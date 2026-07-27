@@ -46,8 +46,8 @@ pub mod reputation;
 // `octo_network::gossip::start_reputation_gossip` without
 // descending into the inner module.
 pub use crate::gossip::reputation::{
-    start_reputation_gossip, IngressOutcome, RawIngress, ReputationGossipHandle,
-    ReputationGossipJoin,
+    gossip_catch_up, start_reputation_gossip, start_reputation_gossip_with_rate_limit,
+    IngressOutcome, RawIngress, ReputationGossipHandle, ReputationGossipJoin,
 };
 pub use crate::reputation::{SlashReputationStoreCompat, HARD_THRESHOLD as SLASH_HARD_THRESHOLD};
 /// Onion Relay Routing (ORR) — RFC-0858.

@@ -38,6 +38,8 @@
 use crate::auth::AttestorRegistration;
 use crate::auth::{Attestation, AttestorId, GovernanceProof, GovernanceSnapshot, SuspensionAuth};
 use crate::error::ReputationError;
+#[cfg(feature = "stoolap")]
+use crate::gossip::GossipCatchUp;
 use crate::store::{ReputationStore, StoreResult};
 use crate::types::{
     ControllerId, EventId, ParityEvidence, RecorderDid, RecorderId, ReputationAggregate,
@@ -169,6 +171,37 @@ mod real {
                 .get(0)
                 .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_next_recorder_id:cast"))?;
             Ok((max + 1) as u64)
+        }
+
+        fn next_attestation_id(&self) -> Result<u64, ReputationError> {
+            // MIN_ATTESTOR_QUORUM is 3 — the next attestation id is
+            // computed as `COALESCE(MAX(id), -1) + 1` so the first row
+            // gets id=0 (rather than MAX(NULL)=NULL+1=NULL).
+            let mut rows = self
+                .db
+                .query(
+                    "SELECT COALESCE(MAX(CAST(attestation_id AS INTEGER)), -1) + 1
+                     FROM reputation_attestations",
+                    [],
+                )
+                .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_next_attestation_id"))?;
+            let row = match rows.next() {
+                Some(Ok(r)) => r,
+                Some(Err(_e)) => {
+                    return Err(ReputationError::ChainRefInvalid(
+                        "stoolap_next_attestation_id:row_err",
+                    ))
+                }
+                None => {
+                    return Err(ReputationError::ChainRefInvalid(
+                        "stoolap_next_attestation_id:empty",
+                    ))
+                }
+            };
+            let max: i64 = row.get(0).map_err(|_e| {
+                ReputationError::ChainRefInvalid("stoolap_next_attestation_id:cast")
+            })?;
+            Ok(max.max(0) as u64)
         }
     }
 
@@ -933,45 +966,493 @@ mod real {
             })
         }
 
-        // -- Federation (Session 7 / mission 0968 Phase 4) --
+        // -- Federation (Session 8 / mission 0968 Phase 4) --
         //
-        // The real SQL implementations land in Session 8. For now the
-        // real cfg-gated impl returns a typed `ChainRefInvalid` stub
-        // marker so the trait stays nameable; tests asserting the
-        // feature-gated API surface continue to compile.
+        // Real SQL implementations for `register_attestor`,
+        // `attestor_lookup_did`, `record_attestation`,
+        // `query_attestations`, `attestor_quorum_reached`, and
+        // `gossip_catch_up`. The attestor_pubkey peer_set_id are
+        // BLOBs; the attestor_did and recorder_did are 52-byte
+        // BLOBs. Idempotency for `record_attestation` is enforced
+        // via Rust-side guard (the (attestor_did, event_id)
+        // composite-key lookup happens before INSERT).
 
         async fn register_attestor(
             &self,
-            _registration: AttestorRegistration,
+            registration: AttestorRegistration,
         ) -> StoreResult<AttestorId> {
-            Err(ReputationError::ChainRefInvalid(
-                "stoolap_backend_unimplemented:register_attestor",
-            ))
+            if registration.attestor_did.as_bytes() == &[0u8; 52] {
+                return Err(ReputationError::RecorderDidMalformed(
+                    "attestor did must not be all-zero",
+                ));
+            }
+            if registration.pubkey == [0u8; 32] {
+                return Err(ReputationError::GossipEnvelopeInvalid(
+                    "attestor_pubkey_zero",
+                ));
+            }
+            // Idempotent: pre-existing row is overwritten via DELETE
+            // + INSERT (stoolap-fork does not support `INSERT OR
+            // REPLACE`). Re-registering with a new pubkey is
+            // legitimate (key rotation); the same DID maps to the
+            // latest pubkey at gossip-ingress verification time.
+            let did_bytes = registration.attestor_did.as_bytes();
+            self.db
+                .execute(
+                    "DELETE FROM reputation_attestors WHERE attestor_did = $1",
+                    vec![stoolap::Value::blob(did_bytes.to_vec())],
+                )
+                .map_err(|_e| {
+                    ReputationError::ChainRefInvalid("stoolap_register_attestor:delete")
+                })?;
+            let params: Vec<stoolap::Value> = vec![
+                stoolap::Value::blob(did_bytes.to_vec()),
+                stoolap::Value::blob(registration.pubkey.to_vec()),
+                stoolap::Value::blob(registration.peer_set_id.to_vec()),
+                u64_to_value(registration.requested_at_unix),
+                u64_to_value(registration.registered_at_unix),
+            ];
+            self.db
+                .execute(
+                    "INSERT INTO reputation_attestors (
+                        attestor_did, attestor_pubkey, peer_set_id,
+                        requested_at_unix, registered_at_unix
+                    ) VALUES ($1, $2, $3, $4, $5)",
+                    params,
+                )
+                .map_err(|_e| {
+                    ReputationError::ChainRefInvalid("stoolap_register_attestor:insert")
+                })?;
+            Ok(registration.attestor_did)
         }
 
         async fn attestor_lookup_did(
             &self,
-            _attestor_did: &AttestorId,
+            attestor_did: &AttestorId,
         ) -> StoreResult<AttestorRegistration> {
-            Err(ReputationError::ChainRefInvalid(
-                "stoolap_backend_unimplemented:attestor_lookup_did",
-            ))
+            let mut rows = self
+                .db
+                .query(
+                    "SELECT attestor_pubkey, peer_set_id,
+                            requested_at_unix, registered_at_unix
+                     FROM reputation_attestors
+                     WHERE attestor_did = $1",
+                    vec![stoolap::Value::blob(attestor_did.as_bytes().to_vec())],
+                )
+                .map_err(|_e| {
+                    ReputationError::ChainRefInvalid("stoolap_attestor_lookup_did:query")
+                })?;
+            let row = match rows.next() {
+                Some(Ok(r)) => r,
+                Some(Err(_e)) => {
+                    return Err(ReputationError::ChainRefInvalid(
+                        "stoolap_attestor_lookup_did:row_err",
+                    ))
+                }
+                None => return Err(ReputationError::RecorderNotRegistered(0)),
+            };
+            let attestor_pubkey_bytes: Vec<u8> =
+                row.get_by_name("attestor_pubkey").map_err(|_e| {
+                    ReputationError::ChainRefInvalid("stoolap_attestor_lookup_did:pubkey")
+                })?;
+            if attestor_pubkey_bytes.len() != 32 {
+                return Err(ReputationError::ChainRefInvalid(
+                    "stoolap_attestor_lookup_did:pubkey_len",
+                ));
+            }
+            let mut attestor_pubkey = [0u8; 32];
+            attestor_pubkey.copy_from_slice(&attestor_pubkey_bytes);
+            let peer_set_id_bytes: Vec<u8> = row.get_by_name("peer_set_id").map_err(|_e| {
+                ReputationError::ChainRefInvalid("stoolap_attestor_lookup_did:peer_set")
+            })?;
+            if peer_set_id_bytes.len() != 32 {
+                return Err(ReputationError::ChainRefInvalid(
+                    "stoolap_attestor_lookup_did:peer_set_len",
+                ));
+            }
+            let mut peer_set_id = [0u8; 32];
+            peer_set_id.copy_from_slice(&peer_set_id_bytes);
+            let requested_at_unix: i64 = row.get_by_name("requested_at_unix").map_err(|_e| {
+                ReputationError::ChainRefInvalid("stoolap_attestor_lookup_did:requested")
+            })?;
+            let registered_at_unix: i64 = row.get_by_name("registered_at_unix").map_err(|_e| {
+                ReputationError::ChainRefInvalid("stoolap_attestor_lookup_did:registered")
+            })?;
+            Ok(AttestorRegistration {
+                attestor_did: *attestor_did,
+                pubkey: attestor_pubkey,
+                peer_set_id,
+                requested_at_unix: i64_to_u64(requested_at_unix),
+                registered_at_unix: i64_to_u64(registered_at_unix),
+            })
         }
 
-        async fn record_attestation(&self, _attestation: Attestation) -> StoreResult<u64> {
-            Err(ReputationError::ChainRefInvalid(
-                "stoolap_backend_unimplemented:record_attestation",
-            ))
+        async fn record_attestation(&self, attestation: Attestation) -> StoreResult<u64> {
+            // Idempotency guard: look up an existing row by the
+            // (attestor_did, recorder_did, event_id) composite key
+            // before INSERT. The v004 schema has `attestation_id
+            // INTEGER PRIMARY KEY` but no UNIQUE on the composite
+            // tuple, so duplicate inserts would collide on PK and
+            // error. The guard returns the existing id and skips the
+            // INSERT. The recorder_did is part of the composite so
+            // that one attestor can attest the same event_id for
+            // distinct recorders (event_id space is shared across
+            // recorders).
+            let attestor_bytes = attestation.attestor.as_bytes();
+            let event_bytes = attestation.event_id.as_bytes();
+            let recorder_bytes = attestation.recorder_did.as_bytes();
+            let existing_id: Option<u64> = {
+                let mut q = self
+                    .db
+                    .query(
+                        "SELECT attestation_id FROM reputation_attestations
+                         WHERE attestor_did = $1 AND recorder_did = $2 AND event_id = $3",
+                        vec![
+                            stoolap::Value::blob(attestor_bytes.to_vec()),
+                            stoolap::Value::blob(recorder_bytes.to_vec()),
+                            stoolap::Value::blob(event_bytes.to_vec()),
+                        ],
+                    )
+                    .map_err(|_e| {
+                        ReputationError::ChainRefInvalid("stoolap_record_attestation:exists_query")
+                    })?;
+                match q.next() {
+                    Some(Ok(row)) => {
+                        let v: i64 = row.get(0).map_err(|_e| {
+                            ReputationError::ChainRefInvalid(
+                                "stoolap_record_attestation:exists_cast",
+                            )
+                        })?;
+                        Some(v.max(0) as u64)
+                    }
+                    Some(Err(_e)) => {
+                        return Err(ReputationError::ChainRefInvalid(
+                            "stoolap_record_attestation:exists_iter",
+                        ))
+                    }
+                    None => None,
+                }
+            };
+            if let Some(id) = existing_id {
+                return Ok(id);
+            }
+            let id = self.next_attestation_id()?;
+            let params: Vec<stoolap::Value> = vec![
+                stoolap::Value::integer(id as i64),
+                stoolap::Value::blob(attestor_bytes.to_vec()),
+                stoolap::Value::blob(recorder_bytes.to_vec()),
+                stoolap::Value::blob(event_bytes.to_vec()),
+                stoolap::Value::blob(attestation.signature.clone()),
+                u64_to_value(attestation.observed_at_unix),
+                u64_to_value(attestation.received_at_unix),
+                stoolap::Value::text(attestation.source_mission.clone()),
+                stoolap::Value::text(attestation.source_domain.clone()),
+            ];
+            self.db
+                .execute(
+                    "INSERT INTO reputation_attestations (
+                        attestation_id, attestor_did, recorder_did, event_id,
+                        signature, observed_at_unix, received_at_unix,
+                        source_mission, source_domain
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                    params,
+                )
+                .map_err(|_e| {
+                    ReputationError::ChainRefInvalid("stoolap_record_attestation:insert")
+                })?;
+            Ok(id)
         }
 
         async fn query_attestations(
             &self,
-            _recorder_did: &RecorderDid,
-            _since_event_id: EventId,
+            recorder_did: &RecorderDid,
+            since_event_id: EventId,
         ) -> StoreResult<Vec<Attestation>> {
-            Err(ReputationError::ChainRefInvalid(
-                "stoolap_backend_unimplemented:query_attestations",
-            ))
+            // Use the `reputation_attestations_recorder` index on
+            // `(recorder_did, observed_at_unix)`. Filter on event_id >
+            // since_event_id via a secondary predicate; the composite
+            // index gets us the row subset fast and the filter is
+            // O(matches) on top.
+            let recorder_bytes = recorder_did.as_bytes();
+            let since_bytes = since_event_id.as_bytes();
+            let mut rows = self
+                .db
+                .query(
+                    "SELECT attestation_id, attestor_did, event_id,
+                            signature, observed_at_unix, received_at_unix,
+                            source_mission, source_domain
+                     FROM reputation_attestations
+                     WHERE recorder_did = $1 AND event_id > $2
+                     ORDER BY observed_at_unix",
+                    vec![
+                        stoolap::Value::blob(recorder_bytes.to_vec()),
+                        stoolap::Value::blob(since_bytes.to_vec()),
+                    ],
+                )
+                .map_err(|_e| {
+                    ReputationError::ChainRefInvalid("stoolap_query_attestations:query")
+                })?;
+            let mut out = Vec::new();
+            loop {
+                match rows.next() {
+                    Some(Ok(row)) => {
+                        let attestation_id: i64 =
+                            row.get_by_name("attestation_id").map_err(|_e| {
+                                ReputationError::ChainRefInvalid("stoolap_query_attestations:id")
+                            })?;
+                        let attestor_bytes: Vec<u8> =
+                            row.get_by_name("attestor_did").map_err(|_e| {
+                                ReputationError::ChainRefInvalid(
+                                    "stoolap_query_attestations:attestor",
+                                )
+                            })?;
+                        if attestor_bytes.len() != 52 {
+                            return Err(ReputationError::ChainRefInvalid(
+                                "stoolap_query_attestations:attestor_len",
+                            ));
+                        }
+                        let mut attestor_arr = [0u8; 52];
+                        attestor_arr.copy_from_slice(&attestor_bytes);
+                        let event_id_bytes: Vec<u8> =
+                            row.get_by_name("event_id").map_err(|_e| {
+                                ReputationError::ChainRefInvalid(
+                                    "stoolap_query_attestations:event_id",
+                                )
+                            })?;
+                        let event_id = bytes_to_event_id(&event_id_bytes)?;
+                        let signature: Vec<u8> = row.get_by_name("signature").map_err(|_e| {
+                            ReputationError::ChainRefInvalid("stoolap_query_attestations:signature")
+                        })?;
+                        let observed_at_unix: i64 =
+                            row.get_by_name("observed_at_unix").map_err(|_e| {
+                                ReputationError::ChainRefInvalid(
+                                    "stoolap_query_attestations:observed",
+                                )
+                            })?;
+                        let received_at_unix: i64 =
+                            row.get_by_name("received_at_unix").map_err(|_e| {
+                                ReputationError::ChainRefInvalid(
+                                    "stoolap_query_attestations:received",
+                                )
+                            })?;
+                        let source_mission: String =
+                            row.get_by_name("source_mission").map_err(|_e| {
+                                ReputationError::ChainRefInvalid(
+                                    "stoolap_query_attestations:mission",
+                                )
+                            })?;
+                        let source_domain: String =
+                            row.get_by_name("source_domain").map_err(|_e| {
+                                ReputationError::ChainRefInvalid(
+                                    "stoolap_query_attestations:domain",
+                                )
+                            })?;
+                        out.push(Attestation {
+                            attestation_id: i64_to_u64(attestation_id),
+                            attestor: AttestorId::from_array(attestor_arr),
+                            recorder_did: *recorder_did,
+                            event_id,
+                            signature,
+                            observed_at_unix: i64_to_u64(observed_at_unix),
+                            received_at_unix: i64_to_u64(received_at_unix),
+                            source_mission,
+                            source_domain,
+                        });
+                    }
+                    Some(Err(_e)) => {
+                        return Err(ReputationError::ChainRefInvalid(
+                            "stoolap_query_attestations:iter",
+                        ))
+                    }
+                    None => break,
+                }
+            }
+            Ok(out)
+        }
+
+        async fn attestor_quorum_reached(&self, event_id: EventId) -> StoreResult<bool> {
+            // Count distinct attestor_did rows for the given event_id
+            // and compare against MIN_ATTESTOR_QUORUM.
+            let event_bytes = event_id.as_bytes();
+            let mut rows = self
+                .db
+                .query(
+                    "SELECT COUNT(DISTINCT attestor_did) FROM reputation_attestations
+                     WHERE event_id = $1",
+                    vec![stoolap::Value::blob(event_bytes.to_vec())],
+                )
+                .map_err(|_e| {
+                    ReputationError::ChainRefInvalid("stoolap_attestor_quorum_reached:query")
+                })?;
+            let row = match rows.next() {
+                Some(Ok(r)) => r,
+                Some(Err(_e)) => {
+                    return Err(ReputationError::ChainRefInvalid(
+                        "stoolap_attestor_quorum_reached:row_err",
+                    ))
+                }
+                None => {
+                    return Err(ReputationError::ChainRefInvalid(
+                        "stoolap_attestor_quorum_reached:empty",
+                    ))
+                }
+            };
+            let distinct: i64 = row.get(0).map_err(|_e| {
+                ReputationError::ChainRefInvalid("stoolap_attestor_quorum_reached:cast")
+            })?;
+            Ok((distinct.max(0) as u32) >= crate::constants::MIN_ATTESTOR_QUORUM)
+        }
+
+        async fn gossip_catch_up(&self, catch_up: &GossipCatchUp) -> StoreResult<Vec<SignalEvent>> {
+            // Stream every event with event_id > since_event_id,
+            // ordered by event_id, so the caller can republish the
+            // missing envelopes. Also record the catch-up in the
+            // `reputation_gossip_seen` ledger (v005) — the
+            // (recorder_did, event_id) composite PK guarantees
+            // idempotency on duplicate catch-up requests.
+            let since_bytes = catch_up.since_event_id.as_bytes();
+            let mut rows = self
+                .db
+                .query(
+                    "SELECT recorder_did, event_id, controller_id, signal_kind,
+                            layer, score_delta, recorded_at_unix,
+                            rotation_provenance, audit_ref
+                     FROM reputation_events
+                     WHERE event_id > $1
+                     ORDER BY event_id",
+                    vec![stoolap::Value::blob(since_bytes.to_vec())],
+                )
+                .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_gossip_catch_up:query"))?;
+            let mut out = Vec::new();
+            loop {
+                match rows.next() {
+                    Some(Ok(row)) => {
+                        let recorder_bytes: Vec<u8> =
+                            row.get_by_name("recorder_did").map_err(|_e| {
+                                ReputationError::ChainRefInvalid("stoolap_gossip_catch_up:recorder")
+                            })?;
+                        if recorder_bytes.len() != 52 {
+                            return Err(ReputationError::ChainRefInvalid(
+                                "stoolap_gossip_catch_up:recorder_len",
+                            ));
+                        }
+                        let mut recorder_arr = [0u8; 52];
+                        recorder_arr.copy_from_slice(&recorder_bytes);
+                        let recorder_did = RecorderDid::from_array(recorder_arr);
+                        let kind_d: i64 = row.get_by_name("signal_kind").map_err(|_e| {
+                            ReputationError::ChainRefInvalid("stoolap_gossip_catch_up:kind")
+                        })?;
+                        let layer_d: i64 = row.get_by_name("layer").map_err(|_e| {
+                            ReputationError::ChainRefInvalid("stoolap_gossip_catch_up:layer")
+                        })?;
+                        let score_bytes: Vec<u8> =
+                            row.get_by_name("score_delta").map_err(|_e| {
+                                ReputationError::ChainRefInvalid("stoolap_gossip_catch_up:score")
+                            })?;
+                        let score_delta = dfp_from_blob(&score_bytes)?;
+                        let event_id_bytes: Vec<u8> =
+                            row.get_by_name("event_id").map_err(|_e| {
+                                ReputationError::ChainRefInvalid("stoolap_gossip_catch_up:event_id")
+                            })?;
+                        let event_id = bytes_to_event_id(&event_id_bytes)?;
+                        let recorded_at_unix: i64 =
+                            row.get_by_name("recorded_at_unix").map_err(|_e| {
+                                ReputationError::ChainRefInvalid("stoolap_gossip_catch_up:ts")
+                            })?;
+                        let controller_id_bytes: Vec<u8> =
+                            row.get_by_name("controller_id").map_err(|_e| {
+                                ReputationError::ChainRefInvalid(
+                                    "stoolap_gossip_catch_up:controller_id",
+                                )
+                            })?;
+                        let controller_id = bytes_to_controller_id(&controller_id_bytes)?;
+                        let rotation_blob: Option<Vec<u8>> =
+                            row.get_by_name("rotation_provenance").ok();
+                        let rotation_provenance = rotation_blob.and_then(|b| {
+                            if b.is_empty() {
+                                return None;
+                            }
+                            serde_json::from_slice(&b).ok()
+                        });
+                        let audit_blob: Option<Vec<u8>> = row.get_by_name("audit_ref").ok();
+                        let audit_ref = audit_blob.filter(|b| !b.is_empty());
+                        let kind = SignalKind::from_discriminant(kind_d as u8).map_err(|_e| {
+                            ReputationError::ChainRefInvalid("stoolap_gossip_catch_up:kind_disc")
+                        })?;
+                        let layer =
+                            ReputationLayer::from_discriminant(layer_d as u8).map_err(|_e| {
+                                ReputationError::ChainRefInvalid(
+                                    "stoolap_gossip_catch_up:layer_disc",
+                                )
+                            })?;
+
+                        // Record the catch-up entry in the gossip_seen
+                        // ledger. The (recorder_did, event_id) PK
+                        // guards against duplicate rows; we use a
+                        // pre-check SELECT because stoolap-fork does
+                        // not support `INSERT OR IGNORE`.
+                        let attestor_bytes = catch_up.attestor_did.as_bytes().to_vec();
+                        let now = crate::migrations::now_unix();
+                        let already_seen: bool = {
+                            let mut q = self
+                                .db
+                                .query(
+                                    "SELECT 1 FROM reputation_gossip_seen
+                                     WHERE recorder_did = $1 AND event_id = $2",
+                                    vec![
+                                        stoolap::Value::blob(recorder_bytes.to_vec()),
+                                        stoolap::Value::blob(event_id_bytes.clone()),
+                                    ],
+                                )
+                                .map_err(|_e| {
+                                    ReputationError::ChainRefInvalid(
+                                        "stoolap_gossip_catch_up:seen_query",
+                                    )
+                                })?;
+                            matches!(q.next(), Some(Ok(_)))
+                        };
+                        if !already_seen {
+                            let seen_params: Vec<stoolap::Value> = vec![
+                                stoolap::Value::blob(recorder_bytes.to_vec()),
+                                stoolap::Value::blob(event_id_bytes.clone()),
+                                stoolap::Value::blob(attestor_bytes),
+                                u64_to_value(now),
+                                stoolap::Value::blob(vec![0u8; 32]),
+                            ];
+                            if let Err(_e) = self.db.execute(
+                                "INSERT INTO reputation_gossip_seen (
+                                    recorder_did, event_id, attestor_did,
+                                    observed_at_unix, peer_id
+                                ) VALUES ($1, $2, $3, $4, $5)",
+                                seen_params,
+                            ) {
+                                eprintln!(
+                                    "gossip_catch_up: gossip_seen insert failed (best-effort)"
+                                );
+                            }
+                        }
+
+                        out.push(SignalEvent {
+                            event_id,
+                            recorder_did,
+                            controller_id,
+                            signal_kind: kind,
+                            layer,
+                            score_delta,
+                            recorded_at_unix: i64_to_u64(recorded_at_unix),
+                            rotation_provenance,
+                            audit_ref,
+                        });
+                    }
+                    Some(Err(_e)) => {
+                        return Err(ReputationError::ChainRefInvalid(
+                            "stoolap_gossip_catch_up:iter",
+                        ))
+                    }
+                    None => break,
+                }
+            }
+            Ok(out)
         }
     }
 }
@@ -986,6 +1467,7 @@ pub use real::StoolapReputationStore;
 #[cfg(not(feature = "stoolap"))]
 mod stub {
     use super::*;
+    use crate::GossipCatchUp;
 
     pub struct StoolapReputationStore;
 
@@ -1017,6 +1499,8 @@ mod stub {
             "attestor_lookup_did" => "stoolap_backend_unimplemented:attestor_lookup_did",
             "record_attestation" => "stoolap_backend_unimplemented:record_attestation",
             "query_attestations" => "stoolap_backend_unimplemented:query_attestations",
+            "attestor_quorum_reached" => "stoolap_backend_unimplemented:attestor_quorum_reached",
+            "gossip_catch_up" => "stoolap_backend_unimplemented:gossip_catch_up",
             _ => "stoolap_backend_unimplemented",
         }))
     }
@@ -1118,6 +1602,12 @@ mod stub {
             _: EventId,
         ) -> StoreResult<Vec<Attestation>> {
             stub("query_attestations")
+        }
+        async fn attestor_quorum_reached(&self, _: EventId) -> StoreResult<bool> {
+            stub("attestor_quorum_reached")
+        }
+        async fn gossip_catch_up(&self, _: &GossipCatchUp) -> StoreResult<Vec<SignalEvent>> {
+            stub("gossip_catch_up")
         }
     }
 }

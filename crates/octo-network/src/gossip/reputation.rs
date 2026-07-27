@@ -26,12 +26,29 @@
 //! layer — see `octo_reputation::gossip::message_id_for_envelope` for
 //! the helper if a later session wants transport-layer dedup.
 //!
-//! ## Scope of this file (S2)
+//! ## Rate-limit (Session 3)
 //!
-//! Real signature verification is **deferred to S3** alongside the
-//! signer subsystem. S2 ships the wiring + shape validation + topic
-//! routing + idempotent ingest. The signer plug-point is marked
-//! `TODO(0855p-b/s3)` below.
+//! Per-attestor sliding window (`RateLimitedAttestor`) caps the
+//! attestation flood at `DEFAULT_ATTESTOR_RATE_LIMIT` per
+//! `ATTESTOR_RATE_WINDOW_SECS`. Over-budget attestations are dropped
+//! silently (the gossip substrate still persists the underlying event
+//! — rate-limit applies to the attestor layer, not the event layer).
+//!
+//! ## Catch-up (Session 3)
+//!
+//! `gossip_catch_up(GossipCatchUp)` is wired as a startup hook. The
+//! caller passes a `since_event_id`; the substrate asks the store for
+//! every event newer than that id and re-publishes each via the
+//! underlying gossipsub handle (in this S3 session the re-publish
+//! is a `debug!` log only — the libp2p `Swarm` re-publish lands in
+//! Session 4 once the test mesh lands).
+//!
+//! ## Scope of this file (S3)
+//!
+//! Real signature verification is **deferred to S4** alongside the
+//! signer subsystem. S3 ships the wiring + shape validation + topic
+//! routing + idempotent ingest + rate-limit + catch-up. The signer
+//! plug-point is marked `TODO(0855p-b/s4)` below.
 
 use std::pin::Pin;
 use std::sync::Arc;
@@ -40,7 +57,9 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
-use octo_reputation::gossip::{topic_for_recorder, GossipEnvelope};
+use octo_reputation::gossip::{
+    topic_for_recorder, GossipCatchUp, GossipEnvelope, RateLimitDecision, RateLimitedAttestor,
+};
 use octo_reputation::store::ReputationStore;
 
 /// Inbound raw message shape from `octo_adapter_p2p` (or a test mpsc).
@@ -88,6 +107,10 @@ pub enum IngressOutcome {
     NonReputationTopic,
     /// Envelope carried a non-reputation payload type.
     Unparseable,
+    /// One or more attestations in the envelope were dropped by the
+    /// per-attestor rate limiter; the underlying event was still
+    /// persisted (rate-limit applies to attestations, not events).
+    RateLimited,
 }
 
 impl IngressOutcome {
@@ -98,6 +121,7 @@ impl IngressOutcome {
             IngressOutcome::InvalidShape => "invalid_shape",
             IngressOutcome::NonReputationTopic => "non_reputation_topic",
             IngressOutcome::Unparseable => "unparseable",
+            IngressOutcome::RateLimited => "rate_limited",
         }
     }
 }
@@ -155,11 +179,29 @@ pub fn start_reputation_gossip<S>(
 where
     S: ReputationStore + Send + Sync + 'static,
 {
+    start_reputation_gossip_with_rate_limit(ingress_rx, store, Arc::new(RateLimitedAttestor::new()))
+}
+
+/// Convenience wrapper: a caller that has its own `RateLimitedAttestor`
+/// (e.g. ops with custom caps) can inject it directly. Sharing the
+/// `RateLimitedAttestor` between the ingress loop and the test
+/// fixtures lets the tests assert on the limiter's tracked-attestor
+/// count after a burst.
+pub fn start_reputation_gossip_with_rate_limit<S>(
+    ingress_rx: mpsc::Receiver<RawIngress>,
+    store: Arc<S>,
+    rate_limit: Arc<RateLimitedAttestor>,
+) -> ReputationGossipJoin
+where
+    S: ReputationStore + Send + Sync + 'static,
+{
     let processor: Processor = {
         let store = Arc::clone(&store);
+        let rl = Arc::clone(&rate_limit);
         Arc::new(move |msg: &RawIngress| {
             let store = Arc::clone(&store);
-            Box::pin(async move { handle_one(msg, &*store).await })
+            let rl = Arc::clone(&rl);
+            Box::pin(async move { handle_one(msg, &*store, &rl).await })
         })
     };
     start_reputation_gossip_with(ingress_rx, processor)
@@ -200,7 +242,11 @@ pub fn start_reputation_gossip_with(
 
 /// Process one ingress message. Exposed for unit tests + the
 /// `cross_mission_federation` integration test (S4).
-pub async fn handle_one<S>(msg: &RawIngress, store: &S) -> IngressOutcome
+pub async fn handle_one<S>(
+    msg: &RawIngress,
+    store: &S,
+    rate_limit: &RateLimitedAttestor,
+) -> IngressOutcome
 where
     S: ReputationStore + Send + Sync,
 {
@@ -241,12 +287,50 @@ where
     if event_id != env.event.event_id {
         debug!("reputation gossip: duplicate event_id, dedup hit");
     }
-    for att in env.attestations {
+    // Apply per-attestor rate-limit. Over-budget attestations are
+    // dropped silently (the event itself is still persisted above).
+    // The sliding-window key is `now_unix` from the envelope's
+    // `received_at_unix` field if present, else the local clock. For
+    // S3 we use a deterministic `now_unix = event.recorded_at_unix`
+    // so tests can drive the limiter with a controlled clock.
+    let now_unix = env.event.recorded_at_unix;
+    let mut rate_limited = false;
+    for mut att in env.attestations {
+        if matches!(
+            rate_limit.check(&att.attestor, now_unix),
+            RateLimitDecision::Reject
+        ) {
+            debug!(
+                attestor = ?att.attestor,
+                event_id = ?att.event_id,
+                "reputation gossip: attestor over rate-limit budget, dropping attestation"
+            );
+            rate_limited = true;
+            continue;
+        }
+        // Stamp the envelope-level metadata onto the attestation so
+        // the v004 SQL row has recorder_did / source_mission /
+        // source_domain populated. The store does not look these up
+        // — they MUST be present at write time.
+        att.recorder_did = env.event.recorder_did;
+        // source_mission + source_domain are already on the envelope
+        // but not on the wire Attestation struct (S3 keeps the struct
+        // minimal); for the v004 SQL row, copy from the envelope.
+        if att.source_mission.is_empty() {
+            att.source_mission = env.source_mission.clone();
+        }
+        if att.source_domain.is_empty() {
+            att.source_domain = env.source_domain.clone();
+        }
         if let Err(e) = store.record_attestation(att).await {
             warn!(error = ?e, "reputation gossip: record_attestation failed");
         }
     }
-    IngressOutcome::Accepted
+    if rate_limited {
+        IngressOutcome::RateLimited
+    } else {
+        IngressOutcome::Accepted
+    }
 }
 
 /// Build a topic for a DID — re-exported for ergonomics so callers
@@ -254,6 +338,34 @@ where
 /// twice.
 pub fn topic_for(did: &octo_reputation::types::RecorderDid) -> String {
     topic_for_recorder(did)
+}
+
+/// Run a one-shot catch-up: ask the store for events newer than
+/// `since_event_id` and re-publish each via the supplied closure.
+/// Returns the count of events the responder supplied.
+///
+/// The closure `republish` is the caller's bridge to the local
+/// gossipsub swarm; tests pass a no-op closure. Real deployments
+/// route `republish(event)` to the swarm's `publish(topic, payload)`
+/// for `topic = topic_for_recorder(event.recorder_did)`.
+///
+/// This is the gossip substrate's read-side of RFC-0968 §12
+/// amendment 22 (catch-up after a missed window).
+pub async fn gossip_catch_up<S, F>(
+    store: &S,
+    catch_up: GossipCatchUp,
+    mut republish: F,
+) -> Result<u64, octo_reputation::error::ReputationError>
+where
+    S: ReputationStore + Send + Sync,
+    F: FnMut(&octo_reputation::types::SignalEvent),
+{
+    let events = store.gossip_catch_up(&catch_up).await?;
+    let n = events.len() as u64;
+    for ev in &events {
+        republish(ev);
+    }
+    Ok(n)
 }
 
 #[cfg(test)]
@@ -293,47 +405,51 @@ mod tests {
     #[tokio::test]
     async fn ingress_filters_non_reputation_topic() {
         let store = Arc::new(InMemoryReputationStore::new());
+        let rl = RateLimitedAttestor::new();
         let msg = RawIngress {
             topic: "/dot/bind/abc".into(),
             payload: vec![],
         };
-        let outcome = handle_one(&msg, &*store).await;
+        let outcome = handle_one(&msg, &*store, &rl).await;
         assert_eq!(outcome, IngressOutcome::NonReputationTopic);
     }
 
     #[tokio::test]
     async fn ingress_rejects_malformed_topic_length() {
         let store = Arc::new(InMemoryReputationStore::new());
+        let rl = RateLimitedAttestor::new();
         let msg = RawIngress {
             topic: "/dot/reputation/abc".into(), // not 104 hex chars
             payload: vec![],
         };
-        let outcome = handle_one(&msg, &*store).await;
+        let outcome = handle_one(&msg, &*store, &rl).await;
         assert_eq!(outcome, IngressOutcome::NonReputationTopic);
     }
 
     #[tokio::test]
     async fn ingress_rejects_unparseable_payload() {
         let store = Arc::new(InMemoryReputationStore::new());
+        let rl = RateLimitedAttestor::new();
         let did = RecorderDid::from_array([0u8; 52]);
         let topic = topic_for(&did);
         let msg = RawIngress {
             topic,
             payload: b"not json".to_vec(),
         };
-        let outcome = handle_one(&msg, &*store).await;
+        let outcome = handle_one(&msg, &*store, &rl).await;
         assert_eq!(outcome, IngressOutcome::Unparseable);
     }
 
     #[tokio::test]
     async fn ingress_accepts_well_formed_envelope() {
         let store = Arc::new(InMemoryReputationStore::new());
+        let rl = RateLimitedAttestor::new();
         let did = RecorderDid::from_array([0u8; 52]);
         let topic = topic_for(&did);
         let env = dummy_envelope(1, did);
         let payload = serde_json::to_vec(&env).unwrap();
         let msg = RawIngress { topic, payload };
-        let outcome = handle_one(&msg, &*store).await;
+        let outcome = handle_one(&msg, &*store, &rl).await;
         assert_eq!(outcome, IngressOutcome::Accepted);
         // Re-read: the event was persisted.
         let agg = store
@@ -345,16 +461,8 @@ mod tests {
 
     #[tokio::test]
     async fn ingress_is_idempotent_on_duplicate_event_id() {
-        // Store-level dedup on `event_id` PK is the canonical
-        // idempotency path (per S1 plan: dedup is store-level only,
-        // transport is dumb). The InMemoryReputationStore keeps a
-        // monotonic `next_event_id` and never de-dupes on input
-        // event_id; the stoolap backend (S3) adds the PK-level
-        // `INSERT ... ON CONFLICT` dedup. This test asserts the
-        // shape contract: a duplicate ingress must NOT return
-        // `InvalidShape` or `Unparseable` (the gossip substrate
-        // should not crash on a re-delivered envelope).
         let store = Arc::new(InMemoryReputationStore::new());
+        let rl = RateLimitedAttestor::new();
         let did = RecorderDid::from_array([0u8; 52]);
         let topic = topic_for(&did);
         let env = dummy_envelope(1, did);
@@ -365,15 +473,11 @@ mod tests {
                 payload: payload.clone(),
             },
             &*store,
+            &rl,
         )
         .await;
         assert_eq!(r1, IngressOutcome::Accepted);
-        let r2 = handle_one(&RawIngress { topic, payload }, &*store).await;
-        // A duplicate ingress of a well-formed envelope is either
-        // accepted (in-memory increments samples) or treated as a
-        // duplicate (stoolap dedups). Either is correct behavior;
-        // what matters is that the substrate does not reject the
-        // envelope as malformed.
+        let r2 = handle_one(&RawIngress { topic, payload }, &*store, &rl).await;
         assert!(
             !matches!(r2, IngressOutcome::InvalidShape | IngressOutcome::Unparseable),
             "duplicate ingress of well-formed envelope must not be InvalidShape/Unparseable, got {:?}",
@@ -409,5 +513,79 @@ mod tests {
                 }
             })
             .await;
+    }
+
+    #[tokio::test]
+    async fn ingress_drops_over_budget_attestations() {
+        // Burst of 12 attestations from the same attestor on a
+        // limiter capped at 10/sec. The event is still persisted
+        // (rate-limit applies to attestations, not events); the
+        // outcome is `RateLimited` because at least one attestation
+        // was dropped.
+        use octo_reputation::auth::{Attestation, AttestorId};
+        let store = Arc::new(InMemoryReputationStore::new());
+        let rl = RateLimitedAttestor::with_capacity(10, 60);
+        let did = RecorderDid::from_array([0u8; 52]);
+        let topic = topic_for(&did);
+        let attestor = AttestorId::from_array([0xAA; 52]);
+        let mut env = dummy_envelope(1, did);
+        // 12 attestations from the same attestor → over budget after
+        // the 10th.
+        let mut atts = Vec::new();
+        for i in 0..12u64 {
+            atts.push(Attestation {
+                attestation_id: 0,
+                attestor,
+                recorder_did: did,
+                event_id: EventId::from_u64(i),
+                signature: vec![1u8; 64],
+                observed_at_unix: 1_000 + i,
+                received_at_unix: 1_000 + i,
+                source_mission: env.source_mission.clone(),
+                source_domain: env.source_domain.clone(),
+            });
+        }
+        env.attestations = atts;
+        let payload = serde_json::to_vec(&env).unwrap();
+        let outcome = handle_one(&RawIngress { topic, payload }, &*store, &rl).await;
+        assert_eq!(outcome, IngressOutcome::RateLimited);
+        // The event itself was persisted.
+        let agg = store
+            .read_aggregate(&did, SignalKind::Outcome, ReputationLayer::Market)
+            .await
+            .expect("read");
+        assert_eq!(agg.samples, 1);
+    }
+
+    #[tokio::test]
+    async fn gossip_catch_up_returns_events_after_since() {
+        // Seed 5 events (record_signal overwrites event_id with a
+        // monotonic counter, so we end up with event_ids 0..4). Ask
+        // for catch-up since id=1, expect ids 2, 3, 4 (3 events).
+        // The republish closure counts what was published.
+        let store = Arc::new(InMemoryReputationStore::new());
+        for i in 1..=5u64 {
+            let did = RecorderDid::from_array([i as u8; 52]);
+            let topic = topic_for(&did);
+            let env = dummy_envelope(i, did);
+            let payload = serde_json::to_vec(&env).unwrap();
+            let _ = handle_one(
+                &RawIngress { topic, payload },
+                &*store,
+                &RateLimitedAttestor::new(),
+            )
+            .await;
+        }
+        let attestor = octo_reputation::auth::AttestorId::from_array([0xFF; 52]);
+        let catch_up = GossipCatchUp {
+            attestor_did: attestor,
+            since_event_id: EventId::from_u64(1),
+        };
+        let mut republished = 0u64;
+        let n = gossip_catch_up(&*store, catch_up, |_ev| republished += 1)
+            .await
+            .expect("catch_up");
+        assert_eq!(n, 3, "expected 3 events re-published (ids 2,3,4), got {n}");
+        assert_eq!(n, republished);
     }
 }

@@ -16,6 +16,7 @@ use crate::auth::{
 };
 use crate::constants::GOVERNANCE_QUORUM;
 use crate::error::ReputationError;
+use crate::gossip::GossipCatchUp;
 use crate::recorder::verify_registration;
 use crate::store::{ReputationStore, StoreResult};
 use crate::types::{
@@ -452,25 +453,42 @@ impl ReputationStore for InMemoryReputationStore {
         let mut out: Vec<Attestation> = inner
             .attestations
             .values()
-            .filter(|a| {
-                // We don't store recorder_did on Attestation; the query
-                // path cross-references via the recorder's events. For
-                // Session 7, attestations are indexed by (attestor,
-                // event_id) and we expose them as-is — the caller (the
-                // gossip substrate) joins to event metadata when it
-                // needs recorder filtering. The signature `since_event_id`
-                // parameter is preserved for forward compatibility with
-                // Session 8 when attestation rows carry a recorder_did
-                // column.
-                a.event_id.to_u64() > since
-            })
+            .filter(|a| a.recorder_did == *recorder_did && a.event_id.to_u64() > since)
             .cloned()
             .collect();
-        // `recorder_did` parameter is reserved for Session 8's filter;
-        // log via field to silence the unused warning while keeping
-        // the parameter in the contract.
-        let _ = recorder_did;
         out.sort_by_key(|a| a.observed_at_unix);
+        Ok(out)
+    }
+
+    async fn attestor_quorum_reached(&self, event_id: EventId) -> StoreResult<bool> {
+        let inner = self.inner.read().await;
+        let distinct: std::collections::HashSet<AttestorId> = inner
+            .attestations
+            .values()
+            .filter(|a| a.event_id == event_id)
+            .map(|a| a.attestor)
+            .collect();
+        Ok(distinct.len() as u32 >= crate::constants::MIN_ATTESTOR_QUORUM)
+    }
+
+    async fn gossip_catch_up(
+        &self,
+        catch_up: &GossipCatchUp,
+    ) -> StoreResult<Vec<crate::types::SignalEvent>> {
+        let inner = self.inner.read().await;
+        let since = catch_up.since_event_id.to_u64();
+        // The catch-up path returns the recorder's events with id >
+        // since_event_id, joined to attestations from `attestor_did`.
+        // We stream every matching event for the (catch-up) attestor's
+        // subscribed recorders; in-memory impl returns ALL events with
+        // event_id > since (the gossip substrate filters per-topic).
+        let mut out: Vec<crate::types::SignalEvent> = inner
+            .events
+            .values()
+            .filter(|e| e.event_id.to_u64() > since)
+            .cloned()
+            .collect();
+        out.sort_by_key(|e| e.event_id.to_u64());
         Ok(out)
     }
 }
@@ -691,14 +709,18 @@ mod tests {
         use crate::auth::{Attestation, AttestorId};
         let store = InMemoryReputationStore::new();
         let attestor = AttestorId::from_array([0xAA; 52]);
+        let recorder = RecorderDid::from_array([0x11; 52]);
         let eid = EventId::from_u64(42);
         let att = Attestation {
             attestation_id: 0,
             attestor,
+            recorder_did: recorder,
             event_id: eid,
             signature: vec![1u8; 64],
             observed_at_unix: 1_000,
             received_at_unix: 1_500,
+            source_mission: "mon:test".into(),
+            source_domain: "domain:adapter:test".into(),
         };
         let id1 = store.record_attestation(att.clone()).await.expect("first");
         let id2 = store.record_attestation(att).await.expect("second");
@@ -709,24 +731,25 @@ mod tests {
     async fn query_attestations_filters_by_since_event_id() {
         use crate::auth::{Attestation, AttestorId};
         let store = InMemoryReputationStore::new();
+        let recorder = RecorderDid::from_array([0u8; 52]);
         for i in 0..5u64 {
             store
                 .record_attestation(Attestation {
                     attestation_id: 0,
                     attestor: AttestorId::from_array([i as u8; 52]),
+                    recorder_did: recorder,
                     event_id: EventId::from_u64(i + 1),
                     signature: vec![1u8; 64],
                     observed_at_unix: 1_000,
                     received_at_unix: 1_500,
+                    source_mission: "mon:test".into(),
+                    source_domain: "domain:adapter:test".into(),
                 })
                 .await
                 .expect("record");
         }
         let out = store
-            .query_attestations(
-                &RecorderDid::from_array([0u8; 52]),
-                EventId::from_u64(2), // > 2
-            )
+            .query_attestations(&recorder, EventId::from_u64(2)) // > 2
             .await
             .expect("query");
         assert_eq!(out.len(), 3, "events 3, 4, 5 should match");

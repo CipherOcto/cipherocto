@@ -54,7 +54,10 @@ pub use compat::{
 pub use cross_layer::{cross_layer_query, dedup_layers, CrossLayerResult, MAX_CROSS_LAYER_FANOUT};
 pub use digest::ReputationDigest;
 pub use error::{ReputationError, StakeComponent};
-pub use gossip::{message_id_for_envelope, topic_for_recorder, GossipCatchUp, GossipEnvelope};
+pub use gossip::{
+    message_id_for_envelope, topic_for_recorder, GossipCatchUp, GossipEnvelope, RateLimitDecision,
+    RateLimitedAttestor, ATTESTOR_RATE_WINDOW_SECS, DEFAULT_ATTESTOR_RATE_LIMIT,
+};
 pub use migrations::{MigrationVersion, BUILTIN_MIGRATIONS};
 pub use parity::{
     compute_parity_report, parity_gate_deadline_unix, ParityReport, ParityRow, TripleClass,

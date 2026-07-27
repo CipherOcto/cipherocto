@@ -137,6 +137,81 @@ pub fn message_id_for_envelope(env: &GossipEnvelope) -> [u8; 32] {
     arr
 }
 
+/// Default attestor rate limit: `DEFAULT_ATTESTOR_RATE_LIMIT` attestations
+/// per `ATTESTOR_RATE_WINDOW_SECS` rolling window per attestor DID. Per
+/// RFC-0968 §12 + mission 0968 Phase 4.
+pub const DEFAULT_ATTESTOR_RATE_LIMIT: u32 = 10;
+pub const ATTESTOR_RATE_WINDOW_SECS: u64 = 1;
+
+/// Outcome of a rate-limit check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RateLimitDecision {
+    /// Attestor under the limit — allow the attestation.
+    Allow,
+    /// Attestor over the limit for the current window — drop.
+    Reject,
+}
+
+/// Sliding-window rate limiter, keyed by `AttestorId`. Records the
+/// timestamp of every accepted attestation; on each `check(attestor,
+/// now_unix)` call, evicts entries older than the window before
+/// comparing the count to the cap.
+///
+/// Used by the gossip substrate (`octo-network::gossip::reputation`)
+/// to drop over-budget attestations before they reach the store. The
+/// store-level idempotency guard on `(attestor_did, event_id)` still
+/// runs for accepted attestations; this is purely a write-side
+/// defence against a flood.
+#[derive(Debug)]
+pub struct RateLimitedAttestor {
+    cap: u32,
+    window_secs: u64,
+    inner: std::sync::Mutex<std::collections::HashMap<AttestorId, Vec<u64>>>,
+}
+
+impl RateLimitedAttestor {
+    pub fn new() -> Self {
+        Self::with_capacity(DEFAULT_ATTESTOR_RATE_LIMIT, ATTESTOR_RATE_WINDOW_SECS)
+    }
+
+    pub fn with_capacity(cap: u32, window_secs: u64) -> Self {
+        Self {
+            cap,
+            window_secs,
+            inner: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Decide whether to accept a new attestation from `attestor` at
+    /// `now_unix`. If accepted, the timestamp is recorded; if rejected,
+    /// no state change. The caller must `.await` the returned decision
+    /// (this method is sync; it is cheap — `O(n)` over the window).
+    pub fn check(&self, attestor: &AttestorId, now_unix: u64) -> RateLimitDecision {
+        let mut g = self.inner.lock().expect("rate_limit mutex poisoned");
+        let entries = g.entry(*attestor).or_default();
+        // Evict entries older than the window.
+        let cutoff = now_unix.saturating_sub(self.window_secs);
+        entries.retain(|t| *t > cutoff);
+        if entries.len() as u32 >= self.cap {
+            return RateLimitDecision::Reject;
+        }
+        entries.push(now_unix);
+        RateLimitDecision::Allow
+    }
+
+    /// Number of attestors currently tracked (for ops diagnostics).
+    pub fn tracked_attestors(&self) -> usize {
+        let g = self.inner.lock().expect("rate_limit mutex poisoned");
+        g.len()
+    }
+}
+
+impl Default for RateLimitedAttestor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,5 +331,60 @@ mod tests {
         let env = dummy_envelope(42, did);
         assert_eq!(env.event_id(), EventId::from_u64(42));
         assert_eq!(env.recorder_did(), did);
+    }
+
+    // -- Session 8 / mission 0968 Phase 4: RateLimitedAttestor --
+
+    #[test]
+    fn rate_limit_allows_under_cap() {
+        let rl = RateLimitedAttestor::with_capacity(3, 60);
+        let a = AttestorId::from_array([0xAA; 52]);
+        // First three within the window: allow.
+        assert_eq!(rl.check(&a, 1_000), RateLimitDecision::Allow);
+        assert_eq!(rl.check(&a, 1_010), RateLimitDecision::Allow);
+        assert_eq!(rl.check(&a, 1_020), RateLimitDecision::Allow);
+        // Fourth within the same window: reject.
+        assert_eq!(rl.check(&a, 1_030), RateLimitDecision::Reject);
+    }
+
+    #[test]
+    fn rate_limit_window_evicts_old_entries() {
+        let rl = RateLimitedAttestor::with_capacity(2, 60);
+        let a = AttestorId::from_array([0xBB; 52]);
+        assert_eq!(rl.check(&a, 1_000), RateLimitDecision::Allow);
+        assert_eq!(rl.check(&a, 1_010), RateLimitDecision::Allow);
+        assert_eq!(rl.check(&a, 1_011), RateLimitDecision::Reject);
+        // Move past the window (60s). The first two entries evict,
+        // the third (1_011) was rejected so not stored.
+        assert_eq!(rl.check(&a, 1_080), RateLimitDecision::Allow);
+    }
+
+    #[test]
+    fn rate_limit_per_attestor_isolation() {
+        let rl = RateLimitedAttestor::with_capacity(1, 60);
+        let a = AttestorId::from_array([0x01; 52]);
+        let b = AttestorId::from_array([0x02; 52]);
+        assert_eq!(rl.check(&a, 1_000), RateLimitDecision::Allow);
+        assert_eq!(rl.check(&a, 1_001), RateLimitDecision::Reject);
+        // `b` is unaffected.
+        assert_eq!(rl.check(&b, 1_001), RateLimitDecision::Allow);
+    }
+
+    #[test]
+    fn rate_limit_tracked_attestors_count() {
+        let rl = RateLimitedAttestor::new();
+        let a = AttestorId::from_array([0x01; 52]);
+        let b = AttestorId::from_array([0x02; 52]);
+        rl.check(&a, 1_000);
+        rl.check(&b, 1_000);
+        assert_eq!(rl.tracked_attestors(), 2);
+    }
+
+    #[test]
+    fn rate_limit_default_constants() {
+        // The plan calls for N=10/sec/attestor as the default; pin it
+        // here so future changes are deliberate.
+        assert_eq!(DEFAULT_ATTESTOR_RATE_LIMIT, 10);
+        assert_eq!(ATTESTOR_RATE_WINDOW_SECS, 1);
     }
 }

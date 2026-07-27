@@ -5,11 +5,12 @@
 //! `async fn` so tests stay deterministic. Session 4 adds the parity binary
 //! which composes both backends.
 //!
-//! The trait is 16 methods as of Session 7 (mission 0968 Phase 4): the
+//! The trait is 18 methods as of Session 8 (mission 0968 Phase 4): the
 //! original 12 plus four federation methods
 //! (`register_attestor`, `attestor_lookup_did`, `record_attestation`,
-//! `query_attestations`) that own the gossip substrate's read-side
-//! (RFC-0968 §12 + amendments 22, 28, 29).
+//! `query_attestations`) and two quorum / catch-up methods
+//! (`attestor_quorum_reached`, `gossip_catch_up`) that own the gossip
+//! substrate's read-side (RFC-0968 §12 + amendments 22, 28, 29).
 
 mod memory;
 mod stoolap;
@@ -22,6 +23,7 @@ use crate::auth::{
     SuspensionAuth,
 };
 use crate::error::ReputationError;
+use crate::gossip::GossipCatchUp;
 use crate::types::{
     EventId, ParityEvidence, RecorderDid, RecorderId, ReputationAggregate, ReputationLayer,
     RetirementEligibility, RotationProvenance, SignalEvent, SignalKind,
@@ -159,6 +161,23 @@ pub trait ReputationStore: Send + Sync {
         recorder_did: &RecorderDid,
         since_event_id: EventId,
     ) -> StoreResult<Vec<Attestation>>;
+
+    /// True iff at least `MIN_ATTESTOR_QUORUM` distinct attestors have
+    /// observed this `event_id`. Counts attestations persisted in
+    /// `reputation_attestations` (session 3 / mission 0968 Phase 4).
+    /// Absence of quorum fails-closed; the gossip substrate rejects
+    /// the event from the confirmed-federation set.
+    async fn attestor_quorum_reached(&self, event_id: EventId) -> StoreResult<bool>;
+
+    /// Catch-up path for a late-joining attestor. Returns every
+    /// `SignalEvent` with `event_id > since_event_id` so the caller
+    /// can republish the missing envelopes to its local swarm. The
+    /// `attestor_did` in the request identifies the asker (for
+    /// rate-limiting on the responder side); the in-memory impl
+    /// ignores it because there is no responder queue, but the
+    /// stoolap impl records the catch-up in the `reputation_gossip_seen`
+    /// ledger.
+    async fn gossip_catch_up(&self, catch_up: &GossipCatchUp) -> StoreResult<Vec<SignalEvent>>;
 }
 
 /// Helper used by every backend — convert a `RotationProvenance` into a

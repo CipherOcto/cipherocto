@@ -259,12 +259,22 @@ pub struct AttestorAuth {
 /// Records that a specific `AttestorId` observed `event_id` at a specific
 /// `observed_at_unix`. Multiple attestors per event are stored as
 /// multiple rows; the `attestor_quorum_reached` count distinct rows.
+///
+/// `recorder_did`, `source_mission`, `source_domain` are envelope-level
+/// fields (mission 0968 Phase 4, RFC-0968 §12): the recorder is the
+/// publisher of the inner event, and the source mission/domain trace
+/// provenance across the mesh. They are required by the v004 schema
+/// (`reputation_attestations`) and are persisted on every attestation
+/// row so quorum and catch-up can be filtered without a join.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Attestation {
     /// Storage-assigned monotonic attestation id.
     pub attestation_id: u64,
     /// Attestor that observed the event.
     pub attestor: AttestorId,
+    /// Recorder whose event is being attested. Identifies the row in
+    /// `reputation_events` whose DID the attestation is for.
+    pub recorder_did: RecorderDid,
     /// Event being attested.
     pub event_id: EventId,
     /// ed25519 signature from the attestor.
@@ -273,6 +283,12 @@ pub struct Attestation {
     pub observed_at_unix: u64,
     /// Unix seconds when the attestation was received by the local store.
     pub received_at_unix: u64,
+    /// Source mission identifier (matches the enclosing envelope's
+    /// `source_mission`; e.g., `mon:whatsapp:phase-1`).
+    pub source_mission: String,
+    /// Source domain within the source mission (matches the enclosing
+    /// envelope's `source_domain`).
+    pub source_domain: String,
 }
 
 #[cfg(test)]

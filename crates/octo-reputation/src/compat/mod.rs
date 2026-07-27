@@ -217,6 +217,17 @@ impl<S: ReputationStore, L: LegacyReputationStore> ReputationStore for Reputatio
             .query_attestations(recorder_did, since_event_id)
             .await
     }
+
+    async fn attestor_quorum_reached(&self, event_id: EventId) -> StoreResult<bool> {
+        self.inner.attestor_quorum_reached(event_id).await
+    }
+
+    async fn gossip_catch_up(
+        &self,
+        catch_up: &crate::gossip::GossipCatchUp,
+    ) -> StoreResult<Vec<crate::types::SignalEvent>> {
+        self.inner.gossip_catch_up(catch_up).await
+    }
 }
 
 /// Reasons a legacy shadow write can fail. The compat layer maps each to a

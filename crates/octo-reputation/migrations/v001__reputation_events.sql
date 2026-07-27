@@ -27,7 +27,7 @@ CREATE TABLE reputation_events (
 );
 
 CREATE INDEX reputation_events_did_layer_kind_time
-    ON reputation_events (recorder_did, layer, signal_kind, recorded_at_unix DESC);
+    ON reputation_events (recorder_did, layer, signal_kind, recorded_at_unix);
 
 CREATE INDEX reputation_events_recorded_at
     ON reputation_events (recorded_at_unix);

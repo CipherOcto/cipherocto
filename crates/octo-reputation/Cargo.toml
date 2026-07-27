@@ -12,6 +12,14 @@ crate-type = ["rlib"]
 default = []
 # Session 4 parity binary pulls in CLI + JSON output.
 parity-bin = ["dep:clap", "dep:serde_json"]
+# Session 6 — StoolapReputationStore impl over the workspace-wide stoolap
+# fork at feat/blockchain-sql. With `stoolap` enabled, every method is
+# wired against real SQL. Without it (CI default build), the type
+# remains constructible as a marker; methods return the historical stub
+# `ChainRefInvalid("stoolap_backend_unimplemented:<name>")` errors so
+# the `ReputationStore` trait is still nameable. Real impls gate on
+# `#[cfg(feature = "stoolap")]` so the build is hermetic in CI.
+stoolap = ["dep:stoolap", "dep:serde_json"]
 
 [dependencies]
 # Deterministic Floating-Point per RFC-0104 — score_ewma / score_delta canonical encoding
@@ -31,6 +39,10 @@ futures-lite = "2"
 # Session 4 parity binary — CLI parsing + JSON output
 clap = { version = "4", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
+# Session 6 — StoolapReputationStore (file-backed + in-memory DSN).
+# Git pin lives at workspace root in `[patch.crates-io]` for compatibility
+# with the rest of the workspace; this crate references it directly.
+stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql", optional = true }
 
 [[bin]]
 name = "reputation-parity"

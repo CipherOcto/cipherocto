@@ -27,6 +27,7 @@ pub mod constants;
 pub mod cross_layer;
 pub mod digest;
 pub mod error;
+pub mod migrations;
 pub mod parity;
 pub mod prometheus;
 pub mod recorder;
@@ -52,6 +53,7 @@ pub use compat::{
 pub use cross_layer::{cross_layer_query, dedup_layers, CrossLayerResult, MAX_CROSS_LAYER_FANOUT};
 pub use digest::ReputationDigest;
 pub use error::{ReputationError, StakeComponent};
+pub use migrations::{MigrationVersion, BUILTIN_MIGRATIONS};
 pub use parity::{
     compute_parity_report, parity_gate_deadline_unix, ParityReport, ParityRow, TripleClass,
     PARITY_GATE_DEADLINE_DAYS, PARITY_THRESHOLD, PER_DID_MISMATCH_DOMINANCE,
@@ -68,7 +70,7 @@ pub use retirement::{
     MIN_RETIREMENT_BUCKET_COUNT, MIN_RETIREMENT_PARITY_SCORE_BP, MIN_RETIREMENT_SIGNATURE_BYTES,
 };
 pub use sliding::{effective_window, sliding_window, MAX_SLIDING_WINDOW_SECS};
-pub use store::{InMemoryReputationStore, ReputationStore, StoreResult};
+pub use store::{InMemoryReputationStore, ReputationStore, StoolapReputationStore, StoreResult};
 pub use types::{
     ControllerId, EventId, ParityEvidence, RecorderDid, RecorderId, ReputationAggregate,
     ReputationLayer, RetirementEligibility, RotationProvenance, SignalEvent, SignalKind,

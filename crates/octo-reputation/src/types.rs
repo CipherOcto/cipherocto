@@ -269,6 +269,30 @@ pub struct ReputationAggregate {
     pub updated_at_unix: u64,
 }
 
+// ---------------------------------------------------------------------------
+// Dfp BLOB helpers
+// ---------------------------------------------------------------------------
+
+/// Encode a `Dfp` as the canonical 24-byte wire form (RFC-0968 §22 +
+/// RFC-0104). Every persistence layer that writes a `score_ewma` /
+/// `score_delta` BLOB column uses this function.
+pub fn dfp_to_blob(d: &Dfp) -> [u8; 24] {
+    DfpEncoding::from_dfp(d).to_bytes()
+}
+
+/// Decode a 24-byte BLOB back into a `Dfp`. Returns
+/// `ReputationError::ScoreEncodingInvalid` on length mismatch. The wire
+/// form is bit-deterministic so a malformed blob indicates corruption,
+/// not a recoverable state.
+pub fn dfp_from_blob(bytes: &[u8]) -> Result<Dfp, crate::error::ReputationError> {
+    if bytes.len() != 24 {
+        return Err(crate::error::ReputationError::ScoreEncodingInvalid);
+    }
+    let mut arr = [0u8; 24];
+    arr.copy_from_slice(bytes);
+    Ok(DfpEncoding::from_bytes(arr).to_dfp())
+}
+
 impl ReputationAggregate {
     /// Test-only constructor.
     #[cfg(test)]

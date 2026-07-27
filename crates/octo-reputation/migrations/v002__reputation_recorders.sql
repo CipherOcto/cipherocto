@@ -37,8 +37,9 @@ CREATE TABLE reputation_recorders (
 CREATE INDEX reputation_recorders_controller
     ON reputation_recorders (controller_id);
 
-CREATE INDEX reputation_recorders_did_hash
-    ON reputation_recorders (recorder_did);
+-- (recorder_did is already uniquely indexed via the UNIQUE constraint on
+-- that column above; a second non-unique index would error with
+-- "cannot create non-unique index: a unique index already exists".)
 
 CREATE TABLE governance_snapshots (
     finalized_at_unix     INTEGER NOT NULL,
@@ -67,7 +68,8 @@ CREATE INDEX governance_proofs_snapshot
     ON governance_proofs (snapshot_unix);
 
 CREATE TABLE auditor_nonces (
-    nonce                 BLOB PRIMARY KEY,
+    id                    INTEGER PRIMARY KEY,
+    nonce                 BLOB NOT NULL UNIQUE,
     issued_at_unix        INTEGER NOT NULL,
     expires_at_unix       INTEGER NOT NULL
 );

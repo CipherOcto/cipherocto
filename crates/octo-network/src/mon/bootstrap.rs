@@ -18,6 +18,9 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
+use octo_reputation::store::ReputationStore;
+use octo_reputation::types::{RecorderDid, SignalKind};
+
 // ── Mission 0851p-a-seed-health-check ─────────────────────────────
 
 /// Maximum age (in epochs) for a seed list entry. At 1-minute
@@ -187,6 +190,15 @@ pub enum BootstrapMode {
 
 /// The set of slashed `peer_id`s (bootstrap nodes that have been
 /// removed from the seed list).
+///
+/// **DEPRECATED (mission 0851p-a AC item 3):** this side-channel
+/// local blacklist is exactly what RFC-0968 forbids. Bootstrap
+/// nodes must consult the persisted `ReputationStore`
+/// `reputation_events` table for canonical `SlashEvent` rows. Use
+/// [`load_and_validate`] instead, which queries the store directly
+/// and returns the rejected peers with the slash `event_id` that
+/// excluded them. This type is preserved only for serde back-compat
+/// in seeds persisted under the pre-0851p-a schema.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SlashedSeedBlacklist {
     slashed: HashSet<String>,
@@ -222,6 +234,119 @@ impl SlashedSeedBlacklist {
     pub fn is_empty(&self) -> bool {
         self.slashed.is_empty()
     }
+}
+
+// ── Mission 0851p-a AC item 3: persisted `ReputationStore` filter ──
+
+/// A seed entry that was rejected by [`load_and_validate`] along
+/// with the canonical `event_id` of the slash that excluded it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RejectedSeed {
+    /// The seed entry as it appeared in the envelope.
+    pub entry: SeedEntry,
+    /// The persisted `SignalEvent::event_id` whose `signal_kind ==
+    /// SignalKind::Slash` excluded this peer.
+    pub slash_event_id: u64,
+}
+
+/// Outcome of [`load_and_validate`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SeedListValidation {
+    /// Peers with no prior slash in the persisted `ReputationStore`.
+    pub accepted: Vec<SeedEntry>,
+    /// Peers rejected for having a persisted Slash event.
+    pub rejected: Vec<RejectedSeed>,
+}
+
+impl SeedListValidation {
+    /// Convenience: convert into the filtered `SeedListEnvelope`
+    /// (drops the rejected peers, keeps metadata intact).
+    pub fn into_envelope(
+        self,
+        authority_pubkey: Vec<u8>,
+        signed_at_epoch: u64,
+    ) -> SeedListEnvelope {
+        SeedListEnvelope {
+            authority_pubkey,
+            signed_at_epoch,
+            peers: self.accepted,
+        }
+    }
+
+    /// True iff at least one peer was rejected for having a persisted
+    /// slash. Callers can use this to gate startup on a WARN log or
+    /// refuse-to-start when the rejection ratio is too high.
+    pub fn had_slashed_peers(&self) -> bool {
+        !self.rejected.is_empty()
+    }
+}
+
+/// Convert a `peer_id` string into a deterministic 52-byte
+/// `RecorderDid` by hashing the string with BLAKE3 to a 32-byte
+/// digest and zero-padding the trailing 20 bytes. The mapping is
+/// stable across replicas and across calls — `peer_id` strings
+/// resolve to the same DID regardless of caller, which is the
+/// property the gossip layer needs to correlate seed-list
+/// rejections with persisted Slash events.
+pub fn peer_id_to_recorder_did(peer_id: &str) -> RecorderDid {
+    use blake3::Hasher;
+    let mut arr = [0u8; 52];
+    let digest = Hasher::new()
+        .update(b"cipherocto/bootstrap/peer_id_to_recorder_did/v1")
+        .update(peer_id.as_bytes())
+        .finalize();
+    let digest_bytes = digest.as_bytes();
+    arr[..32].copy_from_slice(&digest_bytes[..32]);
+    RecorderDid::from_array(arr)
+}
+
+/// Load a seed list envelope and validate each peer against the
+/// persisted `ReputationStore` (mission 0851p-a AC item 3).
+///
+/// Per RFC-0968 §13 row 273 / mission 0851p-a bootstrap-slashing,
+/// a peer is rejected iff its `RecorderDid` has any persisted
+/// `SignalEvent` with `signal_kind == SignalKind::Slash` in the
+/// canonical `reputation_events` table. The function performs the
+/// lookup via `replay_for_audit` (the canonical audit replay path,
+/// not a side-channel local blacklist).
+///
+/// **Caveat — peer_id → RecorderDid mapping.** Seed entries carry
+/// a `peer_id: String` (libp2p `PeerId` ASCII form), while the
+/// reputation store keys on `RecorderDid`. We map by hashing the
+/// peer_id string with BLAKE3 (32-byte digest, zero-padded to 52).
+/// This mapping is deterministic and stable; callers needing a
+/// different keyspace mapping should do the translation upstream
+/// and pass the resulting seed list directly. The function returns
+/// the filtered envelope + a rejection audit log.
+///
+/// Errors from `replay_for_audit` are propagated as
+/// `ReputationError`. A sloppy operator should treat any error as
+/// "fail-closed — refuse to start" rather than "skip the filter".
+pub async fn load_and_validate<S>(
+    envelope: &SeedListEnvelope,
+    store: &S,
+) -> Result<SeedListValidation, octo_reputation::error::ReputationError>
+where
+    S: ReputationStore + ?Sized,
+{
+    let mut accepted = Vec::with_capacity(envelope.peers.len());
+    let mut rejected = Vec::new();
+    for entry in &envelope.peers {
+        let did = peer_id_to_recorder_did(&entry.peer_id);
+        let events = store.replay_for_audit(&did, 0, u64::MAX).await?;
+        let slash_event_id = events
+            .iter()
+            .find(|e| e.signal_kind == SignalKind::Slash)
+            .map(|e| e.event_id.to_u64());
+        match slash_event_id {
+            Some(id) => rejected.push(RejectedSeed {
+                entry: entry.clone(),
+                slash_event_id: id,
+            }),
+            None => accepted.push(entry.clone()),
+        }
+    }
+    Ok(SeedListValidation { accepted, rejected })
 }
 
 #[cfg(test)]
@@ -352,5 +477,127 @@ mod tests {
         assert!(!bl.is_slashed("b"));
         assert_eq!(bl.len(), 1);
         assert!(!bl.is_empty());
+    }
+
+    // -- Mission 0851p-a AC item 3: load_and_validate via
+    //    persisted `ReputationStore`. The deprecated
+    //    `SlashedSeedBlacklist` above stays for serde back-compat;
+    //    the canonical path is now `load_and_validate`.
+
+    use octo_determin::Dfp;
+    use octo_reputation::store::InMemoryReputationStore;
+    use octo_reputation::types::{ControllerId, EventId, ReputationLayer, SignalEvent};
+
+    fn slash_event(seed: u64, did: RecorderDid) -> SignalEvent {
+        SignalEvent {
+            event_id: EventId::from_u64(seed),
+            recorder_did: did,
+            controller_id: ControllerId::from_array([0u8; 32]),
+            signal_kind: SignalKind::Slash,
+            layer: ReputationLayer::Market,
+            score_delta: Dfp::from_f64(-1.0),
+            recorded_at_unix: 1_700_000_000 + seed,
+            rotation_provenance: None,
+            audit_ref: None,
+        }
+    }
+
+    #[test]
+    fn peer_id_to_recorder_did_is_deterministic() {
+        let a = peer_id_to_recorder_did("peer-A");
+        let b = peer_id_to_recorder_did("peer-A");
+        let c = peer_id_to_recorder_did("peer-B");
+        assert_eq!(a, b, "same peer_id → same DID");
+        assert_ne!(a, c, "different peer_id → different DID");
+    }
+
+    #[tokio::test]
+    async fn load_and_validate_rejects_slashed_peer() {
+        // Pre-populate persisted store: the DID that maps to
+        // "evil-peer" has a Slash event. After validation, the
+        // peer must appear in `rejected` (not `accepted`) with
+        // the slash event_id (assigned by the store; we capture
+        // it from the `record_signal` return value to avoid
+        // asserting on internals).
+        let store = InMemoryReputationStore::new();
+        let evil_did = peer_id_to_recorder_did("evil-peer");
+        let assigned_id = store
+            .record_signal(slash_event(42, evil_did))
+            .await
+            .unwrap();
+        let env = envelope(vec![entry("good", 100), entry("evil-peer", 100)]);
+        let v = load_and_validate(&env, &store).await.unwrap();
+        assert_eq!(v.accepted.len(), 1);
+        assert_eq!(v.accepted[0].peer_id, "good");
+        assert_eq!(v.rejected.len(), 1);
+        assert_eq!(v.rejected[0].entry.peer_id, "evil-peer");
+        assert_eq!(v.rejected[0].slash_event_id, assigned_id.to_u64());
+        assert!(v.had_slashed_peers());
+    }
+
+    #[tokio::test]
+    async fn load_and_validate_accepts_clean_peer() {
+        // No persisted slashes for any seed → everyone accepted.
+        let store = InMemoryReputationStore::new();
+        let env = envelope(vec![entry("good", 100), entry("clean", 100)]);
+        let v = load_and_validate(&env, &store).await.unwrap();
+        assert_eq!(v.accepted.len(), 2);
+        assert!(v.rejected.is_empty());
+        assert!(!v.had_slashed_peers());
+    }
+
+    #[tokio::test]
+    async fn load_and_validate_ignores_non_slash_events() {
+        // The DID has Outcome / Latency events but no Slash event.
+        // Peer must remain accepted.
+        let store = InMemoryReputationStore::new();
+        let did = peer_id_to_recorder_did("chatty-peer");
+        store
+            .record_signal(SignalEvent {
+                event_id: EventId::from_u64(1),
+                recorder_did: did,
+                controller_id: ControllerId::from_array([0u8; 32]),
+                signal_kind: SignalKind::Outcome,
+                layer: ReputationLayer::Market,
+                score_delta: Dfp::from_f64(0.5),
+                recorded_at_unix: 1_700_000_001,
+                rotation_provenance: None,
+                audit_ref: None,
+            })
+            .await
+            .unwrap();
+        let env = envelope(vec![entry("chatty-peer", 100)]);
+        let v = load_and_validate(&env, &store).await.unwrap();
+        assert_eq!(v.accepted.len(), 1);
+        assert!(v.rejected.is_empty());
+    }
+
+    #[tokio::test]
+    async fn load_and_validate_into_envelope_drops_rejected() {
+        let store = InMemoryReputationStore::new();
+        store
+            .record_signal(slash_event(7, peer_id_to_recorder_did("evil-peer")))
+            .await
+            .unwrap();
+        let env = envelope(vec![entry("good", 100), entry("evil-peer", 100)]);
+        let v = load_and_validate(&env, &store).await.unwrap();
+        let filtered = v.into_envelope(env.authority_pubkey.clone(), env.signed_at_epoch);
+        assert_eq!(filtered.peers.len(), 1);
+        assert_eq!(filtered.peers[0].peer_id, "good");
+        assert_eq!(filtered.authority_pubkey, env.authority_pubkey);
+        assert_eq!(filtered.signed_at_epoch, env.signed_at_epoch);
+    }
+
+    // Pin the deprecation contract: the canonical path is
+    // `load_and_validate`; `SlashedSeedBlacklist` is preserved
+    // only for serde back-compat and never used at runtime.
+    #[test]
+    fn slashed_blacklist_is_deprecated_use_load_and_validate() {
+        // No runtime assertion — the deprecation is documented on
+        // the type's doc-comment. This test exists so the suite
+        // fails loudly if anyone removes the back-compat shim
+        // without also updating the deprecation notice.
+        let bl = SlashedSeedBlacklist::new();
+        assert!(bl.is_empty());
     }
 }

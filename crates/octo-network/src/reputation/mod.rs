@@ -1,4 +1,5 @@
-//! Federation-side reputation types (mission 0855p-b + 0968 Phase 4).
+//! Federation-side reputation types (mission 0855p-b + 0855p-c +
+//! 0968 Phase 4).
 //!
 //! ## `SlashReputationStoreCompat`
 //!
@@ -10,6 +11,16 @@
 //! as a back-compat field for the differential test (AC L33:
 //! 1000-candidate set, byte-identical priority ordering).
 //!
+//! ## `DcRootedSlashReputationStoreCompat`
+//!
+//! The 0855p-c replacement for the legacy pubkey-keyed
+//! `octo_reputation::compat::legacy::DcRootedSlashReputationStore`.
+//! Keyed by the canonical DC recorder DID (NOT a `dc_pubkey`, per
+//! RFC-0968-A1 amendment 29). Tracks per-DC cross-domain slash
+//! counts and feeds the canonical `election_priority` adapter.
+//! Same shape as `SlashReputationStoreCompat` but namespaced under
+//! `/dot/reputation/dc/{dc_did}` and `ReputationLayer::Coordinator`.
+//!
 //! ## Authority model (RFC-0968-A1 amendment 28)
 //!
 //! Recorder signature is authoritative; coordinator / attestor
@@ -17,6 +28,8 @@
 //! reads only the recorder DID + the canonical event body — never
 //! the gossip envelope.
 
+mod dc_store;
 mod slash_store;
 
+pub use dc_store::DcRootedSlashReputationStoreCompat;
 pub use slash_store::{SlashReputationStoreCompat, HARD_THRESHOLD};

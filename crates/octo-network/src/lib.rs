@@ -49,7 +49,10 @@ pub use crate::gossip::reputation::{
     gossip_catch_up, start_reputation_gossip, start_reputation_gossip_with_rate_limit,
     IngressOutcome, RawIngress, ReputationGossipHandle, ReputationGossipJoin,
 };
-pub use crate::reputation::{SlashReputationStoreCompat, HARD_THRESHOLD as SLASH_HARD_THRESHOLD};
+pub use crate::reputation::{
+    DcRootedSlashReputationStoreCompat, SlashReputationStoreCompat,
+    HARD_THRESHOLD as SLASH_HARD_THRESHOLD,
+};
 /// Onion Relay Routing (ORR) — RFC-0858.
 pub mod orr;
 /// Proof-of-Relay (PoRelay) — RFC-0860.

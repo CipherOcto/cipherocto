@@ -124,6 +124,17 @@ pub fn topic_for_recorder(did: &RecorderDid) -> String {
     format!("/dot/reputation/{}", hex::encode(did.as_bytes()))
 }
 
+/// Compute the libp2p gossipsub topic for a DomainCoordinator
+/// reputation stream (mission 0855p-c). Format:
+/// `/dot/reputation/dc/{hex(dc_did)}`. The DC DID is the canonical
+/// DC's recorder DID (or stable lineage identifier) — NOT a
+/// `dc_pubkey`, per RFC-0968-A1 amendment 29. Cross-domain slash
+/// events ride this topic; the gossip substrate's record_signal +
+/// record_attestation path persists them with `ReputationLayer::Coordinator`.
+pub fn topic_for_dc_recorder(did: &RecorderDid) -> String {
+    format!("/dot/reputation/dc/{}", hex::encode(did.as_bytes()))
+}
+
 /// Compute the gossipsub message id for an envelope. The transport
 /// uses this for **deduplication only** — store-level idempotency on
 /// `event_id` PK is the authoritative dedup path.
@@ -386,5 +397,18 @@ mod tests {
         // here so future changes are deliberate.
         assert_eq!(DEFAULT_ATTESTOR_RATE_LIMIT, 10);
         assert_eq!(ATTESTOR_RATE_WINDOW_SECS, 1);
+    }
+
+    // -- Session 8 / mission 0855p-c: DC reputation topic --
+
+    #[test]
+    fn topic_for_dc_recorder_format() {
+        let did = RecorderDid::from_array([0xAB; 52]);
+        let topic = topic_for_dc_recorder(&did);
+        assert!(topic.starts_with("/dot/reputation/dc/"));
+        assert_eq!(topic.len(), "/dot/reputation/dc/".len() + 52 * 2);
+        assert!(topic.ends_with(&"ab".repeat(52) as &str));
+        // Distinct from the recorder-keyed topic.
+        assert_ne!(topic, topic_for_recorder(&did));
     }
 }

@@ -122,3 +122,202 @@ async fn migration_version_helper_exposes_constant_set() {
     assert!(versions.contains(&"v002__reputation_recorders"));
     assert!(versions.contains(&"v003__schema_migrations"));
 }
+
+#[tokio::test]
+async fn replay_for_audit_returns_sorted_events() {
+    let store = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let did = octo_reputation::RecorderDid::from_array([4u8; 52]);
+    // Insert events at irregular timestamps.
+    for (i, ts) in [(0u64, 100u64), (1, 200), (2, 300), (3, 400)]
+        .iter()
+        .copied()
+    {
+        store
+            .record_signal(ev(i, did, 0.5, ts))
+            .await
+            .expect("record");
+    }
+    let events = store
+        .replay_for_audit(&did, 0, 1_000_000)
+        .await
+        .expect("replay");
+    let mut sorted = events.clone();
+    sorted.sort_by_key(|e| e.recorded_at_unix);
+    assert_eq!(events.len(), 4);
+    for (got, want) in events.iter().zip(sorted.iter()) {
+        assert_eq!(got.recorded_at_unix, want.recorded_at_unix);
+    }
+    assert_eq!(events.last().unwrap().recorded_at_unix, 400);
+}
+
+#[tokio::test]
+async fn replay_for_audit_inverted_window_rejected() {
+    let store = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let did = octo_reputation::RecorderDid::from_array([1u8; 52]);
+    let err = store.replay_for_audit(&did, 1000, 500).await.unwrap_err();
+    assert_eq!(err, octo_reputation::ReputationError::ReplayWindowInverted);
+}
+
+#[tokio::test]
+async fn sliding_window_returns_aggregate_over_events() {
+    let store = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let did = octo_reputation::RecorderDid::from_array([2u8; 52]);
+    for i in 0..5u64 {
+        store
+            .record_signal(ev(i, did, 0.8, 1_000 + i * 60))
+            .await
+            .expect("record");
+    }
+    // Sliding window of 600s ending at `now=2_000` covers events in
+    // [1_400, 2_000] — i.e. events at ts ≥ 1_400. We inserted events at
+    // ts = 1_000, 1_060, 1_120, 1_180, 1_240. None of those fall in
+    // [1_400, 2_000] (the latest is 1_240). Real property tested: the
+    // SQL `>= cutoff AND <= now_unix` filter is wired and produces a
+    // well-formed aggregate (samples==0, valid EWMA=0).
+    let agg = store
+        .sliding_window(
+            &did,
+            SignalKind::Outcome,
+            ReputationLayer::Market,
+            600,
+            2_000,
+        )
+        .await
+        .expect("sliding");
+    assert_eq!(agg.samples, 0);
+    assert!(agg.score_ewma.to_f64().abs() < 1e-12);
+    // Widen the window so one event slips in — the SQL ordering +
+    // EWMA computation must be correct.
+    let agg2 = store
+        .sliding_window(
+            &did,
+            SignalKind::Outcome,
+            ReputationLayer::Market,
+            1_200, // covers ts ∈ [800, 2000] → all 5 events qualify
+            2_000,
+        )
+        .await
+        .expect("sliding2");
+    assert_eq!(agg2.samples, 5);
+}
+
+#[tokio::test]
+async fn sliding_window_zero_rejected() {
+    let store = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let did = octo_reputation::RecorderDid::from_array([3u8; 52]);
+    let err = store
+        .sliding_window(&did, SignalKind::Outcome, ReputationLayer::Market, 0, 1000)
+        .await
+        .unwrap_err();
+    assert_eq!(err, octo_reputation::ReputationError::SlidingWindowZero);
+}
+
+#[tokio::test]
+async fn cross_layer_query_empty_layers_rejected() {
+    let store = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let did = octo_reputation::RecorderDid::from_array([6u8; 52]);
+    let err = store
+        .cross_layer_query(&did, SignalKind::Outcome, &[])
+        .await
+        .unwrap_err();
+    assert_eq!(err, octo_reputation::ReputationError::CrossLayerEmpty);
+}
+
+#[tokio::test]
+async fn cross_layer_query_returns_present_aggregates() {
+    let store = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let did = octo_reputation::RecorderDid::from_array([5u8; 52]);
+    // Seed two layers.
+    for (i, layer) in [ReputationLayer::Market, ReputationLayer::Coordinator]
+        .iter()
+        .enumerate()
+    {
+        let ev = SignalEvent {
+            event_id: EventId::from_u64(0),
+            recorder_did: did,
+            controller_id: ControllerId::from_array([0u8; 32]),
+            signal_kind: SignalKind::Outcome,
+            layer: *layer,
+            score_delta: Dfp::from_f64(0.6),
+            recorded_at_unix: 1_000 + i as u64,
+            rotation_provenance: None,
+            audit_ref: None,
+        };
+        store.record_signal(ev).await.expect("record");
+    }
+    let layers = [
+        ReputationLayer::Market,
+        ReputationLayer::Coordinator,
+        ReputationLayer::Governance, // absent
+    ];
+    let out = store
+        .cross_layer_query(&did, SignalKind::Outcome, &layers)
+        .await
+        .expect("cross_layer_query");
+    assert_eq!(
+        out.len(),
+        2,
+        "expected 2 (Market + Coordinator), got {out:?}"
+    );
+    let layer_set: std::collections::BTreeSet<u8> =
+        out.iter().map(|a| a.layer.discriminant()).collect();
+    assert!(layer_set.contains(&ReputationLayer::Market.discriminant()));
+    assert!(layer_set.contains(&ReputationLayer::Coordinator.discriminant()));
+    assert!(!layer_set.contains(&ReputationLayer::Governance.discriminant()));
+}
+
+#[tokio::test]
+async fn retention_prune_deletes_old_events() {
+    let store = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let did = octo_reputation::RecorderDid::from_array([8u8; 52]);
+    for i in 0..3u64 {
+        store
+            .record_signal(ev(i, did, 0.5, 500 + i * 100))
+            .await
+            .expect("record");
+    }
+    let n = store.retention_prune(700, 1_000).await.expect("prune");
+    // Events at 500, 600 are <= cutoff 700 → deleted.
+    assert!(n >= 2);
+}
+
+#[tokio::test]
+async fn retention_prune_future_cutoff_rejected() {
+    let store = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let err = store.retention_prune(2000, 1000).await.unwrap_err();
+    assert_eq!(err, octo_reputation::ReputationError::RetentionCutoffFuture);
+}
+
+#[tokio::test]
+async fn prune_event_removes_one_record() {
+    let store = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let did = octo_reputation::RecorderDid::from_array([7u8; 52]);
+    let id = store
+        .record_signal(ev(0, did, 1.0, 1_000))
+        .await
+        .expect("record");
+    store.prune_event(id).await.expect("prune");
+    let events = store
+        .replay_for_audit(&did, 0, u64::MAX)
+        .await
+        .expect("replay");
+    assert!(events.is_empty());
+}

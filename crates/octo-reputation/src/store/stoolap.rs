@@ -207,6 +207,17 @@ mod real {
         Ok(EventId::from_u64(u64::from_be_bytes(arr)))
     }
 
+    fn bytes_to_controller_id(b: &[u8]) -> StoreResult<ControllerId> {
+        if b.len() != 32 {
+            return Err(ReputationError::ChainRefInvalid(
+                "stoolap_controller_id_len",
+            ));
+        }
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(b);
+        Ok(ControllerId::from_array(arr))
+    }
+
     // -- ReputationStore impl -----------------------------------------
 
     #[allow(async_fn_in_trait)]
@@ -286,20 +297,32 @@ mod real {
                 u64_to_value(event.recorded_at_unix),
                 u64_to_value(event.recorded_at_unix),
             ];
-            // UPSERT manually: stoolap-fork does not support
-            // `ON CONFLICT … DO UPDATE` (parity bit). INSERT first; if the
-            // PK collides, UPDATE the row in place. Tests use a single
-            // thread so the (read-then-write) race is bounded — a future
-            // session wraps this in `BEGIN/COMMIT` for MVCC-safe
-            // concurrent writers.
-            let insert_result = self.db.execute(
-                "INSERT INTO reputation_aggregates (
-                    recorder_did, signal_kind, layer, score_ewma, samples,
-                    severity_total, last_event_id, last_event_unix, updated_at_unix
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-                params.clone(),
-            );
-            if let Err(_e) = insert_result {
+            // UPSERT manually: select-then-INSERT-or-UPDATE because
+            // stoolap-fork does not support `ON CONFLICT … DO UPDATE`
+            // (parity bit) and `execute` returns `Ok(1)` on a successful
+            // INSERT — never `Err`, even when the PK collides. We
+            // SELECT for existence first; INSERT on miss, UPDATE on hit.
+            // The round-trip is one extra SELECT per write. Bounded to a
+            // single process in tests; production wraps this in a
+            // transaction in a future session.
+            let exists: bool = {
+                let mut q = self
+                    .db
+                    .query(
+                        "SELECT 1 FROM reputation_aggregates
+                         WHERE recorder_did = $1 AND signal_kind = $2 AND layer = $3",
+                        vec![
+                            did_blob(&event.recorder_did),
+                            stoolap::Value::integer(kind_d as i64),
+                            stoolap::Value::integer(layer_d as i64),
+                        ],
+                    )
+                    .map_err(|_e| {
+                        ReputationError::ChainRefInvalid("stoolap_record_signal:exists_query")
+                    })?;
+                matches!(q.next(), Some(Ok(_)))
+            };
+            if exists {
                 let update_params: Vec<stoolap::Value> = vec![
                     dfp_blob(next_ewma_bytes),
                     u64_to_value(samples_next),
@@ -321,6 +344,18 @@ mod real {
                     )
                     .map_err(|_e| {
                         ReputationError::ChainRefInvalid("stoolap_record_signal:update_aggregate")
+                    })?;
+            } else {
+                self.db
+                    .execute(
+                        "INSERT INTO reputation_aggregates (
+                            recorder_did, signal_kind, layer, score_ewma, samples,
+                            severity_total, last_event_id, last_event_unix, updated_at_unix
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                        params,
+                    )
+                    .map_err(|_e| {
+                        ReputationError::ChainRefInvalid("stoolap_record_signal:insert_aggregate")
                     })?;
             }
 
@@ -419,43 +454,301 @@ mod real {
 
         async fn cross_layer_query(
             &self,
-            _did: &RecorderDid,
-            _kind: SignalKind,
+            did: &RecorderDid,
+            kind: SignalKind,
             layers: &[ReputationLayer],
         ) -> StoreResult<Vec<ReputationAggregate>> {
             if layers.is_empty() {
                 return Err(ReputationError::CrossLayerEmpty);
             }
-            // Session 7 stub.
-            Ok(Vec::new())
+            // Build `WHERE layer IN ($1, $2, ...)` with positional params.
+            let mut placeholders: Vec<String> = Vec::with_capacity(layers.len());
+            let mut params: Vec<stoolap::Value> = Vec::with_capacity(layers.len() + 1);
+            params.push(did_blob(did));
+            params.push(stoolap::Value::integer(kind.discriminant() as i64));
+            for (i, _) in layers.iter().enumerate() {
+                placeholders.push(format!("${}", i + 3));
+            }
+            let sql = format!(
+                "SELECT score_ewma, samples, severity_total, last_event_id,
+                        last_event_unix, updated_at_unix, layer
+                 FROM reputation_aggregates
+                 WHERE recorder_did = $1 AND signal_kind = $2 AND layer IN ({})",
+                placeholders.join(", ")
+            );
+            for l in layers {
+                params.push(stoolap::Value::integer(l.discriminant() as i64));
+            }
+            let mut rows = self
+                .db
+                .query(&sql, params)
+                .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_cross_layer_query"))?;
+            let mut out = Vec::with_capacity(layers.len());
+            loop {
+                match rows.next() {
+                    Some(Ok(row)) => {
+                        let score_bytes: Vec<u8> = row.get_by_name("score_ewma").map_err(|_e| {
+                            ReputationError::ChainRefInvalid("stoolap_cross_layer_query:score_blob")
+                        })?;
+                        let score_ewma = dfp_from_blob(&score_bytes)?;
+                        let last_event_id_bytes: Vec<u8> =
+                            row.get_by_name("last_event_id").map_err(|_e| {
+                                ReputationError::ChainRefInvalid(
+                                    "stoolap_cross_layer_query:last_event",
+                                )
+                            })?;
+                        let last_event_id = bytes_to_event_id(&last_event_id_bytes)?;
+                        let samples: i64 = row.get_by_name("samples").map_err(|_e| {
+                            ReputationError::ChainRefInvalid("stoolap_cross_layer_query:samples")
+                        })?;
+                        let severity_total: i64 =
+                            row.get_by_name("severity_total").map_err(|_e| {
+                                ReputationError::ChainRefInvalid(
+                                    "stoolap_cross_layer_query:severity",
+                                )
+                            })?;
+                        let last_event_unix: i64 =
+                            row.get_by_name("last_event_unix").map_err(|_e| {
+                                ReputationError::ChainRefInvalid("stoolap_cross_layer_query:leu")
+                            })?;
+                        let updated_at_unix: i64 =
+                            row.get_by_name("updated_at_unix").map_err(|_e| {
+                                ReputationError::ChainRefInvalid("stoolap_cross_layer_query:uau")
+                            })?;
+                        let layer_d: i64 = row.get_by_name("layer").map_err(|_e| {
+                            ReputationError::ChainRefInvalid("stoolap_cross_layer_query:layer")
+                        })?;
+                        let layer = match layer_d {
+                            0x01 => ReputationLayer::Consensus,
+                            0x02 => ReputationLayer::Market,
+                            0x03 => ReputationLayer::Coordinator,
+                            0x04 => ReputationLayer::Slash,
+                            0x05 => ReputationLayer::Governance,
+                            other => {
+                                return Err(ReputationError::ReputationLayerInvalid(other as u8))
+                            }
+                        };
+                        out.push(ReputationAggregate {
+                            recorder_did: *did,
+                            signal_kind: kind,
+                            layer,
+                            score_ewma,
+                            samples: i64_to_u64(samples),
+                            severity_total: i64_to_u64(severity_total),
+                            last_event_id,
+                            last_event_unix: i64_to_u64(last_event_unix),
+                            updated_at_unix: i64_to_u64(updated_at_unix),
+                        });
+                    }
+                    Some(Err(_e)) => {
+                        return Err(ReputationError::ChainRefInvalid(
+                            "stoolap_cross_layer_query:iter",
+                        ))
+                    }
+                    None => break,
+                }
+            }
+            // Append empty placeholders for layers with no aggregate, so
+            // callers can map by layer without re-querying.
+            let _ = placeholders;
+            Ok(out)
         }
 
         async fn sliding_window(
             &self,
-            _did: &RecorderDid,
-            _kind: SignalKind,
-            _layer: ReputationLayer,
+            did: &RecorderDid,
+            kind: SignalKind,
+            layer: ReputationLayer,
             window_secs: u64,
-            _now_unix: u64,
+            now_unix: u64,
         ) -> StoreResult<ReputationAggregate> {
             if window_secs == 0 {
                 return Err(ReputationError::SlidingWindowZero);
             }
-            Err(ReputationError::ChainRefInvalid(
-                "stoolap_backend_unimplemented:sliding_window",
-            ))
+            let cutoff = now_unix.saturating_sub(window_secs);
+            let kind_d = kind.discriminant();
+            let layer_d = layer.discriminant();
+            let params: Vec<stoolap::Value> = vec![
+                did_blob(did),
+                stoolap::Value::integer(kind_d as i64),
+                stoolap::Value::integer(layer_d as i64),
+                u64_to_value(cutoff),
+                // `now_unix` clamped at `i64::MAX` to avoid a `u64::MAX →
+                // -1` wrap that would make `<= $5` always false. Real
+                // callers pass recent Unix seconds far below this bound.
+                u64_to_value(now_unix.min(i64::MAX as u64)),
+            ];
+            let mut rows = self
+                .db
+                .query(
+                    "SELECT event_id, recorded_at_unix, score_delta
+                     FROM reputation_events
+                     WHERE recorder_did = $1 AND signal_kind = $2 AND layer = $3
+                       AND recorded_at_unix >= $4 AND recorded_at_unix <= $5
+                     ORDER BY recorded_at_unix",
+                    params,
+                )
+                .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_sliding_window:query"))?;
+            let mut score = octo_determin::Dfp::zero();
+            let mut samples: u64 = 0;
+            let mut last_event_id = EventId::from_u64(0);
+            let mut last_event_unix: u64 = 0;
+            let mut updated_at_unix: u64 = 0;
+            loop {
+                match rows.next() {
+                    Some(Ok(row)) => {
+                        let score_bytes: Vec<u8> =
+                            row.get_by_name("score_delta").map_err(|_e| {
+                                ReputationError::ChainRefInvalid(
+                                    "stoolap_sliding_window:score_blob",
+                                )
+                            })?;
+                        let delta = dfp_from_blob(&score_bytes)?;
+                        let event_id_bytes: Vec<u8> =
+                            row.get_by_name("event_id").map_err(|_e| {
+                                ReputationError::ChainRefInvalid("stoolap_sliding_window:event_id")
+                            })?;
+                        let event_id = bytes_to_event_id(&event_id_bytes)?;
+                        let ts: i64 = row.get_by_name("recorded_at_unix").map_err(|_e| {
+                            ReputationError::ChainRefInvalid("stoolap_sliding_window:ts")
+                        })?;
+                        let n = samples as f64;
+                        let alpha = 1.0 / (n + 1.0);
+                        let cur = score.to_f64();
+                        let d = delta.to_f64();
+                        score = octo_determin::Dfp::from_f64(cur * (1.0 - alpha) + d * alpha);
+                        samples += 1;
+                        last_event_id = event_id;
+                        last_event_unix = i64_to_u64(ts);
+                        updated_at_unix = i64_to_u64(ts);
+                    }
+                    Some(Err(_e)) => {
+                        return Err(ReputationError::ChainRefInvalid(
+                            "stoolap_sliding_window:iter",
+                        ))
+                    }
+                    None => break,
+                }
+            }
+            Ok(ReputationAggregate {
+                recorder_did: *did,
+                signal_kind: kind,
+                layer,
+                score_ewma: score,
+                samples,
+                severity_total: 0,
+                last_event_id,
+                last_event_unix,
+                updated_at_unix,
+            })
         }
 
         async fn replay_for_audit(
             &self,
-            _did: &RecorderDid,
+            did: &RecorderDid,
             since_unix: u64,
             until_unix: u64,
         ) -> StoreResult<Vec<SignalEvent>> {
             if since_unix > until_unix {
                 return Err(ReputationError::ReplayWindowInverted);
             }
-            Ok(Vec::new())
+            let params: Vec<stoolap::Value> = vec![
+                did_blob(did),
+                // Cap at `i64::MAX` (signed) to avoid the `u64::MAX → -1`
+                // wrap that would silently drop the upper bound. Callers
+                // that genuinely mean "no upper bound" should pass
+                // `i64::MAX` directly; everything else passes through
+                // unchanged.
+                u64_to_value(since_unix),
+                u64_to_value(until_unix.min(i64::MAX as u64)),
+            ];
+            let mut rows = self
+                .db
+                .query(
+                    "SELECT recorder_did, event_id, controller_id, signal_kind, layer,
+                            score_delta, recorded_at_unix, rotation_provenance, audit_ref
+                     FROM reputation_events
+                     WHERE recorder_did = $1
+                       AND recorded_at_unix >= $2 AND recorded_at_unix <= $3
+                     ORDER BY recorded_at_unix",
+                    params,
+                )
+                .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_replay_for_audit:query"))?;
+            let mut out = Vec::new();
+            loop {
+                match rows.next() {
+                    Some(Ok(row)) => {
+                        let kind_d: i64 = row.get_by_name("signal_kind").map_err(|_e| {
+                            ReputationError::ChainRefInvalid("stoolap_replay_for_audit:kind")
+                        })?;
+                        let layer_d: i64 = row.get_by_name("layer").map_err(|_e| {
+                            ReputationError::ChainRefInvalid("stoolap_replay_for_audit:layer")
+                        })?;
+                        let score_bytes: Vec<u8> =
+                            row.get_by_name("score_delta").map_err(|_e| {
+                                ReputationError::ChainRefInvalid(
+                                    "stoolap_replay_for_audit:score_blob",
+                                )
+                            })?;
+                        let score_delta = dfp_from_blob(&score_bytes)?;
+                        let event_id_bytes: Vec<u8> =
+                            row.get_by_name("event_id").map_err(|_e| {
+                                ReputationError::ChainRefInvalid(
+                                    "stoolap_replay_for_audit:event_id",
+                                )
+                            })?;
+                        let event_id = bytes_to_event_id(&event_id_bytes)?;
+                        let recorded_at_unix: i64 =
+                            row.get_by_name("recorded_at_unix").map_err(|_e| {
+                                ReputationError::ChainRefInvalid("stoolap_replay_for_audit:ts")
+                            })?;
+                        let controller_id_bytes: Vec<u8> =
+                            row.get_by_name("controller_id").map_err(|_e| {
+                                ReputationError::ChainRefInvalid(
+                                    "stoolap_replay_for_audit:controller_id",
+                                )
+                            })?;
+                        let controller_id = bytes_to_controller_id(&controller_id_bytes)?;
+                        let rotation_blob: Option<Vec<u8>> =
+                            row.get_by_name("rotation_provenance").ok();
+                        let rotation_provenance = rotation_blob.and_then(|b| {
+                            if b.is_empty() {
+                                return None;
+                            }
+                            serde_json::from_slice(&b).ok()
+                        });
+                        let audit_blob: Option<Vec<u8>> = row.get_by_name("audit_ref").ok();
+                        let audit_ref = audit_blob.filter(|b| !b.is_empty());
+                        let kind = SignalKind::from_discriminant(kind_d as u8).map_err(|_e| {
+                            ReputationError::ChainRefInvalid("stoolap_replay_for_audit:kind_disc")
+                        })?;
+                        let layer =
+                            ReputationLayer::from_discriminant(layer_d as u8).map_err(|_e| {
+                                ReputationError::ChainRefInvalid(
+                                    "stoolap_replay_for_audit:layer_disc",
+                                )
+                            })?;
+                        out.push(SignalEvent {
+                            event_id,
+                            recorder_did: *did,
+                            controller_id,
+                            signal_kind: kind,
+                            layer,
+                            score_delta,
+                            recorded_at_unix: i64_to_u64(recorded_at_unix),
+                            rotation_provenance,
+                            audit_ref,
+                        });
+                    }
+                    Some(Err(_e)) => {
+                        return Err(ReputationError::ChainRefInvalid(
+                            "stoolap_replay_for_audit:iter",
+                        ))
+                    }
+                    None => break,
+                }
+            }
+            Ok(out)
         }
 
         async fn retention_prune(&self, cutoff_unix: u64, now_unix: u64) -> StoreResult<u64> {

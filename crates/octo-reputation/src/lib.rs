@@ -25,6 +25,7 @@ pub mod compat;
 pub mod constants;
 pub mod digest;
 pub mod error;
+pub mod parity;
 pub mod recorder;
 pub mod store;
 pub mod types;
@@ -40,6 +41,10 @@ pub use compat::{
 };
 pub use digest::ReputationDigest;
 pub use error::{ReputationError, StakeComponent};
+pub use parity::{
+    compute_parity_report, parity_gate_deadline_unix, ParityReport, ParityRow, TripleClass,
+    PARITY_GATE_DEADLINE_DAYS, PARITY_THRESHOLD, PER_DID_MISMATCH_DOMINANCE,
+};
 pub use recorder::{check_stake, verify_registration};
 pub use store::{InMemoryReputationStore, ReputationStore, StoreResult};
 pub use types::{

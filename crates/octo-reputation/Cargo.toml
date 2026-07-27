@@ -10,6 +10,8 @@ crate-type = ["rlib"]
 
 [features]
 default = []
+# Session 4 parity binary pulls in CLI + JSON output.
+parity-bin = ["dep:clap", "dep:serde_json"]
 
 [dependencies]
 # Deterministic Floating-Point per RFC-0104 — score_ewma / score_delta canonical encoding
@@ -24,3 +26,13 @@ serde = { version = "1.0", features = ["derive"] }
 hex = { version = "0.4", features = ["serde"] }
 # Async runtime for storage layer (Session 2)
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+# Session 4 parity sweep uses block_on to drive the canonical store synchronously
+futures-lite = "2"
+# Session 4 parity binary — CLI parsing + JSON output
+clap = { version = "4", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+
+[[bin]]
+name = "reputation-parity"
+path = "src/bin/reputation-parity.rs"
+required-features = ["parity-bin"]

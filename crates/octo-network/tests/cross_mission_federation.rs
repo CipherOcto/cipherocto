@@ -1,6 +1,19 @@
 //! Cross-mission federation integration test (mission 0855p-b / 0968
 //! Phase 4).
 //!
+//! NOTE (Round 2 review C5): the deprecated
+//! `start_reputation_gossip` constructors are used here because the
+//! cross-mission mesh test wires the substrate with a test fixture
+//! for the `PublicKeyLookup` table. Whole-file `#[allow(deprecated)]`
+//! at the top keeps the deprecation diagnostics visible at the public
+//! surface (lib.rs re-exports) where the migration actually matters.
+//!
+#![allow(deprecated)]
+// Round 2 review C5: test fixtures exercise the
+// lookup-less path on purpose; migration to
+// `start_reputation_gossip_with_verification`
+// requires building a test `PublicKeyLookup`
+// impl, deferred to follow-on.
 //! Two-node real libp2p mesh test exercising the reputation gossip
 //! substrate end-to-end:
 //!

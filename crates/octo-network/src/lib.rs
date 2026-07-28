@@ -45,6 +45,13 @@ pub mod reputation;
 // Re-export the reputation gossip substrate so callers can
 // `octo_network::gossip::start_reputation_gossip` without
 // descending into the inner module.
+//
+// `start_reputation_gossip` and `start_reputation_gossip_with_rate_limit`
+// are #[deprecated] (Round 2 review C5 — RFC-0968 §12 MUST); re-exports
+// pass the deprecation through to callers. `#[allow(deprecated)]` here
+// is INTENTIONAL: the re-export site itself is not a use site; the
+// deprecation should fire at the actual caller, not the re-export.
+#[allow(deprecated)]
 pub use crate::gossip::reputation::{
     gossip_catch_up, start_reputation_gossip, start_reputation_gossip_with_rate_limit,
     IngressOutcome, RawIngress, ReputationGossipHandle, ReputationGossipJoin,

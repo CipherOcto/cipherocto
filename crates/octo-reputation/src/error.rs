@@ -4,6 +4,39 @@
 //! `0x01..=0x3A` matches the post-amendment RFC table; `0x3B..=0xFF` is
 //! reserved for future variants. Any new variant MUST be appended (never
 //! re-numbered) to preserve wire-format stability.
+//!
+//! # Round 2 review C2 — pending RFC-0968-A2 enum realignment
+//!
+//! **The current table does NOT match RFC-0968 amendments 9-82 in the
+//! way the RFC requires.** Per amendment 82, the real-variant table
+//! ceiling is `0x39` (57 variants), and `0x3A..=0xFF` is reserved.
+//! The implementation puts `GossipEnvelopeInvalid = 0x3A` in the
+//! reserved band, has ~10 RFC-mandated variants missing (e.g.,
+//! `0x29 = AuditorNonceReplay`, `0x30 = CoalitionQuarantined`,
+//! `0x35 = SlashDestinationMismatch`, `0x38 = StakeLockInvalid`,
+//! `0x39 = RotationProvenanceMissing`), and has ~7 implementation-only
+//! variants that collide with RFC variants (e.g., current
+//! `AuditorNonceInvalid = 0x28` should be `0x29 = AuditorNonceReplay`;
+//! current `StakeLockInvalid = 0x32` should be `0x38`).
+//!
+//! **Do NOT change discriminants until RFC-0968-A2 lands.** A mass
+//! reshuffle breaks:
+//! - Cross-replica error propagation in persisted attestations,
+//! - Test fixtures that pin specific codes (e.g.,
+//!   `crates/octo-network/src/gossip/reputation.rs` and tests in
+//!   `crates/octo-reputation/src/`),
+//! - Wire-format stability across protocol bridges.
+//!
+//! The amendment must include: a v011 migration in
+//! `crates/octo-reputation/migrations/` that translates the legacy
+//! codes to the canonical codes (a lookup-table column on
+//! `reputation_anchors` or a separate `error_code_translation`
+//! table); a chained Rust type rename; full test pinning across
+//! the workspace.
+//!
+//! Until RFC-0968-A2 lands, consumers MUST tolerate the current
+//! table and any downstream bridge layer that translates to the
+//! RFC canonical codes at the protocol boundary.
 
 use thiserror::Error;
 

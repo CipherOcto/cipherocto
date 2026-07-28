@@ -21,6 +21,7 @@
 //! // ... wrap fragment into GossipObject and broadcast via DGP
 //! ```
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use octo_sync::dgp_bridge::SyncHandler;
@@ -39,17 +40,33 @@ pub const SYNC_SNAPSHOT_OBJECT_TYPE: u16 = 0x0008;
 /// envelopes are routed to the sync engine. Each callback receives the
 /// raw payload bytes — the sync engine is responsible for decoding.
 ///
+/// # Bounded inbound queues (Round 2 review C12)
+///
+/// `inbound_summaries` and `inbound_segments` were previously unbounded
+/// `Vec`s behind a `parking_lot::Mutex`. A slow consumer (or a misbehaving
+/// peer flooding the libp2p mesh) could grow RSS without bound. Both are
+/// now `VecDeque` rings of `MAX_INBOUND_QUEUE` entries with explicit
+/// FIFO eviction: when the queue is full, the oldest entry is dropped.
+/// `inbound_wal_tails` stays as a `Vec` because `on_wal_tail` immediately
+/// applies (it does not accumulate). The `MAX_INBOUND_QUEUE` cap protects
+/// against OOM without changing consumer semantics — `drain_inbound()`
+/// returns what's in the queue at the moment of call (which can be
+/// strictly less than the offered rate under sustained overflow).
+///
 /// # Thread Safety
 ///
 /// All methods are `&self` (the handler is shared via `Arc`). The underlying
 /// `SyncSessionManager` uses `parking_lot::Mutex` internally.
+const MAX_INBOUND_QUEUE: usize = 4096;
+
 pub struct SyncDgpHandler {
     session: Arc<SyncSessionManager>,
-    /// Inbound summary responses received from peers (for testing/metrics).
-    inbound_summaries: parking_lot::Mutex<Vec<([u8; 32], Vec<u8>)>>,
-    /// Inbound segment responses received from peers.
-    inbound_segments: parking_lot::Mutex<Vec<([u8; 32], Vec<u8>)>>,
-    /// Inbound WAL tail responses received from peers.
+    /// Inbound summary responses received from peers (bounded FIFO ring).
+    inbound_summaries: parking_lot::Mutex<VecDeque<([u8; 32], Vec<u8>)>>,
+    /// Inbound segment responses received from peers (bounded FIFO ring).
+    inbound_segments: parking_lot::Mutex<VecDeque<([u8; 32], Vec<u8>)>>,
+    /// Inbound WAL tail responses received from peers
+    /// (not accumulated — `on_wal_tail` applies immediately).
     inbound_wal_tails: parking_lot::Mutex<Vec<([u8; 32], Vec<u8>)>>,
 }
 
@@ -58,10 +75,26 @@ impl SyncDgpHandler {
     pub fn new(session: Arc<SyncSessionManager>) -> Self {
         Self {
             session,
-            inbound_summaries: parking_lot::Mutex::new(Vec::new()),
-            inbound_segments: parking_lot::Mutex::new(Vec::new()),
+            inbound_summaries: parking_lot::Mutex::new(VecDeque::new()),
+            inbound_segments: parking_lot::Mutex::new(VecDeque::new()),
             inbound_wal_tails: parking_lot::Mutex::new(Vec::new()),
         }
+    }
+
+    /// Push to a bounded FIFO ring. When the queue is at `MAX_INBOUND_QUEUE`,
+    /// the oldest entry is evicted (`pop_front`) before pushing the new one.
+    /// Returns `true` if an eviction occurred (for ops-telemetry hooks; the
+    /// current impls don't surface this; reserved for future Prometheus
+    /// counter).
+    fn push_bounded(queue: &mut VecDeque<([u8; 32], Vec<u8>)>, item: ([u8; 32], Vec<u8>)) -> bool {
+        let evicted = if queue.len() >= MAX_INBOUND_QUEUE {
+            queue.pop_front();
+            true
+        } else {
+            false
+        };
+        queue.push_back(item);
+        evicted
     }
 
     /// Return a reference to the underlying session manager.
@@ -78,9 +111,9 @@ impl SyncDgpHandler {
         Vec<([u8; 32], Vec<u8>)>,
         Vec<([u8; 32], Vec<u8>)>,
     ) {
-        let summaries = self.inbound_summaries.lock().drain(..).collect();
-        let segments = self.inbound_segments.lock().drain(..).collect();
-        let wal_tails = self.inbound_wal_tails.lock().drain(..).collect();
+        let summaries: Vec<_> = self.inbound_summaries.lock().drain(..).collect();
+        let segments: Vec<_> = self.inbound_segments.lock().drain(..).collect();
+        let wal_tails: Vec<_> = self.inbound_wal_tails.lock().drain(..).collect();
         (summaries, segments, wal_tails)
     }
 }
@@ -99,7 +132,7 @@ impl SyncHandler for SyncDgpHandler {
                     summary_count = response.summaries.len(),
                     "decoded SummaryResponse"
                 );
-                self.inbound_summaries.lock().push((peer_id, payload));
+                Self::push_bounded(&mut self.inbound_summaries.lock(), (peer_id, payload));
             }
             Err(e) => {
                 // Decode failure — store raw bytes anyway for diagnostics.
@@ -108,7 +141,7 @@ impl SyncHandler for SyncDgpHandler {
                     error = %e,
                     "failed to decode SummaryResponse, storing raw bytes"
                 );
-                self.inbound_summaries.lock().push((peer_id, payload));
+                Self::push_bounded(&mut self.inbound_summaries.lock(), (peer_id, payload));
             }
         }
     }
@@ -122,7 +155,7 @@ impl SyncHandler for SyncDgpHandler {
             payload_len = payload.len(),
             "received segment response"
         );
-        self.inbound_segments.lock().push((peer_id, payload));
+        Self::push_bounded(&mut self.inbound_segments.lock(), (peer_id, payload));
     }
 
     fn on_wal_tail(&self, peer_id: [u8; 32], payload: Vec<u8>) {

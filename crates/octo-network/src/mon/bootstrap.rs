@@ -37,7 +37,19 @@ pub struct StaleSeed {
 }
 
 impl StaleSeed {
+    /// True iff the seed is older than `MAX_SEED_AGE_EPOCHS` or
+    /// signed at an epoch later than `current_epoch` (epoch
+    /// rollback / clock skew fail-open — Round 2 review C11).
     pub fn is_stale(&self) -> bool {
+        // Fail-closed on epoch rollback: a `signed_at_epoch` in the
+        // future relative to `current_epoch` indicates either clock
+        // skew or an attacker replaying a future-dated signature.
+        // Saturating subtraction would silently return 0 (the seed
+        // would look fresh); we explicitly treat future-dated seeds
+        // as stale and surface them via the `StaleSeed` list.
+        if self.signed_at_epoch > self.current_epoch {
+            return true;
+        }
         self.current_epoch.saturating_sub(self.signed_at_epoch) > MAX_SEED_AGE_EPOCHS
     }
 }
@@ -83,8 +95,15 @@ impl SeedHealth {
         let mut fresh = 0;
         let mut stale_seeds = Vec::new();
         for peer in &envelope.peers {
-            let age = current_epoch.saturating_sub(peer.signed_at_epoch);
-            if age > MAX_SEED_AGE_EPOCHS {
+            // Fail-closed on epoch rollback (Round 2 review C11):
+            // a future-dated `signed_at_epoch > current_epoch` is
+            // treated as stale, never as fresh.
+            let is_stale_or_future = if peer.signed_at_epoch > current_epoch {
+                true
+            } else {
+                current_epoch.saturating_sub(peer.signed_at_epoch) > MAX_SEED_AGE_EPOCHS
+            };
+            if is_stale_or_future {
                 stale_seeds.push(StaleSeed {
                     peer_id: peer.peer_id.clone(),
                     signed_at_epoch: peer.signed_at_epoch,

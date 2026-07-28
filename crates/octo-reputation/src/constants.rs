@@ -38,8 +38,76 @@ pub const MAX_AUDITOR_NONCE_TTL_SECS: u64 = 7 * 86_400;
 pub const MAX_GOVERNANCE_SNAPSHOT_AGE_SECS: u64 = 600;
 
 /// Minimum finality depth (blocks) before a reputation anchor is considered
-/// final. RFC-0955 §"Finality".
-pub const MIN_REPUTATION_ANCHOR_FINALITY_BLOCKS: u64 = 12;
+/// final. RFC-0955-R1 §"Finality".
+pub const MIN_FINALITY_BLOCKS: u64 = 12;
+
+/// Minimum finality depth (blocks) before a reputation anchor is considered
+/// final. RFC-0955 §"Finality" — **deprecated**: use `MIN_FINALITY_BLOCKS`.
+/// Kept as an alias for the post-deprecation reorganisation; both names
+/// compile to the same value.
+#[deprecated(note = "use MIN_FINALITY_BLOCKS per RFC-0955-R1 §Constants")]
+pub const MIN_REPUTATION_ANCHOR_FINALITY_BLOCKS: u64 = MIN_FINALITY_BLOCKS;
+
+/// Default interval (seconds) between Merkle-root anchor submissions per
+/// attested `controller_id`. RFC-0955-R1 §"Constants".
+pub const DEFAULT_ANCHOR_INTERVAL_SECS: u64 = 300;
+
+/// Maximum anchor root submissions per `controller_id` per anchor window.
+/// RFC-0955-R1 §"Constants" — exactly one root per window.
+pub const MAX_ANCHOR_ROOTS_PER_CONTROLLER_PER_INTERVAL: u64 = 1;
+
+/// Maximum distinct `(did, signal_kind, layer)` tuples aggregated under a
+/// single Merkle root. RFC-0955-R1 §"Constants".
+pub const MAX_TUPLES_PER_ROOT: u64 = 100;
+
+/// Maximum distinct `(did, signal_kind, layer)` tuples anchored by a single
+/// attested `controller_id` in a rolling 24-hour window. RFC-0955-R1 §"Cost
+/// Model".
+pub const MAX_ANCHORED_TUPLES_PER_CONTROLLER_PER_DAY: u64 = 100;
+
+/// Per-root anchor fee (OCTO, non-refundable upper bound). RFC-0955-R1 §"Cost
+/// Model" — amendment 48.
+pub const ANCHOR_FEE_PER_ROOT: u64 = 5_000;
+
+/// Per-leaf anchor fee minimum (OCTO). RFC-0955-R1 §"Cost Model" — amendment
+/// 51.
+pub const MIN_FEE_PER_LEAF: u64 = 50;
+
+/// Maximum bootstrapped (fresh) subjects a single attested `controller_id`
+/// can register per day. RFC-0968 §28 amendment 49.
+pub const MAX_BOOTSTRAPPED_SUBJECTS_PER_CONTROLLER_PER_DAY: u64 = 5;
+
+/// Minimum floor on `score_ewma` for `election_priority_v2` eligibility
+/// (RFC-0968 §10 contract line 2547; Round 7 D4 update).
+pub const MIN_ELECTION_SCORE: f64 = 0.05;
+
+/// Sample count below which an aggregate's effective score is shrunk by the
+/// ratio `samples / MIN_CONFIDENCE_SAMPLES`. RFC-0968-A1 amendment 47.
+pub const MIN_CONFIDENCE_SAMPLES: u64 = 100;
+
+/// Maximum stake (in OCTO) the priority formula saturates at. Stakes
+/// greater than this are treated as `MAX_ELECTION_STAKE` to bound
+/// per-candidate priority in the same units as the legacy
+/// `stake / (1 + global_slash_count)` formula. RFC-0968-A1
+/// amendment 13 (Round 6 I10 stake-saturation cap) + amendment 27
+/// (Round 3 I-X5 `.div(MAX_ELECTION_STAKE)` normalization). Defines
+/// the constant version that both
+/// `SlashReputationStoreCompat::election_priority` and
+/// `election_priority_v2` should consume.
+pub const MAX_ELECTION_STAKE: u64 = 1_000_000;
+
+/// Per-recorder daily cap on positive signals to a single subject.
+/// RFC-0968-A1 amendment 9.
+pub const MAX_POSITIVE_SIGNALS_PER_RECORDER_PER_SUBJECT_PER_DAY: u64 = 100;
+
+/// Per-recorder daily cap on positive signals across all subjects.
+/// RFC-0968-A1 amendment 9.
+pub const MAX_POSITIVE_SIGNALS_PER_RECORDER_PER_DAY: u64 = 10_000;
+
+/// Daily anchor windows per attested `controller_id` (computed convenience;
+/// `86_400 / DEFAULT_ANCHOR_INTERVAL_SECS`). RFC-0955-R1 §"Constants" implies
+/// 288 at the default interval.
+pub const ANCHOR_WINDOWS_PER_CONTROLLER_PER_DAY: u64 = 86_400 / DEFAULT_ANCHOR_INTERVAL_SECS;
 
 // ---------------------------------------------------------------------------
 // RFC-0968-A1 / A2 amendment constants (Phase 1 AC line 48).
@@ -128,9 +196,9 @@ pub const BLAKE3_GOVERNANCE_SET_DOMAIN: &[u8] = b"cipherocto/governance/set/v1";
 mod tests {
     use super::*;
 
-    /// All domain separators must be byte-distinct so a digest computed
-    /// under one domain can never collide with a digest computed under
-    /// another for the same input bytes.
+    /// All domain separators must be byte-distinct: a digest computed
+    /// under one domain MUST never collide with a digest computed
+    /// under any other for the same input bytes.
     #[test]
     fn domains_are_byte_distinct() {
         let all: &[(&str, &[u8])] = &[

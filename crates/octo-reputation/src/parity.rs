@@ -218,12 +218,29 @@ pub fn classify(canonical_score: Option<f64>) -> TripleClass {
 
 /// Unix seconds at which the parity-gate deadline expires — 90 days from
 /// the moment this function is called. Per mission 0968-b Phase D.
+///
+/// **Pre-epoch fail-safe (Round 2 review C10):** a system clock at or
+/// before `UNIX_EPOCH` (NTP misconfig, broken RTC, manual date) would
+/// otherwise yield `now=0` and a deadline of `1970-04-01`, opening the
+/// dual-read auto-retirement immediately (silent data corruption). We
+/// detect the case via `duration_since(...).is_err()`, log to stderr,
+/// and return `u64::MAX` as a "no deadline" sentinel — the deadline
+/// path stays closed until the operator fixes the clock.
 pub fn parity_gate_deadline_unix() -> u64 {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    now + PARITY_GATE_DEADLINE_DAYS * 86_400
+    let now = SystemTime::now().duration_since(UNIX_EPOCH);
+    match now {
+        Ok(d) => d
+            .as_secs()
+            .saturating_add(PARITY_GATE_DEADLINE_DAYS * 86_400),
+        Err(_) => {
+            eprintln!(
+                "octo_reputation::parity: SYSTEM CLOCK at or before UNIX_EPOCH; \
+                 parity-gate deadline UNSET (u64::MAX sentinel). \
+                 Auto-retirement will NOT fire. Fix NTP/RTC before re-checking."
+            );
+            u64::MAX
+        }
+    }
 }
 
 #[cfg(test)]

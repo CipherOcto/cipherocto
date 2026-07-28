@@ -39,6 +39,38 @@ impl RecorderDid {
     pub fn as_bytes(&self) -> &[u8; 52] {
         &self.0
     }
+
+    /// Translate to canonical wire form (`did:octo:z<base58btc>` per
+    /// RFC-0010 §Specification §`raw_to_wire`).
+    ///
+    /// **Round 2 review C3 — pending RFC-0968 §2 vs RFC-0010 reconcile.**
+    /// RFC-0968 §2 mandates `did:octo:b<52-char base32-lowercase-no-padding>`
+    /// over `blake3(pubkey)` (the §2 Round 2 finding M15 explicitly
+    /// REJECTED the `z`/base58btc multibase prefix in favour of `b`/
+    /// base32-lowercase). The implementation takes the RFC-0010 §
+    /// path. The two RFCs are incompatible on the wire form. Until
+    /// the reconcile amendment lands, the wire form emitted here is
+    /// the RFC-0010 form (`did:octo:z<base58btc>`); cross-protocol
+    /// bridges that interpret `did:octo:` per RFC-0968 §2 will need
+    /// a translation layer. The on-disk raw bytes (`self.0`) are
+    /// 52 bytes of `blake3(pubkey) || [0;20]`; that part does NOT
+    /// change between the two RFCs and is the stable interop key.
+    /// See RFC-0968-A2 amendment proposal (post-C3 review).
+    pub fn to_wire(&self) -> Result<String, crate::error::ReputationError> {
+        use octo_ident::{CanonicalCodec, RawDid};
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&self.0[..32]);
+        let mut disc = [0u8; 20];
+        disc.copy_from_slice(&self.0[32..]);
+        let raw = RawDid {
+            hash,
+            version_discriminator: disc,
+        };
+        let wire = CanonicalCodec::raw_to_wire(&raw).map_err(|_e| {
+            crate::error::ReputationError::RecorderDidMalformed("did wire encode failed")
+        })?;
+        Ok(wire.as_str().to_owned())
+    }
 }
 
 impl std::fmt::Debug for RecorderDid {
@@ -136,6 +168,25 @@ impl std::fmt::Debug for RecorderId {
 // ---------------------------------------------------------------------------
 
 /// Type of signal being recorded. RFC-0968 §3.
+///
+/// **Round 2 review C4 — pending RFC-0968-A2 realignment.** The
+/// canonical RFC-0968 §10 + RFC-0955-R1 signal-kind set is
+/// `{Slash, Outcome, Latency, Capacity, Discovery, Rotation}` —
+/// the implementation declares `{Outcome, Latency, Slash,
+/// Suspension, Anchor, CrossLayer}` because the mission-critical
+/// consumers (the slash store, the anchor job, mission 0855p-c
+/// cross-domain reputation) predate the §10 canonicalisation and
+/// carry their own variant names. The discriminant values are
+/// STABLE for the existing consumers; renaming risks
+/// cross-replica protocol drift until every consumer is migrated in
+/// lockstep. Pending an explicit RFC-0968-A2 amendment that
+/// simultaneously:
+/// - renames each variant to the §10 canonical name,
+/// - maintains `discriminant()` backwards-compat for the legacy
+///   code, AND
+/// - bumps the migration slot for `kind_weights` (RFC-0955-R1)
+///   to read the new column.
+///   **Do NOT change `discriminant()` values until RFC-0968-A2 lands.**
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SignalKind {
@@ -166,6 +217,24 @@ impl SignalKind {
 }
 
 /// Layer in which a signal is recorded. RFC-0968 §3 + amendment.
+///
+/// **Round 2 review C4 — pending RFC-0968-A2 realignment.** The
+/// canonical RFC-0968 §10 + RFC-0955-R1 layer set is `{Mon, Dc,
+/// Marketplace, TaskMarket, Retrieval, ProofMarket}`. The
+/// implementation declares `{Consensus, Market, Coordinator,
+/// Slash, Governance}` because the canonical names overlap with
+/// the MON/DCN mission-layer modules (`crates/octo-network/src/mon/`
+/// for `Mon`, `crates/octo-network/src/dc/` for `Dc`) and the
+/// implementation chose non-overlapping names to keep module paths
+/// distinct. Mission 0855p-c wires use `ReputationLayer::Coordinator`
+/// (see `crates/octo-network/src/reputation/dc_store.rs:48, 193`)
+/// because the DC layer maps onto `Coordinator` in the
+/// implementation's vocabulary, NOT the canonical RFC name `Dc`.
+///
+/// **Same migration gate as `SignalKind`:** do NOT rename
+/// discriminants until RFC-0968-A2 lands with a coordinated
+/// migration. The current discriminant values are stable for
+/// existing consumers.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ReputationLayer {

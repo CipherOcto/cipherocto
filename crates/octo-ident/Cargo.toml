@@ -1,0 +1,25 @@
+[package]
+name = "octo-ident"
+version = "0.1.0"
+edition = "2021"
+description = "Canonical OctoID codec per RFC-0010 — translates between 52-byte raw storage form and W3C multibase-z wire form. Mission 0010-a."
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# BLAKE3-256 per RFC-0853; used for DID hash + discriminator derivation
+blake3 = "1.5"
+# Display + Debug
+thiserror = "1"
+# Hex encoding for Debug formatting only (no wire form dependency).
+hex = "0.4"
+# Bitcoin base58btc encoder/decoder — RFC-0010 §Specification §raw_to_wire / §wire_to_raw
+bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
+
+[features]
+default = []
+# Enables long-running legacy-form parsing for environments still mid-migration.
+# Per RFC-0010 §Specification §`parse` step 3, this gate flips off at Mission 0010-c.
+allow-legacy-input = []

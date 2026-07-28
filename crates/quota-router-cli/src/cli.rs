@@ -62,6 +62,31 @@ pub enum Commands {
         #[arg(long, value_delimiter = ',')]
         peers: Vec<String>,
     },
+    /// Show reputation for a canonical DID (RFC-0968 / mission 0968-b Phase E).
+    ///
+    /// Reads the persisted RFC-0968 aggregate for `--did`, displays
+    /// `score_ewma` (Dfp), the 0-100 presentation score, samples, and
+    /// last_signal_at_unix. Replaces the legacy `provider --name` /
+    /// `seller --wallet` / `leaderboard` / `multiplier` subcommands.
+    #[command(name = "reputation-show")]
+    ReputationShow {
+        /// Canonical DID. Both forms accepted per RFC-0010:
+        /// W3C `did:octo:z<base58btc>` (53-54 chars) or legacy
+        /// `did:octo:b<52>` (62 chars) during the deprecation window.
+        #[arg(long)]
+        did: String,
+        /// Backend store: `memory` (in-memory, default) or `stoolap`
+        /// (open the production DB at `--db-path`).
+        #[arg(long, default_value = "memory")]
+        backend: String,
+        /// Path to the stoolap DB file (only when `--backend stoolap`).
+        #[arg(long)]
+        db_path: Option<PathBuf>,
+        /// Refuse under `--strict-deprecation` once legacy CLI subcommands
+        /// are retired.
+        #[arg(long, default_value_t = false)]
+        strict_deprecation: bool,
+    },
 }
 
 #[cfg(test)]
@@ -172,5 +197,40 @@ mod tests {
         let cli = Cli::try_parse_from(["quota-router", "balance"]);
         assert!(cli.is_ok());
         assert!(matches!(cli.unwrap().command, Commands::Balance));
+    }
+
+    #[test]
+    fn parse_reputation_show_canonical_did() {
+        // 62 chars total: did:octo:b (10) + 52 z's.
+        let mut padded = String::from("did:octo:b");
+        for _ in 0..52 {
+            padded.push('z');
+        }
+        let cli = Cli::try_parse_from([
+            "quota-router",
+            "reputation-show",
+            "--did",
+            padded.as_str(),
+            "--backend",
+            "memory",
+        ]);
+        let cli = match cli {
+            Ok(c) => c,
+            Err(e) => panic!("should parse: got error {e}"),
+        };
+        match cli.command {
+            Commands::ReputationShow {
+                did: got,
+                backend,
+                db_path,
+                strict_deprecation,
+            } => {
+                assert_eq!(got, padded);
+                assert_eq!(backend, "memory");
+                assert!(db_path.is_none());
+                assert!(!strict_deprecation);
+            }
+            _ => panic!("expected ReputationShow"),
+        }
     }
 }

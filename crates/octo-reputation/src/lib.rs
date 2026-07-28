@@ -20,16 +20,21 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+pub mod anchor;
+pub mod anchor_job;
 pub mod audit;
 pub mod auth;
 pub mod compat;
 pub mod constants;
 pub mod cross_layer;
 pub mod digest;
+pub mod election;
 pub mod error;
 pub mod gossip;
 pub mod migrations;
 pub mod parity;
+pub mod parity_daemon;
+pub mod presentation;
 pub mod prometheus;
 pub mod recorder;
 pub mod retention;
@@ -39,6 +44,14 @@ pub mod sliding;
 pub mod store;
 pub mod types;
 
+pub use anchor::{
+    exceeds_daily_fanout, is_finality_reached, window_collision, AnchorLeaf, AnchorWindow,
+    ReputationAnchorBatch,
+};
+pub use anchor_job::{
+    plan_batches, run_once, total_fee, AnchorJobConfig, AnchorJobError, AnchorJobOutcome,
+    ChainAnchorSubmitter, StubChainAnchorSubmitter,
+};
 pub use audit::{
     audit_commitment, drop_pre_rotation_events, max_rotation_id, replay as audit_replay,
     AuditReplay,
@@ -54,6 +67,10 @@ pub use compat::{
 };
 pub use cross_layer::{cross_layer_query, dedup_layers, CrossLayerResult, MAX_CROSS_LAYER_FANOUT};
 pub use digest::ReputationDigest;
+pub use election::{
+    apply_per_controller_cap, election_priority_v2, ElectionCandidate, ElectionPriority,
+    PerControllerCounts,
+};
 pub use error::{ReputationError, StakeComponent};
 pub use gossip::{
     message_id_for_envelope, topic_for_dc_recorder, topic_for_recorder, GossipCatchUp,
@@ -65,6 +82,11 @@ pub use parity::{
     compute_parity_report, parity_gate_deadline_unix, ParityReport, ParityRow, TripleClass,
     PARITY_GATE_DEADLINE_DAYS, PARITY_THRESHOLD, PER_DID_MISMATCH_DOMINANCE,
 };
+pub use parity_daemon::{
+    parity_deadline_unix_from_epoch, ParityBucket, ParityDaemonState, MIN_BUCKET_TOTAL,
+    REQUIRED_CONSECUTIVE_BUCKETS,
+};
+pub use presentation::reputation_score_0_100;
 pub use prometheus::{render_prometheus, write_prometheus_file, MetricsSnapshot};
 pub use recorder::{check_stake, verify_registration};
 pub use retention::{

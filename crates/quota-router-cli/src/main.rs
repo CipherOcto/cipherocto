@@ -31,6 +31,12 @@ async fn main() -> Result<()> {
             mock_provider,
             peers,
         } => cmd::serve(listen_addr, &network_config, mock_provider, &peers).await?,
+        Commands::ReputationShow {
+            did,
+            backend,
+            db_path,
+            strict_deprecation,
+        } => cmd::reputation_show(&did, &backend, db_path.as_deref(), strict_deprecation).await?,
     }
 
     Ok(())

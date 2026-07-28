@@ -3,7 +3,12 @@ use crate::config::Config;
 use crate::providers::{default_endpoint, Provider};
 use crate::proxy::ProxyServer;
 use anyhow::Result;
+use octo_determin::Dfp;
+use octo_reputation::reputation_score_0_100;
+use octo_reputation::store::{InMemoryReputationStore, ReputationStore};
+use octo_reputation::types::{ReputationLayer, SignalKind};
 use quota_router_core::admin::AdminServer;
+use quota_router_core::marketplace::reputation_compat::parse_canonical_did;
 use quota_router_core::node::provider::{
     MockLocalProvider, PeerConfig, PeerTrust, ProviderAuth, ProviderConfig, RouterNodeId,
 };
@@ -330,6 +335,116 @@ fn parse_peer_arg(s: &str) -> Option<PeerConfig> {
 /// `Receipt` from the sm-engine state machines. Reads an ask_id (hex) +
 /// receipt payload from the args, runs the canonical_ser pipeline, and
 /// prints the resulting settlement_hash + receipt_id.
+/// CLI: `quota-router reputation-show --did <canonical_did>`
+/// (mission 0968-b Phase E).
+///
+/// Reads the persisted RFC-0968 aggregate for `--did`, prints
+/// `score_ewma` (Dfp → f64 for display), the 0-100 presentation score,
+/// samples, and last_signal_at_unix. Replaces the legacy `provider
+/// --name` / `seller --wallet` / `leaderboard` / `multiplier` subcommands.
+///
+/// `--backend {memory,stoolap}` selects the read-side store. The
+/// default `memory` is hermetic (always empty) — useful for the parse
+/// test path; the production path requires `--backend stoolap` with
+/// `--db-path` pointing at a CipherOcto-fork stoolap DB (per
+/// `feedback_stoolap-persistence.md`).
+///
+/// `--strict-deprecation` is honoured in the retire-PR gate (mission
+/// 0968-b Phase D): the retire gate fails closed while set. The
+/// intent is "refuse while legacy CLI is retired" (so well-formed
+/// canonical DIDs are accepted, and only legacy callers get the
+/// error). Set the flag to refuse the entire subcommand.
+pub async fn reputation_show(
+    did: &str,
+    backend: &str,
+    db_path: Option<&Path>,
+    strict_deprecation: bool,
+) -> Result<()> {
+    if strict_deprecation {
+        return Err(anyhow::anyhow!(
+            "strict-deprecation active: reputation-show CLI retired per retirement gate"
+        ));
+    }
+    if backend != "memory" && backend != "stoolap" {
+        return Err(anyhow::anyhow!(
+            "unsupported backend {backend:?}; expected 'memory' or 'stoolap'"
+        ));
+    }
+    let recorder_did = parse_canonical_did(did)?;
+    println!("did: {did}");
+    match backend {
+        "memory" => {
+            let store = InMemoryReputationStore::new();
+            let outcome = store
+                .read_aggregate(&recorder_did, SignalKind::Outcome, ReputationLayer::Market)
+                .await;
+            print_outcome(outcome)
+        }
+        "stoolap" => {
+            let db_path = db_path
+                .ok_or_else(|| anyhow::anyhow!("--db-path required when --backend stoolap"))?;
+            // Mission 0010-b Phase F (0968-b Phase F): the cipherocto-fork
+            // stoolap backend is now wired. Opens the file-backed DB, applies
+            // migrations on first run, and reads the canonical aggregate.
+            #[cfg(feature = "stoolap")]
+            {
+                let dsn = format!("file://{}", db_path.display());
+                let store =
+                    octo_reputation::store::stoolap::StoolapReputationStore::open(&dsn).await?;
+                let outcome = store
+                    .read_aggregate(&recorder_did, SignalKind::Outcome, ReputationLayer::Market)
+                    .await;
+                print_outcome(outcome)
+            }
+            #[cfg(not(feature = "stoolap"))]
+            {
+                Err(anyhow::anyhow!(
+                    "--backend stoolap requires --features stoolap at build time; \
+                     current binary was built without it (db_path={})",
+                    db_path.display()
+                ))
+            }
+        }
+        _ => unreachable!("backend checked above"),
+    }
+}
+
+fn print_outcome(
+    outcome: Result<
+        octo_reputation::types::ReputationAggregate,
+        octo_reputation::error::ReputationError,
+    >,
+) -> Result<()> {
+    use octo_reputation::error::ReputationError;
+    match outcome {
+        Ok(agg) => {
+            let score = agg.score_ewma.to_f64();
+            let presentation = reputation_score_0_100(agg.score_ewma)?;
+            println!("score_ewma: {score:.6} (Dfp)");
+            println!("presentation_0_100: {presentation}");
+            println!("samples: {}", agg.samples);
+            println!("last_signal_at_unix: {}", agg.last_event_unix);
+            Ok(())
+        }
+        // Distinguish "no data" (canonical AggregateNotFound) from
+        // "connectivity blip" or "schema drift" (any other Err).
+        // The dual-read parity contract (mission 0968-b Phase D)
+        // requires this distinction so a fault doesn't get rendered
+        // as an empty read-side.
+        Err(ReputationError::AggregateNotFound { .. }) => {
+            let default_presentation = reputation_score_0_100(Dfp::from_f64(0.0))?;
+            println!("score_ewma: <unknown> (no aggregate)");
+            println!("presentation_0_100: {default_presentation} (default for unknown providers)");
+            println!("samples: 0");
+            println!("last_signal_at_unix: 0");
+            Ok(())
+        }
+        Err(e) => Err(anyhow::anyhow!(
+            "read_aggregate failed; CLI cannot distinguish data-absence from store fault: {e:?}"
+        )),
+    }
+}
+
 pub fn settle_replay(ask_id_hex: &str, expected_settlement_hash: Option<&str>) -> Result<()> {
     use quota_router_sm_engine::{
         Ask, Receipt, Reservation, SettlementError, SettlementStore, StoolapStore,

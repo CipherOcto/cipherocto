@@ -11,9 +11,10 @@
 //! ## Pubkey → DID keying (amendment 29)
 //!
 //! Keyed by canonical `RecorderDid` (52 bytes). Legacy
-//! `coordinator_pubkey: String` topic + keying model is REMOVED; the
-//! legacy in-memory `octo_network::mon::reputation::SlashReputationStore`
-//! is superseded by this type and is marked deprecated in its docstring.
+//! `coordinator_pubkey: String` topic + keying model is REMOVED. The
+//! legacy in-memory `SlashReputationStore` (formerly at
+//! `octo_network::mon::reputation::SlashReputationStore`, deleted in
+//! S4 hardening 2026-07-27) is superseded by this type.
 //!
 //! ## Authority model (amendment 28)
 //!
@@ -30,8 +31,8 @@ use octo_reputation::types::RecorderDid;
 
 /// Hard threshold: candidates with >= this many global slashes are
 /// excluded from the election. Matches the legacy `HARD_THRESHOLD`
-/// constant in `mon::reputation::SlashReputationStore` for byte-
-/// identical differential test compatibility.
+/// constant (deleted in S4 hardening 2026-07-27) for byte-identical
+/// differential test compatibility.
 pub const HARD_THRESHOLD: u32 = 5;
 
 /// `SlashReputationStoreCompat` — DID-keyed cross-mission slash store.
@@ -92,8 +93,8 @@ impl SlashReputationStoreCompat {
         let n = self.global_slash_count(did) as u128;
         let s = stake as u128;
         // Saturating division — stake=0 with no slashes returns Some(0)
-        // (matching the legacy behavior in
-        // `mon::reputation::SlashReputationStore::priority`).
+        // (matching the legacy behavior in the deleted
+        // `SlashReputationStore::priority`).
         Some(s / (1 + n))
     }
 

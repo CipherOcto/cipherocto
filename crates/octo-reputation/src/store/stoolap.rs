@@ -1464,6 +1464,25 @@ pub use real::StoolapReputationStore;
 // cfg-off: marker stub (preserves CI build path without the stoolap feature)
 // ---------------------------------------------------------------------------
 
+/// Feature-gated dual-impl pattern for `StoolapReputationStore`.
+///
+/// When the `stoolap` Cargo feature is enabled (the default
+/// integration path), the real SQL-backed `StoolapReputationStore`
+/// impl above at `impl StoolapReputationStore` (lines ~975+) is
+/// compiled. When `stoolap` is disabled (e.g. consumers building
+/// with `--no-default-features --features in-memory-only`), the
+/// `stub` module below provides a `StoolapReputationStore` shim
+/// that returns per-method `stoolap_backend_unimplemented:<method>`
+/// errors via `ReputationError::ChainRefInvalid`. Both impls cover
+/// every `ReputationStore` trait method (including the six
+/// federation methods `register_attestor`/`attestor_lookup_did`/
+/// `record_attestation`/`query_attestations`/`attestor_quorum_reached`/
+/// `gossip_catch_up` added in mission 0855p-b / 0968 Phase 4).
+///
+/// The stub is NOT a placeholder to delete: it preserves
+/// `cargo build` for feature-consumers that don't link the SQL
+/// backend, while making any accidental call site immediately
+/// observable in logs.
 #[cfg(not(feature = "stoolap"))]
 mod stub {
     use super::*;

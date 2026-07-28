@@ -39,6 +39,10 @@ pub const BUILTIN_MIGRATIONS: &[(&str, &str)] = &[
         "v005__reputation_gossip_seen",
         include_str!("../migrations/v005__reputation_gossip_seen.sql"),
     ),
+    (
+        "v010__reputation_anchors",
+        include_str!("../migrations/v010__reputation_anchors.sql"),
+    ),
 ];
 
 /// Bootstrap SQL for the tracker table — idempotent. The runner runs this
@@ -59,6 +63,7 @@ impl MigrationVersion {
         "v003__schema_migrations",
         "v004__reputation_attestations",
         "v005__reputation_gossip_seen",
+        "v010__reputation_anchors",
     ];
 }
 
@@ -106,6 +111,7 @@ pub mod stoolap_runner {
                 "v003__schema_migrations" => "migration:v003",
                 "v004__reputation_attestations" => "migration:v004",
                 "v005__reputation_gossip_seen" => "migration:v005",
+                "v010__reputation_anchors" => "migration:v010",
                 _ => "migration:unknown",
             };
             db.execute(sql, ())
@@ -235,6 +241,22 @@ mod tests {
                 w[1].0
             );
         }
+    }
+
+    /// The catalog in RFC-0968 §28 line 3814 allocates `v010` to anchoring.
+    /// The slot numbering in this crate matches the catalog, not the
+    /// implementation order: v006/v007/v008/v009 are reserved for
+    /// recorder_registration and kind_weights (per the same catalog)
+    /// but not yet implemented. The migration runner applies v010 after
+    /// v005 with no intervening versions; the gap is intentional.
+    #[test]
+    fn v010_anchors_slot_is_allocated() {
+        assert!(
+            BUILTIN_MIGRATIONS
+                .iter()
+                .any(|(v, _)| *v == "v010__reputation_anchors"),
+            "v010__reputation_anchors must be registered per RFC-0968 §28"
+        );
     }
 
     #[test]

@@ -14,6 +14,8 @@ license.workspace = true
 # Core library
 quota-router-core = { path = "../quota-router-core" }
 quota-router-sm-engine = { path = "../quota-router-sm-engine" }
+octo-reputation = { path = "../octo-reputation" }
+octo-determin = { path = "../../determin" }
 blake3.workspace = true
 
 # Transport + adapter for mesh daemon
@@ -65,3 +67,11 @@ path = "src/lib.rs"
 [[bin]]
 name = "quota-router"
 path = "src/main.rs"
+
+[features]
+# Mission 0010-b Phase F: enables the cipherocto-fork stoolap backend for
+# `quota-router reputation-show --backend stoolap`. The CLI binary gates the
+# stoolap code path behind this flag so a hermetic build (default) still
+# compiles without the C++ dependencies that may be pulled in transitively.
+# Production deploys must enable this feature.
+stoolap = ["octo-reputation/stoolap"]

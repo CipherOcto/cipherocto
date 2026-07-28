@@ -11,6 +11,7 @@
 
 pub mod escrow;
 pub mod orderbook;
+pub mod reputation_compat;
 pub mod scoring;
 pub mod slashing;
 
@@ -28,6 +29,16 @@ pub struct MarketplaceEntry {
     /// when the latency-aware ranking was not requested.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub latency_ms: Option<u64>,
+    /// Reputation Score 0-100 derived from the persisted RFC-0968
+    /// `score_ewma` at read time (RFC-0968-A1 §22, amendment 30,
+    /// 0968-b Phase C). `None` when the consumer has not asked the
+    /// market to populate reputation (legacy listings omit the field).
+    /// `Some(100)` for unknown providers (legacy "unknown = perfect"
+    /// semantics; a non-zero presentation keeps the field populated).
+    /// Mission 0010-b Phase G (S8): wired through `cheapest` /
+    /// `list_by_asker` so listing UIs can render the value.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub reputation_score_0_100: Option<u8>,
 }
 
 // ============================================================================
@@ -356,16 +367,27 @@ impl Marketplace {
     }
 
     fn entry_from_order(&self, order: &orderbook::Order<AskSpec>) -> MarketplaceEntry {
-        let latency_ms = self
-            .reputation
-            .score(&order.spec.asker_did)
-            .map(|s| s.latency_ms);
+        let provider_score = self.reputation.score(&order.spec.asker_did);
+        let latency_ms = provider_score.as_ref().map(|s| s.latency_ms);
+        // Mission 0010-b Phase G (S8): populate the 0-100 presentation score
+        // from the persisted RFC-0968 score_ewma. The legacy
+        // `ProviderScore` legacy shape carries `success_rate: f64` directly
+        // (in-memory registry); the RFC-0968 compat will eventually replace
+        // this with `compat.reputation_score_0_100(asker_did)`. For now we
+        // map `success_rate: f64` (already clamped to [-1, 1]) through the
+        // `(score + 1) * 50` presentation formula.
+        let reputation_score_0_100 = provider_score.map(|s| {
+            let clamped = s.success_rate.clamp(-1.0, 1.0);
+            let raw = (clamped + 1.0) * 50.0;
+            raw.round().clamp(0.0, 100.0) as u8
+        });
         MarketplaceEntry {
             ask_id: order.spec.ask_id,
             asker_did: order.spec.asker_did.clone(),
             model: order.spec.model.clone(),
             cost_per_1k: order.price,
             latency_ms,
+            reputation_score_0_100,
         }
     }
 
@@ -470,6 +492,7 @@ mod tests {
             model: "gpt-4".into(),
             cost_per_1k: 30_000,
             latency_ms: None,
+            reputation_score_0_100: None,
         });
         m.insert(MarketplaceEntry {
             ask_id: [2; 32],
@@ -477,6 +500,7 @@ mod tests {
             model: "gpt-4".into(),
             cost_per_1k: 25_000,
             latency_ms: None,
+            reputation_score_0_100: None,
         });
         m.insert(MarketplaceEntry {
             ask_id: [3; 32],
@@ -484,6 +508,7 @@ mod tests {
             model: "other".into(),
             cost_per_1k: 1,
             latency_ms: None,
+            reputation_score_0_100: None,
         });
         let cheapest = m.cheapest("gpt-4").unwrap();
         assert_eq!(cheapest.ask_id, [2; 32]);

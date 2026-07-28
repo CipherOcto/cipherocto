@@ -28,9 +28,6 @@ use octo_network::dc::consensus::{
     consensus_topic, ConsensusAction, ConsensusState, ConsensusVote, DcConsensusCoordinator, Quorum,
 };
 use octo_network::dc::rejoin::{RejoinCooldown, RejoinError, REJOIN_COOLDOWN_EPOCHS};
-use octo_network::dc::reputation::{
-    DcRootedSlashReputationStore, DcSlashEventRef, DC_REPUTATION_HARD_THRESHOLD,
-};
 use octo_network::dc::slash::{process_dc_slash, DcMisbehavior, DcSlashEnvelope, DcSlashError};
 use octo_network::dgp::dedup::GossipReplayCache;
 use octo_network::dom::admission::{
@@ -67,6 +64,10 @@ use octo_network::mon::governance::{
 use octo_network::mon::rebind::{PrepareVote, RebindCoordinator};
 use octo_network::orr::onion::{construct_onion, peel_layer, HopConstructionParams};
 use octo_network::orr::types::{OnionRoute, TransportVector};
+use octo_network::reputation::{
+    DcRootedSlashReputationStoreCompat, HARD_THRESHOLD as DC_HARD_THRESHOLD,
+};
+use octo_reputation::types::RecorderDid;
 
 /// Helper: make a `BindEnvelope`.
 fn make_bind(domain: &str, platform: &str, group: &str) -> BindEnvelope {
@@ -472,21 +473,23 @@ async fn scenario5_slash_cooldown_exclusion_rejoin() {
         Err(DcSlashError::InsufficientWitnesses { .. })
     ));
 
-    // Cross-domain reputation store: build up to exclusion.
-    let mut store = DcRootedSlashReputationStore::new();
-    for i in 0..(DC_REPUTATION_HARD_THRESHOLD as u8) {
-        store.record_slash(
-            "dc-1",
-            DcSlashEventRef {
-                domain_id: format!("d-{i}"),
-                slash_reason: 0x000F,
-                event_hash: [i; 32],
-                epoch: 1000,
-            },
-        );
+    // Cross-domain reputation store: build up to exclusion via the
+    // canonical DID-keyed compat adapter (mission 0855p-c
+    // RFC-0968-A1 amendment 29). The legacy pubkey-keyed
+    // `octo_network::dc::DcRootedSlashReputationStore` was removed
+    // 2026-07-27 (gap closure); this scenario retains its
+    // exclusion-at-threshold semantics against the compat API.
+    let store = DcRootedSlashReputationStoreCompat::new();
+    let dc_did = {
+        let mut a = [0u8; 52];
+        a[0] = 1;
+        RecorderDid::from_array(a)
+    };
+    for _ in 0..DC_HARD_THRESHOLD {
+        store.record_dc_slash(&dc_did);
     }
-    assert!(store.is_excluded("dc-1"));
-    assert!(store.priority("dc-1", 1000).is_none());
+    assert!(store.is_excluded(&dc_did));
+    assert!(store.election_priority(&dc_did, 1000, 1.0, 100).is_none());
 
     // Rejoin cooldown: rate-limit within window.
     let mut cd = RejoinCooldown::new();

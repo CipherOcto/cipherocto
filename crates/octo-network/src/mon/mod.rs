@@ -19,7 +19,6 @@ pub mod nostr_bootstrap;
 pub mod quadratic;
 pub mod rebind;
 pub mod reconciliation;
-pub mod reputation;
 pub mod slash;
 pub mod slash_aggregation;
 pub mod topology;
@@ -56,7 +55,6 @@ pub use nostr_bootstrap::{DotCapabilityClaim, Nip05Error, Nip05Identifier, Nostr
 pub use quadratic::{elect, voting_weight, CoordinatorCandidate, ElectionResult};
 pub use rebind::{CoordinatorState, PrepareVote, RebindCoordinator, REBIND_TIMEOUT_SECS};
 pub use reconciliation::{MobilitySession, ReconciliationState, TransportCarrier};
-pub use reputation::{CoordinatorReputation, SlashEventRef, SlashReputationStore, HARD_THRESHOLD};
 pub use slash::{slash_code, BootstrapMisbehavior, SlashEnvelope};
 pub use slash_aggregation::{
     AggregationResult, RejectionReason, SlashAggregator, SlashVote, Vote, SLASH_VOTE_WINDOW_SECS,

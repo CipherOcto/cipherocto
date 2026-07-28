@@ -24,6 +24,8 @@ stoolap = ["dep:stoolap", "dep:serde_json"]
 [dependencies]
 # Deterministic Floating-Point per RFC-0104 — score_ewma / score_delta canonical encoding
 octo-determin = { path = "../../determin" }
+# Canonical OctoID codec per RFC-0010 — `RecorderDid::to_wire()` delegate.
+octo-ident = { path = "../octo-ident" }
 # Hashing — 13 reputation domain separators + governance-set domain + RetirementEligibility envelope
 blake3 = "1.5"
 # Error enum with `#[repr(u8)]` discriminants 0x01..=0x39

@@ -4,12 +4,14 @@
 //! ## `SlashReputationStoreCompat`
 //!
 //! The 0855p-b replacement for the legacy pubkey-keyed
-//! `octo_network::mon::reputation::SlashReputationStore`. Reads the
-//! persisted `ReputationStore` via `query_attestations` to compute
-//! `global_slash_count(did)` and the canonical RFC-0968 §10
-//! `election_priority` formula. Legacy `priority_legacy` is preserved
-//! as a back-compat field for the differential test (AC L33:
-//! 1000-candidate set, byte-identical priority ordering).
+//! `SlashReputationStore` (formerly at
+//! `octo_network::mon::reputation::SlashReputationStore`, deleted in
+//! S4 hardening 2026-07-27). Reads the persisted `ReputationStore` via
+//! `query_attestations` to compute `global_slash_count(did)` and the
+//! canonical RFC-0968 §10 `election_priority` formula. Legacy
+//! `priority_legacy` is preserved as a back-compat field for the
+//! differential test (AC L33: 1000-candidate set, byte-identical
+//! priority ordering).
 //!
 //! ## `DcRootedSlashReputationStoreCompat`
 //!

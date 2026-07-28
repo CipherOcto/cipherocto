@@ -66,6 +66,9 @@ bincode = "1"
 octo-transport = { path = "../../octo-transport" }
 octo-network = { path = "../octo-network" }
 octo-core = { path = "../octo-core" }
+octo-reputation = { path = "../octo-reputation" }
+octo-ident = { path = "../octo-ident" }
+octo-determin = { path = "../../determin" }
 quota-router-storage = { path = "../quota-router-storage" }
 quota-router-sm-engine = { path = "../quota-router-sm-engine" }
 

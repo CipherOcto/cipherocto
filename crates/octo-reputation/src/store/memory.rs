@@ -491,6 +491,46 @@ impl ReputationStore for InMemoryReputationStore {
         out.sort_by_key(|e| e.event_id.to_u64());
         Ok(out)
     }
+
+    async fn anchor_pending(
+        &self,
+        batch_size: u32,
+    ) -> StoreResult<Vec<(crate::types::EventId, [u8; 32])>> {
+        let inner = self.inner.read().await;
+        // Pending-anchor sweep: events with `anchor_tx_hash IS NULL`.
+        // The in-memory backend has no real anchor tx yet, so the
+        // returned `anchor_tx_hash` slot is filled with a 32-byte
+        // placeholder of zeros. Live anchor jobs construct this list,
+        // submit on-chain, then call `set_event_anchor_tx_hash` with
+        // the real chain hash. Test fixture.
+        let mut out: Vec<(crate::types::EventId, [u8; 32])> = inner
+            .events
+            .values()
+            .filter(|e| e.anchor_tx_hash.is_none())
+            .take(batch_size as usize)
+            .map(|e| (e.event_id, [0u8; 32]))
+            .collect();
+        out.sort_by_key(|(id, _)| id.to_u64());
+        Ok(out)
+    }
+
+    async fn set_event_anchor_tx_hash(
+        &self,
+        event_id: crate::types::EventId,
+        anchor_tx_hash: [u8; 32],
+    ) -> StoreResult<()> {
+        let mut inner = self.inner.write().await;
+        // Linear scan: events are partitioned by `EventKey.did_hash`;
+        // the in-memory store has no secondary index keyed by event_id
+        // alone. Test-only path.
+        for (k, v) in inner.events.iter_mut() {
+            if k.event_id == event_id {
+                v.anchor_tx_hash = Some(anchor_tx_hash);
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -551,6 +591,7 @@ mod tests {
             recorded_at_unix: 1_000,
             rotation_provenance: None,
             audit_ref: None,
+            anchor_tx_hash: None,
         };
         let _id = store.record_signal(ev).await.unwrap();
         let agg = store

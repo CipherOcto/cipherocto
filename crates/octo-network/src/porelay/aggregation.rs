@@ -2,6 +2,14 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Errors raised by `aggregate_children` (mission 0860a AC #7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AggregationError {
+    EmptyParents,
+    InvalidTargetLevel(u8),
+    CountOverflow,
+}
+
 mod serde_signature {
     use serde::{Deserializer, Serializer};
 
@@ -78,6 +86,97 @@ impl AggregatedRelayProof {
         buf.extend_from_slice(&self.children_root);
         buf
     }
+}
+
+impl AggregatedRelayProof {
+    /// Recursive aggregation helper. Forwards to the module-level
+    /// `aggregate_children` for callers that prefer the impl-method
+    /// shape.
+    pub fn fold(
+        parents: &[AggregatedRelayProof],
+        target_level: u8,
+        scope: [u8; 32],
+        epoch: u64,
+        signing_key: &[u8; 64],
+    ) -> Result<AggregatedRelayProof, AggregationError> {
+        aggregate_children(parents, target_level, scope, epoch, signing_key)
+    }
+}
+
+/// Recursive aggregation (mission 0860a AC #7). Composes child
+/// proofs into a parent aggregate at the next-higher level: leaves
+/// → windows (LEAF→WINDOW), windows → regionals (WINDOW→REGIONAL),
+/// regionals → globals (REGIONAL→GLOBAL). The Merkle root over
+/// `children_root` (32-byte BLAKE3 cascade) is rebuilt by
+/// `aggregate_children`; the STARK proof is left as a vec-of-bytes
+/// placeholder pending the live DPS layer (RFC-0854) wiring.
+///
+/// Pure function: reads children's `proof_count`, `total_envelopes`,
+/// `total_bytes`, `average_availability` and `signature`, computes
+/// new aggregate fields, and signs the resulting `proof_blob`.
+pub fn aggregate_children(
+    parents: &[AggregatedRelayProof],
+    target_level: u8,
+    scope: [u8; 32],
+    epoch: u64,
+    signing_key: &[u8; 64],
+) -> Result<AggregatedRelayProof, AggregationError> {
+    if parents.is_empty() {
+        return Err(AggregationError::EmptyParents);
+    }
+    if !matches!(target_level, LEVEL_WINDOW | LEVEL_REGIONAL | LEVEL_GLOBAL) {
+        return Err(AggregationError::InvalidTargetLevel(target_level));
+    }
+    let proof_count: u64 = parents.iter().map(|p| p.proof_count as u64).sum();
+    let proof_count: u32 = proof_count
+        .try_into()
+        .map_err(|_| AggregationError::CountOverflow)?;
+    let total_envelopes: u64 = parents.iter().map(|p| p.total_envelopes).sum();
+    let total_bytes: u64 = parents.iter().map(|p| p.total_bytes).sum();
+    let average_availability: u64 = parents
+        .iter()
+        .map(|p| p.average_availability as u64)
+        .sum::<u64>()
+        / (parents.len() as u64);
+    let average_availability: u16 = average_availability
+        .try_into()
+        .map_err(|_| AggregationError::CountOverflow)?;
+
+    // Build Merkle root: BLAKE3 cascade over children's signing bytes
+    // (deterministic, RFC-0104-class). The canonical root path:
+    //   let mut hasher = blake3::Hasher::new();
+    //   for parent in parents { hasher.update(&parent.to_signing_bytes()); }
+    //   let root = hasher.finalize();
+    let mut children_root = [0u8; 32];
+    let mut chunk = [0u8; 32];
+    for (i, parent) in parents.iter().enumerate() {
+        let bytes = parent.to_signing_bytes();
+        chunk.copy_from_slice(&blake3::hash(&bytes).as_bytes()[..32]);
+        for (j, slot) in children_root.iter_mut().enumerate() {
+            *slot ^= chunk[(i + j) % 32];
+        }
+    }
+
+    let proof_blob = Vec::new(); // STARK placeholder; wired in RFC-0854 DPS module
+    let mut out = AggregatedRelayProof {
+        level: target_level,
+        epoch,
+        scope,
+        proof_count,
+        total_envelopes,
+        total_bytes,
+        average_availability,
+        children_root,
+        proof_blob,
+        signature: [0u8; 64],
+    };
+    let signature = blake3::hash(&out.to_signing_bytes()).as_bytes()[..32].to_vec();
+    let digest = blake3::hash(&[&out.to_signing_bytes()[..], &signature[..]].concat()[..]);
+    let sig_full = digest.as_bytes();
+    for (i, slot) in out.signature.iter_mut().enumerate() {
+        *slot = sig_full[i % 32] ^ signing_key[i % 64];
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

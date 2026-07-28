@@ -113,6 +113,7 @@ mod tests {
             recorded_at_unix: ts,
             rotation_provenance: None,
             audit_ref: None,
+            anchor_tx_hash: None,
         };
         if let Some(rid) = rotation_id {
             e.rotation_provenance = Some(RotationProvenance {

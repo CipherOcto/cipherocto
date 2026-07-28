@@ -82,6 +82,7 @@ fn dummy_event(seed: u64, did: RecorderDid) -> SignalEvent {
         recorded_at_unix: 1_700_000_000,
         rotation_provenance: None,
         audit_ref: None,
+        anchor_tx_hash: None,
     }
 }
 

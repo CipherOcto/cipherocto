@@ -505,7 +505,7 @@ mod tests {
 
     use octo_determin::Dfp;
     use octo_reputation::store::InMemoryReputationStore;
-    use octo_reputation::types::{ControllerId, EventId, ReputationLayer, SignalEvent};
+    use octo_reputation::types::{ControllerId, EventId, ReputationLayer, SignalEvent, SignalKind};
 
     fn slash_event(seed: u64, did: RecorderDid) -> SignalEvent {
         SignalEvent {
@@ -518,6 +518,7 @@ mod tests {
             recorded_at_unix: 1_700_000_000 + seed,
             rotation_provenance: None,
             audit_ref: None,
+            anchor_tx_hash: None,
         }
     }
 
@@ -582,6 +583,7 @@ mod tests {
                 recorded_at_unix: 1_700_000_001,
                 rotation_provenance: None,
                 audit_ref: None,
+                anchor_tx_hash: None,
             })
             .await
             .unwrap();

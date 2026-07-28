@@ -38,6 +38,7 @@ fn ev(_seed: u64, did: octo_reputation::RecorderDid, score: f64, ts: u64) -> Sig
         recorded_at_unix: ts,
         rotation_provenance: None,
         audit_ref: None,
+        anchor_tx_hash: None,
     }
 }
 

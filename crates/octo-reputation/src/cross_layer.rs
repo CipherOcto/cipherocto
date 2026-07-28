@@ -139,6 +139,7 @@ mod tests {
                 recorded_at_unix: 1_000,
                 rotation_provenance: None,
                 audit_ref: None,
+                anchor_tx_hash: None,
             };
             store.record_signal(ev).await.unwrap();
         }

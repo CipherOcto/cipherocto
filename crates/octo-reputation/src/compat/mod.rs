@@ -228,6 +228,30 @@ impl<S: ReputationStore, L: LegacyReputationStore> ReputationStore for Reputatio
     ) -> StoreResult<Vec<crate::types::SignalEvent>> {
         self.inner.gossip_catch_up(catch_up).await
     }
+
+    // -- Mission 0968a anchoring bridge (Session 2026-07-28) --
+    //
+    // Anchor reads + writes forward to the inner store only — the
+    // legacy `LegacyReputationStore` shim does not have an anchor
+    // concept (the pre-RFC-0968 pubkey-keyed model pre-dates the
+    // anchoring substrate). The anchor job consumes the result of
+    // `anchor_pending` to construct the controller-level Merkle
+    // root + submit on-chain, then calls `set_event_anchor_tx_hash`
+    // to persist the tx hash for gossip cross-reference.
+
+    async fn anchor_pending(&self, batch_size: u32) -> StoreResult<Vec<(EventId, [u8; 32])>> {
+        self.inner.anchor_pending(batch_size).await
+    }
+
+    async fn set_event_anchor_tx_hash(
+        &self,
+        event_id: EventId,
+        anchor_tx_hash: [u8; 32],
+    ) -> StoreResult<()> {
+        self.inner
+            .set_event_anchor_tx_hash(event_id, anchor_tx_hash)
+            .await
+    }
 }
 
 /// Reasons a legacy shadow write can fail. The compat layer maps each to a
@@ -243,6 +267,8 @@ pub enum LegacyShadowError {
 mod tests {
     use super::*;
     use crate::store::InMemoryReputationStore;
+    use crate::types::{RecorderDid, ReputationLayer, SignalEvent, SignalKind};
+    use crate::EventId;
     use octo_determin::Dfp;
 
     fn dummy_event(seed: u64, score: f64, ts: u64) -> SignalEvent {
@@ -256,6 +282,7 @@ mod tests {
             recorded_at_unix: ts,
             rotation_provenance: None,
             audit_ref: None,
+            anchor_tx_hash: None,
         }
     }
 

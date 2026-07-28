@@ -220,6 +220,7 @@ impl<S: ReputationStore> ProviderReputationRegistryCompat<S> {
             recorded_at_unix: now_unix,
             rotation_provenance: None,
             audit_ref: None,
+            anchor_tx_hash: None,
         };
         let latency_event = SignalEvent {
             event_id: EventId::from_u64(0),
@@ -231,6 +232,7 @@ impl<S: ReputationStore> ProviderReputationRegistryCompat<S> {
             recorded_at_unix: now_unix,
             rotation_provenance: None,
             audit_ref: None,
+            anchor_tx_hash: None,
         };
         let outcome_id = self.store.record_signal(outcome_event).await?;
         let latency_id = self.store.record_signal(latency_event).await?;

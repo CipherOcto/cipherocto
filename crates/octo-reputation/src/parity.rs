@@ -248,6 +248,7 @@ mod tests {
     use super::*;
     use crate::compat::SlashReputationStore;
     use crate::store::InMemoryReputationStore;
+    use crate::types::{ReputationLayer, SignalKind};
     use crate::ControllerId;
     use crate::{EventId, SignalEvent};
     use octo_determin::Dfp;
@@ -263,6 +264,7 @@ mod tests {
             recorded_at_unix: ts,
             rotation_provenance: None,
             audit_ref: None,
+            anchor_tx_hash: None,
         }
     }
 

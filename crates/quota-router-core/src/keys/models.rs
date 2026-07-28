@@ -225,3 +225,31 @@ pub struct MerkleNode {
     /// Right child (None for leaf nodes).
     pub right: Option<Box<MerkleNode>>,
 }
+
+/// One-hour grace window (in seconds) during which a predecessor API
+/// key remains valid after a rotation event. Per mission 0957-b AC-7
+/// + RFC-0903 §RotationEvents. Operators roll out the fresh key
+///   while in-flight requests using the old key still complete; the
+///   predecessor expires after `KEY_ROTATION_GRACE_SECS`.
+pub const KEY_ROTATION_GRACE_SECS: i64 = 3_600;
+
+/// A `KeyRotationEvent` records a single rotation of an API key,
+/// capturing the predecessor key hash, the rotation epoch, and the
+/// predecessor-expires-at timestamp. Mission 0957-b AC-7 closes when
+/// the validator emits events of this shape on each rotation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyRotationEvent {
+    /// Key id being rotated.
+    pub key_id: String,
+    /// Unix seconds at which the rotation occurred.
+    pub rotated_at_unix: i64,
+    /// Hash of the predecessor key (so the validator can match
+    /// in-flight requests against the predecessor key during the
+    /// grace window).
+    pub predecessor_key_hash: Vec<u8>,
+    /// Hash of the new key (the post-rotation active key).
+    pub successor_key_hash: Vec<u8>,
+    /// Unix seconds at which the predecessor key stops being
+    /// honoured. Equal to `rotated_at_unix + KEY_ROTATION_GRACE_SECS`.
+    pub predecessor_expires_at_unix: i64,
+}

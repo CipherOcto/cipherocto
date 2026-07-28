@@ -426,20 +426,6 @@ mod tests {
             }
         }
 
-        fn seed_slash_event(seed: u64, did: RecorderDid) -> SignalEvent {
-            SignalEvent {
-                event_id: EventId::from_u64(seed),
-                recorder_did: did,
-                controller_id: ControllerId::from_array([0u8; 32]),
-                signal_kind: SignalKind::Slash,
-                layer: ReputationLayer::Coordinator,
-                score_delta: Dfp::from_f64(-1.0),
-                recorded_at_unix: 1_700_000_000 + seed,
-                rotation_provenance: None,
-                audit_ref: None,
-            }
-        }
-
         /// AC item 7, direction 1 — the witness substrate's 2/3 YES
         /// vote (simulated via direct Slash event seeding) does
         /// NOT constitute a canonical finalization. Bootstrap

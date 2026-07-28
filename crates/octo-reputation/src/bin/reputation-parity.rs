@@ -187,6 +187,7 @@ fn main() -> ExitCode {
             recorded_at_unix: 1_000 + i as u64,
             rotation_provenance: None,
             audit_ref: None,
+            anchor_tx_hash: None,
         };
         let canonical_for_block = canonical.clone();
         let ev_clone = ev.clone();

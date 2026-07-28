@@ -1454,6 +1454,88 @@ mod real {
             }
             Ok(out)
         }
+
+        async fn anchor_pending(&self, batch_size: u32) -> StoreResult<Vec<(EventId, [u8; 32])>> {
+            // Anchor-pending sweep: events with `anchor_tx_hash IS NULL`
+            // (the schema column added by migration v010). In the live
+            // chain-side flow, the `anchor_tx_hash` slot is filled with
+            // the on-chain tx hash via `set_event_anchor_tx_hash`. The
+            // sweep returns the `(event_id, [0; 32])` placeholder; the
+            // anchor job constructs Merkle roots + submits before
+            // persisting the real hash.
+            let row_results = self
+                .db
+                .query(
+                    "SELECT event_id
+                     FROM reputation_events
+                     WHERE anchor_tx_hash IS NULL
+                     ORDER BY event_id
+                     LIMIT $1",
+                    vec![stoolap::Value::from(batch_size as i64)],
+                )
+                .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_anchor_pending:query"))?;
+            let mut rows = row_results;
+            let mut out: Vec<(EventId, [u8; 32])> = Vec::new();
+            loop {
+                match rows.next() {
+                    Some(Ok(row)) => {
+                        let event_id_bytes: Vec<u8> = match row.get(0).and_then(|v| v.blob()) {
+                            Some(b) => b.to_vec(),
+                            None => {
+                                return Err(ReputationError::ChainRefInvalid(
+                                    "stoolap_anchor_pending:event_id_blob",
+                                ));
+                            }
+                        };
+                        let mut event_id_arr = [0u8; 8];
+                        if event_id_bytes.len() != 8 {
+                            return Err(ReputationError::ChainRefInvalid(
+                                "stoolap_anchor_pending:event_id_len",
+                            ));
+                        }
+                        event_id_arr.copy_from_slice(&event_id_bytes);
+                        out.push((
+                            EventId::from_u64(u64::from_le_bytes(event_id_arr)),
+                            [0u8; 32],
+                        ));
+                    }
+                    Some(Err(_e)) => {
+                        return Err(ReputationError::ChainRefInvalid(
+                            "stoolap_anchor_pending:iter",
+                        ))
+                    }
+                    None => break,
+                }
+            }
+            Ok(out)
+        }
+
+        async fn set_event_anchor_tx_hash(
+            &self,
+            event_id: EventId,
+            anchor_tx_hash: [u8; 32],
+        ) -> StoreResult<()> {
+            // UPDATE the events row to record the on-chain anchor tx
+            // hash. Idempotent on `(event_id, anchor_tx_hash)`: a
+            // second call with the same pair is a no-op (the WHERE
+            // clause narrows the row count to 0 if already set).
+            let event_id_bytes = event_id.to_u64().to_le_bytes();
+            let updated = self
+                .db
+                .execute(
+                    "UPDATE reputation_events
+                     SET anchor_tx_hash = $1
+                     WHERE event_id = $2
+                       AND (anchor_tx_hash IS NULL OR anchor_tx_hash = $1)",
+                    vec![
+                        stoolap::Value::blob(anchor_tx_hash.to_vec()),
+                        stoolap::Value::blob(event_id_bytes.to_vec()),
+                    ],
+                )
+                .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_set_anchor:update"))?;
+            let _ = updated;
+            Ok(())
+        }
     }
 }
 
@@ -1520,6 +1602,8 @@ mod stub {
             "query_attestations" => "stoolap_backend_unimplemented:query_attestations",
             "attestor_quorum_reached" => "stoolap_backend_unimplemented:attestor_quorum_reached",
             "gossip_catch_up" => "stoolap_backend_unimplemented:gossip_catch_up",
+            "anchor_pending" => "stoolap_backend_unimplemented:anchor_pending",
+            "set_event_anchor_tx_hash" => "stoolap_backend_unimplemented:set_event_anchor_tx_hash",
             _ => "stoolap_backend_unimplemented",
         }))
     }
@@ -1627,6 +1711,12 @@ mod stub {
         }
         async fn gossip_catch_up(&self, _: &GossipCatchUp) -> StoreResult<Vec<SignalEvent>> {
             stub("gossip_catch_up")
+        }
+        async fn anchor_pending(&self, _: u32) -> StoreResult<Vec<(EventId, [u8; 32])>> {
+            stub("anchor_pending")
+        }
+        async fn set_event_anchor_tx_hash(&self, _: EventId, _: [u8; 32]) -> StoreResult<()> {
+            stub("set_event_anchor_tx_hash")
         }
     }
 }

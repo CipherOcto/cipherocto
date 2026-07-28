@@ -282,6 +282,11 @@ pub struct SignalEvent {
     pub rotation_provenance: Option<RotationProvenance>,
     /// Optional. Audit metadata (signatures, references).
     pub audit_ref: Option<Vec<u8>>,
+    /// Optional. Anchor tx hash (32-byte BLAKE3) populated by
+    /// `ReputationStore::anchor_pending` once the event is committed to
+    /// the anchoring chain (RFC-0955-R1). `None` until the anchor job
+    /// runs and writes back via `set_event_anchor_tx_hash`.
+    pub anchor_tx_hash: Option<[u8; 32]>,
 }
 
 impl SignalEvent {
@@ -298,12 +303,13 @@ impl SignalEvent {
             recorded_at_unix: ts,
             rotation_provenance: None,
             audit_ref: None,
+            anchor_tx_hash: None,
         }
     }
 
     /// Canonical byte serialisation for digest computation.
     pub fn canonical_bytes(&self) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(8 + 52 + 32 + 1 + 1 + 24 + 8 + 1);
+        let mut buf = Vec::with_capacity(8 + 52 + 32 + 1 + 1 + 24 + 8 + 1 + 32);
         buf.extend_from_slice(self.event_id.as_bytes());
         buf.extend_from_slice(self.recorder_did.as_bytes());
         buf.extend_from_slice(self.controller_id.as_bytes());
@@ -318,6 +324,13 @@ impl SignalEvent {
                 buf.extend_from_slice(rp.new_did.as_bytes());
                 buf.extend_from_slice(&rp.consumed_at_unix.to_be_bytes());
                 buf.extend_from_slice(&rp.rotation_id.to_be_bytes());
+            }
+        }
+        match &self.anchor_tx_hash {
+            None => buf.push(0),
+            Some(h) => {
+                buf.push(1);
+                buf.extend_from_slice(h);
             }
         }
         buf

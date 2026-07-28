@@ -34,15 +34,16 @@ fn mk_event(seed: u64, did: octo_reputation::RecorderDid) -> SignalEvent {
     // Timestamps strictly monotonic from 1_000 onward.
     let ts = 1_000 + seed * 60;
     SignalEvent {
-        event_id: EventId::from_u64(seed), // reassigned by store
+        event_id: octo_reputation::EventId::from_u64(seed),
         recorder_did: did,
-        controller_id: ControllerId::from_array([0u8; 32]),
+        controller_id: octo_reputation::ControllerId::from_array([0u8; 32]),
         signal_kind: SignalKind::Outcome,
         layer: ReputationLayer::Market,
-        score_delta: Dfp::from_f64(score),
+        score_delta: score,
         recorded_at_unix: ts,
         rotation_provenance: None,
         audit_ref: None,
+        anchor_tx_hash: None,
     }
 }
 

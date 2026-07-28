@@ -810,6 +810,7 @@ mod tests {
             recorded_at_unix: 1_700_000_000,
             rotation_provenance: None,
             audit_ref: None,
+            anchor_tx_hash: None,
         }
     }
 
@@ -1052,6 +1053,7 @@ mod tests {
             recorded_at_unix: 1_700_000_000,
             rotation_provenance: None,
             audit_ref: None,
+            anchor_tx_hash: None,
         };
         let env = GossipEnvelope {
             event: slash_event,
@@ -1201,6 +1203,7 @@ mod tests {
             recorded_at_unix: 1_700_000_000,
             rotation_provenance: None,
             audit_ref: None,
+            anchor_tx_hash: None,
         };
         let mut env = GossipEnvelope {
             event,
@@ -1282,6 +1285,7 @@ mod tests {
             recorded_at_unix: 1_700_000_000,
             rotation_provenance: None,
             audit_ref: None,
+            anchor_tx_hash: None,
         };
         let env = GossipEnvelope {
             event,
@@ -1329,6 +1333,7 @@ mod tests {
             recorded_at_unix: 1_700_000_000,
             rotation_provenance: None,
             audit_ref: None,
+            anchor_tx_hash: None,
         };
         let mut env = GossipEnvelope {
             event,
@@ -1381,6 +1386,7 @@ mod tests {
                 recorded_at_unix: 1_700_000_000,
                 rotation_provenance: None,
                 audit_ref: None,
+                anchor_tx_hash: None,
             },
             recorder_signature: vec![1u8; 64],
             source_mission: "mon:test".into(),
@@ -1517,6 +1523,7 @@ mod tests {
             recorded_at_unix: 1_700_000_000,
             rotation_provenance: None,
             audit_ref: None,
+            anchor_tx_hash: None,
         };
 
         // Fire 3 times with the same event_id.

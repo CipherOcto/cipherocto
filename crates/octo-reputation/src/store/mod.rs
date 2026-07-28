@@ -178,6 +178,27 @@ pub trait ReputationStore: Send + Sync {
     /// stoolap impl records the catch-up in the `reputation_gossip_seen`
     /// ledger.
     async fn gossip_catch_up(&self, catch_up: &GossipCatchUp) -> StoreResult<Vec<SignalEvent>>;
+
+    /// Anchor-pending sweep (mission 0968a AC). Returns the up-to-`batch_size`
+    /// `(event_id, anchor_tx_hash)` pairs for events with
+    /// `anchor_tx_hash IS NULL`. The anchor job aggregates these into a
+    /// controller-level Merkle root, submits the on-chain transaction,
+    /// then calls `set_event_anchor_tx_hash(event_id, anchor_tx_hash)`
+    /// to mark each event. Returns the `(event_id, tx_hash)` pairs the
+    /// caller should treat as in-flight; the store still retains
+    /// `anchor_tx_hash IS NULL` until the chain-side ack arrives
+    /// (chain-level idempotency on `(event_id)` per RFC-0955-R1).
+    async fn anchor_pending(&self, batch_size: u32) -> StoreResult<Vec<(EventId, [u8; 32])>>;
+
+    /// Persist the chain-side `anchor_tx_hash` for a single event.
+    /// Used by the anchor job after on-chain inclusion. Idempotent on
+    /// `(event_id, anchor_tx_hash)` pairs: re-applying the same hash is
+    /// a no-op.
+    async fn set_event_anchor_tx_hash(
+        &self,
+        event_id: EventId,
+        anchor_tx_hash: [u8; 32],
+    ) -> StoreResult<()>;
 }
 
 /// Helper used by every backend — convert a `RotationProvenance` into a

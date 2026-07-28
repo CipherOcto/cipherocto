@@ -252,6 +252,15 @@ impl<S: ReputationStore, L: LegacyReputationStore> ReputationStore for Reputatio
             .set_event_anchor_tx_hash(event_id, anchor_tx_hash)
             .await
     }
+
+    async fn query_anchors_by_controller_id(
+        &self,
+        controller_id: crate::types::ControllerId,
+    ) -> StoreResult<Vec<crate::store::AnchorRecord>> {
+        self.inner
+            .query_anchors_by_controller_id(controller_id)
+            .await
+    }
 }
 
 /// Reasons a legacy shadow write can fail. The compat layer maps each to a

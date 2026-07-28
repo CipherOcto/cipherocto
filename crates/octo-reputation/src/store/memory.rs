@@ -531,6 +531,30 @@ impl ReputationStore for InMemoryReputationStore {
         }
         Ok(())
     }
+
+    async fn query_anchors_by_controller_id(
+        &self,
+        controller_id: crate::types::ControllerId,
+    ) -> StoreResult<Vec<crate::store::AnchorRecord>> {
+        let inner = self.inner.read().await;
+        // Linear scan over the events map: filter by controller_id,
+        // skip events without `anchor_tx_hash`, build AnchorRecord.
+        let mut out: Vec<crate::store::AnchorRecord> = inner
+            .events
+            .values()
+            .filter(|e| e.controller_id == controller_id)
+            .filter_map(|e| {
+                e.anchor_tx_hash.map(|h| crate::store::AnchorRecord {
+                    event_id: e.event_id,
+                    anchor_tx_hash: h,
+                    anchored_at_unix: e.recorded_at_unix,
+                })
+            })
+            .collect();
+        // anchored_at_unix ASC (oldest first).
+        out.sort_by_key(|r| r.anchored_at_unix);
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -797,5 +821,71 @@ mod tests {
         let mut ids: Vec<u64> = out.iter().map(|a| a.event_id.to_u64()).collect();
         ids.sort();
         assert_eq!(ids, vec![3, 4, 5]);
+    }
+
+    #[tokio::test]
+    async fn query_anchors_by_controller_id_filters_and_orders() {
+        use crate::store::AnchorRecord;
+        let store = InMemoryReputationStore::new();
+        let c1 = ControllerId::from_array([1u8; 32]);
+        let c2 = ControllerId::from_array([2u8; 32]);
+        let make = |cid: ControllerId, ts: u64| SignalEvent {
+            event_id: EventId::from_u64(0), // storage assigns
+            recorder_did: RecorderDid::from_array([0u8; 52]),
+            controller_id: cid,
+            signal_kind: SignalKind::Outcome,
+            layer: ReputationLayer::Market,
+            score_delta: Dfp::from_f64(0.5),
+            recorded_at_unix: ts,
+            rotation_provenance: None,
+            audit_ref: None,
+            anchor_tx_hash: None,
+        };
+        let e1 = store
+            .record_signal(make(c1, 1_000))
+            .await
+            .expect("record 1");
+        let e2 = store
+            .record_signal(make(c1, 2_000))
+            .await
+            .expect("record 2");
+        let _e3 = store
+            .record_signal(make(c1, 3_000))
+            .await
+            .expect("record 3 (unanchored)");
+        let e4 = store
+            .record_signal(make(c2, 4_000))
+            .await
+            .expect("record 4");
+        // Anchor e1, e2, e4 (e3 left unanchored).
+        for ev_id in [e1, e2, e4] {
+            store
+                .set_event_anchor_tx_hash(ev_id, [0xAA; 32])
+                .await
+                .expect("set anchor");
+        }
+        let c1_out = store
+            .query_anchors_by_controller_id(c1)
+            .await
+            .expect("query c1");
+        assert_eq!(c1_out.len(), 2, "e1+e2 anchored under c1, e3 unanchored");
+        // anchored_at_unix ASC ordering: e1 (ts=1000) before e2 (ts=2000).
+        assert_eq!(c1_out[0].event_id.to_u64(), e1.to_u64());
+        assert_eq!(c1_out[1].event_id.to_u64(), e2.to_u64());
+        assert_eq!(c1_out[0].anchor_tx_hash, [0xAA; 32]);
+        let c2_out = store
+            .query_anchors_by_controller_id(c2)
+            .await
+            .expect("query c2");
+        assert_eq!(c2_out.len(), 1);
+        assert_eq!(c2_out[0].event_id.to_u64(), e4.to_u64());
+        // Empty for an unknown controller.
+        let unknown = store
+            .query_anchors_by_controller_id(ControllerId::from_array([0xFF; 32]))
+            .await
+            .expect("query unknown");
+        assert!(unknown.is_empty());
+        // AnchorRecord is the new struct, not the legacy event.
+        let _: AnchorRecord = c1_out[0].clone();
     }
 }

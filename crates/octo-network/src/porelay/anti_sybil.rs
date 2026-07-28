@@ -137,6 +137,45 @@ pub fn compute_sybil_risk(source_diversity: u32, dest_diversity: u32, peer_diver
         .saturating_div(total as u64) as u16
 }
 
+/// Weighted-similarity classifier (RFC-0968-A1 amendment 46).
+///
+/// `weighted_similarity` is the L2-normalised cosine similarity over
+/// the per-`(subject, kind, layer)` aggregate weight vectors, in
+/// `[0.0, 1.0]`. Returns `true` iff the cluster is classified as
+/// Sybil-correlated (i.e. the weighted similarity is at or above
+/// `WEIGHTED_SIMILARITY_THRESHOLD = 0.60`).
+///
+/// Two gateways with highly-correlated `(subject, kind, layer)`
+/// behaviour (similarity ≥ 0.60) are presumed to share an operator;
+/// the primary classifier for cluster correlation per RFC-0968 §13
+/// error code 0x30 (CoalitionQuarantined).
+pub fn is_sybil_correlated(weighted_similarity: f64) -> bool {
+    weighted_similarity.is_finite() && weighted_similarity >= WEIGHTED_SIMILARITY_THRESHOLD
+}
+
+/// Combined Sybil verdict. Returns `true` iff EITHER:
+/// 1. The cluster fails any of the three diversity floors
+///    (`MIN_SOURCE_DIVERSITY` / `MIN_DEST_DIVERSITY` /
+///    `MIN_PEER_DIVERSITY`), OR
+/// 2. The weighted similarity over `(subject, kind, layer)`
+///    aggregate weight vectors meets the
+///    `WEIGHTED_SIMILARITY_THRESHOLD = 0.60` ceiling.
+///
+/// Per RFC-0968 amendment 46 the weighted-similarity check is the
+/// primary classifier; the diversity check is a conservative
+/// pre-filter for low-traffic clusters where similarity statistics
+/// are not yet meaningful.
+pub fn is_sybil_cluster(
+    source_diversity: u32,
+    dest_diversity: u32,
+    peer_diversity: u16,
+    weighted_similarity: f64,
+) -> bool {
+    let diversity_risk = compute_sybil_risk(source_diversity, dest_diversity, peer_diversity);
+    let similarity_risk = is_sybil_correlated(weighted_similarity);
+    diversity_risk > 0 || similarity_risk
+}
+
 /// Compute stake-proportional routing weight.
 /// Sybil attackers splitting stake across N gateways each get total/N,
 /// making the attack strictly worse than concentrating on one honest gateway.
@@ -186,6 +225,44 @@ mod tests {
         // Total stake 1000, split across 10 Sybil gateways
         // Each gets weight 100/1000 = 100
         assert_eq!(stake_routing_weight(100, 1000), 100);
+    }
+
+    #[test]
+    fn test_is_sybil_correlated_at_threshold() {
+        // At-threshold: weighted_similarity == 0.60 → classified Sybil.
+        assert!(is_sybil_correlated(WEIGHTED_SIMILARITY_THRESHOLD));
+        assert!(is_sybil_correlated(0.61));
+        assert!(is_sybil_correlated(0.95));
+    }
+
+    #[test]
+    fn test_is_sybil_correlated_below_threshold() {
+        assert!(!is_sybil_correlated(0.59));
+        assert!(!is_sybil_correlated(0.0));
+        assert!(!is_sybil_correlated(0.30));
+    }
+
+    #[test]
+    fn test_is_sybil_correlated_rejects_non_finite() {
+        // NaN, +Inf, -Inf must NOT be classified as Sybil-correlated
+        // (would mask missing data as a quarantine).
+        assert!(!is_sybil_correlated(f64::NAN));
+        assert!(!is_sybil_correlated(f64::INFINITY));
+        assert!(!is_sybil_correlated(f64::NEG_INFINITY));
+    }
+
+    #[test]
+    fn test_is_sybil_cluster_combined_verdict() {
+        // Diversity-only trigger (similarity below threshold).
+        assert!(is_sybil_cluster(0, 5, 10, 0.10));
+        // Similarity-only trigger (all diversity OK).
+        assert!(is_sybil_cluster(10, 10, 10, 0.80));
+        // Both fail.
+        assert!(is_sybil_cluster(0, 0, 0, 0.95));
+        // Neither fails.
+        assert!(!is_sybil_cluster(10, 10, 10, 0.30));
+        // Boundary: similarity exactly at threshold → Sybil.
+        assert!(is_sybil_cluster(10, 10, 10, WEIGHTED_SIMILARITY_THRESHOLD));
     }
 
     // -- Mission 0860a AC #4/5/6 closure tests --

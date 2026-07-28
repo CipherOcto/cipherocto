@@ -25,9 +25,10 @@ use crate::auth::{
 use crate::error::ReputationError;
 use crate::gossip::GossipCatchUp;
 use crate::types::{
-    EventId, ParityEvidence, RecorderDid, RecorderId, ReputationAggregate, ReputationLayer,
-    RetirementEligibility, RotationProvenance, SignalEvent, SignalKind,
+    ControllerId, EventId, ParityEvidence, RecorderDid, RecorderId, ReputationAggregate,
+    ReputationLayer, RetirementEligibility, RotationProvenance, SignalEvent, SignalKind,
 };
+use serde::{Deserialize, Serialize};
 
 /// Result alias used by every `ReputationStore` method. The store never panics
 /// on user input — every domain error maps to a `ReputationError` variant.
@@ -199,6 +200,38 @@ pub trait ReputationStore: Send + Sync {
         event_id: EventId,
         anchor_tx_hash: [u8; 32],
     ) -> StoreResult<()>;
+
+    /// Read-side anchor provenance: return `(event_id, anchor_tx_hash,
+    /// anchored_at_unix)` tuples for all events under the given
+    /// `controller_id`. Joins `reputation_anchors` to
+    /// `reputation_events` via the `(event_id)` key.
+    ///
+    /// Used by mission 0968a AC "reputation_anchors queryable by did
+    /// (joined via reputation_events)". The store-side filter on
+    /// `controller_id` matches the
+    /// `idx_reputation_anchors_controller` index defined in
+    /// `migrations/v010__reputation_anchors.sql`.
+    ///
+    /// Returns an empty `Vec` when the controller has no anchored
+    /// events. Ordering is `anchored_at_unix ASC` (oldest first).
+    async fn query_anchors_by_controller_id(
+        &self,
+        controller_id: ControllerId,
+    ) -> StoreResult<Vec<AnchorRecord>>;
+}
+
+/// One row of `reputation_anchors` joined to its underlying event
+/// metadata (mission 0968a AC). Stores `EventId` only — attestation
+/// ids are NEVER stored here (per AC "reputation_anchors stores only
+/// EventId values (not AttestationId)").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnchorRecord {
+    /// EventId (canonical typed BLAKE3 anchor).
+    pub event_id: EventId,
+    /// On-chain anchor transaction hash.
+    pub anchor_tx_hash: [u8; 32],
+    /// Wall-clock unix seconds when the anchor was observed.
+    pub anchored_at_unix: u64,
 }
 
 /// Helper used by every backend — convert a `RotationProvenance` into a

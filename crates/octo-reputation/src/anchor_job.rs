@@ -103,6 +103,26 @@ pub struct AnchorJobOutcome {
     pub fee_paid: u128,
 }
 
+/// Top-level outcome of `run_once` — batches submitted when the
+/// per-controller / per-day fanout cap (`MAX_ANCHORED_TUPLES_PER_CONTROLLER_PER_DAY
+/// = 100`) would be exceeded. Mirrors
+/// `ReputationError::AnchorTupleFanoutExceeded(u64) = 0x2A` so the
+/// canonical error variant carries the count.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnchorTupleFanout {
+    /// `existing_anchored_today + proposed_count`.
+    pub count: u64,
+    /// `MAX_ANCHORED_TUPLES_PER_CONTROLLER_PER_DAY`.
+    pub max: u64,
+}
+
+impl AnchorTupleFanout {
+    /// Convert to the canonical `ReputationError` variant.
+    pub fn to_reputation_error(&self) -> crate::error::ReputationError {
+        crate::error::ReputationError::AnchorTupleFanoutExceeded(self.count)
+    }
+}
+
 /// Trait the runtime implements to bridge to the on-chain settlement
 /// layer. The `submit` call returns the on-chain anchor tx hash.
 pub trait ChainAnchorSubmitter: Send + Sync {
@@ -277,6 +297,56 @@ pub async fn run_once<S: ChainAnchorSubmitter>(
     Ok(outcome)
 }
 
+/// Pre-flight check for the per-controller daily fanout cap.
+///
+/// Returns `Some(AnchorTupleFanout)` when
+/// `existing_anchored_today + aggregates.len() >
+/// MAX_ANCHORED_TUPLES_PER_CONTROLLER_PER_DAY`. Callers convert to
+/// `ReputationError::AnchorTupleFanoutExceeded(u64)` via
+/// `to_reputation_error()` for the canonical error variant.
+pub fn check_daily_fanout(
+    existing_anchored_today: u64,
+    proposed_count: usize,
+) -> Option<AnchorTupleFanout> {
+    use crate::constants::MAX_ANCHORED_TUPLES_PER_CONTROLLER_PER_DAY;
+    let total = existing_anchored_today.saturating_add(proposed_count as u64);
+    if total > MAX_ANCHORED_TUPLES_PER_CONTROLLER_PER_DAY {
+        Some(AnchorTupleFanout {
+            count: total,
+            max: MAX_ANCHORED_TUPLES_PER_CONTROLLER_PER_DAY,
+        })
+    } else {
+        None
+    }
+}
+
+/// Run-once with the canonical `AnchorTupleFanoutExceeded` error
+/// variant. Wraps `run_once` with a pre-flight fanout check that
+/// surfaces `ReputationError::AnchorTupleFanoutExceeded(u64) = 0x2A`
+/// instead of `AnchorJobError::CapExceeded`.
+pub async fn run_once_strict<S: ChainAnchorSubmitter>(
+    submitter: Arc<S>,
+    aggregates: &[ReputationAggregate],
+    controller_id: [u8; 32],
+    config: AnchorJobConfig,
+    existing_anchored_today: u64,
+    existing_window_anchor: Option<AnchorWindow>,
+) -> Result<AnchorJobOutcome, crate::error::ReputationError> {
+    if let Some(fanout) = check_daily_fanout(existing_anchored_today, aggregates.len()) {
+        return Err(fanout.to_reputation_error());
+    }
+    run_once(
+        submitter,
+        aggregates,
+        controller_id,
+        config,
+        existing_anchored_today,
+        existing_window_anchor,
+    )
+    .await
+    .map_err(|_| crate::error::ReputationError::AnchorTupleFanoutExceeded(existing_anchored_today))
+}
+
 /// Convenience: compute the per-batch fee for a single batch.
 pub fn fee_for_batch(batch: &ReputationAnchorBatch) -> u128 {
     batch.fee()
@@ -439,5 +509,53 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(outcome, AnchorJobOutcome::default());
+    }
+
+    #[test]
+    fn check_daily_fanout_returns_some_at_cap() {
+        let f = check_daily_fanout(50, 51).unwrap();
+        assert_eq!(f.count, 101);
+        assert_eq!(
+            f.max,
+            crate::constants::MAX_ANCHORED_TUPLES_PER_CONTROLLER_PER_DAY
+        );
+        // 0x2A = 42 discriminant
+        let err = f.to_reputation_error();
+        assert_eq!(err.discriminant(), 0x2A);
+        assert_eq!(
+            err,
+            crate::error::ReputationError::AnchorTupleFanoutExceeded(101)
+        );
+    }
+
+    #[test]
+    fn check_daily_fanout_returns_none_below_cap() {
+        assert!(check_daily_fanout(50, 50).is_none());
+        assert!(check_daily_fanout(0, 100).is_none());
+        assert!(check_daily_fanout(0, 0).is_none());
+    }
+
+    #[tokio::test]
+    async fn run_once_strict_emits_anchor_tuple_fanout_exceeded() {
+        // Pre-flight emits ReputationError::AnchorTupleFanoutExceeded
+        // (0x2A) when existing + proposed > MAX_ANCHORED_TUPLES_PER_CONTROLLER_PER_DAY.
+        let aggs: Vec<_> = (0..5u8).map(|i| agg(0.5, 100, i)).collect();
+        let cfg = AnchorJobConfig { now_unix: 1_000 };
+        // 96 existing + 5 proposed = 101 > 100.
+        let err = run_once_strict(
+            Arc::new(StubChainAnchorSubmitter),
+            &aggs,
+            [1u8; 32],
+            cfg,
+            96,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            err,
+            crate::error::ReputationError::AnchorTupleFanoutExceeded(101)
+        );
+        assert_eq!(err.discriminant(), 0x2A);
     }
 }

@@ -1536,6 +1536,56 @@ mod real {
             let _ = updated;
             Ok(())
         }
+
+        async fn query_anchors_by_controller_id(
+            &self,
+            controller_id: ControllerId,
+        ) -> StoreResult<Vec<AnchorRecord>> {
+            // Read-side join from `reputation_events` filtered by
+            // `controller_id` + non-null `anchor_tx_hash`. Schema
+            // migration v010__reputation_anchors.sql declares
+            // `idx_reputation_anchors_controller` for this lookup;
+            // the join here uses the underlying events table since
+            // `anchor_tx_hash` lives on `reputation_events`.
+            let mut rows = self
+                .db
+                .query(
+                    "SELECT event_id, anchor_tx_hash, recorded_at_unix
+                     FROM reputation_events
+                     WHERE controller_id = $1
+                       AND anchor_tx_hash IS NOT NULL
+                     ORDER BY recorded_at_unix ASC",
+                    vec![stoolap::Value::blob(controller_id.as_bytes().to_vec())],
+                )
+                .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_query_anchors:select"))?;
+            let mut out: Vec<AnchorRecord> = Vec::new();
+            while let Some(row) = rows.next() {
+                let row = row
+                    .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_query_anchors:row"))?;
+                let event_id_blob: Vec<u8> = row
+                    .get(0)
+                    .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_query_anchors:col0"))?;
+                let anchor_blob: Vec<u8> = row
+                    .get(1)
+                    .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_query_anchors:col1"))?;
+                let anchored_at: i64 = row
+                    .get(2)
+                    .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_query_anchors:col2"))?;
+                if event_id_blob.len() != 8 || anchor_blob.len() != 32 {
+                    continue;
+                }
+                let mut id_arr = [0u8; 8];
+                id_arr.copy_from_slice(&event_id_blob);
+                let mut anchor_arr = [0u8; 32];
+                anchor_arr.copy_from_slice(&anchor_blob);
+                out.push(AnchorRecord {
+                    event_id: EventId::from_u64(u64::from_le_bytes(id_arr)),
+                    anchor_tx_hash: anchor_arr,
+                    anchored_at_unix: anchored_at.max(0) as u64,
+                });
+            }
+            Ok(out)
+        }
     }
 }
 
@@ -1568,6 +1618,7 @@ pub use real::StoolapReputationStore;
 #[cfg(not(feature = "stoolap"))]
 mod stub {
     use super::*;
+    use crate::store::AnchorRecord;
     use crate::GossipCatchUp;
 
     pub struct StoolapReputationStore;
@@ -1604,6 +1655,9 @@ mod stub {
             "gossip_catch_up" => "stoolap_backend_unimplemented:gossip_catch_up",
             "anchor_pending" => "stoolap_backend_unimplemented:anchor_pending",
             "set_event_anchor_tx_hash" => "stoolap_backend_unimplemented:set_event_anchor_tx_hash",
+            "query_anchors_by_controller_id" => {
+                "stoolap_backend_unimplemented:query_anchors_by_controller_id"
+            }
             _ => "stoolap_backend_unimplemented",
         }))
     }
@@ -1717,6 +1771,12 @@ mod stub {
         }
         async fn set_event_anchor_tx_hash(&self, _: EventId, _: [u8; 32]) -> StoreResult<()> {
             stub("set_event_anchor_tx_hash")
+        }
+        async fn query_anchors_by_controller_id(
+            &self,
+            _: ControllerId,
+        ) -> StoreResult<Vec<AnchorRecord>> {
+            stub("query_anchors_by_controller_id")
         }
     }
 }

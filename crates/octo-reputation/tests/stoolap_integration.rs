@@ -2015,19 +2015,22 @@ async fn stoolap_concurrent_record_attestation_with_pre_populated_max() {
     let success_count = results.iter().filter(|r| r.is_ok()).count();
     let err_count = results.iter().filter(|r| r.is_err()).count();
     assert_eq!(success_count + err_count, 4, "every call must complete");
-    // The race is non-deterministic — the actual collision window
-    // depends on whether the 4 spawned tasks read MAX before any
-    // INSERT commits. Accept 1..=4 successes: ≥1 (at least one
-    // wins), ≤4 (at most all four if their MAX reads happened
-    // sequentially). ≥1 + ≤4 ↔ err_count ∈ [0, 3].
+    // R18 review (MEDIUM): tighten to require at least one
+    // collision so a regression that makes SELECT MAX/INSERT
+    // purely sequential (no race window) cannot pass.
+    assert!(
+        success_count < 4,
+        "pre-pop MAX race must trigger at least one collision; \
+         got {success_count}/4 successes (would mask a race regression)"
+    );
+    // R18 review (MEDIUM): the lower bound is NOT loosened — the
+    // race cannot legitimately yield 0 successes because the first
+    // INSERT to commit always wins on attestation_id PK
+    // uniqueness. A 0-successes outcome would indicate a
+    // catastrophic pre-INSERT failure (e.g., wrong error mapping).
     assert!(
         success_count >= 1,
         "at least one concurrent call must succeed; got {}",
-        success_count
-    );
-    assert!(
-        success_count <= 4,
-        "at most 4 concurrent calls can succeed; got {}",
         success_count
     );
     // Row count must equal pre-pop + successes.

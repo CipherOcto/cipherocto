@@ -962,6 +962,99 @@ async fn cross_backend_slash_ewma_canonical_bytes_match() {
     );
 }
 
+/// R18 review (HIGH): N=1 Slash EWMA boundary. At N=1 the EWMA
+/// equals the single seed score (alpha=1, no smoothing). A regression
+/// that returns NaN/0 at n=1 would pass the 5-event parity test
+/// (both backends wrong identically) but fail this boundary test.
+#[tokio::test]
+async fn cross_backend_slash_ewma_n1_equals_score() {
+    use octo_reputation::RecorderDid;
+
+    let did = RecorderDid::from_array([0xE7; 52]);
+    let cid = ControllerId::from_array([0u8; 32]);
+    let score = 0.42;
+    let mk = |ts: u64| SignalEvent {
+        event_id: EventId::from_u64(0),
+        recorder_did: did,
+        controller_id: cid,
+        signal_kind: SignalKind::Slash,
+        layer: octo_reputation::ReputationLayer::Market,
+        score_delta: octo_determin::Dfp::from_f64(score),
+        recorded_at_unix: ts,
+        rotation_provenance: None,
+        audit_ref: None,
+        anchor_tx_hash: None,
+    };
+    let mem = InMemoryReputationStore::new();
+    let stoolap = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    mem.record_signal(mk(1_000)).await.expect("mem");
+    stoolap.record_signal(mk(1_000)).await.expect("stoolap");
+    let mem_agg = mem
+        .read_aggregate(&did, SignalKind::Slash, octo_reputation::ReputationLayer::Market)
+        .await
+        .expect("mem.read");
+    let stoolap_agg = stoolap
+        .read_aggregate(&did, SignalKind::Slash, octo_reputation::ReputationLayer::Market)
+        .await
+        .expect("stoolap.read");
+    assert_eq!(mem_agg.samples, 1);
+    assert_eq!(stoolap_agg.samples, 1);
+    assert_eq!(
+        octo_reputation::types::dfp_to_blob(&mem_agg.score_ewma),
+        octo_reputation::types::dfp_to_blob(&stoolap_agg.score_ewma),
+        "N=1 Slash EWMA must match across backends"
+    );
+    // N=1 EWMA must equal the seed score (alpha=1, no smoothing).
+    let expected = octo_reputation::types::dfp_to_blob(&octo_determin::Dfp::from_f64(score));
+    assert_eq!(
+        octo_reputation::types::dfp_to_blob(&mem_agg.score_ewma),
+        expected,
+        "N=1 EWMA must equal the single seed score"
+    );
+}
+
+/// R18 review (HIGH): cross-layer absence for Slash (the existing
+/// cross-layer test uses Outcome; the (Slash, Governance) corner
+/// is uncovered).
+#[tokio::test]
+async fn cross_backend_severity_total_not_found_for_cross_layer_absence_slash() {
+    use octo_reputation::RecorderDid;
+
+    let did = RecorderDid::from_array([0xE8; 52]);
+    let cid = ControllerId::from_array([0u8; 32]);
+    let mk = |ts: u64| SignalEvent {
+        event_id: EventId::from_u64(0),
+        recorder_did: did,
+        controller_id: cid,
+        signal_kind: SignalKind::Slash,
+        layer: octo_reputation::ReputationLayer::Market,
+        score_delta: octo_determin::Dfp::from_f64(0.5),
+        recorded_at_unix: ts,
+        rotation_provenance: None,
+        audit_ref: None,
+        anchor_tx_hash: None,
+    };
+    let mem = InMemoryReputationStore::new();
+    let stoolap = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    mem.record_signal(mk(1_000)).await.expect("mem");
+    stoolap.record_signal(mk(1_000)).await.expect("stoolap");
+    let mem_out = mem
+        .read_aggregate(&did, SignalKind::Slash, octo_reputation::ReputationLayer::Governance)
+        .await;
+    let stoolap_out = stoolap
+        .read_aggregate(&did, SignalKind::Slash, octo_reputation::ReputationLayer::Governance)
+        .await;
+    assert!(mem_out.is_err());
+    assert!(stoolap_out.is_err());
+    let mem_disc = std::mem::discriminant(&mem_out.unwrap_err());
+    let stoolap_disc = std::mem::discriminant(&stoolap_out.unwrap_err());
+    assert_eq!(mem_disc, stoolap_disc, "Slash cross-layer NotFound discriminant must match");
+}
+
 /// R17 review (MEDIUM): mixed-kind recorder, cross-kind absence.
 /// Insert Slash + Outcome events; read a third absent kind
 /// (Attendance); both backends return AggregateNotFound.

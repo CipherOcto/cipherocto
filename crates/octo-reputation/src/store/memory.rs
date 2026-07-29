@@ -1034,60 +1034,48 @@ mod tests {
         let shared_id = EventId::from_u64(99);
         // r_a already has e_a=1. Insert another event for r_a with
         // event_id=99, and one for r_b with event_id=99.
-        store
-            .inner
-            .write()
-            .await
-            .events
-            .insert(
-                crate::store::memory::EventKey {
-                    did_hash: did_hash(&r_a),
-                    event_id: shared_id,
-                },
-                SignalEvent {
-                    event_id: shared_id,
-                    recorder_did: r_a,
-                    controller_id: cid,
-                    signal_kind: SignalKind::Outcome,
-                    layer: ReputationLayer::Market,
-                    score_delta: octo_determin::Dfp::from_f64(0.5),
-                    recorded_at_unix: 2_000,
-                    rotation_provenance: None,
-                    audit_ref: None,
-                    anchor_tx_hash: None,
-                },
-            );
-        store
-            .inner
-            .write()
-            .await
-            .events
-            .insert(
-                crate::store::memory::EventKey {
-                    did_hash: did_hash(&r_b),
-                    event_id: shared_id,
-                },
-                SignalEvent {
-                    event_id: shared_id,
-                    recorder_did: r_b,
-                    controller_id: cid,
-                    signal_kind: SignalKind::Outcome,
-                    layer: ReputationLayer::Market,
-                    score_delta: octo_determin::Dfp::from_f64(0.5),
-                    recorded_at_unix: 3_000,
-                    rotation_provenance: None,
-                    audit_ref: None,
-                    anchor_tx_hash: None,
-                },
-            );
+        store.inner.write().await.events.insert(
+            crate::store::memory::EventKey {
+                did_hash: did_hash(&r_a),
+                event_id: shared_id,
+            },
+            SignalEvent {
+                event_id: shared_id,
+                recorder_did: r_a,
+                controller_id: cid,
+                signal_kind: SignalKind::Outcome,
+                layer: ReputationLayer::Market,
+                score_delta: octo_determin::Dfp::from_f64(0.5),
+                recorded_at_unix: 2_000,
+                rotation_provenance: None,
+                audit_ref: None,
+                anchor_tx_hash: None,
+            },
+        );
+        store.inner.write().await.events.insert(
+            crate::store::memory::EventKey {
+                did_hash: did_hash(&r_b),
+                event_id: shared_id,
+            },
+            SignalEvent {
+                event_id: shared_id,
+                recorder_did: r_b,
+                controller_id: cid,
+                signal_kind: SignalKind::Outcome,
+                layer: ReputationLayer::Market,
+                score_delta: octo_determin::Dfp::from_f64(0.5),
+                recorded_at_unix: 3_000,
+                rotation_provenance: None,
+                audit_ref: None,
+                anchor_tx_hash: None,
+            },
+        );
         let err = store
             .set_event_anchor_tx_hash(shared_id, [0xAA; 32])
             .await
             .unwrap_err();
         match err {
-            ReputationError::ChainRefInvalid(
-                "set_event_anchor_tx_hash:ambiguous_event_id",
-            ) => {}
+            ReputationError::ChainRefInvalid("set_event_anchor_tx_hash:ambiguous_event_id") => {}
             other => panic!("expected ambiguous_event_id, got {other:?}"),
         }
         // Sanity: the original e_a anchor (unrelated) still works.
@@ -1095,6 +1083,67 @@ mod tests {
             .set_event_anchor_tx_hash(e_a, [0xBB; 32])
             .await
             .expect("unique match anchors");
+    }
+
+    /// R10 review (MEDIUM): 3-way collision (r_a, r_b, r_c) sharing
+    /// the same event_id. The `>= 2` branch in the production
+    /// match arm must still trigger; this test pins the threshold
+    /// at exactly 2 (not 3+) by extending with a third EventKey.
+    #[tokio::test]
+    async fn set_event_anchor_tx_hash_three_way_collision_errors() {
+        let store = InMemoryReputationStore::new();
+        let r_a = RecorderDid::from_array([0xB1; 52]);
+        let r_b = RecorderDid::from_array([0xB2; 52]);
+        let r_c = RecorderDid::from_array([0xB3; 52]);
+        let cid = ControllerId::from_array([0u8; 32]);
+        let shared_id = EventId::from_u64(7);
+        let seed = |did: RecorderDid, ts: u64| {
+            (
+                EventKey {
+                    did_hash: did_hash(&did),
+                    event_id: shared_id,
+                },
+                SignalEvent {
+                    event_id: shared_id,
+                    recorder_did: did,
+                    controller_id: cid,
+                    signal_kind: SignalKind::Outcome,
+                    layer: ReputationLayer::Market,
+                    score_delta: octo_determin::Dfp::from_f64(0.5),
+                    recorded_at_unix: ts,
+                    rotation_provenance: None,
+                    audit_ref: None,
+                    anchor_tx_hash: None,
+                },
+            )
+        };
+        let mut inner = store.inner.write().await;
+        for did in [r_a, r_b, r_c] {
+            let (k, v) = seed(did, 1_000);
+            inner.events.insert(k, v);
+        }
+        drop(inner);
+        let err = store
+            .set_event_anchor_tx_hash(shared_id, [0xCC; 32])
+            .await
+            .unwrap_err();
+        match err {
+            ReputationError::ChainRefInvalid("set_event_anchor_tx_hash:ambiguous_event_id") => {}
+            other => panic!("expected ambiguous_event_id, got {other:?}"),
+        }
+        // No row anchored.
+        let inner = store.inner.read().await;
+        let anchored: Vec<_> = inner
+            .events
+            .values()
+            .filter(|e| e.event_id == shared_id && e.anchor_tx_hash.is_some())
+            .collect();
+        assert_eq!(
+            anchored.len(),
+            0,
+            "3-way collision must leave no rows anchored; got {}",
+            anchored.len()
+        );
     }
 
     /// Round 4 review #2: query_anchors_by_controller_id ordering

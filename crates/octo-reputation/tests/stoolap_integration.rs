@@ -860,27 +860,22 @@ async fn stoolap_next_event_id_rejects_malformed_blob() {
     );
 }
 
-/// R8 review: `set_event_anchor_tx_hash` with R7-F2 fix MUST update
-/// ONLY the targeted (recorder_did, event_id) row when multiple
-/// recorders share the same event_id. We seed two events directly
-/// via raw SQL (bypassing `record_signal` so they collide on
-/// event_id=1 under distinct recorder_dids) and anchor one. The
-/// composite-PK scope guard in the UPDATE must limit the write to
-/// the targeted row.
+/// R10 review (HIGH): stoolap MUST refuse the write when event_id
+/// is shared by 2+ recorders. The API signature lacks recorder_did
+/// so we cannot pick deterministically; mirror memory's R9
+/// ambiguous_event_id rejection. Replaces the old test that
+/// silently anchored one of two rows (which masked the API's
+/// inability to disambiguate).
 #[tokio::test]
-async fn stoolap_set_anchor_scopes_by_composite_pk_cross_recorder() {
+async fn stoolap_set_anchor_rejects_cross_recorder_ambiguous() {
     let store = StoolapReputationStore::open_in_memory()
         .await
         .expect("open");
-    let cid = ControllerId::from_array([0u8; 32]);
     let r_a = octo_reputation::RecorderDid::from_array([0xC1; 52]);
     let r_b = octo_reputation::RecorderDid::from_array([0xC2; 52]);
     let eid_1: Vec<u8> = 1u64.to_be_bytes().to_vec();
-    let kind_i = SignalKind::Outcome as i32;
-    let layer_i = ReputationLayer::Market as i32;
     let score_blob = vec![0u8; 24];
-    // Insert two events under different recorders but the SAME
-    // event_id=1 (this is the scenario R7-F2 protects against).
+    // Seed two events sharing event_id=1 under distinct recorders.
     for did_bytes in [r_a.as_bytes().to_vec(), r_b.as_bytes().to_vec()] {
         store
             .database()
@@ -888,41 +883,110 @@ async fn stoolap_set_anchor_scopes_by_composite_pk_cross_recorder() {
                 "INSERT INTO reputation_events
                  (recorder_did, event_id, controller_id, signal_kind, layer,
                   score_delta, recorded_at_unix, rotation_provenance)
-                 VALUES ($1, $2, $3, $4, $5, $6, 1000, NULL)",
+                 VALUES ($1, $2, $3, 1, 1, $4, 1000, NULL)",
                 vec![
                     stoolap::Value::blob(did_bytes),
                     stoolap::Value::blob(eid_1.clone()),
-                    stoolap::Value::blob(cid.as_bytes().to_vec()),
-                    stoolap::Value::integer(kind_i as i64),
-                    stoolap::Value::integer(layer_i as i64),
+                    stoolap::Value::blob([0u8; 32].to_vec()),
                     stoolap::Value::blob(score_blob.clone()),
                 ],
             )
             .expect("insert event");
     }
-    // Anchor r_a's event via the public API.
-    let hash_a = [0xAA; 32];
-    store
-        .set_event_anchor_tx_hash(EventId::from_u64(1), hash_a)
+    // Anchor event_id=1 — MUST reject ambiguous.
+    let err = store
+        .set_event_anchor_tx_hash(EventId::from_u64(1), [0xAA; 32])
         .await
-        .expect("anchor");
-    // Verify: only one row updated. We SELECT both events and count
-    // anchor_tx_hash == hash_a.
+        .unwrap_err();
+    let msg = format!("{:?}", err);
+    assert!(
+        msg.contains("ambiguous_event_id"),
+        "cross-recorder shared event_id MUST surface :ambiguous_event_id; got {}",
+        msg
+    );
+    // Both rows must remain NULL anchored.
+    let mut rows = store
+        .database()
+        .query(
+            "SELECT COUNT(*) FROM reputation_events
+             WHERE event_id = $1 AND anchor_tx_hash IS NOT NULL",
+            vec![stoolap::Value::blob(eid_1)],
+        )
+        .expect("count");
+    let n: i64 = rows.next().expect("row").expect("ok").get(0).expect("col");
+    assert_eq!(n, 0, "no row must be anchored; got {} anchored", n);
+}
+
+/// R10 review (HIGH): full error-path coverage for stoolap anchor
+/// API under a single-recorder (unambiguous) scenario. Post-R10
+/// the API refuses ambiguous event_ids (mirrors memory's R9 fix);
+/// this test exercises first-anchor + idempotent + already-set +
+/// not-found on event_ids owned by ONE recorder (no ambiguity).
+#[tokio::test]
+async fn stoolap_set_anchor_full_error_paths_single_recorder() {
+    let store = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let did = octo_reputation::RecorderDid::from_array([0xD3; 52]);
+    let e1 = store
+        .record_signal(ev(1, did, 0.5, 1_000))
+        .await
+        .expect("record 1");
+    let e2 = store
+        .record_signal(ev(2, did, 0.4, 2_000))
+        .await
+        .expect("record 2");
+    // First anchor on e1: Ok.
+    let hash = [0xAA; 32];
+    store
+        .set_event_anchor_tx_hash(e1, hash)
+        .await
+        .expect("first anchor");
+    // Idempotent re-anchor on e1 with same hash: Ok.
+    store
+        .set_event_anchor_tx_hash(e1, hash)
+        .await
+        .expect("idempotent re-anchor");
+    // Already-set: different hash on e1 → anchor_already_set.
+    let err = store
+        .set_event_anchor_tx_hash(e1, [0xBB; 32])
+        .await
+        .unwrap_err();
+    let msg = format!("{:?}", err);
+    assert!(
+        msg.contains("anchor_already_set"),
+        "different-hash re-anchor must surface :anchor_already_set, got {}",
+        msg
+    );
+    // Anchor e2 (still NULL): Ok, distinct from e1.
+    store
+        .set_event_anchor_tx_hash(e2, [0xCC; 32])
+        .await
+        .expect("anchor e2");
+    // Not-found event_id: event_not_found.
+    let err = store
+        .set_event_anchor_tx_hash(EventId::from_u64(999), [0xDD; 32])
+        .await
+        .unwrap_err();
+    let msg = format!("{:?}", err);
+    assert!(
+        msg.contains("event_not_found"),
+        "missing event_id must surface :event_not_found, got {}",
+        msg
+    );
+    // Final state: e1 has [0xAA], e2 has [0xCC]. Both rows anchored.
     let rows = store
         .database()
         .query(
-            "SELECT recorder_did, anchor_tx_hash FROM reputation_events
-             WHERE event_id = $1
-             ORDER BY recorder_did ASC",
-            vec![stoolap::Value::blob(eid_1.clone())],
+            "SELECT event_id, anchor_tx_hash FROM reputation_events
+             ORDER BY event_id ASC",
+            (),
         )
-        .expect("select");
-    let mut anchored_count = 0;
-    let mut total = 0;
+        .expect("final select");
+    let mut anchored: Vec<(u64, Vec<u8>)> = Vec::new();
     for r in rows {
         let r = r.expect("row");
-        total += 1;
-        let did: Vec<u8> = r
+        let eid_bytes: Vec<u8> = r
             .get(0)
             .ok()
             .and_then(|v| {
@@ -940,138 +1004,119 @@ async fn stoolap_set_anchor_scopes_by_composite_pk_cross_recorder() {
                 None
             }
         });
-        if anc.as_deref() == Some(&hash_a[..]) {
-            assert_eq!(did, r_a.as_bytes().to_vec(), "anchored row must be r_a");
-            anchored_count += 1;
+        if let (Some(anc), 8) = (anc, eid_bytes.len()) {
+            let mut arr = [0u8; 8];
+            arr.copy_from_slice(&eid_bytes);
+            anchored.push((u64::from_be_bytes(arr), anc));
         }
     }
-    assert_eq!(total, 2, "two seeded events expected, got {}", total);
     assert_eq!(
-        anchored_count, 1,
-        "composite-PK scope regression would anchor both rows; got {}",
-        anchored_count
+        anchored.len(),
+        2,
+        "expected 2 anchored rows, got {}",
+        anchored.len()
+    );
+    let mut sorted = anchored.clone();
+    sorted.sort_by_key(|(eid, _)| *eid);
+    assert_eq!(sorted[0].1, hash.to_vec(), "e1 must have [0xAA;32] hash");
+    assert_eq!(
+        sorted[1].1,
+        [0xCC; 32].to_vec(),
+        "e2 must have [0xCC;32] hash"
     );
 }
 
-/// R9 review (MEDIUM): cross-recorder full error-path coverage.
-/// Seeds two events sharing event_id=1 under distinct recorder_dids
-/// via raw SQL (post-R5-F4 record_signal assigns distinct global
-/// ids, so raw SQL is the only way to force event_id=1 collision).
-/// Exercises first-anchor + idempotent + already-set + not-found
-/// paths; verifies composite-PK scope holds across each path.
+/// R10 review (HIGH): next_event_id u64::MAX saturation guard
+/// (added in commit 450c884f) had no test. Seed an aggregate with
+/// last_event_id = u64::MAX and assert the next record_signal
+/// surfaces :overflow.
 #[tokio::test]
-async fn stoolap_set_anchor_cross_recorder_full_error_paths() {
+async fn stoolap_next_event_id_rejects_u64_max_saturation() {
     let store = StoolapReputationStore::open_in_memory()
         .await
         .expect("open");
-    let r_a = octo_reputation::RecorderDid::from_array([0xD1; 52]);
-    let r_b = octo_reputation::RecorderDid::from_array([0xD2; 52]);
-    let eid_bytes: Vec<u8> = 1u64.to_be_bytes().to_vec();
+    let did_bytes = vec![0xE1u8; 52];
     let score_blob = vec![0u8; 24];
-    let kind_i = SignalKind::Outcome as i32;
-    let layer_i = ReputationLayer::Market as i32;
-    // Seed two events under distinct recorder_dids, same event_id=1.
-    for did_bytes in [r_a.as_bytes().to_vec(), r_b.as_bytes().to_vec()] {
-        store
-            .database()
-            .execute(
-                "INSERT INTO reputation_events
-                 (recorder_did, event_id, controller_id, signal_kind, layer,
-                  score_delta, recorded_at_unix, rotation_provenance)
-                 VALUES ($1, $2, $3, $4, $5, $6, 1000, NULL)",
-                vec![
-                    stoolap::Value::blob(did_bytes),
-                    stoolap::Value::blob(eid_bytes.clone()),
-                    stoolap::Value::blob([0u8; 32].to_vec()),
-                    stoolap::Value::integer(kind_i as i64),
-                    stoolap::Value::integer(layer_i as i64),
-                    stoolap::Value::blob(score_blob.clone()),
-                ],
-            )
-            .expect("insert event");
-    }
-    // First anchor on eid=1: succeeds (probe picks one recorder, the
-    // scoped UPDATE mutates exactly one row).
-    let hash = [0xAA; 32];
-    store
-        .set_event_anchor_tx_hash(EventId::from_u64(1), hash)
-        .await
-        .expect("first anchor");
-    // Idempotent re-anchor: Ok.
-    store
-        .set_event_anchor_tx_hash(EventId::from_u64(1), hash)
-        .await
-        .expect("idempotent re-anchor");
-    // Already-set different hash: ChainRefInvalid(anchor_already_set).
-    let err = store
-        .set_event_anchor_tx_hash(EventId::from_u64(1), [0xBB; 32])
-        .await
-        .unwrap_err();
-    let msg = format!("{:?}", err);
-    assert!(
-        msg.contains("anchor_already_set"),
-        "different-hash re-anchor must surface :anchor_already_set, got {}",
-        msg
-    );
-    // Not-found event_id: ChainRefInvalid(event_not_found).
-    let err = store
-        .set_event_anchor_tx_hash(EventId::from_u64(999), [0xCC; 32])
-        .await
-        .unwrap_err();
-    let msg = format!("{:?}", err);
-    assert!(
-        msg.contains("event_not_found"),
-        "missing event_id must surface :event_not_found, got {}",
-        msg
-    );
-    // Composite-PK scope check: clear the first anchor's row, then
-    // re-anchor — probe now picks the OTHER recorder. Verify
-    // exactly one row ends up anchored (scoped UPDATE is the gate).
+    let max_bytes: Vec<u8> = u64::MAX.to_be_bytes().to_vec();
     store
         .database()
         .execute(
-            "UPDATE reputation_events SET anchor_tx_hash = NULL
-             WHERE recorder_did = $1 AND event_id = $2",
+            "INSERT INTO reputation_aggregates (
+                recorder_did, signal_kind, layer, score_ewma, samples,
+                severity_total, last_event_id, last_event_unix, updated_at_unix
+             ) VALUES ($1, 1, 1, $2, 0, 0, $3, 0, 0)",
             vec![
-                stoolap::Value::blob(r_a.as_bytes().to_vec()),
-                stoolap::Value::blob(eid_bytes.clone()),
+                stoolap::Value::blob(did_bytes),
+                stoolap::Value::blob(score_blob),
+                stoolap::Value::blob(max_bytes),
             ],
         )
-        .expect("clear r_a anchor");
-    store
-        .set_event_anchor_tx_hash(EventId::from_u64(1), hash)
-        .await
-        .expect("re-anchor after clear");
-    let rows = store
-        .database()
-        .query(
-            "SELECT recorder_did, anchor_tx_hash FROM reputation_events
-             WHERE event_id = $1
-             ORDER BY recorder_did ASC",
-            vec![stoolap::Value::blob(eid_bytes)],
-        )
-        .expect("final select");
-    let mut anchored_count = 0;
-    for r in rows {
-        let r = r.expect("row");
-        let anc: Option<Vec<u8>> = r.get(1).ok().and_then(|v| {
-            if let stoolap::Value::Blob(b) = v { Some(b.to_vec()) } else { None }
-        });
-        if anc.is_some() {
-            anchored_count += 1;
-        }
+        .expect("insert saturated aggregate");
+    let did = octo_reputation::RecorderDid::from_array([0xE2; 52]);
+    let res = store.record_signal(ev(1, did, 0.5, 5_000)).await;
+    let msg = format!("{:?}", res);
+    assert!(res.is_err(), "u64::MAX saturation must error, got {}", msg);
+    assert!(
+        msg.contains("overflow"),
+        "must surface :overflow variant, got {}",
+        msg
+    );
+}
+
+/// R10 review (HIGH): same-recorder concurrent record_signal test.
+/// The race is real when distinct recorders DO NOT apply: both
+/// calls read the same MAX, both compute event_id=N+1, both
+/// INSERT — second collides on (recorder_did, event_id) PK. The
+/// composite-PK storage layer dedupes; verify both calls do not
+/// panic and the row count matches successful INSERTs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn stoolap_concurrent_record_signal_same_recorder_pk_collision() {
+    use std::sync::Arc;
+
+    let store = Arc::new(
+        StoolapReputationStore::open_in_memory()
+            .await
+            .expect("open"),
+    );
+    let did = octo_reputation::RecorderDid::from_array([0xF0; 52]);
+    let mut joins = Vec::new();
+    for i in 0..4u8 {
+        let store = Arc::clone(&store);
+        joins.push(tokio::spawn(async move {
+            store
+                .record_signal(ev(i as u64, did, 0.5, 1_000 + i as u64))
+                .await
+        }));
     }
-    // After clear+re-anchor, BOTH rows are anchored: first anchor
-    // set r_a (per probe order); clear set r_a=NULL (r_b still
-    // anchored); re-anchor probe found the NULL row (r_a) and
-    // UPDATEd it. The probe+UPDATE scope is correct — each call
-    // mutates exactly one row. The cross-recorder full-error-paths
-    // exercise above already proved composite-PK scope at each
-    // step. This final assertion pins the cumulative state.
+    let mut results = Vec::new();
+    for j in joins {
+        results.push(j.await.expect("join"));
+    }
+    // All 4 calls share recorder_did, so the read-MAX race produces
+    // duplicate event_id assignments. The composite-PK
+    // (recorder_did, event_id) catches the duplicates at INSERT
+    // time; some calls succeed, others fail with PK collision.
+    let oks: Vec<_> = results.iter().filter_map(|r| r.as_ref().ok()).collect();
+    let errs: Vec<_> = results.iter().filter_map(|r| r.as_ref().err()).collect();
     assert_eq!(
-        anchored_count, 2,
-        "first-anchor + clear + re-anchor must produce 2 anchored rows; got {}",
-        anchored_count
+        oks.len() + errs.len(),
+        4,
+        "every call must complete; got {} oks, {} errs",
+        oks.len(),
+        errs.len()
+    );
+    // Row count == oks.len() (each successful INSERT yields 1 row).
+    let mut rows = store
+        .database()
+        .query("SELECT COUNT(*) FROM reputation_events", ())
+        .expect("count");
+    let n: i64 = rows.next().expect("row").expect("ok").get(0).expect("col");
+    assert_eq!(
+        n as usize,
+        oks.len(),
+        "row count ({}) must match successful INSERTs ({})",
+        n,
+        oks.len()
     );
 }
 
@@ -1153,13 +1198,19 @@ async fn stoolap_concurrent_record_signal_race_is_documented() {
     use std::collections::HashSet;
     use std::sync::Arc;
 
-    let store = Arc::new(StoolapReputationStore::open_in_memory().await.expect("open"));
+    let store = Arc::new(
+        StoolapReputationStore::open_in_memory()
+            .await
+            .expect("open"),
+    );
     let mut joins = Vec::new();
     for i in 0..4u8 {
         let store = Arc::clone(&store);
         joins.push(tokio::spawn(async move {
             let did = octo_reputation::RecorderDid::from_array([0xE0 + i; 52]);
-            store.record_signal(ev(i as u64, did, 0.5, 1_000 + i as u64)).await
+            store
+                .record_signal(ev(i as u64, did, 0.5, 1_000 + i as u64))
+                .await
         }));
     }
     let mut results = Vec::new();
@@ -1248,11 +1299,7 @@ async fn stoolap_next_event_id_rejects_all_wrong_blob_lengths() {
         let did = octo_reputation::RecorderDid::from_array([0xE2; 52]);
         let res = store.record_signal(ev(1, did, 0.5, 5_000)).await;
         let msg = format!("{:?}", res);
-        assert!(
-            res.is_err(),
-            "len={wrong_len} must error, got {}",
-            msg
-        );
+        assert!(res.is_err(), "len={wrong_len} must error, got {}", msg);
         assert!(
             msg.contains("blob_len"),
             "len={wrong_len} must surface :blob_len variant, got {}",

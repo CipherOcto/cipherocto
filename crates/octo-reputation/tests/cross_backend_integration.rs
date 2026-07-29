@@ -525,7 +525,10 @@ async fn cross_backend_set_anchor_rejects_different_hash_parity() {
         .await
         .expect("open");
     let mem_eid = mem.record_signal(mk(1_000)).await.expect("mem.record");
-    let stoolap_eid = stoolap.record_signal(mk(1_000)).await.expect("stoolap.record");
+    let stoolap_eid = stoolap
+        .record_signal(mk(1_000))
+        .await
+        .expect("stoolap.record");
     // First anchor succeeds on both.
     mem.set_event_anchor_tx_hash(mem_eid, [0xAA; 32])
         .await
@@ -584,7 +587,10 @@ async fn cross_backend_set_anchor_idempotent_same_hash_parity() {
         .await
         .expect("open");
     let mem_eid = mem.record_signal(mk(1_000)).await.expect("mem.record");
-    let stoolap_eid = stoolap.record_signal(mk(1_000)).await.expect("stoolap.record");
+    let stoolap_eid = stoolap
+        .record_signal(mk(1_000))
+        .await
+        .expect("stoolap.record");
     // First anchor: both Ok.
     mem.set_event_anchor_tx_hash(mem_eid, [0xAA; 32])
         .await
@@ -601,4 +607,40 @@ async fn cross_backend_set_anchor_idempotent_same_hash_parity() {
         .set_event_anchor_tx_hash(stoolap_eid, [0xAA; 32])
         .await
         .expect("stoolap.idempotent");
+}
+
+/// R10 review (MEDIUM): event_not_found parity. Both backends MUST
+/// surface the same variant on missing event_id; any divergence
+/// is a backend-parity bug.
+#[tokio::test]
+async fn cross_backend_set_anchor_event_not_found_parity() {
+    use octo_reputation::RecorderDid;
+
+    let mem = InMemoryReputationStore::new();
+    let stoolap = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    // Both backends fresh: no events at all.
+    let mem_err = mem
+        .set_event_anchor_tx_hash(EventId::from_u64(999), [0xAA; 32])
+        .await
+        .unwrap_err();
+    let stoolap_err = stoolap
+        .set_event_anchor_tx_hash(EventId::from_u64(999), [0xAA; 32])
+        .await
+        .unwrap_err();
+    let mem_msg = format!("{:?}", mem_err);
+    let stoolap_msg = format!("{:?}", stoolap_err);
+    assert!(
+        mem_msg.contains("event_not_found"),
+        "memory backend must surface :event_not_found for missing event_id; got {}",
+        mem_msg
+    );
+    assert!(
+        stoolap_msg.contains("event_not_found"),
+        "stoolap backend must surface :event_not_found for missing event_id; got {}",
+        stoolap_msg
+    );
+    // Unused-binding suppression.
+    let _ = RecorderDid::from_array([0u8; 52]);
 }

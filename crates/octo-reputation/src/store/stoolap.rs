@@ -1610,94 +1610,75 @@ mod real {
             // cross-recorder side effect. The stoolap UPDATE guard
             // requires composite-PK WHEREs to reference all PK
             // columns, hence this SELECT-then-UPDATE.
-            let mut probe_rows = self
+            //
+            // R10 review (HIGH): event_ids are NOT globally unique
+            // across recorders (schema's composite PK is
+            // (recorder_did, event_id) and event_ids reset per
+            // recorder via the global MAX counter). When two
+            // recorders share an event_id, the probe must count
+            // matches: 0 → not found, 1 → anchor the unique row,
+            // 2+ → ambiguous (refuse; the API signature lacks
+            // recorder_did so we cannot pick deterministically).
+            // This mirrors the memory backend's R9 fix.
+            // First: count ALL rows matching event_id (regardless of anchor).
+            // If 2+ distinct recorders share the event_id, the API call
+            // is inherently ambiguous (no recorder_did in signature)
+            // and we MUST refuse rather than pick one. This is the
+            // stoolap analog of memory's R9 ambiguous_event_id guard.
+            let count_rows = self
                 .db
                 .query(
                     "SELECT recorder_did FROM reputation_events
-                     WHERE event_id = $1 AND anchor_tx_hash IS NULL
-                     LIMIT 1",
+                     WHERE event_id = $1",
                     vec![stoolap::Value::blob(event_id_bytes.to_vec())],
                 )
-                .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_set_anchor:probe_pk"))?;
-            let recorder_did_blob: Vec<u8> = match probe_rows.next() {
-                Some(Ok(r)) => match r.get(0).map_err(|_e| {
-                    ReputationError::ChainRefInvalid("stoolap_set_anchor:probe_pk_col")
+                .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_set_anchor:probe_count"))?;
+            let mut all_matches: Vec<Vec<u8>> = Vec::new();
+            for row_res in count_rows {
+                let row = row_res.map_err(|_e| {
+                    ReputationError::ChainRefInvalid("stoolap_set_anchor:probe_count_iter")
+                })?;
+                let bytes: Vec<u8> = match row.get(0).map_err(|_e| {
+                    ReputationError::ChainRefInvalid("stoolap_set_anchor:probe_count_col")
                 })? {
                     stoolap::Value::Blob(arc) => arc.to_vec(),
-                    _ => {
-                        return Err(ReputationError::ChainRefInvalid(
-                            "stoolap_set_anchor:event_not_found",
-                        ));
-                    }
-                },
-                Some(Err(_e)) => {
-                    // R8 review: row-iteration errors must NOT be
-                    // collapsed into the "not found" path — propagate
-                    // as a distinct error so transient backend failures
-                    // surface to the caller instead of masquerading as
-                    // event_not_found.
-                    return Err(ReputationError::ChainRefInvalid(
-                        "stoolap_set_anchor:probe_pk_iter",
-                    ));
-                }
-                None => {
-                    // No row found: either event_id doesn't exist OR
-                    // the row exists but already has an anchor set.
-                    // Fall through to the existing probe logic
-                    // (post-UPDATE 0-row detection) to distinguish.
-                    Vec::new()
-                }
-            };
-            if recorder_did_blob.is_empty() {
-                // Defer to the original probe path so the
-                // already-anchored case can be detected.
-                let probe_only = self
-                    .db
-                    .query(
-                        "SELECT recorder_did, anchor_tx_hash FROM reputation_events
-                         WHERE event_id = $1 LIMIT 1",
-                        vec![stoolap::Value::blob(event_id_bytes.to_vec())],
-                    )
-                    .map_err(|_e| {
-                        ReputationError::ChainRefInvalid("stoolap_set_anchor:probe_existing")
-                    })?;
-                match probe_only.into_iter().next() {
-                    Some(Ok(r)) => {
-                        let prior_anchor: Vec<u8> = match r.get(1).map_err(|_e| {
-                            ReputationError::ChainRefInvalid(
-                                "stoolap_set_anchor:probe_existing_col",
-                            )
-                        })? {
-                            stoolap::Value::Blob(arc) => arc.to_vec(),
-                            _ => Vec::new(),
-                        };
-                        if prior_anchor == anchor_tx_hash.to_vec() {
-                            return Ok(()); // idempotent re-submit
-                        }
-                        if !prior_anchor.is_empty() {
-                            return Err(ReputationError::ChainRefInvalid(
-                                "stoolap_set_anchor:anchor_already_set",
-                            ));
-                        }
-                        // Shouldn't reach here, but treat as not-found.
-                        return Err(ReputationError::ChainRefInvalid(
-                            "stoolap_set_anchor:event_not_found",
-                        ));
-                    }
-                    Some(Err(_e)) => {
-                        // R8 review: row-iteration errors propagate
-                        // (don't masquerade as not_found).
-                        return Err(ReputationError::ChainRefInvalid(
-                            "stoolap_set_anchor:probe_existing_iter",
-                        ));
-                    }
-                    None => {
-                        return Err(ReputationError::ChainRefInvalid(
-                            "stoolap_set_anchor:event_not_found",
-                        ));
-                    }
+                    _ => continue,
+                };
+                all_matches.push(bytes);
+                if all_matches.len() > 2 {
+                    // Cap at 3 to avoid materializing huge result
+                    // sets; the ambiguity decision is binary.
+                    break;
                 }
             }
+            match all_matches.len() {
+                0 => {
+                    // event_id does not exist under any recorder.
+                    return Err(ReputationError::ChainRefInvalid(
+                        "stoolap_set_anchor:event_not_found",
+                    ));
+                }
+                n if n >= 2 => {
+                    // Multiple recorders share event_id; the API
+                    // contract cannot disambiguate, refuse.
+                    return Err(ReputationError::ChainRefInvalid(
+                        "stoolap_set_anchor:ambiguous_event_id",
+                    ));
+                }
+                _ => {
+                    // Exactly one recorder has this event_id; safe to
+                    // proceed to the null-vs-anchored probe below.
+                }
+            }
+            let recorder_did_blob = all_matches.into_iter().next().expect("len() == 1 above");
+            // Exactly one row matches event_id (count probe above).
+            // The UPDATE is scoped to the composite PK
+            // (recorder_did, event_id). The WHERE clause accepts
+            // either NULL anchor (fresh write) or matching hash
+            // (idempotent re-submit). Updated row count:
+            //   1 → success (fresh or idempotent)
+            //   0 → row exists but anchor is a DIFFERENT hash
+            //        → anchor_already_set
             let updated = self
                 .db
                 .execute(
@@ -1713,55 +1694,14 @@ mod real {
                 )
                 .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_set_anchor:update"))?;
             if updated == 0 {
-                // Distinguish idempotent re-submit (anchor already
-                // set to this hash) from missing-event_id. Probe
-                // the prior value with a SELECT — if the row
-                // exists with the same anchor_tx_hash, the call is
-                // idempotent; otherwise the event_id was never
-                // recorded.
-                let rows = self
-                    .db
-                    .query(
-                        "SELECT anchor_tx_hash FROM reputation_events WHERE event_id = $1",
-                        vec![stoolap::Value::blob(event_id_bytes.to_vec())],
-                    )
-                    .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_set_anchor:probe"))?;
-                match rows.into_iter().next() {
-                    Some(Ok(r)) => {
-                        let prior: Vec<u8> = match r.get(0).map_err(|_e| {
-                            ReputationError::ChainRefInvalid("stoolap_set_anchor:probe_col")
-                        })? {
-                            stoolap::Value::Blob(arc) => arc.to_vec(),
-                            _ => {
-                                return Err(ReputationError::ChainRefInvalid(
-                                    "stoolap_set_anchor:event_not_found",
-                                ));
-                            }
-                        };
-                        if prior == anchor_tx_hash.to_vec() {
-                            // Idempotent re-submit: the anchor was
-                            // already recorded with this hash.
-                            Ok(())
-                        } else {
-                            // Row exists with a different anchor;
-                            // reject (this should never happen —
-                            // anchor_tx_hash is set once per event
-                            // and not mutated thereafter).
-                            Err(ReputationError::ChainRefInvalid(
-                                "stoolap_set_anchor:anchor_already_set",
-                            ))
-                        }
-                    }
-                    Some(Err(_e)) => {
-                        // R8 review: row-iteration errors propagate.
-                        Err(ReputationError::ChainRefInvalid(
-                            "stoolap_set_anchor:probe_iter",
-                        ))
-                    }
-                    None => Err(ReputationError::ChainRefInvalid(
-                        "stoolap_set_anchor:event_not_found",
-                    )),
-                }
+                // Row exists (count probe confirmed 1 match) but
+                // anchor is a different hash. The count probe above
+                // guarantees there is exactly one row at this
+                // event_id, so the 0-row UPDATE result can ONLY
+                // mean anchor_already_set.
+                Err(ReputationError::ChainRefInvalid(
+                    "stoolap_set_anchor:anchor_already_set",
+                ))
             } else {
                 Ok(())
             }

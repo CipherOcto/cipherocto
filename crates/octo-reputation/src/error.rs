@@ -53,7 +53,7 @@ pub enum StakeComponent {
 }
 
 #[repr(u8)]
-#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ReputationError {
     // ----- 0x01..=0x09: structural / shape -----
     #[error("invalid signal kind discriminant: {0}")]
@@ -173,6 +173,13 @@ pub enum ReputationError {
     #[error("anchor tuple fanout exceeded: {0}")]
     AnchorTupleFanoutExceeded(u64) = 0x2A,
 
+    /// Anchor submitter rejected the batch. Carries the submitter's
+    /// reason text so callers can distinguish chain-side rejection
+    /// (fee too low, RPC timeout, invalid batch) from a fanout-cap
+    /// violation. Round 1 review F2/F5.
+    #[error("anchor submitter rejected: {0}")]
+    AnchorSubmitterRejected(String) = 0x33,
+
     #[error("retirement not authorized: {0}")]
     RetirementNotAuthorized(&'static str) = 0x2B,
 
@@ -206,7 +213,7 @@ pub enum ReputationError {
 
 impl ReputationError {
     /// Return the wire discriminant (`u8`).
-    pub fn discriminant(self) -> u8 {
+    pub fn discriminant(&self) -> u8 {
         // Variants carry payloads so `as u8` is disallowed and `transmute`
         // would overflow. Use an exhaustive match — the compiler verifies
         // every variant is covered, and the body is a single `u8` literal
@@ -247,6 +254,7 @@ impl ReputationError {
             ReputationError::AuditorNonceInvalid(_) => 0x28,
             ReputationError::ChainRefInvalid(_) => 0x29,
             ReputationError::AnchorTupleFanoutExceeded(_) => 0x2A,
+            ReputationError::AnchorSubmitterRejected(_) => 0x33,
             ReputationError::RetirementNotAuthorized(_) => 0x2B,
             ReputationError::CutoverFrozen => 0x2C,
             ReputationError::StakeBelowMinimum { .. } => 0x2D,

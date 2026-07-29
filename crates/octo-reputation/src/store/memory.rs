@@ -529,7 +529,12 @@ impl ReputationStore for InMemoryReputationStore {
                 return Ok(());
             }
         }
-        Ok(())
+        // Round 1 review M2: surface missing event_id as
+        // ChainRefInvalid so callers cannot silently acknowledge a
+        // write that didn't land.
+        Err(ReputationError::ChainRefInvalid(
+            "set_event_anchor_tx_hash:event_not_found",
+        ))
     }
 
     async fn query_anchors_by_controller_id(

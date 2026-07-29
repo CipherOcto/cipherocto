@@ -320,10 +320,21 @@ pub fn check_daily_fanout(
     }
 }
 
-/// Run-once with the canonical `AnchorTupleFanoutExceeded` error
-/// variant. Wraps `run_once` with a pre-flight fanout check that
-/// surfaces `ReputationError::AnchorTupleFanoutExceeded(u64) = 0x2A`
-/// instead of `AnchorJobError::CapExceeded`.
+/// Run-once with the canonical `ReputationError` variants surfaced
+/// at the API boundary. Wraps `run_once` and translates internal
+/// `AnchorJobError` to the canonical `ReputationError`:
+///
+/// - Pre-flight `check_daily_fanout` → `AnchorTupleFanoutExceeded(u64) = 0x2A`
+///   (with the actual `existing + proposed` count).
+/// - `AnchorJobError::SubmitterRejected(s)` →
+///   `AnchorSubmitterRejected(s) = 0x33` (carries the submitter's
+///   rejection reason text — Round 1 review F2/F5).
+/// - `AnchorJobError::CapExceeded` (non-daily_fanout caps, currently
+///   unused) → mapped to `AnchorTupleFanoutExceeded(existing_anchored_today)`
+///   as a conservative fallback.
+/// - `AnchorJobError::AlreadyAnchored` → mapped to
+///   `AnchorSubmitterRejected("already_anchored_in_window")` since
+///   this is a chain-side reject (the window already has a root).
 pub async fn run_once_strict<S: ChainAnchorSubmitter>(
     submitter: Arc<S>,
     aggregates: &[ReputationAggregate],
@@ -344,7 +355,19 @@ pub async fn run_once_strict<S: ChainAnchorSubmitter>(
         existing_window_anchor,
     )
     .await
-    .map_err(|_| crate::error::ReputationError::AnchorTupleFanoutExceeded(existing_anchored_today))
+    .map_err(|e| match e {
+        AnchorJobError::SubmitterRejected(reason) => {
+            crate::error::ReputationError::AnchorSubmitterRejected(reason)
+        }
+        AnchorJobError::AlreadyAnchored { .. } => {
+            crate::error::ReputationError::AnchorSubmitterRejected(
+                "already_anchored_in_window".to_string(),
+            )
+        }
+        AnchorJobError::CapExceeded { .. } => {
+            crate::error::ReputationError::AnchorTupleFanoutExceeded(existing_anchored_today)
+        }
+    })
 }
 
 /// Convenience: compute the per-batch fee for a single batch.

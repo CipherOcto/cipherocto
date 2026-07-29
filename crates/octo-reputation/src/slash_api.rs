@@ -191,7 +191,32 @@ mod tests {
     use crate::auth::{AssetTag, GovernanceProof, GovernanceSnapshot, SlashDestination};
     use crate::constants::GOVERNANCE_QUORUM;
     use crate::store::InMemoryReputationStore;
-    use crate::types::RecorderId;
+    #[cfg(feature = "stoolap")]
+    use crate::types::{
+        ControllerId, EventId, RecorderDid, ReputationLayer, SignalEvent, SignalKind,
+    };
+    #[cfg(feature = "stoolap")]
+    use octo_determin::Dfp;
+
+    /// Helper: seed a candidate Slash event into the persisted
+    /// reputation store for the given DID. Used by tests that need
+    /// to land a substrate-layer Slash record without going through
+    /// `issue_governance_slash`.
+    #[cfg(feature = "stoolap")]
+    fn seed_slash_event(seed: u64, did: RecorderDid) -> SignalEvent {
+        SignalEvent {
+            event_id: EventId::from_u64(seed),
+            recorder_did: did,
+            controller_id: ControllerId::from_array([0u8; 32]),
+            signal_kind: SignalKind::Slash,
+            layer: ReputationLayer::Slash,
+            score_delta: Dfp::from_f64(-1.0),
+            recorded_at_unix: 1_700_000_000 + seed,
+            rotation_provenance: None,
+            audit_ref: None,
+            anchor_tx_hash: None,
+        }
+    }
 
     /// Helper: build a `GovernanceProof` whose three slash fields
     /// match the function's separate args. `now_unix` is set inside

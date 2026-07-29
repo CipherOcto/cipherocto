@@ -49,8 +49,8 @@ pub use anchor::{
     ReputationAnchorBatch,
 };
 pub use anchor_job::{
-    plan_batches, run_once, total_fee, AnchorJobConfig, AnchorJobError, AnchorJobOutcome,
-    ChainAnchorSubmitter, StubChainAnchorSubmitter,
+    plan_batches, run_once, run_once_strict, total_fee, AnchorJobConfig, AnchorJobError,
+    AnchorJobOutcome, AnchorTupleFanout, ChainAnchorSubmitter, StubChainAnchorSubmitter,
 };
 pub use audit::{
     audit_commitment, drop_pre_rotation_events, max_rotation_id, replay as audit_replay,
@@ -100,7 +100,9 @@ pub use retirement::{
 };
 pub use slash_api::{issue_governance_slash, MismatchField};
 pub use sliding::{effective_window, sliding_window, MAX_SLIDING_WINDOW_SECS};
-pub use store::{InMemoryReputationStore, ReputationStore, StoolapReputationStore, StoreResult};
+pub use store::{
+    AnchorRecord, InMemoryReputationStore, ReputationStore, StoolapReputationStore, StoreResult,
+};
 pub use types::{
     ControllerId, EventId, ParityEvidence, RecorderDid, RecorderId, ReputationAggregate,
     ReputationLayer, RetirementEligibility, RotationProvenance, SignalEvent, SignalKind,

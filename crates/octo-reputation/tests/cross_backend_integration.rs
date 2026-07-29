@@ -39,7 +39,7 @@ fn mk_event(seed: u64, did: octo_reputation::RecorderDid) -> SignalEvent {
         controller_id: octo_reputation::ControllerId::from_array([0u8; 32]),
         signal_kind: SignalKind::Outcome,
         layer: ReputationLayer::Market,
-        score_delta: score,
+        score_delta: octo_determin::Dfp::from_f64(score),
         recorded_at_unix: ts,
         rotation_provenance: None,
         audit_ref: None,

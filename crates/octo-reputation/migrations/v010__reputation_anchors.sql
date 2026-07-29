@@ -10,8 +10,13 @@
 -- migration runner.
 --
 -- Schema (post-amendment-48 per-controller model):
---   event_id            BLOB PRIMARY KEY — the canonical typed EventId
---                       (32-byte BLAKE3 anchor over the canonical event bytes).
+--   id                  INTEGER PRIMARY KEY AUTOINCREMENT — stoolap-fork
+--                       requires INTEGER PK (rowid alias).
+--   event_id            BLOB NOT NULL UNIQUE — the canonical typed EventId
+--                       (32-byte BLAKE3 anchor over the canonical event
+--                       bytes). UNIQUE constraint gives the chain-side
+--                       idempotency on re-submission
+--                       (RFC-0955-R1 §"Chain-Level Idempotency").
 --   anchor_tx_hash      BLOB NOT NULL    — the on-chain anchor transaction hash.
 --   anchored_at_unix    INTEGER NOT NULL — wall-clock unix seconds when the
 --                       anchor was observed.
@@ -32,13 +37,14 @@
 --                       51; persistence-10 AC).
 --
 -- Constraints:
---   PK on event_id makes the insert idempotent on a re-submission
---   (RFC-0955-R1 §"Chain-Level Idempotency").
---   The (controller_id, anchor_root) pair is the chain-side uniqueness key
---   for the Merkle root commitment; the rows in this table are the local
---   mirror used by the read side.
+--   UNIQUE on event_id gives the chain-side idempotency on a
+--   re-submission (RFC-0955-R1 §"Chain-Level Idempotency").
+--   The (controller_id, anchor_root) pair is the chain-side uniqueness
+--   key for the Merkle root commitment; the rows in this table are the
+--   local mirror used by the read side.
 CREATE TABLE IF NOT EXISTS reputation_anchors (
-    event_id BLOB PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id BLOB NOT NULL UNIQUE,
     anchor_tx_hash BLOB NOT NULL,
     anchored_at_unix INTEGER NOT NULL,
     controller_id BLOB NOT NULL,
@@ -69,7 +75,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_reputation_anchors_controller_root
 -- Rotation-receipt binding index (RFC-0955-R1 §"ReputationAnchorBatch"
 -- post-Round-7 amendment 51). Per-snapshot lookups by rotation
 -- receipt id surface post-rotation resubmissions for the DID-rotation
--- finality interaction.
+-- finality interaction. Plain index (no WHERE clause) — stoolap-fork
+-- does not support partial indexes.
 CREATE INDEX IF NOT EXISTS idx_reputation_anchors_rotation_receipt
-    ON reputation_anchors(rotation_receipt_id)
-    WHERE rotation_receipt_id IS NOT NULL;
+    ON reputation_anchors(rotation_receipt_id);

@@ -60,6 +60,7 @@ use crate::types::{dfp_from_blob, dfp_to_blob};
 #[cfg(feature = "stoolap")]
 mod real {
     use super::*;
+    use crate::store::AnchorRecord;
 
     /// `StoolapReputationStore` (real). Owns one `stoolap::Database` behind
     /// `Arc` so trait methods can hold shared references. All mutating SQL
@@ -773,6 +774,7 @@ mod real {
                             recorded_at_unix: i64_to_u64(recorded_at_unix),
                             rotation_provenance,
                             audit_ref,
+                            anchor_tx_hash: None,
                         });
                     }
                     Some(Err(_e)) => {
@@ -1442,6 +1444,7 @@ mod real {
                             recorded_at_unix: i64_to_u64(recorded_at_unix),
                             rotation_provenance,
                             audit_ref,
+                            anchor_tx_hash: None,
                         });
                     }
                     Some(Err(_e)) => {
@@ -1479,9 +1482,12 @@ mod real {
             loop {
                 match rows.next() {
                     Some(Ok(row)) => {
-                        let event_id_bytes: Vec<u8> = match row.get(0).and_then(|v| v.blob()) {
-                            Some(b) => b.to_vec(),
-                            None => {
+                        let event_id_value = row.get(0).map_err(|_e| {
+                            ReputationError::ChainRefInvalid("stoolap_anchor_pending:event_id_get")
+                        })?;
+                        let event_id_bytes: Vec<u8> = match &event_id_value {
+                            stoolap::Value::Blob(arc) => arc.to_vec(),
+                            _ => {
                                 return Err(ReputationError::ChainRefInvalid(
                                     "stoolap_anchor_pending:event_id_blob",
                                 ));
@@ -1495,7 +1501,7 @@ mod real {
                         }
                         event_id_arr.copy_from_slice(&event_id_bytes);
                         out.push((
-                            EventId::from_u64(u64::from_le_bytes(event_id_arr)),
+                            EventId::from_u64(u64::from_be_bytes(event_id_arr)),
                             [0u8; 32],
                         ));
                     }
@@ -1519,7 +1525,7 @@ mod real {
             // hash. Idempotent on `(event_id, anchor_tx_hash)`: a
             // second call with the same pair is a no-op (the WHERE
             // clause narrows the row count to 0 if already set).
-            let event_id_bytes = event_id.to_u64().to_le_bytes();
+            let event_id_bytes = event_id.to_u64().to_be_bytes();
             let updated = self
                 .db
                 .execute(
@@ -1562,12 +1568,20 @@ mod real {
             while let Some(row) = rows.next() {
                 let row = row
                     .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_query_anchors:row"))?;
-                let event_id_blob: Vec<u8> = row
+                let event_id_value = row
                     .get(0)
                     .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_query_anchors:col0"))?;
-                let anchor_blob: Vec<u8> = row
+                let event_id_blob: Vec<u8> = match &event_id_value {
+                    stoolap::Value::Blob(arc) => arc.to_vec(),
+                    _ => continue,
+                };
+                let anchor_value = row
                     .get(1)
                     .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_query_anchors:col1"))?;
+                let anchor_blob: Vec<u8> = match &anchor_value {
+                    stoolap::Value::Blob(arc) => arc.to_vec(),
+                    _ => continue,
+                };
                 let anchored_at: i64 = row
                     .get(2)
                     .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_query_anchors:col2"))?;
@@ -1579,7 +1593,7 @@ mod real {
                 let mut anchor_arr = [0u8; 32];
                 anchor_arr.copy_from_slice(&anchor_blob);
                 out.push(AnchorRecord {
-                    event_id: EventId::from_u64(u64::from_le_bytes(id_arr)),
+                    event_id: EventId::from_u64(u64::from_be_bytes(id_arr)),
                     anchor_tx_hash: anchor_arr,
                     anchored_at_unix: anchored_at.max(0) as u64,
                 });

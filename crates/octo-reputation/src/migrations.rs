@@ -43,6 +43,10 @@ pub const BUILTIN_MIGRATIONS: &[(&str, &str)] = &[
         "v010__reputation_anchors",
         include_str!("../migrations/v010__reputation_anchors.sql"),
     ),
+    (
+        "v011__reputation_events_anchor",
+        include_str!("../migrations/v011__reputation_events_anchor.sql"),
+    ),
 ];
 
 /// Bootstrap SQL for the tracker table — idempotent. The runner runs this
@@ -64,6 +68,7 @@ impl MigrationVersion {
         "v004__reputation_attestations",
         "v005__reputation_gossip_seen",
         "v010__reputation_anchors",
+        "v011__reputation_events_anchor",
     ];
 }
 
@@ -112,6 +117,7 @@ pub mod stoolap_runner {
                 "v004__reputation_attestations" => "migration:v004",
                 "v005__reputation_gossip_seen" => "migration:v005",
                 "v010__reputation_anchors" => "migration:v010",
+                "v011__reputation_events_anchor" => "migration:v011",
                 _ => "migration:unknown",
             };
             db.execute(sql, ())

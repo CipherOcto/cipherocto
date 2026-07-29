@@ -264,6 +264,7 @@ async fn cross_layer_query_returns_present_aggregates() {
             recorded_at_unix: 1_000 + i as u64,
             rotation_provenance: None,
             audit_ref: None,
+            anchor_tx_hash: None,
         };
         store.record_signal(ev).await.expect("record");
     }

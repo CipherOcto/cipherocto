@@ -326,13 +326,17 @@ impl SignalEvent {
                 buf.extend_from_slice(&rp.rotation_id.to_be_bytes());
             }
         }
-        match &self.anchor_tx_hash {
-            None => buf.push(0),
-            Some(h) => {
-                buf.push(1);
-                buf.extend_from_slice(h);
-            }
-        }
+        // `anchor_tx_hash` is NOT included in `canonical_bytes` —
+        // cross-replica wire-format stability is preserved for the
+        // pre-RFC-0955-R1 gossip + audit contract. The anchor
+        // provenance is a post-event sidecar (`reputation_anchors`
+        // table + `query_anchors_by_controller_id` read-side join),
+        // not part of the event envelope digest. Future RFC-0968-A2
+        // amendment can fold anchor_tx_hash into the canonical preimage
+        // via a version-tagged envelope (`0x00` legacy, `0x01` anchor-
+        // aware). For now the field exists on the struct so callers
+        // can carry the value, but it does NOT participate in digest
+        // computation. (Round 1 review F3.)
         buf
     }
 }

@@ -133,29 +133,28 @@ pub fn aggregate_children(
         .map_err(|_| AggregationError::CountOverflow)?;
     let total_envelopes: u64 = parents.iter().map(|p| p.total_envelopes).sum();
     let total_bytes: u64 = parents.iter().map(|p| p.total_bytes).sum();
-    let average_availability: u64 = parents
+    // Average availability: round-to-nearest to avoid floor-truncation
+    // bias on multi-level aggregation cascades (Round 1 review F6).
+    let avg_num: u128 = parents
         .iter()
-        .map(|p| p.average_availability as u64)
-        .sum::<u64>()
-        / (parents.len() as u64);
-    let average_availability: u16 = average_availability
+        .map(|p| p.average_availability as u128)
+        .sum::<u128>();
+    let avg_den = parents.len() as u128;
+    let average_availability: u16 = ((avg_num + avg_den / 2) / avg_den.max(1))
         .try_into()
         .map_err(|_| AggregationError::CountOverflow)?;
 
     // Build Merkle root: BLAKE3 cascade over children's signing bytes
-    // (deterministic, RFC-0104-class). The canonical root path:
-    //   let mut hasher = blake3::Hasher::new();
-    //   for parent in parents { hasher.update(&parent.to_signing_bytes()); }
-    //   let root = hasher.finalize();
-    let mut children_root = [0u8; 32];
-    let mut chunk = [0u8; 32];
-    for (i, parent) in parents.iter().enumerate() {
-        let bytes = parent.to_signing_bytes();
-        chunk.copy_from_slice(&blake3::hash(&bytes).as_bytes()[..32]);
-        for (j, slot) in children_root.iter_mut().enumerate() {
-            *slot ^= chunk[(i + j) % 32];
-        }
+    // (deterministic, RFC-0104-class). The canonical root path is the
+    // BLAKE3 hasher cascade over `parent.to_signing_bytes()` for each
+    // parent in deterministic order. Round 1 review F1: an XOR-cascade
+    // here is order-independent (commutativity) and NOT a Merkle root.
+    let mut hasher = blake3::Hasher::new();
+    for parent in parents.iter() {
+        hasher.update(&parent.to_signing_bytes());
     }
+    let mut children_root = [0u8; 32];
+    children_root.copy_from_slice(hasher.finalize().as_bytes());
 
     let proof_blob = Vec::new(); // STARK placeholder; wired in RFC-0854 DPS module
     let mut out = AggregatedRelayProof {

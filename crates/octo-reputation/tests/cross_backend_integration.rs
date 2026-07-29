@@ -724,3 +724,73 @@ async fn cross_backend_set_anchor_distinguishes_anchored_vs_missing() {
         stoolap_miss_msg
     );
 }
+
+/// R15 review (MEDIUM): cross-backend parity for severity_total.
+/// Both backends MUST agree on read_aggregate.severity_total
+/// after any record_signal sequence. Per-backend tests pin the
+/// backend-specific behavior; this test pins the invariant.
+#[tokio::test]
+async fn cross_backend_severity_total_matches_after_record_signal() {
+    use octo_reputation::RecorderDid;
+
+    let did = RecorderDid::from_array([0xE1; 52]);
+    let cid = ControllerId::from_array([0u8; 32]);
+    let mk = |kind: SignalKind, ts: u64| SignalEvent {
+        event_id: EventId::from_u64(0),
+        recorder_did: did,
+        controller_id: cid,
+        signal_kind: kind,
+        layer: octo_reputation::ReputationLayer::Market,
+        score_delta: octo_determin::Dfp::from_f64(0.5),
+        recorded_at_unix: ts,
+        rotation_provenance: None,
+        audit_ref: None,
+        anchor_tx_hash: None,
+    };
+    let mem = InMemoryReputationStore::new();
+    let stoolap = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    // Slash → Outcome → Slash → Outcome → Slash (5 events, 3 Slash).
+    let seq = [
+        (SignalKind::Slash, 1_000u64),
+        (SignalKind::Outcome, 1_001),
+        (SignalKind::Slash, 1_002),
+        (SignalKind::Outcome, 1_003),
+        (SignalKind::Slash, 1_004),
+    ];
+    for (kind, ts) in seq {
+        mem.record_signal(mk(kind, ts)).await.expect("mem.record");
+        stoolap.record_signal(mk(kind, ts)).await.expect("stoolap.record");
+    }
+    // Slash aggregate parity.
+    let mem_slash = mem
+        .read_aggregate(&did, SignalKind::Slash, octo_reputation::ReputationLayer::Market)
+        .await
+        .expect("mem.slash.read");
+    let stoolap_slash = stoolap
+        .read_aggregate(&did, SignalKind::Slash, octo_reputation::ReputationLayer::Market)
+        .await
+        .expect("stoolap.slash.read");
+    assert_eq!(
+        mem_slash.severity_total, stoolap_slash.severity_total,
+        "cross-backend severity_total must agree for Slash; mem={} stoolap={}",
+        mem_slash.severity_total, stoolap_slash.severity_total
+    );
+    assert_eq!(mem_slash.severity_total, 3);
+    // Outcome aggregate parity.
+    let mem_outcome = mem
+        .read_aggregate(&did, SignalKind::Outcome, octo_reputation::ReputationLayer::Market)
+        .await
+        .expect("mem.outcome.read");
+    let stoolap_outcome = stoolap
+        .read_aggregate(&did, SignalKind::Outcome, octo_reputation::ReputationLayer::Market)
+        .await
+        .expect("stoolap.outcome.read");
+    assert_eq!(
+        mem_outcome.severity_total, stoolap_outcome.severity_total,
+        "cross-backend severity_total must agree for Outcome; mem={} stoolap={}",
+        mem_outcome.severity_total, stoolap_outcome.severity_total
+    );
+    assert_eq!(mem_outcome.severity_total, 0);
+}

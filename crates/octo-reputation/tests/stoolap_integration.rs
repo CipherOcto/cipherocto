@@ -1827,3 +1827,74 @@ async fn stoolap_next_event_id_rejects_all_wrong_blob_lengths() {
         );
     }
 }
+
+/// R15 review (MEDIUM): the deferred `next_attestation_id` race is
+/// documented at stoolap.rs:212-222 but not pinned by a test.
+/// Mirror the structure of `stoolap_concurrent_record_signal_race_is_documented`:
+/// fire N concurrent `record_attestation` calls; assert at least
+/// one Ok + row count == successful INSERTs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn stoolap_concurrent_record_attestation_race_is_documented() {
+    use std::sync::Arc;
+
+    let store = Arc::new(StoolapReputationStore::open_in_memory().await.expect("open"));
+    // Seed 1 event under a single recorder; all attestations target
+    // this event from distinct attestors to avoid composite-PK
+    // collisions and isolate the next_attestation_id race.
+    let did = octo_reputation::RecorderDid::from_array([0xF1; 52]);
+    let eid = store
+        .record_signal(ev(1, did, 0.5, 1_000))
+        .await
+        .expect("seed event");
+    let mut joins = Vec::new();
+    for i in 0..4u8 {
+        let store = Arc::clone(&store);
+        joins.push(tokio::spawn(async move {
+            let reg = attestor_reg(0xA0 + i, 0xB0 + i);
+            store
+                .register_attestor(reg)
+                .await
+                .expect("register");
+            store
+                .record_attestation(att_for(
+                    AttestorId::from_array([0xA0 + i; 52]),
+                    did,
+                    eid,
+                ))
+                .await
+        }));
+    }
+    let mut results = Vec::new();
+    for j in joins {
+        let r = j.await.expect("join");
+        results.push(r);
+    }
+    // The race: next_attestation_id is read-MAX + compute+1 +
+    // INSERT (non-atomic). Concurrent callers can compute the same
+    // MAX+1; second INSERT collides on attestation_id PK.
+    // We pin:
+    //   - every call completes (no panics)
+    //   - at least one call succeeds
+    //   - row count == successful count (composite-key dedupe)
+    let oks: usize = results
+        .iter()
+        .filter(|r| matches!(r, Ok(_) | Err(_)))
+        .count();
+    assert_eq!(oks, 4, "every call must complete; got {} results", oks);
+    let success_count = results.iter().filter(|r| r.is_ok()).count();
+    let mut rows = store
+        .database()
+        .query("SELECT COUNT(*) FROM reputation_attestations", ())
+        .expect("count");
+    let n: i64 = rows.next().expect("row").expect("ok").get(0).expect("col");
+    assert_eq!(
+        n as usize, success_count,
+        "row count ({}) must match successful INSERTs ({})",
+        n, success_count
+    );
+    assert!(
+        success_count >= 1,
+        "at least one attestation must succeed; got {}",
+        success_count
+    );
+}

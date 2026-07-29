@@ -1573,15 +1573,89 @@ mod real {
             // path) — the no-op idempotent path is verified by
             // checking the prior value with a follow-up SELECT.
             let event_id_bytes = event_id.to_u64().to_be_bytes();
+            // Round 7 review R7-F2: look up recorder_did for this
+            // event so the UPDATE can scope by the FULL composite
+            // primary key (recorder_did, event_id). Without scoping
+            // by recorder_did, the UPDATE would match every event
+            // sharing event_id=X across distinct recorders — a
+            // cross-recorder side effect. The stoolap UPDATE guard
+            // requires composite-PK WHEREs to reference all PK
+            // columns, hence this SELECT-then-UPDATE.
+            let mut probe_rows = self
+                .db
+                .query(
+                    "SELECT recorder_did FROM reputation_events
+                     WHERE event_id = $1 AND anchor_tx_hash IS NULL
+                     LIMIT 1",
+                    vec![stoolap::Value::blob(event_id_bytes.to_vec())],
+                )
+                .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_set_anchor:probe_pk"))?;
+            let recorder_did_blob: Vec<u8> = match probe_rows.next() {
+                Some(Ok(r)) => match r.get(0).map_err(|_e| {
+                    ReputationError::ChainRefInvalid("stoolap_set_anchor:probe_pk_col")
+                })? {
+                    stoolap::Value::Blob(arc) => arc.to_vec(),
+                    _ => {
+                        return Err(ReputationError::ChainRefInvalid(
+                            "stoolap_set_anchor:event_not_found",
+                        ));
+                    }
+                },
+                _ => {
+                    // No row found: either event_id doesn't exist OR
+                    // the row exists but already has an anchor set.
+                    // Fall through to the existing probe logic
+                    // (post-UPDATE 0-row detection) to distinguish.
+                    Vec::new()
+                }
+            };
+            if recorder_did_blob.is_empty() {
+                // Defer to the original probe path so the
+                // already-anchored case can be detected.
+                let mut probe_only = self
+                    .db
+                    .query(
+                        "SELECT recorder_did, anchor_tx_hash FROM reputation_events
+                         WHERE event_id = $1 LIMIT 1",
+                        vec![stoolap::Value::blob(event_id_bytes.to_vec())],
+                    )
+                    .map_err(|_e| {
+                        ReputationError::ChainRefInvalid("stoolap_set_anchor:probe_existing")
+                    })?;
+                if let Some(Ok(r)) = probe_only.next() {
+                    let prior_anchor: Vec<u8> = match r.get(1).map_err(|_e| {
+                        ReputationError::ChainRefInvalid("stoolap_set_anchor:probe_existing_col")
+                    })? {
+                        stoolap::Value::Blob(arc) => arc.to_vec(),
+                        _ => Vec::new(),
+                    };
+                    if prior_anchor == anchor_tx_hash.to_vec() {
+                        return Ok(()); // idempotent re-submit
+                    }
+                    if !prior_anchor.is_empty() {
+                        return Err(ReputationError::ChainRefInvalid(
+                            "stoolap_set_anchor:anchor_already_set",
+                        ));
+                    }
+                    // Shouldn't reach here, but treat as not-found.
+                    return Err(ReputationError::ChainRefInvalid(
+                        "stoolap_set_anchor:event_not_found",
+                    ));
+                }
+                return Err(ReputationError::ChainRefInvalid(
+                    "stoolap_set_anchor:event_not_found",
+                ));
+            }
             let updated = self
                 .db
                 .execute(
                     "UPDATE reputation_events
                      SET anchor_tx_hash = $1
-                     WHERE event_id = $2
+                     WHERE recorder_did = $2 AND event_id = $3
                        AND (anchor_tx_hash IS NULL OR anchor_tx_hash = $1)",
                     vec![
                         stoolap::Value::blob(anchor_tx_hash.to_vec()),
+                        stoolap::Value::blob(recorder_did_blob),
                         stoolap::Value::blob(event_id_bytes.to_vec()),
                     ],
                 )

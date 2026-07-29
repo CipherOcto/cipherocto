@@ -663,8 +663,9 @@ async fn stoolap_query_anchors_round_trips_anchor_and_filters_by_controller() {
     // a BLOB; this prevents multi-event seeding under the same did
     // without colliding on the composite PK — flagged separately as
     // R5-F4 below). One event is sufficient to exercise the SELECT
-    // path including the ORDER BY clause, the recorded_at_unix proxy
-    // field, and the controller_id filter.
+    // path, the recorded_at_unix proxy field, and the controller_id
+    // filter. ORDER BY + tie-break are not exercised here (see
+    // memory-only `query_anchors_tie_breaks_by_event_id_asc`).
     let eid = store
         .record_signal(ev(1, did, 0.5, 5_000))
         .await

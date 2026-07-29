@@ -399,3 +399,104 @@ async fn cross_backend_query_anchors_controller_filter_isolates_results() {
         "stoolap backend must filter out cid_a events when querying cid_b"
     );
 }
+
+/// Round 7 review R7-F2: `query_anchors_by_controller_id` must
+/// EXCLUDE events that exist under the controller but have
+/// `anchor_tx_hash IS NULL`. The SQL has
+/// `AND anchor_tx_hash IS NOT NULL` (memory: filter in iter; stoolap:
+/// SQL clause) — neither was verified by Round 4/5/6 tests.
+///
+/// Strategy: seed 2 events under the same controller with distinct
+/// recorder_dids (sidestepping R5-F4 PK collision), anchor one and
+/// leave the other unanchored, then query and assert only the
+/// anchored event surfaces. Cross-backend parity is asserted by the
+/// (recorded_at_unix, anchor_tx_hash) tuple stream matching.
+#[tokio::test]
+async fn cross_backend_query_anchors_excludes_unanchored_events() {
+    let cid = ControllerId::from_array([0xC7; 32]);
+    let mem_did_a = octo_reputation::RecorderDid::from_array([0xA1; 52]);
+    let mem_did_b = octo_reputation::RecorderDid::from_array([0xA2; 52]);
+    let stoolap_did_a = octo_reputation::RecorderDid::from_array([0xB1; 52]);
+    let stoolap_did_b = octo_reputation::RecorderDid::from_array([0xB2; 52]);
+
+    let mem = InMemoryReputationStore::new();
+    let stoolap = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+
+    // Anchor 1 event under cid per backend; insert 1 unanchored event
+    // under the same controller. Use distinct dids to sidestep R5-F4.
+    let mk = |did: octo_reputation::RecorderDid, ts: u64| SignalEvent {
+        event_id: EventId::from_u64(0),
+        recorder_did: did,
+        controller_id: cid,
+        signal_kind: SignalKind::Outcome,
+        layer: ReputationLayer::Market,
+        score_delta: octo_determin::Dfp::from_f64(0.5),
+        recorded_at_unix: ts,
+        rotation_provenance: None,
+        audit_ref: None,
+        anchor_tx_hash: None,
+    };
+
+    // Memory backend.
+    let mem_eid_anchor = mem
+        .record_signal(mk(mem_did_a, 1_000))
+        .await
+        .expect("mem.record.anchor");
+    let _mem_eid_unanchored = mem
+        .record_signal(mk(mem_did_b, 2_000))
+        .await
+        .expect("mem.record.unanchored");
+    mem.set_event_anchor_tx_hash(mem_eid_anchor, [0xAA; 32])
+        .await
+        .expect("mem.anchor");
+
+    // Stoolap backend.
+    let stoolap_eid_anchor = stoolap
+        .record_signal(mk(stoolap_did_a, 1_000))
+        .await
+        .expect("stoolap.record.anchor");
+    let _stoolap_eid_unanchored = stoolap
+        .record_signal(mk(stoolap_did_b, 2_000))
+        .await
+        .expect("stoolap.record.unanchored");
+    stoolap
+        .set_event_anchor_tx_hash(stoolap_eid_anchor, [0xAA; 32])
+        .await
+        .expect("stoolap.anchor");
+
+    // Query: must return only the anchored event on each backend.
+    let mem_out = mem
+        .query_anchors_by_controller_id(cid)
+        .await
+        .expect("mem.query");
+    let stoolap_out = stoolap
+        .query_anchors_by_controller_id(cid)
+        .await
+        .expect("stoolap.query");
+    assert_eq!(
+        mem_out.len(),
+        1,
+        "memory must return only the anchored event (1 of 2)"
+    );
+    assert_eq!(
+        stoolap_out.len(),
+        1,
+        "stoolap must return only the anchored event (1 of 2)"
+    );
+
+    // Cross-backend parity on the canonical tuple stream.
+    let mem_canon: Vec<(u64, [u8; 32])> = mem_out
+        .iter()
+        .map(|r| (r.recorded_at_unix, r.anchor_tx_hash))
+        .collect();
+    let stoolap_canon: Vec<(u64, [u8; 32])> = stoolap_out
+        .iter()
+        .map(|r| (r.recorded_at_unix, r.anchor_tx_hash))
+        .collect();
+    assert_eq!(
+        mem_canon, stoolap_canon,
+        "cross-backend anchor tuple stream must agree on (recorded_at_unix, anchor_tx_hash)"
+    );
+}

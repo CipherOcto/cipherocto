@@ -121,6 +121,19 @@ mod real {
         // -- monotonic id helpers --------------------------------------
 
         fn next_event_id(&self) -> Result<u64, ReputationError> {
+            // R8 review (deferred): read-MAX → compute+1 → return is
+            // NOT atomic with the subsequent INSERT into
+            // `reputation_events` (composite PK (recorder_did, event_id)).
+            // Two concurrent `record_signal` calls under distinct
+            // recorders can both observe MAX=N, both return N+1, both
+            // INSERT — second INSERT collides on PK. Pre-R5-F4 this
+            // was masked (always 1, collisions deterministic); post-fix
+            // the race is user-visible. Production must wrap this
+            // pair in a `Mutex<()>` or a stoolap transaction. Test
+            // paths exercise single-threaded semantics; concurrent
+            // races are flagged as a known limitation until the
+            // S-locking pass lands. The memory backend avoids this via
+            // `Arc<AtomicU64>::fetch_add(1, SeqCst)`.
             // R5-F4 fix: `last_event_id` is BLOB(8-byte BE u64); stoolap's
             // `CAST(BLOB AS INTEGER)` always yields 0, so the previous
             // SQL-level MAX returned 0 and every call returned 1,
@@ -1607,7 +1620,17 @@ mod real {
                         ));
                     }
                 },
-                _ => {
+                Some(Err(_e)) => {
+                    // R8 review: row-iteration errors must NOT be
+                    // collapsed into the "not found" path — propagate
+                    // as a distinct error so transient backend failures
+                    // surface to the caller instead of masquerading as
+                    // event_not_found.
+                    return Err(ReputationError::ChainRefInvalid(
+                        "stoolap_set_anchor:probe_pk_iter",
+                    ));
+                }
+                None => {
                     // No row found: either event_id doesn't exist OR
                     // the row exists but already has an anchor set.
                     // Fall through to the existing probe logic
@@ -1618,7 +1641,7 @@ mod real {
             if recorder_did_blob.is_empty() {
                 // Defer to the original probe path so the
                 // already-anchored case can be detected.
-                let mut probe_only = self
+                let probe_only = self
                     .db
                     .query(
                         "SELECT recorder_did, anchor_tx_hash FROM reputation_events
@@ -1628,29 +1651,42 @@ mod real {
                     .map_err(|_e| {
                         ReputationError::ChainRefInvalid("stoolap_set_anchor:probe_existing")
                     })?;
-                if let Some(Ok(r)) = probe_only.next() {
-                    let prior_anchor: Vec<u8> = match r.get(1).map_err(|_e| {
-                        ReputationError::ChainRefInvalid("stoolap_set_anchor:probe_existing_col")
-                    })? {
-                        stoolap::Value::Blob(arc) => arc.to_vec(),
-                        _ => Vec::new(),
-                    };
-                    if prior_anchor == anchor_tx_hash.to_vec() {
-                        return Ok(()); // idempotent re-submit
-                    }
-                    if !prior_anchor.is_empty() {
+                match probe_only.into_iter().next() {
+                    Some(Ok(r)) => {
+                        let prior_anchor: Vec<u8> = match r.get(1).map_err(|_e| {
+                            ReputationError::ChainRefInvalid(
+                                "stoolap_set_anchor:probe_existing_col",
+                            )
+                        })? {
+                            stoolap::Value::Blob(arc) => arc.to_vec(),
+                            _ => Vec::new(),
+                        };
+                        if prior_anchor == anchor_tx_hash.to_vec() {
+                            return Ok(()); // idempotent re-submit
+                        }
+                        if !prior_anchor.is_empty() {
+                            return Err(ReputationError::ChainRefInvalid(
+                                "stoolap_set_anchor:anchor_already_set",
+                            ));
+                        }
+                        // Shouldn't reach here, but treat as not-found.
                         return Err(ReputationError::ChainRefInvalid(
-                            "stoolap_set_anchor:anchor_already_set",
+                            "stoolap_set_anchor:event_not_found",
                         ));
                     }
-                    // Shouldn't reach here, but treat as not-found.
-                    return Err(ReputationError::ChainRefInvalid(
-                        "stoolap_set_anchor:event_not_found",
-                    ));
+                    Some(Err(_e)) => {
+                        // R8 review: row-iteration errors propagate
+                        // (don't masquerade as not_found).
+                        return Err(ReputationError::ChainRefInvalid(
+                            "stoolap_set_anchor:probe_existing_iter",
+                        ));
+                    }
+                    None => {
+                        return Err(ReputationError::ChainRefInvalid(
+                            "stoolap_set_anchor:event_not_found",
+                        ));
+                    }
                 }
-                return Err(ReputationError::ChainRefInvalid(
-                    "stoolap_set_anchor:event_not_found",
-                ));
             }
             let updated = self
                 .db
@@ -1673,15 +1709,14 @@ mod real {
                 // exists with the same anchor_tx_hash, the call is
                 // idempotent; otherwise the event_id was never
                 // recorded.
-                let mut rows = self
+                let rows = self
                     .db
                     .query(
                         "SELECT anchor_tx_hash FROM reputation_events WHERE event_id = $1",
                         vec![stoolap::Value::blob(event_id_bytes.to_vec())],
                     )
                     .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_set_anchor:probe"))?;
-                let row = rows.next();
-                match row {
+                match rows.into_iter().next() {
                     Some(Ok(r)) => {
                         let prior: Vec<u8> = match r.get(0).map_err(|_e| {
                             ReputationError::ChainRefInvalid("stoolap_set_anchor:probe_col")
@@ -1707,7 +1742,13 @@ mod real {
                             ))
                         }
                     }
-                    _ => Err(ReputationError::ChainRefInvalid(
+                    Some(Err(_e)) => {
+                        // R8 review: row-iteration errors propagate.
+                        Err(ReputationError::ChainRefInvalid(
+                            "stoolap_set_anchor:probe_iter",
+                        ))
+                    }
+                    None => Err(ReputationError::ChainRefInvalid(
                         "stoolap_set_anchor:event_not_found",
                     )),
                 }

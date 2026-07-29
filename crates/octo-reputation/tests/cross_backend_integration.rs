@@ -497,3 +497,62 @@ async fn cross_backend_query_anchors_excludes_unanchored_events() {
         "cross-backend anchor tuple stream must agree on (recorded_at_unix, anchor_tx_hash)"
     );
 }
+
+/// R8 review: re-anchoring an event with a *different* hash MUST
+/// surface the same error variant on both backends (parity).
+/// Pre-R8, the memory backend silently overwrote the prior anchor;
+/// post-R8 both backends reject.
+#[tokio::test]
+async fn cross_backend_set_anchor_rejects_different_hash_parity() {
+    use octo_reputation::RecorderDid;
+
+    let did = RecorderDid::from_array([0xD9; 52]);
+    let cid = ControllerId::from_array([0u8; 32]);
+    let mk = |ts: u64| SignalEvent {
+        event_id: EventId::from_u64(0),
+        recorder_did: did,
+        controller_id: cid,
+        signal_kind: octo_reputation::SignalKind::Outcome,
+        layer: octo_reputation::ReputationLayer::Market,
+        score_delta: octo_determin::Dfp::from_f64(0.5),
+        recorded_at_unix: ts,
+        rotation_provenance: None,
+        audit_ref: None,
+        anchor_tx_hash: None,
+    };
+    let mem = InMemoryReputationStore::new();
+    let stoolap = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let mem_eid = mem.record_signal(mk(1_000)).await.expect("mem.record");
+    let stoolap_eid = stoolap.record_signal(mk(1_000)).await.expect("stoolap.record");
+    // First anchor succeeds on both.
+    mem.set_event_anchor_tx_hash(mem_eid, [0xAA; 32])
+        .await
+        .expect("mem.first");
+    stoolap
+        .set_event_anchor_tx_hash(stoolap_eid, [0xAA; 32])
+        .await
+        .expect("stoolap.first");
+    // Different-hash re-anchor MUST error on both.
+    let mem_err = mem
+        .set_event_anchor_tx_hash(mem_eid, [0xBB; 32])
+        .await
+        .unwrap_err();
+    let stoolap_err = stoolap
+        .set_event_anchor_tx_hash(stoolap_eid, [0xBB; 32])
+        .await
+        .unwrap_err();
+    let mem_msg = format!("{:?}", mem_err);
+    let stoolap_msg = format!("{:?}", stoolap_err);
+    assert!(
+        mem_msg.contains("anchor_already_set"),
+        "memory backend must reject different-hash re-anchor (got {})",
+        mem_msg
+    );
+    assert!(
+        stoolap_msg.contains("anchor_already_set"),
+        "stoolap backend must reject different-hash re-anchor (got {})",
+        stoolap_msg
+    );
+}

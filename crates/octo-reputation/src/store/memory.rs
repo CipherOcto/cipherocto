@@ -523,10 +523,27 @@ impl ReputationStore for InMemoryReputationStore {
         // Linear scan: events are partitioned by `EventKey.did_hash`;
         // the in-memory store has no secondary index keyed by event_id
         // alone. Test-only path.
+        //
+        // R8 review parity: mirror the stoolap backend's three-way
+        // semantics:
+        //   - prior anchor == new hash        → idempotent Ok(())
+        //   - prior anchor == some other hash → ChainRefInvalid("anchor_already_set")
+        //   - no prior anchor                 → set
+        //   - event_id not found              → ChainRefInvalid("event_not_found")
         for (k, v) in inner.events.iter_mut() {
             if k.event_id == event_id {
-                v.anchor_tx_hash = Some(anchor_tx_hash);
-                return Ok(());
+                match v.anchor_tx_hash {
+                    Some(existing) if existing != anchor_tx_hash => {
+                        return Err(ReputationError::ChainRefInvalid(
+                            "set_event_anchor_tx_hash:anchor_already_set",
+                        ));
+                    }
+                    Some(_) => return Ok(()), // idempotent re-submit
+                    None => {
+                        v.anchor_tx_hash = Some(anchor_tx_hash);
+                        return Ok(());
+                    }
+                }
             }
         }
         // Round 1 review M2: surface missing event_id as
@@ -917,6 +934,50 @@ mod tests {
         match err {
             ReputationError::ChainRefInvalid("set_event_anchor_tx_hash:event_not_found") => {}
             other => panic!("expected ChainRefInvalid(event_not_found), got {other:?}"),
+        }
+    }
+
+    /// R8 review: memory backend must mirror stoolap's three-way
+    /// anchor semantics — same hash is idempotent, different hash
+    /// is rejected (was silently overwritten before R8).
+    #[tokio::test]
+    async fn set_event_anchor_tx_hash_rejects_re_anchor_with_different_hash() {
+        let store = InMemoryReputationStore::new();
+        let did = RecorderDid::from_array([0xC8; 52]);
+        let cid = ControllerId::from_array([0u8; 32]);
+        let eid = store
+            .record_signal(SignalEvent {
+                event_id: EventId::from_u64(0), // storage assigns
+                recorder_did: did,
+                controller_id: cid,
+                signal_kind: SignalKind::Outcome,
+                layer: ReputationLayer::Market,
+                score_delta: octo_determin::Dfp::from_f64(0.5),
+                recorded_at_unix: 1_000,
+                rotation_provenance: None,
+                audit_ref: None,
+                anchor_tx_hash: None,
+            })
+            .await
+            .expect("record");
+        // First anchor: succeeds.
+        store
+            .set_event_anchor_tx_hash(eid, [0xAA; 32])
+            .await
+            .expect("first anchor");
+        // Same-hash re-submit: idempotent.
+        store
+            .set_event_anchor_tx_hash(eid, [0xAA; 32])
+            .await
+            .expect("idempotent same-hash");
+        // Different-hash re-submit: MUST error (parity with stoolap).
+        let err = store
+            .set_event_anchor_tx_hash(eid, [0xBB; 32])
+            .await
+            .unwrap_err();
+        match err {
+            ReputationError::ChainRefInvalid("set_event_anchor_tx_hash:anchor_already_set") => {}
+            other => panic!("expected anchor_already_set, got {other:?}"),
         }
     }
 

@@ -1642,7 +1642,15 @@ mod real {
                     ReputationError::ChainRefInvalid("stoolap_set_anchor:probe_count_col")
                 })? {
                     stoolap::Value::Blob(arc) => arc.to_vec(),
-                    _ => continue,
+                    _ => {
+                        // R11 review: a non-Blob recorder_did means
+                        // data corruption; refuse rather than
+                        // silently undercount (which could mask
+                        // event_id collisions across recorders).
+                        return Err(ReputationError::ChainRefInvalid(
+                            "stoolap_set_anchor:probe_count_invalid_coltype",
+                        ));
+                    }
                 };
                 all_matches.push(bytes);
                 if all_matches.len() > 2 {

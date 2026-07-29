@@ -644,3 +644,83 @@ async fn cross_backend_set_anchor_event_not_found_parity() {
     // Unused-binding suppression.
     let _ = RecorderDid::from_array([0u8; 52]);
 }
+
+/// R11 review (MEDIUM): already_anchored vs event_not_found
+/// distinction. Backends MUST differentiate: a missing event_id is
+/// event_not_found; an event_id that exists with a different hash
+/// is anchor_already_set. Both surfaces on both backends.
+#[tokio::test]
+async fn cross_backend_set_anchor_distinguishes_anchored_vs_missing() {
+    use octo_reputation::RecorderDid;
+
+    let did = RecorderDid::from_array([0xDB; 52]);
+    let cid = ControllerId::from_array([0u8; 32]);
+    let mk = |ts: u64| SignalEvent {
+        event_id: EventId::from_u64(0),
+        recorder_did: did,
+        controller_id: cid,
+        signal_kind: octo_reputation::SignalKind::Outcome,
+        layer: octo_reputation::ReputationLayer::Market,
+        score_delta: octo_determin::Dfp::from_f64(0.5),
+        recorded_at_unix: ts,
+        rotation_provenance: None,
+        audit_ref: None,
+        anchor_tx_hash: None,
+    };
+    let mem = InMemoryReputationStore::new();
+    let stoolap = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let mem_eid = mem.record_signal(mk(1_000)).await.expect("mem.record");
+    let stoolap_eid = stoolap.record_signal(mk(1_000)).await.expect("stoolap.record");
+    // First anchor: Ok on both.
+    mem.set_event_anchor_tx_hash(mem_eid, [0xAA; 32])
+        .await
+        .expect("mem.first");
+    stoolap
+        .set_event_anchor_tx_hash(stoolap_eid, [0xAA; 32])
+        .await
+        .expect("stoolap.first");
+    // Different-hash re-anchor: anchor_already_set on both.
+    let mem_re = mem
+        .set_event_anchor_tx_hash(mem_eid, [0xBB; 32])
+        .await
+        .unwrap_err();
+    let stoolap_re = stoolap
+        .set_event_anchor_tx_hash(stoolap_eid, [0xBB; 32])
+        .await
+        .unwrap_err();
+    let mem_re_msg = format!("{:?}", mem_re);
+    let stoolap_re_msg = format!("{:?}", stoolap_re);
+    assert!(
+        mem_re_msg.contains("anchor_already_set"),
+        "memory already-anchored must surface :anchor_already_set; got {}",
+        mem_re_msg
+    );
+    assert!(
+        stoolap_re_msg.contains("anchor_already_set"),
+        "stoolap already-anchored must surface :anchor_already_set; got {}",
+        stoolap_re_msg
+    );
+    // Missing event_id: event_not_found on both (distinct variant).
+    let mem_miss = mem
+        .set_event_anchor_tx_hash(EventId::from_u64(999), [0xCC; 32])
+        .await
+        .unwrap_err();
+    let stoolap_miss = stoolap
+        .set_event_anchor_tx_hash(EventId::from_u64(999), [0xCC; 32])
+        .await
+        .unwrap_err();
+    let mem_miss_msg = format!("{:?}", mem_miss);
+    let stoolap_miss_msg = format!("{:?}", stoolap_miss);
+    assert!(
+        mem_miss_msg.contains("event_not_found"),
+        "memory missing-id must surface :event_not_found; got {}",
+        mem_miss_msg
+    );
+    assert!(
+        stoolap_miss_msg.contains("event_not_found"),
+        "stoolap missing-id must surface :event_not_found; got {}",
+        stoolap_miss_msg
+    );
+}

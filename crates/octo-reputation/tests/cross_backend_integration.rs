@@ -298,9 +298,6 @@ async fn cross_backend_anchor_pending_returns_consistent_set() {
 /// Multi-event tie-break (recorded_at_unix equality + event_id ASC)
 /// is exercised by the memory-only test
 /// `query_anchors_tie_breaks_by_event_id_asc` in `store/memory.rs`.
-/// The cross-backend assertion for tie-break ordering is deferred
-/// until R5-F4 (pre-existing stoolap `next_event_id` BLOB-CAST bug)
-/// is fixed.
 #[tokio::test]
 async fn cross_backend_query_anchors_controller_filter_isolates_results() {
     let cid_a = ControllerId::from_array([0xA7; 32]);
@@ -407,7 +404,7 @@ async fn cross_backend_query_anchors_controller_filter_isolates_results() {
 /// SQL clause) — neither was verified by Round 4/5/6 tests.
 ///
 /// Strategy: seed 2 events under the same controller with distinct
-/// recorder_dids (sidestepping R5-F4 PK collision), anchor one and
+/// recorder_dids for cleaner cross-backend parity, anchor one and
 /// leave the other unanchored, then query and assert only the
 /// anchored event surfaces. Cross-backend parity is asserted by the
 /// (recorded_at_unix, anchor_tx_hash) tuple stream matching.
@@ -425,7 +422,8 @@ async fn cross_backend_query_anchors_excludes_unanchored_events() {
         .expect("open");
 
     // Anchor 1 event under cid per backend; insert 1 unanchored event
-    // under the same controller. Use distinct dids to sidestep R5-F4.
+    // under the same controller. Use distinct dids for cleaner
+    // cross-backend parity comparison.
     let mk = |did: octo_reputation::RecorderDid, ts: u64| SignalEvent {
         event_id: EventId::from_u64(0),
         recorder_did: did,

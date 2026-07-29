@@ -644,10 +644,6 @@ async fn replay_for_audit_preserves_anchor_tx_hash() {
 /// is exercised. Renamed to match what the test actually verifies:
 /// anchor round-trip, proxy field preservation, controller filter,
 /// empty-result for an unknown controller.
-///
-/// Multi-event ORDER BY + tie-break verification is gated on R5-F4
-/// (pre-existing stoolap `next_event_id` BLOB-CAST bug — every call
-/// returns 1, breaking multi-event seeding under same `recorder_did`).
 #[tokio::test]
 async fn stoolap_query_anchors_round_trips_anchor_and_filters_by_controller() {
     let store = StoolapReputationStore::open_in_memory()
@@ -657,14 +653,9 @@ async fn stoolap_query_anchors_round_trips_anchor_and_filters_by_controller() {
     // SELECT JOIN finds the row.
     let cid = ControllerId::from_array([0u8; 32]);
     let did = octo_reputation::RecorderDid::from_array([0xC5; 52]);
-    // Seed ONE event with a unique recorder_did (the stoolap backend
-    // currently has a pre-existing bug in `next_event_id` that returns
-    // 1 for every call when the aggregate's last_event_id is stored as
-    // a BLOB; this prevents multi-event seeding under the same did
-    // without colliding on the composite PK — flagged separately as
-    // R5-F4 below). One event is sufficient to exercise the SELECT
-    // path, the recorded_at_unix proxy field, and the controller_id
-    // filter. ORDER BY + tie-break are not exercised here (see
+    // One event is sufficient to exercise the SELECT path, the
+    // recorded_at_unix proxy field, and the controller_id filter.
+    // ORDER BY + tie-break are not exercised here (see
     // memory-only `query_anchors_tie_breaks_by_event_id_asc`).
     let eid = store
         .record_signal(ev(1, did, 0.5, 5_000))
@@ -744,5 +735,43 @@ async fn gossip_catch_up_preserves_anchor_tx_hash() {
         !anchored.is_empty(),
         "gossip_catch_up must surface anchor_tx_hash to gossip peers (got {} events)",
         out.len()
+    );
+}
+
+/// Round 8 review R5-F4: `next_event_id` MUST yield strictly increasing
+/// ids across successive `record_signal` calls. Pre-fix root cause:
+/// `SELECT COALESCE(MAX(CAST(last_event_id AS INTEGER)), 0)` — stoolap
+/// treats `CAST(BLOB AS INTEGER)` as 0, so MAX always returns 0 and
+/// `next_event_id` returns 1 every call, colliding on the composite
+/// `(recorder_did, event_id)` PK. Fix: read BLOB, decode 8-byte BE u64
+/// in Rust, MAX in Rust.
+#[tokio::test]
+async fn stoolap_record_signal_assigns_monotonic_event_ids() {
+    let store = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let did = octo_reputation::RecorderDid::from_array([0xD5; 52]);
+    let e1 = store
+        .record_signal(ev(1, did, 0.5, 1_000))
+        .await
+        .expect("r1");
+    let e2 = store
+        .record_signal(ev(2, did, 0.4, 2_000))
+        .await
+        .expect("r2");
+    let e3 = store
+        .record_signal(ev(3, did, 0.3, 3_000))
+        .await
+        .expect("r3");
+    assert_eq!(e1.to_u64(), 1, "first event id must be 1");
+    assert_eq!(
+        e2.to_u64(),
+        2,
+        "second event id must be 2 (pre-fix bug returned 1)"
+    );
+    assert_eq!(
+        e3.to_u64(),
+        3,
+        "third event id must be 3 (pre-fix bug returned 1, colliding on PK)"
     );
 }

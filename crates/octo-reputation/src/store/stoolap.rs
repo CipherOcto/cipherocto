@@ -121,30 +121,36 @@ mod real {
         // -- monotonic id helpers --------------------------------------
 
         fn next_event_id(&self) -> Result<u64, ReputationError> {
-            let mut rows = self
+            // R5-F4 fix: `last_event_id` is BLOB(8-byte BE u64); stoolap's
+            // `CAST(BLOB AS INTEGER)` always yields 0, so the previous
+            // SQL-level MAX returned 0 and every call returned 1,
+            // colliding on the composite (recorder_did, event_id) PK.
+            // Read the BLOB and compute MAX in Rust instead.
+            let rows = self
                 .db
-                .query(
-                    "SELECT COALESCE(MAX(CAST(last_event_id AS INTEGER)), 0) FROM reputation_aggregates",
-                    [],
-                )
+                .query("SELECT last_event_id FROM reputation_aggregates", [])
                 .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_next_event_id"))?;
-            let row = match rows.next() {
-                Some(Ok(r)) => r,
-                Some(Err(_e)) => {
+            let mut max: u64 = 0;
+            for row_res in rows {
+                let row = row_res.map_err(|_e| {
+                    ReputationError::ChainRefInvalid("stoolap_next_event_id:row_err")
+                })?;
+                let bytes: Vec<u8> = row
+                    .get(0)
+                    .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_next_event_id:get"))?;
+                if bytes.len() != 8 {
                     return Err(ReputationError::ChainRefInvalid(
-                        "stoolap_next_event_id:row_err",
-                    ))
+                        "stoolap_next_event_id:blob_len",
+                    ));
                 }
-                None => {
-                    return Err(ReputationError::ChainRefInvalid(
-                        "stoolap_next_event_id:empty",
-                    ))
+                let mut arr = [0u8; 8];
+                arr.copy_from_slice(&bytes);
+                let id = u64::from_be_bytes(arr);
+                if id > max {
+                    max = id;
                 }
-            };
-            let max: i64 = row
-                .get(0)
-                .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_next_event_id:cast"))?;
-            Ok((max + 1) as u64)
+            }
+            Ok(max + 1)
         }
 
         fn next_recorder_id(&self) -> Result<u64, ReputationError> {

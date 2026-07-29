@@ -520,38 +520,51 @@ impl ReputationStore for InMemoryReputationStore {
         anchor_tx_hash: [u8; 32],
     ) -> StoreResult<()> {
         let mut inner = self.inner.write().await;
-        // Linear scan: events are partitioned by `EventKey.did_hash`;
-        // the in-memory store has no secondary index keyed by event_id
-        // alone. Test-only path.
+        // R9 review (HIGH): event_ids are NOT globally unique across
+        // recorders (the schema's composite PK is (recorder_did,
+        // event_id) and event_ids reset per-recorder via the global
+        // MAX counter). A linear scan over `events` keyed by event_id
+        // alone can match multiple EventKey entries under distinct
+        // did_hashs. We MUST count matches: 0 → not_found, 1 →
+        // anchor, 2+ → ambiguous_event_id (refuse; the API contract
+        // `set_event_anchor_tx_hash(event_id, hash)` cannot
+        // disambiguate which recorder's row to mutate).
         //
-        // R8 review parity: mirror the stoolap backend's three-way
-        // semantics:
-        //   - prior anchor == new hash        → idempotent Ok(())
-        //   - prior anchor == some other hash → ChainRefInvalid("anchor_already_set")
-        //   - no prior anchor                 → set
-        //   - event_id not found              → ChainRefInvalid("event_not_found")
-        for (k, v) in inner.events.iter_mut() {
+        // This is the memory-backend analog of stoolap's R7-F2
+        // composite-PK scope fix: the stoolap UPDATE is scoped to
+        // (recorder_did, event_id) and the LIMIT-1 probe is followed
+        // by a scoped write; for memory we explicitly reject
+        // ambiguous matches.
+        let mut matches: Vec<EventKey> = Vec::new();
+        for k in inner.events.keys() {
             if k.event_id == event_id {
+                matches.push(*k);
+            }
+        }
+        match matches.len() {
+            0 => Err(ReputationError::ChainRefInvalid(
+                "set_event_anchor_tx_hash:event_not_found",
+            )),
+            1 => {
+                let k = matches[0];
+                let v = inner.events.get_mut(&k).expect("just-collected key");
                 match v.anchor_tx_hash {
                     Some(existing) if existing != anchor_tx_hash => {
-                        return Err(ReputationError::ChainRefInvalid(
+                        Err(ReputationError::ChainRefInvalid(
                             "set_event_anchor_tx_hash:anchor_already_set",
-                        ));
+                        ))
                     }
-                    Some(_) => return Ok(()), // idempotent re-submit
+                    Some(_) => Ok(()), // idempotent re-submit
                     None => {
                         v.anchor_tx_hash = Some(anchor_tx_hash);
-                        return Ok(());
+                        Ok(())
                     }
                 }
             }
+            _ => Err(ReputationError::ChainRefInvalid(
+                "set_event_anchor_tx_hash:ambiguous_event_id",
+            )),
         }
-        // Round 1 review M2: surface missing event_id as
-        // ChainRefInvalid so callers cannot silently acknowledge a
-        // write that didn't land.
-        Err(ReputationError::ChainRefInvalid(
-            "set_event_anchor_tx_hash:event_not_found",
-        ))
     }
 
     async fn query_anchors_by_controller_id(
@@ -979,6 +992,109 @@ mod tests {
             ReputationError::ChainRefInvalid("set_event_anchor_tx_hash:anchor_already_set") => {}
             other => panic!("expected anchor_already_set, got {other:?}"),
         }
+    }
+
+    /// R9 review (HIGH): cross-recorder event_id collision. event_ids
+    /// are global-monotonic but stored under composite PK
+    /// (recorder_did, event_id); two distinct recorders can each
+    /// have an event with the same event_id (e.g., both their first
+    /// events after R5-F4 if both have empty aggregates). Memory
+    /// backend MUST refuse to anchor when the call is ambiguous
+    /// (multiple did_hashs match); otherwise an attacker can race
+    /// the iteration order to overwrite a victim's anchor (or
+    /// non-deterministically land on the wrong row).
+    #[tokio::test]
+    async fn set_event_anchor_tx_hash_ambiguous_event_id_errors() {
+        let store = InMemoryReputationStore::new();
+        let r_a = RecorderDid::from_array([0xA1; 52]);
+        let r_b = RecorderDid::from_array([0xA2; 52]);
+        let cid = ControllerId::from_array([0u8; 32]);
+        let mk = |did: RecorderDid| SignalEvent {
+            event_id: EventId::from_u64(0),
+            recorder_did: did,
+            controller_id: cid,
+            signal_kind: SignalKind::Outcome,
+            layer: ReputationLayer::Market,
+            score_delta: octo_determin::Dfp::from_f64(0.5),
+            recorded_at_unix: 1_000,
+            rotation_provenance: None,
+            audit_ref: None,
+            anchor_tx_hash: None,
+        };
+        let e_a = store.record_signal(mk(r_a)).await.expect("r_a");
+        let _e_b = store.record_signal(mk(r_b)).await.expect("r_b");
+        // After R5-F4 with empty aggregates both first events share
+        // event_id=1; r_b's record_signal bumps MAX to 2 → r_b=2?
+        // No: r_a inserts first, last_event_id=1 in aggregates;
+        // then r_b reads MAX=1, returns 2. So they DO NOT share id
+        // unless we seed two events with the same id manually.
+        // For this test, just verify the API rejects ambiguous
+        // matches: forge the situation by inserting a row directly
+        // with the same event_id under both recorders.
+        let shared_id = EventId::from_u64(99);
+        // r_a already has e_a=1. Insert another event for r_a with
+        // event_id=99, and one for r_b with event_id=99.
+        store
+            .inner
+            .write()
+            .await
+            .events
+            .insert(
+                crate::store::memory::EventKey {
+                    did_hash: did_hash(&r_a),
+                    event_id: shared_id,
+                },
+                SignalEvent {
+                    event_id: shared_id,
+                    recorder_did: r_a,
+                    controller_id: cid,
+                    signal_kind: SignalKind::Outcome,
+                    layer: ReputationLayer::Market,
+                    score_delta: octo_determin::Dfp::from_f64(0.5),
+                    recorded_at_unix: 2_000,
+                    rotation_provenance: None,
+                    audit_ref: None,
+                    anchor_tx_hash: None,
+                },
+            );
+        store
+            .inner
+            .write()
+            .await
+            .events
+            .insert(
+                crate::store::memory::EventKey {
+                    did_hash: did_hash(&r_b),
+                    event_id: shared_id,
+                },
+                SignalEvent {
+                    event_id: shared_id,
+                    recorder_did: r_b,
+                    controller_id: cid,
+                    signal_kind: SignalKind::Outcome,
+                    layer: ReputationLayer::Market,
+                    score_delta: octo_determin::Dfp::from_f64(0.5),
+                    recorded_at_unix: 3_000,
+                    rotation_provenance: None,
+                    audit_ref: None,
+                    anchor_tx_hash: None,
+                },
+            );
+        let err = store
+            .set_event_anchor_tx_hash(shared_id, [0xAA; 32])
+            .await
+            .unwrap_err();
+        match err {
+            ReputationError::ChainRefInvalid(
+                "set_event_anchor_tx_hash:ambiguous_event_id",
+            ) => {}
+            other => panic!("expected ambiguous_event_id, got {other:?}"),
+        }
+        // Sanity: the original e_a anchor (unrelated) still works.
+        store
+            .set_event_anchor_tx_hash(e_a, [0xBB; 32])
+            .await
+            .expect("unique match anchors");
     }
 
     /// Round 4 review #2: query_anchors_by_controller_id ordering

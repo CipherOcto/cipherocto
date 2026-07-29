@@ -284,27 +284,27 @@ async fn cross_backend_anchor_pending_returns_consistent_set() {
     );
 }
 
-/// Round 5 review R5-F2 + R5-F3: `query_anchors_by_controller_id`
-/// must produce the same (recorded_at_unix ASC, event_id ASC) ordering
-/// across memory + stoolap backends. Round 4 added the tie-break to
-/// both backends but the cross-backend agreement was unverified.
-///
-/// Strategy: seed one anchored event per backend under the same
-/// controller, with distinct recorder_dids (so the composite PK
-/// `(recorder_did, event_id)` doesn't collide — see Round 5 R5-F4
-/// for the stoolap `next_event_id` limitation that forces distinct
-/// dids for multi-event seeding). The two backends must return
-/// byte-identical `(recorded_at_unix, anchor_tx_hash)` tuples; this
-/// proves the SELECT + JOIN + ORDER BY + proxy-field semantics agree.
+/// Round 5 review R5-F2 + R6-F2: `query_anchors_by_controller_id`
+/// must produce the same (recorded_at_unix, anchor_tx_hash) tuple
+/// stream AND respect the controller_id filter consistently across
+/// memory + stoolap backends. Round 4 added the (recorded_at_unix
+/// ASC, event_id ASC) tie-break to both backends but the cross-
+/// backend agreement was unverified. Round 6 noted the original
+/// single-row assertion was tautological (Round 6 R6-F2); this
+/// rewrite adds a cross-backend assertion on the controller_id
+/// FILTER — anchor under cid_a, query for cid_b must return empty
+/// on both backends — proving the JOIN/filter wiring is consistent.
 ///
 /// Multi-event tie-break (recorded_at_unix equality + event_id ASC)
 /// is exercised by the memory-only test
 /// `query_anchors_tie_breaks_by_event_id_asc` in `store/memory.rs`.
 /// The cross-backend assertion for tie-break ordering is deferred
-/// until R5-F4 is fixed.
+/// until R5-F4 (pre-existing stoolap `next_event_id` BLOB-CAST bug)
+/// is fixed.
 #[tokio::test]
-async fn cross_backend_query_anchors_byte_identical_single_row() {
-    let cid = ControllerId::from_array([0u8; 32]);
+async fn cross_backend_query_anchors_controller_filter_isolates_results() {
+    let cid_a = ControllerId::from_array([0xA7; 32]);
+    let cid_b = ControllerId::from_array([0xB7; 32]);
     let mem_did = octo_reputation::RecorderDid::from_array([0xA8; 52]);
     let stoolap_did = octo_reputation::RecorderDid::from_array([0xA9; 52]);
 
@@ -313,13 +313,12 @@ async fn cross_backend_query_anchors_byte_identical_single_row() {
         .await
         .expect("open");
 
-    // Seed one event on each backend. Memory starts event_ids at 0;
-    // stoolap starts at 1 (per its `next_event_id` logic). The
-    // per-backend anchor call uses the backend-local id.
+    // Anchor 1 event under cid_a on each backend. cid_b has zero
+    // anchored events.
     let mem_ev = SignalEvent {
         event_id: EventId::from_u64(0),
         recorder_did: mem_did,
-        controller_id: cid,
+        controller_id: cid_a,
         signal_kind: SignalKind::Outcome,
         layer: ReputationLayer::Market,
         score_delta: octo_determin::Dfp::from_f64(0.5),
@@ -331,7 +330,7 @@ async fn cross_backend_query_anchors_byte_identical_single_row() {
     let stoolap_ev = SignalEvent {
         event_id: EventId::from_u64(0),
         recorder_did: stoolap_did,
-        controller_id: cid,
+        controller_id: cid_a,
         signal_kind: SignalKind::Outcome,
         layer: ReputationLayer::Market,
         score_delta: octo_determin::Dfp::from_f64(0.5),
@@ -355,32 +354,48 @@ async fn cross_backend_query_anchors_byte_identical_single_row() {
         .await
         .expect("stoolap.anchor");
 
-    let mem_out = mem
-        .query_anchors_by_controller_id(cid)
+    // Controller cid_a must return 1 anchor on BOTH backends, with
+    // byte-identical (recorded_at_unix, anchor_tx_hash) tuples.
+    let mem_a = mem
+        .query_anchors_by_controller_id(cid_a)
         .await
-        .expect("mem.query");
-    let stoolap_out = stoolap
-        .query_anchors_by_controller_id(cid)
+        .expect("mem.query_a");
+    let stoolap_a = stoolap
+        .query_anchors_by_controller_id(cid_a)
         .await
-        .expect("stoolap.query");
-
-    assert_eq!(mem_out.len(), 1, "memory backend must return 1 anchor");
-    assert_eq!(stoolap_out.len(), 1, "stoolap backend must return 1 anchor");
-
-    // Cross-backend agreement on the canonical fields.
+        .expect("stoolap.query_a");
+    assert_eq!(mem_a.len(), 1, "memory must return 1 anchor under cid_a");
     assert_eq!(
-        mem_out[0].recorded_at_unix, stoolap_out[0].recorded_at_unix,
-        "proxy recorded_at_unix must agree across backends"
+        stoolap_a.len(),
+        1,
+        "stoolap must return 1 anchor under cid_a"
     );
     assert_eq!(
-        mem_out[0].anchor_tx_hash, stoolap_out[0].anchor_tx_hash,
-        "anchor_tx_hash must agree across backends"
+        mem_a[0].recorded_at_unix, stoolap_a[0].recorded_at_unix,
+        "proxy recorded_at_unix must agree across backends for cid_a"
+    );
+    assert_eq!(
+        mem_a[0].anchor_tx_hash, stoolap_a[0].anchor_tx_hash,
+        "anchor_tx_hash must agree across backends for cid_a"
     );
 
-    // Within each backend: anchor_tx_hash preserved, recorded_at_unix
-    // is the proxy value from the underlying event's recorded_at_unix.
-    for out in [&mem_out, &stoolap_out] {
-        assert_eq!(out[0].anchor_tx_hash, anchor);
-        assert_eq!(out[0].recorded_at_unix, 5_000);
-    }
+    // Controller cid_b must return empty on BOTH backends. This is
+    // the cross-backend filter assertion: a broken JOIN that ignored
+    // the controller_id filter would surface the cid_a row here.
+    let mem_b = mem
+        .query_anchors_by_controller_id(cid_b)
+        .await
+        .expect("mem.query_b");
+    let stoolap_b = stoolap
+        .query_anchors_by_controller_id(cid_b)
+        .await
+        .expect("stoolap.query_b");
+    assert!(
+        mem_b.is_empty(),
+        "memory backend must filter out cid_a events when querying cid_b"
+    );
+    assert!(
+        stoolap_b.is_empty(),
+        "stoolap backend must filter out cid_a events when querying cid_b"
+    );
 }

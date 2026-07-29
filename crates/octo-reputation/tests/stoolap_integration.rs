@@ -638,11 +638,18 @@ async fn replay_for_audit_preserves_anchor_tx_hash() {
 }
 
 /// Round 5 review R5-F1: stoolap backend `query_anchors_by_controller_id`
-/// must produce the same ORDER BY (recorded_at_unix ASC, event_id ASC)
-/// as the memory backend. Round 4 added the tie-break but the stoolap
-/// SQL was previously unverified.
+/// round-trips an anchored event and respects the controller_id filter.
+/// Round 6 review R6-F1: the original test name implied ORDER BY +
+/// tie-break verification, but the test only seeds one event so neither
+/// is exercised. Renamed to match what the test actually verifies:
+/// anchor round-trip, proxy field preservation, controller filter,
+/// empty-result for an unknown controller.
+///
+/// Multi-event ORDER BY + tie-break verification is gated on R5-F4
+/// (pre-existing stoolap `next_event_id` BLOB-CAST bug — every call
+/// returns 1, breaking multi-event seeding under same `recorder_did`).
 #[tokio::test]
-async fn stoolap_query_anchors_orders_by_recorded_then_event_id() {
+async fn stoolap_query_anchors_round_trips_anchor_and_filters_by_controller() {
     let store = StoolapReputationStore::open_in_memory()
         .await
         .expect("open");

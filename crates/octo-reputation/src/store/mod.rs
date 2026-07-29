@@ -202,7 +202,7 @@ pub trait ReputationStore: Send + Sync {
     ) -> StoreResult<()>;
 
     /// Read-side anchor provenance: return `(event_id, anchor_tx_hash,
-    /// anchored_at_unix)` tuples for all events under the given
+    /// recorded_at_unix)` tuples for all events under the given
     /// `controller_id`. Joins `reputation_anchors` to
     /// `reputation_events` via the `(event_id)` key.
     ///
@@ -213,7 +213,13 @@ pub trait ReputationStore: Send + Sync {
     /// `migrations/v010__reputation_anchors.sql`.
     ///
     /// Returns an empty `Vec` when the controller has no anchored
-    /// events. Ordering is `anchored_at_unix ASC` (oldest first).
+    /// events. Ordering is `(recorded_at_unix ASC, event_id ASC)` —
+    /// `recorded_at_unix` is the canonical anchor proxy field
+    /// (event record time, used as the anchor observation time
+    /// until a future amendment threads a separate timestamp
+    /// through `set_event_anchor_tx_hash`); `event_id` is the
+    /// deterministic tie-breaker for rows with the same
+    /// `recorded_at_unix`.
     async fn query_anchors_by_controller_id(
         &self,
         controller_id: ControllerId,
@@ -230,8 +236,14 @@ pub struct AnchorRecord {
     pub event_id: EventId,
     /// On-chain anchor transaction hash.
     pub anchor_tx_hash: [u8; 32],
-    /// Wall-clock unix seconds when the anchor was observed.
-    pub anchored_at_unix: u64,
+    /// Unix seconds. PROXY field: until `set_event_anchor_tx_hash`
+    /// is updated to take a separate `now_unix` for the anchor
+    /// observation time (Round 4 review F2), this is populated
+    /// from the underlying event's `recorded_at_unix`. Round 4
+    /// review confirmed the proxy is consistent across both
+    /// backends; a future RFC-0968-A2 amendment can swap the
+    /// proxy for a true anchor-observation timestamp.
+    pub recorded_at_unix: u64,
 }
 
 /// Helper used by every backend — convert a `RotationProvenance` into a

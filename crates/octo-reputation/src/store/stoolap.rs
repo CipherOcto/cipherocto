@@ -1653,7 +1653,7 @@ mod real {
                      FROM reputation_events
                      WHERE controller_id = $1
                        AND anchor_tx_hash IS NOT NULL
-                     ORDER BY recorded_at_unix ASC",
+                     ORDER BY recorded_at_unix ASC, event_id ASC",
                     vec![stoolap::Value::blob(controller_id.as_bytes().to_vec())],
                 )
                 .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_query_anchors:select"))?;
@@ -1675,7 +1675,7 @@ mod real {
                     stoolap::Value::Blob(arc) => arc.to_vec(),
                     _ => continue,
                 };
-                let anchored_at: i64 = row
+                let recorded_at: i64 = row
                     .get(2)
                     .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_query_anchors:col2"))?;
                 if event_id_blob.len() != 8 || anchor_blob.len() != 32 {
@@ -1688,7 +1688,7 @@ mod real {
                 out.push(AnchorRecord {
                     event_id: EventId::from_u64(u64::from_be_bytes(id_arr)),
                     anchor_tx_hash: anchor_arr,
-                    anchored_at_unix: anchored_at.max(0) as u64,
+                    recorded_at_unix: recorded_at.max(0) as u64,
                 });
             }
             Ok(out)

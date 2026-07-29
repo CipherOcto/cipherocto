@@ -552,12 +552,17 @@ impl ReputationStore for InMemoryReputationStore {
                 e.anchor_tx_hash.map(|h| crate::store::AnchorRecord {
                     event_id: e.event_id,
                     anchor_tx_hash: h,
-                    anchored_at_unix: e.recorded_at_unix,
+                    recorded_at_unix: e.recorded_at_unix,
                 })
             })
             .collect();
-        // anchored_at_unix ASC (oldest first).
-        out.sort_by_key(|r| r.anchored_at_unix);
+        // Round 4 review F2: tie-break by `event_id` ASC for
+        // cross-backend determinism when timestamps tie.
+        out.sort_by(|a, b| {
+            a.recorded_at_unix
+                .cmp(&b.recorded_at_unix)
+                .then(a.event_id.cmp(&b.event_id))
+        });
         Ok(out)
     }
 }
@@ -874,16 +879,21 @@ mod tests {
             .await
             .expect("query c1");
         assert_eq!(c1_out.len(), 2, "e1+e2 anchored under c1, e3 unanchored");
-        // anchored_at_unix ASC ordering: e1 (ts=1000) before e2 (ts=2000).
+        // recorded_at_unix ASC ordering: e1 (ts=1000) before e2 (ts=2000).
         assert_eq!(c1_out[0].event_id.to_u64(), e1.to_u64());
         assert_eq!(c1_out[1].event_id.to_u64(), e2.to_u64());
         assert_eq!(c1_out[0].anchor_tx_hash, [0xAA; 32]);
+        // Round 4 fix: field renamed `anchored_at_unix` →
+        // `recorded_at_unix` (proxy field; round 4 F2).
+        assert_eq!(c1_out[0].recorded_at_unix, 1_000);
+        assert_eq!(c1_out[1].recorded_at_unix, 2_000);
         let c2_out = store
             .query_anchors_by_controller_id(c2)
             .await
             .expect("query c2");
         assert_eq!(c2_out.len(), 1);
         assert_eq!(c2_out[0].event_id.to_u64(), e4.to_u64());
+        assert_eq!(c2_out[0].recorded_at_unix, 4_000);
         // Empty for an unknown controller.
         let unknown = store
             .query_anchors_by_controller_id(ControllerId::from_array([0xFF; 32]))
@@ -908,5 +918,59 @@ mod tests {
             ReputationError::ChainRefInvalid("set_event_anchor_tx_hash:event_not_found") => {}
             other => panic!("expected ChainRefInvalid(event_not_found), got {other:?}"),
         }
+    }
+
+    /// Round 4 review #2: query_anchors_by_controller_id ordering
+    /// breaks ties by event_id ASC for cross-backend determinism.
+    #[tokio::test]
+    async fn query_anchors_tie_breaks_by_event_id_asc() {
+        let store = InMemoryReputationStore::new();
+        let cid = ControllerId::from_array([7u8; 32]);
+        // 3 events under one controller with the same recorded_at_unix.
+        let make = |ts: u64| SignalEvent {
+            event_id: EventId::from_u64(0), // storage assigns
+            recorder_did: RecorderDid::from_array([0u8; 52]),
+            controller_id: cid,
+            signal_kind: SignalKind::Outcome,
+            layer: ReputationLayer::Market,
+            score_delta: Dfp::from_f64(0.5),
+            recorded_at_unix: ts,
+            rotation_provenance: None,
+            audit_ref: None,
+            anchor_tx_hash: None,
+        };
+        let _e_a = store.record_signal(make(5_000)).await.expect("a");
+        let _e_b = store.record_signal(make(5_000)).await.expect("b");
+        let _e_c = store.record_signal(make(5_000)).await.expect("c");
+        // Anchor all 3 — the storage-assigned event_ids are
+        // monotonically increasing, so the tie-break should order
+        // them ascending (whichever ids storage assigned).
+        store
+            .set_event_anchor_tx_hash(EventId::from_u64(0), [0xAA; 32])
+            .await
+            .expect("anchor 0");
+        store
+            .set_event_anchor_tx_hash(EventId::from_u64(1), [0xBB; 32])
+            .await
+            .expect("anchor 1");
+        store
+            .set_event_anchor_tx_hash(EventId::from_u64(2), [0xCC; 32])
+            .await
+            .expect("anchor 2");
+        let out = store
+            .query_anchors_by_controller_id(cid)
+            .await
+            .expect("query");
+        assert_eq!(out.len(), 3);
+        let ids: Vec<u64> = out.iter().map(|r| r.event_id.to_u64()).collect();
+        assert_eq!(
+            ids,
+            vec![0, 1, 2],
+            "tie-break must order by event_id ASC for identical timestamps"
+        );
+        assert_eq!(
+            out.iter().map(|r| r.recorded_at_unix).collect::<Vec<_>>(),
+            vec![5_000, 5_000, 5_000]
+        );
     }
 }

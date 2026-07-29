@@ -793,4 +793,121 @@ async fn cross_backend_severity_total_matches_after_record_signal() {
         mem_outcome.severity_total, stoolap_outcome.severity_total
     );
     assert_eq!(mem_outcome.severity_total, 0);
+    // R16 review (LOW): also pin samples to catch a parity drift
+    // where severity_total agrees but samples does not.
+    assert_eq!(
+        mem_slash.samples, stoolap_slash.samples,
+        "Slash aggregate samples must agree; mem={} stoolap={}",
+        mem_slash.samples, stoolap_slash.samples
+    );
+    assert_eq!(
+        mem_outcome.samples, stoolap_outcome.samples,
+        "Outcome aggregate samples must agree; mem={} stoolap={}",
+        mem_outcome.samples, stoolap_outcome.samples
+    );
+    assert_eq!(mem_slash.samples, 3);
+    assert_eq!(mem_outcome.samples, 2);
+}
+
+/// R16 review (HIGH): pure-Slash sequence parity — read_aggregate
+/// on a (recorder, Outcome) combo that was never inserted must
+/// return AggregateNotFound on both backends (matching
+/// discriminant). Pairs with `cross_backend_severity_total_*` for
+/// the absence path.
+#[tokio::test]
+async fn cross_backend_severity_total_not_found_for_pure_slash_recorder() {
+    use octo_reputation::RecorderDid;
+
+    let did = RecorderDid::from_array([0xE2; 52]);
+    let cid = ControllerId::from_array([0u8; 32]);
+    let mk = |kind: SignalKind, ts: u64| SignalEvent {
+        event_id: EventId::from_u64(0),
+        recorder_did: did,
+        controller_id: cid,
+        signal_kind: kind,
+        layer: octo_reputation::ReputationLayer::Market,
+        score_delta: octo_determin::Dfp::from_f64(0.5),
+        recorded_at_unix: ts,
+        rotation_provenance: None,
+        audit_ref: None,
+        anchor_tx_hash: None,
+    };
+    let mem = InMemoryReputationStore::new();
+    let stoolap = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    for i in 0..3u64 {
+        mem.record_signal(mk(SignalKind::Slash, 1_000 + i))
+            .await
+            .expect("mem.slash");
+        stoolap
+            .record_signal(mk(SignalKind::Slash, 1_000 + i))
+            .await
+            .expect("stoolap.slash");
+    }
+    // Reading Outcome aggregate MUST return NotFound on both.
+    let mem_out = mem
+        .read_aggregate(&did, SignalKind::Outcome, octo_reputation::ReputationLayer::Market)
+        .await;
+    let stoolap_out = stoolap
+        .read_aggregate(&did, SignalKind::Outcome, octo_reputation::ReputationLayer::Market)
+        .await;
+    assert!(mem_out.is_err(), "memory Outcome aggregate must be NotFound");
+    assert!(stoolap_out.is_err(), "stoolap Outcome aggregate must be NotFound");
+    let mem_disc = std::mem::discriminant(&mem_out.unwrap_err());
+    let stoolap_disc = std::mem::discriminant(&stoolap_out.unwrap_err());
+    assert_eq!(
+        mem_disc, stoolap_disc,
+        "NotFound discriminant must match across backends"
+    );
+}
+
+/// R16 review (HIGH): pure-Outcome sequence parity — read_aggregate
+/// on a (recorder, Slash) combo that was never inserted must
+/// return AggregateNotFound on both backends.
+#[tokio::test]
+async fn cross_backend_severity_total_not_found_for_pure_outcome_recorder() {
+    use octo_reputation::RecorderDid;
+
+    let did = RecorderDid::from_array([0xE3; 52]);
+    let cid = ControllerId::from_array([0u8; 32]);
+    let mk = |kind: SignalKind, ts: u64| SignalEvent {
+        event_id: EventId::from_u64(0),
+        recorder_did: did,
+        controller_id: cid,
+        signal_kind: kind,
+        layer: octo_reputation::ReputationLayer::Market,
+        score_delta: octo_determin::Dfp::from_f64(0.5),
+        recorded_at_unix: ts,
+        rotation_provenance: None,
+        audit_ref: None,
+        anchor_tx_hash: None,
+    };
+    let mem = InMemoryReputationStore::new();
+    let stoolap = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    for i in 0..3u64 {
+        mem.record_signal(mk(SignalKind::Outcome, 1_000 + i))
+            .await
+            .expect("mem.outcome");
+        stoolap
+            .record_signal(mk(SignalKind::Outcome, 1_000 + i))
+            .await
+            .expect("stoolap.outcome");
+    }
+    let mem_out = mem
+        .read_aggregate(&did, SignalKind::Slash, octo_reputation::ReputationLayer::Market)
+        .await;
+    let stoolap_out = stoolap
+        .read_aggregate(&did, SignalKind::Slash, octo_reputation::ReputationLayer::Market)
+        .await;
+    assert!(mem_out.is_err(), "memory Slash aggregate must be NotFound");
+    assert!(stoolap_out.is_err(), "stoolap Slash aggregate must be NotFound");
+    let mem_disc = std::mem::discriminant(&mem_out.unwrap_err());
+    let stoolap_disc = std::mem::discriminant(&stoolap_out.unwrap_err());
+    assert_eq!(
+        mem_disc, stoolap_disc,
+        "NotFound discriminant must match across backends"
+    );
 }

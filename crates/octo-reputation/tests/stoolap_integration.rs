@@ -1876,12 +1876,15 @@ async fn stoolap_concurrent_record_attestation_race_is_documented() {
     //   - every call completes (no panics)
     //   - at least one call succeeds
     //   - row count == successful count (composite-key dedupe)
-    let oks: usize = results
-        .iter()
-        .filter(|r| matches!(r, Ok(_) | Err(_)))
-        .count();
-    assert_eq!(oks, 4, "every call must complete; got {} results", oks);
     let success_count = results.iter().filter(|r| r.is_ok()).count();
+    let err_count = results.iter().filter(|r| r.is_err()).count();
+    assert_eq!(
+        success_count + err_count,
+        4,
+        "every call must complete; got {} oks, {} errs",
+        success_count,
+        err_count
+    );
     let mut rows = store
         .database()
         .query("SELECT COUNT(*) FROM reputation_attestations", ())
@@ -1896,5 +1899,59 @@ async fn stoolap_concurrent_record_attestation_race_is_documented() {
         success_count >= 1,
         "at least one attestation must succeed; got {}",
         success_count
+    );
+}
+
+/// R16 review (MEDIUM): sequential baseline for record_attestation.
+/// Without this baseline, the concurrent race test cannot
+/// distinguish "race-driven PK collision" (documented behavior)
+/// from "next_attestation_id is globally broken" (regression).
+/// 4 sequential calls with distinct attestors against the same
+/// event MUST all succeed with distinct ids.
+#[tokio::test]
+async fn stoolap_sequential_record_attestation_assigns_unique_ids() {
+    let store = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let did = octo_reputation::RecorderDid::from_array([0xF2; 52]);
+    let eid = store
+        .record_signal(ev(1, did, 0.5, 1_000))
+        .await
+        .expect("seed event");
+    let mut ids: Vec<i64> = Vec::new();
+    for i in 0..4u8 {
+        let reg = attestor_reg(0xC0 + i, 0xD0 + i);
+        store.register_attestor(reg).await.expect("register");
+        store
+            .record_attestation(att_for(
+                AttestorId::from_array([0xC0 + i; 52]),
+                did,
+                eid,
+            ))
+            .await
+            .expect("attest");
+    }
+    // Sequential row count = 4, attestation_ids distinct.
+    let rows = store
+        .database()
+        .query(
+            "SELECT attestation_id FROM reputation_attestations ORDER BY attestation_id ASC",
+            (),
+        )
+        .expect("select");
+    for r in rows {
+        let r = r.expect("row");
+        let id: i64 = r.get(0).expect("col");
+        ids.push(id);
+    }
+    assert_eq!(ids.len(), 4, "expected 4 sequential attestations");
+    let mut sorted = ids.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(
+        sorted.len(),
+        ids.len(),
+        "sequential attestation_ids must be unique; got {:?}",
+        ids
     );
 }

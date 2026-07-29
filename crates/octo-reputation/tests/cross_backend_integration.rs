@@ -1139,3 +1139,103 @@ async fn cross_backend_severity_total_not_found_for_cross_layer_absence() {
     let stoolap_disc = std::mem::discriminant(&stoolap_out.unwrap_err());
     assert_eq!(mem_disc, stoolap_disc, "cross-layer NotFound discriminant must match");
 }
+
+/// R19 review (HIGH): N=1 EWMA boundary with score=0.0. The
+/// existing N=1 test uses score=0.42; a regression that fails to
+/// seed EWMA at N=1 would return Dfp::zero() which equals the
+/// zero seed. This test mixes a non-zero prior sample with a
+/// 0.0 delta to prove the smoothing path reaches the formula.
+#[tokio::test]
+async fn cross_backend_slash_ewma_zero_delta_smooths_to_zero() {
+    use octo_reputation::RecorderDid;
+
+    let did = RecorderDid::from_array([0xE9; 52]);
+    let cid = ControllerId::from_array([0u8; 32]);
+    let mk = |score: f64, ts: u64| SignalEvent {
+        event_id: EventId::from_u64(0),
+        recorder_did: did,
+        controller_id: cid,
+        signal_kind: SignalKind::Slash,
+        layer: octo_reputation::ReputationLayer::Market,
+        score_delta: octo_determin::Dfp::from_f64(score),
+        recorded_at_unix: ts,
+        rotation_provenance: None,
+        audit_ref: None,
+        anchor_tx_hash: None,
+    };
+    let mem = InMemoryReputationStore::new();
+    let stoolap = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    // First: non-zero seed (0.42) → EWMA = 0.42.
+    mem.record_signal(mk(0.42, 1_000)).await.expect("mem.1");
+    stoolap.record_signal(mk(0.42, 1_000)).await.expect("stoolap.1");
+    // Second: zero delta (0.0) → EWMA = alpha*0 + (1-alpha)*0.42
+    // with alpha = 1/2 = 0.5 → EWMA = 0.21. A bug that returns
+    // Dfp::zero() (ignoring the prior) would fail this test.
+    mem.record_signal(mk(0.0, 1_001)).await.expect("mem.2");
+    stoolap.record_signal(mk(0.0, 1_001)).await.expect("stoolap.2");
+    let mem_agg = mem
+        .read_aggregate(&did, SignalKind::Slash, octo_reputation::ReputationLayer::Market)
+        .await
+        .expect("mem.read");
+    let stoolap_agg = stoolap
+        .read_aggregate(&did, SignalKind::Slash, octo_reputation::ReputationLayer::Market)
+        .await
+        .expect("stoolap.read");
+    assert_eq!(mem_agg.samples, 2);
+    assert_eq!(stoolap_agg.samples, 2);
+    // Smoothing path reached: EWMA must NOT be Dfp::zero() (which
+    // would indicate a delta-ignored regression) and must agree
+    // byte-for-byte across backends.
+    assert_eq!(
+        octo_reputation::types::dfp_to_blob(&mem_agg.score_ewma),
+        octo_reputation::types::dfp_to_blob(&stoolap_agg.score_ewma),
+        "EWMA with zero-delta must match across backends (smoothing reached)"
+    );
+    let zero_blob = octo_reputation::types::dfp_to_blob(&octo_determin::Dfp::zero());
+    assert_ne!(
+        octo_reputation::types::dfp_to_blob(&mem_agg.score_ewma),
+        zero_blob,
+        "EWMA must NOT be zero after 2 events (smoothing path)"
+    );
+}
+
+/// R19 review (MEDIUM): reverse direction of cross-layer absence
+/// for Slash. Insert at Governance, read at Market.
+#[tokio::test]
+async fn cross_backend_severity_total_not_found_for_reverse_cross_layer_absence_slash() {
+    use octo_reputation::RecorderDid;
+
+    let did = RecorderDid::from_array([0xEA; 52]);
+    let cid = ControllerId::from_array([0u8; 32]);
+    let mk = |ts: u64| SignalEvent {
+        event_id: EventId::from_u64(0),
+        recorder_did: did,
+        controller_id: cid,
+        signal_kind: SignalKind::Slash,
+        layer: octo_reputation::ReputationLayer::Governance,
+        score_delta: octo_determin::Dfp::from_f64(0.5),
+        recorded_at_unix: ts,
+        rotation_provenance: None,
+        audit_ref: None,
+        anchor_tx_hash: None,
+    };
+    let mem = InMemoryReputationStore::new();
+    let stoolap = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    mem.record_signal(mk(1_000)).await.expect("mem");
+    stoolap.record_signal(mk(1_000)).await.expect("stoolap");
+    let mem_out = mem
+        .read_aggregate(&did, SignalKind::Slash, octo_reputation::ReputationLayer::Market)
+        .await;
+    let stoolap_out = stoolap
+        .read_aggregate(&did, SignalKind::Slash, octo_reputation::ReputationLayer::Market)
+        .await;
+    assert!(mem_out.is_err());
+    assert!(stoolap_out.is_err());
+    let mem_disc = std::mem::discriminant(&mem_out.unwrap_err());
+    let stoolap_disc = std::mem::discriminant(&stoolap_out.unwrap_err());
+    assert_eq!(mem_disc, stoolap_disc, "reverse Slash cross-layer NotFound discriminant must match");
+}

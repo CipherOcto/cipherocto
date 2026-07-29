@@ -702,7 +702,8 @@ mod real {
                 .db
                 .query(
                     "SELECT recorder_did, event_id, controller_id, signal_kind, layer,
-                            score_delta, recorded_at_unix, rotation_provenance, audit_ref
+                            score_delta, recorded_at_unix, rotation_provenance, audit_ref,
+                            anchor_tx_hash
                      FROM reputation_events
                      WHERE recorder_did = $1
                        AND recorded_at_unix >= $2 AND recorded_at_unix <= $3
@@ -755,6 +756,24 @@ mod real {
                         });
                         let audit_blob: Option<Vec<u8>> = row.get_by_name("audit_ref").ok();
                         let audit_ref = audit_blob.filter(|b| !b.is_empty());
+                        // Round 2 review #1: select the v011
+                        // anchor_tx_hash column so the persisted
+                        // provenance reaches audit callers. Empty /
+                        // NULL blob = event not yet anchored.
+                        let anchor_blob: Option<Vec<u8>> = row.get_by_name("anchor_tx_hash").ok();
+                        let anchor_tx_hash = anchor_blob.and_then(|b| {
+                            if b.is_empty() {
+                                None
+                            } else {
+                                let mut arr = [0u8; 32];
+                                if b.len() == 32 {
+                                    arr.copy_from_slice(&b);
+                                    Some(arr)
+                                } else {
+                                    None
+                                }
+                            }
+                        });
                         let kind = SignalKind::from_discriminant(kind_d as u8).map_err(|_e| {
                             ReputationError::ChainRefInvalid("stoolap_replay_for_audit:kind_disc")
                         })?;
@@ -774,7 +793,7 @@ mod real {
                             recorded_at_unix: i64_to_u64(recorded_at_unix),
                             rotation_provenance,
                             audit_ref,
-                            anchor_tx_hash: None,
+                            anchor_tx_hash,
                         });
                     }
                     Some(Err(_e)) => {
@@ -1318,7 +1337,7 @@ mod real {
                 .query(
                     "SELECT recorder_did, event_id, controller_id, signal_kind,
                             layer, score_delta, recorded_at_unix,
-                            rotation_provenance, audit_ref
+                            rotation_provenance, audit_ref, anchor_tx_hash
                      FROM reputation_events
                      WHERE event_id > $1
                      ORDER BY event_id",
@@ -1378,6 +1397,24 @@ mod real {
                         });
                         let audit_blob: Option<Vec<u8>> = row.get_by_name("audit_ref").ok();
                         let audit_ref = audit_blob.filter(|b| !b.is_empty());
+                        // Round 2 review #2: select the v011
+                        // anchor_tx_hash column so gossip-fed peers
+                        // see the on-chain provenance of every
+                        // catch-up'd event.
+                        let anchor_blob: Option<Vec<u8>> = row.get_by_name("anchor_tx_hash").ok();
+                        let anchor_tx_hash = anchor_blob.and_then(|b| {
+                            if b.is_empty() {
+                                None
+                            } else {
+                                let mut arr = [0u8; 32];
+                                if b.len() == 32 {
+                                    arr.copy_from_slice(&b);
+                                    Some(arr)
+                                } else {
+                                    None
+                                }
+                            }
+                        });
                         let kind = SignalKind::from_discriminant(kind_d as u8).map_err(|_e| {
                             ReputationError::ChainRefInvalid("stoolap_gossip_catch_up:kind_disc")
                         })?;
@@ -1444,7 +1481,7 @@ mod real {
                             recorded_at_unix: i64_to_u64(recorded_at_unix),
                             rotation_provenance,
                             audit_ref,
-                            anchor_tx_hash: None,
+                            anchor_tx_hash,
                         });
                     }
                     Some(Err(_e)) => {

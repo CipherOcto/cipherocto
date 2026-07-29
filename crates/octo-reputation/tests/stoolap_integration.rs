@@ -604,3 +604,84 @@ async fn stoolap_gossip_catch_up_returns_all_events_and_records_seen() {
         out.len()
     );
 }
+
+/// Round 2 review #1: replay_for_audit must preserve the v011
+/// anchor_tx_hash column so audit callers can classify post-anchor
+/// events correctly. Pre-fix: replay returned `anchor_tx_hash: None`
+/// regardless of persistence state.
+#[tokio::test]
+async fn replay_for_audit_preserves_anchor_tx_hash() {
+    let store = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let did = octo_reputation::RecorderDid::from_array([0xAA; 52]);
+    store
+        .record_signal(ev(1, did, 0.5, 1_000))
+        .await
+        .expect("record");
+    // Anchor the event with a fixed hash.
+    let anchor = [0xAB; 32];
+    store
+        .set_event_anchor_tx_hash(EventId::from_u64(1), anchor)
+        .await
+        .expect("anchor");
+    let events = store
+        .replay_for_audit(&did, 0, 10_000)
+        .await
+        .expect("replay");
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0].anchor_tx_hash,
+        Some(anchor),
+        "replay must surface the persisted anchor tx hash"
+    );
+}
+
+/// Round 2 review #2: gossip_catch_up must preserve the v011
+/// anchor_tx_hash column so gossip-fed peers see on-chain provenance
+/// for catch-up'd events.
+#[tokio::test]
+async fn gossip_catch_up_preserves_anchor_tx_hash() {
+    let store = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let did = octo_reputation::RecorderDid::from_array([0xBB; 52]);
+    store
+        .record_signal(ev(1, did, 0.5, 1_000))
+        .await
+        .expect("record");
+    let anchor = [0xCD; 32];
+    store
+        .set_event_anchor_tx_hash(EventId::from_u64(1), anchor)
+        .await
+        .expect("anchor");
+    // Catch-up from a fresh attestor — exercises the gossip_catch_up
+    // SELECT path including the new anchor_tx_hash column.
+    let attestor = AttestorId::from_array([0x99; 52]);
+    let catch_up = GossipCatchUp {
+        attestor_did: attestor,
+        since_event_id: EventId::from_u64(0),
+    };
+    let _ = store
+        .register_attestor(AttestorRegistration {
+            attestor_did: attestor,
+            pubkey: [0x99; 32],
+            peer_set_id: [0u8; 32],
+            requested_at_unix: 1_000,
+            registered_at_unix: 1_500,
+        })
+        .await
+        .expect("register");
+    let out = store.gossip_catch_up(&catch_up).await.expect("catch_up");
+    // gossip_catch_up may return >= 1 row; check the row(s) have
+    // anchor_tx_hash preserved.
+    let anchored: Vec<_> = out
+        .iter()
+        .filter(|e| e.anchor_tx_hash == Some(anchor))
+        .collect();
+    assert!(
+        !anchored.is_empty(),
+        "gossip_catch_up must surface anchor_tx_hash to gossip peers (got {} events)",
+        out.len()
+    );
+}

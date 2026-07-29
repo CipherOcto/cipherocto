@@ -2116,3 +2116,72 @@ async fn stoolap_concurrent_record_attestation_with_k1_pre_populated_max() {
         n, success_count
     );
 }
+
+/// R20 review (LOW): K=2 pre-pop variant of the attestation race.
+/// Between R15's K=0 (empty-table) and R19's K=1, K=2 covers the
+/// middle boundary. Pre-pop 2 attestations so MAX=1; fire 4
+/// concurrent calls; all observe MAX=1, all compute 2.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn stoolap_concurrent_record_attestation_with_k2_pre_populated_max() {
+    use std::sync::Arc;
+
+    let store = Arc::new(StoolapReputationStore::open_in_memory().await.expect("open"));
+    let did = octo_reputation::RecorderDid::from_array([0xF5; 52]);
+    let eid = store
+        .record_signal(ev(1, did, 0.5, 1_000))
+        .await
+        .expect("seed event");
+    for i in 0..2u8 {
+        let reg = attestor_reg(0xB0 + i, 0xC0 + i);
+        store.register_attestor(reg).await.expect("register");
+        store
+            .record_attestation(att_for(
+                AttestorId::from_array([0xB0 + i; 52]),
+                did,
+                eid,
+            ))
+            .await
+            .expect("prepopulate");
+    }
+    let mut joins = Vec::new();
+    for i in 0..4u8 {
+        let store = Arc::clone(&store);
+        joins.push(tokio::spawn(async move {
+            let reg = attestor_reg(0xD0 + i, 0xE0 + i);
+            store
+                .register_attestor(reg)
+                .await
+                .expect("register");
+            store
+                .record_attestation(att_for(
+                    AttestorId::from_array([0xD0 + i; 52]),
+                    did,
+                    eid,
+                ))
+                .await
+        }));
+    }
+    let mut results = Vec::new();
+    for j in joins {
+        let r = j.await.expect("join");
+        results.push(r);
+    }
+    let success_count = results.iter().filter(|r| r.is_ok()).count();
+    let err_count = results.iter().filter(|r| r.is_err()).count();
+    assert_eq!(success_count + err_count, 4, "every call must complete");
+    assert!(
+        success_count >= 1,
+        "at least one concurrent call must succeed; got {}",
+        success_count
+    );
+    let mut rows = store
+        .database()
+        .query("SELECT COUNT(*) FROM reputation_attestations", ())
+        .expect("count");
+    let n: i64 = rows.next().expect("row").expect("ok").get(0).expect("col");
+    assert_eq!(
+        n as usize, 2 + success_count,
+        "row count must be 2 pre-pop + successes; got n={} successes={}",
+        n, success_count
+    );
+}

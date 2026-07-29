@@ -1239,3 +1239,65 @@ async fn cross_backend_severity_total_not_found_for_reverse_cross_layer_absence_
     let stoolap_disc = std::mem::discriminant(&stoolap_out.unwrap_err());
     assert_eq!(mem_disc, stoolap_disc, "reverse Slash cross-layer NotFound discriminant must match");
 }
+
+/// R20 review (LOW): zero-delta-at-n=2 boundary. R19's zero-EWMA
+/// test covers [0.42, 0.0] (n=2 smoothing with alpha=1/2=0.5).
+/// This test extends to 3 events [0.42, 0.42, 0.0] where the
+/// smoothing alpha=1/3 ≈ 0.333 (after 2 events n=2 prior to 3rd
+/// insert). Expected EWMA = 2/3 * 0.42 + 1/3 * 0.0 = 0.28. Pins the
+/// smoothing path at n=2.
+#[tokio::test]
+async fn cross_backend_slash_ewma_zero_delta_at_n2_smooths_to_two_thirds() {
+    use octo_reputation::RecorderDid;
+
+    let did = RecorderDid::from_array([0xEB; 52]);
+    let cid = ControllerId::from_array([0u8; 32]);
+    let mk = |score: f64, ts: u64| SignalEvent {
+        event_id: EventId::from_u64(0),
+        recorder_did: did,
+        controller_id: cid,
+        signal_kind: SignalKind::Slash,
+        layer: octo_reputation::ReputationLayer::Market,
+        score_delta: octo_determin::Dfp::from_f64(score),
+        recorded_at_unix: ts,
+        rotation_provenance: None,
+        audit_ref: None,
+        anchor_tx_hash: None,
+    };
+    let mem = InMemoryReputationStore::new();
+    let stoolap = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    mem.record_signal(mk(0.42, 999)).await.expect("mem.1");
+    mem.record_signal(mk(0.42, 1_000)).await.expect("mem.2");
+    mem.record_signal(mk(0.0, 1_001)).await.expect("mem.3");
+    stoolap.record_signal(mk(0.42, 999)).await.expect("stoolap.1");
+    stoolap.record_signal(mk(0.42, 1_000)).await.expect("stoolap.2");
+    stoolap.record_signal(mk(0.0, 1_001)).await.expect("stoolap.3");
+    let mem_agg = mem
+        .read_aggregate(&did, SignalKind::Slash, octo_reputation::ReputationLayer::Market)
+        .await
+        .expect("mem.read");
+    let stoolap_agg = stoolap
+        .read_aggregate(&did, SignalKind::Slash, octo_reputation::ReputationLayer::Market)
+        .await
+        .expect("stoolap.read");
+    assert_eq!(mem_agg.samples, 3);
+    assert_eq!(stoolap_agg.samples, 3);
+    assert_eq!(
+        octo_reputation::types::dfp_to_blob(&mem_agg.score_ewma),
+        octo_reputation::types::dfp_to_blob(&stoolap_agg.score_ewma),
+        "n=2 zero-delta smoothing must match across backends"
+    );
+    // EWMA must NOT be Dfp::zero() (smoothing path reached) and
+    // must NOT be 0.42 (the seed value — that would indicate the
+    // smoothing formula is broken).
+    let zero_blob = octo_reputation::types::dfp_to_blob(&octo_determin::Dfp::zero());
+    let seed_blob = octo_reputation::types::dfp_to_blob(&octo_determin::Dfp::from_f64(0.42));
+    let actual_blob = octo_reputation::types::dfp_to_blob(&mem_agg.score_ewma);
+    assert_ne!(actual_blob, zero_blob, "EWMA must NOT be zero (smoothing path)");
+    assert_ne!(
+        actual_blob, seed_blob,
+        "EWMA must NOT equal the seed value (formula applied)"
+    );
+}

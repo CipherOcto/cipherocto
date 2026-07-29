@@ -556,3 +556,49 @@ async fn cross_backend_set_anchor_rejects_different_hash_parity() {
         stoolap_msg
     );
 }
+
+/// R9 review (MEDIUM): idempotent same-hash re-anchor must succeed
+/// on BOTH backends. Pre-R8 the memory backend silently accepted
+/// any overwrite; post-R8 it must agree with stoolap on the
+/// idempotent branch.
+#[tokio::test]
+async fn cross_backend_set_anchor_idempotent_same_hash_parity() {
+    use octo_reputation::RecorderDid;
+
+    let did = RecorderDid::from_array([0xDA; 52]);
+    let cid = ControllerId::from_array([0u8; 32]);
+    let mk = |ts: u64| SignalEvent {
+        event_id: EventId::from_u64(0),
+        recorder_did: did,
+        controller_id: cid,
+        signal_kind: octo_reputation::SignalKind::Outcome,
+        layer: octo_reputation::ReputationLayer::Market,
+        score_delta: octo_determin::Dfp::from_f64(0.5),
+        recorded_at_unix: ts,
+        rotation_provenance: None,
+        audit_ref: None,
+        anchor_tx_hash: None,
+    };
+    let mem = InMemoryReputationStore::new();
+    let stoolap = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let mem_eid = mem.record_signal(mk(1_000)).await.expect("mem.record");
+    let stoolap_eid = stoolap.record_signal(mk(1_000)).await.expect("stoolap.record");
+    // First anchor: both Ok.
+    mem.set_event_anchor_tx_hash(mem_eid, [0xAA; 32])
+        .await
+        .expect("mem.first");
+    stoolap
+        .set_event_anchor_tx_hash(stoolap_eid, [0xAA; 32])
+        .await
+        .expect("stoolap.first");
+    // Same-hash re-anchor: both Ok (idempotent).
+    mem.set_event_anchor_tx_hash(mem_eid, [0xAA; 32])
+        .await
+        .expect("mem.idempotent");
+    stoolap
+        .set_event_anchor_tx_hash(stoolap_eid, [0xAA; 32])
+        .await
+        .expect("stoolap.idempotent");
+}

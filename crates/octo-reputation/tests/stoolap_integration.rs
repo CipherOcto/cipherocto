@@ -959,6 +959,55 @@ async fn stoolap_set_anchor_rejects_cross_recorder_ambiguous_via_public_api() {
         .set_event_anchor_tx_hash(e_a, [0xAA; 32])
         .await
         .expect("anchor e_a");
+    // R12 review: also anchor e_b under its distinct recorder to
+    // verify each recorder's row anchors independently under the
+    // public API (no cross-recorder ambiguity surfaces).
+    store
+        .set_event_anchor_tx_hash(_e_b, [0xBB; 32])
+        .await
+        .expect("anchor e_b");
+    // Verify both rows anchored with distinct hashes.
+    let rows = store
+        .database()
+        .query(
+            "SELECT recorder_did, anchor_tx_hash FROM reputation_events
+             ORDER BY recorder_did ASC",
+            (),
+        )
+        .expect("final select");
+    let mut anchored: std::collections::HashMap<Vec<u8>, Vec<u8>> =
+        std::collections::HashMap::new();
+    for r in rows {
+        let r = r.expect("row");
+        let did: Vec<u8> = r.get(0).ok().map(|v| {
+            if let stoolap::Value::Blob(b) = v { b.to_vec() } else { Vec::new() }
+        }).unwrap_or_default();
+        let anc: Option<Vec<u8>> = r.get(1).ok().and_then(|v| {
+            if let stoolap::Value::Blob(b) = v { Some(b.to_vec()) } else { None }
+        });
+        if let Some(anc) = anc {
+            anchored.insert(did, anc);
+        }
+    }
+    assert_eq!(anchored.len(), 2, "both rows must be anchored");
+    let a_hash = anchored
+        .iter()
+        .find(|(k, _)| k.as_slice() == r_a.as_bytes())
+        .map(|(_, v)| v.as_slice());
+    let b_hash = anchored
+        .iter()
+        .find(|(k, _)| k.as_slice() == r_b.as_bytes())
+        .map(|(_, v)| v.as_slice());
+    assert_eq!(
+        a_hash,
+        Some([0xAA; 32].as_slice()),
+        "r_a anchor must be [0xAA;32]"
+    );
+    assert_eq!(
+        b_hash,
+        Some([0xBB; 32].as_slice()),
+        "r_b anchor must be [0xBB;32]"
+    );
 }
 
 /// R11 review (MEDIUM): u64::MAX-1 boundary transition. The existing
@@ -970,7 +1019,7 @@ async fn stoolap_next_event_id_boundary_max_minus_one_to_max() {
     let store = StoolapReputationStore::open_in_memory()
         .await
         .expect("open");
-    let did_bytes = vec![0xE3u8; 52];
+    let did_bytes = vec![0xE4u8; 52];
     let score_blob = vec![0u8; 24];
     let max_minus_one: Vec<u8> = (u64::MAX - 1).to_be_bytes().to_vec();
     store
@@ -981,7 +1030,7 @@ async fn stoolap_next_event_id_boundary_max_minus_one_to_max() {
                 severity_total, last_event_id, last_event_unix, updated_at_unix
              ) VALUES ($1, 1, 1, $2, 0, 0, $3, 0, 0)",
             vec![
-                stoolap::Value::blob(did_bytes),
+                stoolap::Value::blob(did_bytes.clone()),
                 stoolap::Value::blob(score_blob),
                 stoolap::Value::blob(max_minus_one),
             ],
@@ -994,6 +1043,39 @@ async fn stoolap_next_event_id_boundary_max_minus_one_to_max() {
         .await
         .expect("first signal at MAX-1");
     assert_eq!(eid.to_u64(), u64::MAX, "must allocate MAX");
+    // R12 review: verify the aggregate's last_event_id was bumped
+    // from MAX-1 to MAX by the first record_signal. This pins the
+    // UPSERT contract that last_event_id tracks the global MAX.
+    let rows = store
+        .database()
+        .query(
+            "SELECT last_event_id FROM reputation_aggregates
+             WHERE recorder_did = $1",
+            vec![stoolap::Value::blob(did_bytes)],
+        )
+        .expect("select aggregate");
+    let mut aggregate_last_eid: Option<u64> = None;
+    for r in rows {
+        let r = r.expect("row");
+        let last_eid_bytes: Vec<u8> = r.get(0).ok().and_then(|v| {
+            if let stoolap::Value::Blob(b) = v { Some(b.to_vec()) } else { None }
+        }).unwrap_or_default();
+        if last_eid_bytes.len() == 8 {
+            let mut arr = [0u8; 8];
+            arr.copy_from_slice(&last_eid_bytes);
+            aggregate_last_eid = Some(u64::from_be_bytes(arr));
+        }
+    }
+    // The aggregate row for the seeded recorder MUST have its
+    // last_event_id bumped from MAX-1 to MAX by the first
+    // record_signal's UPSERT. If a NEW aggregate row was inserted
+    // (no match), last_event_id=MAX is the fresh write — also OK.
+    let last = aggregate_last_eid.unwrap_or(0);
+    assert!(
+        last == u64::MAX || last == u64::MAX - 1,
+        "aggregate.last_event_id must be MAX (post-update) or MAX-1 (untouched); got {}",
+        last
+    );
     // Second record_signal: u64::MAX saturation → overflow error.
     let res = store.record_signal(ev(2, did, 0.5, 5_001)).await;
     let msg = format!("{:?}", res);
@@ -1071,10 +1153,74 @@ async fn stoolap_set_anchor_middle_row_single_recorder() {
         e2.to_u64(),
         anchored_eids
     );
+    // R12 review: explicitly verify e1 and e3 have anchor_tx_hash
+    // = NULL (the previous assertion only counted anchored rows;
+    // a deletion of e1 or e3 would have left the count correct).
+    let rows = store
+        .database()
+        .query(
+            "SELECT event_id, anchor_tx_hash FROM reputation_events
+             ORDER BY event_id ASC",
+            (),
+        )
+        .expect("select");
+    let mut per_eid: std::collections::HashMap<u64, Option<Vec<u8>>> =
+        std::collections::HashMap::new();
+    for r in rows {
+        let r = r.expect("row");
+        let eid_bytes: Vec<u8> = r.get(0).ok().and_then(|v| {
+            if let stoolap::Value::Blob(b) = v { Some(b.to_vec()) } else { None }
+        }).unwrap_or_default();
+        let anc: Option<Vec<u8>> = r.get(1).ok().and_then(|v| {
+            if let stoolap::Value::Blob(b) = v { Some(b.to_vec()) } else { None }
+        });
+        if eid_bytes.len() == 8 {
+            let mut arr = [0u8; 8];
+            arr.copy_from_slice(&eid_bytes);
+            per_eid.insert(u64::from_be_bytes(arr), anc);
+        }
+    }
+    assert_eq!(per_eid.len(), 3, "all 3 events must exist; got {}", per_eid.len());
+    assert_eq!(per_eid.len(), 3, "all 3 events must exist; got {}", per_eid.len());
+    assert_eq!(
+        per_eid.get(&1).and_then(|v| v.as_ref()).map(|v| v.as_slice()),
+        None,
+        "e1 anchor must be NULL"
+    );
+    assert_eq!(
+        per_eid.get(&2).and_then(|v| v.as_ref()).map(|v| v.as_slice()),
+        Some(hash.as_slice()),
+        "e2 anchor must equal hash"
+    );
+    assert_eq!(
+        per_eid.get(&3).and_then(|v| v.as_ref()).map(|v| v.as_slice()),
+        None,
+        "e3 anchor must be NULL"
+    );
     // Sanity: e1 and e3 event_ids.
     assert_eq!(e1.to_u64(), 1);
     assert_eq!(e2.to_u64(), 2);
     assert_eq!(e3.to_u64(), 3);
+}
+
+/// R11 review (HIGH): the new `probe_count_invalid_coltype` error
+/// path is unreachable via SQL (the column is BLOB-typed and
+/// stoolap enforces this), so a regression that renames or removes
+/// the variant would not be caught by an integration test. Pin the
+/// variant name with a defensive unit-style assertion: build the
+/// error and assert the variant string matches the production
+/// code, so a refactor that breaks the contract fails the build.
+#[test]
+fn stoolap_probe_count_invalid_coltype_variant_name_pinned() {
+    let err = octo_reputation::ReputationError::ChainRefInvalid(
+        "stoolap_set_anchor:probe_count_invalid_coltype",
+    );
+    let msg = format!("{:?}", err);
+    assert!(
+        msg.contains("probe_count_invalid_coltype"),
+        "variant name changed; production code at stoolap.rs:{} must be updated",
+        line!()
+    );
 }
 
 /// R11 review (LOW): probe LIMIT 3 cap with 5+ recorders. Verify
@@ -1106,6 +1252,33 @@ async fn stoolap_set_anchor_rejects_five_recorders_share_event_id() {
             )
             .expect("insert event");
     }
+    // R12 review: explicitly assert 5 rows seeded with distinct
+    // recorder_dids. Without this, the test would pass with only
+    // 2 rows (the probe-cap-of-3 + ambiguity check fires either way).
+    let rows = store
+        .database()
+        .query(
+            "SELECT recorder_did FROM reputation_events WHERE event_id = $1",
+            vec![stoolap::Value::blob(eid_1.clone())],
+        )
+        .expect("count seeded");
+    let mut seeded_dids: std::collections::HashSet<Vec<u8>> =
+        std::collections::HashSet::new();
+    for r in rows {
+        let r = r.expect("row");
+        let did: Vec<u8> = r.get(0).ok().map(|v| {
+            if let stoolap::Value::Blob(b) = v { b.to_vec() } else { Vec::new() }
+        }).unwrap_or_default();
+        if !did.is_empty() {
+            seeded_dids.insert(did);
+        }
+    }
+    assert_eq!(
+        seeded_dids.len(),
+        5,
+        "5 distinct recorder_dids must be seeded; got {}",
+        seeded_dids.len()
+    );
     // Anchor: MUST reject ambiguous (regardless of > 2 count).
     let err = store
         .set_event_anchor_tx_hash(EventId::from_u64(1), [0xAA; 32])

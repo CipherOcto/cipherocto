@@ -207,6 +207,22 @@ mod real {
             // MIN_ATTESTOR_QUORUM is 3 — the next attestation id is
             // computed as `COALESCE(MAX(id), -1) + 1` so the first row
             // gets id=0 (rather than MAX(NULL)=NULL+1=NULL).
+            //
+            // R13 / R14 review (MEDIUM, deferred): read-then-compute-
+            // then-return is NOT atomic with the subsequent INSERT
+            // into `reputation_attestations`. Two concurrent
+            // `record_attestation` calls both observe `MAX = N`, both
+            // compute `N+1`, both attempt INSERT — first succeeds,
+            // second collides on `attestation_id` PK and is mapped to
+            // `ChainRefInvalid("stoolap_record_attestation:insert")`.
+            // The caller cannot distinguish a collision from a generic
+            // DB failure; no retry path; no metric. Production must
+            // wrap the SELECT-then-INSERT pair in `BEGIN IMMEDIATE`
+            // (when stoolap-fork supports transactions) or
+            // retry-on-collision with a distinct error variant.
+            // Memory backend is immune via
+            // `Arc<AtomicU64>::fetch_add(1, SeqCst)`. Documented
+            // alongside the `next_event_id` race at stoolap.rs:124.
             let mut rows = self
                 .db
                 .query(

@@ -109,6 +109,15 @@ impl ReputationStore for InMemoryReputationStore {
         let new_f = cur_f * (1.0 - alpha) + delta_f * alpha;
         agg.score_ewma = Dfp::from_f64(new_f);
         agg.samples += 1;
+        // R14 review (HIGH): mirror the stoolap UPSERT semantic —
+        // Slash events bump severity_total, others preserve it.
+        // Pre-fix, severity_total was only maintained in sliding_window
+        // (sum over the window), leaving read_aggregate's
+        // severity_total stuck at 0 and silently disagreeing with
+        // sliding_window on every read.
+        if matches!(event.signal_kind, SignalKind::Slash) {
+            agg.severity_total = agg.severity_total.saturating_add(1);
+        }
         agg.last_event_id = eid;
         agg.last_event_unix = event.recorded_at_unix;
         agg.updated_at_unix = event.recorded_at_unix;
@@ -820,6 +829,48 @@ mod tests {
         assert_eq!(
             agg.severity_total, 3,
             "sliding_window must sum severities over the window; got {}",
+            agg.severity_total
+        );
+    }
+
+    /// R14 review (HIGH): record_signal MUST bump severity_total on
+    /// Slash-kind events so read_aggregate and sliding_window agree.
+    /// Pre-R14, read_aggregate returned severity_total=0 for any
+    /// recorder with Slash events, silently disagreeing with
+    /// sliding_window.
+    #[tokio::test]
+    async fn record_signal_bumps_severity_total_on_slash() {
+        let store = InMemoryReputationStore::new();
+        let did = RecorderDid::from_array([0xD3u8; 52]);
+        let mk = |kind: SignalKind, ts: u64| SignalEvent {
+            event_id: EventId::from_u64(0),
+            recorder_did: did,
+            controller_id: ControllerId::from_array([0u8; 32]),
+            signal_kind: kind,
+            layer: ReputationLayer::Market,
+            score_delta: Dfp::from_f64(0.5),
+            recorded_at_unix: ts,
+            rotation_provenance: None,
+            audit_ref: None,
+            anchor_tx_hash: None,
+        };
+        for i in 0..3u64 {
+            store
+                .record_signal(mk(SignalKind::Slash, 1_000 + i))
+                .await
+                .expect("slash");
+        }
+        store
+            .record_signal(mk(SignalKind::Outcome, 2_000))
+            .await
+            .expect("outcome");
+        let agg = store
+            .read_aggregate(&did, SignalKind::Slash, ReputationLayer::Market)
+            .await
+            .expect("read");
+        assert_eq!(
+            agg.severity_total, 3,
+            "read_aggregate.severity_total must equal the count of Slash events; got {}",
             agg.severity_total
         );
     }

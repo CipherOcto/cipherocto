@@ -211,9 +211,16 @@ pub use stoolap_runner::{applied_versions, apply};
 /// for tests that do not depend on the stoolap feature.
 #[allow(dead_code)]
 pub fn now_unix() -> u64 {
+    // R14 review (LOW): unwrap_or_default() silently returned 0 if
+    // the system clock is before UNIX_EPOCH (BIOS reset, sandbox
+    // frozen clock, restored pre-1970 image). At now_unix=0 the
+    // reputation freshness gate (`is_fresh(0)`) returns true for ANY
+    // snapshot — re-introducing the CRITICAL pre-R13 bypass.
+    // Panic loudly: a pre-epoch clock is unservicable and silent
+    // defaults have no safe interpretation.
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
+        .expect("system clock is before UNIX_EPOCH; reputation freshness gate cannot operate")
         .as_secs()
 }
 

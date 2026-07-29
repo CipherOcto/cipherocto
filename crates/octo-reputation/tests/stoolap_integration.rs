@@ -1294,6 +1294,69 @@ async fn stoolap_record_signal_preserves_severity_total_on_outcome_update() {
     );
 }
 
+/// R14 review (HIGH): the R13 severity regression test only
+/// exercises Outcome→Slash→Outcome (one Slash). It does NOT cover
+/// the multi-Slash UPDATE path that the R13 fix was designed to
+/// protect: Slash→Outcome→Slash must yield severity_total == 2.
+/// Pre-R13 the second Slash's UPDATE would wipe severity_total to
+/// 0 then +1 → 1 (wrong count). Post-R13 the Rust-side computation
+/// reads the existing severity_total before UPDATE and accumulates.
+#[tokio::test]
+async fn stoolap_record_signal_multi_slash_severity_accumulates() {
+    let store = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let did = octo_reputation::RecorderDid::from_array([0xD2u8; 52]);
+    let mk = |kind: SignalKind, ts: u64| SignalEvent {
+        event_id: EventId::from_u64(0),
+        recorder_did: did,
+        controller_id: ControllerId::from_array([0u8; 32]),
+        signal_kind: kind,
+        layer: ReputationLayer::Market,
+        score_delta: Dfp::from_f64(0.5),
+        recorded_at_unix: ts,
+        rotation_provenance: None,
+        audit_ref: None,
+        anchor_tx_hash: None,
+    };
+    // Slash → Outcome → Slash → Outcome → Slash (5 events, 3 Slash).
+    store
+        .record_signal(mk(SignalKind::Slash, 1_000))
+        .await
+        .expect("s1");
+    store
+        .record_signal(mk(SignalKind::Outcome, 1_001))
+        .await
+        .expect("o1");
+    store
+        .record_signal(mk(SignalKind::Slash, 1_002))
+        .await
+        .expect("s2");
+    store
+        .record_signal(mk(SignalKind::Outcome, 1_003))
+        .await
+        .expect("o2");
+    store
+        .record_signal(mk(SignalKind::Slash, 1_004))
+        .await
+        .expect("s3");
+    let agg = store
+        .read_aggregate(&did, SignalKind::Slash, ReputationLayer::Market)
+        .await
+        .expect("read");
+    assert_eq!(
+        agg.severity_total, 3,
+        "three Slash events must accumulate to severity_total=3; got {}",
+        agg.severity_total
+    );
+    // The Outcome aggregate must still be at severity_total=0.
+    let outcome_agg = store
+        .read_aggregate(&did, SignalKind::Outcome, ReputationLayer::Market)
+        .await
+        .expect("outcome read");
+    assert_eq!(outcome_agg.severity_total, 0, "Outcome aggregate severity must stay 0");
+}
+
 /// R11 review (LOW): probe LIMIT 3 cap with 5+ recorders. Verify
 /// the cap fires early and the ambiguity error surfaces without
 /// materializing all 5 recorder_dids.

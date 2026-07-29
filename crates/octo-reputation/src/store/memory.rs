@@ -187,7 +187,12 @@ impl ReputationStore for InMemoryReputationStore {
         let cutoff = now_unix.saturating_sub(window_secs);
         let mut score = Dfp::zero();
         let mut samples: u64 = 0;
-        let severity_total: u64 = 0;
+        // R13 review: severity_total MUST sum per-event severities
+        // over the window. SignalEvent has no per-event severity
+        // field; derive from signal_kind (Slash contributes 1, others
+        // contribute 0). Mirrors the stoolap backend's `severity_total`
+        // aggregate semantics.
+        let mut severity_total: u64 = 0;
         let mut last_event_id = EventId::from_u64(0);
         let mut last_event_unix: u64 = 0;
         let mut updated_at_unix: u64 = 0;
@@ -206,6 +211,9 @@ impl ReputationStore for InMemoryReputationStore {
             let c = score.to_f64();
             score = Dfp::from_f64(c * (1.0 - alpha) + d * alpha);
             samples += 1;
+            if matches!(ev.signal_kind, SignalKind::Slash) {
+                severity_total = severity_total.saturating_add(1);
+            }
             if ev.recorded_at_unix >= last_event_unix {
                 last_event_unix = ev.recorded_at_unix;
                 last_event_id = ev.event_id;
@@ -339,9 +347,15 @@ impl ReputationStore for InMemoryReputationStore {
 
     async fn slash_recorder(&self, proof: GovernanceProof) -> StoreResult<()> {
         let snap = proof.snapshot.clone();
-        if !snap.is_fresh(0) {
+        // R13 review (CRITICAL): `is_fresh(0)` / `age_secs(0)` always
+        // returns true / 0 because `saturating_sub` of any
+        // finalized_at_unix >= 0 from 0 is 0. Pass the real clock so
+        // stale governance snapshots are rejected. Mirrors the
+        // stoolap backend's use of `crate::migrations::now_unix()`.
+        let now_unix = crate::migrations::now_unix();
+        if !snap.is_fresh(now_unix) {
             return Err(ReputationError::GovernanceSnapshotStale {
-                age_secs: snap.age_secs(0),
+                age_secs: snap.age_secs(now_unix),
                 max: crate::constants::MAX_GOVERNANCE_SNAPSHOT_AGE_SECS,
             });
         }
@@ -688,8 +702,12 @@ mod tests {
     #[tokio::test]
     async fn slash_recorder_requires_destination() {
         let store = InMemoryReputationStore::new();
+        // R13 review: snapshot must be fresh at now_unix for the
+        // freshness gate to pass; use `crate::migrations::now_unix()`
+        // as the finalized_at_unix so the snapshot's age = 0.
+        let now = crate::migrations::now_unix();
         let snap = GovernanceSnapshot {
-            finalized_at_unix: 0,
+            finalized_at_unix: now,
             governance_set_hash: [0u8; 32],
             members: vec![[1u8; 32]; 3],
         };
@@ -711,8 +729,11 @@ mod tests {
     #[tokio::test]
     async fn slash_recorder_accepts_full_proof() {
         let store = InMemoryReputationStore::new();
+        // R13 review: use a fresh snapshot so the is_fresh gate
+        // passes (post-fix the gate reads the real clock).
+        let now = crate::migrations::now_unix();
         let snap = GovernanceSnapshot {
-            finalized_at_unix: 0,
+            finalized_at_unix: now,
             governance_set_hash: [0u8; 32],
             members: vec![[1u8; 32]; 3],
         };
@@ -728,6 +749,79 @@ mod tests {
             slash_asset: AssetTag::Octo,
         };
         store.slash_recorder(proof).await.unwrap();
+    }
+
+    /// R13 review (CRITICAL): stale governance snapshots MUST be
+    /// rejected. Pre-fix, `is_fresh(0)` always returned true (since
+    /// `0u64.saturating_sub(snap.finalized_at_unix) = 0` for any
+    /// `finalized_at_unix >= 0`), allowing any old signed governance
+    /// proof to authorize a slash. Post-fix the gate reads the real
+    /// clock.
+    #[tokio::test]
+    async fn slash_recorder_rejects_stale_snapshot() {
+        let store = InMemoryReputationStore::new();
+        // Pick a timestamp well in the past so age_secs(now) >
+        // MAX_GOVERNANCE_SNAPSHOT_AGE_SECS (600s by default).
+        let stale = 1_700_000_000; // ~Jan 2024 (current epoch is 2026)
+        let snap = GovernanceSnapshot {
+            finalized_at_unix: stale,
+            governance_set_hash: [0u8; 32],
+            members: vec![[1u8; 32]; 3],
+        };
+        let proof = GovernanceProof {
+            governance_pubkey: [1u8; 32],
+            recorder_id: RecorderId::from_u64(0),
+            reason_hash: [0u8; 32],
+            signature: vec![],
+            snapshot: snap,
+            governance_set_hash: [0u8; 32],
+            slash_destination: Some(SlashDestination::Treasury),
+            slash_amount: 100,
+            slash_asset: AssetTag::Octo,
+        };
+        let err = store.slash_recorder(proof).await.unwrap_err();
+        match err {
+            ReputationError::GovernanceSnapshotStale { age_secs, .. } => {
+                assert!(age_secs > 0, "stale snapshot must report positive age");
+            }
+            other => panic!("expected GovernanceSnapshotStale, got {other:?}"),
+        }
+    }
+
+    /// R13 review (HIGH): sliding_window MUST accumulate
+    /// severity_total from the per-event severities in the window.
+    /// Pre-fix, the variable was hardcoded to 0 and never mutated
+    /// inside the loop, silently disagreeing with the stoolap backend.
+    #[tokio::test]
+    async fn sliding_window_severity_total_counts_slash_events() {
+        let store = InMemoryReputationStore::new();
+        let did = RecorderDid::from_array([0xD2u8; 52]);
+        for i in 0..3u64 {
+            store
+                .record_signal(SignalEvent {
+                    event_id: EventId::from_u64(i),
+                    recorder_did: did,
+                    controller_id: ControllerId::from_array([0u8; 32]),
+                    signal_kind: SignalKind::Slash,
+                    layer: ReputationLayer::Market,
+                    score_delta: Dfp::from_f64(1.0),
+                    recorded_at_unix: 1_000 + i,
+                    rotation_provenance: None,
+                    audit_ref: None,
+                    anchor_tx_hash: None,
+                })
+                .await
+                .expect("record");
+        }
+        let agg = store
+            .sliding_window(&did, SignalKind::Slash, ReputationLayer::Market, 600, 1_500)
+            .await
+            .expect("sliding");
+        assert_eq!(
+            agg.severity_total, 3,
+            "sliding_window must sum severities over the window; got {}",
+            agg.severity_total
+        );
     }
 
     #[tokio::test]

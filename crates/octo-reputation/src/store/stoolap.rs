@@ -370,28 +370,52 @@ mod real {
             // The round-trip is one extra SELECT per write. Bounded to a
             // single process in tests; production wraps this in a
             // transaction in a future session.
-            let exists: bool = {
-                let mut q = self
-                    .db
-                    .query(
-                        "SELECT 1 FROM reputation_aggregates
-                         WHERE recorder_did = $1 AND signal_kind = $2 AND layer = $3",
-                        vec![
-                            did_blob(&event.recorder_did),
-                            stoolap::Value::integer(kind_d as i64),
-                            stoolap::Value::integer(layer_d as i64),
-                        ],
-                    )
-                    .map_err(|_e| {
-                        ReputationError::ChainRefInvalid("stoolap_record_signal:exists_query")
+            // R13 review: read existing severity_total so the UPSERT
+            // preserves prior accumulation. Compute
+            // severity_total = existing + (kind==Slash ? 1 : 0) in
+            // Rust and bind to $3; the post-UPDATE bump is deleted.
+            let mut q = self
+                .db
+                .query(
+                    "SELECT severity_total FROM reputation_aggregates
+                     WHERE recorder_did = $1 AND signal_kind = $2 AND layer = $3",
+                    vec![
+                        did_blob(&event.recorder_did),
+                        stoolap::Value::integer(kind_d as i64),
+                        stoolap::Value::integer(layer_d as i64),
+                    ],
+                )
+                .map_err(|_e| {
+                    ReputationError::ChainRefInvalid("stoolap_record_signal:exists_query")
+                })?;
+            let (existing_severity, exists): (u64, bool) = match q.next() {
+                Some(Ok(row)) => {
+                    // severity_total is INTEGER per v001:41 — read
+                    // as i64, not 8-byte BE bytes.
+                    let v: i64 = row.get(0).map_err(|_e| {
+                        ReputationError::ChainRefInvalid(
+                            "stoolap_record_signal:severity_read",
+                        )
                     })?;
-                matches!(q.next(), Some(Ok(_)))
+                    (v.max(0) as u64, true)
+                }
+                Some(Err(_e)) => {
+                    return Err(ReputationError::ChainRefInvalid(
+                        "stoolap_record_signal:severity_read_iter",
+                    ));
+                }
+                None => (0u64, false),
+            };
+            let severity_for_upsert: u64 = if matches!(event.signal_kind, SignalKind::Slash) {
+                existing_severity.saturating_add(1)
+            } else {
+                existing_severity
             };
             if exists {
                 let update_params: Vec<stoolap::Value> = vec![
                     dfp_blob(next_ewma_bytes),
                     u64_to_value(samples_next),
-                    u64_to_value(0),
+                    u64_to_value(severity_for_upsert),
                     event_id_blob(eid),
                     u64_to_value(event.recorded_at_unix),
                     u64_to_value(event.recorded_at_unix),
@@ -411,35 +435,18 @@ mod real {
                         ReputationError::ChainRefInvalid("stoolap_record_signal:update_aggregate")
                     })?;
             } else {
+                let mut insert_params = params;
+                insert_params[5] = u64_to_value(severity_for_upsert);
                 self.db
                     .execute(
                         "INSERT INTO reputation_aggregates (
                             recorder_did, signal_kind, layer, score_ewma, samples,
                             severity_total, last_event_id, last_event_unix, updated_at_unix
                         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-                        params,
+                        insert_params,
                     )
                     .map_err(|_e| {
                         ReputationError::ChainRefInvalid("stoolap_record_signal:insert_aggregate")
-                    })?;
-            }
-
-            // 3. Bump severity_total on Slash events.
-            if matches!(event.signal_kind, SignalKind::Slash) {
-                let params: Vec<stoolap::Value> = vec![
-                    did_blob(&event.recorder_did),
-                    stoolap::Value::integer(kind_d as i64),
-                    stoolap::Value::integer(layer_d as i64),
-                ];
-                self.db
-                    .execute(
-                        "UPDATE reputation_aggregates
-                         SET severity_total = severity_total + 1
-                         WHERE recorder_did = $1 AND signal_kind = $2 AND layer = $3",
-                        params,
-                    )
-                    .map_err(|_e| {
-                        ReputationError::ChainRefInvalid("stoolap_record_signal:severity_update")
                     })?;
             }
             Ok(eid)

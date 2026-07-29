@@ -254,7 +254,10 @@ mod tests {
     async fn gov_2_happy_path_calls_slash_recorder() {
         let s = store();
         let rid = RecorderId::from_u64(7);
-        let now = 1_700_000_000;
+        // R13 review: use current clock so the snapshot's age = 0
+        // and the freshness gate passes (post-fix the memory backend
+        // uses the real clock instead of hardcoded 0).
+        let now = crate::migrations::now_unix();
         let proof = proof_with(
             rid,
             Some(SlashDestination::Treasury),

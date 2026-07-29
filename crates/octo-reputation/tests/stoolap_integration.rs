@@ -1223,6 +1223,77 @@ fn stoolap_probe_count_invalid_coltype_variant_name_pinned() {
     );
 }
 
+/// R13 review (HIGH): severity_total MUST survive non-Slash
+/// UPSERTs. Pre-fix the UPDATE branch hardcoded `severity_total = 0`
+/// and the conditional bump only fired for Slash, wiping prior
+/// accumulation. Verify Outcome→Slash→Outcome preserves the
+/// accumulated severity across the Outcome UPDATE.
+#[tokio::test]
+async fn stoolap_record_signal_preserves_severity_total_on_outcome_update() {
+    let store = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let did = octo_reputation::RecorderDid::from_array([0xD1u8; 52]);
+    // 1) Outcome (creates aggregate, severity_total=0).
+    store
+        .record_signal(SignalEvent {
+            event_id: EventId::from_u64(0),
+            recorder_did: did,
+            controller_id: ControllerId::from_array([0u8; 32]),
+            signal_kind: SignalKind::Outcome,
+            layer: ReputationLayer::Market,
+            score_delta: Dfp::from_f64(0.5),
+            recorded_at_unix: 1_000,
+            rotation_provenance: None,
+            audit_ref: None,
+            anchor_tx_hash: None,
+        })
+        .await
+        .expect("r1 outcome");
+    // 2) Slash (bumps severity_total=1 via the existing conditional).
+    store
+        .record_signal(SignalEvent {
+            event_id: EventId::from_u64(0),
+            recorder_did: did,
+            controller_id: ControllerId::from_array([0u8; 32]),
+            signal_kind: SignalKind::Slash,
+            layer: ReputationLayer::Market,
+            score_delta: Dfp::from_f64(1.0),
+            recorded_at_unix: 1_001,
+            rotation_provenance: None,
+            audit_ref: None,
+            anchor_tx_hash: None,
+        })
+        .await
+        .expect("r2 slash");
+    // 3) Outcome (UPDATE branch — severity_total MUST remain 1,
+    // not be wiped to 0).
+    store
+        .record_signal(SignalEvent {
+            event_id: EventId::from_u64(0),
+            recorder_did: did,
+            controller_id: ControllerId::from_array([0u8; 32]),
+            signal_kind: SignalKind::Outcome,
+            layer: ReputationLayer::Market,
+            score_delta: Dfp::from_f64(0.6),
+            recorded_at_unix: 1_002,
+            rotation_provenance: None,
+            audit_ref: None,
+            anchor_tx_hash: None,
+        })
+        .await
+        .expect("r3 outcome");
+    let agg = store
+        .read_aggregate(&did, SignalKind::Slash, ReputationLayer::Market)
+        .await
+        .expect("read");
+    assert_eq!(
+        agg.severity_total, 1,
+        "severity_total must survive non-Slash UPDATE; got {}",
+        agg.severity_total
+    );
+}
+
 /// R11 review (LOW): probe LIMIT 3 cap with 5+ recorders. Verify
 /// the cap fires early and the ambiguity error surfaces without
 /// materializing all 5 recorder_dids.

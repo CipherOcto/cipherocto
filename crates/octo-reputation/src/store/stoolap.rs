@@ -163,6 +163,16 @@ mod real {
                     max = id;
                 }
             }
+            // R9 review (LOW): defensive guard against u64 overflow
+            // — would require 2^64 events to fire, but `next_event_id`
+            // wraps to 0 in release mode (silent collision) and
+            // panics in debug. Reject and surface a distinct variant
+            // so the operator can see the saturation.
+            if max == u64::MAX {
+                return Err(ReputationError::ChainRefInvalid(
+                    "stoolap_next_event_id:overflow",
+                ));
+            }
             Ok(max + 1)
         }
 

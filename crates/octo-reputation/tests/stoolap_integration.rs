@@ -912,7 +912,8 @@ async fn stoolap_set_anchor_scopes_by_composite_pk_cross_recorder() {
         .database()
         .query(
             "SELECT recorder_did, anchor_tx_hash FROM reputation_events
-             WHERE event_id = $1",
+             WHERE event_id = $1
+             ORDER BY recorder_did ASC",
             vec![stoolap::Value::blob(eid_1.clone())],
         )
         .expect("select");

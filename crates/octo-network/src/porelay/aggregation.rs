@@ -147,10 +147,23 @@ pub fn aggregate_children(
     // Build Merkle root: BLAKE3 cascade over children's signing bytes
     // (deterministic, RFC-0104-class). The canonical root path is the
     // BLAKE3 hasher cascade over `parent.to_signing_bytes()` for each
-    // parent in deterministic order. Round 1 review F1: an XOR-cascade
-    // here is order-independent (commutativity) and NOT a Merkle root.
+    // parent in DETERMINISTIC ORDER — a stable sort by the
+    // `(level, epoch, scope, proof_count, children_root)` tuple so two
+    // peers that receive the same parent set in different orders
+    // produce identical roots (Round 2 review #2: the BLAKE3
+    // streaming hasher is order-sensitive; an unordered input set
+    // produced divergent roots across replicas).
+    let mut sorted: Vec<&AggregatedRelayProof> = parents.iter().collect();
+    sorted.sort_by(|a, b| {
+        a.level
+            .cmp(&b.level)
+            .then(a.epoch.cmp(&b.epoch))
+            .then(a.scope.cmp(&b.scope))
+            .then(a.proof_count.cmp(&b.proof_count))
+            .then(a.children_root.cmp(&b.children_root))
+    });
     let mut hasher = blake3::Hasher::new();
-    for parent in parents.iter() {
+    for parent in sorted.iter() {
         hasher.update(&parent.to_signing_bytes());
     }
     let mut children_root = [0u8; 32];
@@ -224,5 +237,54 @@ mod tests {
         assert_eq!(agg.total_envelopes, 5000);
         assert_eq!(agg.total_bytes, 5_120_000);
         assert_eq!(agg.average_availability, 950);
+    }
+
+    /// Round 2 review #2: BLAKE3 cascade must be order-independent
+    /// for cross-replica consensus. Two peers receiving the same
+    /// parent set in different orders must produce identical
+    /// `children_root`.
+    #[test]
+    fn aggregate_children_is_order_independent() {
+        let p1 = make_aggregate(LEVEL_LEAF, 10);
+        let p2 = make_aggregate(LEVEL_LEAF, 20);
+        let p3 = make_aggregate(LEVEL_LEAF, 30);
+        let out1 = aggregate_children(
+            &[p1.clone(), p2.clone(), p3.clone()],
+            LEVEL_WINDOW,
+            [1u8; 32],
+            1,
+            &[0u8; 64],
+        )
+        .expect("agg");
+        let out2 =
+            aggregate_children(&[p3, p2, p1], LEVEL_WINDOW, [1u8; 32], 1, &[0u8; 64]).expect("agg");
+        assert_eq!(
+            out1.children_root, out2.children_root,
+            "different parent orders must yield identical root"
+        );
+    }
+
+    /// Round 2 review #5: BLAKE3 cascade digest is stable for the
+    /// same parent set across multiple invocations.
+    #[test]
+    fn aggregate_children_is_deterministic() {
+        let parents = vec![
+            make_aggregate(LEVEL_LEAF, 10),
+            make_aggregate(LEVEL_LEAF, 20),
+        ];
+        let out1 =
+            aggregate_children(&parents, LEVEL_REGIONAL, [2u8; 32], 5, &[0u8; 64]).expect("agg");
+        let out2 =
+            aggregate_children(&parents, LEVEL_REGIONAL, [2u8; 32], 5, &[0u8; 64]).expect("agg");
+        assert_eq!(out1.children_root, out2.children_root);
+        assert_eq!(out1.proof_count, out2.proof_count);
+        assert_eq!(out1.total_envelopes, out2.total_envelopes);
+    }
+
+    /// Round 2 review #5: empty parent set is an explicit error.
+    #[test]
+    fn aggregate_children_rejects_empty_parents() {
+        let err = aggregate_children(&[], LEVEL_WINDOW, [0u8; 32], 1, &[0u8; 64]).unwrap_err();
+        assert_eq!(err, AggregationError::EmptyParents);
     }
 }

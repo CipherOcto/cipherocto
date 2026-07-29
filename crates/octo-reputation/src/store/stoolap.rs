@@ -1525,6 +1525,16 @@ mod real {
             // hash. Idempotent on `(event_id, anchor_tx_hash)`: a
             // second call with the same pair is a no-op (the WHERE
             // clause narrows the row count to 0 if already set).
+            //
+            // Round 2 review M2-fix: surface missing event_id as
+            // ChainRefInvalid so callers cannot silently acknowledge
+            // a write that didn't land. `execute` returns the
+            // affected row count — 0 means the event_id was not
+            // found OR the row was already set to the same hash
+            // (idempotent re-submit). We treat 0 as a missing-event
+            // signal ONLY on the first write (anchor_tx_hash IS NULL
+            // path) — the no-op idempotent path is verified by
+            // checking the prior value with a follow-up SELECT.
             let event_id_bytes = event_id.to_u64().to_be_bytes();
             let updated = self
                 .db
@@ -1539,8 +1549,54 @@ mod real {
                     ],
                 )
                 .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_set_anchor:update"))?;
-            let _ = updated;
-            Ok(())
+            if updated == 0 {
+                // Distinguish idempotent re-submit (anchor already
+                // set to this hash) from missing-event_id. Probe
+                // the prior value with a SELECT — if the row
+                // exists with the same anchor_tx_hash, the call is
+                // idempotent; otherwise the event_id was never
+                // recorded.
+                let mut rows = self
+                    .db
+                    .query(
+                        "SELECT anchor_tx_hash FROM reputation_events WHERE event_id = $1",
+                        vec![stoolap::Value::blob(event_id_bytes.to_vec())],
+                    )
+                    .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_set_anchor:probe"))?;
+                let row = rows.next();
+                match row {
+                    Some(Ok(r)) => {
+                        let prior: Vec<u8> = match r.get(0).map_err(|_e| {
+                            ReputationError::ChainRefInvalid("stoolap_set_anchor:probe_col")
+                        })? {
+                            stoolap::Value::Blob(arc) => arc.to_vec(),
+                            _ => {
+                                return Err(ReputationError::ChainRefInvalid(
+                                    "stoolap_set_anchor:event_not_found",
+                                ));
+                            }
+                        };
+                        if prior == anchor_tx_hash.to_vec() {
+                            // Idempotent re-submit: the anchor was
+                            // already recorded with this hash.
+                            Ok(())
+                        } else {
+                            // Row exists with a different anchor;
+                            // reject (this should never happen —
+                            // anchor_tx_hash is set once per event
+                            // and not mutated thereafter).
+                            Err(ReputationError::ChainRefInvalid(
+                                "stoolap_set_anchor:anchor_already_set",
+                            ))
+                        }
+                    }
+                    _ => Err(ReputationError::ChainRefInvalid(
+                        "stoolap_set_anchor:event_not_found",
+                    )),
+                }
+            } else {
+                Ok(())
+            }
         }
 
         async fn query_anchors_by_controller_id(
@@ -1553,7 +1609,7 @@ mod real {
             // `idx_reputation_anchors_controller` for this lookup;
             // the join here uses the underlying events table since
             // `anchor_tx_hash` lives on `reputation_events`.
-            let mut rows = self
+            let rows = self
                 .db
                 .query(
                     "SELECT event_id, anchor_tx_hash, recorded_at_unix
@@ -1565,8 +1621,8 @@ mod real {
                 )
                 .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_query_anchors:select"))?;
             let mut out: Vec<AnchorRecord> = Vec::new();
-            while let Some(row) = rows.next() {
-                let row = row
+            for row_res in rows {
+                let row = row_res
                     .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_query_anchors:row"))?;
                 let event_id_value = row
                     .get(0)

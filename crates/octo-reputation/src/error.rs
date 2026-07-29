@@ -353,6 +353,10 @@ mod tests {
             (ReputationError::RetirementNotAuthorized("x"), 0x2B),
             (ReputationError::CutoverFrozen, 0x2C),
             (
+                ReputationError::AnchorSubmitterRejected("x".to_string()),
+                0x33,
+            ),
+            (
                 ReputationError::StakeBelowMinimum {
                     component: StakeComponent::Octo,
                 },
@@ -382,8 +386,8 @@ mod tests {
         ];
         assert_eq!(
             cases.len(),
-            44,
-            "44 variants defined here (42 prior + 2 added in Round 3 review for API-boundary gate)"
+            45,
+            "45 variants defined here (44 prior + AnchorSubmitterRejected = 0x33 added in Round 2 review)"
         );
         for (variant, expected) in cases {
             assert_eq!(

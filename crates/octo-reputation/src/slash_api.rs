@@ -414,10 +414,7 @@ mod tests {
         use crate::auth::{AssetTag, GovernanceProof, GovernanceSnapshot, SlashDestination};
         use crate::constants::GOVERNANCE_QUORUM;
         use crate::store::{ReputationStore, StoolapReputationStore};
-        use crate::types::{
-            ControllerId, EventId, RecorderDid, ReputationLayer, SignalEvent, SignalKind,
-        };
-        use octo_determin::Dfp;
+        use crate::types::{RecorderDid, SignalKind};
 
         fn recorder_did(seed: u8) -> RecorderDid {
             RecorderDid::from_array({

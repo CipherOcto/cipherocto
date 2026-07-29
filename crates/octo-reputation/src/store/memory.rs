@@ -893,4 +893,20 @@ mod tests {
         // AnchorRecord is the new struct, not the legacy event.
         let _: AnchorRecord = c1_out[0].clone();
     }
+
+    /// Round 2 review #6: set_event_anchor_tx_hash on a missing
+    /// event_id must error with ChainRefInvalid (not silently Ok).
+    #[tokio::test]
+    async fn set_event_anchor_tx_hash_missing_event_id_errors() {
+        let store = InMemoryReputationStore::new();
+        // No record_signal: next_event_id is 0, no event exists.
+        let err = store
+            .set_event_anchor_tx_hash(EventId::from_u64(999), [0xAA; 32])
+            .await
+            .unwrap_err();
+        match err {
+            ReputationError::ChainRefInvalid("set_event_anchor_tx_hash:event_not_found") => {}
+            other => panic!("expected ChainRefInvalid(event_not_found), got {other:?}"),
+        }
+    }
 }

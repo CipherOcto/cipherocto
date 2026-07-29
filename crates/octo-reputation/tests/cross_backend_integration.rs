@@ -16,10 +16,9 @@
 
 #![cfg(feature = "stoolap")]
 
-use octo_determin::Dfp;
 use octo_reputation::auth::{Attestation, AttestorId, AttestorRegistration};
 use octo_reputation::store::ReputationStore;
-use octo_reputation::types::{ControllerId, EventId, SignalEvent};
+use octo_reputation::types::{EventId, SignalEvent};
 use octo_reputation::{
     InMemoryReputationStore, ReputationLayer, SignalKind, StoolapReputationStore,
 };

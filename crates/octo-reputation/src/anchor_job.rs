@@ -581,4 +581,75 @@ mod tests {
         );
         assert_eq!(err.discriminant(), 0x2A);
     }
+
+    /// Round 2 review #4: AnchorSubmitterRejected(0x33) emission path
+    /// — the chain submitter rejected the batch; run_once_strict must
+    /// forward the submitter's reason text (not collapse to fanout).
+    struct RejectingSubmitter;
+    impl ChainAnchorSubmitter for RejectingSubmitter {
+        fn submit(
+            &self,
+            _batch: &ReputationAnchorBatch,
+            _fee: u128,
+        ) -> Result<[u8; 32], AnchorJobError> {
+            Err(AnchorJobError::SubmitterRejected("rpc_timeout".to_string()))
+        }
+    }
+
+    #[tokio::test]
+    async fn run_once_strict_emits_anchor_submitter_rejected() {
+        let aggs: Vec<_> = (0..2u8).map(|i| agg(0.5, 100, i)).collect();
+        let cfg = AnchorJobConfig { now_unix: 1_000 };
+        let err = run_once_strict(Arc::new(RejectingSubmitter), &aggs, [1u8; 32], cfg, 0, None)
+            .await
+            .unwrap_err();
+        match err {
+            crate::error::ReputationError::AnchorSubmitterRejected(reason) => {
+                assert_eq!(reason, "rpc_timeout");
+                assert_eq!(
+                    crate::error::ReputationError::AnchorSubmitterRejected(reason).discriminant(),
+                    0x33
+                );
+            }
+            other => panic!("expected AnchorSubmitterRejected, got {other:?}"),
+        }
+    }
+
+    struct AlreadyAnchoredSubmitter;
+    impl ChainAnchorSubmitter for AlreadyAnchoredSubmitter {
+        fn submit(
+            &self,
+            _batch: &ReputationAnchorBatch,
+            _fee: u128,
+        ) -> Result<[u8; 32], AnchorJobError> {
+            Err(AnchorJobError::AlreadyAnchored {
+                controller_id: [1u8; 32],
+                window: AnchorWindow::at(1_000),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn run_once_strict_emits_already_anchored_in_window() {
+        let aggs: Vec<_> = (0..2u8).map(|i| agg(0.5, 100, i)).collect();
+        let cfg = AnchorJobConfig { now_unix: 1_000 };
+        let err = run_once_strict(
+            Arc::new(AlreadyAnchoredSubmitter),
+            &aggs,
+            [1u8; 32],
+            cfg,
+            0,
+            None,
+        )
+        .await
+        .unwrap_err();
+        match err {
+            crate::error::ReputationError::AnchorSubmitterRejected(reason) => {
+                assert_eq!(reason, "already_anchored_in_window");
+            }
+            other => panic!(
+                "expected AnchorSubmitterRejected(already_anchored_in_window), got {other:?}"
+            ),
+        }
+    }
 }

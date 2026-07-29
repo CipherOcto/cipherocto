@@ -326,17 +326,22 @@ impl SignalEvent {
                 buf.extend_from_slice(&rp.rotation_id.to_be_bytes());
             }
         }
-        // `anchor_tx_hash` is NOT included in `canonical_bytes` —
-        // cross-replica wire-format stability is preserved for the
-        // pre-RFC-0955-R1 gossip + audit contract. The anchor
-        // provenance is a post-event sidecar (`reputation_anchors`
-        // table + `query_anchors_by_controller_id` read-side join),
-        // not part of the event envelope digest. Future RFC-0968-A2
-        // amendment can fold anchor_tx_hash into the canonical preimage
-        // via a version-tagged envelope (`0x00` legacy, `0x01` anchor-
-        // aware). For now the field exists on the struct so callers
-        // can carry the value, but it does NOT participate in digest
-        // computation. (Round 1 review F3.)
+        // Neither `anchor_tx_hash` NOR `audit_ref` is included in
+        // `canonical_bytes` — both are post-event sidecars that
+        // mutate independently of the event envelope digest, so
+        // folding them into the digest would break federation /
+        // audit replay stability. The anchor provenance lives on
+        // `reputation_anchors` + `query_anchors_by_controller_id`;
+        // the audit metadata is intentionally opaque to peers
+        // that don't have the same audit ACL. Cross-replica wire-
+        // format stability is preserved for the pre-RFC-0955-R1
+        // gossip + audit contract. Future RFC-0968-A2 amendment
+        // can fold either field into a version-tagged preimage
+        // (`0x00` legacy, `0x01` anchor-aware, `0x02` audit-
+        // aware). For now both fields exist on the struct so
+        // callers can carry the values, but neither participates
+        // in digest computation. (Round 1 review F3; doc tightened
+        // in Round 4 audit-ref nit.)
         buf
     }
 }

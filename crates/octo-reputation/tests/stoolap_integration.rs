@@ -498,12 +498,11 @@ async fn stoolap_attestor_quorum_threshold() {
 
 #[tokio::test]
 async fn stoolap_query_attestations_filters_by_recorder() {
-    // The stoolap `next_event_id` helper assigns the same id to every
-    // event in a single session (pre-existing BLOB→INTEGER cast
-    // limitation); we therefore use one r1 event + one r2 event and
-    // assert the recorder filter alone. The since_event_id filter is
-    // exercised separately in `gossip_catch_up` and by the
-    // in-memory cross-backend test.
+    // R8 review: post-R5-F4 the stoolap `next_event_id` returns
+    // monotonic per-recorder ids, so multi-event seeding per recorder
+    // is now supported. We seed 2 events per recorder to exercise the
+    // recorder-filter + since_event_id boundary together (1 of the 2
+    // r1 events is above the boundary).
     let store = StoolapReputationStore::open_in_memory()
         .await
         .expect("open");
@@ -551,19 +550,13 @@ async fn stoolap_query_attestations_filters_by_recorder() {
 
 #[tokio::test]
 async fn stoolap_gossip_catch_up_returns_all_events_and_records_seen() {
-    // The stoolap `next_event_id` helper assigns the same id to every
-    // event in a single session (pre-existing BLOB→INTEGER cast
-    // limitation; pre-S3). We seed 2 events and use `since_event_id
-    // = 0` (exclusive) — but since all events end up with the same
-    // id, the filter matches neither. To exercise the catch-up path
-    // deterministically we instead query with `since_event_id =
-    // EventId::from_u64(0)` and verify the SQL runs + the gossip_seen
-    // ledger records an entry per processed row.
-    //
-    // The since_event_id boundary semantics are covered end-to-end by
-    // the in-memory `cross_backend_integration` test (deterministic)
-    // and the gossip substrate's own `gossip_catch_up_returns_events_after_since`
-    // (octo-network tests).
+    // R8 review: post-R5-F4 we seed 2 distinct recorders, each with a
+    // single event; per-recorder event_id=1 in both, so the catch-up
+    // boundary semantics rely on the (recorder_did, event_id) ordering
+    // not global event_id collision. We exercise the SQL run +
+    // gossip_seen ledger population. Boundary semantics for
+    // since_event_id are exercised end-to-end in the gossip substrate
+    // tests (octo-network).
     let store = StoolapReputationStore::open_in_memory()
         .await
         .expect("open");
@@ -583,14 +576,11 @@ async fn stoolap_gossip_catch_up_returns_all_events_and_records_seen() {
         .gossip_catch_up(&catch_up)
         .await
         .expect("gossip_catch_up");
-    // Pre-existing next_event_id limitation means both events share
-    // id=1; the > 0 filter excludes both. We assert >= 0 here so the
-    // test pins the SQL run rather than a specific row count, and
-    // also verify the gossip_seen ledger is populated (catch-up side
-    // effect runs once per event).
-    assert!(out.len() <= 2, "got {} events", out.len());
-    // gossip_seen ledger must have AT LEAST 1 row if any event was
-    // returned (the pre-check guards duplicate inserts).
+    // Both events must surface (post-R5-F4 next_event_id yields distinct
+    // (recorder_did, event_id) tuples, and the since_event_id boundary
+    // is inclusive of 0→1).
+    assert_eq!(out.len(), 2, "got {} events", out.len());
+    // gossip_seen ledger must match returned events 1:1.
     let mut rows = store
         .database()
         .query("SELECT COUNT(*) FROM reputation_gossip_seen", ())
@@ -773,5 +763,243 @@ async fn stoolap_record_signal_assigns_monotonic_event_ids() {
         e3.to_u64(),
         3,
         "third event id must be 3 (pre-fix bug returned 1, colliding on PK)"
+    );
+}
+
+/// R8 review: `next_event_id` iterates ALL aggregate rows. Seed events
+/// under 3 distinct `recorder_did`s so `reputation_aggregates` has
+/// multiple rows; assert new event id under any recorder exceeds the
+/// global MAX (not just per-recorder).
+#[tokio::test]
+async fn stoolap_next_event_id_maxes_across_multiple_aggregates() {
+    let store = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let r1 = octo_reputation::RecorderDid::from_array([0xD1; 52]);
+    let r2 = octo_reputation::RecorderDid::from_array([0xD2; 52]);
+    let r3 = octo_reputation::RecorderDid::from_array([0xD3; 52]);
+    // Seed r1 with 5 events → last_event_id=5 in r1's aggregate
+    for i in 0..5 {
+        store
+            .record_signal(ev(i, r1, 0.5, 1_000 + i))
+            .await
+            .expect("r1");
+    }
+    // Seed r2 with 2 events → last_event_id=2 in r2's aggregate
+    store
+        .record_signal(ev(0, r2, 0.5, 2_000))
+        .await
+        .expect("r2a");
+    store
+        .record_signal(ev(1, r2, 0.5, 2_001))
+        .await
+        .expect("r2b");
+    // Seed r3 with 1 event → last_event_id=1 in r3's aggregate
+    store
+        .record_signal(ev(0, r3, 0.5, 3_000))
+        .await
+        .expect("r3");
+    // Now insert under r3 again. Global MAX is 8 (5+2+1 events
+    // recorded across r1/r2/r3 — each aggregate row's last_event_id
+    // reflects only its own recorder's latest). Next id MUST be 9,
+    // not 2 (which would be max-within-r3).
+    let e = store
+        .record_signal(ev(1, r3, 0.5, 3_001))
+        .await
+        .expect("r3-second");
+    assert_eq!(
+        e.to_u64(),
+        9,
+        "next_event_id must MAX across all aggregate rows (global=8 → +1=9); \
+         a per-recorder MAX bug would return 2"
+    );
+}
+
+/// R8 review: seed a corrupt `last_event_id` BLOB (length != 8) and
+/// assert `next_event_id` rejects with the `:blob_len` error. Guards
+/// against future regressions that drop the length check.
+#[tokio::test]
+async fn stoolap_next_event_id_rejects_malformed_blob() {
+    let store = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    // Inject a corrupt aggregate row directly. The aggregate PK is
+    // (recorder_did, signal_kind, layer) so we provide a sentinel
+    // recorder_did, kind=Outcome=1, layer=Market=1, and a 7-byte
+    // last_event_id (wrong length).
+    let did_bytes = vec![0xE1u8; 52];
+    let score_blob = vec![0u8; 24];
+    let corrupt_blob = vec![0u8; 7];
+    store
+        .database()
+        .execute(
+            "INSERT INTO reputation_aggregates (
+                recorder_did, signal_kind, layer, score_ewma, samples,
+                severity_total, last_event_id, last_event_unix, updated_at_unix
+             ) VALUES ($1, 1, 1, $2, 0, 0, $3, 0, 0)",
+            vec![
+                stoolap::Value::blob(did_bytes),
+                stoolap::Value::blob(score_blob),
+                stoolap::Value::blob(corrupt_blob),
+            ],
+        )
+        .expect("insert corrupt aggregate");
+    // Inserting another event MUST surface the :blob_len error.
+    let did = octo_reputation::RecorderDid::from_array([0xE2; 52]);
+    let res = store.record_signal(ev(1, did, 0.5, 5_000)).await;
+    let msg = format!("{:?}", res);
+    assert!(
+        res.is_err(),
+        "corrupt blob_len must produce error, got {}",
+        msg
+    );
+    assert!(
+        msg.contains("blob_len"),
+        "error must be the :blob_len variant, got {}",
+        msg
+    );
+}
+
+/// R8 review: `set_event_anchor_tx_hash` with R7-F2 fix MUST update
+/// ONLY the targeted (recorder_did, event_id) row when multiple
+/// recorders share the same event_id. We seed two events directly
+/// via raw SQL (bypassing `record_signal` so they collide on
+/// event_id=1 under distinct recorder_dids) and anchor one. The
+/// composite-PK scope guard in the UPDATE must limit the write to
+/// the targeted row.
+#[tokio::test]
+async fn stoolap_set_anchor_scopes_by_composite_pk_cross_recorder() {
+    let store = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let cid = ControllerId::from_array([0u8; 32]);
+    let r_a = octo_reputation::RecorderDid::from_array([0xC1; 52]);
+    let r_b = octo_reputation::RecorderDid::from_array([0xC2; 52]);
+    let eid_1: Vec<u8> = 1u64.to_be_bytes().to_vec();
+    let kind_i = SignalKind::Outcome as i32;
+    let layer_i = ReputationLayer::Market as i32;
+    let score_blob = vec![0u8; 24];
+    // Insert two events under different recorders but the SAME
+    // event_id=1 (this is the scenario R7-F2 protects against).
+    for did_bytes in [r_a.as_bytes().to_vec(), r_b.as_bytes().to_vec()] {
+        store
+            .database()
+            .execute(
+                "INSERT INTO reputation_events
+                 (recorder_did, event_id, controller_id, signal_kind, layer,
+                  score_delta, recorded_at_unix, rotation_provenance)
+                 VALUES ($1, $2, $3, $4, $5, $6, 1000, NULL)",
+                vec![
+                    stoolap::Value::blob(did_bytes),
+                    stoolap::Value::blob(eid_1.clone()),
+                    stoolap::Value::blob(cid.as_bytes().to_vec()),
+                    stoolap::Value::integer(kind_i as i64),
+                    stoolap::Value::integer(layer_i as i64),
+                    stoolap::Value::blob(score_blob.clone()),
+                ],
+            )
+            .expect("insert event");
+    }
+    // Anchor r_a's event via the public API.
+    let hash_a = [0xAA; 32];
+    store
+        .set_event_anchor_tx_hash(EventId::from_u64(1), hash_a)
+        .await
+        .expect("anchor");
+    // Verify: only one row updated. We SELECT both events and count
+    // anchor_tx_hash == hash_a.
+    let rows = store
+        .database()
+        .query(
+            "SELECT recorder_did, anchor_tx_hash FROM reputation_events
+             WHERE event_id = $1",
+            vec![stoolap::Value::blob(eid_1.clone())],
+        )
+        .expect("select");
+    let mut anchored_count = 0;
+    let mut total = 0;
+    for r in rows {
+        let r = r.expect("row");
+        total += 1;
+        let did: Vec<u8> = r
+            .get(0)
+            .ok()
+            .and_then(|v| {
+                if let stoolap::Value::Blob(b) = v {
+                    Some(b.to_vec())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+        let anc: Option<Vec<u8>> = r.get(1).ok().and_then(|v| {
+            if let stoolap::Value::Blob(b) = v {
+                Some(b.to_vec())
+            } else {
+                None
+            }
+        });
+        if anc.as_deref() == Some(&hash_a[..]) {
+            assert_eq!(did, r_a.as_bytes().to_vec(), "anchored row must be r_a");
+            anchored_count += 1;
+        }
+    }
+    assert_eq!(total, 2, "two seeded events expected, got {}", total);
+    assert_eq!(
+        anchored_count, 1,
+        "composite-PK scope regression would anchor both rows; got {}",
+        anchored_count
+    );
+}
+
+/// R8 review: re-anchoring an already-anchored event with a different
+/// hash MUST error (anchor_tx_hash is a one-shot on-chain proof).
+#[tokio::test]
+async fn stoolap_re_anchor_with_different_hash_errors() {
+    let store = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let did = octo_reputation::RecorderDid::from_array([0xC8; 52]);
+    let e = store
+        .record_signal(ev(1, did, 0.5, 1_000))
+        .await
+        .expect("record");
+    store
+        .set_event_anchor_tx_hash(e, [0xAA; 32])
+        .await
+        .expect("first anchor");
+    let res = store.set_event_anchor_tx_hash(e, [0xBB; 32]).await;
+    assert!(
+        res.is_err(),
+        "re-anchor with different hash must error, got {:?}",
+        res
+    );
+}
+
+/// R8 review: 100 sequential `record_signal` calls under one recorder
+/// must yield ids 1..=100 with no duplicates / gaps. Surfaces any
+/// off-by-one or unsigned-overflow regression in next_event_id.
+#[tokio::test]
+async fn stoolap_record_signal_monotonic_at_scale() {
+    let store = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let did = octo_reputation::RecorderDid::from_array([0xC9; 52]);
+    let mut ids = Vec::with_capacity(100);
+    for i in 0..100u64 {
+        let e = store
+            .record_signal(ev(i, did, 0.5, 1_000 + i))
+            .await
+            .expect("record");
+        ids.push(e.to_u64());
+    }
+    let expected: Vec<u64> = (1..=100).collect();
+    assert_eq!(
+        ids,
+        expected,
+        "ids must be exactly 1..=100; got first={} last={} len={}",
+        ids.first().copied().unwrap_or(0),
+        ids.last().copied().unwrap_or(0),
+        ids.len()
     );
 }

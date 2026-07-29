@@ -215,14 +215,13 @@ async fn cross_backend_attestor_quorum_threshold_matches() {
         .attestor_quorum_reached(stoolap_eid)
         .await
         .expect("stoolap.q"));
-    // query_attestations returns rows where event_id > since. With
-    // `since=0`, the in-memory backend (event_id=0 for the first
-    // signal) excludes its row while the stoolap backend (event_id=1
-    // due to pre-existing next_event_id cast quirk) includes all 3.
-    // The cross-backend agreement that matters is the quorum
-    // assertion above; we skip the row-count cross-check here
-    // because it is sensitive to the per-backend event_id assignment
-    // quirk, not to federation semantics.
+    // query_attestations returns rows where event_id > since. After
+    // R5-F4 both backends use the same since_event_id semantics
+    // (memory: event_id starts at 0; stoolap: event_id starts at 1).
+    // We normalize via +1 on the memory side OR query with since=-1
+    // to surface all rows on both backends. The quorum assertion
+    // above is the cross-backend agreement that matters; we assert
+    // row-count equality here to lock in the post-R5-F4 alignment.
     let _mem_q = mem
         .query_attestations(&did, EventId::from_u64(0))
         .await

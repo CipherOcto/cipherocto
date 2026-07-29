@@ -521,4 +521,25 @@ mod tests {
         let e2 = SignalEvent::dummy_for_test(7, 1_700_000_000, 0.75);
         assert_eq!(e1.canonical_bytes(), e2.canonical_bytes());
     }
+
+    /// Round 3 review F4: pin the canonical-bytes length. The pre-F3
+    /// canonical form was 127 bytes (event_id 8 + recorder_did 52 +
+    /// controller_id 32 + signal_kind 1 + layer 1 + score_delta 24 +
+    /// recorded_at_unix 8 + rotation_provenance tag 1). The
+    /// anchor_tx_hash field is intentionally NOT included in the
+    /// preimage (Round 1 review F3 fix). A future drift that
+    /// accidentally folds anchor_tx_hash into the digest is caught
+    /// here.
+    #[test]
+    fn canonical_bytes_length_is_127_for_unanchored_event() {
+        let e = SignalEvent::dummy_for_test(0, 1_000_000, 0.5);
+        // rotation_provenance: None → 1 byte tag, no body.
+        // anchor_tx_hash: excluded by design (Round 1 F3 fix).
+        // audit_ref: also excluded by design (pre-existing).
+        assert_eq!(
+            e.canonical_bytes().len(),
+            127,
+            "canonical_bytes length drifted from pre-anchor baseline"
+        );
+    }
 }

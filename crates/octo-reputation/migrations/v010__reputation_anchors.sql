@@ -1,5 +1,14 @@
 -- v010__reputation_anchors — RFC-0968-A1 §28 catalog line 3814 + RFC-0955-R1 binding contract.
 --
+-- Round 3 review F1 (HIGH): This migration creates the
+-- `reputation_anchors` ledger table, but the Rust impl currently
+-- persists anchor provenance only to `reputation_events.anchor_tx_hash`
+-- (added in v011). The `reputation_anchors` table is dormant
+-- pending a future amendment that wires `set_event_anchor_tx_hash`
+-- to also INSERT into this ledger. The UNIQUE
+-- `(controller_id, anchor_root)` index and the rotation-receipt
+-- binding are NOT exercised by the current code path.
+--
 -- Migration slot v010 is allocated in RFC-0968 §28 catalog for the
 -- per-controller Merkle-root anchor store (mission 0968a). The preceding
 -- slots v006/v007/v008/v009 are reserved for recorder_registration and

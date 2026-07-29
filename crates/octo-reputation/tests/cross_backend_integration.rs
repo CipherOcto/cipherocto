@@ -232,3 +232,54 @@ async fn cross_backend_attestor_quorum_threshold_matches() {
         .await
         .expect("stoolap.q");
 }
+
+/// Round 3 review F3: anchor_pending must agree across memory +
+/// stoolap backends. Both backends return the same SET of
+/// (event_id, anchor_tx_hash_placeholder) pairs for the same seed,
+/// modulo backend-internal event_id assignment (memory starts at 0,
+/// stoolap starts at MAX+1 per RFC-0968 §3 — see docstring on
+/// `next_event_id` for the latter).
+#[tokio::test]
+async fn cross_backend_anchor_pending_returns_consistent_set() {
+    let mem = InMemoryReputationStore::new();
+    let stoolap = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let did = octo_reputation::RecorderDid::from_array([0xC1; 52]);
+    for i in 0..5u64 {
+        let ev = mk_event(i + 1, did);
+        mem.record_signal(ev.clone()).await.expect("mem.record");
+        stoolap.record_signal(ev).await.expect("stoolap.record");
+    }
+    let mem_pending = mem.anchor_pending(3).await.expect("mem.pending");
+    let stoolap_pending = stoolap.anchor_pending(3).await.expect("stoolap.pending");
+    // Placeholder hash: both backends use [0u8; 32] (a real anchor job
+    // would write the on-chain hash via set_event_anchor_tx_hash).
+    assert!(
+        mem_pending.iter().all(|(_, h)| *h == [0u8; 32]),
+        "memory backend placeholder hash mismatch"
+    );
+    assert!(
+        stoolap_pending.iter().all(|(_, h)| *h == [0u8; 32]),
+        "stoolap backend placeholder hash mismatch"
+    );
+    // Both backends return the same COUNT of pending events for the
+    // same batch_size. The set equality is loose because the two
+    // backends assign event_ids from different starting points
+    // (memory = AtomicU64 starting at 0; stoolap = MAX(last_event_id)+1).
+    // The byte-equality contract requires same input -> same output,
+    // and that's tested via cross_backend_1k_events_byte_identical
+    // (the canonical-bytes round-trip). For anchor_pending, the
+    // contract is: same count + same placeholder hash, which is
+    // what we verify here.
+    assert_eq!(
+        mem_pending.len(),
+        stoolap_pending.len(),
+        "batch_size=3 must return same count on both backends"
+    );
+    assert_eq!(
+        mem_pending.len(),
+        3,
+        "batch_size=3 returns 3 entries when >= 3 events exist"
+    );
+}

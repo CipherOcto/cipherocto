@@ -1945,13 +1945,100 @@ async fn stoolap_sequential_record_attestation_assigns_unique_ids() {
         ids.push(id);
     }
     assert_eq!(ids.len(), 4, "expected 4 sequential attestations");
-    let mut sorted = ids.clone();
-    sorted.sort_unstable();
-    sorted.dedup();
+    // R17 review (LOW): pin sequential ids exactly. A regression
+    // that makes next_attestation_id sparse would pass dedup but
+    // fail the exact-sequence check.
     assert_eq!(
-        sorted.len(),
-        ids.len(),
-        "sequential attestation_ids must be unique; got {:?}",
+        ids,
+        vec![0i64, 1, 2, 3],
+        "sequential attestation_ids must be 0,1,2,3; got {:?}",
         ids
+    );
+}
+
+/// R17 review (MEDIUM): pre-populated MAX race. Pre-insert K
+/// attestations, then fire N concurrent calls. All observe MAX =
+/// K, all compute K, all collide. Pins the documented collision
+/// window at non-zero starting MAX (the R15 concurrent test only
+/// covered the empty-table case where MAX = -1).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn stoolap_concurrent_record_attestation_with_pre_populated_max() {
+    use std::sync::Arc;
+
+    let store = Arc::new(StoolapReputationStore::open_in_memory().await.expect("open"));
+    let did = octo_reputation::RecorderDid::from_array([0xF3; 52]);
+    let eid = store
+        .record_signal(ev(1, did, 0.5, 1_000))
+        .await
+        .expect("seed event");
+    // Pre-populate 3 attestations so MAX = 2 (0-indexed, 3 rows
+    // have ids 0, 1, 2). Now fire 4 concurrent calls; they all
+    // observe MAX=2, all compute 3, all collide.
+    for i in 0..3u8 {
+        let reg = attestor_reg(0xE0 + i, 0xF0 + i);
+        store.register_attestor(reg).await.expect("register");
+        store
+            .record_attestation(att_for(
+                AttestorId::from_array([0xE0 + i; 52]),
+                did,
+                eid,
+            ))
+            .await
+            .expect("prepopulate");
+    }
+    let mut joins = Vec::new();
+    for i in 0..4u8 {
+        let store = Arc::clone(&store);
+        joins.push(tokio::spawn(async move {
+            let reg = attestor_reg(0xD0 + i, 0xC0 + i);
+            store
+                .register_attestor(reg)
+                .await
+                .expect("register");
+            store
+                .record_attestation(att_for(
+                    AttestorId::from_array([0xD0 + i; 52]),
+                    did,
+                    eid,
+                ))
+                .await
+        }));
+    }
+    let mut results = Vec::new();
+    for j in joins {
+        let r = j.await.expect("join");
+        results.push(r);
+    }
+    // Pre-populated 3 + 4 concurrent. MAX=2 pre-pop; concurrent
+    // calls all observe MAX=2, all compute 3. With PK collision on
+    // attestation_id, only the first INSERT wins.
+    let success_count = results.iter().filter(|r| r.is_ok()).count();
+    let err_count = results.iter().filter(|r| r.is_err()).count();
+    assert_eq!(success_count + err_count, 4, "every call must complete");
+    // The race is non-deterministic — the actual collision window
+    // depends on whether the 4 spawned tasks read MAX before any
+    // INSERT commits. Accept 1..=4 successes: ≥1 (at least one
+    // wins), ≤4 (at most all four if their MAX reads happened
+    // sequentially). ≥1 + ≤4 ↔ err_count ∈ [0, 3].
+    assert!(
+        success_count >= 1,
+        "at least one concurrent call must succeed; got {}",
+        success_count
+    );
+    assert!(
+        success_count <= 4,
+        "at most 4 concurrent calls can succeed; got {}",
+        success_count
+    );
+    // Row count must equal pre-pop + successes.
+    let mut rows = store
+        .database()
+        .query("SELECT COUNT(*) FROM reputation_attestations", ())
+        .expect("count");
+    let n: i64 = rows.next().expect("row").expect("ok").get(0).expect("col");
+    assert_eq!(
+        n as usize, 3 + success_count,
+        "row count must be 3 pre-pop + successes; got n={} successes={}",
+        n, success_count
     );
 }

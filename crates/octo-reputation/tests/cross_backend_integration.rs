@@ -911,3 +911,138 @@ async fn cross_backend_severity_total_not_found_for_pure_outcome_recorder() {
         "NotFound discriminant must match across backends"
     );
 }
+
+/// R17 review (HIGH): cross-backend score_ewma byte parity for the
+/// Slash aggregate. The existing 1k test only pins Outcome EWMA.
+/// A Slash-specific EWMA drift would be invisible.
+#[tokio::test]
+async fn cross_backend_slash_ewma_canonical_bytes_match() {
+    use octo_reputation::RecorderDid;
+
+    let did = RecorderDid::from_array([0xE4; 52]);
+    let cid = ControllerId::from_array([0u8; 32]);
+    let mk = |kind: SignalKind, score: f64, ts: u64| SignalEvent {
+        event_id: EventId::from_u64(0),
+        recorder_did: did,
+        controller_id: cid,
+        signal_kind: kind,
+        layer: octo_reputation::ReputationLayer::Market,
+        score_delta: octo_determin::Dfp::from_f64(score),
+        recorded_at_unix: ts,
+        rotation_provenance: None,
+        audit_ref: None,
+        anchor_tx_hash: None,
+    };
+    let mem = InMemoryReputationStore::new();
+    let stoolap = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    let scores = [0.10, 0.55, 0.31, 0.78, 0.42];
+    for (i, s) in scores.iter().enumerate() {
+        mem.record_signal(mk(SignalKind::Slash, *s, 1_000 + i as u64))
+            .await
+            .expect("mem");
+        stoolap
+            .record_signal(mk(SignalKind::Slash, *s, 1_000 + i as u64))
+            .await
+            .expect("stoolap");
+    }
+    let mem_agg = mem
+        .read_aggregate(&did, SignalKind::Slash, octo_reputation::ReputationLayer::Market)
+        .await
+        .expect("mem.read");
+    let stoolap_agg = stoolap
+        .read_aggregate(&did, SignalKind::Slash, octo_reputation::ReputationLayer::Market)
+        .await
+        .expect("stoolap.read");
+    assert_eq!(
+        octo_reputation::types::dfp_to_blob(&mem_agg.score_ewma),
+        octo_reputation::types::dfp_to_blob(&stoolap_agg.score_ewma),
+        "Slash EWMA canonical bytes must match across backends"
+    );
+}
+
+/// R17 review (MEDIUM): mixed-kind recorder, cross-kind absence.
+/// Insert Slash + Outcome events; read a third absent kind
+/// (Attendance); both backends return AggregateNotFound.
+#[tokio::test]
+async fn cross_backend_severity_total_not_found_for_cross_kind_absence() {
+    use octo_reputation::RecorderDid;
+
+    let did = RecorderDid::from_array([0xE5; 52]);
+    let cid = ControllerId::from_array([0u8; 32]);
+    let mk = |kind: SignalKind, ts: u64| SignalEvent {
+        event_id: EventId::from_u64(0),
+        recorder_did: did,
+        controller_id: cid,
+        signal_kind: kind,
+        layer: octo_reputation::ReputationLayer::Market,
+        score_delta: octo_determin::Dfp::from_f64(0.5),
+        recorded_at_unix: ts,
+        rotation_provenance: None,
+        audit_ref: None,
+        anchor_tx_hash: None,
+    };
+    let mem = InMemoryReputationStore::new();
+    let stoolap = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    for (kind, ts) in [
+        (SignalKind::Slash, 1_000u64),
+        (SignalKind::Outcome, 1_001),
+        (SignalKind::Slash, 1_002),
+        (SignalKind::Outcome, 1_003),
+    ] {
+        mem.record_signal(mk(kind, ts)).await.expect("mem");
+        stoolap.record_signal(mk(kind, ts)).await.expect("stoolap");
+    }
+    let mem_out = mem
+        .read_aggregate(&did, SignalKind::Latency, octo_reputation::ReputationLayer::Market)
+        .await;
+    let stoolap_out = stoolap
+        .read_aggregate(&did, SignalKind::Latency, octo_reputation::ReputationLayer::Market)
+        .await;
+    assert!(mem_out.is_err());
+    assert!(stoolap_out.is_err());
+    let mem_disc = std::mem::discriminant(&mem_out.unwrap_err());
+    let stoolap_disc = std::mem::discriminant(&stoolap_out.unwrap_err());
+    assert_eq!(mem_disc, stoolap_disc, "cross-kind NotFound discriminant must match");
+}
+
+/// R17 review (LOW): cross-Layer absence path.
+#[tokio::test]
+async fn cross_backend_severity_total_not_found_for_cross_layer_absence() {
+    use octo_reputation::RecorderDid;
+
+    let did = RecorderDid::from_array([0xE6; 52]);
+    let cid = ControllerId::from_array([0u8; 32]);
+    let mk = |ts: u64| SignalEvent {
+        event_id: EventId::from_u64(0),
+        recorder_did: did,
+        controller_id: cid,
+        signal_kind: SignalKind::Outcome,
+        layer: octo_reputation::ReputationLayer::Market,
+        score_delta: octo_determin::Dfp::from_f64(0.5),
+        recorded_at_unix: ts,
+        rotation_provenance: None,
+        audit_ref: None,
+        anchor_tx_hash: None,
+    };
+    let mem = InMemoryReputationStore::new();
+    let stoolap = StoolapReputationStore::open_in_memory()
+        .await
+        .expect("open");
+    mem.record_signal(mk(1_000)).await.expect("mem");
+    stoolap.record_signal(mk(1_000)).await.expect("stoolap");
+    let mem_out = mem
+        .read_aggregate(&did, SignalKind::Outcome, octo_reputation::ReputationLayer::Governance)
+        .await;
+    let stoolap_out = stoolap
+        .read_aggregate(&did, SignalKind::Outcome, octo_reputation::ReputationLayer::Governance)
+        .await;
+    assert!(mem_out.is_err());
+    assert!(stoolap_out.is_err());
+    let mem_disc = std::mem::discriminant(&mem_out.unwrap_err());
+    let stoolap_disc = std::mem::discriminant(&stoolap_out.unwrap_err());
+    assert_eq!(mem_disc, stoolap_disc, "cross-layer NotFound discriminant must match");
+}

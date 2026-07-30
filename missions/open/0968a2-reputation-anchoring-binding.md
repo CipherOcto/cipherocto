@@ -159,18 +159,18 @@ if governance prefers spec-first for any remaining cross-RFC drift.
       governance-membership semantics.
 
       **(a)** Add RFC-0955-R1 types under new names in the same module
-          (e.g., `AnchorGovernanceSnapshot`, `AnchorGovernanceSigner`,
-          `AnchorGovernanceProof`) — preserves existing auth.rs callers
-          (RFC-0968 §3 retirement, SuspensionAuth, SlashDestination) and
-          keeps the anchoring wire schema distinct. Wire them into the
-          new `ReputationAnchorBatch` BLOB fields via serde
-          deserialization. (Mandated path.)
+              (e.g., `AnchorGovernanceSnapshot`, `AnchorGovernanceSigner`,
+              `AnchorGovernanceProof`) — preserves existing auth.rs callers
+              (RFC-0968 §3 retirement, SuspensionAuth, SlashDestination) and
+              keeps the anchoring wire schema distinct. Wire them into the
+              new `ReputationAnchorBatch` BLOB fields via serde
+              deserialization. (Mandated path.)
 
-                          **Also: fix `AnchorLeaf::digest` field-order bug in IMPL** (per
-                          `crates/octo-reputation/src/anchor.rs:80-100`) — the IMPL hashes
-                          `last_event_unix`, `samples`, `severity_total`, then
-                          `score_ewma_raw`. RFC-0955-R1 line 420-422 requires the canonical
-                          order `(did, signal_kind, layer, last_event_id, score_ewma_raw,
+                              **Also: fix `AnchorLeaf::digest` field-order bug in IMPL** (per
+                              `crates/octo-reputation/src/anchor.rs:80-100`) — the IMPL hashes
+                              `last_event_unix`, `samples`, `severity_total`, then
+                              `score_ewma_raw`. RFC-0955-R1 line 420-422 requires the canonical
+                              order `(did, signal_kind, layer, last_event_id, score_ewma_raw,
 
 last_event_unix, samples, severity_total)`— i.e.,`score_ewma_raw`      at position 5 (after`last_event_id`, before the counters). The
       current IMPL puts `score_ewma_raw`last. This breaks

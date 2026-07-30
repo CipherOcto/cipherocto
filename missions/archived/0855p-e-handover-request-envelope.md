@@ -2,7 +2,9 @@
 
 ## Status
 
-Completed (2026-06-17) — Phase 1 implemented
+Completed (Archived 2026-07-30 — Path B)
+
+> **Path B closure:** AC + code verified 2026-07-30 via mission audit. Code ground: `crates/octo-network/src/dot/handover.rs` — `:34-38` `HANDOVER_REQUEST_TAG`/`HOAK`/`HODN` + `:49` `HandoverReason` + `:92` `CoordinatorRole` + `:124` `SlashTally` + `HandoverRequestEnvelope`/`HandoverAckEnvelope`/`HandoverDoneEnvelope` (1045 LOC, 19 `#[test]`). All 25 ACs were unmarked in the AC list despite the implementation landing in `next`; the Status header was correct from 2026-06-17. Did not pass through `claimed/` or `with-pr/` — work landed via prior PRs whose PR trail is lost to audit.
 
 ## RFC
 

@@ -4,19 +4,34 @@
 
 **Claimed 2026-07-27.** RFC-0955-R1 accepted 2026-07-27 (sibling of
 RFC-0955, both promoted to Accepted this session). RFC-0968 accepted
-2026-07-25. Both blockers cleared. **Status corrected 2026-07-28**
-(Round 2 review C9): per the per-AC audit, only 1 of 18 AC items is
-landed in code — the anchor-types scaffolding at
-`crates/octo-reputation/src/anchor.rs` (`AnchorWindow`,
-`AnchorLeaf`, `ReputationAnchorBatch::digest/fee/within_leaf_cap`,
-`exceeds_daily_fanout`, `window_collision`, `is_finality_reached`)
-plus the in-process scheduler at `anchor_job.rs` that consumes them.
-Remaining 17 AC items (the `SignalEvent::anchor_tx_hash` field,
-`ReputationStore::anchor_pending` API, `reputation_anchors` schema
-migration ingestion, live background job, `ComputeOffer::reputation`
-wiring) are aspirational. Migration
-`crates/octo-reputation/migrations/v010__reputation_anchors.sql` exists
-untracked; its ingestion path into `reputation_events` does not.
+2026-07-25. Both blockers cleared. **Status refreshed 2026-07-30**
+(Round 3 review, after R13/R14/R15 commits `1b528ef3`,
+`1e042356`, `e42c67d5`): per the per-AC audit, **10 of 19 AC items
+(Scope + Acceptance Criteria combined) are landed in code** — see
+the `[x]` items below for file:line citations. The 9 ungrounded `[ ]`
+AC items are:
+
+1. Live background job submission path (chain-side adapter not wired)
+2. Idempotency AC (no behavior test against the live job)
+3. Failure isolation AC (no failure-mode tests referencing `reputation_events` mutation)
+4. Per-deployment config plumbing (constants declared, config layer ungrounded)
+5. `rotation_receipt_id` chain encoding (in-memory struct has it; chain encoding ungrounded)
+6. DID-rotation finality handler integration (`MIN_FINALITY_BLOCKS` + `is_finality_reached` declared, not integrated into `plan_batches`)
+7. Governance quorum signatures in anchor tx (verification flow ungrounded)
+8. Reorg re-submission on reorg > `MIN_FINALITY_BLOCKS` (no handler)
+9. Gossip cross-reference (mission 0855p-b does not verify `anchor_tx_hash` provenance)
+
+The `anchor_job.rs` scheduler scaffold, the `v010__reputation_anchors.sql`
+migration, and the `v011__reputation_events_anchor.sql` migration are
+untracked per git status (working tree); they exist on disk and are
+cited by line number below, but are not committed. Migration summary:
+
+- `v010` — creates `reputation_anchors` table (the per-controller
+  Merkle-root ledger). Dormant until a future amendment wires
+  `set_event_anchor_tx_hash` to INSERT into this ledger.
+- `v011` — adds `anchor_tx_hash: BLOB NULL` column to
+  `reputation_events` (the column the anchor job operates on; the
+  AC-required `WHERE anchor_tx_hash IS NULL` sweep depends on this).
 
 Original blocker (now cleared): RFC-0955-R1 acceptance — sibling Accepted
 RFC at `rfcs/accepted/economics/0955-r1-reputation-anchoring.md` (promoted
@@ -33,6 +48,13 @@ Dfp BLOB plus the full tuple identity (`did || signal_kind || layer ||
 last_event_id || last_event_unix || samples || severity_total`). Earlier
 draft wording referencing `reputation:blake3_digest` is RETIRED.
 
+**Discriminant note (Round 3 review B2)**: `ReputationError::AnchorTupleFanoutExceeded`
+is **0x2A** in the impl (`crates/octo-reputation/src/error.rs:174`) and
+**0x2A** in RFC-0968 §13 reserved band (`0x2A..=0xFF`); the previous
+RFC-0955-R1 references to 0x2D were stale (0x2D is already used by
+`StakeBelowMinimum` in `error.rs:190`). RFC-0955-R1 corrected to 0x2A
+in this revision.
+
 ## RFC
 
 - RFC-0955-R1: Reputation Anchoring Amendment (sibling Draft RFC, canonical
@@ -43,7 +65,7 @@ draft wording referencing `reputation:blake3_digest` is RETIRED.
   Phase 5)
 - RFC-0968: Reputation Registry (the persisted source-of-truth whose events
   will be anchored; canonical home of `ReputationError::AnchorTupleFanoutExceeded
-  (0x2D)` per §13)
+  (0x2A, reserved band 0x2A..=0xFF per §13)`)
 
 ## Summary
 
@@ -64,14 +86,15 @@ This mission is **extracted** from RFC-0968's Phase 5 per Round 1 finding H11
 mission; RFC-0968 now owns gossip federation (mission 0855p-b substrate) and
 this mission owns on-chain anchoring).
 
-## Why deferred?
+## Why deferred? (historical)
 
-- RFC-0955-R1 is not yet final. On-chain anchoring requires the binding
-  contract to be live.
+- ~~RFC-0955-R1 is not yet final. On-chain anchoring requires the binding
+  contract to be live.~~ **Cleared 2026-07-27** (RFC-0955-R1 Accepted).
 - Anchoring is a separate cost model (gas, batch frequency) from gossip
-  federation (storage, durability).
+  federation (storage, durability). This cost-model distinction remains
+  a non-blocker rationale for keeping the missions separate.
 - Mission 0968a unblocks independently of RFC-0968 acceptance (RFC-0968
-  was promoted to Accepted 2026-07-25; the blocker is RFC-0955-R1).
+  was promoted to Accepted 2026-07-25; the binding blocker was RFC-0955-R1).
 
 ## Scope (when unblocked)
 
@@ -82,13 +105,13 @@ this mission owns on-chain anchoring).
 - [x] Extend `SignalEvent` with `anchor_tx_hash: Option<[u8; 32]>`
   — *ground*: `crates/octo-reputation/src/types.rs:289` `pub anchor_tx_hash: Option<[u8; 32]>` field declared on `SignalEvent` with doc-comment "Optional. Anchor tx hash (32-byte BLAKE3) populated by `ReputationStore::anchor_pending` once the event is committed to the anchoring chain (RFC-0955-R1). `None` until the anchor job runs and writes back via `set_event_anchor_tx_hash`." `SignalEvent::canonical_bytes` (`types.rs:330`) includes the optional anchor_tx_hash envelope (0/1 tag + 32-byte hash when present).
 - [x] Add `ReputationStore::anchor_pending(batch_size: u32)` API
-  — *ground*: `crates/octo-reputation/src/store/mod.rs:191` `async fn anchor_pending(&self, batch_size: u32) -> StoreResult<Vec<(EventId, [u8; 32])>>` + `:197` `async fn set_event_anchor_tx_hash(&self, event_id: EventId, anchor_tx_hash: [u8; 32]) -> StoreResult<()>`. Implemented in `crates/octo-reputation/src/store/memory.rs:495,517` (linear scan + placeholder hash) and `crates/octo-reputation/src/store/stoolap.rs:1458,1513` (real SQL: `WHERE anchor_tx_hash IS NULL ORDER BY recorded_at_unix LIMIT ?` + `UPDATE reputation_events SET anchor_tx_hash = ? WHERE event_id = ?`). Stub variant at `stoolap.rs:1715,1718` returns `Ok(vec![])` / `Ok(())` for backends without the live schema. `ReputationStoreCompat` forwarders in `crates/octo-reputation/src/compat/mod.rs` route both methods to the inner store.
+  — *ground*: `crates/octo-reputation/src/store/mod.rs:192` `async fn anchor_pending(&self, batch_size: u32) -> StoreResult<Vec<(EventId, [u8; 32])>>` + `:198` `async fn set_event_anchor_tx_hash(&self, event_id: EventId, anchor_tx_hash: [u8; 32]) -> StoreResult<()>`. Implemented in `crates/octo-reputation/src/store/memory.rs:518,540` (linear scan + placeholder hash) and `crates/octo-reputation/src/store/stoolap.rs:1548,1606` for function definitions; the `WHERE anchor_tx_hash IS NULL ORDER BY recorded_at_unix LIMIT ?` sweep is at `stoolap.rs:1561` and the `UPDATE reputation_events SET anchor_tx_hash = ?` writes-back path is at `stoolap.rs:1714-1717` (composite-PK scope `(recorder_did, event_id)`, not the simple `WHERE event_id = ?` originally cited). Stub variant at `stoolap.rs:1826` (`mod stub`), dispatch at `:1863`, and `anchor_pending` stub fn at `:1976` returning `Ok(vec![])` / `Ok(())` for backends without the live schema. `ReputationStoreCompat` forwarders in `crates/octo-reputation/src/compat/mod.rs` route both methods to the inner store.
 - [x] Add `reputation_anchors` table (migration `v010__reputation_anchors.sql`)
-  — *ground*: `crates/octo-reputation/migrations/v010__reputation_anchors.sql` is registered in `BUILTIN_MIGRATIONS` at `crates/octo-reputation/src/migrations.rs:43`; `crates/octo-reputation/src/store/stoolap.rs` queries `WHERE anchor_tx_hash IS NULL` against `reputation_events` (the AC-required scan; ingestion path via `anchor_pending` returns `(EventId, [u8;32])` pairs that the caller writes to `reputation_anchors`). Schema columns: `event_id PK`, `anchor_tx_hash`, `anchored_at_unix`, `controller_id`, `anchor_root`, `leaf_count` (per `v010__reputation_anchors.sql:1`).
+  — *ground*: `crates/octo-reputation/migrations/v010__reputation_anchors.sql` is registered in `BUILTIN_MIGRATIONS` at `crates/octo-reputation/src/migrations.rs:42-44` (the `("v010__reputation_anchors", include_str!(...))` tuple entry). `crates/octo-reputation/src/store/stoolap.rs:1561` queries `WHERE anchor_tx_hash IS NULL` against `reputation_events` (the AC-required scan; ingestion path via `anchor_pending` returns `(EventId, [0u8; 32])` placeholder hashes that the caller overwrites with the real chain hash after on-chain submission). Schema columns (per `v010__reputation_anchors.sql`): `id INTEGER PRIMARY KEY AUTOINCREMENT`, `event_id BLOB NOT NULL UNIQUE`, `anchor_tx_hash BLOB NOT NULL`, `anchored_at_unix INTEGER NOT NULL`, `controller_id BLOB NOT NULL`, `anchor_root BLOB NOT NULL`, `leaf_count INTEGER NOT NULL`, `rotation_receipt_id BLOB NULL` — NO explicit `PRIMARY KEY (event_id)` constraint; the implicit PK is `id INTEGER` (stoolap-fork rowid alias), and uniqueness on `event_id` is enforced by the `UNIQUE` constraint. `event_id` is the chain-side idempotency key per RFC-0955-R1 §"Chain-Level Idempotency". Three indexes are created: `idx_reputation_anchors_controller` on `(controller_id)`, `idx_reputation_anchors_controller_time` on `(controller_id, anchored_at_unix)` (daily fanout count), and `idx_reputation_anchors_controller_root` (UNIQUE) on `(controller_id, anchor_root)` (chain-side Merkle-root uniqueness). Also: `crates/octo-reputation/migrations/v011__reputation_events_anchor.sql` (registered in `BUILTIN_MIGRATIONS` at `:45-47`) adds `anchor_tx_hash BLOB NULL` to `reputation_events` itself + the `idx_reputation_events_controller_anchor` index. The `anchor_tx_hash` column added by v011 is what `anchor_pending` scans and `set_event_anchor_tx_hash` writes back; the v010 ledger table is the chain-side mirror (not directly written by the impl yet — see the dormant-table note in `v010__reputation_anchors.sql` header).
 - [ ] Background job: scan `reputation_events` where `anchor_tx_hash IS NULL`, submit Merkle-root batch transaction, persist
-  — *ungrounded*: `crates/octo-reputation/src/anchor_job.rs` exists (working-tree untracked file) and contains the in-process scheduler at lines `42: use crate::anchor::{…}`, `160: if exceeds_daily_fanout(...)`, `170: let proposed_window = AnchorWindow::at(...)`, `187: AnchorLeaf::from_aggregate`. The file is the scheduler scaffold, NOT the live RFC-0955-R1 binding-submission job. The actual on-chain submission path is ungrounded — no `submit_anchor_tx`, no chain-side adapter wired into the job.
-- [x] `ANCHOR_INTERVAL_SECS` config + `MAX_ANCHOR_ROOTS_PER_CONTROLLER_PER_INTERVAL=1` + `MAX_TUPLES_PER_ROOT=100`
-  — *ground, constants declared*: `crates/octo-reputation/src/constants.rs:57` `pub const MAX_ANCHOR_ROOTS_PER_CONTROLLER_PER_INTERVAL: u64 = 1;`; `:61` `pub const MAX_TUPLES_PER_ROOT: u64 = 100;`; `anchor.rs:22-24` doc references. `DEFAULT_ANCHOR_INTERVAL_SECS = 300` const-tested at `anchor_job.rs:267`. Per-deployment config layer (separate from the in-process scheduler) is ungrounded — `[x]` for the constants being declared and consumed by the scheduler logic, not for the config plumbing.
+  — *ungrounded*: `crates/octo-reputation/src/anchor_job.rs` exists (working-tree untracked file) and contains the in-process scheduler scaffold. The trait is `ChainAnchorSubmitter` with a `submit(&self, batch, fee) -> Result<[u8; 32], AnchorJobError>` method; the only impl in the file is `StubChainAnchorSubmitter` (`anchor_job.rs:139` struct decl + `:141` impl method) which writes a placeholder `[0u8; 32]` hash. No real chain-side adapter is wired into the job. The file is the scheduler scaffold, NOT the live RFC-0955-R1 binding-submission job. The actual on-chain submission path is ungrounded.
+- [x] `DEFAULT_ANCHOR_INTERVAL_SECS` config + `MAX_ANCHOR_ROOTS_PER_CONTROLLER_PER_INTERVAL=1` + `MAX_TUPLES_PER_ROOT=100`
+  — *ground, constants declared*: `crates/octo-reputation/src/constants.rs:57` `pub const MAX_ANCHOR_ROOTS_PER_CONTROLLER_PER_INTERVAL: u64 = 1;`; `:61` `pub const MAX_TUPLES_PER_ROOT: u64 = 100;`; `anchor.rs:20-24` doc references. `DEFAULT_ANCHOR_INTERVAL_SECS = 300` const-tested at `crates/octo-reputation/src/anchor.rs:236` (`const { assert!(DEFAULT_ANCHOR_INTERVAL_SECS == 300) };`). Per-deployment config layer (separate from the in-process scheduler) is ungrounded — `[x]` for the constants being declared and consumed by the scheduler logic, not for the config plumbing.
 - [ ] Cross-reference: mission 0855p-b gossip uses `anchor_tx_hash` to verify gossiped events have on-chain provenance
   — *ungrounded*: no consumer of `SignalEvent::anchor_tx_hash` exists in `crates/octo-network/src/gossip/`.
 
@@ -105,35 +128,38 @@ this mission owns on-chain anchoring).
 - [ ] Anchoring failure does not corrupt `reputation_events`
   — *ungrounded*: no failure-mode tests in `anchor_job.rs` reference `reputation_events` mutation paths.
 - [x] `reputation_anchors` is queryable by `did` (joined via `reputation_events`)
-  — *ground*: `crates/octo-reputation/src/store/mod.rs:225` `async fn query_anchors_by_controller_id(&self, controller_id: ControllerId) -> StoreResult<Vec<AnchorRecord>>` on `ReputationStore` trait. Implemented in `crates/octo-reputation/src/store/memory.rs:535` (linear scan over `inner.events`, filter by `controller_id` + `anchor_tx_hash.is_some()`, sort `anchored_at_unix ASC`) and `crates/octo-reputation/src/store/stoolap.rs` real impl (`SELECT event_id, anchor_tx_hash, recorded_at_unix FROM reputation_events WHERE controller_id = $1 AND anchor_tx_hash IS NOT NULL ORDER BY recorded_at_unix ASC`) + stub variant (`stoolap_backend_unimplemented:query_anchors_by_controller_id`). Compat forwarder in `crates/octo-reputation/src/compat/mod.rs:256`. Test: `query_anchors_by_controller_id_filters_and_orders` (memory).
+  — *ground*: `crates/octo-reputation/src/store/mod.rs:223` `async fn query_anchors_by_controller_id(&self, controller_id: ControllerId) -> StoreResult<Vec<AnchorRecord>>` on `ReputationStore` trait. Implemented in `crates/octo-reputation/src/store/memory.rs:535` (linear scan over `inner.events`, filter by `controller_id` + `anchor_tx_hash.is_some()`, sort `anchored_at_unix ASC`) and `crates/octo-reputation/src/store/stoolap.rs` real impl (`SELECT event_id, anchor_tx_hash, recorded_at_unix FROM reputation_events WHERE controller_id = $1 AND anchor_tx_hash IS NOT NULL ORDER BY recorded_at_unix ASC`) + stub variant (`stoolap_backend_unimplemented:query_anchors_by_controller_id`). Compat forwarder in `crates/octo-reputation/src/compat/mod.rs:256`. Test: `query_anchors_by_controller_id_filters_and_orders` (memory).
 - [x] `reputation_anchors` stores only `EventId` values (not `AttestationId`)
-  — *ground*: `crates/octo-reputation/src/store/mod.rs:228` `pub struct AnchorRecord { event_id: EventId, anchor_tx_hash: [u8; 32], anchored_at_unix: u64 }` — only `EventId`, never `AttestationId`. Schema (`migrations/v010__reputation_anchors.sql`) also stores only `event_id` as the PK column. Schema + Rust type both reflect the AC constraint.
+  — *ground*: `crates/octo-reputation/src/store/mod.rs:234` `pub struct AnchorRecord { event_id: EventId, anchor_tx_hash: [u8; 32], anchored_at_unix: u64 }` — only `EventId`, never `AttestationId`. Schema (`migrations/v010__reputation_anchors.sql`) stores `event_id BLOB NOT NULL UNIQUE` — uniqueness (not PK) on `event_id` is the AC-required constraint. Schema + Rust type both reflect the AC constraint.
 - [ ] Anchor batch interval is configurable per deployment; default = 300s
-  — *ground*: `crates/octo-reputation/src/anchor_job.rs:267` const-test asserts `DEFAULT_ANCHOR_INTERVAL_SECS == 300`. Job is in-process only — no per-deployment config layer yet.
+  — *ground*: `crates/octo-reputation/src/anchor.rs:236` const-test asserts `DEFAULT_ANCHOR_INTERVAL_SECS == 300`. Job is in-process only — no per-deployment config layer yet.
 - [x] Round 8 snapshot rule (`snapshot.finalized_at_unix + MAX_GOVERNANCE_SNAPSHOT_AGE_SECS < now_unix` ⇒ `GovernanceSnapshotStale`)
-  — *ground*: `crates/octo-reputation/src/constants.rs:38` `pub const MAX_GOVERNANCE_SNAPSHOT_AGE_SECS: u64 = 600;`. `crates/octo-reputation/src/auth.rs:33` `pub fn age_secs(&self, now_unix: u64) -> u64` + `pub fn is_fresh(&self, now_unix: u64) -> bool { self.age_secs(now_unix) <= MAX_GOVERNANCE_SNAPSHOT_AGE_SECS }`. `ReputationError::GovernanceSnapshotStale { age_secs, max } = 0x10` declared at `crates/octo-reputation/src/error.rs:106` and emitted by `crates/octo-reputation/src/retirement.rs:88` when the snapshot is stale. Snapshot validation flow is grounded in retirement path; the anchor submission path does NOT yet invoke the freshness check — partial `[x]` (constant + variant + retirement caller grounded; anchor-submission caller ungrounded).
+  — *ground*: `crates/octo-reputation/src/constants.rs:38` `pub const MAX_GOVERNANCE_SNAPSHOT_AGE_SECS: u64 = 600;`. `crates/octo-reputation/src/auth.rs:28` `pub fn age_secs(&self, now_unix: u64) -> u64` + `auth.rs:32` `pub fn is_fresh(&self, now_unix: u64) -> bool { self.age_secs(now_unix) <= MAX_GOVERNANCE_SNAPSHOT_AGE_SECS }`. `ReputationError::GovernanceSnapshotStale { age_secs, max } = 0x10` declared at `crates/octo-reputation/src/error.rs:106` and emitted by `crates/octo-reputation/src/retirement.rs:88` when the snapshot is stale. Snapshot validation flow is grounded in retirement path; the anchor submission path does NOT yet invoke the freshness check — partial `[x]` (constant + variant + retirement caller grounded; anchor-submission caller ungrounded).
 - [ ] **`ReputationAnchorBatch::rotation_receipt_id: Option<[u8; 32]>` (RFC-0955-R1 §"ReputationAnchorBatch")**
-  — *ground*: `crates/octo-reputation/src/anchor.rs:121` `pub struct ReputationAnchorBatch { ... }` and `pub fn rotation_receipt_id: Option<[u8; 32]>` field on the in-memory struct (per the file's `pub struct ReputationAnchorBatch { ... fn digest ... fn fee ... fn within_leaf_cap ...}` surface). NOT `[x]` for the **chain-side wiring** of the same field (in-memory struct is grounded; chain encoding is ungrounded).
+  — *ground*: `crates/octo-reputation/src/anchor.rs:121` `pub struct ReputationAnchorBatch { ... }` (the in-memory struct declaration) and `anchor.rs:134` `pub rotation_receipt_id: Option<[u8; 32]>` field on the struct. NOT `[x]` for the **chain-side wiring** of the same field (in-memory struct is grounded; chain encoding is ungrounded).
 - [ ] DID-rotation finality interaction (`MIN_FINALITY_BLOCKS = 12` threshold)
-  — *ungrounded (constant only)*: `crates/octo-reputation/src/constants.rs:42` `pub const MIN_FINALITY_BLOCKS: u64 = 12;` declared and replaced by the deprecated alias at lines 45-49. No DID-rotation finality handler grounded — `anchor_job.rs:119` `StubChainAnchorSubmitter` is a stub; `plan_batches` (line 152) does not consult `MIN_FINALITY_BLOCKS` for reorg-aware finality checks. Re-flagged to `[ ]` per strict grounded check.
+  — *ungrounded (constant + helper only)*: `crates/octo-reputation/src/constants.rs:42` `pub const MIN_FINALITY_BLOCKS: u64 = 12;` declared. Helper `is_finality_reached(submitted, finalized)` implemented at `crates/octo-reputation/src/anchor.rs:206-208`. No DID-rotation finality handler grounded — `anchor_job.rs:139` `StubChainAnchorSubmitter` is a stub; `plan_batches` (`anchor_job.rs:172` function decl) does not consult `is_finality_reached` for reorg-aware finality checks. Re-flagged to `[ ]` per strict grounded check.
 - [x] `AnchorTupleFanoutExceeded` (`MAX_ANCHORED_TUPLES_PER_CONTROLLER_PER_DAY = 100`)
-  — *ground*: `crates/octo-reputation/src/constants.rs:66` `pub const MAX_ANCHORED_TUPLES_PER_CONTROLLER_PER_DAY: u64 = 100;`. Variant `ReputationError::AnchorTupleFanoutExceeded(u64) = 0x2A` declared at `crates/octo-reputation/src/error.rs:174`. **Canonical emission path** at `crates/octo-reputation/src/anchor_job.rs`: `AnchorTupleFanout { count, max }` struct (line 112) with `to_reputation_error()` → `AnchorTupleFanoutExceeded(count)` (line 121); `check_daily_fanout(existing, proposed) -> Option<AnchorTupleFanout>` preflight (line 313); `run_once_strict` wrapper (line 339) returns `Result<AnchorJobOutcome, ReputationError>` so the canonical `0x2A` variant is the live error from the wrapping API. 3 tests at `anchor_job.rs`: `check_daily_fanout_returns_some_at_cap` (variant + 0x2A discriminant), `check_daily_fanout_returns_none_below_cap`, `run_once_strict_emits_anchor_tuple_fanout_exceeded` (end-to-end).
+  — *ground*: `crates/octo-reputation/src/constants.rs:66` `pub const MAX_ANCHORED_TUPLES_PER_CONTROLLER_PER_DAY: u64 = 100;`. Variant `ReputationError::AnchorTupleFanoutExceeded(u64) = 0x2A` declared at `crates/octo-reputation/src/error.rs:174` (the canonical 0x2A in RFC-0968 §13 reserved band `0x2A..=0xFF`; RFC-0955-R1 corrected to 0x2A in this revision). **Canonical emission path** at `crates/octo-reputation/src/anchor_job.rs`: `pub struct AnchorTupleFanout {` (line 112) with `pub fn to_reputation_error(&self) -> crate::error::ReputationError` (line 121) → `AnchorTupleFanoutExceeded(count)`; `pub fn check_daily_fanout(...)` (function decl line 307; offending-branch `Some(AnchorTupleFanout { ... })` at lines 313-314) preflight; `pub async fn run_once_strict<S: ChainAnchorSubmitter>(submitter: Arc<S>, ...)` (lines 338-339) returns `Result<AnchorJobOutcome, ReputationError>` so the canonical `0x2A` variant is the live error from the wrapping API. Test module at `anchor_job.rs` includes `check_daily_fanout_returns_some_at_cap` (line 538), `check_daily_fanout_returns_none_below_cap` (line 555), `run_once_strict_emits_anchor_tuple_fanout_exceeded` (line 562); the module also contains 6 additional tests (`run_once_strict_emits_anchor_submitter_rejected`, `run_once_strict_emits_already_anchored_in_window`, `run_once_submits_via_stub_with_expected_fee`, etc.) covering the surrounding surface.
 - [x] Per-leaf anchor fee (`MIN_FEE_PER_LEAF = 50`, `ANCHOR_FEE_PER_ROOT = 5_000`)
   — *ground*: `crates/octo-reputation/src/constants.rs:70` `pub const ANCHOR_FEE_PER_ROOT: u64 = 5_000;` + `:74` `pub const MIN_FEE_PER_LEAF: u64 = 50;`. `crates/octo-reputation/src/anchor.rs:172` `pub fn fee(&self) -> u128 { (ANCHOR_FEE_PER_ROOT as u128) + (MIN_FEE_PER_LEAF as u128) * (self.leaves.len() as u128) }` and `:177` `pub fn within_leaf_cap(&self) -> bool` enforce `leaves.len() <= MAX_TUPLES_PER_ROOT = 100`. Compiles const-tests at `anchor.rs:239-240` (`const { assert!(ANCHOR_FEE_PER_ROOT == 5_000) }; const { assert!(MIN_FEE_PER_LEAF == 50) };`). Per-deployment OCTO balance check still ungrounded.
 - [ ] Governance-set hash + 3 distinct signatures in every anchor tx
   — *ground, constants only*: `GOVERNANCE_QUORUM = 3` at `crates/octo-reputation/src/constants.rs`. The verification flow inside the anchor submission path is ungrounded.
 - [ ] Reorg re-submission on reorg > `MIN_FINALITY_BLOCKS`
-  — *ungrounded*: no `MIN_FINALITY_BLOCKS` constant; no reorg handler grounded.
+  — *ungrounded (constant + helper only)*: `MIN_FINALITY_BLOCKS = 12` declared at `crates/octo-reputation/src/constants.rs:42`; `is_finality_reached(submitted, finalized) -> bool` implemented at `crates/octo-reputation/src/anchor.rs:206-208`. The reorg-aware resubmission handler is NOT grounded — `plan_batches` (`anchor_job.rs:172`) does not consult `is_finality_reached` to re-submit batches whose submitted-but-not-finalized roots have been reorged. Re-flagged to `[ ]` per strict grounded check.
 - [x] Test vectors at `crates/octo-reputation/tests/anchoring/canonical_blobs.rs::CANONICAL_ANCHOR_BLOB`
   — *ground*: `crates/octo-reputation/tests/canonical_blobs.rs` (note: Cargo's test auto-discovery requires the file at `tests/*.rs`; the `anchoring/` subdir was merged into `tests/` so the file lives at `crates/octo-reputation/tests/canonical_blobs.rs`). Three pinned vectors: `CANONICAL_ANCHOR_BLOB_0_LEAVES` (controller `[0;32]`, window 0), `CANONICAL_ANCHOR_BLOB_1_LEAF` (controller `[1;32]`, window 3_333 = 1_000_000 / 300), `CANONICAL_ANCHOR_BLOB_100_LEAVES` (controller `[0xAB;32]`, window 5_666_666 = 1_700_000_000 / 300). Domain separator `BLAKE3_REPUTATION_ANCHOR_DOMAIN = b"cipherocto/reputation/anchor/v1"` pinned at `crates/octo-reputation/src/constants.rs:181` and asserted by `canonical_blob_digest_domain_separator_is_stable`. 5 tests pass: zero/single/hundred-leaf pinned + domain-separator stability + BLAKE3 determinism (`canonical_blob_two_independent_computations_are_byte_identical`).
 
 ## Location
 
-Migration slot `v010__reputation_anchors.sql` allocated in RFC-0968 §28
-catalog line 3814 (after v008 = `recorder_registration` and v009 =
-`kind_weights`), gated on RFC-0955-R1 acceptance. The migration slot
-allocation and the specific crate paths will be finalized when 0968a is
-claimed (post-RFC-0955-R1 acceptance).
+Migration slots `v010__reputation_anchors.sql` and
+`v011__reputation_events_anchor.sql` allocated in RFC-0968 §28 catalog
+(after v008 = `recorder_registration` and v009 = `kind_weights`),
+gated on RFC-0955-R1 acceptance (now satisfied 2026-07-27). The
+migrations are registered in `BUILTIN_MIGRATIONS` at
+`crates/octo-reputation/src/migrations.rs:42-47`. Both files exist on
+disk (created 2026-07-28) and are untracked per git status; they
+are not yet committed.
 
 ## Complexity
 
@@ -142,8 +168,12 @@ storage extension + governance-proof verification + reorg re-submission.
 
 ## Claimant
 
-(unassigned)
+@cipherocto (mission-level; sub-tasks claimed individually per RFC-0955-R1 §"Implementation Phases")
 
 ## Pull Request
 
-# (TBD — pending RFC-0955-R1 acceptance)
+None open. Per the Round 3 review (2026-07-30), 9 ungrounded ACs remain
+(see Status header). Submission blocked on addressing the ungrounded
+items in §"Acceptance Criteria" below OR on user-initiated Path B
+closure with explicit acknowledgement of the ungrounded ACs in the
+Path B audit banner.

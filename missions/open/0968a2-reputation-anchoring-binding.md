@@ -143,24 +143,23 @@ if governance prefers spec-first for any remaining cross-RFC drift.
       RFC-0955-R1. `GovernanceSigner` is absent. Following the prior
       mission text literally (create new types in a new auth.rs
       module) would collide with the existing names. Two reconciliation
-      paths:
+      paths. **Only path (a) is viable** — path (b) in-place evolution
+      is not viable because the existing `GovernanceProof` (line 113+) is
+      a semantically distinct **slash/suspension authorization envelope**
+      carrying `governance_pubkey`, `recorder_id`, `reason_hash`,
+      slash destination/amount/asset fields required by RFC-0968
+      authorization flows. Replacing it would remove data required by
+      current RFC-0968 authorization flows; the existing
+      `GovernanceSnapshot` (lines 21-25) is similarly tied to
+      governance-membership semantics.
 
       **(a)** Add RFC-0955-R1 types under new names in the same module
-          (e.g., `AnchorGovernanceSnapshot`, `AnchorGovernanceSigner`,
-          `AnchorGovernanceProof`) — preserves existing auth.rs callers
-          (RFC-0968 §3 retirement, SuspensionAuth, SlashDestination) and
-          keeps the anchoring wire schema distinct. Wire them into the
-          new `ReputationAnchorBatch` BLOB fields via serde
-          deserialization.
-
-          **(b)** Evolve the existing `GovernanceSnapshot` / `GovernanceProof`
-          in place to match RFC-0955-R1 shapes — requires updating every
-          call site (recorder registration, retirement, suspension auth,
-          slash attestation) and a v013 migration for re-shaped BLOB columns.
-          Larger blast radius.
-
-          Recommended path (a) for the smaller blast radius. Document
-          the chosen path in the PR description.
+      (e.g., `AnchorGovernanceSnapshot`, `AnchorGovernanceSigner`,
+      `AnchorGovernanceProof`) — preserves existing auth.rs callers
+      (RFC-0968 §3 retirement, SuspensionAuth, SlashDestination) and
+      keeps the anchoring wire schema distinct. Wire them into the
+      new `ReputationAnchorBatch` BLOB fields via serde
+      deserialization. (Mandated path.)
 
                       **Also: fix `AnchorLeaf::digest` field-order bug in IMPL** (per
                       `crates/octo-reputation/src/anchor.rs:80-100`) — the IMPL hashes
@@ -269,7 +268,7 @@ bug fix requires re-pinning the 3 vectors to the correct order.
 - [ ] Reorg handler re-submits batches whose `(submitted, finalized)` height delta exceeds `MIN_FINALITY_BLOCKS`
 - [ ] DID-rotation finality handler re-submits anchors when `consume_rotation_receipt` is finalized before `MIN_FINALITY_BLOCKS`
 - [ ] Governance signature verification rejects batches with != `GOVERNANCE_QUORUM` (= 3) signatures
-- [ ] Anchor-specific verifier types (`AnchorGovernanceSnapshot` / `AnchorGovernanceSigner` / `AnchorGovernanceProof`) defined per RFC-0955-R1 lines 177-200 (reconciliation path (a) chosen) — or the chosen reconciliation path documented in PR description
+- [ ] Anchor-specific verifier types (`AnchorGovernanceSnapshot` / `AnchorGovernanceSigner` / `AnchorGovernanceProof`) defined per RFC-0955-R1 lines 177-200 — mandated path (a), with existing `GovernanceSnapshot` / `GovernanceProof` (RFC-0968 authorization envelopes) preserved unchanged at `auth.rs:21-25` and `auth.rs:113+`
 - [ ] Per-deployment config layer exposes `interval_secs` + `controller_id` + `chain_endpoint`
 - [ ] Idempotency test (2 duplicate submits on `(did, signal_kind, layer, last_event_id)` 4-tuple) passes
 - [ ] Failure isolation test (submitter mid-batch fail) passes

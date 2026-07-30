@@ -1106,6 +1106,9 @@ graph TD
     D -->|7d timeout| F[Follow up or close]
     B -.->|RFC.Supersedes: path| G[Superseded<br/>missions/archived/superseded/]
     C -.->|RFC.Supersedes: path| G
+    B -.->|Upstream blocker| H[Deferred<br/>missions/deferred/]
+    C -.->|Upstream blocker| H
+    H -.->|Blocker resolved| B
 ```
 
 | State | Location | Trigger |
@@ -1113,6 +1116,7 @@ graph TD
 | Open | `missions/open/` | RFC Accepted, no claimant |
 | Claimed | `missions/claimed/` | `git claim` |
 | With PR | `missions/with-pr/` | PR opened |
+| Deferred | `missions/deferred/` | Upstream blocker (RFC pending, external dep, governance decision) — see procedure below |
 | Archived (completed) | `missions/archived/completed/` | PR Accepted |
 | Archived (superseded) | `missions/archived/superseded/` | Accepted RFC with `Supersedes:` line pointing at the mission path |
 | Archived (rejected/abandoned) | `missions/archived/rejected/` | Rejection or abandonment |
@@ -1138,6 +1142,28 @@ Both legacy and superseded missions remain greppable for history, but cannot be 
 | ------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Mission claim | 14 days | Allows adequate time for understanding RFC, planning implementation, and making significant progress. Two weeks is standard for substantial development work. |
 | PR review     | 7 days  | One week provides sufficient time for thorough human review while preventing indefinite review stalls. Aligns with common sprint cycles.                      |
+
+**Deferral procedure.** A mission moves to `missions/deferred/` when an upstream blocker makes the work unclaimable. Typical blockers:
+
+- The associated RFC is itself still `Draft` (not yet Accepted).
+- An external dependency (foundation RFC, third-party library) is unavailable.
+- A governance decision is required before implementation can proceed (e.g., quorum policy, fee schedule).
+
+When deferring:
+
+1. `git mv` the mission file from `missions/open/` (or `missions/claimed/`) to `missions/deferred/`.
+2. Update the `## Status` header to `Deferred (YYYY-MM-DD) — <blocker>`.
+3. The mission file MUST carry an explicit `## Rationale for deferral` blockquote naming the blocker and any cross-references (e.g., the blocking RFC number or external issue).
+4. No timeouts apply to deferred missions. They remain greppable and recoverable but cannot be claimed.
+
+When the blocker resolves, the mission is re-claimed from `deferred/`:
+
+1. `git mv` back to `missions/open/` (or `missions/claimed/` if a claimant is ready).
+2. Update `## Status` header: `Deferred (YYYY-MM-DD) — <blocker>` → `Open` (or `Claimed`).
+3. Drop the `## Rationale for deferral` blockquote (or convert to a note).
+4. Proceed through the standard lifecycle.
+
+Example existing conformant mission: `missions/deferred/0870g-l3-cross-process-tcp-e2e.md` (defers L3 cross-process TCP end-to-end test pending design discussion; carries the "must NOT be re-implemented by re-introducing a test-only binary" guardrail). `missions/deferred/0968a-reputation-anchoring.md` defers anchoring BLOB schema pending RFC-0955 acceptance.
 
 ---
 

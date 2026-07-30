@@ -979,11 +979,23 @@ async fn stoolap_set_anchor_rejects_cross_recorder_ambiguous_via_public_api() {
         std::collections::HashMap::new();
     for r in rows {
         let r = r.expect("row");
-        let did: Vec<u8> = r.get(0).ok().map(|v| {
-            if let stoolap::Value::Blob(b) = v { b.to_vec() } else { Vec::new() }
-        }).unwrap_or_default();
+        let did: Vec<u8> = r
+            .get(0)
+            .ok()
+            .map(|v| {
+                if let stoolap::Value::Blob(b) = v {
+                    b.to_vec()
+                } else {
+                    Vec::new()
+                }
+            })
+            .unwrap_or_default();
         let anc: Option<Vec<u8>> = r.get(1).ok().and_then(|v| {
-            if let stoolap::Value::Blob(b) = v { Some(b.to_vec()) } else { None }
+            if let stoolap::Value::Blob(b) = v {
+                Some(b.to_vec())
+            } else {
+                None
+            }
         });
         if let Some(anc) = anc {
             anchored.insert(did, anc);
@@ -1057,9 +1069,17 @@ async fn stoolap_next_event_id_boundary_max_minus_one_to_max() {
     let mut aggregate_last_eid: Option<u64> = None;
     for r in rows {
         let r = r.expect("row");
-        let last_eid_bytes: Vec<u8> = r.get(0).ok().and_then(|v| {
-            if let stoolap::Value::Blob(b) = v { Some(b.to_vec()) } else { None }
-        }).unwrap_or_default();
+        let last_eid_bytes: Vec<u8> = r
+            .get(0)
+            .ok()
+            .and_then(|v| {
+                if let stoolap::Value::Blob(b) = v {
+                    Some(b.to_vec())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
         if last_eid_bytes.len() == 8 {
             let mut arr = [0u8; 8];
             arr.copy_from_slice(&last_eid_bytes);
@@ -1134,11 +1154,23 @@ async fn stoolap_set_anchor_middle_row_single_recorder() {
     let mut anchored_eids: Vec<u64> = Vec::new();
     for r in rows {
         let r = r.expect("row");
-        let eid_bytes: Vec<u8> = r.get(0).ok().and_then(|v| {
-            if let stoolap::Value::Blob(b) = v { Some(b.to_vec()) } else { None }
-        }).unwrap_or_default();
+        let eid_bytes: Vec<u8> = r
+            .get(0)
+            .ok()
+            .and_then(|v| {
+                if let stoolap::Value::Blob(b) = v {
+                    Some(b.to_vec())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
         let anc: Option<Vec<u8>> = r.get(1).ok().and_then(|v| {
-            if let stoolap::Value::Blob(b) = v { Some(b.to_vec()) } else { None }
+            if let stoolap::Value::Blob(b) = v {
+                Some(b.to_vec())
+            } else {
+                None
+            }
         });
         if anc.is_some() && eid_bytes.len() == 8 {
             let mut arr = [0u8; 8];
@@ -1168,11 +1200,23 @@ async fn stoolap_set_anchor_middle_row_single_recorder() {
         std::collections::HashMap::new();
     for r in rows {
         let r = r.expect("row");
-        let eid_bytes: Vec<u8> = r.get(0).ok().and_then(|v| {
-            if let stoolap::Value::Blob(b) = v { Some(b.to_vec()) } else { None }
-        }).unwrap_or_default();
+        let eid_bytes: Vec<u8> = r
+            .get(0)
+            .ok()
+            .and_then(|v| {
+                if let stoolap::Value::Blob(b) = v {
+                    Some(b.to_vec())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
         let anc: Option<Vec<u8>> = r.get(1).ok().and_then(|v| {
-            if let stoolap::Value::Blob(b) = v { Some(b.to_vec()) } else { None }
+            if let stoolap::Value::Blob(b) = v {
+                Some(b.to_vec())
+            } else {
+                None
+            }
         });
         if eid_bytes.len() == 8 {
             let mut arr = [0u8; 8];
@@ -1180,20 +1224,39 @@ async fn stoolap_set_anchor_middle_row_single_recorder() {
             per_eid.insert(u64::from_be_bytes(arr), anc);
         }
     }
-    assert_eq!(per_eid.len(), 3, "all 3 events must exist; got {}", per_eid.len());
-    assert_eq!(per_eid.len(), 3, "all 3 events must exist; got {}", per_eid.len());
     assert_eq!(
-        per_eid.get(&1).and_then(|v| v.as_ref()).map(|v| v.as_slice()),
+        per_eid.len(),
+        3,
+        "all 3 events must exist; got {}",
+        per_eid.len()
+    );
+    assert_eq!(
+        per_eid.len(),
+        3,
+        "all 3 events must exist; got {}",
+        per_eid.len()
+    );
+    assert_eq!(
+        per_eid
+            .get(&1)
+            .and_then(|v| v.as_ref())
+            .map(|v| v.as_slice()),
         None,
         "e1 anchor must be NULL"
     );
     assert_eq!(
-        per_eid.get(&2).and_then(|v| v.as_ref()).map(|v| v.as_slice()),
+        per_eid
+            .get(&2)
+            .and_then(|v| v.as_ref())
+            .map(|v| v.as_slice()),
         Some(hash.as_slice()),
         "e2 anchor must equal hash"
     );
     assert_eq!(
-        per_eid.get(&3).and_then(|v| v.as_ref()).map(|v| v.as_slice()),
+        per_eid
+            .get(&3)
+            .and_then(|v| v.as_ref())
+            .map(|v| v.as_slice()),
         None,
         "e3 anchor must be NULL"
     );
@@ -1354,7 +1417,10 @@ async fn stoolap_record_signal_multi_slash_severity_accumulates() {
         .read_aggregate(&did, SignalKind::Outcome, ReputationLayer::Market)
         .await
         .expect("outcome read");
-    assert_eq!(outcome_agg.severity_total, 0, "Outcome aggregate severity must stay 0");
+    assert_eq!(
+        outcome_agg.severity_total, 0,
+        "Outcome aggregate severity must stay 0"
+    );
 }
 
 /// R11 review (LOW): probe LIMIT 3 cap with 5+ recorders. Verify
@@ -1396,13 +1462,20 @@ async fn stoolap_set_anchor_rejects_five_recorders_share_event_id() {
             vec![stoolap::Value::blob(eid_1.clone())],
         )
         .expect("count seeded");
-    let mut seeded_dids: std::collections::HashSet<Vec<u8>> =
-        std::collections::HashSet::new();
+    let mut seeded_dids: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
     for r in rows {
         let r = r.expect("row");
-        let did: Vec<u8> = r.get(0).ok().map(|v| {
-            if let stoolap::Value::Blob(b) = v { b.to_vec() } else { Vec::new() }
-        }).unwrap_or_default();
+        let did: Vec<u8> = r
+            .get(0)
+            .ok()
+            .map(|v| {
+                if let stoolap::Value::Blob(b) = v {
+                    b.to_vec()
+                } else {
+                    Vec::new()
+                }
+            })
+            .unwrap_or_default();
         if !did.is_empty() {
             seeded_dids.insert(did);
         }
@@ -1837,7 +1910,11 @@ async fn stoolap_next_event_id_rejects_all_wrong_blob_lengths() {
 async fn stoolap_concurrent_record_attestation_race_is_documented() {
     use std::sync::Arc;
 
-    let store = Arc::new(StoolapReputationStore::open_in_memory().await.expect("open"));
+    let store = Arc::new(
+        StoolapReputationStore::open_in_memory()
+            .await
+            .expect("open"),
+    );
     // Seed 1 event under a single recorder; all attestations target
     // this event from distinct attestors to avoid composite-PK
     // collisions and isolate the next_attestation_id race.
@@ -1851,16 +1928,9 @@ async fn stoolap_concurrent_record_attestation_race_is_documented() {
         let store = Arc::clone(&store);
         joins.push(tokio::spawn(async move {
             let reg = attestor_reg(0xA0 + i, 0xB0 + i);
+            store.register_attestor(reg).await.expect("register");
             store
-                .register_attestor(reg)
-                .await
-                .expect("register");
-            store
-                .record_attestation(att_for(
-                    AttestorId::from_array([0xA0 + i; 52]),
-                    did,
-                    eid,
-                ))
+                .record_attestation(att_for(AttestorId::from_array([0xA0 + i; 52]), did, eid))
                 .await
         }));
     }
@@ -1923,11 +1993,7 @@ async fn stoolap_sequential_record_attestation_assigns_unique_ids() {
         let reg = attestor_reg(0xC0 + i, 0xD0 + i);
         store.register_attestor(reg).await.expect("register");
         store
-            .record_attestation(att_for(
-                AttestorId::from_array([0xC0 + i; 52]),
-                did,
-                eid,
-            ))
+            .record_attestation(att_for(AttestorId::from_array([0xC0 + i; 52]), did, eid))
             .await
             .expect("attest");
     }
@@ -1965,7 +2031,11 @@ async fn stoolap_sequential_record_attestation_assigns_unique_ids() {
 async fn stoolap_concurrent_record_attestation_with_pre_populated_max() {
     use std::sync::Arc;
 
-    let store = Arc::new(StoolapReputationStore::open_in_memory().await.expect("open"));
+    let store = Arc::new(
+        StoolapReputationStore::open_in_memory()
+            .await
+            .expect("open"),
+    );
     let did = octo_reputation::RecorderDid::from_array([0xF3; 52]);
     let eid = store
         .record_signal(ev(1, did, 0.5, 1_000))
@@ -1978,11 +2048,7 @@ async fn stoolap_concurrent_record_attestation_with_pre_populated_max() {
         let reg = attestor_reg(0xE0 + i, 0xF0 + i);
         store.register_attestor(reg).await.expect("register");
         store
-            .record_attestation(att_for(
-                AttestorId::from_array([0xE0 + i; 52]),
-                did,
-                eid,
-            ))
+            .record_attestation(att_for(AttestorId::from_array([0xE0 + i; 52]), did, eid))
             .await
             .expect("prepopulate");
     }
@@ -1991,16 +2057,9 @@ async fn stoolap_concurrent_record_attestation_with_pre_populated_max() {
         let store = Arc::clone(&store);
         joins.push(tokio::spawn(async move {
             let reg = attestor_reg(0xD0 + i, 0xC0 + i);
+            store.register_attestor(reg).await.expect("register");
             store
-                .register_attestor(reg)
-                .await
-                .expect("register");
-            store
-                .record_attestation(att_for(
-                    AttestorId::from_array([0xD0 + i; 52]),
-                    did,
-                    eid,
-                ))
+                .record_attestation(att_for(AttestorId::from_array([0xD0 + i; 52]), did, eid))
                 .await
         }));
     }
@@ -2040,9 +2099,11 @@ async fn stoolap_concurrent_record_attestation_with_pre_populated_max() {
         .expect("count");
     let n: i64 = rows.next().expect("row").expect("ok").get(0).expect("col");
     assert_eq!(
-        n as usize, 3 + success_count,
+        n as usize,
+        3 + success_count,
         "row count must be 3 pre-pop + successes; got n={} successes={}",
-        n, success_count
+        n,
+        success_count
     );
 }
 
@@ -2062,7 +2123,11 @@ async fn stoolap_concurrent_record_attestation_with_pre_populated_max() {
 async fn stoolap_concurrent_record_attestation_with_k1_pre_populated_max() {
     use std::sync::Arc;
 
-    let store = Arc::new(StoolapReputationStore::open_in_memory().await.expect("open"));
+    let store = Arc::new(
+        StoolapReputationStore::open_in_memory()
+            .await
+            .expect("open"),
+    );
     let did = octo_reputation::RecorderDid::from_array([0xF4; 52]);
     let eid = store
         .record_signal(ev(1, did, 0.5, 1_000))
@@ -2079,16 +2144,9 @@ async fn stoolap_concurrent_record_attestation_with_k1_pre_populated_max() {
         let store = Arc::clone(&store);
         joins.push(tokio::spawn(async move {
             let reg = attestor_reg(0xC0 + i, 0xD0 + i);
+            store.register_attestor(reg).await.expect("register");
             store
-                .register_attestor(reg)
-                .await
-                .expect("register");
-            store
-                .record_attestation(att_for(
-                    AttestorId::from_array([0xC0 + i; 52]),
-                    did,
-                    eid,
-                ))
+                .record_attestation(att_for(AttestorId::from_array([0xC0 + i; 52]), did, eid))
                 .await
         }));
     }
@@ -2111,9 +2169,11 @@ async fn stoolap_concurrent_record_attestation_with_k1_pre_populated_max() {
         .expect("count");
     let n: i64 = rows.next().expect("row").expect("ok").get(0).expect("col");
     assert_eq!(
-        n as usize, 1 + success_count,
+        n as usize,
+        1 + success_count,
         "row count must be 1 pre-pop + successes; got n={} successes={}",
-        n, success_count
+        n,
+        success_count
     );
 }
 
@@ -2125,7 +2185,11 @@ async fn stoolap_concurrent_record_attestation_with_k1_pre_populated_max() {
 async fn stoolap_concurrent_record_attestation_with_k2_pre_populated_max() {
     use std::sync::Arc;
 
-    let store = Arc::new(StoolapReputationStore::open_in_memory().await.expect("open"));
+    let store = Arc::new(
+        StoolapReputationStore::open_in_memory()
+            .await
+            .expect("open"),
+    );
     let did = octo_reputation::RecorderDid::from_array([0xF5; 52]);
     let eid = store
         .record_signal(ev(1, did, 0.5, 1_000))
@@ -2135,11 +2199,7 @@ async fn stoolap_concurrent_record_attestation_with_k2_pre_populated_max() {
         let reg = attestor_reg(0xB0 + i, 0xC0 + i);
         store.register_attestor(reg).await.expect("register");
         store
-            .record_attestation(att_for(
-                AttestorId::from_array([0xB0 + i; 52]),
-                did,
-                eid,
-            ))
+            .record_attestation(att_for(AttestorId::from_array([0xB0 + i; 52]), did, eid))
             .await
             .expect("prepopulate");
     }
@@ -2148,16 +2208,9 @@ async fn stoolap_concurrent_record_attestation_with_k2_pre_populated_max() {
         let store = Arc::clone(&store);
         joins.push(tokio::spawn(async move {
             let reg = attestor_reg(0xD0 + i, 0xE0 + i);
+            store.register_attestor(reg).await.expect("register");
             store
-                .register_attestor(reg)
-                .await
-                .expect("register");
-            store
-                .record_attestation(att_for(
-                    AttestorId::from_array([0xD0 + i; 52]),
-                    did,
-                    eid,
-                ))
+                .record_attestation(att_for(AttestorId::from_array([0xD0 + i; 52]), did, eid))
                 .await
         }));
     }
@@ -2193,8 +2246,10 @@ async fn stoolap_concurrent_record_attestation_with_k2_pre_populated_max() {
         .expect("count");
     let n: i64 = rows.next().expect("row").expect("ok").get(0).expect("col");
     assert_eq!(
-        n as usize, 2 + success_count,
+        n as usize,
+        2 + success_count,
         "row count must be 2 pre-pop + successes; got n={} successes={}",
-        n, success_count
+        n,
+        success_count
     );
 }

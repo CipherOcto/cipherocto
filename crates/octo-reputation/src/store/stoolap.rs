@@ -409,9 +409,7 @@ mod real {
                     // severity_total is INTEGER per v001:41 — read
                     // as i64, not 8-byte BE bytes.
                     let v: i64 = row.get(0).map_err(|_e| {
-                        ReputationError::ChainRefInvalid(
-                            "stoolap_record_signal:severity_read",
-                        )
+                        ReputationError::ChainRefInvalid("stoolap_record_signal:severity_read")
                     })?;
                     (v.max(0) as u64, true)
                 }

@@ -82,6 +82,11 @@ impl ProviderReputationRegistry {
     }
 
     /// Configure the circuit-breaker threshold (`success_rate`).
+    #[deprecated(
+        since = "0.1.0",
+        note = "DEPRECATED: replaced by 0968-b Phase C; route through \
+                `ProviderReputationRegistryCompat` from `octo_reputation`."
+    )]
     pub fn set_min_reputation(&self, min: f64) {
         *self.min_reputation.lock() = min;
     }
@@ -94,6 +99,11 @@ impl ProviderReputationRegistry {
     }
 
     /// Record a transaction outcome. Creates the score on first call.
+    #[deprecated(
+        since = "0.1.0",
+        note = "DEPRECATED: replaced by 0968-b Phase C; route writes through \
+                `ReputationStore::record_signal` from `octo_reputation`."
+    )]
     pub fn record(&self, asker_did: &str, success: bool, latency_ms: u64) {
         let mut inner = self.inner.lock();
         let entry = inner
@@ -114,6 +124,11 @@ impl ProviderReputationRegistry {
     }
 
     /// Manual score override (operator / test fixture).
+    #[deprecated(
+        since = "0.1.0",
+        note = "DEPRECATED: replaced by 0968-b Phase C; use \
+                `ProviderReputationRegistryCompat::set_score` from `octo_reputation`."
+    )]
     pub fn set_score(&self, score: ProviderScore) {
         self.inner.lock().insert(score.asker_did.clone(), score);
     }

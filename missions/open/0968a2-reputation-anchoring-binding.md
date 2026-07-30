@@ -19,15 +19,18 @@ closure or active work on the 9 ungrounded ACs.
 
 ## Why split
 
-Mission 0968a's Round 4 review (REV-3 commit `b5cb0d1f`) identified
+Mission 0968a's Round 4 review (REV-4 commit `b5cb0d1f`) identified
 the 9 ungrounded ACs and 2 cross-RFC drifts (N8 `StakeBelowMinimum`,
-N9 `ReputationAnchorBatch` governance fields). This mission 0968a2
-owns ALL 9 ungrounded ACs from 0968a + the 2 cross-RFC drift
-reconciliations. The 9 Scope items (reorg + DID-rotation finality
-combined into 1 Scope item covering both; the 1:1 AC mapping would
-have produced 10) map cleanly to 12 ACs (8 inherited from 0968a +
-1 live adapter + 1 v012 migration + 1 test re-pinning + 1 explicit
-`rotation_receipt_id` chain encoding).
+N9 `ReputationAnchorBatch` governance fields). The N8 discriminant
+drift was already resolved in commit `013a5676` (Round 2 of 0968a2
+review). This mission 0968a2 now owns the remaining 8 ungrounded ACs
+from 0968a + the N9 governance fields drift + 8 new fix items
+discovered during rounds 1-5 of 0968a2 review (governance types,
+`batch_size`, `chain_block_height` type, `AnchorLeaf::digest` field
+order, rotation_receipt_id chain encoding, live adapter, v012
+migration, test re-pinning). The 9 Scope items (reorg + DID-rotation
+finality combined into 1 Scope item covering both) map cleanly to
+17 ACs (8 inherited from 0968a + 9 new for 0968a2).
 
 1. `StakeBelowMinimum` IMPL/RFC discriminant delta
 2. `ReputationAnchorBatch` governance fields
@@ -73,39 +76,34 @@ if the cross-reference requires dedicated scope).
 
 ## Why not RFC-0968-A2 amendment
 
-The drift is real but filing a new RFC amendment is heavier than the
-fix scope. RFC-0968-A2 has been referenced in past mission files
-(`missions/archived/0968-b-marketplace-integration.md` lines 33, 115)
-but never materialized as a draft file. The cleanest path is: fix in
-**RFC** (update RFC-0968 §13 to declare `StakeBelowMinimum = 0x2D` with
-`{ component: StakeComponent }` payload, matching IMPL); extend
-`ReputationAnchorBatch` IMPL per RFC-0955-R1; document the field-level
-reconciliation in the PR description. A2 amendment remains optional
-if governance prefers spec-first.
+The RFC-0968 §13 discriminant drift was already resolved in commit
+`013a5676` (Round 2): RFC-0968 line 2057 + 2621 were updated to declare
+`StakeBelowMinimum = 0x2D` with `{ component: StakeComponent }` payload,
+matching the IMPL. The remaining `error.rs:8-49` guardrail
+("Do NOT change discriminants until RFC-0968-A2 lands") still applies
+to OTHER discriminant reshuffles — the comment cites 3 categories of
+breakage (cross-replica error propagation, test fixtures, wire-format
+stability) and a v011 migration + chained Rust type rename. RFC-0968-A2
+remains a future-resolved amendment for any further discriminant
+alignment but is NOT a precondition for this mission (the align-0x2D
+work landed directly in RFC-0968 §13). A2 amendment remains optional
+if governance prefers spec-first for any remaining cross-RFC drift.
 
 ## Scope
 
-- [ ] **`StakeBelowMinimum` IMPL/RFC delta** — direction is **RFC → IMPL**
-      (update RFC-0968 §13 to match IMPL), NOT the reverse. The IMPL
-      `StakeBelowMinimum` is at `0x2D` (`crates/octo-reputation/src/error.rs:190`,
-      payload `{ component: StakeComponent }`). The RFC-0968 §13 table
-      declares `StakeBelowMinimum` at `0x17` (RFC-0968 lines 2057 + 2621,
-      payload `{ provided: u64 }`). **The IMPL must NOT change discriminants**
-      (per `error.rs:22-28` guardrail block: "Do NOT change discriminants
-      until RFC-0968-A2 lands. A mass reshuffle breaks cross-replica error
-      propagation in persisted attestations, test fixtures, and wire-format
-      stability across protocol bridges"). Conversely, the IMPL value
-      `0x17` is already occupied by `GovernanceSlashFieldMismatch` at
-      `error.rs:133`, so moving `StakeBelowMinimum` to `0x17` would
-      collide. The clean fix: update RFC-0968 §13 (line 2057 + 2621 table)
-      to declare `StakeBelowMinimum = 0x2D` with payload `{ component: StakeComponent }`
-      (matching IMPL). The IMPL value `0x2D` is in the RFC-0968 §13
-      reserved band `0x2A..=0xFF` (per RFC-0968 §13 line 2641; note
-      `error.rs:8-49` mentions a post-amendment-82 reserved band
-      `0x3A..=0xFF` not yet active), so the assignment is permitted.
-      Document the RFC reconciliation in the PR description. Filed as
-      a follow-up to RFC-0968-A2 amendment (or absorbed into the next
-      RFC-0968 amendment revision).
+- [ ] **`StakeBelowMinimum` discriminant verification** — the discriminant
+      drift that motivated this Scope item was already resolved in
+      commit `013a5676` (Round 2): RFC-0968 §13 line 2057 + 2621 table
+      now declare `StakeBelowMinimum = 0x2D` with payload `{ component: StakeComponent }`,
+      matching the IMPL `crates/octo-reputation/src/error.rs:190`. The
+      `0x17` slot is occupied by `GovernanceSlashFieldMismatch` at
+      `error.rs:133` (which is correct per RFC-0968). This Scope item
+      is now a **verification step** rather than a fix: confirm both
+      `git diff` (RFC-0968 line 2057 + 2621 + 616) and `error.rs:190`
+      agree on `0x2D` + `{ component: StakeComponent }` payload before
+      claiming the work. The IMPL stays as-is per the `error.rs:22-28`
+      guardrail ("Do NOT change discriminants until RFC-0968-A2 lands").
+      Document the verification in the PR description.
 - [ ] **`ReputationAnchorBatch` governance fields** — the IMPL
       `crates/octo-reputation/src/anchor.rs:121-137` has 5 fields
       (`controller_id`, `window`, `chain_block_height`,
@@ -123,8 +121,7 @@ if governance prefers spec-first.
       142 declares `Option<u64>` because the field is `None` at
       submission and `Some(_)` only after the anchor reaches
       `MIN_FINALITY_BLOCKS` depth). The fix scope is items (b)+(c)+(d).
-      Extend the IMPL struct with the 3 governance fields + `batch_size`
-      + change `chain_block_height` to `Option<u64>`. Update
+      Extend the IMPL struct with the 3 governance fields + `batch_size` + change `chain_block_height` to `Option<u64>`. Update
       `ReputationAnchorBatch::digest` (`anchor.rs:139-167`) to fold the
       governance fields into the domain-separated envelope hash. Add a new migration
       `v012__reputation_anchors_governance.sql` extending `reputation_anchors`
@@ -149,7 +146,7 @@ if governance prefers spec-first.
       `last_event_unix`, `samples`, `severity_total`, then
       `score_ewma_raw`. RFC-0955-R1 line 420-422 requires the canonical
       order `(did, signal_kind, layer, last_event_id, score_ewma_raw,
-  last_event_unix, samples, severity_total)` — i.e., `score_ewma_raw`
+last_event_unix, samples, severity_total)` — i.e., `score_ewma_raw`
       at position 5 (after `last_event_id`, before the counters). The
       current IMPL puts `score_ewma_raw` last. This breaks
       cross-implementation digest interoperability (per RFC-0955-R1
@@ -204,11 +201,11 @@ if governance prefers spec-first.
       same `(did, signal_kind, layer, last_event_id)` 4-tuple twice (which
       uniquely determines `event_id` per RFC-0955-R1 §"Chain-Level
       Idempotency") and asserts the second submission is a no-op. Relies
-      on the `UNIQUE` constraint on `reputation_anchors(event_id)` and
-      the composite-PK scope on `reputation_events(recorder_did, event_id)`
-      at `stoolap.rs:1714-1717`. The `anchor_tx_hash` claim in the
-      earlier draft was wrong — idempotency is on `event_id`, not
-      `anchor_tx_hash`.
+      on the `UNIQUE` constraint on `reputation_anchors(event_id)` (defined
+      in `v010__reputation_anchors.sql` line 24) and the composite-PK
+      scope on `reputation_events(recorder_did, event_id)` enforced at
+      `stoolap.rs:1714-1717`. The `anchor_tx_hash` claim in the earlier
+      draft was wrong — idempotency is on `event_id`, not `anchor_tx_hash`.
 - [ ] **Failure isolation test** — add a test that injects a
       `ChainAnchorSubmitter` failure mid-batch and asserts that
       `reputation_events` rows are not mutated (the `anchor_tx_hash`
@@ -218,7 +215,7 @@ if governance prefers spec-first.
       whose `anchor_tx_hash` is `None` AND the event is older than
       `DEFAULT_ANCHOR_INTERVAL_SECS` (i.e., the event should have been
       anchored by now). **Target the ingress handler only** (the
-      `handle_one` / `validate_envelope` call site); the 6 test
+      `handle_one` / `validate_envelope` call site); the 7 test
       fixtures at lines 813, 1056, 1206, 1288, 1336, 1389, 1526
       intentionally use `anchor_tx_hash: None` as test default and
       should remain unchanged. The gossip file is owned by mission
@@ -240,7 +237,7 @@ if governance prefers spec-first.
 
 ## Acceptance Criteria
 
-- [ ] `StakeBelowMinimum` discriminant byte equals 0x2D (impl + RFC agreed); RFC-0968 §13 updated
+- [ ] `StakeBelowMinimum` discriminant verification: confirmation that RFC-0968 §13 line 2057 + 2621 + 616 + IMPL `error.rs:190` all agree on `0x2D` + `{ component: StakeComponent }` payload
 - [ ] `ReputationAnchorBatch` has the 3 governance fields with `digest()` covering them
 - [ ] `ReputationAnchorBatch` has `batch_size: u32` field per RFC-0955-R1 line 173
 - [ ] `ReputationAnchorBatch.chain_block_height` typed `Option<u64>` per RFC-0955-R1 line 142 (currently IMPL `u64`)
@@ -255,25 +252,30 @@ if governance prefers spec-first.
 - [ ] Per-deployment config layer exposes `interval_secs` + `controller_id` + `chain_endpoint`
 - [ ] Idempotency test (2 duplicate submits on `(did, signal_kind, layer, last_event_id)` 4-tuple) passes
 - [ ] Failure isolation test (submitter mid-batch fail) passes
-- [ ] Gossip consumer rejects stale `anchor_tx_hash: None` events at ingress handler only (6 test fixtures remain unchanged; requires 0855p-b successor)
+- [ ] Gossip consumer rejects stale `anchor_tx_hash: None` events at ingress handler only (7 test fixtures remain unchanged; requires 0855p-b successor)
 - [ ] 3 canonical test vectors in `tests/canonical_blobs.rs` (lines 34, 41, 48) re-pinned to new digest
 
 ## AC → Scope mapping
 
-| AC                                           | Scope item(s) |
-| -------------------------------------------- | ------------- |
-| StakeBelowMinimum 0x2D + RFC-0968 §13 update | 1             |
-| ReputationAnchorBatch governance fields      | 2             |
-| v012 migration                               | 2             |
-| Live ChainAnchorSubmitter                    | 3             |
-| Reorg handler                                | 4             |
-| DID-rotation finality handler                | 4             |
-| Governance signature verification            | 5             |
-| Per-deployment config plumbing               | 6             |
-| Idempotency test                             | 7             |
-| Failure isolation test                       | 8             |
-| Gossip cross-reference                       | 9             |
-| Test vector re-pinning                       | 2             |
+| AC                                                                  | Scope item(s) |
+| ------------------------------------------------------------------- | ------------- |
+| `StakeBelowMinimum` 0x2D verification (impl + RFC agreed)           | 1             |
+| `ReputationAnchorBatch` governance fields                           | 2             |
+| `ReputationAnchorBatch` `batch_size: u32` field                     | 2             |
+| `ReputationAnchorBatch.chain_block_height: Option<u64>` type        | 2             |
+| `AnchorLeaf::digest` field order per RFC-0955-R1 line 420-422       | 2             |
+| `GovernanceSnapshot` / `GovernanceSigner` / `GovernanceProof` types | 2             |
+| v012 migration                                                      | 2             |
+| Live `ChainAnchorSubmitter` impl                                    | 3             |
+| Live `ChainAnchorSubmitter` writes `rotation_receipt_id`            | 3             |
+| Reorg handler                                                       | 4             |
+| DID-rotation finality handler                                       | 4             |
+| Governance signature verification                                   | 5             |
+| Per-deployment config plumbing                                      | 6             |
+| Idempotency test                                                    | 7             |
+| Failure isolation test                                              | 8             |
+| Gossip cross-reference                                              | 9             |
+| Test vector re-pinning                                              | 2             |
 
 ## Complexity
 

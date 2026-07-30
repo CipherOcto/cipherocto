@@ -46,7 +46,7 @@ finality combined into 1 Scope item covering both) map cleanly to
 ## RFC
 
 - RFC-0955: Model Liquidity Layer (parent RFC; `ComputeOffer.reputation:
-  ReputationDigest` defined in §"Compute Assets" — the binding target
+ReputationDigest` defined in §"Compute Assets" — the binding target
   for the anchoring)
 - RFC-0955-R1: Reputation Anchoring Amendment (canonical binding
   contract; `ReputationAnchorBatch` struct + governance binding)
@@ -97,8 +97,8 @@ if governance prefers spec-first for any remaining cross-RFC drift.
 
 - [ ] **`StakeBelowMinimum` discriminant verification** — the discriminant
       drift that motivated this Scope item was already resolved in
-      commit `013a5676` (Round 2): RFC-0968 §13 line 2057 + 2621 table
-      now declare `StakeBelowMinimum = 0x2D` with payload `{ component: StakeComponent }`,
+      commit `013a5676` (Round 2): RFC-0968 §10 line 2057 + §13 line 2621 + §3 line 616 now declare `StakeBelowMinimum = 0x2D` with payload
+      `{ component: StakeComponent }`,
       matching the IMPL `crates/octo-reputation/src/error.rs:190`. The
       `0x17` slot is occupied by `GovernanceSlashFieldMismatch` at
       `error.rs:133` (which is correct per RFC-0968). This Scope item
@@ -133,10 +133,11 @@ if governance prefers spec-first for any remaining cross-RFC drift.
       `governance_set_hash BLOB` columns (all nullable). Add unit tests for
       construction + digest stability with the new fields. Note: existing
       3 canonical test vectors in `tests/canonical_blobs.rs` (the
-      `CANONICAL_ANCHOR_BLOB_{0,1,100}_LEAVES` pinned bytes at lines
+      `CANONICAL_ANCHOR_BLOB_0_LEAVES` / `_1_LEAF` / `_100_LEAVES`
+      pinned bytes at lines
       34, 41, 48) will need re-pinning once the digest covers
       governance fields. **Reconcile the verifier types** — RFC-0955-R1
-§"ReputationAnchorBatch" (lines 177-200) defines three
+      §"ReputationAnchorBatch" (lines 177-200) defines three
       Rust types (`GovernanceSnapshot` with `block_height`, `epoch`,
       `finalized_at_unix`; `GovernanceSigner` with `pubkey: [u8; 32]`,
       `signature: [u8; 64]`; `GovernanceProof` with `signers: Vec<GovernanceSigner>`).
@@ -158,18 +159,18 @@ if governance prefers spec-first for any remaining cross-RFC drift.
       governance-membership semantics.
 
       **(a)** Add RFC-0955-R1 types under new names in the same module
-      (e.g., `AnchorGovernanceSnapshot`, `AnchorGovernanceSigner`,
-      `AnchorGovernanceProof`) — preserves existing auth.rs callers
-      (RFC-0968 §3 retirement, SuspensionAuth, SlashDestination) and
-      keeps the anchoring wire schema distinct. Wire them into the
-      new `ReputationAnchorBatch` BLOB fields via serde
-      deserialization. (Mandated path.)
+          (e.g., `AnchorGovernanceSnapshot`, `AnchorGovernanceSigner`,
+          `AnchorGovernanceProof`) — preserves existing auth.rs callers
+          (RFC-0968 §3 retirement, SuspensionAuth, SlashDestination) and
+          keeps the anchoring wire schema distinct. Wire them into the
+          new `ReputationAnchorBatch` BLOB fields via serde
+          deserialization. (Mandated path.)
 
-                      **Also: fix `AnchorLeaf::digest` field-order bug in IMPL** (per
-                      `crates/octo-reputation/src/anchor.rs:80-100`) — the IMPL hashes
-                      `last_event_unix`, `samples`, `severity_total`, then
-                      `score_ewma_raw`. RFC-0955-R1 line 420-422 requires the canonical
-                      order `(did, signal_kind, layer, last_event_id, score_ewma_raw,
+                          **Also: fix `AnchorLeaf::digest` field-order bug in IMPL** (per
+                          `crates/octo-reputation/src/anchor.rs:80-100`) — the IMPL hashes
+                          `last_event_unix`, `samples`, `severity_total`, then
+                          `score_ewma_raw`. RFC-0955-R1 line 420-422 requires the canonical
+                          order `(did, signal_kind, layer, last_event_id, score_ewma_raw,
 
 last_event_unix, samples, severity_total)`— i.e.,`score_ewma_raw`      at position 5 (after`last_event_id`, before the counters). The
       current IMPL puts `score_ewma_raw`last. This breaks
@@ -231,8 +232,6 @@ bug fix requires re-pinning the 3 vectors to the correct order.
       scope on `reputation_events(recorder_did, event_id)` enforced at
       `stoolap.rs:1718-1719` (WHERE clause with composite-PK scope
       `(recorder_did, event_id)`). The `anchor_tx_hash` claim in the earlier
-      draft was wrong — idempotency is on `event_id`, not
-      `anchor_tx_hash`.
       draft was wrong — idempotency is on `event_id`, not `anchor_tx_hash`.
 - [ ] **Failure isolation test** — add a test that injects a
       `ChainAnchorSubmitter` failure mid-batch and asserts that
@@ -264,7 +263,7 @@ bug fix requires re-pinning the 3 vectors to the correct order.
 
 ## Acceptance Criteria
 
-- [ ] `StakeBelowMinimum` discriminant verification: confirmation that RFC-0968 §13 line 2057 + 2621 + 616 + IMPL `error.rs:190` all agree on `0x2D` + `{ component: StakeComponent }` payload
+- [ ] `StakeBelowMinimum` discriminant verification: confirmation that RFC-0968 §10 line 2057 + §13 line 2621 + §3 line 616 + IMPL `error.rs:190` all agree on `0x2D` + `{ component: StakeComponent }` payload
 - [ ] `ReputationAnchorBatch` has the 3 governance fields with `digest()` covering them
 - [ ] `ReputationAnchorBatch` has `batch_size: u32` field per RFC-0955-R1 line 173
 - [ ] `ReputationAnchorBatch.chain_block_height` typed `Option<u64>` per RFC-0955-R1 line 170 (currently IMPL `u64`)

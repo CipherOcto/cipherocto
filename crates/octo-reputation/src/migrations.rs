@@ -260,7 +260,7 @@ mod tests {
         }
     }
 
-    /// The catalog in RFC-0968 §28 line 3814 allocates `v010` to anchoring.
+    /// The catalog in RFC-0968 §28 slot-table allocates `v010` to anchoring.
     /// The slot numbering in this crate matches the catalog, not the
     /// implementation order: v006/v007/v008/v009 are reserved for
     /// recorder_registration and kind_weights (per the same catalog)

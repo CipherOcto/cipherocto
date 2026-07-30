@@ -1,4 +1,4 @@
--- v010__reputation_anchors — RFC-0968-A1 §28 catalog line 3814 + RFC-0955-R1 binding contract.
+-- v010__reputation_anchors — RFC-0968-A1 §28 catalog slot + RFC-0955-R1 binding contract.
 --
 -- Round 3 review F1 (HIGH): This migration creates the
 -- `reputation_anchors` ledger table, but the Rust impl currently

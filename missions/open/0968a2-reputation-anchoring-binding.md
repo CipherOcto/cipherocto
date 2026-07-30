@@ -30,7 +30,7 @@ discovered during rounds 1-5 of 0968a2 review (governance types,
 order, rotation_receipt_id chain encoding, live adapter, v012
 migration, test re-pinning). The 9 Scope items (reorg + DID-rotation
 finality combined into 1 Scope item covering both) map cleanly to
-17 ACs (8 inherited from 0968a + 9 new for 0968a2).
+17 ACs (9 inherited from 0968a + 8 new for 0968a2).
 
 1. `StakeBelowMinimum` IMPL/RFC discriminant delta
 2. `ReputationAnchorBatch` governance fields
@@ -118,7 +118,7 @@ if governance prefers spec-first for any remaining cross-RFC drift.
       `governance_proof`, `governance_set_hash`); (c) `batch_size: u32`
       (RFC-0955-R1 line 173); (d) `chain_block_height: Option<u64>`
       (IMPL currently has `chain_block_height: u64`; RFC-0955-R1 line
-      142 declares `Option<u64>` because the field is `None` at
+      170 declares `Option<u64>` because the field is `None` at
       submission and `Some(_)` only after the anchor reaches
       `MIN_FINALITY_BLOCKS` depth). The fix scope is items (b)+(c)+(d).
       Extend the IMPL struct with the 3 governance fields + `batch_size` + change `chain_block_height` to `Option<u64>`. Update
@@ -240,7 +240,7 @@ last_event_unix, samples, severity_total)` — i.e., `score_ewma_raw`
 - [ ] `StakeBelowMinimum` discriminant verification: confirmation that RFC-0968 §13 line 2057 + 2621 + 616 + IMPL `error.rs:190` all agree on `0x2D` + `{ component: StakeComponent }` payload
 - [ ] `ReputationAnchorBatch` has the 3 governance fields with `digest()` covering them
 - [ ] `ReputationAnchorBatch` has `batch_size: u32` field per RFC-0955-R1 line 173
-- [ ] `ReputationAnchorBatch.chain_block_height` typed `Option<u64>` per RFC-0955-R1 line 142 (currently IMPL `u64`)
+- [ ] `ReputationAnchorBatch.chain_block_height` typed `Option<u64>` per RFC-0955-R1 line 170 (currently IMPL `u64`)
 - [ ] `AnchorLeaf::digest` field order matches RFC-0955-R1 line 420-422 (score_ewma_raw at position 5, not last)
 - [ ] v012 migration adds `governance_snapshot`, `governance_proof`, `governance_set_hash` columns to `reputation_anchors`
 - [ ] Live `ChainAnchorSubmitter` impl exists; `run_once_strict` uses it for production (gated on chain-substrate selection RFC)

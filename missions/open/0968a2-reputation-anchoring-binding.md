@@ -145,28 +145,28 @@ if governance prefers spec-first for any remaining cross-RFC drift.
       module) would collide with the existing names. Two reconciliation
       paths:
 
-      (a) Add RFC-0955-R1 types under new names in the same module
-                  (e.g., `AnchorGovernanceSnapshot`, `AnchorGovernanceSigner`,
-                  `AnchorGovernanceProof`) — preserves existing auth.rs callers
-                  (RFC-0968 §3 retirement, SuspensionAuth, SlashDestination) and
-                  keeps the anchoring wire schema distinct. Wire them into the
-                  new `ReputationAnchorBatch` BLOB fields via serde
-                  deserialization.
+      **(a)** Add RFC-0955-R1 types under new names in the same module
+          (e.g., `AnchorGovernanceSnapshot`, `AnchorGovernanceSigner`,
+          `AnchorGovernanceProof`) — preserves existing auth.rs callers
+          (RFC-0968 §3 retirement, SuspensionAuth, SlashDestination) and
+          keeps the anchoring wire schema distinct. Wire them into the
+          new `ReputationAnchorBatch` BLOB fields via serde
+          deserialization.
 
-                  (b) Evolve the existing `GovernanceSnapshot` / `GovernanceProof`
-                  in place to match RFC-0955-R1 shapes — requires updating
-                  every call site (recorder registration, retirement, suspension
-                  auth, slash attestation) and a v013 migration for re-shaped
-                  BLOB columns. Larger blast radius.
+          **(b)** Evolve the existing `GovernanceSnapshot` / `GovernanceProof`
+          in place to match RFC-0955-R1 shapes — requires updating every
+          call site (recorder registration, retirement, suspension auth,
+          slash attestation) and a v013 migration for re-shaped BLOB columns.
+          Larger blast radius.
 
-                  Recommended path (a) for the smaller blast radius. Document
-                  the chosen path in the PR description.
+          Recommended path (a) for the smaller blast radius. Document
+          the chosen path in the PR description.
 
-                  **Also: fix `AnchorLeaf::digest` field-order bug in IMPL** (per
-                  `crates/octo-reputation/src/anchor.rs:80-100`) — the IMPL hashes
-                  `last_event_unix`, `samples`, `severity_total`, then
-                  `score_ewma_raw`. RFC-0955-R1 line 420-422 requires the canonical
-                  order `(did, signal_kind, layer, last_event_id, score_ewma_raw,
+                      **Also: fix `AnchorLeaf::digest` field-order bug in IMPL** (per
+                      `crates/octo-reputation/src/anchor.rs:80-100`) — the IMPL hashes
+                      `last_event_unix`, `samples`, `severity_total`, then
+                      `score_ewma_raw`. RFC-0955-R1 line 420-422 requires the canonical
+                      order `(did, signal_kind, layer, last_event_id, score_ewma_raw,
 
 last_event_unix, samples, severity_total)`— i.e.,`score_ewma_raw`      at position 5 (after`last_event_id`, before the counters). The
       current IMPL puts `score_ewma_raw`last. This breaks

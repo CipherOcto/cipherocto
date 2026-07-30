@@ -275,8 +275,24 @@ impl DcOrchestrator {
     // unbind_all
     // -------------------------------------------------------------------------
 
+    /// Minimum number of distinct witness ACKs required to advance from
+    /// `UnboundAllPending` to `UnboundAllDone`. Per RFC-0850p-f v0.3 §F-1
+    /// (Quorum Semantics): 1 ACK is chosen — decommission is a defensive
+    /// action; false-negatives are more harmful than false-positives.
+    pub const UNBIND_ALL_MIN_ACKS: u32 = 1;
+
+    /// Default timeout (epochs) for an in-flight `UnboundAllPending` to
+    /// transition to `UnboundQuarantined` if no quorum reached.
+    pub const UNBIND_ALL_TIMEOUT_EPOCHS: u64 = 100;
+
     /// Build an `UnbindAllEnvelope` requesting all members to leave the
     /// group.
+    ///
+    /// `original_nonce`: `None` for a fresh decommission ceremony;
+    /// `Some(orig)` for a re-decommission (a node that missed the original
+    /// `UnbindAllEnvelope` is being re-broadcast; the original nonce is
+    /// carried so witnesses can dedup their prior ACKs). See
+    /// RFC-0850p-f v0.3 §F-5 (Re-decommission).
     #[allow(clippy::too_many_arguments)] // Arguments map 1:1 to envelope fields.
     pub fn build_unbind_all(
         &mut self,
@@ -287,14 +303,16 @@ impl DcOrchestrator {
         reason: UnbindReason,
         current_epoch: u64,
         coordinator_term_id: u64,
+        original_nonce: Option<[u8; 32]>,
     ) -> UnbindAllEnvelope {
+        let nonce = original_nonce.unwrap_or_else(|| self.fresh_nonce());
         let mut env = UnbindAllEnvelope {
             domain_id,
             group_jid,
             platform,
             reason,
             binding_hash,
-            nonce: self.fresh_nonce(),
+            nonce,
             current_epoch,
             coordinator_term_id,
             unbind_hash: [0u8; 32],
@@ -680,7 +698,29 @@ mod tests {
             UnbindReason::Scheduled,
             100,
             1,
+            None, // fresh decommission
         );
+        assert!(env.verify(&orch.dc_key.verifying_key()).is_ok());
+    }
+
+    #[test]
+    fn unbind_all_re_decommission_carries_original_nonce() {
+        // RFC-0850p-f v0.3 §F-5: a node that missed the original UNBIND_ALL
+        // receives a follow-up carrying the original nonce. Verify the
+        // envelope's nonce matches the original.
+        let mut orch = test_orchestrator();
+        let original_nonce = [7u8; 32];
+        let env = orch.build_unbind_all(
+            [1u8; 32],
+            "g1@g.us".into(),
+            "whatsapp".into(),
+            [4u8; 32],
+            UnbindReason::Scheduled,
+            100,
+            1,
+            Some(original_nonce),
+        );
+        assert_eq!(env.nonce, original_nonce);
         assert!(env.verify(&orch.dc_key.verifying_key()).is_ok());
     }
 

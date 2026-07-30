@@ -292,6 +292,63 @@ impl AuditLog {
 }
 
 // -----------------------------------------------------------------------------
+// UnbindAllAckCollector — RFC-0850p-f v0.3 §F-1 (Quorum Semantics)
+// -----------------------------------------------------------------------------
+
+/// Minimum number of distinct witness ACKs required to advance from
+/// `UnboundAllPending` to `UnboundAllDone`. See RFC-0850p-f v0.3 §F-1 for
+/// the trade-off table (1 ACK vs N-of-M). 1 is chosen: decommission is a
+/// defensive action; false-negatives (no decommission when needed) are
+/// more harmful than false-positives (decommission a healthy group,
+/// recoverable via REBIND).
+pub const UNBIND_ALL_MIN_ACKS: u32 = 1;
+
+/// Collects witness ACKs against an in-flight `UnbindAllEnvelope`.
+///
+/// `witness_id`s are deduplicated — a witness who re-ACKs (e.g. after
+/// receiving the rebroadcast for a late joiner per RFC-0850p-f v0.3 §F-3)
+/// is counted once. Quorum reached when `unique_witness_count >=
+/// UNBIND_ALL_MIN_ACKS`.
+#[derive(Debug, Default, Clone)]
+pub struct UnbindAllAckCollector {
+    /// Unique `witness_id`s that have ACK'd this `unbind_hash`.
+    witnesses: BTreeMap<[u8; 32], u64>,
+    /// Total ACKs received (including duplicates); useful for metrics.
+    total_acks: u64,
+}
+
+impl UnbindAllAckCollector {
+    /// Create a fresh collector.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record a witness ACK. Returns `true` if quorum was just reached
+    /// (i.e. this ACK crossed the `UNBIND_ALL_MIN_ACKS` threshold).
+    pub fn record_ack(&mut self, witness_id: [u8; 32]) -> bool {
+        self.total_acks += 1;
+        let was_new = self.witnesses.insert(witness_id, self.total_acks).is_none();
+        let count = self.witnesses.len() as u32;
+        was_new && count >= UNBIND_ALL_MIN_ACKS
+    }
+
+    /// Number of distinct witnesses who have ACK'd.
+    pub fn unique_witness_count(&self) -> u32 {
+        self.witnesses.len() as u32
+    }
+
+    /// Total ACKs received (including duplicates).
+    pub fn total_ack_count(&self) -> u64 {
+        self.total_acks
+    }
+
+    /// `true` if the quorum threshold has been reached.
+    pub fn is_quorum_reached(&self) -> bool {
+        self.unique_witness_count() >= UNBIND_ALL_MIN_ACKS
+    }
+}
+
+// -----------------------------------------------------------------------------
 // Serialization helpers
 // -----------------------------------------------------------------------------
 
@@ -566,5 +623,32 @@ mod tests {
         }
         assert_eq!(&tag::UNBIND_ALL_DONE, b"UADN");
         assert_eq!(&tag::UNBIND_ALL_AUDIT, b"UAAU");
+    }
+
+    // RFC-0850p-f v0.3 §F-1 (Quorum): 1 distinct witness ACK reaches quorum.
+    #[test]
+    fn ack_collector_quorum_reached_after_first_ack() {
+        let mut c = UnbindAllAckCollector::new();
+        assert!(!c.is_quorum_reached());
+        assert_eq!(c.unique_witness_count(), 0);
+        assert_eq!(c.total_ack_count(), 0);
+        // First ACK crosses threshold.
+        assert!(c.record_ack([1u8; 32]));
+        assert!(c.is_quorum_reached());
+        assert_eq!(c.unique_witness_count(), 1);
+        assert_eq!(c.total_ack_count(), 1);
+    }
+
+    // RFC-0850p-f v0.3 §F-1: duplicate ACKs from same witness are deduped.
+    #[test]
+    fn ack_collector_dedupes_duplicate_witness() {
+        let mut c = UnbindAllAckCollector::new();
+        // First ACK crosses threshold (returns true).
+        assert!(c.record_ack([1u8; 32]));
+        // Same witness re-ACKs after a rebroadcast — must NOT re-trigger.
+        assert!(!c.record_ack([1u8; 32]));
+        assert_eq!(c.unique_witness_count(), 1);
+        assert_eq!(c.total_ack_count(), 2);
+        assert!(c.is_quorum_reached());
     }
 }

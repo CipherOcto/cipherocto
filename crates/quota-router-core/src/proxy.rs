@@ -20,6 +20,7 @@ use crate::config::DispatchInfo;
 use crate::fallback::FallbackExecutor;
 use crate::key_rate_limiter::RateLimiterStore;
 use crate::keys::compute_key_hash;
+use crate::logging::StructuredLogger;
 use crate::metrics::Metrics;
 #[cfg(any(feature = "litellm-mode", feature = "full"))]
 use crate::pre_call_checks::{
@@ -205,6 +206,7 @@ pub struct ProxyServer {
     response_cache: Option<Arc<ResponseCache>>,
     callback_executor: Option<Arc<crate::callbacks::CallbackExecutor>>,
     prompt_registry: Option<Arc<std::sync::RwLock<crate::prompts::PromptRegistry>>>,
+    logger: Option<Arc<StructuredLogger>>,
     client: reqwest::Client,
 }
 
@@ -228,6 +230,7 @@ impl ProxyServer {
             response_cache: None,
             callback_executor: None,
             prompt_registry: None,
+            logger: None,
             client: reqwest::Client::builder().build().unwrap_or_default(),
         }
     }
@@ -238,6 +241,15 @@ impl ProxyServer {
         prompt_registry: Arc<std::sync::RwLock<crate::prompts::PromptRegistry>>,
     ) -> Self {
         self.prompt_registry = Some(prompt_registry);
+        self
+    }
+
+    /// Set the structured logger for NDJSON request/response events (RFC-0905).
+    /// When set, every request completion / failure emits a `LogEvent` via
+    /// `StructuredLogger::request_completed` / `request_failed` after the
+    /// `tracing::info!` block at the bottom of `handle_request`.
+    pub fn with_logger(mut self, logger: Arc<StructuredLogger>) -> Self {
+        self.logger = Some(logger);
         self
     }
 
@@ -300,6 +312,7 @@ impl ProxyServer {
         let response_cache = self.response_cache.clone();
         let callback_executor = self.callback_executor.clone();
         let prompt_registry = self.prompt_registry.clone();
+        let logger = self.logger.clone();
         let client = self.client.clone();
 
         // Initialize providers based on mode
@@ -325,6 +338,7 @@ impl ProxyServer {
                 let response_cache = response_cache.clone();
                 let callback_executor = callback_executor.clone();
                 let prompt_registry = prompt_registry.clone();
+                let logger = logger.clone();
                 let client = client.clone();
 
                 tokio::spawn(async move {
@@ -350,6 +364,7 @@ impl ProxyServer {
                                     response_cache.clone(),
                                     callback_executor.clone(),
                                     prompt_registry.clone(),
+                                    logger.clone(),
                                     client.clone(),
                                 )
                             }),
@@ -364,6 +379,35 @@ impl ProxyServer {
         .await?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod rfc0905_tests {
+    //! RFC-0905: verify StructuredLogger wiring into ProxyServer.
+    use super::*;
+    use crate::config::LogConfig;
+    use crate::logging::{LogLevel, StructuredLogger};
+
+    #[tokio::test]
+    async fn with_logger_attaches_handle() {
+        let logger = Arc::new(StructuredLogger::new(
+            16,
+            LogConfig::default().sample_rate,
+            true,
+            LogLevel::Info,
+        ));
+        let _server = ProxyServer::new(
+            Balance::new(1),
+            Provider::new("openai", "https://api.openai.com"),
+            8080,
+            HashMap::new(),
+        )
+        .with_logger(Arc::clone(&logger));
+        // Field is private; exercise through the builder chain only — passing
+        // the same Arc through the builder guarantees the runtime path sees
+        // the same instance via self.logger.clone().
+        assert!(Arc::strong_count(&logger) >= 2);
     }
 }
 
@@ -606,6 +650,7 @@ async fn handle_request<B>(
         allow(unused_variables)
     )]
     prompt_registry: Option<Arc<std::sync::RwLock<crate::prompts::PromptRegistry>>>,
+    logger: Option<Arc<StructuredLogger>>,
     client: reqwest::Client,
 ) -> Result<Response<SseBody>, Infallible>
 where
@@ -2234,6 +2279,35 @@ where
         "request completed"
     );
 
+    // Structured NDJSON request logging (RFC-0905)
+    // Emit LogEvent via StructuredLogger so downstream consumers can
+    // subscribe to the JSON side-channel without re-parsing tracing spans.
+    // Mirrors the tracing fields above; request_failed used on 5xx/Err.
+    if let Some(ref lg) = logger {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let latency_ms = start.elapsed().as_millis() as f64;
+        match &result {
+            Ok(resp) if resp.status().is_success() => {
+                lg.request_completed(
+                    &request_id,
+                    &provider.name,
+                    &request_model,
+                    latency_ms,
+                    0,
+                    0,
+                )
+                .await;
+            }
+            _ => {
+                let err_msg = match &result {
+                    Ok(resp) => format!("non-2xx status {}", resp.status().as_u16()),
+                    Err(_) => "internal proxy error".to_string(),
+                };
+                lg.request_failed(&request_id, &err_msg, latency_ms).await;
+            }
+        }
+    }
+
     // Inject rate limit headers into response (RFC-0933 §Rate Limit Headers).
     // Uses the ApiKey validated during auth to report RPM limits.
     if let (Ok(ref mut resp), Some(ref api_key)) = (&mut result, &validated_api_key) {
@@ -3685,6 +3759,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -3710,6 +3785,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -3752,6 +3828,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -3776,6 +3853,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -3832,6 +3910,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -3864,6 +3943,7 @@ mod tests {
             dispatch_map,
             Some(storage),
             Some("master-key-123".to_string()),
+            None,
             None,
             None,
             None,
@@ -3909,6 +3989,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -3939,6 +4020,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -3980,6 +4062,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -4006,6 +4089,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -4089,6 +4173,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -4157,6 +4242,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -4285,6 +4371,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -4317,6 +4404,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -4341,6 +4429,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -4383,6 +4472,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -4414,6 +4504,7 @@ mod tests {
             None,
             None,
             Some(Arc::new(fallback)),
+            None,
             None,
             None,
             None,
@@ -4449,6 +4540,7 @@ mod tests {
             None,
             None,
             Some(Arc::new(executor)),
+            None,
             None,
             reqwest::Client::new(),
         )
@@ -4538,6 +4630,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -4586,6 +4679,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -4654,6 +4748,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -4697,6 +4792,7 @@ mod tests {
             balance,
             provider,
             Arc::new(dispatch_map),
+            None,
             None,
             None,
             None,
@@ -4764,6 +4860,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -4799,6 +4896,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -4822,6 +4920,7 @@ mod tests {
             balance,
             provider,
             Arc::new(HashMap::new()),
+            None,
             None,
             None,
             None,
@@ -4873,6 +4972,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -4941,6 +5041,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -4993,6 +5094,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -5065,6 +5167,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -5107,6 +5210,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -5163,6 +5267,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -5201,6 +5306,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -5257,6 +5363,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -5290,6 +5397,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -5337,6 +5445,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -5367,6 +5476,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -5414,6 +5524,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -5437,6 +5548,7 @@ mod tests {
             balance,
             provider,
             Arc::new(HashMap::new()),
+            None,
             None,
             None,
             None,
@@ -5482,6 +5594,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -5506,6 +5619,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -5545,6 +5659,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -5568,6 +5683,7 @@ mod tests {
             balance,
             provider,
             Arc::new(HashMap::new()),
+            None,
             None,
             None,
             None,
@@ -5619,6 +5735,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -5648,6 +5765,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -5695,6 +5813,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -5734,6 +5853,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -5757,6 +5877,7 @@ mod tests {
             balance,
             provider,
             Arc::new(HashMap::new()),
+            None,
             None,
             None,
             None,
@@ -5797,6 +5918,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -5820,6 +5942,7 @@ mod tests {
             balance,
             provider,
             Arc::new(HashMap::new()),
+            None,
             None,
             None,
             None,
@@ -5890,6 +6013,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -5931,6 +6055,7 @@ mod tests {
             balance,
             provider,
             Arc::new(dispatch_map),
+            None,
             None,
             None,
             None,
@@ -5988,6 +6113,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -6014,6 +6140,7 @@ mod tests {
             balance,
             provider,
             Arc::new(HashMap::new()),
+            None,
             None,
             None,
             None,
@@ -6063,6 +6190,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -6091,6 +6219,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -6136,6 +6265,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -6172,6 +6302,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -6200,6 +6331,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -6263,6 +6395,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -6287,6 +6420,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -6329,6 +6463,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -6363,6 +6498,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -6385,6 +6521,7 @@ mod tests {
             balance,
             provider,
             Arc::new(HashMap::new()),
+            None,
             None,
             None,
             None,
@@ -6427,6 +6564,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -6449,6 +6587,7 @@ mod tests {
             balance,
             provider,
             Arc::new(HashMap::new()),
+            None,
             None,
             None,
             None,
@@ -6748,6 +6887,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -6784,6 +6924,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -6807,6 +6948,7 @@ mod tests {
             balance,
             provider,
             Arc::new(HashMap::new()),
+            None,
             None,
             None,
             None,
@@ -6892,6 +7034,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -6922,6 +7065,7 @@ mod tests {
             provider,
             dispatch_map,
             Some(storage),
+            None,
             None,
             None,
             None,
@@ -6967,6 +7111,7 @@ mod tests {
             None,
             None,
             Some(rl),
+            None,
             None,
             None,
             None,
@@ -7020,6 +7165,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -7064,6 +7210,7 @@ mod tests {
             None,
             None,
             Some(rl),
+            None,
             None,
             None,
             None,
@@ -7113,6 +7260,7 @@ mod tests {
             provider,
             dispatch_map,
             Some(storage),
+            None,
             None,
             None,
             None,
@@ -7174,6 +7322,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -7211,6 +7360,7 @@ mod tests {
             provider,
             dispatch_map,
             Some(storage),
+            None,
             None,
             None,
             None,
@@ -7281,6 +7431,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -7308,6 +7459,7 @@ mod tests {
             balance,
             provider,
             Arc::new(HashMap::new()),
+            None,
             None,
             None,
             None,
@@ -7370,6 +7522,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -7397,6 +7550,7 @@ mod tests {
             balance,
             provider,
             Arc::new(HashMap::new()),
+            None,
             None,
             None,
             None,
@@ -7446,6 +7600,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -7475,6 +7630,7 @@ mod tests {
             balance,
             provider,
             Arc::new(HashMap::new()),
+            None,
             None,
             None,
             None,
@@ -7524,6 +7680,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -7555,6 +7712,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -7578,6 +7736,7 @@ mod tests {
             balance,
             provider,
             Arc::new(HashMap::new()),
+            None,
             None,
             None,
             None,
@@ -7631,6 +7790,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -7663,6 +7823,7 @@ mod tests {
             None,
             None,
             Some(metrics.clone()),
+            None,
             None,
             None,
             None,
@@ -7703,6 +7864,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -7729,6 +7891,7 @@ mod tests {
             balance,
             provider,
             Arc::new(HashMap::new()),
+            None,
             None,
             None,
             None,
@@ -7804,6 +7967,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -7863,6 +8027,7 @@ mod tests {
             balance,
             provider,
             Arc::new(dispatch_map),
+            None,
             None,
             None,
             None,
@@ -7938,6 +8103,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -7969,6 +8135,7 @@ mod tests {
             balance,
             provider,
             Arc::new(HashMap::new()),
+            None,
             None,
             None,
             None,
@@ -8025,6 +8192,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -8056,6 +8224,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -8099,6 +8268,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -8134,6 +8304,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -8160,6 +8331,7 @@ mod tests {
             balance,
             provider,
             Arc::new(HashMap::new()),
+            None,
             None,
             None,
             None,
@@ -8214,6 +8386,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -8248,6 +8421,7 @@ mod tests {
             provider,
             dispatch_map,
             Some(storage),
+            None,
             None,
             None,
             None,
@@ -8300,6 +8474,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -8332,6 +8507,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -8419,6 +8595,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -8476,6 +8653,7 @@ mod tests {
             Some(cache),
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -8526,6 +8704,7 @@ mod tests {
             Some(cache),
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -8573,6 +8752,7 @@ mod tests {
             None,
             None,
             Some(cache),
+            None,
             None,
             None,
             reqwest::Client::new(),
@@ -8681,6 +8861,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -8753,6 +8934,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -8834,6 +9016,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -8889,6 +9072,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -8923,6 +9107,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -9012,6 +9197,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -9050,6 +9236,7 @@ mod tests {
             balance,
             provider,
             Arc::new(HashMap::new()),
+            None,
             None,
             None,
             None,
@@ -9111,6 +9298,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -9140,6 +9328,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -9325,6 +9514,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -9377,6 +9567,7 @@ mod tests {
             None,
             None,
             Some(exec),
+            None,
             None,
             None,
             None,
@@ -9498,6 +9689,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -9601,6 +9793,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -9683,6 +9876,7 @@ mod tests {
             None,
             None,
             Some(exec.clone()),
+            None,
             None,
             None,
             None,
@@ -10038,6 +10232,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -10083,6 +10278,7 @@ mod tests {
             balance,
             provider,
             Arc::new(dispatch_map),
+            None,
             None,
             None,
             None,
@@ -10152,6 +10348,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -10179,6 +10376,7 @@ mod tests {
             balance,
             provider,
             Arc::new(HashMap::new()),
+            None,
             None,
             None,
             None,
@@ -10223,6 +10421,7 @@ mod tests {
             balance,
             provider,
             Arc::new(HashMap::new()), // empty dispatch_map → api_base lookup misses
+            None,
             None,
             None,
             None,
@@ -10285,6 +10484,7 @@ mod tests {
             None,
             None,
             Some(rl),
+            None,
             None,
             None,
             None,
@@ -10383,6 +10583,7 @@ mod tests {
             Some(cache),
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -10438,6 +10639,7 @@ mod tests {
             None,
             None,
             Some(cache),
+            None,
             None,
             None,
             reqwest::Client::new(),
@@ -10538,6 +10740,7 @@ mod tests {
             None,
             None,
             Some(executor),
+            None,
             None,
             None,
             None,
@@ -10653,6 +10856,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -10757,6 +10961,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -10838,6 +11043,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -10901,6 +11107,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -10979,6 +11186,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
         )
         .await
@@ -11026,6 +11234,7 @@ mod tests {
             balance,
             provider,
             dispatch_map,
+            None,
             None,
             None,
             None,
@@ -11088,6 +11297,7 @@ mod tests {
             None,
             None,
             Some(registry),
+            None,
             reqwest::Client::new(),
         )
         .await

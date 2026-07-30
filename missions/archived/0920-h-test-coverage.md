@@ -2,7 +2,9 @@
 
 ## Status
 
-Completed
+Completed (Archived 2026-07-30 — Path B)
+
+> **Path B closure:** AC + code verified 2026-07-30 via mission audit. All 5 ACs were checked while the mission still lived in `missions/open/`. Claim-based verification (no code anchor — counts test cases across RFC-0920 + RFC-0953 specs). Did not pass through `claimed/` or `with-pr/` — work landed in `next` via prior PRs whose PR trail is lost to audit.
 
 ## RFC
 

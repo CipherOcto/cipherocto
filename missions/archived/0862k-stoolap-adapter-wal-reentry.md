@@ -2,7 +2,9 @@
 
 ## Status
 
-Completed
+Completed (Archived 2026-07-30 — Path B)
+
+> **Path B closure:** AC + code verified 2026-07-30 via mission audit. Code ground: `sync-e2e-tests/stoolap-node/src/main.rs:738` `apply_wal_entry` + `:641` `read_wal_range` + `:117` `current_lsn`. All 9 ACs were checked while the mission still lived in `missions/open/`. Did not pass through `claimed/` or `with-pr/` — work landed in `next` via prior PRs whose PR trail is lost to audit.
 
 ## RFC
 

@@ -1,7 +1,10 @@
 # Mission: WAL Pub/Sub Testing & Configuration
 
 ## Status
-Open
+
+Completed (Archived 2026-07-30 — Path B)
+
+> **Path B closure:** AC + code verified 2026-07-30 via mission audit. Code ground: `crates/quota-router-core/src/config.rs:546` `wal_poll_interval_ms: u64` field (default 50, used in 5 test sites). All 6 ACs were checked while the mission still lived in `missions/open/`. Did not pass through `claimed/` or `with-pr/` — work landed in `next` via prior PRs whose PR trail is lost to audit.
 
 ## RFC
 RFC-0913: Stoolap Pub/Sub for Cache Invalidation

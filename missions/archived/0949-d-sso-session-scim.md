@@ -2,9 +2,9 @@
 
 ## Status
 
-Completed
+Completed (Archived 2026-07-30 — Path B)
 
-Open
+> **Path B closure:** AC + code verified 2026-07-30 via mission audit. Code ground: `crates/quota-router-core/src/admin.rs:908-1108` SCIM v2 routes + `auth/sso/scim_server.rs:7-8` `ScimUser`/`ScimPatchOp`/`ScimGroup`/`ScimServiceProviderConfig`. All 25 ACs were checked while the mission still lived in `missions/open/`. Did not pass through `claimed/` or `with-pr/` — work landed in `next` via prior PRs whose PR trail is lost to audit.
 
 ## RFC
 

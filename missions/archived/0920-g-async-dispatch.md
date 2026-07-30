@@ -2,7 +2,9 @@
 
 ## Status
 
-Completed
+Completed (Archived 2026-07-30 — Path B)
+
+> **Path B closure:** AC + code verified 2026-07-30 via mission audit. Code ground: `crates/quota-router-pyo3/src/lib.rs:88-98` 9 `a*` pyo3 functions registered + `completion.rs:545` `pub async fn acompletion`. All 9 ACs were checked while the mission still lived in `missions/open/`. Did not pass through `claimed/` or `with-pr/` — work landed in `next` via prior PRs whose PR trail is lost to audit.
 
 ## RFC
 

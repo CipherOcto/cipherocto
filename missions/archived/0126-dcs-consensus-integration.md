@@ -1,7 +1,10 @@
 # Mission: RFC-0126 DCS Consensus Integration
 
 ## Status
-Open
+
+Completed (Archived 2026-07-30 — Path B)
+
+> **Path B closure:** AC + code verified 2026-07-30 via mission audit. Code ground: `determin/src/consensus.rs:178` `DcsErrorCode` enum + 6 variants + `as_str()` mapping. All 12 ACs were checked while the mission still lived in `missions/open/`. Did not pass through `claimed/` or `with-pr/` — work landed in `next` via prior PRs whose PR trail is lost to audit.
 
 ## RFC
 RFC-0126: Deterministic Serialization

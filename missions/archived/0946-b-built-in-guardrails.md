@@ -2,7 +2,9 @@
 
 ## Status
 
-Completed
+Completed (Archived 2026-07-30 — Path B)
+
+> **Path B closure:** AC + code verified 2026-07-30 via mission audit. Code ground: `crates/quota-router-core/src/guardrails/mod.rs:247` `PiiDetector` + `:343` `PromptInjection` + `:402` `RegexFilter` + `:436` `ContentModeration` + `:531` `TopicRestriction`. All 12 ACs were checked while the mission still lived in `missions/open/`. Did not pass through `claimed/` or `with-pr/` — work landed in `next` via prior PRs whose PR trail is lost to audit.
 
 ## RFC
 

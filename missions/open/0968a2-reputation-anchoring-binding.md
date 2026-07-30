@@ -132,7 +132,7 @@ if governance prefers spec-first for any remaining cross-RFC drift.
       `CANONICAL_ANCHOR_BLOB_{0,1,100}_LEAVES` pinned bytes at lines
       34, 41, 48) will need re-pinning once the digest covers
       governance fields. **Reconcile the verifier types** — RFC-0955-R1
-      §"Governance Snapshot Binding" (lines 177-200) defines three
+§"ReputationAnchorBatch" (lines 177-200) defines three
       Rust types (`GovernanceSnapshot` with `block_height`, `epoch`,
       `finalized_at_unix`; `GovernanceSigner` with `pubkey: [u8; 32]`,
       `signature: [u8; 64]`; `GovernanceProof` with `signers: Vec<GovernanceSigner>`).

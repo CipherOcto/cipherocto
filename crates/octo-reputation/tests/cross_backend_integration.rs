@@ -1300,4 +1300,19 @@ async fn cross_backend_slash_ewma_zero_delta_at_n2_smooths_to_two_thirds() {
         actual_blob, seed_blob,
         "EWMA must NOT equal the seed value (formula applied)"
     );
+    // R21 review (LOW): pin the SPECIFIC value. Production
+    // formula at n=2 prior: alpha = 1.0/3.0; EWMA = (1.0-alpha)*0.42
+    // + alpha*0.0 = (2.0/3.0)*0.42. Recompute via f64 to match
+    // production's exact bit pattern (Dfp encoding is
+    // bit-deterministic per the type contract).
+    let alpha = 1.0f64 / (2.0 + 1.0);
+    let cur = 0.42f64;
+    let delta = 0.0f64;
+    let expected = (1.0 - alpha) * cur + alpha * delta;
+    let expected_blob = octo_reputation::types::dfp_to_blob(&octo_determin::Dfp::from_f64(expected));
+    assert_eq!(
+        actual_blob, expected_blob,
+        "n=2 zero-EWMA must equal (1-1/3)*0.42 + (1/3)*0.0 ≈ {}",
+        expected
+    );
 }

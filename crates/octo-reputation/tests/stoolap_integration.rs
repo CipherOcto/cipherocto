@@ -2174,6 +2174,14 @@ async fn stoolap_concurrent_record_attestation_with_k2_pre_populated_max() {
         "at least one concurrent call must succeed; got {}",
         success_count
     );
+    // R21 review (LOW): require success_count <= 4 to match the K=3
+    // race test contract. Trivially satisfied but documents the
+    // upper bound and matches the convention across all race variants.
+    assert!(
+        success_count <= 4,
+        "at most 4 concurrent calls can succeed; got {}",
+        success_count
+    );
     let mut rows = store
         .database()
         .query("SELECT COUNT(*) FROM reputation_attestations", ())

@@ -146,36 +146,37 @@ if governance prefers spec-first for any remaining cross-RFC drift.
       paths:
 
       (a) Add RFC-0955-R1 types under new names in the same module
-      (e.g., `AnchorGovernanceSnapshot`, `AnchorGovernanceSigner`,
-      `AnchorGovernanceProof`) — preserves existing auth.rs callers
-      (RFC-0968 §3 retirement, SuspensionAuth, SlashDestination) and
-      keeps the anchoring wire schema distinct. Wire them into the
-      new `ReputationAnchorBatch` BLOB fields via serde
-      deserialization.
+          (e.g., `AnchorGovernanceSnapshot`, `AnchorGovernanceSigner`,
+          `AnchorGovernanceProof`) — preserves existing auth.rs callers
+          (RFC-0968 §3 retirement, SuspensionAuth, SlashDestination) and
+          keeps the anchoring wire schema distinct. Wire them into the
+          new `ReputationAnchorBatch` BLOB fields via serde
+          deserialization.
 
-      (b) Evolve the existing `GovernanceSnapshot` / `GovernanceProof`
-      in place to match RFC-0955-R1 shapes — requires updating
-      every call site (recorder registration, retirement, suspension
-      auth, slash attestation) and a v013 migration for re-shaped
-      BLOB columns. Larger blast radius.
+          (b) Evolve the existing `GovernanceSnapshot` / `GovernanceProof`
+          in place to match RFC-0955-R1 shapes — requires updating
+          every call site (recorder registration, retirement, suspension
+          auth, slash attestation) and a v013 migration for re-shaped
+          BLOB columns. Larger blast radius.
 
-      Recommended path (a) for the smaller blast radius. Document
-      the chosen path in the PR description.
+          Recommended path (a) for the smaller blast radius. Document
+          the chosen path in the PR description.
 
-      **Also: fix `AnchorLeaf::digest` field-order bug in IMPL** (per
-      `crates/octo-reputation/src/anchor.rs:80-100`) — the IMPL hashes
-      `last_event_unix`, `samples`, `severity_total`, then
-      `score_ewma_raw`. RFC-0955-R1 line 420-422 requires the canonical
-      order `(did, signal_kind, layer, last_event_id, score_ewma_raw,
-last_event_unix, samples, severity_total)` — i.e., `score_ewma_raw`
-      at position 5 (after `last_event_id`, before the counters). The
-      current IMPL puts `score_ewma_raw` last. This breaks
+          **Also: fix `AnchorLeaf::digest` field-order bug in IMPL** (per
+          `crates/octo-reputation/src/anchor.rs:80-100`) — the IMPL hashes
+          `last_event_unix`, `samples`, `severity_total`, then
+          `score_ewma_raw`. RFC-0955-R1 line 420-422 requires the canonical
+          order `(did, signal_kind, layer, last_event_id, score_ewma_raw,
+
+last_event_unix, samples, severity_total)`— i.e.,`score_ewma_raw`      at position 5 (after`last_event_id`, before the counters). The
+      current IMPL puts `score_ewma_raw`last. This breaks
       cross-implementation digest interoperability (per RFC-0955-R1
       line 422: "An independent Python implementation using the
-      `hashlib.blake3` library MUST reproduce the same expected bytes").
-      The 3 pinned test vectors in `tests/canonical_blobs.rs` would
-      NOT match any RFC-compliant independent reimplementation; the
-      bug fix requires re-pinning the 3 vectors to the correct order.
+     `hashlib.blake3`library MUST reproduce the same expected bytes").
+      The 3 pinned test vectors in`tests/canonical_blobs.rs` would
+NOT match any RFC-compliant independent reimplementation; the
+bug fix requires re-pinning the 3 vectors to the correct order.
+
 - [ ] **Live `ChainAnchorSubmitter` impl for the on-chain ledger** —
       implement a real `ChainAnchorSubmitter` (alongside the existing
       `StubChainAnchorSubmitter` at `anchor_job.rs:139`) that takes a
@@ -277,25 +278,25 @@ last_event_unix, samples, severity_total)` — i.e., `score_ewma_raw`
 
 ## AC → Scope mapping
 
-| AC                                                                  | Scope item(s) |
-| ------------------------------------------------------------------- | ------------- |
-| `StakeBelowMinimum` 0x2D verification (impl + RFC agreed)           | 1             |
-| `ReputationAnchorBatch` governance fields                           | 2             |
-| `ReputationAnchorBatch` `batch_size: u32` field                     | 2             |
-| `ReputationAnchorBatch.chain_block_height: Option<u64>` type        | 2             |
-| `AnchorLeaf::digest` field order per RFC-0955-R1 line 420-422       | 2             |
-| `AnchorGovernanceSnapshot` / `AnchorGovernanceSigner` / `AnchorGovernanceProof` types | 2     |
-| v012 migration                                                      | 2             |
-| Live `ChainAnchorSubmitter` impl                                    | 3             |
-| Live `ChainAnchorSubmitter` writes `rotation_receipt_id`            | 3             |
-| Reorg handler                                                       | 4             |
-| DID-rotation finality handler                                       | 4             |
-| Governance signature verification                                   | 5             |
-| Per-deployment config plumbing                                      | 6             |
-| Idempotency test                                                    | 7             |
-| Failure isolation test                                              | 8             |
-| Gossip cross-reference                                              | 9             |
-| Test vector re-pinning                                              | 2             |
+| AC                                                                                    | Scope item(s) |
+| ------------------------------------------------------------------------------------- | ------------- |
+| `StakeBelowMinimum` 0x2D verification (impl + RFC agreed)                             | 1             |
+| `ReputationAnchorBatch` governance fields                                             | 2             |
+| `ReputationAnchorBatch` `batch_size: u32` field                                       | 2             |
+| `ReputationAnchorBatch.chain_block_height: Option<u64>` type                          | 2             |
+| `AnchorLeaf::digest` field order per RFC-0955-R1 line 420-422                         | 2             |
+| `AnchorGovernanceSnapshot` / `AnchorGovernanceSigner` / `AnchorGovernanceProof` types | 2             |
+| v012 migration                                                                        | 2             |
+| Live `ChainAnchorSubmitter` impl                                                      | 3             |
+| Live `ChainAnchorSubmitter` writes `rotation_receipt_id`                              | 3             |
+| Reorg handler                                                                         | 4             |
+| DID-rotation finality handler                                                         | 4             |
+| Governance signature verification                                                     | 5             |
+| Per-deployment config plumbing                                                        | 6             |
+| Idempotency test                                                                      | 7             |
+| Failure isolation test                                                                | 8             |
+| Gossip cross-reference                                                                | 9             |
+| Test vector re-pinning                                                                | 2             |
 
 ## Complexity
 

@@ -2174,13 +2174,18 @@ async fn stoolap_concurrent_record_attestation_with_k2_pre_populated_max() {
         "at least one concurrent call must succeed; got {}",
         success_count
     );
-    // R21 review (LOW): require success_count <= 4 to match the K=3
-    // race test contract. Trivially satisfied but documents the
-    // upper bound and matches the convention across all race variants.
+    // R22 review (MEDIUM): K=2 has MAX=1. The canonical outcome
+    // (success_count == 1) is non-deterministic — the race window
+    // depends on whether the 4 spawned tasks race the SELECT MAX
+    // step before any INSERT commits. In practice, scheduling
+    // serializes the SELECTs and multiple INSERTs succeed. Use the
+    // same convention as K=3's `< 4` (loose upper bound, strict
+    // lower bound) — the load-bearing invariant is "no panics" +
+    // "row count parity" + "≥1 Ok".
     assert!(
-        success_count <= 4,
-        "at most 4 concurrent calls can succeed; got {}",
-        success_count
+        success_count < 4,
+        "K=2 pre-pop race must trigger at least one collision; \
+         got {success_count}/4 successes (would mask a race regression)"
     );
     let mut rows = store
         .database()

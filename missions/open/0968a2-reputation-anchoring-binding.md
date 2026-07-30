@@ -112,14 +112,20 @@ if governance prefers spec-first.
       `rotation_receipt_id`, `leaves`). RFC-0955-R1 §"ReputationAnchorBatch"
       defines 14 fields. The drift is two-part: (a) the per-tuple fields
       (`did`, `signal_kind`, `layer`, `last_event_id`, `score_ewma_raw`,
-      `last_event_unix`, `samples`, `severity_total`, `batch_size`) moved
-      into `AnchorLeaf` per RFC-0955-R1 amendment 48 (per-controller
-      refactor — deliberate, NOT a drift to fix); (b) the 3 governance
-      fields (`governance_snapshot`, `governance_proof`,
-      `governance_set_hash`) are MISSING from the IMPL `ReputationAnchorBatch`
-      struct. The fix scope is item (b) only. Extend the IMPL struct with
-      the 3 governance fields. Update `ReputationAnchorBatch::digest`
-      (`anchor.rs:139-167`) to fold the governance fields into the
+      `last_event_unix`, `samples`, `severity_total`) moved into
+      `AnchorLeaf` per RFC-0955-R1 amendment 48 (per-controller
+      refactor — deliberate, NOT a drift to fix). The remaining
+      RFC-mandated fields on `ReputationAnchorBatch` are also missing
+      from the IMPL: (b) the 3 governance fields (`governance_snapshot`,
+      `governance_proof`, `governance_set_hash`); (c) `batch_size:
+    u32` (RFC-0955-R1 line 173); (d) `chain_block_height: Option<u64>`
+      (IMPL currently has `chain_block_height: u64`; RFC-0955-R1 line
+      142 declares `Option<u64>` because the field is `None` at
+      submission and `Some(_)` only after the anchor reaches
+      `MIN_FINALITY_BLOCKS` depth). The fix scope is items (b)+(c)+(d).
+      Extend the IMPL struct with the 3 governance fields + `batch_size` + change `chain_block_height` to `Option<u64>`. Update
+      `ReputationAnchorBatch::digest` (`anchor.rs:139-167`) to fold the
+      governance fields into the domain-separated envelope hash.
       domain-separated envelope hash. Add a new migration
       `v012__reputation_anchors_governance.sql` extending `reputation_anchors`
       with `governance_snapshot BLOB`, `governance_proof BLOB`,
@@ -137,7 +143,21 @@ if governance prefers spec-first.
       `crates/octo-reputation/src/auth.rs` module (alongside
       `age_secs`/`is_fresh` in the existing `auth.rs`). Wire them into
       the new `ReputationAnchorBatch` BLOB fields via serde
-      deserialization as the canonical in-memory form.
+      deserialization as the canonical in-memory form. **Also: fix
+      `AnchorLeaf::digest` field-order bug in IMPL** (per
+      `crates/octo-reputation/src/anchor.rs:80-100`) — the IMPL hashes
+      `last_event_unix`, `samples`, `severity_total`, then
+      `score_ewma_raw`. RFC-0955-R1 line 420-422 requires the canonical
+      order `(did, signal_kind, layer, last_event_id, score_ewma_raw,
+    last_event_unix, samples, severity_total)` — i.e., `score_ewma_raw`
+      at position 5 (after `last_event_id`, before the counters). The
+      current IMPL puts `score_ewma_raw` last. This breaks
+      cross-implementation digest interoperability (per RFC-0955-R1
+      line 422: "An independent Python implementation using the
+      `hashlib.blake3` library MUST reproduce the same expected bytes").
+      The 3 pinned test vectors in `tests/canonical_blobs.rs` would
+      NOT match any RFC-compliant independent reimplementation; the
+      bug fix requires re-pinning the 3 vectors to the correct order.
 - [ ] **Live `ChainAnchorSubmitter` impl for the on-chain ledger** —
       implement a real `ChainAnchorSubmitter` (alongside the existing
       `StubChainAnchorSubmitter` at `anchor_job.rs:139`) that takes a
@@ -222,6 +242,9 @@ if governance prefers spec-first.
 
 - [ ] `StakeBelowMinimum` discriminant byte equals 0x2D (impl + RFC agreed); RFC-0968 §13 updated
 - [ ] `ReputationAnchorBatch` has the 3 governance fields with `digest()` covering them
+- [ ] `ReputationAnchorBatch` has `batch_size: u32` field per RFC-0955-R1 line 173
+- [ ] `ReputationAnchorBatch.chain_block_height` typed `Option<u64>` per RFC-0955-R1 line 142 (currently IMPL `u64`)
+- [ ] `AnchorLeaf::digest` field order matches RFC-0955-R1 line 420-422 (score_ewma_raw at position 5, not last)
 - [ ] v012 migration adds `governance_snapshot`, `governance_proof`, `governance_set_hash` columns to `reputation_anchors`
 - [ ] Live `ChainAnchorSubmitter` impl exists; `run_once_strict` uses it for production (gated on chain-substrate selection RFC)
 - [ ] Live `ChainAnchorSubmitter` writes `rotation_receipt_id` through to v010 ledger (covers 0968a AC #5 chain-side encoding)

@@ -1149,7 +1149,11 @@ Both legacy and superseded missions remain greppable for history, but cannot be 
 - An external dependency (foundation RFC, third-party library) is unavailable.
 - A governance decision is required before implementation can proceed (e.g., quorum policy, fee schedule).
 
-When deferring:
+**Authorization rule.** Deferral is a user-initiated lifecycle transition. An agent MUST NOT defer a mission, propose deferral as part of a sweep, or move a mission file into `missions/deferred/` on its own initiative — even when a blocker is unambiguous, even when the audit sweep identifies the deferral as "the obvious next step." The rationale: deferral is irreversible without human review (it removes the mission from `open/`, breaks claimability, and signals "blocked" to every downstream consumer). Only the user can authorize that signal. Auto-deferral by an agent is treated as a documentation bug regardless of how technically correct the rationale is.
+
+When admitting a blocker during a sweep, the agent's correct action is to **report the blocker** to the user with file:line evidence and a deferral recommendation. The user then issues a direct, explicit instruction (e.g., "defer 0870g" or "defer all three") if they want it acted on. Phrasings like "let's defer this" or "you can defer it" in conversation are not authorization — they are questions, and the agent must wait for the user to confirm the move before executing the `git mv`.
+
+When deferring (user-initiated only):
 
 1. `git mv` the mission file from `missions/open/` (or `missions/claimed/`) to `missions/deferred/`.
 2. Update the `## Status` header to `Deferred (YYYY-MM-DD) — <blocker>`.

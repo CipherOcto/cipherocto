@@ -613,7 +613,7 @@ impl StoolapReputationStore {
         ).map_err(|_| ReputationError::StakeProofInvalid)?;
         // 6. Reject under-staked registrations before persistence.
         if req.stake_amount < MIN_RECORDER_STAKE {
-            return Err(ReputationError::StakeBelowMinimum { provided: req.stake_amount });
+            return Err(ReputationError::StakeBelowMinimum { component: crate::error::StakeComponent::Octo });
         }
         // 7. INSERT, never UPSERT: lifecycle state may not be reconstructed away.
         //    Round 6 H1: `RecorderId::new` is the module-private minting path
@@ -2053,8 +2053,8 @@ pub enum ReputationError {
     StorageTimeout = 0x15,
     #[error("gossip event older than retention window")]
     GossipStale = 0x16,
-    #[error("stake amount {provided} below MIN_RECORDER_STAKE")]
-    StakeBelowMinimum { provided: u64 } = 0x17,
+    #[error("stake component {component:?} below minimum stake guard")]
+    StakeBelowMinimum { component: StakeComponent } = 0x2D,
     #[error("governance stake proof invalid")]
     StakeProofInvalid = 0x18,
     #[error("resume proof grace_until_unix < suspended_at_unix")]
@@ -2618,7 +2618,7 @@ Merge order: `(received_at_unix, event_id)` ascending. Fork resolution is missio
 | `SignalKindUnknown`           | 0x14     | Reject; signal-kind discriminants 6..255 are reserved                                                            |
 | `StorageTimeout`              | 0x15     | Retry with exponential backoff                                                                                   |
 | `GossipStale`                 | 0x16     | Drop event older than retention window                                                                           |
-| `StakeBelowMinimum`           | 0x17     | Reject registration; caller must stake ≥ MIN_RECORDER_STAKE                                                      |
+| `StakeBelowMinimum`           | 0x2D     | Reject registration; component stake below minimum (Octo / Role / Aggregate sub-guard per `StakeComponent` enum)    |
 | `StakeProofInvalid`           | 0x18     | Reject registration; governance stake proof must verify                                                          |
 | `ResumeMalformedGrace`        | 0x19     | **Reserved (RFC-0968-A1, 2026-07-26):** reclaim. The previous definition described `grace_until_unix < suspended_at_unix`, but `current_unix` is typed `u64` and cannot be negative; the actual condition is server-internal row corruption and is correctly reported as `RecorderLifecycleCorrupted` (0x22). The 0x19 code is reserved for a future caller-supplied resume-state error if one is identified. |
 | `GovernanceKeyInactive`       | 0x1A     | Reject; use an active key from the protocol governance registry                                                  |

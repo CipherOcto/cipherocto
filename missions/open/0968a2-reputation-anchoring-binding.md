@@ -161,18 +161,18 @@ if governance prefers spec-first for any remaining cross-RFC drift.
       governance-membership semantics.
 
       **(a)** Add RFC-0955-R1 types under new names in the same module
-              (e.g., `AnchorGovernanceSnapshot`, `AnchorGovernanceSigner`,
-              `AnchorGovernanceProof`) — preserves existing auth.rs callers
-              (RFC-0968 §3 retirement, SuspensionAuth, SlashDestination) and
-              keeps the anchoring wire schema distinct. Wire them into the
-              new `ReputationAnchorBatch` BLOB fields via serde
-              deserialization. (Mandated path.)
+                  (e.g., `AnchorGovernanceSnapshot`, `AnchorGovernanceSigner`,
+                  `AnchorGovernanceProof`) — preserves existing auth.rs callers
+                  (RFC-0968 §3 retirement, SuspensionAuth, SlashDestination) and
+                  keeps the anchoring wire schema distinct. Wire them into the
+                  new `ReputationAnchorBatch` BLOB fields via serde
+                  deserialization. (Mandated path.)
 
-                              **Also: fix `AnchorLeaf::digest` field-order bug in IMPL** (per
-                              `crates/octo-reputation/src/anchor.rs:80-100`) — the IMPL hashes
-                              `last_event_unix`, `samples`, `severity_total`, then
-                              `score_ewma_raw`. RFC-0955-R1 line 420-422 requires the canonical
-                              order `(did, signal_kind, layer, last_event_id, score_ewma_raw,
+                                  **Also: fix `AnchorLeaf::digest` field-order bug in IMPL** (per
+                                  `crates/octo-reputation/src/anchor.rs:80-100`) — the IMPL hashes
+                                  `last_event_unix`, `samples`, `severity_total`, then
+                                  `score_ewma_raw`. RFC-0955-R1 line 420-422 requires the canonical
+                                  order `(did, signal_kind, layer, last_event_id, score_ewma_raw,
 
 last_event_unix, samples, severity_total)`— i.e.,`score_ewma_raw`      at position 5 (after`last_event_id`, before the counters). The
       current IMPL puts `score_ewma_raw`last. This breaks
@@ -189,7 +189,6 @@ bug fix requires re-pinning the 3 vectors to the correct order.
       `ReputationAnchorBatch` and submits the on-chain merkle-root
       transaction. **Explicitly covers 0968a AC #7 (chain-side encoding
       of `rotation_receipt_id`)**: the live submitter must write the
-      of `rotation_receipt_id`):** the live submitter must write the
       `ReputationAnchorBatch.rotation_receipt_id` field through to the
       v010 ledger's `rotation_receipt_id` column (per
       `v010__reputation_anchors.sql` line 62). Wire it into

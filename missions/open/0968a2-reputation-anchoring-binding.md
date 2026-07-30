@@ -117,16 +117,16 @@ if governance prefers spec-first.
       refactor — deliberate, NOT a drift to fix). The remaining
       RFC-mandated fields on `ReputationAnchorBatch` are also missing
       from the IMPL: (b) the 3 governance fields (`governance_snapshot`,
-      `governance_proof`, `governance_set_hash`); (c) `batch_size:
-    u32` (RFC-0955-R1 line 173); (d) `chain_block_height: Option<u64>`
+      `governance_proof`, `governance_set_hash`); (c) `batch_size: u32`
+      (RFC-0955-R1 line 173); (d) `chain_block_height: Option<u64>`
       (IMPL currently has `chain_block_height: u64`; RFC-0955-R1 line
       142 declares `Option<u64>` because the field is `None` at
       submission and `Some(_)` only after the anchor reaches
       `MIN_FINALITY_BLOCKS` depth). The fix scope is items (b)+(c)+(d).
-      Extend the IMPL struct with the 3 governance fields + `batch_size` + change `chain_block_height` to `Option<u64>`. Update
+      Extend the IMPL struct with the 3 governance fields + `batch_size`
+      + change `chain_block_height` to `Option<u64>`. Update
       `ReputationAnchorBatch::digest` (`anchor.rs:139-167`) to fold the
-      governance fields into the domain-separated envelope hash.
-      domain-separated envelope hash. Add a new migration
+      governance fields into the domain-separated envelope hash. Add a new migration
       `v012__reputation_anchors_governance.sql` extending `reputation_anchors`
       with `governance_snapshot BLOB`, `governance_proof BLOB`,
       `governance_set_hash BLOB` columns (all nullable). Add unit tests for
@@ -149,7 +149,7 @@ if governance prefers spec-first.
       `last_event_unix`, `samples`, `severity_total`, then
       `score_ewma_raw`. RFC-0955-R1 line 420-422 requires the canonical
       order `(did, signal_kind, layer, last_event_id, score_ewma_raw,
-    last_event_unix, samples, severity_total)` — i.e., `score_ewma_raw`
+  last_event_unix, samples, severity_total)` — i.e., `score_ewma_raw`
       at position 5 (after `last_event_id`, before the counters). The
       current IMPL puts `score_ewma_raw` last. This breaks
       cross-implementation digest interoperability (per RFC-0955-R1

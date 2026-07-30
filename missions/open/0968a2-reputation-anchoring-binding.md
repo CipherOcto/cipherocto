@@ -101,7 +101,9 @@ if governance prefers spec-first for any remaining cross-RFC drift.
       `{ component: StakeComponent }`,
       matching the IMPL `crates/octo-reputation/src/error.rs:190`. The
       `0x17` slot is occupied by `GovernanceSlashFieldMismatch` at
-      `error.rs:133` (which is correct per RFC-0968). This Scope item
+      `error.rs:133` (not referenced in RFC-0968 §13; the RFC table
+      jumps `0x16 → 0x2D` per Round 13 reviewer verification — see
+      `error.rs:8-49` guardrail context). This Scope item
       is now a **verification step** rather than a fix: confirm both
       `git diff` (RFC-0968 line 2057 + 2621 + 616) and `error.rs:190`
       agree on `0x2D` + `{ component: StakeComponent }` payload before
@@ -185,7 +187,8 @@ bug fix requires re-pinning the 3 vectors to the correct order.
       implement a real `ChainAnchorSubmitter` (alongside the existing
       `StubChainAnchorSubmitter` at `anchor_job.rs:139`) that takes a
       `ReputationAnchorBatch` and submits the on-chain merkle-root
-      transaction. **Explicitly covers 0968a AC #5 (chain-side encoding
+      transaction. **Explicitly covers 0968a AC #7 (chain-side encoding
+      of `rotation_receipt_id`)**: the live submitter must write the
       of `rotation_receipt_id`):** the live submitter must write the
       `ReputationAnchorBatch.rotation_receipt_id` field through to the
       v010 ledger's `rotation_receipt_id` column (per
@@ -270,7 +273,7 @@ bug fix requires re-pinning the 3 vectors to the correct order.
 - [ ] `AnchorLeaf::digest` field order matches RFC-0955-R1 line 420-422 (score_ewma_raw at position 5, not last)
 - [ ] v012 migration adds `governance_snapshot`, `governance_proof`, `governance_set_hash` columns to `reputation_anchors`
 - [ ] Live `ChainAnchorSubmitter` impl exists; `run_once_strict` uses it for production (gated on chain-substrate selection RFC)
-- [ ] Live `ChainAnchorSubmitter` writes `rotation_receipt_id` through to v010 ledger (covers 0968a AC #5 chain-side encoding)
+- [ ] Live `ChainAnchorSubmitter` writes `rotation_receipt_id` through to v010 ledger (covers 0968a AC #7 chain-side encoding of `rotation_receipt_id`)
 - [ ] Reorg handler re-submits batches whose `(submitted, finalized)` height delta exceeds `MIN_FINALITY_BLOCKS`
 - [ ] DID-rotation finality handler re-submits anchors when `consume_rotation_receipt` is finalized before `MIN_FINALITY_BLOCKS`
 - [ ] Governance signature verification rejects batches with != `GOVERNANCE_QUORUM` (= 3) signatures

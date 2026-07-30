@@ -41,6 +41,7 @@ use serde::{Deserialize, Serialize};
 use crate::anchor::{
     exceeds_daily_fanout, window_collision, AnchorLeaf, AnchorWindow, ReputationAnchorBatch,
 };
+use crate::auth::{AnchorGovernanceProof, AnchorGovernanceSnapshot};
 use crate::constants::{
     ANCHOR_FEE_PER_ROOT, MAX_ANCHOR_ROOTS_PER_CONTROLLER_PER_INTERVAL, MAX_TUPLES_PER_ROOT,
     MIN_FEE_PER_LEAF,
@@ -220,8 +221,25 @@ pub fn plan_batches(
             let batch = ReputationAnchorBatch {
                 controller_id,
                 window: proposed_window,
-                chain_block_height: 0,
+                // Pre-submission: the batch has no finalized chain
+                // height yet. The runtime populates this with
+                // `Some(h)` after the anchor reaches
+                // `MIN_FINALITY_BLOCKS` depth (RFC-0955-R1 line 170).
+                chain_block_height: None,
                 rotation_receipt_id: None,
+                // Pre-submission: governance fields are placeholders.
+                // The runtime populates them with the active snapshot
+                // + 3-of-3 quorum proof + governance_set_hash before
+                // calling `ChainAnchorSubmitter::submit`. Defaulting
+                // here keeps `plan_batches` chain-substrate-agnostic.
+                governance_snapshot: AnchorGovernanceSnapshot {
+                    block_height: 0,
+                    epoch: 0,
+                    finalized_at_unix: 0,
+                },
+                governance_proof: AnchorGovernanceProof { signers: vec![] },
+                governance_set_hash: [0u8; 32],
+                batch_size: leaves.len() as u32,
                 leaves: leaves.clone(),
             };
             assert!(

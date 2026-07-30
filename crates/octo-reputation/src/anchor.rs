@@ -26,6 +26,7 @@
 use blake3::Hasher;
 use serde::{Deserialize, Serialize};
 
+use crate::auth::{AnchorGovernanceProof, AnchorGovernanceSnapshot};
 use crate::constants::{
     ANCHOR_FEE_PER_ROOT, BLAKE3_REPUTATION_ANCHOR_DOMAIN, DEFAULT_ANCHOR_INTERVAL_SECS,
     MAX_ANCHORED_TUPLES_PER_CONTROLLER_PER_DAY, MAX_TUPLES_PER_ROOT, MIN_FEE_PER_LEAF,
@@ -95,19 +96,29 @@ impl AnchorLeaf {
     /// Compute the leaf digest under the anchor domain. Distinct leaves
     /// with the same byte content (one event) produce the same digest;
     /// two leaves differing on any field produce different digests.
+    ///
+    /// Canonical field order per RFC-0955-R1 lines 420-422:
+    /// `(did, signal_kind, layer, last_event_id, score_ewma_raw,
+    /// last_event_unix, samples, severity_total)` — `score_ewma_raw`
+    /// is at position 5 (between `last_event_id` and `last_event_unix`).
+    /// The earlier IMPL placed `score_ewma_raw` last, which broke
+    /// cross-implementation digest interoperability (the pinned
+    /// `CANONICAL_ANCHOR_BLOB_*` vectors in `tests/canonical_blobs.rs`
+    /// would not match any RFC-compliant independent reimplementation).
     pub fn digest(&self) -> ReputationDigest {
         let mut hasher = Hasher::new();
         hasher.update(BLAKE3_REPUTATION_ANCHOR_DOMAIN);
-        // Canonical serialisation: tuple identity, then 24-byte Dfp blob,
-        // then the aggregate counters.
+        // Canonical serialisation per RFC-0955-R1 lines 420-422:
+        // tuple identity → score_ewma_raw → aggregate counters.
         hasher.update(self.did.as_bytes());
         hasher.update(&[self.signal_kind.discriminant()]);
         hasher.update(&[self.layer.discriminant()]);
         hasher.update(self.last_event_id.as_bytes());
+        // Position 5: score_ewma_raw (the 24-byte Dfp wire form).
+        hasher.update(&self.score_ewma_raw);
         hasher.update(&self.last_event_unix.to_be_bytes());
         hasher.update(&self.samples.to_be_bytes());
         hasher.update(&self.severity_total.to_be_bytes());
-        hasher.update(&self.score_ewma_raw);
         let out = hasher.finalize();
         let mut arr = [0u8; 32];
         arr.copy_from_slice(out.as_bytes());
@@ -117,6 +128,14 @@ impl AnchorLeaf {
 
 /// A batch of anchor leaves submitted under one Merkle root by one
 /// attested `controller_id` in one anchor window.
+///
+/// RFC-0955-R1 §"ReputationAnchorBatch" (lines 177-200) defines 14
+/// fields. The IMPL carries the per-controller anchor envelope plus
+/// the 3 governance fields (`governance_snapshot`, `governance_proof`,
+/// `governance_set_hash`) and `batch_size` per mission 0968a2 AC #2,
+/// #3. `chain_block_height` is `Option<u64>` (None at submission,
+/// `Some(_)` after `MIN_FINALITY_BLOCKS` finality) per RFC-0955-R1
+/// line 170 — AC #4.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReputationAnchorBatch {
     /// Attested `controller_id` (default `blake3(governance_pubkey)` per
@@ -124,30 +143,74 @@ pub struct ReputationAnchorBatch {
     pub controller_id: [u8; 32],
     /// Anchor window this batch was opened in.
     pub window: AnchorWindow,
-    /// Chain block height at submission time.
-    pub chain_block_height: u64,
+    /// Chain block height. `None` at submission time (the anchor
+    /// tx has not been finalized yet); `Some(h)` once the anchor has
+    /// reached `MIN_FINALITY_BLOCKS` depth. Per RFC-0955-R1 line 170.
+    pub chain_block_height: Option<u64>,
     /// Rotation-receipt binding (RFC-0955-R1 §"ReputationAnchorBatch"
     /// post-Round-7 amendment 51; persistence-10 AC).
     /// `Some(rotation_receipt_id)` when a post-rotation resubmission
     /// must bind to a specific finalized `consume_rotation_receipt`.
     /// `None` for the standard pre-rotation anchor path.
     pub rotation_receipt_id: Option<[u8; 32]>,
+    /// Snapshot under which the anchor is bound (RFC-0955-R1 §"Governance
+    /// Snapshot Binding" lines 250-266). Carries block + epoch +
+    /// finalized timestamp. Per RFC-0955-R1 lines 177-200.
+    pub governance_snapshot: AnchorGovernanceSnapshot,
+    /// 3-of-3 governance quorum proof over `governance_snapshot` +
+    /// `governance_set_hash` (RFC-0955-R1 §"Governance Snapshot Binding"
+    /// lines 250-266). Per RFC-0955-R1 lines 177-200.
+    pub governance_proof: AnchorGovernanceProof,
+    /// Hash of the governance set at snapshot time. Must match the
+    /// set active when the anchor is submitted (RFC-0955-R1 lines
+    /// 177-200 + RFC-0968 §10).
+    pub governance_set_hash: [u8; 32],
+    /// Number of leaves in this batch. Capped at `MAX_TUPLES_PER_ROOT`.
+    /// Per RFC-0955-R1 line 173.
+    pub batch_size: u32,
     /// Leaves (capped at `MAX_TUPLES_PER_ROOT = 100`).
     pub leaves: Vec<AnchorLeaf>,
 }
 
 impl ReputationAnchorBatch {
     /// Compute the batch digest (the on-chain commitment).
+    ///
+    /// Canonical serialisation per RFC-0955-R1 lines 177-200 + 250-266:
+    ///
+    /// ```text
+    /// BLAKE3(BLAKE3_REPUTATION_ANCHOR_DOMAIN
+    ///     || controller_id                                    // 32 bytes
+    ///     || window.window_index.to_be_bytes()                // 8 bytes
+    ///     || chain_block_height (0x00 || 8 bytes BE || 0x01) // 1 + (0 or 8) bytes
+    ///     || rotation_receipt_id (0x00 || 0x01 || 32 bytes)   // 1 + (0 or 32) bytes
+    ///     || governance_snapshot.canonical_bytes()            // 24 bytes
+    ///     || governance_proof.canonical_bytes()               // 0.. bytes
+    ///     || governance_set_hash                              // 32 bytes
+    ///     || batch_size.to_be_bytes()                         // 4 bytes
+    ///     || leaves[i].digest() for each leaf)
+    /// ```
+    ///
+    /// The Option<u64> encoding (presence byte then BE bytes) keeps
+    /// the digest non-ambiguous across the None / Some(_)
+    /// boundary — the absence tag is a single `0x00` byte and the
+    /// presence tag is `0x01` followed by the 8-byte big-endian
+    /// height.
     pub fn digest(&self) -> ReputationDigest {
         let mut hasher = Hasher::new();
         hasher.update(BLAKE3_REPUTATION_ANCHOR_DOMAIN);
         hasher.update(&self.controller_id);
         hasher.update(&self.window.window_index.to_be_bytes());
-        hasher.update(&self.chain_block_height.to_be_bytes());
-        // Domain-separate the rotation-receipt binding presence, then
-        // (when present) the 32-byte receipt id. Encoding the absence
-        // as a single `0` byte keeps the digest non-ambiguous across
-        // the presence/absence boundary.
+        // Option<u64> encoding: 0x00 = None, 0x01 || 8-byte BE = Some(_).
+        match self.chain_block_height {
+            None => {
+                hasher.update(&[0u8]);
+            }
+            Some(h) => {
+                hasher.update(&[1u8]);
+                hasher.update(&h.to_be_bytes());
+            }
+        }
+        // Rotation-receipt binding (same Option encoding shape).
         match self.rotation_receipt_id {
             None => {
                 hasher.update(&[0u8]);
@@ -157,6 +220,11 @@ impl ReputationAnchorBatch {
                 hasher.update(&id);
             }
         }
+        // Governance fields (RFC-0955-R1 lines 177-200).
+        hasher.update(&self.governance_snapshot.canonical_bytes());
+        hasher.update(&self.governance_proof.canonical_bytes());
+        hasher.update(&self.governance_set_hash);
+        hasher.update(&self.batch_size.to_be_bytes());
         for leaf in &self.leaves {
             hasher.update(leaf.digest().as_bytes());
         }
@@ -176,6 +244,7 @@ impl ReputationAnchorBatch {
     /// True iff the batch respects the per-root leaf cap.
     pub fn within_leaf_cap(&self) -> bool {
         (self.leaves.len() as u64) <= MAX_TUPLES_PER_ROOT
+            && (self.leaves.len() as u32) == self.batch_size
     }
 }
 
@@ -228,6 +297,43 @@ mod tests {
     }
     use octo_determin::Dfp;
 
+    /// Default empty governance snapshot — block 0, epoch 0, ts 0.
+    fn dummy_snapshot() -> AnchorGovernanceSnapshot {
+        AnchorGovernanceSnapshot {
+            block_height: 0,
+            epoch: 0,
+            finalized_at_unix: 0,
+        }
+    }
+
+    /// Default empty governance proof — zero signers (test-only; in
+    /// production `meets_quorum()` requires `GOVERNANCE_QUORUM = 3`).
+    fn dummy_proof() -> AnchorGovernanceProof {
+        AnchorGovernanceProof { signers: vec![] }
+    }
+
+    /// Build a `ReputationAnchorBatch` with the governance fields
+    /// filled with sensible defaults so tests can vary the rest.
+    fn dummy_batch(
+        controller_id: [u8; 32],
+        window: AnchorWindow,
+        chain_block_height: Option<u64>,
+        rotation_receipt_id: Option<[u8; 32]>,
+        leaves: Vec<AnchorLeaf>,
+    ) -> ReputationAnchorBatch {
+        ReputationAnchorBatch {
+            controller_id,
+            window,
+            chain_block_height,
+            rotation_receipt_id,
+            governance_snapshot: dummy_snapshot(),
+            governance_proof: dummy_proof(),
+            governance_set_hash: [0u8; 32],
+            batch_size: leaves.len() as u32,
+            leaves,
+        }
+    }
+
     // ----- Constants are pinned -----
 
     #[test]
@@ -269,20 +375,20 @@ mod tests {
     fn batch_digest_changes_on_leaf_membership() {
         let now = 1_000u64; // inside window 3 (1000/300=3)
         let window = AnchorWindow::at(now);
-        let b1 = ReputationAnchorBatch {
-            controller_id: [1u8; 32],
+        let b1 = dummy_batch(
+            [1u8; 32],
             window,
-            chain_block_height: 100,
-            rotation_receipt_id: None,
-            leaves: vec![dummy_leaf(0.5, 100, 1)],
-        };
-        let b2 = ReputationAnchorBatch {
-            controller_id: [1u8; 32],
+            Some(100),
+            None,
+            vec![dummy_leaf(0.5, 100, 1)],
+        );
+        let b2 = dummy_batch(
+            [1u8; 32],
             window,
-            chain_block_height: 100,
-            rotation_receipt_id: None,
-            leaves: vec![dummy_leaf(0.5, 100, 1), dummy_leaf(0.5, 100, 2)],
-        };
+            Some(100),
+            None,
+            vec![dummy_leaf(0.5, 100, 1), dummy_leaf(0.5, 100, 2)],
+        );
         assert_ne!(b1.digest(), b2.digest());
     }
 
@@ -295,52 +401,131 @@ mod tests {
         // DID-rotation finality rule cannot be enforced.
         let now = 1_000u64;
         let window = AnchorWindow::at(now);
-        let without = ReputationAnchorBatch {
-            controller_id: [1u8; 32],
+        let without = dummy_batch(
+            [1u8; 32],
             window,
-            chain_block_height: 100,
-            rotation_receipt_id: None,
-            leaves: vec![dummy_leaf(0.5, 100, 1)],
-        };
+            Some(100),
+            None,
+            vec![dummy_leaf(0.5, 100, 1)],
+        );
         let mut receipt = [0u8; 32];
         receipt[0] = 0xAB;
         receipt[31] = 0xCD;
-        let with = ReputationAnchorBatch {
-            controller_id: [1u8; 32],
+        let with = dummy_batch(
+            [1u8; 32],
             window,
-            chain_block_height: 100,
-            rotation_receipt_id: Some(receipt),
-            leaves: vec![dummy_leaf(0.5, 100, 1)],
-        };
+            Some(100),
+            Some(receipt),
+            vec![dummy_leaf(0.5, 100, 1)],
+        );
         assert_ne!(without.digest(), with.digest());
     }
 
     #[test]
+    fn batch_digest_changes_on_chain_block_height_presence() {
+        // AC #4: `chain_block_height: Option<u64>` — the digest MUST
+        // change between `None` (submitted, not yet finalized) and
+        // `Some(h)` (finalized). Encoding uses the same Option tag
+        // pattern as `rotation_receipt_id`.
+        let now = 1_000u64;
+        let window = AnchorWindow::at(now);
+        let pre = dummy_batch([1u8; 32], window, None, None, vec![dummy_leaf(0.5, 100, 1)]);
+        let post = dummy_batch(
+            [1u8; 32],
+            window,
+            Some(100),
+            None,
+            vec![dummy_leaf(0.5, 100, 1)],
+        );
+        assert_ne!(pre.digest(), post.digest());
+    }
+
+    #[test]
+    fn batch_digest_changes_on_batch_size() {
+        // AC #3: `batch_size: u32` field. A mismatch between
+        // `leaves.len()` and `batch_size` MUST change the digest.
+        let now = 1_000u64;
+        let window = AnchorWindow::at(now);
+        let mut b = dummy_batch(
+            [1u8; 32],
+            window,
+            Some(100),
+            None,
+            vec![dummy_leaf(0.5, 100, 1)],
+        );
+        let d1 = b.digest();
+        b.batch_size = 0; // mismatch: leaves.len() == 1, batch_size == 0
+        let d2 = b.digest();
+        assert_ne!(d1, d2);
+    }
+
+    #[test]
+    fn batch_digest_changes_on_governance_snapshot() {
+        // AC #2: governance_snapshot folded into digest.
+        let now = 1_000u64;
+        let window = AnchorWindow::at(now);
+        let mut b = dummy_batch(
+            [1u8; 32],
+            window,
+            Some(100),
+            None,
+            vec![dummy_leaf(0.5, 100, 1)],
+        );
+        let d1 = b.digest();
+        b.governance_snapshot.block_height = 99_999;
+        let d2 = b.digest();
+        assert_ne!(d1, d2);
+    }
+
+    #[test]
+    fn batch_digest_changes_on_governance_set_hash() {
+        // AC #2: governance_set_hash folded into digest.
+        let now = 1_000u64;
+        let window = AnchorWindow::at(now);
+        let mut b = dummy_batch(
+            [1u8; 32],
+            window,
+            Some(100),
+            None,
+            vec![dummy_leaf(0.5, 100, 1)],
+        );
+        let d1 = b.digest();
+        b.governance_set_hash[0] = 0xFF;
+        let d2 = b.digest();
+        assert_ne!(d1, d2);
+    }
+
+    #[test]
     fn within_leaf_cap_zero_leaves_passes() {
-        let b = ReputationAnchorBatch {
-            controller_id: [1u8; 32],
-            window: AnchorWindow::at(0),
-            chain_block_height: 0,
-            rotation_receipt_id: None,
-            leaves: vec![],
-        };
+        let b = dummy_batch([1u8; 32], AnchorWindow::at(0), Some(0), None, vec![]);
         assert!(b.within_leaf_cap());
     }
 
     #[test]
     fn within_leaf_cap_at_limit_passes() {
-        let mut b = ReputationAnchorBatch {
-            controller_id: [1u8; 32],
-            window: AnchorWindow::at(0),
-            chain_block_height: 0,
-            rotation_receipt_id: None,
-            leaves: vec![],
-        };
+        let mut b = dummy_batch([1u8; 32], AnchorWindow::at(0), Some(0), None, vec![]);
         for i in 0..MAX_TUPLES_PER_ROOT {
             b.leaves.push(dummy_leaf(0.5, 100, i as u8));
         }
+        b.batch_size = b.leaves.len() as u32;
         assert!(b.within_leaf_cap());
         assert_eq!(b.leaves.len() as u64, MAX_TUPLES_PER_ROOT);
+    }
+
+    #[test]
+    fn within_leaf_cap_batch_size_mismatch_fails() {
+        // AC #3 invariant: batch_size MUST equal leaves.len().
+        let b = dummy_batch(
+            [1u8; 32],
+            AnchorWindow::at(0),
+            Some(0),
+            None,
+            vec![dummy_leaf(0.5, 100, 1)],
+        );
+        // Construct a mismatch manually.
+        let mut b = b;
+        b.batch_size = 99;
+        assert!(!b.within_leaf_cap());
     }
 
     #[test]

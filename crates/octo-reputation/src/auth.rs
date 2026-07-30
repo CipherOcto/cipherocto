@@ -395,6 +395,122 @@ pub struct Attestation {
     pub source_domain: String,
 }
 
+// =========================================================================
+// Anchor-specific governance types (mission 0968a2, RFC-0955-R1
+// §"ReputationAnchorBatch" lines 177-200).
+//
+// Path (a) reconciliation: the existing `GovernanceSnapshot` (lines 21-25)
+// and `GovernanceProof` (line 113+) are semantically distinct
+// slash/suspension authorization envelopes tied to RFC-0968 §3
+// retirement + SuspensionAuth flows. In-place evolution would remove data
+// required by current RFC-0968 authorization flows. Path (b) was
+// reviewed in mission 0968a2 Round 7 and found unsafe. Path (a) —
+// defined here under new names — preserves existing auth.rs callers
+// while keeping the anchoring wire schema distinct.
+// =========================================================================
+
+/// Anchor-side governance snapshot (RFC-0955-R1 §"ReputationAnchorBatch"
+/// `Snapshot` lines 177-200). Carries the block + epoch + timestamp
+/// fingerprint under which the anchor batch is bound. Distinct from
+/// the existing `GovernanceSnapshot` (line 21) which carries
+/// membership data for retirement/suspension authorization flows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnchorGovernanceSnapshot {
+    /// Block height at which the snapshot was finalized on-chain.
+    pub block_height: u64,
+    /// Governance epoch identifier (typically `governance_set_hash`
+    /// truncated or a numeric roll-up).
+    pub epoch: u64,
+    /// Unix timestamp at which the snapshot was finalized.
+    pub finalized_at_unix: u64,
+}
+
+impl AnchorGovernanceSnapshot {
+    /// Encode for digest inclusion: 8-byte big-endian block + 8-byte
+    /// epoch + 8-byte timestamp = 24 bytes. Domain-separate via the
+    /// anchor BLAKE3 domain (caller responsibility).
+    pub fn canonical_bytes(&self) -> [u8; 24] {
+        let mut out = [0u8; 24];
+        out[..8].copy_from_slice(&self.block_height.to_be_bytes());
+        out[8..16].copy_from_slice(&self.epoch.to_be_bytes());
+        out[16..24].copy_from_slice(&self.finalized_at_unix.to_be_bytes());
+        out
+    }
+}
+
+/// Anchor-side governance signer (RFC-0955-R1 §"ReputationAnchorBatch"
+/// `Signer` lines 177-200). 32-byte ed25519 pubkey + 64-byte signature
+/// over the snapshot binding.
+///
+/// Note: `[u8; 64]` does not impl serde's `Serialize`/`Deserialize` by
+/// default (serde only supports arrays up to `[T; 32]`); we use the
+/// `hex::serde` adapter (matches the in-repo pattern at
+/// `RecorderDid`/`EventId`/`ControllerId`) so the wire form is hex
+/// for JSON debugging while the in-memory representation stays 64
+/// bytes for digest stability. The v012 BLOB column stores the
+/// `AnchorGovernanceProof` as postcard bytes — independent of the
+/// serde wire form used for JSON.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnchorGovernanceSigner {
+    pub pubkey: [u8; 32],
+    #[serde(with = "hex::serde")]
+    pub signature: [u8; 64],
+}
+
+impl AnchorGovernanceSigner {
+    /// Canonical bytes: 32-byte pubkey || 64-byte signature = 96 bytes.
+    pub fn canonical_bytes(&self) -> [u8; 96] {
+        let mut out = [0u8; 96];
+        out[..32].copy_from_slice(&self.pubkey);
+        out[32..96].copy_from_slice(&self.signature);
+        out
+    }
+}
+
+/// Anchor-side governance proof (RFC-0955-R1 §"ReputationAnchorBatch"
+/// `Proof` lines 177-200). Carries the multi-sig set attesting the
+/// anchor's binding to the governance snapshot. A valid proof has
+/// exactly `GOVERNANCE_QUORUM` (= 3) distinct signers per RFC-0968 §10.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnchorGovernanceProof {
+    pub signers: Vec<AnchorGovernanceSigner>,
+}
+
+impl AnchorGovernanceProof {
+    /// True iff the proof carries exactly the canonical quorum count
+    /// (3 distinct signers per RFC-0968 §10 + RFC-0955-R1 §"Governance
+    /// Snapshot Binding"). Distinctness is checked on `pubkey`; two
+    /// signers with the same pubkey count once.
+    pub fn meets_quorum(&self) -> bool {
+        if self.signers.len() as u32 != crate::constants::GOVERNANCE_QUORUM {
+            return false;
+        }
+        let mut seen: [[u8; 32]; 8] = [[0u8; 32]; 8];
+        for (n, s) in self.signers.iter().enumerate() {
+            if seen[..n].iter().any(|p| p == &s.pubkey) {
+                return false;
+            }
+            if n >= seen.len() {
+                return false;
+            }
+            seen[n] = s.pubkey;
+        }
+        true
+    }
+
+    /// Encode the proof body for digest inclusion: per-signer
+    /// `canonical_bytes()` concatenated in declaration order. Length
+    /// is fixed at `GOVERNANCE_QUORUM * 96` bytes (= 288) when the
+    /// proof is well-formed.
+    pub fn canonical_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.signers.len() * 96);
+        for s in &self.signers {
+            out.extend_from_slice(&s.canonical_bytes());
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

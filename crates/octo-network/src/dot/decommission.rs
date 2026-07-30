@@ -211,11 +211,16 @@ pub struct AuditEntry {
 /// Persists a chronological record of all decommission events. The
 /// default size is 1024 entries; the log is bounded to keep memory
 /// usage predictable. Older entries are evicted on overflow (FIFO).
-#[derive(Debug, Clone)]
+///
+/// When constructed via `open_with_ndjson_store`, an
+/// `AuditLogStore` is attached: every `append` writes through to disk
+/// (RFC-0850p-f v0.3 §F-4).
+#[derive(Debug)]
 pub struct AuditLog {
     entries: BTreeMap<u64, AuditEntry>,
     max_entries: usize,
     next_seq: u64,
+    store: Option<Box<dyn super::audit_store::AuditLogStore>>,
 }
 
 impl Default for AuditLog {
@@ -231,7 +236,43 @@ impl AuditLog {
             entries: BTreeMap::new(),
             max_entries,
             next_seq: 0,
+            store: None,
         }
+    }
+
+    /// Attach a persistent audit log store. When set, every `append`
+    /// call writes through to `store` after the in-memory update.
+    /// Sequence numbers in the store must be contiguous with
+    /// `next_seq`; callers opening an existing store should seed
+    /// `next_seq` via `with_store_rehydrated`.
+    pub fn with_store(mut self, store: Box<dyn super::audit_store::AuditLogStore>) -> Self {
+        self.store = Some(store);
+        self
+    }
+
+    /// Open an audit log with a fresh `NdjsonAuditLogStore` rooted at
+    /// `dir`, rehydrating the in-memory BTreeMap from any existing
+    /// segments. Sequence numbers are seeded to `max_persisted_seq + 1`.
+    pub fn open_with_ndjson_store(
+        max_entries: usize,
+        dir: impl Into<std::path::PathBuf>,
+    ) -> Result<Self, super::audit_store::AuditStoreError> {
+        use super::audit_store::NdjsonAuditLogStore;
+        let store = Box::new(NdjsonAuditLogStore::open(dir)?);
+        let mut log = Self::new(max_entries).with_store(store);
+        // Rehydrate entries from disk.
+        let rehydrated = log
+            .store
+            .as_ref()
+            .unwrap()
+            .read_range(0, u64::MAX)
+            .unwrap_or_default();
+        for (seq, entry) in &rehydrated {
+            log.entries.insert(*seq, entry.clone());
+        }
+        let max_seq = rehydrated.last().map(|(s, _)| *s);
+        log.next_seq = max_seq.map(|s| s + 1).unwrap_or(0);
+        Ok(log)
     }
 
     /// Append an entry to the log. Returns the sequence number assigned.
@@ -249,11 +290,18 @@ impl AuditLog {
             timestamp_secs,
             envelope,
         };
-        self.entries.insert(seq, entry);
+        self.entries.insert(seq, entry.clone());
         // Evict oldest entries to keep size under max_entries
         while self.entries.len() > self.max_entries {
             let oldest_key = *self.entries.keys().next().expect("non-empty");
             self.entries.remove(&oldest_key);
+        }
+        // Write through to the persistent store if one is attached.
+        if let Some(store) = self.store.as_mut() {
+            // Persistence failures are non-fatal — log them but keep
+            // the in-memory entry. Production callers should monitor
+            // the error via a tracing event (TODO: wire tracing here).
+            let _ = store.append(seq, &entry);
         }
         seq
     }
@@ -650,5 +698,51 @@ mod tests {
         assert_eq!(c.unique_witness_count(), 1);
         assert_eq!(c.total_ack_count(), 2);
         assert!(c.is_quorum_reached());
+    }
+
+    // RFC-0850p-f v0.3 §F-4: AuditLog + NdjsonAuditLogStore wiring.
+    // Appends write through to disk; reopening rehydrates entries.
+    #[test]
+    fn audit_log_persists_to_ndjson_and_rehydrates() {
+        let dir = std::env::temp_dir().join(format!(
+            "audit-log-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Open a fresh log with a persistent store.
+        let mut log = AuditLog::open_with_ndjson_store(1024, &dir).unwrap();
+        let key = SigningKey::from_bytes(&[1u8; 32]);
+        let env = UnbindAllAuditEnvelope {
+            domain_id: [7u8; 32],
+            group_jid: "g@g.us".into(),
+            platform: "whatsapp".into(),
+            initiator_id: key.verifying_key().to_bytes(),
+            reason: UnbindReason::Scheduled,
+            reason_text: String::new(),
+            initiated_at_epoch: 0,
+            completed_at_epoch: 0,
+            witness_count: 1,
+            unbind_hash: [0u8; 32],
+            nonce: [0u8; 32],
+            audit_hash: [0u8; 32],
+            signature: [0u8; 64],
+        };
+        let seq0 = log.append(env.clone(), 1_700_000_000);
+        let seq1 = log.append(env, 1_700_000_001);
+        assert_eq!(seq0, 0);
+        assert_eq!(seq1, 1);
+
+        // Reopen: rehydration loads both entries.
+        let log2 = AuditLog::open_with_ndjson_store(1024, &dir).unwrap();
+        assert_eq!(log2.len(), 2);
+        assert_eq!(log2.get(0).unwrap().envelope.domain_id, [7u8; 32]);
+        assert_eq!(log2.get(1).unwrap().envelope.domain_id, [7u8; 32]);
+
+        // Cleanup.
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

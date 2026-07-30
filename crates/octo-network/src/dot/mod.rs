@@ -4,6 +4,7 @@
 //! substrates for decentralized consensus.
 
 pub mod adapters;
+pub mod audit_store;
 pub mod binding;
 pub mod config;
 pub mod dc;

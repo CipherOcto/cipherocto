@@ -201,7 +201,14 @@ case "$ACTION" in
         ;;
 
     stop)
-        if ! daemon_running; then log "not running"; rm -f "$SOCKET"; exit 0; fi
+        if ! daemon_running; then
+            log "not running"
+            rm -f "$SOCKET"
+            # Clean stale db.lock even when not running (previous unclean exit)
+            SESSION_DIR="$DATA_DIR/$NAME.session.db"
+            [ -f "$SESSION_DIR/db.lock" ] && rm -f "$SESSION_DIR/db.lock"
+            exit 0
+        fi
         log "graceful shutdown via RPC"
         if "$BIN" --socket "$SOCKET" shutdown >/dev/null 2>&1; then
             sleep 2
@@ -215,6 +222,13 @@ case "$ACTION" in
             kill -KILL "$pid" 2>/dev/null || true
             rm -f "$PID_FILE" "$SOCKET"
             log "killed"
+        fi
+        # Clean db.lock after stop — daemon releases it on graceful shutdown
+        # but a killed daemon leaves it behind.
+        SESSION_DIR="$DATA_DIR/$NAME.session.db"
+        if [ -f "$SESSION_DIR/db.lock" ]; then
+            log "removing db.lock after stop $SESSION_DIR/db.lock"
+            rm -f "$SESSION_DIR/db.lock"
         fi
         ;;
 
@@ -236,6 +250,12 @@ case "$ACTION" in
             rm -f "$PID_FILE"
         fi
         rm -f "$SOCKET"
+        # Clean stale db.lock after force-kill (unclean shutdown)
+        SESSION_DIR="$DATA_DIR/$NAME.session.db"
+        if [ -f "$SESSION_DIR/db.lock" ]; then
+            log "removing stale db.lock after force-kill $SESSION_DIR/db.lock"
+            rm -f "$SESSION_DIR/db.lock"
+        fi
         sleep 1
         # Filter out --restart before exec; otherwise we loop forever.
         shift_args=()
@@ -296,6 +316,15 @@ EOF
         if [ -S "$SOCKET" ]; then
             log "removing stale socket $SOCKET"
             rm -f "$SOCKET"
+        fi
+
+        # Stale session db.lock from unclean shutdown (kill -9, crash).
+        # SQLite WAL mode writes this file; it persists after process death
+        # and prevents the next daemon from opening the database.
+        SESSION_DIR="$DATA_DIR/$NAME.session.db"
+        if [ -f "$SESSION_DIR/db.lock" ]; then
+            log "removing stale db.lock (unclean shutdown) $SESSION_DIR/db.lock"
+            rm -f "$SESSION_DIR/db.lock"
         fi
 
         mkdir -p "$LOG_DIR" "$CAPTURE_LOG_DIR" "$SOCKET_DIR" "/run/user/$(id -u)"

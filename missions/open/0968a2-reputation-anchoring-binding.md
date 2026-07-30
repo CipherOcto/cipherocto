@@ -23,9 +23,11 @@ Mission 0968a's Round 4 review (REV-3 commit `b5cb0d1f`) identified
 the 9 ungrounded ACs and 2 cross-RFC drifts (N8 `StakeBelowMinimum`,
 N9 `ReputationAnchorBatch` governance fields). This mission 0968a2
 owns ALL 9 ungrounded ACs from 0968a + the 2 cross-RFC drift
-reconciliations. The 10 Scope items (9 Scope + 1 split reorg+DID-rotation
-into one Scope item covering both) map cleanly to 11 ACs (8 inherited
-from 0968a + 1 live adapter + 1 v012 migration + 1 test re-pinning).
+reconciliations. The 9 Scope items (reorg + DID-rotation finality
+combined into 1 Scope item covering both; the 1:1 AC mapping would
+have produced 10) map cleanly to 12 ACs (8 inherited from 0968a +
+1 live adapter + 1 v012 migration + 1 test re-pinning + 1 explicit
+`rotation_receipt_id` chain encoding).
 
 1. `StakeBelowMinimum` IMPL/RFC discriminant delta
 2. `ReputationAnchorBatch` governance fields
@@ -98,10 +100,12 @@ if governance prefers spec-first.
       collide. The clean fix: update RFC-0968 §13 (line 2057 + 2621 table)
       to declare `StakeBelowMinimum = 0x2D` with payload `{ component: StakeComponent }`
       (matching IMPL). The IMPL value `0x2D` is in the RFC-0968 §13
-      reserved band `0x2A..=0xFF` (per `error.rs:8-49` context), so the
-      assignment is permitted. Document the RFC reconciliation in the PR
-      description. Filed as a follow-up to RFC-0968-A2 amendment (or
-      absorbed into the next RFC-0968 amendment revision).
+      reserved band `0x2A..=0xFF` (per RFC-0968 §13 line 2641; note
+      `error.rs:8-49` mentions a post-amendment-82 reserved band
+      `0x3A..=0xFF` not yet active), so the assignment is permitted.
+      Document the RFC reconciliation in the PR description. Filed as
+      a follow-up to RFC-0968-A2 amendment (or absorbed into the next
+      RFC-0968 amendment revision).
 - [ ] **`ReputationAnchorBatch` governance fields** — the IMPL
       `crates/octo-reputation/src/anchor.rs:121-137` has 5 fields
       (`controller_id`, `window`, `chain_block_height`,
@@ -122,21 +126,40 @@ if governance prefers spec-first.
       `governance_set_hash BLOB` columns (all nullable). Add unit tests for
       construction + digest stability with the new fields. Note: existing
       3 canonical test vectors in `tests/canonical_blobs.rs` (the
-      `CANONICAL_ANCHOR_BLOB_{0,1,100}_LEAVES` pinned bytes at lines 34-49)
-      will need re-pinning once the digest covers governance fields.
+      `CANONICAL_ANCHOR_BLOB_{0,1,100}_LEAVES` pinned bytes at lines
+      34, 41, 48) will need re-pinning once the digest covers
+      governance fields. **Also: create the verifier types** — RFC-0955-R1
+      §"Governance Snapshot Binding" (lines 177-200) defines three
+      Rust types (`GovernanceSnapshot` with `block_height`, `epoch`,
+      `finalized_at_unix`; `GovernanceSigner` with `pubkey: [u8; 32]`,
+      `signature: [u8; 64]`; `GovernanceProof` with `signers: Vec<GovernanceSigner>`)
+      that are NOT in the IMPL today. Add them in a new
+      `crates/octo-reputation/src/auth.rs` module (alongside
+      `age_secs`/`is_fresh` in the existing `auth.rs`). Wire them into
+      the new `ReputationAnchorBatch` BLOB fields via serde
+      deserialization as the canonical in-memory form.
 - [ ] **Live `ChainAnchorSubmitter` impl for the on-chain ledger** —
       implement a real `ChainAnchorSubmitter` (alongside the existing
       `StubChainAnchorSubmitter` at `anchor_job.rs:139`) that takes a
       `ReputationAnchorBatch` and submits the on-chain merkle-root
-      transaction. Wire it into `anchor_job.rs:run_once_strict` (line 338)
-      as the default submitter for production deployments. The stub
-      remains the test/CI default. The target chain substrate is pending
-      a separate chain-substrate selection RFC (see ## Dependencies).
-- [ ] **Reorg-aware resubmission** — wire `plan_batches`
-      (`anchor_job.rs:172`) to consult `is_finality_reached`
-      (`anchor.rs:206-208`) for reorg detection. On reorg > `MIN_FINALITY_BLOCKS`
-      (`constants.rs:42`), re-submit the affected `(controller_id, anchor_root)`
-      pair. Add tests for the reorg-handler path. Per RFC-0955-R1 §"Finality"
+      transaction. **Explicitly covers 0968a AC #5 (chain-side encoding
+      of `rotation_receipt_id`):** the live submitter must write the
+      `ReputationAnchorBatch.rotation_receipt_id` field through to the
+      v010 ledger's `rotation_receipt_id` column (per
+      `v010__reputation_anchors.sql` line 62). Wire it into
+      `anchor_job.rs:run_once_strict` (line 338) as the default submitter
+      for production deployments. The stub remains the test/CI default.
+      The target chain substrate is pending a separate chain-substrate
+      selection RFC (see ## Dependencies).
+- [ ] **Reorg-aware resubmission** — `plan_batches`
+      (`anchor_job.rs:172`) is a pure function (no chain-state
+      arguments). Wire a reorg-aware wrapper around it: either extend
+      `run_once_strict` (line 338) to call `is_finality_reached`
+      (`anchor.rs:206-208`) BEFORE calling `plan_batches`, OR introduce
+      a new `plan_batches_with_reorg_check` that takes chain-state
+      parameters. On reorg > `MIN_FINALITY_BLOCKS` (`constants.rs:42`),
+      re-submit the affected `(controller_id, anchor_root)` pair. Add
+      tests for the reorg-handler path. Per RFC-0955-R1 §"Finality"
       (lines 227-248), this also covers DID-rotation finality: if a
       `consume_rotation_receipt` for the anchor's `did` is finalized in
       the chain BEFORE the anchor's `MIN_FINALITY_BLOCKS`, re-submit the
@@ -158,10 +181,12 @@ if governance prefers spec-first.
       selection RFC). Add the spec for `interval_secs`, `controller_id`,
       `chain_endpoint` once the config crate is identified.
 - [ ] **Idempotency behavior test** — add a test that submits the
-      same `EventId` twice and asserts the second submission is a no-op
-      (relies on the `UNIQUE` constraint on `reputation_anchors(event_id)`
-      and the composite-PK scope on `reputation_events(recorder_did, event_id)`
-      at `stoolap.rs:1714-1717`). The `anchor_tx_hash` claim in the
+      same `(did, signal_kind, layer, last_event_id)` 4-tuple twice (which
+      uniquely determines `event_id` per RFC-0955-R1 §"Chain-Level
+      Idempotency") and asserts the second submission is a no-op. Relies
+      on the `UNIQUE` constraint on `reputation_anchors(event_id)` and
+      the composite-PK scope on `reputation_events(recorder_did, event_id)`
+      at `stoolap.rs:1714-1717`. The `anchor_tx_hash` claim in the
       earlier draft was wrong — idempotency is on `event_id`, not
       `anchor_tx_hash`.
 - [ ] **Failure isolation test** — add a test that injects a
@@ -172,8 +197,13 @@ if governance prefers spec-first.
       to read `SignalEvent::anchor_tx_hash` and reject gossiped events
       whose `anchor_tx_hash` is `None` AND the event is older than
       `DEFAULT_ANCHOR_INTERVAL_SECS` (i.e., the event should have been
-      anchored by now). The gossip file is owned by mission 0855p-b
-      (now archived). Coordinate with the 0855p-b successor; if no
+      anchored by now). **Target the ingress handler only** (the
+      `handle_one` / `validate_envelope` call site); the 6 test
+      fixtures at lines 813, 1056, 1206, 1288, 1336, 1389, 1526
+      intentionally use `anchor_tx_hash: None` as test default and
+      should remain unchanged. The gossip file is owned by mission
+      0855p-b (now archived). Coordinate with the 0855p-b successor;
+      if no successor, file a new mission 0968a3-gossip-anchor-provenance.
       successor, file a new mission 0968a3-gossip-anchor-provenance.
 
 ## Out of scope
@@ -194,14 +224,16 @@ if governance prefers spec-first.
 - [ ] `ReputationAnchorBatch` has the 3 governance fields with `digest()` covering them
 - [ ] v012 migration adds `governance_snapshot`, `governance_proof`, `governance_set_hash` columns to `reputation_anchors`
 - [ ] Live `ChainAnchorSubmitter` impl exists; `run_once_strict` uses it for production (gated on chain-substrate selection RFC)
+- [ ] Live `ChainAnchorSubmitter` writes `rotation_receipt_id` through to v010 ledger (covers 0968a AC #5 chain-side encoding)
 - [ ] Reorg handler re-submits batches whose `(submitted, finalized)` height delta exceeds `MIN_FINALITY_BLOCKS`
 - [ ] DID-rotation finality handler re-submits anchors when `consume_rotation_receipt` is finalized before `MIN_FINALITY_BLOCKS`
 - [ ] Governance signature verification rejects batches with != `GOVERNANCE_QUORUM` (= 3) signatures
+- [ ] `GovernanceSnapshot` / `GovernanceSigner` / `GovernanceProof` types defined per RFC-0955-R1 lines 177-200
 - [ ] Per-deployment config layer exposes `interval_secs` + `controller_id` + `chain_endpoint`
-- [ ] Idempotency test (2 duplicate submits on `event_id`) passes
+- [ ] Idempotency test (2 duplicate submits on `(did, signal_kind, layer, last_event_id)` 4-tuple) passes
 - [ ] Failure isolation test (submitter mid-batch fail) passes
-- [ ] Gossip consumer rejects stale `anchor_tx_hash: None` events (requires 0855p-b successor)
-- [ ] 3 canonical test vectors in `tests/canonical_blobs.rs` re-pinned to new digest
+- [ ] Gossip consumer rejects stale `anchor_tx_hash: None` events at ingress handler only (6 test fixtures remain unchanged; requires 0855p-b successor)
+- [ ] 3 canonical test vectors in `tests/canonical_blobs.rs` (lines 34, 41, 48) re-pinned to new digest
 
 ## AC → Scope mapping
 

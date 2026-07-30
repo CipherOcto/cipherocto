@@ -23,8 +23,9 @@ Mission 0968a's Round 4 review (REV-4 commit `b5cb0d1f`) identified
 the 9 ungrounded ACs and 2 cross-RFC drifts (N8 `StakeBelowMinimum`,
 N9 `ReputationAnchorBatch` governance fields). The N8 discriminant
 drift was already resolved in commit `013a5676` (Round 2 of 0968a2
-review). This mission 0968a2 now owns the remaining 8 ungrounded ACs
-from 0968a + the N9 governance fields drift + 8 new fix items
+review). This mission 0968a2 now owns the remaining 9 ungrounded ACs
+from 0968a (the 8 ungrounded ACs + the N9 governance fields drift
+consolidated as one of the 9 inherited ACs) + 8 new fix items
 discovered during rounds 1-5 of 0968a2 review (governance types,
 `batch_size`, `chain_block_height` type, `AnchorLeaf::digest` field
 order, rotation_receipt_id chain encoding, live adapter, v012
@@ -44,10 +45,13 @@ finality combined into 1 Scope item covering both) map cleanly to
 
 ## RFC
 
+- RFC-0955: Model Liquidity Layer (parent RFC; `ComputeOffer.reputation:
+  ReputationDigest` defined in §"Compute Assets" — the binding target
+  for the anchoring)
 - RFC-0955-R1: Reputation Anchoring Amendment (canonical binding
   contract; `ReputationAnchorBatch` struct + governance binding)
-- RFC-0968: Reputation Registry (the persisted source-of-truth;
-  §"Compute Assets" + §13 error enum table)
+- RFC-0968: Reputation Registry (the persisted source-of-truth; §13
+  error enum table)
 - RFC-0927: RouterConfig Extension (consumer-relevant for the per-deployment
   config plumbing in Scope item 6; RFC-0927 is about `RouterConfig`,
   not reputation — the actual reputation config block is a separate
@@ -225,7 +229,10 @@ bug fix requires re-pinning the 3 vectors to the correct order.
       on the `UNIQUE` constraint on `reputation_anchors(event_id)` (defined
       in `v010__reputation_anchors.sql` line 24) and the composite-PK
       scope on `reputation_events(recorder_did, event_id)` enforced at
-      `stoolap.rs:1714-1717`. The `anchor_tx_hash` claim in the earlier
+      `stoolap.rs:1718-1719` (WHERE clause with composite-PK scope
+      `(recorder_did, event_id)`). The `anchor_tx_hash` claim in the earlier
+      draft was wrong — idempotency is on `event_id`, not
+      `anchor_tx_hash`.
       draft was wrong — idempotency is on `event_id`, not `anchor_tx_hash`.
 - [ ] **Failure isolation test** — add a test that injects a
       `ChainAnchorSubmitter` failure mid-batch and asserts that

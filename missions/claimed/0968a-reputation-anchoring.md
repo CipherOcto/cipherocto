@@ -8,22 +8,68 @@ RFC-0955, both promoted to Accepted this session). RFC-0968 accepted
 (Round 3 review, after R13/R14/R15 commits `1b528ef3`,
 `1e042356`, `e42c67d5`): per the per-AC audit, **10 of 19 AC items
 (Scope + Acceptance Criteria combined) are landed in code** — see
-the `[x]` items below for file:line citations. The 9 ungrounded `[ ]`
-AC items are:
+the `[x]` items below for file:line citations.
+
+**Status refreshed 2026-07-30 (round 16)**: mission **0968a2**
+(`missions/claimed/0968a2-reputation-anchoring-binding.md`) landed
+in commit `72bf19d7`. 0968a2 closed the N9 governance fields drift
+(RFC-0955-R1 §"ReputationAnchorBatch") by extending
+`ReputationAnchorBatch` with `governance_snapshot`,
+`governance_proof`, `governance_set_hash`, `batch_size: u32` fields,
+changing `chain_block_height: u64` → `Option<u64>` (None at
+submission, Some(h) post-finality per RFC-0955-R1 line 170), and
+fixing the `AnchorLeaf::digest` field order to put
+`score_ewma_raw` at position 5 per RFC-0955-R1 lines 420-422.
+v012 migration added 3 governance BLOB columns to
+`reputation_anchors`. 3 canonical test vectors re-pinned in
+`tests/canonical_blobs.rs`. AC L146
+("Governance-set hash + 3 distinct signatures in every anchor tx")
+MOSTLY grounds at the struct level; the runtime verification gate
+(`governance_proof.meets_quorum()`) lands with 0968a2 but the
+in-anchor-job pre-flight check (calling `meets_quorum()` before
+`ChainAnchorSubmitter::submit`) is ungrounded — still awaits
+chain-substrate selection.
+
+The 9 ungrounded `[ ]` AC items remain:
 
 1. Live background job submission path (chain-side adapter not wired)
 2. Idempotency AC (no behavior test against the live job)
 3. Failure isolation AC (no failure-mode tests referencing `reputation_events` mutation)
 4. Per-deployment config plumbing (constants declared, config layer ungrounded)
-5. `rotation_receipt_id` chain encoding (in-memory struct has it; chain encoding ungrounded)
-6. DID-rotation finality handler integration (`MIN_FINALITY_BLOCKS` + `is_finality_reached` declared, not integrated into `plan_batches`)
-7. Governance quorum signatures in anchor tx (verification flow ungrounded)
+5. `rotation_receipt_id` chain encoding (in-memory struct + digest
+   folding landed via 0968a2; chain encoding ungrounded — needs
+   live `ChainAnchorSubmitter` wiring, gated on AC #1)
+6. DID-rotation finality handler integration (`MIN_FINALITY_BLOCKS` +
+   `is_finality_reached` declared, not integrated into `plan_batches`)
+7. Governance quorum signatures in anchor tx (struct fields +
+   `meets_quorum()` landed via 0968a2; runtime pre-flight check
+   in `anchor_job.rs::run_once_strict` ungrounded — needs AC #1)
 8. Reorg re-submission on reorg > `MIN_FINALITY_BLOCKS` (no handler)
-9. Gossip cross-reference (mission 0855p-b does not verify `anchor_tx_hash` provenance)
+9. Gossip cross-reference (mission 0855p-b does not verify
+   `anchor_tx_hash` provenance)
+
+Of the 9, **5 (#1, #4, #5, #6, #7, #8) are gated on the
+chain-substrate selection RFC** (a separate deliverable not owned
+by this mission or 0968a2). **#9 is gated on a successor to
+archived mission 0855p-b** (the gossip file
+`crates/octo-network/src/gossip/reputation.rs` is owned by that
+mission family; if no successor is filed, a new mission
+0968a3-gossip-anchor-provenance would be required). Only **#2 and
+#3 (the idempotency + failure isolation behavior tests)** are
+achievable here without external blockers — they were deferred
+because they need a live `ChainAnchorSubmitter` to test against.
+
+**Path forward**: user-initiated Path B closure recommended (per
+BLUEPRINT §1152-1158). The 9 ungrounded ACs split cleanly into
+3 categories with explicit external ownership, all of which are
+out-of-scope for 0968a's commit boundary. The mission is
+substantively complete; the residual work is a separate
+chain-substrate + gossip coordination effort.
 
 The `anchor_job.rs` scheduler scaffold, the `v010__reputation_anchors.sql`
-migration, and the `v011__reputation_events_anchor.sql` migration are
-all committed (tracked in git, last touched by commit `32ea46e7`).
+migration, the `v011__reputation_events_anchor.sql` migration, and
+the new `v012__reputation_anchors_governance.sql` migration are
+all committed (v012 added 2026-07-30 in commit `72bf19d7`).
 Migration summary:
 
 - `v010` — creates `reputation_anchors` table (the per-controller
@@ -34,6 +80,11 @@ Migration summary:
   AC-required `WHERE anchor_tx_hash IS NULL` sweep depends on this).
   Schema: `ALTER TABLE reputation_events ADD COLUMN anchor_tx_hash BLOB;`
   - `idx_reputation_events_controller_anchor` on `(controller_id, anchor_tx_hash)`.
+- `v012` — adds the 3 governance BLOB columns to
+  `reputation_anchors` (`governance_snapshot`, `governance_proof`,
+  `governance_set_hash`) per RFC-0955-R1 lines 177-200. Plus
+  `idx_reputation_anchors_governance_set_hash` for the
+  cross-replica consistency check.
 
 Original blocker (now cleared): RFC-0955-R1 acceptance — sibling Accepted
 RFC at `rfcs/accepted/economics/0955-r1-reputation-anchoring.md` (promoted
@@ -50,40 +101,42 @@ Dfp BLOB plus the full tuple identity (`did || signal_kind || layer ||
 last_event_id || last_event_unix || samples || severity_total`). Earlier
 draft wording referencing `reputation:blake3_digest` is RETIRED.
 
-**Discriminant note (Round 3 review B2)**: `ReputationError::AnchorTupleFanoutExceeded`
+**Discriminant note (Round 3 review B2, resolved round 16)**: `ReputationError::AnchorTupleFanoutExceeded`
 is **0x2A** in the impl (`crates/octo-reputation/src/error.rs:174`) and
 **0x2A** in RFC-0968 §13 reserved band (`0x2A..=0xFF`); the previous
 RFC-0955-R1 references to 0x2D were stale (0x2D is already used by
 `StakeBelowMinimum` in `error.rs:190`). RFC-0955-R1 corrected to 0x2A
 in this revision.
 
-**Cross-RFC drift notes (Round 4 review N8, N9)** — known IMPL/RFC
-mismatches that block some of the 9 ungrounded ACs:
+**Cross-RFC drift notes (Round 4 review N8, N9 — N9 resolved round 16)**:
 
 1. **`StakeBelowMinimum` discriminant (N8)**: IMPL assigns `0x2D`
    (`error.rs:190`, payload `{ component: StakeComponent }`) but
    RFC-0968 §13 (line 2057 + 2621 table) assigns `0x17` (payload
    `{ provided: u64 }`). The IMPL value is in the reserved band
-   `0x2A..=0xFF` per RFC-0968 §13 line 2641. This is a separate
-   pre-existing cross-RFC drift, NOT introduced by mission 0968a.
-   Resolution path: file as future RFC-0968-A2 amendment candidate
-   or correct in impl. Anchor fix (0x2A) is safe regardless.
+   `0x2A..=0xFF` per RFC-0968 §13 line 2641. **Resolved in commit
+   `013a5676`** (round 2 of 0968a2 review): RFC-0968 §10 line 2057 +
+   §13 line 2621 + §3 line 616 updated to declare
+   `StakeBelowMinimum = 0x2D` with `{ component: StakeComponent }`
+   payload, matching the IMPL. The IMPL stays as-is per the
+   `error.rs:22-28` guardrail ("Do NOT change discriminants until
+   RFC-0968-A2 lands"). The 0x17 slot is occupied by
+   `GovernanceSlashFieldMismatch` at `error.rs:133`.
 
-2. **`ReputationAnchorBatch` governance fields (N9)**: RFC-0955-R1
-   §"ReputationAnchorBatch" (lines 148-198) defines a flatter struct
-   with `governance_snapshot`, `governance_proof`, `governance_set_hash`,
-   and `chain_block_height` fields. The IMPL `anchor.rs:121-137` has
-   split this into `AnchorLeaf` (per-leaf identity + score) +
-   `ReputationAnchorBatch` (per-controller aggregation with
-   `controller_id`, `window`, `chain_block_height`, `rotation_receipt_id`,
-   `leaves`). The governance binding lives at the batch level per
-   RFC-0955-R1 §"Governance Snapshot Binding" (lines 250-267) but is
-   NOT yet wired into the IMPL batch struct. This is the load-bearing
-   reason AC L146 ("Governance-set hash + 3 distinct signatures in
-   every anchor tx") is `[ ]` — without those fields on the batch,
-   the AC cannot be partially-checked. Resolution path: extend
-   `ReputationAnchorBatch` per RFC-0955-R1 or add a sub-struct
-   `GovernanceBinding` referenced from the batch.
+2. **`ReputationAnchorBatch` governance fields (N9)**: **Resolved
+   by 0968a2 in commit `72bf19d7`** (round 16). `ReputationAnchorBatch`
+   now carries `governance_snapshot: AnchorGovernanceSnapshot`,
+   `governance_proof: AnchorGovernanceProof`, `governance_set_hash:
+[u8; 32]`, plus `batch_size: u32`, plus
+   `chain_block_height: Option<u64>` per RFC-0955-R1 lines 170,
+   173, 177-200. The anchor-specific verifier types
+   (`AnchorGovernanceSnapshot` / `AnchorGovernanceSigner` /
+   `AnchorGovernanceProof`) live at `crates/octo-reputation/src/auth.rs`
+   per path (a) reconciliation. The `AnchorLeaf::digest` field
+   order was also fixed (`score_ewma_raw` at position 5 per
+   RFC-0955-R1 lines 420-422 — the previous last-position was a
+   cross-implementation interoperability bug). 3 canonical test
+   vectors re-pinned.
 
 ## RFC
 

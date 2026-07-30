@@ -131,17 +131,38 @@ if governance prefers spec-first for any remaining cross-RFC drift.
       3 canonical test vectors in `tests/canonical_blobs.rs` (the
       `CANONICAL_ANCHOR_BLOB_{0,1,100}_LEAVES` pinned bytes at lines
       34, 41, 48) will need re-pinning once the digest covers
-      governance fields. **Also: create the verifier types** — RFC-0955-R1
+      governance fields. **Reconcile the verifier types** — RFC-0955-R1
       §"Governance Snapshot Binding" (lines 177-200) defines three
       Rust types (`GovernanceSnapshot` with `block_height`, `epoch`,
       `finalized_at_unix`; `GovernanceSigner` with `pubkey: [u8; 32]`,
-      `signature: [u8; 64]`; `GovernanceProof` with `signers: Vec<GovernanceSigner>`)
-      that are NOT in the IMPL today. Add them in a new
-      `crates/octo-reputation/src/auth.rs` module (alongside
-      `age_secs`/`is_fresh` in the existing `auth.rs`). Wire them into
-      the new `ReputationAnchorBatch` BLOB fields via serde
-      deserialization as the canonical in-memory form. **Also: fix
-      `AnchorLeaf::digest` field-order bug in IMPL** (per
+      `signature: [u8; 64]`; `GovernanceProof` with `signers: Vec<GovernanceSigner>`).
+      The IMPL `crates/octo-reputation/src/auth.rs` ALREADY has
+      `GovernanceSnapshot` (lines 21-25: `finalized_at_unix`,
+      `governance_set_hash`, `members: Vec<[u8; 32]>`) and
+      `GovernanceProof` (line 113+) but with INCOMPATIBLE shapes vs
+      RFC-0955-R1. `GovernanceSigner` is absent. Following the prior
+      mission text literally (create new types in a new auth.rs
+      module) would collide with the existing names. Two reconciliation
+      paths:
+
+      (a) Add RFC-0955-R1 types under new names in the same module
+      (e.g., `AnchorGovernanceSnapshot`, `AnchorGovernanceSigner`,
+      `AnchorGovernanceProof`) — preserves existing auth.rs callers
+      (RFC-0968 §3 retirement, SuspensionAuth, SlashDestination) and
+      keeps the anchoring wire schema distinct. Wire them into the
+      new `ReputationAnchorBatch` BLOB fields via serde
+      deserialization.
+
+      (b) Evolve the existing `GovernanceSnapshot` / `GovernanceProof`
+      in place to match RFC-0955-R1 shapes — requires updating
+      every call site (recorder registration, retirement, suspension
+      auth, slash attestation) and a v013 migration for re-shaped
+      BLOB columns. Larger blast radius.
+
+      Recommended path (a) for the smaller blast radius. Document
+      the chosen path in the PR description.
+
+      **Also: fix `AnchorLeaf::digest` field-order bug in IMPL** (per
       `crates/octo-reputation/src/anchor.rs:80-100`) — the IMPL hashes
       `last_event_unix`, `samples`, `severity_total`, then
       `score_ewma_raw`. RFC-0955-R1 line 420-422 requires the canonical
@@ -221,7 +242,6 @@ last_event_unix, samples, severity_total)` — i.e., `score_ewma_raw`
       should remain unchanged. The gossip file is owned by mission
       0855p-b (now archived). Coordinate with the 0855p-b successor;
       if no successor, file a new mission 0968a3-gossip-anchor-provenance.
-      successor, file a new mission 0968a3-gossip-anchor-provenance.
 
 ## Out of scope
 
@@ -248,7 +268,7 @@ last_event_unix, samples, severity_total)` — i.e., `score_ewma_raw`
 - [ ] Reorg handler re-submits batches whose `(submitted, finalized)` height delta exceeds `MIN_FINALITY_BLOCKS`
 - [ ] DID-rotation finality handler re-submits anchors when `consume_rotation_receipt` is finalized before `MIN_FINALITY_BLOCKS`
 - [ ] Governance signature verification rejects batches with != `GOVERNANCE_QUORUM` (= 3) signatures
-- [ ] `GovernanceSnapshot` / `GovernanceSigner` / `GovernanceProof` types defined per RFC-0955-R1 lines 177-200
+- [ ] Anchor-specific verifier types (`AnchorGovernanceSnapshot` / `AnchorGovernanceSigner` / `AnchorGovernanceProof`) defined per RFC-0955-R1 lines 177-200 (reconciliation path (a) chosen) — or the chosen reconciliation path documented in PR description
 - [ ] Per-deployment config layer exposes `interval_secs` + `controller_id` + `chain_endpoint`
 - [ ] Idempotency test (2 duplicate submits on `(did, signal_kind, layer, last_event_id)` 4-tuple) passes
 - [ ] Failure isolation test (submitter mid-batch fail) passes
@@ -264,7 +284,7 @@ last_event_unix, samples, severity_total)` — i.e., `score_ewma_raw`
 | `ReputationAnchorBatch` `batch_size: u32` field                     | 2             |
 | `ReputationAnchorBatch.chain_block_height: Option<u64>` type        | 2             |
 | `AnchorLeaf::digest` field order per RFC-0955-R1 line 420-422       | 2             |
-| `GovernanceSnapshot` / `GovernanceSigner` / `GovernanceProof` types | 2             |
+| `AnchorGovernanceSnapshot` / `AnchorGovernanceSigner` / `AnchorGovernanceProof` types | 2     |
 | v012 migration                                                      | 2             |
 | Live `ChainAnchorSubmitter` impl                                    | 3             |
 | Live `ChainAnchorSubmitter` writes `rotation_receipt_id`            | 3             |

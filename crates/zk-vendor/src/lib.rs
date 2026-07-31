@@ -1,38 +1,37 @@
-//! CipherOcto zk-vendor: vendored STWO source with stable-rust patches +
-//! runtime FFI loader for the `stwo-sys` cdylib.
+//! CipherOcto zk-vendor: runtime FFI loader for the `stwo-sys` cdylib
+//! (STWO STARK prover, extracted from the stoolap fork per
+//! [[stoolap-general-purpose-db]] on 2026-07-22).
 //!
-//! **Crypto home:** this crate is the cargo home for STWO (a STARK prover
-//! that depends on nightly-only `curve25519-dalek` SIMD). Extracted from the
-//! stoolap fork per [[stoolap-general-purpose-db]] (2026-07-22). Stable
-//! rust only — MSRV pinned in `rust-toolchain.toml`.
+//! **Decoupled workspace pattern (mission 0958-a S05 Session 2 fix-up,
+//! 2026-07-31):** STWO is NOT compiled into the cipherocto workspace
+//! directly (its upstream requires nightly toolchain — `curve25519-dalek`
+//! SIMD intrinsics, `iter_array_chunks` polyfill). Instead, the STWO FFI
+//! shim is built as a separate cargo project at
+//! `crates/zk-vendor/stwo-sys/` (excluded from the cipherocto workspace
+//! via root `Cargo.toml` `exclude`) producing `libstwo_sys.so`. The
+//! cipherocto workspace loads this artifact at runtime via `libloading`.
 //!
-//! ## Loading strategy
+//! - `crates/zk-vendor/stwo-sys/rust-toolchain.toml` pins nightly
+//!   (matching `stoolap/stwo-plugin/rust-toolchain.toml`).
+//! - `crates/zk-vendor/rust-toolchain.toml` pins stable 1.75.0 (cipherocto
+//!   workspace stays MSRV-stable).
 //!
-//! STWO is NOT compiled into the cipherocto workspace directly (its upstream
-//! requires nightly toolchain). Instead, the STWO FFI shim is built as a
-//! separate cargo project at `crates/zk-vendor/stwo-sys/` (excluded from
-//! workspace via root `Cargo.toml`) producing `libstwo_sys.so`. Cipherocto
-//! loads this artifact at runtime via `libloading`.
+//! No vendoring of STWO source into the cipherocto workspace. The
+//! decoupled pattern keeps the cipherocto build on stable rust while
+//! letting STWO use nightly.
 //!
-//! If the library is missing, zk-vendor falls back to the stub commitment
-//! check + logs a warning. This lets dev workflows run without the nightly
-//! toolchain installed; production deployments ship the `.so` alongside
-//! the binary.
+//! ## Layering for `verify_capability_zk` in `zk-verifier`
 //!
-//! ## Vendor state (2026-07-31, mission 0958-a S05 Session 2)
-//!
-//! The vendored STWO crate at `crates/zk-vendor/stwo/` (Phase C.2 deliverable)
-//! ships a deterministic mock implementation behind the upstream STWO API
-//! surface (`Prover`, `verify`, `Proof`, `PublicInputs`). When the
-//! `vendored-stwo` cargo feature is enabled, `vendor_state()` returns
-//! `Vendored` and `vendored_stwo()` returns `Some(Prover::new())`. The real
-//! `keep-stwo/stwo@cipherocto-stable` source drop replaces the mock bodies
-//! (see `crates/zk-vendor/stwo/PATCHES.md`).
-//!
-//! Layering for `verify_capability_zk` in `zk-verifier`:
-//! 1. FFI (`loaded_library()`) if `libstwo_sys.so` is loaded
-//! 2. Vendored (`vendored_stwo()`) when the `vendored-stwo` feature is on
-//! 3. BLAKE3 stub fallback (always available)
+//! 1. **FFI** (`loaded_library()`) when `libstwo_sys.so` is present on
+//!    the host (production deployments ship the `.so` alongside the
+//!    binary).
+//! 2. **BLAKE3 stub** fallback when the lib is absent (dev / CI without
+//!    nightly-built `libstwo_sys.so`). The stub emits deterministic
+//!    BLAKE3 commitments so the full mint → verify round-trip exercises
+//!    the canonical check; it is NOT a real STARK proof (defense in
+//!    depth: the stub path never accepts a real STWO proof, and a real
+//!    STWO verifier would reject a stub-shaped commitment via the
+//!    `RealStwoError(code)` path).
 
 #![warn(missing_debug_implementations)]
 #![allow(clippy::doc_markdown)]
@@ -48,76 +47,42 @@ use libloading::Library;
 use thiserror::Error;
 use tracing::warn;
 
-/// Marker for whether STWO source is vendored.
+/// Marker for whether STWO is available.
 ///
-/// - `Stub`: BLAKE3 stub in `zk-verifier` (only when neither FFI nor
-///   vendored is available).
-/// - `Vendored`: in-workspace stable-rust vendored STWO crate
-///   (`crates/zk-vendor/stwo/`). Always `Vendored` when the
-///   `vendored-stwo` cargo feature is enabled (default-ON for
-///   `zk-verifier` consumers).
+/// - `Stub`: only the BLAKE3 stub in `zk-verifier` is available (no
+///   `libstwo_sys.so` loaded). Current state until the nightly-built
+///   cdylib is produced + deployed.
+/// - `Ffi`: the FFI bridge to `libstwo_sys.so` is loaded and the real
+///   STWO prover / verifier is available. This is the production
+///   deployment state (the cdylib is built via
+///   `cargo +nightly-2025-06-23 build --release --manifest-path
+///   crates/zk-vendor/stwo-sys/Cargo.toml` and shipped alongside the
+///   binary).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VendorState {
     Stub,
-    Vendored,
+    Ffi,
 }
 
 /// Returns the current vendor state.
 ///
-/// Reports `Vendored` when the `vendored-stwo` cargo feature is enabled
-/// (always true for downstream `zk-verifier` consumers via the default
-/// feature wiring). Reports `Stub` only when the feature is explicitly
-/// disabled.
+/// Reports `Ffi` when `loaded_library()` returns `Some` (production with
+/// `libstwo_sys.so` present); `Stub` otherwise (dev / CI without the
+/// nightly-built cdylib).
 #[must_use]
-pub const fn vendor_state() -> VendorState {
-    #[cfg(feature = "vendored-stwo")]
-    {
-        VendorState::Vendored
-    }
-    #[cfg(not(feature = "vendored-stwo"))]
-    {
+pub fn vendor_state() -> VendorState {
+    if loaded_library().is_some() {
+        VendorState::Ffi
+    } else {
         VendorState::Stub
     }
 }
 
-/// Return an in-process vendored STWO prover handle, or `None` if the
-/// `vendored-stwo` feature is disabled.
-///
-/// When `Some(_)`, callers can delegate STARK prove/verify operations
-/// to the in-workspace vendored STWO crate without going through the
-/// `libstwo_sys.so` FFI shim. The vendored mock emits deterministic
-/// BLAKE3 commitments (see `crates/zk-vendor/stwo/PATCHES.md`); the real
-/// `keep-stwo/stwo@cipherocto-stable` source drop replaces the mock
-/// bodies without changing the API surface.
-#[must_use]
-pub fn vendored_stwo() -> Option<stwo::Prover> {
-    #[cfg(feature = "vendored-stwo")]
-    {
-        Some(stwo::Prover::new())
-    }
-    #[cfg(not(feature = "vendored-stwo"))]
-    {
-        None
-    }
-}
-
-/// Re-exports of the vendored STWO crate's types + functions.
-///
-/// Available only when the `vendored-stwo` cargo feature is enabled
-/// (default-on). `zk-verifier` uses these to bridge its `PublicInputs` /
-/// `ProofBundle` to the vendored API without taking a direct dep on the
-/// vendored crate.
-#[cfg(feature = "vendored-stwo")]
-pub use stwo::{
-    verify as vendored_verify, Proof as VendoredProof, ProverError as VendoredProverError,
-    PublicInputs as VendoredPublicInputs, VerifyError as VendoredVerifyError,
-};
-
 /// BLAKE3 marker hash (deterministic; NOT a STARK proof).
 ///
-/// Reserved for future stub-removal migration: when `VendorState::Vendored`
-/// ships, callers should switch to `stwo::verify(...)` directly. This stub
-/// hash exists for binary verification shape only.
+/// Reserved for future stub-removal migration: when `VendorState::Ffi`
+/// ships, callers should switch to `stwo_verify` (FFI) directly. This
+/// stub hash exists for binary verification shape only.
 #[must_use]
 pub fn stwo_stub_marker() -> [u8; 32] {
     *blake3::hash(b"zk-vendor:stwa-stub:v0").as_bytes()
@@ -414,15 +379,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn vendor_state_is_vendored_by_default() {
-        // Mission 0958-a S05 Session 2 (Phase C.2): in-workspace
-        // vendored STWO crate ships as a deterministic mock behind the
-        // upstream STWO API surface. `vendor_state()` returns
-        // `Vendored` when the `vendored-stwo` cargo feature is enabled
-        // (default-on via zk-vendor's [features].default). The real
-        // `keep-stwo/stwo@cipherocto-stable` source drop replaces the
-        // mock bodies without changing this enum.
-        assert_eq!(vendor_state(), VendorState::Vendored);
+    fn vendor_state_is_stub_for_now() {
+        // Mission 0958-a S05 Session 2 fix-up (2026-07-31): STWO
+        // access is via the FFI bridge (`loaded_library()`), not via
+        // a vendored crate. `vendor_state()` returns `Stub` whenever
+        // the nightly-built `libstwo_sys.so` is not loaded (dev / CI
+        // without the cdylib present). Production deployments that
+        // ship the .so alongside the binary report `VendorState::Ffi`.
+        assert_eq!(vendor_state(), VendorState::Stub);
     }
 
     #[test]

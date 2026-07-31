@@ -27,12 +27,20 @@
 //!  blake3(proof_bytes)[..16]`. Deterministic + Class A but NOT a real STARK
 //! — marker `proof_kind = Stub` in `VerifyError::InternalNote` distinguishes.
 //!
-//! ## FFI bridge (2026-07-22)
+//! ## FFI bridge (2026-07-22 + 2026-07-31 fix-up)
 //!
 //! When `libstwo_sys.so` is loadable via `zk_vendor::loaded_library()`, the
 //! real FFI verify path is taken. When missing (dev / CI without nightly
 //! toolchain), the stub commitment check runs and a warning is logged at
 //! first load. Both paths preserve Class A determinism per RFC-0958.
+//!
+//! **Decoupled workspace pattern (mission 0958-a S05 Session 2 fix-up,
+//! 2026-07-31):** STWO is NOT vendored into the cipherocto workspace.
+//! The cipherocto workspace stays MSRV-stable (1.75.0); STWO upstream
+//! needs nightly toolchain, so the cipherocto workspace loads STWO via
+//! `libstwo_sys.so` produced by the workspace-excluded sub-crate at
+//! `crates/zk-vendor/stwo-sys/` (separate cargo project, nightly
+//! rust-toolchain). See `crates/zk-vendor/src/lib.rs` module docs.
 
 #![deny(unsafe_code)]
 #![warn(missing_debug_implementations)]
@@ -161,44 +169,14 @@ pub fn verify_capability_zk(
         };
     }
 
-    // 4. Vendored STWO (mission 0958-a Phase C.2): when FFI is absent
-    //    AND `zk-vendor` was built with the `vendored-stwo` feature
-    //    (default-on), delegate to the in-workspace stable-rust crate
-    //    `crates/zk-vendor/stwo/`. The vendored mock emits the same
-    //    BLAKE3 commitment shape as the BLAKE3 fallback below, so both
-    //    paths accept the same proofs (interchangeable).
+    // 4. STUB (fallback when libstwo_sys.so not loaded): direct
+    //    commitment check. Real impl: STWO Fiat-Shamir transcript. Stub:
+    //    proof bytes must contain a 32-byte commitment field equal to
+    //    `blake3(casm_hash || canonical_public)`. Constructible by
+    //    proofer; verifiable in O(1).
     //
-    //    Layering: FFI > vendored > BLAKE3 stub.
-    if let Some(_prover) = zk_vendor::vendored_stwo() {
-        // The vendored stub accepts the zk-verifier PublicInputs directly
-        // (structurally identical fields). When the real source lands,
-        // this becomes a real STWO Fiat-Shamir verify. The vendored
-        // `verify` takes `casm_hash_hex: &str` to match zk-verifier's
-        // `stub_commitment` byte shape exactly.
-        let vendored_public = zk_vendor::VendoredPublicInputs {
-            proof_issued_at_unix: public.proof_issued_at_unix,
-            verifier_local_unix_time: public.verifier_local_unix_time,
-            compiled_casm_hash: public.compiled_casm_hash.clone(),
-            capability_root_hash: public.capability_root_hash.clone(),
-            provider_slot_id: public.provider_slot_id.clone(),
-        };
-        let vendored_proof = zk_vendor::VendoredProof {
-            proof_bytes: proof.proof_bytes.clone(),
-        };
-        return match zk_vendor::vendored_verify(&vendored_proof, &vendored_public, casm_hash) {
-            Ok(()) => Ok(()),
-            Err(zk_vendor::VendoredVerifyError::ProofRejected) => Err(VerifyError::ProofRejected),
-            Err(zk_vendor::VendoredVerifyError::CasmHashMismatch { .. }) => {
-                Err(VerifyError::ProofRejected)
-            }
-            Err(other) => Err(VerifyError::Internal(format!("{other}"))),
-        };
-    }
-
-    // 5. STUB (fallback when libstwo_sys.so not loaded AND vendored
-    //    feature is disabled): direct commitment check. Real impl: STWO
-    //    Fiat-Shamir transcript. Stub: proof bytes must contain a 32-byte
-    //    commitment field equal to `blake3(casm_hash || canonical_public)`.
+    //    Layering: FFI > BLAKE3 stub. (Decoupled workspace pattern —
+    //    no vendored middle layer; see `zk-vendor` module docs.)
     if proof.proof_bytes.len() < 32 {
         return Err(VerifyError::MalformedBundle(
             "proof bytes must be >=32".to_owned(),

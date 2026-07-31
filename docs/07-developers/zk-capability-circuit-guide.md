@@ -154,24 +154,24 @@ cargo clippy --workspace --all-targets --features full -- -D warnings
 ## AC traceability
 
 | AC | Deliverable | Test entry | Commit |
+| AC | Deliverable | Test entry | Commit(s) |
 |----|-------------|-----------|--------|
 | **AC-1** | Real Cairo 2.6.0 program body (no `unimplemented!()`) | `cairo/capability_zk.cairo` exists + compiles via `cairo-compile` | `26fa53f6` (S1) |
-| **AC-2** | `zk_circuit::compile_from_source` shells out to cairo-compile; CASM BLAKE3 snapshot | `tests/casm_snapshot.rs` | `26fa53f6` (S1) |
-| **AC-3** | Decoupled FFI workspace + BLAKE3 stub fallback | `tests/ffi_loading.rs` (hardened) | `4f7f47db`, `be113cb1` (S2) |
-| **AC-4** | 8 RFC-0958 §Test Vectors + cross-impl TV1/TV2 | `tests/zk_vectors.rs` (13 tests; 8/8 vectors green) | `46e29fa2` (S3) |
-| **AC-5** | Wholesale mint fail-closed + CI lint | `.github/linters/no-wholesale-zk.sh` + `zk-vectors.rs::tv3` + `ac7_wholesale_zkbearing_registration_rejected` | `46e29fa2` (S3) |
-| **AC-6** | `MissingInferenceTrace` rename + witness-side guard | `zk_mint::tests::selfhost_mint_rejected_without_inference_trace` | `26fa53f6` (S1) |
+| **AC-2** | `zk_circuit::compile_from_source` shells out to cairo-compile; CASM BLAKE3 snapshot | `tests/casm_snapshot.rs` (loud-fail when toolchain missing) | `26fa53f6` (S1); R3 #8 harden `e7c79b9b` |
+| **AC-3** | Decoupled FFI workspace + BLAKE3 stub + MSRV 1.93 + stub-disabled gate | `tests/ffi_loading.rs` (hardened) + `tests/stub_disabled.rs` (2 tests) | `4f7f47db`, `be113cb1`, `96b2489d` (S2); R3 fix-ups `0e0c3ee9` (#1 prod-gate) + `066a263c` (#2 MSRV) + `27641ade` (#3 FFI arg order) |
+| **AC-4** | 8 RFC-0958 §Test Vectors + cross-impl TV1/TV2 | `tests/zk_vectors.rs` (15 tests; 8/8 vectors green + 5 AC-7/9/10 companions + 2 R3) | `46e29fa2` (S3); R3 axes-canon `411334da`; R3 N=2 rotation `a4594be8` |
+| **AC-5** | Wholesale mint fail-closed + CI lint + registry gate | `.github/linters/no-wholesale-zk.sh` + `zk-vectors.rs::tv3` + `ac7_wholesale_zkbearing_registration_rejected` | `46e29fa2` (S3); R3 wire DoS `4977a416` |
+| **AC-6** | `MissingInferenceTrace` rename + witness-side guard | `tests/eleven_step_zk.rs` +20 LoC, mission cites `tests::selfhost_mint_rejected_without_inference_trace` | `26fa53f6` (S1) |
 | **AC-7** | Hybrid opt-in semantics (V1 default + ZKBearing opt-in) | `tests/zk_vectors.rs::ac7_*` | `46e29fa2` (S3) |
-| **AC-8** | Wire format v2 (4th segment = `proof_bundle_borsh`) | `tests/wire_v2_roundtrip.rs` (6 tests) | `46e29fa2` (S3) |
-| **AC-9** | `PublicInputMismatch` + slot-binding drift detection | `tests/zk_vectors.rs::tv4 + ac9` | `46e29fa2` (S3) |
+| **AC-8** | Wire format v2 (4th segment = `proof_bundle_borsh`) + DoS guard | `tests/wire_v2_roundtrip.rs` (8 tests; 2 new DoS guards) | `46e29fa2` (S3); R3 wire DoS `4977a416` |
+| **AC-9** | `PublicInputMismatch` + slot-binding drift | `tests/zk_vectors.rs::tv4 + ac9` | `46e29fa2` (S3) |
 | **AC-10** | CASM drift at mint AND verify paths | `tests/zk_vectors.rs::tv5_*` | `46e29fa2` (S3) |
-| **AC-11** | Proof gen <2s SelfHost 10K trace + verify <100ms | `tests/bench.rs` (3 #[ignore] gates) | `46e29fa2` (S3) |
-| **AC-12** | Proof size 50-500KB (real-zk feature gate) | `tests/bench.rs::proof_size_50_to_500kb` | `46e29fa2` (S3) |
-| **AC-13** | cargo-fuzz `capability_zk_verify` 24h nightly | `crates/octo-wallet/fuzz/fuzz_targets/capability_zk_verify.rs` + CI `fuzz-nightly` job | `46e29fa2` (S3) |
-| **AC-14** | `cargo clippy --workspace --all-targets --features full -- -D warnings` clean | full workspace lint | `46e29fa2` (S3) |
-| **AC-15** | Master plan §8 R12 exit criteria + single cipherocto-side PR | this doc + `git diff --stat` scope check | this commit (S4) |
+| **AC-11** | Proof gen <2s SelfHost 10K trace + verify <100ms | `tests/bench.rs` (3 #[ignore] gates; R3 audit fixed bench to batch path: `proof_size = 32 bytes`) | `46e29fa2` (S3); R3 audit fix-up 2026-07-31 |
+| **AC-12** | Proof size 50-500KB (real-zk feature gate) | `tests/bench.rs::proof_size_50_to_500kb` | `46e29fa2` (S3); R3 #4 declare `real-zk` feature `2fb0a455` |
+| **AC-13** | cargo-fuzz `capability_zk_verify` 24h nightly | `crates/octo-wallet/fuzz/fuzz_targets/capability_zk_verify.rs` + CI `fuzz-nightly` job (R3 #C3 fix `-p` flag → `octo-wallet-fuzz`) | `46e29fa2` (S3); R3 fix `4977a416` |
+| **AC-14** | `cargo clippy --workspace --all-targets --features full -- -D warnings` clean | workspace lint | `46e29fa2` (S3); R3 dead-variant triage `b98801e0` |
+| **AC-15** | Master plan §8 R12 exit criteria + single cipherocto-side PR + 8 R3 follow-ups | this doc + `git diff --stat` scope check + R3 fix-ups table | S4 closure + R3 #5 N=2 `a4594be8` + #7 dead variants `b98801e0` |
 | **AC-16** | **CANCELED v0.3** (no fork PR; crypto in cipherocto workspace) | — | — |
-
 ## Test vector table
 
 | Vector | File | NodeType | Public inputs | Expected outcome |

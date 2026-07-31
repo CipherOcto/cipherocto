@@ -354,20 +354,47 @@ mod tests {
 
     #[test]
     fn clock_skew_at_boundary_returns_ok() {
-        // Skew exactly 300s — boundary inclusive per contract.
+        // Skew exactly 300s — boundary inclusive per RFC-0958 §Time
+        // Bounds contract. R3 audit fix-up (2026-07-31): this test
+        // previously had zero assertions (`let _result = ...`); the
+        // boundary contract was unverified. Now we explicitly assert
+        // that the inclusive-bound call returns Ok (skew ≤ MAX_SKEW).
         let casm = "casm-boundary";
         let public = PublicInputs {
             proof_issued_at_unix: 1_700_000_000,
-            verifier_local_unix_time: 1_700_000_300,
+            verifier_local_unix_time: 1_700_000_300, // skew = 300s exactly
             compiled_casm_hash: casm.to_owned(),
             capability_root_hash: "caproot".to_owned(),
             provider_slot_id: "slot-a".to_owned(),
         };
         let proof_bytes = stub_proof(casm, &public);
         let proof = ProofBundle { proof_bytes };
-        // Stub may still return ProofRejected for invalid salt; if so, we
-        // accept either ok or ProofRejected at this boundary.
-        let _result = verify_capability_zk(&proof, &public, casm);
+        let result = verify_capability_zk(&proof, &public, casm);
+        assert!(
+            result.is_ok(),
+            "RFC-0958 §Time Bounds: skew=MAX_SKEW_SECS (300s) MUST be accepted (inclusive boundary); got {result:?}"
+        );
+
+        // One second past the boundary MUST reject.
+        let public_just_past = PublicInputs {
+            verifier_local_unix_time: 1_700_000_301, // skew = 301s
+            ..public.clone()
+        };
+        let proof_bytes_past = stub_proof(casm, &public_just_past);
+        let proof_past = ProofBundle {
+            proof_bytes: proof_bytes_past,
+        };
+        let result_past = verify_capability_zk(&proof_past, &public_just_past, casm);
+        assert!(
+            matches!(
+                result_past,
+                Err(VerifyError::ClockSkewExceeded {
+                    skew: 301,
+                    max: 300
+                })
+            ),
+            "skew=MAX_SKEW_SECS+1 (301s) MUST reject with ClockSkewExceeded; got {result_past:?}"
+        );
     }
 
     #[test]

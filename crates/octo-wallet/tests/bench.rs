@@ -28,8 +28,8 @@ use std::time::Instant;
 
 use ed25519_dalek::Signature;
 use octo_wallet::capability::zk_mint::{
-    bundled_casm_hash, mint_with_zk, mint_with_zk_and_signers, ExecutionTrace, PrivateWitness,
-    ProofBundle, PublicInputs, TraceStep,
+    bundled_casm_hash, mint_with_zk_and_signers, ExecutionTrace, PrivateWitness, ProofBundle,
+    PublicInputs, TraceStep,
 };
 use octo_wallet::node::NodeType;
 #[allow(unused_imports)]
@@ -108,20 +108,35 @@ fn qr_bundle_from(o: &ProofBundle) -> QrProofBundle {
 #[test]
 #[ignore = "perf gate (AC-11 G1): proof gen <2s SelfHost 10K trace; run with --include-ignored"]
 fn proof_gen_latency_self_host_under_2s_10k_trace() {
+    // R3 audit fix-up (2026-07-31): previously this bench used
+    // `mint_with_zk` (empty-signers legacy path) which produces an
+    // empty `stark_proof` and skips the batch-signature prover
+    // entirely — the 2s budget was met trivially. Switched to
+    // `mint_with_zk_and_signers` with a single signer so the bench
+    // measures the real batch-signature proof-gen path that real zk
+    // minting hits in production.
     let casm = bundled_casm_hash();
     let witness = build_10k_witness();
     let pi = build_public_inputs();
+    let signers: Vec<[u8; 32]> = vec![[0x42; 32]];
 
     let start = Instant::now();
-    let bundle = mint_with_zk(NodeType::SelfHost, &witness, &pi, casm).expect("mint");
+    let bundle = mint_with_zk_and_signers(NodeType::SelfHost, &witness, &pi, casm, &signers)
+        .expect("batch mint");
     let elapsed_ms = start.elapsed().as_millis();
 
     eprintln!(
         "perf AC-11 G1: mint 10k trace took {elapsed_ms}ms (budget {PROOF_GEN_BUDGET_MS}ms) — \
-         proof size = {} bytes",
+         proof size = {} bytes (32-byte BLAKE3 stub proof)",
         bundle.stark_proof.len()
     );
 
+    assert_eq!(
+        bundle.stark_proof.len(),
+        32,
+        "batch path must produce 32-byte stub commitment; got {} bytes",
+        bundle.stark_proof.len()
+    );
     assert!(
         elapsed_ms < PROOF_GEN_BUDGET_MS,
         "proof_gen took {elapsed_ms}ms; budget {PROOF_GEN_BUDGET_MS}ms"

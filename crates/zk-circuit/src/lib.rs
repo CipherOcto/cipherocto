@@ -451,29 +451,33 @@ pub fn prove_batch_signature(
     // Gated by the `real-zk` cargo feature; default builds use the mock
     // path (deterministic BLAKE3 commitment) and do not require the
     // nightly-built `libstwo_sys.so`.
+    //
+    // **R4 audit fix-up (2026-07-31):** the prior implementation
+    // proved a CONSTANT statement (empty witness + canonical
+    // `BatchSigPublicInputs` as public). That provided ZERO
+    // cryptographic security — anyone could reproduce the same
+    // "proof" without knowing the witness. Until the real witness
+    // format lands, the real-zk path is **unimplemented**; the
+    // feature flag now marks the gap explicitly rather than silently
+    // shipping a fake STARK path.
     #[cfg(feature = "real-zk")]
+    #[allow(unreachable_code)] // explicit partial-impl marker
     {
-        if let Some(sys) = zk_vendor::loaded_library() {
-            let canonical = canonical_ser(inputs);
-            // Empty witness: real impl would carry signer sigs + caveats
-            // chain preimages. For now the real-zk path proves a constant
-            // statement so the FFI shape + handle lifecycle are
-            // exercised without committing to a witness format yet.
-            let empty_witness: &[u8] = &[];
-            match sys.prove(&casm_hash, &canonical, empty_witness) {
-                Ok(proof_bytes) => {
-                    return Ok(Proof {
-                        bytes: proof_bytes.commitment.to_vec(),
-                        casm_hash,
-                    });
-                }
-                Err(zk_vendor::VendorError::ProverNull) => {
-                    return Err(ProverError::ProverNull);
-                }
-                Err(other) => {
-                    return Err(ProverError::Internal(format!("{other}")));
-                }
-            }
+        if let Some(_sys) = zk_vendor::loaded_library() {
+            return Err(ProverError::Internal(
+                "real-zk path unimplemented (R4 audit fix-up 2026-07-31): \
+                 witness format not yet finalized; mock commitment is the \
+                 only path that produces a meaningful proof. See docs/07-developers/\
+                 zk-capability-circuit-guide.md §'real-zk enablement' for the \
+                 migration runbook."
+                    .to_owned(),
+            ));
+            // TODO(mission 0958-a post-R3): carry signer sigs + caveats
+            // chain preimages as the witness payload; recompute the
+            // STWO proof with the real transcript.
+            // let canonical = canonical_ser(inputs);
+            // let witness: &[u8] = &[];
+            // match sys.prove(&casm_hash, &canonical, witness) { ... }
         }
     }
 

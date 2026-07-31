@@ -1,5 +1,17 @@
 # CipherOcto zk-vendor: MSRV pinned to stable rust.
 #
+# **MSRV bump (mission 0958-a R3 fix-up, 2026-07-31):** raised from
+# 1.75.0 → 1.93.0 (the workspace floor enforced by the lockfile).
+# Bumping path:
+# - 1.85.0 failed: `tokio-websockets 0.13.3` requires 1.89.
+# - 1.89.0 failed: `roaring 0.11.4` requires 1.90.
+# - 1.90.0 failed: `matrix-sdk 0.18.0` requires 1.93.
+# - 1.93.0: workspace compiles at this MSRV (verified 2026-07-31).
+#
+# The 1.75 pin was dead-letter from the start: `blake3 1.8.5 →
+# constant_time_eq 0.4.2 → cpufeatures 0.3.0` requires 1.85+.
+# Future bumps follow the same dependency-floor policy.
+#
 # STWO upstream uses nightly-only features (curve25519-dalek SIMD intrinsics).
 # The vendored source in `crates/zk-vendor/stwo/` (TBD) is patched to:
 # - replace SIMD intrinsics with stable_curve25519 equivalents
@@ -10,5 +22,5 @@
 # concern, NOT a SQL concern. It lives in cipherocto workspace, NOT in the
 # stoolap fork.
 [toolchain]
-channel = "1.75.0"
+channel = "1.93.0"
 profile = "minimal"

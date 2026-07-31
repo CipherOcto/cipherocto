@@ -295,22 +295,29 @@ impl StwoSys {
     pub fn prove(
         &self,
         casm: &[u8],
-        public: &[u8],
         witness: &[u8],
+        public: &[u8],
     ) -> Result<ProofBytes, VendorError> {
-        // SAFETY: `casm`, `public`, `witness` are valid slices for the FFI
+        // SAFETY: `casm`, `witness`, `public` are valid slices for the FFI
         // call duration; pointers come from non-null slice references;
         // lengths match the FFI signature. The returned `ProofHandle`
         // pointer is owned by the library; we wrap it in `ProofBytes`
         // which `Drop` releases via `stwo_free_proof`.
+        //
+        // **Argument order (mission 0958-a R3 fix-up, 2026-07-31):**
+        // matches the C ABI `stwo_prove(casm, witness, public)`.
+        // Earlier code passed `(casm, public, witness)` which produced
+        // a STWO prover receipt whose public bytes were the witness
+        // bytes — silent fraud (prover proves garbage, verifier
+        // verifies garbage). Fixed in this commit.
         let handle = unsafe {
             (self.prove)(
                 casm.as_ptr(),
                 casm.len(),
-                public.as_ptr(),
-                public.len(),
                 witness.as_ptr(),
                 witness.len(),
+                public.as_ptr(),
+                public.len(),
             )
         };
         if handle.is_null() {

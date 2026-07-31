@@ -126,7 +126,19 @@ pub struct ProofBundle {
     pub security_bits: u8,
 }
 
-/// ZK mint errors (RFC-0958 §Error Handling + v1.2 M5 fix).
+/// ZK mint errors (mission 0958-a R3 fix-up, 2026-07-31).
+///
+/// **R3 #7 audit:** variants triaged. Removed:
+/// - `HolderSigInvalid` (duplicate of `MintError::HolderSig` in mod.rs:175)
+/// - `ChainMismatch` (duplicate of `MacaroonError::ChainMismatch(usize)`)
+///
+/// Variants kept + enforcement wired:
+/// - `EmptySlotId` (already returned at line 323); newly tested below.
+/// - `StwoProveError` reserved for future real-zk STWO prover failures.
+/// - `AxesExceededMaxTotal` reserved for sum-over-axes check (caveats
+///   validate per-axis bounds; total is a future-proof aggregate gate).
+/// - `Expired` for caveats `Before(t)` enforcement.
+/// - `BatchProver` propagated from `prove_batch_signature` failures.
 #[derive(Debug, thiserror::Error)]
 pub enum ZkMintError {
     #[error("NodeType::Wholesale cannot mint ZK-bearing capability (fail-closed)")]
@@ -146,12 +158,6 @@ pub enum ZkMintError {
 
     #[error("STWO proof generation failed: {0}")]
     StwoProveError(String),
-
-    #[error("holder signature invalid for witness")]
-    HolderSigInvalid,
-
-    #[error("HMAC-BLAKE3 chain mismatch in witness")]
-    ChainMismatch,
 
     #[error("axes consumed exceed max_total: total={total}, max={max}")]
     AxesExceededMaxTotal { total: u128, max: u128 },
@@ -639,5 +645,19 @@ mod tests {
             mint_with_zk_and_signers(NodeType::SelfHost, &witness, &pi, bundled_casm_hash(), &[])
                 .unwrap();
         assert!(bundle.stark_proof.is_empty());
+    }
+
+    /// R3 #7: EmptySlotId production code path was untested — exercise it.
+    #[test]
+    fn empty_slot_id_rejected_at_mint() {
+        let witness = sample_witness(NodeType::SelfHost);
+        let mut pi = sample_public_inputs(NodeType::SelfHost);
+        pi.provider_slot_id = String::new();
+        let err = mint_with_zk(NodeType::SelfHost, &witness, &pi, bundled_casm_hash())
+            .expect_err("empty provider_slot_id must be rejected");
+        assert!(
+            matches!(err, ZkMintError::EmptySlotId),
+            "expected EmptySlotId, got {err:?}"
+        );
     }
 }

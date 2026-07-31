@@ -79,7 +79,7 @@ Per RFC-0958 §Implementation Phases B.2 + C.2 + D + E + F + G + S05 plan §3 St
    - PublicInputMismatch check
    - CASM hash re-check at verify time
 
-5. **Mint API + NodeType gating** (`crates/octo-wallet/src/cap/zk_mint.rs`):
+5. **Mint API + NodeType gating** (`crates/octo-wallet/src/capability/zk_mint.rs`):
    - `mint_with_zk(witness, public_inputs, casm_hash) -> Result<ProofBundle, ZkMintError>`
    - Wholesale → REJECT (`NodeTypeCannotMintZKCap`)
    - SelfHost → DEFAULT ZK (mint requires `inference_trace` in witness)
@@ -87,7 +87,7 @@ Per RFC-0958 §Implementation Phases B.2 + C.2 + D + E + F + G + S05 plan §3 St
    - `CapabilityClass` registry enforces `Wholesale → V1 only`
    - Migrated 2026-07-22: `bundled_casm_hash()` calls `zk_circuit::compile()`
 
-6. **Wire format extension** (modify `crates/octo-wallet/src/cap/wire.rs`):
+6. **Wire format extension** (modify `crates/octo-wallet/src/capability/wire.rs`):
    - Add optional 4th segment after 3rd dot: `proof_bundle_borsh`
    - Borsh-serialized `ProofBundle` (deterministic encoding)
    - v1 verifiers split on first 3 dots and ignore the rest (forward-compat per RFC-0957 §Compatibility)

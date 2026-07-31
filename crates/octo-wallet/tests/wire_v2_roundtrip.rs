@@ -145,6 +145,37 @@ fn v2_rejects_wrong_segment_count() {
     ));
 }
 
+#[test]
+fn v2_rejects_oversize_wire_total() {
+    // DoS guard: a >2MiB wire must be rejected before split/decode.
+    let huge = "a".repeat(2 * 1024 * 1024 + 1);
+    let err = deserialize_wire_v2(&huge, "did:octo:test", [0u8; 32])
+        .expect_err("DoS guard: must reject oversize wire");
+    assert!(
+        matches!(
+            err,
+            octo_wallet::capability::wire::WireError::WireTooLong(_, _)
+        ),
+        "expected WireTooLong, got {err:?}"
+    );
+}
+
+#[test]
+fn v2_rejects_oversize_segment() {
+    // 1 MiB per-segment cap. A segment slightly over the cap must be rejected.
+    let oversize_seg = "b".repeat(1024 * 1024 + 1);
+    let wire = format!("a.b.c.{oversize_seg}");
+    let err = deserialize_wire_v2(&wire, "did:octo:test", [0u8; 32])
+        .expect_err("DoS guard: must reject oversize segment");
+    assert!(
+        matches!(
+            err,
+            octo_wallet::capability::wire::WireError::SegmentTooLong(3, _, _)
+        ),
+        "expected SegmentTooLong, got {err:?}"
+    );
+}
+
 // Reference compile-clean: NodeType import is reserved for a future
 // embedding test that exercises the full mint_with_zk path on each
 // NodeType variant; not needed for v2 wire round-trip.

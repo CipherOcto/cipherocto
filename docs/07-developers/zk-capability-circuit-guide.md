@@ -115,8 +115,14 @@ blake3 cairo/capability_zk.casm
 ```
 
 The CASM BLAKE3 hash is checked into
-`crates/zk-circuit/tests/casm_snapshot.rs::EXPECTED_CASM_BLAKE3_HASH` as
-a snapshot assertion. Drift detection = PR fails.
+`crates/zk-circuit/tests/casm_snapshot.rs` as a snapshot assertion. The
+test computes BLAKE3(casm_bytes) at runtime and asserts non-empty +
+64-hex format + determinism + tamper-detection. A pinned
+`EXPECTED_CASM_BLAKE3_HASH` constant is NOT yet checked in — the test
+currently passes by shape + determinism only. Drift detection requires
+either committing the expected hash once the CI cairo-compile 2.6.0
+environment is reproducible, OR adding an
+`#[ignore]` integration test that asserts the cross-build stability.
 
 ## Run tests
 
@@ -300,9 +306,14 @@ across runs to reach 24h effective coverage. Schedule: 02:00 UTC daily.
    `ZkMintError::CasmHashMismatch` (not `VerifyError`); on the verify
    side it's `ZkVerifyError::CasmHashMismatch`. Two distinct enums — match
    the right one per call site.
-4. **`missing_at_align!` cargo-fuzz invocation:** the `cargo fuzz` binary
-   is not pre-installed in CI; the `fuzz-nightly` job runs
-   `cargo install cargo-fuzz` before `cargo fuzz run`.
+4. **`cargo fuzz` invocation:** the `cargo fuzz` binary is not
+   pre-installed in CI; the `fuzz-nightly` job runs
+   `cargo install cargo-fuzz` before `cargo fuzz run`. Note: the
+   fuzz package is `octo-wallet-fuzz`, so the correct invocation
+   is `cargo fuzz run capability_zk_verify -p octo-wallet-fuzz`
+   (NOT `-p octo-wallet`, which would fail with "package not a
+   fuzz package"). See commit `46e29fa2` workaround fix in
+   `.github/workflows/zk-capability-circuit.yml`.
 5. **Workspace duplicate warning:** the cipherocto workspace prints
    `warning: skipping duplicate package octo-determin` on every build.
    This is a benign duplicate `Cargo.toml` location (workspace root +

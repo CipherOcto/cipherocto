@@ -145,9 +145,24 @@ fn parse_wire_to_token(
     holder_did: impl Into<String>,
     holder_pub: [u8; 32],
 ) -> Result<ParsedWire, WireError> {
+    // DoS guard #1: total wire length cap BEFORE split. Prevents
+    // an attacker-supplied 100MB string from allocating on split
+    // + b64 decode + JSON parse.
+    if s.len() > MAX_WIRE_TOTAL {
+        return Err(WireError::WireTooLong(s.len(), MAX_WIRE_TOTAL));
+    }
+
     let parts: Vec<&str> = s.split('.').collect();
     if parts.len() != 3 && parts.len() != 4 {
         return Err(WireError::SegmentCount(parts.len()));
+    }
+
+    // DoS guard #2: per-segment length cap. Each base64url-encoded
+    // segment may not exceed MAX_SEGMENT_BYTES (1 MiB).
+    for (i, seg) in parts.iter().enumerate() {
+        if seg.len() > MAX_SEGMENT_BYTES {
+            return Err(WireError::SegmentTooLong(i, seg.len(), MAX_SEGMENT_BYTES));
+        }
     }
 
     let macaroon_bytes = URL_SAFE_NO_PAD
@@ -197,6 +212,16 @@ fn parse_wire_to_token(
     })
 }
 
+/// Maximum total wire length (RFC-0958 §Performance; protects against
+/// OOM via attacker-supplied huge s4 segments + b64 decode amplification).
+/// 64 KiB is well over the maximum real wire (a SelfHost 500KB proof
+/// would still fit since the 4th segment carries base64-encoded bytes,
+/// 4/3×500KB ≈ 670KB; we set the cap to allow real-zk proofs once the
+/// FFI ships).
+pub const MAX_WIRE_TOTAL: usize = 2 * 1024 * 1024; // 2 MiB defensive cap
+/// Maximum per-segment raw length (before base64 decode).
+pub const MAX_SEGMENT_BYTES: usize = 1024 * 1024; // 1 MiB per segment
+
 /// Wire format errors.
 #[derive(Debug, thiserror::Error)]
 pub enum WireError {
@@ -208,6 +233,12 @@ pub enum WireError {
 
     #[error("expected 3 or 4 wire segments, got {0}")]
     SegmentCount(usize),
+
+    #[error("wire total length {0} exceeds cap of {1} bytes (DoS guard)")]
+    WireTooLong(usize, usize),
+
+    #[error("segment[{0}] length {1} exceeds cap of {2} bytes (DoS guard)")]
+    SegmentTooLong(usize, usize, usize),
 }
 
 /// Minimal borsh-compatible serialization shim using serde_json for S02 MVP.

@@ -23,7 +23,7 @@
 -- The migration runner at `crates/octo-reputation/src/migrations.rs`
 -- enforces idempotency at the application boundary: it queries
 -- `schema_migrations` for the version name before invoking this
--- file's body (see `apply()` lines 100-115 in migrations.rs), so
+-- file's body (see `apply()` lines 106-117 in migrations.rs), so
 -- production open() paths never re-run v012. The runner-level guard
 -- is the contract; do NOT bypass the runner (operational SQL replays
 -- outside the runner path will fail loudly with "duplicate column

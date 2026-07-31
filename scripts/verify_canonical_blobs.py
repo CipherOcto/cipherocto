@@ -110,30 +110,6 @@ def parse_pinned_vectors(path: Path) -> dict[str, bytes]:
 DOMAIN = b"cipherocto/reputation/anchor/v1"
 
 
-def dfp_from_f64(f: float) -> bytes:
-    """Canonical 24-byte Dfp wire form of a f64 value.
-
-    The Rust side uses `octo_determin::Dfp::from_f64` which is an
-    IEEE-754 quad precision representation. Python's float is IEEE-754
-    double; for the canonical_blobs.rs test vectors, all `score_ewma`
-    values derive from `0.5 + seed * 0.001` where `0.5..0.599` are
-    exactly representable in both formats. The 24-byte Dfp blob layout
-    is implementation-defined in `octo_determin` (mission 0955; see
-    `determin/src/dfp.rs`). For cross-implementation byte-equality
-    of the pinned test vectors we therefore read the score_ewma
-    bytes from the test source (build_test_leaf), not from f64 → Dfp.
-
-    Concretely: build_test_leaf uses `Dfp::from_f64(0.5 + seed*0.001)`
-    where seed ∈ {0..99} for the 100-leaf vector and seed = 1 for the
-    single-leaf vector. The Dfp wire form is NOT a trivial f64→bytes
-    conversion; it preserves IEEE-754 quad precision. We replicate the
-    Rust Dfp encoding by reading the determin crate's exact byte layout.
-    """
-    raise NotImplementedError(
-        "Dfp encoding requires octo_determin implementation — "
-        "see scripts/verify_canonical_blobs_determin.py for the "
-        "Dfp wire-form helper."
-    )
 
 
 def leaf_digest(

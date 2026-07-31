@@ -281,8 +281,8 @@ bug fix requires re-pinning the 3 vectors to the correct order.
 - [ ] Governance signature verification rejects batches with != `GOVERNANCE_QUORUM` (= 3) signatures
 - [ ] Anchor-specific verifier types (`AnchorGovernanceSnapshot` / `AnchorGovernanceSigner` / `AnchorGovernanceProof`) defined per RFC-0955-R1 lines 177-200 — mandated path (a), with existing `GovernanceSnapshot` / `GovernanceProof` (RFC-0968 authorization envelopes) preserved unchanged at `auth.rs:21-25` and `auth.rs:113+`
 - [ ] Per-deployment config layer exposes `interval_secs` + `controller_id` + `chain_endpoint`
-- [ ] Idempotency test (2 duplicate submits on `(did, signal_kind, layer, last_event_id)` 4-tuple) passes
-- [ ] Failure isolation test (submitter mid-batch fail) passes
+- [ ] Idempotency test (2 duplicate submits on `(did, signal_kind, layer, last_event_id)` 4-tuple) passes — **DEFERRED to 0968a2 successor (0968a3-gossip-anchor-provenance or chain-substrate RFC).** Requires a live `ChainAnchorSubmitter` fixture; the StubChainAnchorSubmitter at `anchor_job.rs:139` returns a deterministic placeholder but does not exercise the `reputation_anchors(event_id)` UNIQUE constraint path. The 0968a status refresh (commit `f8ac3a82`) confirms these are blocked on chain-substrate selection.
+- [ ] Failure isolation test (submitter mid-batch fail) passes — **DEFERRED to 0968a2 successor.** Same blocker as AC #14; requires a `ChainAnchorSubmitter` impl that fails mid-batch so the test can assert `reputation_events.anchor_tx_hash` remains `NULL` for un-anchored rows.
 - [ ] Gossip consumer rejects stale `anchor_tx_hash: None` events at ingress handler only (7 test fixtures remain unchanged; requires 0855p-b successor)
 - [ ] 3 canonical test vectors in `tests/canonical_blobs.rs` (lines 34, 41, 48) re-pinned to new digest
 

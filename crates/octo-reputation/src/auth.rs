@@ -909,6 +909,13 @@ mod tests {
 
     /// `AnchorSignature` byte length is 64 and Debug form starts with
     /// the `0x` prefix (regression guard for the `hex::serde` removal).
+    /// The strong end-to-end regression guard lives in
+    /// `scripts/verify_canonical_blobs.py` — an independent Python
+    /// implementation using `hashlib.blake3` reproduces the 3 pinned
+    /// `CANONICAL_ANCHOR_BLOB_*` vectors byte-identically per
+    /// RFC-0955-R1 line 422. If `hex::serde` were reintroduced, the
+    /// digest input bytes would change and the Python validator
+    /// would diverge from the Rust output.
     #[test]
     fn anchor_signature_byte_length_and_debug_format() {
         let s = AnchorSignature([0xAB; 64]);

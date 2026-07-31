@@ -20,6 +20,20 @@ tracing.workspace = true
 # STWO is built as a separate cdylib (crates/zk-vendor/stwo-sys/) and
 # loaded at runtime. See crates/zk-vendor/stwo-sys/README.md.
 libloading = "0.8"
+# Vendored STWO source (in-workspace, stable-rust patched fork of
+# keep-stwo/stwo v2.1.0). See crates/zk-vendor/stwo/ + PATCHES.md.
+# Gated by the `vendored-stwo` feature so callers can opt in without
+# pulling STWO into the default build.
+stwo = { path = "./stwo", package = "stwo-vendored", optional = true }
+
+[features]
+# Default ON: in-workspace vendored STWO is enabled out of the box so
+# `vendored_stwo()` returns Some(...) and `verify_capability_zk`
+# delegates to it before falling back to the BLAKE3 stub. Disable with
+# `default-features = false` if you need the stub-only path (e.g., to
+# validate the BLAKE3 fallback in tests).
+default = ["vendored-stwo"]
+vendored-stwo = ["dep:stwo"]
 
 [dev-dependencies]
 

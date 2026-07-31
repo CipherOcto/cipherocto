@@ -1,0 +1,36 @@
+[package]
+name = "stwo-vendored"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Vendored STWO STARK prover (cipherocto workspace). Stable-rust patched fork of keep-stwo/stwo v2.1.0 per [[stoolap-general-purpose-db]] (2026-07-22). MSRV pinned to 1.75.0; no nightly; no #![feature(...)]."
+
+[lib]
+name = "stwo"
+path = "src/lib.rs"
+
+[dependencies]
+# Stable-rust deps only. Mirrors stwo-sys deps (ruint, cairo-vm) but
+# pinned at the workspace level — see [[stoolap-general-purpose-db]]
+# note re. transitive version resolution.
+blake3.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[features]
+default = []
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

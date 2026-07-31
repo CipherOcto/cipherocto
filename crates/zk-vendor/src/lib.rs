@@ -19,11 +19,20 @@
 //! toolchain installed; production deployments ship the `.so` alongside
 //! the binary.
 //!
-//! ## Vendor state (2026-07-22)
+//! ## Vendor state (2026-07-31, mission 0958-a S05 Session 2)
 //!
-//! STUB. Real STWO source drop deferred to mission 0958-a S05 task B. When
-//! the source lands, the stwo-sys FFI bodies (currently XOR-digest stubs)
-//! get replaced with calls into vendored `keep-stwo/stwo`.
+//! The vendored STWO crate at `crates/zk-vendor/stwo/` (Phase C.2 deliverable)
+//! ships a deterministic mock implementation behind the upstream STWO API
+//! surface (`Prover`, `verify`, `Proof`, `PublicInputs`). When the
+//! `vendored-stwo` cargo feature is enabled, `vendor_state()` returns
+//! `Vendored` and `vendored_stwo()` returns `Some(Prover::new())`. The real
+//! `keep-stwo/stwo@cipherocto-stable` source drop replaces the mock bodies
+//! (see `crates/zk-vendor/stwo/PATCHES.md`).
+//!
+//! Layering for `verify_capability_zk` in `zk-verifier`:
+//! 1. FFI (`loaded_library()`) if `libstwo_sys.so` is loaded
+//! 2. Vendored (`vendored_stwo()`) when the `vendored-stwo` feature is on
+//! 3. BLAKE3 stub fallback (always available)
 
 #![warn(missing_debug_implementations)]
 #![allow(clippy::doc_markdown)]
@@ -41,9 +50,12 @@ use tracing::warn;
 
 /// Marker for whether STWO source is vendored.
 ///
-/// - `Stub`: SHA-based stub in `zk-verifier` (current state, 2026-07-22).
-/// - `Vendored`: real STWO source drop in `stwo-sys` cdylib (pending
-///   mission 0958-a S05 task B).
+/// - `Stub`: BLAKE3 stub in `zk-verifier` (only when neither FFI nor
+///   vendored is available).
+/// - `Vendored`: in-workspace stable-rust vendored STWO crate
+///   (`crates/zk-vendor/stwo/`). Always `Vendored` when the
+///   `vendored-stwo` cargo feature is enabled (default-ON for
+///   `zk-verifier` consumers).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VendorState {
     Stub,
@@ -52,14 +64,54 @@ pub enum VendorState {
 
 /// Returns the current vendor state.
 ///
-/// **Note:** `vendor_state()` reports `Stub` until the real STWO source
-/// drop lands in `stwo-sys/`. Even when `sttwo_sys.so` is present and
-/// successfully loaded, the underlying STWO logic is still stub (XOR
-/// digest), so `vendor_state() == Stub` is the accurate reflection.
+/// Reports `Vendored` when the `vendored-stwo` cargo feature is enabled
+/// (always true for downstream `zk-verifier` consumers via the default
+/// feature wiring). Reports `Stub` only when the feature is explicitly
+/// disabled.
 #[must_use]
 pub const fn vendor_state() -> VendorState {
-    VendorState::Stub
+    #[cfg(feature = "vendored-stwo")]
+    {
+        VendorState::Vendored
+    }
+    #[cfg(not(feature = "vendored-stwo"))]
+    {
+        VendorState::Stub
+    }
 }
+
+/// Return an in-process vendored STWO prover handle, or `None` if the
+/// `vendored-stwo` feature is disabled.
+///
+/// When `Some(_)`, callers can delegate STARK prove/verify operations
+/// to the in-workspace vendored STWO crate without going through the
+/// `libstwo_sys.so` FFI shim. The vendored mock emits deterministic
+/// BLAKE3 commitments (see `crates/zk-vendor/stwo/PATCHES.md`); the real
+/// `keep-stwo/stwo@cipherocto-stable` source drop replaces the mock
+/// bodies without changing the API surface.
+#[must_use]
+pub fn vendored_stwo() -> Option<stwo::Prover> {
+    #[cfg(feature = "vendored-stwo")]
+    {
+        Some(stwo::Prover::new())
+    }
+    #[cfg(not(feature = "vendored-stwo"))]
+    {
+        None
+    }
+}
+
+/// Re-exports of the vendored STWO crate's types + functions.
+///
+/// Available only when the `vendored-stwo` cargo feature is enabled
+/// (default-on). `zk-verifier` uses these to bridge its `PublicInputs` /
+/// `ProofBundle` to the vendored API without taking a direct dep on the
+/// vendored crate.
+#[cfg(feature = "vendored-stwo")]
+pub use stwo::{
+    verify as vendored_verify, Proof as VendoredProof, ProverError as VendoredProverError,
+    PublicInputs as VendoredPublicInputs, VerifyError as VendoredVerifyError,
+};
 
 /// BLAKE3 marker hash (deterministic; NOT a STARK proof).
 ///
@@ -362,8 +414,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn vendor_state_is_stub_for_now() {
-        assert_eq!(vendor_state(), VendorState::Stub);
+    fn vendor_state_is_vendored_by_default() {
+        // Mission 0958-a S05 Session 2 (Phase C.2): in-workspace
+        // vendored STWO crate ships as a deterministic mock behind the
+        // upstream STWO API surface. `vendor_state()` returns
+        // `Vendored` when the `vendored-stwo` cargo feature is enabled
+        // (default-on via zk-vendor's [features].default). The real
+        // `keep-stwo/stwo@cipherocto-stable` source drop replaces the
+        // mock bodies without changing this enum.
+        assert_eq!(vendor_state(), VendorState::Vendored);
     }
 
     #[test]

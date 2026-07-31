@@ -14,6 +14,23 @@ path = "src/bin/octo-wallet.rs"
 name = "octo_wallet"
 path = "src/lib.rs"
 
+[features]
+# **Mission 0958-a R3 fix-up (2026-07-31):** the `real-zk` feature
+# opts the bench + acceptance tests into the real-STWO FFI path.
+# When enabled:
+# - The proof-size bench test asserts `proof_size in 50..500KB`
+#   (currently no-op on stub path; documented structural smoke).
+# - Performance gate required for any production deployment.
+# When disabled (default):
+# - The proof-size bench asserts only non-emptiness (stub = 32B).
+# - Real-STWO FFI NOT exercised; tests use the BLAKE3 stub.
+# Enabling `real-zk` requires `libstwo_sys.so` produced by
+# `cargo +nightly-2025-06-23 build --release --manifest-path
+# crates/zk-vendor/stwo-sys/Cargo.toml` to be reachable on the
+# host. See `docs/07-developers/zk-capability-circuit-guide.md`
+# for the FFI vendoring procedure.
+real-zk = []  # placeholder gate; future cargo-fuzz FFI wiring
+
 [dependencies]
 # Workspace deps — only what's needed for wallet MVP
 serde.workspace = true

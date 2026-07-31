@@ -44,6 +44,8 @@ const VERIFY_BUDGET_MS: u128 = 100;
 /// AC-12 target: proof size 50-500KB upper bound (real STWO). Stub
 /// proof = 32 bytes; the structural-smoke gate documents the contract
 /// for the future real-zk feature.
+#[cfg(feature = "real-zk")]
+const PROOF_SIZE_MIN_BYTES_REAL_ZK: usize = 50 * 1024;
 const PROOF_SIZE_MAX_BYTES: usize = 500 * 1024;
 
 fn build_10k_witness() -> PrivateWitness {
@@ -175,15 +177,22 @@ fn proof_size_50_to_500kb() {
     // commitment (the "stub proof" shape, deterministic + Class A but
     // NOT a real STARK). The real-STWO proof shape is 50-500KB.
     //
-    // The `borsh` feature already exists in this crate; `--features
-    // real-zk` would additionally enable the real-STWO FFI bridge
-    // (currently a feature-less stub path).
-    //
-    // For the MVP benchmark we assert the structural smoke (proof is
-    // non-empty). The 50-500KB gate is documented as a future
-    // real-zk-only assertion that activates once the cdylib ships.
-    assert!(
-        proof_size > 0 && proof_size <= PROOF_SIZE_MAX_BYTES,
-        "proof size {proof_size} unexpected (50-500KB target requires --features real-zk)"
-    );
+    // The `real-zk` Cargo feature (mission 0958-a R3 fix-up) enables the
+    // tighter 50KB lower bound. Without it, we assert structural
+    // smoke only (proof non-empty).
+    #[cfg(feature = "real-zk")]
+    {
+        assert!(
+            proof_size >= PROOF_SIZE_MIN_BYTES_REAL_ZK
+                && proof_size <= PROOF_SIZE_MAX_BYTES,
+            "real-zk proof size {proof_size} out of 50-500KB range"
+        );
+    }
+    #[cfg(not(feature = "real-zk"))]
+    {
+        assert!(
+            proof_size > 0 && proof_size <= PROOF_SIZE_MAX_BYTES,
+            "stub proof size {proof_size} unexpected (50-500KB target requires --features real-zk)"
+        );
+    }
 }

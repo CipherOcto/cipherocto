@@ -57,7 +57,8 @@ pub use audit::{
     AuditReplay,
 };
 pub use auth::{
-    governance_set_hash, AssetTag, Attestation, AttestorAuth, AttestorId, AttestorRegistration,
+    governance_set_hash, AnchorGovernanceProof, AnchorGovernanceSigner, AnchorGovernanceSnapshot,
+    AnchorSignature, AssetTag, Attestation, AttestorAuth, AttestorId, AttestorRegistration,
     ChainRef, GovernanceProof, GovernanceSnapshot, SlashDestination, SuspensionAuth,
 };
 pub use compat::{

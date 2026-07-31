@@ -27,6 +27,41 @@ use blake3::Hasher;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::{AnchorGovernanceProof, AnchorGovernanceSnapshot};
+
+/// Canonical Option<u64> encoding for batch-digest inclusion.
+/// `None` ⇒ single `0x00` byte; `Some(h)` ⇒ `0x01` byte followed by
+/// the 8-byte big-endian height. Reused for `chain_block_height` and
+/// any future optional u64 field on the envelope (single source of
+/// truth for the encoding — change here, not at every call site).
+#[inline]
+fn update_option_u64(hasher: &mut Hasher, v: Option<u64>) {
+    match v {
+        None => {
+            hasher.update(&[0u8]);
+        }
+        Some(h) => {
+            hasher.update(&[1u8]);
+            hasher.update(&h.to_be_bytes());
+        }
+    }
+}
+
+/// Canonical Option<[u8; N]> encoding for batch-digest inclusion.
+/// Same tag pattern as `update_option_u64` — `None` ⇒ `0x00`,
+/// `Some(arr)` ⇒ `0x01` || arr bytes. Currently used for
+/// `rotation_receipt_id: Option<[u8; 32]>`.
+#[inline]
+fn update_option_bytes<const N: usize>(hasher: &mut Hasher, v: Option<&[u8; N]>) {
+    match v {
+        None => {
+            hasher.update(&[0u8]);
+        }
+        Some(arr) => {
+            hasher.update(&[1u8]);
+            hasher.update(&arr[..]);
+        }
+    }
+}
 use crate::constants::{
     ANCHOR_FEE_PER_ROOT, BLAKE3_REPUTATION_ANCHOR_DOMAIN, DEFAULT_ANCHOR_INTERVAL_SECS,
     MAX_ANCHORED_TUPLES_PER_CONTROLLER_PER_DAY, MAX_TUPLES_PER_ROOT, MIN_FEE_PER_LEAF,
@@ -200,26 +235,10 @@ impl ReputationAnchorBatch {
         hasher.update(BLAKE3_REPUTATION_ANCHOR_DOMAIN);
         hasher.update(&self.controller_id);
         hasher.update(&self.window.window_index.to_be_bytes());
-        // Option<u64> encoding: 0x00 = None, 0x01 || 8-byte BE = Some(_).
-        match self.chain_block_height {
-            None => {
-                hasher.update(&[0u8]);
-            }
-            Some(h) => {
-                hasher.update(&[1u8]);
-                hasher.update(&h.to_be_bytes());
-            }
-        }
+        // Option<u64> encoding (presence byte + 8-byte BE height).
+        update_option_u64(&mut hasher, self.chain_block_height);
         // Rotation-receipt binding (same Option encoding shape).
-        match self.rotation_receipt_id {
-            None => {
-                hasher.update(&[0u8]);
-            }
-            Some(id) => {
-                hasher.update(&[1u8]);
-                hasher.update(&id);
-            }
-        }
+        update_option_bytes(&mut hasher, self.rotation_receipt_id.as_ref());
         // Governance fields (RFC-0955-R1 lines 177-200).
         hasher.update(&self.governance_snapshot.canonical_bytes());
         hasher.update(&self.governance_proof.canonical_bytes());

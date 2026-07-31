@@ -319,7 +319,11 @@ reconciliation + cross-mission coordination with 0855p-b gossip
 
 ## Claimant
 
-(unassigned)
+@cipherocto (mission-level; landed 2026-07-30 in commit `72bf19d7` —
+`feat(reputation): 0968a2 anchor governance binding + IMPL/RFC
+reconciliation`. Subsequent rounds (rounds 1-3 of post-landing
+review) extend the landing with the cross-impl Python validator +
+hex::serde regression fixes.)
 
 ## Pull Request
 

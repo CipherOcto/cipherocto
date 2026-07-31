@@ -18,20 +18,16 @@
 --     set under the BLAKE3_GOVERNANCE_SET_DOMAIN. RFC-0955-R1 lines
 --     177-200 + RFC-0968 §10.
 --
--- Migration slot v012 is allocated in RFC-0968 §28 catalog for the
--- governance binding follow-up; v010 created the ledger table (with
--- the rotation-receipt binding per amendment 51); v012 adds the
--- governance snapshot + proof + set hash for the full RFC-0955-R1
--- binding contract. The preceding slots v006/v007/v008/v009 are
--- reserved per the catalog but not yet implemented; the gap from
--- v005 → v010 is intentional and matches the catalog.
---
--- Idempotency: ALTER TABLE ADD COLUMN is not natively idempotent in
--- SQLite, but each column is added with a `try/catch`-equivalent
--- guard via a `WHERE NOT EXISTS` subquery against the schema_columns
--- table. Stoolap-fork supports this pattern (verified in
--- crates/octo-reputation/src/store/stoolap.rs via the v011 migration
--- path).
+-- Idempotency: the SQL itself is NOT idempotent — `ALTER TABLE ADD
+-- COLUMN` will fail with "duplicate column name" on re-execution.
+-- The migration runner at `crates/octo-reputation/src/migrations.rs`
+-- enforces idempotency at the application boundary: it queries
+-- `schema_migrations` for the version name before invoking this
+-- file's body (see `apply()` lines 100-115 in migrations.rs), so
+-- production open() paths never re-run v012. The runner-level guard
+-- is the contract; do NOT bypass the runner (operational SQL replays
+-- outside the runner path will fail loudly with "duplicate column
+-- name" — that failure is the desired alarm signal).
 --
 -- Constraints:
 --   All 3 columns are nullable — pre-submission rows may have NULL

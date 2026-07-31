@@ -7,6 +7,7 @@
 //! provisioning. The shape, freshness, and quorum checks all land now so the
 //! production signer can be swapped in later without API churn.
 
+use serde::ser::SerializeSeq;
 use serde::{Deserialize, Serialize};
 
 use crate::constants::{
@@ -427,8 +428,10 @@ pub struct AnchorGovernanceSnapshot {
 
 impl AnchorGovernanceSnapshot {
     /// Encode for digest inclusion: 8-byte big-endian block + 8-byte
-    /// epoch + 8-byte timestamp = 24 bytes. Domain-separate via the
-    /// anchor BLAKE3 domain (caller responsibility).
+    /// epoch + 8-byte timestamp = 24 bytes. Raw bytes — domain
+    /// separation is the caller's responsibility (the batch digest
+    /// applies `BLAKE3_REPUTATION_ANCHOR_DOMAIN` upstream before
+    /// folding the result of this function).
     pub fn canonical_bytes(&self) -> [u8; 24] {
         let mut out = [0u8; 24];
         out[..8].copy_from_slice(&self.block_height.to_be_bytes());
@@ -438,23 +441,103 @@ impl AnchorGovernanceSnapshot {
     }
 }
 
+/// 64-byte ed25519 signature with raw-byte serde form (bypasses
+/// `hex::serde` to keep postcard storage compact).
+///
+/// `[u8; 64]` does not impl `Serialize`/`Deserialize` by default
+/// (serde only ships impls for arrays up to `[T; 32]`). The previous
+/// design used `#[serde(with = "hex::serde")]` — that adapter emits
+/// a length-prefixed hex string for *every* serializer, including
+/// postcard, so the v012 BLOB column would have contained a hex
+/// string instead of 64 raw bytes. The newtype below serializes as
+/// a fixed-length 64-byte sequence via `serialize_seq` — raw bytes
+/// on postcard / bincode, 64-element array on JSON.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct AnchorSignature(pub [u8; 64]);
+
+impl AnchorSignature {
+    pub fn as_bytes(&self) -> &[u8; 64] {
+        &self.0
+    }
+}
+
+impl core::fmt::Debug for AnchorSignature {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // Hex form for human readability (matches the existing
+        // RecorderDid / EventId Debug pattern).
+        write!(f, "AnchorSignature(0x")?;
+        for b in &self.0 {
+            write!(f, "{:02x}", b)?;
+        }
+        write!(f, ")")
+    }
+}
+
+impl Serialize for AnchorSignature {
+    fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut seq = s.serialize_seq(Some(64))?;
+        for b in &self.0 {
+            seq.serialize_element(b)?;
+        }
+        seq.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for AnchorSignature {
+    fn deserialize<D>(d: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct SeqVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for SeqVisitor {
+            type Value = AnchorSignature;
+
+            fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                write!(f, "a 64-byte sequence")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut arr = [0u8; 64];
+                for (i, slot) in arr.iter_mut().enumerate() {
+                    *slot = seq
+                        .next_element()?
+                        .ok_or_else(|| serde::de::Error::invalid_length(i, &self))?;
+                }
+                Ok(AnchorSignature(arr))
+            }
+        }
+
+        d.deserialize_seq(SeqVisitor)
+    }
+}
+
 /// Anchor-side governance signer (RFC-0955-R1 §"ReputationAnchorBatch"
 /// `Signer` lines 177-200). 32-byte ed25519 pubkey + 64-byte signature
-/// over the snapshot binding.
-///
-/// Note: `[u8; 64]` does not impl serde's `Serialize`/`Deserialize` by
-/// default (serde only supports arrays up to `[T; 32]`); we use the
-/// `hex::serde` adapter (matches the in-repo pattern at
-/// `RecorderDid`/`EventId`/`ControllerId`) so the wire form is hex
-/// for JSON debugging while the in-memory representation stays 64
-/// bytes for digest stability. The v012 BLOB column stores the
-/// `AnchorGovernanceProof` as postcard bytes — independent of the
-/// serde wire form used for JSON.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// over the snapshot binding. Both fields are raw bytes on every
+/// serializer — `pubkey: [u8; 32]` is natively supported by serde;
+/// `signature: AnchorSignature` (newtype) bypasses the `[T; 64]` gap.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnchorGovernanceSigner {
     pub pubkey: [u8; 32],
-    #[serde(with = "hex::serde")]
-    pub signature: [u8; 64],
+    pub signature: AnchorSignature,
+}
+
+impl core::fmt::Debug for AnchorGovernanceSigner {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // pubkey as hex (compact), signature via its Debug impl.
+        write!(f, "AnchorGovernanceSigner {{ pubkey: 0x")?;
+        for b in &self.pubkey {
+            write!(f, "{:02x}", b)?;
+        }
+        write!(f, ", signature: {:?} }}", self.signature)
+    }
 }
 
 impl AnchorGovernanceSigner {
@@ -462,7 +545,7 @@ impl AnchorGovernanceSigner {
     pub fn canonical_bytes(&self) -> [u8; 96] {
         let mut out = [0u8; 96];
         out[..32].copy_from_slice(&self.pubkey);
-        out[32..96].copy_from_slice(&self.signature);
+        out[32..96].copy_from_slice(&self.signature.0);
         out
     }
 }
@@ -471,9 +554,17 @@ impl AnchorGovernanceSigner {
 /// `Proof` lines 177-200). Carries the multi-sig set attesting the
 /// anchor's binding to the governance snapshot. A valid proof has
 /// exactly `GOVERNANCE_QUORUM` (= 3) distinct signers per RFC-0968 §10.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnchorGovernanceProof {
     pub signers: Vec<AnchorGovernanceSigner>,
+}
+
+impl core::fmt::Debug for AnchorGovernanceProof {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("AnchorGovernanceProof")
+            .field("signers.len()", &self.signers.len())
+            .finish()
+    }
 }
 
 impl AnchorGovernanceProof {
@@ -485,12 +576,12 @@ impl AnchorGovernanceProof {
         if self.signers.len() as u32 != crate::constants::GOVERNANCE_QUORUM {
             return false;
         }
-        let mut seen: [[u8; 32]; 8] = [[0u8; 32]; 8];
+        // Seen-set sized exactly to `GOVERNANCE_QUORUM` — the length
+        // check above guarantees `n` ranges 0..GOVERNANCE_QUORUM.
+        let mut seen: [[u8; 32]; crate::constants::GOVERNANCE_QUORUM as usize] =
+            [[0u8; 32]; crate::constants::GOVERNANCE_QUORUM as usize];
         for (n, s) in self.signers.iter().enumerate() {
             if seen[..n].iter().any(|p| p == &s.pubkey) {
-                return false;
-            }
-            if n >= seen.len() {
                 return false;
             }
             seen[n] = s.pubkey;
@@ -723,5 +814,110 @@ mod tests {
             SlashDestination::RewardValidator { did }.canonical_bytes(),
             expected
         );
+    }
+
+    // ----- AnchorGovernanceProof (mission 0968a2 AC #12) -----
+
+    fn pk(seed: u8) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        out[0] = seed;
+        out
+    }
+
+    fn sig(seed: u8) -> AnchorSignature {
+        let mut out = [0u8; 64];
+        out[0] = seed;
+        AnchorSignature(out)
+    }
+
+    fn signer_with_pubkey(seed: u8) -> AnchorGovernanceSigner {
+        AnchorGovernanceSigner {
+            pubkey: pk(seed),
+            signature: sig(seed),
+        }
+    }
+
+    /// Empty `signers` vec (the `anchor_job.rs::plan_batches` placeholder)
+    /// MUST fail `meets_quorum()` — the invariant the runtime relies on
+    /// when it refuses to submit a pre-binding batch.
+    #[test]
+    fn anchor_governance_proof_placeholder_empty_fails_quorum() {
+        let proof = AnchorGovernanceProof { signers: vec![] };
+        assert!(
+            !proof.meets_quorum(),
+            "empty signers MUST NOT meet quorum (plan_batches placeholder)"
+        );
+    }
+
+    /// 3 distinct signers pass.
+    #[test]
+    fn anchor_governance_proof_three_distinct_signers_passes() {
+        let proof = AnchorGovernanceProof {
+            signers: vec![
+                signer_with_pubkey(0x01),
+                signer_with_pubkey(0x02),
+                signer_with_pubkey(0x03),
+            ],
+        };
+        assert!(proof.meets_quorum(), "3 distinct signers MUST meet quorum");
+    }
+
+    /// 3 signers with one duplicate pubkey fails (distinctness rule).
+    #[test]
+    fn anchor_governance_proof_duplicate_pubkey_rejects() {
+        let proof = AnchorGovernanceProof {
+            signers: vec![
+                signer_with_pubkey(0x01),
+                signer_with_pubkey(0x01),
+                signer_with_pubkey(0x02),
+            ],
+        };
+        assert!(
+            !proof.meets_quorum(),
+            "duplicate pubkey MUST NOT meet quorum (3-of-3 distinct-set)"
+        );
+    }
+
+    /// 2 signers fail (length mismatch against `GOVERNANCE_QUORUM = 3`).
+    #[test]
+    fn anchor_governance_proof_two_signers_rejects() {
+        let proof = AnchorGovernanceProof {
+            signers: vec![signer_with_pubkey(0x01), signer_with_pubkey(0x02)],
+        };
+        assert!(
+            !proof.meets_quorum(),
+            "2 signers MUST NOT meet quorum (length != GOVERNANCE_QUORUM = 3)"
+        );
+    }
+
+    /// 4 signers fail (overshoot).
+    #[test]
+    fn anchor_governance_proof_four_signers_rejects() {
+        let proof = AnchorGovernanceProof {
+            signers: vec![
+                signer_with_pubkey(0x01),
+                signer_with_pubkey(0x02),
+                signer_with_pubkey(0x03),
+                signer_with_pubkey(0x04),
+            ],
+        };
+        assert!(
+            !proof.meets_quorum(),
+            "4 signers MUST NOT meet quorum (length != GOVERNANCE_QUORUM = 3)"
+        );
+    }
+
+    /// `AnchorSignature` byte length is 64 and Debug form starts with
+    /// the `0x` prefix (regression guard for the `hex::serde` removal).
+    #[test]
+    fn anchor_signature_byte_length_and_debug_format() {
+        let s = AnchorSignature([0xAB; 64]);
+        assert_eq!(s.0.len(), 64);
+        let dbg = format!("{:?}", s);
+        assert!(
+            dbg.starts_with("AnchorSignature(0x"),
+            "Debug form must be hex-prefixed (got: {dbg})"
+        );
+        assert!(dbg.ends_with(")"), "Debug form must close with ')'");
     }
 }

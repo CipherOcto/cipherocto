@@ -10,6 +10,20 @@ description = "CipherOcto ZK verifier: STWO STARK Fiat-Shamir proof verification
 name = "zk_verifier"
 path = "src/lib.rs"
 
+[features]
+# **Mission 0958-a R3 review fix-up (2026-07-31):** the BLAKE3 stub
+# verifier path is forgeable by design (commitment is computable from
+# publicly-known inputs). To prevent accidentally shipping a release
+# build that accepts stub-shaped proofs, the stub path is gated behind
+# this opt-in feature. CI / dev (`cargo test`, `cargo build`) get the
+# feature enabled by default. Production must explicitly disable
+# defaults (`cargo build --no-default-features`) AND either ship
+# `libstwo_sys.so` alongside the binary or set
+# CIPHEROCTO_ALLOW_STUB_VERIFIER=1 in the deploy environment if
+# dev-mode stub verification is genuinely needed.
+default = ["allow-stub-verifier"]
+allow-stub-verifier = []  # cipherocto-internal dev flag; document in dev guide
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true

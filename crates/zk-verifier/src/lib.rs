@@ -98,6 +98,16 @@ pub enum VerifyError {
     /// surface the raw code. Most common: malformed proof bytes.
     #[error("real STWO FFI verify failed (code={0})")]
     RealStwoError(i32),
+    /// **Production gate (mission 0958-a R3 review fix-up, 2026-07-31):**
+    /// the BLAKE3 stub verifier is not allowed in production builds
+    /// (where `libstwo_sys.so` is expected to be present). This error
+    /// fires when neither the FFI library loads NOR the
+    /// `allow-stub-verifier` Cargo feature is enabled — i.e., a release
+    /// build is missing its STWO dependency. Operators must ship
+    /// `libstwo_sys.so` alongside the binary or enable the feature
+    /// opt-in for development.
+    #[error("BLAKE3 stub verifier disabled in production builds (ship libstwo_sys.so or enable allow-stub-verifier feature)")]
+    StubDisabled,
 }
 
 /// Verify a capability ZK proof (Class A determinism, stable rust).
@@ -119,12 +129,21 @@ pub enum VerifyError {
 /// not, return `VerifyError::CasmHashMismatch` (CASM hash drift detection
 /// per RFC-0958 §CASM Hash Drift Detection).
 ///
-/// # STUB
+/// # Production gate (mission 0958-a R3 review fix-up, 2026-07-31)
 ///
-/// Until `zk-vendor` STWO source drops, verification uses a direct
-/// 32-byte commitment check: first 32 bytes of `proof.proof_bytes` MUST
-/// equal `blake3(casm_hash || canonical_public)`. Real impl uses STWO
-/// Fiat-Shamir.
+/// The BLAKE3 stub path is **forgeable by design** (commitment is
+/// computable from publicly-known `casm_hash` + `PublicInputs`).
+/// Therefore production builds fail-closed via a `#[cfg]` guard: the
+/// stub path runs only in (a) `#[cfg(test)]` builds and (b) builds
+/// with the `--features allow-stub-verifier` opt-in. A release build
+/// without that feature returns `Err(VerifyError::StubDisabled)`
+/// instead of accepting a stub-shaped proof, regardless of whether
+/// `libstwo_sys.so` is present.
+///
+/// CI / dev (`cargo test`) keeps the stub opt-in enabled by default
+/// via `[features] default = ["allow-stub-verifier"]` in
+/// `Cargo.toml`. Production deployments must NOT enable the default
+/// feature and MUST ship `libstwo_sys.so` alongside the binary.
 pub fn verify_capability_zk(
     proof: &ProofBundle,
     public: &PublicInputs,
@@ -177,24 +196,49 @@ pub fn verify_capability_zk(
     //
     //    Layering: FFI > BLAKE3 stub. (Decoupled workspace pattern —
     //    no vendored middle layer; see `zk-vendor` module docs.)
-    if proof.proof_bytes.len() < 32 {
-        return Err(VerifyError::MalformedBundle(
-            "proof bytes must be >=32".to_owned(),
-        ));
-    }
-    let canon_pub = canonicalize_public(public);
-    let mut commit = Hasher::new();
-    commit.update(casm_hash.as_bytes());
-    commit.update(&canon_pub);
-    let expected_commit: [u8; 32] = *commit.finalize().as_bytes();
+    //
+    // **Production gate (R3 fix-up):** the BLAKE3 stub is forgeable. It
+    // is only allowed under `#[cfg(test)]` or with the
+    // `allow-stub-verifier` Cargo feature. Production builds (default
+    // features + `--no-default-features`) MUST NOT take this branch —
+    // they return `Err(VerifyError::StubDisabled)` to fail closed when
+    // `libstwo_sys.so` is absent.
+    #[cfg(any(test, feature = "allow-stub-verifier"))]
+    {
+        if proof.proof_bytes.len() < 32 {
+            return Err(VerifyError::MalformedBundle(
+                "proof bytes must be >=32".to_owned(),
+            ));
+        }
+        let canon_pub = canonicalize_public(public);
+        let mut commit = Hasher::new();
+        commit.update(casm_hash.as_bytes());
+        commit.update(&canon_pub);
+        let expected_commit: [u8; 32] = *commit.finalize().as_bytes();
 
-    let proof_commit: [u8; 32] = proof.proof_bytes[..32].try_into().unwrap();
-    if proof_commit != expected_commit {
-        return Err(VerifyError::ProofRejected);
+        let proof_commit: [u8; 32] = proof.proof_bytes[..32].try_into().unwrap();
+        if proof_commit != expected_commit {
+            return Err(VerifyError::ProofRejected);
+        }
+
+        return Ok(());
     }
 
-    Ok(())
+    #[cfg(not(any(test, feature = "allow-stub-verifier")))]
+    {
+        Err(VerifyError::StubDisabled)
+    }
 }
+
+// Production-gate smoke (verified at compile time via `cargo build --release
+// -p zk-verifier --no-default-features`). The cfg-gated branch in
+// `verify_capability_zk` returns `StubDisabled` when compiled without the
+// feature flag, so a release build with a missing `libstwo_sys.so` fails
+// closed with `Err(VerifyError::StubDisabled)`.
+//
+// Inline test for the gate lives in `tests/stub_disabled.rs` (an
+// integration test) — see that file for proof of the closed-by-default
+// behavior under `--no-default-features`.
 
 /// Abs diff helper (saturating).
 fn abs_diff(a: u64, b: u64) -> u64 {

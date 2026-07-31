@@ -274,9 +274,22 @@ fn leb128_len(bytes: &[u8]) -> [u8; 4] {
         .to_le_bytes()
 }
 
-/// Public commitment helper (proofer + verifier share this for stub
-/// commitment construction). Real impl: STWO Fiat-Shamir transcript.
+/// Compute the stub commitment (deterministic BLAKE3 placeholder for
+/// real STWO proofs). Real impl: STWO Fiat-Shamir transcript.
+///
+/// **R4 audit fix-up (2026-07-31):** this helper is forgeable end-to-end
+/// (any attacker can compute the commitment from publicly-known
+/// `casm_hash` + `PublicInputs`). It is gated behind
+/// `#[cfg(any(test, feature = "allow-stub-verifier"))]` so production
+/// binaries (which disable default features) cannot construct
+/// stub-shaped proofs accidentally.
+///
+/// Use `verify_capability_zk` (or the production-gated path under
+/// `--features allow-stub-verifier`) to construct stub proofs via
+/// the proofer. Real STWO FFI computes the commitment natively
+/// (no BLAKE3 placeholder).
 #[must_use]
+#[cfg(any(test, feature = "allow-stub-verifier"))]
 pub fn stub_commitment(casm_hash: &str, public: &PublicInputs) -> [u8; 32] {
     let canon_pub = canonicalize_public(public);
     let mut commit = Hasher::new();

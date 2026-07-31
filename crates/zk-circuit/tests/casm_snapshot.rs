@@ -1,4 +1,4 @@
-//! CASM snapshot test (mission 0958-a Phase B.2 AC-2).
+//! CASM snapshot test (mission 0958-a Phase B.2 AC-2 + R3 fix-up, 2026-07-31).
 //!
 //! Asserts that compiling `cairo/capability_zk.cairo` via
 //! `zk_circuit::compile_from_source` produces a real CASM bytecode whose
@@ -7,16 +7,26 @@
 //!
 //! **Hermetic:** the test exercises the real `compile_from_source` path
 //! (which shells out to `cairo-compile`) without any `cargo insta` or
-//! external snapshot machinery. The expected hash constant is to be filled
-//! in once a real `cairo-compile 2.6.0` run produces it; until then, the
-//! test asserts determinism + shape +64 hex, which is enough to catch
-//! regressions in the compile pipeline.
+//! external snapshot machinery.
+//!
+//! **R3 fix-up (CI hardening):** set `CIPHEROCTO_REQUIRE_CAIRO_COMPILE=1`
+//! in CI to convert the default skip-into-loud-panic when `cairo-compile`
+//! is missing. The CI workflow `casm-snapshot` job sets this env var.
+//!
+//! **R3 fix-up (hash pin):** set `CIPHEROCTO_EXPECTED_CASM_HASH=<64-hex>`
+//! to enable a strict equality assertion against the expected CASM
+//! BLAKE3 hash. CI computes the expected hash in a one-time bootstrap
+//! step (after scarb install) and captures it for subsequent runs.
+//! Without the env var, the test passes determinism checks but does
+//! NOT pin a specific value.
 
 use zk_circuit::{
     bundled_casm_bytes, bundled_casm_hash_hex, compile_from_source, BUNDLED_CAIRO_SOURCE,
 };
 
-/// Skip the test if `cairo-compile` is not in PATH.
+/// Skip the test if `cairo-compile` is not in PATH, unless CI-mode is
+/// active (`CIPHEROCTO_REQUIRE_CAIRO_COMPILE=1`), in which case a
+/// missing toolchain panics loudly.
 ///
 /// CI installs scarb/asdf with `cairo-compile = "2.6.0"` pinned per
 /// master plan §8 Risk #6. Local dev without scarb skips the snapshot
@@ -24,9 +34,15 @@ use zk_circuit::{
 /// surfaces in `bundled_casm_hash()` callers during tests, so the
 /// legacy stub fallback path is exercised).
 fn require_cairo_compile() -> Option<Result<zk_circuit::CompiledCircuit, zk_circuit::HashError>> {
+    let ci_mode = std::env::var_os("CIPHEROCTO_REQUIRE_CAIRO_COMPILE").is_some();
     match compile_from_source(BUNDLED_CAIRO_SOURCE) {
         Ok(c) => Some(Ok(c)),
         Err(zk_circuit::HashError::CompilerInternal(msg)) if msg.contains("not in PATH") => {
+            assert!(
+                !ci_mode,
+                "casm_snapshot: cairo-compile not in PATH. \
+                 Install scarb/asdf with cairo-compile = \"2.6.0\" pinned."
+            );
             eprintln!(
                 "SKIP casm_snapshot: cairo-compile not in PATH. \
                  Install scarb/asdf with cairo-compile = \"2.6.0\" pinned."
@@ -34,6 +50,18 @@ fn require_cairo_compile() -> Option<Result<zk_circuit::CompiledCircuit, zk_circ
             None
         }
         Err(other) => Some(Err(other)),
+    }
+}
+
+/// Optional strict hash assertion. Active when the env var
+/// `CIPHEROCTO_EXPECTED_CASM_HASH` is set.
+fn assert_expected_hash_if_pinned(actual: &str) {
+    if let Ok(expected) = std::env::var("CIPHEROCTO_EXPECTED_CASM_HASH") {
+        assert_eq!(
+            actual.to_lowercase(),
+            expected.to_lowercase(),
+            "CASM BLAKE3 hash must match pinned constant"
+        );
     }
 }
 
@@ -73,6 +101,9 @@ fn casm_hash_is_64_hex_chars() {
         "BLAKE3 hash must be hex; got {}",
         compiled.compiled_casm_hash
     );
+    // R3 fix-up: when CI pins the expected hash via env var, assert
+    // strict equality.
+    assert_expected_hash_if_pinned(&compiled.compiled_casm_hash);
 }
 
 #[test]

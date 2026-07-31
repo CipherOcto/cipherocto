@@ -94,7 +94,13 @@ jobs:
           curl --proto '=https' --tlsv1.2 -sSf https://docs.swmansion.com/scarb/install.sh | sh -s -- -v 2.6.0
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           cairo-compile --version
-      - name: Run CASM BLAKE3 snapshot test
+      - name: Run CASM BLAKE3 snapshot test (CIPHEROCTO_REQUIRE_CAIRO_COMPILE=loud-fail)
+        # R3 fix-up: in CI we require cairo-compile to be present; the
+        # snapshot test panics loudly if the scarb install above did
+        # not succeed, instead of silently masking the missing toolchain
+        # as the dev default does.
+        env:
+          CIPHEROCTO_REQUIRE_CAIRO_COMPILE: "1"
         run: cargo test -p zk-circuit --test casm_snapshot
 
   no-wholesale-zk:

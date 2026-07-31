@@ -1,4 +1,4 @@
-//! Wire format for capability tokens (RFC-0957 §3.7).
+//! Wire format for capability tokens (RFC-0957 §3.7 + RFC-0958 §4 wire).
 //!
 //! v1 wire format (3 segments, base64url no padding):
 //! ```text
@@ -8,14 +8,50 @@
 //!                     || "."
 //!                     || base64url(discharges_borsh)
 //! ```
-//! RFC-0958 adds an optional 4th segment for `proof_bundle_borsh`; S05 owns.
+//!
+//! v2 wire format (RFC-0958 — 4 segments, optional 4th for `proof_bundle_borsh`):
+//! ```text
+//! capability_token_v2 := base64url(macaroon_borsh)
+//!                     || "."
+//!                     || base64url(holder_sig)
+//!                     || "."
+//!                     || base64url(discharges_borsh)
+//!                     || "."
+//!                     || base64url(proof_bundle_borsh)   // v2 ONLY
+//! ```
+//!
+//! **Forward compat:** v1 parsers (`deserialize_wire`) split on `.` and
+//! take the first 3 segments (silently ignoring the v2 4th). v2 parsers
+//! (`deserialize_wire_v2`) detect 4-segment wire and extract
+//! `proof_bundle_borsh` for downstream STARK verify.
+//!
+//! **Backward compat:** v2 emitter (`serialize_wire_v2`) emits 4 segments
+//! iff the caller supplies `Some(proof_bundle_bytes)`, else 3 segments
+//! (the v1 shape). v2 parsers accept both 3 and 4 segment wires.
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 
 use super::CapabilityToken;
 
+/// Result of parsing a v2 wire format: token + optional `proof_bundle_borsh`.
+///
+/// `CapabilityToken` does NOT derive `Eq` (ed25519 signature field), so we
+/// derive `Clone` + `Debug` only. Field-by-field comparisons are explicit
+/// at call sites.
+#[derive(Debug, Clone)]
+pub struct WireV2 {
+    /// Capability token (segments 1..3).
+    pub token: CapabilityToken,
+    /// Optional v2 4th segment: `proof_bundle_borsh` (RFC-0958).
+    pub proof_bundle: Option<Vec<u8>>,
+}
+
 /// Serialize a `CapabilityToken` to v1 wire format (3 segments).
+///
+/// **Forward-compat:** if the caller has a v2 wire with an embedded
+/// `proof_bundle`, use [`serialize_wire_v2`] instead. This function
+/// emits the v1 shape (3 segments) unconditionally.
 ///
 /// # Errors
 /// Returns `WireError::Serialize` on internal borsh failure (should not
@@ -39,6 +75,9 @@ pub fn serialize_wire(token: &CapabilityToken) -> Result<String, WireError> {
 /// Holder DID + public key are NOT in the wire format — caller passes them
 /// as parameters (resolved out-of-band from a DID registry).
 ///
+/// **Forward-compat:** if the wire carries 4 segments (v2 format), the
+/// 4th is silently ignored. v1 callers don't need to know about v2.
+///
 /// # Errors
 /// Returns `WireError::Parse` on malformed wire format.
 pub fn deserialize_wire(
@@ -46,8 +85,68 @@ pub fn deserialize_wire(
     holder_did: impl Into<String>,
     holder_pub: [u8; 32],
 ) -> Result<CapabilityToken, WireError> {
+    let parsed = parse_wire_to_token(s, holder_did, holder_pub)?;
+    // v1 path discards the v2 4th segment silently.
+    Ok(parsed.token)
+}
+
+/// Serialize a `CapabilityToken` + optional `proof_bundle` to v2 wire
+/// format. Emits 4 segments iff `opt_proof_bundle` is `Some(_)`, else 3
+/// segments (the v1 shape).
+///
+/// # Errors
+/// Returns `WireError::Serialize` on internal borsh failure.
+pub fn serialize_wire_v2(
+    token: &CapabilityToken,
+    opt_proof_bundle: Option<&[u8]>,
+) -> Result<String, WireError> {
+    let base = serialize_wire(token)?;
+    match opt_proof_bundle {
+        Some(pb) => {
+            let s4 = URL_SAFE_NO_PAD.encode(pb);
+            Ok(format!("{base}.{s4}"))
+        }
+        None => Ok(base),
+    }
+}
+
+/// Deserialize a v2 wire into token + optional proof bundle bytes.
+///
+/// Accepts both 3-segment (v1) and 4-segment (v2) wire formats. Returns
+/// `proof_bundle = None` for v1 wire; `proof_bundle = Some(bytes)` for
+/// v2. Used by `verify_capability_zk` downstream callers that need
+/// access to the embedded STARK proof.
+///
+/// # Errors
+/// Returns `WireError::Parse` on malformed wire format.
+pub fn deserialize_wire_v2(
+    s: &str,
+    holder_did: impl Into<String>,
+    holder_pub: [u8; 32],
+) -> Result<WireV2, WireError> {
+    let parsed = parse_wire_to_token(s, holder_did, holder_pub)?;
+    Ok(WireV2 {
+        token: parsed.token,
+        proof_bundle: parsed.proof_bundle,
+    })
+}
+
+/// Internal parser shared between v1 + v2 deserializers.
+///
+/// Accepts 3 or 4 segments. Returns the parsed `CapabilityToken` plus the
+/// optional 4th segment bytes (base64url-decoded).
+struct ParsedWire {
+    token: CapabilityToken,
+    proof_bundle: Option<Vec<u8>>,
+}
+
+fn parse_wire_to_token(
+    s: &str,
+    holder_did: impl Into<String>,
+    holder_pub: [u8; 32],
+) -> Result<ParsedWire, WireError> {
     let parts: Vec<&str> = s.split('.').collect();
-    if parts.len() != 3 {
+    if parts.len() != 3 && parts.len() != 4 {
         return Err(WireError::SegmentCount(parts.len()));
     }
 
@@ -77,12 +176,24 @@ pub fn deserialize_wire(
     let discharges: Vec<super::DischargeMacaroon> = borsh_compat::from_slice(&discharges_bytes)
         .map_err(|e| WireError::Parse(format!("discharges borsh: {e}")))?;
 
-    Ok(CapabilityToken {
-        macaroon,
-        holder_pub,
-        holder_did: holder_did.into(),
-        holder_sig,
-        discharges,
+    let proof_bundle = if parts.len() == 4 {
+        let pb = URL_SAFE_NO_PAD
+            .decode(parts[3])
+            .map_err(|e| WireError::Parse(format!("proof_bundle b64: {e}")))?;
+        Some(pb)
+    } else {
+        None
+    };
+
+    Ok(ParsedWire {
+        token: CapabilityToken {
+            macaroon,
+            holder_pub,
+            holder_did: holder_did.into(),
+            holder_sig,
+            discharges,
+        },
+        proof_bundle,
     })
 }
 
@@ -95,7 +206,7 @@ pub enum WireError {
     #[error("parse error: {0}")]
     Parse(String),
 
-    #[error("expected 3 wire segments, got {0}")]
+    #[error("expected 3 or 4 wire segments, got {0}")]
     SegmentCount(usize),
 }
 
@@ -158,10 +269,33 @@ mod tests {
         .unwrap();
         let wire = serialize_wire(&token).unwrap();
         let back = deserialize_wire(&wire, "did:octo:test", token.holder_pub).unwrap();
-        // Macaroon root_id + caveats must match.
         assert_eq!(back.macaroon.root_id, token.macaroon.root_id);
         assert_eq!(back.macaroon.caveats, token.macaroon.caveats);
         assert_eq!(back.holder_did, token.holder_did);
         assert_eq!(back.holder_pub, token.holder_pub);
+    }
+
+    #[test]
+    fn v1_parser_ignores_v2_fourth_segment() {
+        let holder = IdentityKey::generate().unwrap();
+        let root_secret = [0x42; 32];
+        let catalog = InMemoryCatalog::default();
+        let token = CapabilityToken::mint(
+            &root_secret,
+            &holder,
+            "did:octo:test",
+            vec![Caveat::Before(1_700_000_000)],
+            &catalog,
+        )
+        .unwrap();
+        // Synthesize v2 wire: append a 4th segment.
+        let pb_bytes = b"fake_proof_bundle_for_v2_test";
+        let wire_v2 = serialize_wire_v2(&token, Some(pb_bytes)).unwrap();
+        let segments: Vec<&str> = wire_v2.split('.').collect();
+        assert_eq!(segments.len(), 4);
+
+        // v1 deserializer ignores segment 4 and recovers the token.
+        let back = deserialize_wire(&wire_v2, "did:octo:test", token.holder_pub).unwrap();
+        assert_eq!(back.macaroon.root_id, token.macaroon.root_id);
     }
 }

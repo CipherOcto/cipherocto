@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 pub type ChannelId = String;
 
 /// Discharge macaroon issued by a third-party channel.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DischargeMacaroon {
     /// Channel identifier (`"escrow"`, `"revocation"`, etc.).
     pub channel: ChannelId,

@@ -21,7 +21,9 @@ pub use macaroon::{
     hmac_blake3, macaroon_id, CapabilityCatalog, Macaroon, MacaroonError, MacaroonId,
 };
 pub use registry::{CapabilityClassRegistry, RegistryEntry, RegistryError};
-pub use wire::{deserialize_wire, serialize_wire, WireError};
+pub use wire::{
+    deserialize_wire, deserialize_wire_v2, serialize_wire, serialize_wire_v2, WireError, WireV2,
+};
 pub use zk_mint::{
     mint_with_zk, proof_bundle_from_wire, proof_bundle_to_wire, CapabilityClass, PrivateWitness,
     ProofBundle, PublicInputs, ZkMintError, COMPILED_CASM_BLAKE3_HASH,
@@ -33,7 +35,7 @@ use crate::identity::IdentityKey;
 ///
 /// Holder signature is Ed25519 over `canonical_ser(root_id || caveats_wire)`;
 /// the holder DID is the audience (per RFC-0009 §Identity).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilityToken {
     /// Macaroon body (chain + caveats).
     pub macaroon: Macaroon,

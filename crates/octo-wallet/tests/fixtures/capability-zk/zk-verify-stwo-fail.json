@@ -1,0 +1,9 @@
+{
+  "vector_id": "zk-verify-stwo-fail",
+  "rfc": "RFC-0958 §Test Vectors TV6 + §Adversary A5",
+  "description": "Valid public inputs but tampered stark_proof bytes → STWO verify rejects with StwoVerifyError",
+  "node_type": "self-host",
+  "expected_error_variant": "StwoVerifyError",
+  "tamper_strategy": "xor_first_byte_with_0xff",
+  "notes": "STWO FFI bridge surfaces VerifyFailed { code } as RealStwoError(i32); stub path returns ProofRejected."
+}

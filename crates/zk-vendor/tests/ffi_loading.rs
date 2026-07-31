@@ -92,8 +92,8 @@ fn require_built_lib() -> PathBuf {
     if let Some(p) = nightly_lib_path() {
         return p;
     }
-    let allow_missing = std::env::var_os("CIPHEROCTO_ALLOW_MISSING_FFI_LIB")
-        == Some(std::ffi::OsString::from("1"));
+    let allow_missing =
+        std::env::var_os("CIPHEROCTO_ALLOW_MISSING_FFI_LIB") == Some(std::ffi::OsString::from("1"));
     if allow_missing {
         eprintln!(
             "SKIP (allowed via CIPHEROCTO_ALLOW_MISSING_FFI_LIB=1): \

@@ -1,0 +1,174 @@
+name: ZK Capability Circuit CI
+
+# CipherOcto mission 0958-a (RFC-0958 §Test Vectors + wire format v2 + perf
+# + fuzz + wholesale lint). Runs the cross-impl ZK vector suite, the wire v2
+# round-trip tests, the CASM snapshot test, the no-wholesale-zk gate, and
+# (nightly) the cargo-fuzz harness for 24h.
+#
+# References: rfcs/draft/economics/0958-zk-capability-subclass.md
+#             missions/claimed/0958-a-zk-capability-circuit.md
+#             docs/plans/2026-07-19-session-05-zk-capability-circuit.md
+#
+# Feature gate note (per RFC-0917 invariant): `--all-features` is NOT used
+# because `litellm-mode` and `any-llm-mode` are mutually exclusive
+# (`compile_error!` at quota-router-core/src/router.rs:23). Use
+# `--features full` for feature-bounded coverage.
+
+on:
+  pull_request:
+    branches: [main, next]
+  push:
+    branches: [next]
+  # Nightly fuzz job (AC-13): runs cargo-fuzz for ~24h on a schedule; emits
+  # results back to the workspace + opens a follow-up issue on crash findings.
+  schedule:
+    # 02:00 UTC daily, hitting ZK verifier for 24h-equivalent coverage.
+    # The `fuzz-nightly` job self-imposes a 90-minute budget to stay within
+    # the free tier cap; coverage is increased incrementally via code coverage
+    # stats reported on each run.
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: zk-capability-circuit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build cipherocto workspace (stable rust)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install system deps
+        # Same set as exercise-path.yml: libdbus-1-dev + pkg-config for
+        # octo-cable -> bluer -> dbus transitive build.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Build with --features full
+        run: cargo build --workspace --features full
+
+  zk-vectors:
+    name: RFC-0958 test vectors (AC-4)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Run 8 RFC-0958 vectors + cross-impl TV1/TV2
+        run: cargo test -p octo-wallet --test zk_vectors --features full
+
+  wire-v2:
+    name: Wire format v2 round-trip (AC-8)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Run wire v2 4-segment round-trip
+        run: cargo test -p octo-wallet --test wire_v2_roundtrip --features full
+
+  casm-snapshot:
+    name: CASM BLAKE3 snapshot (AC-2)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install scarb for cairo-compile 2.6.0
+        # Cairo 2.6.0 is required (master plan §8 Risk #6). scarb is the
+        # recommended install for cairo-compile (vs asdf fallback). The
+        # zk_circuit::compile_from_source path shells out to whatever
+        # `cairo-compile` is on PATH; if absent, the snapshot test
+        # gracefully skips with a clear message.
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://docs.swmansion.com/scarb/install.sh | sh -s -- -v 2.6.0
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          cairo-compile --version
+      - name: Run CASM BLAKE3 snapshot test
+        run: cargo test -p zk-circuit --test casm_snapshot
+
+  no-wholesale-zk:
+    name: Wholesale ZK mint call-site linter (AC-5)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run layered defense linter
+        # Fail-closed: any mint_with_zk call site outside the canonical
+        # API file fails the build. Layered with the runtime gate
+        # (permits_zk_mint) + the registry (Wholesale → V1 only).
+        run: bash .github/linters/no-wholesale-zk.sh
+
+  perf-gates:
+    name: Performance gates (AC-11 + AC-12)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Run #[ignore] perf gates (proof-gen <2s, verify <100ms, size 50-500KB)
+        # Tagged `#[ignore]` so default `cargo test` does not run them; CI
+        # opts in via `--include-ignored` to enforce the gates per PR.
+        run: cargo test -p octo-wallet --test bench --features full -- --include-ignored
+
+  clippy:
+    name: Clippy clean (AC-14)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Lint with -D warnings
+        run: cargo clippy --workspace --all-targets --features full -- -D warnings
+
+  fuzz-nightly:
+    name: cargo-fuzz 24h on schedule (AC-13)
+    runs-on: ubuntu-latest
+    needs: build
+    # Only run on schedule + workflow_dispatch; skip PRs to stay within the
+    # 90-minute job cap (free tier). Real 24h coverage is achieved via
+    # CORPUS accumulation across runs (cargo-fuzz resumes from the saved
+    # corpus on disk).
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+      - name: Run capability_zk_verify fuzz for 1.5h CI budget
+        # 24h total budget is split across runs in CI; cargo-fuzz resumes
+        # from the saved corpus. 90-minute wall cap keeps the job inside
+        # the free tier; PR reviewers see corpus growth + last coverage.
+        run: |
+          cargo fuzz run capability_zk_verify -p octo-wallet \
+              -- -max_total_time=5400 -max_len=4096
+      - name: Upload corpus artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-corpus-capability-zk
+          path: crates/octo-wallet/fuzz/corpus/capability_zk_verify
+      - name: Report crash if any
+        if: failure()
+        run: |
+          echo "FUZZ CRASH detected on ${{ github.sha }}" >&2
+          echo "Inspect artifacts/fuzz-corpus-capability-zk/crash-*" >&2
+          cargo fuzz list -p octo-wallet

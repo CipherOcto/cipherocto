@@ -9,10 +9,17 @@ cargo-fuzz = true
 
 [dependencies]
 octo-wallet = { path = ".." }
+quota-router-core = { path = "../../quota-router-core" }
 blake3 = "1"
 ed25519-dalek = { version = "2.2", features = ["serde"] }
 libfuzzer-sys = "0.4"
+hex = "0.4"
+hex.workspace = false
 
 [[bin]]
 name = "capability_verify"
 path = "fuzz_targets/capability_verify.rs"
+
+[[bin]]
+name = "capability_zk_verify"
+path = "fuzz_targets/capability_zk_verify.rs"

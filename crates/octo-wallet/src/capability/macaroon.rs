@@ -83,7 +83,7 @@ fn u32_len(n: usize) -> [u8; 4] {
 }
 
 /// Macaroon v1 (RFC-0957 §3.1). Bearer token + chained caveat HMACs.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Macaroon {
     /// Unique 16-byte identifier (per mint).
     pub root_id: MacaroonId,

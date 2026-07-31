@@ -1,0 +1,24 @@
+{
+  "vector_id": "zk-mint-wholesale-reject",
+  "rfc": "RFC-0958 §Test Vectors TV3 / Adversary A3",
+  "description": "Wholesale attempting to mint ZK-capability → NodeTypeCannotMintZKCap (fail-closed)",
+  "node_type": "wholesale",
+  "public_inputs": {
+    "ask_id": "8888888888888888888888888888888888888888888888888888888888888888",
+    "axes_consumed": [["input_tokens_per_1k", 500]],
+    "cap_root_hash": "9999999999999999999999999999999999999999999999999999999999999999",
+    "invocation_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "holder_did": "did:octo:holder-wholesale",
+    "current_unix_time": 1700000002,
+    "output_hash": null,
+    "provider_slot_id": "slot-wholesale-001"
+  },
+  "witness": {
+    "cap_root_secret": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+    "holder_sig": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefe",
+    "inference_trace": null
+  },
+  "expected_outcome": "MintReject",
+  "expected_error_variant": "NodeTypeCannotMintZKCap",
+  "notes": "Defense in depth: Wholesale cannot mint ZK caps per RFC-0958 §NodeType Gating Matrix."
+}

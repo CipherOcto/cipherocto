@@ -1,0 +1,29 @@
+{
+  "vector_id": "zk-mint-self-host",
+  "rfc": "RFC-0958 §Test Vectors TV1",
+  "description": "SelfHost + inference trace + valid public inputs → mint succeeds; verifier accepts",
+  "node_type": "self-host",
+  "public_inputs": {
+    "ask_id": "1111111111111111111111111111111111111111111111111111111111111111",
+    "axes_consumed": [["input_tokens_per_1k", 1000]],
+    "cap_root_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+    "invocation_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+    "holder_did": "did:octo:holder-vector-tv1",
+    "current_unix_time": 1700000000,
+    "output_hash": "4444444444444444444444444444444444444444444444444444444444444444",
+    "provider_slot_id": "slot-tv1-001"
+  },
+  "witness": {
+    "cap_root_secret": "4242424242424242424242424242424242424242424242424242424242424242",
+    "holder_sig": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+    "inference_trace": {
+      "step_count": 1,
+      "step_records": [
+        {"op_code": 0, "input_hash": "3333333333333333333333333333333333333333333333333333333333333333", "output_hash": "4444444444444444444444444444444444444444444444444444444444444444"}
+      ]
+    }
+  },
+  "expected_outcome": "MintAccept",
+  "expected_verifier_result": "Ok",
+  "notes": "TV1: SelfHost mint succeeds; verifier accepts canonical stub commitment."
+}

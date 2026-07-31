@@ -1,0 +1,10 @@
+{
+  "vector_id": "zk-verify-public-input-mismatch",
+  "rfc": "RFC-0958 §Test Vectors TV4 + v1.4 IA-11",
+  "description": "Valid proof presented against mutated `ask_id` public input → verifier rejects with PublicInputMismatch",
+  "node_type": "self-host",
+  "expected_error_variant": "PublicInputMismatch",
+  "mutated_field": "ask_id",
+  "mutated_value_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "notes": "v1.4 IA-11: PublicInputMismatch includes provider_slot_id check; cross-slot replay also fails here."
+}

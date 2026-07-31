@@ -1,0 +1,24 @@
+{
+  "vector_id": "zk-mint-hybrid-no-trace",
+  "rfc": "RFC-0958 §Test Vectors TV2",
+  "description": "Hybrid + no inference trace (opt-in explicit mint_with_zk call) → mint succeeds; verifier accepts",
+  "node_type": "hybrid",
+  "public_inputs": {
+    "ask_id": "5555555555555555555555555555555555555555555555555555555555555555",
+    "axes_consumed": [["input_tokens_per_1k", 2000]],
+    "cap_root_hash": "6666666666666666666666666666666666666666666666666666666666666666",
+    "invocation_hash": "7777777777777777777777777777777777777777777777777777777777777777",
+    "holder_did": "did:octo:holder-vector-tv2",
+    "current_unix_time": 1700000001,
+    "output_hash": null,
+    "provider_slot_id": "slot-tv2-001"
+  },
+  "witness": {
+    "cap_root_secret": "4848484848484848484848484848484848484848484848484848484848484848",
+    "holder_sig": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "inference_trace": null
+  },
+  "expected_outcome": "MintAccept",
+  "expected_verifier_result": "Ok",
+  "notes": "TV2: Hybrid mint with explicit opt-in; verifier accepts canonical stub commitment (no PoI)."
+}

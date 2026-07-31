@@ -226,18 +226,19 @@ pub struct CapabilityVerifier {
 }
 
 impl CapabilityVerifier {
-    /// Construct a verifier at the current wall-clock time (for tests +
-    /// callers that don't need precise time control).
+    /// Construct a verifier at a caller-supplied unix time.
+    ///
+    /// **R4 audit fix-up (2026-07-31):** the prior `at_now()` method
+    /// used `SystemTime::now()` — a Class A determinism violation
+    /// (RFC-0958 §Determinism) since two verification calls within
+    /// the same logical window would produce different results.
+    /// Production callers must pass an explicit timestamp (typically
+    /// the slot's issuance time from the request context).
     #[must_use]
-    pub fn at_now(compiled_casm_blake3_hash: [u8; 32]) -> Self {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+    pub fn at_time(compiled_casm_blake3_hash: [u8; 32], verifier_local_unix_time: u64) -> Self {
         Self {
             compiled_casm_blake3_hash,
-            verifier_local_unix_time: now,
+            verifier_local_unix_time,
         }
     }
 }

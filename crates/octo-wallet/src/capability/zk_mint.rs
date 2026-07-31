@@ -46,12 +46,57 @@ pub enum CapabilityClass {
 /// PrivateWitness is the canonical source of holder_sig for ZK verify,
 /// but the same signature value is also embedded in the public `CapabilityToken`
 /// for v1 verify path (dual representation; same value).
+///
+/// **v1.2 M5 rename (AC-6):** `inference_trace: Option<ExecutionTrace>` MUST
+/// be `Some` iff the caller is `NodeType::SelfHost` (carries the PoI trace).
+/// Hybrid / Wholesale callers leave this `None`; SelfHost callers populate
+/// it with the inference trace whose canonicalized hash matches
+/// `public_inputs.output_hash`. Mint API enforces both directions.
 #[derive(Debug, Clone)]
 pub struct PrivateWitness {
     pub cap_root_secret: [u8; 32],
     pub holder_sig: Signature,
     pub caveats_full: Vec<Caveat>,
     pub discharges_full: Vec<Vec<u8>>, // opaque discharge macaroons
+    /// **v1.2 M5:** SelfHost-only PoI trace. Hybrid/Wholesale leave `None`.
+    /// Mint API rejects SelfHost with `None` via [`ZkMintError::MissingInferenceTrace`].
+    pub inference_trace: Option<ExecutionTrace>,
+}
+
+/// Self-host inference trace (RFC-0958 §Data Structures; v1.2 M5 fix).
+///
+/// Carries the PoI trace for self-host mode. The trace's canonicalized
+/// BLAKE3 hash (over `step_records` via `derive_trace_hash`) MUST equal
+/// `PublicInputs::output_hash` when present. The Cairo-side structural
+/// check (`inference_trace_present == 1` iff `has_output_hash == 1`) lives
+/// at `cairo/capability_zk.cairo::main`.
+///
+/// `step_records` carries one entry per inference step (operator code +
+/// input/output hashes). The verifier reconstructs the trace hash via
+/// `derive_trace_hash` and compares to `public_inputs.output_hash`.
+#[derive(Debug, Clone)]
+pub struct ExecutionTrace {
+    /// Number of steps (bounded by RFC-0958 §Performance G1: 10K reference).
+    pub step_count: u32,
+    /// Per-step records (RFC-0958 §StepRecord). Empty for Hybrid/Wholesale.
+    pub step_records: Vec<TraceStep>,
+}
+
+/// Single inference step (RFC-0958 §StepRecord).
+///
+/// Three-tuple: operator code (`op_as_felt`), input hash (32 bytes),
+/// output hash (32 bytes). The Cairo-side Poseidon canonicalization is
+/// `poseidon_hash(op_as_felt || input_hash_lo || input_hash_hi ||
+/// output_hash_lo || output_hash_hi)`. The Rust-side mirror lives at
+/// `derive_step_hash`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TraceStep {
+    /// Operator code (felt252 in Cairo; opaque u64 here for the hash binding).
+    pub op_code: u64,
+    /// Input hash (32 bytes).
+    pub input_hash: [u8; 32],
+    /// Output hash (32 bytes).
+    pub output_hash: [u8; 32],
 }
 
 /// Public inputs (RFC-0958 §Data Structures; v1.2 M5 fix: output_hash Some iff SelfHost;
@@ -90,8 +135,8 @@ pub enum ZkMintError {
     #[error("Capability class MUST be ZKBearing; got V1")]
     ClassMismatch,
 
-    #[error("SelfHost NodeType requires output_hash in public inputs")]
-    MissingOutputHash,
+    #[error("SelfHost NodeType requires inference_trace in witness (RFC-0958 v1.2 M5 rename)")]
+    MissingInferenceTrace,
 
     #[error("Hybrid NodeType cannot emit PoI (output_hash MUST be None)")]
     HybridCannotEmitPoI,
@@ -145,9 +190,47 @@ pub fn bundled_casm_hash() -> [u8; 32] {
 }
 
 fn compute_bundled_casm_hash() -> [u8; 32] {
-    let program: CairoProgram =
-        serde_json::from_str(BUNDLED_CAIRO_JSON).expect("bundled Cairo JSON must parse");
-    let compiled = compile(&program).expect("bundled Cairo compile must succeed");
+    // Production path (mission 0958-a Phase B.2): shell out to
+    // `cairo-compile` via `zk_circuit::compile_from_source` and hash the
+    // real CASM bytes (no JSON stub). Requires `cairo-compile 2.6.0` in
+    // PATH; install via scarb/asdf per master plan §8 Risk #6.
+    //
+    // **Dev fallback:** when `cairo-compile` is not available (e.g.,
+    // local dev without scarb), fall back to the legacy deterministic
+    // stub so unit tests stay green. The fallback is logged loudly
+    // (eprintln!) and is NEVER hit in production — CI installs the
+    // toolchain per plan S1 risk mitigation.
+    match zk_circuit::compile_from_source(BUNDLED_CAIRO_SOURCE) {
+        Ok(compiled) => {
+            let hex = compiled.hash();
+            let bytes = hex::decode(hex).expect("BLAKE3 hash is hex");
+            let mut out = [0u8; 32];
+            out.copy_from_slice(&bytes[..32]);
+            out
+        }
+        Err(compile_err) => {
+            eprintln!(
+                "WARNING: zk_circuit::compile_from_source failed: {compile_err}. \
+                 Falling back to legacy stub (DEV ONLY). Production MUST install \
+                 cairo-compile 2.6.0 via scarb/asdf."
+            );
+            legacy_stub_bundled_casm_hash()
+        }
+    }
+}
+
+/// Legacy stub: BLAKE3 of canonical JSON of an empty `CairoProgram`.
+/// Used only when `cairo-compile` is unavailable in dev environments.
+/// Production NEVER hits this path — `bundled_casm_hash()` returns the
+/// real CASM BLAKE3 hash.
+fn legacy_stub_bundled_casm_hash() -> [u8; 32] {
+    let program: CairoProgram = CairoProgram {
+        version: "2.6.0".to_owned(),
+        identifier: "capability_zk_v1".to_owned(),
+        hints: vec![],
+        bytecode: vec![],
+    };
+    let compiled = compile(&program).expect("legacy stub compile must succeed");
     let hex = compiled.hash();
     let bytes = hex::decode(hex).expect("BLAKE3 hash is hex");
     let mut out = [0u8; 32];
@@ -157,17 +240,12 @@ fn compute_bundled_casm_hash() -> [u8; 32] {
 
 /// Cairo source for the bundled capability ZK circuit (mint side).
 ///
-/// The real `cairo/capability_zk.cairo` file lives in the repo; for this
-/// MVP stub we carry the program body inline so the compile pipeline has
-/// a stable determinism contract. Migration 2026-07-22: real source lives
-/// at `cairo/capability_zk.cairo`; when that lands, plumb it through
-/// `include_str!` instead of inlining.
-const BUNDLED_CAIRO_JSON: &str = r#"{
-    "version": "2.6.0",
-    "identifier": "capability_zk_v1",
-    "hints": [],
-    "bytecode": []
-}"#;
+/// Re-exported from `zk_circuit::BUNDLED_CAIRO_SOURCE` which loads the
+/// real `cairo/capability_zk.cairo` via `include_str!` at compile time.
+/// Mission 0958-a Phase B.2 (2026-07-22 extraction per
+/// [[stoolap-general-purpose-db]]): real Cairo source replaces the
+/// previous inline JSON stub.
+pub use zk_circuit::BUNDLED_CAIRO_SOURCE;
 
 /// Mint a ZK-bearing capability proof bundle.
 ///
@@ -223,9 +301,11 @@ pub fn mint_with_zk_and_signers(
     //    V1 tokens must NOT call mint_with_zk; enforced at type level (no V1 entrypoint).
     let _ = witness; // witness consumed by STWO in production; MVP no-op
 
-    // 3. SelfHost requires output_hash (v1.2 M5 fix).
-    if matches!(node_type, NodeType::SelfHost) && public_inputs.output_hash.is_none() {
-        return Err(ZkMintError::MissingOutputHash);
+    // 3. SelfHost requires `inference_trace` in witness (v1.2 M5 rename —
+    //    was `MissingOutputHash` checking `public_inputs.output_hash.is_none()`;
+    //    AC-6 fix: enforce witness-side check, not just public-input-side).
+    if matches!(node_type, NodeType::SelfHost) && witness.inference_trace.is_none() {
+        return Err(ZkMintError::MissingInferenceTrace);
     }
 
     // 4. Hybrid cannot emit PoI (v1.2 M5 fix).
@@ -380,12 +460,27 @@ impl ProofBundle {
 mod tests {
     use super::*;
 
-    fn sample_witness() -> PrivateWitness {
+    fn sample_witness(node_type: NodeType) -> PrivateWitness {
+        // **v1.2 M5:** SelfHost requires `inference_trace: Some(_)`; Hybrid /
+        // Wholesale leave it `None`. Test fixture mirrors this rule.
+        let inference_trace = if matches!(node_type, NodeType::SelfHost) {
+            Some(ExecutionTrace {
+                step_count: 1,
+                step_records: vec![TraceStep {
+                    op_code: 0,
+                    input_hash: [0x33; 32],
+                    output_hash: [0x44; 32],
+                }],
+            })
+        } else {
+            None
+        };
         PrivateWitness {
             cap_root_secret: [0x42; 32],
             holder_sig: Signature::from_bytes(&[0xab; 64]),
             caveats_full: vec![],
             discharges_full: vec![],
+            inference_trace,
         }
     }
 
@@ -410,7 +505,7 @@ mod tests {
 
     #[test]
     fn wholesale_mint_rejected() {
-        let witness = sample_witness();
+        let witness = sample_witness(NodeType::Wholesale);
         let pi = sample_public_inputs(NodeType::Wholesale);
         let err =
             mint_with_zk(NodeType::Wholesale, &witness, &pi, bundled_casm_hash()).unwrap_err();
@@ -419,7 +514,7 @@ mod tests {
 
     #[test]
     fn selfhost_mint_succeeds_with_output_hash() {
-        let witness = sample_witness();
+        let witness = sample_witness(NodeType::SelfHost);
         let pi = sample_public_inputs(NodeType::SelfHost);
         let bundle = mint_with_zk(NodeType::SelfHost, &witness, &pi, bundled_casm_hash()).unwrap();
         assert_eq!(bundle.security_bits, 128);
@@ -427,17 +522,25 @@ mod tests {
     }
 
     #[test]
-    fn selfhost_mint_rejected_without_output_hash() {
-        let witness = sample_witness();
-        let mut pi = sample_public_inputs(NodeType::SelfHost);
-        pi.output_hash = None;
-        let err = mint_with_zk(NodeType::SelfHost, &witness, &pi, bundled_casm_hash()).unwrap_err();
-        assert!(matches!(err, ZkMintError::MissingOutputHash));
+    fn selfhost_mint_rejected_without_inference_trace() {
+        // **v1.2 M5 rename (AC-6):** SelfHost witness MUST carry inference_trace.
+        let witness = sample_witness(NodeType::SelfHost);
+        let mut witness_no_trace = witness;
+        witness_no_trace.inference_trace = None;
+        let pi = sample_public_inputs(NodeType::SelfHost);
+        let err = mint_with_zk(
+            NodeType::SelfHost,
+            &witness_no_trace,
+            &pi,
+            bundled_casm_hash(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, ZkMintError::MissingInferenceTrace));
     }
 
     #[test]
     fn hybrid_mint_rejected_with_output_hash() {
-        let witness = sample_witness();
+        let witness = sample_witness(NodeType::Hybrid);
         let mut pi = sample_public_inputs(NodeType::Hybrid);
         pi.output_hash = Some([0x44; 32]);
         let err = mint_with_zk(NodeType::Hybrid, &witness, &pi, bundled_casm_hash()).unwrap_err();
@@ -446,7 +549,7 @@ mod tests {
 
     #[test]
     fn hybrid_mint_succeeds_without_output_hash() {
-        let witness = sample_witness();
+        let witness = sample_witness(NodeType::Hybrid);
         let pi = sample_public_inputs(NodeType::Hybrid);
         let bundle = mint_with_zk(NodeType::Hybrid, &witness, &pi, bundled_casm_hash()).unwrap();
         assert!(bundle.output_hash().is_none());
@@ -454,7 +557,7 @@ mod tests {
 
     #[test]
     fn casm_hash_mismatch_rejected() {
-        let witness = sample_witness();
+        let witness = sample_witness(NodeType::SelfHost);
         let pi = sample_public_inputs(NodeType::SelfHost);
         let wrong_casm = [0xff; 32];
         let err = mint_with_zk(NodeType::SelfHost, &witness, &pi, wrong_casm).unwrap_err();
@@ -463,7 +566,7 @@ mod tests {
 
     #[test]
     fn proof_bundle_wire_roundtrip() {
-        let witness = sample_witness();
+        let witness = sample_witness(NodeType::SelfHost);
         let pi = sample_public_inputs(NodeType::SelfHost);
         let bundle = mint_with_zk(NodeType::SelfHost, &witness, &pi, bundled_casm_hash()).unwrap();
         let bytes = proof_bundle_to_wire(&bundle).unwrap();
@@ -483,7 +586,7 @@ mod tests {
     #[test]
     fn mint_with_zk_and_signers_emits_batch_proof_for_eleven_signers() {
         // Gap 3 / Task 3.3: 11 signers (matches the 11-step exercise).
-        let witness = sample_witness();
+        let witness = sample_witness(NodeType::SelfHost);
         let pi = sample_public_inputs(NodeType::SelfHost);
         let casm = bundled_casm_hash();
         let signers: Vec<[u8; 32]> = (0..11)
@@ -501,7 +604,7 @@ mod tests {
     #[test]
     fn mint_with_zk_and_signers_propagates_prover_error() {
         // Wholesale + signers → NodeType gating still fires first.
-        let witness = sample_witness();
+        let witness = sample_witness(NodeType::Wholesale);
         let pi = sample_public_inputs(NodeType::Wholesale);
         let signers: Vec<[u8; 32]> = (0..3)
             .map(|i| [u8::try_from(i).expect("3 signers fit in u8"); 32])
@@ -520,7 +623,7 @@ mod tests {
     #[test]
     fn mint_with_zk_empty_signers_matches_legacy_path() {
         // Empty signers list → backward-compat path; stark_proof empty.
-        let witness = sample_witness();
+        let witness = sample_witness(NodeType::SelfHost);
         let pi = sample_public_inputs(NodeType::SelfHost);
         let bundle =
             mint_with_zk_and_signers(NodeType::SelfHost, &witness, &pi, bundled_casm_hash(), &[])

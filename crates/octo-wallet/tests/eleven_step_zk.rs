@@ -34,11 +34,20 @@ fn eleven_step_batch_zk_round_trip() {
         .collect();
 
     // Sample witness (RFC-0958 §Data Structures).
+    // **v1.2 M5:** SelfHost requires `inference_trace: Some(_)` (carries the PoI).
     let witness = PrivateWitness {
         cap_root_secret: [0x42; 32],
         holder_sig: Signature::from_bytes(&[0xab; 64]),
         caveats_full: vec![],
         discharges_full: vec![],
+        inference_trace: Some(octo_wallet::capability::zk_mint::ExecutionTrace {
+            step_count: 1,
+            step_records: vec![octo_wallet::capability::zk_mint::TraceStep {
+                op_code: 0,
+                input_hash: [0x33; 32],
+                output_hash: [0x44; 32],
+            }],
+        }),
     };
 
     // Capability public inputs (RFC-0958 §Data Structures).
@@ -121,6 +130,8 @@ fn eleven_step_wholesale_mint_fails_closed() {
         holder_sig: Signature::from_bytes(&[0xab; 64]),
         caveats_full: vec![],
         discharges_full: vec![],
+        // Wholesale → inference_trace is None (no PoI for Wholesale)
+        inference_trace: None,
     };
     let public_inputs = PublicInputs {
         ask_id: [0x11; 32],
@@ -157,6 +168,15 @@ fn eleven_step_batch_proof_is_deterministic() {
         holder_sig: Signature::from_bytes(&[0xab; 64]),
         caveats_full: vec![],
         discharges_full: vec![],
+        // SelfHost → inference_trace required (v1.2 M5 rename, AC-6)
+        inference_trace: Some(octo_wallet::capability::zk_mint::ExecutionTrace {
+            step_count: 1,
+            step_records: vec![octo_wallet::capability::zk_mint::TraceStep {
+                op_code: 0,
+                input_hash: [0x33; 32],
+                output_hash: [0x44; 32],
+            }],
+        }),
     };
     let public_inputs = PublicInputs {
         ask_id: [0x11; 32],

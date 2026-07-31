@@ -23,6 +23,11 @@ thiserror.workspace = true
 # with a stable field order contract (sorted keys) — see hash() doc comment.
 hex = "0.4"
 
+# Tempfile for compile_from_source — writes Cairo source to a temp file
+# before shelling out to `cairo-compile`. The Cairo compiler takes a file
+# path, not stdin, so we need a path. tempfile is the standard for this.
+tempfile = { workspace = true }
+
 # Canonical proof commitment shape (Gap 3 / RFC-0958). Used by the
 # mock proofer to emit commitment bytes that match the downstream
 # verifier's `zk_verifier::stub_commitment` so the full mint -> verify

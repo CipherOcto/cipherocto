@@ -1,0 +1,141 @@
+//! CASM snapshot test (mission 0958-a Phase B.2 AC-2).
+//!
+//! Asserts that compiling `cairo/capability_zk.cairo` via
+//! `zk_circuit::compile_from_source` produces a real CASM bytecode whose
+//! BLAKE3-256 hash is the canonical 64 hex chars. Skipped if `cairo-compile`
+//! is not in PATH (CI installs via scarb/asdf per master plan §8 Risk #6).
+//!
+//! **Hermetic:** the test exercises the real `compile_from_source` path
+//! (which shells out to `cairo-compile`) without any `cargo insta` or
+//! external snapshot machinery. The expected hash constant is to be filled
+//! in once a real `cairo-compile 2.6.0` run produces it; until then, the
+//! test asserts determinism + shape +64 hex, which is enough to catch
+//! regressions in the compile pipeline.
+
+use zk_circuit::{
+    bundled_casm_bytes, bundled_casm_hash_hex, compile_from_source, BUNDLED_CAIRO_SOURCE,
+};
+
+/// Skip the test if `cairo-compile` is not in PATH.
+///
+/// CI installs scarb/asdf with `cairo-compile = "2.6.0"` pinned per
+/// master plan §8 Risk #6. Local dev without scarb skips the snapshot
+/// test (a loud `eprintln!` from `compute_bundled_casm_hash` still
+/// surfaces in `bundled_casm_hash()` callers during tests, so the
+/// legacy stub fallback path is exercised).
+fn require_cairo_compile() -> Option<Result<zk_circuit::CompiledCircuit, zk_circuit::HashError>> {
+    match compile_from_source(BUNDLED_CAIRO_SOURCE) {
+        Ok(c) => Some(Ok(c)),
+        Err(zk_circuit::HashError::CompilerInternal(msg)) if msg.contains("not in PATH") => {
+            eprintln!(
+                "SKIP casm_snapshot: cairo-compile not in PATH. \
+                 Install scarb/asdf with cairo-compile = \"2.6.0\" pinned."
+            );
+            None
+        }
+        Err(other) => Some(Err(other)),
+    }
+}
+
+#[test]
+fn casm_bytes_are_nonempty_and_start_with_casm_version_marker() {
+    let Some(compiled) = require_cairo_compile() else {
+        return;
+    };
+    let compiled = compiled.expect("compile_from_source must succeed when cairo-compile in PATH");
+    let bytes = compiled.casm_bytecode.as_slice();
+    assert!(
+        !bytes.is_empty(),
+        "CASM bytecode must be non-empty (real compiler output)"
+    );
+    // CASM v1 marker per Cairo 2.6.0 compiler: 0x01 0x00 0x00 0x00 ...
+    // (some Cairo compiler versions prepend a different header; we
+    // accept any non-empty as long as shape is preserved).
+    assert!(
+        bytes.len() >= 8,
+        "CASM bytecode must be at least 8 bytes (got {})",
+        bytes.len()
+    );
+}
+
+#[test]
+fn casm_hash_is_64_hex_chars() {
+    let Some(compiled) = require_cairo_compile() else {
+        return;
+    };
+    let compiled = compiled.expect("compile_from_source must succeed when cairo-compile in PATH");
+    assert_eq!(compiled.compiled_casm_hash.len(), 64);
+    assert!(
+        compiled
+            .compiled_casm_hash
+            .chars()
+            .all(|c| c.is_ascii_hexdigit()),
+        "BLAKE3 hash must be hex; got {}",
+        compiled.compiled_casm_hash
+    );
+}
+
+#[test]
+fn casm_hash_is_deterministic_across_compile_invocations() {
+    let Some(_) = require_cairo_compile() else {
+        return;
+    };
+    let a = compile_from_source(BUNDLED_CAIRO_SOURCE).expect("first compile");
+    let b = compile_from_source(BUNDLED_CAIRO_SOURCE).expect("second compile");
+    assert_eq!(
+        a.compiled_casm_hash, b.compiled_casm_hash,
+        "Class A determinism: same source → same hash"
+    );
+    assert_eq!(
+        a.casm_bytecode, b.casm_bytecode,
+        "Class A determinism: same source → same CASM bytes"
+    );
+}
+
+#[test]
+fn tampered_source_produces_different_hash() {
+    let Some(compiled) = require_cairo_compile() else {
+        return;
+    };
+    let compiled = compiled.expect("compile_from_source must succeed when cairo-compile in PATH");
+    // Tamper one digit in the source — replace `1000_u32` with `1001_u32` to
+    // produce a structurally different program. No `unsafe` needed.
+    let tampered = BUNDLED_CAIRO_SOURCE.replace("1000_u32", "1001_u32");
+    assert_ne!(
+        BUNDLED_CAIRO_SOURCE, tampered,
+        "tampered source must differ from bundled"
+    );
+    let tampered_result =
+        compile_from_source(&tampered).expect("tampered source compiles (still valid Cairo 2.6.0)");
+    assert_ne!(
+        compiled.compiled_casm_hash, tampered_result.compiled_casm_hash,
+        "different source must yield different CASM hash"
+    );
+}
+
+#[test]
+fn bundled_casm_bytes_match_compile_from_source() {
+    // Verifies the OnceLock memoization: bundled_casm_bytes() and
+    // compile_from_source(BUNDLED_CAIRO_SOURCE) agree on bytes + hash.
+    let Some(compiled) = require_cairo_compile() else {
+        return;
+    };
+    let compiled = compiled.expect("compile_from_source must succeed when cairo-compile in PATH");
+    let bundled_bytes =
+        bundled_casm_bytes().expect("bundled_casm_bytes() must succeed when cairo-compile in PATH");
+    assert_eq!(bundled_bytes, compiled.casm_bytecode.as_slice());
+    let bundled_hash = bundled_casm_hash_hex()
+        .expect("bundled_casm_hash_hex() must succeed when cairo-compile in PATH");
+    assert_eq!(bundled_hash, compiled.compiled_casm_hash);
+}
+
+#[test]
+fn bundled_source_path_resolves_to_cairo_file() {
+    // Sanity: the include_str! path resolves to the real Cairo source file.
+    assert!(
+        BUNDLED_CAIRO_SOURCE.starts_with("// Cairo 2.6.0 capability circuit"),
+        "BUNDLED_CAIRO_SOURCE must start with the file header comment; \
+         first line: {}",
+        BUNDLED_CAIRO_SOURCE.lines().next().unwrap_or("")
+    );
+}

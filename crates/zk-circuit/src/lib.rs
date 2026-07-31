@@ -11,11 +11,18 @@
 //!
 //! ## Surface
 //!
-//! - [`compile`]: Cairo JSON program (canonical_ser) → [`CompiledCircuit`]
-//!   carrying CASM bytecode + BLAKE3 hash.
+//! - [`compile_from_source`]: Cairo source string (Cairo 2.6.0) →
+//!   [`CompiledCircuit`] carrying real CASM bytecode + BLAKE3 hash.
+//!   Shells out to `cairo-compile` 2.6.0; install via scarb/asdf.
+//! - [`compile`]: legacy stub over `CairoProgram` JSON struct (deterministic
+//!   BLAKE3 of canonical JSON). Kept for backward compat with tests + the
+//!   `Program::Capability` dispatch; production path is `compile_from_source`.
+//! - [`bundled_casm_bytes`]: real CASM bytes of `cairo/capability_zk.cairo`
+//!   (memoized via `OnceLock`).
+//! - [`bundled_casm_hash_hex`]: BLAKE3-256 hex of the bundled CASM.
 //! - [`CompiledCircuit::hash`]: stable 64-char hex (matches RFC-0958
 //!   `compiled_casm_hash` field shape).
-//! - [`HashError`]: error type for malformed Cairo input.
+//! - [`HashError`]: error type for malformed Cairo input or missing toolchain.
 //! - [`Program`], [`BatchSigPublicInputs`], [`prove_batch_signature`]:
 //!   batch signature circuit surface (Gap 3; RFC-0958 capability ZK
 //!   subclass + RFC-0962 §9 ZK proof integration).
@@ -29,6 +36,10 @@
 #![deny(unsafe_code)]
 #![warn(missing_debug_implementations)]
 #![allow(clippy::doc_markdown)]
+
+use std::io::Write as _;
+use std::process::Command;
+use std::sync::OnceLock;
 
 use blake3::Hasher;
 use serde::{Deserialize, Serialize};
@@ -80,6 +91,139 @@ pub enum HashError {
     MalformedProgram(String),
     #[error("CASM compiler internal error: {0}")]
     CompilerInternal(String),
+}
+
+/// Cairo source for the bundled capability circuit (RFC-0958 §Algorithms).
+///
+/// Loaded at compile time from `cairo/capability_zk.cairo` (cipherocto
+/// workspace; Phase B.2 per [[stoolap-general-purpose-db]]). The path is
+/// resolved relative to this file: `crates/zk-circuit/src/lib.rs` →
+/// `../../../cairo/capability_zk.cairo` → repo-root `cairo/capability_zk.cairo`.
+pub const BUNDLED_CAIRO_SOURCE: &str = include_str!("../../../cairo/capability_zk.cairo");
+
+/// Cached `CompiledCircuit` for the bundled source. Memoizes the
+/// `cairo-compile` subprocess invocation on first call. If `cairo-compile`
+/// is not in PATH, the cached value is `Err(CompilerInternal)` and all
+/// subsequent `bundled_*` calls return the same error (the failure is
+/// permanent for this process — install scarb/asdf and restart).
+pub static BUNDED_CASM_CIRCUIT: OnceLock<Result<CompiledCircuit, HashError>> = OnceLock::new();
+
+/// Returns the bundled CASM bytecode (real CASM bytes from
+/// `cairo-compile`). Memoized via [`BUNDED_CASM_CIRCUIT`].
+///
+/// # Errors
+/// Returns [`HashError::CompilerInternal`] if `cairo-compile` is not in
+/// PATH or compilation fails. Install scarb/asdf with
+/// `cairo-compile = "2.6.0"` pinned per master plan §8 Risk #6.
+pub fn bundled_casm_bytes() -> Result<&'static [u8], HashError> {
+    let cached = BUNDED_CASM_CIRCUIT.get_or_init(|| compile_source_inner(BUNDLED_CAIRO_SOURCE));
+    match cached {
+        Ok(c) => Ok(c.casm_bytecode.as_slice()),
+        Err(e) => Err(clone_hash_error(e)),
+    }
+}
+
+/// Returns the bundled CASM BLAKE3-256 hash as 64 hex chars
+/// (matches RFC-0958 `compiled_casm_hash` shape).
+///
+/// # Errors
+/// Same as [`bundled_casm_bytes`].
+pub fn bundled_casm_hash_hex() -> Result<String, HashError> {
+    let cached = BUNDED_CASM_CIRCUIT.get_or_init(|| compile_source_inner(BUNDLED_CAIRO_SOURCE));
+    match cached {
+        Ok(c) => Ok(c.compiled_casm_hash.clone()),
+        Err(e) => Err(clone_hash_error(e)),
+    }
+}
+
+/// Compile a Cairo 2.6.0 source string to real CASM bytecode + BLAKE3 hash.
+///
+/// This is the **production path** for mission 0958-a Phase B.2. Shells out
+/// to `cairo-compile` 2.6.0 (install via scarb/asdf). The output CASM
+/// bytes are BLAKE3-256 hashed; the same source always produces the same
+/// bytes + hash (Class A determinism, RFC-0958 §Determinism).
+///
+/// # Errors
+/// - [`HashError::CompilerInternal`] if `cairo-compile` is not in PATH or
+///   the subprocess fails (non-zero exit, IO error reading output).
+///
+/// # Examples
+/// ```no_run
+/// use zk_circuit::compile_from_source;
+/// let source = zk_circuit::BUNDLED_CAIRO_SOURCE;
+/// let compiled = compile_from_source(source).expect("cairo-compile must be in PATH");
+/// assert_eq!(compiled.hash().len(), 64);
+/// ```
+pub fn compile_from_source(source: &str) -> Result<CompiledCircuit, HashError> {
+    compile_source_inner(source)
+}
+
+fn compile_source_inner(source: &str) -> Result<CompiledCircuit, HashError> {
+    // Cairo-compile takes a file path, not stdin. Write to a temp file and
+    // capture the resulting .casm alongside.
+    let mut tmp = tempfile::Builder::new()
+        .suffix(".cairo")
+        .tempfile()
+        .map_err(|e| HashError::CompilerInternal(format!("tempfile create: {e}")))?;
+    tmp.write_all(source.as_bytes())
+        .map_err(|e| HashError::CompilerInternal(format!("tempfile write: {e}")))?;
+    let tmp_path = tmp.path().to_path_buf();
+    let casm_path = tmp.path().with_extension("casm");
+
+    // Invoke cairo-compile. cairo_path /usr/local/lib/cairo is the
+    // standard scarb install location; cairo-compile fails with a clear
+    // error if it's wrong.
+    let output = Command::new("cairo-compile")
+        .arg(&tmp_path)
+        .arg("--output")
+        .arg(&casm_path)
+        .arg("--cairo_path")
+        .arg("/usr/local/lib/cairo")
+        .output()
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                HashError::CompilerInternal(
+                    "cairo-compile not in PATH; install via scarb/asdf (pin cairo-compile = \"2.6.0\" per master plan §8 Risk #6)".to_owned(),
+                )
+            } else {
+                HashError::CompilerInternal(format!("cairo-compile spawn: {e}"))
+            }
+        })?;
+
+    if !output.status.success() {
+        return Err(HashError::CompilerInternal(format!(
+            "cairo-compile exited with status {}: stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr),
+        )));
+    }
+
+    let casm_bytes = std::fs::read(&casm_path).map_err(|e| {
+        HashError::CompilerInternal(format!("read CASM {}: {e}", casm_path.display()))
+    })?;
+
+    let hash_hex = blake3_hex(&casm_bytes);
+
+    Ok(CompiledCircuit {
+        program: CairoProgram {
+            version: "2.6.0".to_owned(),
+            identifier: "capability_zk_v1".to_owned(),
+            hints: vec![],
+            bytecode: vec![],
+        },
+        casm_bytecode: casm_bytes,
+        compiled_casm_hash: hash_hex,
+    })
+}
+
+/// `HashError` doesn't derive `Clone` (some variants may carry non-Clone
+/// payloads in the future). For the current shape every variant is
+/// string-payload, so a manual clone is fine.
+fn clone_hash_error(e: &HashError) -> HashError {
+    match e {
+        HashError::MalformedProgram(s) => HashError::MalformedProgram(s.clone()),
+        HashError::CompilerInternal(s) => HashError::CompilerInternal(s.clone()),
+    }
 }
 
 /// Compile a Cairo program to CASM bytecode + BLAKE3 hash.

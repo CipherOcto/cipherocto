@@ -260,6 +260,46 @@ across runs to reach 24h effective coverage. Schedule: 02:00 UTC daily.
 
 ## Operator runbook
 
+### CASM Rotation (N=2 grace) — RFC-0958 §CASM Drift N=2 retention
+
+**When does CASM rotate?** Only when `cairo/capability_zk.cairo` changes in a way that affects proof binding (circuit structure, public input field, verification logic). Documentation-only changes do NOT trigger rotation.
+
+**Operator runbook (per RFC-0958 §CASM Drift, mission 0958-a R3 #5 fix-up):**
+
+1. **Compute new CASM BLAKE3.**
+   ```bash
+   cairo-compile cairo/capability_zk.cairo --output cairo/capability_zk.casm
+   blake3 cairo/capability_zk.casm
+   # → new_casm_hash_hex (64-char hex; FIRST 32 bytes → [u8; 32])
+   ```
+
+2. **Deploy N=2 grace verifier config.** Update the verifier's `accepted_casm_blake3_hashes` config to include both old and new:
+   ```rust
+   verify_capability_zk(&proof, &expected_public_inputs, &[old_casm, new_casm], now);
+   ```
+   Proofs bound to EITHER hash verify for the duration of the grace period.
+
+3. **Banner the grace period in release notes.** Operators see the N=2 acceptance in the dev guide + the verifier config.
+
+4. **Reissue mints in flight** (operator-driven, not automatic). Capabilities minted under the old CASM continue to verify during grace; new mints automatically bind to the new CASM (since `bundle.casm_hash = bundled_casm_hash()` reads from the current compiled binary).
+
+5. **After 7-day grace** (RFC-0958 default), remove the old hash from the verifier config:
+   ```rust
+   verify_capability_zk(&proof, &expected_public_inputs, &[new_casm], now);
+   ```
+   Capabilities minted under the old hash now return `CasmHashMismatch`.
+
+**Test coverage:** `r3_casm_n2_rotation_accepts_either_v1_or_v2_hash` in `crates/octo-wallet/tests/zk_vectors.rs` exercises:
+- v1 proof rejected when accepted-set = [v2]
+- v2 proof NOT CasmHashMismatch when accepted-set = [v1, v2]
+- empty accepted-set fails closed
+
+**Migration runbook (future):** When `cairo/capability_zk.cairo` changes:
+1. Bump `casm_version` on each new mint (currently hardcoded to 1)
+2. Track per-version CASM BLAKE3 separately
+3. Cap-verifier accepts `[v_N_casm] + [v_{N-1}_casm]` for grace, then `[v_N_casm]` alone
+4. Document the migration in this file (track all past CASM hashes)
+
 ### Adding a new test vector
 
 1. Author the JSON golden under

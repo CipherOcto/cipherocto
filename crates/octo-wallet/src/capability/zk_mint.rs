@@ -118,11 +118,19 @@ pub struct PublicInputs {
 }
 
 /// Proof bundle (RFC-0958 §Data Structures).
+///
+/// **R3 #5 fix-up (2026-07-31):** `casm_version: u32` added so that
+/// verifiers can route a v2 proof to a v2 verifier and a v1 proof to
+/// a v1 verifier (or, per RFC-0958 §CASM Rotation: accept both during
+/// the N=2 grace period). The casm_hash binding still operates over
+/// the hash (no behavioral change); the version field is for
+/// migration tracking.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProofBundle {
     pub stark_proof: Vec<u8>,
     pub public_inputs: PublicInputs,
     pub casm_hash: [u8; 32],
+    pub casm_version: u32,
     pub security_bits: u8,
 }
 
@@ -361,6 +369,7 @@ pub fn mint_with_zk_and_signers(
         stark_proof,
         public_inputs: public_inputs_canon,
         casm_hash,
+        casm_version: 1,
         security_bits: 128,
     })
 }

@@ -95,6 +95,7 @@ fn v2_parser_extracts_proof_bundle_borsh() {
             provider_slot_id: "slot-bridge-001".to_owned(),
         },
         casm_hash: [0x42; 32],
+        casm_version: 1,
         security_bits: 128,
     };
     let pb_bytes =

@@ -100,6 +100,7 @@ fn qr_bundle_from(o: &ProofBundle) -> QrProofBundle {
             provider_slot_id: o.public_inputs.provider_slot_id.clone(),
         },
         casm_hash: o.casm_hash,
+        casm_version: o.casm_version,
         security_bits: o.security_bits,
     }
 }
@@ -140,8 +141,13 @@ fn verify_latency_under_100ms() {
     let qr = qr_bundle_from(&bundle);
 
     let start = Instant::now();
-    verify_capability_zk(&qr, &qr.public_inputs, &qr.casm_hash, pi.current_unix_time)
-        .expect("verify");
+    verify_capability_zk(
+        &qr,
+        &qr.public_inputs,
+        &[qr.casm_hash],
+        pi.current_unix_time,
+    )
+    .expect("verify");
     let elapsed_ms = start.elapsed().as_millis();
 
     eprintln!("perf AC-11 G2: verify took {elapsed_ms}ms (budget {VERIFY_BUDGET_MS}ms)");
@@ -183,8 +189,7 @@ fn proof_size_50_to_500kb() {
     #[cfg(feature = "real-zk")]
     {
         assert!(
-            proof_size >= PROOF_SIZE_MIN_BYTES_REAL_ZK
-                && proof_size <= PROOF_SIZE_MAX_BYTES,
+            proof_size >= PROOF_SIZE_MIN_BYTES_REAL_ZK && proof_size <= PROOF_SIZE_MAX_BYTES,
             "real-zk proof size {proof_size} out of 50-500KB range"
         );
     }

@@ -61,7 +61,7 @@ pub fn canonicalize_axes(pi: &mut PublicInputs) {
 pub fn verify_capability_zk(
     proof: &ProofBundle,
     expected_public_inputs: &PublicInputs,
-    compiled_casm_blake3_hash: &[u8; 32],
+    accepted_casm_blake3_hashes: &[[u8; 32]],
     verifier_local_unix_time: u64,
 ) -> Result<(), ZkVerifyError> {
     // 1. Public input check (on canonicalized copies — sort axes first).
@@ -76,13 +76,25 @@ pub fn verify_capability_zk(
         )));
     }
 
-    // 2. CASM hash drift check.
-    if &proof.casm_hash != compiled_casm_blake3_hash {
+    // 2. CASM hash check (N=2 rotation grace, mission 0958-a R3 #5).
+    if accepted_casm_blake3_hashes.is_empty() {
         return Err(ZkVerifyError::CasmHashMismatch {
-            expected: *compiled_casm_blake3_hash,
+            expected: [0u8; 32],
             got: proof.casm_hash,
         });
     }
+    let compiled_casm_blake3_hash = match accepted_casm_blake3_hashes
+        .iter()
+        .find(|h| **h == proof.casm_hash)
+    {
+        Some(h) => *h,
+        None => {
+            return Err(ZkVerifyError::CasmHashMismatch {
+                expected: accepted_casm_blake3_hashes[0],
+                got: proof.casm_hash,
+            });
+        }
+    };
 
     // 3. Clock skew bounds check (R1 H8 fix).
     let skew = proof
@@ -136,7 +148,7 @@ pub fn verify_capability_zk(
                             None
                         }
                     })
-                    .unwrap_or(*compiled_casm_blake3_hash),
+                    .unwrap_or(compiled_casm_blake3_hash),
                 got: hex::decode(&got)
                     .ok()
                     .and_then(|v| {
@@ -221,7 +233,7 @@ pub fn verify_capability_zk_token(
     verify_capability_zk(
         proof,
         &proof.public_inputs,
-        &verifier.compiled_casm_blake3_hash,
+        &[verifier.compiled_casm_blake3_hash],
         verifier.verifier_local_unix_time,
     )
 }
@@ -275,7 +287,7 @@ pub fn verify_batch_capability_zk(
     verify_capability_zk(
         proof,
         &proof.public_inputs,
-        &verifier.compiled_casm_blake3_hash,
+        &[verifier.compiled_casm_blake3_hash],
         verifier.verifier_local_unix_time,
     )
 }
@@ -316,6 +328,7 @@ mod tests {
             stark_proof,
             public_inputs: public,
             casm_hash: casm,
+            casm_version: 1,
             security_bits: 128,
         }
     }
@@ -327,7 +340,7 @@ mod tests {
         expected.ask_id = [0xff; 32];
         let casm = proof.casm_hash;
         let now = proof.public_inputs.current_unix_time;
-        let err = verify_capability_zk(&proof, &expected, &casm, now).unwrap_err();
+        let err = verify_capability_zk(&proof, &expected, &[casm], now).unwrap_err();
         assert!(matches!(err, ZkVerifyError::PublicInputMismatch(_)));
     }
 
@@ -337,7 +350,7 @@ mod tests {
         let expected = proof.public_inputs.clone();
         let wrong_casm = [0u8; 32];
         let now = proof.public_inputs.current_unix_time;
-        let err = verify_capability_zk(&proof, &expected, &wrong_casm, now).unwrap_err();
+        let err = verify_capability_zk(&proof, &expected, &[wrong_casm], now).unwrap_err();
         assert!(matches!(err, ZkVerifyError::CasmHashMismatch { .. }));
     }
 
@@ -348,7 +361,7 @@ mod tests {
         let casm = proof.casm_hash;
         // 1 hour skew — exceeds MAX_SKEW_SECS=300.
         let skewed = proof.public_inputs.current_unix_time + 3600;
-        let err = verify_capability_zk(&proof, &expected, &casm, skewed).unwrap_err();
+        let err = verify_capability_zk(&proof, &expected, &[casm], skewed).unwrap_err();
         assert!(matches!(err, ZkVerifyError::ClockSkewExceeded { .. }));
     }
 
@@ -358,7 +371,7 @@ mod tests {
         let expected = proof.public_inputs.clone();
         let casm = proof.casm_hash;
         let now = proof.public_inputs.current_unix_time;
-        verify_capability_zk(&proof, &expected, &casm, now).unwrap();
+        verify_capability_zk(&proof, &expected, &[casm], now).unwrap();
     }
 
     #[test]
@@ -370,7 +383,7 @@ mod tests {
             .push(("output_tokens_per_1k".to_owned(), 50));
         let casm = proof.casm_hash;
         let now = proof.public_inputs.current_unix_time;
-        let err = verify_capability_zk(&proof, &expected, &casm, now).unwrap_err();
+        let err = verify_capability_zk(&proof, &expected, &[casm], now).unwrap_err();
         assert!(matches!(err, ZkVerifyError::PublicInputMismatch(_)));
     }
 
@@ -382,7 +395,7 @@ mod tests {
         let expected = proof.public_inputs.clone();
         let casm = proof.casm_hash;
         let now = proof.public_inputs.current_unix_time;
-        let err = verify_capability_zk(&proof, &expected, &casm, now).unwrap_err();
+        let err = verify_capability_zk(&proof, &expected, &[casm], now).unwrap_err();
         // Either StwoVerifyError (proof bytes random) or PublicInputMismatch
         // (only if something else mismatched first).
         assert!(matches!(
@@ -421,6 +434,7 @@ mod tests {
                 stark_proof,
                 public_inputs: public,
                 casm_hash: casm,
+                casm_version: 1,
                 security_bits: 128,
             },
             casm,

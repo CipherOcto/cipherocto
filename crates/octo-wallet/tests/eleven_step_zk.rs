@@ -112,6 +112,7 @@ fn eleven_step_batch_zk_round_trip() {
             provider_slot_id: bundle.public_inputs.provider_slot_id.clone(),
         },
         casm_hash: bundle.casm_hash,
+        casm_version: bundle.casm_version,
         security_bits: bundle.security_bits,
     };
     verify_batch_capability_zk(&core_bundle, &signers, &verifier)

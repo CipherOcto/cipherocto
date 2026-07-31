@@ -56,6 +56,7 @@ fn sample_proof() -> ProofBundle {
         stark_proof: make_stub_proof_bytes(&casm, &public),
         public_inputs: public,
         casm_hash: casm,
+        casm_version: 1,
         security_bits: 128,
     }
 }
@@ -67,7 +68,7 @@ fn zk_mint_self_host() {
     result.unwrap();
     let proof = sample_proof();
     let expected = proof.public_inputs.clone();
-    verify_capability_zk(&proof, &expected, &COMPILED_CASM_HASH, COMPILED_TIME).unwrap();
+    verify_capability_zk(&proof, &expected, &[COMPILED_CASM_HASH], COMPILED_TIME).unwrap();
 }
 
 /// Vector 2: zk-mint-hybrid-no-trace (Hybrid does NOT require inference trace).
@@ -91,7 +92,7 @@ fn zk_verify_public_input_mismatch() {
     let mut expected = proof.public_inputs.clone();
     expected.ask_id = [0x99; 32];
     let err =
-        verify_capability_zk(&proof, &expected, &COMPILED_CASM_HASH, COMPILED_TIME).unwrap_err();
+        verify_capability_zk(&proof, &expected, &[COMPILED_CASM_HASH], COMPILED_TIME).unwrap_err();
     assert!(matches!(
         err,
         quota_router_core::zk_verify::ZkVerifyError::PublicInputMismatch(_)
@@ -104,7 +105,7 @@ fn zk_verify_casm_drift() {
     let proof = sample_proof();
     let expected = proof.public_inputs.clone();
     let wrong_casm = [0u8; 32];
-    let err = verify_capability_zk(&proof, &expected, &wrong_casm, COMPILED_TIME).unwrap_err();
+    let err = verify_capability_zk(&proof, &expected, &[wrong_casm], COMPILED_TIME).unwrap_err();
     assert!(matches!(
         err,
         quota_router_core::zk_verify::ZkVerifyError::CasmHashMismatch { .. }
@@ -122,7 +123,7 @@ fn zk_verify_stwo_fail() {
     proof.stark_proof = vec![0xff; 64]; // corrupted — does not equal commitment
     let expected = proof.public_inputs.clone();
     let err =
-        verify_capability_zk(&proof, &expected, &COMPILED_CASM_HASH, COMPILED_TIME).unwrap_err();
+        verify_capability_zk(&proof, &expected, &[COMPILED_CASM_HASH], COMPILED_TIME).unwrap_err();
     assert!(matches!(
         err,
         quota_router_core::zk_verify::ZkVerifyError::StwoVerifyError(_)
@@ -143,7 +144,7 @@ fn zk_verify_expired() {
     let stark_proof = make_stub_proof_bytes(&COMPILED_CASM_HASH, &proof.public_inputs);
     proof.stark_proof = stark_proof;
     let expected = proof.public_inputs.clone();
-    let result = verify_capability_zk(&proof, &expected, &COMPILED_CASM_HASH, COMPILED_TIME);
+    let result = verify_capability_zk(&proof, &expected, &[COMPILED_CASM_HASH], COMPILED_TIME);
     result.unwrap();
 }
 
@@ -159,10 +160,10 @@ fn zk_cross_impl_tv1() {
     let mut p2 = p1.clone();
     p2.stark_proof = vec![0xef; 96]; // ignored in stub contract; ignored fields beyond 32 bytes
     let expected = p1.public_inputs.clone();
-    verify_capability_zk(&p1, &expected, &COMPILED_CASM_HASH, COMPILED_TIME).unwrap();
+    verify_capability_zk(&p1, &expected, &[COMPILED_CASM_HASH], COMPILED_TIME).unwrap();
     // p2 has different stark_proof bytes that DON'T match the commitment;
     // returns StwoVerifyError — proving the contract is enforced.
-    let err = verify_capability_zk(&p2, &expected, &COMPILED_CASM_HASH, COMPILED_TIME);
+    let err = verify_capability_zk(&p2, &expected, &[COMPILED_CASM_HASH], COMPILED_TIME);
     assert!(err.is_err(), "corrupted p2 should fail");
 }
 
@@ -177,7 +178,7 @@ fn zk_verify_slot_binding_mismatch() {
     let mut expected = proof.public_inputs.clone();
     expected.provider_slot_id = "slot-beta-002".to_owned();
     let err =
-        verify_capability_zk(&proof, &expected, &COMPILED_CASM_HASH, COMPILED_TIME).unwrap_err();
+        verify_capability_zk(&proof, &expected, &[COMPILED_CASM_HASH], COMPILED_TIME).unwrap_err();
     assert!(matches!(
         err,
         quota_router_core::zk_verify::ZkVerifyError::PublicInputMismatch(_)
@@ -192,5 +193,5 @@ fn zk_verify_slot_binding_mismatch() {
 fn zk_verify_slot_binding_match() {
     let proof = sample_proof();
     let expected = proof.public_inputs.clone();
-    verify_capability_zk(&proof, &expected, &COMPILED_CASM_HASH, COMPILED_TIME).unwrap();
+    verify_capability_zk(&proof, &expected, &[COMPILED_CASM_HASH], COMPILED_TIME).unwrap();
 }

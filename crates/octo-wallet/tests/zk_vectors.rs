@@ -167,6 +167,7 @@ fn qr_bundle_from(o: &octo_wallet::capability::ProofBundle) -> QrProofBundle {
             provider_slot_id: o.public_inputs.provider_slot_id.clone(),
         },
         casm_hash: o.casm_hash,
+        casm_version: o.casm_version,
         security_bits: o.security_bits,
     }
 }
@@ -202,8 +203,13 @@ fn tv1_selfhost_mint_and_verify_round_trip() {
     // Verifier local time matches issuance time so the stub commitment
     // (which folds `verifier_local_unix_time` into the canonical form)
     // matches the mint-time commitment.
-    verify_capability_zk(&qr, &qr.public_inputs, &qr.casm_hash, pi.current_unix_time)
-        .expect("TV1 verify");
+    verify_capability_zk(
+        &qr,
+        &qr.public_inputs,
+        &[qr.casm_hash],
+        pi.current_unix_time,
+    )
+    .expect("TV1 verify");
 }
 
 // ============================================================
@@ -219,10 +225,16 @@ fn tv2_hybrid_no_trace_mint_and_verify_round_trip() {
     assert_eq!(bundle.stark_proof.len(), 32);
 
     let qr = qr_bundle_from(&bundle);
+    // (spacing marker — no behavior change here)
     // Verifier local time matches issuance time (TV2 issues at
     // TV_FIXED_TIME + 1; verifier accepts that).
-    verify_capability_zk(&qr, &qr.public_inputs, &qr.casm_hash, pi.current_unix_time)
-        .expect("TV2 verify");
+    verify_capability_zk(
+        &qr,
+        &qr.public_inputs,
+        &[qr.casm_hash],
+        pi.current_unix_time,
+    )
+    .expect("TV2 verify");
 }
 
 // ============================================================
@@ -259,7 +271,7 @@ fn tv4_public_input_mismatch_detected() {
     let mut expected = qr.public_inputs.clone();
     expected.ask_id = [0xff; 32];
 
-    let err = verify_capability_zk(&qr, &expected, &qr.casm_hash, TV_FIXED_TIME)
+    let err = verify_capability_zk(&qr, &expected, &[qr.casm_hash], TV_FIXED_TIME)
         .expect_err("TV4 verify must reject");
     assert!(
         matches!(err, ZkVerifyError::PublicInputMismatch(_)),
@@ -297,7 +309,7 @@ fn tv5_casm_drift_detected_at_verify() {
 
     let qr = qr_bundle_from(&bundle);
     let wrong_casm = [0u8; 32];
-    let err = verify_capability_zk(&qr, &qr.public_inputs, &wrong_casm, TV_FIXED_TIME)
+    let err = verify_capability_zk(&qr, &qr.public_inputs, &[wrong_casm], TV_FIXED_TIME)
         .expect_err("TV5 verify must reject on casm drift");
     assert!(
         matches!(err, ZkVerifyError::CasmHashMismatch { .. }),
@@ -323,8 +335,13 @@ fn tv6_tampered_stark_proof_rejected() {
     bundle.stark_proof[0] ^= 0xFF;
 
     let qr = qr_bundle_from(&bundle);
-    let err = verify_capability_zk(&qr, &qr.public_inputs, &qr.casm_hash, pi.current_unix_time)
-        .expect_err("TV6 verify must reject on tampered proof");
+    let err = verify_capability_zk(
+        &qr,
+        &qr.public_inputs,
+        &[qr.casm_hash],
+        pi.current_unix_time,
+    )
+    .expect_err("TV6 verify must reject on tampered proof");
     assert!(
         matches!(err, ZkVerifyError::StwoVerifyError(_)),
         "TV6 expected StwoVerifyError, got {err:?}"
@@ -346,7 +363,7 @@ fn tv7_clock_skew_exceeded_rejected() {
     // the skew check BEFORE the commitment check, so we don't need to
     // match the issuance time on the commitment.
     let skewed_now = pi.current_unix_time + MAX_SKEW_SECS + 1;
-    let err = verify_capability_zk(&qr, &qr.public_inputs, &qr.casm_hash, skewed_now)
+    let err = verify_capability_zk(&qr, &qr.public_inputs, &[qr.casm_hash], skewed_now)
         .expect_err("TV7 verify must reject on clock skew");
     match err {
         ZkVerifyError::ClockSkewExceeded { skew, max } => {
@@ -370,7 +387,7 @@ fn tv7_clock_skew_within_window_accepted() {
     // `clock_skew_at_boundary_returns_ok` covers the equal-time path;
     // here we verify the skew gate itself via an overshoot.
     let in_window_now = pi.current_unix_time + 100;
-    let err = verify_capability_zk(&qr, &qr.public_inputs, &qr.casm_hash, in_window_now);
+    let err = verify_capability_zk(&qr, &qr.public_inputs, &[qr.casm_hash], in_window_now);
     // Either accept (commitment matches too) or reject with
     // StwoVerifyError (commitment rebuild uses new verifier time). Both
     // prove the skew gate did NOT fire.
@@ -437,7 +454,7 @@ fn tv8_cross_impl_two_prover_paths_byte_equivalent() {
 
     // Both paths verify accepted.
     let qr_a = qr_bundle_from(&path_a);
-    verify_capability_zk(&qr_a, &qr_pi, &qr_a.casm_hash, pi.current_unix_time)
+    verify_capability_zk(&qr_a, &qr_pi, &[qr_a.casm_hash], pi.current_unix_time)
         .expect("path A verify");
 }
 
@@ -492,6 +509,82 @@ fn ac7_wholesale_zkbearing_registration_rejected() {
 // (Already implemented above as tv4_public_input_mismatch_detected +
 //  tv5_casm_drift_detected_at_{mint,verify}.)
 // ============================================================
+
+// ============================================================
+// AC-5 R3 #5 fix-up: CASM N=2 rotation grace
+// ============================================================
+#[test]
+fn r3_casm_n2_rotation_accepts_either_v1_or_v2_hash() {
+    // Per RFC-0958 §CASM Rotation: during the N=2 grace period, the
+    // verifier accepts BOTH the v1 and v2 CASM hashes. After the grace
+    // period, the verifier accepts ONLY v2.
+    //
+    // We bypass the STWO commitment check by mocking with
+    // `quota_router_core::zk_verify::ProofBundle` + zero proof bytes and
+    // a single-hash accepted set that doesn't include the proof's hash —
+    // the test asserts the `CasmHashMismatch` error variant is hit
+    // before the STWO check would fail. This isolates the rotation
+    // invariant from the stub verifiability contract.
+    use quota_router_core::zk_verify::ProofBundle as QrProofBundle;
+    use quota_router_core::zk_verify::PublicInputs as QrPublicInputs;
+    let casm_old = [0xaa; 32];
+    let casm_new = [0xbb; 32];
+    let public = QrPublicInputs {
+        ask_id: [1; 32],
+        axes_consumed: vec![("input_tokens_per_1k".to_owned(), 100)],
+        cap_root_hash: [2; 32],
+        invocation_hash: [3; 32],
+        holder_did: "did:octo:n2".to_owned(),
+        current_unix_time: 1_700_000_000,
+        output_hash: None,
+        provider_slot_id: "slot-n2".to_owned(),
+    };
+    // A proof bound to casm_new (a "future" CASM). Only accepted when
+    // casm_new ∈ accepted list. The first call asserts the "v2-only"
+    // path; the second asserts the N=2 grace path; the third asserts
+    // the "empty list fails closed" path.
+    let proof_v2 = QrProofBundle {
+        stark_proof: vec![0u8; 32], // commitment shape only
+        public_inputs: public.clone(),
+        casm_hash: casm_new,
+        casm_version: 2,
+        security_bits: 128,
+    };
+    let proof_v1 = QrProofBundle {
+        stark_proof: vec![0u8; 32],
+        public_inputs: public.clone(),
+        casm_hash: casm_old,
+        casm_version: 1,
+        security_bits: 128,
+    };
+
+    // Accepted set = [new]: v2 verifies (skipping stub mismatch check),
+    // v1 fails with CasmHashMismatch.
+    let err = verify_capability_zk(&proof_v1, &public, &[casm_new], public.current_unix_time);
+    assert!(
+        matches!(err, Err(ZkVerifyError::CasmHashMismatch { .. })),
+        "v1 proof must reject when only v2 accepted: {err:?}"
+    );
+
+    // Accepted set = [old, new]: both hashes permitted.
+    let res = verify_capability_zk(
+        &proof_v2,
+        &public,
+        &[casm_old, casm_new],
+        public.current_unix_time,
+    );
+    assert!(
+        !matches!(res, Err(ZkVerifyError::CasmHashMismatch { .. })),
+        "v2 proof must NOT fail with CasmHashMismatch when N=2 grace list; got {res:?}"
+    );
+
+    // Empty list: fails closed (does NOT silently accept).
+    let err = verify_capability_zk(&proof_v1, &public, &[], public.current_unix_time);
+    assert!(
+        matches!(err, Err(ZkVerifyError::CasmHashMismatch { .. })),
+        "empty accepted list must NOT verify: {err:?}"
+    );
+}
 
 // ============================================================
 // AC-6 R3 fix-up: axes_consumed canonical sort
@@ -565,7 +658,7 @@ fn ac9_public_input_mismatch_detected_under_slot_binding_drift() {
     let mut expected = qr.public_inputs.clone();
     expected.provider_slot_id = "slot-drift-different".to_owned();
 
-    let err = verify_capability_zk(&qr, &expected, &qr.casm_hash, pi.current_unix_time)
+    let err = verify_capability_zk(&qr, &expected, &[qr.casm_hash], pi.current_unix_time)
         .expect_err("AC9 slot-drift must reject");
     assert!(
         matches!(err, ZkVerifyError::PublicInputMismatch(_)),

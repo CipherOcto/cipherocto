@@ -136,6 +136,7 @@ fn qr_bundle_from(o: &octo_wallet::capability::ProofBundle) -> QrProofBundle {
             provider_slot_id: o.public_inputs.provider_slot_id.clone(),
         },
         casm_hash: o.casm_hash,
+        casm_version: o.casm_version,
         security_bits: o.security_bits,
     }
 }
@@ -168,7 +169,12 @@ fn closure_acceptance_all_vectors_emitting_structured_report() {
     let w = selfhost_witness();
     let bundle = mint_with_stub_proof(NodeType::SelfHost, &w, &pi, casm);
     let qr = qr_bundle_from(&bundle);
-    let r = verify_capability_zk(&qr, &qr.public_inputs, &qr.casm_hash, pi.current_unix_time);
+    let r = verify_capability_zk(
+        &qr,
+        &qr.public_inputs,
+        &[qr.casm_hash],
+        pi.current_unix_time,
+    );
     report.push(VectorReport {
         name: "TV1 SelfHost round-trip",
         outcome: if r.is_ok() { "OK" } else { "FAIL" },
@@ -183,7 +189,7 @@ fn closure_acceptance_all_vectors_emitting_structured_report() {
     let r2 = verify_capability_zk(
         &qr2,
         &qr2.public_inputs,
-        &qr2.casm_hash,
+        &[qr2.casm_hash],
         pi2.current_unix_time,
     );
     report.push(VectorReport {
@@ -218,7 +224,7 @@ fn closure_acceptance_all_vectors_emitting_structured_report() {
     expected4.ask_id = [0xff; 32];
     // Pass the ORIGINAL proof + MUTATED expected so the
     // public-input equality check fires.
-    let r4 = verify_capability_zk(&qr4, &expected4, &qr4.casm_hash, pi4.current_unix_time);
+    let r4 = verify_capability_zk(&qr4, &expected4, &[qr4.casm_hash], pi4.current_unix_time);
     report.push(VectorReport {
         name: "TV4 PublicInputMismatch on ask_id",
         outcome: if matches!(r4, Err(ZkVerifyError::PublicInputMismatch(_))) {
@@ -235,7 +241,12 @@ fn closure_acceptance_all_vectors_emitting_structured_report() {
     let bundle5 = mint_with_stub_proof(NodeType::SelfHost, &w5, &pi5, casm);
     let qr5 = qr_bundle_from(&bundle5);
     let wrong_casm = [0u8; 32];
-    let r5 = verify_capability_zk(&qr5, &qr5.public_inputs, &wrong_casm, pi5.current_unix_time);
+    let r5 = verify_capability_zk(
+        &qr5,
+        &qr5.public_inputs,
+        &[wrong_casm],
+        pi5.current_unix_time,
+    );
     report.push(VectorReport {
         name: "TV5 CASM drift at verify",
         outcome: if matches!(r5, Err(ZkVerifyError::CasmHashMismatch { .. })) {
@@ -255,7 +266,7 @@ fn closure_acceptance_all_vectors_emitting_structured_report() {
     let r6 = verify_capability_zk(
         &qr6,
         &qr6.public_inputs,
-        &qr6.casm_hash,
+        &[qr6.casm_hash],
         pi6.current_unix_time,
     );
     report.push(VectorReport {
@@ -274,7 +285,7 @@ fn closure_acceptance_all_vectors_emitting_structured_report() {
     let bundle7 = mint_with_stub_proof(NodeType::SelfHost, &w7, &pi7, casm);
     let qr7 = qr_bundle_from(&bundle7);
     let skewed_now = pi7.current_unix_time + MAX_SKEW_SECS + 1;
-    let r7 = verify_capability_zk(&qr7, &qr7.public_inputs, &qr7.casm_hash, skewed_now);
+    let r7 = verify_capability_zk(&qr7, &qr7.public_inputs, &[qr7.casm_hash], skewed_now);
     report.push(VectorReport {
         name: "TV7 ClockSkewExceeded +301s",
         outcome: if matches!(r7, Err(ZkVerifyError::ClockSkewExceeded { .. })) {
@@ -293,7 +304,7 @@ fn closure_acceptance_all_vectors_emitting_structured_report() {
     let r8 = verify_capability_zk(
         &qr8,
         &qr8.public_inputs,
-        &qr8.casm_hash,
+        &[qr8.casm_hash],
         pi8.current_unix_time,
     );
     report.push(VectorReport {
@@ -339,7 +350,7 @@ fn closure_acceptance_all_vectors_emitting_structured_report() {
     let r_slot = verify_capability_zk(
         &qr_slot,
         &exp_slot,
-        &qr_slot.casm_hash,
+        &[qr_slot.casm_hash],
         pi_slot.current_unix_time,
     );
     report.push(VectorReport {

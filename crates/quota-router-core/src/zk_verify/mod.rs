@@ -48,11 +48,15 @@ pub struct PublicInputs {
 }
 
 /// Proof bundle (RFC-0958 §Data Structures).
+///
+/// **R3 #5 fix-up (2026-07-31):** `casm_version: u32` added for
+/// CASM rotation routing (RFC-0958 §CASM Rotation N=2 grace).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProofBundle {
     pub stark_proof: Vec<u8>,
     pub public_inputs: PublicInputs,
     pub casm_hash: [u8; 32],
+    pub casm_version: u32,
     pub security_bits: u8,
 }
 

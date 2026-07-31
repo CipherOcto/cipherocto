@@ -22,7 +22,9 @@ use octo_wallet::capability::zk_mint::{
 };
 use octo_wallet::capability::CapabilityClass;
 use octo_wallet::node::NodeType;
-use quota_router_core::zk_verify::capability::verify_capability_zk;
+use quota_router_core::zk_verify::capability::{
+    verify_batch_capability_zk, verify_capability_zk, CapabilityVerifier,
+};
 use quota_router_core::zk_verify::ZkVerifyError;
 use quota_router_core::zk_verify::{ProofBundle as QrProofBundle, PublicInputs as QrPublicInputs};
 
@@ -169,11 +171,15 @@ fn closure_acceptance_all_vectors_emitting_structured_report() {
     let w = selfhost_witness();
     let bundle = mint_with_stub_proof(NodeType::SelfHost, &w, &pi, casm);
     let qr = qr_bundle_from(&bundle);
-    let r = verify_capability_zk(
+    // 1-signer batch proof: use verify_batch_capability_zk (R4 fix-up).
+    let r = verify_batch_capability_zk(
         &qr,
-        &qr.public_inputs,
-        &[qr.casm_hash],
-        pi.current_unix_time,
+        &[[0x42; 32]],
+        Some(&qr.public_inputs),
+        &CapabilityVerifier {
+            compiled_casm_blake3_hash: qr.casm_hash,
+            verifier_local_unix_time: pi.current_unix_time,
+        },
     );
     report.push(VectorReport {
         name: "TV1 SelfHost round-trip",
@@ -186,11 +192,14 @@ fn closure_acceptance_all_vectors_emitting_structured_report() {
     let w2 = no_trace_witness();
     let bundle2 = mint_with_stub_proof(NodeType::Hybrid, &w2, &pi2, casm);
     let qr2 = qr_bundle_from(&bundle2);
-    let r2 = verify_capability_zk(
+    let r2 = verify_batch_capability_zk(
         &qr2,
-        &qr2.public_inputs,
-        &[qr2.casm_hash],
-        pi2.current_unix_time,
+        &[[0x42; 32]],
+        Some(&qr2.public_inputs),
+        &CapabilityVerifier {
+            compiled_casm_blake3_hash: qr2.casm_hash,
+            verifier_local_unix_time: pi2.current_unix_time,
+        },
     );
     report.push(VectorReport {
         name: "TV2 Hybrid no-trace round-trip",
@@ -224,7 +233,15 @@ fn closure_acceptance_all_vectors_emitting_structured_report() {
     expected4.ask_id = [0xff; 32];
     // Pass the ORIGINAL proof + MUTATED expected so the
     // public-input equality check fires.
-    let r4 = verify_capability_zk(&qr4, &expected4, &[qr4.casm_hash], pi4.current_unix_time);
+    let r4 = verify_batch_capability_zk(
+        &qr4,
+        &[[0x42; 32]],
+        Some(&expected4),
+        &CapabilityVerifier {
+            compiled_casm_blake3_hash: qr4.casm_hash,
+            verifier_local_unix_time: pi4.current_unix_time,
+        },
+    );
     report.push(VectorReport {
         name: "TV4 PublicInputMismatch on ask_id",
         outcome: if matches!(r4, Err(ZkVerifyError::PublicInputMismatch(_))) {
@@ -240,12 +257,16 @@ fn closure_acceptance_all_vectors_emitting_structured_report() {
     let w5 = selfhost_witness();
     let bundle5 = mint_with_stub_proof(NodeType::SelfHost, &w5, &pi5, casm);
     let qr5 = qr_bundle_from(&bundle5);
-    let wrong_casm = [0u8; 32];
-    let r5 = verify_capability_zk(
+    // Pass a CASM hash the verifier's accepted list does NOT include.
+    let wrong_casm_verifier = CapabilityVerifier {
+        compiled_casm_blake3_hash: [0u8; 32], // wrong
+        verifier_local_unix_time: pi5.current_unix_time,
+    };
+    let r5 = verify_batch_capability_zk(
         &qr5,
-        &qr5.public_inputs,
-        &[wrong_casm],
-        pi5.current_unix_time,
+        &[[0x42; 32]],
+        Some(&qr5.public_inputs),
+        &wrong_casm_verifier,
     );
     report.push(VectorReport {
         name: "TV5 CASM drift at verify",
@@ -263,15 +284,19 @@ fn closure_acceptance_all_vectors_emitting_structured_report() {
     let mut bundle6 = mint_with_stub_proof(NodeType::SelfHost, &w6, &pi6, casm);
     bundle6.stark_proof[0] ^= 0xFF;
     let qr6 = qr_bundle_from(&bundle6);
-    let r6 = verify_capability_zk(
+    // Tampered stark_proof breaks the batch commitment → BatchSignerSetMismatch.
+    let r6 = verify_batch_capability_zk(
         &qr6,
-        &qr6.public_inputs,
-        &[qr6.casm_hash],
-        pi6.current_unix_time,
+        &[[0x42; 32]],
+        Some(&qr6.public_inputs),
+        &CapabilityVerifier {
+            compiled_casm_blake3_hash: qr6.casm_hash,
+            verifier_local_unix_time: pi6.current_unix_time,
+        },
     );
     report.push(VectorReport {
         name: "TV6 STWO fail on tampered proof",
-        outcome: if matches!(r6, Err(ZkVerifyError::StwoVerifyError(_))) {
+        outcome: if matches!(r6, Err(ZkVerifyError::BatchSignerSetMismatch { .. })) {
             "OK"
         } else {
             "FAIL"
@@ -285,7 +310,15 @@ fn closure_acceptance_all_vectors_emitting_structured_report() {
     let bundle7 = mint_with_stub_proof(NodeType::SelfHost, &w7, &pi7, casm);
     let qr7 = qr_bundle_from(&bundle7);
     let skewed_now = pi7.current_unix_time + MAX_SKEW_SECS + 1;
-    let r7 = verify_capability_zk(&qr7, &qr7.public_inputs, &[qr7.casm_hash], skewed_now);
+    let r7 = verify_batch_capability_zk(
+        &qr7,
+        &[[0x42; 32]],
+        Some(&qr7.public_inputs),
+        &CapabilityVerifier {
+            compiled_casm_blake3_hash: qr7.casm_hash,
+            verifier_local_unix_time: skewed_now,
+        },
+    );
     report.push(VectorReport {
         name: "TV7 ClockSkewExceeded +301s",
         outcome: if matches!(r7, Err(ZkVerifyError::ClockSkewExceeded { .. })) {
@@ -301,11 +334,14 @@ fn closure_acceptance_all_vectors_emitting_structured_report() {
     let w8 = selfhost_witness();
     let bundle8 = mint_with_stub_proof(NodeType::SelfHost, &w8, &pi8, casm);
     let qr8 = qr_bundle_from(&bundle8);
-    let r8 = verify_capability_zk(
+    let r8 = verify_batch_capability_zk(
         &qr8,
-        &qr8.public_inputs,
-        &[qr8.casm_hash],
-        pi8.current_unix_time,
+        &[[0x42; 32]],
+        Some(&qr8.public_inputs),
+        &CapabilityVerifier {
+            compiled_casm_blake3_hash: qr8.casm_hash,
+            verifier_local_unix_time: pi8.current_unix_time,
+        },
     );
     report.push(VectorReport {
         name: "TV8 Cross-impl byte-equivalent + verify",

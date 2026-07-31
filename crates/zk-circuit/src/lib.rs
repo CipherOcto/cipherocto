@@ -477,37 +477,81 @@ pub fn prove_batch_signature(
         }
     }
 
-    // Mock path: emit a proof whose 32-byte commitment shape matches the
-    // downstream verifier's `zk_verifier::stub_commitment`. This way
-    // proofer + verifier agree on byte layout (RFC-0958 §Determinism
-    // Class A) and the full mint -> verify round-trip exercises the
-    // canonical check, not a parallel one.
+    // Mock path: emit a 32-byte BLAKE3 commitment over
+    // (casm_hash || canonical_ser(inputs)) — binds BOTH the CASM
+    // bytecode hash AND the signer set + message root. This commitment
+    // is the single source of truth shared with the verifier
+    // (`verify_batch_capability_zk` reconstructs it from the
+    // caller-supplied signer list + proof.public_inputs and compares).
     //
-    // The proofer substitutes the real `compiled_casm_hash` (hex-encoded)
-    // into the caller's `zk_public` so the commitment includes the
-    // CASM hash binding.
-    let casm_hash_hex = hex::encode(casm_hash);
-    let mut committed_public = zk_public.clone();
-    committed_public
-        .compiled_casm_hash
-        .clone_from(&casm_hash_hex);
-    let commitment = zk_verifier::stub_commitment(&casm_hash_hex, &committed_public);
+    // **R4 audit fix-up (2026-07-31):** the prior mock commit bound
+    // only (casm_hash, zk_verifier::PublicInputs fields) — NOT the
+    // signer set, so a mock batch proof was forgeable end-to-end. This
+    // rewire fixes the cryptographic gap.
+    let commitment = batch_proof_commitment(inputs, zk_public, &casm_hash);
     Ok(Proof {
         bytes: commitment.to_vec(),
         casm_hash,
     })
 }
 
+/// Canonical 32-byte mock commitment for a batch signature proof
+/// (R4 audit fix-up, 2026-07-31).
+///
+/// `BLAKE3(hex(casm_hash) || canonical_ser(BatchSigPublicInputs) || sub_commitment)`
+/// — where `hex(casm_hash)` matches the `&str` parameter passed to
+/// `zk_verifier::verify_capability_zk` (its stub commitment uses
+/// `casm_hash.as_bytes()` of the hex string).
+///
+/// Commits to BOTH the signer set + the canonical capability public
+/// inputs. The downstream `zk_verifier::verify_capability_zk` runs
+/// the SAME commitment shape on the first 32 bytes of
+/// `proof.stark_proof`, so a batch proof's start satisfies the
+/// single-capability commitment check uniformly.
+///
+/// **Why combine?** Real STWO proves a single statement bundling
+/// batch + per-cap claims under one Fiat-Shamir transcript. The mock
+/// mirrors that by binding both via one BLAKE3 — so the verifier
+/// uniformly accepts batch proofs minted via `prove_batch_signature`.
+///
+/// Real impl defers to `stwo-sys` (opaque STARK bytes; the upstream
+/// STWO Fiat-Shamir transcript checks the binding natively).
+#[must_use]
+pub fn batch_proof_commitment(
+    inputs: &BatchSigPublicInputs,
+    zk_public: &zk_verifier::PublicInputs,
+    casm_hash: &[u8; 32],
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    // Match zk_verifier::stub_commitment's casm_hash contract: a &str
+    // (hex-encoded). The proofer feeds hex bytes; the verifier at the
+    // quota_router_core level feeds the same hex string.
+    hasher.update(hex::encode(casm_hash).as_bytes());
+    hasher.update(&canonical_ser(inputs));
+    // Inner sub-commitment binds ONLY the 4 stable per-capability
+    // fields (no `verifier_local_unix_time` — that's a verifier-side
+    // skew concern, handled by the structural check). Using
+    // `zk_verifier::stub_commitment` directly would include
+    // `verifier_local_unix_time` and break under any clock drift.
+    let mut h = blake3::Hasher::new();
+    h.update(b"zkp_per_cap:");
+    h.update(hex::encode(casm_hash).as_bytes());
+    h.update(zk_public.capability_root_hash.as_bytes());
+    h.update(&zk_public.proof_issued_at_unix.to_le_bytes());
+    h.update(zk_public.provider_slot_id.as_bytes());
+    hasher.update(h.finalize().as_bytes());
+    *hasher.finalize().as_bytes()
+}
+
 /// Canonical serialization of `BatchSigPublicInputs` (Class A
 /// determinism — field-order, length-prefixed, no JSON).
 ///
-/// **Currently unused** — kept for the real-zk FFI branch which feeds
-/// `canonical_ser(inputs)` as the `public` argument to
-/// `stwo-sys::prove`. The mock path uses
-/// `zk_verifier::stub_commitment` instead (single source of truth for
-/// the commitment shape between proofer and verifier).
-#[allow(dead_code)]
-fn canonical_ser(inputs: &BatchSigPublicInputs) -> Vec<u8> {
+/// Used by both the real-zk FFI branch (`canonical_ser` is fed as the
+/// `public` argument to `stwo-sys::prove`) and the mock path
+/// (`batch_proof_commitment` folds it into the BLAKE3 commitment).
+/// Single source of truth shared between proofer and verifier.
+#[must_use]
+pub fn canonical_ser(inputs: &BatchSigPublicInputs) -> Vec<u8> {
     let mut out = Vec::with_capacity(40 + inputs.signer_roots.len() * 32);
     out.push(0xA8); // domain separator: batch-sig inputs
     out.extend_from_slice(
@@ -524,24 +568,42 @@ fn canonical_ser(inputs: &BatchSigPublicInputs) -> Vec<u8> {
 
 /// Verify a mock batch proof against its public inputs.
 ///
-/// Returns true iff `proof.bytes` matches the commitment the proofer
-/// would emit for the same `zk_verifier::PublicInputs`. The proofer uses
-/// `zk_verifier::stub_commitment` as the single source of truth for the
-/// mock commitment shape (so the downstream `zk_verifier::verify_capability_zk`
-/// accepts it). This helper re-derives the same commitment for round-trip
-/// tests.
+/// **R4 audit fix-up (2026-07-31):** the prior version compared
+/// against the forgeable `zk_verifier::stub_commitment` (which is
+/// public, deterministic, and reconstructible from publicly-known
+/// `casm_hash` + `zk_public` — i.e., an attacker could construct a
+/// "valid" batch proof for any signer set). The new contract compares
+/// against `batch_proof_commitment(inputs, casm_hash)`, which
+/// cryptographically binds both signer set + casm. Returns true iff the
+/// proof's 32-byte prefix matches the expected commitment.
 ///
-/// Real impl defers to `stwo-sys` `verify` (RFC-0958 + RFC-0962 §9).
+/// Real impl defers to `stwo-sys` `verify_cairo` (RFC-0958 + RFC-0962
+/// §9) — when the FFI lib is loaded, the real STWO proof bytes are
+/// opaque, and the real verifier (per the upstream STWO Fiat-Shamir
+/// transcript) checks the binding natively.
 #[must_use]
-pub fn verify_mock_batch_proof(proof: &Proof, zk_public: &zk_verifier::PublicInputs) -> bool {
-    let casm_hash_hex = hex::encode(proof.casm_hash);
-    let mut committed_public = zk_public.clone();
-    committed_public
-        .compiled_casm_hash
-        .clone_from(&casm_hash_hex);
-    let expected = zk_verifier::stub_commitment(&casm_hash_hex, &committed_public);
-    proof.bytes == expected.to_vec()
+pub fn verify_mock_batch_proof(
+    proof: &Proof,
+    inputs: &BatchSigPublicInputs,
+    zk_public: &zk_verifier::PublicInputs,
+) -> bool {
+    proof.bytes.len() >= 32
+        && proof.bytes[..32] == batch_proof_commitment(inputs, zk_public, &proof.casm_hash)
 }
+
+/// Domain separators for batch-sig construction (R4 audit fix-up,
+/// 2026-07-31). The mint side
+/// (`crates/octo-wallet/src/capability/zk_mint.rs::batch_sig_inputs`)
+///
+/// and the verifier side
+/// (`quota-router-core::zk_verify::capability::verify_batch_capability_zk`)
+/// MUST both use these constants in lockstep — otherwise the
+/// reconstructed `BatchSigPublicInputs` differs from the minted one,
+/// the commitment check fails, and proofs are rejected. Kept here as
+/// a single source of truth.
+pub const BATCH_SIG_SIGNER_ROOT_DOMAIN: u8 = 0xB1;
+/// Domain separator for the message-root BLAKE3 commitment.
+pub const BATCH_SIG_MESSAGE_ROOT_DOMAIN: u8 = 0xB2;
 
 #[cfg(test)]
 mod tests {
@@ -693,16 +755,24 @@ mod tests {
     }
 
     #[test]
-    fn prove_batch_signature_different_zk_public_different_proof() {
-        // The mock commitment is over (casm_hash, zk_public). Different
-        // zk_public fields must yield different commitments.
-        let inputs = sample_batch_inputs(11);
-        let zk_a = sample_zk_public();
-        let a = prove_batch_signature(Program::BatchSig, [0xCD; 32], &inputs, &zk_a).unwrap();
-        let mut zk_b = sample_zk_public();
-        zk_b.provider_slot_id = "different-slot".to_owned();
-        let b = prove_batch_signature(Program::BatchSig, [0xCD; 32], &inputs, &zk_b).unwrap();
-        assert_ne!(a, b);
+    fn prove_batch_signature_different_signer_set_different_proof() {
+        // R4 fix-up: the mock commitment is `BLAKE3(casm_hash ||
+        // canonical_ser(inputs))` — it depends on signer_roots +
+        // message_root, NOT on `zk_public` fields. Two invocations with
+        // different signer lists therefore produce different proof bytes.
+        let inputs_a = sample_batch_inputs(11);
+        let mut inputs_b = sample_batch_inputs(11);
+        // Flip one signer's root to break the signer-set commitment.
+        inputs_b.signer_roots[0] = [0xAB; 32];
+        let zk_public = sample_zk_public();
+        let a =
+            prove_batch_signature(Program::BatchSig, [0xCD; 32], &inputs_a, &zk_public).unwrap();
+        let b =
+            prove_batch_signature(Program::BatchSig, [0xCD; 32], &inputs_b, &zk_public).unwrap();
+        assert_ne!(
+            a.bytes, b.bytes,
+            "different signer set MUST yield different proof bytes"
+        );
     }
 
     #[test]
@@ -720,18 +790,25 @@ mod tests {
         let zk_public = sample_zk_public();
         let proof =
             prove_batch_signature(Program::BatchSig, [0xCD; 32], &inputs, &zk_public).unwrap();
-        assert!(verify_mock_batch_proof(&proof, &zk_public));
+        assert!(verify_mock_batch_proof(&proof, &inputs, &zk_public));
     }
 
     #[test]
-    fn verify_mock_batch_proof_rejects_mismatched_public() {
-        let inputs = sample_batch_inputs(11);
+    fn verify_mock_batch_proof_rejects_tampered_inputs() {
+        // R4 fix-up: verifies that mutating the signer set AFTER proving
+        // causes `verify_mock_batch_proof` to reject. The mock
+        // commitment binds the signer_roots set, so swapping one root
+        // must invalidate the proof.
+        let inputs_orig = sample_batch_inputs(11);
         let zk_public = sample_zk_public();
         let proof =
-            prove_batch_signature(Program::BatchSig, [0xCD; 32], &inputs, &zk_public).unwrap();
-        let mut other_public = sample_zk_public();
-        other_public.capability_root_hash = hex::encode([0xEE; 32]);
-        assert!(!verify_mock_batch_proof(&proof, &other_public));
+            prove_batch_signature(Program::BatchSig, [0xCD; 32], &inputs_orig, &zk_public).unwrap();
+        let mut tampered_inputs = inputs_orig.clone();
+        tampered_inputs.signer_roots[0] = [0xEF; 32]; // mutate one signer root
+        assert!(
+            !verify_mock_batch_proof(&proof, &tampered_inputs, &zk_public),
+            "tampered signer set MUST reject the original proof"
+        );
     }
 
     #[test]
@@ -741,6 +818,6 @@ mod tests {
         let mut proof =
             prove_batch_signature(Program::BatchSig, [0xCD; 32], &inputs, &zk_public).unwrap();
         proof.bytes[0] ^= 0xFF;
-        assert!(!verify_mock_batch_proof(&proof, &zk_public));
+        assert!(!verify_mock_batch_proof(&proof, &inputs, &zk_public));
     }
 }

@@ -19,7 +19,9 @@ use octo_wallet::capability::zk_mint::{
     bundled_casm_hash, mint_with_zk_and_signers, PrivateWitness, PublicInputs,
 };
 use octo_wallet::node::NodeType;
-use quota_router_core::zk_verify::capability::{verify_batch_capability_zk, CapabilityVerifier};
+use quota_router_core::zk_verify::capability::{
+    reconstruct_batch_sig_inputs, verify_batch_capability_zk, CapabilityVerifier,
+};
 use quota_router_core::zk_verify::ProofBundle as CoreProofBundle;
 use zk_circuit::verify_mock_batch_proof;
 
@@ -87,8 +89,22 @@ fn eleven_step_batch_zk_round_trip() {
         bytes: bundle.stark_proof.clone(),
         casm_hash: casm,
     };
+    // Convert octo-wallet PublicInputs → quota-router-core PublicInputs
+    // (the verifier layer reconstructs batch_sig_inputs from the q-r-core
+    // shape; field-by-field mirror).
+    let q_pi = quota_router_core::zk_verify::PublicInputs {
+        ask_id: public_inputs.ask_id,
+        axes_consumed: public_inputs.axes_consumed.clone(),
+        cap_root_hash: public_inputs.cap_root_hash,
+        invocation_hash: public_inputs.invocation_hash,
+        holder_did: public_inputs.holder_did.clone(),
+        current_unix_time: public_inputs.current_unix_time,
+        output_hash: public_inputs.output_hash,
+        provider_slot_id: public_inputs.provider_slot_id.clone(),
+    };
+    let batch_inputs = reconstruct_batch_sig_inputs(&q_pi, &signers);
     assert!(
-        verify_mock_batch_proof(&proof_obj, &zk_public),
+        verify_mock_batch_proof(&proof_obj, &batch_inputs, &zk_public),
         "mock proofer commitment must match re-derived zk_verifier::PublicInputs"
     );
 
@@ -115,8 +131,13 @@ fn eleven_step_batch_zk_round_trip() {
         casm_version: bundle.casm_version,
         security_bits: bundle.security_bits,
     };
-    verify_batch_capability_zk(&core_bundle, &signers, &verifier)
-        .expect("11-signer batch proof verifies end-to-end");
+    verify_batch_capability_zk(
+        &core_bundle,
+        &signers,
+        Some(&core_bundle.public_inputs),
+        &verifier,
+    )
+    .expect("11-signer batch proof verifies end-to-end");
 }
 
 /// Round-trip with Wholesale node type fails closed (fail-closed per

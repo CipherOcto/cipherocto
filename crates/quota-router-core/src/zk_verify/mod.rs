@@ -90,6 +90,21 @@ pub enum ZkVerifyError {
     /// batch commitment.
     #[error("batch signer list mismatch: count={count}, expected at least {expected}")]
     BatchSignerMissing { count: usize, expected: usize },
+
+    /// **R4 audit fix-up (2026-07-31):** the batch proof's 32-byte
+    /// commitment prefix does NOT match the expected commitment
+    /// reconstructed from `signer_pubkeys + proof.public_inputs`.
+    /// Indicates a forged signer set or a tampered proof bundle
+    /// (Class A: forgery is detectable, not silently accepted).
+    #[error("batch signer set commitment mismatch: expected={expected:02x?}, got={got:02x?}")]
+    BatchSignerSetMismatch {
+        /// The BLAKE3(casm_hash || canonical_ser(inputs)) the verifier
+        /// would have computed for the supplied signer list + canonical
+        /// capability public inputs.
+        expected: [u8; 32],
+        /// The first 32 bytes of `proof.stark_proof`.
+        got: [u8; 32],
+    },
 }
 
 /// ZK mint error (RFC-0958 §Error Handling).

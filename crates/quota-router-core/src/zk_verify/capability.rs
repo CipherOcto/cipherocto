@@ -58,12 +58,25 @@ pub fn canonicalize_axes(pi: &mut PublicInputs) {
 ///
 /// # Errors
 /// Returns `ZkVerifyError` on any of the four checks above.
-pub fn verify_capability_zk(
+/// Run only the structural checks (public-inputs equal + CASM drift +
+/// clock skew) on a proof. Skips the STWO/commitment check (assumed
+/// already verified by the caller's commitment layer — for batch proofs
+/// `verify_batch_capability_zk` reconstructs the batch commitment
+/// itself and compares to `proof.stark_proof[..32]`).
+///
+/// **Returns** the matched CASM BLAKE3 hash on success (selected from
+/// `accepted_casm_blake3_hashes` for downstream STWO verification).
+///
+/// **R4 audit fix-up (2026-07-31):** this helper exists so batch proofs
+/// can validate the structural + clock + CASM invariants without
+/// tripping the downstream `zk_verifier::verify_capability_zk` stub
+/// path (which would reject a batch-shaped commitment).
+fn verify_capability_zk_structural(
     proof: &ProofBundle,
     expected_public_inputs: &PublicInputs,
     accepted_casm_blake3_hashes: &[[u8; 32]],
     verifier_local_unix_time: u64,
-) -> Result<(), ZkVerifyError> {
+) -> Result<[u8; 32], ZkVerifyError> {
     // 1. Public input check (on canonicalized copies — sort axes first).
     let mut proof_pi_canon = proof.public_inputs.clone();
     let mut expected_pi_canon = expected_public_inputs.clone();
@@ -107,6 +120,23 @@ pub fn verify_capability_zk(
             max: MAX_SKEW_SECS,
         });
     }
+
+    Ok(compiled_casm_blake3_hash)
+}
+
+pub fn verify_capability_zk(
+    proof: &ProofBundle,
+    expected_public_inputs: &PublicInputs,
+    accepted_casm_blake3_hashes: &[[u8; 32]],
+    verifier_local_unix_time: u64,
+) -> Result<(), ZkVerifyError> {
+    // 1-3. Structural checks (public input + CASM drift + clock skew).
+    let compiled_casm_blake3_hash = verify_capability_zk_structural(
+        proof,
+        expected_public_inputs,
+        accepted_casm_blake3_hashes,
+        verifier_local_unix_time,
+    )?;
 
     // 4. Delegate STWO verify to the cipherocto zk-verifier crate
     //    (extracted from stoolap fork 2026-07-22). Map domain-layer
@@ -230,6 +260,10 @@ pub fn verify_capability_zk_token(
     proof: &ProofBundle,
     verifier: &CapabilityVerifier,
 ) -> Result<(), ZkVerifyError> {
+    // Convenience wrapper: verify_capability_zk_token delegates to the
+    // single-capability verifier (structural + STWO/commitment). For
+    // batch proofs use verify_batch_capability_zk which skips the stub
+    // commitment check (R4 fix-up).
     verify_capability_zk(
         proof,
         &proof.public_inputs,
@@ -267,10 +301,29 @@ pub fn verify_capability_zk_token(
 /// Returns `ZkVerifyError::BatchSignerMissing` when the signer list is
 /// empty; returns the underlying single-capability errors via
 /// `verify_capability_zk` (CasmHashMismatch, ClockSkewExceeded,
-/// StwoVerifyError, PublicInputMismatch).
+/// StwoVerifyError, PublicInputMismatch, **BatchSignerSetMismatch**).
+///
+/// **R4 audit fix-up (2026-07-31):** the prior implementation ONLY
+/// checked the single-capability commitment; it never verified that the
+/// proof bound the supplied `signer_pubkeys`, so a mock batch proof
+/// was forgeable end-to-end. The new contract:
+/// 1. Reconstruct `BatchSigPublicInputs` from `signer_pubkeys + proof.public_inputs`
+///    using the same canonical construction as the mint side (domain
+///    separators `0xB1` / `0xB2` per `zk_circuit::constants`).
+/// 2. Re-derive `batch_proof_commitment(inputs, casm_hash)` and compare
+///    byte-for-byte to `proof.stark_proof[..32]`. Mismatch returns
+///    `BatchSignerSetMismatch`.
+/// 3. Delegate to single-capability verifier for CASM hash drift, clock
+///    skew, and the rest of the contract.
+///
+/// `expected_public_inputs` is the caller's expected canonical
+/// capability public inputs (typically the verifier's view of the
+/// request context). If `None`, the proof's own public inputs are
+/// used (self-verifying path).
 pub fn verify_batch_capability_zk(
     proof: &ProofBundle,
     signer_pubkeys: &[[u8; 32]],
+    expected_public_inputs: Option<&PublicInputs>,
     verifier: &CapabilityVerifier,
 ) -> Result<(), ZkVerifyError> {
     if signer_pubkeys.is_empty() {
@@ -280,16 +333,99 @@ pub fn verify_batch_capability_zk(
         });
     }
 
-    // Delegate to the canonical single-capability verifier. The downstream
-    // check covers CASM hash drift, clock skew, and the STWO / stub
-    // commitment — including the per-signer binding produced by the
-    // proofer at mint time.
-    verify_capability_zk(
+    // Order: structural check FIRST (cheap; rejects CASM drift + clock
+    // skew + public-input mismatch), THEN commitment check (which
+    // depends on `verifier_local_unix_time` and would falsely fire
+    // BatchSignerSetMismatch on a clock-skewed verifier). The
+    // commitment check binds the signer set + casm + per-cap fields
+    // (excluding verifier_local_unix_time from the inner sub-commitment
+    // because that field is verifier-side, not proofer-side).
+    let expected = expected_public_inputs.unwrap_or(&proof.public_inputs);
+    verify_capability_zk_structural(
         proof,
-        &proof.public_inputs,
+        expected,
         &[verifier.compiled_casm_blake3_hash],
         verifier.verifier_local_unix_time,
-    )
+    )?;
+
+    // R4 fix-up: reconstruct BatchSigPublicInputs + re-derive the
+    // batch commitment. Catches forged signer sets (a pre-fix-up
+    // mock-batch proof was forgeable end-to-end).
+    //
+    // The proofer signs via `zk_verifier::PublicInputs`; we mirror
+    // that shape here so the same `batch_proof_commitment` produced by
+    // `prove_batch_signature` is what we reconstruct. The
+    // `quota_router_core::zk_verify::PublicInputs` (carried in
+    // `proof.public_inputs`) is field-equivalent — convert.
+    let zk_public = zk_verifier::PublicInputs {
+        proof_issued_at_unix: proof.public_inputs.current_unix_time,
+        verifier_local_unix_time: verifier.verifier_local_unix_time,
+        compiled_casm_hash: hex::encode(proof.casm_hash),
+        capability_root_hash: hex::encode(proof.public_inputs.cap_root_hash),
+        provider_slot_id: proof.public_inputs.provider_slot_id.clone(),
+    };
+    let batch_inputs = reconstruct_batch_sig_inputs(&proof.public_inputs, signer_pubkeys);
+    if proof.stark_proof.len() < 32
+        || proof.stark_proof[..32]
+            != zk_circuit::batch_proof_commitment(&batch_inputs, &zk_public, &proof.casm_hash)
+    {
+        let mut got = [0u8; 32];
+        got.copy_from_slice(&proof.stark_proof[..32]);
+        return Err(ZkVerifyError::BatchSignerSetMismatch {
+            expected: zk_circuit::batch_proof_commitment(
+                &batch_inputs,
+                &zk_public,
+                &proof.casm_hash,
+            ),
+            got,
+        });
+    }
+
+    Ok(())
+}
+
+/// Reconstruct `BatchSigPublicInputs` from capability public inputs
+/// + signer pubkeys.
+///
+/// **MUST stay in lockstep with the mint-side construction**
+/// (`octo_wallet::capability::zk_mint::batch_sig_inputs`).
+///
+/// `signer_roots[i] = BLAKE3(BATCH_SIG_SIGNER_ROOT_DOMAIN || signer_pubkey_i)`
+/// `message_root = BLAKE3(BATCH_SIG_MESSAGE_ROOT_DOMAIN || canonical_message)`
+///
+/// Domain separators are `pub const`s on `zk_circuit` (single source
+/// of truth — `BATCH_SIG_SIGNER_ROOT_DOMAIN = 0xB1`,
+/// `BATCH_SIG_MESSAGE_ROOT_DOMAIN = 0xB2`).
+pub fn reconstruct_batch_sig_inputs(
+    public_inputs: &PublicInputs,
+    signer_pubkeys: &[[u8; 32]],
+) -> zk_circuit::BatchSigPublicInputs {
+    use blake3::Hasher;
+
+    let signer_roots: Vec<[u8; 32]> = signer_pubkeys
+        .iter()
+        .map(|pk| {
+            let mut h = Hasher::new();
+            h.update(&[zk_circuit::BATCH_SIG_SIGNER_ROOT_DOMAIN]);
+            h.update(pk);
+            *h.finalize().as_bytes()
+        })
+        .collect();
+
+    let mut msg_hasher = Hasher::new();
+    msg_hasher.update(&[zk_circuit::BATCH_SIG_MESSAGE_ROOT_DOMAIN]);
+    msg_hasher.update(&public_inputs.ask_id);
+    msg_hasher.update(&public_inputs.cap_root_hash);
+    msg_hasher.update(&public_inputs.invocation_hash);
+    msg_hasher.update(public_inputs.holder_did.as_bytes());
+    msg_hasher.update(&public_inputs.current_unix_time.to_le_bytes());
+    msg_hasher.update(public_inputs.provider_slot_id.as_bytes());
+    let message_root: [u8; 32] = *msg_hasher.finalize().as_bytes();
+
+    zk_circuit::BatchSigPublicInputs {
+        signer_roots,
+        message_root,
+    }
 }
 
 #[cfg(test)]
@@ -447,52 +583,114 @@ mod tests {
             .collect()
     }
 
+    /// Construct a batch proof by proofer path: build the canonical
+    /// `BatchSigPublicInputs` from the signer list, then mint a proof
+    /// via `zk_circuit::prove_batch_signature` (or via the public
+    /// `batch_proof_commitment` helper when bypassing the program arg).
+    /// Mirrors what `octo-wallet::mint_with_zk_and_signers` produces.
+    fn sample_real_batch_proof() -> (ProofBundle, [u8; 32]) {
+        let (proof, casm) = sample_batch_proof();
+        let signers = eleven_signers();
+        let batch_inputs = reconstruct_batch_sig_inputs(&proof.public_inputs, &signers);
+        // Convert quota-router-core's PublicInputs to zk_verifier's
+        // shape (field-equivalent; proofer signs via zk_verifier::PublicInputs).
+        let zk_public = zk_verifier::PublicInputs {
+            proof_issued_at_unix: proof.public_inputs.current_unix_time,
+            verifier_local_unix_time: proof.public_inputs.current_unix_time,
+            compiled_casm_hash: hex::encode(casm),
+            capability_root_hash: hex::encode(proof.public_inputs.cap_root_hash),
+            provider_slot_id: proof.public_inputs.provider_slot_id.clone(),
+        };
+        let commitment = zk_circuit::batch_proof_commitment(&batch_inputs, &zk_public, &casm);
+        (
+            ProofBundle {
+                stark_proof: commitment.to_vec(),
+                ..proof
+            },
+            casm,
+        )
+    }
+
     #[test]
     fn batch_verify_accepts_matching_proof_and_signers() {
-        let (proof, casm) = sample_batch_proof();
+        let (proof, casm) = sample_real_batch_proof();
         let verifier = CapabilityVerifier {
             compiled_casm_blake3_hash: casm,
             verifier_local_unix_time: proof.public_inputs.current_unix_time,
         };
         let signers = eleven_signers();
-        verify_batch_capability_zk(&proof, &signers, &verifier).unwrap();
+        verify_batch_capability_zk(&proof, &signers, Some(&proof.public_inputs), &verifier)
+            .unwrap();
     }
 
     #[test]
     fn batch_verify_rejects_empty_signer_list() {
-        let (proof, casm) = sample_batch_proof();
+        let (proof, casm) = sample_real_batch_proof();
         let verifier = CapabilityVerifier {
             compiled_casm_blake3_hash: casm,
             verifier_local_unix_time: proof.public_inputs.current_unix_time,
         };
-        let err = verify_batch_capability_zk(&proof, &[], &verifier).unwrap_err();
+        let err = verify_batch_capability_zk(&proof, &[], Some(&proof.public_inputs), &verifier)
+            .unwrap_err();
         assert!(matches!(err, ZkVerifyError::BatchSignerMissing { .. }));
     }
 
     #[test]
     fn batch_verify_rejects_wrong_casm_hash() {
-        let (proof, _casm) = sample_batch_proof();
+        let (proof, _casm) = sample_real_batch_proof();
         let verifier = CapabilityVerifier {
             compiled_casm_blake3_hash: [0u8; 32], // wrong
             verifier_local_unix_time: proof.public_inputs.current_unix_time,
         };
         let signers = eleven_signers();
-        let err = verify_batch_capability_zk(&proof, &signers, &verifier).unwrap_err();
+        let err =
+            verify_batch_capability_zk(&proof, &signers, Some(&proof.public_inputs), &verifier)
+                .unwrap_err();
         // The downstream verify_capability_zk fires CasmHashMismatch.
         assert!(matches!(err, ZkVerifyError::CasmHashMismatch { .. }));
     }
 
     #[test]
     fn batch_verify_rejects_tampered_proof() {
-        let (mut proof, casm) = sample_batch_proof();
+        let (mut proof, casm) = sample_real_batch_proof();
         proof.stark_proof[0] ^= 0xFF;
         let verifier = CapabilityVerifier {
             compiled_casm_blake3_hash: casm,
             verifier_local_unix_time: proof.public_inputs.current_unix_time,
         };
         let signers = eleven_signers();
-        let err = verify_batch_capability_zk(&proof, &signers, &verifier).unwrap_err();
-        // Downstream STWO verify rejects the tampered commitment.
-        assert!(matches!(err, ZkVerifyError::StwoVerifyError(_)));
+        let err =
+            verify_batch_capability_zk(&proof, &signers, Some(&proof.public_inputs), &verifier)
+                .unwrap_err();
+        // R4 fix-up: the BATCH commitment check fires first (before the
+        // downstream STWO/BLAKE3 stub path). Assert the new variant.
+        assert!(matches!(err, ZkVerifyError::BatchSignerSetMismatch { .. }));
+    }
+
+    /// R4 fix-up: a forged signer list (different from the one the
+    /// proofer bound into the proof) MUST be rejected even when the
+    /// downstream STWO/commitment would accept the canonical inputs.
+    #[test]
+    fn batch_verify_rejects_forged_signer_list() {
+        let (proof, casm) = sample_real_batch_proof();
+        let verifier = CapabilityVerifier {
+            compiled_casm_blake3_hash: casm,
+            verifier_local_unix_time: proof.public_inputs.current_unix_time,
+        };
+        // Replace signers with a different set; the proof's commitment
+        // was bound to the ORIGINAL set, so the reconstructed commitment
+        // differs → BatchSignerSetMismatch.
+        let forged_signers: Vec<[u8; 32]> = vec![[0xEE; 32]; 11];
+        let err = verify_batch_capability_zk(
+            &proof,
+            &forged_signers,
+            Some(&proof.public_inputs),
+            &verifier,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ZkVerifyError::BatchSignerSetMismatch { .. }),
+            "forged signer list MUST be detected; got {err:?}"
+        );
     }
 }

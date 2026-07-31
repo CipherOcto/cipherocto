@@ -25,8 +25,9 @@ pub use wire::{
     deserialize_wire, deserialize_wire_v2, serialize_wire, serialize_wire_v2, WireError, WireV2,
 };
 pub use zk_mint::{
-    mint_with_zk, proof_bundle_from_wire, proof_bundle_to_wire, CapabilityClass, PrivateWitness,
-    ProofBundle, PublicInputs, ZkMintError, COMPILED_CASM_BLAKE3_HASH,
+    bundled_casm_hash, canonicalize_axes, mint_with_zk, mint_with_zk_and_signers,
+    proof_bundle_from_wire, proof_bundle_to_wire, CapabilityClass, ExecutionTrace, PrivateWitness,
+    ProofBundle, PublicInputs, TraceStep, ZkMintError, COMPILED_CASM_BLAKE3_HASH,
 };
 
 use crate::identity::IdentityKey;

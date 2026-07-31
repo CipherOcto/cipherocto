@@ -221,7 +221,7 @@ pub fn verify_capability_zk(
             return Err(VerifyError::ProofRejected);
         }
 
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(any(test, feature = "allow-stub-verifier")))]

@@ -1,5 +1,12 @@
 //! Integration test: `verify_capability_zk` fail-closed invariant
 //! (mission 0958-a R3 fix-up).
+//! Test-internal doc-comment lint relaxation.
+// Integration tests are not user-facing API.
+#![allow(clippy::doc_markdown)]
+#![allow(clippy::doc_lazy_continuation)]
+
+
+
 //!
 //! Asserts that a production build (`--no-default-features`,
 //! missing `libstwo_sys.so`) returns `Err(VerifyError::StubDisabled)`
@@ -10,7 +17,9 @@
 //! `ProofRejected` — also NOT a silent acceptance. Both branches are
 //! safe; the release invariant asserts the FIRST.
 
-use zk_verifier::{ProofBundle, PublicInputs, VerifyError};
+use zk_verifier::{ProofBundle, PublicInputs};
+#[cfg(not(feature = "allow-stub-verifier"))]
+use zk_verifier::VerifyError;
 
 const TV_FIXED_TIME: u64 = 1_700_000_000;
 
@@ -46,16 +55,17 @@ fn release_gate_fails_closed() {
 /// R3 coverage check (default-features + dev tools present): the
 /// verifier MUST NOT take the forgeable BLAKE3 stub path with
 /// arbitrary bytes. Either the FFI path fires (returning Err on
-/// bogus bytes) or the stub path fires (returning ProofRejected).
+/// bogus bytes) or the stub path fires (returning `ProofRejected`).
 /// A `ProofRejected` IS the canonical stub-path result for bogus
 /// bytes; the invariant is that we never return `Ok(())` for an
 /// attacker-supplied commitment.
 #[test]
+#[allow(unused_imports)] // VerifyError only used in --no-default-features variant
 fn default_build_does_not_accept_arbtrary_stub_commit() {
     let (proof, public) = sample("casm-default-gate");
     let result = zk_verifier::verify_capability_zk(&proof, &public, "casm-default-gate");
     assert!(
-        !result.is_ok(),
+        result.is_err(),
         "arbitrary proof bytes must NOT be accepted (no forge); got Ok"
     );
 }

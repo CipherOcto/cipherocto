@@ -285,6 +285,10 @@ pub fn mint_with_zk(
 /// # Errors
 /// Returns `ZkMintError::BatchProver` if the prover rejects the inputs;
 /// returns the same errors as `mint_with_zk` for gating / preconditions.
+pub fn canonicalize_axes(pi: &mut PublicInputs) {
+    pi.axes_consumed.sort_by(|a, b| a.0.cmp(&b.0));
+}
+
 pub fn mint_with_zk_and_signers(
     node_type: NodeType,
     witness: &PrivateWitness,
@@ -328,14 +332,20 @@ pub fn mint_with_zk_and_signers(
         });
     }
 
-    // 7. STARK proof generation.
+    // 7. R3 fix-up: canonicalize axes_consumed before proof generation
+    //    so the proofer + verifier agree on order (the structural
+    //    equality check is Vec::== — order-sensitive).
+    let mut public_inputs_canon = public_inputs.clone();
+    canonicalize_axes(&mut public_inputs_canon);
+
+    // 8. STARK proof generation.
     let stark_proof = if signers.is_empty() {
         // Backward-compatible single-capability path (MVP stub).
         Vec::new()
     } else {
         // Batch signature path (RFC-0958 + RFC-0962 §9 / Gap 3 / Task 3.3).
-        let inputs = batch_sig_inputs(public_inputs, signers);
-        let zk_public = zk_verifier_public(public_inputs);
+        let inputs = batch_sig_inputs(&public_inputs_canon, signers);
+        let zk_public = zk_verifier_public(&public_inputs_canon);
         prove_batch_signature(Program::BatchSig, casm_hash, &inputs, &zk_public)
             .map_err(|e| ZkMintError::BatchProver(e.to_string()))?
             .bytes
@@ -343,7 +353,7 @@ pub fn mint_with_zk_and_signers(
 
     Ok(ProofBundle {
         stark_proof,
-        public_inputs: public_inputs.clone(),
+        public_inputs: public_inputs_canon,
         casm_hash,
         security_bits: 128,
     })

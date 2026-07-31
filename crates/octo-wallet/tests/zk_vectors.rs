@@ -493,6 +493,64 @@ fn ac7_wholesale_zkbearing_registration_rejected() {
 //  tv5_casm_drift_detected_at_{mint,verify}.)
 // ============================================================
 
+// ============================================================
+// AC-6 R3 fix-up: axes_consumed canonical sort
+// ============================================================
+#[test]
+fn r3_axes_consumed_canonical_sort_independent_of_input_order() {
+    // Construct two semantically-identical PublicInputs that differ
+    // only in axes_consumed Vec order. Both should mint + verify
+    // successfully because the canonicalize_axes helper sorts at
+    // every boundary.
+    use octo_wallet::capability::zk_mint::canonicalize_axes;
+    let casm = bundled_casm_hash();
+    let signers: Vec<[u8; 32]> = vec![[0x42; 32]];
+
+    // Order A: alpha then mu
+    let mut pi_a = public_inputs_tv1();
+    pi_a.axes_consumed = vec![("alpha".to_owned(), 100), ("mu".to_owned(), 200)];
+    // Order B: mu then alpha (REVERSED)
+    let mut pi_b = pi_a.clone();
+    pi_b.axes_consumed = pi_a.axes_consumed.clone();
+    pi_b.axes_consumed.reverse();
+
+    let bundle_a = octo_wallet::capability::zk_mint::mint_with_zk_and_signers(
+        NodeType::SelfHost,
+        &witness_from_tv1_fixture(),
+        &pi_a,
+        casm,
+        &signers,
+    )
+    .expect("mint A");
+    let bundle_b = octo_wallet::capability::zk_mint::mint_with_zk_and_signers(
+        NodeType::SelfHost,
+        &witness_from_tv1_fixture(),
+        &pi_b,
+        casm,
+        &signers,
+    )
+    .expect("mint B");
+
+    // Both bundles' public_inputs must be canonically sorted (the
+    // mint helper canonicalizes before proof gen).
+    canonicalize_axes(&mut pi_a);
+    canonicalize_axes(&mut pi_b);
+    assert_eq!(
+        bundle_a.public_inputs.axes_consumed, pi_a.axes_consumed,
+        "mint A: axes_consumed must be canonical"
+    );
+    assert_eq!(
+        bundle_b.public_inputs.axes_consumed, pi_b.axes_consumed,
+        "mint B: axes_consumed must be canonical"
+    );
+    // Both canonical sorts agree (the verifier sees canonical order
+    // regardless of caller-supplied order).
+    assert_eq!(
+        bundle_a.public_inputs.axes_consumed, bundle_b.public_inputs.axes_consumed,
+        "after canonicalize, both orders agree"
+    );
+}
+
 #[test]
 fn ac9_public_input_mismatch_detected_under_slot_binding_drift() {
     // Defense in depth: cross-slot drift also surfaces as

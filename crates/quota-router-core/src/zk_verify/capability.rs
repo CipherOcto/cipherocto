@@ -29,6 +29,24 @@ use super::{ProofBundle, PublicInputs, ZkVerifyError};
 /// Defense against malicious prover setting arbitrary wall-clock.
 pub const MAX_SKEW_SECS: u64 = zk_verifier::MAX_SKEW_SECS;
 
+/// Canonicalize `axes_consumed` order (mission 0958-a R3 fix-up, 2026-07-31).
+///
+/// **Contract:** `axes_consumed` MUST be sorted by `(axis_name)` before any
+/// structural equality check OR proof generation. Without this, an upstream
+/// caller that incidentally sorts (e.g., `HashMap` iteration,
+/// `BTreeMap` round-trip) trips `PublicInputMismatch` on a semantically
+/// identical capability. The `Vec` derives `PartialEq` so order matters;
+/// this helper provides the canonical contract.
+///
+/// Called at every boundary:
+/// 1. Mint site (`octo-wallet/src/capability/zk_mint.rs::mint_with_zk_and_signers`)
+///    — so the proofer sees the canonical order.
+/// 2. Verify site (`verify_capability_zk`, just before `public_inputs_equal`)
+///    — so the structural comparison is order-independent.
+pub fn canonicalize_axes(pi: &mut PublicInputs) {
+    pi.axes_consumed.sort_by(|a, b| a.0.cmp(&b.0));
+}
+
 /// Verify a ZK capability proof against expected public inputs.
 ///
 /// Algorithm (RFC-0958 §3.5):
@@ -46,8 +64,12 @@ pub fn verify_capability_zk(
     compiled_casm_blake3_hash: &[u8; 32],
     verifier_local_unix_time: u64,
 ) -> Result<(), ZkVerifyError> {
-    // 1. Public input check.
-    if !public_inputs_equal(&proof.public_inputs, expected_public_inputs) {
+    // 1. Public input check (on canonicalized copies — sort axes first).
+    let mut proof_pi_canon = proof.public_inputs.clone();
+    let mut expected_pi_canon = expected_public_inputs.clone();
+    canonicalize_axes(&mut proof_pi_canon);
+    canonicalize_axes(&mut expected_pi_canon);
+    if !public_inputs_equal(&proof_pi_canon, &expected_pi_canon) {
         return Err(ZkVerifyError::PublicInputMismatch(format!(
             "expected={:?}, got={:?}",
             expected_public_inputs, proof.public_inputs

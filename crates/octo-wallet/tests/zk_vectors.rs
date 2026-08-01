@@ -12,12 +12,20 @@
 //! behavioral drift vs accidental snapshot updates.
 //!
 //! **Cross-impl invariant (TV8):** the same `PublicInputs` + `casm_hash`
-//! generates a proof accepted by `verify_capability_zk` whether constructed
-//! via:
-//! - `mint_with_zk_and_signers` (signer-aware, batch signature path),
-//! - direct `ProofBundle` construction via `zk_verifier::stub_commitment`.
-//! Both paths reduce to `BLAKE3(casm || canonical_ser(public))` so the
-//! verifier accepts byte-equivalently.
+//! produces proofs that are each accepted by their CORRECT verifier:
+//! - `mint_with_zk_and_signers` (batch signature path) emits a
+//!   `batch_proof_commitment` that binds the signer set; it is accepted
+//!   by `verify_batch_capability_zk`.
+//! - direct `ProofBundle` construction via `zk_verifier::stub_commitment`
+//!   emits a single-cap `stub_commitment`; it is accepted by
+//!   `verify_capability_zk`.
+//! R5 fix-up (2026-07-31): the pre-R4 invariant asserted that both
+//! prover paths produce byte-equal commitments accepted by
+//! `verify_capability_zk`. R4 #1 broke that intentionally — the
+//! batch proofer now binds the signer set (security property), so
+//! its commitment shape diverges from the single-cap stub. The
+//! invariant was rewritten to assert each path is accepted by its
+//! own verifier, NOT byte equivalence.
 // Test-internal doc lint relaxation — pedantic clippy flags every
 //! `///` line that mentions a type name or contiguous list inside prose;
 //! integration tests are not user-facing API docs, so relax these.
@@ -200,14 +208,23 @@ fn tv1_selfhost_mint_and_verify_round_trip() {
     assert_eq!(bundle.stark_proof.len(), 32);
 
     let qr = qr_bundle_from(&bundle);
-    // Verifier local time matches issuance time so the stub commitment
-    // (which folds `verifier_local_unix_time` into the canonical form)
-    // matches the mint-time commitment.
-    verify_capability_zk(
+    // R5 fix-up (2026-07-31): the batch proofer (mint_with_zk_and_signers
+    // via mint_with_stub_proof) emits a `batch_proof_commitment` that
+    // binds the signer set; the matching verifier is
+    // `verify_batch_capability_zk`, NOT the single-cap
+    // `verify_capability_zk` (which compares against
+    // `zk_verifier::stub_commitment`, a different commitment shape).
+    // The structural checks (public-input equality + CASM hash + clock
+    // skew) are reused from the single-cap path; the commitment check
+    // is reconstructed from the caller-supplied signer list.
+    verify_batch_capability_zk(
         &qr,
-        &qr.public_inputs,
-        &[qr.casm_hash],
-        pi.current_unix_time,
+        &[[0x42; 32]],
+        Some(&qr.public_inputs),
+        &CapabilityVerifier {
+            compiled_casm_blake3_hash: qr.casm_hash,
+            verifier_local_unix_time: pi.current_unix_time,
+        },
     )
     .expect("TV1 verify");
 }
@@ -225,14 +242,19 @@ fn tv2_hybrid_no_trace_mint_and_verify_round_trip() {
     assert_eq!(bundle.stark_proof.len(), 32);
 
     let qr = qr_bundle_from(&bundle);
-    // (spacing marker — no behavior change here)
-    // Verifier local time matches issuance time (TV2 issues at
-    // TV_FIXED_TIME + 1; verifier accepts that).
-    verify_capability_zk(
+    // R5 fix-up (2026-07-31): see TV1 — batch proofer requires
+    // `verify_batch_capability_zk`, NOT `verify_capability_zk`. The
+    // commitment shape differs (batch binds the signer set); the
+    // structural checks (public-input equality + CASM hash + clock
+    // skew) are reused.
+    verify_batch_capability_zk(
         &qr,
-        &qr.public_inputs,
-        &[qr.casm_hash],
-        pi.current_unix_time,
+        &[[0x42; 32]],
+        Some(&qr.public_inputs),
+        &CapabilityVerifier {
+            compiled_casm_blake3_hash: qr.casm_hash,
+            verifier_local_unix_time: pi.current_unix_time,
+        },
     )
     .expect("TV2 verify");
 }
@@ -447,11 +469,13 @@ fn tv8_cross_impl_two_prover_paths_byte_equivalent() {
     };
 
     // Path A: mint_with_zk_and_signers (batch signature prover).
-    let signers: Vec<[u8; 32]> = (0..1)
-        .map(|i| [u8::try_from(i).expect("1 signer fits in u8"); 32])
-        .collect();
-    let path_a =
-        mint_with_zk_and_signers(NodeType::SelfHost, &witness, &pi, casm, &signers).expect("A");
+    // R5 fix-up (2026-07-31): the signer list MUST match what the
+    // batch verifier is given (`&[[0x42; 32]]` below) — R4 #1's
+    // `batch_proof_commitment` binds the signer set, so a mismatch
+    // here now legitimately fails the cross-impl test (pre-R4 the
+    // commitment didn't bind signers, so the mismatch was silent).
+    let path_a = mint_with_zk_and_signers(NodeType::SelfHost, &witness, &pi, casm, &[[0x42; 32]])
+        .expect("A");
     assert_eq!(
         path_a.stark_proof.len(),
         32,
@@ -460,7 +484,7 @@ fn tv8_cross_impl_two_prover_paths_byte_equivalent() {
 
     // Path B: direct stub_commitment (canonical public form). The
     // `zk_verifier::stub_commitment` re-derivation matches what the
-    // mint-side stub proofer would emit given the same public inputs.
+    // single-cap mock proofer (no signers) would emit.
     let casm_hex = hex::encode(casm);
     let zv_public = ZvPublicInputs {
         proof_issued_at_unix: pi.current_unix_time,
@@ -471,16 +495,29 @@ fn tv8_cross_impl_two_prover_paths_byte_equivalent() {
     };
     let path_b_commitment = zk_verifier::stub_commitment(&casm_hex, &zv_public);
 
-    // Cross-impl invariant: path A and path B must produce the same 32-byte
-    // commitment. The stub proofer for the batch path embeds the same
-    // shape; if shape diverges, AC-4 fails.
-    assert_eq!(
+    // R5 fix-up (2026-07-31): the pre-R4 cross-impl invariant asserted
+    // byte-equivalence between the batch proofer's commitment and the
+    // single-cap `stub_commitment`. R4 #1 broke that intentionally — the
+    // batch proofer now binds the signer set, so its commitment shape
+    // diverges from the single-cap stub by design (signer-set binding
+    // is the security property R4 added; reverting it would re-open
+    // the forgeability gap). The actual cross-impl invariant is
+    // "each proofer path is accepted by its CORRECT verifier".
+    //
+    // Path A (batch proofer) — must satisfy `verify_batch_capability_zk`
+    // reconstructing `batch_proof_commitment` from the signer list.
+    // Path B (single-cap stub_commitment) — must satisfy
+    // `verify_capability_zk` reconstructing `stub_commitment` directly.
+    // Both are exercised end-to-end below.
+    assert_ne!(
         path_a.stark_proof.as_slice(),
         &path_b_commitment,
-        "cross-impl: batch prover and stub_commitment must agree"
+        "cross-impl: batch proofer binds the signer set (R4 #1), \
+         so it MUST differ from the signer-free single-cap stub_commitment. \
+         Equality here means signer-set binding was removed — security regression."
     );
 
-    // Both paths verify accepted.
+    // Path A verify: batch path with explicit signer list.
     let qr_a = qr_bundle_from(&path_a);
     verify_batch_capability_zk(
         &qr_a,
@@ -491,7 +528,24 @@ fn tv8_cross_impl_two_prover_paths_byte_equivalent() {
             verifier_local_unix_time: pi.current_unix_time,
         },
     )
-    .expect("path A verify");
+    .expect("path A verify (batch)");
+
+    // Path B verify: single-cap path with direct stub_commitment bytes.
+    let path_b_bundle = octo_wallet::capability::ProofBundle {
+        stark_proof: path_b_commitment.to_vec(),
+        public_inputs: pi.clone(),
+        casm_hash: casm,
+        casm_version: 1,
+        security_bits: 128,
+    };
+    let qr_b = qr_bundle_from(&path_b_bundle);
+    verify_capability_zk(
+        &qr_b,
+        &qr_b.public_inputs,
+        &[qr_b.casm_hash],
+        pi.current_unix_time,
+    )
+    .expect("path B verify (single-cap stub_commitment)");
 }
 
 // ============================================================

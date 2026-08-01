@@ -182,11 +182,24 @@ pub enum EgressCaveatError {
 /// removed from an egress request. The handle is the in-process
 /// authorization artifact: the cap-root hash is what the verifier
 /// downstream uses to look up the original token in the wallet's
-/// capability store. The DID identifies the holder (subject of the
-/// capability); the original token NEVER crosses the boundary.
+/// capability store. The original token NEVER crosses the boundary.
 ///
-/// `None` for `cap_root_hash` and `holder_did` means no capability was
-/// attached at strip time (e.g., the request was internal).
+/// A zero `cap_root_hash` means no capability was attached at strip
+/// time (e.g., the request was internal); the verifier applies the
+/// default-allow / default-deny policy for the provider egress point.
+///
+/// **R9-4 closure (mission 0957-b):** the previous `holder_did: String`
+/// field was dropped. The field was structurally dead — every code
+/// path that constructed `CapabilityHandle` initialized it to
+/// `String::new()` and no producer populated it. The "verifier layer"
+/// comment referenced an aspirational architecture that does not exist
+/// in the workspace. Downstream consumers that need the holder
+/// identity obtain it from the wallet-side parsed `CapabilityToken`
+/// (`octo_wallet::capability::wire::deserialize_wire` with the
+/// caller-supplied `holder_did`) — NOT from this egress-side handle.
+/// The mint API (`crates/octo-wallet/src/capability/mod.rs:119`) is
+/// unchanged: `mint(root_secret, holder, holder_did, caveats, catalog)`
+/// preserves the parameter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapabilityHandle {
     /// BLAKE3-256 over the holder signature message
@@ -194,9 +207,6 @@ pub struct CapabilityHandle {
     /// `octo_wallet::capability::holder_msg`). Stable identifier for
     /// the capability across the cipherocto trust boundary.
     pub cap_root_hash: [u8; 32],
-    /// Holder DID extracted from the wire (segment 1 of the v1 wire
-    /// format's holder DID; resolved out-of-band for v2 callers).
-    pub holder_did: String,
 }
 
 /// Strip the capability token from an outgoing provider-bound request.
@@ -206,16 +216,19 @@ pub struct CapabilityHandle {
 /// request against the wallet's capability store.
 ///
 /// On a request that carries no capability header, returns
-/// `CapabilityHandle { cap_root_hash: [0; 32], holder_did: String::new() }`
-/// — the verifier treats zero-hash as "no capability attached" and
-/// enforces the request against the default-allow / default-deny policy
-/// for the provider egress point.
+/// `CapabilityHandle { cap_root_hash: [0; 32] }` — the verifier treats
+/// zero-hash as "no capability attached" and enforces the request
+/// against the default-allow / default-deny policy for the provider
+/// egress point.
 ///
-/// **Note:** this minimal impl computes the `cap_root_hash` as
-/// `BLAKE3(holder_did || wire_token)` — a stable, content-addressed
-/// identifier usable by the verifier for lookup. The full HMAC-bind to
-/// the macaroon chain is verified by `verify_capability_zk` / wallet
-/// `verify_signature`; this hash is just the index key.
+/// **Note:** the `cap_root_hash` is computed as
+/// `BLAKE3(b"cipherocto/egress/cap_root_hash/v1" || wire_token)` —
+/// a stable, content-addressed identifier usable by the verifier for
+/// lookup. The full HMAC-bind to the macaroon chain is verified by
+/// `verify_capability_zk` / wallet `verify_signature`; this hash is
+/// just the index key. The wire does NOT contain a holder DID (per
+/// RFC-0957 §Wire Format v1 = 3 segments, no DID); the verifier
+/// resolves the holder identity out-of-band.
 ///
 /// **Infallibility (2026-08-01 fix):** the function is structurally
 /// infallible — the loop body never produces an error (malformed
@@ -283,7 +296,6 @@ pub fn strip_capability(req: &mut EgressRequest) -> CapabilityHandle {
     let Some((_hdr_name, wire)) = removed else {
         return CapabilityHandle {
             cap_root_hash: [0u8; 32],
-            holder_did: String::new(),
         };
     };
     // Compute cap_root_hash = BLAKE3(wire_token_bytes). Holder DID is
@@ -294,10 +306,7 @@ pub fn strip_capability(req: &mut EgressRequest) -> CapabilityHandle {
     hasher.update(b"cipherocto/egress/cap_root_hash/v1");
     hasher.update(wire.as_bytes());
     let cap_root_hash = *hasher.finalize().as_bytes();
-    CapabilityHandle {
-        cap_root_hash,
-        holder_did: String::new(), // populated by the verifier layer
-    }
+    CapabilityHandle { cap_root_hash }
 }
 
 /// Redact capability-token-shaped substrings from a request body.
@@ -608,7 +617,6 @@ mod tests {
         };
         let handle = strip_capability(&mut req);
         assert_eq!(handle.cap_root_hash, [0u8; 32]);
-        assert_eq!(handle.holder_did, "");
         assert_eq!(req.headers.len(), 1);
     }
 

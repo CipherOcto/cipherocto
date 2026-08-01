@@ -47,6 +47,31 @@ pub fn canonicalize_axes(pi: &mut PublicInputs) {
     pi.axes_consumed.sort_by(|a, b| a.0.cmp(&b.0));
 }
 
+/// Decode a 64-char hex string into a 32-byte BLAKE3 hash.
+///
+/// **R5 audit fix-up (2026-07-31):** the prior call sites used
+/// `hex::decode(...).ok().and_then(...).unwrap_or(...)` which silently
+/// produced `compiled_casm_blake3_hash` / `[0u8; 32]` on corruption —
+/// a valid-looking 32-byte value that hid upstream zk-verifier bugs.
+/// This helper returns the decoded bytes on success or a descriptive
+/// error on failure (corrupt hex or non-32-byte length). Callers that
+/// surface the bug should propagate the `Err`; callers that treat hex
+/// decode as an internal invariant can `.expect("...")`.
+fn decode_hex_hash32(s: &str, field: &'static str) -> Result<[u8; 32], String> {
+    match hex::decode(s) {
+        Ok(v) if v.len() == 32 => {
+            let mut out = [0u8; 32];
+            out.copy_from_slice(&v);
+            Ok(out)
+        }
+        Ok(v) => Err(format!(
+            "`{field}` is hex of {} bytes, expected 32",
+            v.len()
+        )),
+        Err(e) => Err(format!("`{field}` is not valid hex: {e}")),
+    }
+}
+
 /// Verify a ZK capability proof against expected public inputs.
 ///
 /// Algorithm (RFC-0958 §3.5):
@@ -166,31 +191,26 @@ pub fn verify_capability_zk(
             ZkVerifyError::ClockSkewExceeded { skew, max }
         }
         zk_verifier::VerifyError::CasmHashMismatch { expected, got } => {
-            ZkVerifyError::CasmHashMismatch {
-                expected: hex::decode(&expected)
-                    .ok()
-                    .and_then(|v| {
-                        if v.len() == 32 {
-                            let mut out = [0u8; 32];
-                            out.copy_from_slice(&v);
-                            Some(out)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(compiled_casm_blake3_hash),
-                got: hex::decode(&got)
-                    .ok()
-                    .and_then(|v| {
-                        if v.len() == 32 {
-                            let mut out = [0u8; 32];
-                            out.copy_from_slice(&v);
-                            Some(out)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or([0u8; 32]),
+            // R5 audit fix-up (2026-07-31): the prior `unwrap_or` chains
+            // silently substituted `compiled_casm_blake3_hash` / `[0u8; 32]`
+            // on hex decode failure — a corruption symptom hidden behind a
+            // valid-looking 32-byte value. Hex decode here is an internal
+            // invariant (zk-verifier's `CasmHashMismatch` always carries
+            // 64-char hex of a 32-byte BLAKE3 hash); on violation we
+            // surface the upstream bug via `StwoVerifyError` so it is
+            // visible in logs rather than masquerading as a hash
+            // mismatch.
+            match (
+                decode_hex_hash32(&expected, "expected"),
+                decode_hex_hash32(&got, "got"),
+            ) {
+                (Ok(expected_bytes), Ok(got_bytes)) => ZkVerifyError::CasmHashMismatch {
+                    expected: expected_bytes,
+                    got: got_bytes,
+                },
+                (Err(e), _) | (_, Err(e)) => ZkVerifyError::StwoVerifyError(format!(
+                    "zk-verifier CasmHashMismatch hex decode failed: {e}"
+                )),
             }
         }
         other => ZkVerifyError::StwoVerifyError(format!("{other}")),

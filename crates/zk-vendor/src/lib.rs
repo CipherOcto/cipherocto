@@ -118,13 +118,15 @@ pub enum VendorError {
 /// Loaded `stwo-sys` library handle. Wraps `libloading::Library` plus the
 /// resolved function symbols. `Drop` releases the handle (closes the dlopen
 /// handle).
+///
+/// Function pointers are valid for the lifetime of `_lib` (held in the
+/// struct, never dropped before the symbols). `prove` is invoked by
+/// `StwoSys::prove`, `free_proof` is invoked by `ProofBytes::drop`, and
+/// `verify` is invoked by `StwoSys::verify`.
 pub struct StwoSys {
     _lib: Library,
-    // Function pointers are valid for the lifetime of `_lib`.
-    #[allow(dead_code)] // surfaced via API in follow-up commit (prover helper).
     prove: libloading::Symbol<'static, ProveFn>,
     verify: libloading::Symbol<'static, VerifyFn>,
-    #[allow(dead_code)] // surfaced via API in follow-up commit (proof release).
     free_proof: libloading::Symbol<'static, FreeProofFn>,
 }
 

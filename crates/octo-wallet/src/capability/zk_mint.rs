@@ -274,15 +274,36 @@ pub use zk_circuit::BUNDLED_CAIRO_SOURCE;
 /// # Errors
 /// Returns `ZkMintError` on any gating/precondition failure or on STWO
 /// proof generation failure.
+///
+/// **R5 audit doc (2026-07-31):** `mint_with_zk` is a deliberate mock
+/// shim, not leftover. It delegates to `mint_with_zk_and_signers(.., &[])`,
+/// which in turn produces an empty `stark_proof` when the signer list
+/// is empty (the single-capability MVP stub path; see
+/// `mint_with_zk_and_signers` step 8). This is the canonical entry
+/// point for:
+/// - Unit tests asserting the gating rules (Wholesale reject,
+///   SelfHost inference-trace requirement, CASM drift, Hybrid PoI
+///   rule, EmptySlotId) WITHOUT dragging in batch-signature proving.
+/// - Dev / CI without the `libstwo_sys.so` cdylib (no real prover
+///   available, but the gating logic is exercised).
+///
+/// The **production** entry point is `mint_with_zk_and_signers` with a
+/// non-empty `signers` list — that path produces a real batch STARK
+/// proof and is what the live quota-router exercises end-to-end.
+/// `mint_with_zk` MUST NOT be used in code paths that ship real
+/// tokens; the wholesale CI lint
+/// (`.github/linters/no-wholesale-zk.sh`) blocks the call in
+/// `NodeType::Wholesale` paths and the registry layer 2 defense
+/// (`super::registry`) catches any cross-class misuse.
 pub fn mint_with_zk(
     node_type: NodeType,
     witness: &PrivateWitness,
     public_inputs: &PublicInputs,
     casm_hash: [u8; 32],
 ) -> Result<ProofBundle, ZkMintError> {
-    // Backward-compatible shim: delegates to the signers-aware variant
-    // with an empty signer list (single-capability STARK proof / MVP
-    // stub path).
+    // Mock shim: delegates to the signers-aware variant with an empty
+    // signer list (single-capability MVP stub path). See the doc
+    // comment above for why this is intentional and not a workaround.
     mint_with_zk_and_signers(node_type, witness, public_inputs, casm_hash, &[])
 }
 
@@ -315,8 +336,18 @@ pub fn mint_with_zk_and_signers(
         return Err(ZkMintError::NodeTypeCannotMintZKCap);
     }
 
-    // 2. Capability class — implicit in mint_with_zk API; this is ZKBearing path.
-    //    V1 tokens must NOT call mint_with_zk; enforced at type level (no V1 entrypoint).
+    // 2. Capability class: this function is the ZKBearing path.
+    //    V1 tokens use `CapabilityToken::mint` in `super::mod` (no STARK
+    //    proof), and the capability-class field on the wire format
+    //    disambiguates. The ZK/V1 split is NOT a Rust type-level
+    //    invariant; it is enforced by:
+    //    (a) `CapabilityClass` enum + wire-format discriminator,
+    //    (b) Layer 2 defense in `super::registry` (CapabilityClassRegistry
+    //        rejects Wholesale ZK mint + V1 ZK mix),
+    //    (c) CI lint `.github/linters/no-wholesale-zk.sh` blocking
+    //        `mint_with_zk*` in `NodeType::Wholesale` paths.
+    //    Any caller of `mint_with_zk*` MUST already be in the
+    //    ZKBearing code path; the call itself does not verify that.
     let _ = witness; // witness consumed by STWO in production; MVP no-op
 
     // 3. SelfHost requires `inference_trace` in witness (v1.2 M5 rename —

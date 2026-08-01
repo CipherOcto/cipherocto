@@ -12,7 +12,7 @@ Claimed (2026-07-20)
 
 ## Summary
 
-Implement capability token macaroon v1: HMAC-BLAKE3 keyed-hash mode (NOT HMAC-SHA256), Ed25519 holder signature via RFC-0009 substrate (Ed25519Keypair), attenuation monotonicity enforced, third-party discharge protocol (escrow + revocation + rate-limit channel providers), wire format `base64url(macaroon) || "." || base64url(holder_sig) || "." || base64url(discharges_bag)`, egress transform strip from outbound provider-bound requests. Capability NEVER crosses provider boundary — single egress point + CI lint forbids `X-Capability-Token` header on outbound provider requests.
+Implement capability token macaroon v1: **BLAKE3-keyed hash mode** (`blake3::keyed_hash(key, msg)` per RFC-0957 §Algorithms + RFC-0853 §1.1 — i.e., BLAKE3's native keyed-hash primitive, NOT HMAC-SHA256 and NOT RFC 2104 ipad/opad wrapped around unkeyed BLAKE3), Ed25519 holder signature via RFC-0009 substrate (Ed25519Keypair), attenuation monotonicity enforced, third-party discharge protocol (escrow + revocation + rate-limit channel providers), wire format `base64url(macaroon) || "." || base64url(holder_sig) || "." || base64url(discharges_bag)`, egress transform strip from outbound provider-bound requests. Capability NEVER crosses provider boundary — single egress point + CI lint forbids `X-Capability-Token` header on outbound provider requests.
 
 ## Acceptance Criteria
 
@@ -22,13 +22,13 @@ Implement capability token macaroon v1: HMAC-BLAKE3 keyed-hash mode (NOT HMAC-SH
 - [ ] Define `CapabilityToken`, `AskUnsignedPayload` (consumed by RFC-0959), `Caveat`, `Macaroon`, `DischargeMacaroon`, `ChannelId`, `ChannelProvider`, `ChannelProviderRegistry`, `VerifyContext`, `AskId`, `MacaroonId`, `HolderSignature`
 - [ ] Re-export from `octo-core` via newtype wrapper to avoid circular types
 
-### Macaroon crypto (HMAC-BLAKE3)
+### Macaroon crypto (BLAKE3-keyed mode per RFC-0957 §Algorithms + RFC-0853 §1.1)
 
-- [ ] Implement HMAC-BLAKE3 keyed-hash as `blake3::keyed_hash(key: &[u8;32], msg: &[u8]) -> [u8;32]`
+- [x] **R7 fix (2026-08-01):** implement BLAKE3 keyed-hash as `blake3::keyed_hash(key: &[u8;32], msg: &[u8]) -> [u8;32]` — `hmac_blake3` is now a thin wrapper over `blake3::keyed_hash`. The S02 commit (`8b660353`) rolled RFC 2104 by hand; mission 0957-a R6 audit (2026-07-31) flagged this as a spec deviation; R7 fix replaces the body.
 - [ ] Implement `Macaroon::mint(root_secret, caveats: &[Caveat]) -> Macaroon`
 - [ ] Implement `Macaroon::verify(macaroon: &Macaroon) -> Result<(), MacaroonError>` (where `MacaroonError` is canonical per RFC-0957 §Error Handling; HolderError is an alias retained for call-site readability)
-- [ ] Test vectors from RFC-0853 §Test Vectors extended for HMAC-BLAKE3 mode
-- [ ] Property test: 10K random caveat sequences; verify always succeeds when monotonic attenuation holds
+- [ ] Test vectors from RFC-0853 §Test Vectors extended for BLAKE3 keyed-mode
+- [x] **R7 fix:** property test `prop_10k_random_monotonic_caveat_sequences_verify` (10K random monotonic AmountMax sequences, chain re-derivation succeeds) + `prop_10k_macaroon_chain_rederives_with_random_caveats` (full chain mint + attenuate + verify across 10K inputs) + `prop_10k_hmac_blake3_matches_blake3_keyed_hash` (10K random (key, msg) pairs, impl equals blake3::keyed_hash) + avalanche / cross-key / cross-msg distinctness proptests + chunk-boundary exploratory tests
 
 ### Caveat DSL
 

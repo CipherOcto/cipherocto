@@ -75,14 +75,14 @@ Without this spec, downstream RFCs (RFC-0958 ZK subclass, RFC-0959 independent s
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| **G1: Attenuation cost** | <1ms per attenuation | Bench `attenuate(token, &new_caveat)` |
-| **G2: Verify cost** | <2ms per token verify | Bench `verify(token, &channel_providers)` |
-| **G3: Wire size** | <2KB typical token (≤5 caveats, ≤2 discharges) | Measured against fixture set |
-| **G4: Unlinkability** | 10K random (audience, channel) pairs produce 10K independent capability keys | Property test (collision rate = 0 across 100K samples) |
-| **G5: Fuzz safety** | 0 panic / 0 abort on 24h random-bytes fuzz | cargo-fuzz nightly |
-| **G6: HMAC agility** | HMAC-BLAKE3 only at v1; HMAC-SHA256 fall back path documented but not implemented | Documented in §Cryptographic Agility |
+| Goal                     | Target                                                                            | Metric                                                 |
+| ------------------------ | --------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| **G1: Attenuation cost** | <1ms per attenuation                                                              | Bench `attenuate(token, &new_caveat)`                  |
+| **G2: Verify cost**      | <2ms per token verify                                                             | Bench `verify(token, &channel_providers)`              |
+| **G3: Wire size**        | <2KB typical token (≤5 caveats, ≤2 discharges)                                    | Measured against fixture set                           |
+| **G4: Unlinkability**    | 10K random (audience, channel) pairs produce 10K independent capability keys      | Property test (collision rate = 0 across 100K samples) |
+| **G5: Fuzz safety**      | 0 panic / 0 abort on 24h random-bytes fuzz                                        | cargo-fuzz nightly                                     |
+| **G6: HMAC agility**     | HMAC-BLAKE3 only at v1; HMAC-SHA256 fall back path documented but not implemented | Documented in §Cryptographic Agility                   |
 
 ## Motivation
 
@@ -369,14 +369,14 @@ fn verify_discharge(discharge: &DischargeMacaroon, channel_id: &ChannelId, ctx: 
 
 > Attenuator MUST NOT remove a caveat, weaken its predicate, or remove a third-party caveat. Verifier rejects any token where the attenuation rule was violated. The HMAC chain attests the caveat ordering — a forged weaker caveat breaks the chain.
 
-| Earlier caveat | Allowed later caveat | Rationale |
-|----------------|----------------------|-----------|
-| `AmountMax(100)` | `AmountMax(50)` | Tightens budget |
-| `AmountMax(100)` | `AmountMax(200)` | **REJECTED** — loosens |
-| `Provider(vec!["openai", "anthropic"])` | `Provider(vec!["openai"])` | Tightens provider set |
-| `Provider(vec!["openai"])` | `Provider(vec!["openai", "anthropic"])` | **REJECTED** — loosens |
-| `Before(2026-12-31T23:59:59Z)` | `Before(2026-06-30T23:59:59Z)` | Tightens expiry |
-| `ThirdParty(channel_id)` | (must remain) | Cannot drop third-party caveat without invalidating HMAC |
+| Earlier caveat                          | Allowed later caveat                    | Rationale                                                |
+| --------------------------------------- | --------------------------------------- | -------------------------------------------------------- |
+| `AmountMax(100)`                        | `AmountMax(50)`                         | Tightens budget                                          |
+| `AmountMax(100)`                        | `AmountMax(200)`                        | **REJECTED** — loosens                                   |
+| `Provider(vec!["openai", "anthropic"])` | `Provider(vec!["openai"])`              | Tightens provider set                                    |
+| `Provider(vec!["openai"])`              | `Provider(vec!["openai", "anthropic"])` | **REJECTED** — loosens                                   |
+| `Before(2026-12-31T23:59:59Z)`          | `Before(2026-06-30T23:59:59Z)`          | Tightens expiry                                          |
+| `ThirdParty(channel_id)`                | (must remain)                           | Cannot drop third-party caveat without invalidating HMAC |
 
 #### Discharge Protocol
 
@@ -447,14 +447,14 @@ fn borrow_provider_key(handle: &CapabilityHandle, vault: &Vault) -> Result<Decry
 
 ### Role/Authority Coverage Table
 
-| Role | Identifier | Authority Scope | Lifecycle | Source/Ref |
-|------|------------|-----------------|-----------|------------|
-| Token Issuer | `DID` (per RFC-0009 §Identity Key Format: `did:octo:<multibase(z)-32-bytes>`); persisted on `CapabilityToken.holder_did` | Mint initial macaroon with chosen caveats; bind to third-party channels | `Designated` at identity generation; `Active` while holder retains signing key | RFC-0009 §Identity |
-| Attenuator | Holder (or holder-authorized proxy) | Append monotonic caveats; pass subset of authority downstream | Co-located with Token Issuer lifecycle | This RFC §Attenuation |
-| Verifier | `quota-router-core::proxy` (or any service that holds macaroon root secret) | Validate HMAC chain; evaluate caveats; resolve discharges | Stateless; lifecycle = uptime of verifier service | This RFC §Verify |
-| Channel Provider | `ChannelProvider` trait implementor (Escrow / Revocation / RateLimit) | Mint discharge macaroons when own predicate passes; reject otherwise | Persistent — must hold channel root secret across requests | This RFC §Discharge Protocol |
-| Egress Module | `quota-router-core::egress::strip_capability` (SINGLE egress point) | Strip capability token from outbound requests; substitute provider key from vault | Process-lifetime; thread-safe singleton | This RFC §Egress Transform |
-| Provider Boundary Recipient | External provider API endpoint (e.g., `api.openai.com/v1/chat/completions`) — opaque identifier from CipherOcto's perspective | Receives ONLY provider key + request body; NEVER sees capability token | Stateless — provider is a pass-through receiver; no protocol-level state held by CipherOcto. Out of CipherOcto control by design (delegated to egress boundary). | This RFC §Egress Transform |
+| Role                        | Identifier                                                                                                                    | Authority Scope                                                                                                                               | Lifecycle                                                                                                                                                        | Source/Ref                                 |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| Token Issuer                | `DID` (per RFC-0009 §Identity Key Format: `did:octo:<multibase(z)-32-bytes>`); persisted on `CapabilityToken.holder_did`      | Mint initial macaroon with chosen caveats; bind to third-party channels                                                                       | `Designated` at identity generation; `Active` while holder retains signing key                                                                                   | RFC-0009 §Identity                         |
+| Attenuator                  | Holder (or holder-authorized proxy)                                                                                           | Append monotonic caveats; pass subset of authority downstream                                                                                 | Co-located with Token Issuer lifecycle                                                                                                                           | This RFC §Attenuation                      |
+| Verifier                    | `quota-router-core::proxy` (or any service that holds macaroon root secret)                                                   | Validate HMAC chain; evaluate caveats; resolve discharges                                                                                     | Stateless; lifecycle = uptime of verifier service                                                                                                                | This RFC §Verify                           |
+| Channel Provider            | `ChannelProvider` trait implementor (Escrow / Revocation / RateLimit)                                                         | Mint discharge macaroons when own predicate passes; reject otherwise                                                                          | Persistent — must hold channel root secret across requests                                                                                                       | This RFC §Discharge Protocol               |
+| Egress Module               | `quota-router-core::egress::strip_capability` + `egress::key_swap::attach_bearer` (SINGLE egress point)                       | Strip capability token from outbound requests; substitute provider key from vault; reject cipherocto-internal key shapes via runtime denylist | Process-lifetime; thread-safe singleton                                                                                                                          | This RFC §Egress Transform                 |
+| Provider Boundary Recipient | External provider API endpoint (e.g., `api.openai.com/v1/chat/completions`) — opaque identifier from CipherOcto's perspective | Receives ONLY provider key + request body; NEVER sees capability token or any cipherocto-internal key material                                | Stateless — provider is a pass-through receiver; no protocol-level state held by CipherOcto. Out of CipherOcto control by design (delegated to egress boundary). | This RFC §Egress Transform + §Adversary A5 |
 
 ### Out-of-Scope Roles
 
@@ -489,16 +489,16 @@ stateDiagram-v2
     Rejected --> [*]
 ```
 
-| From | To | Trigger | Deterministic? | Side Effects | Signing Requirement |
-|------|----|---------|----------------|--------------|---------------------|
-| (none) | Minted | `mint(root_secret, nonce, caveats)` returns Macaroon; holder signs | Yes (modulo OS RNG for nonce) | Emit `TokenMinted { root_id, holder_did, caveat_axes }` event | Holder signs `Ed25519(holder_seed, canonical_ser(root_id || caveats_wire))` |
-| Minted | Attenuated | `append(&mut macaroon, &new_caveat)` | Yes | Emit `TokenAttenuated { root_id, added_caveat_axis }` event | Holder signs (same as mint) |
-| Attenuated | InFlight | HTTP request issued with `X-Capability-Token` | Yes (request is a discrete event) | Log request (root_id only, never contents) | n/a |
-| InFlight | Verified | Verifier calls `verify(token, &ctx)` returns `Ok(())` | Yes | Emit `TokenVerified { root_id }` event; downstream service receives request | n/a |
-| InFlight | Rejected | Verifier returns `Err(MacaroonError::*)` | Yes | Emit `TokenRejected { root_id, reason }` event; request denied with appropriate HTTP code | n/a |
-| Verified | Consumed | Settlement complete (RFC-0959 independent settlement chain) | Yes | Emit `TokenConsumed { root_id, settlement_receipt_hash }` event | n/a |
-| InFlight | Expired | `Before(UnixTime) < now()` at verify time | Yes | Token rejected with `MacaroonError::Expired` | n/a |
-| Minted / Attenuated / Verified | Revoked | Holder signs `revoke_envelope(root_id)` and broadcasts to verifiers | Yes | Verifiers add root_id to revocation list (RFC-0957 §Revocation Oracles) | Holder signs `Ed25519(holder_seed, "revoke:" || root_id)` |
+| From                           | To         | Trigger                                                             | Deterministic?                    | Side Effects                                                                              | Signing Requirement                                      |
+| ------------------------------ | ---------- | ------------------------------------------------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| (none)                         | Minted     | `mint(root_secret, nonce, caveats)` returns Macaroon; holder signs  | Yes (modulo OS RNG for nonce)     | Emit `TokenMinted { root_id, holder_did, caveat_axes }` event                             | Holder signs `Ed25519(holder_seed, canonical_ser(root_id |     | caveats_wire))` |
+| Minted                         | Attenuated | `append(&mut macaroon, &new_caveat)`                                | Yes                               | Emit `TokenAttenuated { root_id, added_caveat_axis }` event                               | Holder signs (same as mint)                              |
+| Attenuated                     | InFlight   | HTTP request issued with `X-Capability-Token`                       | Yes (request is a discrete event) | Log request (root_id only, never contents)                                                | n/a                                                      |
+| InFlight                       | Verified   | Verifier calls `verify(token, &ctx)` returns `Ok(())`               | Yes                               | Emit `TokenVerified { root_id }` event; downstream service receives request               | n/a                                                      |
+| InFlight                       | Rejected   | Verifier returns `Err(MacaroonError::*)`                            | Yes                               | Emit `TokenRejected { root_id, reason }` event; request denied with appropriate HTTP code | n/a                                                      |
+| Verified                       | Consumed   | Settlement complete (RFC-0959 independent settlement chain)         | Yes                               | Emit `TokenConsumed { root_id, settlement_receipt_hash }` event                           | n/a                                                      |
+| InFlight                       | Expired    | `Before(UnixTime) < now()` at verify time                           | Yes                               | Token rejected with `MacaroonError::Expired`                                              | n/a                                                      |
+| Minted / Attenuated / Verified | Revoked    | Holder signs `revoke_envelope(root_id)` and broadcasts to verifiers | Yes                               | Verifiers add root_id to revocation list (RFC-0957 §Revocation Oracles)                   | Holder signs `Ed25519(holder_seed, "revoke:"             |     | root_id)`       |
 
 ### Liveness Check
 
@@ -512,29 +512,29 @@ No external liveness check for token (transient artifact). Channel providers (es
 
 ### Time Bounds
 
-| Bound | Value | Rationale |
-|-------|-------|-----------|
-| Token TTL | Per `Before(UnixTime)` caveat; default = 1 hour | Bounded exposure window |
-| Discharge TTL | Per-channel; default = 60s | Revocation oracle: short-lived non-revocation proof |
-| Rotation grace | 24 hours | RFC-0853 §12 amendment |
-| Revocation propagation | ≤60s | Verifier caches updated via gossip / push |
+| Bound                  | Value                                           | Rationale                                           |
+| ---------------------- | ----------------------------------------------- | --------------------------------------------------- |
+| Token TTL              | Per `Before(UnixTime)` caveat; default = 1 hour | Bounded exposure window                             |
+| Discharge TTL          | Per-channel; default = 60s                      | Revocation oracle: short-lived non-revocation proof |
+| Rotation grace         | 24 hours                                        | RFC-0853 §12 amendment                              |
+| Revocation propagation | ≤60s                                            | Verifier caches updated via gossip / push           |
 
 ## Determinism Requirements
 
 Per BLUEPRINT.md, every RFC MUST include an RFC-0008 execution class mapping.
 
-| RFC-0957 Operation | Execution Class | Justification |
-|--------------------|-----------------|---------------|
-| HMAC-BLAKE3 chain construction | **A** (Protocol Deterministic) | BLAKE3 keyed hash is canonical; same inputs same output |
-| Canonical JSON caveat serialization | **A** | BTreeMap ordering deterministic (RFC-0126) |
-| Holder signature (Ed25519) | **A** | RFC 8032 deterministic; same message + key → same signature |
-| Attenuation check | **A** | Set inclusion / numeric comparison deterministic |
-| `Before(UnixTime)` evaluation | **A** | Wall-clock comparison; depends on time source (see IA-2) |
-| Discharge resolution | **A** | Channel lookup + HMAC verify deterministic |
-| Mint root_secret generation | **C** (Probabilistic) | OS RNG; non-determinism expected for security |
-| Wire format parse/serialize | **A** | base64url deterministic |
-| Egress transform strip | **A** | Header removal deterministic |
-| Vault one-shot borrow | **B** (Deterministic Off-Chain) | Deterministic given (passphrase, slot); cross-impl requires test vectors |
+| RFC-0957 Operation                  | Execution Class                 | Justification                                                            |
+| ----------------------------------- | ------------------------------- | ------------------------------------------------------------------------ |
+| HMAC-BLAKE3 chain construction      | **A** (Protocol Deterministic)  | BLAKE3 keyed hash is canonical; same inputs same output                  |
+| Canonical JSON caveat serialization | **A**                           | BTreeMap ordering deterministic (RFC-0126)                               |
+| Holder signature (Ed25519)          | **A**                           | RFC 8032 deterministic; same message + key → same signature              |
+| Attenuation check                   | **A**                           | Set inclusion / numeric comparison deterministic                         |
+| `Before(UnixTime)` evaluation       | **A**                           | Wall-clock comparison; depends on time source (see IA-2)                 |
+| Discharge resolution                | **A**                           | Channel lookup + HMAC verify deterministic                               |
+| Mint root_secret generation         | **C** (Probabilistic)           | OS RNG; non-determinism expected for security                            |
+| Wire format parse/serialize         | **A**                           | base64url deterministic                                                  |
+| Egress transform strip              | **A**                           | Header removal deterministic                                             |
+| Vault one-shot borrow               | **B** (Deterministic Off-Chain) | Deterministic given (passphrase, slot); cross-impl requires test vectors |
 
 **Determinism contract:** Two implementations of `mint / append / verify / parse / serialize` MUST produce identical bytes for the same inputs. Cross-implementation test vectors included in `crates/octo-wallet/tests/fixtures/macaroon-v1/`.
 
@@ -596,34 +596,34 @@ Per BLUEPRINT.md, RFCs touching token economics MUST include an Economic Analysi
 
 ### Mint / Verify / Discharge Cost (compute-only, no network)
 
-| Operation | CPU cycles (approx) | Wall time @ 3 GHz | Cost basis (per 1M ops) |
-|-----------|---------------------|-------------------|--------------------------|
-| **Mint** (root derivation + HMAC-BLAKE3 chain + Ed25519 holder sig) | ~50K cycles | ~17 μs | 50 ms CPU |
-| **Verify** (HMAC-BLAKE3 chain check + caveat predicate eval + Ed25519 verify) | ~80K cycles | ~27 μs | 80 ms CPU |
-| **Attenuate** (add caveat + re-sign) | ~40K cycles | ~13 μs | 40 ms CPU |
-| **Discharge mint** (3rd party issuer) | ~50K cycles | ~17 μs | 50 ms CPU |
-| **Discharge verify** (3rd party signature + caveat check) | ~80K cycles | ~27 μs | 80 ms CPU |
+| Operation                                                                     | CPU cycles (approx) | Wall time @ 3 GHz | Cost basis (per 1M ops) |
+| ----------------------------------------------------------------------------- | ------------------- | ----------------- | ----------------------- |
+| **Mint** (root derivation + HMAC-BLAKE3 chain + Ed25519 holder sig)           | ~50K cycles         | ~17 μs            | 50 ms CPU               |
+| **Verify** (HMAC-BLAKE3 chain check + caveat predicate eval + Ed25519 verify) | ~80K cycles         | ~27 μs            | 80 ms CPU               |
+| **Attenuate** (add caveat + re-sign)                                          | ~40K cycles         | ~13 μs            | 40 ms CPU               |
+| **Discharge mint** (3rd party issuer)                                         | ~50K cycles         | ~17 μs            | 50 ms CPU               |
+| **Discharge verify** (3rd party signature + caveat check)                     | ~80K cycles         | ~27 μs            | 80 ms CPU               |
 
 **Reference HW:** modern x86-64 desktop (Intel i7-12700 / AMD Ryzen 7 7700X). Network latency excluded (covered by §Performance Targets).
 
 ### Token Bytes-per-Operation
 
-| Operation | Wire bytes (avg) | Wire bytes (max caveat payload) |
-|-----------|------------------|----------------------------------|
-| Mint (root + 0 caveats) | 96 bytes (32 root + 64 sig) | n/a |
-| Mint (root + 5 caveats) | ~300 bytes | 1024 bytes |
-| Verify (request) | n/a (verify is local) | n/a |
-| Verify result (success) | 0 bytes (OK) | n/a |
-| Verify result (failure) | 32 bytes (BLAKE3 error tag) | 64 bytes |
-| Discharge (3rd party) | 96 + caveats | 512 bytes |
+| Operation               | Wire bytes (avg)            | Wire bytes (max caveat payload) |
+| ----------------------- | --------------------------- | ------------------------------- |
+| Mint (root + 0 caveats) | 96 bytes (32 root + 64 sig) | n/a                             |
+| Mint (root + 5 caveats) | ~300 bytes                  | 1024 bytes                      |
+| Verify (request)        | n/a (verify is local)       | n/a                             |
+| Verify result (success) | 0 bytes (OK)                | n/a                             |
+| Verify result (failure) | 32 bytes (BLAKE3 error tag) | 64 bytes                        |
+| Discharge (3rd party)   | 96 + caveats                | 512 bytes                       |
 
 ### Storage Footprint
 
-| Artifact | Bytes | Lifetime |
-|----------|-------|----------|
-| Minted token (in-flight) | 96 + caveats | ≤ TTL or ≤ consumption |
+| Artifact                              | Bytes           | Lifetime                              |
+| ------------------------------------- | --------------- | ------------------------------------- |
+| Minted token (in-flight)              | 96 + caveats    | ≤ TTL or ≤ consumption                |
 | Consumed token index (replay defense) | 32 (BLAKE3 tag) | Per RFC-0853 §7 replay cache lifetime |
-| Discharge | 96 + caveats | Per discharge channel policy |
+| Discharge                             | 96 + caveats    | Per discharge channel policy          |
 
 ### Economic Incentive Alignment
 
@@ -634,15 +634,15 @@ Per BLUEPRINT.md, RFCs touching token economics MUST include an Economic Analysi
 
 ## Performance Targets
 
-| Metric | Target | Notes |
-|--------|--------|-------|
-| Mint | <0.5ms per caveat | No external I/O |
-| Attenuate (append) | <0.5ms per caveat | Single HMAC-BLAKE3 keyed-hash |
-| Verify (no discharges) | <2ms for ≤10 caveats | HMAC re-derive + caveat eval |
-| Verify (with 2 discharges) | <10ms | Includes channel provider round-trip |
-| Parse wire format | <1ms | base64url decode + JSON |
-| Serialize wire format | <1ms | base64url encode + canonical JSON |
-| Wire size (typical) | <2KB | 5 first-party caveats + 2 discharges |
+| Metric                     | Target               | Notes                                |
+| -------------------------- | -------------------- | ------------------------------------ |
+| Mint                       | <0.5ms per caveat    | No external I/O                      |
+| Attenuate (append)         | <0.5ms per caveat    | Single HMAC-BLAKE3 keyed-hash        |
+| Verify (no discharges)     | <2ms for ≤10 caveats | HMAC re-derive + caveat eval         |
+| Verify (with 2 discharges) | <10ms                | Includes channel provider round-trip |
+| Parse wire format          | <1ms                 | base64url decode + JSON              |
+| Serialize wire format      | <1ms                 | base64url encode + canonical JSON    |
+| Wire size (typical)        | <2KB                 | 5 first-party caveats + 2 discharges |
 
 ## Security Considerations
 
@@ -740,20 +740,20 @@ This RFC is security-sensitive (authorization, attenuated delegation, provider-k
 
 Per BLUEPRINT.md v1.3 consistency checklist:
 
-| Dependency | Status (2026-07-19) | Assumption |
-|------------|---------------------|------------|
-| RFC-0009 (Process: Identity Management) | **Draft** (promoted 2026-07-19) | **Must reach Accepted before this RFC Accepted.** RFC-0009 owns `holder_sign(identity, root_hash) -> Ed25519Signature` (per §Capability Keys) and `derive_capability_key(identity, audience_did, channel_id)` (per §Capability Keys, HKDF-BLAKE3). This RFC's `Holder` struct consumes `holder_sign` from RFC-0009 substrate. |
-| RFC-0102 (Numeric: Wallet Cryptography) | **Draft** (amended 2026-07-19) | **Must reach Accepted before this RFC Accepted.** RFC-0102 provides `Signer` trait + Stark Curve `KeyPair`. While this RFC does NOT use Stark Curve for token signing, the wallet crate hosts both substrates; `cap::holder.rs` imports from `wallet::identity::IdentityKey` (RFC-0009) which coexists with Stark Curve types (RFC-0102). |
-| RFC-0853 (Networking: Overlay Cryptography) | **Draft** (2026-05-25) | **Assumption: RFC-0853 will reach Accepted.** This RFC inherits BLAKE3 keyed-hash mode + HKDF-BLAKE3 primitives per RFC-0853 §1.1. Compatibility dependent on RFC-0853's crypto agility policy. |
-| RFC-0126 (Numeric: Deterministic Serialization) | **Accepted (v2.5.1)** | None — additive integration. This RFC's `canonical_ser` consumes RFC-0126 canonical JSON serializer for caveat values. |
-| RFC-0900 (Economics: AI Quota Marketplace) | **Draft** | None for this RFC's promotion. RFC-0900 may consume `Caveat::AskBinding(AskId)` in a future amendment; current RFC-0900 receives AskBinding as opaque caveat. |
-| RFC-0903 (Economics: Virtual API Key System) | **Final (v35 — Stoolap compatibility)** | None — additive. RFC-0903 virtual keys MAY wrap capability tokens at deployment; this RFC defines the bearer format. |
-| RFC-0911 (Economics: Capability-Based API Keys) | **Planned** | None for this RFC's promotion. RFC-0911 (LiteLLM-style) may issue tokens per RFC-0957 format in a future amendment. Cross-link in RFC-0911 `## Related RFCs` when authored. |
-| RFC-0958 (Proof Systems: ZK Capability Subclass) | **Draft** (authored 2026-07-20, S05; path corrected from `rfcs/draft/zk/` → `rfcs/draft/proof-systems/` per BLUEPRINT numbering) | None — RFC-0958 subclasses this RFC; no circular dependency. RFC-0958 defines `capability_class` + `proof_bundle` extension fields consuming this RFC's `Macaroon` + `DischargeMacaroon`. |
-| RFC-0959 (Economics: Independent Settlement Chain for Ask Pricing — Option A rewrite 2026-07-20) | **Draft v1.0** (S03 + S04 audit) | None for this RFC's promotion. RFC-0959 adds `Caveat::AskBinding` settlement-side semantics; this RFC defines the caveat type only. |
-| `blake3` crate | external | API stable; pin minor version in Cargo.toml |
-| `ed25519-dalek` crate | external | API stable; pin 2.2 |
-| `serde` / `serde_json` | external | For canonical_ser; pin minor |
+| Dependency                                                                                       | Status (2026-07-19)                                                                                                              | Assumption                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| RFC-0009 (Process: Identity Management)                                                          | **Draft** (promoted 2026-07-19)                                                                                                  | **Must reach Accepted before this RFC Accepted.** RFC-0009 owns `holder_sign(identity, root_hash) -> Ed25519Signature` (per §Capability Keys) and `derive_capability_key(identity, audience_did, channel_id)` (per §Capability Keys, HKDF-BLAKE3). This RFC's `Holder` struct consumes `holder_sign` from RFC-0009 substrate.             |
+| RFC-0102 (Numeric: Wallet Cryptography)                                                          | **Draft** (amended 2026-07-19)                                                                                                   | **Must reach Accepted before this RFC Accepted.** RFC-0102 provides `Signer` trait + Stark Curve `KeyPair`. While this RFC does NOT use Stark Curve for token signing, the wallet crate hosts both substrates; `cap::holder.rs` imports from `wallet::identity::IdentityKey` (RFC-0009) which coexists with Stark Curve types (RFC-0102). |
+| RFC-0853 (Networking: Overlay Cryptography)                                                      | **Draft** (2026-05-25)                                                                                                           | **Assumption: RFC-0853 will reach Accepted.** This RFC inherits BLAKE3 keyed-hash mode + HKDF-BLAKE3 primitives per RFC-0853 §1.1. Compatibility dependent on RFC-0853's crypto agility policy.                                                                                                                                           |
+| RFC-0126 (Numeric: Deterministic Serialization)                                                  | **Accepted (v2.5.1)**                                                                                                            | None — additive integration. This RFC's `canonical_ser` consumes RFC-0126 canonical JSON serializer for caveat values.                                                                                                                                                                                                                    |
+| RFC-0900 (Economics: AI Quota Marketplace)                                                       | **Draft**                                                                                                                        | None for this RFC's promotion. RFC-0900 may consume `Caveat::AskBinding(AskId)` in a future amendment; current RFC-0900 receives AskBinding as opaque caveat.                                                                                                                                                                             |
+| RFC-0903 (Economics: Virtual API Key System)                                                     | **Final (v35 — Stoolap compatibility)**                                                                                          | None — additive. RFC-0903 virtual keys MAY wrap capability tokens at deployment; this RFC defines the bearer format.                                                                                                                                                                                                                      |
+| RFC-0911 (Economics: Capability-Based API Keys)                                                  | **Planned**                                                                                                                      | None for this RFC's promotion. RFC-0911 (LiteLLM-style) may issue tokens per RFC-0957 format in a future amendment. Cross-link in RFC-0911 `## Related RFCs` when authored.                                                                                                                                                               |
+| RFC-0958 (Proof Systems: ZK Capability Subclass)                                                 | **Draft** (authored 2026-07-20, S05; path corrected from `rfcs/draft/zk/` → `rfcs/draft/proof-systems/` per BLUEPRINT numbering) | None — RFC-0958 subclasses this RFC; no circular dependency. RFC-0958 defines `capability_class` + `proof_bundle` extension fields consuming this RFC's `Macaroon` + `DischargeMacaroon`.                                                                                                                                                 |
+| RFC-0959 (Economics: Independent Settlement Chain for Ask Pricing — Option A rewrite 2026-07-20) | **Draft v1.0** (S03 + S04 audit)                                                                                                 | None for this RFC's promotion. RFC-0959 adds `Caveat::AskBinding` settlement-side semantics; this RFC defines the caveat type only.                                                                                                                                                                                                       |
+| `blake3` crate                                                                                   | external                                                                                                                         | API stable; pin minor version in Cargo.toml                                                                                                                                                                                                                                                                                               |
+| `ed25519-dalek` crate                                                                            | external                                                                                                                         | API stable; pin 2.2                                                                                                                                                                                                                                                                                                                       |
+| `serde` / `serde_json`                                                                           | external                                                                                                                         | For canonical_ser; pin minor                                                                                                                                                                                                                                                                                                              |
 
 **Dependency graph check:** No cycles. RFC-0009 + RFC-0102 (both Draft → must be Accepted first) are Required. RFC-0853 (Draft) is Required for BLAKE3 primitives — must reach Accepted before or alongside this RFC. RFC-0126 (Accepted) is satisfied. RFC-0958 + RFC-0959 (Planned) are forward references, no blocker.
 
@@ -761,16 +761,16 @@ Per BLUEPRINT.md v1.3 consistency checklist:
 
 Per BLUEPRINT.md, every RFC MUST include an Implicit Assumptions Audit. Entries with non-trivial blast radius MUST be tracked to closure.
 
-| # | Assumption | Blast Radius | Tracking |
-|---|-----------|--------------|----------|
-| IA-1 | BLAKE3 keyed-hash is a secure PRF (HMAC-equivalent security) | If broken, all HMAC-BLAKE3 chains forgeable | Track BLAKE3 cryptanalysis status (RFC-0853) |
-| IA-2 | Wall-clock time source (system clock) is monotonic and synchronized | Clock skew or NTP failure → false `Before()` rejections or false acceptances | Use monotonic time for `Before` checks where possible; NTP monitoring at verifier |
-| IA-3 | Canonical JSON serialization per RFC-0126 is byte-identical across implementations | Drift → HMAC chain mismatch on cross-impl token transfer | Test vectors; cargo test cross-checks |
-| IA-4 | `Before(UnixTime)` is enforced at verify time, not mint time | Mint-side-only enforcement → tokens valid past expiry | Mandatory verify-time check; lint forbids mint-side `Before` evaluation |
-| IA-5 | Revocation propagation completes within 60s | Long propagation → revoked tokens accepted in window | Circuit-breaker on high reject rates; gossip-based revocation push |
-| IA-6 | Channel provider root secrets are not leaked via logs / dumps | Leak → all discharges forgeable | Zeroize + tracing skip + audit; HSM in Phase H |
-| IA-7 | Egress module is the only outbound HTTP path in `quota-router-core` | Bypass → provider sees token + key | CI lint (forbid `Client::new` outside egress); runtime backtrace check |
-| IA-8 | Holder private key (RFC-0009 substrate) is stored per RFC-0009 §Vault | Loss / leak → token forgery | Inherited from RFC-0009 §Security |
+| #    | Assumption                                                                         | Blast Radius                                                                 | Tracking                                                                          |
+| ---- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| IA-1 | BLAKE3 keyed-hash is a secure PRF (HMAC-equivalent security)                       | If broken, all HMAC-BLAKE3 chains forgeable                                  | Track BLAKE3 cryptanalysis status (RFC-0853)                                      |
+| IA-2 | Wall-clock time source (system clock) is monotonic and synchronized                | Clock skew or NTP failure → false `Before()` rejections or false acceptances | Use monotonic time for `Before` checks where possible; NTP monitoring at verifier |
+| IA-3 | Canonical JSON serialization per RFC-0126 is byte-identical across implementations | Drift → HMAC chain mismatch on cross-impl token transfer                     | Test vectors; cargo test cross-checks                                             |
+| IA-4 | `Before(UnixTime)` is enforced at verify time, not mint time                       | Mint-side-only enforcement → tokens valid past expiry                        | Mandatory verify-time check; lint forbids mint-side `Before` evaluation           |
+| IA-5 | Revocation propagation completes within 60s                                        | Long propagation → revoked tokens accepted in window                         | Circuit-breaker on high reject rates; gossip-based revocation push                |
+| IA-6 | Channel provider root secrets are not leaked via logs / dumps                      | Leak → all discharges forgeable                                              | Zeroize + tracing skip + audit; HSM in Phase H                                    |
+| IA-7 | Egress module is the only outbound HTTP path in `quota-router-core`                | Bypass → provider sees token + key                                           | CI lint (forbid `Client::new` outside egress); runtime backtrace check            |
+| IA-8 | Holder private key (RFC-0009 substrate) is stored per RFC-0009 §Vault              | Loss / leak → token forgery                                                  | Inherited from RFC-0009 §Security                                                 |
 
 ## Compatibility
 
@@ -789,26 +789,26 @@ Per BLUEPRINT.md, every RFC MUST include an Implicit Assumptions Audit. Entries 
 
 Canonical test cases for cross-implementation verification. Located at `crates/octo-wallet/tests/fixtures/macaroon-v1/`:
 
-| Vector | Scenario | Expected |
-|--------|----------|----------|
-| `mint-empty.json` | Mint with no caveats | root_id = HMAC-BLAKE3(root_secret, "cipherocto/macaroon/v1:<nonce>")[:16] |
-| `mint-one-caveat.json` | Mint with `AmountMax(100)` | final_sig = HMAC-BLAKE3(root_secret, canonical_ser(AmountMax(100))) |
-| `attenuate-tighten.json` | Mint with `AmountMax(100)` then attenuate to `AmountMax(50)` | Verify passes; HMAC chain re-derived |
-| `attenuate-weaken-reject.json` | Mint with `AmountMax(50)` then attenuate to `AmountMax(100)` | Verify fails with `AttenuationViolation` |
-| `discharge-escrow.json` | Mint with `ThirdParty(escrow)`, escrow channel issues discharge | Verify passes when escrow discharge present |
-| `discharge-missing-reject.json` | Same mint, no discharge | Verify fails with `MissingDischarge(escrow)` |
-| `expired.json` | Mint with `Before(2026-01-01)` verified after 2026-01-01 | Verify fails with `Expired` |
-| `invocation-hash-bind.json` | Mint with `InvocationHashBind(blake3("request-body"))`, presented with different body | Verify fails with `CaveatViolation` |
+| Vector                          | Scenario                                                                              | Expected                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `mint-empty.json`               | Mint with no caveats                                                                  | root_id = HMAC-BLAKE3(root_secret, "cipherocto/macaroon/v1:<nonce>")[:16] |
+| `mint-one-caveat.json`          | Mint with `AmountMax(100)`                                                            | final_sig = HMAC-BLAKE3(root_secret, canonical_ser(AmountMax(100)))       |
+| `attenuate-tighten.json`        | Mint with `AmountMax(100)` then attenuate to `AmountMax(50)`                          | Verify passes; HMAC chain re-derived                                      |
+| `attenuate-weaken-reject.json`  | Mint with `AmountMax(50)` then attenuate to `AmountMax(100)`                          | Verify fails with `AttenuationViolation`                                  |
+| `discharge-escrow.json`         | Mint with `ThirdParty(escrow)`, escrow channel issues discharge                       | Verify passes when escrow discharge present                               |
+| `discharge-missing-reject.json` | Same mint, no discharge                                                               | Verify fails with `MissingDischarge(escrow)`                              |
+| `expired.json`                  | Mint with `Before(2026-01-01)` verified after 2026-01-01                              | Verify fails with `Expired`                                               |
+| `invocation-hash-bind.json`     | Mint with `InvocationHashBind(blake3("request-body"))`, presented with different body | Verify fails with `CaveatViolation`                                       |
 
 ## Alternatives Considered
 
-| Approach | Pros | Cons | Rejection Reason |
-|----------|------|------|------------------|
-| OAuth2 / JWT | Mature; widely understood | Centralized issuer lookup required; no third-party caveats; no attenuation without re-issuance | Fails G2 (attenuation), G3 (no third-party caveats) |
-| PASETO / CWT | Modern; less footgun than JWT | Same issuer-lookup issue; no attenuation | Same as OAuth2 |
-| macaroons (HMAC-SHA256, original paper) | Attenuation + third-party caveats built in | HMAC-SHA256 conflicts with CipherOcto mandate for BLAKE3 (RFC-0853) | Adapted to HMAC-BLAKE3 instead — this RFC |
-| Capability URLs | Simple | Discoverable in logs; no attenuation; no third-party caveats | Fails G2 |
-| ZK capability (RFC-0958) | Privacy-preserving; can hide token contents | Heavier crypto; not needed at v1 | Deferred to RFC-0958 (S05); v1 macaroon + v2 ZK subclass |
+| Approach                                | Pros                                        | Cons                                                                                           | Rejection Reason                                         |
+| --------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| OAuth2 / JWT                            | Mature; widely understood                   | Centralized issuer lookup required; no third-party caveats; no attenuation without re-issuance | Fails G2 (attenuation), G3 (no third-party caveats)      |
+| PASETO / CWT                            | Modern; less footgun than JWT               | Same issuer-lookup issue; no attenuation                                                       | Same as OAuth2                                           |
+| macaroons (HMAC-SHA256, original paper) | Attenuation + third-party caveats built in  | HMAC-SHA256 conflicts with CipherOcto mandate for BLAKE3 (RFC-0853)                            | Adapted to HMAC-BLAKE3 instead — this RFC                |
+| Capability URLs                         | Simple                                      | Discoverable in logs; no attenuation; no third-party caveats                                   | Fails G2                                                 |
+| ZK capability (RFC-0958)                | Privacy-preserving; can hide token contents | Heavier crypto; not needed at v1                                                               | Deferred to RFC-0958 (S05); v1 macaroon + v2 ZK subclass |
 
 ## Implementation Phases
 
@@ -827,11 +827,15 @@ Canonical test cases for cross-implementation verification. Located at `crates/o
 - Verify-with-discharge path.
 - Discharge TTL semantics.
 
-### Phase 3: Egress Transform Stub (S02 — this RFC)
+### Phase 3: Egress Transform (S02 stub; S04 full + R2 key-swap boundary)
 
-- `quota-router-core::egress::strip_capability` function (header removal + CapabilityHandle return).
-- Lint: forbid `reqwest::Client::new()` outside egress.
-- **Stub only** — full egress/ingress transform (vault borrow, provider key attachment, ingress response classify) lives in S04 (`docs/plans/2026-07-19-session-04-provider-boundary-exercise-path.md`) which depends on this RFC being Accepted. S02 ships only the strip function; S04 wires it into the 11-step exercise path.
+- S02 stubs: `quota_router_core::egress::strip_capability` (header removal + `CapabilityHandle` return); CI lint forbids `reqwest::Client::new()` outside egress.
+- **S04 R2 (commit `da83d8cd`, 2026-08-01):** full key-swap boundary is structurally enforced via `quota_router_core::egress::key_swap`. Three layers of defense:
+  - Brand-typed `ProviderApiKey` newtype; only constructible via `from_resolved()` which runs a cipherocto-internal prefix denylist (`sk-virtual-`, `sk-cipherocto-`, `sk-cto-`, `CipherOcto-`).
+  - Single egress entry-point `attach_bearer(&str) -> Result<String, KeySwapError>` wrapping denylist + wire-value guard; all 32 outbound `Authorization` attachment sites in `proxy.rs` (8) + `native_http/*` (24) wired through it.
+  - CI lint `.github/linters/no-provider-bound-cap.sh` extended to reject any `req_builder.header("Authorization", …)`, `req_builder.bearer_auth(…)`, or raw cipherocto-internal key literal inside an `Authorization` header across `crates/`.
+- Integration tests `crates/quota-router-core/tests/key_swap_boundary.rs` (7 tests): inbound `sk-virtual-alice` round-trip asserts outbound `Authorization` carries only the resolved provider key; 4-prefix exhaustive denylist coverage; type-level enforcement; brand separability; provider-key survival across `strip_capability`.
+- Reference: `docs/plans/2026-07-19-session-04-provider-boundary-exercise-path.md` §3 Step 1 (R2 fix annotations). Spec authority for the swap principle: this RFC §Adversary Analysis A5. Implementation belongs to mission `0957-b-provider-boundary-exercise-path.md`.
 
 ### Phase 4: ZK Subclass (deferred — RFC-0958, S05)
 
@@ -841,18 +845,18 @@ Canonical test cases for cross-implementation verification. Located at `crates/o
 
 ## Key Files to Modify
 
-| File | Change |
-|------|--------|
-| `rfcs/draft/economics/0957-capability-token-format.md` | NEW — this RFC |
-| `crates/octo-wallet/src/cap/` | NEW module — `CapabilityToken`, `Caveat`, `Macaroon`, `DischargeMacaroon`, `ChannelId`, `ChannelProvider` trait |
-| `crates/octo-wallet/src/cap/macaroon.rs` | NEW — mint / append / verify |
-| `crates/octo-wallet/src/cap/discharge.rs` | NEW — EscrowDischargeProvider, RevocationDischargeProvider, RateLimitDischargeProvider |
-| `crates/octo-wallet/src/cap/wire.rs` | NEW — parse / serialize / wire format |
-| `crates/octo-wallet/src/cap/holder.rs` | NEW — Ed25519 holder sig via RFC-0009 `holder_sign` |
-| `crates/quota-router-core/src/egress/mod.rs` | NEW — `strip_capability` (stub for S02; full impl S04) |
-| `crates/octo-wallet/tests/fixtures/macaroon-v1/` | NEW — test vectors per §Test Vectors |
-| `crates/octo-wallet/tests/fuzz/capability_verify.rs` | NEW — cargo-fuzz target |
-| `docs/07-developers/capability-token-implementation-guide.md` | NEW — companion implementation guide per BLUEPRINT §Tools |
+| File                                                          | Change                                                                                                          |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `rfcs/draft/economics/0957-capability-token-format.md`        | NEW — this RFC                                                                                                  |
+| `crates/octo-wallet/src/cap/`                                 | NEW module — `CapabilityToken`, `Caveat`, `Macaroon`, `DischargeMacaroon`, `ChannelId`, `ChannelProvider` trait |
+| `crates/octo-wallet/src/cap/macaroon.rs`                      | NEW — mint / append / verify                                                                                    |
+| `crates/octo-wallet/src/cap/discharge.rs`                     | NEW — EscrowDischargeProvider, RevocationDischargeProvider, RateLimitDischargeProvider                          |
+| `crates/octo-wallet/src/cap/wire.rs`                          | NEW — parse / serialize / wire format                                                                           |
+| `crates/octo-wallet/src/cap/holder.rs`                        | NEW — Ed25519 holder sig via RFC-0009 `holder_sign`                                                             |
+| `crates/quota-router-core/src/egress/mod.rs`                  | NEW — `strip_capability` (stub for S02; full impl S04)                                                          |
+| `crates/octo-wallet/tests/fixtures/macaroon-v1/`              | NEW — test vectors per §Test Vectors                                                                            |
+| `crates/octo-wallet/tests/fuzz/capability_verify.rs`          | NEW — cargo-fuzz target                                                                                         |
+| `docs/07-developers/capability-token-implementation-guide.md` | NEW — companion implementation guide per BLUEPRINT §Tools                                                       |
 
 ## Future Work
 
@@ -879,10 +883,11 @@ BLAKE3 chosen over SHA-256 for HMAC because:
 
 ## Version History
 
-| Version | Date | Status | Author | Notes |
-|---------|------|--------|--------|-------|
-| 0.1 | 2026-07-19 | Draft (new) | @cipherocto (S02 capability token work) | Initial Draft. Number 0957 (renumbered from 0956 because 0956 is archived). Includes: macaroon v1 with HMAC-BLAKE3; first-party + third-party caveat DSL with Raw escape; Ed25519 holder signature via RFC-0009; attenuation monotonicity invariant enforced at type level; discharge protocol with three ChannelProvider impls (Escrow / Revocation / RateLimit); wire format v1; egress transform stub; CI lint (single egress module rule). All 8 BLUEPRINT v1.3 mandatory sections present: §Roles and Authorities, §Adversary Analysis (5 findings), §Lifecycle Requirements (CapabilityToken state machine), §Determinism Requirements (RFC-0008 mapping), §Security Considerations, §Implicit Assumptions Audit (8 entries), §Dependency Validation, §Version History. |
-| 0.2 | 2026-07-20 | Draft (acceptance-prep) | @mmacedoeu | Pre-acceptance additions (BLUEPRINT v1.3 template completeness): added §Authors, §Maintainers (relocated from §Status note to dedicated H2 per template); added §Economic Analysis (5-row cost table for mint/verify/attenuate/discharge-mint/discharge-verify; 5-row wire bytes table; 3-row storage footprint; economic incentive alignment section). |
+| Version    | Date                                                                                                                                                                                                                                                                                                                                                                                                | Status                         | Author                                                                  | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.1        | 2026-07-19                                                                                                                                                                                                                                                                                                                                                                                          | Draft (new)                    | @cipherocto (S02 capability token work)                                 | Initial Draft. Number 0957 (renumbered from 0956 because 0956 is archived). Includes: macaroon v1 with HMAC-BLAKE3; first-party + third-party caveat DSL with Raw escape; Ed25519 holder signature via RFC-0009; attenuation monotonicity invariant enforced at type level; discharge protocol with three ChannelProvider impls (Escrow / Revocation / RateLimit); wire format v1; egress transform stub; CI lint (single egress module rule). All 8 BLUEPRINT v1.3 mandatory sections present: §Roles and Authorities, §Adversary Analysis (5 findings), §Lifecycle Requirements (CapabilityToken state machine), §Determinism Requirements (RFC-0008 mapping), §Security Considerations, §Implicit Assumptions Audit (8 entries), §Dependency Validation, §Version History. |
+| 0.2        | 2026-08-01                                                                                                                                                                                                                                                                                                                                                                                          | Accepted (Phase 3 R2 key-swap) | @mmacedoeu (mission 0957-b R2 audit + key-swap impl, commit `da83d8cd`) | §Phase 3 upgraded from stub to enforced: `egress::key_swap::attach_bearer` now wraps every outbound `Authorization` attachment in `proxy.rs` (8 sites) + `native_http/*` (24 sites) with brand-typed `ProviderApiKey` + cipherocto-internal prefix denylist. CI lint extended. §Adversary A5 defense-in-depth deeper than originally specified (was lint-only; now lint + runtime denylist + type brand). §Role/Authority Egress Module row + Provider Boundary Recipient row updated to reference the new boundary. Mission `0957-b-provider-boundary-exercise-path.md` cites this row in its In Scope item.                                                                                                                                                                 |
+| 0.2        | 2026-07-20                                                                                                                                                                                                                                                                                                                                                                                          | Draft (acceptance-prep)        | @mmacedoeu                                                              | Pre-acceptance additions (BLUEPRINT v1.3 template completeness): added §Authors, §Maintainers (relocated from §Status note to dedicated H2 per template); added §Economic Analysis (5-row cost table for mint/verify/attenuate/discharge-mint/discharge-verify; 5-row wire bytes table; 3-row storage footprint; economic incentive alignment section).                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | 2026-07-20 | **Promoted to Accepted.** 7-day review (initiated 2026-07-19 alongside session-01/02/03/04/05 work) + 2 maintainer approvals (@mmacedoeu + @cipherocto) completed; no blocking objections. Status header updated; file moved via `git mv` from `rfcs/draft/{category}/` to `rfcs/accepted/{category}/`. Pre-acceptance completeness fixes applied (see prior version rows 0.2-0.5/1.1/1.2.0/1.2.1). |
 
 ---

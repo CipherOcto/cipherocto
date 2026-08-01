@@ -66,6 +66,25 @@ jobs:
         # detection + macaroon 3-segment base64url detection).
         run: cargo test --test egress_boundary -p quota-router-core --features full
 
+  egress-constructors:
+    name: Egress HTTP-client constructor site discipline (mission 0957-b R4 §3)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify no new reqwest::Client::new sites outside the allowlisted egress surface
+        # Mission 0957-b R4 close-out: the clippy [disallowed-methods] deny
+        # has 14 module-level `#[allow(...)]` exemptions (proxy.rs + 12
+        # native_http/* + guardrails/mod.rs). That allowlist is coarse —
+        # a new reqwest::Client::new() call inside any of those modules
+        # is not caught by clippy. This linter scans the workspace for
+        # reqwest::Client::new outside the allowlist and fails if any
+        # are found. New sites in NEW files (not yet allowlisted) trip
+        # this gate; the reviewer then either adds the path to the
+        # allowlist (with delta rationale) or routes through an existing
+        # egress helper.
+        run: bash .github/linters/no-new-http-client-constructors.sh
+
   clippy:
     name: Clippy clean (AC-6)
     runs-on: ubuntu-latest

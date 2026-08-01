@@ -99,6 +99,15 @@ fn identity_key_debug_does_not_leak_seed() {
     let k = IdentityKey::from_seed(SEED_MARKER);
     let s = format!("{k:?}");
     assert_no_marker("IdentityKey", &s);
+    // Tripwire: the manual Debug impl prints `public_key` as a hex string
+    // field; a regression to `#[derive(Debug)]` would render the
+    // `IdentityKey(SigningKey(...))` tuple form (no `public_key` field
+    // name, and the SigningKey inner Debug surfaces the secret scalar).
+    // Asserting `public_key` is present catches that regression.
+    assert!(
+        s.contains("public_key"),
+        "IdentityKey Debug must include the redacted `public_key` field; got: {s}"
+    );
 }
 
 #[test]
@@ -111,6 +120,13 @@ fn capability_key_debug_does_not_leak_bytes() {
     let k = octo_wallet::identity::derive_capability_key(&identity, &audience, &channel).unwrap();
     let s = format!("{k:?}");
     assert_no_marker("CapabilityKey", &s);
+    // Tripwire: the manual Debug uses the literal `[REDACTED]` for the
+    // 32-byte key field. A `#[derive(Debug)]` regression would render
+    // `[u8; 32]` as `[204, 204, ...]` and omit the magic string.
+    assert!(
+        s.contains("[REDACTED]"),
+        "CapabilityKey Debug must include the `[REDACTED]` marker; got: {s}"
+    );
 }
 
 #[test]
@@ -119,6 +135,12 @@ fn in_memory_signer_debug_does_not_leak_seed() {
     let s = InMemorySigner::new(SEED_MARKER, pk);
     let out = format!("{s:?}");
     assert_no_marker("InMemorySigner", &out);
+    // Tripwire: manual Debug prints `[REDACTED]` for `seed_bytes`.
+    // Derived Debug would print `[u8; 32]` as decimal `[204, 204, ...]`.
+    assert!(
+        out.contains("[REDACTED]"),
+        "InMemorySigner Debug must include the `[REDACTED]` marker for seed_bytes; got: {out}"
+    );
 }
 
 #[test]
@@ -127,6 +149,14 @@ fn ledger_signer_debug_does_not_leak_seed() {
     let s = LedgerSigner::new(SEED_MARKER, pk);
     let out = format!("{s:?}");
     assert_no_marker("LedgerSigner", &out);
+    // Tripwire: LedgerSigner Debug delegates to the inner InMemorySigner
+    // which prints `[REDACTED]`. A `#[derive(Debug)]` regression on
+    // LedgerSigner would print the inner field as a struct literal with
+    // the seed bytes as decimal — `[REDACTED]` would be absent.
+    assert!(
+        out.contains("[REDACTED]"),
+        "LedgerSigner Debug must propagate the inner `[REDACTED]` marker; got: {out}"
+    );
 }
 
 #[test]
@@ -134,6 +164,13 @@ fn key_hierarchy_debug_does_not_leak_seed() {
     let h = KeyHierarchy::new(SEED_MARKER);
     let out = format!("{h:?}");
     assert_no_marker("KeyHierarchy", &out);
+    // Tripwire: manual Debug prints `[REDACTED 32 bytes]` for the
+    // `identity_seed` field. A `#[derive(Debug)]` regression would print
+    // `[u8; 32]` as decimal `[204, 204, ...]` and omit the magic string.
+    assert!(
+        out.contains("[REDACTED 32 bytes]"),
+        "KeyHierarchy Debug must include the `[REDACTED 32 bytes]` marker for identity_seed; got: {out}"
+    );
 
     // Also verify derived key Debug does not leak the seed (KeyHierarchy
     // derives `identity_seed` only, but a downstream user might Debug a
@@ -145,26 +182,46 @@ fn key_hierarchy_debug_does_not_leak_seed() {
     let k = h.derive_mission_key(&m).unwrap();
     let k_dbg = format!("{k:?}");
     // MissionKey holds [u8; 32] derived from SEED_MARKER via blake3 derive_key
-    // — the derived bytes won't match the marker, so this is just a smoke test
-    // that Debug works at all (and that we don't crash).
-    assert!(k_dbg.contains("MissionKey") || !k_dbg.is_empty());
+    // — the derived bytes won't match the marker. Tripwire: the manual
+    // MissionKey Debug prints `[REDACTED 32 bytes]`. A regression to
+    // `#[derive(Debug)]` would print `[u8; 32]` as decimal and omit the
+    // magic string.
+    assert!(
+        k_dbg.contains("[REDACTED 32 bytes]"),
+        "MissionKey Debug must include the `[REDACTED 32 bytes]` marker; got: {k_dbg}"
+    );
 }
 
 #[test]
 fn macaroon_debug_does_not_leak_chain_or_root_secret_hash() {
     let m = Macaroon::mint(&ROOT_SECRET_MARKER).unwrap();
     let out = format!("{m:?}");
-    // Root secret hash = BLAKE3(ROOT_SECRET_MARKER) — distinct from marker.
-    // The chain HMACs are derived from root_secret via BLAKE3 keyed mode —
-    // also distinct. So we only need to assert the marker isn't somehow
-    // present (it can't be, but the assertion is documentation).
-    assert_no_marker("Macaroon", &out);
-    // Also assert chain_len is present (proves we're seeing the redacted
-    // form, not a default Debug that would have shown the chain values).
+    // Tripwire: the manual Macaroon Debug prints `chain_len` (a count,
+    // not the chain bytes) and the literal `[REDACTED 32 bytes]` /
+    // `[REDACTED 16 bytes]` markers for the secret-derived fields. A
+    // `#[derive(Debug)]` regression would print the chain as
+    // `chain: [[204, 204, ...], ...]` (decimal array of [u8; 32] values)
+    // and the literal `chain_len` field name would be absent. The
+    // redaction-marker strings would also be absent.
     assert!(
         out.contains("chain_len"),
         "Macaroon Debug must include chain_len (redaction marker); got: {out}"
     );
+    assert!(
+        out.contains("[REDACTED 32 bytes]"),
+        "Macaroon Debug must include `[REDACTED 32 bytes]` for root_secret_hash / id; got: {out}"
+    );
+    assert!(
+        out.contains("[REDACTED 16 bytes]"),
+        "Macaroon Debug must include `[REDACTED 16 bytes]` for root_id; got: {out}"
+    );
+    // Note: the hex marker assertion was previously here as documentation,
+    // but `ROOT_SECRET_MARKER` is the 32-byte root secret, while
+    // `macaroon.root_secret_hash` is `BLAKE3(ROOT_SECRET_MARKER)` —
+    // distinct bytes. The chain HMACs are also BLAKE3-derived from the
+    // root secret. The marker is irrelevant to Macaroon (the redacted
+    // fields carry derived bytes, not the raw secret). The redaction
+    // marker strings above are the real tripwires.
 }
 
 #[test]

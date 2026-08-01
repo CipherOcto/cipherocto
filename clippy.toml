@@ -1,35 +1,39 @@
 # CipherOcto clippy configuration (mission 0957-b AC-1 + RFC-0957 §Adversary A5).
 #
-# AC-1: Provider boundary lint forbids any client constructor (`reqwest`,
-# `hyper`, `ureq`, `isahc`) outside `crates/quota-router-core/src/egress/`.
-# Per RFC-0957 §Adversary A5: capability token NEVER crosses provider
-# boundary; only the canonical egress module is allowed to construct
-# outbound HTTP clients.
+# AC-1: Provider boundary lint forbids the `reqwest::Client::new`
+# constructor outside the allowlisted modules. Per RFC-0957 §Adversary
+# A5: capability token NEVER crosses provider boundary; only the
+# canonical egress module is allowed to construct outbound HTTP clients.
 #
 # Enforcement strategy (defense in depth):
 # 1. **clippy `[disallowed-methods]` table (this file)** — durable,
 #    in-tree lint that compiles with the project. Catches any new
 #    outbound HTTP client constructor added anywhere in the workspace
-#    outside the egress module's allowed list.
-# 2. **`#[deny(clippy::disallowed_methods)]` on `src/egress.rs::lint`** —
-#    backup inside the egress module itself (see egress.rs).
-# 3. **CI grep gate** in `.github/workflows/exercise-path.yml` — backup
+#    outside the allowlist.
+# 2. **CI grep gate** in `.github/workflows/exercise-path.yml` — backup
 #    grep over the source tree (catches bypasses via type aliases or
 #    macro re-exports that clippy might miss).
 #
+# Historical note: earlier drafts of this file also listed
+# `hyper::Client::new`, `ureq::AgentBuilder::new`, and
+# `isahc::HttpClient::new`. Those entries are dead code at the current
+# workspace state — `ureq` and `isahc` are not workspace dependencies,
+# and `hyper::Client::new` is the hyper 0.14 API path which does not
+# exist in the workspace's `hyper = "1.3"` dependency. Clippy emits
+# "does not refer to a reachable function" warnings on those entries,
+# which surfaced the dead-code condition. If a future workspace
+# migration adds one of those crates, re-introduce the corresponding
+# deny entry with the correct API path for the version in use.
+#
 # Path syntax: clippy `[disallowed-methods]` takes the full crate-local
-# path (no leading `::`). For `reqwest`, the full path is
-# `reqwest::Client::new`. The lint can be silenced at the call site
+# path (no leading `::`). The lint can be silenced at the call site
 # with `#[allow(clippy::disallowed_methods)]` and a justification
 # comment — but each allow MUST be reviewed at PR time.
 
 disallowed-methods = [
-    # Outbound HTTP client constructors. The egress module is the
-    # ONLY allowed construction site; see `src/egress.rs::lint` for
-    # the structural rationale (single egress point, capability-strip,
+    # Outbound HTTP client constructor. The egress module is the ONLY
+    # allowed construction site; see `src/egress.rs::lint` for the
+    # structural rationale (single egress point, capability-strip,
     # key-swap boundary).
     { path = "reqwest::Client::new", reason = "Mission 0957-b AC-1: HTTP client constructor must live in egress module only" },
-    { path = "hyper::Client::new", reason = "Mission 0957-b AC-1: HTTP client constructor must live in egress module only" },
-    { path = "ureq::AgentBuilder::new", reason = "Mission 0957-b AC-1: HTTP client constructor must live in egress module only" },
-    { path = "isahc::HttpClient::new", reason = "Mission 0957-b AC-1: HTTP client constructor must live in egress module only" },
 ]

@@ -80,7 +80,9 @@ impl super::HttpProvider for MistralProvider {
             .header("Content-Type", "application/json")
             .json(&body);
         if let Some(key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(&key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         let resp = req_builder
             .send()
@@ -156,7 +158,9 @@ impl super::HttpProvider for MistralProvider {
             .header("Content-Type", "application/json")
             .json(&body);
         if let Some(key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(&key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         let resp = req_builder
             .send()

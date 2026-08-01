@@ -81,7 +81,9 @@ impl super::HttpProvider for ReplicateProvider {
             .header("Content-Type", "application/json")
             .json(&create_body);
         if let Some(key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(&key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         let create_resp = req_builder
             .send()
@@ -127,7 +129,9 @@ impl super::HttpProvider for ReplicateProvider {
 
             let mut poll_builder = self.client.get(poll_url);
             if let Some(key) = api_key {
-                poll_builder = poll_builder.header("Authorization", format!("Bearer {}", key));
+                let bearer = crate::egress::key_swap::attach_bearer(&key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
+                poll_builder = poll_builder.header("Authorization", bearer);
             }
             let poll_resp = poll_builder
                 .send()
@@ -220,7 +224,9 @@ impl super::HttpProvider for ReplicateProvider {
             .header("Content-Type", "application/json")
             .json(&create_body);
         if let Some(key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(&key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         let create_resp = req_builder
             .send()
@@ -255,7 +261,9 @@ impl super::HttpProvider for ReplicateProvider {
             .get(&stream_url)
             .header("Accept", "text/event-stream");
         if let Some(key) = api_key {
-            stream_builder = stream_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(&key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
+            stream_builder = stream_builder.header("Authorization", bearer);
         }
         let resp = stream_builder
             .send()

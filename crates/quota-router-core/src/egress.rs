@@ -23,6 +23,8 @@
 //! other code path constructs an `EgressRequest` carrying an
 //! `X-Capability-Token` header.
 
+pub mod key_swap;
+
 use serde::{Deserialize, Serialize};
 
 /// Canonical capability-token HTTP header (default; primary).

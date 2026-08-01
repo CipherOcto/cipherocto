@@ -993,7 +993,9 @@ where
             .header("Content-Type", "application/json")
             .body(full_body.to_vec());
         if let Some(ref key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, an upstream path populated api_key from a CipherOcto source — fix that path");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         let resp = req_builder.send().await;
 
@@ -1141,7 +1143,9 @@ where
             .header("Content-Type", "application/json")
             .body(full_body.to_vec());
         if let Some(ref key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, an upstream path populated api_key from a CipherOcto source — fix that path");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         let resp = req_builder.send().await;
 
@@ -1196,7 +1200,9 @@ where
         let client = client.clone();
         let mut req_builder = client.post(&target_url).body(full_body.to_vec());
         if let Some(ref key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, an upstream path populated api_key from a CipherOcto source — fix that path");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         let resp = req_builder.send().await;
 
@@ -1251,7 +1257,9 @@ where
             .header("Content-Type", "application/json")
             .body(full_body.to_vec());
         if let Some(ref key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, an upstream path populated api_key from a CipherOcto source — fix that path");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         let resp = req_builder.send().await;
 
@@ -1448,7 +1456,9 @@ where
             _ => unreachable!(),
         };
         if let Some(ref key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, an upstream path populated api_key from a CipherOcto source — fix that path");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         let resp = req_builder.send().await;
 
@@ -1576,7 +1586,9 @@ where
             _ => unreachable!(),
         };
         if let Some(ref key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, an upstream path populated api_key from a CipherOcto source — fix that path");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         let resp = req_builder.send().await;
 
@@ -1666,7 +1678,9 @@ where
             .header("Content-Type", "application/json")
             .body(full_body.to_vec());
         if let Some(ref key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, an upstream path populated api_key from a CipherOcto source — fix that path");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         let resp = req_builder.send().await;
 
@@ -1790,7 +1804,9 @@ where
             .or_else(|| std::env::var(format!("{}_API_KEY", provider_name.to_uppercase())).ok());
 
         if let Some(key) = passthrough_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(&key)
+                .expect("provider-boundary key-swap: passthrough_key MUST be provider-shaped; if this fires, dispatch_map or env injected a CipherOcto key");
+            req_builder = req_builder.header("Authorization", bearer);
         }
 
         let resp = match req_builder.send().await {

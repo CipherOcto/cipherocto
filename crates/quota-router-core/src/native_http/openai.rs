@@ -126,7 +126,9 @@ impl super::HttpProvider for OpenAIProvider {
             .header("Content-Type", "application/json")
             .json(&body);
         if let Some(key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(&key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         if let Some(t) = request.timeout {
             req_builder = req_builder.timeout(std::time::Duration::from_secs_f64(t));
@@ -186,7 +188,9 @@ impl super::HttpProvider for OpenAIProvider {
             .header("Content-Type", "application/json")
             .json(&body);
         if let Some(key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(&key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         if let Some(t) = request.timeout {
             req_builder = req_builder.timeout(std::time::Duration::from_secs_f64(t));
@@ -299,7 +303,9 @@ impl super::HttpProvider for OpenAIProvider {
             .header("Content-Type", "application/json")
             .json(&body);
         if let Some(key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(&key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         let resp = req_builder
             .send()
@@ -376,7 +382,9 @@ impl super::HttpProvider for OpenAIProvider {
             .get(&url)
             .header("Content-Type", "application/json");
         if let Some(key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(&key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         if let Some(t) = timeout {
             req_builder = req_builder.timeout(std::time::Duration::from_secs_f64(t));
@@ -427,7 +435,9 @@ impl super::HttpProvider for OpenAIProvider {
             .delete(&url)
             .header("Content-Type", "application/json");
         if let Some(key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(&key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         if let Some(t) = timeout {
             req_builder = req_builder.timeout(std::time::Duration::from_secs_f64(t));
@@ -477,7 +487,9 @@ impl super::HttpProvider for OpenAIProvider {
             .get(&url)
             .header("Content-Type", "application/json");
         if let Some(key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(&key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         if let Some(t) = timeout {
             req_builder = req_builder.timeout(std::time::Duration::from_secs_f64(t));
@@ -529,7 +541,9 @@ impl super::HttpProvider for OpenAIProvider {
             .post(&url)
             .header("Content-Type", "application/json");
         if let Some(key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(&key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         if let Some(t) = request.timeout {
             req_builder = req_builder.timeout(std::time::Duration::from_secs_f64(t));
@@ -582,7 +596,9 @@ impl super::HttpProvider for OpenAIProvider {
             .post(&url)
             .header("Content-Type", "application/json");
         if let Some(key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(&key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         if let Some(t) = request.timeout {
             req_builder = req_builder.timeout(std::time::Duration::from_secs_f64(t));
@@ -616,7 +632,9 @@ impl super::HttpProvider for OpenAIProvider {
 
         let mut req_builder = self.client.get(&url);
         if let Some(key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(&key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         if let Some(t) = timeout {
             req_builder = req_builder.timeout(std::time::Duration::from_secs_f64(t));
@@ -649,7 +667,9 @@ impl super::HttpProvider for OpenAIProvider {
 
         let mut req_builder = self.client.post(&url);
         if let Some(key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(&key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         if let Some(t) = timeout {
             req_builder = req_builder.timeout(std::time::Duration::from_secs_f64(t));
@@ -685,7 +705,9 @@ impl super::HttpProvider for OpenAIProvider {
 
         let mut req_builder = self.client.get(&url);
         if let Some(key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(&key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         if let Some(t) = timeout {
             req_builder = req_builder.timeout(std::time::Duration::from_secs_f64(t));
@@ -718,7 +740,9 @@ impl super::HttpProvider for OpenAIProvider {
 
         let mut req_builder = self.client.get(&url);
         if let Some(key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(&key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         if let Some(t) = timeout {
             req_builder = req_builder.timeout(std::time::Duration::from_secs_f64(t));

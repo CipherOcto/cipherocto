@@ -483,10 +483,19 @@ impl ContentModeration {
         };
 
         for attempt in 0..=self.retries {
+            // CipherOcto provider-boundary invariant (RFC-0957 §Adversary A5):
+            // every outbound `Authorization: Bearer …` MUST go through
+            // `egress::key_swap::attach_bearer` so the cipherocto-internal
+            // prefix denylist fires at construction time. Operator-supplied
+            // `self.api_key` from YAML config is treated as provider-shaped
+            // by default; if a future caller wires a CipherOcto-internal
+            // key through `ContentModeration::new`, this guard rejects it.
+            let bearer = crate::egress::key_swap::attach_bearer(&self.api_key)
+                .expect("provider-boundary key-swap: ContentModeration::api_key MUST be provider-shaped; if this fires, the operator-config source path leaked a CipherOcto key (sk-virtual-/sk-cipherocto-/sk-cto-/CipherOcto-)");
             let result = self
                 .client
                 .post(&self.api_url)
-                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Authorization", bearer)
                 .header("Content-Type", "application/json")
                 .timeout(std::time::Duration::from_millis(self.timeout_ms))
                 .json(&request)

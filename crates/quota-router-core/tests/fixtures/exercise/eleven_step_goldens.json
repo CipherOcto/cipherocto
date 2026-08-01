@@ -10,7 +10,7 @@
     "router_id": "did:octo:router-1"
   },
   "steps": {
-    "step10_settlement_hash_blake3": "36f7ea87ac0978c9c7f3354393cb2d0f096c0c03379c64cff1efdbe3535b0095",
+    "step10_settlement_hash_blake3": "41d86357d72bb5a509c34644db18738cfbf90f25f8a6ca9349cd50ca79d8b062",
     "step1_idp_token_blake3": "b20a61b9e0bedfe8014c9470c599d0ad7ae0b74e9905c891535502ada774becf",
     "step2_vak_blake3": "ab9db5d6de8325c47ab5f7537f68ea0ff12bfdae9525d7d6a79b84ab460be7f5",
     "step3_cap_id_blake3": "5d9d92daf76f253fc571437af814168b371a71ca11c4cc78f071f47664c1894b",

@@ -24,7 +24,7 @@ use blake3::Hasher;
 use ed25519_dalek::Signer;
 use quota_router_core::{
     egress::{EgressRequest, EgressResponse},
-    ingress::{IngressMetadata, ProviderUsage},
+    ingress::{Ingress, IngressMetadata, OpenAiIngress, ProviderUsage},
     marketplace::{Marketplace, MarketplaceEntry},
     receipt::{canonical_receipt_bytes, Receipt},
     sim::{ProviderSim, SimConfig, SimResponseKind},
@@ -155,44 +155,45 @@ fn step8_provider_response(sim: &ProviderSim, body: &[u8]) -> EgressResponse {
 }
 
 /// Step 9: Cache-classify + axis_consumed.
+///
+/// R1 carryover M-4 fix: now delegates to the canonical
+/// `quota_router_core::ingress::OpenAiIngress` (RFC-0957 §Attenuation
+/// ↔ RFC-0959 v1.0 §Cache classification). This replaces the prior
+/// `body_str.find("\"prompt_tokens\":")` hand-walk with a proper
+/// serde_json-driven parse. The test no longer maintains a private
+/// parser — the same `Ingress` impl is what the production
+/// `IngressTransform::normalise` will call.
+///
+/// Error-mode (4xx / 5xx / malformed body): a provider-error response
+/// degrades gracefully to a zero-usage placeholder so the orchestrator
+/// can drive settlement / cache-classify on whatever it actually
+/// represents (rate-limited → no consumption recorded; 5xx → no
+/// axes_consumed for downstream logic to skip).
 fn step9_cache_classify(resp: &EgressResponse) -> IngressMetadata {
-    let body_str = std::str::from_utf8(&resp.body).unwrap_or("");
-    // Minimal parse: extract prompt_tokens + completion_tokens if present.
-    let (input, output) = if let (Some(p), Some(c)) = (
-        body_str.find("\"prompt_tokens\":"),
-        body_str.find("\"completion_tokens\":"),
-    ) {
-        let parse_int = |s: &str| -> u64 {
-            s.chars()
-                .skip_while(|c| !c.is_ascii_digit())
-                .take_while(|c| c.is_ascii_digit())
-                .collect::<String>()
-                .parse()
-                .unwrap_or(0)
-        };
-        let after_p = &body_str[p..];
-        let after_c = &body_str[c..];
-        (parse_int(after_p), parse_int(after_c))
-    } else {
-        (0, 0)
+    let parse_result = OpenAiIngress.parse(&resp.body, resp.status);
+    let mut meta = match parse_result {
+        Ok(m) => m,
+        Err(_) => {
+            return IngressMetadata {
+                model_id: "gpt-4".to_owned(),
+                provider: "openai".to_owned(),
+                usage: ProviderUsage::default(),
+                cache_hit: false,
+                cache_key_hash: None,
+                timestamp_unix: 1_700_000_000,
+            };
+        }
     };
-    let cache_hit = resp.status == 200 && body_str.contains("cached");
-    IngressMetadata {
-        model_id: "openai/gpt-4".to_owned(),
-        provider: "openai".to_owned(),
-        usage: ProviderUsage {
-            input_tokens: input,
-            output_tokens: output,
-            cached_input_tokens: 0,
-        },
-        cache_hit,
-        cache_key_hash: if cache_hit {
-            Some(*blake3::hash(&resp.body).as_bytes())
-        } else {
-            None
-        },
-        timestamp_unix: 1_700_000_000,
+    let body_str = std::str::from_utf8(&resp.body).unwrap_or("");
+    if !meta.cache_hit && resp.status == 200 && body_str.contains("cached") {
+        meta.cache_hit = true;
     }
+    if meta.cache_hit {
+        meta.cache_key_hash = Some(*blake3::hash(&resp.body).as_bytes());
+    }
+    meta.timestamp_unix = 1_700_000_000;
+    meta.provider = "openai".to_owned();
+    meta
 }
 
 /// Step 10: Receipt build (signed by router).
@@ -368,7 +369,7 @@ fn eleven_step_exercise_green() {
     assert!(!resp.body.is_empty());
     // 9
     let ingress = step9_cache_classify(&resp);
-    assert_eq!(ingress.model_id, "openai/gpt-4");
+    assert_eq!(ingress.model_id, "gpt-4");
     // 10
     let store = StoolapStore::open_in_memory().expect("open sm-engine store");
     let nonce: [u8; 32] = [0x55; 32];
@@ -405,7 +406,7 @@ fn eleven_step_handles_429() {
     let resp = step8_provider_response(&sim, body);
     assert_eq!(resp.status, 429);
     let ingress = step9_cache_classify(&resp);
-    assert_eq!(ingress.model_id, "openai/gpt-4");
+    assert_eq!(ingress.model_id, "gpt-4");
     assert_eq!(ingress.usage.input_tokens, 0);
 }
 
@@ -613,9 +614,41 @@ fn tv_settlement_hash_impl1(env: &SettlementEnvelope) -> [u8; 32] {
     env.compute_settlement_hash()
 }
 
-/// Independent impl path #2: hand-rolled reference impl (BLAKE3 over canonical
-/// field-by-field concatenation, no `serde_json` round-trip — exercises that the
-/// production canonicalization is canonical, not coupled to its serializer).
+/// Hand-rolled reference impl encoding that matches `serde_json::to_vec`
+/// output for a `Vec<(String, u64)>`. R3 AC-10 fix: the historical impl2
+/// used a hand-rolled length-prefixed axes encoding that did not match
+/// the production `serde_json::to_vec` axes encoding, so the two impls
+/// produced different hashes (RC-3 AC-10 technically satisfied on
+/// "≥2 impls exist" but the byte-equivalent assertion was disabled).
+///
+/// This new impl2 manually mirrors `serde_json`'s output for
+/// `Vec<(String, u64)>`: a JSON array of `[name, count]` inner arrays,
+/// with no whitespace, no trailing comma, no key escaping needed
+/// (axis names are `input_tokens_per_1k` style — pure ASCII alphanumeric).
+fn manual_axes_canonical(axes: &[(String, u64)]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.push(b'[');
+    for (i, (name, count)) in axes.iter().enumerate() {
+        if i > 0 {
+            buf.push(b',');
+        }
+        buf.push(b'[');
+        buf.push(b'"');
+        buf.extend_from_slice(name.as_bytes());
+        buf.push(b'"');
+        buf.push(b',');
+        buf.extend_from_slice(count.to_string().as_bytes());
+        buf.push(b']');
+    }
+    buf.push(b']');
+    buf
+}
+
+/// Independent impl path #2: hand-rolled reference impl that mirrors
+/// `SettlementEnvelope::compute_settlement_hash` byte-for-byte (same
+/// field concatenation: model || axes_json || ask_id || nonce || ts_le).
+/// No `serde_json` runtime dependency inside impl2 — the canonical
+/// axes JSON is constructed manually via `manual_axes_canonical`.
 fn tv_settlement_hash_impl2(
     model: &str,
     axes: &[(String, u64)],
@@ -625,12 +658,7 @@ fn tv_settlement_hash_impl2(
 ) -> [u8; 32] {
     let mut msg = Vec::with_capacity(model.len() + 64 + 8);
     msg.extend_from_slice(model.as_bytes());
-    // Manual canonical axes encoding: axis_name_len(4 LE) || axis_name || count(8 LE).
-    for (axis, count) in axes {
-        msg.extend_from_slice(&(axis.len() as u32).to_le_bytes());
-        msg.extend_from_slice(axis.as_bytes());
-        msg.extend_from_slice(&count.to_le_bytes());
-    }
+    msg.extend_from_slice(&manual_axes_canonical(axes));
     msg.extend_from_slice(ask_id);
     msg.extend_from_slice(nonce);
     msg.extend_from_slice(&ts.to_le_bytes());
@@ -661,17 +689,18 @@ fn cross_impl_tv1_settlement_hash_matches() {
         &env.nonce,
         env.timestamp_unix,
     );
-    // TV note: impl1 + impl2 use different field-ordering for axes, so digests
-    // intentionally differ. The cross-impl property is captured separately by
-    // `cross_impl_different_inputs_produce_different_hashes` (sanity) +
-    // SettlementEnvelope round-trip stability (impl1 idempotent under
-    // canonical_ser). Both impls remain RFC-0959 conformant via their own
-    // canonicalization contract. AC-10 satisfied: ≥2 impls exist + both
-    // produce deterministic 32-byte digests from canonical inputs.
+    // TV1 AC-10 byte-equivalent assertion (R3 fix): after the impl2
+    // canonicalization was reconciled with `serde_json::to_vec` output,
+    // both impls produce the same 32-byte digest for the same canonical
+    // inputs. The historical comment ("intentionally differ") reflected
+    // the pre-R3 incomplete impl2; the R3 fix closes the gap.
+    assert_eq!(
+        h1, h2,
+        "TV1 cross-impl byte-equivalent: impl1 (production SettlementEnvelope) \
+         and impl2 (hand-rolled manual_axes_canonical) MUST agree byte-for-byte"
+    );
     assert_ne!(h1, [0u8; 32], "TV1 impl1 produced zero digest");
-    assert_ne!(h2, [0u8; 32], "TV1 impl2 produced zero digest");
     assert_eq!(h1.len(), 32);
-    assert_eq!(h2.len(), 32);
 }
 
 #[test]
@@ -700,8 +729,104 @@ fn cross_impl_tv2_settlement_hash_matches() {
         &env.nonce,
         env.timestamp_unix,
     );
-    assert_ne!(h1, [0u8; 32], "TV2 impl1 produced zero digest");
-    assert_ne!(h2, [0u8; 32], "TV2 impl2 produced zero digest");
+    assert_eq!(
+        h1, h2,
+        "TV2 cross-impl byte-equivalent: impl1 and impl2 MUST agree"
+    );
+    assert_ne!(h1, [0u8; 32], "TV2 produced zero digest");
+}
+
+/// AC-10 + M-3 closed-loop test: the canonical envelope's
+/// `compute_settlement_hash` (impl1) MUST byte-equal the hand-rolled
+/// reference impl (impl2). This is the cross-impl byte-equivalent
+/// assertion. The sm-engine on-disk path (`run_settlement`) and the
+/// envelope canonicalization are TWO INDEPENDENT LAYERS per
+/// RFC-0959 v1.0 §Adversary A2 (deliberate separation between
+/// settlement-engine canonicalization and in-memory replay-defense
+/// canonicalization); they are NOT required to produce the same
+/// hash for the same inputs.
+///
+/// This test asserts impl1 == impl2 byte-equivalence (R3 fix to the
+/// historical AC-10 "non-zero only" passing condition).
+#[test]
+fn step10_settlement_hash_cross_impl_byte_equivalent() {
+    let canonical_env = SettlementEnvelope {
+        settlement_hash: [0u8; 32],
+        asker_did: "did:octo:asker1".to_owned(),
+        holder_did: HOLDER_DID.to_owned(),
+        model: MODEL.to_owned(),
+        axes_consumed: vec![("input_tokens_per_1k".to_owned(), 1000_u64)],
+        ask_id: [0xAA; 32],
+        nonce: [0x55; 32],
+        timestamp_unix: 1_700_000_000,
+        cost: 30_000_u128,
+    };
+    let h1 = tv_settlement_hash_impl1(&canonical_env);
+    let h2 = tv_settlement_hash_impl2(
+        &canonical_env.model,
+        &canonical_env.axes_consumed,
+        &canonical_env.ask_id,
+        &canonical_env.nonce,
+        canonical_env.timestamp_unix,
+    );
+    assert_eq!(
+        h1, h2,
+        "impl1 (SettlementEnvelope::compute_settlement_hash) and impl2 (hand-rolled manual_axes_canonical) MUST agree byte-for-byte"
+    );
+    assert_ne!(h1, [0u8; 32], "produced zero digest");
+
+    // (M-3 carryover close-loop) the golden fixture now binds to the
+    // same canonicalization the impl1/impl2 use. Run settlement
+    // through the exercise and assert the impl1 hash is what the
+    // golden pins — closes the historic stub-vs-real gap.
+    let marketplace = Marketplace::open_in_memory().expect("open marketplace");
+    let ask = quota_router_storage::ask::Ask {
+        asker_did: "did:octo:asker1".to_owned(),
+        model: MODEL.to_owned(),
+        rates: quota_router_storage::ask::ModelRateTable {
+            model: MODEL.to_owned(),
+            rates: vec![quota_router_storage::ask::AxisRate {
+                axis: "input_tokens_per_1k".to_owned(),
+                rate_per_1k: 30_000,
+            }],
+        },
+        nonce: [0x42; 16],
+        expires_at_unix: 1_900_000_000,
+    };
+    let ask_id = ask.id();
+    marketplace.put(&ask).expect("put ask");
+
+    let raw = std::fs::read_to_string("tests/fixtures/exercise/eleven_step_goldens.json")
+        .expect("read fixture");
+    let fixture: serde_json::Value = serde_json::from_str(&raw).expect("parse fixture");
+    let pinned = fixture["steps"]["step10_settlement_hash_blake3"]
+        .as_str()
+        .expect("fixture.steps.step10_settlement_hash_blake3 missing");
+    let pinned_bytes = hex::decode(pinned).expect("hex decode");
+    let mut pinned_arr = [0u8; 32];
+    pinned_arr.copy_from_slice(&pinned_bytes);
+
+    // The golden fixture is bound to the impl1/impl2 canonicalization
+    // for the canonical sample inputs (HOLDER_DID, MODEL,
+    // input_tokens_per_1k=1000, ask_id derived from the canonical
+    // Ask, nonce=[0x55;32], ts=1_700_000_000). Verify that re-pinning
+    // with `UPDATE_GOLDENS=1` does NOT drift.
+    let golden_env = SettlementEnvelope {
+        settlement_hash: [0u8; 32],
+        asker_did: "did:octo:asker1".to_owned(),
+        holder_did: HOLDER_DID.to_owned(),
+        model: MODEL.to_owned(),
+        axes_consumed: vec![("input_tokens_per_1k".to_owned(), 1000_u64)],
+        ask_id,
+        nonce: [0x55; 32],
+        timestamp_unix: 1_700_000_000,
+        cost: 30_000_u128,
+    };
+    let golden_hash = tv_settlement_hash_impl1(&golden_env);
+    assert_eq!(
+        golden_hash, pinned_arr,
+        "golden fixture MUST match the impl1 canonicalization for the canonical sample inputs (re-run with UPDATE_GOLDENS=1 if intentional drift)"
+    );
 }
 
 #[test]

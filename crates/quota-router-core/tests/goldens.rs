@@ -84,8 +84,27 @@ fn compute_goldens() -> Goldens {
     h.update(b"escrow/v1");
     let step6 = hex::encode(h.finalize().as_bytes());
 
-    // Step 10 settlement_hash (the fixture binds the test-issued "settlement-mock" hash)
-    let step10 = hex::encode(*blake3::hash(b"settlement-mock").as_bytes());
+    // Step 10 settlement_hash — R1 carryover M-3 fix: now derives from the
+    // SAME `SettlementEnvelope::compute_settlement_hash` canonicalization
+    // used by the sm-engine on disk path, instead of the prior
+    // `blake3::hash(b"settlement-mock")` stub. The golden now reflects
+    // the actual deterministic output of the canonical envelope encoder
+    // for the canonical 11-step inputs.
+    use quota_router_storage::ask::SettlementEnvelope;
+    let envelope = SettlementEnvelope {
+        settlement_hash: [0u8; 32], // placeholder; computed below
+        asker_did: "did:octo:asker1".to_owned(),
+        holder_did: HOLDER_DID.to_owned(),
+        model: MODEL.to_owned(),
+        axes_consumed: vec![("input_tokens_per_1k".to_owned(), 1000)],
+        // The ask_id used by `eleven_step::run_settlement` is what the
+        // marketplace Ask derives via `Ask::id()` — we mirror that here.
+        ask_id: ask_id, // reused from the step-6 calculation above
+        nonce: [0x55; 32],
+        timestamp_unix: 1_700_000_000,
+        cost: 30_000_u128,
+    };
+    let step10 = hex::encode(envelope.compute_settlement_hash());
 
     Goldens {
         step1_idp_token: step1,

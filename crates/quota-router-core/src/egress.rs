@@ -69,8 +69,28 @@ pub enum EgressError {
     Refused(String),
 }
 
-/// Egress trait — single egress point. Implementations MUST NOT cache
-/// capability tokens; provider key MUST come from `provider_key` parameter.
+/// Egress trait — canonical abstract egress point. R3 M-5 fix: this
+/// trait is a **structural placeholder** for future per-provider egress
+/// adapters that want a uniform interface. The current production
+/// egress path goes through `proxy.rs` + per-provider `native_http/*`
+/// directly using `reqwest` — those are the canonical sites today.
+///
+/// Implementations MUST:
+/// 1. NOT cache capability tokens (capability strip happens upstream
+///    via [`strip_capability`]).
+/// 2. Source the upstream `Authorization` header value from the
+///    `provider_key` parameter, NEVER from any inbound cipherocto
+///    shape — route through [`crate::egress::key_swap::attach_bearer`].
+/// 3. Emit the `OutboundRequest` (after `EgressRequest -> OutboundRequest`
+///    reshape) and never carry the inbound `EgressRequest`'s
+///    `X-Capability-Token` header value to the provider.
+///
+/// The trait is synchronous today because `reqwest::blocking::Client`
+/// is the simplest credible impl; production sites use async
+/// `reqwest::Client` directly. `EgressTransform::forward` is the
+/// historical async escape hatch — currently a paper abstraction
+/// (no production impl). Follow-up session should either populate
+/// `EgressTransform` with a real `reqwest::Client` impl or remove it.
 pub trait Egress {
     fn send(&self, req: &EgressRequest, provider_key: &[u8])
         -> Result<EgressResponse, EgressError>;

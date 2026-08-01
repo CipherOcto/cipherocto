@@ -106,6 +106,19 @@ impl AsRef<str> for ProviderApiKey {
     }
 }
 
+#[cfg(test)]
+impl ProviderApiKey {
+    /// Test-only seam: construct a `ProviderApiKey` from a raw string
+    /// bypassing the `from_resolved` denylist. **NEVER call from
+    /// production code.** Used by the `#[should_panic]` tripwire test
+    /// to exercise the unreachable `panic!()` branch in
+    /// `bearer_wire_value` (the panic exists precisely because that branch
+    /// is unreachable through the production path).
+    pub fn from_string_unchecked_for_testing(key: String) -> Self {
+        Self(key)
+    }
+}
+
 /// The single egress swap entry-point used by `proxy.rs`'s 8 outbound
 /// `Authorization` attachment sites. Wraps `from_resolved` + the runtime
 /// wire-value guard in one call so every site gets identical treatment.
@@ -225,5 +238,35 @@ mod tests {
         let branded: ProviderApiKey = ProviderApiKey::from_resolved(raw.clone()).unwrap();
         assert_eq!(branded.as_str(), raw);
         assert_eq!(branded.as_ref(), raw);
+    }
+
+    /// Tripwire test (M-1 R3): the `panic!` inside `bearer_wire_value` is the
+    /// last line of defense against an internal-shaped key reaching the wire.
+    /// Without this test, the panic logic could be wrong (off-by-one in
+    /// prefix matching, broken `starts_with` semantics) and silently regress.
+    /// Construction uses the `#[cfg(test)]` seam `from_string_unchecked_for_testing`,
+    /// which bypasses `from_resolved`'s denylist — exactly the path the
+    /// tripwire is designed to catch.
+    #[test]
+    #[should_panic(
+        expected = "CI: rendered Authorization header carries CipherOcto-internal"
+    )]
+    fn bearer_wire_value_tripwire_panics_on_internal_prefix() {
+        let bad = ProviderApiKey::from_string_unchecked_for_testing(
+            "sk-virtual-direct-test".to_owned(),
+        );
+        let _ = bad.bearer_wire_value();
+    }
+
+    /// Tripwire test for `CipherOcto-` prefix.
+    #[test]
+    #[should_panic(
+        expected = "CI: rendered Authorization header carries CipherOcto-internal"
+    )]
+    fn bearer_wire_value_tripwire_panics_on_cipherocto_prefix() {
+        let bad = ProviderApiKey::from_string_unchecked_for_testing(
+            "CipherOcto-direct-test".to_owned(),
+        );
+        let _ = bad.bearer_wire_value();
     }
 }

@@ -35,7 +35,14 @@ const NONCE_LEN: usize = 12;
 const SALT_LEN: usize = 16;
 
 /// On-disk vault file format. Versioned for forward-compat.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// **Debug redaction (octo-wallet §Security):** the `salt`, `nonce`,
+/// and `ciphertext` fields together with a leaked passphrase constitute
+/// the on-disk encryption envelope. While the ciphertext is not
+/// plaintext (Argon2id-wrapped AES-256-GCM), Debug-dumping the envelope
+/// alongside an in-scope passphrase or any panic message context is a
+/// defense-in-depth risk. Manual `Debug` impl prints only the version.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct VaultFile {
     /// Format version. Bump on schema change.
     pub version: u8,
@@ -45,6 +52,15 @@ pub struct VaultFile {
     pub nonce: String,
     /// AES-GCM ciphertext + tag.
     pub ciphertext: Vec<u8>,
+}
+
+impl std::fmt::Debug for VaultFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VaultFile")
+            .field("version", &self.version)
+            .field("ciphertext_size_bytes", &self.ciphertext.len())
+            .finish_non_exhaustive()
+    }
 }
 
 /// One-shot borrow of decrypted plaintext.

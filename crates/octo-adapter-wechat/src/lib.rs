@@ -2,7 +2,14 @@
 //!
 //! Bridges DOT envelopes to WeChat via the WeChat Official Account API.
 //! Uses access_token authentication with AES-256-CBC message encryption.
-//!
+
+// Clippy `[disallowed-methods]` allowlist: this is a messaging-platform
+// adapter (NOT an LLM model provider). The cipherocto capability
+// token boundary lives at `quota-router-core/src/egress/`; this
+// adapter talks to the WeChat Official Account API using platform-issued
+// credentials.
+#![allow(clippy::disallowed_methods)]
+
 //! ## Configuration
 //!
 //! ```json

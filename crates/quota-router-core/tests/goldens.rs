@@ -99,7 +99,7 @@ fn compute_goldens() -> Goldens {
         axes_consumed: vec![("input_tokens_per_1k".to_owned(), 1000)],
         // The ask_id used by `eleven_step::run_settlement` is what the
         // marketplace Ask derives via `Ask::id()` — we mirror that here.
-        ask_id: ask_id, // reused from the step-6 calculation above
+        ask_id, // reused from the step-6 calculation above
         nonce: [0x55; 32],
         timestamp_unix: 1_700_000_000,
         cost: 30_000_u128,

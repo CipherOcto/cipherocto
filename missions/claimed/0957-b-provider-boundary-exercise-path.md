@@ -217,9 +217,36 @@ Adversarial review after R2 commit `da83d8cd` + R2-doc-align `9ca61025` surfaced
 
 | ID                                                     | Status | Reason                                                                                                              |
 | ------------------------------------------------------ | ------ | ------------------------------------------------------------------------------------------------------------------- |
-| C-1 (R1) clippy `[disallowed-methods]` table           | OPEN   | Defensive grep shell-script + key-swap denylist are current defense; clippy is durable closure. Follow-up session.  |
-| C-3 (R1) 24 `reqwest::Client::new` sites in `proxy.rs` | OPEN   | Egress-side swap hard-enforced; HTTP-constructor deny is parallel concern (clippy [disallowed-methods] table lift). |
-| 15 workspace clippy cascade                            | OPEN   | Multi-crate cleanup (`octo-wallet/src/` structs missing `Debug`); not 0957-b-specific.                              |
+| C-1 (R1) clippy `[disallowed-methods]` table           | **CLOSED 2026-08-01** | `clippy.toml` now contains the `[disallowed-methods]` table for `reqwest::Client::new` / `hyper::Client::new` / `ureq::AgentBuilder::new` / `isahc::HttpClient::new`. Defense-in-depth: clippy `disallowed-methods` (in-tree, compile-time) + body-scan job in CI + key-swap denylist (runtime). Per-module `#[allow(clippy::disallowed_methods)]` applied to legitimate provider-egress sites (`proxy.rs`, `native_http/*`), operator-IdP sites (`auth/sso/*`), observability callbacks (`callbacks/*`), secret-manager AWS SigV4 sites, content-moderation sites (`guardrails/mod.rs`), provider health probes (`pre_call_checks.rs`, `node/provider.rs`), and Chrome DevTools Protocol tooling (`whatsapp_chrome_*`). |
+| C-3 (R1) 24 `reqwest::Client::new` sites in `proxy.rs` | **CLOSED 2026-08-01** | All provider-egress sites (`proxy.rs` + `native_http/*`) now flow through `attach_bearer` (key swap) and `strip_capability` (capability strip). The clippy `[disallowed-methods]` deny (C-1 closure) enforces that no NEW HTTP client constructor sites can be added outside the allowlist without explicit review. |
+| 15 workspace clippy cascade                            | **CLOSED 2026-08-01** | `cargo clippy --workspace --all-targets --features full -- -D warnings` exits 0. Closure includes: (a) octo-wallet `missing_debug_implementations` redactions for all security-sensitive structs (manual `Debug` impls that redact secret material per the user's explicit constraint "octo-wallet is security sensitive, Debug should not leak in full security related data"); (b) pedantic lints in `octo-wallet/src/capability/{macaroon,discharge}.rs` (`implicit_hasher`, `unnecessary_literal_bound`, `manual_let_else`, `doc_lazy_continuation`, `type_complexity`); (c) quota-router-core `needless_borrow` (27 sites) + `result_unit_err` in `egress.rs::strip_capability` (now infallible); (d) workspace-wide `uninlined_format_args` + `cast_possible_truncation` cleanups. New redaction test suite `crates/octo-wallet/tests/debug_redaction.rs` (13 tests) asserts Debug output never leaks a known marker pattern for: `IdentityKey`, `CapabilityKey`, `InMemorySigner`, `LedgerSigner`, `KeyHierarchy`, `Macaroon`, `CapabilityToken`, `PrivateWitness`, `ProofBundle`, `KeyShare`, `KeystoreFile`, `VaultFile`. |
+
+### Redaction strategy (R4 close-out, 2026-08-01)
+
+Per the user's explicit constraint that `octo-wallet` is security-sensitive
+and Debug must not leak in full security-related data, all security-sensitive
+fields are redacted in manual `Debug` impls:
+
+| Struct | Field | Redaction form |
+| ------ | ----- | -------------- |
+| `IdentityKey` (existing) | (substrate) | `finish_non_exhaustive()` + public_key hex |
+| `CapabilityKey` (existing) | `[u8;32]` | `"[REDACTED]"` |
+| `InMemorySigner` (R4) | `seed_bytes: [u8;32]` | `"[REDACTED]"` |
+| `LedgerSigner` (R4) | (delegates to inner) | inner Debug |
+| `KeyHierarchy` (R4) | `identity_seed: [u8;32]` | `"[REDACTED 32 bytes]"` |
+| `Macaroon` (R4) | `root_id`, `root_secret_hash`, `id`, `chain` | `"[REDACTED N bytes]"` + `chain_len` |
+| `DischargeMacaroon` (R4) | `root_secret_hash`, `chain` | `"[REDACTED 32 bytes]"` + `chain_len` |
+| `CapabilityToken` (R4) | `holder_sig`, `macaroon`, `discharges` | `"[REDACTED 64 bytes]"` + propagated |
+| `PrivateWitness` (R4) | `cap_root_secret`, `holder_sig` | `"[REDACTED 32 bytes]"` + `"[REDACTED 64 bytes]"` |
+| `ProofBundle` (R4) | `stark_proof: Vec<u8>` | `stark_proof_size_bytes` count |
+| `KeyShare` (R4) | `y: [u8;32]` | `"[REDACTED 32 bytes]"` |
+| `KeystoreFile` (R4) | `crypto: Crypto` | `"[REDACTED — encrypted seed blob + MAC + KDF params]"` |
+| `VaultFile` (R4) | `salt`, `nonce`, `ciphertext` | `ciphertext_size_bytes` count |
+
+`ChannelProviderRegistry` (which was missing Debug — item 12) now derives
+Debug via `ChannelProvider: std::fmt::Debug` super-trait; provider impls
+hold only public operational state (balances, revocation lists, rate
+windows).
 
 ## Mission-level (RFC prerequisites)
 

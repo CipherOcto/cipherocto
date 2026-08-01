@@ -43,6 +43,13 @@
 //! Chrome driver — its only job is to observe what a logged-in Chrome
 //! session does during connect + reconnect, so our daemon can mirror it.
 
+// Clippy `[disallowed-methods]` allowlist: these binaries talk to
+// Chrome DevTools Protocol (CDP) at `http://localhost:9222` to extract
+// WhatsApp Web session keys for Phase 7.J work. CDP is an operator
+// diagnostic endpoint (not an LLM model provider). Cipherocto capability
+// tokens never reach CDP.
+#![allow(clippy::disallowed_methods)]
+
 mod cdp;
 
 use anyhow::{bail, Context, Result};

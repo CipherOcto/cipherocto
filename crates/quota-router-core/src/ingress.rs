@@ -102,8 +102,9 @@ impl Ingress for OpenAiIngress {
             let body_str = String::from_utf8_lossy(raw_body).to_string();
             return Err(IngressError::ProviderError(raw_status, body_str));
         }
-        let parsed: OpenAiResponse = serde_json::from_slice(raw_body)
-            .map_err(|e| IngressError::Malformed(format!("provider response JSON parse failed: {e}")))?;
+        let parsed: OpenAiResponse = serde_json::from_slice(raw_body).map_err(|e| {
+            IngressError::Malformed(format!("provider response JSON parse failed: {e}"))
+        })?;
         let usage = ProviderUsage {
             input_tokens: parsed.usage.prompt_tokens,
             output_tokens: parsed.usage.completion_tokens,

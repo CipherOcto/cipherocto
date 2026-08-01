@@ -15,13 +15,20 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::caveat::{Caveat, RateLimit as CaveatRateLimit};
+use super::caveat::Caveat;
 
 /// Channel identifier (opaque string). Standard channels: "escrow", "revocation", "rate-limit".
 pub type ChannelId = String;
 
 /// Discharge macaroon issued by a third-party channel.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// **Debug redaction (octo-wallet §Security):** `root_secret_hash` and the
+/// HMAC `chain` are bearer-signature material (same class as `Macaroon`).
+/// Manual `Debug` impl prints only the channel name + chain length +
+/// caveat summary. The channel's root secret hash is the channel
+/// operator's responsibility; leaking it through panic messages would
+/// enable offline brute-force on the channel root secret.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DischargeMacaroon {
     /// Channel identifier (`"escrow"`, `"revocation"`, etc.).
     pub channel: ChannelId,
@@ -31,6 +38,17 @@ pub struct DischargeMacaroon {
     pub chain: Vec<[u8; 32]>,
     /// Caveats on the discharge (e.g., time bounds).
     pub caveats: Vec<super::Caveat>,
+}
+
+impl std::fmt::Debug for DischargeMacaroon {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DischargeMacaroon")
+            .field("channel", &self.channel)
+            .field("root_secret_hash", &"[REDACTED 32 bytes]")
+            .field("chain_len", &self.chain.len())
+            .field("caveats", &self.caveats)
+            .finish()
+    }
 }
 
 /// Standard discharge channels (RFC-0957 §3.6).
@@ -118,9 +136,20 @@ pub enum DischargeError {
 /// windows) behind their own fields. Verification is per-discharge:
 /// `verify_discharge` decides whether a specific discharge macaroon is
 /// valid for a specific holder token.
-pub trait ChannelProvider: Send + Sync {
+///
+/// **`Debug` super-trait:** `ChannelProviderRegistry` stores
+/// `Box<dyn ChannelProvider>` and uses the trait object's Debug for its
+/// own Debug impl (so the registry satisfies the wallet's
+/// `missing_debug_implementations` lint). All channel provider impls in
+/// this module hold only public operational state (balances, revocation
+/// lists, rate windows); Debug output never carries secret material.
+pub trait ChannelProvider: Send + Sync + std::fmt::Debug {
     /// Channel identifier this provider services (`"escrow"`, etc.).
-    fn channel(&self) -> &str;
+    /// Static because all standard channels (escrow / revocation /
+    /// rate-limit) are compile-time string constants; this also lets
+    /// `&'static str` be inferred downstream (avoids clippy
+    /// `unnecessary_literal_bound` warnings on every impl).
+    fn channel(&self) -> &'static str;
 
     /// Mint a new discharge macaroon for `req`. Returns the discharge
     /// macaroon body that the holder attaches to their token.
@@ -158,7 +187,7 @@ pub trait ChannelProviderResolver {
 /// Sufficient for tests + single-process deployments; production
 /// deployments will swap for a network-backed resolver (e.g., discovering
 /// providers via the wallet's PCE).
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct ChannelProviderRegistry {
     providers: HashMap<ChannelId, Box<dyn ChannelProvider>>,
 }
@@ -217,6 +246,12 @@ impl ChannelProviderResolver for ChannelProviderRegistry {
 ///   does not match the caveat's channel.
 /// - `DischargeError::ChannelRejected` if the provider rejects the
 ///   discharge (escrow too low, revoked, rate exceeded).
+// `implicit_hasher` (clippy::pedantic): the public API takes a concrete
+// `HashMap<_, _, _>` rather than generic `BuildHasher`. Generalizing would
+// require changing every caller; the simpler fix is a targeted allow
+// scoped to the signature, which keeps the API stable for downstream
+// crates (e.g., quota-router-core's `verify_discharges` callsite).
+#[allow(clippy::implicit_hasher)]
 pub fn verify_discharges(
     token: &super::CapabilityToken,
     resolver: &dyn ChannelProviderResolver,
@@ -322,7 +357,7 @@ impl EscrowDischargeProvider {
 }
 
 impl ChannelProvider for EscrowDischargeProvider {
-    fn channel(&self) -> &str {
+    fn channel(&self) -> &'static str {
         "escrow"
     }
 
@@ -369,17 +404,12 @@ impl ChannelProvider for EscrowDischargeProvider {
         req: &DischargeRequest<'_>,
         _discharge: &DischargeMacaroon,
     ) -> DischargeVerification {
-        let requested = match EscrowBalance::from_context(req.context) {
-            Some(r) => r,
-            None => {
-                return DischargeVerification {
-                    channel: "escrow".to_owned(),
-                    valid: false,
-                    reason: Some(
-                        "context must be 16-byte big-endian u128 EscrowBalance".to_owned(),
-                    ),
-                };
-            }
+        let Some(requested) = EscrowBalance::from_context(req.context) else {
+            return DischargeVerification {
+                channel: "escrow".to_owned(),
+                valid: false,
+                reason: Some("context must be 16-byte big-endian u128 EscrowBalance".to_owned()),
+            };
         };
         let balance = self
             .balances
@@ -455,7 +485,7 @@ impl RevocationDischargeProvider {
 }
 
 impl ChannelProvider for RevocationDischargeProvider {
-    fn channel(&self) -> &str {
+    fn channel(&self) -> &'static str {
         "revocation"
     }
 
@@ -527,12 +557,22 @@ impl ChannelProvider for RevocationDischargeProvider {
 // provider tracks per-window request counts and rejects if either limit
 // is exceeded.
 
+/// Rate-limit window key: `(holder_did, model_hash, axis_hash, window_start)`.
+/// `model_hash` + `axis_hash` are the blake3-derived u32 fingerprints of
+/// the model name + axis id (computed in `verify_discharge` from the
+/// `RateLimitContext`); `window_start` is the unix-time minute boundary
+/// for the rate-limit window.
+type RateLimitWindowKey = (String, u32, u32, u64);
+/// Rate-limit window counters: `(rpm_count, tpm_count)` for the
+/// (holder, model, axis) tuple over the current minute window.
+type RateLimitWindowCounters = (u32, u32);
+
 /// Rate-limit discharge provider. Holds per-(holder, model, axis)
 /// counters keyed by the current minute window.
 #[derive(Debug, Default)]
 pub struct RateLimitDischargeProvider {
-    /// (holder_did, model_hash, axis_hash, window_start) -> (rpm_count, tpm_count).
-    windows: std::sync::Mutex<HashMap<(String, u32, u32, u64), (u32, u32)>>,
+    /// `(holder_did, model_hash, axis_hash, window_start) -> (rpm_count, tpm_count)`.
+    windows: std::sync::Mutex<HashMap<RateLimitWindowKey, RateLimitWindowCounters>>,
 }
 
 /// Rate-limit context (12 bytes): `u32(model) || u32(axis) || u16(rpm) || u16(tpm)`.
@@ -586,7 +626,7 @@ impl RateLimitDischargeProvider {
 }
 
 impl ChannelProvider for RateLimitDischargeProvider {
-    fn channel(&self) -> &str {
+    fn channel(&self) -> &'static str {
         "rate-limit"
     }
 
@@ -622,18 +662,15 @@ impl ChannelProvider for RateLimitDischargeProvider {
         req: &DischargeRequest<'_>,
         _discharge: &DischargeMacaroon,
     ) -> DischargeVerification {
-        let ctx = match RateLimitContext::from_bytes(req.context) {
-            Some(c) => c,
-            None => {
-                return DischargeVerification {
-                    channel: "rate-limit".to_owned(),
-                    valid: false,
-                    reason: Some(
-                        "context must be 12 bytes: u32 model || u32 axis || u16 rpm || u16 tpm"
-                            .to_owned(),
-                    ),
-                };
-            }
+        let Some(ctx) = RateLimitContext::from_bytes(req.context) else {
+            return DischargeVerification {
+                channel: "rate-limit".to_owned(),
+                valid: false,
+                reason: Some(
+                    "context must be 12 bytes: u32 model || u32 axis || u16 rpm || u16 tpm"
+                        .to_owned(),
+                ),
+            };
         };
         // The current minute window. Production pulls from a time oracle;
         // tests use a fixed epoch via `req.context`. For this minimal
@@ -733,7 +770,7 @@ mod tests {
         // matches the mint-time context (escrow checks the requested
         // amount against current balance at verify time too, so the
         // context must be re-supplied by the verifying layer).
-        let mut token = test_token_with_discharge(holder_did, caveats.clone(), discharge.clone());
+        let token = test_token_with_discharge(holder_did, caveats.clone(), discharge.clone());
         // Inject the verify-time context into the token by attaching a
         // marker discharge whose channel field carries it. For this
         // minimal impl, verify_discharges reads context from a fixed
@@ -882,7 +919,13 @@ mod tests {
             use crate::capability::macaroon::compute_capability_id;
             let id = compute_capability_id(&macaroon);
             let mut v = Vec::with_capacity(4 + id.len());
-            v.extend_from_slice(&(id.len() as u32).to_be_bytes());
+            // u32 length prefix per RFC-0957 §3.7 (capability_id is a
+            // 32-byte BLAKE3 digest — fits trivially in u32). The cast
+            // is safe by construction; clippy `cast_possible_truncation`
+            // is silenced here because `id` is a `[u8; 32]`.
+            #[allow(clippy::cast_possible_truncation)]
+            let len_u32 = id.len() as u32;
+            v.extend_from_slice(&len_u32.to_be_bytes());
             v.extend_from_slice(&id);
             v
         };

@@ -28,6 +28,13 @@
 //! Run:
 //!   cargo run -p whatsapp_chrome_session_extract --bin whatsapp_idb_cryptokey_diff_gen --release
 
+// Clippy `[disallowed-methods]` allowlist: these binaries talk to
+// Chrome DevTools Protocol (CDP) at `http://localhost:9222` to extract
+// WhatsApp Web session keys for Phase 7.J work. CDP is an operator
+// diagnostic endpoint (not an LLM model provider). Cipherocto capability
+// tokens never reach CDP.
+#![allow(clippy::disallowed_methods)]
+
 use anyhow::{Context, Result};
 use chrono::Utc;
 use clap::Parser;

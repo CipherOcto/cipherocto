@@ -6,12 +6,30 @@
 # boundary; only the canonical egress module is allowed to construct
 # outbound HTTP clients.
 #
-# Enforcement strategy:
-# - `src/egress.rs` lint module declares BoundaryGuard marker consts
-# - CI grep gate (`.github/workflows/exercise-path.yml`) backs up the lint
-# - body-scan job (per RFC-0957 §In Scope item 3) catches non-header
-#   CapabilityToken leakage
+# Enforcement strategy (defense in depth):
+# 1. **clippy `[disallowed-methods]` table (this file)** — durable,
+#    in-tree lint that compiles with the project. Catches any new
+#    outbound HTTP client constructor added anywhere in the workspace
+#    outside the egress module's allowed list.
+# 2. **`#[deny(clippy::disallowed_methods)]` on `src/egress.rs::lint`** —
+#    backup inside the egress module itself (see egress.rs).
+# 3. **CI grep gate** in `.github/workflows/exercise-path.yml` — backup
+#    grep over the source tree (catches bypasses via type aliases or
+#    macro re-exports that clippy might miss).
+#
+# Path syntax: clippy `[disallowed-methods]` takes the full crate-local
+# path (no leading `::`). For `reqwest`, the full path is
+# `reqwest::Client::new`. The lint can be silenced at the call site
+# with `#[allow(clippy::disallowed_methods)]` and a justification
+# comment — but each allow MUST be reviewed at PR time.
 
-# Disallowed methods are enforced in `src/egress.rs` via the
-# `#[deny(clippy::disallowed_methods)]` attribute on the `lint` module;
-# see `src/egress.rs` for the actual method list.
+disallowed-methods = [
+    # Outbound HTTP client constructors. The egress module is the
+    # ONLY allowed construction site; see `src/egress.rs::lint` for
+    # the structural rationale (single egress point, capability-strip,
+    # key-swap boundary).
+    { path = "reqwest::Client::new", reason = "Mission 0957-b AC-1: HTTP client constructor must live in egress module only" },
+    { path = "hyper::Client::new", reason = "Mission 0957-b AC-1: HTTP client constructor must live in egress module only" },
+    { path = "ureq::AgentBuilder::new", reason = "Mission 0957-b AC-1: HTTP client constructor must live in egress module only" },
+    { path = "isahc::HttpClient::new", reason = "Mission 0957-b AC-1: HTTP client constructor must live in egress module only" },
+]

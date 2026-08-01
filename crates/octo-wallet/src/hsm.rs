@@ -49,10 +49,22 @@ pub trait HsmAdapter: Send + Sync {
 /// All `InMemorySigner` instances share the identity's public key but sign
 /// locally (no hardware boundary). Production deployments MUST replace this
 /// with a real HSM adapter before production rollout.
-#[derive(Debug)]
+///
+/// **Debug redaction (octo-wallet §Security):** `seed_bytes` is the raw
+/// identity seed — must NEVER appear in Debug output (panic messages, log
+/// lines, `dbg!()`). Manual `Debug` impl prints only the public key.
 pub struct InMemorySigner {
     seed_bytes: [u8; 32],
     public_key: [u8; 32],
+}
+
+impl std::fmt::Debug for InMemorySigner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InMemorySigner")
+            .field("seed_bytes", &"[REDACTED]")
+            .field("public_key", &hex::encode(self.public_key))
+            .finish()
+    }
 }
 
 impl InMemorySigner {
@@ -87,9 +99,19 @@ impl HsmAdapter for InMemorySigner {
 /// USB/HID transport which lives outside this MVP module). The smoke test
 /// verifies the adapter contract is satisfied: signature length 64, public key
 /// discovery, deterministic behavior.
-#[derive(Debug)]
+///
+/// **Debug redaction:** manual `Debug` impl delegates to `InMemorySigner::fmt`
+/// which redacts `seed_bytes`.
 pub struct LedgerSigner {
     inner: InMemorySigner,
+}
+
+impl std::fmt::Debug for LedgerSigner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LedgerSigner")
+            .field("inner", &self.inner)
+            .finish()
+    }
 }
 
 impl LedgerSigner {

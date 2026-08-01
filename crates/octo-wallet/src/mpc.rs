@@ -44,13 +44,29 @@ pub enum MpcError {
 }
 
 /// A single key share (32-byte payload + x-coordinate).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// **Debug redaction (octo-wallet §Security):** `y` is the share payload
+/// — for the XOR 2-of-3 scheme, a single share leaks no info about the
+/// secret (one-time pad), but the share itself is operational key material
+/// and MUST NOT appear in Debug output (panic messages, log lines,
+/// `dbg!()`). Manual `Debug` impl prints only the x-coordinate + payload
+/// length placeholder.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct KeyShare {
     /// X-coordinate (share index, 1..=n). Must be unique across shares.
     pub x: u8,
     /// Y-coordinate: 32-byte share payload.
     /// For 2-of-3 XOR scheme: share_3 = A XOR B XOR secret; share_1=A; share_2=B.
     pub y: [u8; 32],
+}
+
+impl std::fmt::Debug for KeyShare {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeyShare")
+            .field("x", &self.x)
+            .field("y", &"[REDACTED 32 bytes]")
+            .finish()
+    }
 }
 
 /// Threshold signer trait.

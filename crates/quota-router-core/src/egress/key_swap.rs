@@ -248,25 +248,19 @@ mod tests {
     /// which bypasses `from_resolved`'s denylist — exactly the path the
     /// tripwire is designed to catch.
     #[test]
-    #[should_panic(
-        expected = "CI: rendered Authorization header carries CipherOcto-internal"
-    )]
+    #[should_panic(expected = "CI: rendered Authorization header carries CipherOcto-internal")]
     fn bearer_wire_value_tripwire_panics_on_internal_prefix() {
-        let bad = ProviderApiKey::from_string_unchecked_for_testing(
-            "sk-virtual-direct-test".to_owned(),
-        );
+        let bad =
+            ProviderApiKey::from_string_unchecked_for_testing("sk-virtual-direct-test".to_owned());
         let _ = bad.bearer_wire_value();
     }
 
     /// Tripwire test for `CipherOcto-` prefix.
     #[test]
-    #[should_panic(
-        expected = "CI: rendered Authorization header carries CipherOcto-internal"
-    )]
+    #[should_panic(expected = "CI: rendered Authorization header carries CipherOcto-internal")]
     fn bearer_wire_value_tripwire_panics_on_cipherocto_prefix() {
-        let bad = ProviderApiKey::from_string_unchecked_for_testing(
-            "CipherOcto-direct-test".to_owned(),
-        );
+        let bad =
+            ProviderApiKey::from_string_unchecked_for_testing("CipherOcto-direct-test".to_owned());
         let _ = bad.bearer_wire_value();
     }
 }

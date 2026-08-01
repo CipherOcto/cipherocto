@@ -2,6 +2,11 @@
 //!
 //! Per RFC-0947: 3 attempts with exponential backoff (1s, 2s, 4s).
 
+// Clippy `[disallowed-methods]` allowlist: Generic webhook callback
+// target (RFC-0947) — operator-configured URL, NOT an LLM model
+// provider. Cipherocto capability tokens never reach webhook targets.
+#![allow(clippy::disallowed_methods)]
+
 use super::{CallbackError, CallbackEvent, CallbackTarget};
 use async_trait::async_trait;
 use hmac_sha256::HMAC;

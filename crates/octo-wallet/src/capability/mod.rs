@@ -41,7 +41,14 @@ use crate::identity::IdentityKey;
 ///
 /// Holder signature is Ed25519 over `canonical_ser(root_id || caveats_wire)`;
 /// the holder DID is the audience (per RFC-0009 §Identity).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// **Debug redaction (octo-wallet §Security):** `holder_sig` is the bearer
+/// Ed25519 signature over the macaroon; `macaroon.chain` is the HMAC chain
+/// (redacted by `Macaroon::Debug`); `discharges[*].chain` is the discharge
+/// HMAC chain (redacted by `DischargeMacaroon::Debug`). Manual `Debug` impl
+/// prints only the public `holder_pub` + `holder_did` + `holder_sig_stale`
+/// flag + a count of attached discharges. Never log `holder_sig` bytes.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilityToken {
     /// Macaroon body (chain + caveats).
     pub macaroon: Macaroon,
@@ -64,6 +71,19 @@ pub struct CapabilityToken {
     /// set to `true` on `attenuate` (without signer).
     #[serde(default)]
     pub holder_sig_stale: bool,
+}
+
+impl std::fmt::Debug for CapabilityToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CapabilityToken")
+            .field("macaroon", &self.macaroon)
+            .field("holder_pub", &hex::encode(self.holder_pub))
+            .field("holder_did", &self.holder_did)
+            .field("holder_sig", &"[REDACTED 64 bytes]")
+            .field("discharges_count", &self.discharges.len())
+            .field("holder_sig_stale", &self.holder_sig_stale)
+            .finish()
+    }
 }
 
 /// Serialize a `CapabilityToken` with Ed25519 signature as raw bytes.

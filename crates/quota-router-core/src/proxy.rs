@@ -14,6 +14,19 @@
 //! - any-llm-mode: py_bridge (PyO3 → Python SDKs) via python_sdk_entry
 //! - full: Either path is available
 
+// Clippy `[disallowed-methods]` allowlist: `proxy.rs` is the canonical
+// provider-egress path (litellm-mode and full mode). Every reqwest::Client
+// site in this module routes through `egress::key_swap::attach_bearer` for
+// the cipherocto-internal → provider-key swap, and through
+// `egress::strip_capability` for capability-token removal. This module is
+// the canonical alternative to `egress.rs`'s structural placeholder `Egress`
+// trait (which is a paper abstraction today). The clippy.toml table
+// forbids `reqwest::Client::new` globally; this file allows it at module
+// scope because the legitimate egress IS here. Future work: collapse the
+// 130+ `reqwest::Client::new()` calls into a single `ProviderHttpClient`
+// helper that the lint will permit as a single allowed method.
+#![allow(clippy::disallowed_methods)]
+
 use crate::balance::Balance;
 use crate::cache::ResponseCache;
 use crate::config::DispatchInfo;

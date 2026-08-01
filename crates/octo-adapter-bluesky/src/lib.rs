@@ -2,7 +2,14 @@
 //!
 //! Bridges DOT envelopes to Bluesky via the AT Protocol (XRPC API).
 //! Uses app password authentication (OAuth2-like flow with session JWT).
-//!
+
+// Clippy `[disallowed-methods]` allowlist: this is a messaging-platform
+// adapter (NOT an LLM model provider). The cipherocto capability
+// token boundary lives at `quota-router-core/src/egress/`; this
+// adapter talks to the AT Protocol XRPC API using platform-issued
+// credentials.
+#![allow(clippy::disallowed_methods)]
+
 //! ## Configuration
 //!
 //! ```json

@@ -4,6 +4,14 @@
 //! on LLM requests and responses. Enables enterprise deployments to enforce
 //! content policies, detect sensitive data, and prevent misuse.
 
+// Clippy `[disallowed-methods]` allowlist: Content moderation (RFC-0946)
+// calls out to third-party moderation APIs (operator-configured URL +
+// API key). These are NOT LLM model providers — the cipherocto
+// capability strip happens at the upstream egress boundary (egress.rs),
+// and the moderation call carries only the moderated content bytes (not
+// capability tokens).
+#![allow(clippy::disallowed_methods)]
+
 pub mod registry;
 
 use serde::{Deserialize, Serialize};

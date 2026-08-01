@@ -200,7 +200,7 @@ pub struct CapabilityHandle {
 /// request against the wallet's capability store.
 ///
 /// On a request that carries no capability header, returns
-/// `Ok(CapabilityHandle { cap_root_hash: [0; 32], holder_did: String::new() })`
+/// `CapabilityHandle { cap_root_hash: [0; 32], holder_did: String::new() }`
 /// — the verifier treats zero-hash as "no capability attached" and
 /// enforces the request against the default-allow / default-deny policy
 /// for the provider egress point.
@@ -211,12 +211,13 @@ pub struct CapabilityHandle {
 /// the macaroon chain is verified by `verify_capability_zk` / wallet
 /// `verify_signature`; this hash is just the index key.
 ///
-/// # Errors
-/// Returns `Err(())` if a capability header is present but malformed
-/// (e.g., wrong segment count); the caller MUST treat this as a
-/// hard failure to prevent silent capability leakage through the
-/// boundary.
-pub fn strip_capability(req: &mut EgressRequest) -> Result<CapabilityHandle, ()> {
+/// **Infallibility (2026-08-01 fix):** the function is structurally
+/// infallible — the loop body never produces an error (malformed
+/// wire shapes do not arise at strip time; the verifier downstream
+/// checks wire shape). The previous `Result<_, ()>` signature was
+/// dead-error noise; converted to `CapabilityHandle` directly. Clippy
+/// `result_unit_err` lint was the trigger.
+pub fn strip_capability(req: &mut EgressRequest) -> CapabilityHandle {
     let mut removed: Option<(String, String)> = None; // (header_name, value)
     let mut idx_to_remove: Vec<usize> = Vec::new();
     for (i, (k, v)) in req.headers.iter().enumerate() {
@@ -237,10 +238,10 @@ pub fn strip_capability(req: &mut EgressRequest) -> Result<CapabilityHandle, ()>
         req.headers.remove(i);
     }
     let Some((_hdr_name, wire)) = removed else {
-        return Ok(CapabilityHandle {
+        return CapabilityHandle {
             cap_root_hash: [0u8; 32],
             holder_did: String::new(),
-        });
+        };
     };
     // Compute cap_root_hash = BLAKE3(wire_token_bytes). Holder DID is
     // not in the wire (it's resolved out-of-band at mint time), so the
@@ -250,10 +251,10 @@ pub fn strip_capability(req: &mut EgressRequest) -> Result<CapabilityHandle, ()>
     hasher.update(b"cipherocto/egress/cap_root_hash/v1");
     hasher.update(wire.as_bytes());
     let cap_root_hash = *hasher.finalize().as_bytes();
-    Ok(CapabilityHandle {
+    CapabilityHandle {
         cap_root_hash,
         holder_did: String::new(), // populated by the verifier layer
-    })
+    }
 }
 
 #[cfg(test)]
@@ -350,7 +351,7 @@ mod tests {
             ],
             body: b"{}".to_vec(),
         };
-        let handle = strip_capability(&mut req).expect("strip");
+        let handle = strip_capability(&mut req);
         assert_ne!(handle.cap_root_hash, [0u8; 32]);
         assert!(
             !req.headers.iter().any(|(k, _)| k == "X-Capability-Token"),
@@ -371,7 +372,7 @@ mod tests {
             )],
             body: b"{}".to_vec(),
         };
-        let handle = strip_capability(&mut req).expect("strip alt");
+        let handle = strip_capability(&mut req);
         assert_ne!(handle.cap_root_hash, [0u8; 32]);
         assert!(!req.headers.iter().any(|(k, _)| k == "Authorization"));
     }
@@ -385,7 +386,7 @@ mod tests {
             headers: vec![("Content-Type".to_owned(), "application/json".to_owned())],
             body: b"{}".to_vec(),
         };
-        let handle = strip_capability(&mut req).expect("strip");
+        let handle = strip_capability(&mut req);
         assert_eq!(handle.cap_root_hash, [0u8; 32]);
         assert_eq!(handle.holder_did, "");
         assert_eq!(req.headers.len(), 1);
@@ -403,7 +404,7 @@ mod tests {
             )],
             body: b"{}".to_vec(),
         };
-        strip_capability(&mut req).expect("strip");
+        strip_capability(&mut req);
         assert!(req.headers.is_empty(), "lowercase variant must also strip");
     }
 
@@ -421,7 +422,7 @@ mod tests {
             )],
             body: b"{}".to_vec(),
         };
-        strip_capability(&mut req).expect("strip");
+        strip_capability(&mut req);
         assert_eq!(req.headers.len(), 1);
         assert_eq!(req.headers[0].0, "Authorization");
     }

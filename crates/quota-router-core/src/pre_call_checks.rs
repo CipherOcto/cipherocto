@@ -5,6 +5,12 @@
 //! - Tag filtering
 //! - Health checks
 
+// Clippy `[disallowed-methods]` allowlist: Pre-call checks perform
+// health probes against deployment endpoints (RFC-0936). Health probes
+// are unauthenticated GETs to `/.well-known/health` style endpoints —
+// they do NOT carry cipherocto capability material.
+#![allow(clippy::disallowed_methods)]
+
 use async_trait::async_trait;
 
 // ============================================================================

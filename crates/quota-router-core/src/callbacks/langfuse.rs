@@ -2,6 +2,10 @@
 //!
 //! Per RFC-0947: 3 attempts with exponential backoff (1s, 2s, 4s).
 
+// Clippy `[disallowed-methods]` allowlist: Langfuse is an observability
+// callback target (RFC-0947), NOT an LLM model provider.
+#![allow(clippy::disallowed_methods)]
+
 use super::{CallbackError, CallbackEvent, CallbackTarget};
 use async_trait::async_trait;
 use std::time::Duration;

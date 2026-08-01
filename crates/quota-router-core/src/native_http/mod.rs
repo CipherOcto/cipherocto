@@ -623,7 +623,7 @@ pub async fn stream_openai_compatible(
         .header("Content-Type", "application/json")
         .json(&body);
     if let Some(key) = api_key {
-        let bearer = crate::egress::key_swap::attach_bearer(&key)
+        let bearer = crate::egress::key_swap::attach_bearer(key)
                 .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
         req_builder = req_builder.header("Authorization", bearer);
     }

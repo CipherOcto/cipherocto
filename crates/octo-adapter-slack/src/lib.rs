@@ -11,6 +11,13 @@
 //! }
 //! ```
 
+// Clippy `[disallowed-methods]` allowlist: this is a messaging-platform
+// adapter (NOT an LLM model provider). The cipherocto capability
+// token boundary lives at `quota-router-core/src/egress/`; this
+// adapter talks to its own platform API using platform-issued
+// credentials.
+#![allow(clippy::disallowed_methods)]
+
 use async_trait::async_trait;
 use base64::Engine;
 use std::collections::BTreeMap;

@@ -136,9 +136,21 @@ fn is_valid_mission_id_char(c: char) -> bool {
 ///
 /// Construct via `KeyHierarchy::new(identity_seed_bytes)`. Stateless — every
 /// call to `derive` is deterministic for the same input.
-#[derive(Clone, Debug)]
+///
+/// **Debug redaction (octo-wallet §Security):** `identity_seed` is the raw
+/// 32-byte seed — must NEVER appear in Debug output (panic messages, log
+/// lines, `dbg!()`). Manual `Debug` impl prints only the byte count.
+#[derive(Clone)]
 pub struct KeyHierarchy {
     identity_seed: [u8; 32],
+}
+
+impl std::fmt::Debug for KeyHierarchy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeyHierarchy")
+            .field("identity_seed", &"[REDACTED 32 bytes]")
+            .finish()
+    }
 }
 
 impl KeyHierarchy {

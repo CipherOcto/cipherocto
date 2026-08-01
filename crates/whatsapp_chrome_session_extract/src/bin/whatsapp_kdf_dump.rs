@@ -13,6 +13,13 @@
 //! Output: NDJSON of every webpack module whose name matches crypto-related
 //! patterns, plus the function source for matched modules.
 
+// Clippy `[disallowed-methods]` allowlist: these binaries talk to
+// Chrome DevTools Protocol (CDP) at `http://localhost:9222` to extract
+// WhatsApp Web session keys for Phase 7.J work. CDP is an operator
+// diagnostic endpoint (not an LLM model provider). Cipherocto capability
+// tokens never reach CDP.
+#![allow(clippy::disallowed_methods)]
+
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use clap::Parser;

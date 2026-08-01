@@ -29,6 +29,11 @@
 //!   * dumps every CDP event as one JSONL line to `--trace`, plus a short
 //!     human summary table at the end (UA / Sec-CH-UA / endpoint / frame count).
 
+// Clippy `[disallowed-methods]` allowlist: this binary drives Chrome via
+// Chrome DevTools Protocol (CDP) at `http://localhost:9222` — operator
+// diagnostic tooling (Phase 7.J), NOT an LLM model provider.
+#![allow(clippy::disallowed_methods)]
+
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use clap::Parser;

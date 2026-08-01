@@ -31,10 +31,10 @@ pub enum SimResponseKind {
     Unauthorized, // 401
     KeyExpired,   // 401 with expired-key error schema
     Timeout,
-    SchemaChange, // 200 but malformed body
-    Throttle,     // 200 with high latency (slow body, no 429)
-    Burst429,     // rapid-fire 429 with retry-after hint
-    Garbage,      // 200 with binary body
+    SchemaChange,  // 200 but malformed body
+    Throttle,      // 200 with high latency (slow body, no 429)
+    Burst429,      // rapid-fire 429 with retry-after hint
+    Garbage,       // 200 with binary body
     InternalError, // 500 with provider-specific error schema
 }
 

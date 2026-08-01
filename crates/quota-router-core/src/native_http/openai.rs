@@ -1,3 +1,11 @@
+// Clippy `[disallowed-methods]` allowlist: this module is a
+// legitimate provider-egress adapter. It talks to the model
+// provider's REST API and routes the Authorization header through
+// `egress::key_swap::attach_bearer` so the cipherocto-internal key
+// is swapped for the provider's key before the request leaves.
+// Capability tokens never reach the provider (see `egress::strip_capability`).
+#![allow(clippy::disallowed_methods)]
+
 // openai — OpenAI via reqwest (native_http, LiteLLM mode)
 
 use super::{
@@ -126,7 +134,7 @@ impl super::HttpProvider for OpenAIProvider {
             .header("Content-Type", "application/json")
             .json(&body);
         if let Some(key) = api_key {
-            let bearer = crate::egress::key_swap::attach_bearer(&key)
+            let bearer = crate::egress::key_swap::attach_bearer(key)
                 .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
             req_builder = req_builder.header("Authorization", bearer);
         }
@@ -188,7 +196,7 @@ impl super::HttpProvider for OpenAIProvider {
             .header("Content-Type", "application/json")
             .json(&body);
         if let Some(key) = api_key {
-            let bearer = crate::egress::key_swap::attach_bearer(&key)
+            let bearer = crate::egress::key_swap::attach_bearer(key)
                 .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
             req_builder = req_builder.header("Authorization", bearer);
         }
@@ -303,7 +311,7 @@ impl super::HttpProvider for OpenAIProvider {
             .header("Content-Type", "application/json")
             .json(&body);
         if let Some(key) = api_key {
-            let bearer = crate::egress::key_swap::attach_bearer(&key)
+            let bearer = crate::egress::key_swap::attach_bearer(key)
                 .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
             req_builder = req_builder.header("Authorization", bearer);
         }
@@ -382,7 +390,7 @@ impl super::HttpProvider for OpenAIProvider {
             .get(&url)
             .header("Content-Type", "application/json");
         if let Some(key) = api_key {
-            let bearer = crate::egress::key_swap::attach_bearer(&key)
+            let bearer = crate::egress::key_swap::attach_bearer(key)
                 .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
             req_builder = req_builder.header("Authorization", bearer);
         }
@@ -435,7 +443,7 @@ impl super::HttpProvider for OpenAIProvider {
             .delete(&url)
             .header("Content-Type", "application/json");
         if let Some(key) = api_key {
-            let bearer = crate::egress::key_swap::attach_bearer(&key)
+            let bearer = crate::egress::key_swap::attach_bearer(key)
                 .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
             req_builder = req_builder.header("Authorization", bearer);
         }
@@ -487,7 +495,7 @@ impl super::HttpProvider for OpenAIProvider {
             .get(&url)
             .header("Content-Type", "application/json");
         if let Some(key) = api_key {
-            let bearer = crate::egress::key_swap::attach_bearer(&key)
+            let bearer = crate::egress::key_swap::attach_bearer(key)
                 .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
             req_builder = req_builder.header("Authorization", bearer);
         }
@@ -541,7 +549,7 @@ impl super::HttpProvider for OpenAIProvider {
             .post(&url)
             .header("Content-Type", "application/json");
         if let Some(key) = api_key {
-            let bearer = crate::egress::key_swap::attach_bearer(&key)
+            let bearer = crate::egress::key_swap::attach_bearer(key)
                 .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
             req_builder = req_builder.header("Authorization", bearer);
         }
@@ -596,7 +604,7 @@ impl super::HttpProvider for OpenAIProvider {
             .post(&url)
             .header("Content-Type", "application/json");
         if let Some(key) = api_key {
-            let bearer = crate::egress::key_swap::attach_bearer(&key)
+            let bearer = crate::egress::key_swap::attach_bearer(key)
                 .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
             req_builder = req_builder.header("Authorization", bearer);
         }
@@ -632,7 +640,7 @@ impl super::HttpProvider for OpenAIProvider {
 
         let mut req_builder = self.client.get(&url);
         if let Some(key) = api_key {
-            let bearer = crate::egress::key_swap::attach_bearer(&key)
+            let bearer = crate::egress::key_swap::attach_bearer(key)
                 .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
             req_builder = req_builder.header("Authorization", bearer);
         }
@@ -667,7 +675,7 @@ impl super::HttpProvider for OpenAIProvider {
 
         let mut req_builder = self.client.post(&url);
         if let Some(key) = api_key {
-            let bearer = crate::egress::key_swap::attach_bearer(&key)
+            let bearer = crate::egress::key_swap::attach_bearer(key)
                 .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
             req_builder = req_builder.header("Authorization", bearer);
         }
@@ -705,7 +713,7 @@ impl super::HttpProvider for OpenAIProvider {
 
         let mut req_builder = self.client.get(&url);
         if let Some(key) = api_key {
-            let bearer = crate::egress::key_swap::attach_bearer(&key)
+            let bearer = crate::egress::key_swap::attach_bearer(key)
                 .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
             req_builder = req_builder.header("Authorization", bearer);
         }
@@ -740,7 +748,7 @@ impl super::HttpProvider for OpenAIProvider {
 
         let mut req_builder = self.client.get(&url);
         if let Some(key) = api_key {
-            let bearer = crate::egress::key_swap::attach_bearer(&key)
+            let bearer = crate::egress::key_swap::attach_bearer(key)
                 .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, the upstream source path leaked a CipherOcto key");
             req_builder = req_builder.header("Authorization", bearer);
         }

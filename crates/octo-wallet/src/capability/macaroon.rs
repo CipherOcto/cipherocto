@@ -79,7 +79,15 @@ fn u32_len(n: usize) -> [u8; 4] {
 }
 
 /// Macaroon v1 (RFC-0957 §3.1). Bearer token + chained caveat HMACs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// **Debug redaction (octo-wallet §Security):** `root_secret_hash`, `id`
+/// (capability identifier), and `chain` (HMAC chain — bearer signature)
+/// MUST NOT appear in Debug output. The HMAC chain is the macaroon
+/// bearer token; dumping it into panic messages or log lines would
+/// enable offline brute-force attacks on the issuer's root secret
+/// (RFC-0957 §Adversary A5). Manual `Debug` impl prints only chain
+/// length + caveat summary.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Macaroon {
     /// Unique 16-byte identifier (per mint).
     pub root_id: MacaroonId,
@@ -100,6 +108,18 @@ pub struct Macaroon {
     pub chain: Vec<[u8; 32]>,
     /// Caveat list (in attenuation order).
     pub caveats: Vec<Caveat>,
+}
+
+impl std::fmt::Debug for Macaroon {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Macaroon")
+            .field("root_id", &"[REDACTED 16 bytes]")
+            .field("root_secret_hash", &"[REDACTED 32 bytes]")
+            .field("id", &"[REDACTED 32 bytes]")
+            .field("chain_len", &self.chain.len())
+            .field("caveats", &self.caveats)
+            .finish()
+    }
 }
 
 /// Compute the 32-byte capability id per RFC-0965 §3.7:
@@ -351,9 +371,9 @@ impl Macaroon {
 
     /// Full verification: chain re-derivation + `WrappedOnly` chain check
     /// + attenuation subsumption against `expected_parent` (if provided).
-    /// Use this in preference to `verify_signature` for any verification
-    /// path that needs to enforce RFC-0957 §3.5 attenuation monotonicity
-    /// AND RFC-0965 §3.7 wrapped-chain integrity.
+    ///   * Use this in preference to `verify_signature` for any verification
+    ///   * path that needs to enforce RFC-0957 §3.5 attenuation monotonicity
+    ///   * AND RFC-0965 §3.7 wrapped-chain integrity.
     ///
     /// `expected_parent = None` skips the subsumption check (use for root
     /// tokens that have no parent).
@@ -591,7 +611,8 @@ mod tests {
     fn hex(bytes: &[u8]) -> String {
         let mut s = String::with_capacity(bytes.len() * 2);
         for b in bytes {
-            s.push_str(&format!("{:02x}", b));
+            use std::fmt::Write;
+            let _ = write!(s, "{b:02x}");
         }
         s
     }
@@ -644,24 +665,25 @@ mod tests {
     #[test]
     fn hmac_blake3_matches_blake3_keyed_hash_various_keys() {
         // Distinct 32-byte keys (zeros, ones, ascending, descending, pattern)
-        // to catch any branch where the key is misread.
+        // to catch any branch where the key is misread. The `as u8`
+        // casts below are safe: `i` ranges over 0..32 (one byte's worth
+        // of values) and 255 - i is also in u8 range.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        fn fill_key<F: Fn(usize) -> u8>(f: F) -> [u8; 32] {
+            let mut k = [0u8; 32];
+            for (i, b) in k.iter_mut().enumerate() {
+                *b = f(i);
+            }
+            k
+        }
+        // The `as u8` casts in the closures below are safe: `i` ranges
+        // over 0..32 (truncation impossible) and 255 - i is also a u8.
+        #[allow(clippy::cast_possible_truncation)]
         let keys: Vec<[u8; 32]> = vec![
             [0u8; 32],
             [0xffu8; 32],
-            {
-                let mut k = [0u8; 32];
-                for (i, b) in k.iter_mut().enumerate() {
-                    *b = i as u8;
-                }
-                k
-            },
-            {
-                let mut k = [0u8; 32];
-                for (i, b) in k.iter_mut().enumerate() {
-                    *b = 255 - i as u8;
-                }
-                k
-            },
+            fill_key(|i| i as u8),
+            fill_key(|i| 255 - i as u8),
             {
                 let mut k = [0u8; 32];
                 for (i, b) in k.iter_mut().enumerate() {
@@ -1038,6 +1060,10 @@ mod tests {
             0, 1, 63, 64, 127, 128, 1023, 1024, 1025, 2047, 2048, 4096, 8192,
         ];
         for &len in lengths {
+            // `i & 0xff` is already a u8-shaped value; the cast is safe
+            // by construction (no truncation possible). Silence clippy
+            // `cast_possible_truncation`.
+            #[allow(clippy::cast_possible_truncation)]
             let msg: Vec<u8> = (0..len).map(|i| (i & 0xff) as u8).collect();
             for (k_idx, key) in keys.iter().enumerate() {
                 let impl_out = hmac_blake3(key, &msg);

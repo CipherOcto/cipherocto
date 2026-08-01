@@ -45,7 +45,15 @@ const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
 
 /// Keystore file envelope (Starkli-shaped). Versioned for forward-compat.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// **Debug redaction (octo-wallet §Security):** the on-disk `crypto` field
+/// carries the encrypted seed blob + MAC tag + Argon2id salt + nonce.
+/// While these are not plaintext secret material (the seed is wrapped
+/// under Argon2id(passphrase) + ChaCha20-Poly1305), Debug-dumping the
+/// full envelope into panic messages or log lines surfaces the on-disk
+/// format alongside any caller-supplied passphrase that may also be in
+/// scope. Manual `Debug` impl prints only the public_key + version.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct KeystoreFile {
     pub version: u8,
     pub crypto: Crypto,
@@ -56,7 +64,21 @@ pub struct KeystoreFile {
     pub cipher_name: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl std::fmt::Debug for KeystoreFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeystoreFile")
+            .field("version", &self.version)
+            .field("cipher_name", &self.cipher_name)
+            .field("public_key", &self.public_key)
+            .field(
+                "crypto",
+                &"[REDACTED — encrypted seed blob + MAC + KDF params]",
+            )
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Crypto {
     pub cipher: String,
     pub ciphertext: String,
@@ -68,12 +90,31 @@ pub struct Crypto {
     pub mac: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl std::fmt::Debug for Crypto {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Crypto")
+            .field("cipher", &self.cipher)
+            .field("kdf", &self.kdf)
+            .field("ciphertext_size_hex_chars", &self.ciphertext.len())
+            .field("mac_size_hex_chars", &self.mac.len())
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CipherParams {
     pub nonce: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl std::fmt::Debug for CipherParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CipherParams")
+            .field("nonce_size_hex_chars", &self.nonce.len())
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct KdfParams {
     pub salt: String,
     #[serde(rename = "timecost")]
@@ -83,6 +124,18 @@ pub struct KdfParams {
     pub parallelism: u32,
     #[serde(rename = "outputlen")]
     pub output_len: usize,
+}
+
+impl std::fmt::Debug for KdfParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KdfParams")
+            .field("salt_size_hex_chars", &self.salt.len())
+            .field("time_cost", &self.time_cost)
+            .field("memory_cost", &self.memory_cost)
+            .field("parallelism", &self.parallelism)
+            .field("output_len", &self.output_len)
+            .finish()
+    }
 }
 
 /// Starkli-shaped keystore importer/exporter for Ed25519 identity keys.

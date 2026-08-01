@@ -52,7 +52,12 @@ pub enum CapabilityClass {
 /// Hybrid / Wholesale callers leave this `None`; SelfHost callers populate
 /// it with the inference trace whose canonicalized hash matches
 /// `public_inputs.output_hash`. Mint API enforces both directions.
-#[derive(Debug, Clone)]
+///
+/// **Debug redaction (octo-wallet §Security):** `cap_root_secret` is the
+/// macaroon root secret (RFC-0957 §3.1) and `holder_sig` is the bearer
+/// Ed25519 signature — both MUST NEVER appear in Debug output. Manual
+/// `Debug` impl prints only field presence + lengths.
+#[derive(Clone)]
 pub struct PrivateWitness {
     pub cap_root_secret: [u8; 32],
     pub holder_sig: Signature,
@@ -61,6 +66,21 @@ pub struct PrivateWitness {
     /// **v1.2 M5:** SelfHost-only PoI trace. Hybrid/Wholesale leave `None`.
     /// Mint API rejects SelfHost with `None` via [`ZkMintError::MissingInferenceTrace`].
     pub inference_trace: Option<ExecutionTrace>,
+}
+
+impl std::fmt::Debug for PrivateWitness {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PrivateWitness")
+            .field("cap_root_secret", &"[REDACTED 32 bytes]")
+            .field("holder_sig", &"[REDACTED 64 bytes]")
+            .field("caveats_count", &self.caveats_full.len())
+            .field("discharges_count", &self.discharges_full.len())
+            .field(
+                "inference_trace",
+                &self.inference_trace.as_ref().map(|t| t.step_count),
+            )
+            .finish()
+    }
 }
 
 /// Self-host inference trace (RFC-0958 §Data Structures; v1.2 M5 fix).
@@ -125,13 +145,32 @@ pub struct PublicInputs {
 /// the N=2 grace period). The casm_hash binding still operates over
 /// the hash (no behavioral change); the version field is for
 /// migration tracking.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// **Debug redaction (octo-wallet §Security):** `stark_proof` carries
+/// the proof bytes (50-500 KB per RFC-0958 §Performance); dumping to
+/// panic messages / log lines pollutes output and may carry transient
+/// proof-generation data the verifier hasn't yet finalized. Manual
+/// `Debug` impl prints only the size + casm_hash hex + version +
+/// security_bits.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ProofBundle {
     pub stark_proof: Vec<u8>,
     pub public_inputs: PublicInputs,
     pub casm_hash: [u8; 32],
     pub casm_version: u32,
     pub security_bits: u8,
+}
+
+impl std::fmt::Debug for ProofBundle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProofBundle")
+            .field("stark_proof_size_bytes", &self.stark_proof.len())
+            .field("public_inputs", &self.public_inputs)
+            .field("casm_hash", &hex::encode(self.casm_hash))
+            .field("casm_version", &self.casm_version)
+            .field("security_bits", &self.security_bits)
+            .finish()
+    }
 }
 
 /// ZK mint errors (mission 0958-a R3 fix-up, 2026-07-31).

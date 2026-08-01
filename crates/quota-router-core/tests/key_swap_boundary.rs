@@ -71,10 +71,12 @@ fn build_ingress_request_with_capability_and_virtual_key(
 fn swap_to_provider_key(req: &mut EgressRequest, provider_key: &str) -> Result<(), KeySwapError> {
     // Step 1: strip cipherocto-internal material (capability token + the
     // inbound virtual-key Bearer header).
-    let _: CapabilityHandle = egress::strip_capability(req).unwrap_or(CapabilityHandle {
-        cap_root_hash: [0u8; 32],
-        holder_did: String::new(),
-    });
+    // `strip_capability` is now infallible (2026-08-01 fix); the handle
+    // is bound to `_` because the wire-level key-swap path doesn't need
+    // it — the verifier layer downstream uses it for authorization
+    // lookups, but the swap-to-provider-key helper is purely about
+    // re-keying the outbound Authorization.
+    let _: CapabilityHandle = egress::strip_capability(req);
     // Step 2: remove ALL inbound Authorization variants (refreshes any
     // leftover virtual key).
     req.headers
@@ -238,7 +240,7 @@ fn egress_strip_capability_preserves_provider_bearer() {
         ],
         body: b"{}".to_vec(),
     };
-    let _ = egress::strip_capability(&mut req).expect("strip succeeds with no cap header");
+    let _ = egress::strip_capability(&mut req);
 
     let auth = req
         .headers
@@ -298,9 +300,7 @@ fn spawn_one_shot_capture_server() -> (String, mpsc::Receiver<CapturedRequest>) 
 
     std::thread::spawn(move || {
         // 200ms timeout so test failures don't hang the runner.
-        listener
-            .set_nonblocking(false)
-            .expect("set blocking");
+        listener.set_nonblocking(false).expect("set blocking");
         let accept_res = listener.accept();
         let (mut stream, _peer) = match accept_res {
             Ok(t) => t,
@@ -419,15 +419,14 @@ fn send_egress_request_over_tcp(
     {
         wire_headers.push(("Content-Type".to_owned(), "application/json".to_owned()));
     }
-    if !wire_headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("host")) {
+    if !wire_headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("host"))
+    {
         wire_headers.push(("Host".to_owned(), host_port.to_owned()));
     }
 
-    let mut req = format!(
-        "{} {} HTTP/1.1\r\n",
-        outbound.method,
-        outbound.path
-    );
+    let mut req = format!("{} {} HTTP/1.1\r\n", outbound.method, outbound.path);
     for (k, v) in &wire_headers {
         // Sanitize: forbid embedded CRLF in header values (CRLF injection).
         let safe_v: String = v
@@ -545,10 +544,8 @@ fn wire_round_trip_inbound_cipherocto_key_never_reaches_server_authorization() {
 fn wire_round_trip_attach_bearer_rejects_cipherocto_internal_shape() {
     let inbound_virtual_key = "sk-virtual-bypass-attempt";
     let cap_token = "wire-token-bypass-test";
-    let mut req = build_ingress_request_with_capability_and_virtual_key(
-        inbound_virtual_key,
-        cap_token,
-    );
+    let mut req =
+        build_ingress_request_with_capability_and_virtual_key(inbound_virtual_key, cap_token);
     // The swap helper itself rejects cipherocto-internal "provider" keys
     // (the attacker-controlled path: operator misconfig or upstream code
     // that accidentally feeds cipherocto key into the resolve layer).

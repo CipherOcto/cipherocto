@@ -8,6 +8,14 @@
 //! Run with: cargo test -p quota-router-core --test e2e_proxy --features litellm-mode -- --test-threads=1
 //!
 //! Requires:
+
+// Clippy `[disallowed-methods]` allowlist: e2e_proxy spins up a real
+// proxy server that talks to a real LLM endpoint (opengateway/mimo).
+// This is the legitimate provider-egress path exercised end-to-end.
+// Capability tokens never cross the boundary (verified by
+// `tests/key_swap_boundary.rs`).
+#![allow(clippy::disallowed_methods)]
+
 //!   - Network access to opengateway.gitlawb.com
 
 use reqwest::Client;

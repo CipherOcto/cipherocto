@@ -78,13 +78,36 @@ fuzz_target!(|data: &[u8]| {
 
     // Tampering test: change caveat without re-deriving chain.
     if !caveats.is_empty() {
+        // Mutate caveat[0] (head of chain).
         let mut broken = token.macaroon.clone();
         broken.caveats[0] = Caveat::AmountMax(u128::MAX);
         let res = broken.verify_signature(&root_secret);
-        assert!(res.is_err(), "tampered caveat must fail verify");
+        assert!(res.is_err(), "tampered caveat[0] must fail verify");
+
+        // Mutate every non-tail caveat (middle of chain). Catches bugs
+        // that only re-derive from the head and skip intermediates.
+        for i in 1..caveats.len().saturating_sub(1) {
+            let mut broken = token.macaroon.clone();
+            broken.caveats[i] = Caveat::AmountMax(u128::MAX);
+            let res = broken.verify_signature(&root_secret);
+            assert!(res.is_err(), "tampered caveat[{i}] (mid-chain) must fail verify");
+        }
+
+        // Mutate the tail caveat (last entry).
+        if caveats.len() > 1 {
+            let mut broken = token.macaroon.clone();
+            let last = caveats.len() - 1;
+            broken.caveats[last] = Caveat::AmountMax(u128::MAX);
+            let res = broken.verify_signature(&root_secret);
+            assert!(res.is_err(), "tampered caveat[last] (tail) must fail verify");
+        }
     }
 
     // Holder-sig tamper: change signature to random bytes.
+    // Mission 0957-a R6 fix: previously this branch silently swallowed
+    // the verify result. The fuzz target's invariant IS that a tampered
+    // sig fails — assert it. Probability of a random 64-byte value being
+    // a valid Ed25519 signature is 2^(-256); assertion is sound.
     if let Some(last) = data.last() {
         let mut bad_token = token.clone();
         let bad_sig = {
@@ -94,10 +117,10 @@ fuzz_target!(|data: &[u8]| {
         };
         if let Ok(sig) = bad_sig {
             bad_token.holder_sig = sig;
-            let _ = bad_token.verify_holder_sig();
-            // Note: we don't assert this fails because random bytes
-            // could happen to match; the invariant is checked via the
-            // chain-mismatch path above.
+            assert!(
+                bad_token.verify_holder_sig().is_err(),
+                "tampered holder_sig must fail verify_holder_sig"
+            );
         }
     }
 });

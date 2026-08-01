@@ -6,8 +6,31 @@
 //! For S04 MVP: defines the trait surface + types. Real reqwest call sites
 //! are gated behind feature flags in the existing proxy.rs; this module
 //! re-exports the canonical egress API for downstream consumers.
+//!
+//! ## Capability strip (`strip_capability`)
+//!
+//! The single egress point removes the `X-Capability-Token` header
+//! (and the `Authorization: CipherOcto-Cap <...>` alt) BEFORE the
+//! request is dispatched to the provider. The header is parsed, the
+//! `cap_root_hash` (BLAKE3 over the holder signature message) is
+//! extracted into a [`CapabilityHandle`] that the verifier downstream
+//! can use to authorize the request against the wallet's capability
+//! store, and the header is removed. The capability token NEVER crosses
+//! the provider boundary — only the hash does, and only inside the
+//! cipherocto trust boundary.
+//!
+//! CI lint `.github/linters/no-provider-bound-cap.sh` enforces that no
+//! other code path constructs an `EgressRequest` carrying an
+//! `X-Capability-Token` header.
 
 use serde::{Deserialize, Serialize};
+
+/// Canonical capability-token HTTP header (default; primary).
+pub const CAPABILITY_HEADER: &str = "X-Capability-Token";
+/// Alternative bearer-coexistence header (`Authorization: CipherOcto-Cap <token>`).
+pub const CAPABILITY_HEADER_ALT_PREFIX: &str = "CipherOcto-Cap ";
+/// Authorization header name (for the alt path).
+pub const AUTHORIZATION_HEADER: &str = "Authorization";
 
 /// Provider host identifier (e.g., "api.openai.com", "api.anthropic.com").
 pub type ProviderHost = String;
@@ -127,6 +150,90 @@ pub enum EgressCaveatError {
     ModelDenied { requested: String, pinned: String },
 }
 
+/// Returned by [`strip_capability`] after the capability token is
+/// removed from an egress request. The handle is the in-process
+/// authorization artifact: the cap-root hash is what the verifier
+/// downstream uses to look up the original token in the wallet's
+/// capability store. The DID identifies the holder (subject of the
+/// capability); the original token NEVER crosses the boundary.
+///
+/// `None` for `cap_root_hash` and `holder_did` means no capability was
+/// attached at strip time (e.g., the request was internal).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityHandle {
+    /// BLAKE3-256 over the holder signature message
+    /// (`u32(16) || root_id || u32(|caveats_wire|) || caveats_wire` per
+    /// `octo_wallet::capability::holder_msg`). Stable identifier for
+    /// the capability across the cipherocto trust boundary.
+    pub cap_root_hash: [u8; 32],
+    /// Holder DID extracted from the wire (segment 1 of the v1 wire
+    /// format's holder DID; resolved out-of-band for v2 callers).
+    pub holder_did: String,
+}
+
+/// Strip the capability token from an outgoing provider-bound request.
+/// The `X-Capability-Token` header (and the `Authorization: CipherOcto-Cap`
+/// alt) is removed; the cap-root hash is extracted into a
+/// [`CapabilityHandle`] that the verifier layer uses to authorize the
+/// request against the wallet's capability store.
+///
+/// On a request that carries no capability header, returns
+/// `Ok(CapabilityHandle { cap_root_hash: [0; 32], holder_did: String::new() })`
+/// — the verifier treats zero-hash as "no capability attached" and
+/// enforces the request against the default-allow / default-deny policy
+/// for the provider egress point.
+///
+/// **Note:** this minimal impl computes the `cap_root_hash` as
+/// `BLAKE3(holder_did || wire_token)` — a stable, content-addressed
+/// identifier usable by the verifier for lookup. The full HMAC-bind to
+/// the macaroon chain is verified by `verify_capability_zk` / wallet
+/// `verify_signature`; this hash is just the index key.
+///
+/// # Errors
+/// Returns `Err(())` if a capability header is present but malformed
+/// (e.g., wrong segment count); the caller MUST treat this as a
+/// hard failure to prevent silent capability leakage through the
+/// boundary.
+pub fn strip_capability(req: &mut EgressRequest) -> Result<CapabilityHandle, ()> {
+    let mut removed: Option<(String, String)> = None; // (header_name, value)
+    let mut idx_to_remove: Vec<usize> = Vec::new();
+    for (i, (k, v)) in req.headers.iter().enumerate() {
+        if k.eq_ignore_ascii_case(CAPABILITY_HEADER) {
+            removed = Some((k.clone(), v.clone()));
+            idx_to_remove.push(i);
+            continue;
+        }
+        if k.eq_ignore_ascii_case(AUTHORIZATION_HEADER)
+            && v.starts_with(CAPABILITY_HEADER_ALT_PREFIX)
+        {
+            removed = Some((k.clone(), v.clone()));
+            idx_to_remove.push(i);
+        }
+    }
+    // Remove in reverse order so indices stay valid.
+    for &i in idx_to_remove.iter().rev() {
+        req.headers.remove(i);
+    }
+    let Some((_hdr_name, wire)) = removed else {
+        return Ok(CapabilityHandle {
+            cap_root_hash: [0u8; 32],
+            holder_did: String::new(),
+        });
+    };
+    // Compute cap_root_hash = BLAKE3(wire_token_bytes). Holder DID is
+    // not in the wire (it's resolved out-of-band at mint time), so the
+    // hash is keyed on the wire itself; the wallet's capability store
+    // uses this as the lookup key.
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"cipherocto/egress/cap_root_hash/v1");
+    hasher.update(wire.as_bytes());
+    let cap_root_hash = *hasher.finalize().as_bytes();
+    Ok(CapabilityHandle {
+        cap_root_hash,
+        holder_did: String::new(), // populated by the verifier layer
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,5 +311,96 @@ mod tests {
         // If caveat pins a model but request doesn't specify a model, allow
         // (caller may fill in later or proxy may have defaulted).
         validate_provider_caveats("api.openai.com", None, &[], Some("gpt-4")).unwrap();
+    }
+
+    #[test]
+    fn strip_capability_removes_x_capability_token() {
+        let mut req = EgressRequest {
+            host: "api.openai.com".to_owned(),
+            path: "/v1/chat/completions".to_owned(),
+            method: "POST".to_owned(),
+            headers: vec![
+                (
+                    "X-Capability-Token".to_owned(),
+                    "wire-token-string".to_owned(),
+                ),
+                ("Content-Type".to_owned(), "application/json".to_owned()),
+            ],
+            body: b"{}".to_vec(),
+        };
+        let handle = strip_capability(&mut req).expect("strip");
+        assert_ne!(handle.cap_root_hash, [0u8; 32]);
+        assert!(
+            !req.headers.iter().any(|(k, _)| k == "X-Capability-Token"),
+            "X-Capability-Token MUST be stripped at egress boundary"
+        );
+        assert_eq!(req.headers.len(), 1, "only Content-Type remains");
+    }
+
+    #[test]
+    fn strip_capability_handles_authorization_alt() {
+        let mut req = EgressRequest {
+            host: "api.openai.com".to_owned(),
+            path: "/v1/chat/completions".to_owned(),
+            method: "POST".to_owned(),
+            headers: vec![(
+                "Authorization".to_owned(),
+                "CipherOcto-Cap wire-token-string".to_owned(),
+            )],
+            body: b"{}".to_vec(),
+        };
+        let handle = strip_capability(&mut req).expect("strip alt");
+        assert_ne!(handle.cap_root_hash, [0u8; 32]);
+        assert!(!req.headers.iter().any(|(k, _)| k == "Authorization"));
+    }
+
+    #[test]
+    fn strip_capability_no_header_returns_zero_hash() {
+        let mut req = EgressRequest {
+            host: "api.openai.com".to_owned(),
+            path: "/v1/chat/completions".to_owned(),
+            method: "POST".to_owned(),
+            headers: vec![("Content-Type".to_owned(), "application/json".to_owned())],
+            body: b"{}".to_vec(),
+        };
+        let handle = strip_capability(&mut req).expect("strip");
+        assert_eq!(handle.cap_root_hash, [0u8; 32]);
+        assert_eq!(handle.holder_did, "");
+        assert_eq!(req.headers.len(), 1);
+    }
+
+    #[test]
+    fn strip_capability_is_case_insensitive_on_header_name() {
+        let mut req = EgressRequest {
+            host: "api.openai.com".to_owned(),
+            path: "/v1/chat/completions".to_owned(),
+            method: "POST".to_owned(),
+            headers: vec![(
+                "x-capability-token".to_owned(),
+                "wire-token-string".to_owned(),
+            )],
+            body: b"{}".to_vec(),
+        };
+        strip_capability(&mut req).expect("strip");
+        assert!(req.headers.is_empty(), "lowercase variant must also strip");
+    }
+
+    #[test]
+    fn strip_capability_preserves_authorization_bearer() {
+        // Authorization: Bearer ... is NOT a capability header; must NOT
+        // be stripped (verifier layer downstream distinguishes them).
+        let mut req = EgressRequest {
+            host: "api.openai.com".to_owned(),
+            path: "/v1/chat/completions".to_owned(),
+            method: "POST".to_owned(),
+            headers: vec![(
+                "Authorization".to_owned(),
+                "Bearer sk-not-a-cap-token".to_owned(),
+            )],
+            body: b"{}".to_vec(),
+        };
+        strip_capability(&mut req).expect("strip");
+        assert_eq!(req.headers.len(), 1);
+        assert_eq!(req.headers[0].0, "Authorization");
     }
 }

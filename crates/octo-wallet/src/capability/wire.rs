@@ -2,32 +2,42 @@
 //!
 //! v1 wire format (3 segments, base64url no padding):
 //! ```text
-//! capability_token_v1 := base64url(macaroon_borsh)
+//! capability_token_v1 := base64url(macaroon_canonical_json)
 //!                     || "."
 //!                     || base64url(holder_sig)
 //!                     || "."
-//!                     || base64url(discharges_borsh)
+//!                     || base64url(discharges_canonical_json)
 //! ```
 //!
-//! v2 wire format (RFC-0958 — 4 segments, optional 4th for `proof_bundle_borsh`):
+//! v2 wire format (RFC-0958 — 4 segments, optional 4th for
+//! `proof_bundle_canonical_json`):
 //! ```text
-//! capability_token_v2 := base64url(macaroon_borsh)
+//! capability_token_v2 := base64url(macaroon_canonical_json)
 //!                     || "."
 //!                     || base64url(holder_sig)
 //!                     || "."
-//!                     || base64url(discharges_borsh)
+//!                     || base64url(discharges_canonical_json)
 //!                     || "."
-//!                     || base64url(proof_bundle_borsh)   // v2 ONLY
+//!                     || base64url(proof_bundle_canonical_json)   // v2 ONLY
 //! ```
 //!
 //! **Forward compat:** v1 parsers (`deserialize_wire`) split on `.` and
 //! take the first 3 segments (silently ignoring the v2 4th). v2 parsers
 //! (`deserialize_wire_v2`) detect 4-segment wire and extract
-//! `proof_bundle_borsh` for downstream STARK verify.
+//! `proof_bundle_canonical_json` for downstream STARK verify.
 //!
 //! **Backward compat:** v2 emitter (`serialize_wire_v2`) emits 4 segments
 //! iff the caller supplies `Some(proof_bundle_bytes)`, else 3 segments
 //! (the v1 shape). v2 parsers accept both 3 and 4 segment wires.
+//!
+//! **Serialization substrate (mission 0957-a R6 fix):** the wire segments
+//! use **canonical JSON** (via `serde_json` with the `preserve_order`
+//! feature disabled, giving BTreeMap-keyed canonical output) rather than
+//! borsh. Earlier versions of this doc and code referenced `_borsh`
+//! suffixes, but the actual encoding has always been JSON. The naming
+//! is now aligned with the substrate to avoid cross-impl interop
+//! confusion. A future RFC may move to borsh for tighter canonicalization;
+//! until then, treat the segments as canonical-JSON bytes.
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -58,10 +68,10 @@ pub struct WireV2 {
 /// happen for valid tokens).
 pub fn serialize_wire(token: &CapabilityToken) -> Result<String, WireError> {
     let macaroon_bytes =
-        borsh_compat::to_vec(&token.macaroon).map_err(|e| WireError::Serialize(e.clone()))?;
+        json_canon::to_vec(&token.macaroon).map_err(|e| WireError::Serialize(e.clone()))?;
     let sig_bytes = token.holder_sig.to_bytes();
     let discharges_bytes =
-        borsh_compat::to_vec(&token.discharges).map_err(|e| WireError::Serialize(e.clone()))?;
+        json_canon::to_vec(&token.discharges).map_err(|e| WireError::Serialize(e.clone()))?;
 
     let s1 = URL_SAFE_NO_PAD.encode(&macaroon_bytes);
     let s2 = URL_SAFE_NO_PAD.encode(sig_bytes);
@@ -186,10 +196,10 @@ fn parse_wire_to_token(
     let holder_sig = ed25519_dalek::Signature::from_slice(&sig_arr)
         .map_err(|e| WireError::Parse(format!("sig: {e}")))?;
 
-    let macaroon: super::Macaroon = borsh_compat::from_slice(&macaroon_bytes)
-        .map_err(|e| WireError::Parse(format!("macaroon borsh: {e}")))?;
-    let discharges: Vec<super::DischargeMacaroon> = borsh_compat::from_slice(&discharges_bytes)
-        .map_err(|e| WireError::Parse(format!("discharges borsh: {e}")))?;
+    let macaroon: super::Macaroon = json_canon::from_slice(&macaroon_bytes)
+        .map_err(|e| WireError::Parse(format!("macaroon json: {e}")))?;
+    let discharges: Vec<super::DischargeMacaroon> = json_canon::from_slice(&discharges_bytes)
+        .map_err(|e| WireError::Parse(format!("discharges json: {e}")))?;
 
     let proof_bundle = if parts.len() == 4 {
         let pb = URL_SAFE_NO_PAD
@@ -207,6 +217,7 @@ fn parse_wire_to_token(
             holder_did: holder_did.into(),
             holder_sig,
             discharges,
+            holder_sig_stale: false,
         },
         proof_bundle,
     })
@@ -241,13 +252,18 @@ pub enum WireError {
     SegmentTooLong(usize, usize, usize),
 }
 
-/// Minimal borsh-compatible serialization shim using serde_json for S02 MVP.
+/// Minimal canonical-JSON serialization shim (mission 0957-a R6 fix:
+/// the wire substrate is serde_json-canonical, not borsh; the segment
+/// naming was renamed to match the actual substrate to avoid cross-impl
+/// interop confusion).
 ///
-/// **TODO (S05):** replace with proper borsh per RFC-0957 §3.7 wire spec
-/// ("`proof_bundle_borsh`" implies borsh elsewhere too). For S02 we use
-/// serde_json to avoid pulling in borsh crate; canonical_ser already provides
-/// determinism for caveats.
-mod borsh_compat {
+/// Caveat canonicalization is delegated to the per-caveat
+/// `Caveat::canonical_ser()` impl (deterministic); serde_json handles
+/// the outer macaroon/discharge envelope via `serde::Serialize` /
+/// `serde::Deserialize`. The full wire-format canonical form is the
+/// concatenation of the per-caveat canonical JSON wrapped in the
+/// serde_json envelope.
+mod json_canon {
     pub fn to_vec<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, String> {
         serde_json::to_vec(value).map_err(|e| e.to_string())
     }

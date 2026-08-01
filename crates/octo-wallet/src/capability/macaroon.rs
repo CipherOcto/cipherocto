@@ -213,6 +213,13 @@ impl Macaroon {
         caveat: Caveat,
         catalog: &dyn CapabilityCatalog,
     ) -> Result<Self, MacaroonError> {
+        // Pre-append Raw caveat registration check (mission 0957-a AC #13).
+        // Fail-closed: an unregistered Raw name MUST NOT enter the chain.
+        if let Caveat::Raw(r) = &caveat {
+            if !catalog.is_raw_name_registered(&r.name) {
+                return Err(MacaroonError::UnknownRawName(r.name.clone()));
+            }
+        }
         // Pre-append check — rejects cyclic / over-deep chains before we
         // mutate anything.
         check_wrapped_chain(self, catalog)?;
@@ -345,6 +352,43 @@ impl Macaroon {
             _ => None,
         })
     }
+
+    /// Full verification: chain re-derivation + `WrappedOnly` chain check
+    /// + attenuation subsumption against `expected_parent` (if provided).
+    /// Use this in preference to `verify_signature` for any verification
+    /// path that needs to enforce RFC-0957 §3.5 attenuation monotonicity
+    /// AND RFC-0965 §3.7 wrapped-chain integrity.
+    ///
+    /// `expected_parent = None` skips the subsumption check (use for root
+    /// tokens that have no parent).
+    ///
+    /// # Errors
+    /// - `MacaroonError::*` from `verify_signature` if the chain fails.
+    /// - `MacaroonError::WrappedCycle` / `WrappedDepthExceeded` /
+    ///   `WrappedParentNotFound` from `check_wrapped_chain` if the chain
+    ///   walk fails.
+    /// - `MacaroonError::AttenuationViolation` if the macaroon's caveats
+    ///   are not a subsumption of `expected_parent`'s caveats
+    ///   (attenuation was weakened).
+    pub fn verify_full(
+        &self,
+        root_secret: &[u8; 32],
+        catalog: &dyn CapabilityCatalog,
+        expected_parent: Option<&[Caveat]>,
+    ) -> Result<(), MacaroonError> {
+        self.verify_signature(root_secret)?;
+        check_wrapped_chain(self, catalog)?;
+        if let Some(parent_caveats) = expected_parent {
+            let all_match =
+                super::caveat::set_subsumes_with_registry(parent_caveats, &self.caveats, |name| {
+                    catalog.is_raw_name_registered(name)
+                });
+            if !all_match {
+                return Err(MacaroonError::AttenuationViolation);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Capability catalog: resolves a parent `WrappedOnly` reference to a macaroon.
@@ -357,6 +401,18 @@ impl Macaroon {
 pub trait CapabilityCatalog {
     /// Resolve a capability id to its `Macaroon`, or `None` if absent.
     fn get(&self, id: &[u8; 32]) -> Option<&Macaroon>;
+
+    /// Whether `name` is a registered `Caveat::Raw` escape-hatch name.
+    /// Raw caveats are fail-closed: an unknown name MUST be rejected at
+    /// attenuate + verify time. Mission 0957-a AC #13.
+    ///
+    /// The default impl returns `false` (reject all Raw caveats), which
+    /// is the secure default for catalogs that don't override. Catalogs
+    /// that opt into the Raw escape MUST explicitly enumerate their
+    /// registered names.
+    fn is_raw_name_registered(&self, _name: &str) -> bool {
+        false
+    }
 }
 
 /// Walk the `WrappedOnly` chain rooted at `macaroon`, rejecting cycles,
@@ -449,6 +505,20 @@ pub enum MacaroonError {
     #[error("WrappedOnly parent {parent_id:?} not found in catalog")]
     WrappedParentNotFound { parent_id: [u8; 32] },
 
+    /// `Caveat::Raw` with an unregistered name was passed to `attenuate`.
+    /// Mission 0957-a AC #13 (fail-closed: unknown Raw names are rejected
+    /// at mint/attenuate time; the registry must enumerate every
+    /// escape-hatch name the system will accept).
+    #[error("Caveat::Raw name `{0}` not registered in catalog (fail-closed)")]
+    UnknownRawName(String),
+
+    /// `verify_full` detected that the macaroon's caveats are not a
+    /// subsumption of `expected_parent`'s caveats (RFC-0957 §3.5
+    /// attenuation monotonicity was violated). Mission 0957-a R6 fix
+    /// surfaces this at verify time, not just at attenuate time.
+    #[error("attenuation violates monotonicity (child caveats not subsumed by parent)")]
+    AttenuationViolation,
+
     /// `capability_id` does not match the content-addressed derivation
     /// `BLAKE3(CAPABILITY_ID_DOMAIN || canonical_ser_unsigned(macaroon))`
     /// per RFC-0965 §3.7.
@@ -469,12 +539,27 @@ pub const MAX_WRAPPED_DEPTH: u8 = 16;
 #[derive(Default, Clone, Debug)]
 pub struct InMemoryCatalog {
     pub(crate) by_id: std::collections::HashMap<[u8; 32], Macaroon>,
+    pub(crate) raw_names: std::collections::HashSet<String>,
+}
+
+#[cfg(test)]
+impl InMemoryCatalog {
+    /// Register a `Caveat::Raw` escape-hatch name. Caveats whose `name`
+    /// is not registered are rejected at attenuate + verify time.
+    /// Mission 0957-a AC #13 (fail-closed for unknown Raw names).
+    pub fn register_raw_name(&mut self, name: &str) {
+        self.raw_names.insert(name.to_owned());
+    }
 }
 
 #[cfg(test)]
 impl CapabilityCatalog for InMemoryCatalog {
     fn get(&self, id: &[u8; 32]) -> Option<&Macaroon> {
         self.by_id.get(id)
+    }
+
+    fn is_raw_name_registered(&self, name: &str) -> bool {
+        self.raw_names.contains(name)
     }
 }
 
@@ -500,6 +585,127 @@ mod tests {
 
     fn empty_catalog() -> InMemoryCatalog {
         InMemoryCatalog::default()
+    }
+
+    #[test]
+    fn unknown_raw_caveat_name_rejected_at_attenuate() {
+        // Mission 0957-a AC #13: Raw caveat escape requires registration
+        // before verify (fail-closed for unknown Raw names).
+        let secret = [0x42; 32];
+        let m = Macaroon::mint(&secret).unwrap();
+        let mut catalog = empty_catalog();
+        // Do NOT register "elevation_of_privilege".
+        let res = m.attenuate(
+            Caveat::Raw(crate::capability::caveat::RawCaveat {
+                name: "elevation_of_privilege".to_owned(),
+                value: vec![0xff; 8],
+            }),
+            &catalog,
+        );
+        assert!(matches!(res, Err(MacaroonError::UnknownRawName(_))));
+
+        // After registration, attenuate succeeds.
+        catalog.register_raw_name("elevation_of_privilege");
+        let res = m.attenuate(
+            Caveat::Raw(crate::capability::caveat::RawCaveat {
+                name: "elevation_of_privilege".to_owned(),
+                value: vec![0xff; 8],
+            }),
+            &catalog,
+        );
+        assert!(res.is_ok(), "registered Raw name must attenuate");
+    }
+
+    #[test]
+    fn raw_caveat_substitution_rejected_when_name_unregistered() {
+        // set_subsumes_with_registry must reject Raw names not in the
+        // registry even if the parent caveat matches structurally.
+        let parent = vec![Caveat::Raw(crate::capability::caveat::RawCaveat {
+            name: "elevation_of_privilege".to_owned(),
+            value: vec![0xff; 8],
+        })];
+        let child = vec![Caveat::Raw(crate::capability::caveat::RawCaveat {
+            name: "elevation_of_privilege".to_owned(),
+            value: vec![0xff; 8],
+        })];
+        // Fail-closed registry rejects the child.
+        assert!(!crate::capability::caveat::set_subsumes_with_registry(
+            &parent,
+            &child,
+            |_| false
+        ));
+        // Permissive registry accepts.
+        assert!(crate::capability::caveat::set_subsumes_with_registry(
+            &parent,
+            &child,
+            |name| name == "elevation_of_privilege"
+        ));
+    }
+
+    #[test]
+    fn verify_full_enforces_attenuation_subsumption() {
+        // Mission 0957-a R6 fix: verify_full must reject a child macaroon
+        // whose caveats are NOT subsumed by the expected parent.
+        let secret = [0x42; 32];
+        let m = Macaroon::mint(&secret).unwrap();
+        // Parent has AmountMax(100). Child has AmountMax(500) (weaker).
+        let catalog = empty_catalog();
+        let child = m
+            .clone()
+            .attenuate(Caveat::AmountMax(500), &catalog)
+            .unwrap();
+        // expected_parent says child must have AmountMax <= 100.
+        let err = child
+            .verify_full(&secret, &catalog, Some(&[Caveat::AmountMax(100)]))
+            .unwrap_err();
+        assert!(
+            matches!(err, MacaroonError::AttenuationViolation),
+            "weaker child must be rejected, got {err:?}"
+        );
+
+        // Correct parent (AmountMax(1000)) accepts the child.
+        let ok = child.verify_full(&secret, &catalog, Some(&[Caveat::AmountMax(1000)]));
+        assert!(ok.is_ok(), "stronger parent must accept the child");
+
+        // No parent (None) skips the subsumption check.
+        let ok = child.verify_full(&secret, &catalog, None);
+        assert!(ok.is_ok(), "no-parent verify_full skips subsumption");
+    }
+
+    /// Mission 0957-a AC #10 (R6 fix): property test — 10K random
+    /// monotonic attenuation sequences verify successfully. The
+    /// shrinking invariant: any macaroon built via a chain of `attenuate`
+    /// calls from a single root secret MUST re-derive its chain under
+    /// `verify_signature` against the same root secret.
+    ///
+    /// The generator picks an `AmountMax` step sequence where each step
+    /// is ≤ the previous (monotonic narrowing). The constructed
+    /// macaroon verifies iff the HMAC chain re-derives. Bounded to
+    /// `PROPTEST_CASES=10000` per AC.
+    #[test]
+    fn prop_10k_random_monotonic_caveat_sequences_verify() {
+        use proptest::prelude::*;
+        proptest!(ProptestConfig::with_cases(10_000), |(
+            amounts in proptest::collection::vec(1u128..=100_000_000_000, 1..=16)
+        )| {
+            // Build monotonic narrowing sequence: scan back-to-front, keep
+            // the running min. This guarantees each caveat is <= parent.
+            let mut mono = Vec::with_capacity(amounts.len());
+            let mut cur = u128::MAX;
+            for &a in &amounts {
+                cur = cur.min(a);
+                mono.push(cur);
+            }
+            let secret = [0x42; 32];
+            let m0 = Macaroon::mint(&secret).unwrap();
+            let catalog = empty_catalog();
+            let mut m = m0;
+            for &a in &mono {
+                m = m.attenuate(Caveat::AmountMax(a), &catalog).unwrap();
+            }
+            // verify_signature MUST succeed for the original root secret.
+            m.verify_signature(&secret).expect("verify must succeed for monotonic chain");
+        });
     }
 
     #[test]

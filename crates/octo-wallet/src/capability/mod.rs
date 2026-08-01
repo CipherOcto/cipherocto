@@ -16,7 +16,12 @@ pub mod zk_mint;
 use serde::{Deserialize, Serialize};
 
 pub use caveat::{Caveat, CaveatName, MicroOctoW, UnixTimeSecs};
-pub use discharge::{DischargeChannel, DischargeMacaroon};
+pub use discharge::{
+    verify_discharges, ChannelProvider, ChannelProviderRegistry, ChannelProviderResolver,
+    DischargeChannel, DischargeError, DischargeMacaroon, DischargeRequest, DischargeVerification,
+    EscrowBalance, EscrowDischargeProvider, RateLimitContext, RateLimitDischargeProvider,
+    RevocationDischargeProvider, REVOCATION_DISCHARGE_TTL_SECS,
+};
 pub use macaroon::{
     hmac_blake3, macaroon_id, CapabilityCatalog, Macaroon, MacaroonError, MacaroonId,
 };
@@ -49,6 +54,16 @@ pub struct CapabilityToken {
     pub holder_sig: ed25519_dalek::Signature,
     /// Discharge macaroons (escrow / revocation / rate-limit channels).
     pub discharges: Vec<DischargeMacaroon>,
+    /// True iff the holder signature was invalidated by a subsequent
+    /// `attenuate()` without re-signing. `verify_holder_sig` rejects
+    /// tokens with `holder_sig_stale = true` regardless of the embedded
+    /// signature bytes. Mission 0957-a R6 fix: the previous design
+    /// returned Ok-with-stale-sig silently, which downstream code could
+    /// forget to re-validate; the explicit flag forces the verifier to
+    /// notice. Set to `false` on `mint` and `attenuate_with_signer`;
+    /// set to `true` on `attenuate` (without signer).
+    #[serde(default)]
+    pub holder_sig_stale: bool,
 }
 
 /// Serialize a `CapabilityToken` with Ed25519 signature as raw bytes.
@@ -101,15 +116,24 @@ impl CapabilityToken {
             holder_did,
             holder_sig,
             discharges: Vec::new(),
+            holder_sig_stale: false,
         })
     }
 
-    /// Append a caveat (attenuation). Returns a new token.
+    /// Append a caveat (attenuation). Returns a new token with
+    /// `holder_sig_stale = true` — the embedded signature does NOT cover
+    /// the new caveat list. Callers MUST either:
+    /// 1. Re-sign by calling `attenuate_with_signer(caveat, holder, ...)`
+    ///    instead (preferred), or
+    /// 2. Recognize the stale flag and re-validate downstream.
+    ///
+    /// `verify_holder_sig` rejects tokens with `holder_sig_stale = true`
+    /// unconditionally; this surfaces the broken state at the verify
+    /// boundary rather than letting it propagate silently.
     ///
     /// # Errors
-    /// Returns `MacaroonError` (cycle / depth / parent-not-found) if the
-    /// catalog rejects the assembled chain. Holder signature is stale —
-    /// callers without the holder key MUST use `attenuate_with_signer`.
+    /// Returns `MacaroonError` (cycle / depth / parent-not-found /
+    /// `UnknownRawName`) if the catalog rejects the assembled chain.
     pub fn attenuate(
         &self,
         caveat: Caveat,
@@ -117,10 +141,7 @@ impl CapabilityToken {
     ) -> Result<Self, MintError> {
         let mut next = self.clone();
         next.macaroon = next.macaroon.attenuate(caveat, catalog)?;
-        // Holder signature no longer covers the new caveat list — re-sign.
-        // Note: holder private key is required for re-sign; this method is
-        // only useful for the holder. Attenuators without the holder key can
-        // produce a re-signed token by calling `attenuate_with_signer`.
+        next.holder_sig_stale = true;
         Ok(next)
     }
 
@@ -139,14 +160,25 @@ impl CapabilityToken {
         next.macaroon = next.macaroon.attenuate(caveat, catalog)?;
         let msg = Self::holder_msg(&next.macaroon.root_id, &next.macaroon.caveats);
         next.holder_sig = holder.sign(&msg);
+        next.holder_sig_stale = false;
         Ok(next)
     }
 
     /// Verify the holder signature.
     ///
     /// # Errors
-    /// Returns `MintError::HolderSig` on signature failure.
+    /// Returns `MintError::HolderSig` on signature failure OR when the
+    /// token has `holder_sig_stale = true` (set by `attenuate` without
+    /// re-signing — mission 0957-a R6 fix surfaces stale state at the
+    /// verify boundary rather than letting it propagate).
     pub fn verify_holder_sig(&self) -> Result<(), MintError> {
+        if self.holder_sig_stale {
+            return Err(MintError::HolderSig(
+                "holder_sig_stale: token was attenuated without re-signing; \
+                 call attenuate_with_signer or re-mint"
+                    .to_owned(),
+            ));
+        }
         let msg = Self::holder_msg(&self.macaroon.root_id, &self.macaroon.caveats);
         let vk = ed25519_dalek::VerifyingKey::from_bytes(&self.holder_pub)
             .map_err(|e| MintError::HolderSig(e.to_string()))?;
@@ -155,15 +187,45 @@ impl CapabilityToken {
         Ok(())
     }
 
-    /// Compose the holder signature message: `canonical_ser(root_id || caveats_wire)`.
+    /// Compose the holder signature message:
+    /// `u32(16) || root_id || u32(|caveats_wire|) || caveats_wire`.
+    ///
+    /// Length-prefixed per field (matching `Macaroon::canonical_ser_unsigned`
+    /// at `macaroon.rs:172`) to prevent concatenation-collision attacks:
+    /// without prefixes, `canonical_ser(caveat_A) || canonical_ser(caveat_B)`
+    /// can collide with `canonical_ser(caveat_A') || canonical_ser(caveat_B')`
+    /// when byte boundaries align. The Ed25519 signature would then be
+    /// signing ambiguity — distinct caveat lists would produce identical
+    /// signatures.
+    ///
+    /// `caveats_wire` itself is a single length-prefixed concatenation of
+    /// the per-caveat canonical JSON (the inner field is the
+    /// caveat-variant-tagged serialization). The outer `u32(|caveats_wire|)`
+    /// removes the outer ambiguity; inner per-caveat boundaries remain
+    /// length-prefixed by each caveat's own `canonical_ser`.
     fn holder_msg(root_id: &MacaroonId, caveats: &[Caveat]) -> Vec<u8> {
-        let mut msg = Vec::with_capacity(16 + caveats.len() * 64);
-        msg.extend_from_slice(root_id);
+        let mut inner = Vec::with_capacity(caveats.len() * 64);
         for caveat in caveats {
-            msg.extend_from_slice(&caveat.canonical_ser());
+            inner.extend_from_slice(&caveat.canonical_ser());
         }
+        let mut msg = Vec::with_capacity(4 + 16 + 4 + inner.len());
+        msg.extend_from_slice(&u32_len_field(root_id.len()));
+        msg.extend_from_slice(root_id);
+        msg.extend_from_slice(&u32_len_field(inner.len()));
+        msg.extend_from_slice(&inner);
         msg
     }
+}
+
+/// Big-endian `u32` length prefix used by `holder_msg` (mirrors
+/// `Macaroon::canonical_ser_unsigned` field-prefixing at `macaroon.rs`).
+/// Holder signature path is bounded by `caveats.len() < 2^16` and
+/// per-caveat `canonical_ser() < 2^16` in practice; `u32` is the
+/// safe upper bound.
+fn u32_len_field(n: usize) -> [u8; 4] {
+    u32::try_from(n)
+        .expect("holder_msg field length fits in u32")
+        .to_be_bytes()
 }
 
 /// Errors during capability token mint/attenuate.

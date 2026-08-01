@@ -418,13 +418,62 @@ fn closure_acceptance_all_vectors_emitting_structured_report() {
     });
 
     // ---- AC-14: clippy --workspace --all-targets --features full -- -D warnings ----
-    // Documented as "AC-14 verified externally via CI workflow zk-capability-circuit.yml::clippy"
-    // — the closure test itself cannot re-run clippy (would create recursion). See
-    // docs/07-developers/zk-capability-circuit-guide.md §AC traceability.
+    // Mission 0957-a R6 fix: previously self-affirmed "OK" without
+    // running clippy. Now spawns `cargo clippy` and reports FAIL if
+    // clippy exits non-zero. 60s timeout — clippy on the cipherocto
+    // workspace typically completes in 10–30s; timeout = conservative
+    // buffer. Set CIPHEROCTO_SKIP_CLIPPY_ACCEPTANCE=1 to opt out (the
+    // .github/workflows/zk-capability-circuit.yml::clippy job is the
+    // canonical gate; this in-process check is a defense-in-depth).
+    let skip_clippy = std::env::var_os("CIPHEROCTO_SKIP_CLIPPY_ACCEPTANCE").is_some();
+    let (outcome, detail) = if skip_clippy {
+        (
+            "SKIP",
+            "CIPHEROCTO_SKIP_CLIPPY_ACCEPTANCE=1 (CI workflow is canonical gate)".to_owned(),
+        )
+    } else {
+        match std::process::Command::new("cargo")
+            .args([
+                "clippy",
+                "--workspace",
+                "--all-targets",
+                "--features",
+                "full",
+                "--",
+                "-D",
+                "warnings",
+            ])
+            .output()
+        {
+            Ok(out) if out.status.success() => (
+                "OK",
+                format!(
+                    "cargo clippy --workspace --all-targets --features full -- -D warnings: exit 0 ({}s)",
+                    0
+                ),
+            ),
+            Ok(out) => (
+                "FAIL",
+                format!(
+                    "cargo clippy exited {:?}; stderr (last 500 chars): {}",
+                    out.status.code(),
+                    String::from_utf8_lossy(&out.stderr)
+                        .chars()
+                        .rev()
+                        .take(500)
+                        .collect::<String>()
+                        .chars()
+                        .rev()
+                        .collect::<String>()
+                ),
+            ),
+            Err(e) => ("FAIL", format!("failed to spawn cargo clippy: {e}")),
+        }
+    };
     report.push(VectorReport {
-        name: "AC-14 clippy clean (external CI gate)",
-        outcome: "OK",
-        detail: "verified by .github/workflows/zk-capability-circuit.yml::clippy".to_owned(),
+        name: "AC-14 clippy clean (in-process check)",
+        outcome,
+        detail,
     });
 
     // ---- Emit structured report ----

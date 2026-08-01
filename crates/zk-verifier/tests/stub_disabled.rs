@@ -5,8 +5,6 @@
 #![allow(clippy::doc_markdown)]
 #![allow(clippy::doc_lazy_continuation)]
 
-
-
 //!
 //! Asserts that a production build (`--no-default-features`,
 //! missing `libstwo_sys.so`) returns `Err(VerifyError::StubDisabled)`
@@ -17,9 +15,9 @@
 //! `ProofRejected` — also NOT a silent acceptance. Both branches are
 //! safe; the release invariant asserts the FIRST.
 
-use zk_verifier::{ProofBundle, PublicInputs};
 #[cfg(not(feature = "allow-stub-verifier"))]
 use zk_verifier::VerifyError;
+use zk_verifier::{ProofBundle, PublicInputs};
 
 const TV_FIXED_TIME: u64 = 1_700_000_000;
 

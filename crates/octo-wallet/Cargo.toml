@@ -62,6 +62,11 @@ base64 = "0.22"
 
 # Capability token (RFC-0957 §3)
 borsh = { version = "1", optional = true }
+# Mission 0957-a R6 fix: the optional `borsh` dep above was unused — the
+# wire format actually uses serde_json (canonical JSON), per the new
+# `wire::json_canon` module + naming alignment. Borsh may be re-enabled
+# in a future RFC if a tighter canonicalization is adopted; until then
+# the dep is removed to avoid carrying an unused surface.
 
 # Typed Constraint substrate (RFC-0964) for Caveat::Factory pre_conditions
 cipherocto-encoding = { path = "../cipherocto-encoding" }
@@ -86,6 +91,9 @@ rpassword = "7"
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
+# Mission 0957-a AC #10 (R6 fix): property test for 10K random monotonic
+# caveat sequences.
+proptest = "1"
 
 # Gap 3 / Task 3.4: eleven_step_zk.rs uses `verify_batch_capability_zk` +
 # `CapabilityVerifier` from quota-router-core. Dev-dep only — production

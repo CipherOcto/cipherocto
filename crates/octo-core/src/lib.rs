@@ -15,6 +15,7 @@
 //! `quota-router-storage` — they are quota-router domain, not core.
 //! octo-core is now lean: identity + role + routing only.
 
+pub mod capability;
 pub mod identity;
 pub mod role;
 pub mod routing;

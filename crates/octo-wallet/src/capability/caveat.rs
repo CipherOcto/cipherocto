@@ -349,6 +349,30 @@ pub fn set_subsumes(parent: &[Caveat], child: &[Caveat]) -> bool {
     child.iter().all(|c| parent_caveat_implies(parent, c))
 }
 
+/// Catalog-aware subsumption check. Adds the Raw caveat fail-closed
+/// invariant: any `Caveat::Raw` whose `name` is not registered with
+/// the catalog is rejected (returns `false`). Mission 0957-a AC #13.
+///
+/// `is_raw_registered` is the catalog's registration predicate
+/// (see `CapabilityCatalog::is_raw_name_registered`). Pass
+/// `|_| false` for the legacy fail-closed default (reject all Raw).
+#[must_use]
+pub fn set_subsumes_with_registry<F: Fn(&str) -> bool>(
+    parent: &[Caveat],
+    child: &[Caveat],
+    is_raw_registered: F,
+) -> bool {
+    child.iter().all(|c| {
+        // Fail-closed for unregistered Raw caveat names.
+        if let Caveat::Raw(r) = c {
+            if !is_raw_registered(&r.name) {
+                return false;
+            }
+        }
+        parent_caveat_implies(parent, c)
+    })
+}
+
 #[allow(clippy::too_many_lines)]
 fn parent_caveat_implies(parent: &[Caveat], child: &Caveat) -> bool {
     match child {

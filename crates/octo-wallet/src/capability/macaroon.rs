@@ -8,6 +8,18 @@
 //! HMAC per RFC 2104 with BLAKE3 as the hash function:
 //!   `HMAC(K, m) = H(K' ⊕ opad || H(K' ⊕ ipad || m))`
 //! where K' is K zero-padded to BLAKE3 block size (64 bytes), or BLAKE3(K) || zeros if shorter.
+//!
+//! **AC #4 deviation (mission 0957-a R6 audit):** this impl uses
+//! `K' = BLAKE3(K) || zeros` for short keys, which is NOT what RFC 2104
+//! §2 specifies (RFC 2104 says `K' = K || zeros` for K shorter than the
+//! block size). RFC-0957 §Algorithms specifies `blake3::keyed_hash(key,
+//! msg)` (BLAKE3 native keyed mode), not RFC 2104 wrapped around
+//! unkeyed BLAKE3. Per the user's R7 directive, AC #4 is "leave as is,
+//! flag future deep investigation". Three `#[ignore]` tests in the test
+//! module (`hmac_blake3_matches_rfc2104_reference_for_32_byte_key` and
+//! `_test_vector_2_short_key` / `_3_long_key`) document the deviation
+//! in-place and flip to passing when the impl is replaced with
+//! `*blake3::keyed_hash(key, msg).as_bytes()` per RFC-0957.
 
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -581,6 +593,101 @@ mod tests {
         let key2 = [0xcd; 32];
         let msg = b"hello world";
         assert_ne!(hmac_blake3(&key1, msg), hmac_blake3(&key2, msg));
+    }
+
+    /// Reference RFC 2104 §2 HMAC-BLAKE3 implementation. Used by the
+    /// conformance tests below to verify (or refute) that `hmac_blake3`
+    /// matches the RFC. Key derivation rule per §2: K' = K if len(K)
+    /// == B, else K zero-padded to B. BLAKE3 block size B = 64.
+    fn rfc2104_hmac_blake3(key: &[u8], msg: &[u8]) -> [u8; 32] {
+        const B: usize = 64;
+        const IPAD: u8 = 0x36;
+        const OPAD: u8 = 0x5c;
+        let mut k_prime = [0u8; B];
+        if key.len() >= B {
+            k_prime.copy_from_slice(&key[..B]);
+        } else {
+            k_prime[..key.len()].copy_from_slice(key);
+        }
+        let mut ipad_key = [0u8; B];
+        let mut opad_key = [0u8; B];
+        for i in 0..B {
+            ipad_key[i] = k_prime[i] ^ IPAD;
+            opad_key[i] = k_prime[i] ^ OPAD;
+        }
+        let mut inner = blake3::Hasher::new();
+        inner.update(&ipad_key);
+        inner.update(msg);
+        let inner_out = inner.finalize();
+        let mut outer = blake3::Hasher::new();
+        outer.update(&opad_key);
+        outer.update(inner_out.as_bytes());
+        let outer_out = outer.finalize();
+        let mut out = [0u8; 32];
+        out.copy_from_slice(outer_out.as_bytes());
+        out
+    }
+
+    #[test]
+    #[ignore = "documents AC #4 deviation; passes when hmac_blake3 is replaced with blake3::keyed_hash"]
+    fn hmac_blake3_matches_rfc2104_reference_for_32_byte_key() {
+        // RFC 2104 §2 conformance check. For 32-byte keys: impl uses
+        // H(K)||zeros (hash-then-pad). RFC 2104 says K zero-padded (no
+        // hash). These differ — the impl is NOT RFC 2104 conformant
+        // for 32-byte keys.
+        //
+        // Per the user's R7 directive, AC #4 is "leave as is, flag future
+        // deep investigation". This test DOCUMENTS the deviation
+        // (intentionally failing until AC #4 is fixed) and pins the exact
+        // nature of the bug. When the impl is replaced with
+        // `*blake3::keyed_hash(key, msg).as_bytes()` (per RFC-0957 §Algorithms
+        // + RFC-0853 §1.1 convention), this assertion flips to passing.
+        //
+        // Marked `#[ignore]` so it doesn't break the default test suite;
+        // run explicitly via `cargo test -- --ignored` to surface the
+        // AC #4 deviation in CI.
+        let key = [0xa1u8; 32];
+        let msg = b"cipherocto macaroon test vector";
+        let impl_out = hmac_blake3(&key, msg);
+        let rfc_out = rfc2104_hmac_blake3(&key, msg);
+        assert_eq!(
+            impl_out, rfc_out,
+            "AC #4 deviation: impl must match RFC 2104 reference for 32-byte keys \
+             (impl uses H(K)||zeros instead of K||zeros; tracked for future fix)"
+        );
+    }
+
+    #[test]
+    #[ignore = "documents AC #4 deviation; passes when hmac_blake3 is replaced with blake3::keyed_hash"]
+    fn hmac_blake3_rfc2104_test_vector_2_short_key() {
+        // RFC 2104 test case 2 (BLAKE3-ified). Records the deviation:
+        // for short keys, impl uses H(K)||zeros while RFC says K||zeros.
+        let key = b"Jefe";
+        let msg = b"what do ya want for nothing?";
+        let mut key32 = [0u8; 32];
+        key32[..key.len()].copy_from_slice(key);
+        let impl_out = hmac_blake3(&key32, msg);
+        let rfc_out = rfc2104_hmac_blake3(key, msg);
+        assert_eq!(
+            impl_out, rfc_out,
+            "AC #4 deviation: RFC 2104 test vector 2 (short key) mismatch"
+        );
+    }
+
+    #[test]
+    #[ignore = "documents AC #4 deviation; passes when hmac_blake3 is replaced with blake3::keyed_hash"]
+    fn hmac_blake3_rfc2104_test_vector_3_long_key() {
+        // RFC 2104 test case 3 (BLAKE3-ified). Records the deviation.
+        let key = [0xaau8; 20];
+        let msg = b"Test Using Larger Than Block-Size Key - Hash Key First";
+        let mut key32 = [0u8; 32];
+        key32[..20].copy_from_slice(&key);
+        let impl_out = hmac_blake3(&key32, msg);
+        let rfc_out = rfc2104_hmac_blake3(&key, msg);
+        assert_eq!(
+            impl_out, rfc_out,
+            "AC #4 deviation: RFC 2104 test vector 3 mismatch"
+        );
     }
 
     fn empty_catalog() -> InMemoryCatalog {

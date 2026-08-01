@@ -85,6 +85,23 @@ jobs:
         # egress helper.
         run: bash .github/linters/no-new-http-client-constructors.sh
 
+  attach-bearer-drift:
+    name: attach_bearer() call count drift gate (mission 0957-b R9-6)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify attach_bearer() call count has not drifted from the checked-in baseline (36)
+        # Mission 0957-b R9-6: the total number of `attach_bearer()` call
+        # sites is a structural invariant — every provider egress path
+        # that attaches an outbound Authorization header MUST route
+        # through `attach_bearer`. This linter compares the count against
+        # a baseline (currently 36) and fails on drift. New sites are
+        # allowed (with a bumped baseline + delta rationale in the PR
+        # description); accidental removals or new sites bypassing
+        # `attach_bearer` are caught.
+        run: bash .github/linters/no-attach-bearer-count-drift.sh
+
   clippy:
     name: Clippy clean (AC-6)
     runs-on: ubuntu-latest

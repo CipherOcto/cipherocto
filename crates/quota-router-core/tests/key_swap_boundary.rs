@@ -203,18 +203,18 @@ fn provider_api_key_type_cannot_be_constructed_from_cipherocto_internal_string()
     // path is caught by `from_resolved` callers — via the
     // `assert_wire_value_safe` boundary check.
     let branded = ProviderApiKey::from_resolved("sk-real-anthropic-abc123".to_owned()).unwrap();
-    assert_wire_value_safe(&branded.bearer_wire_value()).unwrap();
+    assert_wire_value_safe(&branded.bearer_wire_value().unwrap()).unwrap();
 }
 
 #[test]
 fn outbound_authorization_render_never_carries_internal_prefix() {
     // Belt-and-suspenders: even if a future contributor attached
     // `Bearer <internal-key>` directly, this test documents the
-    // post-condition the boundary enforces. (The `panic` in
-    // `bearer_wire_value` is a CI tripwire, not a runtime assertion; this
-    // test asserts only the happy path.)
+    // post-condition the boundary enforces. R9-3 fix: `bearer_wire_value`
+    // now returns `Result` (no panic) so the tripwire semantics are
+    // explicit at the type level. This test asserts only the happy path.
     let branded = ProviderApiKey::from_resolved("sk-real-google-abc123".to_owned()).unwrap();
-    let rendered = branded.bearer_wire_value();
+    let rendered = branded.bearer_wire_value().unwrap();
     assert_eq!(rendered, "Bearer sk-real-google-abc123");
     for prefix in CIPHEROCTO_INTERNAL_KEY_PREFIXES {
         assert!(

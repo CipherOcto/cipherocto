@@ -80,23 +80,30 @@ impl ProviderApiKey {
     /// contributor who attaches `format!("Bearer {}", self.as_str())`
     /// directly still hits the denylist when this test runs at the boundary
     /// test site.
-    #[must_use]
-    pub fn bearer_wire_value(&self) -> String {
+    ///
+    /// R9 fix (mission 0957-b R9-3): returns `Result` rather than panicking.
+    /// A `panic!` in a security-sensitive path is a DoS vector — if a future
+    /// contributor calls `bearer_wire_value` directly on a `ProviderApiKey`
+    /// constructed via a path that bypassed `from_resolved`, a panic would
+    /// crash the entire process. `Err` lets the caller propagate the failure
+    /// without crashing.
+    pub fn bearer_wire_value(&self) -> Result<String, KeySwapError> {
         let rendered = format!("Bearer {}", self.0);
         for prefix in CIPHEROCTO_INTERNAL_KEY_PREFIXES {
             if rendered.starts_with(&format!("Bearer {prefix}")) {
-                // Internal-mode tripwire: would be a serious leak. Test
-                // suite (`key_swap_boundary::provider_api_key_blocks_internal_prefix`)
-                // asserts this branch is unreachable for any key produced by
-                // `from_resolved`.
-                panic!(
-                    "CI: rendered Authorization header carries CipherOcto-internal \
-                     prefix `{prefix}` — this indicates a key-swap bypass. \
-                     See `egress::key_swap::CIPHEROCTO_INTERNAL_KEY_PREFIXES`."
-                );
+                // Internal-mode tripwire: would be a serious leak. Production
+                // code routes through `from_resolved` which rejects
+                // CipherOcto-internal-shaped keys BEFORE this branch is
+                // reachable. The `Result` returned here is the structural
+                // safeguard for any path that constructs a `ProviderApiKey`
+                // outside `from_resolved`.
+                return Err(KeySwapError::CipheroctoInternalLeak {
+                    leaked_prefix: (*prefix).to_owned(),
+                    surface: "bearer_wire_value",
+                });
             }
         }
-        rendered
+        Ok(rendered)
     }
 }
 
@@ -110,10 +117,11 @@ impl AsRef<str> for ProviderApiKey {
 impl ProviderApiKey {
     /// Test-only seam: construct a `ProviderApiKey` from a raw string
     /// bypassing the `from_resolved` denylist. **NEVER call from
-    /// production code.** Used by the `#[should_panic]` tripwire test
-    /// to exercise the unreachable `panic!()` branch in
-    /// `bearer_wire_value` (the panic exists precisely because that branch
-    /// is unreachable through the production path).
+    /// production code.** Used by the tripwire tests
+    /// (`bearer_wire_value_tripwire_rejects_*`) to exercise the
+    /// unreachable branch in `bearer_wire_value` (the branch is
+    /// unreachable through the production path; tripwires verify the
+    /// defensive `Result` contract).
     pub fn from_string_unchecked_for_testing(key: String) -> Self {
         Self(key)
     }
@@ -129,7 +137,7 @@ impl ProviderApiKey {
 /// into a `req_builder.header("Authorization", …)` call.
 pub fn attach_bearer(raw_key: &str) -> Result<String, KeySwapError> {
     let branded = ProviderApiKey::from_resolved(raw_key.to_owned())?;
-    let rendered = branded.bearer_wire_value();
+    let rendered = branded.bearer_wire_value()?;
     assert_wire_value_safe(&rendered)?;
     Ok(rendered)
 }
@@ -226,7 +234,10 @@ mod tests {
     #[test]
     fn bearer_wire_value_renders_bearer_prefix() {
         let k = ProviderApiKey::from_resolved("sk-real-openai-abc123".to_owned()).unwrap();
-        assert_eq!(k.bearer_wire_value(), "Bearer sk-real-openai-abc123");
+        assert_eq!(
+            k.bearer_wire_value().unwrap(),
+            "Bearer sk-real-openai-abc123"
+        );
     }
 
     #[test]
@@ -240,27 +251,44 @@ mod tests {
         assert_eq!(branded.as_ref(), raw);
     }
 
-    /// Tripwire test (M-1 R3): the `panic!` inside `bearer_wire_value` is the
-    /// last line of defense against an internal-shaped key reaching the wire.
-    /// Without this test, the panic logic could be wrong (off-by-one in
-    /// prefix matching, broken `starts_with` semantics) and silently regress.
-    /// Construction uses the `#[cfg(test)]` seam `from_string_unchecked_for_testing`,
-    /// which bypasses `from_resolved`'s denylist — exactly the path the
-    /// tripwire is designed to catch.
+    /// Tripwire test (R3 M-1; R9-3 hardened): the denylist inside
+    /// `bearer_wire_value` is the last line of defense against an
+    /// internal-shaped key reaching the wire. Without this test, the
+    /// prefix matching could silently regress (off-by-one, broken
+    /// `starts_with` semantics). Construction uses the `#[cfg(test)]` seam
+    /// `from_string_unchecked_for_testing`, which bypasses `from_resolved`'s
+    /// denylist — exactly the path the tripwire is designed to catch.
+    ///
+    /// R9-3 fix: assert `Err` rather than `#[should_panic]`. The previous
+    /// `panic!` was a DoS vector if the branch were ever reached in
+    /// production; we now return `Err` and the tripwire verifies the
+    /// defensive contract.
     #[test]
-    #[should_panic(expected = "CI: rendered Authorization header carries CipherOcto-internal")]
-    fn bearer_wire_value_tripwire_panics_on_internal_prefix() {
+    fn bearer_wire_value_tripwire_rejects_internal_prefix() {
         let bad =
             ProviderApiKey::from_string_unchecked_for_testing("sk-virtual-direct-test".to_owned());
-        let _ = bad.bearer_wire_value();
+        let err = bad.bearer_wire_value().unwrap_err();
+        assert_eq!(
+            err,
+            KeySwapError::CipheroctoInternalLeak {
+                leaked_prefix: "sk-virtual-".to_owned(),
+                surface: "bearer_wire_value",
+            }
+        );
     }
 
     /// Tripwire test for `CipherOcto-` prefix.
     #[test]
-    #[should_panic(expected = "CI: rendered Authorization header carries CipherOcto-internal")]
-    fn bearer_wire_value_tripwire_panics_on_cipherocto_prefix() {
+    fn bearer_wire_value_tripwire_rejects_cipherocto_prefix() {
         let bad =
             ProviderApiKey::from_string_unchecked_for_testing("CipherOcto-direct-test".to_owned());
-        let _ = bad.bearer_wire_value();
+        let err = bad.bearer_wire_value().unwrap_err();
+        assert_eq!(
+            err,
+            KeySwapError::CipheroctoInternalLeak {
+                leaked_prefix: "CipherOcto-".to_owned(),
+                surface: "bearer_wire_value",
+            }
+        );
     }
 }

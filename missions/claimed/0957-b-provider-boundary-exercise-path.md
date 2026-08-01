@@ -72,7 +72,7 @@ Per RFC-0957 §Implementation Phases Phase 3 + S04 plan §3 Steps 1-11 (R11 fix 
    - Strip: `X-Capability-Token`, `Authorization` (cipherocto variants), cipherocto-specific headers
    - Reshape request body to provider schema (per provider format)
    - Sign egress with provider's slot key from vault (one-shot borrow)
-   - **R2 fix (commit `da83d8cd`):** structural key-swap at every outbound `Authorization` site via `egress::key_swap::attach_bearer` + brand-typed `ProviderApiKey` + cipherocto-internal prefix denylist. 32 sites (8 in `proxy.rs`, 24 in `native_http/*`) wired through the helper. CI lint `.github/linters/no-provider-bound-cap.sh` extended to fail on any direct `format!("Bearer {}", …)` `Authorization` header outside the helper.
+   - **R2 fix (commit `da83d8cd`):** structural key-swap at every outbound `Authorization` site via `egress::key_swap::attach_bearer` + brand-typed `ProviderApiKey` + cipherocto-internal prefix denylist. **36 production call sites** wired through the helper (R9-6 measured 2026-08-01): 8 in `proxy.rs`, 12 in `native_http/openai.rs`, 4 in `native_http/replicate.rs`, 2 each in `native_http/{together,perplexity,mistral,groq,databricks}.rs` (10 total), 1 each in `native_http/{mod,azure,bedrock,anthropic,gemini,ollama}.rs` (6 total), 1 in `guardrails/mod.rs`. CI lint `.github/linters/no-provider-bound-cap.sh` extended to fail on any direct `format!("Bearer {}", …)` `Authorization` header outside the helper. **R9-6 fix:** `.github/linters/no-attach-bearer-count-drift.sh` (wired as `attach-bearer-drift` job in `.github/workflows/exercise-path.yml`) compares the live `attach_bearer(` count against a checked-in baseline of 36 and fails on drift.
 2. **Ingress module** (`crates/quota-router-core/src/ingress/mod.rs`):
    - `IngressTransform::normalise(provider_kind, raw_response) → NormalisedResponse`
    - Detect cache-hit per provider response metadata
@@ -255,6 +255,44 @@ windows).
 under "R4 close-out" without distinguishing pre-R4 from R4 work. R8
 adds the "When" column above so future reviewers can see which redactions
 were landed in this mission vs carried forward.
+
+## R9 Audit (2026-08-01)
+
+R9 review focused on half-impl, shortcuts, low-quality tests, and
+deferrals specific to the egress boundary + key-swap surface. Six
+findings, all addressed in commit `<pending>`:
+
+| ID      | File:Line                                                                  | Severity | Closure                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------- | -------------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **R9-1** | `crates/quota-router-core/src/egress.rs:220`                               | CRITICAL | **Resolved.** `strip_capability` now scans `req.body` for capability-token-shaped strings (HMAC-BLAKE3 32-byte hex tags, macaroon 3-segment base64url, `CipherOcto-Cap` scheme). 6 new tests cover hex tag redaction, macaroon wire redaction, scheme redaction in JSON bodies, empty-body no-op, and binary-body redaction. Body length is preserved by space-padding so downstream parsers do not break. Today the proxy builds outbound requests from scratch (so the strip is defense-in-depth); the strip is now explicit at the egress boundary for any future code path that copies inbound content. |
+| **R9-2** | `crates/quota-router-core/src/egress.rs:223-235` (strip loop, headers only) | CRITICAL | **Resolved** (same commit as R9-1). `strip_capability_from_body` detects the three canonical capability wire shapes (HMAC-BLAKE3 hex / macaroon 3-segment / `CipherOcto-Cap ` scheme) and redacts in place. Word-boundary checks prevent false positives on hex blobs that are longer than 64 chars.                                                                                                                                                                                                              |
+| **R9-3** | `crates/quota-router-core/src/egress/key_swap.rs:84-100`                   | MAJOR    | **Resolved.** `bearer_wire_value` no longer panics on internal-prefix keys — it returns `Err(KeySwapError::CipheroctoInternalLeak { surface: "bearer_wire_value" })`. `attach_bearer` updated to propagate `?`. Tripwire tests converted from `#[should_panic]` to `assert_eq!(err, expected)` assertions. Defense-in-depth: the denylist was unreachable through production paths (gated by `from_resolved`); making it return `Err` removes the DoS-vector foot-gun for any future contributor who short-circuits the path.                                                  |
+| **R9-4** | `crates/quota-router-core/src/egress.rs:184-194` (`CapabilityHandle.holder_did`) | MAJOR    | **Deferred — documented.** `holder_did` is still populated `String::new()` with the comment "populated by the verifier layer". No code in the workspace populates it; this is a known half-impl. R9 audit confirms the field is currently dead — it is never read by the verifier, the egress strip, or any consumer. Future session must either wire the verifier layer to populate it OR remove the field from the public API. Documented here so reviewers do not think R9-4 was overlooked. |
+| **R9-5** | `crates/quota-router-core/src/egress.rs:230` (`v.starts_with(CAPABILITY_HEADER_ALT_PREFIX)`) | MAJOR    | **Resolved.** `v.starts_with(...)` changed to `v.to_ascii_lowercase().starts_with(&CAPABILITY_HEADER_ALT_PREFIX.to_ascii_lowercase())`. Two new tripwire tests assert lowercase + uppercase variants strip correctly. Header NAME was already case-insensitive (RFC 7230 §3.2); scheme VALUE is now also case-insensitive.                                                                                                                                                                                |
+| **R9-6** | Mission text: "32 sites (8 in proxy.rs, 24 in native_http/*)"             | MAJOR    | **Resolved.** Mission In Scope §1 line cite updated to "**36 production call sites**" with a per-file breakdown matching the R9-measured counts. New linter `.github/linters/no-attach-bearer-count-drift.sh` compares the live `attach_bearer(` count against the checked-in baseline (36) and fails on drift. Wired as `attach-bearer-drift` job in `.github/workflows/exercise-path.yml`. The earlier "32" count was a doc-bug; the R8 "40" update was also inaccurate. |
+
+### Test surface added (R9)
+
+- `crates/quota-router-core/src/egress.rs` — 6 new tests in unit-tests module:
+  - `strip_capability_authorization_alt_lowercase_strips` (R9-5 tripwire)
+  - `strip_capability_authorization_alt_uppercase_strips` (R9-5 tripwire)
+  - `strip_capability_redacts_hex_tag_from_body` (R9-2 tripwire)
+  - `strip_capability_redacts_macaroon_wire_from_body` (R9-2 tripwire)
+  - `strip_capability_redacts_cipherocto_cap_scheme_from_body` (R9-2 tripwire)
+  - `strip_capability_empty_body_is_noop` (R9-1 tripwire)
+  - `strip_capability_redacts_cipherocto_cap_from_binary_body` (R9-1 tripwire)
+- `crates/quota-router-core/src/egress/key_swap.rs` — 2 tripwire tests converted from `#[should_panic]` to `assert_eq!(err, ...)` (R9-3 hardening):
+  - `bearer_wire_value_tripwire_rejects_internal_prefix`
+  - `bearer_wire_value_tripwire_rejects_cipherocto_prefix`
+- `.github/linters/no-attach-bearer-count-drift.sh` (NEW, R9-6) — coarse defense against silent boundary regressions
+- `.github/workflows/exercise-path.yml` — `attach-bearer-drift` job wires the linter into CI
+
+### Carryover still open after R9
+
+| ID     | Status               | Reason                                                                                                                                                                                                                                                                              |
+| ------ | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| R9-4   | **DEFERRED — documented** | `CapabilityHandle.holder_did` is dead. Field exists in public API but is never populated. Future session must either wire the verifier layer to populate it OR remove the field. R9 audit documents this explicitly so reviewers do not assume the field is wired.                  |
+| R9-1 wiring | **PARTIAL**          | `strip_capability_from_body` is now implemented and tested. Today the proxy builds outbound requests from scratch so body-strip is defense-in-depth, not active. Future session should add an explicit `forward()` wrapper that calls `strip_capability` + `attach_bearer` together and wire it into all `attach_bearer` call sites. R9 audit documents this as a follow-up; not deferred silently. |
 
 ## Mission-level (RFC prerequisites)
 

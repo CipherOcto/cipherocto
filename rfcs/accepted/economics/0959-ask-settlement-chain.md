@@ -30,16 +30,18 @@ Coexists with RFC-0909 (Deterministic Quota Accounting). RFC-0909 governs virtua
 
 **Requires:**
 
-- RFC-0126 (Numeric): Deterministic Serialization — Accepted; canonical_ser for ask_id + axes encoding + envelope
-- RFC-0853 (Networking): Overlay Cryptography — Draft; BLAKE3 primitive source for ask_id + cache_key_hash + settlement_hash
-- RFC-0009 (Process): Identity Management — Draft; Ed25519 substrate for Ask signature + NodeType taxonomy
-- RFC-0957 (Economics): Capability Token Format — Draft; cap_root_hash source + `AskBinding` caveat host
-- RFC-0862 (Networking): Stoolap Sync Layer — Accepted (2026-06-20, v1.2.0); marketplace index rebuild + cross-repo persistence for `asks` table
+- RFC-0126 (Numeric): Deterministic Serialization — canonical_ser for ask_id + axes encoding + envelope
+- RFC-0853 (Networking): Overlay Cryptography — BLAKE3 primitive source for ask_id + cache_key_hash + settlement_hash
+- RFC-0009 (Process): Identity Management — Ed25519 substrate for Ask signature + NodeType taxonomy
+- RFC-0957 (Economics): Capability Token Format — cap_root_hash source + `AskBinding` caveat host
+- RFC-0957-A1 (Economics): Holder Registry + Catalog Storage — `HolderRegistry::insert_dual` + `HolderKind::Bearer`/`Capability`/`HopCapability`/`ZKBearing`
+- RFC-0959-A1 (Economics): Market Delivery Envelope — `DealSettled` event surface + `deliver_at_settlement` algorithm + `MarketDeliveryEnvelope` artifact
+- RFC-0862 (Networking): Stoolap Sync Layer — marketplace index rebuild + cross-repo persistence for `asks` table
 
 **Optional:**
 
-- RFC-0910 (Economics): Pricing Table Registry — Accepted (v31); pricing-table consumer surface
-- RFC-0900 (Economics): AI Quota Marketplace — Draft; marketplace index consumer
+- RFC-0910 (Economics): Pricing Table Registry — pricing-table consumer surface
+- RFC-0900 (Economics): AI Quota Marketplace — marketplace index consumer
 
 **Not Requires (per Option A):**
 
@@ -49,7 +51,7 @@ Coexists with RFC-0909 (Deterministic Quota Accounting). RFC-0909 governs virtua
 > 1. Dependencies MUST form a DAG (no cycles) — verified: `0959 ← {0126, 0853, 0009, 0957, 0862, 0910*, 0900*}` (asterisk = optional); no back-edges.
 > 2. All "Requires" RFCs MUST be listed as mission prerequisites — see `missions/open/0959-a-ask-pricing-stoolap.md`
 > 3. Optional dependencies documented separately from required — done
-> 4. Dependencies on "Draft" RFCs (RFC-0853, RFC-0009, RFC-0957) MUST note the assumption they will reach Accepted prior to RFC-0959 promotion — see §Implicit Assumptions Audit IA-1, IA-2, IA-3
+> 4. Dependencies on "Draft" RFCs (RFC-0853, RFC-0009) MUST note the assumption they will reach Accepted prior to RFC-0959 promotion — see §Implicit Assumptions Audit IA-1, IA-2. RFC-0957 was Draft at RFC-0959 acceptance; IA-3 closes when RFC-0957 reaches Accepted (alongside RFC-0957-A1 + RFC-0959-A1 + RFC-0969 + RFC-0970 + RFC-0971).
 
 ## Dependency Validation
 
@@ -60,7 +62,7 @@ Standalone, top-level section to satisfy BLUEPRINT v1.3 mandatory section set.
 | RFC-0126 | Requires | Accepted | Already | No |
 | RFC-0853 | Requires | Draft | Yes (IA-1: ACCEPTED RISK) | YES |
 | RFC-0009 | Requires | Draft | Yes (IA-2: ACCEPTED RISK) | YES |
-| RFC-0957 | Requires | Draft | Yes (IA-3: ACCEPTED RISK) | YES |
+| RFC-0957 | Requires | Accepted (2026-08-02) | Yes (IA-3: CLOSED post-batch) | No |
 | RFC-0862 | Requires | Accepted (2026-06-20); v1.2.0 (2026-06-25) at `rfcs/accepted/networking/0862-stoolap-data-sync.md` | Already | No |
 | RFC-0910 | Optional | Accepted (v31) | n/a | No |
 | RFC-0900 | Optional | Draft | Best-effort | No |
@@ -556,7 +558,7 @@ stateDiagram-v2
 |------------|-------------------|----------------------|---------------------|
 | **IA-1:** RFC-0853 (Overlay Cryptography) reaches Accepted status prior to RFC-0959 promotion | §Data Structures (BLAKE3 use), §Algorithms (settlement_hash, cache_key, receipt_id) | Settlement hash + ask_id + cache_key_hash + receipt_id diverge from RFC-0853 spec if RFC-0853 changes post-RFC-0959 acceptance | **ACCEPTED RISK:** RFC-0853 Draft as of 2026-07-20; promotion gated on RFC-0853 acceptance first; deadline = RFC-0959 acceptance PR |
 | **IA-2:** RFC-0009 (Identity Management) reaches Accepted status prior to RFC-0959 promotion | §Roles (Asker identity, Router identity), §Algorithms (sign_ask uses IdentityKey::sign; router signs envelope) | Ed25519 signature substrate changes break Ask signature interop; router signature interop | **ACCEPTED RISK:** RFC-0009 Draft as of 2026-07-20; promotion gated; deadline = RFC-0959 acceptance PR |
-| **IA-3:** RFC-0957 (Capability Token Format) reaches Accepted status prior to RFC-0959 promotion | §Algorithms (settlement_hash binds cap_root_hash), §Roles | Cap-root-hash format changes break Ask-bound settlement | **ACCEPTED RISK:** RFC-0957 Draft as of 2026-07-20; promotion gated; deadline = RFC-0959 acceptance PR |
+| **IA-3:** RFC-0957 (Capability Token Format) reaches Accepted status prior to RFC-0959 promotion | §Algorithms (settlement_hash binds cap_root_hash), §Roles | Cap-root-hash format changes break Ask-bound settlement | **CLOSED:** RFC-0957 promoted to Accepted on 2026-08-02 alongside the dual-mode authorization batch (RFC-0957-A1 + RFC-0959-A1 + RFC-0969 + RFC-0970 + RFC-0971); cap_root_hash format stable; settlement hash reproducible. |
 | **IA-4:** Stoolap fork `feat/blockchain-sql` branch is the canonical persistence surface | §System Architecture, §Implementation Phases | `asks` table + ledger divergence between forks; routing index drift | **Test:** RFC-0862 sync layer integration test must pass before RFC-0959 acceptance; cross-repo PR sequencing per master plan §5 Session 05 |
 | **IA-5:** RFC-0126 canonical_ser version byte is `0x01` at v1 | §Algorithms (ask_id, settlement_hash, receipt_id, envelope inputs) | Cross-version canonical_ser drift → ask_id collision; settlement hash divergence; receipt_id divergence | **Test:** `canonical_ser_roundtrip_test` covers v1 fixture; **R6 fix:** canonical_ser_roundtrip_test is part of `crates/octo-core` unit tests, not §Test Vectors property test matrix (different scope — property matrix tests hash replay; roundtrip_test tests canonical_ser encoding fidelity); version bump triggers new RFC |
 | **IA-6:** PricingAxis IDs use snake_case (`input_tokens_per_1k`) | §Data Structures (PricingAxis.id), TOML parser | Axis-ID casing drift → `UnknownAxis` at compute_cost | **Test:** TOML parser rejects mixed-case IDs; CLI rejects publish |
@@ -853,13 +855,13 @@ assert overflow.is_err();  // OCTO_WAmount cannot represent u128::MAX MicroOCTO_
 
 ## Implementation Phases
 
-### Phase 1: Core (RFC-0959 reach Accepted; mission implementation gated)
+### Phase 1: Core (RFC-0959 reaches Accepted; mission implementation gated)
 
 - [x] Author this RFC v1.0 (Option A rewrite; 2026-07-20)
 - [x] Author mission file `missions/open/0959-a-ask-pricing-stoolap.md` (S03; requires Option A wording update)
 - [ ] Await RFC-0959 acceptance (7-day review + 2 maintainer approvals)
-- [ ] Await RFC-0126 (already Accepted), RFC-0853, RFC-0009, RFC-0957 promotion to Accepted (gate dependencies)
-- [ ] RFC-0862 already Accepted (no action)
+- [ ] Await RFC-0126, RFC-0853, RFC-0009, RFC-0957 promotion to Accepted (gate dependencies)
+- [ ] RFC-0862 prerequisite satisfied (no action)
 
 ### Phase 2: Implementation (mission claim gated on Phase 1 closure)
 
@@ -932,13 +934,19 @@ Option A (independent settlement chain) is adopted because:
 
 ## Related RFCs
 
-- RFC-0957 (Economics): Capability Token Format — Draft; capability token + `AskBinding` caveat host
-- RFC-0910 (Economics): Pricing Table Registry — Accepted (v31); pricing-table consumer surface
-- RFC-0900 (Economics): AI Quota Marketplace — Draft; marketplace index
-- RFC-0009 (Process): Identity Management — Draft; Ed25519 substrate for Ask signature + NodeType
-- RFC-0853 (Networking): Overlay Cryptography — Draft; BLAKE3 primitive source
-- RFC-0862 (Networking): Stoolap Sync Layer — Accepted (2026-06-20, v1.2.0); marketplace index rebuild
-- RFC-0126 (Numeric): Deterministic Serialization — Accepted; canonical_ser
+- RFC-0957 (Economics): Capability Token Format — capability token + `AskBinding` caveat host
+- RFC-0957-A1 (Economics): Holder Registry + Catalog Storage — in-place amendment; HolderRegistry + CapabilityCatalog + HolderKind
+- RFC-0959-A1 (Economics): Market Delivery Envelope — in-place amendment; DealSettled + deliver_at_settlement + MarketDeliveryEnvelope
+- RFC-0969 (Economics): Dual-Pipeline Authorization — bearer + capability coexistence; identity linkage
+- RFC-0970 (Networking): Forwarding-Hop Authorization Envelope — per-hop HopCapability + E2E inner
+- RFC-0971 (Networking): Destination-Node Role Consolidation — Router ∧ TokenIssuer ∧ Asker predicate
+- RFC-0910 (Economics): Pricing Table Registry — pricing-table consumer surface
+- RFC-0900 (Economics): AI Quota Marketplace — marketplace index
+- RFC-0009 (Process): Identity Management — Ed25519 substrate for Ask signature + NodeType
+- RFC-0853 (Networking): Overlay Cryptography — BLAKE3 primitive source
+- RFC-0862 (Networking): Stoolap Sync Layer — marketplace index rebuild
+- RFC-0126 (Numeric): Deterministic Serialization — canonical_ser
+- RFC-0909 (Economics): Deterministic Quota Accounting — coexistence only (independent chain per Option A)
 - RFC-0909 (Economics): Deterministic Quota Accounting — Accepted (v69); coexistence only (independent chain per Option A)
 
 ## Related Use Cases

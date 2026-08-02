@@ -1,4 +1,4 @@
-# Mission: Forwarding-Hop Auth Envelope (RFC-0970)
+# Mission: Forwarding-Hop Authorization Envelope (RFC-0970)
 
 ## Status
 
@@ -6,7 +6,7 @@ Open
 
 ## RFC
 
-RFC-0970 (Networking): Forwarding-Hop Auth Envelope — Accepted 2026-08-02
+RFC-0970 (Networking): Forwarding-Hop Authorization Envelope — Accepted 2026-08-02
 
 **BLUEPRINT gate note:** RFC reached Accepted 2026-08-02 (multi-round R28-R64 review convergence). Mission now CLAIMABLE per BLUEPRINT Mission Lifecycle.
 

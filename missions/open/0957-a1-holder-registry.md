@@ -10,7 +10,7 @@ RFC-0957-A1 (Economics): Holder Registry + Catalog Storage (Amendment) — Accep
 
 **BLUEPRINT gate note:** RFC reached Accepted 2026-08-02 (multi-round R28-R64 review convergence). Mission now CLAIMABLE per BLUEPRINT Mission Lifecycle.
 
-This mission is the **top-level decomposition mission** for RFC-0957-A1. RFC-0957-A1 has 13 test vectors, 4 implementation phases, and 6 new types (HolderKind + HolderRecord + HolderRegistry + CapabilityCatalog extensions + StoolapHolderRegistry + Transaction). Per BLUEPRINT §Multi-Mission Decomposition (RFC with >10 types, >4 phases), this top-level mission captures acceptance criteria + Type Coverage roll-up; the actual implementation work is decomposed into 3 sub-missions (0957-c, 0957-d, 0957-e). The sub-missions inherit this mission's RFC reference + dependencies + design goals.
+This mission is the **top-level decomposition mission** for RFC-0957-A1. RFC-0957-A1 has 15 test vectors, 4 implementation phases, and 11 new types (HolderKind enum, HolderRecord struct, HolderRegistry trait, Transaction type, StoolapHolderRegistry reference impl, CapabilityCatalog extensions, CapabilityToken::mint signature amendment, compute_cap_root_hash_from_wire helper, VerifyContext::holder_registry slot, HolderRecord constructors, IdentityKey::from_public_bytes working stub). Per BLUEPRINT §Multi-Mission Decomposition (RFC with >10 types, >4 phases), this top-level mission captures acceptance criteria + Type Coverage roll-up; the actual implementation work is decomposed into 3 sub-missions (0957-c, 0957-d, 0957-e). The sub-missions inherit this mission's RFC reference + dependencies + design goals.
 
 ## Summary
 

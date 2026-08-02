@@ -6,7 +6,7 @@ Open
 
 ## RFC
 
-RFC-0970 (Networking): Forwarding-Hop Auth Envelope — Accepted 2026-08-02
+RFC-0970 (Networking): Forwarding-Hop Authorization Envelope — Accepted 2026-08-02
 
 **Sub-mission of:** `missions/open/0970-forwarding-hop-auth-envelope.md` (top-level decomposition mission)
 

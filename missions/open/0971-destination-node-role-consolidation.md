@@ -10,7 +10,7 @@ RFC-0971 (Networking): Destination-Node Role Consolidation — Accepted 2026-08-
 
 **BLUEPRINT gate note:** RFC reached Accepted 2026-08-02 (multi-round R28-R64 review convergence). Mission now CLAIMABLE per BLUEPRINT Mission Lifecycle.
 
-This mission is the **top-level decomposition mission** for RFC-0971. RFC-0971 is a meta RFC that names the role binding explicitly: `DestinationNode = Router ∧ TokenIssuer ∧ Asker` (predicate-based per R23-N9 fix). `ReputationAnchor` is OPTIONAL (R13-N8 fix). Pure forwarder exception is explicit (Finding A18 defense). RFC-0971 has 8 test vectors, 3 implementation phases, and 4-6 new types (`RoleTag` enum, `RoleBindingDeclaration` struct, `RoleBindingLifecycle` state machine, role-binding audit trail). Per BLUEPRINT §Multi-Mission Decomposition (>10 types threshold NOT met; 4-6 types), this top-level captures acceptance criteria + Type Coverage roll-up; the implementation work is a single sub-mission (0971-a) because the work is naturally a meta-spec that consumes the other 4 in-batch RFCs without introducing parallel work.
+This mission is the **top-level decomposition mission** for RFC-0971. RFC-0971 is a meta RFC that names the role binding explicitly: `DestinationNode = Router ∧ TokenIssuer ∧ Asker` (predicate-based per R23-N9 fix). `ReputationAnchor` is OPTIONAL (R13-N8 fix). Pure forwarder exception is explicit (Finding A18 defense). RFC-0971 has 8 test vectors, 3 implementation phases, and 4 new types (`RoleTag` enum, `RoleBindingDeclaration` struct, `RoleBindingLifecycle` state machine, role-binding audit trail). Per BLUEPRINT §Multi-Mission Decomposition (>10 types threshold NOT met; 4 types), this top-level captures acceptance criteria + Type Coverage roll-up; the implementation work is a single sub-mission (0971-a) because the work is naturally a meta-spec that consumes the other 4 in-batch RFCs without introducing parallel work.
 
 ## Summary
 
@@ -44,7 +44,7 @@ The sub-mission (0971-a) implements the ACs by RFC-0971 §Test Vectors. When 097
 | Pure forwarder exception (configuration) | Sub-mission 0971-a |
 | ReputationAnchor optional (configuration) | Sub-mission 0971-a |
 | Role-binding audit trail (append-only log of transitions) | Sub-mission 0971-a |
-| `destination-node-architecture.md` developer guide | Sub-mission 0971-a |
+| Inline §Developer Guide section (per docs/07-developers/ rule; no external developer-guide file) | Sub-mission 0971-a |
 
 ### Mission Dependency Model
 
@@ -95,7 +95,7 @@ decomposes_into:
 
 RFC-0971 is borderline for decomposition per BLUEPRINT §Multi-Mission Decomposition:
 
-- **4-6 new types** (RoleTag, RoleBindingDeclaration, RoleBindingLifecycle, audit trail) — does NOT exceed >10 threshold
+- **4 new types** (RoleTag, RoleBindingDeclaration, RoleBindingLifecycle, audit trail) — does NOT exceed >10 threshold
 - **3 implementation phases** (§Phase 1: Role Binding Declaration, §Phase 2: Cross-Role Data Flow Documentation, §Phase 3: Mission Decomposition) — does NOT exceed >4 threshold
 - **Different prerequisite chains:** NOT applicable — all work depends on the same in-batch RFCs landing first
 

@@ -115,7 +115,7 @@ This sub-mission implements (per top-level Type Coverage table):
 - Pure forwarder exception
 - ReputationAnchor optional
 - Role-binding audit trail
-- `destination-node-architecture.md` developer guide
+- Inline §Developer Guide section (per docs/07-developers/ rule; no external developer-guide file)
 
 ## Location
 

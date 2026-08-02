@@ -94,7 +94,7 @@ decomposes_into:
 
 RFC-0957-A1 qualifies for decomposition per BLUEPRINT §Multi-Mission Decomposition:
 
-- **13 RFC types** (HolderKind, HolderRecord, HolderRegistry, Transaction, StoolapHolderRegistry, CapabilityCatalog x4, mint signature, compute_cap_root_hash_from_wire, VerifyContext::holder_registry, HolderRecord constructors, manual Debug impls, IdentityKey stub) — exceeds the >10 threshold
+- **11 RFC-0957-A1 new types** (HolderKind, HolderRecord, HolderRegistry, Transaction, StoolapHolderRegistry, CapabilityCatalog extensions, mint signature amendment, compute_cap_root_hash_from_wire, VerifyContext::holder_registry, HolderRecord constructors, IdentityKey::from_public_bytes working stub) — exceeds the >10 threshold. Manual redacting `Debug` impls on `HolderRecord` live in sub-mission 0957-c; the 5 security-bearing structs from sibling RFCs (BearerCapsule, MarketDeliveryEnvelope, DealSettled, DealSettledPayload, EnvelopeId from RFC-0959-A1) are NOT in scope here.
 - **3 implementation phases** (§Phase 1: Schema + Trait + Reference Impl, §Phase 2: Wire + Verify Updates, §Phase 3: Mission Decomposition) — does not exceed >4 but the work is naturally split by module boundary
 - **Different prerequisite chains:**
   - 0957-c (registry impl) depends on RFC-0862 stoolap substrate

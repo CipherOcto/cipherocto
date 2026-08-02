@@ -12,7 +12,7 @@ RFC-0971 (Networking): Destination-Node Role Consolidation — Accepted 2026-08-
 
 ## Summary
 
-Implement RFC-0971 §Phase 1 (Role Binding Declaration) and §Phase 2 (Cross-Role Data Flow Documentation). Author `RoleTag` typed enum (5 variants: `Router`, `TokenIssuer`, `Asker`, `PureForwarder`, `ReputationAnchor`), `RoleBindingDeclaration` struct, `RoleBindingLifecycle` state machine (Active, Draining, Suspended, Retired), cross-role data flow documentation for deal settlement + forwarded request. Implement role-binding audit trail (append-only log of transitions). Update RFC-0870, RFC-0957, RFC-0959, RFC-0968 §Roles sections with cross-references to RFC-0971. Author inline §Developer Guide section (inline in this mission).
+Implement RFC-0971 §Phase 1 (Role Binding Declaration) and §Phase 2 (Cross-Role Data Flow Documentation). Author `RoleTag` typed enum (5 variants: `Router`, `TokenIssuer`, `Asker`, `PureForwarder`, `ReputationAnchor`), `RoleBindingDeclaration` struct, `RoleBindingLifecycle` state machine (Active, Draining, Suspended, Retired), cross-role data flow documentation for deal settlement + forwarded request. Implement role-binding audit trail (append-only log of transitions). Update RFC-0870, RFC-0957, RFC-0959, RFC-0955-R1 §Roles sections with cross-references to RFC-0971. Author inline §Developer Guide section (inline in this mission).
 
 Predicate-based definition `DestinationNode = Router ∧ TokenIssuer ∧ Asker` is canonical (R23-N9 fix). `ReputationAnchor` is OPTIONAL (R13-N8 fix). Pure forwarder exception is explicit (Finding A18 defense). `seller_signature ≡ Asker signature`.
 
@@ -49,7 +49,7 @@ Predicate-based definition `DestinationNode = Router ∧ TokenIssuer ∧ Asker` 
 - [ ] RFC-0870 §Roles documentation updated: add `RFC-0971` cross-reference.
 - [ ] RFC-0957 §Roles documentation updated: add `RFC-0971` cross-reference.
 - [ ] RFC-0959 §Roles documentation updated: add `RFC-0971` cross-reference.
-- [ ] RFC-0968 §Roles documentation updated: add `RFC-0971` cross-reference.
+- [ ] RFC-0955-R1 §Roles documentation updated: add `RFC-0971` cross-reference.
 
 ### Developer guide (inline §Developer Guide section in this mission)
 
@@ -86,7 +86,7 @@ Predicate-based definition `DestinationNode = Router ∧ TokenIssuer ∧ Asker` 
 - RFC-0957-A1 — unified HolderRegistry
 - RFC-0959 — Asker role substrate
 - RFC-0959-A1 — `DealSettled` event signing
-- RFC-0968 — ReputationAnchor role (OPTIONAL)
+- RFC-0955-R1 — ReputationAnchor role (OPTIONAL)
 - RFC-0969 — routing role substrate
 - RFC-0970 — forwarding role substrate
 
@@ -125,7 +125,7 @@ This sub-mission implements (per top-level Type Coverage table):
 - `rfcs/accepted/networking/0870-router-network-layer.md` (MODIFY) — §Roles cross-reference
 - `rfcs/accepted/economics/0957-capability-token-format.md` (MODIFY) — §Roles cross-reference
 - `rfcs/accepted/economics/0959-ask-settlement-chain.md` (MODIFY) — §Roles cross-reference
-- `rfcs/accepted/economics/0968-reputation-anchoring.md` (MODIFY) — §Roles cross-reference
+- `rfcs/accepted/economics/0955-r1-reputation-anchoring.md` (MODIFY) — §Roles cross-reference
 
 ## Claimant
 

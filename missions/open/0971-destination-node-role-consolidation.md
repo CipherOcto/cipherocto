@@ -14,7 +14,7 @@ This mission is the **top-level decomposition mission** for RFC-0971. RFC-0971 i
 
 ## Summary
 
-Implement the meta RFC that names the binding: destination-node = Router + TokenIssuer + Asker. The seller's node holds all three roles simultaneously (predicate-based per R23-N9 fix). `ReputationAnchor` is OPTIONAL — not every destination node anchors reputation (R13-N8 fix). Pure forwarder exception: nodes that do NOT bind to the unified role forward without role-binding audit (Finding A18 defense). Cross-RFC dependencies: RFC-0870 (Router role), RFC-0957 (Token Issuer role), RFC-0959 (Asker role), RFC-0957-A1 (unified HolderRegistry). Cross-references: RFC-0870 §Roles, RFC-0957 §Roles, RFC-0959 §Roles, RFC-0968 §Roles.
+Implement the meta RFC that names the binding: destination-node = Router + TokenIssuer + Asker. The seller's node holds all three roles simultaneously (predicate-based per R23-N9 fix). `ReputationAnchor` is OPTIONAL — not every destination node anchors reputation (R13-N8 fix). Pure forwarder exception: nodes that do NOT bind to the unified role forward without role-binding audit (Finding A18 defense). Cross-RFC dependencies: RFC-0870 (Router role), RFC-0957 (Token Issuer role), RFC-0959 (Asker role), RFC-0957-A1 (unified HolderRegistry). Cross-references: RFC-0870 §Roles, RFC-0957 §Roles, RFC-0959 §Roles, RFC-0955-R1 §Roles.
 
 ## Acceptance Criteria
 
@@ -40,7 +40,7 @@ The sub-mission (0971-a) implements the ACs by RFC-0971 §Test Vectors. When 097
 | `RoleBindingDeclaration` struct | Sub-mission 0971-a |
 | `RoleBindingLifecycle` state machine (Active, Draining, Suspended, Retired) | Sub-mission 0971-a |
 | Cross-role data flow (deal settlement + forwarded request) | Sub-mission 0971-a |
-| Cross-RFC §Roles updates (RFC-0870, RFC-0957, RFC-0959, RFC-0968) | Sub-mission 0971-a |
+| Cross-RFC §Roles updates (RFC-0870, RFC-0957, RFC-0959, RFC-0955-R1) | Sub-mission 0971-a |
 | Pure forwarder exception (configuration) | Sub-mission 0971-a |
 | ReputationAnchor optional (configuration) | Sub-mission 0971-a |
 | Role-binding audit trail (append-only log of transitions) | Sub-mission 0971-a |
@@ -54,7 +54,7 @@ depends_on:
   - 0870-router-network-layer # Router role substrate
   - 0957-capability-token-format # Token Issuer role substrate
   - 0959-ask-settlement-chain # Asker role substrate
-  - 0968-reputation-anchoring # ReputationAnchor role (optional)
+  - 0968a-reputation-anchoring # ReputationAnchor role (optional; RFC-0955-R1 binding; in flight per 0968a)
   - 0969-dual-pipeline-authorization # routing role
   - 0970-forwarding-hop-auth-envelope # forwarding role
 decomposes_into:
@@ -73,7 +73,7 @@ decomposes_into:
 - RFC-0957-A1 — unified HolderRegistry
 - RFC-0959 — Asker role (one of the three required roles)
 - RFC-0959-A1 — `DealSettled` event signing (Asker signature)
-- RFC-0968 — ReputationAnchor role (OPTIONAL; not every destination anchors reputation per R13-N8 fix)
+- RFC-0955-R1 — ReputationAnchor role (OPTIONAL; not every destination anchors reputation per R13-N8 fix; reputation anchoring is in flight via `missions/claimed/0968a-reputation-anchoring.md`)
 - RFC-0969 — routing role
 - RFC-0970 — forwarding role
 
@@ -112,10 +112,10 @@ Despite not strictly exceeding the thresholds, decomposition into top-level + si
 ## Notes
 
 - Predicate-based definition `DestinationNode = Router ∧ TokenIssuer ∧ Asker` is canonical per R23-N9 fix (Round 21 R13-N8 superseded). Prior 'super-role' wording in earlier drafts was REJECTED per RFC-0971 §Appendix B "Why Not a Super-Role?".
-- `ReputationAnchor` is OPTIONAL (R13-N8 fix). Cross-reference to RFC-0968: destination nodes MAY bind the ReputationAnchor role; they are NOT REQUIRED to.
+- `ReputationAnchor` is OPTIONAL (R13-N8 fix). Cross-reference to RFC-0955-R1: destination nodes MAY bind the ReputationAnchor role; they are NOT REQUIRED to.
 - Pure forwarder exception: nodes that do NOT bind to the unified role forward without role-binding audit. The `pure_forward` algorithm from RFC-0970 §Algorithms + the `HopScope::PureForwarder` variant from RFC-0970 §Data Structures are the substrate.
 - `seller_signature ≡ Asker signature` (R13-N8 fix: explicitly equivalent). This means the same Ed25519 keypair signs both the `Ask` (RFC-0959) and the `DealSettled` event (RFC-0959-A1). NOT two separate keys.
-- Cross-RFC §Roles updates: RFC-0870, RFC-0957, RFC-0959, RFC-0968 §Roles sections all gain a cross-reference to RFC-0971. Documentation-only change.
+- Cross-RFC §Roles updates: RFC-0870, RFC-0957, RFC-0959, RFC-0955-R1 §Roles sections all gain a cross-reference to RFC-0971. Documentation-only change.
 - Role-binding audit trail: append-only log of role-binding transitions (Active → Draining → Suspended → Retired). Per Finding A20 (cross-role audit trail ambiguity), the audit trail MUST include the `role_tag` (typed enum, NOT string literal) and the `node_epoch` for replay protection.
 - Developer guide §Developer Guide section (inline in sub-mission 0971-a) documents the role-binding declaration + the pure forwarder exception + the ReputationAnchor opt-in.
 

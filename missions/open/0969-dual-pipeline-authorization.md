@@ -85,7 +85,7 @@ decomposes_into:
 
 **Not Requires:**
 
-- RFC-0958 (ZK subclass) — out of scope
+- RFC-0958 (ZK subclass) — Accepted; ZK capability circuit implementation in flight via `missions/claimed/0958-a-zk-capability-circuit.md` (S05 4-session plan); bearer + capability dual-pipeline authority is the substrate; ZK-verified extension is post-0958-a merge scope
 - RFC-0955 (marketplace ordering) — orthogonal
 
 ## Implementation Guide

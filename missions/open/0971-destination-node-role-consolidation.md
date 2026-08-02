@@ -83,7 +83,7 @@ decomposes_into:
 
 **Not Requires:**
 
-- RFC-0958 (ZK subclass) — out of scope
+- RFC-0958 (ZK subclass) — Accepted; implementation in flight via `missions/claimed/0958-a-zk-capability-circuit.md` (S05 4-session plan); role-binding for ZK-verified hops is post-0958-a merge scope
 
 ## Implementation Guide
 

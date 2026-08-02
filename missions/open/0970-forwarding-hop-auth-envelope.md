@@ -87,7 +87,7 @@ decomposes_into:
 
 - RFC-0970 §Specification → §System Architecture → §Data Structures → §Algorithms → §Wire Format → §Test Vectors (single canonical reference)
 - RFC-0970 §Appendices: §Why Not Transitive Trust?, §Why Not Destination-Only Auth?, §RFC-0870 ForwardRequestPayload Update, §Example 3-Hop Chain
-- Companion: `docs/07-developers/forwarding-hop-auth-guide.md` (NOT yet authored; in 0970-b scope)
+- Developer guide: inline §Developer Guide section in sub-mission 0970-b (inline in this mission)
 
 ## Decomposition Rationale
 

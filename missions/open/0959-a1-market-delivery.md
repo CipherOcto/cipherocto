@@ -87,7 +87,7 @@ decomposes_into:
 
 - RFC-0959-A1 §Specification → §System Architecture → §Data Structures → §Algorithms → §Settlement Chain Extension → §Test Vectors (single canonical reference)
 - RFC-0959-A1 §Appendices: §Sample Walk-Through, §RFC-0959 §Roles Update, §Forward-Compat Behavior for Legacy Verifiers
-- Companion: `docs/07-developers/market-delivery-envelope-guide.md` (NOT yet authored; in 0959-b scope)
+- Developer guide: inline §Developer Guide section in sub-mission 0959-b (inline in this mission)
 
 ## Decomposition Rationale
 

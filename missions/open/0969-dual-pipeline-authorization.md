@@ -92,7 +92,7 @@ decomposes_into:
 
 - RFC-0969 §Specification → §System Architecture → §Data Structures → §Wire Format → §Algorithms → §Test Vectors (single canonical reference)
 - RFC-0969 §Appendices: §Sample Walk-Through, §Why Not OR-Gate?, §Why Not Separate Gateways?
-- Companion: `docs/07-developers/dual-pipeline-gateway-guide.md` (NOT yet authored; in 0969-a scope)
+- Developer guide: inline §Developer Guide section in sub-mission 0969-a (inline in this mission)
 
 ## Decomposition Rationale
 

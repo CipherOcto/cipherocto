@@ -77,4 +77,4 @@ This sub-mission implements (per top-level Type Coverage table):
 - This sub-mission has NO test vectors. It is purely additive glue + a documentation cross-reference. Per RFC-0970 §Phase 4 description.
 - The `hop_envelope: Option<HopEnvelope>` field is opt-in: requests forwarded without a hop envelope use `ForwardRequestPayload::new(inner)`. Pure forward path is the default.
 - RFC-0870 §Roles update is documentation-only. The actual cross-reference text lives in RFC-0970 §Appendix C; this mission copies it into RFC-0870 §Roles per the cross-reference rule.
-- The companion developer guide `docs/07-developers/forwarding-hop-auth-guide.md` may be authored as part of this sub-mission (per RFC-0970 §Implementation Guide). Recommended: include in the same PR as the `ForwardRequestPayload` extension.
+- The developer guide is an inline §Developer Guide section in this sub-mission (inline in this mission). Sections: `ForwardRequestPayload` extension, hop_envelope opt-in field, RFC-0870 §Roles cross-reference, wire format v2 envelope attachment. Include in the same PR as the `ForwardRequestPayload` extension.

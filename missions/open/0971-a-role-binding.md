@@ -12,7 +12,7 @@ RFC-0971 (Networking): Destination-Node Role Consolidation — Accepted 2026-08-
 
 ## Summary
 
-Implement RFC-0971 §Phase 1 (Role Binding Declaration) and §Phase 2 (Cross-Role Data Flow Documentation). Author `RoleTag` typed enum (5 variants: `Router`, `TokenIssuer`, `Asker`, `PureForwarder`, `ReputationAnchor`), `RoleBindingDeclaration` struct, `RoleBindingLifecycle` state machine (Active, Draining, Suspended, Retired), cross-role data flow documentation for deal settlement + forwarded request. Implement role-binding audit trail (append-only log of transitions). Update RFC-0870, RFC-0957, RFC-0959, RFC-0968 §Roles sections with cross-references to RFC-0971. Author companion developer guide `docs/07-developers/destination-node-architecture.md`.
+Implement RFC-0971 §Phase 1 (Role Binding Declaration) and §Phase 2 (Cross-Role Data Flow Documentation). Author `RoleTag` typed enum (5 variants: `Router`, `TokenIssuer`, `Asker`, `PureForwarder`, `ReputationAnchor`), `RoleBindingDeclaration` struct, `RoleBindingLifecycle` state machine (Active, Draining, Suspended, Retired), cross-role data flow documentation for deal settlement + forwarded request. Implement role-binding audit trail (append-only log of transitions). Update RFC-0870, RFC-0957, RFC-0959, RFC-0968 §Roles sections with cross-references to RFC-0971. Author inline §Developer Guide section (inline in this mission).
 
 Predicate-based definition `DestinationNode = Router ∧ TokenIssuer ∧ Asker` is canonical (R23-N9 fix). `ReputationAnchor` is OPTIONAL (R13-N8 fix). Pure forwarder exception is explicit (Finding A18 defense). `seller_signature ≡ Asker signature`.
 
@@ -51,9 +51,9 @@ Predicate-based definition `DestinationNode = Router ∧ TokenIssuer ∧ Asker` 
 - [ ] RFC-0959 §Roles documentation updated: add `RFC-0971` cross-reference.
 - [ ] RFC-0968 §Roles documentation updated: add `RFC-0971` cross-reference.
 
-### Developer guide
+### Developer guide (inline §Developer Guide section in this mission)
 
-- [ ] `docs/07-developers/destination-node-architecture.md` (NEW) — destination node architecture guide. Sections: role-binding declaration, pure forwarder exception, ReputationAnchor opt-in, cross-role data flow, audit trail, troubleshooting.
+- [ ] §Developer Guide section authored inline in this mission (inline in this mission). Sections: role-binding declaration, pure forwarder exception, ReputationAnchor opt-in, cross-role data flow, audit trail, troubleshooting.
 
 ### Test vectors (RFC-0971 §Test Vectors, all 8 live in this sub-mission)
 
@@ -121,7 +121,7 @@ This sub-mission implements (per top-level Type Coverage table):
 
 - `crates/quota-router-core/src/node/role_binding.rs` (NEW)
 - `crates/quota-router-core/src/node/role_binding_audit.rs` (NEW)
-- `docs/07-developers/destination-node-architecture.md` (NEW)
+- §Developer Guide section in this mission (inline)
 - `rfcs/accepted/networking/0870-router-network-layer.md` (MODIFY) — §Roles cross-reference
 - `rfcs/accepted/economics/0957-capability-token-format.md` (MODIFY) — §Roles cross-reference
 - `rfcs/accepted/economics/0959-ask-settlement-chain.md` (MODIFY) — §Roles cross-reference
@@ -140,4 +140,4 @@ This sub-mission implements (per top-level Type Coverage table):
 - This sub-mission owns ALL 8 test vectors. The pure documentation-update scope (4 RFC §Roles cross-references) is bundled with the implementation work because the cross-references are critical to the RFC-0971 acceptance criteria (Finding A18 defense: role confusion attack).
 - `seller_signature ≡ Asker signature` (R13-N8 fix): the same Ed25519 keypair signs both the `Ask` (RFC-0959) and the `DealSettled` event (RFC-0959-A1). The `RoleBindingDeclaration` does NOT carry a separate `seller_keypair` field — it derives from the `Asker` role binding.
 - Role-binding audit trail entries use typed `RoleTag` enum (NO string literals). TV8 grep test enforces.
-- Developer guide `docs/07-developers/destination-node-architecture.md` is the canonical reference for destination-node operators. Recommended placement: same PR as the implementation.
+- Developer guide §Developer Guide section (inline in this mission) is the canonical reference for destination-node operators. Recommended placement: same PR as the implementation.

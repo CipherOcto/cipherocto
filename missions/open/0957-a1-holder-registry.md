@@ -88,7 +88,7 @@ decomposes_into:
 
 - RFC-0957-A1 §Specification → §System Architecture → §Data Structures → §Algorithms → §Test Vectors (single canonical reference)
 - RFC-0957-A1 §Appendices: §Schema Migration Path, §Example Integration, §RFC-0957 §Roles Token Issuer Update
-- Companion: `docs/07-developers/holder-registry-implementation-guide.md` (NOT yet authored; S05d scope; cite in 0957-d sub-mission)
+- Developer guide: inline §Developer Guide section in sub-mission 0957-d (inline in this mission)
 
 ## Decomposition Rationale
 

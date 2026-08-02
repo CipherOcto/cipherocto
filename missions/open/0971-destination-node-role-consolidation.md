@@ -89,7 +89,7 @@ decomposes_into:
 
 - RFC-0971 §Specification → §System Architecture → §Data Structures → §Algorithms → §Role-Binding Table → §Wire Format → §Cross-Role Data Flow → §Test Vectors (single canonical reference)
 - RFC-0971 §Appendices: §RFC Cross-Reference Updates, §Why Not a Super-Role?, §Why Not Pure Forwarder + Mint Elsewhere?, §Example Configuration, §Pure Forwarder Configuration (No Binding)
-- Companion: `docs/07-developers/destination-node-architecture.md` (to be authored in 0971-a)
+- Developer guide: inline §Developer Guide section in sub-mission 0971-a (inline in this mission)
 
 ## Decomposition Rationale
 
@@ -117,7 +117,7 @@ Despite not strictly exceeding the thresholds, decomposition into top-level + si
 - `seller_signature ≡ Asker signature` (R13-N8 fix: explicitly equivalent). This means the same Ed25519 keypair signs both the `Ask` (RFC-0959) and the `DealSettled` event (RFC-0959-A1). NOT two separate keys.
 - Cross-RFC §Roles updates: RFC-0870, RFC-0957, RFC-0959, RFC-0968 §Roles sections all gain a cross-reference to RFC-0971. Documentation-only change.
 - Role-binding audit trail: append-only log of role-binding transitions (Active → Draining → Suspended → Retired). Per Finding A20 (cross-role audit trail ambiguity), the audit trail MUST include the `role_tag` (typed enum, NOT string literal) and the `node_epoch` for replay protection.
-- Developer guide `docs/07-developers/destination-node-architecture.md` documents the role-binding declaration + the pure forwarder exception + the ReputationAnchor opt-in.
+- Developer guide §Developer Guide section (inline in sub-mission 0971-a) documents the role-binding declaration + the pure forwarder exception + the ReputationAnchor opt-in.
 
 ### Related
 

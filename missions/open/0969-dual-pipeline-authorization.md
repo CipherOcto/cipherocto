@@ -81,7 +81,7 @@ decomposes_into:
 - `missions/claimed/0957-a-capability-token-macaroon.md` (in progress) — base capability path
 - `missions/open/0957-c-holder-registry-impl.md` — `HolderRegistry` + `Transaction::insert_dual`
 - `missions/open/0957-e-mint-txn-parameter.md` — `CapabilityCatalog` extensions
-- Bearer path mission (TBD; RFC-0903 bearer mission)
+- Bearer path mission: `missions/claimed/` (RFC-0903 bearer substrate). Search `missions/claimed/0903*` for the exact filename; if absent, RFC-0903 bearer path is owned by RFC-0959-A1 §Out of Scope (BearerCapsule is a typed struct here, NOT a virtual key per RFC-0903) — coordinate with sub-mission 0959-b.
 
 **Not Requires:**
 

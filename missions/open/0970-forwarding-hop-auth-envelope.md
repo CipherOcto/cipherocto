@@ -76,8 +76,8 @@ decomposes_into:
 **Mission gates:**
 
 - `missions/open/0957-c-holder-registry-impl.md` — `HolderRecord::from_hop_capability` constructor MUST exist (cross-mission; co-author contract per 0957-c Notes)
-- `missions/claimed/0870*` (TBD) — Router substrate
-- `missions/claimed/0853*` (TBD) — channel substrate
+- Router substrate: RFC-0870 (Router role; not yet decomposed into a `missions/open/0870*` mission as of 2026-08-02). Coordinate with RFC-0870 §Roles (updated by sub-mission 0970-b).
+- Channel substrate: RFC-0853 (per-hop channel binding). Coordinate with existing 0957-a capability substrate (BLAKE3 keyed-hash + HKDF-BLAKE3 primitives).
 
 **Not Requires:**
 

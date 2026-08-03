@@ -138,7 +138,7 @@ cargo test -p zk-circuit --test casm_snapshot     # 1 test (CASM BLAKE3 hash)
 # Perf gates (#[ignore] → opt-in via --include-ignored)
 cargo test -p octo-wallet --test bench -- --include-ignored --nocapture
 # expected: 3 passed; proof_gen <2s SelfHost 10K trace; verify <100ms;
-#           proof size 50-500KB (stub path = 32B structural smoke; real-zk gate under feature)
+#           proof size 50-500KB (stub path = 32B structural smoke; full gate under feature)
 
 # FFI libloading (#[ignore] → opt-in via --include-ignored)
 cargo test -p zk-vendor --test ffi_loading -- --include-ignored --nocapture
@@ -167,7 +167,7 @@ cargo clippy --workspace --all-targets --features full -- -D warnings
 | **AC-9** | `PublicInputMismatch` + slot-binding drift | `tests/zk_vectors.rs::tv4 + ac9` | `46e29fa2` (S3) |
 | **AC-10** | CASM drift at mint AND verify paths | `tests/zk_vectors.rs::tv5_*` | `46e29fa2` (S3) |
 | **AC-11** | Proof gen <2s SelfHost 10K trace + verify <100ms | `tests/bench.rs` (3 #[ignore] gates; R3 audit fixed bench to batch path: `proof_size = 32 bytes`) | `46e29fa2` (S3); R3 audit fix-up 2026-07-31 |
-| **AC-12** | Proof size 50-500KB (real-zk feature gate) | `tests/bench.rs::proof_size_50_to_500kb` | `46e29fa2` (S3); R3 #4 declare `real-zk` feature `2fb0a455` |
+| **AC-12** | Proof size 50-500KB (full feature gate) | `tests/bench.rs::proof_size_50_to_500kb` | `46e29fa2` (S3); R3 #4 declare `full` feature `2fb0a455` |
 | **AC-13** | cargo-fuzz `capability_zk_verify` 24h nightly | `crates/octo-wallet/fuzz/fuzz_targets/capability_zk_verify.rs` + CI `fuzz-nightly` job (R3 #C3 fix `-p` flag → `octo-wallet-fuzz`) | `46e29fa2` (S3); R3 fix `4977a416` |
 | **AC-14** | `cargo clippy --workspace --all-targets --features full -- -D warnings` clean | workspace lint | `46e29fa2` (S3); R3 dead-variant triage `b98801e0` |
 | **AC-15** | Master plan §8 R12 exit criteria + single cipherocto-side PR + 8 R3 follow-ups | this doc + `git diff --stat` scope check + R3 fix-ups table | S4 closure + R3 #5 N=2 `a4594be8` + #7 dead variants `b98801e0` |
@@ -231,9 +231,9 @@ Base64url no-padding encoding per RFC-0957 §3.7.
 
 | Gate | Target | Test | Status |
 |------|--------|------|--------|
-| **G1** (AC-11) | Proof gen <2s on 10K trace (SelfHost reference HW) | `tests/bench.rs::proof_gen_latency_self_host_under_2s_10k_trace` | sub-ms on stub; real-STWO gate under `--features real-zk` |
+| **G1** (AC-11) | Proof gen <2s on 10K trace (SelfHost reference HW) | `tests/bench.rs::proof_gen_latency_self_host_under_2s_10k_trace` | sub-ms on stub; real-STWO gate under `--features full` |
 | **G2** (AC-11) | Verify <100ms | `tests/bench.rs::verify_latency_under_100ms` | sub-ms on stub |
-| **AC-12** | Proof size 50-500KB | `tests/bench.rs::proof_size_50_to_500kb` | stub = 32B structural smoke; 50-500KB gate under `--features real-zk` |
+| **AC-12** | Proof size 50-500KB | `tests/bench.rs::proof_size_50_to_500kb` | stub = 32B structural smoke; 50-500KB gate under `--features full` |
 
 **Reference HW:** 4-core x86_64, 16GB RAM, NVMe SSD (per RFC-0958 §Implementation Reference).
 

@@ -351,9 +351,9 @@ pub const MAX_BATCH_SIGNERS: usize = 256;
 /// RFC-0962 §9 ZK proof integration).
 ///
 /// Behavior:
-/// - If `zk_vendor::loaded_library()` returns `Some` AND the `real-zk`
+/// - If `zk_vendor::loaded_library()` returns `Some` AND the `full`
 ///   feature is enabled, delegates to `stwo-sys` `prove` via libloading.
-/// - Otherwise (default — `real-zk` feature off, or lib missing), returns
+/// - Otherwise (default — `full` feature off, or lib missing), returns
 ///   a deterministic mock proof whose 32-byte commitment matches
 ///   `zk_verifier::stub_commitment(casm_hash, &zk_public)` — the same
 ///   helper the verifier uses. This makes proofer and verifier agree on
@@ -374,7 +374,7 @@ pub const MAX_BATCH_SIGNERS: usize = 256;
 /// **The mock-path commitment is over `zk_verifier::PublicInputs` only.**
 /// `BatchSigPublicInputs::signer_roots` and `message_root` are
 /// accepted as inputs (so the API surface + validation match the
-/// real-zk path) but they are NOT folded into the deterministic mock
+/// full path) but they are NOT folded into the deterministic mock
 /// bytes. The canonical proofer → verifier round-trip passes by
 /// structure: the proofer emits a BLAKE3 commitment over
 /// `(casm_hash || zk_verifier::PublicInputs)`, the verifier
@@ -391,12 +391,12 @@ pub const MAX_BATCH_SIGNERS: usize = 256;
 /// the verifier (defense in depth), but it does not bind individual
 /// signers to the proof bytes in the mock path.
 ///
-/// **Real-zk path (gated by the `real-zk` cargo feature):** the
+/// **Real-zk path (gated by the `full` cargo feature):** the
 /// `canonical_ser(BatchSigPublicInputs)` helper below is used as the
 /// STWO public-input commitment. `signer_roots` + `message_root` are
 /// folded into the Fiat-Shamir transcript and the STARK proof binds
 /// them cryptographically. Production deployments MUST enable the
-/// `real-zk` feature and ship the `libstwo_sys.so` artifact.
+/// `full` feature and ship the `libstwo_sys.so` artifact.
 ///
 /// # Round-trip smoke
 ///
@@ -405,13 +405,13 @@ pub const MAX_BATCH_SIGNERS: usize = 256;
 /// proofer; the test passes by structure (canonical commitment
 /// round-trip + non-empty signer list check). It is a smoke test for
 /// the wire shape + API surface, NOT a security test for signer
-/// binding; security requires the `real-zk` feature path.
+/// binding; security requires the `full` feature path.
 ///
-/// **TODO (follow-up gap):** when the real-zk path ships, add a
+/// **TODO (follow-up gap):** when the full path ships, add a
 /// `signer_roots_public` field to `zk_verifier::PublicInputs` (or a
 /// parallel public-input struct) so the STARK proof's public input
 /// commitment includes the signers. The mock-path commitment shape
-/// would then need to mirror the real-zk layout for byte-identical
+/// would then need to mirror the full layout for byte-identical
 /// verifier behavior. Tracked under Gap 3 follow-up; see
 /// `docs/plans/2026-07-24-seven-gap-impl.md` §"Done When" + Risks.
 ///
@@ -419,8 +419,8 @@ pub const MAX_BATCH_SIGNERS: usize = 256;
 /// Returns `ProverError` on:
 /// - `EmptySigners` (signer_roots empty)
 /// - `TooManySigners` (> `MAX_BATCH_SIGNERS`)
-/// - `ProverNull` (real-zk only — stwo-sys returned a null handle)
-/// - `Internal` (real-zk only — FFI failure)
+/// - `ProverNull` (full only — stwo-sys returned a null handle)
+/// - `Internal` (full only — FFI failure)
 pub fn prove_batch_signature(
     program: Program,
     casm_hash: [u8; 32],
@@ -448,7 +448,7 @@ pub fn prove_batch_signature(
     }
 
     // Real-zk path: delegate to stwo-sys via libloading when available.
-    // Gated by the `real-zk` cargo feature; default builds use the mock
+    // Gated by the `full` cargo feature; default builds use the mock
     // path (deterministic BLAKE3 commitment) and do not require the
     // nightly-built `libstwo_sys.so`.
     //
@@ -457,18 +457,18 @@ pub fn prove_batch_signature(
     // `BatchSigPublicInputs` as public). That provided ZERO
     // cryptographic security — anyone could reproduce the same
     // "proof" without knowing the witness. Until the real witness
-    // format lands, the real-zk path is **unimplemented**; the
+    // format lands, the full path is **unimplemented**; the
     // feature flag now marks the gap explicitly rather than silently
     // shipping a fake STARK path.
-    #[cfg(feature = "real-zk")]
+    #[cfg(feature = "full")]
     #[allow(unreachable_code)] // explicit partial-impl marker
     {
         if let Some(_sys) = zk_vendor::loaded_library() {
             return Err(ProverError::Internal(
-                "real-zk path unimplemented (R4 audit fix-up 2026-07-31): \
+                "full path unimplemented (R4 audit fix-up 2026-07-31): \
                  witness format not yet finalized; mock commitment is the \
                  only path that produces a meaningful proof. See docs/07-developers/\
-                 zk-capability-circuit-guide.md §'real-zk enablement' for the \
+                 zk-capability-circuit-guide.md §'full enablement' for the \
                  migration runbook."
                     .to_owned(),
             ));
@@ -550,7 +550,7 @@ pub fn batch_proof_commitment(
 /// Canonical serialization of `BatchSigPublicInputs` (Class A
 /// determinism — field-order, length-prefixed, no JSON).
 ///
-/// Used by both the real-zk FFI branch (`canonical_ser` is fed as the
+/// Used by both the full FFI branch (`canonical_ser` is fed as the
 /// `public` argument to `stwo-sys::prove`) and the mock path
 /// (`batch_proof_commitment` folds it into the BLAKE3 commitment).
 /// Single source of truth shared between proofer and verifier.

@@ -181,7 +181,7 @@ impl std::fmt::Debug for ProofBundle {
 ///
 /// Variants kept + enforcement wired:
 /// - `EmptySlotId` (already returned at line 323); newly tested below.
-/// - `StwoProveError` reserved for future real-zk STWO prover failures.
+/// - `StwoProveError` reserved for future full STWO prover failures.
 /// - `AxesExceededMaxTotal` reserved for sum-over-axes check (caveats
 ///   validate per-axis bounds; total is a future-proof aggregate gate).
 /// - `Expired` for caveats `Before(t)` enforcement.

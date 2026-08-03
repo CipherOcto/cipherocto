@@ -19,7 +19,7 @@
 //! `libstwo_sys.so` are 50-500KB. The bench therefore measures the
 //! canonical commitment round-trip latency (which is what real proofs
 //! will hit on the same code path), not the absolute STARK cost.
-//! `cargo test --features real-zk` enables real STWO when the cdylib
+//! `cargo test --features full` enables real STWO when the cdylib
 //! is present; see `crates/zk-vendor/README.md`.
 // Test doc-comment lint relaxation.
 #![allow(clippy::doc_markdown)]
@@ -43,8 +43,8 @@ const PROOF_GEN_BUDGET_MS: u128 = 2_000;
 const VERIFY_BUDGET_MS: u128 = 100;
 /// AC-12 target: proof size 50-500KB upper bound (real STWO). Stub
 /// proof = 32 bytes; the structural-smoke gate documents the contract
-/// for the future real-zk feature.
-#[cfg(feature = "real-zk")]
+/// for the future full feature.
+#[cfg(feature = "full")]
 const PROOF_SIZE_MIN_BYTES_REAL_ZK: usize = 50 * 1024;
 const PROOF_SIZE_MAX_BYTES: usize = 500 * 1024;
 
@@ -174,7 +174,7 @@ fn verify_latency_under_100ms() {
 }
 
 #[test]
-#[ignore = "AC-12: proof size 50-500KB measured against --features real-zk; stub path = structural smoke; run with --include-ignored"]
+#[ignore = "AC-12: proof size 50-500KB measured against --features full; stub path = structural smoke; run with --include-ignored"]
 fn proof_size_50_to_500kb() {
     let casm = bundled_casm_hash();
     let witness = build_10k_witness();
@@ -189,30 +189,30 @@ fn proof_size_50_to_500kb() {
     // commitment (the "stub proof" shape, deterministic + Class A but
     // NOT a real STARK). The real-STWO proof shape is 50-500KB. The
     // bottom edge of the gate (32 bytes) therefore trips on stub path;
-    // we instead document the contract: for real-zk, proof_size in
+    // we instead document the contract: for full, proof_size in
     // 50..=500KB; for stub path, proof_size = 32 (the structural smoke
     // output).
-    eprintln!("AC-12 proof size: {proof_size} bytes (50-500KB target requires --features real-zk)");
+    eprintln!("AC-12 proof size: {proof_size} bytes (50-500KB target requires --features full)");
 
     // **Stub caveat:** the mock batch prover emits a 32-byte BLAKE3
     // commitment (the "stub proof" shape, deterministic + Class A but
     // NOT a real STARK). The real-STWO proof shape is 50-500KB.
     //
-    // The `real-zk` Cargo feature (mission 0958-a R3 fix-up) enables the
+    // The `full` Cargo feature (mission 0958-a R3 fix-up) enables the
     // tighter 50KB lower bound. Without it, we assert structural
     // smoke only (proof non-empty).
-    #[cfg(feature = "real-zk")]
+    #[cfg(feature = "full")]
     {
         assert!(
-            proof_size >= PROOF_SIZE_MIN_BYTES_REAL_ZK && proof_size <= PROOF_SIZE_MAX_BYTES,
-            "real-zk proof size {proof_size} out of 50-500KB range"
+            (PROOF_SIZE_MIN_BYTES_REAL_ZK..=PROOF_SIZE_MAX_BYTES).contains(&proof_size),
+            "full proof size {proof_size} out of 50-500KB range"
         );
     }
-    #[cfg(not(feature = "real-zk"))]
+    #[cfg(not(feature = "full"))]
     {
         assert!(
             proof_size > 0 && proof_size <= PROOF_SIZE_MAX_BYTES,
-            "stub proof size {proof_size} unexpected (50-500KB target requires --features real-zk)"
+            "stub proof size {proof_size} unexpected (50-500KB target requires --features full)"
         );
     }
 }

@@ -8,7 +8,7 @@
 //! `quota_router_core::zk_verify::capability` verify API are exercised
 //! end-to-end.
 //!
-//! The mock prover path (default; `real-zk` feature off) emits a
+//! The mock prover path (default; `full` feature off) emits a
 //! deterministic BLAKE3 commitment; the canonical
 //! `zk_verifier::stub_commitment` shape is what the verifier's STWO
 //! check accepts. Both proofer and verifier agree on the same

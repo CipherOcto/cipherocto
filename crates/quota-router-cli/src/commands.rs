@@ -389,8 +389,7 @@ pub async fn reputation_show(
             #[cfg(feature = "stoolap")]
             {
                 let dsn = format!("file://{}", db_path.display());
-                let store =
-                    octo_reputation::store::stoolap::StoolapReputationStore::open(&dsn).await?;
+                let store = octo_reputation::StoolapReputationStore::open(&dsn).await?;
                 let outcome = store
                     .read_aggregate(&recorder_did, SignalKind::Outcome, ReputationLayer::Market)
                     .await;

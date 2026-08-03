@@ -222,7 +222,7 @@ pub fn check_nesting_depth(multi: &MultiEnvelope, current_depth: u8) -> Result<(
 
 ### Task 3.2 — Mock prover for tests
 
-**Step 1:** Fail test calling `prove_batch_signature(Program::BatchSig, inputs, witnesses) -> Proof`. **Step 3:** Implement `prove_batch_signature` that delegates to `stwo-sys` `prove` via libloading when `feature = "real-zk"`, else returns deterministic mock bytes. **Step 5:** Commit `feat(zk-circuit): mock batch signature prover`.
+**Step 1:** Fail test calling `prove_batch_signature(Program::BatchSig, inputs, witnesses) -> Proof`. **Step 3:** Implement `prove_batch_signature` that delegates to `stwo-sys` `prove` via libloading when `feature = "full"`, else returns deterministic mock bytes. **Step 5:** Commit `feat(zk-circuit): mock batch signature prover`.
 
 ### Task 3.3 — Wire `mint_with_zk` to prover
 
@@ -401,7 +401,7 @@ After each gap: run full `cargo test -p <changed>`, then `cargo clippy --all-tar
 
 ## Risks
 
-- **Gap 3 ZK real circuit:** stwo-sys may not yet ship on stable arch. Default to mock prover behind `real-zk` feature; ship feature-off. Acceptance = mock path end-to-end green.
+- **Gap 3 ZK real circuit:** stwo-sys may not yet ship on stable arch. Default to mock prover behind `full` feature; ship feature-off. Acceptance = mock path end-to-end green.
 - **Gap 5/6 lock-in:** OrderBook BTreeMap is fine ≤1k providers; revisit if perf gate fails.
 - **Gap 7 RFC promotion:** RFC-0900 acceptance requires all stakeholder sign-offs; this plan only implements the code.
 

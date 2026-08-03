@@ -42,9 +42,9 @@ zk-verifier = { path = "../zk-verifier" }
 zk-vendor = { path = "../zk-vendor", optional = true }
 
 [features]
-# Default OFF: build without the real-zk dep. Mock prover handles all
+# Default OFF: build without the full dep. Mock prover handles all
 # test vectors and the default 11-step ZK mint flow.
-real-zk = ["dep:zk-vendor"]
+full = ["dep:zk-vendor"]
 
 [dev-dependencies]
 

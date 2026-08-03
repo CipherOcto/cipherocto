@@ -84,6 +84,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
       - name: Install scarb for cairo-compile 2.6.0
         # Cairo 2.6.0 is required (master plan §8 Risk #6). scarb is the
         # recommended install for cairo-compile (vs asdf fallback). The
@@ -93,6 +96,10 @@ jobs:
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://docs.swmansion.com/scarb/install.sh | sh -s -- -v 2.6.0
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          # scarb 2.6.0 ships the cairo compiler libraries but does NOT
+          # ship the standalone `cairo-compile` binary. Install via
+          # cairo-lang Python wheel (provides cairo-compile on PATH).
+          pip install cairo-lang==2.6.0
           cairo-compile --version
       - name: Run CASM BLAKE3 snapshot test (CIPHEROCTO_REQUIRE_CAIRO_COMPILE=loud-fail)
         # R3 fix-up: in CI we require cairo-compile to be present; the

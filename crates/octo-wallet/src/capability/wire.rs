@@ -227,7 +227,7 @@ fn parse_wire_to_token(
 /// OOM via attacker-supplied huge s4 segments + b64 decode amplification).
 /// 64 KiB is well over the maximum real wire (a SelfHost 500KB proof
 /// would still fit since the 4th segment carries base64-encoded bytes,
-/// 4/3×500KB ≈ 670KB; we set the cap to allow real-zk proofs once the
+/// 4/3×500KB ≈ 670KB; we set the cap to allow full proofs once the
 /// FFI ships).
 pub const MAX_WIRE_TOTAL: usize = 2 * 1024 * 1024; // 2 MiB defensive cap
 /// Maximum per-segment raw length (before base64 decode).

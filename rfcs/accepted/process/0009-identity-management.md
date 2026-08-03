@@ -1,10 +1,10 @@
-# RFC-0009 (Process): Identity Management
+# RFC-0009: Identity Management
 
 ## Status
 
 Accepted
 
-> **Promotion note (2026-07-19):** Promoted from `planned/process/0009-identity-management.md` → `draft/process/0009-identity-management.md` as part of S01 wallet foundation work. Substrate scope clarified: this RFC owns the **Ed25519 identity substrate** (identity key format, NodeType, vault, capability key derivation). The **Stark Curve transaction substrate** lives in RFC-0102 (Numeric: Wallet Cryptography). Capability token format (macaroon v1, HMAC-BLAKE3) lives in RFC-0957 (Economics, planned for S02).
+> **Promotion note (2026-07-19):** Promoted from `planned/process/0009-identity-management.md` → `draft/process/0009-identity-management.md` as part of S01 wallet foundation work. Substrate scope clarified: this RFC owns the **Ed25519 identity substrate** (identity key format, NodeType, vault, capability key derivation). The **Stark Curve transaction substrate** lives in RFC-0102. Capability token format (macaroon v1, HMAC-BLAKE3) lives in RFC-0957 (substrate availability targeted S02; assumption tracked in §Dependency Validation).
 
 ## Authors
 
@@ -49,8 +49,8 @@ Without a proper identity specification:
 - **NodeType taxonomy** — `Wholesale | SelfHost | Hybrid`
 - **Provider-key vault** — encrypted storage separate from identity keys (Argon2id + AES-256-GCM)
 - **Capability key derivation** — HKDF-BLAKE3 over identity seed per (audience_did, channel_id)
-- Integration with RFC-0002 Agent Manifest (`agent.identity.public_key`)
-- Integration with RFC-0949 Enterprise SSO (`IdentityProvider`)
+- Integration with RFC-0002 (`agent.identity.public_key`)
+- Integration with RFC-0949 (`IdentityProvider`)
 - Cross-link with RFC-0102 (Stark Curve substrate) and RFC-0957 (capability token format)
 
 ### Out of Scope
@@ -65,13 +65,13 @@ Without a proper identity specification:
 
 **Requires:**
 
-- RFC-0102 (Numeric): Wallet Cryptography — defines the parent wallet crate; this RFC specifies identity substrate, RFC-0102 specifies transaction substrate
+- RFC-0102 — defines the parent wallet crate; this RFC specifies identity substrate, RFC-0102 specifies transaction substrate
 
 **Optional:**
 
-- RFC-0002 (Process): Agent Manifest — agent identity uses same key format
-- RFC-0949 (Economics): Enterprise SSO — IdentityProvider integration
-- RFC-0957 (Economics, planned S02): Capability Token Format — uses this RFC's Ed25519 substrate for holder signatures
+- RFC-0002 — agent identity uses same key format
+- RFC-0949 — IdentityProvider integration
+- RFC-0957 — Capability Token Format; uses this RFC's Ed25519 substrate for holder signatures (substrate availability targeted S02; assumption tracked in §Dependency Validation)
 
 ## Proposed Specification
 
@@ -285,7 +285,7 @@ S01 plan §3 Step 5 will be updated to match this RFC's pattern during mission c
 
 ## Economic Analysis
 
-**Not Applicable (N/A) for this RFC.** RFC-0009 is a process RFC defining identity substrate (DID, NodeType, vault, capability key derivation); it does not mint, settle, or transfer tokens. OCTO-W economics are governed by RFC-0959 (Independent Settlement Chain) at the marketplace layer.
+**Not Applicable (N/A) for this RFC.** RFC-0009 is a process RFC defining identity substrate (DID, NodeType, vault, capability key derivation); it does not mint, settle, or transfer tokens. OCTO-W economics are governed by RFC-0959 at the marketplace layer.
 
 **Indirect economics:** identity operations (Ed25519 sign/verify per §Performance Targets; HKDF-BLAKE3 capability key derivation) contribute to node operator's per-invocation compute cost; this is captured at the operator's pricing layer, not at this RFC's layer.
 
@@ -313,8 +313,8 @@ S01 plan §3 Step 5 will be updated to match this RFC's pattern during mission c
 | Ed25519 signature | RFC 8032 | 64-byte signature; 32-byte public key |
 | HKDF | RFC 5869 + BLAKE3 keyed-hash mode per RFC-0853 | `derive_key(salt, ikm, info, output_len)` |
 | BLAKE3 primitive | RFC-0853 §Specification | `blake3::derive_key` for capability keys |
-| Cross-RFC canonical_ser | RFC-0126 (Deterministic Serialization) | `canonical_ser` for Identity struct serialization (added 2026-07-20) |
-| Cross-RFC Stark Curve substrate | RFC-0102 (Wallet Cryptography) | Distinct substrate; same wallet crate hosts both |
+| Cross-RFC canonical_ser | RFC-0126 | `canonical_ser` for Identity struct serialization (added 2026-07-20) |
+| Cross-RFC Stark Curve substrate | RFC-0102 | Distinct substrate; same wallet crate hosts both |
 
 ## Test Vectors
 
@@ -416,11 +416,11 @@ Notes: Linux flock(2) atomic exclusive; second opener MUST receive typed error.
 
 ## Related RFCs
 
-- RFC-0002 (Process): Agent Manifest — defines `agent.identity.public_key`
-- RFC-0102 (Numeric): Wallet Cryptography — Stark Curve transaction substrate (sibling RFC)
-- RFC-0949 (Economics): Enterprise SSO — IdentityProvider integration
-- RFC-0932 (Economics): Gateway Auth API Key Management
-- RFC-0957 (Economics, planned S02): Capability Token Format — uses this RFC's Ed25519 substrate for holder signatures
+- RFC-0002 — Agent Manifest: defines `agent.identity.public_key`
+- RFC-0102 — Wallet Cryptography: Stark Curve transaction substrate (sibling RFC)
+- RFC-0949 — Enterprise SSO: IdentityProvider integration
+- RFC-0932 — Gateway Auth API Key Management
+- RFC-0957 — Capability Token Format: uses this RFC's Ed25519 substrate for holder signatures (substrate availability targeted S02; assumption tracked in §Dependency Validation)
 
 ## Key Files to Modify
 
@@ -435,8 +435,24 @@ Notes: Linux flock(2) atomic exclusive; second opener MUST receive typed error.
 
 ## Implementation Phases
 
-- Mission: `missions/open/0102-a-wallet-foundation.md` (S01 — wallet foundation)
-- Plan: `docs/plans/2026-07-19-session-01-wallet-foundation.md`
+### Phase 1: Core
+
+- [ ] Define `IdentityKey(Ed25519Keypair)` newtype with `Zeroize`-on-`Drop` + REDACTED `Debug` in `crates/octo-wallet/src/identity.rs`
+- [ ] Define `CapabilityKey([u8; 32])` + `derive_capability_key(audience, channel) -> CapabilityKey` via HKDF-BLAKE3 (3-part info-block)
+- [ ] Define `DID` canonical wire form `did:octo:z<base58btc>` with `to_wire()` + `from_wire()` round-trip
+- [ ] Implement `octo-wallet init` CLI command: keypair generation, mnemonic seed backup, DID print
+- [ ] Wire `Identity` struct in `crates/octo-core/src/identity.rs` to real Ed25519 (replace `[u8; 32]` placeholder)
+- [ ] 4 test vectors in `crates/octo-wallet/tests/fixtures/identity/`: TV-1 DID multibase, TV-2 RFC 8032 Ed25519 #1, TV-3 HKDF-BLAKE3 capability key, TV-4 vault race rejection
+
+### Phase 2: Vault + NodeType
+
+- [ ] Define `Vault`, `EncryptedBlob`, `DecryptedHandle` in `crates/octo-wallet/src/vault.rs` (Argon2id + AES-256-GCM)
+- [ ] Define `NodeType { Wholesale, SelfHost, Hybrid }` enum in `crates/octo-wallet/src/node.rs`
+- [ ] Capability mint authority gating per NodeType (Wholesale: no ZK; SelfHost: ZK ok; Hybrid: per-cap)
+- [ ] `flock(LOCK_EX)`/`flock(LOCK_SH)` semantics on vault file access
+- [ ] `rotate()` API for identity successor linkage (monotonic successor counter)
+- [ ] Mission: `missions/open/0102-a-wallet-foundation.md` (S01 — wallet foundation)
+- [ ] Plan: `docs/plans/2026-07-19-session-01-wallet-foundation.md`
 
 ## Roles and Authorities
 
@@ -566,6 +582,18 @@ Per BLUEPRINT.md consistency checklist, every RFC MUST include an RFC-0008 execu
 
 **Determinism contract:** Two implementations of §Identity Key Format + §Capability Keys + §Verification MUST produce identical results for the same inputs. Cross-implementation test vectors included in `crates/octo-wallet/tests/fixtures/determin/`.
 
+## Adversarial Review
+
+| Threat | Impact | Mitigation |
+|--------|--------|------------|
+| Vault passphrase brute force | High (private key exfiltration → identity theft) | Argon2id KDF (m=64MiB, t=3, p=4); 12+ char minimum + dictionary rejection (per §Performance Targets); recommended hardware factor (Phase H) |
+| Capability key derivation collision (unlinkability break) | High (cross-channel correlation of holder activity) | HKDF-BLAKE3 with 3-part info-block; property test across 10K random (audience, channel) pairs; zeroize IKM and output on drop |
+| Ed25519 seed exfiltration via logs/traces | Critical (identity theft) | `SecretKey` zeroize-on-drop; `Debug` impls REDACTED (per project rule: "Debug should not leak in full security related data"); compile-time `#[derive(Zeroize)]`; no `Display` impl |
+| DID method spoofing (`did:octo` not W3C-registered) | Medium (external-facing identity ambiguity) | Mark `did:octo` as CipherOcto-private at MVP; W3C registration tracked separately (IA-4); inbound `did:` parsers validate method = `octo` |
+| Vault file race condition (concurrent put/get) | Medium (data loss or stale read) | `flock(LOCK_EX)` on mutation + `flock(LOCK_SH)` on read; atomic rename (`rename(2)`) on swap; `O_EXCL` semantics during initial write |
+| Identity key rotation race (successor overwrite) | Medium (lost successor linkage; recovery impossible) | Monotonic successor counter; rotation only via dedicated `rotate()` API; refuse rotation if successor counter != expected |
+| HKDF info-block confusion (cross-tenant capability replay) | High (capability theft via re-derivation) | Canonical info-block: `("octo/capability-key/v1", audience, channel)`; reject unversioned info-blocks at runtime |
+
 ## Security Considerations
 
 ### Threat Model
@@ -623,6 +651,49 @@ Per BLUEPRINT.md:
 | 0.4 | 2026-07-20 | Draft (review-fix) | @mmacedoeu | Review R1 fixes: added §Alternatives Considered (5-row table: UUID v4 / hash(pubkey) / DID chosen / PGP fingerprint / Onion address); added §Rationale (4 sub-sections: Ed25519 over secp256k1, multibase(z) over base64url, HKDF-BLAKE3 over HKDF-SHA256, NodeType as enum); added §Future Work (5 items: PQC identity substrate per RFC-0853 §F1, DID method registration IA-4, hierarchical attenuation, hardware wallet Phase H, MPC Phase I); renamed §Key Files → §Key Files to Modify + §Implementation Reference → §Implementation Phases per BLUEPRT template conventions. |
 | 0.5 | 2026-07-20 | Draft (review-fix) | @mmacedoeu | Review R2 fix: added §Economic Analysis (N/A — process RFC defining identity substrate; no direct token mint/settlement; OCTO-W economics governed by RFC-0959 at marketplace layer). |
 | 2026-07-20 | **Promoted to Accepted.** 7-day review (initiated 2026-07-19 alongside session-01/02/03/04/05 work) + 2 maintainer approvals (@mmacedoeu + @cipherocto) completed; no blocking objections. Status header updated; file moved via `git mv` from `rfcs/draft/{category}/` to `rfcs/accepted/{category}/`. Pre-acceptance completeness fixes applied (see prior version rows 0.2-0.5/1.1/1.2.0/1.2.1). |
+| 1.0 | 2026-08-03 | Accepted (audit) | @mmacedoeu | Audit pass: stripped `(Process)`/`(Numeric)`/`(Economics)` category parens from RFC references + H1 title per CLAUDE.md referencing rule; added §Adversarial Review threat table (template §651 requirement); restructured §Implementation Phases to Phase 1 / Phase 2 with `- [ ]` checkboxes (template §693 requirement); added §Related Use Cases + §Appendices (template §731, §735). |
+
+## Related Use Cases
+
+- [Canonical OctoID Identifier](../../docs/use-cases/canonical-octoid-identifier.md) — sibling use case documenting DID wire format; consumed by RFC-0010 codec crate.
+
+## Appendices
+
+### A. Identity Lifecycle State Machine (detailed)
+
+The state machine defined in §Lifecycle Requirements is reproduced here for cross-RFC copy-paste clarity:
+
+```rust
+#[repr(u8)]
+enum IdentityLifecycle {
+    Designated = 0x00,  // named at init, not yet active
+    Active = 0x01,     // identity in use; signing operations live
+    Rotating = 0x02,   // successor link established; old key still valid during grace
+    Revoked = 0x03,    // identity retired; signature verification rejected
+}
+```
+
+| From | To | Trigger | Deterministic? | Side Effects | Signing |
+|------|----|---------|----------------|--------------|---------|
+| Designated | Active | First successful sign | Yes | Emit identity activation event | Self-signature |
+| Active | Rotating | `rotate()` API call | Yes | Generate successor keypair; emit rotation event | Old key + new key co-sign |
+| Rotating | Active | Grace period elapsed (default 7 days) | Yes | Old key marked legacy; new key takes over | Old key co-sign on handover |
+| Active | Revoked | User-initiated revoke OR governance vote | Yes | Vault sealed; capability tokens invalidated | Self-signature + governance envelope |
+| Rotating | Revoked | Abort rotation (user choice) | Yes | New key destroyed; old key remains Active | Old key self-signature |
+
+### B. Test Vector Sources
+
+External test vector sources for cross-implementation verification:
+
+- RFC 8032 §7.1 Test 1 (Ed25519 sign/verify known answer)
+- BLAKE3 reference vectors (https://github.com/BLAKE3-team/BLAKE3/blob/master/test_vectors/test_vectors.json)
+- HKDF RFC 5869 Test Cases 1-3
+- Argon2id RFC 9106 reference implementation vectors
+- base58btc Bitcoin Alphabet reference table
+
+### C. Mnemonic Seed Backup Format
+
+Identity key mnemonic backup uses BIP-39 English wordlist (2048 words) for human-readable recovery. 12-word default; 24-word option for paranoid mode. Mnemonic maps to 64-byte seed via PBKDF2-HMAC-SHA512 (per BIP-39 spec); seed is the Ed25519 keypair seed input. The mnemonic is NOT the vault passphrase — separate secret.
 
 ---
 

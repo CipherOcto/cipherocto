@@ -85,10 +85,10 @@ If this use case is implemented:
 
 ## Related RFCs
 
-- RFC-0851 (Networking): Gateway Discovery Protocol — base; defines discovery modes
+- RFC-0851: Gateway Discovery Protocol — base; defines discovery modes
 - RFC-0851p-a (Networking): Network Bootstrap Protocol — concrete bootstrap spec; this UC motivates it
-- RFC-0850 (Networking): Deterministic Overlay Transport — base protocol
-- RFC-0852 (Networking): Deterministic Gossip Protocol — gossip layer that bootstrap feeds into
+- RFC-0850: Deterministic Overlay Transport — base protocol
+- RFC-0852: Deterministic Gossip Protocol — gossip layer that bootstrap feeds into
 - RFC-0855p-b (Networking): Mission Coordinator Lifecycle — slash reason codes (0x000D)
 
 ## Related Use Cases
@@ -102,10 +102,10 @@ If this use case is implemented:
 Use Case (DOT Network Bootstrap — this document)
    │
    ▼
-RFC-0850 (Networking): Deterministic Overlay Transport
+RFC-0850: Deterministic Overlay Transport
    │
    ▼
-RFC-0851 (Networking): Gateway Discovery Protocol
+RFC-0851: Gateway Discovery Protocol
    │
    ▼
 RFC-0851p-a (Networking): Network Bootstrap Protocol

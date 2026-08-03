@@ -156,25 +156,25 @@ Five sync approaches were analyzed in the research (event-driven, WAL-tail, oper
 
 ## Related RFCs
 
-- **RFC-0126 (Numeric): Deterministic Serialization** — canonical encoding (DCS) for all Sync wire structs.
-- **RFC-0850 (Networking): Deterministic Overlay Transport** — transport. 21 platform types in `§3.1`; wire formats `DOT/1/{base64}`, `DOT/2/{msg_id}`, `DOT/F/{base64_frag}`, `RAW/{binary}`; `BTreeMap<envelope_id, first_seen>` replay cache; QUIC profile in `§8.7`. **No protocol change** — new envelope payload discriminators `0xA0–0xC2` reserved.
-- **RFC-0851 (Networking): Gateway Discovery Protocol** — discovery. 5-state `DiscoveryLifecycle`. `GatewayAdvertisement` with Merkle-committed `capabilities_root` etc. **A new `SyncCapable` bit is added to `capabilities_root` — bit position TBD by maintainer decision. The base 6 capability bits (Edge=0x0001, Relay=0x0002, Consensus=0x0004, Archive=0x0008, Stealth=0x0010, Translation=0x0020) per `RFC-0850:284-287` and `RFC-0851:210-213,558` are already allocated; the new bit must be at a higher position (e.g., 0x0040+ per the GDP extension pattern). Maintainer decision required.**
+- **RFC-0126: Deterministic Serialization** — canonical encoding (DCS) for all Sync wire structs.
+- **RFC-0850: Deterministic Overlay Transport** — transport. 21 platform types in `§3.1`; wire formats `DOT/1/{base64}`, `DOT/2/{msg_id}`, `DOT/F/{base64_frag}`, `RAW/{binary}`; `BTreeMap<envelope_id, first_seen>` replay cache; QUIC profile in `§8.7`. **No protocol change** — new envelope payload discriminators `0xA0–0xC2` reserved.
+- **RFC-0851: Gateway Discovery Protocol** — discovery. 5-state `DiscoveryLifecycle`. `GatewayAdvertisement` with Merkle-committed `capabilities_root` etc. **A new `SyncCapable` bit is added to `capabilities_root` — bit position TBD by maintainer decision. The base 6 capability bits (Edge=0x0001, Relay=0x0002, Consensus=0x0004, Archive=0x0008, Stealth=0x0010, Translation=0x0020) per `RFC-0850:284-287` and `RFC-0851:210-213,558` are already allocated; the new bit must be at a higher position (e.g., 0x0040+ per the GDP extension pattern). Maintainer decision required.**
 - **RFC-0851p-a (Networking): Network Bootstrap Protocol** — bootstrap. 7-state `BootstrapClientLifecycle`. **Note:** slash code `0x000D` claim in `0851p-a:420,431,726` contradicts `0850p-c:460` claim of `0x000C-0x000D` for sub-DC delegation. **Maintainer decision required.**
-- **RFC-0852 (Networking): Deterministic Gossip Protocol** — gossip, anti-entropy. `GossipObjectType = 0x0008 SnapshotFragment` format to be specified in `RFC-0862` (immediate §10.3 change).
-- **RFC-0853 (Networking): Overlay Cryptography** — crypto. `OverlayIdentity { public_key, identity_epoch }`; `MissionKeyHierarchy`; new HKDF context `"sync:v1"` in §6 Mission Cryptography (immediate §10.3 change).
-- **RFC-0855 (Networking): Mission Overlay Networks** — missions. New `Replicator` role in `§4.2` (immediate §10.3 change).
+- **RFC-0852: Deterministic Gossip Protocol** — gossip, anti-entropy. `GossipObjectType = 0x0008 SnapshotFragment` format to be specified in `RFC-0862` (immediate §10.3 change).
+- **RFC-0853: Overlay Cryptography** — crypto. `OverlayIdentity { public_key, identity_epoch }`; `MissionKeyHierarchy`; new HKDF context `"sync:v1"` in §6 Mission Cryptography (immediate §10.3 change).
+- **RFC-0855: Mission Overlay Networks** — missions. New `Replicator` role in `§4.2` (immediate §10.3 change).
 - **RFC-0855p-b (Networking): Mission Coordinator Lifecycle** — 8-state `CoordinatorLifecycle`.
 - **RFC-0855p-c (Networking): Domain Coordinator Role** — 90-epoch platform-loss window; basis for `F8` auto-failover.
-- **RFC-0856 (Networking): Deterministic Route Selection** — DRS scoring for peer selection.
-- **RFC-0857 (Networking): Deterministic Overlay Mempool** — Phase 3 batch shipping.
-- **RFC-0858 (Networking): Onion Relay Routing** — optional for PRIVATE missions.
-- **RFC-0859 (Networking): Proof-Carrying Envelopes** — `F3` proof-of-sync.
-- **RFC-0860 (Networking): Proof-of-Relay** — composite scoring (forwarding/availability/bandwidth/uptime/diversity with `WF=300, WA=250, WB=200, WU=150, WD=100`); `SyncForwardingProof` variant added. **Note: slash code allocation for `sync_peer_misbehavior` is TBD by maintainer decision. The code `0x0010` is already allocated to `FalseWitness` per `RFC-0850p-c:463`, `RFC-0850p-d:392`, `RFC-0850p-e:305`, and `RFC-0855p-b:963`. The code `0x0012` is allocated to `CrossPlatformWitnessCollusion` per `RFC-0855p-c §9b:507`. A new slash code (e.g., `0x0013` or higher per the `RFC-0850p-c §6` reserved range `0x0013-0xFFFF`) must be chosen. Maintainer decision required.**
-- **RFC-0861 (Networking): CoordinatorAdmin Trait Refinements** — 17 findings closed, 1,373 tests; basis for `0862d` OCrypt-binding mission.
-- **RFC-0200 (Storage): Production Vector-SQL Storage Engine v2** — supersedes the body-section Raft sketch (line 1821-1997) and the brief §A "Replication Model" (line 2640); add forward reference to `RFC-0862` in §A (immediate §10.3 change).
-- **RFC-0740 (Consensus): Sharded Consensus Protocol** — `CrossShardMessage::StateSync` is the cross-shard analog; basis for `F9` schema migration.
+- **RFC-0856: Deterministic Route Selection** — DRS scoring for peer selection.
+- **RFC-0857: Deterministic Overlay Mempool** — Phase 3 batch shipping.
+- **RFC-0858: Onion Relay Routing** — optional for PRIVATE missions.
+- **RFC-0859: Proof-Carrying Envelopes** — `F3` proof-of-sync.
+- **RFC-0860: Proof-of-Relay** — composite scoring (forwarding/availability/bandwidth/uptime/diversity with `WF=300, WA=250, WB=200, WU=150, WD=100`); `SyncForwardingProof` variant added. **Note: slash code allocation for `sync_peer_misbehavior` is TBD by maintainer decision. The code `0x0010` is already allocated to `FalseWitness` per `RFC-0850p-c:463`, `RFC-0850p-d:392`, `RFC-0850p-e:305`, and `RFC-0855p-b:963`. The code `0x0012` is allocated to `CrossPlatformWitnessCollusion` per `RFC-0855p-c §9b:507`. A new slash code (e.g., `0x0013` or higher per the `RFC-0850p-c §6` reserved range `0x0013-0xFFFF`) must be chosen. Maintainer decision required.**
+- **RFC-0861: CoordinatorAdmin Trait Refinements** — 17 findings closed, 1,373 tests; basis for `0862d` OCrypt-binding mission.
+- **RFC-0200: Production Vector-SQL Storage Engine v2** — supersedes the body-section Raft sketch (line 1821-1997) and the brief §A "Replication Model" (line 2640); add forward reference to `RFC-0862` in §A (immediate §10.3 change).
+- **RFC-0740: Sharded Consensus Protocol** — `CrossShardMessage::StateSync` is the cross-shard analog; basis for `F9` schema migration.
 
-**New RFC required:** `RFC-0862 (Networking): Stoolap Data Sync Protocol` (recommended; alternative `RFC-0210` in storage rejected per research §10 rationale).
+**New RFC required:** `RFC-0862: Stoolap Data Sync Protocol` (recommended; alternative `RFC-0210` in storage rejected per research §10 rationale).
 
 ## Related Use Cases
 
@@ -194,7 +194,7 @@ Research (docs/research/stoolap-data-sync-via-cipherocto-network.md, v2.0 — po
 Use Case (this document)
    │
    ▼
-RFC-0862 (Networking): Stoolap Data Sync Protocol (ACCEPTED, at `rfcs/accepted/networking/0862-stoolap-data-sync.md`)
+RFC-0862: Stoolap Data Sync Protocol (ACCEPTED, at `rfcs/accepted/networking/0862-stoolap-data-sync.md`)
    │
    ▼
 0862 base mission (0862-stoolap-data-sync-base.md) (EXECUTION)

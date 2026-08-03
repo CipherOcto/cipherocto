@@ -389,7 +389,7 @@ MACI's separation:
 |---|---|---|
 | Encrypted + on-chain message log | `transfer_events` (plaintext) | Some cipherocto messages (e.g., AI inference requests) may need encryption |
 | Off-chain coordinator | not in grand design | Cipherocto may need a `coordinator` role for off-chain settlement aggregation |
-| zk-SNARK proof of state transition | RFC-0958 (ZK capability) | Apply to settlement state transitions, not just capabilities |
+| zk-SNARK proof of state transition | RFC-0958 | Apply to settlement state transitions, not just capabilities |
 | Key change for anti-collusion | not in grand design | Capabilities could support key rotation (e.g., per-mission keys already exist from Phase E) |
 | Verifier on-chain | RFC-0958 has verifier | Apply to settlement state machine transitions |
 
@@ -623,7 +623,7 @@ Updates to grand design doc §12.1-§12.9 (Consensus Sessions):
 - `docs/research/2026-07-22-value-transfer-model-internal-landscape.md` (Phase 1)
 - `docs/research/2026-07-22-grand-design-vaults-capabilities-reservations.md` (Phase 2)
 - RFC-0957 (capability token format)
-- RFC-0958 (ZK capability subclass)
+- RFC-0958
 - RFC-0959 (settlement receipt)
 - RFC-0853 (overlay crypto — Phase E mission keys)
 

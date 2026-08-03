@@ -156,12 +156,12 @@ Per BLUEPRINT.md Research Review Gate: "Review by maintainers (min. 2 reviewers)
 - `docs/research/ai-quota-marketplace-research.md` — feasibility for per-node Ask market (existing); does not cite RFC-0900 explicitly by line reference (R2 reviewer flagged cross-ref claim against line 153, which is a Token Economics table row, not an RFC-0900 cite; corrected.)
 - `docs/research/litellm-analysis-and-quota-router-comparison.md` — LiteLLM pricing-axis patterns (100+ providers).
 - `docs/research/bifrost-litellm-caching.md` — Bifrost cache-classification patterns.
-- RFC-0909 (Economics): Deterministic Quota Accounting — base settlement hash surface; v70 bump gated on RFC-0959 Accepted.
-- RFC-0903 (Economics): Virtual API Keys — cost-unit treatment reference (per RFC-0959 §Data Structures currency discussion). **Canonical path:** `rfcs/final/economics/0903-virtual-api-key-system.md` (Final-stage folder per BLUEPRINT convention; sibling drafts at `rfcs/accepted/economics/0903-B1-schema-amendments.md`, `rfcs/accepted/economics/0903-C1-extended-schema-amendments.md`, `rfcs/planned/economics/0903-C2-existing-deployment-migration.md`).
-- RFC-0910 (Economics): Pricing Table Registry — pricing-table consumer; canonical path `rfcs/accepted/economics/0910-pricing-table-registry.md`.
-- RFC-0853 (Networking): Overlay Cryptography — BLAKE3 primitive source. Canonical path: `rfcs/draft/networking/0853-overlay-cryptography.md` (Networking category per BLUEPRINT.md numbering; not Numeric).
-- RFC-0009 (Process): Identity Management — NodeType taxonomy for `Ask.node_type` + capability bit for `ModelRef.namespace == "cipherocto"` gate. Canonical path: `rfcs/draft/process/0009-identity-management.md`.
-- RFC-0957 (Economics): Capability Token Format — AskBinding caveat host. Canonical path: `rfcs/draft/economics/0957-capability-token-format.md`.
+- RFC-0909: Deterministic Quota Accounting — base settlement hash surface; v70 bump gated on RFC-0959 Accepted.
+- RFC-0903: Virtual API Keys — cost-unit treatment reference (per RFC-0959 §Data Structures currency discussion). **Canonical path:** `rfcs/final/economics/0903-virtual-api-key-system.md` (Final-stage folder per BLUEPRINT convention; sibling drafts at `rfcs/accepted/economics/0903-B1-schema-amendments.md`, `rfcs/accepted/economics/0903-C1-extended-schema-amendments.md`, `rfcs/planned/economics/0903-C2-existing-deployment-migration.md`).
+- RFC-0910: Pricing Table Registry — pricing-table consumer; canonical path `rfcs/accepted/economics/0910-pricing-table-registry.md`.
+- RFC-0853: Overlay Cryptography — BLAKE3 primitive source. Canonical path: `rfcs/draft/networking/0853-overlay-cryptography.md` (Networking category per BLUEPRINT.md numbering; not Numeric).
+- RFC-0009: Identity Management — NodeType taxonomy for `Ask.node_type` + capability bit for `ModelRef.namespace == "cipherocto"` gate. Canonical path: `rfcs/draft/process/0009-identity-management.md`.
+- RFC-0957: Capability Token Format — AskBinding caveat host. Canonical path: `rfcs/draft/economics/0957-capability-token-format.md`.
 
 ## Research Quality Notes
 

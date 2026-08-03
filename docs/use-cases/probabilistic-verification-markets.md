@@ -133,9 +133,9 @@ Storage + Compute
 
 ## Related RFCs
 
-- [RFC-0615 (Proof Systems): Probabilistic Verification Markets](../rfcs/0615-probabilistic-verification-markets.md)
-- [RFC-0412 (Agents): Verifiable Reasoning Traces](../rfcs/0412-verifiable-reasoning-traces.md)
-- [RFC-0116 (Numeric/Math): Unified Deterministic Execution Model](../rfcs/0116-unified-deterministic-execution-model.md)
-- [RFC-0413 (Agents): State Virtualization for Massive Agent Scaling](../rfcs/0413-state-virtualization-massive-scaling.md)
-- [RFC-0415 (Agents): Alignment & Control Mechanisms](../rfcs/0415-alignment-control-mechanisms.md)
-- [RFC-0650 (Proof Systems): Proof Aggregation Protocol](../rfcs/0650-proof-aggregation-protocol.md)
+- RFC-0615
+- RFC-0412
+- RFC-0116
+- RFC-0413
+- RFC-0415
+- RFC-0650

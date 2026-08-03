@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-This research investigates the feature gaps between the CipherOcto Stoolap embedded SQL database and the SQL requirements specified in RFC-0903 (Virtual API Key System). The goal is to determine if Stoolap can serve as the sole persistence layer for the quota router without requiring Redis for caching and pub/sub functionality.
+This research investigates the feature gaps between the CipherOcto Stoolap embedded SQL database and the SQL requirements specified in RFC-0903. The goal is to determine if Stoolap can serve as the sole persistence layer for the quota router without requiring Redis for caching and pub/sub functionality.
 
 **Key Finding:** Stoolap can replace Redis for L1 key caching and rate limiting state, but requires extensions for:
 1. Explicit `FOR UPDATE` row locking (critical for multi-router deployments)

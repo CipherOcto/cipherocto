@@ -1104,8 +1104,8 @@ This research intersects with several existing CipherOcto RFCs and research docu
 | **RFC-0303** (Draft, Retrieval) | [Deterministic Vector Index (HNSW-D)](../../rfcs/draft/retrieval/0303-deterministic-vector-index.md) | **Direct companion.** Defines SHA-256-based deterministic level assignment, canonical neighbor selection, and deterministic search ordering for HNSW. Provides the exact algorithm for fixing the `rand::random()` issue in stoolap's `hnsw.rs:2306`. Also defines `HNSW-D` with fixed-point L2 distance via RFC-0148. |
 | **RFC-0003** (Draft, Process) | [Deterministic Execution Standard (DES)](../../rfcs/draft/process/0003-deterministic-execution-standard.md) | **Governing standard.** Defines global determinism rules for the CipherOcto protocol — numeric types (RFC-0106), vector indexing, retrieval pipelines. The DES is the parent standard this research extends into the stoolap context. |
 | **RFC-0129** (Planned, Numeric) | [Deterministic RNG](../../rfcs/planned/numeric/0129-deterministic-rng.md) | **Direct companion.** Planned RFC for ChaCha8 seeded from block hash — exactly the fix recommended for HNSW layer generation. RFC-0303's implementation will depend on this. |
-| **RFC-0304** (Draft, Retrieval) | [Verifiable Vector Query Execution (VVQE)](../../rfcs/draft/retrieval/0304-verifiable-vector-query-execution.md) | **Layer above HNSW-D.** Defines deterministic ANN query layer with SQL integration and proof generation. Builds on RFC-0303 (HNSW-D) and RFC-0107 (Vector-SQL). |
-| **RFC-0520** (Draft, AI Execution) | [Deterministic AI VM](../../rfcs/draft/ai-execution/0520-deterministic-ai-vm.md) | **Broader scope.** Deterministic AI execution across heterogeneous hardware. Shares the same determinism taxonomy (Class A/B/C) and references RFC-0106 (Numeric Tower). |
+| **RFC-0304** (Draft, Retrieval) | [Verifiable Vector Query Execution (VVQE)](../../rfcs/draft/retrieval/0304-verifiable-vector-query-execution.md) | **Layer above HNSW-D.** Defines deterministic ANN query layer with SQL integration and proof generation. Builds on RFC-0303 and RFC-0107. |
+| **RFC-0520** (Draft, AI Execution) | [Deterministic AI VM](../../rfcs/draft/ai-execution/0520-deterministic-ai-vm.md) | **Broader scope.** Deterministic AI execution across heterogeneous hardware. Shares the same determinism taxonomy (Class A/B/C) and references RFC-0106. |
 | **RFC-0200** (Draft, Storage) | [Production Vector SQL Storage v2](../../rfcs/draft/storage/0200-production-vector-sql-storage-v2.md) | **Sibling spec.** Production vector SQL operations built on top of HNSW-D. Relevant if HNSW becomes consensus-state. |
 | **RFC-0916** (Planned, Retrieval) | [TurboHNSW Quantized Index](../../rfcs/planned/retrieval/0916-turbohnsw-quantized-index.md) | **Future optimization.** PQ-quantized HNSW for memory efficiency. Deterministic version would need to follow RFC-0303's determinism patterns. |
 
@@ -1142,7 +1142,7 @@ graph LR
 
 ### Critical Gap: HNSW-D vs. Stoolap HNSW
 
-**Important distinction:** RFC-0303 (HNSW-D) is a **CipherOcto crate specification** (`crates/octo-vector/src/hnsw_d.rs`). Stoolap is an **external dependency** with its own HNSW implementation (`stoolap/src/storage/index/hnsw.rs`) using `rand::random()`. The fix for stoolap must be applied within stoolap itself — RFC-0303 provides the **algorithm specification** but cannot directly modify stoolap's code.
+**Important distinction:** RFC-0303 is a **CipherOcto crate specification** (`crates/octo-vector/src/hnsw_d.rs`). Stoolap is an **external dependency** with its own HNSW implementation (`stoolap/src/storage/index/hnsw.rs`) using `rand::random()`. The fix for stoolap must be applied within stoolap itself — RFC-0303 provides the **algorithm specification** but cannot directly modify stoolap's code.
 
 For CipherOcto's purposes, there are two paths:
 1. **Fork stoolap** and apply the HNSW-D algorithm to create a deterministic variant

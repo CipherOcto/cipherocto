@@ -68,9 +68,9 @@ We maintain four distinct layers that must never mix:
 │  - Expected behavior                                        │
 │                                                             │
 │  Examples:                                                  │
-│  - RFC-0001 (Process/Meta): Mission Lifecycle                              │
-│  - RFC-0002 (Process/Meta): Agent Manifest Spec                            │
-│  - RFC-0003 (Process/Meta): Deterministic Execution Standard                      │
+│  - RFC-0001: Mission Lifecycle                              │
+│  - RFC-0002: Agent Manifest Spec                            │
+│  - RFC-0003: Deterministic Execution Standard                      │
 │                                                             │
 │  Answer: "What must exist before implementation?"           │
 └──────────────────────────┬──────────────────────────────────┘
@@ -182,7 +182,7 @@ This means:
 
 ### RFC-0008: Deterministic AI Execution Boundary
 
-See [RFC-0008 (Process/Meta): Deterministic AI Execution Boundary](../rfcs/planned/0008-deterministic-ai-execution-boundary.md) for the full specification of execution classes and boundary requirements.
+See [RFC-0008: Deterministic AI Execution Boundary](../rfcs/planned/0008-deterministic-ai-execution-boundary.md) for the full specification of execution classes and boundary requirements.
 
 ---
 

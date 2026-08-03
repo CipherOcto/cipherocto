@@ -10,9 +10,9 @@ This advisory documents the compliance analysis of stoolap's BYTEA/BLOB implemen
 
 ## Background
 
-RFC-0127 (DCS Blob Amendment) Change 13 specifies that String and Blob share the same wire format (`u32_be(length) || payload`) and are **only distinguishable by schema context**. This is the "Length-Prefixed" encoding equivalence class.
+RFC-0127 Change 13 specifies that String and Blob share the same wire format (`u32_be(length) || payload`) and are **only distinguishable by schema context**. This is the "Length-Prefixed" encoding equivalence class.
 
-RFC-0201 (Binary BLOB Type) parrots this requirement:
+RFC-0201 parrots this requirement:
 
 > **Dispatcher requirement for mixed schemas (normative — RECIPEROCIAL):** When a stoolap schema contains both `BYTEA` (Blob) and `TEXT` (String) columns, the storage engine's deserialization MUST use the schema-driven dispatcher per RFC-0127's shared-encoding rule.
 
@@ -156,4 +156,4 @@ stoolap achieves the **same security and correctness guarantees** as RFC-0127's 
 ---
 
 *Analysis date: 2026-03-28*
-*Related RFCs: RFC-0127 (DCS Blob Amendment), RFC-0201 (Binary BLOB Type)*
+*Related RFCs: RFC-0127, RFC-0201*

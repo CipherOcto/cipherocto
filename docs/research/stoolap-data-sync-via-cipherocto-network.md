@@ -178,7 +178,7 @@ The two substrates are almost-but-not-quite complementary. Each has half of what
 | Need | Stoolap has | CipherOcto has | Gap |
 | --- | --- | --- | --- |
 | **Local change log** | V2 binary WAL with LSN, CRC32, all DML/DDL/vector operations. `append_entry`, `current_lsn`, `replay_two_phase`. | — (DGP objects are not row data) | None on this side. |
-| **Deterministic value wire format** | `determ::DetermValue`, `determ::DetermRow` (no-`Arc`, fixed inline/heap layout, SHA-256 MerkleHasher). `consensus::Operation` with big-endian fixed-width encoding. `octo_determin::Dfp/Decimal/Dqa/BigInt`. | RFC-0126 (DCS) + BLAKE3-256 for hashes. RFC-0853 (OCrypt) for encryption. | None on this side. |
+| **Deterministic value wire format** | `determ::DetermValue`, `determ::DetermRow` (no-`Arc`, fixed inline/heap layout, SHA-256 MerkleHasher). `consensus::Operation` with big-endian fixed-width encoding. `octo_determin::Dfp/Decimal/Dqa/BigInt`. | RFC-0126 + BLAKE3-256 for hashes. RFC-0853 for encryption. | None on this side. |
 | **Cross-process event propagation** | `WalPubSub` writes a separate pubsub-WAL file. | `DatabaseEvent` enum, `EventPublisher` trait. | Carrier is local file; needs network carrier. |
 | **Commit hook** | `TransactionEngineOperations::record_commit(txn_id)` is the single chokepoint. | — | None. |
 | **Replay-safe network transport** | — | `DeterministicEnvelope`, `ReplayCache` (BTreeMap with deterministic eviction), 21 platform adapters, multi-carrier propagation, fragmentation, 4 wire formats. | None on this side. |
@@ -746,9 +746,9 @@ All targets assume: NativeP2P transport (libp2p gossipsub, `0x000A`), LZ4 compre
 | Stoolap commit hook | `stoolap/src/storage/mvcc/transaction.rs` `TransactionEngineOperations::record_commit(txn_id)` | Single chokepoint to capture LSN range. |
 | Stoolap deterministic types | `stoolap/src/determ/` `DetermValue`, `DetermRow` | Wire format for row payloads when Class A required. |
 | Stoolap pub-sub | `stoolap/src/pubsub/{event_bus,wal_pubsub,traits}.rs` | Use `EventPublisher` to surface sync events locally. **Namespace separation**: `WalPubSub` uses `pubsub-wal-*.log` files (event namespace) and is the cross-process local-FS cache-invalidation channel. Sync uses `state/sync-watermarks.bin` and `state/sync-replay-cache.bin` (sync namespace) and is the cross-node network-based data-transfer channel. The two are disjoint on disk and in memory. Cross-process `WalPubSub` events (e.g., `KeyInvalidated`) are NOT shipped over Sync; Sync only ships the `Database` state itself, not the pub-sub event stream. |
-| RFC-0104 (DFP) | `stoolap/Cargo.toml:182, 212-213, 215-228` build profile settings | All sync code MUST inherit these (`inherits = "release"`, `codegen-units = 1`, `lto = true`, `overflow-checks = false`, `panic = "abort"`, `-C target-feature=-fma` via RUSTFLAGS). |
-| RFC-0126 (DCS) | Canonical serialization | Use for all wire structs. |
-| RFC-0008 (Determinism Boundary) | Class A for wire, Class B for transport/retry, Class C for diagnostics | See §4.4 mapping table. |
+| RFC-0104 | `stoolap/Cargo.toml:182, 212-213, 215-228` build profile settings | All sync code MUST inherit these (`inherits = "release"`, `codegen-units = 1`, `lto = true`, `overflow-checks = false`, `panic = "abort"`, `-C target-feature=-fma` via RUSTFLAGS). |
+| RFC-0126 | Canonical serialization | Use for all wire structs. |
+| RFC-0008 | Class A for wire, Class B for transport/retry, Class C for diagnostics | See §4.4 mapping table. |
 
 ---
 
@@ -847,7 +847,7 @@ Alternatives that should also be considered (deferred to F1):
    - **Also follow the repo's de facto pattern** (per `dot-network-bootstrap.md:99-126` and `stoolap-only-persistence.md`) by adding "Pipeline Position" and "Related Missions" sections (these are not in the BLUEPRINT template but are the established pattern in this repo).
    - Define the stakeholders, success metrics (latency, throughput, determinism), constraints, and non-goals.
    - List the related RFCs (`RFC-0850`, `RFC-0851`, `RFC-0851p-a`, `RFC-0852`, `RFC-0853`, `RFC-0855`, `RFC-0860`, plus the new `RFC-0862`).
-   - Pipeline position: `Use Case (this) → RFC-0862 (DESIGN) → 0862 base mission (0862-base) + 9 sub-missions 0862a through 0862i (EXECUTION)`.
+   - Pipeline position: `Use Case (this) → RFC-0862 → 0862 base mission (0862-base) + 9 sub-missions 0862a through 0862i (EXECUTION)`.
 
 ### 11.2 Draft the RFC
 
@@ -885,7 +885,7 @@ Alternatives that should also be considered (deferred to F1):
 8. **Open follow-up research** items (track in `docs/research/followups.md`):
    - **F1 — Multi-leader / active-active.** Investigate how to extend Sync with conflict resolution. Candidates: (a) per-row HLC + LWW, (b) move to a Raft/Paxos overlay (per `RFC-0200` body section, line 1821-1997), (c) restricted to specific table groups. **Note**: the §5 R-20 entry (originally labeled "F2 future work" for the `Replicator` role in an earlier draft) is incorrect — `Replicator` is a v1 role (immediate change to RFC-0855 §4.2).
    - **F2 — Trust-anchored storage checkpoint.** Mirror the RFC-0851p-a §6 Sybil-Eclipse Defense (line 365) "genesis checkpoint from CipherOcto website" pattern (referenced in the §5 Mode C Invite Link / §6 Sybil-Eclipse Defense table) for *storage* checkpoints. Without this, a brand-new node must trust the first peer it meets.
-   - **F3 — Proof-of-sync.** Use RFC-0859 (PCE) to attach a ZK proof of state equivalence to a `SnapshotResponse`. Useful for "I just received a snapshot, here is the proof it matches the published state root." Requires STWO integration.
+   - **F3 — Proof-of-sync.** Use RFC-0859 to attach a ZK proof of state equivalence to a `SnapshotResponse`. Useful for "I just received a snapshot, here is the proof it matches the published state root." Requires STWO integration.
    - **F4 — ZK proof of state equivalence.** A zero-knowledge proof that two Stoolap states are equivalent. Composes with the existing `HexaryProof` and the L2 rollup module.
    - **F5 — Cairo/Move port of the Sync protocol.** The Cairo programs in the **stoolap fork's `cairo/`** directory (`hexary_verify.cairo`, `merkle_batch.cairo`, `state_transition.cairo`) already exist; port the Sync protocol to a Cairo implementation and test interop. (Note: `cipherocto/cairo/` does **not** exist; F5 was originally misreferenced.)
    - **F6 — Sync on a public network.** Investigate bandwidth, cost, and Sybil-resistance implications of running Sync over a high-cost public carrier (e.g., SMS, voice).
@@ -915,25 +915,25 @@ Alternatives that should also be considered (deferred to F1):
 
 ### CipherOcto RFCs (existing, relied upon)
 
-- [RFC-0126 (Numeric): Deterministic Serialization](../../rfcs/accepted/numeric/0126-deterministic-serialization.md) (canonical encoding)
-- [RFC-0850 (Networking): Deterministic Overlay Transport](../../rfcs/accepted/networking/0850-deterministic-overlay-transport.md) (transport)
-- [RFC-0851 (Networking): Gateway Discovery Protocol](../../rfcs/accepted/networking/0851-gateway-discovery-protocol.md) (discovery; 5-state `DiscoveryLifecycle`)
+- [RFC-0126: Deterministic Serialization](../../rfcs/accepted/numeric/0126-deterministic-serialization.md) (canonical encoding)
+- [RFC-0850: Deterministic Overlay Transport](../../rfcs/accepted/networking/0850-deterministic-overlay-transport.md) (transport)
+- [RFC-0851: Gateway Discovery Protocol](../../rfcs/accepted/networking/0851-gateway-discovery-protocol.md) (discovery; 5-state `DiscoveryLifecycle`)
 - [RFC-0851p-a (Networking): Network Bootstrap Protocol](../../rfcs/accepted/networking/0851p-a-network-bootstrap.md) (bootstrap; 7-state `BootstrapClientLifecycle`)
-- [RFC-0852 (Networking): Deterministic Gossip Protocol](../../rfcs/draft/networking/0852-deterministic-gossip-protocol.md) (gossip, anti-entropy; `SnapshotFragment = 0x0008`)
-- [RFC-0853 (Networking): Overlay Cryptography](../../rfcs/draft/networking/0853-overlay-cryptography.md) (crypto; `OverlayIdentity`, `MissionKeyHierarchy`)
-- [RFC-0855 (Networking): Mission Overlay Networks](../../rfcs/accepted/networking/0855-mission-overlay-networks.md) (missions; 6 topology models, 5 governance, 8 roles)
+- [RFC-0852: Deterministic Gossip Protocol](../../rfcs/draft/networking/0852-deterministic-gossip-protocol.md) (gossip, anti-entropy; `SnapshotFragment = 0x0008`)
+- [RFC-0853: Overlay Cryptography](../../rfcs/draft/networking/0853-overlay-cryptography.md) (crypto; `OverlayIdentity`, `MissionKeyHierarchy`)
+- [RFC-0855: Mission Overlay Networks](../../rfcs/accepted/networking/0855-mission-overlay-networks.md) (missions; 6 topology models, 5 governance, 8 roles)
 - [RFC-0855p-b (Networking): Mission Coordinator Lifecycle](../../rfcs/accepted/networking/0855p-b-coordinator-lifecycle.md) (lifecycle; 8-state `CoordinatorLifecycle`)
 - [RFC-0855p-c (Networking): Domain Coordinator Role](../../rfcs/accepted/networking/0855p-c-domain-coordinator-role.md) (DC; 90-epoch platform-loss window)
-- [RFC-0856 (Networking): Deterministic Route Selection](../../rfcs/draft/networking/0856-deterministic-route-selection.md) (routing)
-- [RFC-0857 (Networking): Deterministic Overlay Mempool](../../rfcs/draft/networking/0857-deterministic-overlay-mempool.md) (mempool)
-- [RFC-0858 (Networking): Onion Relay Routing](../../rfcs/draft/networking/0858-onion-relay-routing.md) (onion)
-- [RFC-0859 (Networking): Proof-Carrying Envelopes](../../rfcs/draft/networking/0859-proof-carrying-envelopes.md) (proofs)
-- [RFC-0860 (Networking): Proof-of-Relay](../../rfcs/draft/networking/0860-proof-of-relay.md) (trust; composite scoring `composite = (forwarding * WF + availability * WA + bandwidth * WB + uptime * WU + diversity * WD) * stake_multiplier / 1000` with `WF=300, WA=250, WB=200, WU=150, WD=100`)
-- [RFC-0861 (Networking): CoordinatorAdmin Trait Refinements](../../rfcs/accepted/networking/0861-coordinator-admin-trait-refinements.md) (most recent, 17 findings closed, 1,373 tests passing)
-- [RFC-0200 (Storage): Production Vector-SQL Storage Engine v2](../../rfcs/draft/storage/0200-production-vector-sql-storage-v2.md) (the body-section Raft sketch at line 1821-1997 and brief §A Replication Model at line 2640 that we are superseding)
-- [RFC-0201 (Storage): Binary BLOB Type Support](../../rfcs/accepted/storage/0201-binary-blob-type-support.md)
-- [RFC-0740 (Consensus): Sharded Consensus Protocol](../../rfcs/draft/consensus/0740-sharded-consensus-protocol.md) (cross-shard `StateSync`)
-- [RFC-0742 (Consensus): Data Availability & Sampling](../../rfcs/draft/consensus/0742-data-availability-sampling.md) (DAS)
+- [RFC-0856: Deterministic Route Selection](../../rfcs/draft/networking/0856-deterministic-route-selection.md) (routing)
+- [RFC-0857: Deterministic Overlay Mempool](../../rfcs/draft/networking/0857-deterministic-overlay-mempool.md) (mempool)
+- [RFC-0858: Onion Relay Routing](../../rfcs/draft/networking/0858-onion-relay-routing.md) (onion)
+- [RFC-0859: Proof-Carrying Envelopes](../../rfcs/draft/networking/0859-proof-carrying-envelopes.md) (proofs)
+- [RFC-0860: Proof-of-Relay](../../rfcs/draft/networking/0860-proof-of-relay.md) (trust; composite scoring `composite = (forwarding * WF + availability * WA + bandwidth * WB + uptime * WU + diversity * WD) * stake_multiplier / 1000` with `WF=300, WA=250, WB=200, WU=150, WD=100`)
+- [RFC-0861: CoordinatorAdmin Trait Refinements](../../rfcs/accepted/networking/0861-coordinator-admin-trait-refinements.md) (most recent, 17 findings closed, 1,373 tests passing)
+- [RFC-0200: Production Vector-SQL Storage Engine v2](../../rfcs/draft/storage/0200-production-vector-sql-storage-v2.md) (the body-section Raft sketch at line 1821-1997 and brief §A Replication Model at line 2640 that we are superseding)
+- [RFC-0201: Binary BLOB Type Support](../../rfcs/accepted/storage/0201-binary-blob-type-support.md)
+- [RFC-0740: Sharded Consensus Protocol](../../rfcs/draft/consensus/0740-sharded-consensus-protocol.md) (cross-shard `StateSync`)
+- [RFC-0742: Data Availability & Sampling](../../rfcs/draft/consensus/0742-data-availability-sampling.md) (DAS)
 
 ### Stoolap fork files
 

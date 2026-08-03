@@ -2,16 +2,16 @@
 
 ## Status
 
-**Spec authority:** RFC-0960 (Accepted 2026-07-23). This document is a **navigation reference**, not a normative spec. Every section points to the canonical RFC-0960 §N (or companion RFC §N) for full specification. RFC-0960 supersedes the value-layer gap analysis from `docs/research/2026-07-22-value-transfer-model-internal-landscape.md` Phase 1.
+**Spec authority:** RFC-0960. This document is a **navigation reference**, not a normative spec. Every section points to the canonical RFC-0960 §N (or companion RFC §N) for full specification. RFC-0960 supersedes the value-layer gap analysis from `docs/research/2026-07-22-value-transfer-model-internal-landscape.md` Phase 1.
 
 **Companion RFCs (promoted in lockstep with RFC-0960 on 2026-07-23):**
 
-- RFC-0961 (CIPHERO_SQL Deterministic SQL); DEFERRED for implementation (see §22)
-- RFC-0962 (ExecutionEnvelope Object Protocol)
-- RFC-0963 (Resource Shard Routing)
-- RFC-0964 (Constraint Encoding Standard)
-- RFC-0965 (Capability Extension Format)
-- RFC-0967 (Policy Object Graph)
+- RFC-0961; DEFERRED for implementation (see §22)
+- RFC-0962
+- RFC-0963
+- RFC-0964
+- RFC-0965
+- RFC-0967
 
 ---
 
@@ -99,7 +99,7 @@ Reservation state machine: `Reserved → Executing → Settled → Auditable →
 ### 2.4 Settlement (alias to RFC-0959 SettlementReceipt)
 
 ```text
-// RFC-0959 (Accepted, authoritative):
+// RFC-0959:
 SettlementReceipt {
     envelope: {
         receipt_id:        ReceiptId,       // = BLAKE3(canonical_ser(event, nonce, settled_at_unix))
@@ -514,7 +514,7 @@ All errors emitted by the RFC-0960 stack live in one table for cross-RFC discove
 
 ## 22. RFC-0961 Deferral Rationale
 
-RFC-0961 (CIPHERO_SQL Deterministic SQL) is **Accepted** (2026-07-23, promoted in lockstep with RFC-0960). It is **deferred** in the 2026-07-23 wave plan's priority order, NOT in accept-status. Rationale:
+RFC-0961 is **Accepted** (2026-07-23, promoted in lockstep with RFC-0960). It is **deferred** in the 2026-07-23 wave plan's priority order, NOT in accept-status. Rationale:
 
 1. **Coupling.** RFC-0961 is the canonical SQL dialect for `ExecutionEnvelope`. It is only exercised when the envelope surface lands (W6). Building a full SQL parser before the envelope + KV substrate (W6) exists is premature.
 2. **Specification completeness.** RFC-0961 §Open Questions resolved at RFC-0960 R28+; however, the parser implementation must consume RFC-0964 (constraint encoding) + RFC-0965 (caveat payloads) + RFC-0962 (envelope shape). None of those crate consumers exist yet (W3 first).
@@ -531,21 +531,21 @@ This deferral is **deferral-by-priority** (per user direction 2026-07-23: "RFC d
 
 ### Internal RFCs
 
-- RFC-0957 (Economics): Capability Token Format — Accepted
-- RFC-0958 (Economics): ZK Capability Subclass — Accepted
-- RFC-0959 (Economics): Ask Settlement Chain
-- RFC-0961 (Economics): CIPHERO_SQL Deterministic SQL (Deferred)
-- RFC-0962 (Economics): ExecutionEnvelope Object Protocol
-- RFC-0963 (Economics): Resource Shard Routing
-- RFC-0964 (Economics): Constraint Encoding Standard
-- RFC-0965 (Economics): Capability Extension Format
-- RFC-0967 (Economics): Policy Object Graph
-- RFC-0126 (Numeric): Deterministic Serialization — Accepted
-- RFC-0102 (Numeric): Wallet Cryptography — Accepted
-- RFC-0862 (Networking): Stoolap Sync Layer
-- RFC-0909 (Economics): Deterministic Quota Accounting (coexistence)
-- RFC-0853 (Networking): Overlay Cryptography — Accepted (BLAKE3 primitive)
-- RFC-0009 (Process): Identity Management — Accepted (Ed25519 substrate)
+- RFC-0957: Capability Token Format — Accepted
+- RFC-0958: ZK Capability Subclass — Accepted
+- RFC-0959: Ask Settlement Chain
+- RFC-0961: CIPHERO_SQL Deterministic SQL (Deferred)
+- RFC-0962: ExecutionEnvelope Object Protocol
+- RFC-0963: Resource Shard Routing
+- RFC-0964: Constraint Encoding Standard
+- RFC-0965: Capability Extension Format
+- RFC-0967: Policy Object Graph
+- RFC-0126: Deterministic Serialization — Accepted
+- RFC-0102: Wallet Cryptography — Accepted
+- RFC-0862: Stoolap Sync Layer
+- RFC-0909: Deterministic Quota Accounting (coexistence)
+- RFC-0853: Overlay Cryptography — Accepted (BLAKE3 primitive)
+- RFC-0009: Identity Management — Accepted (Ed25519 substrate)
 
 ### Internal research
 

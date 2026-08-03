@@ -65,17 +65,17 @@ When implemented, CipherOcto nodes can:
 
 ## Related RFCs
 
-- RFC-0850 (Networking): Deterministic Overlay Transport — adapter trait, envelope format, fragmentation
-- RFC-0851 (Networking): Gateway Discovery Protocol — gateway advertisements
+- RFC-0850: Deterministic Overlay Transport — adapter trait, envelope format, fragmentation
+- RFC-0851: Gateway Discovery Protocol — gateway advertisements
 - RFC-0851p-a (Networking): Network Bootstrap Protocol — peer-to-peer bootstrap channels
 - RFC-0850p-a (Networking): WhatsApp Auth Onboarding — Tier 3 transport (WhatsApp)
 - RFC-0850p-c (Networking): Transport Group Binding Ceremony — `domain_id` ↔ physical group mapping
-- RFC-0852 (Networking): Deterministic Gossip Protocol — multi-carrier propagation
+- RFC-0852: Deterministic Gossip Protocol — multi-carrier propagation
 - RFC-0855p-b (Networking): Mission Coordinator Lifecycle — coordinator state machine
 - RFC-0855p-c (Networking): DomainCoordinator Role — physical-platform coordinator
-- RFC-0856 (Networking): Deterministic Route Selection — transport diversity scoring
-- RFC-0858 (Networking): Onion Relay Routing — multi-transport onion paths
-- RFC-0860 (Networking): Proof-of-Relay — relay verification across platforms
+- RFC-0856: Deterministic Route Selection — transport diversity scoring
+- RFC-0858: Onion Relay Routing — multi-transport onion paths
+- RFC-0860: Proof-of-Relay — relay verification across platforms
 
 ## Related Missions (RFC-0850)
 

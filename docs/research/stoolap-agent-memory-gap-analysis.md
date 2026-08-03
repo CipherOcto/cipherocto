@@ -1060,7 +1060,7 @@ graph LR
 | ------------------------- | ----------- | -------------------------------- |
 | **Verifiable State**      | None        | Merkle proofs for every memory   |
 | **ZK Privacy**            | Partial     | STWO integration                 |
-| **Deterministic Compute** | None        | DQA from RFC-0106 (Numeric/Math) |
+| **Deterministic Compute** | None        | DQA from RFC-0106 |
 | **Time-Travel Queries**   | No          | Built-in temporal queries        |
 | **Cost-Based Optimizer**  | Some        | AQE + semantic cache             |
 
@@ -1194,7 +1194,7 @@ Stoolap: All features + ZK proofs ✨
 **Related Documents:**
 
 - [Agent Memory Comprehensive Research](./agent-memory-comprehensive-research.md)
-- [RFC-0410 (Agents): Verifiable Agent Memory](../rfcs/0410-verifiable-agent-memory.md)
+- RFC-0410
 - [Use Case: Verifiable Agent Memory Layer](../use-cases/verifiable-agent-memory-layer.md)
 - [Stoolap Research Report](./stoolap-research.md)
 - [Mission: Stoolap Provider Integration](../missions/stoolap-provider-integration.md)

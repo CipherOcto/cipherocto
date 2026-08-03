@@ -22,9 +22,9 @@ If this works, the entire architecture becomes credible.
 
 **Required RFCs:**
 
-- RFC-0104 (Numeric/Math): Deterministic Floating-Point
-- RFC-0105 (Numeric/Math): Deterministic Quant Arithmetic
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0104: Deterministic Floating-Point
+- RFC-0105: Deterministic Quant Arithmetic
+- RFC-0106: Deterministic Numeric Tower
 
 **Implementation:**
 
@@ -52,7 +52,7 @@ pub mod deterministic {
 
 **Required RFCs:**
 
-- RFC-0520 (AI Execution): Deterministic AI-VM
+- RFC-0520: Deterministic AI-VM
 
 **Implementation:**
 
@@ -81,7 +81,7 @@ pub enum Operator {
 
 **Required RFCs:**
 
-- RFC-0107 (Numeric/Math): Deterministic Transformer Circuit
+- RFC-0107: Deterministic Transformer Circuit
 
 **Start Small:**
 
@@ -110,7 +110,7 @@ impl Circuit for TransformerCircuit {
 
 **Required RFCs:**
 
-- RFC-0630 (Proof Systems): Proof-of-Inference Consensus
+- RFC-0630: Proof-of-Inference Consensus
 
 **Options (use existing framework):**
 
@@ -146,7 +146,7 @@ pub fn verify(proof: &Proof, result: &Digest) -> bool {
 
 **Required RFCs:**
 
-- RFC-0843 (Networking): OCTO-Network Protocol
+- RFC-0843: OCTO-Network Protocol
 
 **Implementation:**
 
@@ -174,8 +174,8 @@ pub const TOPICS: &str = [
 
 **Required RFCs:**
 
-- RFC-0630 (Proof Systems): Proof-of-Inference
-- RFC-0741 (Consensus): Parallel Block DAG
+- RFC-0630: Proof-of-Inference
+- RFC-0741: Parallel Block DAG
 
 **Simplify for Genesis:**
 
@@ -239,7 +239,7 @@ pub fn adjust_difficulty(block_time: u64) {
 
 **Required RFCs:**
 
-- RFC-0631 (Proof Systems): Proof-of-Dataset Integrity
+- RFC-0631: Proof-of-Dataset Integrity
 
 **Simplified Format:**
 
@@ -265,7 +265,7 @@ fn get_prompt(i: u32) -> String {
 
 **Required RFCs:**
 
-- RFC-0102 (Numeric/Math): Wallet Cryptography
+- RFC-0102: Wallet Cryptography
 
 **Implementation:**
 
@@ -382,11 +382,11 @@ These RFCs are **not required for genesis**:
 
 | RFC                  | Reason                                             |
 | -------------------- | -------------------------------------------------- |
-| RFC-0414 (Agents)    | Autonomous Agent Organizations — application layer |
-| RFC-0411 (Economics) | Knowledge Markets — application layer              |
-| RFC-0900 (Economics) | AI Quota Marketplace — application layer           |
-| RFC-0955 (Economics) | Model Liquidity — application layer                |
-| RFC-0415 (Agents)    | Alignment Mechanisms — application layer           |
+| RFC-0414    | Autonomous Agent Organizations — application layer |
+| RFC-0411 | Knowledge Markets — application layer              |
+| RFC-0900 | AI Quota Marketplace — application layer           |
+| RFC-0955 | Model Liquidity — application layer                |
+| RFC-0415    | Alignment Mechanisms — application layer           |
 
 **Genesis focuses on the infrastructure layer.** Applications can grow on top.
 
@@ -435,14 +435,14 @@ These RFCs are **not required for genesis**:
 
 ## Related RFCs
 
-- RFC-0104 (Numeric/Math): Deterministic Floating-Point
-- RFC-0105 (Numeric/Math): Deterministic Quant Arithmetic
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
-- RFC-0520 (AI Execution): Deterministic AI-VM
-- RFC-0630 (Proof Systems): Proof-of-Inference Consensus
-- RFC-0107 (Numeric/Math): Deterministic Transformer Circuit
-- RFC-0843 (Networking): OCTO-Network Protocol
-- RFC-0004 (Process/Meta): Implementation Roadmap
+- RFC-0104: Deterministic Floating-Point
+- RFC-0105: Deterministic Quant Arithmetic
+- RFC-0106: Deterministic Numeric Tower
+- RFC-0520: Deterministic AI-VM
+- RFC-0630: Proof-of-Inference Consensus
+- RFC-0107: Deterministic Transformer Circuit
+- RFC-0843: OCTO-Network Protocol
+- RFC-0004: Implementation Roadmap
 
 ---
 
@@ -456,4 +456,4 @@ Once this works, everything else (agents, markets, governance) can grow on top.
 
 ---
 
-_This guide complements RFC-0004 (Process/Meta): Implementation Roadmap with a focused genesis strategy._
+_This guide complements RFC-0004: Implementation Roadmap with a focused genesis strategy._

@@ -3,7 +3,7 @@
 **Status:** Draft (awaiting adversarial review)
 **Date:** 2026-06-21
 **Author:** @cipherocto (research)
-**Trigger:** RFC-0862 (Stoolap Data Sync Protocol) is Accepted; implementation requires stoolap to consume cipherocto network APIs.
+**Trigger:** RFC-0862 is Accepted; implementation requires stoolap to consume cipherocto network APIs.
 
 ## 1. Problem Statement
 
@@ -379,10 +379,10 @@ pub struct StoolapSyncBridge<A: DatabaseSyncAdapter> { adapter: A, ... }
 ## 8. Cross-References
 
 - RFC-0853 §1 (HKDF-BLAKE3), §6 (Mission Cryptography), §7 (Replay Protection), §12 (Key Rotation) — defines the cryptography and key-management primitives the new `octo-sync` crate must use.
-- RFC-0850 (DOT) — defines the envelope wire format.
-- RFC-0852 (DGP) §7 (anti-entropy Merkle summary) — the algorithm the `MerkleSegmentTree` in `octo-sync` implements.
-- RFC-0855 (Mission Overlay Networks) — defines the mission-binding precondition.
-- RFC-0862 (Stoolap Data Sync Protocol) — the wire protocol that motivates this research.
+- RFC-0850 — defines the envelope wire format.
+- RFC-0852 §7 (anti-entropy Merkle summary) — the algorithm the `MerkleSegmentTree` in `octo-sync` implements.
+- RFC-0855 — defines the mission-binding precondition.
+- RFC-0862 — the wire protocol that motivates this research.
 - Mission 0862-base + 0862a–0862i — the 10 missions that depend on the new `octo-sync` leaf crate.
 - `docs/research/stoolap-data-sync-via-cipherocto-network.md` — the upstream research that this work implements.
 - `docs/BLUEPRINT.md` §"Canonical Workflow" — the Research → Use Case → RFC → Mission pipeline that this document feeds.

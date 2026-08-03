@@ -137,6 +137,6 @@ sequenceDiagram
 
 ## Related RFCs
 
-- [RFC-0108 (Numeric/Math): Deterministic Training Circuits](../rfcs/0108-deterministic-training-circuits.md)
-- [RFC-0109 (Numeric/Math): Linear Algebra Engine](../rfcs/0109-linear-algebra-engine.md)
-- [RFC-0411 (Economics): Knowledge Market & Verifiable Data Assets](../rfcs/0411-knowledge-market-verifiable-data-assets.md)
+- RFC-0108
+- RFC-0109
+- RFC-0411

@@ -361,11 +361,11 @@ across runs to reach 24h effective coverage. Schedule: 02:00 UTC daily.
 
 ## Cross-mission dependencies
 
-- **Depends on:** RFC-0957 (Capability Token Format) — substrate;
-  RFC-0630 (Proof-of-Inference Consensus) — `ExecutionTrace` type;
-  RFC-0009 (Identity Management) — DID + NodeType;
-  RFC-0102 (Wallet Cryptography) — wallet substrate;
-  RFC-0853 (Overlay Cryptography) — BLAKE3 primitive.
+- **Depends on:** RFC-0957 — substrate;
+  RFC-0630 — `ExecutionTrace` type;
+  RFC-0009 — DID + NodeType;
+  RFC-0102 — wallet substrate;
+  RFC-0853 — BLAKE3 primitive.
 - **Optional consumers:** mission `0957-b` (provider-boundary exercise path)
   may consume ZK-bearing caps in optional ZK flag (Phase F extension; not
   required for S04 acceptance); sibling mission `zk-proof-verification.md`

@@ -281,15 +281,15 @@ And: Receives OCTO-W for sold prompts
 
 ## Related RFCs
 
-- [RFC-0900 (Economics): AI Quota Marketplace Protocol](../rfcs/0900-ai-quota-marketplace.md)
-- [RFC-0901 (Economics): Quota Router Agent Specification](../rfcs/0901-quota-router-agent.md)
-- [RFC-0902 (Economics): Multi-Provider Routing and Load Balancing](../rfcs/planned/economics/0902-multi-provider-routing-load-balancing.md) (Planned)
-- [RFC-0903 (Economics): Virtual API Key System](../rfcs/planned/economics/0903-virtual-api-key-system.md) (Planned)
-- [RFC-0904 (Economics): Real-Time Cost Tracking](../rfcs/planned/economics/0904-real-time-cost-tracking.md) (Planned)
-- [RFC-0905 (Economics): Observability and Logging](../rfcs/planned/economics/0905-observability-logging.md) (Planned)
-- [RFC-0906 (Economics): Response Caching](../rfcs/planned/economics/0906-response-caching.md) (Planned)
-- [RFC-0907 (Economics): Configuration Management](../rfcs/planned/economics/0907-configuration-management.md) (Planned)
-- [RFC-0908 (Economics): Python SDK and PyO3 Bindings](../rfcs/draft/economics/0908-python-sdk-pyo3-bindings.md) (Draft) - **CRITICAL for drop-in replacement**
+- RFC-0900
+- RFC-0901
+- [RFC-0902: Multi-Provider Routing and Load Balancing](../rfcs/planned/economics/0902-multi-provider-routing-load-balancing.md) (Planned)
+- [RFC-0903: Virtual API Key System](../rfcs/planned/economics/0903-virtual-api-key-system.md) (Planned)
+- [RFC-0904: Real-Time Cost Tracking](../rfcs/planned/economics/0904-real-time-cost-tracking.md) (Planned)
+- [RFC-0905: Observability and Logging](../rfcs/planned/economics/0905-observability-logging.md) (Planned)
+- [RFC-0906: Response Caching](../rfcs/planned/economics/0906-response-caching.md) (Planned)
+- [RFC-0907: Configuration Management](../rfcs/planned/economics/0907-configuration-management.md) (Planned)
+- [RFC-0908: Python SDK and PyO3 Bindings](../rfcs/draft/economics/0908-python-sdk-pyo3-bindings.md) (Draft) - **CRITICAL for drop-in replacement**
 
 ---
 

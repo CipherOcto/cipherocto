@@ -479,7 +479,7 @@ This is closer to Cosmos's design + Datomic's ARAR + ZK for privacy. Practical t
 - Grand design doc §10 (Resource Sharding)
 - Grand design doc §6 (Audit Window — needs correction event support)
 - RFC-0862 (sync as propagation)
-- RFC-0958 (ZK capability — extends to events)
+- RFC-0958
 
 ---
 

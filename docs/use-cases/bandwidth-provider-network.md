@@ -77,4 +77,4 @@ Current centralized CDNs are expensive and create dependency on single providers
 
 ## Related RFCs
 
-- [RFC-0109 (Numeric/Math): Linear Algebra Engine](../rfcs/0109-linear-algebra-engine.md)
+- RFC-0109

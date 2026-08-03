@@ -403,7 +403,7 @@ pub struct PersistenceManager {
 
 ### Type Gap Matrix: Stoolap vs Numeric Tower
 
-| Feature | Stoolap | RFC-0104 (DFP) | RFC-0105 (DQA) | RFC-0110 (BIGINT) | RFC-0111 (DECIMAL) | Gap Severity |
+| Feature | Stoolap | RFC-0104 | RFC-0105 | RFC-0110 | RFC-0111 | Gap Severity |
 |---------|---------|----------------|-----------------|-------------------|-------------------|--------------|
 | i64 Integer | ✅ | — | — | — | — | None |
 | IEEE-754 Float | ✅ | — | — | — | — | None |

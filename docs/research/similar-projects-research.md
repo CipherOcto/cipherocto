@@ -33,7 +33,7 @@ Verifiable quality / disputes
 In RFC-0900 disputes (garbage response, failed inference), CipherOcto relies on automated signals + reputation.
 → Take cues from LuminAIR's proof-of-correct-execution to design lightweight proofs for "the model produced a valid output shape/latency" or integrate STWO-based verification for high-stake routes in Phase 2/3.
 Starknet / Cairo alignment
-CipherOcto's RFC-0102 (Numeric/Math) already chooses Starknet ECDSA, Poseidon hashing, and Cairo-compatible structures.
+CipherOcto's RFC-0102 already chooses Starknet ECDSA, Poseidon hashing, and Cairo-compatible structures.
 → This makes future integration technically natural. Use LuminAIR as inspiration to make quota proofs verifiable on Starknet (e.g., prove that X prompts were routed correctly and burned OCTO-W).
 Agent verifiability
 As both projects target autonomous agents, borrow the "verifiable intelligence" narrative: position CipherOcto's quota router as the access layer that feeds into verifiable execution layers like LuminAIR.

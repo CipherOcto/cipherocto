@@ -21,8 +21,8 @@ The architecture spans **five core domains**:
 │                         APPLICATION LAYER                                   │
 │  ┌─────────────────────┐  ┌─────────────────────────────────────────┐   │
 │  │ Self-Verifying     │  │ Autonomous Agent Organizations         │   │
-│  │ AI Agents          │  │ (RFC-0414 (Agents))                            │   │
-│  │ (RFC-0416 (Agents))        │  │                                        │   │
+│  │ AI Agents          │  │ (RFC-0414)                            │   │
+│  │ (RFC-0416)        │  │                                        │   │
 │  └─────────────────────┘  └─────────────────────────────────────────┘   │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │
@@ -30,12 +30,12 @@ The architecture spans **five core domains**:
 │                         AI EXECUTION LAYER                              │
 │  ┌─────────────────────────┐  ┌─────────────────────────────────────┐   │
 │  │ Deterministic           │  │ Deterministic Training Circuits       │   │
-│  │ Transformer Circuit    │  │ (RFC-0108 (Numeric/Math))                          │   │
-│  │ (RFC-0107 (Numeric/Math))            │  │                                     │   │
+│  │ Transformer Circuit    │  │ (RFC-0108)                          │   │
+│  │ (RFC-0107)            │  │                                     │   │
 │  └─────────────────────────┘  └─────────────────────────────────────┘   │
 │                                    │                                    │
 │  ┌───────────────────────────────▼────────────────────────────────┐    │
-│  │            Deterministic AI-VM (RFC-0520 (AI Execution))                    │    │
+│  │            Deterministic AI-VM (RFC-0520)                    │    │
 │  └───────────────────────────────┬────────────────────────────────┘    │
 └──────────────────────────────────┼───────────────────────────────────┘
                                    │
@@ -43,18 +43,18 @@ The architecture spans **five core domains**:
 │                         VERIFICATION LAYER                              │
 │  ┌─────────────────────────┐  ┌─────────────────────────────────────┐   │
 │  │ Proof-of-Dataset       │  │ Probabilistic Verification Markets   │   │
-│  │ Integrity (RFC-0631 (Proof Systems))   │  │ (RFC-0615 (Proof Systems))                         │   │
+│  │ Integrity (RFC-0631)   │  │ (RFC-0615)                         │   │
 │  └─────────────────────────┘  └─────────────────────────────────────┘   │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │
 ┌────────────────────────────────────▼────────────────────────────────────┐
 │                         CONSENSUS LAYER                                  │
 │  ┌──────────────────────────────────────────────────────────────┐      │
-│  │            Proof-of-Inference Consensus (RFC-0630 (Proof Systems))           │      │
+│  │            Proof-of-Inference Consensus (RFC-0630)           │      │
 │  │  ┌─────────────┐  ┌─────────────┐  ┌──────────────────┐  │      │
 │  │  │ Sharded     │  │ Parallel    │  │ Data            │  │      │
 │  │  │ Consensus   │  │ Block DAG   │  │ Availability    │  │      │
-│  │  │(RFC-0740 (Consensus))  │  │(RFC-0741 (Consensus))  │  │(RFC-0742 (Consensus))      │  │      │
+│  │  │(RFC-0740)  │  │(RFC-0741)  │  │(RFC-0742)      │  │      │
 │  │  └─────────────┘  └─────────────┘  └──────────────────┘  │      │
 │  └──────────────────────────────────────────────────────────────┘      │
 └────────────────────────────────────┬────────────────────────────────────┘
@@ -63,17 +63,17 @@ The architecture spans **five core domains**:
 │                         NETWORK LAYER                                     │
 │  ┌─────────────────────────────┐  ┌─────────────────────────────────┐   │
 │  │ OCTO-Network Protocol      │  │ Inference Task Market            │   │
-│  │ (RFC-0843 (Networking))                │  │ (RFC-0910 (Economics))                      │   │
+│  │ (RFC-0843)                │  │ (RFC-0910)                      │   │
 │  └─────────────────────────────┘  └─────────────────────────────────┘   │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │
 ┌────────────────────────────────────▼────────────────────────────────────┐
 │                         EXECUTION LAYER                                  │
 │  ┌──────────────────────────────────────────────────────────────┐      │
-│  │            Deterministic Numeric Tower (RFC-0106 (Numeric/Math))            │      │
+│  │            Deterministic Numeric Tower (RFC-0106)            │      │
 │  │  ┌────────────┐  ┌────────────┐  ┌────────────────────┐   │      │
 │  │  │ DFP        │  │ DQA        │  │ Numeric Types    │   │      │
-│  │  │(RFC-0104 (Numeric/Math))  │  │(RFC-0105 (Numeric/Math))  │  │(RFC-0106 (Numeric/Math))       │   │      │
+│  │  │(RFC-0104)  │  │(RFC-0105)  │  │(RFC-0106)       │   │      │
 │  │  └────────────┘  └────────────┘  └────────────────────┘   │      │
 │  └──────────────────────────────────────────────────────────────┘      │
 └─────────────────────────────────────────────────────────────────────┘
@@ -86,36 +86,36 @@ The architecture spans **five core domains**:
 ```mermaid
 graph TD
     subgraph Execution
-        RFC0104[RFC-0104 (Numeric/Math): DFP]
-        RFC0105[RFC-0105 (Numeric/Math): DQA]
-        RFC0106[RFC-0106 (Numeric/Math): Numeric Tower]
+        RFC0104[RFC-0104: DFP]
+        RFC0105[RFC-0105: DQA]
+        RFC0106[RFC-0106: Numeric Tower]
     end
 
     subgraph AI
-        RFC0120[RFC-0520 (AI Execution): AI-VM]
-        RFC0131[RFC-0107 (Numeric/Math): Transformer Circuit]
-        RFC0132[RFC-0108 (Numeric/Math): Training Circuits]
+        RFC0120[RFC-0520: AI-VM]
+        RFC0131[RFC-0107: Transformer Circuit]
+        RFC0132[RFC-0108: Training Circuits]
     end
 
     subgraph Data
-        RFC0133[RFC-0631 (Proof Systems): Dataset Integrity]
-        RFC0142[RFC-0742 (Consensus): Data Availability]
+        RFC0133[RFC-0631: Dataset Integrity]
+        RFC0142[RFC-0742: Data Availability]
     end
 
     subgraph Consensus
-        RFC0130[RFC-0630 (Proof Systems): PoI Consensus]
-        RFC0140[RFC-0740 (Consensus): Sharded Consensus]
-        RFC0141[RFC-0741 (Consensus): Block DAG]
+        RFC0130[RFC-0630: PoI Consensus]
+        RFC0140[RFC-0740: Sharded Consensus]
+        RFC0141[RFC-0741: Block DAG]
     end
 
     subgraph Network
-        RFC0143[RFC-0843 (Networking): OCTO-Network]
-        RFC0144[RFC-0918 (Economics): Task Market]
+        RFC0143[RFC-0843: OCTO-Network]
+        RFC0144[RFC-0918: Task Market]
     end
 
     subgraph Agents
-        RFC0134[RFC-0416 (Agents): Self-Verifying Agents]
-        RFC0118[RFC-0414 (Agents): Agent Organizations]
+        RFC0134[RFC-0416: Self-Verifying Agents]
+        RFC0118[RFC-0414: Agent Organizations]
     end
 
     RFC0104 --> RFC0106
@@ -142,21 +142,21 @@ graph TD
 
 ## Core Components
 
-### 1. Deterministic Numeric Tower (RFC-0106 (Numeric/Math))
+### 1. Deterministic Numeric Tower (RFC-0106)
 
 The foundation layer ensuring bit-exact arithmetic across all nodes.
 
 | Component                     | Purpose                            |
 | ----------------------------- | ---------------------------------- |
-| DFP (RFC-0104 (Numeric/Math)) | Deterministic floating-point       |
-| DQA (RFC-0105 (Numeric/Math)) | Deterministic quantized arithmetic |
+| DFP (RFC-0104) | Deterministic floating-point       |
+| DQA (RFC-0105) | Deterministic quantized arithmetic |
 | Numeric Types                 | Q32.32, Q16.16 fixed-point         |
 
 **Key Property:** Any computation produces identical results on any hardware.
 
 ---
 
-### 2. Deterministic AI-VM (RFC-0520 (AI Execution))
+### 2. Deterministic AI-VM (RFC-0520)
 
 A virtual machine that executes AI models deterministically.
 
@@ -169,7 +169,7 @@ A virtual machine that executes AI models deterministically.
 
 ---
 
-### 3. Deterministic Transformer Circuit (RFC-0107 (Numeric/Math))
+### 3. Deterministic Transformer Circuit (RFC-0107)
 
 Efficient STARK circuits for transformer inference.
 
@@ -187,20 +187,20 @@ Efficient STARK circuits for transformer inference.
 
 ---
 
-### 4. Deterministic Training Circuits (RFC-0108 (Numeric/Math))
+### 4. Deterministic Training Circuits (RFC-0108)
 
 Verifiable gradient-based training.
 
 **Phases Verified:**
 
-1. Forward pass (RFC-0107 (Numeric/Math))
+1. Forward pass (RFC-0107)
 2. Loss computation
 3. Backpropagation
 4. Optimizer update
 
 ---
 
-### 5. Proof-of-Dataset Integrity (RFC-0631 (Proof Systems))
+### 5. Proof-of-Dataset Integrity (RFC-0631)
 
 Cryptographic verification of dataset properties.
 
@@ -213,7 +213,7 @@ Cryptographic verification of dataset properties.
 
 ---
 
-### 6. Proof-of-Inference Consensus (RFC-0630 (Proof Systems))
+### 6. Proof-of-Inference Consensus (RFC-0630)
 
 AI inference replaces hash computation as consensus work.
 
@@ -233,7 +233,7 @@ AI inference replaces hash computation as consensus work.
 
 ---
 
-### 7. Sharded Consensus (RFC-0740 (Consensus))
+### 7. Sharded Consensus (RFC-0740)
 
 Horizontal scaling of PoI across parallel shards.
 
@@ -245,7 +245,7 @@ Horizontal scaling of PoI across parallel shards.
 
 ---
 
-### 8. Parallel Block DAG (RFC-0741 (Consensus))
+### 8. Parallel Block DAG (RFC-0741)
 
 Leaderless block production with Hashgraph-style consensus.
 
@@ -257,7 +257,7 @@ Leaderless block production with Hashgraph-style consensus.
 
 ---
 
-### 9. Data Availability Sampling (RFC-0742 (Consensus))
+### 9. Data Availability Sampling (RFC-0742)
 
 Efficient verification of shard availability.
 
@@ -269,7 +269,7 @@ Efficient verification of shard availability.
 
 ---
 
-### 10. OCTO-Network Protocol (RFC-0843 (Networking))
+### 10. OCTO-Network Protocol (RFC-0843)
 
 libp2p-based P2P networking.
 
@@ -281,7 +281,7 @@ libp2p-based P2P networking.
 
 ---
 
-### 11. Inference Task Market (RFC-0918 (Economics))
+### 11. Inference Task Market (RFC-0918)
 
 Economic protocol for task allocation.
 
@@ -299,7 +299,7 @@ Economic protocol for task allocation.
 
 ---
 
-### 12. Self-Verifying AI Agents (RFC-0416 (Agents))
+### 12. Self-Verifying AI Agents (RFC-0416)
 
 Agents that prove their reasoning.
 
@@ -412,18 +412,18 @@ sequenceDiagram
 
 ### RFCs
 
-- [RFC-0106 (Numeric/Math): Deterministic Numeric Tower](../rfcs/0106-deterministic-numeric-tower.md)
-- [RFC-0520 (AI Execution): Deterministic AI-VM](../rfcs/0520-deterministic-ai-vm.md)
-- [RFC-0630 (Proof Systems): Proof-of-Inference Consensus](../rfcs/0630-proof-of-inference-consensus.md)
-- [RFC-0107 (Numeric/Math): Deterministic Transformer Circuit](../rfcs/0107-deterministic-transformer-circuit.md)
-- [RFC-0108 (Numeric/Math): Deterministic Training Circuits](../rfcs/0108-deterministic-training-circuits.md)
-- [RFC-0631 (Proof Systems): Proof-of-Dataset Integrity](../rfcs/0631-proof-of-dataset-integrity.md)
-- [RFC-0416 (Agents): Self-Verifying AI Agents](../rfcs/0416-self-verifying-ai-agents.md)
-- [RFC-0740 (Consensus): Sharded Consensus Protocol](../rfcs/0740-sharded-consensus-protocol.md)
-- [RFC-0741 (Consensus): Parallel Block DAG](../rfcs/0741-parallel-block-dag.md)
-- [RFC-0742 (Consensus): Data Availability Sampling](../rfcs/0742-data-availability-sampling.md)
-- [RFC-0843 (Networking): OCTO-Network Protocol](../rfcs/0843-octo-network-protocol.md)
-- [RFC-0918 (Economics): Inference Task Market](../rfcs/0918-inference-task-market.md)
+- RFC-0106
+- RFC-0520
+- RFC-0630
+- RFC-0107
+- RFC-0108
+- RFC-0631
+- RFC-0416
+- RFC-0740
+- RFC-0741
+- RFC-0742
+- RFC-0843
+- RFC-0918
 
 ### Use Cases
 

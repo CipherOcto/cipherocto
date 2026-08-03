@@ -75,25 +75,25 @@ graph TB
 
 ## Related RFCs
 
-- [RFC-0104 (Numeric/Math): Deterministic Floating-Point](../rfcs/0104-deterministic-floating-point.md)
-- [RFC-0105 (Numeric/Math): Deterministic Quant Arithmetic](../rfcs/0105-deterministic-quant-arithmetic.md)
-- [RFC-0106 (Numeric/Math): Deterministic Numeric Tower](../rfcs/0106-deterministic-numeric-tower.md)
-- [RFC-0116 (Numeric/Math): Unified Deterministic Execution Model](../rfcs/0116-unified-deterministic-execution-model.md)
-- [RFC-0520 (AI Execution): Deterministic AI Virtual Machine](../rfcs/0520-deterministic-ai-vm.md)
-- [RFC-0521 (AI Execution): Verifiable Large Model Execution](../rfcs/0521-verifiable-large-model-execution.md)
-- [RFC-0522 (AI Execution): Mixture-of-Experts](../rfcs/0522-mixture-of-experts.md)
-- [RFC-0523 (AI Execution): Scalable Verifiable AI Execution](../rfcs/0523-scalable-verifiable-ai-execution.md)
-- [RFC-0616 (Proof Systems): Proof Market and Hierarchical Inference Network](../rfcs/0616-proof-market-hierarchical-network.md)
-- [RFC-0955 (Economics): Model Liquidity Layer](../rfcs/0955-model-liquidity-layer.md)
-- [RFC-0630 (Proof Systems): Proof-of-Inference Consensus](../rfcs/0630-proof-of-inference-consensus.md)
-- [RFC-0107 (Numeric/Math): Deterministic Transformer Circuit](../rfcs/0107-deterministic-transformer-circuit.md)
-- [RFC-0108 (Numeric/Math): Deterministic Training Circuits](../rfcs/0108-deterministic-training-circuits.md)
-- [RFC-0631 (Proof Systems): Proof-of-Dataset Integrity](../rfcs/0631-proof-of-dataset-integrity.md)
-- [RFC-0416 (Agents): Self-Verifying AI Agents](../rfcs/0416-self-verifying-ai-agents.md)
-- [RFC-0740 (Consensus): Sharded Consensus Protocol](../rfcs/0740-sharded-consensus-protocol.md)
-- [RFC-0741 (Consensus): Parallel Block DAG Specification](../rfcs/0741-parallel-block-dag.md)
-- [RFC-0742 (Consensus): Data Availability & Sampling Protocol](../rfcs/0742-data-availability-sampling.md)
-- [RFC-0843 (Networking): OCTO-Network Protocol](../rfcs/0843-octo-network-protocol.md)
-- [RFC-0918 (Economics): Inference Task Market](../rfcs/0918-inference-task-market.md)
-- [RFC-0845 (Networking): Hardware Capability Registry](../rfcs/0845-hardware-capability-registry.md)
-- [RFC-0650 (Proof Systems): Proof Aggregation Protocol](../rfcs/0650-proof-aggregation-protocol.md)
+- RFC-0104
+- RFC-0105
+- RFC-0106
+- RFC-0116
+- RFC-0520
+- RFC-0521
+- RFC-0522
+- RFC-0523
+- RFC-0616
+- RFC-0955
+- RFC-0630
+- RFC-0107
+- RFC-0108
+- RFC-0631
+- RFC-0416
+- RFC-0740
+- RFC-0741
+- RFC-0742
+- RFC-0843
+- RFC-0918
+- RFC-0845
+- RFC-0650

@@ -155,7 +155,7 @@ All 6 tests pass after Phase 2.
 
 - RFC-0200: Production Vector-SQL Storage Engine (MVCC transactions)
 - RFC-0202: Stoolap BIGINT/DECIMAL Core Types (type system baseline)
-- RFC-0204 (Accepted): [Expression Compiler Aggregate Function Resolution](../../rfcs/accepted/storage/0204-expression-compiler-aggregate-fix.md)
+- RFC-0204: [Expression Compiler Aggregate Function Resolution](../../rfcs/accepted/storage/0204-expression-compiler-aggregate-fix.md)
 
 ## Related Use Cases
 

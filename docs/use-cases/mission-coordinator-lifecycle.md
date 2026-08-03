@@ -85,11 +85,11 @@ If this use case is implemented:
 
 ## Related RFCs
 
-- RFC-0855 (Networking): Mission Overlay Networks — primary; §3 "Mission Lifecycle", §11 "Governance Models", §16.3 "Coordinator State" (forward-reference; filled by 0855p-b)
+- RFC-0855: Mission Overlay Networks — primary; §3 "Mission Lifecycle", §11 "Governance Models", §16.3 "Coordinator State" (forward-reference; filled by 0855p-b)
 - RFC-0855p-b (Networking): Mission Coordinator Lifecycle — `CoordinatorLifecycle` state machine, election, handover, slashing
 - RFC-0855p-c (Networking): DomainCoordinator Role — specialization for physical platforms
 - RFC-0850p-c (Networking): Transport Group Binding Ceremony — `domain_id` and BIND/REBIND/UNBIND envelope types
-- RFC-0850 (Networking): Deterministic Overlay Transport — base protocol
+- RFC-0850: Deterministic Overlay Transport — base protocol
 
 ## Related Use Cases
 
@@ -102,7 +102,7 @@ If this use case is implemented:
 Use Case (Mission Coordinator Lifecycle — this document)
    │
    ▼
-RFC-0855 (Networking): Mission Overlay Networks
+RFC-0855: Mission Overlay Networks
    │
    ▼
 RFC-0855p-b (Networking): Mission Coordinator Lifecycle (general state machine)

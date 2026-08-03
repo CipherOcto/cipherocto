@@ -73,15 +73,15 @@ CipherOcto's stoolap integration for the quota marketplace would benefit from Tu
 
 ## Related RFCs
 
-- [RFC-0303 (Retrieval)](../rfcs/draft/retrieval/0303-deterministic-vector-index.md): HNSW-D (deterministic index)
-- [RFC-0304 (Retrieval)](../rfcs/draft/retrieval/0304-verifiable-vector-query-execution.md): VVQE (verifiable query execution)
-- [RFC-0109 (Numeric/Math)](../rfcs/accepted/numeric/0109-deterministic-linear-algebra-engine.md): DLAE (distance primitives)
-- [RFC-0104 (Numeric/Math)](../rfcs/accepted/numeric/0104-deterministic-floating-point.md): DFP (deterministic float)
+- [RFC-0303](../rfcs/draft/retrieval/0303-deterministic-vector-index.md): HNSW-D (deterministic index)
+- [RFC-0304](../rfcs/draft/retrieval/0304-verifiable-vector-query-execution.md): VVQE (verifiable query execution)
+- [RFC-0109](../rfcs/accepted/numeric/0109-deterministic-linear-algebra-engine.md): DLAE (distance primitives)
+- [RFC-0104](../rfcs/accepted/numeric/0104-deterministic-floating-point.md): DFP (deterministic float)
 
 ## Future RFC Candidates
 
-- **RFC-0915 (Retrieval)**: TurboQuant-Enhanced Vector Quantization
-- **RFC-0916 (Retrieval)**: TurboHNSW Index (quantized HNSW for off-chain)
+- **RFC-0915**: TurboQuant-Enhanced Vector Quantization
+- **RFC-0916**: TurboHNSW Index (quantized HNSW for off-chain)
 
 ## Technical Debt Considerations
 

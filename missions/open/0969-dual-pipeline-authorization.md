@@ -56,7 +56,7 @@ The sub-missions (0969-a, 0969-b) implement the ACs by RFC-0969 §Test Vectors. 
 depends_on:
   - 0957-c-holder-registry-impl # HolderRegistry + Transaction substrate
   - 0957-e-mint-txn-parameter # CapabilityCatalog extensions
-  - 0903-bearer-token # bearer path substrate
+  - RFC-0903 # bearer path substrate (no mission file yet — RFC substrate)
   - 0957-a-capability-token-macaroon # capability path substrate
 decomposes_into:
   - 0969-a-dual-pipeline-gateway # AuthHeader + DispatchSet + GatewayAuthenticator + authenticate algorithm + identity linkage

@@ -50,13 +50,13 @@ The sub-mission (0971-a) implements the ACs by RFC-0971 §Test Vectors. When 097
 
 ```yaml
 depends_on:
-  - 0957-a1-holder-registry # unified HolderRegistry + capability registry
-  - 0870-router-network-layer # Router role substrate
-  - 0957-capability-token-format # Token Issuer role substrate
-  - 0959-ask-settlement-chain # Asker role substrate
-  - 0968a-reputation-anchoring # ReputationAnchor role (optional; RFC-0955-R1 binding; in flight per 0968a)
-  - 0969-dual-pipeline-authorization # routing role
-  - 0970-forwarding-hop-auth-envelope # forwarding role
+  - 0957-a1-holder-registry # unified HolderRegistry + capability registry (mission file exists)
+  - RFC-0870 # Router role substrate (no mission file yet — RFC substrate)
+  - RFC-0957 # Token Issuer role substrate (no mission file yet — RFC substrate)
+  - RFC-0959 # Asker role substrate (no mission file yet — RFC substrate)
+  - 0968a-reputation-anchoring # ReputationAnchor role (optional; RFC-0955-R1 binding; in flight per 0968a; mission file exists)
+  - 0969-dual-pipeline-authorization # routing role (mission file exists)
+  - 0970-forwarding-hop-auth-envelope # forwarding role (mission file exists)
 decomposes_into:
   - 0971-a-role-binding # RoleTag + RoleBindingDeclaration + Lifecycle + audit trail + Cross-RFC §Roles updates + developer guide
 ```

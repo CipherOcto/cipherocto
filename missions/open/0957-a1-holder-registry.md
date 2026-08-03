@@ -114,7 +114,7 @@ Splitting by module boundary (registry / wire / mint) lets each sub-mission merg
 ## Notes
 
 - The `IdentityKey::from_public_bytes` stub MUST live in this top-level mission (not in sub-mission 0957-c) because it is referenced from RFC-0959-A1 §Algorithms:phantom_call_site and RFC-0969 §Algorithms:phantom_call_site — both of which are independent RFCs in this batch. Stub location: `crates/octo-wallet/src/capability/identity_stub.rs`.
-- RFC-0957-A1 §Future Work (F1: catalog federation across nodes; F2: 30-day GC of Revoked/Expired rows; F3: append-only audit log; F4: CapabilityCatalog V2 bundling) — concrete plan documented in RFC-0957-A1 §Future Work; not in scope for this mission; does NOT block the 13 ACs. Track via follow-up mission `missions/open/0957-f-future-work.md` (to be claimed when sub-missions 0957-c/d/e land).
+- RFC-0957-A1 §Future Work (F1: catalog federation across nodes; F2: 30-day GC of Revoked/Expired rows; F3: append-only audit log; F4: CapabilityCatalog V2 bundling) — concrete plans documented in RFC-0957-A1 §Future Work; not in scope for this mission; does NOT block the 11 ACs. Track via follow-up mission `missions/open/0957-f-future-work.md` (concrete plans for F1, F2, F3; F4 blocks on RFC-0009 §Identity evolution).
 - `HolderRecord::from_hop_capability` constructor is a cross-mission dependency on RFC-0970 sub-mission 0970-a. If RFC-0970 is claimed first, that constructor lives in 0970-a and is consumed here via the trait; otherwise it lives here and is consumed by 0970-a via the trait. Convention: constructor on `HolderRecord` impl, documented in RFC-0957-A1 §Data Structures; trait method or free function consumed by RFC-0970 §Algorithms:wrap_for_hop.
 
 ### Related

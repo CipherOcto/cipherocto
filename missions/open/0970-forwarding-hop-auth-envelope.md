@@ -54,9 +54,9 @@ The sub-missions (0970-a, 0970-b) implement the ACs by RFC-0970 §Test Vectors. 
 ```yaml
 depends_on:
   - 0957-c-holder-registry-impl # HolderRegistry + from_hop_capability constructor
-  - 0870-forwarder-network-layer # ForwardRequestPayload substrate
-  - 0853-channel-layer # HopScope substrate
-  - 0862-gossip # audit_replay_log sync
+  - RFC-0870 # Router role substrate (ForwardRequestPayload; no mission file yet — RFC substrate)
+  - RFC-0853 # HopScope substrate (no mission file yet — RFC substrate)
+  - RFC-0862 # audit_replay_log sync (stoolap substrate; no mission file yet — RFC substrate)
 decomposes_into:
   - 0970-a-hop-envelope # HopEnvelope + HopCapability + wrap_for_hop + unwrap_at_destination + verify_chain_hash + pure_forward + DestinationNonceStore phantom
   - 0970-b-forward-integration # ForwardRequestPayload extension + RFC-0870 §Roles cross-reference

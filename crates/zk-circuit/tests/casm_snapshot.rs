@@ -49,6 +49,29 @@ fn require_cairo_compile() -> Option<Result<zk_circuit::CompiledCircuit, zk_circ
             );
             None
         }
+        // **Cairo 0.x legacy `cairo-compile` (from cairo-lang 0.14.0.1)**
+        // rejects Cairo 2.x syntax (`felt252`, struct fields, etc.) with
+        // `Unexpected token Token('IDENTIFIER', 'main')`. The Cairo 2.x
+        // compiler is embedded in `scarb` only — no standalone
+        // `cairo-compile` binary exists for Cairo 2.x. Mission 0958-a S2
+        // (vendored STWO + Cairo 2.x build pipeline) is required to make
+        // this test pass. Until S2 lands, treat syntax errors as a
+        // toolchain mismatch (skip, not loud-fail).
+        Err(zk_circuit::HashError::CompilerInternal(msg))
+            if msg.contains("Unexpected token") || msg.contains("exited with status") =>
+        {
+            assert!(
+                !ci_mode,
+                "casm_snapshot: cairo-compile rejected Cairo 2.x syntax. \
+                 Install scarb (provides Cairo 2.x compiler) instead of cairo-lang standalone."
+            );
+            eprintln!(
+                "SKIP casm_snapshot: cairo-compile rejected Cairo 2.x syntax. \
+                 Cairo 2.x compiler is embedded in `scarb` (no standalone cairo-compile binary). \
+                 0958-a S2 lands the real Cairo 2.x build pipeline."
+            );
+            None
+        }
         Err(other) => Some(Err(other)),
     }
 }

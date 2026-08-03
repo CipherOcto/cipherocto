@@ -97,10 +97,10 @@ Predicate-based definition `DestinationNode = Router ∧ TokenIssuer ∧ Asker` 
 
 ```yaml
 depends_on:
-  - mission-0957-c-holder-registry-impl # HolderRecord + HolderKind (consumed by Router audit trail)
-  - mission-0959-b-market-delivery-impl # DealSettled (consumed by Asker audit trail)
-  - mission-0969-a-dual-pipeline-gateway # GatewayAuthenticator (consumed by Router audit trail)
-  - mission-0970-a-hop-envelope # HopEnvelope (consumed by Router forwarding audit trail)
+  - 0957-c-holder-registry-impl # HolderRecord + HolderKind (consumed by Router audit trail)
+  - 0959-b-market-delivery-impl # DealSettled (consumed by Asker audit trail)
+  - 0969-a-dual-pipeline-gateway # GatewayAuthenticator (consumed by Router audit trail)
+  - 0970-a-hop-envelope # HopEnvelope (consumed by Router forwarding audit trail)
 ```
 
 ## Type Coverage

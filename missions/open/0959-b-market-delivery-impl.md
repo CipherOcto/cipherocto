@@ -87,9 +87,9 @@ Manual redacting `Debug` impls on all 6 security-bearing structs (MarketDelivery
 
 ```yaml
 depends_on:
-  - mission-0959-a-ask-pricing-stoolap # base settlement chain
-  - mission-0957-c-holder-registry-impl # Transaction + HolderRegistry
-  - mission-0957-e-mint-txn-parameter # CapabilityCatalog extensions
+  - 0959-a-ask-pricing-stoolap # base settlement chain
+  - 0957-c-holder-registry-impl # Transaction + HolderRegistry
+  - 0957-e-mint-txn-parameter # CapabilityCatalog extensions
 ```
 
 ## Type Coverage

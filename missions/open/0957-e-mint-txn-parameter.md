@@ -72,8 +72,8 @@ This amendment breaks the double-insert contradiction between the prior `mint()`
 
 ```yaml
 depends_on:
-  - mission-0957-c-holder-registry-impl # HolderRecord + Transaction
-  - mission-0957-a-capability-token-macaroon # base mint (5-arg) for amendment
+  - 0957-c-holder-registry-impl # HolderRecord + Transaction
+  - 0957-a-capability-token-macaroon # base mint (5-arg) for amendment
 ```
 
 ## Type Coverage

@@ -82,8 +82,8 @@ Manual redacting `Debug` impls on all security-bearing structs: redacts `cap_roo
 
 ```yaml
 depends_on:
-  - mission-0957-a-capability-token-macaroon # BearerCapsule + CapabilityToken types
-  - mission-0957-a1-holder-registry # top-level decomposition
+  - 0957-a-capability-token-macaroon # BearerCapsule + CapabilityToken types
+  - 0957-a1-holder-registry # top-level decomposition
 ```
 
 ## Type Coverage

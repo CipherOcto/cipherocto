@@ -78,9 +78,9 @@ Manual redacting `Debug` impls on `ParseError`, `AuthError`. Brace balance verif
 
 ```yaml
 depends_on:
-  - mission-0957-c-holder-registry-impl # HolderRegistry consumed via Arc<dyn>
-  - mission-0957-d-wire-resolver-update # VerifyContext slot shared
-  - mission-0957-a-capability-token-macaroon # capability path substrate
+  - 0957-c-holder-registry-impl # HolderRegistry consumed via Arc<dyn>
+  - 0957-d-wire-resolver-update # VerifyContext slot shared
+  - 0957-a-capability-token-macaroon # capability path substrate
 ```
 
 ## Type Coverage

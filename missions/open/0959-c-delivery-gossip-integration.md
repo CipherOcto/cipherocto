@@ -59,8 +59,8 @@ This sub-mission depends on 0959-b envelope wire format + 0957-e `gossip_to_buye
 
 ```yaml
 depends_on:
-  - mission-0959-b-market-delivery-impl # MarketDeliveryEnvelope + DeliveryError::GossipFailed variant
-  - mission-0957-e-mint-txn-parameter # CapabilityCatalog::gossip_to_buyer
+  - 0959-b-market-delivery-impl # MarketDeliveryEnvelope + DeliveryError::GossipFailed variant
+  - 0957-e-mint-txn-parameter # CapabilityCatalog::gossip_to_buyer
 ```
 
 ## Type Coverage

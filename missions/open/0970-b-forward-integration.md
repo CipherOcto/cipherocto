@@ -49,7 +49,7 @@ This sub-mission is purely additive — no new types, no new algorithms. It is t
 
 ```yaml
 depends_on:
-  - mission-0970-a-hop-envelope # HopEnvelope + InnerRequest
+  - 0970-a-hop-envelope # HopEnvelope + InnerRequest
 ```
 
 ## Type Coverage

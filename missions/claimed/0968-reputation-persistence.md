@@ -31,7 +31,7 @@ RFC-0968: Reputation Registry (with RFC-0968-A1 in-place amendment, 2026-07-26)
 **Related missions (separate scope):**
 
 - Mission 0968a-reputation-anchoring (NEW, deferred) — on-chain anchoring per RFC-0955-R1 follow-up. Stub path: `missions/deferred/0968a-reputation-anchoring.md`. Status remains "Deferred; depends on RFC-0955 acceptance + RFC-0955-R1 deployment." Mission 0968a's acceptance criterion is now gated on RFC-0955 Accepted + RFC-0955-R1 Accepted.
-- Mission 0968-b-marketplace-integration (NEW, RFC-0968-A1.19) — owns marketplace read-side: routing priority, listing display, `0-100` Reputation Score presentation layer. Carrier of §7 dual-read cutover. Path: `missions/claimed/0968-b-marketplace-integration.md` (to be authored when claimed).
+- Mission 0968-b-marketplace-integration (NEW, RFC-0968-A1.19) — owns marketplace read-side: routing priority, listing display, `0-100` Reputation Score presentation layer. Carrier of §7 dual-read cutover. Path: `missions/archived/0968-b-marketplace-integration.md` (Completed via Path B closure 2026-07-30).
 
 ## Summary
 
@@ -125,7 +125,7 @@ The previous "Phase 2 equivalence via replay" claim is replaced with a **dual-re
 - [ ] `ProviderReputationRegistryCompat (marketplace)` reads from `ReputationStore`, `kind=Outcome`, `layer=2`.
 - [ ] Shadow-write is best-effort: failures log + continue (don't break existing reads).
 - [ ] **Dual-read cutover gate:** retirement of legacy stores is gated on a 24-hour dual-read parity ≥ 0.999 across all `(did, kind, layer)` triples with `total ≥ 100`. Below the threshold, the metric is suppressed.
-- [ ] **No `stake / (1 + count)` retention.** Mission 0968-b-marketplace-integration owns the election priority adapter (`election_priority` in RFC-0968 §10) and the `0-100` presentation layer (`round(((score_ewma + 1.0) × 50.0).clamp(0.0, 100.0))` at read time per RFC-0968-A1 §22 / §23.
+- [x] **No `stake / (1 + count)` retention.** Mission 0968-b-marketplace-integration (archived 2026-07-30) owns the election priority adapter (`election_priority` in RFC-0968 §10) and the `0-100` presentation layer (`round(((score_ewma + 1.0) × 50.0).clamp(0.0, 100.0))` at read time per RFC-0968-A1 §22 / §23.
 - [ ] Existing in-memory test suites pass with the compatibility adapter enabled.
 
 ### Phase 2.5: Backfill + Reconciliation (RFC-0968-A1 amendment 14 + 18)
@@ -141,7 +141,7 @@ The previous "Phase 2 equivalence via replay" claim is replaced with a **dual-re
 - [ ] In-memory store remains as fallback when storage disabled.
 - [ ] **`cross_layer_query` is Class B (RFC-0968-A1 amendment 8):** Rust-side aggregation over hydrated Dfp BLOBs from `reputation_aggregates`, with sample-count weighting `weight ∝ min(samples_k, MAX_RELIABILITY_SAMPLES)` (Bayesian shrinkage) and minimum evidence threshold `samples_total ≥ 30` masking below-threshold rows from the composite.
 - [ ] **`election_priority` adapter spec in RFC-0968 §10 (RFC-0968-A1 amendment 20):** `election_priority(candidate_did, stake, store, layer, now_unix) -> Result<Option<u128>, ReputationError>`. Tests cover overflow, NaN, ±Inf, score = 0 at samples=0.
-- [ ] CLI surface `quota-router reputation show --did <did>` (RFC-0968-A1 amendment 24). Owned by mission 0968-b-marketplace-integration's Phase 3 acceptance.
+- [x] CLI surface `quota-router reputation show --did <did>` (RFC-0968-A1 amendment 24). Owned by mission 0968-b-marketplace-integration (archived 2026-07-30) Phase 3 acceptance.
 - [ ] Daemon restart preserves `score_ewma` across all three adapters (verified by integration test).
 - [ ] Parity check continues to run in production (drift detection).
 

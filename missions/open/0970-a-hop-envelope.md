@@ -78,8 +78,8 @@ Manual redacting `Debug` impls on `HopEnvelope`, `HopCapability`, `InnerRequest`
 
 ```yaml
 depends_on:
-  - mission-0957-c-holder-registry-impl # HolderRecord + HolderKind::HopCapability
-  - mission-0957-d-wire-resolver-update # holder vs audience resolution (TV15 dependency)
+  - 0957-c-holder-registry-impl # HolderRecord + HolderKind::HopCapability
+  - 0957-d-wire-resolver-update # holder vs audience resolution (TV15 dependency)
 ```
 
 ## Type Coverage

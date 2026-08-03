@@ -59,8 +59,8 @@ This sub-mission preserves wire format compatibility (G2: wire bytes byte-identi
 
 ```yaml
 depends_on:
-  - mission-0957-c-holder-registry-impl # HolderRegistry trait + HolderRecord
-  - mission-0957-a-capability-token-macaroon # base Macaroon::verify + deserialize_wire
+  - 0957-c-holder-registry-impl # HolderRegistry trait + HolderRecord
+  - 0957-a-capability-token-macaroon # base Macaroon::verify + deserialize_wire
 ```
 
 ## Type Coverage

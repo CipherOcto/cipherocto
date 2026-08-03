@@ -60,9 +60,9 @@ Phantom type `IdentityKey::from_public_bytes` call site is at `mint_dual` (buyer
 
 ```yaml
 depends_on:
-  - mission-0957-e-mint-txn-parameter # 4-arg mint signature
-  - mission-0957-c-holder-registry-impl # Transaction::insert_dual
-  - mission-0959-b-market-delivery-impl # BearerCapsule type
+  - 0957-e-mint-txn-parameter # 4-arg mint signature
+  - 0957-c-holder-registry-impl # Transaction::insert_dual
+  - 0959-b-market-delivery-impl # BearerCapsule type
 ```
 
 ## Type Coverage

@@ -99,7 +99,7 @@ jobs:
           # scarb 2.6.0 ships the cairo compiler libraries but does NOT
           # ship the standalone `cairo-compile` binary. Install via
           # cairo-lang Python wheel (provides cairo-compile on PATH).
-          pip install cairo-lang==2.6.0
+          pip install cairo-lang==0.14.0.1
           cairo-compile --version
       - name: Run CASM BLAKE3 snapshot test (CIPHEROCTO_REQUIRE_CAIRO_COMPILE=loud-fail)
         # R3 fix-up: in CI we require cairo-compile to be present; the

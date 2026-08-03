@@ -14,7 +14,6 @@ blake3 = "1"
 ed25519-dalek = { version = "2.2", features = ["serde"] }
 libfuzzer-sys = "0.4"
 hex = "0.4"
-hex.workspace = false
 
 [[bin]]
 name = "capability_verify"

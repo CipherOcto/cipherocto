@@ -54,9 +54,9 @@ The sub-missions (0970-a, 0970-b) implement the ACs by RFC-0970 §Test Vectors. 
 ```yaml
 depends_on:
   - 0957-c-holder-registry-impl # HolderRegistry + from_hop_capability constructor
-  - RFC-0870 # Router role substrate (ForwardRequestPayload; no mission file yet — RFC substrate)
-  - RFC-0853 # HopScope substrate (no mission file yet — RFC substrate)
-  - RFC-0862 # audit_replay_log sync (stoolap substrate; no mission file yet — RFC substrate)
+  - RFC-0870 # Router role substrate (ForwardRequestPayload)
+  - RFC-0853 # HopScope substrate (per-hop channel binding)
+  - RFC-0862 # audit_replay_log sync (stoolap substrate)
 decomposes_into:
   - 0970-a-hop-envelope # HopEnvelope + HopCapability + wrap_for_hop + unwrap_at_destination + verify_chain_hash + pure_forward + DestinationNonceStore phantom
   - 0970-b-forward-integration # ForwardRequestPayload extension + RFC-0870 §Roles cross-reference
@@ -76,7 +76,7 @@ decomposes_into:
 **Mission gates:**
 
 - `missions/open/0957-c-holder-registry-impl.md` — `HolderRecord::from_hop_capability` constructor MUST exist (cross-mission; co-author contract per 0957-c Notes)
-- Router substrate: RFC-0870 (Router role; not yet decomposed into a `missions/open/0870*` mission as of 2026-08-02). Coordinate with RFC-0870 §Roles (updated by sub-mission 0970-b).
+- Router substrate: RFC-0870 (Router role). Coordinate with RFC-0870 §Roles (updated by sub-mission 0970-b).
 - Channel substrate: RFC-0853 (per-hop channel binding). Coordinate with existing 0957-a capability substrate (BLAKE3 keyed-hash + HKDF-BLAKE3 primitives).
 
 **Not Requires:**

@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Claimed (2026-08-04)
 
 ## RFC
 
@@ -77,7 +77,7 @@ This sub-mission implements (per top-level Type Coverage table):
 
 ## Claimant
 
-@unclaimed
+@mmacedoeu (CipherOcto-side; cross-mission consumption via Arc<dyn HolderRegistry>)
 
 ## Pull Request
 

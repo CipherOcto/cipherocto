@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Claimed (2026-08-04)
 
 ## RFC
 
@@ -103,7 +103,7 @@ Despite not strictly exceeding the thresholds, decomposition into top-level + si
 
 ## Claimant
 
-@unclaimed
+@mmacedoeu (top-level decomposition; ACs roll up as 0971-a lands)
 
 ## Pull Request
 

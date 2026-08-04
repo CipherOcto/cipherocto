@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::ask::{settlement_cost, Ask, AxisConsumption, ModelRateTable, PricingAxis};
+use crate::ask::{settlement_cost, Ask, AxisConsumption, ModelRateTable, ModelRef, PricingAxis};
 use crate::migrations;
 
 /// Maximum candidates to fetch for `cheapest()` query before sorting in Rust.
@@ -48,7 +48,7 @@ impl TryFrom<&Ask> for AskRow {
         Ok(Self {
             ask_id: ask.id().to_vec(),
             asker_did: ask.asker_did.clone(),
-            model: ask.model.clone(),
+            model: ask.model.to_wire(),
             rates_json,
             nonce: ask.nonce.to_vec(),
             expires_at_unix: ask.expires_at_unix as i64,
@@ -81,7 +81,7 @@ impl TryFrom<AskRow> for Ask {
         nonce.copy_from_slice(&row.nonce);
         Ok(Self {
             asker_did: row.asker_did,
-            model: row.model,
+            model: ModelRef::from(row.model),
             rates,
             nonce,
             expires_at_unix: row.expires_at_unix as u64,
@@ -360,7 +360,7 @@ fn row_to_ask(row: stoolap::ResultRow) -> Result<Ask, RepoError> {
     nonce_arr.copy_from_slice(&nonce);
     Ok(Ask {
         asker_did,
-        model,
+        model: ModelRef::from(model),
         rates,
         nonce: nonce_arr,
         expires_at_unix: expires_at_unix as u64,
@@ -370,14 +370,14 @@ fn row_to_ask(row: stoolap::ResultRow) -> Result<Ask, RepoError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ask::{Ask, AxisRate, ModelRateTable};
+    use crate::ask::{Ask, AxisRate, ModelRateTable, ModelRef};
 
     fn sample_ask(asker: &str, model: &str, rate: u128, expires: u64) -> Ask {
         Ask {
             asker_did: asker.to_owned(),
-            model: model.to_owned(),
+            model: ModelRef::from(model),
             rates: ModelRateTable {
-                model: model.to_owned(),
+                model: ModelRef::from(model),
                 rates: vec![AxisRate {
                     axis: "input_tokens_per_1k".to_owned(),
                     rate_per_1k: rate,

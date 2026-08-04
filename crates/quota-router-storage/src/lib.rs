@@ -8,6 +8,7 @@
 //! - [`ask`] — `Ask`, `AskId`, `PricingAxis`, `SettlementEnvelope`, `ConsumedReceiptIndex` types
 //! - [`migrations`] — migration runner with version tracking (`apply_pending`)
 //! - [`ask_repo`] — `AskRepository` DAO (put/get/cheapest/list_by_asker/delete)
+//! - [`marketplace`] — in-memory `MarketplaceIndex` for ordered lookups (RFC-0959 §Roles)
 //! - [`sync`] — `CipheroctoTable` + `ReplicatedTables` sync subscription config
 //! - [`cache_key`] — `cache_key()` BLAKE3 keyed-hash (RFC-0959 §Data Structures)
 //! - [`circuit_breaker`] — anti-fraud monitor state machine (RFC-0959 §Lifecycle)
@@ -18,17 +19,19 @@ pub mod ask_repo;
 pub mod axis_registry_toml;
 pub mod cache_key;
 pub mod circuit_breaker;
+pub mod marketplace;
 pub mod migrations;
 pub mod sync;
 
 pub use ask::{
     cache_key_hash, compute_cost, compute_settlement_hash, settlement_cost,
     sign_settlement_receipt, verify_settlement_receipt, Ask, AskError, AskId, AskSigned,
-    AskSignedError, AskUnsignedPayload, AxesConsumed, AxisConsumption, AxisRate, AxisRegistryError,
-    CacheClassification, CachePolicy, ConsumedReceiptIndex, Ed25519PublicKey, Ed25519Signature,
-    MicroOCTO_W, MicroOCTO_WNewtype, ModelRateTable, ModelRef, OCTO_WAmount, PricingAxis,
-    PricingAxisRegistry, SettlementEnvelope, SettlementError, SettlementEvent, SettlementReceipt,
-    TokenCount, SETTLEMENT_HASH_DOMAIN,
+    AskSignedError, AskUnsignedPayload, AskerDid, AxesConsumed, AxisConsumption, AxisId, AxisRate,
+    AxisRegistryError, CacheClassification, CachePolicy, ConsumedReceiptIndex, Ed25519PublicKey,
+    Ed25519Signature, MicroOCTO_W, MicroOCTO_WNewtype, ModelRateTable, ModelRef, ModelRefError,
+    NodeType, NodeTypeParseError, OCTO_WAmount, PricingAxis, PricingAxisRegistry,
+    SettlementEnvelope, SettlementError, SettlementEvent, SettlementReceipt, TokenCount,
+    SETTLEMENT_HASH_DOMAIN,
 };
 pub use ask_repo::{AskRepository, AskRow, RepoError};
 pub use axis_registry_toml::{
@@ -43,6 +46,7 @@ pub use circuit_breaker::{
     TransitionReason, CACHE_HIT_RATE_TRIP_THRESHOLD, MIN_PROMPT_DIVERSITY, RECOVERY_COOLDOWN_SECS,
     RECOVERY_OBSERVE_SECS, WINDOW_SIZE,
 };
+pub use marketplace::{MarketplaceIndex, ACTIVE_ASK_CAP};
 pub use migrations::{
     apply_pending, list_migrations, Migration, MigrationError, BUILTIN_MIGRATIONS,
 };

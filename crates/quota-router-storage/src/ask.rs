@@ -61,8 +61,221 @@ pub type Ed25519Signature = [u8; 64];
 /// Ed25519 verifying key bytes (32 bytes; RFC-0009 §Identity Key Format).
 pub type Ed25519PublicKey = [u8; 32];
 
-/// Provider model reference (e.g., "openai/gpt-4", "anthropic/claude-3-opus").
-pub type ModelRef = String;
+/// Provider model reference (RFC-0959 §Data Structures).
+///
+/// `{namespace, family, version?}` matches RFC-0959 §Data Structures verbatim.
+/// The wire format (slash-joined string) is the canonical on-the-wire form;
+/// callers convert via `ModelRef::parse` / `Display` at the boundary. The
+/// `asks.model` DB column stores the wire form (String); `From<&str>` /
+/// `From<String>` produce the structured form for in-memory use.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub struct ModelRef {
+    /// Provider namespace (e.g., `"openai"`, `"anthropic"`, `"custom"`).
+    pub namespace: String,
+    /// Model family (e.g., `"gpt-4"`, `"claude-3"`).
+    pub family: String,
+    /// Optional version pin (e.g., `"0613"`, `"opus-2026"`).
+    /// `None` matches any version.
+    pub version: Option<String>,
+}
+
+impl ModelRef {
+    /// Construct a new ModelRef.
+    /// # Errors
+    /// Returns `ModelRefError::EmptyNamespace` / `EmptyFamily` if invalid.
+    pub fn new(
+        namespace: impl Into<String>,
+        family: impl Into<String>,
+        version: Option<String>,
+    ) -> Result<Self, ModelRefError> {
+        let namespace = namespace.into();
+        let family = family.into();
+        if namespace.is_empty() {
+            return Err(ModelRefError::EmptyNamespace);
+        }
+        if family.is_empty() {
+            return Err(ModelRefError::EmptyFamily);
+        }
+        Ok(Self {
+            namespace,
+            family,
+            version,
+        })
+    }
+
+    /// Parse from the wire string `"namespace/family/version"` or `"namespace/family"`.
+    /// Whitespace-only segments are rejected.
+    /// # Errors
+    /// Returns `ModelRefError::Parse` on malformed input.
+    pub fn parse(s: &str) -> Result<Self, ModelRefError> {
+        let parts: Vec<&str> = s.splitn(3, '/').collect();
+        match parts.len() {
+            2 => {
+                let namespace = parts[0].trim();
+                let family = parts[1].trim();
+                if namespace.is_empty() {
+                    return Err(ModelRefError::Parse(
+                        "namespace is empty (expected `namespace/family[/version]`)".to_owned(),
+                    ));
+                }
+                if family.is_empty() {
+                    return Err(ModelRefError::Parse(
+                        "family is empty (expected `namespace/family[/version]`)".to_owned(),
+                    ));
+                }
+                Ok(Self {
+                    namespace: namespace.to_owned(),
+                    family: family.to_owned(),
+                    version: None,
+                })
+            }
+            3 => {
+                let namespace = parts[0].trim();
+                let family = parts[1].trim();
+                let version = parts[2].trim();
+                if namespace.is_empty() {
+                    return Err(ModelRefError::Parse("namespace is empty".to_owned()));
+                }
+                if family.is_empty() {
+                    return Err(ModelRefError::Parse("family is empty".to_owned()));
+                }
+                if version.is_empty() {
+                    return Err(ModelRefError::Parse("version is empty".to_owned()));
+                }
+                Ok(Self {
+                    namespace: namespace.to_owned(),
+                    family: family.to_owned(),
+                    version: Some(version.to_owned()),
+                })
+            }
+            _ => Err(ModelRefError::Parse(format!(
+                "expected `namespace/family[/version]`, got `{s}`"
+            ))),
+        }
+    }
+
+    /// Render to the wire form `"namespace/family/version"` or `"namespace/family"`.
+    #[must_use]
+    pub fn to_wire(&self) -> String {
+        match &self.version {
+            Some(v) => format!("{}/{}/{}", self.namespace, self.family, v),
+            None => format!("{}/{}", self.namespace, self.family),
+        }
+    }
+
+    /// Lenient parse: returns a placeholder (`namespace="", family=""`) when
+    /// input is empty / malformed. Used at DB-read boundaries where the
+    /// persisted string may predate ModelRef partitioning.
+    #[must_use]
+    pub fn parse_lenient(s: &str) -> Self {
+        Self::parse(s).unwrap_or_else(|_| Self {
+            namespace: String::new(),
+            family: s.to_owned(),
+            version: None,
+        })
+    }
+}
+
+impl std::fmt::Display for ModelRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.to_wire())
+    }
+}
+
+impl std::str::FromStr for ModelRef {
+    type Err = ModelRefError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s)
+    }
+}
+
+impl From<&str> for ModelRef {
+    fn from(s: &str) -> Self {
+        Self::parse_lenient(s)
+    }
+}
+
+impl From<String> for ModelRef {
+    fn from(s: String) -> Self {
+        Self::parse_lenient(&s)
+    }
+}
+
+/// ModelRef construction / parse errors.
+#[derive(Debug, thiserror::Error)]
+pub enum ModelRefError {
+    #[error("model namespace is empty")]
+    EmptyNamespace,
+    #[error("model family is empty")]
+    EmptyFamily,
+    #[error("invalid model reference: {0}")]
+    Parse(String),
+}
+
+/// NodeType taxonomy (RFC-0009 §Node + RFC-0959 §Data Structures).
+///
+/// Mirrors `octo_wallet::node::NodeType` wire format (kebab-case JSON,
+/// `wholesale` / `self-host` / `hybrid` CLI strings) so the two crates
+/// stay in sync at the wire boundary. Defined locally here to avoid pulling
+/// `octo-wallet` (HSM/MPC/keystore) into the storage crate — the
+/// `octo-wallet::node::NodeType` re-export remains the canonical version
+/// for the wallet crate itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NodeType {
+    /// Routes calls to external opaque providers. Cannot mint ZK-bearing
+    /// capabilities per RFC-0958 §Adversary A3.
+    Wholesale,
+    /// Runs inference inside the CipherOcto protocol boundary.
+    /// Mints ZK-bearing capabilities by default per RFC-0958 §NodeType Gating.
+    #[serde(rename = "self-host")]
+    SelfHost,
+    /// Operates both wholesale-routed and self-hosted inference.
+    /// ZK mint requires explicit `mint_with_zk()` API call.
+    Hybrid,
+}
+
+impl NodeType {
+    /// CLI string accepted by `octo-wallet init --node-type <X>`.
+    #[must_use]
+    pub fn as_cli_str(&self) -> &'static str {
+        match self {
+            Self::Wholesale => "wholesale",
+            Self::SelfHost => "self-host",
+            Self::Hybrid => "hybrid",
+        }
+    }
+
+    /// Returns true iff this NodeType permits minting ZK-bearing capabilities.
+    /// Wholesale always returns false; SelfHost and Hybrid return true.
+    #[must_use]
+    pub const fn permits_zk_mint(&self) -> bool {
+        matches!(self, Self::SelfHost | Self::Hybrid)
+    }
+}
+
+impl std::fmt::Display for NodeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_cli_str())
+    }
+}
+
+impl std::str::FromStr for NodeType {
+    type Err = NodeTypeParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "wholesale" => Ok(Self::Wholesale),
+            "self-host" | "self_host" | "selfhost" => Ok(Self::SelfHost),
+            "hybrid" => Ok(Self::Hybrid),
+            _ => Err(NodeTypeParseError(s.to_owned())),
+        }
+    }
+}
+
+/// Error returned when parsing a `NodeType` from CLI / config fails.
+#[derive(Debug, thiserror::Error)]
+#[error("unknown NodeType `{0}`; expected one of: wholesale, self-host, hybrid")]
+pub struct NodeTypeParseError(pub String);
 
 /// Asker (publisher) DID.
 pub type AskerDid = String;
@@ -167,17 +380,17 @@ impl Ask {
     /// Returns `AskError::EmptyAskerDid` / `EmptyModel` / `EmptyNonce`.
     pub fn new(
         asker_did: impl Into<String>,
-        model: impl Into<String>,
+        model: impl Into<ModelRef>,
         rates: ModelRateTable,
         nonce: [u8; 16],
         expires_at_unix: u64,
     ) -> Result<Self, AskError> {
         let asker_did = asker_did.into();
-        let model = model.into();
+        let model: ModelRef = model.into();
         if asker_did.is_empty() {
             return Err(AskError::EmptyAskerDid);
         }
-        if model.is_empty() {
+        if model.family.is_empty() {
             return Err(AskError::EmptyModel);
         }
         if nonce == [0u8; 16] {
@@ -199,10 +412,11 @@ impl Ask {
     pub fn id(&self) -> AskId {
         let rates_canonical = serde_json::to_vec(&self.rates).expect("serializable");
         let axes_hash = blake3::hash(&rates_canonical);
+        let model_wire = self.model.to_wire();
         let mut msg =
-            Vec::with_capacity(self.asker_did.len() + self.model.len() + 32 + self.nonce.len());
+            Vec::with_capacity(self.asker_did.len() + model_wire.len() + 32 + self.nonce.len());
         msg.extend_from_slice(self.asker_did.as_bytes());
-        msg.extend_from_slice(self.model.as_bytes());
+        msg.extend_from_slice(model_wire.as_bytes());
         msg.extend_from_slice(axes_hash.as_bytes());
         msg.extend_from_slice(&self.nonce);
         *blake3::hash(&msg).as_bytes()
@@ -242,17 +456,20 @@ pub enum AskError {
 /// AskIds, which matters for rate-table updates where the asker publishes
 /// a new nonce to invalidate prior AskIds).
 ///
-/// **NodeType deferred:** RFC-0959 §Data Structures lists `node_type` as a
-/// payload field, gated by RFC-0009 §Node (which lives in `octo-wallet::node`).
-/// Adding `octo-wallet` as a dep pulls HSM/MPC/keystore — too heavy for this
-/// session. The field is omitted here; the follow-up session that adds
-/// `octo-wallet` re-introduces it via `NodeType` re-export. This matches the
-/// mission's "Re-exported from octo-wallet::node" intent.
+/// `node_type` is the asker's deployment mode (RFC-0009 §Node). It gates
+/// downstream capability-class minting per RFC-0958 §NodeType Gating Matrix
+/// and informs the marketplace index's jurisdiction/routing decisions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AskUnsignedPayload {
     /// Asker (publisher) DID (RFC-0009 §Identity Key Format).
     pub asker_did: AskerDid,
-    /// Model reference — strings `{namespace, family, version?}` per RFC-0959 §Data Structures.
+    /// NodeType of the asker (RFC-0009 §Node; mirrored locally from
+    /// `octo_wallet::node::NodeType` to avoid the wallet dep).
+    pub node_type: NodeType,
+    /// Model reference — uses `ModelRef` struct form `{namespace, family,
+    /// version?}` per RFC-0959 §Data Structures. Stored as the wire string
+    /// (`"namespace/family/version"`) for persistence compat with the `asks`
+    /// table schema (RFC-0959 §Implementation Phases).
     pub model: ModelRef,
     /// Per-model rate table.
     pub rates: ModelRateTable,
@@ -272,9 +489,11 @@ impl AskUnsignedPayload {
     /// # Errors
     /// Returns `AskError::EmptyAskerDid` / `EmptyModel` / `EmptyJurisdiction` /
     /// `EmptyNonce`.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         asker_did: impl Into<String>,
-        model: impl Into<String>,
+        node_type: NodeType,
+        model: impl Into<ModelRef>,
         rates: ModelRateTable,
         ttl_unix: u64,
         jurisdiction: Vec<String>,
@@ -282,11 +501,11 @@ impl AskUnsignedPayload {
         nonce: [u8; 16],
     ) -> Result<Self, AskError> {
         let asker_did = asker_did.into();
-        let model = model.into();
+        let model: ModelRef = model.into();
         if asker_did.is_empty() {
             return Err(AskError::EmptyAskerDid);
         }
-        if model.is_empty() {
+        if model.family.is_empty() {
             return Err(AskError::EmptyModel);
         }
         if jurisdiction.is_empty() {
@@ -297,6 +516,7 @@ impl AskUnsignedPayload {
         }
         Ok(Self {
             asker_did,
+            node_type,
             model,
             rates,
             ttl_unix,
@@ -437,7 +657,7 @@ mod ask_signed_tests {
 
     fn sample_payload() -> AskUnsignedPayload {
         let rates = ModelRateTable {
-            model: "openai/gpt-4".to_owned(),
+            model: ModelRef::from("openai/gpt-4"),
             rates: vec![AxisRate {
                 axis: "input_tokens_per_1k".to_owned(),
                 rate_per_1k: 30_000,
@@ -445,7 +665,8 @@ mod ask_signed_tests {
         };
         AskUnsignedPayload {
             asker_did: "did:octo:asker1".to_owned(),
-            model: "openai/gpt-4".to_owned(),
+            node_type: NodeType::SelfHost,
+            model: ModelRef::from("openai/gpt-4"),
             rates,
             ttl_unix: 1_900_000_000,
             jurisdiction: vec!["US".to_owned(), "EU".to_owned()],
@@ -536,6 +757,7 @@ mod ask_signed_tests {
         payload.jurisdiction.clear();
         let err = AskUnsignedPayload::new(
             payload.asker_did.clone(),
+            payload.node_type,
             payload.model.clone(),
             payload.rates.clone(),
             payload.ttl_unix,
@@ -697,9 +919,10 @@ impl SettlementEnvelope {
     /// Compute settlement hash from canonical fields.
     #[must_use]
     pub fn compute_settlement_hash(&self) -> [u8; 32] {
+        let model_wire = self.model.to_wire();
         let mut msg =
-            Vec::with_capacity(self.model.len() + 32 + 32 + self.axes_consumed.len() * 32 + 32);
-        msg.extend_from_slice(self.model.as_bytes());
+            Vec::with_capacity(model_wire.len() + 32 + 32 + self.axes_consumed.len() * 32 + 32);
+        msg.extend_from_slice(model_wire.as_bytes());
         let axes_canonical = serde_json::to_vec(&self.axes_consumed).expect("serializable");
         msg.extend_from_slice(&axes_canonical);
         msg.extend_from_slice(&self.ask_id);
@@ -1013,9 +1236,9 @@ mod tests {
     fn sample_ask() -> Ask {
         Ask {
             asker_did: "did:octo:asker1".to_owned(),
-            model: "openai/gpt-4".to_owned(),
+            model: ModelRef::from("openai/gpt-4"),
             rates: ModelRateTable {
-                model: "openai/gpt-4".to_owned(),
+                model: ModelRef::from("openai/gpt-4"),
                 rates: vec![
                     AxisRate {
                         axis: "input_tokens_per_1k".to_owned(),
@@ -1090,7 +1313,7 @@ mod tests {
             settlement_hash: [0u8; 32],
             asker_did: "did:octo:a".to_owned(),
             holder_did: "did:octo:h".to_owned(),
-            model: "openai/gpt-4".to_owned(),
+            model: ModelRef::from("openai/gpt-4"),
             axes_consumed: vec![("input_tokens_per_1k".to_owned(), 100)],
             ask_id: [1u8; 32],
             nonce: [2u8; 32],
@@ -1108,7 +1331,7 @@ mod tests {
             settlement_hash: [0xab; 32],
             asker_did: "did:octo:a".to_owned(),
             holder_did: "did:octo:h".to_owned(),
-            model: "openai/gpt-4".to_owned(),
+            model: ModelRef::from("openai/gpt-4"),
             axes_consumed: vec![("input_tokens_per_1k".to_owned(), 100)],
             ask_id: [1u8; 32],
             nonce: [2u8; 32],
@@ -1131,7 +1354,7 @@ mod tests {
             settlement_hash: [0u8; 32],
             asker_did: "did:octo:a".to_owned(),
             holder_did: "did:octo:h".to_owned(),
-            model: "openai/gpt-4".to_owned(),
+            model: ModelRef::from("openai/gpt-4"),
             axes_consumed: vec![("input_tokens_per_1k".to_owned(), 100)],
             ask_id: [1u8; 32],
             nonce: [2u8; 32],
@@ -1168,7 +1391,7 @@ mod tests {
             settlement_hash: [0u8; 32],
             asker_did: "a".to_owned(),
             holder_did: "h".to_owned(),
-            model: "m".to_owned(),
+            model: ModelRef::from("m"),
             axes_consumed: vec![("a_per_1k".to_owned(), 1), ("b_per_1k".to_owned(), 2)],
             ask_id: [0u8; 32],
             nonce: [0u8; 32],
@@ -1258,7 +1481,7 @@ mod settlement_engine_tests {
             "did:octo:a",
             "openai/gpt-4",
             ModelRateTable {
-                model: "openai/gpt-4".to_owned(),
+                model: ModelRef::from("openai/gpt-4"),
                 rates: vec![AxisRate {
                     axis: "cached_input_tokens_per_1k".to_owned(),
                     rate_per_1k: 3_000,
@@ -1313,7 +1536,7 @@ mod settlement_engine_tests {
             "did:octo:a",
             "openai/gpt-4",
             ModelRateTable {
-                model: "openai/gpt-4".to_owned(),
+                model: ModelRef::from("openai/gpt-4"),
                 rates: vec![AxisRate {
                     axis: "input_tokens_per_1k".to_owned(),
                     rate_per_1k: u128::MAX,

@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Claimed (2026-08-04)
 
 ## RFC
 
@@ -105,7 +105,7 @@ Splitting by module boundary (registry / wire / mint) lets each sub-mission merg
 
 ## Claimant
 
-@unclaimed
+@mmacedoeu (top-level decomposition; ACs flip as sub-missions land)
 
 ## Pull Request
 

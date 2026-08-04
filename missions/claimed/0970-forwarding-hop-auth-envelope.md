@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Claimed (2026-08-04)
 
 ## RFC
 
@@ -103,7 +103,7 @@ Splitting by module boundary (envelope / forward) lets 0970-a merge independentl
 
 ## Claimant
 
-@unclaimed
+@mmacedoeu (top-level decomposition; ACs roll up as 0970-a, 0970-b land)
 
 ## Pull Request
 

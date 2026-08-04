@@ -429,6 +429,45 @@ pub trait CapabilityCatalog {
     fn is_raw_name_registered(&self, _name: &str) -> bool {
         false
     }
+
+    /// RFC-0957-A1 §Phase 3 (R13-N3 fix): holder registry accessor.
+    /// Default impl returns `None` for legacy catalogs that haven't
+    /// migrated to the registry substrate.
+    fn holder_registry(&self) -> Option<std::sync::Arc<dyn quota_router_storage::holder_registry::HolderRegistry>> {
+        None
+    }
+
+    /// RFC-0957-A1 §Phase 3 (R13-N3 fix): root secret for a given ask.
+    /// Used by RFC-0959-A1 §Algorithms:deliver_at_settlement step 3.
+    fn root_secret_for_ask(&self, _ask_id: &[u8; 32]) -> Option<[u8; 32]> {
+        None
+    }
+
+    /// RFC-0957-A1 §Phase 3 (R13-N3 fix): current settlement chain tip.
+    fn settlement_chain_tip(&self) -> Option<[u8; 32]> {
+        None
+    }
+
+    /// RFC-0957-A1 §Phase 3 (R13-N3 fix): gossip a `MarketDeliveryEnvelope`
+    /// payload to the buyer's peer set. Default impl returns `Err` for
+    /// catalogs that don't support direct gossip.
+    fn gossip_to_buyer(
+        &self,
+        _buyer_did: &str,
+        _env: &[u8],
+    ) -> Result<(), CatalogGossipError> {
+        Err(CatalogGossipError::Unsupported)
+    }
+}
+
+/// Error type for `CapabilityCatalog::gossip_to_buyer` default impl.
+/// Defined here (not in `registry.rs`) to avoid cross-module error-type
+/// entanglement — `gossip_to_buyer` is a catalog-extension operation, not
+/// a `CapabilityClassRegistry` operation.
+#[derive(Debug, thiserror::Error)]
+pub enum CatalogGossipError {
+    #[error("catalog does not support gossip (RFC-0957-A1 §Phase 3 default impl)")]
+    Unsupported,
 }
 
 /// Walk the `WrappedOnly` chain rooted at `macaroon`, rejecting cycles,

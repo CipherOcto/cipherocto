@@ -19,13 +19,21 @@ pub mod anti_fraud;
 pub mod ask;
 pub mod ask_repo;
 pub mod axis_registry_toml;
+pub mod bearer_capsule_stub;
 pub mod cache_key;
 pub mod circuit_breaker;
+pub mod clock;
 pub mod consumed_receipt_repo;
+pub mod holder_kind;
+pub mod holder_record;
+pub mod holder_registry;
 pub mod marketplace;
 pub mod migrations;
+pub mod outbox;
 pub mod settlement_event_repo;
+pub mod stoolap_holder_registry;
 pub mod sync;
+pub mod transaction;
 
 pub use anti_fraud::{
     AntiFraudMonitor, AskerHitRate, FraudSignal, FraudSignalKind, MultiLayerCacheStatus,

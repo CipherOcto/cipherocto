@@ -45,6 +45,16 @@ pub const BUILTIN_MIGRATIONS: &[Migration] = &[
         name: "create_settlement_events",
         sql: include_str!("../migrations/v004__create_settlement_events.sql"),
     },
+    Migration {
+        version: 5,
+        name: "create_holder_registry",
+        sql: include_str!("../migrations/v005__create_holder_registry.sql"),
+    },
+    Migration {
+        version: 6,
+        name: "create_outbox",
+        sql: include_str!("../migrations/v006__create_outbox.sql"),
+    },
 ];
 
 /// Migration errors.

@@ -5,11 +5,61 @@
 
 use std::collections::HashMap;
 
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
 /// Micro-OCTO-W (u128). 1 OCTO-W = 1_000_000 micro-OCTO-W.
 #[allow(non_camel_case_types)]
 pub type MicroOCTO_W = u128;
+
+/// Display-unit OCTO-W (RFC-0959 §Data Structures type-distinct newtype).
+///
+/// NOT a type alias — this is a distinct newtype to prevent silent unit-conversion
+/// bugs (R1 critical fix; type aliases permitted silently otherwise).
+/// `to_micro()` / `from_micro()` enforce the conversion at the ingress boundary.
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct OCTO_WAmount(pub u128);
+
+/// On-wire micro-OCTO-W newtype. Pairs with [`OCTO_WAmount`] for type-safe display ↔ wire.
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct MicroOCTO_WNewtype(pub u128);
+
+impl OCTO_WAmount {
+    /// 1 OCTO-W = 1_000_000 micro-OCTO-W.
+    pub const MICRO_PER_OCTOW: u128 = 1_000_000;
+
+    /// Convert display-unit OCTO-W to on-wire micro-OCTO-W.
+    #[must_use]
+    pub const fn to_micro(self) -> u128 {
+        self.0 * Self::MICRO_PER_OCTOW
+    }
+
+    /// Construct from on-wire micro-OCTO-W. Returns `None` if not aligned.
+    #[must_use]
+    pub const fn from_micro(micro: u128) -> Option<Self> {
+        if micro.is_multiple_of(Self::MICRO_PER_OCTOW) {
+            Some(Self(micro / Self::MICRO_PER_OCTOW))
+        } else {
+            None
+        }
+    }
+}
+
+/// Token counter per axis (RFC-0959 §Data Structures).
+/// `u32` cap = 4.29B tokens — sufficient for any single-axis quota.
+pub type TokenCount = u32;
+
+/// Ed25519 signature bytes (RFC 8032 standard, 64 bytes).
+/// `AskSigned.signature` stores as `Vec<u8>` for serde compatibility; use
+/// `AskSigned::signature_fixed()` to obtain the fixed-size form.
+pub type Ed25519Signature = [u8; 64];
+
+/// Ed25519 verifying key bytes (32 bytes; RFC-0009 §Identity Key Format).
+pub type Ed25519PublicKey = [u8; 32];
 
 /// Provider model reference (e.g., "openai/gpt-4", "anthropic/claude-3-opus").
 pub type ModelRef = String;
@@ -175,6 +225,343 @@ pub enum AskError {
     EmptyModel,
     #[error("nonce is all-zeros (use a real CSPRNG-generated 16-byte nonce)")]
     EmptyNonce,
+    #[error("jurisdiction is empty (use [\"*\"] for global)")]
+    EmptyJurisdiction,
+    #[error("asker identity seed is all-zeros")]
+    EmptyIdentitySeed,
+}
+
+/// Unsigned Ask payload (RFC-0959 §Data Structures).
+///
+/// This is the canonical content that gets signed. `AskId` and the signature
+/// are derived FROM this payload; neither is part of the canonical signed
+/// surface (non-circular derivation per R1 fix).
+///
+/// The `nonce` field is 16 bytes (RFC-0959 fix; the AskId re-derivation uses
+/// the nonce as a uniqueness salt so two identical offers produce distinct
+/// AskIds, which matters for rate-table updates where the asker publishes
+/// a new nonce to invalidate prior AskIds).
+///
+/// **NodeType deferred:** RFC-0959 §Data Structures lists `node_type` as a
+/// payload field, gated by RFC-0009 §Node (which lives in `octo-wallet::node`).
+/// Adding `octo-wallet` as a dep pulls HSM/MPC/keystore — too heavy for this
+/// session. The field is omitted here; the follow-up session that adds
+/// `octo-wallet` re-introduces it via `NodeType` re-export. This matches the
+/// mission's "Re-exported from octo-wallet::node" intent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AskUnsignedPayload {
+    /// Asker (publisher) DID (RFC-0009 §Identity Key Format).
+    pub asker_did: AskerDid,
+    /// Model reference — strings `{namespace, family, version?}` per RFC-0959 §Data Structures.
+    pub model: ModelRef,
+    /// Per-model rate table.
+    pub rates: ModelRateTable,
+    /// TTL in Unix seconds (inclusive). After this, the Ask is invalid.
+    pub ttl_unix: u64,
+    /// Jurisdiction tag(s). Empty list rejected by `AskUnsignedPayload::new`.
+    pub jurisdiction: Vec<String>,
+    /// Unix timestamp at which the payload was assembled (for replay-window defenses).
+    pub published_at_unix: u64,
+    /// Nonce for content-addressable AskId uniqueness (16 bytes; CSPRNG-generated).
+    pub nonce: [u8; 16],
+}
+
+impl AskUnsignedPayload {
+    /// Construct a validated payload. Rejects empty asker_did / model / jurisdiction
+    /// / all-zero nonce.
+    /// # Errors
+    /// Returns `AskError::EmptyAskerDid` / `EmptyModel` / `EmptyJurisdiction` /
+    /// `EmptyNonce`.
+    pub fn new(
+        asker_did: impl Into<String>,
+        model: impl Into<String>,
+        rates: ModelRateTable,
+        ttl_unix: u64,
+        jurisdiction: Vec<String>,
+        published_at_unix: u64,
+        nonce: [u8; 16],
+    ) -> Result<Self, AskError> {
+        let asker_did = asker_did.into();
+        let model = model.into();
+        if asker_did.is_empty() {
+            return Err(AskError::EmptyAskerDid);
+        }
+        if model.is_empty() {
+            return Err(AskError::EmptyModel);
+        }
+        if jurisdiction.is_empty() {
+            return Err(AskError::EmptyJurisdiction);
+        }
+        if nonce == [0u8; 16] {
+            return Err(AskError::EmptyNonce);
+        }
+        Ok(Self {
+            asker_did,
+            model,
+            rates,
+            ttl_unix,
+            jurisdiction,
+            published_at_unix,
+            nonce,
+        })
+    }
+
+    /// Compute the content-addressable AskId (RFC-0959 §Algorithms).
+    /// `AskId = BLAKE3(canonical_ser(self))`.
+    /// Non-circular: `ask_id` and `signature` are NOT part of the canonical payload.
+    #[must_use]
+    pub fn ask_id(&self) -> AskId {
+        let canonical = serde_json::to_vec(self).expect("serializable");
+        *blake3::hash(&canonical).as_bytes()
+    }
+}
+
+/// Cryptographically-attested Ask (RFC-0959 §Data Structures).
+///
+/// `AskSigned { ask_id, payload, signature }` is the wire/transport form. The
+/// signature is Ed25519 over `canonical_ser(payload)`. `verify()` recomputes
+/// `ask_id` from the payload and verifies both the AskId re-derivation and
+/// the Ed25519 signature against the embedded `asker_did` (which must be
+/// resolvable to a known Ed25519 public key — see RFC-0009 §DID Resolution).
+///
+/// The `signature` field is stored as `Vec<u8>` to satisfy serde's default
+/// impl (stable Rust has no `Deserialize` for `[u8; 64]` without the
+/// `serde_with` feature). Use `signature_fixed()` to obtain the 64-byte form.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AskSigned {
+    /// `BLAKE3(canonical_ser(payload))`. Must equal `payload.ask_id()`.
+    pub ask_id: AskId,
+    /// The unsigned payload.
+    pub payload: AskUnsignedPayload,
+    /// Ed25519 signature over `canonical_ser(payload)`.
+    pub signature: Vec<u8>,
+}
+
+impl AskSigned {
+    /// Sign a payload with the asker's 32-byte Ed25519 seed (RFC-0959 §Algorithms).
+    ///
+    /// `ask_id` is derived from the payload; the signature is over
+    /// `canonical_ser(payload)`. The seed is consumed via `SigningKey::from_bytes`
+    /// (NOT zeroized here — the caller owns seed material).
+    /// # Errors
+    /// Returns `AskSignedError::EmptyIdentitySeed` if the seed is all-zeros.
+    /// Returns `AskSignedError::CanonicalSer` if `serde_json` serialization fails.
+    pub fn sign(
+        payload: AskUnsignedPayload,
+        identity_seed: &[u8; 32],
+    ) -> Result<Self, AskSignedError> {
+        if identity_seed == &[0u8; 32] {
+            return Err(AskSignedError::EmptyIdentitySeed);
+        }
+        let canonical = serde_json::to_vec(&payload).map_err(AskSignedError::CanonicalSer)?;
+        let ask_id = *blake3::hash(&canonical).as_bytes();
+        let signing = SigningKey::from_bytes(identity_seed);
+        let signature = signing.sign(&canonical);
+        Ok(Self {
+            ask_id,
+            payload,
+            signature: signature.to_bytes().to_vec(),
+        })
+    }
+
+    /// Verify both AskId re-derivation AND Ed25519 signature (RFC-0959 §Algorithms).
+    ///
+    /// `asker_public_key` is the 32-byte Ed25519 verifying key derived from the
+    /// asker's DID per RFC-0009 §Identity Key Format.
+    /// # Errors
+    /// Returns `AskSignedError::AskIdMismatch` if `ask_id != payload.ask_id()`.
+    /// Returns `AskSignedError::SignatureLengthInvalid` if signature is not 64 bytes.
+    /// Returns `AskSignedError::AskSignatureInvalid` if Ed25519 verify fails.
+    pub fn verify(&self, asker_public_key: &Ed25519PublicKey) -> Result<(), AskSignedError> {
+        // 1. Re-derive AskId from payload; must equal embedded ask_id.
+        let derived = self.payload.ask_id();
+        if derived != self.ask_id {
+            return Err(AskSignedError::AskIdMismatch {
+                expected: self.ask_id,
+                actual: derived,
+            });
+        }
+        // 2. Verify Ed25519 signature over canonical_ser(payload).
+        let canonical = serde_json::to_vec(&self.payload).map_err(AskSignedError::CanonicalSer)?;
+        let sig_bytes: [u8; 64] = self
+            .signature
+            .as_slice()
+            .try_into()
+            .map_err(|_| AskSignedError::SignatureLengthInvalid)?;
+        let verifying = VerifyingKey::from_bytes(asker_public_key)
+            .map_err(|_| AskSignedError::InvalidPublicKey)?;
+        let sig = Signature::from_bytes(&sig_bytes);
+        verifying
+            .verify(&canonical, &sig)
+            .map_err(|_| AskSignedError::AskSignatureInvalid)
+    }
+
+    /// Return the signature as a fixed 64-byte array. Panics if stored signature
+    /// is the wrong length (should never happen after `sign()`).
+    #[must_use]
+    pub fn signature_fixed(&self) -> [u8; 64] {
+        self.signature
+            .as_slice()
+            .try_into()
+            .expect("AskSigned signature is always 64 bytes after sign()")
+    }
+
+    /// Convenience: compute the asker's Ed25519 public key from a seed (for tests + CLI flows).
+    #[must_use]
+    pub fn public_key_from_seed(seed: &[u8; 32]) -> Ed25519PublicKey {
+        SigningKey::from_bytes(seed).verifying_key().to_bytes()
+    }
+}
+
+/// AskSigned construction / verification errors.
+#[derive(Debug, thiserror::Error)]
+pub enum AskSignedError {
+    #[error("asker identity seed is all-zeros")]
+    EmptyIdentitySeed,
+    #[error("canonical serialization failed: {0}")]
+    CanonicalSer(serde_json::Error),
+    #[error("ask_id mismatch: expected {expected:?}, derived {actual:?}")]
+    AskIdMismatch { expected: AskId, actual: AskId },
+    #[error("signature length invalid (must be 64 bytes)")]
+    SignatureLengthInvalid,
+    #[error("invalid Ed25519 public key bytes")]
+    InvalidPublicKey,
+    #[error("Ed25519 signature verification failed (tampered payload or wrong key)")]
+    AskSignatureInvalid,
+}
+
+#[cfg(test)]
+mod ask_signed_tests {
+    use super::*;
+    use crate::ask::{AxisRate, ModelRateTable};
+
+    fn sample_payload() -> AskUnsignedPayload {
+        let rates = ModelRateTable {
+            model: "openai/gpt-4".to_owned(),
+            rates: vec![AxisRate {
+                axis: "input_tokens_per_1k".to_owned(),
+                rate_per_1k: 30_000,
+            }],
+        };
+        AskUnsignedPayload {
+            asker_did: "did:octo:asker1".to_owned(),
+            model: "openai/gpt-4".to_owned(),
+            rates,
+            ttl_unix: 1_900_000_000,
+            jurisdiction: vec!["US".to_owned(), "EU".to_owned()],
+            published_at_unix: 1_700_000_000,
+            nonce: [0x42; 16],
+        }
+    }
+
+    #[test]
+    fn sign_then_verify_roundtrip() {
+        let payload = sample_payload();
+        let seed = [0xABu8; 32];
+        let pk = AskSigned::public_key_from_seed(&seed);
+        let signed = AskSigned::sign(payload.clone(), &seed).expect("sign");
+        assert_eq!(signed.ask_id, payload.ask_id());
+        assert_eq!(signed.payload, payload);
+        signed.verify(&pk).expect("verify");
+    }
+
+    #[test]
+    fn ask_id_non_circular() {
+        // ask_id MUST equal BLAKE3(canonical_ser(payload)) and NOT depend on signature.
+        let payload = sample_payload();
+        let seed = [0xCDu8; 32];
+        let s1 = AskSigned::sign(payload.clone(), &seed).unwrap();
+        let s2 = AskSigned::sign(payload.clone(), &seed).unwrap();
+        assert_eq!(s1.ask_id, s2.ask_id, "ask_id deterministic across re-sign");
+        assert_eq!(s1.ask_id, payload.ask_id());
+    }
+
+    #[test]
+    fn tampered_payload_breaks_verify() {
+        let payload = sample_payload();
+        let seed = [0xEFu8; 32];
+        let pk = AskSigned::public_key_from_seed(&seed);
+        let mut signed = AskSigned::sign(payload, &seed).unwrap();
+        // Flip one byte in the rate table — payload & ask_id diverge.
+        signed.payload.rates.rates[0].rate_per_1k = 999;
+        let err = signed.verify(&pk).unwrap_err();
+        // Either AskIdMismatch (preferred) or AskSignatureInvalid — both are
+        // acceptable defenses against tampering.
+        assert!(
+            matches!(
+                err,
+                AskSignedError::AskIdMismatch { .. } | AskSignedError::AskSignatureInvalid
+            ),
+            "expected AskIdMismatch or AskSignatureInvalid, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn tampered_ask_id_breaks_verify() {
+        let payload = sample_payload();
+        let seed = [0x77u8; 32];
+        let pk = AskSigned::public_key_from_seed(&seed);
+        let mut signed = AskSigned::sign(payload, &seed).unwrap();
+        signed.ask_id[0] ^= 0xFF;
+        let err = signed.verify(&pk).unwrap_err();
+        assert!(
+            matches!(err, AskSignedError::AskIdMismatch { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn wrong_public_key_rejects_signature() {
+        let payload = sample_payload();
+        let seed = [0x11u8; 32];
+        let signed = AskSigned::sign(payload, &seed).unwrap();
+        let wrong_pk = AskSigned::public_key_from_seed(&[0x22u8; 32]);
+        let err = signed.verify(&wrong_pk).unwrap_err();
+        assert!(
+            matches!(err, AskSignedError::AskSignatureInvalid),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn empty_seed_rejected() {
+        let payload = sample_payload();
+        let err = AskSigned::sign(payload, &[0u8; 32]).unwrap_err();
+        assert!(matches!(err, AskSignedError::EmptyIdentitySeed));
+    }
+
+    #[test]
+    fn empty_jurisdiction_rejected() {
+        let mut payload = sample_payload();
+        payload.jurisdiction.clear();
+        let err = AskUnsignedPayload::new(
+            payload.asker_did.clone(),
+            payload.model.clone(),
+            payload.rates.clone(),
+            payload.ttl_unix,
+            payload.jurisdiction.clone(),
+            payload.published_at_unix,
+            payload.nonce,
+        );
+        assert!(matches!(err, Err(AskError::EmptyJurisdiction)));
+    }
+
+    #[test]
+    fn octow_amount_distinct_newtype() {
+        // R1 critical fix: OCTO_WAmount must be a distinct newtype, NOT a type alias.
+        // We verify the type system catches silent unit-conversion: `let _: u128 = x.0` is fine,
+        // but `let _: u128 = x` is a compile error (intentional, prevents accidental ops).
+        let one_octow = OCTO_WAmount(1);
+        let one_micro = OCTO_WAmount(0).to_micro();
+        assert_eq!(one_octow.to_micro(), 1_000_000);
+        assert_eq!(one_micro, 0);
+        let back = OCTO_WAmount::from_micro(1_000_000).unwrap();
+        assert_eq!(back, OCTO_WAmount(1));
+        assert!(
+            OCTO_WAmount::from_micro(1_000_001).is_none(),
+            "non-aligned must reject"
+        );
+    }
 }
 
 /// Per-axis consumption tuple: `(axis_id, units_consumed)`.

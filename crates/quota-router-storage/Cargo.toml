@@ -19,6 +19,12 @@ stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockc
 # Hashing (BLAKE3 for AskId, settlement_hash, mission key derivation)
 blake3 = "1"
 
+# Ed25519 signature substrate (RFC-0959 §Algorithms `verify_ask`)
+# Uses raw `SigningKey`/`Signature` so the storage crate stays decoupled from
+# the higher-level `octo_wallet::identity::IdentityKey` wrapper (which pulls
+# HSM/MPC/keystore). Callers convert at the boundary.
+ed25519-dalek = { version = "2.2", features = ["serde"] }
+
 # Serialization (rates_json column; model rates table)
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

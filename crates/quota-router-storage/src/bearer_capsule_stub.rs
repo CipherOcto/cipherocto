@@ -30,6 +30,24 @@ pub struct BearerCapsule {
     pub seller_signature: [u8; 64],
 }
 
+impl BearerCapsule {
+    /// Construct a `BearerCapsule` from its 3 fields. Available for test
+    /// fixtures + downstream callers; not `#[non_exhaustive]`-gated because
+    /// the 3 fields are the entire RFC-0959-A1 §Data Structures shape.
+    #[must_use]
+    pub const fn new(
+        bearer_capsule_hash: [u8; 32],
+        encrypted_capsule: Vec<u8>,
+        seller_signature: [u8; 64],
+    ) -> Self {
+        Self {
+            bearer_capsule_hash,
+            encrypted_capsule,
+            seller_signature,
+        }
+    }
+}
+
 // Manual Debug redaction per RFC-0957-A1 §Security (cross-applied to the stub).
 impl std::fmt::Debug for BearerCapsule {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

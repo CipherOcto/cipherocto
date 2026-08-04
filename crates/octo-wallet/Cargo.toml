@@ -43,6 +43,7 @@ anyhow.workspace = true
 thiserror.workspace = true
 directories.workspace = true
 rand.workspace = true
+serde_bytes = "0.11"
 
 # ZK circuit (CASM compile, RFC-0958 Phase B.2; crypto home per [[stoolap-general-purpose-db]])
 zk-circuit = { path = "../zk-circuit" }

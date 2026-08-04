@@ -5,9 +5,11 @@
 //! 2. HMAC chain re-derivation against the issuer's root secret.
 //! 3. Caveat evaluation against the request context.
 
+pub mod bearer_capsule_re_export;
 pub mod caveat;
 pub mod discharge;
 pub mod macaroon;
+pub mod market_delivery;
 pub mod redemption;
 pub mod registry;
 pub mod verify;
@@ -16,6 +18,7 @@ pub mod zk_mint;
 
 use serde::{Deserialize, Serialize};
 
+pub use bearer_capsule_re_export::BearerCapsule;
 pub use caveat::{Caveat, CaveatName, MicroOctoW, UnixTimeSecs};
 pub use discharge::{
     verify_discharges, ChannelProvider, ChannelProviderRegistry, ChannelProviderResolver,
@@ -25,6 +28,10 @@ pub use discharge::{
 };
 pub use macaroon::{
     hmac_blake3, macaroon_id, CapabilityCatalog, Macaroon, MacaroonError, MacaroonId,
+};
+pub use market_delivery::{
+    DealSettled, DealSettledPayload, DeliveryError, EnvelopeId, MarketDeliveryEnvelope,
+    MarketDeliveryEnvelopePreimage, RoleTag,
 };
 pub use registry::{CapabilityClassRegistry, RegistryEntry, RegistryError};
 pub use verify::{verify_with_resolve, VerifiedToken, VerifyContext, VerifyError};

@@ -95,10 +95,7 @@ pub fn parse_auth_headers(headers: &[(String, String)]) -> Result<DispatchSet, P
 #[derive(Debug, thiserror::Error)]
 pub enum AuthError {
     #[error("identity mismatch: bearer_did=<redacted>, cap_did=<redacted>")]
-    IdentityMismatch {
-        bearer_did: String,
-        cap_did: String,
-    },
+    IdentityMismatch { bearer_did: String, cap_did: String },
     #[error("ask binding mismatch: bearer_ask=<redacted>, cap_ask=<redacted>")]
     AskBindingMismatch {
         bearer_ask: [u8; 32],
@@ -131,11 +128,8 @@ mod tests {
 
     #[test]
     fn parse_capability_only() {
-        let set = parse_auth_headers(&[(
-            "Authorization".into(),
-            "CipherOcto-Cap xyz".into(),
-        )])
-        .unwrap();
+        let set =
+            parse_auth_headers(&[("Authorization".into(), "CipherOcto-Cap xyz".into())]).unwrap();
         assert!(set.bearer.is_none());
         assert!(matches!(set.capability, Some(AuthHeader::CipherOctoCap(_))));
     }

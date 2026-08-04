@@ -74,6 +74,9 @@ borsh = { version = "1", optional = true }
 # in a future RFC if a tighter canonicalization is adopted; until then
 # the dep is removed to avoid carrying an unused surface.
 
+# Federation delta wire format (RFC-0957-A1 §F1) — uses JSON (already in
+# workspace deps). Bounded via length-prefixed encoding (see federation.rs).
+
 # Typed Constraint substrate (RFC-0964) for Caveat::Factory pre_conditions
 cipherocto-encoding = { path = "../cipherocto-encoding" }
 

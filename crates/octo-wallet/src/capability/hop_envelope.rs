@@ -53,7 +53,10 @@ pub struct InnerRequest {
 impl std::fmt::Debug for InnerRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("InnerRequest")
-            .field("ciphertext", &format_args!("<redacted {} bytes>", self.ciphertext.len()))
+            .field(
+                "ciphertext",
+                &format_args!("<redacted {} bytes>", self.ciphertext.len()),
+            )
             .field("aad", &format_args!("<redacted {} bytes>", self.aad.len()))
             .finish()
     }
@@ -90,10 +93,7 @@ pub enum HopError {
         now_millis_unix: u64,
     },
     #[error("audience mismatch: envelope=expected=<redacted>")]
-    AudienceMismatch {
-        envelope: String,
-        expected: String,
-    },
+    AudienceMismatch { envelope: String, expected: String },
     #[error("chain hash mismatch: expected=<redacted>, actual=<redacted>")]
     ChainHashMismatch {
         expected: [u8; 32],
@@ -156,10 +156,7 @@ pub fn verify_chain_hash(
     chain: &[HopEnvelope],
     expected_chain_hash: &[u8; 32],
 ) -> Result<(), HopError> {
-    let actual = chain
-        .last()
-        .map(|e| e.chain_hash)
-        .unwrap_or([0u8; 32]);
+    let actual = chain.last().map(|e| e.chain_hash).unwrap_or([0u8; 32]);
     if &actual != expected_chain_hash {
         return Err(HopError::ChainHashMismatch {
             expected: *expected_chain_hash,
@@ -260,56 +257,71 @@ mod tests {
             1_700_000_000_000,
             "did:octo:router",
             "did:octo:destination",
-        ).unwrap();
-        let unwrapped = unwrap_at_destination(&wrapped, "did:octo:destination", 1_699_999_999_999).unwrap();
+        )
+        .unwrap();
+        let unwrapped =
+            unwrap_at_destination(&wrapped, "did:octo:destination", 1_699_999_999_999).unwrap();
         assert_eq!(unwrapped, inner);
     }
 
     #[test]
     fn unwrap_audience_mismatch() {
-        let inner = InnerRequest { ciphertext: vec![], aad: vec![] };
+        let inner = InnerRequest {
+            ciphertext: vec![],
+            aad: vec![],
+        };
         let wrapped = wrap_for_hop(
             inner,
             &[0x33; 32],
             1_700_000_000_000,
             "did:octo:router",
             "did:octo:destination",
-        ).unwrap();
+        )
+        .unwrap();
         let r = unwrap_at_destination(&wrapped, "did:octo:other", 1_699_999_999_999);
         assert!(matches!(r, Err(HopError::AudienceMismatch { .. })));
     }
 
     #[test]
     fn unwrap_ttl_exceeded() {
-        let inner = InnerRequest { ciphertext: vec![], aad: vec![] };
+        let inner = InnerRequest {
+            ciphertext: vec![],
+            aad: vec![],
+        };
         let wrapped = wrap_for_hop(
             inner,
             &[0x33; 32],
             1_700_000_000_000,
             "did:octo:router",
             "did:octo:destination",
-        ).unwrap();
+        )
+        .unwrap();
         let r = unwrap_at_destination(&wrapped, "did:octo:destination", 1_700_000_000_001);
         assert!(matches!(r, Err(HopError::TtlExceeded { .. })));
     }
 
     #[test]
     fn verify_chain_hash_matches_last_envelope() {
-        let inner = InnerRequest { ciphertext: vec![], aad: vec![] };
+        let inner = InnerRequest {
+            ciphertext: vec![],
+            aad: vec![],
+        };
         let e1 = wrap_for_hop(
             inner.clone(),
             &[0x33; 32],
             1_700_000_000_000,
             "did:octo:r1",
             "did:octo:r2",
-        ).unwrap();
+        )
+        .unwrap();
         let e2 = wrap_for_hop(
             inner,
             &[0x44; 32],
             1_700_000_000_000,
             "did:octo:r2",
             "did:octo:dest",
-        ).unwrap();
+        )
+        .unwrap();
         let chain = vec![e1, e2];
         let expected = chain.last().unwrap().chain_hash;
         assert!(verify_chain_hash(&chain, &expected).is_ok());
@@ -317,14 +329,18 @@ mod tests {
 
     #[test]
     fn verify_chain_hash_mismatch() {
-        let inner = InnerRequest { ciphertext: vec![], aad: vec![] };
+        let inner = InnerRequest {
+            ciphertext: vec![],
+            aad: vec![],
+        };
         let e1 = wrap_for_hop(
             inner,
             &[0x33; 32],
             1_700_000_000_000,
             "did:octo:r1",
             "did:octo:r2",
-        ).unwrap();
+        )
+        .unwrap();
         let chain = vec![e1];
         let r = verify_chain_hash(&chain, &[0xFF; 32]);
         assert!(matches!(r, Err(HopError::ChainHashMismatch { .. })));
@@ -341,14 +357,18 @@ mod tests {
 
     #[test]
     fn forward_request_payload_with_hop_envelope() {
-        let inner = InnerRequest { ciphertext: vec![], aad: vec![] };
+        let inner = InnerRequest {
+            ciphertext: vec![],
+            aad: vec![],
+        };
         let env = wrap_for_hop(
             inner.clone(),
             &[0x33; 32],
             1_700_000_000_000,
             "did:octo:router",
             "did:octo:destination",
-        ).unwrap();
+        )
+        .unwrap();
         let p = ForwardRequestPayload::with_hop_envelope(inner, env);
         assert!(p.hop_envelope.is_some());
     }

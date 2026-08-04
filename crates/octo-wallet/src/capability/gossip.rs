@@ -6,8 +6,8 @@
 
 use std::time::Duration;
 
-use super::market_delivery::{DeliveryError, MarketDeliveryEnvelope};
 use super::macaroon::{CapabilityCatalog, CatalogGossipError};
+use super::market_delivery::{DeliveryError, MarketDeliveryEnvelope};
 
 /// Maximum gossip retry attempts (RFC-0959-A1 §Future Work F5).
 pub const MAX_GOSSIP_ATTEMPTS: u32 = 5;
@@ -45,23 +45,19 @@ pub fn gossip_envelope_to_buyer(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::super::bearer_capsule_re_export::BearerCapsule;
     use super::super::macaroon::CapabilityCatalog;
     use super::super::market_delivery::{
         DealSettled, DealSettledPayload, MarketDeliveryEnvelope, RoleTag,
     };
-    use super::super::bearer_capsule_re_export::BearerCapsule;
+    use super::*;
 
     struct AlwaysFailCatalog;
     impl CapabilityCatalog for AlwaysFailCatalog {
         fn get(&self, _id: &[u8; 32]) -> Option<&super::super::macaroon::Macaroon> {
             None
         }
-        fn gossip_to_buyer(
-            &self,
-            _buyer_did: &str,
-            _env: &[u8],
-        ) -> Result<(), CatalogGossipError> {
+        fn gossip_to_buyer(&self, _buyer_did: &str, _env: &[u8]) -> Result<(), CatalogGossipError> {
             Err(CatalogGossipError::Unsupported)
         }
     }
@@ -71,11 +67,7 @@ mod tests {
         fn get(&self, _id: &[u8; 32]) -> Option<&super::super::macaroon::Macaroon> {
             None
         }
-        fn gossip_to_buyer(
-            &self,
-            _buyer_did: &str,
-            _env: &[u8],
-        ) -> Result<(), CatalogGossipError> {
+        fn gossip_to_buyer(&self, _buyer_did: &str, _env: &[u8]) -> Result<(), CatalogGossipError> {
             Ok(())
         }
     }

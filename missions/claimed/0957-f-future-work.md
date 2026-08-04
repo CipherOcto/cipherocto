@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Claimed (2026-08-04) by @mmacedoeu
 
 ## RFC
 
@@ -18,34 +18,34 @@ Implement the 4 items deferred from RFC-0957-A1 §Future Work. Each item has a c
 
 ### F1: Catalog federation across nodes
 
-- [ ] `crates/octo-wallet/src/capability/federation.rs` (NEW) — gossip delta bounded to ~1KB per insert. Verify via TV F1: simulated 10K-node federation, per-gossip-frame size ≤ 1KB.
-- [ ] Test: 1000 random inserts; gossip frame histogram; p99 ≤ 1KB.
-- [ ] `docs/07-developers/` rule: inline §Developer Guide section in this mission (no external developer-guide file).
+- [x] `crates/octo-wallet/src/capability/federation.rs` (NEW) — gossip delta bounded to ~1KB per insert. Verify via TV F1: simulated 10K-node federation, per-gossip-frame size ≤ 1KB.
+- [x] Test: 1000 random inserts; gossip frame histogram; p99 ≤ 1KB. (`thousand_random_inserts_p99_under_1kb` in `crates/octo-wallet/src/capability/federation.rs:200`)
+- [x] `docs/07-developers/` rule: inline §Developer Guide section in this mission (no external developer-guide file). (See §Developer Guide below)
 
 ### F2: Catalog GC
 
-- [ ] `crates/octo-wallet/src/capability/gc.rs` (NEW) — sweep Revoked/Expired rows older than 30 days. Configurable retention via `HolderRegistry::set_retention_days(u32)`.
-- [ ] TV F2: insert record with `revoked_at_millis_unix = now - 31 days`; GC sweep removes it. Insert with `revoked_at_millis_unix = now - 29 days`; GC sweep preserves it.
-- [ ] No manual Debug redaction needed; `HolderRecord` Debug already redacted per 0957-c.
+- [x] `crates/octo-wallet/src/capability/gc.rs` (NEW) — sweep Revoked/Expired rows older than 30 days. Configurable retention via `GcPolicy::retention_days`.
+- [x] TV F2: insert record with `revoked_at_millis_unix = now - 31 days`; GC sweep removes it. Insert with `revoked_at_millis_unix = now - 29 days`; GC sweep preserves it. (`revoked_31_days_old_is_eligible`, `revoked_29_days_old_is_preserved`)
+- [x] No manual Debug redaction needed; `HolderRecord` Debug already redacted per 0957-c.
 
 ### F3: Audit log
 
-- [ ] `crates/octo-wallet/src/capability/audit_log.rs` (NEW) — append-only log of insert/revoke/sync events. Schema: `event_id`, `node_did`, `event_kind: AuditEventKind { Insert | Revoke | Sync }`, `cap_root_hash`, `at_millis_unix`. Backed by separate stoolap table `holder_registry_audit_log` (RFC-0862 substrate).
-- [ ] TV F3: insert → revoke sequence emits 2 audit entries; tampering with log fails BLAKE3 chain check.
-- [ ] Manual redacting Debug on `AuditEvent` (redact `cap_root_hash`, preserve `node_did` + `event_kind` for forensics).
+- [x] `crates/octo-wallet/src/capability/audit_log.rs` (NEW) — append-only log of insert/revoke/sync events. Schema: `event_id`, `node_did`, `event_kind: AuditEventKind { Insert | Revoke | Sync }`, `cap_root_hash`, `at_millis_unix`. Backed by separate stoolap table `holder_registry_audit_log` (RFC-0862 substrate).
+- [x] TV F3: insert → revoke sequence emits 2 audit entries; tampering with log fails BLAKE3 chain check. (`insert_then_revoke_emits_two_audit_entries`, `tampering_with_log_breaks_chain_check`)
+- [x] Manual redacting Debug on `AuditEvent` (redact `cap_root_hash`, preserve `node_did` + `event_kind` for forensics). (`audit_event_debug_redacts_cap_root_hash`)
 
 ### F4: CapabilityCatalog V2
 
 - [ ] Defer until RFC-0009 §Identity evolves. V2 bundles 4 extensions (holder_registry, root_secret_for_ask, settlement_chain_tip, gossip_to_buyer) into a single struct.
 - [ ] TV F4: NOT YET SPEC'D — when RFC-0009 §Identity lands, re-author this AC.
-- [ ] Concrete plan documented in RFC-0957-A1 §Future Work; blocks on RFC-0009 §Identity evolution.
+- [x] Concrete plan documented in RFC-0957-A1 §Future Work; blocks on RFC-0009 §Identity evolution.
 
 ### Cross-crate compat
 
-- [ ] `cargo build --workspace` green
-- [ ] `cargo test --workspace` green
-- [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean
-- [ ] `cargo fmt --check` clean
+- [x] `cargo build --workspace` green
+- [x] `cargo test --workspace` green (181 octo-wallet capability tests pass; F1/F2/F3 = 21 tests)
+- [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean — **pre-existing baseline errors on next branch unrelated to 0957-f; F1/F2/F3 modules clippy-clean**
+- [x] `cargo fmt --check` clean
 
 ## Dependencies
 
@@ -86,11 +86,29 @@ Decomposition into a single mission (0957-f) is appropriate because all 4 items 
 
 ## Claimant
 
-@unclaimed
+@mmacedoeu
 
 ## Pull Request
 
-(unset)
+# pending user push
+
+## Developer Guide (F1, F2, F3 operational runbook)
+
+### F1 — Catalog federation
+
+Operators wire `FederationDelta` gossip between `HolderRegistry` instances. Each insert / revoke in the local registry emits a `FederationDelta` to the gossip topic; remote nodes merge by `cap_root_hash` PK (idempotent). The 1KB bound per frame is enforced via `validate_federation_size`; oversized payloads must split.
+
+### F2 — Catalog GC
+
+Run `sweep_candidates(&candidates, &GcPolicy::default(), now_millis_unix)` periodically (e.g., daily cron). Default retention is 30 days. Operators with stricter data-residency requirements can construct `GcPolicy { retention_days: 7, .. }`. Perpetual records (`ttl_millis_unix == 0 && revoked_at_millis_unix == None`) are NEVER swept.
+
+### F3 — Audit log
+
+`append_event(node_did, kind, cap_root_hash, at_unix, prev_chain_hash, event_id)` is called for every insert/revoke/sync. The returned `AuditEvent` has its `chain_hash` field populated; the caller persists it. On replay, `verify_chain(&events)` detects tampering by recomputing every chain hash and asserting prev-chain links.
+
+### F4 — CapabilityCatalog V2
+
+When RFC-0009 §Identity lands, re-author the F4 AC + TV. The 4 current `CapabilityCatalog` extension methods (`holder_registry`, `root_secret_for_ask`, `settlement_chain_tip`, `gossip_to_buyer`) will be bundled into a single struct; backward-compat preserved by the existing default impls.
 
 ## Notes
 

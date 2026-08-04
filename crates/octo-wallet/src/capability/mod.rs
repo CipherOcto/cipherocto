@@ -5,11 +5,14 @@
 //! 2. HMAC chain re-derivation against the issuer's root secret.
 //! 3. Caveat evaluation against the request context.
 
+pub mod audit_log;
 pub mod bearer_capsule_re_export;
 pub mod caveat;
-pub mod dispatch;
 pub mod discharge;
+pub mod dispatch;
 pub mod dual_issuance;
+pub mod federation;
+pub mod gc;
 pub mod gossip;
 pub mod hop_envelope;
 pub mod macaroon;

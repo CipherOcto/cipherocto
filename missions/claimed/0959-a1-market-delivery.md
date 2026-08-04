@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Claimed (2026-08-04)
 
 ## RFC
 
@@ -103,7 +103,7 @@ Splitting by module boundary (transaction wrapper / gossip) lets 0959-b merge in
 
 ## Claimant
 
-@unclaimed
+@mmacedoeu (Top-level decomposition; ACs roll up as 0959-b, 0959-c land)
 
 ## Pull Request
 

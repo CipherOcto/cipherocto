@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Claimed (2026-08-04)
 
 ## RFC
 
@@ -127,9 +127,9 @@ This sub-mission implements (per top-level Type Coverage table):
 - `rfcs/accepted/economics/0959-ask-settlement-chain.md` (MODIFY) — §Roles cross-reference
 - `rfcs/accepted/economics/0955-r1-reputation-anchoring.md` (MODIFY) — §Roles cross-reference
 
-## Claimant
+## Claimant |
 
-@unclaimed
+@mmacedoeu (RoleTag + lifecycle state machine + audit trail types)
 
 ## Pull Request
 

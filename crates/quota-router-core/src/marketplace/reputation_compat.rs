@@ -282,7 +282,7 @@ fn aggregate_to_compat(agg: ReputationAggregate) -> CompatOutcome {
 /// `reputation-show` handler and the compat-internal helpers consume
 /// this single source of truth.
 pub fn parse_canonical_did(did: &str) -> Result<RecorderDid, ReputationError> {
-    use octo_ident::CanonicalCodec;
+    use octo_ident::{CanonicalCodec, DidCodec};
 
     // Step 1: W3C canonical wire form (preferred).
     if did.starts_with("did:octo:z") {

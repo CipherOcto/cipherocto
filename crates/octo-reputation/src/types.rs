@@ -57,7 +57,7 @@ impl RecorderDid {
     /// change between the two RFCs and is the stable interop key.
     /// See RFC-0968-A2 amendment proposal (post-C3 review).
     pub fn to_wire(&self) -> Result<String, crate::error::ReputationError> {
-        use octo_ident::{CanonicalCodec, RawDid};
+        use octo_ident::{CanonicalCodec, DidCodec, RawDid};
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&self.0[..32]);
         let mut disc = [0u8; 20];

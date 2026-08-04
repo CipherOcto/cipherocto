@@ -14,7 +14,7 @@
 //! assert!(did.starts_with("did:octo:z"));
 //! ```
 
-use crate::{CanonicalCodec, WireDid};
+use crate::{CanonicalCodec, DidCodec, WireDid};
 
 /// Generate a canonical W3C DID wire form for tests.
 ///

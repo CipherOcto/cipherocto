@@ -433,7 +433,9 @@ pub trait CapabilityCatalog {
     /// RFC-0957-A1 §Phase 3 (R13-N3 fix): holder registry accessor.
     /// Default impl returns `None` for legacy catalogs that haven't
     /// migrated to the registry substrate.
-    fn holder_registry(&self) -> Option<std::sync::Arc<dyn quota_router_storage::holder_registry::HolderRegistry>> {
+    fn holder_registry(
+        &self,
+    ) -> Option<std::sync::Arc<dyn quota_router_storage::holder_registry::HolderRegistry>> {
         None
     }
 
@@ -451,11 +453,7 @@ pub trait CapabilityCatalog {
     /// RFC-0957-A1 §Phase 3 (R13-N3 fix): gossip a `MarketDeliveryEnvelope`
     /// payload to the buyer's peer set. Default impl returns `Err` for
     /// catalogs that don't support direct gossip.
-    fn gossip_to_buyer(
-        &self,
-        _buyer_did: &str,
-        _env: &[u8],
-    ) -> Result<(), CatalogGossipError> {
+    fn gossip_to_buyer(&self, _buyer_did: &str, _env: &[u8]) -> Result<(), CatalogGossipError> {
         Err(CatalogGossipError::Unsupported)
     }
 }

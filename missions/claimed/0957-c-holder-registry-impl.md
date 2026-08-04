@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Claimed (2026-08-04)
 
 ## RFC
 
@@ -110,7 +110,7 @@ This sub-mission implements (per top-level Type Coverage table):
 
 ## Claimant
 
-@unclaimed
+@mmacedoeu (CipherOcto-side implementation; cipherocto-side migration only per [[stoolap-general-purpose-db]] red line)
 
 ## Pull Request
 

@@ -12,8 +12,10 @@
 //! - [`sync`] — `CipheroctoTable` + `ReplicatedTables` sync subscription config
 //! - [`cache_key`] — `cache_key()` BLAKE3 keyed-hash (RFC-0959 §Data Structures)
 //! - [`circuit_breaker`] — anti-fraud monitor state machine (RFC-0959 §Lifecycle)
+//! - [`anti_fraud`] — multi-layer AntiFraudMonitor wrapping the breaker (RFC-0959 §Adversary A5)
 //! - [`axis_registry_toml`] — TOML parser for `pricing-axes.toml` (RFC-0959 §Data Structures)
 
+pub mod anti_fraud;
 pub mod ask;
 pub mod ask_repo;
 pub mod axis_registry_toml;
@@ -23,6 +25,10 @@ pub mod marketplace;
 pub mod migrations;
 pub mod sync;
 
+pub use anti_fraud::{
+    AntiFraudMonitor, AskerHitRate, FraudSignal, FraudSignalKind, MultiLayerCacheStatus,
+    ProviderCacheControl, RecordOutcome, ReputationDelta,
+};
 pub use ask::{
     cache_key_hash, compute_cost, compute_settlement_hash, settlement_cost,
     sign_settlement_receipt, verify_settlement_receipt, Ask, AskError, AskId, AskSigned,

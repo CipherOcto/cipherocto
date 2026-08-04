@@ -18,6 +18,10 @@ use clap::{Parser, Subcommand};
 use std::io::{Read as _, Write as _};
 
 use octo_wallet::{vault::Vault, AudienceId, CapabilityKey, ChannelId, IdentityKey, NodeType};
+use quota_router_storage::ask::{
+    AskError, AskSigned, AskSignedError, AskUnsignedPayload, ModelRateTable, ModelRef,
+    NodeType as StorageNodeType,
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "octo-wallet", version, about = "CipherOcto wallet CLI")]
@@ -54,6 +58,12 @@ enum Cmd {
         #[command(subcommand)]
         op: VaultOp,
     },
+
+    /// Ask marketplace operations (RFC-0959 §CLI).
+    Ask {
+        #[command(subcommand)]
+        op: AskOp,
+    },
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -64,6 +74,16 @@ enum CliNodeType {
 }
 
 impl From<CliNodeType> for NodeType {
+    fn from(c: CliNodeType) -> Self {
+        match c {
+            CliNodeType::Wholesale => Self::Wholesale,
+            CliNodeType::SelfHost => Self::SelfHost,
+            CliNodeType::Hybrid => Self::Hybrid,
+        }
+    }
+}
+
+impl From<CliNodeType> for StorageNodeType {
     fn from(c: CliNodeType) -> Self {
         match c {
             CliNodeType::Wholesale => Self::Wholesale,
@@ -90,6 +110,53 @@ enum VaultOp {
     },
     /// List all vault slot IDs.
     List,
+}
+
+/// Ask marketplace subcommands (RFC-0959 §CLI).
+///
+/// `publish` builds a signed `AskSigned` from CLI args + the wallet seed
+/// and emits the JSON envelope to stdout. The signer is the Ed25519 key
+/// derived from `--seed` (same as `init`).
+#[derive(Debug, Subcommand)]
+enum AskOp {
+    /// Publish a signed Ask (RFC-0959 §CLI; mission 0959-a AC).
+    ///
+    /// Reads the wallet seed from `--seed`, builds an `AskUnsignedPayload`
+    /// from the CLI args, signs via `AskSigned::sign`, and emits the
+    /// JSON envelope to stdout. The asker DID is derived from the seed
+    /// (Ed25519 verifying key → `did:octo:b<base58btc>` form per RFC-0009).
+    Publish {
+        /// `NodeType` of the asker (`wholesale` / `self-host` / `hybrid`).
+        #[arg(long, value_enum)]
+        node_type: CliNodeType,
+        /// Model reference `namespace/family` (e.g., `openai/gpt-4`).
+        #[arg(long)]
+        model: String,
+        /// Per-axis rate entries as `axis_id:rate_per_1k` pairs, comma-separated.
+        /// Example: `--axes input_tokens_per_1k:30,output_tokens_per_1k:60`
+        #[arg(long, value_delimiter = ',')]
+        axes: Vec<String>,
+        /// TTL in Unix seconds (Ask is invalid after this).
+        #[arg(long)]
+        ttl_unix: u64,
+        /// Jurisdiction tag(s) (at least one required by RFC-0959).
+        #[arg(long, value_delimiter = ',')]
+        jurisdiction: Vec<String>,
+        /// 32-hex-character nonce (16 bytes). Defaults to BLAKE3("ask-nonce:v1")
+        /// for deterministic test fixtures; pass explicit hex for production.
+        #[arg(
+            long,
+            default_value = "8c3e6f4b2a1d9e7c5f8b3a6d9c2e5f8b1a4d7c0e3f6b9a2d5c8e1f4b7a0d3c6f"
+        )]
+        nonce_hex: String,
+        /// Unix timestamp at which the payload is assembled. Defaults to
+        /// wall-clock `now` (Unix seconds).
+        #[arg(long, default_value_t = 0)]
+        published_at_unix: u64,
+        /// Path to the 32-byte wallet seed (written by `init`).
+        #[arg(long, default_value = "identity.seed")]
+        seed: PathBuf,
+    },
 }
 
 fn main() -> ExitCode {
@@ -181,5 +248,139 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+
+        Cmd::Ask { op } => match op {
+            AskOp::Publish {
+                node_type,
+                model,
+                axes,
+                ttl_unix,
+                jurisdiction,
+                nonce_hex,
+                published_at_unix,
+                seed,
+            } => ask_publish(
+                node_type,
+                &model,
+                &axes,
+                ttl_unix,
+                &jurisdiction,
+                &nonce_hex,
+                published_at_unix,
+                &seed,
+            ),
+        },
     }
+}
+
+/// Build + sign an Ask, emit JSON to stdout (RFC-0959 §CLI).
+#[allow(clippy::too_many_arguments)]
+fn ask_publish(
+    node_type: CliNodeType,
+    model: &str,
+    axes: &[String],
+    ttl_unix: u64,
+    jurisdiction: &[String],
+    nonce_hex: &str,
+    published_at_unix: u64,
+    seed: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    // 1. Parse node_type + model.
+    let nt: StorageNodeType = node_type.into();
+    let model_ref = ModelRef::parse(model).map_err(|e| format!("invalid --model: {e}"))?;
+
+    // 2. Parse axes (axis_id:rate_per_1k pairs).
+    let mut rates = Vec::with_capacity(axes.len());
+    for entry in axes {
+        let (axis_id, rate_str) = entry
+            .split_once(':')
+            .ok_or_else(|| format!("invalid --axes entry `{entry}` (expected `<axis>:<rate>`)"))?;
+        let rate: u128 = rate_str
+            .parse()
+            .map_err(|e| format!("invalid rate for axis `{axis_id}`: {e}"))?;
+        rates.push(quota_router_storage::ask::AxisRate {
+            axis: axis_id.to_owned(),
+            rate_per_1k: rate,
+        });
+    }
+    let rate_table = ModelRateTable {
+        model: model_ref.clone(),
+        rates,
+    };
+
+    // 3. Parse nonce (16 bytes hex).
+    let nonce_bytes = hex::decode(nonce_hex).map_err(|e| format!("invalid --nonce-hex: {e}"))?;
+    if nonce_bytes.len() != 16 {
+        return Err(format!(
+            "nonce must be 16 bytes (32 hex chars), got {}",
+            nonce_bytes.len()
+        )
+        .into());
+    }
+    let mut nonce = [0u8; 16];
+    nonce.copy_from_slice(&nonce_bytes);
+
+    // 4. Default published_at_unix to wall-clock now if not supplied.
+    let published_at_unix = if published_at_unix == 0 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs())
+    } else {
+        published_at_unix
+    };
+
+    // 5. Read 32-byte seed.
+    let seed_bytes = std::fs::read(seed)?;
+    if seed_bytes.len() != 32 {
+        return Err(format!("seed must be 32 bytes, got {}", seed_bytes.len()).into());
+    }
+    let mut seed_arr = [0u8; 32];
+    seed_arr.copy_from_slice(&seed_bytes);
+
+    // 6. Build unsigned payload.
+    let asker_did = derive_asker_did(&seed_arr);
+    let payload = AskUnsignedPayload::new(
+        asker_did,
+        nt,
+        model_ref.clone(),
+        rate_table,
+        ttl_unix,
+        jurisdiction.to_vec(),
+        published_at_unix,
+        nonce,
+    )
+    .map_err(|e| match e {
+        AskError::EmptyAskerDid => "asker DID is empty",
+        AskError::EmptyModel => "model is empty",
+        AskError::EmptyJurisdiction => "jurisdiction list is empty (at least one required)",
+        AskError::EmptyNonce => "nonce is all-zero (use a real CSPRNG-generated nonce)",
+        AskError::EmptyIdentitySeed => "identity seed is all-zero",
+    })?;
+
+    // 7. Sign.
+    let signed = AskSigned::sign(payload, &seed_arr).map_err(|e| match e {
+        AskSignedError::EmptyIdentitySeed => "identity seed is all-zero".to_owned(),
+        AskSignedError::CanonicalSer(s) => format!("canonical_ser(payload) failed: {s}"),
+        _ => "AskSigned::sign failed".to_owned(),
+    })?;
+
+    // 8. Emit JSON envelope.
+    let out = serde_json::to_string(&signed).map_err(|e| format!("serialize AskSigned: {e}"))?;
+    println!("{out}");
+    Ok(())
+}
+
+/// Derive asker DID from the 32-byte Ed25519 seed (RFC-0009 §Identity Key Format).
+///
+/// Canonical form: `did:octo:b<hex-encoded 32-byte public-key>`. The proper
+/// W3C `z<base58btc>` form requires the multibase + multihash codec wrappers
+/// (RFC-0010 `unprefixed-bytes`); the hex form is the dev-friendly fallback
+/// accepted by `quota-router-core::marketplace::reputation_compat::parse_canonical_did`.
+fn derive_asker_did(seed_arr: &[u8; 32]) -> String {
+    let id = IdentityKey::from_seed(*seed_arr);
+    let pk_bytes = id.public_key_bytes();
+    let pk_hex = hex::encode(pk_bytes);
+    format!("did:octo:b{pk_hex}")
 }

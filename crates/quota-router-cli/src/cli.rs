@@ -87,6 +87,30 @@ pub enum Commands {
         #[arg(long, default_value_t = false)]
         strict_deprecation: bool,
     },
+
+    /// Compute settlement hash from a partial envelope JSON (RFC-0959 §CLI).
+    ///
+    /// Reads a JSON `SettlementEnvelope` from `--from` (or stdin via `-`),
+    /// recomputes `settlement_hash` via `SettlementEnvelope::compute_settlement_hash()`,
+    /// and emits the full envelope JSON with the hash field filled.
+    Settle {
+        /// Path to envelope JSON, or `-` for stdin.
+        #[arg(long, default_value = "-")]
+        from: String,
+    },
+
+    /// Verify a settlement envelope against replay defense (RFC-0959 §CLI).
+    ///
+    /// Reads a JSON `SettlementEnvelope` (with `settlement_hash` filled)
+    /// from `--from` (or stdin via `-`), recomputes the hash, checks it
+    /// matches the embedded field, then checks the nonce against the
+    /// in-memory `ConsumedReceiptIndex`. On success, inserts the nonce.
+    /// On replay (already-consumed nonce), returns an error.
+    SettleReplay {
+        /// Path to envelope JSON, or `-` for stdin.
+        #[arg(long, default_value = "-")]
+        from: String,
+    },
 }
 
 #[cfg(test)]

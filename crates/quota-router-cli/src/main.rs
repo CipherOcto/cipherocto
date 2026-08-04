@@ -37,6 +37,13 @@ async fn main() -> Result<()> {
             db_path,
             strict_deprecation,
         } => cmd::reputation_show(&did, &backend, db_path.as_deref(), strict_deprecation).await?,
+        Commands::Settle { from } => {
+            let serialized = cmd::settle(&from)?;
+            println!("{serialized}");
+        }
+        Commands::SettleReplay { from } => {
+            cmd::settle_replay(&from)?;
+        }
     }
 
     Ok(())

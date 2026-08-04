@@ -53,6 +53,11 @@ zk-circuit = { path = "../zk-circuit" }
 # matches the verifier's stub_commitment check.
 zk-verifier = { path = "../zk-verifier" }
 
+# Storage types (Ask + AskRepository + SettlementEnvelope) for the
+# `octo-wallet ask publish/list/show/revoke` CLI subcommand set
+# (mission 0959-a §CLI surface).
+quota-router-storage = { path = "../quota-router-storage" }
+
 # Identity crypto (RFC-0009 §Identity Key Format)
 ed25519-dalek = { version = "2.2", features = ["serde", "zeroize"] }
 hkdf = "0.12"

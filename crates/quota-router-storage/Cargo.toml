@@ -32,5 +32,8 @@ serde_json = "1.0"
 # Error types
 thiserror = "2.0"
 
+# TOML parser for the PricingAxis registry (RFC-0959 §Data Structures)
+toml = "0.8"
+
 [dev-dependencies]
 tempfile = "3"

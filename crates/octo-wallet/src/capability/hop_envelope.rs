@@ -184,6 +184,35 @@ pub fn pure_forward(
     ))
 }
 
+/// ForwardRequestPayload extension (RFC-0970 §Phase 4 + RFC-0870 §Roles).
+///
+/// `hop_envelope = None` is the pure forward path (RFC-0970 §pure_forward
+/// + RFC-0971 §Pure Forwarder Exception). `hop_envelope = Some(_)` opts in
+/// to forwarding with a hop envelope (Forwarder / Auditor roles).
+#[derive(Clone, Debug)]
+pub struct ForwardRequestPayload {
+    pub inner: InnerRequest,
+    pub hop_envelope: Option<HopEnvelope>,
+}
+
+impl ForwardRequestPayload {
+    /// Default constructor: pure forward (no hop envelope).
+    pub fn new(inner: InnerRequest) -> Self {
+        Self {
+            inner,
+            hop_envelope: None,
+        }
+    }
+
+    /// Constructor with explicit hop envelope opt-in.
+    pub fn with_hop_envelope(inner: InnerRequest, hop_envelope: HopEnvelope) -> Self {
+        Self {
+            inner,
+            hop_envelope: Some(hop_envelope),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,5 +328,28 @@ mod tests {
         let chain = vec![e1];
         let r = verify_chain_hash(&chain, &[0xFF; 32]);
         assert!(matches!(r, Err(HopError::ChainHashMismatch { .. })));
+    }
+
+    #[test]
+    fn forward_request_payload_new_has_no_hop_envelope() {
+        let p = ForwardRequestPayload::new(InnerRequest {
+            ciphertext: vec![],
+            aad: vec![],
+        });
+        assert!(p.hop_envelope.is_none());
+    }
+
+    #[test]
+    fn forward_request_payload_with_hop_envelope() {
+        let inner = InnerRequest { ciphertext: vec![], aad: vec![] };
+        let env = wrap_for_hop(
+            inner.clone(),
+            &[0x33; 32],
+            1_700_000_000_000,
+            "did:octo:router",
+            "did:octo:destination",
+        ).unwrap();
+        let p = ForwardRequestPayload::with_hop_envelope(inner, env);
+        assert!(p.hop_envelope.is_some());
     }
 }

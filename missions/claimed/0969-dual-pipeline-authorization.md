@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Claimed (2026-08-04)
 
 ## RFC
 
@@ -108,7 +108,7 @@ Splitting by module boundary (gateway / mint) lets each sub-mission merge indepe
 
 ## Claimant
 
-@unclaimed
+@mmacedoeu (top-level decomposition; ACs roll up as 0969-a, 0969-b land)
 
 ## Pull Request
 

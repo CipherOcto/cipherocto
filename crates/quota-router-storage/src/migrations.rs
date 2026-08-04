@@ -35,6 +35,11 @@ pub const BUILTIN_MIGRATIONS: &[Migration] = &[
         name: "create_asks_indexes",
         sql: include_str!("../migrations/v002__create_asks_indexes.sql"),
     },
+    Migration {
+        version: 3,
+        name: "create_consumed_receipt_index",
+        sql: include_str!("../migrations/v003__create_consumed_receipt_index.sql"),
+    },
 ];
 
 /// Migration errors.
@@ -282,5 +287,117 @@ mod tests {
         // Instead, verify the documented behavior: if apply_pending is called
         // twice, second call is a no-op (idempotency is the safety net).
         apply_pending(&db).unwrap();
+    }
+
+    #[test]
+    fn v003_creates_consumed_receipt_index_table() {
+        let db = stoolap::Database::open_in_memory().unwrap();
+        apply_pending(&db).unwrap();
+
+        // Schema-version table records v003 as applied.
+        let rows = db
+            .query(
+                "SELECT version FROM cipherocto_schema_version WHERE version = 3",
+                (),
+            )
+            .unwrap();
+        let mut iter = rows.into_iter();
+        let row = iter.next().expect("v003 row").unwrap();
+        let v: i64 = row.get(0).unwrap();
+        assert_eq!(v, 3, "v003 must be recorded in cipherocto_schema_version");
+
+        // consumed_receipt_index table is queryable. Insert + select round-trip
+        // proves the schema + indexes are usable end-to-end (avoids depending
+        // on sqlite_master introspection which is not exposed in stoolap).
+        // Row id is computed explicitly (CIPHEROCTO PRIMARY KEY pattern: row_id
+        // is INTEGER PRIMARY KEY w/o AUTO_INCREMENT — matches `asks` v001).
+        let next_id = || -> i64 {
+            let rows = db
+                .query(
+                    "SELECT COALESCE(MAX(row_id), 0) + 1 FROM consumed_receipt_index",
+                    (),
+                )
+                .unwrap();
+            rows.into_iter()
+                .next()
+                .unwrap()
+                .unwrap()
+                .get::<i64>(0)
+                .unwrap()
+        };
+        db.execute(
+            "INSERT INTO consumed_receipt_index \
+             (row_id, settlement_hash, nonce, ask_id, asker_did, consumed_at_unix) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                next_id(),
+                vec![0x42_u8; 32],
+                vec![0x55_u8; 32],
+                vec![0x77_u8; 32],
+                "did:octo:asker1",
+                1_700_000_000_i64,
+            ),
+        )
+        .unwrap();
+        let rows = db
+            .query("SELECT row_id FROM consumed_receipt_index", ())
+            .unwrap();
+        let mut iter = rows.into_iter();
+        let row = iter.next().expect("inserted row").unwrap();
+        let rid: i64 = row.get(0).unwrap();
+        assert_eq!(rid, 1, "first insert gets row_id 1");
+
+        // Round-trip: same nonce cannot be inserted again (UNIQUE constraint).
+        let dup = db.execute(
+            "INSERT INTO consumed_receipt_index \
+             (row_id, settlement_hash, nonce, ask_id, asker_did, consumed_at_unix) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                next_id(),
+                vec![0x42_u8; 32],
+                vec![0x55_u8; 32],
+                vec![0x77_u8; 32],
+                "did:octo:asker1",
+                1_700_000_001_i64,
+            ),
+        );
+        assert!(
+            dup.is_err(),
+            "duplicate nonce must be rejected by UNIQUE constraint: {dup:?}"
+        );
+
+        // Round-trip via mutation: rolling a fresh nonce in succeeds.
+        db.execute(
+            "INSERT INTO consumed_receipt_index \
+             (row_id, settlement_hash, nonce, ask_id, asker_did, consumed_at_unix) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                next_id(),
+                vec![0x66_u8; 32],
+                vec![0x99_u8; 32],
+                vec![0x77_u8; 32],
+                "did:octo:asker2",
+                1_700_000_002_i64,
+            ),
+        )
+        .unwrap();
+
+        // Per-asker filter (idx_cri_asker) returns both rows.
+        let rows = db
+            .query(
+                "SELECT asker_did, nonce FROM consumed_receipt_index ORDER BY consumed_at_unix",
+                (),
+            )
+            .unwrap();
+        let entries: Vec<(String, Vec<u8>)> = rows
+            .into_iter()
+            .map(|r| {
+                let r = r.unwrap();
+                (r.get::<String>(0).unwrap(), r.get::<Vec<u8>>(1).unwrap())
+            })
+            .collect();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].0, "did:octo:asker1");
+        assert_eq!(entries[1].0, "did:octo:asker2");
     }
 }

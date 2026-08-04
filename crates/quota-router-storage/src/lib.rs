@@ -21,6 +21,7 @@ pub mod ask_repo;
 pub mod axis_registry_toml;
 pub mod cache_key;
 pub mod circuit_breaker;
+pub mod consumed_receipt_repo;
 pub mod marketplace;
 pub mod migrations;
 pub mod sync;
@@ -52,6 +53,7 @@ pub use circuit_breaker::{
     TransitionReason, CACHE_HIT_RATE_TRIP_THRESHOLD, MIN_PROMPT_DIVERSITY, RECOVERY_COOLDOWN_SECS,
     RECOVERY_OBSERVE_SECS, WINDOW_SIZE,
 };
+pub use consumed_receipt_repo::ConsumedReceiptRepository;
 pub use marketplace::{MarketplaceIndex, ACTIVE_ASK_CAP};
 pub use migrations::{
     apply_pending, list_migrations, Migration, MigrationError, BUILTIN_MIGRATIONS,

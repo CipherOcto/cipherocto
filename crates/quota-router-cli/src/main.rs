@@ -41,8 +41,8 @@ async fn main() -> Result<()> {
             let serialized = cmd::settle(&from)?;
             println!("{serialized}");
         }
-        Commands::SettleReplay { from } => {
-            cmd::settle_replay(&from)?;
+        Commands::SettleReplay { from, db_path } => {
+            cmd::settle_replay(&from, db_path.as_deref())?;
         }
     }
 

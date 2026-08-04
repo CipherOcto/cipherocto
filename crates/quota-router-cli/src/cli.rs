@@ -104,12 +104,19 @@ pub enum Commands {
     /// Reads a JSON `SettlementEnvelope` (with `settlement_hash` filled)
     /// from `--from` (or stdin via `-`), recomputes the hash, checks it
     /// matches the embedded field, then checks the nonce against the
-    /// in-memory `ConsumedReceiptIndex`. On success, inserts the nonce.
-    /// On replay (already-consumed nonce), returns an error.
+    /// persisted `consumed_receipt_index` table (in-memory by default;
+    /// pass `--db-path` for file-backed persistence that survives across
+    /// CLI invocations). On success, inserts the nonce. On replay
+    /// (already-consumed nonce), returns an error.
     SettleReplay {
         /// Path to envelope JSON, or `-` for stdin.
         #[arg(long, default_value = "-")]
         from: String,
+        /// Open a file-backed stoolap DB at this path instead of the
+        /// in-memory default. Replay-defense state persists across CLI
+        /// invocations against the same path.
+        #[arg(long)]
+        db_path: Option<String>,
     },
 }
 

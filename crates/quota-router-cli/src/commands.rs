@@ -493,21 +493,36 @@ pub fn settle_from_json(envelope_json: &str) -> Result<String> {
 /// Steps:
 /// 1. Recompute `settlement_hash` from canonical fields → `HashMismatch` if
 ///    envelope fields were tampered with.
-/// 2. Check `nonce` against the in-memory `ConsumedReceiptIndex` →
+/// 2. Check `nonce` against the persisted `consumed_receipt_index` table
+///    (in-memory by default; file-backed if `--db-path` is supplied) →
 ///    `AlreadyConsumed` if the nonce was already inserted (replay).
-/// 3. On success, insert the nonce into the index (advances the
-///    replay-defense cursor).
+/// 3. On success, insert the nonce into the table (advances the
+///    replay-defense cursor; persists across CLI invocations against the
+///    same `--db-path`).
 ///
-/// The CLI holds a per-process in-memory index; production deployments
-/// back the index with the stoolap-backed `consumed_receipt_index` table
-/// (out of scope for this CLI; see `quota-router-storage` schema).
-pub fn settle_replay(from: &str) -> Result<()> {
+/// `settle_replay` is the CLI entry point; `settle_replay_repo` is the
+/// testable surface (takes a `ConsumedReceiptRepository` directly); both
+/// delegate to the same `SettlementEnvelope::verify` semantics.
+pub fn settle_replay(from: &str, db_path: Option<&str>) -> Result<()> {
     let envelope_json = read_envelope(from)?;
-    settle_replay_from_json(&envelope_json)
+    let repo = match db_path {
+        Some(p) => {
+            quota_router_storage::consumed_receipt_repo::ConsumedReceiptRepository::open_path(p)
+                .map_err(|e| anyhow::anyhow!("open db {p}: {e}"))?
+        }
+        None => {
+            quota_router_storage::consumed_receipt_repo::ConsumedReceiptRepository::open_in_memory()
+                .map_err(|e| anyhow::anyhow!("open in-memory store: {e}"))?
+        }
+    };
+    settle_replay_repo(&envelope_json, &repo)
 }
 
 /// Verify a settlement envelope from JSON (testable surface).
 pub fn settle_replay_from_json(envelope_json: &str) -> Result<()> {
+    // Legacy in-memory test path. New code should use settle_replay_repo
+    // against the persisted DAO. Kept for backward-compat with the unit tests
+    // in this module (which was authored before the persisted DAO existed).
     use quota_router_storage::ask::{ConsumedReceiptIndex, SettlementEnvelope};
 
     let envelope: SettlementEnvelope = serde_json::from_str(envelope_json)
@@ -524,6 +539,40 @@ pub fn settle_replay_from_json(envelope_json: &str) -> Result<()> {
     println!("index_len       = {}", index.len());
     println!("verify: OK (hash matches + nonce inserted)");
     Ok(())
+}
+
+/// Verify a settlement envelope against the persisted DAO (testable surface).
+pub fn settle_replay_repo(
+    envelope_json: &str,
+    repo: &quota_router_storage::consumed_receipt_repo::ConsumedReceiptRepository,
+) -> Result<()> {
+    use quota_router_storage::ask::SettlementEnvelope;
+    use quota_router_storage::consumed_receipt_repo::VerifyOutcome;
+
+    let envelope: SettlementEnvelope = serde_json::from_str(envelope_json)
+        .map_err(|e| anyhow::anyhow!("invalid envelope JSON: {e}"))?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let outcome = repo
+        .verify_and_insert(&envelope, now)
+        .map_err(|e| anyhow::anyhow!("settle_replay failed: {e}"))?;
+    match outcome {
+        VerifyOutcome::HashMismatch => Err(anyhow::anyhow!("settle_replay failed: hash mismatch")),
+        VerifyOutcome::AlreadyConsumed => Err(anyhow::anyhow!(
+            "settle_replay failed: nonce already consumed (replay)"
+        )),
+        VerifyOutcome::Inserted(_) => {
+            println!(
+                "settlement_hash = {}",
+                hex::encode(envelope.settlement_hash)
+            );
+            println!("nonce           = {}", hex::encode(envelope.nonce));
+            println!("index_len       = {}", repo.len().unwrap_or(0));
+            println!("verify: OK (hash matches + nonce inserted)");
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -787,23 +836,34 @@ network_id = "0202020202020202020202020202020202020202020202020202020202020202"
     }
 
     #[test]
-    fn settle_replay_rejects_tampered_envelope() {
+    fn settle_replay_repo_persists_nonce_across_replay_attempts() {
+        // Confirms the persisted DAO (not the in-memory HashMap) is the
+        // canonical replay-defense path. Sprint 7 (mission 0959-a S7).
+        let repo =
+            quota_router_storage::consumed_receipt_repo::ConsumedReceiptRepository::open_in_memory(
+            )
+            .expect("open in-memory DAO");
         let input = sample_envelope_json();
-        let mut settled: serde_json::Value =
-            serde_json::from_str(&settle_from_json(&input).unwrap()).unwrap();
-        // Tamper: flip a byte in timestamp_unix. This IS part of the canonical
-        // preimage (see SettlementEnvelope::compute_settlement_hash), so the
-        // embedded settlement_hash will no longer match. `cost` is NOT part of
-        // the hash preimage, so it would silently pass — confirmed by an
-        // earlier round of this test.
-        settled["timestamp_unix"] = serde_json::json!(1_700_000_999_u64);
-        let tampered = serde_json::to_string(&settled).unwrap();
-        let result = settle_replay_from_json(&tampered);
-        assert!(result.is_err(), "tampered envelope must fail verify");
-        let err = format!("{result:?}");
+        let settled = settle_from_json(&input).expect("settle");
+        // First call: verify + insert.
+        settle_replay_repo(&settled, &repo).expect("first settle_replay");
+        assert_eq!(repo.len().unwrap(), 1, "first call inserts 1 row");
+        // Second call (same settled JSON, same nonce): AlreadyConsumed.
+        let err = settle_replay_repo(&settled, &repo).unwrap_err();
         assert!(
-            err.contains("settlement hash mismatch") || err.contains("HashMismatch"),
-            "error must indicate hash mismatch, got: {err}"
+            format!("{err:?}").contains("nonce already consumed"),
+            "replay attempt must fail with AlreadyConsumed, got: {err:?}"
         );
+        // Third call: tamper with timestamp_unix (canonical preimage field).
+        let mut tampered: serde_json::Value = serde_json::from_str(&settled).unwrap();
+        tampered["timestamp_unix"] = serde_json::json!(1_700_000_999_u64);
+        let tampered_str = serde_json::to_string(&tampered).unwrap();
+        let err = settle_replay_repo(&tampered_str, &repo).unwrap_err();
+        assert!(
+            format!("{err:?}").contains("hash mismatch"),
+            "tampered envelope must fail with hash mismatch, got: {err:?}"
+        );
+        // Row count unchanged: tamper + replay both rejected BEFORE insert.
+        assert_eq!(repo.len().unwrap(), 1, "no new rows after rejection");
     }
 }

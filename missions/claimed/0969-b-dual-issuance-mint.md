@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Claimed (2026-08-04)
 
 ## RFC
 
@@ -81,7 +81,7 @@ This sub-mission implements (per top-level Type Coverage table):
 
 ## Claimant
 
-@unclaimed
+@mmacedoeu (algorithm stub + MintError type; full crypto deferred)
 
 ## Pull Request
 

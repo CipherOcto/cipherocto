@@ -136,7 +136,7 @@ Per `docs/BLUEPRINT.md` "Research Review Gate" line 232-247 — research → Use
 
 - Author RFC-0959 at `rfcs/draft/economics/0959-rfc-0909-amendment-ask-settlement.md` referencing this research — **DONE 2026-07-19** (Session 03, this research document).
 - Cross-link from S03 session plan §2 (Decisions Locked) — **DONE**.
-- Plan settlement engine + PricingAxis registry + cache classification in mission `missions/open/0959-a-ask-pricing-stoolap.md` — **DONE 2026-07-19** (S03).
+- Plan settlement engine + PricingAxis registry + cache classification in mission `missions/claimed/0959-a-ask-pricing-stoolap.md` — **DONE 2026-07-19** (S03).
 - **Submit Research to Review Board:** per BLUEPRINT.md Research Review Gate ("Review by maintainers (min. 2 reviewers)"), circulate this research to maintainers for ≥ 2 reviewer approvals before considering it for Use Case promotion status. Reviewer signatures tracked in §Reviewer Signatures below.
 - **Create Use Case? (Yes/No):** **YES** — `docs/use-cases/ai-quota-marketplace.md` already exists and this research is a deeper dive into one of its technical axes (per-node Ask pricing); promotion from research → use case is implicit (the use case pre-dates this research). NO new use case artifact needed; this research supports the existing use case with finer-grained rationale.
 

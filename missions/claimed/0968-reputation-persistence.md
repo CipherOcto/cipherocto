@@ -30,7 +30,7 @@ RFC-0968: Reputation Registry (with RFC-0968-A1 in-place amendment, 2026-07-26)
 
 **Related missions (separate scope):**
 
-- Mission 0968a-reputation-anchoring (NEW, deferred) — on-chain anchoring per RFC-0955-R1 follow-up. Stub path: `missions/deferred/0968a-reputation-anchoring.md`. Status remains "Deferred; depends on RFC-0955 acceptance + RFC-0955-R1 deployment." Mission 0968a's acceptance criterion is now gated on RFC-0955 Accepted + RFC-0955-R1 Accepted.
+- Mission 0968a-reputation-anchoring (NEW, claimed) — on-chain anchoring per RFC-0955-R1 follow-up. Path: `missions/claimed/0968a-reputation-anchoring.md`. Status remains gated on RFC-0955 Accepted + RFC-0955-R1 Accepted (RFC-0955 is Draft as of 2026-08-04; see `missions/claimed/0968a2-reputation-anchoring-binding.md` for the LIVE chain-side binding patch under development).
 - Mission 0968-b-marketplace-integration (NEW, RFC-0968-A1.19) — owns marketplace read-side: routing priority, listing display, `0-100` Reputation Score presentation layer. Carrier of §7 dual-read cutover. Path: `missions/archived/0968-b-marketplace-integration.md` (Completed via Path B closure 2026-07-30).
 
 ## Summary
@@ -147,7 +147,7 @@ The previous "Phase 2 equivalence via replay" claim is replaced with a **dual-re
 
 ### Phase 4: Federation (Gated on claimed/Accepted 0855p-b, RFC-0968-A1 amendments 21, 22)
 
-- [ ] **Gating (RFC-0968-A1 amendment 22):** Phase 4 ships ONLY when `missions/0855p-b-cross-mission-reputation.md` (or its replacement canonical mission) is in `claimed/` or accepted. The Phase 4 PR MUST reference a claimed 0855p-b in its description.
+- [ ] **Gating (RFC-0968-A1 amendment 22):** Phase 4 ships ONLY when `missions/archived/0855p-b-cross-mission-reputation.md` (or its replacement canonical mission) is in `claimed/` or accepted. The Phase 4 PR MUST reference a claimed 0855p-b in its description.
 - [ ] **Authority model (RFC-0968-A1 amendment 21):** Gossip envelopes carry `event_id`, `recorder_did`, `recorder_signature` (authoritative), `source_mission`, `source_domain`. Coordinator signature MAY authorize the source mission but cannot replace recorder authorization. Attestor signature is non-authoritative transport metadata.
 - [ ] **Pubkey-keyed topics replaced (RFC-0968-A1 amendment 22, C-X5):** Topics key on canonical DID or stable lineage identifier. Replication payload includes `rotation_receipt` + `old_did/new_did` lineage map. Stale pubkey mappings rejected at gossip ingress with `GossipEnvelopeInvalid`.
 - [ ] **Gossip safety (RFC-0968-A1 amendment 16 / I-P7):** `MIN_ATTESTOR_QUORUM = 3` per-event attestation threshold. Attestor rate-limit enforcement.
@@ -155,11 +155,11 @@ The previous "Phase 2 equivalence via replay" claim is replaced with a **dual-re
 
 ### Phase 5: On-Chain Anchoring — DEFERRED (mission 0968a per Round 1 H11, RFC-0955-R1 follow-up)
 
-- [ ] **NOT IN THIS MISSION.** Phase 5 is `missions/deferred/0968a-reputation-anchoring.md`. Unblock requires:
+- [ ] **NOT IN THIS MISSION.** Phase 5 is `missions/claimed/0968a-reputation-anchoring.md` (gated on RFC-0955 Accepted + RFC-0955-R1 Accepted). Unblock requires:
   - RFC-0955 Accepted (currently Draft; see `rfcs/draft/economics/0955-model-liquidity-layer.md`).
   - RFC-0955-R1 amendment **deployed**: `reputation:blake3_digest` (32-byte) field replaces `reputation: u64` on `ComputeAsset` per `rfcs/draft/economics/0955-model-liquidity-layer.md:263` + `§ Reputation Anchoring Amendment (RFC-0955-R1, 2026-07-26)`.
   - Anchor commitment envelope is `BLAKE3(BLAKE3_REPUTATION_ANCHOR_DOMAIN || did || kind || layer || last_event_id || DfpEncoding::from_dfp(&score_ewma).to_bytes() || last_event_unix || samples || severity_total)` per RFC-0955-R1 §"Wire contract".
-- [ ] See `missions/deferred/0968a-reputation-anchoring.md` for the canonical mission scope and acceptance criteria.
+- [ ] See `missions/claimed/0968a-reputation-anchoring.md` for the canonical mission scope and acceptance criteria.
 
 ### Implementation Guide
 

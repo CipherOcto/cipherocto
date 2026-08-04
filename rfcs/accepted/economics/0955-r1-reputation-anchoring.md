@@ -311,7 +311,7 @@ closes the 1-leaf spam amplification (Round 10 R10-N03).
 
 A per-chain cost estimate with three recorder-count scenarios
 (low: ≤100 recorders, medium: 100-10_000, high: >10_000) is published as
-part of `missions/deferred/0968a-reputation-anchoring.md` (gated on this
+part of `missions/claimed/0968a-reputation-anchoring.md` (gated on this
 RFC acceptance). The estimate uses the upper bound
 `288 anchor roots/controller/day` (per `DEFAULT_ANCHOR_INTERVAL_SECS = 300`)
 × `MAX_ANCHOR_ROOTS_PER_CONTROLLER_PER_INTERVAL` × recorder-count, NOT the
@@ -436,8 +436,9 @@ last_event_unix, samples, severity_total)` tuple MUST produce the same
   44 (controller-level aggregation), §28.1 amendment 48 (per-controller
   Merkle-root batching), §28.1 amendment 51 (proportional fee per leaf).
 - RFC-0104 — Dfp bit-determinism; canonical 24-byte encoding.
-- `missions/deferred/0968a-reputation-anchoring.md` — the implementation
-  mission; gated on this RFC acceptance.
+- `missions/claimed/0968a-reputation-anchoring.md` — the implementation
+  mission; gated on this RFC acceptance (live chain-side binding patch:
+  `missions/claimed/0968a2-reputation-anchoring-binding.md`).
 - `missions/claimed/0968-reputation-persistence.md` — Phase 1-4 only;
   Phase 5 (anchoring) is owned by mission 0968a.
 

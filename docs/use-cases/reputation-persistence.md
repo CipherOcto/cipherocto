@@ -136,7 +136,7 @@ If not implemented:
 - RFC-0900: AI Quota Marketplace (provider reputation signal)
 - RFC-0918: Inference Task Market (provider outcome signal)
 - RFC-0927: RouterConfig Extension (per-layer alpha overrides)
-- RFC-0955: Model Liquidity Layer (reputation field; on-chain anchoring follows mission 0968a — stub at `missions/deferred/0968a-reputation-anchoring.md`)
+- RFC-0955: Model Liquidity Layer (reputation field; on-chain anchoring follows mission 0968a — canonical mission: `missions/claimed/0968a-reputation-anchoring.md`; live chain-side binding patch: `missions/claimed/0968a2-reputation-anchoring-binding.md`)
 - RFC-0967: Policy Object Graph (consumes reputation signal)
 - Mission 0855p-b: Cross-mission coordinator reputation (federation target)
 
@@ -157,5 +157,5 @@ Draft → RFC Draft Created.
 
 - ✓ RFC-0968 created — `rfcs/accepted/economics/0968-reputation-registry.md`.
 - ✓ Mission file created — `missions/claimed/0968-reputation-persistence.md`.
-- ✓ On-chain anchoring stub — `missions/deferred/0968a-reputation-anchoring.md` (deferred; depends on RFC-0955).
+- ✓ On-chain anchoring mission claimed — `missions/claimed/0968a-reputation-anchoring.md` (gated on RFC-0955 Accepted + RFC-0955-R1 Accepted). Live chain-side binding patch in `missions/claimed/0968a2-reputation-anchoring-binding.md`.
 - → Mission implement.

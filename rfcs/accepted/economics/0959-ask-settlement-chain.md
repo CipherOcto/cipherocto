@@ -49,7 +49,7 @@ Coexists with RFC-0909 (Deterministic Quota Accounting). RFC-0909 governs virtua
 
 > **Dependency Validation Rules:**
 > 1. Dependencies MUST form a DAG (no cycles) — verified: `0959 ← {0126, 0853, 0009, 0957, 0862, 0910*, 0900*}` (asterisk = optional); no back-edges.
-> 2. All "Requires" RFCs MUST be listed as mission prerequisites — see `missions/open/0959-a-ask-pricing-stoolap.md`
+> 2. All "Requires" RFCs MUST be listed as mission prerequisites — see `missions/claimed/0959-a-ask-pricing-stoolap.md`
 > 3. Optional dependencies documented separately from required — done
 > 4. Dependencies on "Draft" RFCs (RFC-0853, RFC-0009) MUST note the assumption they will reach Accepted prior to RFC-0959 promotion — see §Implicit Assumptions Audit IA-1, IA-2. RFC-0957 was Draft at RFC-0959 acceptance; IA-3 closes when RFC-0957 reaches Accepted (alongside RFC-0957-A1 + RFC-0959-A1 + RFC-0969 + RFC-0970 + RFC-0971).
 
@@ -70,7 +70,7 @@ Standalone, top-level section to satisfy BLUEPRINT v1.3 mandatory section set.
 
 **DAG check:** `0959 ← {0126, 0853, 0009, 0957, 0862}` — acyclic. No back-edge. Valid.
 
-**Mission prerequisite alignment:** `missions/open/0959-a-ask-pricing-stoolap.md` §"Mission-level (RFC prerequisites)" mirrors this table (RFC-0909 dropped per Option A).
+**Mission prerequisite alignment:** `missions/claimed/0959-a-ask-pricing-stoolap.md` §"Mission-level (RFC prerequisites)" mirrors this table (RFC-0909 dropped per Option A).
 
 ## Design Goals
 
@@ -858,7 +858,7 @@ assert overflow.is_err();  // OCTO_WAmount cannot represent u128::MAX MicroOCTO_
 ### Phase 1: Core (RFC-0959 reaches Accepted; mission implementation gated)
 
 - [x] Author this RFC v1.0 (Option A rewrite; 2026-07-20)
-- [x] Author mission file `missions/open/0959-a-ask-pricing-stoolap.md` (S03; requires Option A wording update)
+- [x] Author mission file `missions/claimed/0959-a-ask-pricing-stoolap.md` (S03; requires Option A wording update)
 - [ ] Await RFC-0959 acceptance (7-day review + 2 maintainer approvals)
 - [ ] Await RFC-0126, RFC-0853, RFC-0009, RFC-0957 promotion to Accepted (gate dependencies)
 - [ ] RFC-0862 prerequisite satisfied (no action)

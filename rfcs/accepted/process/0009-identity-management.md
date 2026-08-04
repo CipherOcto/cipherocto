@@ -451,7 +451,7 @@ Notes: Linux flock(2) atomic exclusive; second opener MUST receive typed error.
 - [ ] Capability mint authority gating per NodeType (Wholesale: no ZK; SelfHost: ZK ok; Hybrid: per-cap)
 - [ ] `flock(LOCK_EX)`/`flock(LOCK_SH)` semantics on vault file access
 - [ ] `rotate()` API for identity successor linkage (monotonic successor counter)
-- [ ] Mission: `missions/open/0102-a-wallet-foundation.md` (S01 — wallet foundation)
+- [ ] Mission: `missions/claimed/0102-a-wallet-foundation.md` (S01 — wallet foundation)
 - [ ] Plan: `docs/plans/2026-07-19-session-01-wallet-foundation.md`
 
 ## Roles and Authorities

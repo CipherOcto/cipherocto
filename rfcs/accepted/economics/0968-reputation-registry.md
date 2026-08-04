@@ -3339,7 +3339,7 @@ Cross-file propagation:
 - `missions/open/0968-reputation-persistence-blocked.md`: `update_ewma returns Result<f64, _>` → `Result<octo_determin::Dfp, _>` (Phase 1 acceptance); EWMA test vector line and "Why v1.1 DFP upgrade" Notes paragraph rewritten; cargo dep added to Mission Phase 1 acceptance; `f64::EPSILON * samples` equivalence-test entry dropped.
 - `docs/use-cases/reputation-persistence.md`: "Round 2 M14 DFP upgrade path" bullet replaced with "v1.0 uses `octo_determin::Dfp` per RFC-0104. Cross-replica determinism is achieved at the type level."
 - `docs/research/2026-07-24-reputation-persistence-research.md`: "f64 caveat" paragraph replaced; "f64 cross-platform variance" risk row rewritten.
-- `missions/deferred/0968a-reputation-anchoring.md`: v3.0-r15 cross-reference added.
+- `missions/claimed/0968a-reputation-anchoring.md`: v3.0-r15 cross-reference added.
 
 ### Round 16 Notes (v3.1-r16)
 
@@ -3392,7 +3392,7 @@ v3.2-r17 is a Round 16 conformance + Dfp-API audit round. It closes 10 in-file f
 
 **Cross-file propagation deferred to caller** (out-of-scope for the RFC doc; "Don't touch other files" constraint):
 
-- **(C11)** `missions/deferred/0968a-reputation-anchoring.md:7` says "anchor 24-byte DFP directly into RFC-0955 reputation:u64", but `reputation:u64` is incompatible with a 24-byte BLOB. The fix is to anchor `BLAKE3(24-byte DFP)` or use `reputation:blake3_digest`.
+- **(C11)** `missions/claimed/0968a-reputation-anchoring.md:7` says "anchor 24-byte DFP directly into RFC-0955 reputation:u64", but `reputation:u64` is incompatible with a 24-byte BLOB. The fix is to anchor `BLAKE3(24-byte DFP)` or use `reputation:blake3_digest`.
 - **(C12)** Use case 91, mission 44/154, RFC comment 1912, OQ 2883 reserve `0x28` for future variants. The v3.1-r16 L4 fix promotes `0x28` to `ScoreEncodingInvalid`; those companion docs need to update their `0x28` reserves to `0x29+`.
 
 Round 17 makes no design changes; it only corrects in-file spec references against the canonical `octo_determin` API surface and tightens the v1.0 outcome-mapping contract.
@@ -3426,7 +3426,7 @@ v3.3-r18 is a Round 17 follow-up + cross-file propagation round. It closes 12 CR
 - **(C9)** `missions/open/0968-reputation-persistence-blocked.md:56, 104, 271`: `Dfp::to_bytes()` / `score_ewma.to_bytes()` → `DfpEncoding::from_dfp(&d).to_bytes()`.
 - **(C10)** `missions/open/0968-reputation-persistence-blocked.md:44, 154`: `0x28..=0xFF reserved for future variants` → `0x29..=0xFF reserved for future variants` (since `ScoreEncodingInvalid = 0x28`).
 - **(C11)** `docs/use-cases/reputation-persistence.md:91`: `0x28..=0xFF reserved` → `0x29..=0xFF reserved`.
-- **(C12)** `missions/deferred/0968a-reputation-anchoring.md:7`: "anchor 24-byte DFP directly into RFC-0955 reputation:u64" → "anchor `BLAKE3(DfpEncoding::from_dfp(&reputation).to_bytes())` (32-byte digest) into the RFC-0955 `reputation:blake3_digest` field" (a 24-byte BLOB does not fit in `reputation:u64`).
+- **(C12)** `missions/claimed/0968a-reputation-anchoring.md:7`: "anchor 24-byte DFP directly into RFC-0955 reputation:u64" → "anchor `BLAKE3(DfpEncoding::from_dfp(&reputation).to_bytes())` (32-byte digest) into the RFC-0955 `reputation:blake3_digest` field" (a 24-byte BLOB does not fit in `reputation:u64`).
 
 Round 18 makes no design changes; it only closes the Round 17 cross-file propagation backlog (C11, C12) plus 10 stale-reference / spec-tidying findings on the RFC itself.
 

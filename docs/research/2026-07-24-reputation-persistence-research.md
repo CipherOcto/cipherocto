@@ -52,7 +52,7 @@ All share structural similarity (DID → score + history) but use distinct in-me
 
 **Excluded:**
 
-- On-chain anchoring (separate gap, mission 0968a per RFC-0955; stub: `missions/deferred/0968a-reputation-anchoring.md`).
+- On-chain anchoring (separate gap, mission 0968a per RFC-0955; canonical mission: `missions/claimed/0968a-reputation-anchoring.md`; live chain-side binding patch: `missions/claimed/0968a2-reputation-anchoring-binding.md`).
 - Reputation tokenization; reputation remains a derived signal, not a token or balance.
 - Reputation weighting algorithms beyond per-kind normalizers.
 
@@ -234,7 +234,7 @@ Clock dependency is explicit: callers pass `now_unix` into every mutating time-s
 4. **Recorder signature + stake + state machine** for write authority; `register_recorder` API with `stake_proof` (Round 2 H6).
 5. **Per-kind normalizers + weights table** for cross-layer AVG; `Normalizer` trait + `MAX_SEVERITY` + `KIND_WEIGHTS` constants (Round 2 H9).
 6. **Type-safe adapter** in `crates/quota-router-storage` with `ReputationStore` trait.
-7. **Defer on-chain anchoring** to mission 0968a (RFC-0955 follow-up; stub: `missions/deferred/0968a-reputation-anchoring.md`).
+7. **Defer on-chain anchoring** to mission 0968a (RFC-0955 follow-up; canonical mission: `missions/claimed/0968a-reputation-anchoring.md`; live chain-side binding patch: `missions/claimed/0968a2-reputation-anchoring-binding.md`).
 8. **Defer reputation tokenization** — keep reputation as derived signal, not balance.
 
 ## Risks

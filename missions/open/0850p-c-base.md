@@ -121,7 +121,7 @@ High (~1500 lines; envelope types, GroupRegistry, witness validation pipeline, c
 
 ## Prerequisites
 
-- RFC-0850 status: Draft (implementation has begun per CLAUDE.md; binding can proceed in parallel per the 0850p-a pattern in `missions/claimed/0850p-a-whatsapp-auth-onboarding.md`)
+- RFC-0850 status: Draft (implementation has begun per CLAUDE.md; binding can proceed in parallel per the 0850p-a pattern in `missions/open/0850p-a-whatsapp-auth-onboarding.md`)
 - RFC-0855 status: Accepted
 - RFC-0855p-b status: Accepted
 - RFC-0850p-a status: Accepted
@@ -138,7 +138,7 @@ RFC-0850p-c declares 6 envelope types, 4 GroupState transitions, 10 witness vali
 
 ### Why is the RFC still Draft while this base mission is Open?
 
-Per `missions/claimed/0850p-a-whatsapp-auth-onboarding.md` ("RFC Status" section): "implementation has proceeded in parallel with RFC maturation." The 0850h mission is `Implemented` while RFC-0850 is still `Draft`; the 0850ab-a mission is `Claimed` while RFC-0850ab-a is `Accepted`. This base mission follows the same pattern: the RFC is mature (Accepted as of 2026-06-16) and the base mission is now Open for claim.
+Per `missions/open/0850p-a-whatsapp-auth-onboarding.md` ("RFC Status" section): "implementation has proceeded in parallel with RFC maturation." The 0850h mission is `Implemented` while RFC-0850 is still `Draft`; the 0850ab-a mission is `Claimed` while RFC-0850ab-a is `Accepted`. This base mission follows the same pattern: the RFC is mature (Accepted as of 2026-06-16) and the base mission is now Open for claim.
 
 ### Cross-RFC consistency
 

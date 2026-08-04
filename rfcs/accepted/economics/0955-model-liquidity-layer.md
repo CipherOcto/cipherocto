@@ -378,7 +378,7 @@ impl ReputationDigest {
 /// `0955-r1-reputation-anchoring.md` for the canonical authority).
 ///
 /// Submitted by the reputation anchoring job
-/// (`missions/deferred/0968a-reputation-anchoring.md`) per
+/// (`missions/claimed/0968a-reputation-anchoring.md`) per
 /// `(did, signal_kind, layer)` tuple whose `last_event_id` is unanchored.
 /// Every anchoring transaction carries a `GovernanceSnapshot` and validates
 /// freshness against `MAX_GOVERNANCE_SNAPSHOT_AGE_SECS = 600` per RFC-0968 §3
@@ -979,9 +979,10 @@ graph TB
 
 Phase 5 is owned by the sibling Draft RFC
 `rfcs/draft/economics/0955-r1-reputation-anchoring.md` and the implementation
-mission `missions/deferred/0968a-reputation-anchoring.md` (Deferred,
-gated on RFC-0955-R1 acceptance). This RFC cross-references the sibling; it
-does NOT duplicate the implementation checklist.
+mission `missions/claimed/0968a-reputation-anchoring.md` (gated on
+RFC-0955-R1 acceptance; see `missions/claimed/0968a2-reputation-anchoring-binding.md`
+for the LIVE chain-side binding patch under development). This RFC
+cross-references the sibling; it does NOT duplicate the implementation checklist.
 
 **Phase 5 acceptance gate.** RFC-0955-R1 promotion from Draft to Accepted is
 gated on:
@@ -1026,8 +1027,9 @@ Promotion of the binding to Accepted is independent of this RFC's promotion.
 - **Error handling.** `ReputationError::AnchorTupleFanoutExceeded (0x2A)` is
   a joint RFC-0968 / RFC-0955-R1 table entry; canonical assignment is
   RFC-0968 §13.
-- **Implementation mission.** `missions/deferred/0968a-reputation-anchoring.md`
-  (Deferred, gated on RFC-0955-R1 acceptance).
+- **Implementation mission.** `missions/claimed/0968a-reputation-anchoring.md`
+  (gated on RFC-0955-R1 acceptance; live chain-side binding patch:
+  `missions/claimed/0968a2-reputation-anchoring-binding.md`).
 
 ## Rationale
 

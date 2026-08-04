@@ -220,7 +220,7 @@ Medium-High (3 new core modules, 1 marketplace router module, 1 anti-fraud modul
 
 ## Claimant
 
-CLAIMED 2026-07-20 (mission moved from missions/open/0959-a-ask-pricing-stoolap.md to missions/claimed/0959-a-ask-pricing-stoolap.md per BLUEPRT Mission Lifecycle; all 4 new Requires RFCs reached Accepted 2026-07-20 — RFC-0959 v1.0 + RFC-0853 + RFC-0009 + RFC-0957; RFC-0862 + RFC-0126 + RFC-0909 already Accepted pre-2026-07-20)
+CLAIMED 2026-07-20 (mission promoted from Open to Claimed per BLUEPRINT Mission Lifecycle; all 4 new Requires RFCs reached Accepted 2026-07-20 — RFC-0959 v1.0 + RFC-0853 + RFC-0009 + RFC-0957; RFC-0862 + RFC-0126 + RFC-0909 already Accepted pre-2026-07-20)
 
 ## Pull Request
 

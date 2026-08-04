@@ -122,7 +122,7 @@ Master plan S04 row (§5 line 102): "Provider egress/ingress + 11-step exercise 
 
 **Pre-existing crate note (per S04 plan §1 line 41):** `crates/quota-router-core/` exists with 30+ modules. S04 ADDS the missing modules under the same crate: `src/egress/`, `src/ingress/`, `src/marketplace/`, `src/settle/`, `src/receipt/`, `src/sim/`. No `cargo new`; just `mod` declarations + feature flags.
 
-**Filename consistency note (R1 fix per S04 audit):** master plan names `0957-b-provider-boundary-exercise-path.md`. S04 plan §0 line 21 names bare `provider-boundary-exercise-path.md` (no RFC prefix; cited pattern `missions/open/quota-market-integration.md` does not exist per `ls`). This mission file uses master-plan naming for consistency with `0102-a-`, `0957-a-`, `0959-a-` pattern.
+**Filename consistency note (R1 fix per S04 audit):** master plan names `0957-b-provider-boundary-exercise-path.md`. S04 plan §0 line 21 names bare `provider-boundary-exercise-path.md` (no RFC prefix; a bare-name pattern was used as the placeholder in S04 plan and the canonical quota-market-integration mission now lives at `missions/archived/superseded/quota-market-integration.md`). This mission file uses master-plan naming for consistency with `0102-a-`, `0957-a-`, `0959-a-` pattern.
 
 ## Acceptance Criteria
 

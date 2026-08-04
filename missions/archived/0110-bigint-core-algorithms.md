@@ -310,7 +310,7 @@ Preconditions:
 - RFC-0110: Deterministic BIGINT (§Data Structure, §Canonical Form, §Algorithms)
 - RFC-0110: Deterministic BIGINT (§Determinism Rules)
 - RFC-0110: Deterministic BIGINT (§Constants)
-- missions/claimed/0104-dfp-core-type.md (DFP pattern for structure)
+- missions/archived/0104-dfp-core-type.md (DFP pattern for structure)
 
 ## Complexity
 High — Division (Knuth Algorithm D) is the most complex component

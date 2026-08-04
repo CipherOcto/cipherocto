@@ -139,7 +139,7 @@ Medium-High (HMAC-BLAKE3 macaroon, multiple channel providers, attenuation enfor
 
 ## Claimant
 
-CLAIMED 2026-07-20 (mission moved from missions/open/0957-a-capability-token-macaroon.md to missions/claimed/0957-a-capability-token-macaroon.md per BLUEPRT Mission Lifecycle; RFC-0957 reached Accepted 2026-07-20)
+CLAIMED 2026-07-20 (mission promoted from Open to Claimed per BLUEPRINT Mission Lifecycle; RFC-0957 reached Accepted 2026-07-20)
 
 ## Pull Request
 

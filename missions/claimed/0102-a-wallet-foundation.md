@@ -134,7 +134,7 @@ Medium-High (new crate, dual substrate, vault crypto, CLI, RFC additions)
 
 ## Claimant
 
-CLAIMED 2026-07-20 (mission moved from missions/open/0102-a-wallet-foundation.md to missions/claimed/0102-a-wallet-foundation.md per BLUEPRT Mission Lifecycle; both RFC-0102 + RFC-0009 reached Accepted 2026-07-20)
+CLAIMED 2026-07-20 (mission promoted from Open to Claimed per BLUEPRINT Mission Lifecycle; both RFC-0102 + RFC-0009 reached Accepted 2026-07-20)
 
 ## Pull Request
 

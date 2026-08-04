@@ -195,7 +195,7 @@ prop_compose! {
 - RFC-0110: Deterministic BIGINT (§Gas Model)
 - RFC-0110: Deterministic BIGINT (§Differential Fuzzing Requirement)
 - RFC-0110: Deterministic BIGINT (§Verification Probe)
-- missions/claimed/0104-dfp-core-type.md (DFP fuzzing pattern)
+- missions/archived/0104-dfp-core-type.md (DFP fuzzing pattern)
 
 ## Complexity
 Medium — Fuzzing infrastructure setup + comprehensive test coverage

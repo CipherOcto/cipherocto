@@ -1167,7 +1167,7 @@ When the blocker resolves, the mission is re-claimed from `deferred/`:
 3. Drop the `## Rationale for deferral` blockquote (or convert to a note).
 4. Proceed through the standard lifecycle.
 
-Example existing conformant mission: `missions/deferred/0870g-l3-cross-process-tcp-e2e.md` (defers L3 cross-process TCP end-to-end test pending design discussion; carries the "must NOT be re-implemented by re-introducing a test-only binary" guardrail). `missions/deferred/0968a-reputation-anchoring.md` defers anchoring BLOB schema pending RFC-0955 acceptance.
+Example existing conformant mission: `missions/deferred/0870g-l3-cross-process-tcp-e2e.md` (defers L3 cross-process TCP end-to-end test pending design discussion; carries the "must NOT be re-implemented by re-introducing a test-only binary" guardrail). `missions/claimed/0968a-reputation-anchoring.md` defers anchoring BLOB schema pending RFC-0955 acceptance (live chain-side binding patch: `missions/claimed/0968a2-reputation-anchoring-binding.md`).
 
 ---
 

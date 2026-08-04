@@ -8,6 +8,7 @@
 pub mod bearer_capsule_re_export;
 pub mod caveat;
 pub mod discharge;
+pub mod gossip;
 pub mod macaroon;
 pub mod market_delivery;
 pub mod redemption;

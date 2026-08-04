@@ -6,6 +6,7 @@ pub mod metrics;
 pub mod provider;
 pub mod ratelimit;
 pub mod request;
+pub mod role_binding;
 pub mod scorer;
 #[cfg(any(test, feature = "test-helpers"))]
 pub mod testing;

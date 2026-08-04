@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod storage;
 pub mod template;
 
@@ -5,8 +6,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 use thiserror::Error;
 
+use cache::PromptCache;
 use storage::PromptStorage;
 #[cfg(test)]
 use template::TemplateEngine;
@@ -183,13 +186,45 @@ impl Default for AbTestMetrics {
 /// Thread-safe prompt registry shared across proxy workers via Arc.
 pub struct PromptRegistry {
     storage: PromptStorage,
+    cache: PromptCache,
 }
 
 impl PromptRegistry {
+    /// Build a registry with the default cache size (1000) + TTL (300s).
     pub fn new() -> Self {
+        Self::with_cache(1000, Duration::from_secs(300))
+    }
+
+    /// Build a registry with explicit cache size and TTL.
+    pub fn with_cache(cache_size: usize, ttl: Duration) -> Self {
         Self {
             storage: PromptStorage::new(),
+            cache: PromptCache::new(cache_size, ttl),
         }
+    }
+
+    /// Direct cache access for tests + tooling.
+    pub fn cache(&self) -> &PromptCache {
+        &self.cache
+    }
+
+    /// Render a prompt with template substitution and LRU caching.
+    /// Cache key incorporates `request_id` so A/B tests do not bleed across requests.
+    pub fn render(
+        &mut self,
+        prompt_id: &str,
+        request_id: &str,
+        variables: &HashMap<String, String>,
+    ) -> Result<String, PromptError> {
+        if let Some(cached) = self.cache.get(prompt_id, "", request_id) {
+            return Ok(cached);
+        }
+        let prompt = self.resolve(prompt_id, request_id)?;
+        let rendered = TemplateEngine::render(&prompt.template, variables, &prompt.defaults)?;
+        // Cache miss path caches under the resolved version for invalidation accuracy.
+        self.cache
+            .put(prompt_id, &prompt.version, request_id, &rendered);
+        Ok(rendered)
     }
 
     pub fn get(&self, prompt_id: &str) -> Result<PromptTemplate, PromptError> {
@@ -221,6 +256,7 @@ impl PromptRegistry {
         };
         self.storage.store_prompt(prompt)?;
         self.storage.store_version(version)?;
+        self.cache.invalidate(&id);
         Ok(id)
     }
 
@@ -255,17 +291,20 @@ impl PromptRegistry {
         prompt.version = new_version.clone();
         prompt.updated_at = Utc::now();
         self.storage.store_prompt(prompt)?;
+        self.cache.invalidate(prompt_id);
 
         Ok(new_version)
     }
 
     pub fn rollback(&mut self, prompt_id: &str, version: &str) -> Result<(), PromptError> {
         self.storage.activate_version(prompt_id, version)?;
+        self.cache.invalidate(prompt_id);
         Ok(())
     }
 
     pub fn delete(&mut self, prompt_id: &str) -> Result<(), PromptError> {
         self.storage.delete_prompt(prompt_id)?;
+        self.cache.invalidate(prompt_id);
         Ok(())
     }
 
@@ -279,6 +318,7 @@ impl PromptRegistry {
 
     pub fn activate_version(&mut self, prompt_id: &str, version: &str) -> Result<(), PromptError> {
         self.storage.activate_version(prompt_id, version)?;
+        self.cache.invalidate(prompt_id);
         Ok(())
     }
 

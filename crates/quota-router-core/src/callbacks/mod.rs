@@ -4,6 +4,7 @@
 //! Callbacks fire asynchronously via a bounded channel — never block the request path.
 
 use chrono::{DateTime, Utc};
+use prometheus::IntCounter;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -208,6 +209,10 @@ pub struct CallbackExecutor {
     worker: Option<JoinHandle<()>>,
     /// Dropped event counter.
     dropped_total: Arc<AtomicU64>,
+    /// Optional Prometheus counter sink — set via `install_dropped_counter`.
+    /// When the channel is full, both this counter and `dropped_total` are
+    /// incremented so `callback_dropped_total` exposes the overflow metric.
+    dropped_metric: Option<IntCounter>,
 }
 
 impl CallbackExecutor {
@@ -228,7 +233,22 @@ impl CallbackExecutor {
             tx,
             worker: Some(worker),
             dropped_total,
+            dropped_metric: None,
         }
+    }
+
+    /// Wire the Prometheus counter sink for overflow tracking.
+    /// After installation, every `fire()` that fails on full channel
+    /// increments BOTH the local `dropped_total` AND the supplied counter.
+    /// Returns the count of events already dropped but not yet reported
+    /// to the metric (should be zero when installed at startup).
+    pub fn install_dropped_counter(&mut self, counter: IntCounter) -> u64 {
+        let prior = self.dropped_total.load(Ordering::Relaxed);
+        if prior > 0 {
+            counter.inc_by(prior);
+        }
+        self.dropped_metric = Some(counter);
+        prior
     }
 
     /// Register a callback target for a specific event type.
@@ -245,6 +265,9 @@ impl CallbackExecutor {
             Ok(()) => Ok(()),
             Err(_) => {
                 self.dropped_total.fetch_add(1, Ordering::Relaxed);
+                if let Some(c) = &self.dropped_metric {
+                    c.inc();
+                }
                 Err(CallbackError::TargetUnreachable("Channel full".to_string()))
             }
         }
@@ -492,6 +515,43 @@ mod tests {
         // Give time for processing
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         assert!(executor.dropped_count() >= 1);
+    }
+
+    #[tokio::test]
+    async fn test_callback_executor_install_dropped_counter_wires_metric() {
+        let counter = IntCounter::new("test_callback_dropped_total", "test").unwrap();
+        let mut executor = CallbackExecutor::new(1);
+        let replay = executor.install_dropped_counter(counter.clone());
+        assert_eq!(replay, 0);
+        let event = make_test_event(CallbackType::Success);
+        // Fill channel + force at least one drop
+        let _ = executor.fire(event.clone()).await;
+        let _ = executor.fire(event.clone()).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        // The metric must reflect the same count as the local AtomicU64.
+        assert_eq!(
+            counter.get(),
+            executor.dropped_count(),
+            "metric must mirror local dropped_total after install"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_callback_executor_install_dropped_counter_replays_prior() {
+        let counter = IntCounter::new("test_callback_dropped_replay_total", "test").unwrap();
+        let mut executor = CallbackExecutor::new(1);
+        let event = make_test_event(CallbackType::Success);
+        let _ = executor.fire(event.clone()).await;
+        let _ = executor.fire(event.clone()).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let prior = executor.dropped_count();
+        assert!(prior > 0, "test setup should produce at least one drop");
+        let replay = executor.install_dropped_counter(counter.clone());
+        assert_eq!(
+            replay, prior,
+            "install must report prior drops for catch-up"
+        );
+        assert_eq!(counter.get(), prior);
     }
 
     #[test]

@@ -14,6 +14,9 @@ pub struct Metrics {
     pub cache_hits: IntCounter,
     pub cache_misses: IntCounter,
     pub precall_check_failures: IntCounter,
+    /// Callback delivery events dropped due to a full channel (RFC-0947).
+    /// Wired via `CallbackExecutor::install_dropped_counter` at startup.
+    pub callback_dropped_total: IntCounter,
     registry: Registry,
 }
 
@@ -91,6 +94,12 @@ impl Metrics {
         ))
         .unwrap();
 
+        let callback_dropped_total = IntCounter::with_opts(Opts::new(
+            "callback_dropped_total",
+            "Callback events dropped due to bounded channel overflow (RFC-0947)",
+        ))
+        .unwrap();
+
         registry.register(Box::new(requests_total.clone())).unwrap();
         registry
             .register(Box::new(request_duration.clone()))
@@ -115,6 +124,9 @@ impl Metrics {
         registry
             .register(Box::new(precall_check_failures.clone()))
             .unwrap();
+        registry
+            .register(Box::new(callback_dropped_total.clone()))
+            .unwrap();
 
         Self {
             requests_total,
@@ -129,6 +141,7 @@ impl Metrics {
             cache_hits,
             cache_misses,
             precall_check_failures,
+            callback_dropped_total,
             registry,
         }
     }
@@ -164,6 +177,7 @@ mod tests {
         assert_eq!(metrics.cache_misses.get(), 0);
         assert_eq!(metrics.precall_check_failures.get(), 0);
         assert_eq!(metrics.budget_alerts.get(), 0);
+        assert_eq!(metrics.callback_dropped_total.get(), 0);
     }
 
     #[test]
@@ -179,6 +193,7 @@ mod tests {
         assert!(encoded.contains("requests_total"));
         assert!(encoded.contains("rate_limit_hits_total"));
         assert!(encoded.contains("provider_errors_total"));
+        assert!(encoded.contains("callback_dropped_total"));
     }
 
     #[test]

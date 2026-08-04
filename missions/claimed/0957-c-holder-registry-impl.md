@@ -22,47 +22,47 @@ Manual redacting `Debug` impls on all security-bearing structs: redacts `cap_roo
 
 ### Type definitions
 
-- [ ] `crates/octo-wallet/src/capability/holder_kind.rs` (NEW) — `HolderKind` enum: `V1 = 0x00`, `ZKBearing = 0x01`, `Bearer = 0x02`, `HopCapability = 0x03`. Manual Debug impl.
-- [ ] `crates/octo-wallet/src/capability/holder_record.rs` (NEW) — `HolderRecord` struct + 10 fields. Manual redacting Debug impl per RFC-0957-A1 §Security. `from_bearer(b: BearerCapsule, mint_at_unix_ms: i64) -> Self` + `from_capability(t: CapabilityToken, mint_at_unix_ms: i64) -> Self` constructors.
-- [ ] `crates/octo-wallet/src/capability/holder_registry.rs` (NEW) — `HolderRegistry` trait (6 methods): `lookup(cap_root_hash) -> Option<HolderRecord>`, `lookup_by_ask(ask_id, kind) -> Option<HolderRecord>`, `lookup_active(cap_root_hash, &dyn Clock) -> Option<HolderRecord>`, `insert(record) -> Result<(), RegistryError>`, `revoke(cap_root_hash, &dyn Clock) -> Result<(), RegistryError>`, `sync_peers() -> Result<(), RegistryError>`. (R24-N3 fix: `revoke` takes clock parameter per R15-N3 canonical signature; R26-N3 supersedes prior "uses internal clock" wording.)
-- [ ] `crates/octo-wallet/src/capability/transaction.rs` (NEW) — `Transaction` type for atomic multi-record operations.
-- [ ] `crates/octo-wallet/src/capability/stoolap_holder_registry.rs` (NEW) — `StoolapHolderRegistry` impl backed by `stoolap::Database`. Schema: `cap_root_hash BLOB PRIMARY KEY, kind TINYINT, holder_did TEXT, holder_pub BLOB, audience_did TEXT, caveats_canonical BLOB, ask_id TEXT NULL, mint_at_millis_unix BIGINT, ttl_millis_unix BIGINT, revoked_at_millis_unix BIGINT NULL`. UNIQUE constraint `UNIQUE(ask_id, kind) WHERE ask_id IS NOT NULL` (RFC-0957-A1 §Schema). INDEX `(ask_id, kind)`.
+- [x] `HolderKind` enum (`V1 = 0x00`, `ZKBearing = 0x01`, `Bearer = 0x02`, `HopCapability = 0x03`) with manual `Debug` — implemented at `crates/quota-router-storage/src/holder_kind.rs`, not the mission's `crates/octo-wallet/src/capability/holder_kind.rs` path. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `byte_round_trip_all_variants`, `byte_values_match_rfc`, `debug_is_variant_name_only`.]
+- [x] `HolderRecord` with 10 fields, manual redacting `Debug`, `from_bearer`, and `from_capability` — implemented at `crates/quota-router-storage/src/holder_record.rs`; constructors use five arguments per RFC §Data Structures, and `from_capability` accepts the `CapabilityTokenLike` projection rather than `CapabilityToken`. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `from_bearer_sets_cap_root_hash_from_capsule_hash`, `from_capability_v1_sets_kind_v1`, `from_capability_zk_bearing_sets_kind_zk_bearing`.]
+- [x] `HolderRegistry` trait with six methods — implemented at `crates/quota-router-storage/src/holder_registry.rs`; `Clock` is supplied by `crates/quota-router-storage/src/clock.rs` because RFC-0853 does not export the assumed trait. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `tv1_lookup_hit`, `tv2_lookup_miss`, `tv4_revoke_then_lookup_active_returns_none`, `tv12_lookup_by_ask_unique`.]
+- [x] `Transaction` type for atomic multi-record operations — implemented at `crates/quota-router-storage/src/transaction.rs`; the storage boundary exists, while `insert_dual` remains the 0969-b-owned stub covered separately below. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `stub_methods_return_storage_error`.]
+- [x] `StoolapHolderRegistry` reference implementation and schema — implemented at `crates/quota-router-storage/src/stoolap_holder_registry.rs` with migrations `v005__create_holder_registry.sql` and `v006__create_outbox.sql`; actual schema uses `kind INTEGER`, BLOB `ask_id`, and a composite unique index relying on NULL semantics instead of `UNIQUE ... WHERE`. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `tv1_lookup_hit`, `tv12_lookup_by_ask_unique`, `tv13_debug_redaction_holds_across_schema`.]
 
 ### Debug redaction (RFC-0957-A1 §Security)
 
-- [ ] Manual `impl Debug for HolderRecord` — redact `cap_root_hash`, `holder_pub`, `caveats_canonical` (display `[REDACTED caveats]`), `revoked_at_millis_unix` (display `None` if Some, else `None`).
-- [ ] Manual `impl Debug for HolderKind` — display variant name only (no payload).
-- [ ] Unit test: `format!("{:?}", record)` does NOT contain any byte sequence from `cap_root_hash` or `holder_pub`.
+- [ ] Manual `impl Debug for HolderRecord` — partial only: `cap_root_hash`, `holder_pub`, `caveats_canonical`, and `ask_id` are redacted, but `revoked_at_millis_unix` is printed as `Some(timestamp)` rather than `None`; deferred security correction. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `debug_redacts_credential_material`, `tv13_debug_redaction_holds_across_schema` (neither asserts revoked-timestamp redaction).]
+- [x] Manual `impl Debug for HolderKind` displays variant name only. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `debug_is_variant_name_only`.]
+- [x] Unit test that `format!("{:?}", record)` does not contain byte sequences from `cap_root_hash` or `holder_pub`. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `debug_redacts_credential_material`, `tv13_debug_redaction_holds_across_schema`.]
 
 ### Cross-node mint verifiability (G5)
 
-- [ ] Integration test: node A mints capability, inserts via `StoolapHolderRegistry::insert`, syncs to node B (RFC-0862 gossip), node B's `lookup(cap_root_hash)` returns the same `HolderRecord`. Cross-node mint verifiable end-to-end.
+- [ ] Integration test for node-A mint, RFC-0862 gossip sync, and node-B lookup — deferred cross-mission: 0957-c ships `sync_peers()` as an `Ok(())` stub; no multi-node gossip integration test is implemented here. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `none` (sync stub).]
 
 ### 4-kind agnosticism (G6)
 
-- [ ] Unit test inserting one record per `HolderKind` variant (V1, ZKBearing, Bearer, HopCapability); each round-trips; lookup returns the same kind byte.
+- [x] Unit test inserting one record per `HolderKind` variant and round-tripping the kind byte. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `tv6_four_kind_agnosticism`, `byte_round_trip_all_variants`.]
 
 ### Atomicity (G8)
 
-- [ ] Forced-failure integration test: `TransactionExt::insert_dual(bearer, capability)` where the capability insert fails — bearer record MUST NOT be persisted (all-or-nothing).
+- [ ] Forced-failure `TransactionExt::insert_dual(bearer, capability)` integration test — deferred to 0969-b under the co-author contract; `Transaction::insert_dual` is an explicit storage-error stub and no all-or-nothing persistence test exists in 0957-c. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `stub_methods_return_storage_error` (stub boundary only).]
 
 ### Test vectors (RFC-0957-A1 §Test Vectors, this sub-mission owns TV1, TV2, TV3, TV4, TV6, TV12, TV13, TV14)
 
-- [ ] TV1: Lookup Hit — insert record, lookup returns same record.
-- [ ] TV2: Lookup Miss — lookup on absent `cap_root_hash` returns `None`.
-- [ ] TV3: Insert + Duplicate — second insert with same `cap_root_hash` PK returns `RegistryError::DuplicateKey`.
-- [ ] TV4: Revoke + Lookup — revoke sets `revoked_at_millis_unix`; subsequent `lookup` returns the revoked record; `lookup_active` returns `None` after revocation.
-- [ ] TV6: 4-Kind Agnosticism — insert one per variant, lookup returns matching kind.
-- [ ] TV12: `lookup_by_ask` UNIQUE — two inserts with same `(ask_id, kind)` second one fails UNIQUE constraint.
-- [ ] TV13: Debug Redaction — `format!("{:?}", record)` contains `[REDACTED]` markers; grep test for credential material.
-- [ ] TV14: `revoked_at_millis_unix` Distinct from `ttl_millis_unix` — assert field independence: a record with `ttl_millis_unix=0` and `revoked_at_millis_unix=None` is "active, no TTL expiry"; a record with `revoked_at_millis_unix=Some(t)` is "revoked at t".
+- [x] TV1: Lookup Hit — insert record, lookup returns same record. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `tv1_lookup_hit`.]
+- [x] TV2: Lookup Miss — lookup on absent `cap_root_hash` returns `None`. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `tv2_lookup_miss`.]
+- [x] TV3: Insert + Duplicate — second insert with same `cap_root_hash` PK fails; implementation reports `RegistryError::AlreadyExists` rather than the mission's `RegistryError::DuplicateKey` name. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `tv3_insert_duplicate_pk`.]
+- [x] TV4: Revoke + Lookup — revoke sets `revoked_at_millis_unix`; `lookup` retains the revoked record and `lookup_active` returns `None`. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `tv4_revoke_then_lookup_active_returns_none`.]
+- [x] TV6: 4-Kind Agnosticism — insert one record per variant and lookup returns matching kind. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `tv6_four_kind_agnosticism`.]
+- [x] TV12: `lookup_by_ask` uniqueness — two inserts with same `(ask_id, kind)` fail through the composite unique index; implementation relies on NULL semantics and does not use a partial `WHERE` clause. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `tv12_lookup_by_ask_unique`.]
+- [x] TV13: Debug Redaction — schema round-trip retains `[redacted]` markers and does not expose credential bytes. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `tv13_debug_redaction_holds_across_schema`.]
+- [x] TV14: `revoked_at_millis_unix` distinct from `ttl_millis_unix` — `ttl_millis_unix=0` with no revocation is perpetual-active, while `Some(t)` is revoked. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `tv14_revoked_distinct_from_ttl`, `revoked_at_millis_distinct_from_ttl_millis`.]
 
 ### Cross-crate compat
 
-- [ ] `cargo build --workspace` green
-- [ ] `cargo test --workspace` green
-- [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean
-- [ ] `cargo fmt --check` clean
+- [x] `cargo build --workspace` green. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `cargo build --workspace` completed successfully.]
+- [x] `cargo test --workspace` green for the requested library-test verification — 5,391 passed, 0 failed, 1 ignored across 50 test suites. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `cargo test --workspace --lib`.]
+- [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings` — deferred/not green at workspace all-features scope: the exact command fails in unrelated `tdlib-rs` because `pkg-config` and `download-tdlib` are mutually enabled and `TDLIB_VERSION` is unavailable; package-scoped `quota-router-storage` clippy is clean. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `cargo clippy -p quota-router-storage --all-targets -- -D warnings` (clean).]
+- [x] `cargo fmt --check` clean; verified with both `cargo fmt --check` and `cargo fmt --all --check`. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `cargo fmt --all --check`.]
 
 ## Dependencies
 
@@ -121,3 +121,87 @@ This sub-mission implements (per top-level Type Coverage table):
 - The `Clock` trait used in `lookup_active(cap_root_hash, &dyn Clock)` and `revoke(cap_root_hash, &dyn Clock)` already exists from RFC-0853; this sub-mission consumes it.
 - The `stoolap` dep is the CipherOcto fork at `feat/blockchain-sql` per [[feedback_stoolap-persistence]]. Schema migration path documented in RFC-0957-A1 §Appendix A.
 - TV11 (`insert_dual` atomicity) crosses into sub-mission 0969-b (RFC-0969 §Algorithms:mint_dual). Co-author contract: 0969-b owns the algorithm; this sub-mission owns the trait method `Transaction::insert_dual(...)` if it lives on `Transaction`, or 0969-b owns it if it lives as a free function. Pre-RFC-0957-A2 split: default `Transaction::insert_dual`.
+
+## Closure
+
+- Date: 2026-08-04
+
+### Commit table
+
+| Role           | Short SHA  | Full SHA                                   | Subject                                                                                              |
+| -------------- | ---------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| Claim          | `82802c93` | `82802c93540638615da19f3d724c06a17fd1b08d` | `docs(missions): claim 0957-c holder-registry-impl (RFC-0957-A1 §Phase 1)`                           |
+| Implementation | `998debbf` | `998debbf93dfce981cc67130e0f4279b2e225250` | `feat(quota-router-storage): HolderRegistry + StoolapHolderRegistry + Outbox (RFC-0957-A1 §Phase 1)` |
+
+### Verification commands and outputs
+
+- `cargo build --workspace` — PASS; workspace build completed successfully.
+- `cargo test --workspace --lib` — PASS; 50 suites, 5,391 passed, 0 failed, 1 ignored.
+- `cargo test -p quota-router-storage --lib` — PASS; 160 passed, 0 failed.
+- `cargo clippy -p quota-router-storage --all-targets -- -D warnings` — PASS; clean.
+- `cargo fmt --all --check` — PASS; clean.
+- `cargo fmt --check` — PASS; clean.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings` — NOT GREEN; unrelated `tdlib-rs` build fails because `pkg-config` and `download-tdlib` are mutually enabled and `TDLIB_VERSION` is unavailable.
+
+### AC walk count
+
+| Acceptance-criteria section        |  `[x]` | `[ ]` |
+| ---------------------------------- | -----: | ----: |
+| Type definitions                   |      5 |     0 |
+| Debug redaction                    |      2 |     1 |
+| Cross-node mint verifiability (G5) |      0 |     1 |
+| 4-kind agnosticism (G6)            |      1 |     0 |
+| Atomicity (G8)                     |      0 |     1 |
+| Test vectors                       |      8 |     0 |
+| Cross-crate compat                 |      3 |     1 |
+| **Total**                          | **19** | **4** |
+
+### Deviations
+
+1. **Implementation location.** Mission paths point to `crates/octo-wallet/src/capability/*.rs`; implementation is in `crates/quota-router-storage/src/*.rs` because `octo-wallet` has no `stoolap` dependency. The registry and migrations remain CIPHEROCTO-side, preserving the general-purpose stoolap red line.
+2. **Schema integer type.** Mission text says `kind TINYINT`; migration uses `INTEGER` while preserving wire-stable discriminants `0x00` through `0x03`.
+3. **Partial unique constraint.** Mission text says `UNIQUE(ask_id, kind) WHERE ask_id IS NOT NULL`; Stoolap does not support that partial-constraint syntax, so the migration uses a composite unique index and relies on SQL NULL semantics.
+4. **Constructor signatures.** Mission text gives two-argument constructor forms. The RFC-compatible implementation uses five arguments for each constructor, including holder public key, holder DID, ask binding, and TTL; `mint_at_millis_unix` is initialized to zero and caller-patched.
+5. **Capability-token dependency boundary.** `from_capability` takes `CapabilityTokenLike`, not the full `CapabilityToken`, to avoid dependency inversion. Promotion to the canonical type belongs to 0970-a / 0970-b integration.
+6. **Test-vector count.** Mission summary refers to six vectors, while this implementation ships the eight listed vectors TV1, TV2, TV3, TV4, TV6, TV12, TV13, and TV14.
+7. **Duplicate error naming.** TV3 verifies duplicate-PK rejection as `RegistryError::AlreadyExists`; the mission's `RegistryError::DuplicateKey` name is not present in the implemented error enum.
+8. **HolderRecord debug redaction.** The implementation redacts hash, public-key, caveat, and ask material, but currently prints `revoked_at_millis_unix` when present. The security AC therefore remains deferred rather than being falsely marked complete.
+9. **Cross-node sync.** `sync_peers()` is a trait and reference-implementation stub returning `Ok(())`; RFC-0862 gossip and the node-A/node-B integration test are cross-mission work.
+10. **Atomic dual insert.** `Transaction::insert_dual` is a deliberate storage-error stub. The forced-failure all-or-nothing test and `TransactionExt` ownership belong to 0969-b under the co-author contract.
+11. **Bearer type boundary.** `bearer_capsule_stub.rs` supplies the structural `BearerCapsule` shape until 0959-a1 lands the cryptographic type; this is not a fork modification.
+12. **Clock boundary.** 0957-c adds `Clock`, `SystemClock`, and `FixedClock` because the mission's assumed RFC-0853 export is absent; registry methods receive the injected clock explicitly.
+13. **Outbox boundary.** 0957-c adds the holder and outbox migrations plus the `OutboxEntry` model; the retry worker remains owned by 0959-c.
+14. **Workspace lint scope.** Package-scoped `quota-router-storage` clippy is clean. The broad all-features workspace command is blocked by unrelated `tdlib-rs` feature incompatibility, so that AC remains deferred.
+
+### Deferred follow-up work
+
+- **TV5 cross-node:** implement RFC-0862 gossip sync and the node-A mint / node-B lookup integration test.
+- **TV11 insert-dual atomicity:** implement the 0969-b `TransactionExt::insert_dual` algorithm and forced-failure rollback test.
+- **CapabilityTokenLike → CapabilityToken promotion:** replace the projection at the 0970-a / 0970-b integration boundary once dependency direction permits.
+- **0970-a `from_hop_capability` constructor:** add the HopCapability-specific constructor in the designated sub-mission.
+- **HolderRecord revoked-timestamp redaction:** change the manual `Debug` implementation and add an assertion that a revoked timestamp is never printed.
+- **Workspace all-features clippy:** resolve the unrelated `tdlib-rs` feature selection failure, then rerun the broad lint AC.
+
+### Files created / modified (CIPHEROCTO-side only)
+
+**Created:**
+
+- `crates/quota-router-storage/migrations/v005__create_holder_registry.sql`
+- `crates/quota-router-storage/migrations/v006__create_outbox.sql`
+- `crates/quota-router-storage/src/bearer_capsule_stub.rs`
+- `crates/quota-router-storage/src/clock.rs`
+- `crates/quota-router-storage/src/holder_kind.rs`
+- `crates/quota-router-storage/src/holder_record.rs`
+- `crates/quota-router-storage/src/holder_registry.rs`
+- `crates/quota-router-storage/src/outbox.rs`
+- `crates/quota-router-storage/src/stoolap_holder_registry.rs`
+- `crates/quota-router-storage/src/transaction.rs`
+
+**Modified:**
+
+- `crates/quota-router-storage/Cargo.toml`
+- `crates/quota-router-storage/src/lib.rs`
+- `crates/quota-router-storage/src/migrations.rs`
+- `missions/claimed/0957-c-holder-registry-impl.md`
+
+**NOT touched:** stoolap fork (`feat/blockchain-sql`); all implementation and migration changes are CIPHEROCTO-side.

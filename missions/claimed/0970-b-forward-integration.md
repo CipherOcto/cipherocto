@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Claimed (2026-08-04)
 
 ## RFC
 
@@ -66,7 +66,7 @@ This sub-mission implements (per top-level Type Coverage table):
 
 ## Claimant
 
-@unclaimed
+@mmacedoeu (ForwardRequestPayload extension stub)
 
 ## Pull Request
 

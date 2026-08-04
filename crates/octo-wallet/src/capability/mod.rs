@@ -10,6 +10,7 @@ pub mod discharge;
 pub mod macaroon;
 pub mod redemption;
 pub mod registry;
+pub mod verify;
 pub mod wire;
 pub mod zk_mint;
 
@@ -26,8 +27,10 @@ pub use macaroon::{
     hmac_blake3, macaroon_id, CapabilityCatalog, Macaroon, MacaroonError, MacaroonId,
 };
 pub use registry::{CapabilityClassRegistry, RegistryEntry, RegistryError};
+pub use verify::{verify_with_resolve, VerifiedToken, VerifyContext, VerifyError};
 pub use wire::{
-    deserialize_wire, deserialize_wire_v2, serialize_wire, serialize_wire_v2, WireError, WireV2,
+    compute_cap_root_hash_from_wire, deserialize_wire, deserialize_wire_v2, serialize_wire,
+    serialize_wire_v2, WireError, WireV2,
 };
 pub use zk_mint::{
     bundled_casm_hash, mint_with_zk, mint_with_zk_and_signers, proof_bundle_from_wire,

@@ -223,6 +223,43 @@ fn parse_wire_to_token(
     })
 }
 
+/// Compute the `cap_root_hash` PK from a v1 wire string (RFC-0957-A1 §Phase 2).
+///
+/// `cap_root_hash = BLAKE3(macaroon.root_id)` (R21-N4 fix; canonical derivation).
+/// This is the lookup key for `HolderRegistry::lookup(cap_root_hash)`. The
+/// wire-only derivation is byte-identical to the mint-time derivation
+/// (Round 3 R2 C1 fix): both hash the macaroon's `root_id` directly.
+///
+/// Forward compat: v2 wire (4 segments) is accepted but the 4th segment
+/// (proof_bundle) is NOT included in the hash (the proof_bundle is
+/// post-mint artifact that doesn't change the registry PK).
+///
+/// # Errors
+/// Returns `WireError::Parse` on malformed wire format. Returns
+/// `WireError::SegmentCount` on wrong segment count. Returns
+/// `WireError::WireTooLong` / `WireError::SegmentTooLong` on DoS guard trips.
+pub fn compute_cap_root_hash_from_wire(s: &str) -> Result<[u8; 32], WireError> {
+    // DoS guard (mirrors parse_wire_to_token).
+    if s.len() > MAX_WIRE_TOTAL {
+        return Err(WireError::WireTooLong(s.len(), MAX_WIRE_TOTAL));
+    }
+    let parts: Vec<&str> = s.split('.').collect();
+    if parts.len() != 3 && parts.len() != 4 {
+        return Err(WireError::SegmentCount(parts.len()));
+    }
+    for (i, seg) in parts.iter().enumerate() {
+        if seg.len() > MAX_SEGMENT_BYTES {
+            return Err(WireError::SegmentTooLong(i, seg.len(), MAX_SEGMENT_BYTES));
+        }
+    }
+    let macaroon_bytes = URL_SAFE_NO_PAD
+        .decode(parts[0])
+        .map_err(|e| WireError::Parse(format!("macaroon b64: {e}")))?;
+    let macaroon: super::Macaroon = json_canon::from_slice(&macaroon_bytes)
+        .map_err(|e| WireError::Parse(format!("macaroon json: {e}")))?;
+    Ok(super::macaroon::compute_capability_id(&macaroon))
+}
+
 /// Maximum total wire length (RFC-0958 §Performance; protects against
 /// OOM via attacker-supplied huge s4 segments + b64 decode amplification).
 /// 64 KiB is well over the maximum real wire (a SelfHost 500KB proof
@@ -279,6 +316,54 @@ mod tests {
     use crate::capability::caveat::Caveat;
     use crate::capability::macaroon::InMemoryCatalog;
     use crate::identity::IdentityKey;
+
+    #[test]
+    fn compute_cap_root_hash_from_wire_returns_32_bytes() {
+        // TV7 (cross-mission): the helper is the wire-only PK derivation.
+        // Build a minimal valid wire + confirm the helper returns 32 bytes.
+        let macaroon = crate::capability::macaroon::Macaroon::mint(&[0x33; 32]).unwrap();
+        let token = crate::capability::CapabilityToken {
+            macaroon,
+            holder_pub: [0xCC; 32],
+            holder_did: "did:octo:test".into(),
+            holder_sig: ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            discharges: vec![],
+            holder_sig_stale: false,
+        };
+        let wire = serialize_wire(&token).unwrap();
+        let hash = compute_cap_root_hash_from_wire(&wire).unwrap();
+        assert_eq!(hash.len(), 32);
+    }
+
+    #[test]
+    fn compute_cap_root_hash_matches_macaroons_compute_capability_id() {
+        // TV7: wire-only derivation matches mint-time derivation byte-for-byte.
+        let macaroon = crate::capability::macaroon::Macaroon::mint(&[0x33; 32]).unwrap();
+        let token = crate::capability::CapabilityToken {
+            macaroon: macaroon.clone(),
+            holder_pub: [0xCC; 32],
+            holder_did: "did:octo:test".into(),
+            holder_sig: ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            discharges: vec![],
+            holder_sig_stale: false,
+        };
+        let wire = serialize_wire(&token).unwrap();
+        let hash_from_wire = compute_cap_root_hash_from_wire(&wire).unwrap();
+        let hash_from_mac = crate::capability::macaroon::compute_capability_id(&macaroon);
+        assert_eq!(hash_from_wire, hash_from_mac);
+    }
+
+    #[test]
+    fn compute_cap_root_hash_malformed_wire_returns_segment_count() {
+        let r = compute_cap_root_hash_from_wire("not.a.valid.wire.format");
+        assert!(matches!(r, Err(WireError::SegmentCount(5))));
+    }
+
+    #[test]
+    fn compute_cap_root_hash_bad_base64_returns_parse_error() {
+        let r = compute_cap_root_hash_from_wire("!!!.@@@.###");
+        assert!(matches!(r, Err(WireError::Parse(_))));
+    }
 
     #[test]
     fn wire_format_three_segments() {

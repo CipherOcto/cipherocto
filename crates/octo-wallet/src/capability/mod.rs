@@ -9,6 +9,7 @@ pub mod bearer_capsule_re_export;
 pub mod caveat;
 pub mod dispatch;
 pub mod discharge;
+pub mod dual_issuance;
 pub mod gossip;
 pub mod macaroon;
 pub mod market_delivery;

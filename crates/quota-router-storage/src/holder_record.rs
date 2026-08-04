@@ -193,6 +193,31 @@ impl HolderRecord {
         }
         now_millis_unix < self.ttl_millis_unix
     }
+
+    /// Build a `HolderRecord` for a `HopCapability` (RFC-0970).
+    /// `holder_did` is the wrapping node; `audience_did` is the next hop.
+    /// TV15 (HolderRecord::from_hop_capability holder vs audience) requires
+    /// this constructor.
+    pub fn from_hop_capability(
+        hop_capacity_id: [u8; 32],
+        wrapping_node_did: &str,
+        wrapping_node_pub: &[u8; 32],
+        next_hop_did: &str,
+        ttl_millis_unix: u64,
+    ) -> Self {
+        Self {
+            cap_root_hash: hop_capacity_id,
+            kind: HolderKind::HopCapability,
+            holder_did: wrapping_node_did.to_string(),
+            holder_pub: *wrapping_node_pub,
+            audience_did: next_hop_did.to_string(),
+            caveats_canonical: Vec::new(),
+            ask_id: None,
+            mint_at_millis_unix: 0,
+            ttl_millis_unix,
+            revoked_at_millis_unix: None,
+        }
+    }
 }
 
 /// Minimal projection of `octo-wallet::capability::CapabilityToken` that
@@ -343,5 +368,22 @@ mod tests {
         let s = serde_json::to_string(&r).unwrap();
         let back: HolderRecord = serde_json::from_str(&s).unwrap();
         assert_eq!(r, back);
+    }
+
+    #[test]
+    fn from_hop_capability_distinguishes_holder_and_audience() {
+        // TV15: holder_did (intermediate router) MUST differ from audience_did (destination).
+        let r = HolderRecord::from_hop_capability(
+            [0xAA; 32],
+            "did:octo:router",
+            &[0xBB; 32],
+            "did:octo:destination",
+            1_700_000_000_000,
+        );
+        assert_eq!(r.kind, HolderKind::HopCapability);
+        assert_eq!(r.holder_did, "did:octo:router");
+        assert_eq!(r.audience_did, "did:octo:destination");
+        assert_ne!(r.holder_did, r.audience_did);
+        assert_eq!(r.ask_id, None);
     }
 }

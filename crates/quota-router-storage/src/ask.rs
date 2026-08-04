@@ -765,6 +765,245 @@ pub enum SettlementError {
     AlreadyConsumed,
     #[error("axes_consumed exceeds ask max_total (anti-fraud)")]
     AxesExceededMaxTotal,
+    #[error("unknown axis `{0}` referenced in settlement (not in registry)")]
+    UnknownAxis(String),
+    #[error("ask expired at {ttl_unix} (now={now})")]
+    AskExpired {
+        ask_id: AskId,
+        ttl_unix: u64,
+        now: u64,
+    },
+    #[error("ask {ask_id:?} not found in marketplace index")]
+    AskNotFound { ask_id: AskId },
+    #[error("jurisdiction mismatch: declared {declared:?}, actual {actual:?}")]
+    JurisdictionMismatch {
+        declared: Vec<String>,
+        actual: Vec<String>,
+    },
+    #[error(
+        "cached axis consumed but cache_key_hash not provided (RFC-0959 §Cache Classification)"
+    )]
+    CacheStrategyRequired,
+    #[error("overflow in compute_cost for axis `{axis_id}` (partial sum = {partial_sum})")]
+    Overflow { axis_id: String, partial_sum: u128 },
+    #[error("ask signature invalid (tampered payload or wrong key)")]
+    AskSignatureInvalid,
+    #[error("canonical_ser error: {0}")]
+    CanonicalSer(#[from] serde_json::Error),
+}
+
+// ============================================================================
+// RFC-0959 §Algorithms Settlement Surface (session 2)
+// ============================================================================
+
+/// Per-axis consumption at settlement time (RFC-0959 §Data Structures).
+///
+/// `axes` is a `BTreeMap` (NOT `HashMap`) for deterministic ordering — the
+/// `canonical_ser` derivation must produce identical bytes across two
+/// independent nodes replaying the same event set (RFC-0909 §Determinism
+/// Requirements).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AxesConsumed {
+    /// Axis ID → units consumed (BTreeMap for canonical ordering).
+    pub axes: std::collections::BTreeMap<String, TokenCount>,
+    /// BLAKE3 hash of the prompt tokens (RFC-0959 §Cache Classification).
+    /// Required iff any cached axis (e.g., `cached_input_tokens_per_1k`)
+    /// appears in `axes`. None for fully non-cache settlements.
+    pub cache_key_hash: Option<[u8; 32]>,
+}
+
+impl AxesConsumed {
+    /// Construct an `AxesConsumed` with no cache classification.
+    #[must_use]
+    pub fn new(axes: std::collections::BTreeMap<String, TokenCount>) -> Self {
+        Self {
+            axes,
+            cache_key_hash: None,
+        }
+    }
+
+    /// Attach a `cache_key_hash` (used when any cached axis is consumed).
+    #[must_use]
+    pub fn with_cache_key_hash(mut self, hash: [u8; 32]) -> Self {
+        self.cache_key_hash = Some(hash);
+        self
+    }
+
+    /// Returns true iff this settlement consumes any axis whose ID contains
+    /// "cached" (heuristic for the `cached_input_tokens_per_1k` axis family).
+    #[must_use]
+    pub fn requires_cache_strategy(&self) -> bool {
+        self.axes.keys().any(|id| id.contains("cached"))
+    }
+}
+
+/// Settlement event (RFC-0959 §Data Structures).
+///
+/// The canonical wire form for a settled invocation. Settlement hash is
+/// computed externally via [`compute_settlement_hash`] and not stored in
+/// this struct (RFC-0959 §Data Structures fix: separation of content from
+/// attestation).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettlementEvent {
+    /// BLAKE3 hash of the capability root (RFC-0957 §Algorithms `cap_root_hash`).
+    pub cap_root_hash: [u8; 32],
+    /// Content-addressable AskId.
+    pub ask_id: AskId,
+    /// BLAKE3 hash of the invocation (RFC-0959 §Data Structures `invocation_hash`).
+    pub invocation_hash: [u8; 32],
+    /// Per-axis consumption.
+    pub axes_consumed: AxesConsumed,
+    /// Computed cost in micro-OCTO-W (integer-only, no float).
+    pub cost: MicroOCTO_W,
+    /// Unix timestamp of settlement.
+    pub settled_at_unix: u64,
+}
+
+/// Router-signed receipt wrapping a [`SettlementEvent`] (RFC-0959 §Algorithms).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettlementReceipt {
+    /// The event being attested.
+    pub event: SettlementEvent,
+    /// Ed25519 signature over `canonical_ser((event || nonce || settled_at_unix))`.
+    /// Stored as `Vec<u8>` for serde compatibility; length MUST be 64.
+    pub router_signature: Vec<u8>,
+    /// 16-byte nonce derived from `csprng.next_u64().to_le_bytes() ++ wall_clock_now.to_le_bytes()`.
+    pub nonce: [u8; 16],
+}
+
+/// Domain separator for settlement hash (RFC-0959 §Algorithms).
+///
+/// MUST stay stable across versions. To bump the hash surface, change to
+/// `"cipherocto/settlement/v2\n"` and accept a cross-impl hash migration.
+pub const SETTLEMENT_HASH_DOMAIN: &[u8] = b"cipherocto/settlement/v1\n";
+
+/// Compute the RFC-0959 §Algorithms settlement hash.
+///
+/// `settlement_hash = BLAKE3(DOMAIN || cap_root_hash || ask_id || invocation_hash || canonical_ser(axes_consumed))`
+///
+/// `Result` return propagates `serde_json::Error` from `canonical_ser`
+/// (RFC-0959 §Data Structures R1 fix: previously infallible `expect()`).
+/// # Errors
+/// Returns `serde_json::Error` if `canonical_ser` fails (should never happen
+/// for `AxesConsumed` since the field types are all serde-friendly).
+pub fn compute_settlement_hash(event: &SettlementEvent) -> Result<[u8; 32], serde_json::Error> {
+    let axes_canonical = serde_json::to_vec(&event.axes_consumed)?;
+    let mut msg =
+        Vec::with_capacity(SETTLEMENT_HASH_DOMAIN.len() + 32 + 32 + 32 + axes_canonical.len());
+    msg.extend_from_slice(SETTLEMENT_HASH_DOMAIN);
+    msg.extend_from_slice(&event.cap_root_hash);
+    msg.extend_from_slice(&event.ask_id);
+    msg.extend_from_slice(&event.invocation_hash);
+    msg.extend_from_slice(&axes_canonical);
+    Ok(*blake3::hash(&msg).as_bytes())
+}
+
+/// Compute settlement cost (RFC-0959 §Data Structures `compute_cost`).
+///
+/// `cost = Σ ceil(tokens/1000) * rate[axis]` (u128 throughout, integer-only).
+/// Rejects cached axes without `cache_key_hash` per RFC-0959 §Cache
+/// Classification.
+/// # Errors
+/// Returns `SettlementError::UnknownAxis` if an axis ID isn't in the registry.
+/// Returns `SettlementError::CacheStrategyRequired` if a cached axis is
+/// consumed without `cache_key_hash`.
+/// Returns `SettlementError::Overflow` if the running sum overflows `u128`.
+pub fn compute_cost(
+    ask: &Ask,
+    axes_consumed: &AxesConsumed,
+    registry: &[PricingAxis],
+) -> Result<MicroOCTO_W, SettlementError> {
+    if axes_consumed.requires_cache_strategy() && axes_consumed.cache_key_hash.is_none() {
+        return Err(SettlementError::CacheStrategyRequired);
+    }
+    let mut total: u128 = 0;
+    for (axis_id, &units) in &axes_consumed.axes {
+        let rate = ask
+            .rates
+            .cost_for(axis_id, u64::from(units), registry)
+            .ok_or_else(|| SettlementError::UnknownAxis(axis_id.clone()))?;
+        let new_total = total
+            .checked_add(rate)
+            .ok_or_else(|| SettlementError::Overflow {
+                axis_id: axis_id.clone(),
+                partial_sum: total,
+            })?;
+        total = new_total;
+    }
+    Ok(total)
+}
+
+/// Sign a [`SettlementEvent`] with the router's 32-byte Ed25519 seed,
+/// producing a [`SettlementReceipt`] (RFC-0959 §Algorithms).
+///
+/// Signature input: `canonical_ser((event || nonce || settled_at_unix))`.
+/// `nonce` is 16 bytes; the caller supplies it (typically
+/// `csprng.next_u64().to_le_bytes() ++ wall_clock_now.to_le_bytes()`).
+/// # Errors
+/// Returns `AskSignedError::EmptyIdentitySeed` if the seed is all-zeros.
+/// Returns `AskSignedError::CanonicalSer` if `serde_json` fails.
+pub fn sign_settlement_receipt(
+    event: SettlementEvent,
+    router_seed: &[u8; 32],
+    nonce: [u8; 16],
+) -> Result<SettlementReceipt, AskSignedError> {
+    if router_seed == &[0u8; 32] {
+        return Err(AskSignedError::EmptyIdentitySeed);
+    }
+    // RFC-0959 §Algorithms signature input = canonical_ser((event || nonce || settled_at_unix)).
+    // We approximate "canonical_ser((event || nonce || settled_at_unix))" as
+    // `serde_json::to_vec(event) ++ nonce ++ settled_at_unix.to_le_bytes()`.
+    // A borsh-encoded form would be wire-equivalent under the canonical_ser
+    // contract (deterministic JSON), so this is sufficient for the in-process
+    // round-trip. The full borsh migration is out of scope here.
+    let event_canonical = serde_json::to_vec(&event).map_err(AskSignedError::CanonicalSer)?;
+    let mut msg = Vec::with_capacity(event_canonical.len() + nonce.len() + 8);
+    msg.extend_from_slice(&event_canonical);
+    msg.extend_from_slice(&nonce);
+    msg.extend_from_slice(&event.settled_at_unix.to_le_bytes());
+    let signing = SigningKey::from_bytes(router_seed);
+    let signature = signing.sign(&msg);
+    Ok(SettlementReceipt {
+        event,
+        router_signature: signature.to_bytes().to_vec(),
+        nonce,
+    })
+}
+
+/// Verify a [`SettlementReceipt`] (RFC-0959 §Algorithms).
+///
+/// Recomputes the signature input and verifies the router's Ed25519 signature.
+/// Also re-derives and compares the embedded settlement hash if present.
+/// # Errors
+/// Returns `SettlementError::HashMismatch` if the embedded settlement hash
+/// doesn't match `compute_settlement_hash(event)`.
+/// Returns `SettlementError::AskSignatureInvalid` if router signature verify fails.
+/// Returns `SettlementError::CanonicalSer` if `serde_json` fails.
+pub fn verify_settlement_receipt(
+    receipt: &SettlementReceipt,
+    router_public_key: &Ed25519PublicKey,
+    expected_settlement_hash: &[u8; 32],
+) -> Result<(), SettlementError> {
+    let computed = compute_settlement_hash(&receipt.event)?;
+    if &computed != expected_settlement_hash {
+        return Err(SettlementError::HashMismatch);
+    }
+    let event_canonical = serde_json::to_vec(&receipt.event)?;
+    let mut msg = Vec::with_capacity(event_canonical.len() + receipt.nonce.len() + 8);
+    msg.extend_from_slice(&event_canonical);
+    msg.extend_from_slice(&receipt.nonce);
+    msg.extend_from_slice(&receipt.event.settled_at_unix.to_le_bytes());
+    let sig_bytes: [u8; 64] = receipt
+        .router_signature
+        .as_slice()
+        .try_into()
+        .map_err(|_| SettlementError::AskSignatureInvalid)?;
+    let verifying = VerifyingKey::from_bytes(router_public_key)
+        .map_err(|_| SettlementError::AskSignatureInvalid)?;
+    let sig = Signature::from_bytes(&sig_bytes);
+    verifying
+        .verify(&msg, &sig)
+        .map_err(|_| SettlementError::AskSignatureInvalid)
 }
 
 #[cfg(test)]
@@ -942,5 +1181,253 @@ mod tests {
         env2.settlement_hash = env2.compute_settlement_hash();
         // Different order → different hash (current contract).
         assert_ne!(env1.settlement_hash, env2.settlement_hash);
+    }
+}
+
+#[cfg(test)]
+mod settlement_engine_tests {
+    use super::*;
+
+    fn sample_event() -> SettlementEvent {
+        SettlementEvent {
+            cap_root_hash: [0x01; 32],
+            ask_id: [0x02; 32],
+            invocation_hash: [0x03; 32],
+            axes_consumed: AxesConsumed::new({
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("input_tokens_per_1k".to_owned(), 1000);
+                m.insert("output_tokens_per_1k".to_owned(), 500);
+                m
+            }),
+            cost: 90_000,
+            settled_at_unix: 1_700_000_000,
+        }
+    }
+
+    #[test]
+    fn settlement_hash_deterministic() {
+        // Same event → same hash (across calls; across two recomputations).
+        let e = sample_event();
+        let h1 = compute_settlement_hash(&e).unwrap();
+        let h2 = compute_settlement_hash(&e).unwrap();
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn settlement_hash_byte_equivalent_across_replay() {
+        // Two independent "nodes" replaying the same event set produce identical hash.
+        let e1 = sample_event();
+        let e2 = sample_event();
+        assert_eq!(
+            compute_settlement_hash(&e1).unwrap(),
+            compute_settlement_hash(&e2).unwrap(),
+        );
+    }
+
+    #[test]
+    fn settlement_hash_domain_separator_present() {
+        // Bumping the domain separator MUST change the hash (RFC-0959 §Algorithms
+        // version migration contract).
+        let e = sample_event();
+        let with_domain = compute_settlement_hash(&e).unwrap();
+        // Recompute with zero domain (simulates "forgot to prepend").
+        let axes_canonical = serde_json::to_vec(&e.axes_consumed).unwrap();
+        let mut msg = Vec::new();
+        msg.extend_from_slice(&e.cap_root_hash);
+        msg.extend_from_slice(&e.ask_id);
+        msg.extend_from_slice(&e.invocation_hash);
+        msg.extend_from_slice(&axes_canonical);
+        let without_domain = *blake3::hash(&msg).as_bytes();
+        assert_ne!(with_domain, without_domain);
+    }
+
+    #[test]
+    fn settlement_hash_changes_when_axes_change() {
+        let mut e = sample_event();
+        let h1 = compute_settlement_hash(&e).unwrap();
+        e.axes_consumed
+            .axes
+            .insert("cached_input_tokens_per_1k".to_owned(), 100);
+        let h2 = compute_settlement_hash(&e).unwrap();
+        assert_ne!(h1, h2, "axes change must change hash");
+    }
+
+    #[test]
+    fn cached_axis_requires_cache_key_hash() {
+        let ask = Ask::new(
+            "did:octo:a",
+            "openai/gpt-4",
+            ModelRateTable {
+                model: "openai/gpt-4".to_owned(),
+                rates: vec![AxisRate {
+                    axis: "cached_input_tokens_per_1k".to_owned(),
+                    rate_per_1k: 3_000,
+                }],
+            },
+            [0x42; 16],
+            1_900_000_000,
+        )
+        .unwrap();
+        let axes = PricingAxis::standard_axes();
+        let consumed = AxesConsumed::new({
+            let mut m = std::collections::BTreeMap::new();
+            m.insert("cached_input_tokens_per_1k".to_owned(), 100);
+            m
+        });
+        // No cache_key_hash → CacheStrategyRequired.
+        let err = compute_cost(&ask, &consumed, &axes).unwrap_err();
+        assert!(matches!(err, SettlementError::CacheStrategyRequired));
+        // With cache_key_hash → succeeds.
+        let consumed_ok = consumed.with_cache_key_hash([0xAA; 32]);
+        let cost = compute_cost(&ask, &consumed_ok, &axes).unwrap();
+        // 100 tokens = ceil(100/1000) = 1 block * 3000 = 3000.
+        assert_eq!(cost, 3_000);
+    }
+
+    #[test]
+    fn compute_cost_unknown_axis_rejected() {
+        let ask = Ask::new(
+            "did:octo:a",
+            "openai/gpt-4",
+            ModelRateTable::default(),
+            [0x42; 16],
+            1_900_000_000,
+        )
+        .unwrap();
+        let axes = PricingAxis::standard_axes();
+        let consumed = AxesConsumed::new({
+            let mut m = std::collections::BTreeMap::new();
+            m.insert("nonexistent_axis".to_owned(), 100);
+            m
+        });
+        let err = compute_cost(&ask, &consumed, &axes).unwrap_err();
+        assert!(matches!(err, SettlementError::UnknownAxis(ref s) if s == "nonexistent_axis"));
+    }
+
+    #[test]
+    fn compute_cost_overflow_detected() {
+        // Force overflow: a single axis with u128::MAX worth of rate + huge units.
+        // We can't directly set u128::MAX rate via standard axes, so we use a
+        // synthetic Ask with an extreme rate.
+        let ask = Ask::new(
+            "did:octo:a",
+            "openai/gpt-4",
+            ModelRateTable {
+                model: "openai/gpt-4".to_owned(),
+                rates: vec![AxisRate {
+                    axis: "input_tokens_per_1k".to_owned(),
+                    rate_per_1k: u128::MAX,
+                }],
+            },
+            [0x42; 16],
+            1_900_000_000,
+        )
+        .unwrap();
+        let axes = PricingAxis::standard_axes();
+        let consumed = AxesConsumed::new({
+            let mut m = std::collections::BTreeMap::new();
+            m.insert("input_tokens_per_1k".to_owned(), 100);
+            m
+        });
+        // First block of 100 tokens: 1 * u128::MAX = u128::MAX. Second call
+        // would overflow. Use 2 axes to trigger.
+        let mut consumed2 = consumed.clone();
+        consumed2
+            .axes
+            .insert("output_tokens_per_1k".to_owned(), 100);
+        // Add output rate to push sum over u128::MAX.
+        // Hmm — our ask only has input rate. Output falls back to default 60_000.
+        // u128::MAX + 60_000 overflows.
+        let err = compute_cost(&ask, &consumed2, &axes).unwrap_err();
+        assert!(matches!(err, SettlementError::Overflow { .. }));
+    }
+
+    #[test]
+    fn receipt_sign_verify_roundtrip() {
+        let event = sample_event();
+        let seed = [0xCDu8; 32];
+        let pk = AskSigned::public_key_from_seed(&seed);
+        let nonce = [0xEEu8; 16];
+        let receipt = sign_settlement_receipt(event.clone(), &seed, nonce).unwrap();
+        let expected_hash = compute_settlement_hash(&event).unwrap();
+        verify_settlement_receipt(&receipt, &pk, &expected_hash).expect("verify");
+    }
+
+    #[test]
+    fn receipt_wrong_hash_rejected() {
+        let event = sample_event();
+        let seed = [0xCDu8; 32];
+        let pk = AskSigned::public_key_from_seed(&seed);
+        let receipt = sign_settlement_receipt(event, &seed, [0xEE; 16]).unwrap();
+        let wrong_hash = [0xFFu8; 32];
+        let err = verify_settlement_receipt(&receipt, &pk, &wrong_hash).unwrap_err();
+        assert!(matches!(err, SettlementError::HashMismatch));
+    }
+
+    #[test]
+    fn receipt_wrong_public_key_rejected() {
+        let event = sample_event();
+        let seed = [0xCDu8; 32];
+        let receipt = sign_settlement_receipt(event, &seed, [0xEE; 16]).unwrap();
+        let expected_hash = compute_settlement_hash(&receipt.event).unwrap();
+        let wrong_pk = AskSigned::public_key_from_seed(&[0x99u8; 32]);
+        let err = verify_settlement_receipt(&receipt, &wrong_pk, &expected_hash).unwrap_err();
+        assert!(matches!(err, SettlementError::AskSignatureInvalid));
+    }
+
+    #[test]
+    fn receipt_tampered_event_rejected() {
+        let event = sample_event();
+        let seed = [0xCDu8; 32];
+        let pk = AskSigned::public_key_from_seed(&seed);
+        let mut receipt = sign_settlement_receipt(event, &seed, [0xEE; 16]).unwrap();
+        receipt.event.cost += 1; // tamper
+        let expected_hash = compute_settlement_hash(&receipt.event).unwrap();
+        let err = verify_settlement_receipt(&receipt, &pk, &expected_hash).unwrap_err();
+        assert!(matches!(err, SettlementError::AskSignatureInvalid));
+    }
+
+    #[test]
+    fn empty_router_seed_rejected() {
+        let event = sample_event();
+        let err = sign_settlement_receipt(event, &[0u8; 32], [0xEE; 16]).unwrap_err();
+        assert!(matches!(err, AskSignedError::EmptyIdentitySeed));
+    }
+
+    #[test]
+    fn settlement_hash_property_10k_replays() {
+        // 10K random (cap_root_hash, ask_id, invocation_hash, axes) tuples,
+        // recomputed twice → identical 32-byte hash. (Property-test surrogate
+        // without pulling in `proptest` crate; deterministic seeded RNG.)
+        use std::collections::BTreeMap;
+        let mut rng_state: u64 = 0xDEAD_BEEF_CAFE_BABE;
+        let mut next = || {
+            rng_state ^= rng_state << 13;
+            rng_state ^= rng_state >> 7;
+            rng_state ^= rng_state << 17;
+            rng_state
+        };
+        for _ in 0..10_000 {
+            let mut axes = BTreeMap::new();
+            axes.insert("input_tokens_per_1k".to_owned(), (next() as u32) % 10_000);
+            axes.insert("output_tokens_per_1k".to_owned(), (next() as u32) % 5_000);
+            let event = SettlementEvent {
+                cap_root_hash: next().to_le_bytes().repeat(4)[..32]
+                    .try_into()
+                    .unwrap_or([0u8; 32]),
+                ask_id: next().to_le_bytes().repeat(4)[..32]
+                    .try_into()
+                    .unwrap_or([0u8; 32]),
+                invocation_hash: next().to_le_bytes().repeat(4)[..32]
+                    .try_into()
+                    .unwrap_or([0u8; 32]),
+                axes_consumed: AxesConsumed::new(axes),
+                cost: u128::from(next()),
+                settled_at_unix: next(),
+            };
+            let h1 = compute_settlement_hash(&event).unwrap();
+            let h2 = compute_settlement_hash(&event).unwrap();
+            assert_eq!(h1, h2, "determinism violated for event {event:?}");
+        }
     }
 }

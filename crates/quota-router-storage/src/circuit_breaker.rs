@@ -363,6 +363,7 @@ pub enum CircuitBreakerError {
 mod tests {
     use super::*;
 
+    #[allow(dead_code)]
     fn seed_window(breaker: &mut CircuitBreaker, hits: bool, unique: usize, now: u64) {
         // Feed `unique` distinct cache keys, each with `hits` semantics.
         for i in 0..unique {

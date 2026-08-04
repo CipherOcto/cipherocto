@@ -65,9 +65,9 @@ fn compute_goldens() -> Goldens {
     // that here. (axes_hash computation lives in quota-router-storage::ask.)
     let ask = quota_router_storage::ask::Ask {
         asker_did: "did:octo:asker1".to_owned(),
-        model: MODEL.to_owned(),
+        model: ModelRef::from(MODEL),
         rates: quota_router_storage::ask::ModelRateTable {
-            model: MODEL.to_owned(),
+            model: ModelRef::from(MODEL),
             rates: vec![quota_router_storage::ask::AxisRate {
                 axis: "input_tokens_per_1k".to_owned(),
                 rate_per_1k: 30_000,
@@ -90,12 +90,12 @@ fn compute_goldens() -> Goldens {
     // `blake3::hash(b"settlement-mock")` stub. The golden now reflects
     // the actual deterministic output of the canonical envelope encoder
     // for the canonical 11-step inputs.
-    use quota_router_storage::ask::SettlementEnvelope;
+    use quota_router_storage::ask::{ModelRef, SettlementEnvelope};
     let envelope = SettlementEnvelope {
         settlement_hash: [0u8; 32], // placeholder; computed below
         asker_did: "did:octo:asker1".to_owned(),
         holder_did: HOLDER_DID.to_owned(),
-        model: MODEL.to_owned(),
+        model: ModelRef::from(MODEL),
         axes_consumed: vec![("input_tokens_per_1k".to_owned(), 1000)],
         // The ask_id used by `eleven_step::run_settlement` is what the
         // marketplace Ask derives via `Ask::id()` — we mirror that here.

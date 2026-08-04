@@ -33,7 +33,9 @@ use quota_router_sm_engine::{
     Ask as EngineAsk, Receipt as EngineReceipt, Reservation, SettlementError as EngineError,
     SettlementStore, StoolapStore,
 };
-use quota_router_storage::ask::{ConsumedReceiptIndex, SettlementEnvelope, SettlementError};
+use quota_router_storage::ask::{
+    ConsumedReceiptIndex, ModelRef, SettlementEnvelope, SettlementError,
+};
 use std::collections::HashSet;
 
 const ROUTER_ID: &str = "did:octo:router-1";
@@ -256,7 +258,7 @@ fn run_settlement(
         settlement_hash: [0u8; 32],
         asker_did: asker_did.to_owned(),
         holder_did: holder_did.to_owned(),
-        model: model.to_owned(),
+        model: ModelRef::from(model),
         axes_consumed: axes.clone(),
         ask_id,
         nonce,
@@ -313,9 +315,9 @@ fn eleven_step_exercise_green() {
     let marketplace = Marketplace::open_in_memory().expect("open marketplace");
     let inserted_ask = quota_router_storage::ask::Ask {
         asker_did: "did:octo:asker1".to_owned(),
-        model: "openai/gpt-4".to_owned(),
+        model: ModelRef::from("openai/gpt-4"),
         rates: quota_router_storage::ask::ModelRateTable {
-            model: "openai/gpt-4".to_owned(),
+            model: ModelRef::from("openai/gpt-4"),
             rates: vec![quota_router_storage::ask::AxisRate {
                 axis: "input_tokens_per_1k".to_owned(),
                 rate_per_1k: 30_000,
@@ -438,7 +440,7 @@ fn sample_envelope(ask_id: [u8; 32], nonce: [u8; 32]) -> SettlementEnvelope {
         settlement_hash: [0u8; 32], // placeholder; filled by compute_settlement_hash
         asker_did: "did:octo:asker1".to_owned(),
         holder_did: HOLDER_DID.to_owned(),
-        model: "openai/gpt-4".to_owned(),
+        model: ModelRef::from("openai/gpt-4"),
         axes_consumed: vec![("input_tokens_per_1k".to_owned(), 1000_u64)],
         ask_id,
         nonce,
@@ -508,9 +510,9 @@ fn eleven_step_replay_defense_full_path() {
     let marketplace = Marketplace::open_in_memory().expect("open marketplace");
     let ask = quota_router_storage::ask::Ask {
         asker_did: "did:octo:asker1".to_owned(),
-        model: "openai/gpt-4".to_owned(),
+        model: ModelRef::from("openai/gpt-4"),
         rates: quota_router_storage::ask::ModelRateTable {
-            model: "openai/gpt-4".to_owned(),
+            model: ModelRef::from("openai/gpt-4"),
             rates: vec![quota_router_storage::ask::AxisRate {
                 axis: "input_tokens_per_1k".to_owned(),
                 rate_per_1k: 30_000,
@@ -561,7 +563,7 @@ fn eleven_step_replay_defense_full_path() {
         settlement_hash,
         asker_did: "did:octo:asker1".to_owned(),
         holder_did: HOLDER_DID.to_owned(),
-        model: MODEL.to_owned(),
+        model: ModelRef::from(MODEL),
         axes_consumed: vec![(
             "input_tokens_per_1k".to_owned(),
             ingress.usage.input_tokens.max(1000),
@@ -674,7 +676,7 @@ fn cross_impl_tv1_settlement_hash_matches() {
         settlement_hash: [0u8; 32],
         asker_did: "did:octo:asker1".to_owned(),
         holder_did: HOLDER_DID.to_owned(),
-        model: "openai/gpt-4".to_owned(),
+        model: ModelRef::from("openai/gpt-4"),
         axes_consumed: vec![("input_tokens_per_1k".to_owned(), 1000_u64)],
         ask_id: ask_id_arr,
         nonce,
@@ -683,7 +685,7 @@ fn cross_impl_tv1_settlement_hash_matches() {
     };
     let h1 = tv_settlement_hash_impl1(&env);
     let h2 = tv_settlement_hash_impl2(
-        &env.model,
+        &env.model.to_wire(),
         &env.axes_consumed,
         &env.ask_id,
         &env.nonce,
@@ -711,7 +713,7 @@ fn cross_impl_tv2_settlement_hash_matches() {
         settlement_hash: [0u8; 32],
         asker_did: "did:octo:asker2".to_owned(),
         holder_did: HOLDER_DID.to_owned(),
-        model: "anthropic/claude-3-opus".to_owned(),
+        model: ModelRef::from("anthropic/claude-3-opus"),
         axes_consumed: vec![
             ("input_tokens_per_1k".to_owned(), 2000_u64),
             ("output_tokens_per_1k".to_owned(), 500_u64),
@@ -723,7 +725,7 @@ fn cross_impl_tv2_settlement_hash_matches() {
     };
     let h1 = tv_settlement_hash_impl1(&env);
     let h2 = tv_settlement_hash_impl2(
-        &env.model,
+        &env.model.to_wire(),
         &env.axes_consumed,
         &env.ask_id,
         &env.nonce,
@@ -754,7 +756,7 @@ fn step10_settlement_hash_cross_impl_byte_equivalent() {
         settlement_hash: [0u8; 32],
         asker_did: "did:octo:asker1".to_owned(),
         holder_did: HOLDER_DID.to_owned(),
-        model: MODEL.to_owned(),
+        model: ModelRef::from(MODEL),
         axes_consumed: vec![("input_tokens_per_1k".to_owned(), 1000_u64)],
         ask_id: [0xAA; 32],
         nonce: [0x55; 32],
@@ -763,7 +765,7 @@ fn step10_settlement_hash_cross_impl_byte_equivalent() {
     };
     let h1 = tv_settlement_hash_impl1(&canonical_env);
     let h2 = tv_settlement_hash_impl2(
-        &canonical_env.model,
+        &canonical_env.model.to_wire(),
         &canonical_env.axes_consumed,
         &canonical_env.ask_id,
         &canonical_env.nonce,
@@ -782,9 +784,9 @@ fn step10_settlement_hash_cross_impl_byte_equivalent() {
     let marketplace = Marketplace::open_in_memory().expect("open marketplace");
     let ask = quota_router_storage::ask::Ask {
         asker_did: "did:octo:asker1".to_owned(),
-        model: MODEL.to_owned(),
+        model: ModelRef::from(MODEL),
         rates: quota_router_storage::ask::ModelRateTable {
-            model: MODEL.to_owned(),
+            model: ModelRef::from(MODEL),
             rates: vec![quota_router_storage::ask::AxisRate {
                 axis: "input_tokens_per_1k".to_owned(),
                 rate_per_1k: 30_000,
@@ -815,7 +817,7 @@ fn step10_settlement_hash_cross_impl_byte_equivalent() {
         settlement_hash: [0u8; 32],
         asker_did: "did:octo:asker1".to_owned(),
         holder_did: HOLDER_DID.to_owned(),
-        model: MODEL.to_owned(),
+        model: ModelRef::from(MODEL),
         axes_consumed: vec![("input_tokens_per_1k".to_owned(), 1000_u64)],
         ask_id,
         nonce: [0x55; 32],

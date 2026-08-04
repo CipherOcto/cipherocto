@@ -237,7 +237,7 @@ impl Marketplace {
                 AskSpec {
                     ask_id,
                     asker_did: ask.asker_did.clone(),
-                    model: ask.model.clone(),
+                    model: ask.model.to_wire(),
                 },
                 cost,
                 1, // qty 1 per Ask; RFC-0900 markets trade 1 prompt per Ask
@@ -404,9 +404,10 @@ impl Marketplace {
 /// borrow and we already own the Ask by value here.
 fn compute_ask_id_static(ask: &Ask) -> [u8; 32] {
     let axes_hash = ask.axes_hash();
-    let mut msg = Vec::with_capacity(ask.asker_did.len() + ask.model.len() + 32 + ask.nonce.len());
+    let model_wire = ask.model.to_wire();
+    let mut msg = Vec::with_capacity(ask.asker_did.len() + model_wire.len() + 32 + ask.nonce.len());
     msg.extend_from_slice(ask.asker_did.as_bytes());
-    msg.extend_from_slice(ask.model.as_bytes());
+    msg.extend_from_slice(model_wire.as_bytes());
     msg.extend_from_slice(&axes_hash);
     msg.extend_from_slice(&ask.nonce);
     *blake3::hash(&msg).as_bytes()
@@ -465,14 +466,14 @@ impl Marketplace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quota_router_storage::ask::{AxisRate, ModelRateTable};
+    use quota_router_storage::ask::{AxisRate, ModelRateTable, ModelRef};
 
     fn sample_ask(asker: &str, model: &str, rate: u128, expires: u64) -> Ask {
         Ask {
             asker_did: asker.to_owned(),
-            model: model.to_owned(),
+            model: ModelRef::from(model),
             rates: ModelRateTable {
-                model: model.to_owned(),
+                model: ModelRef::from(model),
                 rates: vec![AxisRate {
                     axis: "input_tokens_per_1k".to_owned(),
                     rate_per_1k: rate,

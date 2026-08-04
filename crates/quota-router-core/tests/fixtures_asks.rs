@@ -72,7 +72,7 @@ fn build_ask(spec: &AskSpec) -> Result<Ask, AskError> {
         spec.asker_did.clone(),
         spec.model.clone(),
         ModelRateTable {
-            model: spec.model.clone(),
+            model: spec.model.clone().into(),
             rates,
         },
         hex_to_nonce(&spec.nonce_hex),

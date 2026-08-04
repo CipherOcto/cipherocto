@@ -118,6 +118,22 @@ pub enum Commands {
         #[arg(long)]
         db_path: Option<String>,
     },
+
+    /// List persisted settlement events for an asker (RFC-0959 §Event Sourcing).
+    ///
+    /// Queries the `settlement_events` table for all events matching
+    /// `--asker-did`, ordered by `settled_at_unix` ASC. Each row is
+    /// printed as `settlement_hash + ask_id + nonce + cost_micro_octo_w`.
+    /// Pair with `--db-path` to query a file-backed DB (must be the same
+    /// path used by `settle-replay` to populate the table).
+    SettleList {
+        /// Asker DID (RFC-0009) to filter events by.
+        #[arg(long)]
+        asker_did: String,
+        /// Path to file-backed stoolap DB; defaults to in-memory (always empty).
+        #[arg(long)]
+        db_path: Option<String>,
+    },
 }
 
 #[cfg(test)]

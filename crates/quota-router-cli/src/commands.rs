@@ -575,6 +575,28 @@ pub fn settle_replay_repo(
     }
 }
 
+/// List persisted settlement events for an asker (RFC-0959 §Event Sourcing).
+pub fn settle_list(asker_did: &str, db_path: Option<&str>) -> Result<()> {
+    let repo =
+        quota_router_storage::settlement_event_repo::SettlementEventRepository::open(db_path)
+            .map_err(|e| anyhow::anyhow!("open settlement_events: {e}"))?;
+    let events = repo
+        .list_by_asker(asker_did)
+        .map_err(|e| anyhow::anyhow!("list_by_asker: {e}"))?;
+    println!("asker_did = {}  events = {}", asker_did, events.len());
+    for ev in &events {
+        println!(
+            "settlement_hash = {}  ask_id = {}  nonce = {}  cost_micro_octo_w = {}  settled_at_unix = {}",
+            hex::encode(ev.settlement_hash),
+            hex::encode(ev.ask_id),
+            hex::encode(&ev.nonce),
+            ev.cost_micro_octo_w,
+            ev.settled_at_unix,
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -865,5 +887,13 @@ network_id = "0202020202020202020202020202020202020202020202020202020202020202"
         );
         // Row count unchanged: tamper + replay both rejected BEFORE insert.
         assert_eq!(repo.len().unwrap(), 1, "no new rows after rejection");
+    }
+
+    // Settle-list CLI surface (RFC-0959 §Event Sourcing).
+    #[test]
+    fn settle_list_with_no_persisted_events_returns_empty() {
+        // Empty in-memory DB returns 0 events for any asker.
+        let result = settle_list("did:octo:nobody", None);
+        assert!(result.is_ok(), "settle_list with empty DB must succeed");
     }
 }

@@ -44,6 +44,9 @@ async fn main() -> Result<()> {
         Commands::SettleReplay { from, db_path } => {
             cmd::settle_replay(&from, db_path.as_deref())?;
         }
+        Commands::SettleList { asker_did, db_path } => {
+            cmd::settle_list(&asker_did, db_path.as_deref())?;
+        }
     }
 
     Ok(())

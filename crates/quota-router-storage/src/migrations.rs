@@ -40,6 +40,11 @@ pub const BUILTIN_MIGRATIONS: &[Migration] = &[
         name: "create_consumed_receipt_index",
         sql: include_str!("../migrations/v003__create_consumed_receipt_index.sql"),
     },
+    Migration {
+        version: 4,
+        name: "create_settlement_events",
+        sql: include_str!("../migrations/v004__create_settlement_events.sql"),
+    },
 ];
 
 /// Migration errors.
@@ -399,5 +404,110 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].0, "did:octo:asker1");
         assert_eq!(entries[1].0, "did:octo:asker2");
+    }
+
+    #[test]
+    fn v004_creates_settlement_events_table() {
+        let db = stoolap::Database::open_in_memory().unwrap();
+        apply_pending(&db).unwrap();
+
+        // Schema-version table records v004 as applied.
+        let rows = db
+            .query(
+                "SELECT version FROM cipherocto_schema_version WHERE version = 4",
+                (),
+            )
+            .unwrap();
+        let mut iter = rows.into_iter();
+        let row = iter.next().expect("v004 row").unwrap();
+        let v: i64 = row.get(0).unwrap();
+        assert_eq!(v, 4, "v004 must be recorded in cipherocto_schema_version");
+
+        // settlement_events table is queryable. Insert + select round-trip
+        // proves the schema + indexes are usable end-to-end.
+        let next_id = || -> i64 {
+            let rows = db
+                .query(
+                    "SELECT COALESCE(MAX(row_id), 0) + 1 FROM settlement_events",
+                    (),
+                )
+                .unwrap();
+            rows.into_iter()
+                .next()
+                .unwrap()
+                .unwrap()
+                .get::<i64>(0)
+                .unwrap()
+        };
+        let axes_canonical = serde_json::to_vec(&serde_json::json!({
+            "axes": {"input_tokens_per_1k": 1000},
+            "cache_key_hash": null,
+        }))
+        .unwrap();
+        let cost_be = 30_000_u128.to_be_bytes().to_vec();
+        db.execute(
+            "INSERT INTO settlement_events \
+             (row_id, settlement_hash, cap_root_hash, ask_id, asker_did, \
+              invocation_hash, axes_consumed_json, cost_micro_octo_w, \
+              settled_at_unix, router_signature, nonce) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                next_id(),
+                vec![0x42_u8; 32],
+                vec![0x01_u8; 32],
+                vec![0x02_u8; 32],
+                "did:octo:asker1",
+                vec![0xab_u8; 32],
+                axes_canonical,
+                cost_be,
+                1_700_000_000_i64,
+                vec![0u8; 64], // Ed25519 signature zero-pad
+                vec![0x55_u8; 16],
+            ),
+        )
+        .unwrap();
+
+        // Round-trip: same settlement_hash cannot be inserted twice (UNIQUE).
+        let dup = db.execute(
+            "INSERT INTO settlement_events \
+             (row_id, settlement_hash, cap_root_hash, ask_id, asker_did, \
+              invocation_hash, axes_consumed_json, cost_micro_octo_w, \
+              settled_at_unix, router_signature, nonce) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                next_id(),
+                vec![0x42_u8; 32],
+                vec![0x01_u8; 32],
+                vec![0x02_u8; 32],
+                "did:octo:asker1",
+                vec![0xab_u8; 32],
+                serde_json::to_vec(&serde_json::json!({"axes": {}, "cache_key_hash": null}))
+                    .unwrap(),
+                30_000_u128.to_be_bytes().to_vec(),
+                1_700_000_001_i64,
+                vec![0u8; 64],
+                vec![0x55_u8; 16],
+            ),
+        );
+        assert!(
+            dup.is_err(),
+            "duplicate settlement_hash must be rejected: {dup:?}"
+        );
+
+        // Per-asker query (idx_se_asker_did) returns the row.
+        let rows = db
+            .query(
+                "SELECT settlement_hash, cost_micro_octo_w FROM settlement_events \
+                 WHERE asker_did = ?",
+                ("did:octo:asker1",),
+            )
+            .unwrap();
+        let mut iter = rows.into_iter();
+        let r = iter.next().expect("row").unwrap();
+        let hash: Vec<u8> = r.get(0).unwrap();
+        let cost: Vec<u8> = r.get(1).unwrap();
+        assert_eq!(hash, vec![0x42_u8; 32]);
+        let cost_val = u128::from_be_bytes(cost.as_slice().try_into().unwrap());
+        assert_eq!(cost_val, 30_000);
     }
 }

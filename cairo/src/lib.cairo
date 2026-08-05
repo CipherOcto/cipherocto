@@ -64,6 +64,7 @@ use core::poseidon::poseidon_hash_span;
 use core::traits::{Into, TryInto};
 
 mod blake3;
+mod ed25519;
 
 /// Number of caveats exercised in the hardcoded TV1 chain.
 pub const CHAIN_DEPTH: u32 = 3;

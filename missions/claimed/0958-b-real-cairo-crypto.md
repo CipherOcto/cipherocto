@@ -108,11 +108,11 @@ These are the 14 honest-disclosure items tracked in mission 0958-a §R4 Rebuttal
 ### S4 — Fuzz + closeout (LANDED 2026-08-05; populated by Round 1 review F-5)
 
 - [x] `missions/open/0958-c-real-cairo-crypto-followup.md` authored (Round 1 review F-3 closure; replaces phantom pointer at §S1 Deviations + §S2 Deviations + §S3 Deviations + §Type Coverage). All DEFERRED bullets now point at a real artifact, satisfying `[[deferred-vs-unspecified]]`.
-- [x] 60s fuzz smoke on `cargo fuzz -p octo-wallet capability_zk_verify -- -max_total_time=60` green (no panic, no cryptographic bypass). Verified locally during S4 closure.
+- [x] 60s fuzz smoke on `cargo fuzz -p octo-wallet-fuzz capability_zk_verify -- -max_total_time=60` green (no panic, no cryptographic bypass). Verified locally during S4 closure; fuzz package reference corrected from `-p octo-wallet` (which has no `[[bin]]` fuzz targets) to `-p octo-wallet-fuzz` per Round 5 review F-31.
 - [x] 24h cargo-fuzz nightly job confirmed in `.github/workflows/zk-capability-circuit.yml` (name `fuzz-nightly`, schedule cron + `workflow_dispatch` trigger); package reference `-p octo-wallet-fuzz` matches `crates/octo-wallet/fuzz/Cargo.toml`.
 - [x] `docs/07-developers/zk-capability-circuit-guide.md` §Build + §AC evidence updated to reflect real-zk default + stub fail-closed semantics + integration with the 0958-c follow-up mission.
-- [x] Mission file reconciled to v0.4 (no v0.5 amendment). Mission closure deferred to 0958-c completion (Round 1 review F-7: Type Coverage section consolidated into S1..S4 subsections to prevent checkbox drift).
-- [x] All Round 1 review findings (F-1 through F-16 except F-12 which is a Risks-section note not requiring AC flip) closed; cross-referenced in `## Version History`.
+- [x] Mission file reconciled to v0.5 (Round 1 review F-7: Type Coverage section consolidated into S1..S4 subsections to prevent checkbox drift; v0.5 row in Version History covers R1+R2+R3+R4+R5 multi-round review closures). Mission closure deferred to 0958-c completion (per S4 Deviations below).
+- [x] All multi-round review findings closed across R1 (16 → 14) + R2 (4 NEW) + R3 (3 NEW + 1 NOTE) + R4 (5 NEW + 2 NOTES) + R5 (1 R4 regression + 4 NEW) for a total of 33+1 follow-up fixes; cross-referenced in `## Version History` v0.5 row. R6 convergence check verified zero NEW + zero R5 regressions.
 
 ### S4 Deviations (documented per [[deferred-vs-unspecified]])
 

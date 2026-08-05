@@ -69,21 +69,28 @@ and debug the FFI bridge.
 ### Workspace (stable rust)
 
 ```bash
-# Build with all current features
-cargo build --workspace --features full
+# Build workspace (Round 4 review of mission 0958-b F-25 removed
+# --features full: the `full` cargo feature was DELETED in mission
+# 0958-b S2 commit 77aff4aa in favor of runtime dispatch on
+# zk_vendor::vendor_state(). Real-zk STWO is selected at runtime via
+# libstwo_sys.so presence; the BLAKE3 stub activates under
+# --features allow-stub-verifier for test compilation only.)
+cargo build --workspace
 
-# Lint (zero warnings required)
-cargo clippy --workspace --all-targets --features full -- -D warnings
+# Lint (zero warnings required; --features full removed per R4 F-25)
+cargo clippy --workspace --all-targets -- -D warnings
 
 # Format
 cargo fmt --all
 ```
 
-**Important:** `--all-features` is **NOT** used because `litellm-mode` and
+**Important:** `--all-features` is NOT used because `litellm-mode` and
 `any-llm-mode` are mutually exclusive (`compile_error!` at
 `quota-router-core/src/router.rs`). The mode gate controls HOW (reqwest vs
-PyO3), not WHETHER (RFC-0917 invariant). Use `--features full` for
-feature-bounded coverage.
+PyO3), not WHETHER (RFC-0917 invariant). NO `--features full` flag exists
+since mission 0958-b S2; feature coverage happens via per-crate
+`[dev-dependencies]` opt-in (see `crates/octo-wallet/Cargo.toml` for the
+`zk-verifier` allow-stub-verifier re-export per R1 F-1 closure).
 
 ### STWO FFI cdylib (nightly)
 
@@ -162,15 +169,37 @@ cargo test -p zk-vendor --test ffi_loading -- --include-ignored --nocapture
 # Wholesale lint (fail-closed; MUST exit 0)
 bash .github/linters/no-wholesale-zk.sh
 
-# Verify the canonical clean-state build
-cargo clippy --workspace --all-targets --features full -- -D warnings
+# Verify the canonical clean-state build (R4 F-25: --features full removed)
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-## AC traceability
+## AC evidence (mission 0958-b v0.5 — multi-round review convergence)
 
-| AC | Deliverable | Test entry | Commit |
-| AC | Deliverable | Test entry | Commit(s) |
-|----|-------------|-----------|--------|
+The AC table below covers `mission 0958-b`'s claim scope (Phase B.3 Cairo
+cryptographic body + Phase C.3 real-zk STWO end-to-end). For the full
+AC traceability including the prior `mission 0958-a` surface area work,
+see `missions/claimed/0958-b-real-cairo-crypto.md` §Version History
+v0.4/v0.5 rows + `missions/claimed/0958-a-zk-capability-circuit.md` §AC.
+
+**Multi-round review status (mission 0958-b v0.5; 2026-08-05):**
+
+| Round | Findings | Commit | Notes |
+|---|---|---|---|
+| S1 + S2 + S3 | (baseline crypto + real-zk STWO + stub retirement) | `aa004ad0` + `77aff4aa` + `81e2db4e` | Mission AC list original |
+| R1 | 16 findings (14 closed) | `549c2cc2` | F-1 unconditional-feature closure most critical |
+| R2 | 4 NEW MAJOR + MINOR | `e8a9ba5c` | F-17 phantom shas, F-18 core::blake3, F-19 zk_vectors breakdown, F-20 0958-c Version History |
+| R3 | 3 NEW MAJOR + 1 NOTE | `9fef522f` | F-21 0958-c regression, F-22 cron drift, F-23 phantom SHA, F-24 compiler.rs line ref |
+| R4 | 5 NEW + 2 NOTES | `63debd76` | F-25 phantom `--features full` in CI (CRITICAL), F-26 casm_split, F-27 nightly toolchain, F-28 AC-6 count, F-29 EOF newline |
+| R5 | 1 R4 regression + 4 NEW | `75e7e1e4` | F-30 YAML colon-in-parens (CRITICAL), F-31 fuzz package ref, F-32 seed corpus claim, F-33 Version History v0.5 row, F-34 0958-c v0.2 row |
+| R6 | 0 NEW (convergence verified) | `777f2f1e` | All R5 fixes stable; review chain closed |
+
+**Stub fail-closed semantics:** `crates/octo-wallet/Cargo.toml` does NOT
+activate `allow-stub-verifier` on the production `[dependencies]` edge.
+Test-only stub mode activates through `[dev-dependencies]`, which sets
+`features = ["allow-stub-verifier"]` on `zk-verifier` for test compilation
+only (R1 F-1 closure; surviving R6 verification).
+
+
 | **AC-1** | Real Cairo 2.x program body (no `unimplemented!()`) under scarb package `capability_zk` | `cairo/src/lib.cairo` exists + `scarb build` produces Sierra IR | `ae4dc4f8` (R4 S1 redo) |
 | **AC-2** | `zk_circuit::compile_from_source` shells out to cairo-compile; CASM BLAKE3 snapshot | `tests/casm_snapshot.rs` (loud-fail when toolchain missing) | `26fa53f6` (S1); R3 #8 harden `e7c79b9b` |
 | **AC-3** | Decoupled FFI workspace + BLAKE3 stub + MSRV 1.93 + stub-disabled gate | `tests/ffi_loading.rs` (hardened) + `tests/stub_disabled.rs` (2 tests) | `4f7f47db`, `be113cb1`, `96b2489d` (S2); R3 fix-ups `0e0c3ee9` (#1 prod-gate) + `066a263c` (#2 MSRV) + `27641ade` (#3 FFI arg order) |

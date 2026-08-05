@@ -178,3 +178,9 @@ tempfile = "3"
 octo-wallet = { path = "../octo-wallet" }
 cipherocto-encoding = { path = "../cipherocto-encoding" }
 cipherocto-policy = { path = "../cipherocto-policy" }
+
+# Mission 0958-b S2 (2026-08-05): zk_verify::capability tests gate
+# on `zk_vendor::vendor_state()` to skip stub-shaped assertions when
+# the real-zk FFI is loaded (R4 forgery-channel gate rejects
+# stub-shaped proofs under FFI). Dev-dep only.
+zk-vendor = { path = "../zk-vendor" }

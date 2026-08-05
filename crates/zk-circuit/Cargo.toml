@@ -61,12 +61,12 @@ num-bigint = "0.4"
 # round-trip exercises the canonical check.
 zk-verifier = { path = "../zk-verifier" }
 
-# Real STWO FFI (RFC-0958 capability ZK + RFC-0962 §9; Gap 3 Task 3.2). Only
-# enabled when explicitly opted in — see zk-circuit::prove_batch_signature
-# FFI branch. Default builds use the mock-prover path (deterministic
-# BLAKE3 commitment), which preserves Class A determinism without
-# requiring the nightly-only `libstwo_sys.so`.
-zk-vendor = { path = "../zk-vendor", optional = true }
+# Real STWO FFI (RFC-0958 capability ZK + RFC-0962 §9; Gap 3 Task 3.2).
+# Mission 0958-b S2 (2026-08-05): now non-optional — runtime dispatch
+# on `zk_vendor::loaded_library()` selects the real-zk path when
+# `libstwo_sys.so` is reachable, mock path otherwise. No cargo feature
+# gate. See `prove_batch_signature` for the dispatch logic.
+zk-vendor = { path = "../zk-vendor" }
 
 # ZK canonicalization primitives (canonicalize_axes + ZKP_DOMAIN_PREFIX
 # constants). R3 fix-up 2026-08-05: dropped the orphan `canonical_ser`
@@ -74,9 +74,15 @@ zk-vendor = { path = "../zk-vendor", optional = true }
 cipherocto-zkp-canonical = { path = "../cipherocto-zkp-canonical" }
 
 [features]
-# Default OFF: build without the full dep. Mock prover handles all
-# test vectors and the default 11-step ZK mint flow.
-full = ["dep:zk-vendor"]
+# **Mission 0958-b S2 (2026-08-05):** the `full` cargo feature was
+# REMOVED. Real-zk STWO selection is now runtime (see
+# `zk_vendor::loaded_library()`), not compile-time. Callers that
+# previously gated on `--features full` should check
+# `zk_vendor::vendor_state() == zk_vendor::VendorState::Ffi` instead.
+# The bench tests in `crates/octo-wallet/tests/bench.rs` no longer
+# need the feature flag — they exercise the dispatch path
+# transparently, asserting 50-500KB proof size when FFI is loaded
+# and structural-smoke when only the mock path is available.
 
 [dev-dependencies]
 

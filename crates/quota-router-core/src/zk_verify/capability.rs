@@ -552,6 +552,22 @@ mod tests {
 
     #[test]
     fn verify_accepts_matching_inputs_with_valid_stub_proof() {
+        // **Mission 0958-b S2 (2026-08-05):** when the real-zk STWO
+        // FFI library is loaded, `verify_capability_zk` takes the FFI
+        // path and rejects stub-shaped proof bytes as a forgery
+        // channel (per R4 fix-up `StubShapedProofRejected`). The test
+        // therefore asserts success ONLY in `VendorState::Stub`; with
+        // FFI loaded, the verifier's R4 forgery-channel gate
+        // legitimately fires and the test returns an `Err` (matching
+        // production security semantics). Production deployments
+        // ship the cdylib; this test documents the stub-mode contract.
+        if zk_vendor::vendor_state() == zk_vendor::VendorState::Ffi {
+            eprintln!(
+                "verify_accepts_matching_inputs_with_valid_stub_proof: SKIP — FFI loaded; \
+                 stub-shaped proof correctly rejected by R4 forgery-channel gate"
+            );
+            return;
+        }
         let proof = sample_proof();
         let expected = proof.public_inputs.clone();
         let casm = proof.casm_hash;

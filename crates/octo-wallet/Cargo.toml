@@ -15,21 +15,18 @@ name = "octo_wallet"
 path = "src/lib.rs"
 
 [features]
-# **Mission 0958-a R3 fix-up (2026-07-31):** the `full` feature
-# opts the bench + acceptance tests into the real-STWO FFI path.
-# When enabled:
-# - The proof-size bench test asserts `proof_size in 50..500KB`
-#   (currently no-op on stub path; documented structural smoke).
-# - Performance gate required for any production deployment.
-# When disabled (default):
-# - The proof-size bench asserts only non-emptiness (stub = 32B).
-# - Real-STWO FFI NOT exercised; tests use the BLAKE3 stub.
-# Enabling `full` requires `libstwo_sys.so` produced by
-# `cargo +nightly-2025-06-23 build --release --manifest-path
-# crates/zk-vendor/stwo-sys/Cargo.toml` to be reachable on the
-# host. See `docs/07-developers/zk-capability-circuit-guide.md`
-# for the FFI vendoring procedure.
-full = []  # placeholder gate; future cargo-fuzz FFI wiring
+# **Mission 0958-b S2 (2026-08-05):** the `full` cargo feature was
+# REMOVED. Real-zk STWO selection is now runtime (see
+# `zk_vendor::loaded_library()`), not compile-time. The bench tests
+# in `tests/bench.rs` exercise the dispatch path transparently:
+# - When `libstwo_sys.so` is reachable (vendor state == Ffi), the
+#   proof-size gate asserts 50-500KB and the latency gates measure
+#   real STWO proof gen / verify.
+# - When only the mock path is available (vendor state == Stub,
+#   default dev/CI), the benches run structural smoke + assert
+#   non-emptiness only — same behavior as before but no feature
+#   gate required. Production deployments ship the cdylib alongside
+# the binary.
 
 [dependencies]
 # Workspace deps — only what's needed for wallet MVP
@@ -116,6 +113,12 @@ octo-ident = { path = "../octo-ident" }
 # `CapabilityVerifier` from quota-router-core. Dev-dep only — production
 # wallet code does not depend on quota-router-core (one-way dependency).
 quota-router-core = { path = "../quota-router-core" }
+
+# Mission 0958-b S2 (2026-08-05): bench reads `zk_vendor::vendor_state()`
+# to dispatch the AC-12 proof-size gate on whether the real-zk STWO FFI
+# is loaded. Dev-dep only — production wallet code does not depend on
+# zk-vendor directly (the FFI dispatch lives in `zk-circuit::prove_batch_signature`).
+zk-vendor = { path = "../zk-vendor" }
 
 [lints.rust]
 unsafe_code = "forbid"

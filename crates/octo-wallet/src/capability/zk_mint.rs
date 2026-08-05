@@ -168,6 +168,14 @@ pub struct ProofBundle {
     pub casm_hash: [u8; 32],
     pub casm_version: u32,
     pub security_bits: u8,
+    /// **AC-3 (mission 0958-c, 2026-08-05):** witness format marker.
+    /// `ProverInputJson` = real STWO ProverInput JSON shape (production
+    /// path under `VendorState::Ffi`); `BytesFallback` = legacy raw-byte
+    /// fallback (only reachable when `ProverInput::bytes_fallback = true`
+    /// or when the FFI parse fails). Defaults to `BytesFallback` for
+    /// backward compat with pre-AC-3 serialized bundles.
+    #[serde(default)]
+    pub witness_format: zk_vendor::prover_input::WitnessFormat,
 }
 
 impl std::fmt::Debug for ProofBundle {
@@ -178,6 +186,11 @@ impl std::fmt::Debug for ProofBundle {
             .field("casm_hash", &hex::encode(self.casm_hash))
             .field("casm_version", &self.casm_version)
             .field("security_bits", &self.security_bits)
+            // **AC-3 (0958-c):** witness format marker is observability
+            // metadata (kill switch + audit), not secret-bearing. Show
+            // the enum variant name so panic messages + log lines reveal
+            // which witness shape was emitted.
+            .field("witness_format", &self.witness_format)
             .finish()
     }
 }
@@ -457,6 +470,14 @@ pub fn mint_with_zk_and_signers(
         casm_hash,
         casm_version: 1,
         security_bits: 128,
+        // **AC-3 (0958-c):** witness format marker. Defaults to
+        // `BytesFallback` because `prove_batch_signature` currently
+        // emits raw `canonical_ser` bytes (the AC-3 zk-circuit rewrite
+        // will flip this to `ProverInputJson` once `prove_batch_signature`
+        // constructs the structured `ProverInput` JSON via the new
+        // `zk_vendor::prover_input` adapter). The marker records the
+        // path at runtime for observability (kill switch + audit).
+        witness_format: zk_vendor::prover_input::WitnessFormat::BytesFallback,
     })
 }
 

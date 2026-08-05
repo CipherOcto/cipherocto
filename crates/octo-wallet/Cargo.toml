@@ -110,6 +110,15 @@ zeroize = { version = "1", features = ["zeroize_derive"] }
 clap = { version = "4.5", features = ["derive"] }
 rpassword = "7"
 
+# Mission 0958-b S2 (2026-08-05): bench reads `zk_vendor::vendor_state()`
+# to dispatch the AC-12 proof-size gate on whether the real-zk STWO FFI
+# is loaded.
+# Mission 0958-c AC-3 (2026-08-05): also a runtime dep — the wallet-side
+# `ProofBundle.witness_format` field uses
+# `zk_vendor::prover_input::WitnessFormat` so the enum is shared across
+# proofer + verifier + wallet.
+zk-vendor = { path = "../zk-vendor" }
+
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
@@ -138,12 +147,6 @@ octo-ident = { path = "../octo-ident" }
 # `CapabilityVerifier` from quota-router-core. Dev-dep only — production
 # wallet code does not depend on quota-router-core (one-way dependency).
 quota-router-core = { path = "../quota-router-core" }
-
-# Mission 0958-b S2 (2026-08-05): bench reads `zk_vendor::vendor_state()`
-# to dispatch the AC-12 proof-size gate on whether the real-zk STWO FFI
-# is loaded. Dev-dep only — production wallet code does not depend on
-# zk-vendor directly (the FFI dispatch lives in `zk-circuit::prove_batch_signature`).
-zk-vendor = { path = "../zk-vendor" }
 
 [lints.rust]
 unsafe_code = "forbid"

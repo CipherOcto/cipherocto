@@ -95,11 +95,11 @@ pub enum HashError {
 
 /// Cairo source for the bundled capability circuit (RFC-0958 §Algorithms).
 ///
-/// Loaded at compile time from `cairo/capability_zk.cairo` (cipherocto
+/// Loaded at compile time from `cairo/src/lib.cairo` (cipherocto
 /// workspace; Phase B.2 per [[stoolap-general-purpose-db]]). The path is
 /// resolved relative to this file: `crates/zk-circuit/src/lib.rs` →
-/// `../../../cairo/capability_zk.cairo` → repo-root `cairo/capability_zk.cairo`.
-pub const BUNDLED_CAIRO_SOURCE: &str = include_str!("../../../cairo/capability_zk.cairo");
+/// `../../../cairo/src/lib.cairo` → repo-root `cairo/src/lib.cairo`.
+pub const BUNDLED_CAIRO_SOURCE: &str = include_str!("../../../cairo/src/lib.cairo");
 
 /// Cached `CompiledCircuit` for the bundled source. Memoizes the
 /// `cairo-compile` subprocess invocation on first call. If `cairo-compile`

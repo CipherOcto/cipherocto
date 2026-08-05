@@ -1,0 +1,18 @@
+[package]
+name = "capability_zk"
+version = "0.1.0"
+edition = "2024_07"
+
+[cairo]
+target = { kind = "lib" }
+
+# Toolchain pin: scarb 2.16.0 / cairo 2.16.0.
+# Cairo 1.x standalone `cairo-compile` binary does NOT exist; Cairo 2.x uses
+# scarb as the build orchestrator. The compiled artifact at
+# `target/dev/capability_zk.sierra.json` is deterministic across runs of the
+# same scarb + source combination.
+#
+# For the canonical CASM production path (RFC-0958 §CASM Hash Drift Detection),
+# a downstream Sierra→CASM pass lives in a follow-up session — Session 2
+# will wire `cairo-lang-sierra-to-casm` into `crates/zk-circuit`. Session 1
+# lands the Cairo source rewrite + scarb build determinism contract.

@@ -1,4 +1,4 @@
-# cairo/ — Cairo 2.6.0 capability circuit (RFC-0958 Phase B.2)
+# cairo/ — Cairo 2.x capability circuit (RFC-0958 Session 1)
 
 Per master plan §4 row B.2, the Cairo capability circuit lives in the
 **cipherocto workspace**, not the stoolap fork. The 2026-07-22 v0.3 amendment
@@ -7,49 +7,78 @@ branch) into cipherocto workspace crates (`zk-circuit`, `zk-verifier`,
 `zk-vendor`) per [[stoolap-general-purpose-db]] — proof-systems concern,
 orthogonal to SQL. The stoolap fork is untouched by this mission.
 
-## Files
+## Session 1 scope (current)
 
-- **`capability_zk.cairo`** — Cairo 2.6.0 source for the capability
-  attestation circuit. Per RFC-0958 §Algorithms with R1 fixes applied
-  (C1 holder_sig in witness, C2 PartialEq, C3 determinism, C4 trace
-  canonicalization). Compiles via scarb/cairo-compile; structural checks
-  only — cryptographic verifications are off-circuit in the STWO prover
-  + Rust verifier.
-- **`build.sh`** — manual / CI entry point. Shells out to `cairo-compile`
-  and prints the BLAKE3 hash. Fails loudly if `cairo-compile` is not in
-  PATH (no silent skip — S1 risk mitigation).
+This session lands the **Cairo 2.x source rewrite + scarb build pipeline**:
 
-## Build invocation
+- `cairo/Scarb.toml` — scarb 2.16.0 project manifest
+- `cairo/src/lib.cairo` — Cairo 2.x source (structs, `assert!` macro, lib target)
+- `crates/zk-circuit/tests/casm_snapshot.rs` — Rust smoke test that invokes
+  `scarb build`, parses the Sierra IR, and asserts semantic determinism
 
-```bash
-# Manual (after installing cairo-compile 2.6.0 via scarb/asdf):
-cairo/build.sh
-# → writes cairo/capability_zk.casm + cairo/capability_zk.casm.blake3
+The Sierra→CASM pass (producing the bytes whose BLAKE3 hash is the canonical
+`compiled_casm_hash`) lives in **Session 2** — it requires wiring
+`cairo-lang-sierra-to-casm` and `cairo-lang-compiler` into `crates/zk-circuit`.
+The Session 1 prerequisite is that the Cairo source compiles deterministically
+through the real scarb toolchain, which the smoke test verifies.
 
-# Runtime (via zk-circuit crate, memoized):
-# crates/zk-circuit::compile_from_source(include_str!("cairo/capability_zk.cairo"))
-#   → shells out to cairo-compile, captures CASM bytes, BLAKE3 hashes
+## Why scarb and not `cairo-compile`
+
+The prior assumption was that `cairo-compile 2.6.0` exists as a standalone
+binary. **It does not.** Cairo 2.x removed the standalone compiler; the
+compiler is embedded inside scarb's build pipeline. Cairo 1.x shipped a
+`cairo-compile` binary that is no longer produced by any modern Cairo
+toolchain.
+
+The scarb-driven path is the only real Cairo 2.x compile route:
+
+```text
+cairo/src/lib.cairo (this directory's source)
+    │ scarb build
+    ▼
+cairo/target/dev/capability_zk.sierra.json
+    │ [Session 2] cairo-lang-sierra-to-casm
+    ▼
+CASM bytecode → BLAKE3 hash
 ```
 
-## Cairo toolchain pin
+## Toolchain pin
 
-Pin `cairo-compile = 2.6.0` via scarb or asdf. CI installs the pin in
-`.github/workflows/zk-capability-circuit.yml` (S3 deliverable). Local
-development: install scarb (https://github.com/starkware-libs/cairo) and
-run `scarb --version` to verify 2.6.0.
+- **scarb** 2.16.0 (matches `~/.asdf/installs/scarb/2.16.0`)
+- **cairo** 2.16.0 (embedded in scarb 2.16.0)
+- Install scarb: https://docs.swmansion.com/scarb/download.html
+- Or via asdf: `asdf plugin add scarb && asdf install scarb 2.16.0`
+- Local dev must have scarb installed; the Rust smoke test hard-panics
+  with an actionable message if scarb is missing.
 
-## CASM hash determinism contract
+## Determinism contract
 
-Same `capability_zk.cairo` source → same CASM bytecode → same BLAKE3 hash.
-Across processes, across architectures, across platforms. STWO Fiat-Shamir
-transform is Class A deterministic (RFC-0958 §Determinism Class A).
+The Rust smoke test (`crates/zk-circuit/tests/casm_snapshot.rs`) verifies:
+1. `scarb build` succeeds.
+2. Sierra IR is valid JSON with `version:1`.
+3. The `funcs` array includes `capability_zk::main`.
+4. The bundled `BUNDLED_CAIRO_SOURCE` constant in `crates/zk-circuit/src/lib.rs`
+   matches `cairo/src/lib.cairo` on disk (the `include_str!` contract).
+5. Two independent `scarb build` runs produce semantically identical IR
+   (same type_declarations + funcs, modulo salsa UUIDs which only affect
+   internal DB identifiers, not the IR semantics the downstream CASM
+   pass consumes).
 
-The check-in hash lives at `crates/zk-circuit/tests/casm_snapshot.rs`
-(`EXPECTED_CASM_BLAKE3_HASH`). The snapshot test asserts the hash matches;
-CI must install `cairo-compile` for the test to run (skipped locally if
-the toolchain is absent — local dev can stub via `bundled_casm_hash`).
+**Why "semantically identical" rather than byte-identical:** scarb uses
+salsa (an incremental-compiler database) which generates fresh UUIDs per
+compile session. The raw JSON bytes differ, but the IR content — types,
+function signatures, statement bodies — is deterministic. Session 2's
+CASM emission will compare CASM bytes directly because the Sierra→CASM
+pass canonicalizes the IR before lowering.
 
-## Cross-Repo Coordination
+## CI
+
+The CI workflow `.github/workflows/zk-capability-circuit.yml` (Session 3)
+installs scarb 2.16.0 via asdf. Until that workflow lands, local dev must
+install scarb manually. The smoke test fails loudly without scarb — no
+silent skip.
+
+## Cross-repo coordination
 
 **None.** Per v0.3 amendment (2026-07-22), this mission ships a single
 cipherocto-side PR. The stoolap fork is not modified by mission 0958-a.

@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (filed 2026-08-05 by mission 0958-b Round 1 review F-3 closure; updated 2026-08-05 Round 1 review of 0958-c itself per multi-round adversarial review methodology). Addresses the deferred items enumerated in `missions/claimed/0958-b-real-cairo-crypto.md` §S1 Deviations + §S2 Deviations + §S3 Deviations + §Type Coverage.
+Claimed (filed 2026-08-05 by mission 0958-b Round 1 review F-3 closure; claimed 2026-08-05 after R18 closure + R19 zero-finding round per multi-round adversarial review methodology). Addresses the deferred items enumerated in `missions/claimed/0958-b-real-cairo-crypto.md` §S1 Deviations + §S2 Deviations + §S3 Deviations + §Type Coverage.
 
 **Submitter (Round 1 fix F-16):** @cipherocto (BLUEPRINT mission-lifecycle implies claimant identity for `claimed/` transition; this mission is Open with explicit submitter for traceability).
 

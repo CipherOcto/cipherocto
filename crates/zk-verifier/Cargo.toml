@@ -42,9 +42,10 @@ zk-vendor = { path = "../zk-vendor" }
 # side-channel in stub-pattern rejection — HIGH-1 of R2 review).
 subtle = "2.6"
 
-# ZK canonicalization primitives (canonicalize_axes, canonical_ser,
-# ZKP_DOMAIN_PREFIX). R2 fix-up 2026-08-05 — the `canonicalize_public`
-# inline impl previously in zk-verifier now delegates here.
+# ZK canonicalization primitives (ZKP_DOMAIN_PREFIX constant). R3
+# fix-up 2026-08-05: dropped the orphan `canonical_ser` symbol that was
+# shipped in R2 but had zero non-test callers. Full canonical_ser
+# consolidation is deferred to mission 0958-b.
 cipherocto-zkp-canonical = { path = "../cipherocto-zkp-canonical" }
 
 # STWO is vendored under `zk-vendor/` (NOT a crates.io dep). Stubbed below

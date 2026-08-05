@@ -87,8 +87,9 @@ hex = "0.4"
 # ZK capability crypto (RFC-0958; crypto home per [[stoolap-general-purpose-db]] 2026-07-22)
 zk-circuit = { path = "../zk-circuit" }
 
-# ZK canonicalization primitives (canonicalize_axes, canonical_ser,
-# ZKP_DOMAIN_PREFIX). R2 fix-up 2026-08-05.
+# ZK canonicalization primitives (canonicalize_axes + ZKP_DOMAIN_PREFIX
+# constants). R3 fix-up 2026-08-05: dropped the orphan `canonical_ser`
+# symbol that was shipped in R2 but had zero non-test callers.
 cipherocto-zkp-canonical = { path = "../cipherocto-zkp-canonical" }
 zk-verifier = { path = "../zk-verifier", features = ["allow-stub-verifier"] }
 

@@ -11,6 +11,8 @@ name = "cipherocto_zkp_canonical"
 path = "src/lib.rs"
 
 [dependencies]
-blake3 = { workspace = true }
+# `blake3` removed in R3 — the only function that used it (`canonical_ser`)
+# was an orphan symbol with zero non-test callers. The remaining crate
+# surface uses only the constants + `canonicalize_axes` (sort helper).
 serde = { workspace = true }
 serde_json = { workspace = true }

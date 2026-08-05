@@ -48,10 +48,9 @@ serde_bytes = "0.11"
 # ZK circuit (CASM compile, RFC-0958 Phase B.2; crypto home per [[stoolap-general-purpose-db]])
 zk-circuit = { path = "../zk-circuit" }
 
-# ZK canonicalization primitives (canonicalize_axes, canonical_ser,
-# ZKP_DOMAIN_PREFIX). R2 fix-up 2026-08-05: replaces the duplicate
-# definitions previously in octo-wallet + quota-router-core
-# (mission 0958-a R4 M4 / M7 / M10).
+# ZK canonicalization primitives (canonicalize_axes + ZKP_DOMAIN_PREFIX
+# constants). R3 fix-up 2026-08-05: dropped the orphan `canonical_ser`
+# symbol that was shipped in R2 but had zero non-test callers.
 cipherocto-zkp-canonical = { path = "../cipherocto-zkp-canonical" }
 
 # ZK verifier (Gap 3 / RFC-0958 + RFC-0962 §9 batch signature). Used at mint time

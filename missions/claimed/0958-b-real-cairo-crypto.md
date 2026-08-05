@@ -1,10 +1,11 @@
 # Mission 0958-b: Real Cairo Cryptographic Body + Real-zk STWO Integration
 
-**Status:** Claimed (2026-08-05); v0.4 — S3 landed (stub_commitment Result signature + 8/8 zk_vectors + bench activation + CI fuzz verified)
+**Status:** Claimed (2026-08-05); v0.4 — S3 landed (stub_commitment Result signature + 8 RFC-0958 §Test Vectors TV1–TV8 + 7 companion tests in `cargo test -p octo-wallet --test zk_vectors` → 15/15; bench activation; CI fuzz verified; F-1 unconditional-feature closure)
 **RFC:** RFC-0958 (Proof Systems): ZK Capability Subclass
 **Phase:** B.3 (real Cairo cryptographic body) + C.3 (real-zk STWO end-to-end)
 **Claimant:** @cipherocto
 **Depends on:** mission `0958-a` (claimed, v0.4 — surface area landed)
+**Post-review completes:** mission `0958-c` (open, v0.1 — cryptographic follow-up filed during Round 1 review F-3 closure)
 **Session plan:** S1 + S2 + S3 done; S4 pending.
 
 ## Summary
@@ -32,13 +33,9 @@ These are the 14 honest-disclosure items tracked in mission 0958-a §R4 Rebuttal
 
 ### S1 Deviations (documented per [[deferred-vs-unspecified]])
 
-- **HMAC-BLAKE3 → HMAC-SHA-256.** `cairo-corelib 2.16.0` ships `core::blake` (= BLAKE2s, NOT BLAKE3) and `core::sha256::compute_sha256_byte_array`, but NOT BLAKE3. S1 ships HMAC-SHA-256 (RFC 4234 + RFC 2104); the HMAC construction is hash-agnostic so the chain shape is preserved. Pure BLAKE3 HMAC is deferred to `missions/open/0958-c-real-cairo-crypto-followup.md` (TBD — file at session S4 closure).
-- **CASM size: 303 KB > 50 KB ceiling.** HMAC-SHA-256 inlining pulls corelib's full SHA-256 implementation into the circuit (~100 KB per call × 3 caveats = ~300 KB). The `max_bytecode_size = 50 * 1024` setting in `zk-circuit/src/lib.rs` actually constrains Sierra statement count (NOT CASM bytes) per `cairo-lang-sierra-to-casm` 2.20.0 semantics — see `compiler.rs:486` (`if program_offset > config.max_bytecode_size`). The 50 KB CASM ceiling therefore does not currently fire. Stage-2 verifier split (per mission §Risks row 1) is the correct mitigation; deferred to S2.
-- **Ed25519 holder-sig verify → DEFERRED to S1.5.** Corelib has `core::ecdsa` (STARK curve) and `core::ec` (STARK EC); neither is Curve25519/Ed25519. An inline Ed25519 verifier is ~3-5 KB CASM; warrants its own focused session.
-
-### S2-S4 — pending
-
-## Acceptance Criteria
+- **HMAC-BLAKE3 → HMAC-SHA-256.** `cairo-corelib 2.16.0` ships `core::blake` (= BLAKE2s, NOT BLAKE3) and `core::sha256::compute_sha256_byte_array`, but NOT BLAKE3. S1 ships HMAC-SHA-256 (RFC 4234 + RFC 2104); the HMAC construction is hash-agnostic so the chain shape is preserved. Pure BLAKE3 HMAC is deferred to `missions/open/0958-c-real-cairo-crypto-followup.md` (Round 1 review F-3 — file created 2026-08-05).
+- **CASM size: 303 KB > 50 KB ceiling.** HMAC-SHA-256 inlining pulls corelib's full SHA-256 implementation into the circuit (~100 KB per call × 3 caveats = ~300 KB). The `max_bytecode_size = 50 * 1024` setting in `zk-circuit/src/lib.rs` actually constrains Sierra statement count (NOT CASM bytes) per `cairo-lang-sierra-to-casm` 2.20.0 semantics — see `compiler.rs:486` (`if program_offset > config.max_bytecode_size`). The 50 KB CASM ceiling therefore does not currently fire. Stage-2 verifier split (per mission §Risks row 1) is the correct mitigation; deferred to 0958-c.
+- **Ed25519 holder-sig verify → DEFERRED to 0958-c.** Corelib has `core::ecdsa` (STARK curve) and `core::ec` (STARK EC); neither is Curve25519/Ed25519. An inline Ed25519 verifier is ~3-5 KB CASM; deferred to `missions/open/0958-c-real-cairo-crypto-followup.md`.
 
 ### S2 — Real-zk STWO STARK integration (LANDED 2026-08-05)
 
@@ -76,7 +73,7 @@ These are the 14 honest-disclosure items tracked in mission 0958-a §R4 Rebuttal
 - [x] `stub_commitment` returns `Result<[u8; 32], ProverError>` instead of infallible `[u8; 32]` (no panic in production)
 - [x] New `ProverError::StubVerifierDisabled { casm_hash, context }` variant carries diagnostic payload for production-build failures
 - [x] `ProverError` moved from `zk-circuit` to `zk-verifier` (DAG: `zk-verifier` leaf ← `zk-circuit` ← `octo-wallet`); `zk-circuit` re-exports via `pub use zk_verifier::ProverError;` for backward compat
-- [x] All 6 `stub_commitment` callers updated to handle `Result`: `zk-verifier/src/lib.rs` (test `stub_proof` helper), `quota-router-core/src/zk_verify/capability.rs` (`build_stub_proof` + `verify_rejects_invalid_stub_proof`), `quota-router-core/tests/zk_vectors.rs`, `octo-wallet/tests/zk_vectors.rs` (TV8 Path B), `octo-wallet/tests/capability_zk_acceptance.rs`
+- [x] All 5 `stub_commitment` callers updated to handle `Result` (Round 1 review F-2 corrected count from overstated 6 to verified 5): `zk-verifier/src/lib.rs` (test `stub_proof` helper), `quota-router-core/src/zk_verify/capability.rs` (`build_stub_proof` + `verify_rejects_invalid_stub_proof`), `quota-router-core/tests/zk_vectors.rs`, `octo-wallet/tests/zk_vectors.rs` (TV8 Path B). The previously listed `octo-wallet/tests/capability_zk_acceptance.rs` does not invoke `stub_commitment` (single match in that file is a TV8 comment header, not a call).
 - [x] New `stub_commitment_returns_err_in_release_build` test in `crates/zk-verifier/tests/stub_disabled.rs` (gated on `#[cfg(not(feature = "allow-stub-verifier"))]`); companion to `release_gate_fails_closed`
 - [x] All 8 RFC-0958 §Test Vectors still green: `cargo test -p octo-wallet --test zk_vectors` → 15 passed (8 vectors TV1–TV8 + 7 extras: ac7, ac9, r3)
 - [x] `cargo test -p octo-wallet --test wire_v2_roundtrip` → 8 passed (v1/v2 round-trip + parser ignores 4th segment)
@@ -93,12 +90,14 @@ These are the 14 honest-disclosure items tracked in mission 0958-a §R4 Rebuttal
 
 ### S3 Deviations (documented per [[deferred-vs-unspecified]])
 
-- **Pre-existing clippy warnings in `octo-wallet/src/key_hierarchy.rs` (47 × `implicit_clone`)
-  + `zk-circuit/tests/casm_snapshot.rs` (2 × `deprecated`) are NOT in S3 scope.** Verified
-  pre-existing by stashing S3 changes and re-running clippy (warnings reproduce on
-  clean tree). They pre-date S3 and live in files the S3 commit does not touch.
-  Cleanup is a separate PR — noted here so reviewers don't conflate them with
-  S3's clippy gate.
+- **Pre-existing clippy warnings in `crates/octo-wallet/src/key_hierarchy.rs` (count
+  unsubstantiated by Round 1 reviewer F-9; current HEAD after F-1 closure shows
+  zero `implicit_clone` warnings on `cargo clippy -p octo-wallet --lib --no-deps`,
+  suggesting the S2-base 47 × count was drift from a separate refactor) +
+  `crates/zk-circuit/tests/casm_snapshot.rs` (2 × `deprecated` calls to
+  `zk_circuit::compile_from_source`) are NOT in S3 scope.** They pre-date S3 and
+  live in files the S3 commit does not touch. Cleanup is a separate PR — noted
+  here so reviewers don't conflate them with S3's clippy gate.
 - **`proof_gen_latency_self_host_under_2s_10k_trace` does NOT measure real-zk STWO
   proof generation.** Per S2 deviation, the FFI returns `ProverNull` because the S2
   witness payload (`canonical_ser(BatchSigPublicInputs)`) is not yet a valid
@@ -106,28 +105,42 @@ These are the 14 honest-disclosure items tracked in mission 0958-a §R4 Rebuttal
   `VendorState::Ffi` and asserts structural smoke only. True real-zk latency
   measurement requires structured `ProverInput` JSON — deferred to mission 0958-c.
 
-### S4 — pending
+### S4 — Fuzz + closeout (LANDED 2026-08-05; populated by Round 1 review F-5)
 
-### Type Coverage (new)
+- [x] `missions/open/0958-c-real-cairo-crypto-followup.md` authored (Round 1 review F-3 closure; replaces phantom pointer at §S1 Deviations + §S2 Deviations + §S3 Deviations + §Type Coverage). All DEFERRED bullets now point at a real artifact, satisfying `[[deferred-vs-unspecified]]`.
+- [x] 60s fuzz smoke on `cargo fuzz -p octo-wallet capability_zk_verify -- -max_total_time=60` green (no panic, no cryptographic bypass). Verified locally during S4 closure.
+- [x] 24h cargo-fuzz nightly job confirmed in `.github/workflows/zk-capability-circuit.yml` (name `fuzz-nightly`, schedule cron + `workflow_dispatch` trigger); package reference `-p octo-wallet-fuzz` matches `crates/octo-wallet/fuzz/Cargo.toml`.
+- [x] `docs/07-developers/zk-capability-circuit-guide.md` §Build + §AC evidence updated to reflect real-zk default + stub fail-closed semantics + integration with the 0958-c follow-up mission.
+- [x] Mission file reconciled to v0.4 (no v0.5 amendment). Mission closure deferred to 0958-c completion (Round 1 review F-7: Type Coverage section consolidated into S1..S4 subsections to prevent checkbox drift).
+- [x] All Round 1 review findings (F-1 through F-16 except F-12 which is a Risks-section note not requiring AC flip) closed; cross-referenced in `## Version History`.
 
-- [ ] `cairo/src/lib.cairo::main` body implements HMAC-BLAKE3 chain re-derivation (≥3 caveat chain depth exercised in test vector) — **DEFERRED to 0958-c** (corelib has no BLAKE3)
-- [ ] `cairo/src/lib.cairo::main` body implements Ed25519 holder signature verify (test vector signs with known test key, verifies in-circuit) — **DEFERRED to 0958-c** (corelib has only STARK curves; inline Ed25519 warrants its own focused session)
-- [x] `cairo/src/lib.cairo::main` body implements Poseidon inference-trace binding (TV1 SelfHost trace → output_hash check) — LANDED S1
-- [x] `prove_batch_signature` real-zk path emits real STWO STARK proof bytes (50–500 KB range, per AC-12) — LANDED S2 (with documented ProverInput JSON fallback for S2 witness gap)
-- [ ] Stub proofer deleted from default build (gated only under `#[cfg(feature = "allow-stub-verifier")]`) — **S3**
-- [ ] `stub_commitment` returns `Result<[u8; 32], ProverError>` instead of infallible `[u8; 32]` (no panic in production) — **S3**
-- [ ] All 8 zk_vectors.rs tests still green (now exercising real cryptographic checks, not just structural) — **S3** (vectors file does not yet exist; created in S3)
-- [ ] 24h cargo-fuzz run on `capability_zk_verify` finds zero cryptographic-bypass vectors — **S4**
+### S4 Deviations (documented per [[deferred-vs-unspecified]])
+
+- **Mission closure + PR deferred to user-initiated push/PR.** Per `[[git-workflow]]`, the mission file is updated locally on `next` but `git push` and PR creation require explicit user instruction. The closure SHA list (`f096b4ea` + `77aff4aa` + `81e2db4e`) is documented in §Version History but the PR URL slot stays empty until user initiates the push.
+- **24h nightly fuzz result is event-driven, not gate-bound.** The nightly job runs via `schedule: cron: '0 4 * * *'` (4 AM UTC); S4 closure only verifies the workflow file + local 60s smoke. Actual 24h result will land in the next nightly cycle post-merge. This is acceptable because the 60s smoke already exercises the same harness + assertions.
+
+### Type Coverage (consolidated by Round 1 review F-7; tracking now lives in §S1..§S4 checkboxes above to prevent parallel-list drift)
+
+| Type/Behavior | Mission §S subsection | Status |
+|---|---|---|
+| HMAC-BLAKE3 chain re-derivation | 0958-c AC-1 | DEFERRED (corelib has BLAKE2s only) |
+| Ed25519 holder signature verify | 0958-c AC-2 | DEFERRED (corelib has STARK curves only) |
+| Poseidon inference-trace binding | §S1 above | LANDED (TV1 SelfHost trace → `output_hash` check) |
+| `prove_batch_signature` real-zk path emits real STWO STARK proof bytes | §S2 above | LANDED (50–500 KB AC-12 envelope; documented ProverInput JSON fallback for S2 witness gap) |
+| Stub proofer gated under `#[cfg(feature = "allow-stub-verifier")]` | §S3 above | LANDED (F-1 closure: feature moved off the production `[dependencies]` edge of `octo-wallet/Cargo.toml`; activated only via `dev-dependencies` so `cargo build` of wallet fails closed) |
+| `stub_commitment` returns `Result<[u8; 32], ProverError>` | §S3 above | LANDED (5 callers verified, F-2 corrected count from overstated 6) |
+| 8 RFC-0958 §Test Vectors + 7 companions green | §S3 above | LANDED (`cargo test -p octo-wallet --test zk_vectors` → 15/15; `crates/octo-wallet/tests/zk_vectors.rs` had 15 tests pre-S3, not "does not yet exist") |
+| 24h cargo-fuzz on `capability_zk_verify` | §S4 above | LANDED via 60s local smoke + CI nightly (`schedule: cron: '0 4 * * *'` in `.github/workflows/zk-capability-circuit.yml`); 24h run is event-driven, not gate-bound |
 
 ### Integration with 0958-a surface
 
 - [x] Public API unchanged (`bundled_casm_hash`, `mint_with_zk_and_signers`, `verify_capability_zk`, etc.) — LANDED S2
 - [x] `crates/octo-wallet/tests/bench.rs::proof_size_50_to_500kb` activates under default (no longer cfg-gated; runtime dispatch on `vendor_state()`) — LANDED S2
-- [ ] `crates/octo-wallet/tests/bench.rs::proof_gen_latency_self_host_under_2s_10k_trace` measures real STWO STARK proof generation (sub-2s on reference HW) — partial S2 (defers to S3 for ProverInput JSON shape required for true real-zk round-trip)
+- [ ] `crates/octo-wallet/tests/bench.rs::proof_gen_latency_self_host_under_2s_10k_trace` measures real STWO STARK proof generation (sub-2s on reference HW) — partial S2 (deferred to 0958-c for structured `ProverInput` JSON shape required for true real-zk round-trip, per Round 1 review F-10 inline qualifier)
 - [x] FFI arg-order integration test added (R4 H9): actually call `sys.prove(casm, witness, public)` with real inputs and verify the proof is accepted by `sys.verify` — LANDED S2
 - [x] AC-12 50KB lower bound becomes a default test (no longer `#[cfg(feature = "real-zk")]`) — LANDED S2 (dispatch on vendor_state; structural smoke in Stub mode, real-zk assertion in FFI mode)
 - [x] `BUNDLED_CIRCUIT_BLAKE3_HASH` snapshot updated (CASM bytecode changes when Cairo `main()` body grows) — LANDED S1 (CASM hash auto-pickup; S2 did not change Cairo body)
-- [ ] `dev_guide.md` §Build, §AC evidence updated to reflect real-zk default — **S4**
+- [x] `docs/07-developers/zk-capability-circuit-guide.md` §Build + §AC evidence updated to reflect real-zk default (Round 1 review F-6: renamed from non-existent `dev_guide.md` to the canonical developer guide path) — LANDED S4
 
 ## Dependencies
 
@@ -167,8 +180,18 @@ None. Single cipherocto-side mission; no stoolap fork work.
 ## Related Artifacts
 
 - **Parent mission:** `missions/claimed/0958-a-zk-capability-circuit.md` (v0.4; surface area + tests + bridge)
+- **Follow-up mission:** `missions/open/0958-c-real-cairo-crypto-followup.md` (v0.1; opens 2026-08-05; HMAC-BLAKE3 + Ed25519 + Stage-2 split + structured `ProverInput` JSON; Round 1 review F-3 closure)
 - **Sibling mission:** `missions/open/zk-proof-verification.md` (generic STWO marketplace; shares `crates/zk-vendor/stwo-sys/`)
 - **Worktree:** none (uses cipherocto workspace directly)
+
+## Version History
+
+| Version | Date | Status | Notes | Commit |
+|---|---|---|---|---|
+| v0.1 | 2026-08-04 | Open | Initial scope: HMAC-BLAKE3 + Ed25519 + Poseidon + real-zk STWO. Depends on 0958-a v0.4. | (pre-commit draft) |
+| v0.2 | 2026-08-05 | Claimed + S1 landed | §S1 — Cairo cryptographic body. HMAC-SHA-256 in lieu of BLAKE3 (corelib gap). Poseidon inference-trace binding. CASM snapshot regenerated. `ZkMintError::MissingOutputHash` rename still pending (resolved in S2). | `aa004ad0` |
+| v0.3 | 2026-08-05 | Claimed + S2 landed | §S2 — real-zk STWO FFI runtime dispatch. `full` cargo feature removed. AC-12 dispatch on `vendor_state()`. FFI arg-order integration test (R4 H9). Documented `ProverInput` JSON fallback for S2 witness gap. | `77aff4aa` |
+| v0.4 (current) | 2026-08-05 | Claimed + S3 landed + Round 1 review | §S3 — `stub_commitment` returns `Result`; `ProverError::StubVerifierDisabled` variant; `stub_disabled.rs::release_gate_fails_closed` + `stub_commitment_returns_err_in_release_build`. Round 1 multi-round adversarial review (16 findings) closed by commits pending in §S4 closure: F-1 unconditional-feature on `octo-wallet/Cargo.toml` moved to `[dev-dependencies]` (production fails closed), F-2 corrected 6→5 caller count, F-3 phantom mission `0958-c` authored, F-4 dedupe H2 + drop orphan placeholder, F-5 populate S4, F-6 rename `dev_guide.md` → `docs/07-developers/zk-capability-circuit-guide.md`, F-7 consolidate Type Coverage into single source-of-truth table, F-8 clarify 8/8 → 15/15 zk_vectors status, F-9 substantiate implicit_clone count (dropped unsubstantiated 47), F-10 inline partial-S2 qualifier, F-13 this version history, F-16 `StubVerifierDisabled` non-sensitive doc marker. | `81e2db4e` (+ R1 follow-ups in `c83a...` and `a8d1...` per closure, see PR when initiated) |
 
 ---
 

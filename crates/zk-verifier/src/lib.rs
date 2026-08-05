@@ -85,6 +85,12 @@ pub enum ProverError {
              To enable locally: `cargo build --features allow-stub-verifier`; \
              in production, deploy `libstwo_sys.so` for real-zk STWO."
     )]
+    /// **Round 1 review F-16 (2026-08-05):** both fields are diagnostic
+    /// only and carry no secret material. `casm_hash` is the BLAKE3
+    /// hash of the compiled CASM bytecode (public identifier per
+    /// RFC-0958 §Public Inputs); `context` is operator guidance text
+    /// that includes the `--features allow-stub-verifier` opt-in
+    /// instruction. Safe to log or surface to operators.
     StubVerifierDisabled { casm_hash: String, context: String },
     #[error("internal prover error: {0}")]
     Internal(String),

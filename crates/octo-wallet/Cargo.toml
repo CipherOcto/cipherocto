@@ -54,7 +54,19 @@ cipherocto-zkp-canonical = { path = "../cipherocto-zkp-canonical" }
 # to construct the canonical `zk_verifier::PublicInputs` the downstream
 # verifier will reconstruct, so the proofer's mock commitment shape
 # matches the verifier's stub_commitment check.
-zk-verifier = { path = "../zk-verifier", features = ["allow-stub-verifier"] }
+#
+# **Mission 0958-b Round 1 review fix (2026-08-05, F-1):** the
+# `allow-stub-verifier` feature is no longer enabled on the production
+# dependency edge. Production `cargo build` of `octo-wallet` now
+# activates the FFI fail-closed branch (`stub_commitment` returns
+# `Err(ProverError::StubVerifierDisabled)` when `libstwo_sys.so` is
+# absent). The feature is re-activated for the test suite below via a
+# `dev-dependencies` re-export so `cargo test --features
+# allow-stub-verifier` (or any `cargo test` that pulls the test-only
+# feature) still has the BLAKE3 stub path available for the structural
+# smoke tests + crypto-bypass detection in
+# `tests/zk_vectors.rs::stub_proof_*`.
+zk-verifier = { path = "../zk-verifier" }
 
 # Storage types (Ask + AskRepository + SettlementEnvelope) for the
 # `octo-wallet ask publish/list/show/revoke` CLI subcommand set
@@ -105,6 +117,19 @@ tempfile = "3"
 # Mission 0957-a AC #10 (R6 fix): property test for 10K random monotonic
 # caveat sequences.
 proptest = "1"
+
+# **Mission 0958-b Round 1 review fix (2026-08-05, F-1):** re-export
+# `zk-verifier` with `allow-stub-verifier` enabled here so the
+# integration tests (`tests/zk_vectors.rs`,
+# `tests/capability_zk_acceptance.rs`, `tests/wire_v2_roundtrip.rs`)
+# can still call `stub_commitment` / `stub_proof` under their `#[test]`
+# bodies. Cargo's feature unification scopes dev-dependency features
+# to `cargo test` invocations only — `cargo build` of the wallet
+# library (and any downstream consumer that doesn't itself enable the
+# feature) gets the FFI fail-closed branch. This restores the
+# security rationale for S3 (`StubVerifierDisabled` returns Err on
+# production builds) without breaking the test suite.
+zk-verifier = { path = "../zk-verifier", features = ["allow-stub-verifier"] }
 
 # Mission 0010-b: test fixtures use sample_did() from octo-ident test_helpers
 octo-ident = { path = "../octo-ident" }

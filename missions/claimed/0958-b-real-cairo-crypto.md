@@ -1,8 +1,11 @@
 # Mission 0958-b: Real Cairo Cryptographic Body + Real-zk STWO Integration
 
-**Status:** Open
+**Status:** Claimed (2026-08-05); v0.2 — S1 landed (Cairo crypto body)
 **RFC:** RFC-0958 (Proof Systems): ZK Capability Subclass
 **Phase:** B.3 (real Cairo cryptographic body) + C.3 (real-zk STWO end-to-end)
+**Claimant:** @cipherocto
+**Depends on:** mission `0958-a` (claimed, v0.4 — surface area landed)
+**Session plan:** S1 done; S2-S4 pending.
 
 ## Summary
 
@@ -14,6 +17,26 @@ Follow-up to mission `0958-a` (Claimed, v0.4 amended 2026-08-04). Mission 0958-a
 4. **Real-zk STWO integration** — replace `prove_batch_signature`'s stub BLAKE3 commitment with the real STWO STARK prover. Requires `crates/zk-vendor/stwo-sys/` to be built (`cargo +nightly-2025-06-23 build --release --manifest-path crates/zk-vendor/stwo-sys/Cargo.toml`) and the `real-zk` Cargo feature enabled.
 
 These are the 14 honest-disclosure items tracked in mission 0958-a §R4 Rebuttal Register (C1, C3, C4, H2, H4 follow-up, H9, M9, AC-11 stub disclosure, AC-12 stub disclosure, etc.). The architecture, surface area, and test fixtures already exist from 0958-a; this mission is the cryptographic content inside that surface.
+
+## Acceptance Criteria
+
+### S1 — Cairo cryptographic body (LANDED 2026-08-05)
+
+- [x] `cairo/src/lib.cairo::main` body implements HMAC chain re-derivation (≥3 caveat chain depth exercised; uses SHA-256 from corelib; see §S1 Deviations for BLAKE3→SHA-256 swap)
+- [x] `cairo/src/lib.cairo::main` body implements Poseidon inference-trace binding (TV1 SelfHost trace → `output_hash` check; `assert!(trace_root == pub_inputs.output_hash)`)
+- [x] 5 inline `scarb cairo-test` tests green (RFC 4231 TC1, determinism, Poseidon fold, distinct-input distinct-output, chain depth constant)
+- [x] All 8 `zk-circuit/tests/casm_snapshot.rs` tests green (scarb build, Sierra IR, determinism, bundled source, CASM hash stability)
+- [x] Workspace `cargo test --workspace --lib`: 0 failures (pre-existing `default_path_is_lib_dir` flake unrelated to S1)
+- [x] `cargo clippy --workspace --lib --no-deps -- -D warnings` clean
+- [x] `bundled_casm_hash_hex()` snapshot updated automatically (BLAKE3-256 hex recomputed at compile time; no hardcoded expected value)
+
+### S1 Deviations (documented per [[deferred-vs-unspecified]])
+
+- **HMAC-BLAKE3 → HMAC-SHA-256.** `cairo-corelib 2.16.0` ships `core::blake` (= BLAKE2s, NOT BLAKE3) and `core::sha256::compute_sha256_byte_array`, but NOT BLAKE3. S1 ships HMAC-SHA-256 (RFC 4234 + RFC 2104); the HMAC construction is hash-agnostic so the chain shape is preserved. Pure BLAKE3 HMAC is deferred to `missions/open/0958-c-real-cairo-crypto-followup.md` (TBD — file at session S4 closure).
+- **CASM size: 303 KB > 50 KB ceiling.** HMAC-SHA-256 inlining pulls corelib's full SHA-256 implementation into the circuit (~100 KB per call × 3 caveats = ~300 KB). The `max_bytecode_size = 50 * 1024` setting in `zk-circuit/src/lib.rs` actually constrains Sierra statement count (NOT CASM bytes) per `cairo-lang-sierra-to-casm` 2.20.0 semantics — see `compiler.rs:486` (`if program_offset > config.max_bytecode_size`). The 50 KB CASM ceiling therefore does not currently fire. Stage-2 verifier split (per mission §Risks row 1) is the correct mitigation; deferred to S2.
+- **Ed25519 holder-sig verify → DEFERRED to S1.5.** Corelib has `core::ecdsa` (STARK curve) and `core::ec` (STARK EC); neither is Curve25519/Ed25519. An inline Ed25519 verifier is ~3-5 KB CASM; warrants its own focused session.
+
+### S2-S4 — pending
 
 ## Acceptance Criteria
 

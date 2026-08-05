@@ -41,6 +41,8 @@
 // intentionally relaxed at the crate root; re-tighten by adding
 // `#[deny(unsafe_code)]` per non-FFI module as the FFI surface solidifies.
 
+pub mod prover_input;
+
 use std::sync::OnceLock;
 
 use libloading::Library;

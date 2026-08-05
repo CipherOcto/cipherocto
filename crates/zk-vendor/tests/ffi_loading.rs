@@ -55,6 +55,7 @@
 
 use std::path::PathBuf;
 
+use zk_vendor::prover_input::{CapabilityClassTag, ProverInput, WitnessFormat};
 use zk_vendor::try_load;
 
 /// Resolve the path to `libstwo_sys.so` built by the nightly toolchain
@@ -271,5 +272,151 @@ fn ffi_arg_order_round_trip_respects_abi_casmpub_wit() {
             // STARK validity.
             eprintln!("ffi_arg_order: prove returned non-ProverNull error: {e}");
         }
+    }
+}
+
+// =========================================================================
+// Mission 0958-c AC-3 (2026-08-05): ProverInput JSON adapter integration
+// tests. These tests do NOT require the nightly-built cdylib — they
+// exercise the `prover_input` module's deterministic JSON serialization
+// directly, so they run under the default `cargo test` invocation
+// (NOT `#[ignore]`).
+//
+// The AC-3 contract:
+// 1. `ProverInput::to_witness_bytes()` produces canonical JSON (sorted
+//    keys, compact) that the upstream `stwo_prove` FFI accepts.
+// 2. `ProverInput::to_bytes_fallback()` produces a minimal JSON object
+//    that preserves observability of the fallback path. The
+//    `ProofBundle.witness_format` enum field records which path was
+//    used at runtime; the integration test asserts the enum round-trips
+//    through serde.
+// =========================================================================
+
+#[test]
+fn prover_input_json_round_trip() {
+    // Synthetic inputs — the structural shape is what the test pins,
+    // not the cryptographic contents (CASM bytes here are arbitrary).
+    let casm = b"\x00\x01\x02cipherocto-ac3-casm-fixture\x00\xff";
+    let signer_a = [0xab_u8; 32];
+    let signer_b = [0xcd_u8; 32];
+    let message_root = [0xef_u8; 32];
+    let trace_step = [0x12_u8; 32];
+    let public_bytes = b"\x00cipherocto-ac3-public-fixture";
+
+    let p = ProverInput::new(
+        casm,
+        &[signer_a, signer_b],
+        &message_root,
+        &[trace_step],
+        public_bytes,
+        CapabilityClassTag::SelfHost,
+    );
+
+    // Serialize → parse round-trip.
+    let witness_bytes = p.to_witness_bytes().expect("serialize ProverInput");
+    let parsed: ProverInput =
+        serde_json::from_slice(&witness_bytes).expect("parse ProverInput round-trip");
+    assert_eq!(parsed, p, "ProverInput round-trip must preserve all fields");
+
+    // Witness format defaults to ProverInputJson (the AC-3 production
+    // path). The fallback path is opt-in via `to_bytes_fallback()`.
+    assert_eq!(parsed.witness_format, WitnessFormat::ProverInputJson);
+
+    // Field count: program (hex) + witness (3 fields + 1 nested) +
+    // public (hex) + witness_format = 4 top-level fields.
+    let value: serde_json::Value =
+        serde_json::from_slice(&witness_bytes).expect("parse as Value for field count");
+    let obj = value.as_object().expect("top-level is object");
+    assert_eq!(obj.len(), 4, "expected 4 top-level fields");
+    assert!(obj.contains_key("program"));
+    assert!(obj.contains_key("public"));
+    assert!(obj.contains_key("witness"));
+    assert!(obj.contains_key("witness_format"));
+
+    // Canonical JSON contract: top-level keys are sorted alphabetically.
+    let s = std::str::from_utf8(&witness_bytes).expect("utf8");
+    let pos_program = s.find("\"program\"").expect("program");
+    let pos_public = s.find("\"public\"").expect("public");
+    let pos_witness = s.find("\"witness\"").expect("witness");
+    let pos_format = s.find("\"witness_format\"").expect("format");
+    assert!(pos_program < pos_public, "program must sort before public");
+    assert!(pos_public < pos_witness, "public must sort before witness");
+    assert!(
+        pos_witness < pos_format,
+        "witness must sort before witness_format"
+    );
+
+    // Hex contracts: program + public are hex-encoded; signer_roots_hex
+    // + message_root_hex + trace_steps_hex are arrays / single hex
+    // strings. The hex strings must be 64 chars (32 bytes) per root.
+    assert_eq!(
+        parsed.witness.signer_roots_hex.len(),
+        2,
+        "2 signers → 2 hex roots"
+    );
+    assert_eq!(
+        parsed.witness.signer_roots_hex[0].len(),
+        64,
+        "32-byte hex = 64 chars"
+    );
+    assert_eq!(
+        parsed.witness.message_root_hex.len(),
+        64,
+        "32-byte message root hex = 64 chars"
+    );
+    assert_eq!(
+        parsed.witness.trace_steps_hex.len(),
+        1,
+        "1 trace step → 1 hex entry"
+    );
+}
+
+#[test]
+fn prover_input_fallback_observable() {
+    // Mission 0958-c AC-3 requires that the bytes-fallback path be
+    // observable: the `ProofBundle.witness_format` enum field records
+    // which path was used. This test asserts the enum discriminates
+    // both shapes + serde round-trips correctly through JSON.
+    let p = ProverInput::new(
+        b"casm-fallback-fixture",
+        &[[0x55_u8; 32]],
+        &[0x66_u8; 32],
+        &[],
+        b"public-fallback",
+        CapabilityClassTag::Hybrid,
+    );
+
+    // Production path: ProverInputJson.
+    let json_bytes = p.to_witness_bytes().expect("serialize JSON");
+    let parsed_json: ProverInput = serde_json::from_slice(&json_bytes).expect("parse JSON");
+    assert_eq!(parsed_json.witness_format, WitnessFormat::ProverInputJson);
+
+    // Fallback path: minimal JSON object with the marker.
+    let fallback_bytes = p.to_bytes_fallback().expect("serialize fallback");
+    let fallback: serde_json::Value =
+        serde_json::from_slice(&fallback_bytes).expect("parse fallback");
+    assert_eq!(
+        fallback.get("__cipherocto_bytes_fallback"),
+        Some(&serde_json::Value::Bool(true)),
+        "fallback marker must be present"
+    );
+    assert_eq!(
+        fallback.get("public_hex"),
+        Some(&serde_json::Value::String(p.public.clone())),
+        "public_hex must round-trip from ProverInput.public"
+    );
+
+    // The two formats produce DIFFERENT bytes (asserting the
+    // observability contract — fallback is structurally distinct).
+    assert_ne!(
+        json_bytes, fallback_bytes,
+        "JSON and fallback shapes must produce distinct bytes"
+    );
+
+    // WitnessFormat enum round-trips through serde.
+    for fmt in [WitnessFormat::ProverInputJson, WitnessFormat::BytesFallback] {
+        let s = serde_json::to_string(&fmt).expect("serialize enum");
+        let back: WitnessFormat = serde_json::from_str(&s).expect("parse enum");
+        assert_eq!(back, fmt, "WitnessFormat round-trip must preserve variant");
     }
 }

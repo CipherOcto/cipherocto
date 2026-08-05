@@ -138,3 +138,9 @@ To be populated at session-end. Each entry must follow `[[deferred-vs-unspecifie
 **Submission Date:** 2026-08-05
 **Last Updated:** 2026-08-05
 **Version:** 0.1 (Open; AC-1..AC-6 defined; Phase B.4 + C.4 + D.4)
+
+## Version History
+
+| Version | Date | Status | Notes |
+|---|---|---|---|
+| v0.1 (current) | 2026-08-05 | Open | Authored by Round 1 review F-3 closure of mission `0958-b`. Aggregates 5 DEFERRED items that pointer'd at a phantom mission: HMAC-BLAKE3 chain re-derivation (AC-1), Ed25519 holder signature verify in-circuit (AC-2), structured `ProverInput` JSON witness shape (AC-3), Stage-2 verifier split for CASM size (AC-4), honest-disclosure residual closure (AC-5). Clippy + tests + bench + fuzz gates in AC-6. Order of operations in §Implementation Guide puts AC-3 first (witness shape unblocks bench + real-zk latency measurement), AC-1 + AC-2 in parallel, AC-4 last (depends on AC-1 + AC-2), AC-5 last (depends on AC-1..AC-4 closure). Round 2 review F-20 added this Version History table for consistency with sibling mission `0958-b` v0.4. |

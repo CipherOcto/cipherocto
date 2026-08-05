@@ -105,7 +105,7 @@ The actual CASM size reduction is a 5-step refactor (split + Stage-2 composition
 
 ## History
 
-**2026-08-05 (0958-b S2d, original):** design doc authored during 0958-b S2. Sub-function names `verify_hmac_chain` + `verify_poseidon_fold` reflected the HMAC-SHA-256 + Poseidon chain. Cost estimate: main circuit ~10 KB, `verify_hmac_chain` sub-circuit ~150 KB (SHA-256 inlined 3×), `verify_poseidon_fold` sub-circuit ~5 KB.
+**2026-08-05 (0958-b S2d, original):** design doc authored during 0958-b S2. Sub-function names `verify_hmac_chain` + `verify_poseidon_fold` reflected the HMAC-SHA-256 + Poseidon chain. Cost estimate: main circuit ~10 KB, `verify_hmac_chain` sub-circuit ~150 KB (SHA-256 inlined 3×), `verify_poseidon_fold` sub-circuit ~5 KB. **Round 5 fix F-68 qualifier:** these are design projections; the 0958-b S2 actual landing was 303 KB main circuit (per §Context above), and the Stage-2 split was deferred to 0958-c AC-4 (per "Implementation plan (NOT landed in 0958-b S2 — deferred to mission 0958-c AC-4)" heading above). The "~10 KB main circuit" never landed in 0958-b.
 
 **2026-08-05 (0958-c R4 F-51 update):** sub-function names renamed to `verify_chain` + `verify_holder_sig` + `verify_inference_fold` to reflect 0958-c's BLAKE3 + Ed25519 + Poseidon substitution. Cost estimate reduced: HMAC-BLAKE3 sub-circuit ~5 KB (was ~150 KB for SHA-256); Ed25519 sub-circuit ~5 KB (new in 0958-c). The Stage-2 split architecture is unchanged; only the per-sub-circuit primitives + sizes differ.
 

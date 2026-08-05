@@ -55,7 +55,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libdbus-1-dev pkg-config
-      - name: Build workspace (R4 F-25: dropped --features full phantom flag)
+      - name: Build workspace (R4 F-25 — dropped --features full phantom flag)
         run: cargo build --workspace
 
   zk-vectors:
@@ -69,7 +69,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libdbus-1-dev pkg-config
-      - name: Run 8 RFC-0958 vectors + cross-impl TV1/TV2 (R4 F-25: dropped --features full)
+      - name: Run 8 RFC-0958 vectors + cross-impl TV1/TV2 (R4 F-25 — dropped --features full)
         run: cargo test -p octo-wallet --test zk_vectors
 
   wire-v2:
@@ -83,7 +83,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libdbus-1-dev pkg-config
-      - name: Run wire v2 4-segment round-trip (R4 F-25: dropped --features full)
+      - name: Run wire v2 4-segment round-trip (R4 F-25 — dropped --features full)
         run: cargo test -p octo-wallet --test wire_v2_roundtrip
 
   casm-snapshot:
@@ -178,7 +178,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libdbus-1-dev pkg-config
-      - name: Lint with -D warnings (R4 F-25: dropped --features full)
+      - name: Lint with -D warnings (R4 F-25 — dropped --features full)
         run: cargo clippy --workspace --all-targets -- -D warnings
 
   fuzz-nightly:

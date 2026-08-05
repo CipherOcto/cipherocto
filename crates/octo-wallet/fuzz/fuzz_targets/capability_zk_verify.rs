@@ -7,19 +7,30 @@
 //!
 //! **Target:** `quota_router_core::zk_verify::capability::verify_capability_zk`.
 //! The fuzzer generates random `PublicInputs` + `ProofBundle` (synthesized
-//! from raw bytes) and asserts that no path panics. Coverage target =
-//! exercise every variant in `ZkVerifyError` + `ZkMintError`.
+//! from raw bytes via `pub_inputs_from_data`) and asserts that no path
+//! panics. Coverage target = exercise every variant in `ZkVerifyError` +
+//! `ZkMintError`. Note: this target does NOT depend on the `arbitrary`
+//! crate — `pub_inputs_from_data` consumes raw bytes to construct the
+//! structured input, simplifying the dep graph.
 //!
-//! **Corpus seeds:** checked-in under `fuzz/corpus/capability_zk_verify/`,
-//! crafted to hit each `ZkVerifyError` variant once (PublicInputMismatch,
-//! CasmHashMismatch, ClockSkewExceeded, StwoVerifyError, BatchSignerMissing).
+//! **Corpus seeds:** the fuzzer starts with an empty corpus; cargo-fuzz
+//! populates during nightly runs and persists to
+//! `crates/octo-wallet/fuzz/corpus/capability_zk_verify/`. Round 5 review
+//! F-32 corrected the prior claim of checked-in seed files exercising
+//! each `ZkVerifyError` variant once — those seed files do not exist on
+//! disk. Future mission (0958-c or beyond) may author them; for now the
+//! empty-corpus nightly run gradually expands coverage across the
+//! schedule window.
 //!
 //! **Run:**
 //! ```bash
-//! cargo fuzz run capability_zk_verify -p octo-wallet
+//! cargo fuzz run capability_zk_verify -p octo-wallet-fuzz
 //! # 24h nightly:
-//! cargo fuzz run capability_zk_verify -p octo-wallet -- -max_total_time=86400
+//! cargo fuzz run capability_zk_verify -p octo-wallet-fuzz -- -max_total_time=86400
 //! ```
+//! Round 5 review F-31 corrected the prior `-p octo-wallet` package
+//! reference — the fuzz crate is `octo-wallet-fuzz`, not `octo-wallet`
+//! (no `[[bin]]` fuzz targets live under the wallet crate itself).
 //!
 //! **CI integration:** `.github/workflows/zk-capability-circuit.yml::fuzz-nightly`
 //! runs `cargo fuzz run` for 90-minute budget per run; the corpus

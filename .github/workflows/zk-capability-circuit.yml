@@ -11,8 +11,17 @@ name: ZK Capability Circuit CI
 #
 # Feature gate note (per RFC-0917 invariant): `--all-features` is NOT used
 # because `litellm-mode` and `any-llm-mode` are mutually exclusive
-# (`compile_error!` at quota-router-core/src/router.rs:23). Use
-# `--features full` for feature-bounded coverage.
+# (`compile_error!` at quota-router-core/src/router.rs:23). Per Round 4
+# review F-25 (2026-08-05): the prior `--features full` invocations were
+# a phantom flag — mission 0958-b S2 (commit `77aff4aa`) REMOVED the
+# `full` cargo feature from `crates/octo-wallet/Cargo.toml` +
+# `crates/zk-circuit/Cargo.toml` in favor of runtime dispatch on
+# `zk_vendor::vendor_state()`. The `--features full` flag now errors
+# every build. All 6 invocations below were rewritten to drop the flag.
+# Real-zk STWO selection happens at runtime via `libstwo_sys.so` presence;
+# stub mode activates under `--features allow-stub-verifier` (test-only
+# activation through `[dev-dependencies]` on `octo-wallet`, per R1 review
+# F-1 closure).
 
 on:
   pull_request:
@@ -46,8 +55,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libdbus-1-dev pkg-config
-      - name: Build with --features full
-        run: cargo build --workspace --features full
+      - name: Build workspace (R4 F-25: dropped --features full phantom flag)
+        run: cargo build --workspace
 
   zk-vectors:
     name: RFC-0958 test vectors (AC-4)
@@ -60,8 +69,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libdbus-1-dev pkg-config
-      - name: Run 8 RFC-0958 vectors + cross-impl TV1/TV2
-        run: cargo test -p octo-wallet --test zk_vectors --features full
+      - name: Run 8 RFC-0958 vectors + cross-impl TV1/TV2 (R4 F-25: dropped --features full)
+        run: cargo test -p octo-wallet --test zk_vectors
 
   wire-v2:
     name: Wire format v2 round-trip (AC-8)
@@ -74,8 +83,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libdbus-1-dev pkg-config
-      - name: Run wire v2 4-segment round-trip
-        run: cargo test -p octo-wallet --test wire_v2_roundtrip --features full
+      - name: Run wire v2 4-segment round-trip (R4 F-25: dropped --features full)
+        run: cargo test -p octo-wallet --test wire_v2_roundtrip
 
   casm-snapshot:
     name: CASM BLAKE3 snapshot (AC-2, mission 0958-a Session 2)
@@ -154,7 +163,7 @@ jobs:
       - name: Run #[ignore] perf gates (proof-gen <2s, verify <100ms, size 50-500KB)
         # Tagged `#[ignore]` so default `cargo test` does not run them; CI
         # opts in via `--include-ignored` to enforce the gates per PR.
-        run: cargo test -p octo-wallet --test bench --features full -- --include-ignored
+        run: cargo test -p octo-wallet --test bench -- --include-ignored
 
   clippy:
     name: Clippy clean (AC-14)
@@ -169,8 +178,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libdbus-1-dev pkg-config
-      - name: Lint with -D warnings
-        run: cargo clippy --workspace --all-targets --features full -- -D warnings
+      - name: Lint with -D warnings (R4 F-25: dropped --features full)
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
   fuzz-nightly:
     name: cargo-fuzz 24h on schedule (AC-13)
@@ -183,7 +192,13 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
-      - name: Install cargo-fuzz
+      # Round 4 review F-27 (2026-08-05): `cargo fuzz run` requires the
+      # nightly toolchain (uses `-Z` unstable flags). The build job uses
+      # stable; this job installs nightly explicitly. Toolchain pin matches
+      # the scarb 2.16.0 + cairo 2.16.0 + sierra 1.7.0 pin referenced in
+      # the `casm-snapshot` job at line 90.
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install cargo-fuzz (stable-compatible; pin a matching nightly)
         run: cargo install cargo-fuzz
       - name: Run capability_zk_verify fuzz for 1.5h CI budget
         # 24h total budget is split across runs in CI; cargo-fuzz resumes

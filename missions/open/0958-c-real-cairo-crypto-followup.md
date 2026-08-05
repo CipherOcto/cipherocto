@@ -85,8 +85,8 @@ Items:
 
 ### AC-6 — Clippy + tests + bench + fuzz
 
-- [ ] `cargo clippy --workspace --all-targets --features full -- -D warnings` clean.
-- [ ] `cargo test -p octo-wallet --test zk_vectors` ≥ 16/16 (8 original TVs + TV9 Ed25519 + tv9_stage2_split + companions).
+- [ ] `cargo clippy --workspace --all-targets -- -D warnings` clean (Round 4 review F-25: dropped `--features full`; the `full` cargo feature was REMOVED in mission 0958-b S2 commit `77aff4aa` in favor of runtime dispatch on `zk_vendor::vendor_state()`).
+- [ ] `cargo test -p octo-wallet --test zk_vectors` ≥ 17/17 (15 from 0958-b baseline = 10 RFC-0958 §Test Vector functions with TV5/TV7 splits [TV5: `tv5_casm_drift_detected_at_mint` + `tv5_casm_drift_detected_at_verify`; TV7: `tv7_clock_skew_exceeded_rejected` + `tv7_clock_skew_within_window_accepted`] + 5 companion tests [`ac7_wholesale_zkbearing_registration_rejected`, `ac7_hybrid_without_explicit_mint_remains_v1`, `ac9_public_input_mismatch_detected_under_slot_binding_drift`, `r3_casm_n2_rotation_accepts_either_v1_or_v2_hash`, `r3_axes_consumed_canonical_sort_independent_of_input_order`] + TV9 Ed25519 + `tv9_stage2_split_round_trip`). Round 4 review F-28 corrected the prior ≥ 16/16 claim (off-by-one: 15 + 2 = 17, not 16; "8 original TVs" was internally inconsistent with AC-1's "10 test functions via splits" phrasing).
 - [ ] `cargo test -p octo-wallet --test bench -- --include-ignored` exercises real STWO proof gen (G1 + G2 + AC-12 envelopes all green without mock fallback).
 - [ ] 60s local fuzz smoke on `capability_zk_verify` green; 24h CI nightly healthy.
 - [ ] `cargo fmt --all` ran.

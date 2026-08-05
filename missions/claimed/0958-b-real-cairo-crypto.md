@@ -156,7 +156,7 @@ These are the 14 honest-disclosure items tracked in mission 0958-a §R4 Rebuttal
 
 ### Architectural direction
 
-1. **Cairo circuit body rewrite** — replace the current `cairo/src/lib.cairo::main()` structural stub with the cryptographic body. Use scarb 2.16.0 corelib imports; pin all corelib versions in `cairo/Scarb.toml`. Verify CASM size stays under `max_bytecode_size = 50 * 1024` (set by 0958-a R4 fix). If CASM exceeds 50 KB, use the `#[cfg(feature = "casm_split")]` flag to move the HMAC-BLAKE3 chain into a separate verifying sub-circuit (Stage-2 verifier pattern).
+1. **Cairo circuit body rewrite** — replace the current `cairo/src/lib.cairo::main()` structural stub with the cryptographic body. Use scarb 2.16.0 corelib imports; pin all corelib versions in `cairo/Scarb.toml`. Verify CASM size stays under `max_bytecode_size = 50 * 1024` (set by 0958-a R4 fix). If CASM exceeds 50 KB, split the HMAC-BLAKE3 chain into a separate verifying sub-circuit (Stage-2 verifier pattern) — see `missions/open/0958-c-real-cairo-crypto-followup.md` AC-4. Round 4 review F-26: dropped the prior `#[cfg(feature = "casm_split")]` gating reference; no such cargo feature exists in any Cargo.toml (the Stage-2 split is a code-level refactor, not a feature-flag-bound artifact).
 
 2. **Real-zk STWO integration** — extend `prove_batch_signature` to actually call `zk_vendor::loaded_library().unwrap().prove(casm, witness, public)` (R4 H9 integration test). The current `#[cfg(feature = "full")]` stub returns `Err(ProverError::Internal("full path unimplemented"))`; replace with the real implementation. Drop the `full` feature flag; replace with `real-zk` (already declared in `crates/octo-wallet/Cargo.toml` per R3 #4 `2fb0a455`).
 

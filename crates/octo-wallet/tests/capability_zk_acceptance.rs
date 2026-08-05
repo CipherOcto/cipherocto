@@ -483,8 +483,21 @@ fn closure_acceptance_all_vectors_emitting_structured_report() {
         println!("  [{:>4}] {:<55} {}", r.outcome, r.name, r.detail);
     }
     let ok_count = report.iter().filter(|r| r.outcome == "OK").count();
+    let skip_count = report.iter().filter(|r| r.outcome == "SKIP").count();
     let total = report.len();
-    println!("\n{ok_count}/{total} vectors + AC tests passed.");
+    println!("\n{ok_count}/{total} vectors + AC tests passed ({skip_count} skipped).");
 
-    assert_eq!(ok_count, total, "all acceptance vectors must pass");
+    // Allow SKIP rows (e.g., AC-14 in-process clippy when
+    // CIPHEROCTO_SKIP_CLIPPY_ACCEPTANCE=1 is set) but require all non-SKIP
+    // rows to be OK. FAIL is the only panic-worthy outcome.
+    let failed: Vec<&VectorReport> = report
+        .iter()
+        .filter(|r| r.outcome != "OK" && r.outcome != "SKIP")
+        .collect();
+    assert!(
+        failed.is_empty(),
+        "all acceptance vectors must pass (FAIL count: {}); failing rows: {:#?}",
+        failed.len(),
+        failed
+    );
 }

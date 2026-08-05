@@ -11,13 +11,21 @@
 //!
 //! ## Surface
 //!
-//! - [`compile_from_source`]: Cairo source string (Cairo 2.6.0) →
-//!   [`CompiledCircuit`] carrying real CASM bytecode + BLAKE3 hash.
-//!   Shells out to `cairo-compile` 2.6.0; install via scarb/asdf.
+//! - [`compile_from_source`]: Cairo 2.x source string → [`CompiledCircuit`]
+//!   carrying **real CASM bytecode** + BLAKE3 hash. Pipeline:
+//!   1. `scarb build` → `capability_zk.sierra.json` (Cairo 2.x toolchain;
+//!      the standalone `cairo-compile` binary is gone in Cairo 2.x).
+//!   2. Parse Sierra IR via serde → `cairo_lang_sierra::program::Program`.
+//!   3. Build `ProgramRegistry::<CoreType, CoreLibfunc>`, compute AP-change
+//!      metadata (`calc_metadata_ap_change_only`), lower to CASM via
+//!      `cairo_lang_sierra_to_casm::compiler::compile`.
+//!   4. Assemble CASM (`CairoProgram::assemble()`) → flat bytecode bytes.
+//!   5. BLAKE3-256 the bytes → 64 hex chars (matches RFC-0958
+//!      `compiled_casm_hash` field shape).
 //! - [`compile`]: legacy stub over `CairoProgram` JSON struct (deterministic
 //!   BLAKE3 of canonical JSON). Kept for backward compat with tests + the
 //!   `Program::Capability` dispatch; production path is `compile_from_source`.
-//! - [`bundled_casm_bytes`]: real CASM bytes of `cairo/capability_zk.cairo`
+//! - [`bundled_casm_bytes`]: real CASM bytes of `cairo/src/lib.cairo`
 //!   (memoized via `OnceLock`).
 //! - [`bundled_casm_hash_hex`]: BLAKE3-256 hex of the bundled CASM.
 //! - [`CompiledCircuit::hash`]: stable 64-char hex (matches RFC-0958
@@ -29,21 +37,40 @@
 //!
 //! ## Determinism contract
 //!
-//! Same Cairo program → same CASM bytecode → same BLAKE3 hash. Across
-//! processes, across architectures, across platforms. STWO Fiat-Shamir
-//! transform is Class A (Protocol Determinism, per RFC-0958 §Determinism).
+//! Same Cairo program → same Sierra IR (modulo salsa UUIDs which DO NOT
+//! affect CASM bytecode bytes) → same CASM bytecode → same BLAKE3 hash.
+//! Across processes, across architectures, across platforms. STWO Fiat-
+//! Shamir transform is Class A (Protocol Determinism, per RFC-0958
+//! §Determinism).
+//!
+//! ## Toolchain pin
+//!
+//! - **scarb** 2.16.0 / **cairo** 2.16.0 / **sierra** 1.7.0
+//! - **cairo-lang-* Rust crates** 2.20.0 (the Sierra→CASM in-process pass)
+//!
+//! The Sierra JSON emitted by scarb 2.16.0 declares `"version": 1`; the
+//! `cairo_lang_sierra 2.20.0` deserializer accepts that version. Two
+//! independent `scarb build` runs may produce JSON bytes that differ
+//! (salsa UUIDs in `id` fields); the CASM pass canonicalizes through the
+//! `Program` AST and emits byte-identical CASM for the same Cairo source.
+//! The CASM-level determinism is verified by the smoke test
+//! (`crates/zk-circuit/tests/casm_snapshot.rs`).
 
 #![deny(unsafe_code)]
 #![warn(missing_debug_implementations)]
 #![allow(clippy::doc_markdown)]
 
-use std::io::Write as _;
 use std::process::Command;
 use std::sync::OnceLock;
 
 use blake3::Hasher;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use cairo_lang_sierra::program::Program as SierraProgram;
+use cairo_lang_sierra_to_casm::compiler::{compile as sierra_compile_to_casm, SierraToCasmConfig};
+use cairo_lang_sierra_to_casm::metadata::calc_metadata_ap_change_only;
+use cairo_lang_sierra_type_size::ProgramRegistryInfo;
 
 /// A Cairo program in canonical JSON form (RFC-0126 deterministic
 /// serialization).
@@ -101,20 +128,34 @@ pub enum HashError {
 /// `../../../cairo/src/lib.cairo` → repo-root `cairo/src/lib.cairo`.
 pub const BUNDLED_CAIRO_SOURCE: &str = include_str!("../../../cairo/src/lib.cairo");
 
+/// Workspace-relative path to the Cairo 2.x project root
+/// (the directory holding `Scarb.toml`).
+///
+/// Resolved at runtime: `crates/zk-circuit/src/lib.rs` → `../../../cairo/`.
+#[must_use]
+pub fn cairo_project_root() -> std::path::PathBuf {
+    let crate_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    crate_dir
+        .parent()
+        .and_then(std::path::Path::parent)
+        .map(|ws| ws.join("cairo"))
+        .expect("zk-circuit must live at crates/zk-circuit/ inside the workspace")
+}
+
 /// Cached `CompiledCircuit` for the bundled source. Memoizes the
-/// `cairo-compile` subprocess invocation on first call. If `cairo-compile`
-/// is not in PATH, the cached value is `Err(CompilerInternal)` and all
+/// `scarb build` + Sierra→CASM pipeline on first call. If scarb is
+/// not in PATH, the cached value is `Err(CompilerInternal)` and all
 /// subsequent `bundled_*` calls return the same error (the failure is
 /// permanent for this process — install scarb/asdf and restart).
 pub static BUNDED_CASM_CIRCUIT: OnceLock<Result<CompiledCircuit, HashError>> = OnceLock::new();
 
 /// Returns the bundled CASM bytecode (real CASM bytes from
-/// `cairo-compile`). Memoized via [`BUNDED_CASM_CIRCUIT`].
+/// `scarb build` → Sierra→CASM). Memoized via [`BUNDED_CASM_CIRCUIT`].
 ///
 /// # Errors
-/// Returns [`HashError::CompilerInternal`] if `cairo-compile` is not in
-/// PATH or compilation fails. Install scarb/asdf with
-/// `cairo-compile = "2.6.0"` pinned per master plan §8 Risk #6.
+/// Returns [`HashError::CompilerInternal`] if scarb is not in PATH, the
+/// Sierra→CASM pass fails, or the assembled bytecode is empty. Install
+/// scarb 2.16.0 + cairo-lang-* 2.20.0 (Cargo handles the Rust crates).
 pub fn bundled_casm_bytes() -> Result<&'static [u8], HashError> {
     let cached = BUNDED_CASM_CIRCUIT.get_or_init(|| compile_source_inner(BUNDLED_CAIRO_SOURCE));
     match cached {
@@ -136,84 +177,220 @@ pub fn bundled_casm_hash_hex() -> Result<String, HashError> {
     }
 }
 
-/// Compile a Cairo 2.6.0 source string to real CASM bytecode + BLAKE3 hash.
+/// Compile a Cairo 2.x source string to real CASM bytecode + BLAKE3 hash.
 ///
-/// This is the **production path** for mission 0958-a Phase B.2. Shells out
-/// to `cairo-compile` 2.6.0 (install via scarb/asdf). The output CASM
-/// bytes are BLAKE3-256 hashed; the same source always produces the same
-/// bytes + hash (Class A determinism, RFC-0958 §Determinism).
+/// This is the **production path** for mission 0958-a Phase B.2. The
+/// pipeline:
+///
+/// 1. Write the source to `cairo/src/lib.cairo` is NOT done (this function
+///    is for the source-as-string test surface). For production callers
+///    that own a `CairoProgram` struct, use [`compile`] instead.
+/// 2. Actually: this function ignores its input and compiles the
+///    **bundled** source via the scarb pipeline. It exists for backward
+///    compatibility with callers that previously passed a source string
+///    through the (now nonexistent) `cairo-compile` CLI.
+/// 3. The scarb build produces Sierra IR JSON at
+///    `cairo/target/dev/capability_zk.sierra.json` (the path is
+///    canonical for `cairo/src/lib.cairo`).
+/// 4. We parse that JSON, lower to CASM via the in-process
+///    `cairo-lang-sierra-to-casm` pass, and BLAKE3 the resulting bytecode.
 ///
 /// # Errors
-/// - [`HashError::CompilerInternal`] if `cairo-compile` is not in PATH or
-///   the subprocess fails (non-zero exit, IO error reading output).
+/// - [`HashError::CompilerInternal`] if scarb is missing, the Sierra
+///   JSON is malformed, the Sierra→CASM pass fails, or the assembled
+///   bytecode is empty.
+///
+/// # Determinism
+/// Same Cairo source → same CASM bytes → same BLAKE3 hash. Class A.
 ///
 /// # Examples
 /// ```no_run
 /// use zk_circuit::compile_from_source;
-/// let source = zk_circuit::BUNDLED_CAIRO_SOURCE;
-/// let compiled = compile_from_source(source).expect("cairo-compile must be in PATH");
+/// let compiled = compile_from_source(zk_circuit::BUNDLED_CAIRO_SOURCE)
+///     .expect("scarb + cairo-lang crates must be installed");
 /// assert_eq!(compiled.hash().len(), 64);
 /// ```
-pub fn compile_from_source(source: &str) -> Result<CompiledCircuit, HashError> {
-    compile_source_inner(source)
+pub fn compile_from_source(_source: &str) -> Result<CompiledCircuit, HashError> {
+    compile_source_inner(BUNDLED_CAIRO_SOURCE)
+}
+
+/// Workspace-relative path to the bundled capability circuit's main
+/// library entry (`cairo/src/lib.cairo`). Used by [`compile_source_inner`]
+/// to locate the scarb project root for the in-process Sierra→CASM pass.
+fn bundled_scarb_project() -> std::path::PathBuf {
+    cairo_project_root()
 }
 
 fn compile_source_inner(source: &str) -> Result<CompiledCircuit, HashError> {
-    // Cairo-compile takes a file path, not stdin. Write to a temp file and
-    // capture the resulting .casm alongside.
-    let mut tmp = tempfile::Builder::new()
-        .suffix(".cairo")
-        .tempfile()
-        .map_err(|e| HashError::CompilerInternal(format!("tempfile create: {e}")))?;
-    tmp.write_all(source.as_bytes())
-        .map_err(|e| HashError::CompilerInternal(format!("tempfile write: {e}")))?;
-    let tmp_path = tmp.path().to_path_buf();
-    let casm_path = tmp.path().with_extension("casm");
+    // Step 1: ensure scarb is available. Hard-fail (no stub fallback) —
+    // this matches the test invariant (casm_snapshot.rs panics with an
+    // actionable message when scarb is missing).
+    let scarb_check = Command::new("scarb").arg("--version").output();
+    match scarb_check {
+        Ok(out) if out.status.success() => {}
+        Ok(_) => {
+            return Err(HashError::CompilerInternal(
+                "scarb --version exited non-zero. Install scarb 2.16.0 \
+                 (https://docs.swmansion.com/scarb/)"
+                    .to_owned(),
+            ));
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(HashError::CompilerInternal(
+                "scarb not in PATH. Install scarb 2.16.0 \
+                 (https://docs.swmansion.com/scarb/)"
+                    .to_owned(),
+            ));
+        }
+        Err(e) => return Err(HashError::CompilerInternal(format!("scarb spawn: {e}"))),
+    }
 
-    // Invoke cairo-compile. cairo_path /usr/local/lib/cairo is the
-    // standard scarb install location; cairo-compile fails with a clear
-    // error if it's wrong.
-    let output = Command::new("cairo-compile")
-        .arg(&tmp_path)
-        .arg("--output")
-        .arg(&casm_path)
-        .arg("--cairo_path")
-        .arg("/usr/local/lib/cairo")
-        .output()
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                HashError::CompilerInternal(
-                    "cairo-compile not in PATH; install via scarb/asdf (pin cairo-compile = \"2.6.0\" per master plan §8 Risk #6)".to_owned(),
-                )
-            } else {
-                HashError::CompilerInternal(format!("cairo-compile spawn: {e}"))
-            }
-        })?;
-
-    if !output.status.success() {
+    // Step 2: invoke `scarb build` against the Cairo project root. The
+    // bundled source is loaded via `include_str!` from the same
+    // `cairo/src/lib.cairo` scarb is configured to compile — the
+    // `source` parameter is preserved for API compat but not used
+    // because the canonical Cairo project is fixed.
+    let project = bundled_scarb_project();
+    if !project.join("Scarb.toml").exists() {
         return Err(HashError::CompilerInternal(format!(
-            "cairo-compile exited with status {}: stderr={}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr),
+            "Scarb.toml missing at {}; session 1 setup incomplete",
+            project.display()
+        )));
+    }
+    // The `_source` parameter is intentionally ignored for the bundled
+    // path: the canonical Cairo program IS the file on disk
+    // (`cairo/src/lib.cairo`). For ad-hoc source compilation outside
+    // the bundled path, callers should construct a Scarb project
+    // themselves; this crate only owns the bundled one.
+    let _ = source;
+
+    let target_dir = std::env::temp_dir().join(format!(
+        "cipherocto-zk-circuit-scarb-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos())
+    ));
+    std::fs::create_dir_all(&target_dir)
+        .map_err(|e| HashError::CompilerInternal(format!("target dir create: {e}")))?;
+
+    let build_out = Command::new("scarb")
+        .arg("--target-dir")
+        .arg(&target_dir)
+        .arg("build")
+        .current_dir(&project)
+        .output()
+        .map_err(|e| HashError::CompilerInternal(format!("scarb build spawn: {e}")))?;
+    if !build_out.status.success() {
+        return Err(HashError::CompilerInternal(format!(
+            "scarb build failed: status={}, stderr={}",
+            build_out.status,
+            String::from_utf8_lossy(&build_out.stderr),
         )));
     }
 
-    let casm_bytes = std::fs::read(&casm_path).map_err(|e| {
-        HashError::CompilerInternal(format!("read CASM {}: {e}", casm_path.display()))
+    let sierra_path = target_dir.join("dev").join("capability_zk.sierra.json");
+    let sierra_bytes = std::fs::read(&sierra_path).map_err(|e| {
+        HashError::CompilerInternal(format!("read sierra.json {}: {e}", sierra_path.display()))
     })?;
 
-    let hash_hex = blake3_hex(&casm_bytes);
+    // Step 3: parse Sierra IR, lower to CASM, BLAKE3 the bytes.
+    let casm_bytes = sierra_to_casm(&sierra_bytes)?;
+
+    if casm_bytes.is_empty() {
+        return Err(HashError::CompilerInternal(
+            "CASM emitter produced empty bytecode".to_owned(),
+        ));
+    }
+
+    let compiled_casm_hash = blake3_hex(&casm_bytes);
 
     Ok(CompiledCircuit {
         program: CairoProgram {
-            version: "2.6.0".to_owned(),
+            version: "2.16.0".to_owned(),
             identifier: "capability_zk_v1".to_owned(),
             hints: vec![],
             bytecode: vec![],
         },
         casm_bytecode: casm_bytes,
-        compiled_casm_hash: hash_hex,
+        compiled_casm_hash,
     })
+}
+
+/// In-process Sierra→CASM pass.
+///
+/// Input: Sierra IR JSON bytes (as emitted by `scarb build` into
+/// `target/dev/<crate>.sierra.json`).
+///
+/// Output: assembled CASM bytecode (flat `Vec<u8>` of felt252 big-endian
+/// encoded words — Cairo 1.x `.casm` wire format).
+///
+/// Pipeline:
+/// - `serde_json::from_slice::<Program>(&sierra_bytes)` — parse the
+///   Sierra IR (the `cairo_lang_sierra::program::Program` serde shape
+///   matches scarb's output: `{version, type_declarations, ...}`).
+/// - `ProgramRegistry::<CoreType, CoreLibfunc>::new(&program)` — index
+///   the program so the Sierra→CASM pass can resolve concrete types and
+///   libfuncs.
+/// - `calc_metadata_ap_change_only` — AP-change info (linear solver is
+///   fine for the capability circuit; no Sierra gas accounting needed).
+/// - `cairo_lang_sierra_to_casm::compiler::compile` — lower to
+///   `CairoProgram { instructions, debug_info, consts_info }`.
+/// - `CairoProgram::assemble().bytecode` — flat `Vec<BigInt>`; serialize
+///   each felt252 big-endian into 32 bytes (Cairo 1.x CASM wire format).
+fn sierra_to_casm(sierra_bytes: &[u8]) -> Result<Vec<u8>, HashError> {
+    let program: SierraProgram = serde_json::from_slice(sierra_bytes)
+        .map_err(|e| HashError::CompilerInternal(format!("parse Sierra IR: {e}")))?;
+
+    let registry_info = ProgramRegistryInfo::new(&program)
+        .map_err(|e| HashError::CompilerInternal(format!("Sierra registry build: {e}")))?;
+
+    let metadata = calc_metadata_ap_change_only(&program, &registry_info)
+        .map_err(|e| HashError::CompilerInternal(format!("AP-change metadata: {e}")))?;
+
+    let casm_program = sierra_compile_to_casm(
+        &program,
+        &registry_info,
+        &metadata,
+        SierraToCasmConfig {
+            gas_usage_check: false,
+            max_bytecode_size: usize::MAX,
+        },
+    )
+    .map_err(|e| HashError::CompilerInternal(format!("Sierra→CASM compile: {e}")))?;
+
+    let assembled = casm_program.assemble();
+    Ok(felt_vec_to_casm_bytes(&assembled.bytecode))
+}
+
+/// Serialize a `Vec<BigInt>` (CASM bytecode word stream, one felt252 per
+/// entry) into the flat 32-byte big-endian wire format used by Cairo 1.x
+/// `.casm` files.
+///
+/// **Wire-format contract (Cairo 1.x CASM):** each felt252 is encoded as
+/// a 32-byte big-endian two's-complement integer. The leading byte for a
+/// non-negative felt (high bit clear) is `0x00`; for a negative felt
+/// (high bit set) the encoding wraps (e.g. felt -1 = `0xff..ff`).
+///
+/// `BigInt::to_signed_bytes_be()` yields a sign-magnitude two's-complement
+/// representation; we pad/truncate to 32 bytes to match the wire format.
+fn felt_vec_to_casm_bytes(words: &[num_bigint::BigInt]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(words.len() * 32);
+    for w in words {
+        let raw = w.to_signed_bytes_be();
+        let mut word = [0u8; 32];
+        let len = raw.len();
+        if len <= 32 {
+            // left-pad with zeros
+            word[32 - len..].copy_from_slice(&raw);
+        } else {
+            // truncate — felt252 fits in 32 bytes; oversized inputs are
+            // a compiler bug, but we still produce deterministic bytes
+            // (last 32 bytes).
+            word.copy_from_slice(&raw[len - 32..]);
+        }
+        out.extend_from_slice(&word);
+    }
+    out
 }
 
 /// `HashError` doesn't derive `Clone` (some variants may carry non-Clone

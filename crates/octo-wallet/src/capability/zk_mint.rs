@@ -27,7 +27,7 @@ use crate::node::NodeType;
 use super::caveat::Caveat;
 use super::macaroon::MacaroonId;
 use super::wire::WireError;
-use zk_circuit::{compile, prove_batch_signature, BatchSigPublicInputs, CairoProgram, Program};
+use zk_circuit::{prove_batch_signature, BatchSigPublicInputs, Program};
 
 use std::sync::OnceLock;
 
@@ -232,63 +232,56 @@ pub enum ZkMintError {
 /// startup via `bundled_casm_hash()` and memoized in a `OnceLock`.
 ///
 /// Real upstream (production pipeline) emits a `bundled.rs` constant from
-/// `cairo/capability_zk.cairo` compiled via `cairo/build.sh`; for MVP the
-/// constant is produced at runtime from the in-tree Cairo source.
-pub static COMPILED_CASM_BLAKE3_HASH: OnceLock<[u8; 32]> = OnceLock::new();
+/// `cairo/src/lib.cairo` compiled via `scarb build` (Cairo 2.x) and
+/// lowered in-process to CASM via `cairo-lang-sierra-to-casm` (Session 2).
+///
+/// **Session 3 invariant:** the slot stores `Result<[u8; 32], _>` so a
+/// compilation failure is cached permanently for the process — every
+/// subsequent `bundled_casm_hash()` call returns the same error rather
+/// than retrying the scarb subprocess on every mint.
+pub static COMPILED_CASM_BLAKE3_HASH: OnceLock<Result<[u8; 32], zk_circuit::HashError>> =
+    OnceLock::new();
 
 /// Returns the bundled CASM hash, memoizing on first call.
+///
+/// # Panics
+/// Panics if the underlying `zk_circuit::compile_from_source` call
+/// fails (e.g., scarb not in PATH, cairo-lang crates not installed).
+/// Session 3 mandate: no stub fallback — if the real CASM cannot be
+/// produced, mint-time CASM hash checks MUST fail loudly rather than
+/// silently accept a placeholder.
 #[must_use]
 pub fn bundled_casm_hash() -> [u8; 32] {
-    *COMPILED_CASM_BLAKE3_HASH.get_or_init(compute_bundled_casm_hash)
+    COMPILED_CASM_BLAKE3_HASH
+        .get_or_init(compute_bundled_casm_hash)
+        .as_ref()
+        .copied()
+        .unwrap_or_else(|compile_err| {
+            panic!(
+                "bundled_casm_hash() init failed: {compile_err}. Install scarb 2.16.0 \
+                 (https://docs.swmansion.com/scarb/) and ensure cairo-lang-* 2.20.0 \
+                 Rust crates are linked into zk-circuit."
+            )
+        })
 }
 
-fn compute_bundled_casm_hash() -> [u8; 32] {
-    // Production path (mission 0958-a Phase B.2): shell out to
-    // `cairo-compile` via `zk_circuit::compile_from_source` and hash the
-    // real CASM bytes (no JSON stub). Requires `cairo-compile 2.6.0` in
-    // PATH; install via scarb/asdf per master plan §8 Risk #6.
+fn compute_bundled_casm_hash() -> Result<[u8; 32], zk_circuit::HashError> {
+    // Production path (mission 0958-a Phase B.2 + Session 2): invoke
+    // the scarb+Sierra→CASM pipeline via `zk_circuit::compile_from_source`
+    // and hash the real CASM bytes. Requires scarb 2.16.0 in PATH +
+    // cairo-lang-* 2.20.0 Rust crates (linked into zk-circuit).
     //
-    // **Dev fallback:** when `cairo-compile` is not available (e.g.,
-    // local dev without scarb), fall back to the legacy deterministic
-    // stub so unit tests stay green. The fallback is logged loudly
-    // (eprintln!) and is NEVER hit in production — CI installs the
-    // toolchain per plan S1 risk mitigation.
-    match zk_circuit::compile_from_source(BUNDLED_CAIRO_SOURCE) {
-        Ok(compiled) => {
-            let hex = compiled.hash();
-            let bytes = hex::decode(hex).expect("BLAKE3 hash is hex");
-            let mut out = [0u8; 32];
-            out.copy_from_slice(&bytes[..32]);
-            out
-        }
-        Err(compile_err) => {
-            eprintln!(
-                "WARNING: zk_circuit::compile_from_source failed: {compile_err}. \
-                 Falling back to legacy stub (DEV ONLY). Production MUST install \
-                 cairo-compile 2.6.0 via scarb/asdf."
-            );
-            legacy_stub_bundled_casm_hash()
-        }
-    }
-}
-
-/// Legacy stub: BLAKE3 of canonical JSON of an empty `CairoProgram`.
-/// Used only when `cairo-compile` is unavailable in dev environments.
-/// Production NEVER hits this path — `bundled_casm_hash()` returns the
-/// real CASM BLAKE3 hash.
-fn legacy_stub_bundled_casm_hash() -> [u8; 32] {
-    let program: CairoProgram = CairoProgram {
-        version: "2.6.0".to_owned(),
-        identifier: "capability_zk_v1".to_owned(),
-        hints: vec![],
-        bytecode: vec![],
-    };
-    let compiled = compile(&program).expect("legacy stub compile must succeed");
+    // Session 3 contract: no stub fallback. The error is propagated
+    // up to `bundled_casm_hash()` which then panics with an actionable
+    // message; the smoke test `casm_snapshot` already verifies the
+    // hard-fail behavior at the test layer.
+    let compiled = zk_circuit::compile_from_source(BUNDLED_CAIRO_SOURCE)?;
     let hex = compiled.hash();
-    let bytes = hex::decode(hex).expect("BLAKE3 hash is hex");
+    let bytes = hex::decode(hex)
+        .map_err(|e| zk_circuit::HashError::CompilerInternal(format!("decode BLAKE3 hex: {e}")))?;
     let mut out = [0u8; 32];
     out.copy_from_slice(&bytes[..32]);
-    out
+    Ok(out)
 }
 
 /// Cairo source for the bundled capability ZK circuit (mint side).

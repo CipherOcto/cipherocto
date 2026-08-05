@@ -23,10 +23,37 @@ thiserror.workspace = true
 # with a stable field order contract (sorted keys) — see hash() doc comment.
 hex = "0.4"
 
-# Tempfile for compile_from_source — writes Cairo source to a temp file
-# before shelling out to `cairo-compile`. The Cairo compiler takes a file
-# path, not stdin, so we need a path. tempfile is the standard for this.
+# Tempfile for compile_from_source — `compile_source_inner` shells out to
+# `scarb build` (Cairo 2.x build orchestrator) which writes the Sierra IR
+# JSON inside `target_dir`. No cairo-compile subprocess (Cairo 1.x
+# standalone binary is gone in Cairo 2.x). tempfile is needed for the
+# per-call `--target-dir` directory we hand to scarb to keep parallel
+# calls from clobbering each other's `target/dev/` output.
 tempfile = { workspace = true }
+
+# Cairo 2.x Sierra→CASM in-process pass (Session 2; mission 0958-a
+# Phase B.2). `cairo_lang_compiler` is pulled in transitively via
+# `cairo_lang_sierra` extensions + `ProgramRegistry` setup, but we
+# list it explicitly here so the dependency graph is auditable from
+# this Cargo.toml alone.
+#
+# Determinism contract: scarb produces Sierra IR JSON from the Cairo
+# source; we parse it via serde, build a `Program`, construct the
+# `ProgramRegistry::<CoreType, CoreLibfunc>`, compute AP-change
+# metadata, lower to CASM via `compile`, and BLAKE3 the assembled
+# bytecode. Same Cairo source → same Sierra IR (modulo salsa UUIDs
+# which DO NOT affect the compiled CASM bytes) → same CASM bytes →
+# same BLAKE3 hash. Class A determinism end-to-end.
+cairo-lang-sierra = "=2.20.0"
+cairo-lang-sierra-to-casm = "=2.20.0"
+cairo-lang-compiler = "=2.20.0"
+# Required transitively for `ProgramRegistryInfo` which is the input type
+# to `calc_metadata_ap_change_only` and `compile`. Pulled in by
+# `cairo-lang-sierra-to-casm` already; listed explicitly for auditability.
+cairo-lang-sierra-type-size = "=2.20.0"
+
+# BigInt for CASM bytecode serialization (felt252 → 32-byte BE encoding).
+num-bigint = "0.4"
 
 # Canonical proof commitment shape (Gap 3 / RFC-0958). Used by the
 # mock proofer to emit commitment bytes that match the downstream

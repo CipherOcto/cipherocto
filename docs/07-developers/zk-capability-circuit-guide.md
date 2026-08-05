@@ -279,7 +279,7 @@ Base64url no-padding encoding per RFC-0957 §3.7.
 | **G2** (AC-11) | Verify <100ms | `tests/bench.rs::verify_latency_under_100ms` | sub-ms on stub |
 | **AC-12** | Proof size 50-500KB | `tests/bench.rs::proof_size_50_to_500kb` | stub = 32B structural smoke; 50-500KB gate under `--features full` |
 
-**Reference HW:** 4-core x86_64, 16GB RAM, NVMe SSD (per RFC-0958 §Implementation Reference).
+**Reference HW:** 4-core x86_64, 16GB RAM, NVMe SSD (per RFC-0958 §Performance Targets). STWO build flags: STWO_CAIRO=1 STWO_USE_BUNDLED=0. OS: Ubuntu 22.04 LTS. Round 4 review F-56 closure: the prior "RFC-0958 §Implementation Reference" cross-reference was a phantom section (no such heading exists in RFC-0958); corrected to point at the actual `§Performance Targets` section.
 
 ## Fuzz target + CI nightly
 

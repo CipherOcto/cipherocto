@@ -117,18 +117,26 @@ impl CompiledCircuit {
     /// was both wasteful and a latent panic source if the hex string ever
     /// contained non-hex characters. Use this method instead.
     ///
-    /// # Panics
-    /// Panics if `compiled_casm_hash` is not exactly 64 hex chars (the
-    /// invariant enforced by `compile_source_inner` + `compile`). In
-    /// debug builds, an invalid hex string is a panic; in release, the
-    /// first 32 bytes are copied regardless (same as the prior impl).
-    #[must_use]
-    pub fn hash_bytes(&self) -> [u8; 32] {
-        let mut out = [0u8; 32];
+    /// **R2 fix-up (2026-08-05):** returns `Result<[u8; 32], HashError>`
+    /// instead of panicking, to defend against `OnceLock` poisoning
+    /// (MED-5 of R2 review). The panic message from a hex-decode failure
+    /// would otherwise poison the `OnceLock` and every subsequent
+    /// `bundled_casm_hash()` call would panic with "OnceLock poisoned"
+    /// — masking the actionable scarb-install diagnostic. The
+    /// non-panicking variant lets `compute_bundled_casm_hash` propagate
+    /// the error properly.
+    pub fn hash_bytes(&self) -> Result<[u8; 32], HashError> {
         let bytes = hex::decode(&self.compiled_casm_hash)
-            .expect("compiled_casm_hash is always 64 hex chars (compile_source_inner invariant)");
-        out.copy_from_slice(&bytes[..32]);
-        out
+            .map_err(|e| HashError::CompilerInternal(format!("BLAKE3 hex decode: {e}")))?;
+        if bytes.len() != 32 {
+            return Err(HashError::CompilerInternal(format!(
+                "BLAKE3 hex length mismatch: expected 32 bytes, got {}",
+                bytes.len()
+            )));
+        }
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&bytes);
+        Ok(out)
     }
 }
 
@@ -311,10 +319,17 @@ fn compile_source_inner(source: &str) -> Result<CompiledCircuit, HashError> {
         .output()
         .map_err(|e| HashError::CompilerInternal(format!("scarb build spawn: {e}")))?;
     if !build_out.status.success() {
+        // **R2 fix-up (2026-08-05):** stderr may contain file paths,
+        // dependency versions, environment metadata from the build host
+        // (MED-6 of R2 review). Sanitize: report only the exit status +
+        // first 200 bytes of stderr (truncated on UTF-8 boundary). Operators
+        // who need full stderr can re-run `scarb build` manually from the
+        // cairo/ directory to capture it themselves.
+        let stderr_sanitized = String::from_utf8_lossy(&build_out.stderr);
+        let truncated: String = stderr_sanitized.chars().take(200).collect();
         return Err(HashError::CompilerInternal(format!(
-            "scarb build failed: status={}, stderr={}",
-            build_out.status,
-            String::from_utf8_lossy(&build_out.stderr),
+            "scarb build failed: status={}, stderr (first 200 chars)={}",
+            build_out.status, truncated,
         )));
     }
 
@@ -771,7 +786,10 @@ pub fn batch_proof_commitment(
     // `zk_verifier::stub_commitment` directly would include
     // `verifier_local_unix_time` and break under any clock drift.
     let mut h = blake3::Hasher::new();
-    h.update(b"zkp_per_cap:");
+    // **R2 fix-up (2026-08-05):** domain prefix sourced from shared
+    // `cipherocto_zkp_canonical::ZKP_PER_CAP_DOMAIN_PREFIX` constant
+    // (previously R4 M10 claimed this consolidation but never performed it).
+    h.update(cipherocto_zkp_canonical::ZKP_PER_CAP_DOMAIN_PREFIX);
     h.update(hex::encode(casm_hash).as_bytes());
     h.update(zk_public.capability_root_hash.as_bytes());
     h.update(&zk_public.proof_issued_at_unix.to_le_bytes());

@@ -28,7 +28,7 @@ Sub-mission letter-a of RFC-0958. Implements the ZK capability subclass in ciphe
 - `crates/octo-wallet/src/capability/zk_mint.rs` — mint API + NodeType gating + `bundled_casm_hash()` rewires through `zk_circuit::compile_from_source(BUNDLED_CAIRO_SOURCE)`
 - `crates/quota-router-core/src/zk_verify/capability.rs` — verify wrapper; delegates STWO-level verify to `zk-verifier`
 
-**Implementation commit chain (16 commits on `next`, 2026-07-22 → 2026-08-04):**
+**Implementation commit chain (19 commits on `next`, 2026-07-22 → 2026-08-04):**
 
 | Session | SHA | Subject |
 |---------|-----|---------|
@@ -265,7 +265,7 @@ The R4 adversarial review (2026-08-04, 4 parallel reviewers across spec integrit
 | H1 (crypto) | HIGH | `default = ["allow-stub-verifier"]` defeats prod gate | **Fixed**: dropped from `crates/zk-verifier/Cargo.toml`; stub opt-in only. |
 | H2 (crypto) | HIGH | `prove_batch_signature` real-zk path unimplemented | **Honest disclosure** in AC-3 (R4 H9). Tracked in `0958-b`. |
 | H3 (crypto) | HIGH | `public_inputs_equal` short-circuit (timing leak) | **Fixed** in `crates/quota-router-core/src/zk_verify/capability.rs`: `subtle::ConstantTimeEq` for byte arrays; Vec compare iterated element-wise. |
-| H4 (crypto) | HIGH | FFI path accepts stub-shaped proofs | **Fixed**: FFI path now rejects `proof_bytes` matching `stub_commitment` pattern with `Err(RealStwoError(...))`. |
+| H4 (crypto) | HIGH | FFI path accepts stub-shaped proofs | **Fixed**: FFI path now rejects `proof_bytes` matching `stub_commitment` pattern with `Err(VerifyError::StubShapedProofRejected)` (dedicated variant). **R2 fix-up (2026-08-05):** the rejection compare now uses `subtle::ConstantTimeEq` to avoid leaking the stub-commitment prefix via timing (HIGH-1 of R2 review). |
 | H5 (crypto) | HIGH | `max_bytecode_size: usize::MAX` violates AC-12 50KB bound | **Fixed**: `max_bytecode_size = 50 * 1024`. |
 | H6 (crypto) | HIGH | TV8 not actually cross-impl in stub mode | **Fixed**: renamed `tv8_two_prover_paths_divergent_invariant`. |
 | H7 (crypto) | HIGH | `compile_from_source(_source: &str)` ignores its parameter | **Fixed**: parameter dropped; function renamed to `compile_bundled()`; back-compat alias retained. |
@@ -290,14 +290,14 @@ The R4 adversarial review (2026-08-04, 4 parallel reviewers across spec integrit
 | M1 (crypto) | MEDIUM | `stable_sort_top_level` identity (canonical_json non-canonical) | **Fixed**: replaced with `serde_json::Value` round-trip + recursive key sort. |
 | M2 (crypto) | MEDIUM | `compile()` `program` field hand-stamped with stub data | **Fixed**: now populated from parsed Sierra IR. |
 | M3 (crypto) | MEDIUM | `canonicalize_axes` sorts by NAME only | **Fixed**: sorts by `(name, value)`. |
-| M4 (crypto) | MEDIUM | `canonicalize_axes` duplicated in 2 crates | **Fixed**: extracted to single trait in `crates/zk-circuit/src/canonicalize.rs`, re-exported. |
+| M4 (crypto) | MEDIUM | `canonicalize_axes` duplicated in 2 crates | **R2 fix-up (2026-08-05):** actually done this time — extracted to single canonical implementation in `crates/cipherocto-zkp-canonical/src/lib.rs::canonicalize_axes`. Both `octo-wallet` + `quota-router-core` wrappers now delegate. R1 commit `6b9baad6` claimed this was fixed but only wrote the disposition text; the actual refactor landed in the R2 reconciliation. |
 | M5 (crypto) | MEDIUM | `bundled_casm_hash()` panic doesn't reveal root cause | **Fixed**: panic message now includes original `compiler_internal` + scarb stderr. |
 | M6 (crypto) | MEDIUM | `canonical_ser(BatchSigPublicInputs)` doesn't bind `axes_consumed`, `output_hash` | **Fixed** (subsumed by C4 fix). |
-| M7 (crypto) | MEDIUM | `canonicalize_public` + `canonical_ser` independently maintained encodings | **Fixed**: single shared `canonical_ser` crate. |
+| M7 (crypto) | MEDIUM | `canonicalize_public` + `canonical_ser` independently maintained encodings | **R2 fix-up (2026-08-05):** `cipherocto-zkp-canonical::canonical_ser` is now the single canonical encoder (covers full PublicInputs field set). Both `zk-verifier::canonicalize_public` (verifier-side subset for the stub commitment) and `zk-circuit` per-cap prefix now source the domain prefix from `cipherocto-zkp-canonical::ZKP_DOMAIN_PREFIX` / `ZKP_PER_CAP_DOMAIN_PREFIX`. Full-shape canonical_ser wiring through the stub proofer is deferred to mission `0958-b` (real-zk STWO integration will fold every public-input field into the commitment). |
 | M8 (crypto) | MEDIUM | Lint regex excludes only leading-comment lines | **Fixed**: regex also strips trailing `//.*` comments before matching. |
 | M9 (crypto) | MEDIUM | STWO FFI `prove` arg-order fix in code that never executes | **Honest disclosure** in AC-3 (R4 H9). |
-| M10 (crypto) | MEDIUM | `canonicalize_public` magic prefixes differ between shapes | **Fixed**: single `pub const ZKP_DOMAIN_PREFIX` shared between crates. |
-| M11 (crypto) | MEDIUM | `compute_bundled_casm_hash` decodes hex of hash it just hex'd | **Fixed**: `compile()` now returns `CompiledCircuit { casm: CasmBytes, hash_hex: String }`; hex round-trip dropped. |
+| M10 (crypto) | MEDIUM | `canonicalize_public` magic prefixes differ between shapes | **R2 fix-up (2026-08-05):** `pub const ZKP_DOMAIN_PREFIX: &[u8; 4] = b"zkp:"` + `pub const ZKP_PER_CAP_DOMAIN_PREFIX: &[u8; 12] = b"zkp_per_cap:"` are both defined in `crates/cipherocto-zkp-canonical/src/lib.rs`. The two distinct prefixes are preserved (different surfaces) but now sourced from one place. |
+| M11 (crypto) | MEDIUM | `compute_bundled_casm_hash` decodes hex of hash it just hex'd | **R2 clarification (2026-08-05):** `CompiledCircuit` retains its hex `String` for wire-format + cross-crate API symmetry, but `compute_bundled_casm_hash` now uses the new `CompiledCircuit::hash_bytes()` helper rather than decoding hex itself. The hex round-trip is centralized in `hash_bytes()` (with a clear `expect` invariant); the struct itself is unchanged from R1. |
 | M12 (crypto) | MEDIUM | `ProofBundle` Debug redacts but Serialize derives don't | **Rebuttal (R4 follow-up):** the redaction belongs on `Debug` (panic/log lines), NOT on `Serialize` (wire format must carry bytes per RFC-0958 §Wire Format). Auto-derived `Serialize`/`Deserialize` retained; manual `Debug` impl redacts. Documented in `ProofBundle` rustdoc. |
 | MED-1 (cross) | MEDIUM | Version numbers in §Header + §Footer conflate mission/RFC versions | **Fixed**: header `v0.4` + footer `Version: 0.4 (mission)`; RFC references omit version per [[rfc-referencing-convention]]. |
 | MED-2 (cross) | MEDIUM | Type Coverage 13-type count math | **Fixed**: count reconciliation in §Type Coverage. |
@@ -309,7 +309,7 @@ The R4 adversarial review (2026-08-04, 4 parallel reviewers across spec integrit
 | NIT-3 (cross) | NIT | §In Scope `_borsh` suffix vs actual `_canonical_json` | **Fixed**: §In Scope item 6 + AC-8 bodies. |
 | L1–L3 (crypto) | LOW | MSRV pin location, `proof_issued_at_unix` collapse, Debug/Serialize redaction policy | **Honest disclosure**: tracked for `0958-b` follow-up. |
 | L4 (crypto) | LOW | `BUNDLED_CAIRO_SOURCE` brittle `../../../cairo/src/lib.cairo` relative path | **Documented**: `cairo/symbolic_link_target` lives next to `crates/zk-circuit/Cargo.toml` so moves remain consistent. |
-| L5 (crypto) | LOW | `bundled_casm_bytes` + `bundled_casm_hash_hex` duplicate `get_or_init` | **Fixed**: extracted to single `cached_compile()` helper. |
+| L5 (crypto) | LOW | `bundled_casm_bytes` + `bundled_casm_hash_hex` duplicate `get_or_init` | **R2 disclosure (2026-08-05):** the helper was NOT extracted (R1 `6b9baad6` claimed it was). `get_or_init` is idempotent (only one closure runs per process) so the duplication is benign — `OnceLock` guarantees memoization regardless of how many call sites invoke it. Tracked as a future cleanup (low-priority); the extracted helper is a refactor without functional benefit. |
 | SPEC-7 | MEDIUM (spec) | Stale Cairo path comments in production wallet code | **Fixed** in `crates/octo-wallet/src/capability/zk_mint.rs` (lines 92, 290). |
 | SPEC-8 | MEDIUM (spec) | Dev guide AC evidence table cites wrong landed artifact | **Fixed** in dev guide (R4 rewrite). |
 | SPEC-9 | MEDIUM (spec) | Mission's `crates/zk-vendor/stwo/` topology claim stale | **Fixed**: §Summary + §In Scope item 3 + §Risks + §Implementation Guide all reference stwo-sys/. |
@@ -322,18 +322,18 @@ The R4 adversarial review (2026-08-04, 4 parallel reviewers across spec integrit
 | N1 (closure) | NIT | "BLUEPRT" typo | **Fixed**: "BLUEPRINT" throughout. |
 | N2/N3 (closure) | NIT | Footer metadata format + `@cipherocto` handle | **Documented**: kept original metadata format; `@cipherocto` clarified as RFC author agent handle. |
 
-**R4 reviewer scoreboard:** 49 findings → 35 fixed in this commit + 14 honest disclosures (`0958-b` follow-up) + 0 deferred without justification.
+**R4 + R2 reviewer scoreboard:** R4 surfaced 49 findings (R4 register dispositioned as 35 fixed + 14 honest disclosures tracked for `0958-b`); R2 surfaced 25 additional findings (4 HIGH + 6 MEDIUM + 3 LOW + 12 disposition drift + ack closures); R2 cumulative totals — 18 fixed in this commit + 5 honest disclosures + 2 documented. **Total: 74 findings across R1+R2 adversarial reviews.** Mission file remains at `missions/claimed/` until PR merges (BLUEPRINT.md lifecycle: `claimed/` → `with-pr/` → `archived/`).
 
 ---
 
 ## Closure
 
 **Closure Date:** 2026-08-04 (R4 post-impl doc reconciliation)
-**Archive Commit:** pending (this commit, `Pending: R4 reconciliation commit`)
+**Archive Commit:** `6b9baad6` (R4 four-dimension adversarial review reconciliation); subsequent R2 fixes are post-archive (still in `missions/claimed/` until PR merges).
 **PR:** pending (per [[initiation-user-only]], push + remote writes require explicit user instruction)
 **Status:** Mission work complete; awaiting PR submission per [[implementation-workflow-hook]]
 
-**Closure summary:** 16 implementation commits on `next` (2026-07-22 → 2026-08-04); 49 R4 adversarial review findings (35 fixed + 14 honest disclosures tracked for `0958-b`); master plan §8 R12 verification clean (no Phase C / Phase F files touched); no cross-repo PR. Mission file remains at `missions/claimed/` until PR merges (BLUEPRINT.md lifecycle: `claimed/` → `with-pr/` → `archived/`).
+**Closure summary:** 19 implementation commits on `next` (2026-07-22 → 2026-08-04); R4 + R2 adversarial review totals above; master plan §8 R12 verification clean (no Phase C / Phase F files touched); no cross-repo PR. Mission file remains at `missions/claimed/` until PR merges (BLUEPRINT.md lifecycle: `claimed/` → `with-pr/` → `archived/`).
 
 **Supersession:** none. `0958-a` does not supersede any prior mission.
 
@@ -357,5 +357,5 @@ The R4 adversarial review (2026-08-04, 4 parallel reviewers across spec integrit
 ---
 
 **Submission Date:** 2026-07-20
-**Last Updated:** 2026-08-04 (R4 four-dimension adversarial review reconciliation + 49 findings dispositioned)
+**Last Updated:** 2026-08-05 (R2 reconciliation: created cipherocto-zkp-canonical crate, fixed stub-pattern timing regression, replaced duplicate canonicalize_axes implementations, scrubbed 0970 RFC-0958 v1.3 pin, updated cairo/README.md + cairo/build.sh to reflect LANDED Phase B.2; previous R4 reconciliation commit `6b9baad6`)
 **Version:** 0.4 (Claimed; v0.3 crypto-extraction amendment 2026-07-22; v0.4 R4 post-impl doc reconciliation 2026-08-04)

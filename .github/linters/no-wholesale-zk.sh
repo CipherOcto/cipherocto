@@ -48,10 +48,17 @@ fi
 # **R4 fix-up (2026-08-04):** also strips trailing `//.*` comments so a
 # line like `let _ = witness; // calls mint_with_zk_and_signers(...)`
 # does NOT trigger the lint (the call is in the comment, not in code).
+#
+# **R2 fix-up (2026-08-05):** also strips inline `/* ... */` block
+# comments so `let x = /* mint_with_zk() */ foo;` does not trip the lint
+# (LOW-2 of R2 review). The block-comment regex is best-effort — nested
+# block comments are not Rust syntax so the simple pattern covers all
+# real cases.
 matches=$(grep -RInE '\bmint_with_zk(_and_signers)?\s*\(' "$SRC_DIR" \
     | grep -v "^$SRC_DIR/$API_FILE:" \
     | grep -vE ':[[:space:]]*(///|//!|//|\*)' \
     | sed -E 's#//.*$##' \
+    | sed -E 's#/\*[^*]*\*+([^/*][^*]*\*+)*/##g' \
     | grep -E '\bmint_with_zk(_and_signers)?\s*\(' \
     || true)
 

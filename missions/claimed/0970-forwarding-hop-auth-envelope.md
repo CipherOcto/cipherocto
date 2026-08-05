@@ -70,7 +70,7 @@ decomposes_into:
 - RFC-0862 — HolderRegistry gossip + audit_replay_log sync
 - RFC-0870 — Router role + ForwardRequestPayload
 - RFC-0957-A1 — unified HolderRegistry (`HolderKind::HopCapability` row + `HolderRecord::from_hop_capability` constructor)
-- RFC-0958 — optional ZK-verified hops; F4 promotion path (build-pipeline Ed25519 sig + verify-side pubkey check) documented in RFC-0958 v1.3 §Future Work; implementation in flight via `missions/claimed/0958-a-zk-capability-circuit.md` (S05 4-session plan); `hop_envelope` signature verifiability integration is post-0958-a merge scope
+- RFC-0958 — optional ZK-verified hops; F4 promotion path (build-pipeline Ed25519 sig + verify-side pubkey check) documented in RFC-0958 §Future Work; implementation in flight via `missions/claimed/0958-a-zk-capability-circuit.md`; `hop_envelope` signature verifiability integration is post-0958-a merge scope
 - RFC-0971 — destination-node role consolidation (downstream)
 
 **Mission gates:**

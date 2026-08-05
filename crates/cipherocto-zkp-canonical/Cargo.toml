@@ -1,0 +1,16 @@
+[package]
+name = "cipherocto-zkp-canonical"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "CipherOcto ZK canonicalization primitives: shared `canonicalize_axes`, `canonical_ser`, and `ZKP_DOMAIN_PREFIX`. R2 fix-up 2026-08-05 closes the R4 M4/M7/M10 disposition drift — the R1 register claimed this consolidation was done but never actually performed the work."
+
+[lib]
+name = "cipherocto_zkp_canonical"
+path = "src/lib.rs"
+
+[dependencies]
+blake3 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

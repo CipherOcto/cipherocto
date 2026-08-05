@@ -299,8 +299,8 @@ fn compute_bundled_casm_hash() -> Result<[u8; 32], zk_circuit::HashError> {
     // message; the smoke test `casm_snapshot` already verifies the
     // hard-fail behavior at the test layer.
     #[allow(deprecated)]
-    let compiled = zk_circuit::compile_from_source(BUNDLED_CAIRO_SOURCE)?;
-    Ok(compiled.hash_bytes())
+    let compiled = zk_circuit::compile_bundled()?;
+    compiled.hash_bytes()
 }
 
 /// Cairo source for the bundled capability ZK circuit (mint side).
@@ -372,14 +372,11 @@ pub fn mint_with_zk(
 /// Returns `ZkMintError::BatchProver` if the prover rejects the inputs;
 /// returns the same errors as `mint_with_zk` for gating / preconditions.
 pub fn canonicalize_axes(pi: &mut PublicInputs) {
-    // R4 fix-up 2026-08-04: sort by (name, value) not by name alone, matching
-    // `quota-router-core::zk_verify::capability::canonicalize_axes`. The
-    // duplicate definition was kept here historically so callers don't need a
-    // cross-crate dependency for this trivial helper; the canonical
-    // implementation lives in `quota-router-core` and this mirror MUST stay
-    // in lock-step (R4 MEDIUM M4 hardening).
-    pi.axes_consumed
-        .sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    // **R2 fix-up (2026-08-05):** delegate to the canonical crate
+    // `cipherocto-zkp-canonical::canonicalize_axes`. The local duplicate
+    // was removed (R4 M4 disposition drift was a documentation bug —
+    // R1 claimed the consolidation was done but never performed the work).
+    cipherocto_zkp_canonical::canonicalize_axes(&mut pi.axes_consumed);
 }
 
 pub fn mint_with_zk_and_signers(

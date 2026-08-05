@@ -48,6 +48,7 @@
 
 use blake3::Hasher;
 use serde::{Deserialize, Serialize};
+use subtle::ConstantTimeEq;
 use thiserror::Error;
 
 /// Maximum acceptable clock skew between verifier + proof issuance
@@ -196,12 +197,21 @@ pub fn verify_capability_zk(
         // `StubShapedProofRejected`. This defense fires whether or not the
         // FFI verify call returns Ok (a bug-for-bug-compat FFI could
         // accept stub bytes); it is a local sanity check.
+        //
+        // **R2 fix-up (2026-08-05):** the prior `==` comparison was
+        // short-circuit on first mismatching byte, opening the same
+        // timing side-channel that R4 closed at the `public_inputs_equal`
+        // site (capability.rs:227-233). Use `subtle::ConstantTimeEq` for
+        // the byte-array compare so the verifier's wall-clock duration
+        // does not leak the stub-commitment prefix. Real STWO proofs do
+        // not match this pattern, so legitimate proofs are unaffected.
         if proof.proof_bytes.len() >= 32 {
             let mut commit = Hasher::new();
             commit.update(casm_hash.as_bytes());
             commit.update(&canon_pub);
             let expected_stub_commit: [u8; 32] = *commit.finalize().as_bytes();
-            if proof.proof_bytes[..32] == expected_stub_commit {
+            let stub_match: subtle::Choice = proof.proof_bytes[..32].ct_eq(&expected_stub_commit);
+            if bool::from(stub_match) {
                 return Err(VerifyError::StubShapedProofRejected);
             }
         }
@@ -278,9 +288,26 @@ fn abs_diff(a: u64, b: u64) -> u64 {
 /// `u64`). Avoids any reliance on `serde_json` field-order or version-
 /// sensitive encoding — both proofer + verifier produce byte-identical
 /// output for same input. RFC-0958 §Determinism Class A.
+///
+/// **R2 fix-up (2026-08-05):** the domain prefix `b"zkp:"` is now
+/// sourced from `cipherocto_zkp_canonical::ZKP_DOMAIN_PREFIX` (shared
+/// constant, previously R4 M10 claimed this consolidation but never
+/// performed it).
+///
+/// **R2 disclosure:** the field coverage here is a SUBSET of the full
+/// `PublicInputs` checked by `public_inputs_equal` (zk-verify capability.rs
+/// `public_inputs_equal`); the missing fields (`ask_id`, `axes_consumed`,
+/// `invocation_hash`, `holder_did`, `output_hash`) are structurally
+/// checked upstream by `verify_capability_zk_structural` before the
+/// stub-commitment check fires. A direct caller that bypasses the
+/// structural check could replay a stub proof with different
+/// `ask_id`/`holder_did` — this gap is acceptable for stub-mode
+/// (R4 C4 disclosure) and is closed by mission 0958-b's real Cairo
+/// cryptographic body which will fold all public-input fields into the
+/// commitment transcript via `cipherocto_zkp_canonical::canonical_ser`.
 fn canonicalize_public(public: &PublicInputs) -> Vec<u8> {
     let mut out = Vec::with_capacity(160);
-    out.extend_from_slice(b"zkp:");
+    out.extend_from_slice(cipherocto_zkp_canonical::ZKP_DOMAIN_PREFIX);
     out.extend_from_slice(&leb128_len(public.compiled_casm_hash.as_bytes()));
     out.extend_from_slice(public.compiled_casm_hash.as_bytes());
     out.extend_from_slice(&leb128_len(public.capability_root_hash.as_bytes()));

@@ -68,6 +68,11 @@ zk-verifier = { path = "../zk-verifier" }
 # requiring the nightly-only `libstwo_sys.so`.
 zk-vendor = { path = "../zk-vendor", optional = true }
 
+# ZK canonicalization primitives (canonicalize_axes, canonical_ser,
+# ZKP_DOMAIN_PREFIX). R2 fix-up 2026-08-05 — replaces the inline
+# `canonical_json` impl previously in zk-circuit.
+cipherocto-zkp-canonical = { path = "../cipherocto-zkp-canonical" }
+
 [features]
 # Default OFF: build without the full dep. Mock prover handles all
 # test vectors and the default 11-step ZK mint flow.

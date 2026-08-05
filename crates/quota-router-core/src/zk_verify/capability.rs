@@ -30,26 +30,15 @@ use subtle::ConstantTimeEq;
 /// Defense against malicious prover setting arbitrary wall-clock.
 pub const MAX_SKEW_SECS: u64 = zk_verifier::MAX_SKEW_SECS;
 
-/// Canonicalize `axes_consumed` order (mission 0958-a R3 fix-up, 2026-07-31;
-/// R4 fix 2026-08-04: sort by `(name, value)` not by `name` alone).
+/// Canonicalize `axes_consumed` order.
 ///
-/// **Contract:** `axes_consumed` MUST be sorted by `(axis_name, axis_value)`
-/// before any structural equality check OR proof generation. Without this,
-/// an upstream caller that incidentally sorts (e.g., `HashMap` iteration,
-/// `BTreeMap` round-trip) trips `PublicInputMismatch` on a semantically
-/// identical capability. R4 hardens this to also order by value so two
-/// `(name, value)` entries with the same name but different values produce
-/// a deterministic order — necessary for Class A determinism (RFC-0958
-/// §Determinism contract).
-///
-/// Called at every boundary:
-/// 1. Mint site (`octo-wallet/src/capability/zk_mint.rs::mint_with_zk_and_signers`)
-///    — so the proofer sees the canonical order.
-/// 2. Verify site (`verify_capability_zk`, just before `public_inputs_equal`)
-///    — so the structural comparison is order-independent.
+/// **R2 fix-up (2026-08-05):** the canonical implementation lives in
+/// `cipherocto_zkp_canonical::canonicalize_axes` (single source of truth,
+/// shared between this crate and `octo-wallet`). This wrapper exists
+/// for backward compat with existing callers; new code MUST call the
+/// canonical crate directly.
 pub fn canonicalize_axes(pi: &mut PublicInputs) {
-    pi.axes_consumed
-        .sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    cipherocto_zkp_canonical::canonicalize_axes(&mut pi.axes_consumed);
 }
 
 /// Decode a 64-char hex string into a 32-byte BLAKE3 hash.

@@ -38,6 +38,15 @@ hex = "0.4"
 # crates/zk-vendor/stwo-sys/). Falls back to stub when lib missing.
 zk-vendor = { path = "../zk-vendor" }
 
+# Constant-time byte-array compare (R2 fix-up 2026-08-05: closes timing
+# side-channel in stub-pattern rejection — HIGH-1 of R2 review).
+subtle = "2.6"
+
+# ZK canonicalization primitives (canonicalize_axes, canonical_ser,
+# ZKP_DOMAIN_PREFIX). R2 fix-up 2026-08-05 — the `canonicalize_public`
+# inline impl previously in zk-verifier now delegates here.
+cipherocto-zkp-canonical = { path = "../cipherocto-zkp-canonical" }
+
 # STWO is vendored under `zk-vendor/` (NOT a crates.io dep). Stubbed below
 # until the source drop + curve25519 patches land in zk-vendor.
 # zk-vendor = { path = "../zk-vendor" }

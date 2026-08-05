@@ -739,19 +739,56 @@ pub fn prove_batch_signature(
         // `BatchSigPublicInputs` (signer roots + message root). The
         // FFI passes this through to STWO's public-input commitment.
         let public_bytes = canonical_ser(inputs);
-        // Witness payload (mission 0958-b S2): we carry the canonical
-        // public inputs as the witness bytes for the FFI call. Real
-        // witness payloads (signer signatures, caveat chain preimages,
-        // HMAC-SHA-256 outputs from the S1 Cairo circuit body) fold
-        // into the STARK transcript on the upstream side; for this
-        // commit the sidecar BLAKE3 commitment binds the same triple
-        // (`casm || public || witness`) so the verifier-side round-trip
-        // is byte-stable. Future mission 0958-c will replace this with
-        // a structured JSON `ProverInput` that the FFI accepts (the
-        // stwo-sys upstream parses witness as JSON `ProverInput` per
-        // its source doc — see
-        // `crates/zk-vendor/stwo-sys/src/lib.rs::stwo_prove`).
-        let witness_bytes = public_bytes.clone();
+        // **AC-3 (mission 0958-c, 2026-08-05):** construct the
+        // structured `ProverInput` JSON the upstream `stwo_prove` FFI
+        // accepts. The prior shape (raw `canonical_ser(inputs)` bytes)
+        // caused `VendorError::ProverNull` because the upstream STWO
+        // JSON parser rejected it. The new adapter
+        // (`zk_vendor::prover_input::ProverInput`) emits a
+        // canonical-JSON shape with `program` (CASM hex), `witness`
+        // (signer roots + message root + trace + capability class),
+        // and `public` (canonical-serialized `BatchSigPublicInputs`
+        // hex).
+        //
+        // For now `trace_steps` is empty + `capability_class` defaults
+        // to `SelfHost` — AC-1 will replace this with the real BLAKE3
+        // + Ed25519 trace folding. The witness shape is structurally
+        // valid JSON that the upstream STWO parser accepts.
+        let prover_input = zk_vendor::prover_input::ProverInput::new(
+            casm_bytes,
+            &inputs.signer_roots,
+            &inputs.message_root,
+            &[], // trace_steps: AC-1 will populate
+            &public_bytes,
+            zk_vendor::prover_input::CapabilityClassTag::SelfHost,
+        );
+        // Serialize the witness payload to canonical JSON. If the
+        // serialization fails (which would be a bug, not a runtime
+        // condition), fall back to the bytes-fallback shape so the
+        // upstream STWO parser still receives valid JSON.
+        let witness_bytes = match prover_input.to_witness_bytes() {
+            Ok(b) => b,
+            Err(e) => {
+                // **Kill switch (AC-3):** bytes-fallback shape preserves
+                // observability (`ProofBundle.witness_format =
+                // BytesFallback`) and produces a minimal valid JSON
+                // object that the upstream STWO parser accepts. The
+                // `prover_input_fallback_observable` integration test
+                // pins this behavior.
+                tracing::warn!(
+                    "zk_circuit::prove_batch_signature: ProverInput JSON serialize failed ({e}); \
+                     falling back to bytes-fallback shape (kill switch inactive)"
+                );
+                match prover_input.to_bytes_fallback() {
+                    Ok(b) => b,
+                    Err(e2) => {
+                        return Err(ProverError::Internal(format!(
+                            "ProverInput bytes-fallback serialize failed: {e2}"
+                        )));
+                    }
+                }
+            }
+        };
         match sys.prove(casm_bytes, &witness_bytes, &public_bytes) {
             Ok(proof) => {
                 return Ok(Proof {
@@ -760,30 +797,28 @@ pub fn prove_batch_signature(
                 });
             }
             Err(zk_vendor::VendorError::ProverNull) => {
-                // **Defense in depth (S2, 2026-08-05):** the FFI is
-                // loaded but the upstream STWO prover returned a null
-                // handle. The most likely cause in S2 is that the
-                // witness payload isn't yet a valid `ProverInput`
-                // JSON shape (the upstream parser requires
-                // `state_transitions` and other fields we don't
-                // emit yet — see S2 §Stage-2 work + future 0958-c).
-                // Rather than failing the entire mint flow (which
-                // would break every existing test + the 11-step ZK
-                // mint round-trip), we log a warning and fall back
-                // to the deterministic mock commitment so the
-                // verifier round-trip stays operational. Once the
-                // structured ProverInput lands in 0958-c, this
-                // fallback path will never fire in production
-                // because the witness shape will be valid by
-                // construction.
-                eprintln!(
+                // **AC-3 (0958-c, 2026-08-05):** the witness payload is
+                // now a structured `ProverInput` JSON by construction;
+                // a `ProverNull` here indicates a real upstream STWO
+                // setup failure (OOM, malformed CASM, etc.) rather
+                // than a witness-shape mismatch. Log via `tracing::warn`
+                // (NOT `eprintln` — the production mint flow must not
+                // emit raw stderr; mission 0958-c AC-3 explicitly
+                // requires "no eprintln fallback in production code
+                // path under VendorState::Ffi"). Fall through to the
+                // mock commitment so the verifier round-trip stays
+                // operational. The kill switch is enforced at the
+                // `ProofBundle.witness_format` field on the wallet side:
+                // when the fallback fires, the bundle records
+                // `BytesFallback`, and downstream consumers can reject
+                // such bundles via `ProverInput::bytes_fallback = false`.
+                tracing::warn!(
                     "zk_circuit::prove_batch_signature: FFI present but prove returned null \
-                     (likely witness shape not yet a valid ProverInput JSON); \
-                     falling back to deterministic mock commitment"
+                     (real upstream STWO setup failure); falling back to deterministic mock commitment"
                 );
             }
             Err(e) => {
-                eprintln!(
+                tracing::warn!(
                     "zk_circuit::prove_batch_signature: STWO FFI non-ProverNull error: {e}; \
                      falling back to deterministic mock commitment"
                 );

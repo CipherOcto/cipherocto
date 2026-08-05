@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "CipherOcto ZK canonicalization primitives: shared `canonicalize_axes`, `canonical_ser`, and `ZKP_DOMAIN_PREFIX`. R2 fix-up 2026-08-05 closes the R4 M4/M7/M10 disposition drift — the R1 register claimed this consolidation was done but never actually performed the work."
+description = "CipherOcto ZK canonicalization primitives: shared `canonicalize_axes`, `ZKP_DOMAIN_PREFIX`, and `ZKP_PER_CAP_DOMAIN_PREFIX`. R3 fix-up 2026-08-05 removed the orphan `canonical_ser` + `CanonicalPublicInputs` trait that R2 had shipped; remaining surface is what is actually consumed (canonicalize_axes sort helper + the two domain-prefix constants). Full canonical_ser consolidation deferred to mission 0958-b."
 
 [lib]
 name = "cipherocto_zkp_canonical"

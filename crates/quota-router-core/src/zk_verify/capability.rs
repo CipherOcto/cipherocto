@@ -219,13 +219,7 @@ pub fn verify_capability_zk(
 
 /// Public inputs equality (RFC-0958 §Adversary A5 + v1.4 IA-11 slot binding).
 fn public_inputs_equal(a: &PublicInputs, b: &PublicInputs) -> bool {
-    a.ask_id == b.ask_id
-        && a.axes_consumed == b.axes_consumed
-        && a.cap_root_hash == b.cap_root_hash
-        && a.invocation_hash == b.invocation_hash
-        && a.holder_did == b.holder_did
-        && a.current_unix_time == b.current_unix_time
-        && a.output_hash == b.output_hash
+    a.ask_id == b.ask_id && a.axes_consumed == b.axes_consumed && a.cap_root_hash == b.cap_root_hash && a.invocation_hash == b.invocation_hash && a.holder_did == b.holder_did && a.current_unix_time == b.current_unix_time && a.output_hash == b.output_hash
         // **v1.4 (RFC-0958 IA-11):** slot binding must match — defense
         // against cross-slot replay. If the proof was minted for slot A
         // and the verifier expects slot B, this returns false → caller
@@ -236,7 +230,7 @@ fn public_inputs_equal(a: &PublicInputs, b: &PublicInputs) -> bool {
 /// Verifier parameters (Gap 3 / RFC-0958 + RFC-0962 §9 / Task 3.4).
 ///
 /// Bundles the long-lived verifier configuration so the call sites can
-/// pass a single `&CapabilityVerifier` instead of three separate args.
+/// pass a single `&&CapabilityVerifier` instead of three separate args.
 #[derive(Debug, Clone, Copy)]
 pub struct CapabilityVerifier {
     /// BLAKE3 hash of the compiled CASM bytecode the proof must bind to.
@@ -267,7 +261,7 @@ impl CapabilityVerifier {
 ///
 /// Convenience wrapper that threads the `CapabilityVerifier` through to
 /// the canonical `verify_capability_zk` function. The signature mirrors
-/// the Gap 3 plan shorthand `verify_capability_zk(proof, &verifier)` for
+/// the Gap 3 plan shorthand `verify_capability_zk(proof, &&verifier)` for
 /// multi-signer envelopes; the underlying check is identical to the
 /// 4-arg `verify_capability_zk` (single-capability path) — the
 /// `expected_public_inputs` field of the proof bundle carries the
@@ -474,7 +468,7 @@ mod tests {
             axes_consumed: vec![("input_tokens_per_1k".to_owned(), 100)],
             cap_root_hash: [2u8; 32],
             invocation_hash: [3u8; 32],
-            holder_did: "did:octo:holder".to_owned(),
+            holder_did: octo_ident::test_helpers::sample_did(42).to_owned(),
             current_unix_time: 1_700_000_000,
             output_hash: None,
             provider_slot_id: "slot-alpha-001".to_owned(),
@@ -569,7 +563,7 @@ mod tests {
             axes_consumed: vec![("input_tokens_per_1k".to_owned(), 100)],
             cap_root_hash: [2u8; 32],
             invocation_hash: [3u8; 32],
-            holder_did: "did:octo:holder".to_owned(),
+            holder_did: octo_ident::test_helpers::sample_did(42).to_owned(),
             current_unix_time: 1_700_000_000,
             output_hash: None,
             provider_slot_id: "slot-alpha-001".to_owned(),

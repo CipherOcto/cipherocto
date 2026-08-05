@@ -2000,7 +2000,7 @@ mod tests {
             .as_coordinator_admin()
             .expect("MTProto adapter must opt in to CoordinatorAdmin");
         // `as_coordinator_admin` returns
-        // `Option<&dyn CoordinatorAdmin>` so the trait
+        // `Option<&&dyn CoordinatorAdmin>` so the trait
         // methods are callable without an extra import.
         assert_eq!(admin.platform_name(), "telegram");
     }

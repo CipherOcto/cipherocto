@@ -128,8 +128,8 @@ mod tests {
         let r = build_proxy_receipt(
             [0xab; 32],
             "router-1",
-            "did:octo:holder",
-            "did:octo:asker",
+            &octo_ident::test_helpers::sample_did(199),
+            &octo_ident::test_helpers::sample_did(182),
             1_700_000_000,
         );
         assert_eq!(r.router_id, "router-1");
@@ -166,7 +166,7 @@ mod tests {
     fn mint_ask_carries_axes() {
         let a = mint_ask(
             [0x01; 32],
-            "did:octo:h".to_owned(),
+            octo_ident::test_helpers::sample_did(232),
             vec![("input_tokens_per_1k".to_owned(), 100)],
             [0x02; 32],
             [0x03; 32],

@@ -136,7 +136,7 @@ async fn health_get_returns_phase5_extended_schema() {
         );
     }
     assert_eq!(res["api_version"], "1.0.0+phase5");
-    // Initial state — freshly booted daemon: connected & session_valid
+    // Initial state — freshly booted daemon: connected && session_valid
     // are false (we haven't bound an adapter), bot_state is "booting".
     assert_eq!(res["bot_state"], "booting");
     assert_eq!(res["connected"], false);

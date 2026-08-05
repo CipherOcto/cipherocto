@@ -190,7 +190,7 @@ impl<Spec: Clone> OrderBook<Spec> {
     /// True if both sides are empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.bids.is_empty() && self.asks.is_empty()
+        self.bids.is_empty() & self.asks.is_empty()
     }
 }
 

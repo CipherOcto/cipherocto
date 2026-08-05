@@ -290,7 +290,12 @@ mod tests {
     #[test]
     fn insert_records_ask_and_lookup() {
         let mut idx = MarketplaceIndex::new();
-        let a = sample_ask("did:octo:a", "openai/gpt-4", 30_000, 1_900_000_000);
+        let a = sample_ask(
+            &octo_ident::test_helpers::sample_did(111),
+            "openai/gpt-4",
+            30_000,
+            1_900_000_000,
+        );
         let id = a.id();
         assert!(idx.insert(a.clone()));
         assert_eq!(idx.len(), 1);
@@ -301,7 +306,12 @@ mod tests {
     #[test]
     fn insert_same_id_twice_replaces() {
         let mut idx = MarketplaceIndex::new();
-        let a = sample_ask("did:octo:a", "openai/gpt-4", 30_000, 1_900_000_000);
+        let a = sample_ask(
+            &octo_ident::test_helpers::sample_did(111),
+            "openai/gpt-4",
+            30_000,
+            1_900_000_000,
+        );
         let id = a.id();
         assert!(idx.insert(a.clone()));
         // Re-insert EXACT same ask (same rate → same id) — count unchanged.
@@ -313,7 +323,12 @@ mod tests {
     #[test]
     fn remove_drops_ask_and_clears_empty_bucket() {
         let mut idx = MarketplaceIndex::new();
-        let a = sample_ask("did:octo:a", "openai/gpt-4", 30_000, 1_900_000_000);
+        let a = sample_ask(
+            &octo_ident::test_helpers::sample_did(111),
+            "openai/gpt-4",
+            30_000,
+            1_900_000_000,
+        );
         let id = a.id();
         idx.insert(a);
         assert!(idx.remove(&id));
@@ -328,7 +343,12 @@ mod tests {
     fn prune_expired_drops_only_expired() {
         let mut idx = MarketplaceIndex::new();
         let now = 1_700_000_000;
-        let active = sample_ask("did:octo:a", "openai/gpt-4", 30_000, now + 1000);
+        let active = sample_ask(
+            &octo_ident::test_helpers::sample_did(111),
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+        );
         let expired = sample_ask("did:octo:b", "openai/gpt-4", 30_000, now - 1);
         idx.insert(active);
         idx.insert(expired);
@@ -341,9 +361,19 @@ mod tests {
     fn select_ask_picks_cheapest_within_budget() {
         let mut idx = MarketplaceIndex::new();
         let now = 1_700_000_000;
-        let cheap = sample_ask("did:octo:a", "openai/gpt-4", 10_000, now + 1000);
+        let cheap = sample_ask(
+            &octo_ident::test_helpers::sample_did(111),
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+        );
         let mid = sample_ask("did:octo:b", "openai/gpt-4", 30_000, now + 1000);
-        let expensive = sample_ask("did:octo:c", "openai/gpt-4", 100_000, now + 1000);
+        let expensive = sample_ask(
+            &octo_ident::test_helpers::sample_did(191),
+            "openai/gpt-4",
+            100_000,
+            now + 1000,
+        );
         idx.insert(cheap);
         idx.insert(mid);
         idx.insert(expensive);
@@ -351,14 +381,19 @@ mod tests {
         let picked = idx
             .select_ask("openai/gpt-4", &[], 50_000, &axes, now)
             .expect("pick");
-        assert_eq!(picked.asker_did, "did:octo:a");
+        assert_eq!(picked.asker_did, octo_ident::test_helpers::sample_did(111));
     }
 
     #[test]
     fn select_ask_deterministic_tie_break_by_ask_id() {
         let mut idx = MarketplaceIndex::new();
         let now = 1_700_000_000;
-        let a = sample_ask("did:octo:a", "openai/gpt-4", 30_000, now + 1000);
+        let a = sample_ask(
+            &octo_ident::test_helpers::sample_did(111),
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+        );
         let b = sample_ask("did:octo:b", "openai/gpt-4", 30_000, now + 1000);
         let id_a = a.id();
         let id_b = b.id();
@@ -377,7 +412,12 @@ mod tests {
     fn select_ask_filters_by_budget() {
         let mut idx = MarketplaceIndex::new();
         let now = 1_700_000_000;
-        let mut ask = sample_ask("did:octo:a", "openai/gpt-4", 30_000, now + 1000);
+        let mut ask = sample_ask(
+            &octo_ident::test_helpers::sample_did(111),
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+        );
         ask.rates.rates[0].rate_per_1k = 200_000;
         idx.insert(ask);
         let axes = PricingAxis::standard_axes();
@@ -395,7 +435,12 @@ mod tests {
         // post-mint form will tighten the filter.
         let mut idx = MarketplaceIndex::new();
         let now = 1_700_000_000;
-        let ask = sample_ask("did:octo:a", "openai/gpt-4", 30_000, now + 1000);
+        let ask = sample_ask(
+            &octo_ident::test_helpers::sample_did(111),
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+        );
         idx.insert(ask);
         let axes = PricingAxis::standard_axes();
         let picked = idx.select_ask("openai/gpt-4", &["EU".to_owned()], 100_000, &axes, now);
@@ -414,7 +459,12 @@ mod tests {
     fn select_ask_evicts_expired_lazily() {
         let mut idx = MarketplaceIndex::new();
         let now = 1_700_000_000;
-        let expired = sample_ask("did:octo:a", "openai/gpt-4", 10_000, now - 1);
+        let expired = sample_ask(
+            &octo_ident::test_helpers::sample_did(111),
+            "openai/gpt-4",
+            10_000,
+            now - 1,
+        );
         idx.insert(expired);
         let axes = PricingAxis::standard_axes();
         let picked = idx.select_ask("openai/gpt-4", &[], 100_000, &axes, now);
@@ -478,18 +528,23 @@ mod tests {
     fn list_by_asker_filters() {
         let mut idx = MarketplaceIndex::new();
         let now = 1_700_000_000;
-        idx.insert(sample_ask("did:octo:a", "openai/gpt-4", 10_000, now + 1000));
         idx.insert(sample_ask(
-            "did:octo:a",
+            &octo_ident::test_helpers::sample_did(111),
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+        ));
+        idx.insert(sample_ask(
+            &octo_ident::test_helpers::sample_did(111),
             "anthropic/claude",
             20_000,
             now + 1000,
         ));
         idx.insert(sample_ask("did:octo:b", "openai/gpt-4", 30_000, now + 1000));
-        let alice = idx.list_by_asker(&"did:octo:a".to_owned());
+        let alice = idx.list_by_asker(&octo_ident::test_helpers::sample_did(111));
         assert_eq!(alice.len(), 2);
         for a in &alice {
-            assert_eq!(a.asker_did, "did:octo:a");
+            assert_eq!(a.asker_did, octo_ident::test_helpers::sample_did(111));
         }
     }
 
@@ -516,7 +571,12 @@ mod tests {
     fn iter_all_asks() {
         let mut idx = MarketplaceIndex::new();
         let now = 1_700_000_000;
-        idx.insert(sample_ask("did:octo:a", "openai/gpt-4", 10_000, now + 1000));
+        idx.insert(sample_ask(
+            &octo_ident::test_helpers::sample_did(111),
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+        ));
         idx.insert(sample_ask(
             "did:octo:b",
             "anthropic/claude",

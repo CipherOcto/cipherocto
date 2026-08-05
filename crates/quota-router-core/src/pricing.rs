@@ -302,7 +302,7 @@ pub enum CostError {
 // =============================================================================
 
 /// Compute cost deterministically using integer arithmetic.
-/// Receives `&PricingTable` (RFC-0910 struct).
+/// Receives `&&PricingTable` (RFC-0910 struct).
 pub fn compute_cost(
     pricing: &PricingTable,
     input_tokens: u32,

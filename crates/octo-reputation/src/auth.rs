@@ -213,7 +213,7 @@ impl GovernanceProof {
 }
 
 /// Authorisation for `verify_governance_suspension` (read-side). Carries
-/// `(auth: &SuspensionAuth, snapshot: &GovernanceSnapshot, now_unix)` per
+/// `(auth: &&SuspensionAuth, snapshot: &&GovernanceSnapshot, now_unix)` per
 /// the canonical `ReputationStore` trait signature.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SuspensionAuth {

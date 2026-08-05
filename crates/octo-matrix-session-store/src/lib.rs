@@ -12,7 +12,7 @@
 //!   EXA's `SessionData` (one row per `(user_id, device_id)`, columns
 //!   for tokens / homeserver / login type / position / last-used),
 //!   adapted to stoolap's `INTEGER`/`TEXT` type system.
-//! - [`schema`] — `init_schema(&db)`: idempotent `CREATE TABLE IF NOT
+//! - [`schema`] — `init_schema(&&db)`: idempotent `CREATE TABLE IF NOT
 //!   EXISTS` + indexes. The store calls this on `new`.
 //! - [`store`] — `SessionStore` trait + `StoolapSessionStore` impl.
 //!   The trait surface (`add_session`, `update_data`, `get_session`,

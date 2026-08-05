@@ -70,7 +70,7 @@ mod tests {
     fn debug_redacts_payload() {
         let e = OutboxEntry {
             id: Some(1),
-            buyer_did: "did:octo:buyer".into(),
+            buyer_did: octo_ident::test_helpers::sample_did(0).into(),
             payload: vec![0xAB; 256],
             attempts: 0,
             created_at_millis_unix: 1_700_000_000_000,

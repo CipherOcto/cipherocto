@@ -19,6 +19,7 @@
 //! `PublicInputs`; no sentinel placeholder. Fixtures use concrete slot IDs
 //! (e.g. `"slot-alpha-001"`).
 
+use octo_ident::test_helpers::sample_did;
 use quota_router_core::node_type_gating::{
     check_zk_mint_allowed, check_zk_mint_preflight, NodeType,
 };
@@ -46,7 +47,7 @@ fn sample_proof() -> ProofBundle {
         axes_consumed: vec![("input_tokens_per_1k".to_owned(), 100)],
         cap_root_hash: [2u8; 32],
         invocation_hash: [3u8; 32],
-        holder_did: "did:octo:holder".to_owned(),
+        holder_did: sample_did(235).to_owned(),
         current_unix_time: 1_700_000_000,
         output_hash: None,
         provider_slot_id: "slot-alpha-001".to_owned(),

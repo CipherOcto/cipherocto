@@ -16,7 +16,7 @@
 //! ## Determinism contract (RFC-0104)
 //!
 //! All score / delta fields are `octo_determin::Dfp`, never raw `f64`.
-//! Canonical wire form: `DfpEncoding::from_dfp(&d).to_bytes() -> [u8; 24]`.
+//! Canonical wire form: `DfpEncoding::from_dfp(&&d).to_bytes() -> [u8; 24]`.
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 

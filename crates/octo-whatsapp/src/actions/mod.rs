@@ -85,7 +85,7 @@ pub enum ActionError {
 /// Executes a single `ActionSpec`. The rule engine drives this in a
 /// `tokio::time::timeout(deadline)` wrapper.
 ///
-/// Phase 5 Part F: dispatchers now read & mutate daemon state via
+/// Phase 5 Part F: dispatchers now read && mutate daemon state via
 /// `ctx.daemon` — webhook hits the shared `reqwest::Client`,
 /// `agent_run` invokes `TriggerStore::run`, `shell` runs the
 /// Linux/Other sandbox, `mcp_notify` fans out to subscribed MCP

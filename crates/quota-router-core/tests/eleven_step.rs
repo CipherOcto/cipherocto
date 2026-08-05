@@ -22,6 +22,7 @@
 
 use blake3::Hasher;
 use ed25519_dalek::Signer;
+use octo_ident::test_helpers::sample_did;
 use quota_router_core::{
     egress::{EgressRequest, EgressResponse},
     ingress::{Ingress, IngressMetadata, OpenAiIngress, ProviderUsage},
@@ -943,7 +944,7 @@ fn wave_integration_w6_envelope() {
     let mut env = build_envelope(
         [0x01; 32],
         [0x02; 32],
-        "did:octo:test".to_owned(),
+        sample_did(221).to_owned(),
         vec!["SELECT 1 FROM t".to_owned()],
         vec![],
         vec![],
@@ -969,7 +970,7 @@ fn wave_integration_w6_envelope() {
     let err = build_envelope(
         [0x01; 32],
         [0x02; 32],
-        "did:octo:test".to_owned(),
+        sample_did(221).to_owned(),
         stmts,
         vec![],
         vec![],
@@ -1066,7 +1067,7 @@ fn wave_integration_master_consistency() {
     let env = build_envelope(
         [0x01; 32],
         [0x02; 32],
-        "did:octo:test".to_owned(),
+        sample_did(221).to_owned(),
         vec!["SELECT 1".to_owned()],
         vec![],
         vec![],

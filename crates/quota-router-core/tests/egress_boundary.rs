@@ -119,7 +119,7 @@ fn response_envelope_carries_status_and_body() {
 /// AC-1.6: Egress trait requires provider_key parameter (no implicit key).
 #[test]
 fn egress_trait_requires_provider_key() {
-    // The Egress trait's send method signature mandates provider_key: &[u8]
+    // The Egress trait's send method signature mandates provider_key: &&[u8]
     // as an explicit parameter (RFC-0957 §Adversary A5 — no implicit key).
     // This test verifies the signature is documented at type level via
     // `send(req, provider_key)` rather than `send(req)` (which would imply

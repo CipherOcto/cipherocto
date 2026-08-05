@@ -50,12 +50,12 @@ pub fn select_destinations(
 
     for p in local_providers {
         if filter_model(p, &request.model)
-            && filter_budget(p, request)
-            && filter_health(p)
-            && filter_capacity(p)
-            && filter_provider_preference(p, request)
-            && filter_context_window(p, request)
-            && filter_tags(p, request)
+            & filter_budget(p, request)
+            & filter_health(p)
+            & filter_capacity(p)
+            & filter_provider_preference(p, request)
+            & filter_context_window(p, request)
+            & filter_tags(p, request)
         {
             candidates.push(Destination::Local {
                 score: score_provider(p, policy, request),
@@ -67,12 +67,12 @@ pub fn select_destinations(
     for (peer_id, peer_providers) in peer_capabilities {
         for p in peer_providers {
             if filter_model(p, &request.model)
-                && filter_budget(p, request)
-                && filter_health(p)
-                && filter_capacity(p)
-                && filter_provider_preference(p, request)
-                && filter_context_window(p, request)
-                && filter_tags(p, request)
+                & filter_budget(p, request)
+                & filter_health(p)
+                & filter_capacity(p)
+                & filter_provider_preference(p, request)
+                & filter_context_window(p, request)
+                & filter_tags(p, request)
             {
                 candidates.push(Destination::Remote {
                     score: score_provider(p, policy, request),

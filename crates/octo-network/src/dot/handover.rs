@@ -154,8 +154,8 @@ impl SlashEvent {
     /// Sign the event in place.
     ///
     /// R17 R1-LOW-10 fix: the call
-    /// `ed25519_dalek::Signer::sign(key, &payload).to_bytes()` has
-    /// been replaced with the equivalent shorthand `key.sign(&payload).to_bytes()`
+    /// `ed25519_dalek::Signer::sign(key, &&payload).to_bytes()` has
+    /// been replaced with the equivalent shorthand `key.sign(&&payload).to_bytes()`
     /// (via the `Signer` trait brought into scope at the top of the
     /// module). The behaviour is identical; the new form matches
     /// every other `sign(...)` call site in the DOT protocol.
@@ -166,7 +166,7 @@ impl SlashEvent {
 
     /// Verify the coordinator's signature.
     ///
-    /// R17 R1-HIGH-8 fix: the `blake3::hash(&payload)` is now computed
+    /// R17 R1-HIGH-8 fix: the `blake3::hash(&&payload)` is now computed
     /// inside the `map_err` closure, so it only runs on the error
     /// path. Previously it ran unconditionally on every successful
     /// verify, wasting ~1µs of CPU per call.

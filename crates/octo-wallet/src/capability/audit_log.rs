@@ -226,7 +226,7 @@ mod tests {
         // TV F3: insert → revoke sequence emits 2 audit entries.
         let mut events = Vec::new();
         let insert = append_event(
-            "did:octo:node",
+            &octo_ident::test_helpers::sample_did(53),
             AuditEventKind::Insert,
             [0x42; 32],
             1_700_000_000_000,
@@ -235,7 +235,7 @@ mod tests {
         );
         events.push(insert.clone());
         let revoke = append_event(
-            "did:octo:node",
+            &octo_ident::test_helpers::sample_did(53),
             AuditEventKind::Revoke,
             [0x42; 32],
             1_700_000_001_000,
@@ -253,7 +253,7 @@ mod tests {
     #[test]
     fn tampering_with_log_breaks_chain_check() {
         // TV F3: tampering fails BLAKE3 chain check.
-        let mut events = append_n("did:octo:node", 3);
+        let mut events = append_n(&octo_ident::test_helpers::sample_did(53), 3);
         // Tamper: rewrite event[1].cap_root_hash. The recompute MUST detect.
         events[1].cap_root_hash = [0xFF; 32];
         let r = verify_chain(&events);
@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn chain_verify_accepts_genesis_prev_zero() {
-        let events = append_n("did:octo:node", 1);
+        let events = append_n(&octo_ident::test_helpers::sample_did(53), 1);
         assert!(verify_chain(&events).is_ok());
     }
 
@@ -273,7 +273,7 @@ mod tests {
 
     #[test]
     fn broken_prev_link_detected() {
-        let mut events = append_n("did:octo:node", 2);
+        let mut events = append_n(&octo_ident::test_helpers::sample_did(53), 2);
         // Inject a wrong prev_chain_hash on event[1].
         events[1].prev_chain_hash = [0x99; 32];
         let r = verify_chain(&events);
@@ -283,7 +283,7 @@ mod tests {
     #[test]
     fn audit_event_debug_redacts_cap_root_hash() {
         let event = append_event(
-            "did:octo:node",
+            &octo_ident::test_helpers::sample_did(53),
             AuditEventKind::Insert,
             [0xAB; 32],
             1_700_000_000_000,
@@ -294,7 +294,10 @@ mod tests {
         assert!(s.contains("redacted"), "expected redaction: {s}");
         assert!(!s.contains("ABAB"), "leaked cap_root_hash bytes: {s}");
         // node_did + event_kind MUST be preserved for forensics.
-        assert!(s.contains("did:octo:node"), "node_did missing: {s}");
+        assert!(
+            s.contains(&octo_ident::test_helpers::sample_did(53)),
+            "node_did missing: {s}"
+        );
         assert!(s.contains("Insert"), "event_kind missing: {s}");
     }
 
@@ -308,7 +311,7 @@ mod tests {
     #[test]
     fn chain_hash_is_deterministic() {
         let a = append_event(
-            "did:octo:node",
+            &octo_ident::test_helpers::sample_did(53),
             AuditEventKind::Insert,
             [0x33; 32],
             1_700_000_000_000,
@@ -316,7 +319,7 @@ mod tests {
             0,
         );
         let b = append_event(
-            "did:octo:node",
+            &octo_ident::test_helpers::sample_did(53),
             AuditEventKind::Insert,
             [0x33; 32],
             1_700_000_000_000,

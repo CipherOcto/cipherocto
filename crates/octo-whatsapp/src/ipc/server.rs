@@ -281,7 +281,7 @@ async fn handle_conn(
         //     RPCs unconditionally even when no tokens are loaded).
         let hermetic_bypass = handle.config().security.hermetic_bypass;
         let must_auth = bearer_required
-            && (active_token_count > 0 || crate::security::auth::is_mutating_method(&req.method));
+            & (active_token_count > 0 || crate::security::auth::is_mutating_method(&req.method));
         if must_auth {
             if let Err(e) = authenticate(
                 &req.method,

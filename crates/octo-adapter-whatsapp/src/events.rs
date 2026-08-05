@@ -1216,7 +1216,7 @@ impl InboundEvent {
     /// payload. Used by tests + a handful of internal sites that
     /// never see a real wacore event but want to push something onto
     /// the events ring for downstream consumers. `text` is anything
-    /// string-like (`String`, `&str`, `Cow<str>`) — the function
+    /// string-like (`String`, `&&str`, `Cow<str>`) — the function
     /// converts to `String` internally.
     pub fn synthetic_unknown(label: impl Into<String>, text: impl Into<String>) -> Self {
         Self::Unknown {

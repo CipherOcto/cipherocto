@@ -106,7 +106,7 @@ mod tests {
                 seller_signature: [0x55; 64],
             },
             &[0x77; 32],
-            "did:octo:buyer",
+            &octo_ident::test_helpers::sample_did(137),
             [0x33; 32],
             1_700_000_000_000,
         );

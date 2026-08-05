@@ -38,3 +38,5 @@ toml = "0.8"
 
 [dev-dependencies]
 tempfile = "3"
+# Mission 0010-b: test fixtures use sample_did() from octo-ident test_helpers
+octo-ident = { path = "../octo-ident" }

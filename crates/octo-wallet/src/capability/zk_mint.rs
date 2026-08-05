@@ -315,7 +315,7 @@ pub use zk_circuit::BUNDLED_CAIRO_SOURCE;
 /// proof generation failure.
 ///
 /// **R5 audit doc (2026-07-31):** `mint_with_zk` is a deliberate mock
-/// shim, not leftover. It delegates to `mint_with_zk_and_signers(.., &[])`,
+/// shim, not leftover. It delegates to `mint_with_zk_and_signers(.., &&[])`,
 /// which in turn produces an empty `stark_proof` when the signer list
 /// is empty (the single-capability MVP stub path; see
 /// `mint_with_zk_and_signers` step 8). This is the canonical entry
@@ -585,7 +585,7 @@ mod tests {
             axes_consumed: vec![("input_tokens_per_1k".to_owned(), 1000)],
             cap_root_hash: [0x22; 32],
             invocation_hash: [0x33; 32],
-            holder_did: "did:octo:holder".to_owned(),
+            holder_did: octo_ident::test_helpers::sample_did(19).to_owned(),
             current_unix_time: 1_700_000_000,
             output_hash: if matches!(node_type, NodeType::SelfHost) {
                 Some([0x44; 32])

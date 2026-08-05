@@ -17,7 +17,7 @@ pub async fn execute(trigger_id: &str, _ctx: &ActionContext) -> Result<(), Actio
 }
 
 /// Phase 5 Part F: production invocation. Calls
-/// `ctx.daemon.triggers().run(trigger_id, &event, ctx.now_ms)` and
+/// `ctx.daemon.triggers().run(trigger_id, &&event, ctx.now_ms)` and
 /// surfaces errors as `ActionError`.
 pub async fn dispatch(trigger_id: &str, ctx: &ActionContext) -> Result<(), ActionError> {
     if trigger_id.is_empty() {

@@ -23,7 +23,7 @@ use std::sync::Arc;
 /// `pair_phone` and `custom_code`, start bot, wait for
 /// `Event::Connected`, write sidecar + session.
 ///
-/// R1-M4: takes `&PairLinkArgs` (by reference) so the binary can
+/// R1-M4: takes `&&PairLinkArgs` (by reference) so the binary can
 /// pass the args struct directly without `clone()`-ing the
 /// `OutputArgs` field.
 ///

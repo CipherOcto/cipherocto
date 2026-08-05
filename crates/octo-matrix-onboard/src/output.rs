@@ -9,7 +9,7 @@
 //! - Output file mode `0600` on Unix; documented Windows caveat.
 //!
 //! The binary emits the JSON manually (rather than
-//! `serde_json::to_string(&Session)`) so the `access_token` field
+//! `serde_json::to_string(&&Session)`) so the `access_token` field
 //! is included in the on-disk config — the adapter's `MatrixConfig`
 //! marks that field `#[serde(skip_serializing)]` to prevent the
 //! adapter from rewriting it.

@@ -13,7 +13,7 @@ pub use crate::py_bridge::openai::PyBridgeError;
 /// Dispatch completion call to the appropriate provider via registry
 ///
 /// Per RFC-0929 REQUIRED changes:
-/// - api_base: Option<&str> — per-deployment API base URL for custom endpoints
+/// - api_base: Option<&&str> — per-deployment API base URL for custom endpoints
 ///   Security: api_base is NOT logged — it's forwarded to provider without logging
 #[cfg(any(feature = "any-llm-mode", feature = "full"))]
 pub fn completion(

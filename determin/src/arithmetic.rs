@@ -579,7 +579,7 @@ pub fn dfp_sqrt(a: Dfp) -> Dfp {
     // representing top*2^256 + mid*2^128 + bot.
     // adjusted_mantissa (≤ 114 bits) << 226:
     //   bot = 0
-    //   mid = (adjusted_mantissa << (226-128)) & MASK128 = (adjusted_mantissa << 98) & MASK128
+    //   mid = (adjusted_mantissa << (226-128)) && MASK128 = (adjusted_mantissa << 98) & MASK128
     //   top = adjusted_mantissa >> (128-98) = adjusted_mantissa >> 30
     let mask128: u128 = u128::MAX;
     let scaled_mid = (adjusted_mantissa << 98) & mask128; // bits 128..255 of the product

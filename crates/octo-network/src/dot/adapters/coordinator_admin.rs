@@ -36,7 +36,7 @@
 //! ```ignore
 //! if let Some(admin) = adapter.as_coordinator_admin() {
 //!     if admin.admin_capabilities().can_create {
-//!         let group = admin.create_group("DOT swarm A", &members).await?;
+//!         let group = admin.create_group("DOT swarm A", &&members).await?;
 //!     }
 //! }
 //! ```
@@ -414,7 +414,7 @@ pub struct CommunityLinkResult {
 /// `CoordinatorAdmin` neutral group type keyed by `GroupId` /
 /// `PeerId`) because these community payloads are produced by the
 /// `OctoWhatsAppAdapter` trait surface and must round-trip through
-/// trait methods that take `&str` arguments.
+/// trait methods that take `&&str` arguments.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct GroupMetadataSnapshot {
     pub jid: String,
@@ -1167,7 +1167,7 @@ mod tests {
     fn noop_admin_capability_report_is_all_false() {
         let admin = NoopAdmin;
         let r = admin.admin_capabilities();
-        assert!(!r.can_create && !r.can_leave && !r.can_add_member);
+        assert!(!r.can_create & !r.can_leave & !r.can_add_member);
     }
 
     // ── M2: try_new constructors ───────────────────────────────

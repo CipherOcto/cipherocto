@@ -246,7 +246,7 @@ mod tests {
         HolderRecord::from_bearer(
             &bearer(),
             &pub_key,
-            "did:octo:buyer",
+            &octo_ident::test_helpers::sample_did(234),
             [0x33; 32],
             1_700_000_000_000,
         )
@@ -338,7 +338,7 @@ mod tests {
                 class: crate::holder_record::CapabilityClass::ZKBearing,
             },
             &[0x55; 32],
-            "did:octo:zk",
+            &octo_ident::test_helpers::sample_did(196),
             None,
             1_700_000_000_000,
         );
@@ -347,9 +347,9 @@ mod tests {
         let hop = HolderRecord {
             cap_root_hash: [0x66; 32],
             kind: HolderKind::HopCapability,
-            holder_did: "did:octo:hop".into(),
+            holder_did: octo_ident::test_helpers::sample_did(104).into(),
             holder_pub: [0x77; 32],
-            audience_did: "did:octo:next".into(),
+            audience_did: octo_ident::test_helpers::sample_did(23).into(),
             caveats_canonical: vec![],
             ask_id: None,
             mint_at_millis_unix: 1_700_000_000_000,

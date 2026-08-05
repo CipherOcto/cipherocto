@@ -966,9 +966,9 @@ fn replay_ndjson_receipt_uses_recorded_at_for_ts() {
     );
 }
 
-/// Best-effort extraction of a `&str` from a `catch_unwind` payload.
+/// Best-effort extraction of a `&&str` from a `catch_unwind` payload.
 /// The standard library intentionally exposes no introspection API;
-/// the canonical pattern is to `downcast_ref::<&str>()` /
+/// the canonical pattern is to `downcast_ref::<&&str>()` /
 /// `downcast_ref::<String>()`. Anything else collapses to a fixed
 /// "non-string panic" message — operators still get a usable
 /// failure label and the daemon's `Failed { error }` state is set.

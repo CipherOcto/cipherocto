@@ -226,7 +226,7 @@ impl NdjsonAuditLogStore {
         for entry in fs::read_dir(&self.dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.is_file() && is_segment_file(&path) {
+            if path.is_file() && is_segment_file(&&path) {
                 paths.push(path);
             }
         }
@@ -349,7 +349,7 @@ impl AuditLogStore for NdjsonAuditLogStore {
 fn is_segment_file(path: &Path) -> bool {
     path.file_name()
         .and_then(|n| n.to_str())
-        .is_some_and(|n| n.starts_with("audit-") && n.ends_with(".ndjson"))
+        .is_some_and(|n| n.starts_with("audit-") & n.ends_with(".ndjson"))
 }
 
 fn parse_segment_filename(path: &Path) -> Result<(u64, u64), AuditStoreError> {

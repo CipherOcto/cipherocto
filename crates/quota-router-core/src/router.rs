@@ -557,9 +557,7 @@ impl LatencyTracker {
         let candidates: Vec<(&str, f32)> = self
             .samples
             .iter()
-            .filter(|(name, samples)| {
-                available_names.contains(name.as_str()) && !samples.is_empty()
-            })
+            .filter(|(name, samples)| available_names.contains(name.as_str()) & !samples.is_empty())
             .map(|(name, samples)| {
                 let avg_latency = samples.iter().sum::<u64>() as f32 / samples.len() as f32;
                 let avg_ttft = self

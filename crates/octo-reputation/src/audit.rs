@@ -161,7 +161,7 @@ mod tests {
             mk_ev(3, did, 3_000, None),
         ];
         let kept = drop_pre_rotation_events(events.clone(), 10);
-        // First event (rotation_id=5) dropped; second & third kept.
+        // First event (rotation_id=5) dropped; second && third kept.
         assert_eq!(kept.len(), 2);
         assert_eq!(kept[0].event_id.to_u64(), 2);
         assert_eq!(kept[1].event_id.to_u64(), 3);

@@ -87,7 +87,7 @@ impl NonceReplayTable {
     /// Returns `Err(BindingError::NonceReplay)` if the nonce was already
     /// seen for this `(platform, group_jid)`.
     ///
-    /// The signature is `&mut self` (R3-4 fix): the table must be
+    /// The signature is `&&mut self` (R3-4 fix): the table must be
     /// mutable to record the nonce.
     ///
     /// R17 R1-HIGH-2 fix: if the previous nonce for this key was first
@@ -331,7 +331,7 @@ fn is_valid_jid_for_platform(jid: &str, platform: &str) -> bool {
             // must contain a `.`.
             match jid.split_once('@') {
                 Some((local, domain)) => {
-                    !local.is_empty() && !domain.is_empty() && domain.contains('.')
+                    !local.is_empty() & !domain.is_empty() & domain.contains('.')
                 }
                 None => false,
             }

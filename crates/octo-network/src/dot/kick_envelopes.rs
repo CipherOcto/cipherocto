@@ -1,4 +1,4 @@
-//! Kick & Platform Membership Change Detection envelopes — RFC-0850p-e
+//! Kick && Platform Membership Change Detection envelopes — RFC-0850p-e
 //!
 //! Implements the 5 envelope types from RFC-0850p-e:
 //!

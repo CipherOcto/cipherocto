@@ -235,7 +235,7 @@ mod tests {
     #[test]
     fn derive_deterministic() {
         let k = IdentityKey::generate().unwrap();
-        let aud: AudienceId = "did:octo:abc".parse().unwrap();
+        let aud: AudienceId = octo_ident::test_helpers::sample_did(188).parse().unwrap();
         let ch: ChannelId = "channel-1".parse().unwrap();
         let cap1 = derive_capability_key(&k, &aud, &ch).unwrap();
         let cap2 = derive_capability_key(&k, &aud, &ch).unwrap();
@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn derive_independent_channels() {
         let k = IdentityKey::generate().unwrap();
-        let aud: AudienceId = "did:octo:abc".parse().unwrap();
+        let aud: AudienceId = octo_ident::test_helpers::sample_did(188).parse().unwrap();
         let cap_a = derive_capability_key(&k, &aud, &"ch-a".parse().unwrap()).unwrap();
         let cap_b = derive_capability_key(&k, &aud, &"ch-b".parse().unwrap()).unwrap();
         assert_ne!(cap_a.as_bytes(), cap_b.as_bytes());
@@ -255,7 +255,12 @@ mod tests {
     fn derive_independent_audiences() {
         let k = IdentityKey::generate().unwrap();
         let ch: ChannelId = "channel-1".parse().unwrap();
-        let cap_a = derive_capability_key(&k, &"did:octo:a".parse().unwrap(), &ch).unwrap();
+        let cap_a = derive_capability_key(
+            &k,
+            &octo_ident::test_helpers::sample_did(85).parse().unwrap(),
+            &ch,
+        )
+        .unwrap();
         let cap_b = derive_capability_key(&k, &"did:octo:b".parse().unwrap(), &ch).unwrap();
         assert_ne!(cap_a.as_bytes(), cap_b.as_bytes());
     }

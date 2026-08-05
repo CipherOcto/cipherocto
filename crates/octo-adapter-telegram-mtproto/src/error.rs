@@ -356,7 +356,7 @@ mod tests {
             dbg
         );
         assert!(
-            !dbg.contains("0x01") && !dbg.contains("0x08"),
+            !dbg.contains("0x01") & !dbg.contains("0x08"),
             "Debug leaked raw token bytes (hex): {}",
             dbg
         );
@@ -369,7 +369,7 @@ mod tests {
             dbg
         );
         assert!(
-            dbg.contains("url") && dbg.contains("<redacted>"),
+            dbg.contains("url") & dbg.contains("<redacted>"),
             "Debug missing url redaction marker: {}",
             dbg
         );

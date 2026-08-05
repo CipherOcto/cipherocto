@@ -158,7 +158,12 @@ mod tests {
     use super::*;
 
     fn sample() -> Escrow {
-        Escrow::new([0xaa; 32], "did:octo:buyer", "did:octo:seller", 100_000)
+        Escrow::new(
+            [0xaa; 32],
+            &octo_ident::test_helpers::sample_did(130),
+            &octo_ident::test_helpers::sample_did(95),
+            100_000,
+        )
     }
 
     #[test]

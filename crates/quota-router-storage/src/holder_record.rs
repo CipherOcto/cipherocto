@@ -259,12 +259,17 @@ mod tests {
         let b = bearer();
         let pub_key = [0x77; 32];
         let ask_id = [0x33; 32];
-        let r =
-            HolderRecord::from_bearer(&b, &pub_key, "did:octo:buyer", ask_id, 1_700_000_000_000);
+        let r = HolderRecord::from_bearer(
+            &b,
+            &pub_key,
+            &octo_ident::test_helpers::sample_did(229),
+            ask_id,
+            1_700_000_000_000,
+        );
         assert_eq!(r.cap_root_hash, b.bearer_capsule_hash);
         assert_eq!(r.kind, HolderKind::Bearer);
         assert_eq!(r.holder_pub, pub_key);
-        assert_eq!(r.holder_did, "did:octo:buyer");
+        assert_eq!(r.holder_did, octo_ident::test_helpers::sample_did(229));
         assert_eq!(r.ask_id, Some(ask_id));
         assert_eq!(r.ttl_millis_unix, 1_700_000_000_000);
         assert_eq!(r.revoked_at_millis_unix, None);
@@ -279,7 +284,7 @@ mod tests {
         let r = HolderRecord::from_capability(
             &tok,
             &[0x22; 32],
-            "did:octo:holder",
+            &octo_ident::test_helpers::sample_did(36),
             Some([0x33; 32]),
             1_700_000_000_000,
         );
@@ -297,7 +302,7 @@ mod tests {
         let r = HolderRecord::from_capability(
             &tok,
             &[0x22; 32],
-            "did:octo:holder",
+            &octo_ident::test_helpers::sample_did(36),
             None,
             1_700_000_000_000,
         );
@@ -310,7 +315,7 @@ mod tests {
         let mut r = HolderRecord::from_bearer(
             &bearer(),
             &[0x77; 32],
-            "did:octo:buyer",
+            &octo_ident::test_helpers::sample_did(229),
             [0x33; 32],
             1_700_000_000_000,
         );
@@ -326,7 +331,7 @@ mod tests {
         let r = HolderRecord::from_bearer(
             &bearer(),
             &[0x77; 32],
-            "did:octo:buyer",
+            &octo_ident::test_helpers::sample_did(229),
             [0xAB; 32],
             1_700_000_000_000,
         );
@@ -344,7 +349,13 @@ mod tests {
     #[test]
     fn revoked_at_millis_distinct_from_ttl_millis() {
         // TV14: ttl_millis_unix=0 + revoked_at_millis_unix=None = "active, no TTL expiry".
-        let r = HolderRecord::from_bearer(&bearer(), &[0x77; 32], "did:octo:buyer", [0x33; 32], 0);
+        let r = HolderRecord::from_bearer(
+            &bearer(),
+            &[0x77; 32],
+            &octo_ident::test_helpers::sample_did(229),
+            [0x33; 32],
+            0,
+        );
         assert_eq!(r.ttl_millis_unix, 0);
         assert_eq!(r.revoked_at_millis_unix, None);
         assert!(r.is_active_at(0)); // any now_millis < 0 impossible; assert expire semantics
@@ -361,7 +372,7 @@ mod tests {
         let r = HolderRecord::from_bearer(
             &bearer(),
             &[0x77; 32],
-            "did:octo:buyer",
+            &octo_ident::test_helpers::sample_did(229),
             [0x33; 32],
             1_700_000_000_000,
         );
@@ -375,14 +386,14 @@ mod tests {
         // TV15: holder_did (intermediate router) MUST differ from audience_did (destination).
         let r = HolderRecord::from_hop_capability(
             [0xAA; 32],
-            "did:octo:router",
+            &octo_ident::test_helpers::sample_did(206),
             &[0xBB; 32],
-            "did:octo:destination",
+            &octo_ident::test_helpers::sample_did(208),
             1_700_000_000_000,
         );
         assert_eq!(r.kind, HolderKind::HopCapability);
-        assert_eq!(r.holder_did, "did:octo:router");
-        assert_eq!(r.audience_did, "did:octo:destination");
+        assert_eq!(r.holder_did, octo_ident::test_helpers::sample_did(206));
+        assert_eq!(r.audience_did, octo_ident::test_helpers::sample_did(208));
         assert_ne!(r.holder_did, r.audience_did);
         assert_eq!(r.ask_id, None);
     }

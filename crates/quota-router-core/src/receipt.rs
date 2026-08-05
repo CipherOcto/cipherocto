@@ -62,7 +62,7 @@ pub struct CacheClassifyMeta {
 /// Distinct type from `ExecutionEnvelope` (RFC-0962 §4). Commits the
 /// `Receipt` + `CacheClassifyMeta` pair via the dedicated
 /// `receipt_envelope_hash` domain separator (`0xA7`, RFC-0962 §9.1).
-/// The router signs `canonical_envelope_bytes(&self)` to bind
+/// The router signs `canonical_envelope_bytes(&&self)` to bind
 /// cache-classify to the settlement.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReceiptEnvelope {
@@ -70,7 +70,7 @@ pub struct ReceiptEnvelope {
     pub envelope_hash: [u8; 32],
     pub receipt: Receipt,
     pub cache_classify: CacheClassifyMeta,
-    /// Ed25519 signature over `canonical_envelope_bytes(&self)`.
+    /// Ed25519 signature over `canonical_envelope_bytes(&&self)`.
     #[serde(with = "ed25519_sig_serde")]
     pub signature: ed25519_dalek::Signature,
 }
@@ -212,16 +212,36 @@ mod tests {
     #[test]
     fn canonical_bytes_stable() {
         let h = [0xab; 32];
-        let a = canonical_receipt_bytes(&h, "did:octo:a", "did:octo:h", 1_700_000_000);
-        let b = canonical_receipt_bytes(&h, "did:octo:a", "did:octo:h", 1_700_000_000);
+        let a = canonical_receipt_bytes(
+            &h,
+            &octo_ident::test_helpers::sample_did(134),
+            &octo_ident::test_helpers::sample_did(183),
+            1_700_000_000,
+        );
+        let b = canonical_receipt_bytes(
+            &h,
+            &octo_ident::test_helpers::sample_did(134),
+            &octo_ident::test_helpers::sample_did(183),
+            1_700_000_000,
+        );
         assert_eq!(a, b);
     }
 
     #[test]
     fn canonical_bytes_changes_with_timestamp() {
         let h = [0xab; 32];
-        let a = canonical_receipt_bytes(&h, "did:octo:a", "did:octo:h", 1_700_000_000);
-        let b = canonical_receipt_bytes(&h, "did:octo:a", "did:octo:h", 1_700_000_001);
+        let a = canonical_receipt_bytes(
+            &h,
+            &octo_ident::test_helpers::sample_did(134),
+            &octo_ident::test_helpers::sample_did(183),
+            1_700_000_000,
+        );
+        let b = canonical_receipt_bytes(
+            &h,
+            &octo_ident::test_helpers::sample_did(134),
+            &octo_ident::test_helpers::sample_did(183),
+            1_700_000_001,
+        );
         assert_ne!(a, b);
     }
 

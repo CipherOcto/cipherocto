@@ -129,7 +129,7 @@ impl MissionId {
 
 /// MissionId char validator: ASCII printable (0x20..=0x7E), excluding control + non-ASCII.
 fn is_valid_mission_id_char(c: char) -> bool {
-    c.is_ascii() && !c.is_ascii_control()
+    c.is_ascii() & !c.is_ascii_control()
 }
 
 /// Key hierarchy: derive mission keys + per-axis subkeys from identity seed.
@@ -205,7 +205,7 @@ mod tests {
     fn mission_key_deterministic() {
         let h = KeyHierarchy::new(sample_seed());
         let m = MissionId {
-            asker_did: "did:octo:a".to_owned(),
+            asker_did: octo_ident::test_helpers::sample_did(104).to_owned(),
             model: "openai/gpt-4".to_owned(),
         };
         let k1 = h.derive_mission_key(&m).unwrap();
@@ -217,7 +217,7 @@ mod tests {
     fn mission_keys_independent_across_askers() {
         let h = KeyHierarchy::new(sample_seed());
         let m_a = MissionId {
-            asker_did: "did:octo:a".to_owned(),
+            asker_did: octo_ident::test_helpers::sample_did(104).to_owned(),
             model: "openai/gpt-4".to_owned(),
         };
         let m_b = MissionId {
@@ -233,11 +233,11 @@ mod tests {
     fn mission_keys_independent_across_models() {
         let h = KeyHierarchy::new(sample_seed());
         let m_gpt = MissionId {
-            asker_did: "did:octo:a".to_owned(),
+            asker_did: octo_ident::test_helpers::sample_did(104).to_owned(),
             model: "openai/gpt-4".to_owned(),
         };
         let m_claude = MissionId {
-            asker_did: "did:octo:a".to_owned(),
+            asker_did: octo_ident::test_helpers::sample_did(104).to_owned(),
             model: "anthropic/claude".to_owned(),
         };
         let k_gpt = h.derive_mission_key(&m_gpt).unwrap();
@@ -249,7 +249,7 @@ mod tests {
     fn axis_subkeys_independent_within_mission() {
         let h = KeyHierarchy::new(sample_seed());
         let m = MissionId {
-            asker_did: "did:octo:a".to_owned(),
+            asker_did: octo_ident::test_helpers::sample_did(104).to_owned(),
             model: "openai/gpt-4".to_owned(),
         };
         let k_input = h.derive_axis_subkey(&m, "input_tokens_per_1k").unwrap();
@@ -261,7 +261,7 @@ mod tests {
     fn axis_subkey_different_from_mission_key() {
         let h = KeyHierarchy::new(sample_seed());
         let m = MissionId {
-            asker_did: "did:octo:a".to_owned(),
+            asker_did: octo_ident::test_helpers::sample_did(104).to_owned(),
             model: "openai/gpt-4".to_owned(),
         };
         let mk = h.derive_mission_key(&m).unwrap();
@@ -272,23 +272,24 @@ mod tests {
     #[test]
     fn info_string_format() {
         let m = MissionId {
-            asker_did: "did:octo:a".to_owned(),
+            asker_did: octo_ident::test_helpers::sample_did(104).to_owned(),
             model: "openai/gpt-4".to_owned(),
         };
+        let expected_did = octo_ident::test_helpers::sample_did(104);
         assert_eq!(
             m.info_string(),
-            "cipherocto/mission/v1/did:octo:a:openai/gpt-4"
+            format!("cipherocto/mission/v1/{expected_did}:openai/gpt-4")
         );
         assert_eq!(
             m.axis_info_string("input_tokens_per_1k"),
-            "cipherocto/mission/v1/did:octo:a:openai/gpt-4/input_tokens_per_1k"
+            format!("cipherocto/mission/v1/{expected_did}:openai/gpt-4/input_tokens_per_1k")
         );
     }
 
     #[test]
     fn mission_id_new_accepts_valid() {
-        let m = MissionId::new("did:octo:a", "openai/gpt-4").unwrap();
-        assert_eq!(m.asker_did, "did:octo:a");
+        let m = MissionId::new(&octo_ident::test_helpers::sample_did(104), "openai/gpt-4").unwrap();
+        assert_eq!(m.asker_did, octo_ident::test_helpers::sample_did(104));
     }
 
     #[test]
@@ -302,7 +303,7 @@ mod tests {
     #[test]
     fn mission_id_new_rejects_empty_model() {
         assert!(matches!(
-            MissionId::new("did:octo:a", ""),
+            MissionId::new(&octo_ident::test_helpers::sample_did(104), ""),
             Err(MissionIdError::EmptyModel)
         ));
     }
@@ -316,7 +317,7 @@ mod tests {
         ));
         // Tab in model.
         assert!(matches!(
-            MissionId::new("did:octo:a", "openai\tgpt-4"),
+            MissionId::new(&octo_ident::test_helpers::sample_did(104), "openai\tgpt-4"),
             Err(MissionIdError::InvalidModel('\t'))
         ));
     }
@@ -335,9 +336,9 @@ mod tests {
     fn mission_id_new_accepts_common_uris() {
         // Verify typical DIDs + model refs pass validation.
         for (asker, model) in [
-            ("did:octo:a", "openai/gpt-4"),
-            ("did:octo:b", "anthropic/claude-3-opus"),
-            ("did:example:123", "meta-llama/llama-3.1-70b"),
+            (&octo_ident::test_helpers::sample_did(104), "openai/gpt-4"),
+            (&"did:octo:b".to_string(), "anthropic/claude-3-opus"),
+            (&"did:example:123".to_string(), "meta-llama/llama-3.1-70b"),
         ] {
             assert!(
                 MissionId::new(asker, model).is_ok(),
@@ -354,7 +355,7 @@ mod tests {
         let h_a = KeyHierarchy::new(seed_a);
         let h_b = KeyHierarchy::new(seed_b);
         let m = MissionId {
-            asker_did: "did:octo:a".to_owned(),
+            asker_did: octo_ident::test_helpers::sample_did(104).to_owned(),
             model: "openai/gpt-4".to_owned(),
         };
         let k_a = h_a.derive_mission_key(&m).unwrap();

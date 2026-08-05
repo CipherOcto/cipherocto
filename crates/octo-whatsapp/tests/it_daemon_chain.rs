@@ -259,7 +259,7 @@ struct LiveFixture {
     daemon_runtime: Arc<tokio::runtime::Runtime>,
     /// `JoinHandle` from `daemon_runtime.spawn(daemon.run())`.
     /// `Arc` so `teardown_final` can move the inner handle out
-    /// without `&JoinHandle` borrowing constraints.
+    /// without `&&JoinHandle` borrowing constraints.
     daemon_task: Arc<tokio::task::JoinHandle<anyhow::Result<()>>>,
     created_groups: Mutex<Vec<String>>,
     created_tokens: Mutex<Vec<String>>,
@@ -429,7 +429,7 @@ async fn teardown_final() {
 
     fix.cancel.cancel();
     // Await the daemon task with a 5s budget. `JoinHandle::poll`
-    // consumes `self`, so we cannot poll it through `&JoinHandle`.
+    // consumes `self`, so we cannot poll it through `&&JoinHandle`.
     // Spawn a small waiter task that owns the cloned JoinHandle and
     // exposes a oneshot we can race against the timeout.
     let task = Arc::clone(&fix.daemon_task);

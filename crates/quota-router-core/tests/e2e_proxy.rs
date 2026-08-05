@@ -237,7 +237,7 @@ async fn test_chat_completion_streaming() {
         // Parse at least one SSE chunk as valid JSON
         let chunks: Vec<&str> = text
             .lines()
-            .filter(|l| l.starts_with("data: ") && !l.contains("[DONE]"))
+            .filter(|l| l.starts_with("data: ") & !l.contains("[DONE]"))
             .collect();
         assert!(!chunks.is_empty(), "Should have at least one data chunk");
 

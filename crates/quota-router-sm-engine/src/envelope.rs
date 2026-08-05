@@ -582,7 +582,7 @@ mod tests {
         let mut env = build_envelope(
             [0x01; 32],
             [0x02; 32],
-            "did:octo:test".to_owned(),
+            octo_ident::test_helpers::sample_did(212).to_owned(),
             vec!["SELECT 1".to_owned()],
             vec![],
             vec![],
@@ -607,7 +607,7 @@ mod tests {
         let err = build_envelope(
             [0x01; 32],
             [0x02; 32],
-            "did:octo:test".to_owned(),
+            octo_ident::test_helpers::sample_did(212).to_owned(),
             stmts,
             vec![],
             vec![],
@@ -628,7 +628,7 @@ mod tests {
         let mut env = build_envelope(
             [0x01; 32],
             [0x02; 32],
-            "did:octo:test".to_owned(),
+            octo_ident::test_helpers::sample_did(212).to_owned(),
             vec!["SELECT 1".to_owned()],
             vec![],
             vec![],
@@ -651,7 +651,7 @@ mod tests {
         let mut env = build_envelope(
             [0x01; 32],
             [0x02; 32],
-            "did:octo:test".to_owned(),
+            octo_ident::test_helpers::sample_did(212).to_owned(),
             vec!["SELECT 1".to_owned()],
             vec![],
             vec![],
@@ -702,7 +702,7 @@ mod tests {
         let mut env = build_envelope(
             [0x01; 32],
             [0x02; 32],
-            "did:octo:test".to_owned(),
+            octo_ident::test_helpers::sample_did(212).to_owned(),
             vec!["SELECT 1".to_owned()],
             vec![],
             vec![],
@@ -717,7 +717,10 @@ mod tests {
         let key = make_key();
         sign_envelope(&mut env, &key);
         let index = InMemoryIndex {
-            seen: vec![(b"did:octo:test".to_vec(), nonce)],
+            seen: vec![(
+                octo_ident::test_helpers::sample_did(212).into_bytes(),
+                nonce,
+            )],
         };
         let err = check_replay(&env, &index).unwrap_err();
         assert_eq!(err, EnvelopeError::ReplayDetected(nonce));
@@ -734,7 +737,7 @@ mod tests {
         let mut env = build_envelope(
             [0x01; 32],
             [0x02; 32],
-            "did:octo:test".to_owned(),
+            octo_ident::test_helpers::sample_did(212).to_owned(),
             vec!["SELECT 1".to_owned()],
             vec![],
             vec![],
@@ -771,7 +774,7 @@ mod tests {
         let mut env = build_envelope(
             [0x01; 32],
             [0x02; 32],
-            "did:octo:test".to_owned(),
+            octo_ident::test_helpers::sample_did(212).to_owned(),
             vec!["SELECT 1".to_owned()],
             vec![],
             vec![],
@@ -813,7 +816,7 @@ mod tests {
         build_envelope(
             [0x01; 32],
             [0x02; 32],
-            "did:octo:test".to_owned(),
+            octo_ident::test_helpers::sample_did(212).to_owned(),
             vec!["SELECT 1".to_owned()],
             vec![],
             vec![],
@@ -970,7 +973,7 @@ mod tests {
         let env = build_envelope(
             [0x01; 32],
             [0x02; 32],
-            "did:octo:test".to_owned(),
+            octo_ident::test_helpers::sample_did(212).to_owned(),
             vec![],
             vec![],
             vec![],
@@ -1017,7 +1020,7 @@ mod tests {
         let mut env_alice = build_envelope(
             [0x01; 32],
             [0x02; 32],
-            "did:octo:alice".to_owned(),
+            octo_ident::test_helpers::sample_did(96).to_owned(),
             vec![],
             vec![],
             vec![],
@@ -1030,7 +1033,7 @@ mod tests {
         )
         .unwrap();
         let mut env_bob = env_alice.clone();
-        env_bob.capability_holder = "did:octo:bob".to_owned();
+        env_bob.capability_holder = octo_ident::test_helpers::sample_did(158).to_owned();
         let key = make_key();
         sign_envelope(&mut env_alice, &key);
         sign_envelope(&mut env_bob, &key);
@@ -1047,7 +1050,7 @@ mod tests {
         let env = build_envelope(
             [0x01; 32],
             [0x02; 32],
-            "did:octo:test".to_owned(),
+            octo_ident::test_helpers::sample_did(212).to_owned(),
             vec!["SELECT 1".to_owned()],
             vec![],
             vec![],
@@ -1070,7 +1073,7 @@ mod tests {
         let env = build_envelope(
             [0x01; 32],
             [0x02; 32],
-            "did:octo:test".to_owned(),
+            octo_ident::test_helpers::sample_did(212).to_owned(),
             vec!["SELECT 1".to_owned()],
             vec![],
             vec![],
@@ -1090,7 +1093,7 @@ mod tests {
         let mut env = build_envelope(
             [0x01; 32],
             [0x02; 32],
-            "did:octo:a".to_owned(),
+            octo_ident::test_helpers::sample_did(34).to_owned(),
             vec!["SELECT 1".to_owned()],
             vec![],
             vec![],
@@ -1107,7 +1110,7 @@ mod tests {
             &build_envelope(
                 [0x01; 32],
                 [0x02; 32],
-                "did:octo:a".to_owned(),
+                octo_ident::test_helpers::sample_did(34).to_owned(),
                 vec!["SELECT 1".to_owned()],
                 vec![],
                 vec![],
@@ -1132,7 +1135,7 @@ mod tests {
             &build_envelope(
                 [0x01; 32],
                 [0x02; 32],
-                "did:octo:test".to_owned(),
+                octo_ident::test_helpers::sample_did(212).to_owned(),
                 vec![],
                 vec![],
                 vec![],
@@ -1162,7 +1165,7 @@ mod tests {
             &build_envelope(
                 [0x01; 32],
                 [0x02; 32],
-                "did:octo:test".to_owned(),
+                octo_ident::test_helpers::sample_did(212).to_owned(),
                 vec![],
                 vec![],
                 vec![],
@@ -1192,7 +1195,7 @@ mod tests {
             &build_envelope(
                 [0x01; 32],
                 [0x02; 32],
-                "did:octo:test".to_owned(),
+                octo_ident::test_helpers::sample_did(212).to_owned(),
                 vec![],
                 vec![],
                 vec![],
@@ -1222,7 +1225,7 @@ mod tests {
             &build_envelope(
                 [0x01; 32],
                 [0x02; 32],
-                "did:octo:test".to_owned(),
+                octo_ident::test_helpers::sample_did(212).to_owned(),
                 vec![],
                 vec![],
                 vec![],
@@ -1358,7 +1361,7 @@ mod tests {
         let env = build_envelope(
             [0x01; 32],
             [0x02; 32],
-            "did:octo:test".to_owned(),
+            octo_ident::test_helpers::sample_did(212).to_owned(),
             vec![],
             vec![],
             vec![],
@@ -1385,7 +1388,7 @@ mod tests {
         let env = build_envelope(
             [0x01; 32],
             [0x02; 32],
-            "did:octo:test".to_owned(),
+            octo_ident::test_helpers::sample_did(212).to_owned(),
             vec![],
             vec![],
             vec![],

@@ -120,12 +120,12 @@ mod tests {
     fn dispute_new_sets_fields() {
         let d = Dispute::new(
             [0xab; 32],
-            "did:octo:buyer",
+            &octo_ident::test_helpers::sample_did(8),
             DisputeReason::ResultMismatch,
             None,
         );
         assert_eq!(d.escrow_id, [0xab; 32]);
-        assert_eq!(d.raised_by, "did:octo:buyer");
+        assert_eq!(d.raised_by, octo_ident::test_helpers::sample_did(8));
         assert!(!d.has_evidence());
     }
 
@@ -133,7 +133,7 @@ mod tests {
     fn dispute_with_evidence_has_evidence() {
         let d = Dispute::new(
             [0xab; 32],
-            "did:octo:buyer",
+            &octo_ident::test_helpers::sample_did(8),
             DisputeReason::ProviderError,
             Some(Evidence {
                 hash: [0xcc; 32],
@@ -148,7 +148,7 @@ mod tests {
         let mut reg = DisputeRegistry::new();
         let d = Dispute::new(
             [0x01; 32],
-            "did:octo:buyer",
+            &octo_ident::test_helpers::sample_did(8),
             DisputeReason::ResultMismatch,
             None,
         );
@@ -162,13 +162,13 @@ mod tests {
         let mut reg = DisputeRegistry::new();
         let d1 = Dispute::new(
             [0x01; 32],
-            "did:octo:buyer",
+            &octo_ident::test_helpers::sample_did(8),
             DisputeReason::ResultMismatch,
             None,
         );
         let d2 = Dispute::new(
             [0x01; 32],
-            "did:octo:buyer",
+            &octo_ident::test_helpers::sample_did(8),
             DisputeReason::ProviderTimeout,
             None,
         );
@@ -182,7 +182,7 @@ mod tests {
         let mut reg = DisputeRegistry::new();
         let d = Dispute::new(
             [0x01; 32],
-            "did:octo:buyer",
+            &octo_ident::test_helpers::sample_did(8),
             DisputeReason::ResultMismatch,
             None,
         );

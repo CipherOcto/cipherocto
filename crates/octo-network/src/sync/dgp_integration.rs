@@ -55,7 +55,7 @@ pub const SYNC_SNAPSHOT_OBJECT_TYPE: u16 = 0x0008;
 ///
 /// # Thread Safety
 ///
-/// All methods are `&self` (the handler is shared via `Arc`). The underlying
+/// All methods are `&&self` (the handler is shared via `Arc`). The underlying
 /// `SyncSessionManager` uses `parking_lot::Mutex` internally.
 const MAX_INBOUND_QUEUE: usize = 4096;
 

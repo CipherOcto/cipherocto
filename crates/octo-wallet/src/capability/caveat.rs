@@ -478,11 +478,7 @@ fn parent_caveat_implies(parent: &[Caveat], child: &Caveat) -> bool {
         }),
         Caveat::Factory(c) => parent.iter().any(|p| match p {
             Caveat::Factory(p) => {
-                p.target_vault_id == c.target_vault_id
-                    && p.action_template == c.action_template
-                    && p.required_caller == c.required_caller
-                    && p.pre_conditions == c.pre_conditions
-                    && p.expiry_for_deploy_unix == c.expiry_for_deploy_unix
+                p.target_vault_id == c.target_vault_id && p.action_template == c.action_template && p.required_caller == c.required_caller && p.pre_conditions == c.pre_conditions && p.expiry_for_deploy_unix == c.expiry_for_deploy_unix
             }
             _ => false,
         }),
@@ -879,14 +875,20 @@ mod tests {
 
     #[test]
     fn subsumes_audience_must_match() {
-        let parent = vec![Caveat::Audience("did:octo:alice".to_owned())];
+        let parent = vec![Caveat::Audience(
+            octo_ident::test_helpers::sample_did(111).to_owned(),
+        )];
         assert!(set_subsumes(
             &parent,
-            &[Caveat::Audience("did:octo:alice".to_owned())]
+            &[Caveat::Audience(
+                octo_ident::test_helpers::sample_did(111).to_owned()
+            )]
         ));
         assert!(!set_subsumes(
             &parent,
-            &[Caveat::Audience("did:octo:bob".to_owned())]
+            &[Caveat::Audience(
+                octo_ident::test_helpers::sample_did(234).to_owned()
+            )]
         ));
     }
 
@@ -1125,7 +1127,7 @@ mod tests {
                 selector: "transfer_v1".to_owned(),
                 args: vec!["arg1".to_owned()],
             },
-            required_caller: Some("did:octo:caller".to_owned()),
+            required_caller: Some(octo_ident::test_helpers::sample_did(238).to_owned()),
             pre_conditions: vec![Constraint::SingleUse],
             expiry_for_deploy_unix: 1_000_000,
         };
@@ -1322,7 +1324,9 @@ mod tests {
         assert!(set_subsumes(&parent, &[Caveat::Factory(vet_a.clone())]));
         // Different constraint type → no subsume
         let mut vet_b = vet_a.clone();
-        vet_b.pre_conditions = vec![Constraint::CallerBound("did:octo:other".to_owned())];
+        vet_b.pre_conditions = vec![Constraint::CallerBound(
+            octo_ident::test_helpers::sample_did(239).to_owned(),
+        )];
         assert!(!set_subsumes(&parent, &[Caveat::Factory(vet_b)]));
     }
 

@@ -11,7 +11,6 @@ use thiserror::Error;
 
 use cache::PromptCache;
 use storage::PromptStorage;
-#[cfg(test)]
 use template::TemplateEngine;
 use template::TemplateError;
 

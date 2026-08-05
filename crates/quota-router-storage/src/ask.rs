@@ -66,7 +66,7 @@ pub type Ed25519PublicKey = [u8; 32];
 /// `{namespace, family, version?}` matches RFC-0959 §Data Structures verbatim.
 /// The wire format (slash-joined string) is the canonical on-the-wire form;
 /// callers convert via `ModelRef::parse` / `Display` at the boundary. The
-/// `asks.model` DB column stores the wire form (String); `From<&str>` /
+/// `asks.model` DB column stores the wire form (String); `From<&&str>` /
 /// `From<String>` produce the structured form for in-memory use.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct ModelRef {
@@ -703,7 +703,7 @@ mod ask_signed_tests {
         let seed = [0xEFu8; 32];
         let pk = AskSigned::public_key_from_seed(&seed);
         let mut signed = AskSigned::sign(payload, &seed).unwrap();
-        // Flip one byte in the rate table — payload & ask_id diverge.
+        // Flip one byte in the rate table — payload && ask_id diverge.
         signed.payload.rates.rates[0].rate_per_1k = 999;
         let err = signed.verify(&pk).unwrap_err();
         // Either AskIdMismatch (preferred) or AskSignatureInvalid — both are
@@ -1311,8 +1311,8 @@ mod tests {
     fn settlement_hash_stable() {
         let env = SettlementEnvelope {
             settlement_hash: [0u8; 32],
-            asker_did: "did:octo:a".to_owned(),
-            holder_did: "did:octo:h".to_owned(),
+            asker_did: octo_ident::test_helpers::sample_did(82).to_owned(),
+            holder_did: octo_ident::test_helpers::sample_did(175).to_owned(),
             model: ModelRef::from("openai/gpt-4"),
             axes_consumed: vec![("input_tokens_per_1k".to_owned(), 100)],
             ask_id: [1u8; 32],
@@ -1329,8 +1329,8 @@ mod tests {
     fn settlement_verify_rejects_hash_mismatch() {
         let mut env = SettlementEnvelope {
             settlement_hash: [0xab; 32],
-            asker_did: "did:octo:a".to_owned(),
-            holder_did: "did:octo:h".to_owned(),
+            asker_did: octo_ident::test_helpers::sample_did(82).to_owned(),
+            holder_did: octo_ident::test_helpers::sample_did(175).to_owned(),
             model: ModelRef::from("openai/gpt-4"),
             axes_consumed: vec![("input_tokens_per_1k".to_owned(), 100)],
             ask_id: [1u8; 32],
@@ -1352,8 +1352,8 @@ mod tests {
     fn settlement_replay_defense() {
         let mut env = SettlementEnvelope {
             settlement_hash: [0u8; 32],
-            asker_did: "did:octo:a".to_owned(),
-            holder_did: "did:octo:h".to_owned(),
+            asker_did: octo_ident::test_helpers::sample_did(82).to_owned(),
+            holder_did: octo_ident::test_helpers::sample_did(175).to_owned(),
             model: ModelRef::from("openai/gpt-4"),
             axes_consumed: vec![("input_tokens_per_1k".to_owned(), 100)],
             ask_id: [1u8; 32],
@@ -1478,7 +1478,7 @@ mod settlement_engine_tests {
     #[test]
     fn cached_axis_requires_cache_key_hash() {
         let ask = Ask::new(
-            "did:octo:a",
+            &octo_ident::test_helpers::sample_did(82),
             "openai/gpt-4",
             ModelRateTable {
                 model: ModelRef::from("openai/gpt-4"),
@@ -1510,7 +1510,7 @@ mod settlement_engine_tests {
     #[test]
     fn compute_cost_unknown_axis_rejected() {
         let ask = Ask::new(
-            "did:octo:a",
+            &octo_ident::test_helpers::sample_did(82),
             "openai/gpt-4",
             ModelRateTable::default(),
             [0x42; 16],
@@ -1533,7 +1533,7 @@ mod settlement_engine_tests {
         // We can't directly set u128::MAX rate via standard axes, so we use a
         // synthetic Ask with an extreme rate.
         let ask = Ask::new(
-            "did:octo:a",
+            &octo_ident::test_helpers::sample_did(82),
             "openai/gpt-4",
             ModelRateTable {
                 model: ModelRef::from("openai/gpt-4"),

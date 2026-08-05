@@ -26,6 +26,9 @@ octo-transport = { path = "../../octo-transport" }
 octo-adapter-tcp = { path = "../octo-adapter-tcp" }
 octo-network = { path = "../octo-network" }
 
+# Mission 0010-b: test fixtures use sample_did() from octo-ident test_helpers
+octo-ident = { path = "../octo-ident" }
+
 # Database
 stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
 

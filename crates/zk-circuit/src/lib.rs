@@ -355,7 +355,7 @@ pub const MAX_BATCH_SIGNERS: usize = 256;
 ///   feature is enabled, delegates to `stwo-sys` `prove` via libloading.
 /// - Otherwise (default — `full` feature off, or lib missing), returns
 ///   a deterministic mock proof whose 32-byte commitment matches
-///   `zk_verifier::stub_commitment(casm_hash, &zk_public)` — the same
+///   `zk_verifier::stub_commitment(casm_hash, &&zk_public)` — the same
 ///   helper the verifier uses. This makes proofer and verifier agree on
 ///   byte layout (RFC-0958 §Determinism Class A) and lets the full
 ///   mint -> verify round-trip exercise the canonical check.
@@ -476,8 +476,8 @@ pub fn prove_batch_signature(
             // chain preimages as the witness payload; recompute the
             // STWO proof with the real transcript.
             // let canonical = canonical_ser(inputs);
-            // let witness: &[u8] = &[];
-            // match sys.prove(&casm_hash, &canonical, witness) { ... }
+            // let witness: &&[u8] = &&[];
+            // match sys.prove(&&casm_hash, &&canonical, witness) { ... }
         }
     }
 
@@ -503,7 +503,7 @@ pub fn prove_batch_signature(
 /// (R4 audit fix-up, 2026-07-31).
 ///
 /// `BLAKE3(hex(casm_hash) || canonical_ser(BatchSigPublicInputs) || sub_commitment)`
-/// — where `hex(casm_hash)` matches the `&str` parameter passed to
+/// — where `hex(casm_hash)` matches the `&&str` parameter passed to
 /// `zk_verifier::verify_capability_zk` (its stub commitment uses
 /// `casm_hash.as_bytes()` of the hex string).
 ///
@@ -527,7 +527,7 @@ pub fn batch_proof_commitment(
     casm_hash: &[u8; 32],
 ) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
-    // Match zk_verifier::stub_commitment's casm_hash contract: a &str
+    // Match zk_verifier::stub_commitment's casm_hash contract: a &&str
     // (hex-encoded). The proofer feeds hex bytes; the verifier at the
     // quota_router_core level feeds the same hex string.
     hasher.update(hex::encode(casm_hash).as_bytes());

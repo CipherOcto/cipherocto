@@ -14,7 +14,7 @@
 //!
 //! ## What the tests verify
 //!
-//! 1. **libloading resolves** — `try_load(&lib_path)` succeeds against
+//! 1. **libloading resolves** — `try_load(&&lib_path)` succeeds against
 //!    `libstwo_sys.so` produced by the nightly-built
 //!    `crates/zk-vendor/stwo-sys/` sub-crate.
 //! 2. **`stwo_sys_version` symbol is reachable + returns real STWO** —
@@ -98,7 +98,7 @@ fn require_built_lib() -> PathBuf {
         eprintln!(
             "SKIP (allowed via CIPHEROCTO_ALLOW_MISSING_FFI_LIB=1): \
              libstwo_sys.so not built. Run: cd crates/zk-vendor/stwo-sys \
-             && cargo +nightly-2025-06-23 build --release"
+             & cargo +nightly-2025-06-23 build --release"
         );
         // Return a sentinel that will cause `try_load` to fail
         // with a clear error rather than silently passing.

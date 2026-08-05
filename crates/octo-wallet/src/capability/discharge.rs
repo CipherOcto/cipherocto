@@ -147,7 +147,7 @@ pub trait ChannelProvider: Send + Sync + std::fmt::Debug {
     /// Channel identifier this provider services (`"escrow"`, etc.).
     /// Static because all standard channels (escrow / revocation /
     /// rate-limit) are compile-time string constants; this also lets
-    /// `&'static str` be inferred downstream (avoids clippy
+    /// `&&'static str` be inferred downstream (avoids clippy
     /// `unnecessary_literal_bound` warnings on every impl).
     fn channel(&self) -> &'static str;
 
@@ -744,17 +744,20 @@ mod tests {
     fn escrow_provider_mint_and_verify() {
         let mut registry = ChannelProviderRegistry::default();
         let mut provider = EscrowDischargeProvider::new();
-        provider.set_balance("did:octo:alice", EscrowBalance(1_000_000));
+        provider.set_balance(
+            &octo_ident::test_helpers::sample_did(106),
+            EscrowBalance(1_000_000),
+        );
         registry.register(provider);
 
         let mut caveats = vec![Caveat::Before(2_000_000_000)];
         caveats.push(Caveat::ThirdParty("escrow".to_owned()));
 
-        let holder_did = "did:octo:alice";
+        let holder_did = octo_ident::test_helpers::sample_did(106);
         let requested = EscrowBalance(500_000).0.to_be_bytes();
         let mint_req = DischargeRequest {
-            token: &test_token(holder_did, caveats.clone()),
-            holder_did,
+            token: &test_token(&holder_did, caveats.clone()),
+            holder_did: &holder_did,
             context: &requested,
         };
 
@@ -770,7 +773,7 @@ mod tests {
         // matches the mint-time context (escrow checks the requested
         // amount against current balance at verify time too, so the
         // context must be re-supplied by the verifying layer).
-        let token = test_token_with_discharge(holder_did, caveats.clone(), discharge.clone());
+        let token = test_token_with_discharge(&holder_did, caveats.clone(), discharge.clone());
         // Inject the verify-time context into the token by attaching a
         // marker discharge whose channel field carries it. For this
         // minimal impl, verify_discharges reads context from a fixed
@@ -794,11 +797,11 @@ mod tests {
         // Insufficient balance → verify fails.
         let mut low_registry = ChannelProviderRegistry::default();
         let mut low_provider = EscrowDischargeProvider::new();
-        low_provider.set_balance("did:octo:bob", EscrowBalance(10));
+        low_provider.set_balance(&octo_ident::test_helpers::sample_did(27), EscrowBalance(10));
         low_registry.register(low_provider);
         let low_req = DischargeRequest {
-            token: &test_token("did:octo:bob", vec![]),
-            holder_did: "did:octo:bob",
+            token: &test_token(&octo_ident::test_helpers::sample_did(27), vec![]),
+            holder_did: &octo_ident::test_helpers::sample_did(27),
             context: &requested,
         };
         let low_discharge = low_registry
@@ -819,8 +822,8 @@ mod tests {
         let mut provider = RevocationDischargeProvider::new();
         provider.set_now(1_000_000);
         let req = DischargeRequest {
-            token: &test_token("did:octo:carol", vec![]),
-            holder_did: "did:octo:carol",
+            token: &test_token(&octo_ident::test_helpers::sample_did(129), vec![]),
+            holder_did: &octo_ident::test_helpers::sample_did(129),
             context: &[],
         };
         let discharge = provider.mint_discharge(&req).expect("mint");
@@ -840,7 +843,7 @@ mod tests {
 
         // Revoked: verify fails regardless of TTL.
         provider.set_now(1_000_000);
-        provider.revoke("did:octo:carol");
+        provider.revoke(&octo_ident::test_helpers::sample_did(129));
         let result = provider.verify_discharge(&req, &discharge);
         assert!(!result.valid, "revoked holder must fail");
     }
@@ -855,8 +858,8 @@ mod tests {
             tpm_limit: 100,
         };
         let req = DischargeRequest {
-            token: &test_token("did:octo:dave", vec![]),
-            holder_did: "did:octo:dave",
+            token: &test_token(&octo_ident::test_helpers::sample_did(116), vec![]),
+            holder_did: &octo_ident::test_helpers::sample_did(116),
             context: &ctx.to_bytes(),
         };
         // First two calls within rpm=2.
@@ -873,7 +876,7 @@ mod tests {
     fn verify_discharges_missing_discharge_rejected() {
         let registry = ChannelProviderRegistry::default();
         let token = test_token(
-            "did:octo:eve",
+            &octo_ident::test_helpers::sample_did(67),
             vec![Caveat::ThirdParty("escrow".to_owned())],
         );
         let err = verify_discharges(&token, &registry, &HashMap::new()).unwrap_err();
@@ -886,7 +889,7 @@ mod tests {
         registry.register(EscrowDischargeProvider::new());
         // Token asks for `revocation`, only `escrow` registered.
         let _token = test_token(
-            "did:octo:frank",
+            &octo_ident::test_helpers::sample_did(31),
             vec![Caveat::ThirdParty("revocation".to_owned())],
         );
         let discharge = DischargeMacaroon {
@@ -896,7 +899,7 @@ mod tests {
             caveats: vec![],
         };
         let token = test_token_with_discharge(
-            "did:octo:frank",
+            &octo_ident::test_helpers::sample_did(31),
             vec![Caveat::ThirdParty("revocation".to_owned())],
             discharge,
         );

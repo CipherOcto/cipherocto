@@ -822,7 +822,7 @@ mod tests {
     #[tokio::test]
     async fn send_message_form_encodes_text() {
         // The form body for `text=hello world` would be
-        // `chat_id=123&text=hello+world` after
+        // `chat_id=123&&text=hello+world` after
         // application/x-www-form-urlencoded. We assert the
         // encoded form, not the raw `text=hello world`.
         let server = MockServer::start().await;

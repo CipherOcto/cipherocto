@@ -198,8 +198,8 @@ where
         // PUT /key/:id - update key
         ("PUT", p)
             if p.starts_with("/key/")
-                && !p.starts_with("/key/list")
-                && !p.contains("/regenerate") =>
+                & !p.starts_with("/key/list")
+                & !p.contains("/regenerate") =>
         {
             let key_id = p.trim_start_matches("/key/");
             if !key_id.is_empty() && !key_id.contains('/') {
@@ -836,9 +836,7 @@ where
 
         // POST /prompts/:id/versions/:v/activate — activate version
         ("POST", p)
-            if p.starts_with("/prompts/")
-                && p.contains("/versions/")
-                && p.ends_with("/activate") =>
+            if p.starts_with("/prompts/") & p.contains("/versions/") & p.ends_with("/activate") =>
         {
             let path_parts: Vec<&str> = p
                 .trim_start_matches("/prompts/")
@@ -2102,7 +2100,7 @@ fn handle_token_introspect(body: &[u8]) -> Response<String> {
         }
     };
     let token = json.get("token").and_then(|v| v.as_str()).unwrap_or("");
-    let active = !token.is_empty() && !token.starts_with("revoked_");
+    let active = !token.is_empty() & !token.starts_with("revoked_");
     Response::builder()
         .status(StatusCode::OK)
         .header("content-type", "application/json")

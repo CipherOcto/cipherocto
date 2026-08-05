@@ -65,7 +65,7 @@ impl std::fmt::Debug for VaultFile {
 
 /// One-shot borrow of decrypted plaintext.
 ///
-/// Caller owns the backing buffer (`&mut Vec<u8>` passed to `Vault::get`) and is
+/// Caller owns the backing buffer (`&&mut Vec<u8>` passed to `Vault::get`) and is
 /// responsible for zeroizing it after use. `DecryptedHandle` does NOT take
 /// ownership of the buffer (the borrow is read-only).
 pub struct DecryptedHandle<'a> {

@@ -227,8 +227,8 @@ mod tests {
             hop_envelope_id: [0xAA; 32],
             hop_cap: HopCapability {
                 hop_envelope_id: [0xAA; 32],
-                wrapping_node_did: "did:octo:router".into(),
-                next_hop_did: "did:octo:destination".into(),
+                wrapping_node_did: octo_ident::test_helpers::sample_did(102).into(),
+                next_hop_did: octo_ident::test_helpers::sample_did(161).into(),
                 ttl_millis_unix: 1_700_000_000_000,
                 signature: [0x99; 64],
             },
@@ -255,12 +255,16 @@ mod tests {
             inner.clone(),
             &[0x33; 32],
             1_700_000_000_000,
-            "did:octo:router",
-            "did:octo:destination",
+            &octo_ident::test_helpers::sample_did(102),
+            &octo_ident::test_helpers::sample_did(161),
         )
         .unwrap();
-        let unwrapped =
-            unwrap_at_destination(&wrapped, "did:octo:destination", 1_699_999_999_999).unwrap();
+        let unwrapped = unwrap_at_destination(
+            &wrapped,
+            &octo_ident::test_helpers::sample_did(161),
+            1_699_999_999_999,
+        )
+        .unwrap();
         assert_eq!(unwrapped, inner);
     }
 
@@ -274,11 +278,15 @@ mod tests {
             inner,
             &[0x33; 32],
             1_700_000_000_000,
-            "did:octo:router",
-            "did:octo:destination",
+            &octo_ident::test_helpers::sample_did(102),
+            &octo_ident::test_helpers::sample_did(161),
         )
         .unwrap();
-        let r = unwrap_at_destination(&wrapped, "did:octo:other", 1_699_999_999_999);
+        let r = unwrap_at_destination(
+            &wrapped,
+            &octo_ident::test_helpers::sample_did(212),
+            1_699_999_999_999,
+        );
         assert!(matches!(r, Err(HopError::AudienceMismatch { .. })));
     }
 
@@ -292,11 +300,15 @@ mod tests {
             inner,
             &[0x33; 32],
             1_700_000_000_000,
-            "did:octo:router",
-            "did:octo:destination",
+            &octo_ident::test_helpers::sample_did(102),
+            &octo_ident::test_helpers::sample_did(161),
         )
         .unwrap();
-        let r = unwrap_at_destination(&wrapped, "did:octo:destination", 1_700_000_000_001);
+        let r = unwrap_at_destination(
+            &wrapped,
+            &octo_ident::test_helpers::sample_did(161),
+            1_700_000_000_001,
+        );
         assert!(matches!(r, Err(HopError::TtlExceeded { .. })));
     }
 
@@ -319,7 +331,7 @@ mod tests {
             &[0x44; 32],
             1_700_000_000_000,
             "did:octo:r2",
-            "did:octo:dest",
+            &octo_ident::test_helpers::sample_did(153),
         )
         .unwrap();
         let chain = vec![e1, e2];
@@ -365,8 +377,8 @@ mod tests {
             inner.clone(),
             &[0x33; 32],
             1_700_000_000_000,
-            "did:octo:router",
-            "did:octo:destination",
+            &octo_ident::test_helpers::sample_did(102),
+            &octo_ident::test_helpers::sample_did(161),
         )
         .unwrap();
         let p = ForwardRequestPayload::with_hop_envelope(inner, env);

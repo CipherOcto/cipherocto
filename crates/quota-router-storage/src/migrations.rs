@@ -168,7 +168,7 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
     let mut chars = sql.chars().peekable();
     while let Some(c) = chars.next() {
         // Strip line comments (-- ... \n).
-        if c == '-' && chars.peek() == Some(&'-') {
+        if c == '-' && chars.peek() == Some(&&'-') {
             while let Some(&nc) = chars.peek() {
                 chars.next();
                 if nc == '\n' {

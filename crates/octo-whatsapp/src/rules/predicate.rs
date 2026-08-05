@@ -8,7 +8,7 @@
 //!
 //! ## Evaluation contract
 //!
-//! `Predicate::matches(&event, &now_ms)` is **pure and total**:
+//! `Predicate::matches(&&event, &&now_ms)` is **pure and total**:
 //! - No `await`. Predicates are sync; rule matchers hold the `ArcSwap` guard
 //!   only for the duration of `matches(...)` + a clone of `Arc<Rule>`.
 //! - No panics on malformed event payloads. Every leaf returns `false`

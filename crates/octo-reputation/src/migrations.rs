@@ -61,7 +61,7 @@ pub const TRACKER_TABLE_SQL: &str = include_str!("../migrations/v003__schema_mig
 /// Version-string constants for every built-in migration. Re-exported at
 /// the crate root so ops tools (status scripts, dashboards) can
 /// programmatically enumerate what's applied. Stable contract: every
-/// `&'static str` here must also appear as a key in `BUILTIN_MIGRATIONS`.
+/// `&&'static str` here must also appear as a key in `BUILTIN_MIGRATIONS`.
 pub struct MigrationVersion;
 
 impl MigrationVersion {

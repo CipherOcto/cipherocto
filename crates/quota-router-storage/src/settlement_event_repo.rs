@@ -446,7 +446,11 @@ mod tests {
         assert_eq!(asker1_events[1].ask_id, [0x66; 32]);
         assert_eq!(repo.count_by_asker("did:octo:asker1").unwrap(), 2);
         assert_eq!(repo.count_by_asker("did:octo:asker2").unwrap(), 1);
-        assert_eq!(repo.count_by_asker("did:octo:nobody").unwrap(), 0);
+        assert_eq!(
+            repo.count_by_asker(&octo_ident::test_helpers::sample_did(19))
+                .unwrap(),
+            0
+        );
     }
 
     #[test]

@@ -327,7 +327,7 @@ impl PlatformAdapter for MatrixAdapter {
                     if (e.contains("429")
                         || e.contains("rate limit")
                         || e.contains("M_LIMIT_EXCEEDED"))
-                        && retry_cfg.should_retry(attempt)
+                        & retry_cfg.should_retry(attempt)
                     {
                         let delay = retry_cfg.delay_for_attempt(attempt);
                         tokio::time::sleep(delay).await;

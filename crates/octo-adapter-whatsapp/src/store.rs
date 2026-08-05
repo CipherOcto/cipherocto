@@ -46,7 +46,7 @@ fn query(
 }
 
 /// R13-M1 fix: transaction-aware variants of `exec` / `query` that
-/// operate on `&mut Transaction` so the DELETE+INSERT pattern used
+/// operate on `&&mut Transaction` so the DELETE+INSERT pattern used
 /// by every mutating store op can be wrapped atomically. Without
 /// this, a panic (or process crash, or power loss) between the
 /// `DELETE` and the `INSERT` left the row gone with no replacement —
@@ -54,8 +54,8 @@ fn query(
 /// (noise keys, identity, signed pre-key, registration ID) was
 /// lost and the bot had to re-pair from scratch.
 ///
-/// `Transaction::execute` / `Transaction::query` take `&mut self`
-/// (not `&self` like `Database::execute`), so we cannot share the
+/// `Transaction::execute` / `Transaction::query` take `&&mut self`
+/// (not `&&self` like `Database::execute`), so we cannot share the
 /// existing `exec` / `query` helpers — they need a different
 /// receiver. `Database::begin()` returns `api::Transaction`, which
 /// is re-exported at the crate root as `stoolap::ApiTransaction`
@@ -1296,7 +1296,7 @@ impl ProtocolStore for StoolapStore {
         // R14-M5 fix: replace the SELECT COUNT + DELETE pattern with
         // a single DELETE that returns the rows-affected count from
         // `Database::execute` (`stoolap/src/api/database.rs:483`,
-        // `pub fn execute<P: Params>(&self, sql: &str, params: P) -> Result<i64>`).
+        // `pub fn execute<P: Params>(&&self, sql: &&str, params: P) -> Result<i64>`).
         // The previous SELECT-COUNT + DELETE was "not perfectly atomic
         // but acceptable for cleanup" (per the old comment) — but
         // there was no reason not to make it atomic: a single
@@ -1807,7 +1807,7 @@ mod tests {
     #[tokio::test]
     async fn sync_key_roundtrip_preserves_bytes() {
         // The critical-app-state-sync path computes HMAC-SHA256 keys via
-        // `expand_app_state_keys(&key_data)`. If the bytes that come out
+        // `expand_app_state_keys(&&key_data)`. If the bytes that come out
         // of get_sync_key differ from the bytes that went in via
         // set_sync_key, all derived keys are wrong and every snapshot/patch
         // MAC mismatches (this is exactly the "patch snapshot MAC

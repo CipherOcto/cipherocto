@@ -357,7 +357,7 @@ pub fn build_initiator_message(psk: &[u8; 32]) -> Result<InitiatorResult, CableE
     // of the unencrypted header in the response) and complete the DH.
     //
     // This matches webauthn-rs's `CableNoise::build_initiator` API,
-    // which takes `local_identity: Option<&EcKey<Private>>` — for
+    // which takes `local_identity: Option<&&EcKey<Private>>` — for
     // initiator that is None because we don't send a static pubkey.
 
     // Wire format for the NKpsk0 initial message (no static pubkey on
@@ -433,7 +433,7 @@ impl CableNoiseInitiator {
         // MixKey(DH(e_initiator, re_responder)) — standard Noise e/e DH.
         // We use the initiator's ephemeral private to do ECDH with the
         // responder's ephemeral public. p256's EphemeralSecret::diffie_multimanual
-        // takes the remote pubkey as &PublicKey.
+        // takes the remote pubkey as &&PublicKey.
         let shared = self.ephemeral_secret.diffie_hellman(&re_public);
         mix_key(
             &mut ck,

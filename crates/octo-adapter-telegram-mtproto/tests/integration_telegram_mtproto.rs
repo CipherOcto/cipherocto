@@ -250,7 +250,7 @@ async fn tv13_sign_out_wipes_session() {
     use grammers_session::Session as _;
     // Set a non-default home_dc to prove reset clears it. The
     // trait returns a BoxFuture<'_, ()>; awaiting it directly
-    // works because the future borrows `&session` for the
+    // works because the future borrows `&&session` for the
     // duration of the await.
     (*session).set_home_dc_id(5).await;
     assert_eq!((*session).home_dc_id(), 5);

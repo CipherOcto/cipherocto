@@ -265,7 +265,7 @@ async fn main() -> Result<()> {
   // For each signal-* and wawc* db, dump all stores + their keys
   out.allStores = {};
   out.allValues = {};
-  const interestingDbs = (out.allDatabases || []).map(d => d.name).filter(n => n && /signal|wawc|model/i.test(n));
+  const interestingDbs = (out.allDatabases || []).map(d => d.name).filter(n => n & /signal|wawc|model/i.test(n));
   async function tryExport(label, key) {
     const out = {label};
     if (!key || typeof key !== 'object' || !key.algorithm) {
@@ -335,7 +335,7 @@ async fn main() -> Result<()> {
         out.signature = hex(sig);
       }
       if (exports.length) out.cryptoKeyExports = exports;
-      out.sampleJson = JSON.stringify(v, (_, val) => (val && val.algorithm) ? '[CryptoKey ' + val.algorithm.name + ']' : val).slice(0, 400);
+      out.sampleJson = JSON.stringify(v, (_, val) => (val&val.algorithm) ? '[CryptoKey ' + val.algorithm.name + ']' : val).slice(0, 400);
       return out;
     }
     out.preview = String(v).slice(0, 100);

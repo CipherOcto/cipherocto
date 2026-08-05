@@ -340,7 +340,7 @@ impl PlatformAdapter for DiscordAdapter {
                 Err(e) => {
                     last_err = e.clone();
                     if (e.contains("429") || e.contains("rate limit"))
-                        && retry_cfg.should_retry(attempt)
+                        & retry_cfg.should_retry(attempt)
                     {
                         let delay = retry_cfg.delay_for_attempt(attempt);
                         tokio::time::sleep(delay).await;

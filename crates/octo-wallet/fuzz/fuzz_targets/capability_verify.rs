@@ -44,7 +44,7 @@ fuzz_target!(|data: &[u8]| {
 
     // Subsequent caveats: random from data bytes.
     let mut i = 64;
-    while caveats.len() < MAX_CAVEATS && i + 8 <= data.len() {
+    while caveats.len() < MAX_CAVEATS&i + 8 <= data.len() {
         let choice = data[i] % 4;
         let val = data[i + 1];
         let count = u32::from_le_bytes([data[i + 2], data[i + 3], data[i + 4], data[i + 5]]);
@@ -62,7 +62,7 @@ fuzz_target!(|data: &[u8]| {
     let token = match CapabilityToken::mint(
         &root_secret,
         &holder,
-        "did:octo:fuzz",
+        &octo_ident::test_helpers::sample_did(99),
         caveats.clone(),
         &catalog,
     ) {

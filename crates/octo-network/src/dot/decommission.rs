@@ -1,4 +1,4 @@
-//! Transport Group Decommission envelopes & audit log — RFC-0850p-f
+//! Transport Group Decommission envelopes && audit log — RFC-0850p-f
 //!
 //! Implements the 2 new envelope types and the local audit log:
 //!

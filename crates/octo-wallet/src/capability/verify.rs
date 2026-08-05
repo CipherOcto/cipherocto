@@ -166,7 +166,7 @@ mod tests {
                 class: CapabilityClass::V1,
             },
             &[0xBB; 32],
-            "did:octo:holder",
+            &octo_ident::test_helpers::sample_did(31),
             None,
             1_700_000_000_000,
         );
@@ -187,7 +187,7 @@ mod tests {
                 class: CapabilityClass::V1,
             },
             &[0xBB; 32],
-            "did:octo:holder",
+            &octo_ident::test_helpers::sample_did(31),
             None,
             1_700_000_000_000,
         );
@@ -205,7 +205,7 @@ mod tests {
         let wired = super::super::wire::serialize_wire(&crate::capability::CapabilityToken {
             macaroon: minted.clone(),
             holder_pub: [0xBB; 32],
-            holder_did: "did:octo:holder".into(),
+            holder_did: octo_ident::test_helpers::sample_did(31).into(),
             holder_sig: ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
             discharges: vec![],
             holder_sig_stale: false,

@@ -75,7 +75,7 @@ async fn envelope_send_native_rejects_dot_prefixed_input() {
     assert_eq!(resp["error"]["code"], -32602, "full response: {resp}");
     let msg = resp["error"]["message"].as_str().unwrap();
     assert!(
-        msg.contains("raw wire bytes") && msg.contains("DOT/"),
+        msg.contains("raw wire bytes") & msg.contains("DOT/"),
         "expected guidance message, got: {msg}"
     );
     assert_eq!(

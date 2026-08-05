@@ -81,8 +81,8 @@ mod tests {
                 event_hash: [0x11; 32],
                 payload: DealSettledPayload {
                     prev_chain_hash: [0; 32],
-                    buyer_did: "did:octo:buyer".into(),
-                    seller_did: "did:octo:seller".into(),
+                    buyer_did: octo_ident::test_helpers::sample_did(9).into(),
+                    seller_did: octo_ident::test_helpers::sample_did(14).into(),
                     ask_id: [0x33; 32],
                     bearer_capsule_hash: [0x42; 32],
                     cap_root_hash: [0x77; 32],
@@ -98,14 +98,22 @@ mod tests {
     #[test]
     fn gossip_succeeds_on_first_attempt() {
         let env = empty_envelope();
-        let result = gossip_envelope_to_buyer(&env, "did:octo:buyer", &AlwaysOkCatalog);
+        let result = gossip_envelope_to_buyer(
+            &env,
+            &octo_ident::test_helpers::sample_did(9),
+            &AlwaysOkCatalog,
+        );
         assert!(result.is_ok());
     }
 
     #[test]
     fn gossip_fails_fast_on_unsupported() {
         let env = empty_envelope();
-        let result = gossip_envelope_to_buyer(&env, "did:octo:buyer", &AlwaysFailCatalog);
+        let result = gossip_envelope_to_buyer(
+            &env,
+            &octo_ident::test_helpers::sample_did(9),
+            &AlwaysFailCatalog,
+        );
         assert!(matches!(
             result,
             Err(DeliveryError::GossipFailed { attempts: 1 })

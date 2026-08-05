@@ -313,7 +313,7 @@ pub struct WhatsAppWebAdapter {
     raw_event_tx: tokio::sync::broadcast::Sender<Arc<crate::events::InboundEvent>>,
     /// Mission 0850 (RFC-0850 §8.6/§9.4): channel for routing
     /// `DOT/2/{token}` download requests from the sync on_event closure
-    /// (which does NOT capture `&self`) to the async download_rx
+    /// (which does NOT capture `&&self`) to the async download_rx
     /// consumer task spawned by `start_bot`. The on_event closure
     /// clones this `Arc` and `try_send`s a `DownloadRequest`; the
     /// consumer task pops, calls `Client::download`, and pushes the
@@ -321,7 +321,7 @@ pub struct WhatsAppWebAdapter {
     ///
     /// `Arc<tokio::sync::Mutex<Option<...>>>` mirrors the existing
     /// `client` field shape (line 224) — `start_bot` populates the
-    /// `Some(_)` variant without `&mut self`, and the closure holds an
+    /// `Some(_)` variant without `&&mut self`, and the closure holds an
     /// `Arc` clone without owning `self`. Initialized to `None` in
     /// `new`; populated in `start_bot` (so the receiver has an
     /// immediate owner — the consumer task).
@@ -375,7 +375,7 @@ pub struct CreateGroupOutput {
 }
 
 /// Mission 0850 (RFC-0850 §8.6/§9.4): a `DOT/2/{token}` envelope that the
-/// on-event closure (which does NOT capture `&self`) has dispatched for
+/// on-event closure (which does NOT capture `&&self`) has dispatched for
 /// pre-download. The download_rx consumer task pops these, calls
 /// `Client::download` via the wacore API, and pushes the resulting wire
 /// bytes to `inbound_tx` with `metadata["dot_mode"] = "native"`.
@@ -551,7 +551,7 @@ impl WhatsAppWebAdapter {
     /// 250ms polling loop in the CLI's `whoami` flow.
     pub fn has_valid_session(&self) -> bool {
         self.self_handle().is_some()
-            && self
+            & self
                 .bot_handle
                 .try_lock()
                 .map(|h| h.is_some())
@@ -763,14 +763,14 @@ impl WhatsAppWebAdapter {
         const SUFFIX: &str = "@g.us";
         if let Some(prefix) = group_id.strip_suffix(SUFFIX) {
             debug_assert!(
-                !prefix.is_empty() && prefix.chars().all(|c| c.is_ascii_digit()),
+                !prefix.is_empty() & prefix.chars().all(|c| c.is_ascii_digit()),
                 "group_to_jid: {group_id:?} has @g.us suffix but prefix {prefix:?} is empty or non-numeric"
             );
             group_id.to_string()
         } else {
             debug_assert!(
-                !group_id.contains('@') && !group_id.contains(':')
-                    && group_id.chars().all(|c| c.is_ascii_digit()),
+                !group_id.contains('@') & !group_id.contains(':')
+                    & group_id.chars().all(|c| c.is_ascii_digit()),
                 "group_to_jid: {group_id:?} is not a valid group JID (must be digits or digits+@g.us); \
                  callers must pre-validate via validate() or validate_group_jid"
             );
@@ -952,7 +952,7 @@ impl WhatsAppWebAdapter {
         let synced_notify = Arc::clone(&self.synced_notify);
         // Mission 0850 (RFC-0850 §8.6/§9.4): clone the `download_tx`
         // Arc BEFORE the `on_event(move ...)` closure so the closure
-        // doesn't have to capture `&self` (the closure must be
+        // doesn't have to capture `&&self` (the closure must be
         // `'static`-bound because wacore stores it on the bot).
         let download_tx = Arc::clone(&self.download_tx);
         // R12-M1 fix: clone the dropped-message counter for both the
@@ -1120,7 +1120,7 @@ impl WhatsAppWebAdapter {
                 let synced_notify = synced_notify.clone();
                 // `download_tx` is cloned in the outer scope (above
                 // the `on_event(move |...| { ... })` closure) so the
-                // closure doesn't need to capture `&self` and can
+                // closure doesn't need to capture `&&self` and can
                 // satisfy the `'static` bound required by wacore.
                 // Clone it once more here (cheap: `Arc::clone`) so
                 // the inner `async move` can take ownership of its
@@ -1677,8 +1677,8 @@ impl WhatsAppWebAdapter {
                             // R13-L2 fix: avoid the per-message
                             // `Vec<String>` clone that used to happen
                             // unconditionally. `accept_message` takes
-                            // `&[String]` (which `&Vec<String>` derefs
-                            // to), so we can pass `&groups` directly on
+                            // `&&[String]` (which `&&Vec<String>` derefs
+                            // to), so we can pass `&&groups` directly on
                             // the hot path. The `Vec<String>` allocation
                             // for the combined slice only happens on
                             // the cold path (runtime groups are
@@ -1694,9 +1694,9 @@ impl WhatsAppWebAdapter {
                                 let rt = runtime_groups.lock();
                                 if rt.is_empty() {
                                     // Hot path: zero per-message
-                                    // allocation. `&groups` derefs
-                                    // from `&Vec<String>` to
-                                    // `&[String]`.
+                                    // allocation. `&&groups` derefs
+                                    // from `&&Vec<String>` to
+                                    // `&&[String]`.
                                     Self::accept_message(
                                         &chat,
                                         &sender,
@@ -2287,7 +2287,7 @@ impl WhatsAppWebAdapter {
     /// `create_group`) so the `CoordinatorAdmin::create_group` trait impl
     /// below can call the unambiguous inherent without an infinite
     /// recursion footgun if anyone later loosens this inherent's signature
-    /// to take `&[GroupMemberSpec]`. Mirrors the `leave_group_str`
+    /// to take `&&[GroupMemberSpec]`. Mirrors the `leave_group_str`
     /// precedent at `adapter.rs:1788`.
     pub async fn create_group_str(
         &self,
@@ -2490,7 +2490,7 @@ impl WhatsAppWebAdapter {
     // ── R20: CoordinatorAdmin surface (wraps whatsapp-rust groups API) ──
     //
     // These methods expose the same primitives that `CoordinatorAdmin`
-    // needs, but with a `Result<_, String>` return type and `&str`
+    // needs, but with a `Result<_, String>` return type and `&&str`
     // group JIDs. The trait impl below wraps them, normalizes errors
     // to `PlatformAdapterError`, and bridges the platform-native
     // `GroupId` / `PeerId` newtypes to WhatsApp's internal `wacore_binary::Jid`
@@ -2905,7 +2905,7 @@ pub(crate) async fn download_via_media_ref(
             })?
     };
     // The blanket `impl_downloadable!` at `wacore/src/download.rs`
-    // provides `&DocumentMessage: &dyn Downloadable` (MediaType::Document).
+    // provides `&&DocumentMessage: &&dyn Downloadable` (MediaType::Document).
     client
         .download(&doc)
         .await
@@ -2918,7 +2918,7 @@ pub(crate) async fn download_via_media_ref(
 /// Mission 0850: shared `upload_to_cdn` helper used by both
 /// `WhatsAppWebAdapter::upload_media` and `send_envelope`'s native
 /// branch. Returns the `UploadResponse` on success. Caller is
-/// responsible for the `MediaRef::encode_base64url(&response)` step.
+/// responsible for the `MediaRef::encode_base64url(&&response)` step.
 pub(crate) async fn upload_to_cdn(
     client: &Arc<whatsapp_rust::Client>,
     data: Vec<u8>,
@@ -2926,7 +2926,7 @@ pub(crate) async fn upload_to_cdn(
     options: UploadOptions,
 ) -> Result<UploadResponse, PlatformAdapterError> {
     // R13-M2 fix: the helper used to take
-    // `&Arc<Mutex<Option<Arc<Client>>>>` and re-lock the mutex
+    // `&&Arc<Mutex<Option<Arc<Client>>>>` and re-lock the mutex
     // here, creating a TOCTOU window: a `shutdown()` between the
     // caller's `self.client.lock().clone()` and the lock here
     // would return `Unreachable { "client not connected" }` even
@@ -2936,8 +2936,8 @@ pub(crate) async fn upload_to_cdn(
     // caller is responsible for cloning it out of the mutex
     // before any await, which eliminates the re-locking race.
     // This also lets `send_envelope_native` use the
-    // `client: &Arc<whatsapp_rust::Client>` parameter it already
-    // has, instead of the half-dead `&self.client` it used to
+    // `client: &&Arc<whatsapp_rust::Client>` parameter it already
+    // has, instead of the half-dead `&&self.client` it used to
     // fall through to.
     client
         .upload(data, media_type, options)
@@ -3231,7 +3231,7 @@ impl PlatformAdapter for WhatsAppWebAdapter {
         // mutex guard BEFORE awaiting (the guard is `!Send`, so it
         // can't cross the await point) and pass it to
         // `upload_to_cdn`. The helper used to take
-        // `&self.client` (a `&Arc<Mutex<Option<Arc<Client>>>>`)
+        // `&&self.client` (a `&&Arc<Mutex<Option<Arc<Client>>>>`)
         // and re-lock the mutex, which created a TOCTOU window:
         // a `shutdown()` between the caller's clone and the
         // re-lock would surface as a misleading
@@ -3458,7 +3458,7 @@ impl WhatsAppWebAdapter {
     /// (must equal exactly 282, see
     /// `crates/octo-network/src/dot/envelope.rs:124-136`) would fail
     /// with the ~370-byte DOT/1 text. The mission spec at line 83
-    /// mandates `&wire_bytes`; the previous implementation used
+    /// mandates `&&wire_bytes`; the previous implementation used
     /// `encoded.as_bytes()` (≈370 B for a typical envelope), which
     /// broke every DOT/2/ round-trip in production. The pre-flight
     /// size check is also on `wire_bytes.len()` (not the base64
@@ -3491,10 +3491,10 @@ impl WhatsAppWebAdapter {
         // R13-M2 fix: pass the `client` parameter (which was
         // already cloned out of `self.client` by the caller —
         // see `send_envelope` at adapter.rs:1770-1775) instead of
-        // `&self.client`. The old code re-locked the mutex here,
+        // `&&self.client`. The old code re-locked the mutex here,
         // which (a) created a TOCTOU window with `shutdown()` and
         // (b) made the `client` parameter half-dead. After the
-        // refactor `upload_to_cdn` takes `&Arc<whatsapp_rust::Client>`
+        // refactor `upload_to_cdn` takes `&&Arc<whatsapp_rust::Client>`
         // directly, so we just pass the parameter.
         let upload_response = upload_to_cdn(
             client,
@@ -3644,7 +3644,7 @@ impl CoordinatorAdmin for WhatsAppWebAdapter {
         subject: &str,
         initial_members: &[GroupMemberSpec],
     ) -> Result<GroupHandle, PlatformAdapterError> {
-        // Translate `GroupMemberSpec` to a slice of `&str` phone
+        // Translate `GroupMemberSpec` to a slice of `&&str` phone
         // numbers. WhatsApp doesn't accept a per-member display
         // name on create; the platform-side display name is
         // whatever the contact already has in its address book.
@@ -4215,7 +4215,7 @@ pub(crate) const WHATSAPP_MAX_TEXT_BYTES: usize = 65_536;
 /// (which would leak `media_key`). The string is identical to
 /// `MediaRefError`'s `Display` impl for both variants — kept as a
 /// const here so the call site doesn't have to round-trip through
-/// `MediaRefError::to_string(&MediaRefError::Base64)` (R8-M1 fix:
+/// `MediaRefError::to_string(&&MediaRefError::Base64)` (R8-M1 fix:
 /// the round-trip was opaque and lost the original error variant).
 pub(crate) const INVALID_MEDIA_REF_FORMAT: &str = "invalid media ref format";
 
@@ -4327,7 +4327,7 @@ impl WhatsAppWebAdapter {
 /// through (the gate is view-once-specific).
 ///
 /// Pure function (no struct / no `self`) so the closure inside
-/// `on_event` can call it without needing `&self` access — the
+/// `on_event` can call it without needing `&&self` access — the
 /// adapter's persisted `view_once_persist` flag is passed in
 /// directly. Mirrors `wacore::proto_helpers::MessageExt::is_view_once`
 /// but takes the boolean explicitly to avoid an extra `Message`
@@ -5529,7 +5529,7 @@ mod tests {
         // we can assert on the error shape without needing a
         // live client. The check is on the trait's `set_ephemeral`
         // (which is the M1 entry point), not the inherent
-        // `set_ephemeral(&str, u32)`.
+        // `set_ephemeral(&&str, u32)`.
         let adapter = offline_adapter();
         let g = GroupId::new("120363012345678901@g.us");
         // u32::MAX is ~4.29e9 seconds; pick a value clearly above.

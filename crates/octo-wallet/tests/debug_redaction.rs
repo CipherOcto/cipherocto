@@ -23,6 +23,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use octo_ident::test_helpers::sample_did;
 use octo_wallet::capability::{
     macaroon::{CapabilityCatalog, Macaroon},
     zk_mint::{CapabilityClass, PrivateWitness, ProofBundle},
@@ -115,7 +116,7 @@ fn capability_key_debug_does_not_leak_bytes() {
     // CapabilityKey has no public constructor — use derive_capability_key
     // with a deterministic (identity, audience, channel) tuple to get one.
     let identity = IdentityKey::from_seed(SEED_MARKER);
-    let audience: octo_wallet::identity::AudienceId = "did:octo:audience".parse().unwrap();
+    let audience: octo_wallet::identity::AudienceId = sample_did(241).parse().unwrap();
     let channel: octo_wallet::identity::ChannelId = "channel-redaction".parse().unwrap();
     let k = octo_wallet::identity::derive_capability_key(&identity, &audience, &channel).unwrap();
     let s = format!("{k:?}");
@@ -176,7 +177,7 @@ fn key_hierarchy_debug_does_not_leak_seed() {
     // derives `identity_seed` only, but a downstream user might Debug a
     // MissionKey or similar — exercise the derive path).
     let m = MissionId {
-        asker_did: "did:octo:a".to_owned(),
+        asker_did: sample_did(169).to_owned(),
         model: "openai/gpt-4".to_owned(),
     };
     let k = h.derive_mission_key(&m).unwrap();
@@ -231,7 +232,7 @@ fn capability_token_debug_does_not_leak_holder_sig_or_chain() {
     let token = CapabilityToken::mint(
         &ROOT_SECRET_MARKER,
         &holder,
-        "did:octo:test",
+        sample_did(192),
         vec![Caveat::Model("gpt-4".to_owned())],
         &catalog,
     )
@@ -259,7 +260,7 @@ fn private_witness_debug_does_not_leak_root_secret_or_holder_sig() {
     let token = CapabilityToken::mint(
         &ROOT_SECRET_MARKER,
         &holder,
-        "did:octo:test",
+        sample_did(192),
         vec![],
         &catalog,
     )
@@ -305,7 +306,7 @@ fn proof_bundle_debug_does_not_leak_stark_proof_bytes() {
             axes_consumed: vec![("input_tokens_per_1k".to_owned(), 1000)],
             cap_root_hash: ROOT_SECRET_MARKER,
             invocation_hash: [0xAB; 32],
-            holder_did: "did:octo:test".to_owned(),
+            holder_did: sample_did(192).to_owned(),
             current_unix_time: 1_700_000_000,
             output_hash: None,
             provider_slot_id: "openai-prod".to_owned(),
@@ -425,7 +426,7 @@ fn debug_works_end_to_end_with_no_panic() {
     let token = CapabilityToken::mint(
         &ROOT_SECRET_MARKER,
         &holder,
-        "did:octo:alice",
+        sample_did(3),
         vec![
             Caveat::Model("gpt-4".to_owned()),
             Caveat::Before(1_700_000_000),

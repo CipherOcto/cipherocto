@@ -526,7 +526,7 @@ mod tests {
         let m = Marketplace::open_in_memory().unwrap();
         let now = current_unix();
         m.put(&sample_ask(
-            "did:octo:a",
+            &octo_ident::test_helpers::sample_did(164),
             "openai/gpt-4",
             30_000,
             now + 1000,
@@ -540,14 +540,14 @@ mod tests {
         ))
         .unwrap();
         m.put(&sample_ask(
-            "did:octo:c",
+            &octo_ident::test_helpers::sample_did(62),
             "openai/gpt-4",
             10_000,
             now + 1000,
         ))
         .unwrap();
         let cheapest = m.cheapest("openai/gpt-4").expect("cheapest");
-        assert_eq!(cheapest.asker_did, "did:octo:c");
+        assert_eq!(cheapest.asker_did, octo_ident::test_helpers::sample_did(62));
         assert_eq!(cheapest.cost_per_1k, 10_000);
     }
 
@@ -563,21 +563,24 @@ mod tests {
         let now = current_unix();
         // Expired (cheap) Ask must NOT be returned even if cheaper.
         m.put(&sample_ask(
-            "did:octo:cheap",
+            &octo_ident::test_helpers::sample_did(166),
             "openai/gpt-4",
             1_000,
             now - 100,
         ))
         .unwrap();
         m.put(&sample_ask(
-            "did:octo:active",
+            &octo_ident::test_helpers::sample_did(106),
             "openai/gpt-4",
             50_000,
             now + 1000,
         ))
         .unwrap();
         let cheapest = m.cheapest("openai/gpt-4").expect("cheapest");
-        assert_eq!(cheapest.asker_did, "did:octo:active");
+        assert_eq!(
+            cheapest.asker_did,
+            octo_ident::test_helpers::sample_did(106)
+        );
         assert_eq!(cheapest.cost_per_1k, 50_000);
     }
 
@@ -586,14 +589,14 @@ mod tests {
         let m = Marketplace::open_in_memory().unwrap();
         let now = current_unix();
         m.put(&sample_ask(
-            "did:octo:a",
+            &octo_ident::test_helpers::sample_did(164),
             "openai/gpt-4",
             10_000,
             now + 1000,
         ))
         .unwrap();
         m.put(&sample_ask(
-            "did:octo:a",
+            &octo_ident::test_helpers::sample_did(164),
             "anthropic/claude",
             20_000,
             now + 1000,
@@ -606,11 +609,15 @@ mod tests {
             now + 1000,
         ))
         .unwrap();
-        let alice_asks = m.list_by_asker("did:octo:a").unwrap();
+        let alice_asks = m
+            .list_by_asker(&octo_ident::test_helpers::sample_did(164))
+            .unwrap();
         assert_eq!(alice_asks.len(), 2);
         let bob_asks = m.list_by_asker("did:octo:b").unwrap();
         assert_eq!(bob_asks.len(), 1);
-        let none = m.list_by_asker("did:octo:nonexistent").unwrap();
+        let none = m
+            .list_by_asker(&octo_ident::test_helpers::sample_did(9))
+            .unwrap();
         assert!(none.is_empty());
     }
 
@@ -627,7 +634,7 @@ mod tests {
         let m = Marketplace::open_in_memory().unwrap();
         let now = current_unix();
         m.put(&sample_ask(
-            "did:octo:a",
+            &octo_ident::test_helpers::sample_did(164),
             "openai/gpt-4",
             30_000,
             now + 1000,
@@ -642,7 +649,7 @@ mod tests {
             (book.ask_count(), (best.spec.asker_did.clone(), best.price))
         };
         assert_eq!(ask_count, 1);
-        assert_eq!(best_asker.0, "did:octo:a");
+        assert_eq!(best_asker.0, octo_ident::test_helpers::sample_did(164));
         assert_eq!(best_asker.1, 30_000);
     }
 
@@ -652,7 +659,7 @@ mod tests {
         let now = current_unix();
         // Cheap but expired → should NOT be in the orderbook.
         m.put(&sample_ask(
-            "did:octo:expired",
+            &octo_ident::test_helpers::sample_did(204),
             "openai/gpt-4",
             1_000,
             now - 1,
@@ -660,7 +667,7 @@ mod tests {
         .unwrap();
         // Active but expensive → in the orderbook.
         m.put(&sample_ask(
-            "did:octo:active",
+            &octo_ident::test_helpers::sample_did(106),
             "openai/gpt-4",
             50_000,
             now + 1000,
@@ -672,7 +679,10 @@ mod tests {
             assert_eq!(book.ask_count(), 1);
         }
         let cheapest = m.cheapest("openai/gpt-4").expect("cheapest");
-        assert_eq!(cheapest.asker_did, "did:octo:active");
+        assert_eq!(
+            cheapest.asker_did,
+            octo_ident::test_helpers::sample_did(106)
+        );
     }
 
     #[test]
@@ -680,7 +690,7 @@ mod tests {
         let m = Marketplace::open_in_memory().unwrap();
         let now = current_unix();
         m.put(&sample_ask(
-            "did:octo:a",
+            &octo_ident::test_helpers::sample_did(164),
             "openai/gpt-4",
             30_000,
             now + 1000,
@@ -710,14 +720,14 @@ mod tests {
         let m = Marketplace::open_in_memory().unwrap();
         let now = current_unix();
         m.put(&sample_ask(
-            "did:octo:good",
+            &octo_ident::test_helpers::sample_did(35),
             "openai/gpt-4",
             30_000,
             now + 1000,
         ))
         .unwrap();
         m.put(&sample_ask(
-            "did:octo:bad",
+            &octo_ident::test_helpers::sample_did(79),
             "openai/gpt-4",
             10_000, // cheaper but excluded
             now + 1000,
@@ -726,11 +736,12 @@ mod tests {
 
         // Configure circuit-breaker at 0.5 success_rate.
         m.set_min_reputation(0.5);
-        m.set_provider_score(score("did:octo:bad", 0.3, 0, 10));
+        m.set_provider_score(score(&octo_ident::test_helpers::sample_did(79), 0.3, 0, 10));
 
         let cheapest = m.cheapest("openai/gpt-4").expect("cheapest");
         assert_eq!(
-            cheapest.asker_did, "did:octo:good",
+            cheapest.asker_did,
+            octo_ident::test_helpers::sample_did(35),
             "provider below reputation threshold must be excluded"
         );
         assert_eq!(cheapest.cost_per_1k, 30_000);
@@ -741,14 +752,14 @@ mod tests {
         let m = Marketplace::open_in_memory().unwrap();
         let now = current_unix();
         m.put(&sample_ask(
-            "did:octo:borderline",
+            &octo_ident::test_helpers::sample_did(191),
             "openai/gpt-4",
             10_000,
             now + 1000,
         ))
         .unwrap();
         m.put(&sample_ask(
-            "did:octo:good",
+            &octo_ident::test_helpers::sample_did(35),
             "openai/gpt-4",
             30_000,
             now + 1000,
@@ -756,10 +767,18 @@ mod tests {
         .unwrap();
 
         m.set_min_reputation(0.5);
-        m.set_provider_score(score("did:octo:borderline", 0.5, 0, 10)); // exactly threshold
+        m.set_provider_score(score(
+            &octo_ident::test_helpers::sample_did(191),
+            0.5,
+            0,
+            10,
+        )); // exactly threshold
 
         let cheapest = m.cheapest("openai/gpt-4").expect("cheapest");
-        assert_eq!(cheapest.asker_did, "did:octo:borderline");
+        assert_eq!(
+            cheapest.asker_did,
+            octo_ident::test_helpers::sample_did(191)
+        );
     }
 
     #[test]
@@ -767,25 +786,26 @@ mod tests {
         let m = Marketplace::open_in_memory().unwrap();
         let now = current_unix();
         m.put(&sample_ask(
-            "did:octo:bad",
+            &octo_ident::test_helpers::sample_did(79),
             "openai/gpt-4",
             10_000,
             now + 1000,
         ))
         .unwrap();
         m.put(&sample_ask(
-            "did:octo:good",
+            &octo_ident::test_helpers::sample_did(35),
             "openai/gpt-4",
             30_000,
             now + 1000,
         ))
         .unwrap();
         // No min_reputation set; default is 0.0 → no filtering.
-        m.set_provider_score(score("did:octo:bad", 0.0, 0, 10));
+        m.set_provider_score(score(&octo_ident::test_helpers::sample_did(79), 0.0, 0, 10));
 
         let cheapest = m.cheapest("openai/gpt-4").expect("cheapest");
         assert_eq!(
-            cheapest.asker_did, "did:octo:bad",
+            cheapest.asker_did,
+            octo_ident::test_helpers::sample_did(79),
             "with threshold=0.0, no providers are excluded"
         );
     }
@@ -795,7 +815,7 @@ mod tests {
         let m = Marketplace::open_in_memory().unwrap();
         let now = current_unix();
         m.put(&sample_ask(
-            "did:octo:unknown",
+            &octo_ident::test_helpers::sample_did(69),
             "openai/gpt-4",
             10_000,
             now + 1000,
@@ -806,23 +826,25 @@ mod tests {
         // No score registered for `did:octo:unknown` → treat as max reputation.
 
         let cheapest = m.cheapest("openai/gpt-4").expect("cheapest");
-        assert_eq!(cheapest.asker_did, "did:octo:unknown");
+        assert_eq!(cheapest.asker_did, octo_ident::test_helpers::sample_did(69));
     }
 
     #[test]
     fn record_outcome_updates_ewma_success_rate() {
         let m = Marketplace::open_in_memory().unwrap();
-        m.record_outcome("did:octo:p", true, 100);
-        m.record_outcome("did:octo:p", true, 100);
+        m.record_outcome(&octo_ident::test_helpers::sample_did(181), true, 100);
+        m.record_outcome(&octo_ident::test_helpers::sample_did(181), true, 100);
         let s = m
-            .provider_score("did:octo:p")
+            .provider_score(&octo_ident::test_helpers::sample_did(181))
             .expect("score registered after two observations");
         assert!(s.success_rate > 0.9, "success_rate={}", s.success_rate);
         assert_eq!(s.latency_ms, 100);
         assert_eq!(s.samples, 2);
 
-        m.record_outcome("did:octo:p", false, 100);
-        let s = m.provider_score("did:octo:p").unwrap();
+        m.record_outcome(&octo_ident::test_helpers::sample_did(181), false, 100);
+        let s = m
+            .provider_score(&octo_ident::test_helpers::sample_did(181))
+            .unwrap();
         assert!(
             s.success_rate < 0.9 && s.success_rate > 0.0,
             "EWMA should decay: success_rate={}",
@@ -858,18 +880,25 @@ mod tests {
         // Cheaper-but-slow (10k, 5s).
         put_ask_with_latency(
             &m,
-            "did:octo:cheap",
+            &octo_ident::test_helpers::sample_did(166),
             "openai/gpt-4",
             10_000,
             now + 1000,
             5_000,
         );
         // Mid-price + fast (30k, 100ms) — should win under prefer_latency.
-        put_ask_with_latency(&m, "did:octo:fast", "openai/gpt-4", 30_000, now + 1000, 100);
+        put_ask_with_latency(
+            &m,
+            &octo_ident::test_helpers::sample_did(232),
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+            100,
+        );
         // Slower + more expensive (50k, 4s).
         put_ask_with_latency(
             &m,
-            "did:octo:slow",
+            &octo_ident::test_helpers::sample_did(110),
             "openai/gpt-4",
             50_000,
             now + 1000,
@@ -880,7 +909,8 @@ mod tests {
             .cheapest_with_ranking("openai/gpt-4", LatencyRanking::prefer_latency())
             .expect("a non-excluded provider must exist");
         assert_eq!(
-            best.asker_did, "did:octo:fast",
+            best.asker_did,
+            octo_ident::test_helpers::sample_did(232),
             "lower latency must beat cheaper price when prefer_latency=true"
         );
         // Latency must surface on the entry.
@@ -893,17 +923,25 @@ mod tests {
         let now = current_unix();
         put_ask_with_latency(
             &m,
-            "did:octo:cheap",
+            &octo_ident::test_helpers::sample_did(166),
             "openai/gpt-4",
             10_000,
             now + 1000,
             5_000,
         );
-        put_ask_with_latency(&m, "did:octo:fast", "openai/gpt-4", 30_000, now + 1000, 100);
+        put_ask_with_latency(
+            &m,
+            &octo_ident::test_helpers::sample_did(232),
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+            100,
+        );
 
         let best = m.cheapest("openai/gpt-4").expect("cheapest");
         assert_eq!(
-            best.asker_did, "did:octo:cheap",
+            best.asker_did,
+            octo_ident::test_helpers::sample_did(166),
             "default cheapest() must preserve price-only ranking"
         );
     }
@@ -912,12 +950,24 @@ mod tests {
     fn cheapest_with_ranking_returns_none_when_all_excluded() {
         let m = Marketplace::open_in_memory().unwrap();
         let now = current_unix();
-        put_ask_with_latency(&m, "did:octo:a", "openai/gpt-4", 10_000, now + 1000, 100);
+        put_ask_with_latency(
+            &m,
+            &octo_ident::test_helpers::sample_did(164),
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+            100,
+        );
         put_ask_with_latency(&m, "did:octo:b", "openai/gpt-4", 20_000, now + 1000, 200);
 
         // Override both providers with bad scores so they fall below
         // the threshold.
-        m.set_provider_score(score("did:octo:a", 0.1, 100, 10));
+        m.set_provider_score(score(
+            &octo_ident::test_helpers::sample_did(164),
+            0.1,
+            100,
+            10,
+        ));
         m.set_provider_score(score("did:octo:b", 0.2, 200, 10));
         m.set_min_reputation(0.5);
 
@@ -931,16 +981,35 @@ mod tests {
         let now = current_unix();
         // Cheapest ask from a bad-rep provider should be skipped even
         // under latency-aware ranking.
-        put_ask_with_latency(&m, "did:octo:bad", "openai/gpt-4", 10_000, now + 1000, 50);
-        put_ask_with_latency(&m, "did:octo:good", "openai/gpt-4", 30_000, now + 1000, 100);
+        put_ask_with_latency(
+            &m,
+            &octo_ident::test_helpers::sample_did(79),
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+            50,
+        );
+        put_ask_with_latency(
+            &m,
+            &octo_ident::test_helpers::sample_did(35),
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+            100,
+        );
 
         m.set_min_reputation(0.5);
-        m.set_provider_score(score("did:octo:bad", 0.1, 50, 10));
+        m.set_provider_score(score(
+            &octo_ident::test_helpers::sample_did(79),
+            0.1,
+            50,
+            10,
+        ));
 
         let best = m
             .cheapest_with_ranking("openai/gpt-4", LatencyRanking::prefer_latency())
             .expect("good provider remains eligible");
-        assert_eq!(best.asker_did, "did:octo:good");
+        assert_eq!(best.asker_did, octo_ident::test_helpers::sample_did(35));
     }
 
     #[test]
@@ -949,19 +1018,27 @@ mod tests {
         let now = current_unix();
         put_ask_with_latency(
             &m,
-            "did:octo:cheap",
+            &octo_ident::test_helpers::sample_did(166),
             "openai/gpt-4",
             10_000,
             now + 1000,
             5_000,
         );
-        put_ask_with_latency(&m, "did:octo:fast", "openai/gpt-4", 30_000, now + 1000, 100);
+        put_ask_with_latency(
+            &m,
+            &octo_ident::test_helpers::sample_did(232),
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+            100,
+        );
 
         let best = m
             .cheapest_with_ranking("openai/gpt-4", LatencyRanking::cheapest())
             .expect("cheapest");
         assert_eq!(
-            best.asker_did, "did:octo:cheap",
+            best.asker_did,
+            octo_ident::test_helpers::sample_did(166),
             "with price-only ranking, the cheapest ask wins regardless of latency"
         );
     }

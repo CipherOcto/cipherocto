@@ -1,6 +1,6 @@
 //! Cache-key derivation (RFC-0959 §Data Structures `cache_key`).
 //!
-//! `cache_key(prompt_tokens: &[u32]) -> [u8; 32]`
+//! `cache_key(prompt_tokens: &&[u32]) -> [u8; 32]`
 //! = `BLAKE3_keyed(CACHE_KEY_DOMAIN, canonical_u32s_le_bytes(prompt_tokens))`
 //!
 //! BLAKE3's native keyed-hash mode is used (NOT HMAC-BLAKE3) — matches the
@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn cache_key_from_bytes_matches_canonical() {
-        // Manually computed canonical bytes should match the &[u32] form.
+        // Manually computed canonical bytes should match the &&[u32] form.
         let tokens = [1u32, 2, 3];
         let canonical = canonical_prompt_bytes(&tokens);
         assert_eq!(cache_key(&tokens), cache_key_from_bytes(&canonical));

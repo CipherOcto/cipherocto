@@ -91,7 +91,7 @@ impl AdapterLifecycle {
     /// (e.g. `shutting-down`) is more operator-friendly
     /// than the PascalCase `Display` form.
     ///
-    /// Returns a `&'static str` for the current variants;
+    /// Returns a `&&'static str` for the current variants;
     /// any future variant (the enum is `#[non_exhaustive]`)
     /// falls back to the PascalCase `Display` form so the
     /// CLI still gets a usable label rather than panicking

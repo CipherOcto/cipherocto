@@ -396,7 +396,12 @@ mod tests {
     #[test]
     fn put_and_get_roundtrip() {
         let repo = AskRepository::open_in_memory().unwrap();
-        let ask = sample_ask("did:octo:a", "openai/gpt-4", 30_000, 1_900_000_000);
+        let ask = sample_ask(
+            &octo_ident::test_helpers::sample_did(94),
+            "openai/gpt-4",
+            30_000,
+            1_900_000_000,
+        );
         let id = ask.id();
         repo.put(&ask).unwrap();
         let got = repo.get(&id).unwrap().expect("get");
@@ -409,7 +414,12 @@ mod tests {
     #[test]
     fn put_overwrites_existing() {
         let repo = AskRepository::open_in_memory().unwrap();
-        let mut ask = sample_ask("did:octo:a", "openai/gpt-4", 30_000, 1_900_000_000);
+        let mut ask = sample_ask(
+            &octo_ident::test_helpers::sample_did(94),
+            "openai/gpt-4",
+            30_000,
+            1_900_000_000,
+        );
         repo.put(&ask).unwrap();
         // Update rate, keep same id (since nonce + asker + model + rates are identical).
         ask.rates.rates[0].rate_per_1k = 25_000;
@@ -430,9 +440,19 @@ mod tests {
         let repo = AskRepository::open_in_memory().unwrap();
         let axes = PricingAxis::standard_axes();
         let now = 1_700_000_000;
-        let cheap = sample_ask("did:octo:a", "openai/gpt-4", 20_000, now + 1000);
+        let cheap = sample_ask(
+            &octo_ident::test_helpers::sample_did(94),
+            "openai/gpt-4",
+            20_000,
+            now + 1000,
+        );
         let mid = sample_ask("did:octo:b", "openai/gpt-4", 30_000, now + 1000);
-        let exp = sample_ask("did:octo:c", "openai/gpt-4", 10_000, now + 1000);
+        let exp = sample_ask(
+            &octo_ident::test_helpers::sample_did(50),
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+        );
         repo.put(&mid).unwrap();
         repo.put(&cheap).unwrap();
         repo.put(&exp).unwrap();
@@ -449,7 +469,12 @@ mod tests {
         let repo = AskRepository::open_in_memory().unwrap();
         let axes = PricingAxis::standard_axes();
         let now = 1_700_000_000;
-        let active = sample_ask("did:octo:a", "openai/gpt-4", 50_000, now + 1000);
+        let active = sample_ask(
+            &octo_ident::test_helpers::sample_did(94),
+            "openai/gpt-4",
+            50_000,
+            now + 1000,
+        );
         let expired = sample_ask("did:octo:b", "openai/gpt-4", 1_000, now - 100);
         repo.put(&active).unwrap();
         repo.put(&expired).unwrap();
@@ -480,8 +505,18 @@ mod tests {
         let repo = AskRepository::open_in_memory().unwrap();
         let axes = PricingAxis::standard_axes();
         let now = 1_700_000_000;
-        let free = sample_ask("did:octo:free", "openai/gpt-4", 0, now + 1000);
-        let paid = sample_ask("did:octo:paid", "openai/gpt-4", 30_000, now + 1000);
+        let free = sample_ask(
+            &octo_ident::test_helpers::sample_did(22),
+            "openai/gpt-4",
+            0,
+            now + 1000,
+        );
+        let paid = sample_ask(
+            &octo_ident::test_helpers::sample_did(142),
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+        );
         repo.put(&paid).unwrap();
         repo.put(&free).unwrap();
         let winner = repo
@@ -489,7 +524,7 @@ mod tests {
             .unwrap()
             .expect("cheapest");
         // Free Ask wins cheapest (lowest cost among candidates).
-        assert_eq!(winner.asker_did, "did:octo:free");
+        assert_eq!(winner.asker_did, octo_ident::test_helpers::sample_did(22));
         // Cost for free Ask is non-negative (using default rates for axes not in the
         // Ask's rates table; rate=0 only for the axis explicitly listed in rates).
         let consumed: Vec<_> = axes.iter().map(|a| (a.id.clone(), 1000u64)).collect();
@@ -530,27 +565,46 @@ mod tests {
     fn list_by_asker_filters() {
         let repo = AskRepository::open_in_memory().unwrap();
         let now = 1_700_000_000;
-        let a1 = sample_ask("did:octo:a", "openai/gpt-4", 10_000, now + 1000);
-        let a2 = sample_ask("did:octo:a", "anthropic/claude", 20_000, now + 1000);
+        let a1 = sample_ask(
+            &octo_ident::test_helpers::sample_did(94),
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+        );
+        let a2 = sample_ask(
+            &octo_ident::test_helpers::sample_did(94),
+            "anthropic/claude",
+            20_000,
+            now + 1000,
+        );
         let b1 = sample_ask("did:octo:b", "openai/gpt-4", 30_000, now + 1000);
         for a in [&a1, &a2, &b1] {
             repo.put(a).unwrap();
         }
-        let alice_asks = repo.list_by_asker("did:octo:a", now).unwrap();
+        let alice_asks = repo
+            .list_by_asker(&octo_ident::test_helpers::sample_did(94), now)
+            .unwrap();
         assert_eq!(alice_asks.len(), 2);
         for ask in &alice_asks {
-            assert_eq!(ask.asker_did, "did:octo:a");
+            assert_eq!(ask.asker_did, octo_ident::test_helpers::sample_did(94));
         }
         let bob_asks = repo.list_by_asker("did:octo:b", now).unwrap();
         assert_eq!(bob_asks.len(), 1);
-        let empty = repo.list_by_asker("did:octo:nonexistent", now).unwrap();
+        let empty = repo
+            .list_by_asker(&octo_ident::test_helpers::sample_did(100), now)
+            .unwrap();
         assert!(empty.is_empty());
     }
 
     #[test]
     fn delete_removes_ask() {
         let repo = AskRepository::open_in_memory().unwrap();
-        let ask = sample_ask("did:octo:a", "openai/gpt-4", 30_000, 1_900_000_000);
+        let ask = sample_ask(
+            &octo_ident::test_helpers::sample_did(94),
+            "openai/gpt-4",
+            30_000,
+            1_900_000_000,
+        );
         let id = ask.id();
         repo.put(&ask).unwrap();
         assert!(repo.get(&id).unwrap().is_some());

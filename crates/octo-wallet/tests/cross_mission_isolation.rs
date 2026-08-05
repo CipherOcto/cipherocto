@@ -12,9 +12,9 @@
 //!    even when (asker, model, axis) collide
 //! 6. Different identity seeds → distinct mission keys (per-identity isolation)
 
-#![allow(clippy::doc_markdown)]
-
+#[allow(clippy::doc_markdown)]
 use blake3::Hash;
+use octo_ident::test_helpers::sample_did;
 use octo_wallet::{AxisSubkey, KeyHierarchy, MissionId, MissionKey};
 
 const SEED: [u8; 32] = [
@@ -31,10 +31,10 @@ fn mission(asker: &str, model: &str) -> MissionId {
 fn distinct_askers_distinct_mission_keys() {
     let h = KeyHierarchy::new(SEED);
     let k_a = h
-        .derive_mission_key(&mission("did:octo:alice", "openai/gpt-4"))
+        .derive_mission_key(&mission(&sample_did(156), "openai/gpt-4"))
         .unwrap();
     let k_b = h
-        .derive_mission_key(&mission("did:octo:bob", "openai/gpt-4"))
+        .derive_mission_key(&mission(&sample_did(207), "openai/gpt-4"))
         .unwrap();
     assert_ne!(
         k_a.as_bytes(),
@@ -48,10 +48,10 @@ fn distinct_askers_distinct_mission_keys() {
 fn distinct_models_distinct_mission_keys() {
     let h = KeyHierarchy::new(SEED);
     let k_gpt = h
-        .derive_mission_key(&mission("did:octo:alice", "openai/gpt-4"))
+        .derive_mission_key(&mission(&sample_did(156), "openai/gpt-4"))
         .unwrap();
     let k_claude = h
-        .derive_mission_key(&mission("did:octo:alice", "anthropic/claude-3-opus"))
+        .derive_mission_key(&mission(&sample_did(156), "anthropic/claude-3-opus"))
         .unwrap();
     assert_ne!(
         k_gpt.as_bytes(),
@@ -67,9 +67,9 @@ fn axis_subkeys_isolated_across_missions() {
     let h = KeyHierarchy::new(SEED);
     let axis = "input_tokens_per_1k";
 
-    let m_alice_gpt = mission("did:octo:alice", "openai/gpt-4");
-    let m_bob_gpt = mission("did:octo:bob", "openai/gpt-4");
-    let m_alice_claude = mission("did:octo:alice", "anthropic/claude-3-opus");
+    let m_alice_gpt = mission(&sample_did(156), "openai/gpt-4");
+    let m_bob_gpt = mission(&sample_did(207), "openai/gpt-4");
+    let m_alice_claude = mission(&sample_did(156), "anthropic/claude-3-opus");
 
     let sk_alice_gpt = h.derive_axis_subkey(&m_alice_gpt, axis).unwrap();
     let sk_bob_gpt = h.derive_axis_subkey(&m_bob_gpt, axis).unwrap();
@@ -92,7 +92,7 @@ fn axis_subkeys_isolated_across_missions() {
 #[test]
 fn derive_is_deterministic() {
     let h = KeyHierarchy::new(SEED);
-    let m = mission("did:octo:alice", "openai/gpt-4");
+    let m = mission(&sample_did(156), "openai/gpt-4");
 
     let k1: MissionKey = h.derive_mission_key(&m).unwrap();
     let k2: MissionKey = h.derive_mission_key(&m).unwrap();
@@ -109,8 +109,8 @@ fn derive_is_deterministic() {
 #[test]
 fn hmac_tag_cross_mission_rejected() {
     let h = KeyHierarchy::new(SEED);
-    let m_alice_gpt = mission("did:octo:alice", "openai/gpt-4");
-    let m_bob_gpt = mission("did:octo:bob", "openai/gpt-4");
+    let m_alice_gpt = mission(&sample_did(156), "openai/gpt-4");
+    let m_bob_gpt = mission(&sample_did(207), "openai/gpt-4");
     let axis = "input_tokens_per_1k";
 
     // Two missions with distinct askers — same model + axis identifier.
@@ -159,7 +159,7 @@ fn distinct_seeds_distinct_mission_keys() {
 
     let h_a = KeyHierarchy::new(SEED);
     let h_b = KeyHierarchy::new(seed_b);
-    let m = mission("did:octo:alice", "openai/gpt-4");
+    let m = mission(&sample_did(156), "openai/gpt-4");
 
     let k_a = h_a.derive_mission_key(&m).unwrap();
     let k_b = h_b.derive_mission_key(&m).unwrap();
@@ -176,7 +176,7 @@ fn distinct_seeds_distinct_mission_keys() {
 #[test]
 fn mission_id_validation_prevents_empty_keys() {
     assert!(MissionId::new("", "openai/gpt-4").is_err());
-    assert!(MissionId::new("did:octo:alice", "").is_err());
+    assert!(MissionId::new(&sample_did(156), "").is_err());
 }
 
 /// 8. Symmetry / closure — given the public API, a receiver can re-derive
@@ -187,7 +187,7 @@ fn mission_id_validation_prevents_empty_keys() {
 fn mission_key_rederivable_from_seed() {
     let h1 = KeyHierarchy::new(SEED);
     let h2 = KeyHierarchy::new(SEED);
-    let m = mission("did:octo:alice", "openai/gpt-4");
+    let m = mission(&sample_did(156), "openai/gpt-4");
 
     let k1 = h1.derive_mission_key(&m).unwrap();
     let k2 = h2.derive_mission_key(&m).unwrap();

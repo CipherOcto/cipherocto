@@ -18,6 +18,7 @@ use std::collections::{HashMap, HashSet};
 /// Empty `CapabilityCatalog` for tests that don't use `WrappedOnly` caveats.
 /// `CapabilityCatalog` is in scope but `InMemoryCatalog` is `cfg(test)`-only
 /// (unit tests inside the crate), so we inline a stub for integration tests.
+use octo_ident::test_helpers::sample_did;
 #[derive(Debug, Default)]
 struct EmptyCatalog;
 
@@ -66,7 +67,7 @@ fn build_capability(caveats: Vec<Caveat>) -> CapabilityToken {
     CapabilityToken::mint(
         &fresh_root_secret(),
         &holder,
-        "did:octo:test",
+        sample_did(81),
         caveats,
         &catalog,
     )

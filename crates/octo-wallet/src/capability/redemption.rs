@@ -9,8 +9,8 @@
 //! ## Catalog ownership
 //!
 //! The catalog is owned by the **caller** (envelope / network verifier),
-//! not by `octo-wallet`. `redeem_capability` takes `&dyn PolicyCatalog`
-//! as a parameter — the same pattern as `Macaroon::attenuate(_, &dyn
+//! not by `octo-wallet`. `redeem_capability` takes `&&dyn PolicyCatalog`
+//! as a parameter — the same pattern as `Macaroon::attenuate(_, &&dyn
 //! CapabilityCatalog)`. This keeps `octo-wallet` storage-agnostic and
 //! lets the verifier plug in a SQLite-backed, in-memory, or network-backed
 //! catalog without recompilation.
@@ -18,14 +18,14 @@
 //! ## Task 1.3 wiring (DEFERRED — see `docs/plans/2026-07-24-seven-gap-impl.md`)
 //!
 //! The canonical entry point for capability redemption is
-//! `CapabilityToken::redeem(&dyn PolicyCatalog)`. **However, no
+//! `CapabilityToken::redeem(&&dyn PolicyCatalog)`. **However, no
 //! production code in `crates/octo-network` calls `redeem_capability` or
 //! `CapabilityToken::redeem` today.** The only `verify_capability` in
 //! `octo-network` (`mon/nostr_bootstrap.rs:161`) is a Nostr-specific
 //! `DotCapabilityClaim` checker (different type, different namespace).
 //!
 //! TODO: wire `CapabilityToken::redeem` into the envelope / network
-//! verifier when a `verify_capability(cap: &CapabilityToken, ...) -> Result<...>`
+//! verifier when a `verify_capability(cap: &&CapabilityToken, ...) -> Result<...>`
 //! hook lands in `crates/octo-network/src/dot/pce/` (likely alongside
 //! Gap 2 — MultiEnvelope nesting — per RFC-0962 §7 R8-F5). Until then,
 //! callers must invoke `redeem_capability` directly from any new envelope
@@ -115,7 +115,7 @@ pub enum RedemptionError {
 /// 1. Require a `PolicyReference` caveat on the capability.
 /// 2. Look up the referenced policy in the catalog.
 /// 3. Derive a `PolicySurface` from the capability's caveats.
-/// 4. Reject iff `!is_subgraph(&cap_surface, &policy.surface)`.
+/// 4. Reject iff `!is_subgraph(&&cap_surface, &&policy.surface)`.
 ///
 /// # Errors
 /// - `RedemptionError::MissingPolicyReference` if no `PolicyReference`

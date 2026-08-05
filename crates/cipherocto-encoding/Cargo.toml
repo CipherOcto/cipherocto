@@ -18,6 +18,8 @@ thiserror.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+# Mission 0010-b: test fixtures use sample_did() from octo-ident test_helpers
+octo-ident = { path = "../octo-ident" }
 
 [lints.rust]
 unsafe_code = "forbid"

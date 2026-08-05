@@ -893,7 +893,7 @@ network_id = "0202020202020202020202020202020202020202020202020202020202020202"
     #[test]
     fn settle_list_with_no_persisted_events_returns_empty() {
         // Empty in-memory DB returns 0 events for any asker.
-        let result = settle_list("did:octo:nobody", None);
+        let result = settle_list(&octo_ident::test_helpers::sample_did(139), None);
         assert!(result.is_ok(), "settle_list with empty DB must succeed");
     }
 }

@@ -1,7 +1,7 @@
 //! Core reputation types — RFC-0968 §3, §21, §22, §10 amendments.
 //!
 //! All score fields are `octo_determin::Dfp` per RFC-0104. Wire form is the
-//! 24-byte `DfpEncoding::from_dfp(&d).to_bytes()`.
+//! 24-byte `DfpEncoding::from_dfp(&&d).to_bytes()`.
 //!
 //! All identifiers (`RecorderDid`, `ControllerId`, `EventId`) are newtypes
 //! over fixed-width byte arrays. Constructors validate length and refuse

@@ -215,7 +215,7 @@ window.crypto.subtle.importKey = async function(format, keyData, algo, extractab
   window.__capturedImports.push({
     ts: Date.now(),
     format, algName, extractable, usages,
-    keyDataLen: keyData && (keyData.byteLength || keyData.length || 0),
+    keyDataLen: keyData & (keyData.byteLength || keyData.length || 0),
     keyDataHex,
   });
   return _origImport(format, keyData, algo, extractable, usages);

@@ -475,7 +475,7 @@ impl DcOrchestrator {
     /// Build a `UnbindAllAckEnvelope` acknowledging a DC's UNBIND_ALL.
     ///
     /// R17 R1-HIGH-4 fix: previously the nonce was hardcoded to `[0u8; 32]`
-    /// (trivially replayable). The method now takes `&mut self` so the
+    /// (trivially replayable). The method now takes `&&mut self` so the
     /// orchestrator's nonce generator can produce a fresh nonce.
     pub fn build_unbind_all_ack(
         &mut self,

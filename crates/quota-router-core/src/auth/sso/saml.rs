@@ -248,9 +248,7 @@ impl SamlAssertionParserImpl {
                         in_session_index = false;
                     }
                     // Check if we're reading an attribute value
-                    if in_attribute_statement
-                        && current_attribute_name.is_some()
-                        && !text.is_empty()
+                    if in_attribute_statement && current_attribute_name.is_some() & !text.is_empty()
                     {
                         current_attribute_values.push(text);
                     }

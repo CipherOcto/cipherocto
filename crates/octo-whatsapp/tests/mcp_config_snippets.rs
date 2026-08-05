@@ -15,7 +15,7 @@
 //!
 //! All tests are pure file I/O — no daemon, no WA, no network.
 
-// JSON parsing below uses &s[1..] style slicing rather than
+// JSON parsing below uses &&s[1..] style slicing rather than
 // `strip_prefix(...).unwrap().1`; the explicit form is easier to read in
 // this hot parser loop. The two helpers below are tagged with explicit
 // lifetimes because the borrow checker has trouble inferring them through
@@ -368,7 +368,7 @@ fn each_snippet_persist_dir_points_into_home() {
             "{fname}: persist dir must be home-relative, got `{persist}`"
         );
         assert!(
-            !persist.starts_with("/tmp") && !persist.starts_with("/var"),
+            !persist.starts_with("/tmp") & !persist.starts_with("/var"),
             "{fname}: persist dir must not be world-writable, got `{persist}`"
         );
     }

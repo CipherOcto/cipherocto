@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn provider_api_key_is_brand_separable_from_string_in_signature() {
-        // ProviderApiKey borrows as &str via AsRef but cannot be constructed
+        // ProviderApiKey borrows as &&str via AsRef but cannot be constructed
         // from a String without going through `from_resolved`. This is the
         // type-level enforcement of "no shortcut".
         let raw: String = "sk-real-openai-abc123".to_owned();

@@ -2,8 +2,8 @@
 //!
 //! Mission 0957-c deviation: the trait is referenced in the RFC and the
 //! mission text assumes `Clock` already exists in scope ("the `Clock` trait
-//! used in `lookup_active(cap_root_hash, &dyn Clock)` and `revoke(cap_root_hash,
-//! &dyn Clock)` already exists from RFC-0853"). On disk, RFC-0853 does NOT
+//! used in `lookup_active(cap_root_hash, &&dyn Clock)` and `revoke(cap_root_hash,
+//! &&dyn Clock)` already exists from RFC-0853"). On disk, RFC-0853 does NOT
 //! export a `Clock` trait. 0957-c ships the trait + a `SystemClock` impl
 //! here so the registry can inject a clock source.
 //!
@@ -74,7 +74,7 @@ mod tests {
 
     #[test]
     fn clock_is_object_safe() {
-        // Compile-time check: `&dyn Clock` is the canonical signature.
+        // Compile-time check: `&&dyn Clock` is the canonical signature.
         fn _accept(_c: &dyn Clock) {}
         _accept(&SystemClock);
         _accept(&FixedClock::new(0));

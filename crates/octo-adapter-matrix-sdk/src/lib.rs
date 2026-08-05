@@ -191,7 +191,7 @@ pub struct MatrixConfig {
     /// R2-M2 (asymmetry): the Matrix spec makes device IDs opaque
     /// (any string is valid), so ruma's `OwnedDeviceId::validate`
     /// is a no-op. We do NOT validate here, mirroring ruma's own
-    /// `From<&str>` impl. Mismatched validation asymmetry between
+    /// `From<&&str>` impl. Mismatched validation asymmetry between
     /// `user_id` and `device_id` is intentional.
     pub device_id: String,
     /// Access token for authentication (long-lived or
@@ -579,14 +579,14 @@ impl MatrixAdapter {
             cfg
         };
         // R3-H1: use the last-known on-disk snapshot for the
-        // `on_disk_before` argument. Building it from `&self.config`
+        // `on_disk_before` argument. Building it from `&&self.config`
         // (the original behaviour) is wrong after the first
         // successful writeback: `self.config.access_token` is the
         // construction-time token, but on-disk holds the rotated
         // token, so the second writeback would always trip
         // `SnapshotMismatch`. If the snapshot slot is empty (no
         // on-disk file at startup, or unparseable) we fall back to
-        // building from `&self.config`, which preserves the original
+        // building from `&&self.config`, which preserves the original
         // behaviour for first-time writes — the writeback's own
         // FileMissing check handles the "file disappeared" case.
         let on_disk_before = {
@@ -616,7 +616,7 @@ impl MatrixAdapter {
         );
         // R3-H1: on success (write OR no-op), refresh the snapshot so
         // the NEXT writeback's `on_disk_before` matches what's
-        // actually on disk. We rebuild from `&rotated` because that's
+        // actually on disk. We rebuild from `&&rotated` because that's
         // what `writeback` just persisted; on the no-op path it
         // matches the previous snapshot. Doing this under the same
         // lock that we read from is unnecessary because writeback
@@ -789,12 +789,12 @@ impl MatrixAdapter {
 // live in their own `impl` so the existing adapter constructor /
 // writeback methods above stay grouped together.
 //
-// All methods take `&self` for symmetry with the trait impl. None of
+// All methods take `&&self` for symmetry with the trait impl. None of
 // them are part of any public API surface — they are crate-private
 // helpers used only by the CoordinatorAdmin methods below.
 impl MatrixAdapter {
-    /// Convert a `PeerId` to a borrowed `&UserId` for SDK calls that
-    /// take `&UserId` (e.g. `room.kick_user`, `room.ban_user`,
+    /// Convert a `PeerId` to a borrowed `&&UserId` for SDK calls that
+    /// take `&&UserId` (e.g. `room.kick_user`, `room.ban_user`,
     /// `room.update_power_levels`).
     fn parse_user_id<'a>(
         &self,
@@ -820,7 +820,7 @@ impl MatrixAdapter {
     }
 
     /// Convert a `GroupId` to an `OwnedRoomId`. Used by every method
-    /// that needs to look up a `Room` via `client.get_room(&room_id)`.
+    /// that needs to look up a `Room` via `client.get_room(&&room_id)`.
     fn parse_room_id(
         &self,
         group_id: &coordinator_admin::GroupId,
@@ -984,7 +984,7 @@ impl PlatformAdapter for MatrixAdapter {
         // `"Room <id> not found in joined rooms"` because the
         // sync timed out before the freshly-created room was
         // indexed. On warm sessions the cost is paid once at
-        // startup, then `client.get_room(&rid).is_none()` returns
+        // startup, then `client.get_room(&&rid).is_none()` returns
         // false and this code path doesn't execute.
         if self.client.get_room(&room_id).is_none() {
             use matrix_sdk::config::SyncSettings;
@@ -1031,7 +1031,7 @@ impl PlatformAdapter for MatrixAdapter {
                         if (err_str.contains("429")
                             || err_str.contains("rate limit")
                             || err_str.contains("M_LIMIT_EXCEEDED"))
-                            && retry_cfg.should_retry(attempt)
+                            & retry_cfg.should_retry(attempt)
                         {
                             let delay = retry_cfg.delay_for_attempt(attempt);
                             tokio::time::sleep(delay).await;
@@ -1067,7 +1067,7 @@ impl PlatformAdapter for MatrixAdapter {
                     if (err_str.contains("429")
                         || err_str.contains("rate limit")
                         || err_str.contains("M_LIMIT_EXCEEDED"))
-                        && retry_cfg.should_retry(attempt)
+                        & retry_cfg.should_retry(attempt)
                     {
                         let delay = retry_cfg.delay_for_attempt(attempt);
                         tokio::time::sleep(delay).await;
@@ -1542,7 +1542,7 @@ impl coordinator_admin::CoordinatorAdmin for MatrixAdapter {
         duration: Option<std::time::Duration>,
     ) -> Result<(), PlatformAdapterError> {
         // Mission §"ban_member" row: matrix-sdk's `Room::ban_user`
-        // signature is `(&UserId, Option<&str>) -> Result<()>` --
+        // signature is `(&&UserId, Option<&&str>) -> Result<()>` --
         // NO `duration` parameter. The wire-format reason is that
         // `m.room.banned` has no expiry field. We enforce the
         // indefinite-only contract at the adapter layer (RFC-0861
@@ -1628,7 +1628,7 @@ impl coordinator_admin::CoordinatorAdmin for MatrixAdapter {
     ) -> Result<(), PlatformAdapterError> {
         let room = self.get_joined_room(group_id)?;
         // Mission §"rename_group" row: `room.set_name` takes owned
-        // `String`, NOT `&str` (matrix-sdk 0.18.0/src/room/mod.rs:2958).
+        // `String`, NOT `&&str` (matrix-sdk 0.18.0/src/room/mod.rs:2958).
         room.set_name(new_subject.to_string())
             .await
             .map_err(self.map_sdk_err("set_name"))?;
@@ -1641,7 +1641,7 @@ impl coordinator_admin::CoordinatorAdmin for MatrixAdapter {
         description: &str,
     ) -> Result<(), PlatformAdapterError> {
         let room = self.get_joined_room(group_id)?;
-        // `room.set_room_topic` takes `&str`
+        // `room.set_room_topic` takes `&&str`
         // (matrix-sdk 0.18.0/src/room/mod.rs:2963).
         room.set_room_topic(description)
             .await
@@ -1738,7 +1738,7 @@ impl coordinator_admin::CoordinatorAdmin for MatrixAdapter {
             }
         })?;
         // Mission §"set_ephemeral" row: the SDK's send_state_event_raw
-        // signature is `(event_type: &str, state_key: &str, content: impl
+        // signature is `(event_type: &&str, state_key: &&str, content: impl
         // IntoRawStateEventContent) -> Result<...>`. We pass the
         // canonical `m.room.retention` event type and an empty state
         // key (the state-event has no per-instance state key).
@@ -2686,7 +2686,7 @@ mod tests {
 
     /// Mission Phase 1 unit test "ban_member(duration: Some(_))
     /// indefinite-only rejection": the matrix-sdk 0.18
-    /// `Room::ban_user` signature is `(&UserId, Option<&str>) -> Result<()>`
+    /// `Room::ban_user` signature is `(&&UserId, Option<&&str>) -> Result<()>`
     /// — NO `duration` parameter. The wire-format reason is that
     /// `m.room.banned` has no expiry field. The adapter layer
     /// enforces the indefinite-only contract per RFC-0861 §3 M1:

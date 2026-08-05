@@ -130,7 +130,7 @@ fn live_config() -> WhatsAppConfig {
         pair_code: None,
         // groups starts empty: the new group's JID is not known until
         // `create_group` returns. The E2E test calls
-        // `register_group_at_runtime(&group_jid)` immediately after
+        // `register_group_at_runtime(&&group_jid)` immediately after
         // creation so the public `PlatformAdapter::send_message` path
         // can route the envelope via domain→JID lookup.
         groups: vec![],
@@ -333,19 +333,18 @@ async fn live_e2e_coordinator_creates_group_sends_envelope_receives_self() {
     let bot_digits: String = bot_phone.chars().filter(|c| c.is_ascii_digit()).collect();
     let participant_jids: Vec<String> = meta.members.iter().map(|p| p.0.clone()).collect();
     let creator_in_list = !participant_jids.is_empty()
-        && participant_jids.iter().any(|p_str| {
+        & participant_jids.iter().any(|p_str| {
             // PN match: participant JID contains the bot's phone digits.
             let p_digits: String = p_str.chars().filter(|c| c.is_ascii_digit()).collect();
-            !bot_digits.is_empty()
-                && p_digits.len() >= bot_digits.len()
-                && p_digits.starts_with(&bot_digits)
+            !bot_digits.is_empty() & p_digits.len()
+                >= bot_digits.len() & p_digits.starts_with(&bot_digits)
         });
     let creator_is_lid = participant_jids.iter().any(|p_str| {
         // LID match: the server returned a LID JID for the creator. We
         // accept this as a valid sign of creator presence because LIDs
         // are opaque; the dot-e2e test does not require PN-shape matches.
         let user = p_str.split_once('@').map(|(u, _)| u).unwrap_or("");
-        !user.is_empty() && user.chars().all(|c| c.is_ascii_digit())
+        !user.is_empty() & user.chars().all(|c| c.is_ascii_digit())
     });
     assert!(
         creator_in_list || creator_is_lid,

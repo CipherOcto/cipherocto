@@ -29,7 +29,7 @@
 //!    calls `room.leave()` (idempotent on already-left rooms;
 //!    silently swallows the SDK's `WrongRoomState` error).
 //! 2. **`room_id`s in the session file's `rooms[]` array that the
-//!    SDK no longer resolves via `client.get_room(&rid)`** — these
+//!    SDK no longer resolves via `client.get_room(&&rid)`** — these
 //!    are the exact failure mode of `mx04_05_06_envelope_round_trip`.
 //!    Reported in the summary; only `--update-config` actually
 //!    rewrites the session file.

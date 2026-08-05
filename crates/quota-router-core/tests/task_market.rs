@@ -11,6 +11,7 @@
 // Task 6.1 — TaskType enum + TaskSpec constructors
 // ---------------------------------------------------------------------------
 
+use octo_ident::test_helpers::sample_did;
 use quota_router_core::task_market::{
     Dispute, DisputeReason, Evidence, TaskEscrow, TaskMarket, TaskSpec, TaskType,
 };
@@ -194,8 +195,8 @@ fn task_escrow_new_starts_pending() {
         [0xaa; 32],
         [0x11; 32],
         [0x22; 32],
-        "did:octo:buyer",
-        "did:octo:seller",
+        sample_did(236),
+        sample_did(54),
         100_000,
     );
     assert_eq!(e.state(), EscrowState::Pending);
@@ -210,8 +211,8 @@ fn task_escrow_happy_path_lock_then_settle() {
         [0xaa; 32],
         [0x11; 32],
         [0x22; 32],
-        "did:octo:buyer",
-        "did:octo:seller",
+        sample_did(236),
+        sample_did(54),
         100_000,
     );
     e.lock().expect("lock");
@@ -227,14 +228,14 @@ fn task_escrow_dispute_valid_slashes_seller() {
         [0xaa; 32],
         [0x11; 32],
         [0x22; 32],
-        "did:octo:buyer",
-        "did:octo:seller",
+        sample_did(236),
+        sample_did(54),
         100_000,
     );
     e.lock().expect("lock");
     let dispute = Dispute::new(
         [0xaa; 32],
-        "did:octo:buyer",
+        sample_did(236),
         DisputeReason::ResultMismatch,
         Some(Evidence {
             hash: [0x99; 32],
@@ -242,7 +243,7 @@ fn task_escrow_dispute_valid_slashes_seller() {
         }),
     );
     assert_eq!(dispute.escrow_id, [0xaa; 32]);
-    assert_eq!(dispute.raised_by, "did:octo:buyer");
+    assert_eq!(dispute.raised_by, sample_did(236));
     assert_eq!(dispute.reason, DisputeReason::ResultMismatch);
     assert_eq!(dispute.evidence.expect("evidence").hash, [0x99; 32]);
 
@@ -259,8 +260,8 @@ fn task_escrow_dispute_invalid_confirms_payment() {
         [0xaa; 32],
         [0x11; 32],
         [0x22; 32],
-        "did:octo:buyer",
-        "did:octo:seller",
+        sample_did(236),
+        sample_did(54),
         100_000,
     );
     e.lock().expect("lock");
@@ -276,8 +277,8 @@ fn task_escrow_rejects_lock_from_non_pending() {
         [0xaa; 32],
         [0x11; 32],
         [0x22; 32],
-        "did:octo:buyer",
-        "did:octo:seller",
+        sample_did(236),
+        sample_did(54),
         100_000,
     );
     e.lock().expect("lock");
@@ -290,8 +291,8 @@ fn task_escrow_rejects_settle_from_pending() {
         [0xaa; 32],
         [0x11; 32],
         [0x22; 32],
-        "did:octo:buyer",
-        "did:octo:seller",
+        sample_did(236),
+        sample_did(54),
         100_000,
     );
     assert!(e.settle().is_err());
@@ -303,8 +304,8 @@ fn task_escrow_rejects_dispute_from_pending() {
         [0xaa; 32],
         [0x11; 32],
         [0x22; 32],
-        "did:octo:buyer",
-        "did:octo:seller",
+        sample_did(236),
+        sample_did(54),
         100_000,
     );
     assert!(e.dispute().is_err());
@@ -316,8 +317,8 @@ fn task_escrow_rejects_resolve_from_non_disputed() {
         [0xaa; 32],
         [0x11; 32],
         [0x22; 32],
-        "did:octo:buyer",
-        "did:octo:seller",
+        sample_did(236),
+        sample_did(54),
         100_000,
     );
     e.lock().expect("lock");
@@ -329,7 +330,7 @@ fn task_escrow_rejects_resolve_from_non_disputed() {
 fn dispute_without_evidence_allowed() {
     let d = Dispute::new(
         [0x01; 32],
-        "did:octo:buyer",
+        sample_did(236),
         DisputeReason::ProviderTimeout,
         None,
     );
@@ -394,9 +395,9 @@ use quota_router_core::task_market::TaskMarketSlashing;
 #[test]
 fn task_market_slashing_register_then_slash_deducts_stake() {
     let mut slashing = TaskMarketSlashing::new();
-    slashing.register("did:octo:worker", 1_000_000);
+    slashing.register(&sample_did(251), 1_000_000);
     let out = slashing
-        .slash("did:octo:worker", SlashReason::Timeout, 1.0)
+        .slash(&sample_did(251), SlashReason::Timeout, 1.0)
         .expect("slash");
     assert_eq!(out.amount_micro_octo_w, 100_000);
     assert_eq!(out.new_stake_micro_octo_w, 900_000);
@@ -406,13 +407,13 @@ fn task_market_slashing_register_then_slash_deducts_stake() {
 #[test]
 fn task_market_slashing_repeated_offenses_escalate() {
     let mut slashing = TaskMarketSlashing::new();
-    slashing.register("did:octo:flaky", 1_000_000);
+    slashing.register(&sample_did(63), 1_000_000);
     let o1 = slashing
-        .slash("did:octo:flaky", SlashReason::ProviderError, 1.0)
+        .slash(&sample_did(63), SlashReason::ProviderError, 1.0)
         .expect("slash 1");
     assert_eq!(o1.amount_micro_octo_w, 100_000);
     let o2 = slashing
-        .slash("did:octo:flaky", SlashReason::ProviderError, 1.0)
+        .slash(&sample_did(63), SlashReason::ProviderError, 1.0)
         .expect("slash 2");
     // 0.10 * 1.5 = 0.15 → 0.15 * 900_000 = 135_000
     assert_eq!(o2.amount_micro_octo_w, 135_000);
@@ -422,15 +423,15 @@ fn task_market_slashing_repeated_offenses_escalate() {
 #[test]
 fn task_market_slashing_eventually_bans_provider() {
     let mut slashing = TaskMarketSlashing::new();
-    slashing.register("did:octo:bad", 1_000_000);
+    slashing.register(&sample_did(86), 1_000_000);
     // 4 consecutive offenses at default rules → banned.
     for _ in 0..4 {
         let _ = slashing
-            .slash("did:octo:bad", SlashReason::ProviderError, 1.0)
+            .slash(&sample_did(86), SlashReason::ProviderError, 1.0)
             .expect("slash");
     }
     let err = slashing
-        .slash("did:octo:bad", SlashReason::Timeout, 1.0)
+        .slash(&sample_did(86), SlashReason::Timeout, 1.0)
         .unwrap_err();
     assert!(matches!(
         err,
@@ -447,9 +448,9 @@ fn task_market_slashing_below_tolerance_does_not_slash() {
             miss_rate_tolerance: 0.05,
             ..quota_router_core::marketplace::slashing::SlashingRules::default()
         });
-    slashing.register("did:octo:ok", 1_000_000);
+    slashing.register(&sample_did(130), 1_000_000);
     let err = slashing
-        .slash("did:octo:ok", SlashReason::Timeout, 0.01)
+        .slash(&sample_did(130), SlashReason::Timeout, 0.01)
         .unwrap_err();
     assert!(matches!(
         err,
@@ -500,20 +501,20 @@ fn full_rfc_0918_inference_flow_happy_path() {
     let market = TaskMarket::new();
     let mut slashing = TaskMarketSlashing::new();
     let disputes = DisputeRegistry::new();
-    slashing.register("did:octo:worker-a", 1_000_000);
+    slashing.register(&sample_did(99), 1_000_000);
 
     // 2. Buyer places a buy order (max 120 micro-OCTO-W).
     let buyer_spec = TaskSpec::new(TaskType::Inference, "openai/gpt-4", 120, 0, 1);
-    market.place_buy(buyer_spec, 120, 1, "did:octo:buyer", 1_000);
+    market.place_buy(buyer_spec, 120, 1, &sample_did(236), 1_000);
 
     // 3. Worker places a sell order (asking 100 micro-OCTO-W).
     let worker_spec = TaskSpec::new(TaskType::Inference, "openai/gpt-4", 0, 0, 1);
-    market.place_sell(worker_spec, 100, 1, "did:octo:worker-a", 1_500);
+    market.place_sell(worker_spec, 100, 1, &sample_did(99), 1_500);
 
     // 4. Top-of-book matches; bid (120) >= ask (100) → cross at 100.
     let matched = market.match_top().expect("match");
-    assert_eq!(matched.bid.owner, "did:octo:buyer");
-    assert_eq!(matched.ask.owner, "did:octo:worker-a");
+    assert_eq!(matched.bid.owner, sample_did(236));
+    assert_eq!(matched.ask.owner, sample_did(99));
     assert_eq!(matched.price, 100);
     assert_eq!(matched.qty, 1);
     assert!(market.is_empty());
@@ -546,7 +547,7 @@ fn full_rfc_0918_inference_flow_happy_path() {
 
     // 8. No dispute opened; provider stake untouched.
     assert!(disputes.is_empty());
-    let stake = slashing.ledger_stake("did:octo:worker-a").unwrap();
+    let stake = slashing.ledger_stake(&sample_did(99)).unwrap();
     assert_eq!(stake, 1_000_000);
 }
 
@@ -555,13 +556,13 @@ fn full_rfc_0918_inference_flow_dispute_then_slash() {
     let market = TaskMarket::new();
     let mut slashing = TaskMarketSlashing::new();
     let mut disputes = DisputeRegistry::new();
-    slashing.register("did:octo:bad-worker", 1_000_000);
+    slashing.register(&sample_did(37), 1_000_000);
 
     // Place + match.
     let buyer_spec = TaskSpec::new(TaskType::Inference, "openai/gpt-4", 200, 0, 1);
-    market.place_buy(buyer_spec, 200, 1, "did:octo:buyer", 100);
+    market.place_buy(buyer_spec, 200, 1, &sample_did(236), 100);
     let worker_spec = TaskSpec::new(TaskType::Inference, "openai/gpt-4", 0, 0, 1);
-    market.place_sell(worker_spec, 150, 1, "did:octo:bad-worker", 200);
+    market.place_sell(worker_spec, 150, 1, &sample_did(37), 200);
     let matched = market.match_top().expect("match");
     assert_eq!(matched.price, 150);
 
@@ -584,7 +585,7 @@ fn full_rfc_0918_inference_flow_dispute_then_slash() {
     };
     let dispute = Dispute::new(
         escrow_id,
-        "did:octo:buyer",
+        sample_did(236),
         DisputeReason::ResultMismatch,
         Some(evidence),
     );
@@ -600,7 +601,7 @@ fn full_rfc_0918_inference_flow_dispute_then_slash() {
 
     // Apply the slash (miss_rate = 1.0 → first-offense penalty 10%).
     let out = slashing
-        .slash("did:octo:bad-worker", SlashReason::ProviderError, 1.0)
+        .slash(&sample_did(37), SlashReason::ProviderError, 1.0)
         .expect("slash");
     assert_eq!(out.amount_micro_octo_w, 100_000);
     assert_eq!(out.new_stake_micro_octo_w, 900_000);
@@ -618,9 +619,9 @@ fn full_rfc_0918_inference_flow_dispute_invalid_keeps_payment() {
     let mut disputes = DisputeRegistry::new();
 
     let buyer_spec = TaskSpec::new(TaskType::Inference, "openai/gpt-4", 80, 0, 1);
-    market.place_buy(buyer_spec, 80, 1, "did:octo:buyer", 1);
+    market.place_buy(buyer_spec, 80, 1, &sample_did(236), 1);
     let worker_spec = TaskSpec::new(TaskType::Inference, "openai/gpt-4", 0, 0, 1);
-    market.place_sell(worker_spec, 70, 1, "did:octo:worker", 2);
+    market.place_sell(worker_spec, 70, 1, &sample_did(251), 2);
     let matched = market.match_top().expect("match");
     assert_eq!(matched.price, 70);
 
@@ -639,7 +640,7 @@ fn full_rfc_0918_inference_flow_dispute_invalid_keeps_payment() {
     disputes
         .open(Dispute::new(
             escrow_id,
-            "did:octo:buyer",
+            sample_did(236),
             DisputeReason::ResultMismatch,
             None,
         ))

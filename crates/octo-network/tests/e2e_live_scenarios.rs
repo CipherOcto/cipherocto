@@ -1117,7 +1117,7 @@ async fn scenario12_coordinator_admin_bridge_downcast_and_capability_honesty() {
 // The main end-to-end flow. Exercises the full bridge from a trait
 // method through to wire bytes:
 //
-//   1. `&dyn PlatformAdapter` → `as_coordinator_admin` → `&dyn CoordinatorAdmin`
+//   1. `&&dyn PlatformAdapter` → `as_coordinator_admin` → `&&dyn CoordinatorAdmin`
 //   2. `CoordinatorAdmin::create_group` returns a `GroupHandle`
 //   3. `GroupHandle.id` flows into a `BindEnvelope` (consumer side)
 //   4. `BindGossipState::record_received` ingests the bind

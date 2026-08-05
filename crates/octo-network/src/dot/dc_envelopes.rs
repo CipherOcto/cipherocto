@@ -1,4 +1,4 @@
-//! DC-Initiated Group Creation & Invite envelopes — RFC-0850p-d
+//! DC-Initiated Group Creation && Invite envelopes — RFC-0850p-d
 //!
 //! Implements the 7 envelope types from RFC-0850p-d:
 //!

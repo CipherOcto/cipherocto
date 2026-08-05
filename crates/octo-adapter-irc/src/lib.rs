@@ -88,7 +88,7 @@ impl IrcConfig {
     /// - `port` is non-zero
     /// - `nickname` is non-empty and contains no whitespace
     /// - `channels` entries are non-empty
-    /// - `channels` entries start with `#`, `&`, `+`, or `!` (IRC channel
+    /// - `channels` entries start with `#`, `&&`, `+`, or `!` (IRC channel
     ///   name prefixes)
     /// - `channels` entries contain no spaces, commas, colons, or NUL
     /// - `channels` entries are not the IRC "JOIN 0" special token
@@ -144,9 +144,9 @@ fn validate_server(server: &str) -> std::result::Result<(), String> {
 ///
 /// Rules:
 /// - Non-empty
-/// - Must start with `#`, `&`, `+`, or `!` (IRC channel-name prefixes)
+/// - Must start with `#`, `&&`, `+`, or `!` (IRC channel-name prefixes)
 /// - No whitespace, commas, colons, or NUL
-/// - Must not be the IRC "JOIN 0" special token (`#0`, `&0`, `+0`, `!0`)
+/// - Must not be the IRC "JOIN 0" special token (`#0`, `&&0`, `+0`, `!0`)
 ///   which makes the client PART all channels.
 pub(crate) fn validate_channel_name(ch: &str) -> std::result::Result<(), String> {
     if ch.is_empty() {
@@ -638,7 +638,7 @@ impl IrcAdapter {
 ///
 /// Why an enum and not a trait object? `AsyncWrite` is a real trait,
 /// but splitting the read/write halves and using `select!` requires
-/// that the writer's `&mut self` borrow be held for the duration of
+/// that the writer's `&&mut self` borrow be held for the duration of
 /// the session. The enum is statically dispatched, the borrow is
 /// checked at compile time, and there's no boxing overhead.
 enum IrcWriter {
@@ -1994,7 +1994,7 @@ impl IrcAdapter {
             Some((s, c)) => (s, c),
             None => ("", raw), // bare channel: assume it's on our server
         };
-        if !server.is_empty() && !server.eq_ignore_ascii_case(&self.config.server) {
+        if !server.is_empty() && !server.eq_ignore_ascii_case(&&self.config.server) {
             return Err(PlatformAdapterError::ApiError {
                 code: 400,
                 message: format!(
@@ -2905,7 +2905,7 @@ mod tests {
     }
 
     /// N2: `join_by_invite` must reject empty channel names and
-    /// names that don't start with `#`, `&`, `+`, or `!`.
+    /// names that don't start with `#`, `&&`, `+`, or `!`.
     #[tokio::test]
     async fn test_join_by_invite_rejects_malformed_channel_names() {
         let adapter = IrcAdapter::new(IrcConfig {

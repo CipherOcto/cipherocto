@@ -208,8 +208,8 @@ mod tests {
     fn payload() -> DealSettledPayload {
         DealSettledPayload {
             prev_chain_hash: [0x00; 32],
-            buyer_did: "did:octo:buyer".into(),
-            seller_did: "did:octo:seller".into(),
+            buyer_did: octo_ident::test_helpers::sample_did(237).into(),
+            seller_did: octo_ident::test_helpers::sample_did(106).into(),
             ask_id: [0x33; 32],
             bearer_capsule_hash: [0x42; 32],
             cap_root_hash: [0x77; 32],
@@ -246,7 +246,10 @@ mod tests {
         assert!(s.contains("redacted"), "expected redaction: {s}");
         assert!(!s.contains("4242"), "leaked bearer_capsule_hash: {s}");
         assert!(!s.contains("3333"), "leaked ask_id: {s}");
-        assert!(s.contains("did:octo:seller"), "DID should be visible: {s}");
+        assert!(
+            s.contains(&octo_ident::test_helpers::sample_did(106)),
+            "DID should be visible: {s}"
+        );
     }
 
     #[test]

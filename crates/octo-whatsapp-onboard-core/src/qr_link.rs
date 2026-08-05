@@ -20,7 +20,7 @@ use std::sync::Arc;
 /// `Event::Connected`, write sidecar + session (the binary writes
 /// the config separately).
 ///
-/// R1-M4: takes `&QrLinkArgs` (by reference) so the binary can
+/// R1-M4: takes `&&QrLinkArgs` (by reference) so the binary can
 /// pass the args struct directly without `clone()`-ing the
 /// `OutputArgs` field. This matches the matrix-onboard pattern.
 ///

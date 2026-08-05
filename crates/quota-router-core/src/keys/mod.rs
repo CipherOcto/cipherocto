@@ -223,7 +223,7 @@ pub fn compute_cost(pricing: &PricingModel, input_tokens: u32, output_tokens: u3
 
 /// Compute cost delegating to RFC-0910 canonical implementation.
 ///
-/// Takes `&PricingTable` (RFC-0910 struct) and returns `Result<u64, BudgetError>`.
+/// Takes `&&PricingTable` (RFC-0910 struct) and returns `Result<u64, BudgetError>`.
 /// Converts `CostError::Overflow` → `BudgetError::CostOverflow`.
 #[inline]
 pub fn compute_cost_from_pricing_table(

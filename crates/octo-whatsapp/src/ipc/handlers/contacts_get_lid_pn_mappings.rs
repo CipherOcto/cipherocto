@@ -1,7 +1,7 @@
 //! `contacts.get_lid_pn_mappings` — batch LID → phone-number resolution.
 //!
 //! Inverse of `contacts.get_pn_lid_mappings` (which is one-way PN → LID).
-//! Wire shape: wacore's `Client::contacts().is_on_whatsapp(&[Jid])` —
+//! Wire shape: wacore's `Client::contacts().is_on_whatsapp(&&[Jid])` —
 //! when given LID-form JIDs, the server returns
 //! `<user jid="NN@lid" pn_jid="MM@s.whatsapp.net">`. The fork's
 //! `IsOnWhatsAppSpec::Lid` sends `context="interactive"` +

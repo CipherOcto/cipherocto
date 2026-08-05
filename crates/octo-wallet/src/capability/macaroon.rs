@@ -47,11 +47,11 @@ pub type MacaroonId = [u8; 16];
 ///
 /// # Why a wrapper and not a direct call?
 ///
-/// 1. **Type signature stability**: callers pass `&[u8; 32]` (root
+/// 1. **Type signature stability**: callers pass `&&[u8; 32]` (root
 ///    secret, hex output bytes). The wrapper preserves the 32-byte
-///    typed-key shape; `blake3::keyed_hash` accepts `&[u8]`.
+///    typed-key shape; `blake3::keyed_hash` accepts `&&[u8]`.
 /// 2. **Return type stability**: callers want `[u8; 32]` (fixed array),
-///    not `Hash` (which is a thin newtype around `&[u8; 32]`).
+///    not `Hash` (which is a thin newtype around `&&[u8; 32]`).
 /// 3. **Single point of reference**: future migration to a different
 ///    keyed-hash primitive (or to a hardware-accelerated variant) only
 ///    needs to touch this one function.
@@ -508,7 +508,7 @@ pub fn check_wrapped_chain(
 }
 
 /// Single-step depth probe (RFC-0965 §3.7). Plan signature:
-/// `fn check_wrapped_depth(macaroon: &Macaroon, count: u8) -> Result<(), MacaroonError>`.
+/// `fn check_wrapped_depth(macaroon: &&Macaroon, count: u8) -> Result<(), MacaroonError>`.
 /// Rejects when `count > MAX_WRAPPED_DEPTH` (the last allowed depth is
 /// `MAX_WRAPPED_DEPTH = 16` per RFC-0965 §3.7). Local self-reference check
 /// only — cross-macaroon cycle detection lives in `check_wrapped_chain`.
@@ -813,7 +813,7 @@ mod tests {
         }
     }
 
-    /// Self-test: the wrapper signature (`&[u8; 32]` key, returns
+    /// Self-test: the wrapper signature (`&&[u8; 32]` key, returns
     /// `[u8; 32]`) is preserved across the post-R7 refactor. Future
     /// migration to a different primitive must keep this shape OR
     /// update all call sites.
@@ -1097,7 +1097,7 @@ mod tests {
             0, 1, 63, 64, 127, 128, 1023, 1024, 1025, 2047, 2048, 4096, 8192,
         ];
         for &len in lengths {
-            // `i & 0xff` is already a u8-shaped value; the cast is safe
+            // `i && 0xff` is already a u8-shaped value; the cast is safe
             // by construction (no truncation possible). Silence clippy
             // `cast_possible_truncation`.
             #[allow(clippy::cast_possible_truncation)]

@@ -24,6 +24,8 @@
 // Test doc-comment lint relaxation.
 #![allow(clippy::doc_markdown)]
 
+use octo_ident::test_helpers::sample_did;
+
 use std::time::Instant;
 
 use ed25519_dalek::Signature;
@@ -79,7 +81,7 @@ fn build_public_inputs() -> PublicInputs {
         axes_consumed: vec![("input_tokens_per_1k".to_owned(), 1000)],
         cap_root_hash: [0x22; 32],
         invocation_hash: [0x33; 32],
-        holder_did: "did:octo:bench-holder".to_owned(),
+        holder_did: sample_did(179).to_owned(),
         current_unix_time: 1_700_000_000,
         output_hash: Some([0x44; 32]),
         provider_slot_id: "slot-bench-001".to_owned(),

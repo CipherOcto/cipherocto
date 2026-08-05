@@ -32,6 +32,8 @@
 #![allow(clippy::doc_markdown)]
 #![allow(clippy::doc_lazy_continuation)]
 
+use octo_ident::test_helpers::sample_did;
+
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use ed25519_dalek::Signature;
@@ -138,7 +140,7 @@ fn public_inputs_tv3() -> octo_wallet::capability::zk_mint::PublicInputs {
         axes_consumed: vec![("input_tokens_per_1k".to_owned(), 500)],
         cap_root_hash: [0x99; 32],
         invocation_hash: [0xaa; 32],
-        holder_did: "did:octo:holder-wholesale".to_owned(),
+        holder_did: sample_did(117).to_owned(),
         current_unix_time: TV_FIXED_TIME + 2,
         output_hash: None,
         provider_slot_id: "slot-wholesale-001".to_owned(),
@@ -470,7 +472,7 @@ fn tv8_cross_impl_two_prover_paths_byte_equivalent() {
 
     // Path A: mint_with_zk_and_signers (batch signature prover).
     // R5 fix-up (2026-07-31): the signer list MUST match what the
-    // batch verifier is given (`&[[0x42; 32]]` below) — R4 #1's
+    // batch verifier is given (`&&[[0x42; 32]]` below) — R4 #1's
     // `batch_proof_commitment` binds the signer set, so a mismatch
     // here now legitimately fails the cross-impl test (pre-R4 the
     // commitment didn't bind signers, so the mismatch was silent).

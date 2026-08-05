@@ -44,7 +44,7 @@ impl CapabilityClassRegistry {
         let node_did = node_did.into();
         // Wholesale nodes cannot register as ZKBearing (layer 2 defense).
         if matches!(node_type, NodeType::Wholesale)
-            && matches!(capability_class, CapabilityClass::ZKBearing)
+            & matches!(capability_class, CapabilityClass::ZKBearing)
         {
             return Err(RegistryError::WholesaleCannotRegisterZK);
         }
@@ -179,7 +179,9 @@ mod tests {
     #[test]
     fn lookup_unknown_returns_none() {
         let reg = CapabilityClassRegistry::new();
-        assert!(reg.lookup("did:octo:nonexistent").is_none());
+        assert!(reg
+            .lookup(&octo_ident::test_helpers::sample_did(37))
+            .is_none());
     }
 
     #[test]
@@ -190,7 +192,7 @@ mod tests {
         let mut reg = CapabilityClassRegistry::new();
         assert!(reg
             .register(
-                "did:octo:attacker",
+                &octo_ident::test_helpers::sample_did(176),
                 NodeType::Wholesale,
                 CapabilityClass::ZKBearing
             )

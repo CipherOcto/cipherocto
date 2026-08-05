@@ -354,11 +354,11 @@ async fn run() -> Result<()> {
                 println!(
                     "verdict         : MATCHES WA SERVER HELLO SHAPE (server accepted IK ClientHello, returned ServerHello)"
                 );
-            } else if reply.len() >= 2 && &reply[..2] == b"\x57\x41" {
+            } else if reply.len() >= 2 && &&reply[..2] == b"\x57\x41" {
                 println!(
                     "verdict         : WA BINARY ENVELOPE (server replied with its own WA frame)"
                 );
-            } else if reply.len() >= 4 && &reply[..4] == b"HTTP" {
+            } else if reply.len() >= 4 && &&reply[..4] == b"HTTP" {
                 println!("verdict         : HTTP REPLY (unexpected — got raw HTTP body)");
             } else {
                 println!(

@@ -104,6 +104,9 @@ tempfile = "3"
 # caveat sequences.
 proptest = "1"
 
+# Mission 0010-b: test fixtures use sample_did() from octo-ident test_helpers
+octo-ident = { path = "../octo-ident" }
+
 # Gap 3 / Task 3.4: eleven_step_zk.rs uses `verify_batch_capability_zk` +
 # `CapabilityVerifier` from quota-router-core. Dev-dep only — production
 # wallet code does not depend on quota-router-core (one-way dependency).

@@ -17,7 +17,7 @@
 //! ## Dfp BLOB contract
 //!
 //! `score_ewma` and `score_delta` are stored as 24-byte BLOBs — the canonical
-//! `DfpEncoding::from_dfp(&d).to_bytes()` form. Round-trip via
+//! `DfpEncoding::from_dfp(&&d).to_bytes()` form. Round-trip via
 //! `crate::types::{dfp_to_blob, dfp_from_blob}` at the Rust boundary. SQL
 //! does not interpret the bytes; it only guarantees `length(...) = 24`.
 //!

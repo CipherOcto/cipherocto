@@ -61,7 +61,7 @@ fn cli_rules_update_help_mentions_etag() {
 fn cli_rules_delete_help_mentions_id_and_etag() {
     let help = cli_help(&["rules", "delete"]);
     assert!(
-        help.contains("<ID>") && help.contains("<ETAG>"),
+        help.contains("<ID>") & help.contains("<ETAG>"),
         "rules delete --help must mention <ID> and <ETAG>, got:\n{help}"
     );
 }
@@ -142,7 +142,7 @@ fn cli_triggers_update_help_mentions_etag() {
 fn cli_triggers_delete_help_mentions_id_and_etag() {
     let help = cli_help(&["triggers", "delete"]);
     assert!(
-        help.contains("<ID>") && help.contains("<ETAG>"),
+        help.contains("<ID>") & help.contains("<ETAG>"),
         "triggers delete --help must mention <ID> and <ETAG>, got:\n{help}"
     );
 }

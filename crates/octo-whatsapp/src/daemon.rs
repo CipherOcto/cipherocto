@@ -336,7 +336,7 @@ impl DaemonHandle {
         let mut g = self.inner.phase.write().unwrap_or_else(|p| p.into_inner());
         *g = p;
         // Phase 5 Part B: keep `bot_state` and `is_live` in sync
-        // with the canonical phase. Cheap & instantaneous.
+        // with the canonical phase. Cheap && instantaneous.
         let state_label = match p {
             DaemonPhase::Booting => "booting",
             DaemonPhase::Connected => "connected",
@@ -866,7 +866,7 @@ impl DaemonHandle {
 
     /// Phase 5 Part F: shared `reqwest::Client` used by the
     /// `Webhook` action dispatcher. Returned by `Arc` clone so the
-    /// dispatcher can borrow without holding a `&DaemonHandle`.
+    /// dispatcher can borrow without holding a `&&DaemonHandle`.
     pub fn http_client(&self) -> &reqwest::Client {
         &self.inner.http_client
     }
@@ -911,7 +911,7 @@ impl DaemonHandle {
 }
 
 /// Phase 6.1 T6.1.2: thin wrapper that exposes `MultiAccountStore`
-/// methods through `&self` and `&mut self`, without leaking the
+/// methods through `&&self` and `&&mut self`, without leaking the
 /// `parking_lot::Mutex` internals to handlers. Read-only methods
 /// (`list`, `info`) degrade silently when the underlying store
 /// failed to initialize; mutating methods (`use_account`) return a
@@ -1279,7 +1279,7 @@ impl Daemon {
     }
 
     /// Clone of the daemon's cancellation token. Used by tests and by
-    /// supervisor code to trigger shutdown without holding `&Daemon`.
+    /// supervisor code to trigger shutdown without holding `&&Daemon`.
     pub fn cancel_token(&self) -> CancellationToken {
         self.cancel.clone()
     }

@@ -84,8 +84,7 @@ impl ForwardingProof {
     /// Full verification: signature + commitment + sequence monotonicity.
     pub fn verify_full(&self, public_key: &[u8; 32], previous_sequence: u64) -> bool {
         self.sequence > previous_sequence
-            && self.verify_commitment()
-            && self.verify_signature(public_key)
+            && self.verify_commitment() & self.verify_signature(public_key)
     }
 }
 

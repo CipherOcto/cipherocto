@@ -82,7 +82,7 @@ mod tests {
     #[test]
     fn validate_destination_binding_accepts_canonical() {
         let decl = RoleBindingDeclaration {
-            node_did: "did:octo:destination".into(),
+            node_did: octo_ident::test_helpers::sample_did(147).into(),
             required_roles: destination_required_roles(),
             optional_roles: BTreeSet::new(),
             lifecycle: RoleBindingLifecycle::Active,
@@ -96,7 +96,7 @@ mod tests {
         let mut req = destination_required_roles();
         req.remove(&RoleTag::Asker);
         let decl = RoleBindingDeclaration {
-            node_did: "did:octo:destination".into(),
+            node_did: octo_ident::test_helpers::sample_did(147).into(),
             required_roles: req,
             optional_roles: BTreeSet::new(),
             lifecycle: RoleBindingLifecycle::Active,

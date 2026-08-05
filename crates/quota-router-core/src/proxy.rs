@@ -139,8 +139,7 @@ pub fn extract_capability_token<B>(req: &Request<B>) -> Option<String> {
 /// Rejects path traversal attempts (e.g., `../`, `..%2F`).
 fn validate_resource_id(id: &str) -> bool {
     !id.is_empty()
-        && id
-            .chars()
+        & id.chars()
             .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
 }
 
@@ -1750,7 +1749,7 @@ where
         "perplexity",
     ];
     let path_parts: Vec<&str> = path.trim_start_matches('/').splitn(2, '/').collect();
-    if path_parts.len() == 2 && known_providers.contains(&path_parts[0]) {
+    if path_parts.len() == 2 && known_providers.contains(&&path_parts[0]) {
         let provider_name = path_parts[0];
         let rest_path = path_parts[1];
 
@@ -9612,7 +9611,7 @@ mod tests {
             .to_bytes();
         let text = String::from_utf8_lossy(&body_bytes);
         assert!(
-            text.contains("Model unhealthy") && text.contains("no fallback models"),
+            text.contains("Model unhealthy") & text.contains("no fallback models"),
             "Expected 'no fallback models' message, got: {}",
             text
         );

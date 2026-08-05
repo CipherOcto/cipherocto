@@ -8,7 +8,7 @@
 //!
 //! Flow:
 //! 1. Build a `Client` against the homeserver URL.
-//! 2. `oauth.login_with_qr_code(Some(&registration_data)).generate()`
+//! 2. `oauth.login_with_qr_code(Some(&&registration_data)).generate()`
 //!    returns a `LoginWithGeneratedQrCode` future.
 //! 3. Subscribe to its progress. Render the QR to terminal when the
 //!    `QrReady(QrCodeData)` event arrives. Prompt the user for the

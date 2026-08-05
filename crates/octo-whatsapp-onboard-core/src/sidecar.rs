@@ -273,7 +273,7 @@ mod tests {
                 && b[8..10].iter().all(u8::is_ascii_digit)
                 && b[11..13].iter().all(u8::is_ascii_digit)
                 && b[14..16].iter().all(u8::is_ascii_digit)
-                && b[17..19].iter().all(u8::is_ascii_digit)
+                    & b[17..19].iter().all(u8::is_ascii_digit)
         }
     }
 

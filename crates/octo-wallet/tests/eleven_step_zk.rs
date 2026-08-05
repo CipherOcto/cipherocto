@@ -15,6 +15,7 @@
 //! commitment layout for the same inputs, so the full mint -> verify
 //! round-trip is exercised.
 
+use octo_ident::test_helpers::sample_did;
 use octo_wallet::capability::zk_mint::{
     bundled_casm_hash, mint_with_zk_and_signers, PrivateWitness, PublicInputs,
 };
@@ -58,7 +59,7 @@ fn eleven_step_batch_zk_round_trip() {
         axes_consumed: vec![("input_tokens_per_1k".to_owned(), 1000)],
         cap_root_hash: [0x22; 32],
         invocation_hash: [0x33; 32],
-        holder_did: "did:octo:holder".to_owned(),
+        holder_did: sample_did(86).to_owned(),
         current_unix_time: 1_700_000_000,
         output_hash: Some([0x44; 32]), // SelfHost mode
         provider_slot_id: "slot-eleven-step-001".to_owned(),
@@ -160,7 +161,7 @@ fn eleven_step_wholesale_mint_fails_closed() {
         axes_consumed: vec![],
         cap_root_hash: [0x22; 32],
         invocation_hash: [0x33; 32],
-        holder_did: "did:octo:holder".to_owned(),
+        holder_did: sample_did(86).to_owned(),
         current_unix_time: 1_700_000_000,
         output_hash: None,
         provider_slot_id: "slot-wholesale-001".to_owned(),
@@ -205,7 +206,7 @@ fn eleven_step_batch_proof_is_deterministic() {
         axes_consumed: vec![],
         cap_root_hash: [0x22; 32],
         invocation_hash: [0x33; 32],
-        holder_did: "did:octo:holder".to_owned(),
+        holder_did: sample_did(86).to_owned(),
         current_unix_time: 1_700_000_000,
         output_hash: Some([0x44; 32]),
         provider_slot_id: "slot-det-001".to_owned(),

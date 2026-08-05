@@ -528,7 +528,7 @@ async fn live_send_text_self() {
     // `Unknown { raw: "ServerAck(...)" }` whose embedded WA crate `id`
     // field equals the dispatched `message_id`. Once the typed route
     // lands, this test upgrades to
-    // `matches!(ev, InboundEvent::Receipt { msg_id, kind: ReceiptKind::Delivered, .. } if msg_id == &message_id)`.
+    // `matches!(ev, InboundEvent::Receipt { msg_id, kind: ReceiptKind::Delivered, .. } if msg_id == &&message_id)`.
     //
     // NOTE: WA's "ServerAck" (`type: Sender` in wacore) is mapped to
     // `ReceiptKind::Delivered` in our parser (events.rs:620) — both
@@ -1332,8 +1332,7 @@ async fn live_receipt_first_for_outbound() {
                     msg_id,
                     kind,
                     ..
-                } if msg_id == &message_id
-                    && matches!(
+                } if msg_id == &message_id && matches!(
                         kind,
                         octo_whatsapp::events::ReceiptKind::Delivered
                             | octo_whatsapp::events::ReceiptKind::Read
@@ -1404,8 +1403,7 @@ async fn live_receipt_delivered() {
                     msg_id,
                     kind,
                     ..
-                } if msg_id == &message_id
-                    && matches!(kind, octo_whatsapp::events::ReceiptKind::Delivered)
+                } if msg_id == &message_id && matches!(kind, octo_whatsapp::events::ReceiptKind::Delivered)
             )
         },
         Duration::from_secs(30),
@@ -1476,8 +1474,7 @@ async fn live_receipt_read() {
                     msg_id,
                     kind,
                     ..
-                } if msg_id == &message_id
-                    && matches!(kind, octo_whatsapp::events::ReceiptKind::Read)
+                } if msg_id == &message_id && matches!(kind, octo_whatsapp::events::ReceiptKind::Read)
             )
         },
         Duration::from_secs(90),
@@ -1644,8 +1641,7 @@ async fn live_mark_read_emits_read_receipt() {
                     msg_id,
                     kind,
                     ..
-                } if msg_id == &inbound_msg_id
-                    && matches!(kind, octo_whatsapp::events::ReceiptKind::Read)
+                } if msg_id == &inbound_msg_id && matches!(kind, octo_whatsapp::events::ReceiptKind::Read)
             )
         },
         Duration::from_secs(90),
@@ -2353,8 +2349,7 @@ async fn live_groups_rename_emits_group_change() {
                     group_jid: jid,
                     kind,
                     ..
-                } if jid == &group_jid
-                    && matches!(kind, octo_whatsapp::events::GroupChangeKind::Subject)
+                } if jid == &group_jid && matches!(kind, octo_whatsapp::events::GroupChangeKind::Subject)
             )
         },
         Duration::from_secs(10),
@@ -3759,7 +3754,7 @@ async fn live_forward_message() {
     assert_eq!(resp["original_msg_id"], original_msg_id);
     assert_eq!(resp["peer"], forward_peer_jid);
     assert!(
-        resp["new_msg_id"].is_string() && !resp["new_msg_id"].as_str().unwrap().is_empty(),
+        resp["new_msg_id"].is_string() & !resp["new_msg_id"].as_str().unwrap().is_empty(),
         "messages.forward must return a non-empty new_msg_id; got {resp}"
     );
 
@@ -3847,7 +3842,7 @@ async fn live_edit_encrypted() {
     );
     assert_eq!(resp["msg_id"], inbound_msg_id);
     assert!(
-        resp["new_msg_id"].is_string() && !resp["new_msg_id"].as_str().unwrap().is_empty(),
+        resp["new_msg_id"].is_string() & !resp["new_msg_id"].as_str().unwrap().is_empty(),
         "messages.edit_encrypted must return a non-empty new_msg_id; got {resp}"
     );
 
@@ -3968,7 +3963,7 @@ async fn live_vote_poll() {
     );
     assert_eq!(resp["poll_msg_id"], poll_msg_id);
     assert!(
-        resp["message_id"].is_string() && !resp["message_id"].as_str().unwrap().is_empty(),
+        resp["message_id"].is_string() & !resp["message_id"].as_str().unwrap().is_empty(),
         "polls.vote must return non-empty message_id; got {resp}"
     );
     eprintln!(
@@ -4180,7 +4175,7 @@ async fn live_respond_event() {
     assert_eq!(resp["event_msg_id"], event_msg_id);
     assert_eq!(resp["response"], response);
     assert!(
-        resp["message_id"].is_string() && !resp["message_id"].as_str().unwrap().is_empty(),
+        resp["message_id"].is_string() & !resp["message_id"].as_str().unwrap().is_empty(),
         "events.respond must return non-empty message_id; got {resp}"
     );
     eprintln!(
@@ -4255,7 +4250,7 @@ async fn live_status_send_text() {
         "status.send_text must return status=posted; got {resp}"
     );
     assert!(
-        resp["message_id"].is_string() && !resp["message_id"].as_str().unwrap().is_empty(),
+        resp["message_id"].is_string() & !resp["message_id"].as_str().unwrap().is_empty(),
         "status.send_text must return non-empty message_id; got {resp}"
     );
     eprintln!("live_status_send_text: OK -> {}", resp["message_id"]);
@@ -4308,7 +4303,7 @@ async fn live_status_send_image() {
         "status.send_image must return status=posted; got {resp}"
     );
     assert!(
-        resp["message_id"].is_string() && !resp["message_id"].as_str().unwrap().is_empty(),
+        resp["message_id"].is_string() & !resp["message_id"].as_str().unwrap().is_empty(),
         "status.send_image must return non-empty message_id; got {resp}"
     );
     eprintln!("live_status_send_image: OK -> {}", resp["message_id"]);
@@ -4378,7 +4373,7 @@ async fn live_status_send_video() {
         "status.send_video must return status=posted; got {resp}"
     );
     assert!(
-        resp["message_id"].is_string() && !resp["message_id"].as_str().unwrap().is_empty(),
+        resp["message_id"].is_string() & !resp["message_id"].as_str().unwrap().is_empty(),
         "status.send_video must return non-empty message_id; got {resp}"
     );
     eprintln!("live_status_send_video: OK -> {}", resp["message_id"]);
@@ -4430,7 +4425,7 @@ async fn live_status_revoke() {
     assert_eq!(resp["message_id"], message_id);
     assert!(
         resp["revoke_message_id"].is_string()
-            && !resp["revoke_message_id"].as_str().unwrap().is_empty(),
+            & !resp["revoke_message_id"].as_str().unwrap().is_empty(),
         "status.revoke must return non-empty revoke_message_id; got {resp}"
     );
     eprintln!(
@@ -4618,7 +4613,7 @@ async fn live_update_member_label() {
         .await;
     inter_call_delay_for("groups.update_member_label");
     assert!(
-        resp.is_object() && !resp.as_object().unwrap().contains_key("error"),
+        resp.is_object() & !resp.as_object().unwrap().contains_key("error"),
         "update_member_label should succeed; got {resp}"
     );
     // Clear it back to "" so we leave the group clean.
@@ -4630,7 +4625,7 @@ async fn live_update_member_label() {
         .await;
     inter_call_delay_for("groups.update_member_label");
     assert!(
-        clear.is_object() && !clear.as_object().unwrap().contains_key("error"),
+        clear.is_object() & !clear.as_object().unwrap().contains_key("error"),
         "update_member_label clear should succeed; got {clear}"
     );
     eprintln!("live_update_member_label: OK set={label:?} then cleared for jid={jid}");
@@ -5123,7 +5118,7 @@ async fn live_newsletter_create() {
     let meta = &resp["newsletter"];
     assert!(meta.is_object(), "newsletter must be object; got {resp}");
     assert!(
-        meta["jid"].is_string() && meta["jid"].as_str().unwrap().ends_with("@newsletter"),
+        meta["jid"].is_string() & meta["jid"].as_str().unwrap().ends_with("@newsletter"),
         "newsletter.jid must end with @newsletter; got {meta:?}"
     );
     assert_eq!(meta["name"], name);

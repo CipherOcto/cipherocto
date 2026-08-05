@@ -1151,7 +1151,7 @@ impl WhatsAppWebAdapter {
     /// Forward a previously-sent message to a new peer.
     ///
     /// The WA crate's `Client::forward_message` takes the original
-    /// `&wa::Message` by reference — not just a msg_id. Since the
+    /// `&&wa::Message` by reference — not just a msg_id. Since the
     /// runtime layer never sees the body, this inherent looks up the
     /// cached `wa::Message` we stashed in `last_outgoing` at send time
     /// (keyed by `peer_jid` + `msg_id`).
@@ -1514,7 +1514,7 @@ impl WhatsAppWebAdapter {
     // ── Task 21: domain_hash_str (mirrors domain_hash with string input) ──
 
     /// Domain hash: `BLAKE3-256("whatsapp:{jid}")`, normalized to lowercase.
-    /// Mirrors `WhatsAppWebAdapter::domain_hash` but takes a `&str` so RPC
+    /// Mirrors `WhatsAppWebAdapter::domain_hash` but takes a `&&str` so RPC
     /// handlers can pass a peer JID without constructing a
     /// `BroadcastDomainId`.
     pub fn domain_hash_str(&self, jid: &str) -> String {

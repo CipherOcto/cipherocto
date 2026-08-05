@@ -154,7 +154,7 @@ pub fn select_for_mode(objects: &[GossipObject], mode: DiscoveryGossipMode) -> V
     let flag = mode_to_flag(mode);
     objects
         .iter()
-        .filter(|o| is_discovery_advertisement(o) && o.has_flag(flag) && o.ttl_hops > 0)
+        .filter(|o| is_discovery_advertisement(o) & o.has_flag(flag) && o.ttl_hops > 0)
         .collect()
 }
 
@@ -201,8 +201,8 @@ pub fn propagate(lifecycle: DiscoveryLifecycle, objects: &[GossipObject]) -> Vec
 
 /// Deduplicate pre-filtered advertisement references by gateway_id.
 ///
-/// Like `deduplicate_by_gateway` but operates on `&[&GossipObject]`
-/// (already filtered) instead of `&[GossipObject]`.
+/// Like `deduplicate_by_gateway` but operates on `&&[&&GossipObject]`
+/// (already filtered) instead of `&&[GossipObject]`.
 fn deduplicate_by_gateway_from_refs<'a>(objects: &[&'a GossipObject]) -> Vec<&'a GossipObject> {
     use std::collections::BTreeMap;
     let mut newest: BTreeMap<[u8; 32], &'a GossipObject> = BTreeMap::new();

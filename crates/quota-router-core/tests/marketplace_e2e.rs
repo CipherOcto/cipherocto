@@ -20,6 +20,7 @@ use quota_router_core::marketplace::slashing::{SlashReason, SlashingLedger, Slas
 /// Minimal Spec for the e2e test: an `AskSpec` carries the model name
 /// and the asker (seller) DID — enough to drive end-to-end matching and
 /// escrow settlement without depending on the stoolap-backed Ask repo.
+use octo_ident::test_helpers::sample_did;
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AskSpec {
     model: String,
@@ -71,11 +72,11 @@ fn match_and_populate(tx: &mut MarketTransaction) -> MatchPair<AskSpec> {
 
 #[test]
 fn happy_path_bid_matches_ask_escrow_settles() {
-    let mut tx = setup_match("did:octo:buyer", "did:octo:seller", "openai/gpt-4", 100, 5);
+    let mut tx = setup_match(&sample_did(238), &sample_did(145), "openai/gpt-4", 100, 5);
 
     let matched = match_and_populate(&mut tx);
-    assert_eq!(matched.bid.owner, "did:octo:buyer");
-    assert_eq!(matched.ask.owner, "did:octo:seller");
+    assert_eq!(matched.bid.owner, sample_did(238));
+    assert_eq!(matched.ask.owner, sample_did(145));
     assert_eq!(matched.price, 100);
     assert_eq!(matched.qty, 5);
     assert!(tx.book.is_empty());
@@ -89,7 +90,7 @@ fn happy_path_bid_matches_ask_escrow_settles() {
 
 #[test]
 fn dispute_valid_slashes_seller() {
-    let mut tx = setup_match("did:octo:buyer", "did:octo:seller", "openai/gpt-4", 200, 3);
+    let mut tx = setup_match(&sample_did(238), &sample_did(145), "openai/gpt-4", 200, 3);
     let matched = match_and_populate(&mut tx);
     assert_eq!(matched.qty, 3);
 
@@ -100,9 +101,9 @@ fn dispute_valid_slashes_seller() {
 
     // Provider gets slashed.
     let mut ledger = SlashingLedger::new();
-    ledger.register("did:octo:seller", 1_000_000);
+    ledger.register(&sample_did(145), 1_000_000);
     let out = ledger
-        .slash("did:octo:seller", SlashReason::ProviderError, 1.0)
+        .slash(&sample_did(145), SlashReason::ProviderError, 1.0)
         .expect("slash");
     assert_eq!(out.amount_micro_octo_w, 100_000); // 10% first offense
     assert_eq!(out.new_stake_micro_octo_w, 900_000);
@@ -112,8 +113,8 @@ fn dispute_valid_slashes_seller() {
 #[test]
 fn dispute_invalid_confirms_payment() {
     let mut tx = setup_match(
-        "did:octo:buyer",
-        "did:octo:seller",
+        &sample_did(238),
+        &sample_did(145),
         "anthropic/claude",
         50,
         10,
@@ -132,18 +133,18 @@ fn below_tolerance_miss_rate_does_not_slash() {
         miss_rate_tolerance: 0.05,
         ..SlashingRules::default()
     });
-    ledger.register("did:octo:seller", 1_000_000);
+    ledger.register(&sample_did(145), 1_000_000);
     let err = ledger
-        .slash("did:octo:seller", SlashReason::Timeout, 0.01)
+        .slash(&sample_did(145), SlashReason::Timeout, 0.01)
         .unwrap_err();
     assert!(matches!(
         err,
         quota_router_core::marketplace::slashing::SlashError::BelowTolerance { .. }
     ));
     // Stake untouched.
-    assert_eq!(ledger.stake("did:octo:seller").unwrap().offense_count, 0);
+    assert_eq!(ledger.stake(&sample_did(145)).unwrap().offense_count, 0);
     assert_eq!(
-        ledger.stake("did:octo:seller").unwrap().stake_micro_octo_w,
+        ledger.stake(&sample_did(145)).unwrap().stake_micro_octo_w,
         1_000_000
     );
 }
@@ -151,24 +152,24 @@ fn below_tolerance_miss_rate_does_not_slash() {
 #[test]
 fn repeated_offenses_eventually_ban_provider() {
     let mut ledger = SlashingLedger::new();
-    ledger.register("did:octo:flaky", 1_000_000);
+    ledger.register(&sample_did(20), 1_000_000);
 
     // First three offenses with default rules (10%, 15%, 22.5%) leave
     // cumulative ≈ 40.7%. Fourth offense (33.75% of remaining ≈ 30%)
     // crosses 50% → banned.
     for _ in 0..4 {
         let _ = ledger
-            .slash("did:octo:flaky", SlashReason::ProviderError, 1.0)
+            .slash(&sample_did(20), SlashReason::ProviderError, 1.0)
             .expect("slash");
     }
     assert!(ledger
-        .stake("did:octo:flaky")
+        .stake(&sample_did(20))
         .unwrap()
         .is_banned(ledger.rules()));
 
     // Subsequent slashes rejected.
     let err = ledger
-        .slash("did:octo:flaky", SlashReason::Timeout, 1.0)
+        .slash(&sample_did(20), SlashReason::Timeout, 1.0)
         .unwrap_err();
     assert!(matches!(
         err,

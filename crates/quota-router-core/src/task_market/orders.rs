@@ -147,7 +147,7 @@ impl TaskMarket {
         spec_pred: P,
     ) -> Option<MatchPair<TaskSpec>> {
         let book = self.book.lock();
-        // The OrderBook::best_ask_matching returns &Order; we surface
+        // The OrderBook::best_ask_matching returns &&Order; we surface
         // an Owned version via MatchPair cloning a single-order shape.
         let order = book.best_ask_matching(spec_pred)?;
         Some(MatchPair {

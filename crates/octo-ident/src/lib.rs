@@ -658,7 +658,7 @@ mod tests {
     fn trait_dispatch_via_impl() {
         // AC: DidCodec trait exists and is dispatchable through its impl.
         // (We don't use `dyn DidCodec` here because the codec methods are
-        // associated functions without `&self` — the trait is dispatchable
+        // associated functions without `&&self` — the trait is dispatchable
         // by importing the trait and calling `<CanonicalCodec as DidCodec>::mint`.)
         let raw = <CanonicalCodec as DidCodec>::mint(&sample_pubkey(7));
         let wire = <CanonicalCodec as DidCodec>::raw_to_wire(&raw).unwrap();

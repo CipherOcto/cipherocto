@@ -657,7 +657,7 @@ impl WhatsAppRuntimeConfig {
         // avoid pathological sub-second fsync churn. 0 is rejected
         // because it would block the actor loop on every event.
         if self.events.persistence_enabled
-            && !(100..=60_000).contains(&self.events.flush_interval_ms)
+            & !(100..=60_000).contains(&self.events.flush_interval_ms)
         {
             return Err(ConfigError::InvalidName(format!(
                 "events.flush_interval_ms must be in 100..=60000 when persistence is enabled (got {})",

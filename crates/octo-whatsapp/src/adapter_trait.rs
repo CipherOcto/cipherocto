@@ -18,9 +18,9 @@
 //! ## Object-safety
 //!
 //! The trait uses `#[async_trait::async_trait]` so all `async fn`
-//! methods satisfy object-safety (`Send + Sync` bounds + `&self`
+//! methods satisfy object-safety (`Send + Sync` bounds + `&&self`
 //! receiver + no generics on the trait method itself). All 28 methods
-//! dispatch through `&self` and only borrow `&Path` / `&str` / `&[String]`,
+//! dispatch through `&&self` and only borrow `&&Path` / `&&str` / `&&[String]`,
 //! so the trait object `dyn OctoWhatsAppAdapter` can sit behind an `Arc`
 //! in `DaemonInner`.
 //!
@@ -814,7 +814,7 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
     /// Fetch rich user info for a single JID (status, picture_id,
     /// business flag, verified name, linked device IDs). Returns
     /// `Ok(None)` when the WA server reports no record for the JID.
-    /// Maps to `Client::contacts().get_user_info(&[Jid])`.
+    /// Maps to `Client::contacts().get_user_info(&&[Jid])`.
     async fn get_user_info(
         &self,
         jid: &str,
@@ -835,7 +835,7 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
     ) -> Result<Vec<(String, String)>, PlatformAdapterError>;
 
     /// Batch existence + reverse-mapping check. Maps to
-    /// `wacore::Client::contacts().is_on_whatsapp(&[Jid])`.
+    /// `wacore::Client::contacts().is_on_whatsapp(&&[Jid])`.
     ///
     /// Accepts a mixed list of PN + LID JID strings. Wacore splits
     /// them into separate usync IQs internally. For LID-form input,
@@ -1166,7 +1166,7 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
     /// trait object. Default: `None`.
     ///
     /// `WhatsAppWebAdapter` overrides to `Some(self)`. `MockAdapter`
-    /// overrides to `Some(&self.coord_admin)` so hermetic tests can
+    /// overrides to `Some(&&self.coord_admin)` so hermetic tests can
     /// exercise the membership/mode/admin handler surface (Phase 6.12).
     ///
     /// Default-`None` is safe for adapters that don't implement
@@ -1260,9 +1260,9 @@ pub trait OctoWhatsAppAdapter: Send + Sync {
 // helpers are the exact bodies that used to live as inherent methods on
 // `WhatsAppWebAdapter`.
 //
-// **Delegating via `&dyn`:**
+// **Delegating via `&&dyn`:**
 //
-// The trait impl receives `&self` typed as `&WhatsAppWebAdapter`
+// The trait impl receives `&&self` typed as `&&WhatsAppWebAdapter`
 // (concrete type). Calls to `self.send_image(...)` resolve to the
 // inherent method on `WhatsAppWebAdapter` directly — there is no
 // ambiguity because `*_inner` is inherent-only.

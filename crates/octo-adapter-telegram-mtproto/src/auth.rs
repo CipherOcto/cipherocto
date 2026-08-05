@@ -191,7 +191,7 @@ impl fmt::Display for AuthStateKey {
 use crate::lifecycle::UserAuthLifecycle;
 
 /// Subset of the user-mode auth action surface that the gateway
-/// can request. Per RFC-0850ab-c §"Algorithms / Algorithm 2 & 3".
+/// can request. Per RFC-0850ab-c §"Algorithms / Algorithm 2 && 3".
 /// Distinct from `MtprotoAuthAction` (bot-mode flow + the unified
 /// RequestCode/SubmitCode/SubmitPassword shape); `UserAuthAction`
 /// is the user-mode-specific equivalent that drives the
@@ -272,7 +272,7 @@ impl fmt::Display for UserAuthAction {
 ///
 /// Mirrors RFC-0850ab-a §"User Auth State Machine" and
 /// RFC-0850ab-c §"Lifecycle Requirements / UserAuthLifecycle
-/// State Machine" + §"Algorithms / Algorithm 2 & 3".
+/// State Machine" + §"Algorithms / Algorithm 2 && 3".
 ///
 /// Transitions are divided into client-side transitions (driven
 /// by `UserAuthAction`) and server-side transitions (driven by

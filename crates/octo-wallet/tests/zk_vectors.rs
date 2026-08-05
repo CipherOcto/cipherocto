@@ -495,7 +495,13 @@ fn tv8_cross_impl_two_prover_paths_byte_equivalent() {
         capability_root_hash: hex::encode(pi.cap_root_hash),
         provider_slot_id: pi.provider_slot_id.clone(),
     };
-    let path_b_commitment = zk_verifier::stub_commitment(&casm_hex, &zv_public);
+    // **Mission 0958-b S3 (2026-08-05):** `stub_commitment` now
+    // returns `Result<[u8; 32], ProverError>`. Integration tests run
+    // under `#[cfg(test)]` so the Ok branch fires; `.expect` documents
+    // the invariant for any future refactor that moves Path B out of
+    // the test module.
+    let path_b_commitment = zk_verifier::stub_commitment(&casm_hex, &zv_public)
+        .expect("stub_commitment Ok in #[cfg(test)] module");
 
     // R5 fix-up (2026-07-31): the pre-R4 cross-impl invariant asserted
     // byte-equivalence between the batch proofer's commitment and the

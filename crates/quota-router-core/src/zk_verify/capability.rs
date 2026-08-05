@@ -484,6 +484,12 @@ mod tests {
     /// Construct a valid stub proof that passes `zk_verifier::verify_capability_zk`.
     /// Uses the public `zk_verifier::stub_commitment` helper so test + prod agree
     /// on the canonical commitment (deterministic binary form; no serde_json).
+    ///
+    /// **Mission 0958-b S3 (2026-08-05):** `stub_commitment` returns
+    /// `Result<[u8; 32], ProverError>`. This test helper lives in a
+    /// `#[cfg(test)]` module, so the Ok branch always fires under
+    /// `cargo test --features allow-stub-verifier` (CI default).
+    /// `.expect` documents the invariant.
     fn build_stub_proof(casm_hash: &[u8; 32], public: &PublicInputs) -> Vec<u8> {
         let casm_hex = hex::encode(casm_hash);
         let zk_public = zk_verifier::PublicInputs {
@@ -493,7 +499,9 @@ mod tests {
             capability_root_hash: hex::encode(public.cap_root_hash),
             provider_slot_id: public.provider_slot_id.clone(),
         };
-        zk_verifier::stub_commitment(&casm_hex, &zk_public).to_vec()
+        zk_verifier::stub_commitment(&casm_hex, &zk_public)
+            .expect("stub_commitment Ok in #[cfg(test)] module")
+            .to_vec()
     }
 
     fn sample_proof() -> ProofBundle {
@@ -629,7 +637,9 @@ mod tests {
             capability_root_hash: hex::encode(public.cap_root_hash),
             provider_slot_id: public.provider_slot_id.clone(),
         };
-        let stark_proof = zk_verifier::stub_commitment(&casm_hex, &zk_public).to_vec();
+        let stark_proof = zk_verifier::stub_commitment(&casm_hex, &zk_public)
+            .expect("stub_commitment Ok in #[cfg(test)] module")
+            .to_vec();
         (
             ProofBundle {
                 stark_proof,

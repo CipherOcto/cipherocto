@@ -578,18 +578,16 @@ pub struct Proof {
     pub casm_hash: [u8; 32],
 }
 
-/// Errors emitted by `prove_batch_signature`.
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum ProverError {
-    #[error("empty signer_roots (RFC-0958 batch signature requires at least 1 signer)")]
-    EmptySigners,
-    #[error("signer count {count} exceeds maximum {max}")]
-    TooManySigners { count: usize, max: usize },
-    #[error("stwo-sys prover returned null handle (OOM or setup failure)")]
-    ProverNull,
-    #[error("internal prover error: {0}")]
-    Internal(String),
-}
+/// Errors emitted by `prove_batch_signature` + stub proofer helpers.
+///
+/// **Mission 0958-b S3 (2026-08-05):** `ProverError` moved from
+/// `zk-circuit` to `zk-verifier` so `stub_commitment` (which lives in
+/// `zk-verifier`) can return `Result<[u8; 32], ProverError>` without
+/// introducing a cyclic `zk-verifier` → `zk-circuit` dep. The DAG is
+/// now: `zk-verifier` (leaf) ← `zk-circuit` ← `octo-wallet`. Existing
+/// callers of `prove_batch_signature` see no API change — the error
+/// type is re-exported below.
+pub use zk_verifier::ProverError;
 
 /// Maximum batch size (RFC-0958 batch signature — bounded for Fiat-
 /// Shamir transcript determinism + verifier memory bound).

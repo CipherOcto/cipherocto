@@ -17,7 +17,7 @@
 
 #[cfg(not(feature = "allow-stub-verifier"))]
 use zk_verifier::VerifyError;
-use zk_verifier::{ProofBundle, PublicInputs};
+use zk_verifier::{ProofBundle, ProverError, PublicInputs};
 
 const TV_FIXED_TIME: u64 = 1_700_000_000;
 
@@ -48,6 +48,32 @@ fn release_gate_fails_closed() {
         matches!(result, Err(VerifyError::StubDisabled)),
         "release gate must return StubDisabled; got {result:?}"
     );
+}
+
+/// **Mission 0958-b S3 (2026-08-05):** `stub_commitment` returns
+/// `Result<[u8; 32], ProverError>`. In a release build with no
+/// `libstwo_sys.so` AND no `allow-stub-verifier` feature, the
+/// forgeable BLAKE3 stub path MUST refuse to compute a commitment.
+/// Companion invariant to `release_gate_fails_closed`: the verifier
+/// gates `verify_capability_zk`; the proofer gates `stub_commitment`.
+/// Both must fail closed under release configuration.
+#[cfg(not(feature = "allow-stub-verifier"))]
+#[test]
+fn stub_commitment_returns_err_in_release_build() {
+    let (_proof, public) = sample("casm-release-stub-commit");
+    let result = zk_verifier::stub_commitment("casm-release-stub-commit", &public);
+    match result {
+        Err(ProverError::StubVerifierDisabled { casm_hash, context }) => {
+            assert_eq!(casm_hash, "casm-release-stub-commit");
+            assert!(
+                context.contains("allow-stub-verifier"),
+                "context must point operators to the opt-in feature; got {context:?}"
+            );
+        }
+        other => panic!(
+            "release build must return Err(ProverError::StubVerifierDisabled); got {other:?}"
+        ),
+    }
 }
 
 /// R3 coverage check (default-features + dev tools present): the

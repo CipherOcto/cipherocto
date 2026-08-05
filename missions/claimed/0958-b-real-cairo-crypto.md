@@ -1,11 +1,11 @@
 # Mission 0958-b: Real Cairo Cryptographic Body + Real-zk STWO Integration
 
-**Status:** Claimed (2026-08-05); v0.3 — S2 landed (real-zk STWO FFI + feature-gate removal)
+**Status:** Claimed (2026-08-05); v0.4 — S3 landed (stub_commitment Result signature + 8/8 zk_vectors + bench activation + CI fuzz verified)
 **RFC:** RFC-0958 (Proof Systems): ZK Capability Subclass
 **Phase:** B.3 (real Cairo cryptographic body) + C.3 (real-zk STWO end-to-end)
 **Claimant:** @cipherocto
 **Depends on:** mission `0958-a` (claimed, v0.4 — surface area landed)
-**Session plan:** S1 + S2 done; S3-S4 pending.
+**Session plan:** S1 + S2 + S3 done; S4 pending.
 
 ## Summary
 
@@ -71,9 +71,42 @@ These are the 14 honest-disclosure items tracked in mission 0958-a §R4 Rebuttal
   landed at `docs/plans/2026-08-05-stage-2-verifier-split.md` for the follow-up
   mission (0958-c lead-off or S4 closure).
 
-### S3-S4 — pending
+### S3 — Stub proofer retirement + Result signature + bench activation (LANDED 2026-08-05)
 
-## Acceptance Criteria
+- [x] `stub_commitment` returns `Result<[u8; 32], ProverError>` instead of infallible `[u8; 32]` (no panic in production)
+- [x] New `ProverError::StubVerifierDisabled { casm_hash, context }` variant carries diagnostic payload for production-build failures
+- [x] `ProverError` moved from `zk-circuit` to `zk-verifier` (DAG: `zk-verifier` leaf ← `zk-circuit` ← `octo-wallet`); `zk-circuit` re-exports via `pub use zk_verifier::ProverError;` for backward compat
+- [x] All 6 `stub_commitment` callers updated to handle `Result`: `zk-verifier/src/lib.rs` (test `stub_proof` helper), `quota-router-core/src/zk_verify/capability.rs` (`build_stub_proof` + `verify_rejects_invalid_stub_proof`), `quota-router-core/tests/zk_vectors.rs`, `octo-wallet/tests/zk_vectors.rs` (TV8 Path B), `octo-wallet/tests/capability_zk_acceptance.rs`
+- [x] New `stub_commitment_returns_err_in_release_build` test in `crates/zk-verifier/tests/stub_disabled.rs` (gated on `#[cfg(not(feature = "allow-stub-verifier"))]`); companion to `release_gate_fails_closed`
+- [x] All 8 RFC-0958 §Test Vectors still green: `cargo test -p octo-wallet --test zk_vectors` → 15 passed (8 vectors TV1–TV8 + 7 extras: ac7, ac9, r3)
+- [x] `cargo test -p octo-wallet --test wire_v2_roundtrip` → 8 passed (v1/v2 round-trip + parser ignores 4th segment)
+- [x] `cargo test -p octo-wallet --test bench -- --include-ignored` → 3/3 (G1 proof gen <2s, G2 verify <100ms, AC-12 proof size 50-500KB dispatched on `vendor_state()`)
+- [x] `cargo test -p zk-circuit --lib` → 16 passed (prove_batch_signature contracts + BLAKE3 hash shape)
+- [x] `cargo test -p zk-verifier --no-default-features` → 12 passed (9 lib + 3 stub_disabled including new release-gate test)
+- [x] `cargo test -p zk-verifier --features allow-stub-verifier` → 10 passed (lib + default_features stub_disabled test)
+- [x] `cargo clippy --workspace --lib --no-deps -- -D warnings` clean (S3-touched crates)
+- [x] `cargo clippy -p zk-verifier --all-targets --no-deps -- -D warnings` clean
+- [x] `cargo clippy -p zk-circuit --lib --no-deps -- -D warnings` clean
+- [x] `cargo clippy -p octo-wallet --lib --no-deps -- -D warnings` clean
+- [x] `cargo fmt --all` ran
+- [x] CI workflow `.github/workflows/zk-capability-circuit.yml` already lands fuzz-nightly job for 24h corpus accumulation (S3 verifies; the `-p octo-wallet-fuzz` package name matches the fuzz crate Cargo.toml)
+
+### S3 Deviations (documented per [[deferred-vs-unspecified]])
+
+- **Pre-existing clippy warnings in `octo-wallet/src/key_hierarchy.rs` (47 × `implicit_clone`)
+  + `zk-circuit/tests/casm_snapshot.rs` (2 × `deprecated`) are NOT in S3 scope.** Verified
+  pre-existing by stashing S3 changes and re-running clippy (warnings reproduce on
+  clean tree). They pre-date S3 and live in files the S3 commit does not touch.
+  Cleanup is a separate PR — noted here so reviewers don't conflate them with
+  S3's clippy gate.
+- **`proof_gen_latency_self_host_under_2s_10k_trace` does NOT measure real-zk STWO
+  proof generation.** Per S2 deviation, the FFI returns `ProverNull` because the S2
+  witness payload (`canonical_ser(BatchSigPublicInputs)`) is not yet a valid
+  `ProverInput` JSON shape; the bench runs the deterministic mock fallback under
+  `VendorState::Ffi` and asserts structural smoke only. True real-zk latency
+  measurement requires structured `ProverInput` JSON — deferred to mission 0958-c.
+
+### S4 — pending
 
 ### Type Coverage (new)
 
@@ -141,4 +174,4 @@ None. Single cipherocto-side mission; no stoolap fork work.
 
 **Submission Date:** 2026-08-04
 **Last Updated:** 2026-08-05
-**Version:** 0.3 (Claimed; S1 + S2 landed)
+**Version:** 0.4 (Claimed; S1 + S2 + S3 landed; S4 pending)

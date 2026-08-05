@@ -38,7 +38,13 @@ fn make_stub_proof_bytes(casm: &[u8; 32], public: &PublicInputs) -> Vec<u8> {
         capability_root_hash: hex::encode(public.cap_root_hash),
         provider_slot_id: public.provider_slot_id.clone(),
     };
-    zk_verifier::stub_commitment(&casm_hex, &zk_public).to_vec()
+    // **Mission 0958-b S3 (2026-08-05):** `stub_commitment` now
+    // returns `Result<[u8; 32], ProverError>`. Test helpers run under
+    // `#[cfg(test)]` so the Ok branch fires; `.expect` documents the
+    // invariant.
+    zk_verifier::stub_commitment(&casm_hex, &zk_public)
+        .expect("stub_commitment Ok in #[cfg(test)] module")
+        .to_vec()
 }
 
 fn sample_proof() -> ProofBundle {

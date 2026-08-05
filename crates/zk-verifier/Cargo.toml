@@ -48,6 +48,15 @@ subtle = "2.6"
 # consolidation is deferred to mission 0958-b.
 cipherocto-zkp-canonical = { path = "../cipherocto-zkp-canonical" }
 
+# **Mission 0958-b S3 (2026-08-05):** `ProverError` is defined HERE in
+# `zk-verifier` (not in `zk-circuit`) so `stub_commitment` can return
+# `Result<[u8; 32], ProverError>` directly. `zk-circuit` re-exports it
+# via `pub use zk_verifier::ProverError;`. This keeps the DAG acyclic:
+# `zk-verifier` (leaf) ← `zk-circuit` ← `octo-wallet`. An earlier
+# attempt to add `zk-circuit` as a `zk-verifier` dep cycled (`zk-circuit`
+# already depends on `zk-verifier` for verify round-trips). No `zk-circuit`
+# dep line is needed in this Cargo.toml.
+
 # STWO is vendored under `zk-vendor/` (NOT a crates.io dep). Stubbed below
 # until the source drop + curve25519 patches land in zk-vendor.
 # zk-vendor = { path = "../zk-vendor" }

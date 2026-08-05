@@ -51,6 +51,45 @@ use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use thiserror::Error;
 
+// **Mission 0958-b S3 (2026-08-05):** `ProverError` lives in
+// `zk-verifier` (no upward deps) so `stub_commitment` can return
+// `Result<[u8; 32], ProverError>` directly. `zk-circuit` re-exports
+// it via `pub use zk_verifier::ProverError;` so existing callers of
+// `prove_batch_signature`'s error type see no API change.
+//
+// **Why here, not in `zk-circuit`:** `zk-circuit` already depends on
+// `zk-verifier` (for the verification round-trip test). Putting
+// `ProverError` in `zk-verifier` keeps the dependency DAG
+// acyclic (`zk-verifier` has no path deps; `zk-circuit` depends on it;
+// `octo-wallet` depends on both). Earlier attempts to add
+// `zk-circuit` as a `zk-verifier` dep cycled.
+//
+// **Why the new `StubVerifierDisabled` variant:** the BLAKE3 stub
+// proofer is forgeable by design (the commitment is computable from
+// publicly-known inputs). Production code that calls
+// `stub_commitment` without `--features allow-stub-verifier` would
+// otherwise panic via the unwrap on `Option<...>` / non-existent
+// function. Returning `Err(ProverError::StubVerifierDisabled { ... })`
+// makes the failure mode explicit + diagnostic.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum ProverError {
+    #[error("empty signer_roots (RFC-0958 batch signature requires at least 1 signer)")]
+    EmptySigners,
+    #[error("signer count {count} exceeds maximum {max}")]
+    TooManySigners { count: usize, max: usize },
+    #[error("stwo-sys prover returned null handle (OOM or setup failure)")]
+    ProverNull,
+    #[error(
+        "BLAKE3 stub verifier disabled in production build (RFC-0958 R4 fix-up); \
+             casm_hash={casm_hash}, context={context}. \
+             To enable locally: `cargo build --features allow-stub-verifier`; \
+             in production, deploy `libstwo_sys.so` for real-zk STWO."
+    )]
+    StubVerifierDisabled { casm_hash: String, context: String },
+    #[error("internal prover error: {0}")]
+    Internal(String),
+}
+
 /// Maximum acceptable clock skew between verifier + proof issuance
 /// (RFC-0958 R3 N5 fix; 300 seconds = 5 minutes).
 pub const MAX_SKEW_SECS: u64 = 300;
@@ -332,23 +371,54 @@ fn leb128_len(bytes: &[u8]) -> [u8; 4] {
 ///
 /// **R4 audit fix-up (2026-07-31):** this helper is forgeable end-to-end
 /// (any attacker can compute the commitment from publicly-known
-/// `casm_hash` + `PublicInputs`). It is gated behind
-/// `#[cfg(any(test, feature = "allow-stub-verifier"))]` so production
-/// binaries (which disable default features) cannot construct
-/// stub-shaped proofs accidentally.
+/// `casm_hash` + `PublicInputs`).
+///
+/// **Mission 0958-b S3 (2026-08-05):** the return type is now
+/// `Result<[u8; 32], ProverError>` (defined in this crate; re-exported
+/// by `zk-circuit` for backward compat with `prove_batch_signature`'s
+/// callers) so a production build never silently accepts a forgeable
+/// stub commitment. Under `#[cfg(any(test, feature =
+/// "allow-stub-verifier"))]` the function returns `Ok(commitment)`;
+/// otherwise (vanilla release build with no libstwo_sys.so reachable
+/// and no opt-in feature) the function returns
+/// `Err(ProverError::StubVerifierDisabled { casm_hash, context })`.
+/// Production code MUST handle the `Err` arm explicitly — calling
+/// `stub_commitment` and `.unwrap()`-ing in production is a security
+/// bug (would silently forge a proof).
 ///
 /// Use `verify_capability_zk` (or the production-gated path under
 /// `--features allow-stub-verifier`) to construct stub proofs via
 /// the proofer. Real STWO FFI computes the commitment natively
 /// (no BLAKE3 placeholder).
-#[must_use]
-#[cfg(any(test, feature = "allow-stub-verifier"))]
-pub fn stub_commitment(casm_hash: &str, public: &PublicInputs) -> [u8; 32] {
-    let canon_pub = canonicalize_public(public);
-    let mut commit = Hasher::new();
-    commit.update(casm_hash.as_bytes());
-    commit.update(&canon_pub);
-    *commit.finalize().as_bytes()
+///
+/// (No `#[must_use]` — `Result<[u8; 32], ProverError>` is already
+/// `#[must_use]` by virtue of the `Result` type itself; clippy
+/// `double_must_use` lint rejects explicit duplicate annotation.)
+pub fn stub_commitment(casm_hash: &str, public: &PublicInputs) -> Result<[u8; 32], ProverError> {
+    #[cfg(any(test, feature = "allow-stub-verifier"))]
+    {
+        let canon_pub = canonicalize_public(public);
+        let mut commit = Hasher::new();
+        commit.update(casm_hash.as_bytes());
+        commit.update(&canon_pub);
+        Ok(*commit.finalize().as_bytes())
+    }
+    #[cfg(not(any(test, feature = "allow-stub-verifier")))]
+    {
+        // The `public` parameter is intentionally unused in the
+        // production-build branch — the BLAKE3 stub must not run, so
+        // there is no commitment to compute over. Suppress the unused-
+        // variable lint without renaming the parameter (callers always
+        // pass a value).
+        #[allow(unused_variables)]
+        let _ = public;
+        Err(ProverError::StubVerifierDisabled {
+            casm_hash: casm_hash.to_owned(),
+            context: "stub_commitment is opt-in; pass --features allow-stub-verifier \
+                      for dev/CI or use real-zk STWO FFI in production"
+                .to_owned(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -379,7 +449,16 @@ mod tests {
         // `blake3(casm_hash || canonical_public)` (via public helper so
         // external call sites — capability.rs integration, zk_vectors
         // fixtures — get the same commitment).
-        stub_commitment(casm, public).to_vec()
+        //
+        // **Mission 0958-b S3 (2026-08-05):** `stub_commitment` now
+        // returns `Result<[u8; 32], ProverError>`. The test module is
+        // gated under `#[cfg(test)]`, so the cfg-enabled branch always
+        // fires (returns `Ok(commitment)`); `.expect` documents the
+        // invariant for any future refactor that moves this helper out
+        // of the cfg-gated module.
+        stub_commitment(casm, public)
+            .expect("stub_commitment Ok in #[cfg(test)] module")
+            .to_vec()
     }
 
     /// **Mission 0958-b S2 (2026-08-05):** stub-shaped proofs are

@@ -89,7 +89,7 @@ impl std::fmt::Debug for PrivateWitness {
 /// BLAKE3 hash (over `step_records` via `derive_trace_hash`) MUST equal
 /// `PublicInputs::output_hash` when present. The Cairo-side structural
 /// check (`inference_trace_present == 1` iff `has_output_hash == 1`) lives
-/// at `cairo/capability_zk.cairo::main`.
+/// at `cairo/src/lib.cairo::main`.
 ///
 /// `step_records` carries one entry per inference step (operator code +
 /// input/output hashes). The verifier reconstructs the trace hash via
@@ -152,6 +152,15 @@ pub struct PublicInputs {
 /// proof-generation data the verifier hasn't yet finalized. Manual
 /// `Debug` impl prints only the size + casm_hash hex + version +
 /// security_bits.
+///
+/// **Wire format intentionally carries raw bytes:** the `Serialize`
+/// impl is auto-derived (NOT redacted) so the wire format can transmit
+/// the proof bytes end-to-end. The `Debug` redaction protects panic
+/// messages / log lines; the wire format is the explicit "full" surface
+/// (RFC-0958 §Wire Format). R4 audit (M12) initially proposed a
+/// custom redacting `Serialize` impl — that was reverted because it
+/// broke the roundtrip invariant; the redaction belongs on `Debug`,
+/// not `Serialize`.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ProofBundle {
     pub stark_proof: Vec<u8>,
@@ -257,40 +266,50 @@ pub fn bundled_casm_hash() -> [u8; 32] {
         .as_ref()
         .copied()
         .unwrap_or_else(|compile_err| {
+            // R4 fix-up (2026-08-04): surface the original compiler error
+            // (e.g. `MalformedProgram("...")` or `CompilerInternal("...")`)
+            // so the operator can diagnose whether the failure is a missing
+            // scarb, a malformed Sierra JSON, or a Sierra→CASM bug — rather
+            // than the previous generic "install scarb" advice that fired
+            // even when scarb was fine.
             panic!(
-                "bundled_casm_hash() init failed: {compile_err}. Install scarb 2.16.0 \
-                 (https://docs.swmansion.com/scarb/) and ensure cairo-lang-* 2.20.0 \
-                 Rust crates are linked into zk-circuit."
+                "bundled_casm_hash() init failed. Underlying error: {compile_err}. \
+                 Common causes: (1) scarb 2.16.0 not in PATH — install via \
+                 https://docs.swmansion.com/scarb/; (2) cairo-lang-* 2.20.0 \
+                 Rust crates not linked into zk-circuit — rebuild with \
+                 `cargo build -p zk-circuit`; (3) malformed Sierra IR from \
+                 `cairo/src/lib.cairo` — re-run `scarb build` from the \
+                 `cairo/` directory and inspect the JSON output."
             )
         })
 }
 
 fn compute_bundled_casm_hash() -> Result<[u8; 32], zk_circuit::HashError> {
     // Production path (mission 0958-a Phase B.2 + Session 2): invoke
-    // the scarb+Sierra→CASM pipeline via `zk_circuit::compile_from_source`
+    // the scarb+Sierra→CASM pipeline via `zk_circuit::compile_bundled()`
     // and hash the real CASM bytes. Requires scarb 2.16.0 in PATH +
     // cairo-lang-* 2.20.0 Rust crates (linked into zk-circuit).
+    //
+    // R4 fix-up (2026-08-04): use `compiled.hash_bytes()` instead of
+    // decoding the hex ourselves — `hash_bytes()` carries the
+    // hex-invariant panic so a corrupt hash surfaces as a clear failure.
     //
     // Session 3 contract: no stub fallback. The error is propagated
     // up to `bundled_casm_hash()` which then panics with an actionable
     // message; the smoke test `casm_snapshot` already verifies the
     // hard-fail behavior at the test layer.
+    #[allow(deprecated)]
     let compiled = zk_circuit::compile_from_source(BUNDLED_CAIRO_SOURCE)?;
-    let hex = compiled.hash();
-    let bytes = hex::decode(hex)
-        .map_err(|e| zk_circuit::HashError::CompilerInternal(format!("decode BLAKE3 hex: {e}")))?;
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&bytes[..32]);
-    Ok(out)
+    Ok(compiled.hash_bytes())
 }
 
 /// Cairo source for the bundled capability ZK circuit (mint side).
 ///
 /// Re-exported from `zk_circuit::BUNDLED_CAIRO_SOURCE` which loads the
-/// real `cairo/capability_zk.cairo` via `include_str!` at compile time.
-/// Mission 0958-a Phase B.2 (2026-07-22 extraction per
-/// [[stoolap-general-purpose-db]]): real Cairo source replaces the
-/// previous inline JSON stub.
+/// real `cairo/src/lib.cairo` (Cairo 2.x scarb package `capability_zk`)
+/// via `include_str!` at compile time. Mission 0958-a Phase B.2
+/// (2026-07-22 extraction per [[stoolap-general-purpose-db]]): real
+/// Cairo source replaces the previous inline JSON stub.
 pub use zk_circuit::BUNDLED_CAIRO_SOURCE;
 
 /// Mint a ZK-bearing capability proof bundle.
@@ -353,7 +372,14 @@ pub fn mint_with_zk(
 /// Returns `ZkMintError::BatchProver` if the prover rejects the inputs;
 /// returns the same errors as `mint_with_zk` for gating / preconditions.
 pub fn canonicalize_axes(pi: &mut PublicInputs) {
-    pi.axes_consumed.sort_by(|a, b| a.0.cmp(&b.0));
+    // R4 fix-up 2026-08-04: sort by (name, value) not by name alone, matching
+    // `quota-router-core::zk_verify::capability::canonicalize_axes`. The
+    // duplicate definition was kept here historically so callers don't need a
+    // cross-crate dependency for this trivial helper; the canonical
+    // implementation lives in `quota-router-core` and this mirror MUST stay
+    // in lock-step (R4 MEDIUM M4 hardening).
+    pi.axes_consumed
+        .sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
 }
 
 pub fn mint_with_zk_and_signers(
@@ -512,16 +538,18 @@ pub fn proof_bundle_to_wire(bundle: &ProofBundle) -> Result<Vec<u8>, WireError> 
     serde_json::to_vec(bundle).map_err(|e| WireError::Serialize(e.to_string()))
 }
 
-/// Sanity: assert that the macaroon root_id derived from witness matches the
-/// `cap_root_hash` public input. Used at mint time as a defense-in-depth check
-/// before invoking STWO.
-pub fn witness_chain_matches(witness: &PrivateWitness, expected_root_hash: &[u8; 32]) -> bool {
-    // In production: re-derive `current_sig = blake3_keyed_hash(derive_key("capability.cairo.chain", current_sig), msg)`
-    // for each caveat; compare final to expected. MVP: stub returns true if chain is
-    // structurally valid (cap_root_secret non-zero).
-    witness.cap_root_secret != [0u8; 32] && *expected_root_hash != [0u8; 32]
-}
-
+/// **REMOVED (R4 fix-up 2026-08-04):** `witness_chain_matches` was a
+/// stub function (returned `true` iff `cap_root_secret != 0` and
+/// `expected_root_hash != 0`) that was never called from the production
+/// mint path. The cryptographic chain re-derivation (HMAC-BLAKE3 keyed
+/// hash chain over caveat links) is now tracked as a deliverable of
+/// follow-up mission `missions/open/0958-b-real-cairo-crypto.md` (to
+/// be filed). Until then, the BLAKE3 batch commitment covers the
+/// witness via `witness_commitment = blake3(cap_root_secret ||
+/// holder_sig || caveats_full || discharges_full || inference_trace)`
+/// in `prove_batch_signature`, which is a structural (not
+/// cryptographic) guarantee — honest disclosure per AC-6/AC-11/Risks.
+///
 /// Helper: derive `cap_root_hash` from `cap_root_secret` (BLAKE3 identity case).
 pub fn derive_root_hash_from_secret(cap_root_secret: &[u8; 32]) -> [u8; 32] {
     *blake3::hash(cap_root_secret).as_bytes()

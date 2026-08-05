@@ -9,7 +9,7 @@ RFC-0102: Wallet Cryptography Specification
 
 ## Cross-link (2026-07-22 — crypto extraction amendment per [[stoolap-general-purpose-db]])
 
-Shares Phase C.2 STWO substrate with sibling mission `missions/claimed/0958-a-zk-capability-circuit.md`. Per v0.3 amendment of mission 0958-a (2026-07-22), STWO is vendored under `crates/zk-vendor/` (stable-rust patched) and verified via `crates/zk-verifier/` — both in the cipherocto workspace, NOT in the stoolap fork. When this mission implements STWO verifier integration, it should depend on `zk-verifier` (cargo path dep) rather than pulling STWO from stoolap fork or [patch.crates-io]. Cross-link is one-directional: this mission depends on 0958-a's STWO substrate; 0958-a does not depend on this mission.
+Shares STWO bridge with sibling mission `missions/claimed/0958-a-zk-capability-circuit.md` (v0.3 amendment 2026-07-22). 0958-a ships the FFI bridge in `crates/zk-vendor/stwo-sys/` (cdylib, nightly `2025-06-23`) plus the cipherocto-side wrapper `crates/zk-vendor/src/lib.rs::loaded_library() -> Option<StwoSys>` and the layered verifier `crates/zk-verifier/src/lib.rs` (FFI > Stub). When this mission implements STWO verifier integration, it should depend on `crates/zk-verifier/` (cargo path dep) and call `zk_verifier::verify_capability_zk(...)` through the public API. The cipherocto workspace does not patch STWO via `[patch.crates-io]`; the bridge is a local cdylib libloaded at runtime. Cross-link is one-directional: this mission depends on 0958-a's STWO bridge; 0958-a does not depend on this mission.
 
 ## Blockers / Dependencies
 

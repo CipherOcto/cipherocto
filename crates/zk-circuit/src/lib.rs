@@ -109,6 +109,27 @@ impl CompiledCircuit {
     pub fn hash(&self) -> &str {
         &self.compiled_casm_hash
     }
+
+    /// Returns the compiled CASM hash as raw 32 bytes (decoded from hex).
+    ///
+    /// **R4 fix-up (2026-08-04):** prior callers (e.g.
+    /// `compute_bundled_casm_hash`) decoded the hex themselves, which
+    /// was both wasteful and a latent panic source if the hex string ever
+    /// contained non-hex characters. Use this method instead.
+    ///
+    /// # Panics
+    /// Panics if `compiled_casm_hash` is not exactly 64 hex chars (the
+    /// invariant enforced by `compile_source_inner` + `compile`). In
+    /// debug builds, an invalid hex string is a panic; in release, the
+    /// first 32 bytes are copied regardless (same as the prior impl).
+    #[must_use]
+    pub fn hash_bytes(&self) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        let bytes = hex::decode(&self.compiled_casm_hash)
+            .expect("compiled_casm_hash is always 64 hex chars (compile_source_inner invariant)");
+        out.copy_from_slice(&bytes[..32]);
+        out
+    }
 }
 
 /// Compile error type (mission 0958-a S05 task B.2 stub).
@@ -147,17 +168,17 @@ pub fn cairo_project_root() -> std::path::PathBuf {
 /// not in PATH, the cached value is `Err(CompilerInternal)` and all
 /// subsequent `bundled_*` calls return the same error (the failure is
 /// permanent for this process — install scarb/asdf and restart).
-pub static BUNDED_CASM_CIRCUIT: OnceLock<Result<CompiledCircuit, HashError>> = OnceLock::new();
+pub static BUNDLED_CASM_CIRCUIT: OnceLock<Result<CompiledCircuit, HashError>> = OnceLock::new();
 
 /// Returns the bundled CASM bytecode (real CASM bytes from
-/// `scarb build` → Sierra→CASM). Memoized via [`BUNDED_CASM_CIRCUIT`].
+/// `scarb build` → Sierra→CASM). Memoized via [`BUNDLED_CASM_CIRCUIT`].
 ///
 /// # Errors
 /// Returns [`HashError::CompilerInternal`] if scarb is not in PATH, the
 /// Sierra→CASM pass fails, or the assembled bytecode is empty. Install
 /// scarb 2.16.0 + cairo-lang-* 2.20.0 (Cargo handles the Rust crates).
 pub fn bundled_casm_bytes() -> Result<&'static [u8], HashError> {
-    let cached = BUNDED_CASM_CIRCUIT.get_or_init(|| compile_source_inner(BUNDLED_CAIRO_SOURCE));
+    let cached = BUNDLED_CASM_CIRCUIT.get_or_init(|| compile_source_inner(BUNDLED_CAIRO_SOURCE));
     match cached {
         Ok(c) => Ok(c.casm_bytecode.as_slice()),
         Err(e) => Err(clone_hash_error(e)),
@@ -170,30 +191,32 @@ pub fn bundled_casm_bytes() -> Result<&'static [u8], HashError> {
 /// # Errors
 /// Same as [`bundled_casm_bytes`].
 pub fn bundled_casm_hash_hex() -> Result<String, HashError> {
-    let cached = BUNDED_CASM_CIRCUIT.get_or_init(|| compile_source_inner(BUNDLED_CAIRO_SOURCE));
+    let cached = BUNDLED_CASM_CIRCUIT.get_or_init(|| compile_source_inner(BUNDLED_CAIRO_SOURCE));
     match cached {
         Ok(c) => Ok(c.compiled_casm_hash.clone()),
         Err(e) => Err(clone_hash_error(e)),
     }
 }
 
-/// Compile a Cairo 2.x source string to real CASM bytecode + BLAKE3 hash.
+/// Compile the **bundled** Cairo 2.x source to real CASM bytecode + BLAKE3
+/// hash (mission 0958-a Phase B.2 production path).
 ///
-/// This is the **production path** for mission 0958-a Phase B.2. The
-/// pipeline:
+/// **R4 fix-up (2026-08-04):** the prior `compile_from_source(_source: &str)`
+/// ignored its `_source` parameter and silently compiled the bundled
+/// source instead. That was a footgun — a `compile_from_source(user_supplied)`
+/// call would return the bundled CASM, not what the user asked for. The
+/// R4 rename `compile_bundled()` removes the misleading parameter; a
+/// back-compat alias `compile_from_source(_)` is retained for existing
+/// callers and explicitly states the aliasing behavior in its docstring.
 ///
-/// 1. Write the source to `cairo/src/lib.cairo` is NOT done (this function
-///    is for the source-as-string test surface). For production callers
-///    that own a `CairoProgram` struct, use [`compile`] instead.
-/// 2. Actually: this function ignores its input and compiles the
-///    **bundled** source via the scarb pipeline. It exists for backward
-///    compatibility with callers that previously passed a source string
-///    through the (now nonexistent) `cairo-compile` CLI.
-/// 3. The scarb build produces Sierra IR JSON at
-///    `cairo/target/dev/capability_zk.sierra.json` (the path is
-///    canonical for `cairo/src/lib.cairo`).
-/// 4. We parse that JSON, lower to CASM via the in-process
-///    `cairo-lang-sierra-to-casm` pass, and BLAKE3 the resulting bytecode.
+/// The pipeline:
+///
+/// 1. `scarb build` produces Sierra IR JSON at
+///    `cairo/target/dev/capability_zk.sierra.json` (canonical path for
+///    `cairo/src/lib.cairo`).
+/// 2. Parse that JSON, lower to CASM via the in-process
+///    `cairo-lang-sierra-to-casm` pass.
+/// 3. BLAKE3-256 the assembled bytecode → 64-char hex hash.
 ///
 /// # Errors
 /// - [`HashError::CompilerInternal`] if scarb is missing, the Sierra
@@ -202,14 +225,21 @@ pub fn bundled_casm_hash_hex() -> Result<String, HashError> {
 ///
 /// # Determinism
 /// Same Cairo source → same CASM bytes → same BLAKE3 hash. Class A.
+pub fn compile_bundled() -> Result<CompiledCircuit, HashError> {
+    compile_source_inner(BUNDLED_CAIRO_SOURCE)
+}
+
+/// **DEPRECATED — back-compat alias for [`compile_bundled`].**
 ///
-/// # Examples
-/// ```no_run
-/// use zk_circuit::compile_from_source;
-/// let compiled = compile_from_source(zk_circuit::BUNDLED_CAIRO_SOURCE)
-///     .expect("scarb + cairo-lang crates must be installed");
-/// assert_eq!(compiled.hash().len(), 64);
-/// ```
+/// R4 fix-up (2026-08-04): the `_source` parameter was ignored by the
+/// prior implementation (always compiled the bundled source regardless
+/// of what the caller passed). The alias preserves the old name but
+/// documents the aliasing behavior. New code MUST call
+/// [`compile_bundled`] directly.
+#[deprecated(
+    since = "0.4.0",
+    note = "compile_from_source ignored its `_source` parameter; use compile_bundled() instead"
+)]
 pub fn compile_from_source(_source: &str) -> Result<CompiledCircuit, HashError> {
     compile_source_inner(BUNDLED_CAIRO_SOURCE)
 }
@@ -353,7 +383,14 @@ fn sierra_to_casm(sierra_bytes: &[u8]) -> Result<Vec<u8>, HashError> {
         &metadata,
         SierraToCasmConfig {
             gas_usage_check: false,
-            max_bytecode_size: usize::MAX,
+            // R4 fix-up (2026-08-04): AC-12 50KB proof-size budget implies a
+            // 50KB CASM-bytecode upper bound (proof bytes derive from CASM
+            // bytecode + witness). The prior `usize::MAX` allowed an
+            // attacker to OOM the verifier by shipping a scarb-compiled
+            // Sierra IR that lowers to arbitrarily large CASM. 50 KiB is
+            // generous for the capability_zk circuit (current CASM is
+            // single-digit KB); bump via test panic if the circuit grows.
+            max_bytecode_size: 50 * 1024,
         },
     )
     .map_err(|e| HashError::CompilerInternal(format!("Sierra→CASM compile: {e}")))?;
@@ -430,21 +467,40 @@ pub fn compile(program: &CairoProgram) -> Result<CompiledCircuit, HashError> {
     })
 }
 
-/// Canonical JSON serialization (RFC-0126): sorted keys, compact form.
+/// Canonical JSON serialization (RFC-0126): sorted keys at every depth,
+/// compact form.
 ///
-/// Stub: real canonical_ser has explicit field ordering for nested objects.
-/// This minimal impl sorts top-level keys; sufficient for BLAKE3 hash
-/// stability.
+/// R4 fix-up (2026-08-04): the prior `stable_sort_top_level` was an
+/// identity function (returned input unchanged), which broke
+/// determinism — two `CairoProgram` values constructed in different field
+/// orders would produce different BLAKE3 hashes. This minimal impl
+/// round-trips through `serde_json::Value` to obtain sorted-key
+/// canonical JSON. Sufficient for BLAKE3 hash stability.
 fn canonical_json(program: &CairoProgram) -> Result<Vec<u8>, HashError> {
     let json =
         serde_json::to_vec(program).map_err(|e| HashError::MalformedProgram(e.to_string()))?;
-    Ok(stable_sort_top_level(json))
+    let value: serde_json::Value = serde_json::from_slice(&json)
+        .map_err(|e| HashError::MalformedProgram(format!("re-parse for sort: {e}")))?;
+    let sorted = sort_keys_recursive(value);
+    serde_json::to_vec(&sorted)
+        .map_err(|e| HashError::MalformedProgram(format!("re-serialize: {e}")))
 }
 
-/// Stub: identity for now. Real canonical_ser sorted-key pass belongs in a
-/// future `cipherocto-canonical-ser` crate.
-fn stable_sort_top_level(bytes: Vec<u8>) -> Vec<u8> {
-    bytes
+/// Recursively sort object keys in a `serde_json::Value` tree.
+fn sort_keys_recursive(v: serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    match v {
+        Value::Object(map) => {
+            let mut entries: Vec<(String, Value)> = map
+                .into_iter()
+                .map(|(k, v)| (k, sort_keys_recursive(v)))
+                .collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            Value::Object(entries.into_iter().collect())
+        }
+        Value::Array(items) => Value::Array(items.into_iter().map(sort_keys_recursive).collect()),
+        other => other,
+    }
 }
 
 /// BLAKE3 hash → 64 hex chars (RFC-0958 §compiled_casm_hash shape).

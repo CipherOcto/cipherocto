@@ -24,19 +24,23 @@
 //! commitment checks for the multi-signer envelope.
 
 use super::{ProofBundle, PublicInputs, ZkVerifyError};
+use subtle::ConstantTimeEq;
 
 /// Maximum tolerable clock skew between prover and verifier (RFC-0958 §Time Bounds).
 /// Defense against malicious prover setting arbitrary wall-clock.
 pub const MAX_SKEW_SECS: u64 = zk_verifier::MAX_SKEW_SECS;
 
-/// Canonicalize `axes_consumed` order (mission 0958-a R3 fix-up, 2026-07-31).
+/// Canonicalize `axes_consumed` order (mission 0958-a R3 fix-up, 2026-07-31;
+/// R4 fix 2026-08-04: sort by `(name, value)` not by `name` alone).
 ///
-/// **Contract:** `axes_consumed` MUST be sorted by `(axis_name)` before any
-/// structural equality check OR proof generation. Without this, an upstream
-/// caller that incidentally sorts (e.g., `HashMap` iteration,
+/// **Contract:** `axes_consumed` MUST be sorted by `(axis_name, axis_value)`
+/// before any structural equality check OR proof generation. Without this,
+/// an upstream caller that incidentally sorts (e.g., `HashMap` iteration,
 /// `BTreeMap` round-trip) trips `PublicInputMismatch` on a semantically
-/// identical capability. The `Vec` derives `PartialEq` so order matters;
-/// this helper provides the canonical contract.
+/// identical capability. R4 hardens this to also order by value so two
+/// `(name, value)` entries with the same name but different values produce
+/// a deterministic order — necessary for Class A determinism (RFC-0958
+/// §Determinism contract).
 ///
 /// Called at every boundary:
 /// 1. Mint site (`octo-wallet/src/capability/zk_mint.rs::mint_with_zk_and_signers`)
@@ -44,7 +48,8 @@ pub const MAX_SKEW_SECS: u64 = zk_verifier::MAX_SKEW_SECS;
 /// 2. Verify site (`verify_capability_zk`, just before `public_inputs_equal`)
 ///    — so the structural comparison is order-independent.
 pub fn canonicalize_axes(pi: &mut PublicInputs) {
-    pi.axes_consumed.sort_by(|a, b| a.0.cmp(&b.0));
+    pi.axes_consumed
+        .sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
 }
 
 /// Decode a 64-char hex string into a 32-byte BLAKE3 hash.
@@ -217,14 +222,54 @@ pub fn verify_capability_zk(
     })
 }
 
-/// Public inputs equality (RFC-0958 §Adversary A5 + v1.4 IA-11 slot binding).
+/// Public inputs equality (RFC-0958 §Adversary A5 + IA-11 slot binding;
+///
+/// R4 fix-up 2026-08-04: rewritten to use `subtle::ConstantTimeEq` for the
+/// byte-array fields (and constant-time iteration for `Vec<(String, u64)>`)
+/// so the comparison's wall-clock duration does not leak which field
+/// mismatched. Prior `==`-based comparison was short-circuit on first
+/// mismatch, enabling a side-channel that combined with the stub proofer's
+/// permissive commitment (R4 C4 disclosure) could let an attacker
+/// field-discovery a proof by timing the verifier.
 fn public_inputs_equal(a: &PublicInputs, b: &PublicInputs) -> bool {
-    a.ask_id == b.ask_id && a.axes_consumed == b.axes_consumed && a.cap_root_hash == b.cap_root_hash && a.invocation_hash == b.invocation_hash && a.holder_did == b.holder_did && a.current_unix_time == b.current_unix_time && a.output_hash == b.output_hash
-        // **v1.4 (RFC-0958 IA-11):** slot binding must match — defense
-        // against cross-slot replay. If the proof was minted for slot A
-        // and the verifier expects slot B, this returns false → caller
-        // returns `PublicInputMismatch`.
-        && a.provider_slot_id == b.provider_slot_id
+    use subtle::Choice;
+    let byte32_eq = |x: &[u8; 32], y: &[u8; 32]| -> Choice { x.ct_eq(y) };
+    let ct_eq_opt = |x: &Option<[u8; 32]>, y: &Option<[u8; 32]>| -> Choice {
+        match (x, y) {
+            (Some(x), Some(y)) => byte32_eq(x, y),
+            (None, None) => Choice::from(1u8),
+            _ => Choice::from(0u8),
+        }
+    };
+    // Vec compare: lengths first (constant time), then per-element ct_eq
+    // on (name, value). Different lengths short-circuit (caller cannot
+    // derive field-level info from the length difference since `len()`
+    // is O(1) anyway).
+    let axes_eq = if a.axes_consumed.len() != b.axes_consumed.len() {
+        Choice::from(0u8)
+    } else {
+        let initial: Choice = Choice::from(1u8);
+        a.axes_consumed.iter().zip(b.axes_consumed.iter()).fold(
+            initial,
+            |acc, ((n1, v1), (n2, v2))| {
+                let name_eq: Choice = n1.as_bytes().ct_eq(n2.as_bytes());
+                let val_eq: Choice = v1.ct_eq(v2);
+                acc & name_eq & val_eq
+            },
+        )
+    };
+    let initial: Choice = Choice::from(1u8);
+    let combined = initial
+        & byte32_eq(&a.ask_id, &b.ask_id)
+        & axes_eq
+        & byte32_eq(&a.cap_root_hash, &b.cap_root_hash)
+        & byte32_eq(&a.invocation_hash, &b.invocation_hash)
+        & a.holder_did.as_bytes().ct_eq(b.holder_did.as_bytes())
+        & a.current_unix_time.ct_eq(&b.current_unix_time)
+        & ct_eq_opt(&a.output_hash, &b.output_hash)
+        // IA-11 slot binding must match — defense against cross-slot replay.
+        & a.provider_slot_id.as_bytes().ct_eq(b.provider_slot_id.as_bytes());
+    bool::from(combined)
 }
 
 /// Verifier parameters (Gap 3 / RFC-0958 + RFC-0962 §9 / Task 3.4).

@@ -100,18 +100,33 @@ The cipherocto workspace loads this artifact at runtime via
 `zk_vendor::loaded_library()`. Production deployments ship the `.so`
 alongside the binary.
 
-### CASM compilation (Cairo 2.6.0)
+### CASM compilation (Cairo 2.x via scarb)
+
+**R4 fix-up (2026-08-04):** the previous guide documented Cairo 2.6.0
+standalone `cairo-compile` invocations. The current implementation uses
+**scarb 2.16.0** as the build orchestrator (Cairo 1.x standalone
+`cairo-compile` does not exist post-Cairo-1.x; the binary was retired
+when Cairo moved to the scarb project model in 2024). The in-process
+Sierra→CASM pass lives in `crates/zk-circuit/` and is invoked
+automatically by `bundled_casm_hash()` on first call.
 
 ```bash
-# Install cairo-compile via scarb (or asdf fallback)
-curl --proto '=https' --tlsv1.2 -sSf https://docs.swmansion.com/scarb/install.sh | sh -s -- -v 2.6.0
+# Install scarb 2.16.0 (CI installs via scarb/asdf per master plan §8 Risk #6)
+curl --proto '=https' --tlsv1.2 -sSf https://docs.swmansion.com/scarb/install.sh | sh -s -- -v 2.16.0
 
-# Compile the bundled Cairo source → CASM bytecode
-cairo-compile cairo/capability_zk.cairo --output cairo/capability_zk.casm
+# Verify scarb is on PATH
+scarb --version   # expect: scarb 2.16.0
 
-# Hash the compiled CASM (BLAKE3, 32-byte hash)
-blake3 cairo/capability_zk.casm
-# expect: <EXPECTED_CASM_BLAKE3_HASH>
+# Compile the bundled Cairo source → Sierra IR (in-process Sierra→CASM pass runs at runtime)
+cd cairo && scarb build
+# Output:
+#   cairo/target/dev/capability_zk.sierra.json
+
+# The CASM is produced in-process by `crates/zk-circuit/src/lib.rs::compile_source_inner`
+# via `cairo-lang-sierra-to-casm` 2.20.0 + `cairo-lang-sierra-type-size` 2.20.0.
+# The BLAKE3 hash of the assembled CASM bytecode is what `bundled_casm_hash()` returns.
+# No manual CASM-file step is needed — the snapshot test
+# (`crates/zk-circuit/tests/casm_snapshot.rs`) reads the in-process output.
 ```
 
 The CASM BLAKE3 hash is checked into
@@ -120,7 +135,7 @@ test computes BLAKE3(casm_bytes) at runtime and asserts non-empty +
 64-hex format + determinism + tamper-detection. A pinned
 `EXPECTED_CASM_BLAKE3_HASH` constant is NOT yet checked in — the test
 currently passes by shape + determinism only. Drift detection requires
-either committing the expected hash once the CI cairo-compile 2.6.0
+either committing the expected hash once the CI scarb 2.16.0
 environment is reproducible, OR adding an
 `#[ignore]` integration test that asserts the cross-build stability.
 
@@ -156,7 +171,7 @@ cargo clippy --workspace --all-targets --features full -- -D warnings
 | AC | Deliverable | Test entry | Commit |
 | AC | Deliverable | Test entry | Commit(s) |
 |----|-------------|-----------|--------|
-| **AC-1** | Real Cairo 2.6.0 program body (no `unimplemented!()`) | `cairo/capability_zk.cairo` exists + compiles via `cairo-compile` | `26fa53f6` (S1) |
+| **AC-1** | Real Cairo 2.x program body (no `unimplemented!()`) under scarb package `capability_zk` | `cairo/src/lib.cairo` exists + `scarb build` produces Sierra IR | `ae4dc4f8` (R4 S1 redo) |
 | **AC-2** | `zk_circuit::compile_from_source` shells out to cairo-compile; CASM BLAKE3 snapshot | `tests/casm_snapshot.rs` (loud-fail when toolchain missing) | `26fa53f6` (S1); R3 #8 harden `e7c79b9b` |
 | **AC-3** | Decoupled FFI workspace + BLAKE3 stub + MSRV 1.93 + stub-disabled gate | `tests/ffi_loading.rs` (hardened) + `tests/stub_disabled.rs` (2 tests) | `4f7f47db`, `be113cb1`, `96b2489d` (S2); R3 fix-ups `0e0c3ee9` (#1 prod-gate) + `066a263c` (#2 MSRV) + `27641ade` (#3 FFI arg order) |
 | **AC-4** | 8 RFC-0958 §Test Vectors + cross-impl TV1/TV2 | `tests/zk_vectors.rs` (15 tests; 8/8 vectors green + 5 AC-7/9/10 companions + 2 R3) | `46e29fa2` (S3); R3 axes-canon `411334da`; R3 N=2 rotation `a4594be8` |
@@ -262,15 +277,15 @@ across runs to reach 24h effective coverage. Schedule: 02:00 UTC daily.
 
 ### CASM Rotation (N=2 grace) — RFC-0958 §CASM Drift N=2 retention
 
-**When does CASM rotate?** Only when `cairo/capability_zk.cairo` changes in a way that affects proof binding (circuit structure, public input field, verification logic). Documentation-only changes do NOT trigger rotation.
+**When does CASM rotate?** Only when `cairo/src/lib.cairo` changes in a way that affects proof binding (circuit structure, public input field, verification logic). Documentation-only changes do NOT trigger rotation.
 
 **Operator runbook (per RFC-0958 §CASM Drift, mission 0958-a R3 #5 fix-up):**
 
-1. **Compute new CASM BLAKE3.**
+1. **Compute new CASM BLAKE3.** Run `scarb build` in `cairo/` and read the in-process CASM BLAKE3 hash from `bundled_casm_hash()`. The hash is computed at runtime by `crates/zk-circuit/src/lib.rs::compile_source_inner`; no manual CASM file step is required.
    ```bash
-   cairo-compile cairo/capability_zk.cairo --output cairo/capability_zk.casm
-   blake3 cairo/capability_zk.casm
-   # → new_casm_hash_hex (64-char hex; FIRST 32 bytes → [u8; 32])
+   cd cairo && scarb build
+   cargo test -p zk-circuit --test casm_snapshot
+   # → assert_eq!(casm_hash, <EXPECTED_CASM_BLAKE3_HASH>)
    ```
 
 2. **Deploy N=2 grace verifier config.** Update the verifier's `accepted_casm_blake3_hashes` config to include both old and new:
@@ -294,7 +309,7 @@ across runs to reach 24h effective coverage. Schedule: 02:00 UTC daily.
 - v2 proof NOT CasmHashMismatch when accepted-set = [v1, v2]
 - empty accepted-set fails closed
 
-**Migration runbook (future):** When `cairo/capability_zk.cairo` changes:
+**Migration runbook (future):** When `cairo/src/lib.cairo` changes:
 1. Bump `casm_version` on each new mint (currently hardcoded to 1)
 2. Track per-version CASM BLAKE3 separately
 3. Cap-verifier accepts `[v_N_casm] + [v_{N-1}_casm]` for grace, then `[v_N_casm]` alone
@@ -373,5 +388,5 @@ across runs to reach 24h effective coverage. Schedule: 02:00 UTC daily.
 - **Non-overlapping:** Phase C (mission `0959-a-ask-pricing-stoolap`) and
   Phase F (mission `0957-b-provider-boundary-exercise-path`) per master
   plan §8 Risk #10 R12 mitigation. The cipherocto-side PR for 0958-a is
-  the only cipherocto-side PR for this mission; the stoolap fork PR
-  (AC-16) was CANCELED in v0.3.
+  the only cipherocto-side PR for this mission; the cross-repo
+  stoolap fork PR (AC-16) was CANCELED in v0.3.

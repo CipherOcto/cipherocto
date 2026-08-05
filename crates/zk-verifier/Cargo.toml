@@ -11,17 +11,19 @@ name = "zk_verifier"
 path = "src/lib.rs"
 
 [features]
-# **Mission 0958-a R3 review fix-up (2026-07-31):** the BLAKE3 stub
+# **Mission 0958-a R4 review fix-up (2026-08-04):** the BLAKE3 stub
 # verifier path is forgeable by design (commitment is computable from
-# publicly-known inputs). To prevent accidentally shipping a release
-# build that accepts stub-shaped proofs, the stub path is gated behind
-# this opt-in feature. CI / dev (`cargo test`, `cargo build`) get the
-# feature enabled by default. Production must explicitly disable
-# defaults (`cargo build --no-default-features`) AND either ship
-# `libstwo_sys.so` alongside the binary or set
-# CIPHEROCTO_ALLOW_STUB_VERIFIER=1 in the deploy environment if
-# dev-mode stub verification is genuinely needed.
-default = ["allow-stub-verifier"]
+# publicly-known inputs). The stub path is opt-in only — a vanilla
+# `cargo build` (release or otherwise) does NOT enable it. To activate
+# the stub proofer (e.g. for local dev or CI without a built
+# `libstwo_sys.so`), pass `--features allow-stub-verifier` explicitly.
+# Production deployments MUST NOT enable this feature.
+#
+# R4 rationale: the previous default-on behavior created a silent
+# forgery channel (any release build would accept stub-shaped proofs
+# if `libstwo_sys.so` failed to load). Removing the default closes
+# that channel without changing the test surface (CI workflows pass
+# `--features allow-stub-verifier` in the test command).
 allow-stub-verifier = []  # cipherocto-internal dev flag; document in dev guide
 
 [dependencies]

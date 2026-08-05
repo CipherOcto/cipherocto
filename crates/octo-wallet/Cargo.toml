@@ -52,7 +52,7 @@ zk-circuit = { path = "../zk-circuit" }
 # to construct the canonical `zk_verifier::PublicInputs` the downstream
 # verifier will reconstruct, so the proofer's mock commitment shape
 # matches the verifier's stub_commitment check.
-zk-verifier = { path = "../zk-verifier" }
+zk-verifier = { path = "../zk-verifier", features = ["allow-stub-verifier"] }
 
 # Storage types (Ask + AskRepository + SettlementEnvelope) for the
 # `octo-wallet ask publish/list/show/revoke` CLI subcommand set

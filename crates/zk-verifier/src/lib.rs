@@ -108,6 +108,15 @@ pub enum VerifyError {
     /// opt-in for development.
     #[error("BLAKE3 stub verifier disabled in production builds (ship libstwo_sys.so or enable allow-stub-verifier feature)")]
     StubDisabled,
+    /// **R4 fix-up (2026-08-04):** the FFI path received proof bytes that
+    /// match the BLAKE3 stub proofer's commitment shape. The FFI lib
+    /// loaded successfully (so the stub path was not taken), but the
+    /// proof would have been accepted by the stub proofer. This is
+    /// rejected as a forgery channel — a legitimate STWO proof does NOT
+    /// match the stub commitment shape. Surfaces the forge attempt
+    /// rather than silently accepting it.
+    #[error("FFI verify received stub-shaped proof bytes; forgery channel closed (R4 fix-up)")]
+    StubShapedProofRejected,
 }
 
 /// Verify a capability ZK proof (Class A determinism, stable rust).
@@ -168,17 +177,34 @@ pub fn verify_capability_zk(
 
     // 3. FFI bridge (2026-07-22): if `libstwo_sys.so` is loaded, call the
     // real STWO verify via FFI. When the lib is missing, fall through to
-    // the vendored STWO path (zk-vendor's in-workspace stable-rust crate,
-    // mission 0958-a Phase C.2).
+    // the BLAKE3 stub path (Layered: FFI > Stub — vendored STWO was
+    // reverted via `4f7f47db` per mission 0958-a R3 #2; see
+    // `zk-vendor` module docs).
     //
-    //    Why check FFI before stub: the stub is byte-compatible with the
-    //    FFI stub proof bytes (XOR digest of inputs), so the FFI path
-    //    ACCEPTS proofs constructed via the stub proofer. If FFI rejects
-    //    (non-zero), we surface `RealStwoError(code)`; if FFI accepts,
-    //    we're done. Only fall through to vendored + stub when the lib
-    //    is absent.
+    // **R4 fix-up (2026-08-04):** the stub proofer is byte-compatible
+    // with the FFI stub proof shape (XOR digest of inputs). Prior to this
+    // fix, the FFI path ACCEPTS proofs constructed via the stub proofer
+    // — a forgery channel in production. R4 closes the channel by
+    // computing the expected stub commitment locally and rejecting if the
+    // FFI path accepts a proof that matches the stub pattern. Real STWO
+    // proofs do not match this pattern (they have a different prefix and
+    // non-trivial structure), so legitimate proofs are unaffected.
     if let Some(sys) = zk_vendor::loaded_library() {
         let canon_pub = canonicalize_public(public);
+        // **R4 stub-pattern rejection:** if the FFI lib is loaded but the
+        // proof bytes match the stub proofer's shape, reject with
+        // `StubShapedProofRejected`. This defense fires whether or not the
+        // FFI verify call returns Ok (a bug-for-bug-compat FFI could
+        // accept stub bytes); it is a local sanity check.
+        if proof.proof_bytes.len() >= 32 {
+            let mut commit = Hasher::new();
+            commit.update(casm_hash.as_bytes());
+            commit.update(&canon_pub);
+            let expected_stub_commit: [u8; 32] = *commit.finalize().as_bytes();
+            if proof.proof_bytes[..32] == expected_stub_commit {
+                return Err(VerifyError::StubShapedProofRejected);
+            }
+        }
         return match sys.verify(&proof.proof_bytes, &canon_pub) {
             Ok(()) => Ok(()),
             Err(zk_vendor::VendorError::VerifyFailed { code }) => {

@@ -108,7 +108,7 @@ Per RFC-0957 §Implementation Phases Phase 3 + S04 plan §3 Steps 1-11 (R11 fix 
 
 ## Out of Scope (this mission only)
 
-- ZK capability circuit exercise → mission `0958-a-zk-capability-circuit-cairo.md` (S05)
+- ZK capability circuit exercise → mission `0958-a-zk-capability-circuit.md` (S05)
 - On-chain settlement discharge flow → RFC-0955 future
 - Hardware wallet integration → Phase H (future)
 - MPC threshold keys → Phase I (future)

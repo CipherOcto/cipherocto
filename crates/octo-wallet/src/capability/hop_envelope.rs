@@ -156,7 +156,7 @@ pub fn verify_chain_hash(
     chain: &[HopEnvelope],
     expected_chain_hash: &[u8; 32],
 ) -> Result<(), HopError> {
-    let actual = chain.last().map(|e| e.chain_hash).unwrap_or([0u8; 32]);
+    let actual = chain.last().map_or([0u8; 32], |e| e.chain_hash);
     if &actual != expected_chain_hash {
         return Err(HopError::ChainHashMismatch {
             expected: *expected_chain_hash,
@@ -185,7 +185,7 @@ pub fn pure_forward(
 ///
 /// `hop_envelope = None` is the pure forward path (RFC-0970 §pure_forward
 /// + RFC-0971 §Pure Forwarder Exception). `hop_envelope = Some(_)` opts in
-/// to forwarding with a hop envelope (Forwarder / Auditor roles).
+///   to forwarding with a hop envelope (Forwarder / Auditor roles).
 #[derive(Clone, Debug)]
 pub struct ForwardRequestPayload {
     pub inner: InnerRequest,

@@ -136,7 +136,7 @@ impl QuotaRouterHandler {
                 .find(|p| p.node_id == sender)
                 .map(|p| p.trust_level.clone())
                 .unwrap_or(PeerTrust::Trusted);
-            if trust == PeerTrust::Verified && !req.verify_hmac(&&self.network_key) {
+            if trust == PeerTrust::Verified && !req.verify_hmac(&self.network_key) {
                 return Err(TransportError::AdapterFailure(
                     "forward request HMAC mismatch".into(),
                 ));

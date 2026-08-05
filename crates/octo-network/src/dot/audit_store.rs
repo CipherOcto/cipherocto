@@ -226,7 +226,7 @@ impl NdjsonAuditLogStore {
         for entry in fs::read_dir(&self.dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.is_file() && is_segment_file(&&path) {
+            if path.is_file() && is_segment_file(&path) {
                 paths.push(path);
             }
         }

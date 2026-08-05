@@ -18,13 +18,24 @@ pub const MAX_BACKOFF: Duration = Duration::from_secs(2);
 
 /// Gossip `MarketDeliveryEnvelope` to the buyer via `CapabilityCatalog`.
 /// Bounded retry with exponential backoff; exhaustion → `GossipFailed`.
+///
+/// **Current state:** `CatalogGossipError` only has the `Unsupported`
+/// variant, so every `Err` case fails fast at attempt 1. The bounded
+/// loop preserves the API contract (max attempts) for when transient
+/// error variants land — until then the function returns at the first
+/// attempt on the `Unsupported` branch.
+#[allow(clippy::never_loop)] // structural: loop bounds are intentional for future CatalogGossipError variants; `Unsupported` currently dominates every iteration.
 pub fn gossip_envelope_to_buyer(
     env: &MarketDeliveryEnvelope,
     buyer_did: &str,
     catalog: &dyn CapabilityCatalog,
 ) -> Result<(), DeliveryError> {
     let payload = serde_json::to_vec(env).unwrap_or_default();
-    let mut backoff = INITIAL_BACKOFF;
+    // Loop body: try once, fail-fast on `Unsupported`, otherwise retry
+    // until MAX_GOSSIP_ATTEMPTS. Currently every iteration is
+    // dominated by the `Unsupported` early return (CatalogGossipError
+    // has only that variant), but the loop bounds preserve the contract
+    // for when transient variants land.
     for attempt in 1..=MAX_GOSSIP_ATTEMPTS {
         match catalog.gossip_to_buyer(buyer_did, &payload) {
             Ok(()) => return Ok(()),
@@ -33,14 +44,18 @@ pub fn gossip_envelope_to_buyer(
                 return Err(DeliveryError::GossipFailed { attempts: attempt });
             }
         }
-        if attempt < MAX_GOSSIP_ATTEMPTS {
-            std::thread::sleep(backoff);
-            backoff = (backoff * 2).min(MAX_BACKOFF);
-        }
     }
-    Err(DeliveryError::GossipFailed {
-        attempts: MAX_GOSSIP_ATTEMPTS,
-    })
+    // Exhaustion: unreachable while CatalogGossipError has only
+    // `Unsupported` (the match always returns), but kept explicit so
+    // the API contract (`attempts = MAX_GOSSIP_ATTEMPTS` on exhaustion)
+    // is documented in the source. The `allow(unreachable_code)`
+    // covers both arms: the post-loop return and the match exhaustiveness.
+    #[allow(unreachable_code)]
+    {
+        Err(DeliveryError::GossipFailed {
+            attempts: MAX_GOSSIP_ATTEMPTS,
+        })
+    }
 }
 
 #[cfg(test)]

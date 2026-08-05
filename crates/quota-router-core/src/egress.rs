@@ -416,7 +416,7 @@ fn find_capability_token_shape(text: &str) -> Option<(usize, usize)> {
     while i < n {
         // First segment: at least 16 b64url chars.
         let seg1_start = i;
-        while i < n && b64u.contains(&&bytes[i]) {
+        while i < n && b64u.contains(&bytes[i]) {
             i += 1;
         }
         let seg1_len = i - seg1_start;
@@ -427,7 +427,7 @@ fn find_capability_token_shape(text: &str) -> Option<(usize, usize)> {
         }
         i += 1; // skip '.'
         let seg2_start = i;
-        while i < n && b64u.contains(&&bytes[i]) {
+        while i < n && b64u.contains(&bytes[i]) {
             i += 1;
         }
         let seg2_len = i - seg2_start;
@@ -437,7 +437,7 @@ fn find_capability_token_shape(text: &str) -> Option<(usize, usize)> {
         }
         i += 1; // skip '.'
         let seg3_start = i;
-        while i < n && b64u.contains(&&bytes[i]) {
+        while i < n && b64u.contains(&bytes[i]) {
             i += 1;
         }
         let seg3_len = i - seg3_start;

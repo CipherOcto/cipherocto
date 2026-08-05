@@ -185,7 +185,7 @@ impl PeerCache {
     }
 
     pub fn try_add(&mut self, node_id: RouterNodeId) {
-        if !self.direct.contains_key(&&node_id) && !self.discovered.contains_key(&&node_id) {
+        if !self.direct.contains_key(&node_id) && !self.discovered.contains_key(&node_id) {
             if self.total() >= self.max_peers {
                 if let Some(oldest) = self
                     .discovered

@@ -1749,7 +1749,7 @@ where
         "perplexity",
     ];
     let path_parts: Vec<&str> = path.trim_start_matches('/').splitn(2, '/').collect();
-    if path_parts.len() == 2 && known_providers.contains(&&path_parts[0]) {
+    if path_parts.len() == 2 && known_providers.contains(&path_parts[0]) {
         let provider_name = path_parts[0];
         let rest_path = path_parts[1];
 

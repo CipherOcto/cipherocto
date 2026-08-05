@@ -79,11 +79,12 @@ pub fn parse_auth_headers(headers: &[(String, String)]) -> Result<DispatchSet, P
     if bearer.is_none() && capability.is_none() {
         return Err(ParseError::NoAuthHeader);
     }
-    let identity_linkage = if bearer.is_some() && capability.is_some() {
-        LinkageResult::Indeterminate
-    } else {
-        LinkageResult::Indeterminate
-    };
+    // identity_linkage is structurally Indeterminate today: dual-bearer
+    // and dual-capability resolutions require side-channel binding info
+    // (RFC-0969 §Phase 2) which this parser does not have. Until that
+    // signal lands, every successful parse collapses to Indeterminate.
+    let _ = (bearer.is_some(), capability.is_some());
+    let identity_linkage = LinkageResult::Indeterminate;
     Ok(DispatchSet {
         bearer,
         capability,

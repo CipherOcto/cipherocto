@@ -1994,7 +1994,7 @@ impl IrcAdapter {
             Some((s, c)) => (s, c),
             None => ("", raw), // bare channel: assume it's on our server
         };
-        if !server.is_empty() && !server.eq_ignore_ascii_case(&&self.config.server) {
+        if !server.is_empty() && !server.eq_ignore_ascii_case(&self.config.server) {
             return Err(PlatformAdapterError::ApiError {
                 code: 400,
                 message: format!(

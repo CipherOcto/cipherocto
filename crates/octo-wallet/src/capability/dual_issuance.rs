@@ -44,7 +44,7 @@ impl std::fmt::Debug for MintError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::AskExpired {
-                ask_id,
+                ask_id: _,
                 expired_at_unix,
             } => f
                 .debug_struct("AskExpired")

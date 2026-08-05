@@ -61,20 +61,16 @@
 
 use core::array::{ArrayTrait, SpanTrait};
 use core::poseidon::poseidon_hash_span;
-use core::sha256::compute_sha256_byte_array;
 use core::traits::{Into, TryInto};
+
+mod blake3;
 
 /// Number of caveats exercised in the hardcoded TV1 chain.
 pub const CHAIN_DEPTH: u32 = 3;
 
-/// HMAC-SHA-256 inner-pad byte (`0x36`).
-const IPAD_BYTE: u8 = 0x36;
-/// HMAC-SHA-256 outer-pad byte (`0x5c`).
-const OPAD_BYTE: u8 = 0x5c;
-/// HMAC block size for SHA-256 = 64 bytes.
-const HMAC_BLOCK_SIZE: usize = 64;
-/// SHA-256 output size = 32 bytes (= 8 u32 words).
-const SHA256_OUT_WORDS: usize = 8;
+/// BLAKE3 keyed_hash output size = 32 bytes (= 8 u32 words).
+/// HMAC-BLAKE3 retains the same 32-byte output size as HMAC-SHA-256.
+pub const OUT_WORDS: usize = 8;
 
 /// Public inputs (mirrors `octo_wallet::capability::zk_mint::PublicInputs`).
 #[derive(Drop, Copy)]
@@ -110,22 +106,18 @@ pub struct TraceStep {
 }
 
 // =========================================================================
-// HMAC-SHA-256 (RFC 2104)
+// HMAC-BLAKE3 (RFC 2104 with BLAKE3 keyed_hash as inner hash).
+// 0958-c AC-1: SHA-256 path REMOVED per mission spec (Round 1 fix F-05).
 // =========================================================================
 
-/// SHA-256 of a `ByteArray`.
-fn sha256(bytes: @ByteArray) -> [u32; SHA256_OUT_WORDS] {
-    compute_sha256_byte_array(bytes)
-}
-
-/// Convert a SHA-256 digest (`[u32; 8]`) to a 32-byte `ByteArray`
-/// (big-endian byte order, which is SHA-256's wire format).
-fn digest_to_bytes(digest: [u32; SHA256_OUT_WORDS]) -> ByteArray {
+/// Convert a 32-byte digest (`[u32; 8]`) to a 32-byte `ByteArray`
+/// (big-endian byte order, which is BLAKE3's wire format).
+fn digest_to_bytes(digest: [u32; 8]) -> ByteArray {
     let mut out: ByteArray = "";
     let span = digest.span();
     let mut i: usize = 0;
     loop {
-        if i == SHA256_OUT_WORDS {
+        if i == 8 {
             break;
         }
         let word: u32 = *span.at(i);
@@ -153,58 +145,19 @@ fn concat_bytes(a: @ByteArray, b: @ByteArray) -> ByteArray {
     out
 }
 
-/// HMAC-SHA-256 (RFC 2104). `key` is at most 64 bytes; longer keys are
-/// pre-hashed per RFC 2104 §2 (we keep keys ≤ 64 bytes in this mission —
-/// `cap_root_secret` is split as lo/hi felts = 32 bytes total).
-fn hmac_sha256(key: @ByteArray, msg: @ByteArray) -> [u32; SHA256_OUT_WORDS] {
-    let key_len: usize = key.len();
-
-    // Inner key: key XOR ipad, padded to 64 bytes.
-    let mut inner_key: ByteArray = "";
-    let mut i: usize = 0;
-    loop {
-        if i == HMAC_BLOCK_SIZE {
-            break;
-        }
-        let kb: u8 = if i < key_len {
-            key.at(i).unwrap() ^ IPAD_BYTE
-        } else {
-            IPAD_BYTE
-        };
-        inner_key.append_byte(kb);
-        i += 1;
-    };
-    // inner = SHA-256(inner_key || msg).
-    let inner_input: ByteArray = concat_bytes(@inner_key, msg);
-    let inner: [u32; SHA256_OUT_WORDS] = sha256(@inner_input);
-
-    // Outer key: key XOR opad, padded to 64 bytes.
-    let mut outer_key: ByteArray = "";
-    let mut j: usize = 0;
-    loop {
-        if j == HMAC_BLOCK_SIZE {
-            break;
-        }
-        let kb: u8 = if j < key_len {
-            key.at(j).unwrap() ^ OPAD_BYTE
-        } else {
-            OPAD_BYTE
-        };
-        outer_key.append_byte(kb);
-        j += 1;
-    };
-    // outer = SHA-256(outer_key || inner).
-    let inner_bytes: ByteArray = digest_to_bytes(inner);
-    let outer_input: ByteArray = concat_bytes(@outer_key, @inner_bytes);
-    sha256(@outer_input)
+/// HMAC-BLAKE3 wrapper: thin alias to `blake3::hmac_blake3`.
+/// 0958-c AC-1: HMAC-SHA-256 path removed; this name preserves the
+/// chain-call site in `caveat_mac`.
+fn hmac_sha256(key: @ByteArray, msg: @ByteArray) -> [u32; 8] {
+    blake3::hmac_blake3(key, msg)
 }
 
 // =========================================================================
 // Macaroon caveat chain (RFC-0957 §Caveat Format)
 // =========================================================================
 
-/// Single caveat MAC step: `HMAC(key, prev || cav)`.
-fn caveat_mac(prev: @ByteArray, key: @ByteArray, caveat: @ByteArray) -> [u32; SHA256_OUT_WORDS] {
+/// Single caveat MAC step: `HMAC-BLAKE3(key, prev || cav)`.
+fn caveat_mac(prev: @ByteArray, key: @ByteArray, caveat: @ByteArray) -> [u32; 8] {
     let msg: ByteArray = concat_bytes(prev, caveat);
     hmac_sha256(key, @msg)
 }
@@ -238,7 +191,7 @@ fn fold_inference_trace(steps: @Array<TraceStep>) -> felt252 {
 // big-endian into a felt252 (16 bytes).
 // `cap_root_hash_hi` = upper 128 bits = last 4 u32 words, packed BE.
 
-fn digest_lo_felt(digest: [u32; SHA256_OUT_WORDS]) -> felt252 {
+fn digest_lo_felt(digest: [u32; OUT_WORDS]) -> felt252 {
     let span = digest.span();
     let mut acc: u128 = 0;
     let mut i: usize = 0;
@@ -260,12 +213,12 @@ fn digest_lo_felt(digest: [u32; SHA256_OUT_WORDS]) -> felt252 {
     acc.into()
 }
 
-fn digest_hi_felt(digest: [u32; SHA256_OUT_WORDS]) -> felt252 {
+fn digest_hi_felt(digest: [u32; OUT_WORDS]) -> felt252 {
     let span = digest.span();
     let mut acc: u128 = 0;
     let mut i: usize = 4;
     loop {
-        if i == SHA256_OUT_WORDS {
+        if i == OUT_WORDS {
             break;
         }
         let w: u32 = *span.at(i);
@@ -369,14 +322,14 @@ pub fn main() -> felt252 {
     // chain root into the structural checks — preventing dead-code
     // elimination.
     let mut prev: ByteArray = "";
-    let mut final_digest: [u32; SHA256_OUT_WORDS] = [0; SHA256_OUT_WORDS];
+    let mut final_digest: [u32; OUT_WORDS] = [0; OUT_WORDS];
     let mut i: u32 = 0;
     loop {
         if i == CHAIN_DEPTH {
             break;
         }
         let cav: @ByteArray = caveats.at(i);
-        let next: [u32; SHA256_OUT_WORDS] = caveat_mac(@prev, @secret, cav);
+        let next: [u32; OUT_WORDS] = caveat_mac(@prev, @secret, cav);
         prev = digest_to_bytes(next);
         final_digest = next;
         i += 1;
@@ -430,9 +383,11 @@ mod tests {
     use super::{caveat_mac, fold_inference_trace, hmac_sha256, CHAIN_DEPTH, TraceStep};
 
     #[test]
-    fn hmac_sha256_rfc4231_test_case_1() {
-        // RFC 4231 §Test Case 1: key = 0x0b * 20, msg = "Hi There".
-        // Expected digest word[0] (big-endian) = 0xb0344c61.
+    fn hmac_blake3_deterministic_and_distinct() {
+        // 0958-c AC-1: HMAC-SHA-256 path removed (mission F-05). This test
+        // replaces the prior SHA-256 RFC 4231 TC1 vector assertion with a
+        // HMAC-BLAKE3 distinctness check — same input determinism + distinct
+        // inputs distinct outputs (BLAKE3 keyed_hash determinism + AVALANCHE).
         let mut key: ByteArray = "";
         let mut i: usize = 0;
         loop {
@@ -442,9 +397,23 @@ mod tests {
             key.append_byte(0x0b);
             i += 1;
         };
-        let digest = hmac_sha256(@key, @"Hi There");
-        let span = digest.span();
-        assert!(*span.at(0) == 0xb0344c61, "RFC 4231 TC1 word[0]");
+
+        // Same input → same output (determinism).
+        let d1 = hmac_sha256(@key, @"Hi There");
+        let d2 = hmac_sha256(@key, @"Hi There");
+        let s1 = d1.span();
+        let s2 = d2.span();
+        let mut j: usize = 0;
+        loop {
+            if j == 8 { break; }
+            assert!(*s1.at(j) == *s2.at(j), "hmac_blake3_deterministic");
+            j += 1;
+        };
+
+        // Distinct inputs → distinct outputs (avalanche).
+        let m_a = hmac_sha256(@key, @"Hi There");
+        let m_b = hmac_sha256(@key, @"Hi Theer");
+        assert!(*m_a.span().at(0) != *m_b.span().at(0), "hmac_blake3_avalanche");
     }
 
     #[test]

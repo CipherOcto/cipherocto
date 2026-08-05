@@ -50,7 +50,7 @@ Items:
 - [ ] `cairo/Scarb.toml` BLAKE3 dependency declared (either inline `pub mod blake3` source-drop at `cairo/src/blake3.cairo` or `cairo-ed25519-verifier`-style external crate).
 - [ ] `crates/zk-circuit/tests/casm_snapshot.rs` snapshot regenerated; `EXPECTED_CASM_BLAKE3_HASH` updated.
 - [ ] RFC-0958 §Test Vectors TV1's HMAC chain step matches the new BLAKE3 inner-hash output.
-- [ ] `cargo test -p octo-wallet --test zk_vectors` ≥ 15/15 (TV1 through TV8 + 7 extras), with TV1 now exercising the real BLAKE3 chain.
+- [ ] `cargo test -p octo-wallet --test zk_vectors` ≥ 15/15 (8 RFC-0958 §Test Vectors TV1–TV8 → 10 test functions via TV5 (`tv5_casm_drift_detected_at_mint` + `tv5_casm_drift_detected_at_verify`) and TV7 (`tv7_clock_skew_exceeded_rejected` + `tv7_clock_skew_within_window_accepted`) splits + 5 companion tests: `ac7_wholesale_zkbearing_registration_rejected`, `ac7_hybrid_without_explicit_mint_remains_v1`, `ac9_public_input_mismatch_detected_under_slot_binding_drift`, `r3_casm_n2_rotation_accepts_either_v1_or_v2_hash`, `r3_axes_consumed_canonical_sort_independent_of_input_order`). TV1 exercises the real BLAKE3 chain (Round 3 review F-21 corrected the prior `TV1 through TV8 + 7 extras` breakdown, which Round 2 review F-19 had already corrected in 0958-b but did not propagate to 0958-c AC-1).
 - [ ] Existing HMAC-SHA-256 path REMOVED (or gated as fallback if BLAKE3 not feasible in chosen corelib).
 
 ### AC-2 — Ed25519 holder signature verify

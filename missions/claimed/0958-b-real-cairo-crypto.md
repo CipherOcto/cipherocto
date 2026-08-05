@@ -34,7 +34,7 @@ These are the 14 honest-disclosure items tracked in mission 0958-a §R4 Rebuttal
 ### S1 Deviations (documented per [[deferred-vs-unspecified]])
 
 - **HMAC-BLAKE3 → HMAC-SHA-256.** `cairo-corelib 2.16.0` ships `core::blake` (= BLAKE2s, NOT BLAKE3) and `core::sha256::compute_sha256_byte_array`, but NOT BLAKE3. S1 ships HMAC-SHA-256 (RFC 4234 + RFC 2104); the HMAC construction is hash-agnostic so the chain shape is preserved. Pure BLAKE3 HMAC is deferred to `missions/open/0958-c-real-cairo-crypto-followup.md` (Round 1 review F-3 — file created 2026-08-05).
-- **CASM size: 303 KB > 50 KB ceiling.** HMAC-SHA-256 inlining pulls corelib's full SHA-256 implementation into the circuit (~100 KB per call × 3 caveats = ~300 KB). The `max_bytecode_size = 50 * 1024` setting in `zk-circuit/src/lib.rs` actually constrains Sierra statement count (NOT CASM bytes) per `cairo-lang-sierra-to-casm` 2.20.0 semantics — see `compiler.rs:486` (`if program_offset > config.max_bytecode_size`). The 50 KB CASM ceiling therefore does not currently fire. Stage-2 verifier split (per mission §Risks row 1) is the correct mitigation; deferred to 0958-c.
+- **CASM size: 303 KB > 50 KB ceiling.** HMAC-SHA-256 inlining pulls corelib's full SHA-256 implementation into the circuit (~100 KB per call × 3 caveats = ~300 KB). The `max_bytecode_size = 50 * 1024` setting in `zk-circuit/src/lib.rs` actually constrains Sierra statement count (NOT CASM bytes) per `cairo-lang-sierra-to-casm` 2.20.0 semantics — see the upstream `compile(...)` method's `program_offset > config.max_bytecode_size` branch (Round 3 review F-24: replaced line ref `compiler.rs:486` with symbol-form reference per `[[no-line-refs-anywhere]]`). The 50 KB CASM ceiling therefore does not currently fire. Stage-2 verifier split (per mission §Risks row 1) is the correct mitigation; deferred to 0958-c.
 - **Ed25519 holder-sig verify → DEFERRED to 0958-c.** Corelib has `core::ecdsa` (STARK curve) and `core::ec` (STARK EC); neither is Curve25519/Ed25519. An inline Ed25519 verifier is ~3-5 KB CASM; deferred to `missions/open/0958-c-real-cairo-crypto-followup.md`.
 
 ### S2 — Real-zk STWO STARK integration (LANDED 2026-08-05)
@@ -116,8 +116,8 @@ These are the 14 honest-disclosure items tracked in mission 0958-a §R4 Rebuttal
 
 ### S4 Deviations (documented per [[deferred-vs-unspecified]])
 
-- **Mission closure + PR deferred to user-initiated push/PR.** Per `[[git-workflow]]`, the mission file is updated locally on `next` but `git push` and PR creation require explicit user instruction. The closure SHA list (`f096b4ea` + `77aff4aa` + `81e2db4e`) is documented in §Version History but the PR URL slot stays empty until user initiates the push.
-- **24h nightly fuzz result is event-driven, not gate-bound.** The nightly job runs via `schedule: cron: '0 4 * * *'` (4 AM UTC); S4 closure only verifies the workflow file + local 60s smoke. Actual 24h result will land in the next nightly cycle post-merge. This is acceptable because the 60s smoke already exercises the same harness + assertions.
+- **Mission closure + PR deferred to user-initiated push/PR.** Per `[[git-workflow]]`, the mission file is updated locally on `next` but `git push` and PR creation require explicit user instruction. The closure SHA list (`aa004ad0` + `77aff4aa` + `81e2db4e` + `549c2cc2` + `e8a9ba5c` covering S1, S2, S3, R1 review closure, R2 review closure respectively) is documented in §Version History but the PR URL slot stays empty until user initiates the push.
+- **24h nightly fuzz result is event-driven, not gate-bound.** The nightly job runs via `schedule: cron: "17 2 * * *"` (02:17 UTC) per `.github/workflows/zk-capability-circuit.yml`; S4 closure only verifies the workflow file + local 60s smoke. Actual 24h result will land in the next nightly cycle post-merge. This is acceptable because the 60s smoke already exercises the same harness + assertions.
 
 ### Type Coverage (consolidated by Round 1 review F-7; tracking now lives in §S1..§S4 checkboxes above to prevent parallel-list drift)
 
@@ -130,7 +130,7 @@ These are the 14 honest-disclosure items tracked in mission 0958-a §R4 Rebuttal
 | Stub proofer gated under `#[cfg(feature = "allow-stub-verifier")]` | §S3 above | LANDED (F-1 closure: feature moved off the production `[dependencies]` edge of `octo-wallet/Cargo.toml`; activated only via `dev-dependencies` so `cargo build` of wallet fails closed) |
 | `stub_commitment` returns `Result<[u8; 32], ProverError>` | §S3 above | LANDED (5 callers verified, F-2 corrected count from overstated 6) |
 | 8 RFC-0958 §Test Vectors (TV1–TV8) + 5 companion tests green | §S3 above | LANDED (`cargo test -p octo-wallet --test zk_vectors` → 15/15; 8 vectors expand to 10 test functions because TV5 and TV7 each split into 2 [mint/verify variants; exceeded/within-window variants]; companions are 2 × ac7 + 1 × ac9 + 2 × r3 = 5. Round 2 review F-19 corrected the prior `8+7=15` miscount.) |
-| 24h cargo-fuzz on `capability_zk_verify` | §S4 above | LANDED via 60s local smoke + CI nightly (`schedule: cron: '0 4 * * *'` in `.github/workflows/zk-capability-circuit.yml`); 24h run is event-driven, not gate-bound |
+| 24h cargo-fuzz on `capability_zk_verify` | §S4 above | LANDED via 60s local smoke + CI nightly (`schedule: cron: "17 2 * * *"` at 02:17 UTC, in `.github/workflows/zk-capability-circuit.yml`); 24h run is event-driven, not gate-bound |
 
 ### Integration with 0958-a surface
 

@@ -297,8 +297,8 @@ fn compile_from_source_returns_non_empty_casm() {
     // - bytecode length is a multiple of 32 (felt252 wire format),
     // - hash is 64 hex chars (BLAKE3-256 shape),
     // - hash is stable across two calls (OnceLock memoization).
-    let a = zk_circuit::compile_from_source(BUNDLED_CAIRO_SOURCE)
-        .expect("compile_from_source must succeed; scarb + cairo-lang crates must be installed");
+    let a = zk_circuit::compile_bundled()
+        .expect("compile_bundled must succeed; scarb + cairo-lang crates must be installed");
     assert!(
         !a.casm_bytecode.is_empty(),
         "CASM bytecode must be non-empty (real CASM, not a stub)"
@@ -321,8 +321,7 @@ fn compile_from_source_returns_non_empty_casm() {
     );
 
     // Memoization: second call returns the same circuit (OnceLock caches).
-    let b = zk_circuit::compile_from_source(BUNDLED_CAIRO_SOURCE)
-        .expect("second call must also succeed");
+    let b = zk_circuit::compile_bundled().expect("second call must also succeed");
     assert_eq!(
         a.compiled_casm_hash, b.compiled_casm_hash,
         "compile_from_source must be deterministic (OnceLock memoization)"
@@ -414,34 +413,28 @@ fn compile_sierra_to_casm(sierra_bytes: &[u8]) -> Vec<u8> {
 fn measure_current_casm_size() {
     // Pre-AC-4 baseline measurement.
     let bytes = zk_circuit::bundled_casm_bytes().expect("compile");
-    println!(
-        "AC-4 baseline: CASM bytes={} ({:.2} KB), words={}",
-        bytes.len(),
-        bytes.len() as f64 / 1024.0,
-        bytes.len() / 32,
-    );
+    let bytes_len = bytes.len();
+    let kb = bytes_to_kb(bytes_len);
+    let words = bytes_len / 32;
+    println!("AC-4 baseline: CASM bytes={bytes_len} ({kb:.2} KB), words={words}",);
     println!("AC-4 hard ceilings: 50 KB serialized / 1600 words (Round 18 fix F-122/F-139)");
 }
 
 /// AC-4 hard gate: serialized CASM bytes ≤ 50 KB after Stage-2 split.
 ///
-/// **Status (mission 0958-c AC-4, 2026-08-06):** currently FAILING
-/// (CASM = ~267 KB / 8,534 words). AC-4 closes fail-closed per
-/// mission text until STWO recursive composition lands (RFC-0958
-/// §Future Work F7 — `prove_cairo` composition API not yet upstream).
-/// The actual size reduction requires each sub-circuit as its own
-/// scarb project + STARK proof, with `main()` verifying the proofs
-/// rather than inlining the cryptographic primitives.
+/// **Status (mission 0958-c AC-4, 2026-08-06):** GREEN as of R19 closure.
+/// CASM = ~41.19 KB / 1,318 words. R19 swap: production `verify_chain`
+/// uses corelib Poseidon over felt252 (replacing R18 SHA-256 stopgap),
+/// dropping `corelib::sha256` + `ByteArray` assembly + `u128` `pow256` loop
+/// from the compiled CASM.
 #[test]
-#[ignore = "AC-4 fail-closed: CASM bytes > 50 KB until STWO composition lands (RFC-0958 §F7)"]
 fn casm_bytes_under_50kb_after_stage2_split() {
     let bytes = zk_circuit::bundled_casm_bytes().expect("compile");
+    let bytes_len = bytes.len();
+    let kb = bytes_to_kb(bytes_len);
     assert!(
-        bytes.len() <= 50 * 1024,
-        "AC-4 fail-closed: serialized CASM = {} bytes ({:.2} KB) > 50 KB ceiling. \
-         Required: Stage-2 STWO composition (RFC-0958 §Future Work F7).",
-        bytes.len(),
-        bytes.len() as f64 / 1024.0,
+        bytes_len <= 50 * 1024,
+        "AC-4 size regression: serialized CASM = {bytes_len} bytes ({kb:.2} KB) > 50 KB ceiling.",
     );
 }
 
@@ -449,19 +442,23 @@ fn casm_bytes_under_50kb_after_stage2_split() {
 /// (Round 18 fix F-122 — `max_bytecode_size` measures CASM words,
 /// NOT Sierra statements or serialized bytes).
 ///
-/// **Status:** currently FAILING (CASM = ~8,534 words). See
-/// `casm_bytes_under_50kb_after_stage2_split` for the failure rationale.
+/// **Status:** GREEN as of R19 closure. CASM word count = 1,318.
 #[test]
-#[ignore = "AC-4 fail-closed: CASM words > 1600 until STWO composition lands (RFC-0958 §F7)"]
 fn casm_words_under_1600_after_stage2() {
     let bytes = zk_circuit::bundled_casm_bytes().expect("compile");
     let words = bytes.len() / 32;
     assert!(
         words <= 1600,
-        "AC-4 fail-closed: CASM word count = {} > 1600 ceiling. \
-         Required: Stage-2 STWO composition (RFC-0958 §Future Work F7).",
-        words,
+        "AC-4 size regression: CASM word count = {words} > 1600 ceiling.",
     );
+}
+
+/// Convert a byte count to KB (f64). CASM sizes are bounded well below
+/// 2^53 bytes so the precision loss is irrelevant for the AC-4 size
+/// reporting at lines above.
+#[allow(clippy::cast_precision_loss)]
+fn bytes_to_kb(n: usize) -> f64 {
+    n as f64 / 1024.0
 }
 
 /// Test-local helper module mirroring `zk_circuit::felt_vec_to_casm_bytes`

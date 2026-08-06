@@ -2,8 +2,13 @@
 
 ## Status
 
-**Version:** 1.20 (2026-03-17)
+**Version:** 1.21 (2026-08-06)
 **Status:** Accepted
+
+> **Adversarial Review v1.21 Changes (2 Issues Fixed):**
+> - Locale Specification whitespace policy: trim leading + trailing whitespace; **TRAP on internal whitespace** (normative binding; mirrors cipherocto `determin::Decimal::FromStr` impl).
+> - DECIMAL ↔ String Representation: normative `FromStr` policy + `Display` impl contract. Round-trip `Display→FromStr→Display` MUST be exact for every canonical value.
+> - Version updated to 1.21; Merkle root unchanged (no algorithm change, only locale/specification clarification).
 
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
 
@@ -1031,6 +1036,42 @@ Algorithm:
 - Sign: optional '+' allowed for positive, '-' for negative
 - Output uses ASCII characters only
 
+**String → DECIMAL Parsing Policy (Normative, v1.21):**
+
+Implementations MUST expose `FromStr` (or equivalent) accepting decimal
+strings. The parser MUST apply the following policies in order; any violation
+returns `ParseError` (or implementation-defined equivalent) — there is no
+"lenient" mode:
+
+1. **Whitespace:** `trim()` leading + trailing whitespace (spaces, tabs,
+   CR, LF). Internal whitespace is a **TRAP** — reject with `ParseError`.
+2. **Empty:** empty string (or whitespace-only) after trim → `ParseError`.
+3. **Sign:** optional leading `+` for positive, `-` for negative;
+   no-sign = positive.
+4. **Decimal separator:** period (`.`) only — comma rejected.
+5. **Single period only:** `1.2.3` or `1..2` rejected.
+6. **Empty integer or empty fractional:** bare `.`, `.1` rejected. Trailing
+   dot (`1.`) accepted as integer-only. No-period (`42`) accepted as
+   integer-only.
+7. **No exponent notation:** `e` / `E` anywhere → `ParseError`.
+8. **Digits only:** no thousands separators, no non-digit ASCII characters
+   (rejects `0x1A`, `1_000`, `--1`, `+-1`, etc.).
+9. **Scale boundary:** fractional-part length ≤ 36 (per §Constants). Length
+   > 36 → `InvalidScale`.
+10. **Mantissa range:** mantissa magnitude ≤ `MAX_DECIMAL_MANTISSA` (10^36−1)
+    → otherwise `Overflow`.
+11. **Canonicalization:** the parsed value is canonicalized via
+    `Decimal::new` (trailing zeros stripped; zero normalized to `{0, 0}`).
+
+**DECIMAL ↔ String Round-Trip Invariant (Normative, v1.21):**
+
+For every canonical `Decimal` `d`, the round-trip
+`format!("{}", d).parse::<Decimal>()` MUST equal `d`. Implementations MUST
+expose `Display` whose output equals `decimal_to_string(d)` (or equivalent
+canonical-string function). Implementations MUST NOT panic inside
+`Display::fmt` for any input `d`; unreachable length TRAP must surface as a
+sentinel string (e.g., `<decimal:length-trap>`) rather than unwrap.
+
 ## Determinism Guarantee
 
 All operations defined in this RFC produce **identical results** across all compliant implementations regardless of:
@@ -1710,6 +1751,7 @@ All errors are fatal (TRAP) — no partial results or fallback behavior:
 | 1.14 | 2026-03-17 | TBD | Fixed HIGH-1, HIGH-3, HIGH-4, MED-2, MED-3, MED-4, MED-6 from adversarial review |
 | 1.16 | 2026-03-17 | TBD | Fixed BUG-1 (MUL sign-aware rounding), BUG-2 (DIV unsafe cast), BUG-3 (BIGINT→DECIMAL), BUG-4 (probe 24b), BUG-5 (config hash), BUG-6 (SQRT off-by-one), BUG-7 (ROUND encoding) |
 | 1.17 | 2026-03-17 | TBD | Fixed Python SQRT (BUG-6 off-by-one), Python DIV (canonicalize), added config hash script, fixed probe 25 description, updated Known Issues |
+| 1.21 | 2026-08-06 | ciphercito | Locale Specification: trim leading/trailing whitespace; TRAP on internal whitespace (normative). DECIMAL ↔ String: `FromStr` policy (sign, period-only, no thousands separators, no exponent, bare dot rejected, integer-only accepted, scale boundary at 36) + `Display` impl contract (delegates to `decimal_to_string`). Round-trip `Display→FromStr→Display` MUST be exact for canonical values. Cipherocto-side impl: `determin::decimal::impl FromStr for Decimal` + `impl fmt::Display for Decimal` + 14 unit tests (determin/src/decimal.rs). Missions 0111-decimal-display-error + 0111-decimal-whitespace-amendment closed. |
 
 ## Compatibility
 

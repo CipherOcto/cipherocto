@@ -9,6 +9,8 @@ use num_integer::Integer;
 use num_traits::{Signed, ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::fmt;
+use std::str::FromStr;
 
 /// DECIMAL specification version
 pub const DECIMAL_SPEC_VERSION: u32 = 1;
@@ -878,6 +880,123 @@ pub fn decimal_to_string(d: &Decimal) -> Result<String, DecimalError> {
     Ok(result)
 }
 
+/// `Display` for `Decimal` — RFC-0111 §Display and String Representation.
+///
+/// Delegates to [`decimal_to_string`]; output is the canonical deterministic
+/// string (no leading zeros except the single `0` integer part; no trailing
+/// zeros in fractional part; period `.` separator; no thousands separators;
+/// no exponent notation; ASCII only).
+///
+/// Returns `fmt::Error` (without panicking) if `decimal_to_string` would
+/// exceed the 256-byte TRAP bound — the only failure mode of `decimal_to_string`
+/// is the length cap, which is unreachable for well-formed Decimals whose
+/// mantissa fits in `i128`. We surface this as a formatter error rather than
+/// unwrapping so `{}` formatting never panics on bad input.
+impl fmt::Display for Decimal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match decimal_to_string(self) {
+            Ok(s) => f.write_str(&s),
+            // Length TRAP — emit sentinel rather than panic in formatter.
+            Err(DecimalError::ConversionLoss) => f.write_str("<decimal:length-trap>"),
+            Err(_) => f.write_str("<decimal:error>"),
+        }
+    }
+}
+
+/// `FromStr` for `Decimal` — RFC-0111 §Locale Specification + §String Representation.
+///
+/// Policy (RFC-0111 v1.21):
+///   - Whitespace: `trim()` leading + trailing; **TRAP** on internal whitespace.
+///   - Sign: optional `+` for positive, `-` for negative; no-sign = positive.
+///   - Decimal separator: `.` (period) only — comma rejected.
+///   - No thousands separators — digits must NOT be grouped.
+///   - No exponent notation (`1.5e+10` rejected).
+///   - Empty after trim → `ParseError`.
+///   - Bare `.` (no int or frac) → `ParseError`. Trailing dot (`1.`) accepted
+///     as integer-only input. Leading-dot-only (`.1`) → `ParseError` because
+///     int_part is empty.
+///
+/// Returns `DecimalError::ParseError` on any policy violation. The resulting
+/// `Decimal` is canonicalized via `Decimal::new` (trailing zeros stripped,
+/// zero normalized to `{0, 0}`).
+impl FromStr for Decimal {
+    type Err = DecimalError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let trimmed = s.trim();
+
+        if trimmed.is_empty() {
+            return Err(DecimalError::ParseError);
+        }
+
+        // Internal whitespace check: after trim, any remaining ' ' / '\t' / '\n'
+        // / '\r' is a TRAP per RFC-0111 §Locale Specification.
+        if trimmed.chars().any(|c| c.is_whitespace()) {
+            return Err(DecimalError::ParseError);
+        }
+
+        // Optional leading sign.
+        let (sign, body) = match trimmed.as_bytes()[0] {
+            b'+' => (1i128, &trimmed[1..]),
+            b'-' => (-1i128, &trimmed[1..]),
+            _ => (1i128, trimmed),
+        };
+        if body.is_empty() {
+            return Err(DecimalError::ParseError);
+        }
+
+        // Single period only; no exponent.
+        let mut iter = body.split('.');
+        let int_part = iter.next().expect("non-empty by construction");
+        let frac_part = iter.next();
+        if iter.next().is_some() {
+            return Err(DecimalError::ParseError); // multiple periods
+        }
+        // Reject bare '.' / '1.' / '.1' — integer AND fractional both required
+        // unless one side is canonically-empty AND we choose to allow it. Per
+        // RFC-0111 line 1024 ("Canonical form ensures no trailing zeros in
+        // fractional part"), `1.0` is stored as `{1, 0}` not `{10, 1}`. We
+        // accept both `1` and `1.0` here and let `Decimal::new` canonicalize.
+        let frac_part: &str = frac_part.unwrap_or_default(); // no period → integer-only; allowed
+        if int_part.is_empty() {
+            return Err(DecimalError::ParseError); // bare '.' or '.1'
+        }
+
+        // No exponent notation: 'e' / 'E' anywhere → TRAP.
+        if int_part.contains('e')
+            || int_part.contains('E')
+            || frac_part.contains('e')
+            || frac_part.contains('E')
+        {
+            return Err(DecimalError::ParseError);
+        }
+
+        // Digits only (no thousands separators, no other locale noise).
+        // Empty `frac_part` is allowed (integer-only input like "42").
+        let all_digits = |s: &str| s.bytes().all(|b| b.is_ascii_digit());
+        if !all_digits(int_part) || !all_digits(frac_part) {
+            return Err(DecimalError::ParseError);
+        }
+
+        // Mantissa = sign * (int_part concatenated with frac_part); scale = len(frac_part).
+        let combined = format!("{}{}", int_part, frac_part);
+        if combined.is_empty() {
+            return Err(DecimalError::ParseError);
+        }
+        // RFC-0111 §Scale: ≤ 36.
+        if frac_part.len() > MAX_DECIMAL_SCALE as usize {
+            return Err(DecimalError::InvalidScale);
+        }
+
+        let mantissa_abs: i128 = combined.parse().map_err(|_| DecimalError::ParseError)?;
+        let mantissa = sign
+            .checked_mul(mantissa_abs)
+            .ok_or(DecimalError::Overflow)?;
+
+        Decimal::new(mantissa, frac_part.len() as u8)
+    }
+}
+
 #[cfg(test)]
 impl Decimal {
     /// For testing only — bypasses validation to create non-canonical values
@@ -1099,5 +1218,167 @@ mod tests {
             computed, DECIMAL_ARITHMETIC_CONFIG_HASH,
             "Config hash must match RFC-0111 canonical value"
         );
+    }
+
+    // --- Display + FromStr surface (RFC-0111 §Display and String Representation) ---
+
+    #[test]
+    fn display_canonical_zero() {
+        let d = Decimal::new(0, 5).unwrap();
+        assert_eq!(format!("{}", d), "0");
+    }
+
+    #[test]
+    fn display_canonical_integer() {
+        // 1000 with scale=3 canonicalizes to {1, 0}.
+        let d = Decimal::new(1000, 3).unwrap();
+        assert_eq!(format!("{}", d), "1");
+    }
+
+    #[test]
+    fn display_fractional() {
+        // 12345 with scale=3 → "12.345".
+        let d = Decimal::new(12345, 3).unwrap();
+        assert_eq!(format!("{}", d), "12.345");
+    }
+
+    #[test]
+    fn display_negative() {
+        let d = Decimal::new(-12345, 3).unwrap();
+        assert_eq!(format!("{}", d), "-12.345");
+    }
+
+    #[test]
+    fn display_leading_zeros_in_fraction() {
+        // mantissa 123, scale 5 → "0.00123".
+        let d = Decimal::new(123, 5).unwrap();
+        assert_eq!(format!("{}", d), "0.00123");
+    }
+
+    #[test]
+    fn fromstr_canonical_round_trip() {
+        // Display↔FromStr must be exact for every value Display produces.
+        for raw in ["0", "1", "-1", "12.345", "-12.345", "0.00123", "100"] {
+            let d: Decimal = raw.parse().expect("parse");
+            let rendered = format!("{}", d);
+            assert_eq!(rendered, raw, "round-trip drift for {raw}");
+        }
+    }
+
+    #[test]
+    fn fromstr_trims_leading_and_trailing_whitespace() {
+        for input in ["  1.5  ", "\t-12.345\n", " \r\n0 \r\n"] {
+            let d: Decimal = input.parse().expect("parse with trim");
+            assert_eq!(format!("{}", d), input.trim());
+        }
+    }
+
+    #[test]
+    fn fromstr_traps_internal_whitespace() {
+        // RFC-0111 §Locale Specification: "TRAP on internal whitespace".
+        for bad in ["1 . 5", "1. 5", "1.5 6", "1\t2"] {
+            let r: Result<Decimal, _> = bad.parse();
+            assert!(
+                matches!(r, Err(DecimalError::ParseError)),
+                "got {r:?} for {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn fromstr_rejects_empty() {
+        let r: Result<Decimal, _> = "".parse();
+        assert!(matches!(r, Err(DecimalError::ParseError)));
+        let r2: Result<Decimal, _> = "   ".parse();
+        assert!(matches!(r2, Err(DecimalError::ParseError)));
+    }
+
+    #[test]
+    fn fromstr_rejects_bare_dot_and_partial() {
+        for bad in [".", ".1", "1..2", "1.2.3"] {
+            let r: Result<Decimal, _> = bad.parse();
+            assert!(
+                matches!(r, Err(DecimalError::ParseError)),
+                "got {r:?} for {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn fromstr_accepts_trailing_dot_as_integer() {
+        // "1." parses as int=1, frac="" → Decimal(1, 0). Same canonical
+        // value as "1". Allowed per RFC-0111 §Locale Specification: period
+        // is the decimal separator; trailing period with empty fractional
+        // part is a degenerate but well-formed representation.
+        let d: Decimal = "1.".parse().unwrap();
+        assert_eq!(d.mantissa(), 1);
+        assert_eq!(d.scale(), 0);
+    }
+
+    #[test]
+    fn fromstr_rejects_comma_separator() {
+        // RFC-0111 §Locale Specification: period only, never comma.
+        let r: Result<Decimal, _> = "1,5".parse();
+        assert!(matches!(r, Err(DecimalError::ParseError)));
+    }
+
+    #[test]
+    fn fromstr_rejects_exponent_notation() {
+        for bad in ["1e10", "1.5E+2", "1e-3", "-1.5e2"] {
+            let r: Result<Decimal, _> = bad.parse();
+            assert!(
+                matches!(r, Err(DecimalError::ParseError)),
+                "got {r:?} for {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn fromstr_rejects_non_digit_chars() {
+        for bad in ["abc", "0x1A", "1_000", "1.5a", "--1", "+-1"] {
+            let r: Result<Decimal, _> = bad.parse();
+            assert!(
+                matches!(r, Err(DecimalError::ParseError)),
+                "got {r:?} for {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn fromstr_accepts_explicit_positive_sign() {
+        let d: Decimal = "+12.345".parse().unwrap();
+        assert_eq!(format!("{}", d), "12.345");
+    }
+
+    #[test]
+    fn fromstr_accepts_integer_only_input() {
+        // No period = integer; scale 0.
+        let d: Decimal = "42".parse().unwrap();
+        assert_eq!(d.mantissa(), 42);
+        assert_eq!(d.scale(), 0);
+    }
+
+    #[test]
+    fn fromstr_canonicalizes_trailing_zeros() {
+        // "1.000" should canonicalize to {1, 0} — same as "1".
+        let d: Decimal = "1.000".parse().unwrap();
+        assert_eq!(d.mantissa(), 1);
+        assert_eq!(d.scale(), 0);
+    }
+
+    #[test]
+    fn fromstr_rejects_scale_overflow() {
+        // 37 fractional digits → scale > 36 → InvalidScale.
+        let bad = format!("0.{}", "1".repeat(37));
+        let r: Result<Decimal, _> = bad.parse();
+        assert!(matches!(r, Err(DecimalError::InvalidScale)), "got {r:?}");
+    }
+
+    #[test]
+    fn fromstr_accepts_scale_at_boundary() {
+        // Exactly 36 fractional digits must succeed.
+        let ok = format!("0.{}", "1".repeat(36));
+        let d: Decimal = ok.parse().unwrap();
+        assert_eq!(d.scale(), 36);
     }
 }

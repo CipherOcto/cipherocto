@@ -1,10 +1,24 @@
 # RFC-0950 (Economics): Agent Mission Marketplace (AMM)
 
+> **SUPERSEDED 2026-08-06** by the accepted grand-design family:
+>
+> - **RFC-0960** (Accepted, 2026-07-23) — Grand Design: Vaults, Capabilities, Reservations
+> - **RFC-0959** (Accepted, 2026-08-04) — Ask Settlement Chain
+> - **RFC-0959-A1** (Accepted, 2026-08-02) — Market Delivery
+> - **RFC-0957** (Accepted, 2026-08-01) — Capability Token Format
+> - **RFC-0957-A1** (Accepted, 2026-08-02) — Holder Registry
+> - **RFC-0918** (Accepted, 2026-07-24) — Inference Task Market
+>
+> This RFC is archived as **historical design intent**. The AMM conceptual model (mission creation → bidding → execution → verification → settlement) was subsumed by the vaults/capabilities/reservations architecture of RFC-0960 and the per-Ask settlement chain of RFC-0959. No implementation substrate (no `crates/octo-marketplace/`, no `crates/octo-vm/`) was ever written against this RFC. The accepted family defines the canonical marketplace substrate.
+>
+> **Supersession context:** Originally authored 2026-03-10 as RFC-0153, renumbered to RFC-0950 on 2026-06-19 (commit `7e16394f`). Stayed Draft for 4+ months. §Depends on cites RFC-0106 (archived, superseded by RFC-0110-0115). No amendments authored. Grand-design reconciliation RFC-0960 (2026-07-23) superseded the mission/bidding/settlement model.
+
 ## Status
 
 **Version:** 1.0
-**Status:** Draft
+**Status:** Draft → **Archived (Superseded)** 2026-08-06
 **Submission Date:** 2026-03-10
+**Archive Date:** 2026-08-06
 
 > **Note:** This RFC was renumbered from RFC-0153 to RFC-0950 as part of the category-based numbering system.
 

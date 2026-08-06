@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-08-04) by @mmacedoeu
+Closed (Band A — 2026-08-06). Claimed 2026-08-04 by @mmacedoeu; implementation landed F1+F2+F3 (14/16 ACs green; modules `crates/octo-wallet/src/capability/{federation,gc,audit_log}.rs` carrying 21 tests across 789 lines). 2 unchecked ACs are explicit cross-mission deferrals with named owner per [[deferred-vs-unspecified]]: F4 (2 ACs: bundle struct + TV) blocks on RFC-0009 §Identity evolution (RFC-0009 currently Accepted 2026-08-02 but §Identity evolution not yet active upstream). Future-work sub-mission `0957-f-f4-bundle` to be filed when RFC-0009 §Identity lands.
 
 ## RFC
 
@@ -19,7 +19,7 @@ Implement the 4 items deferred from RFC-0957-A1 §Future Work. Each item has a c
 ### F1: Catalog federation across nodes
 
 - [x] `crates/octo-wallet/src/capability/federation.rs` (NEW) — gossip delta bounded to ~1KB per insert. Verify via TV F1: simulated 10K-node federation, per-gossip-frame size ≤ 1KB.
-- [x] Test: 1000 random inserts; gossip frame histogram; p99 ≤ 1KB. (`thousand_random_inserts_p99_under_1kb` in `crates/octo-wallet/src/capability/federation.rs:200`)
+- [x] Test: 1000 random inserts; gossip frame histogram; p99 ≤ 1KB. (`thousand_random_inserts_p99_under_1kb` in `crates/octo-wallet/src/capability/federation.rs` §thousand_random_inserts_p99_under_1kb)
 - [x] `docs/07-developers/` rule: inline §Developer Guide section in this mission (no external developer-guide file). (See §Developer Guide below)
 
 ### F2: Catalog GC
@@ -57,7 +57,7 @@ Implement the 4 items deferred from RFC-0957-A1 §Future Work. Each item has a c
 
 **Mission gates:**
 
-- `missions/open/0957-c-holder-registry-impl.md` — base HolderRecord + HolderKind MUST exist (F1, F2, F3 substrate)
+- `missions/claimed/0957-c-holder-registry-impl.md` — base HolderRecord + HolderKind MUST exist (F1, F2, F3 substrate) — Closed Band A 2026-08-06
 - `missions/open/0957-e-mint-txn-parameter.md` — CapabilityCatalog 4-method extension MUST exist (F4 substrate)
 
 **Blocks:**
@@ -117,6 +117,16 @@ When RFC-0009 §Identity lands, re-author the F4 AC + TV. The 4 current `Capabil
 - F4 is the only item not yet fully spec'd (TV F4 placeholder) because it depends on RFC-0009 §Identity evolution. The mission structure explicitly handles this: when RFC-0009 §Identity lands, re-author F4 AC + TV.
 - Manual Debug redaction on `AuditEvent` is the load-bearing security primitive for F3 (audit logs are forensics surface; cap_root_hash leakage defeats audit purpose).
 - Concrete plans for F1, F2, F3 mean this mission is CLAIMABLE; only F4 blocks on upstream.
+
+## Version History
+
+| Version | Date       | Change                                                                                                                                    |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-04 | Mission claimed. RFC-0957-A1 §Future Work F1-F4 consolidated.                                                                             |
+| v0.2    | 2026-08-06 | Closed Band A (14/16 ACs). F4 (2 ACs) explicit deferral to `0957-f-f4-bundle` future sub-mission; blocks on RFC-0009 §Identity evolution. |
+
+Last Updated: 2026-08-06
+Version: 0.2
 
 ### Related
 

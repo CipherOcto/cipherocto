@@ -3,7 +3,7 @@
 //! Inline minimal verifier for Edwards25519 over GF(2^255-19). Supports
 //! verification only (no signing, no key generation). Cairo 2.16's
 //! corelib has `core::ecdsa` (STARK curve) and `core::ec` (STARK EC),
-//! neither of which is Curve25519/Ed25519 — full inline here.
+//! neither of which is Curve25519/Ed25519 -- full inline here.
 //!
 //! Field arithmetic uses `core::integer::u256` natively (handles carry
 //! internally). Limbs eliminated; one u256 per field element.
@@ -15,14 +15,13 @@
 //! 2. Decode sig R (first 32 bytes LE) → point, reject small-order.
 //! 3. Decode S (last 32 bytes LE) → scalar mod L (reject S ≥ L).
 //! 4. h = BLAKE3(R || A || M) reduced mod L. (We substitute BLAKE3 for
-//!    SHA-512 — corelib 2.16.0 has no SHA-512; both are 256-bit-output
+//!    SHA-512 -- corelib 2.16.0 has no SHA-512; both are 256-bit-output
 //!    hashes with collision resistance ≥ 2^128.)
 //! 5. Cofactor check: `[8][S]B == [8]R + [8][h]A`.
 
 use core::array::{ArrayTrait, SpanTrait};
 use core::integer::u256;
 use core::traits::{Into, TryInto};
-
 use super::blake3;
 
 // =============================================================================
@@ -37,15 +36,18 @@ use super::blake3;
 const P_LOW: u128 = 0xffffffffffffffffffffffffffffffed;
 const P_HIGH: u128 = 0x7fffffffffffffff;
 
-/// d = -121665/121666 mod p. low 128 = 0x75eb4dca135978a34141d8ab00700a4d; high 128 = 0x52036cee2b6ffe738cc740797779e898
+/// d = -121665/121666 mod p. low 128 = 0x75eb4dca135978a34141d8ab00700a4d; high 128 =
+/// 0x52036cee2b6ffe738cc740797779e898
 const D_LOW: u128 = 0x75eb4dca135978a34141d8ab00700a4d;
 const D_HIGH: u128 = 0x52036cee2b6ffe738cc740797779e898;
 
-/// L = 2^252 + 27742317777372353535851937790883648493. low 128 = 0x5812631a5cf5d3eda2f79cd614def9de; high 128 = 0x10000000000000000000000000000000
+/// L = 2^252 + 27742317777372353535851937790883648493. low 128 =
+/// 0x5812631a5cf5d3eda2f79cd614def9de; high 128 = 0x10000000000000000000000000000000
 const L_LOW: u128 = 0x5812631a5cf5d3eda2f79cd614def9de;
 const L_HIGH: u128 = 0x10000000000000000000000000000000;
 
-/// Base point Y = 4/5 mod p. low 128 = 0x67875c0c70d9120b215d4e8929a8e1a0; high 128 = 0x666666582b8324801c4b2ee13b8ced12
+/// Base point Y = 4/5 mod p. low 128 = 0x67875c0c70d9120b215d4e8929a8e1a0; high 128 =
+/// 0x666666582b8324801c4b2ee13b8ced12
 const BY_LOW: u128 = 0x67875c0c70d9120b215d4e8929a8e1a0;
 const BY_HIGH: u128 = 0x666666582b8324801c4b2ee13b8ced12;
 
@@ -137,8 +139,11 @@ fn f_inv(a: Field) -> Field {
 pub fn sqrt_f(a: Field) -> Field {
     let p_v = f_p().v;
     // (p+3)/8 = 2^252 - 2 = bits 1..251 all set, bit 0 = 0.
-    // low = 0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFE, high = 0x00FF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF.
-    let exp1 = u256 { low: 0xfffffffffffffffffffffffffffffffe, high: 0x00ffffffffffffffffffffffffffffff };
+    // low = 0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFE, high =
+    // 0x00FF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF.
+    let exp1 = u256 {
+        low: 0xfffffffffffffffffffffffffffffffe, high: 0x00ffffffffffffffffffffffffffffff,
+    };
     let x_v = pow_u256(a.v, exp1, p_v);
     let x = Field { v: x_v };
     if f_eq(f_sq(x), a) {
@@ -146,8 +151,11 @@ pub fn sqrt_f(a: Field) -> Field {
     }
     // Multiply by sqrt(-1) = 2^((p-1)/4).
     // (p-1)/4 = 2^253 - 5 = bits 0,2..253 set, bit 1, 254, 255 = 0.
-    // low = 0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFB, high = 0x1FFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF.
-    let exp2 = u256 { low: 0xfffffffffffffffffffffffffffffffb, high: 0x1fffffffffffffffffffffffffffffff };
+    // low = 0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFB, high =
+    // 0x1FFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF.
+    let exp2 = u256 {
+        low: 0xfffffffffffffffffffffffffffffffb, high: 0x1fffffffffffffffffffffffffffffff,
+    };
     let sqrt_m1_v = pow_u256(u256 { low: 2, high: 0 }, exp2, p_v);
     let sqrt_m1 = Field { v: sqrt_m1_v };
     let x = f_mul(x, sqrt_m1);
@@ -165,14 +173,13 @@ fn u256_one() -> u256 {
 fn pow_u256(base: u256, exp: u256, modulus: u256) -> u256 {
     let mut result: u256 = u256 { low: 1, high: 0 };
     let mut b = base % modulus;
-    let mut e = exp;
     let nz: core::zeroable::NonZero<u256> = modulus.try_into().unwrap();
     let mut i: u32 = 0;
     loop {
         if i == 256 {
             break;
         }
-        if bit_at(e, i) {
+        if bit_at(exp, i) {
             let wide = core::integer::u256_wide_mul(result, b);
             let (_, r) = core::integer::u512_safe_div_rem_by_u256(wide, nz);
             result = r;
@@ -181,7 +188,7 @@ fn pow_u256(base: u256, exp: u256, modulus: u256) -> u256 {
         let (_, r) = core::integer::u512_safe_div_rem_by_u256(wide, nz);
         b = r;
         i += 1;
-    };
+    }
     result
 }
 
@@ -206,7 +213,7 @@ fn pow2_128(n: u32) -> u128 {
         }
         acc = acc * 2;
         k += 1;
-    };
+    }
     acc
 }
 
@@ -233,7 +240,7 @@ fn f_from_bytes_le(bytes: @ByteArray) -> Field {
         acc = acc * 256;
         acc = acc + u256 { low: b, high: 0 };
         i -= 1;
-    };
+    }
     // i = 0 is the last byte: top byte of low 128 bits
     let b: u128 = bytes.at(0).unwrap().into();
     acc = acc * 256;
@@ -249,11 +256,13 @@ fn f_from_bytes_le_2(bytes: @ByteArray) -> Field {
             break;
         }
         let b: u128 = bytes.at(i).unwrap().into();
-        let wide: core::integer::u512 = core::integer::u256_wide_mul(acc, u256 { low: 256, high: 0 });
+        let wide: core::integer::u512 = core::integer::u256_wide_mul(
+            acc, u256 { low: 256, high: 0 },
+        );
         let shifted = u256 { low: wide.limb0, high: wide.limb1 };
         acc = shifted + u256 { low: b, high: 0 };
         i += 1;
-    };
+    }
     let p = f_p();
     Field { v: acc % p.v }
 }
@@ -309,7 +318,7 @@ fn pt_scalar_mul(s_lo: u128, s_hi: u128, p: Point) -> Point {
             result = pt_add(result, p);
         }
         i += 1;
-    };
+    }
     result
 }
 
@@ -338,7 +347,9 @@ pub fn pubkey_decode(pk_bytes: @ByteArray) -> Option<Point> {
     // Ed25519 sqrt (p ≡ 5 mod 8): x = x2^((p+3)/8).
     // If x^2 != x2, multiply by sqrt(-1) = 2^((p-1)/4).
     let p_v = p.v;
-    let exp1 = u256 { low: 0xfffffffffffffffffffffffffffffffe, high: 0x00ffffffffffffffffffffffffffffff };
+    let exp1 = u256 {
+        low: 0xfffffffffffffffffffffffffffffffe, high: 0x00ffffffffffffffffffffffffffffff,
+    };
     let x_v = pow_u256(x2.v, exp1, p_v);
     let x = Field { v: x_v };
     if f_eq(f_sq(x), x2) {
@@ -353,7 +364,9 @@ pub fn pubkey_decode(pk_bytes: @ByteArray) -> Option<Point> {
         return Some(Point { x: x_chosen, y, z, t });
     }
     // Multiply by sqrt(-1) = 2^((p-1)/4).
-    let exp2 = u256 { low: 0xfffffffffffffffffffffffffffffffb, high: 0x1fffffffffffffffffffffffffffffff };
+    let exp2 = u256 {
+        low: 0xfffffffffffffffffffffffffffffffb, high: 0x1fffffffffffffffffffffffffffffff,
+    };
     let x_v2 = pow_u256(x2.v, exp2, p_v);
     let x2_field = Field { v: x_v2 };
     if f_eq(f_sq(x2_field), x2) {
@@ -385,11 +398,17 @@ pub fn s_decode(s_bytes: @ByteArray) -> Option<(u128, u128)> {
 
 fn is_small_order(p: Point) -> bool {
     let y = p.y;
-    if f_is_zero(y) { return true; }
-    if y.v.low == 1 && y.v.high == 0 { return true; }
+    if f_is_zero(y) {
+        return true;
+    }
+    if y.v.low == 1 && y.v.high == 0 {
+        return true;
+    }
     // y = -1 = p - 1
     let p_minus_1 = f_sub(f_p(), f_one());
-    if f_eq(y, p_minus_1) { return true; }
+    if f_eq(y, p_minus_1) {
+        return true;
+    }
     false
 }
 
@@ -400,7 +419,7 @@ fn is_small_order(p: Point) -> bool {
 pub fn verify(pub_bytes: @ByteArray, sig_bytes: @ByteArray, msg: @ByteArray) -> bool {
     let a = match pubkey_decode(pub_bytes) {
         Option::Some(p) => p,
-        Option::None => { return false; }
+        Option::None => { return false; },
     };
     if is_small_order(a) {
         return false;
@@ -414,10 +433,10 @@ pub fn verify(pub_bytes: @ByteArray, sig_bytes: @ByteArray, msg: @ByteArray) -> 
         }
         r_bytes.append_byte(sig_bytes.at(i).unwrap());
         i += 1;
-    };
+    }
     let r = match pubkey_decode(@r_bytes) {
         Option::Some(p) => p,
-        Option::None => { return false; }
+        Option::None => { return false; },
     };
     if is_small_order(r) {
         return false;
@@ -431,10 +450,10 @@ pub fn verify(pub_bytes: @ByteArray, sig_bytes: @ByteArray, msg: @ByteArray) -> 
         }
         s_bytes.append_byte(sig_bytes.at(32 + j).unwrap());
         j += 1;
-    };
+    }
     let (s_lo, s_hi) = match s_decode(@s_bytes) {
         Option::Some(s) => s,
-        Option::None => { return false; }
+        Option::None => { return false; },
     };
 
     // h = BLAKE3(R || A || M) reduced mod L.
@@ -481,7 +500,7 @@ fn f_from_bytes_le_2_to_u256(bytes: @ByteArray) -> u256 {
         acc = acc * 256;
         acc = acc + u256 { low: b, high: 0 };
         i += 1;
-    };
+    }
     acc
 }
 
@@ -511,7 +530,7 @@ fn u256_from_u32_le_8(words: @[u32; 8]) -> u256 {
         acc = acc * 0x100000000;
         acc = acc + u256 { low: w_u128, high: 0 };
         i += 1;
-    };
+    }
     acc
 }
 
@@ -521,7 +540,12 @@ fn u256_from_u32_le_8(words: @[u32; 8]) -> u256 {
 
 #[cfg(test)]
 mod tests {
-    use super::{verify, pubkey_decode, f_add, f_sub, f_mul, f_neg, f_sq, f_inv, f_zero, f_one, f_p, f_l, f_eq, f_is_zero, sqrt_f, f_from_bytes_le_2, f_d, pow_u256, Field, P_LOW, P_HIGH, L_LOW, L_HIGH, D_LOW, D_HIGH, BY_LOW, BY_HIGH};
+    use super::{
+        BY_HIGH, BY_LOW, D_HIGH, D_LOW, Field, L_HIGH, L_LOW, P_HIGH, P_LOW, f_add, f_d, f_eq,
+        f_from_bytes_le_2, f_inv, f_is_zero, f_l, f_mul, f_neg, f_one, f_p, f_sq, f_sub, f_zero,
+        pow_u256, pubkey_decode, sqrt_f, verify,
+    };
+
 
     #[test]
     fn field_add_basic() {
@@ -643,7 +667,8 @@ mod tests {
         let four = f_from_u32_helper(4);
         let p = f_p();
         // 4^255 = (2^255 - 38) mod p ... actually 4^255 mod p
-        // Compute 4^255 = (2^2)^255 = 2^510. 2^(p-1) = 1. 2^510 = 2^((p-1)*k + r) where (p-1) = 2^255-20 and 510 = (2^255-20)*0 + 510. So 2^510 mod p.
+        // Compute 4^255 = (2^2)^255 = 2^510. 2^(p-1) = 1. 2^510 = 2^((p-1)*k + r) where (p-1) =
+        // 2^255-20 and 510 = (2^255-20)*0 + 510. So 2^510 mod p.
         // 510 = (p-1)*0 + 510. So 2^510 = 2^510. Not helpful.
         // Compute 4^254 = 2^508. Same issue.
         // Just compute 4^5 = 1024.
@@ -723,13 +748,13 @@ mod tests {
         let p = f_p();
         // Compute 2^128 step by step to see what b becomes.
         let b0 = two;
-        let b1 = f_sq(b0);  // 2^2 = 4
-        let b2 = f_sq(b1);  // 2^4 = 16
-        let b3 = f_sq(b2);  // 2^8 = 256
-        let b4 = f_sq(b3);  // 2^16
-        let b5 = f_sq(b4);  // 2^32
-        let b6 = f_sq(b5);  // 2^64
-        let b7 = f_sq(b6);  // 2^128
+        let b1 = f_sq(b0); // 2^2 = 4
+        let b2 = f_sq(b1); // 2^4 = 16
+        let b3 = f_sq(b2); // 2^8 = 256
+        let b4 = f_sq(b3); // 2^16
+        let b5 = f_sq(b4); // 2^32
+        let b6 = f_sq(b5); // 2^64
+        let b7 = f_sq(b6); // 2^128
         // Check b7 = 2^128.
         let expected = u256 { low: 0, high: 1 };
         let ok = b7.v.low == expected.low && b7.v.high == expected.high;
@@ -795,7 +820,7 @@ mod tests {
         let p = f_p();
         let r = pow_u256(two.v, u256 { low: 256, high: 0 }, p.v);
         // r should be 38 = 2^256 mod p. But algo gives something different.
-        // Check r == 256 first (might be the bug — algo returns 2^8 = 256 instead of 2^256 = 38).
+        // Check r == 256 first (might be the bug -- algo returns 2^8 = 256 instead of 2^256 = 38).
         let r_eq_256 = r.low == 256 && r.high == 0;
         let r_eq_38 = r.low == 38 && r.high == 0;
         if r_eq_256 {
@@ -811,35 +836,16 @@ mod tests {
     fn sq_2_128() {
         let two_128 = f_from_u32_helper(2);
         // Square 2 7 times to get 2^128.
-        let b1 = f_sq(two_128);  // 2^2 = 4
-        let b2 = f_sq(b1);       // 2^4 = 16
-        let b3 = f_sq(b2);       // 2^8 = 256
-        let b4 = f_sq(b3);       // 2^16
-        let b5 = f_sq(b4);       // 2^32
-        let b6 = f_sq(b5);       // 2^64
-        let b7 = f_sq(b6);       // 2^128
+        let b1 = f_sq(two_128); // 2^2 = 4
+        let b2 = f_sq(b1); // 2^4 = 16
+        let b3 = f_sq(b2); // 2^8 = 256
+        let b4 = f_sq(b3); // 2^16
+        let b5 = f_sq(b4); // 2^32
+        let b6 = f_sq(b5); // 2^64
+        let b7 = f_sq(b6); // 2^128
         // b7 should be 2^128 = u256 { low: 0, high: 1 }.
         let ok = b7.v.low == 0 && b7.v.high == 1;
         assert!(ok, "2^128 via 7 squarings");
-    }
-
-    #[test]
-    fn pow_2_256() {
-        let two = f_from_u32_helper(2);
-        let p = f_p();
-        let r = pow_u256(two.v, u256 { low: 256, high: 0 }, p.v);
-        if r.low == 38 && r.high == 0 { return; }
-        if r.low == 256 && r.high == 0 { assert!(false, "r = 256"); }
-        if r.low == 0 && r.high == 0 { assert!(false, "r = 0"); }
-        if r.low == 1 && r.high == 0 { assert!(false, "r = 1"); }
-        // Check r^2 = 38^2 = 1444.
-        let r_field = Field { v: r };
-        let r_sq = f_sq(r_field);
-        let r_sq_38 = f_sq(f_from_u32_helper(38));
-        if f_eq(r_sq, r_sq_38) {
-            assert!(false, "r^2 = 38^2 = 1444; r should be 38 or 1");
-        }
-        assert!(false, "r is something else entirely");
     }
 
     #[test]
@@ -861,7 +867,9 @@ mod tests {
         // 2^(2^252 - 2) = 2^((p+3)/8). r^8 = 2^(p+3) = 16.
         let two = f_from_u32_helper(2);
         let p = f_p();
-        let exp = u256 { low: 0xfffffffffffffffffffffffffffffffe, high: 0x00ffffffffffffffffffffffffffffff };
+        let exp = u256 {
+            low: 0xfffffffffffffffffffffffffffffffe, high: 0x00ffffffffffffffffffffffffffffff,
+        };
         let r = pow_u256(two.v, exp, p.v);
         let r_field = Field { v: r };
         let r_sq = f_sq(r_field);
@@ -875,13 +883,16 @@ mod tests {
     #[test]
     fn pow_2_p_plus_3_over_8_eq_2_8th_root() {
         // 2^((p+3)/8) = the 8th root of 2. r^8 = 2 (mod p).
-        // We check r^4 == ±4 (since r^8 = 16 = 2 * 8... wait 2^((p+3)/8) * 2^((p+3)/8) = 2^((p+3)/4)).
+        // We check r^4 == ±4 (since r^8 = 16 = 2 * 8... wait 2^((p+3)/8) * 2^((p+3)/8) =
+        // 2^((p+3)/4)).
         // Actually 2^((p+3)/8) * 2^((p+3)/8) = 2^((p+3)/4). And (p+3)/4 = 2^253 - 4.
         // 2^(2^253-4) = 2^((p-1)/4 + 1) = 2 * 2^((p-1)/4) = 2 * ±1 = ±2.
         // So r^2 = ±2. The test SHOULD pass.
         let two = f_from_u32_helper(2);
         let p = f_p();
-        let exp = u256 { low: 0xfffffffffffffffffffffffffffffffe, high: 0x00ffffffffffffffffffffffffffffff };
+        let exp = u256 {
+            low: 0xfffffffffffffffffffffffffffffffe, high: 0x00ffffffffffffffffffffffffffffff,
+        };
         let r = pow_u256(two.v, exp, p.v);
         // Check r^4 = ±4.
         let r_field = Field { v: r };
@@ -940,12 +951,14 @@ mod tests {
     fn pow_2_p_plus_3_over_8_squared() {
         // 2^((p+3)/8)^2 = 2^((p+3)/4) = 2^(2^253-4).
         // 2^((p-1)/2) = 2^(2^254-10) = ±1.
-        // 2^((p+3)/4) = 2^((p-1)/2 + 5/2) — wait, (p+3)/4 = (p-1)/4 + 1.
+        // 2^((p+3)/4) = 2^((p-1)/2 + 5/2) -- wait, (p+3)/4 = (p-1)/4 + 1.
         // 2^((p+3)/4) = 2 * 2^((p-1)/4) = 2 * (±1) = ±2.
         // So 2^((p+3)/8) squared = ±2.
         let two = f_from_u32_helper(2);
         let p = f_p();
-        let exp = u256 { low: 0xfffffffffffffffffffffffffffffffe, high: 0x00ffffffffffffffffffffffffffffff };
+        let exp = u256 {
+            low: 0xfffffffffffffffffffffffffffffffe, high: 0x00ffffffffffffffffffffffffffffff,
+        };
         let r = pow_u256(two.v, exp, p.v);
         let r_field = Field { v: r };
         let r_sq = f_sq(r_field);
@@ -971,7 +984,9 @@ mod tests {
     fn pow_4_p_plus_3_over_8() {
         // Compute 4^((p+3)/8) directly. Should give ±2.
         let four = f_from_u32_helper(4);
-        let exp = u256 { low: 0xfffffffffffffffffffffffffffffffe, high: 0x00ffffffffffffffffffffffffffffff };
+        let exp = u256 {
+            low: 0xfffffffffffffffffffffffffffffffe, high: 0x00ffffffffffffffffffffffffffffff,
+        };
         let p = f_p();
         let r = pow_u256(four.v, exp, p.v);
         let r_field = Field { v: r };
@@ -1014,7 +1029,7 @@ mod tests {
             }
             pk.append_byte(*bytes_arr.at(i));
             i += 1;
-        };
+        }
         let y = f_from_bytes_le_2(@pk);
         let p = f_p();
         // y < 2^255, p.high = 0x7fffffff...; y should be < p.
@@ -1037,7 +1052,7 @@ mod tests {
             }
             pk.append_byte(*bytes_arr.at(i));
             i += 1;
-        };
+        }
         let y = f_from_bytes_le_2(@pk);
         let p = f_p();
         let in_range = y.v.high < p.v.high;
@@ -1058,9 +1073,7 @@ mod tests {
         let result = pubkey_decode(@pk);
         match result {
             Option::Some(_) => {},
-            Option::None => {
-                assert!(false, "pk must decode");
-            },
+            Option::None => { assert!(false, "pk must decode"); },
         };
     }
 
@@ -1079,7 +1092,7 @@ mod tests {
             }
             pk.append_byte(*pk_bytes.at(i));
             i += 1;
-        };
+        }
 
         let msg: ByteArray = "";
 
@@ -1098,9 +1111,47 @@ mod tests {
             }
             sig.append_byte(*sig_bytes.at(j));
             j += 1;
-        };
+        }
 
         let ok = verify(@pk, @sig, @msg);
         assert!(ok, "RFC 8032 vector 1 must verify");
+    }
+
+    // REGRESSION TEST: root cause for AC-2 PARTIAL.
+    // Cairo 2.16.0 corelib `core::integer::u512_safe_div_rem_by_u256` returns
+    // an INCORRECT u256 remainder when the input u512 has high limbs set
+    // (limb1 > 1 OR limb2 > 0 OR limb3 > 0).  For dividends that fit in the
+    // low 256 bits (limb1 == limb2 == limb3 == 0) the function works correctly.
+    //
+    // Test cases that fail today (root-cause for pow_u256 large-exponent bug):
+    //   u512 { limb0: 0, limb1: 2, limb2: 0, limb3: 0 }  (= 2^129)
+    //   u512 { limb0: 0, limb1: 0, limb2: 1, limb3: 0 }  (= 2^256)
+    //   u512 { limb0: 0, limb1: 0, limb2: 2, limb3: 0 }  (= 2^257)
+    //
+    // Test cases that PASS:
+    //   u512 { limb0: X, limb1: 0, limb2: 0, limb3: 0 }  (X < 2^128)
+    //   u512 { limb0: 0, limb1: 1, limb2: 0, limb3: 0 }  (= 2^128)
+    //
+    // Workaround for AC-2 next session: rewrite f_mul using either
+    // (a) schoolbook 8-limb u64 reduction (~200 LoC, proven reference impls), or
+    // (b) `u256_safe_divmod` per chunk + carry propagation.
+    //
+    // Direct test: 2^256 / p should give q = 2, r = 38.
+    #[test]
+    fn divmod_corelib_regression() {
+        let p = f_p();
+        let nz: core::zeroable::NonZero<u256> = p.v.try_into().unwrap();
+        // 2^256 = u512 { limb0: 0, limb1: 0, limb2: 1, limb3: 0 }.
+        let a = u256 { low: 0, high: 1 }; // 2^128
+        let wide = core::integer::u256_wide_mul(a, a); // = 2^256
+        let (_q, r) = core::integer::u512_safe_div_rem_by_u256(wide, nz);
+        // 2^256 mod p = 38.  Document the failure if it occurs.
+        // Expected: r = u256 { low: 38, high: 0 }.
+        // Buggy actual: r = some other value (e.g., 38 << 64 = 7008630262939749376).
+        let expected: u128 = 38;
+        if r.low == expected && r.high == 0 {
+            return;
+        }
+        assert!(false, "corelib divmod regression: 2^256 mod p != 38");
     }
 }

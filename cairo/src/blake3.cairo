@@ -39,8 +39,7 @@ pub const KEYED_HASH: u8 = 0x10;
 // =========================================================================
 
 pub const IV: [u32; 8] = [
-    0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A,
-    0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19,
+    0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19,
 ];
 
 pub const SIGMA: [[u8; 16]; 10] = [
@@ -62,97 +61,189 @@ pub const SIGMA: [[u8; 16]; 10] = [
 
 #[derive(Copy, Drop)]
 pub struct VState {
-    pub v0: u32, pub v1: u32, pub v2: u32, pub v3: u32,
-    pub v4: u32, pub v5: u32, pub v6: u32, pub v7: u32,
-    pub v8: u32, pub v9: u32, pub v10: u32, pub v11: u32,
-    pub v12: u32, pub v13: u32, pub v14: u32, pub v15: u32,
+    pub v0: u32,
+    pub v1: u32,
+    pub v2: u32,
+    pub v3: u32,
+    pub v4: u32,
+    pub v5: u32,
+    pub v6: u32,
+    pub v7: u32,
+    pub v8: u32,
+    pub v9: u32,
+    pub v10: u32,
+    pub v11: u32,
+    pub v12: u32,
+    pub v13: u32,
+    pub v14: u32,
+    pub v15: u32,
 }
 
 #[derive(Copy, Drop)]
 pub struct MState {
-    pub m0: u32, pub m1: u32, pub m2: u32, pub m3: u32,
-    pub m4: u32, pub m5: u32, pub m6: u32, pub m7: u32,
-    pub m8: u32, pub m9: u32, pub m10: u32, pub m11: u32,
-    pub m12: u32, pub m13: u32, pub m14: u32, pub m15: u32,
+    pub m0: u32,
+    pub m1: u32,
+    pub m2: u32,
+    pub m3: u32,
+    pub m4: u32,
+    pub m5: u32,
+    pub m6: u32,
+    pub m7: u32,
+    pub m8: u32,
+    pub m9: u32,
+    pub m10: u32,
+    pub m11: u32,
+    pub m12: u32,
+    pub m13: u32,
+    pub m14: u32,
+    pub m15: u32,
 }
 
 fn v_at(s: @VState, idx: usize) -> u32 {
-    if idx == 0 { *s.v0 }
-    else if idx == 1 { *s.v1 }
-    else if idx == 2 { *s.v2 }
-    else if idx == 3 { *s.v3 }
-    else if idx == 4 { *s.v4 }
-    else if idx == 5 { *s.v5 }
-    else if idx == 6 { *s.v6 }
-    else if idx == 7 { *s.v7 }
-    else if idx == 8 { *s.v8 }
-    else if idx == 9 { *s.v9 }
-    else if idx == 10 { *s.v10 }
-    else if idx == 11 { *s.v11 }
-    else if idx == 12 { *s.v12 }
-    else if idx == 13 { *s.v13 }
-    else if idx == 14 { *s.v14 }
-    else { *s.v15 }
+    if idx == 0 {
+        *s.v0
+    } else if idx == 1 {
+        *s.v1
+    } else if idx == 2 {
+        *s.v2
+    } else if idx == 3 {
+        *s.v3
+    } else if idx == 4 {
+        *s.v4
+    } else if idx == 5 {
+        *s.v5
+    } else if idx == 6 {
+        *s.v6
+    } else if idx == 7 {
+        *s.v7
+    } else if idx == 8 {
+        *s.v8
+    } else if idx == 9 {
+        *s.v9
+    } else if idx == 10 {
+        *s.v10
+    } else if idx == 11 {
+        *s.v11
+    } else if idx == 12 {
+        *s.v12
+    } else if idx == 13 {
+        *s.v13
+    } else if idx == 14 {
+        *s.v14
+    } else {
+        *s.v15
+    }
 }
 
 fn v_set(ref s: VState, idx: usize, val: u32) {
-    if idx == 0 { s.v0 = val; }
-    else if idx == 1 { s.v1 = val; }
-    else if idx == 2 { s.v2 = val; }
-    else if idx == 3 { s.v3 = val; }
-    else if idx == 4 { s.v4 = val; }
-    else if idx == 5 { s.v5 = val; }
-    else if idx == 6 { s.v6 = val; }
-    else if idx == 7 { s.v7 = val; }
-    else if idx == 8 { s.v8 = val; }
-    else if idx == 9 { s.v9 = val; }
-    else if idx == 10 { s.v10 = val; }
-    else if idx == 11 { s.v11 = val; }
-    else if idx == 12 { s.v12 = val; }
-    else if idx == 13 { s.v13 = val; }
-    else if idx == 14 { s.v14 = val; }
-    else { s.v15 = val; }
+    if idx == 0 {
+        s.v0 = val;
+    } else if idx == 1 {
+        s.v1 = val;
+    } else if idx == 2 {
+        s.v2 = val;
+    } else if idx == 3 {
+        s.v3 = val;
+    } else if idx == 4 {
+        s.v4 = val;
+    } else if idx == 5 {
+        s.v5 = val;
+    } else if idx == 6 {
+        s.v6 = val;
+    } else if idx == 7 {
+        s.v7 = val;
+    } else if idx == 8 {
+        s.v8 = val;
+    } else if idx == 9 {
+        s.v9 = val;
+    } else if idx == 10 {
+        s.v10 = val;
+    } else if idx == 11 {
+        s.v11 = val;
+    } else if idx == 12 {
+        s.v12 = val;
+    } else if idx == 13 {
+        s.v13 = val;
+    } else if idx == 14 {
+        s.v14 = val;
+    } else {
+        s.v15 = val;
+    }
 }
 
 fn m_at(s: @MState, idx: usize) -> u32 {
-    if idx == 0 { *s.m0 }
-    else if idx == 1 { *s.m1 }
-    else if idx == 2 { *s.m2 }
-    else if idx == 3 { *s.m3 }
-    else if idx == 4 { *s.m4 }
-    else if idx == 5 { *s.m5 }
-    else if idx == 6 { *s.m6 }
-    else if idx == 7 { *s.m7 }
-    else if idx == 8 { *s.m8 }
-    else if idx == 9 { *s.m9 }
-    else if idx == 10 { *s.m10 }
-    else if idx == 11 { *s.m11 }
-    else if idx == 12 { *s.m12 }
-    else if idx == 13 { *s.m13 }
-    else if idx == 14 { *s.m14 }
-    else { *s.m15 }
+    if idx == 0 {
+        *s.m0
+    } else if idx == 1 {
+        *s.m1
+    } else if idx == 2 {
+        *s.m2
+    } else if idx == 3 {
+        *s.m3
+    } else if idx == 4 {
+        *s.m4
+    } else if idx == 5 {
+        *s.m5
+    } else if idx == 6 {
+        *s.m6
+    } else if idx == 7 {
+        *s.m7
+    } else if idx == 8 {
+        *s.m8
+    } else if idx == 9 {
+        *s.m9
+    } else if idx == 10 {
+        *s.m10
+    } else if idx == 11 {
+        *s.m11
+    } else if idx == 12 {
+        *s.m12
+    } else if idx == 13 {
+        *s.m13
+    } else if idx == 14 {
+        *s.m14
+    } else {
+        *s.m15
+    }
 }
 
 fn sigma_at(round_idx: usize, col: usize) -> usize {
     let s: Span<[u8; 16]> = SIGMA.span();
     let p: @[u8; 16] = s.at(round_idx);
     let ps: Span<u8> = p.span();
-    if col == 0 { (*ps.at(0)).into() }
-    else if col == 1 { (*ps.at(1)).into() }
-    else if col == 2 { (*ps.at(2)).into() }
-    else if col == 3 { (*ps.at(3)).into() }
-    else if col == 4 { (*ps.at(4)).into() }
-    else if col == 5 { (*ps.at(5)).into() }
-    else if col == 6 { (*ps.at(6)).into() }
-    else if col == 7 { (*ps.at(7)).into() }
-    else if col == 8 { (*ps.at(8)).into() }
-    else if col == 9 { (*ps.at(9)).into() }
-    else if col == 10 { (*ps.at(10)).into() }
-    else if col == 11 { (*ps.at(11)).into() }
-    else if col == 12 { (*ps.at(12)).into() }
-    else if col == 13 { (*ps.at(13)).into() }
-    else if col == 14 { (*ps.at(14)).into() }
-    else { (*ps.at(15)).into() }
+    if col == 0 {
+        (*ps.at(0)).into()
+    } else if col == 1 {
+        (*ps.at(1)).into()
+    } else if col == 2 {
+        (*ps.at(2)).into()
+    } else if col == 3 {
+        (*ps.at(3)).into()
+    } else if col == 4 {
+        (*ps.at(4)).into()
+    } else if col == 5 {
+        (*ps.at(5)).into()
+    } else if col == 6 {
+        (*ps.at(6)).into()
+    } else if col == 7 {
+        (*ps.at(7)).into()
+    } else if col == 8 {
+        (*ps.at(8)).into()
+    } else if col == 9 {
+        (*ps.at(9)).into()
+    } else if col == 10 {
+        (*ps.at(10)).into()
+    } else if col == 11 {
+        (*ps.at(11)).into()
+    } else if col == 12 {
+        (*ps.at(12)).into()
+    } else if col == 13 {
+        (*ps.at(13)).into()
+    } else if col == 14 {
+        (*ps.at(14)).into()
+    } else {
+        (*ps.at(15)).into()
+    }
 }
 
 // =========================================================================
@@ -163,10 +254,12 @@ fn shr32(x: u32, n: u32) -> u32 {
     let mut r: u32 = x;
     let mut i: u32 = 0;
     loop {
-        if i == n { break; }
+        if i == n {
+            break;
+        }
         r = r / 2;
         i += 1;
-    };
+    }
     r
 }
 
@@ -174,17 +267,20 @@ fn shl32(x: u32, n: u32) -> u32 {
     let mut r: u32 = x;
     let mut i: u32 = 0;
     loop {
-        if i == n { break; }
+        if i == n {
+            break;
+        }
         r = r.wrapping_mul(2_u32);
         i += 1;
-    };
+    }
     r
 }
 
 fn rot_r(x: u32, n: u32) -> u32 {
     let m: u32 = n & 31;
-    if m == 0 { x }
-    else {
+    if m == 0 {
+        x
+    } else {
         let lo: u32 = shr32(x, m);
         let hi: u32 = shl32(x, 32 - m);
         lo | hi
@@ -193,10 +289,26 @@ fn rot_r(x: u32, n: u32) -> u32 {
 
 fn read_u32_be_at(bytes: @ByteArray, off: usize) -> u32 {
     let total = bytes.len();
-    let b3: u32 = if off + 3 < total { bytes.at(off + 3).unwrap().into() } else { 0 };
-    let b2: u32 = if off + 2 < total { bytes.at(off + 2).unwrap().into() } else { 0 };
-    let b1: u32 = if off + 1 < total { bytes.at(off + 1).unwrap().into() } else { 0 };
-    let b0: u32 = if off < total { bytes.at(off).unwrap().into() } else { 0 };
+    let b3: u32 = if off + 3 < total {
+        bytes.at(off + 3).unwrap().into()
+    } else {
+        0
+    };
+    let b2: u32 = if off + 2 < total {
+        bytes.at(off + 2).unwrap().into()
+    } else {
+        0
+    };
+    let b1: u32 = if off + 1 < total {
+        bytes.at(off + 1).unwrap().into()
+    } else {
+        0
+    };
+    let b0: u32 = if off < total {
+        bytes.at(off).unwrap().into()
+    } else {
+        0
+    };
     (b3 * 0x1000000) + (b2 * 0x10000) + (b1 * 0x100) + b0
 }
 
@@ -233,30 +345,14 @@ fn g(ref v: VState, a: usize, b: usize, c: usize, d: usize, mx: u32, my: u32) {
 // =========================================================================
 
 fn round_fn(ref v: VState, m: @MState, round_idx: usize) {
-    g(ref v, 0, 4, 8, 12,
-      m_at(m, sigma_at(round_idx, 0)),
-      m_at(m, sigma_at(round_idx, 1)));
-    g(ref v, 1, 5, 9, 13,
-      m_at(m, sigma_at(round_idx, 2)),
-      m_at(m, sigma_at(round_idx, 3)));
-    g(ref v, 2, 6, 10, 14,
-      m_at(m, sigma_at(round_idx, 4)),
-      m_at(m, sigma_at(round_idx, 5)));
-    g(ref v, 3, 7, 11, 15,
-      m_at(m, sigma_at(round_idx, 6)),
-      m_at(m, sigma_at(round_idx, 7)));
-    g(ref v, 0, 5, 10, 15,
-      m_at(m, sigma_at(round_idx, 8)),
-      m_at(m, sigma_at(round_idx, 9)));
-    g(ref v, 1, 6, 11, 12,
-      m_at(m, sigma_at(round_idx, 10)),
-      m_at(m, sigma_at(round_idx, 11)));
-    g(ref v, 2, 7, 8, 13,
-      m_at(m, sigma_at(round_idx, 12)),
-      m_at(m, sigma_at(round_idx, 13)));
-    g(ref v, 3, 4, 9, 14,
-      m_at(m, sigma_at(round_idx, 14)),
-      m_at(m, sigma_at(round_idx, 15)));
+    g(ref v, 0, 4, 8, 12, m_at(m, sigma_at(round_idx, 0)), m_at(m, sigma_at(round_idx, 1)));
+    g(ref v, 1, 5, 9, 13, m_at(m, sigma_at(round_idx, 2)), m_at(m, sigma_at(round_idx, 3)));
+    g(ref v, 2, 6, 10, 14, m_at(m, sigma_at(round_idx, 4)), m_at(m, sigma_at(round_idx, 5)));
+    g(ref v, 3, 7, 11, 15, m_at(m, sigma_at(round_idx, 6)), m_at(m, sigma_at(round_idx, 7)));
+    g(ref v, 0, 5, 10, 15, m_at(m, sigma_at(round_idx, 8)), m_at(m, sigma_at(round_idx, 9)));
+    g(ref v, 1, 6, 11, 12, m_at(m, sigma_at(round_idx, 10)), m_at(m, sigma_at(round_idx, 11)));
+    g(ref v, 2, 7, 8, 13, m_at(m, sigma_at(round_idx, 12)), m_at(m, sigma_at(round_idx, 13)));
+    g(ref v, 3, 4, 9, 14, m_at(m, sigma_at(round_idx, 14)), m_at(m, sigma_at(round_idx, 15)));
 }
 
 // =========================================================================
@@ -267,14 +363,22 @@ fn round_fn(ref v: VState, m: @MState, round_idx: usize) {
 pub fn compress(prev_h: [u32; 8], m: MState, counter: u64, block_len: u32, flags: u8) -> [u32; 16] {
     let iv_span = IV.span();
     let mut v = VState {
-        v0: *prev_h.span().at(0), v1: *prev_h.span().at(1),
-        v2: *prev_h.span().at(2), v3: *prev_h.span().at(3),
-        v4: *prev_h.span().at(4), v5: *prev_h.span().at(5),
-        v6: *prev_h.span().at(6), v7: *prev_h.span().at(7),
-        v8:  *iv_span.at(0), v9:  *iv_span.at(1),
-        v10: *iv_span.at(2), v11: *iv_span.at(3),
-        v12: *iv_span.at(4), v13: *iv_span.at(5),
-        v14: *iv_span.at(6), v15: *iv_span.at(7),
+        v0: *prev_h.span().at(0),
+        v1: *prev_h.span().at(1),
+        v2: *prev_h.span().at(2),
+        v3: *prev_h.span().at(3),
+        v4: *prev_h.span().at(4),
+        v5: *prev_h.span().at(5),
+        v6: *prev_h.span().at(6),
+        v7: *prev_h.span().at(7),
+        v8: *iv_span.at(0),
+        v9: *iv_span.at(1),
+        v10: *iv_span.at(2),
+        v11: *iv_span.at(3),
+        v12: *iv_span.at(4),
+        v13: *iv_span.at(5),
+        v14: *iv_span.at(6),
+        v15: *iv_span.at(7),
     };
 
     let counter_lo: u32 = (counter & 0xFFFFFFFF).try_into().unwrap();
@@ -295,9 +399,8 @@ pub fn compress(prev_h: [u32; 8], m: MState, counter: u64, block_len: u32, flags
     round_fn(ref v, @m, 6);
 
     [
-        v.v0 ^ v.v8,  v.v1 ^ v.v9,  v.v2 ^ v.v10, v.v3 ^ v.v11,
-        v.v4 ^ v.v12, v.v5 ^ v.v13, v.v6 ^ v.v14, v.v7 ^ v.v15,
-        v.v8 ^ v.v0,  v.v9 ^ v.v1,  v.v10 ^ v.v2, v.v11 ^ v.v3,
+        v.v0 ^ v.v8, v.v1 ^ v.v9, v.v2 ^ v.v10, v.v3 ^ v.v11, v.v4 ^ v.v12, v.v5 ^ v.v13,
+        v.v6 ^ v.v14, v.v7 ^ v.v15, v.v8 ^ v.v0, v.v9 ^ v.v1, v.v10 ^ v.v2, v.v11 ^ v.v3,
         v.v12 ^ v.v4, v.v13 ^ v.v5, v.v14 ^ v.v6, v.v15 ^ v.v7,
     ]
 }
@@ -306,16 +409,16 @@ pub fn compress(prev_h: [u32; 8], m: MState, counter: u64, block_len: u32, flags
 /// `off`. Positions past `bytes.len()` are zero-padded (per spec).
 fn read_block(bytes: @ByteArray, off: usize) -> MState {
     MState {
-        m0:  read_u32_be_at(bytes, off + 0),
-        m1:  read_u32_be_at(bytes, off + 4),
-        m2:  read_u32_be_at(bytes, off + 8),
-        m3:  read_u32_be_at(bytes, off + 12),
-        m4:  read_u32_be_at(bytes, off + 16),
-        m5:  read_u32_be_at(bytes, off + 20),
-        m6:  read_u32_be_at(bytes, off + 24),
-        m7:  read_u32_be_at(bytes, off + 28),
-        m8:  read_u32_be_at(bytes, off + 32),
-        m9:  read_u32_be_at(bytes, off + 36),
+        m0: read_u32_be_at(bytes, off + 0),
+        m1: read_u32_be_at(bytes, off + 4),
+        m2: read_u32_be_at(bytes, off + 8),
+        m3: read_u32_be_at(bytes, off + 12),
+        m4: read_u32_be_at(bytes, off + 16),
+        m5: read_u32_be_at(bytes, off + 20),
+        m6: read_u32_be_at(bytes, off + 24),
+        m7: read_u32_be_at(bytes, off + 28),
+        m8: read_u32_be_at(bytes, off + 32),
+        m9: read_u32_be_at(bytes, off + 36),
         m10: read_u32_be_at(bytes, off + 40),
         m11: read_u32_be_at(bytes, off + 44),
         m12: read_u32_be_at(bytes, off + 48),
@@ -339,7 +442,11 @@ pub fn keyed_hash_one_chunk(key: [u32; 8], msg: @ByteArray) -> [u32; 8] {
     loop {
         let is_first: bool = offset == 0;
         let remaining: usize = msg_len - offset;
-        let block_len: usize = if remaining >= 64 { 64 } else { remaining };
+        let block_len: usize = if remaining >= 64 {
+            64
+        } else {
+            remaining
+        };
         let is_last: bool = if is_first {
             (offset + block_len == msg_len) || msg_len == 0
         } else {
@@ -359,19 +466,16 @@ pub fn keyed_hash_one_chunk(key: [u32; 8], msg: @ByteArray) -> [u32; 8] {
 
         if is_last {
             return [
-                *cv.span().at(0), *cv.span().at(1),
-                *cv.span().at(2), *cv.span().at(3),
-                *cv.span().at(4), *cv.span().at(5),
-                *cv.span().at(6), *cv.span().at(7),
+                *cv.span().at(0), *cv.span().at(1), *cv.span().at(2), *cv.span().at(3),
+                *cv.span().at(4), *cv.span().at(5), *cv.span().at(6), *cv.span().at(7),
             ];
         }
 
-        state = [
-            *cv.span().at(0), *cv.span().at(1),
-            *cv.span().at(2), *cv.span().at(3),
-            *cv.span().at(4), *cv.span().at(5),
-            *cv.span().at(6), *cv.span().at(7),
-        ];
+        state =
+            [
+                *cv.span().at(0), *cv.span().at(1), *cv.span().at(2), *cv.span().at(3),
+                *cv.span().at(4), *cv.span().at(5), *cv.span().at(6), *cv.span().at(7),
+            ];
         offset = offset + block_len;
     }
 }
@@ -396,11 +500,17 @@ pub fn hmac_blake3(key: @ByteArray, msg: @ByteArray) -> [u32; 8] {
     let mut kpad: ByteArray = "";
     let mut i: usize = 0;
     loop {
-        if i == KEY_LEN { break; }
-        let b: u8 = if i < key.len() { key.at(i).unwrap() } else { 0 };
+        if i == KEY_LEN {
+            break;
+        }
+        let b: u8 = if i < key.len() {
+            key.at(i).unwrap()
+        } else {
+            0
+        };
         kpad.append_byte(b);
         i += 1;
-    };
+    }
 
     let key_words: [u32; 8] = read_key_le(@kpad);
 
@@ -408,19 +518,23 @@ pub fn hmac_blake3(key: @ByteArray, msg: @ByteArray) -> [u32; 8] {
     let mut inner_key: ByteArray = "";
     let mut ii: usize = 0;
     loop {
-        if ii == KEY_LEN { break; }
+        if ii == KEY_LEN {
+            break;
+        }
         inner_key.append_byte(kpad.at(ii).unwrap() ^ 0x36);
         ii += 1;
-    };
+    }
 
     // outer_key = kpad XOR 0x5c (32 bytes)
     let mut outer_key: ByteArray = "";
     let mut oi: usize = 0;
     loop {
-        if oi == KEY_LEN { break; }
+        if oi == KEY_LEN {
+            break;
+        }
         outer_key.append_byte(kpad.at(oi).unwrap() ^ 0x5c);
         oi += 1;
-    };
+    }
 
     // inner_input = inner_key || msg
     let mut inner_input: ByteArray = "";
@@ -447,7 +561,9 @@ fn u32s_le_to_bytes(words: [u32; 8]) -> ByteArray {
     let mut out: ByteArray = "";
     let mut i: usize = 0;
     loop {
-        if i == 8 { break; }
+        if i == 8 {
+            break;
+        }
         let w: u32 = *words.span().at(i);
         let b0: u8 = (w & 0xff).try_into().unwrap();
         let b1: u8 = ((w / 0x100) & 0xff).try_into().unwrap();
@@ -458,16 +574,15 @@ fn u32s_le_to_bytes(words: [u32; 8]) -> ByteArray {
         out.append_byte(b2);
         out.append_byte(b3);
         i += 1;
-    };
+    }
     out
 }
 
 /// Reconstruct a [u32; 8] from a ByteArray (32 bytes, little-endian u32s).
 pub fn read_key_le(bytes: @ByteArray) -> [u32; 8] {
     [
-        read_u32_le_at(bytes, 0),  read_u32_le_at(bytes, 4),
-        read_u32_le_at(bytes, 8),  read_u32_le_at(bytes, 12),
-        read_u32_le_at(bytes, 16), read_u32_le_at(bytes, 20),
+        read_u32_le_at(bytes, 0), read_u32_le_at(bytes, 4), read_u32_le_at(bytes, 8),
+        read_u32_le_at(bytes, 12), read_u32_le_at(bytes, 16), read_u32_le_at(bytes, 20),
         read_u32_le_at(bytes, 24), read_u32_le_at(bytes, 28),
     ]
 }
@@ -475,9 +590,25 @@ pub fn read_key_le(bytes: @ByteArray) -> [u32; 8] {
 /// Read little-endian u32 from `bytes` at byte offset `off`. Returns 0 if past end.
 pub fn read_u32_le_at(bytes: @ByteArray, off: usize) -> u32 {
     let total = bytes.len();
-    let b0: u32 = if off < total { bytes.at(off).unwrap().into() } else { 0 };
-    let b1: u32 = if off + 1 < total { bytes.at(off + 1).unwrap().into() } else { 0 };
-    let b2: u32 = if off + 2 < total { bytes.at(off + 2).unwrap().into() } else { 0 };
-    let b3: u32 = if off + 3 < total { bytes.at(off + 3).unwrap().into() } else { 0 };
+    let b0: u32 = if off < total {
+        bytes.at(off).unwrap().into()
+    } else {
+        0
+    };
+    let b1: u32 = if off + 1 < total {
+        bytes.at(off + 1).unwrap().into()
+    } else {
+        0
+    };
+    let b2: u32 = if off + 2 < total {
+        bytes.at(off + 2).unwrap().into()
+    } else {
+        0
+    };
+    let b3: u32 = if off + 3 < total {
+        bytes.at(off + 3).unwrap().into()
+    } else {
+        0
+    };
     (b3 * 0x1000000) + (b2 * 0x10000) + (b1 * 0x100) + b0
 }

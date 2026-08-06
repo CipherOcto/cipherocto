@@ -134,7 +134,7 @@ fn digest_to_bytes(digest: [u32; 8]) -> ByteArray {
         out.append_byte(b1);
         out.append_byte(b0);
         i += 1;
-    };
+    }
     out
 }
 
@@ -180,7 +180,7 @@ fn fold_inference_trace(steps: @Array<TraceStep>) -> felt252 {
         flat.append(s.input_hash);
         flat.append(s.output_hash);
         i += 1;
-    };
+    }
     poseidon_hash_span(flat.span())
 }
 
@@ -210,7 +210,7 @@ fn digest_lo_felt(digest: [u32; OUT_WORDS]) -> felt252 {
         let word_u128: u128 = b3 * 0x1000000_u128 + b2 * 0x10000_u128 + b1 * 0x100_u128 + b0;
         acc = acc * 0x10000000000000000000000000000_u128 + word_u128;
         i += 1;
-    };
+    }
     acc.into()
 }
 
@@ -232,7 +232,7 @@ fn digest_hi_felt(digest: [u32; OUT_WORDS]) -> felt252 {
         let word_u128: u128 = b3 * 0x1000000_u128 + b2 * 0x10000_u128 + b1 * 0x100_u128 + b0;
         acc = acc * 0x10000000000000000000000000000_u128 + word_u128;
         i += 1;
-    };
+    }
     acc.into()
 }
 
@@ -279,10 +279,7 @@ pub fn main() -> felt252 {
     if pub_inputs.has_output_hash == 1_u8 {
         assert!(priv_witness.inference_trace_present == 1_u8, "MissingInferenceTrace");
     }
-    assert!(
-        pub_inputs.current_unix_time < 18446744073709551615_u64,
-        "InvalidUnixTime",
-    );
+    assert!(pub_inputs.current_unix_time < 18446744073709551615_u64, "InvalidUnixTime");
 
     // ---------- 1. HMAC-SHA-256 caveat chain re-derivation ----------
     // Pack lo + hi felts as 32 LE bytes (matching the Rust-side
@@ -299,7 +296,7 @@ pub fn main() -> felt252 {
         let byte: u8 = ((lo / shift) % 256_u128).try_into().unwrap();
         secret.append_byte(byte);
         k += 1;
-    };
+    }
     let hi: u128 = priv_witness.cap_root_secret_hi.try_into().unwrap();
     let mut k: usize = 0;
     loop {
@@ -310,7 +307,7 @@ pub fn main() -> felt252 {
         let byte: u8 = ((hi / shift) % 256_u128).try_into().unwrap();
         secret.append_byte(byte);
         k += 1;
-    };
+    }
 
     let mut caveats: Array<ByteArray> = array![];
     caveats.append("caveat-0:input_tokens_per_1k:max-1000");
@@ -334,7 +331,7 @@ pub fn main() -> felt252 {
         prev = digest_to_bytes(next);
         final_digest = next;
         i += 1;
-    };
+    }
 
     // Convert digest to lo/hi felts. Bind them to `pub_inputs.cap_root_*`
     // so the compiler cannot eliminate the HMAC chain. Equality is the
@@ -347,13 +344,14 @@ pub fn main() -> felt252 {
 
     // ---------- 2. Poseidon inference-trace binding ----------
     let mut steps: Array<TraceStep> = array![];
-    steps.append(
-        TraceStep {
-            op_code: 0,
-            input_hash: 0x33333333333333333333333333333333,
-            output_hash: 0x44444444444444444444444444444444444444444444444444444444444444,
-        },
-    );
+    steps
+        .append(
+            TraceStep {
+                op_code: 0,
+                input_hash: 0x33333333333333333333333333333333,
+                output_hash: 0x44444444444444444444444444444444444444444444444444444444444444,
+            },
+        );
     let trace_root: felt252 = fold_inference_trace(@steps);
     assert!(trace_root == pub_inputs.output_hash, "InferenceTraceBindingMismatch");
 
@@ -370,7 +368,7 @@ fn pow256(n: usize) -> u128 {
         }
         acc = acc * 256_u128;
         k += 1;
-    };
+    }
     acc
 }
 
@@ -381,7 +379,7 @@ fn pow256(n: usize) -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use super::{caveat_mac, fold_inference_trace, hmac_sha256, CHAIN_DEPTH, TraceStep};
+    use super::{CHAIN_DEPTH, TraceStep, caveat_mac, fold_inference_trace, hmac_sha256};
 
     #[test]
     fn hmac_blake3_deterministic_and_distinct() {
@@ -397,7 +395,7 @@ mod tests {
             }
             key.append_byte(0x0b);
             i += 1;
-        };
+        }
 
         // Same input → same output (determinism).
         let d1 = hmac_sha256(@key, @"Hi There");
@@ -406,10 +404,12 @@ mod tests {
         let s2 = d2.span();
         let mut j: usize = 0;
         loop {
-            if j == 8 { break; }
+            if j == 8 {
+                break;
+            }
             assert!(*s1.at(j) == *s2.at(j), "hmac_blake3_deterministic");
             j += 1;
-        };
+        }
 
         // Distinct inputs → distinct outputs (avalanche).
         let m_a = hmac_sha256(@key, @"Hi There");
@@ -438,13 +438,14 @@ mod tests {
     #[test]
     fn fold_inference_trace_single_step_poseidon() {
         let mut steps: Array<TraceStep> = array![];
-        steps.append(
-            TraceStep {
-                op_code: 0,
-                input_hash: 0x33333333333333333333333333333333,
-                output_hash: 0x44444444444444444444444444444444444444444444444444444444444444,
-            },
-        );
+        steps
+            .append(
+                TraceStep {
+                    op_code: 0,
+                    input_hash: 0x33333333333333333333333333333333,
+                    output_hash: 0x44444444444444444444444444444444444444444444444444444444444444,
+                },
+            );
         let r1 = fold_inference_trace(@steps);
         let r2 = fold_inference_trace(@steps);
         assert!(r1 == r2, "Poseidon fold deterministic");

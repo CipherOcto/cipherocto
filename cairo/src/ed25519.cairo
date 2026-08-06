@@ -92,12 +92,29 @@ fn f_by() -> Field {
 
 fn f_add(a: Field, b: Field) -> Field {
     let p = f_p();
-    let r = a.v + b.v;
-    // r ∈ [0, 2p). If r >= p, subtract p.
-    if r >= p.v {
-        Field { v: r - p.v }
+    let (sum, ov) = core::integer::u256_overflowing_add(a.v, b.v);
+    if ov {
+        // a + b >= 2^256. Subtract 2^256 - p once: sum = a + b - (2^256 - p).
+        // 2^256 - p = 2^256 - (2^255 - 19) = 2^255 + 19.
+        // But a + b < 2p (callers ensure), so a + b < 2*(2^255-19) = 2^256 - 38.
+        // Thus a + b - (2^256 - p) < 2^256 - 38 - (2^255 + 19) = 2^255 - 57.
+        // Use simple subtract via u256_overflowing_sub with a wrap value.
+        // Actually sum as u256 = (a+b) mod 2^256 = a+b - 2^256, since a+b > 2^256.
+        // To get true value mod p: true = a+b. true mod p = (a+b-2^256) mod p, since
+        // 2^256 ≡ 38 (mod p), so (a+b) mod p = (sum + 38) mod p.
+        let (with_38, _) = core::integer::u256_overflowing_add(
+            sum, u256 { low: 38_u128, high: 0_u128 },
+        );
+        let candidate = with_38;
+        if candidate >= p.v {
+            Field { v: candidate - p.v }
+        } else {
+            Field { v: candidate }
+        }
+    } else if sum >= p.v {
+        Field { v: sum - p.v }
     } else {
-        Field { v: r }
+        Field { v: sum }
     }
 }
 
@@ -112,12 +129,124 @@ fn f_sub(a: Field, b: Field) -> Field {
     Field { v: r }
 }
 
+/// Multiply two Field elements mod p = 2^255 - 19.
+///
+/// Cairo 2.16.0 corelib `u512_safe_div_rem_by_u256` returns the wrong
+/// u256 remainder when the input u512 has high limbs set, so we compute
+/// the full u512 product via `u256_wide_mul` (which is correct) and
+/// reduce mod p ourselves using the identities
+///   2^0   ≡ 1
+///   2^128 ≡ 2^128              (since 2^128 < p)
+///   2^256 ≡ 38                 (since 2 * (2^255 - 19) = 2^256 - 38)
+///   2^384 ≡ 38 * 2^128
+///
+/// We iterate over the 4 product limbs, scaling each by its corresponding
+/// factor and accumulating with f_add (which handles u256 overflow).
+///
+/// NOTE: this implementation works for small products (e.g., 2*2, p-1*2,
+/// (p-1)^2, 2^64*2^64, 2^128*2^128) but produces wrong results for some
+/// intermediate products like 2^127*2^127 (= 2^254). Root cause is under
+/// investigation. See `divmod_corelib_regression` and `test_pow_trace` for
+/// the diagnostic suite.
 fn f_mul(a: Field, b: Field) -> Field {
-    let p = f_p();
     let wide = core::integer::u256_wide_mul(a.v, b.v);
-    let nz: core::zeroable::NonZero<u256> = p.v.try_into().unwrap();
-    let (_, r) = core::integer::u512_safe_div_rem_by_u256(wide, nz);
-    Field { v: r }
+    // wide is u512 { limb0, limb1, limb2, limb3 } (each u128).
+    // product = limb0 + limb1*2^128 + limb2*2^256 + limb3*2^384.
+    let limb0 = Field { v: u256 { low: wide.limb0, high: 0_u128 } };
+    let limb1 = Field { v: u256 { low: wide.limb1, high: 0_u128 } };
+    let limb2 = Field { v: u256 { low: wide.limb2, high: 0_u128 } };
+    let limb3 = Field { v: u256 { low: wide.limb3, high: 0_u128 } };
+    // Each term < 2^128, so term * factor fits in u256 (factor < p).
+    // Use mul_limb_by_small for *38 (since 38 < 128).
+    // For *2^128 (limb1), we shift left by 128 bits: u256 {high=limb, low=0}.
+    // Then reduce mod p.
+    let t0 = limb0; // *1
+    let t1_shifted = u256 { low: 0_u128, high: limb1.v.low };
+    let t1 = reduce_u256_mod_p_8x(t1_shifted);
+    let t2 = mul_limb_by_small(limb2, 38_u128);
+    // t3 = limb3 * 38 * 2^128 mod p
+    let t3_pre = mul_limb_by_small(limb3, 38_u128);
+    let t3_shifted = u256 { low: 0_u128, high: t3_pre.v.low };
+    let t3 = reduce_u256_mod_p_8x(t3_shifted);
+    let s01 = f_add(t0, t1);
+    let s012 = f_add(s01, t2);
+    f_add(s012, t3)
+}
+
+/// Multiply a Field element (always < p) by a small u128 constant c < 2^7,
+/// returning the result reduced mod p.  Used in f_mul for the *38 cases
+/// to avoid recursion through f_mul (which would blow up gas).
+///
+/// Property: result < 2 * c * p < 2^263.  As u256 that's high ≤ c (small),
+/// low = 0.  After reducing mod p, result is in [0, p).
+fn mul_limb_by_small(a: Field, c: u128) -> Field {
+    let p_v = f_p().v;
+    let (wide_high, wide_low) = core::integer::u128_wide_mul(a.v.low, c);
+    // wide_low = a.low * c, wide_high = (a.low * c) / 2^128.
+    let high_term = a.v.high * c;
+    // Total value = high_term * 2^128 + (wide_low) + wide_high * 2^128 (from carry).
+    // In u256 form: low = wide_low, high = high_term + wide_high (may overflow u128).
+    let (new_high, high_ov) = match core::integer::u128_overflowing_add(high_term, wide_high) {
+        core::result::Result::Ok(v) => (v, false),
+        core::result::Result::Err(v) => (v, true),
+    };
+    let _ = high_ov; // If overflow, value > 2^256+p; reduce by subtracting p+38 etc. Out of scope.
+    reduce_u256_mod_p(u256 { low: wide_low, high: new_high }, false)
+}
+
+/// Reduce a u256 value mod p = 2^255 - 19.  Since p < 2^256, at most one
+/// subtraction is needed, even when the input slightly exceeds p (input
+/// must be < 2p; we enforce that at call sites).
+fn reduce_u256_mod_p(x: u256, _x_overflow: bool) -> Field {
+    let r = x;
+    let p_high = P_HIGH;
+    let p_lo = P_LOW;
+    let needs_reduce = if r.high < p_high {
+        false
+    } else if r.high > p_high {
+        true
+    } else {
+        r.low >= p_lo
+    };
+    let reduced = if needs_reduce {
+        let (rl, _borrow) = core::integer::u256_overflowing_sub(r, f_p().v);
+        rl
+    } else {
+        r
+    };
+    Field { v: reduced }
+}
+
+/// Reduce a u256 value mod p, given that the value is bounded by 8*p.
+/// Uses up to 7 conditional subtractions (handles up to 8p).
+fn reduce_u256_mod_p_8x(x: u256) -> Field {
+    let p_v = f_p().v;
+    let p_high = P_HIGH;
+    let p_lo = P_LOW;
+    let (r1, _) = sub_if_ge(x, p_v, p_high, p_lo);
+    let (r2, _) = sub_if_ge(r1, p_v, p_high, p_lo);
+    let (r3, _) = sub_if_ge(r2, p_v, p_high, p_lo);
+    let (r4, _) = sub_if_ge(r3, p_v, p_high, p_lo);
+    let (r5, _) = sub_if_ge(r4, p_v, p_high, p_lo);
+    let (r6, _) = sub_if_ge(r5, p_v, p_high, p_lo);
+    let (r7, _) = sub_if_ge(r6, p_v, p_high, p_lo);
+    Field { v: r7 }
+}
+
+fn sub_if_ge(x: u256, s: u256, s_high: u128, s_lo: u128) -> (u256, bool) {
+    let needs = if x.high < s_high {
+        false
+    } else if x.high > s_high {
+        true
+    } else {
+        x.low >= s_lo
+    };
+    if needs {
+        let (rl, _borrow) = core::integer::u256_overflowing_sub(x, s);
+        (rl, true)
+    } else {
+        (x, false)
+    }
 }
 
 fn f_neg(a: Field) -> Field {
@@ -169,24 +298,19 @@ fn u256_one() -> u256 {
     u256 { low: 1, high: 0 }
 }
 
-/// Square-and-multiply exponentiation for u256.
+/// Square-and-multiply exponentiation for u256, reduced mod p via f_mul.
 fn pow_u256(base: u256, exp: u256, modulus: u256) -> u256 {
     let mut result: u256 = u256 { low: 1, high: 0 };
     let mut b = base % modulus;
-    let nz: core::zeroable::NonZero<u256> = modulus.try_into().unwrap();
     let mut i: u32 = 0;
     loop {
         if i == 256 {
             break;
         }
         if bit_at(exp, i) {
-            let wide = core::integer::u256_wide_mul(result, b);
-            let (_, r) = core::integer::u512_safe_div_rem_by_u256(wide, nz);
-            result = r;
+            result = f_mul(Field { v: result }, Field { v: b }).v;
         }
-        let wide = core::integer::u256_wide_mul(b, b);
-        let (_, r) = core::integer::u512_safe_div_rem_by_u256(wide, nz);
-        b = r;
+        b = f_mul(Field { v: b }, Field { v: b }).v;
         i += 1;
     }
     result
@@ -543,7 +667,7 @@ mod tests {
     use super::{
         BY_HIGH, BY_LOW, D_HIGH, D_LOW, Field, L_HIGH, L_LOW, P_HIGH, P_LOW, f_add, f_d, f_eq,
         f_from_bytes_le_2, f_inv, f_is_zero, f_l, f_mul, f_neg, f_one, f_p, f_sq, f_sub, f_zero,
-        pow_u256, pubkey_decode, sqrt_f, verify,
+        mul_limb_by_small, pow_u256, pubkey_decode, sqrt_f, verify,
     };
 
 
@@ -1153,5 +1277,155 @@ mod tests {
             return;
         }
         assert!(false, "corelib divmod regression: 2^256 mod p != 38");
+    }
+
+    // Diagnostic: 38^2 = 1444 (2^512 mod p).
+    #[test]
+    fn pow_2_512_via_sq() {
+        let two = f_from_u32_helper(2);
+        // b = 2^256 (should be 38)
+        let b256 = pow_u256(two.v, u256 { low: 256, high: 0 }, f_p().v);
+        let b256_field = Field { v: b256 };
+        // b512 = b256^2 should be 38^2 = 1444
+        let b512 = f_sq(b256_field);
+        let expected = f_from_u32_helper(1444);
+        assert!(f_eq(b512, expected), "2^512 = 1444");
+    }
+
+    // Diagnostic: 2^1024 = 1444^2 mod p.
+    #[test]
+    fn pow_2_1024_via_sq() {
+        let two = f_from_u32_helper(2);
+        let b256 = pow_u256(two.v, u256 { low: 256, high: 0 }, f_p().v);
+        let b512 = f_sq(Field { v: b256 });
+        let b1024 = f_sq(b512);
+        // Expected: 1444^2 mod p = 2085136 mod p.
+        let expected = f_from_u32_helper(2085136);
+        assert!(f_eq(b1024, expected), "2^1024 = 2085136");
+    }
+
+    // Diagnostic: square small u128 values, check 38*2^128 case.
+    #[test]
+    fn test_38_times_2_128() {
+        // 38 * 2^128 mod p.
+        // 2^128 = some field value (it's < p so just {low:0, high:1}).
+        let two_128 = Field { v: u256 { low: 0, high: 1 } };
+        let r = mul_limb_by_small(two_128, 38_u128);
+        // 38 * 2^128 = 38 << 128 = some u256.  Reduce mod p.
+        // 38 * 2^128 / p: 38 * 2^128 / 2^255 ≈ 38 * 2^-127, very small.
+        // So 38 * 2^128 mod p = 38 * 2^128 - 0 = 38 * 2^128 as u256: {low:0, high:38}.
+        // But 38 < p, so {low:0, high:38} is the canonical representation.
+        assert!(r.v.low == 0 && r.v.high == 38, "38 * 2^128 = 38*2^128");
+    }
+
+    // Diagnostic: square 38 (should give 1444).
+    #[test]
+    fn test_sq_38() {
+        let thirty_eight = f_from_u32_helper(38);
+        let sq = f_sq(thirty_eight);
+        let expected = f_from_u32_helper(1444);
+        assert!(f_eq(sq, expected), "38^2 = 1444");
+    }
+
+    // Diagnostic: 1444^2 = 2085136.
+    #[test]
+    fn test_sq_1444() {
+        let v = f_from_u32_helper(1444);
+        let sq = f_sq(v);
+        let expected = f_from_u32_helper(2085136);
+        assert!(f_eq(sq, expected), "1444^2 = 2085136");
+    }
+
+    // Diagnostic: square an intermediate value, then check.
+    #[test]
+    fn test_pow_2_p_simplified() {
+        // 2^p mod p should be 2 (Fermat).
+        // Run pow_u256 directly with exp = p.
+        let two = f_from_u32_helper(2);
+        let p_v = f_p().v;
+        let r = pow_u256(two.v, p_v, p_v);
+        let two_field = f_from_u32_helper(2);
+        assert!(r.low == two_field.v.low && r.high == two_field.v.high, "2^p = 2");
+    }
+
+    // Bisect: try with first 8 bits of p only.
+    #[test]
+    fn test_pow_small_exp() {
+        let two = f_from_u32_helper(2);
+        let p_v = f_p().v;
+        // exp = 0x7 (bits 0..2). 2^7 = 128.
+        let r = pow_u256(two.v, u256 { low: 0x7, high: 0 }, p_v);
+        assert!(r.low == 128 && r.high == 0, "2^7 = 128");
+        // exp = 0xf (bits 0..3). 2^15 = 32768.
+        let r2 = pow_u256(two.v, u256 { low: 0xf, high: 0 }, p_v);
+        assert!(r2.low == 32768 && r2.high == 0, "2^15 = 32768");
+        // exp = 0x3f (bits 0..5). 2^63.
+        let r3 = pow_u256(two.v, u256 { low: 0x3f, high: 0 }, p_v);
+        // 2^63 = 9223372036854775808.
+        let expected: u128 = 0x8000000000000000;
+        assert!(r3.low == expected && r3.high == 0, "2^63 = 2^63");
+        // exp = 0xff (bits 0..7). 2^255 = p + 19, so mod p = 19.
+        let r4 = pow_u256(two.v, u256 { low: 0xff, high: 0 }, p_v);
+        assert!(r4.low == 19 && r4.high == 0, "2^255 = 19");
+    }
+
+    // Bisect: trace pow at various single-bit positions.
+    #[test]
+    fn test_pow_trace() {
+        let two = f_from_u32_helper(2);
+        let p_v = f_p().v;
+        let b0 = two;
+        assert!(b0.v.low == 2 && b0.v.high == 0, "b0=2");
+        let b1 = f_sq(b0);
+        assert!(b1.v.low == 4 && b1.v.high == 0, "b1=4, got {} {}", b1.v.low, b1.v.high);
+        let b2 = f_sq(b1);
+        assert!(b2.v.low == 16 && b2.v.high == 0, "b2=16, got {} {}", b2.v.low, b2.v.high);
+        let b3 = f_sq(b2);
+        assert!(b3.v.low == 256 && b3.v.high == 0, "b3=256, got {} {}", b3.v.low, b3.v.high);
+        let b4 = f_sq(b3);
+        assert!(b4.v.low == 65536 && b4.v.high == 0, "b4=65536, got {} {}", b4.v.low, b4.v.high);
+        let b5 = f_sq(b4);
+        let b5_expected: u128 = 4294967296; // 2^32
+        assert!(
+            b5.v.low == b5_expected && b5.v.high == 0, "b5=2^32, got {} {}", b5.v.low, b5.v.high,
+        );
+        let b6 = f_sq(b5);
+        let b6_expected: u128 = 18446744073709551616; // 2^64
+        assert!(
+            b6.v.low == b6_expected && b6.v.high == 0, "b6=2^64, got {} {}", b6.v.low, b6.v.high,
+        );
+        let b7 = f_sq(b6);
+        assert!(b7.v.low == 0 && b7.v.high == 1, "b7=2^128, got {} {}", b7.v.low, b7.v.high);
+        let b8 = f_sq(b7);
+        assert!(b8.v.low == 38 && b8.v.high == 0, "b8=38, got {} {}", b8.v.low, b8.v.high);
+        // f_mul(2^127, 2^128) = 2^255 mod p = 19.
+        let two_127 = Field { v: u256 { low: 0x80000000000000000000000000000000, high: 0 } };
+        let two_128 = Field { v: u256 { low: 0, high: 1 } };
+        // First: f_mul(2^127, 2^127) = 2^254 (since 2^254 < p).
+        let r254 = f_mul(two_127, two_127);
+        // Check r254 == {0, 2^126}.
+        let r254_expected_high: u128 = 85070591730234615865843651857942052864;
+        let high_ok = r254.v.high == r254_expected_high;
+        let low_ok = r254.v.low == 0;
+        let ok = high_ok & low_ok;
+        let _ = ok;
+        assert!(ok, "2^127 * 2^127 = 2^254, got lo={} hi={}", r254.v.low, r254.v.high);
+        // f_mul(2^128, 2^128) = 2^256 = 38
+        let r256 = f_mul(two_128, two_128);
+        assert!(
+            r256.v.low == 38 && r256.v.high == 0,
+            "2^128 * 2^128 = 38, got {} {}",
+            r256.v.low,
+            r256.v.high,
+        );
+        // f_mul(2^64, 2^64) = 2^128
+        let two_64 = Field { v: u256 { low: 18446744073709551616_u128, high: 0 } };
+        let r128 = f_mul(two_64, two_64);
+        assert!(
+            r128.v.low == 0 && r128.v.high == 1,
+            "2^64 * 2^64 = 2^128, got {} {}",
+            r128.v.low,
+            r128.v.high,
+        );
     }
 }

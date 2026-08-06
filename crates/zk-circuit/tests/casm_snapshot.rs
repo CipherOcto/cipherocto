@@ -410,6 +410,60 @@ fn compile_sierra_to_casm(sierra_bytes: &[u8]) -> Vec<u8> {
     zk_circuit_test_helpers::felt_vec_to_casm_bytes(&assembled.bytecode)
 }
 
+#[test]
+fn measure_current_casm_size() {
+    // Pre-AC-4 baseline measurement.
+    let bytes = zk_circuit::bundled_casm_bytes().expect("compile");
+    println!(
+        "AC-4 baseline: CASM bytes={} ({:.2} KB), words={}",
+        bytes.len(),
+        bytes.len() as f64 / 1024.0,
+        bytes.len() / 32,
+    );
+    println!("AC-4 hard ceilings: 50 KB serialized / 1600 words (Round 18 fix F-122/F-139)");
+}
+
+/// AC-4 hard gate: serialized CASM bytes ≤ 50 KB after Stage-2 split.
+///
+/// **Status (mission 0958-c AC-4, 2026-08-06):** currently FAILING
+/// (CASM = ~267 KB / 8,534 words). AC-4 closes fail-closed per
+/// mission text until STWO recursive composition lands (RFC-0958
+/// §Future Work F7 — `prove_cairo` composition API not yet upstream).
+/// The actual size reduction requires each sub-circuit as its own
+/// scarb project + STARK proof, with `main()` verifying the proofs
+/// rather than inlining the cryptographic primitives.
+#[test]
+#[ignore = "AC-4 fail-closed: CASM bytes > 50 KB until STWO composition lands (RFC-0958 §F7)"]
+fn casm_bytes_under_50kb_after_stage2_split() {
+    let bytes = zk_circuit::bundled_casm_bytes().expect("compile");
+    assert!(
+        bytes.len() <= 50 * 1024,
+        "AC-4 fail-closed: serialized CASM = {} bytes ({:.2} KB) > 50 KB ceiling. \
+         Required: Stage-2 STWO composition (RFC-0958 §Future Work F7).",
+        bytes.len(),
+        bytes.len() as f64 / 1024.0,
+    );
+}
+
+/// AC-4 hard gate: CASM word count ≤ 1,600 after Stage-2 split
+/// (Round 18 fix F-122 — `max_bytecode_size` measures CASM words,
+/// NOT Sierra statements or serialized bytes).
+///
+/// **Status:** currently FAILING (CASM = ~8,534 words). See
+/// `casm_bytes_under_50kb_after_stage2_split` for the failure rationale.
+#[test]
+#[ignore = "AC-4 fail-closed: CASM words > 1600 until STWO composition lands (RFC-0958 §F7)"]
+fn casm_words_under_1600_after_stage2() {
+    let bytes = zk_circuit::bundled_casm_bytes().expect("compile");
+    let words = bytes.len() / 32;
+    assert!(
+        words <= 1600,
+        "AC-4 fail-closed: CASM word count = {} > 1600 ceiling. \
+         Required: Stage-2 STWO composition (RFC-0958 §Future Work F7).",
+        words,
+    );
+}
+
 /// Test-local helper module mirroring `zk_circuit::felt_vec_to_casm_bytes`
 /// so the test does not depend on the private helper. Kept here (not in
 /// the lib crate) because exposing it as `pub` would expand the

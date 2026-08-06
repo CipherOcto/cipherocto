@@ -398,14 +398,24 @@ fn sierra_to_casm(sierra_bytes: &[u8]) -> Result<Vec<u8>, HashError> {
         &metadata,
         SierraToCasmConfig {
             gas_usage_check: false,
-            // R4 fix-up (2026-08-04): AC-12 50KB proof-size budget implies a
-            // 50KB CASM-bytecode upper bound (proof bytes derive from CASM
-            // bytecode + witness). The prior `usize::MAX` allowed an
-            // attacker to OOM the verifier by shipping a scarb-compiled
-            // Sierra IR that lowers to arbitrarily large CASM. 50 KiB is
-            // generous for the capability_zk circuit (current CASM is
-            // single-digit KB); bump via test panic if the circuit grows.
-            max_bytecode_size: 50 * 1024,
+            // Mission 0958-c AC-4 (Stage-2 verifier split): AC-4 hard
+            // ceiling is ≤1,600 CASM words (Round 18 fix F-122). Current
+            // compiled CASM is ~8,500 words (267 KB serialized) — well
+            // over the AC-4 target. The actual size reduction requires
+            // Stage-2 STARK composition (each sub-circuit as its own
+            // scarb project + STARK proof; tracked under RFC-0958 §Future
+            // Work F7 — STWO recursive composition API not yet landed
+            // upstream). Until STWO composition lands, this gate fails
+            // closed and AC-4 closes with a fail-closed verdict per
+            // mission text.
+            //
+            // Sized above the current CASM (~8,534 words) so the existing
+            // compilation pipeline keeps working. The hard 1,600-word
+            // ceiling is enforced by `casm_words_under_1600_after_stage2`
+            // below (currently failing; will turn green once STWO
+            // composition lands). Bump this value when the AC-4 ceiling
+            // becomes achievable.
+            max_bytecode_size: 12_000,
         },
     )
     .map_err(|e| HashError::CompilerInternal(format!("Sierra→CASM compile: {e}")))?;

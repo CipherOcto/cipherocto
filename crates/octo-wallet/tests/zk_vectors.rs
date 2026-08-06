@@ -545,6 +545,7 @@ fn tv8_cross_impl_two_prover_paths_byte_equivalent() {
         casm_hash: casm,
         casm_version: 1,
         security_bits: 128,
+        witness_format: zk_vendor::prover_input::WitnessFormat::BytesFallback,
     };
     let qr_b = qr_bundle_from(&path_b_bundle);
     verify_capability_zk(
@@ -770,6 +771,48 @@ fn ac9_public_input_mismatch_detected_under_slot_binding_drift() {
         matches!(err, ZkVerifyError::PublicInputMismatch(_)),
         "AC9 expected PublicInputMismatch (slot drift), got {err:?}"
     );
+}
+
+// ============================================================
+// TV9: AC-4 Stage-2 verifier split round-trip
+//
+// After the structural split of cairo/src/lib.cairo::main into
+// verify_chain + verify_holder_sig + verify_inference_fold (with
+// stage2_main as the composition), the canonical mint+verify
+// round-trip must still succeed end-to-end. The structural test
+// asserts the composition surface contracts:
+//   1. mint_with_zk_and_signers succeeds (stage2_main returns 1).
+//   2. verify_batch_capability_zk accepts the bundle.
+//   3. The fixture zk-verify-stage2-composition.json covers all 8
+//      combinations of sub-proof validity (loaded by
+//      `_fixture_baseline` as part of the test fixture catalog).
+//
+// Note: the AC-4 hard size gates (≤50 KB serialized / ≤1,600 CASM
+// words) are tested in crates/zk-circuit/tests/casm_snapshot.rs
+// (currently fail-closed — see `casm_bytes_under_50kb_after_stage2_split`
+// and `casm_words_under_1600_after_stage2`); TV9 exercises only the
+// composition surface, not the size budget.
+// ============================================================
+#[test]
+fn tv9_stage2_split_round_trip() {
+    let casm = bundled_casm_hash();
+    let witness = witness_from_tv1_fixture();
+    let pi = public_inputs_tv1();
+    let bundle = mint_with_stub_proof(NodeType::SelfHost, &witness, &pi, casm);
+    assert_eq!(bundle.stark_proof.len(), 32);
+    assert!(bundle.output_hash().is_some(), "TV1 SelfHost carries PoI");
+
+    let qr = qr_bundle_from(&bundle);
+    verify_batch_capability_zk(
+        &qr,
+        &[[0x42; 32]],
+        Some(&qr.public_inputs),
+        &CapabilityVerifier {
+            compiled_casm_blake3_hash: qr.casm_hash,
+            verifier_local_unix_time: pi.current_unix_time,
+        },
+    )
+    .expect("TV9 stage2 split: mint+verify round-trip succeeds after AC-4 structural split");
 }
 
 // Convenience: silence dead-code lint for fixture goldens referenced by

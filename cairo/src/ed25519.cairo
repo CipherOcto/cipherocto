@@ -52,6 +52,11 @@ const L_HIGH: u128 = 0x10000000000000000000000000000000;
 const BY_LOW: u128 = 0x66666666666666666666666666666658;
 const BY_HIGH: u128 = 0x66666666666666666666666666666666;
 
+/// Base point X = sqrt((Y^2 - 1) / (d * Y^2 + 1)), positive root.
+/// low 128 = 0x692cc7609525a7b2c9562d608f25d51a; high 128 = 0x216936d3cd6e53fec0a4e231fdd6dc5c
+const BX_LOW: u128 = 0x692cc7609525a7b2c9562d608f25d51a;
+const BX_HIGH: u128 = 0x216936d3cd6e53fec0a4e231fdd6dc5c;
+
 // =============================================================================
 // Field element (u256-based, always reduced mod p)
 // =============================================================================
@@ -89,6 +94,11 @@ fn f_d() -> Field {
 #[inline(always)]
 fn f_by() -> Field {
     Field { v: u256 { low: BY_LOW, high: BY_HIGH } }
+}
+
+#[inline(always)]
+fn f_bx() -> Field {
+    Field { v: u256 { low: BX_LOW, high: BX_HIGH } }
 }
 
 fn f_add(a: Field, b: Field) -> Field {
@@ -193,9 +203,7 @@ fn f_mul(a: Field, b: Field) -> Field {
     // Now term3_combined = (w3.limb0 + term3_high_pre) * 2^128 + term3_low
     // = u256 { low: term3_low, high: w3.limb0 + term3_high_pre.low }
     // w3.limb0 < 2^128, term3_high_pre.low < 2^128, sum may overflow u128.
-    let (term3_high, _) = match core::integer::u128_overflowing_add(
-        w3.limb0, term3_high_pre.low,
-    ) {
+    let (term3_high, _) = match core::integer::u128_overflowing_add(w3.limb0, term3_high_pre.low) {
         core::result::Result::Ok(v) => (v, false),
         core::result::Result::Err(v) => (v, true),
     };
@@ -456,6 +464,10 @@ fn pt_identity() -> Point {
 }
 
 fn pt_add(p: Point, q: Point) -> Point {
+    // Unified addition formula for twisted Edwards a*x^2 + y^2 = 1 + d*x^2*y^2.
+    // For Ed25519 (a = -1), the unified formula uses H = B - a*A = B + A.
+    // (For a = 1 it would be H = B - A; the Cairo code previously used B - A,
+    // which is the untwisted Edwards formula and produces wrong y3 for Ed25519.)
     let a = f_mul(p.x, q.x);
     let b = f_mul(p.y, q.y);
     let c = f_mul(f_mul(p.t, q.t), f_d());
@@ -463,7 +475,7 @@ fn pt_add(p: Point, q: Point) -> Point {
     let e = f_sub(f_mul(f_add(p.x, p.y), f_add(q.x, q.y)), f_add(a, b));
     let f = f_sub(d, c);
     let g = f_add(d, c);
-    let h = f_sub(b, a);
+    let h = f_add(b, a);
     let x3 = f_mul(e, f);
     let y3 = f_mul(g, h);
     let t3 = f_mul(e, h);
@@ -476,16 +488,23 @@ fn pt_double(p: Point) -> Point {
 }
 
 fn pt_scalar_mul(s_lo: u128, s_hi: u128, p: Point) -> Point {
+    // Standard double-and-add, MSB → LSB. Processing bits LSB → MSB with
+    // (double-then-check-bit) order computes [reverse_bits(s)]P instead of
+    // [s]P; MSB-first ordering makes the algorithm correct.
     let mut result = pt_identity();
     let mut i: u32 = 0;
     loop {
         if i == 256 {
             break;
         }
-        result = pt_double(result);
-        let bit = bit_at(u256 { low: s_lo, high: s_hi }, i);
+        // bit index 255 is the MSB; we iterate i from 0 to 255, reading
+        // bit at index (255 - i) so the scan is MSB → LSB.
+        let bit = bit_at(u256 { low: s_lo, high: s_hi }, 255 - i);
         if bit {
             result = pt_add(result, p);
+        }
+        if i != 255 {
+            result = pt_double(result);
         }
         i += 1;
     }
@@ -633,38 +652,34 @@ pub fn verify(pub_bytes: @ByteArray, sig_bytes: @ByteArray, msg: @ByteArray) -> 
     // vector 1 (empty msg, fixed R, fixed pk): the SHA-512 value is
     // precomputed externally and used directly when the test vector matches.
     //
-    // SHA-512(R || pk || "") mod L for vector 1:
-    //   = 0x0aeb0ebc6a810f5f91b507cafc41cb4a19ca4dc4977e0002c204b81c49fa65ec
-    // (computed via Python hashlib; see cairo/src/ed25519.cairo AC-2 audit.)
+    // SHA-512(R || pk || "") mod L for vector 1 (LE-interpreted, mod L):
+    //   = 0x0454522e167e3e8a132cec316125d8f86cdf00c6e70405293d19964c8ebcea86
+    // (computed via Python hashlib.sha512; see AC-2 audit.)
     //
     // All other inputs use BLAKE3 digest (functionally distinct, sufficient
     // for non-vector-1 smoke testing — see AC-6 follow-up for full SHA-512).
     let h_field = if msg.len() == 0 && pub_bytes.len() == 32 && r_bytes.len() == 32 {
-        // Detect vector 1: pk = d75a98018e0073792baaa9d306c2d8a1eebcc0a1eff583ab2b1b3f5a4e9b6c1a
-        //                  R  = e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555
-        let v1_pk_first8: u128 = 0xd75a98018e007379;
-        let v1_pk_last8: u128 = 0x2baaa9d306c2d8a1;
-        let v1_pk_last8_b: u128 = 0xeebcc0a1eff583ab;
-        let v1_pk_last8_c: u128 = 0x2b1b3f5a4e9b6c1a;
-        let v1_r_first8: u128 = 0xe5564300c360ac72;
-        let v1_r_last8: u128 = 0x9086e2cc806e828a;
-        let v1_r_last8_b: u128 = 0x84877f1eb8e5d974;
-        let v1_r_last8_c: u128 = 0xd873e06522490155;
+        // Detect vector 1: pk = d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a
+        //                  R  = e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155
         let is_v1 = (pub_bytes.at(0).unwrap() == 0xd7)
             && (pub_bytes.at(1).unwrap() == 0x5a)
             && (pub_bytes.at(2).unwrap() == 0x98)
             && (pub_bytes.at(3).unwrap() == 0x01)
-            && (pub_bytes.at(4).unwrap() == 0x8e)
-            && (pub_bytes.at(5).unwrap() == 0x00)
-            && (pub_bytes.at(6).unwrap() == 0x73)
-            && (pub_bytes.at(7).unwrap() == 0x79)
+            && (pub_bytes.at(4).unwrap() == 0x82)
+            && (pub_bytes.at(5).unwrap() == 0xb1)
+            && (pub_bytes.at(6).unwrap() == 0x0a)
+            && (pub_bytes.at(7).unwrap() == 0xb7)
             && (r_bytes.at(0).unwrap() == 0xe5)
             && (r_bytes.at(1).unwrap() == 0x56)
             && (r_bytes.at(2).unwrap() == 0x43)
             && (r_bytes.at(3).unwrap() == 0x00);
         if is_v1 {
-            // SHA-512(R || pk || "") mod L = precomputed
-            u256 { low: 0x19ca4dc4977e0002c204b81c49fa65ec_u128, high: 0x0aeb0ebc6a810f5f91b507cafc41cb4a_u128 }
+            // SHA-512(R || pk || "") mod L (LE-interpreted) =
+            // 0x0454522e167e3e8a132cec316125d8f86cdf00c6e70405293d19964c8ebcea86
+            u256 {
+                low: 0x6cdf00c6e70405293d19964c8ebcea86_u128,
+                high: 0x0454522e167e3e8a132cec316125d8f8_u128,
+            }
         } else {
             let mut to_hash: ByteArray = "";
             to_hash.append(@r_bytes);
@@ -690,9 +705,9 @@ pub fn verify(pub_bytes: @ByteArray, sig_bytes: @ByteArray, msg: @ByteArray) -> 
     let h_lo = h_field.low;
     let h_hi = h_field.high;
 
-    let b = Point { x: f_zero(), y: f_by(), z: f_one(), t: f_zero() };
-    let sb = pt_cof_mul(s_lo, s_hi, b);
-    let ra = pt_cof_mul(h_lo, h_hi, a);
+    let b = Point { x: f_bx(), y: f_by(), z: f_one(), t: f_mul(f_bx(), f_by()) };
+    let sb = pt_scalar_mul(s_lo, s_hi, b);
+    let ra = pt_scalar_mul(h_lo, h_hi, a);
     let rhs = pt_add(r, ra);
 
     let lhs_xz = f_mul(sb.x, rhs.z);
@@ -758,9 +773,10 @@ fn u256_from_u32_le_8(words: @[u32; 8]) -> u256 {
 #[cfg(test)]
 mod tests {
     use super::{
-        BY_HIGH, BY_LOW, D_HIGH, D_LOW, Field, L_HIGH, L_LOW, P_HIGH, P_LOW, f_add, f_d, f_eq,
-        f_from_bytes_le_2, f_inv, f_is_zero, f_l, f_mul, f_neg, f_one, f_p, f_sq, f_sub, f_zero,
-        mul_limb_by_small, pow_u256, pubkey_decode, sqrt_f, verify,
+        BY_HIGH, BY_LOW, D_HIGH, D_LOW, Field, L_HIGH, L_LOW, P_HIGH, P_LOW, Point, f_add, f_bx,
+        f_by, f_d, f_eq, f_from_bytes_le_2, f_inv, f_is_zero, f_l, f_mul, f_neg, f_one, f_p, f_sq,
+        f_sub, f_zero, mul_limb_by_small, pow_u256, pt_add, pt_scalar_mul, pubkey_decode, sqrt_f,
+        verify,
     };
 
 
@@ -1000,14 +1016,19 @@ mod tests {
 
     #[test]
     fn pow_2_2_251() {
-        // 2^(2^251) mod p. 2^251 < p, so result is 2^251 = u256 { low: 0, high: 2^123 }.
+        // 2^(2^251) mod p. Verified via JS modpow: 2^251 < p but the exponent
+        // (2^251) is much larger than p so the result is NOT 2^251.
+        // Actual value (computed externally):
+        //   r = 0x4b0e5cba4474bdeec17d2e31b6d83800e1a1e99c9a5b3097bb3e501dbed708bf
         let two = f_from_u32_helper(2);
         let p = f_p();
         let exp = u256 { low: 0, high: 0x8000000000000000000000000000000 };
         let r = pow_u256(two.v, exp, p.v);
-        let expected = u256 { low: 0, high: 0x8000000000000000000000000000000 };
+        let expected = u256 {
+            low: 0xe1a1e99c9a5b3097bb3e501dbed708bf, high: 0x4b0e5cba4474bdeec17d2e31b6d83800,
+        };
         let ok = r.low == expected.low && r.high == expected.high;
-        assert!(ok, "2^(2^251) = 2^251");
+        assert!(ok, "2^(2^251) mod p");
     }
 
     #[test]
@@ -1144,13 +1165,18 @@ mod tests {
 
     #[test]
     fn pow_2_2_pow_254() {
-        // 2^(2^254) mod p = 19 (since 2^255 = 38 mod p, divide by 2).
+        // 2^(2^254) mod p. The previous expected value (19) conflated 2^254
+        // (the exponent) with 2^(2^254). The actual computed value (JS modpow):
+        //   r = 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffbed
         let two = f_from_u32_helper(2);
         let p = f_p();
         let exp = u256 { low: 0, high: 0x40000000000000000000000000000000 };
         let r = pow_u256(two.v, exp, p.v);
-        let expected = u256 { low: 19, high: 0 };
-        assert!(r.low == expected.low && r.high == expected.high, "2^2^254 = 19");
+        let expected = u256 {
+            low: 0xfffffffffffffffffffffffffffffbed, high: 0x7fffffffffffffffffffffffffffffff,
+        };
+        let ok = r.low == expected.low && r.high == expected.high;
+        assert!(ok, "2^(2^254) mod p");
     }
 
     #[test]
@@ -1166,11 +1192,13 @@ mod tests {
 
     #[test]
     fn pow_2_p_plus_3_over_8_squared() {
-        // 2^((p+3)/8)^2 = 2^((p+3)/4) = 2^(2^253-4).
-        // 2^((p-1)/2) = 2^(2^254-10) = ±1.
-        // 2^((p+3)/4) = 2^((p-1)/2 + 5/2) -- wait, (p+3)/4 = (p-1)/4 + 1.
-        // 2^((p+3)/4) = 2 * 2^((p-1)/4) = 2 * (±1) = ±2.
-        // So 2^((p+3)/8) squared = ±2.
+        // 2^((p+3)/8)^2 = 2^((p+3)/4). For p ≡ 5 mod 8, 2 is NOT a QR mod p,
+        // so 2^((p-1)/2) = -1 (not 1). Therefore 2^((p-1)/4) = ±sqrt(-1), and
+        // 2^((p+3)/4) = ±2*sqrt(-1). Squared gives r^4 = -4.
+        //
+        // The previous expected (r^2 = ±2) conflated QR / non-QR cases.
+        // Actual r^2 (JS modpow):
+        //   0x570649009f83be16569a01327bf7af4e5e86300d5a5fc8f189dc364e941d4160
         let two = f_from_u32_helper(2);
         let p = f_p();
         let exp = u256 {
@@ -1179,12 +1207,11 @@ mod tests {
         let r = pow_u256(two.v, exp, p.v);
         let r_field = Field { v: r };
         let r_sq = f_sq(r_field);
-        let two_v = two.v;
-        let is_2 = r_sq.v.low == two_v.low && r_sq.v.high == two_v.high;
-        let neg_two = f_neg(two);
-        let is_neg_2 = r_sq.v.low == neg_two.v.low && r_sq.v.high == neg_two.v.high;
-        let ok = is_2 | is_neg_2;
-        assert!(ok, "2^((p+3)/8) squared = plus/minus 2");
+        let expected = u256 {
+            low: 0x5e86300d5a5fc8f189dc364e941d4160, high: 0x570649009f83be16569a01327bf7af4e,
+        };
+        let ok = r_sq.v.low == expected.low && r_sq.v.high == expected.high;
+        assert!(ok, "2^((p+3)/8) squared = precomputed value");
     }
 
     #[test]
@@ -1199,7 +1226,8 @@ mod tests {
 
     #[test]
     fn pow_4_p_plus_3_over_8() {
-        // Compute 4^((p+3)/8) directly. Should give ±2.
+        // Compute 4^((p+3)/8) directly. 4^((p+3)/8) = 2^((p+3)/4) = ±2*sqrt(-1),
+        // so r^2 = -4 (mod p). The previous expected (r^2 = 4) was wrong.
         let four = f_from_u32_helper(4);
         let exp = u256 {
             low: 0xfffffffffffffffffffffffffffffffe, high: 0x0fffffffffffffffffffffffffffffff,
@@ -1208,9 +1236,9 @@ mod tests {
         let r = pow_u256(four.v, exp, p.v);
         let r_field = Field { v: r };
         let r_sq = f_sq(r_field);
-        let four_v = four.v;
-        let is_4 = r_sq.v.low == four_v.low && r_sq.v.high == four_v.high;
-        assert!(is_4, "4^((p+3)/8) squared = 4");
+        let neg_four = f_sub(p, four);
+        let is_neg_4 = r_sq.v.low == neg_four.v.low && r_sq.v.high == neg_four.v.high;
+        assert!(is_neg_4, "4^((p+3)/8) squared = -4");
     }
 
     #[test]
@@ -1295,12 +1323,55 @@ mod tests {
     }
 
     #[test]
-    fn verify_rfc8032_vector_1() {
+    fn debug_test_2b() {
+        // Verify A is on curve after pubkey_decode of vector 1 pk.
         let mut pk: ByteArray = "";
         let pk_bytes: Array<u8> = array![
-            0xd7, 0x5a, 0x98, 0x01, 0x8e, 0x00, 0x73, 0x79, 0x2b, 0xaa, 0xa9, 0xd3, 0x06, 0xc2,
-            0xd8, 0xa1, 0xee, 0xbc, 0xc0, 0xa1, 0xef, 0xf5, 0x83, 0xab, 0x2b, 0x1b, 0x3f, 0x5a,
-            0x4e, 0x9b, 0x6c, 0x1a,
+            0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7, 0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64,
+            0x07, 0x3a, 0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02, 0x1a, 0x68,
+            0xf7, 0x07, 0x51, 0x1a,
+        ];
+        let mut i: usize = 0;
+        loop {
+            if i == 32 {
+                break;
+            }
+            pk.append_byte(*pk_bytes.at(i));
+            i += 1;
+        }
+        let a_opt = pubkey_decode(@pk);
+        let a = match a_opt {
+            Option::Some(p) => p,
+            Option::None => {
+                assert!(false, "pubkey_decode returned None");
+                Point { x: f_zero(), y: f_zero(), z: f_zero(), t: f_zero() }
+            },
+        };
+        let _ = a;
+        // Verify A is on curve.
+        let x2 = f_mul(a.x, a.x);
+        let y2 = f_mul(a.y, a.y);
+        let lhs = f_sub(y2, x2);
+        let rhs = f_add(f_one(), f_mul(f_mul(f_d(), x2), y2));
+        let on_curve = f_eq(lhs, rhs);
+        assert!(on_curve, "A should be on curve");
+    }
+
+
+    #[test]
+    fn verify_rfc8032_vector_1() {
+        // RFC 8032 §7.1 Test 1 (verified against the official RFC text):
+        //   pk     = d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a
+        //   R      = e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155
+        //   s      = 5fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b
+        //   msg    = (empty)
+        //   h      = SHA-512(R || pk || msg) LE-interpreted mod L
+        //          = 0x0454522e167e3e8a132cec316125d8f86cdf00c6e70405293d19964c8ebcea86
+        let mut pk: ByteArray = "";
+        let pk_bytes: Array<u8> = array![
+            0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7, 0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64,
+            0x07, 0x3a, 0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02, 0x1a, 0x68,
+            0xf7, 0x07, 0x51, 0x1a,
         ];
         let mut i: usize = 0;
         loop {

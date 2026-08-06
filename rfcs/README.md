@@ -331,16 +331,31 @@ Once accepted:
 
 ### Economics (RFC-0900-0999)
 
-| RFC                  | Title                           | Status              | Description                                                                                        |
-| -------------------- | ------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------- |
-| RFC-0900 (Economics) | AI Quota Marketplace Protocol   | Draft               | Marketplace for AI compute quotas                                                                  |
-| RFC-0901 (Economics) | Quota Router Agent              | Draft               | Agent for routing requests                                                                         |
-| RFC-0909 (Economics) | Deterministic Quota Accounting  | Accepted            | Deterministic quota accounting                                                                     |
-| RFC-0910 (Economics) | Pricing Table Registry          | Draft               | Versioned immutable pricing tables                                                                 |
-| RFC-0919 (Economics) | Stoolap Partial Indexes         | Planned             | `CREATE INDEX ... WHERE` support                                                                   |
-| RFC-0950 (Economics) | Agent Mission Marketplace (AMM) | Archived Superseded | Subsumed by RFC-0960 + RFC-0959 + RFC-0957 (grand-design family, Accepted 2026-07-23 / 2026-08-04) |
-| RFC-0955 (Economics) | Model Liquidity Layer           | Draft               | Tokenized AI models                                                                                |
-| RFC-0956 (Economics) | Model Liquidity Layer (MLL) v2  | Draft               | Tokenized AI models (updated)                                                                      |
+| RFC                  | Title                                             | Status              | Description                                                                                                                       |
+| -------------------- | ------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| RFC-0900 (Economics) | AI Quota Marketplace Protocol                     | Accepted            | Marketplace for AI compute quotas                                                                                                 |
+| RFC-0901 (Economics) | Quota Router Agent                                | Draft               | Agent for routing requests                                                                                                        |
+| RFC-0909 (Economics) | Deterministic Quota Accounting                    | Final               | Deterministic quota accounting                                                                                                    |
+| RFC-0910 (Economics) | Pricing Table Registry                            | Accepted (v31)      | Versioned immutable pricing tables                                                                                                |
+| RFC-0918 (Economics) | Inference Task Market                             | Accepted            | Per-model inference-task marketplace substrate                                                                                    |
+| RFC-0919 (Economics) | Stoolap Partial Indexes                           | Planned             | `CREATE INDEX ... WHERE` support                                                                                                  |
+| RFC-0950 (Economics) | Agent Mission Marketplace (AMM)                   | Archived Superseded | Subsumed by RFC-0960 + RFC-0959 + RFC-0957 (grand-design family, Accepted 2026-07-23 / 2026-08-04)                                |
+| RFC-0955             | Model Liquidity Layer                             | Accepted 2026-07-27 | Tokenized AI models (canonical: 4 asset types, multi-owner, 5-way split, liquidity pools, governance)                             |
+| RFC-0955-R1          | Reputation Anchoring (Amendment)                  | Accepted 2026-07-27 | On-chain reputation anchoring binding; requires RFC-0968 (also Accepted)                                                          |
+| RFC-0956 (Economics) | Model Liquidity Layer (MLL) v2                    | Archived Superseded | Simplified models-only v2 superseded by RFC-0955 + RFC-0957 (2026-05-16)                                                          |
+| RFC-0957 (Economics) | Capability Token Format (Macaroon v1)             | Accepted            | Capability tokens: bearer + caveat; 23-variant Constrain Set                                                                      |
+| RFC-0957-A1          | Holder Registry + Catalog Storage (Amendment)     | Accepted 2026-08-02 | On-chain holder registry + cross-DC catalog storage (in-place amendment to RFC-0957)                                              |
+| RFC-0959 (Economics) | Ask Settlement Chain (Independent)                | Accepted 2026-08-04 | Per-Ask settlement receipts; independent from RFC-0126 settlement carrier                                                         |
+| RFC-0959-A1          | Market Delivery Envelope (Amendment)              | Accepted 2026-08-02 | Market-side DeliveryEnvelope format (in-place amendment to RFC-0959)                                                              |
+| RFC-0960 (Economics) | Grand Design — Vaults, Capabilities, Reservations | Accepted (v2.0)     | Umbrella architecture: 4 primitives (Vault, Capability, Reservation, Settlement) over 7 RFC stack (0961/0962/0963/0964/0965/0967) |
+| RFC-0961 (Economics) | CIPHERO_SQL — Deterministic SQL Dialect           | Accepted            | Strategic reframe (v2.0): deterministic SQL spec for cipherocto-side persistence + cross-DC federation                            |
+| RFC-0962 (Economics) | ExecutionEnvelope — DB Transaction Object         | Accepted            | `ExecutionEnvelope` as database transaction object over RFC-0862 stoolap sync layer                                               |
+| RFC-0963 (Economics) | Resource Shard Routing                            | Accepted            | Strategic reframe (v2.0): shard routing over `ExecutionEnvelope`                                                                  |
+| RFC-0964 (Economics) | Constraint Encoding Standard                      | Accepted            | 23-variant Constraint Set catalog + encoding (per RFC-0957 §caveats)                                                              |
+| RFC-0965 (Economics) | Capability Extension Format (Caveat DSL)          | Accepted            | Caveat extension type-set for RFC-0957                                                                                            |
+| RFC-0967 (Economics) | Policy Object Graph                               | Accepted            | Separable authorization policy: policy_ref + caveat + PolicyGraph                                                                 |
+| RFC-0968             | Reputation Registry                               | Accepted            | Reputation registry (353 KB; canonical reputation substrate)                                                                      |
+| RFC-0969 (Economics) | Dual-Pipeline Authorization                       | Accepted 2026-08-02 | Legacy bearer + capability dual-pipeline authorization (RFC-0969)                                                                 |
 
 ### Archived
 
@@ -349,6 +364,7 @@ Once accepted:
 | RFC-0103 (Storage)   | Unified Vector-SQL Storage      | Superseded by RFC-0200 (Storage)                                             |
 | RFC-0106 (Numeric)   | Deterministic Numeric Tower     | Superseded by 0110-0115                                                      |
 | RFC-0950 (Economics) | Agent Mission Marketplace (AMM) | Superseded by RFC-0960 + RFC-0959 + RFC-0957 (grand-design family, Accepted) |
+| RFC-0956 (Economics) | Model Liquidity Layer (MLL) v2  | Superseded by RFC-0955 + RFC-0957 (simplified models-only v2; 2026-05-16)    |
 
 ---
 
@@ -408,7 +424,7 @@ Proof Verification (RFC-0651 Proof Systems)
         ↓
 Model Execution (RFC-0555 AI Execution)
         ↓
-Model Liquidity (RFC-0956 Economics)
+Model Liquidity (RFC-0955 Economics)
 ```
 
 ---

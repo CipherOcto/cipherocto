@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-07-20)
+Closed (Band A — 2026-08-04). Claimed 2026-07-20; implementation landed across 8 sessions (S1-S8) per §Closure commit chain `5bd076a4..3f520867` (9 commits); audit-grade AC flip landed `598273b0` (56/64 flipped; 8 deferred with named owners per [[deferred-vs-unspecified]]). Band A in-scope coverage: 56/56 ACs green. 8 deferred: 3× N/A per [[stoolap-general-purpose-db]] red line (fork PR + fork validation × 2); 3× CLI surfaces (`octo-wallet ask list/show/revoke`) → 0959-a1 / 0959-a2 future missions; 2× bench harness (criterion + 100-row fixture) → reopen on §4 Validation bench reactivation. Single cipherocto-side PR (9 commits on `next` ahead of `origin/next`); push awaits user instruction per [[git-workflow]].
 
 > **Availability:** Mission is now CLAIMABLE per BLUEPRT Mission Lifecycle (Requires RFC-0959 + RFC-0009 + RFC-0853 + RFC-0957 all reached Accepted 2026-07-20; RFC-0862 already Accepted 2026-06-20; RFC-0126 already Accepted). Implementation coverage (RFC-0959 §Specification) ships the spec; the implement transition is now unblocked as of 2026-07-20.
 
@@ -13,14 +13,14 @@ Claimed (2026-07-20)
 
 **BLUEPRINT gate note (resolved 2026-07-20):** Per BLUEPRINT.md "Missions REQUIRE an approved RFC. No RFC = Create one first." — this mission is now CLAIMABLE; all Requires RFCs below reached Accepted status 2026-07-20 (RFC-0959 v1.0 + RFC-0853 + RFC-0009 + RFC-0957 all promoted same day; RFC-0862 + RFC-0126 + RFC-0909 already Accepted pre-2026-07-20). The Requires RFC table below is retained for reference:
 
-| Requires RFC | Status | Blocking |
-|--------------|--------|----------|
-| RFC-0959 | ACCEPTED (2026-07-20, v1.0) | Yes |
-| RFC-0909 | Accepted | No (already Accepted) |
-| RFC-0126 (Deterministic Serialization; canonical_ser substrate) | Accepted | No |
-| RFC-0853 (Overlay Cryptography; BLAKE3 primitive) | ACCEPTED (2026-07-20) | No (promoted) |
-| RFC-0009 (Identity Management; IdentityKey + NodeType) | ACCEPTED (2026-07-20) | No (promoted) |
-| RFC-0957 (Capability Token Format; cap_root_hash + AskBinding host) | ACCEPTED (2026-07-20) | No (promoted) |
+| Requires RFC                                                                                                    | Status                                               | Blocking                                                                                                                                  |
+| --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| RFC-0959                                                                                                        | ACCEPTED (2026-07-20, v1.0)                          | Yes                                                                                                                                       |
+| RFC-0909                                                                                                        | Accepted                                             | No (already Accepted)                                                                                                                     |
+| RFC-0126 (Deterministic Serialization; canonical_ser substrate)                                                 | Accepted                                             | No                                                                                                                                        |
+| RFC-0853 (Overlay Cryptography; BLAKE3 primitive)                                                               | ACCEPTED (2026-07-20)                                | No (promoted)                                                                                                                             |
+| RFC-0009 (Identity Management; IdentityKey + NodeType)                                                          | ACCEPTED (2026-07-20)                                | No (promoted)                                                                                                                             |
+| RFC-0957 (Capability Token Format; cap_root_hash + AskBinding host)                                             | ACCEPTED (2026-07-20)                                | No (promoted)                                                                                                                             |
 | RFC-0862 (Stoolap Sync Layer; marketplace rebuild driver; `rfcs/accepted/networking/0862-stoolap-data-sync.md`) | **Accepted (2026-06-20; v1.2.0 updated 2026-06-25)** | No (already Accepted; **R3 fix**: line 144 Cross-RFC primitives table previously said "Draft"; corrected to Accepted across all surfaces) |
 
 Claim completed 2026-07-20: RFC-0959 + RFC-0853 + RFC-0009 + RFC-0957 promotion to Accepted via 7-day review + 2 maintainer approvals each (per master plan §0 + BLUEPRINT.md RFC Acceptance Process). RFC-0862 was already Accepted 2026-06-20 pre-claim; RFC-0862 line above marked 'No (already Accepted)'. **RFC-0862 is no longer a hard-blocks gate** — `rfcs/accepted/networking/0862-stoolap-data-sync.md` is already Accepted per actual repo state (R3 fix).
@@ -129,20 +129,20 @@ Implement the Ask primitive + multi-axis pricing in OCTO-W end-to-end. Delivers 
 
 **Mission-level (RFC prerequisites):**
 
-| Mission | RFC | Status | Hard-blocks claim? |
-|---------|-----|--------|--------------------|
-| `0102-a-wallet-foundation.md` | RFC-0102 — ACCEPTED (2026-07-20)) | Yes — IdentityKey + NodeType substrate |
-| `0957-a-capability-token-macaroon.md` | RFC-0957 — ACCEPTED (2026-07-20)) | Yes — cap_root_hash + AskBinding host |
-| **This mission** | RFC-0959 | Claimed (2026-07-20; RFC ACCEPTED v1.0; this RFC) | n/a (self) |
+| Mission                               | RFC                               | Status                                            | Hard-blocks claim? |
+| ------------------------------------- | --------------------------------- | ------------------------------------------------- | ------------------ |
+| `0102-a-wallet-foundation.md`         | RFC-0102 — ACCEPTED (2026-07-20)) | Yes — IdentityKey + NodeType substrate            |
+| `0957-a-capability-token-macaroon.md` | RFC-0957 — ACCEPTED (2026-07-20)) | Yes — cap_root_hash + AskBinding host             |
+| **This mission**                      | RFC-0959                          | Claimed (2026-07-20; RFC ACCEPTED v1.0; this RFC) | n/a (self)         |
 
 **Cross-RFC primitives (gating per RFC-0959 §Dependency Validation):**
 
-| RFC | Status | Hard-blocks RFC-0959 acceptance? |
-|-----|--------|-----------------------------------|
-| RFC-0853 — ACCEPTED (2026-07-20) | YES (IA-1 ACCEPTED RISK) |
-| RFC-0126 (Deterministic Serialization / canonical_ser; accepted; substrate for `AskUnsignedPayload.sign` field hash; **`canonical_ser` implementation gap**: this mission assumes a working `canonical_ser` library — verification of an existing crate is not in scope; if no library exists, this mission's `ask_id` derivation needs an alternate non-canonical_ser implementation OR a separate mission must implement canonical_ser first.) | Accepted | implementation gap: verify or ship prerequisite |
-| RFC-0862 (Stoolap Sync Layer; `rfcs/accepted/networking/0862-stoolap-data-sync.md`) | **Accepted (2026-06-20; v1.2.0 updated 2026-06-25)** | **No** (already Accepted; corrected per R3 fix — supersedes earlier "Draft" reading) |
-| RFC-0909 (Deterministic Quota Accounting; coexistence only per Option A — independent chain) | Accepted | No |
+| RFC                                                                                                                                                                                                                                                                                                                                                                                                                                              | Status                                               | Hard-blocks RFC-0959 acceptance?                                                     |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| RFC-0853 — ACCEPTED (2026-07-20)                                                                                                                                                                                                                                                                                                                                                                                                                 | YES (IA-1 ACCEPTED RISK)                             |
+| RFC-0126 (Deterministic Serialization / canonical_ser; accepted; substrate for `AskUnsignedPayload.sign` field hash; **`canonical_ser` implementation gap**: this mission assumes a working `canonical_ser` library — verification of an existing crate is not in scope; if no library exists, this mission's `ask_id` derivation needs an alternate non-canonical_ser implementation OR a separate mission must implement canonical_ser first.) | Accepted                                             | implementation gap: verify or ship prerequisite                                      |
+| RFC-0862 (Stoolap Sync Layer; `rfcs/accepted/networking/0862-stoolap-data-sync.md`)                                                                                                                                                                                                                                                                                                                                                              | **Accepted (2026-06-20; v1.2.0 updated 2026-06-25)** | **No** (already Accepted; corrected per R3 fix — supersedes earlier "Draft" reading) |
+| RFC-0909 (Deterministic Quota Accounting; coexistence only per Option A — independent chain)                                                                                                                                                                                                                                                                                                                                                     | Accepted                                             | No                                                                                   |
 
 **Library-level:**
 
@@ -154,32 +154,32 @@ Implement the Ask primitive + multi-axis pricing in OCTO-W end-to-end. Delivers 
 
 Per BLUEPRINT.md Mission template, the RFC-0959 specification defines the following types; this mission implements them as listed:
 
-| RFC-0959 Type | Implemented By |
-|---------------|----------------|
-| `AskUnsignedPayload` struct | This mission (in `crates/octo-core/src/ask.rs`) |
-| `Ask` struct | This mission (in `crates/octo-core/src/ask.rs`) |
-| `AskId` type alias (`[u8; 32]`) | This mission (in `crates/octo-core/src/ask.rs`) |
-| `OCTO_WAmount(pub u128)` newtype (display unit) | This mission (in `crates/octo-core/src/ask.rs`) |
-| `MicroOCTO_W(pub u128)` newtype (on-wire unit, 1 OCTO-W = 1e6) | This mission (in `crates/octo-core/src/ask.rs`) |
-| `TokenCount` type alias (`u32`) | This mission (in `crates/octo-core/src/ask.rs`) |
-| `Ed25519Signature` type alias (`[u8; 64]`) | This mission (in `crates/octo-core/src/ask.rs`) |
-| `PricingAxis` struct (in `axis_registry.rs`, NOT `ask.rs` per RFC-0959 §Data Structures cross-ref) | This mission |
-| `ModelRef` struct | This mission (in `crates/octo-core/src/ask.rs`) |
-| `NodeType` enum | Re-exported from `octo-wallet::node` (RFC-0009 substrate; S01 mission) |
-| `AxesConsumed` struct | This mission (in `crates/octo-core/src/settlement.rs`) |
-| `SettlementEvent` struct (no `hash` field — R1 fix; `settlement_hash()` is a free function) | This mission (in `crates/octo-core/src/settlement.rs`) |
-| `SettlementReceipt` struct (`event` + `router_signature` + `nonce`; R1 fix — replay defense) | This mission |
-| `SettlementError` enum (with `Overflow { axis_id, partial_sum }` + `AskSignatureInvalid` variants per R1 critical fix; **R3 fix**: removed stale `NonceGenerationError` mention — variant was removed in R2 as unreachable per `csprng.next_u64()` returning `u64` not `Result`) | This mission (in `crates/octo-core/src/settlement.rs`) |
-| `compute_cost(ask, axes) -> Result<MicroOCTO_W, SettlementError>` fn | This mission |
-| `settlement_hash(event) -> Result<[u8; 32], SettlementError>` fn (R1 Result return fix) | This mission |
-| `cache_key(prompt_tokens: &[u32]) -> [u8; 32]` fn | This mission (in `crates/octo-core/src/cache.rs`) |
-| `sign_ask(identity, payload) -> (AskId, Ed25519Signature)` fn | This mission |
-| `verify_ask(ask) -> Result<(), SettlementError>` fn | This mission |
-| Marketplace BTreeMap: `BTreeMap<(String, String, Option<String>), BTreeSet<AskId>>` (R1 BTreeMap-over-HashMap fix) | This mission (in `crates/quota-router-core/src/marketplace.rs`) |
-| Full capability token (Caveat::AskBinding payload schema) | Reference only — RFC-0957 (S02 mission `0957-a-capability-token-macaroon.md`) hosts this; this mission supplies `AskId` as the binding key |
-| ZK-class capability subclass | **NOT this mission** — RFC-0958 (S05 mission, Planned) |
-| On-chain settlement discharge | **NOT this mission** — no canonical RFC yet for on-chain ASK settlement |
-| Dual-stake economics (OCTO-W provider role) | Token role economics documented in `docs/04-tokenomics/token-design.md`; not implemented here |
+| RFC-0959 Type                                                                                                                                                                                                                                                                    | Implemented By                                                                                                                             |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `AskUnsignedPayload` struct                                                                                                                                                                                                                                                      | This mission (in `crates/octo-core/src/ask.rs`)                                                                                            |
+| `Ask` struct                                                                                                                                                                                                                                                                     | This mission (in `crates/octo-core/src/ask.rs`)                                                                                            |
+| `AskId` type alias (`[u8; 32]`)                                                                                                                                                                                                                                                  | This mission (in `crates/octo-core/src/ask.rs`)                                                                                            |
+| `OCTO_WAmount(pub u128)` newtype (display unit)                                                                                                                                                                                                                                  | This mission (in `crates/octo-core/src/ask.rs`)                                                                                            |
+| `MicroOCTO_W(pub u128)` newtype (on-wire unit, 1 OCTO-W = 1e6)                                                                                                                                                                                                                   | This mission (in `crates/octo-core/src/ask.rs`)                                                                                            |
+| `TokenCount` type alias (`u32`)                                                                                                                                                                                                                                                  | This mission (in `crates/octo-core/src/ask.rs`)                                                                                            |
+| `Ed25519Signature` type alias (`[u8; 64]`)                                                                                                                                                                                                                                       | This mission (in `crates/octo-core/src/ask.rs`)                                                                                            |
+| `PricingAxis` struct (in `axis_registry.rs`, NOT `ask.rs` per RFC-0959 §Data Structures cross-ref)                                                                                                                                                                               | This mission                                                                                                                               |
+| `ModelRef` struct                                                                                                                                                                                                                                                                | This mission (in `crates/octo-core/src/ask.rs`)                                                                                            |
+| `NodeType` enum                                                                                                                                                                                                                                                                  | Re-exported from `octo-wallet::node` (RFC-0009 substrate; S01 mission)                                                                     |
+| `AxesConsumed` struct                                                                                                                                                                                                                                                            | This mission (in `crates/octo-core/src/settlement.rs`)                                                                                     |
+| `SettlementEvent` struct (no `hash` field — R1 fix; `settlement_hash()` is a free function)                                                                                                                                                                                      | This mission (in `crates/octo-core/src/settlement.rs`)                                                                                     |
+| `SettlementReceipt` struct (`event` + `router_signature` + `nonce`; R1 fix — replay defense)                                                                                                                                                                                     | This mission                                                                                                                               |
+| `SettlementError` enum (with `Overflow { axis_id, partial_sum }` + `AskSignatureInvalid` variants per R1 critical fix; **R3 fix**: removed stale `NonceGenerationError` mention — variant was removed in R2 as unreachable per `csprng.next_u64()` returning `u64` not `Result`) | This mission (in `crates/octo-core/src/settlement.rs`)                                                                                     |
+| `compute_cost(ask, axes) -> Result<MicroOCTO_W, SettlementError>` fn                                                                                                                                                                                                             | This mission                                                                                                                               |
+| `settlement_hash(event) -> Result<[u8; 32], SettlementError>` fn (R1 Result return fix)                                                                                                                                                                                          | This mission                                                                                                                               |
+| `cache_key(prompt_tokens: &[u32]) -> [u8; 32]` fn                                                                                                                                                                                                                                | This mission (in `crates/octo-core/src/cache.rs`)                                                                                          |
+| `sign_ask(identity, payload) -> (AskId, Ed25519Signature)` fn                                                                                                                                                                                                                    | This mission                                                                                                                               |
+| `verify_ask(ask) -> Result<(), SettlementError>` fn                                                                                                                                                                                                                              | This mission                                                                                                                               |
+| Marketplace BTreeMap: `BTreeMap<(String, String, Option<String>), BTreeSet<AskId>>` (R1 BTreeMap-over-HashMap fix)                                                                                                                                                               | This mission (in `crates/quota-router-core/src/marketplace.rs`)                                                                            |
+| Full capability token (Caveat::AskBinding payload schema)                                                                                                                                                                                                                        | Reference only — RFC-0957 (S02 mission `0957-a-capability-token-macaroon.md`) hosts this; this mission supplies `AskId` as the binding key |
+| ZK-class capability subclass                                                                                                                                                                                                                                                     | **NOT this mission** — RFC-0958 (S05 mission, Planned)                                                                                     |
+| On-chain settlement discharge                                                                                                                                                                                                                                                    | **NOT this mission** — no canonical RFC yet for on-chain ASK settlement                                                                    |
+| Dual-stake economics (OCTO-W provider role)                                                                                                                                                                                                                                      | Token role economics documented in `docs/04-tokenomics/token-design.md`; not implemented here                                              |
 
 ## Location
 
@@ -249,23 +249,34 @@ For complex sub-systems, missions may link a companion implementation guide at `
 - **CipherOcto brand casing on hash tags:** The settlement hash version tag uses lowercase `b"cipherocto/settlement/v1"` (project brand is `CipherOcto` Pascal case) per RFC-0959 §Settlement hash — the lowercase form is intentional (registry convention per RFC-0959 §Compatibility). Documented as deliberate to prevent reviewer re-flagging the casing.
 - **Status block strict-reading:** Per BLUEPRINT.md "Missions REQUIRE an approved RFC" literal reading, mission Status = `Open` is nominal — no claim is permitted until RFC-0959 reaches Accepted, irrespective of RFC authorship. Documented at top of file.
 - **Implementation acceptance cross-ref:** every S03 §3 step is captured in §"Acceptance Criteria" above; mission §Notes provides rationale for the boundary between in-scope (this mission) and out-of-scope (S02/S04/S05 missions).
+
+## Version History
+
+| Version | Date       | Change                                                                                                    |
+| ------- | ---------- | --------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-07-20 | Mission claimed (RFC-0959 v1.0 Accepted same day).                                                        |
+| v1.0    | 2026-08-04 | Closed Band A (56/64 ACs; 8 explicit deferrals with named owners). Audit-grade AC flip landed `598273b0`. |
+
+Last Updated: 2026-08-04
+Version: 1.0
+
 ## Closure
 
-_Closed 2026-08-04 (audit pass; awaiting user go-signal for single cipherocto-side PR push)._
+_Closed 2026-08-04 (audit-grade AC flip landed `598273b0`; awaiting user go-signal for single cipherocto-side PR push)._
 
 ### Commit chain (9 commits, all on `next` ahead of `origin/next`)
 
-| Session | SHA | Subject |
-|---------|-----|---------|
-| S1 | `5bd076a4` | feat(quota-router-storage): AskUnsignedPayload split + Ed25519 sign/verify (RFC-0959) |
-| S2 | `ae9310d5` | feat(quota-router-storage): settlement engine (RFC-0959 §Algorithms) |
-| S3 | `8b85f897` | feat(quota-router-storage): TOML axis registry + circuit-breaker + cache_key (RFC-0959) |
-| S4 | `1e3c5416` | feat(quota-router-storage): NodeType + ModelRef struct + marketplace index (RFC-0959 §Roles) |
-| S4-fu | `059f3532` | fix(quota-router): propagate ModelRef struct through marketplace + tests (S4 follow-up) |
-| S5 | `8d5fde06` | feat(quota-router-storage): AntiFraudMonitor multi-layer defense (RFC-0959 §Adversary A5) |
-| S6 | `4e3b810d` | feat(quota-router-cli + octo-wallet): CLI surfaces for RFC-0959 (mission 0959-a S6) |
-| S7 | `0659cf87` | feat(quota-router-storage): consumed_receipt_index table + persisted DAO (mission 0959-a S7) |
-| S8 | `3f520867` | feat(quota-router-storage): settlement_events table + DAO + CLI settle-list (mission 0959-a S8) |
+| Session | SHA        | Subject                                                                                         |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------- |
+| S1      | `5bd076a4` | feat(quota-router-storage): AskUnsignedPayload split + Ed25519 sign/verify (RFC-0959)           |
+| S2      | `ae9310d5` | feat(quota-router-storage): settlement engine (RFC-0959 §Algorithms)                            |
+| S3      | `8b85f897` | feat(quota-router-storage): TOML axis registry + circuit-breaker + cache_key (RFC-0959)         |
+| S4      | `1e3c5416` | feat(quota-router-storage): NodeType + ModelRef struct + marketplace index (RFC-0959 §Roles)    |
+| S4-fu   | `059f3532` | fix(quota-router): propagate ModelRef struct through marketplace + tests (S4 follow-up)         |
+| S5      | `8d5fde06` | feat(quota-router-storage): AntiFraudMonitor multi-layer defense (RFC-0959 §Adversary A5)       |
+| S6      | `4e3b810d` | feat(quota-router-cli + octo-wallet): CLI surfaces for RFC-0959 (mission 0959-a S6)             |
+| S7      | `0659cf87` | feat(quota-router-storage): consumed_receipt_index table + persisted DAO (mission 0959-a S7)    |
+| S8      | `3f520867` | feat(quota-router-storage): settlement_events table + DAO + CLI settle-list (mission 0959-a S8) |
 
 ### Verification
 
@@ -278,18 +289,18 @@ cargo fmt --all --check                                 # clean (no diff)
 
 ### AC walk (audit-grade)
 
-| Section | ACs | Result |
-|---------|-----|--------|
-| Ask primitive | 11 | 11 / 11 flipped `[x]` |
-| Settlement engine | 11 | 11 / 11 flipped `[x]` (4 deviations noted: MicroOCTO_W alias vs newtype; AskSigned rename; AskSignedError vs SettlementError; `compute_settlement_hash` returns `serde_json::Error` not `SettlementError`) |
-| Cache classification | 3 | 3 / 3 flipped `[x]` |
-| PricingAxis registry | 5 | 5 / 5 flipped `[x]` |
-| Stoolap asks table | 6 | 3 / 6 flipped `[x]` (cipherocto-side migration v001 + v002 + idempotency); 3 `[ ]` (100-row fixture bench + cross-repo fork PR sequencing + fork validation — all N/A per red line, marked `[ ]` for grep honesty) |
-| Marketplace index | 6 | 5 / 6 flipped `[x]`; 1 `[ ]` (criterion bench harness — deferred) |
-| Anti-fraud monitor | 6 | 6 / 6 flipped `[x]` (all 5 RFC-0959 transitions: AutoTripped, AutoCooldownElapsed, AutoCleanObservation, AutoRetripped, OperatorSignature; +advisory invariant test) |
-| CLI | 7 | 4 / 7 flipped `[x]` (`octo-wallet ask publish` + `quota-router-cli settle` + `settle-replay` + `settle-list`); 3 `[ ]` (octo-wallet `ask list/show/revoke` — deferred) |
-| RFC-0959 follow-up amendments | 3 | 3 / 3 (RFC-0959 already Accepted pre-mission; v1.2 version row drafted for single cipherocto-side PR; RFC-0909 v70 bump N/A per Option A) |
-| Cross-crate compat | 6 | 5 / 6 flipped `[x]` (build/test/clippy/fmt/doc — 1 quota-router-storage intra-doc-link warning noted in lib.rs:13); 1 `[ ]` (stoolap fork validation — N/A per red line, kept `[ ]` for grep honesty) |
+| Section                       | ACs | Result                                                                                                                                                                                                             |
+| ----------------------------- | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Ask primitive                 | 11  | 11 / 11 flipped `[x]`                                                                                                                                                                                              |
+| Settlement engine             | 11  | 11 / 11 flipped `[x]` (4 deviations noted: MicroOCTO_W alias vs newtype; AskSigned rename; AskSignedError vs SettlementError; `compute_settlement_hash` returns `serde_json::Error` not `SettlementError`)         |
+| Cache classification          | 3   | 3 / 3 flipped `[x]`                                                                                                                                                                                                |
+| PricingAxis registry          | 5   | 5 / 5 flipped `[x]`                                                                                                                                                                                                |
+| Stoolap asks table            | 6   | 3 / 6 flipped `[x]` (cipherocto-side migration v001 + v002 + idempotency); 3 `[ ]` (100-row fixture bench + cross-repo fork PR sequencing + fork validation — all N/A per red line, marked `[ ]` for grep honesty) |
+| Marketplace index             | 6   | 5 / 6 flipped `[x]`; 1 `[ ]` (criterion bench harness — deferred)                                                                                                                                                  |
+| Anti-fraud monitor            | 6   | 6 / 6 flipped `[x]` (all 5 RFC-0959 transitions: AutoTripped, AutoCooldownElapsed, AutoCleanObservation, AutoRetripped, OperatorSignature; +advisory invariant test)                                               |
+| CLI                           | 7   | 4 / 7 flipped `[x]` (`octo-wallet ask publish` + `quota-router-cli settle` + `settle-replay` + `settle-list`); 3 `[ ]` (octo-wallet `ask list/show/revoke` — deferred)                                             |
+| RFC-0959 follow-up amendments | 3   | 3 / 3 (RFC-0959 already Accepted pre-mission; v1.2 version row drafted for single cipherocto-side PR; RFC-0909 v70 bump N/A per Option A)                                                                          |
+| Cross-crate compat            | 6   | 5 / 6 flipped `[x]` (build/test/clippy/fmt/doc — 1 quota-router-storage intra-doc-link warning noted in lib.rs:13); 1 `[ ]` (stoolap fork validation — N/A per red line, kept `[ ]` for grep honesty)              |
 
 **Total flipped:** 56 / 64 (88%). **Deferred:** 8 (3× `octo-wallet ask list/show/revoke` + 1× criterion bench harness + 1× 100-row fixture + 1× cross-repo fork PR sequencing + 1× fork validation + 1× fork-includes-validation — all `[ ]` per grep honesty / explicit deferral). All `[ ]` carry explicit deferral rationale + reopen conditions.
 

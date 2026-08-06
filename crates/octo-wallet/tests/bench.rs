@@ -120,6 +120,15 @@ fn proof_gen_latency_self_host_under_2s_10k_trace() {
     // `mint_with_zk_and_signers` with a single signer so the bench
     // measures the real batch-signature proof-gen path that real zk
     // minting hits in production.
+    //
+    // **0958-b Round 6 (2026-08-06):** runtime dispatch on
+    // `zk_vendor::vendor_state()` mirrors `proof_size_50_to_500kb`
+    // (line 195). Under `Ffi` (libstwo_sys.so reachable), the bench
+    // measures the real STWO STARK proof-gen path and asserts
+    // elapsed <2s on a 10K trace. Under `Stub` (no cdylib), the
+    // 32-byte BLAKE3 mock commitment is asserted and the latency
+    // budget still holds. This closes AC-139 in 0958-b by enabling
+    // the FFI dispatch that AC-3 partial #3 (`4b846a1a`) wired up.
     let casm = bundled_casm_hash();
     let witness = build_10k_witness();
     let pi = build_public_inputs();
@@ -129,23 +138,48 @@ fn proof_gen_latency_self_host_under_2s_10k_trace() {
     let bundle = mint_with_zk_and_signers(NodeType::SelfHost, &witness, &pi, casm, &signers)
         .expect("batch mint");
     let elapsed_ms = start.elapsed().as_millis();
+    let proof_size = bundle.stark_proof.len();
 
-    eprintln!(
-        "perf AC-11 G1: mint 10k trace took {elapsed_ms}ms (budget {PROOF_GEN_BUDGET_MS}ms) — \
-         proof size = {} bytes (32-byte BLAKE3 stub proof)",
-        bundle.stark_proof.len()
-    );
-
-    assert_eq!(
-        bundle.stark_proof.len(),
-        32,
-        "batch path must produce 32-byte stub commitment; got {} bytes",
-        bundle.stark_proof.len()
-    );
-    assert!(
-        elapsed_ms < PROOF_GEN_BUDGET_MS,
-        "proof_gen took {elapsed_ms}ms; budget {PROOF_GEN_BUDGET_MS}ms"
-    );
+    match vendor_state() {
+        VendorState::Ffi => {
+            // Real-zk path: STWO STARK prover ran. Production
+            // deployments ship `libstwo_sys.so`; CI local
+            // `cargo +nightly-2025-06-23 build --release` on
+            // `crates/zk-vendor/stwo-sys/Cargo.toml` produces the
+            // cdylib at `crates/zk-vendor/stwo-sys/target/release/libstwo_sys.so`.
+            // Set `$CIPHEROCTO_STWO_LIB` to that path for the FFI arm
+            // to engage.
+            eprintln!(
+                "perf AC-11 G1 (FFI): mint 10k trace took {elapsed_ms}ms \
+                 (budget {PROOF_GEN_BUDGET_MS}ms); real STWO proof wire = {proof_size} bytes"
+            );
+            assert!(
+                proof_size > 0 && proof_size <= PROOF_SIZE_MAX_BYTES,
+                "real-zk wire proof size {proof_size} out of envelope"
+            );
+            assert!(
+                elapsed_ms < PROOF_GEN_BUDGET_MS,
+                "real-zk proof_gen took {elapsed_ms}ms; budget {PROOF_GEN_BUDGET_MS}ms"
+            );
+        }
+        VendorState::Stub => {
+            // Mock path: BLAKE3 commitment = 32 bytes. Document the
+            // contract — real-zk latency requires
+            // `libstwo_sys.so` reachable at runtime.
+            eprintln!(
+                "perf AC-11 G1 (Stub): mint 10k trace took {elapsed_ms}ms \
+                 (budget {PROOF_GEN_BUDGET_MS}ms); mock BLAKE3 = {proof_size} bytes"
+            );
+            assert_eq!(
+                proof_size, 32,
+                "batch path stub-mode must produce 32-byte BLAKE3 commitment; got {proof_size} bytes"
+            );
+            assert!(
+                elapsed_ms < PROOF_GEN_BUDGET_MS,
+                "proof_gen took {elapsed_ms}ms; budget {PROOF_GEN_BUDGET_MS}ms"
+            );
+        }
+    }
 }
 
 #[test]

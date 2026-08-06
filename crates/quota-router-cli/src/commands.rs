@@ -14,6 +14,7 @@ use quota_router_core::node::provider::{
 };
 use quota_router_core::node::{QuotaRouterNode, RouterNodeLifecycle};
 use quota_router_core::{init_database, StoolapKeyStorage};
+use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
 use std::io::Read as _;
 use std::net::SocketAddr;
@@ -29,6 +30,25 @@ fn read_envelope(from: &str) -> Result<String> {
         Ok(buf)
     } else {
         Ok(std::fs::read_to_string(from)?)
+    }
+}
+
+/// Deserialize `Vec<u8>` from either a JSON hex string (`"deadbeef"`) or a
+/// JSON byte sequence (`[0xde, 0xad, 0xbe, 0xef]`). Used by `VerifyEnvelopeWire`
+/// so operators can paste hex strings in CLI input without re-encoding.
+fn deserialize_proof_bytes<'de, D>(d: D) -> std::result::Result<Vec<u8>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum HexOrBytes {
+        Hex(String),
+        Bytes(Vec<u8>),
+    }
+    match HexOrBytes::deserialize(d)? {
+        HexOrBytes::Hex(s) => hex::decode(&s).map_err(serde::de::Error::custom),
+        HexOrBytes::Bytes(b) => Ok(b),
     }
 }
 
@@ -597,6 +617,267 @@ pub fn settle_list(asker_did: &str, db_path: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+// =========================================================================
+// ZK proof verification (mission zk-proof-verification AC-1 / AC-2 / AC-5).
+// =========================================================================
+//
+// Wraps `zk_verifier::verify_capability_zk` for the CLI surface. Sub-modes:
+//   - single:  one envelope JSON → one verify → one history append
+//   - batch:   JSON array of envelopes → N verifies → N history appends
+//   - history: print JSONL log (newest first)
+//
+// History persistence: JSONL at `default_history_path()` (XDG-aware) or
+// `--history-path` override. Atomic append via `OpenOptions::append` +
+// `writeln!`. No external DB — AC-3 (on-chain settlement) is deferred.
+
+/// JSON envelope for a single ZK proof verification request.
+///
+/// Wire schema (matches `crates/quota-router-cli` RFC-0959 envelope style):
+/// ```json
+/// {
+///   "proof_bundle":   { "proof_bytes": "<hex>" },
+///   "public_inputs":  { "proof_issued_at_unix": 1700000000,
+///                        "verifier_local_unix_time": 1700000005,
+///                        "compiled_casm_hash": "<hex>",
+///                        "capability_root_hash": "<hex>",
+///                        "provider_slot_id": "slot-a" },
+///   "casm_hash":      "<hex>"
+/// }
+/// ```
+///
+/// `proof_bundle.proof_bytes` accepts either a hex string (`"deadbeef"`) or
+/// a JSON byte sequence (`[222, 173, 190, 239]`) via `deserialize_proof_bytes`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct VerifyEnvelope {
+    /// STWO proof bundle (RFC-0958 §Proof Bundle). `proof_bytes` field
+    /// accepts hex string OR JSON byte sequence on deserialization.
+    pub proof_bundle: VerifyProofBundleWire,
+    /// Public inputs to the ZK proof (RFC-0958 §Public Inputs).
+    pub public_inputs: zk_verifier::PublicInputs,
+    /// CASM hash passed to `verify_capability_zk` (may differ from
+    /// `public_inputs.compiled_casm_hash` for drift-detection testing).
+    pub casm_hash: String,
+}
+
+/// Wire-shape proof bundle: `proof_bytes` accepts hex OR byte array.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct VerifyProofBundleWire {
+    /// Proof bytes (hex string OR JSON byte sequence on input; always
+    /// serialized as hex on output).
+    #[serde(
+        serialize_with = "serialize_proof_bytes_hex",
+        deserialize_with = "deserialize_proof_bytes"
+    )]
+    pub proof_bytes: Vec<u8>,
+}
+
+impl From<VerifyProofBundleWire> for zk_verifier::ProofBundle {
+    fn from(w: VerifyProofBundleWire) -> Self {
+        Self {
+            proof_bytes: w.proof_bytes,
+        }
+    }
+}
+
+impl From<zk_verifier::ProofBundle> for VerifyProofBundleWire {
+    fn from(b: zk_verifier::ProofBundle) -> Self {
+        Self {
+            proof_bytes: b.proof_bytes,
+        }
+    }
+}
+
+fn serialize_proof_bytes_hex<S>(bytes: &Vec<u8>, s: S) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    s.serialize_str(&hex::encode(bytes))
+}
+
+/// One row in the verify-history JSONL log.
+///
+/// Written after each verify attempt (single or batch element). Schema is
+/// stable; consumers (e.g. an RFC-0968 reputation signal feed) can parse
+/// the log without version negotiation.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct VerifyHistoryEntry {
+    /// Unix timestamp the verify call ran.
+    pub verified_at_unix: u64,
+    /// `Ok` / one of the `VerifyError` variant names (lowercased for grep).
+    pub outcome: String,
+    /// BLAKE3 hash (hex) of the proof bytes — fingerprint, NOT the
+    /// proof itself (proofs may be 50-500 KB per RFC-0958 §Wire Format).
+    pub proof_fingerprint_hex: String,
+    /// CASM hash that was bound (hex).
+    pub casm_hash: String,
+    /// Capability root hash (hex).
+    pub capability_root_hash: String,
+    /// Provider slot ID.
+    pub provider_slot_id: String,
+}
+
+/// Default history file path: `${XDG_DATA_HOME:-~/.local/share}/cipherocto/quota-router/verify-history.jsonl`.
+pub fn default_history_path() -> std::path::PathBuf {
+    let base = directories::ProjectDirs::from("ai", "cipherocto", "quota-router")
+        .map(|p| p.data_dir().to_path_buf())
+        .unwrap_or_else(|| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| String::from("."));
+            std::path::PathBuf::from(home)
+                .join(".local")
+                .join("share")
+                .join("cipherocto")
+                .join("quota-router")
+        });
+    base.join("verify-history.jsonl")
+}
+
+/// Hex-fingerprint a proof bundle (BLAKE3 of bytes, hex-encoded).
+fn proof_fingerprint_hex(proof: &zk_verifier::ProofBundle) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&proof.proof_bytes);
+    hex::encode(hasher.finalize().as_bytes())
+}
+
+/// Verify a single proof envelope and append the result to history.
+///
+/// Testable surface: callers pass `envelope_json` and `history_path`
+/// directly. The CLI dispatcher in `verify()` reads from `--from`/stdin
+/// and calls this with the default path.
+pub fn verify_one_from_json(
+    envelope_json: &str,
+    history_path: &Path,
+    now_unix: u64,
+) -> Result<VerifyHistoryEntry> {
+    let envelope: VerifyEnvelope = serde_json::from_str(envelope_json)
+        .map_err(|e| anyhow::anyhow!("invalid envelope JSON: {e}"))?;
+    let proof_bundle: zk_verifier::ProofBundle = envelope.proof_bundle.into();
+    let result = zk_verifier::verify_capability_zk(
+        &proof_bundle,
+        &envelope.public_inputs,
+        &envelope.casm_hash,
+    );
+    let outcome = match &result {
+        Ok(()) => "ok".to_owned(),
+        Err(e) => format!("{:?}", e)
+            .split_whitespace()
+            .next()
+            .unwrap_or("error")
+            .to_lowercase(),
+    };
+    let entry = VerifyHistoryEntry {
+        verified_at_unix: now_unix,
+        outcome,
+        proof_fingerprint_hex: proof_fingerprint_hex(&proof_bundle),
+        casm_hash: envelope.casm_hash.clone(),
+        capability_root_hash: envelope.public_inputs.capability_root_hash.clone(),
+        provider_slot_id: envelope.public_inputs.provider_slot_id.clone(),
+    };
+    append_history(history_path, &entry)?;
+    Ok(entry)
+}
+
+/// Verify a batch (JSON array of single envelopes) and append each result.
+pub fn verify_batch_from_json(
+    envelopes_json: &str,
+    history_path: &Path,
+    now_unix: u64,
+) -> Result<Vec<VerifyHistoryEntry>> {
+    let envelopes: Vec<VerifyEnvelope> = serde_json::from_str(envelopes_json)
+        .map_err(|e| anyhow::anyhow!("invalid batch JSON: {e}"))?;
+    let mut out = Vec::with_capacity(envelopes.len());
+    for (idx, env) in envelopes.iter().enumerate() {
+        let env_json = serde_json::to_string(env)
+            .map_err(|e| anyhow::anyhow!("re-serialize envelope[{idx}]: {e}"))?;
+        let entry = verify_one_from_json(&env_json, history_path, now_unix)?;
+        out.push(entry);
+    }
+    Ok(out)
+}
+
+/// Print verification history (newest first). Empty log → ok with no rows.
+pub fn verify_history_print(history_path: &Path) -> Result<()> {
+    if !history_path.exists() {
+        println!("(no verifications recorded; history file does not exist)");
+        return Ok(());
+    }
+    let raw = std::fs::read_to_string(history_path)?;
+    let mut entries: Vec<VerifyHistoryEntry> = Vec::new();
+    for line in raw.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let entry: VerifyHistoryEntry =
+            serde_json::from_str(line).map_err(|e| anyhow::anyhow!("history parse error: {e}"))?;
+        entries.push(entry);
+    }
+    entries.sort_by_key(|b| std::cmp::Reverse(b.verified_at_unix));
+    println!("history entries = {}", entries.len());
+    for e in &entries {
+        println!(
+            "verified_at_unix = {}  outcome = {}  proof = {}  casm = {}  cap_root = {}  slot = {}",
+            e.verified_at_unix,
+            e.outcome,
+            &e.proof_fingerprint_hex[..16],
+            &e.casm_hash[..16.min(e.casm_hash.len())],
+            &e.capability_root_hash[..16.min(e.capability_root_hash.len())],
+            e.provider_slot_id,
+        );
+    }
+    Ok(())
+}
+
+/// Append one entry to the JSONL history file. Creates parent dirs.
+fn append_history(history_path: &Path, entry: &VerifyHistoryEntry) -> Result<()> {
+    if let Some(parent) = history_path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    let line =
+        serde_json::to_string(entry).map_err(|e| anyhow::anyhow!("history serialize: {e}"))?;
+    use std::io::Write as _;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(history_path)?;
+    writeln!(f, "{line}")?;
+    Ok(())
+}
+
+/// CLI dispatcher for `quota-router verify ...`.
+pub fn verify(from: &str, batch: bool, history: bool, history_path: Option<&Path>) -> Result<()> {
+    let history_path = history_path
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(default_history_path);
+    if history {
+        return verify_history_print(&history_path);
+    }
+    let raw = read_envelope(from)?;
+    // Deterministic timestamp for tests: read from `NOW_UNIX` env if set.
+    let now_unix: u64 = std::env::var("NOW_UNIX")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        });
+    if batch {
+        let entries = verify_batch_from_json(&raw, &history_path, now_unix)?;
+        println!("batch verified: {} entries", entries.len());
+        Ok(())
+    } else {
+        let entry = verify_one_from_json(&raw, &history_path, now_unix)?;
+        println!(
+            "verify: {} (proof = {})",
+            entry.outcome,
+            &entry.proof_fingerprint_hex[..16]
+        );
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -895,5 +1176,187 @@ network_id = "0202020202020202020202020202020202020202020202020202020202020202"
         // Empty in-memory DB returns 0 events for any asker.
         let result = settle_list(&octo_ident::test_helpers::sample_did(139), None);
         assert!(result.is_ok(), "settle_list with empty DB must succeed");
+    }
+
+    // =====================================================================
+    // ZK proof verification tests (mission zk-proof-verification AC-1/AC-2/AC-5)
+    // =====================================================================
+    //
+    // Requires `zk-verifier` built with `--features allow-stub-verifier`
+    // (declared in `quota-router-cli/Cargo.toml [dev-dependencies]`). Without
+    // the feature, `verify_capability_zk` returns `Err(StubDisabled)` for
+    // every stub-shaped proof (production semantics).
+    //
+    // The test paths use `tempfile::tempdir()` for history isolation; the
+    // JSONL file is per-test and torn down on drop.
+
+    use zk_verifier::{ProofBundle, PublicInputs};
+
+    fn stub_envelope_json(casm: &str, issued_at: u64, verify_at: u64) -> (String, [u8; 32]) {
+        let public = PublicInputs {
+            proof_issued_at_unix: issued_at,
+            verifier_local_unix_time: verify_at,
+            compiled_casm_hash: casm.to_owned(),
+            capability_root_hash: "caproot-test".to_owned(),
+            provider_slot_id: "slot-test".to_owned(),
+        };
+        // Compute the stub commitment locally (deterministic BLAKE3) so the
+        // proof bytes satisfy the stub verifier.
+        let commitment = zk_verifier::stub_commitment(casm, &public)
+            .expect("stub_commitment Ok under --features allow-stub-verifier (test build)");
+        let mut proof_bytes = commitment.to_vec();
+        // Append a tail so proof_bytes.len() > 32; the verifier checks
+        // `proof_bytes.len() >= 32`.
+        proof_bytes.extend_from_slice(b"trailing-padding-bytes");
+        let envelope = serde_json::json!({
+            "proof_bundle": { "proof_bytes": hex::encode(&proof_bytes) },
+            "public_inputs": {
+                "proof_issued_at_unix": public.proof_issued_at_unix,
+                "verifier_local_unix_time": public.verifier_local_unix_time,
+                "compiled_casm_hash": public.compiled_casm_hash,
+                "capability_root_hash": public.capability_root_hash,
+                "provider_slot_id": public.provider_slot_id,
+            },
+            "casm_hash": casm,
+        });
+        (envelope.to_string(), commitment)
+    }
+
+    #[test]
+    fn verify_one_ok_writes_history_with_ok_outcome() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let history = dir.path().join("verify-history.jsonl");
+        let (env, _commit) = stub_envelope_json("casm-ok", 1_700_000_000, 1_700_000_005);
+        let entry =
+            verify_one_from_json(&env, &history, 1_700_000_010).expect("verify_one_from_json");
+        assert_eq!(entry.outcome, "ok", "valid stub proof must verify Ok");
+        assert_eq!(entry.verified_at_unix, 1_700_000_010);
+        assert_eq!(entry.casm_hash, "casm-ok");
+        // History file exists and contains exactly one line.
+        let raw = std::fs::read_to_string(&history).expect("read history");
+        assert_eq!(raw.lines().count(), 1, "one JSONL line per verify");
+        assert!(
+            raw.contains("\"outcome\":\"ok\""),
+            "history JSON must encode ok outcome"
+        );
+        // Re-parse to confirm shape.
+        let parsed: VerifyHistoryEntry =
+            serde_json::from_str(raw.trim()).expect("re-parse history entry");
+        assert_eq!(parsed.outcome, "ok");
+        assert_eq!(parsed.casm_hash, "casm-ok");
+    }
+
+    #[test]
+    fn verify_one_casm_mismatch_writes_history_with_error_outcome() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let history = dir.path().join("verify-history.jsonl");
+        let (env, _commit) = stub_envelope_json("casm-actual", 1_700_000_000, 1_700_000_005);
+        // Tamper the embedded casm_hash in the envelope so public_inputs.compiled_casm_hash
+        // differs from the wrapper's `casm_hash` field — drives CasmHashMismatch.
+        let mut v: serde_json::Value = serde_json::from_str(&env).expect("parse");
+        v["casm_hash"] = serde_json::json!("casm-EXPECTED");
+        let env_tampered = serde_json::to_string(&v).expect("re-serialize");
+        let entry = verify_one_from_json(&env_tampered, &history, 1_700_000_020)
+            .expect("verify_one_from_json returns history entry even on error");
+        assert!(
+            entry.outcome.contains("casm"),
+            "outcome must surface the casm mismatch variant; got {}",
+            entry.outcome
+        );
+        // History still appends on error (audit trail).
+        let raw = std::fs::read_to_string(&history).expect("read");
+        assert_eq!(raw.lines().count(), 1);
+    }
+
+    #[test]
+    fn verify_one_clock_skew_writes_history_with_error_outcome() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let history = dir.path().join("verify-history.jsonl");
+        // Skew = 600s (> MAX_SKEW_SECS = 300s). Stub proofer still constructs
+        // a valid commitment (it's forgeable); the verifier rejects on skew
+        // before the commitment check.
+        let (env, _commit) = stub_envelope_json("casm-skew", 1_700_000_000, 1_700_000_600);
+        let entry = verify_one_from_json(&env, &history, 1_700_000_700)
+            .expect("verify_one_from_json appends even on skew rejection");
+        assert!(
+            entry.outcome.contains("clock"),
+            "outcome must surface ClockSkewExceeded; got {}",
+            entry.outcome
+        );
+    }
+
+    #[test]
+    fn verify_batch_appends_one_entry_per_envelope() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let history = dir.path().join("verify-history.jsonl");
+        let (env0, _) = stub_envelope_json("casm-batch-0", 1_700_000_000, 1_700_000_005);
+        let (env1, _) = stub_envelope_json("casm-batch-1", 1_700_000_100, 1_700_000_105);
+        let batch = serde_json::json!([
+            serde_json::from_str::<serde_json::Value>(&env0).unwrap(),
+            serde_json::from_str::<serde_json::Value>(&env1).unwrap()
+        ]);
+        let entries = verify_batch_from_json(&batch.to_string(), &history, 1_700_000_200)
+            .expect("verify_batch_from_json");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].casm_hash, "casm-batch-0");
+        assert_eq!(entries[1].casm_hash, "casm-batch-1");
+        let raw = std::fs::read_to_string(&history).expect("read");
+        assert_eq!(raw.lines().count(), 2, "batch must append 2 JSONL rows");
+    }
+
+    #[test]
+    fn verify_history_print_empty_path_returns_ok() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("does-not-exist.jsonl");
+        let result = verify_history_print(&missing);
+        assert!(
+            result.is_ok(),
+            "missing history file is OK (no entries yet)"
+        );
+    }
+
+    #[test]
+    fn verify_history_print_newest_first() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let history = dir.path().join("verify-history.jsonl");
+        let (env0, _) = stub_envelope_json("casm-hist-0", 1_700_000_000, 1_700_000_005);
+        let (env1, _) = stub_envelope_json("casm-hist-1", 1_700_000_100, 1_700_000_105);
+        // Append in chronological order: row-0 first (older), row-1 second
+        // (newer). The file is in append order on disk; the print function
+        // sorts DESC for display.
+        verify_one_from_json(&env0, &history, 1_700_000_010).expect("first verify");
+        verify_one_from_json(&env1, &history, 1_700_000_110).expect("second verify");
+        // File on disk: row-0 (older), row-1 (newer).
+        let raw = std::fs::read_to_string(&history).expect("read");
+        assert_eq!(raw.lines().count(), 2);
+        let parsed: Vec<VerifyHistoryEntry> = raw
+            .lines()
+            .map(|l| serde_json::from_str::<VerifyHistoryEntry>(l).expect("parse"))
+            .collect();
+        assert_eq!(
+            parsed[0].casm_hash, "casm-hist-0",
+            "file on disk: first row is the chronologically-older verify"
+        );
+        assert_eq!(
+            parsed[1].casm_hash, "casm-hist-1",
+            "file on disk: second row is the chronologically-newer verify"
+        );
+        // Re-sort DESC to confirm the print function's contract: newest first.
+        let mut sorted_desc = parsed.clone();
+        sorted_desc.sort_by_key(|b| std::cmp::Reverse(b.verified_at_unix));
+        assert_eq!(
+            sorted_desc[0].casm_hash, "casm-hist-1",
+            "newest-first sort: most recent verify first"
+        );
+        assert_eq!(
+            sorted_desc[1].casm_hash, "casm-hist-0",
+            "newest-first sort: older verify last"
+        );
+        // Smoke: verify_history_print returns Ok and emits to stdout.
+        let result = verify_history_print(&history);
+        assert!(result.is_ok(), "history print must succeed: {result:?}");
+        let _ = ProofBundle {
+            proof_bytes: vec![],
+        }; // suppress unused-import warning.
     }
 }

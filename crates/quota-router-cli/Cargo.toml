@@ -58,6 +58,14 @@ uuid.workspace = true
 parking_lot.workspace = true
 hex = "0.4"
 
+# ZK verifier substrate (mission zk-proof-verification AC-1 + AC-2 + AC-5).
+# 0958-a shipped `verify_capability_zk` + `PublicInputs` + `ProofBundle` +
+# `ProverError` in `crates/zk-verifier/`. The CLI calls through this surface
+# for the `verify` subcommands. The stub proofer (for dev/CI without
+# `libstwo_sys.so`) is opt-in via `--features allow-stub-verifier` on the
+# `zk-verifier` crate; production builds fail closed with `StubDisabled`.
+zk-verifier = { path = "../zk-verifier" }
+
 # Logging
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -81,3 +89,14 @@ path = "src/main.rs"
 # compiles without the C++ dependencies that may be pulled in transitively.
 # Production deploys must enable this feature.
 stoolap = ["octo-reputation/stoolap"]
+# Test-only flag that propagates `allow-stub-verifier` to zk-verifier so
+# `cargo test` can exercise the stub proofer hermetically (no libstwo_sys.so).
+# NOT enabled in production builds — the stub proofer is forgeable by design.
+allow-stub-verifier = ["zk-verifier/allow-stub-verifier"]
+
+[dev-dependencies]
+# Enable the stub proofer for unit tests only. Production release builds
+# do NOT propagate this feature (cargo feature unification scopes to the
+# `dev-dependencies` declaration under `cargo test`).
+zk-verifier = { path = "../zk-verifier", features = ["allow-stub-verifier"] }
+tempfile = "3"

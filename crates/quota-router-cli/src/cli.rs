@@ -134,6 +134,44 @@ pub enum Commands {
         #[arg(long)]
         db_path: Option<String>,
     },
+
+    /// Verify ZK capability proofs (mission zk-proof-verification AC-1 / AC-2 / AC-5).
+    ///
+    /// Sub-modes (mutually exclusive):
+    ///   --from <path-or-"-">    Verify a single proof JSON envelope
+    ///   --batch --from <path>    Verify a batch (JSON array of envelopes)
+    ///   history                  Print verification history (JSONL log)
+    ///
+    /// Envelope schema (single proof):
+    /// ```json
+    /// {
+    ///   "proof_bundle":   { "proof_bytes": "<hex>" },
+    ///   "public_inputs":  { "proof_issued_at_unix": 1700000000,
+    ///                        "verifier_local_unix_time": 1700000005,
+    ///                        "compiled_casm_hash": "<hex>",
+    ///                        "capability_root_hash": "<hex>",
+    ///                        "provider_slot_id": "slot-a" },
+    ///   "casm_hash":      "<hex>"
+    /// }
+    /// ```
+    /// Batch envelope: top-level JSON array of single envelopes.
+    ///
+    /// History defaults to `${XDG_DATA_HOME:-~/.local/share}/quota-router/verify-history.jsonl`
+    /// (override via `--history-path`).
+    Verify {
+        /// Path to proof JSON file, or `-` for stdin. Ignored when sub-mode is `history`.
+        #[arg(long, default_value = "-")]
+        from: String,
+        /// Batch mode: input is a JSON array of single envelopes.
+        #[arg(long, default_value_t = false)]
+        batch: bool,
+        /// Print verification history (newest first).
+        #[arg(long, default_value_t = false)]
+        history: bool,
+        /// Override the verification history file path.
+        #[arg(long)]
+        history_path: Option<PathBuf>,
+    },
 }
 
 #[cfg(test)]
@@ -278,6 +316,89 @@ mod tests {
                 assert!(!strict_deprecation);
             }
             _ => panic!("expected ReputationShow"),
+        }
+    }
+
+    #[test]
+    fn parse_verify_default_single_mode() {
+        // No flags: single-mode, `--from -` (stdin), history off.
+        let cli = Cli::try_parse_from(["quota-router", "verify"]);
+        let cli = cli.expect("verify default args should parse");
+        match cli.command {
+            Commands::Verify {
+                from,
+                batch,
+                history,
+                history_path,
+            } => {
+                assert_eq!(from, "-");
+                assert!(!batch);
+                assert!(!history);
+                assert!(history_path.is_none());
+            }
+            _ => panic!("expected Verify"),
+        }
+    }
+
+    #[test]
+    fn parse_verify_batch_with_from() {
+        let cli = Cli::try_parse_from([
+            "quota-router",
+            "verify",
+            "--batch",
+            "--from",
+            "/tmp/proofs.json",
+        ]);
+        let cli = cli.expect("verify --batch --from should parse");
+        match cli.command {
+            Commands::Verify {
+                from,
+                batch,
+                history,
+                history_path,
+            } => {
+                assert_eq!(from, "/tmp/proofs.json");
+                assert!(batch);
+                assert!(!history);
+                assert!(history_path.is_none());
+            }
+            _ => panic!("expected Verify"),
+        }
+    }
+
+    #[test]
+    fn parse_verify_history_with_path_override() {
+        // `--history` is a flag (not a subcommand); `--history-path` overrides
+        // the default XDG location. Both flags must coexist on the same
+        // command line.
+        let cli = Cli::try_parse_from([
+            "quota-router",
+            "verify",
+            "--history",
+            "--history-path",
+            "/var/log/verify.jsonl",
+        ]);
+        let cli = cli.expect("verify --history --history-path should parse");
+        match cli.command {
+            Commands::Verify {
+                history,
+                history_path,
+                ..
+            } => {
+                assert!(history);
+                assert_eq!(history_path, Some(PathBuf::from("/var/log/verify.jsonl")));
+            }
+            _ => panic!("expected Verify"),
+        }
+    }
+
+    #[test]
+    fn parse_verify_history_flag_explicit() {
+        let cli = Cli::try_parse_from(["quota-router", "verify", "--history"]);
+        let cli = cli.expect("verify --history flag should parse");
+        match cli.command {
+            Commands::Verify { history, .. } => assert!(history),
+            _ => panic!("expected Verify"),
         }
     }
 }

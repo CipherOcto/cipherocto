@@ -47,6 +47,12 @@ async fn main() -> Result<()> {
         Commands::SettleList { asker_did, db_path } => {
             cmd::settle_list(&asker_did, db_path.as_deref())?;
         }
+        Commands::Verify {
+            from,
+            batch,
+            history,
+            history_path,
+        } => cmd::verify(&from, batch, history, history_path.as_deref())?,
     }
 
     Ok(())

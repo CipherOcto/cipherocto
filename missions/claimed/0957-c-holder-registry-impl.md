@@ -30,7 +30,7 @@ Manual redacting `Debug` impls on all security-bearing structs: redacts `cap_roo
 
 ### Debug redaction (RFC-0957-A1 §Security)
 
-- [ ] Manual `impl Debug for HolderRecord` — partial only: `cap_root_hash`, `holder_pub`, `caveats_canonical`, and `ask_id` are redacted, but `revoked_at_millis_unix` is printed as `Some(timestamp)` rather than `None`; deferred security correction. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `debug_redacts_credential_material`, `tv13_debug_redaction_holds_across_schema` (neither asserts revoked-timestamp redaction).]
+- [x] Manual `impl Debug for HolderRecord` — all five credential-material fields are now redacted: `cap_root_hash`, `holder_pub`, `caveats_canonical`, `ask_id`, and `revoked_at_millis_unix` (the last via `Option::map(|_| "<redacted>")`, mirroring the `ask_id` pattern). The existing `debug_redacts_credential_material` test was tightened to assert no `1700000000000` substring leak in the rendered Debug output, and a new `debug_redacts_revoked_at_millis_unix` test was added to cover the revoked-state case explicitly. [commit pending — see §Closure; tests `debug_redacts_credential_material`, `debug_redacts_revoked_at_millis_unix`, `tv13_debug_redaction_holds_across_schema` (should still pass — no behavior change visible above the redaction surface).]
 - [x] Manual `impl Debug for HolderKind` displays variant name only. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `debug_is_variant_name_only`.]
 - [x] Unit test that `format!("{:?}", record)` does not contain byte sequences from `cap_root_hash` or `holder_pub`. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `debug_redacts_credential_material`, `tv13_debug_redaction_holds_across_schema`.]
 
@@ -205,3 +205,50 @@ This sub-mission implements (per top-level Type Coverage table):
 - `missions/claimed/0957-c-holder-registry-impl.md`
 
 **NOT touched:** stoolap fork (`feat/blockchain-sql`); all implementation and migration changes are CIPHEROCTO-side.
+
+### Revoke-timestamp redaction closure (2026-08-06)
+
+Round 2 close-out — addresses the §Deferred follow-up item "*HolderRecord revoked-timestamp redaction*". The 4-AC open list had 2 in-0957-c items (L33 + L64) and 2 explicit cross-mission deferrals (L39 gossip, L47 0969-b atomicity). L33 was the only in-scope Band A item; this round flips it green.
+
+**Changes:**
+
+- `crates/quota-router-storage/src/holder_record.rs` — manual `Debug for HolderRecord` now redacts `revoked_at_millis_unix` via `Option::map(|_| "<redacted>")`, mirroring the `ask_id` pattern. The five credential-material fields are now uniformly redacted: `cap_root_hash`, `holder_pub`, `caveats_canonical`, `ask_id`, and `revoked_at_millis_unix`.
+- `crates/quota-router-storage/src/holder_record.rs` — testing surface tightened:
+  - `debug_redacts_credential_material` now constructs a record with `revoked_at_millis_unix = Some(1_700_000_000_000)` and asserts the literal `1700000000000` substring does NOT appear in the rendered Debug output. `ttl_millis_unix` is set to `0` so the substring search does not collide with the un-redacted TTL field.
+  - New test `debug_redacts_revoked_at_millis_unix` (24 lines) explicitly verifies the revoked-state redaction contract: redacted marker present, literal timestamp absent, both for the revoked and the unrevoked rendering.
+
+**Commit subject (pending):**
+
+`fix(quota-router-storage): redact revoked_at_millis_unix in HolderRecord Debug (RFC-0957-A1 §Security)`
+
+**Verification commands and outputs:**
+
+- `cargo test -p quota-router-storage --lib holder_record` — PASS; 9 passed, 0 failed.
+- `cargo test -p quota-router-storage --lib` — PASS; 162 passed, 0 failed (was 160 before this round; +2 new/strengthened tests).
+- `cargo clippy -p quota-router-storage --all-targets -- -D warnings` — PASS; clean.
+- `cargo fmt -p quota-router-storage --all -- --check` — PASS; clean.
+
+**AC walk count (post-Round 2):**
+
+| Acceptance-criteria section        |  `[x]` | `[ ]` |
+| ---------------------------------- | -----: | ----: |
+| Type definitions                   |      5 |     0 |
+| Debug redaction                    |      3 |     0 |
+| Cross-node mint verifiability (G5) |      0 |     1 |
+| 4-kind agnosticism (G6)            |      1 |     0 |
+| Atomicity (G8)                     |      0 |     1 |
+| Test vectors                       |      8 |     0 |
+| Cross-crate compat                 |      3 |     1 |
+| **Total**                          | **20** | **3** |
+
+**Remaining open ACs (all explicit cross-mission or out-of-scope, per [[deferred-vs-unspecified]]):**
+
+- *Debug redaction*: 0 open — section is now fully green.
+- *Cross-node mint verifiability (G5)*: 1 open — `sync_peers()` is an `Ok(())` stub; RFC-0862 gossip + node-A / node-B integration test is owned by the prospective 0957-c-gossip sub-mission (TV5). Not a 0957-c Band A item.
+- *Atomicity (G8)*: 1 open — `TransactionExt::insert_dual` algorithm + forced-failure rollback test is owned by 0969-b under the co-author contract (TV11). Explicit deferral target.
+- *Cross-crate compat*: 1 open — `cargo clippy --workspace --all-targets --all-features -- -D warnings` fails in unrelated `tdlib-rs` (feature-conflict + missing `TDLIB_VERSION`). Package-scoped `quota-router-storage` clippy is clean. Out of 0957-c scope.
+
+**Unblock surface:**
+
+- L33 close → unblocks 0957-d wire-resolver-update (which reads `HolderRecord` Debug output for downstream transport — see §Pull Request).
+- L39 / L47 / L64 remain explicit cross-mission deferrals with named owners; no Band A follow-up proposed here.

@@ -122,7 +122,10 @@ impl std::fmt::Debug for HolderRecord {
             .field("ask_id", &self.ask_id.map(|_| "<redacted 32 bytes>"))
             .field("mint_at_millis_unix", &self.mint_at_millis_unix)
             .field("ttl_millis_unix", &self.ttl_millis_unix)
-            .field("revoked_at_millis_unix", &self.revoked_at_millis_unix)
+            .field(
+                "revoked_at_millis_unix",
+                &self.revoked_at_millis_unix.map(|_| "<redacted>"),
+            )
             .finish()
     }
 }
@@ -328,13 +331,17 @@ mod tests {
 
     #[test]
     fn debug_redacts_credential_material() {
-        let r = HolderRecord::from_bearer(
+        let mut r = HolderRecord::from_bearer(
             &bearer(),
             &[0x77; 32],
             &octo_ident::test_helpers::sample_did(229),
             [0xAB; 32],
-            1_700_000_000_000,
+            0,
         );
+        // Force a revocation; the timestamp MUST NOT leak in Debug output.
+        // Use a sentinel value distinct from any other field so the substring
+        // search does not collide with `ttl_millis_unix` (un-redacted).
+        r.revoked_at_millis_unix = Some(1_700_000_000_000);
         let s = format!("{:?}", r);
         assert!(s.contains("redacted"), "expected redaction: {s}");
         // Original bytes must NOT appear in the debug output.
@@ -344,6 +351,47 @@ mod tests {
         assert!(!s.contains("7777"), "leaked holder_pub bytes: {s}");
         // The ask_id is [0xAB; 32] = "ABAB...".
         assert!(!s.contains("ABAB"), "leaked ask_id bytes: {s}");
+        // The revoked-at timestamp MUST NOT leak (RFC-0957-A1 §Security).
+        assert!(
+            !s.contains("1700000000000"),
+            "leaked revoked_at_millis_unix timestamp: {s}"
+        );
+    }
+
+    #[test]
+    fn debug_redacts_revoked_at_millis_unix() {
+        // TV13 contract: revoked-at timestamp is timing side-channel metadata
+        // per RFC-0957-A1 §Security. Redact it like `ask_id` (Option<T>.map).
+        let mut r = HolderRecord::from_bearer(
+            &bearer(),
+            &[0x77; 32],
+            &octo_ident::test_helpers::sample_did(229),
+            [0xAB; 32],
+            0,
+        );
+        let s_unrevoked = format!("{:?}", r);
+        // Revoke the record at a sentinel that nothing else in the record
+        // emits (ttl_millis_unix=0, no mint/populated timestamps).
+        r.revoked_at_millis_unix = Some(1_700_000_000_000);
+        let s_revoked = format!("{:?}", r);
+        // The generated Debug must NOT embed the literal timestamp.
+        assert!(
+            !s_revoked.contains("1700000000000"),
+            "revoked Debug output leaked timestamp: {s_revoked}"
+        );
+        // The redacted marker MUST appear instead.
+        assert!(
+            s_revoked.contains("<redacted>"),
+            "revoked Debug output missing <redacted> marker: {s_revoked}"
+        );
+        // Unrevoked record has Option-outer None — different rendered form.
+        // Both forms must NOT contain the literal timestamp value (defense in
+        // depth: even if a future change leaks Some(_), the inner value is
+        // still redacted).
+        assert!(
+            !s_unrevoked.contains("1700000000000"),
+            "unrevoked Debug output leaked timestamp: {s_unrevoked}"
+        );
     }
 
     #[test]

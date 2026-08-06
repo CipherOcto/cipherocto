@@ -121,28 +121,37 @@ mod ed25519_sig_serde {
 impl CapabilityToken {
     /// Mint a capability token: generate macaroon + holder signature.
     ///
-    /// The catalog is required for the `WrappedOnly` chain guard (RFC-0965
-    /// §3.7) — every attenuation funnels through `Macaroon::attenuate`,
-    /// which walks the parent chain via the catalog. For tokens that do
-    /// not carry any `WrappedOnly` caveats, an empty catalog suffices.
+    /// **0957-e amendment (mission 0957-e; RFC-0957-A1 §Persistence-Free Mint):**
+    /// 4-arg persistence-free signature per RFC-0957-A1 G3. The `catalog`
+    /// and `Option<&mut Transaction>` parameters are REMOVED; mint is pure
+    /// crypto (R6-C3 fix). Persistence is handled by the caller via
+    /// `TransactionExt::insert_holder_record` (single) or
+    /// `TransactionExt::insert_dual` (atomic pair insert per RFC-0969).
+    ///
+    /// Initial caveats are appended via `Macaroon::extend_chain` (pub(crate)
+    /// helper) WITHOUT the catalog-based `WrappedOnly` chain guard. The
+    /// guard is enforced at `attenuate` / `attenuate_with_signer` time
+    /// (caller responsibility) and at `verify_full` time (verifier
+    /// responsibility) — NOT at mint. This breaks the double-insert
+    /// contradiction between prior 5-arg `mint` (post-write hook auto-
+    /// inserted into `HolderRegistry`) and RFC-0969 `mint_dual` (atomic
+    /// pair insert).
     ///
     /// # Errors
-    /// Returns `MacaroonError::OsRng` on RNG failure, `WrappedCycle` /
-    /// `WrappedDepthExceeded` / `WrappedParentNotFound` if the catalog
-    /// rejects the assembled chain.
+    /// Returns `MacaroonError::OsRng` on RNG failure. Initial caveat
+    /// append via `extend_chain` cannot fail (no catalog check).
     pub fn mint(
         root_secret: &[u8; 32],
         holder: &IdentityKey,
-        holder_did: impl Into<String>,
-        initial_caveats: Vec<Caveat>,
-        catalog: &dyn CapabilityCatalog,
+        holder_did: &str,
+        initial_caveats: &[Caveat],
     ) -> Result<Self, MintError> {
         let mut macaroon = Macaroon::mint(root_secret)?;
         for caveat in initial_caveats {
-            macaroon = macaroon.attenuate(caveat, catalog)?;
+            macaroon = macaroon.extend_chain(caveat.clone());
         }
         let holder_pub = holder.public_key_bytes();
-        let holder_did = holder_did.into();
+        let holder_did = holder_did.to_owned();
 
         let msg = Self::holder_msg(&macaroon.root_id, &macaroon.caveats);
         let holder_sig = holder.sign(&msg);
@@ -289,14 +298,12 @@ mod tests {
     fn mint_and_verify_holder_sig() {
         let holder = IdentityKey::generate().unwrap();
         let root_secret = [0x42; 32];
-        let caveats = vec![Caveat::Model("gpt-4".to_owned())];
-        let catalog = empty_catalog();
+        let caveats = [Caveat::Model("gpt-4".to_owned())];
         let token = CapabilityToken::mint(
             &root_secret,
             &holder,
-            octo_ident::test_helpers::sample_did(104),
-            caveats,
-            &catalog,
+            &octo_ident::test_helpers::sample_did(104),
+            &caveats,
         )
         .unwrap();
         token.verify_holder_sig().unwrap();
@@ -310,9 +317,8 @@ mod tests {
         let token = CapabilityToken::mint(
             &root_secret,
             &holder,
-            octo_ident::test_helpers::sample_did(104),
-            vec![],
-            &catalog,
+            &octo_ident::test_helpers::sample_did(104),
+            &[],
         )
         .unwrap();
         let attenuated = token
@@ -330,9 +336,8 @@ mod tests {
         let token = CapabilityToken::mint(
             &root_secret,
             &holder,
-            octo_ident::test_helpers::sample_did(104),
-            vec![],
-            &catalog,
+            &octo_ident::test_helpers::sample_did(104),
+            &[],
         )
         .unwrap();
         let broken = token

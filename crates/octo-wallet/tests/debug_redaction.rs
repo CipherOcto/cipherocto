@@ -228,15 +228,9 @@ fn macaroon_debug_does_not_leak_chain_or_root_secret_hash() {
 #[test]
 fn capability_token_debug_does_not_leak_holder_sig_or_chain() {
     let holder = IdentityKey::from_seed(SEED_MARKER);
-    let catalog = TestCatalog::default();
-    let token = CapabilityToken::mint(
-        &ROOT_SECRET_MARKER,
-        &holder,
-        sample_did(192),
-        vec![Caveat::Model("gpt-4".to_owned())],
-        &catalog,
-    )
-    .unwrap();
+    let caveats = [Caveat::Model("gpt-4".to_owned())];
+    let token =
+        CapabilityToken::mint(&ROOT_SECRET_MARKER, &holder, &sample_did(192), &caveats).unwrap();
     let out = format!("{token:?}");
     assert_no_marker("CapabilityToken (holder seed)", &out);
     // holder_sig is derived from holder.sign(...); it does NOT contain
@@ -256,15 +250,7 @@ fn capability_token_debug_does_not_leak_holder_sig_or_chain() {
 #[test]
 fn private_witness_debug_does_not_leak_root_secret_or_holder_sig() {
     let holder = IdentityKey::from_seed(SEED_MARKER);
-    let catalog = TestCatalog::default();
-    let token = CapabilityToken::mint(
-        &ROOT_SECRET_MARKER,
-        &holder,
-        sample_did(192),
-        vec![],
-        &catalog,
-    )
-    .unwrap();
+    let token = CapabilityToken::mint(&ROOT_SECRET_MARKER, &holder, &sample_did(192), &[]).unwrap();
     let witness = PrivateWitness {
         cap_root_secret: ROOT_SECRET_MARKER,
         holder_sig: token.holder_sig,
@@ -423,22 +409,17 @@ fn debug_works_end_to_end_with_no_panic() {
     // This catches any field-ordering / generic-bound errors in the
     // manual Debug impl.
     let holder = IdentityKey::from_seed(SEED_MARKER);
-    let catalog = TestCatalog::default();
-    let token = CapabilityToken::mint(
-        &ROOT_SECRET_MARKER,
-        &holder,
-        sample_did(3),
-        vec![
-            Caveat::Model("gpt-4".to_owned()),
-            Caveat::Before(1_700_000_000),
-        ],
-        &catalog,
-    )
-    .unwrap();
+    let caveats = [
+        Caveat::Model("gpt-4".to_owned()),
+        Caveat::Before(1_700_000_000),
+    ];
+    let token =
+        CapabilityToken::mint(&ROOT_SECRET_MARKER, &holder, &sample_did(3), &caveats).unwrap();
     let _ = format!("{token:?}");
     let _ = format!("{token:#?}");
 
     // Exercise an attenuated token too.
+    let catalog = TestCatalog::default();
     let next = token
         .attenuate_with_signer(Caveat::Model("gpt-3.5-turbo".to_owned()), &holder, &catalog)
         .unwrap();

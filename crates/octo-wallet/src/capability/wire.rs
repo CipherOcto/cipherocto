@@ -314,7 +314,6 @@ mod json_canon {
 mod tests {
     use super::*;
     use crate::capability::caveat::Caveat;
-    use crate::capability::macaroon::InMemoryCatalog;
     use crate::identity::IdentityKey;
 
     #[test]
@@ -369,13 +368,12 @@ mod tests {
     fn wire_format_three_segments() {
         let holder = IdentityKey::generate().unwrap();
         let root_secret = [0x42; 32];
-        let catalog = InMemoryCatalog::default();
+        let caveats = [Caveat::Before(1_700_000_000)];
         let token = CapabilityToken::mint(
             &root_secret,
             &holder,
-            octo_ident::test_helpers::sample_did(2),
-            vec![Caveat::Before(1_700_000_000)],
-            &catalog,
+            &octo_ident::test_helpers::sample_did(2),
+            &caveats,
         )
         .unwrap();
         let wire = serialize_wire(&token).unwrap();
@@ -390,13 +388,12 @@ mod tests {
     fn wire_roundtrip() {
         let holder = IdentityKey::generate().unwrap();
         let root_secret = [0x42; 32];
-        let catalog = InMemoryCatalog::default();
+        let caveats = [Caveat::Before(1_700_000_000)];
         let token = CapabilityToken::mint(
             &root_secret,
             &holder,
-            octo_ident::test_helpers::sample_did(2),
-            vec![Caveat::Before(1_700_000_000)],
-            &catalog,
+            &octo_ident::test_helpers::sample_did(2),
+            &caveats,
         )
         .unwrap();
         let wire = serialize_wire(&token).unwrap();
@@ -416,13 +413,12 @@ mod tests {
     fn v1_parser_ignores_v2_fourth_segment() {
         let holder = IdentityKey::generate().unwrap();
         let root_secret = [0x42; 32];
-        let catalog = InMemoryCatalog::default();
+        let caveats = [Caveat::Before(1_700_000_000)];
         let token = CapabilityToken::mint(
             &root_secret,
             &holder,
-            octo_ident::test_helpers::sample_did(2),
-            vec![Caveat::Before(1_700_000_000)],
-            &catalog,
+            &octo_ident::test_helpers::sample_did(2),
+            &caveats,
         )
         .unwrap();
         // Synthesize v2 wire: append a 4th segment.

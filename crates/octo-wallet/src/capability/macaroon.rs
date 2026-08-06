@@ -255,7 +255,13 @@ impl Macaroon {
     /// and `attenuate_unchecked_for_test` (unchecked). Pushes the new
     /// caveat, derives `chain[i+1]` = HMAC(chain[i], caveat_name ||
     /// canonical_ser(caveat) || capability_id_{i-1}), and recomputes id.
-    fn extend_chain(self, caveat: Caveat) -> Self {
+    ///
+    /// **0957-e amendment (mission 0957-e):** changed visibility to
+    /// `pub(crate)` so `CapabilityToken::mint` (RFC-0957-A1 §Persistence-Free
+    /// Mint, 4-arg signature) can append initial caveats without a catalog.
+    /// The catalog-based `WrappedOnly` chain guard remains on `attenuate`;
+    /// `mint` is pure crypto per RFC-0957-A1 G3.
+    pub(crate) fn extend_chain(self, caveat: Caveat) -> Self {
         let mut next = self;
         let prev_chain = *next.chain.last().expect("chain non-empty");
         let mut msg = Vec::with_capacity(caveat.name().as_str().len() + 64 + next.id.len());

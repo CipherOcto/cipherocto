@@ -11,37 +11,18 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use octo_ident::test_helpers::sample_did;
 use octo_wallet::capability::caveat::Caveat;
-use octo_wallet::capability::macaroon::{CapabilityCatalog, Macaroon};
 use octo_wallet::capability::{
     deserialize_wire, deserialize_wire_v2, serialize_wire, serialize_wire_v2,
 };
 use octo_wallet::capability::{CapabilityToken, ProofBundle, PublicInputs};
 use octo_wallet::identity::IdentityKey;
 
-/// Empty `CapabilityCatalog` for integration tests that don't use `WrappedOnly`
-/// caveats. `InMemoryCatalog` is `#[cfg(test)]`-only inside the crate, so
-/// integration tests inline a minimal stub.
-#[derive(Debug, Default)]
-struct EmptyCatalog;
-
-impl CapabilityCatalog for EmptyCatalog {
-    fn get(&self, _id: &[u8; 32]) -> Option<&Macaroon> {
-        None
-    }
-}
-
 fn sample_token() -> (CapabilityToken, IdentityKey) {
     let holder = IdentityKey::generate().expect("identity key");
     let root_secret = [0x42; 32];
-    let catalog = EmptyCatalog;
-    let token = CapabilityToken::mint(
-        &root_secret,
-        &holder,
-        sample_did(244),
-        vec![Caveat::Before(1_700_000_000)],
-        &catalog,
-    )
-    .expect("mint");
+    let caveats = [Caveat::Before(1_700_000_000)];
+    let token =
+        CapabilityToken::mint(&root_secret, &holder, &sample_did(244), &caveats).expect("mint");
     (token, holder)
 }
 

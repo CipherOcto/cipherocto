@@ -427,22 +427,30 @@ fn f_from_bytes_le(bytes: @ByteArray) -> Field {
 }
 
 fn f_from_bytes_le_2(bytes: @ByteArray) -> Field {
+    // Little-endian byte-to-u256 conversion: byte[0] is the LSB, byte[31] is the MSB.
+    // Iterate from i=31 down to 0 so the first byte processed (byte[31]) is
+    // multiplied by 256 the most times and ends up at the highest position.
     let mut acc: u256 = u256 { low: 0, high: 0 };
-    let mut i: usize = 0;
+    let mut i: usize = 32;
     loop {
-        if i == 32 {
+        if i == 0 {
             break;
         }
+        i -= 1;
         let b: u128 = bytes.at(i).unwrap().into();
         let wide: core::integer::u512 = core::integer::u256_wide_mul(
             acc, u256 { low: 256, high: 0 },
         );
         let shifted = u256 { low: wide.limb0, high: wide.limb1 };
         acc = shifted + u256 { low: b, high: 0 };
-        i += 1;
     }
     let p = f_p();
-    Field { v: acc % p.v }
+    let p_high = P_HIGH;
+    let p_lo = P_LOW;
+    let (r1, _) = sub_if_ge(acc, p.v, p_high, p_lo);
+    let (r2, _) = sub_if_ge(r1, p.v, p_high, p_lo);
+    let (r3, _) = sub_if_ge(r2, p.v, p_high, p_lo);
+    Field { v: r3 }
 }
 
 
@@ -518,6 +526,20 @@ fn pt_cof_mul(s_lo: u128, s_hi: u128, p: Point) -> Point {
     pt_double(r2)
 }
 
+// Helper: pick the X root with the desired parity.  In Ed25519 the sign bit
+// (byte 31 MSB of compressed form) encodes "X is negative" iff X mod 2 = 1.
+// Given a square root x, x and -x have opposite parities, so we pick the
+// root whose parity matches the encoded sign bit.
+fn pick_x_root(x: Field, sign_byte: u32) -> Field {
+    let sign_bit: u128 = ((sign_byte / 128) % 2).into();
+    let x_parity = x.v.low & 1;
+    if x_parity == sign_bit {
+        x
+    } else {
+        f_neg(x)
+    }
+}
+
 // =============================================================================
 // Public-key / signature decoding
 // =============================================================================
@@ -541,13 +563,9 @@ pub fn pubkey_decode(pk_bytes: @ByteArray) -> Option<Point> {
     };
     let x_v = pow_u256(x2.v, exp1, p_v);
     let x = Field { v: x_v };
+    let sign_byte: u32 = pk_bytes.at(31).unwrap().into();
     if f_eq(f_sq(x), x2) {
-        let sign_byte: u32 = pk_bytes.at(31).unwrap().into();
-        let x_chosen = if sign_byte / 128 % 2 == 1 {
-            f_neg(x)
-        } else {
-            x
-        };
+        let x_chosen = pick_x_root(x, sign_byte);
         let z = f_one();
         let t = f_mul(x_chosen, y);
         return Some(Point { x: x_chosen, y, z, t });
@@ -556,15 +574,11 @@ pub fn pubkey_decode(pk_bytes: @ByteArray) -> Option<Point> {
     let exp2 = u256 {
         low: 0xfffffffffffffffffffffffffffffffb, high: 0x1fffffffffffffffffffffffffffffff,
     };
-    let x_v2 = pow_u256(x2.v, exp2, p_v);
-    let x2_field = Field { v: x_v2 };
-    if f_eq(f_sq(x2_field), x2) {
-        let sign_byte: u32 = pk_bytes.at(31).unwrap().into();
-        let x_chosen = if sign_byte / 128 % 2 == 1 {
-            f_neg(x2_field)
-        } else {
-            x2_field
-        };
+    let sqrt_m1_v = pow_u256(u256 { low: 2, high: 0 }, exp2, p_v);
+    let sqrt_m1 = Field { v: sqrt_m1_v };
+    let x_prime = f_mul(x, sqrt_m1);
+    if f_eq(f_sq(x_prime), x2) {
+        let x_chosen = pick_x_root(x_prime, sign_byte);
         let z = f_one();
         let t = f_mul(x_chosen, y);
         return Some(Point { x: x_chosen, y, z, t });
@@ -1321,42 +1335,6 @@ mod tests {
             Option::None => { assert!(false, "pk must decode"); },
         };
     }
-
-    #[test]
-    fn debug_test_2b() {
-        // Verify A is on curve after pubkey_decode of vector 1 pk.
-        let mut pk: ByteArray = "";
-        let pk_bytes: Array<u8> = array![
-            0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7, 0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64,
-            0x07, 0x3a, 0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02, 0x1a, 0x68,
-            0xf7, 0x07, 0x51, 0x1a,
-        ];
-        let mut i: usize = 0;
-        loop {
-            if i == 32 {
-                break;
-            }
-            pk.append_byte(*pk_bytes.at(i));
-            i += 1;
-        }
-        let a_opt = pubkey_decode(@pk);
-        let a = match a_opt {
-            Option::Some(p) => p,
-            Option::None => {
-                assert!(false, "pubkey_decode returned None");
-                Point { x: f_zero(), y: f_zero(), z: f_zero(), t: f_zero() }
-            },
-        };
-        let _ = a;
-        // Verify A is on curve.
-        let x2 = f_mul(a.x, a.x);
-        let y2 = f_mul(a.y, a.y);
-        let lhs = f_sub(y2, x2);
-        let rhs = f_add(f_one(), f_mul(f_mul(f_d(), x2), y2));
-        let on_curve = f_eq(lhs, rhs);
-        assert!(on_curve, "A should be on curve");
-    }
-
 
     #[test]
     fn verify_rfc8032_vector_1() {

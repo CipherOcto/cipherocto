@@ -416,7 +416,7 @@ fn measure_current_casm_size() {
     let bytes_len = bytes.len();
     let kb = bytes_to_kb(bytes_len);
     let words = bytes_len / 32;
-    println!("AC-4 baseline: CASM bytes={bytes_len} ({kb:.2} KB), words={words}",);
+    println!("AC-4 baseline: CASM bytes={bytes_len} ({kb:.2} KB), words={words}");
     println!("AC-4 hard ceilings: 50 KB serialized / 1600 words (Round 18 fix F-122/F-139)");
 }
 

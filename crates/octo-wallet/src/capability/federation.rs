@@ -146,7 +146,10 @@ mod tests {
         for seed in 0u32..1000 {
             let mut hash = [0u8; 32];
             for (i, b) in hash.iter_mut().enumerate() {
-                *b = (seed.wrapping_add(i as u32) & 0xFF) as u8;
+                #[allow(clippy::cast_possible_truncation)]
+                {
+                    *b = (seed.wrapping_add(i as u32) & 0xFF) as u8;
+                }
             }
             let delta = FederationDelta {
                 cap_root_hash: hash,
@@ -170,10 +173,10 @@ mod tests {
         sizes.sort_unstable();
         // p99 = sizes[990] (1000-1 = 999, 0-indexed).
         let p99 = sizes[990];
-        assert!(p99 <= MAX_GOSSIP_PAYLOAD_BYTES, "p99 = {} bytes", p99);
+        assert!(p99 <= MAX_GOSSIP_PAYLOAD_BYTES, "p99 = {p99} bytes");
         // Sanity: max <= 1KB.
         let max = *sizes.last().unwrap();
-        assert!(max <= MAX_GOSSIP_PAYLOAD_BYTES, "max = {} bytes", max);
+        assert!(max <= MAX_GOSSIP_PAYLOAD_BYTES, "max = {max} bytes");
     }
 
     #[test]

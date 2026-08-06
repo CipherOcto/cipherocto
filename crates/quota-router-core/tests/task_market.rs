@@ -395,7 +395,7 @@ use quota_router_core::task_market::TaskMarketSlashing;
 #[test]
 fn task_market_slashing_register_then_slash_deducts_stake() {
     let mut slashing = TaskMarketSlashing::new();
-    slashing.register(&sample_did(251), 1_000_000);
+    slashing.register(sample_did(251), 1_000_000);
     let out = slashing
         .slash(&sample_did(251), SlashReason::Timeout, 1.0)
         .expect("slash");
@@ -407,7 +407,7 @@ fn task_market_slashing_register_then_slash_deducts_stake() {
 #[test]
 fn task_market_slashing_repeated_offenses_escalate() {
     let mut slashing = TaskMarketSlashing::new();
-    slashing.register(&sample_did(63), 1_000_000);
+    slashing.register(sample_did(63), 1_000_000);
     let o1 = slashing
         .slash(&sample_did(63), SlashReason::ProviderError, 1.0)
         .expect("slash 1");
@@ -423,7 +423,7 @@ fn task_market_slashing_repeated_offenses_escalate() {
 #[test]
 fn task_market_slashing_eventually_bans_provider() {
     let mut slashing = TaskMarketSlashing::new();
-    slashing.register(&sample_did(86), 1_000_000);
+    slashing.register(sample_did(86), 1_000_000);
     // 4 consecutive offenses at default rules → banned.
     for _ in 0..4 {
         let _ = slashing
@@ -448,7 +448,7 @@ fn task_market_slashing_below_tolerance_does_not_slash() {
             miss_rate_tolerance: 0.05,
             ..quota_router_core::marketplace::slashing::SlashingRules::default()
         });
-    slashing.register(&sample_did(130), 1_000_000);
+    slashing.register(sample_did(130), 1_000_000);
     let err = slashing
         .slash(&sample_did(130), SlashReason::Timeout, 0.01)
         .unwrap_err();
@@ -501,15 +501,15 @@ fn full_rfc_0918_inference_flow_happy_path() {
     let market = TaskMarket::new();
     let mut slashing = TaskMarketSlashing::new();
     let disputes = DisputeRegistry::new();
-    slashing.register(&sample_did(99), 1_000_000);
+    slashing.register(sample_did(99), 1_000_000);
 
     // 2. Buyer places a buy order (max 120 micro-OCTO-W).
     let buyer_spec = TaskSpec::new(TaskType::Inference, "openai/gpt-4", 120, 0, 1);
-    market.place_buy(buyer_spec, 120, 1, &sample_did(236), 1_000);
+    market.place_buy(buyer_spec, 120, 1, sample_did(236), 1_000);
 
     // 3. Worker places a sell order (asking 100 micro-OCTO-W).
     let worker_spec = TaskSpec::new(TaskType::Inference, "openai/gpt-4", 0, 0, 1);
-    market.place_sell(worker_spec, 100, 1, &sample_did(99), 1_500);
+    market.place_sell(worker_spec, 100, 1, sample_did(99), 1_500);
 
     // 4. Top-of-book matches; bid (120) >= ask (100) → cross at 100.
     let matched = market.match_top().expect("match");
@@ -556,13 +556,13 @@ fn full_rfc_0918_inference_flow_dispute_then_slash() {
     let market = TaskMarket::new();
     let mut slashing = TaskMarketSlashing::new();
     let mut disputes = DisputeRegistry::new();
-    slashing.register(&sample_did(37), 1_000_000);
+    slashing.register(sample_did(37), 1_000_000);
 
     // Place + match.
     let buyer_spec = TaskSpec::new(TaskType::Inference, "openai/gpt-4", 200, 0, 1);
-    market.place_buy(buyer_spec, 200, 1, &sample_did(236), 100);
+    market.place_buy(buyer_spec, 200, 1, sample_did(236), 100);
     let worker_spec = TaskSpec::new(TaskType::Inference, "openai/gpt-4", 0, 0, 1);
-    market.place_sell(worker_spec, 150, 1, &sample_did(37), 200);
+    market.place_sell(worker_spec, 150, 1, sample_did(37), 200);
     let matched = market.match_top().expect("match");
     assert_eq!(matched.price, 150);
 
@@ -619,9 +619,9 @@ fn full_rfc_0918_inference_flow_dispute_invalid_keeps_payment() {
     let mut disputes = DisputeRegistry::new();
 
     let buyer_spec = TaskSpec::new(TaskType::Inference, "openai/gpt-4", 80, 0, 1);
-    market.place_buy(buyer_spec, 80, 1, &sample_did(236), 1);
+    market.place_buy(buyer_spec, 80, 1, sample_did(236), 1);
     let worker_spec = TaskSpec::new(TaskType::Inference, "openai/gpt-4", 0, 0, 1);
-    market.place_sell(worker_spec, 70, 1, &sample_did(251), 2);
+    market.place_sell(worker_spec, 70, 1, sample_did(251), 2);
     let matched = market.match_top().expect("match");
     assert_eq!(matched.price, 70);
 

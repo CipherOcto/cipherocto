@@ -876,18 +876,18 @@ mod tests {
     #[test]
     fn subsumes_audience_must_match() {
         let parent = vec![Caveat::Audience(
-            octo_ident::test_helpers::sample_did(111).to_owned(),
+            octo_ident::test_helpers::sample_did(111).clone(),
         )];
         assert!(set_subsumes(
             &parent,
             &[Caveat::Audience(
-                octo_ident::test_helpers::sample_did(111).to_owned()
+                octo_ident::test_helpers::sample_did(111).clone()
             )]
         ));
         assert!(!set_subsumes(
             &parent,
             &[Caveat::Audience(
-                octo_ident::test_helpers::sample_did(234).to_owned()
+                octo_ident::test_helpers::sample_did(234).clone()
             )]
         ));
     }
@@ -1127,7 +1127,7 @@ mod tests {
                 selector: "transfer_v1".to_owned(),
                 args: vec!["arg1".to_owned()],
             },
-            required_caller: Some(octo_ident::test_helpers::sample_did(238).to_owned()),
+            required_caller: Some(octo_ident::test_helpers::sample_did(238).clone()),
             pre_conditions: vec![Constraint::SingleUse],
             expiry_for_deploy_unix: 1_000_000,
         };
@@ -1325,7 +1325,7 @@ mod tests {
         // Different constraint type → no subsume
         let mut vet_b = vet_a.clone();
         vet_b.pre_conditions = vec![Constraint::CallerBound(
-            octo_ident::test_helpers::sample_did(239).to_owned(),
+            octo_ident::test_helpers::sample_did(239).clone(),
         )];
         assert!(!set_subsumes(&parent, &[Caveat::Factory(vet_b)]));
     }

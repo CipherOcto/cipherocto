@@ -227,8 +227,8 @@ mod tests {
             hop_envelope_id: [0xAA; 32],
             hop_cap: HopCapability {
                 hop_envelope_id: [0xAA; 32],
-                wrapping_node_did: octo_ident::test_helpers::sample_did(102).into(),
-                next_hop_did: octo_ident::test_helpers::sample_did(161).into(),
+                wrapping_node_did: octo_ident::test_helpers::sample_did(102),
+                next_hop_did: octo_ident::test_helpers::sample_did(161),
                 ttl_millis_unix: 1_700_000_000_000,
                 signature: [0x99; 64],
             },
@@ -238,7 +238,7 @@ mod tests {
             },
             chain_hash: [0xBB; 32],
         };
-        let s = format!("{:?}", env);
+        let s = format!("{env:?}");
         assert!(s.contains("redacted"), "expected redaction: {s}");
         assert!(!s.contains("AAAA"), "leaked hop_envelope_id: {s}");
         assert!(!s.contains("9999"), "leaked signature bytes: {s}");

@@ -624,7 +624,7 @@ mod tests {
             axes_consumed: vec![("input_tokens_per_1k".to_owned(), 1000)],
             cap_root_hash: [0x22; 32],
             invocation_hash: [0x33; 32],
-            holder_did: octo_ident::test_helpers::sample_did(19).to_owned(),
+            holder_did: octo_ident::test_helpers::sample_did(19).clone(),
             current_unix_time: 1_700_000_000,
             output_hash: if matches!(node_type, NodeType::SelfHost) {
                 Some([0x44; 32])

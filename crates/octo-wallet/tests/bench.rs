@@ -40,6 +40,7 @@ use octo_wallet::node::NodeType;
 use quota_router_core::zk_verify::capability::verify_capability_zk;
 #[allow(unused_imports)]
 use quota_router_core::zk_verify::{ProofBundle as QrProofBundle, PublicInputs as QrPublicInputs};
+use zk_vendor::{vendor_state, VendorState};
 
 /// G1 target: proof generation latency <2s on 10K trace steps.
 const PROOF_GEN_BUDGET_MS: u128 = 2_000;
@@ -83,7 +84,7 @@ fn build_public_inputs() -> PublicInputs {
         axes_consumed: vec![("input_tokens_per_1k".to_owned(), 1000)],
         cap_root_hash: [0x22; 32],
         invocation_hash: [0x33; 32],
-        holder_did: sample_did(179).to_owned(),
+        holder_did: sample_did(179).clone(),
         current_unix_time: 1_700_000_000,
         output_hash: Some([0x44; 32]),
         provider_slot_id: "slot-bench-001".to_owned(),
@@ -208,7 +209,6 @@ fn proof_size_50_to_500kb() {
     // 50-500KB only when FFI is loaded; on the mock path (dev/CI
     // without the cdylib) we fall back to the structural smoke
     // assertion (non-empty + below the 500KB upper bound).
-    use zk_vendor::{vendor_state, VendorState};
     match vendor_state() {
         VendorState::Ffi => {
             // Real-zk path: the sidecar commitment is a BLAKE3

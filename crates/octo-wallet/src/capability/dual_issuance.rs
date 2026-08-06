@@ -121,7 +121,7 @@ mod tests {
             ask_id: [0x42; 32],
             expired_at_unix: 1_700_000_000_000,
         };
-        let s = format!("{:?}", e);
+        let s = format!("{e:?}");
         assert!(s.contains("redacted"), "expected redaction: {s}");
         assert!(!s.contains("4242"), "leaked ask_id bytes: {s}");
     }

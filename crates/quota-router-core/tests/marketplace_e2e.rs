@@ -101,7 +101,7 @@ fn dispute_valid_slashes_seller() {
 
     // Provider gets slashed.
     let mut ledger = SlashingLedger::new();
-    ledger.register(&sample_did(145), 1_000_000);
+    ledger.register(sample_did(145), 1_000_000);
     let out = ledger
         .slash(&sample_did(145), SlashReason::ProviderError, 1.0)
         .expect("slash");
@@ -133,7 +133,7 @@ fn below_tolerance_miss_rate_does_not_slash() {
         miss_rate_tolerance: 0.05,
         ..SlashingRules::default()
     });
-    ledger.register(&sample_did(145), 1_000_000);
+    ledger.register(sample_did(145), 1_000_000);
     let err = ledger
         .slash(&sample_did(145), SlashReason::Timeout, 0.01)
         .unwrap_err();
@@ -152,7 +152,7 @@ fn below_tolerance_miss_rate_does_not_slash() {
 #[test]
 fn repeated_offenses_eventually_ban_provider() {
     let mut ledger = SlashingLedger::new();
-    ledger.register(&sample_did(20), 1_000_000);
+    ledger.register(sample_did(20), 1_000_000);
 
     // First three offenses with default rules (10%, 15%, 22.5%) leave
     // cumulative ≈ 40.7%. Fourth offense (33.75% of remaining ≈ 30%)

@@ -347,9 +347,9 @@ mod tests {
         let hop = HolderRecord {
             cap_root_hash: [0x66; 32],
             kind: HolderKind::HopCapability,
-            holder_did: octo_ident::test_helpers::sample_did(104).into(),
+            holder_did: octo_ident::test_helpers::sample_did(104),
             holder_pub: [0x77; 32],
-            audience_did: octo_ident::test_helpers::sample_did(23).into(),
+            audience_did: octo_ident::test_helpers::sample_did(23),
             caveats_canonical: vec![],
             ask_id: None,
             mint_at_millis_unix: 1_700_000_000_000,

@@ -325,7 +325,7 @@ mod tests {
         let token = crate::capability::CapabilityToken {
             macaroon,
             holder_pub: [0xCC; 32],
-            holder_did: octo_ident::test_helpers::sample_did(2).into(),
+            holder_did: octo_ident::test_helpers::sample_did(2),
             holder_sig: ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
             discharges: vec![],
             holder_sig_stale: false,
@@ -342,7 +342,7 @@ mod tests {
         let token = crate::capability::CapabilityToken {
             macaroon: macaroon.clone(),
             holder_pub: [0xCC; 32],
-            holder_did: octo_ident::test_helpers::sample_did(2).into(),
+            holder_did: octo_ident::test_helpers::sample_did(2),
             holder_sig: ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
             discharges: vec![],
             holder_sig_stale: false,
@@ -373,7 +373,7 @@ mod tests {
         let token = CapabilityToken::mint(
             &root_secret,
             &holder,
-            &octo_ident::test_helpers::sample_did(2),
+            octo_ident::test_helpers::sample_did(2),
             vec![Caveat::Before(1_700_000_000)],
             &catalog,
         )
@@ -394,7 +394,7 @@ mod tests {
         let token = CapabilityToken::mint(
             &root_secret,
             &holder,
-            &octo_ident::test_helpers::sample_did(2),
+            octo_ident::test_helpers::sample_did(2),
             vec![Caveat::Before(1_700_000_000)],
             &catalog,
         )
@@ -402,7 +402,7 @@ mod tests {
         let wire = serialize_wire(&token).unwrap();
         let back = deserialize_wire(
             &wire,
-            &octo_ident::test_helpers::sample_did(2),
+            octo_ident::test_helpers::sample_did(2),
             token.holder_pub,
         )
         .unwrap();
@@ -420,7 +420,7 @@ mod tests {
         let token = CapabilityToken::mint(
             &root_secret,
             &holder,
-            &octo_ident::test_helpers::sample_did(2),
+            octo_ident::test_helpers::sample_did(2),
             vec![Caveat::Before(1_700_000_000)],
             &catalog,
         )
@@ -434,7 +434,7 @@ mod tests {
         // v1 deserializer ignores segment 4 and recovers the token.
         let back = deserialize_wire(
             &wire_v2,
-            &octo_ident::test_helpers::sample_did(2),
+            octo_ident::test_helpers::sample_did(2),
             token.holder_pub,
         )
         .unwrap();

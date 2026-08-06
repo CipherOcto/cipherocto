@@ -177,7 +177,7 @@ fn key_hierarchy_debug_does_not_leak_seed() {
     // derives `identity_seed` only, but a downstream user might Debug a
     // MissionKey or similar — exercise the derive path).
     let m = MissionId {
-        asker_did: sample_did(169).to_owned(),
+        asker_did: sample_did(169).clone(),
         model: "openai/gpt-4".to_owned(),
     };
     let k = h.derive_mission_key(&m).unwrap();
@@ -306,7 +306,7 @@ fn proof_bundle_debug_does_not_leak_stark_proof_bytes() {
             axes_consumed: vec![("input_tokens_per_1k".to_owned(), 1000)],
             cap_root_hash: ROOT_SECRET_MARKER,
             invocation_hash: [0xAB; 32],
-            holder_did: sample_did(192).to_owned(),
+            holder_did: sample_did(192).clone(),
             current_unix_time: 1_700_000_000,
             output_hash: None,
             provider_slot_id: "openai-prod".to_owned(),
@@ -314,6 +314,7 @@ fn proof_bundle_debug_does_not_leak_stark_proof_bytes() {
         casm_hash: [0xAB; 32],
         casm_version: 1,
         security_bits: 128,
+        witness_format: zk_vendor::prover_input::WitnessFormat::BytesFallback,
     };
     let out = format!("{bundle:?}");
     // stark_proof was 1024 bytes of 0x99 — would appear as

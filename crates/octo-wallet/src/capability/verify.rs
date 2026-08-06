@@ -205,7 +205,7 @@ mod tests {
         let wired = super::super::wire::serialize_wire(&crate::capability::CapabilityToken {
             macaroon: minted.clone(),
             holder_pub: [0xBB; 32],
-            holder_did: octo_ident::test_helpers::sample_did(31).into(),
+            holder_did: octo_ident::test_helpers::sample_did(31),
             holder_sig: ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
             discharges: vec![],
             holder_sig_stale: false,

@@ -294,7 +294,7 @@ mod tests {
         let token = CapabilityToken::mint(
             &root_secret,
             &holder,
-            &octo_ident::test_helpers::sample_did(104),
+            octo_ident::test_helpers::sample_did(104),
             caveats,
             &catalog,
         )
@@ -310,7 +310,7 @@ mod tests {
         let token = CapabilityToken::mint(
             &root_secret,
             &holder,
-            &octo_ident::test_helpers::sample_did(104),
+            octo_ident::test_helpers::sample_did(104),
             vec![],
             &catalog,
         )
@@ -330,7 +330,7 @@ mod tests {
         let token = CapabilityToken::mint(
             &root_secret,
             &holder,
-            &octo_ident::test_helpers::sample_did(104),
+            octo_ident::test_helpers::sample_did(104),
             vec![],
             &catalog,
         )

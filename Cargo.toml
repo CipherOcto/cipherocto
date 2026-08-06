@@ -30,6 +30,13 @@ exclude = [
     # stable-rust; stwo-sys is a separate cargo project loaded at runtime
     # via libloading. See crates/zk-vendor/stwo-sys/README.md.
     "crates/zk-vendor/stwo-sys",
+    # octo-wallet-fuzz is a standalone cargo-fuzz project. cargo-fuzz
+    # requires libfuzzer-sys (nightly-only); the fuzz crate is built +
+    # run from its own dir (`cd crates/octo-wallet/fuzz && cargo fuzz
+    # run capability_zk_verify`). Excluded from `cargo clippy
+    # --workspace` / `cargo test --workspace` to keep fuzz infra separate
+    # from the main stable-rust workspace.
+    "crates/octo-wallet/fuzz",
     # MTProto onboard crates are intentionally NOT excluded:
     # unlike the TDLib ones, they do not pull in TDLib. They
     # compile against the pure-Rust `octo-adapter-telegram-mtproto`

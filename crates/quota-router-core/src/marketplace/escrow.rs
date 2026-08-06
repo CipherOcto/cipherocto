@@ -160,8 +160,8 @@ mod tests {
     fn sample() -> Escrow {
         Escrow::new(
             [0xaa; 32],
-            &octo_ident::test_helpers::sample_did(130),
-            &octo_ident::test_helpers::sample_did(95),
+            octo_ident::test_helpers::sample_did(130),
+            octo_ident::test_helpers::sample_did(95),
             100_000,
         )
     }

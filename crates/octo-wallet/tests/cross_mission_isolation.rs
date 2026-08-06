@@ -7,12 +7,12 @@
 //! 1. Distinct askers → distinct mission keys
 //! 2. Distinct models (under same asker) → distinct mission keys
 //! 3. Axis subkeys derived under one mission do NOT validate under a sibling
-//! 4. derive_mission_key is deterministic — same inputs yield identical bytes
+//! 4. `derive_mission_key` is deterministic — same inputs yield identical bytes
 //! 5. Defense-in-depth: HMAC tag minted by mission A is rejected by mission B
 //!    even when (asker, model, axis) collide
 //! 6. Different identity seeds → distinct mission keys (per-identity isolation)
 
-#[allow(clippy::doc_markdown)]
+#![allow(clippy::doc_markdown)]
 use blake3::Hash;
 use octo_ident::test_helpers::sample_did;
 use octo_wallet::{AxisSubkey, KeyHierarchy, MissionId, MissionKey};
@@ -87,7 +87,7 @@ fn axis_subkeys_isolated_across_missions() {
     );
 }
 
-/// 4. Determinism — derive twice from the same hierarchy + MissionId, get
+/// 4. Determinism — derive twice from the same hierarchy + `MissionId`, get
 ///    identical 32-byte output. Required for stable HMAC verification.
 #[test]
 fn derive_is_deterministic() {
@@ -170,17 +170,17 @@ fn distinct_seeds_distinct_mission_keys() {
     );
 }
 
-/// 7. MissionId validation is a pre-condition: an empty asker_did MUST be
+/// 7. `MissionId` validation is a pre-condition: an empty `asker_did` MUST be
 ///    rejected before reaching HKDF. Confirms the security boundary lives at
-///    MissionId::new, not at derive_mission_key.
+///    `MissionId::new`, not at `derive_mission_key`.
 #[test]
 fn mission_id_validation_prevents_empty_keys() {
     assert!(MissionId::new("", "openai/gpt-4").is_err());
-    assert!(MissionId::new(&sample_did(156), "").is_err());
+    assert!(MissionId::new(sample_did(156), "").is_err());
 }
 
 /// 8. Symmetry / closure — given the public API, a receiver can re-derive
-///    the mission key from just (identity_seed, asker_did, model). No
+///    the mission key from just (`identity_seed`, `asker_did`, model). No
 ///    out-of-band channel needed. This is the contract the rest of the
 ///    system relies on (RFC-0853 §6).
 #[test]

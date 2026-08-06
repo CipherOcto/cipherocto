@@ -96,8 +96,8 @@ mod tests {
                 event_hash: [0x11; 32],
                 payload: DealSettledPayload {
                     prev_chain_hash: [0; 32],
-                    buyer_did: octo_ident::test_helpers::sample_did(9).into(),
-                    seller_did: octo_ident::test_helpers::sample_did(14).into(),
+                    buyer_did: octo_ident::test_helpers::sample_did(9),
+                    seller_did: octo_ident::test_helpers::sample_did(14),
                     ask_id: [0x33; 32],
                     bearer_capsule_hash: [0x42; 32],
                     cap_root_hash: [0x77; 32],

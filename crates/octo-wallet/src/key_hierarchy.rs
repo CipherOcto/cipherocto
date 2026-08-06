@@ -205,7 +205,7 @@ mod tests {
     fn mission_key_deterministic() {
         let h = KeyHierarchy::new(sample_seed());
         let m = MissionId {
-            asker_did: octo_ident::test_helpers::sample_did(104).to_owned(),
+            asker_did: octo_ident::test_helpers::sample_did(104).clone(),
             model: "openai/gpt-4".to_owned(),
         };
         let k1 = h.derive_mission_key(&m).unwrap();
@@ -217,7 +217,7 @@ mod tests {
     fn mission_keys_independent_across_askers() {
         let h = KeyHierarchy::new(sample_seed());
         let m_a = MissionId {
-            asker_did: octo_ident::test_helpers::sample_did(104).to_owned(),
+            asker_did: octo_ident::test_helpers::sample_did(104).clone(),
             model: "openai/gpt-4".to_owned(),
         };
         let m_b = MissionId {
@@ -233,11 +233,11 @@ mod tests {
     fn mission_keys_independent_across_models() {
         let h = KeyHierarchy::new(sample_seed());
         let m_gpt = MissionId {
-            asker_did: octo_ident::test_helpers::sample_did(104).to_owned(),
+            asker_did: octo_ident::test_helpers::sample_did(104).clone(),
             model: "openai/gpt-4".to_owned(),
         };
         let m_claude = MissionId {
-            asker_did: octo_ident::test_helpers::sample_did(104).to_owned(),
+            asker_did: octo_ident::test_helpers::sample_did(104).clone(),
             model: "anthropic/claude".to_owned(),
         };
         let k_gpt = h.derive_mission_key(&m_gpt).unwrap();
@@ -249,7 +249,7 @@ mod tests {
     fn axis_subkeys_independent_within_mission() {
         let h = KeyHierarchy::new(sample_seed());
         let m = MissionId {
-            asker_did: octo_ident::test_helpers::sample_did(104).to_owned(),
+            asker_did: octo_ident::test_helpers::sample_did(104).clone(),
             model: "openai/gpt-4".to_owned(),
         };
         let k_input = h.derive_axis_subkey(&m, "input_tokens_per_1k").unwrap();
@@ -261,7 +261,7 @@ mod tests {
     fn axis_subkey_different_from_mission_key() {
         let h = KeyHierarchy::new(sample_seed());
         let m = MissionId {
-            asker_did: octo_ident::test_helpers::sample_did(104).to_owned(),
+            asker_did: octo_ident::test_helpers::sample_did(104).clone(),
             model: "openai/gpt-4".to_owned(),
         };
         let mk = h.derive_mission_key(&m).unwrap();
@@ -272,7 +272,7 @@ mod tests {
     #[test]
     fn info_string_format() {
         let m = MissionId {
-            asker_did: octo_ident::test_helpers::sample_did(104).to_owned(),
+            asker_did: octo_ident::test_helpers::sample_did(104).clone(),
             model: "openai/gpt-4".to_owned(),
         };
         let expected_did = octo_ident::test_helpers::sample_did(104);
@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn mission_id_new_accepts_valid() {
-        let m = MissionId::new(&octo_ident::test_helpers::sample_did(104), "openai/gpt-4").unwrap();
+        let m = MissionId::new(octo_ident::test_helpers::sample_did(104), "openai/gpt-4").unwrap();
         assert_eq!(m.asker_did, octo_ident::test_helpers::sample_did(104));
     }
 
@@ -303,7 +303,7 @@ mod tests {
     #[test]
     fn mission_id_new_rejects_empty_model() {
         assert!(matches!(
-            MissionId::new(&octo_ident::test_helpers::sample_did(104), ""),
+            MissionId::new(octo_ident::test_helpers::sample_did(104), ""),
             Err(MissionIdError::EmptyModel)
         ));
     }
@@ -317,7 +317,7 @@ mod tests {
         ));
         // Tab in model.
         assert!(matches!(
-            MissionId::new(&octo_ident::test_helpers::sample_did(104), "openai\tgpt-4"),
+            MissionId::new(octo_ident::test_helpers::sample_did(104), "openai\tgpt-4"),
             Err(MissionIdError::InvalidModel('\t'))
         ));
     }
@@ -355,7 +355,7 @@ mod tests {
         let h_a = KeyHierarchy::new(seed_a);
         let h_b = KeyHierarchy::new(seed_b);
         let m = MissionId {
-            asker_did: octo_ident::test_helpers::sample_did(104).to_owned(),
+            asker_did: octo_ident::test_helpers::sample_did(104).clone(),
             model: "openai/gpt-4".to_owned(),
         };
         let k_a = h_a.derive_mission_key(&m).unwrap();

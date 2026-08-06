@@ -192,7 +192,7 @@ mod tests {
         let mut reg = CapabilityClassRegistry::new();
         assert!(reg
             .register(
-                &octo_ident::test_helpers::sample_did(176),
+                octo_ident::test_helpers::sample_did(176),
                 NodeType::Wholesale,
                 CapabilityClass::ZKBearing
             )

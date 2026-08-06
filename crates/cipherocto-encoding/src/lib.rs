@@ -915,7 +915,7 @@ mod tests {
                 asset_id: [0xcd; 32],
             },
             Constraint::AllowedDestinations {
-                dids: vec![octo_ident::test_helpers::sample_did(164).to_owned()],
+                dids: vec![octo_ident::test_helpers::sample_did(164).clone()],
             },
             Constraint::DeniedDestinations {
                 dids: vec!["did:octo:b".to_owned()],
@@ -928,9 +928,9 @@ mod tests {
                 signers: vec!["did:octo:s1".to_owned(), "did:octo:s2".to_owned()],
             },
             Constraint::RequireReceiptSignatureBy(
-                octo_ident::test_helpers::sample_did(103).to_owned(),
+                octo_ident::test_helpers::sample_did(103).clone(),
             ),
-            Constraint::CallerBound(octo_ident::test_helpers::sample_did(150).to_owned()),
+            Constraint::CallerBound(octo_ident::test_helpers::sample_did(150).clone()),
             Constraint::MaxUses { count: 5 },
             Constraint::SingleUse,
             Constraint::AllowIf {
@@ -943,7 +943,7 @@ mod tests {
             Constraint::WrappedOnly,
             Constraint::SponsoredBy { vault: [0x99; 32] },
             Constraint::CoordinatorCanSubmit {
-                coordinator: octo_ident::test_helpers::sample_did(206).to_owned(),
+                coordinator: octo_ident::test_helpers::sample_did(206).clone(),
             },
             Constraint::LinearRelease {
                 start: 0,

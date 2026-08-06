@@ -208,8 +208,8 @@ mod tests {
     fn payload() -> DealSettledPayload {
         DealSettledPayload {
             prev_chain_hash: [0x00; 32],
-            buyer_did: octo_ident::test_helpers::sample_did(237).into(),
-            seller_did: octo_ident::test_helpers::sample_did(106).into(),
+            buyer_did: octo_ident::test_helpers::sample_did(237),
+            seller_did: octo_ident::test_helpers::sample_did(106),
             ask_id: [0x33; 32],
             bearer_capsule_hash: [0x42; 32],
             cap_root_hash: [0x77; 32],
@@ -234,7 +234,7 @@ mod tests {
     #[test]
     fn envelope_id_debug_is_redacted() {
         let e = EnvelopeId([0xFF; 32]);
-        let s = format!("{:?}", e);
+        let s = format!("{e:?}");
         assert!(s.contains("redacted"), "expected redaction: {s}");
         assert!(!s.contains("FFFF"), "leaked bytes: {s}");
     }
@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn deal_settled_payload_debug_redacts_hashes() {
         let p = payload();
-        let s = format!("{:?}", p);
+        let s = format!("{p:?}");
         assert!(s.contains("redacted"), "expected redaction: {s}");
         assert!(!s.contains("4242"), "leaked bearer_capsule_hash: {s}");
         assert!(!s.contains("3333"), "leaked ask_id: {s}");
@@ -259,7 +259,7 @@ mod tests {
             payload: payload(),
             seller_signature: [0x99; 64],
         };
-        let s = format!("{:?}", d);
+        let s = format!("{d:?}");
         assert!(s.contains("redacted"), "expected redaction: {s}");
         assert!(!s.contains("9999"), "leaked signature bytes: {s}");
     }
@@ -277,7 +277,7 @@ mod tests {
             },
             created_at_unix: 1_700_000_000_000,
         };
-        let s = format!("{:?}", env);
+        let s = format!("{env:?}");
         assert!(s.contains("redacted"), "expected redaction: {s}");
         assert!(!s.contains("secret-token"), "leaked capability_token: {s}");
     }
@@ -311,7 +311,7 @@ mod tests {
         let e = DeliveryError::ReplayDetected {
             envelope_id: EnvelopeId([0xAA; 32]),
         };
-        let s = format!("{:?}", e);
+        let s = format!("{e:?}");
         assert!(s.contains("redacted"), "expected redaction: {s}");
         assert!(!s.contains("AAAA"), "leaked envelope_id bytes: {s}");
     }

@@ -1478,7 +1478,7 @@ mod settlement_engine_tests {
     #[test]
     fn cached_axis_requires_cache_key_hash() {
         let ask = Ask::new(
-            &octo_ident::test_helpers::sample_did(82),
+            octo_ident::test_helpers::sample_did(82),
             "openai/gpt-4",
             ModelRateTable {
                 model: ModelRef::from("openai/gpt-4"),
@@ -1510,7 +1510,7 @@ mod settlement_engine_tests {
     #[test]
     fn compute_cost_unknown_axis_rejected() {
         let ask = Ask::new(
-            &octo_ident::test_helpers::sample_did(82),
+            octo_ident::test_helpers::sample_did(82),
             "openai/gpt-4",
             ModelRateTable::default(),
             [0x42; 16],
@@ -1533,7 +1533,7 @@ mod settlement_engine_tests {
         // We can't directly set u128::MAX rate via standard axes, so we use a
         // synthetic Ask with an extreme rate.
         let ask = Ask::new(
-            &octo_ident::test_helpers::sample_did(82),
+            octo_ident::test_helpers::sample_did(82),
             "openai/gpt-4",
             ModelRateTable {
                 model: ModelRef::from("openai/gpt-4"),

@@ -17,7 +17,7 @@
 
 #[cfg(not(feature = "allow-stub-verifier"))]
 use zk_verifier::VerifyError;
-use zk_verifier::{ProofBundle, ProverError, PublicInputs};
+use zk_verifier::{ProofBundle, PublicInputs};
 
 const TV_FIXED_TIME: u64 = 1_700_000_000;
 

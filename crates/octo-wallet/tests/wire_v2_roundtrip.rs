@@ -90,7 +90,7 @@ fn v2_parser_extracts_proof_bundle_borsh() {
             axes_consumed: vec![("input_tokens_per_1k".to_owned(), 42)],
             cap_root_hash: [0x66; 32],
             invocation_hash: [0x77; 32],
-            holder_did: sample_did(134).to_owned(),
+            holder_did: sample_did(134).clone(),
             current_unix_time: 1_700_000_300,
             output_hash: None,
             provider_slot_id: "slot-bridge-001".to_owned(),
@@ -98,6 +98,7 @@ fn v2_parser_extracts_proof_bundle_borsh() {
         casm_hash: [0x42; 32],
         casm_version: 1,
         security_bits: 128,
+        witness_format: zk_vendor::prover_input::WitnessFormat::BytesFallback,
     };
     let pb_bytes =
         octo_wallet::capability::zk_mint::proof_bundle_to_wire(&pb).expect("proof_bundle_to_wire");
@@ -132,14 +133,14 @@ fn v2_parser_accepts_v1_3segment_wire() {
 
 #[test]
 fn v2_rejects_wrong_segment_count() {
-    let err = deserialize_wire_v2("only.one", &sample_did(244), [0u8; 32])
+    let err = deserialize_wire_v2("only.one", sample_did(244), [0u8; 32])
         .expect_err("must reject < 3 segments");
     assert!(matches!(
         err,
         octo_wallet::capability::wire::WireError::SegmentCount(2)
     ));
 
-    let err = deserialize_wire_v2("a.b.c.d.e", &sample_did(244), [0u8; 32])
+    let err = deserialize_wire_v2("a.b.c.d.e", sample_did(244), [0u8; 32])
         .expect_err("must reject > 4 segments");
     assert!(matches!(
         err,
@@ -151,7 +152,7 @@ fn v2_rejects_wrong_segment_count() {
 fn v2_rejects_oversize_wire_total() {
     // DoS guard: a >2MiB wire must be rejected before split/decode.
     let huge = "a".repeat(2 * 1024 * 1024 + 1);
-    let err = deserialize_wire_v2(&huge, &sample_did(244), [0u8; 32])
+    let err = deserialize_wire_v2(&huge, sample_did(244), [0u8; 32])
         .expect_err("DoS guard: must reject oversize wire");
     assert!(
         matches!(
@@ -167,7 +168,7 @@ fn v2_rejects_oversize_segment() {
     // 1 MiB per-segment cap. A segment slightly over the cap must be rejected.
     let oversize_seg = "b".repeat(1024 * 1024 + 1);
     let wire = format!("a.b.c.{oversize_seg}");
-    let err = deserialize_wire_v2(&wire, &sample_did(244), [0u8; 32])
+    let err = deserialize_wire_v2(&wire, sample_did(244), [0u8; 32])
         .expect_err("DoS guard: must reject oversize segment");
     assert!(
         matches!(

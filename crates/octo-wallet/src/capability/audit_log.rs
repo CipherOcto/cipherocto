@@ -290,7 +290,7 @@ mod tests {
             [0; 32],
             0,
         );
-        let s = format!("{:?}", event);
+        let s = format!("{event:?}");
         assert!(s.contains("redacted"), "expected redaction: {s}");
         assert!(!s.contains("ABAB"), "leaked cap_root_hash bytes: {s}");
         // node_did + event_kind MUST be preserved for forensics.

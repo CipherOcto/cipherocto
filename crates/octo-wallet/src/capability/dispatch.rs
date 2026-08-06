@@ -171,7 +171,7 @@ mod tests {
     #[test]
     fn auth_header_debug_redacts() {
         let h = AuthHeader::Bearer("secret-token".into());
-        let s = format!("{:?}", h);
+        let s = format!("{h:?}");
         assert!(s.contains("redacted"), "expected redaction: {s}");
         assert!(!s.contains("secret-token"), "leaked token: {s}");
     }

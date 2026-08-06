@@ -1,7 +1,7 @@
 # Mission 0958-a: ZK Capability Circuit (Cairo + STWO in CipherOcto Workspace)
 
 **RFC:** RFC-0958 (Proof Systems): ZK Capability Subclass (sub-mission letter-a; authored 2026-07-20; promoted 2026-07-21; multi-round adversarial review applied across R1/R2/R3 review rounds plus the R4 crypto-correctness sweep 2026-08-04)
-**Status:** Claimed (2026-07-22); **v0.5 amended 2026-08-05** (0958-c cryptographic closure of R4 L1-L3/L5 LOW items; per mission `0958-c` AC-5)
+**Status:** Closed (Band A — 2026-08-06). Claimed 2026-07-22; implementation landed across 19 commits `e7032f94..89063351` (R3 + R4 redo); 15/15 ACs flipped (AC-16 CANCELED v0.3). R4 four-dimension adversarial review reconciliation landed `6b9baad6`. S4 closure artifacts on disk: `docs/07-developers/zk-capability-circuit-guide.md` + `crates/octo-wallet/tests/capability_zk_acceptance.rs` (13/13 structured pass) + `.github/linters/no-wholesale-zk.sh` + `.github/workflows/zk-capability-circuit.yml`. R4 disclosures carried forward with named owners: R4 CRITICAL C1 (Cairo `main()` cryptographic body) → `0958-b` (CLOSED Band A 2026-08-06); R4 HIGH H2 (real-zk STWO end-to-end) → `0958-c` (Claimed); R4 HIGH H6 (TV8 cross-impl in stub mode) → `0958-b` Round 6 closure per §Two-prover paths divergent invariant. Single cipherocto-side PR (19 commits on `next` ahead of `origin/next`); push awaits user instruction per [[git-workflow]]. v0.5 amendment 2026-08-05 absorbed into closure record.
 **Phase:** B.2 (CASM compilation — S05 unique deliverable) + C.2 (STWO stable-rust FFI bridge) + D + E + F (integration)
 **Master plan:** `docs/plans/2026-07-19-identity-master-plan.md`
 **Session plan:** `docs/plans/2026-07-19-session-05-zk-capability-circuit.md` (Sessions 1–4 of original; superseded in part by `docs/plans/2026-07-27-mission-0968-implementation.md` for the R4 redo — see `## Rebuttal & Deferred Items`)
@@ -329,12 +329,25 @@ The R4 adversarial review (2026-08-04, 4 parallel reviewers across spec integrit
 
 ---
 
+## Version History
+
+| Version | Date       | Change                                                                                                                                  |
+| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-07-22 | Mission claimed. All 6 Requires RFCs Accepted.                                                                                          |
+| v0.3    | 2026-07-22 | Crypto home extraction (CASM + STWO into cipherocto workspace).                                                                         |
+| v0.4    | 2026-08-04 | R4 four-dimension adversarial review reconciliation (`6b9baad6`); §Closure added.                                                       |
+| v0.5    | 2026-08-05 | 0958-c cryptographic closure of R4 LOW L1-L3/L5 items per 0958-c AC-5.                                                                  |
+| v0.6    | 2026-08-06 | Status drift fix (R4 SPEC-1 closure): header `Claimed`→`Closed (Band A — 2026-08-06)`; Band-A coverage 15/15 ACs (AC-16 CANCELED v0.3). |
+
+Last Updated: 2026-08-06
+Version: 0.6
+
 ## Closure
 
-**Closure Date:** 2026-08-04 (R4 post-impl doc reconciliation)
+**Closure Date:** 2026-08-06 (v0.6 R4 SPEC-1 closure; prior §Closure date 2026-08-04 was R4 reconciliation)
 **Archive Commit:** `6b9baad6` (R4 four-dimension adversarial review reconciliation); subsequent R2 fixes are post-archive (still in `missions/claimed/` until PR merges).
 **PR:** pending (per [[initiation-user-only]], push + remote writes require explicit user instruction)
-**Status:** Mission work complete; awaiting PR submission per [[implementation-workflow-hook]]
+**Status:** Band A closed; awaiting PR submission per [[implementation-workflow-hook]]
 
 **Closure summary:** 19 implementation commits on `next` (2026-07-22 → 2026-08-04); R4 + R2 adversarial review totals above; master plan §8 R12 verification clean (no Phase C / Phase F files touched); no cross-repo PR. Mission file remains at `missions/claimed/` until PR merges (BLUEPRINT.md lifecycle: `claimed/` → `with-pr/` → `archived/`).
 

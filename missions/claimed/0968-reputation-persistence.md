@@ -446,7 +446,7 @@ Phase 1 AC → substrate mapping (31 ACs):
 | AC-30 (`cargo test --features stoolap --lib`) | tests/canonical_blobs.rs + cross_backend_integration.rs + stoolap_integration.rs | **VERIFIED 2026-08-07: 205 passed; 0 failed; 0 ignored** (cargo test -p octo-reputation --features stoolap --lib) |
 | AC-31 (`cargo clippy --all-targets --all-features -- -D warnings`) | verified clean | **VERIFIED 2026-08-07: cargo clippy -p octo-reputation --all-targets --all-features -- -D warnings clean** |
 
-**Summary:** 30/31 Phase 1 ACs have substrate on disk. AC-30 + AC-31 verified green 2026-08-07 (205/205 lib tests pass with `--features stoolap`; clippy clean). 5 follow-up items (AC-9, AC-22, AC-29, AC-14, AC-2 pseudocode-symbol mismatch) require symbol-level audit before AC text rewrite. Phase 1 does NOT flip checkboxes — module/migration names in AC text need rewrite per §Path Reconciliation. After AC text rewrite, Phase 1 plausibly ~28-30/31 green.
+**Summary:** 30/31 Phase 1 ACs have substrate on disk at the FILE level. AC-30 flipped [x] 2026-08-07 (cargo test --features stoolap --lib verified 212/212). AC-31 partial (per-crate clippy clean; workspace-wide blocked by pre-existing tdlib-rs build script). 29 ACs (`AC-1` through `AC-29`) cite symbols that are NOT all present at the symbol level: `RecorderRegistration`, `RecorderRegistrationRequest`, `ReplayRecord`, `RotationReceipt`, `AggregateCheckpoint`, `ResumeProof`, `GovernanceRegistry`, `GovernanceError`, `StakeProof`, `PublicKey`, `ReputationPolicy`, `ReaderAuth`, `AuditorAuth`, `RetentionAuth`, `SuspensionReason` do NOT exist as `pub struct` in the current substrate. Substrate has equivalents (`auth::AttestorRegistration`, `auth::SuspensionAuth`, `auth::ChainRef`, `recorder::StakeCheck`) but AC text references canonical pre-RFC-0968-A1 names that the substrate evolved away from. Per [[no-phantom-mission-pointers]] + [[deferred-vs-unspecified]], these 29 ACs are deferred to follow-up mission `0968-p1-symbol-alignment` (TBD) — either the substrate adds the canonical names, or the AC text is rewritten to use the actual substrate names.
 
 **Follow-up work (genuine impl gaps, post AC rename):**
 
@@ -462,10 +462,13 @@ Per [[no-phantom-mission-pointers]] + [[deferred-vs-unspecified]], Phase 1 AC fl
 
 ```text
 cargo test -p octo-reputation --features stoolap --lib --no-run  # clean (compiles in 20.23s)
-cargo test -p octo-reputation --features stoolap --lib          # 205 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+cargo test -p octo-reputation --features stoolap --lib          # 212 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 cargo clippy -p octo-reputation --all-targets --all-features -- -D warnings  # clean
+cargo clippy --all-targets --all-features -- -D warnings         # FAILS (pre-existing tdlib-rs E0425; out of scope)
 cargo fmt -p octo-reputation -- --check                          # clean
 ```
+
+**AC-30 flipped [x] 2026-08-07.**
 
 ### Phase 2 + 2.5 + 3 AC Reconciliation (2026-08-07)
 

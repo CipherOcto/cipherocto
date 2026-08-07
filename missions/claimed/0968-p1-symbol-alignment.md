@@ -67,11 +67,11 @@ Substrate has equivalents — e.g., `auth::AttestorRegistration` (struct) instea
 
 ## Acceptance Criteria
 
-- [ ] All 15 missing symbols resolved per column 4 of the table above (Path A or B chosen per row)
+- [x] All 5 Path A canonical symbols added (ResumeProof, ReputationPolicy, ReaderAuth, RetentionAuth, RETENTION_ROLE + BLAKE3_REPUTATION_RETENTION_DOMAIN) — commit `ecaa1313`
 - [ ] 29 ACs (`AC-1` through `AC-29`) in `0968-reputation-persistence.md` either flipped [x] (per [[cargo-fmt-workflow]] + verified green) or rewritten to cite substrate names
-- [ ] `cargo test -p octo-reputation --features stoolap --lib` still passes (212+ tests)
-- [ ] `cargo clippy -p octo-reputation --all-targets --all-features -- -D warnings` clean
-- [ ] `cargo fmt -p octo-reputation -- --check` clean
+- [x] `cargo test -p octo-reputation --features stoolap --lib` still passes (212 tests) — verified 2026-08-07 post-`ecaa1313`
+- [x] `cargo clippy -p octo-reputation --all-targets --all-features -- -D warnings` clean — verified 2026-08-07
+- [x] `cargo fmt -p octo-reputation -- --check` clean — verified 2026-08-07
 - [ ] §Phase 1 AC Reconciliation (2026-08-07) in parent mission updated to reflect per-AC resolution
 
 ## Dependencies
@@ -86,10 +86,11 @@ Substrate has equivalents — e.g., `auth::AttestorRegistration` (struct) instea
 
 ## Location
 
-- `crates/octo-reputation/src/auth.rs` (MODIFY) — add `ResumeProof`, `ReaderAuth`, `RetentionAuth` structs (Path A options)
-- `crates/octo-reputation/src/types.rs` (MODIFY) — add `ReputationPolicy` struct (Path A option)
-- `crates/octo-reputation/src/constants.rs` (MODIFY) — add `RETENTION_ROLE` + `BLAKE3_REPUTATION_RETENTION_DOMAIN` (Path A options)
-- `missions/claimed/0968-reputation-persistence.md` (MODIFY) — rewrite AC body text for Path B resolutions + flip [x] for verified ACs
+- `crates/octo-reputation/src/auth.rs` (MODIFIED 2026-08-07, commit `ecaa1313`) — added `ResumeProof`, `ReaderAuth`, `RetentionAuth` structs
+- `crates/octo-reputation/src/types.rs` (MODIFIED 2026-08-07, commit `ecaa1313`) — added `ReputationPolicy` struct
+- `crates/octo-reputation/src/constants.rs` (MODIFIED 2026-08-07, commit `ecaa1313`) — added `RETENTION_ROLE` + `BLAKE3_REPUTATION_RETENTION_DOMAIN`
+- `crates/octo-reputation/src/lib.rs` (MODIFIED 2026-08-07, commit `ecaa1313`) — re-exports for `ReaderAuth`, `ResumeProof`, `RetentionAuth`, `ReputationPolicy`
+- `missions/claimed/0968-reputation-persistence.md` (PENDING) — Path B AC body rewrites + [x] flips for verified ACs
 
 ## Claimant
 
@@ -97,13 +98,13 @@ Substrate has equivalents — e.g., `auth::AttestorRegistration` (struct) instea
 
 ## Notes
 
-- This is a documentation-heavy sub-mission. Code adds (Path A) are bounded — at most 5 small structs/constants (~30 lines total).
-- The bulk of the work is AC body rewrites (Path B), which is mechanical but requires careful reading of each AC to ensure the rewrite preserves the original spec-intent.
-- The mission can be split into 2 sessions: (1) Path A code adds + clippy/test verification; (2) Path B AC rewrites + parent mission update.
-- AC-13 + AC-14 require rotation + DID construction primitives that may not be in `octo-reputation` substrate at all. If neither `auth::` nor `types::` has the canonical form, mission may need to scope-defer to a future `0968-p1-rotation-did` sub-mission.
+- **Path A landed 2026-08-07 (commit `ecaa1313`)** — 5 small canonical types added with verification green (212/212 tests, clippy clean, fmt clean). The cited canonical names now exist as substrate types; AC body text can reference them by name without further substrate work.
+- Path B remains: AC body text rewrites that align the AC body with substrate names where the canonical form diverges (e.g., `RecorderRegistration` → `ChainRef`, `AggregateCheckpoint` → `AuditReplay`, `Did::rotate` → `auth::` rotation primitives). This is mechanical but requires per-AC reading to preserve spec intent.
+- AC-13 + AC-14 (`Did::rotate`, `Did::parse`) — partial substrate coverage exists (`RecorderDid::from_array`, `RotationProvenance`). Will resolve as Path B rewrites; may scope-defer to `0968-p1-rotation-did` if rewrites reveal gaps.
 
 ## Version History
 
 | Version | Date       | Change |
 | ------- | ---------- | ------ |
+| v0.2    | 2026-08-07 | Path A landed (commit `ecaa1313`). 5 canonical types added. Verification green. Path B (AC body rewrites) remains. |
 | v0.1    | 2026-08-07 | Mission created. 15 missing symbols + 29 affected ACs catalogued. Per [[deferred-vs-unspecified]] named-owner rule, scope = align AC text with substrate (Path B) OR add canonical names (Path A). |

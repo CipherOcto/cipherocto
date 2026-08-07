@@ -15,11 +15,9 @@
 //! `ProofRejected` — also NOT a silent acceptance. Both branches are
 //! safe; the release invariant asserts the FIRST.
 
-#[cfg(not(feature = "allow-stub-verifier"))]
-use zk_verifier::VerifyError;
-#[cfg(not(feature = "allow-stub-verifier"))]
-use zk_verifier::ProverError;
 use zk_verifier::{ProofBundle, PublicInputs};
+#[cfg(not(feature = "allow-stub-verifier"))]
+use zk_verifier::{ProverError, VerifyError};
 
 const TV_FIXED_TIME: u64 = 1_700_000_000;
 

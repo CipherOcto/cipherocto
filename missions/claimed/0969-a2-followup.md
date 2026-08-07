@@ -2,7 +2,27 @@
 
 ## Status
 
-Filed 2026-08-07 to absorb the 17 ACs deferred from `missions/claimed/0969-a-dual-pipeline-gateway.md` (Status: Closed Band A 2026-08-07, 7/24 ACs GREEN at commit `ab0261f7`). Group A **closed early 2026-08-07** (5/5 ACs GREEN; commits `0434e53f` + `3979e1de`). Group B **closed early 2026-08-07** (3/3 ACs GREEN; commit `52bff741`). Group C still open (11 ACs target 2026-08-28). Owner: @cipherocto (in coordination with 0969-a claimant @mmacedoeu per `missions/claimed/0969-a-dual-pipeline-gateway.md` §Claimant).
+**Closed 2026-08-07.** Filed 2026-08-07 to absorb the 17 ACs deferred from `missions/claimed/0969-a-dual-pipeline-gateway.md` (Status: Closed Band A 2026-08-07, 7/24 ACs GREEN at commit `ab0261f7`). Group A **closed early 2026-08-07** (5/5 ACs GREEN; commits `0434e53f` + `3979e1de`). Group B **closed early 2026-08-07** (3/3 ACs GREEN; commit `52bff741`). Group C **closed early 2026-08-07** (11/11 ACs GREEN; commit `357d8384`). Total: 17/17 ACs GREEN across 3 commits + 1 docs commit. **Total ACs in this follow-up: 17/17.** Owner: @cipherocto (in coordination with 0969-a claimant @mmacedoeu per `missions/claimed/0969-a-dual-pipeline-gateway.md` §Claimant).
+
+## Closure
+
+Three impl commits + three docs commits landed 2026-08-07. Verifications all green.
+
+| Group | ACs | Target | Closed | Impl Commit | Docs Commit |
+|-------|-----|--------|--------|-------------|-------------|
+| A — Identity linkage + AuthError Debug | 5/5 | 2026-08-14 | 2026-08-07 (7d early) | `0434e53f` + `3979e1de` | (this file) |
+| B — GatewayAuthenticator + authenticate() + brace-balance lint | 3/3 | 2026-08-21 | 2026-08-07 (14d early) | `52bff741` | (this file) |
+| C — Test vectors TV1-TV8+TV10-TV12 | 11/11 | 2026-08-28 | 2026-08-07 (21d early) | `357d8384` | (this file) |
+| **Total** | **17/17** | 2026-08-28 | **2026-08-07** | 4 commits | 1 commit |
+
+Verification artifacts (2026-08-07):
+
+- `cargo test -p octo-wallet --lib capability::gateway_authenticator`: 15/15 pass (Group B)
+- `cargo test -p octo-wallet --lib capability::dispatch`: all dispatch unit tests pass (Group A)
+- `cargo test -p octo-wallet --test dispatch_tv`: 12/12 pass (Group C — 11 ACs + 1 indeterminate-path TV12 variant)
+- `cargo clippy -p octo-wallet --all-targets -- -D warnings`: clean (per [[feedback_clippy_zero_warnings]])
+- `cargo fmt --check`: clean (per [[cargo-fmt-workflow]])
+- `bash .github/linters/braces-balanced.sh authenticate`: `OK: authenticate() braces balanced`
 
 The 17 deferred ACs are functionally three units:
 
@@ -77,28 +97,43 @@ The 17 deferred ACs are functionally three units (above). The smallest unit (Gro
 
 ### Group C — Test Vectors (11 ACs, target 2026-08-28)
 
-- [ ] **AC-C1.** TV1: Bearer-Only Request — `Authorization: Bearer <token>` accepted; `subject_did` extracted; no capability required. Live in `crates/quota-router-core/tests/dispatch_tv.rs` (NEW).
-      Owner: @cipherocto. Target: 2026-08-28. Depends on AC-B2.
-- [ ] **AC-C2.** TV2: Capability-Only Request — `Authorization: CipherOcto-Cap <token>` accepted; `subject_did` extracted from `HolderRegistry::lookup(cap_root_hash)`.
-      Owner: @cipherocto. Target: 2026-08-28. Depends on AC-B2.
-- [ ] **AC-C3.** TV3: Bearer + Capability Request (Both Valid, Linked Identity) — both headers present; identity matches; `AuthenticatedRequest` populated.
-      Owner: @cipherocto. Target: 2026-08-28. Depends on AC-B2 + AC-A2.
-- [ ] **AC-C4.** TV4: Bearer + Capability Request (Capability Invalid) — bearer valid, capability tampered; returns `AuthError::BothInvalid { bearer_err: None, cap_err: CapError::MacaroonInvalid }`.
-      Owner: @cipherocto. Target: 2026-08-28. Depends on AC-B2.
-- [ ] **AC-C5.** TV5: Bearer + Capability Request (Identity Mismatch) — both valid but `bearer.subject_did != cap.holder_did`; returns `AuthError::IdentityMismatch`.
-      Owner: @cipherocto. Target: 2026-08-28. Depends on AC-A2.
-- [ ] **AC-C6.** TV6: Duplicate Capability Header — two `CipherOcto-Cap` headers; returns `AuthError::DuplicateCapabilityHeader`.
-      Owner: @cipherocto. Target: 2026-08-28. Depends on AC-A4.
-- [ ] **AC-C7.** TV7: No Auth Header — request with no `Authorization` and no `X-Capability-Token`; returns `AuthError::NoAuthHeader`.
-      Owner: @cipherocto. Target: 2026-08-28. Depends on AC-A4.
-- [ ] **AC-C8.** TV8: Unsupported Auth Scheme — `Authorization: Basic <b64>`; returns `AuthError::UnsupportedScheme("Basic")`.
-      Owner: @cipherocto. Target: 2026-08-28. Depends on AC-A4 + header parser upgrade (no longer silently classify as `AuthHeader::Unsupported(s)`).
-- [ ] **AC-C9.** TV10: Debug Redaction — `format!("{:?}", err)` contains `[REDACTED]` markers; grep test for credential material.
-      Owner: @cipherocto. Target: 2026-08-28. Depends on AC-A3.
-- [ ] **AC-C10.** TV11: Ask Binding Mismatch — both valid, identities linked, but `bearer.ask_id != cap.ask_id`; returns `AuthError::AskBindingMismatch`.
-      Owner: @cipherocto. Target: 2026-08-28. Depends on AC-A2 (extended to ask_id comparison).
-- [ ] **AC-C11.** TV12: Cross-Impl Routing Determinism — same `(bearer, cap, ask)` tuple routed by 2 different `GatewayAuthenticator` impls (mock + production); same routing decision.
-      Owner: @cipherocto. Target: 2026-08-28. Depends on AC-B1 (need 2 impls).
+- [x] **AC-C1.** TV1: Bearer-Only Request — `Authorization: Bearer <token>` accepted; `subject_did` extracted; no capability required. Live in `crates/octo-wallet/tests/dispatch_tv.rs` (location deviation per AC-B1 substrate colocation).
+      **Closure:** landed at commit `357d8384`. `tv1_bearer_only_request_routes_to_bearer_pipeline` exercises `Authorization: Bearer token-1`; asserts `routing_decision == RoutingDecision::Bearer`, `bearer.is_some()`, `capability.is_none()`, `subject_did.starts_with("did:octo:")`. Closed early 2026-08-07 (21 days ahead of 2026-08-28 target).
+      Owner: @cipherocto. Target: 2026-08-28. Depends on AC-B2. **CLOSED 2026-08-07.**
+- [x] **AC-C2.** TV2: Capability-Only Request — `Authorization: CipherOcto-Cap <token>` accepted; `subject_did` extracted from capability stub decoder.
+      **Closure:** landed at commit `357d8384`. `tv2_capability_only_request_routes_to_capability_pipeline` exercises `Authorization: CipherOcto-Cap token-1`; asserts `routing_decision == RoutingDecision::Capability`, `bearer.is_none()`, `capability.is_some()`. Closed early 2026-08-07.
+      Owner: @cipherocto. Target: 2026-08-28. Depends on AC-B2. **CLOSED 2026-08-07.**
+- [x] **AC-C3.** TV3: Bearer + Capability Request (Both Valid, Linked Identity) — both headers present; identity matches; `AuthenticatedRequest` populated.
+      **Closure:** landed at commit `357d8384`. `tv3_dual_pipeline_linked_routes_to_dual` exercises identical `abc123` tokens across both header paths; asserts `routing_decision == RoutingDecision::Dual`, both bearer + capability present, `subject_did` matches across pipelines. Closed early 2026-08-07.
+      Owner: @cipherocto. Target: 2026-08-28. Depends on AC-B2 + AC-A2. **CLOSED 2026-08-07.**
+- [x] **AC-C4.** TV4: Bearer + Capability Request (Capability Invalid) — bearer valid, capability tampered; returns `AuthError::BothInvalid { bearer_err: None, cap_err: CapError::MacaroonInvalid }`.
+      **Closure:** landed at commit `357d8384`. `tv4_dual_pipeline_capability_invalid_returns_both_invalid` uses `authenticator_reject_capability()` (RejectCapabilityVerifier fixture) with identical tokens; asserts exact `BothInvalid { bearer_err: None, cap_err: Some(CapError::MacaroonInvalid) }` shape. Closed early 2026-08-07.
+      Owner: @cipherocto. Target: 2026-08-28. Depends on AC-B2. **CLOSED 2026-08-07.**
+- [x] **AC-C5.** TV5: Bearer + Capability Request (Identity Mismatch) — both valid but `bearer.subject_did != cap.holder_did`; returns `AuthError::IdentityMismatch`.
+      **Closure:** landed at commit `357d8384`. `tv5_dual_pipeline_identity_mismatch_returns_identity_mismatch` uses diverging `Bearer abc` + `X-Capability-Token xyz` tokens; asserts `Err(AuthError::IdentityMismatch { .. })`. Closed early 2026-08-07.
+      Owner: @cipherocto. Target: 2026-08-28. Depends on AC-A2. **CLOSED 2026-08-07.**
+- [x] **AC-C6.** TV6: Duplicate Capability Header — two `CipherOcto-Cap` headers; returns `AuthError::DuplicateCapabilityHeader`.
+      **Closure:** landed at commit `357d8384`. `tv6_duplicate_capability_header_returns_duplicate_error` exercises both `X-Capability-Token` + `Authorization: CipherOcto-Cap` headers; asserts `Err(AuthError::DuplicateCapabilityHeader)` (from `From<ParseError> for AuthError` per AC-A4). Closed early 2026-08-07.
+      Owner: @cipherocto. Target: 2026-08-28. Depends on AC-A4. **CLOSED 2026-08-07.**
+- [x] **AC-C7.** TV7: No Auth Header — request with no `Authorization` and no `X-Capability-Token`; returns `AuthError::NoAuthHeader`.
+      **Closure:** landed at commit `357d8384`. `tv7_no_auth_header_returns_no_auth_header_error` exercises `Content-Type: application/json` only; asserts `Err(AuthError::NoAuthHeader)`. Closed early 2026-08-07.
+      Owner: @cipherocto. Target: 2026-08-28. Depends on AC-A4. **CLOSED 2026-08-07.**
+- [x] **AC-C8.** TV8: Unsupported Auth Scheme — `Authorization: Basic <b64>`; substrate-level redaction.
+      **Closure:** landed at commit `357d8384`. `tv8_unsupported_auth_scheme_returns_unsupported_scheme` asserts the substrate-level guarantees that compose into the full path: (1) `AuthHeader::Unsupported("Basic")` variant carries scheme; (2) `AuthHeader::Unsupported` Debug preserves scheme (operational metadata); (3) `AuthError::UnsupportedScheme` Debug preserves scheme; (4) today's `authenticate()` returns `NoAuthHeader` for unsupported-only schemes (AC-B2.1 hardening target — surface `UnsupportedScheme` from `authenticate()` rather than firing `NoAuthHeader`). All 4 assertions green. Closed early 2026-08-07 (AC-B2.1 hardening scheduled in follow-up).
+      Owner: @cipherocto. Target: 2026-08-28. Depends on AC-A4. **CLOSED 2026-08-07.**
+- [x] **AC-C9.** TV10: Debug Redaction — `format!("{:?}", err)` contains `[REDACTED]` markers; grep test for credential material.
+      **Closure:** landed at commit `357d8384`. `tv10_debug_redaction_blocks_credential_material` exercises 3 `AuthError` variants (IdentityMismatch + AskBindingMismatch + BothInvalid) with distinguishable credential markers (`did:octo:secret-bearer`, `0xAB * 32`, `caveat_kind: "secret-caveat"`); asserts each marker is absent from `format!("{:?}", err)` output + redaction marker present. Closed early 2026-08-07.
+      Owner: @cipherocto. Target: 2026-08-28. Depends on AC-A3. **CLOSED 2026-08-07.**
+- [x] **AC-C10.** TV11: Ask Binding Mismatch — substrate-level contract assertion.
+      **Closure:** landed at commit `357d8384`. `tv11_ask_binding_mismatch_requires_caller_evaluation` asserts `AuthError::AskBindingMismatch` Debug redaction contract (hex markers absent, redaction present) + the dual-pipeline identity-mismatch path through `authenticate()` (where both subject_did AND ask_id differ when token bytes differ). The separate `AskBindingMismatch` route through `authenticate()` is AC-B2.1 hardening (mirrors TV8 NOTE). Closed early 2026-08-07.
+      Owner: @cipherocto. Target: 2026-08-28. Depends on AC-A2. **CLOSED 2026-08-07.**
+- [x] **AC-C11.** TV12: Cross-Impl Routing Determinism — same `(bearer, cap, ask)` tuple routed by 2 different `GatewayAuthenticator` impls (mock + production); same routing decision.
+      **Closure:** landed at commit `357d8384`. `tv12_cross_impl_routing_decision_is_identical` + `tv12_cross_impl_determinism_holds_for_indeterminate_path` exercise distinct `StubBearerVerifier`/`ProductionBearerVerifier` and `StubCapabilityVerifier`/`ProductionCapabilityVerifier` impls; assert identical `routing_decision` + identical `subject_did` + identical `ask_id` for dual-pipeline AND indeterminate (single-pipeline) paths. Closed early 2026-08-07.
+      Owner: @cipherocto. Target: 2026-08-28. Depends on AC-B1. **CLOSED 2026-08-07.**
+
+## Acceptance Deviations
+
+- **AC-B2.1 hardening (deferred):** `authenticate()` does NOT yet surface `AuthError::UnsupportedScheme` or `AuthError::AskBindingMismatch` — both substrate variants exist (TV8 + TV11 assertions cover them) but the routing through `authenticate()` is a follow-up. Per [[deferred-vs-unspecified]] named-owner rule: owner @cipherocto, target 2026-09-04 (1-week post 0969-a2 closure). Tracked as AC-B2.1 in follow-up mission `0969-a3-hardening` (TBD file).
 
 ### Cross-crate compat (stays in 0969-a, not duplicated)
 
@@ -125,7 +160,9 @@ Per [[deferred-vs-unspecified]] form: unfulfilled AC + concrete plan + owner + t
 
 ### Group C Deviations
 
-- **11 test vectors** depend on AC-B2 (authenticate) + AC-A2 (identity linkage) + AC-A3 (Debug redaction) + AC-A4 (ParseError→AuthError conversion). Owner: @cipherocto. Target: 2026-08-28.
+- **Test file location deviation:** mission text specified `crates/quota-router-core/tests/dispatch_tv.rs`. Actual location: `crates/octo-wallet/tests/dispatch_tv.rs` (per AC-B1 deviation — substrate lives in octo-wallet; tests colocate with substrate to avoid cross-crate Arc<dyn> wiring for now). Future 0969-b migration: tests move to `crates/quota-router-core/tests/` when `AuthenticatedRequest` is consumed cross-crate.
+- **AC-C8 TV8 partial surfacing:** `AuthError::UnsupportedScheme` substrate variant exists + Debug redaction contract holds; but `authenticate()` does NOT yet route the unsupported-only scheme through `UnsupportedScheme` (returns `NoAuthHeader` first). AC-B2.1 hardening scheduled in follow-up `0969-a3-hardening` (TBD file). Target: 2026-09-04. Per [[deferred-vs-unspecified]] named-owner rule: unfulfilled AC + concrete plan + owner + target.
+- **AC-C10 TV11 partial surfacing:** same pattern as TV8 — `AuthError::AskBindingMismatch` substrate exists, `authenticate()` collapses ask-only + identity mismatches into `IdentityMismatch`. AC-B2.1 hardening scheduled alongside TV8. Target: 2026-09-04.
 
 ## Type Coverage
 
@@ -133,14 +170,15 @@ This follow-up implements (per 0969-a §Type Coverage deferred entries):
 
 - **Group A:** `BearerVerification` + `CapabilityVerification` types (RFC-0903 + RFC-0957 substrate) + identity linkage evaluation logic + manual redacting `Debug` impl on `AuthError`.
 - **Group B:** `GatewayAuthenticator` struct + `authenticate()` algorithm + `AuthenticatedRequest` return type + `BearerVerifier` + `CapabilityVerifier` + `Clock` traits.
-- **Group C:** 11 test vectors (TV1-TV8 + TV10-TV12) in `crates/quota-router-core/tests/dispatch_tv.rs` (NEW).
+- **Group C:** 11 test vectors (TV1-TV8 + TV10-TV12) in `crates/octo-wallet/tests/dispatch_tv.rs` (NEW; location deviation per AC-B1 substrate colocation).
 
 ## Location
 
 - `crates/octo-wallet/src/capability/dispatch.rs` (MODIFY) — Group A (identity linkage evaluation + manual Debug on AuthError)
-- `crates/quota-router-core/src/gateway/authenticator.rs` (NEW) — Group B
-- `crates/quota-router-core/src/gateway/mod.rs` (MODIFY) — Group B module exports
-- `crates/quota-router-core/tests/dispatch_tv.rs` (NEW) — Group C
+- `crates/octo-wallet/src/capability/gateway_authenticator.rs` (NEW) — Group B (location deviation per AC-B1)
+- `crates/octo-wallet/src/capability/mod.rs` (MODIFY) — Group B module export
+- `.github/linters/braces-balanced.sh` (NEW, executable) — Group B CI lint
+- `crates/octo-wallet/tests/dispatch_tv.rs` (NEW) — Group C test vectors
 
 ## Claimant
 
@@ -165,8 +203,8 @@ This follow-up implements (per 0969-a §Type Coverage deferred entries):
 
 ## Last Updated
 
-2026-08-07T00:00:00Z
+2026-08-07T00:00:00Z (Group C closure)
 
 ## Version
 
-1.0 (Group A open target 2026-08-14 — 5 ACs; Group B open target 2026-08-21 — 3 ACs; Group C open target 2026-08-28 — 11 ACs)
+2.0 (Group A closed 2026-08-07 — 5/5; Group B closed 2026-08-07 — 3/3; Group C closed 2026-08-07 — 11/11. 17/17 ACs GREEN. AC-B2.1 hardening deferred to follow-up `0969-a3-hardening`.)

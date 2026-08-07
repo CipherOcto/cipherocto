@@ -83,7 +83,7 @@ impl std::fmt::Debug for CapabilityVerification {
 }
 
 /// `BearerError` (RFC-0969 §Phase 1) — bearer verification failure modes.
-#[derive(thiserror::Error)]
+#[derive(thiserror::Error, Clone, PartialEq, Eq)]
 pub enum BearerError {
     #[error("malformed bearer token")]
     Malformed,
@@ -107,7 +107,7 @@ impl std::fmt::Debug for BearerError {
 }
 
 /// `CapError` (RFC-0969 §Phase 1) — capability verification failure modes.
-#[derive(thiserror::Error)]
+#[derive(thiserror::Error, Clone, PartialEq, Eq)]
 pub enum CapError {
     #[error("macaroon invalid")]
     MacaroonInvalid,
@@ -234,7 +234,7 @@ pub fn parse_auth_headers(headers: &[(String, String)]) -> Result<DispatchSet, P
 }
 
 /// AuthError (RFC-0969 §Phase 1).
-#[derive(thiserror::Error)]
+#[derive(thiserror::Error, Clone, PartialEq)]
 pub enum AuthError {
     #[error("identity mismatch: bearer_did=<redacted>, cap_did=<redacted>")]
     IdentityMismatch { bearer_did: String, cap_did: String },

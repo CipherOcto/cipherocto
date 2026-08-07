@@ -14,6 +14,7 @@ pub mod discharge;
 pub mod dispatch;
 pub mod dual_issuance;
 pub mod federation;
+pub mod gateway_authenticator;
 pub mod gc;
 pub mod gossip;
 pub mod hop_envelope;

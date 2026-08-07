@@ -69,6 +69,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Install scarb 2.16.0 (Cairo 2.x build orchestrator)
+        # Required by `bundled_casm_hash()` invoked transitively from the
+        # zk_vectors integration tests via `capability::zk_mint::*` paths.
+        # Same pin as `casm-snapshot` job.
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://docs.swmansion.com/scarb/install.sh | sh -s -- -v 2.16.0
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          scarb --version
       - name: Run 8 RFC-0958 vectors + cross-impl TV1/TV2 (R4 F-25 — dropped --features full)
         run: cargo test -p octo-wallet --test zk_vectors
 
@@ -83,6 +91,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Install scarb 2.16.0 (Cairo 2.x build orchestrator)
+        # Required by `bundled_casm_hash()` invoked transitively from the
+        # wire_v2_roundtrip tests via `capability::zk_mint::proof_bundle_wire_roundtrip`
+        # and related paths.
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://docs.swmansion.com/scarb/install.sh | sh -s -- -v 2.16.0
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          scarb --version
       - name: Run wire v2 4-segment round-trip (R4 F-25 — dropped --features full)
         run: cargo test -p octo-wallet --test wire_v2_roundtrip
 
@@ -160,6 +176,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Install scarb 2.16.0 (Cairo 2.x build orchestrator)
+        # Required by `bundled_casm_hash()` invoked by the 3 bench tests
+        # (`proof_gen_latency_self_host_under_2s_10k_trace`,
+        # `verify_latency_under_100ms`, `proof_size_50_to_500kb`).
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://docs.swmansion.com/scarb/install.sh | sh -s -- -v 2.16.0
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          scarb --version
       - name: Run #[ignore] perf gates (proof-gen <2s, verify <100ms, size 50-500KB)
         # Tagged `#[ignore]` so default `cargo test` does not run them; CI
         # opts in via `--include-ignored` to enforce the gates per PR.

@@ -37,6 +37,7 @@ Defines a distributed mesh network of Quota Router Nodes that cooperatively rout
 - RFC-0923: Dynamic Provider Routing — per-request `provider_type` dispatch
 
 > **Dependency Validation Rules:**
+>
 > 1. Dependencies MUST form a DAG (no cycles). ✅ Verified: this RFC depends on 0863, 0850, 0862, 0126; none depend on this RFC.
 > 2. All "Requires" RFCs MUST be listed as mission prerequisites. ✅
 > 3. Optional dependencies MUST be documented separately from required. ✅
@@ -44,16 +45,16 @@ Defines a distributed mesh network of Quota Router Nodes that cooperatively rout
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| G1 — Request forwarding latency | < 100ms p50 for 3-hop propagation | End-to-end request → provider dispatch |
-| G2 — Provider capacity convergence | < 30s for capacity state to propagate 5 hops | Gossip convergence time |
-| G3 — Fault tolerance | Requests survive any single-node failure | No request loss on single-node crash |
-| G4 — Integration simplicity | ≤ 20 lines to join a router to the network | `QuotaRouterNode::builder()` + `.provider()` + `.peer()` + `.build()` |
-| G5 — Backward compatibility | Works with existing `NodeTransport` consumers | Sync engine, agent runtime use unchanged |
-| G6 — Quota accounting determinism | All quota operations Class A per RFC-0008 | Deterministic settlement |
-| G7 — Provider diversity | Support ≥ 10 concurrent providers per node | Provider registry capacity |
-| G8 — Bootstrap independence | Core routing works without `BootstrapOrchestrator` | Static peers + peer exchange (via `CapacityGossip.known_peers`) provide full functionality |
+| Goal                               | Target                                             | Metric                                                                                     |
+| ---------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| G1 — Request forwarding latency    | < 100ms p50 for 3-hop propagation                  | End-to-end request → provider dispatch                                                     |
+| G2 — Provider capacity convergence | < 30s for capacity state to propagate 5 hops       | Gossip convergence time                                                                    |
+| G3 — Fault tolerance               | Requests survive any single-node failure           | No request loss on single-node crash                                                       |
+| G4 — Integration simplicity        | ≤ 20 lines to join a router to the network         | `QuotaRouterNode::builder()` + `.provider()` + `.peer()` + `.build()`                      |
+| G5 — Backward compatibility        | Works with existing `NodeTransport` consumers      | Sync engine, agent runtime use unchanged                                                   |
+| G6 — Quota accounting determinism  | All quota operations Class A per RFC-0008          | Deterministic settlement                                                                   |
+| G7 — Provider diversity            | Support ≥ 10 concurrent providers per node         | Provider registry capacity                                                                 |
+| G8 — Bootstrap independence        | Core routing works without `BootstrapOrchestrator` | Static peers + peer exchange (via `CapacityGossip.known_peers`) provide full functionality |
 
 ## Motivation
 
@@ -82,7 +83,7 @@ This is the distributed extension of RFC-0901's single-node Quota Router Agent.
 
 The design follows two established patterns:
 
-1. **NodeTransport** (`octo-transport`): Declarative transport stack with fan-out/failover. We extend this with request forwarding semantics — instead of just sending data, we forward *requests* with routing metadata.
+1. **NodeTransport** (`octo-transport`): Declarative transport stack with fan-out/failover. We extend this with request forwarding semantics — instead of just sending data, we forward _requests_ with routing metadata.
 
 2. **Stoolap Sync** (RFC-0862): Peer-to-peer protocol with envelope discriminators, anti-entropy state exchange, and deterministic ordering. We adapt the anti-entropy pattern for quota capacity gossip instead of database state sync.
 
@@ -103,6 +104,7 @@ A Quota Router Node cannot forward requests until it knows at least one peer. Th
 **Decision:** Use a two-layer approach — (1) initial peer acquisition via RFC-0851p-a `BootstrapOrchestrator` + static config, (2) ongoing peer exchange via the `known_peers` field piggybacked on `CapacityGossip` envelopes.
 
 **Rationale:**
+
 - RFC-0851p-a's `BootstrapOrchestrator` is designed for exactly this: acquiring initial peers. Reusing it avoids duplicating seed-list validation, Sybil defense, and intersection logic.
 - The `BootstrapOrchestrator` response collection is currently a **stub** (see `octo-transport/src/bootstrap.rs` — the `send_bootstrap_requests()` method returns empty `Vec`). This is a **known gap** that must be resolved before Phase 1 of this RFC can integrate bootstrap.
 - Peer exchange (the `known_peers` field of `CapacityGossipPayload`) provides continuous peer discovery after bootstrap, allowing the mesh to grow organically without re-running the bootstrap protocol. No separate envelope is used — peer exchange rides on the existing gossip envelope.
@@ -204,6 +206,7 @@ impl QuotaRouterNode {
 The `BootstrapOrchestrator::send_bootstrap_requests()` (in `octo-transport/src/bootstrap.rs`) currently returns an empty `Vec` because the `NetworkReceiver` inbound path is not wired. This means `run()` will always return `NoResponses` when `min_responses > 0`.
 
 **Resolution options:**
+
 1. **Fix the stub** (prerequisite): Wire `NetworkReceiver` to collect `BOOTSTRAP_RESP` envelopes. This is the correct fix and benefits all consumers of `BootstrapOrchestrator`.
 2. **Bypass bootstrap entirely**: Use only static peers + `CapacityGossip.known_peers` for discovery. Simpler, but requires manual peer configuration.
 3. **Hybrid approach** (recommended for Phase 1): Use static peers initially, then switch to `BootstrapOrchestrator` once the stub is fixed. This RFC's implementation can proceed without blocking on the stub fix.
@@ -281,6 +284,7 @@ pub struct CapacityGossipPayload {
 ```
 
 **Peer exchange rules:**
+
 1. On receiving `CapacityGossip`, merge `known_peers` into local peer cache.
 2. Only add a peer if: (a) not already known, (b) `RouterAnnounce` was received from it (identity verification), (c) supported models overlap with local policy.
 3. Maximum peer cache size: 128 (configurable). Evict least-recently-seen peers.
@@ -308,14 +312,18 @@ stateDiagram-v2
 
 ### Role/Authority Coverage Table
 
-| Role | Identifier | Authority Scope | Lifecycle | Source/Ref |
-|------|------------|-----------------|-----------|------------|
-| **Router Node** | `RouterNodeId` (BLAKE3-256 of `node_public_key \|\| network_id`) | Accept inbound requests, forward to peers, dispatch to local providers, gossip capacity | 7-state lifecycle (§Lifecycle Requirements) | This RFC §Specification |
-| **Provider** | `ProviderId` (BLAKE3-256 of `provider_name \|\| router_node_id`) | Execute inference requests, report capacity | Per-node registration; health-checked | This RFC §Specification + RFC-0901 |
-| **Consumer** | Any code calling `QuotaRouterNode::route()` | Submit inference requests | Stateless — no persistent state | This RFC §Specification |
-| **Network Operator** | Human operator configuring router nodes | Configure peers, providers, policies | Config at startup | This RFC §Specification |
+| Role                                 | Identifier                                                                                                                                         | Authority Scope                                                                                                                                                                                                                                                    | Lifecycle                                   | Source/Ref                                                  |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------- | ----------------------------------------------------------- |
+| **Router Node**                      | `RouterNodeId` (BLAKE3-256 of `node_public_key \|\| network_id`)                                                                                   | Accept inbound requests, forward to peers (optionally via `HopEnvelope` per [RFC-0970](../networking/0970-forwarding-hop-auth-envelope.md) — `ForwardRequestPayload.hop_envelope: Option<HopEnvelope>` opt-in field), dispatch to local providers, gossip capacity | 7-state lifecycle (§Lifecycle Requirements) | This RFC §Specification + RFC-0970 §Phase 4                 |
+| **Provider**                         | `ProviderId` (BLAKE3-256 of `provider_name \|\| router_node_id`)                                                                                   | Execute inference requests, report capacity                                                                                                                                                                                                                        | Per-node registration; health-checked       | This RFC §Specification + RFC-0901                          |
+| **Consumer**                         | Any code calling `QuotaRouterNode::route()`                                                                                                        | Submit inference requests                                                                                                                                                                                                                                          | Stateless — no persistent state             | This RFC §Specification                                     |
+| **Network Operator**                 | Human operator configuring router nodes                                                                                                            | Configure peers, providers, policies                                                                                                                                                                                                                               | Config at startup                           | This RFC §Specification                                     |
+| **Forwarder** (Router sub-role)      | `RouterNodeId` with `Forwarder` binding declared via [RFC-0971](../networking/0971-destination-node-role-consolidation.md) §RoleBindingDeclaration | Forward via `HopEnvelope` (RFC-0970) with `HolderKind::HopCapability` row in HolderRegistry; cross-realm replay defense                                                                                                                                            | Per RFC-0971 §Lifecycle Requirements        | RFC-0970 + RFC-0971                                         |
+| **Auditor** (Router sub-role)        | `RouterNodeId` with `Auditor` binding declared via RFC-0971 §RoleBindingDeclaration                                                                | Forward via `HopEnvelope` + emit `audit_replay_log` entry                                                                                                                                                                                                          | Per RFC-0971 §Lifecycle Requirements        | RFC-0970 + RFC-0971                                         |
+| **Pure Forwarder** (Router sub-role) | `RouterNodeId` with `PureForwarder` binding declared via RFC-0971 §RoleBindingDeclaration                                                          | Forward WITHOUT `HolderKind::HopCapability` row (pure forward path); cross-realm replay defense per Finding A22                                                                                                                                                    | Stateless                                   | RFC-0970 §pure_forward + RFC-0971 §Pure Forwarder Exception |
 
 **Out-of-scope roles:**
+
 - **Platform administrators** (OpenAI, Anthropic, etc.) manage their own APIs. This RFC does not define provider-level roles.
 - **Settlement operators** — quota accounting and settlement are handled by RFC-0909 and RFC-0900; this RFC defines request routing only.
 - **Mission coordinators** — this RFC does not define mission-scoped roles; see RFC-0855p-c.
@@ -899,6 +907,7 @@ impl PlatformAdapterPoller {
 **Wire-format contract (RFC-0850 §8.8 Raw mode):**
 
 `RawPlatformMessage.payload` is `[DeterministicEnvelope wire bytes (282 bytes)][mesh payload bytes]`. The poller splits the frame:
+
 - Bytes `0..ENVELOPE_WIRE_LEN` → parsed via `canonicalize()` to extract `envelope.source_peer` (32-byte sender-id), `envelope.mission_id`, and other envelope fields.
 - Bytes `ENVELOPE_WIRE_LEN..` → the mesh payload, dispatched to all registered `NetworkReceiver` instances via `NodeTransport::dispatch`.
 
@@ -940,6 +949,7 @@ When a remote peer dispatches a request and generates a `ForwardResponse`, the r
 **Response routing mechanism:**
 
 The `ForwardResponse` is sent directly back to the `origin_node` (Node A), not through the chain. This is possible because:
+
 - Each peer knows its direct neighbors (from gossip)
 - The `origin_node` is a `RouterNodeId` (32-byte ID)
 - `NodeTransport::send_best()` finds the best adapter to reach `origin_node`
@@ -1218,7 +1228,7 @@ Rationale:
 - **No caller-side wiring.** A tuple return required callers to construct or pass `Arc`s in the right order; this was a frequent source of bugs. Returning a single value removes that surface.
 - **Layered API.** The internal layering (`NodeTransport` → `NetworkReceiver` → handler) is an implementation detail. The public surface is `QuotaRouterNode`, period.
 
-See Mission 0870c for the consumer-side wiring example, Mission 0870m for the inbound API definition, and Mission 0870g (in `missions/deferred/`) for the cross-process boundary discussion that is *not* covered by this RFC.
+See Mission 0870c for the consumer-side wiring example, Mission 0870m for the inbound API definition, and Mission 0870g (in `missions/deferred/`) for the cross-process boundary discussion that is _not_ covered by this RFC.
 
 ### Public API
 
@@ -1341,7 +1351,7 @@ pub struct NetworkId(pub [u8; 32]);
 
 #### QuotaRouterNode
 
-```rust
+````rust
 /// The main quota router node — consumer-facing API for mesh routing.
 pub struct QuotaRouterNode {
     /// Node configuration.
@@ -1525,7 +1535,7 @@ impl GossipCache {
             .collect()
     }
 }
-```
+````
 
 #### Peer Cache
 
@@ -1893,15 +1903,15 @@ pub struct ForwardingConfig {
 
 New envelope payload discriminators for the Quota Router Network, allocated from the 8-bit space after the Sync range (`0xA0–0xC2`) and before the reserved range (`0xCD+`):
 
-| Code | Name | Direction | Description |
-|------|------|-----------|-------------|
-| `0xC3` | `ForwardRequest` | Router → Router | "Execute this request at your provider" (carries full `RequestContext` + payload + TTL) |
-| `0xC4` | `ForwardResponse` | Router → Router | "Here is the result" (carries response payload + provider metadata + latency) |
-| `0xC5` | `ForwardReject` | Router → Router | "I cannot fulfill this" (capacity exhausted, model not supported, TTL expired, budget exceeded) |
-| `0xC6` | `CapacityGossip` | Router ↔ Router | Periodic provider capacity advertisement (batched `ProviderCapacity` list + piggybacked `known_peers` for transitive peer discovery, up to 32 IDs) |
-| `0xC7` | `CapacityRequest` | Router → Router | "Send me your current capacity" (pull-based gossip) |
-| `0xCA` | `RouterAnnounce` | Router → Network | "I exist, here are my capabilities" (bootstrap discovery) |
-| `0xCB` | `RouterWithdraw` | Router → Network | "I am leaving the network" (graceful shutdown) |
+| Code   | Name              | Direction        | Description                                                                                                                                        |
+| ------ | ----------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0xC3` | `ForwardRequest`  | Router → Router  | "Execute this request at your provider" (carries full `RequestContext` + payload + TTL)                                                            |
+| `0xC4` | `ForwardResponse` | Router → Router  | "Here is the result" (carries response payload + provider metadata + latency)                                                                      |
+| `0xC5` | `ForwardReject`   | Router → Router  | "I cannot fulfill this" (capacity exhausted, model not supported, TTL expired, budget exceeded)                                                    |
+| `0xC6` | `CapacityGossip`  | Router ↔ Router  | Periodic provider capacity advertisement (batched `ProviderCapacity` list + piggybacked `known_peers` for transitive peer discovery, up to 32 IDs) |
+| `0xC7` | `CapacityRequest` | Router → Router  | "Send me your current capacity" (pull-based gossip)                                                                                                |
+| `0xCA` | `RouterAnnounce`  | Router → Network | "I exist, here are my capabilities" (bootstrap discovery)                                                                                          |
+| `0xCB` | `RouterWithdraw`  | Router → Network | "I am leaving the network" (graceful shutdown)                                                                                                     |
 
 Reserved for future use: `0xC8–0xC9` (provider health probe/report, deferred to F8.5), `0xCC` (was RouterPeerExchange; folded into `CapacityGossip`'s `known_peers` field per §Phase 3), and `0xCD–0xFF` (51 codes).
 
@@ -2223,6 +2233,7 @@ Phase 1 (hard filters) eliminates candidates that **cannot** fulfill the request
 **Design Choice — Context window check at mesh vs. local level:**
 
 Context window filtering (`max_input_tokens`, `max_output_tokens`) is **not** gossiped in `ProviderCapacity` because:
+
 - Token counts change per-request (a request with 1K tokens fits; 100K doesn't)
 - Provider context windows are fixed per-model (known at config time)
 - Detailed token counting requires the request payload (not available at mesh level)
@@ -2232,6 +2243,7 @@ Instead, context window checks happen at **dispatch time** (local layer) using R
 **Design Choice — Tag filtering at local level:**
 
 Tags are request-specific metadata that determine which providers accept a request. They are not gossiped because:
+
 - Tags change per-request
 - Tag matching logic is provider-specific (allowed_tags, blocked_tags)
 - Detailed tag checking requires the full tag list
@@ -2480,6 +2492,7 @@ Inspired by RFC-0862's anti-entropy Merkle summary pattern and RFC-0852's DGP go
 3. **Convergence:** Capacity state converges within `max_ttl × gossip_interval` seconds. In practice: 3 hops × 10s = 30s for full network convergence.
 
 **Design Choice:** Push gossip is preferred over anti-entropy for quota state because:
+
 - Quota state is **ephemeral** (changes every request), not **durable** (like database state in Stoolap Sync)
 - Small payload (~256 bytes per provider, ~2KB per node with 8 providers)
 - Network is small-to-medium (10-1000 nodes), not large-scale (millions)
@@ -2539,17 +2552,17 @@ enum RouterNodeLifecycle {
 }
 ```
 
-| From | To | Trigger | Deterministic? | Side Effects | Signing |
-|------|----|---------|----------------|--------------|---------|
-| Init | Bootstrapping | `RouterNodeConfig` loaded, `node_id` valid, seed_list or static_peers configured | Yes | Load seed list, begin `BootstrapOrchestrator` or static peer connection | n/a |
-| Bootstrapping | Active | ≥min_peers acquired via bootstrap or static config | Yes | Start accepting consumer requests, begin periodic gossip + `RouterAnnounce` | n/a |
-| Bootstrapping | Discovering | Bootstrap completed but <min_peers | Yes | Emit `InsufficientPeers` event; continue listening for `RouterAnnounce` | n/a |
-| Discovering | Active | ≥min_peers via `RouterAnnounce` from new peers | Yes | Resume forwarding to peers | n/a |
-| Active | Degraded | All peers unreachable (heartbeat timeout `2 × gossip_interval`) | Yes | Emit `AllPeersUnreachable` event; continue local dispatch | n/a |
-| Degraded | Active | ≥1 peer responds to `CapacityRequest` or `RouterAnnounce` | Yes | Resume forwarding to peers | n/a |
-| Active | Draining | Operator initiates graceful shutdown | Yes | Send `RouterWithdraw` to all peers; stop accepting new requests; drain in-flight | n/a |
-| Degraded | Draining | Operator initiates graceful shutdown | Yes | Send `RouterWithdraw` to any reconnected peers | n/a |
-| Draining | Terminated | All in-flight requests completed or timed out (`drain_timeout` = 30s) | Yes | Close network connections | n/a |
+| From          | To            | Trigger                                                                          | Deterministic? | Side Effects                                                                     | Signing |
+| ------------- | ------------- | -------------------------------------------------------------------------------- | -------------- | -------------------------------------------------------------------------------- | ------- |
+| Init          | Bootstrapping | `RouterNodeConfig` loaded, `node_id` valid, seed_list or static_peers configured | Yes            | Load seed list, begin `BootstrapOrchestrator` or static peer connection          | n/a     |
+| Bootstrapping | Active        | ≥min_peers acquired via bootstrap or static config                               | Yes            | Start accepting consumer requests, begin periodic gossip + `RouterAnnounce`      | n/a     |
+| Bootstrapping | Discovering   | Bootstrap completed but <min_peers                                               | Yes            | Emit `InsufficientPeers` event; continue listening for `RouterAnnounce`          | n/a     |
+| Discovering   | Active        | ≥min_peers via `RouterAnnounce` from new peers                                   | Yes            | Resume forwarding to peers                                                       | n/a     |
+| Active        | Degraded      | All peers unreachable (heartbeat timeout `2 × gossip_interval`)                  | Yes            | Emit `AllPeersUnreachable` event; continue local dispatch                        | n/a     |
+| Degraded      | Active        | ≥1 peer responds to `CapacityRequest` or `RouterAnnounce`                        | Yes            | Resume forwarding to peers                                                       | n/a     |
+| Active        | Draining      | Operator initiates graceful shutdown                                             | Yes            | Send `RouterWithdraw` to all peers; stop accepting new requests; drain in-flight | n/a     |
+| Degraded      | Draining      | Operator initiates graceful shutdown                                             | Yes            | Send `RouterWithdraw` to any reconnected peers                                   | n/a     |
+| Draining      | Terminated    | All in-flight requests completed or timed out (`drain_timeout` = 30s)            | Yes            | Close network connections                                                        | n/a     |
 
 **Liveness check:** Heartbeat via `CapacityGossip` exchange (every `gossip_interval`, default 10s). If no gossip received from a peer for `2 × gossip_interval` (20s), mark peer `Unreachable`.
 
@@ -2559,61 +2572,61 @@ enum RouterNodeLifecycle {
 
 ### Determinism Requirements
 
-| Operation | Class | Rationale |
-|-----------|-------|-----------|
-| Provider scoring function | **A** | Deterministic given identical inputs (prices, latencies, policy) |
-| TTL decrement | **A** | Counter operation, no wall clock |
-| HMAC computation | **A** | RFC-0853 primitives, deterministic |
-| Gossip timestamp | **A** | Monotonic counter, no wall clock |
-| DCS encoding of wire structs | **A** | RFC-0126 canonical encoding |
-| Provider health check | **B** | Deterministic when provider state is fixed; health changes are probabilistic |
-| Request forwarding order | **C** | Network timing determines which peer responds first |
-| Gossip propagation order | **C** | Network timing determines gossip arrival order |
-| Consumer request timing | **C** | External input, non-deterministic |
+| Operation                    | Class | Rationale                                                                    |
+| ---------------------------- | ----- | ---------------------------------------------------------------------------- |
+| Provider scoring function    | **A** | Deterministic given identical inputs (prices, latencies, policy)             |
+| TTL decrement                | **A** | Counter operation, no wall clock                                             |
+| HMAC computation             | **A** | RFC-0853 primitives, deterministic                                           |
+| Gossip timestamp             | **A** | Monotonic counter, no wall clock                                             |
+| DCS encoding of wire structs | **A** | RFC-0126 canonical encoding                                                  |
+| Provider health check        | **B** | Deterministic when provider state is fixed; health changes are probabilistic |
+| Request forwarding order     | **C** | Network timing determines which peer responds first                          |
+| Gossip propagation order     | **C** | Network timing determines gossip arrival order                               |
+| Consumer request timing      | **C** | External input, non-deterministic                                            |
 
 ### Error Handling
 
-| Code | Name | Cause | Recovery |
-|------|------|-------|----------|
-| `E_QRN_NO_PROVIDER` | NoProvider | No local or remote provider supports the requested model within budget | Return error to consumer; log for capacity planning |
-| `E_QRN_MODEL_NOT_SUPPORTED` | ModelNotSupported | Requested model not in any known provider's model list | Return ForwardReject with `ModelNotSupported`; consumer may retry with different model |
-| `E_QRN_TTL_EXPIRED` | TtlExpired | ForwardRequest reached TTL=0 without finding a provider | Return ForwardReject to originator; originator tries other peers |
-| `E_QRN_CAPACITY_EXHAUSTED` | CapacityExhausted | All known providers (local + gossiped) have 0 requests remaining | ForwardReject with `CapacityExhausted`; consumer may retry after gossip interval |
-| `E_QRN_CONTEXT_WINDOW_EXCEEDED` | ContextWindowExceeded | Request tokens exceed provider's max_input_tokens (RFC-0936) | ForwardReject with `ContextWindowExceeded`; originator tries next provider |
-| `E_QRN_PEER_UNREACHABLE` | PeerUnreachable | ForwardRequest send failed (transport error) | Skip peer, try next; mark peer `Unreachable` in gossip cache |
-| `E_QRN_FORWARD_TIMEOUT` | ForwardTimeout | ForwardResponse not received within `forward_timeout` | Cancel forward, try next peer; log for investigation |
-| `E_QRN_AUTH_FAILURE` | AuthFailure | ForwardRequest signature verification failed (if `PeerTrust::Verified`) | Reject request, log misbehavior; slash-tally candidate |
-| `E_QRN_PAYLOAD_TOO_LARGE` | PayloadTooLarge | Request payload exceeds `max_payload_bytes` | Reject at consumer; suggest chunking |
-| `E_QRN_HMAC_MISMATCH` | HmacMismatch | Gossip HMAC verification failed | Discard gossip entry; peer may be misconfigured or compromised |
-| `E_QRN_PROVIDER_FAILURE` | ProviderFailure | Local provider returned error | Failover to next local provider, then forward to peers |
+| Code                            | Name                  | Cause                                                                   | Recovery                                                                               |
+| ------------------------------- | --------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `E_QRN_NO_PROVIDER`             | NoProvider            | No local or remote provider supports the requested model within budget  | Return error to consumer; log for capacity planning                                    |
+| `E_QRN_MODEL_NOT_SUPPORTED`     | ModelNotSupported     | Requested model not in any known provider's model list                  | Return ForwardReject with `ModelNotSupported`; consumer may retry with different model |
+| `E_QRN_TTL_EXPIRED`             | TtlExpired            | ForwardRequest reached TTL=0 without finding a provider                 | Return ForwardReject to originator; originator tries other peers                       |
+| `E_QRN_CAPACITY_EXHAUSTED`      | CapacityExhausted     | All known providers (local + gossiped) have 0 requests remaining        | ForwardReject with `CapacityExhausted`; consumer may retry after gossip interval       |
+| `E_QRN_CONTEXT_WINDOW_EXCEEDED` | ContextWindowExceeded | Request tokens exceed provider's max_input_tokens (RFC-0936)            | ForwardReject with `ContextWindowExceeded`; originator tries next provider             |
+| `E_QRN_PEER_UNREACHABLE`        | PeerUnreachable       | ForwardRequest send failed (transport error)                            | Skip peer, try next; mark peer `Unreachable` in gossip cache                           |
+| `E_QRN_FORWARD_TIMEOUT`         | ForwardTimeout        | ForwardResponse not received within `forward_timeout`                   | Cancel forward, try next peer; log for investigation                                   |
+| `E_QRN_AUTH_FAILURE`            | AuthFailure           | ForwardRequest signature verification failed (if `PeerTrust::Verified`) | Reject request, log misbehavior; slash-tally candidate                                 |
+| `E_QRN_PAYLOAD_TOO_LARGE`       | PayloadTooLarge       | Request payload exceeds `max_payload_bytes`                             | Reject at consumer; suggest chunking                                                   |
+| `E_QRN_HMAC_MISMATCH`           | HmacMismatch          | Gossip HMAC verification failed                                         | Discard gossip entry; peer may be misconfigured or compromised                         |
+| `E_QRN_PROVIDER_FAILURE`        | ProviderFailure       | Local provider returned error                                           | Failover to next local provider, then forward to peers                                 |
 
 ## Performance Targets
 
-| Metric | Target | Notes |
-|--------|--------|-------|
-| Local dispatch latency | < 5ms overhead | Provider scoring + dispatch, excluding provider call |
-| Forwarded request latency (3-hop) | < 100ms p50 | End-to-end: consumer → router → router → provider → router → consumer |
-| Capacity gossip convergence | < 30s | 3 hops × 10s gossip interval |
-| Capacity gossip bandwidth | < 1KB/s per peer | ~256 bytes/provider × 8 providers × 10s interval = 2KB/10s = 200B/s |
-| Max concurrent forwards | 64 per node | Configurable via `ForwardingConfig.max_concurrent_forwards` |
-| Max providers per node | 256 | Provider registry capacity (local + gossiped) |
-| Max peers per node | 128 | Direct peer connections |
-| Router node memory overhead | < 10MB | Gossip cache (128 peers × 256B/provider × 8 providers = 260KB) + routing state |
+| Metric                            | Target           | Notes                                                                          |
+| --------------------------------- | ---------------- | ------------------------------------------------------------------------------ |
+| Local dispatch latency            | < 5ms overhead   | Provider scoring + dispatch, excluding provider call                           |
+| Forwarded request latency (3-hop) | < 100ms p50      | End-to-end: consumer → router → router → provider → router → consumer          |
+| Capacity gossip convergence       | < 30s            | 3 hops × 10s gossip interval                                                   |
+| Capacity gossip bandwidth         | < 1KB/s per peer | ~256 bytes/provider × 8 providers × 10s interval = 2KB/10s = 200B/s            |
+| Max concurrent forwards           | 64 per node      | Configurable via `ForwardingConfig.max_concurrent_forwards`                    |
+| Max providers per node            | 256              | Provider registry capacity (local + gossiped)                                  |
+| Max peers per node                | 128              | Direct peer connections                                                        |
+| Router node memory overhead       | < 10MB           | Gossip cache (128 peers × 256B/provider × 8 providers = 260KB) + routing state |
 
 ## Implicit Assumptions Audit
 
-| # | Category | Assumption | Where Relied Upon | Blast Radius if False | Mitigation / Status |
-|---|----------|------------|-------------------|----------------------|---------------------|
-| 1 | Network | Peers are reachable within `forward_timeout` (30s) | §Request Routing Algorithm step 3c | Requests fail; consumers see timeouts | Timeout handling + failover to next peer |
-| 2 | Configuration | Provider credentials are correctly configured | §Router Node Configuration | Provider dispatch fails; local-only fallback | Health probe on startup; operator runbook |
-| 3 | Identity stability | `RouterNodeId` is stable for the node's lifetime | §Data Structures | Gossip cache invalidation; peer trust broken | `RouterNodeId` derived from persistent keypair |
-| 4 | Trust | Peers do not forward malicious requests | §Adversary Analysis | Resource exhaustion, abuse | TTL limit + rate limiting + optional HMAC verification |
-| 5 | Resource availability | Node has sufficient memory for gossip cache | §Performance Targets | OOM on large networks | Bounded cache (128 peers × 256B = 32KB gossip + 32 × 32B = 1KB peer-exchange) |
-| 6 | Upgrade safety | All nodes on compatible protocol version | §Wire Format | ForwardRequest/Response decode failure | Version byte in envelope header; reject unknown versions |
-| 7 | Time source | OS provides monotonic time for gossip timestamps | §Gossip Payload | Timestamp rollback breaks staleness detection | Counter persisted in local state; no wall clock |
-| 8 | Network partition | Network eventually recovers from partitions | §Lifecycle Requirements | Degraded mode persists; manual intervention needed | Auto-recovery when peers reconnect; operator alerting |
-| 9 | Bootstrap | `BootstrapOrchestrator` response collection is a stub (returns empty `Vec`) | §Network Bootstrap Phase 1 | `run()` returns `NoResponses`; fallback to static peers | **ACCEPTED RISK** — Phase 1 uses static peers; `BootstrapOrchestrator` integration is Phase 2 enhancement. Stub fix is tracked as separate work item (octo-transport `bootstrap.rs`). |
-| 10 | Trust | Peer identity is verified via `RouterAnnounce` HMAC before adding to peer cache | §Phase 3 Peer Exchange | Untrusted peer injected into cache; amplification vector | HMAC verification required before forwarding to `discovered: true` peers |
+| #   | Category              | Assumption                                                                      | Where Relied Upon                  | Blast Radius if False                                    | Mitigation / Status                                                                                                                                                                   |
+| --- | --------------------- | ------------------------------------------------------------------------------- | ---------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Network               | Peers are reachable within `forward_timeout` (30s)                              | §Request Routing Algorithm step 3c | Requests fail; consumers see timeouts                    | Timeout handling + failover to next peer                                                                                                                                              |
+| 2   | Configuration         | Provider credentials are correctly configured                                   | §Router Node Configuration         | Provider dispatch fails; local-only fallback             | Health probe on startup; operator runbook                                                                                                                                             |
+| 3   | Identity stability    | `RouterNodeId` is stable for the node's lifetime                                | §Data Structures                   | Gossip cache invalidation; peer trust broken             | `RouterNodeId` derived from persistent keypair                                                                                                                                        |
+| 4   | Trust                 | Peers do not forward malicious requests                                         | §Adversary Analysis                | Resource exhaustion, abuse                               | TTL limit + rate limiting + optional HMAC verification                                                                                                                                |
+| 5   | Resource availability | Node has sufficient memory for gossip cache                                     | §Performance Targets               | OOM on large networks                                    | Bounded cache (128 peers × 256B = 32KB gossip + 32 × 32B = 1KB peer-exchange)                                                                                                         |
+| 6   | Upgrade safety        | All nodes on compatible protocol version                                        | §Wire Format                       | ForwardRequest/Response decode failure                   | Version byte in envelope header; reject unknown versions                                                                                                                              |
+| 7   | Time source           | OS provides monotonic time for gossip timestamps                                | §Gossip Payload                    | Timestamp rollback breaks staleness detection            | Counter persisted in local state; no wall clock                                                                                                                                       |
+| 8   | Network partition     | Network eventually recovers from partitions                                     | §Lifecycle Requirements            | Degraded mode persists; manual intervention needed       | Auto-recovery when peers reconnect; operator alerting                                                                                                                                 |
+| 9   | Bootstrap             | `BootstrapOrchestrator` response collection is a stub (returns empty `Vec`)     | §Network Bootstrap Phase 1         | `run()` returns `NoResponses`; fallback to static peers  | **ACCEPTED RISK** — Phase 1 uses static peers; `BootstrapOrchestrator` integration is Phase 2 enhancement. Stub fix is tracked as separate work item (octo-transport `bootstrap.rs`). |
+| 10  | Trust                 | Peer identity is verified via `RouterAnnounce` HMAC before adding to peer cache | §Phase 3 Peer Exchange             | Untrusted peer injected into cache; amplification vector | HMAC verification required before forwarding to `discovered: true` peers                                                                                                              |
 
 ## Security Considerations
 
@@ -2626,13 +2639,13 @@ enum RouterNodeLifecycle {
 
 ### Mitigations
 
-| Threat | Mitigation | Cost to Legitimate Operation |
-|--------|-----------|------------------------------|
+| Threat                    | Mitigation                                                          | Cost to Legitimate Operation                 |
+| ------------------------- | ------------------------------------------------------------------- | -------------------------------------------- |
 | Malicious peer forwarding | HMAC on ForwardRequest (optional `PeerTrust::Verified`) + TTL limit | Signature verification adds ~1ms per forward |
-| Request injection | Rate limiting per consumer (token bucket, 100 req/s default) | None — prevents abuse |
-| Capacity manipulation | HMAC on gossip; staleness eviction (30s); trust score tracking | HMAC adds ~0.1ms per gossip message |
-| Provider key theft | Keys stored locally, encrypted; never transmitted over network | None — keys stay on machine |
-| Amplification attack | Max TTL (3); max concurrent forwards (64); forward timeout (30s) | Limits maximum network fan-out |
+| Request injection         | Rate limiting per consumer (token bucket, 100 req/s default)        | None — prevents abuse                        |
+| Capacity manipulation     | HMAC on gossip; staleness eviction (30s); trust score tracking      | HMAC adds ~0.1ms per gossip message          |
+| Provider key theft        | Keys stored locally, encrypted; never transmitted over network      | None — keys stay on machine                  |
+| Amplification attack      | Max TTL (3); max concurrent forwards (64); forward timeout (30s)    | Limits maximum network fan-out               |
 
 ### Adversary Analysis (5-Question Test)
 
@@ -2640,12 +2653,12 @@ enum RouterNodeLifecycle {
 
 #### Decision Table
 
-| Decision | Q1 Beneficiary | Q2 Cost to Attacker | Q3 Gain if Successful | Q4 Defense (cost to legit op) | Q5 Residual Risk |
-|----------|----------------|---------------------|------------------------|------------------------------|------------------|
-| Accept ForwardRequest from any peer without HMAC verification (default `PeerTrust::Trusted`) | Compromised router node operator | trivial — modify config to add malicious peer | Forward forged requests to all reachable providers, consuming quota | HMAC verification (optional `PeerTrust::Verified`): ~1ms per forward | ACCEPTED RISK — v1 trust model; F2 (signed peer announcements) reduces to cryptographic verification |
-| Gossip capacity state without HMAC verification | Router node operator | trivial — modify gossip payload | Misdirect traffic (attract: capture OCTO-W fees; repel: avoid load) | HMAC on gossip: ~0.1ms per message; staleness eviction (30s) | Operator can lie about own capacity; mitigated by consumer-side verification + reputation tracking (future) |
-| TTL=3 allows 3-hop forwarding amplification | Attacker wanting to exhaust network capacity | moderate — must compromise one peer within TTL range | Amplify requests to all reachable providers | TTL limit caps amplification; rate limiting per origin node | A compromised node within TTL range can amplify; mitigated by peer trust scoring + anomaly detection |
-| Static peer configuration (no cryptographic bootstrap) | Network operator who compromises seed list | moderate — must gain access to seed list file | Redirect all new node traffic to attacker-controlled nodes | BootstrapOrchestrator with HMAC-signed seed lists (RFC-0851p-a); static peers are operator-trusted | ACCEPTED RISK — v1 trust model; F2 (signed peer announcements) reduces bootstrap trust |
+| Decision                                                                                     | Q1 Beneficiary                               | Q2 Cost to Attacker                                  | Q3 Gain if Successful                                               | Q4 Defense (cost to legit op)                                                                      | Q5 Residual Risk                                                                                            |
+| -------------------------------------------------------------------------------------------- | -------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Accept ForwardRequest from any peer without HMAC verification (default `PeerTrust::Trusted`) | Compromised router node operator             | trivial — modify config to add malicious peer        | Forward forged requests to all reachable providers, consuming quota | HMAC verification (optional `PeerTrust::Verified`): ~1ms per forward                               | ACCEPTED RISK — v1 trust model; F2 (signed peer announcements) reduces to cryptographic verification        |
+| Gossip capacity state without HMAC verification                                              | Router node operator                         | trivial — modify gossip payload                      | Misdirect traffic (attract: capture OCTO-W fees; repel: avoid load) | HMAC on gossip: ~0.1ms per message; staleness eviction (30s)                                       | Operator can lie about own capacity; mitigated by consumer-side verification + reputation tracking (future) |
+| TTL=3 allows 3-hop forwarding amplification                                                  | Attacker wanting to exhaust network capacity | moderate — must compromise one peer within TTL range | Amplify requests to all reachable providers                         | TTL limit caps amplification; rate limiting per origin node                                        | A compromised node within TTL range can amplify; mitigated by peer trust scoring + anomaly detection        |
+| Static peer configuration (no cryptographic bootstrap)                                       | Network operator who compromises seed list   | moderate — must gain access to seed list file        | Redirect all new node traffic to attacker-controlled nodes          | BootstrapOrchestrator with HMAC-signed seed lists (RFC-0851p-a); static peers are operator-trusted | ACCEPTED RISK — v1 trust model; F2 (signed peer announcements) reduces bootstrap trust                      |
 
 **Threat 1: Malicious peer amplifies requests**
 
@@ -2665,12 +2678,12 @@ enum RouterNodeLifecycle {
 
 ### Severity Classification
 
-| Severity | Finding | Action |
-|----------|---------|--------|
-| HIGH | Static peer config without cryptographic verification (Implicit Assumption #4) | ACCEPTED RISK — v1 trust model; F2 deadline for signed peer announcements |
-| MEDIUM | Gossip HMAC optional (Implicit Assumption #10) | Should add HMAC before Accept; low cost to legitimate operation |
-| LOW | TTL amplification within 3-hop range | Acceptable — bounded by design; rate limiting provides defense |
-| LOW | Operator can lie about own capacity | Acceptable — marketplace dispute resolution (RFC-0900) provides recourse |
+| Severity | Finding                                                                        | Action                                                                    |
+| -------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| HIGH     | Static peer config without cryptographic verification (Implicit Assumption #4) | ACCEPTED RISK — v1 trust model; F2 deadline for signed peer announcements |
+| MEDIUM   | Gossip HMAC optional (Implicit Assumption #10)                                 | Should add HMAC before Accept; low cost to legitimate operation           |
+| LOW      | TTL amplification within 3-hop range                                           | Acceptable — bounded by design; rate limiting provides defense            |
+| LOW      | Operator can lie about own capacity                                            | Acceptable — marketplace dispute resolution (RFC-0900) provides recourse  |
 
 ## Economic Analysis
 
@@ -2690,11 +2703,11 @@ The quota router network creates a **distributed demand-routing layer** for AI i
 
 ### Economic Attack Surface
 
-| Attack | Impact | Mitigation |
-|--------|--------|------------|
-| Price manipulation (gossip false pricing) | Consumers routed to expensive providers | HMAC on gossip; staleness eviction; consumer-side verification |
-| Capacity manipulation (gossip false capacity) | Traffic directed to overloaded nodes | HMAC on gossip; staleness eviction; health probes |
-| Fee capture (attract traffic to own node) | Operator earns OCTO-W fees from forwarded requests | Consumer policy override; reputation tracking (future) |
+| Attack                                        | Impact                                             | Mitigation                                                     |
+| --------------------------------------------- | -------------------------------------------------- | -------------------------------------------------------------- |
+| Price manipulation (gossip false pricing)     | Consumers routed to expensive providers            | HMAC on gossip; staleness eviction; consumer-side verification |
+| Capacity manipulation (gossip false capacity) | Traffic directed to overloaded nodes               | HMAC on gossip; staleness eviction; health probes              |
+| Fee capture (attract traffic to own node)     | Operator earns OCTO-W fees from forwarded requests | Consumer policy override; reputation tracking (future)         |
 
 ## Compatibility
 
@@ -2806,13 +2819,13 @@ Cross-process TCP/UDP for quota router nodes is a separate design problem (see M
 
 ## Alternatives Considered
 
-| Approach | Pros | Cons |
-|----------|------|------|
-| Centralized registry (single coordinator) | Simple; global view | Single point of failure; doesn't scale |
-| DHT-based routing (Kademlia) | Scalable; proven | Complex; overkill for 10-1000 nodes; requires RFC-0843 |
-| Pure broadcast (no TTL) | Simple; guaranteed delivery | Amplification attack vector; doesn't scale |
-| TTL-limited mesh (this RFC) | Bounded amplification; simple; reuses NodeTransport | Requires gossip for capacity; eventual consistency |
-| On-chain routing (smart contract) | Trustless; verifiable | Expensive; slow; doesn't match latency targets |
+| Approach                                  | Pros                                                | Cons                                                   |
+| ----------------------------------------- | --------------------------------------------------- | ------------------------------------------------------ |
+| Centralized registry (single coordinator) | Simple; global view                                 | Single point of failure; doesn't scale                 |
+| DHT-based routing (Kademlia)              | Scalable; proven                                    | Complex; overkill for 10-1000 nodes; requires RFC-0843 |
+| Pure broadcast (no TTL)                   | Simple; guaranteed delivery                         | Amplification attack vector; doesn't scale             |
+| TTL-limited mesh (this RFC)               | Bounded amplification; simple; reuses NodeTransport | Requires gossip for capacity; eventual consistency     |
+| On-chain routing (smart contract)         | Trustless; verifiable                               | Expensive; slow; doesn't match latency targets         |
 
 **Design Choice:** TTL-limited mesh is the right tradeoff for CipherOcto's current scale (10-1000 nodes). The `octo-transport` integration means no new transport layer — the mesh rides on existing DOT envelopes. DHT routing is a future extension (F2) if the network grows beyond 10K nodes.
 
@@ -2861,21 +2874,21 @@ Cross-process TCP/UDP for quota router nodes is a separate design problem (see M
 
 ## Key Files to Modify
 
-| File | Change |
-|------|--------|
-| `quota-router/Cargo.toml` | **New:** standalone crate manifest (depends on `octo-transport`) |
-| `quota-router/src/lib.rs` | **New:** `QuotaRouterNode`, `RouterNodeConfig`, `RouterNodeBuilder`, lifecycle, `QuotaRouterBootstrap` |
-| `quota-router/src/handler.rs` | **New:** `QuotaRouterHandler` — `NetworkReceiver` impl for inbound dispatch |
-| `quota-router/src/provider.rs` | **New:** `LocalProvider` trait, `ProviderCapacity`, `HttpLocalProvider`, `PyO3LocalProvider` |
-| `quota-router/src/scorer.rs` | **New:** `DestinationScorer`, `Destination`, two-phase scoring algorithm |
-| `quota-router/src/gossip.rs` | **New:** `CapacityGossipPayload`, `GossipCache`, gossip protocol |
-| `quota-router/src/announce.rs` | **New:** `RouterAnnouncePayload`, `RouterWithdrawPayload`, lifecycle broadcast |
-| `quota-router/src/forward.rs` | **New:** `ForwardRequestPayload`, `ForwardResponsePayload`, forwarding logic |
-| `quota-router/src/request.rs` | **New:** `RequestContext`, `RoutingPolicy`, `ForwardingConfig` |
-| `quota-router/src/metrics.rs` | **New:** `QuotaRouterMetrics` (Prometheus collectors) |
-| `quota-router/src/ratelimit.rs` | **New:** `RateLimiter`, `TokenBucket` |
-| `quota-router/tests/quota_router_adversarial.rs` | **New:** adversarial tests (TTL, HMAC, amplification, LRU) |
-| `octo-transport/src/bootstrap.rs` | **Fix stub:** Wire `NetworkReceiver` to collect `BOOTSTRAP_RESP` (prerequisite for Phase 3 bootstrap integration) |
+| File                                             | Change                                                                                                            |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `quota-router/Cargo.toml`                        | **New:** standalone crate manifest (depends on `octo-transport`)                                                  |
+| `quota-router/src/lib.rs`                        | **New:** `QuotaRouterNode`, `RouterNodeConfig`, `RouterNodeBuilder`, lifecycle, `QuotaRouterBootstrap`            |
+| `quota-router/src/handler.rs`                    | **New:** `QuotaRouterHandler` — `NetworkReceiver` impl for inbound dispatch                                       |
+| `quota-router/src/provider.rs`                   | **New:** `LocalProvider` trait, `ProviderCapacity`, `HttpLocalProvider`, `PyO3LocalProvider`                      |
+| `quota-router/src/scorer.rs`                     | **New:** `DestinationScorer`, `Destination`, two-phase scoring algorithm                                          |
+| `quota-router/src/gossip.rs`                     | **New:** `CapacityGossipPayload`, `GossipCache`, gossip protocol                                                  |
+| `quota-router/src/announce.rs`                   | **New:** `RouterAnnouncePayload`, `RouterWithdrawPayload`, lifecycle broadcast                                    |
+| `quota-router/src/forward.rs`                    | **New:** `ForwardRequestPayload`, `ForwardResponsePayload`, forwarding logic                                      |
+| `quota-router/src/request.rs`                    | **New:** `RequestContext`, `RoutingPolicy`, `ForwardingConfig`                                                    |
+| `quota-router/src/metrics.rs`                    | **New:** `QuotaRouterMetrics` (Prometheus collectors)                                                             |
+| `quota-router/src/ratelimit.rs`                  | **New:** `RateLimiter`, `TokenBucket`                                                                             |
+| `quota-router/tests/quota_router_adversarial.rs` | **New:** adversarial tests (TTL, HMAC, amplification, LRU)                                                        |
+| `octo-transport/src/bootstrap.rs`                | **Fix stub:** Wire `NetworkReceiver` to collect `BOOTSTRAP_RESP` (prerequisite for Phase 3 bootstrap integration) |
 
 ## Future Work
 
@@ -2906,6 +2919,7 @@ The mesh topology is inspired by how Stoolap Sync (RFC-0862) propagates WAL entr
 **Bootstrap design decision: why not fix the stub first?**
 
 The `BootstrapOrchestrator` stub (`octo-transport/src/bootstrap.rs`) is a known gap. Fixing it requires wiring `NetworkReceiver` to collect `BOOTSTRAP_RESP` envelopes — a non-trivial change that affects `octo-transport`'s inbound path. This RFC decouples from that work by:
+
 - Supporting static peer configuration as the primary bootstrap mechanism
 - Designing `CapacityGossip.known_peers` for ongoing discovery (independent of bootstrap)
 - Deferring `BootstrapOrchestrator` integration to Phase 3, after the stub fix
@@ -2914,19 +2928,19 @@ This means the quota router network can be deployed and tested without waiting f
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0 | 2026-06-28 | Initial draft — core mesh, forwarding, capacity gossip |
-| 1.1 | 2026-06-28 | Added §Network Bootstrap and Peer Discovery — two-layer peer discovery (RFC-0851p-a bootstrap + `CapacityGossip.known_peers`), `RouterAnnounce`/`RouterWithdraw` envelope types, `QuotaRouterBootstrap` config, `build_with_bootstrap()` API, documented `BootstrapOrchestrator` stub gap as ACCEPTED RISK, added implicit assumptions #9-#10, updated implementation phases, updated key files, updated future work (F1: stub fix) |
-| 1.2 | 2026-06-28 | Added §Node Destination Selection Algorithm — full request-scoped routing criteria system: `RequestContext` struct (model ID, preferred provider, model group, context window, tags, budget, latency, priority, deadline), two-phase filter-then-score algorithm (hard filters → soft scoring → ranking), `ForwardRequest` with full context, `Destination` ranking enum. Model ID as primary routing key. Context window and tag checks delegated to local dispatch (RFC-0936). Model group resolution at mesh level (RFC-0954). Updated error handling with `ModelNotSupported` and `ContextWindowExceeded` codes. Updated envelope descriptions. |
-| 1.3 | 2026-06-28 | Added §Component Integration Architecture — full integration architecture: component wiring diagram, end-to-end data flow sequence diagram, module layout (`quota_router/` subdirectory), `QuotaRouterHandler` (`NetworkReceiver` impl for inbound dispatch), response path (origin_node routing), `LocalProvider` trait (abstracts litellm-mode/any-llm-mode), `QuotaRouterNodeBuilder` pattern, startup wiring diagram. Updated Key Files to Modify with 8 new module files. |
-| 1.4 | 2026-06-28 | BLUEPRINT compliance pass — added §Economic Analysis (market dynamics, token economics reference, economic attack surface), §Adversary Analysis Decision Table (5-question test table format), §Severity Classification, §Compatibility (backward/forward), §Test Vectors (4 canonical test cases). All template v1.3 required sections now present. |
-| 1.5 | 2026-06-28 | Adversarial review Round 1-3 fixes — Status version aligned to v1.5; lifecycle state count corrected (6→7); envelope discriminator range corrected (0xD0→0xCD); duplicate Request Flow removed (replaced with summary); Wire Format discriminator range corrected (0xC3–0xCB→0xC3–0xCC); `network_id` added to `ForwardRequestPayload`; missing `## Alternatives Considered` heading added; `network_key` field added to `QuotaRouterHandler`; `ProviderHealth::`/`RoutingPolicy::` prefixes added in scoring function; `QuotaRouterNode`, `GossipCache`, `PeerCache`, `PeerInfo`, `ForwardRejectReason`, `RouterNodeError`, `ProviderError` struct/enum definitions added; `LocalProviderSender` adapter definition added; `Serialize`/`Deserialize` added to `ForwardingConfig`, `RouterNodeConfig`, `ProviderConfig`, `PeerConfig`, `PeerTrust`, `QuotaRouterBootstrap`; duplicate `CapacityGossipPayload` definition removed (replaced with reference to Phase 3); Test Vector 1 expected scores made derivable from scoring formula. |
-| 1.6 | 2026-06-28 | Adversarial review Round 1 (continued) fixes — Removed `(Networking/Numeric/Economics)` RFC category prefixes from §Dependencies (RFC referencing convention); corrected `BootstrapConfig.node_pubkey` initialization (was substituting `node_id.0` hash bytes for the keypair pubkey); replaced non-existent `TransportError::HmacMismatch` with `AdapterFailure` (F4 will add dedicated variant); added `&ReceiveContext` parameter to `handle_forward_request` (was referencing undefined `ctx`); reconciled peer-cache limits (32 IDs per gossip × ≤128 cache entries); clarified `0xCC` (RouterPeerExchange) folded into `CapacityGossip.known_peers`, removed from discriminator table; deferred `0xC8`/`0xC9` (provider health probe/report) to F8.5; reconciled `Vec<ProviderConfig>` vs `Vec<Box<dyn LocalProvider>>` (builders now register config, handler wraps in `HttpLocalProvider`); added missing builder setters (`forwarding`, `gossip_interval`); added missing `QuotaRouterNode` methods (`route`, `peer_count`, `local_provider_models`, `add_peer`, `build_capacity_gossip`, `request_capacity_from`); added `keypair` field; removed `disc_state` field (orchestrator-local); added `ForwardResponsePayload`, `ForwardRejectPayload`, `CapacityRequestPayload`, `PendingRequests`, `ForwardOutcome`; added full implementations of `handle_forward_response`, `handle_forward_reject`, `handle_capacity_request`, `handle_router_withdraw`; fixed HMAC coverage on `RouterWithdrawPayload`; added HMAC spec for `CapacityGossipPayload.hmac`; fixed data-flow sequence diagram (peer→handler skipped `NodeTransport`); reconciled Implicit Roles F1 → F2 (signed peer announcements); Test Vector 4 notation corrected to use `RouterNodeId`/`ProviderId` typed IDs. |
-| 1.7 | 2026-06-28 | Adversarial review Round 2 fixes — Fixed §Forward Compatibility claim that `RoutingPolicy::Custom` enables "new policy variants without protocol changes" (new top-level enum variants are breaking; only `CustomPolicy` fields are forward-compatible via `#[serde(default)]`); defined `ProviderCapacity::from_config` (used by `route()` and gossip loops); replaced non-existent `NodeTransport::send_to_peer(peer_id, payload)` in `request_capacity_from` with documented v1 limitation (piggyback on next gossip broadcast; F8 will add per-peer routing); defined `SignedPayload` trait with `compute_hmac`/`verify_hmac` impls for `RouterAnnouncePayload`, `RouterWithdrawPayload`, `CapacityGossipPayload`; added `PeerCache::{try_add, remove, total, direct_ids}` methods (were referenced but undefined); added `GossipCache::{new, merge, snapshot}` methods; added `PendingRequests::{insert, origin}` (replaces raw `BTreeMap` access in `route()`); added `QuotaRouterHandler::send_forward_response`, `send_forward_reject` helper methods (were called but undefined); added `QuotaRouterNode::select_destinations` method wrapper, `pending_origin`, `primary_provider_id`; fixed `handle_forward_request`'s `node.select_destinations(&req.context)` (was missing 3 of 4 args); added `serialize`/`deserialize` module-level helpers; added `HttpLocalProvider::new(ProviderConfig)` and `PyO3LocalProvider::new(ProviderConfig, PyO3Bridge)` impls (called by builder but undefined). |
-| 1.8 | 2026-06-28 | Adversarial review Round 3 fixes — Defined `QuotaRouterNode::broadcast_gossip` and `broadcast_announce` (called by §Wiring Diagram startup loops but never implemented); added `monotonic_now` references via the shared helper defined alongside `PeerCache`; verified all method calls in spec have a corresponding `fn` definition (77 `fn` definitions total). |
-| 1.9 | 2026-06-28 | Adversarial review Round 4 fixes — Removed all 4 `octo-transport/src/bootstrap.rs:332` line-number references (CLAUDE.md line-number prohibition in RFCs/Missions); replaced with bare file path. |
-| 1.10 | 2026-06-28 | Adversarial review Round 1 (v1.9 external changes) fixes — Fixed Mutex-held-across-await deadlock risk in `handle_capacity_request`, `handle_forward_request`, `send_forward_response`, `send_forward_reject` (handler now holds separate `Arc<NodeTransport>` outside Mutex); added `DropAction` enum for lock-scope control in `handle_forward_request`; replaced hardcoded `monotonic_now()` returning `0` with atomic counter; fixed Wire Format diagram discriminator range (`0xC3–0xCC` → `0xC3–0xCB`); fixed `PendingRequests::complete`/`reject` signature (`&mut self` → `&self`); added `primary_provider: Arc<dyn LocalProvider>` field to `QuotaRouterNode` (was referenced by `route()` but missing); updated builder to initialize `primary_provider` and `handler.transport`. |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0     | 2026-06-28 | Initial draft — core mesh, forwarding, capacity gossip                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 1.1     | 2026-06-28 | Added §Network Bootstrap and Peer Discovery — two-layer peer discovery (RFC-0851p-a bootstrap + `CapacityGossip.known_peers`), `RouterAnnounce`/`RouterWithdraw` envelope types, `QuotaRouterBootstrap` config, `build_with_bootstrap()` API, documented `BootstrapOrchestrator` stub gap as ACCEPTED RISK, added implicit assumptions #9-#10, updated implementation phases, updated key files, updated future work (F1: stub fix)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 1.2     | 2026-06-28 | Added §Node Destination Selection Algorithm — full request-scoped routing criteria system: `RequestContext` struct (model ID, preferred provider, model group, context window, tags, budget, latency, priority, deadline), two-phase filter-then-score algorithm (hard filters → soft scoring → ranking), `ForwardRequest` with full context, `Destination` ranking enum. Model ID as primary routing key. Context window and tag checks delegated to local dispatch (RFC-0936). Model group resolution at mesh level (RFC-0954). Updated error handling with `ModelNotSupported` and `ContextWindowExceeded` codes. Updated envelope descriptions.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 1.3     | 2026-06-28 | Added §Component Integration Architecture — full integration architecture: component wiring diagram, end-to-end data flow sequence diagram, module layout (`quota_router/` subdirectory), `QuotaRouterHandler` (`NetworkReceiver` impl for inbound dispatch), response path (origin_node routing), `LocalProvider` trait (abstracts litellm-mode/any-llm-mode), `QuotaRouterNodeBuilder` pattern, startup wiring diagram. Updated Key Files to Modify with 8 new module files.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 1.4     | 2026-06-28 | BLUEPRINT compliance pass — added §Economic Analysis (market dynamics, token economics reference, economic attack surface), §Adversary Analysis Decision Table (5-question test table format), §Severity Classification, §Compatibility (backward/forward), §Test Vectors (4 canonical test cases). All template v1.3 required sections now present.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 1.5     | 2026-06-28 | Adversarial review Round 1-3 fixes — Status version aligned to v1.5; lifecycle state count corrected (6→7); envelope discriminator range corrected (0xD0→0xCD); duplicate Request Flow removed (replaced with summary); Wire Format discriminator range corrected (0xC3–0xCB→0xC3–0xCC); `network_id` added to `ForwardRequestPayload`; missing `## Alternatives Considered` heading added; `network_key` field added to `QuotaRouterHandler`; `ProviderHealth::`/`RoutingPolicy::` prefixes added in scoring function; `QuotaRouterNode`, `GossipCache`, `PeerCache`, `PeerInfo`, `ForwardRejectReason`, `RouterNodeError`, `ProviderError` struct/enum definitions added; `LocalProviderSender` adapter definition added; `Serialize`/`Deserialize` added to `ForwardingConfig`, `RouterNodeConfig`, `ProviderConfig`, `PeerConfig`, `PeerTrust`, `QuotaRouterBootstrap`; duplicate `CapacityGossipPayload` definition removed (replaced with reference to Phase 3); Test Vector 1 expected scores made derivable from scoring formula.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 1.6     | 2026-06-28 | Adversarial review Round 1 (continued) fixes — Removed `(Networking/Numeric/Economics)` RFC category prefixes from §Dependencies (RFC referencing convention); corrected `BootstrapConfig.node_pubkey` initialization (was substituting `node_id.0` hash bytes for the keypair pubkey); replaced non-existent `TransportError::HmacMismatch` with `AdapterFailure` (F4 will add dedicated variant); added `&ReceiveContext` parameter to `handle_forward_request` (was referencing undefined `ctx`); reconciled peer-cache limits (32 IDs per gossip × ≤128 cache entries); clarified `0xCC` (RouterPeerExchange) folded into `CapacityGossip.known_peers`, removed from discriminator table; deferred `0xC8`/`0xC9` (provider health probe/report) to F8.5; reconciled `Vec<ProviderConfig>` vs `Vec<Box<dyn LocalProvider>>` (builders now register config, handler wraps in `HttpLocalProvider`); added missing builder setters (`forwarding`, `gossip_interval`); added missing `QuotaRouterNode` methods (`route`, `peer_count`, `local_provider_models`, `add_peer`, `build_capacity_gossip`, `request_capacity_from`); added `keypair` field; removed `disc_state` field (orchestrator-local); added `ForwardResponsePayload`, `ForwardRejectPayload`, `CapacityRequestPayload`, `PendingRequests`, `ForwardOutcome`; added full implementations of `handle_forward_response`, `handle_forward_reject`, `handle_capacity_request`, `handle_router_withdraw`; fixed HMAC coverage on `RouterWithdrawPayload`; added HMAC spec for `CapacityGossipPayload.hmac`; fixed data-flow sequence diagram (peer→handler skipped `NodeTransport`); reconciled Implicit Roles F1 → F2 (signed peer announcements); Test Vector 4 notation corrected to use `RouterNodeId`/`ProviderId` typed IDs. |
+| 1.7     | 2026-06-28 | Adversarial review Round 2 fixes — Fixed §Forward Compatibility claim that `RoutingPolicy::Custom` enables "new policy variants without protocol changes" (new top-level enum variants are breaking; only `CustomPolicy` fields are forward-compatible via `#[serde(default)]`); defined `ProviderCapacity::from_config` (used by `route()` and gossip loops); replaced non-existent `NodeTransport::send_to_peer(peer_id, payload)` in `request_capacity_from` with documented v1 limitation (piggyback on next gossip broadcast; F8 will add per-peer routing); defined `SignedPayload` trait with `compute_hmac`/`verify_hmac` impls for `RouterAnnouncePayload`, `RouterWithdrawPayload`, `CapacityGossipPayload`; added `PeerCache::{try_add, remove, total, direct_ids}` methods (were referenced but undefined); added `GossipCache::{new, merge, snapshot}` methods; added `PendingRequests::{insert, origin}` (replaces raw `BTreeMap` access in `route()`); added `QuotaRouterHandler::send_forward_response`, `send_forward_reject` helper methods (were called but undefined); added `QuotaRouterNode::select_destinations` method wrapper, `pending_origin`, `primary_provider_id`; fixed `handle_forward_request`'s `node.select_destinations(&req.context)` (was missing 3 of 4 args); added `serialize`/`deserialize` module-level helpers; added `HttpLocalProvider::new(ProviderConfig)` and `PyO3LocalProvider::new(ProviderConfig, PyO3Bridge)` impls (called by builder but undefined).                                                                                                                                                                                                                                                                                 |
+| 1.8     | 2026-06-28 | Adversarial review Round 3 fixes — Defined `QuotaRouterNode::broadcast_gossip` and `broadcast_announce` (called by §Wiring Diagram startup loops but never implemented); added `monotonic_now` references via the shared helper defined alongside `PeerCache`; verified all method calls in spec have a corresponding `fn` definition (77 `fn` definitions total).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 1.9     | 2026-06-28 | Adversarial review Round 4 fixes — Removed all 4 `octo-transport/src/bootstrap.rs:332` line-number references (CLAUDE.md line-number prohibition in RFCs/Missions); replaced with bare file path.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 1.10    | 2026-06-28 | Adversarial review Round 1 (v1.9 external changes) fixes — Fixed Mutex-held-across-await deadlock risk in `handle_capacity_request`, `handle_forward_request`, `send_forward_response`, `send_forward_reject` (handler now holds separate `Arc<NodeTransport>` outside Mutex); added `DropAction` enum for lock-scope control in `handle_forward_request`; replaced hardcoded `monotonic_now()` returning `0` with atomic counter; fixed Wire Format diagram discriminator range (`0xC3–0xCC` → `0xC3–0xCB`); fixed `PendingRequests::complete`/`reject` signature (`&mut self` → `&self`); added `primary_provider: Arc<dyn LocalProvider>` field to `QuotaRouterNode` (was referenced by `route()` but missing); updated builder to initialize `primary_provider` and `handler.transport`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 | 1.11 | 2026-06-28 | Added TCP/UDP transport references: quota router nodes can now use `PlatformType::Tcp` (RFC-0850 §8.8) or `PlatformType::Udp` (RFC-0850 §8.9) adapters via `PlatformAdapterBridge`. Updated transport integration notes to reference TCP adapter for L3 cross-process E2E tests. |
 | 1.12 | 2026-06-29 | Fixed wiring diagram to use RFC-0863 v1.7 `NodeTransport::register_receiver()`. Removed fictional `transport: Arc<NodeTransport>` field from `QuotaRouterHandler` spec. Updated handler to hold `Arc<QuotaRouterNode>` directly (no Mutex). Added inbound receive loop to startup diagram. |

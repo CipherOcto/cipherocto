@@ -35,7 +35,7 @@ RFC-0968: Reputation Registry (with RFC-0968-A1 in-place amendment, 2026-07-26)
 
 ## Summary
 
-Implement the unified, DID-keyed, persisted, cryptographically-signed reputation registry per RFC-0968 as amended by RFC-0968-A1. Phase 1 lands the dedicated `crates/oct-reputation/` workspace member with stoolap-backed storage, canonical `did:octo:b<52>` encoding (62 chars), dual-stake recorder authorization (`role + octo ≥ 5000`), per-subject admission (co-signature or stake bond), per-recorder `severity_emitted_total`, governance-set-hash quorum (≥3), and kind-gated adapters. Phase 2 ships shadow-write from existing in-memory stores via RFC-0968-A1 §7 dual-read compatibility adapters. Phase 2.5 reconciles backfill + computes parity_score before the read switch (the previous equivalence claim is replaced with a dual-read cutover path). Phase 3 switches reads via the compatibility adapters and the `0-100` presentation layer. Phase 4 is gossip federation (gated on a claimed/Accepted 0855p-b per RFC-0968-A1 §7). Phase 5 (on-chain anchoring) is deferred to mission 0968a.
+Implement the unified, DID-keyed, persisted, cryptographically-signed reputation registry per RFC-0968 as amended by RFC-0968-A1. Phase 1 lands the dedicated `crates/octo-reputation/` workspace member with stoolap-backed storage, canonical `did:octo:b<52>` encoding (62 chars), dual-stake recorder authorization (`role + octo ≥ 5000`), per-subject admission (co-signature or stake bond), per-recorder `severity_emitted_total`, governance-set-hash quorum (≥3), and kind-gated adapters. Phase 2 ships shadow-write from existing in-memory stores via RFC-0968-A1 §7 dual-read compatibility adapters. Phase 2.5 reconciles backfill + computes parity_score before the read switch (the previous equivalence claim is replaced with a dual-read cutover path). Phase 3 switches reads via the compatibility adapters and the `0-100` presentation layer. Phase 4 is gossip federation (gated on a claimed/Accepted 0855p-b per RFC-0968-A1 §7). Phase 5 (on-chain anchoring) is deferred to mission 0968a.
 
 ## Acceptance Criteria
 
@@ -45,7 +45,7 @@ The acceptance criteria below fold in RFC-0968-A1 (25 amendments, 2026-07-26), `
 
 #### Type declarations
 
-- [ ] `crates/oct-reputation/src/{lib,core,event,recorder,reader,auditor,attestor,rotation,suspension,retention,error,constants}.rs` plus `src/storage/{mod,stoolap}.rs` define `SignalEvent`, canonical nine-field `ReputationAggregate`, `ReputationLayer`, `SignalKind`, `Did`, `RecorderId`, `ReaderId`, `AuditorId`, `AttestorId`, `AttestorRegistration`, `ReputationStore` trait (with `register_attestor` + `attestor_lookup_did`), `ReputationError` (now 41 variants, `0x01..=0x29` monotonic per RFC-0968-A1 §13; reserved `0x2A..=0xFF` for future variants; new `AuditorNonceReplay = 0x29` per amendment 22), `Attestation`, `ReplayRecord`, `RotationReceipt`, `AggregateCheckpoint`, `RecorderRegistrationRequest`, `ReaderAuth`, `AuditorAuth`, `RetentionAuth`, `AttestorAuth`, `GovernanceProof` (now carries `governance_set_hash: [u8; 32]` per amendment 26 / I-5), `ResumeProof`, `SuspensionAuth`, `SuspensionReason`, `GovernanceRegistry`, `GovernanceError`, `GovernanceSnapshot`, `PublicKey`, `ReputationPayload`, `EventId` + `AttestationId` (private-field newtypes, distinct namespaces), `PublicKeyLookup` trait + `PublicKeyLookupError`, `Normalizer` trait, `NormalizerInput`, `MAX_SEVERITY`, `SUSPENSION_SEVERITY_THRESHOLD = 5`, `MAX_REGISTRATION_DRIFT_SECS = 300`, `MAX_RESUME_DRIFT_SECS = 300`, `MAX_GOVERNANCE_SNAPSHOT_AGE_SECS = 600`, `MAX_ATTESTATION_DRIFT_SECS = 60`, `KIND_WEIGHTS` (mutable seeded migration v009; seeded in Phase 1 acceptance per amendment 12), `RecorderState` (7 variants: Active, Suspended, Revoked, UnderStaked, Stale, Expired, Unknown), `roles: u64` bitfield, `ROTATION_DECAY_Q32_32 = 0xE6666666`, `verify_attestation_id`, `verify_governance_suspension`, the 10 `BLAKE3_REPUTATION_*_DOMAIN` constants (canonical home in §10), and the new `MIN_RECORDER_DUAL_STAKE = 5000`, `MIN_RECORDER_OCTO_STAKE = 4000`, `GOVERNANCE_QUORUM = 3`, `MAX_AUDITOR_NONCE_TTL_SECS = 7 * 86_400` (default 7 days) constants per amendments 1, 26, 22.
+- [ ] `crates/octo-reputation/src/{lib,core,event,recorder,reader,auditor,attestor,rotation,suspension,retention,error,constants}.rs` plus `src/storage/{mod,stoolap}.rs` define `SignalEvent`, canonical nine-field `ReputationAggregate`, `ReputationLayer`, `SignalKind`, `Did`, `RecorderId`, `ReaderId`, `AuditorId`, `AttestorId`, `AttestorRegistration`, `ReputationStore` trait (with `register_attestor` + `attestor_lookup_did`), `ReputationError` (now 41 variants, `0x01..=0x29` monotonic per RFC-0968-A1 §13; reserved `0x2A..=0xFF` for future variants; new `AuditorNonceReplay = 0x29` per amendment 22), `Attestation`, `ReplayRecord`, `RotationReceipt`, `AggregateCheckpoint`, `RecorderRegistrationRequest`, `ReaderAuth`, `AuditorAuth`, `RetentionAuth`, `AttestorAuth`, `GovernanceProof` (now carries `governance_set_hash: [u8; 32]` per amendment 26 / I-5), `ResumeProof`, `SuspensionAuth`, `SuspensionReason`, `GovernanceRegistry`, `GovernanceError`, `GovernanceSnapshot`, `PublicKey`, `ReputationPayload`, `EventId` + `AttestationId` (private-field newtypes, distinct namespaces), `PublicKeyLookup` trait + `PublicKeyLookupError`, `Normalizer` trait, `NormalizerInput`, `MAX_SEVERITY`, `SUSPENSION_SEVERITY_THRESHOLD = 5`, `MAX_REGISTRATION_DRIFT_SECS = 300`, `MAX_RESUME_DRIFT_SECS = 300`, `MAX_GOVERNANCE_SNAPSHOT_AGE_SECS = 600`, `MAX_ATTESTATION_DRIFT_SECS = 60`, `KIND_WEIGHTS` (mutable seeded migration v009; seeded in Phase 1 acceptance per amendment 12), `RecorderState` (7 variants: Active, Suspended, Revoked, UnderStaked, Stale, Expired, Unknown), `roles: u64` bitfield, `ROTATION_DECAY_Q32_32 = 0xE6666666`, `verify_attestation_id`, `verify_governance_suspension`, the 10 `BLAKE3_REPUTATION_*_DOMAIN` constants (canonical home in §10), and the new `MIN_RECORDER_DUAL_STAKE = 5000`, `MIN_RECORDER_OCTO_STAKE = 4000`, `GOVERNANCE_QUORUM = 3`, `MAX_AUDITOR_NONCE_TTL_SECS = 7 * 86_400` (default 7 days) constants per amendments 1, 26, 22.
 
 #### Recorder registration (RFC-0968-A1 amendments 1, 2, 5, 26)
 
@@ -101,7 +101,7 @@ The acceptance criteria below fold in RFC-0968-A1 (25 amendments, 2026-07-26), `
 - [ ] Migration files v003 through v008 follow RFC-0968 §5 + §2.1 with canonical scores as `BLOB NOT NULL CHECK (length(...) = 24)` per RFC-0104. New v009 migration seeds `kind_weights` deterministically for all scored kinds (Slash, Outcome, Latency, Capacity, Discovery); `Rotation` is OMITTED from `kind_weights`. Weights are immutable in v1.0.
 - [ ] **Checkpoint ID derivation (RFC-0968-A1 amendment 13 / C-P3):** `aggregate_checkpoint.checkpoint_id = BLAKE3(BLAKE3_REPUTATION_CHECKPOINT_DOMAIN || did || signal_kind || layer || checkpoint_event_id)`. Audit replay picks the checkpoint with the largest `checkpoint_event_id` such that all events with `received_at_unix < checkpoint_event_received_at_unix` are pruned.
 - [ ] **Checkpoint authority choice (RFC-0968-A1 amendment 14 / C-P4):** v1.0 uses the pointer-plus-recompute model: checkpoint stores ONLY `checkpoint_event_id`; auditor re-derives `score_ewma` from retained events. Alternative authoritative-snapshot model deferred.
-- [ ] `crates/oct-reputation/Cargo.toml` gains `octo-determin = { path = "../../determin" }` and defines features `default = []`, `stoolap = ["dep:quota-router-storage"]`, `mon = []`, `dc = []`, `marketplace = []`, `wallet = []`. `score_delta`, `score_ewma`, `NormalizerInput.delta`, normalizer outputs, and `update_ewma` parameters/return value are all `octo_determin::Dfp`. **No `f64` anywhere in the persisted reputation data model.**
+- [ ] `crates/octo-reputation/Cargo.toml` gains `octo-determin = { path = "../../determin" }` and defines features `default = []`, `stoolap = ["dep:quota-router-storage"]`, `mon = []`, `dc = []`, `marketplace = []`, `wallet = []`. `score_delta`, `score_ewma`, `NormalizerInput.delta`, normalizer outputs, and `update_ewma` parameters/return value are all `octo_determin::Dfp`. **No `f64` anywhere in the persisted reputation data model.**
 - [ ] `crates/quota-router-storage/src/migrations.rs` retains `BUILTIN_MIGRATIONS` and appends v003 through v009 in order after v002.
 - [ ] **Attestor rate limit (RFC-0968-A1 amendment 16 / I-P7):** `MIN_ATTESTOR_QUORUM = 3` constant; `query_attestations` requires ≥ quorum attestors have observed the event. `GossipCatchUp { attestor_did, since_event_id }` wired over federation.
 - [ ] **Federated suspension certificate (RFC-0968-A1 amendment 17 / I-X1):** Signing path emits a signed `FederatedSuspensionCertificate { recorder_did, reason_hash, frozen_at_unix, governance_pubkey, snapshot }`. Election consumers require `freshness_max_secs` import or fail-closed.
@@ -113,7 +113,7 @@ The acceptance criteria below fold in RFC-0968-A1 (25 amendments, 2026-07-26), `
 
 #### Cargo verification
 
-- [ ] `cargo test -p oct-reputation --features stoolap --lib` all pass.
+- [ ] `cargo test -p octo-reputation --features stoolap --lib` all pass.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` clean.
 
 ### Phase 2: Adapter Shadow-Write (Compatibility Adapters, RFC-0968-A1 amendment 18 / C-P5)
@@ -168,7 +168,7 @@ The previous "Phase 2 equivalence via replay" claim is replaced with a **dual-re
 - Module tree:
 
   ```text
-  crates/oct-reputation/
+  crates/octo-reputation/
   ├── Cargo.toml
   ├── src/
   │   ├── lib.rs
@@ -216,20 +216,20 @@ The previous "Phase 2 equivalence via replay" claim is replaced with a **dual-re
 
 ## Location
 
-- New: `crates/oct-reputation/Cargo.toml` (workspace member; `stoolap`, `mon`, `dc`, `marketplace`, `wallet` features)
-- New: `crates/oct-reputation/src/{lib.rs, core.rs, event.rs, recorder.rs, reader.rs, auditor.rs, attestor.rs, rotation.rs, suspension.rs, retention.rs, error.rs, constants.rs}`
-- New: `crates/oct-reputation/src/storage/{mod.rs, stoolap.rs}`
-- New: `crates/oct-reputation/src/kinds/{mod.rs, mon.rs, dc.rs, marketplace.rs, wallet.rs}`
-- New: `crates/oct-reputation/migrations/v003__reputation_events.sql`
-- New: `crates/oct-reputation/migrations/v004__reputation_aggregates.sql`
-- New: `crates/oct-reputation/migrations/v005__reputation_rotations.sql`
-- New: `crates/oct-reputation/migrations/v006__reputation_attestations.sql`
-- New: `crates/oct-reputation/migrations/v007__aggregate_checkpoints.sql`
-- New: `crates/oct-reputation/migrations/v008__recorder_registration.sql` (Round 6 C1 + L5)
+- New: `crates/octo-reputation/Cargo.toml` (workspace member; `stoolap`, `mon`, `dc`, `marketplace`, `wallet` features)
+- New: `crates/octo-reputation/src/{lib.rs, core.rs, event.rs, recorder.rs, reader.rs, auditor.rs, attestor.rs, rotation.rs, suspension.rs, retention.rs, error.rs, constants.rs}`
+- New: `crates/octo-reputation/src/storage/{mod.rs, stoolap.rs}`
+- New: `crates/octo-reputation/src/kinds/{mod.rs, mon.rs, dc.rs, marketplace.rs, wallet.rs}`
+- New: `crates/octo-reputation/migrations/v003__reputation_events.sql`
+- New: `crates/octo-reputation/migrations/v004__reputation_aggregates.sql`
+- New: `crates/octo-reputation/migrations/v005__reputation_rotations.sql`
+- New: `crates/octo-reputation/migrations/v006__reputation_attestations.sql`
+- New: `crates/octo-reputation/migrations/v007__aggregate_checkpoints.sql`
+- New: `crates/octo-reputation/migrations/v008__recorder_registration.sql` (Round 6 C1 + L5)
 - Modified: `crates/quota-router-storage/src/migrations.rs` (retain `BUILTIN_MIGRATIONS`; append calls to `oct_reputation::migrations::v003__reputation_events()` through `v008__recorder_registration()`)
-- Modified: `crates/octo-network/Cargo.toml` (add `oct-reputation` with `mon`, `dc`)
-- Modified: `crates/quota-router-core/Cargo.toml` (add `oct-reputation` with `marketplace`)
-- Modified: `crates/octo-wallet/Cargo.toml` (add `oct-reputation` with `wallet`)
+- Modified: `crates/octo-network/Cargo.toml` (add `octo-reputation` with `mon`, `dc`)
+- Modified: `crates/quota-router-core/Cargo.toml` (add `octo-reputation` with `marketplace`)
+- Modified: `crates/octo-wallet/Cargo.toml` (add `octo-reputation` with `wallet`)
 - Modified: `crates/octo-network/src/mon/reputation.rs` (shadow-write)
 - Modified: `crates/octo-network/src/dc/reputation.rs` (shadow-write)
 - Modified: `crates/quota-router-core/src/marketplace/scoring.rs` (shadow-write)
@@ -278,7 +278,7 @@ Per the research update: a single combined table locks the aggregate shape to th
 
 ### Why stoolap, not raw SQLite?
 
-Per `feedback_stoolap-persistence.md` memory: stoolap is the CipherOcto fork. RAW SQLite is forbidden. Migration files land in `crates/oct-reputation/migrations/` and are referenced by `BUILTIN_MIGRATIONS` in `crates/quota-router-storage/src/migrations.rs`.
+Per `feedback_stoolap-persistence.md` memory: stoolap is the CipherOcto fork. RAW SQLite is forbidden. Migration files land in `crates/octo-reputation/migrations/` and are referenced by `BUILTIN_MIGRATIONS` in `crates/quota-router-storage/src/migrations.rs`.
 
 ### Cross-mission gossip (mission 0855p-b)
 
@@ -302,12 +302,73 @@ Per Round 1 finding H6: the RFC's section numbers are now fixed (`§3 = Recorder
 
 ### Migration naming (Round 1 finding H10)
 
-Migration files use contiguous `v003` through `v007` numeric prefixes, not date-based names. v006 is the Phase 1 attestation table and v007 is the aggregate-checkpoint table; the deferred mission 0968a `reserved slot v006` phrase is a non-binding planning label, not a second migration claim. Files land in `crates/oct-reputation/migrations/` (consistent with `v001__create_asks_table.sql` and `v002__create_asks_indexes.sql`). `BUILTIN_MIGRATIONS` is appended, never reordered.
+Migration files use contiguous `v003` through `v007` numeric prefixes, not date-based names. v006 is the Phase 1 attestation table and v007 is the aggregate-checkpoint table; the deferred mission 0968a `reserved slot v006` phrase is a non-binding planning label, not a second migration claim. Files land in `crates/octo-reputation/migrations/` (consistent with `v001__create_asks_table.sql` and `v002__create_asks_indexes.sql`). `BUILTIN_MIGRATIONS` is appended, never reordered.
 
 ### Unblock Workflow
 
 Resolved 2026-07-25: RFC-0968 status change recorded, file renamed from `0968-reputation-persistence-blocked.md` → `0968-reputation-persistence.md`, BLOCKED banner removed, Status set to Claimed, Claimants assigned. PR is now the next step.
 
+### Path Reconciliation (2026-08-07)
+
+Grand-design audit surfaced a path + module rename that affects all 56 ACs in this mission. Mechanical find-replace applied: `crates/oct-reputation/` → `crates/octo-reputation/`. Total: 22 path references updated.
+
+Module name drift (NOT auto-applied — needs manual review per AC):
+
+| Mission text cites | Actual on-disk location | Status |
+|---|---|---|
+| `src/lib.rs` | `src/lib.rs` | PRESENT |
+| `src/recorder.rs` | `src/recorder.rs` | PRESENT |
+| `src/retention.rs` | `src/retention.rs` | PRESENT |
+| `src/error.rs` | `src/error.rs` | PRESENT |
+| `src/constants.rs` | `src/constants.rs` | PRESENT |
+| `src/core.rs` | not present (functionality split into `recorder` + `types` + `digest`) | RENAMED |
+| `src/event.rs` | not present (events folded into `recorder.rs`) | RENAMED |
+| `src/reader.rs` | not present (read paths folded into `audit.rs` + `presentation.rs`) | RENAMED |
+| `src/auditor.rs` | not present → `src/audit.rs` | RENAMED |
+| `src/attestor.rs` | not present → `src/auth.rs` + `src/anchor.rs` | RENAMED (split) |
+| `src/rotation.rs` | not present → `src/retirement.rs` + folded into `auth.rs` | RENAMED |
+| `src/suspension.rs` | not present → folded into `audit.rs` + `gossip.rs` | RENAMED |
+| `src/kinds/{mod.rs, ...}` | not present (kinds folded into `types.rs`) | RENAMED |
+| `src/storage/{mod.rs, ...}` | not present → `src/store/` (directory) | RENAMED |
+
+Additional on-disk modules NOT cited in mission text (substrate growth beyond original spec):
+
+- `src/anchor.rs` + `src/anchor_job.rs` — anchoring substrate (per RFC-0955 + RFC-0955-R1 chain, missions 0968a + 0968a2)
+- `src/cross_layer.rs` — cross-layer query (RFC-0968-A1 amendment 8, Class B)
+- `src/digest.rs` — BLAKE3 helpers
+- `src/election.rs` — election priority (RFC-0968-A1 amendment 20)
+- `src/gossip.rs` — gossip envelopes (RFC-0968-A1 amendment 21)
+- `src/parity.rs` + `src/parity_daemon.rs` — parity + Prometheus export
+- `src/presentation.rs` — reader API surface
+- `src/prometheus.rs` — `reputation_parity_match_count` / `reputation_parity_total_count` counters
+- `src/retirement.rs` — replaces `rotation`
+- `src/slash_api.rs` — slash signal API
+- `src/sliding.rs` — sliding window
+- `src/store/` — replaces `storage/`
+- `src/types.rs` — replaces `kinds/`
+- `src/compat/` — compatibility adapter directory
+
+Migration numbering drift (mission cites v003-v008, actual uses v001-v005 + v010-v012):
+
+| Mission text | Actual on-disk | Status |
+|---|---|---|
+| `v003__reputation_events.sql` | `v001__reputation_events.sql` | RENAMED |
+| `v004__reputation_aggregates.sql` | `v002__reputation_recorders.sql` | RENAMED |
+| `v005__reputation_rotations.sql` | `v003__schema_migrations.sql` + `v010-v012` (anchors) | RENAMED + split |
+| `v006__reputation_attestations.sql` | `v004__reputation_attestations.sql` | RENAMED |
+| `v007__aggregate_checkpoints.sql` | not present | MISSING (work landed in code, not migration) |
+| `v008__recorder_registration.sql` | `v005__reputation_gossip_seen.sql` | RENAMED |
+
+### Status
+
+Path rename applied mechanically. Module rename map documented above — each AC that cites a renamed module needs explicit textual reconciliation before its checkbox can flip. Of the 54 unchecked ACs:
+
+- ~30 cite renamed modules (`core` / `event` / `reader` / `auditor` / `attestor` / `rotation` / `suspension` / `kinds/` / `storage/`). Cannot be flipped until AC text is rewritten to point at the renamed module.
+- ~10 cite specific SQL migration filenames (v003-v008) that don't match on-disk v001-v005 + v010-v012. Cannot be flipped until AC text + ordering is reconciled.
+- ~14 are genuine implementation gaps that may need follow-up mission work (Dfp EWMA validation, governance suspension flow, dual-read parity cutover, federated suspension certificate, recorder registration flows).
+
+Recommend a follow-up audit pass that mechanically rewrites the ~40 ACs citing renamed modules/migrations per the table above, then evaluates the remaining ~14 ACs for genuine closure.
+
 ### Changelog
 
-- **v3.0-r15 (Gap 9, 2026-07-25):** switch `f64` to `octo_determin::Dfp` per RFC-0104. `SignalEvent.score_delta`, `ReputationAggregate.score_ewma`, `update_ewma` parameters/return, `NormalizerInput.delta`, all normalizer outputs, `CrossLayerResult.composite_score`, `SlidingWindowResult.score_delta`, and `ReplayRecord.aggregate_evolution` all move from `f64` to `octo_determin::Dfp`. SQL: `score_delta REAL` / `score_ewma REAL` / `score_ewma_at_checkpoint REAL` → `BLOB NOT NULL CHECK (length(...) = 24)` (canonical 24-byte `DfpEncoding::to_bytes()` form). Mission Phase 1 acceptance adds `octo-determin = { path = "../../determin" }` to `crates/oct-reputation/Cargo.toml` and adds feature-gated `oct-reputation` dependencies to `octo-network`, `quota-router-core`, and `octo-wallet`. Cross-replica determinism is achieved at the type level; no `f64` migration path exists. RFC-0104 DFP migration is no longer future work — `Dfp` is the v1.0 type.
+- **v3.0-r15 (Gap 9, 2026-07-25):** switch `f64` to `octo_determin::Dfp` per RFC-0104. `SignalEvent.score_delta`, `ReputationAggregate.score_ewma`, `update_ewma` parameters/return, `NormalizerInput.delta`, all normalizer outputs, `CrossLayerResult.composite_score`, `SlidingWindowResult.score_delta`, and `ReplayRecord.aggregate_evolution` all move from `f64` to `octo_determin::Dfp`. SQL: `score_delta REAL` / `score_ewma REAL` / `score_ewma_at_checkpoint REAL` → `BLOB NOT NULL CHECK (length(...) = 24)` (canonical 24-byte `DfpEncoding::to_bytes()` form). Mission Phase 1 acceptance adds `octo-determin = { path = "../../determin" }` to `crates/octo-reputation/Cargo.toml` and adds feature-gated `octo-reputation` dependencies to `octo-network`, `quota-router-core`, and `octo-wallet`. Cross-replica determinism is achieved at the type level; no `f64` migration path exists. RFC-0104 DFP migration is no longer future work — `Dfp` is the v1.0 type.

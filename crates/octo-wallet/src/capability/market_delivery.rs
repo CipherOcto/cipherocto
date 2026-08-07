@@ -182,7 +182,7 @@ impl std::fmt::Debug for EnvelopeId {
 /// per mission 0959-b1 AC-D1).
 #[derive(thiserror::Error)]
 pub enum DeliveryError {
-    #[error("chain-tip mismatch: expected <redacted 32 bytes>, actual <redacted 32 bytes>")]
+    #[error("chain-tip mismatch: expected {expected:?}, actual {actual:?}")]
     ChainTipMismatch {
         expected: [u8; 32],
         actual: [u8; 32],
@@ -196,7 +196,7 @@ pub enum DeliveryError {
     GossipFailed { attempts: u32 },
     #[error("replay detected: envelope_id=<redacted>")]
     ReplayDetected { envelope_id: EnvelopeId },
-    #[error("chain hash broken: expected <redacted>, actual <redacted>")]
+    #[error("chain hash broken: expected {expected:?}, actual {actual:?}")]
     ChainHashBroken {
         expected: [u8; 32],
         actual: [u8; 32],
@@ -229,7 +229,7 @@ pub enum DeliveryError {
     SerializationError { reason: String },
     #[error("registry error: {reason}")]
     RegistryError { reason: String },
-    #[error("chain append error: expected_hash <redacted>, actual_hash <redacted>")]
+    #[error("chain append error: expected_hash {expected_hash:?}, actual_hash {actual_hash:?}")]
     ChainAppendError {
         expected_hash: [u8; 32],
         actual_hash: [u8; 32],
@@ -244,7 +244,7 @@ pub enum DeliveryError {
 /// chain cascade per mission 0959-b1 AC-D1).
 #[derive(thiserror::Error, Clone, PartialEq, Eq)]
 pub enum SettlementChainError {
-    #[error("settlement chain tip mismatch: expected <redacted>, actual <redacted>")]
+    #[error("settlement chain tip mismatch: expected {expected:?}, actual {actual:?}")]
     TipMismatch {
         expected: [u8; 32],
         actual: [u8; 32],
@@ -253,7 +253,7 @@ pub enum SettlementChainError {
     AppendFailed { reason: String },
     #[error("settlement chain reorg detected at height {height}")]
     ReorgDetected { height: u64 },
-    #[error("settlement chain unknown parent: parent_hash <redacted>")]
+    #[error("settlement chain unknown parent: parent_hash {parent_hash:?}")]
     UnknownParent { parent_hash: [u8; 32] },
 }
 

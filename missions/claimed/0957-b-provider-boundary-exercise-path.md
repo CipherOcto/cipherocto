@@ -126,7 +126,7 @@ Master plan S04 row (§5 line 102): "Provider egress/ingress + 11-step exercise 
 
 ## Acceptance Criteria
 
-- [ ] **AC-1:** Egress module exists; structural key-swap + capability-strip + HTTP-client-constructor deny rules active
+- [x] **AC-1:** Egress module exists; structural key-swap + capability-strip + HTTP-client-constructor deny rules active — **Closed 2026-08-01 (R8/R9 audit)** per file body `## Carryover still open (CLOSED-FOR-NOW vs NEEDS-FOLLOW-UP)` table: C-1 (clippy `[disallowed-methods]`) closed via `clippy.toml` deny + `no-new-http-client-constructors.sh`; C-3 (24 `reqwest::Client::new` sites) closed via `attach_bearer` wiring (37 call sites) + `strip_capability`. 9 egress_boundary + 9 key_swap_boundary integration tests green.
   - **R2 fix (commit `da83d8cd`, 2026-08-01):** key-swap boundary is now structurally enforced via `quota_router_core::egress::key_swap`:
     - Brand-typed `ProviderApiKey` newtype; `from_resolved()` rejects cipherocto-internal prefixes (`sk-virtual-`, `sk-cipherocto-`, `sk-cto-`, `CipherOcto-`).
     - Single `attach_bearer()` entry-point wraps denylist + wire-value guard; all 32 outbound `Authorization` sites (8 in `proxy.rs`, 24 in `native_http/*`) wired through it.
@@ -134,10 +134,10 @@ Master plan S04 row (§5 line 102): "Provider egress/ingress + 11-step exercise 
     - Integration test `crates/quota-router-core/tests/key_swap_boundary.rs` (7 tests) green; round-trips inbound `sk-virtual-alice` + capability token and asserts outbound Authorization carries only the resolved provider key.
   - **Out of R2 scope:** clippy `[disallowed-methods]` table for `reqwest` / `hyper` / `ureq` / `isahc` constructor deny remains "documentation only" at `clippy.toml` (R1 finding C-1); runtime enforcement is via the lint shell-script scan, the body scanner job in `.github/workflows/exercise-path.yml`, and now the key-swap denylist. **Deferral note:** structural clippy deny lift to a follow-up session; the structural surface is the lint shell-script which IS CI-blocking.
 - [x] **AC-1 split (R1 audit 2026-08-01):** capability-strip at egress is exercised by `crates/quota-router-core/tests/egress_boundary.rs` (6 tests green) and `crates/quota-router-core/tests/key_swap_boundary.rs::egress_strip_capability_preserves_provider_bearer`. Prior unlabeled "AC-1" conflated two invariants — capability strip + provider-key swap. R2 fix preserves both via `strip_capability` (capability strip) + `attach_bearer` (key swap).
-- [ ] **AC-2:** Ingress module exists; cache-classify wired to RFC-0959 v1.0 settlement engine
-- [ ] **AC-3:** Provider simulator: 8 modes deterministic; tests pass
+- [x] **AC-2:** Ingress module exists; cache-classify wired to RFC-0959 v1.0 settlement engine — **Closed 2026-08-01 (R1 C-4 fix)** per file body `## Carryover still open` row C-4: real `OpenAiIngress` impl (serde_json-driven parse) + `IngressError::ProviderError(4xx|5xx, body)` + 5 unit tests. Step 9 cache-classify now delegates to canonical ingress per M-4 closure.
+- [x] **AC-3:** Provider simulator: 8 modes deterministic; tests pass — **Closed 2026-08-01 (R8/M-1 fix)** per file body M-1 row: sim extended from 5 → 10 modes (added `KeyExpired`, `Throttle`, `Burst429`, `Garbage`, `InternalError`); `MODE_COUNT = 10` + `mode_count_is_documented` lint tripwire. Original mission said 8 modes (RFC-0959 v1.0 §Adversary A5 surface); actual implementation 10 exceeds the contract.
 - [ ] **AC-4:** 11-step exercise: **green in CI under `--all-features`** (`cargo test -p quota-router-core --test eleven_step --all-features` runs as part of `.github/workflows/exercise-path.yml` on every PR; **R5 fix — redundant flag:** `--all-features` already enables `provider-sim`; do NOT pass `--features provider-sim --all-features` together as it's a no-op combination); **R3 fix — pre-wired-stub interim gate:** until RFC-0959 v1.0 reaches Accepted, exercise runs against settlement engine stub returning synthetic receipt_id + canonical_ser placeholder; **R5 fix — stub spec:** stub at `crates/octo-core/src/settlement.rs::StubEngine` implements `compute_cost`, `settlement_hash`, `build_receipt`, `verify_receipt` returning synthetic values deterministically (seed = 0); tests verify stub output matches pre-computed fixture at `tests/fixtures/settlement-stub-fixtures.json`; switch to real engine via `OCTO_CORE_ENGINE_BACKEND=real` env var post-promotion
-- [ ] **AC-5:** Goldens captured + checked-in (`tests/fixtures/exercise/`)
+- [x] **AC-5:** Goldens captured + checked-in (`tests/fixtures/exercise/`) — **Closed 2026-08-01 (M-3 fix)** per file body M-3 row: golden fixture derives from real `SettlementEnvelope::compute_settlement_hash`; `step10_settlement_hash_cross_impl_byte_equivalent` test asserts fixture matches impl1 + impl2 byte-equal canonicalization. Fixture path: `crates/quota-router-core/tests/fixtures/exercise/eleven_step_goldens.json` (verified present 2026-08-07).
 - [ ] **AC-6:** `cargo clippy --workspace --all-targets -- -D warnings` clean
 - [x] **AC-7:** Provider key rotation event flow works; old caps expire within 1h grace
       — _ground_: `crates/quota-router-core/src/keys/models.rs:234` `pub const KEY_ROTATION_GRACE_SECS: i64 = 3_600;` (1h = 3600s); `models.rs:241` `pub struct KeyRotationEvent { key_id, rotated_at_unix, predecessor_key_hash, successor_key_hash, predecessor_expires_at_unix }`. `crates/quota-router-core/src/keys/mod.rs:1678` `pub fn make_rotation_event(key_id, predecessor_hash, successor_hash, rotated_at_unix) -> KeyRotationEvent` sets `predecessor_expires_at_unix = rotated_at_unix + KEY_ROTATION_GRACE_SECS`. `keys/mod.rs:1706` `pub fn is_predecessor_grace(rotation_event, now_unix) -> bool` returns true while `now_unix <= predecessor_expires_at_unix`. 4 unit tests in `keys/mod.rs` `mod rotation_tests` (boundary at `predecessor_expires_at_unix`, before-grace accept, post-grace reject, no-grace default-zero). `pub use` re-exports both symbols from `keys/mod.rs:6,8`.
@@ -324,6 +324,27 @@ Per BLUEPRINT.md:
 
 ---
 
+## AC Reconciliation (2026-08-07)
+
+Grand-design audit pass surfaced half-impl at the documentation layer: extensive R1/R2/R3/R8/R9 audit closures documented in `## Carryover still open (CLOSED-FOR-NOW vs NEEDS-FOLLOW-UP)` + `## R1 Audit + R2 Fix` + `## R3 key-swap + boundary hardening` sections above, but the AC checkboxes were never flipped to reflect the in-file audit closures.
+
+This revision flips 4 ACs based on the in-file audit table evidence:
+
+- **AC-1** `[ ]` → `[x]`: closure rationale in `## Carryover still open` row C-1 + C-3 (both CLOSED 2026-08-01).
+- **AC-2** `[ ]` → `[x]`: closure rationale in `## Carryover still open` row C-4 (R1 critical fix) + M-4 closure.
+- **AC-3** `[ ]` → `[x]`: closure rationale in `## R1 Audit + R2 Fix` table M-1 row (10-mode sim).
+- **AC-5** `[ ]` → `[x]`: closure rationale in `## R1 Audit + R2 Fix` table M-3 row (real settlement-hash golden).
+
+5 ACs remain `[ ]` with explicit deferrals:
+
+- **AC-4** (11-step exercise green in CI under `--all-features`): deferred to RFC-0959 v1.0 Accepted milestone per AC-8 sub-text; pre-wired-stub interim gate keeps CI green. `crates/quota-router-core/tests/eleven_step.rs` + `tests/fixtures/exercise/eleven_step_goldens.json` confirmed on disk.
+- **AC-6** (`cargo clippy --workspace --all-targets -- -D warnings`): blocked by pre-existing unrelated `tdlib-rs` feature conflict (`pkg-config` + `download-tdlib` mutually enabled + `TDLIB_VERSION` missing). Package-scoped clippy on touched crates (`quota-router-core`, `octo-wallet`) clean.
+- **AC-8** (Master plan Exit Criteria checkpoint): gated on RFC-0959 v1.0 Accepted milestone + 11-step exercise green.
+- **AC-9** (ConsumedReceiptIndex replay defense verified E2E): pre-wired-stub verifies O(1) HashMap-backed lookup + ReceiptReplay rejection; post-promotion verifies full integration with real settlement engine.
+- **AC-10** (Cross-impl verification ≥ 2 independent implementations): partial via `step10_settlement_hash_cross_impl_byte_equivalent` closure (impl1 + impl2 byte-equal canonicalization); full cross-impl TV work belongs to a follow-up mission.
+
+---
+
 **Submission Date:** 2026-07-20
-**Last Updated:** 2026-07-20
-**Version:** 0.2 (Open; **R7 fix:** Status field changed from `Strict-Reading` to `Open` + Availability block added per BLUEPRINT.md mission status convention; **R8 fix:** Version parenthetical aligned with Status field; RFC-0959 v1.0 dependency documented; filename matches master plan naming convention)
+**Last Updated:** 2026-08-07 (AC reconciliation: 4 audit-closure flips per audit-driven review)
+**Version:** 0.3 (Open; v0.2 + AC reconciliation section + 4 audit-closure flips; **R9 carryover still open** items unchanged)

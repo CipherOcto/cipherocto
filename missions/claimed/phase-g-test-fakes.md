@@ -1,7 +1,7 @@
 # Mission phase-g: Test Fakes (ASK fixtures + cache + provider sim)
 
 **RFCs:** RFC-0959 v1.0 (Accepted 2026-07-20, Ask + axis registry + settlement), RFC-0957 (Accepted 2026-07-20, capability token format), RFC-0009 (Accepted 2026-07-20, NodeType taxonomy — Wholesale / SelfHost / Hybrid)
-**Status:** Claimed (2026-07-22)
+**Status:** Closed (Band A — 2026-08-06). Claimed (2026-07-22)
 **Phase:** G (Test fakes per master plan §4)
 **Master plan:** `docs/plans/2026-07-19-identity-master-plan.md` §4 row G
 **Sub-mission of:** Phase G of identity-master-plan; standalone (no parent RFC-mission binding)
@@ -79,3 +79,14 @@ cargo fmt --all -- --check
 **Submission Date:** 2026-07-22
 **Last Updated:** 2026-07-22
 **Version:** 0.1 (Claimed; concurrent implementation per user directive)
+**Closure Date:** 2026-08-06 (Band A)
+**AC Rollup:** 8/8 ACs green; 11/11 fixtures_asks tests pass; clippy clean; fmt clean.
+
+---
+
+**Version History:**
+
+| Version | Date       | Change                                                                                                                                                |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-07-22 | Mission claimed; concurrent implementation per user directive.                                                                                        |
+| v0.2    | 2026-08-06 | Closed Band A. Status header Claimed→Closed (Band A — 2026-08-06). 11/11 fixtures_asks tests verified green post-claim. No new impl commits needed. |

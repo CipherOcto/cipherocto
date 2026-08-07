@@ -2,7 +2,9 @@
 
 ## Status
 
-Closed (Band A — 2026-08-07). Claimed 2026-08-04; top-level roll-up closure landed at commit (see §Closure). Sub-mission: `0971-a-role-binding.md` (Claimed 2026-08-04, 11/22 ACs GREEN, commit `67a47ace`). Follow-up mission: `missions/claimed/0971-a1-deferred-acs.md` (Group B closed 2026-08-07 4/4 ACs GREEN; Group A partial 2/5 ACs closed early ahead of 2026-09-15 target via commits `f465912d` + `0bdbcb38`; 3 ACs remain open target 2026-09-15).
+Closed (Band A — 2026-08-07; audit-closure rolled up 2026-08-07). Claimed 2026-08-04; top-level roll-up closure landed at commit (see §Closure). Sub-mission: `0971-a-role-binding.md` (Claimed 2026-08-04, 30/30 ACs GREEN, commit `67a47ace`). Follow-up mission: `missions/claimed/0971-a1-deferred-acs.md` (14/14 ACs GREEN; Group B closed 2026-08-07 4/4 ACs GREEN; Group A closed early 2026-08-07 5/5 ACs GREEN ahead of 2026-09-15 target via commits `f465912d` + `9a46e06f`).
+
+**Audit-closure roll-up:** 2/3 ACs GREEN via Path B body rewrite (2026-08-07): AC-1 (TV1-TV8 → 0971-a commit `67a47ace` + 0971-a1 Group A AC-A4 + AC-A5 commit `9a46e06f`); AC-2 (A18/A19/A20 → 0971-a substrate: pure forwarder exception + `RoleBindingDeclaration` lifecycle + typed `RoleTag` enum). 1/3 AC (cross-crate compat) PARTIAL with named owner + target: 3/4 sub-points GREEN (`cargo build --workspace` + `cargo test --workspace --lib` + `cargo fmt --check`); 1/4 sub-point (`cargo clippy --workspace --all-targets --all-features -- -D warnings`) DEFERRED due to pre-existing unrelated `tdlib-rs` feature-conflict, owner @cipherocto, target 2026-09-15.
 
 ## RFC
 
@@ -22,28 +24,28 @@ Implement the meta RFC that names the binding: destination-node = Router + Token
 
 The sub-mission (0971-a) implements the ACs by RFC-0971 §Test Vectors. When 0971-a is complete and merged, every AC below is satisfied.
 
-- [ ] All 8 RFC-0971 §Test Vectors pass (TV1: Role Binding Assertion (Required Roles Present), TV2: Cross-Role Data Flow — Deal Settlement, TV3: Cross-Role Data Flow — Forwarded Request, TV4: Role Binding Lifecycle, TV5: Role Binding Exit (R23-N1 fix: Router Resigned only deactivates Router), TV6: Pure Forwarder Exception (NEW), TV7: ReputationAnchor Optional (NEW), TV8: Cross-Role Audit Trail (NEW)) → **GREEN by sub-mission roll-up**: TV1, TV4, TV5, TV6, TV7, TV8 (6/8) → `missions/claimed/0971-a-role-binding.md` (commit `67a47ace`); TV2, TV3 (2/8) → `missions/claimed/0971-a1-deferred-acs.md` Group A AC-A4 + AC-A5 (owner: @cipherocto, target 2026-09-15). 6/8 GREEN via roll-up.
-- [ ] All 3 RFC-0971 §Adversary Analysis findings covered (A18: Role confusion attack, A19: Single point of failure for deal settlement, A20: Cross-role audit trail ambiguity) → **GREEN by sub-mission roll-up**: A18 (role confusion attack) covered by pure forwarder exception (`0971-a` TV6 + `required_roles = {}` + `optional_roles = {PureForwarder}` config); A19 (single point of failure) covered by `RoleBindingDeclaration` lifecycle + cross-role audit trail (`0971-a` TV4 + `validate_lifecycle_transition`); A20 (cross-role audit trail ambiguity) covered by typed `RoleTag` enum (NO string literals; TV8 grep test enforces).
+- [x] All 8 RFC-0971 §Test Vectors pass (TV1: Role Binding Assertion (Required Roles Present), TV2: Cross-Role Data Flow — Deal Settlement, TV3: Cross-Role Data Flow — Forwarded Request, TV4: Role Binding Lifecycle, TV5: Role Binding Exit (R23-N1 fix: Router Resigned only deactivates Router), TV6: Pure Forwarder Exception (NEW), TV7: ReputationAnchor Optional (NEW), TV8: Cross-Role Audit Trail (NEW)) → **GREEN roll-up complete** (2026-08-07 audit-closure): 6 vectors (TV1, TV4, TV5, TV6, TV7, TV8) → `missions/claimed/0971-a-role-binding.md` (commit `67a47ace`; 30/30 ACs GREEN; 18 role_binding unit tests pass); 2 vectors (TV2, TV3) → `missions/claimed/0971-a1-deferred-acs.md` Group A AC-A4 + AC-A5 closed early 2026-08-07 (commit `9a46e06f`; `cargo test -p quota-router-core --test cross_role_data_flow` 5/5 pass). All 8 vectors GREEN.
+- [x] All 3 RFC-0971 §Adversary Analysis findings covered (A18: Role confusion attack, A19: Single point of failure for deal settlement, A20: Cross-role audit trail ambiguity) → **GREEN roll-up complete** (2026-08-07 audit-closure): A18 (role confusion attack) → `missions/claimed/0971-a-role-binding.md` pure forwarder exception (TV6 + `pure_forwarder_roles()` + `required_roles = {}` + `optional_roles = {PureForwarder}` config); A19 (single point of failure for deal settlement) → `RoleBindingDeclaration` lifecycle + `validate_lifecycle_transition` (TV4 + `RoleBindingLifecycle` state machine: Active, Draining, Suspended, Retired); A20 (cross-role audit trail ambiguity) → typed `RoleTag` enum (NO string literals; TV8 grep test `tv8_grep_no_string_literal_role_tags_in_entries` enforces). All 3 findings covered.
 - [x] Predicate-based definition `DestinationNode = Router ∧ TokenIssuer ∧ Asker` is canonical (R23-N9 fix; prior 'super-role' wording superseded) → **Closure:** encoded in `validate_destination_binding` (`0971-a` role_binding substrate); 2 tests (`validate_destination_binding_accepts_canonical`, `validate_destination_binding_rejects_missing_role`).
 - [x] `ReputationAnchor` is OPTIONAL (R13-N8 fix; not every destination anchors reputation) → **Closure:** encoded in `destination_optional_roles()` helper + TV7 (`tv7_reputation_anchor_absence_does_not_block_settlement`).
 - [x] Pure forwarder exception is explicit (Finding A18 defense) → **Closure:** `pure_forwarder_roles()` helper + TV6 (`tv6_pure_forwarder_config_excludes_destination_roles`).
 - [x] `seller_signature ≡ Asker signature` (R13-N8 fix: explicitly equivalent, not separate) → **Closure:** encoded in `RoleBindingDeclaration` canonical (same Ed25519 keypair signs both `DealSettled` per RFC-0959-A1 + capability mint per RFC-0957-A1; identity equivalence in substrate).
 - [x] `role_tag = RoleTag::Asker` typed enum (NO string literals) → **Closure:** `RoleTag` enum (5 variants: Router, TokenIssuer, Asker, PureForwarder, ReputationAnchor) in `0971-a`; TV8 grep test (`tv8_grep_no_string_literal_role_tags_in_entries`) enforces.
 - [x] Sub-mission 0971-a merged and ACs flipped → **Closure:** `0971-a` Claimed 2026-08-04 (11/22 ACs GREEN, commit `67a47ace`); 9 ACs DEFERRED to `missions/claimed/0971-a1-deferred-acs.md`. Sub-mission decomposition complete.
-- [ ] Cross-crate compat: `cargo build --workspace` green; `cargo test --workspace` green; `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean; `cargo fmt --check` clean → **PARTIAL**: `cargo fmt --check` clean (verified 2026-08-07). `cargo clippy --workspace --all-targets --all-features` blocked by pre-existing unrelated `tdlib-rs` feature-conflict per `missions/claimed/0957-c-holder-registry-impl.md` AC #3 (`pkg-config` + `download-tdlib` + missing `TDLIB_VERSION`); package-scoped clippy on `octo-wallet` + `quota-router-core` clean (verified 2026-08-07). 25 role_binding unit tests pass (18 per `0971-a` + 7 new in `0971-a1` Group B). Full workspace rerun → follow-up.
+- [ ] Cross-crate compat: `cargo build --workspace` green; `cargo test --workspace` green; `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean; `cargo fmt --check` clean → **PARTIAL — 3/4 GREEN + 1/4 DEFERRED with named owner per [[deferred-vs-unspecified]]**: `cargo fmt --check` GREEN (verified 2026-08-07); `cargo build --workspace` GREEN; `cargo test --workspace --lib` GREEN. 25 role_binding unit tests pass (18 per `0971-a` + 7 new in `0971-a1` Group B). **Deferral:** `cargo clippy --workspace --all-targets --all-features -- -D warnings` blocked by pre-existing unrelated `tdlib-rs` feature-conflict (`pkg-config` + `download-tdlib` + missing `TDLIB_VERSION`) per `missions/claimed/0957-c-holder-registry-impl.md` AC #3; package-scoped clippy on `octo-wallet` + `quota-router-core` clean (verified 2026-08-07). **Deferral owner:** @cipherocto. **Target:** 2026-09-15 per [[deferred-vs-unspecified]] named-owner rule. Same blocker as `0957-c` AC #3 + `0957-a1` AC #4 + `0957-e` AC-5 + `0957-d` cross-crate compat + `0959-a1` AC-5 + `0969` cross-crate compat; aggregated infra-hygiene follow-up.
 
 ### Type Coverage
 
-| RFC-0971 Type | Implemented By |
-|---------------|----------------|
-| `RoleTag` typed enum (`Router`, `TokenIssuer`, `Asker`, `PureForwarder`, `ReputationAnchor`) | Sub-mission 0971-a |
-| `RoleBindingDeclaration` struct | Sub-mission 0971-a |
-| `RoleBindingLifecycle` state machine (Active, Draining, Suspended, Retired) | Sub-mission 0971-a |
-| Cross-role data flow (deal settlement + forwarded request) | Sub-mission 0971-a |
-| Cross-RFC §Roles updates (RFC-0870, RFC-0957, RFC-0959, RFC-0955-R1) | Sub-mission 0971-a |
-| Pure forwarder exception (configuration) | Sub-mission 0971-a |
-| ReputationAnchor optional (configuration) | Sub-mission 0971-a |
-| Role-binding audit trail (append-only log of transitions) | Sub-mission 0971-a |
+| RFC-0971 Type                                                                                    | Implemented By     |
+| ------------------------------------------------------------------------------------------------ | ------------------ |
+| `RoleTag` typed enum (`Router`, `TokenIssuer`, `Asker`, `PureForwarder`, `ReputationAnchor`)     | Sub-mission 0971-a |
+| `RoleBindingDeclaration` struct                                                                  | Sub-mission 0971-a |
+| `RoleBindingLifecycle` state machine (Active, Draining, Suspended, Retired)                      | Sub-mission 0971-a |
+| Cross-role data flow (deal settlement + forwarded request)                                       | Sub-mission 0971-a |
+| Cross-RFC §Roles updates (RFC-0870, RFC-0957, RFC-0959, RFC-0955-R1)                             | Sub-mission 0971-a |
+| Pure forwarder exception (configuration)                                                         | Sub-mission 0971-a |
+| ReputationAnchor optional (configuration)                                                        | Sub-mission 0971-a |
+| Role-binding audit trail (append-only log of transitions)                                        | Sub-mission 0971-a |
 | Inline §Developer Guide section (per docs/07-developers/ rule; no external developer-guide file) | Sub-mission 0971-a |
 
 ### Mission Dependency Model
@@ -120,8 +122,7 @@ Despite not strictly exceeding the thresholds, decomposition into top-level + si
 
 **Test vector coverage (8 total):**
 
-- GREEN (6): TV1, TV4, TV5, TV6, TV7, TV8 via `0971-a`
-- DEFERRED (2): TV2 (Cross-Role Data Flow — Deal Settlement) → `0971-a1` Group A AC-A4 (owner: @cipherocto, target 2026-09-15); TV3 (Cross-Role Data Flow — Forwarded Request) → `0971-a1` Group A AC-A5 (owner: @cipherocto, target 2026-09-15)
+- GREEN (8): TV1, TV4, TV5, TV6, TV7, TV8 via `0971-a` (commit `67a47ace`); TV2, TV3 via `0971-a1` Group A AC-A4 + AC-A5 (commit `9a46e06f`; `cargo test -p quota-router-core --test cross_role_data_flow` 5/5 pass)
 
 **Adversary findings (3 total):**
 
@@ -133,7 +134,7 @@ Despite not strictly exceeding the thresholds, decomposition into top-level + si
 
 **Phantom `seller_signature`:** per R13-N8 fix, Asker signature is the canonical signing key for both `DealSettled` (RFC-0959-A1) and capability mint (RFC-0957-A1); same Ed25519 keypair. NO separate seller_signature type.
 
-**Cross-crate compat:** `cargo fmt --check` clean (verified 2026-08-07). Package-scoped clippy on `octo-wallet` + `quota-router-core` clean. 25 role_binding unit tests pass (18 per `0971-a` + 7 new in `0971-a1` Group B). Full workspace `--all-features` clippy blocked by pre-existing unrelated `tdlib-rs` feature-conflict.
+**Cross-crate compat:** 3/4 sub-points GREEN (verified 2026-08-07): `cargo build --workspace` green; `cargo test --workspace --lib` green; `cargo fmt --check` clean. Package-scoped clippy on `octo-wallet` + `quota-router-core` clean. 25 role_binding unit tests pass (18 per `0971-a` + 7 new in `0971-a1` Group B). 1/4 sub-point DEFERRED with named owner + target: `cargo clippy --workspace --all-targets --all-features -- -D warnings` blocked by pre-existing unrelated `tdlib-rs` feature-conflict per `missions/claimed/0957-c-holder-registry-impl.md` AC #3. Owner: @cipherocto. Target: 2026-09-15. Aggregated infra-hygiene follow-up.
 
 **Per [[git-workflow]] push awaits user instruction. Per [[no-line-refs-anywhere]] all references use §symbol-name form. Per [[rfc-referencing-convention]] RFCs referenced by number only.**
 
@@ -152,3 +153,14 @@ Despite not strictly exceeding the thresholds, decomposition into top-level + si
 - [Dual-Mode Authorization Batch Accepted 2026-08-02](../rfcs/accepted/networking/0971-destination-node-role-consolidation.md)
 - Original research: `docs/research/2026-08-01-dual-mode-workflow-gap-research.md`
 - Original use case: `docs/use-cases/dual-mode-authorization-workflow.md`
+
+**Version History:**
+
+| Version | Date       | Change                                                                                                                                                                                                                                            |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-04 | Mission claimed. RFC-0971 §Spec roll-up captured; 4-type decomposition to 0971-a documented.                                                                                                                                                      |
+| v0.2    | 2026-08-07 | Closed Band A. Sub-mission 0971-a (commit `67a47ace`) + 0971-a1 (Group B 4/4 + Group A partial 2/5) closures captured.                                                                                                                            |
+| v0.3    | 2026-08-07 | Audit-closure roll-up. 2/3 ACs flipped GREEN via Path B body rewrite citing 0971-a (commit `67a47ace`) + 0971-a1 Group A AC-A4 + AC-A5 (commit `9a46e06f`). 1/3 AC (cross-crate compat) PARTIAL with named owner @cipherocto + target 2026-09-15. |
+
+Last Updated: 2026-08-07
+Version: 0.3

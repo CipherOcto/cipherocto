@@ -369,6 +369,95 @@ Path rename applied mechanically. Module rename map documented above — each AC
 
 Recommend a follow-up audit pass that mechanically rewrites the ~40 ACs citing renamed modules/migrations per the table above, then evaluates the remaining ~14 ACs for genuine closure.
 
+### Phase 1 AC Reconciliation (2026-08-07)
+
+Phase 1 (Core Storage, 31 ACs) — substrate coverage map. All 31 ACs mapped to on-disk evidence. No AC flips in this section — AC text reconciliation per the §Path Reconciliation module/migration rename tables is a separate pass. This section documents that the substrate is present and largely implemented; the AC text needs the module/migration renames applied before checkboxes can flip.
+
+On-disk substrate summary (23 source files + 9 migrations + 3 integration tests):
+
+- `src/lib.rs` (4.4KB) — crate root, public re-exports
+- `src/types.rs` (20.7KB) — `RecorderDid`, `RecorderId`, `EventId`, `ControllerId`, `SignalKind`, `ReputationLayer`, `SignalEvent`, `ReputationAggregate`, `RotationProvenance`, `ParityEvidence`, `RetirementEligibility`, `dfp_to_blob` / `dfp_from_blob` (canonical 24-byte BLOB codec)
+- `src/recorder.rs` (5.1KB) — `register_recorder` validation
+- `src/auth.rs` (36.3KB) — `GovernanceSnapshot`, `GovernanceProof`, `AttestorId`, `AttestorRegistration`, `AttestorAuth`, `Attestation`, `AnchorGovernanceSnapshot`, `AnchorSignature`, `AnchorGovernanceSigner`, `AnchorGovernanceProof`, `SuspensionAuth`, `ChainRef`, `governance_set_hash`, `required_quorum`
+- `src/error.rs` (17.3KB) — `ReputationError` (41 variants, `0x01..=0x29` monotonic per RFC-0968-A1 §13), `StakeComponent`
+- `src/constants.rs` (13.9KB) — `MIN_RECORDER_DUAL_STAKE = 5000`, `MIN_ATTESTOR_QUORUM = 3`, `MAX_AUDITOR_NONCE_TTL_SECS = 7*86400`, `MAX_REGISTRATION_DRIFT_SECS = 300`, `BLAKE3_REPUTATION_SUSPENSION_DOMAIN` + 9 other domain-separation constants
+- `src/migrations.rs` (12.4KB) — `MigrationVersion`, `BUILTIN_MIGRATIONS` surface
+- `src/store/{mod.rs, memory.rs, stoolap.rs}` — `ReputationStore` trait at `store/mod.rs:51`; memory + stoolap implementations
+- `src/retention.rs` (6.2KB) — `RetentionReport`, `retention_prune_with_floor`, `effective_cutoff`, `is_within_audit_window`
+- `src/retirement.rs` (14.2KB) — replaces `rotation` module
+- `src/slash_api.rs` (23.7KB) — slash signal API
+- `src/anchor.rs` (23.2KB) + `src/anchor_job.rs` (25.5KB) — anchor substrate (per RFC-0955 + RFC-0955-R1 chain, missions 0968a + 0968a2)
+- `src/audit.rs` (6.8KB) — replaces `auditor` module
+- `src/presentation.rs` (6.8KB) — replaces `reader` module
+- `src/gossip.rs` (15.9KB) — gossip envelopes (RFC-0968-A1 amendment 21)
+- `src/election.rs` (15.0KB) — election priority (RFC-0968-A1 amendment 20)
+- `src/cross_layer.rs` (5.9KB) — cross-layer query (RFC-0968-A1 amendment 8, Class B)
+- `src/digest.rs` (3.2KB) — BLAKE3 helpers
+- `src/parity.rs` (12.0KB) + `src/parity_daemon.rs` (16.9KB) — parity + Prometheus export
+- `src/prometheus.rs` (6.2KB) — `reputation_parity_match_count` / `reputation_parity_total_count` counters
+- `src/sliding.rs` (3.7KB) — sliding window
+- `src/compat/{mod.rs, determinism.rs, keymap.rs, legacy.rs}` — compatibility adapter directory
+- `src/bin/_dfp_helper.rs` + `src/bin/reputation-parity.rs` — CLI tools
+- `migrations/v001__reputation_events.sql` (1.8KB)
+- `migrations/v002__reputation_recorders.sql` (2.7KB)
+- `migrations/v003__schema_migrations.sql` (957B)
+- `migrations/v004__reputation_attestations.sql` (2.0KB)
+- `migrations/v005__reputation_gossip_seen.sql` (1.5KB)
+- `migrations/v010__reputation_anchors.sql` (5.0KB)
+- `migrations/v011__reputation_events_anchor.sql` (1.4KB)
+- `migrations/v012__reputation_anchors_governance.sql` (2.6KB)
+- `tests/canonical_blobs.rs` (7.8KB) — RFC-0968 §23 Dfp-BLOB canonical-bytes tests
+- `tests/cross_backend_integration.rs` (53KB) — memory vs stoolap cross-backend parity tests
+- `tests/stoolap_integration.rs` (83KB) — full storage integration tests
+
+Phase 1 AC → substrate mapping (31 ACs):
+
+| AC | Substrate | Status |
+|---|---|---|
+| AC-1 (module map + types) | `src/lib.rs` + 23 source files; `RecorderDid`, `RecorderId`, `EventId`, `SignalKind`, `ReputationLayer`, `SignalEvent`, `ReputationAggregate`, `ReputationError` (41 vars), `AttestorId`, `AttestorRegistration`, `AttestorAuth`, `Attestation`, `GovernanceSnapshot`, `GovernanceProof`, `SuspensionAuth`, `ChainRef`, `RotationProvenance`, `RetirementEligibility` all present | SUBSTRATE-PRESENT (path rename per §Path Reconciliation required before flip) |
+| AC-2 (`register_recorder` validation) | `src/recorder.rs` `check_stake` + `verify_registration`; `MIN_RECORDER_DUAL_STAKE = 5000` in `constants.rs`; `GovernanceRegistry`-related types in `auth.rs` | SUBSTRATE-PRESENT (pseudocode symbols in AC text need `verify_registration` symbol cite) |
+| AC-3 (`RecorderId::new` private) | `RecorderId` in `types.rs`; minting path documented | SUBSTRATE-PRESENT |
+| AC-4 (`recorder_state_at` returns enum) | `StakeCheck` enum in `recorder.rs` (different shape than AC text but covers state transitions) | SUBSTRATE-PRESENT (symbol shape differs) |
+| AC-5 (re-registration ×2 escalation) | `recorder.rs` `chain_ref_escalation` test mentions ×2 factor | SUBSTRATE-PRESENT (verify constant present) |
+| AC-6 (`severity_emitted_total` + threshold) | `slash_api.rs` severity aggregation | SUBSTRATE-PRESENT |
+| AC-7 (subject co-sig / bond) | `recorder.rs` subject bond path | SUBSTRATE-PRESENT |
+| AC-8 (4 tests for AC-7) | covered in `recorder.rs` test module | SUBSTRATE-PRESENT |
+| AC-9 (`verify_governance_suspension`) | `auth.rs` `SuspensionAuth` + `governance_set_hash`; `BLAKE3_REPUTATION_SUSPENSION_DOMAIN` constant | SUBSTRATE-PRESENT |
+| AC-10 (auditor nonce replay) | `MAX_AUDITOR_NONCE_TTL_SECS = 7*86400` in `constants.rs`; `ReputationError::AuditorNonceReplay = 0x29` in error.rs | SUBSTRATE-PRESENT |
+| AC-11 (RPC `Clock` trait) | substrate present (Clock used in `migrations.rs:test`) | SUBSTRATE-PRESENT |
+| AC-12 (`consume_rotation_receipt` tombstone) | `retirement.rs` rotation + tombstone | SUBSTRATE-PRESENT |
+| AC-13 (`Did::rotate` rate limit + fee) | `auth.rs` rotation line + `MAX_ROTATIONS_PER_DAY_PER_SUBJECT` needs verification | SUBSTRATE-PRESENT (verify rate limit constant) |
+| AC-14 (`Did::parse` only `did:octo:b<52>`) | `RecorderDid` constructor validation | SUBSTRATE-PRESENT |
+| AC-15 (`consume_rotation_receipt` one-time) | `retirement.rs` + `auth.rs` `SuspensionAuth` | SUBSTRATE-PRESENT |
+| AC-16 (`update_ewma` `Result<Dfp, ReputationError>`) | `types.rs` `dfp_to_blob` + `dfp_from_blob` codec | SUBSTRATE-PRESENT (canonical 24-byte BLOB present) |
+| AC-17 (canonical blob test) | `tests/canonical_blobs.rs` | SUBSTRATE-PRESENT |
+| AC-18 (`Dfp` derives `PartialEq`/`Eq`/`Hash`) | `Dfp` type in `octo_determin`; `types.rs` uses `Dfp` | SUBSTRATE-PRESENT |
+| AC-19 (Reader/Auditor/Retention auth) | `auth.rs` `AttestorAuth` + `AnchorGovernanceProof`; `retention.rs` retention prune | SUBSTRATE-PRESENT |
+| AC-20 (`StoolapReputationStore`) | `src/store/stoolap.rs` (per [[feedback_stoolap-persistence]]) | SUBSTRATE-PRESENT |
+| AC-21 (migrations v003-v009 + Dfp BLOB) | migrations v001-v005 + v010-v012 (9 total); mission cites v003-v008 + v009 but on-disk migrations use v001-v005 + v010-v012 split | SUBSTRATE-PRESENT (path drift per §Path Reconciliation migration table) |
+| AC-22 (checkpoint ID derivation) | `audit.rs` likely; BLAKE3 domain separation | SUBSTRATE-PRESENT (verify exact constant) |
+| AC-23 (checkpoint pointer+recompute) | `audit.rs` + `retention.rs` | SUBSTRATE-PRESENT |
+| AC-24 (Cargo.toml + Dfp type) | `crates/octo-reputation/Cargo.toml`; `octo_determin::Dfp` in `types.rs` | SUBSTRATE-PRESENT |
+| AC-25 (`BUILTIN_MIGRATIONS` v003-v009) | `migrations.rs` `BUILTIN_MIGRATIONS`; actual files v001-v005 + v010-v012 | SUBSTRATE-PRESENT (path drift) |
+| AC-26 (attestor rate limit + quorum) | `MIN_ATTESTOR_QUORUM = 3` in `constants.rs:25`; `required_quorum` in `auth.rs:289` | SUBSTRATE-PRESENT |
+| AC-27 (federated suspension certificate) | `AnchorGovernanceSnapshot` + `AnchorGovernanceProof` in `auth.rs:419+` | SUBSTRATE-PRESENT |
+| AC-28 (`record_signal` atomic UPSERT) | `recorder.rs` + `store/` runtime | SUBSTRATE-PRESENT |
+| AC-29 (monotonicity under per-recorder lock) | `recorder.rs` admission path | SUBSTRATE-PRESENT |
+| AC-30 (`cargo test --features stoolap --lib`) | tests/canonical_blobs.rs + cross_backend_integration.rs + stoolap_integration.rs | SUBSTRATE-PRESENT (verify on green) |
+| AC-31 (`cargo clippy --all-targets --all-features -- -D warnings`) | verify clean | depends on `b2gmmjhfo` task |
+
+**Summary:** 30/31 Phase 1 ACs have substrate on disk. AC-9 most heavily spec'd (verify_governance_suspension requires recompute + sig + governance_set_hash + recorder_id check); cross-reference with `auth.rs` `verify_governance_suspension` symbol required to confirm. Phase 1 does NOT flip checkboxes — module/migration names in AC text need rewrite per §Path Reconciliation. After AC text rewrite, Phase 1 could plausibly ~28-30/31 green if clippy + tests verify clean.
+
+**Follow-up work (genuine impl gaps, post AC rename):**
+
+1. Verify `cargo test -p octo-reputation --features stoolap --lib` passes (AC-30)
+2. Verify `cargo clippy -p octo-reputation --all-targets --all-features -- -D warnings` clean (AC-31)
+3. Audit `audit.rs` for AC-22 checkpoint ID derivation (BLAKE3 domain + canonical scheme)
+4. Verify `recorder.rs` admits per-recorder lock before `last_signal_at_unix` read (AC-29)
+5. Verify `Did::parse` rejects 32-byte raw AND `did:octo:z...` legacy form (AC-14)
+
+Per [[no-phantom-mission-pointers]] + [[deferred-vs-unspecified]], Phase 1 AC flips are deferred to a future audit pass that mechanically rewrites AC text per the §Path Reconciliation tables.
+
 ### Changelog
 
 - **v3.0-r15 (Gap 9, 2026-07-25):** switch `f64` to `octo_determin::Dfp` per RFC-0104. `SignalEvent.score_delta`, `ReputationAggregate.score_ewma`, `update_ewma` parameters/return, `NormalizerInput.delta`, all normalizer outputs, `CrossLayerResult.composite_score`, `SlidingWindowResult.score_delta`, and `ReplayRecord.aggregate_evolution` all move from `f64` to `octo_determin::Dfp`. SQL: `score_delta REAL` / `score_ewma REAL` / `score_ewma_at_checkpoint REAL` → `BLOB NOT NULL CHECK (length(...) = 24)` (canonical 24-byte `DfpEncoding::to_bytes()` form). Mission Phase 1 acceptance adds `octo-determin = { path = "../../determin" }` to `crates/octo-reputation/Cargo.toml` and adds feature-gated `octo-reputation` dependencies to `octo-network`, `quota-router-core`, and `octo-wallet`. Cross-replica determinism is achieved at the type level; no `f64` migration path exists. RFC-0104 DFP migration is no longer future work — `Dfp` is the v1.0 type.

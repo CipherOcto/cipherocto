@@ -155,3 +155,4 @@ This sub-mission implements (per top-level Type Coverage table):
 - Brace balance verified at `authenticate()` (R53-N1 fix). CI lint: `bash .github/linters/braces-balanced.sh authenticate` runs on every PR touching the function.
 - TV9 (Dual-Issuance Atomicity) and the `mint_dual` algorithm + `MintError` live in sub-mission 0969-b. This sub-mission owns 11 of 12 vectors.
 - The bearer path mission (RFC-0903 bearer mission) is the upstream for `BearerVerification` with `subject_did` + `ask_id` fields. If that mission is incomplete, this sub-mission's TV1/TV3/TV4/TV5/TV11 are `[ ]` until then.
+- The 17 ACs deferred at Band A closure (commit `ab0261f7`) are tracked under follow-up mission `missions/claimed/0969-a2-followup.md` (filed 2026-08-07) per [[deferred-vs-unspecified]] named-owner rule. Group A (5 ACs, target 2026-08-14) + Group B (3 ACs, target 2026-08-21) + Group C (11 ACs, target 2026-08-28).

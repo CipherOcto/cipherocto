@@ -93,7 +93,7 @@ pub fn parse_auth_headers(headers: &[(String, String)]) -> Result<DispatchSet, P
 }
 
 /// AuthError (RFC-0969 §Phase 1).
-#[derive(Debug, thiserror::Error)]
+#[derive(thiserror::Error)]
 pub enum AuthError {
     #[error("identity mismatch: bearer_did=<redacted>, cap_did=<redacted>")]
     IdentityMismatch { bearer_did: String, cap_did: String },
@@ -114,6 +114,57 @@ pub enum AuthError {
     UnsupportedScheme(String),
     #[error("indeterminate")]
     Indeterminate,
+}
+
+// Manual redacting Debug (RFC-0969 §Security): credential material (DIDs,
+// ask IDs) must be redacted from `Debug` output. The `#[derive(Debug)]`
+// would leak `bearer_did: String` + `cap_did: String` + `bearer_ask` + `cap_ask`
+// field values; the manual impl below substitutes `<redacted>` for credential
+// fields and preserves operational metadata (e.g. `RoutingLatencyExceeded`
+// threshold + actual ms).
+impl std::fmt::Debug for AuthError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IdentityMismatch { .. } => f
+                .debug_struct("IdentityMismatch")
+                .field("bearer_did", &"<redacted>")
+                .field("cap_did", &"<redacted>")
+                .finish(),
+            Self::AskBindingMismatch { .. } => f
+                .debug_struct("AskBindingMismatch")
+                .field("bearer_ask", &"<redacted>")
+                .field("cap_ask", &"<redacted>")
+                .finish(),
+            Self::BothInvalid => f.write_str("BothInvalid"),
+            Self::RoutingLatencyExceeded {
+                threshold_ms,
+                actual_ms,
+            } => f
+                .debug_struct("RoutingLatencyExceeded")
+                .field("threshold_ms", threshold_ms)
+                .field("actual_ms", actual_ms)
+                .finish(),
+            Self::DuplicateCapabilityHeader => f.write_str("DuplicateCapabilityHeader"),
+            Self::NoAuthHeader => f.write_str("NoAuthHeader"),
+            Self::UnsupportedScheme(scheme) => {
+                f.debug_tuple("UnsupportedScheme").field(&scheme).finish()
+            }
+            Self::Indeterminate => f.write_str("Indeterminate"),
+        }
+    }
+}
+
+/// Convert a `ParseError` to the equivalent `AuthError` variant so that
+/// `authenticate()` (or any consumer of `parse_auth_headers`) can surface
+/// the failure via the unified error type without leaking parse-stage
+/// internals.
+impl From<ParseError> for AuthError {
+    fn from(err: ParseError) -> Self {
+        match err {
+            ParseError::DuplicateCapabilityHeader => AuthError::DuplicateCapabilityHeader,
+            ParseError::NoAuthHeader => AuthError::NoAuthHeader,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -174,5 +225,87 @@ mod tests {
         let s = format!("{h:?}");
         assert!(s.contains("redacted"), "expected redaction: {s}");
         assert!(!s.contains("secret-token"), "leaked token: {s}");
+    }
+
+    #[test]
+    fn auth_error_debug_redacts_identity_mismatch() {
+        let err = AuthError::IdentityMismatch {
+            bearer_did: "did:octo:b1".into(),
+            cap_did: "did:octo:c1".into(),
+        };
+        let s = format!("{err:?}");
+        assert!(s.contains("IdentityMismatch"), "expected variant: {s}");
+        assert!(s.contains("redacted"), "expected redaction: {s}");
+        assert!(!s.contains("did:octo:b1"), "leaked bearer_did: {s}");
+        assert!(!s.contains("did:octo:c1"), "leaked cap_did: {s}");
+    }
+
+    #[test]
+    fn auth_error_debug_redacts_ask_binding_mismatch() {
+        let err = AuthError::AskBindingMismatch {
+            bearer_ask: [0xAA; 32],
+            cap_ask: [0xBB; 32],
+        };
+        let s = format!("{err:?}");
+        assert!(s.contains("AskBindingMismatch"), "expected variant: {s}");
+        assert!(s.contains("redacted"), "expected redaction: {s}");
+        // hex of all-AA / all-BB must not appear
+        assert!(!s.contains("aaaaaaaa"), "leaked bearer_ask: {s}");
+        assert!(!s.contains("bbbbbbbb"), "leaked cap_ask: {s}");
+    }
+
+    #[test]
+    fn auth_error_debug_preserves_routing_latency_metadata() {
+        let err = AuthError::RoutingLatencyExceeded {
+            threshold_ms: 100,
+            actual_ms: 250,
+        };
+        let s = format!("{err:?}");
+        assert!(
+            s.contains("RoutingLatencyExceeded"),
+            "expected variant: {s}"
+        );
+        assert!(s.contains("100"), "threshold_ms preserved: {s}");
+        assert!(s.contains("250"), "actual_ms preserved: {s}");
+    }
+
+    #[test]
+    fn auth_error_debug_unit_variants_are_stable() {
+        // Unit variants (no fields) render as their variant name — useful
+        // for grep tests in CI (RFC-0969 §Security).
+        for (err, expected) in [
+            (AuthError::BothInvalid, "BothInvalid"),
+            (
+                AuthError::DuplicateCapabilityHeader,
+                "DuplicateCapabilityHeader",
+            ),
+            (AuthError::NoAuthHeader, "NoAuthHeader"),
+            (AuthError::Indeterminate, "Indeterminate"),
+        ] {
+            assert_eq!(format!("{err:?}"), expected);
+        }
+    }
+
+    #[test]
+    fn auth_error_debug_unsupported_scheme_shows_scheme() {
+        // The scheme name itself is operational metadata (not credential
+        // material) and is preserved for forensics.
+        let err = AuthError::UnsupportedScheme("Basic".into());
+        let s = format!("{err:?}");
+        assert!(s.contains("UnsupportedScheme"), "expected variant: {s}");
+        assert!(s.contains("Basic"), "scheme name preserved: {s}");
+    }
+
+    #[test]
+    fn parse_error_converts_to_auth_error() {
+        // DuplicateCapabilityHeader
+        let p = ParseError::DuplicateCapabilityHeader;
+        let a: AuthError = p.into();
+        assert!(matches!(a, AuthError::DuplicateCapabilityHeader));
+
+        // NoAuthHeader
+        let p = ParseError::NoAuthHeader;
+        let a: AuthError = p.into();
+        assert!(matches!(a, AuthError::NoAuthHeader));
     }
 }

@@ -41,7 +41,7 @@ pub use macaroon::{
 };
 pub use market_delivery::{
     DealSettled, DealSettledPayload, DeliveryError, EnvelopeId, MarketDeliveryEnvelope,
-    MarketDeliveryEnvelopePreimage, RoleTag,
+    MarketDeliveryEnvelopePreimage, RoleTag, SettlementChainError,
 };
 pub use registry::{CapabilityClassRegistry, RegistryEntry, RegistryError};
 pub use verify::{verify_with_resolve, VerifiedToken, VerifyContext, VerifyError};

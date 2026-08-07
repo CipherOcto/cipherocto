@@ -361,7 +361,13 @@ fn tv2_cross_role_data_flow_deal_settlement() {
 
 #[test]
 fn tv3_cross_role_data_flow_forwarded_request() {
-    let router = IdentityKey::generate().expect("Router identity generate");
+    // **Round 7 (F39 fix):** pre-fix code called `IdentityKey::generate()`
+    // for the router but never used the generated key (only `let _ =
+    // router;` at the end). The `router_did` was a synthetic
+    // `sample_did(32)` string. Generating a real Ed25519 keypair purely
+    // to silence the unused warning wastes CPU + cryptographic entropy
+    // on every test run. Removed; the synthetic `sample_did(32)` is the
+    // canonical router DID for this fixture.
     let destination_did = sample_did(31);
     let router_did = sample_did(32);
 
@@ -445,8 +451,6 @@ fn tv3_cross_role_data_flow_forwarded_request() {
     assert!(
         quota_router_core::node::role_binding::validate_destination_binding(&destination_binding)
     );
-    // Silence the unused identity warning.
-    let _ = router;
 }
 
 // =========================================================================

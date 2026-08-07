@@ -100,6 +100,31 @@ impl std::fmt::Debug for CapabilityVerification {
     }
 }
 
+/// Case-insensitive ASCII scheme-prefix stripper. Returns the byte offset
+/// of the token start in the original-case `value` if `value` starts with
+/// the canonical scheme prefix (case-folded); `None` otherwise.
+///
+/// Avoids the off-by-one of `value_lower.strip_prefix(prefix).unwrap()` +
+/// `value[rest.len()..]` (which would split at byte offset derived from
+/// the lowercased buffer, not the original — corrupting the case of the
+/// token when the scheme is mixed-case like `Bearer`).
+fn strip_scheme_ci(value: &str, prefix: &str) -> Option<usize> {
+    if value.len() < prefix.len() {
+        return None;
+    }
+    if !value.is_ascii() || !prefix.is_ascii() {
+        return None; // ASCII-only: scheme tokens per RFC-7235 are ASCII.
+    }
+    let value_bytes = value.as_bytes();
+    let prefix_bytes = prefix.as_bytes();
+    for i in 0..prefix.len() {
+        if value_bytes[i].to_ascii_lowercase() != prefix_bytes[i] {
+            return None;
+        }
+    }
+    Some(prefix.len())
+}
+
 /// `BearerError` (RFC-0969 §Phase 1) — bearer verification failure modes.
 #[derive(thiserror::Error, Clone, PartialEq, Eq)]
 pub enum BearerError {
@@ -156,6 +181,19 @@ impl std::fmt::Debug for CapError {
 /// deterministic placeholder `subject_did` + `ask_id` from the token string
 /// bytes — sufficient to populate `BearerVerification` for `parse_auth_headers`
 /// linkage evaluation. Future AC-B1 lands real signature verification.
+///
+/// **Stub limitation (F2, Round 1 fix):** because both `subject_did` and
+/// `ask_id` are derived from the same token bytes (the prefix determines
+/// the DID, the body bytes determine the ask), the stub cannot produce
+/// the `AskBindingMismatch` linkage outcome from `parse_auth_headers` —
+/// different tokens produce different (subject, ask) pairs together, never
+/// a same-subject / different-ask pair. The real Ed25519 substrate (AC-B1)
+/// decouples these: the subject is the holder's public key, the ask is
+/// independent of the token content. To exercise `AskBindingMismatch` end
+/// to end today, construct `BearerVerification` + `CapabilityVerification`
+/// directly and call `evaluate_linkage(Some(&b), Some(&c))` (see the
+/// `evaluate_linkage_ask_binding_mismatch_when_subject_match_ask_differ`
+/// test below).
 pub fn unverified_decode_bearer(token: &str) -> BearerVerification {
     let mut ask_id = [0u8; 32];
     let bytes = token.as_bytes();
@@ -213,10 +251,18 @@ pub fn parse_auth_headers(headers: &[(String, String)]) -> Result<DispatchSet, P
     for (name, value) in headers {
         let lower = name.to_lowercase();
         if lower == "authorization" {
-            if let Some(rest) = value.strip_prefix("Bearer ") {
-                bearer = Some(AuthHeader::Bearer(rest.to_string()));
-            } else if let Some(rest) = value.strip_prefix("CipherOcto-Cap ") {
-                capability = Some(AuthHeader::CipherOctoCap(rest.to_string()));
+            // RFC-7235 §2.1: scheme names are case-insensitive. Real-world
+            // deployments send `bearer <token>` (lowercase) and
+            // `Bearer <token>` interchangeably; matching only the exact
+            // case would silently discard valid credentials and emit
+            // `UnsupportedScheme("bearer")` instead of routing to the
+            // bearer pipeline. Compare byte-by-byte against the
+            // canonical scheme prefix, case-folded, to find the actual
+            // token start in the original-case `value`.
+            if let Some(token_start) = strip_scheme_ci(value, "bearer ") {
+                bearer = Some(AuthHeader::Bearer(value[token_start..].to_string()));
+            } else if let Some(token_start) = strip_scheme_ci(value, "cipherocto-cap ") {
+                capability = Some(AuthHeader::CipherOctoCap(value[token_start..].to_string()));
                 cap_count += 1;
             } else {
                 // Unknown scheme — mission 0969-a3 AC-B2.1.a: surface the
@@ -709,6 +755,60 @@ mod tests {
         let p = ParseError::UnsupportedScheme("Digest".into());
         let a: AuthError = p.into();
         assert!(matches!(a, AuthError::UnsupportedScheme(s) if s == "Digest"));
+    }
+
+    // --- F1 (Round 1 fix): RFC-7235 §2.1 case-insensitive scheme match ---
+
+    /// `Authorization: bearer <token>` (lowercase scheme) routes to bearer
+    /// pipeline. RFC-7235 §2.1: scheme names are case-insensitive.
+    #[test]
+    fn parse_auth_headers_bearer_lowercase_scheme_routes_correctly() {
+        let r = parse_auth_headers(&[("Authorization".into(), "bearer abc123".into())]);
+        match r {
+            Ok(set) => {
+                assert!(matches!(set.bearer, Some(AuthHeader::Bearer(ref t)) if t == "abc123"));
+                assert!(set.capability.is_none());
+            }
+            Err(e) => panic!("expected Ok, got {e:?}"),
+        }
+    }
+
+    /// `Authorization: BEARER <token>` (uppercase) routes to bearer pipeline.
+    #[test]
+    fn parse_auth_headers_bearer_uppercase_scheme_routes_correctly() {
+        let r = parse_auth_headers(&[("Authorization".into(), "BEARER abc".into())]);
+        match r {
+            Ok(set) => {
+                assert!(matches!(set.bearer, Some(AuthHeader::Bearer(ref t)) if t == "abc"));
+            }
+            Err(e) => panic!("expected Ok, got {e:?}"),
+        }
+    }
+
+    /// `Authorization: cipherocto-cap <token>` (lowercase) routes to capability.
+    #[test]
+    fn parse_auth_headers_cap_lowercase_scheme_routes_correctly() {
+        let r = parse_auth_headers(&[("Authorization".into(), "cipherocto-cap xyz".into())]);
+        match r {
+            Ok(set) => {
+                assert!(matches!(
+                    set.capability,
+                    Some(AuthHeader::CipherOctoCap(ref t)) if t == "xyz"
+                ));
+            }
+            Err(e) => panic!("expected Ok, got {e:?}"),
+        }
+    }
+
+    /// Empty `Authorization` header (no scheme) returns `UnsupportedScheme("")`
+    /// — preserves operator forensics for malformed clients.
+    #[test]
+    fn parse_auth_headers_empty_authorization_value_returns_empty_scheme() {
+        let r = parse_auth_headers(&[("Authorization".into(), String::new())]);
+        match r {
+            Err(ParseError::UnsupportedScheme(scheme)) => assert_eq!(scheme, ""),
+            other => panic!("expected UnsupportedScheme(\"\"), got {other:?}"),
+        }
     }
 
     // --- AC-A5: BothInvalid carries BearerError / CapError ---

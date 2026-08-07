@@ -264,10 +264,10 @@ pub enum SettlementChainError {
 impl std::fmt::Debug for DeliveryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::ChainTipMismatch { .. } => f
+            Self::ChainTipMismatch { expected, actual } => f
                 .debug_struct("ChainTipMismatch")
-                .field("expected", &"<redacted 32 bytes>")
-                .field("actual", &"<redacted 32 bytes>")
+                .field("expected", expected)
+                .field("actual", actual)
                 .finish(),
             Self::BearerInsertFailed { reason, .. } => f
                 .debug_struct("BearerInsertFailed")
@@ -287,10 +287,10 @@ impl std::fmt::Debug for DeliveryError {
                 .debug_struct("ReplayDetected")
                 .field("envelope_id", &"<redacted>")
                 .finish(),
-            Self::ChainHashBroken { .. } => f
+            Self::ChainHashBroken { expected, actual } => f
                 .debug_struct("ChainHashBroken")
-                .field("expected", &"<redacted>")
-                .field("actual", &"<redacted>")
+                .field("expected", expected)
+                .field("actual", actual)
                 .finish(),
             Self::AskNotFound { .. } => f
                 .debug_struct("AskNotFound")
@@ -340,10 +340,13 @@ impl std::fmt::Debug for DeliveryError {
                 .debug_struct("RegistryError")
                 .field("reason", reason)
                 .finish(),
-            Self::ChainAppendError { .. } => f
+            Self::ChainAppendError {
+                expected_hash,
+                actual_hash,
+            } => f
                 .debug_struct("ChainAppendError")
-                .field("expected_hash", &"<redacted>")
-                .field("actual_hash", &"<redacted>")
+                .field("expected_hash", expected_hash)
+                .field("actual_hash", actual_hash)
                 .finish(),
             Self::SettlementChainError(e) => {
                 f.debug_tuple("SettlementChainError").field(e).finish()
@@ -355,10 +358,10 @@ impl std::fmt::Debug for DeliveryError {
 impl std::fmt::Debug for SettlementChainError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::TipMismatch { .. } => f
+            Self::TipMismatch { expected, actual } => f
                 .debug_struct("TipMismatch")
-                .field("expected", &"<redacted>")
-                .field("actual", &"<redacted>")
+                .field("expected", expected)
+                .field("actual", actual)
                 .finish(),
             Self::AppendFailed { reason } => f
                 .debug_struct("AppendFailed")
@@ -368,9 +371,9 @@ impl std::fmt::Debug for SettlementChainError {
                 .debug_struct("ReorgDetected")
                 .field("height", height)
                 .finish(),
-            Self::UnknownParent { .. } => f
+            Self::UnknownParent { parent_hash } => f
                 .debug_struct("UnknownParent")
-                .field("parent_hash", &"<redacted>")
+                .field("parent_hash", parent_hash)
                 .finish(),
         }
     }
@@ -495,6 +498,90 @@ mod tests {
         assert!(!s.contains("AAAA"), "leaked envelope_id bytes: {s}");
     }
 
+    /// **F6 (Round 1 fix):** chain hashes are operational forensics
+    /// (public chain-state data, not credential material). Operators MUST
+    /// see them to reconcile forks. `ChainTipMismatch` + `ChainHashBroken`
+    /// preserve hashes in Debug; only `ask_id` / `envelope_id` /
+    /// `bearer_capsule_hash` / `cap_root_hash` are credential material
+    /// and stay redacted.
+    #[test]
+    fn delivery_error_chain_tip_mismatch_preserves_hashes() {
+        let e = DeliveryError::ChainTipMismatch {
+            expected: [0xAA; 32],
+            actual: [0xBB; 32],
+        };
+        let s = format!("{e:?}");
+        assert!(s.contains("ChainTipMismatch"));
+        // Debug renders [u8; 32] as decimal byte values — `0xAA = 170`,
+        // `0xBB = 187`. Assert no redaction marker present (chain hashes
+        // preserved) AND a non-trivial value is visible (not all zeros).
+        assert!(
+            !s.contains("redacted"),
+            "chain hashes MUST NOT be redacted: {s}"
+        );
+        assert!(s.contains("170"), "expected hash preserved: {s}");
+        assert!(s.contains("187"), "actual hash preserved: {s}");
+    }
+
+    #[test]
+    fn delivery_error_chain_hash_broken_preserves_hashes() {
+        let e = DeliveryError::ChainHashBroken {
+            expected: [0xAA; 32],
+            actual: [0xBB; 32],
+        };
+        let s = format!("{e:?}");
+        assert!(s.contains("ChainHashBroken"));
+        assert!(
+            !s.contains("redacted"),
+            "chain hashes MUST NOT be redacted: {s}"
+        );
+        assert!(s.contains("170"), "expected hash preserved: {s}");
+        assert!(s.contains("187"), "actual hash preserved: {s}");
+    }
+
+    #[test]
+    fn delivery_error_chain_append_error_preserves_hashes() {
+        let e = DeliveryError::ChainAppendError {
+            expected_hash: [0xCC; 32],
+            actual_hash: [0xDD; 32],
+        };
+        let s = format!("{e:?}");
+        assert!(s.contains("ChainAppendError"));
+        assert!(
+            !s.contains("redacted"),
+            "chain hashes MUST NOT be redacted: {s}"
+        );
+        // 0xCC = 204, 0xDD = 221
+        assert!(s.contains("204"), "expected_hash preserved: {s}");
+        assert!(s.contains("221"), "actual_hash preserved: {s}");
+    }
+
+    #[test]
+    fn settlement_chain_error_preserves_hashes() {
+        let tip = SettlementChainError::TipMismatch {
+            expected: [0xEE; 32],
+            actual: [0xFF; 32],
+        };
+        let s = format!("{tip:?}");
+        assert!(
+            !s.contains("redacted"),
+            "chain hashes MUST NOT be redacted: {s}"
+        );
+        // 0xEE = 238, 0xFF = 255
+        assert!(s.contains("238"), "expected preserved: {s}");
+        assert!(s.contains("255"), "actual preserved: {s}");
+
+        let unk = SettlementChainError::UnknownParent {
+            parent_hash: [0x11; 32],
+        };
+        let s = format!("{unk:?}");
+        assert!(
+            !s.contains("redacted"),
+            "parent_hash MUST NOT be redacted: {s}"
+        );
+        assert!(s.contains("17"), "parent_hash preserved: {s}");
+    }
+
     // --- 0959-b1 AC-D1: new DeliveryError variants Debug redaction ---
 
     #[test]
@@ -529,16 +616,24 @@ mod tests {
     }
 
     #[test]
-    fn settlement_chain_error_tip_mismatch_redacts_hashes() {
+    fn settlement_chain_error_tip_mismatch_preserves_hashes() {
+        // **F6 (Round 1 fix):** chain hashes are operational forensics,
+        // not credential material. Operators MUST see them for fork
+        // reconciliation. Renamed from `tip_mismatch_redacts_hashes`
+        // (pre-fix) to `tip_mismatch_preserves_hashes` (post-fix).
         let e = SettlementChainError::TipMismatch {
             expected: [0xDD; 32],
             actual: [0xEE; 32],
         };
         let s = format!("{e:?}");
         assert!(s.contains("TipMismatch"));
-        assert!(s.contains("redacted"));
-        assert!(!s.contains("dddddddd"), "leaked expected hash: {s}");
-        assert!(!s.contains("eeeeeeee"), "leaked actual hash: {s}");
+        assert!(
+            !s.contains("redacted"),
+            "chain hashes MUST NOT be redacted: {s}"
+        );
+        // 0xDD = 221, 0xEE = 238
+        assert!(s.contains("221"), "expected hash MUST be preserved: {s}");
+        assert!(s.contains("238"), "actual hash MUST be preserved: {s}");
     }
 
     // --- 0959-b1 AC-D2: RoleTag variants aligned to RFC-0971 ---

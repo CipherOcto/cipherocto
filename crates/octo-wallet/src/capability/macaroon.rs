@@ -468,10 +468,48 @@ pub trait CapabilityCatalog {
 /// Defined here (not in `registry.rs`) to avoid cross-module error-type
 /// entanglement — `gossip_to_buyer` is a catalog-extension operation, not
 /// a `CapabilityClassRegistry` operation.
-#[derive(Debug, thiserror::Error)]
+///
+/// Variants per RFC-0959-A1 §Phase 3 retry policy (mission `0959-c1-gossip-error-variants`):
+/// - `Unsupported` — catalog does not support gossip (fail-fast, no retry)
+/// - `Transient(String)` — retryable network failure (bounded retry with backoff)
+/// - `Permanent(String)` — non-retryable schema/capability mismatch (fail-fast)
+///
+/// **Security (RFC-0957-A1 §Security):** reason strings are operator-facing
+/// diagnostic only; manual `Debug` impl redacts the payload to defend against
+/// accidental exposure of sender/DID material that may be present in error
+/// context (defense in depth).
+#[derive(thiserror::Error)]
 pub enum CatalogGossipError {
     #[error("catalog does not support gossip (RFC-0957-A1 §Phase 3 default impl)")]
     Unsupported,
+    /// Transient failure (network partition, peer not reachable). Retry with
+    /// exponential backoff bounded by `MAX_GOSSIP_ATTEMPTS`.
+    #[error("transient gossip failure: {0}")]
+    Transient(String),
+    /// Permanent failure (schema mismatch, capability revoked). Fail-fast,
+    /// do not retry.
+    #[error("permanent gossip failure: {0}")]
+    Permanent(String),
+}
+
+impl std::fmt::Debug for CatalogGossipError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // RFC-0957-A1 §Security: reason strings may carry operator-facing
+        // diagnostic context; redact the payload in Debug to defend against
+        // accidental log exposure. Operators needing the raw reason query
+        // the typed variant directly via match.
+        match self {
+            Self::Unsupported => f.write_str("Unsupported"),
+            Self::Transient(_) => f
+                .debug_tuple("Transient")
+                .field(&"[REDACTED reason]")
+                .finish(),
+            Self::Permanent(_) => f
+                .debug_tuple("Permanent")
+                .field(&"[REDACTED reason]")
+                .finish(),
+        }
+    }
 }
 
 /// Walk the `WrappedOnly` chain rooted at `macaroon`, rejecting cycles,

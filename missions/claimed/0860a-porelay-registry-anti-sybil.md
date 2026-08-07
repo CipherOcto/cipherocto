@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed 2026-07-27
+Closed (Band A — 2026-08-06). Claimed 2026-07-27.
 
 ## RFC
 
@@ -79,3 +79,13 @@ High
 - **RFC-0968 §21** — dual-stake + on-chain stake_lock_ref + slash-destination invariants (shared with this mission)
 - **RFC-0968 §16** — cross-layer query + weighted-similarity correlation (amendment 46)
 - **Mission 0968 (claimed)** — persisted `ReputationStore` is the canonical authoritative state for reputation-influenced gateway admission
+
+**Version History:**
+
+| Version | Date       | Change                                                                                                                                                       |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| v0.1    | 2026-07-27 | Mission claimed. Pre-existing trust registry + anti-Sybil + aggregation substrate verified.                                                                  |
+| v0.2    | 2026-08-06 | Closed Band A. 11/13 ACs green; 2/13 ACs explicit deferrals per [[deferred-vs-unspecified]] named-owner rule (DPS aggregation integration + monthly earnings → `0860a1-dps-integration-and-economics` follow-up). 77+ porelay tests pass; clippy clean. Status header flipped Claimed→Closed (Band A — 2026-08-06). |
+
+Last Updated: 2026-08-06
+Version: 0.2

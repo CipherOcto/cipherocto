@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed 2026-07-27 — initial slice landed: slash codes 0x0020-0x0023 in `crates/octo-sync/src/slash.rs`; `verify_summary_hmac` function + tests in `crates/octo-sync/src/summary.rs`; CRC32 helper for WAL entry payload checks. Pending: `apply_wal_entry` CRC verification integration at each adapter implementation, LSN-regression slash emission in `WalTailStreamer::on_lsn_ack`, rate-limit-violation detection at the stream layer.
+Closed (Band A — 2026-08-06). Claimed 2026-07-27 — initial slice landed: slash codes 0x0020-0x0023 in `crates/octo-sync/src/slash.rs`; `verify_summary_hmac` function + tests in `crates/octo-sync/src/summary.rs`; CRC32 helper for WAL entry payload checks. 5/7 ACs green per Band A closure; 2/7 ACs explicit deferrals per [[deferred-vs-unspecified]] named-owner rule (`0862m1-slash-event-emit-and-integration-test.md` follow-up: SlashEvent DC bridge + bad-peer integration test).
 
 ## RFC
 
@@ -73,3 +73,13 @@ Medium (~250 lines). CRC32/LSN checks are straightforward. HMAC verification and
 ## Changelog
 
 - **Round 1** (2026-06-23): Fixed slash code conflict (0x0013-0x0015 clash with PlatformType). Added CRC32/LSN/HMAC detection details. Clarified what's already implemented vs what needs adding.
+
+**Version History:**
+
+| Version | Date       | Change                                                                                                                                                       |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| v0.1    | 2026-07-27 | Mission claimed; initial slice landed (slash codes 0x0020-0x0023 + CRC32 + LSN regression + verify_summary_hmac + 9 unit tests).                              |
+| v0.2    | 2026-08-06 | Closed Band A. 5/7 ACs green; 2/7 ACs explicit deferrals per [[deferred-vs-unspecified]] named-owner rule (SlashEvent DC bridge + bad-peer integration test → `0862m1-slash-event-emit-and-integration-test` follow-up). 9/9 sync slash tests pass. Status header flipped Claimed→Closed (Band A — 2026-08-06). |
+
+Last Updated: 2026-08-06
+Version: 0.2

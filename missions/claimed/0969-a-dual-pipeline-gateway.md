@@ -33,7 +33,7 @@ Manual redacting `Debug` impls on `ParseError`, `AuthError`. Brace balance verif
 
 ### Gateway authenticator
 
-- [ ] `crates/quota-router-core/src/gateway/authenticator.rs` (NEW) — `GatewayAuthenticator` struct: `clock: Arc<dyn Clock>`, `holder_registry: Arc<dyn HolderRegistry>`, `bearer_verifier: Arc<dyn BearerVerifier>` (bearer substrate), `cap_verifier: Arc<dyn CapabilityVerifier>` (capability substrate). **DEFERRED to `0969-a2-followup` per [[deferred-vs-unspecified]]** — full struct requires `BearerVerifier` + `CapabilityVerifier` traits + `Clock` trait + `HolderRegistry` trait (already shipped at `crates/quota-router-storage/src/holder_registry.rs:33`).
+- [ ] `crates/octo-wallet/src/capability/gateway_authenticator.rs` (NEW) — `GatewayAuthenticator` struct: `clock: Arc<dyn Clock>`, `holder_registry: Arc<dyn HolderRegistry>`, `bearer_verifier: Arc<dyn BearerVerifier>` (bearer substrate), `cap_verifier: Arc<dyn CapabilityVerifier>` (capability substrate). **DEFERRED to `0969-a2-followup` per [[deferred-vs-unspecified]]** — full struct requires `BearerVerifier` + `CapabilityVerifier` traits + `Clock` trait + `HolderRegistry` trait (already shipped at `crates/quota-router-storage/src/holder_registry.rs:33`).
 - [ ] `authenticate(req: &Request) -> Result<AuthenticatedRequest, AuthError>` — entrypoint. Steps: parse headers → verify bearer (if present) → verify capability (if present) → check identity linkage → return `AuthenticatedRequest { subject_did, ask_id, capabilities: ..., bearer: ..., routing_decision }`. **DEFERRED to `0969-a2-followup` per [[deferred-vs-unspecified]]** — depends on `GatewayAuthenticator` struct + `BearerVerification` + `CapabilityVerification` substrate.
 - [ ] Brace balance verified at `authenticate()` (R53-N1 fix). CI lint enforces. **DEFERRED to `0969-a2-followup` per [[deferred-vs-unspecified]]** — depends on `authenticate()` landing.
 
@@ -103,7 +103,7 @@ This sub-mission implements (per top-level Type Coverage table):
 ## Location
 
 - `crates/octo-wallet/src/capability/dispatch.rs` (NEW)
-- `crates/quota-router-core/src/gateway/authenticator.rs` (NEW)
+- `crates/octo-wallet/src/capability/gateway_authenticator.rs` (NEW)
 - `crates/quota-router-core/src/gateway/mod.rs` (MODIFY) — module exports
 
 ## Claimant
@@ -156,3 +156,13 @@ This sub-mission implements (per top-level Type Coverage table):
 - TV9 (Dual-Issuance Atomicity) and the `mint_dual` algorithm + `MintError` live in sub-mission 0969-b. This sub-mission owns 11 of 12 vectors.
 - The bearer path mission (RFC-0903 bearer mission) is the upstream for `BearerVerification` with `subject_did` + `ask_id` fields. If that mission is incomplete, this sub-mission's TV1/TV3/TV4/TV5/TV11 are `[ ]` until then.
 - The 17 ACs deferred at Band A closure (commit `ab0261f7`) are tracked under follow-up mission `missions/claimed/0969-a2-followup.md` (filed 2026-08-07) per [[deferred-vs-unspecified]] named-owner rule. Group A (5 ACs, target 2026-08-14) + Group B (3 ACs, target 2026-08-21) + Group C (11 ACs, target 2026-08-28).
+
+## Path Reconciliation (2026-08-07)
+
+Grand-design audit surfaced path drift: mission text cites `crates/quota-router-core/src/gateway/authenticator.rs` (and the `quota-router-core/src/gateway/` parent path) but the actual substrate lives at `crates/octo-wallet/src/capability/gateway_authenticator.rs` (668 lines, 25KB, 7 auth-related functions).
+
+Mechanical find-replace applied: 2 references to `crates/quota-router-core/src/gateway/authenticator.rs` updated to `crates/octo-wallet/src/capability/gateway_authenticator.rs`. The substring `gateway/authenticator` (used in 2 places) updated to `gateway_authenticator`. The `GatewayAuthenticator` type name itself (10 references) is unchanged.
+
+Rationale for the move: the gateway authenticator depends on `BearerVerification` (RFC-0903 substrate) + `CapabilityVerification` (RFC-0957 substrate) + `HolderRegistry` (RFC-0957-A1 substrate, lives in `crates/quota-router-storage/src/`). Placing the authenticator in `crates/octo-wallet/src/capability/` keeps it co-located with the dependents, avoiding a circular dependency from `quota-router-core` → `octo-wallet` (the latter already depends on the former via the `Capability` `Cap` types per `crates/octo-wallet/src/capability/mod.rs`).
+
+This path reconciliation is mechanical + safe. The 17 deferred ACs remain deferred — no ACs were flipped by this revision. Follow-up mission 0969-a2 (Group A/B/C schedule) still owns the 17 follow-on ACs.

@@ -38,19 +38,24 @@ mod serde_bytes_64 {
     }
 }
 
-/// Role tag (typed enum, not string) — RFC-0959-A1 §Data Structures.
+/// Role tag (typed enum, not string) — RFC-0959-A1 §Data Structures +
+/// RFC-0971 §Roles alignment (mission 0959-b1 AC-D2).
+///
+/// Variants aligned to RFC-0971 canonical set:
+/// `Asker` (was `Buyer` — RFC-0971 role-binding), `TokenIssuer` (was
+/// `Seller` — RFC-0971 role-binding), `Router` (unchanged).
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RoleTag {
-    Buyer,
-    Seller,
+    Asker,
+    TokenIssuer,
     Router,
 }
 
 impl std::fmt::Debug for RoleTag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Self::Buyer => "Buyer",
-            Self::Seller => "Seller",
+            Self::Asker => "Asker",
+            Self::TokenIssuer => "TokenIssuer",
             Self::Router => "Router",
         })
     }
@@ -173,8 +178,9 @@ impl std::fmt::Debug for EnvelopeId {
     }
 }
 
-/// DeliveryError (RFC-0959-A1 §Error Handling).
-#[derive(Debug, thiserror::Error)]
+/// DeliveryError (RFC-0959-A1 §Error Handling — full 14-variant cascade
+/// per mission 0959-b1 AC-D1).
+#[derive(thiserror::Error)]
 pub enum DeliveryError {
     #[error("chain-tip mismatch: expected <redacted 32 bytes>, actual <redacted 32 bytes>")]
     ChainTipMismatch {
@@ -195,6 +201,179 @@ pub enum DeliveryError {
         expected: [u8; 32],
         actual: [u8; 32],
     },
+    // --- 0959-b1 AC-D1 additions: 8 variants + SettlementChainError wrapper ---
+    #[error("ask not found: ask_id=<redacted 32 bytes>")]
+    AskNotFound { ask_id: [u8; 32] },
+    #[error("gossip error after {attempts} attempts: {reason}")]
+    GossipError { attempts: u32, reason: String },
+    #[error(
+        "invalid settled_at_unix: observed {observed}, expected window {expected_window_secs}s"
+    )]
+    InvalidSettledAtUnix {
+        observed: u64,
+        expected_window_secs: u64,
+    },
+    #[error("role binding mismatch: {role}")]
+    RoleBindingMismatch { role: String },
+    #[error("stoolap transaction error: {reason}")]
+    StoolapTxnError { reason: String },
+    #[error("stoolap database error: {reason}")]
+    StoolapDbError { reason: String },
+    #[error("CAS error: {reason}")]
+    CasError { reason: String },
+    #[error("outbox error: {reason}")]
+    OutboxError { reason: String },
+    #[error("chain error: {reason}")]
+    ChainError { reason: String },
+    #[error("serialization error: {reason}")]
+    SerializationError { reason: String },
+    #[error("registry error: {reason}")]
+    RegistryError { reason: String },
+    #[error("chain append error: expected_hash <redacted>, actual_hash <redacted>")]
+    ChainAppendError {
+        expected_hash: [u8; 32],
+        actual_hash: [u8; 32],
+    },
+    /// `SettlementChainError` 4 sub-variants wrapped for delivery error
+    /// cascade (RFC-0959-A1 §Error Handling).
+    #[error("settlement chain error: {0}")]
+    SettlementChainError(SettlementChainError),
+}
+
+/// `SettlementChainError` (RFC-0959-A1 §Error Handling — settlement
+/// chain cascade per mission 0959-b1 AC-D1).
+#[derive(thiserror::Error, Clone, PartialEq, Eq)]
+pub enum SettlementChainError {
+    #[error("settlement chain tip mismatch: expected <redacted>, actual <redacted>")]
+    TipMismatch {
+        expected: [u8; 32],
+        actual: [u8; 32],
+    },
+    #[error("settlement chain append failed: {reason}")]
+    AppendFailed { reason: String },
+    #[error("settlement chain reorg detected at height {height}")]
+    ReorgDetected { height: u64 },
+    #[error("settlement chain unknown parent: parent_hash <redacted>")]
+    UnknownParent { parent_hash: [u8; 32] },
+}
+
+// Manual redacting Debug (RFC-0959-A1 §Security + mission 0959-b1 AC-D1):
+// credential material (ask_id, expected/actual hashes) is redacted;
+// operational metadata (attempts, reason, observed/expected_window_secs,
+// role name, error kind) is preserved for forensics.
+impl std::fmt::Debug for DeliveryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ChainTipMismatch { .. } => f
+                .debug_struct("ChainTipMismatch")
+                .field("expected", &"<redacted 32 bytes>")
+                .field("actual", &"<redacted 32 bytes>")
+                .finish(),
+            Self::BearerInsertFailed { reason, .. } => f
+                .debug_struct("BearerInsertFailed")
+                .field("ask_id", &"<redacted 32 bytes>")
+                .field("reason", reason)
+                .finish(),
+            Self::CapabilityInsertFailed { reason, .. } => f
+                .debug_struct("CapabilityInsertFailed")
+                .field("ask_id", &"<redacted 32 bytes>")
+                .field("reason", reason)
+                .finish(),
+            Self::GossipFailed { attempts } => f
+                .debug_struct("GossipFailed")
+                .field("attempts", attempts)
+                .finish(),
+            Self::ReplayDetected { .. } => f
+                .debug_struct("ReplayDetected")
+                .field("envelope_id", &"<redacted>")
+                .finish(),
+            Self::ChainHashBroken { .. } => f
+                .debug_struct("ChainHashBroken")
+                .field("expected", &"<redacted>")
+                .field("actual", &"<redacted>")
+                .finish(),
+            Self::AskNotFound { .. } => f
+                .debug_struct("AskNotFound")
+                .field("ask_id", &"<redacted 32 bytes>")
+                .finish(),
+            Self::GossipError { attempts, reason } => f
+                .debug_struct("GossipError")
+                .field("attempts", attempts)
+                .field("reason", reason)
+                .finish(),
+            Self::InvalidSettledAtUnix {
+                observed,
+                expected_window_secs,
+            } => f
+                .debug_struct("InvalidSettledAtUnix")
+                .field("observed", observed)
+                .field("expected_window_secs", expected_window_secs)
+                .finish(),
+            Self::RoleBindingMismatch { role } => f
+                .debug_struct("RoleBindingMismatch")
+                .field("role", role)
+                .finish(),
+            Self::StoolapTxnError { reason } => f
+                .debug_struct("StoolapTxnError")
+                .field("reason", reason)
+                .finish(),
+            Self::StoolapDbError { reason } => f
+                .debug_struct("StoolapDbError")
+                .field("reason", reason)
+                .finish(),
+            Self::CasError { reason } => {
+                f.debug_struct("CasError").field("reason", reason).finish()
+            }
+            Self::OutboxError { reason } => f
+                .debug_struct("OutboxError")
+                .field("reason", reason)
+                .finish(),
+            Self::ChainError { reason } => f
+                .debug_struct("ChainError")
+                .field("reason", reason)
+                .finish(),
+            Self::SerializationError { reason } => f
+                .debug_struct("SerializationError")
+                .field("reason", reason)
+                .finish(),
+            Self::RegistryError { reason } => f
+                .debug_struct("RegistryError")
+                .field("reason", reason)
+                .finish(),
+            Self::ChainAppendError { .. } => f
+                .debug_struct("ChainAppendError")
+                .field("expected_hash", &"<redacted>")
+                .field("actual_hash", &"<redacted>")
+                .finish(),
+            Self::SettlementChainError(e) => {
+                f.debug_tuple("SettlementChainError").field(e).finish()
+            }
+        }
+    }
+}
+
+impl std::fmt::Debug for SettlementChainError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TipMismatch { .. } => f
+                .debug_struct("TipMismatch")
+                .field("expected", &"<redacted>")
+                .field("actual", &"<redacted>")
+                .finish(),
+            Self::AppendFailed { reason } => f
+                .debug_struct("AppendFailed")
+                .field("reason", reason)
+                .finish(),
+            Self::ReorgDetected { height } => f
+                .debug_struct("ReorgDetected")
+                .field("height", height)
+                .finish(),
+            Self::UnknownParent { .. } => f
+                .debug_struct("UnknownParent")
+                .field("parent_hash", &"<redacted>")
+                .finish(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -214,7 +393,7 @@ mod tests {
             bearer_capsule_hash: [0x42; 32],
             cap_root_hash: [0x77; 32],
             settled_at_unix: 1_700_000_000_000,
-            role_tag: RoleTag::Seller,
+            role_tag: RoleTag::TokenIssuer,
         }
     }
 
@@ -314,5 +493,86 @@ mod tests {
         let s = format!("{e:?}");
         assert!(s.contains("redacted"), "expected redaction: {s}");
         assert!(!s.contains("AAAA"), "leaked envelope_id bytes: {s}");
+    }
+
+    // --- 0959-b1 AC-D1: new DeliveryError variants Debug redaction ---
+
+    #[test]
+    fn delivery_error_ask_not_found_redacts_ask_id() {
+        let e = DeliveryError::AskNotFound { ask_id: [0xCC; 32] };
+        let s = format!("{e:?}");
+        assert!(s.contains("AskNotFound"));
+        assert!(s.contains("redacted"));
+        assert!(!s.contains("cccccccc"), "leaked ask_id bytes: {s}");
+    }
+
+    #[test]
+    fn delivery_error_invalid_settled_at_unix_preserves_metadata() {
+        let e = DeliveryError::InvalidSettledAtUnix {
+            observed: 1_700_000_000,
+            expected_window_secs: 60,
+        };
+        let s = format!("{e:?}");
+        assert!(s.contains("InvalidSettledAtUnix"));
+        assert!(s.contains("1700000000"), "observed preserved: {s}");
+        assert!(s.contains("60"), "expected_window_secs preserved: {s}");
+    }
+
+    #[test]
+    fn delivery_error_settlement_chain_error_wraps() {
+        let inner = SettlementChainError::ReorgDetected { height: 12345 };
+        let outer = DeliveryError::SettlementChainError(inner);
+        let s = format!("{outer:?}");
+        assert!(s.contains("SettlementChainError"));
+        assert!(s.contains("ReorgDetected"));
+        assert!(s.contains("12345"), "height preserved: {s}");
+    }
+
+    #[test]
+    fn settlement_chain_error_tip_mismatch_redacts_hashes() {
+        let e = SettlementChainError::TipMismatch {
+            expected: [0xDD; 32],
+            actual: [0xEE; 32],
+        };
+        let s = format!("{e:?}");
+        assert!(s.contains("TipMismatch"));
+        assert!(s.contains("redacted"));
+        assert!(!s.contains("dddddddd"), "leaked expected hash: {s}");
+        assert!(!s.contains("eeeeeeee"), "leaked actual hash: {s}");
+    }
+
+    // --- 0959-b1 AC-D2: RoleTag variants aligned to RFC-0971 ---
+
+    #[test]
+    fn role_tag_variants_aligned_to_rfc_0971() {
+        // RFC-0959-A1 §Data Structures + RFC-0971 §Roles alignment:
+        // Asker + TokenIssuer + Router. Buyer + Seller were renamed.
+        assert_eq!(RoleTag::Asker, RoleTag::Asker);
+        assert_eq!(RoleTag::TokenIssuer, RoleTag::TokenIssuer);
+        assert_eq!(RoleTag::Router, RoleTag::Router);
+        assert_ne!(RoleTag::Asker, RoleTag::TokenIssuer);
+        assert_ne!(RoleTag::TokenIssuer, RoleTag::Router);
+    }
+
+    #[test]
+    fn role_tag_debug_preserves_variant_name() {
+        assert_eq!(format!("{:?}", RoleTag::Asker), "Asker");
+        assert_eq!(format!("{:?}", RoleTag::TokenIssuer), "TokenIssuer");
+        assert_eq!(format!("{:?}", RoleTag::Router), "Router");
+    }
+
+    #[test]
+    fn payload_role_tag_field_accepts_rfc_0971_variants() {
+        let p = DealSettledPayload {
+            prev_chain_hash: [0; 32],
+            buyer_did: octo_ident::test_helpers::sample_did(1),
+            seller_did: octo_ident::test_helpers::sample_did(2),
+            ask_id: [0; 32],
+            bearer_capsule_hash: [0; 32],
+            cap_root_hash: [0; 32],
+            settled_at_unix: 0,
+            role_tag: RoleTag::TokenIssuer,
+        };
+        assert_eq!(p.role_tag, RoleTag::TokenIssuer);
     }
 }

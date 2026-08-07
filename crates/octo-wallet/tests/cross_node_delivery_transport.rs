@@ -91,7 +91,7 @@ fn build_envelope() -> MarketDeliveryEnvelope {
                 bearer_capsule_hash: [0x42; 32],
                 cap_root_hash: [0x77; 32],
                 settled_at_unix: 1_700_000_000_000,
-                role_tag: RoleTag::Seller,
+                role_tag: RoleTag::TokenIssuer,
             },
             seller_signature: [0x99; 64],
         },

@@ -191,7 +191,7 @@ fn cross_role_data_flow_deal_settlement_full_pipeline() {
         bearer_capsule_hash,
         cap_root_hash,
         settled_at_unix: 1_700_000_000_004,
-        role_tag: MarketRoleTag::Seller,
+        role_tag: MarketRoleTag::TokenIssuer,
     };
     let event_hash = b3_hash(&[b"deal_settled:", ask_id.as_slice()]);
     let seller_signature = asker.sign(&event_hash).to_bytes();
@@ -301,7 +301,7 @@ fn tv2_cross_role_data_flow_deal_settlement() {
             bearer_capsule_hash,
             cap_root_hash,
             settled_at_unix: 1_700_000_001_003,
-            role_tag: MarketRoleTag::Seller,
+            role_tag: MarketRoleTag::TokenIssuer,
         },
         seller_signature,
     };

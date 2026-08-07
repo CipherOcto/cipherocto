@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-08-06); **v0.1 re-evaluation amendments 2026-08-06** (per re-evaluation of stale substrate description + RFC-0100 ghost + dependency classification).
+Closed (Band A — 2026-08-06). Claimed (2026-08-06); **v0.1 re-evaluation amendments 2026-08-06** (per re-evaluation of stale substrate description + RFC-0100 ghost + dependency classification).
 
 ## RFC
 
@@ -203,3 +203,13 @@ cargo clippy --workspace --all-targets --features allow-stub-verifier \
 **Mission Type:** Implementation
 **Priority:** Medium
 **Phase:** ZK Proofs
+
+**Version History:**
+
+| Version | Date       | Change                                                                                                                                                  |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-06 | Mission claimed; AC-1 + AC-2 + AC-5 closed in Session 1; AC-3/AC-4 (settlement carrier missing) + AC-6 (GPU, optional) deferred per §Blockers.          |
+| v0.2    | 2026-08-06 | Closed Band A. 7/10 ACs green (AC-1/AC-2/AC-5 closed; AC-3/AC-4/AC-6 explicitly deferred per [[deferred-vs-unspecified]] named-owner rule). Status header flipped Claimed→Closed (Band A — 2026-08-06). No new impl commits (Session 1 closure substrate already shipped). |
+
+Last Updated: 2026-08-06
+Version: 0.2

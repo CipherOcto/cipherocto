@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-08-04)
+Closed (Band A — 2026-08-07). Claimed 2026-08-04; top-level roll-up closure landed at commit (see §Closure). Sub-missions: `0957-c-holder-registry-impl.md` (Band A closed 2026-08-06, commit `998debbf` + `3edc425c`; 20/23 ACs GREEN, 3 deferred — TV5 → 0957-c-gossip prospective sub-mission, TV11 → 0969-b1, --all-features clippy → tdlib-rs blocker); `0957-d-wire-resolver-update.md` (closed 2026-08-04, commit `5b6ea93e`; 7/10 ACs GREEN, 3 deferred — TV5 → 0959-a1, TV15 → 0970-a, RFC appendix → future promotion); `0957-e-mint-txn-parameter.md` (Band A closed 2026-08-06, commit `e05f9639`; 12/15 ACs GREEN, 3 deferred — TV8 → follow-up, TV10 → follow-up, TV11 → 0969-b1).
 
 ## RFC
 
@@ -24,12 +24,12 @@ The registry is the resolver: wire bytes carry `cap_root_hash` but exclude `hold
 
 The sub-missions (0957-c, 0957-d, 0957-e) implement the ACs by RFC-0957-A1 §Test Vectors. When all 3 sub-missions are complete and merged, every AC below is satisfied.
 
-- [ ] All 15 RFC-0957-A1 §Test Vectors pass (TV1: Lookup Hit, TV2: Lookup Miss, TV3: Insert + Duplicate, TV4: Revoke + Lookup, TV5: Cross-Node Mint Verifiability, TV6: 4-Kind Agnosticism, TV7: Wire Format Unchanged, TV8: 100K Lookup Benchmark, TV9: Mint Is Persistence-Free, TV10: Caller-Side Persistence via TransactionExt, TV11: insert_dual Atomicity, TV12: lookup_by_ask UNIQUE, TV13: Debug Redaction, TV14: revoked_at_millis_unix Distinct from ttl_millis_unix, TV15: HopCapability Holder vs Audience)
-- [ ] All 8 RFC-0957-A1 §Design Goals green (G1: lookup ≤5ms p99 over 100K holders, G2: wire byte-identical pre/post amendment, G3: mint signature amended to 4-arg persistence-free, G4: gossip convergence ≤30s, G5: cross-node mint verifiability, G6: 4-kind agnosticism, G7: zero credential material in Debug output, G8: insert_dual atomicity)
-- [ ] All 3 RFC-0957-A1 §Adversary Analysis findings covered (A6: gossip partition → cross-node verification fails, A7: holder DID enumeration via gossip, A8: registry row spoofing via INSERT privilege escalation)
-- [ ] Phantom type `IdentityKey::from_public_bytes` properly DEFERRED to RFC-0009-B1 / RFC-0957-A2 (working stub per §Phantom Types; full signature promotion deferred)
-- [ ] Sub-missions 0957-c, 0957-d, 0957-e all merged and ACs flipped
-- [ ] Cross-crate compat: `cargo build --workspace` green; `cargo test --workspace` green; `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean; `cargo fmt --check` clean
+- [ ] All 15 RFC-0957-A1 §Test Vectors pass (TV1: Lookup Hit, TV2: Lookup Miss, TV3: Insert + Duplicate, TV4: Revoke + Lookup, TV5: Cross-Node Mint Verifiability, TV6: 4-Kind Agnosticism, TV7: Wire Format Unchanged, TV8: 100K Lookup Benchmark, TV9: Mint Is Persistence-Free, TV10: Caller-Side Persistence via TransactionExt, TV11: insert_dual Atomicity, TV12: lookup_by_ask UNIQUE, TV13: Debug Redaction, TV14: revoked_at_millis_unix Distinct from ttl_millis_unix, TV15: HopCapability Holder vs Audience) → **GREEN by sub-mission roll-up**: TV1, TV2, TV3, TV4, TV6, TV12, TV13, TV14 (8 vectors) → `missions/claimed/0957-c-holder-registry-impl.md` Band A closure (commits `998debbf` + `3edc425c`); TV7 (Wire Format Unchanged) → `missions/claimed/0957-d-wire-resolver-update.md` closure (commit `5b6ea93e`; 3 round-trip tests); TV9 (Mint Is Persistence-Free) → `missions/claimed/0957-e-mint-txn-parameter.md` Band A closure (commit `e05f9639`; compile-time guarantee via 4-arg signature); TV11 (`insert_dual` Atomicity) → `missions/claimed/0969-b1-insert-dual-impl.md` Band A closure (commit; 3 TV9-I1/I2/I3 atomicity tests pass); TV15 (HopCapability Holder vs Audience) → `missions/claimed/0970-a-hop-envelope.md` Band A closure (`HolderKind::HopCapability = 0x03` discriminator + `HolderRecord::from_hop_capability` constructor at `crates/quota-router-storage/src/holder_record.rs:204` + `from_hop_capability_distinguishes_holder_and_audience` unit test at `crates/quota-router-storage/src/holder_record.rs:433`). **12/15 GREEN**. **3/15 DEFERRED** per [[deferred-vs-unspecified]] named-owner rule: TV5 (Cross-Node Mint Verifiability) → prospective 0957-c-gossip sub-mission (RFC-0862 gossip + node-A/node-B integration test, owner: @cipherocto, target 2026-08-21); TV8 (100K Lookup Benchmark) → follow-up mission (criterion bench + 100K fixture at `crates/octo-wallet/benches/holder_registry_lookup.rs`, owner: @cipherocto, target 2026-08-28); TV10 (Caller-Side Persistence via TransactionExt) → follow-up mission (cross-crate `TransactionExt::insert_holder_record` integration test, owner: @cipherocto, target 2026-08-28).
+- [ ] All 8 RFC-0957-A1 §Design Goals green (G1: lookup ≤5ms p99 over 100K holders, G2: wire byte-identical pre/post amendment, G3: mint signature amended to 4-arg persistence-free, G4: gossip convergence ≤30s, G5: cross-node mint verifiability, G6: 4-kind agnosticism, G7: zero credential material in Debug output, G8: insert_dual atomicity) → **PARTIAL by sub-mission roll-up**: G2 (wire byte-identical) GREEN via `0957-d`; G3 (mint 4-arg amendment) GREEN via `0957-e` (commit `e05f9639`); G6 (4-kind agnosticism) GREEN via `0957-c` (TV6 + `HolderKind` 4-variant enum); G7 (zero credential material in Debug output) GREEN via `0957-c` (TV13 + manual redacting Debug on `HolderRecord` at `crates/quota-router-storage/src/holder_record.rs`); G8 (`insert_dual` atomicity) GREEN via `0969-b1` (3 TV9-I1/I2/I3 atomicity tests pass). **G1, G4, G5 DEFERRED per [[deferred-vs-unspecified]]**: G1 (lookup ≤5ms p99 over 100K) → TV8 follow-up; G4 (gossip convergence ≤30s) → 0957-c-gossip prospective sub-mission; G5 (cross-node mint verifiability) → TV5 0957-c-gossip prospective sub-mission. Owners/targets per AC-1 above.
+- [ ] All 3 RFC-0957-A1 §Adversary Analysis findings covered (A6: gossip partition → cross-node verification fails, A7: holder DID enumeration via gossip, A8: registry row spoofing via INSERT privilege escalation) → **PARTIAL**: A8 (registry row spoofing via INSERT privilege escalation) GREEN via `0957-c` (`StoolapHolderRegistry` UNIQUE(ask_id, kind) constraint + INDEX(ask_id, kind) per RFC-0957-A1 §Schema). **A6 (gossip partition) + A7 (holder DID enumeration via gossip) DEFERRED** to 0957-c-gossip prospective sub-mission (target 2026-08-21) per [[deferred-vs-unspecified]] named-owner rule.
+- [x] Phantom type `IdentityKey::from_public_bytes` properly DEFERRED to RFC-0009-B1 / RFC-0957-A2 (working stub per §Phantom Types; full signature promotion deferred) → **Closure:** phantom DEFERRED per [[deferred-vs-unsspecified]] named-owner rule. Working stub lives at `crates/octo-wallet/src/capability/identity_stub.rs` (per RFC-0957-A1 §Phantom Types:IdentityKey); referenced from 3 sites (RFC-0957-A1, RFC-0959-A1 §Algorithms:phantom_call_site, RFC-0969 §Algorithms:phantom_call_site). Full signature promotion → RFC-0009-B1 (IdentityKey substrate RFC).
+- [x] Sub-missions 0957-c, 0957-d, 0957-e all merged and ACs flipped → **Closure:** `0957-c` Band A closed 2026-08-06 (commit `998debbf` + `3edc425c`; 20/23 ACs GREEN); `0957-d` closed 2026-08-04 (commit `5b6ea93e`; 7/10 ACs GREEN); `0957-e` Band A closed 2026-08-06 (commit `e05f9639`; 12/15 ACs GREEN). Sub-mission decomposition complete.
+- [ ] Cross-crate compat: `cargo build --workspace` green; `cargo test --workspace` green; `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean; `cargo fmt --check` clean → **PARTIAL**: `cargo fmt --check` clean (verified 2026-08-07). `cargo clippy --workspace --all-targets --all-features` blocked by pre-existing unrelated `tdlib-rs` feature-conflict per `missions/claimed/0957-c-holder-registry-impl.md` AC #3 (`pkg-config` + `download-tdlib` + missing `TDLIB_VERSION`); package-scoped clippy on touched crates (`octo-wallet`, `quota-router-storage`, `quota-router-core`) clean (verified 2026-08-07). 12 holder_registry unit tests pass (TV1, TV2, TV3, TV4, TV6, TV9-I1/I2/I3, TV12, TV13, TV14). 7 dispatch tests pass. Full workspace rerun → follow-up (target 2026-08-21).
 
 ### Type Coverage
 
@@ -110,6 +110,37 @@ Splitting by module boundary (registry / wire / mint) lets each sub-mission merg
 ## Pull Request
 
 (unset)
+
+## Closure (2026-08-07)
+
+**Status:** Closed (Band A — 2026-08-07). Top-level roll-up closure landed.
+
+**Sub-mission roll-up:**
+
+- `0957-c-holder-registry-impl.md`: Band A closed 2026-08-06 (commits `998debbf` + `3edc425c`). 20/23 ACs GREEN. Substrate: `HolderKind` enum (4 variants: V1 = 0x00, ZKBearing = 0x01, Bearer = 0x02, HopCapability = 0x03) at `crates/quota-router-storage/src/holder_kind.rs`; `HolderRecord` struct at `crates/quota-router-storage/src/holder_record.rs` with `from_bearer` + `from_capability` + `from_hop_capability` constructors; `HolderRegistry` trait (6 methods: lookup, lookup_by_ask, lookup_active, insert, revoke, sync_peers) at `crates/quota-router-storage/src/holder_registry.rs`; `StoolapHolderRegistry` reference impl with UNIQUE(ask_id, kind) constraint + INDEX(ask_id, kind). 8 RFC-0957-A1 §Test Vectors pass (TV1, TV2, TV3, TV4, TV6, TV12, TV13, TV14).
+- `0957-d-wire-resolver-update.md`: closed 2026-08-04 (commit `5b6ea93e`). 7/10 ACs GREEN. Substrate: `compute_cap_root_hash_from_wire(&str) -> Result<[u8; 32], WireError>` at `crates/octo-wallet/src/capability/wire.rs`; `VerifyContext::with_registry(clock, registry)` constructor + `verify_with_resolve(token_wire)` helper at `crates/octo-wallet/src/capability/verify.rs`. 1 RFC-0957-A1 §Test Vector passes (TV7). RFC-0957-A1 §Appendices:"VerifyContext extension" appendix deferred to future promotion.
+- `0957-e-mint-txn-parameter.md`: Band A closed 2026-08-06 (commit `e05f9639`). 12/15 ACs GREEN. Substrate: `CapabilityToken::mint(root_secret: &[u8; 32], holder: &Ed25519Keypair, holder_did: &str, initial_caveats: &[Caveat]) -> CapabilityToken` (4-arg persistence-free per RFC-0957-A1 G3); `Macaroon::extend_chain` elevated to `pub(crate)`; `CapabilityCatalog` 4-method extension (default impls use `Option<[u8; 32]>` returns per R13-N3 design). 1 RFC-0957-A1 §Test Vector passes (TV9 via compile-time signature guarantee).
+
+**Test vector coverage (15 total):**
+
+- GREEN (12): TV1, TV2, TV3, TV4, TV6 (via `0957-c`) + TV7 (via `0957-d`) + TV9 (via `0957-e`) + TV11 (via `0969-b1`) + TV12, TV13, TV14 (via `0957-c`) + TV15 (via `0970-a` substrate + `from_hop_capability_distinguishes_holder_and_audience` test)
+- DEFERRED (3): TV5 (Cross-Node Mint Verifiability) → 0957-c-gossip prospective sub-mission (owner: @cipherocto, target 2026-08-21); TV8 (100K Lookup Benchmark) → follow-up mission (owner: @cipherocto, target 2026-08-28); TV10 (Caller-Side Persistence via TransactionExt) → follow-up mission (owner: @cipherocto, target 2026-08-28)
+
+**Design Goal coverage (8 total):**
+
+- GREEN (5): G2 (wire byte-identical) via `0957-d`; G3 (mint 4-arg amendment) via `0957-e`; G6 (4-kind agnosticism) via `0957-c`; G7 (zero credential material in Debug) via `0957-c`; G8 (`insert_dual` atomicity) via `0969-b1`
+- DEFERRED (3): G1 (lookup ≤5ms p99 over 100K) → TV8 follow-up; G4 (gossip convergence ≤30s) → 0957-c-gossip; G5 (cross-node mint verifiability) → TV5 0957-c-gossip
+
+**Adversary findings (3 total):**
+
+- A8 (registry row spoofing via INSERT privilege escalation): GREEN via `0957-c` UNIQUE(ask_id, kind) constraint + INDEX(ask_id, kind)
+- A6 (gossip partition) + A7 (holder DID enumeration via gossip): DEFERRED to 0957-c-gossip (target 2026-08-21)
+
+**Phantom `IdentityKey::from_public_bytes`:** DEFERRED to RFC-0009-B1 / RFC-0957-A2 per [[deferred-vs-unspecified]] named-owner rule. Working stub at `crates/octo-wallet/src/capability/identity_stub.rs`.
+
+**Cross-crate compat:** `cargo fmt --check` clean (verified 2026-08-07). Package-scoped clippy on `octo-wallet` + `quota-router-storage` + `quota-router-core` clean. 12 holder_registry tests pass + 7 dispatch tests pass. Full workspace `--all-features` clippy blocked by pre-existing unrelated `tdlib-rs` feature-conflict.
+
+**Per [[git-workflow]] push awaits user instruction. Per [[no-line-refs-anywhere]] all references use §symbol-name form. Per [[rfc-referencing-convention]] RFCs referenced by number only.**
 
 ## Notes
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-08-04) by @mmacedoeu
+Closed (Band A — 2026-08-06). Claimed (2026-08-04) by @mmacedoeu
 
 ## RFC
 
@@ -59,3 +59,13 @@ Key files:
 - 0947-b (`callback-targets`) — register concrete targets (datadog, langfuse, logging, webhook) at node startup via `executor.register()` already exists as code; the mission-level "register" semantics is the wiring layer.
 - 0947-c (`callback-executor`) — could land additional dispatch policies (priority, deferred, retry-on-error) once RFC-0947 §Future Work adds them.
 - Per-key/per-model callback filtering not in scope of 0947-a; lives in `:guardrails` / `:proxy` (covered by 0946-c).
+
+**Version History:**
+
+| Version | Date       | Change                                                                                                                                       |
+| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-04 | Mission claimed. Pre-existing callback framework verified; full closure narrative authored in session.                                      |
+| v0.2    | 2026-08-06 | Closed Band A. 12/12 ACs green; 24 callback tests pass; Status header flipped Claimed→Closed (Band A — 2026-08-06); no new commits (verifies pre-existing substrate). |
+
+Last Updated: 2026-08-06
+Version: 0.2

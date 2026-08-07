@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-08-04) by @mmacedoeu
+Closed (Band A — 2026-08-06). Claimed (2026-08-04) by @mmacedoeu
 
 ## RFC
 
@@ -59,3 +59,13 @@ Key files:
 - `GuardrailExecutor::check_output` does not currently transform output (only flags it). The `Transform { transformed: bool }` path is wired for `GuardrailAction::Transform` but the redact-and-return loop is mission 0946-c.
 - Per-key override merging for `Transform` semantics (replace vs redact) is mission 0946-c.
 - `GuardrailConfig` schema does NOT yet serialize via stable JSON keys for cross-version compat — planned in a follow-up.
+
+**Version History:**
+
+| Version | Date       | Change                                                                                                                                       |
+| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-04 | Mission claimed. Pre-existing guardrails framework verified; full closure narrative authored in session.                                     |
+| v0.2    | 2026-08-06 | Closed Band A. 13/13 ACs green; 20 guardrails tests pass; Status header flipped Claimed→Closed (Band A — 2026-08-06); no new commits (verifies pre-existing substrate). |
+
+Last Updated: 2026-08-06
+Version: 0.2

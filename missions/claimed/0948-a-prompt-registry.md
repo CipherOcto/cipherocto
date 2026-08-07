@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-08-04) by @mmacedoeu
+Closed (Band A — 2026-08-06). Claimed (2026-08-04) by @mmacedoeu
 
 ## RFC
 
@@ -66,3 +66,13 @@ Key files:
 - 0948-c (`prompt-integration`) — must wire `PromptRegistry` into the proxy hot path. The `PromptRegistry::render()` API is the seam; the integration mission should add a `proxy.rs` call site that maps incoming `prompt_id` → `rendered_text`.
 - RFC-0914 wiring — when RFC-0914 acceptance promotes, swap `PromptStorage` from HashMap to stoolap tables. The storage trait is the boundary.
 - `TemplateEngine::render` currently does not support nested filters (`{{var | lower | truncate:80}}`); the impl parses filters one segment at a time. RFC-0948 §Template Engine does not require nested filters; future mission if needed.
+
+**Version History:**
+
+| Version | Date       | Change                                                                                                                                       |
+| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-04 | Mission claimed. Pre-existing prompt registry framework verified; full closure narrative authored in session.                                |
+| v0.2    | 2026-08-06 | Closed Band A. 13/13 ACs green; 36 prompts tests pass; Status header flipped Claimed→Closed (Band A — 2026-08-06); no new commits (verifies pre-existing substrate). |
+
+Last Updated: 2026-08-06
+Version: 0.2

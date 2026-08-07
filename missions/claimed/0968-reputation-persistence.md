@@ -490,7 +490,7 @@ Phase 2 (Shadow-Write, RFC-0968-A1 amendment 18 / C-P5) AC → substrate mapping
 |---|---|---|---|
 | AC-1 (SlashReputationStoreCompat mon) | `SlashReputationStoreCompat (mon)` reads from `ReputationStore` and implements legacy public API | `SlashReputationStore` in `compat/legacy.rs`; legacy store implements `LegacyReputationStore`; `ReputationStoreCompat<S, L>` wraps both at `compat/mod.rs:29` | SUBSTRATE-PRESENT (type name mismatch; actual = `SlashReputationStore` w/o `Compat` suffix; `Compat` suffix implied by `ReputationStoreCompat` wrapper) |
 | AC-2 (DcRootedSlashReputationStoreCompat dc, layer=1) | `DcRootedSlashReputationStoreCompat (dc)` reads from `ReputationStore`, `layer=1` | `DcRootedSlashReputationStore` at `compat/legacy.rs:105`; `LegacyReputationStore` impl at line 115 | SUBSTRATE-PRESENT (type name mismatch; `layer=1` filter via `SignalKind` discrimination in legacy.rs:124) |
-| AC-3 (ProviderReputationRegistryCompat marketplace, layer=2) | `ProviderReputationRegistryCompat (marketplace)` reads from `ReputationStore`, `kind=Outcome`, `layer=2` | NOT in substrate (`quota-router-core::marketplace` per `legacy.rs:5` comment); `kind=Outcome` filter via `matches!(kind, SignalKind::Outcome)` at legacy.rs:79+ | MISSING (marketplace compat adapter lives in `quota-router-core`, not `octo-reputation`; AC-3 AC text needs to reflect cross-crate boundary) |
+| AC-3 (ProviderReputationRegistryCompat marketplace, layer=2) | `ProviderReputationRegistryCompat (marketplace)` reads from `ReputationStore`, `kind=Outcome`, `layer=2` | `ProviderReputationRegistryCompat<S: ReputationStore>` at `crates/quota-router-core/src/marketplace/reputation_compat.rs:95` (mission 0968-b Phase A owned); `kind=Outcome` filter via `matches!(kind, SignalKind::Outcome)` at legacy.rs:79+ | **SUBSTRATE-PRESENT (cross-crate)** — concrete type lives in `quota-router-core::marketplace`, not `octo-reputation`; AC text needs to reflect cross-crate ownership (0968-b owns the adapter) |
 | AC-4 (shadow-write best-effort) | "Shadow-write is best-effort: failures log + continue (don't break existing reads)" | `compat/mod.rs:25` (shadow-write wrapper doc); `compat/mod.rs:72` ("Shadow write to the legacy store. Failures are non-fatal for the ...") | SUBSTRATE-PRESENT |
 | AC-5 (dual-read cutover gate) | "retirement of legacy stores is gated on a 24-hour dual-read parity ≥ 0.999 across all `(did, kind, layer)` triples with `total ≥ 100`. Below the threshold, the metric is suppressed." | `parity.rs:101` `ParityReport::passes_threshold`; `parity.rs:229` `parity_gate_deadline_unix` (24h gate); `parity.rs:210` `classify` (TripleClass discrimination); `parity.rs:62` `TripleClass::discriminant` (parity-driven `kind=Outcome` filter at layer=2) | SUBSTRATE-PRESENT |
 | AC-6 | already [x] election priority + 0-100 presentation deferred to 0968-b | n/a | n/a |
@@ -517,10 +517,11 @@ Phase 3 (Read Migration, RFC-0968-A1 amendments 19, 20, 23) AC → substrate map
 | AC-3-6 (daemon restart preserves score_ewma) | "Daemon restart preserves `score_ewma` across all three adapters (verified by integration test)." | BLOB-backed state in `store/stoolap.rs`; `no_std` codec for canonical 24-byte BLOB | SUBSTRATE-PRESENT (verify by integration test in `tests/stoolap_integration.rs`) |
 | AC-3-7 (parity check in production) | "Parity check continues to run in production (drift detection)." | `parity_daemon.rs` (16.9KB) | SUBSTRATE-PRESENT |
 
-**Phase 2-3 summary:** 16/18 ACs SUBSTRATE-PRESENT. 2 GENUINE-MISSING:
+**Phase 2-3 summary:** 17/18 ACs SUBSTRATE-PRESENT. 1 GENUINE-MISSING:
 
-1. **AC-2-3** (`ProviderReputationRegistryCompat` marketplace) — concrete type missing in `octo-reputation`; AC text drift per `legacy.rs:5` comment ("`quota-router-core::marketplace`")
-2. **AC-2.5-2** (background reconciliation job) — no reconciler daemon; `parity_daemon.rs` is parity check, not reconciliation
+1. **AC-2.5-2** (background reconciliation job) — no reconciler daemon; `parity_daemon.rs` is parity check, not reconciliation
+
+**AC-2-3 cross-crate finding (2026-08-07):** `ProviderReputationRegistryCompat<S: ReputationStore>` exists at `crates/quota-router-core/src/marketplace/reputation_compat.rs:95` (mission 0968-b Phase A owned). AC text drift: original AC was written assuming cross-crate boundary (`octo-reputation` owns); actual ownership is `quota-router-core::marketplace`. AC-3 AC text needs rewrite to reflect: "ProviderReputationRegistryCompat in `crates/quota-router-core/src/marketplace/reputation_compat.rs` reads from `ReputationStore` (consumed via `compat::LegacyReputationStore` projection), `kind=Outcome`, `layer=2`."
 
 **Follow-up work (post AC rename + missing-type resolution):**
 
@@ -528,7 +529,7 @@ Phase 3 (Read Migration, RFC-0968-A1 amendments 19, 20, 23) AC → substrate map
 2. Verify `cargo test -p octo-reputation --features stoolap --lib parity` passes (AC-2-5, AC-2.5-3, AC-2.5-4)
 3. Verify `cargo test -p octo-reputation --features stoolap --lib election` passes (AC-3-4)
 4. Verify `cargo test -p octo-reputation --features stoolap --lib cross_layer` passes (AC-3-3)
-5. Resolve AC-2-3 cross-crate boundary: either add `ProviderReputationRegistryCompat` type alias in `compat/legacy.rs` or rewrite AC-3 to reflect cross-crate ownership
+5. Resolve AC-2-3 cross-crate: rewrite AC-3 to reflect `ProviderReputationRegistryCompat` ownership by `quota-router-core::marketplace` (mission 0968-b Phase A)
 6. Resolve AC-2.5-2: either add reconciler daemon or defer to follow-up mission per [[deferred-vs-unspecified]] named-owner rule
 
 **Verification (2026-08-07):**
@@ -540,10 +541,11 @@ cargo test -p octo-reputation --features stoolap --lib prometheus   # 4 passed; 
 cargo test -p octo-reputation --features stoolap --lib election     # 10 passed; 0 failed (priority saturate + zero score)
 cargo test -p octo-reputation --features stoolap --lib cross_layer  # 5 passed; 0 failed (dedup + memory cross-layer)
 cargo test -p octo-reputation --features stoolap --lib              # 205 passed baseline
+cargo test -p quota-router-core --lib marketplace::reputation_compat  # 4 passed; 0 failed (AC-2-3 cross-crate)
 cargo clippy -p octo-reputation --all-targets --all-features -- -D warnings  # clean
 ```
 
-**Phase 2-3 verified counts:** 45/45 module tests pass (10+16+4+10+5). 205/205 lib-total baseline. Clippy clean. 16/18 ACs substrate-present + tests green. 2 genuine missing (AC-2-3 cross-crate, AC-2.5-2 reconciler daemon).
+**Phase 2-3 verified counts:** 45/45 module tests pass (10+16+4+10+5) + 4/4 cross-crate compat tests (AC-2-3). 205/205 lib-total baseline. Clippy clean. 17/18 ACs substrate-present + tests green. 1 genuine missing (AC-2.5-2 reconciler daemon).
 
 ### Changelog
 

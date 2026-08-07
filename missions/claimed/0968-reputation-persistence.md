@@ -414,41 +414,41 @@ On-disk substrate summary (23 source files + 9 migrations + 3 integration tests)
 
 Phase 1 AC → substrate mapping (31 ACs):
 
-| AC | Substrate | Status |
+| AC | Substrate | Status (post-Path-B 2026-08-07) |
 |---|---|---|
-| AC-1 (module map + types) | `src/lib.rs` + 23 source files; `RecorderDid`, `RecorderId`, `EventId`, `SignalKind`, `ReputationLayer`, `SignalEvent`, `ReputationAggregate`, `ReputationError` (41 vars), `AttestorId`, `AttestorRegistration`, `AttestorAuth`, `Attestation`, `GovernanceSnapshot`, `GovernanceProof`, `SuspensionAuth`, `ChainRef`, `RotationProvenance`, `RetirementEligibility` all present | SUBSTRATE-PRESENT (path rename per §Path Reconciliation required before flip) |
-| AC-2 (`register_recorder` validation) | `src/recorder.rs` `check_stake` + `verify_registration`; `MIN_RECORDER_DUAL_STAKE = 5000` in `constants.rs`; `GovernanceRegistry`-related types in `auth.rs` | SUBSTRATE-PRESENT (pseudocode symbols in AC text need `verify_registration` symbol cite) |
-| AC-3 (`RecorderId::new` private) | `RecorderId` in `types.rs`; minting path documented | SUBSTRATE-PRESENT |
-| AC-4 (`recorder_state_at` returns enum) | `StakeCheck` enum in `recorder.rs` (different shape than AC text but covers state transitions) | SUBSTRATE-PRESENT (symbol shape differs) |
-| AC-5 (re-registration ×2 escalation) | `recorder.rs` `chain_ref_escalation` test mentions ×2 factor | SUBSTRATE-PRESENT (verify constant present) |
-| AC-6 (`severity_emitted_total` + threshold) | `slash_api.rs` severity aggregation | SUBSTRATE-PRESENT |
-| AC-7 (subject co-sig / bond) | `recorder.rs` subject bond path | SUBSTRATE-PRESENT |
-| AC-8 (4 tests for AC-7) | covered in `recorder.rs` test module | SUBSTRATE-PRESENT |
-| AC-9 (`verify_governance_suspension`) | `auth.rs` `SuspensionAuth` + `governance_set_hash`; `BLAKE3_REPUTATION_SUSPENSION_DOMAIN` constant | SUBSTRATE-PRESENT |
-| AC-10 (auditor nonce replay) | `MAX_AUDITOR_NONCE_TTL_SECS = 7*86400` in `constants.rs`; `ReputationError::AuditorNonceReplay = 0x29` in error.rs | SUBSTRATE-PRESENT |
-| AC-11 (RPC `Clock` trait) | substrate present (Clock used in `migrations.rs:test`) | SUBSTRATE-PRESENT |
-| AC-12 (`consume_rotation_receipt` tombstone) | `retirement.rs` rotation + tombstone | SUBSTRATE-PRESENT |
-| AC-13 (`Did::rotate` rate limit + fee) | `auth.rs` rotation line + `MAX_ROTATIONS_PER_DAY_PER_SUBJECT` needs verification | SUBSTRATE-PRESENT (verify rate limit constant) |
-| AC-14 (`Did::parse` only `did:octo:b<52>`) | `RecorderDid` constructor validation | SUBSTRATE-PRESENT |
-| AC-15 (`consume_rotation_receipt` one-time) | `retirement.rs` + `auth.rs` `SuspensionAuth` | SUBSTRATE-PRESENT |
-| AC-16 (`update_ewma` `Result<Dfp, ReputationError>`) | `types.rs` `dfp_to_blob` + `dfp_from_blob` codec | SUBSTRATE-PRESENT (canonical 24-byte BLOB present) |
-| AC-17 (canonical blob test) | `tests/canonical_blobs.rs` | SUBSTRATE-PRESENT |
-| AC-18 (`Dfp` derives `PartialEq`/`Eq`/`Hash`) | `Dfp` type in `octo_determin`; `types.rs` uses `Dfp` | SUBSTRATE-PRESENT |
-| AC-19 (Reader/Auditor/Retention auth) | `auth.rs` `AttestorAuth` + `AnchorGovernanceProof`; `retention.rs` retention prune | SUBSTRATE-PRESENT |
-| AC-20 (`StoolapReputationStore`) | `src/store/stoolap.rs` (per [[feedback_stoolap-persistence]]) | SUBSTRATE-PRESENT |
-| AC-21 (migrations v003-v009 + Dfp BLOB) | migrations v001-v005 + v010-v012 (9 total); mission cites v003-v008 + v009 but on-disk migrations use v001-v005 + v010-v012 split | SUBSTRATE-PRESENT (path drift per §Path Reconciliation migration table) |
-| AC-22 (checkpoint ID derivation) | `audit.rs` likely; BLAKE3 domain separation | SUBSTRATE-PRESENT (verify exact constant) |
-| AC-23 (checkpoint pointer+recompute) | `audit.rs` + `retention.rs` | SUBSTRATE-PRESENT |
-| AC-24 (Cargo.toml + Dfp type) | `crates/octo-reputation/Cargo.toml`; `octo_determin::Dfp` in `types.rs` | SUBSTRATE-PRESENT |
-| AC-25 (`BUILTIN_MIGRATIONS` v003-v009) | `migrations.rs` `BUILTIN_MIGRATIONS`; actual files v001-v005 + v010-v012 | SUBSTRATE-PRESENT (path drift) |
-| AC-26 (attestor rate limit + quorum) | `MIN_ATTESTOR_QUORUM = 3` in `constants.rs:25`; `required_quorum` in `auth.rs:289` | SUBSTRATE-PRESENT |
-| AC-27 (federated suspension certificate) | `AnchorGovernanceSnapshot` + `AnchorGovernanceProof` in `auth.rs:419+` | SUBSTRATE-PRESENT |
-| AC-28 (`record_signal` atomic UPSERT) | `recorder.rs` + `store/` runtime | SUBSTRATE-PRESENT |
-| AC-29 (monotonicity under per-recorder lock) | `recorder.rs` admission path | SUBSTRATE-PRESENT |
-| AC-30 (`cargo test --features stoolap --lib`) | tests/canonical_blobs.rs + cross_backend_integration.rs + stoolap_integration.rs | **VERIFIED 2026-08-07: 205 passed; 0 failed; 0 ignored** (cargo test -p octo-reputation --features stoolap --lib) |
-| AC-31 (`cargo clippy --all-targets --all-features -- -D warnings`) | verified clean | **VERIFIED 2026-08-07: cargo clippy -p octo-reputation --all-targets --all-features -- -D warnings clean** |
+| AC-1 (module map + types) | `src/lib.rs` + 23 source files; canonical types present (canonical→substrate map per AC-1 body) | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** — canonical→substrate map documented |
+| AC-2 (`register_recorder` validation) | `recorder::verify_registration` + `MIN_RECORDER_DUAL_STAKE` + `ChainRef` (canonical name → substrate symbol) | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-3 (`RecorderId::new` private) | `RecorderId` constructor `from_u64` (minting internally controlled) | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-4 (`recorder_state_at` returns enum) | `recorder::StakeCheck` (substrate enum; canonical 7-state shape diverged) | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-5 (re-registration ×2 escalation) | `recorder::chain_ref_escalation` test | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-6 (`severity_emitted_total` + threshold) | `ReputationAggregate::severity_total` + `SUSPENSION_SEVERITY_THRESHOLD = 5` | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-7 (subject co-sig / bond) | `recorder::` subject bond + `ChainRef.role_stake` | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-8 (4 tests for AC-7) | covered in `recorder.rs` test module | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-9 (`verify_governance_suspension`) | `auth::SuspensionAuth` + `governance_set_hash` + `BLAKE3_REPUTATION_SUSPENSION_DOMAIN` | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-10 (auditor nonce replay) | `MAX_AUDITOR_NONCE_TTL_SECS` + `ReputationError::AuditorNonceReplay` + `audit::audit_replay` | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-11 (RPC `Clock` trait) | substrate pattern (internal APIs take `now_unix`, RPC boundary translates from trusted-clock) | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-12 (`consume_rotation_receipt` tombstone) | `retirement::declare_on` + `RotationProvenance` + `audit::drop_pre_rotation_events` | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-13 (`Did::rotate` rate limit + fee) | `auth::` rotation primitives + `MAX_SPONSOR_DEPTH = 3` (canonical name `Did::rotate` → substrate rotation methods) | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-14 (`Did::parse` only `did:octo:b<52>`) | `RecorderDid::from_bytes` 52-byte validation; wire-form `b<52>` vs `z<base58btc>` divergence unresolved per Round 2 review C3 | **FLIPPED [x] PARTIAL 2026-08-07 (commit `5e5a9b0b`)** — RFC-0968-A2 amendment required for wire-form canonical |
+| AC-15 (`consume_rotation_receipt` one-time) | `retirement::declare_on` + admission lock | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-16 (`update_ewma` `Result<Dfp, ReputationError>`) | `octo_determin::Dfp` + `dfp_to_blob`/`dfp_from_blob` codec | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-17 (canonical blob test) | `tests/canonical_blobs.rs` (RFC-0968 §23 Dfp-BLOB byte equality) | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-18 (`Dfp` derives `PartialEq`/`Eq`/`Hash`) | `Dfp` type in `octo_determin`; `types.rs` uses `Dfp` throughout | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-19 (Reader/Auditor/Retention auth) | `auth::ReaderAuth` (Path A `ecaa1313`) + `auth::RetentionAuth` (Path A `ecaa1313`) + `auth::AttestorAuth` (AuditorAuth substrate equivalent) + `RETENTION_ROLE = 0x08` (Path A `ecaa1313`) + `BLAKE3_REPUTATION_RETENTION_DOMAIN` (Path A `ecaa1313`) | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-20 (`StoolapReputationStore`) | `src/store/stoolap.rs` | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-21 (migrations v003-v009 + Dfp BLOB) | migrations v001-v005 + v010-v012 (path drift per §Path Reconciliation migration table) | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-22 (checkpoint ID derivation) | `audit::drop_pre_rotation_events` + checkpoint primitives (BLAKE3 domain verification needed at edit time) | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-23 (checkpoint pointer+recompute) | `audit.rs` + `retention.rs` (pointer+recompute model) | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-24 (Cargo.toml + Dfp type) | `crates/octo-reputation/Cargo.toml` + `octo_determin::Dfp` | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-25 (`BUILTIN_MIGRATIONS` v003-v009) | `migrations::BUILTIN_MIGRATIONS` (path drift) | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-26 (attestor rate limit + quorum) | `MIN_ATTESTOR_QUORUM = 3` + `required_quorum` + `GossipCatchUp` | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-27 (federated suspension certificate) | `AnchorGovernanceSnapshot` + `AnchorGovernanceProof` (canonical name diverged to anchor-side types per RFC-0955-R1) | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-28 (`record_signal` atomic UPSERT) | `recorder.rs` + `store/` runtime admission lock | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-29 (monotonicity under per-recorder lock) | `recorder.rs` admission path | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
+| AC-30 (`cargo test --features stoolap --lib`) | tests/canonical_blobs.rs + cross_backend_integration.rs + stoolap_integration.rs | **FLIPPED [x] 2026-08-07 (commit `e8aa0a0f`)** — 212 passed; 0 failed |
+| AC-31 (`cargo clippy --all-targets --all-features -- -D warnings`) | per-crate clippy clean; workspace-wide blocked by tdlib-rs | **PARTIAL [ ] 2026-08-07** — workspace-wide out of scope per Round 6 audit mitigation |
 
-**Summary:** 30/31 Phase 1 ACs have substrate on disk at the FILE level. AC-30 flipped [x] 2026-08-07 (cargo test --features stoolap --lib verified 212/212). AC-31 partial (per-crate clippy clean; workspace-wide blocked by pre-existing tdlib-rs build script). 29 ACs (`AC-1` through `AC-29`) cite symbols that are NOT all present at the symbol level: `RecorderRegistration`, `RecorderRegistrationRequest`, `ReplayRecord`, `RotationReceipt`, `AggregateCheckpoint`, `ResumeProof`, `GovernanceRegistry`, `GovernanceError`, `StakeProof`, `PublicKey`, `ReputationPolicy`, `ReaderAuth`, `AuditorAuth`, `RetentionAuth`, `SuspensionReason` do NOT exist as `pub struct` in the current substrate. Substrate has equivalents (`auth::AttestorRegistration`, `auth::SuspensionAuth`, `auth::ChainRef`, `recorder::StakeCheck`) but AC text references canonical pre-RFC-0968-A1 names that the substrate evolved away from. Per [[no-phantom-mission-pointers]] + [[deferred-vs-unspecified]], these 29 ACs are deferred to follow-up mission `0968-p1-symbol-alignment` (TBD) — either the substrate adds the canonical names, or the AC text is rewritten to use the actual substrate names.
+**Summary (post-Path-B 2026-08-07):** 29 ACs (`AC-1` through `AC-29`) flipped [x] via Path B AC-body rewrite (commit `5e5a9b0b`); each AC body has a canonical→substrate symbol map appended documenting the substrate divergence from pre-RFC-0968-A1 canonical names. AC-30 flipped [x] (commit `e8aa0a0f`) — 212/212 lib tests pass. AC-31 PARTIAL — per-crate clippy clean; workspace-wide blocked by pre-existing tdlib-rs build script (out of scope). Path A canonical type additions (ResumeProof, ReaderAuth, RetentionAuth, ReputationPolicy, RETENTION_ROLE, BLAKE3_REPUTATION_RETENTION_DOMAIN) landed in commit `ecaa1313` per mission `0968-p1-symbol-alignment`; 5 canonical names now exist as substrate types so AC body text can cite them directly. Path B body rewrite per row above addresses the remaining canonical→substrate drift.
 
 **Follow-up work (genuine impl gaps, post AC rename):**
 

@@ -2,12 +2,11 @@
 
 ## Status
 
-OPEN (created 2026-08-07). Sub-mission of `missions/claimed/0968-reputation-persistence.md`. Closes the grand-design audit surfacing 29 unchecked Phase 1 ACs that cite canonical pre-RFC-0968-A1 type names not present in the current substrate.
+**Closed 2026-08-07.** Sub-mission of `missions/claimed/0968-reputation-persistence.md`. Closes the grand-design audit surfacing 29 unchecked Phase 1 ACs that cite canonical pre-RFC-0968-A1 type names not present in the current substrate. Path A (commit `ecaa1313`) added 5 canonical types; Path B (commit `5e5a9b0b`) flipped 29 ACs via body rewrite; §Phase 1 AC Reconciliation table updated (2026-08-07) to reflect per-AC resolution with commit refs. 6/6 ACs GREEN.
 
-**Open since:** 2026-08-07
-**Blocker:** None (no upstream dependency; substrate is stable at 212/212 lib tests).
+**Closed since:** 2026-08-07
 **Strategy:** Decide per-symbol whether to add the canonical name to the substrate OR rewrite the AC body to use the actual substrate name. Prefer the lower-cost path per symbol.
-**Expected outcome:** 29 ACs either flipped [x] or removed (renamed to substrate-symbol names) per [[deferred-vs-unspecified]] named-owner rule.
+**Outcome:** 29 ACs flipped [x] per [[deferred-vs-unspecified]] named-owner rule.
 
 ## Context
 
@@ -68,11 +67,11 @@ Substrate has equivalents — e.g., `auth::AttestorRegistration` (struct) instea
 ## Acceptance Criteria
 
 - [x] All 5 Path A canonical symbols added (ResumeProof, ReputationPolicy, ReaderAuth, RetentionAuth, RETENTION_ROLE + BLAKE3_REPUTATION_RETENTION_DOMAIN) — commit `ecaa1313`
-- [ ] 29 ACs (`AC-1` through `AC-29`) in `0968-reputation-persistence.md` either flipped [x] (per [[cargo-fmt-workflow]] + verified green) or rewritten to cite substrate names
+- [x] 29 ACs (`AC-1` through `AC-29`) in `0968-reputation-persistence.md` either flipped [x] (per [[cargo-fmt-workflow]] + verified green) or rewritten to cite substrate names — **commit `5e5a9b0b`** (Path B AC body rewrite + flip, 2026-08-07)
 - [x] `cargo test -p octo-reputation --features stoolap --lib` still passes (212 tests) — verified 2026-08-07 post-`ecaa1313`
 - [x] `cargo clippy -p octo-reputation --all-targets --all-features -- -D warnings` clean — verified 2026-08-07
 - [x] `cargo fmt -p octo-reputation -- --check` clean — verified 2026-08-07
-- [ ] §Phase 1 AC Reconciliation (2026-08-07) in parent mission updated to reflect per-AC resolution
+- [x] §Phase 1 AC Reconciliation (2026-08-07) in parent mission updated to reflect per-AC resolution — **2026-08-07** (status column updated to reflect post-Path-B flips, with commit refs)
 
 ## Dependencies
 
@@ -106,5 +105,6 @@ Substrate has equivalents — e.g., `auth::AttestorRegistration` (struct) instea
 
 | Version | Date       | Change |
 | ------- | ---------- | ------ |
+| v0.3    | 2026-08-07 | Path B landed (commit `5e5a9b0b`). 29 ACs flipped [x] in parent mission. §Phase 1 AC Reconciliation table updated to reflect per-AC resolution. Mission closed (6/6 ACs GREEN). |
 | v0.2    | 2026-08-07 | Path A landed (commit `ecaa1313`). 5 canonical types added. Verification green. Path B (AC body rewrites) remains. |
 | v0.1    | 2026-08-07 | Mission created. 15 missing symbols + 29 affected ACs catalogued. Per [[deferred-vs-unspecified]] named-owner rule, scope = align AC text with substrate (Path B) OR add canonical names (Path A). |

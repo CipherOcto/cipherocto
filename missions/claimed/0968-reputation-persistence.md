@@ -534,14 +534,16 @@ Phase 3 (Read Migration, RFC-0968-A1 amendments 19, 20, 23) AC → substrate map
 **Verification (2026-08-07):**
 
 ```text
-cargo test -p octo-reputation --features stoolap --lib compat       # verify
-cargo test -p octo-reputation --features stoolap --lib parity       # verify
-cargo test -p octo-reputation --features stoolap --lib prometheus   # verify
-cargo test -p octo-reputation --features stoolap --lib election     # verify
-cargo test -p octo-reputation --features stoolap --lib cross_layer  # verify
+cargo test -p octo-reputation --features stoolap --lib compat       # 10 passed; 0 failed (shadow-write + byte-identical parity)
+cargo test -p octo-reputation --features stoolap --lib parity       # 16 passed; 0 failed (parity_daemon deadline block + retirement)
+cargo test -p octo-reputation --features stoolap --lib prometheus   # 4 passed; 0 failed (freeze off + roundtrip)
+cargo test -p octo-reputation --features stoolap --lib election     # 10 passed; 0 failed (priority saturate + zero score)
+cargo test -p octo-reputation --features stoolap --lib cross_layer  # 5 passed; 0 failed (dedup + memory cross-layer)
 cargo test -p octo-reputation --features stoolap --lib              # 205 passed baseline
 cargo clippy -p octo-reputation --all-targets --all-features -- -D warnings  # clean
 ```
+
+**Phase 2-3 verified counts:** 45/45 module tests pass (10+16+4+10+5). 205/205 lib-total baseline. Clippy clean. 16/18 ACs substrate-present + tests green. 2 genuine missing (AC-2-3 cross-crate, AC-2.5-2 reconciler daemon).
 
 ### Changelog
 

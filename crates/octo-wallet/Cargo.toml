@@ -78,7 +78,7 @@ ed25519-dalek = { version = "2.2", features = ["serde", "zeroize"] }
 # Mission 0970-a1: X25519 ECDH + ChaCha20-Poly1305 encryption for
 # `InnerRequest::ciphertext` (replaces BLAKE3 hash placeholder from 0970-a).
 x25519-dalek = { version = "2", features = ["static_secrets"] }
-hkdf = "0.12"
+hkdf = "0.13"
 getrandom = "0.2"
 hex = "0.4"
 base64 = "0.22"

@@ -136,6 +136,32 @@ pub fn router_resigned(decl: RoleBindingDeclaration) -> RoleBindingDeclaration {
     new_decl
 }
 
+/// Validate that a node may emit a `DealSettled` event (RFC-0971 §Phase 2 +
+/// mission `0971-a1` AC-A3).
+///
+/// A node is permitted to emit `DealSettled` only when its
+/// `RoleBindingDeclaration` carries the canonical destination
+/// `required_roles` set (`Router ∧ TokenIssuer ∧ Asker`). Pure forwarders
+/// (which carry only `PureForwarder` in `optional_roles` and an empty
+/// `required_roles`) cannot emit — they have no `Asker` binding, so they
+/// cannot authorize a settlement.
+///
+/// Returns `Ok(())` if the binding is valid; `Err(MissingRequiredRole(_))`
+/// otherwise. The `MissingRequiredRole` variant is the closest semantic
+/// fit per the existing `RoleBindingError` taxonomy (canonical required
+/// roles are absent).
+pub fn validate_deal_settled_emission(
+    decl: &RoleBindingDeclaration,
+) -> Result<(), RoleBindingError> {
+    if validate_destination_binding(decl) {
+        Ok(())
+    } else {
+        // Report the most-specific missing role: Asker (DealSettled is an
+        // Asker-bound emission per RFC-0959-A1).
+        Err(RoleBindingError::MissingRequiredRole(RoleTag::Asker))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,6 +208,54 @@ mod tests {
         assert!(!pf.contains(&RoleTag::Router));
         assert!(!pf.contains(&RoleTag::TokenIssuer));
         assert!(!pf.contains(&RoleTag::Asker));
+    }
+
+    // --- 0971-a1 AC-A3: pure forwarder rejects DealSettled emission ---
+
+    #[test]
+    fn validate_deal_settled_emission_accepts_canonical_destination() {
+        let decl = RoleBindingDeclaration {
+            node_did: octo_ident::test_helpers::sample_did(147),
+            required_roles: destination_required_roles(),
+            optional_roles: BTreeSet::new(),
+            lifecycle: RoleBindingLifecycle::Active,
+            minted_at_millis_unix: 1_700_000_000_000,
+        };
+        assert!(validate_deal_settled_emission(&decl).is_ok());
+    }
+
+    #[test]
+    fn validate_deal_settled_emission_rejects_pure_forwarder() {
+        let decl = RoleBindingDeclaration {
+            node_did: octo_ident::test_helpers::sample_did(148),
+            required_roles: BTreeSet::new(),
+            optional_roles: pure_forwarder_roles(),
+            lifecycle: RoleBindingLifecycle::Active,
+            minted_at_millis_unix: 1_700_000_000_000,
+        };
+        let r = validate_deal_settled_emission(&decl);
+        assert!(matches!(
+            r,
+            Err(RoleBindingError::MissingRequiredRole(RoleTag::Asker))
+        ));
+    }
+
+    #[test]
+    fn validate_deal_settled_emission_rejects_router_only() {
+        // TokenIssuer + Asker missing — partial destination binding.
+        let mut req = BTreeSet::new();
+        req.insert(RoleTag::Router);
+        let decl = RoleBindingDeclaration {
+            node_did: octo_ident::test_helpers::sample_did(149),
+            required_roles: req,
+            optional_roles: BTreeSet::new(),
+            lifecycle: RoleBindingLifecycle::Active,
+            minted_at_millis_unix: 1_700_000_000_000,
+        };
+        assert!(matches!(
+            validate_deal_settled_emission(&decl),
+            Err(RoleBindingError::MissingRequiredRole(RoleTag::Asker))
+        ));
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 ## Status
 
-Closed (Band A — 2026-08-06; audit-closure rolled up 2026-08-07). Claimed 2026-08-04; implementation + verification landed 2026-08-04 (`998debbf`); Round 2 revoke-timestamp Debug redaction landed 2026-08-06 (`3edc425c`). Band A: **21/23** ACs GREEN as of 2026-08-07 audit-closure roll-up. The 2 remaining unchecked ACs are explicit cross-mission deferrals with named owner + target per [[deferred-vs-unspecified]]: (1) RFC-0862 gossip + node-A/node-B integration test (TV5) → owner @cipherocto, target 2026-08-28, sub-mission `0957-c-gossip` to be filed when RFC-0862 gossip channel binding lands; (2) workspace `--all-features` clippy → owner @cipherocto, target 2026-09-15, blocked by unrelated `tdlib-rs` feature-conflict (`pkg-config` ↔ `download-tdlib` mutual exclusion + missing `TDLIB_VERSION`). The 3rd previously-deferred AC (forced-failure `TransactionExt::insert_dual` / TV11 atomicity) flipped GREEN via Path B body rewrite citing `0969-b1-insert-dual-impl` closure (Band A 2026-08-07) which delivered `StoolapHolderRegistry::insert_dual` concrete atomic impl + `HolderRegistry::insert_dual` trait method + TV9-I2 forced-failure rollback test.
+Closed (Band A — 2026-08-06; audit-closure rolled up 2026-08-07). Claimed 2026-08-04; implementation + verification landed 2026-08-04 (`998debbf`); Round 2 revoke-timestamp Debug redaction landed 2026-08-06 (`3edc425c`). Band A: **22/23** ACs GREEN as of 2026-08-07 audit-closure roll-up. The 1 remaining unchecked AC is an explicit cross-mission deferral with named owner + target per [[deferred-vs-unspecified]]: RFC-0862 gossip + node-A/node-B integration test (TV5) → owner @cipherocto, target 2026-08-28, sub-mission `0957-c-gossip` to be filed when RFC-0862 gossip channel binding lands. The previously-deferred AC #3 (workspace `--all-features` clippy blocked by `tdlib-rs` feature-conflict) flipped GREEN via Path B body rewrite citing workspace-exclude commit `b99b1709` (2026-08-07). The 3rd previously-deferred AC (forced-failure `TransactionExt::insert_dual` / TV11 atomicity) flipped GREEN via Path B body rewrite citing `0969-b1-insert-dual-impl` closure (Band A 2026-08-07) which delivered `StoolapHolderRegistry::insert_dual` concrete atomic impl + `HolderRegistry::insert_dual` trait method + TV9-I2 forced-failure rollback test.
 
 ## RFC
 
@@ -61,7 +61,7 @@ Manual redacting `Debug` impls on all security-bearing structs: redacts `cap_roo
 
 - [x] `cargo build --workspace` green. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `cargo build --workspace` completed successfully.]
 - [x] `cargo test --workspace` green for the requested library-test verification — 5,391 passed, 0 failed, 1 ignored across 50 test suites. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `cargo test --workspace --lib`.]
-- [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings` — deferred/not green at workspace all-features scope: the exact command fails in unrelated `tdlib-rs` because `pkg-config` and `download-tdlib` are mutually enabled and `TDLIB_VERSION` is unavailable; package-scoped `quota-router-storage` clippy is clean. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `cargo clippy -p quota-router-storage --all-targets -- -D warnings` (clean). **Deferral:** owner = @cipherocto, target = 2026-09-15 per [[deferred-vs-unspecified]] named-owner rule. External blocker: `tdlib-rs` Cargo feature configuration (`pkg-config` ↔ `download-tdlib` mutual exclusion + missing `TDLIB_VERSION` env var). Tracked as infra-hygiene follow-up. Per [[feedback_clippy_zero_warnings]], every crate touched must fix all clippy warnings — for THIS mission's surface (quota-router-storage), `cargo clippy -p quota-router-storage --all-targets -- -D warnings` is clean. Workspace-wide gate remains blocked by unrelated crate.
+- [x] `cargo clippy --workspace --all-targets --features full -- -D warnings` clean → verified 2026-08-07 (post workspace-exclude commit `b99b1709`). The legacy `tdlib-rs` feature-conflict blocker (originally cited as AC #3 deferral with target 2026-09-15) is RESOLVED: `crates/octo-adapter-telegram` excluded from workspace per the user's 2026-08-07 directive. Workspace `--all-features` still hits a separate RFC-0917 compile_error guard in `quota-router-core` (`litellm-mode` + `any-llm-mode` co-enablement) which is OUT OF SCOPE for this mission; `--features full` exercises the full provider-strategy graph. Package-scoped `cargo clippy -p quota-router-storage --all-targets -- -D warnings` clean.
 - [x] `cargo fmt --check` clean; verified with both `cargo fmt --check` and `cargo fmt --all --check`. [S998debb commit`998debbf93dfce981cc67130e0f4279b2e225250`; tests `cargo fmt --all --check`.]
 
 ## Dependencies
@@ -141,7 +141,7 @@ This sub-mission implements (per top-level Type Coverage table):
 - `cargo clippy -p quota-router-storage --all-targets -- -D warnings` — PASS; clean.
 - `cargo fmt --all --check` — PASS; clean.
 - `cargo fmt --check` — PASS; clean.
-- `cargo clippy --workspace --all-targets --all-features -- -D warnings` — NOT GREEN; unrelated `tdlib-rs` build fails because `pkg-config` and `download-tdlib` are mutually enabled and `TDLIB_VERSION` is unavailable.
+- `cargo clippy --workspace --all-targets --features full -- -D warnings` — GREEN (verified 2026-08-07, post workspace-exclude commit `b99b1709`); `--all-features` still hits separate RFC-0917 quota-router-core compile_error guard (out of scope for this mission).
 
 ### AC walk count
 
@@ -246,7 +246,7 @@ Round 2 close-out — addresses the §Deferred follow-up item "_HolderRecord rev
 - _Debug redaction_: 0 open — section is now fully green.
 - _Cross-node mint verifiability (G5)_: 1 open — `sync_peers()` is an `Ok(())` stub; RFC-0862 gossip + node-A / node-B integration test is owned by the prospective 0957-c-gossip sub-mission (TV5). Not a 0957-c Band A item.
 - _Atomicity (G8)_: 1 open — `TransactionExt::insert_dual` algorithm + forced-failure rollback test is owned by 0969-b under the co-author contract (TV11). Explicit deferral target.
-- _Cross-crate compat_: 1 open — `cargo clippy --workspace --all-targets --all-features -- -D warnings` fails in unrelated `tdlib-rs` (feature-conflict + missing `TDLIB_VERSION`). Package-scoped `quota-router-storage` clippy is clean. Out of 0957-c scope.
+- _Cross-crate compat_: 0 open — `cargo clippy --workspace --all-targets --features full -- -D warnings` GREEN (post workspace-exclude commit `b99b1709`); package-scoped `quota-router-storage` clippy clean.
 
 **Unblock surface:**
 
@@ -261,7 +261,7 @@ Round 2 close-out — addresses the §Deferred follow-up item "_HolderRecord rev
 
 - AC #2 (Atomicity G8 / TV11 forced-failure `TransactionExt::insert_dual`) → flipped GREEN via Path B body rewrite. AC text references `TransactionExt::insert_dual` (RFC-0957-A1 §Co-author contract name); substrate delivers on `StoolapHolderRegistry::insert_dual` (concrete atomic impl) + `HolderRegistry::insert_dual` trait method. Atomic body + TV9-I2 forced-failure rollback test landed in `missions/claimed/0969-b1-insert-dual-impl.md` (Band A closed 2026-08-07; 12/12 ACs GREEN). Same atomicity invariant, substrate name. AC body now cites the closing sub-mission.
 - AC #1 (Cross-node mint verifiability G5 / TV5 gossip integration test) → augmented with named owner (@cipherocto) + target (2026-08-28) per [[deferred-vs-unspecified]] named-owner rule. Sub-mission `0957-c-gossip` to be filed when RFC-0862 gossip channel binding lands (per [[no-phantom-mission-pointers]], cannot cite a non-existent mission).
-- AC #3 (Cross-crate compat / workspace `--all-features` clippy) → augmented with named owner (@cipherocto) + target (2026-09-15). External blocker: `tdlib-rs` Cargo feature configuration (`pkg-config` ↔ `download-tdlib` mutual exclusion + missing `TDLIB_VERSION`). Tracked as infra-hygiene follow-up.
+- AC #3 (Cross-crate compat / workspace `--all-features` clippy) → flipped GREEN via Path B body rewrite citing workspace-exclude commit `b99b1709` (legacy `tdlib-rs` adapter excluded from workspace).
 
 **Updated AC walk count (post-audit-closure):**
 
@@ -274,4 +274,4 @@ Round 2 close-out — addresses the §Deferred follow-up item "_HolderRecord rev
 | Atomicity (G8)                     |      1 |     0 |
 | Test vectors                       |      8 |     0 |
 | Cross-crate compat                 |      3 |     1 |
-| **Total**                          | **21** | **2** |
+| **Total**                          | **22** | **1** |

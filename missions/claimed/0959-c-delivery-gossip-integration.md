@@ -43,7 +43,7 @@ This sub-mission depends on 0959-b envelope wire format + 0957-e `gossip_to_buye
 
 - [x] `cargo build -p octo-wallet` green (verified post-commit `323a115f`-prior; workspace-level `tdlib-rs` build error is pre-existing on `next` branch and unrelated)
 - [x] `cargo test -p octo-wallet --lib` green: 2/2 gossip tests pass (`gossip_succeeds_on_first_attempt`, `gossip_fails_fast_on_unsupported`); 231/231 total octo-wallet lib tests pass
-- [x] `cargo clippy -p octo-wallet --all-targets --all-features -- -D warnings` clean (per [[feedback_clippy_zero_warnings]]); workspace-level pre-existing `tdlib-rs` build error excluded from this AC
+- [x] `cargo clippy -p octo-wallet --all-targets --all-features -- -D warnings` clean (per [[feedback_clippy_zero_warnings]]); workspace-level `tdlib-rs` blocker RESOLVED 2026-08-07 via commit `b99b1709` workspace exclude of `crates/octo-adapter-telegram` (legacy TDLib adapter superseded by pure-Rust `octo-adapter-telegram-mtproto`)
 - [x] `cargo fmt --check -p octo-wallet` clean
 
 ## Dependencies

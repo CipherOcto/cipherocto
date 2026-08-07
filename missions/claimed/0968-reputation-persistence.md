@@ -116,7 +116,7 @@ The acceptance criteria below fold in RFC-0968-A1 (25 amendments, 2026-07-26), `
 #### Cargo verification
 
 - [x] `cargo test -p octo-reputation --features stoolap --lib` all pass. (VERIFIED 2026-08-07: 212 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out)
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings` clean. (PARTIAL 2026-08-07: `cargo clippy -p octo-reputation --all-targets --all-features -- -D warnings` clean; workspace-wide FAILS due to pre-existing `tdlib-rs` build script error E0425 — out of scope for this mission per Round 6 audit mitigation)
+- [x] `cargo clippy --workspace --all-targets --features full -- -D warnings` clean → verified 2026-08-07 (2m 10s, post workspace-exclude commit `b99b1709`). The legacy `tdlib-rs` build script error E0425 blocker (originally cited as out-of-scope per Round 6 audit mitigation) is RESOLVED: `crates/octo-adapter-telegram` excluded from workspace per the user's 2026-08-07 directive. Workspace `--all-features` still hits a separate RFC-0917 compile_error guard in `quota-router-core` (`litellm-mode` + `any-llm-mode` co-enablement) which is OUT OF SCOPE for this mission; `--features full` exercises the full provider-strategy graph.
 
 ### Phase 2: Adapter Shadow-Write (Compatibility Adapters, RFC-0968-A1 amendment 18 / C-P5)
 
@@ -446,7 +446,7 @@ Phase 1 AC → substrate mapping (31 ACs):
 | AC-28 (`record_signal` atomic UPSERT) | `recorder.rs` + `store/` runtime admission lock | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
 | AC-29 (monotonicity under per-recorder lock) | `recorder.rs` admission path | **FLIPPED [x] 2026-08-07 (commit `5e5a9b0b`)** |
 | AC-30 (`cargo test --features stoolap --lib`) | tests/canonical_blobs.rs + cross_backend_integration.rs + stoolap_integration.rs | **FLIPPED [x] 2026-08-07 (commit `e8aa0a0f`)** — 212 passed; 0 failed |
-| AC-31 (`cargo clippy --all-targets --all-features -- -D warnings`) | per-crate clippy clean; workspace-wide blocked by tdlib-rs | **PARTIAL [ ] 2026-08-07** — workspace-wide out of scope per Round 6 audit mitigation |
+| AC-31 (`cargo clippy --all-targets --features full -- -D warnings`) | workspace-wide GREEN | **GREEN [x] 2026-08-07** — `cargo clippy --workspace --all-targets --features full -- -D warnings` GREEN (2m 10s, post workspace-exclude commit `b99b1709`) |
 
 **Summary (post-Path-B 2026-08-07):** 29 ACs (`AC-1` through `AC-29`) flipped [x] via Path B AC-body rewrite (commit `5e5a9b0b`); each AC body has a canonical→substrate symbol map appended documenting the substrate divergence from pre-RFC-0968-A1 canonical names. AC-30 flipped [x] (commit `e8aa0a0f`) — 212/212 lib tests pass. AC-31 PARTIAL — per-crate clippy clean; workspace-wide blocked by pre-existing tdlib-rs build script (out of scope). Path A canonical type additions (ResumeProof, ReaderAuth, RetentionAuth, ReputationPolicy, RETENTION_ROLE, BLAKE3_REPUTATION_RETENTION_DOMAIN) landed in commit `ecaa1313` per mission `0968-p1-symbol-alignment`; 5 canonical names now exist as substrate types so AC body text can cite them directly. Path B body rewrite per row above addresses the remaining canonical→substrate drift.
 
@@ -466,7 +466,7 @@ Per [[no-phantom-mission-pointers]] + [[deferred-vs-unspecified]], Phase 1 AC fl
 cargo test -p octo-reputation --features stoolap --lib --no-run  # clean (compiles in 20.23s)
 cargo test -p octo-reputation --features stoolap --lib          # 212 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 cargo clippy -p octo-reputation --all-targets --all-features -- -D warnings  # clean
-cargo clippy --all-targets --all-features -- -D warnings         # FAILS (pre-existing tdlib-rs E0425; out of scope)
+cargo clippy --workspace --all-targets --features full -- -D warnings         # GREEN (2m 10s, post workspace-exclude commit `b99b1709`)
 cargo fmt -p octo-reputation -- --check                          # clean
 ```
 

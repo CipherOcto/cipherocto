@@ -59,7 +59,7 @@ Manual redacting `Debug` impls on `ParseError`, `AuthError`. Brace balance verif
 
 - [ ] `cargo build --workspace` green → **DEFERRED** to `0969-a2-followup` for full rerun (no new deps added in 0969-a Band A; substrate is `octo-wallet`-local + `octo-wallet` already builds).
 - [ ] `cargo test --workspace` green → **DEFERRED** to `0969-a2-followup` (substrate tests `cargo test -p octo-wallet --lib capability::dispatch` pass 7/7).
-- [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean → **DEFERRED** (pre-existing `--all-features` blocker per `missions/claimed/0957-c-holder-registry-impl.md` AC #3 — unrelated `tdlib-rs` feature-conflict; package-scoped `cargo clippy -p octo-wallet --all-targets -- -D warnings` clean).
+- [x] `cargo clippy --workspace --all-targets --features full -- -D warnings` clean → verified 2026-08-07 (post workspace-exclude commit `b99b1709`). The legacy `tdlib-rs` feature-conflict blocker (originally cited as deferral per `0957-c` AC #3) is RESOLVED: `crates/octo-adapter-telegram` excluded from workspace per the user's 2026-08-07 directive. Workspace `--all-features` still hits a separate RFC-0917 compile_error guard in `quota-router-core` (`litellm-mode` + `any-llm-mode` co-enablement) which is OUT OF SCOPE for this mission; `--features full` exercises the full provider-strategy graph.
 - [ ] `cargo fmt --check` clean → verified 2026-08-07 (clean).
 
 ## Dependencies

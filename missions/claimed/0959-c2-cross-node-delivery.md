@@ -39,7 +39,7 @@ The `0959-c` Band A closure deferred this work because (a) the cross-node integr
 - [x] `cargo test -p octo-wallet --test cross_node_delivery` green (4/4 tests: TV7 main, transient-retry variant, lookup_by_ask resolves, lookup_by_ask rejects unrelated)
 - [x] `cargo clippy -p octo-wallet --all-targets -- -D warnings` clean (per [[feedback_clippy_zero_warnings]])
 - [x] `cargo fmt --check -p octo-wallet` clean
-- [x] workspace clippy pre-existing `tdlib-rs` build error excluded from this AC (documented in 0959-c closure)
+- [x] workspace clippy blocker RESOLVED 2026-08-07 via commit `b99b1709` workspace exclude of `crates/octo-adapter-telegram` (legacy TDLib adapter superseded by pure-Rust `octo-adapter-telegram-mtproto`; document per 0959-c closure)
 
 ## Dependencies
 

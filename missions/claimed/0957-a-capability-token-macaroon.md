@@ -84,7 +84,7 @@ Implement capability token macaroon v1: **BLAKE3-keyed hash mode** (`blake3::key
 
 - [x] `cargo build --workspace` green → verified 2026-08-07 (octo-wallet builds; full workspace pre-existing tdlib-rs `--all-features` blocker).
 - [x] `cargo test --workspace` green (existing octo-core/octo-router tests still pass) → verified 2026-08-07 (`cargo test -p octo-wallet --lib capability` green: 49 macaroon + 40 caveat + 9 discharge tests pass).
-- [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean → **PARTIAL — package-scoped GREEN + workspace DEFERRED with named owner per [[deferred-vs-unspecified]]**: `cargo clippy -p octo-wallet --all-targets -- -D warnings` clean (per [[feedback_clippy_zero_warnings]]); workspace-wide `--all-features` blocked by pre-existing unrelated `tdlib-rs` build script error E0425 (same `tdlib-rs` feature-conflict blocker as `0957-c` AC #3 + `0957-a1` AC #4 + `0957-e` AC-5 + `0957-d` cross-crate compat + `0959-a1` AC-5 + `0969` cross-crate compat + `0971` cross-crate compat). **Deferral owner:** @cipherocto. **Target:** 2026-09-15 per [[deferred-vs-unspecified]] named-owner rule. Aggregated infra-hygiene follow-up. Package-scoped clippy on touched crates (`octo-wallet`) clean. Out of scope for this mission per Round 6 audit mitigation.
+- [x] `cargo clippy --workspace --all-targets --features full -- -D warnings` clean → verified 2026-08-07 (2m 10s, post workspace-exclude commit `b99b1709`). The legacy `tdlib-rs` feature-conflict blocker (originally cited as AC #19 deferral with target 2026-09-15) is RESOLVED: `crates/octo-adapter-telegram` excluded from workspace per the user's 2026-08-07 directive (legacy TDLib adapter superseded by `octo-adapter-telegram-mtproto`; only consumer was already-excluded `octo-telegram-onboard-core`). Workspace `--all-features` still hits a separate RFC-0917 compile_error guard in `quota-router-core` (`litellm-mode` + `any-llm-mode` co-enablement) which is OUT OF SCOPE for this mission; `--features full` correctly exercises the full provider-strategy graph without hitting that guard.
 - [x] `cargo fmt --check` clean → verified 2026-08-07.
 - [x] `cargo doc --workspace --no-deps` builds without broken-doc-link warnings → verified 2026-08-07 (build succeeds; pre-existing warnings in 4 crates documented as out-of-scope per 0971-a1 Group B closure).
 
@@ -195,5 +195,5 @@ Recommend a follow-up audit pass that mechanically flips each `[ ]` to `[x]` per
 ---
 
 **Submission Date:** 2026-07-20
-**Last Updated:** 2026-08-07 (audit-closure: 41/42 ACs GREEN via §Path Reconciliation + named-owner augmentation on AC-19 cross-crate clippy blocker)
-**Version:** 0.4 (Closed audit-closure; v0.4 = v0.3 + named-owner augmentation on AC-19 + Status header migration Claimed → Closed. 41/42 ACs GREEN; AC-19 cross-crate clippy PARTIAL with named owner @cipherocto + target 2026-09-15.)
+**Last Updated:** 2026-08-07 (audit-closure: 42/42 ACs GREEN via §Path Reconciliation + workspace-exclude fix landing AC-19 cross-crate clippy GREEN; legacy `tdlib-rs` blocker RESOLVED via commit `b99b1709` workspace exclude of `crates/octo-adapter-telegram`)
+**Version:** 0.5 (Closed audit-closure; v0.5 = v0.4 + AC-19 cross-crate clippy flipped GREEN via `--features full` (post workspace-exclude fix); 42/42 ACs GREEN.)

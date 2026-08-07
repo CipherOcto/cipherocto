@@ -501,7 +501,7 @@ Phase 2.5 (Backfill + Reconciliation, RFC-0968-A1 amendment 14 + 18) AC → subs
 | AC | Mission text | Substrate | Status |
 |---|---|---|---|
 | AC-2.5-1 (in-memory authoritative during dual-read window) | n/a | `store/memory.rs` + `RecStoreOption` enum (verify exact enum name) | SUBSTRATE-PRESENT |
-| AC-2.5-2 (background reconciliation job) | "Background reconciliation job replays historical events (if any) into `ReputationStore` to seed the persisted aggregates." | NOT in substrate (no reconciler daemon visible in `parity_daemon.rs`; daemon = parity check, not reconciliation) | MISSING (no reconciliation daemon); either rename to follow-up mission or implement |
+| AC-2.5-2 (background reconciliation job) | "Background reconciliation job replays historical events (if any) into `ReputationStore` to seed the persisted aggregates." | `src/reconciler.rs` (commit `297ad56b`); `ReconcilerConfig` + `reconcile_once<L, C>` + `LegacyEventSource` trait + `build_replay_event` + `event_id_from_envelope` | **SUBSTRATE-PRESENT (2026-08-07)** — 7/7 reconciler tests pass; canonical store accumulates new writes via shadow-write; historical replay is no-op until legacy stores gain `LegacyEventSource` impl |
 | AC-2.5-3 (pure-Dfp parity no tolerance) | "Pure-Dfp comparisons never use tolerance." | `parity.rs:127` `compute_parity_report` operates on Dfp paths; `parity_daemon.rs` | SUBSTRATE-PRESENT |
 | AC-2.5-4 (Prometheus parity counters) | "`reputation_parity_match_count` (counter), `reputation_parity_total_count` (counter)" | `prometheus.rs:47` `PrometheusMetrics::from_report`; counters named per RFC-0968-A1 | SUBSTRATE-PRESENT |
 
@@ -517,9 +517,7 @@ Phase 3 (Read Migration, RFC-0968-A1 amendments 19, 20, 23) AC → substrate map
 | AC-3-6 (daemon restart preserves score_ewma) | "Daemon restart preserves `score_ewma` across all three adapters (verified by integration test)." | BLOB-backed state in `store/stoolap.rs`; `no_std` codec for canonical 24-byte BLOB | SUBSTRATE-PRESENT (verify by integration test in `tests/stoolap_integration.rs`) |
 | AC-3-7 (parity check in production) | "Parity check continues to run in production (drift detection)." | `parity_daemon.rs` (16.9KB) | SUBSTRATE-PRESENT |
 
-**Phase 2-3 summary:** 17/18 ACs SUBSTRATE-PRESENT. 1 GENUINE-MISSING:
-
-1. **AC-2.5-2** (background reconciliation job) — no reconciler daemon; `parity_daemon.rs` is parity check, not reconciliation
+**Phase 2-3 summary:** 18/18 ACs SUBSTRATE-PRESENT (2026-08-07). All Phase 2-3 gaps closed: AC-2-3 cross-crate `ProviderReputationRegistryCompat` documented (mission 0968-b Phase A owned), AC-2.5-2 reconciler daemon implemented (commit `297ad56b`). 0 GENUINE-MISSING.
 
 **AC-2-3 cross-crate finding (2026-08-07):** `ProviderReputationRegistryCompat<S: ReputationStore>` exists at `crates/quota-router-core/src/marketplace/reputation_compat.rs:95` (mission 0968-b Phase A owned). AC text drift: original AC was written assuming cross-crate boundary (`octo-reputation` owns); actual ownership is `quota-router-core::marketplace`. AC-3 AC text needs rewrite to reflect: "ProviderReputationRegistryCompat in `crates/quota-router-core/src/marketplace/reputation_compat.rs` reads from `ReputationStore` (consumed via `compat::LegacyReputationStore` projection), `kind=Outcome`, `layer=2`."
 
@@ -529,8 +527,8 @@ Phase 3 (Read Migration, RFC-0968-A1 amendments 19, 20, 23) AC → substrate map
 2. Verify `cargo test -p octo-reputation --features stoolap --lib parity` passes (AC-2-5, AC-2.5-3, AC-2.5-4)
 3. Verify `cargo test -p octo-reputation --features stoolap --lib election` passes (AC-3-4)
 4. Verify `cargo test -p octo-reputation --features stoolap --lib cross_layer` passes (AC-3-3)
-5. Resolve AC-2-3 cross-crate: rewrite AC-3 to reflect `ProviderReputationRegistryCompat` ownership by `quota-router-core::marketplace` (mission 0968-b Phase A)
-6. Resolve AC-2.5-2: either add reconciler daemon or defer to follow-up mission per [[deferred-vs-unspecified]] named-owner rule
+5. (CLOSED 2026-08-07) AC-2-3 cross-crate: AC text rewritten to reflect `ProviderReputationRegistryCompat` ownership by `quota-router-core::marketplace` (mission 0968-b Phase A)
+6. (CLOSED 2026-08-07) AC-2.5-2 reconciler daemon: implemented in commit `297ad56b` (`crates/octo-reputation/src/reconciler.rs`)
 
 **Verification (2026-08-07):**
 
@@ -540,12 +538,13 @@ cargo test -p octo-reputation --features stoolap --lib parity       # 16 passed;
 cargo test -p octo-reputation --features stoolap --lib prometheus   # 4 passed; 0 failed (freeze off + roundtrip)
 cargo test -p octo-reputation --features stoolap --lib election     # 10 passed; 0 failed (priority saturate + zero score)
 cargo test -p octo-reputation --features stoolap --lib cross_layer  # 5 passed; 0 failed (dedup + memory cross-layer)
-cargo test -p octo-reputation --features stoolap --lib              # 205 passed baseline
+cargo test -p octo-reputation --features stoolap --lib reconciler   # 7 passed; 0 failed (AC-2.5-2 reconciler daemon)
+cargo test -p octo-reputation --features stoolap --lib              # 212 passed baseline (was 205; +7 reconciler)
 cargo test -p quota-router-core --lib marketplace::reputation_compat  # 4 passed; 0 failed (AC-2-3 cross-crate)
 cargo clippy -p octo-reputation --all-targets --all-features -- -D warnings  # clean
 ```
 
-**Phase 2-3 verified counts:** 45/45 module tests pass (10+16+4+10+5) + 4/4 cross-crate compat tests (AC-2-3). 205/205 lib-total baseline. Clippy clean. 17/18 ACs substrate-present + tests green. 1 genuine missing (AC-2.5-2 reconciler daemon).
+**Phase 2-3 verified counts:** 52/52 module tests pass (10+16+4+10+5+7) + 4/4 cross-crate compat tests (AC-2-3). 212/212 lib-total baseline (was 205; +7 reconciler). Clippy clean. 18/18 Phase 2-3 ACs substrate-present + tests green. 0 GENUINE-MISSING.
 
 ### Changelog
 

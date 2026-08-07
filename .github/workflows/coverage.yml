@@ -39,6 +39,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libdbus-1-dev pkg-config
 
+      - name: Install scarb 2.16.0 (Cairo 2.x build orchestrator)
+        # Required by `bundled_casm_hash()` in `crates/octo-wallet/src/capability/zk_mint.rs`
+        # exercised by `cargo llvm-cov --all-features --workspace`. The 11 zk_mint
+        # unit tests panic with `CASM compiler internal error: scarb not in PATH`
+        # without it. Same pin as ci.yml + zk-capability-circuit.yml.
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://docs.swmansion.com/scarb/install.sh | sh -s -- -v 2.16.0
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          scarb --version
+
       - name: Generate coverage
         run: |
           # octo-adapter-whatsapp is excluded from --all-features because

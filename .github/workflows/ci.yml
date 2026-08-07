@@ -42,6 +42,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libdbus-1-dev pkg-config
 
+      - name: Install scarb 2.16.0 (Cairo 2.x build orchestrator)
+        # Required by `bundled_casm_hash()` in `crates/octo-wallet/src/capability/zk_mint.rs`
+        # + `crates/zk-circuit/src/lib.rs`. The `OnceLock` `BUNDLED_CASM_CIRCUIT`
+        # initializes on first test that calls `bundled_casm_hash()` (e.g., the
+        # 11 zk_mint unit tests in `capability::zk_mint::tests`). Pre-9c996fba
+        # the function was a stub (no scarb needed); post-9c996fba it shells
+        # out to `scarb build` for the real CASM pipeline. Without scarb the
+        # init fails with `CASM compiler internal error: scarb not in PATH`,
+        # and all dependent tests panic.
+        #
+        # Pin matches `zk-capability-circuit.yml` `casm-snapshot` job: same
+        # scarb 2.16.0 + cairo 2.16.0 + sierra 1.7.0 contract.
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://docs.swmansion.com/scarb/install.sh | sh -s -- -v 2.16.0
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          scarb --version
+
       - name: Setup Node
         uses: actions/setup-node@v6
         with:

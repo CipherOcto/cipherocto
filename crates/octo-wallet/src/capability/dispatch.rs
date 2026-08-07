@@ -44,6 +44,127 @@ pub enum LinkageResult {
     Indeterminate,
 }
 
+/// `BearerVerification` (RFC-0969 §Phase 1) — decoded bearer token content
+/// from a successful `verify_bearer_token` call. Holds the canonical
+/// `subject_did` (issuer-asserted holder identity, RFC-0009 DID form) and
+/// `ask_id` (the ask this bearer was issued against).
+#[derive(Clone, PartialEq, Eq)]
+pub struct BearerVerification {
+    pub subject_did: String,
+    pub ask_id: [u8; 32],
+}
+
+impl std::fmt::Debug for BearerVerification {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BearerVerification")
+            .field("subject_did", &"<redacted>")
+            .field("ask_id", &"<redacted 32 bytes>")
+            .finish()
+    }
+}
+
+/// `CapabilityVerification` (RFC-0969 §Phase 1) — decoded capability token
+/// content from a successful `verify_capability_token` call. Holds the
+/// `holder_did` (RFC-0957-A1 `HolderRecord::holder_did`) and `ask_id` (the
+/// ask this capability was issued against).
+#[derive(Clone, PartialEq, Eq)]
+pub struct CapabilityVerification {
+    pub holder_did: String,
+    pub ask_id: [u8; 32],
+}
+
+impl std::fmt::Debug for CapabilityVerification {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CapabilityVerification")
+            .field("holder_did", &"<redacted>")
+            .field("ask_id", &"<redacted 32 bytes>")
+            .finish()
+    }
+}
+
+/// `BearerError` (RFC-0969 §Phase 1) — bearer verification failure modes.
+#[derive(thiserror::Error)]
+pub enum BearerError {
+    #[error("malformed bearer token")]
+    Malformed,
+    #[error("invalid bearer signature")]
+    InvalidSignature,
+    #[error("bearer expired: expired_at_unix={expired_at_unix}")]
+    Expired { expired_at_unix: u64 },
+}
+
+impl std::fmt::Debug for BearerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Malformed => f.write_str("Malformed"),
+            Self::InvalidSignature => f.write_str("InvalidSignature"),
+            Self::Expired { expired_at_unix } => f
+                .debug_struct("Expired")
+                .field("expired_at_unix", expired_at_unix)
+                .finish(),
+        }
+    }
+}
+
+/// `CapError` (RFC-0969 §Phase 1) — capability verification failure modes.
+#[derive(thiserror::Error)]
+pub enum CapError {
+    #[error("macaroon invalid")]
+    MacaroonInvalid,
+    #[error("caveat violation: caveat_kind={caveat_kind}")]
+    CaveatViolation { caveat_kind: String },
+    #[error("capability expired: expired_at_unix={expired_at_unix}")]
+    Expired { expired_at_unix: u64 },
+}
+
+impl std::fmt::Debug for CapError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MacaroonInvalid => f.write_str("MacaroonInvalid"),
+            Self::CaveatViolation { .. } => f
+                .debug_struct("CaveatViolation")
+                .field("caveat_kind", &"<redacted>")
+                .finish(),
+            Self::Expired { expired_at_unix } => f
+                .debug_struct("Expired")
+                .field("expired_at_unix", expired_at_unix)
+                .finish(),
+        }
+    }
+}
+
+/// Stub bearer decode (RFC-0969 §Phase 1). Real decode requires RFC-0903
+/// bearer substrate + Ed25519 signature verification. This stub extracts a
+/// deterministic placeholder `subject_did` + `ask_id` from the token string
+/// bytes — sufficient to populate `BearerVerification` for `parse_auth_headers`
+/// linkage evaluation. Future AC-B1 lands real signature verification.
+pub fn unverified_decode_bearer(token: &str) -> BearerVerification {
+    let mut ask_id = [0u8; 32];
+    let bytes = token.as_bytes();
+    let n = bytes.len().min(32);
+    ask_id[..n].copy_from_slice(&bytes[..n]);
+    let subject_did = format!("did:octo:{}", &token[..token.len().min(8)]);
+    BearerVerification {
+        subject_did,
+        ask_id,
+    }
+}
+
+/// Stub capability decode (RFC-0969 §Phase 1). Real decode requires RFC-0957
+/// capability substrate + `HolderRegistry::lookup(cap_root_hash)`. Stub extracts
+/// deterministic placeholder `holder_did` + `ask_id` from token bytes. The
+/// `holder_did` follows the same `did:octo:<prefix>` format as `subject_did`
+/// because real substrate derives both from the same canonical identity (the
+/// holder's Ed25519 pubkey + multibase encoding per RFC-0009).
+pub fn unverified_decode_capability(token: &str) -> CapabilityVerification {
+    let mut ask_id = [0u8; 32];
+    let bytes = token.as_bytes();
+    let n = bytes.len().min(32);
+    ask_id[..n].copy_from_slice(&bytes[..n]);
+    let holder_did = format!("did:octo:{}", &token[..token.len().min(8)]);
+    CapabilityVerification { holder_did, ask_id }
+}
+
 /// DispatchSet: parsed headers + identity linkage.
 #[derive(Clone, Debug)]
 pub struct DispatchSet {
@@ -53,6 +174,14 @@ pub struct DispatchSet {
 }
 
 /// Parse `Authorization` + `X-Capability-Token` headers from a request map.
+///
+/// Identity linkage evaluation (RFC-0969 §Phase 1 + AC-A2):
+/// - Both bearer + capability present → decode stubs run → compare
+///   `subject_did == holder_did` AND `ask_id == ask_id`. Mismatch → `Mismatched`;
+///   match → `Linked { subject_did, ask_id }`.
+/// - One present, other absent → `Indeterminate` (cannot evaluate linkage).
+/// - Neither present → `ParseError::NoAuthHeader` (upstream of `AuthError::NoAuthHeader`
+///   via `From<ParseError> for AuthError`).
 pub fn parse_auth_headers(headers: &[(String, String)]) -> Result<DispatchSet, ParseError> {
     let mut bearer = None;
     let mut capability = None;
@@ -79,12 +208,24 @@ pub fn parse_auth_headers(headers: &[(String, String)]) -> Result<DispatchSet, P
     if bearer.is_none() && capability.is_none() {
         return Err(ParseError::NoAuthHeader);
     }
-    // identity_linkage is structurally Indeterminate today: dual-bearer
-    // and dual-capability resolutions require side-channel binding info
-    // (RFC-0969 §Phase 2) which this parser does not have. Until that
-    // signal lands, every successful parse collapses to Indeterminate.
-    let _ = (bearer.is_some(), capability.is_some());
-    let identity_linkage = LinkageResult::Indeterminate;
+    // Identity linkage evaluation (AC-A2): dual-pipeline case only.
+    // Stub decode functions extract placeholder `subject_did` / `holder_did`
+    // from token bytes; real signature verification lands in AC-B1.
+    let identity_linkage = match (&bearer, &capability) {
+        (Some(AuthHeader::Bearer(b)), Some(AuthHeader::CipherOctoCap(c))) => {
+            let bv = unverified_decode_bearer(b);
+            let cv = unverified_decode_capability(c);
+            if bv.subject_did == cv.holder_did && bv.ask_id == cv.ask_id {
+                LinkageResult::Linked {
+                    subject_did: bv.subject_did,
+                    ask_id: bv.ask_id,
+                }
+            } else {
+                LinkageResult::Mismatched
+            }
+        }
+        _ => LinkageResult::Indeterminate,
+    };
     Ok(DispatchSet {
         bearer,
         capability,
@@ -102,8 +243,11 @@ pub enum AuthError {
         bearer_ask: [u8; 32],
         cap_ask: [u8; 32],
     },
-    #[error("both invalid")]
-    BothInvalid,
+    #[error("both invalid: bearer_err=<redacted>, cap_err=<redacted>")]
+    BothInvalid {
+        bearer_err: Option<BearerError>,
+        cap_err: Option<CapError>,
+    },
     #[error("routing latency exceeded: {actual_ms}ms > {threshold_ms}ms")]
     RoutingLatencyExceeded { threshold_ms: u64, actual_ms: u64 },
     #[error("duplicate capability header")]
@@ -135,7 +279,11 @@ impl std::fmt::Debug for AuthError {
                 .field("bearer_ask", &"<redacted>")
                 .field("cap_ask", &"<redacted>")
                 .finish(),
-            Self::BothInvalid => f.write_str("BothInvalid"),
+            Self::BothInvalid { .. } => f
+                .debug_struct("BothInvalid")
+                .field("bearer_err", &"<redacted>")
+                .field("cap_err", &"<redacted>")
+                .finish(),
             Self::RoutingLatencyExceeded {
                 threshold_ms,
                 actual_ms,
@@ -163,6 +311,29 @@ impl From<ParseError> for AuthError {
         match err {
             ParseError::DuplicateCapabilityHeader => AuthError::DuplicateCapabilityHeader,
             ParseError::NoAuthHeader => AuthError::NoAuthHeader,
+        }
+    }
+}
+
+/// Convert a single-path `BearerError` to `AuthError::BothInvalid`. Used when
+/// only the bearer leg was attempted (e.g. capability-only request fails on
+/// bearer verification before reaching capability).
+impl From<BearerError> for AuthError {
+    fn from(err: BearerError) -> Self {
+        AuthError::BothInvalid {
+            bearer_err: Some(err),
+            cap_err: None,
+        }
+    }
+}
+
+/// Convert a single-path `CapError` to `AuthError::BothInvalid`. Used when
+/// only the capability leg was attempted.
+impl From<CapError> for AuthError {
+    fn from(err: CapError) -> Self {
+        AuthError::BothInvalid {
+            bearer_err: None,
+            cap_err: Some(err),
         }
     }
 }
@@ -209,14 +380,17 @@ mod tests {
 
     #[test]
     fn parse_both_headers_present() {
+        // Identical token bytes in both header paths → decode stubs produce
+        // identical (subject_did, holder_did, ask_id) → linkage is Linked.
+        // Pre-0969-a2 AC-A2 implementation: linkage was stubbed Indeterminate.
         let set = parse_auth_headers(&[
             ("Authorization".into(), "Bearer abc".into()),
-            ("X-Capability-Token".into(), "xyz".into()),
+            ("X-Capability-Token".into(), "abc".into()),
         ])
         .unwrap();
         assert!(set.bearer.is_some());
         assert!(set.capability.is_some());
-        assert_eq!(set.identity_linkage, LinkageResult::Indeterminate);
+        assert!(matches!(set.identity_linkage, LinkageResult::Linked { .. }));
     }
 
     #[test]
@@ -274,7 +448,6 @@ mod tests {
         // Unit variants (no fields) render as their variant name — useful
         // for grep tests in CI (RFC-0969 §Security).
         for (err, expected) in [
-            (AuthError::BothInvalid, "BothInvalid"),
             (
                 AuthError::DuplicateCapabilityHeader,
                 "DuplicateCapabilityHeader",
@@ -307,5 +480,161 @@ mod tests {
         let p = ParseError::NoAuthHeader;
         let a: AuthError = p.into();
         assert!(matches!(a, AuthError::NoAuthHeader));
+    }
+
+    // --- AC-A1: BearerVerification + CapabilityVerification substrate ---
+
+    #[test]
+    fn bearer_verification_debug_redacts_subject_did() {
+        let v = BearerVerification {
+            subject_did: "did:octo:b1".into(),
+            ask_id: [0xAA; 32],
+        };
+        let s = format!("{v:?}");
+        assert!(s.contains("BearerVerification"));
+        assert!(s.contains("redacted"));
+        assert!(!s.contains("did:octo:b1"));
+        assert!(!s.contains("aaaaaaaa"));
+    }
+
+    #[test]
+    fn capability_verification_debug_redacts_holder_did() {
+        let v = CapabilityVerification {
+            holder_did: "did:octo:c1".into(),
+            ask_id: [0xBB; 32],
+        };
+        let s = format!("{v:?}");
+        assert!(s.contains("CapabilityVerification"));
+        assert!(s.contains("redacted"));
+        assert!(!s.contains("did:octo:c1"));
+        assert!(!s.contains("bbbbbbbb"));
+    }
+
+    #[test]
+    fn unverified_decode_bearer_is_deterministic() {
+        let a = unverified_decode_bearer("token-1");
+        let b = unverified_decode_bearer("token-1");
+        assert_eq!(a, b);
+        assert_eq!(a.subject_did, b.subject_did);
+        assert_eq!(a.ask_id, b.ask_id);
+    }
+
+    #[test]
+    fn unverified_decode_capability_is_deterministic() {
+        let a = unverified_decode_capability("cap-1");
+        let b = unverified_decode_capability("cap-1");
+        assert_eq!(a, b);
+        assert_eq!(a.holder_did, b.holder_did);
+        assert_eq!(a.ask_id, b.ask_id);
+    }
+
+    // --- AC-A2: identity linkage evaluation logic ---
+
+    #[test]
+    fn linkage_matched_when_tokens_identical() {
+        // Two identical token strings → decode stubs produce identical
+        // (subject_did, holder_did, ask_id) → Linked.
+        let set = parse_auth_headers(&[
+            ("Authorization".into(), "Bearer abc123".into()),
+            ("X-Capability-Token".into(), "abc123".into()),
+        ])
+        .unwrap();
+        assert!(matches!(set.identity_linkage, LinkageResult::Linked { .. }));
+    }
+
+    #[test]
+    fn linkage_mismatched_when_tokens_differ() {
+        let set = parse_auth_headers(&[
+            ("Authorization".into(), "Bearer abc123".into()),
+            ("X-Capability-Token".into(), "xyz789".into()),
+        ])
+        .unwrap();
+        assert_eq!(set.identity_linkage, LinkageResult::Mismatched);
+    }
+
+    #[test]
+    fn linkage_indeterminate_when_only_one_present() {
+        // Bearer only
+        let set = parse_auth_headers(&[("Authorization".into(), "Bearer abc".into())]).unwrap();
+        assert_eq!(set.identity_linkage, LinkageResult::Indeterminate);
+        // Capability only
+        let set =
+            parse_auth_headers(&[("Authorization".into(), "CipherOcto-Cap abc".into())]).unwrap();
+        assert_eq!(set.identity_linkage, LinkageResult::Indeterminate);
+    }
+
+    // --- AC-A5: BothInvalid carries BearerError / CapError ---
+
+    #[test]
+    fn bearer_error_converts_to_auth_error_both_invalid() {
+        let b = BearerError::Malformed;
+        let a: AuthError = b.into();
+        match a {
+            AuthError::BothInvalid {
+                bearer_err: Some(BearerError::Malformed),
+                cap_err: None,
+            } => {}
+            other => {
+                panic!("expected BothInvalid{{bearer: Some(Malformed), cap: None}}, got {other:?}")
+            }
+        }
+    }
+
+    #[test]
+    fn cap_error_converts_to_auth_error_both_invalid() {
+        let c = CapError::MacaroonInvalid;
+        let a: AuthError = c.into();
+        match a {
+            AuthError::BothInvalid {
+                bearer_err: None,
+                cap_err: Some(CapError::MacaroonInvalid),
+            } => {}
+            other => panic!(
+                "expected BothInvalid{{bearer: None, cap: Some(MacaroonInvalid)}}, got {other:?}"
+            ),
+        }
+    }
+
+    #[test]
+    fn both_invalid_constructed_with_both_errs_redacts() {
+        // AuthError::BothInvalid Debug fully redacts the inner bearer_err +
+        // cap_err (both treated as credential material at the AuthError level).
+        // Operational metadata lives on the inner variants themselves
+        // (BearerError::Expired.expired_at_unix, CapError::Expired.expired_at_unix);
+        // each has its own Debug impl that preserves that metadata.
+        let err = AuthError::BothInvalid {
+            bearer_err: Some(BearerError::Expired {
+                expired_at_unix: 1_700_000_000,
+            }),
+            cap_err: Some(CapError::CaveatViolation {
+                caveat_kind: "ip-allowlist".into(),
+            }),
+        };
+        let s = format!("{err:?}");
+        assert!(s.contains("BothInvalid"));
+        assert!(s.contains("redacted"));
+        // Caveat kind is credential-adjacent; fully redacted at AuthError level.
+        assert!(!s.contains("ip-allowlist"));
+    }
+
+    #[test]
+    fn bearer_error_debug_preserves_expired_metadata() {
+        let err = BearerError::Expired {
+            expired_at_unix: 1_700_000_000,
+        };
+        let s = format!("{err:?}");
+        assert!(s.contains("Expired"));
+        assert!(s.contains("1700000000"));
+    }
+
+    #[test]
+    fn cap_error_debug_redacts_caveat_kind() {
+        let err = CapError::CaveatViolation {
+            caveat_kind: "ip-allowlist".into(),
+        };
+        let s = format!("{err:?}");
+        assert!(s.contains("CaveatViolation"));
+        assert!(s.contains("redacted"));
+        assert!(!s.contains("ip-allowlist"));
     }
 }

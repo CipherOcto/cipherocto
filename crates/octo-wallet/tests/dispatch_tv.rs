@@ -285,42 +285,22 @@ fn tv7_no_auth_header_returns_no_auth_header_error() {
 
 #[test]
 fn tv8_unsupported_auth_scheme_returns_unsupported_scheme() {
-    // The header parser (`parse_auth_headers`) classifies `Basic <b64>`
-    // as `AuthHeader::Unsupported("Basic")` but does NOT populate the
-    // `bearer`/`capability` fields. Per dispatch.rs policy, an
-    // Authorization header with an unrecognized scheme falls through to
-    // `AuthHeader::Unsupported` but is treated as no auth — so the
-    // parser returns `Ok(DispatchSet)` with both fields None, then the
-    // `NoAuthHeader` guard fires.
-    //
-    // Per AC-C8 the contract is `AuthError::UnsupportedScheme("Basic")`
-    // surfaced from `authenticate()`. The substrate ships the
-    // `AuthHeader::Unsupported` variant + the `AuthError::UnsupportedScheme`
-    // variant but `authenticate()` does NOT yet route through it (it
-    // returns `NoAuthHeader` first). This TV asserts the substrate-level
-    // guarantees that the future AC-B2.1 hardening will compose into the
-    // full path:
-    //
-    // 1. `AuthHeader::Unsupported` variant exists and carries scheme.
-    // 2. `AuthHeader::Unsupported` Debug preserves the scheme name
-    //    (operational metadata, not credential material).
-    // 3. `AuthError::UnsupportedScheme(scheme)` Debug preserves scheme.
-    // 4. The current `authenticate()` returns `NoAuthHeader` when only
-    //    an unsupported scheme is present — that's the
-    //    AC-B2.1 hardening target.
+    // Mission 0969-a3 AC-B2.1.a: `parse_auth_headers` now surfaces
+    // `ParseError::UnsupportedScheme(scheme)` for unrecognized
+    // Authorization schemes, which `From<ParseError> for AuthError`
+    // converts to `AuthError::UnsupportedScheme(scheme)`. The previous
+    // silent-discard → `NoAuthHeader` policy is gone.
     use octo_wallet::capability::dispatch::AuthHeader;
 
-    // (1) Variant exists.
+    // (1) Variant exists + Debug preserves scheme.
     let h = AuthHeader::Unsupported("Basic".into());
     if let AuthHeader::Unsupported(scheme) = &h {
         assert_eq!(scheme, "Basic");
     }
-
-    // (2) Debug preserves scheme.
     let dbg = format!("{h:?}");
     assert!(dbg.contains("Basic"), "scheme preserved in Debug: {dbg}");
 
-    // (3) `AuthError::UnsupportedScheme` Debug preserves scheme.
+    // (2) `AuthError::UnsupportedScheme` Debug preserves scheme.
     let err = AuthError::UnsupportedScheme("Basic".into());
     let edbg = format!("{err:?}");
     assert!(
@@ -328,14 +308,14 @@ fn tv8_unsupported_auth_scheme_returns_unsupported_scheme() {
         "AuthError::UnsupportedScheme preserves scheme: {edbg}"
     );
 
-    // (4) Today's `authenticate()` surfaces NoAuthHeader (AC-B2.1
-    // hardening will convert to `AuthError::UnsupportedScheme`).
+    // (3) `authenticate()` surfaces `UnsupportedScheme("Basic")` directly
+    // (mission 0969-a3 AC-B2.1.a: previous silent-discard policy removed).
     let auth = authenticator();
     let r = auth.authenticate(&[("Authorization".into(), "Basic dXNlcjpwYXNz".into())]);
-    assert!(
-        matches!(r, Err(AuthError::NoAuthHeader)),
-        "current `authenticate()` returns NoAuthHeader for unsupported scheme (AC-B2.1 target)"
-    );
+    match r {
+        Err(AuthError::UnsupportedScheme(scheme)) => assert_eq!(scheme, "Basic"),
+        other => panic!("expected UnsupportedScheme(\"Basic\"), got {other:?}"),
+    }
 }
 
 // =========================================================================

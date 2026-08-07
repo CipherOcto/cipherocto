@@ -154,6 +154,17 @@ impl GatewayAuthenticator {
                     .map(|c| c.holder_did.clone())
                     .unwrap_or_default(),
             }),
+            // Mission 0969-a3 AC-B2.1.b: subject DIDs match but ask IDs
+            // differ. Surface as `AuthError::AskBindingMismatch` so the
+            // caller can distinguish "wrong ask" from "wrong identity"
+            // without re-running the linkage evaluation.
+            LinkageResult::AskBindingMismatch {
+                bearer_ask,
+                cap_ask,
+            } => Err(AuthError::AskBindingMismatch {
+                bearer_ask,
+                cap_ask,
+            }),
             LinkageResult::Linked { .. } => {
                 // Both verified + linked — extract identity from bearer (canonical).
                 let b = bearer.as_ref().expect("Linked implies bearer present");
@@ -222,27 +233,12 @@ impl GatewayAuthenticator {
 
 /// Identity linkage evaluation (RFC-0969 §Phase 1 + AC-A2).
 ///
-/// Pure function: takes optional `BearerVerification` + `CapabilityVerification`
-/// and returns `Linked { subject_did, ask_id }` if both are present AND match,
-/// `Mismatched` if both are present but differ, `Indeterminate` if one is absent.
-pub fn evaluate_linkage(
-    bearer: Option<&BearerVerification>,
-    capability: Option<&CapabilityVerification>,
-) -> LinkageResult {
-    match (bearer, capability) {
-        (Some(b), Some(c)) => {
-            if b.subject_did == c.holder_did && b.ask_id == c.ask_id {
-                LinkageResult::Linked {
-                    subject_did: b.subject_did.clone(),
-                    ask_id: b.ask_id,
-                }
-            } else {
-                LinkageResult::Mismatched
-            }
-        }
-        _ => LinkageResult::Indeterminate,
-    }
-}
+/// **Moved to `dispatch.rs` (mission 0969-a3 AC-B2.1.b)**: the linkage
+/// decision logic is the canonical home for `LinkageResult` (the enum
+/// itself lives in dispatch.rs). `evaluate_linkage` now lives next to
+/// the enum. This wrapper is preserved as a re-export for downstream
+/// callers (gateway_authenticator + tests).
+pub use crate::capability::dispatch::evaluate_linkage;
 
 // Suppress unused warning when this module is included but `AuthOutcome` is not
 // yet consumed by callers.
@@ -250,14 +246,6 @@ pub fn evaluate_linkage(
 fn _outcome_unused() -> Option<AuthOutcome> {
     None
 }
-
-// Suppress unused warning when this module is included but `evaluate_linkage`
-// is called via `authenticate()` only (no external consumers yet).
-#[allow(dead_code)]
-const EVAL_LINKAGE: fn() = || {
-    let _: fn(Option<&BearerVerification>, Option<&CapabilityVerification>) -> LinkageResult =
-        evaluate_linkage;
-};
 
 // Compile-time check that `ParseError → AuthError` conversion exists.
 #[allow(dead_code)]
@@ -441,6 +429,49 @@ mod tests {
             ("X-Capability-Token".into(), "xyz".into()),
         ]);
         assert!(matches!(r, Err(AuthError::IdentityMismatch { .. })));
+    }
+
+    // --- 0969-a3 AC-B2.1.b: AskBindingMismatch distinguished from Mismatched ---
+
+    #[test]
+    fn evaluate_linkage_ask_binding_mismatch_routes_to_auth_error() {
+        // Direct test of `evaluate_linkage` with same subject DID + different
+        // ask IDs. The stub decoders derive both subject DID and ask_id
+        // from the token bytes; this test bypasses the decoder stubs by
+        // calling `evaluate_linkage` with pre-constructed verification
+        // structs that decouple the two (mimicking the real substrate).
+        let b = BearerVerification {
+            subject_did: "did:octo:holder-1".into(),
+            ask_id: [0xAA; 32],
+        };
+        let c = CapabilityVerification {
+            holder_did: "did:octo:holder-1".into(),
+            ask_id: [0xBB; 32],
+        };
+        let r = evaluate_linkage(Some(&b), Some(&c));
+        assert!(matches!(
+            r,
+            LinkageResult::AskBindingMismatch {
+                bearer_ask,
+                cap_ask,
+            } if bearer_ask == [0xAA; 32] && cap_ask == [0xBB; 32]
+        ));
+    }
+
+    // --- 0969-a3 AC-B2.1.a: UnsupportedScheme routed via authenticate() ---
+
+    #[test]
+    fn unsupported_auth_scheme_returns_unsupported_scheme_error() {
+        // AC-B2.1.a: previously `authenticate()` returned `NoAuthHeader`
+        // for `Authorization: Basic <b64>`. Now `parse_auth_headers`
+        // surfaces `ParseError::UnsupportedScheme(scheme)` which converts
+        // to `AuthError::UnsupportedScheme(scheme)`.
+        let auth = authenticator();
+        let r = auth.authenticate(&[("Authorization".into(), "Basic dXNlcjpwYXNz".into())]);
+        match r {
+            Err(AuthError::UnsupportedScheme(scheme)) => assert_eq!(scheme, "Basic"),
+            other => panic!("expected UnsupportedScheme(\"Basic\"), got {other:?}"),
+        }
     }
 
     #[test]

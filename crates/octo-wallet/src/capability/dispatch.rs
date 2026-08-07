@@ -31,9 +31,21 @@ pub enum ParseError {
     DuplicateCapabilityHeader,
     #[error("no Authorization header found")]
     NoAuthHeader,
+    /// Authorization header carries an unrecognized scheme (e.g., `Basic`,
+    /// `Digest`, `Negotiate`). The scheme name is preserved as operational
+    /// metadata (not credential material). Mission 0969-a3 AC-B2.1.a:
+    /// surfaced via `From<ParseError> for AuthError` as
+    /// `AuthError::UnsupportedScheme`.
+    #[error("unsupported auth scheme: {0}")]
+    UnsupportedScheme(String),
 }
 
 /// LinkageResult (RFC-0969 §Phase 1).
+///
+/// Mission 0969-a3 AC-B2.1.b adds `AskBindingMismatch` so the
+/// `authenticate()` path can distinguish a same-identity / different-ask
+/// mismatch from a full identity mismatch (different subject DID +
+/// different ask ID).
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum LinkageResult {
     Linked {
@@ -41,6 +53,12 @@ pub enum LinkageResult {
         ask_id: [u8; 32],
     },
     Mismatched,
+    /// Subject DIDs match but ask IDs differ. Mission 0969-a3 AC-B2.1.b:
+    /// surfaced via `authenticate()` as `AuthError::AskBindingMismatch`.
+    AskBindingMismatch {
+        bearer_ask: [u8; 32],
+        cap_ask: [u8; 32],
+    },
     Indeterminate,
 }
 
@@ -177,11 +195,17 @@ pub struct DispatchSet {
 ///
 /// Identity linkage evaluation (RFC-0969 §Phase 1 + AC-A2):
 /// - Both bearer + capability present → decode stubs run → compare
-///   `subject_did == holder_did` AND `ask_id == ask_id`. Mismatch → `Mismatched`;
-///   match → `Linked { subject_did, ask_id }`.
+///   `subject_did == holder_did` AND `ask_id == ask_id`.
+///   - Both match → `Linked { subject_did, ask_id }`.
+///   - Subject match + ask mismatch → `AskBindingMismatch { bearer_ask, cap_ask }`
+///     (mission 0969-a3 AC-B2.1.b).
+///   - Subject mismatch → `Mismatched`.
 /// - One present, other absent → `Indeterminate` (cannot evaluate linkage).
 /// - Neither present → `ParseError::NoAuthHeader` (upstream of `AuthError::NoAuthHeader`
 ///   via `From<ParseError> for AuthError`).
+/// - Authorization header with unrecognized scheme (e.g., `Basic <b64>`) →
+///   `ParseError::UnsupportedScheme(scheme)` (mission 0969-a3 AC-B2.1.a;
+///   upstream of `AuthError::UnsupportedScheme`).
 pub fn parse_auth_headers(headers: &[(String, String)]) -> Result<DispatchSet, ParseError> {
     let mut bearer = None;
     let mut capability = None;
@@ -195,7 +219,12 @@ pub fn parse_auth_headers(headers: &[(String, String)]) -> Result<DispatchSet, P
                 capability = Some(AuthHeader::CipherOctoCap(rest.to_string()));
                 cap_count += 1;
             } else {
-                // Unknown scheme — flagged in `Unsupported` but not an error.
+                // Unknown scheme — mission 0969-a3 AC-B2.1.a: surface the
+                // scheme name so `authenticate()` can return
+                // `AuthError::UnsupportedScheme(scheme)`. The previous
+                // silent-discard policy (pre-AC-B2.1) dropped the scheme.
+                let scheme = value.split_whitespace().next().unwrap_or("").to_owned();
+                return Err(ParseError::UnsupportedScheme(scheme));
             }
         } else if lower == "x-capability-token" {
             capability = Some(AuthHeader::CipherOctoCap(value.clone()));
@@ -208,7 +237,7 @@ pub fn parse_auth_headers(headers: &[(String, String)]) -> Result<DispatchSet, P
     if bearer.is_none() && capability.is_none() {
         return Err(ParseError::NoAuthHeader);
     }
-    // Identity linkage evaluation (AC-A2): dual-pipeline case only.
+    // Identity linkage evaluation (AC-A2 + AC-B2.1.b): dual-pipeline case only.
     // Stub decode functions extract placeholder `subject_did` / `holder_did`
     // from token bytes; real signature verification lands in AC-B1.
     let identity_linkage = match (&bearer, &capability) {
@@ -219,6 +248,12 @@ pub fn parse_auth_headers(headers: &[(String, String)]) -> Result<DispatchSet, P
                 LinkageResult::Linked {
                     subject_did: bv.subject_did,
                     ask_id: bv.ask_id,
+                }
+            } else if bv.subject_did == cv.holder_did {
+                // Subject matches but ask differs — mission 0969-a3 AC-B2.1.b.
+                LinkageResult::AskBindingMismatch {
+                    bearer_ask: bv.ask_id,
+                    cap_ask: cv.ask_id,
                 }
             } else {
                 LinkageResult::Mismatched
@@ -231,6 +266,42 @@ pub fn parse_auth_headers(headers: &[(String, String)]) -> Result<DispatchSet, P
         capability,
         identity_linkage,
     })
+}
+
+/// Identity linkage evaluation (RFC-0969 §Phase 1 + AC-A2 + mission 0969-a3
+/// AC-B2.1.b).
+///
+/// Pure function: takes optional `BearerVerification` + `CapabilityVerification`
+/// and returns:
+/// - `Linked { subject_did, ask_id }` if both present AND both
+///   `subject_did == holder_did` AND `ask_id == ask_id`.
+/// - `AskBindingMismatch { bearer_ask, cap_ask }` (mission 0969-a3 AC-B2.1.b)
+///   if both present AND `subject_did == holder_did` BUT `ask_id != ask_id`.
+/// - `Mismatched` if both present AND `subject_did != holder_did`.
+/// - `Indeterminate` if one or both absent.
+pub fn evaluate_linkage(
+    bearer: Option<&BearerVerification>,
+    capability: Option<&CapabilityVerification>,
+) -> LinkageResult {
+    match (bearer, capability) {
+        (Some(b), Some(c)) => {
+            if b.subject_did == c.holder_did && b.ask_id == c.ask_id {
+                LinkageResult::Linked {
+                    subject_did: b.subject_did.clone(),
+                    ask_id: b.ask_id,
+                }
+            } else if b.subject_did == c.holder_did {
+                // Mission 0969-a3 AC-B2.1.b: same subject, different ask.
+                LinkageResult::AskBindingMismatch {
+                    bearer_ask: b.ask_id,
+                    cap_ask: c.ask_id,
+                }
+            } else {
+                LinkageResult::Mismatched
+            }
+        }
+        _ => LinkageResult::Indeterminate,
+    }
 }
 
 /// AuthError (RFC-0969 §Phase 1).
@@ -311,6 +382,11 @@ impl From<ParseError> for AuthError {
         match err {
             ParseError::DuplicateCapabilityHeader => AuthError::DuplicateCapabilityHeader,
             ParseError::NoAuthHeader => AuthError::NoAuthHeader,
+            // Mission 0969-a3 AC-B2.1.a: route `UnsupportedScheme(scheme)`
+            // through `AuthError::UnsupportedScheme(scheme)` so consumers
+            // see a typed scheme-name (operational metadata) rather than a
+            // silent NoAuthHeader fallback.
+            ParseError::UnsupportedScheme(scheme) => AuthError::UnsupportedScheme(scheme),
         }
     }
 }
@@ -561,6 +637,78 @@ mod tests {
         let set =
             parse_auth_headers(&[("Authorization".into(), "CipherOcto-Cap abc".into())]).unwrap();
         assert_eq!(set.identity_linkage, LinkageResult::Indeterminate);
+    }
+
+    // --- 0969-a3 AC-B2.1.b: AskBindingMismatch distinguished from Mismatched ---
+
+    #[test]
+    fn evaluate_linkage_ask_binding_mismatch_when_subject_match_ask_differ() {
+        // Construct pre-decoded BearerVerification + CapabilityVerification
+        // directly: same `subject_did` / `holder_did`, different `ask_id`.
+        // The stub decoders derive both `subject_did` AND `ask_id` from
+        // token bytes (so they cannot decouple subject from ask); the
+        // real substrate (AC-B1) decouples them via Ed25519 pubkey +
+        // canonical ask. Direct `evaluate_linkage` exercise proves the
+        // 4-arm decision logic.
+        let b = BearerVerification {
+            subject_did: "did:octo:holder-1".into(),
+            ask_id: [0xAA; 32],
+        };
+        let c = CapabilityVerification {
+            holder_did: "did:octo:holder-1".into(),
+            ask_id: [0xBB; 32],
+        };
+        let r = evaluate_linkage(Some(&b), Some(&c));
+        assert!(
+            matches!(r, LinkageResult::AskBindingMismatch { .. }),
+            "expected AskBindingMismatch, got {r:?}"
+        );
+        if let LinkageResult::AskBindingMismatch {
+            bearer_ask,
+            cap_ask,
+        } = r
+        {
+            assert_eq!(bearer_ask, [0xAA; 32]);
+            assert_eq!(cap_ask, [0xBB; 32]);
+            assert_ne!(bearer_ask, cap_ask);
+        }
+    }
+
+    #[test]
+    fn evaluate_linkage_mismatched_when_subject_differ() {
+        // Different subject DID AND different ask ID → full Mismatched
+        // (not AskBindingMismatch).
+        let b = BearerVerification {
+            subject_did: "did:octo:bearer".into(),
+            ask_id: [0xAA; 32],
+        };
+        let c = CapabilityVerification {
+            holder_did: "did:octo:cap".into(),
+            ask_id: [0xBB; 32],
+        };
+        assert_eq!(
+            evaluate_linkage(Some(&b), Some(&c)),
+            LinkageResult::Mismatched
+        );
+    }
+
+    #[test]
+    fn parse_error_unsupported_scheme_carries_scheme_name() {
+        // Mission 0969-a3 AC-B2.1.a: Authorization header with
+        // unrecognized scheme returns `ParseError::UnsupportedScheme`.
+        let r = parse_auth_headers(&[("Authorization".into(), "Basic dXNlcjpwYXNz".into())]);
+        match r {
+            Err(ParseError::UnsupportedScheme(scheme)) => assert_eq!(scheme, "Basic"),
+            other => panic!("expected UnsupportedScheme(\"Basic\"), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_error_unsupported_scheme_converts_to_auth_error() {
+        // AC-B2.1.a: `From<ParseError> for AuthError` routes UnsupportedScheme.
+        let p = ParseError::UnsupportedScheme("Digest".into());
+        let a: AuthError = p.into();
+        assert!(matches!(a, AuthError::UnsupportedScheme(s) if s == "Digest"));
     }
 
     // --- AC-A5: BothInvalid carries BearerError / CapError ---

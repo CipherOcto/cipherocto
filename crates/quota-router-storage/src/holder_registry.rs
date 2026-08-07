@@ -52,6 +52,22 @@ pub trait HolderRegistry: Send + Sync {
     /// Insert a new record. Fails with `RegistryError::AlreadyExists` on PK collision.
     fn insert(&self, record: HolderRecord) -> Result<(), RegistryError>;
 
+    /// Atomic dual-record insert (RFC-0969 §Phase 2 atomicity invariant).
+    /// Inserts both records in a single Stoolap transaction; either both
+    /// persist (on commit) or neither does (on rollback).
+    ///
+    /// Default impl falls back to non-atomic `insert` calls — implementations
+    /// that can open a Stoolap transaction SHOULD override with the atomic
+    /// path (see `StoolapHolderRegistry::insert_dual`).
+    fn insert_dual(
+        &self,
+        bearer: HolderRecord,
+        capability: HolderRecord,
+    ) -> Result<(), RegistryError> {
+        self.insert(bearer)?;
+        self.insert(capability)
+    }
+
     /// Revoke a record. Sets `revoked_at_millis_unix = Some(current_millis_unix)`.
     /// Idempotent: revoking an already-revoked record is a no-op.
     fn revoke(&self, cap_root_hash: &[u8; 32], clock: &dyn Clock) -> Result<(), RegistryError>;

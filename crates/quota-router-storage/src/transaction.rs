@@ -27,24 +27,32 @@ pub struct Transaction {
 impl Transaction {
     /// Insert a single `HolderRecord` into the registry.
     pub fn insert_holder_record(&self, _record: HolderRecord) -> Result<(), RegistryError> {
-        // Concrete impl in `stoolap_holder_registry.rs::StoolapTransaction`.
+        // Concrete impl in `stoolap_holder_registry.rs::StoolapHolderRegistry::insert`.
         Err(RegistryError::Storage(
-            "Transaction::insert_holder_record must be invoked via StoolapTransaction".into(),
+            "Transaction::insert_holder_record must be invoked via StoolapHolderRegistry::insert \
+             (structural Transaction stub does not carry a Stoolap handle)"
+                .into(),
         ))
     }
 
     /// Insert a paired (Bearer, Capability) record atomically.
-    /// Both inserts succeed or neither does.
-    /// **Mission 0957-c scope:** stub. Owned by 0969-b (RFC-0969 §Algorithms:mint_dual)
-    /// per the co-author contract in the 0957-c mission notes.
+    /// Both inserts succeed or neither does (RFC-0969 §Phase 2 atomicity).
+    ///
+    /// **Mission 0969-b1 scope:** concrete impl landed at
+    /// `stoolap_holder_registry.rs::StoolapHolderRegistry::insert_dual`.
+    /// This structural-stub body remains to preserve the trait surface
+    /// (callers wired through `&mut Transaction`); the concrete impl is
+    /// reachable via the registry directly. A future mission can give
+    /// `Transaction` an `Arc<StoolapHolderRegistry>` handle so the
+    /// structural-stub body delegates to the concrete impl.
     pub fn insert_dual(
         &self,
         _bearer: HolderRecord,
         _capability: HolderRecord,
     ) -> Result<(), RegistryError> {
         Err(RegistryError::Storage(
-            "Transaction::insert_dual is owned by 0969-b (RFC-0969 §Algorithms:mint_dual) \
-             — co-author contract per 0957-c mission notes"
+            "Transaction::insert_dual (structural stub) — concrete atomic impl at \
+             stoolap_holder_registry.rs::StoolapHolderRegistry::insert_dual (mission 0969-b1)"
                 .into(),
         ))
     }

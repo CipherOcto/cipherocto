@@ -20,6 +20,82 @@ use crate::holder_record::HolderRecord;
 use crate::holder_registry::{HolderRegistry, RegistryError};
 use crate::migrations::apply_pending;
 
+/// Canonical INSERT statement for the `holder_registry` table.
+/// Shared by `insert` (single-record) + `insert_dual` (atomic pair) so
+/// the SQL stays in lockstep — a column added to one MUST be added to
+/// the other. Mission 0969-b1 R3-N1 invariant.
+const INSERT_HOLDER_SQL: &str = "INSERT INTO holder_registry \
+     (cap_root_hash, kind, holder_did, holder_pub, audience_did, \
+      caveats_canonical, ask_id, mint_at_millis_unix, ttl_millis_unix, \
+      revoked_at_millis_unix) \
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+
+/// Parameter tuple for `INSERT_HOLDER_SQL` (10 columns; see schema
+/// `v005__create_holder_registry.sql`). Named alias to satisfy clippy
+/// `type_complexity`.
+type InsertParams = (
+    Vec<u8>,
+    i64,
+    String,
+    Vec<u8>,
+    String,
+    Vec<u8>,
+    Option<Vec<u8>>,
+    i64,
+    i64,
+    Option<i64>,
+);
+
+/// Build the parameter tuple for `INSERT_HOLDER_SQL` from a `HolderRecord`.
+fn insert_params(record: &HolderRecord) -> InsertParams {
+    (
+        record.cap_root_hash.to_vec(),
+        record.kind.as_byte() as i64,
+        record.holder_did.clone(),
+        record.holder_pub.to_vec(),
+        record.audience_did.clone(),
+        record.caveats_canonical.clone(),
+        record.ask_id.map(|a| a.to_vec()),
+        record.mint_at_millis_unix as i64,
+        record.ttl_millis_unix as i64,
+        record.revoked_at_millis_unix.map(|v| v as i64),
+    )
+}
+
+/// Map a Stoolap `execute` error to the canonical `RegistryError`
+/// taxonomy. `AlreadyExists` on UNIQUE/PK collisions; `Storage` for
+/// everything else.
+fn classify_insert_err(e: stoolap::Error) -> RegistryError {
+    let msg = format!("{e}");
+    if msg.contains("UNIQUE")
+        || msg.contains("unique")
+        || msg.contains("PRIMARY")
+        || msg.contains("PrimaryKey")
+    {
+        RegistryError::AlreadyExists
+    } else {
+        RegistryError::Storage(msg)
+    }
+}
+
+/// Execute `INSERT_HOLDER_SQL` against a `stoolap::Database`.
+fn execute_insert_db(db: &stoolap::Database, record: &HolderRecord) -> Result<(), RegistryError> {
+    db.execute(INSERT_HOLDER_SQL, insert_params(record))
+        .map(|_| ())
+        .map_err(classify_insert_err)
+}
+
+/// Execute `INSERT_HOLDER_SQL` against a `stoolap::ApiTransaction`.
+/// Used by `insert_dual` so both records run in the same Stoolap tx.
+fn execute_insert_tx(
+    tx: &mut stoolap::ApiTransaction,
+    record: &HolderRecord,
+) -> Result<(), RegistryError> {
+    tx.execute(INSERT_HOLDER_SQL, insert_params(record))
+        .map(|_| ())
+        .map_err(classify_insert_err)
+}
+
 /// Stoolap-backed registry implementation.
 pub struct StoolapHolderRegistry {
     db: stoolap::Database,
@@ -165,42 +241,48 @@ impl HolderRegistry for StoolapHolderRegistry {
     }
 
     fn insert(&self, record: HolderRecord) -> Result<(), RegistryError> {
-        let kind = record.kind.as_byte();
-        let ask_id: Option<Vec<u8>> = record.ask_id.map(|a| a.to_vec());
-        let result = self.db.execute(
-            "INSERT INTO holder_registry \
-             (cap_root_hash, kind, holder_did, holder_pub, audience_did, \
-              caveats_canonical, ask_id, mint_at_millis_unix, ttl_millis_unix, \
-              revoked_at_millis_unix) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                record.cap_root_hash.to_vec(),
-                kind as i64,
-                record.holder_did.clone(),
-                record.holder_pub.to_vec(),
-                record.audience_did.clone(),
-                record.caveats_canonical.clone(),
-                ask_id,
-                record.mint_at_millis_unix as i64,
-                record.ttl_millis_unix as i64,
-                record.revoked_at_millis_unix.map(|v| v as i64),
-            ),
-        );
-        match result {
-            Ok(_affected) => Ok(()),
-            Err(e) => {
-                let msg = format!("{e}");
-                if msg.contains("UNIQUE")
-                    || msg.contains("unique")
-                    || msg.contains("PRIMARY")
-                    || msg.contains("PrimaryKey")
-                {
-                    Err(RegistryError::AlreadyExists)
-                } else {
-                    Err(RegistryError::Storage(msg))
-                }
-            }
-        }
+        execute_insert_db(&self.db, &record)
+    }
+
+    /// Atomic dual-record insert (RFC-0969 §Phase 2 atomicity invariant).
+    /// Both records persist or neither does. Mission 0969-b1.
+    ///
+    /// Uses Stoolap `Database::begin()` to open a transaction, inserts
+    /// the bearer + capability records via the same SQL the single-record
+    /// `insert` uses, then commits. On any failure the `Transaction`
+    /// wrapper auto-rolls back on `Drop` (per Stoolap `Drop` impl), so
+    /// neither record is visible to subsequent queries.
+    ///
+    /// Error mapping mirrors `insert`:
+    /// - `RegistryError::AlreadyExists` if either PK collides (UNIQUE
+    ///   constraint on `cap_root_hash` or `(ask_id, kind)`).
+    /// - `RegistryError::Storage(reason)` for any other failure
+    ///   (transaction begin, SQL execution, commit).
+    fn insert_dual(
+        &self,
+        bearer: HolderRecord,
+        capability: HolderRecord,
+    ) -> Result<(), RegistryError> {
+        // Open Stoolap transaction (auto-rollback on Drop if not committed).
+        let mut tx = self
+            .db
+            .begin()
+            .map_err(|e| RegistryError::Storage(format!("insert_dual begin: {e}")))?;
+
+        // Insert bearer first. If this fails, the tx is dropped → auto-rollback,
+        // capability is never attempted.
+        execute_insert_tx(&mut tx, &bearer)?;
+
+        // Insert capability. If this fails, the tx is dropped → auto-rollback,
+        // bearer is rolled back too.
+        execute_insert_tx(&mut tx, &capability)?;
+
+        // Commit. If commit fails, the tx is still in scope and Drop
+        // attempts rollback (defense in depth — Stoolap's commit failure
+        // path leaves the tx usable per `Database::begin` contract).
+        tx.commit()
+            .map_err(|e| RegistryError::Storage(format!("insert_dual commit: {e}")))?;
+        Ok(())
     }
 
     fn revoke(&self, cap_root_hash: &[u8; 32], clock: &dyn Clock) -> Result<(), RegistryError> {
@@ -452,5 +534,152 @@ mod tests {
         let clock = FixedClock::new(revoke_at + 1);
         let active = r.lookup_active(&rec.cap_root_hash, &clock).unwrap();
         assert!(active.is_none(), "TV14: revoked record must not be active");
+    }
+
+    // ---- Mission 0969-b1: TV9-I1/I2/I3 atomic insert_dual tests ----
+
+    fn capability_v1(cap_root_hash: [u8; 32]) -> HolderRecord {
+        HolderRecord::from_capability(
+            &crate::holder_record::CapabilityTokenLike {
+                cap_root_hash,
+                class: crate::holder_record::CapabilityClass::V1,
+            },
+            &[0x88; 32],
+            &octo_ident::test_helpers::sample_did(207),
+            Some([0x33; 32]),
+            1_700_000_000_000,
+        )
+    }
+
+    fn bearer_with_pub_and_hash(
+        capsule_hash: [u8; 32],
+        holder_pub: [u8; 32],
+        ask_id: [u8; 32],
+    ) -> HolderRecord {
+        HolderRecord::from_bearer(
+            &BearerCapsule {
+                bearer_capsule_hash: capsule_hash,
+                encrypted_capsule: vec![0x01, 0x02, 0x03],
+                seller_signature: [0x55; 64],
+            },
+            &holder_pub,
+            &octo_ident::test_helpers::sample_did(118),
+            ask_id,
+            1_700_000_000_000,
+        )
+    }
+
+    /// TV9-I1: `insert_dual` happy path — both records persist atomically.
+    /// Mission 0969-b1 AC: `lookup_by_ask(ask_id, HolderKind::Bearer)` returns
+    /// the bearer record AND `lookup_by_ask(ask_id, HolderKind::V1)` returns
+    /// the capability record after a single `insert_dual` call.
+    #[test]
+    fn tv9_i1_insert_dual_happy_path() {
+        let r = reg();
+        let ask_id = [0x33; 32];
+        let bearer = bearer_with_pub_and_hash([0x42; 32], [0x77; 32], ask_id);
+        let capability = capability_v1([0x11; 32]);
+
+        r.insert_dual(bearer.clone(), capability.clone()).unwrap();
+
+        let bearer_got = r
+            .lookup_by_ask(&ask_id, HolderKind::Bearer)
+            .unwrap()
+            .expect("TV9-I1: bearer must persist after dual insert");
+        let cap_got = r
+            .lookup_by_ask(&ask_id, HolderKind::V1)
+            .unwrap()
+            .expect("TV9-I1: capability must persist after dual insert");
+
+        assert_eq!(bearer_got.cap_root_hash, bearer.cap_root_hash);
+        assert_eq!(bearer_got.kind, HolderKind::Bearer);
+        assert_eq!(cap_got.cap_root_hash, capability.cap_root_hash);
+        assert_eq!(cap_got.kind, HolderKind::V1);
+    }
+
+    /// TV9-I2: atomicity failure path — capability insert forced to fail
+    /// (PK collision with a pre-existing record). Assert: the bearer record
+    /// MUST NOT persist. Mission 0969-b1 AC.
+    #[test]
+    fn tv9_i2_insert_dual_rollback_on_capability_failure() {
+        let r = reg();
+        let ask_id = [0x33; 32];
+
+        // Pre-existing capability record with the SAME cap_root_hash as the
+        // one we're about to dual-insert. This forces a PK collision on the
+        // capability insert (UNIQUE on cap_root_hash).
+        let pre_cap = capability_v1([0x11; 32]);
+        r.insert(pre_cap.clone()).unwrap();
+
+        let bearer = bearer_with_pub_and_hash([0x42; 32], [0x77; 32], ask_id);
+        let capability = capability_v1([0x11; 32]); // SAME cap_root_hash → collision
+
+        let err = r
+            .insert_dual(bearer.clone(), capability.clone())
+            .unwrap_err();
+        assert!(
+            matches!(err, RegistryError::AlreadyExists),
+            "TV9-I2: capability PK collision must surface AlreadyExists, got {err:?}"
+        );
+
+        // Bearer MUST NOT persist (atomicity guarantee).
+        let bearer_got = r.lookup(&bearer.cap_root_hash).unwrap();
+        assert!(
+            bearer_got.is_none(),
+            "TV9-I2: bearer MUST be rolled back on capability failure, got {bearer_got:?}"
+        );
+        let bearer_by_ask = r.lookup_by_ask(&ask_id, HolderKind::Bearer).unwrap();
+        assert!(
+            bearer_by_ask.is_none(),
+            "TV9-I2: bearer (by ask_id) MUST NOT persist, got {bearer_by_ask:?}"
+        );
+
+        // Pre-existing capability still present (not touched by failed dual).
+        let pre_cap_got = r.lookup(&pre_cap.cap_root_hash).unwrap();
+        assert_eq!(
+            pre_cap_got,
+            Some(pre_cap),
+            "TV9-I2: pre-existing capability must remain"
+        );
+    }
+
+    /// TV9-I3: bearer PK collision — `insert_dual` returns AlreadyExists,
+    /// capability is never attempted. Mission 0969-b1 AC.
+    #[test]
+    fn tv9_i3_insert_dual_aborts_on_bearer_pk_collision() {
+        let r = reg();
+        let ask_id = [0x33; 32];
+
+        // Pre-existing bearer with the SAME cap_root_hash AND same ask_id
+        // as the dual-insert input — forces collision on BOTH the PK
+        // (`cap_root_hash`) and the `(ask_id, kind)` UNIQUE index.
+        let pre_bearer = bearer_with_pub_and_hash([0x42; 32], [0x77; 32], ask_id);
+        r.insert(pre_bearer.clone()).unwrap();
+
+        let bearer = bearer_with_pub_and_hash([0x42; 32], [0xAA; 32], ask_id);
+        let capability = capability_v1([0x11; 32]);
+
+        let err = r
+            .insert_dual(bearer.clone(), capability.clone())
+            .unwrap_err();
+        assert!(
+            matches!(err, RegistryError::AlreadyExists),
+            "TV9-I3: bearer PK collision must surface AlreadyExists, got {err:?}"
+        );
+
+        // Capability was never attempted → not present.
+        let cap_got = r.lookup(&capability.cap_root_hash).unwrap();
+        assert!(
+            cap_got.is_none(),
+            "TV9-I3: capability MUST NOT be attempted on bearer PK collision, got {cap_got:?}"
+        );
+
+        // Pre-existing bearer untouched.
+        let pre_got = r.lookup(&pre_bearer.cap_root_hash).unwrap();
+        assert_eq!(
+            pre_got,
+            Some(pre_bearer),
+            "TV9-I3: pre-existing bearer must remain"
+        );
     }
 }

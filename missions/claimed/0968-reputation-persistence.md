@@ -443,10 +443,10 @@ Phase 1 AC → substrate mapping (31 ACs):
 | AC-27 (federated suspension certificate) | `AnchorGovernanceSnapshot` + `AnchorGovernanceProof` in `auth.rs:419+` | SUBSTRATE-PRESENT |
 | AC-28 (`record_signal` atomic UPSERT) | `recorder.rs` + `store/` runtime | SUBSTRATE-PRESENT |
 | AC-29 (monotonicity under per-recorder lock) | `recorder.rs` admission path | SUBSTRATE-PRESENT |
-| AC-30 (`cargo test --features stoolap --lib`) | tests/canonical_blobs.rs + cross_backend_integration.rs + stoolap_integration.rs | SUBSTRATE-PRESENT (verify on green) |
-| AC-31 (`cargo clippy --all-targets --all-features -- -D warnings`) | verify clean | depends on `b2gmmjhfo` task |
+| AC-30 (`cargo test --features stoolap --lib`) | tests/canonical_blobs.rs + cross_backend_integration.rs + stoolap_integration.rs | **VERIFIED 2026-08-07: 205 passed; 0 failed; 0 ignored** (cargo test -p octo-reputation --features stoolap --lib) |
+| AC-31 (`cargo clippy --all-targets --all-features -- -D warnings`) | verified clean | **VERIFIED 2026-08-07: cargo clippy -p octo-reputation --all-targets --all-features -- -D warnings clean** |
 
-**Summary:** 30/31 Phase 1 ACs have substrate on disk. AC-9 most heavily spec'd (verify_governance_suspension requires recompute + sig + governance_set_hash + recorder_id check); cross-reference with `auth.rs` `verify_governance_suspension` symbol required to confirm. Phase 1 does NOT flip checkboxes — module/migration names in AC text need rewrite per §Path Reconciliation. After AC text rewrite, Phase 1 could plausibly ~28-30/31 green if clippy + tests verify clean.
+**Summary:** 30/31 Phase 1 ACs have substrate on disk. AC-30 + AC-31 verified green 2026-08-07 (205/205 lib tests pass with `--features stoolap`; clippy clean). 5 follow-up items (AC-9, AC-22, AC-29, AC-14, AC-2 pseudocode-symbol mismatch) require symbol-level audit before AC text rewrite. Phase 1 does NOT flip checkboxes — module/migration names in AC text need rewrite per §Path Reconciliation. After AC text rewrite, Phase 1 plausibly ~28-30/31 green.
 
 **Follow-up work (genuine impl gaps, post AC rename):**
 
@@ -457,6 +457,15 @@ Phase 1 AC → substrate mapping (31 ACs):
 5. Verify `Did::parse` rejects 32-byte raw AND `did:octo:z...` legacy form (AC-14)
 
 Per [[no-phantom-mission-pointers]] + [[deferred-vs-unspecified]], Phase 1 AC flips are deferred to a future audit pass that mechanically rewrites AC text per the §Path Reconciliation tables.
+
+**Verification (2026-08-07):**
+
+```text
+cargo test -p octo-reputation --features stoolap --lib --no-run  # clean (compiles in 20.23s)
+cargo test -p octo-reputation --features stoolap --lib          # 205 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+cargo clippy -p octo-reputation --all-targets --all-features -- -D warnings  # clean
+cargo fmt -p octo-reputation -- --check                          # clean
+```
 
 ### Changelog
 

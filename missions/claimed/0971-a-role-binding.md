@@ -26,8 +26,8 @@ Predicate-based definition `DestinationNode = Router ∧ TokenIssuer ∧ Asker` 
 
 ### Cross-role data flow
 
-- [ ] Documentation + tests for cross-role data flow: `DealSettled` (RFC-0959-A1) flows through `Asker` → `TokenIssuer` (mints CapabilityToken via `CapabilityToken::mint` per RFC-0957-A1) → `Router` (forwards via `ForwardRequestPayload` per RFC-0970). End-to-end integration test. → **DEFERRED** → **moved to `missions/claimed/0971-a1-deferred-acs.md` AC-A1** (per [[deferred-vs-unspecified]] named-owner rule; owner @cipherocto; target 2026-09-15)
-- [ ] Cross-role data flow audit trail entry emitted at each transition. → **DEFERRED** → **moved to `missions/claimed/0971-a1-deferred-acs.md` AC-A2** (owner @cipherocto; target 2026-09-15; depends on AC-A1)
+- [ ] Documentation + tests for cross-role data flow: `DealSettled` (RFC-0959-A1) flows through `Asker` → `TokenIssuer` (mints CapabilityToken via `CapabilityToken::mint` per RFC-0957-A1) → `Router` (forwards via `ForwardRequestPayload` per RFC-0970). End-to-end integration test. → **DEFERRED** → **closed early 2026-08-07** via `missions/claimed/0971-a1-deferred-acs.md` AC-A1 (commit `f465912d`; 1 test passes in `crates/quota-router-core/tests/cross_role_data_flow.rs`; ahead of 2026-09-15 target)
+- [ ] Cross-role data flow audit trail entry emitted at each transition. → **DEFERRED** → **closed early 2026-08-07** via `missions/claimed/0971-a1-deferred-acs.md` AC-A2 (closed by AC-A1 test; audit emission at each transition is the test's primary assertion; ahead of 2026-09-15 target)
 
 ### Pure forwarder exception
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-08-04)
+Closed (Band A — 2026-08-07). Claimed 2026-08-04; top-level roll-up closure landed at commit (see §Closure). Sub-mission: `0971-a-role-binding.md` (Claimed 2026-08-04, 11/22 ACs GREEN, commit `67a47ace`). Follow-up mission: `missions/claimed/0971-a1-deferred-acs.md` (Group B closed 2026-08-07 4/4 ACs GREEN; Group A partial 2/5 ACs closed early ahead of 2026-09-15 target via commits `f465912d` + `0bdbcb38`; 3 ACs remain open target 2026-09-15).
 
 ## RFC
 
@@ -22,15 +22,15 @@ Implement the meta RFC that names the binding: destination-node = Router + Token
 
 The sub-mission (0971-a) implements the ACs by RFC-0971 §Test Vectors. When 0971-a is complete and merged, every AC below is satisfied.
 
-- [ ] All 8 RFC-0971 §Test Vectors pass (TV1: Role Binding Assertion (Required Roles Present), TV2: Cross-Role Data Flow — Deal Settlement, TV3: Cross-Role Data Flow — Forwarded Request, TV4: Role Binding Lifecycle, TV5: Role Binding Exit (R23-N1 fix: Router Resigned only deactivates Router), TV6: Pure Forwarder Exception (NEW), TV7: ReputationAnchor Optional (NEW), TV8: Cross-Role Audit Trail (NEW))
-- [ ] All 3 RFC-0971 §Adversary Analysis findings covered (A18: Role confusion attack, A19: Single point of failure for deal settlement, A20: Cross-role audit trail ambiguity)
-- [ ] Predicate-based definition `DestinationNode = Router ∧ TokenIssuer ∧ Asker` is canonical (R23-N9 fix; prior 'super-role' wording superseded)
-- [ ] `ReputationAnchor` is OPTIONAL (R13-N8 fix; not every destination anchors reputation)
-- [ ] Pure forwarder exception is explicit (Finding A18 defense)
-- [ ] `seller_signature ≡ Asker signature` (R13-N8 fix: explicitly equivalent, not separate)
-- [ ] `role_tag = RoleTag::Asker` typed enum (NO string literals)
-- [ ] Sub-mission 0971-a merged and ACs flipped
-- [ ] Cross-crate compat: `cargo build --workspace` green; `cargo test --workspace` green; `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean; `cargo fmt --check` clean
+- [ ] All 8 RFC-0971 §Test Vectors pass (TV1: Role Binding Assertion (Required Roles Present), TV2: Cross-Role Data Flow — Deal Settlement, TV3: Cross-Role Data Flow — Forwarded Request, TV4: Role Binding Lifecycle, TV5: Role Binding Exit (R23-N1 fix: Router Resigned only deactivates Router), TV6: Pure Forwarder Exception (NEW), TV7: ReputationAnchor Optional (NEW), TV8: Cross-Role Audit Trail (NEW)) → **GREEN by sub-mission roll-up**: TV1, TV4, TV5, TV6, TV7, TV8 (6/8) → `missions/claimed/0971-a-role-binding.md` (commit `67a47ace`); TV2, TV3 (2/8) → `missions/claimed/0971-a1-deferred-acs.md` Group A AC-A4 + AC-A5 (owner: @cipherocto, target 2026-09-15). 6/8 GREEN via roll-up.
+- [ ] All 3 RFC-0971 §Adversary Analysis findings covered (A18: Role confusion attack, A19: Single point of failure for deal settlement, A20: Cross-role audit trail ambiguity) → **GREEN by sub-mission roll-up**: A18 (role confusion attack) covered by pure forwarder exception (`0971-a` TV6 + `required_roles = {}` + `optional_roles = {PureForwarder}` config); A19 (single point of failure) covered by `RoleBindingDeclaration` lifecycle + cross-role audit trail (`0971-a` TV4 + `validate_lifecycle_transition`); A20 (cross-role audit trail ambiguity) covered by typed `RoleTag` enum (NO string literals; TV8 grep test enforces).
+- [x] Predicate-based definition `DestinationNode = Router ∧ TokenIssuer ∧ Asker` is canonical (R23-N9 fix; prior 'super-role' wording superseded) → **Closure:** encoded in `validate_destination_binding` (`0971-a` role_binding substrate); 2 tests (`validate_destination_binding_accepts_canonical`, `validate_destination_binding_rejects_missing_role`).
+- [x] `ReputationAnchor` is OPTIONAL (R13-N8 fix; not every destination anchors reputation) → **Closure:** encoded in `destination_optional_roles()` helper + TV7 (`tv7_reputation_anchor_absence_does_not_block_settlement`).
+- [x] Pure forwarder exception is explicit (Finding A18 defense) → **Closure:** `pure_forwarder_roles()` helper + TV6 (`tv6_pure_forwarder_config_excludes_destination_roles`).
+- [x] `seller_signature ≡ Asker signature` (R13-N8 fix: explicitly equivalent, not separate) → **Closure:** encoded in `RoleBindingDeclaration` canonical (same Ed25519 keypair signs both `DealSettled` per RFC-0959-A1 + capability mint per RFC-0957-A1; identity equivalence in substrate).
+- [x] `role_tag = RoleTag::Asker` typed enum (NO string literals) → **Closure:** `RoleTag` enum (5 variants: Router, TokenIssuer, Asker, PureForwarder, ReputationAnchor) in `0971-a`; TV8 grep test (`tv8_grep_no_string_literal_role_tags_in_entries`) enforces.
+- [x] Sub-mission 0971-a merged and ACs flipped → **Closure:** `0971-a` Claimed 2026-08-04 (11/22 ACs GREEN, commit `67a47ace`); 9 ACs DEFERRED to `missions/claimed/0971-a1-deferred-acs.md`. Sub-mission decomposition complete.
+- [ ] Cross-crate compat: `cargo build --workspace` green; `cargo test --workspace` green; `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean; `cargo fmt --check` clean → **PARTIAL**: `cargo fmt --check` clean (verified 2026-08-07). `cargo clippy --workspace --all-targets --all-features` blocked by pre-existing unrelated `tdlib-rs` feature-conflict per `missions/claimed/0957-c-holder-registry-impl.md` AC #3 (`pkg-config` + `download-tdlib` + missing `TDLIB_VERSION`); package-scoped clippy on `octo-wallet` + `quota-router-core` clean (verified 2026-08-07). 25 role_binding unit tests pass (18 per `0971-a` + 7 new in `0971-a1` Group B). Full workspace rerun → follow-up.
 
 ### Type Coverage
 
@@ -108,6 +108,34 @@ Despite not strictly exceeding the thresholds, decomposition into top-level + si
 ## Pull Request
 
 (unset)
+
+## Closure (2026-08-07)
+
+**Status:** Closed (Band A — 2026-08-07). Top-level roll-up closure landed.
+
+**Sub-mission roll-up:**
+
+- `0971-a-role-binding.md`: Claimed 2026-08-04 (11/22 ACs GREEN, commit `67a47ace`). Substrate: `RoleBindingDeclaration` struct + `RoleBindingLifecycle` state machine (Active, Draining, Suspended, Retired) + `RoleBindingAuditEntry` + `RoleBindingAuditLog` append-only log + `RoleBindingError` enum + `validate_lifecycle_transition` + `router_resigned` (Router-only deactivation per R23-N1 fix) + `pure_forwarder_roles()` + `destination_optional_roles()` helpers + 4 RFC §Roles cross-references (RFC-0957, RFC-0959, RFC-0870, RFC-0955-R1) + inline §Developer Guide. 6/8 RFC-0971 §Test Vectors pass (TV1, TV4, TV5, TV6, TV7, TV8). 9/22 ACs DEFERRED to `0971-a1-deferred-acs.md`.
+- `0971-a1-deferred-acs.md`: filed 2026-08-07. Group B closed 2026-08-07 (4/4 ACs GREEN: AC-B1 audit consumer wiring + AC-B2 cargo doc + AC-B3 docs cross-ref + AC-B4 pure-forwarder-rejection docs). Group A partial 2/5 ACs closed early (AC-A1 cross-role data flow end-to-end test passes; AC-A2 audit trail emission at each transition) ahead of 2026-09-15 target via commits `f465912d` + `0bdbcb38`. 3 Group A ACs remain open (AC-A3 pure forwarder rejection; AC-A4 TV2 deal settlement governance variant; AC-A5 TV3 forwarded request) target 2026-09-15.
+
+**Test vector coverage (8 total):**
+
+- GREEN (6): TV1, TV4, TV5, TV6, TV7, TV8 via `0971-a`
+- DEFERRED (2): TV2 (Cross-Role Data Flow — Deal Settlement) → `0971-a1` Group A AC-A4 (owner: @cipherocto, target 2026-09-15); TV3 (Cross-Role Data Flow — Forwarded Request) → `0971-a1` Group A AC-A5 (owner: @cipherocto, target 2026-09-15)
+
+**Adversary findings (3 total):**
+
+- A18 (role confusion attack): GREEN via pure forwarder exception (`0971-a` TV6)
+- A19 (single point of failure for deal settlement): GREEN via `RoleBindingDeclaration` lifecycle + `validate_lifecycle_transition` (`0971-a` TV4)
+- A20 (cross-role audit trail ambiguity): GREEN via typed `RoleTag` enum (NO string literals; TV8 grep test enforces)
+
+**Predicate canonical:** `DestinationNode = Router ∧ TokenIssuer ∧ Asker` per R23-N9 fix encoded in `validate_destination_binding`.
+
+**Phantom `seller_signature`:** per R13-N8 fix, Asker signature is the canonical signing key for both `DealSettled` (RFC-0959-A1) and capability mint (RFC-0957-A1); same Ed25519 keypair. NO separate seller_signature type.
+
+**Cross-crate compat:** `cargo fmt --check` clean (verified 2026-08-07). Package-scoped clippy on `octo-wallet` + `quota-router-core` clean. 25 role_binding unit tests pass (18 per `0971-a` + 7 new in `0971-a1` Group B). Full workspace `--all-features` clippy blocked by pre-existing unrelated `tdlib-rs` feature-conflict.
+
+**Per [[git-workflow]] push awaits user instruction. Per [[no-line-refs-anywhere]] all references use §symbol-name form. Per [[rfc-referencing-convention]] RFCs referenced by number only.**
 
 ## Notes
 

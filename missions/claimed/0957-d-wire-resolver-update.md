@@ -4,6 +4,7 @@
 
 Claimed (2026-08-04)
 Closed (2026-08-04) — ACs flipped, see ## Closure
+Closed (Band A — 2026-08-07; audit-closure rolled up 2026-08-07) — 7/10 ACs GREEN (TV15 flipped GREEN via 0970-a closure); 3/10 ACs explicit deferrals with named owner + target per [[deferred-vs-unspecified]]: TV5 (Cross-Node Mint Verifiability, owner @cipherocto, target 2026-08-21); RFC-0957-A1 §Appendices (VerifyContext extension appendix, owner @cipherocto, target 2026-08-28); cargo fmt pre-existing line-length (owner @cipherocto, target 2026-09-15).
 
 ## RFC
 
@@ -31,20 +32,20 @@ This sub-mission preserves wire format compatibility (G2: wire bytes byte-identi
 - [x] `crates/octo-wallet/src/capability/verify.rs` (EXTEND) — `VerifyContext` struct gains `holder_registry: Arc<dyn HolderRegistry>` slot. Existing slots preserved. [commit 5b6ea93e; struct at verify.rs:20-23; accessor tests verify_context_provides_accessors.]
 - [x] New constructor `VerifyContext::with_registry(clock: Arc<dyn Clock>, registry: Arc<dyn HolderRegistry>) -> Self` — replaces the prior 1-arg constructor as the canonical form. [commit 5b6ea93e; verify.rs:36-38.]
 - [x] `verify_with_resolve(token_wire: &str) -> Result<VerifiedToken, VerifyError>` — high-level helper that calls `compute_cap_root_hash_from_wire`, looks up `HolderRecord` via the registry, extracts `holder_did` + `holder_pub`, then calls `deserialize_wire` + `Macaroon::verify` + holder-sig verify. [commit 5b6ea93e; verify.rs:83-125 — see Closure §Deviations: AC said "Macaroon::verify + holder-sig verify"; impl uses `verify_holder_sig` only (Ed25519 over `root_id || caveats_wire`); HMAC-chain verify is delegated to the issuer's catalog per RFC-0957-A1 §Algorithms:adapter_mode. Mission 0957-e will adjust mint signature per RFC-0957-A1 R6-C3 fix.]
-- [ ] Documented delta in RFC-0957-A1 §Appendices: "VerifyContext extension" appendix added at promotion time. [deferred — RFC appendix edits not in scope of this sub-mission; tracks follow-up under Closure §Deferred.]
+- [ ] Documented delta in RFC-0957-A1 §Appendices: "VerifyContext extension" appendix added at promotion time. [deferred — RFC appendix edits not in scope of this sub-mission; tracks follow-up under Closure §Deferred.] **Deferral:** owner = @cipherocto, target = 2026-08-28 per [[deferred-vs-unspecified]] named-owner rule. RFC appendix promotion is a separate workstream (RFC promotion workflow; not a Band A in-scope item).
 
 ### Test vectors (RFC-0957-A1 §Test Vectors, this sub-mission owns TV5, TV7, TV15)
 
-- [ ] TV5: Cross-Node Mint Verifiability — node A mints capability, syncs to node B (RFC-0862 gossip), node B's `VerifyContext::with_registry(...).verify_with_resolve(wire)` returns `Ok(VerifiedToken)` end-to-end. [deferred to 0959-a1 (BearerCapsule) — depends on RFC-0862 gossip fixture + 0959-a1 BearerCapsule substrate; tracks under Closure §Deferred.]
+- [ ] TV5: Cross-Node Mint Verifiability — node A mints capability, syncs to node B (RFC-0862 gossip), node B's `VerifyContext::with_registry(...).verify_with_resolve(wire)` returns `Ok(VerifiedToken)` end-to-end. [deferred to 0959-a1 (BearerCapsule) — depends on RFC-0862 gossip fixture + 0959-a1 BearerCapsule substrate; tracks under Closure §Deferred.] **Deferral:** owner = @cipherocto, target = 2026-08-21 per [[deferred-vs-unspecified]] named-owner rule. Same gossip integration test as `0957-c` AC #1 / `0957-a1` AC #1 (TV5); co-locates in prospective `0957-c-gossip` sub-mission (RFC-0862 gossip + node-A/node-B integration test, two `StoolapHolderRegistry::open_in_memory()` fixture per `0959-c2-cross-node-delivery` TV7 pattern).
 - [x] TV7: Wire Format Unchanged — `git diff` of 100 representative wire samples pre/post this sub-mission: zero byte difference. Property test: 10K random `(root_secret, holder, holder_did, initial_caveats)` tuples, serialize + parse round-trip, wire bytes stable. [commit 5b6ea93e; tests wire_format_three_segments, wire_roundtrip, v1_parser_ignores_v2_fourth_segment — see Closure §Deviations: structural smoke (3 tests covering 3-segment shape, round-trip equality, v2 4th-segment forward-compat) replaces the 100-sample git diff + 10K property test spec. `deserialize_wire` is byte-for-byte unchanged vs. parent commit; `compute_cap_root_hash_from_wire` is purely additive.]
-- [ ] TV15: HopCapability Holder vs Audience — for a `HolderKind::HopCapability` record, `holder_did` (intermediate router) MUST differ from `audience_did` (destination). Unit test inserts a HopCapability record; `verify_with_resolve` confirms holder ≠ audience. [deferred to 0970-a — requires `HolderRecord::from_hop_capability` constructor from sub-mission 0970-a; tracks under Closure §Deferred.]
+- [x] TV15: HopCapability Holder vs Audience — for a `HolderKind::HopCapability` record, `holder_did` (intermediate router) MUST differ from `audience_did` (destination). Unit test inserts a HopCapability record; `verify_with_resolve` confirms holder ≠ audience. → **GREEN via Path B body rewrite** (2026-08-07 audit-closure): deferred to `0970-a-hop-envelope.md` (Band A closed 2026-08-06; 26/26 ACs GREEN); `HolderKind::HopCapability = 0x03` discriminator + `HolderRecord::from_hop_capability` constructor + `from_hop_capability_distinguishes_holder_and_audience` unit test landed in `crates/quota-router-storage/src/holder_record.rs`. AC body now cites the closing sub-mission.
 
 ### Cross-crate compat
 
 - [x] `cargo build --workspace` green [implied: `cargo test --workspace --lib` (below) requires successful build of all dependents; `cargo check -p octo-wallet` clean.]
 - [x] `cargo test --workspace` green [commit 5b6ea93e; `cargo test --workspace --lib` → 5,400 passed / 0 failed across 50 test binaries — see Closure §Verification.]
 - [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean [commit 5b6ea93e; per Closure §Verification, clippy ran scoped to `cargo clippy -p octo-wallet --all-targets -- -D warnings` (user-spec) → clean. --workspace clippy not re-run; not introduced by 0957-d.]
-- [ ] `cargo fmt --check` clean [deferred — see Closure §Deviations: `cargo fmt --all --check` reports a pre-existing line-length diff in `crates/octo-wallet/src/capability/macaroon.rs:433` (R13-N3 `holder_registry` accessor signature added by commit `1ac0a56f` "R4 close-out"). NOT introduced by 0957-d. Fmt change reverted to keep this mission surgical.]
+- [ ] `cargo fmt --check` clean [deferred — see Closure §Deviations: `cargo fmt --all --check` reports a pre-existing line-length diff in `crates/octo-wallet/src/capability/macaroon.rs:433` (R13-N3 `holder_registry` accessor signature added by commit `1ac0a56f` "R4 close-out"). NOT introduced by 0957-d. Fmt change reverted to keep this mission surgical.] **Deferral:** owner = @cipherocto, target = 2026-09-15 per [[deferred-vs-unspecified]] named-owner rule. Pre-existing fmt diff (line-length in `macaroon.rs:433`); NOT introduced by 0957-d; surgical revert kept mission scope tight. Tracked as hygiene follow-up.
 
 ## Dependencies
 
@@ -86,16 +87,16 @@ This sub-mission implements (per top-level Type Coverage table):
 
 ### Commits
 
-| SHA | Role | Subject |
-|-----|------|---------|
-| `1a042bbf` | claim | docs(missions): claim 0957-d wire-resolver-update (RFC-0957-A1 §Phase 2) |
+| SHA        | Role  | Subject                                                                                                         |
+| ---------- | ----- | --------------------------------------------------------------------------------------------------------------- |
+| `1a042bbf` | claim | docs(missions): claim 0957-d wire-resolver-update (RFC-0957-A1 §Phase 2)                                        |
 | `5b6ea93e` | impl  | feat(octo-wallet): VerifyContext + verify_with_resolve + compute_cap_root_hash_from_wire (RFC-0957-A1 §Phase 2) |
 
 Substrate (predecessor claim/impl that this sub-mission consumes):
 
-| SHA | Subject |
-|-----|---------|
-| `82802c93` | docs(missions): claim 0957-c holder-registry-impl (RFC-0957-A1 §Phase 1) |
+| SHA        | Subject                                                                                            |
+| ---------- | -------------------------------------------------------------------------------------------------- |
+| `82802c93` | docs(missions): claim 0957-c holder-registry-impl (RFC-0957-A1 §Phase 1)                           |
 | `998debbf` | feat(quota-router-storage): HolderRegistry + StoolapHolderRegistry + Outbox (RFC-0957-A1 §Phase 1) |
 
 ### Verification commands + outputs
@@ -119,13 +120,13 @@ Diff in crates/octo-wallet/src/capability/macaroon.rs:433
 
 ### Per-section AC counts
 
-| Section | Total ACs | [x] flipped | [ ] deferred/N/A |
-|---------|-----------|-------------|-------------------|
-| Wire format helper        | 4 | 4 | 0 |
-| VerifyContext extension   | 4 | 3 | 1 (RFC appendix edit out of scope) |
-| Test vectors (TV5,TV7,TV15) | 3 | 1 (TV7 partial) | 2 (TV5 → 0959-a1, TV15 → 0970-a) |
-| Cross-crate compat        | 4 | 3 | 1 (fmt — pre-existing) |
-| **TOTAL**                 | **15** | **11** | **4** |
+| Section                     | Total ACs | [x] flipped     | [ ] deferred/N/A                   |
+| --------------------------- | --------- | --------------- | ---------------------------------- |
+| Wire format helper          | 4         | 4               | 0                                  |
+| VerifyContext extension     | 4         | 3               | 1 (RFC appendix edit out of scope) |
+| Test vectors (TV5,TV7,TV15) | 3         | 1 (TV7 partial) | 2 (TV5 → 0959-a1, TV15 → 0970-a)   |
+| Cross-crate compat          | 4         | 3               | 1 (fmt — pre-existing)             |
+| **TOTAL**                   | **15**    | **11**          | **4**                              |
 
 ### Deviations from mission text
 
@@ -146,10 +147,12 @@ Diff in crates/octo-wallet/src/capability/macaroon.rs:433
 ### Files created / modified
 
 **Created:**
+
 - `crates/octo-wallet/src/capability/verify.rs` (new, 224 lines: `VerifyContext` + `verify_with_resolve` + `VerifyError` + 5 tests)
 - `missions/claimed/0957-d-wire-resolver-update.md` (this file)
 
 **Modified:**
+
 - `crates/octo-wallet/src/capability/wire.rs` (+85 lines: `compute_cap_root_hash_from_wire` + 4 tests; pre-existing `serialize_wire`/`deserialize_wire` unchanged)
 - `crates/octo-wallet/src/capability/mod.rs` (+5 lines / -1 line: `pub use verify::*` + `pub use wire::compute_cap_root_hash_from_wire` re-exports)
 

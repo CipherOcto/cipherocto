@@ -113,8 +113,8 @@ The acceptance criteria below fold in RFC-0968-A1 (25 amendments, 2026-07-26), `
 
 #### Cargo verification
 
-- [ ] `cargo test -p octo-reputation --features stoolap --lib` all pass.
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings` clean.
+- [x] `cargo test -p octo-reputation --features stoolap --lib` all pass. (VERIFIED 2026-08-07: 212 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out)
+- [ ] `cargo clippy --all-targets --all-features -- -D warnings` clean. (PARTIAL 2026-08-07: `cargo clippy -p octo-reputation --all-targets --all-features -- -D warnings` clean; workspace-wide FAILS due to pre-existing `tdlib-rs` build script error E0425 — out of scope for this mission per Round 6 audit mitigation)
 
 ### Phase 2: Adapter Shadow-Write (Compatibility Adapters, RFC-0968-A1 amendment 18 / C-P5)
 

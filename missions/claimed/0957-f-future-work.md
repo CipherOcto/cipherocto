@@ -36,8 +36,8 @@ Implement the 4 items deferred from RFC-0957-A1 §Future Work. Each item has a c
 
 ### F4: CapabilityCatalog V2
 
-- [ ] Defer until RFC-0009 §Identity evolves. V2 bundles 4 extensions (holder_registry, root_secret_for_ask, settlement_chain_tip, gossip_to_buyer) into a single struct.
-- [ ] TV F4: NOT YET SPEC'D — when RFC-0009 §Identity lands, re-author this AC.
+- [ ] Defer until RFC-0009 §Identity evolves. V2 bundles 4 extensions (holder_registry, root_secret_for_ask, settlement_chain_tip, gossip_to_buyer) into a single struct. **Deferral owner:** @cipherocto. **Target:** RFC-0009-B1 / RFC-0957-A2 full signature promotion (target 2026-09-15 per the 0957-a1 / 0959-a1 / 0969 phantom-type chain) per [[deferred-vs-unspecified]] named-owner rule.
+- [ ] TV F4: NOT YET SPEC'D — when RFC-0009 §Identity lands, re-author this AC. **Deferral owner:** @cipherocto. **Target:** 2026-09-15 per [[deferred-vs-unspecified]] named-owner rule. Re-author AC body when F4 substrate (V2 bundling) lands.
 - [x] Concrete plan documented in RFC-0957-A1 §Future Work; blocks on RFC-0009 §Identity evolution.
 
 ### Cross-crate compat
@@ -120,13 +120,14 @@ When RFC-0009 §Identity lands, re-author the F4 AC + TV. The 4 current `Capabil
 
 ## Version History
 
-| Version | Date       | Change                                                                                                                                    |
-| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-08-04 | Mission claimed. RFC-0957-A1 §Future Work F1-F4 consolidated.                                                                             |
-| v0.2    | 2026-08-06 | Closed Band A (14/16 ACs). F4 (2 ACs) explicit deferral to `0957-f-f4-bundle` future sub-mission; blocks on RFC-0009 §Identity evolution. |
+| Version | Date       | Change                                                                                                                                                                                                     |
+| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-04 | Mission claimed. RFC-0957-A1 §Future Work F1-F4 consolidated.                                                                                                                                              |
+| v0.2    | 2026-08-06 | Closed Band A (14/16 ACs). F4 (2 ACs) explicit deferral to `0957-f-f4-bundle` future sub-mission; blocks on RFC-0009 §Identity evolution.                                                                  |
+| v0.3    | 2026-08-07 | Audit-closure: named-owner augmentation on F4 (2 ACs) per [[deferred-vs-unspecified]] named-owner rule. owner = @cipherocto, target = 2026-09-15 (sync with RFC-0009-B1 / RFC-0957-A2 phantom-type chain). |
 
-Last Updated: 2026-08-06
-Version: 0.2
+Last Updated: 2026-08-07
+Version: 0.3
 
 ### Related
 

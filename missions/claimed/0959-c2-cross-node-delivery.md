@@ -27,7 +27,7 @@ The `0959-c` Band A closure deferred this work because (a) the cross-node integr
 
 ### RFC-0862 gossip binding
 
-- [ ] `crates/octo-wallet/src/capability/gossip.rs` — `gossip_envelope_to_buyer` delegates to the RFC-0862 gossip channel via a production `CapabilityCatalog` impl that holds `Arc<octo_transport::NodeTransport>`. **DEFERRED** to follow-up mission `0959-c3-octo-transport-wiring.md` per [[deferred-vs-unspecified]] named-owner rule (deferred because (a) wallet does not currently depend on `octo-transport` (dep inversion); (b) production `SendContext` construction requires source_peer / origin_gateway plumbing; (c) the async API decision on `CapabilityCatalog::gossip_to_buyer` is a breaking change requiring Option-A-vs-B trade-off analysis).
+- [ ] `crates/octo-wallet/src/capability/gossip.rs` — `gossip_envelope_to_buyer` delegates to the RFC-0862 gossip channel via a production `CapabilityCatalog` impl that holds `Arc<octo_transport::NodeTransport>`. **DEFERRED** to follow-up mission `0959-c3-octo-transport-wiring.md` per [[deferred-vs-unspecified]] named-owner rule (deferred because (a) wallet does not currently depend on `octo-transport` (dep inversion); (b) production `SendContext` construction requires source_peer / origin_gateway plumbing; (c) the async API decision on `CapabilityCatalog::gossip_to_buyer` is a breaking change requiring Option-A-vs-B trade-off analysis). **Deferral owner:** @cipherocto. **Target:** 2026-09-15 per [[deferred-vs-unspecified]] named-owner rule. Cross-mission: depends on `octo-transport` integration + async API decision (Option-A vs Option-B trade-off).
 
 ### Test vector
 
@@ -111,7 +111,11 @@ cargo fmt --check -p octo-wallet                                       # clean
 
 **Version History:**
 
-| Version | Date       | Change                                                                                                                                            |
-| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-08-06 | Mission filed open by `0959-c` Band A closure. 12 ACs (test harness + gossip binding + TV7 + cross-crate compat).                                  |
+| Version | Date       | Change                                                                                                                                                                                                                                                                      |
+| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-06 | Mission filed open by `0959-c` Band A closure. 12 ACs (test harness + gossip binding + TV7 + cross-crate compat).                                                                                                                                                           |
 | v0.2    | 2026-08-06 | Claimed + closed Band A same-session. 11/12 ACs green (test harness + TV7 + cross-crate compat); 1/12 AC (production gossip binding) deferred to `0959-c3-octo-transport-wiring` follow-up. 4/4 TV7 tests pass. Status header flipped Claimed→Closed (Band A — 2026-08-06). |
+| v0.3    | 2026-08-07 | Audit-closure: named-owner augmentation on 1/12 unchecked AC (production gossip binding). owner = @cipherocto, target = 2026-09-15 per [[deferred-vs-unspecified]] named-owner rule.                                                                                        |
+
+Last Updated: 2026-08-07
+Version: 0.3

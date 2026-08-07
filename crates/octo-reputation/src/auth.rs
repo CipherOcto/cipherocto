@@ -291,6 +291,50 @@ pub fn required_quorum() -> u32 {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 1 AC canonical types — added per mission 0968-p1-symbol-alignment
+// (Path A). Each is a thin envelope that mirrors the canonical pre-RFC-
+// 0968-A1 type names cited in the mission's AC body. The substrate
+// already carries the substrate-specific names (`ChainRef`, `AttestorAuth`,
+// etc.); these aliases let AC text reference canonical names without
+// forcing AC-body rewrites (Path B). Both paths exist; AC body text is
+// the authoritative surface, and these types give the cited canonical
+// names a substrate presence.
+// ---------------------------------------------------------------------------
+
+/// Authorisation for resuming a recorder post-suspension. Carries the
+/// `resume_at_unix` timestamp + the governance snapshot under which the
+/// resume is authorised. Shape mirrors `GovernanceProof` (no slash
+/// fields). Drift bound by `MAX_RESUME_DRIFT_SECS`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ResumeProof {
+    pub governance_pubkey: [u8; 32],
+    pub recorder_id: RecorderId,
+    pub resume_at_unix: u64,
+    pub signature: Vec<u8>,
+    pub snapshot: GovernanceSnapshot,
+    pub governance_set_hash: [u8; 32],
+}
+
+/// Reader-side authorisation envelope. Carries the requesting reader
+/// identity + freshness window. Distinct from `AttestorAuth` (which
+/// carries attestor-side transport metadata). The role bit is enforced
+/// at the read-side `ReputationStore::query_*` boundary.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReaderAuth {
+    pub reader_id: RecorderId,
+    pub requested_at_unix: u64,
+}
+
+/// Retention-side authorisation envelope. Internal-only: carries an
+/// attestor auth + the retention role bit (`RETENTION_ROLE`). The
+/// `auth` field is `AttestorAuth` per the substrate convention;
+/// the retention domain separator is applied at the retention boundary.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RetentionAuth {
+    pub auth: AttestorAuth,
+}
+
+// ---------------------------------------------------------------------------
 // Attestor types — RFC-0968 §12 + amendments 22, 28
 //
 // An Attestor is a replication peer that signs `Attestation` records

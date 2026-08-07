@@ -60,7 +60,8 @@ pub use audit::{
 pub use auth::{
     governance_set_hash, AnchorGovernanceProof, AnchorGovernanceSigner, AnchorGovernanceSnapshot,
     AnchorSignature, AssetTag, Attestation, AttestorAuth, AttestorId, AttestorRegistration,
-    ChainRef, GovernanceProof, GovernanceSnapshot, SlashDestination, SuspensionAuth,
+    ChainRef, GovernanceProof, GovernanceSnapshot, ReaderAuth, ResumeProof, RetentionAuth,
+    SlashDestination, SuspensionAuth,
 };
 pub use compat::{
     deterministic_f64_mirror, CompatKeymap, CompatMapping, DcRootedSlashReputationStore,
@@ -112,5 +113,6 @@ pub use store::{
 };
 pub use types::{
     ControllerId, EventId, ParityEvidence, RecorderDid, RecorderId, ReputationAggregate,
-    ReputationLayer, RetirementEligibility, RotationProvenance, SignalEvent, SignalKind,
+    ReputationLayer, ReputationPolicy, RetirementEligibility, RotationProvenance, SignalEvent,
+    SignalKind,
 };

@@ -457,6 +457,32 @@ pub struct RetirementEligibility {
     pub adapter: u8,
 }
 
+// ---------------------------------------------------------------------------
+// Phase 1 AC canonical type — added per mission 0968-p1-symbol-alignment
+// (Path A). The canonical pre-RFC-0968-A1 AC body cites `ReputationPolicy`
+// for the read-side policy enforcement surface; the substrate enforces
+// these knobs at the `ReputationStore::query_*` boundary.
+// ---------------------------------------------------------------------------
+
+/// Per-recorder reputation policy. Carries the read-side knobs that the
+/// canonical pre-RFC-0968-A1 AC body surfaces as a single `ReputationPolicy`
+/// struct. Substrate code consumes the individual constants
+/// (`MIN_ELECTION_SCORE`, `MAX_POSITIVE_SIGNALS_PER_RECORDER_PER_SUBJECT_PER_DAY`,
+/// `MIN_CONFIDENCE_SAMPLES`) rather than this struct directly; the
+/// struct exists to give the AC body a canonical name to cite.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReputationPolicy {
+    /// Minimum floor on `score_ewma` for election eligibility.
+    /// Mirrors `MIN_ELECTION_SCORE`.
+    pub min_election_score: f64,
+    /// Per-recorder daily cap on positive signals to a single subject.
+    /// Mirrors `MAX_POSITIVE_SIGNALS_PER_RECORDER_PER_SUBJECT_PER_DAY`.
+    pub max_positive_signals_per_subject_per_day: u64,
+    /// Sample count below which an aggregate's effective score is shrunk
+    /// by `samples / MIN_CONFIDENCE_SAMPLES`. Mirrors `MIN_CONFIDENCE_SAMPLES`.
+    pub min_confidence_samples: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

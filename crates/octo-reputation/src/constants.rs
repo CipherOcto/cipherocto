@@ -187,10 +187,19 @@ pub const BLAKE3_REPUTATION_PARITY_DOMAIN: &[u8] = b"cipherocto/reputation/parit
 pub const BLAKE3_REPUTATION_GOVERNANCE_SNAPSHOT_DOMAIN: &[u8] =
     b"cipherocto/governance/snapshot/v1";
 pub const BLAKE3_REPUTATION_GOVERNANCE_PROOF_DOMAIN: &[u8] = b"cipherocto/governance/proof/v1";
+pub const BLAKE3_REPUTATION_RETENTION_DOMAIN: &[u8] = b"cipherocto/reputation/retention/v1";
 
 /// Separate family from reputation domains — the set of governance pubkeys
 /// authorised to sign authoritative proofs. RFC-0968 §10 Review Round 7.
 pub const BLAKE3_GOVERNANCE_SET_DOMAIN: &[u8] = b"cipherocto/governance/set/v1";
+
+/// Retention role bit (RFC-0968 §21 + mission 0968-p1-symbol-alignment).
+/// `AttestorAuth::role_bits` carries this value when the attestor is
+/// authorised to perform retention-prune operations. Distinct from
+/// attestor-read (0x01) / attestor-write (0x02) / governance (0x04)
+/// role bits so role checks at the retention boundary can branch
+/// on a single byte.
+pub const RETENTION_ROLE: u8 = 0x08;
 
 #[cfg(test)]
 mod tests {

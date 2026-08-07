@@ -2,7 +2,7 @@
 
 ## Status
 
-Group B Closed (2026-08-07). Group A Partial (2/5 ACs closed early 2026-08-07; 3 ACs remain open target 2026-09-15). Claimed 2026-08-07 to absorb the 9 deferred ACs from `missions/claimed/0971-a-role-binding.md` (Status: Claimed 2026-08-04, 11/22 GREEN at commit `67a47ace`). Owner: @cipherocto (in coordination with 0971-a claimant @mmacedoeu per `missions/claimed/0971-a-role-binding.md` §Claimant).
+**Closed 2026-08-07.** Group B Closed (2026-08-07, 4/4 ACs GREEN). Group A **closed early 2026-08-07** (5/5 ACs GREEN; commit `9a46e06f`). **Total: 9/9 ACs GREEN across 3 commits.** Claimed 2026-08-07 to absorb the 9 deferred ACs from `missions/claimed/0971-a-role-binding.md` (Status: Claimed 2026-08-04, 11/22 GREEN at commit `67a47ace`). Owner: @cipherocto (in coordination with 0971-a claimant @mmacedoeu per `missions/claimed/0971-a-role-binding.md` §Claimant).
 
 Group B closed 2026-08-07 (4/4 ACs GREEN):
 
@@ -11,13 +11,30 @@ Group B closed 2026-08-07 (4/4 ACs GREEN):
 - **AC-B3** (inline §Developer Guide section in 0971-a): 6 subsections (role-binding declaration + pure forwarder + ReputationAnchor opt-in + cross-role data flow + audit trail + troubleshooting)
 - **AC-B4** (`cargo doc --workspace --no-deps`): build succeeds; pre-existing warnings documented as out-of-scope (4 crates)
 
-Group A partial closure 2026-08-07 (2/5 ACs closed early, 3 ACs remain open target 2026-09-15):
+Group A closed 2026-08-07 (5/5 ACs GREEN; commit `9a46e06f`, 39 days ahead of 2026-09-15 target):
 
 - **AC-A1** (cross-role data flow end-to-end integration test): commit `f465912d` — `crates/quota-router-core/tests/cross_role_data_flow.rs` (NEW, 258 lines). 1 test passes.
 - **AC-A2** (audit trail emission at transition): closed by AC-A1 test (test asserts `audit_log.len() == 4` with typed `role_tag` per transition).
-- **AC-A3** (pure forwarder rejection path): OPEN. Target 2026-09-15.
-- **AC-A4** (TV2 cross-role data flow): OPEN. Depends on AC-A1 + AC-A2 (both closed). Target 2026-09-15.
-- **AC-A5** (TV3 cross-role data flow): OPEN. Depends on AC-A1 + AC-A2 (both closed). Target 2026-09-15.
+- **AC-A3** (pure forwarder rejection path): commit `9a46e06f` — `validate_deal_settled_emission` helper in `crates/quota-router-core/src/node/role_binding.rs` (NEW, ~30 lines) + 3 unit tests (canonical_accepts + pure_forwarder_rejects + router_only_rejects) + 2 integration tests (`ac_a3_pure_forwarder_rejects_deal_settled_emission` + `ac_a3_router_only_binding_rejects_deal_settled_emission`).
+- **AC-A4** (TV2 cross-role data flow): commit `9a46e06f` — dedicated `tv2_cross_role_data_flow_deal_settlement` test isolates the TV2 contract: Asker creates Ask → TokenIssuer mints capability → DealSettled signed by Asker (R13-N8 fix: `seller_did == asker_did`) + 3 audit entries (Asker / TokenIssuer / Asker-settle).
+- **AC-A5** (TV3 cross-role data flow): commit `9a46e06f` — `tv3_cross_role_data_flow_forwarded_request` test exercises Router→destination forwarding with `ForwardRequestPayload` (RFC-0870) + hop_count increment + Router-role + destination-Asker audit entries (2 entries). Hop_envelope substrate (RFC-0970) is upstream of 0970-a1; test documents the wiring contract for the future landing.
+
+## Closure
+
+Three impl commits + this docs commit landed 2026-08-07. Verifications all green.
+
+| Group | ACs | Target | Closed | Impl Commit | Docs Commit |
+|-------|-----|--------|--------|-------------|-------------|
+| A — Cross-role data flow | 5/5 | 2026-09-15 | 2026-08-07 (39d early) | `f465912d` (AC-A1+AC-A2) + `9a46e06f` (AC-A3+AC-A4+AC-A5) | (this file) |
+| B — Docs + audit consumer + cargo doc | 4/4 | 2026-08-21 | 2026-08-07 (14d early) | `0bdbcb38` | (this file) |
+| **Total** | **9/9** | 2026-09-15 | **2026-08-07** | 3 commits | 1 commit |
+
+Verification artifacts (2026-08-07):
+
+- `cargo test -p quota-router-core --lib node::role_binding`: 28/28 pass (existing 11 + 7 from AC-B1 + 7 from AC-A1 + 3 new for `validate_deal_settled_emission`)
+- `cargo test -p quota-router-core --test cross_role_data_flow`: 5/5 pass (AC-A1+AC-A2 full pipeline + AC-A3 pure_forwarder rejection + AC-A3 router_only rejection + AC-A4 TV2 + AC-A5 TV3)
+- `cargo clippy -p quota-router-core --all-targets -- -D warnings`: clean (per [[feedback_clippy_zero_warnings]])
+- `cargo fmt --check -p quota-router-core`: clean (per [[cargo-fmt-workflow]])
 
 Per [[git-workflow]] push awaits user instruction. Per [[no-line-refs-anywhere]] all references use §symbol-name form. Per [[rfc-referencing-convention]] RFCs referenced by number only. Per [[no-phantom-mission-pointers]] all `depends_on` cites real missions or RFC substrate.
 
@@ -62,12 +79,15 @@ The 9 deferred ACs are functionally two units:
       Owner: @cipherocto. Target: 2026-09-15. Substrate: `mint_dual` (commit `2ffb1fc8`) + `ForwardRequestPayload` (commit `2ffb1fc8` prior) + `HolderRegistry` (commit `67a47ace`). **Closure (2026-08-07, early — original target 2026-09-15):** Commit `f465912d` — `crates/quota-router-core/tests/cross_role_data_flow.rs` (NEW, 258 lines). 1 test (`cross_role_data_flow_deal_settlement_full_pipeline`) exercises the full Asker→TokenIssuer→Router pipeline with DealSettled signed by Asker (R13-N8 fix). Module docstring documents cross-mission contract with commit references for each substrate component.
 - [x] **AC-A2.** Cross-role data flow audit trail entry emitted at each transition (Asker → TokenIssuer → Router). Each transition emits `RoleBindingAuditEntry` with the typed `role_tag` of the transition actor.
       Owner: @cipherocto. Target: 2026-09-15. Depends on AC-A1. **Closure (2026-08-07, early — original target 2026-09-15):** The AC-A1 test asserts `audit_log.len() == 4` after the 4 transitions (Asker / TokenIssuer / Router / Asker) and verifies each entry's `role_tag` matches the transition actor. The audit emission at each transition is the test's primary assertion — AC-A2 is closed by the same test.
-- [ ] **AC-A3.** Pure forwarder does NOT emit `DealSettled` events (no `Asker` binding) and does NOT mint tokens (no `TokenIssuer` binding). Active path: `pure_forwarder_roles()` config (`required_roles = {}`, `optional_roles = {PureForwarder}`) → `DealSettled` emission path checks `RoleBindingDeclaration` for `Asker` binding before allowing emission.
-      Owner: @cipherocto. Target: 2026-09-15. Depends on AC-A1.
-- [ ] **AC-A4.** TV2: Cross-Role Data Flow — Deal Settlement — end-to-end: Asker creates Ask → TokenIssuer mints capability → Seller signs `DealSettled` → all audit entries emitted with correct `role_tag`. Live in `crates/quota-router-core/tests/cross_role_data_flow.rs` (NEW).
-      Owner: @cipherocto. Target: 2026-09-15. Depends on AC-A1 + AC-A2.
-- [ ] **AC-A5.** TV3: Cross-Role Data Flow — Forwarded Request — end-to-end: Router forwards `ForwardRequestPayload` with `hop_envelope` per RFC-0970 → destination unwraps → audit entries emitted. Live in `crates/quota-router-core/tests/cross_role_data_flow.rs` (alongside TV2).
-      Owner: @cipherocto. Target: 2026-09-15. Depends on AC-A1 + AC-A2.
+- [x] **AC-A3.** Pure forwarder does NOT emit `DealSettled` events (no `Asker` binding) and does NOT mint tokens (no `TokenIssuer` binding). Active path: `pure_forwarder_roles()` config (`required_roles = {}`, `optional_roles = {PureForwarder}`) → `DealSettled` emission path checks `RoleBindingDeclaration` for `Asker` binding before allowing emission.
+      **Closure:** landed at commit `9a46e06f`. (a) New helper `validate_deal_settled_emission(decl) -> Result<(), RoleBindingError>` in `crates/quota-router-core/src/node/role_binding.rs` — returns `Ok(())` when `validate_destination_binding(decl)` holds (canonical required roles present); returns `Err(MissingRequiredRole(Asker))` otherwise (DealSettled is Asker-bound per RFC-0959-A1). (b) 3 unit tests in `role_binding::tests`: `validate_deal_settled_emission_accepts_canonical_destination`, `validate_deal_settled_emission_rejects_pure_forwarder`, `validate_deal_settled_emission_rejects_router_only`. (c) 2 integration tests in `tests/cross_role_data_flow.rs`: `ac_a3_pure_forwarder_rejects_deal_settled_emission` (asserts `Err(MissingRequiredRole(Asker))` for pure forwarder + `Ok(())` for canonical destination) + `ac_a3_router_only_binding_rejects_deal_settled_emission` (asserts Router-only binding also rejected — settlement is Asker-bound not Router-bound). Closed early 2026-08-07 (39 days ahead of 2026-09-15 target).
+      Owner: @cipherocto. Target: 2026-09-15. Depends on AC-A1. **CLOSED 2026-08-07.**
+- [x] **AC-A4.** TV2: Cross-Role Data Flow — Deal Settlement — end-to-end: Asker creates Ask → TokenIssuer mints capability → Seller signs `DealSettled` → all audit entries emitted with correct `role_tag`. Live in `crates/quota-router-core/tests/cross_role_data_flow.rs` (NEW).
+      **Closure:** landed at commit `9a46e06f`. Dedicated `tv2_cross_role_data_flow_deal_settlement` test in `tests/cross_role_data_flow.rs` (NEW, ~80 lines) isolates the TV2 contract: Asker creates Ask (audit entry 1: Asker) → TokenIssuer mints capability via `Macaroon::mint` (audit entry 2: TokenIssuer) → DealSettled signed by Asker with `seller_did == asker_did` (R13-N8 fix) (audit entry 3: Asker). Asserts `audit_log.len() == 3` + each entry's `role_tag` matches the actor + `seller_did == asker_did` structural invariant. Closed early 2026-08-07.
+      Owner: @cipherocto. Target: 2026-09-15. Depends on AC-A1 + AC-A2. **CLOSED 2026-08-07.**
+- [x] **AC-A5.** TV3: Cross-Role Data Flow — Forwarded Request — end-to-end: Router forwards `ForwardRequestPayload` with `hop_envelope` per RFC-0970 → destination unwraps → audit entries emitted. Live in `crates/quota-router-core/tests/cross_role_data_flow.rs` (alongside TV2).
+      **Closure:** landed at commit `9a46e06f`. `tv3_cross_role_data_flow_forwarded_request` test in `tests/cross_role_data_flow.rs` (NEW, ~75 lines) exercises: Router originates `ForwardRequestPayload` (RFC-0870) + Router-role audit entry → Router increments `hop_count` + next_hop payload integrity bands asserted → destination-Asker audit entry. Hop_envelope substrate (RFC-0970) is upstream of 0970-a1; test documents the wiring contract for the future landing (forward_payload field set is the substrate today; hop_envelope is the 0970-a1 follow-up). Asserts `audit_log.len() == 2` + Router→Asker role_tag sequence + both bindings validate as canonical destinations. Closed early 2026-08-07.
+      Owner: @cipherocto. Target: 2026-09-15. Depends on AC-A1 + AC-A2. **CLOSED 2026-08-07.**
 
 ### Group B — Docs + Audit Consumer + cargo doc (4 ACs, target 2026-08-21)
 
@@ -82,11 +102,11 @@ The 9 deferred ACs are functionally two units:
 
 ### Cross-crate compat (stays in 0971-a, not duplicated)
 
-- [ ] `cargo build -p quota-router-core` green (substrate unchanged; verified per 0971-a commit `67a47ace`).
-- [ ] `cargo test -p quota-router-core --lib node::role_binding`: 18/18 pass (existing 11 + 7 new from 0971-a; new tests in this mission append to this count).
-- [ ] `cargo clippy -p quota-router-core --all-targets --features full -- -D warnings` clean (per [[feedback_clippy_zero_warnings]] + [[mode-gate-never-equals-interface]]).
-- [ ] `cargo fmt --check -p quota-router-core` clean.
-- [ ] New: `cargo test -p quota-router-core --test cross_role_data_flow` GREEN (Group A TV2 + TV3 live here).
+- [x] `cargo build -p quota-router-core` green (substrate unchanged; verified per 0971-a commit `67a47ace` + 0971-a1 commits).
+- [x] `cargo test -p quota-router-core --lib node::role_binding`: 28/28 pass (existing 11 + 7 from 0971-a commit `67a47ace` + 7 from AC-B1 commit `0bdbcb38` + 3 from AC-A3 commit `9a46e06f`).
+- [x] `cargo clippy -p quota-router-core --all-targets --features full -- -D warnings` clean (per [[feedback_clippy_zero_warnings]] + [[mode-gate-never-equals-interface]]).
+- [x] `cargo fmt --check -p quota-router-core` clean.
+- [x] `cargo test -p quota-router-core --test cross_role_data_flow` GREEN (Group A TV2 + TV3 live here; 5/5 pass).
 
 ## Acceptance Deviations
 
@@ -94,9 +114,11 @@ Each entry follows [[deferred-vs-unspecified]] form: unfulfilled AC + concrete p
 
 ### Group A Deviations
 
-- **Cross-role data flow end-to-end wiring is the missing piece.** All substrate types exist (mint_dual, ForwardRequestPayload, HolderRegistry); the pending work is the consumer-side orchestrator that ties them together in a single test pipeline. Owner: @cipherocto. Target: 2026-09-15.
-- **Audit trail emission at transition is downstream.** Depends on AC-A1 wiring the orchestrator. The `RoleBindingAuditLog` substrate exists (commit `67a47ace`); emission at each transition follows once AC-A1 lands. Owner: @cipherocto. Target: 2026-09-15.
-- **Pure forwarder rejection is downstream.** Depends on AC-A1 wiring the `DealSettled` emission path with the role-binding check. Owner: @cipherocto. Target: 2026-09-15.
+- **Cross-role data flow end-to-end wiring was the missing piece.** Closed at commit `f465912d` (2026-08-07). All substrate types exist (mint_dual, ForwardRequestPayload, HolderRegistry); the consumer-side orchestrator now ties them together in a single test pipeline. Owner: @cipherocto. Closed: 2026-08-07.
+- **Audit trail emission at transition was downstream.** Closed at commit `f465912d` (2026-08-07) — same test. The `RoleBindingAuditLog` substrate exists (commit `67a47ace`); emission at each transition follows once AC-A1 lands. Owner: @cipherocto. Closed: 2026-08-07.
+- **Pure forwarder rejection was downstream.** Closed at commit `9a46e06f` (2026-08-07) — `validate_deal_settled_emission` helper + 5 tests. Owner: @cipherocto. Closed: 2026-08-07.
+- **TV2 dedicated test isolation was downstream.** Closed at commit `9a46e06f` — `tv2_cross_role_data_flow_deal_settlement` dedicated test (DealSettled signed by Asker + 3 audit entries).
+- **TV3 forwarded request was downstream.** Closed at commit `9a46e06f` — `tv3_cross_role_data_flow_forwarded_request` test exercises Router→destination forwarding via `ForwardRequestPayload` (RFC-0870). Hop_envelope substrate (RFC-0970) is upstream of 0970-a1; test documents the wiring contract for the future landing.
 
 ### Group B Deviations
 
@@ -142,8 +164,8 @@ This follow-up implements (per 0971-a §Type Coverage deferred entries):
 
 ## Last Updated
 
-2026-08-07T00:00:00Z
+2026-08-07T00:00:00Z (Group A closure)
 
 ## Version
 
-1.1 (Group B closed 2026-08-07 — 4/4 ACs GREEN; Group A open target 2026-09-15 — 5 ACs remaining)
+2.0 (Group A closed 2026-08-07 — 5/5 ACs GREEN ahead of 2026-09-15 target; Group B closed 2026-08-07 — 4/4 ACs GREEN. 9/9 ACs GREEN across 3 commits.)

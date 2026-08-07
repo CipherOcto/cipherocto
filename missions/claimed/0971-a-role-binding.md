@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-08-04). Partial progress 2026-08-06: 11/22 ACs flipped GREEN (RoleBindingAuditEntry + RoleBindingAuditLog + Manual redacting Debug + 4 audit tests + RoleBindingError enum + validate_lifecycle_transition + router_resigned + 7 new role_binding tests + RFC-0957 + RFC-0959 §Roles cross-refs + cross-crate compat; commit `67a47ace`). 11/22 ACs explicit deferrals per [[deferred-vs-unspecified]] named-owner rule: cross-role data flow end-to-end integration tests (TV2/TV3, requires `mint_dual` + `ForwardRequestPayload` + `HolderRegistry` end-to-end wiring) + `audit_replay_log` cross-crate wiring (consumer-side log) + inline §Developer Guide section + fixture for governance set hash + 3 distinct signatures (TV8 governance variant) + 1 RFC-0955-R1 §Roles section creation.
+Claimed (2026-08-04). Partial progress 2026-08-06: 11/22 ACs flipped GREEN (RoleBindingAuditEntry + RoleBindingAuditLog + Manual redacting Debug + 4 audit tests + RoleBindingError enum + validate_lifecycle_transition + router_resigned + 7 new role_binding tests + RFC-0957 + RFC-0959 §Roles cross-refs + cross-crate compat; commit `67a47ace`). 9 ACs DEFERRED into mission `missions/claimed/0971-a1-deferred-acs.md` per [[deferred-vs-unspecified]] named-owner rule (filed 2026-08-07). Owner: @cipherocto. Group A (5 ACs, cross-role data flow) target 2026-09-15; Group B (4 ACs, docs + audit consumer + cargo doc) target 2026-08-21. The 2-line status header previously stated "fixture for governance set hash + 3 distinct signatures (TV8 governance variant)" — this is folded into 0971-a1 Group A cross-role data flow test pipeline (TV8 governance variant is a variant of AC-A4 TV2 setup; the fixture is test-data only).
 
 ## RFC
 
@@ -26,41 +26,41 @@ Predicate-based definition `DestinationNode = Router ∧ TokenIssuer ∧ Asker` 
 
 ### Cross-role data flow
 
-- [ ] Documentation + tests for cross-role data flow: `DealSettled` (RFC-0959-A1) flows through `Asker` → `TokenIssuer` (mints CapabilityToken via `CapabilityToken::mint` per RFC-0957-A1) → `Router` (forwards via `ForwardRequestPayload` per RFC-0970). End-to-end integration test. → **DEFERRED** (end-to-end TV2/TV3 require cross-crate wiring of `mint_dual` + `ForwardRequestPayload` + `HolderRegistry` + audit emission at each transition; substrate absent on disk; tracked under follow-up mission TBD per [[deferred-vs-unspecified]])
-- [ ] Cross-role data flow audit trail entry emitted at each transition. → **DEFERRED** (depends on TV2/TV3 end-to-end wiring; audit log substrate lands in this commit but emission at transition is downstream)
+- [ ] Documentation + tests for cross-role data flow: `DealSettled` (RFC-0959-A1) flows through `Asker` → `TokenIssuer` (mints CapabilityToken via `CapabilityToken::mint` per RFC-0957-A1) → `Router` (forwards via `ForwardRequestPayload` per RFC-0970). End-to-end integration test. → **DEFERRED** → **moved to `missions/claimed/0971-a1-deferred-acs.md` AC-A1** (per [[deferred-vs-unspecified]] named-owner rule; owner @cipherocto; target 2026-09-15)
+- [ ] Cross-role data flow audit trail entry emitted at each transition. → **DEFERRED** → **moved to `missions/claimed/0971-a1-deferred-acs.md` AC-A2** (owner @cipherocto; target 2026-09-15; depends on AC-A1)
 
 ### Pure forwarder exception
 
 - [x] Configuration: `RoleBindingDeclaration` with `required_roles = {}` (empty) + `optional_roles = {PureForwarder}` declares a pure forwarder node. No `Router` / `TokenIssuer` / `Asker` binding. → **GREEN** (commit `67a47ace`; `pure_forwarder_roles()` helper + TV6 test asserts)
-- [ ] Pure forwarder does NOT emit `DealSettled` events (no `Asker` binding) and does NOT mint tokens (no `TokenIssuer` binding). → **DEFERRED** (end-to-end rejection requires `DealSettled` emission path wired with role-binding check; downstream)
+- [ ] Pure forwarder does NOT emit `DealSettled` events (no `Asker` binding) and does NOT mint tokens (no `TokenIssuer` binding). → **DEFERRED** → **moved to `missions/claimed/0971-a1-deferred-acs.md` AC-A3** (owner @cipherocto; target 2026-09-15; depends on AC-A1)
 
 ### ReputationAnchor optional
 
 - [x] Configuration: `RoleBindingDeclaration` with `required_roles = {Router, TokenIssuer, Asker}` + `optional_roles = {ReputationAnchor}` declares a destination node that MAY anchor reputation. NOT REQUIRED to. → **GREEN** (commit `67a47ace`; `destination_optional_roles()` + TV7 test)
-- [ ] ReputationAnchor binding is configured at runtime; absence does not block deal settlement or forwarding. → **GREEN** (commit `67a47ace`; TV7 asserts absence does not block settlement; canonical R13-N8 fix)
+- [x] ReputationAnchor binding is configured at runtime; absence does not block deal settlement or forwarding. → **GREEN** (commit `67a47ace`; TV7 asserts absence does not block settlement; canonical R13-N8 fix)
 
 ### Role-binding audit trail
 
 - [x] `crates/quota-router-core/src/node/role_binding_audit.rs` (NEW) — append-only log of role-binding transitions. Per entry: `node_did`, `role_tag: RoleTag` (typed enum), `from_state: RoleBindingLifecycle`, `to_state: RoleBindingLifecycle`, `node_epoch: u64`, `at_millis_unix: i64`. → **GREEN** (commit `67a47ace`; `RoleBindingAuditEntry` + `RoleBindingAuditLog`)
 - [x] Manual redacting Debug on `RoleBindingAuditEntry` (redact `node_did` per audit log convention; preserve `role_tag` for forensics). → **GREEN** (commit `67a47ace`; `debug_redacts_node_did_preserves_role_tag` test passes)
-- [ ] `audit_replay_log.rs` cross-crate consumer (consumer-side replay audit log per RFC-0971 §Adversary A16). → **DEFERRED** (consumer-side wiring for `HopEnvelope` replay is owned by mission `0970-a1-holder-binding-and-crypto`; this mission owns the producer-side `RoleBindingAuditLog` only)
+- [ ] `audit_replay_log.rs` cross-crate consumer (consumer-side replay audit log per RFC-0971 §Adversary A16). → **DEFERRED** → **moved to `missions/claimed/0971-a1-deferred-acs.md` AC-B1** (owner @cipherocto; target 2026-08-21; producer-side substrate landed at commit `2ffb1fc8` prior mission 0970-a1)
 
 ### Cross-RFC §Roles updates
 
 - [x] RFC-0870 §Roles documentation updated: add `RFC-0971` cross-reference. → **GREEN** (RFC-0870 §Roles table extended with Forwarder/Auditor/PureForwarder sub-rows citing RFC-0971 in commit `56143def` 0970-b Band A closure)
 - [x] RFC-0957 §Roles documentation updated: add `RFC-0971` cross-reference. → **GREEN** (commit `67a47ace`; Role Binding row added)
 - [x] RFC-0959 §Roles documentation updated: add `RFC-0971` cross-reference. → **GREEN** (commit `67a47ace`; Role Binding row added with R13-N8 fix `seller_signature ≡ Asker signature`)
-- [ ] RFC-0955-R1 §Roles documentation updated: add `RFC-0971` cross-reference. → **DEFERRED** (RFC-0955-R1 has no §Roles section — anchoring is mechanism, not role. RFC-0955-R1 §Roles section creation deferred to follow-up; or omit per RFC scope rationale.)
+- [ ] RFC-0955-R1 §Roles documentation updated: add `RFC-0971` cross-reference. → **DEFERRED** → **moved to `missions/claimed/0971-a1-deferred-acs.md` AC-B2** (owner @cipherocto; target 2026-08-21; either create §Roles section or document explicit omission per RFC scope rationale)
 
 ### Developer guide (inline §Developer Guide section in this mission)
 
-- [ ] §Developer Guide section authored inline in this mission (inline in this mission). Sections: role-binding declaration, pure forwarder exception, ReputationAnchor opt-in, cross-role data flow, audit trail, troubleshooting. → **DEFERRED** (inline §Developer Guide section deferred to follow-up; current docs are in rustdoc of `RoleBindingDeclaration` + `RoleBindingAuditLog` + `RoleBindingError` types — adequate substrate coverage, full §Developer Guide authoring is follow-up work)
+- [ ] §Developer Guide section authored inline in this mission (inline in this mission). Sections: role-binding declaration, pure forwarder exception, ReputationAnchor opt-in, cross-role data flow, audit trail, troubleshooting. → **DEFERRED** → **moved to `missions/claimed/0971-a1-deferred-acs.md` AC-B3** (owner @cipherocto; target 2026-08-21; current docs are in rustdoc of `RoleBindingDeclaration` + `RoleBindingAuditLog` + `RoleBindingError` types — adequate substrate coverage, full §Developer Guide authoring is follow-up work)
 
 ### Test vectors (RFC-0971 §Test Vectors, all 8 live in this sub-mission)
 
 - [x] TV1: Role Binding Assertion (Required Roles Present) — `RoleBindingDeclaration { required_roles: {Router, TokenIssuer, Asker} }` validates; missing any one of the three returns `RoleBindingError::MissingRequiredRole`. → **GREEN** (commit `67a47ace`; `tv1_required_roles_present_validates` + `tv1_missing_required_role_rejects`)
-- [ ] TV2: Cross-Role Data Flow — Deal Settlement — end-to-end: Asker creates Ask → TokenIssuer mints capability → Seller signs `DealSettled` → all audit entries emitted with correct `role_tag`. → **DEFERRED** (cross-role data flow integration; downstream)
-- [ ] TV3: Cross-Role Data Flow — Forwarded Request — end-to-end: Router forwards `ForwardRequestPayload` with `hop_envelope` per RFC-0970 → destination unwraps → audit entries emitted. → **DEFERRED** (cross-role data flow integration; downstream)
+- [ ] TV2: Cross-Role Data Flow — Deal Settlement — end-to-end: Asker creates Ask → TokenIssuer mints capability → Seller signs `DealSettled` → all audit entries emitted with correct `role_tag`. → **DEFERRED** → **moved to `missions/claimed/0971-a1-deferred-acs.md` AC-A4** (owner @cipherocto; target 2026-09-15; depends on AC-A1 + AC-A2)
+- [ ] TV3: Cross-Role Data Flow — Forwarded Request — end-to-end: Router forwards `ForwardRequestPayload` with `hop_envelope` per RFC-0970 → destination unwraps → audit entries emitted. → **DEFERRED** → **moved to `missions/claimed/0971-a1-deferred-acs.md` AC-A5** (owner @cipherocto; target 2026-09-15; depends on AC-A1 + AC-A2)
 - [x] TV4: Role Binding Lifecycle — transitions Active → Draining → Suspended → Retired. Invalid transitions (e.g., Active → Retired directly) return `RoleBindingError::InvalidTransition`. → **GREEN** (commit `67a47ace`; `tv4_lifecycle_happy_path` + `tv4_lifecycle_terminal_retired_rejects` + `tv4_lifecycle_invalid_suspended_to_draining_rejects`)
 - [x] TV5: Role Binding Exit (R23-N1 fix: Router Resigned only deactivates Router) — Router lifecycle resignation deactivates Router role; TokenIssuer + Asker remain Active. → **GREEN** (commit `67a47ace`; `tv5_router_resigned_deactivates_router_only`)
 - [x] TV6: Pure Forwarder Exception (NEW) — pure forwarder config (`required_roles = {}`, `optional_roles = {PureForwarder}`) accepts forwarded requests but rejects deal settlement attempts. → **GREEN** (commit `67a47ace`; `tv6_pure_forwarder_config_excludes_destination_roles`)
@@ -73,7 +73,7 @@ Predicate-based definition `DestinationNode = Router ∧ TokenIssuer ∧ Asker` 
 - [x] `cargo test -p quota-router-core --lib node::role_binding`: 18/18 pass (11 pre-existing + 7 new) → **GREEN**
 - [x] `cargo clippy -p quota-router-core --all-targets --features full -- -D warnings` clean (per [[feedback_clippy_zero_warnings]] + [[mode-gate-never-equals-interface]]) → **GREEN**
 - [x] `cargo fmt --check -p quota-router-core` clean → **GREEN**
-- [ ] `cargo doc --workspace --no-deps` builds without broken-doc-link warnings → **DEFERRED** (targeted `-p quota-router-core` clippy is clean; workspace doc build unverified — documented under follow-up)
+- [ ] `cargo doc --workspace --no-deps` builds without broken-doc-link warnings → **DEFERRED** → **moved to `missions/claimed/0971-a1-deferred-acs.md` AC-B4** (owner @cipherocto; target 2026-08-21; targeted `-p quota-router-core` clippy is clean; workspace doc build unverified)
 
 ## Dependencies
 

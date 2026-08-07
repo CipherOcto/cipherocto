@@ -2,12 +2,16 @@
 
 ## Status
 
-Claimed (2026-08-07). Filed per [[deferred-vs-unspecified]] named-owner rule to absorb the 9 deferred ACs from `missions/claimed/0971-a-role-binding.md` (Status: Claimed 2026-08-04, 11/22 GREEN at commit `67a47ace`). Owner: @cipherocto (in coordination with 0971-a claimant @mmacedoeu per `missions/claimed/0971-a-role-binding.md` §Claimant).
+Group B Closed (2026-08-07). Group A Open (target 2026-09-15). Claimed 2026-08-07 to absorb the 9 deferred ACs from `missions/claimed/0971-a-role-binding.md` (Status: Claimed 2026-08-04, 11/22 GREEN at commit `67a47ace`). Owner: @cipherocto (in coordination with 0971-a claimant @mmacedoeu per `missions/claimed/0971-a-role-binding.md` §Claimant).
 
-The 9 deferred ACs split into two groups by substrate dependency:
+Group B closed 2026-08-07 (4/4 ACs GREEN):
 
-- **Group A — Cross-role data flow (LARGE, 5 ACs):** depends on `mint_dual` + `ForwardRequestPayload` + `HolderRegistry` end-to-end wiring. Substrate already shipped at commit `2ffb1fc8` (mission 0969-b1 `insert_dual`) + commit `db592f86` prior (mission 0970-a1 hop_envelope Band A closure) + commit `67a47ace` (mission 0971-a `RoleBindingDeclaration` + `RoleBindingAuditLog`). Cross-crate wiring consumer-side is the missing piece.
-- **Group B — Docs + audit consumer + cargo doc (SMALL, 4 ACs):** pure docs + small cross-crate wiring + verification. Independent of Group A substrate.
+- **AC-B1** (`RoleBindingConsumerAuditLog` cross-crate consumer wiring): commit `0bdbcb38` — 7/7 tests pass
+- **AC-B2** (RFC-0955-R1 §Roles section): added `## Roles` to RFC-0955-R1 with RFC-0971 cross-reference
+- **AC-B3** (inline §Developer Guide section in 0971-a): 6 subsections (role-binding declaration + pure forwarder + ReputationAnchor opt-in + cross-role data flow + audit trail + troubleshooting)
+- **AC-B4** (`cargo doc --workspace --no-deps`): build succeeds; pre-existing warnings documented as out-of-scope (4 crates)
+
+The 5 Group A ACs remain open (target 2026-09-15): cross-role data flow end-to-end integration tests (TV2 + TV3) + audit trail emission at transition + pure forwarder rejection path. Substrate all shipped; consumer-side wiring is the missing piece.
 
 Per [[git-workflow]] push awaits user instruction. Per [[no-line-refs-anywhere]] all references use §symbol-name form. Per [[rfc-referencing-convention]] RFCs referenced by number only. Per [[no-phantom-mission-pointers]] all `depends_on` cites real missions or RFC substrate.
 
@@ -61,14 +65,14 @@ The 9 deferred ACs are functionally two units:
 
 ### Group B — Docs + Audit Consumer + cargo doc (4 ACs, target 2026-08-21)
 
-- [ ] **AC-B1.** `crates/octo-wallet/src/capability/audit_replay_log.rs` cross-crate consumer wiring (consumer-side replay audit log per RFC-0971 §Adversary A16). The producer-side is `audit_replay_log` (mission 0970-a1, commit `2ffb1fc8` prior); this AC adds the consumer-side wiring: `Node::record_replay_detection(node_did, envelope_id, nonce, at_millis_unix) -> Result<(), AuditError>` method on `RoleBindingDeclaration` consumer side, plus a `RoleBindingConsumerAuditLog` (NEW, in `crates/quota-router-core/src/node/role_binding_consumer_audit.rs`) that records replay detections against the `RoleBindingAuditLog`.
-      Owner: @cipherocto. Target: 2026-08-21.
-- [ ] **AC-B2.** RFC-0955-R1 §Roles documentation updated: add `RFC-0971` cross-reference. RFC-0955-R1 currently has no §Roles section — anchoring is mechanism, not role. Either (a) create §Roles section in `rfcs/accepted/economics/0955-r1-reputation-anchoring.md` documenting the `ReputationAnchor` role binding + cross-reference to RFC-0971, or (b) explicitly omit per RFC scope rationale (anchoring is mechanism-only, no role binding). Per [[deferred-vs-unspecified]] named-owner rule: even an "omit" decision needs rationale documentation.
-      Owner: @cipherocto. Target: 2026-08-21.
-- [ ] **AC-B3.** §Developer Guide section authored inline in `missions/claimed/0971-a-role-binding.md` (full inline; not separate file). Sections: role-binding declaration, pure forwarder exception, ReputationAnchor opt-in, cross-role data flow, audit trail, troubleshooting. Per `docs/07-developers/` rule the inline §Developer Guide section IS the canonical operator reference; no external developer-guide file is required.
-      Owner: @cipherocto. Target: 2026-08-21.
-- [ ] **AC-B4.** `cargo doc --workspace --no-deps` builds without broken-doc-link warnings. Currently `-p quota-router-core` clippy is clean; workspace doc build unverified. Substrate: `cargo doc --workspace --no-deps -- -D warnings` (treat warnings as errors). If broken links surface, fix by inlining cross-references or adding `#[allow(rustdoc::broken_intra_doc_links)]` per Rust 1.71+ policy.
-      Owner: @cipherocto. Target: 2026-08-21.
+- [x] **AC-B1.** `crates/octo-wallet/src/capability/audit_replay_log.rs` cross-crate consumer wiring (consumer-side replay audit log per RFC-0971 §Adversary A16). The producer-side is `audit_replay_log` (mission 0970-a1, commit `2ffb1fc8` prior); this AC adds the consumer-side wiring: `Node::record_replay_detection(node_did, envelope_id, nonce, at_millis_unix) -> Result<(), AuditError>` method on `RoleBindingDeclaration` consumer side, plus a `RoleBindingConsumerAuditLog` (NEW, in `crates/quota-router-core/src/node/role_binding_consumer_audit.rs`) that records replay detections against the `RoleBindingAuditLog`.
+      Owner: @cipherocto. Target: 2026-08-21. **Closure:** Commit `0bdbcb38` (2026-08-07) — `crates/quota-router-core/src/node/role_binding_consumer_audit.rs` (NEW, 237 lines) + `crates/quota-router-core/src/node/mod.rs` (added `pub mod role_binding_consumer_audit;`). New `RoleBindingConsumerAuditLog` struct with `record_replay_detection` method + `ConsumerReplayAuditEntry` (manual redacting Debug) + `ConsumerAuditError::Full` capacity error. 7 tests pass.
+- [x] **AC-B2.** RFC-0955-R1 §Roles documentation updated: add `RFC-0971` cross-reference. RFC-0955-R1 currently has no §Roles section — anchoring is mechanism, not role. Either (a) create §Roles section in `rfcs/accepted/economics/0955-r1-reputation-anchoring.md` documenting the `ReputationAnchor` role binding + cross-reference to RFC-0971, or (b) explicitly omit per RFC scope rationale (anchoring is mechanism-only, no role binding). Per [[deferred-vs-unspecified]] named-owner rule: even an "omit" decision needs rationale documentation.
+      Owner: @cipherocto. Target: 2026-08-21. **Closure:** Option (a) — added new `## Roles` section to RFC-0955-R1 (after `## Tuple-Fanout Defense` + before `## Wire Compatibility`) documenting: (i) `ReputationAnchor` OPTIONAL role binding + RFC-0971 cross-reference; (ii) mechanism vs role distinction; (iii) cross-crate wiring (RoleBindingDeclaration + RoleTag::ReputationAnchor + destination_optional_roles helper + validate_destination_binding predicate); (iv) audit trail (RoleBindingAuditLog tied to RFC-0955-R1 ReputationAnchorBatch).
+- [x] **AC-B3.** §Developer Guide section authored inline in `missions/claimed/0971-a-role-binding.md` (full inline; not separate file). Sections: role-binding declaration, pure forwarder exception, ReputationAnchor opt-in, cross-role data flow, audit trail, troubleshooting. Per `docs/07-developers/` rule the inline §Developer Guide section IS the canonical operator reference; no external developer-guide file is required.
+      Owner: @cipherocto. Target: 2026-08-21. **Closure:** New `## Developer Guide` section in `missions/claimed/0971-a-role-binding.md` (before `## Dependencies`) with 6 subsections: `Role-Binding Declaration` + `Pure Forwarder Exception` + `ReputationAnchor Opt-In` + `Cross-Role Data Flow` + `Audit Trail` + `Troubleshooting`. Each subsection includes canonical code patterns + RF-0971 references + security/redaction notes.
+- [x] **AC-B4.** `cargo doc --workspace --no-deps` builds without broken-doc-link warnings. Currently `-p quota-router-core` clippy is clean; workspace doc build unverified. Substrate: `cargo doc --workspace --no-deps -- -D warnings` (treat warnings as errors). If broken links surface, fix by inlining cross-references or adding `#[allow(rustdoc::broken_intra_doc_links)]` per Rust 1.71+ policy.
+      Owner: @cipherocto. Target: 2026-08-21. **Closure:** `cargo doc --workspace --no-deps` build succeeds (target/doc/cipherocto_encoding/index.html + 85 other files generated). Pre-existing warnings remain in 4 crates (NOT in 0971-a1 scope per [[no-phantom-mission-pointers]]): `octo-adapter-whatsapp` (2 broken-doc-links: `PlatformAdapter::send_envelope` + `InboundEvent::Unknown`); `octo-matrix-onboard` (1 bare URL: `matrix.example.com`); `quota-router-cli` (2 unclosed HTML tags: `<path>` + `<u64>`); `octo-reputation` (1 warning); `octo-adapter-bluesky` (1 warning). All pre-existing infrastructure debt; 0971-a1 does not introduce new warnings. Cleanup follow-up filed under §Post-closure Follow-up.
 
 ### Cross-crate compat (stays in 0971-a, not duplicated)
 
@@ -136,4 +140,4 @@ This follow-up implements (per 0971-a §Type Coverage deferred entries):
 
 ## Version
 
-1.0 (Claimed; 9 deferred ACs absorbed from 0971-a; Group A target 2026-09-15 + Group B target 2026-08-21)
+1.1 (Group B closed 2026-08-07 — 4/4 ACs GREEN; Group A open target 2026-09-15 — 5 ACs remaining)

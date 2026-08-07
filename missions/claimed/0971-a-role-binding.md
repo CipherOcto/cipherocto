@@ -54,7 +54,7 @@ Predicate-based definition `DestinationNode = Router ∧ TokenIssuer ∧ Asker` 
 
 ### Developer guide (inline §Developer Guide section in this mission)
 
-- [ ] §Developer Guide section authored inline in this mission (inline in this mission). Sections: role-binding declaration, pure forwarder exception, ReputationAnchor opt-in, cross-role data flow, audit trail, troubleshooting. → **DEFERRED** → **moved to `missions/claimed/0971-a1-deferred-acs.md` AC-B3** (owner @cipherocto; target 2026-08-21; current docs are in rustdoc of `RoleBindingDeclaration` + `RoleBindingAuditLog` + `RoleBindingError` types — adequate substrate coverage, full §Developer Guide authoring is follow-up work)
+- [x] §Developer Guide section authored inline in this mission (inline in this mission). Sections: role-binding declaration, pure forwarder exception, ReputationAnchor opt-in, cross-role data flow, audit trail, troubleshooting. → **GREEN** (per `docs/07-developers/` rule the inline §Developer Guide section IS the canonical operator reference; no external developer-guide file is required). See `## Developer Guide` section below.
 
 ### Test vectors (RFC-0971 §Test Vectors, all 8 live in this sub-mission)
 
@@ -74,6 +74,159 @@ Predicate-based definition `DestinationNode = Router ∧ TokenIssuer ∧ Asker` 
 - [x] `cargo clippy -p quota-router-core --all-targets --features full -- -D warnings` clean (per [[feedback_clippy_zero_warnings]] + [[mode-gate-never-equals-interface]]) → **GREEN**
 - [x] `cargo fmt --check -p quota-router-core` clean → **GREEN**
 - [ ] `cargo doc --workspace --no-deps` builds without broken-doc-link warnings → **DEFERRED** → **moved to `missions/claimed/0971-a1-deferred-acs.md` AC-B4** (owner @cipherocto; target 2026-08-21; targeted `-p quota-router-core` clippy is clean; workspace doc build unverified)
+
+## Developer Guide
+
+This section is the canonical operator reference for RFC-0971 §Role Binding
+declarations. Per the `docs/07-developers/` rule, the inline §Developer
+Guide section IS the canonical reference; no external developer-guide file
+is required.
+
+### Role-Binding Declaration
+
+A destination node declares its role binding via `RoleBindingDeclaration`
+in `crates/quota-router-core/src/node/role_binding.rs`. The struct
+canonicalizes the configuration:
+
+```rust
+pub struct RoleBindingDeclaration {
+    pub node_did: String,
+    pub required_roles: BTreeSet<RoleTag>,   // must contain {Router, TokenIssuer, Asker}
+    pub optional_roles: BTreeSet<RoleTag>,   // may contain {ReputationAnchor}
+    pub lifecycle: RoleBindingLifecycle,
+    pub minted_at_millis_unix: i64,
+}
+```
+
+The canonical **destination-node pattern** is:
+
+```rust
+use std::collections::BTreeSet;
+use crate::node::role_binding::{RoleBindingDeclaration, RoleTag, RoleBindingLifecycle, destination_required_roles, destination_optional_roles};
+
+let decl = RoleBindingDeclaration {
+    node_did: "did:octo:<canonical-form>".to_string(),
+    required_roles: destination_required_roles(),   // {Router, TokenIssuer, Asker}
+    optional_roles: destination_optional_roles(),   // {ReputationAnchor}
+    lifecycle: RoleBindingLifecycle::Active,
+    minted_at_millis_unix: now_millis_unix(),
+};
+```
+
+The helper `destination_required_roles()` returns the canonical
+`{Router, TokenIssuer, Asker}` set; `destination_optional_roles()` returns
+`{ReputationAnchor}`. Both helpers are the canonical constructors; do
+NOT hand-construct the BTreeSets.
+
+### Pure Forwarder Exception
+
+A pure forwarder node does NOT carry `Router`, `TokenIssuer`, or `Asker`
+roles. The canonical pure-forwarder pattern is:
+
+```rust
+use crate::node::role_binding::{RoleBindingDeclaration, pure_forwarder_roles};
+
+let decl = RoleBindingDeclaration {
+    node_did: "did:octo:<pure-forwarder>".to_string(),
+    required_roles: BTreeSet::new(),                  // empty
+    optional_roles: pure_forwarder_roles(),           // {PureForwarder}
+    lifecycle: RoleBindingLifecycle::Active,
+    minted_at_millis_unix: now_millis_unix(),
+};
+```
+
+Pure forwarders ACCEPT forwarded requests (RFC-0970) but REJECT deal
+settlement (no `Asker` binding) and do NOT mint tokens (no `TokenIssuer`
+binding). Finding A18 defense: without this exception, a node lacking
+`Router`/`TokenIssuer`/`Asker` bindings would be rejected by
+`validate_destination_binding()` even when the operator intentionally
+ran a pure-forwarder node.
+
+### ReputationAnchor Opt-In
+
+`ReputationAnchor` is OPTIONAL. A destination node without `ReputationAnchor`
+in `optional_roles` still performs deal settlement and forwarding; only
+reputation-anchoring attempts return `RoleBindingError::RoleNotBound`.
+
+```rust
+// Canonical destination node with ReputationAnchor OPTIONAL — absence does not block settlement
+let decl_without_anchor = RoleBindingDeclaration {
+    node_did: "did:octo:<canonical-form>".to_string(),
+    required_roles: destination_required_roles(),
+    optional_roles: BTreeSet::new(),                  // no ReputationAnchor
+    lifecycle: RoleBindingLifecycle::Active,
+    minted_at_millis_unix: now_millis_unix(),
+};
+```
+
+The `validate_destination_binding()` predicate checks `required_roles ⊆ {Router, TokenIssuer, Asker}`
+without requiring `ReputationAnchor`. R13-N8 fix: anchoring absence is
+non-blocking. The canonical `ReputationAnchor` role binding is documented
+in RFC-0955-R1 §Roles (cross-reference added in mission 0971-a1 AC-B2).
+
+### Cross-Role Data Flow
+
+Destination-node role bindings carry the data-flow contract:
+
+- **`Asker`** — creates Ask (RFC-0959), signs `DealSettled` (RFC-0959-A1)
+- **`TokenIssuer`** — mints `CapabilityToken` (RFC-0957-A1) via `CapabilityToken::mint`
+- **`Router`** — forwards `ForwardRequestPayload` (RFC-0970) with `hop_envelope`
+- **`ReputationAnchor`** (OPTIONAL) — anchors reputation to chain-side ledger (RFC-0955-R1)
+
+The cross-role data flow is end-to-end: `Asker → TokenIssuer → Router`.
+The pure forwarder stands outside this flow (`Asker → TokenIssuer → Router`
+data-flow does NOT pass through pure forwarders). Mission 0971-a1 Group A
+(target 2026-09-15) implements the end-to-end integration tests.
+
+### Audit Trail
+
+Role-binding transitions emit `RoleBindingAuditEntry` records in
+`RoleBindingAuditLog` (file `crates/quota-router-core/src/node/role_binding_audit.rs`).
+Each entry carries typed `RoleTag` (no string literals; TV8 grep test
+enforces). Replay detection events (RFC-0971 §Adversary A16) flow through
+the producer-side `AuditReplayLog` (`octo_wallet::capability::audit_replay_log`)
+into the consumer-side `RoleBindingConsumerAuditLog`
+(`crates/quota-router-core/src/node/role_binding_consumer_audit.rs`,
+mission 0971-a1 AC-B1).
+
+Audit log structure:
+
+```rust
+pub struct RoleBindingAuditEntry {
+    pub node_did: String,                   // REDACTED in Debug
+    pub role_tag: RoleTag,                  // preserved for forensics
+    pub from_state: RoleBindingLifecycle,
+    pub to_state: RoleBindingLifecycle,
+    pub node_epoch: u64,
+    pub at_millis_unix: i64,
+}
+```
+
+Per RFC-0957-A1 §Security, `node_did` is redacted in Debug output. The
+consumer-side audit log uses the same redaction convention for `envelope_id`
+
+- `nonce` fields.
+
+### Troubleshooting
+
+- **"destination node rejected: MissingRequiredRole"** — the
+  `required_roles` BTreeSet is missing one of `{Router, TokenIssuer, Asker}`.
+  Use `destination_required_roles()`; do NOT hand-construct.
+- **"destination node rejected: InvalidTransition"** — the lifecycle
+  transition is invalid (e.g., `Active → Retired` directly). Use
+  `validate_lifecycle_transition()` to check transitions before applying.
+- **"router_resigned broke the binding"** — calling `router_resigned()`
+  on a `RoleBindingDeclaration` flips the `Router` role to inactive while
+  preserving `TokenIssuer` + `Asker`. R23-N1 fix: the resignation only
+  deactivates `Router`, not the entire binding.
+- **"pure forwarder rejected deal settlement"** — expected; pure forwarders
+  lack `Asker` binding. Use the canonical destination-node pattern
+  (Router + TokenIssuer + Asker) for settlement-accepting nodes.
+- **"audit log full (capacity N entries)"** — `RoleBindingAuditLog` is
+  bounded. Increase capacity at construction, or rotate to a persistent
+  ledger (stoolap-backed append-only ledger is a follow-up; per
+  [[stoolap-general-purpose-db]] hard red line, the cipherocto business
+  schema stays cipherocto-side).
 
 ## Dependencies
 

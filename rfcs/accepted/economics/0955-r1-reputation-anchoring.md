@@ -16,8 +16,8 @@ Accepted 2026-07-27 (sibling amendment promoted to Accepted in concert with RFC-
 
 ## Version History
 
-| Version | Date | Changes |
-| --- | --- | --- |
+| Version   | Date       | Changes                                                                                                                 |
+| --------- | ---------- | ----------------------------------------------------------------------------------------------------------------------- |
 | 1.0-draft | 2026-07-27 | Initial draft. Promoted from in-file amendment at RFC-0955 lines 912-1023 to a sibling Draft RFC per BLUEPRINT process. |
 
 ## Summary
@@ -89,10 +89,10 @@ anchor_digest = BLAKE3(
 ### Range constraints
 
 - `signal_kind` MUST be one of `SignalKind::{Slash, Outcome, Latency, Capacity,
-  Discovery, Rotation}` (RFC-0968 §10); values `6..255` are reserved and
+Discovery, Rotation}` (RFC-0968 §10); values `6..255` are reserved and
   rejected at the chain-side contract.
 - `layer` MUST be one of `ReputationLayer::{Mon, Dc, Marketplace, TaskMarket,
-  Retrieval, ProofMarket}` (RFC-0968 §10); values `6..255` are reserved and
+Retrieval, ProofMarket}` (RFC-0968 §10); values `6..255` are reserved and
   rejected at the chain-side contract.
 
 The range check is enforced at the chain-side contract, NOT at the recorder
@@ -345,6 +345,53 @@ per-leaf cap. The per-controller aggregation supersedes the prior
 per-recorder model; the `ANCHOR_FEE_ESCROW_PER_TUPLE_PER_DAY` field is
 REMOVED.
 
+## Roles
+
+This RFC introduces the **`ReputationAnchor`** role binding for destination
+nodes (cross-reference to RFC-0971). The role binding is **OPTIONAL** —
+a destination node may perform deal settlement and forwarding without the
+`ReputationAnchor` role. The role binding is the destination-node-side
+counterpart of the on-chain anchoring binding defined in this RFC.
+
+### Relationship to RFC-0971
+
+RFC-0971 §Phase 1 defines `RoleBindingDeclaration` with `required_roles` +
+`optional_roles` BTreeSets over the typed `RoleTag` enum. The `ReputationAnchor`
+variant is the OPTIONAL role; absence from both `required_roles` and
+`optional_roles` does NOT block the destination node from performing deal
+settlement or forwarding. The canonical predicate for a destination node is
+`Router ∧ TokenIssuer ∧ Asker` with `ReputationAnchor` as an OPTIONAL
+augmentation (RFC-0971 §Phase 1 R13-N8 fix).
+
+### Mechanism vs role
+
+The anchoring itself is a **mechanism** (the on-chain binding described in
+this RFC) — every eligible destination node MAY anchor reputation to the
+chain-side ledger regardless of role binding. The `ReputationAnchor` role
+binding is the **destination-node declared intent** to perform anchoring
+operations, surfaced via `RoleBindingDeclaration.optional_roles`. The
+mechanism is owned by RFC-0955-R1; the role binding is owned by RFC-0971.
+
+### Cross-crate wiring
+
+The canonical `RoleBindingDeclaration` substrate lives at
+`crates/quota-router-core/src/node/role_binding.rs` (mission 0971-a
+Band A closure, commit `67a47ace`). The `RoleTag::ReputationAnchor` variant
+is the typed enum entry. The `destination_optional_roles()` helper
+constructs the canonical `optional_roles = {ReputationAnchor}` set for
+the destination node pattern. The `validate_destination_binding()` call
+asserts the predicate without requiring `ReputationAnchor`, so anchoring
+absence is non-blocking per RFC-0971 §Roles cross-reference.
+
+### Audit trail
+
+Role-binding transitions (including `ReputationAnchor` opt-in / opt-out
+transitions) are recorded in the append-only `RoleBindingAuditLog` (mission
+0971-a commit `67a47ace`, file `crates/quota-router-core/src/node/role_binding_audit.rs`).
+The audit trail uses typed `RoleTag` enum (NO string literals); TV8 grep
+test enforces. Separate from the chain-side `ReputationAnchorBatch` defined
+in this RFC.
+
 ## Wire Compatibility
 
 The previous `reputation: u64` field on `ComputeOffer` (RFC-0955 §3.2) is
@@ -364,9 +411,9 @@ update the encoding tables below. A pre-image rejection rule: chain-side
 contract MUST reject any anchoring transaction whose `governance_set_hash[0]`
 does not match the active version byte. Version-history table:
 
-| Version | Date | Changes |
-| --- | --- | --- |
-| `0x01` | 2026-07-27 | Initial format: 32-byte BLAKE3 anchor digest; `GovernanceProof.signers: Vec<GovernanceSigner>` (per-sig pubkey required); `ReputationAnchorBatch` carries `governance_proof` + `governance_set_hash` + `chain_block_height: Option<u64>`. |
+| Version | Date       | Changes                                                                                                                                                                                                                                   |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0x01`  | 2026-07-27 | Initial format: 32-byte BLAKE3 anchor digest; `GovernanceProof.signers: Vec<GovernanceSigner>` (per-sig pubkey required); `ReputationAnchorBatch` carries `governance_proof` + `governance_set_hash` + `chain_block_height: Option<u64>`. |
 
 Signer ordering: `GovernanceProof.signers` MUST be sorted lexicographically
 by `signer.pubkey` before transmission. Two replicas observing the same
@@ -381,20 +428,20 @@ of the breaking change; no live pre-R1 anchor transactions exist).
 
 ## Performance Targets
 
-| Metric | Target | Notes |
-| ------ | ------ | ----- |
-| Anchor submission (single batch, per controller) | <2s p99 | Mempool admission + chain-side idempotency lookup |
-| Anchor finality (depth confirmation) | <5min p99 | `MIN_FINALITY_BLOCKS = 12` at ~25s/block; cap at 5min |
-| Anchor Merkle root computation | <50ms p99 | 100 leaves per root, in-memory BLAKE3 |
-| Anchor storage (per anchor row in `reputation_anchors`) | <10ms p99 | Indexed PK lookup on `event_id` |
+| Metric                                                  | Target    | Notes                                                 |
+| ------------------------------------------------------- | --------- | ----------------------------------------------------- |
+| Anchor submission (single batch, per controller)        | <2s p99   | Mempool admission + chain-side idempotency lookup     |
+| Anchor finality (depth confirmation)                    | <5min p99 | `MIN_FINALITY_BLOCKS = 12` at ~25s/block; cap at 5min |
+| Anchor Merkle root computation                          | <50ms p99 | 100 leaves per root, in-memory BLAKE3                 |
+| Anchor storage (per anchor row in `reputation_anchors`) | <10ms p99 | Indexed PK lookup on `event_id`                       |
 
 ## Error Handling
 
-| Hex code | Variant | Source | Recovery |
-| -------- | ------- | ------ | -------- |
-| `0x2A` | `AnchorTupleFanoutExceeded` | RFC-0968 §13 (reserved band 0x2A..=0xFF) | Reject; controller exceeds `MAX_ANCHORED_TUPLES_PER_CONTROLLER_PER_DAY = 100`. |
-| `0x12` | `GovernanceQuorumNotMet` | RFC-0968 §13 | Reject; re-submit with full `GOVERNANCE_QUORUM = 3` signatures. |
-| `0x13` | `GovernanceSetHashMismatch` | RFC-0968 §13 | Reject; re-fetch the active set hash and re-sign. |
+| Hex code | Variant                     | Source                                   | Recovery                                                                       |
+| -------- | --------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------ |
+| `0x2A`   | `AnchorTupleFanoutExceeded` | RFC-0968 §13 (reserved band 0x2A..=0xFF) | Reject; controller exceeds `MAX_ANCHORED_TUPLES_PER_CONTROLLER_PER_DAY = 100`. |
+| `0x12`   | `GovernanceQuorumNotMet`    | RFC-0968 §13                             | Reject; re-submit with full `GOVERNANCE_QUORUM = 3` signatures.                |
+| `0x13`   | `GovernanceSetHashMismatch` | RFC-0968 §13                             | Reject; re-fetch the active set hash and re-sign.                              |
 
 The 0955-R1 wire layer re-exports `ReputationError::AnchorTupleFanoutExceeded`
 from RFC-0968; the joint-table entry is the single source of truth.
@@ -408,7 +455,7 @@ reproducible byte-exact by an independent implementation:
    `layer = 0`, `last_event_id = [0u8; 32]`, `score_ewma_raw = [0u8; 24]`,
    `last_event_unix = 0`, `samples = 0`, `severity_total = 0`:
    `anchor_digest = BLAKE3(BLAKE3_REPUTATION_ANCHOR_DOMAIN || [0u8;32] ||
-   0x00 || 0x00 || [0u8;32] || [0u8;24] || [0u8;8] || [0u8;8] || [0u8;8])`
+0x00 || 0x00 || [0u8;32] || [0u8;24] || [0u8;8] || [0u8;8] || [0u8;8])`
    yields a deterministic 32-byte digest. Pin the expected bytes in
    `crates/octo-reputation/tests/anchoring/canonical_blobs.rs::CANONICAL_ANCHOR_BLOB`.
 2. **Cross-DID distinctness.** Two unrelated DIDs with identical score produce

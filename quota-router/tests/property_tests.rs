@@ -87,6 +87,11 @@ fn make_forward_request(
 }
 
 proptest! {
+    // Property tests run 1000+ iterations per the 0870h AC-3 spec.
+    // PROPTEST_CASES=1000 sets this per-test config. See:
+    // missions/claimed/0870h-property-tests-and-adversarial-e2e.md AC-3.
+    #![proptest_config(ProptestConfig::with_cases(1000))]
+
     #[test]
     fn scoring_deterministic(
         providers in proptest::collection::vec(any_provider_capacity(), 0..50),

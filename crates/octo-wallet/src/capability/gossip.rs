@@ -4,6 +4,17 @@
 // handle Finding A11 (gossip partition → envelope not received).
 // Exhaustion emits `DeliveryError::GossipFailed { attempts }`.
 
+// **Mission 0959-c3:** the original `CapabilityCatalog::gossip_to_buyer`
+// was split into a separate `CapabilityGossip` async trait so the primary
+// catalog stays object-safe (`&dyn CapabilityCatalog` is used elsewhere
+// for caveat attenuation + macaroon storage). The bounded retry loop in
+// this module dispatches via the sync shim `gossip_to_buyer_sync` on the
+// primary trait; catalogs that implement async gossip return
+// `Err(Unsupported)` from the sync shim and instead expose the async
+// `CapabilityGossip::gossip_to_buyer` for runtime callers. The 0959-c2
+// in-process harness uses the sync path (no tokio runtime required);
+// production `TransportDeliveryCatalog` uses the async path directly.
+
 use std::thread;
 use std::time::Duration;
 
@@ -41,12 +52,22 @@ pub fn backoff_for_attempt(attempt: u32) -> Duration {
 ///
 /// **Retry policy (RFC-0959-A1 §Phase 3 + mission `0959-c1-gossip-error-variants`):**
 /// - `Ok(())` → return `Ok(())`.
-/// - `Err(Unsupported)` → fail-fast (catalog lacks gossip substrate); return
+/// - `Err(Unsupported)` → fail-fast (catalog lacks gossip substrate OR
+///   only implements async `CapabilityGossip`); return
 ///   `GossipFailed { attempts }` immediately (no retry, no backoff).
 /// - `Err(Permanent(_))` → fail-fast (schema/capability mismatch); return
 ///   `GossipFailed { attempts }` immediately (no retry).
 /// - `Err(Transient(_))` → backoff per `backoff_for_attempt(attempt)` then
 ///   retry up to `MAX_GOSSIP_ATTEMPTS`. Exhaustion → `GossipFailed { attempts: 5 }`.
+///
+/// **Mission 0959-c3:** this function delegates to the sync shim
+/// `catalog.gossip_to_buyer_sync(...)`. Catalogs that implement only
+/// the async `CapabilityGossip` trait (e.g.,
+/// `TransportDeliveryCatalog`) return `Unsupported` from the sync shim
+/// and require the async dispatch path
+/// `gossip_envelope_to_buyer_async`. The 0959-c2 in-process harness
+/// keeps using this sync function; production wiring uses the new
+/// async function.
 pub fn gossip_envelope_to_buyer(
     env: &MarketDeliveryEnvelope,
     buyer_did: &str,
@@ -54,7 +75,7 @@ pub fn gossip_envelope_to_buyer(
 ) -> Result<(), DeliveryError> {
     let payload = serde_json::to_vec(env).unwrap_or_default();
     for attempt in 1..=MAX_GOSSIP_ATTEMPTS {
-        match catalog.gossip_to_buyer(buyer_did, &payload) {
+        match catalog.gossip_to_buyer_sync(buyer_did, &payload) {
             Ok(()) => return Ok(()),
             // `Unsupported` (catalog lacks gossip substrate) and `Permanent`
             // (non-retryable schema/capability mismatch) both fail-fast.
@@ -78,6 +99,43 @@ pub fn gossip_envelope_to_buyer(
     })
 }
 
+/// **Mission 0959-c3:** async variant of `gossip_envelope_to_buyer` that
+/// drives the async `CapabilityCatalog::gossip_to_buyer` (now routed
+/// through `CapabilityGossip::gossip_to_buyer`) using a tokio runtime
+/// budget. Same retry policy as the sync variant; replaces
+/// `thread::sleep` with `tokio::time::sleep` so the runtime can drive
+/// other futures concurrently.
+///
+/// Production callers (e.g., the wallet's market-delivery pipeline)
+/// should prefer this function when the catalog advertises async
+/// gossip (`CapabilityCatalog::implements_gossip()`). The bounded
+/// retry loop awaits each attempt + backoff interval before re-driving.
+pub async fn gossip_envelope_to_buyer_async(
+    env: &MarketDeliveryEnvelope,
+    buyer_did: &str,
+    catalog: &dyn CapabilityGossip,
+) -> Result<(), DeliveryError> {
+    let payload = serde_json::to_vec(env).unwrap_or_default();
+    for attempt in 1..=MAX_GOSSIP_ATTEMPTS {
+        match catalog.gossip_to_buyer(buyer_did, &payload).await {
+            Ok(()) => return Ok(()),
+            Err(CatalogGossipError::Unsupported | CatalogGossipError::Permanent(_)) => {
+                return Err(DeliveryError::GossipFailed { attempts: attempt });
+            }
+            Err(CatalogGossipError::Transient(_)) => {
+                if attempt < MAX_GOSSIP_ATTEMPTS {
+                    tokio::time::sleep(backoff_for_attempt(attempt)).await;
+                }
+            }
+        }
+    }
+    Err(DeliveryError::GossipFailed {
+        attempts: MAX_GOSSIP_ATTEMPTS,
+    })
+}
+
+use super::macaroon::CapabilityGossip;
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
@@ -94,7 +152,11 @@ mod tests {
         fn get(&self, _id: &[u8; 32]) -> Option<&Macaroon> {
             None
         }
-        fn gossip_to_buyer(&self, _buyer_did: &str, _env: &[u8]) -> Result<(), CatalogGossipError> {
+        fn gossip_to_buyer_sync(
+            &self,
+            _buyer_did: &str,
+            _env: &[u8],
+        ) -> Result<(), CatalogGossipError> {
             Err(CatalogGossipError::Unsupported)
         }
     }
@@ -104,7 +166,11 @@ mod tests {
         fn get(&self, _id: &[u8; 32]) -> Option<&Macaroon> {
             None
         }
-        fn gossip_to_buyer(&self, _buyer_did: &str, _env: &[u8]) -> Result<(), CatalogGossipError> {
+        fn gossip_to_buyer_sync(
+            &self,
+            _buyer_did: &str,
+            _env: &[u8],
+        ) -> Result<(), CatalogGossipError> {
             Ok(())
         }
     }
@@ -115,7 +181,11 @@ mod tests {
         fn get(&self, _id: &[u8; 32]) -> Option<&Macaroon> {
             None
         }
-        fn gossip_to_buyer(&self, _buyer_did: &str, _env: &[u8]) -> Result<(), CatalogGossipError> {
+        fn gossip_to_buyer_sync(
+            &self,
+            _buyer_did: &str,
+            _env: &[u8],
+        ) -> Result<(), CatalogGossipError> {
             Err(CatalogGossipError::Permanent("schema mismatch".into()))
         }
     }
@@ -129,7 +199,11 @@ mod tests {
         fn get(&self, _id: &[u8; 32]) -> Option<&Macaroon> {
             None
         }
-        fn gossip_to_buyer(&self, _buyer_did: &str, _env: &[u8]) -> Result<(), CatalogGossipError> {
+        fn gossip_to_buyer_sync(
+            &self,
+            _buyer_did: &str,
+            _env: &[u8],
+        ) -> Result<(), CatalogGossipError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Err(CatalogGossipError::Transient("network unreachable".into()))
         }
@@ -326,7 +400,11 @@ mod tests {
         fn get(&self, _id: &[u8; 32]) -> Option<&Macaroon> {
             None
         }
-        fn gossip_to_buyer(&self, _buyer_did: &str, _env: &[u8]) -> Result<(), CatalogGossipError> {
+        fn gossip_to_buyer_sync(
+            &self,
+            _buyer_did: &str,
+            _env: &[u8],
+        ) -> Result<(), CatalogGossipError> {
             let n = self.counter.fetch_add(1, Ordering::SeqCst);
             if n < self.initial_fail_count {
                 Err(CatalogGossipError::Transient("network blip".into()))

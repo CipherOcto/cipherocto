@@ -92,7 +92,7 @@ impl CapabilityCatalog for InProcessDeliveryCatalog {
         None
     }
 
-    fn gossip_to_buyer(&self, _buyer_did: &str, env: &[u8]) -> Result<(), CatalogGossipError> {
+    fn gossip_to_buyer_sync(&self, _buyer_did: &str, env: &[u8]) -> Result<(), CatalogGossipError> {
         self.inbox
             .lock()
             .expect("poisoned inbox mutex")
@@ -212,7 +212,7 @@ impl CapabilityCatalog for FlakyDeliveryCatalog {
         None
     }
 
-    fn gossip_to_buyer(&self, _buyer_did: &str, env: &[u8]) -> Result<(), CatalogGossipError> {
+    fn gossip_to_buyer_sync(&self, _buyer_did: &str, env: &[u8]) -> Result<(), CatalogGossipError> {
         let mut count = self.fail_count.lock().expect("poisoned fail_count mutex");
         if *count < self.initial_failures {
             *count += 1;

@@ -119,6 +119,24 @@ rpassword = "7"
 # proofer + verifier + wallet.
 zk-vendor = { path = "../zk-vendor" }
 
+# Mission 0959-c3: production `TransportDeliveryCatalog` wires
+# `CapabilityCatalog::gossip_to_buyer` to the canonical RFC-0862
+# gossip substrate (`octo_transport::NodeTransport::broadcast`).
+octo-transport = { path = "../../octo-transport" }
+
+# Mission 0959-c3: production wiring tests use tokio runtime to drive
+# `octo_transport::NodeTransport::broadcast` (an async fn). Pulled
+# in as a runtime dep because `gossip_envelope_to_buyer_async` in
+# `gossip.rs` uses `tokio::time::sleep`.
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+
+# `async_trait` allows `CapabilityGossip::gossip_to_buyer` (an `async fn`
+# in a trait) to be invoked through `&dyn CapabilityGossip` — required
+# because Rust's native `async fn` in trait is not yet dyn-compatible.
+# Mission 0959-c3. Runtime dep (not dev-dep) because the trait lives
+# in library code (`crates/octo-wallet/src/capability/macaroon.rs`).
+async-trait = "0.1"
+
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"

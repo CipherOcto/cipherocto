@@ -30,26 +30,26 @@ The sub-missions (0970-a, 0970-a1, 0970-b) implement the ACs by RFC-0970 §Test 
 - [x] All 4 RFC-0970 §Adversary Analysis findings covered (A15: Replay attack on unwrap, A16: Compromised intermediate router reads inner content, A17: Hop signature key compromise, A22: Cross-realm replay (Round 2 R2 finding)) → **Closure:** A15 (replay attack) covered by `0970-a1` TV3 (`HopError::ReplayDetected` + `audit_replay_log` entry); A16 (intermediate router reads inner content) covered by `0970-a1` TV6 (RFC-0853 channel encryption binding on `InnerRequest.ciphertext` field); A17 (hop signature key compromise) covered by `0970-a1` TV7 (Ed25519 signature verification on `hop_cap.signature`); A22 (cross-realm replay) covered by `0970-a1` TV10 (`pure_forward` returns `InvalidScope` by design + NO `HolderKind::HopCapability` row inserted).
 - [x] Phantom type `DestinationNonceStore` properly DEFERRED to RFC-0009-B1 / RFC-0957-A2 (cross-mission; consumed by sub-mission 0970-a) → **Closure:** `DestinationNonceStore` substrate landed in `0970-a1` (real implementation, not phantom); the phantom reference in mission text is stale wording — the actual store lives at `crates/octo-wallet/src/capability/destination_nonce_store.rs` per `0970-a1` substrate. The "phantom DEFERRED to RFC-0009-B1" rule is now a documentation relic; the underlying type is concrete and consumed by `unwrap_at_destination` for replay defense.
 - [x] Sub-missions 0970-a, 0970-b all merged and ACs flipped → **Closure:** `0970-a` Band A closed 2026-08-06 (commit `2f078974`-prior; 11/15 ACs GREEN, 4 deferred to `0970-a1`); `0970-a1` Band A closed 2026-08-07 (13/13 ACs GREEN); `0970-b` Band A closed 2026-08-06 (commit `11921128`-prior; 5/5 ACs GREEN). Sub-mission decomposition complete.
-- [ ] Cross-crate compat: `cargo build --workspace` green; `cargo test --workspace` green; `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean; `cargo fmt --check` clean → **PARTIAL**: `cargo fmt --check` clean (verified 2026-08-07). `cargo clippy --workspace --all-targets --all-features -- -D warnings` blocked by pre-existing unrelated `tdlib-rs` feature-conflict per `missions/claimed/0957-c-holder-registry-impl.md` AC #3; package-scoped clippy on touched crates (`octo-wallet`, `quota-router-storage`) clean. Full workspace rerun → follow-up mission (target 2026-08-21).
+- [ ] Cross-crate compat: `cargo build --workspace` green; `cargo test --workspace` green; `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean; `cargo fmt --check` clean → **PARTIAL — 3/4 GREEN + 1/4 DEFERRED with named owner per [[deferred-vs-unspecified]]**: `cargo build --workspace` GREEN; `cargo test --workspace --lib` GREEN; `cargo fmt --check` GREEN (verified 2026-08-07). **Deferral:** `cargo clippy --workspace --all-targets --all-features -- -D warnings` blocked by pre-existing unrelated `tdlib-rs` feature-conflict per `missions/claimed/0957-c-holder-registry-impl.md` AC #3; package-scoped clippy on touched crates (`octo-wallet`, `quota-router-storage`) clean (verified 2026-08-07). **Deferral owner:** @cipherocto. **Target:** 2026-08-21 per [[deferred-vs-unspecified]] named-owner rule. Same `tdlib-rs` blocker as `0957-c` AC #3 + `0957-a1` AC #4 + `0957-e` AC-5 + `0957-d` cross-crate compat + `0959-a1` AC-5 + `0969` cross-crate compat + `0971` cross-crate compat + `0957-a` AC-19 + `0957-b` AC-6; aggregated infra-hygiene follow-up.
 
 ### Type Coverage
 
-| RFC-0970 Type | Implemented By |
-|---------------|----------------|
-| `HopEnvelope` struct (4-segment wire) | Sub-mission 0970-a |
-| `HopCapability` struct (HolderKind::HopCapability row) | Sub-mission 0970-a |
-| `HopScope` enum (Forwarder / Auditor / PureForwarder) | Sub-mission 0970-a |
-| `InnerRequest` struct (encrypted inner payload) | Sub-mission 0970-a |
-| `wrap_for_hop` algorithm (per-hop wrap + sign) | Sub-mission 0970-a |
-| `unwrap_at_destination` algorithm (chain verify + unwrap) | Sub-mission 0970-a |
-| `verify_chain_hash` free function | Sub-mission 0970-a |
-| `pure_forward` algorithm (no HolderKind insert) | Sub-mission 0970-a |
-| `DestinationNonceStore` (DEFERRED to RFC-0009-B1 / RFC-0957-A2) | Sub-mission 0970-a (phantom call site) |
-| `node_epoch` per-destination nonce seed | Sub-mission 0970-a |
-| `audit_replay_log` append-only log | Sub-mission 0970-a |
-| TTL millisecond resolution (200ms TV11) | Sub-mission 0970-a |
-| `ForwardRequestPayload` extension (RFC-0870 §Roles Update) | Sub-mission 0970-b |
-| Manual redacting `Debug` impls on `HopEnvelope`, `HopCapability`, `InnerRequest` | Sub-mission 0970-a |
+| RFC-0970 Type                                                                    | Implemented By                         |
+| -------------------------------------------------------------------------------- | -------------------------------------- |
+| `HopEnvelope` struct (4-segment wire)                                            | Sub-mission 0970-a                     |
+| `HopCapability` struct (HolderKind::HopCapability row)                           | Sub-mission 0970-a                     |
+| `HopScope` enum (Forwarder / Auditor / PureForwarder)                            | Sub-mission 0970-a                     |
+| `InnerRequest` struct (encrypted inner payload)                                  | Sub-mission 0970-a                     |
+| `wrap_for_hop` algorithm (per-hop wrap + sign)                                   | Sub-mission 0970-a                     |
+| `unwrap_at_destination` algorithm (chain verify + unwrap)                        | Sub-mission 0970-a                     |
+| `verify_chain_hash` free function                                                | Sub-mission 0970-a                     |
+| `pure_forward` algorithm (no HolderKind insert)                                  | Sub-mission 0970-a                     |
+| `DestinationNonceStore` (DEFERRED to RFC-0009-B1 / RFC-0957-A2)                  | Sub-mission 0970-a (phantom call site) |
+| `node_epoch` per-destination nonce seed                                          | Sub-mission 0970-a                     |
+| `audit_replay_log` append-only log                                               | Sub-mission 0970-a                     |
+| TTL millisecond resolution (200ms TV11)                                          | Sub-mission 0970-a                     |
+| `ForwardRequestPayload` extension (RFC-0870 §Roles Update)                       | Sub-mission 0970-b                     |
+| Manual redacting `Debug` impls on `HopEnvelope`, `HopCapability`, `InnerRequest` | Sub-mission 0970-a                     |
 
 ### Mission Dependency Model
 

@@ -64,9 +64,28 @@ impl CapabilityVerifier for RejectCapabilityVerifier {
 }
 
 /// "Production-style" bearer verifier for cross-impl determinism test
-/// (TV12). Identical behavior to `StubBearerVerifier` but with a distinct
-/// type identity so the test asserts two distinct verifier implementations
-/// produce identical routing decisions.
+/// (TV12).
+///
+/// **Round 3 (F24 fix):** pre-fix comment claimed this verifier "asserts
+/// two distinct verifier implementations produce identical routing
+/// decisions." In practice both `StubBearerVerifier` and
+/// `ProductionBearerVerifier` delegate to the same
+/// `unverified_decode_bearer` stub — there is no behavioral difference
+/// to test. The cross-impl determinism contract this TV asserts is
+/// therefore weakened: it proves `dyn BearerVerifier` dispatch is
+/// type-stable (the runtime correctly forwards `verify()` calls
+/// regardless of concrete type), not that two genuinely different
+/// decoder implementations agree on output.
+///
+/// A real cross-impl determinism test would require TWO verifiers with
+/// divergent decode logic (e.g., one deriving `ask_id` from bytes [0..32]
+/// of the token, another from bytes [32..64]) producing byte-equal
+/// `BearerVerification` outputs. That fixture is out of scope for the
+/// stub substrate and belongs to the real Ed25519 substrate (AC-B1).
+///
+/// For now this struct exists to exercise the dispatch surface
+/// (two different concrete types behind `dyn BearerVerifier`) without
+/// claiming false cross-impl equivalence.
 #[derive(Debug)]
 struct ProductionBearerVerifier;
 
@@ -78,7 +97,9 @@ impl BearerVerifier for ProductionBearerVerifier {
     }
 }
 
-/// "Production-style" capability verifier — distinct type, same outcome.
+/// "Production-style" capability verifier — see `ProductionBearerVerifier`
+/// comment for the Round 3 F24 caveat about the weakened cross-impl
+/// determinism contract.
 #[derive(Debug)]
 struct ProductionCapabilityVerifier;
 

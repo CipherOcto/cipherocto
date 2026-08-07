@@ -25,6 +25,18 @@ exclude = [
     "crates/quota-router-pyo3",
     "crates/octo-telegram-onboard",
     "crates/octo-telegram-onboard-core",
+    # octo-adapter-telegram is the LEGACY TDLib-backed Telegram adapter
+    # (RFC-0850 §8.1; superseded by octo-adapter-telegram-mtproto per
+    # Phase B). Pulls in `tdlib-rs` 1.4.0 + a ~150 MB TDLib C++ build that
+    # must run inside a docker container. Excluded 2026-08-07 so
+    # `cargo build --workspace --all-features` no longer pulls tdlib-rs
+    # (which has an upstream `compile_error!` for conflicting
+    # (download-tdlib, pkg-config) feature co-enablement at
+    # build.rs:274 — making `--all-features` permanently red). The
+    # pure-Rust `octo-adapter-telegram-mtproto` adapter is the workspace
+    # surface for new Telegram work. To build the legacy adapter:
+    #   cargo build --manifest-path crates/octo-adapter-telegram/Cargo.toml
+    "crates/octo-adapter-telegram",
     # stwo-sys builds on nightly (STWO upstream requires nightly-only
     # curve25519-dalek SIMD intrinsics). Cipherocto workspace stays
     # stable-rust; stwo-sys is a separate cargo project loaded at runtime

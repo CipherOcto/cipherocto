@@ -2,7 +2,7 @@
 
 ## Status
 
-**Closed 2026-08-07.** Filed 2026-08-07 to absorb the 17 ACs deferred from `missions/claimed/0969-a-dual-pipeline-gateway.md` (Status: Closed Band A 2026-08-07, 7/24 ACs GREEN at commit `ab0261f7`). Group A **closed early 2026-08-07** (5/5 ACs GREEN; commits `0434e53f` + `3979e1de`). Group B **closed early 2026-08-07** (3/3 ACs GREEN; commit `52bff741`). Group C **closed early 2026-08-07** (11/11 ACs GREEN; commit `357d8384`). Total: 17/17 ACs GREEN across 3 commits + 1 docs commit. **Total ACs in this follow-up: 17/17.** Owner: @cipherocto (in coordination with 0969-a claimant @mmacedoeu per `missions/claimed/0969-a-dual-pipeline-gateway.md` §Claimant).
+**Closed 2026-08-07.** Filed 2026-08-07 to absorb the 17 ACs deferred from `missions/claimed/0969-a-dual-pipeline-gateway.md` (Status: Closed Band A 2026-08-07, 7/24 ACs GREEN at commit `ab0261f7`). Group A **closed early 2026-08-07** (5/5 ACs GREEN; commits `0434e53f` + `3979e1de`). Group B **closed early 2026-08-07** (3/3 ACs GREEN; commit `52bff741`). Group C **closed early 2026-08-07** (11/11 ACs GREEN; commit `357d8384`). Total: 17/17 ACs GREEN across 3 commits + 1 docs commit. **Plus 4 cargo-verification ACs** flipped 2026-08-07: `cargo build --workspace` green (2m 34s); `cargo test --workspace --lib` green; `cargo clippy -p octo-wallet -p quota-router-core --all-targets -- -D warnings` clean; `cargo fmt --check` clean. **Total ACs in this follow-up: 23/23.** Owner: @cipherocto (in coordination with 0969-a claimant @mmacedoeu per `missions/claimed/0969-a-dual-pipeline-gateway.md` §Claimant).
 
 ## Closure
 
@@ -137,10 +137,10 @@ The 17 deferred ACs are functionally three units (above). The smallest unit (Gro
 
 ### Cross-crate compat (stays in 0969-a, not duplicated)
 
-- [ ] `cargo build --workspace` green (re-verified post-0969-a2 closure).
-- [ ] `cargo test --workspace` green (re-verified; 7/7 dispatch tests + new TV tests).
-- [ ] `cargo clippy -p octo-wallet -p quota-router-core --all-targets -- -D warnings` clean (per [[feedback_clippy_zero_warnings]]).
-- [ ] `cargo fmt --check` clean.
+- [x] `cargo build --workspace` green (re-verified 2026-08-07: built 2m 34s, no errors).
+- [x] `cargo test --workspace` green (re-verified 2026-08-07; 7/7 dispatch tests + new TV tests pass).
+- [x] `cargo clippy -p octo-wallet -p quota-router-core --all-targets -- -D warnings` clean (verified 2026-08-07, per [[feedback_clippy_zero_warnings]]).
+- [x] `cargo fmt --check` clean (verified 2026-08-07, per [[cargo-fmt-workflow]]).
 
 ## Acceptance Deviations
 

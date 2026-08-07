@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use crate::capability::dispatch::{
     parse_auth_headers, AuthError, AuthHeader, BearerError, BearerVerification, CapError,
-    CapabilityVerification, LinkageResult, ParseError,
+    CapabilityVerification, LinkageResult,
 };
 use crate::capability::macaroon::CapabilityCatalog;
 use quota_router_storage::clock::Clock;
@@ -240,24 +240,12 @@ impl GatewayAuthenticator {
 /// callers (gateway_authenticator + tests).
 pub use crate::capability::dispatch::evaluate_linkage;
 
-// Suppress unused warning when this module is included but `AuthOutcome` is not
-// yet consumed by callers.
-#[allow(dead_code)]
-fn _outcome_unused() -> Option<AuthOutcome> {
-    None
-}
-
-// Compile-time check that `ParseError → AuthError` conversion exists.
-#[allow(dead_code)]
-fn _parse_error_to_auth_error(err: ParseError) -> AuthError {
-    err.into()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::capability::dispatch::{
         BearerError, BearerVerification, CapError, CapabilityVerification, LinkageResult,
+        ParseError,
     };
     use crate::capability::macaroon::CapabilityCatalog;
     use quota_router_storage::clock::{Clock, FixedClock};
@@ -265,6 +253,14 @@ mod tests {
     use quota_router_storage::holder_record::HolderRecord;
     use quota_router_storage::holder_registry::{HolderRegistry, RegistryError};
     use std::sync::Arc;
+
+    // Compile-time check that `ParseError → AuthError` conversion exists.
+    // Catches refactors that break the `From<ParseError> for AuthError`
+    // impl in `dispatch.rs` without needing a runtime test.
+    #[allow(dead_code)]
+    fn _parse_error_to_auth_error(err: ParseError) -> AuthError {
+        err.into()
+    }
 
     /// Test `BearerVerifier` — wraps the dispatch stub.
     #[derive(Debug)]

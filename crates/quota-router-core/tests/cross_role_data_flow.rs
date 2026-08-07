@@ -182,6 +182,21 @@ fn cross_role_data_flow_deal_settlement_full_pipeline() {
     );
 
     // 6. DealSettled signed by Asker (R13-N8 fix: seller_signature ≡ Asker).
+    //
+    // **Round 2 (F13 fix):** `role_tag` field semantics:
+    // - `seller_did` = the actor who economically settles (Asker, per R13-N8)
+    // - `role_tag` = the emitting role's tag in the canonical role-binding
+    //   vocabulary. Per RFC-0971 §Roles, the Asker role emits
+    //   `DealSettled` events on the marketplace; the TokenIssuer role
+    //   issues capabilities. Both are typically bound to the same node
+    //   (canonical destination = Router ∧ TokenIssuer ∧ Asker), so the
+    //   emission's role tag is `TokenIssuer` when the producing node
+    //   carries the TokenIssuer role binding AND emits a DealSettled
+    //   in that role's context (e.g., the marketplace side of a deal).
+    //
+    // The drift risk: a future reader might assume `role_tag` = signer's
+    // role. It is NOT — `role_tag` = emitting role. Signer = `seller_did`
+    // (always Asker per R13-N8). The two fields capture orthogonal facts.
     let bearer_capsule_hash = b3_hash(&[b"bearer_capsule:", cap_root_hash.as_slice()]);
     let payload = DealSettledPayload {
         prev_chain_hash: [0u8; 32],

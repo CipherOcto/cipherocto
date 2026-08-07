@@ -4,7 +4,9 @@
 
 **Claimed 2026-07-30** (was Open 2026-07-30; moved to `claimed/` after
 15-round adversarial review reached zero-finding convergence at HEAD
-`f96ecf6a`). Follow-up to mission 0968a (still in `claimed/` state at
+`f96ecf6a`). IMPL landed in `72bf19d7` (Round 1: `b0660c39`;
+Round 2: `48cf9978`); R7 mission-text refresh in v0.2. Follow-up to
+mission 0968a (still in `claimed/` state at
 `missions/claimed/0968a-reputation-anchoring.md` with 9 ungrounded
 ACs documented per Round 3 review). Mission 0968a covered the
 in-memory batch envelope + Merkle-root aggregation + ledger table
@@ -113,69 +115,44 @@ if governance prefers spec-first for any remaining cross-RFC drift.
       claiming the work. The IMPL stays as-is per the `error.rs:22-28`
       guardrail ("Do NOT change discriminants until RFC-0968-A2 lands").
       Document the verification in the PR description.
-- [ ] **`ReputationAnchorBatch` governance fields** — the IMPL
-      `crates/octo-reputation/src/anchor.rs:121-137` has 5 fields
-      (`controller_id`, `window`, `chain_block_height`,
-      `rotation_receipt_id`, `leaves`). RFC-0955-R1 §"ReputationAnchorBatch"
-      defines 14 fields. The drift is two-part: (a) the per-tuple fields
-      (`did`, `signal_kind`, `layer`, `last_event_id`, `score_ewma_raw`,
-      `last_event_unix`, `samples`, `severity_total`) moved into
-      `AnchorLeaf` per RFC-0955-R1 amendment 48 (per-controller
-      refactor — deliberate, NOT a drift to fix). The remaining
-      RFC-mandated fields on `ReputationAnchorBatch` are also missing
-      from the IMPL: (b) the 3 governance fields (`governance_snapshot`,
-      `governance_proof`, `governance_set_hash`); (c) `batch_size: u32`
-      (RFC-0955-R1 line 173); (d) `chain_block_height: Option<u64>`
-      (IMPL currently has `chain_block_height: u64`; RFC-0955-R1 line
-      170 declares `Option<u64>` because the field is `None` at
-      submission and `Some(_)` only after the anchor reaches
-      `MIN_FINALITY_BLOCKS` depth). The fix scope is items (b)+(c)+(d).
-      Extend the IMPL struct with the 3 governance fields + `batch_size` + change `chain_block_height` to `Option<u64>`. Update
-      `ReputationAnchorBatch::digest` (`anchor.rs:139-167`) to fold the
-      governance fields into the domain-separated envelope hash. Add a new migration
-      `v012__reputation_anchors_governance.sql` extending `reputation_anchors`
-      with `governance_snapshot BLOB`, `governance_proof BLOB`,
-      `governance_set_hash BLOB` columns (all nullable). Add unit tests for
-      construction + digest stability with the new fields. Note: existing
-      3 canonical test vectors in `tests/canonical_blobs.rs` (the
-      `CANONICAL_ANCHOR_BLOB_0_LEAVES` / `_1_LEAF` / `_100_LEAVES`
-      pinned bytes at lines
-      34, 41, 48) will need re-pinning once the digest covers
-      governance fields. **Reconcile the verifier types** — RFC-0955-R1
-      §"ReputationAnchorBatch" (lines 177-200) defines three
-      Rust types (`GovernanceSnapshot` with `block_height`, `epoch`,
-      `finalized_at_unix`; `GovernanceSigner` with `pubkey: [u8; 32]`,
-      `signature: [u8; 64]`; `GovernanceProof` with `signers: Vec<GovernanceSigner>`).
-      The IMPL `crates/octo-reputation/src/auth.rs` ALREADY has
-      `GovernanceSnapshot` (lines 21-25: `finalized_at_unix`,
-      `governance_set_hash`, `members: Vec<[u8; 32]>`) and
-      `GovernanceProof` (line 113+) but with INCOMPATIBLE shapes vs
-      RFC-0955-R1. `GovernanceSigner` is absent. Following the prior
-      mission text literally (create new types in a new auth.rs
-      module) would collide with the existing names. Two reconciliation
-      paths. **Only path (a) is viable** — path (b) in-place evolution
-      is not viable because the existing `GovernanceProof` (line 113+) is
-      a semantically distinct **slash/suspension authorization envelope**
-      carrying `governance_pubkey`, `recorder_id`, `reason_hash`,
-      slash destination/amount/asset fields required by RFC-0968
-      authorization flows. Replacing it would remove data required by
-      current RFC-0968 authorization flows; the existing
-      `GovernanceSnapshot` (lines 21-25) is similarly tied to
-      governance-membership semantics.
-
-      **(a)** Add RFC-0955-R1 types under new names in the same module
-                      (e.g., `AnchorGovernanceSnapshot`, `AnchorGovernanceSigner`,
-                      `AnchorGovernanceProof`) — preserves existing auth.rs callers
-                      (RFC-0968 §3 retirement, SuspensionAuth, SlashDestination) and
-                      keeps the anchoring wire schema distinct. Wire them into the
-                      new `ReputationAnchorBatch` BLOB fields via serde
-                      deserialization. (Mandated path.)
+- [x] **`ReputationAnchorBatch` governance fields** — landed in commit
+      `72bf19d7` (Round 1: `b0660c39`; Round 2: `48cf9978`). IMPL at
+      `crates/octo-reputation/src/anchor.rs:174-208` now has the 5
+      original fields + the 3 governance fields (`governance_snapshot:
+    AnchorGovernanceSnapshot`, `governance_proof:
+    AnchorGovernanceProof`, `governance_set_hash: [u8; 32]`) +
+      `batch_size: u32` (per RFC-0955-R1 line 173). `chain_block_height`
+      typed `Option<u64>` per RFC-0955-R1 line 170 (`None` at submission,
+      `Some(_)` post-`MIN_FINALITY_BLOCKS` finality). `digest()`
+      (`anchor.rs:233+`) folds governance fields into the
+      domain-separated envelope hash via `update_option_u64` + the
+      governance canonical-bytes helpers. Migration
+      `v012__reputation_anchors_governance.sql` adds the 3 BLOB columns.
+      **Verifier types reconciled via path (a) — mandated.** Existing
+      `auth.rs::GovernanceSnapshot` (L21-25) and `GovernanceProof`
+      (L113+) are slash/suspension authorization envelopes tied to
+      RFC-0968 §3 retirement + `SuspensionAuth` + `SlashDestination`
+      flows — semantically distinct from the anchor binding schema.
+      Anchor types defined under new names in same module:
+      `AnchorGovernanceSnapshot` (`block_height`, `epoch`,
+      `finalized_at_unix`), `AnchorGovernanceSigner` (`pubkey`,
+      `signature: AnchorSignature`), `AnchorGovernanceProof`
+      (`signers: Vec<AnchorGovernanceSigner>`). See
+      `crates/octo-reputation/src/auth.rs:399-603` + 5 unit tests in
+      `auth.rs:819-908` covering empty/3-distinct/dup-pubkey/2/4
+      signers + `AnchorSignature` byte-length and Debug format
+      regression guard. `AnchorSignature` newtype serializes as a
+      fixed-length 64-byte sequence (raw bytes on postcard / bincode,
+      64-element array on JSON) to bypass the `[T; 64]` serde gap;
+      the previous `#[serde(with = "hex::serde")]` form would have
+      emitted a length-prefixed hex string into the v012 BLOB column
+      and broken the wire schema.
 
                                       **Also: fix `AnchorLeaf::digest` field-order bug in IMPL** (per
-                                      `crates/octo-reputation/src/anchor.rs:80-100`) — the IMPL hashes
-                                      `last_event_unix`, `samples`, `severity_total`, then
-                                      `score_ewma_raw`. RFC-0955-R1 line 420-422 requires the canonical
-                                      order `(did, signal_kind, layer, last_event_id, score_ewma_raw,
+                                          `crates/octo-reputation/src/anchor.rs:80-100`) — the IMPL hashes
+                                          `last_event_unix`, `samples`, `severity_total`, then
+                                          `score_ewma_raw`. RFC-0955-R1 line 420-422 requires the canonical
+                                          order `(did, signal_kind, layer, last_event_id, score_ewma_raw,
 
 last_event_unix, samples, severity_total)`— i.e.,`score_ewma_raw`      at position 5 (after`last_event_id`, before the counters). The
       current IMPL puts `score_ewma_raw`last. This breaks
@@ -269,22 +246,23 @@ bug fix requires re-pinning the 3 vectors to the correct order.
 ## Acceptance Criteria
 
 - [ ] `StakeBelowMinimum` discriminant verification: confirmation that RFC-0968 §10 line 2057 + §13 line 2621 + §3 line 616 + IMPL `error.rs:190` all agree on `0x2D` + `{ component: StakeComponent }` payload
-- [ ] `ReputationAnchorBatch` has the 3 governance fields with `digest()` covering them
-- [ ] `ReputationAnchorBatch` has `batch_size: u32` field per RFC-0955-R1 line 173
-- [ ] `ReputationAnchorBatch.chain_block_height` typed `Option<u64>` per RFC-0955-R1 line 170 (currently IMPL `u64`)
-- [ ] `AnchorLeaf::digest` field order matches RFC-0955-R1 line 420-422 (score_ewma_raw at position 5, not last)
-- [ ] v012 migration adds `governance_snapshot`, `governance_proof`, `governance_set_hash` columns to `reputation_anchors`
-- [ ] Live `ChainAnchorSubmitter` impl exists; `run_once_strict` uses it for production (gated on chain-substrate selection RFC)
-- [ ] Live `ChainAnchorSubmitter` writes `rotation_receipt_id` through to v010 ledger (covers 0968a AC #7 chain-side encoding of `rotation_receipt_id`)
-- [ ] Reorg handler re-submits batches whose `(submitted, finalized)` height delta exceeds `MIN_FINALITY_BLOCKS`
-- [ ] DID-rotation finality handler re-submits anchors when `consume_rotation_receipt` is finalized before `MIN_FINALITY_BLOCKS`
-- [ ] Governance signature verification rejects batches with != `GOVERNANCE_QUORUM` (= 3) signatures
-- [ ] Anchor-specific verifier types (`AnchorGovernanceSnapshot` / `AnchorGovernanceSigner` / `AnchorGovernanceProof`) defined per RFC-0955-R1 lines 177-200 — mandated path (a), with existing `GovernanceSnapshot` / `GovernanceProof` (RFC-0968 authorization envelopes) preserved unchanged at `auth.rs:21-25` and `auth.rs:113+`
-- [ ] Per-deployment config layer exposes `interval_secs` + `controller_id` + `chain_endpoint`
-- [ ] Idempotency test (2 duplicate submits on `(did, signal_kind, layer, last_event_id)` 4-tuple) passes — **DEFERRED to 0968a2 successor (0968a3-gossip-anchor-provenance or chain-substrate RFC).** Requires a live `ChainAnchorSubmitter` fixture; the StubChainAnchorSubmitter at `anchor_job.rs:139` returns a deterministic placeholder but does not exercise the `reputation_anchors(event_id)` UNIQUE constraint path. The 0968a status refresh (commit `f8ac3a82`) confirms these are blocked on chain-substrate selection.
-- [ ] Failure isolation test (submitter mid-batch fail) passes — **DEFERRED to 0968a2 successor.** Same blocker as AC #14; requires a `ChainAnchorSubmitter` impl that fails mid-batch so the test can assert `reputation_events.anchor_tx_hash` remains `NULL` for un-anchored rows.
-- [ ] Gossip consumer rejects stale `anchor_tx_hash: None` events at ingress handler only (7 test fixtures remain unchanged; requires 0855p-b successor)
-- [ ] 3 canonical test vectors in `tests/canonical_blobs.rs` (lines 34, 41, 48) re-pinned to new digest
+- [x] `StakeBelowMinimum` discriminant verification: confirmation that RFC-0968 §10 line 2057 + §13 line 2621 + §3 line 616 + IMPL `error.rs:190` all agree on `0x2D` + `{ component: StakeComponent }` payload — verified in commit `013a5676` (Round 2 of 0968a2 review); IMPL stays per `error.rs:22-28` guardrail.
+- [x] `ReputationAnchorBatch` has the 3 governance fields with `digest()` covering them — landed in `72bf19d7` + `48cf9978`; IMPL at `crates/octo-reputation/src/anchor.rs:174-208` + `digest()` at L233+.
+- [x] `ReputationAnchorBatch` has `batch_size: u32` field per RFC-0955-R1 line 173 — same commit.
+- [x] `ReputationAnchorBatch.chain_block_height` typed `Option<u64>` per RFC-0955-R1 line 170 — same commit (was `u64`; retyped to `Option<u64>`).
+- [x] `AnchorLeaf::digest` field order matches RFC-0955-R1 line 420-422 (score_ewma_raw at position 5, not last) — landed in `b0660c39` (Round 1 review fix); `digest()` at `anchor.rs:143-161` with canonical comment.
+- [x] v012 migration adds `governance_snapshot`, `governance_proof`, `governance_set_hash` columns to `reputation_anchors` — `crates/octo-reputation/migrations/v012__reputation_anchors_governance.sql` shipped.
+- [ ] Live `ChainAnchorSubmitter` impl exists; `run_once_strict` uses it for production (gated on chain-substrate selection RFC) — **DEFERRED** to chain-substrate selection RFC per `## Dependencies`.
+- [ ] Live `ChainAnchorSubmitter` writes `rotation_receipt_id` through to v010 ledger (covers 0968a AC #7 chain-side encoding of `rotation_receipt_id`) — **DEFERRED** (same blocker; `v010__reputation_anchors.sql:62` column already exists; live submitter wires through).
+- [ ] Reorg handler re-submits batches whose `(submitted, finalized)` height delta exceeds `MIN_FINALITY_BLOCKS` — **DEFERRED** (chain-substrate selection blocker).
+- [ ] DID-rotation finality handler re-submits anchors when `consume_rotation_receipt` is finalized before `MIN_FINALITY_BLOCKS` — **DEFERRED** (chain-substrate selection blocker).
+- [ ] Governance signature verification rejects batches with != `GOVERNANCE_QUORUM` (= 3) signatures — **DEFERRED** for runtime wire-up; the `AnchorGovernanceProof::meets_quorum()` helper at `auth.rs:570-590` enforces the invariant (5 unit tests at `auth.rs:819-908`), but the pre-flight hook into `anchor_job.rs::run_once_strict` is pending chain-substrate selection.
+- [x] Anchor-specific verifier types (`AnchorGovernanceSnapshot` / `AnchorGovernanceSigner` / `AnchorGovernanceProof`) defined per RFC-0955-R1 lines 177-200 — landed in `72bf19d7` at `crates/octo-reputation/src/auth.rs:399-603`; existing `GovernanceSnapshot` / `GovernanceProof` (RFC-0968 authorization envelopes) preserved unchanged at `auth.rs:21-25` and `auth.rs:113+`.
+- [ ] Per-deployment config layer exposes `interval_secs` + `controller_id` + `chain_endpoint` — **DEFERRED** (chain-substrate selection blocker; RFC-0927 is about `RouterConfig` not reputation, config crate TBD).
+- [ ] Idempotency test (2 duplicate submits on `(did, signal_kind, layer, last_event_id)` 4-tuple) passes — **DEFERRED** to chain-substrate selection RFC or 0968a3-gossip-anchor-provenance successor. Requires live `ChainAnchorSubmitter` fixture; stub at `anchor_job.rs:139` returns deterministic placeholder, does not exercise `reputation_anchors(event_id)` UNIQUE path.
+- [ ] Failure isolation test (submitter mid-batch fail) passes — **DEFERRED** (same blocker as AC #14).
+- [ ] Gossip consumer rejects stale `anchor_tx_hash: None` events at ingress handler only (7 test fixtures remain unchanged; requires 0855p-b successor) — **DEFERRED** (gossip file owned by archived 0855p-b).
+- [ ] 3 canonical test vectors in `tests/canonical_blobs.rs` (lines 34, 41, 48) re-pinned to new digest — **DEFERRED** to chain-substrate selection RFC (digest now includes governance fields; re-pinning must align with the live submitter round-trip).
 
 ## AC → Scope mapping
 
@@ -328,3 +306,10 @@ hex::serde regression fixes.)
 ## Pull Request
 
 # (TBD — pending chain-substrate selection RFC + 0855p-b successor)
+
+## Version History
+
+| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-07-30 | Filed claimed by mission `0968a` Round 3 closure. 9 inherited ACs (0968a ungrounded) + 8 new for 0968a2 = 17 ACs.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| v0.2    | 2026-08-07 | R7 mission-text refresh. IMPL landed in `72bf19d7` (Round 1: `b0660c39`; Round 2: `48cf9978`). ACs #2/#3/#4/#5/#6/#12 grounded (governance fields + `batch_size` + `Option<u64>` chain_block_height + `AnchorLeaf::digest` field-order fix + v012 migration + `AnchorGovernanceSnapshot`/`AnchorGovernanceSigner`/`AnchorGovernanceProof`/`AnchorSignature` types in `auth.rs:399-603`). R7 MAJOR finding (governance type collision) closed: mandate path (a) reconciled and IMPL now matches; existing `GovernanceSnapshot`/`GovernanceProof` (RFC-0968 authorization envelopes) preserved. R7 NIT (duplicate sentence at L223-224) self-resolved (no duplicate in current file). Remaining ACs #7/#8/#9/#10/#11/#13/#14/#15/#16/#17 all deferred to chain-substrate selection RFC + 0855p-b successor per [[deferred-vs-unspecified]] named-owner rule. |

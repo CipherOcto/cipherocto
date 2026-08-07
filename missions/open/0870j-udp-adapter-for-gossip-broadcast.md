@@ -2,7 +2,13 @@
 
 ## Status
 
-Claimed
+**Closed 2026-08-07.** Substrate was pre-shipped in `crates/octo-adapter-udp/`
+prior to this mission's filing but the crate was not wired into the
+workspace test path. Verification: `cargo test -p octo-adapter-udp --lib`
+5/5 pass; `cargo clippy -p octo-adapter-udp --all-targets -- -D warnings`
+clean; `cargo fmt --check -p octo-adapter-udp` clean. `members = ["crates/*"]`
+in the root `Cargo.toml` already covers the crate; no workspace manifest
+change needed. All 10 ACs GREEN. Owner: @cipherocto.
 
 ## RFC
 
@@ -151,16 +157,16 @@ let transport = NodeTransport::new(senders);
 
 ## Acceptance Criteria
 
-- [ ] `crates/octo-adapter-udp/` crate created with `UdpAdapter` implementing `PlatformAdapter`
-- [ ] `PlatformType::Udp = 0x0017` registered in `octo-network` domain registry
-- [ ] UDP datagram framing: `[discriminator][payload]` working correctly
-- [ ] `send_message` sends UDP datagrams to known peers
-- [ ] `receive_messages` receives UDP datagrams and parses them
-- [ ] `canonicalize` parses raw UDP datagrams into `DeterministicEnvelope`
-- [ ] Payload size check: rejects envelopes exceeding 1400 bytes
-- [ ] Unit tests: datagram roundtrip, size limit, health check
-- [ ] `cargo clippy -p octo-adapter-udp -- -D warnings` clean
-- [ ] `cargo fmt --check` passes
+- [x] `crates/octo-adapter-udp/` crate created with `UdpAdapter` implementing `PlatformAdapter`
+- [x] `PlatformType::Udp = 0x0017` registered in `octo-network` domain registry
+- [x] UDP datagram framing: `[discriminator][payload]` working correctly
+- [x] `send_message` sends UDP datagrams to known peers
+- [x] `receive_messages` receives UDP datagrams and parses them
+- [x] `canonicalize` parses raw UDP datagrams into `DeterministicEnvelope`
+- [x] Payload size check: rejects envelopes exceeding 1400 bytes
+- [x] Unit tests: datagram roundtrip, size limit, health check
+- [x] `cargo clippy -p octo-adapter-udp -- -D warnings` clean
+- [x] `cargo fmt --check` passes
 
 ## Complexity
 

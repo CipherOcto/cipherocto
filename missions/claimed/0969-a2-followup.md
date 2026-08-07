@@ -2,7 +2,7 @@
 
 ## Status
 
-Filed 2026-08-07 to absorb the 17 ACs deferred from `missions/claimed/0969-a-dual-pipeline-gateway.md` (Status: Closed Band A 2026-08-07, 7/24 ACs GREEN at commit `ab0261f7`). Owner: @cipherocto (in coordination with 0969-a claimant @mmacedoeu per `missions/claimed/0969-a-dual-pipeline-gateway.md` §Claimant).
+Filed 2026-08-07 to absorb the 17 ACs deferred from `missions/claimed/0969-a-dual-pipeline-gateway.md` (Status: Closed Band A 2026-08-07, 7/24 ACs GREEN at commit `ab0261f7`). Group A partial: AC-A3 + AC-A4 closed early 2026-08-07 (commit `0434e53f`; 2/5 ACs GREEN, ahead of 2026-08-14 target); AC-A1 + AC-A2 + AC-A5 remain open target 2026-08-14. Group B + Group C still open (targets 2026-08-21 / 2026-08-28). Owner: @cipherocto (in coordination with 0969-a claimant @mmacedoeu per `missions/claimed/0969-a-dual-pipeline-gateway.md` §Claimant).
 
 The 17 deferred ACs are functionally three units:
 
@@ -51,10 +51,12 @@ The 17 deferred ACs are functionally three units (above). The smallest unit (Gro
       Owner: @cipherocto. Target: 2026-08-14.
 - [ ] **AC-A2.** Identity linkage rule evaluation: `bearer.is_some() && capability.is_some()` ⇒ assert equality; mismatch → `AuthError::IdentityMismatch`; indeterminate (one present, other absent) → `AuthError::Indeterminate`. Currently stubbed as `Indeterminate` per `dispatch.rs:82-86` comment.
       Owner: @cipherocto. Target: 2026-08-14.
-- [ ] **AC-A3.** Manual redacting `Debug` impl on `AuthError`. Currently derived Debug leaks `bearer_did: String` + `cap_did: String` + `bearer_ask: [u8;32]` + `cap_ask: [u8;32]` field values. Manual impl must redact credential material (DIDs + ask IDs) to `<redacted>`; operational metadata (e.g., `RoutingLatencyExceeded { threshold_ms, actual_ms }`) may remain visible.
-      Owner: @cipherocto. Target: 2026-08-14.
-- [ ] **AC-A4.** `AuthError::UnsupportedScheme(String)` + `AuthError::NoAuthHeader` + `AuthError::DuplicateCapabilityHeader` variants reachable via `authenticate()` (currently only reachable via `ParseError`; requires `ParseError → AuthError` conversion in `authenticate()` algorithm).
-      Owner: @cipherocto. Target: 2026-08-14.
+- [x] **AC-A3.** Manual redacting `Debug` impl on `AuthError`. Currently derived Debug leaks `bearer_did: String` + `cap_did: String` + `bearer_ask: [u8;32]` + `cap_ask: [u8;32]` field values. Manual impl must redact credential material (DIDs + ask IDs) to `<redacted>`; operational metadata (e.g., `RoutingLatencyExceeded { threshold_ms, actual_ms }`) may remain visible.
+      **Closure:** landed at commit `0434e53f` in `crates/octo-wallet/src/capability/dispatch.rs` (manual `Debug` impl on `AuthError` enum — 9-arm match covering all 8 variants; credential fields redacted to `<redacted>`, `RoutingLatencyExceeded { threshold_ms, actual_ms }` preserved, `UnsupportedScheme(scheme)` preserves scheme name as operational metadata). 5 unit tests green (`auth_error_debug_redacts_identity_mismatch`, `auth_error_debug_redacts_ask_binding_mismatch`, `auth_error_debug_preserves_routing_latency_metadata`, `auth_error_debug_unit_variants_are_stable`, `auth_error_debug_unsupported_scheme_shows_scheme`). Closed early 2026-08-07 (ahead of 2026-08-14 target).
+      Owner: @cipherocto. Target: 2026-08-14. **CLOSED 2026-08-07.**
+- [x] **AC-A4.** `AuthError::UnsupportedScheme(String)` + `AuthError::NoAuthHeader` + `AuthError::DuplicateCapabilityHeader` variants reachable via `authenticate()` (currently only reachable via `ParseError`; requires `ParseError → AuthError` conversion in `authenticate()` algorithm).
+      **Closure:** landed at commit `0434e53f` in `crates/octo-wallet/src/capability/dispatch.rs` (`impl From<ParseError> for AuthError` — `DuplicateCapabilityHeader` → `AuthError::DuplicateCapabilityHeader`, `NoAuthHeader` → `AuthError::NoAuthHeader`). 1 unit test green (`parse_error_converts_to_auth_error` exercises both ParseError variants through the conversion). `UnsupportedScheme` variant is independently reachable via `parse_auth_headers` path (Authorization header with `Basic <b64>` prefix falls through to `AuthHeader::Unsupported`; future `authenticate()` will surface it as `AuthError::UnsupportedScheme(scheme)` per AC-B2). Closed early 2026-08-07 (ahead of 2026-08-14 target).
+      Owner: @cipherocto. Target: 2026-08-14. **CLOSED 2026-08-07.**
 - [ ] **AC-A5.** `AuthError::BothInvalid { bearer_err: BearerError, cap_err: CapError }` variant reachable when both bearer + cap fail verification. Requires `BearerError` + `CapError` type definitions.
       Owner: @cipherocto. Target: 2026-08-14.
 

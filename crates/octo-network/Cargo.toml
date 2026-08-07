@@ -29,6 +29,8 @@ octo-sync = { path = "../../octo-sync" }
 parking_lot = "0.12"
 # Mission 0855p-b / 0968 Phase 4 — federation substrate
 octo-reputation = { path = "../octo-reputation" }
+# Mission 0862m1: peer_id hex encoding in slash bridge
+hex = "0.4"
 # Boxed futures for the gossip ingress task (erases the async-fn
 # non-Send future so tokio::spawn can drive it).
 futures = "0.3"

@@ -29,6 +29,7 @@ pub mod consensus;
 pub mod discipline;
 pub mod rejoin;
 pub mod slash;
+pub mod slash_bridge;
 pub mod sub_admin;
 
 pub use admin_attest::{
@@ -50,6 +51,7 @@ pub use slash::{
     dc_slash_topic, DcFinalState, DcMisbehavior, DcSlashEnvelope, DcSlashError, DcSlashOutcome,
     DcSlashSubCode, DC_SLASH_REASON_DOMAIN_COORDINATOR_MISBEHAVIOR,
 };
+pub use slash_bridge::{encode_sync_slash, sync_peer_to_recorder_did, BridgeError};
 pub use sub_admin::{
     elect_active_sub_admin, should_activate_sub_admin, SubAdminAuthority, SubAdminDesignation,
     SubAdminState, SUB_ADMIN_ACTIVATION_EPOCHS,

@@ -18,7 +18,7 @@
 use std::thread;
 use std::time::Duration;
 
-use super::macaroon::{CapabilityCatalog, CatalogGossipError};
+use super::macaroon::{CapabilityCatalog, CapabilityGossip, CatalogGossipError};
 use super::market_delivery::{DeliveryError, MarketDeliveryEnvelope};
 
 /// Maximum gossip retry attempts (RFC-0959-A1 §Future Work F5).
@@ -73,7 +73,16 @@ pub fn gossip_envelope_to_buyer(
     buyer_did: &str,
     catalog: &dyn CapabilityCatalog,
 ) -> Result<(), DeliveryError> {
-    let payload = serde_json::to_vec(env).unwrap_or_default();
+    // **Round 6 (F35 fix):** `unwrap_or_default()` previously swallowed
+    // serialization errors, gossiping empty bytes silently. Empty payload
+    // would deserialize downstream to a different error mode (the buyer's
+    // JSON parser would fail, not the gossiper's). Surfacing the error
+    // here makes the failure mode visible to operators and prevents
+    // "phantom successful gossip" where the seller thinks the envelope
+    // arrived but the buyer received garbage.
+    let payload = serde_json::to_vec(env).map_err(|e| DeliveryError::SerializationError {
+        reason: format!("envelope serialization failed: {e}"),
+    })?;
     for attempt in 1..=MAX_GOSSIP_ATTEMPTS {
         match catalog.gossip_to_buyer_sync(buyer_did, &payload) {
             Ok(()) => return Ok(()),
@@ -115,7 +124,11 @@ pub async fn gossip_envelope_to_buyer_async(
     buyer_did: &str,
     catalog: &dyn CapabilityGossip,
 ) -> Result<(), DeliveryError> {
-    let payload = serde_json::to_vec(env).unwrap_or_default();
+    // **Round 6 (F35 fix):** see `gossip_envelope_to_buyer` — surfacing
+    // serialization error rather than silently gossiping empty bytes.
+    let payload = serde_json::to_vec(env).map_err(|e| DeliveryError::SerializationError {
+        reason: format!("envelope serialization failed: {e}"),
+    })?;
     for attempt in 1..=MAX_GOSSIP_ATTEMPTS {
         match catalog.gossip_to_buyer(buyer_did, &payload).await {
             Ok(()) => return Ok(()),
@@ -133,8 +146,6 @@ pub async fn gossip_envelope_to_buyer_async(
         attempts: MAX_GOSSIP_ATTEMPTS,
     })
 }
-
-use super::macaroon::CapabilityGossip;
 
 #[cfg(test)]
 mod tests {

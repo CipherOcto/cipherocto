@@ -36,6 +36,7 @@ pub mod parity;
 pub mod parity_daemon;
 pub mod presentation;
 pub mod prometheus;
+pub mod reconciler;
 pub mod recorder;
 pub mod retention;
 pub mod retirement;
@@ -89,6 +90,11 @@ pub use parity_daemon::{
 };
 pub use presentation::reputation_score_0_100;
 pub use prometheus::{render_prometheus, write_prometheus_file, MetricsSnapshot};
+pub use reconciler::{
+    build_replay_event, dfp_from_legacy_f64, dfp_to_canonical_blob, event_id_from_envelope,
+    legacy_has_event_source, legacy_lacks_event_source, reconcile_once, ReconcileOutcome,
+    ReconcilerConfig,
+};
 pub use recorder::{check_stake, verify_registration};
 pub use retention::{
     effective_cutoff, is_within_audit_window, retention_prune_with_floor, RetentionReport,

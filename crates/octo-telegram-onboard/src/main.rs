@@ -474,7 +474,7 @@ async fn run_refresh_identity(args: cli::RefreshIdentityArgs) -> Result<()> {
         .as_str()
         .ok_or_else(|| OnboardError::BadConfig("config missing data_dir".into()))?;
     // Clone to an owned PathBuf so the borrow of `config` (via
-    // `data_dir` &&str) doesn't extend past the later mutation
+    // `data_dir` &str) doesn't extend past the later mutation
     // of `config["user_id"]`/`config["username"]` below.
     let data_path: std::path::PathBuf = data_dir.into();
     // Fallback: if the config doesn't have api_id/api_hash (e.g.,

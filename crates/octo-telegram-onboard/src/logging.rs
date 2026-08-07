@@ -79,9 +79,9 @@ fn redact_body_substrings(body: &str) -> String {
                     let after_space = val_end + 1;
                     let rest_lower = result[after_space..].to_ascii_lowercase();
                     let is_key_boundary = REDACT_KEYS.iter().any(|&k| {
-                        rest_lower.starts_with(k) & after_space + k.len()
-                            < result.len()
-                                & matches!(result.as_bytes()[after_space + k.len()], b'=' | b':')
+                        rest_lower.starts_with(k)
+                            && after_space + k.len() < result.len()
+                            && matches!(result.as_bytes()[after_space + k.len()], b'=' | b':')
                     });
                     if is_key_boundary {
                         break;
@@ -129,8 +129,8 @@ fn redact_body_substrings(body: &str) -> String {
             let key_end = abs_pos + search_pattern.len();
             // Skip optional whitespace and colon: "key": or "key" :
             let mut colon_pos = key_end;
-            while colon_pos
-                < result.len() & matches!(result.as_bytes()[colon_pos], b' ' | b'\t' | b':')
+            while colon_pos < result.len()
+                && matches!(result.as_bytes()[colon_pos], b' ' | b'\t' | b':')
             {
                 colon_pos += 1;
             }

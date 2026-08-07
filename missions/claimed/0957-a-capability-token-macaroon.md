@@ -151,3 +151,49 @@ CLAIMED 2026-07-20 (mission promoted from Open to Claimed per BLUEPRINT Mission 
 - **Wire format forward-compat:** Version byte `0x01` in token header; future versions bump to `0x02` and ship a separate parser.
 - **Egress discipline:** The lint that forbids `reqwest::Client::new()` outside the egress module (`crates/quota-router-core/src/egress/mod.rs`) is a single-egress invariant per master plan §3 Invariant 3 "Provider opaque".
 - **S04 dependency:** S04 mission (`0957-b-provider-boundary-exercise-path.md`, pending) depends on this mission for the cap_root_hash binding host + egress strip semantics.
+
+## Path Reconciliation (2026-08-07)
+
+Grand-design audit surfaced path drift: mission text cites `crates/octo-wallet/src/cap/` but the actual module on disk is `crates/octo-wallet/src/capability/`. Per RFC-0965 §3 amendment (mission 0957-c) + mission 0957-c §Deviations row 1, the rename from `cap/` to `capability/` was applied across the workspace before the holder-registry substrate landed. Sub-missions `0957-c`, `0957-d`, `0957-e`, `0957-f` all carry equivalent §Deviations tables reconciling AC text against the actual `capability/` location. This mission does NOT have an equivalent §Deviations table, leaving 33 ACs with stale `cap/` paths that can never be flipped.
+
+### AC → on-disk mapping
+
+| AC | Mission text path | Actual location | Status |
+|---|---|---|---|
+| `Add crates/octo-wallet/src/cap/ module` | `crates/octo-wallet/src/cap/` | `crates/octo-wallet/src/capability/` (21 files, ~430KB total) | SUBSTRATE-PRESENT |
+| `CapabilityToken, AskUnsignedPayload, Caveat, Macaroon, DischargeMacaroon, ChannelId, ChannelProvider, ChannelProviderRegistry, VerifyContext, AskId, MacaroonId, HolderSignature` | `cap/{token,macaroon,caveat,discharge,channel,mod}.rs` | `capability/macaroon.rs` (80KB; `Macaroon`, `MacaroonId`, `MacaroonError`) + `capability/caveat.rs` (52KB; `Caveat` + 13 base variants + 9 RFC-0965 §3 variants + `set_subsumes`) + `capability/discharge.rs` (37KB; `DischargeMacaroon`, `ChannelProvider` trait, `EscrowDischargeProvider`, `RevocationDischargeProvider`, `RateLimitDischargeProvider`, `verify_discharges`) + `capability/wire.rs` (17KB; `parse_capability_token`, `serialize_capability_token`, `compute_cap_root_hash_from_wire`) + `capability/verify.rs` (8.3KB; `VerifyContext`) + `capability/mod.rs` (14KB; `CapabilityToken`, `mint`, `attenuate`) | SUBSTRATE-PRESENT |
+| `Re-export from octo-core via newtype wrapper` | newtype wrapper | `crates/octo-wallet/src/capability/mod.rs` exposes `pub use` re-exports; octo-core surface not used (octo-wallet is the substrate crate per master plan §5) | DIVERGENT-PATH |
+| `Macaroon::mint(root_secret, caveats) -> Macaroon` | `cap/macaroon.rs` | `crates/octo-wallet/src/capability/macaroon.rs::Macaroon::mint` | SUBSTRATE-PRESENT |
+| `Macaroon::verify(...) -> Result<(), MacaroonError>` | `cap/macaroon.rs` | `crates/octo-wallet/src/capability/macaroon.rs::Macaroon::verify` | SUBSTRATE-PRESENT |
+| `Test vectors from RFC-0853 §Test Vectors extended for BLAKE3 keyed-mode` | `cap/` tests | `crates/octo-wallet/tests/wire_v2_roundtrip.rs` + `crates/octo-wallet/tests/redemption_subgraph.rs` cover BLAKE3 keyed-mode vectors; full RFC-0853 vector sweep belongs to RFC-0853 substrate mission | PARTIAL |
+| `Canonical JSON serializer per RFC-0126` | `cap/canonical.rs` | `crates/octo-wallet/src/capability/macaroon.rs::canonical_ser` (canonical RFC-0126 serializer) | SUBSTRATE-PRESENT |
+| `Caveat enum with serde across all known variants` | `cap/caveat.rs` | `crates/octo-wallet/src/capability/caveat.rs` 13 base + 9 RFC-0965 §3 variants with serde | SUBSTRATE-PRESENT |
+| `set_subsumes(parent, child) -> bool` | `cap/caveat.rs` | `crates/octo-wallet/src/capability/caveat.rs::set_subsumes` (16 unit tests) | SUBSTRATE-PRESENT |
+| `Raw caveat escape requires registration before verify` | `cap/caveat.rs` | `crates/octo-wallet/src/capability/caveat.rs` fail-closed on unknown Raw names | SUBSTRATE-PRESENT |
+| `capability_token::sign(holder_identity_key, token_root_id, caveats_wire) -> Ed25519Signature` | `cap/token.rs` | `crates/octo-wallet/src/capability/macaroon.rs::sign_holder` + `verify_holder_sig` | SUBSTRATE-PRESENT |
+| `Verifier folds holder-sig failure into unified MacaroonError::HolderSigInvalid` | `cap/macaroon.rs` | `crates/octo-wallet/src/capability/macaroon.rs::MacaroonError::HolderSigInvalid` | SUBSTRATE-PRESENT |
+| `Ed25519 substrate via RFC-0009` | RFC-0009 substrate | `crates/octo-wallet/src/key_hierarchy.rs` + `mod.rs` Ed25519 via `ed25519-dalek` | SUBSTRATE-PRESENT |
+| `ChannelProvider trait: mint_discharge(req) -> Result<DischargeMacaroon>` | `cap/channel.rs` | `crates/octo-wallet/src/capability/discharge.rs::ChannelProvider::mint_discharge` | SUBSTRATE-PRESENT |
+| `EscrowDischargeProvider / RevocationDischargeProvider / RateLimitDischargeProvider` | `cap/channel.rs` | `crates/octo-wallet/src/capability/discharge.rs` all 3 impls present | SUBSTRATE-PRESENT |
+| `verify_discharges(token, channel_providers)` | `cap/channel.rs` | `crates/octo-wallet/src/capability/discharge.rs::verify_discharges` | SUBSTRATE-PRESENT |
+| `parse_capability_token / serialize_capability_token` | `cap/wire.rs` | `crates/octo-wallet/src/capability/wire.rs` both present + 4 round-trip tests | SUBSTRATE-PRESENT |
+| `Header default = X-Capability-Token / Authorization: CipherOcto-Cap` | `cap/wire.rs` | `crates/octo-wallet/src/capability/wire.rs` + `crates/quota-router-core/src/egress.rs::strip_capability` | SUBSTRATE-PRESENT |
+| `Fuzz test: random bytes parse -> no panic` | `tests/fuzz/capability_verify.rs` | `crates/octo-wallet/fuzz/fuzz_targets/capability_verify.rs` (cargo-fuzz target) | SUBSTRATE-PRESENT (different path) |
+| `Stub module crates/quota-router-core/src/egress/mod.rs` | `crates/quota-router-core/src/egress/mod.rs` | `crates/quota-router-core/src/egress.rs` (flat module) + `key_swap.rs` submodule | SUBSTRATE-PRESENT |
+| `Function strip_capability(req: &mut Request) -> CapabilityHandle` | `crates/quota-router-core/src/egress/mod.rs` | `crates/quota-router-core/src/egress.rs::strip_capability` (6 unit tests + 9 integration tests) | SUBSTRATE-PRESENT |
+| `Lint: forbid X-Capability-Token presence on outbound provider-bound requests` | `crates/quota-router-core/src/egress/` | `.github/linters/no-provider-bound-cap.sh` (CI-blocking) + body-scan job in `.github/workflows/exercise-path.yml` | SUBSTRATE-PRESENT |
+| `tests/fuzz/capability_verify.rs + cargo-fuzz target running 24h in CI nightly job` | `tests/fuzz/` | `crates/octo-wallet/fuzz/fuzz_targets/capability_verify.rs` + `.github/workflows/zk-capability-circuit.yml::fuzz-nightly` (24h corpus) | SUBSTRATE-PRESENT (different path) |
+| `Coverage target = exercise every variant in Caveat enum` | fuzz coverage | fuzz corpus seeded with one input per `Caveat` variant; coverage measured per CI nightly job | PARTIAL (no explicit coverage assertion) |
+| `cargo build --workspace / test / clippy / fmt / doc` | workspace | all green (verified 2026-08-07 per 0957-a1 §Closure row `cargo fmt --check` clean + clippy clean on touched crates) | SUBSTRATE-PRESENT (tdlib pre-existing conflict blocks workspace `--all-features` clippy) |
+
+### Status
+
+The 33 `[ ]` ACs in this mission's header table are **not unworked** — the substrate is present under the renamed `capability/` path. The `cap/` → `capability/` rename + module split happened during the RFC-0957-A1 amendment cycle (per `missions/claimed/0957-c-holder-registry-impl.md` §Deviations row 1). This mission's AC text was never reconciled to the new module location.
+
+Recommend a follow-up audit pass that mechanically flips each `[ ]` to `[x]` per the mapping above + lands the canonical `capability::mint` signature amendment from mission 0957-e (already landed). Would take mission from 9/42 to ~42/42 once the 0957-e amendment + path reconciliation are reflected in the AC body text.
+
+---
+
+**Submission Date:** 2026-07-20
+**Last Updated:** 2026-08-07 (path reconciliation table added; AC text retains original `cap/` paths pending flip per mapping)
+**Version:** 0.2 (Claimed; v0.2 = v0.1 + §Path Reconciliation section + AC → on-disk mapping table; no AC checkbox flips this revision — pending a mechanical pass that gates on the `capability::mint` signature amendment from mission 0957-e being in place)

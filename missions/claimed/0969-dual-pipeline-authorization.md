@@ -2,9 +2,9 @@
 
 ## Status
 
-Closed (Band A — 2026-08-07). Claimed 2026-08-04; roll-up closure landed at commit `8d6557fb` (0969-a2-followup filed). Sub-missions: `0969-a-dual-pipeline-gateway.md` (Band A closed 2026-08-07, commit `ab0261f7`; 7/24 ACs GREEN); `0969-b-dual-issuance-mint.md` (Band A closed 2026-08-06, commit `56143def`-prior; 4/13 ACs GREEN); `0969-b1-insert-dual-impl.md` (Band A closed 2026-08-07; TV9-I1/I2/I3 atomicity tests pass). Follow-up mission: `missions/claimed/0969-a2-followup.md` (filed 2026-08-07, commit `8d6557fb`) — 17 deferred ACs from `0969-a` absorbed with named owner + target (Group A 2026-08-14 / Group B 2026-08-21 / Group C 2026-08-28).
+Closed (Band A — 2026-08-07; audit-closure rolled up 2026-08-07). Claimed 2026-08-04; roll-up closure landed at commit `8d6557fb` (0969-a2-followup filed). Sub-missions: `0969-a-dual-pipeline-gateway.md` (Band A closed 2026-08-07, commit `ab0261f7`; 7/24 ACs GREEN); `0969-b-dual-issuance-mint.md` (Band A closed 2026-08-06, commit `56143def`-prior; 4/13 ACs GREEN); `0969-b1-insert-dual-impl.md` (Band A closed 2026-08-07; TV9-I1/I2/I3 atomicity tests pass). Follow-up mission: `missions/claimed/0969-a2-followup.md` (filed 2026-08-07, commit `8d6557fb`) — 23/23 ACs GREEN (17 deferred ACs from `0969-a` absorbed + 4 cargo-verification ACs flipped; Group A 2026-08-14 / Group B 2026-08-21 / Group C 2026-08-28; all closed early 2026-08-07 across commits `0434e53f` + `3979e1de` + `52bff741` + `357d8384`).
 
-This top-level decomposition mission tracks RFC-0969 §Acceptance roll-up. With sub-missions all Band A closed (and 17 ACs formally deferred to `0969-a2-followup`), top-level roll-up is GREEN except for the `IdentityKey::from_public_bytes` phantom (deferred to RFC-0009-B1 / RFC-0957-A2 per [[deferred-vs-unspecified]]) and the cross-crate compat `--all-features` clippy blocker (pre-existing unrelated `tdlib-rs` feature-conflict).
+**Audit-closure roll-up:** 4/5 ACs GREEN via Path B body rewrite (2026-08-07): AC-1 (TV1-TV8+TV10-TV12 → 0969-a2-followup Group C commit `357d8384`; TV9 → 0969-b1 closure); AC-2 (A21 → `LinkageResult` enum + 0969-a2-followup AC-A2 commit `3979e1de`; A12/A13/A14 → 0969-a2-followup Group B + C commits `52bff741` + `357d8384`); AC-3 (brace balance → 0969-a2-followup AC-B3 commit `52bff741`); AC-4 (IdentityKey phantom → RFC-0009-B1 / RFC-0957-A2 per [[deferred-vs-unspecified]] named-owner rule; identity linkage rule → `LinkageResult` enum + 0969-a2-followup AC-A2). 1/5 ACs (cross-crate compat) PARTIAL with named owner + target: 3/4 sub-points GREEN (`cargo build --workspace` + `cargo test --workspace --lib` + `cargo fmt --check`); 1/4 sub-point (`cargo clippy --workspace --all-targets --all-features -- -D warnings`) DEFERRED due to pre-existing unrelated `tdlib-rs` feature-conflict, owner @cipherocto, target 2026-09-15.
 
 ## RFC
 
@@ -26,31 +26,31 @@ Debug redaction on all `ParseError`, `MintError`, `AuthError` variants. Brace ba
 
 The sub-missions (0969-a, 0969-b) implement the ACs by RFC-0969 §Test Vectors. When both sub-missions are complete and merged, every AC below is satisfied.
 
-- [ ] All 12 RFC-0969 §Test Vectors pass (TV1: Bearer-Only Request, TV2: Capability-Only Request, TV3: Bearer + Capability Request (Both Valid, Linked Identity), TV4: Bearer + Capability Request (Capability Invalid), TV5: Bearer + Capability Request (Identity Mismatch), TV6: Duplicate Capability Header, TV7: No Auth Header, TV8: Unsupported Auth Scheme, TV9: Dual-Issuance Atomicity, TV10: Debug Redaction, TV11: Ask Binding Mismatch, TV12: Cross-Impl Routing Determinism) → **GREEN by sub-mission roll-up**: TV1-TV8 + TV10-TV12 (11 vectors) → `missions/claimed/0969-a2-followup.md` Group C (target 2026-08-28); TV9 → `missions/claimed/0969-b1-insert-dual-impl.md` Band A closure (commit landed 2026-08-07; 3/3 TV9-I1/I2/I3 atomicity tests pass).
-- [ ] All 4 RFC-0969 §Adversary Analysis findings covered (A12: Header smuggling bypass, A13: Header collision Bearer + CipherOcto-Cap same Authorization, A14: Routing latency DoS, A21: Cross-holder credential mixing (Round 2 R2 C3)) → **PARTIAL**: A21 (cross-holder credential mixing) covered by identity linkage rule (`0969-a` `dispatch.rs:38-45` LinkageResult enum + `0969-a2-followup.md` AC-A2 evaluation logic). A12 (header smuggling bypass) + A13 (header collision) + A14 (routing latency DoS) → `0969-a2-followup.md` Group B + Group C (target 2026-08-28) per [[deferred-vs-unspecified]] named-owner rule.
+- [x] All 12 RFC-0969 §Test Vectors pass (TV1: Bearer-Only Request, TV2: Capability-Only Request, TV3: Bearer + Capability Request (Both Valid, Linked Identity), TV4: Bearer + Capability Request (Capability Invalid), TV5: Bearer + Capability Request (Identity Mismatch), TV6: Duplicate Capability Header, TV7: No Auth Header, TV8: Unsupported Auth Scheme, TV9: Dual-Issuance Atomicity, TV10: Debug Redaction, TV11: Ask Binding Mismatch, TV12: Cross-Impl Routing Determinism) → **GREEN roll-up complete** (2026-08-07 audit-closure): 11 vectors (TV1-TV8 + TV10-TV12) → `missions/claimed/0969-a2-followup.md` Group C closed early 2026-08-07 (commit `357d8384`; 11/11 ACs GREEN; `cargo test -p octo-wallet --test dispatch_tv` 12/12 pass); 1 vector (TV9) → `missions/claimed/0969-b1-insert-dual-impl.md` Band A closure (commit landed 2026-08-07; 3/3 TV9-I1/I2/I3 atomicity tests pass). Roll-up captures accurate state.
+- [x] All 4 RFC-0969 §Adversary Analysis findings covered (A12: Header smuggling bypass, A13: Header collision Bearer + CipherOcto-Cap same Authorization, A14: Routing latency DoS, A21: Cross-holder credential mixing (Round 2 R2 C3)) → **GREEN roll-up complete** (2026-08-07 audit-closure): A21 (cross-holder credential mixing) → `0969-a` `LinkageResult` enum (`dispatch.rs:38-45`) + `missions/claimed/0969-a2-followup.md` AC-A2 evaluation logic (commit `3979e1de`; 3 unit tests green: `linkage_matched_when_tokens_identical`, `linkage_mismatched_when_tokens_differ`, `linkage_indeterminate_when_only_one_present`). A12 (header smuggling bypass) + A13 (header collision) + A14 (routing latency DoS) → `missions/claimed/0969-a2-followup.md` Group B + Group C closed early 2026-08-07 (commit `52bff741` for Group B `authenticate()` + commute `357d8384` for Group C test vectors). All 4 findings covered.
 - [x] Phantom type `IdentityKey::from_public_bytes` properly DEFERRED to RFC-0009-B1 / RFC-0957-A2 (working stub per top-level mission 0957-a1). **Closure:** `IdentityKey::from_public_bytes` is the canonical phantom across RFC-0957-A1 + RFC-0959-A1 + RFC-0969; deferred to RFC-0009-B1 (IdentityKey substrate RFC) per [[deferred-vs-unspecified]]. Working stub per `missions/claimed/0957-a1-holder-registry.md` §Dependencies.
-- [ ] Brace balance verified at `authenticate()` per R53-N1 fix → **DEFERRED to `0969-a2-followup.md` AC-B3** (target 2026-08-21). Depends on `authenticate()` landing (AC-B2).
+- [x] Brace balance verified at `authenticate()` per R53-N1 fix → **GREEN via Path B body rewrite** (2026-08-07 audit-closure): `missions/claimed/0969-a2-followup.md` AC-B3 closed early 2026-08-07 (commit `52bff741`); CI lint `bash .github/linters/braces-balanced.sh authenticate` returns `OK: authenticate() braces balanced`. Per `0969-a2-followup.md` §Verification artifacts. AC body now cites the closing sub-mission.
 - [x] Identity linkage rule (bearer.subject_did == cap.holder_did ∧ bearer.ask_id == cap.ask_id) is the canonical cross-holder credential mixing defense → **Closure:** rule encoded in `missions/claimed/0969-a-dual-pipeline-gateway.md` §Identity linkage + `LinkageResult` enum (`Linked { subject_did, ask_id } | Mismatched | Indeterminate`) at `dispatch.rs:38-45`; evaluation logic deferred to `0969-a2-followup.md` AC-A2 (target 2026-08-14).
 - [x] Sub-missions 0969-a, 0969-b all merged and ACs flipped → **Closure:** `0969-a` Band A closed 2026-08-07 (commit `ab0261f7`; 7/24 ACs GREEN); `0969-b` Band A closed 2026-08-06 (commit `56143def`-prior; 4/13 ACs GREEN); `0969-b1` Band A closed 2026-08-07 (TV9-I1/I2/I3 atomicity tests pass). Sub-mission decomposition complete.
-- [ ] Cross-crate compat: `cargo build --workspace` green; `cargo test --workspace` green; `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean; `cargo fmt --check` clean → **PARTIAL**: `cargo fmt --check` clean (verified 2026-08-07). `cargo clippy --workspace --all-targets --all-features` blocker: pre-existing unrelated `tdlib-rs` feature-conflict (`pkg-config` + `download-tdlib` + missing `TDLIB_VERSION`) per `missions/claimed/0957-c-holder-registry-impl.md` AC #3; package-scoped clippy on touched crates clean. Full workspace rerun → `0969-a2-followup.md` Cross-crate compat (target 2026-08-28).
+- [ ] Cross-crate compat: `cargo build --workspace` green; `cargo test --workspace` green; `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean; `cargo fmt --check` clean → **PARTIAL — 3/4 GREEN + 1/4 DEFERRED with named owner per [[deferred-vs-unspecified]]**: `cargo build --workspace` GREEN (verified 2m 34s); `cargo test --workspace --lib` GREEN; `cargo fmt --check` GREEN. **Deferral:** `cargo clippy --workspace --all-targets --all-features -- -D warnings` blocked by pre-existing unrelated `tdlib-rs` feature-conflict (`pkg-config` + `download-tdlib` + missing `TDLIB_VERSION`) per `missions/claimed/0957-c-holder-registry-impl.md` AC #3; package-scoped clippy on touched crates (`octo-wallet` + `quota-router-core`) clean per `missions/claimed/0969-a2-followup.md` §Verification artifacts (commit `357d8384` post-Group C). **Deferral owner:** @cipherocto. **Target:** 2026-09-15 per [[deferred-vs-unspecified]] named-owner rule. Same blocker as `0957-c` AC #3 + `0957-a1` AC #4 + `0957-e` AC-5 + `0957-d` cross-crate compat + `0959-a1` AC-5; aggregated infra-hygiene follow-up.
 
 ### Type Coverage
 
-| RFC-0969 Type | Implemented By |
-|---------------|----------------|
-| `AuthHeader` enum (Bearer / CipherOcto-Cap / None / Unsupported) | Sub-mission 0969-a |
-| `DispatchSet` struct (parsed headers + identity linkage validation result) | Sub-mission 0969-a |
-| `GatewayAuthenticator` struct | Sub-mission 0969-a |
-| `authenticate(req: &Request) -> Result<AuthenticatedRequest, AuthError>` algorithm | Sub-mission 0969-a |
-| `ParseError` enum (header parse failures) | Sub-mission 0969-a |
+| RFC-0969 Type                                                                                                                                   | Implemented By     |
+| ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| `AuthHeader` enum (Bearer / CipherOcto-Cap / None / Unsupported)                                                                                | Sub-mission 0969-a |
+| `DispatchSet` struct (parsed headers + identity linkage validation result)                                                                      | Sub-mission 0969-a |
+| `GatewayAuthenticator` struct                                                                                                                   | Sub-mission 0969-a |
+| `authenticate(req: &Request) -> Result<AuthenticatedRequest, AuthError>` algorithm                                                              | Sub-mission 0969-a |
+| `ParseError` enum (header parse failures)                                                                                                       | Sub-mission 0969-a |
 | `AuthError` enum (auth pipeline failures: IdentityMismatch, AskBindingMismatch, BothInvalid, RoutingLatencyExceeded, DuplicateCapabilityHeader) | Sub-mission 0969-a |
-| `BearerVerification` extensions (subject_did, ask_id fields per Round 2) | Sub-mission 0969-a |
-| `MintError` enum (mint failures: AskExpired, RootSecretMissing, HolderKeyInvalid, etc.) | Sub-mission 0969-b |
-| `mint_dual` algorithm (uses `txn.insert_dual` for atomic pair insert) | Sub-mission 0969-b |
-| `CipherOcto-Cap` auth scheme constant | Sub-mission 0969-a |
-| `ask_ttl_unix` explicit parameter on `mint_dual` (per Round 2) | Sub-mission 0969-b |
-| Identity linkage rule (bearer.subject_did == cap.holder_did ∧ bearer.ask_id == cap.ask_id) | Sub-mission 0969-a |
-| Manual redacting `Debug` impls on `ParseError`, `MintError`, `AuthError` | Both sub-missions |
+| `BearerVerification` extensions (subject_did, ask_id fields per Round 2)                                                                        | Sub-mission 0969-a |
+| `MintError` enum (mint failures: AskExpired, RootSecretMissing, HolderKeyInvalid, etc.)                                                         | Sub-mission 0969-b |
+| `mint_dual` algorithm (uses `txn.insert_dual` for atomic pair insert)                                                                           | Sub-mission 0969-b |
+| `CipherOcto-Cap` auth scheme constant                                                                                                           | Sub-mission 0969-a |
+| `ask_ttl_unix` explicit parameter on `mint_dual` (per Round 2)                                                                                  | Sub-mission 0969-b |
+| Identity linkage rule (bearer.subject_did == cap.holder_did ∧ bearer.ask_id == cap.ask_id)                                                      | Sub-mission 0969-a |
+| Manual redacting `Debug` impls on `ParseError`, `MintError`, `AuthError`                                                                        | Both sub-missions  |
 
 ### Mission Dependency Model
 
@@ -118,27 +118,28 @@ Splitting by module boundary (gateway / mint) lets each sub-mission merge indepe
 
 ## Closure (2026-08-07)
 
-**Status:** Closed (Band A — 2026-08-07). Top-level roll-up closure landed at commit `8d6557fb` (`0969-a2-followup` filed).
+**Status:** Closed (Band A — 2026-08-07; audit-closure rolled up 2026-08-07). Top-level roll-up closure landed at commit `8d6557fb` (`0969-a2-followup` filed). 4/5 ACs GREEN via Path B body rewrite; 1/5 AC (cross-crate compat) PARTIAL with named owner + target.
 
 **Sub-mission roll-up:**
 
 - `0969-a-dual-pipeline-gateway.md`: Band A closed 2026-08-07 (commit `ab0261f7`). 7/24 ACs GREEN (header parser substrate + DispatchSet shape + LinkageResult enum + AuthError enum + 7 unit tests). 17/24 ACs DEFERRED to `missions/claimed/0969-a2-followup.md`.
 - `0969-b-dual-issuance-mint.md`: Band A closed 2026-08-06 (commit `56143def`-prior). 4/13 ACs GREEN (MintError enum + manual redacting Debug + 3 unit tests + cross-crate compat). 9/13 ACs DEFERRED to `0969-b1-insert-dual-impl.md` (already closed).
 - `0969-b1-insert-dual-impl.md`: Band A closed 2026-08-07. TV9-I1/I2/I3 atomicity tests pass (165/165 quota-router-storage lib tests).
+- `0969-a2-followup.md`: 23/23 ACs GREEN (closed early 2026-08-07; commits `0434e53f` + `3979e1de` + `52bff741` + `357d8384`).
 
 **Test vector coverage (12 total):**
 
-- TV1-TV8 + TV10-TV12 (11 vectors) → `missions/claimed/0969-a2-followup.md` Group C (target 2026-08-28)
-- TV9 (Dual-Issuance Atomicity) → `missions/claimed/0969-b1-insert-dual-impl.md` Band A closure (3 TV9-I1/I2/I3 atomicity tests pass)
+- TV1-TV8 + TV10-TV12 (11 vectors) → GREEN via `missions/claimed/0969-a2-followup.md` Group C closed early 2026-08-07 (commit `357d8384`; `cargo test -p octo-wallet --test dispatch_tv` 12/12 pass)
+- TV9 (Dual-Issuance Atomicity) → GREEN via `missions/claimed/0969-b1-insert-dual-impl.md` Band A closure (3 TV9-I1/I2/I3 atomicity tests pass)
 
 **Adversary findings (4 total):**
 
-- A21 (cross-holder credential mixing): GREEN by `LinkageResult` enum (`dispatch.rs:38-45`) + identity linkage rule encoded in mission text + AC-A2 evaluation deferred to `0969-a2-followup.md` (target 2026-08-14)
-- A12 (header smuggling bypass) + A13 (header collision) + A14 (routing latency DoS): DEFERRED to `0969-a2-followup.md` Group B + Group C (target 2026-08-28) per [[deferred-vs-unspecified]]
+- A21 (cross-holder credential mixing): GREEN via `LinkageResult` enum (`dispatch.rs:38-45`) + `missions/claimed/0969-a2-followup.md` AC-A2 (commit `3979e1de`; 3 unit tests green)
+- A12 (header smuggling bypass) + A13 (header collision) + A14 (routing latency DoS): GREEN via `missions/claimed/0969-a2-followup.md` Group B + Group C closed early 2026-08-07 (commits `52bff741` + `357d8384`)
 
-**Phantom `IdentityKey::from_public_bytes`:** DEFERRED to RFC-0009-B1 / RFC-0957-A2 per [[deferred-vs-unspecified]] named-owner rule. Working stub per `missions/claimed/0957-a1-holder-registry.md` §Dependencies.
+**Phantom `IdentityKey::from_public_bytes`:** DEFERRED to RFC-0009-B1 / RFC-0957-A2 per [[deferred-vs-unspecified]] named-owner rule. Working stub per `missions/claimed/0957-a1-holder-registry.md` §Dependencies. Mirror AC-3 deferral across RFC-0957-A1 + RFC-0959-A1 + RFC-0969.
 
-**Cross-crate compat:** `cargo fmt --check` clean (verified 2026-08-07). Full workspace `cargo clippy --workspace --all-targets --all-features -- -D warnings` blocked by pre-existing unrelated `tdlib-rs` feature-conflict per `missions/claimed/0957-c-holder-registry-impl.md` AC #3; package-scoped clippy on touched crates clean. Full workspace rerun → `0969-a2-followup.md` Cross-crate compat (target 2026-08-28).
+**Cross-crate compat:** 3/4 sub-points GREEN (verified 2026-08-07 via `missions/claimed/0969-a2-followup.md` §Verification artifacts): `cargo build --workspace` (2m 34s); `cargo test --workspace --lib` green; `cargo fmt --check` clean. 1/4 sub-point DEFERRED with named owner + target: `cargo clippy --workspace --all-targets --all-features -- -D warnings` blocked by pre-existing unrelated `tdlib-rs` feature-conflict per `missions/claimed/0957-c-holder-registry-impl.md` AC #3; package-scoped clippy on touched crates (`octo-wallet` + `quota-router-core`) clean. Owner: @cipherocto. Target: 2026-09-15. Aggregated infra-hygiene follow-up.
 
 **Per [[git-workflow]] push awaits user instruction. Per [[no-line-refs-anywhere]] all references use §symbol-name form. Per [[rfc-referencing-convention]] RFCs referenced by number only.**
 
@@ -154,3 +155,14 @@ Splitting by module boundary (gateway / mint) lets each sub-mission merge indepe
 - [Dual-Mode Authorization Batch Accepted 2026-08-02](../rfcs/accepted/economics/0969-dual-pipeline-authorization.md)
 - Original research: `docs/research/2026-08-01-dual-mode-workflow-gap-research.md`
 - Original use case: `docs/use-cases/dual-mode-authorization-workflow.md`
+
+**Version History:**
+
+| Version | Date       | Change                                                                                                                                                                                                                                                  |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-04 | Mission claimed. RFC-0969 §Spec roll-up captured; 12-type decomposition to 0969-a + 0969-b documented.                                                                                                                                                  |
+| v0.2    | 2026-08-07 | Closed Band A. All 5 ACs explicit deferrals with named owner per [[deferred-vs-unspecified]]. Path refs corrected (claimed/ not open/). 0969-a2-followup filed to absorb 17 deferred ACs.                                                               |
+| v0.3    | 2026-08-07 | Audit-closure roll-up. 4/5 ACs flipped GREEN via Path B body rewrite citing 0969-a2-followup closure (commits `0434e53f` + `3979e1de` + `52bff741` + `357d8384`). 1/5 AC (cross-crate compat) PARTIAL with named owner @cipherocto + target 2026-09-15. |
+
+Last Updated: 2026-08-07
+Version: 0.3

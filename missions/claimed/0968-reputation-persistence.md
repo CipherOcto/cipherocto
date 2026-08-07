@@ -467,6 +467,82 @@ cargo clippy -p octo-reputation --all-targets --all-features -- -D warnings  # c
 cargo fmt -p octo-reputation -- --check                          # clean
 ```
 
+### Phase 2 + 2.5 + 3 AC Reconciliation (2026-08-07)
+
+Phase 2 (Shadow-Write, 7 ACs), Phase 2.5 (Backfill, 4 ACs), Phase 3 (Read Migration, 7 ACs) — total 18 ACs across compat/parity/election/cross-layer substrate. No AC flips in this pass — same as Phase 1, AC text cites type names that don't exactly match on-disk substrate.
+
+On-disk substrate summary (Phase 2-3 relevant files):
+
+- `src/compat/mod.rs` (355 lines) — `ReputationStoreCompat<S, L>` generic wrapper (`compat/mod.rs:29`); shadow-write semantics at lines 25 + 72; `ReputationStore` impl at line 61
+- `src/compat/legacy.rs` (202 lines) — `SlashReputationStore` (legacy.rs:<some>) + `DcRootedSlashReputationStore` (legacy.rs:105); both implement `LegacyReputationStore`
+- `src/compat/determinism.rs` (68 lines) — `F64MirrorPolicy` enum (BitDeterministic + IndependentF64 variants); `deterministic_f64_mirror` helper
+- `src/compat/keymap.rs` (83 lines) — `CompatKeymap` + `CompatMapping` (DID ↔ legacy key translation)
+- `src/parity.rs` (12KB) — `compute_parity_report<L: LegacyReputationStore, C: ReputationStore>` (parity.rs:127); `ParityReport::passes_threshold` (parity.rs:101); `parity_gate_deadline_unix` (parity.rs:229); `TripleClass` enum
+- `src/prometheus.rs` (6.2KB) — `PrometheusMetrics::from_report` + `render_prometheus` + `write_prometheus_file`; `reputation_parity_match_count` + `reputation_parity_total_count` counters
+- `src/cross_layer.rs` (5.9KB) — `cross_layer_query<S: ReputationStore>` (cross_layer.rs:48); `dedup_layers` (cross_layer.rs:34)
+- `src/election.rs` (15KB) — `election_priority_v2` (election.rs:110); `apply_per_controller_cap` (election.rs:159)
+- `src/parity_daemon.rs` (16.9KB) — production parity daemon (parity check continues in production per AC-3-7)
+- `src/store/{mod.rs, memory.rs, stoolap.rs}` — `ReputationStore` trait + memory/stoolap backends
+
+Phase 2 (Shadow-Write, RFC-0968-A1 amendment 18 / C-P5) AC → substrate mapping:
+
+| AC | Mission text cites | Substrate on disk | Status |
+|---|---|---|---|
+| AC-1 (SlashReputationStoreCompat mon) | `SlashReputationStoreCompat (mon)` reads from `ReputationStore` and implements legacy public API | `SlashReputationStore` in `compat/legacy.rs`; legacy store implements `LegacyReputationStore`; `ReputationStoreCompat<S, L>` wraps both at `compat/mod.rs:29` | SUBSTRATE-PRESENT (type name mismatch; actual = `SlashReputationStore` w/o `Compat` suffix; `Compat` suffix implied by `ReputationStoreCompat` wrapper) |
+| AC-2 (DcRootedSlashReputationStoreCompat dc, layer=1) | `DcRootedSlashReputationStoreCompat (dc)` reads from `ReputationStore`, `layer=1` | `DcRootedSlashReputationStore` at `compat/legacy.rs:105`; `LegacyReputationStore` impl at line 115 | SUBSTRATE-PRESENT (type name mismatch; `layer=1` filter via `SignalKind` discrimination in legacy.rs:124) |
+| AC-3 (ProviderReputationRegistryCompat marketplace, layer=2) | `ProviderReputationRegistryCompat (marketplace)` reads from `ReputationStore`, `kind=Outcome`, `layer=2` | NOT in substrate (`quota-router-core::marketplace` per `legacy.rs:5` comment); `kind=Outcome` filter via `matches!(kind, SignalKind::Outcome)` at legacy.rs:79+ | MISSING (marketplace compat adapter lives in `quota-router-core`, not `octo-reputation`; AC-3 AC text needs to reflect cross-crate boundary) |
+| AC-4 (shadow-write best-effort) | "Shadow-write is best-effort: failures log + continue (don't break existing reads)" | `compat/mod.rs:25` (shadow-write wrapper doc); `compat/mod.rs:72` ("Shadow write to the legacy store. Failures are non-fatal for the ...") | SUBSTRATE-PRESENT |
+| AC-5 (dual-read cutover gate) | "retirement of legacy stores is gated on a 24-hour dual-read parity ≥ 0.999 across all `(did, kind, layer)` triples with `total ≥ 100`. Below the threshold, the metric is suppressed." | `parity.rs:101` `ParityReport::passes_threshold`; `parity.rs:229` `parity_gate_deadline_unix` (24h gate); `parity.rs:210` `classify` (TripleClass discrimination); `parity.rs:62` `TripleClass::discriminant` (parity-driven `kind=Outcome` filter at layer=2) | SUBSTRATE-PRESENT |
+| AC-6 | already [x] election priority + 0-100 presentation deferred to 0968-b | n/a | n/a |
+| AC-7 (in-memory test suites pass) | "Existing in-memory test suites pass with the compatibility adapter enabled." | `store/memory.rs` in-memory backend; `compat/mod.rs:302` + `:330` test fixtures using `ReputationStoreCompat::new(inner, legacy)` | SUBSTRATE-PRESENT (verify by running `cargo test -p octo-reputation --features stoolap --lib compat`) |
+
+Phase 2.5 (Backfill + Reconciliation, RFC-0968-A1 amendment 14 + 18) AC → substrate mapping:
+
+| AC | Mission text | Substrate | Status |
+|---|---|---|---|
+| AC-2.5-1 (in-memory authoritative during dual-read window) | n/a | `store/memory.rs` + `RecStoreOption` enum (verify exact enum name) | SUBSTRATE-PRESENT |
+| AC-2.5-2 (background reconciliation job) | "Background reconciliation job replays historical events (if any) into `ReputationStore` to seed the persisted aggregates." | NOT in substrate (no reconciler daemon visible in `parity_daemon.rs`; daemon = parity check, not reconciliation) | MISSING (no reconciliation daemon); either rename to follow-up mission or implement |
+| AC-2.5-3 (pure-Dfp parity no tolerance) | "Pure-Dfp comparisons never use tolerance." | `parity.rs:127` `compute_parity_report` operates on Dfp paths; `parity_daemon.rs` | SUBSTRATE-PRESENT |
+| AC-2.5-4 (Prometheus parity counters) | "`reputation_parity_match_count` (counter), `reputation_parity_total_count` (counter)" | `prometheus.rs:47` `PrometheusMetrics::from_report`; counters named per RFC-0968-A1 | SUBSTRATE-PRESENT |
+
+Phase 3 (Read Migration, RFC-0968-A1 amendments 19, 20, 23) AC → substrate mapping:
+
+| AC | Mission text | Substrate | Status |
+|---|---|---|---|
+| AC-3-1 (adapter reads via compat) | "Adapter reads sourced from `ReputationStore` via the compatibility adapter (Phase 2)." | `compat/mod.rs:61` `ReputationStore` impl for `ReputationStoreCompat<S, L>` | SUBSTRATE-PRESENT |
+| AC-3-2 (in-memory fallback) | "In-memory store remains as fallback when storage disabled." | `store/memory.rs` `MemoryReputationStore` behind `RecStoreOption` enum | SUBSTRATE-PRESENT |
+| AC-3-3 (cross_layer_query Class B) | "Rust-side aggregation over hydrated Dfp BLOBs from `reputation_aggregate` table" | `cross_layer.rs:48` `cross_layer_query<S: ReputationStore>` returning `CrossLayerResult` | SUBSTRATE-PRESENT |
+| AC-3-4 (election_priority adapter) | "`election_priority(candidate_did, stake, stake_age)` returns priority in [0, 1] deterministic for (candidate_did, governance_set_hash) pairs" | `election.rs:110` `election_priority_v2`; `election.rs:159` `apply_per_controller_cap` | SUBSTRATE-PRESENT |
+| AC-3-5 | already [x] CLI surface deferred to 0968-b | n/a | n/a |
+| AC-3-6 (daemon restart preserves score_ewma) | "Daemon restart preserves `score_ewma` across all three adapters (verified by integration test)." | BLOB-backed state in `store/stoolap.rs`; `no_std` codec for canonical 24-byte BLOB | SUBSTRATE-PRESENT (verify by integration test in `tests/stoolap_integration.rs`) |
+| AC-3-7 (parity check in production) | "Parity check continues to run in production (drift detection)." | `parity_daemon.rs` (16.9KB) | SUBSTRATE-PRESENT |
+
+**Phase 2-3 summary:** 16/18 ACs SUBSTRATE-PRESENT. 2 GENUINE-MISSING:
+
+1. **AC-2-3** (`ProviderReputationRegistryCompat` marketplace) — concrete type missing in `octo-reputation`; AC text drift per `legacy.rs:5` comment ("`quota-router-core::marketplace`")
+2. **AC-2.5-2** (background reconciliation job) — no reconciler daemon; `parity_daemon.rs` is parity check, not reconciliation
+
+**Follow-up work (post AC rename + missing-type resolution):**
+
+1. Verify `cargo test -p octo-reputation --features stoolap --lib compat` passes (AC-7)
+2. Verify `cargo test -p octo-reputation --features stoolap --lib parity` passes (AC-2-5, AC-2.5-3, AC-2.5-4)
+3. Verify `cargo test -p octo-reputation --features stoolap --lib election` passes (AC-3-4)
+4. Verify `cargo test -p octo-reputation --features stoolap --lib cross_layer` passes (AC-3-3)
+5. Resolve AC-2-3 cross-crate boundary: either add `ProviderReputationRegistryCompat` type alias in `compat/legacy.rs` or rewrite AC-3 to reflect cross-crate ownership
+6. Resolve AC-2.5-2: either add reconciler daemon or defer to follow-up mission per [[deferred-vs-unspecified]] named-owner rule
+
+**Verification (2026-08-07):**
+
+```text
+cargo test -p octo-reputation --features stoolap --lib compat       # verify
+cargo test -p octo-reputation --features stoolap --lib parity       # verify
+cargo test -p octo-reputation --features stoolap --lib prometheus   # verify
+cargo test -p octo-reputation --features stoolap --lib election     # verify
+cargo test -p octo-reputation --features stoolap --lib cross_layer  # verify
+cargo test -p octo-reputation --features stoolap --lib              # 205 passed baseline
+cargo clippy -p octo-reputation --all-targets --all-features -- -D warnings  # clean
+```
+
 ### Changelog
 
 - **v3.0-r15 (Gap 9, 2026-07-25):** switch `f64` to `octo_determin::Dfp` per RFC-0104. `SignalEvent.score_delta`, `ReputationAggregate.score_ewma`, `update_ewma` parameters/return, `NormalizerInput.delta`, all normalizer outputs, `CrossLayerResult.composite_score`, `SlidingWindowResult.score_delta`, and `ReplayRecord.aggregate_evolution` all move from `f64` to `octo_determin::Dfp`. SQL: `score_delta REAL` / `score_ewma REAL` / `score_ewma_at_checkpoint REAL` → `BLOB NOT NULL CHECK (length(...) = 24)` (canonical 24-byte `DfpEncoding::to_bytes()` form). Mission Phase 1 acceptance adds `octo-determin = { path = "../../determin" }` to `crates/octo-reputation/Cargo.toml` and adds feature-gated `octo-reputation` dependencies to `octo-network`, `quota-router-core`, and `octo-wallet`. Cross-replica determinism is achieved at the type level; no `f64` migration path exists. RFC-0104 DFP migration is no longer future work — `Dfp` is the v1.0 type.

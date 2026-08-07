@@ -6,8 +6,10 @@
 //! 3. Caveat evaluation against the request context.
 
 pub mod audit_log;
+pub mod audit_replay_log;
 pub mod bearer_capsule_re_export;
 pub mod caveat;
+pub mod destination_nonce_store;
 pub mod discharge;
 pub mod dispatch;
 pub mod dual_issuance;

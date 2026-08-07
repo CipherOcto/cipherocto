@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-08-04) by @mmacedoeu
+Closed (Band A — 2026-08-06). Claimed (2026-08-04) by @mmacedoeu
 
 ## RFC
 
@@ -98,3 +98,13 @@ Reference: `crates/octo-ident/src/lib.rs` (new); `crates/octo-reputation/src/typ
 
 - `mint` signature: per RFC-0957-A1 R6-C3 the catalog parameter is required upstream; for 0010-a `mint(pubkey)` is sufficient (no catalog binding for raw DIDs).
 - F1 (W3C DID method registration), F2 (Multi-chain DID resolution), F3 (capability key derivation) tracked in RFC-0010 §Future Work — out of scope.
+
+**Version History:**
+
+| Version | Date       | Change                                                                                                                                                |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-04 | Mission claimed. `crates/octo-ident/` codec crate + DidCodec trait + 21 tests landed.                                                                  |
+| v0.2    | 2026-08-06 | Closed Band A. 10/10 ACs green; 21/21 octo-ident tests verified green post-claim. Status header flipped Claimed→Closed (Band A — 2026-08-06). No new impl commits. |
+
+Last Updated: 2026-08-06
+Version: 0.2

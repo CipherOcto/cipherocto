@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-08-04) by @mmacedoeu
+Closed (Band A — 2026-08-06). Claimed (2026-08-04) by @mmacedoeu
 
 ## RFC
 
@@ -95,3 +95,13 @@ Replace 347 `did:octo:` literals across `crates/` test fixtures and migration te
 > Use `let did = sample_did(42);` instead.
 >
 > **JSON fixtures:** out of scope for the .rs codemod. JSON test vectors carry bare-name DIDs as named-holder fixtures; they migrate separately when their owning mission lands (e.g., 0958-a).
+
+**Version History:**
+
+| Version | Date       | Change                                                                                                                                                |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-04 | Mission claimed. 533 literal replacements across 40 files; sample_did(seed) test helper added.                                                          |
+| v0.2    | 2026-08-06 | Closed Band A. 8/8 ACs green. Status header flipped Claimed→Closed (Band A — 2026-08-06). No new impl commits (pre-existing codemod substrate verified). |
+
+Last Updated: 2026-08-06
+Version: 0.2

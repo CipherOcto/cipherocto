@@ -68,6 +68,11 @@ octo-network = { path = "../octo-network" }
 octo-core = { path = "../octo-core" }
 octo-reputation = { path = "../octo-reputation" }
 octo-ident = { path = "../octo-ident" }
+# Mission 0870-b-envelope-adoption: NodeEnvelope + PayloadKindId +
+# Authorization from RFC-0871 (Layer 1 stable substrate). Used by quota
+# router outbound to wrap existing 0xC3–0xCB discriminator payloads in
+# the unified `NodeEnvelope` envelope per RFC-0870 §NodeEnvelope Adoption.
+octo-protocol = { path = "../octo-protocol" }
 octo-determin = { path = "../../determin" }
 quota-router-storage = { path = "../quota-router-storage" }
 quota-router-sm-engine = { path = "../quota-router-sm-engine" }
@@ -77,6 +82,14 @@ sha2.workspace = true
 
 # For Ed25519 (S04 receipt signature + S05 ZK capability)
 ed25519-dalek = { version = "2.2", features = ["serde"] }
+
+# RFC-0871 §Data Structures: NodeEnvelope uses borsh-serialized wire
+# form. Pulled in for the 0870-b envelope adoption (`envelope_v2.rs`)
+# where `NodeEnvelope::build` round-trips via borsh.
+borsh = "=1.5.0"
+# RFC-0870 §NodeEnvelope Adoption: `signer_did` wire form
+# `did:octo:z<base58btc(verifying_key)>` (see `envelope_v2.rs::node_canonical_did`).
+bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
 
 # For BLAKE3 (used in tokenizer_id derivation)
 blake3.workspace = true

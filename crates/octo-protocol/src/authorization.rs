@@ -156,7 +156,10 @@ impl BlsSignature {
 /// per RFC-0010).
 ///
 /// Used by `EnvelopeDispatcher` to verify each `Authorization::Signature`.
-pub(crate) fn verify_ed25519_signature(
+/// Also exposed publicly so downstream consumers (e.g. quota-router-core
+/// per RFC-0870 §NodeEnvelope Adoption) can verify RFC-0871 signatures
+/// without round-tripping through the full dispatcher.
+pub fn verify_ed25519_signature(
     signer_did: &WireDid,
     msg: &[u8],
     sig_bytes: &Ed25519SignatureBytes,

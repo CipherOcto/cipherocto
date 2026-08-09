@@ -1,4 +1,5 @@
 pub mod announce;
+pub mod envelope_v2;
 pub mod forward;
 pub mod gossip;
 pub mod handler;

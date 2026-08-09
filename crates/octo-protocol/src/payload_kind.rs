@@ -137,6 +137,99 @@ pub const WALLET_RESOLVE_DID: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04,
 ]);
 
+// RFC-0870 quota router payload kinds (RFC-0870 §NodeEnvelope Adoption,
+// mission 0870-b-envelope-adoption). Allocated in the RFC-0871
+// `rfc_namespace` (`0x0009:...`) with sub-namespace `0x0003` (RFC-0870 — quota
+// router mesh). The RFC-0870 amendment table uses conceptual `[0x87, 0x00, ...]`
+// byte placeholders; this allocation is the canonical materialization per
+// RFC-0871 §Ordering + RFC-0871 §Namespace. Mission 0870-b maps the legacy
+// discriminator bytes (0xC3–0xCB) to these UUIDs at the quota-router-core
+// boundary (see `crates/quota-router-core/src/node/envelope_v2.rs`).
+//
+// RFC-0870 §NodeEnvelope Adoption table:
+//
+// | Legacy discriminator | New PayloadKindId                |
+// |----------------------|-----------------------------------|
+// | 0xC3 (FWD_REQUEST)   | QUOTA_FORWARD_REQUEST             |
+// | 0xC4 (FWD_RESPONSE)  | QUOTA_FORWARD_RESPONSE            |
+// | 0xC5 (FWD_REJECT)    | QUOTA_FORWARD_REJECT              |
+// | 0xC6 (CAP_GOSSIP)    | QUOTA_CAPACITY_GOSSIP             |
+// | 0xC7 (CAP_REQUEST)   | QUOTA_CAPACITY_REQUEST            |
+// | 0xCA (ROUTER_ANNC)   | QUOTA_ROUTER_ANNOUNCE             |
+// | 0xCB (ROUTER_WITHD)  | QUOTA_ROUTER_WITHDRAW             |
+
+/// Router announce (RFC-0870 §NodeEnvelope Adoption).
+///
+/// UUID: `0x0009:0003:0000:0000:0000:0000:0000:0000`
+pub const QUOTA_ROUTER_ANNOUNCE: PayloadKindId = PayloadKindId([
+    0x00, 0x09, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+]);
+
+/// Router withdraw (RFC-0870 §NodeEnvelope Adoption).
+///
+/// UUID: `0x0009:0003:0000:0000:0000:0000:0000:0001`
+pub const QUOTA_ROUTER_WITHDRAW: PayloadKindId = PayloadKindId([
+    0x00, 0x09, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+]);
+
+/// Capacity gossip (RFC-0870 §NodeEnvelope Adoption).
+///
+/// UUID: `0x0009:0003:0000:0000:0000:0000:0000:0002`
+pub const QUOTA_CAPACITY_GOSSIP: PayloadKindId = PayloadKindId([
+    0x00, 0x09, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
+]);
+
+/// Capacity request (RFC-0870 §NodeEnvelope Adoption).
+///
+/// UUID: `0x0009:0003:0000:0000:0000:0000:0000:0003`
+pub const QUOTA_CAPACITY_REQUEST: PayloadKindId = PayloadKindId([
+    0x00, 0x09, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
+]);
+
+/// Forward request (RFC-0870 §NodeEnvelope Adoption).
+///
+/// UUID: `0x0009:0003:0000:0000:0000:0000:0000:0010`
+pub const QUOTA_FORWARD_REQUEST: PayloadKindId = PayloadKindId([
+    0x00, 0x09, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10,
+]);
+
+/// Forward response (RFC-0870 §NodeEnvelope Adoption).
+///
+/// UUID: `0x0009:0003:0000:0000:0000:0000:0000:0011`
+pub const QUOTA_FORWARD_RESPONSE: PayloadKindId = PayloadKindId([
+    0x00, 0x09, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11,
+]);
+
+/// Forward reject (RFC-0870 §NodeEnvelope Adoption).
+///
+/// UUID: `0x0009:0003:0000:0000:0000:0000:0000:0012`
+pub const QUOTA_FORWARD_REJECT: PayloadKindId = PayloadKindId([
+    0x00, 0x09, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x12,
+]);
+
+/// All RFC-0870 quota-router payload kinds (mission 0870-b-envelope-adoption).
+///
+/// Mission 0870-b uses this array to perform `on_receive` dispatch: a
+/// borsh-deserialized `NodeEnvelope` whose `payload_kind` matches one of
+/// these UUIDs is routed to the corresponding `QuotaRouterHandler::handle_*`
+/// method. Unknown UUIDs in the RFC-0870 sub-namespace are dropped
+/// fail-closed per RFC-0871 §Compatibility + RFC-0965 §3.2.
+pub const QUOTA_PAYLOAD_KINDS: &[PayloadKindId] = &[
+    QUOTA_ROUTER_ANNOUNCE,
+    QUOTA_ROUTER_WITHDRAW,
+    QUOTA_CAPACITY_GOSSIP,
+    QUOTA_CAPACITY_REQUEST,
+    QUOTA_FORWARD_REQUEST,
+    QUOTA_FORWARD_RESPONSE,
+    QUOTA_FORWARD_REJECT,
+];
+
+/// True if `kind` is an RFC-0870 quota-router payload kind.
+#[must_use]
+pub fn is_quota_payload_kind(kind: &PayloadKindId) -> bool {
+    QUOTA_PAYLOAD_KINDS.contains(kind)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,5 +263,67 @@ mod tests {
         let bytes = borsh::to_vec(&IDENTITY_RESOLVE).unwrap();
         let back: PayloadKindId = borsh::from_slice(&bytes).unwrap();
         assert_eq!(back, IDENTITY_RESOLVE);
+    }
+
+    #[test]
+    fn quota_payload_kinds_are_distinct() {
+        // Mission 0870-b AC: 7 RFC-0870 payload kinds must be pairwise distinct
+        // (no two payloads share a UUID by accident).
+        let kinds = QUOTA_PAYLOAD_KINDS;
+        assert_eq!(kinds.len(), 7);
+        for i in 0..kinds.len() {
+            for j in (i + 1)..kinds.len() {
+                assert_ne!(
+                    kinds[i], kinds[j],
+                    "duplicate UUID in QUOTA_PAYLOAD_KINDS at indices {i} / {j}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn quota_payload_kinds_are_rfc_allocated() {
+        // Mission 0870-b AC: every RFC-0870 payload kind MUST sit in the
+        // RFC-0871 `rfc_namespace` (0x0009:0000…0x0009:FFFF). Legacy
+        // outbound code reads the first byte to discriminate legacy vs new
+        // envelopes; new envelopes MUST be borsh-decodable as `NodeEnvelope`.
+        for kind in QUOTA_PAYLOAD_KINDS {
+            assert!(
+                kind.is_rfc_allocated(),
+                "RFC-0870 payload kind {kind:?} not in rfc_namespace"
+            );
+        }
+    }
+
+    #[test]
+    fn quota_payload_kinds_first16bits_0x0009_0003() {
+        // Mission 0870-b AC: RFC-0870 sub-namespace = 0x0003 (within
+        // RFC-0871 rfc_namespace). First 16 bits must be 0x0009; next 16
+        // bits must be 0x0003.
+        for kind in QUOTA_PAYLOAD_KINDS {
+            assert_eq!(kind.0[0], 0x00);
+            assert_eq!(kind.0[1], 0x09);
+            assert_eq!(kind.0[2], 0x00);
+            assert_eq!(kind.0[3], 0x03);
+        }
+    }
+
+    #[test]
+    fn is_quota_payload_kind_matches_array() {
+        for kind in QUOTA_PAYLOAD_KINDS {
+            assert!(is_quota_payload_kind(kind));
+        }
+        // A non-quota RFC-0871 payload kind must NOT match.
+        assert!(!is_quota_payload_kind(&IDENTITY_RESOLVE));
+        assert!(!is_quota_payload_kind(&WALLET_SIGN_ED25519));
+    }
+
+    #[test]
+    fn quota_payload_kinds_borsh_round_trip() {
+        for kind in QUOTA_PAYLOAD_KINDS {
+            let bytes = borsh::to_vec(kind).unwrap();
+            let back: PayloadKindId = borsh::from_slice(&bytes).unwrap();
+            assert_eq!(back, *kind);
+        }
     }
 }

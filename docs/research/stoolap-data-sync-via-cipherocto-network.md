@@ -64,7 +64,7 @@ Without a Sync protocol, the operator of the fork can only synchronize data by c
 ### Non-Goals (out of scope for v1)
 
 - Multi-leader / active-active conflict resolution. v1 is single-leader (one writer node, N read replicas) with deterministic LSN ordering. CRDTs are explicitly **rejected** by `RFC-0852` for consensus-relevant state; we will not introduce them here either.
-- Native browser/browser-node sync (WebRTC data channel). v1 uses DOT platform adapters (NativeP2P / QUIC / Webhook). WebRTC can be a Phase 3 platform adapter (`RFC-0850 §8.2` already allocates the type).
+- Native browser/browser-node sync (WebRTC data channel). v1 uses DOT platform adapters (NativeP2P / QUIC / Webhook). WebRTC can be a Phase 3 platform adapter (RFC-0850 Platform Translation Layer already allocates the type).
 - Trust-anchor design for storage checkpoints (the analog of RFC-0851p-a §6 "genesis checkpoint from CipherOcto website" for peer lists, but for storage). This is mentioned in §11 of this research as F2 future work.
 - Sharding across multiple Stoolap instances (different schemas per shard). v1 is whole-DB replication; sharded replication can be a follow-up.
 
@@ -135,7 +135,7 @@ Safe-truncation logic: free function `find_safe_truncation_lsn(snapshot_dir, kee
 
 **Crypto — `RFC-0853` (Overlay Cryptography, Draft).** BLAKE3-256, Ed25519, X25519, ChaCha20-Poly1305, HKDF-BLAKE3. `OverlayIdentity`. `EncryptedEnvelope` with AAD `(envelope_id || sender_ephemeral_public || mission_id || logical_timestamp || sequence)`. `MissionKeyHierarchy { mission_root_key, transport_keys_root, relay_keys_root, execution_keys_root }`. Replay cache per-mission (1h or 10K entries). Onion layers (primitive; consumed by `RFC-0858`). Deterministic randomness `HKDF-BLAKE3(seed, context, epoch)`. 24h revocation grace.
 
-**Mission Overlay Networks — `RFC-0855` (Accepted) + `0855p-b`/`0855p-c` (Accepted) + `0855p-e` (Draft, early-stage).** 8-state mission lifecycle (Created 0x0001 → Discovering 0x0002 → Forming 0x0003 → Active 0x0004 → Degraded 0x0005 → Recovering 0x0006 → Terminated 0x0007 → Archived 0x0008) per `RFC-0855:287-307`. `MissionId { network_id: u32, mission_hash: [u8;32], version: u16 }` per `RFC-0855:179-186` (note: 3 fields, not 2). `MissionDescriptor`. `MissionNode` with `role_flags` bitmask. **6 topology models** (Mesh, Hierarchical, Star, Swarm, Ring, Hybrid) per `RFC-0855:485-495` (note: the doc earlier said "8"; corrected — 6). 5 governance models (Centralized, DAO, Federated, AI-Assisted, Autonomous) per `RFC-0855:859-872`. 8 membership roles (Coordinator, Executor, Relay, Validator, Observer, Archivist, Prover, Aggregator) per `RFC-0855:397-406` (defined in §4.2 Roles and Authorities, not §6). 8-state `CoordinatorLifecycle` (`Designated, Elected, Active, Suspect, Handover, Demoting, Resigned, Inactive`) per `RFC-0855p-b:153-170`. Dual-stake requirements per `RFC-0855:431-444`.
+**Mission Overlay Networks — `RFC-0855` (Accepted) + `0855p-b`/`0855p-c` (Accepted) + `0855p-e` (Draft, early-stage).** 8-state mission lifecycle (Created 0x0001 → Discovering 0x0002 → Forming 0x0003 → Active 0x0004 → Degraded 0x0005 → Recovering 0x0006 → Terminated 0x0007 → Archived 0x0008) per `RFC-0855:287-307`. `MissionId { network_id: u32, mission_hash: [u8;32], version: u16 }` per `RFC-0855:179-186` (note: 3 fields, not 2). `MissionDescriptor`. `MissionNode` with `role_flags` bitmask. **6 topology models** (Mesh, Hierarchical, Star, Swarm, Ring, Hybrid) per `RFC-0855:485-495` (note: the doc earlier said "8"; corrected — 6). 5 governance models (Centralized, DAO, Federated, AI-Assisted, Autonomous) per `RFC-0855:859-872`. 8 membership roles (Coordinator, Executor, Relay, Validator, Observer, Archivist, Prover, Aggregator) per `RFC-0855:397-406` (defined in the Mission Membership section, not Topology section). 8-state `CoordinatorLifecycle` (`Designated, Elected, Active, Suspect, Handover, Demoting, Resigned, Inactive`) per `RFC-0855p-b:153-170`. Dual-stake requirements per `RFC-0855:431-444`.
 
 **Other accepted networking RFCs.** `0850ab-a` (Telegram auth onboarding), `0850p-a` (WhatsApp auth), `0850p-c` (Transport Group Binding Ceremony, with `BIND/BIND_ACK/REBIND/UNBIND` envelopes and 4-state `GroupState` at `RFC-0850p-c:133-141`), `0861` (CoordinatorAdmin trait refinements, 17 findings closed: H1, H2, H6, M1, M2, M3, M4, M5, M7, M8, M10, M11, M12, M13, M14, M15, M16 = 17 total, 1,373 tests passing per `RFC-0861:386`).
 
@@ -332,8 +332,8 @@ The two substrates are almost-but-not-quite complementary. Each has half of what
 │                       │                                            │
 │  ┌────────────────────┴───────────────────────────────────────┐    │
 │  │  Transport adapters:                                       │    │
-│  │   - NativeP2P (libp2p gossipsub, RFC-0850 §3.1 0x000A)    │    │
-│  │   - QUIC (RFC-0850 §8.7) — alternative primary            │    │
+│  │   - NativeP2P (libp2p gossipsub, RFC-0850 platform type 0x000A)    │    │
+│  │   - QUIC (RFC-0850 platform type 0x0015) — alternative primary            │    │
 │  │   - Webhook (HTTP) — fallback for air-gapped bridges      │    │
 │  │   - Multi-carrier (Telegram/Discord/Matrix) — best-effort │    │
 │  └────────────────────┬───────────────────────────────────────┘    │

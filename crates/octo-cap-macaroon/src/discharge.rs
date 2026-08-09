@@ -964,6 +964,13 @@ mod tests {
         // Empty escrow context → EscrowDischargeProvider returns valid=false
         // ("missing context" decodes as 0 bytes, fails-closed per RFC-0957 §3.6).
         let err = verify_discharges(&token, &registry, &HashMap::new()).unwrap_err();
+        // R5 finding: pin the exact Display string BEFORE destructuring
+        // (thiserror #[error(...)] regression guard). The destructure
+        // moves the inner Strings, so to_string() must run first.
+        assert_eq!(
+            err.to_string(),
+            "discharge channel `escrow` rejected: context must be 16-byte big-endian u128 EscrowBalance"
+        );
         match err {
             DischargeError::ChannelRejected { channel, reason } => {
                 assert_eq!(channel, "escrow");
@@ -974,6 +981,41 @@ mod tests {
             }
             other => panic!("expected ChannelRejected, got {other:?}"),
         }
+    }
+
+    /// `EscrowBalance::from_context` boundary tests. `from_be_bytes` is
+    /// infallible per Rust guarantees and `copy_from_slice` is guarded by
+    /// the 16-byte length check, but the boundary deserialization was
+    /// previously unexercised. R5 finding: pin 0, 1, and u128::MAX.
+    #[test]
+    fn escrow_balance_from_context_zero() {
+        let ctx = 0u128.to_be_bytes();
+        let bal = EscrowBalance::from_context(&ctx).expect("16-byte ctx decodes");
+        assert_eq!(bal.0, 0);
+    }
+
+    #[test]
+    fn escrow_balance_from_context_one() {
+        let ctx = 1u128.to_be_bytes();
+        let bal = EscrowBalance::from_context(&ctx).expect("16-byte ctx decodes");
+        assert_eq!(bal.0, 1);
+    }
+
+    #[test]
+    fn escrow_balance_from_context_u128_max() {
+        let ctx = u128::MAX.to_be_bytes();
+        let bal = EscrowBalance::from_context(&ctx).expect("16-byte ctx decodes");
+        assert_eq!(bal.0, u128::MAX);
+    }
+
+    #[test]
+    fn escrow_balance_from_context_wrong_length_returns_none() {
+        // 15 bytes: short by 1.
+        assert!(EscrowBalance::from_context(&[0u8; 15]).is_none());
+        // 17 bytes: long by 1.
+        assert!(EscrowBalance::from_context(&[0u8; 17]).is_none());
+        // Empty.
+        assert!(EscrowBalance::from_context(&[]).is_none());
     }
 
     // --- Test helpers (avoid constructing full CapabilityToken inline) ---

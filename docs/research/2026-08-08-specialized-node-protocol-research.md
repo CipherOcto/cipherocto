@@ -100,7 +100,7 @@ For each: extract the load-bearing abstraction, identify what CipherOcto already
 
 **What CipherOcto already has:** RFC-0010 (`crates/octo-ident::DidCodec`), RFC-0010 critique already identified that `octo-wallet::AudienceId::from_str` doesn't validate. **Wallet gap to close.**
 
-**Conflict risk:** DIDComm uses URI message types (`https://...`); CipherOcto uses UUID. Both work. UUIDs are easier to allocate centrally (RFC-numbered) without registering with W3C. **Adopt UUID-based; DIDComm interop deferred to a future RFC-0XXX on DIDComm URI bridge if cross-ecosystem interop is required (Owner: TBD, Schedule: post-v2.0).**
+**Conflict risk:** DIDComm uses URI message types (`https://...`); CipherOcto uses UUID. Both work. UUIDs are easier to allocate centrally (RFC-numbered) without registering with W3C. **Adopt UUID-based; DIDComm interop deferred to a future RFC-0XXX on DIDComm URI bridge if cross-ecosystem interop is required (Owner: TBD, Schedule: post-v2.0, Trigger: external W3C ecosystem requests interop).**
 
 ### 6. Capability-based authorization (Cap'n Proto, E, KeyNote)
 

@@ -254,9 +254,12 @@ pub struct WalletNode {
 }
 
 impl WalletNode {
-    /// Register as a receiver on the transport.
+    /// Register as a receiver on the transport; publish `RouterAnnouncePayload`
+    /// so mesh peers cache the `(node_id, capabilities, payload_kinds)` triple
+    /// per RFC-0870 §RouterAnnounce + RFC-0871 §Test Vectors TV5.
     pub async fn start(&self) -> Result<(), ProtocolError> {
         self.transport.register_receiver(Arc::new(self.clone()));
+        self.transport.publish_announce(self.announce_payload.clone()).await?;
         Ok(())
     }
 }
@@ -519,14 +522,14 @@ The full byte-exact parity is verified by two complementary mechanisms:
 - `NodeEnvelope`, `PayloadKindId`, `Authorization`, `RecipientRef`, `ProtocolError`
 - borsh serde impls + BLAKE3 envelope_id computation
 - DID validation via `octo_ident::CanonicalCodec::parse()`
-- Implementation mission: TBD — file under `missions/open/0871-a-core-envelope-crate.md` at promotion-to-Accepted time. RFC-0870 adoption mission `missions/open/0870-b-envelope-adoption.md` consumes this phase.
+- Implementation mission: TBD — file under `missions/open/` with slug assigned at promotion-to-Accepted time (slug TBD to avoid pre-naming collision per Round-3 review). RFC-0870 adoption mission `missions/open/0870-b-envelope-adoption.md` consumes this phase.
 
 ### Phase 2 — Wallet node (Layer 2 specialized)
 - `crates/octo-wallet-node/` new crate (or fold into `octo-wallet`)
 - `WalletNode` struct + `NetworkReceiver` impl
 - `IdentityKey::sign` routes through `HsmAdapter` (close the gap)
 - Wallet payload kinds: `WALLET_SIGN_ED25519`, `WALLET_MINT_CAPABILITY`, `WALLET_ATTENUATE_CAPABILITY`, `WALLET_RESOLVE_DID`
-- Implementation mission: `missions/open/0009-a-hsm-routing.md` (HSM closure prerequisite); new mission `missions/open/0871-b-wallet-node-crate.md` to file at promotion-to-Accepted time.
+- Implementation mission: `missions/open/0009-a-hsm-routing.md` (HSM closure prerequisite); new mission file under `missions/open/` with slug TBD at promotion-to-Accepted time.
 
 ### Phase 3 — Specialized node adoption (per-RFC)
 - Quota router adopts envelope — mission `missions/open/0870-b-envelope-adoption.md`
@@ -544,7 +547,7 @@ The full byte-exact parity is verified by two complementary mechanisms:
 - New caveat type `PaymentCaveat` (RFC-0965 reserved range 0x1A-0xCF)
 - `RouterAnnouncePayload` declares pricing policy per payload_kind
 - Wallet authorization = `Authorization::Capability(token)` with `PaymentCaveat`
-- Implementation mission: TBD — file under `missions/open/0871-c-paid-query-caveat.md` at promotion-to-Accepted time.
+- Implementation mission: TBD — file under `missions/open/` with slug TBD at promotion-to-Accepted time.
 
 ## Key Files to Modify
 

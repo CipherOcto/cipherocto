@@ -263,14 +263,25 @@ impl WalletNode {
         Ok(())
     }
 
-    /// Build + sign + broadcast the `RouterAnnouncePayload` for this wallet node.
-    /// Mirrors RFC-0870 §QuotaRouterNode `broadcast_announce` pattern.
+    /// Build + HMAC-sign + broadcast the `RouterAnnouncePayload` for this wallet node.
+    /// Mirrors RFC-0870 §QuotaRouterNode `broadcast_announce` exactly.
+    /// (Note: `self.network_key()` is the wallet's network-channel key derived
+    /// from the wallet's identity per RFC-0853 §Channel Binding; see
+    /// `WalletNode::network_key()` definition in `crates/octo-wallet-node`.)
     pub async fn broadcast_announce(&self) -> Result<usize, TransportError> {
-        let announce = self.announce_payload.clone();
-        let bytes = borsh::serialize(&announce).map_err(TransportError::from)?;
-        let hmac = self.sign_hmac(&bytes);
-        let signed = SignedAnnounce { announce, hmac };
-        self.transport.broadcast(&signed, &SendContext::mesh_gossip()).await
+        let announce = RouterAnnouncePayload {
+            node_id: self.node_did().clone(),
+            network_id: self.network_id.clone(),
+            supported_models: vec![],   // wallet does not serve models
+            capacities: vec![],         // wallet does not serve inference capacity
+            timestamp: self.monotonic_now(),
+            hmac: [0u8; 32],
+        };
+        let mut signed = announce;
+        signed.hmac = signed.compute_hmac(&self.network_key());
+        let payload = borsh::serialize(&signed).map_err(TransportError::from)?;
+        let ctx = SendContext::default();
+        Ok(self.transport.broadcast(&payload, &ctx).await)
     }
 }
 
@@ -488,7 +499,7 @@ Test vectors below use a fixed test identity for reproducibility. The seed byte 
 
 **Input:** `WalletNode::start()` registers the node + emits `RouterAnnouncePayload { node_id: <wallet_node_id>, network_id: <wallet_domain>, supported_models: vec![], capacities: vec![], timestamp: <unix_ms>, hmac: <HMAC over canonical_ser(payload) with wallet-node-key> }` per RFC-0870 §QuotaRouterNode `broadcast_announce` pattern. The wallet node reuses the existing `RouterAnnouncePayload` shape (no extension required); peers cache the announcement by `node_id` and use the announced `network_id` for `RecipientRef::Domain` routing.
 
-**Note on payload-kind announcement:** Per RFC-0870 + RFC-0871 §Wallet Node Lifecycle, the wallet-specific payload kinds (`WALLET_SIGN_ED25519`, `WALLET_MINT_CAPABILITY`, etc.) are advertised via a separate `RouterAnnouncePayload` extension field OR a follow-on RFC. This TV intentionally reuses the existing `RouterAnnouncePayload` shape (no `AnnouncedCapability` struct introduced) to avoid adding a new shape without full §NodeEnvelope Adoption review. See RFC-0870 §Future Work for the wallet-capability announcement extension RFC.
+**Note on payload-kind announcement:** Per RFC-0870 + RFC-0871 §Wallet Node Lifecycle, the wallet-specific payload kinds (`WALLET_SIGN_ED25519`, `WALLET_MINT_CAPABILITY`, etc.) are advertised via a separate `RouterAnnouncePayload` extension field OR a follow-on RFC. This TV intentionally reuses the existing `RouterAnnouncePayload` shape (no `AnnouncedCapability` struct introduced) to avoid adding a new shape without full §NodeEnvelope Adoption review. See RFC-0871 §Future Work (TBD post-v2.0; Owner: TBD) for the wallet-capability announcement extension RFC.
 
 **Expected output:** Mesh gossip carries the announce payload to peers; peers cache the `(node_id, capabilities, payload_kinds)` triple for `TTL = 24 hours`. Subsequent `NodeEnvelope` to `WALLET_SIGN_ED25519` can be addressed via `RecipientRef::Domain(wallet_did)` for fan-out to any node advertising the wallet capability.
 

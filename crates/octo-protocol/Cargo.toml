@@ -1,0 +1,37 @@
+[package]
+name = "octo-protocol"
+version = "0.1.0"
+edition = "2021"
+description = "Specialized Node Protocol Envelope per RFC-0871 — NodeEnvelope, PayloadKindId, Authorization, RecipientRef, ProtocolError. Layer 1 stable."
+license = "MIT OR Apache-2.0"
+authors = ["CipherOcto"]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# BLAKE3-256 per RFC-0853 — envelope_id derivation + signature preimage domain separation.
+blake3 = "1.5"
+# Canonical serialization per RFC-0126 (Class A determinism required for envelope_id parity).
+borsh = { version = "=1.5.0", features = ["derive"] }
+# Ed25519 signature verification per RFC-0853 §F1.
+ed25519-dalek = { version = "2.2", features = ["serde", "zeroize"] }
+# Canonical DID codec per RFC-0010 — every `from_did` validated via CanonicalCodec::parse.
+# `borsh` feature enables BorshSerialize/BorshDeserialize for `WireDid` (required
+# by RFC-0871 `NodeEnvelope` borsh wire format).
+octo-ident = { path = "../octo-ident", features = ["borsh"] }
+# Bitcoin base58btc decoder (RFC-0010 §`raw_to_wire` shape). Required for
+# Ed25519 verifying-key reconstruction from canonical DID wire form.
+bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
+# thiserror for ProtocolError — Layer 1 stable, RFC-0871 §Error Handling.
+thiserror = "1"
+# Async-trait for EnvelopeDispatcher trait — production dispatchers are async;
+# tests use the trait's sync surface via dispatch_sync.
+async-trait = "0.1"
+# parking_lot::Mutex for ValidationCache (per-receiver state); std::sync::Mutex
+# is poison-prone and adds `.lock().unwrap()` noise throughout dispatch.
+parking_lot = "0.12"
+
+[dev-dependencies]
+# hex for test fixture byte dumps (RFC-0871 §Test Vectors TV8).
+hex = "0.4"

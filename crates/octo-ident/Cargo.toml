@@ -23,3 +23,13 @@ default = []
 # Enables long-running legacy-form parsing for environments still mid-migration.
 # Per RFC-0010 §Specification §`parse` step 3, this gate flips off at Mission 0010-c.
 allow-legacy-input = []
+# Adds borsh Serialize/Deserialize impls for `WireDid` and `RawDid`. Required by
+# RFC-0871 `NodeEnvelope` (Layer 1 envelope types embed `WireDid`). Off by
+# default so Layer-1 codec stays minimal; `octo-protocol` enables it via its
+# own feature flag.
+borsh = ["dep:borsh"]
+
+[dependencies.borsh]
+version = "=1.5.0"
+features = ["derive"]
+optional = true

@@ -18,6 +18,9 @@
 use blake3::Hasher;
 use thiserror::Error;
 
+#[cfg(feature = "borsh")]
+use borsh::{BorshDeserialize, BorshSerialize};
+
 pub mod test_helpers;
 
 /// Canonical 52-byte DID storage form.
@@ -81,6 +84,38 @@ impl RawDid {
 /// is 1 char; 32-byte payload base58btc encodes to 43-44 chars).
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct WireDid(String);
+
+#[cfg(feature = "borsh")]
+impl BorshSerialize for WireDid {
+    fn serialize<W: borsh::io::Write>(
+        &self,
+        writer: &mut W,
+    ) -> borsh::io::Result<()> {
+        // Length-prefixed UTF-8 string (RFC-0871 §wire format).
+        let bytes = self.0.as_bytes();
+        (bytes.len() as u32).serialize(writer)?;
+        writer.write_all(bytes)?;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "borsh")]
+impl BorshDeserialize for WireDid {
+    fn deserialize_reader<R: borsh::io::Read>(
+        reader: &mut R,
+    ) -> borsh::io::Result<Self> {
+        let len = u32::deserialize_reader(reader)?;
+        let mut buf = vec![0u8; len as usize];
+        reader.read_exact(&mut buf)?;
+        let s = String::from_utf8(buf).map_err(|_| {
+            borsh::io::Error::new(
+                borsh::io::ErrorKind::InvalidData,
+                "WireDid: invalid UTF-8",
+            )
+        })?;
+        Ok(WireDid(s))
+    }
+}
 
 impl std::fmt::Display for WireDid {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

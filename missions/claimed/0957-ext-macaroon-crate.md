@@ -91,7 +91,32 @@ Per-extension crate extraction is multi-file (1 NEW crate + 5 source migrations 
 
 ## Pull Request
 
-(unset)
+f123fe1b (local; push + remote writes await user instruction per [[git-workflow]])
+
+## Closure Summary
+
+Phase 1 extraction landed in commit `f123fe1b` on `next` branch. 5 files
+changed, 323 insertions / 27 deletions. NEW `crates/octo-cap-macaroon/`
+Layer-4 extension crate owns the pure-crypto foundation (HMAC-BLAKE3 +
+macaroon_id + domain constants); `octo-wallet::capability::macaroon`
+re-exports for backward compat. Zero regressions: 320/320 octo-wallet
+tests pass, 8/8 new octo-cap-macaroon tests pass, clippy -D warnings
+clean, fmt clean, workspace builds.
+
+**Honest scope disclosure:** This commit delivered **Phase 1 of 2** —
+the pure-crypto foundation. The full file migration (Macaroon struct +
+caveat.rs 1382 lines + discharge.rs 962 lines + wire.rs 439 lines +
+CapabilitySpec impl) remains for follow-on missions, tracked in the
+`### Phase 2 follow-on` section above. The mission's full acceptance
+criteria were NOT met in a single session due to scope (4688 lines of
+extracted code across 4 source files with many cross-dependencies); a
+follow-on mission or dedicated extraction session is needed to complete
+the migration.
+
+Next per DAG serial path: **`0870-b-envelope-adoption`** — quota router
+adopts the `NodeEnvelope` from `octo-protocol` (mission 0871's substrate).
+This unblocks mission `0871a` wallet-node (consumes `octo-cap-macaroon`
+re-exports for `Authorization::Capability` materialization).
 
 ## Notes
 

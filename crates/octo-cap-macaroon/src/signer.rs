@@ -171,6 +171,37 @@ mod tests {
         vk.verify(msg, &sig).expect("signature must verify");
     }
 
+    /// R10 finding: `CapabilitySigner::sign` was tested with short
+    /// non-empty messages (`b"hello"`, `b"deterministic"`, etc.) but not
+    /// edge cases. Empty messages and 1 MiB messages exercise the
+    /// BLAKE3 long-input path (Ed25519 hashes arbitrary-length input
+    /// internally via SHA-512 / BLAKE3 depending on impl). Pin both.
+    #[test]
+    fn sign_with_empty_message_verifies() {
+        let s = fixture();
+        let sig_bytes = s.sign(b"").expect("sign empty");
+        assert_eq!(sig_bytes.len(), 64);
+        let pk_bytes = s.public_key_bytes();
+        let vk = VerifyingKey::from_bytes(&pk_bytes).expect("pk parse");
+        let sig = Signature::from_bytes(&sig_bytes);
+        vk.verify(b"", &sig)
+            .expect("empty msg signature must verify");
+    }
+
+    #[test]
+    fn sign_with_large_message_verifies() {
+        let s = fixture();
+        // 1 MiB — exercises the internal hash input chunking.
+        let msg = vec![0xabu8; 1024 * 1024];
+        let sig_bytes = s.sign(&msg).expect("sign large");
+        assert_eq!(sig_bytes.len(), 64);
+        let pk_bytes = s.public_key_bytes();
+        let vk = VerifyingKey::from_bytes(&pk_bytes).expect("pk parse");
+        let sig = Signature::from_bytes(&sig_bytes);
+        vk.verify(&msg, &sig)
+            .expect("1 MiB msg signature must verify");
+    }
+
     #[test]
     fn box_dyn_forwards_sign_and_pubkey() {
         let s = fixture();

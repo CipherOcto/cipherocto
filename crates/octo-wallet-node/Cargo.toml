@@ -1,0 +1,51 @@
+[package]
+name = "octo-wallet-node"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "CipherOcto wallet specialized-node adapter (RFC-0871 §Wallet Node Lifecycle). Bridges octo-wallet to the NodeEnvelope mesh."
+
+[lib]
+name = "octo_wallet_node"
+path = "src/lib.rs"
+
+[dependencies]
+# Layer 1 stable substrate (RFC-0871 §Data Structures)
+octo-protocol = { path = "../octo-protocol" }
+# Layer B identity + wallet core (RFC-0009 HsmAdapter, RFC-0957 macaroon)
+octo-wallet = { path = "../octo-wallet" }
+# Layer B identity (canonical DID codec, RFC-0010)
+octo-ident = { path = "../octo-ident" }
+# Layer D transport adapter (RFC-0863 NodeTransport)
+octo-transport = { path = "../../octo-transport" }
+
+# Async runtime for NetworkReceiver impl + broadcast_announce
+tokio = { version = "1", features = ["rt", "sync", "macros", "time"] }
+async-trait = "0.1"
+
+# Canonical coding (RFC-0126)
+borsh = "=1.5.0"
+# BLAKE3 for the canonical envelope_id derivation (mirrored across other crates)
+blake3 = "1.5"
+# bs58 for deriving public-key DID wire form (RFC-0010 v1.2 F4)
+bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
+
+# Errors
+thiserror = "1"
+
+[dev-dependencies]
+# Test signer for HSM mock
+hex = "0.4"
+# Ed25519 verification in tests (verify signature against public key)
+ed25519-dalek = { version = "2.2", features = ["serde"] }
+# bs58 for deriving public-key DID wire form in tests
+bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+# Mission 0871a MVP — strict pedantic lints deferred to follow-on polish pass.
+pedantic = "allow"

@@ -1,0 +1,76 @@
+//! Wallet payload handlers (RFC-0871 §Wallet Node Lifecycle).
+//!
+//! Each handler maps one `WALLET_*` payload kind to its business logic.
+//! All handlers route through `EnvelopeDispatcher` for envelope_id dedup
+//! + expiry + signature verification (no handler shortcuts, no per-handler HMAC bypass).
+//!
+//! Layer B boundary: handlers consume `octo-wallet` + `octo-ident` types
+//! and never reach into `ed25519_dalek` directly. Signing always flows
+//! through `Arc<dyn HsmAdapter>`.
+
+use octo_protocol::ProtocolError;
+
+pub mod attenuate;
+pub mod mint;
+pub mod resolve;
+pub mod sign;
+
+pub use attenuate::{AttenuateHandler, AttenuateRequest};
+pub use mint::{MintHandler, MintRequest};
+pub use resolve::{ResolveDIDHandler, ResolveDIDRequest};
+pub use sign::{SignHandler, SignRequest};
+
+/// Output of a wallet handler invocation.
+///
+/// Either returns a response envelope that the caller (`WalletNode`)
+/// transmits back to the originating peer, or a local effect (e.g. a
+/// created `CapabilityToken`), or both, or neither (e.g. an
+/// attenuation that mutates existing state).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HandlerOutput {
+    /// Optional response envelope to send back to the requester.
+    pub response_payload: Option<Vec<u8>>,
+    /// Optional response payload kind (RFC-0871 §Response convention).
+    pub response_payload_kind: Option<octo_protocol::PayloadKindId>,
+    /// Optional human-readable note (for logs; never on wire).
+    pub note: Option<String>,
+}
+
+impl HandlerOutput {
+    /// Empty output (no response, no local effect).
+    #[must_use]
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    /// Build a response envelope payload + payload kind.
+    #[must_use]
+    pub fn response(payload: Vec<u8>, payload_kind: octo_protocol::PayloadKindId) -> Self {
+        Self {
+            response_payload: Some(payload),
+            response_payload_kind: Some(payload_kind),
+            note: None,
+        }
+    }
+
+    /// Attach a note (for logs).
+    #[must_use]
+    pub fn with_note(mut self, note: impl Into<String>) -> Self {
+        self.note = Some(note.into());
+        self
+    }
+}
+
+/// Convert a `Wallet` error into a `ProtocolError` for handler failures.
+///
+/// Mapping is shallow: `wallet_error_to_protocol(error)` carries the
+/// display string through. Handlers SHOULD preserve enough context
+/// (e.g. error in `note`) for callers to diagnose.
+pub fn wallet_error_to_protocol(e: impl std::fmt::Display) -> ProtocolError {
+    ProtocolError::AuthorizationFailed(e.to_string())
+}
+
+/// Map a `octo_ident::DidError` to a `ProtocolError` for invalid DID inputs.
+pub fn did_error_to_protocol(e: impl std::fmt::Display) -> ProtocolError {
+    ProtocolError::InvalidDid(e.to_string())
+}

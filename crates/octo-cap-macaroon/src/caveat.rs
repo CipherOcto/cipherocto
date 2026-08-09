@@ -735,6 +735,84 @@ mod tests {
         assert_eq!(a.canonical_ser(), b.canonical_ser());
     }
 
+    /// R9 finding: `canonical_ser` had deterministic unit tests for
+    /// Jurisdiction + Provider order-independence, plus a stability test,
+    /// but no broader property test covering more variants. This test
+    /// constructs a representative sample of variants (one per "kind"
+    /// of inner payload — primitive, struct, sequence, set, enum) and
+    /// asserts determinism + structural properties.
+    ///
+    /// Determinism is the load-bearing property for HMAC input stability
+    /// across implementations (RFC-0126). A regression that broke
+    /// determinism for any variant would silently break HMAC chain
+    /// verification across wallet ↔ verifier boundaries.
+    #[test]
+    fn canonical_ser_property_test_sample() {
+        // Sample: one variant per payload shape — primitive, struct, seq, set, enum.
+        let samples: Vec<Caveat> = vec![
+            // Primitive payloads.
+            // Note: avoid `u128::MAX` — `json!` macro rejects values outside
+            // the i64 range. Use modest values that fit in JSON numbers.
+            Caveat::AmountMax(1_000_000u128),
+            Caveat::Before(1_700_000_000),
+            Caveat::MaxPerTx(50_000u128),
+            // Struct payloads.
+            Caveat::PerAxisMax(PerAxisMax {
+                axis: "input_tokens".to_owned(),
+                max_per_1k: 500u128,
+            }),
+            Caveat::RateLimit(RateLimit {
+                rpm: 60,
+                tpm: 100_000,
+            }),
+            Caveat::AuditWindow { duration_secs: 0 },
+            Caveat::MaxUses { count: 0 },
+            Caveat::ValidRange {
+                valid_after_unix: 0,
+                valid_until_unix: u64::MAX,
+            },
+            Caveat::PolicyReference {
+                policy_id: [0xff; 32],
+                policy_version_seq: u64::MAX,
+                attenuation_witness: [0xab; 64],
+            },
+            // Sequence payloads.
+            Caveat::Provider(vec!["a".to_owned(), "b".to_owned(), "c".to_owned()]),
+            Caveat::ThirdParty("escrow".to_owned()),
+            // Set payloads.
+            Caveat::Jurisdiction(["US".to_owned()].into_iter().collect()),
+            // Enum payloads.
+            Caveat::Permission(PermissionKind::VaultMutation),
+            Caveat::CacheStrategy(CachePolicy::Always { ttl_secs: u32::MAX }),
+        ];
+
+        for caveat in &samples {
+            // Determinism: same input → same bytes.
+            let bytes_a = caveat.canonical_ser();
+            let bytes_b = caveat.canonical_ser();
+            assert_eq!(
+                bytes_a, bytes_b,
+                "canonical_ser not deterministic for {caveat:?}"
+            );
+
+            // Non-empty: every variant must serialize to at least the type tag.
+            assert!(
+                !bytes_a.is_empty(),
+                "canonical_ser produced empty bytes for {caveat:?}"
+            );
+        }
+
+        // Distinct variants → distinct bytes (sanity check the type-tag
+        // disambiguates). Two structurally different caveats serialize to
+        // different output (the type tag in the JSON object differs).
+        let before_bytes = Caveat::Before(1_700_000_000).canonical_ser();
+        let amountmax_bytes = Caveat::AmountMax(0u128).canonical_ser();
+        assert_ne!(
+            before_bytes, amountmax_bytes,
+            "distinct Caveat variants must yield distinct canonical_ser output"
+        );
+    }
+
     // RFC-0957 §3.5 + 0957-a mission AC: set_subsumes enforces monotonic
     // attenuation — child capability may only narrow, never widen.
 
@@ -1520,7 +1598,10 @@ mod tests {
         // Parent required_caller = None. Child Some does NOT subsume
         // (would allow a caller that the parent didn't).
         assert!(
-            !set_subsumes(core::slice::from_ref(&base), core::slice::from_ref(&child_some)),
+            !set_subsumes(
+                core::slice::from_ref(&base),
+                core::slice::from_ref(&child_some)
+            ),
             "Factory required_caller=None must NOT subsume required_caller=Some(_)"
         );
 

@@ -951,6 +951,22 @@ mod tests {
         );
     }
 
+    /// R9 finding: `ChannelProviderRegistry::len` + `is_empty` had only
+    /// transitive coverage. Pin the empty-registry invariants directly:
+    /// a default-constructed registry is empty (len == 0, is_empty == true).
+    #[test]
+    fn channel_provider_registry_default_is_empty() {
+        let registry = ChannelProviderRegistry::default();
+        assert_eq!(registry.len(), 0, "default registry len must be 0");
+        assert!(registry.is_empty(), "default registry must be empty");
+
+        // After registering one provider, len flips to 1, is_empty to false.
+        let mut registry = ChannelProviderRegistry::default();
+        registry.register(EscrowDischargeProvider::new());
+        assert_eq!(registry.len(), 1);
+        assert!(!registry.is_empty());
+    }
+
     /// `ChannelProviderRegistry::register` is documented as last-writer-wins.
     /// R6 finding: replacement semantics previously relied on
     /// `HashMap::insert` without a test pinning the contract.

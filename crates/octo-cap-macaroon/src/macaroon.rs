@@ -1879,6 +1879,39 @@ mod tests {
             .expect("expected_parent=None must skip subsumption, succeed on signature only");
     }
 
+    /// R9 finding: `compute_capability_id` had no direct determinism test
+    /// — only transitive coverage through `verify_signature` and mint
+    /// assertions. Pin the invariant directly: `f(macaroon) == f(macaroon)`
+    /// (same input → same id), and `f(m1) != f(m2)` for distinct inputs.
+    #[test]
+    fn compute_capability_id_is_deterministic() {
+        let secret = [0x42u8; 32];
+        let catalog = InMemoryCatalog::default();
+        let macaroon = Macaroon::mint(&secret)
+            .unwrap()
+            .attenuate(Caveat::Before(2_000_000_000), &catalog)
+            .unwrap()
+            .attenuate(Caveat::Model("gpt-4".to_owned()), &catalog)
+            .unwrap();
+
+        let id_a = compute_capability_id(&macaroon);
+        let id_b = compute_capability_id(&macaroon);
+        assert_eq!(id_a, id_b, "compute_capability_id must be deterministic");
+
+        // Distinct macaroons (different nonces → different root_ids) →
+        // distinct capability ids.
+        let macaroon_2 = Macaroon::mint(&secret)
+            .unwrap()
+            .attenuate(Caveat::Before(2_000_000_000), &catalog)
+            .unwrap();
+        assert_ne!(
+            macaroon.id, macaroon_2.id,
+            "different mints must produce different root_ids"
+        );
+        let id_2 = compute_capability_id(&macaroon_2);
+        assert_ne!(id_a, id_2, "distinct macaroons must yield distinct ids");
+    }
+
     /// R8 finding (non-finding after investigation): `WrappedCycle` was
     /// flagged as untested via `Macaroon::attenuate`. After investigation,
     /// the public API does not expose a direct path to construct a

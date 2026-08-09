@@ -82,7 +82,7 @@ Relocate `GatewayAuthenticator` from `crates/octo-wallet/src/capability/gateway_
 
 ## Decomposition Rationale
 
-RFC-0969 relocation is multi-file (`octo-wallet` removal + `quota-router-core::ingress` new + `proxy.rs` update + tests). Below the BLUEPRINT §Multi-Mission Decomposition threshold (>10 types, >4 phases, different prerequisite chains). Single mission.
+RFC-0969 relocation is multi-file (`octo-wallet` removal + `quota-router-core::ingress` new + `proxy.rs` update + tests). Below the BLUEPRINT multi-mission decomposition threshold (>10 types, >4 phases, different prerequisite chains). Single mission.
 
 ## Claimant
 

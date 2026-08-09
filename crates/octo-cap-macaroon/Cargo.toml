@@ -15,7 +15,47 @@ crate-type = ["rlib"]
 blake3 = "1.5"
 # hex for Debug redaction output (does NOT appear in wire form; safe).
 hex = "0.4"
+# Serde derives for Caveat + Macaroon + CapabilityCatalog (RFC-0126 canonical ser).
+serde = { version = "1", features = ["derive"] }
+# serde_json for `caveat::canonical_ser` JSON serialization (RFC-0126).
+serde_json = "1"
+# RNG for the 16-byte macaroon nonce (RFC-0957 §3.2 root_id derivation).
+rand = "0.9"
+# `#[async_trait]` for `CapabilityGossip::gossip_to_buyer` (mission 0959-c3).
+async-trait = "0.1"
+# thiserror for `MacaroonError` + `CatalogGossipError` derive.
+thiserror = "1"
+# RFC-0964 constraint encoding (used by `caveat::FactoryVet::pre_conditions`).
+cipherocto-encoding = { path = "../cipherocto-encoding" }
+# `HolderRegistry` accessor on `CapabilityCatalog::holder_registry`
+# (RFC-0957-A1 §Phase 3 R13-N3 fix). Layer B substrate; `octo-cap-macaroon`
+# stays Layer 4 — this is an optional wiring accessor (default impl returns
+# `None`). Mission 0957 Phase 2 honest disclosure: cross-layer dep is
+# unavoidable while the catalog trait retains this accessor. Follow-on
+# mission may relocate the accessor into a registry glue crate to remove
+# the cross-layer edge.
+quota-router-storage = { path = "../quota-router-storage" }
+# Layer D transport (RFC-0863 NodeTransport) for `TransportDeliveryCatalog`
+# mission 0959-c3 substrate.
+octo-transport = { path = "../../octo-transport" }
 
 [dev-dependencies]
-# rand for property tests (no production usage; dev-only).
-rand = "0.9"
+# Property-based tests in `macaroon.rs` (`proptest!` macros).
+proptest = "1"
+# Test-only sample-DID helper used by `caveat.rs` + `macaroon.rs` tests.
+octo-ident = { path = "../octo-ident" }
+
+[lints.rust]
+unsafe_code = "forbid"
+# `missing_docs` is a rustc lint; the crate-level `#![allow(missing_docs)]`
+# in src/lib.rs covers it. (Clippy's `missing_docs` lint doesn't exist —
+# clippy reuses the rustc lint under the same name.)
+
+[lints.clippy]
+# Pedantic doc-comment style nits (empty lines after docs, doc list
+# indentation) — original octo-wallet source was hand-written, not
+# pedantic-style-compliant. Phase 2 keeps the substrate verbatim;
+# a polish pass can normalize.
+empty_line_after_doc_comments = "allow"
+doc_lazy_continuation = "allow"
+

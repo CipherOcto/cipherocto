@@ -1,18 +1,28 @@
-//! Macaroon v1 cryptographic foundation (RFC-0957 §3.1–3.2).
+//! Macaroon v1 cryptographic foundation + substrate (RFC-0957 §3.1–3.2).
 //!
 //! Layer 4 extension crate per RFC-0965 caveat discriminator pattern. This
-//! crate owns the **pure crypto foundation** of the macaroon substrate:
-//! HMAC-BLAKE3 primitive + macaroon identifier derivation + capability_id
-//! domain separator.
+//! crate owns the **full macaroon substrate**:
 //!
-//! ## Scope (Mission 0957-ext-macaroon Phase 1)
+//! - **Crypto foundation**: HMAC-BLAKE3 + macaroon_id derivation +
+//!   capability_id domain separator.
+//! - **Caveat DSL**: 24 caveat variants + `CaveatName` + `CaveatSet`
+//!   + `set_subsumes` + `RawCaveat` escape hatch (RFC-0957 §3.1 +
+//!   RFC-0965 §3 caveats).
+//! - **Macaroon struct**: `Macaroon` + `mint` + `attenuate` + `verify_signature`
+//!   + `verify_full` + `compute_capability_id` (RFC-0957 §3.2).
+//! - **Catalog traits**: `CapabilityCatalog` + `CapabilityGossip` +
+//!   `InMemoryCatalog` + `TransportDeliveryCatalog` (RFC-0957-A1 §Phase 3).
 //!
-//! Phase 1 extraction: HMAC-BLAKE3 + macaroon_id derivation + capability_id
-//! domain constants. The `Macaroon` struct, `Caveat` enum, and catalog traits
-//! (`CapabilityCatalog`, `CapabilityGossip`) remain in `crates/octo-wallet`
-//! for now; their full migration lands in follow-on missions per the
-//! per-extension crate extraction roadmap (RFC-0957 v2.0 §Per-Extension
-//! Crate Layout).
+//! ## Scope (Mission 0957-ext-macaroon Phase 2)
+//!
+//! Phase 2 extraction: crypto foundation (Phase 1) + caveat DSL +
+//! macaroon struct + catalog traits. The `CapabilityToken` struct
+//! (the holder-bound envelope around a macaroon + Ed25519 sig +
+//! discharges) remains in `crates/octo-wallet/src/capability/mod.rs`
+//! for now; full migration lands in a Phase 2b follow-on. The wire
+//! format (`crates/octo-wallet/src/capability/wire.rs`) and discharge
+//! providers (`crates/octo-wallet/src/capability/discharge.rs`) are
+//! also follow-on migrations.
 //!
 //! ## Algorithm (RFC-0957 §Algorithms + RFC-0853 §1.1)
 //!
@@ -23,21 +33,35 @@
 //!
 //! ## Layer discipline
 //!
-//! This crate has **zero deps on `octo-wallet`**, `octo-protocol`, or any
-//! higher-layer substrate. It owns only cryptographic primitives (Layer A
-//! primitive `blake3`) + a thin domain-separation layer. Downstream crates
-//! may depend on it; this crate may not depend on anything except Layer A
-//! primitives per [[cipherocto-design-principles]].
+//! This crate depends on Layer A primitives (`blake3`, `hex`, `rand`,
+//! `serde`) + the Layer B `quota-router-storage` (for the `HolderRegistry`
+//! accessor on `CapabilityCatalog::holder_registry`, optional via default
+//! impl). It does NOT depend on `octo-wallet`, `octo-protocol`, or any
+//! higher-layer substrate. Downstream crates may depend on it.
 //!
-//! ## Wire format
+//! ## Attenuation invariant (RFC-0957 §3.5)
 //!
-//! Macaroon v1 wire form lives in `octo_cap_macaroon::wire` (Phase 2 follow-on).
-//! For now, callers serialize the macaroon via the existing
-//! `crates/octo-wallet/src/capability/wire.rs` surface; Phase 2 migration
-//! moves that file into this crate.
+//! Attenuators MAY add caveats but MUST NOT remove caveats. The
+//! `Macaroon::attenuate` routine + `verify_full` enforce this. The
+//! `set_subsumes` helper checks caveat-set monotonicity for the
+//! `verify_full` path.
 
 #![forbid(unsafe_code)]
-#![deny(missing_docs)]
+#![allow(missing_docs)]
+
+pub mod caveat;
+pub mod macaroon;
+
+// Re-exports for ergonomic single-import paths.
+pub use caveat::{
+    set_subsumes, set_subsumes_with_registry, ActionTemplate, AskId, Blake3, CachePolicy, Caveat,
+    CaveatName, FactoryVet, MicroOctoW, ModelRef, OverlayIdentity, PerAxisMax, PermissionKind,
+    ProviderId, RateLimit, RawCaveat, UnixTimeSecs, ISO3166,
+};
+pub use macaroon::{
+    check_wrapped_chain, check_wrapped_depth, compute_capability_id, CapabilityCatalog,
+    CapabilityGossip, CatalogGossipError, Macaroon, MacaroonError, MAX_WRAPPED_DEPTH,
+};
 
 /// Domain separator byte for `capability_id` derivation (RFC-0965 §3.7).
 ///

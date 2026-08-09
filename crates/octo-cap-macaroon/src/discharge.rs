@@ -855,6 +855,12 @@ mod tests {
         );
         let err = verify_discharges(&token, &registry, &HashMap::new()).unwrap_err();
         assert!(matches!(err, DischargeError::MissingDischarge { .. }));
+        // R6 finding: pin the exact Display string (thiserror regression
+        // guard). Asserts BEFORE destructure to avoid partial-move E0382.
+        assert_eq!(
+            err.to_string(),
+            "token references third-party caveat `escrow` but no discharge attached"
+        );
     }
 
     /// Smoke test: a token with no `ThirdParty` caveats must short-circuit
@@ -937,6 +943,50 @@ mod tests {
         );
         let err = verify_discharges(&token, &registry, &HashMap::new()).unwrap_err();
         assert!(matches!(err, DischargeError::UnknownChannel(_)));
+        // R6 finding: pin the exact Display string (thiserror regression
+        // guard). Asserts BEFORE destructure to avoid partial-move E0382.
+        assert_eq!(
+            err.to_string(),
+            "discharge for unknown channel `revocation`"
+        );
+    }
+
+    /// `ChannelProviderRegistry::register` is documented as last-writer-wins.
+    /// R6 finding: replacement semantics previously relied on
+    /// `HashMap::insert` without a test pinning the contract.
+    #[test]
+    fn channel_provider_registry_register_replaces_existing() {
+        let mut registry = ChannelProviderRegistry::default();
+        // First provider: zero-balance escrow (rejects all mints).
+        registry.register(EscrowDischargeProvider::new());
+        assert_eq!(registry.len(), 1);
+        // Re-register a different provider for the same channel.
+        let mut rich = EscrowDischargeProvider::new();
+        rich.set_balance(
+            &octo_ident::test_helpers::sample_did(7),
+            EscrowBalance(1_000_000),
+        );
+        registry.register(rich);
+        // Registry still has one entry (last-writer-wins).
+        assert_eq!(registry.len(), 1, "register must replace, not append");
+
+        // Verify the replacement is active: a request that the original
+        // (zero-balance) provider would reject now succeeds.
+        let discharge = DischargeMacaroon {
+            channel: "escrow".to_owned(),
+            root_secret_hash: [0; 32],
+            chain: vec![[0; 32]],
+            caveats: vec![],
+        };
+        let token = test_token_with_discharge(
+            &octo_ident::test_helpers::sample_did(7),
+            vec![Caveat::ThirdParty("escrow".to_owned())],
+            discharge,
+        );
+        let mut ctx = HashMap::new();
+        ctx.insert("escrow".to_owned(), 500_000u128.to_be_bytes().to_vec());
+        verify_discharges(&token, &registry, &ctx)
+            .expect("replacement provider must serve the channel");
     }
 
     /// `verify_discharges` must surface `ChannelRejected` when the registered

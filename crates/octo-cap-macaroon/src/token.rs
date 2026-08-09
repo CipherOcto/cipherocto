@@ -369,4 +369,51 @@ mod tests {
         // Without re-signing, holder sig is stale.
         assert!(broken.verify_holder_sig().is_err());
     }
+
+    /// R6 finding: `CapabilityToken` derives `Serialize/Deserialize`. The
+    /// `wire_roundtrip` test in `wire.rs` exercises the full token through
+    /// the base64-wrapped wire format, but a direct `serde_json` roundtrip
+    /// pins JSON-specific concerns (field tag preservation, signature
+    /// byte-array encoding via `ed25519_sig_serde`).
+    #[test]
+    fn capability_token_serde_json_roundtrip() {
+        let holder = sample_signer();
+        let root_secret = [0x42; 32];
+        let _catalog = empty_catalog();
+        let token = CapabilityToken::mint(
+            &root_secret,
+            &holder,
+            "did:octo:zSerdeTest",
+            &[Caveat::Model("gpt-4".to_owned())],
+        )
+        .unwrap();
+
+        let json = serde_json::to_string(&token).expect("serialize");
+        let restored: CapabilityToken = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(restored, token, "serde_json roundtrip must be exact");
+
+        // Holder signature must still verify after round-trip.
+        restored
+            .verify_holder_sig()
+            .expect("holder sig still verifies");
+    }
+
+    /// R6 finding: `DischargeMacaroon` derives `Serialize/Deserialize`.
+    /// Direct `serde_json` roundtrip pins the wire encoding (channel
+    /// string, fixed-size byte arrays, caveat enum tags).
+    #[test]
+    fn discharge_macaroon_serde_json_roundtrip() {
+        let discharge = DischargeMacaroon {
+            channel: "escrow".to_owned(),
+            root_secret_hash: [0xaau8; 32],
+            chain: vec![[0x01; 32], [0x02; 32]],
+            caveats: vec![
+                Caveat::Before(2_000_000_000),
+                Caveat::Model("gpt-4".to_owned()),
+            ],
+        };
+        let json = serde_json::to_string(&discharge).expect("serialize");
+        let restored: DischargeMacaroon = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(restored, discharge, "serde_json roundtrip must be exact");
+    }
 }

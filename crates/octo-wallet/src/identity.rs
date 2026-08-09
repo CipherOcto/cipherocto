@@ -311,6 +311,33 @@ pub fn derive_capability_key(
     Ok(CapabilityKey(okm))
 }
 
+/// `octo-cap-macaroon::CapabilitySigner` blanket impl — enables
+/// `IdentityKey` to sign `CapabilityToken`s minted by the Layer 4
+/// extension crate (mission 0957 Phase 2b-2). The original
+/// `IdentityKey::sign` returns `Result<Signature, WalletError>`; this
+/// impl maps `WalletError` → `CapabilitySignerError::Signer` for the
+/// crate boundary.
+///
+/// Mission 0957 Phase 2b-2 / RFC-0957 §3.1: holder signing is routed
+/// through the `CapabilitySigner` trait abstraction so `CapabilityToken`
+/// can live in `octo-cap-macaroon` (Layer 4) without taking a dep on
+/// `octo-wallet` (Layer B) — preserving the layer model.
+impl octo_cap_macaroon::CapabilitySigner for IdentityKey {
+    fn sign(&self, msg: &[u8]) -> Result<[u8; 64], octo_cap_macaroon::CapabilitySignerError> {
+        // Delegate to existing `IdentityKey::sign` (RFC-0009 HSM routing).
+        // The HSM adapter (InMemorySigner / MockLedgerSigner / etc.) is
+        // consulted; failure is mapped to `CapabilitySignerError::Signer`
+        // with the original `WalletError` message preserved.
+        IdentityKey::sign(self, msg)
+            .map(|sig| sig.to_bytes())
+            .map_err(|e| octo_cap_macaroon::CapabilitySignerError::Signer(e.to_string()))
+    }
+
+    fn public_key_bytes(&self) -> [u8; 32] {
+        IdentityKey::public_key_bytes(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

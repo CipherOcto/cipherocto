@@ -51,6 +51,8 @@
 
 pub mod caveat;
 pub mod macaroon;
+pub mod signer;
+pub mod token;
 
 // Re-exports for ergonomic single-import paths.
 pub use caveat::{
@@ -62,6 +64,8 @@ pub use macaroon::{
     check_wrapped_chain, check_wrapped_depth, compute_capability_id, CapabilityCatalog,
     CapabilityGossip, CatalogGossipError, Macaroon, MacaroonError, MAX_WRAPPED_DEPTH,
 };
+pub use signer::{CapabilitySigner, CapabilitySignerError};
+pub use token::{CapabilityToken, DischargeMacaroon, MintError};
 
 /// Domain separator byte for `capability_id` derivation (RFC-0965 §3.7).
 ///

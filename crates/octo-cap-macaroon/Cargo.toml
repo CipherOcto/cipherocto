@@ -38,6 +38,8 @@ quota-router-storage = { path = "../quota-router-storage" }
 # Layer D transport (RFC-0863 NodeTransport) for `TransportDeliveryCatalog`
 # mission 0959-c3 substrate.
 octo-transport = { path = "../../octo-transport" }
+# Ed25519 signature type (CapabilityToken.holder_sig field).
+ed25519-dalek = { version = "2.2", features = ["serde"] }
 
 [dev-dependencies]
 # Property-based tests in `macaroon.rs` (`proptest!` macros).

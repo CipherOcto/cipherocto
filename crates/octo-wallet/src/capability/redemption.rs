@@ -144,7 +144,7 @@ pub fn redeem_capability(
             policy_id: policy_ref,
         })?;
 
-    if !is_subgraph(&cap.to_policy_object(), policy) {
+    if !is_subgraph(&capability_to_policy_object(cap), policy) {
         return Err(RedemptionError::PolicyNotSuperseded {
             cap_id: cap.macaroon.id,
             policy_id: policy_ref,
@@ -207,34 +207,42 @@ pub(crate) fn capability_to_surface(cap: &CapabilityToken) -> PolicySurface {
     }
 }
 
-impl CapabilityToken {
-    /// Mint a `PolicyObject` snapshot from the capability's caveats.
-    ///
-    /// Used by `redeem_capability` to perform the subgraph check. The
-    /// returned `PolicyObject` is a transient surface derivation — it
-    /// does not carry a real signature or audit reference and is not
-    /// intended for storage. The `audit_ref` is all zero and the
-    /// timestamp is zero so the result is deterministic.
-    #[must_use]
-    pub fn to_policy_object(&self) -> PolicyObject {
-        let surface = capability_to_surface(self);
-        PolicyObject::mint_surface(surface, [0u8; 32], 0)
-    }
+/// Mint a `PolicyObject` snapshot from the capability's caveats.
+///
+/// Used by `redeem_capability` to perform the subgraph check. The
+/// returned `PolicyObject` is a transient surface derivation — it
+/// does not carry a real signature or audit reference and is not
+/// intended for storage. The `audit_ref` is all zero and the
+/// timestamp is zero so the result is deterministic.
+///
+/// Mission 0957 Phase 2b-3: free function (not inherent `impl`) because
+/// `CapabilityToken` now lives in the `octo-cap-macaroon` extension
+/// crate (orphan rule prevents inherent impls on foreign types).
+#[must_use]
+pub fn capability_to_policy_object(cap: &CapabilityToken) -> PolicyObject {
+    let surface = capability_to_surface(cap);
+    PolicyObject::mint_surface(surface, [0u8; 32], 0)
+}
 
-    /// Full redemption: verify holder signature + subgraph check (RFC-0967 §5).
-    ///
-    /// This is the canonical entry point for envelope-side verification.
-    /// It runs:
-    /// 1. `verify_holder_sig` — Ed25519 over `canonical_ser(root_id || caveats)`.
-    /// 2. `redeem_capability` — subgraph check against the policy catalog.
-    ///
-    /// # Errors
-    /// - `RedemptionError::HolderSig(msg)` if the holder signature fails.
-    /// - `RedemptionError::PolicyNotSuperseded / MissingPolicyReference /
-    ///   PolicyNotFound` from the subgraph check (see [`redeem_capability`]).
-    pub fn redeem(&self, catalog: &dyn PolicyCatalog) -> Result<(), RedemptionError> {
-        self.verify_holder_sig()
-            .map_err(|e| RedemptionError::HolderSig(e.to_string()))?;
-        redeem_capability(self, catalog)
-    }
+/// Full redemption: verify holder signature + subgraph check (RFC-0967 §5).
+///
+/// This is the canonical entry point for envelope-side verification.
+/// It runs:
+/// 1. `verify_holder_sig` — Ed25519 over `canonical_ser(root_id || caveats)`.
+/// 2. `redeem_capability` — subgraph check against the policy catalog.
+///
+/// # Errors
+/// - `RedemptionError::HolderSig(msg)` if the holder signature fails.
+/// - `RedemptionError::PolicyNotSuperseded / MissingPolicyReference /
+///   PolicyNotFound` from the subgraph check (see [`redeem_capability`]).
+///
+/// Mission 0957 Phase 2b-3: free function (not inherent `impl`) because
+/// `CapabilityToken` now lives in the `octo-cap-macaroon` extension crate.
+pub fn redeem_capability_token(
+    cap: &CapabilityToken,
+    catalog: &dyn PolicyCatalog,
+) -> Result<(), RedemptionError> {
+    cap.verify_holder_sig()
+        .map_err(|e| RedemptionError::HolderSig(e.to_string()))?;
+    redeem_capability(cap, catalog)
 }

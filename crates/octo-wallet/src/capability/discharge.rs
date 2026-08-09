@@ -13,43 +13,17 @@
 
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
-
 use super::caveat::Caveat;
+
+// Mission 0957 Phase 2b-3: `DischargeMacaroon` moved to the
+// `octo-cap-macaroon` extension crate alongside `CapabilityToken`
+// (which holds `Vec<DischargeMacaroon>`). Re-export here so the existing
+// `octo_wallet::capability::discharge::DischargeMacaroon` import path
+// keeps working.
+pub use octo_cap_macaroon::DischargeMacaroon;
 
 /// Channel identifier (opaque string). Standard channels: "escrow", "revocation", "rate-limit".
 pub type ChannelId = String;
-
-/// Discharge macaroon issued by a third-party channel.
-///
-/// **Debug redaction (octo-wallet §Security):** `root_secret_hash` and the
-/// HMAC `chain` are bearer-signature material (same class as `Macaroon`).
-/// Manual `Debug` impl prints only the channel name + chain length +
-/// caveat summary. The channel's root secret hash is the channel
-/// operator's responsibility; leaking it through panic messages would
-/// enable offline brute-force on the channel root secret.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DischargeMacaroon {
-    /// Channel identifier (`"escrow"`, `"revocation"`, etc.).
-    pub channel: ChannelId,
-    /// Discharge macaroon body (32-byte root secret hash + caveats).
-    pub root_secret_hash: [u8; 32],
-    /// Chain HMACs (same format as `Macaroon.chain`).
-    pub chain: Vec<[u8; 32]>,
-    /// Caveats on the discharge (e.g., time bounds).
-    pub caveats: Vec<super::Caveat>,
-}
-
-impl std::fmt::Debug for DischargeMacaroon {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DischargeMacaroon")
-            .field("channel", &self.channel)
-            .field("root_secret_hash", &"[REDACTED 32 bytes]")
-            .field("chain_len", &self.chain.len())
-            .field("caveats", &self.caveats)
-            .finish()
-    }
-}
 
 /// Standard discharge channels (RFC-0957 §3.6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

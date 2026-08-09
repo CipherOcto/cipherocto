@@ -6,7 +6,9 @@
 //! violate the parent policy.
 
 use octo_wallet::capability::caveat::Caveat;
-use octo_wallet::capability::redemption::{redeem_capability, PolicyCatalog, RedemptionError};
+use octo_wallet::capability::redemption::{
+    redeem_capability, redeem_capability_token, PolicyCatalog, RedemptionError,
+};
 use octo_wallet::capability::CapabilityToken;
 use octo_wallet::identity::IdentityKey;
 
@@ -239,7 +241,7 @@ fn capability_redeem_runs_holder_sig_then_subgraph_check() {
     let mut catalog = TestPolicyCatalog::default();
     catalog.insert(org_policy);
 
-    let err = cap.redeem(&catalog).unwrap_err();
+    let err = redeem_capability_token(&cap, &catalog).unwrap_err();
     assert_eq!(
         err,
         RedemptionError::PolicyNotSuperseded {
@@ -266,6 +268,6 @@ fn capability_redeem_accepts_in_policy_capability() {
     let mut catalog = TestPolicyCatalog::default();
     catalog.insert(org_policy);
 
-    cap.redeem(&catalog)
+    redeem_capability_token(&cap, &catalog)
         .expect("in-policy capability should redeem");
 }

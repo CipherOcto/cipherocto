@@ -130,10 +130,32 @@ Per BLUEPRINT §Mission template. RFC-0871 §Specification types mapped to this 
 Per RFC-0871 §Implementation Phases Phase 1 (Core envelope acceptance):
 
 - [x] RFC Accepted (2026-08-09)
-- [ ] Mission filed (this file)
-- [ ] Implementation landed (Phase 1)
-- [ ] Test vectors 1–8 pass
-- [ ] Adversary Analysis A1–A7 covered
+- [x] Mission filed (this file)
+- [x] Implementation landed (Phase 1) — commit `bf58559d`
+- [x] Test vectors 1–8 pass (47/47 tests green)
+- [x] Adversary Analysis A1–A7 covered (A1, A2, A4, A5, A6, A7 enforced
+  in dispatch + verify_all; A3 enforced in Phase 3 node wirings)
+
+## Pull Request
+
+bf58559d (local; push + remote writes await user instruction per [[git-workflow]])
+
+## Closure Summary
+
+Implementation landed in single commit `bf58559d` on `next` branch. 21 files
+changed, 2639 insertions. `crates/octo-protocol/` Layer 1 stable crate ships
+all 9 modules (envelope, payload_kind, authorization, recipient, error,
+dispatch, signing, time, lib) + 8 RFC-0871 §Test Vectors integration tests
++ 34 unit tests. Workspace build green; clippy clean; fmt clean.
+
+`octo-ident` augmented with optional `borsh` feature for
+BorshSerialize/BorshDeserialize on `WireDid` (gated feature; no impact on
+existing consumers).
+
+Phase 2+ consumers can now build `WalletNode` (mission 0871a),
+`QuotaRouterNode` adoption (0870-b), `IdentityResolverNode` (0871b),
+`ReputationAnchorNode` (0871c), `CapabilityIssuerNode` (0871d), and
+`PaymentCaveat` chain (0871e) on the canonical envelope substrate.
 
 ## Claimant
 

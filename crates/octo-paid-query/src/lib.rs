@@ -1,0 +1,714 @@
+//! Paid-query caveat bridge (RFC-0871 §Implementation Phases Phase 5,
+//! mission 0871e-paid-query-caveat).
+//!
+//! Layer E extension crate per [[cipherocto-design-principles]] —
+//! per-extension crate pattern (RFC-0957 v2.0 §Per-Extension Crate
+//! Layout). This crate owns the **paid-query caveat bridge** between
+//! `octo-wallet` (capability substrate), `octo-cap-macaroon` (macaroon
+//! crypto foundation), and `quota-router-core` (forwarding target).
+//!
+//! ## Scope (Mission 0871e Phase 5 MVP)
+//!
+//! This Phase 5 MVP delivers the bridge pattern only — it proves the
+//! per-extension crate shape that future payment variants (subscription,
+//! per-token billing, metered egress) will plug into. Specifically it
+//! owns:
+//!
+//! 1. The `PaidQueryCaveat` data type — `(caveat_name, budget, model)`
+//!    caveat composition per RFC-0965 reserved discriminator 0x1A.
+//! 2. The `verify_paid_query` primitive — verifies a `MacaroonId` is
+//!    associated with a caveat whose `budget >= query_cost` and
+//!    returns a `PaidQueryDecision` (proceed / reject / partial).
+//! 3. The `RateLimitBudget` rate-limit accumulator — per-holder spend
+//!    tracker that the wallet uses to gate downstream calls.
+//!
+//! ## MVP disclosures
+//!
+//! Phase 5 MVP is intentionally minimal — the full RFC-0871 Phase 5
+//! surface lives in follow-on missions:
+//!
+//! - `PaymentCaveat` composition into the `octo-cap-macaroon` caveat
+//!   chain (RFC-0957 §Algorithms caveat verification step) lands in
+//!   mission 0957 Phase 2 follow-on.
+//! - `RouterAnnouncePayload::pricing_policy` extension + atomic drain
+//!   (RFC-0862 atomic transaction substrate) lands in a follow-on
+//!   mission once the quota-router proxy integration is wired.
+//! - `PaymentReceipt` event emission lands alongside the atomic drain
+//!   mission.
+//!
+//! ## Layer discipline
+//!
+//! This crate sits at **Layer E** (per-extension). It depends on:
+//!
+//! - Layer A: `blake3` (keyed-hash primitive).
+//! - Layer 1: `octo-protocol` (payload-kind UUID + envelope types).
+//! - Layer B: `octo-wallet`, `octo-ident` (capability + identity
+//!   substrate — for `CapabilityToken` type reference + DID codec).
+//! - Layer 4: `octo-cap-macaroon` (macaroon crypto foundation —
+//!   `MacaroonId` alias + `hmac_blake3` primitive).
+//!
+//! The reverse direction is forbidden: this crate is consumed by
+//! `octo-wallet-node` (Layer C wallet specialized node) via its
+//! `PAID_QUERY_VERIFY` handler.
+//!
+//! ## Wire format
+//!
+//! `PaidQueryCaveat` + `PaidQueryDecision` wire forms are borsh-encoded
+//! (`borsh = "=1.5.0"`, matching the wallet-node envelope pin).
+//! The `caveat_name` field carries the RFC-0965 discriminator string
+//! (`"paid-query/v1"`) so future variants can be distinguished on
+//! decode without changing the borsh schema.
+
+#![forbid(unsafe_code)]
+#![deny(missing_docs)]
+
+use borsh::{BorshDeserialize, BorshSerialize};
+use octo_cap_macaroon::MacaroonId;
+use octo_ident::WireDid;
+use octo_protocol::PayloadKindId;
+use thiserror::Error;
+
+/// RFC-0965 caveat discriminator string for the paid-query variant.
+///
+/// First slot in the 0x1A-0xCF reserved range per RFC-0871
+/// §Implementation Phases Phase 5. The string form (`"paid-query/v1"`)
+/// is the canonical wire-form discriminator; future payment variants
+/// (subscription, per-token billing, metered egress) get distinct
+/// discriminator strings (`"paid-query/subscription/v1"`, etc.) and
+/// distinct types — no central enum edit per
+/// [[cipherocto-design-principles]] §"Extension over enumeration".
+pub const PAID_QUERY_CAVEAT_NAME: &str = "paid-query/v1";
+
+/// Paid-query verify payload-kind UUID (RFC-0871 §Wallet Node
+/// Lifecycle, mission 0871e).
+///
+/// Re-exported from `octo-protocol::payload_kind::PAID_QUERY_VERIFY`
+/// for ergonomic consumption by the wallet-node handler. The crate
+/// root does not duplicate the constant; the re-export keeps the
+/// dependency on `octo-protocol` minimal in calling code.
+pub use octo_protocol::payload_kind::PAID_QUERY_VERIFY;
+
+/// Cost unit (MicroOCTO_W). One OCTO_W = 1_000_000 MicroOCTO_W.
+///
+/// Phase 5 MVP uses `u128` for cost arithmetic so that overflow in
+/// budget accumulation is impossible even at the worst-case scale
+/// (RFC-0853 §Adversary A7 — arithmetic overflow in accounting
+/// primitives). The follow-on atomic-drain mission may swap this
+/// for a more typed `MicroOctoW` newtype once `crates/octo-wallet`'s
+/// economics substrate stabilises.
+#[allow(non_camel_case_types)]
+pub type MicroOCTO_W = u128;
+
+/// Paid-query caveat (RFC-0965 reserved discriminator 0x1A).
+///
+/// A `PaidQueryCaveat` is a single-element composition in the macaroon
+/// caveat chain that bounds the holder's spend against a `budget`
+/// over queries against `model`. The verifier (`verify_paid_query`)
+/// checks `budget >= query_cost` and atomically debits the cost from
+/// a `RateLimitBudget` keyed by `(holder_did, macaroon_id, model)`.
+///
+/// Wire form: `borsh::to_vec(&self)` (RFC-0957 §Wire Format +
+/// RFC-0965 §2 Caveat envelope encoding).
+#[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub struct PaidQueryCaveat {
+    /// RFC-0965 caveat discriminator string. Always
+    /// `"paid-query/v1"` for this variant; future variants carry
+    /// distinct strings (`"paid-query/subscription/v1"`, etc.).
+    pub caveat_name: String,
+    /// Prepaid spend budget in MicroOCTO_W. Holder can spend up to
+    /// this amount across all queries matching `model`. Drained by
+    /// `verify_paid_query` on each accepted query.
+    pub budget: MicroOCTO_W,
+    /// Model identifier this caveat applies to (e.g. `"gpt-4"`,
+    /// `"claude-3-opus"`, `"octo-router/multi"`). Empty string `""`
+    /// means "any model" — used for prepaid capacity subscriptions
+    /// that span the wallet's full set of routed models.
+    pub model: String,
+    /// Unix-time millisecond expiry (RFC-0871 §Adversary A10 — no
+    /// indefinite prepaid). After this instant, `verify_paid_query`
+    /// rejects the caveat regardless of remaining budget. `u64::MAX`
+    /// means "never expires" (used for indefinite prepaid plans;
+    /// revocation is then handled via the caveat chain's
+    /// `RevocationCaveat` per RFC-0957 §Algorithms).
+    pub expires_at_unix_ms: u64,
+}
+
+impl PaidQueryCaveat {
+    /// Construct a new paid-query caveat with the canonical name.
+    ///
+    /// Caller must supply budget, model, and expiry. The `caveat_name`
+    /// field is fixed to `"paid-query/v1"` (discriminator constant).
+    #[must_use]
+    pub fn new(budget: MicroOCTO_W, model: impl Into<String>, expires_at_unix_ms: u64) -> Self {
+        Self {
+            caveat_name: PAID_QUERY_CAVEAT_NAME.to_string(),
+            budget,
+            model: model.into(),
+            expires_at_unix_ms,
+        }
+    }
+
+    /// True if `now_unix_ms > expires_at_unix_ms`.
+    ///
+    /// `u64::MAX` expiry returns `false` (never expires).
+    #[must_use]
+    pub fn is_expired(&self, now_unix_ms: u64) -> bool {
+        self.expires_at_unix_ms != u64::MAX && now_unix_ms > self.expires_at_unix_ms
+    }
+
+    /// True if `model` matches the caveat's model scope. Empty
+    /// caveat `model` matches any query model (wildcard).
+    #[must_use]
+    pub fn matches_model(&self, query_model: &str) -> bool {
+        self.model.is_empty() || self.model == query_model
+    }
+}
+
+/// Decision returned by `verify_paid_query` after comparing the
+/// caveat against the proposed `query_cost`.
+///
+/// The verifier is **read-only** in Phase 5 MVP — the wallet applies
+/// the decision via its own `RateLimitBudget` mutation. Follow-on
+/// missions (atomic drain, RFC-0862) will return the mutation inside
+/// the decision so the proxy can apply it transactionally.
+#[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub enum PaidQueryDecision {
+    /// Query is authorized; full cost can be deducted; remaining
+    /// budget = `caveat.budget - query_cost`.
+    Proceed {
+        /// Remaining budget after this query (MicroOCTO_W).
+        remaining_budget: MicroOCTO_W,
+    },
+    /// Query exceeds caveat budget but could proceed at a partial
+    /// cost. `max_allowed_cost = caveat.budget` is the highest cost
+    /// the verifier will accept; the caller (router) can either
+    /// downgrade the model or reject.
+    Partial {
+        /// Highest cost the verifier will accept (caveat.budget).
+        max_allowed_cost: MicroOCTO_W,
+    },
+    /// Query is rejected. `reason` carries a discriminator byte so
+    /// the caller can log + surface to the holder without parsing
+    /// a free-form string.
+    Reject {
+        /// Rejection reason discriminator.
+        reason: PaidQueryRejectionReason,
+    },
+}
+
+impl PaidQueryDecision {
+    /// True if the decision authorizes the query (`Proceed`).
+    #[must_use]
+    pub fn is_proceed(&self) -> bool {
+        matches!(self, Self::Proceed { .. })
+    }
+}
+
+/// Reason a paid-query was rejected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize)]
+pub enum PaidQueryRejectionReason {
+    /// `caveat.budget == 0` (no prepaid capacity left).
+    BudgetExhausted,
+    /// `now_unix_ms > caveat.expires_at_unix_ms`.
+    Expired,
+    /// `query_model` does not match caveat's `model` scope (and
+    /// caveat is not a wildcard).
+    ModelMismatch,
+    /// `query_cost > caveat.budget` (and the caller did not ask for
+    /// `Partial`).
+    CostExceedsBudget,
+}
+
+/// Per-holder rate-limit accumulator (Phase 5 MVP).
+///
+/// Tracks prepaid spend per `(holder_did, macaroon_id)` so that
+/// `verify_paid_query` can drain atomically. Phase 5 MVP is in-memory
+/// (`parking_lot::Mutex<HashMap>`); the follow-on atomic-drain mission
+/// swaps the storage for the `HolderRegistry`-backed ledger per
+/// RFC-0862 atomic transaction substrate.
+///
+/// All mutations flow through `try_deduct` which returns the
+/// remaining balance (or a `PaidQueryError`). This is the single
+/// entry point so future persistence can be retrofitted without
+/// touching call sites.
+#[derive(Clone, Debug, Default)]
+pub struct RateLimitBudget {
+    inner: std::sync::Arc<std::sync::Mutex<BudgetState>>,
+}
+
+#[derive(Debug, Default)]
+struct BudgetState {
+    per_holder: std::collections::HashMap<(WireDid, MacaroonId), MicroOCTO_W>,
+}
+
+impl RateLimitBudget {
+    /// Construct an empty in-memory budget.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: std::sync::Arc::new(std::sync::Mutex::new(BudgetState::default())),
+        }
+    }
+
+    /// Seed the budget for a `(holder_did, macaroon_id)` pair. Used
+    /// when the wallet provisions a capability — the caveat's budget
+    /// is registered as the holder's prepaid balance.
+    pub fn seed(&self, holder_did: &WireDid, macaroon_id: &MacaroonId, budget: MicroOCTO_W) {
+        let mut state = self.inner.lock().expect("budget mutex poisoned");
+        state
+            .per_holder
+            .insert((holder_did.clone(), *macaroon_id), budget);
+    }
+
+    /// Atomically deduct `cost` from the `(holder_did, macaroon_id)`
+    /// balance. Returns the new remaining balance on success, or a
+    /// `PaidQueryError` on insufficient balance / missing record.
+    ///
+    /// # Errors
+    /// - `PaidQueryError::UnknownHolder` if no balance exists for the
+    ///   `(holder_did, macaroon_id)` pair (wallet must `seed` first).
+    /// - `PaidQueryError::InsufficientBalance` if balance < cost.
+    pub fn try_deduct(
+        &self,
+        holder_did: &WireDid,
+        macaroon_id: &MacaroonId,
+        cost: MicroOCTO_W,
+    ) -> Result<MicroOCTO_W, PaidQueryError> {
+        let mut state = self.inner.lock().expect("budget mutex poisoned");
+        let key = (holder_did.clone(), *macaroon_id);
+        let balance = state
+            .per_holder
+            .get_mut(&key)
+            .ok_or(PaidQueryError::UnknownHolder)?;
+        if *balance < cost {
+            return Err(PaidQueryError::InsufficientBalance {
+                balance: *balance,
+                cost,
+            });
+        }
+        *balance -= cost;
+        Ok(*balance)
+    }
+
+    /// Read-only balance lookup. Returns `None` if no record exists.
+    #[must_use]
+    pub fn balance(&self, holder_did: &WireDid, macaroon_id: &MacaroonId) -> Option<MicroOCTO_W> {
+        let state = self.inner.lock().expect("budget mutex poisoned");
+        state
+            .per_holder
+            .get(&(holder_did.clone(), *macaroon_id))
+            .copied()
+    }
+}
+
+/// Verification + decision primitive (Phase 5 MVP).
+///
+/// Verifies that a `(macaroon_id, caveat)` pair authorizes a query
+/// costing `query_cost` against `query_model`, returning a
+/// `PaidQueryDecision`. The caller (wallet node) then applies the
+/// decision — Phase 5 MVP is read-only, follow-on atomic-drain
+/// mission will fold the drain into this function.
+///
+/// # Parameters
+///
+/// - `macaroon_id` — `MacaroonId` of the capability token being
+///   verified (16 bytes, RFC-0957 §Wire Format).
+/// - `caveat` — the `PaidQueryCaveat` being asserted (RFC-0965
+///   reserved discriminator 0x1A).
+/// - `query_cost` — proposed query cost in MicroOCTO_W.
+/// - `query_model` — proposed model identifier; must match
+///   `caveat.model` (unless caveat model is `""` wildcard).
+/// - `now_unix_ms` — current time in unix milliseconds; used for
+///   expiry check.
+///
+/// # Returns
+///
+/// `PaidQueryDecision::Proceed { remaining_budget }` if the query
+/// is fully authorized; `Partial { max_allowed_cost }` if the
+/// query exceeds budget but a partial-cost downgrade is possible;
+/// `Reject { reason }` if the caveat is expired, exhausted, or
+/// mismatched.
+#[must_use]
+pub fn verify_paid_query(
+    macaroon_id: &MacaroonId,
+    caveat: &PaidQueryCaveat,
+    query_cost: MicroOCTO_W,
+    query_model: &str,
+    now_unix_ms: u64,
+) -> PaidQueryDecision {
+    // Defensive: macaroon_id must be non-zero (all-zero would
+    // indicate an uninitialised identifier from a buggy caller).
+    if macaroon_id.iter().all(|b| *b == 0) {
+        return PaidQueryDecision::Reject {
+            reason: PaidQueryRejectionReason::BudgetExhausted,
+        };
+    }
+
+    // Expiry gate first — never spend against an expired caveat
+    // (RFC-0871 §Adversary A10 — post-expiry queries).
+    if caveat.is_expired(now_unix_ms) {
+        return PaidQueryDecision::Reject {
+            reason: PaidQueryRejectionReason::Expired,
+        };
+    }
+
+    // Model scope gate — caveat binds to a specific model (or "").
+    if !caveat.matches_model(query_model) {
+        return PaidQueryDecision::Reject {
+            reason: PaidQueryRejectionReason::ModelMismatch,
+        };
+    }
+
+    // Budget gate — query must fit within caveat budget.
+    if caveat.budget == 0 {
+        return PaidQueryDecision::Reject {
+            reason: PaidQueryRejectionReason::BudgetExhausted,
+        };
+    }
+    if query_cost > caveat.budget {
+        return PaidQueryDecision::Partial {
+            max_allowed_cost: caveat.budget,
+        };
+    }
+
+    PaidQueryDecision::Proceed {
+        remaining_budget: caveat.budget - query_cost,
+    }
+}
+
+/// Typed errors for `RateLimitBudget` operations.
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
+pub enum PaidQueryError {
+    /// No balance record exists for the `(holder_did, macaroon_id)`
+    /// pair. The wallet must `seed` the budget before queries can
+    /// be deducted (typically happens at capability mint time per
+    /// RFC-0957 §Algorithms).
+    #[error("no balance record for holder/macaroon; wallet must seed before deduct")]
+    UnknownHolder,
+    /// Balance < proposed cost. Carries both numbers for caller
+    /// diagnostics.
+    #[error("insufficient balance: balance={balance}, cost={cost}")]
+    InsufficientBalance {
+        /// Current balance (MicroOCTO_W).
+        balance: MicroOCTO_W,
+        /// Proposed cost (MicroOCTO_W).
+        cost: MicroOCTO_W,
+    },
+}
+
+/// Re-export the wallet `CapabilityToken` type so downstream crates
+/// (wallet-node handler) can refer to the full capability substrate
+/// without reaching into the wallet crate's `capability::` module
+/// path. This keeps the public surface of the paid-query extension
+/// stable across future wallet re-organisations.
+pub use octo_wallet::capability::CapabilityToken;
+
+/// Re-export the wallet `CapabilityKey` so the wallet-node handler
+/// can sign caveats with the holder's capability key without
+/// importing from the wallet root.
+pub use octo_wallet::CapabilityKey;
+
+/// Convenience: build a `PAID_QUERY_VERIFY`-shaped request envelope
+/// payload (the `(macaroon_id, caveat, query_cost, query_model,
+/// now_unix_ms)` tuple) as borsh bytes. The handler decodes with
+/// `PaidQueryRequest::from_borsh`.
+///
+/// Borsh schema is fixed-position (struct-of-fields); order MUST be
+/// `macaroon_id, caveat, query_cost, query_model, now_unix_ms`.
+#[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub struct PaidQueryRequest {
+    /// Macaroon identifier of the capability being verified.
+    pub macaroon_id: MacaroonId,
+    /// Caveat composition being asserted.
+    pub caveat: PaidQueryCaveat,
+    /// Proposed query cost (MicroOCTO_W).
+    pub query_cost: MicroOCTO_W,
+    /// Proposed model identifier.
+    pub query_model: String,
+    /// Current time (unix milliseconds) for expiry check.
+    pub now_unix_ms: u64,
+}
+
+impl PaidQueryRequest {
+    /// Decode from borsh wire form.
+    ///
+    /// # Errors
+    /// Returns `borsh::io::Error` on malformed payload.
+    pub fn from_borsh(bytes: &[u8]) -> Result<Self, borsh::io::Error> {
+        borsh::from_slice(bytes)
+    }
+
+    /// Encode to borsh wire form.
+    ///
+    /// # Errors
+    /// Returns `borsh::io::Error` on serialization failure.
+    pub fn to_borsh(&self) -> Result<Vec<u8>, borsh::io::Error> {
+        borsh::to_vec(self)
+    }
+}
+
+/// Wire form for the `PaidQueryDecision` response envelope. The
+/// `PaidQueryDecision` enum is the canonical type, but the response
+/// also carries the `payload_kind` for the originating request so
+/// the receiver can route it back to the correct handler context.
+#[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub struct PaidQueryResponse {
+    /// Decision returned by `verify_paid_query`.
+    pub decision: PaidQueryDecision,
+    /// Echo of the request's `macaroon_id` (lets the caller correlate
+    /// response ↔ request without re-encoding the caveat).
+    pub macaroon_id: MacaroonId,
+    /// Originating payload kind (always `PAID_QUERY_VERIFY` for
+    /// Phase 5 MVP; kept in the response so future variants can
+    /// multiplex without rewriting the handler dispatch).
+    pub request_payload_kind: PayloadKindId,
+}
+
+impl PaidQueryResponse {
+    /// Decode from borsh wire form.
+    ///
+    /// # Errors
+    /// Returns `borsh::io::Error` on malformed payload.
+    pub fn from_borsh(bytes: &[u8]) -> Result<Self, borsh::io::Error> {
+        borsh::from_slice(bytes)
+    }
+
+    /// Encode to borsh wire form.
+    ///
+    /// # Errors
+    /// Returns `borsh::io::Error` on serialization failure.
+    pub fn to_borsh(&self) -> Result<Vec<u8>, borsh::io::Error> {
+        borsh::to_vec(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_macaroon_id() -> MacaroonId {
+        let mut id = [0u8; 16];
+        for (i, b) in id.iter_mut().enumerate() {
+            *b = (i as u8).wrapping_add(1);
+        }
+        id
+    }
+
+    fn sample_holder() -> WireDid {
+        WireDid::new("did:octo:zTestHolderPaidQuery".to_string())
+    }
+
+    fn fresh_caveat(budget: MicroOCTO_W, model: &str, expires_at: u64) -> PaidQueryCaveat {
+        PaidQueryCaveat::new(budget, model, expires_at)
+    }
+
+    #[test]
+    fn caveat_constructor_sets_canonical_name() {
+        let c = PaidQueryCaveat::new(1_000_000, "gpt-4", u64::MAX);
+        assert_eq!(c.caveat_name, PAID_QUERY_CAVEAT_NAME);
+        assert_eq!(c.caveat_name, "paid-query/v1");
+        assert_eq!(c.budget, 1_000_000);
+        assert_eq!(c.model, "gpt-4");
+        assert_eq!(c.expires_at_unix_ms, u64::MAX);
+    }
+
+    #[test]
+    fn caveat_expiry_predicate() {
+        let c = fresh_caveat(100, "gpt-4", 1_000_000);
+        assert!(!c.is_expired(500_000));
+        assert!(!c.is_expired(999_999));
+        assert!(!c.is_expired(1_000_000));
+        assert!(c.is_expired(1_000_001));
+        // u64::MAX = never expires.
+        let never = fresh_caveat(100, "gpt-4", u64::MAX);
+        assert!(!never.is_expired(u64::MAX));
+        assert!(!never.is_expired(0));
+    }
+
+    #[test]
+    fn caveat_model_match_includes_wildcard() {
+        let specific = fresh_caveat(100, "gpt-4", u64::MAX);
+        assert!(specific.matches_model("gpt-4"));
+        assert!(!specific.matches_model("gpt-3.5"));
+        let wildcard = fresh_caveat(100, "", u64::MAX);
+        assert!(wildcard.matches_model("gpt-4"));
+        assert!(wildcard.matches_model("anything"));
+        assert!(wildcard.matches_model(""));
+    }
+
+    #[test]
+    fn verify_proceeds_when_budget_covers_cost() {
+        let mac = sample_macaroon_id();
+        let c = fresh_caveat(1_000, "gpt-4", u64::MAX);
+        let d = verify_paid_query(&mac, &c, 250, "gpt-4", 0);
+        assert!(d.is_proceed());
+        assert_eq!(
+            d,
+            PaidQueryDecision::Proceed {
+                remaining_budget: 750
+            }
+        );
+    }
+
+    #[test]
+    fn verify_partial_when_cost_exceeds_budget() {
+        let mac = sample_macaroon_id();
+        let c = fresh_caveat(100, "gpt-4", u64::MAX);
+        let d = verify_paid_query(&mac, &c, 500, "gpt-4", 0);
+        assert_eq!(
+            d,
+            PaidQueryDecision::Partial {
+                max_allowed_cost: 100
+            }
+        );
+    }
+
+    #[test]
+    fn verify_rejects_when_expired() {
+        let mac = sample_macaroon_id();
+        let c = fresh_caveat(1_000, "gpt-4", 100);
+        let d = verify_paid_query(&mac, &c, 10, "gpt-4", 200);
+        assert_eq!(
+            d,
+            PaidQueryDecision::Reject {
+                reason: PaidQueryRejectionReason::Expired
+            }
+        );
+    }
+
+    #[test]
+    fn verify_rejects_when_model_mismatch() {
+        let mac = sample_macaroon_id();
+        let c = fresh_caveat(1_000, "gpt-4", u64::MAX);
+        let d = verify_paid_query(&mac, &c, 10, "claude-3-opus", 0);
+        assert_eq!(
+            d,
+            PaidQueryDecision::Reject {
+                reason: PaidQueryRejectionReason::ModelMismatch
+            }
+        );
+    }
+
+    #[test]
+    fn verify_rejects_when_budget_exhausted() {
+        let mac = sample_macaroon_id();
+        let c = fresh_caveat(0, "gpt-4", u64::MAX);
+        let d = verify_paid_query(&mac, &c, 1, "gpt-4", 0);
+        assert_eq!(
+            d,
+            PaidQueryDecision::Reject {
+                reason: PaidQueryRejectionReason::BudgetExhausted
+            }
+        );
+    }
+
+    #[test]
+    fn verify_rejects_zero_macaroon_id() {
+        // All-zero macaroon_id is a defensive sentinel for an
+        // uninitialised identifier — never authorise.
+        let mac = [0u8; 16];
+        let c = fresh_caveat(1_000, "gpt-4", u64::MAX);
+        let d = verify_paid_query(&mac, &c, 10, "gpt-4", 0);
+        assert_eq!(
+            d,
+            PaidQueryDecision::Reject {
+                reason: PaidQueryRejectionReason::BudgetExhausted
+            }
+        );
+    }
+
+    #[test]
+    fn rate_limit_budget_seed_and_deduct() {
+        let b = RateLimitBudget::new();
+        let holder = sample_holder();
+        let mac = sample_macaroon_id();
+        b.seed(&holder, &mac, 1_000);
+
+        // First deduct succeeds; remaining = 750.
+        let remaining = b.try_deduct(&holder, &mac, 250).unwrap();
+        assert_eq!(remaining, 750);
+
+        // Second deduct brings remaining to 500.
+        let remaining = b.try_deduct(&holder, &mac, 250).unwrap();
+        assert_eq!(remaining, 500);
+
+        // Insufficient balance.
+        let err = b.try_deduct(&holder, &mac, 600).unwrap_err();
+        assert_eq!(
+            err,
+            PaidQueryError::InsufficientBalance {
+                balance: 500,
+                cost: 600
+            }
+        );
+
+        // Balance lookup unchanged after rejection.
+        assert_eq!(b.balance(&holder, &mac), Some(500));
+    }
+
+    #[test]
+    fn rate_limit_budget_unknown_holder() {
+        let b = RateLimitBudget::new();
+        let holder = sample_holder();
+        let mac = sample_macaroon_id();
+        let err = b.try_deduct(&holder, &mac, 1).unwrap_err();
+        assert_eq!(err, PaidQueryError::UnknownHolder);
+        assert_eq!(b.balance(&holder, &mac), None);
+    }
+
+    #[test]
+    fn rate_limit_budget_isolation_between_holders() {
+        let b = RateLimitBudget::new();
+        let h1 = WireDid::new("did:octo:zHolder1".to_string());
+        let h2 = WireDid::new("did:octo:zHolder2".to_string());
+        let mac = sample_macaroon_id();
+        b.seed(&h1, &mac, 100);
+        b.seed(&h2, &mac, 200);
+
+        assert_eq!(b.try_deduct(&h1, &mac, 50).unwrap(), 50);
+        assert_eq!(b.try_deduct(&h2, &mac, 50).unwrap(), 150);
+        // h1 unaffected by h2's deduct.
+        assert_eq!(b.balance(&h1, &mac), Some(50));
+        assert_eq!(b.balance(&h2, &mac), Some(150));
+    }
+
+    #[test]
+    fn paid_query_request_borsh_round_trip() {
+        let req = PaidQueryRequest {
+            macaroon_id: sample_macaroon_id(),
+            caveat: fresh_caveat(1_000, "gpt-4", u64::MAX),
+            query_cost: 100,
+            query_model: "gpt-4".to_string(),
+            now_unix_ms: 1_700_000_000_000,
+        };
+        let bytes = req.to_borsh().unwrap();
+        let back = PaidQueryRequest::from_borsh(&bytes).unwrap();
+        assert_eq!(back, req);
+    }
+
+    #[test]
+    fn paid_query_response_borsh_round_trip() {
+        let resp = PaidQueryResponse {
+            decision: PaidQueryDecision::Proceed {
+                remaining_budget: 750,
+            },
+            macaroon_id: sample_macaroon_id(),
+            request_payload_kind: PAID_QUERY_VERIFY,
+        };
+        let bytes = resp.to_borsh().unwrap();
+        let back = PaidQueryResponse::from_borsh(&bytes).unwrap();
+        assert_eq!(back, resp);
+    }
+
+    #[test]
+    fn paid_query_payload_kind_is_the_documented_uuid() {
+        // Defensive: keep the local re-export in lockstep with
+        // octo-protocol so a future refactor of the protocol
+        // payload_kind module surfaces immediately.
+        let expected: [u8; 16] = [
+            0x00, 0x09, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x01,
+        ];
+        assert_eq!(PAID_QUERY_VERIFY.as_bytes(), &expected);
+    }
+}

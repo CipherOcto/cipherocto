@@ -29,8 +29,9 @@ use octo_transport::NodeTransport;
 use octo_wallet::identity::IdentityKey;
 
 use crate::handlers::{
-    AttenuateHandler, AttenuateRequest, HandlerOutput, MintHandler, MintRequest, ResolveDIDHandler,
-    ResolveDIDRequest, SignHandler, SignRequest,
+    AttenuateHandler, AttenuateRequest, HandlerOutput, MintHandler, MintRequest,
+    PaidQueryVerifyHandler, PaidQueryVerifyRequest, ResolveDIDHandler, ResolveDIDRequest,
+    SignHandler, SignRequest,
 };
 use crate::is_wallet_payload_kind;
 
@@ -129,6 +130,15 @@ impl WalletNode {
     ///    verification (RFC-0871 §Adversary Analysis A6).
     /// 2. `payload_kind` UUID lookup → handler map.
     /// 3. Handler returns `HandlerOutput` (response envelope payload).
+    ///
+    /// Phase 5 (mission 0871e-paid-query-caveat) adds a fifth arm:
+    /// `PAID_QUERY_VERIFY` (sub-namespace `0x0006`) — the paid-query
+    /// caveat bridge. The wallet serves this kind so holders can
+    /// verify a `(macaroon_id, PaidQueryCaveat)` pair against a
+    /// proposed query cost without standing up a separate verifier
+    /// node. Future follow-on missions may relocate this to a
+    /// dedicated `paid-query-node` per Layer C specialized-node
+    /// pattern; Phase 5 MVP keeps it co-located with the wallet.
     pub fn handle_envelope(&self, envelope: &NodeEnvelope) -> Result<HandlerOutput, ProtocolError> {
         // 1. Verify envelope (replay defense + signature)
         self.dispatcher.verify_all(envelope)?;
@@ -151,6 +161,11 @@ impl WalletNode {
             k if k == octo_protocol::payload_kind::WALLET_RESOLVE_DID => {
                 let req = ResolveDIDRequest::from_borsh(&envelope.payload)?;
                 ResolveDIDHandler::new(identity).handle(&req)
+            }
+            k if k == octo_paid_query::PAID_QUERY_VERIFY => {
+                let req = PaidQueryVerifyRequest::from_borsh(&envelope.payload)
+                    .map_err(|e| ProtocolError::AuthorizationFailed(e.to_string()))?;
+                PaidQueryVerifyHandler::new().handle(&req)
             }
             _ => Err(ProtocolError::AuthorizationFailed(format!(
                 "unsupported payload kind: {:?}",

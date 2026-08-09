@@ -19,6 +19,10 @@ octo-wallet = { path = "../octo-wallet" }
 octo-ident = { path = "../octo-ident" }
 # Layer D transport adapter (RFC-0863 NodeTransport)
 octo-transport = { path = "../../octo-transport" }
+# Layer E paid-query extension (RFC-0871 §Implementation Phases Phase 5,
+# mission 0871e-paid-query-caveat). Owns the paid-query caveat
+# verification bridge consumed by the WALLET_PAID_QUERY_VERIFY handler.
+octo-paid-query = { path = "../octo-paid-query" }
 
 # Async runtime for NetworkReceiver impl + broadcast_announce
 tokio = { version = "1", features = ["rt", "sync", "macros", "time"] }

@@ -1,0 +1,45 @@
+[package]
+name = "octo-paid-query"
+version = "0.1.0"
+edition = "2021"
+description = "Paid-query caveat bridge (RFC-0871 §Implementation Phases Phase 5, mission 0871e). Layer E extension crate; per-extension crate pattern from RFC-0957 v2.0 §Per-Extension Crate Layout."
+license = "MIT OR Apache-2.0"
+authors = ["CipherOcto"]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# Layer A primitive (BLAKE3 keyed-hash, RFC-0853 §1.1).
+blake3 = "1.5"
+# Borsh v1.5 wire form for `PaidQueryCaveat` + `PaidQueryDecision`
+# (per octo-wallet-node borsh-version pin and octo-protocol envelope
+# payload encoding convention).
+borsh = "=1.5.0"
+# thiserror for typed error surface (`PaidQueryError`).
+thiserror = "1"
+
+# Layer 1 envelope + payload-kind substrate (RFC-0871).
+octo-protocol = { path = "../octo-protocol" }
+# Layer B identity + DID substrate (RFC-0871 §Wallet Node Lifecycle).
+octo-ident = { path = "../octo-ident" }
+# Layer B wallet substrate (for `CapabilityToken` type reference only —
+# the verification logic operates on the `MacaroonId` alias exported by
+# `octo-cap-macaroon` so no deep dep on wallet internals is required).
+octo-wallet = { path = "../octo-wallet" }
+# Layer 4 macaroon foundation (mission 0957-ext-macaroon Phase 1) —
+# provides `MacaroonId` type alias + `hmac_blake3` primitive. This
+# crate consumes those primitives; it does NOT depend on the wallet's
+# monolithic `caveat.rs` (which is slated for follow-on extraction).
+octo-cap-macaroon = { path = "../octo-cap-macaroon" }
+
+[dev-dependencies]
+# hex for Debug redaction output (does NOT appear in wire form).
+hex = "0.4"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = "allow"

@@ -336,6 +336,54 @@ pub fn is_capability_payload_kind(kind: &PayloadKindId) -> bool {
     CAPABILITY_PAYLOAD_KINDS.contains(kind)
 }
 
+// RFC-0871 paid-query verifier payload kinds (RFC-0871 §Wallet Node
+// Lifecycle, mission 0871e-paid-query-caveat Phase 5).
+//
+// Sub-namespace `0x0006` continues the existing per-specialized-node
+// allocation pattern: `0x0001` (identity — 0871), `0x0002` (wallet —
+// 0871a), `0x0003` (quota router — 0870-b), `0x0004` (reputation
+// anchor — 0871c), `0x0005` (capability issuer — 0871d). Phase 5
+// introduces `0x0006` for the paid-query caveat bridge.
+//
+// Mission 0871e AC exposes ONLY `PAID_QUERY_VERIFY` — a query verifier
+// that takes a macaroon token + a `PaidQueryCaveat` (RFC-0965 reserved
+// range 0x1A) and returns whether the query is authorized + the
+// rate-limit budget. The full RFC-0871 §Implementation Phases Phase 5
+// surface (`PAID_QUERY_RECEIPT`, `PAID_QUERY_REFRESH`, etc.) lands in
+// follow-on missions once the `RouterAnnouncePayload::pricing_policy`
+// extension + atomic drain substrate (RFC-0862) are wired.
+
+/// Paid-query verify (RFC-0871 §Wallet Node Lifecycle, mission 0871e).
+///
+/// Phase 5 MVP bridge: takes a macaroon `MacaroonId` + a `PaidQueryCaveat`
+/// and a `query_cost: u128` (in MicroOCTO_W), returns whether the query
+/// is authorized (budget >= cost) + the remaining rate-limit budget.
+///
+/// The full `PaymentCaveat` composition + atomic drain (RFC-0862) lands
+/// in follow-on; this bridge proves the per-extension crate pattern
+/// (Layer E) for paid-query variants.
+///
+/// UUID: `0x0009:0006:0000:0000:0000:0000:0000:0001`
+pub const PAID_QUERY_VERIFY: PayloadKindId = PayloadKindId([
+    0x00, 0x09, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+]);
+
+/// All paid-query payload kinds served by the paid-query verifier
+/// (RFC-0871 §Wallet Node Lifecycle, mission 0871e-paid-query-caveat).
+///
+/// Phase 5 MVP exposes `PAID_QUERY_VERIFY`. Follow-on missions add
+/// `PAID_QUERY_RECEIPT` + `PAID_QUERY_REFRESH` once the
+/// `RouterAnnouncePayload::pricing_policy` extension + atomic drain
+/// substrate (RFC-0862) are wired.
+pub const PAID_QUERY_PAYLOAD_KINDS: &[PayloadKindId] = &[PAID_QUERY_VERIFY];
+
+/// True if `kind` is a paid-query payload kind (RFC-0871
+/// §Wallet Node Lifecycle, mission 0871e).
+#[must_use]
+pub fn is_paid_query_payload_kind(kind: &PayloadKindId) -> bool {
+    PAID_QUERY_PAYLOAD_KINDS.contains(kind)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -608,5 +656,75 @@ mod tests {
     // for one assertion.
     fn is_wallet_payload_kind_placeholder(kind: &PayloadKindId) -> bool {
         kind.0[0] == 0x00 && kind.0[1] == 0x09 && kind.0[2] == 0x00 && kind.0[3] == 0x02
+    }
+
+    // ── Mission 0871e-paid-query-caveat (Phase 5) AC tests ──
+
+    #[test]
+    fn paid_query_verify_uuid_matches_mission_0871e() {
+        // Mission 0871e AC: PAID_QUERY_VERIFY UUID =
+        // 0x0009:0006:0000:0000:0000:0000:0000:0001
+        let expected: [u8; 16] = [
+            0x00, 0x09, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x01,
+        ];
+        assert_eq!(PAID_QUERY_VERIFY.0, expected);
+    }
+
+    #[test]
+    fn paid_query_payload_kinds_are_rfc_allocated() {
+        // Mission 0871e AC: every paid-query payload kind MUST sit in the
+        // RFC-0871 `rfc_namespace` (0x0009:0000…0x0009:FFFF) with
+        // sub-namespace `0x0006` (mission 0871e — paid query).
+        for kind in PAID_QUERY_PAYLOAD_KINDS {
+            assert!(
+                kind.is_rfc_allocated(),
+                "RFC-0871 paid-query payload kind {kind:?} not in rfc_namespace"
+            );
+            assert_eq!(kind.0[0], 0x00);
+            assert_eq!(kind.0[1], 0x09);
+            assert_eq!(kind.0[2], 0x00);
+            assert_eq!(kind.0[3], 0x06);
+        }
+    }
+
+    #[test]
+    fn is_paid_query_payload_kind_matches_array() {
+        for kind in PAID_QUERY_PAYLOAD_KINDS {
+            assert!(is_paid_query_payload_kind(kind));
+        }
+        // Non-paid-query RFC-0871 payload kinds must NOT match.
+        assert!(!is_paid_query_payload_kind(&IDENTITY_RESOLVE));
+        assert!(!is_paid_query_payload_kind(&WALLET_SIGN_ED25519));
+        assert!(!is_paid_query_payload_kind(&QUOTA_ROUTER_ANNOUNCE));
+        assert!(!is_paid_query_payload_kind(&REPUTATION_ANCHOR_QUERY));
+        assert!(!is_paid_query_payload_kind(&CAPABILITY_ISSUE));
+    }
+
+    #[test]
+    fn paid_query_payload_kinds_borsh_round_trip() {
+        for kind in PAID_QUERY_PAYLOAD_KINDS {
+            let bytes = borsh::to_vec(kind).unwrap();
+            let back: PayloadKindId = borsh::from_slice(&bytes).unwrap();
+            assert_eq!(back, *kind);
+        }
+    }
+
+    #[test]
+    fn paid_query_verify_does_not_collide_with_other_namespaces() {
+        // Mission 0871e AC: PAID_QUERY_VERIFY must NOT collide with
+        // wallet (0x0002), quota router (0x0003), reputation anchor
+        // (0x0004), or capability issuer (0x0005) sub-namespaces.
+        // The dispatcher classifies by exact UUID match; a collision
+        // would silently route paid-query verification to the wrong
+        // receiver.
+        assert!(!is_wallet_payload_kind_placeholder(&PAID_QUERY_VERIFY));
+        assert!(!is_quota_payload_kind(&PAID_QUERY_VERIFY));
+        assert!(!is_reputation_payload_kind(&PAID_QUERY_VERIFY));
+        assert!(!is_capability_payload_kind(&PAID_QUERY_VERIFY));
+        assert_ne!(PAID_QUERY_VERIFY, WALLET_MINT_CAPABILITY);
+        assert_ne!(PAID_QUERY_VERIFY, QUOTA_ROUTER_ANNOUNCE);
+        assert_ne!(PAID_QUERY_VERIFY, REPUTATION_ANCHOR_QUERY);
+        assert_ne!(PAID_QUERY_VERIFY, CAPABILITY_ISSUE);
     }
 }

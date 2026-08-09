@@ -12,11 +12,13 @@ use octo_protocol::ProtocolError;
 
 pub mod attenuate;
 pub mod mint;
+pub mod paid_query;
 pub mod resolve;
 pub mod sign;
 
 pub use attenuate::{AttenuateHandler, AttenuateRequest};
 pub use mint::{MintHandler, MintRequest};
+pub use paid_query::{PaidQueryVerifyHandler, PaidQueryVerifyRequest};
 pub use resolve::{ResolveDIDHandler, ResolveDIDRequest};
 pub use sign::{SignHandler, SignRequest};
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Claimed (2026-08-09). RFC-0957 + RFC-0965 amendments mandate per-extension crate layout. Claimant: @cipherocto.
+Open (2026-08-08). RFC-0957 + RFC-0965 amendments mandate per-extension crate layout.
 
 ## RFC
 
@@ -21,22 +21,21 @@ Extract the macaroon v1 capability type into a dedicated `crates/octo-cap-macaro
 
 ### Top-level: Extraction
 
-- [x] NEW: `crates/octo-cap-macaroon/` crate created with `Cargo.toml` + `src/lib.rs`
-- [x] Phase 1 extraction: `hmac_blake3`, `macaroon_id`, `MacaroonId`, `CAPABILITY_ID_DOMAIN`, `MACAR_ID_DOMAIN` constants moved from `crates/octo-wallet/src/capability/macaroon.rs` (lines 40-76) to `crates/octo-cap-macaroon/src/lib.rs`
-- [x] `octo-wallet::capability::macaroon` re-exports the moved items via `pub use octo_cap_macaroon::{...}` for backward compatibility
-- [x] `octo-wallet` `Cargo.toml` adds `octo-cap-macaroon = { path = "../octo-cap-macaroon" }` dep
-- [x] Workspace auto-registers new crate via `crates/*` glob (no Cargo.toml edit needed)
-- [x] All existing macaroon tests pass: `cargo test -p octo-cap-macaroon --lib` = 8/8; `cargo test -p octo-wallet --lib` = 320/320 (zero regressions)
-- [x] `cargo clippy -p octo-cap-macaroon -p octo-wallet --all-targets -- -D warnings` clean
-- [x] `cargo fmt --check` clean
-
-### Phase 2 follow-on (not in scope of this session)
-
-- Migrate `Macaroon` struct + `verify` / `attenuate` methods (~lines 97-428 of macaroon.rs) — depends on `caveat::Caveat` type which lives in a separate file
-- Migrate `caveat.rs` (1382 lines) — 22 caveat types + `CaveatName` + `CaveatSet` + `RawCaveat`
-- Migrate `discharge.rs` (962 lines) — `EscrowDischargeProvider` + `RevocationDischargeProvider` + `RateLimitDischargeProvider` + `ChannelProvider` trait
-- Migrate `wire.rs` (439 lines) — wire format v1 + canonical serialization
-- Implement `CapabilitySpec` trait for plugin registration
+- [ ] NEW: `crates/octo-cap-macaroon/` crate created with `Cargo.toml` + `src/lib.rs`
+- [ ] Migrated from `crates/octo-wallet/src/capability/macaroon.rs` (1905 lines): `CapabilityToken`, `Mint`, `Verify`, `attenuate`, `append_caveat`
+- [ ] Migrated from `crates/octo-wallet/src/capability/caveat.rs` (1382 lines): 22 caveat types (RFC-0957 existing 12 + RFC-0965 10), `CaveatName`, `CaveatSet`, `RawCaveat`
+- [ ] Migrated from `crates/octo-wallet/src/capability/discharge.rs` (962 lines): `EscrowDischargeProvider`, `RevocationDischargeProvider`, `RateLimitDischargeProvider`, `ChannelProvider` trait
+- [ ] Migrated from `crates/octo-wallet/src/capability/wire.rs` (439 lines): wire format v1, canonical serialization
+- [ ] Migrated from `crates/octo-wallet/src/capability/holder.rs`: Ed25519 holder signature
+- [ ] `CapabilitySpec` impl registered via plugin at startup
+- [ ] `octo-wallet` `Cargo.toml` adds `octo-cap-macaroon = { path = "../octo-cap-macaroon" }` dep
+- [ ] Workspace `Cargo.toml` adds `crates/octo-cap-macaroon` to `members`
+- [ ] `CapabilityToken::mint` signature unchanged (per RFC-0957-A1 R6-C3 fix: 4-arg persistence-free)
+- [ ] `HolderRegistry` trait remains in `crates/quota-router-storage/src/holder_registry.rs` (no extraction)
+- [ ] All existing macaroon tests pass: `cargo test -p octo-cap-macaroon --lib` + `cargo test -p octo-wallet --lib capability`
+- [ ] All existing capability integration tests pass: `cargo test -p octo-wallet --tests`
+- [ ] `cargo clippy --workspace --all-targets --features full -- -D warnings` clean
+- [ ] `cargo fmt --check` clean
 
 ### Cross-crate compat
 
@@ -87,36 +86,11 @@ Per-extension crate extraction is multi-file (1 NEW crate + 5 source migrations 
 
 ## Claimant
 
-@cipherocto (claimed 2026-08-09)
+@unassigned (per `[[feedback_initiation_user_only]]` — user initiates the claim)
 
 ## Pull Request
 
-f123fe1b (local; push + remote writes await user instruction per [[git-workflow]])
-
-## Closure Summary
-
-Phase 1 extraction landed in commit `f123fe1b` on `next` branch. 5 files
-changed, 323 insertions / 27 deletions. NEW `crates/octo-cap-macaroon/`
-Layer-4 extension crate owns the pure-crypto foundation (HMAC-BLAKE3 +
-macaroon_id + domain constants); `octo-wallet::capability::macaroon`
-re-exports for backward compat. Zero regressions: 320/320 octo-wallet
-tests pass, 8/8 new octo-cap-macaroon tests pass, clippy -D warnings
-clean, fmt clean, workspace builds.
-
-**Honest scope disclosure:** This commit delivered **Phase 1 of 2** —
-the pure-crypto foundation. The full file migration (Macaroon struct +
-caveat.rs 1382 lines + discharge.rs 962 lines + wire.rs 439 lines +
-CapabilitySpec impl) remains for follow-on missions, tracked in the
-`### Phase 2 follow-on` section above. The mission's full acceptance
-criteria were NOT met in a single session due to scope (4688 lines of
-extracted code across 4 source files with many cross-dependencies); a
-follow-on mission or dedicated extraction session is needed to complete
-the migration.
-
-Next per DAG serial path: **`0870-b-envelope-adoption`** — quota router
-adopts the `NodeEnvelope` from `octo-protocol` (mission 0871's substrate).
-This unblocks mission `0871a` wallet-node (consumes `octo-cap-macaroon`
-re-exports for `Authorization::Capability` materialization).
+(unset)
 
 ## Notes
 

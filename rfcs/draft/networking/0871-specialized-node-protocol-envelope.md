@@ -263,25 +263,27 @@ impl WalletNode {
         Ok(())
     }
 
-    /// Build + HMAC-sign + broadcast the `RouterAnnouncePayload` for this wallet node.
-    /// Mirrors RFC-0870 §QuotaRouterNode `broadcast_announce` exactly.
-    /// (Note: `self.network_key()` is the wallet's network-channel key derived
-    /// from the wallet's identity per RFC-0853 §Channel Binding; see
-    /// `WalletNode::network_key()` definition in `crates/octo-wallet-node`.)
+    /// HMAC-sign + broadcast the existing `announce_payload` field for this wallet
+    /// node. Mirrors the SHAPE of RFC-0870 §QuotaRouterNode `broadcast_announce`
+    /// (build→hmac→serialize→broadcast); codec is borsh per §Algorithms, not
+    /// bincode per RFC-0870 §Envelope Codec. The pre-built `announce_payload`
+    /// field is constructed by `WalletNode::new(...)` (out of RFC-0871 scope;
+    /// see `crates/octo-wallet-node/src/node.rs` for the construction pattern
+    /// matching RFC-0870 §QuotaRouterNode `new(...)`).
     pub async fn broadcast_announce(&self) -> Result<usize, TransportError> {
-        let announce = RouterAnnouncePayload {
-            node_id: self.node_did().clone(),
-            network_id: self.network_id.clone(),
-            supported_models: vec![],   // wallet does not serve models
-            capacities: vec![],         // wallet does not serve inference capacity
-            timestamp: self.monotonic_now(),
-            hmac: [0u8; 32],
-        };
-        let mut signed = announce;
+        let mut signed = self.announce_payload.clone();
         signed.hmac = signed.compute_hmac(&self.network_key());
         let payload = borsh::serialize(&signed).map_err(TransportError::from)?;
         let ctx = SendContext::default();
         Ok(self.transport.broadcast(&payload, &ctx).await)
+    }
+
+    /// Network-channel HMAC key derived from `self.identity` (IdentityKey)
+    /// per RFC-0853 §Channel Binding. Defined in `crates/octo-wallet-node` impl;
+    /// spec sketch: `HKDF-Expand(self.identity.signing_key(), info=self.network_id, L=32)`.
+    fn network_key(&self) -> [u8; 32] {
+        // Spec placeholder; concrete impl in `crates/octo-wallet-node/src/network_key.rs`.
+        unimplemented!()
     }
 }
 
@@ -595,6 +597,7 @@ The full byte-exact parity is verified by two complementary mechanisms:
 | Paid query subscription model (pre-paid capacity, drain over time) | TBD | post-v2.0 | Phase 5 mission (file at promotion) |
 | Cross-domain DID resolution (resolver chains across specialized nodes) | TBD | post-v2.0 | RFC-0009 §Future Work |
 | Mesh routing QoS (per-payload-kind priority in `SendContext`) | TBD | post-v2.0 | RFC-0870 transport extension |
+| Wallet-capability announcement extension RFC (extends `RouterAnnouncePayload` with payload_kinds advertised; required for TV5's wallet-specific kind advertisement) | TBD | post-v2.0 | RFC-0871 §Wallet Node Lifecycle TV5 + RFC-0870 §NodeEnvelope Adoption |
 
 > **Note on Future Work table:** per `[[deferred-vs-unspecified]]` rule, Future Work items MUST carry an owner + schedule. Items marked `TBD` will be assigned owners at promotion-to-Accepted time; the table is included now to prevent the "specified-but-unspecified" trap.
 

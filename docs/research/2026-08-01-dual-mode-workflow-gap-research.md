@@ -5,7 +5,7 @@
 **Author:** @cipherocto + @mmacedoeu
 **Scope:** Map the existing RFCs + missions against the dual-mode authorization workflow (legacy bearer + capability-based) over the cipherocto forwarding network, identify the spec-level gaps, classify each as gap-in-scope-of-existing-RFC, in-place amendment, or new RFC. Verify the "remove holder_did from the empty-field deserialized struct" claim against current RFC-0957.
 
-> **Format note:** This follows `docs/BLUEPRINT.md` §Research Report template.
+> **Format note:** This follows `docs/BLUEPRINT.md` research report template.
 
 ---
 
@@ -41,19 +41,19 @@ The user's framing — *"the `holder_did` we can remove from the struct holding 
 
 ## Problem Statement
 
-The original design intent (recovered from RFC-0957 §Goals + RFC-0959 §Roles + RFC-0870 §Architecture + this session's user statement):
+The original design intent (recovered from RFC-0957 design goals + RFC-0959 roles and authorities + RFC-0870 system architecture + this session's user statement):
 
 - CipherOcto runs a **mesh of router nodes** that forward inference requests toward the destination node that holds the provider key.
 - The destination node is the **mints** — it issues both bearer tokens (for legacy clients) and capability tokens (for wallet-side clients) for the providers it re-sells.
 - The destination node holds the **catalog map**: `DID -> holder_pub -> caveats -> rate-limit -> provider`. This is its local knowledge of every holder it has ever minted for.
 - When a holder wants to use a legacy client, they opt for the bearer path. When their client is capability-aware, they opt for the capability path. The destination node's catalog must support both.
-- When the destination node decides to **re-sell access** in the quota market (RFC-0955 + RFC-0959), the buyer (B) provides its DID to the seller (S) at deal time. S mints a capability token for B *bound to the Ask* (RFC-0959 `AskBinding` caveat, RFC-0957 §Caveat DSL). S also has a legacy bearer for B's legacy client. S delivers both.
+- When the destination node decides to **re-sell access** in the quota market (RFC-0955 + RFC-0959), the buyer (B) provides its DID to the seller (S) at deal time. S mints a capability token for B *bound to the Ask* (RFC-0959 `AskBinding` caveat, RFC-0957 caveat DSL). S also has a legacy bearer for B's legacy client. S delivers both.
 - B and S both store the same `(B_did, holder_pub, caveats, ask_id)` tuple. The wire does not need to carry `holder_did` because both sides already have it. The mint API doesn't need the buyer to supply it at mint time — S's catalog already has it.
 
 Today's spec state:
 
-- ✅ Wire format excludes holder_did (RFC-0957 §Wire Format v1).
-- ✅ Catalog map is implicit (RFC-0957 §Roles calls Token Issuer "persisted on `CapabilityToken.holder_did`" but the catalog storage layer is unspecified).
+- ✅ Wire format excludes holder_did (RFC-0957 §Wire Format).
+- ✅ Catalog map is implicit (RFC-0957 roles and authorities calls Token Issuer "persisted on `CapabilityToken.holder_did`" but the catalog storage layer is unspecified).
 - ✅ Mint API surface: stays as-is by design (user clarification 2026-08-01). The mint receives `holder_did` from the caller at deal time; the parsed `CapabilityToken` keeps the field. The wallet-side parsed struct is the source of truth — the egress-side `CapabilityHandle.holder_did` is the F4 dead field, NOT the mint API parameter.
 - ❌ Forwarding behavior at intermediate hops is unspecified for either auth path (see F1, G1).
 - ❌ Dual-issuance (bearer + capability for the same holder) is not a spec concept (see F1, G2).
@@ -76,7 +76,7 @@ The gap is **a missing coherent design for the destination-node-as-mints + catal
 - Resolver semantics: how the verification side resolves the holder_did at parse time
 
 **Excluded:**
-- Provider-key vault (RFC-0009 §Vault) — already speced, no changes needed
+- Provider-key vault (RFC-0009 vault — Provider-Key Handling) — already speced, no changes needed
 - The macaroon crypto itself (RFC-0957 §Algorithms) — already speced
 - The ask settlement chain (RFC-0959) — already speced; gaps identified are upstream
 - ZK capability subclass (RFC-0958) — separate concern, base class gaps are load-bearing
@@ -91,10 +91,10 @@ The gap is **a missing coherent design for the destination-node-as-mints + catal
 **What exists:**
 - RFC-0917 defines **litellm-mode** vs **any-llm-mode**. This is **provider integration strategy** (reqwest vs PyO3), NOT auth strategy. Both modes expose both HTTP proxy and Python SDK.
 - RFC-0903 is the centralized virtual-key management layer. Tokens are `sk-...` style, validated by HTTP proxy auth middleware.
-- RFC-0957 §Wire Format defines the capability token wire. RFC-0957 §Alternative Header Form: *"Alternative: `Authorization: CipherOcto-Cap <...>` (when bearer coexists)"* — this is the only spec-level hint that both could be on the same request.
+- RFC-0957 §Wire Format defines the capability token wire. RFC-0957 alternative header form: *"Alternative: `Authorization: CipherOcto-Cap <...>` (when bearer coexists)"* — this is the only spec-level hint that both could be on the same request.
 - RFC-0949 is for enterprise browser users; separate concern.
 
-**Gap:** RFC-0917 is misread as addressing the dual-mode auth question. It does not. The "dual-mode" name is reused for two different concepts (provider integration strategy vs auth strategy). The actual legacy-bearer + capability dual-pipeline is only implicitly described in RFC-0957 §Alternative Header Form.
+**Gap:** RFC-0917 is misread as addressing the dual-mode auth question. It does not. The "dual-mode" name is reused for two different concepts (provider integration strategy vs auth strategy). The actual legacy-bearer + capability dual-pipeline is only implicitly described in RFC-0957 alternative header form.
 
 **Boundary check:** RFC-0917 mentions *"virtual keys (RFC-0903) — HTTP proxy only (Python SDK callers bypass proxy, no virtual key enforcement)"* — this is the auth-path split, but it's about HTTP-vs-Python, not bearer-vs-capability.
 
@@ -102,11 +102,11 @@ The gap is **a missing coherent design for the destination-node-as-mints + catal
 
 > **RFC-0969: Dual-Pipeline Authorization — Legacy Bearer + Capability**
 >
-> - §Wire Format: `Authorization: Bearer <sk-...>` OR `X-Capability-Token: <macaroon>` OR `Authorization: CipherOcto-Cap <macaroon>` (when bearer coexists per RFC-0957 §Alternative Header Form)
-> - §Router-side: gateway middleware MUST accept both, choose parse path based on header prefix
-> - §Destination side: same node mints both; catalog unifies both into `HolderRecord { did, holder_pub, bearer_capsule, capability_token_root, ... }`
-> - §Backward compat: legacy clients (claude-code, hardcoded agent HTTP, etc.) continue using bearer with no client-side change
-> - §Forward compatibility: new clients opt into capability by including the wallet-side signer
+> - §Wire Format: `Authorization: Bearer <sk-...>` OR `X-Capability-Token: <macaroon>` OR `Authorization: CipherOcto-Cap <macaroon>` (when bearer coexists per RFC-0957 alternative header form)
+> - Router-side: gateway middleware MUST accept both, choose parse path based on header prefix
+> - Destination side: same node mints both; catalog unifies both into `HolderRecord { did, holder_pub, bearer_capsule, capability_token_root, ... }`
+> - Backward compat: legacy clients (claude-code, hardcoded agent HTTP, etc.) continue using bearer with no client-side change
+> - Forward compatibility: new clients opt into capability by including the wallet-side signer
 
 **Confidence:** HIGH. The wire format is already this; the spec just needs to acknowledge it.
 
@@ -114,7 +114,7 @@ The gap is **a missing coherent design for the destination-node-as-mints + catal
 
 **What exists:**
 - RFC-0870 defines `ForwardRequest` envelopes with TTL≤3 hops. The envelope carries `request: serialized HTTP request + headers`. Auth headers travel in the envelope transparently.
-- RFC-0870 §Peer Trust: *"Do NOT forward `known_peers` from untrusted peers (`PeerTrust::Untrusted`)."* — this is about peer meta, not auth.
+- RFC-0870 peer trust: *"Do NOT forward `known_peers` from untrusted peers (`PeerTrust::Untrusted`)."* — this is about peer meta, not auth.
 - RFC-0870 G1: *"< 100ms p50 for 3-hop propagation."* — performance budget for forwarding.
 - RFC-0870 Roles table: Router Node lifecycle includes forwarding but does NOT pin auth responsibilities.
 
@@ -124,37 +124,37 @@ The gap is **a missing coherent design for the destination-node-as-mints + catal
 - (c) Re-mint a scoped-down capability for the next hop? **Verified NO** — RFC-0870 TTL only; no per-hop mint
 - (d) Strip the inner auth and replace with its own? **Verified NO** — handler does not touch the inner request's auth headers
 
-**The forward-then-verify model assumes the destination is the verifier.** But RFC-0870 §Forwarding Trigger shows that forwarding is selected when local capacity is insufficient — the destination node is the verifier.
+**The forward-then-verify model assumes the destination is the verifier.** But RFC-0870 forwarding trigger shows that forwarding is selected when local capacity is insufficient — the destination node is the verifier.
 
 **The gap is whether intermediate hops can be trusted with the bearer/capability.** Two design options:
 
 | Option | Threat model | Performance | Verdict |
 |---|---|---|---|
-| **Transitive trust** — hops forward the inner auth unchanged | Trust all hops (mesh-level adversary) | Fast | Rejected — RFC-0853 §Overlay Cryptography specifies hop-by-hop channel binding |
+| **Transitive trust** — hops forward the inner auth unchanged | Trust all hops (mesh-level adversary) | Fast | Rejected — RFC-0853 overlay cryptography specifies hop-by-hop channel binding |
 | **Channel-wrapped re-issuance** — every hop gets a fresh, scope-narrowed capability for the next hop | Trust only the destination | Slower (re-mint per hop) | Proposed (RFC-0957 has no spec for per-hop scope yet) |
 
-**Classification:** **New RFC (or §Amendment to RFC-0870).** Stricter: this is a new RFC because it changes the wire envelope from RFC-0870. Suggested:
+**Classification:** **New RFC (or amendment to RFC-0870).** Stricter: this is a new RFC because it changes the wire envelope from RFC-0870. Suggested:
 
 > **RFC-0970: Forwarding-Hop Authorization Envelope**
 >
-> - §Hops-as-untrusted: intermediate router nodes are NOT trusted with the long-lived bearer or capability token
-> - §Per-hop channel: each hop wraps the inner request in a per-hop capability (TTL ≤ next hop's RTT, scope ≤ model+rate, audience = the next hop's DID)
-> - §Destination unwrap: destination node unwraps chain, sees original bearer/capability, runs its own verification
-> - §Cross-hop verifiability: per-hop channel binding via RFC-0853 §Overlay Cryptography (BLAKE3 keyed-hash over hop envelope + next-hop DID)
-> - §Dependency: requires RFC-0957 capability format (Accepted) + RFC-0853
+> - Hops-as-untrusted: intermediate router nodes are NOT trusted with the long-lived bearer or capability token
+> - Per-hop channel: each hop wraps the inner request in a per-hop capability (TTL ≤ next hop's RTT, scope ≤ model+rate, audience = the next hop's DID)
+> - Destination unwrap: destination node unwraps chain, sees original bearer/capability, runs its own verification
+> - Cross-hop verifiability: per-hop channel binding via RFC-0853 overlay cryptography (BLAKE3 keyed-hash over hop envelope + next-hop DID)
+> - Dependency: requires RFC-0957 capability format (Accepted) + RFC-0853
 
 **Confidence:** MEDIUM. The "transitive trust" rejection is forced by RFC-0853. The per-hop envelope is a design choice; alternative is "destination-only auth + opaque envelope" (use the channel layer for hop-by-hop encryption, don't re-issue capabilities).
 
 ### Finding F3: holder_did resolution — "out-of-band" is a TODO, not a design
 
 **What exists:**
-- RFC-0957 §Roles: *"Token Issuer: `DID` (per RFC-0009 §Identity Key Format); persisted on `CapabilityToken.holder_did`."* — the catalog exists as a concept but is not a spec module.
-- RFC-0957 §Verify Context: `VerifyContext::root_secret_lookup: Box<dyn Fn(&[u8; 32]) -> Option<[u8; 32]>>` — the root secret catalog is a function pointer; no schema.
-- RFC-0957 §Verify Context: `VerifyContext { discharges, channel_providers, clock, root_secret_lookup }` — the verify context already has 4 slots; one of them COULD be the DID resolver, but the spec doesn't name it.
+- RFC-0957 roles and authorities: *"Token Issuer: `DID` (per RFC-0009 §Identity Key Format); persisted on `CapabilityToken.holder_did`."* — the catalog exists as a concept but is not a spec module.
+- RFC-0957 verify context: `VerifyContext::root_secret_lookup: Box<dyn Fn(&[u8; 32]) -> Option<[u8; 32]>>` — the root secret catalog is a function pointer; no schema.
+- RFC-0957 verify context: `VerifyContext { discharges, channel_providers, clock, root_secret_lookup }` — the verify context already has 4 slots; one of them COULD be the DID resolver, but the spec doesn't name it.
 - `crates/octo-wallet/src/capability/mod.rs:119`: `mint(root_secret: &[u8; 32], holder: &IdentityKey, holder_did: impl Into<String>, ...)` — holder_did is a parameter.
 - `crates/octo-wallet/src/capability/wire.rs:84-86`: *"Holder DID + public key are NOT in the wire format — caller passes them as parameters (resolved out-of-band from a DID registry)."*
 
-**Gap:** The "DID registry" mentioned in the wire spec comment doesn't exist. The closest is the `AudienceId` from RFC-0009 §Identity, which is an opaque string (`crates/octo-wallet/src/identity.rs::AudienceId::from_str` accepts any non-empty string).
+**Gap:** The "DID registry" mentioned in the wire spec comment doesn't exist. The closest is the `AudienceId` from RFC-0009 identity, which is an opaque string (`crates/octo-wallet/src/identity.rs::AudienceId::from_str` accepts any non-empty string).
 
 **What the destination node needs to resolve at verify time:**
 - Given `cap_root_hash` (from the wire) → find the local `HolderRecord { did, holder_pub, caveats, ask_id, ttl, scope }`
@@ -175,7 +175,7 @@ The gap is **a missing coherent design for the destination-node-as-mints + catal
 - Index is `cap_root_hash` (deterministic, BLAKE3-derived, 32 bytes — perfect primary key)
 - Schema is straightforward: `did, holder_pub, caveats, ask_id, mint_at, ttl`
 
-**Classification:** **In-place amendment to RFC-0957.** Add a new §section "Catalog Storage" + new `HolderRegistry` trait + new `StoolapHolderRegistry` impl. The existing `VerifyContext` extended with `holder_registry: Box<dyn HolderRegistry>`. The mint side also writes to the registry.
+**Classification:** **In-place amendment to RFC-0957.** Add a new "Catalog Storage" section + new `HolderRegistry` trait + new `StoolapHolderRegistry` impl. The existing `VerifyContext` extended with `holder_registry: Box<dyn HolderRegistry>`. The mint side also writes to the registry.
 
 **Confidence:** HIGH. The substrate is there; the spec just needs to bind it.
 
@@ -221,11 +221,11 @@ The egress-side handle is now a thin wrapper around the cap root hash. Any downs
 ### Finding F5: Destination node is the mints — no role-binding
 
 **What exists:**
-- RFC-0870 §Roles: Router Node has lifecycle "(Designated, Elected, Active, ...)" — does NOT mention minting capability.
-- RFC-0957 §Roles: Token Issuer is the *holder* (RFC-0009 §Identity). The seller is unspecified as a role.
-- RFC-0959 §Roles: Asker = the node that publishes the Ask. Router = the node that verifies the capability at consumption time. RFC-0959 §Role Catalog lists Asker and Router as separate roles.
+- RFC-0870 roles and authorities: Router Node has lifecycle "(Designated, Elected, Active, ...)" — does NOT mention minting capability.
+- RFC-0957 roles and authorities: Token Issuer is the *holder* (RFC-0009 identity). The seller is unspecified as a role.
+- RFC-0959 roles and authorities: Asker = the node that publishes the Ask. Router = the node that verifies the capability at consumption time. RFC-0959 role catalog lists Asker and Router as separate roles.
 
-**Gap:** The destination node (RFC-0870 "Router") is one role. The capability token issuer (RFC-0957 "Token Issuer") is another role. RFC-0959 "Asker" is a third. **Verified separately** in RFC-0959 §Role Catalog — Asker and Router are listed as distinct roles with no explicit "same node" assertion. The user's framing assumes the destination node holds all three roles; the RFCs do not bind them explicitly. This is the gap.
+**Gap:** The destination node (RFC-0870 "Router") is one role. The capability token issuer (RFC-0957 "Token Issuer") is another role. RFC-0959 "Asker" is a third. **Verified separately** in RFC-0959 role catalog — Asker and Router are listed as distinct roles with no explicit "same node" assertion. The user's framing assumes the destination node holds all three roles; the RFCs do not bind them explicitly. This is the gap.
 
 **What the spec needs:**
 - Designate the destination node as holding the union of: RouterNode + TokenIssuer + Asker.
@@ -233,14 +233,14 @@ The egress-side handle is now a thin wrapper around the cap root hash. Any downs
 - Specify that when the destination node re-sells access (RFC-0955 marketplace), it adopts the role of "Seller" with its own DID + escrow + reputation.
 - Specify that the destination node's forward-departure behavior at egress (RFC-0957-b) is the same node function regardless of whether the inbound was bearer or capability.
 
-**Classification:** **New RFC or amendment to RFC-0870.** The role-binding is fundamental enough to warrant a §section. Suggested:
+**Classification:** **New RFC or amendment to RFC-0870.** The role-binding is fundamental enough to warrant a dedicated section. Suggested:
 
 > **RFC-0971: Destination-Node as Mint-Holder — Role Consolidation**
 >
-> - §Roles: Router + TokenIssuer + Asker are the same node. Spec-merge the three.
-> - §HolderRegistry: one per node; synced via RFC-0862 across peer set
-> - §Market integration: when the node re-sells, it adopts Seller role + dual-pipeline (bearer + capability)
-> - §Capability mint on inbound: verify at destination; mint downstream caveats for the next hop (per F2)
+> - Roles: Router + TokenIssuer + Asker are the same node. Spec-merge the three.
+> - HolderRegistry: one per node; synced via RFC-0862 across peer set
+> - Market integration: when the node re-sells, it adopts Seller role + dual-pipeline (bearer + capability)
+> - Capability mint on inbound: verify at destination; mint downstream caveats for the next hop (per F2)
 
 **Confidence:** MEDIUM. The role-binding is implicit in the architecture; explicit naming is a gap only because no spec has crystallized it.
 
@@ -255,7 +255,7 @@ The egress-side handle is now a thin wrapper around the cap root hash. Any downs
 
 1. Buyer (B) registers with Seller (S) — gives B's DID to S.
 2. S publishes an Ask (RFC-0959).
-3. B selects the Ask; deal settles (RFC-0959 §SettlementEvent).
+3. B selects the Ask; deal settles (RFC-0959 SettlementEvent).
 4. S delivers the authorization to B — both bearer (for legacy clients) + capability token (for wallet-side clients), bound to the ask_id.
 5. B stores the capability token; uses it for all subsequent requests.
 
@@ -275,7 +275,7 @@ The egress-side handle is now a thin wrapper around the cap root hash. Any downs
 
 **The user's framing implies (a)**: the catalog entry holds both. This is the cleanest because the HolderRegistry already exists per F3.
 
-**Classification:** **In-place amendment to RFC-0959** (Market Delivery Envelope) + new §section in RFC-0957-A1 (holder registry schema includes bearer capsule).
+**Classification:** **In-place amendment to RFC-0959** (Market Delivery Envelope) + new section in RFC-0957-A1 (holder registry schema includes bearer capsule).
 
 **Confidence:** HIGH. The R9 work in 0957-b already did the egress side; the delivery side is the symmetric upstream.
 
@@ -299,49 +299,49 @@ The egress-side handle is now a thin wrapper around the cap root hash. Any downs
 
 **0957-b R9-4 closure (mission fix, no RFC): Drop `CapabilityHandle.holder_did`**
 - File: `crates/quota-router-core/src/egress.rs`
-- Remove `holder_did: String` field from `CapabilityHandle` (§Holder Field)
-- Remove `String::new()` initializers in §Constructors
-- Remove `assert_eq!(handle.holder_did, "")` in §Tests
-- Update doc comment in §Holder Field (no more "None for holder_did" sentinel)
+- Remove `holder_did: String` field from `CapabilityHandle` (holder field)
+- Remove `String::new()` initializers in constructors
+- Remove `assert_eq!(handle.holder_did, "")` in tests
+- Update doc comment in holder field (no more "None for holder_did" sentinel)
 - Side effect: any consumer of `handle.holder_did` (grep across `crates/quota-router-core/`) updated to obtain the DID from the wire-parse path (`deserialize_wire(s, holder_did, holder_pub)`) — wallet-side, not egress-side
 - Mint API (`crates/octo-wallet/src/capability/mod.rs:119`) STAYS AS-IS — `holder_did` parameter preserved
 
 **RFC-0957-A1 (in-place amendment): Holder Registry + Catalog Storage**
 - Section: §Algorithms — `mint()` signature STAYS (`mint(root_secret, holder, holder_did, caveats, catalog)`); no parameter changes
-- Section: §Roles — Token Issuer row updated to mention `HolderRegistry` (RFC-0862-backed stoolap table)
+- Section: §Roles and Authorities — Token Issuer row updated to mention `HolderRegistry` (RFC-0862-backed stoolap table)
 - Section: §Data Structures — `CapabilityToken.holder_did` populated at parse time from the wallet's local catalog
-- Section: §Mandates — `StoolapHolderRegistry` reference impl
-- Section: §Security — Adversary A5 row updated to reflect that the registry's stoolap sync is the channel-binding
+- Section: Mandates (reference impl) — `StoolapHolderRegistry` reference impl
+- Section: §Security Considerations — Adversary A5 row updated to reflect that the registry's stoolap sync is the channel-binding
 - Implementation: `crates/octo-wallet/src/capability/{registry,wire}.rs` + new `crates/octo-wallet/src/capability/holder_registry.rs`
 - Missions: extend `0957-a` (registry) + new `0957-c` (registry impl + wire rewrite if needed)
 
 **RFC-0959-A1 (in-place amendment): Market Delivery Envelope**
-- Section: §Roles — Asker row updated to mention Seller = the same node
-- Section: §Lifecycle — new event `DealSettled { buyer_did, seller_did, ask_id, bearer_capsule_hash, capability_root_hash, ... }`
+- Section: §Roles and Authorities — Asker row updated to mention Seller = the same node
+- Section: §Lifecycle Requirements — new event `DealSettled { buyer_did, seller_did, ask_id, bearer_capsule_hash, capability_root_hash, ... }`
 - Section: §Algorithms — `deliver_at_settlement(buyer_did, seller_did, ask_id) -> (BearerCapsule, CapabilityToken)` that pulls both from the HolderRegistry
-- Section: §Composed compatibility — references RFC-0957-A1
+- Section: §Compatibility — references RFC-0957-A1
 - Implementation: `crates/octo-wallet/src/capability/{market,delivery}.rs` (or extension of existing 0959 crate)
 
 **RFC-0969 (new): Dual-Pipeline Authorization**
 - Section: §Wire Format — both legacy bearer and capability on the same request envelope
-- Section: §Roles — Gateway Authenticator role (new)
+- Section: §Roles and Authorities — Gateway Authenticator role (new)
 - Section: §Algorithms — header-based router: `Authorization: Bearer ...` → RFC-0903 path; `X-Capability-Token: ...` → RFC-0957 path; `Authorization: CipherOcto-Cap ...` → RFC-0957 alt path
-- Section: §Roles — Buyer + Legacy Client + Capability Client
-- Section: §Lifecycle — BearerLifecycle (Issue → Active → Revoked) parallel to CapabilityToken state machine
-- Section: §Security — Adversary Analysis on the dual-pipeline path
+- Section: §Roles and Authorities — Buyer + Legacy Client + Capability Client
+- Section: §Lifecycle Requirements — BearerLifecycle (Issue → Active → Revoked) parallel to CapabilityToken state machine
+- Section: §Adversary Analysis — on the dual-pipeline path
 
 **RFC-0970 (new): Forwarding-Hop Authorization Envelope**
 - Section: §Wire Format — outer envelope wraps inner request; per-hop channel
-- Section: §Roles — Intermediate Router (untrusted)
+- Section: §Roles and Authorities — Intermediate Router (untrusted)
 - Section: §Algorithms — per-hop re-mint: `mutate_for_hop(capability, next_hop_did, ttl = RTT)`; destination unwraps
-- Section: §Security — full Adversary Analysis assuming malicious hop
+- Section: §Adversary Analysis — full analysis assuming malicious hop
 - Section: §Compatibility — RFC-0870 ForwardRequest envelope extended
 
 **RFC-0971 (new): Destination-Node Role Consolidation**
-- Section: §Roles — Router + TokenIssuer + Asker + (optionally) ReputationAnchor are the same node
-- Section: §Lifecycle — combined state machine
-- Section: §Storage — single HolderRegistry on the destination node
-- Section: §Backward compat — RFC-0870 Router role unchanged; new role binding is meta
+- Section: §Roles and Authorities — Router + TokenIssuer + Asker + (optionally) ReputationAnchor are the same node
+- Section: §Lifecycle Requirements — combined state machine
+- Section: §Specification (storage) — single HolderRegistry on the destination node
+- Section: §Compatibility (backward) — RFC-0870 Router role unchanged; new role binding is meta
 
 ### Sequencing
 
@@ -364,7 +364,7 @@ RFC-0971 (role consolidation)             — meta, summarizes all four
 ### Out of scope (deferred)
 
 - ZK capability subclass (RFC-0958) — already separate; the dual-pipeline authority DOES extend to ZK, but that's its own scoping exercise
-- Provider-key vault (RFC-0009 §Vault) — already speced
+- Provider-key vault (RFC-0009 vault — Provider-Key Handling) — already speced
 - Cross-provider correlation analysis (RFC-0957-b R9) — already addressed
 - Wallet-side derivation key binding (RFC-0009 §Capability Keys) — already speced
 
@@ -374,7 +374,7 @@ RFC-0971 (role consolidation)             — meta, summarizes all four
 
 ### Immediate (next session)
 
-1. **Close 0957-b R9-4** — drop `holder_did: String` from `CapabilityHandle` in `crates/quota-router-core/src/egress.rs`. Update §Holder Field doc, §Constructors initializers, §Tests assertion. Side-effect: any consumer of `handle.holder_did` updated to parse from wire (`deserialize_wire(s, holder_did, holder_pub)`). Mint API unchanged.
+1. **Close 0957-b R9-4** — drop `holder_did: String` from `CapabilityHandle` in `crates/quota-router-core/src/egress.rs`. Update holder-field doc, constructors initializers, tests assertion. Side-effect: any consumer of `handle.holder_did` updated to parse from wire (`deserialize_wire(s, holder_did, holder_pub)`). Mint API unchanged.
 2. **Update `missions/claimed/0957-b-provider-boundary-exercise-path.md`** R9-4 carryover table — mark as CLOSED (mission-scale fix, not RFC).
 3. **Create RFC-0957-A1** in `rfcs/draft/economics/0957-a1-holder-registry.md`. Cover F3 (holder registry + catalog). Mint API signature stays as-is per user clarification.
 

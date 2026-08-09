@@ -62,7 +62,7 @@ Dual-stake model (L1921-): "Actors must stake" — both OCTO + a role token. Pre
 | RFC-0853 | Accepted | Overlay crypto | Section 6 references "mission key per (asker, model)" — implemented in `octo-wallet::key_hierarchy` (Phase E closed 2026-07-22 via `e139a898`) | Per-mission key, not value vault |
 | RFC-0630 | Accepted | Proof-of-Inference consensus | "Execute transfers" referenced at L499 | Inference-reward distribution — assumes a transfer primitive |
 
-**Critical circular dependency (RFC-0957 §discharge):**
+**Critical circular dependency (RFC-0957 discharge channel):**
 > Channel provider evaluates its own predicate (escrow balance, revocation status, rate budget). (L392)
 
 The escrow channel PROVIDER must know the escrow balance. But the escrow balance lives in a table that hasn't been spec'd yet. RFC-0957 assumes it; this research exists to fill it.
@@ -260,16 +260,16 @@ This is the hypothesis. External research phases will test it against:
 ## 7. References
 
 Internal:
-- docs/01-foundation/whitepaper/v0.1-draft.md (§Token role table; §Dual-stake model)
-- rfcs/accepted/economics/0904-real-time-cost-tracking.md (§counter model)
-- rfcs/accepted/economics/0934-budget-management-spend-tracking.md (§per-key budget)
-- rfcs/accepted/economics/0957-capability-token-format.md (§escrow oracle assumption)
-- rfcs/accepted/economics/0959-ask-settlement-chain.md (§settlement receipt)
-- rfcs/accepted/numeric/0102-wallet-cryptography.md (§Transfer struct sketch)
-- rfcs/draft/economics/0955-model-liquidity-layer.md (§TransferOwnership sketch)
-- crates/quota-router-core/src/balance.rs (§in-memory saturating_sub bug)
-- crates/quota-router-core/src/schema.rs (§octo_w_balances table)
-- crates/quota-router-core/src/storage.rs (§get/deduct impls)
+- docs/01-foundation/whitepaper/v0.1-draft.md (token role table + dual-stake model)
+- rfcs/accepted/economics/0904-real-time-cost-tracking.md (counter model)
+- rfcs/accepted/economics/0934-budget-management-spend-tracking.md (per-key budget)
+- rfcs/accepted/economics/0957-capability-token-format.md (escrow oracle assumption)
+- rfcs/accepted/economics/0959-ask-settlement-chain.md (settlement receipt)
+- rfcs/accepted/numeric/0102-wallet-cryptography.md (Transfer struct sketch)
+- rfcs/draft/economics/0955-model-liquidity-layer.md (TransferOwnership sketch)
+- crates/quota-router-core/src/balance.rs (in-memory saturating_sub bug)
+- crates/quota-router-core/src/schema.rs (octo_w_balances table)
+- crates/quota-router-core/src/storage.rs (get/deduct impls)
 - crates/octo-wallet/src/capability/discharge.rs (Channel::Escrow)
 - crates/octo-wallet/src/key_hierarchy.rs (Phase E mission keys)
 

@@ -24,7 +24,7 @@ Relocate `GatewayAuthenticator` from `crates/octo-wallet/src/capability/gateway_
 - [ ] NEW: `crates/quota-router-core/src/ingress/authenticator.rs` — `GatewayAuthenticator` orchestrator (replaces the orphan substrate)
 - [ ] `GatewayAuthenticator` fields per RFC-0969: `bearer_verifier: Arc<dyn BearerVerifier>` + `capability_verifier: Arc<dyn CapabilityVerifier>` + `holder_registry: Arc<dyn HolderRegistry>` + `clock: Arc<dyn Clock>`
 - [ ] `AuthenticatedRequest` per RFC-0969: `subject_did: String` + `ask_id: [u8; 32]` + `bearer: Option<BearerVerification>` + `capability: Option<CapabilityVerification>` + `routing_decision: RoutingDecision`
-- [ ] `RoutingDecision` enum has 4 variants per RFC-0969 §Dispatch Table:
+- [ ] `RoutingDecision` enum has 4 variants per RFC-0969 dispatch table:
   - `Bearer` (today's 100% traffic)
   - `Capability` (future cipherocto clients)
   - `BothSchemesUnsupported` (client misconfig; rejected as `AuthError`)
@@ -102,7 +102,7 @@ RFC-0969 relocation is multi-file (`octo-wallet` removal + `quota-router-core::i
 
 | Version | Date | Change |
 | --- | --- | --- |
-| v0.1 | 2026-08-08 | Mission filed. RFC-0969 amendment adds relocation + dispatch table requirement; mission captures the gap closure scope. Cross-references RFC-0871 §Wallet Node Lifecycle + RFC-0969 §Dispatch Table. |
+| v0.1 | 2026-08-08 | Mission filed. RFC-0969 amendment adds relocation + dispatch table requirement; mission captures the gap closure scope. Cross-references RFC-0871 §Wallet Node Lifecycle + RFC-0969 dispatch table. |
 
 Last Updated: 2026-08-08
 Version: 0.1

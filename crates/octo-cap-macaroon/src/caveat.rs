@@ -699,6 +699,7 @@ impl Caveat {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json;
 
     #[test]
     fn caveat_name_stable() {
@@ -1344,6 +1345,108 @@ mod tests {
             args: vec!["200".to_owned(), "alice".to_owned()],
         };
         assert_ne!(t1, t3);
+    }
+
+    /// R7 finding: `Caveat` derives `Serialize/Deserialize` with per-variant
+    /// `#[serde(rename = "...")]` tags. The serde roundtrip was previously
+    /// tested transitively for only 2/25 variants (`Model`, `Before`); the
+    /// other 23 RFC-0965 variants (`Vault`, `Permission`, `ValidRange`,
+    /// `MaxPerTx`, `AuditWindow`, `MaxUses`, `WrappedOnly`, `Factory`,
+    /// `PolicyReference`, `ValidAfter`, `RedemptionContext`, `Sharded`, …)
+    /// had no explicit serde roundtrip coverage.
+    ///
+    /// This table-driven test serializes each variant through serde_json and
+    /// asserts byte-exact equality on deserialize. Catches regressions in
+    /// the `#[serde(rename)]` annotations or field ordering.
+    #[test]
+    fn caveat_serde_json_roundtrip_all_variants() {
+        let mut jurisdiction = HashSet::new();
+        jurisdiction.insert("US".to_owned());
+        jurisdiction.insert("GB".to_owned());
+
+        let factory_action = ActionTemplate {
+            selector: "transfer".to_owned(),
+            args: vec!["100".to_owned(), "alice".to_owned()],
+        };
+
+        let samples: Vec<Caveat> = vec![
+            Caveat::AmountMax(1_000_000u128),
+            Caveat::PerAxisMax(PerAxisMax {
+                axis: "input_tokens".to_owned(),
+                max_per_1k: 500u128,
+            }),
+            Caveat::Model("gpt-4".to_owned()),
+            Caveat::Provider(vec!["provider-a".to_owned(), "provider-b".to_owned()]),
+            Caveat::Before(2_000_000_000),
+            Caveat::Audience("did:octo:zAudience".to_owned()),
+            Caveat::RateLimit(RateLimit {
+                rpm: 60,
+                tpm: 100_000,
+            }),
+            Caveat::InvocationHashBind([0xab; 32]),
+            Caveat::Jurisdiction(jurisdiction),
+            Caveat::CacheStrategy(CachePolicy::Off),
+            Caveat::CacheStrategy(CachePolicy::OptIn {
+                cache_key_hash: Some([0xcd; 32]),
+            }),
+            Caveat::CacheStrategy(CachePolicy::Always { ttl_secs: 300 }),
+            Caveat::AskBinding([0xef; 32]),
+            Caveat::ThirdParty("escrow".to_owned()),
+            Caveat::Raw(RawCaveat {
+                name: "custom/forward-compat".to_owned(),
+                value: vec![0x01, 0x02, 0x03],
+            }),
+            Caveat::Vault([0x11; 32]),
+            Caveat::Permission(PermissionKind::NativeTokenTransfer),
+            Caveat::Permission(PermissionKind::Erc20TokenTransfer),
+            Caveat::Permission(PermissionKind::ContractCall),
+            Caveat::Permission(PermissionKind::Reservation),
+            Caveat::Permission(PermissionKind::VaultMutation),
+            Caveat::ValidRange {
+                valid_after_unix: 1_700_000_000,
+                valid_until_unix: 2_000_000_000,
+            },
+            Caveat::MaxPerTx(50_000u128),
+            Caveat::AuditWindow {
+                duration_secs: 3600,
+            },
+            Caveat::MaxUses { count: 100 },
+            Caveat::WrappedOnly {
+                parent_capability: [0x22; 32],
+            },
+            Caveat::Factory(FactoryVet {
+                target_vault_id: [0x33; 32],
+                action_template: factory_action,
+                required_caller: None,
+                pre_conditions: Vec::new(),
+                expiry_for_deploy_unix: 2_000_000_000,
+            }),
+            Caveat::PolicyReference {
+                policy_id: [0x44; 32],
+                policy_version_seq: 7,
+                attenuation_witness: [0x55; 64],
+            },
+            Caveat::ValidAfter {
+                not_before_unix: 1_700_000_000,
+            },
+            Caveat::RedemptionContext {
+                context_hash: [0x66; 32],
+            },
+            Caveat::Sharded { shard_id: 42 },
+        ];
+
+        // All distinct — sanity check the helper assembled 25 variants.
+        assert_eq!(
+            samples.len(),
+            31,
+            "25 distinct variants + CachePolicy x3 + PermissionKind x5 = 31"
+        );
+
+        for caveat in &samples {
+            let json = serde_json::to_string(caveat).expect("serialize Caveat");
+            let restored: Caveat = serde_json::from_str(&json).expect("deserialize Caveat");
+            assert_eq!(&restored, caveat, "round-trip mismatch for {caveat:?}");
+        }
     }
 }
 

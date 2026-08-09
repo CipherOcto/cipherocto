@@ -416,4 +416,40 @@ mod tests {
         let restored: DischargeMacaroon = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(restored, discharge, "serde_json roundtrip must be exact");
     }
+
+    /// R7 finding: `holder_sig_stale` is set to `false` on `mint` and on
+    /// `attenuate_with_signer`, and to `true` on `attenuate` (without
+    /// signer). The `false → true` direction is tested
+    /// (`attenuate_without_signer_breaks_holder_sig`); the reverse
+    /// `true → false` after `attenuate_with_signer` was not directly
+    /// asserted (only indirectly via `verify_holder_sig` passing).
+    #[test]
+    fn attenuate_with_signer_clears_holder_sig_stale_flag() {
+        let holder = sample_signer();
+        let root_secret = [0x42; 32];
+        let catalog = empty_catalog();
+        let token =
+            CapabilityToken::mint(&root_secret, &holder, "did:octo:zStaleTest", &[]).unwrap();
+
+        // First: attenuate WITHOUT signer → flag goes true.
+        let stale = token
+            .attenuate(Caveat::Model("gpt-4".to_owned()), &catalog)
+            .unwrap();
+        assert!(
+            stale.holder_sig_stale,
+            "attenuate-without-signer must set holder_sig_stale=true"
+        );
+
+        // Second: attenuate WITH signer → flag must go back to false.
+        let fresh = stale
+            .attenuate_with_signer(Caveat::Before(2_000_000_000), &holder, &catalog)
+            .unwrap();
+        assert!(
+            !fresh.holder_sig_stale,
+            "attenuate_with_signer must clear holder_sig_stale flag (got true)"
+        );
+        fresh
+            .verify_holder_sig()
+            .expect("signature verifies after re-sign");
+    }
 }

@@ -724,6 +724,7 @@ impl CapabilityCatalog for InMemoryCatalog {
 mod tests {
     use super::*;
     use crate::caveat::{Caveat, ProviderId, UnixTimeSecs};
+    use serde_json;
 
     #[test]
     fn hmac_blake3_deterministic() {
@@ -1762,5 +1763,119 @@ mod tests {
         current
             .verify_signature(&secret)
             .expect("16-caveat chain verifies");
+    }
+
+    /// R7 finding: `Macaroon` derives `Serialize/Deserialize` but had no
+    /// standalone `serde_json` roundtrip test. The `wire_roundtrip` test
+    /// exercises the full token through the base64-wrapped wire format;
+    /// this pins the JSON-specific encoding (field ordering, HMAC chain
+    /// bytes, caveat enum tags).
+    #[test]
+    fn macaroon_serde_json_roundtrip() {
+        let secret = [0x42u8; 32];
+        let catalog = InMemoryCatalog::default();
+        let macaroon = Macaroon::mint(&secret)
+            .unwrap()
+            .attenuate(Caveat::Before(2_000_000_000), &catalog)
+            .unwrap()
+            .attenuate(Caveat::Model("gpt-4".to_owned()), &catalog)
+            .unwrap();
+
+        let json = serde_json::to_string(&macaroon).expect("serialize Macaroon");
+        let restored: Macaroon = serde_json::from_str(&json).expect("deserialize Macaroon");
+        assert_eq!(restored, macaroon, "serde_json roundtrip must be exact");
+
+        // Signature must still verify after round-trip.
+        restored
+            .verify_signature(&secret)
+            .expect("HMAC chain still verifies after serde roundtrip");
+    }
+
+    /// R7 finding: `verify_full` combines three checks (signature + wrapped
+    /// chain + subsumption). Each was tested individually but never in one
+    /// e2e test. This exercises signature + subsumption together (the
+    /// WrappedOnly chain walk is exercised by `check_wrapped_chain`'s
+    /// own dedicated tests; mixing it into this e2e would require the
+    /// child to carry the same WrappedOnly caveat as the expected_parent,
+    /// which would make the subsumption check trivially true).
+    ///
+    /// Subsumption semantics (per `parent_caveat_implies`): every child
+    /// caveat must be matched by an equivalent-or-tighter caveat in the
+    /// expected_parent list. Tightening a parent caveat (Before 2B → 1.9B)
+    /// subsumes. Adding a new caveat that's absent from the parent does
+    /// NOT subsume (per the existing strict `parent_caveat_implies`
+    /// rules). This test exercises both directions.
+    #[test]
+    fn verify_full_e2e_signature_and_subsumption() {
+        let secret = [0x42u8; 32];
+        let catalog = InMemoryCatalog::default();
+
+        // Parent carries both caveats the child will tighten/preserve.
+        let parent = Macaroon::mint(&secret)
+            .unwrap()
+            .attenuate(Caveat::Before(2_000_000_000), &catalog)
+            .unwrap()
+            .attenuate(Caveat::Model("gpt-4".to_owned()), &catalog)
+            .unwrap();
+
+        // Child tightens Before (1.9B ≤ 2B subsumes); preserves Model.
+        let child = parent
+            .clone()
+            .attenuate(Caveat::Before(1_900_000_000), &catalog)
+            .unwrap();
+
+        // Happy path: signature + subsumption.
+        let expected_parent_caveats = vec![
+            Caveat::Before(2_000_000_000),
+            Caveat::Model("gpt-4".to_owned()),
+        ];
+        child
+            .verify_full(&secret, &catalog, Some(&expected_parent_caveats))
+            .expect("e2e verify_full: signature + subsumption");
+
+        // Subsumption failure path: stricter parent Before (1B) does NOT
+        // subsume the child's Before (1.9B).
+        let stricter_parent = vec![
+            Caveat::Before(1_000_000_000),
+            Caveat::Model("gpt-4".to_owned()),
+        ];
+        let err = child
+            .verify_full(&secret, &catalog, Some(&stricter_parent))
+            .unwrap_err();
+        assert!(
+            matches!(err, MacaroonError::AttenuationViolation),
+            "subsumption must reject weaker child, got {err:?}"
+        );
+
+        // Signature failure path: wrong root_secret must reject before
+        // subsumption is even checked.
+        let wrong_secret = [0x99u8; 32];
+        let err = child
+            .verify_full(&wrong_secret, &catalog, Some(&expected_parent_caveats))
+            .unwrap_err();
+        assert!(
+            matches!(err, MacaroonError::RootSecretMismatch),
+            "wrong root_secret must yield RootSecretMismatch, got {err:?}"
+        );
+    }
+
+    /// R7 finding: `verify_full` with `expected_parent = None` skips the
+    /// subsumption check. This is the "no parent context" path used by
+    /// verifiers that don't track attenuation history. Exercise it to
+    /// pin the `None` branch.
+    #[test]
+    fn verify_full_with_no_expected_parent_skips_subsumption() {
+        let secret = [0x42u8; 32];
+        let catalog = InMemoryCatalog::default();
+        let macaroon = Macaroon::mint(&secret)
+            .unwrap()
+            .attenuate(Caveat::Before(2_000_000_000), &catalog)
+            .unwrap()
+            .attenuate(Caveat::Model("gpt-4".to_owned()), &catalog)
+            .unwrap();
+
+        macaroon
+            .verify_full(&secret, &catalog, None)
+            .expect("expected_parent=None must skip subsumption, succeed on signature only");
     }
 }

@@ -270,6 +270,72 @@ pub fn is_reputation_payload_kind(kind: &PayloadKindId) -> bool {
     REPUTATION_PAYLOAD_KINDS.contains(kind)
 }
 
+// RFC-0871 capability issuer node payload kinds (RFC-0871 §Roles and
+// Authorities, mission 0871d-capability-issuer-node Phase 3). Allocated
+// in the RFC-0871 `rfc_namespace` (`0x0009:...`) with sub-namespace
+// `0x0005` (mission 0871d — capability issuer specialized node).
+//
+// Sub-namespace `0x0005` follows the existing pattern: `0x0002` (wallet
+// — 0871a), `0x0003` (quota router — 0870-b), `0x0004` (reputation
+// anchor — 0871c). Each new specialized node gets its own sub-namespace
+// to keep dispatch unambiguous.
+//
+// Phase 3 MVP exposes `CAPABILITY_ISSUE` + `CAPABILITY_REVOKE`. The
+// full RFC-0957 §Algorithms macaroon surface (`CAPABILITY_LOOKUP` +
+// `CAPABILITY_ATTENUATE`) lands in follow-on missions once the
+// `HolderRegistry` substrate (RFC-0957-A1) is wired in production.
+//
+// Mission 0871d AC exposes these as **adapter stubs**: typed hand-off
+// points that validate canonical DID inputs (issuer's `from_did` +
+// holder DID in `CAPABILITY_ISSUE`) and return placeholder wire forms.
+// The full macaroon mint + revocation substrate (RFC-0957
+// §Algorithms + RFC-0957-A1 §HolderRecord State Machine) lands in
+// mission 0957 Phase 2 follow-on (macaroon struct + caveat +
+// discharge + wire migrations).
+
+/// Capability issue (RFC-0871 §Roles and Authorities, mission 0871d).
+///
+/// Phase 3 MVP stub: validates `holder_did` via canonical DID codec and
+/// returns a placeholder `CIPHEROCTO_ISSUE_V1:<holder_did>:<token_id>`
+/// wire form. The full macaroon mint (`CapabilityToken::mint`,
+/// `holder.sign`, `HolderRegistry` registration per RFC-0957 §Algorithms
+/// and RFC-0957-A1 §Data Structures) lands in mission 0957 Phase 2
+/// follow-on and is plugged in here via the macaroon substrate.
+///
+/// UUID: `0x0009:0005:0000:0000:0000:0000:0000:0001`
+pub const CAPABILITY_ISSUE: PayloadKindId = PayloadKindId([
+    0x00, 0x09, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+]);
+
+/// Capability revoke (RFC-0871 §Roles and Authorities, mission 0871d).
+///
+/// Phase 3 MVP stub: validates `token_id` length (16 bytes per
+/// RFC-0957 §Wire Format `token_id = macaroon_id`) and returns a
+/// placeholder acknowledgement. The full revocation flow
+/// (RFC-0957-A1 §HolderRecord State Machine transitions and RFC-0965
+/// `RevocationCaveat`) lands in mission 0957 Phase 2 follow-on.
+///
+/// UUID: `0x0009:0005:0000:0000:0000:0000:0000:0002`
+pub const CAPABILITY_REVOKE: PayloadKindId = PayloadKindId([
+    0x00, 0x09, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
+]);
+
+/// All capability-issuer payload kinds served by `CapabilityIssuerNode`
+/// (RFC-0871 §Roles and Authorities, mission 0871d-capability-issuer-node).
+///
+/// Phase 3 MVP exposes `CAPABILITY_ISSUE` + `CAPABILITY_REVOKE`. Follow-on
+/// missions add `CAPABILITY_LOOKUP` + `CAPABILITY_ATTENUATE` once the
+/// macaroon substrate (mission 0957 Phase 2) + `HolderRegistry`
+/// (RFC-0957-A1) are wired in production.
+pub const CAPABILITY_PAYLOAD_KINDS: &[PayloadKindId] = &[CAPABILITY_ISSUE, CAPABILITY_REVOKE];
+
+/// True if `kind` is a capability-issuer payload kind (RFC-0871
+/// §Roles and Authorities, mission 0871d).
+#[must_use]
+pub fn is_capability_payload_kind(kind: &PayloadKindId) -> bool {
+    CAPABILITY_PAYLOAD_KINDS.contains(kind)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -425,5 +491,122 @@ mod tests {
             let back: PayloadKindId = borsh::from_slice(&bytes).unwrap();
             assert_eq!(back, *kind);
         }
+    }
+
+    #[test]
+    fn capability_issue_uuid_matches_mission_0871d() {
+        // Mission 0871d AC: CAPABILITY_ISSUE UUID =
+        // 0x0009:0005:0000:0000:0000:0000:0000:0001
+        let expected: [u8; 16] = [
+            0x00, 0x09, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x01,
+        ];
+        assert_eq!(CAPABILITY_ISSUE.0, expected);
+    }
+
+    #[test]
+    fn capability_revoke_uuid_matches_mission_0871d() {
+        // Mission 0871d AC: CAPABILITY_REVOKE UUID =
+        // 0x0009:0005:0000:0000:0000:0000:0000:0002
+        let expected: [u8; 16] = [
+            0x00, 0x09, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x02,
+        ];
+        assert_eq!(CAPABILITY_REVOKE.0, expected);
+    }
+
+    #[test]
+    fn capability_payload_kinds_are_distinct() {
+        // Mission 0871d AC: 2 capability-issuer payload kinds must be
+        // pairwise distinct (no two payloads share a UUID by accident).
+        let kinds = CAPABILITY_PAYLOAD_KINDS;
+        assert_eq!(kinds.len(), 2);
+        assert_ne!(kinds[0], kinds[1]);
+    }
+
+    #[test]
+    fn capability_payload_kinds_are_rfc_allocated() {
+        // Mission 0871d AC: every capability-issuer payload kind MUST sit
+        // in the RFC-0871 `rfc_namespace` (0x0009:0000…0x0009:FFFF) with
+        // sub-namespace `0x0005` (mission 0871d — capability issuer).
+        for kind in CAPABILITY_PAYLOAD_KINDS {
+            assert!(
+                kind.is_rfc_allocated(),
+                "RFC-0871 capability payload kind {kind:?} not in rfc_namespace"
+            );
+            assert_eq!(kind.0[0], 0x00);
+            assert_eq!(kind.0[1], 0x09);
+            assert_eq!(kind.0[2], 0x00);
+            assert_eq!(kind.0[3], 0x05);
+        }
+    }
+
+    #[test]
+    fn capability_payload_kinds_first16bits_0x0009_0005() {
+        // Mission 0871d AC: capability-issuer sub-namespace = 0x0005
+        // (within RFC-0871 rfc_namespace). First 16 bits must be 0x0009;
+        // next 16 bits must be 0x0005.
+        for kind in CAPABILITY_PAYLOAD_KINDS {
+            assert_eq!(kind.0[0], 0x00);
+            assert_eq!(kind.0[1], 0x09);
+            assert_eq!(kind.0[2], 0x00);
+            assert_eq!(kind.0[3], 0x05);
+        }
+    }
+
+    #[test]
+    fn is_capability_payload_kind_matches_array() {
+        for kind in CAPABILITY_PAYLOAD_KINDS {
+            assert!(is_capability_payload_kind(kind));
+        }
+        // Non-capability RFC-0871 payload kinds must NOT match.
+        assert!(!is_capability_payload_kind(&IDENTITY_RESOLVE));
+        assert!(!is_capability_payload_kind(&WALLET_SIGN_ED25519));
+        assert!(!is_capability_payload_kind(&QUOTA_ROUTER_ANNOUNCE));
+        assert!(!is_capability_payload_kind(&REPUTATION_ANCHOR_QUERY));
+    }
+
+    #[test]
+    fn capability_payload_kinds_borsh_round_trip() {
+        for kind in CAPABILITY_PAYLOAD_KINDS {
+            let bytes = borsh::to_vec(kind).unwrap();
+            let back: PayloadKindId = borsh::from_slice(&bytes).unwrap();
+            assert_eq!(back, *kind);
+        }
+    }
+
+    #[test]
+    fn capability_issue_does_not_collide_with_wallet_or_reputation() {
+        // Mission 0871d AC: CAPABILITY_ISSUE must NOT collide with the
+        // wallet (0x0002), quota router (0x0003), or reputation anchor
+        // (0x0004) sub-namespaces. The dispatcher classifies by exact
+        // UUID match; a collision would silently route capability
+        // issuance to the wrong receiver.
+        assert!(!is_wallet_payload_kind_placeholder(&CAPABILITY_ISSUE));
+        assert!(!is_reputation_payload_kind(&CAPABILITY_ISSUE));
+        assert!(!is_quota_payload_kind(&CAPABILITY_ISSUE));
+        assert_ne!(CAPABILITY_ISSUE, WALLET_MINT_CAPABILITY);
+        assert_ne!(CAPABILITY_ISSUE, REPUTATION_ANCHOR_QUERY);
+        assert_ne!(CAPABILITY_ISSUE, QUOTA_ROUTER_ANNOUNCE);
+    }
+
+    #[test]
+    fn capability_revoke_does_not_collide_with_wallet_or_reputation() {
+        // Mission 0871d AC: CAPABILITY_REVOKE must NOT collide with the
+        // wallet, quota router, or reputation anchor sub-namespaces.
+        assert!(!is_wallet_payload_kind_placeholder(&CAPABILITY_REVOKE));
+        assert!(!is_reputation_payload_kind(&CAPABILITY_REVOKE));
+        assert!(!is_quota_payload_kind(&CAPABILITY_REVOKE));
+        assert_ne!(CAPABILITY_REVOKE, WALLET_ATTENUATE_CAPABILITY);
+        assert_ne!(CAPABILITY_REVOKE, REPUTATION_ANCHOR_QUERY);
+        assert_ne!(CAPABILITY_REVOKE, QUOTA_ROUTER_ANNOUNCE);
+    }
+
+    // Local helper — wallet-kind test predicate lives in `octo_wallet_node`
+    // crate; we expose a minimal local test predicate here so the cross-
+    // namespace collision test doesn't take a transitive crate dep just
+    // for one assertion.
+    fn is_wallet_payload_kind_placeholder(kind: &PayloadKindId) -> bool {
+        kind.0[0] == 0x00 && kind.0[1] == 0x09 && kind.0[2] == 0x00 && kind.0[3] == 0x02
     }
 }

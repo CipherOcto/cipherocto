@@ -445,15 +445,6 @@ pub trait CapabilityCatalog {
         false
     }
 
-    /// RFC-0957-A1 §Phase 3 (R13-N3 fix): holder registry accessor.
-    /// Default impl returns `None` for legacy catalogs that haven't
-    /// migrated to the registry substrate.
-    fn holder_registry(
-        &self,
-    ) -> Option<std::sync::Arc<dyn quota_router_storage::holder_registry::HolderRegistry>> {
-        None
-    }
-
     /// RFC-0957-A1 §Phase 3 (R13-N3 fix): root secret for a given ask.
     /// Used by RFC-0959-A1 §Algorithms:deliver_at_settlement step 3.
     fn root_secret_for_ask(&self, _ask_id: &[u8; 32]) -> Option<[u8; 32]> {

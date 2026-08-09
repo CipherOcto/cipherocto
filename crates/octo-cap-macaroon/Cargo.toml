@@ -27,18 +27,13 @@ async-trait = "0.1"
 thiserror = "1"
 # RFC-0964 constraint encoding (used by `caveat::FactoryVet::pre_conditions`).
 cipherocto-encoding = { path = "../cipherocto-encoding" }
-# `HolderRegistry` accessor on `CapabilityCatalog::holder_registry`
-# (RFC-0957-A1 §Phase 3 R13-N3 fix). Layer B substrate; `octo-cap-macaroon`
-# stays Layer 4 — this is an optional wiring accessor (default impl returns
-# `None`). Mission 0957 Phase 2 honest disclosure: cross-layer dep is
-# unavoidable while the catalog trait retains this accessor. Follow-on
-# mission may relocate the accessor into a registry glue crate to remove
-# the cross-layer edge.
-quota-router-storage = { path = "../quota-router-storage" }
-# Layer D transport (RFC-0863 NodeTransport) — previously depended on
-# this for `TransportDeliveryCatalog`. Phase 2c-1 (mission 0957-ext-macaroon)
-# moved `TransportDeliveryCatalog` to the `octo-cap-macaroon-transport`
-# glue crate, removing the cross-layer dep from this Layer 4 crate.
+# Layer B `HolderRegistry` accessor on `CapabilityCatalog` was REMOVED
+# in Phase 2c-2 (mission 0957-ext-macaroon). The accessor had zero call
+# sites (verified 2026-08-09 across workspace) so dropping it removes
+# the cross-layer `quota-router-storage` dep without breaking any caller.
+# Holder registry lookups are wired directly by downstream crates
+# (`octo-wallet` uses `Arc<dyn HolderRegistry>` directly in verify.rs +
+# gateway_authenticator.rs + audit_log.rs + federation.rs).
 # Ed25519 signature type (CapabilityToken.holder_sig field).
 ed25519-dalek = { version = "2.2", features = ["serde"] }
 # base64 for capability token wire format encoding (RFC-0957 §3.7).

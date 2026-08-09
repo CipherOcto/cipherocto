@@ -36,10 +36,14 @@
 //! ## Layer discipline
 //!
 //! This crate depends on Layer A primitives (`blake3`, `hex`, `rand`,
-//! `serde`) + the Layer B `quota-router-storage` (for the `HolderRegistry`
-//! accessor on `CapabilityCatalog::holder_registry`, optional via default
-//! impl). It does NOT depend on `octo-wallet`, `octo-protocol`, or any
+//! `serde`, `ed25519-dalek`, `base64`) + the `cipherocto-encoding`
+//! constraint substrate (Layer B-adjacent). It does NOT depend on
+//! `quota-router-storage`, `octo-wallet`, `octo-protocol`, or any
 //! higher-layer substrate. Downstream crates may depend on it.
+//!
+//! **Phase 2c-2 (2026-08-09):** dropped the `CapabilityCatalog::holder_registry`
+//! accessor (zero call sites). Removed the `quota-router-storage` dep.
+//! Holder registry lookups are wired directly by downstream crates.
 //!
 //! ## Attenuation invariant (RFC-0957 §3.5)
 //!

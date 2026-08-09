@@ -1448,6 +1448,146 @@ mod tests {
             assert_eq!(&restored, caveat, "round-trip mismatch for {caveat:?}");
         }
     }
+
+    /// R8 finding: `PermissionKind` has 5 variants but only one
+    /// (`NativeTokenTransfer`) was previously tested in subsumption. The
+    /// subsumption rule (parent kind must equal child kind — cannot
+    /// widen the permission type via attenuation) is the same across all
+    /// variants, but a regression that special-cased one variant would
+    /// not be caught. Table-driven test exercises all 5.
+    #[test]
+    fn permission_kind_subsumption_all_variants() {
+        let all_kinds = [
+            PermissionKind::NativeTokenTransfer,
+            PermissionKind::Erc20TokenTransfer,
+            PermissionKind::ContractCall,
+            PermissionKind::Reservation,
+            PermissionKind::VaultMutation,
+        ];
+
+        for kind in all_kinds {
+            // Same-kind subsumes (parent and child both have the kind).
+            assert!(
+                set_subsumes(&[Caveat::Permission(kind)], &[Caveat::Permission(kind)]),
+                "PermissionKind::{kind:?} must subsume itself"
+            );
+
+            // Different kinds do NOT subsume — try each pair.
+            for other in all_kinds {
+                if other == kind {
+                    continue;
+                }
+                assert!(
+                    !set_subsumes(&[Caveat::Permission(kind)], &[Caveat::Permission(other)],),
+                    "PermissionKind::{kind:?} must NOT subsume {other:?}"
+                );
+            }
+        }
+    }
+
+    /// R8 finding: `Factory` subsumption requires full canonical-vector
+    /// equality across 5 fields (`target_vault_id`, `action_template`,
+    /// `required_caller`, `pre_conditions`, `expiry_for_deploy_unix`).
+    /// The existing tests cover `action_template` mismatch and
+    /// `pre_conditions` mismatch, but `required_caller` (Option<String>)
+    /// and `expiry_for_deploy_unix` (u64) variants of mismatch are
+    /// independent — regressions on those fields would not be caught.
+    #[test]
+    fn factory_subsumption_required_caller_must_match() {
+        let base = Caveat::Factory(FactoryVet {
+            target_vault_id: [0x33; 32],
+            action_template: ActionTemplate {
+                selector: "transfer".to_owned(),
+                args: vec!["100".to_owned(), "alice".to_owned()],
+            },
+            required_caller: None,
+            pre_conditions: Vec::new(),
+            expiry_for_deploy_unix: 2_000_000_000,
+        });
+        let child_none = Caveat::Factory(FactoryVet {
+            required_caller: None,
+            ..match_factory(&base)
+        });
+        let child_some = Caveat::Factory(FactoryVet {
+            required_caller: Some("did:octo:zCaller".to_owned()),
+            ..match_factory(&base)
+        });
+        // Parent required_caller = None. Child None subsumes (equal).
+        assert!(
+            set_subsumes(core::slice::from_ref(&base), &[child_none]),
+            "Factory required_caller=None must subsume when both None"
+        );
+        // Parent required_caller = None. Child Some does NOT subsume
+        // (would allow a caller that the parent didn't).
+        assert!(
+            !set_subsumes(core::slice::from_ref(&base), core::slice::from_ref(&child_some)),
+            "Factory required_caller=None must NOT subsume required_caller=Some(_)"
+        );
+
+        // Reverse: parent = Some, child = None does NOT subsume
+        // (would loosen the caller constraint).
+        let parent_some = Caveat::Factory(FactoryVet {
+            required_caller: Some("did:octo:zCaller".to_owned()),
+            ..match_factory(&base)
+        });
+        let child_none2 = Caveat::Factory(FactoryVet {
+            required_caller: None,
+            ..match_factory(&base)
+        });
+        assert!(
+            !set_subsumes(&[parent_some], &[child_none2]),
+            "Factory required_caller=Some(_) must NOT subsume required_caller=None"
+        );
+    }
+
+    /// R8 finding: `Factory::expiry_for_deploy_unix` mismatch must reject.
+    /// Independent of `action_template` / `pre_conditions` regressions.
+    #[test]
+    fn factory_subsumption_expiry_for_deploy_must_match() {
+        let parent = Caveat::Factory(FactoryVet {
+            target_vault_id: [0x33; 32],
+            action_template: ActionTemplate {
+                selector: "transfer".to_owned(),
+                args: vec!["100".to_owned(), "alice".to_owned()],
+            },
+            required_caller: None,
+            pre_conditions: Vec::new(),
+            expiry_for_deploy_unix: 2_000_000_000,
+        });
+        let child_same = Caveat::Factory(FactoryVet {
+            expiry_for_deploy_unix: 2_000_000_000,
+            ..match_factory(&parent)
+        });
+        let child_later = Caveat::Factory(FactoryVet {
+            expiry_for_deploy_unix: 3_000_000_000,
+            ..match_factory(&parent)
+        });
+        let child_earlier = Caveat::Factory(FactoryVet {
+            expiry_for_deploy_unix: 1_000_000_000,
+            ..match_factory(&parent)
+        });
+        assert!(set_subsumes(core::slice::from_ref(&parent), &[child_same]));
+        // Neither longer nor shorter deploy expiry subsumes — must match.
+        assert!(
+            !set_subsumes(core::slice::from_ref(&parent), &[child_later]),
+            "Factory expiry_for_deploy_unix mismatch must reject"
+        );
+        assert!(
+            !set_subsumes(&[parent], &[child_earlier]),
+            "Factory expiry_for_deploy_unix mismatch must reject"
+        );
+    }
+
+    /// Helper: clone all fields from a `Caveat::Factory` so test sites
+    /// can override a single field. Pulled out because the
+    /// `..match_factory(&base)` syntax requires a function call, not a
+    /// literal.
+    fn match_factory(c: &Caveat) -> FactoryVet {
+        match c {
+            Caveat::Factory(f) => f.clone(),
+            _ => panic!("expected Caveat::Factory"),
+        }
+    }
 }
 
 // `serde_bytes` shim — Json representation: hex string.

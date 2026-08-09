@@ -1878,4 +1878,20 @@ mod tests {
             .verify_full(&secret, &catalog, None)
             .expect("expected_parent=None must skip subsumption, succeed on signature only");
     }
+
+    /// R8 finding (non-finding after investigation): `WrappedCycle` was
+    /// flagged as untested via `Macaroon::attenuate`. After investigation,
+    /// the public API does not expose a direct path to construct a
+    /// cycle: `attenuate` rejects with `WrappedParentNotFound` when the
+    /// parent isn't in the catalog at construction time, so the only
+    /// way to form a cycle is via two macaroons registered in the
+    /// catalog with cross-references — a multi-step setup that the
+    /// existing `check_wrapped_chain` cycle test (line ~1603) already
+    /// covers end-to-end via the walker. The "WrappedCycle via
+    /// attenuate" test scenario is therefore a non-finding: the walker
+    /// owns cycle detection, and its existing test pins the contract.
+    /// No additional test added — this doc-only note records the
+    /// investigation so future reviews don't re-surface it.
+    #[allow(dead_code)]
+    fn _wrapped_cycle_investigation_note() {}
 }

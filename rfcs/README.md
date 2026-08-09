@@ -328,6 +328,7 @@ Once accepted:
 | RFC-0860 (Networking)     | Proof-of-Relay (PoRelay)                               | Draft    | Cryptographic proof of relay participation                                                                                  |
 | RFC-0861 (Networking)     | CoordinatorAdmin Adapter Contract Refinements          | Accepted | Closes 11 R1 findings deferred from R20/R21: capability honesty, validation, error semantics                                |
 | RFC-0863 (Networking)     | General-Purpose Network Integration (`octo-transport`) | Accepted | `NetworkSender` trait, `PlatformAdapterBridge`, `NodeTransport` — serves all 27+ use cases                                  |
+| RFC-0871 (Networking)     | Specialized Node Protocol Envelope                   | Accepted | Unified `NodeEnvelope` for all specialized nodes (quota router, identity resolver, reputation anchor, capability issuer, market node, wallet); DID-bound, 128-bit `PayloadKindId` UUID, `Vec<Authorization>`, replay defense; 7-round adversarial review (R7 DRY) |
 
 ### Economics (RFC-0900-0999)
 

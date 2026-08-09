@@ -164,10 +164,10 @@ For each: extract the load-bearing abstraction, identify what CipherOcto already
 
 ## Next Steps
 
-1. File RFC-0871 (Specialized Node Protocol Envelope) at `rfcs/draft/networking/0871-specialized-node-protocol-envelope.md` (after this research informs the design).
+1. RFC-0871 (Specialized Node Protocol Envelope) was filed at `rfcs/accepted/networking/0871-specialized-node-protocol-envelope.md` and Accepted 2026-08-09 after 7-round adversarial review (R1–R7; R7 DRY).
 2. Amend RFC-0010 to add a "Wallet Audience Validation" requirement: `AudienceId::from_str` MUST validate via `octo_ident::CanonicalCodec::parse()`.
 3. Amend RFC-0870 §Cross-Reference to note wallet follows the same specialized-node pattern.
-4. After RFC-0871 acceptance: file top-level mission `0871-specialized-node-protocol-envelope.md` + sub-missions per the decomposition in the RFC §Implementation Phases.
+4. After RFC-0871 acceptance (2026-08-09): file top-level mission `0871-specialized-node-protocol-envelope.md` + sub-missions per the decomposition in the RFC §Implementation Phases.
 
 ## Open Questions for the RFC Author
 

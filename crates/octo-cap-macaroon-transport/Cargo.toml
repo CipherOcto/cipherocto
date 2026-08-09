@@ -1,0 +1,38 @@
+[package]
+name = "octo-cap-macaroon-transport"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Transport glue crate: `TransportDeliveryCatalog` for `octo-cap-macaroon`. Wires `CapabilityCatalog::gossip_to_buyer` to the canonical RFC-0862 gossip substrate (`octo_transport::NodeTransport::broadcast`). Keeps `octo-cap-macaroon` free of the Layer D transport dep."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# `TransportDeliveryCatalog` impls `CapabilityCatalog` + `CapabilityGossip`
+# (Layer 4 macaroon substrate per RFC-0957 §3.5 + RFC-0959-A1 §Phase 3).
+octo-cap-macaroon = { path = "../octo-cap-macaroon" }
+# Layer D transport (RFC-0863 NodeTransport) — the canonical RFC-0862
+# gossip substrate `TransportDeliveryCatalog` wraps. Only this crate
+# (not `octo-cap-macaroon`) depends on it.
+octo-transport = { path = "../../octo-transport" }
+# `async_trait` allows `CapabilityGossip::gossip_to_buyer` (an `async fn`
+# in a trait) to be invoked through `&dyn CapabilityGossip` — required
+# because Rust's native `async fn` in trait is not yet dyn-compatible.
+async-trait = "0.1"
+# BLAKE3-256 for `mission_id` derivation (RFC-0959-A1 §Algorithms).
+blake3 = "1"
+
+[dev-dependencies]
+# Test-only sample-DID helper.
+octo-ident = { path = "../octo-ident" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+# Pedantic doc-comment style nits — original octo-cap-macaroon source
+# was hand-written, not pedantic-style-compliant.
+empty_line_after_doc_comments = "allow"
+doc_lazy_continuation = "allow"

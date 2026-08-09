@@ -30,12 +30,11 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
+use octo_cap_macaroon_transport::TransportDeliveryCatalog;
 use octo_transport::sender::{NetworkSender, SendContext, TransportError};
 use octo_transport::NodeTransport;
 use octo_wallet::capability::gossip::gossip_envelope_to_buyer_async;
-use octo_wallet::capability::macaroon::{
-    CapabilityCatalog, CapabilityGossip, CatalogGossipError, TransportDeliveryCatalog,
-};
+use octo_wallet::capability::macaroon::{CapabilityCatalog, CapabilityGossip, CatalogGossipError};
 use octo_wallet::capability::market_delivery::{
     DealSettled, DealSettledPayload, MarketDeliveryEnvelope, RoleTag,
 };

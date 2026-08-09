@@ -475,7 +475,7 @@ pub trait CapabilityCatalog {
     /// bounded retry loop in `gossip_envelope_to_buyer` downcasts the
     /// catalog to `&dyn CapabilityGossip` and returns `Unsupported` if
     /// the catalog doesn't implement gossip. Catalogs that do support
-    /// direct gossip (e.g., [`TransportDeliveryCatalog`]) implement
+    /// direct gossip (e.g., `octo_cap_macaroon_transport::TransportDeliveryCatalog`) implement
     /// both traits.
     fn gossip_to_buyer_sync(
         &self,
@@ -506,7 +506,7 @@ pub trait CapabilityCatalog {
 /// and macaroon lookups). `async fn` is not dyn-compatible; gating it
 /// behind a separate trait lets the primary catalog stay object-safe
 /// while still allowing production catalogs (e.g.,
-/// [`TransportDeliveryCatalog`]) to advertise async gossip capability.
+/// `octo_cap_macaroon_transport::TransportDeliveryCatalog`) to advertise async gossip capability.
 ///
 /// Catalogs implement BOTH `CapabilityCatalog` (for storage) and
 /// `CapabilityGossip` (for broadcast). The bounded retry loop in
@@ -723,140 +723,11 @@ impl CapabilityCatalog for InMemoryCatalog {
     }
 }
 
-// wiring. See `missions/claimed/0959-c3-octo-transport-wiring.md`.
-//
-// RFC-0862 §Gossip Substrate specifies that `MarketDeliveryEnvelope` gossip
-// fans out via the canonical `NodeTransport::broadcast` sender set. This
-// struct wraps a shared `NodeTransport` + identity-context pair (source
-// peer + origin gateway) and implements `CapabilityCatalog::gossip_to_buyer`
-// by building a `SendContext` and broadcasting.
-// =============================================================================
-
-/// Production-wired `CapabilityCatalog` that delivers `MarketDeliveryEnvelope`
-/// payloads through the canonical RFC-0862 gossip channel
-/// (`octo_transport::NodeTransport::broadcast`).
-///
-/// The struct is `Send + Sync` (the transport holds `Arc`s internally) and
-/// is intended to be installed in the wallet's `CapabilityCatalogRegistry`
-/// once per `NodeTransport` lifecycle (typically per node startup). Multiple
-/// `TransportDeliveryCatalog` instances can coexist — e.g., one for HTTP
-/// senders + one for TCP senders — but the canonical pattern is one catalog
-/// per node hosting the unified `NodeTransport`.
-///
-/// # Identity context
-///
-/// `source_peer` is the 32-byte public key of the node broadcasting the
-/// envelope (the seller-side producer). `origin_gateway` is the 32-byte
-/// gateway identifier of the gateway that first injected the envelope
-/// into the gossip network (often the same gateway as the seller, but
-/// distinct field for the multi-hop case).
-///
-/// # Mission context
-///
-/// `mission_id` derivation per RFC-0959-A1 §Algorithms: `mission_id` is
-/// the first 32 bytes of `BLAKE3-256(envelope_payload)` domain-separated
-/// to `b"cipherocto:market-delivery:mission"` — this is the canonical
-/// mission-scoped binding that downstream DC reputation stores
-/// (`octo-reputation::SlashReputationStoreCompat`) consume.
-pub struct TransportDeliveryCatalog {
-    transport: std::sync::Arc<octo_transport::NodeTransport>,
-    source_peer: [u8; 32],
-    origin_gateway: [u8; 32],
-}
-
-impl TransportDeliveryCatalog {
-    /// Default gossip priority for `MarketDeliveryEnvelope` payloads
-    /// (mid-band: above gossip churn, below real-time control traffic).
-    pub const DEFAULT_GOSSIP_PRIORITY: u8 = 128;
-
-    /// Construct a new `TransportDeliveryCatalog`.
-    ///
-    /// # Arguments
-    ///
-    /// * `transport` — shared `NodeTransport` (typically one per node).
-    /// * `source_peer` — 32-byte public key of the gossiping node.
-    /// * `origin_gateway` — 32-byte gateway identifier (may equal
-    ///   `source_peer` for single-hop deployments).
-    pub fn new(
-        transport: std::sync::Arc<octo_transport::NodeTransport>,
-        source_peer: [u8; 32],
-        origin_gateway: [u8; 32],
-    ) -> Self {
-        Self {
-            transport,
-            source_peer,
-            origin_gateway,
-        }
-    }
-
-    /// Derive the canonical `mission_id` for a `MarketDeliveryEnvelope`
-    /// payload. Domain-separated BLAKE3-256, first 32 bytes.
-    fn mission_id_for(payload: &[u8]) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(b"cipherocto:market-delivery:mission");
-        hasher.update(payload);
-        let out = hasher.finalize();
-        let mut id = [0u8; 32];
-        id.copy_from_slice(&out.as_bytes()[..32]);
-        id
-    }
-}
-
-impl std::fmt::Debug for TransportDeliveryCatalog {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Per RFC-0957-A1 §Security: do not leak `source_peer` /
-        // `origin_gateway` bytes in Debug (operator-facing diagnostic
-        // only; manual redaction defends against accidental log
-        // exposure — same defense-in-depth as `BridgeError` in
-        // `octo-network::dc::slash_bridge`).
-        f.debug_struct("TransportDeliveryCatalog")
-            .field("transport", &"<Arc<NodeTransport>>")
-            .field("source_peer", &"[REDACTED 32B]")
-            .field("origin_gateway", &"[REDACTED 32B]")
-            .finish()
-    }
-}
-
-impl CapabilityCatalog for TransportDeliveryCatalog {
-    fn get(&self, _id: &[u8; 32]) -> Option<&Macaroon> {
-        // TransportDeliveryCatalog owns gossip delivery only; it is not
-        // the canonical macaroon storage path. Production wallets
-        // compose a `CompositeCapabilityCatalog` that delegates
-        // `get` to the underlying storage catalog and `gossip_to_buyer`
-        // to this struct. Returning `None` keeps the default fallback
-        // behavior consistent with `NodeTransport`-only catalogs.
-        None
-    }
-
-    fn implements_gossip(&self) -> bool {
-        true
-    }
-}
-
-#[async_trait]
-impl CapabilityGossip for TransportDeliveryCatalog {
-    async fn gossip_to_buyer(
-        &self,
-        _buyer_did: &str,
-        env: &[u8],
-    ) -> Result<(), CatalogGossipError> {
-        let ctx = octo_transport::SendContext {
-            mission_id: Self::mission_id_for(env),
-            priority: Self::DEFAULT_GOSSIP_PRIORITY,
-            source_peer: self.source_peer,
-            origin_gateway: self.origin_gateway,
-        };
-
-        // `NodeTransport::broadcast` is `async fn` returning the count
-        // of successful sender deliveries (plain `usize`, not `Result`).
-        // A zero count is **not** an error (every node may be offline);
-        // we surface success in that case so the bounded retry loop in
-        // `gossip_envelope_to_buyer` does not mistake "no peers
-        // reachable right now" for "transient failure".
-        let _delivered = self.transport.broadcast(env, &ctx).await;
-        Ok(())
-    }
-}
+// Production `TransportDeliveryCatalog` (RFC-0959-A1 §Phase 3) was moved to
+// the `octo-cap-macaroon-transport` glue crate (mission 0957 Phase 2c-1) so
+// `octo-cap-macaroon` stays free of the Layer D `octo-transport` dep.
+// See `crates/octo-cap-macaroon-transport/src/lib.rs` for the canonical
+// implementation.
 
 #[cfg(test)]
 mod tests {

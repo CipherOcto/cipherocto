@@ -35,9 +35,10 @@ cipherocto-encoding = { path = "../cipherocto-encoding" }
 # mission may relocate the accessor into a registry glue crate to remove
 # the cross-layer edge.
 quota-router-storage = { path = "../quota-router-storage" }
-# Layer D transport (RFC-0863 NodeTransport) for `TransportDeliveryCatalog`
-# mission 0959-c3 substrate.
-octo-transport = { path = "../../octo-transport" }
+# Layer D transport (RFC-0863 NodeTransport) — previously depended on
+# this for `TransportDeliveryCatalog`. Phase 2c-1 (mission 0957-ext-macaroon)
+# moved `TransportDeliveryCatalog` to the `octo-cap-macaroon-transport`
+# glue crate, removing the cross-layer dep from this Layer 4 crate.
 # Ed25519 signature type (CapabilityToken.holder_sig field).
 ed25519-dalek = { version = "2.2", features = ["serde"] }
 # base64 for capability token wire format encoding (RFC-0957 §3.7).

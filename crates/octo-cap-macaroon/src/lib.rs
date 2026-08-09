@@ -11,7 +11,9 @@
 //! - **Macaroon struct**: `Macaroon` + `mint` + `attenuate` + `verify_signature`
 //!   + `verify_full` + `compute_capability_id` (RFC-0957 §3.2).
 //! - **Catalog traits**: `CapabilityCatalog` + `CapabilityGossip` +
-//!   `InMemoryCatalog` + `TransportDeliveryCatalog` (RFC-0957-A1 §Phase 3).
+//!   `InMemoryCatalog` (RFC-0957-A1 §Phase 3). Production
+//!   `TransportDeliveryCatalog` lives in the `octo-cap-macaroon-transport`
+//!   glue crate (Phase 2c-1; keeps this crate free of Layer D dep).
 //!
 //! ## Scope (Mission 0957-ext-macaroon Phase 2)
 //!
@@ -62,6 +64,12 @@ pub use caveat::{
     CaveatName, FactoryVet, MicroOctoW, ModelRef, OverlayIdentity, PerAxisMax, PermissionKind,
     ProviderId, RateLimit, RawCaveat, UnixTimeSecs, ISO3166,
 };
+pub use discharge::{
+    verify_discharges, ChannelProvider, ChannelProviderRegistry, ChannelProviderResolver,
+    DischargeChannel, DischargeError, DischargeRequest, DischargeVerification, EscrowBalance,
+    EscrowDischargeProvider, RateLimitContext, RateLimitDischargeProvider,
+    RevocationDischargeProvider, REVOCATION_DISCHARGE_TTL_SECS,
+};
 pub use macaroon::{
     check_wrapped_chain, check_wrapped_depth, compute_capability_id, CapabilityCatalog,
     CapabilityGossip, CatalogGossipError, Macaroon, MacaroonError, MAX_WRAPPED_DEPTH,
@@ -71,12 +79,6 @@ pub use token::{CapabilityToken, DischargeMacaroon, MintError};
 pub use wire::{
     compute_cap_root_hash_from_wire, deserialize_wire, deserialize_wire_v2, serialize_wire,
     serialize_wire_v2, WireError, WireV2,
-};
-pub use discharge::{
-    verify_discharges, ChannelProvider, ChannelProviderRegistry, ChannelProviderResolver,
-    DischargeChannel, DischargeError, DischargeRequest, DischargeVerification, EscrowBalance,
-    EscrowDischargeProvider, RateLimitContext, RateLimitDischargeProvider,
-    RevocationDischargeProvider, REVOCATION_DISCHARGE_TTL_SECS,
 };
 
 /// Domain separator byte for `capability_id` derivation (RFC-0965 §3.7).

@@ -125,6 +125,10 @@ zk-vendor = { path = "../zk-vendor" }
 # Mission 0959-c3: production `TransportDeliveryCatalog` wires
 # `CapabilityCatalog::gossip_to_buyer` to the canonical RFC-0862
 # gossip substrate (`octo_transport::NodeTransport::broadcast`).
+# Phase 2c-1 (mission 0957-ext-macaroon): the struct lives in
+# `octo-cap-macaroon-transport` (Layer 4 ↔ Layer D glue crate).
+# The test harness still imports `octo_transport::NodeTransport`
+# directly to build an in-process capturing sender.
 octo-transport = { path = "../../octo-transport" }
 
 # Mission 0959-c3: production wiring tests use tokio runtime to drive
@@ -157,6 +161,9 @@ tempfile = "3"
 # Mission 0957-a AC #10 (R6 fix): property test for 10K random monotonic
 # caveat sequences.
 proptest = "1"
+# Mission 0957 Phase 2c-1: production `TransportDeliveryCatalog` lives
+# in this glue crate; the integration test imports it directly.
+octo-cap-macaroon-transport = { path = "../octo-cap-macaroon-transport" }
 
 # **Mission 0958-b Round 1 review fix (2026-08-05, F-1):** re-export
 # `zk-verifier` with `allow-stub-verifier` enabled here so the

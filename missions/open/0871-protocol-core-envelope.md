@@ -49,13 +49,15 @@ Create `crates/octo-protocol/` Layer-1-stable crate owning the canonical envelop
 
 ### Adversary coverage (RFC-0871 §Adversary Analysis A1–A7)
 
-- [ ] A1 replay attack — covered by TV3 + `EnvelopeDispatcher::dispatch` envelope_id dedup
-- [ ] A2 unauthorized sender — covered by TV4 + `Authorization::Signature` ed25519 verify
-- [ ] A3 unknown payload kind — fail-closed (per RFC-0965 §3.2) returns `ProtocolError::UnknownPayloadKind`
-- [ ] A4 expired envelope — covered by TV2
-- [ ] A5 nonce collision — `nonce: [u8; 16]` random per sender, accepted iff unique
-- [ ] A6 HSM bypass — all signing paths route through `Arc<dyn HsmAdapter>` (no direct `ed25519_dalek::SigningKey` access)
-- [ ] A7 DID spoofing — canonical validation rejects non-canonical wire form per RFC-0010
+Per RFC-0871 §Adversary Analysis (verbatim threat framing), the seven threats + their defenses are mapped to test vectors + crate enforcement points:
+
+- [ ] **A1 replay attack on signed envelope** — covered by TV3 (envelope_id dedup) + `EnvelopeDispatcher::dispatch` seen-set + `nonce` per-sender cache + TTL check (Defense: `envelope_id` uniqueness + nonce cache + per-node TTL ceiling)
+- [ ] **A2 capability forgery** — covered by TV4 (`Vec<Authorization>` containing capability + signature) + `Authorization::Capability` HMAC verification + Ed25519 sig on token mint (Defense: RFC-0957 §Algorithms invariant + Ed25519 sig)
+- [ ] **A3 cross-domain trust escalation** — covered by `RouterAnnouncePayload` trust root declaration (quota-tier envelope from identity-tier node rejected at dispatch); trust root per node type enforced in `EnvelopeDispatcher::dispatch` payload_kind → trust_root lookup (Defense: trust root per node type)
+- [ ] **A4 TTL manipulation** — covered by TV2 (expired envelope rejected) + per-node-type TTL ceiling from `RouterAnnouncePayload` (Defense: ceiling clamps sender's `expires_at_unix_ms`)
+- [ ] **A5 payload kind spoofing (unknown kind handler)** — covered by `ProtocolError::UnknownPayloadKind` fail-closed path (Defense: old nodes reject unknown kinds per RFC-0965 §3.2 pattern)
+- [ ] **A6 authorization composition attack** — covered by `EnvelopeDispatcher::verify_all` (ALL authorizations must verify, logical AND, not OR) + TV4 demonstrates mixed `Vec<Authorization>` (Defense: logical-AND verification across the entire `Vec<Authorization>`)
+- [ ] **A7 DID spoofing via legacy form** — covered by canonical DID validation via `octo_ident::CanonicalCodec::parse(s, false)` on every envelope boundary + every `Authorization::Signature` (Defense: legacy `did:octo:b<base32>` post-deprecation rejected)
 
 ### Cross-crate compat
 

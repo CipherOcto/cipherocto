@@ -756,6 +756,17 @@ mod tests {
             verify_result.valid,
             "escrow verify must pass with sufficient balance"
         );
+        // Happy-path invariant: `valid: true` MUST carry `reason: None`.
+        // R4 finding: previously implied but never asserted; a regression
+        // setting `reason: Some(_)` on the success path would not have
+        // been caught. The `ChannelRejected` error surfacing uses
+        // `reason` as the user-facing message, so leaking a reason on
+        // success would confuse downstream log scrapers.
+        assert!(
+            verify_result.reason.is_none(),
+            "valid:true must carry reason:None; got {:?}",
+            verify_result.reason
+        );
 
         // Insufficient balance → verify fails.
         let mut low_registry = ChannelProviderRegistry::default();
@@ -859,6 +870,49 @@ mod tests {
         );
         verify_discharges(&token, &registry, &HashMap::new())
             .expect("token without ThirdParty caveats must verify cleanly");
+    }
+
+    /// Mixed-iteration path: a token with `[Before, ThirdParty("escrow")]`
+    /// exercises the `let Caveat::ThirdParty(_) = caveat else { continue };`
+    /// arm mid-iteration. The empty-list test covers the zero-iterations
+    /// path; this test covers the continue-skips-non-ThirdParty path with
+    /// a non-empty list and a downstream ThirdParty that still resolves
+    /// cleanly.
+    #[test]
+    fn verify_discharges_mixed_caveats_with_continue_arm() {
+        let mut registry = ChannelProviderRegistry::default();
+        // Configure the escrow provider with a sufficient balance so the
+        // ThirdParty arm passes (escrow verify returns valid:false when
+        // context is empty OR when balance < requested).
+        let mut provider = EscrowDischargeProvider::new();
+        let holder_did = octo_ident::test_helpers::sample_did(113);
+        provider.set_balance(&holder_did, EscrowBalance(1_000_000));
+        registry.register(provider);
+
+        // Attach a discharge so the ThirdParty arm completes cleanly.
+        let discharge = DischargeMacaroon {
+            channel: "escrow".to_owned(),
+            root_secret_hash: [0; 32],
+            chain: vec![[0; 32]],
+            caveats: vec![],
+        };
+        let mut token = test_token(
+            &holder_did,
+            // Before(2B) caveat + ThirdParty("escrow") — the Before
+            // caveat hits the `continue` arm; ThirdParty hits the body.
+            vec![
+                Caveat::Before(2_000_000_000),
+                Caveat::ThirdParty("escrow".to_owned()),
+            ],
+        );
+        token.discharges.push(discharge);
+
+        // Provide a 16-byte escrow context (required amount: 1000
+        // EscrowBalance units, well below holder's 1_000_000 balance).
+        let mut ctx = HashMap::new();
+        ctx.insert("escrow".to_owned(), 1000u128.to_be_bytes().to_vec());
+        verify_discharges(&token, &registry, &ctx)
+            .expect("mixed-caveat token with valid escrow discharge must verify");
     }
 
     #[test]

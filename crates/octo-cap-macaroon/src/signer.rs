@@ -245,4 +245,23 @@ mod tests {
             other => panic!("expected Malformed error, got {other:?}"),
         }
     }
+
+    // --- Display-string tests (thiserror #[error(...)] format regression guard) ---
+    //
+    // The `CapabilitySignerError` variants are surfaced to operators via
+    // log lines and to upstream callers via `Display`. A regression in
+    // the format string (e.g., transposed argument names, dropped braces)
+    // would silently corrupt log aggregation. These tests pin the strings.
+
+    #[test]
+    fn signer_error_display_signer_variant() {
+        let err = CapabilitySignerError::Signer("hsm timeout".into());
+        assert_eq!(err.to_string(), "signer rejected: hsm timeout");
+    }
+
+    #[test]
+    fn signer_error_display_malformed_variant() {
+        let err = CapabilitySignerError::Malformed("invalid curve point".into());
+        assert_eq!(err.to_string(), "malformed signature: invalid curve point");
+    }
 }

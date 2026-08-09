@@ -142,6 +142,22 @@ Per RFC-0871 §Implementation Phases Phase 3 + RFC-0010 (codec crate):
 
 #
 
+## Closure Record
+
+Mission landed in commit `3b1767d6` (this commit = closure record). NEW
+`crates/octo-identity-resolver-node/` Layer C crate with 1 payload
+handler (`IDENTITY_RESOLVE`), `ReferenceDispatcher::verify_all`-driven
+authorization, canonical DID validation via `CanonicalCodec::parse(s, false)`,
+and `NetworkReceiver` wiring via `IdentityResolverNodeReceiver`.
+
+**Phase 1 MVP disclosures** (per [[deferred-vs-unspecified]] discipline):
+
+- **Placeholder pubkey**: `ResolveHandler::handle` returns `RawDid::hash` (the leading 32-byte hash of the canonical DID) as the storage-pubkey form. This is deterministic + byte-exact, so the wire shape is identical once the real `DidRegistry` backend is wired in a follow-on mission — no consumer-side migration.
+- **No `DidRegistry` trait yet**: the codec crate (`octo-ident`) exposes `CanonicalCodec` for canonical encoding but not a storage trait. The follow-on mission will define `DidRegistry` in `octo-ident` (or a new `octo-identity-storage` crate) and have `ResolveHandler` call it instead of computing the placeholder.
+- **`broadcast_announce` is a stub**: per 0871a wallet-node pattern, the full `RouterAnnouncePayload` shape lives in mission 0870-b follow-on.
+- **`IDENTITY_RESOLVE` only**: substrate RFC-0871 allocates one UUID in the `IDENTITY_*` namespace so far (`0x0009:0001:...:0001`). The mission's original `DID_LOOKUP` payload kind is a future RFC-0871 amendment — not in scope here.
+- **`verify_all` only (not full `dispatch`)**: `IdentityResolverNode::handle_envelope` calls `ReferenceDispatcher::verify_all` (authz + sig verification) but does NOT itself enforce envelope_id dedup + nonce uniqueness + TTL ceiling — those run at the `EnvelopeDispatcher::dispatch` layer above the per-node handler. Production wiring plugs the resolver into the full dispatcher flow; tests use `verify_all`-equivalent via the unit-test path.
+
 ## Notes
 
 - Layer C crate (specialized node). Stability: per-RFC.
@@ -149,9 +165,3 @@ Per RFC-0871 §Implementation Phases Phase 3 + RFC-0010 (codec crate):
 - Cross-domain DID resolution (resolver chains across specialized nodes) is RFC-0871 §Future Work — not in this mission scope. Filed separately when needed.
 - Rate limiting per RFC-0871 §Replay Protection. Resolution is an attack surface (DoS via lookup floods); per-caller rate limit enforced at `EnvelopeDispatcher` level.
 - Production deployment: identity resolver is a stateful actor (RFC-0871 §Roles and Authorities). Coordinator role + election required for multi-node deployment. Single-node mission for now; multi-node federation deferred.
-- **Phase 1 MVP disclosures** (per [[deferred-vs-unspecified]] discipline):
-  - **Placeholder pubkey**: `ResolveHandler::handle` returns `RawDid::hash` (the leading 32-byte hash of the canonical DID) as the storage-pubkey form. This is deterministic + byte-exact, so the wire shape is identical once the real `DidRegistry` backend is wired in a follow-on mission — no consumer-side migration.
-  - **No `DidRegistry` trait yet**: the codec crate (`octo-ident`) exposes `CanonicalCodec` for canonical encoding but not a storage trait. The follow-on mission will define `DidRegistry` in `octo-ident` (or a new `octo-identity-storage` crate) and have `ResolveHandler` call it instead of computing the placeholder.
-  - **`broadcast_announce` is a stub**: per 0871a wallet-node pattern, the full `RouterAnnouncePayload` shape lives in mission 0870-b follow-on.
-  - **`IDENTITY_RESOLVE` only**: substrate RFC-0871 allocates one UUID in the `IDENTITY_*` namespace so far (`0x0009:0001:...:0001`). The mission's original `DID_LOOKUP` payload kind is a future RFC-0871 amendment — not in scope here.
-  - **`verify_all` only (not full `dispatch`)**: `IdentityResolverNode::handle_envelope` calls `ReferenceDispatcher::verify_all` (authz + sig verification) but does NOT itself enforce envelope_id dedup + nonce uniqueness + TTL ceiling — those run at the `EnvelopeDispatcher::dispatch` layer above the per-node handler. Production wiring plugs the resolver into the full dispatcher flow; tests use `verify_all`-equivalent via the unit-test path.

@@ -34,7 +34,6 @@ pub use discharge::{
     EscrowDischargeProvider, RateLimitContext, RateLimitDischargeProvider,
     RevocationDischargeProvider, REVOCATION_DISCHARGE_TTL_SECS,
 };
-pub use octo_cap_macaroon::DischargeMacaroon;
 pub use macaroon::{
     hmac_blake3, macaroon_id, CapabilityCatalog, Macaroon, MacaroonError, MacaroonId,
 };
@@ -42,6 +41,7 @@ pub use market_delivery::{
     DealSettled, DealSettledPayload, DeliveryError, EnvelopeId, MarketDeliveryEnvelope,
     MarketDeliveryEnvelopePreimage, RoleTag, SettlementChainError,
 };
+pub use octo_cap_macaroon::DischargeMacaroon;
 pub use registry::{CapabilityClassRegistry, RegistryEntry, RegistryError};
 pub use verify::{verify_with_resolve, VerifiedToken, VerifyContext, VerifyError};
 pub use wire::{

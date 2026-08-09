@@ -43,12 +43,14 @@ rand.workspace = true
 serde_bytes = "0.11"
 
 # ZK circuit (CASM compile, RFC-0958 Phase B.2; crypto home per [[stoolap-general-purpose-db]])
-zk-circuit = { path = "../zk-circuit" }
+# Mission 0957-ext-zk-crate: moved to octo-cap-zk.
+# zk-circuit = { path = "../zk-circuit" }
 
 # ZK canonicalization primitives (canonicalize_axes + ZKP_DOMAIN_PREFIX
 # constants). R3 fix-up 2026-08-05: dropped the orphan `canonical_ser`
 # symbol that was shipped in R2 but had zero non-test callers.
-cipherocto-zkp-canonical = { path = "../cipherocto-zkp-canonical" }
+# Mission 0957-ext-zk-crate: moved to octo-cap-zk.
+# cipherocto-zkp-canonical = { path = "../cipherocto-zkp-canonical" }
 
 # ZK verifier (Gap 3 / RFC-0958 + RFC-0962 §9 batch signature). Used at mint time
 # to construct the canonical `zk_verifier::PublicInputs` the downstream
@@ -66,6 +68,8 @@ cipherocto-zkp-canonical = { path = "../cipherocto-zkp-canonical" }
 # feature) still has the BLAKE3 stub path available for the structural
 # smoke tests + crypto-bypass detection in
 # `tests/zk_vectors.rs::stub_proof_*`.
+# Mission 0957-ext-zk-crate: production dep moved to octo-cap-zk;
+# dev-dep kept (test suite still exercises stub_commitment).
 zk-verifier = { path = "../zk-verifier" }
 
 # Storage types (Ask + AskRepository + SettlementEnvelope) for the
@@ -90,6 +94,14 @@ borsh = { version = "1", optional = true }
 # `wire::json_canon` module + naming alignment. Borsh may be re-enabled
 # in a future RFC if a tighter canonicalization is adopted; until then
 # the dep is removed to avoid carrying an unused surface.
+
+# ZK circuit substrate (mission 0957-ext-zk-crate). Per-extension crate
+# layout per RFC-0965: ZK capability lives in `octo-cap-zk` (Layer 4
+# sibling of `octo-cap-macaroon`). Re-exported via the `zk_mint`
+# shim module. `zk-circuit` / `zk-verifier` / `zk-vendor` /
+# `cipherocto-zkp-canonical` deps moved to octo-cap-zk (no longer used
+# directly in the wallet lib).
+octo-cap-zk = { path = "../octo-cap-zk" }
 
 # Federation delta wire format (RFC-0957-A1 §F1) — uses JSON (already in
 # workspace deps). Bounded via length-prefixed encoding (see federation.rs).
@@ -120,7 +132,8 @@ rpassword = "7"
 # `ProofBundle.witness_format` field uses
 # `zk_vendor::prover_input::WitnessFormat` so the enum is shared across
 # proofer + verifier + wallet.
-zk-vendor = { path = "../zk-vendor" }
+# Mission 0957-ext-zk-crate: moved to octo-cap-zk.
+# zk-vendor = { path = "../zk-vendor" }
 
 # Mission 0959-c3: production `TransportDeliveryCatalog` wires
 # `CapabilityCatalog::gossip_to_buyer` to the canonical RFC-0862
@@ -164,6 +177,12 @@ proptest = "1"
 # Mission 0957 Phase 2c-1: production `TransportDeliveryCatalog` lives
 # in this glue crate; the integration test imports it directly.
 octo-cap-macaroon-transport = { path = "../octo-cap-macaroon-transport" }
+# Mission 0957-ext-zk-crate: ZK substrate moved to octo-cap-zk but tests
+# still reach into `zk_circuit` + `zk_vendor` + `zk_verifier` directly
+# for `verify_mock_batch_proof` + `vendor_state()` + stub_commitment
+# shape checks. Re-added as dev-deps for test-only access.
+zk-circuit = { path = "../zk-circuit" }
+zk-vendor = { path = "../zk-vendor" }
 
 # **Mission 0958-b Round 1 review fix (2026-08-05, F-1):** re-export
 # `zk-verifier` with `allow-stub-verifier` enabled here so the

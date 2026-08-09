@@ -268,6 +268,5 @@ fn capability_redeem_accepts_in_policy_capability() {
     let mut catalog = TestPolicyCatalog::default();
     catalog.insert(org_policy);
 
-    redeem_capability_token(&cap, &catalog)
-        .expect("in-policy capability should redeem");
+    redeem_capability_token(&cap, &catalog).expect("in-policy capability should redeem");
 }

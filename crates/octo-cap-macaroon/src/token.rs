@@ -337,13 +337,8 @@ mod tests {
         let holder = sample_signer();
         let root_secret = [0x42; 32];
         let caveats = [Caveat::Model("gpt-4".to_owned())];
-        let token = CapabilityToken::mint(
-            &root_secret,
-            &holder,
-            "did:octo:zTestHolder",
-            &caveats,
-        )
-        .unwrap();
+        let token =
+            CapabilityToken::mint(&root_secret, &holder, "did:octo:zTestHolder", &caveats).unwrap();
         token.verify_holder_sig().unwrap();
     }
 
@@ -352,13 +347,8 @@ mod tests {
         let holder = sample_signer();
         let root_secret = [0x42; 32];
         let catalog = empty_catalog();
-        let token = CapabilityToken::mint(
-            &root_secret,
-            &holder,
-            "did:octo:zTestHolder",
-            &[],
-        )
-        .unwrap();
+        let token =
+            CapabilityToken::mint(&root_secret, &holder, "did:octo:zTestHolder", &[]).unwrap();
         let attenuated = token
             .attenuate_with_signer(Caveat::Model("gpt-4".to_owned()), &holder, &catalog)
             .unwrap();
@@ -371,13 +361,8 @@ mod tests {
         let holder = sample_signer();
         let root_secret = [0x42; 32];
         let catalog = empty_catalog();
-        let token = CapabilityToken::mint(
-            &root_secret,
-            &holder,
-            "did:octo:zTestHolder",
-            &[],
-        )
-        .unwrap();
+        let token =
+            CapabilityToken::mint(&root_secret, &holder, "did:octo:zTestHolder", &[]).unwrap();
         let broken = token
             .attenuate(Caveat::Model("gpt-4".to_owned()), &catalog)
             .unwrap();

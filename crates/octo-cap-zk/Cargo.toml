@@ -1,0 +1,57 @@
+[package]
+name = "octo-cap-zk"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "ZK capability subclass (RFC-0958). Layer 4 extension crate; per RFC-0965 caveat discriminator pattern. Owns the `mint_with_zk` / `mint_with_zk_and_signers` API + `ProofBundle` + `ZkMintError` + `ExecutionTrace` types."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# Macaroon substrate (Layer 4 sibling per RFC-0957 §3.1). Provides
+# `Caveat` + `MacaroonId` + `WireError` types consumed by mint API.
+octo-cap-macaroon = { path = "../octo-cap-macaroon" }
+# ZK circuit primitive (Layer A per RFC-0958 §Algorithms). Provides
+# `prove_batch_signature` + `BatchSigPublicInputs` + `Program` + Cairo
+# compilation (mission 0958-a S05 Phase B.2).
+zk-circuit = { path = "../zk-circuit" }
+# ZK verifier (Layer A per RFC-0958 + RFC-0962 §9). Provides
+# `PublicInputs` type reconstructed by downstream verifier; mint API
+# must match the field shape byte-for-byte.
+zk-verifier = { path = "../zk-verifier" }
+# ZK vendor state + witness format marker (RFC-0958-A1 S05 mission
+# 0958-c AC-3). Provides `WitnessFormat` enum (ProverInputJson /
+# BytesFallback) embedded in `ProofBundle.witness_format`.
+zk-vendor = { path = "../zk-vendor" }
+# Canonical axes_consumed ordering (RFC-0958 §canonicalization).
+# The local `canonicalize_axes` was removed in R4 fix-up (orphan
+# duplicate from R1) and now delegates to this crate.
+cipherocto-zkp-canonical = { path = "../cipherocto-zkp-canonical" }
+
+# Ed25519 signature (PrivateWitness.holder_sig field).
+ed25519-dalek = { version = "2.2", features = ["serde"] }
+# ProofBundle wire format encoding (RFC-0958 §Wire Format).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# BLAKE3 for `derive_root_hash_from_secret` + `macaroon_id_from_root_hash`
+# + batch_sig_inputs (signer_roots + message_root derivation).
+blake3 = "1"
+# Debug redaction + casm_hash hex encoding.
+hex = "0.4"
+# ZkMintError derives.
+thiserror = "1"
+
+[dev-dependencies]
+# Test-only sample-DID helper used by tests.
+octo-ident = { path = "../octo-ident" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+# Pedantic doc-comment style nits — original octo-wallet source was
+# hand-written, not pedantic-style-compliant.
+empty_line_after_doc_comments = "allow"
+doc_lazy_continuation = "allow"

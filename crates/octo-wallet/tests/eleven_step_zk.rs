@@ -19,7 +19,11 @@ use octo_ident::test_helpers::sample_did;
 use octo_wallet::capability::zk_mint::{
     bundled_casm_hash, mint_with_zk_and_signers, PrivateWitness, PublicInputs,
 };
-use octo_wallet::node::NodeType;
+// Mission 0957-ext-zk-crate: use `octo_cap_zk::NodeType` directly in
+// tests (the wallet's `NodeType` is converted via the `to_zk_node_type`
+// shim in production code paths; tests exercise the ZK substrate
+// directly so the conversion adds no value here).
+use octo_cap_zk::NodeType;
 use quota_router_core::zk_verify::capability::{
     reconstruct_batch_sig_inputs, verify_batch_capability_zk, CapabilityVerifier,
 };

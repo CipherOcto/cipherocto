@@ -43,7 +43,11 @@ use octo_wallet::capability::zk_mint::{
     TraceStep,
 };
 use octo_wallet::capability::CapabilityClass;
-use octo_wallet::node::NodeType;
+// Mission 0957-ext-zk-crate: `NodeType` defaults to `octo_cap_zk::NodeType`
+// (used for ZK mint API). `WalletNodeType` aliases the wallet's
+// `CapabilityClassRegistry::register` argument.
+use octo_cap_zk::NodeType;
+use octo_wallet::node::NodeType as WalletNodeType;
 use quota_router_core::zk_verify::capability::{
     verify_batch_capability_zk, verify_capability_zk, CapabilityVerifier,
 };
@@ -566,8 +570,12 @@ fn ac7_hybrid_without_explicit_mint_remains_v1() {
     // Hybrid node opts into V1 (the default). The registry stores the
     // class explicitly; an `unwrap_or_default` style call would resolve to
     // V1 — but the explicit registration captures operator intent.
-    reg.register("slot-v1-default", NodeType::Hybrid, CapabilityClass::V1)
-        .expect("hybrid V1 registration");
+    reg.register(
+        "slot-v1-default",
+        WalletNodeType::Hybrid,
+        CapabilityClass::V1,
+    )
+    .expect("hybrid V1 registration");
     let class = reg.capability_class_of("slot-v1-default");
     assert_eq!(
         class,
@@ -580,7 +588,7 @@ fn ac7_hybrid_without_explicit_mint_remains_v1() {
     let mut reg2 = CapabilityClassRegistry::new();
     reg2.register(
         "slot-zk-optin",
-        NodeType::Hybrid,
+        WalletNodeType::Hybrid,
         CapabilityClass::ZKBearing,
     )
     .expect("hybrid ZKBearing opt-in must be allowed");
@@ -595,7 +603,11 @@ fn ac7_wholesale_zkbearing_registration_rejected() {
     // Wholesale + ZKBearing is rejected at registration time (layer 2 of 3).
     let mut reg = CapabilityClassRegistry::new();
     let err = reg
-        .register("slot-bad", NodeType::Wholesale, CapabilityClass::ZKBearing)
+        .register(
+            "slot-bad",
+            WalletNodeType::Wholesale,
+            CapabilityClass::ZKBearing,
+        )
         .expect_err("Wholesale + ZKBearing must be rejected");
     assert!(
         matches!(err, RegistryError::WholesaleCannotRegisterZK),

@@ -35,7 +35,8 @@ use octo_wallet::capability::zk_mint::{
     bundled_casm_hash, mint_with_zk_and_signers, ExecutionTrace, PrivateWitness, ProofBundle,
     PublicInputs, TraceStep,
 };
-use octo_wallet::node::NodeType;
+// Mission 0957-ext-zk-crate: use `octo_cap_zk::NodeType` directly.
+use octo_cap_zk::NodeType;
 #[allow(unused_imports)]
 use quota_router_core::zk_verify::capability::verify_capability_zk;
 #[allow(unused_imports)]

@@ -22,7 +22,11 @@ use octo_wallet::capability::zk_mint::{
     TraceStep,
 };
 use octo_wallet::capability::CapabilityClass;
-use octo_wallet::node::NodeType;
+// Mission 0957-ext-zk-crate: `NodeType` defaults to `octo_cap_zk::NodeType`
+// (used for ZK mint API). `WalletNodeType` aliases the wallet's
+// `CapabilityClassRegistry::register` argument.
+use octo_cap_zk::NodeType;
+use octo_wallet::node::NodeType as WalletNodeType;
 use quota_router_core::zk_verify::capability::{
     verify_batch_capability_zk, verify_capability_zk, CapabilityVerifier,
 };
@@ -352,7 +356,11 @@ fn closure_acceptance_all_vectors_emitting_structured_report() {
 
     // ---- AC-5: Wholesale ZKBearing registration rejected ----
     let mut reg = CapabilityClassRegistry::new();
-    let err_reg = reg.register("wslot", NodeType::Wholesale, CapabilityClass::ZKBearing);
+    let err_reg = reg.register(
+        "wslot",
+        WalletNodeType::Wholesale,
+        CapabilityClass::ZKBearing,
+    );
     report.push(VectorReport {
         name: "AC-5 Wholesale ZKBearing registration reject",
         outcome: if matches!(err_reg, Err(RegistryError::WholesaleCannotRegisterZK)) {
@@ -365,7 +373,7 @@ fn closure_acceptance_all_vectors_emitting_structured_report() {
 
     // ---- AC-7: Hybrid without explicit mint resolves to V1 ----
     let mut reg2 = CapabilityClassRegistry::new();
-    let r_reg2 = reg2.register("hslot", NodeType::Hybrid, CapabilityClass::V1);
+    let r_reg2 = reg2.register("hslot", WalletNodeType::Hybrid, CapabilityClass::V1);
     let class_hybrid = reg2.capability_class_of("hslot");
     report.push(VectorReport {
         name: "AC-7 Hybrid default → V1 (no ZK)",

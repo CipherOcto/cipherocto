@@ -198,8 +198,9 @@ fn parse_wire_to_token(
 
     let macaroon: crate::macaroon::Macaroon = json_canon::from_slice(&macaroon_bytes)
         .map_err(|e| WireError::Parse(format!("macaroon json: {e}")))?;
-    let discharges: Vec<crate::token::DischargeMacaroon> = json_canon::from_slice(&discharges_bytes)
-        .map_err(|e| WireError::Parse(format!("discharges json: {e}")))?;
+    let discharges: Vec<crate::token::DischargeMacaroon> =
+        json_canon::from_slice(&discharges_bytes)
+            .map_err(|e| WireError::Parse(format!("discharges json: {e}")))?;
 
     let proof_bundle = if parts.len() == 4 {
         let pb = URL_SAFE_NO_PAD

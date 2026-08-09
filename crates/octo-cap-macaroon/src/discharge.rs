@@ -896,10 +896,7 @@ mod tests {
             pub_bytes: [u8; 32],
         }
         impl CapabilitySigner for TestSigner {
-            fn sign(
-                &self,
-                msg: &[u8],
-            ) -> Result<[u8; 64], crate::signer::CapabilitySignerError> {
+            fn sign(&self, msg: &[u8]) -> Result<[u8; 64], crate::signer::CapabilitySignerError> {
                 let sk = SigningKey::from_bytes(&self.key);
                 let sig = sk.sign(msg);
                 Ok(sig.to_bytes())

@@ -30,10 +30,11 @@ pub use bearer_capsule_re_export::BearerCapsule;
 pub use caveat::{Caveat, CaveatName, MicroOctoW, UnixTimeSecs};
 pub use discharge::{
     verify_discharges, ChannelProvider, ChannelProviderRegistry, ChannelProviderResolver,
-    DischargeChannel, DischargeError, DischargeMacaroon, DischargeRequest, DischargeVerification,
-    EscrowBalance, EscrowDischargeProvider, RateLimitContext, RateLimitDischargeProvider,
+    DischargeChannel, DischargeError, DischargeRequest, DischargeVerification, EscrowBalance,
+    EscrowDischargeProvider, RateLimitContext, RateLimitDischargeProvider,
     RevocationDischargeProvider, REVOCATION_DISCHARGE_TTL_SECS,
 };
+pub use octo_cap_macaroon::DischargeMacaroon;
 pub use macaroon::{
     hmac_blake3, macaroon_id, CapabilityCatalog, Macaroon, MacaroonError, MacaroonId,
 };

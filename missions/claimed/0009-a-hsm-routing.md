@@ -84,7 +84,22 @@ RFC-0009 HSM routing is multi-file (identity.rs + 4 capability files + tests). B
 
 ## Pull Request
 
-(unset)
+3eca8525 (local; push + remote writes await user instruction per [[git-workflow]])
+
+## Closure Summary
+
+Implementation landed in commit `3eca8525` on `next` branch. 9 files changed,
+343 insertions / 50 deletions. `IdentityKey` now wraps `Arc<dyn HsmAdapter>`
+with byte-identical signature parity preserved for `InMemorySigner`-backed
+keys. Production hardware adapters (Ledger / YubiHSM / TPM) can plug in via
+`IdentityKey::with_signer()` without changing call sites.
+
+315/315 unit tests pass; 5/5 cross_role_data_flow tests pass; clippy -D
+warnings clean; fmt clean; workspace builds.
+
+Next serial-path mission: **`0010-d-wallet-audience-validation`** —
+AudienceId DID validation (RFC-0010 v1.2 §`parse` step 3); ~30 min surgical
+fix in `crates/octo-wallet/src/identity.rs::AudienceId::from_str`.
 
 ## Notes
 

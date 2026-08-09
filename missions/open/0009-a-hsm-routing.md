@@ -76,7 +76,7 @@ Refactor `IdentityKey` (and every signing call site in `octo-wallet`) to route t
 
 ## Decomposition Rationale
 
-RFC-0009 v1.1 HSM routing is multi-file (identity.rs + 4 capability files + tests). Below the BLUEPRINT §Multi-Mission Decomposition threshold (>10 types, >4 phases, different prerequisite chains). Single mission.
+RFC-0009 HSM routing is multi-file (identity.rs + 4 capability files + tests). Below the BLUEPRINT §Multi-Mission Decomposition threshold (>10 types, >4 phases, different prerequisite chains). Single mission.
 
 ## Claimant
 

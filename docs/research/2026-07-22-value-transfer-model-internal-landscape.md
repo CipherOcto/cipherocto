@@ -106,7 +106,7 @@ No prior internal research on:
 | Per-DID OCTO-W account | implied (resale market) | RFC-0934 partial (per-key) | `octo_w_balances` per-key | **GAP** — no DID-keyed accounts |
 | Value transfer between DIDs | implied (resale, settlement) | RFC-0102 sketch only | none | **GAP** — no `transfers` table |
 | Escrow hold/release | implied (Step 6) | RFC-0957 channel assumes it | none | **GAP** — no escrow primitive |
-| Multi-token (role tokens) | explicit (L156-163, dual-stake L1921) | RFC-0955 partial | none | **GAP** — OCTO-A/B/D/etc. not in any schema |
+| Multi-token (role tokens) | explicit (whitepaper §Token role table; §Dual-stake model) | RFC-0955 partial | none | **GAP** — OCTO-A/B/D/etc. not in any schema |
 | Link transfer ↔ settlement_hash | implied | RFC-0959 spec'd cost but not movement | none | **GAP** — no FK between receipts and transfers |
 | Capability-gated spend | NOT addressed | RFC-0957 channel layer exists | discharge.rs has the channel | **GAP** — no per-capability spending policy |
 | Negative-balance defense | implied (misbehaving agents lose viability) | not addressed | `saturating_sub` L27 silently underflows | **BUG** |
@@ -190,7 +190,7 @@ struct SpendPolicy {
 The holder signs a transfer; the verifier checks: (1) holder signature valid; (2) holder's balance ≥ amount; (3) capability token's SpendPolicy allows this transfer; (4) if `requires_receipt_signature_by` is set, the co-signer's RFC-0959 settlement receipt is attached.
 
 **Pros:**
-- Maps the whitepaper's "permission scopes" + "cryptographic accountability" (L1390-1395) onto actual spend authority
+- Maps the whitepaper's "permission scopes" + "cryptographic accountability" (§Cryptographic Accountability) onto actual spend authority
 - Maps RFC-0957's existing discharge-channel model — instead of "escrow oracle checked balance", the capability IS the escrow (it carries the policy)
 - Lets a holder delegate spend to a sub-agent with a tighter policy (e.g., a daily limit) without moving actual tokens
 - Naturally ties to Phase E mission keys (per-mission per-(asker, model) keys already exist) — a capability can be tied to a mission
@@ -260,16 +260,16 @@ This is the hypothesis. External research phases will test it against:
 ## 7. References
 
 Internal:
-- docs/01-foundation/whitepaper/v0.1-draft.md (token role table L156-163; dual-stake L1921)
-- rfcs/accepted/economics/0904-real-time-cost-tracking.md (counter model)
-- rfcs/accepted/economics/0934-budget-management-spend-tracking.md (per-key budget)
-- rfcs/accepted/economics/0957-capability-token-format.md (assumes escrow oracle exists)
-- rfcs/accepted/economics/0959-ask-settlement-chain.md (settlement receipt only)
-- rfcs/accepted/numeric/0102-wallet-cryptography.md (Transfer struct sketch L95)
-- rfcs/draft/economics/0955-model-liquidity-layer.md (TransferOwnership sketch)
-- crates/quota-router-core/src/balance.rs (in-memory, saturating_sub bug L27)
-- crates/quota-router-core/src/schema.rs (octo_w_balances table L182)
-- crates/quota-router-core/src/storage.rs (get/deduct impls L1062-1098)
+- docs/01-foundation/whitepaper/v0.1-draft.md (§Token role table; §Dual-stake model)
+- rfcs/accepted/economics/0904-real-time-cost-tracking.md (§counter model)
+- rfcs/accepted/economics/0934-budget-management-spend-tracking.md (§per-key budget)
+- rfcs/accepted/economics/0957-capability-token-format.md (§escrow oracle assumption)
+- rfcs/accepted/economics/0959-ask-settlement-chain.md (§settlement receipt)
+- rfcs/accepted/numeric/0102-wallet-cryptography.md (§Transfer struct sketch)
+- rfcs/draft/economics/0955-model-liquidity-layer.md (§TransferOwnership sketch)
+- crates/quota-router-core/src/balance.rs (§in-memory saturating_sub bug)
+- crates/quota-router-core/src/schema.rs (§octo_w_balances table)
+- crates/quota-router-core/src/storage.rs (§get/deduct impls)
 - crates/octo-wallet/src/capability/discharge.rs (Channel::Escrow)
 - crates/octo-wallet/src/key_hierarchy.rs (Phase E mission keys)
 

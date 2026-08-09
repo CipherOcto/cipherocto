@@ -12,9 +12,9 @@ change needed. All 10 ACs GREEN. Owner: @cipherocto.
 
 ## RFC
 
-RFC-0850 v1.2.0 (Networking): Deterministic Overlay Transport — §8.9 UDP Transport Profile
-RFC-0863 v1.5 (Networking): General-Purpose Network Integration — PlatformAdapter bridge
-RFC-0870 v1.11 (Networking): Distributed Quota Router Network — gossip transport
+RFC-0850 (Networking): Deterministic Overlay Transport — §8.9 UDP Transport Profile
+RFC-0863 (Networking): General-Purpose Network Integration — PlatformAdapter bridge
+RFC-0870 (Networking): Distributed Quota Router Network — gossip transport
 
 ## Dependencies
 

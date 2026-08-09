@@ -46,7 +46,7 @@ Migrate `QuotaRouterNode` outbound + inbound payloads to use the unified `NodeEn
 
 ### RFC-0871 dependency
 
-- [ ] RFC-0871 reaches Accepted status BEFORE this mission's implementation starts (per BLUEPRINT §Mission Dependency Model + RFC-0870 v2.0 §NodeEnvelope Adoption)
+- [ ] RFC-0871 reaches Accepted status BEFORE this mission's implementation starts (per BLUEPRINT §Mission Dependency Model + RFC-0870 §NodeEnvelope Adoption)
 
 ## Dependencies
 
@@ -78,7 +78,7 @@ Migrate `QuotaRouterNode` outbound + inbound payloads to use the unified `NodeEn
 
 ## Decomposition Rationale
 
-RFC-0870 v2.0 NodeEnvelope adoption is multi-file (`node/{handler,mod,forward,gossip}.rs` + new `octo-protocol` crate from RFC-0871). Below the BLUEPRINT §Multi-Mission Decomposition threshold (>10 types, >4 phases, different prerequisite chains). Single mission.
+RFC-0870 NodeEnvelope adoption is multi-file (`node/{handler,mod,forward,gossip}.rs` + new `octo-protocol` crate from RFC-0871). Below the BLUEPRINT §Multi-Mission Decomposition threshold (>10 types, >4 phases, different prerequisite chains). Single mission.
 
 ## Claimant
 
@@ -91,7 +91,7 @@ RFC-0870 v2.0 NodeEnvelope adoption is multi-file (`node/{handler,mod,forward,go
 ## Notes
 
 - This mission depends on RFC-0871 reaching Accepted status. If RFC-0871 is rejected or significantly changed, this mission's scope may shift.
-- 6-month backward-compat window per RFC-0870 v2.0; documented in production rollout plan.
+- 6-month backward-compat window per RFC-0870 §NodeEnvelope Adoption; documented in production rollout plan.
 - Mission is the quota-side complement to mission `0969-a-gateway-relocation.md` (gateway-side envelope adoption).
 
 **Version History:**

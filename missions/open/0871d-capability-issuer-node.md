@@ -100,7 +100,7 @@ Per BLUEPRINT §Mission template. RFC-0871 §Roles and Authorities + RFC-0957 + 
 - `crates/octo-protocol` — Phase 1 envelope types (mission `0871-protocol-core-envelope.md`)
 - `crates/octo-wallet` — wallet substrate (`CapabilityToken::mint`, macaroon substrate)
 - `crates/octo-ident` — DID parsing
-- `crates/octo-transport` — NodeTransport (RFC-0863)
+- `octo-transport` — NodeTransport (RFC-0863); crate lives at workspace root
 
 **Mission gates (sequential):**
 

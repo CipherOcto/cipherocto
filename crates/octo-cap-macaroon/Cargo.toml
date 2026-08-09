@@ -40,6 +40,8 @@ quota-router-storage = { path = "../quota-router-storage" }
 octo-transport = { path = "../../octo-transport" }
 # Ed25519 signature type (CapabilityToken.holder_sig field).
 ed25519-dalek = { version = "2.2", features = ["serde"] }
+# base64 for capability token wire format encoding (RFC-0957 §3.7).
+base64 = "0.22"
 
 [dev-dependencies]
 # Property-based tests in `macaroon.rs` (`proptest!` macros).

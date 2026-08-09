@@ -53,6 +53,7 @@ pub mod caveat;
 pub mod macaroon;
 pub mod signer;
 pub mod token;
+pub mod wire;
 
 // Re-exports for ergonomic single-import paths.
 pub use caveat::{
@@ -66,6 +67,10 @@ pub use macaroon::{
 };
 pub use signer::{CapabilitySigner, CapabilitySignerError};
 pub use token::{CapabilityToken, DischargeMacaroon, MintError};
+pub use wire::{
+    compute_cap_root_hash_from_wire, deserialize_wire, deserialize_wire_v2, serialize_wire,
+    serialize_wire_v2, WireError, WireV2,
+};
 
 /// Domain separator byte for `capability_id` derivation (RFC-0965 §3.7).
 ///

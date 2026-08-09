@@ -177,7 +177,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             seed_out,
         } => {
             let id = IdentityKey::generate()?;
-            std::fs::write(&seed_out, id.seed_bytes())?;
+            std::fs::write(&seed_out, id.seed_bytes_for_hkdf()?)?;
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;

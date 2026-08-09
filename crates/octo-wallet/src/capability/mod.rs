@@ -157,7 +157,7 @@ impl CapabilityToken {
         let holder_did = holder_did.to_owned();
 
         let msg = Self::holder_msg(&macaroon.root_id, &macaroon.caveats);
-        let holder_sig = holder.sign(&msg);
+        let holder_sig = holder.sign(&msg)?;
 
         Ok(Self {
             macaroon,
@@ -208,7 +208,7 @@ impl CapabilityToken {
         let mut next = self.clone();
         next.macaroon = next.macaroon.attenuate(caveat, catalog)?;
         let msg = Self::holder_msg(&next.macaroon.root_id, &next.macaroon.caveats);
-        next.holder_sig = holder.sign(&msg);
+        next.holder_sig = holder.sign(&msg)?;
         next.holder_sig_stale = false;
         Ok(next)
     }
@@ -285,6 +285,12 @@ pub enum MintError {
 
     #[error("holder signature error: {0}")]
     HolderSig(String),
+
+    /// HSM adapter failure (mission `0009-a` HsmAdapter routing). Propagates
+    /// from `IdentityKey::sign` when the underlying `HsmAdapter` rejects the
+    /// operation (user denied on-device, transport failure, etc.).
+    #[error("HSM error: {0}")]
+    Hsm(#[from] crate::error::WalletError),
 }
 
 #[cfg(test)]

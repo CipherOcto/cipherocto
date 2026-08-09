@@ -2,6 +2,8 @@
 
 use thiserror::Error;
 
+use crate::hsm::HsmError;
+
 /// Top-level error for `octo-wallet`.
 #[derive(Debug, Error)]
 pub enum WalletError {
@@ -19,6 +21,9 @@ pub enum WalletError {
 
     #[error("signature verification failed: {0}")]
     Signature(String),
+
+    #[error("HSM error: {0}")]
+    Hsm(#[from] HsmError),
 
     #[error("vault slot not found: {0}")]
     VaultSlotNotFound(String),

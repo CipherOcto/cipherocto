@@ -1,75 +1,146 @@
 //! Identity substrate.
 //!
-//! Per RFC-0009 §Identity Key Format + §Capability Keys:
-//! - `IdentityKey` is a newtype wrapper around an Ed25519 signing keypair.
-//! - `CapabilityKey` is a 32-byte symmetric key derived per-(audience, channel).
-//!
-//! The `ed25519-dalek` type is intentionally NOT exposed above this module.
-//! Downstream code consumes `IdentityKey` / `CapabilityKey` only — keeping the
-//! substrate swappable (RFC-0853 §Substrate Migration tracks future curve work).
+//! Per RFC-0009 §Identity Key Format + §Capability Keys + RFC-0009 v1.1
+//! §HsmAdapter Integration:
+//! - `IdentityKey` holds an `Arc<dyn HsmAdapter>` for signing operations
+//!   (host memory for `InMemorySigner`, secure element for `LedgerSigner`).
+//! - The raw seed NEVER leaves the adapter; production `LedgerSigner` signs
+//!   on-device with explicit user confirmation.
+//! - `CapabilityKey` is a 32-byte symmetric key derived per-(audience, channel)
+//!   via HKDF-BLAKE3; for `InMemorySigner`-backed identities the derivation
+//!   uses the adapter's seed (crate-internal accessor only).
 
 use std::str::FromStr;
+use std::sync::Arc;
 
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::error::WalletError;
+use crate::hsm::{HsmAdapter, InMemorySigner};
 
-/// Ed25519 identity keypair. Newtype wrapper around `ed25519-dalek::SigningKey`.
+/// Ed25519 identity keypair. Wraps an `Arc<dyn HsmAdapter>` + cached
+/// 32-byte public key.
 ///
-/// Per RFC-0009 §Identity Key Format:
-/// - `seed_bytes()` (32 bytes) is the identity seed used as HKDF salt.
-/// - `verifying_key()` produces the public key (32 bytes) bound to the DID.
-#[derive(Clone, ZeroizeOnDrop)]
-pub struct IdentityKey(SigningKey);
+/// Per RFC-0009 v1.1 §HsmAdapter Integration:
+/// - `sign()` delegates to `self.signer.sign(msg)`; never touches host memory
+///   for production `LedgerSigner` (seed lives in secure element).
+/// - The raw seed is accessible only via the adapter — `InMemorySigner` exposes
+///   it crate-internally for HKDF + keystore-export paths; hardware adapters
+///   do not expose it at all.
+pub struct IdentityKey {
+    signer: Arc<dyn HsmAdapter>,
+    public_key: [u8; 32],
+}
 
 impl std::fmt::Debug for IdentityKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("IdentityKey")
-            .field(
-                "public_key",
-                &hex::encode(self.0.verifying_key().to_bytes()),
-            )
+            .field("public_key", &hex::encode(self.public_key))
+            .field("signer", &"<dyn HsmAdapter>")
             .finish_non_exhaustive()
     }
 }
 
+impl Clone for IdentityKey {
+    fn clone(&self) -> Self {
+        Self {
+            signer: self.signer.clone(),
+            public_key: self.public_key,
+        }
+    }
+}
+
 impl IdentityKey {
-    /// Generate a fresh identity key from OS CSPRNG.
+    /// Generate a fresh identity key from OS CSPRNG (defaults to
+    /// `InMemorySigner` for MVP; production swaps in a hardware adapter via
+    /// [`IdentityKey::with_signer`]).
     ///
     /// # Errors
     /// Returns `WalletError::OsRng` if the OS RNG fails (extremely rare).
     pub fn generate() -> Result<Self, WalletError> {
         let mut seed = [0u8; 32];
         getrandom::getrandom(&mut seed).map_err(|e| WalletError::OsRng(e.to_string()))?;
-        let signing = SigningKey::from_bytes(&seed);
+        let k = Self::from_seed(seed);
         seed.zeroize();
-        Ok(Self(signing))
+        Ok(k)
     }
 
-    /// Restore from a 32-byte seed (deterministic per RFC-0009 §Identity Key Format).
+    /// Restore from a 32-byte seed using the default `InMemorySigner`.
     pub fn from_seed(seed: [u8; 32]) -> Self {
-        Self(SigningKey::from_bytes(&seed))
+        let sk = ed25519_dalek::SigningKey::from_bytes(&seed);
+        let public_key = sk.verifying_key().to_bytes();
+        Self {
+            signer: Arc::new(InMemorySigner::new(seed, public_key)),
+            public_key,
+        }
     }
 
-    /// Identity seed bytes (32 bytes). Used as HKDF salt for capability derivation.
-    /// MUST be zeroized after use in capability derivation.
-    #[must_use]
-    pub fn seed_bytes(&self) -> [u8; 32] {
-        self.0.to_bytes()
+    /// Construct an `IdentityKey` backed by an arbitrary `HsmAdapter` impl
+    /// (e.g. `LedgerSigner`). The public key is sourced from the adapter.
+    ///
+    /// # Errors
+    /// Returns `WalletError::Hsm(HsmError::Device)` if `get_public_key`
+    /// fails on the adapter (transport failure).
+    pub fn with_signer(signer: Arc<dyn HsmAdapter>) -> Result<Self, WalletError> {
+        let public_key = signer.get_public_key()?;
+        Ok(Self { signer, public_key })
+    }
+
+    /// Crate-internal seed accessor for HKDF derivation. Returns the seed
+    /// when the adapter IS an `InMemorySigner`; otherwise returns an error.
+    /// This is the ONLY path that exposes the raw seed bytes; production
+    /// hardware adapters cannot satisfy it.
+    ///
+    /// # Errors
+    /// Returns `WalletError::Hsm(HsmError::Device)` when the adapter is not
+    /// an `InMemorySigner` (production hardware wallets MUST NOT export seed).
+    ///
+    /// **Note:** `pub` (not `pub(crate)`) because the `octo-wallet` CLI binary
+    /// (`src/bin/octo-wallet.rs`) needs to export the seed for vault
+    /// initialization. Any other consumer should use `IdentityKey::sign()`
+    /// which delegates to the adapter without exposing the seed.
+    pub fn seed_bytes_for_hkdf(&self) -> Result<[u8; 32], WalletError> {
+        // MVP shortcut: every `IdentityKey::from_seed` constructs with
+        // `InMemorySigner` as the adapter. Production wirings using real
+        // `LedgerSigner` would need a separate `LedgerSigner::export_seed`
+        // APDU (deliberately not implemented — seed export is what hardware
+        // wallets REFUSE to do). For now, when a non-InMemorySigner is in
+        // use, the caller must catch this error.
+        let any = self.signer.as_any();
+        if let Some(in_mem) = any.downcast_ref::<InMemorySigner>() {
+            Ok(in_mem.seed_bytes())
+        } else {
+            Err(WalletError::Hsm(crate::hsm::HsmError::Device(
+                "seed export not supported by hardware adapter".to_owned(),
+            )))
+        }
     }
 
     /// Public verifying key (32 bytes Ed25519 public key).
     #[must_use]
     pub fn public_key_bytes(&self) -> [u8; 32] {
-        self.0.verifying_key().to_bytes()
+        self.public_key
     }
 
-    /// Ed25519 signature over `msg`.
+    /// Ed25519 signature over `msg`. Delegates to the underlying
+    /// `HsmAdapter::sign` — production `LedgerSigner` will prompt the user
+    /// on-device; rejection propagates as `WalletError::Hsm(HsmError::UserRejected)`.
+    ///
+    /// # Errors
+    /// Returns `WalletError::Hsm(_)` on any adapter failure (transport,
+    /// user rejection, device error).
+    pub fn sign(&self, msg: &[u8]) -> Result<Signature, WalletError> {
+        let sig_bytes = self.signer.sign(msg)?;
+        Ok(Signature::from_bytes(&sig_bytes))
+    }
+
+    /// Borrow the underlying signer (e.g. for tests asserting parity with
+    /// direct adapter calls).
     #[must_use]
-    pub fn sign(&self, msg: &[u8]) -> Signature {
-        self.0.sign(msg)
+    pub fn signer(&self) -> &Arc<dyn HsmAdapter> {
+        &self.signer
     }
 
     /// Verify a signature (useful for self-tests).
@@ -77,8 +148,9 @@ impl IdentityKey {
     /// # Errors
     /// Returns `WalletError::Signature` if the signature is invalid.
     pub fn verify(&self, msg: &[u8], sig: &Signature) -> Result<(), WalletError> {
-        VerifyingKey::from(&self.0)
-            .verify(msg, sig)
+        let vk = VerifyingKey::from_bytes(&self.public_key)
+            .map_err(|e| WalletError::Signature(e.to_string()))?;
+        vk.verify(msg, sig)
             .map_err(|e| WalletError::Signature(e.to_string()))
     }
 }
@@ -182,12 +254,16 @@ impl std::fmt::Display for ChannelId {
     }
 }
 
-/// Derive a per-(audience, channel) capability key from an identity seed.
+/// Derive a per-(audience, channel) capability key from an identity.
 ///
 /// `capability_root = HKDF-BLAKE3(salt=identity_seed, info="cipherocto/cap/v1/{channel_id}", ikm=audience_did)`
 ///
 /// Per RFC-0009 §Capability Keys:
-/// - salt = identity_seed (per-identity domain separation)
+/// - salt = identity_seed (per-identity domain separation; sourced from
+///   adapter for `InMemorySigner`; returns `WalletError::Hsm` for hardware
+///   adapters that cannot export the seed — those adapters are NOT supported
+///   for HKDF-derived capability roots; mission `0871a` defines the
+///   hardware-wallet capability mint path)
 /// - info = `cipherocto/cap/v1/{channel_id}` (versioned namespace)
 /// - ikm = audience_did (audience unlinkability)
 ///
@@ -196,22 +272,25 @@ impl std::fmt::Display for ChannelId {
 ///
 /// # Errors
 /// Returns `WalletError::InvalidAudienceId` / `WalletError::InvalidChannelId`
-/// if the inputs fail validation.
+/// if the inputs fail validation, or `WalletError::Hsm` when the identity's
+/// adapter cannot export the seed.
 pub fn derive_capability_key(
     identity: &IdentityKey,
     audience: &AudienceId,
     channel: &ChannelId,
 ) -> Result<CapabilityKey, WalletError> {
-    // RFC-0009 §Capability Keys: `HKDF-BLAKE3(salt=identity_seed, info="cipherocto/cap/v1/{channel_id}", ikm=audience_did)`.
-    // We use `blake3::derive_key` which is HKDF-style Extract-and-Expand with BLAKE3 as the
-    // underlying hash (per blake3 spec §5.4). Context string encodes info + ikm; salt (identity_seed)
-    // is prepended to key_material for per-identity domain separation.
+    // RFC-0009 §Capability Keys: HKDF-BLAKE3(salt=identity_seed,
+    // info="cipherocto/cap/v1/{channel_id}", ikm=audience_did).
+    // We use `blake3::derive_key` (HKDF-style Extract-and-Expand with BLAKE3).
+    // Salt is sourced from the adapter (InMemorySigner exposes it crate-internally;
+    // hardware adapters refuse to export it).
     let info = channel.info_string();
     let ikm = audience.to_string();
     let context = format!("{info}:{ikm}");
 
+    let seed = identity.seed_bytes_for_hkdf()?;
     let mut salted_ikm = Vec::with_capacity(32 + ikm.len());
-    salted_ikm.extend_from_slice(&identity.seed_bytes());
+    salted_ikm.extend_from_slice(&seed);
     salted_ikm.extend_from_slice(ikm.as_bytes());
 
     let derived = blake3::derive_key(&context, &salted_ikm);
@@ -223,13 +302,81 @@ pub fn derive_capability_key(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hsm::InMemorySigner;
+    use ed25519_dalek::Signer;
 
     #[test]
     fn generate_sign_verify_roundtrip() {
         let k = IdentityKey::generate().expect("generate");
         let msg = b"hello world";
-        let sig = k.sign(msg);
+        let sig = k.sign(msg).expect("sign");
         k.verify(msg, &sig).expect("verify");
+    }
+
+    #[test]
+    fn from_seed_signs_deterministically() {
+        let seed = [42u8; 32];
+        let k = IdentityKey::from_seed(seed);
+        let msg = b"deterministic";
+        let sig1 = k.sign(msg).expect("sign 1");
+        let sig2 = k.sign(msg).expect("sign 2");
+        assert_eq!(sig1, sig2, "Ed25519 sign must be deterministic");
+    }
+
+    #[test]
+    fn in_memory_signer_byte_identical_to_raw_signing_key() {
+        // RFC-0009 byte-identical parity: HsmAdapter-mediated signing MUST
+        // produce the same bytes as a direct ed25519_dalek::SigningKey call.
+        let seed = [99u8; 32];
+        let raw_sk = ed25519_dalek::SigningKey::from_bytes(&seed);
+        let raw_sig = raw_sk.sign(b"parity check");
+
+        let id = IdentityKey::from_seed(seed);
+        let adapter_sig = id.sign(b"parity check").expect("adapter sign");
+        assert_eq!(raw_sig.to_bytes(), adapter_sig.to_bytes());
+    }
+
+    #[test]
+    fn public_key_matches_signing_key_derivation() {
+        let seed = [7u8; 32];
+        let expected_pk = ed25519_dalek::SigningKey::from_bytes(&seed)
+            .verifying_key()
+            .to_bytes();
+        let id = IdentityKey::from_seed(seed);
+        assert_eq!(id.public_key_bytes(), expected_pk);
+    }
+
+    #[test]
+    fn seed_export_blocked_for_hardware_adapter() {
+        // RFC-0009 A9 mitigation: a hardware-backed IdentityKey MUST NOT
+        // expose its seed via `seed_bytes_for_hkdf`. We simulate a hardware
+        // adapter with a custom HsmAdapter that returns a fixed public key.
+        struct FakeHwAdapter {
+            pk: [u8; 32],
+        }
+        impl HsmAdapter for FakeHwAdapter {
+            fn get_public_key(&self) -> Result<[u8; 32], crate::hsm::HsmError> {
+                Ok(self.pk)
+            }
+            fn sign(&self, _msg: &[u8]) -> Result<[u8; 64], crate::hsm::HsmError> {
+                Ok([0u8; 64])
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+        let pk = [1u8; 32];
+        let id = IdentityKey::with_signer(Arc::new(FakeHwAdapter { pk })).unwrap();
+        let r = id.seed_bytes_for_hkdf();
+        assert!(matches!(r, Err(WalletError::Hsm(_))));
+    }
+
+    #[test]
+    fn derive_capability_key_succeeds_for_in_memory() {
+        let k = IdentityKey::from_seed([7u8; 32]);
+        let aud: AudienceId = "did:octo:zTest".parse().unwrap();
+        let ch: ChannelId = "channel-1".parse().unwrap();
+        let _ = derive_capability_key(&k, &aud, &ch).expect("hkdf derive");
     }
 
     #[test]
@@ -279,5 +426,13 @@ mod tests {
     fn channel_info_string() {
         let ch: ChannelId = "test".parse().unwrap();
         assert_eq!(ch.info_string(), "cipherocto/cap/v1/test");
+    }
+
+    #[test]
+    fn in_memory_signer_factory_round_trips() {
+        // Sanity check the construction path used by `IdentityKey::from_seed`.
+        let seed = [11u8; 32];
+        let s = InMemorySigner::new(seed, [0u8; 32]);
+        assert_eq!(s.seed_bytes(), seed);
     }
 }

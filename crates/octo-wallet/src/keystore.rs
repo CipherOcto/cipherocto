@@ -266,7 +266,7 @@ impl StarkliCompat {
         rng.fill_bytes(&mut nonce_bytes);
         let cipher = ChaCha20Poly1305::new(Key::from_slice(&aead_key));
         let nonce = Nonce::from_slice(&nonce_bytes);
-        let seed = key.seed_bytes();
+        let seed = key.seed_bytes_for_hkdf()?;
         // AEAD encrypt produces ciphertext || tag (16-byte Poly1305 tag).
         let ct_with_tag = cipher
             .encrypt(nonce, seed.as_ref())

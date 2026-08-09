@@ -932,7 +932,7 @@ mod tests {
             v.extend_from_slice(&id);
             v
         };
-        let sig = holder.sign(&msg);
+        let sig = holder.sign(&msg).expect("holder sign in test");
         super::super::CapabilityToken {
             macaroon,
             holder_pub: holder.public_key_bytes(),

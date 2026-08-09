@@ -42,6 +42,13 @@ pub trait HsmAdapter: Send + Sync {
     /// Returns `HsmError::UserRejected` if the user denies on-device,
     /// `HsmError::Device` on transport failure.
     fn sign(&self, msg: &[u8]) -> Result<[u8; 64], HsmError>;
+
+    /// Downcast hook for `Any` introspection. Required by callers that need
+    /// to access adapter-specific state (e.g. `IdentityKey::seed_bytes_for_hkdf`
+    /// downcasting to `InMemorySigner`). Each impl returns `self` cast to
+    /// `&dyn Any`; the caller's `downcast_ref::<T>()` will succeed when the
+    /// concrete type matches `T`.
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// In-memory HSM adapter (MVP default; wraps `IdentityKey`).
@@ -76,6 +83,15 @@ impl InMemorySigner {
             public_key,
         }
     }
+
+    /// Borrow the 32-byte identity seed. Restricted to crate-internal callers
+    /// (mission `0009-a` A9 mitigation: prevent host-side seed exfiltration).
+    /// Production hardware wallets MUST NOT expose this — the seed lives only
+    /// inside the secure element.
+    #[must_use]
+    pub(crate) fn seed_bytes(&self) -> [u8; 32] {
+        self.seed_bytes
+    }
 }
 
 impl HsmAdapter for InMemorySigner {
@@ -89,6 +105,10 @@ impl HsmAdapter for InMemorySigner {
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&self.seed_bytes);
         let sig = signing_key.sign(msg);
         Ok(sig.to_bytes())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -133,6 +153,10 @@ impl HsmAdapter for LedgerSigner {
         // Production: dispatch APDU `SIGN_PAYMENT` to Ledger; user confirms
         // on-device; device returns 64-byte Ed25519 signature.
         self.inner.sign(msg)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

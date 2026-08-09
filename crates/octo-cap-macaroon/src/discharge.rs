@@ -870,6 +870,43 @@ mod tests {
         assert!(matches!(err, DischargeError::UnknownChannel(_)));
     }
 
+    /// `verify_discharges` must surface `ChannelRejected` when the registered
+    /// provider's predicate returns `valid: false`. The escrow provider's
+    /// "balance < requested" path is the canonical example: empty escrow
+    /// context rejects, so a discharge with no balance context is rejected.
+    /// R2 finding: this exit was uncovered; provider tests exercise
+    /// `verify_discharge` directly but never through `verify_discharges`.
+    #[test]
+    fn verify_discharges_channel_rejected() {
+        let mut registry = ChannelProviderRegistry::default();
+        registry.register(EscrowDischargeProvider::new());
+
+        let discharge = DischargeMacaroon {
+            channel: "escrow".to_owned(),
+            root_secret_hash: [0; 32],
+            chain: vec![[0; 32]],
+            caveats: vec![],
+        };
+        let token = test_token_with_discharge(
+            &octo_ident::test_helpers::sample_did(83),
+            vec![Caveat::ThirdParty("escrow".to_owned())],
+            discharge,
+        );
+        // Empty escrow context → EscrowDischargeProvider returns valid=false
+        // ("missing context" decodes as 0 bytes, fails-closed per RFC-0957 §3.6).
+        let err = verify_discharges(&token, &registry, &HashMap::new()).unwrap_err();
+        match err {
+            DischargeError::ChannelRejected { channel, reason } => {
+                assert_eq!(channel, "escrow");
+                assert!(
+                    !reason.is_empty(),
+                    "ChannelRejected must carry a non-empty reason"
+                );
+            }
+            other => panic!("expected ChannelRejected, got {other:?}"),
+        }
+    }
+
     // --- Test helpers (avoid constructing full CapabilityToken inline) ---
 
     fn test_token(holder_did: &str, caveats: Vec<Caveat>) -> crate::token::CapabilityToken {

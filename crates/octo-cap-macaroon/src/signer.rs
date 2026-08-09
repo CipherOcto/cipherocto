@@ -86,7 +86,7 @@ impl CapabilitySigner for std::sync::Arc<dyn CapabilitySigner> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::{Signer, SigningKey};
+    use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 
     /// Test fixture: thin Ed25519 keypair wrapper implementing `CapabilitySigner`.
     /// Mirrors the canonical `IdentityKey` impl in `octo-wallet` without taking
@@ -102,6 +102,26 @@ mod tests {
 
         fn public_key_bytes(&self) -> [u8; 32] {
             self.0.verifying_key().to_bytes()
+        }
+    }
+
+    /// Test fixture: signer that always fails with a configurable error
+    /// variant. Exercises the error-propagation contract of the blanket
+    /// `Box<dyn>` / `Arc<dyn>` impls.
+    #[derive(Debug)]
+    struct FailingTestSigner(CapabilitySignerError);
+
+    impl CapabilitySigner for FailingTestSigner {
+        fn sign(&self, _msg: &[u8]) -> Result<[u8; 64], CapabilitySignerError> {
+            Err(match &self.0 {
+                // Clone the inner String without moving out of `&self`.
+                CapabilitySignerError::Signer(s) => CapabilitySignerError::Signer(s.clone()),
+                CapabilitySignerError::Malformed(s) => CapabilitySignerError::Malformed(s.clone()),
+            })
+        }
+
+        fn public_key_bytes(&self) -> [u8; 32] {
+            [0u8; 32]
         }
     }
 
@@ -133,6 +153,24 @@ mod tests {
         assert_eq!(pk, s.0.verifying_key().to_bytes());
     }
 
+    /// Cross-check: `sign()` output must verify with `public_key_bytes()`.
+    /// Without this, the tests only prove mechanical properties (length,
+    /// determinism) — not that the signature is a valid Ed25519 signature
+    /// over the message under the returned public key. Cryptographic
+    /// validity is the load-bearing property for the `CapabilitySigner`
+    /// contract; an implementation bug that returned garbage bytes would
+    /// pass the other tests but fail here.
+    #[test]
+    fn sign_output_verifies_with_public_key() {
+        let s = fixture();
+        let msg = b"verify-me";
+        let sig_bytes = s.sign(msg).expect("sign");
+        let pk_bytes = s.public_key_bytes();
+        let vk = VerifyingKey::from_bytes(&pk_bytes).expect("pk parse");
+        let sig = Signature::from_bytes(&sig_bytes);
+        vk.verify(msg, &sig).expect("signature must verify");
+    }
+
     #[test]
     fn box_dyn_forwards_sign_and_pubkey() {
         let s = fixture();
@@ -161,5 +199,37 @@ mod tests {
         assert_eq!(a.public_key_bytes(), b.public_key_bytes());
         // Same backing key — same signature for the same message.
         assert_eq!(a.sign(b"shared").unwrap(), b.sign(b"shared").unwrap());
+    }
+
+    // --- Error path: blanket impls must propagate CapabilitySignerError ---
+
+    #[test]
+    fn box_dyn_propagates_signer_error() {
+        let failing = FailingTestSigner(CapabilitySignerError::Signer("hsm timeout".into()));
+        let boxed: Box<dyn CapabilitySigner> = Box::new(failing);
+        match boxed.sign(b"any") {
+            Err(CapabilitySignerError::Signer(msg)) => assert_eq!(msg, "hsm timeout"),
+            other => panic!("expected Signer error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn box_dyn_propagates_malformed_error() {
+        let failing = FailingTestSigner(CapabilitySignerError::Malformed("bad curve point".into()));
+        let boxed: Box<dyn CapabilitySigner> = Box::new(failing);
+        match boxed.sign(b"any") {
+            Err(CapabilitySignerError::Malformed(msg)) => assert_eq!(msg, "bad curve point"),
+            other => panic!("expected Malformed error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn arc_dyn_propagates_signer_error() {
+        let failing = FailingTestSigner(CapabilitySignerError::Signer("user denied".into()));
+        let arc: std::sync::Arc<dyn CapabilitySigner> = std::sync::Arc::new(failing);
+        match arc.sign(b"any") {
+            Err(CapabilitySignerError::Signer(msg)) => assert_eq!(msg, "user denied"),
+            other => panic!("expected Signer error, got {other:?}"),
+        }
     }
 }

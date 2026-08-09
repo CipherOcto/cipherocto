@@ -98,8 +98,6 @@ pub enum DischargeError {
     ChannelRejected { channel: ChannelId, reason: String },
     #[error("token references third-party caveat `{channel}` but no discharge attached")]
     MissingDischarge { channel: ChannelId },
-    #[error("discharge channel `{got}` does not satisfy token caveat `{expected}`")]
-    ChannelMismatch { expected: ChannelId, got: ChannelId },
 }
 
 /// Trait implemented by third-party channel operators (RFC-0957 §3.6).
@@ -215,8 +213,6 @@ impl ChannelProviderResolver for ChannelProviderRegistry {
 ///   matching discharge attached.
 /// - `DischargeError::UnknownChannel` if no provider is registered for
 ///   the channel.
-/// - `DischargeError::ChannelMismatch` if a discharge's channel field
-///   does not match the caveat's channel.
 /// - `DischargeError::ChannelRejected` if the provider rejects the
 ///   discharge (escrow too low, revoked, rate exceeded).
 // `implicit_hasher` (clippy::pedantic): the public API takes a concrete
@@ -234,7 +230,10 @@ pub fn verify_discharges(
         let Caveat::ThirdParty(expected_channel) = caveat else {
             continue;
         };
-        // Find a discharge for this channel.
+        // Find a discharge for this channel. The `find` filter guarantees
+        // `discharge.channel == expected_channel` by construction; the
+        // earlier defensive re-check was dead code (the bound `discharge`
+        // is an immutable borrow and cannot diverge from the filter).
         let discharge = token
             .discharges
             .iter()
@@ -242,15 +241,6 @@ pub fn verify_discharges(
             .ok_or_else(|| DischargeError::MissingDischarge {
                 channel: expected_channel.clone(),
             })?;
-        // Channel ID sanity (the discharge's `channel` field MUST equal
-        // the caveat's expected channel; already implied by `find`, but
-        // surfaces a structured error if the wire was tampered).
-        if discharge.channel != *expected_channel {
-            return Err(DischargeError::ChannelMismatch {
-                expected: expected_channel.clone(),
-                got: discharge.channel.clone(),
-            });
-        }
         // Provider lookup + verify.
         let provider = resolver
             .resolve(expected_channel)

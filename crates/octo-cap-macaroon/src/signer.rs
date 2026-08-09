@@ -82,3 +82,84 @@ impl CapabilitySigner for std::sync::Arc<dyn CapabilitySigner> {
         (**self).public_key_bytes()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    /// Test fixture: thin Ed25519 keypair wrapper implementing `CapabilitySigner`.
+    /// Mirrors the canonical `IdentityKey` impl in `octo-wallet` without taking
+    /// on the HSM-routing / RFC-0009 §Identity dependencies.
+    #[derive(Debug)]
+    struct TestSigner(SigningKey);
+
+    impl CapabilitySigner for TestSigner {
+        fn sign(&self, msg: &[u8]) -> Result<[u8; 64], CapabilitySignerError> {
+            let sig = self.0.sign(msg);
+            Ok(sig.to_bytes())
+        }
+
+        fn public_key_bytes(&self) -> [u8; 32] {
+            self.0.verifying_key().to_bytes()
+        }
+    }
+
+    fn fixture() -> TestSigner {
+        // Deterministic 32-byte seed for reproducible tests.
+        TestSigner(SigningKey::from_bytes(&[7u8; 32]))
+    }
+
+    #[test]
+    fn sign_produces_64_byte_signature() {
+        let s = fixture();
+        let sig = s.sign(b"hello").expect("sign");
+        assert_eq!(sig.len(), 64);
+    }
+
+    #[test]
+    fn sign_is_deterministic_for_same_message() {
+        let s = fixture();
+        let sig_a = s.sign(b"deterministic").expect("sign a");
+        let sig_b = s.sign(b"deterministic").expect("sign b");
+        assert_eq!(sig_a, sig_b, "Ed25519 must be deterministic per RFC-8032");
+    }
+
+    #[test]
+    fn public_key_bytes_matches_verifying_key() {
+        let s = fixture();
+        let pk = s.public_key_bytes();
+        assert_eq!(pk.len(), 32);
+        assert_eq!(pk, s.0.verifying_key().to_bytes());
+    }
+
+    #[test]
+    fn box_dyn_forwards_sign_and_pubkey() {
+        let s = fixture();
+        let boxed: Box<dyn CapabilitySigner> = Box::new(s);
+        let sig_direct = fixture().sign(b"box-dyn").expect("direct");
+        let sig_boxed = boxed.sign(b"box-dyn").expect("boxed");
+        assert_eq!(sig_direct, sig_boxed, "Box<dyn> must forward verbatim");
+        assert_eq!(boxed.public_key_bytes(), fixture().public_key_bytes());
+    }
+
+    #[test]
+    fn arc_dyn_forwards_sign_and_pubkey() {
+        let s = fixture();
+        let arc: std::sync::Arc<dyn CapabilitySigner> = std::sync::Arc::new(s);
+        let sig_direct = fixture().sign(b"arc-dyn").expect("direct");
+        let sig_arc = arc.sign(b"arc-dyn").expect("arc");
+        assert_eq!(sig_direct, sig_arc, "Arc<dyn> must forward verbatim");
+        assert_eq!(arc.public_key_bytes(), fixture().public_key_bytes());
+    }
+
+    #[test]
+    fn arc_dyn_clone_shares_state() {
+        let s = fixture();
+        let a: std::sync::Arc<dyn CapabilitySigner> = std::sync::Arc::new(s);
+        let b = a.clone();
+        assert_eq!(a.public_key_bytes(), b.public_key_bytes());
+        // Same backing key — same signature for the same message.
+        assert_eq!(a.sign(b"shared").unwrap(), b.sign(b"shared").unwrap());
+    }
+}

@@ -28,3 +28,46 @@ pub fn to_zk_node_type(node_type: &crate::node::NodeType) -> octo_cap_zk::NodeTy
         WalletNodeType::Hybrid => octo_cap_zk::NodeType::Hybrid,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn to_zk_node_type_wholesale() {
+        let wallet = crate::node::NodeType::Wholesale;
+        assert_eq!(to_zk_node_type(&wallet), octo_cap_zk::NodeType::Wholesale);
+    }
+
+    #[test]
+    fn to_zk_node_type_self_host() {
+        let wallet = crate::node::NodeType::SelfHost;
+        assert_eq!(to_zk_node_type(&wallet), octo_cap_zk::NodeType::SelfHost);
+    }
+
+    #[test]
+    fn to_zk_node_type_hybrid() {
+        let wallet = crate::node::NodeType::Hybrid;
+        assert_eq!(to_zk_node_type(&wallet), octo_cap_zk::NodeType::Hybrid);
+    }
+
+    #[test]
+    fn to_zk_node_type_preserves_permits_zk_mint_semantics() {
+        // Mirror the RFC-0958 §NodeType Gating Rule (Wholesale fail-closed,
+        // SelfHost default, Hybrid opt-in). If the wallet's NodeType gating
+        // rules drift from the ZK crate's, this test surfaces the mismatch.
+        let cases = [
+            (crate::node::NodeType::Wholesale, false),
+            (crate::node::NodeType::SelfHost, true),
+            (crate::node::NodeType::Hybrid, true),
+        ];
+        for (wallet_nt, expected) in cases {
+            let zk_nt = to_zk_node_type(&wallet_nt);
+            assert_eq!(
+                zk_nt.permits_zk_mint(),
+                expected,
+                "NodeType::{wallet_nt:?} gating mismatch",
+            );
+        }
+    }
+}

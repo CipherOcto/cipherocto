@@ -235,7 +235,7 @@ For each: extract the load-bearing abstraction, identify what CipherOcto already
 - `crates/octo-transport/src/node_transport.rs` — `NodeTransport` struct (broadcast, send_best, dispatch)
 - `crates/octo-cable/src/{ble,noise,tunnel,handshake,ctap2,framing,discovery,base10,assert}.rs` — cable transport stack
 - `crates/quota-router-core/src/node/mod.rs` — `QuotaRouterNode` (1400 lines, reference impl)
-- `crates/quota-router-core/src/proxy.rs::handle_request` — inline Bearer strip (see §Inline Bearer Strip pattern in this file) — orphan `GatewayAuthenticator` substrate in `octo-wallet/src/capability/gateway_authenticator.rs`
+- `crates/quota-router-core/src/proxy.rs::handle_request` — inline Bearer strip (see §6 Capability-based authorization — the `PreSharedKeyVerifier` Reject entry below for design rationale) — orphan `GatewayAuthenticator` substrate in `octo-wallet/src/capability/gateway_authenticator.rs`
 
 ## Conclusion
 

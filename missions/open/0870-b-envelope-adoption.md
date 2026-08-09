@@ -8,7 +8,7 @@ Open (2026-08-08). RFC-0870 amendment adds the NodeEnvelope adoption requirement
 
 RFC-0870 (Networking): Distributed Quota Router Network
 
-**BLUEPRINT gate note:** RFC-0870 is Accepted. Mission 0870-b implements the NodeEnvelope adoption mandate. **Implementation depends on RFC-0871 reaching Accepted status** (cross-mission dependency on the NodeEnvelope specification itself; RFC-0871 is currently Draft per promotion 2026-08-08, commit `b355cb5b` + content commit pending).
+**BLUEPRINT gate note:** RFC-0870 is Accepted. Mission 0870-b implements the NodeEnvelope adoption mandate. **Implementation depends on RFC-0871 reaching Accepted status** (cross-mission dependency on the NodeEnvelope specification itself).
 
 This mission closes the wire format heterogeneity gap surfaced by the 2026-08-08 specialized node protocol research. Today, quota router uses bespoke wire format (0xC3-0xCB discriminator + DCS-encoded payload + OCrypt AEAD). The amendment mandates encapsulation in the unified `NodeEnvelope` (RFC-0871) while preserving the existing AEAD encryption layer.
 
@@ -53,7 +53,7 @@ Migrate `QuotaRouterNode` outbound + inbound payloads to use the unified `NodeEn
 **Requires:**
 
 - RFC-0870 — NodeEnvelope adoption requirement
-- RFC-0871 (Draft; MUST be Accepted before implementation starts)
+- RFC-0871 (cross-mission dependency; tracked separately)
 - RFC-0126 — Canonical serialization for payload bodies
 - RFC-0853 — AEAD encryption layer preserved
 

@@ -36,7 +36,7 @@ This Use Case is part of a broader CipherOcto pivot: every crypto-bearing entity
 
 | Metric | Target | Measurement |
 | ------ | ------ | ----------- |
-| New specialized node types can be added without modifying the protocol envelope | ≥ 3 new node types shipped (Identity, Reputation, Wallet) without touching `octo-transport` | RFC-0871 §Conformance |
+| New specialized node types can be added without modifying the protocol envelope | ≥ 3 new node types shipped (Identity, Reputation, Wallet) without touching `octo-transport` | RFC-0871 §Compatibility |
 | Wallet signs capability tokens via HSM end-to-end | 100% of `IdentityKey::sign()` paths route through `HsmAdapter::sign()` | `cargo test --features allow-stub-verifier` + integration tests |
 | Wallet announces its services to the mesh on startup | All wallet payload kinds declared in `RouterAnnouncePayload` | Integration test: wallet boots, mesh peers can `lookup(payload_kind)` |
 | Hardware wallet over BLE participates in network signing | `LedgerSigner` + `octo-cable::BleAdapter` end-to-end test passes | Hardware test rig |
@@ -87,4 +87,4 @@ If implemented:
 - RFC-0969 (Dual pipeline authorization — `GatewayAuthenticator` placement discussion)
 - RFC-0970 (Forwarding-hop auth — TTL millisecond resolution)
 - RFC-0971 (Destination-node role consolidation)
-- **RFC-0871** (Specialized Node Protocol Envelope — currently Draft per promotion 2026-08-08; this Use Case is the motivating input)
+- **RFC-0871** (Specialized Node Protocol Envelope)

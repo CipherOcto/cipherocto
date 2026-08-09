@@ -8,7 +8,7 @@ Open (2026-08-08). RFC-0969 amendment adds the relocation + 4-way dispatch table
 
 RFC-0969 (Economics): Dual Pipeline Authorization
 
-**BLUEPRINT gate note:** RFC-0969 is Accepted. Mission 0969-a implements the GatewayAuthenticator relocation + dispatch table. **Implementation depends on RFC-0871 reaching Accepted status** (cross-mission dependency on the NodeEnvelope + verifier trait specifications; RFC-0871 is currently Draft per promotion 2026-08-08, commit `b355cb5b` + content commit pending).
+**BLUEPRINT gate note:** RFC-0969 is Accepted. Mission 0969-a implements the GatewayAuthenticator relocation + dispatch table. **Implementation depends on RFC-0871 reaching Accepted status** (cross-mission dependency on the NodeEnvelope + verifier trait specifications).
 
 This mission closes the orphan-substrate gap surfaced by the 2026-08-08 specialized node protocol research. `GatewayAuthenticator` at `crates/octo-wallet/src/capability/gateway_authenticator.rs` (orphan substrate, 0 production callers as of audit 2026-08-08) co-locates with `quota-router-core::proxy::handle_request` doing its own inline Bearer strip (per RFC-0969 §Motivation).
 
@@ -58,7 +58,7 @@ Relocate `GatewayAuthenticator` from `crates/octo-wallet/src/capability/gateway_
 **Requires:**
 
 - RFC-0969 — relocation + dispatch table requirement
-- RFC-0871 (Draft; MUST be Accepted before implementation starts)
+- RFC-0871 (cross-mission dependency; tracked separately)
 - RFC-0957-A1 — `HolderRegistry` trait
 - `quota-router-storage` — `Clock` trait
 

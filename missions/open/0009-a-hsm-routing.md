@@ -91,7 +91,7 @@ RFC-0009 v1.1 HSM routing is multi-file (identity.rs + 4 capability files + test
 - This mission is the wallet-side complement to the 2026-08-08 specialized node protocol research + RFC-0871 §Implementation Phase 2.
 - Mission `0010-d-wallet-audience-validation.md` is the OTHER gap closure (AudienceId DID validation). These two missions together close the wallet-side foundational gaps surfaced by the audit. Both are independent of RFC-0871 acceptance — claimable today.
 - Per `[[deferred-vs-unspecified]]` named-owner rule: this mission has a concrete scope (RFC-0009 HsmAdapter Integration). No further deferral.
-- Production LedgerSigner (real APDU over USB HID) is tracked under RFC-0850 §F2 future work. No mission file exists today; will be filed at `missions/open/0850p-h-wallet-ledger.md` when production APDU work begins (not yet a phantom pointer per `[[no-phantom-mission-pointers]]` — the substrate is in RFC-0850).
+- Production LedgerSigner (real APDU over USB HID) is tracked under RFC-0850 §F2 future work. No mission file exists today; a new mission will be filed under `missions/open/` (slug TBD at work-start; not pre-named to avoid phantom pointer per `[[no-phantom-mission-pointers]]`) when production APDU work begins.
 
 **Version History:**
 

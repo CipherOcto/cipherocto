@@ -18,7 +18,7 @@ Generic SE principles that guide any new RFC, mission, or crate. Full reference:
 | **B** | Identity substrate + transport + cable + wallet-core | RFC-driven, additive only (years-stable) | New RFC adds feature |
 | **C** | Specialized nodes (one per node role) | Per-RFC | New node type = new RFC + new crate |
 | **D** | Transport adapters (BLE/USB/TCP/QUIC/HID/...) | Per-adapter | New adapter = new crate |
-| **E** | Capability variants + user extensions | Per-extension | New ext = new crate + register |
+| **E** | User extensions + capability variants | Per-extension | New ext = new crate + register |
 
 Layer direction: A → B → C → D/E. Never the reverse. Layer B depends on A (stable substrate); Layer D depends on B (transport trait); Layer E registers into B (registry pattern), doesn't depend on it. Audit question for any new crate or dep: which layer? Does the dependency direction respect the layer model?
 

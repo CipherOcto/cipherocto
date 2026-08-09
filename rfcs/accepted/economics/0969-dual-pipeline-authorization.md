@@ -20,14 +20,14 @@ Closes G1 ("no spec for dual-pipeline auth") + G2 ("dual-issuance is not a spec 
 
 Key elements:
 
-1. **Wire Format** — `Authorization: Bearer <sk-...>` OR `X-Capability-Token: <macaroon>` OR `Authorization: CipherOcto-Cap <macaroon>` (the alt path mentioned in RFC-0957). Each header alone, or `Bearer` + `X-Capability-Token` together, is valid.
+1. **Wire Format** — `Authorization: Bearer <sk-...>` OR `X-Capability-Token: <macaroon>` OR `Authorization: CipherOcto-Cap <macaroon>` (the alt path mentioned in RFC-0957). Each header alone is valid. Both auth headers present (bearer + capability) is rejected per the 4-way dispatch table (client misconfig; the legitimate "both" case is RFC-0959-A1 market delivery, server-side, not HTTP request ingress).
 2. **Gateway Authenticator** — new role on the gateway. Owns the header parser + router + dispatch. Stateless beyond the local `HolderRegistry` cache.
 3. **Routing algorithm** — header prefix determines parse path:
    - `Authorization: Bearer <...>` → RFC-0903 path (virtual-key table lookup + vault borrow)
    - `X-Capability-Token: <...>` → RFC-0957 path (HolderRegistry lookup + macaroon chain check + Ed25519 sig verify)
    - `Authorization: CipherOcto-Cap <...>` → RFC-0957 alt path
 4. **Dual-issuance** — a holder can hold both a bearer (from RFC-0903) and a capability token (from RFC-0957) for the same `HolderRecord`. The destination node's mint endpoint accepts either request and writes to the same `HolderRegistry`.
-5. **Identity linkage** — when both `Bearer` and `X-Capability-Token` are present, the gateway requires the bearer's `subject_did` (or a virtual-key→holder binding) to equal the capability's `HolderRecord.holder_did`, AND the bearer's `ask_id` to equal the capability's `ask_id`. Mismatch is rejected with `IdentityMismatch`. This is the Round 2 fix for the cross-holder credential mixing attack.
+5. **Dispatch table (v1.1 amendment)** — `routing_decision` computed from header count alone: bearer-only → `RoutingDecision::Bearer`; capability-only → `RoutingDecision::Capability`; both → `RoutingDecision::BothSchemesUnsupported` (rejected as client misconfig); neither → `RoutingDecision::NoAuth` (pass-through to model provider). The prior AND-gate identity linkage step is REMOVED in v1.1 because the dispatch table REJECTS the "both schemes" case as client misconfig — linkage is unreachable per new semantics.
 6. **`mint_dual` algorithm** — `mint_dual(buyer_did, buyer_holder_pub, ask_id, ask_ttl_unix, capability_root_secret, buyer_encryption_pubkey, wallet, db)` — 8 params (R22-N1 fix: dropped dead `bearer_root_secret`; canonical signature per §`mint_dual` Algorithm at line 475 uses 8 params with `&dyn WalletCrypto` + `&stoolap::Database`). Mints both tokens exactly once and writes both via `TransactionExt::insert_dual` (RFC-0957-A1 §TransactionExt). `CapabilityToken::mint(root_secret, holder, holder_did, initial_caveats)` is the 4-arg persistence-free signature (R6-C3 fix, R7-N6 fix: NO `Some(&mut txn)` parameter; mint is pure crypto, no post-write hook). The caller writes both `HolderRecord`s via `txn.insert_dual(...)` in the same transaction, preventing the double-insert contradiction. (R15-N16 fix: `mint_dual` is a preview/test utility; production writes happen ONLY in `deliver_at_settlement` per RFC-0959-A1 §Algorithms. Calling both paths for the same ask_id would hit `UNIQUE(ask_id, kind)` and fail. Documented as the single-write authority.)
 7. **Backward compat** — legacy clients (claude-code, hardcoded HTTP agents) using `Authorization: Bearer <sk-...>` continue working without client-side changes.
 8. **Forward compat** — new clients opt into capability by including the wallet-side signer and `X-Capability-Token` header.
@@ -40,9 +40,9 @@ The dual-mode workflow requires two authorization pipelines running through the 
 1. **Legacy bearer** — `Authorization: Bearer <sk-...>` for legacy clients. Validated by the gateway as a virtual-API-key (RFC-0903) or enterprise SSO token (RFC-0949, out of scope).
 2. **Capability-based** — `X-Capability-Token: <3-segment macaroon>` for new wallet-side clients. Verified by RFC-0957 macaroon chain + Ed25519 holder signature + discharge channels.
 
-Today's RFCs scatter this story. No document names the Gateway Authenticator role. No document specifies header-prefix routing. No document states that both tokens can coexist on the same request envelope with identity linkage.
+Today's RFCs scatter this story. No document names the Gateway Authenticator role. No document specifies header-prefix routing. No document states that both tokens can coexist on the same request envelope (rejected per v1.1 dispatch table; legitimate "both" case is RFC-0959-A1 market delivery).
 
-This RFC names the role, specifies the routing, binds identity linkage, and binds both paths to the unified catalog.
+This RFC names the role, specifies the routing, applies the 4-way dispatch table, and binds both paths to the unified catalog.
 
 ## Scope
 
@@ -52,7 +52,7 @@ This RFC names the role, specifies the routing, binds identity linkage, and bind
 - Gateway Authenticator role definition.
 - Header-prefix routing algorithm.
 - Dual-issuance semantics (one holder, two tokens, one registry entry).
-- Header precedence rules (AND-gate when both present + identity linkage).
+- Header precedence rules (4-way dispatch table; both-schemes-present is `BothSchemesUnsupported`).
 - Backward compat with RFC-0903 path.
 - Forward compat with RFC-0957 path + RFC-0957-A1 catalog.
 - Test vectors for routing, dual-issuance, header precedence, identity mismatch, error cases.
@@ -97,8 +97,8 @@ This RFC names the role, specifies the routing, binds identity linkage, and bind
 | Goal | Target | Metric |
 |------|--------|--------|
 | **G1: Routing determinism** | Header prefix → parse path is a pure function | Test: every header prefix has exactly one parse path |
-| **G2: Dual-pipeline coverage** | 100% of gateway requests routed through bearer path, capability path, or both (AND-gate) | Test: 100 representative requests, all routed correctly |
-| **G3: Header precedence** | When both Bearer + Capability-Token are present, both paths must verify AND identity must match | Test: dual-token request with linked identity → Ok; with mismatched identity → Err |
+| **G2: Dual-pipeline coverage** | 100% of gateway requests routed through bearer path, capability path, or no-auth path (v1.1 dispatch table) | Test: 100 representative requests, all routed correctly |
+| **G3: Header precedence (v1.1 amendment)** | Both Bearer + Capability-Token present → `BothSchemesUnsupported` (rejected per dispatch table). The prior AND-gate + identity-linkage behavior is REMOVED. | Test: dual-token request → `Err(AuthError::BothSchemesUnsupported)` regardless of identity match |
 | **G4: Backward compat** | Legacy bearer requests continue working | Regression test over RFC-0903 |
 | **G5: Forward compat** | Wallet-side capability requests work | Regression test over RFC-0957 |
 | **G6: Routing latency** | ≤ 1ms p99 added | Bench |
@@ -280,7 +280,7 @@ Per the 2026-08-08 specialized node protocol research + user clarification, the 
 
 `LinkageResult::Indeterminate` variant is REMOVED. `RoutingDecision::Dual` is REMOVED from the request-shape axis (only valid in RFC-0959-A1 delivery context, not HTTP request ingress). The dispatch is fully determined by request headers alone; no side-channel lookup needed for the dispatch decision itself.
 
-**Cross-reference:** RFC-0871 §Wallet as Specialized Node (planned); `docs/research/2026-08-08-specialized-node-protocol-research.md` §5 (W3C DID Resolution + DIDComm — dispatch decision can be made from headers alone).
+**Cross-reference:** RFC-0871 §Wallet Node Lifecycle; `docs/research/2026-08-08-specialized-node-protocol-research.md` §5 (W3C DID Resolution + DIDComm — dispatch decision can be made from headers alone).
 
 #### Removed types (v1.1 amendment)
 
@@ -307,7 +307,7 @@ X-Capability-Token: eyJ...macaroon....eyJ...sig....eyJ...discharges
 X-Request-Id: req_42
 ```
 
-The bearer header value is the RFC-0903 virtual key string. The capability header value is the RFC-0957 3-segment wire string. The headers are independently optional; the AND-gate is enforced when both are present.
+The bearer header value is the RFC-0903 virtual key string. The capability header value is the RFC-0957 3-segment wire string. The headers are independently optional; the v1.1 dispatch table rejects both-present as `BothSchemesUnsupported` (client misconfig). The v1.0 AND-gate enforcement is REMOVED.
 
 ### Algorithms
 
@@ -372,7 +372,7 @@ pub fn from_headers(headers: &http::HeaderMap) -> Result<Self, ParseError> {
 /// `routing_decision` is computed from `dispatch.headers` alone (header
 /// count, no side-channel lookup). Verifier traits (`BearerVerifier`,
 /// `CapabilityVerifier`) replace direct `VirtualKeyTable` + `HolderRegistry`
-/// access per RFC-0871 §Traits.
+/// access per RFC-0871 §Wallet Node Lifecycle.
 pub fn authenticate(&self, dispatch: &DispatchSet)
     -> Result<AuthenticatedRequest, AuthError>
 {
@@ -448,10 +448,10 @@ pub fn authenticate(&self, dispatch: &DispatchSet)
 
 #### Header Precedence Rules
 
-When multiple auth headers are present:
+When multiple auth headers are present (v1.1 amendment: 4-way dispatch table — see §Dispatch Table):
 
-1. **`Authorization: Bearer` + `X-Capability-Token`** — both paths must succeed AND identity must match. AND-gate.
-2. **`Authorization: Bearer` + `Authorization: CipherOcto-Cap`** — both paths must succeed; identity linkage.
+1. **`Authorization: Bearer` + `X-Capability-Token`** — REJECT with `Err(AuthError::BothSchemesUnsupported)`. The dispatch table REJECTS the both-schemes case as client misconfig before any verification runs. (v1.0 used AND-gate + identity linkage; this is REMOVED in v1.1.)
+2. **`Authorization: Bearer` + `Authorization: CipherOcto-Cap`** — REJECT with `Err(AuthError::BothSchemesUnsupported)` for the same reason. (v1.0 used AND-gate + identity linkage; this is REMOVED in v1.1.)
 3. **`X-Capability-Token` + `Authorization: CipherOcto-Cap`** — REJECT with `AuthError::DuplicateCapabilityHeader`. The two are aliases.
 4. **Two `Authorization: Bearer` headers** — REJECT with `AuthError::DuplicateAuthHeader`.
 5. **Two `X-Capability-Token` headers** — REJECT with `AuthError::DuplicateCapabilityHeader`.
@@ -562,7 +562,7 @@ On gateway restart: the Gateway Authenticator rebuilds its state from the local 
 ## Determinism Requirements
 
 - **`DispatchSet::from_headers()` ordering:** preserves header order.
-- **`authenticate()` ordering:** iterates headers in order; AND-gate is symmetric.
+- **`authenticate()` ordering:** iterates headers in order; dispatch is header-count-only (v1.1 amendment — see §Dispatch Table).
 - **`AuthenticatedRequest.subject_did` derivation:** from `CapabilityVerification.holder_did` for capability path; from `BearerVerification.subject_did` for bearer-only path. (R14-N5 fix: prior text said "synthesized from virtual-key ID" which violates RFC-0009 §Identity Key Format; the implementation uses the actual `subject_did` per R12-N8. v1.1 amendment: field renamed from `did` to `subject_did` for consistency with `BearerVerification.subject_did`.)
 - **Header precedence rules:** deterministic; same input → same output.
 
@@ -573,7 +573,7 @@ On gateway restart: the Gateway Authenticator rebuilds its state from the local 
 | `DispatchSet::from_headers()` | A | Pure deterministic parser |
 | `authenticate()` RFC-0903 path | A | Virtual-key table lookup is deterministic |
 | `authenticate()` RFC-0957 path | A | HolderRegistry lookup + chain check are deterministic |
-| `authenticate()` AND-gate + identity linkage | A | Pure boolean |
+| `authenticate()` routing_decision computation | A | Pure boolean (header count per dispatch table) |
 | `mint_dual()` | A | Single transaction; deterministic |
 
 ## Error Handling
@@ -728,10 +728,10 @@ impl std::fmt::Debug for AuthError {
 
 ### Threat Model Additions
 
-- **Header smuggling** — attacker sends Bearer + Capability hoping one path bypasses the other. Mitigation: AND-gate.
+- **Header smuggling** — attacker sends Bearer + Capability hoping one path bypasses the other. Mitigation: 4-way dispatch table rejects `BothSchemesUnsupported` before any verification runs (v1.1 amendment; v1.0 AND-gate is REMOVED).
 - **Bearer-only downgrade** — attacker strips Capability. Mitigation: by design; bearer-only is the legacy path.
-- **Cross-holder credential mixing** — attacker has Bearer for holder A and Capability for holder B; sends both. Mitigation: `IdentityMismatch` check forces `bearer.subject_did == capability.holder_did`.
-- **Cross-ask credential mixing** — attacker has Bearer for ask X and Capability for ask Y. Mitigation: `AskBindingMismatch` check forces equality.
+- **Cross-holder credential mixing** — attacker has Bearer for holder A and Capability for holder B; sends both. Mitigation: dispatch table rejects `BothSchemesUnsupported` (no cross-holder path is reachable per v1.1 semantics).
+- **Cross-ask credential mixing** — attacker has Bearer for ask X and Capability for ask Y. Mitigation: same — `BothSchemesUnsupported` reject.
 - **Capability header forgery** — attacker forges a Capability header. Mitigation: `UnknownHolder` error.
 - **Holder registry poisoning** — see RFC-0957-A1 §Security.
 - **Routing logic injection** — malformed `Authorization` header. Mitigation: `ParseError::UnsupportedAuthScheme` rejects.
@@ -747,7 +747,7 @@ UNCHANGED from RFC-0957 + RFC-0903.
 
 ### Replay Protection
 
-Capability path inherits RFC-0957 §Replay Protection. Bearer path inherits RFC-0903 §Replay Protection. AND-gate combines both.
+Capability path inherits RFC-0957 §Replay Protection. Bearer path inherits RFC-0903 §Replay Protection. Per-scheme replay defense applies per dispatched path; no AND-gate combination (v1.1 amendment).
 
 ## Adversary Analysis (5-Question Test)
 
@@ -756,7 +756,7 @@ Capability path inherits RFC-0957 §Replay Protection. Bearer path inherits RFC-
 1. **Who benefits?** — Attacker with a valid bearer but no valid capability.
 2. **What does it cost them?** — A valid bearer.
 3. **What do they gain if successful?** — They could use the bearer path alone. This is the legitimate bearer path.
-4. **What's our defense?** — AND-gate requires BOTH paths to succeed if BOTH headers are present. A valid bearer alone, with no capability, is rejected if the capability header is also present and invalid.
+4. **What's our defense?** — 4-way dispatch table rejects `BothSchemesUnsupported` before any verification (v1.1 amendment). Attacker cannot use the bearer path while also presenting an invalid capability; the both-present case is rejected at dispatch.
 5. **What's the residual risk?** — Attacker can omit the capability header and use bearer alone. Legitimate bearer path.
 
 Verdict: NO RISK. By design.
@@ -786,10 +786,10 @@ Verdict: ACCEPTED RISK. Standard DoS mitigation.
 1. **Who benefits?** — Attacker with valid bearer for holder A and valid capability for holder B.
 2. **What does it cost them?** — Two valid credentials.
 3. **What do they gain if successful?** — Cross-holder authorization; the audit trail attributes the request to holder A's bearer but the capability was actually holder B's.
-4. **What's our defense?** — `IdentityMismatch` check forces `bearer.subject_did == capability.holder_did`.
-5. **What's the residual risk?** — None; the check is mandatory when both paths are present.
+4. **What's our defense?** — 4-way dispatch table rejects `BothSchemesUnsupported` before any cross-holder path is reachable (v1.1 amendment; the v1.0 `IdentityMismatch` AND-gate check is REMOVED because unreachable).
+5. **What's the residual risk?** — None; the both-schemes case is rejected at dispatch, before any verification runs.
 
-Verdict: NO RISK. Mandatory AND-gate with identity linkage.
+Verdict: NO RISK. 4-way dispatch table rejects `BothSchemesUnsupported` upfront.
 
 ## Dependency Validation
 
@@ -811,9 +811,9 @@ Verdict: NO RISK. Mandatory AND-gate with identity linkage.
 | **IA-1: Header order is preserved by the HTTP library** | §Algorithms `from_headers` | Routing determinism breaks | Use `http::HeaderMap::iter()` |
 | **IA-2: Virtual-key table is operator-managed** | §Roles Virtual-Key Operator | Bearer path unavailable | RFC-0903 §Operations |
 | **IA-3: HolderRegistry is local to the gateway** | §Algorithms HolderRegistry lookup | Cross-node capability verification fails | RFC-0957-A1 §HolderRegistry binding |
-| **IA-4: AND-gate semantics are agreed upon by all implementers** | §Algorithms AND-gate | Inconsistent routing across gateway impls | Test: TV1-TV5 |
-| **IA-5: Virtual-key `subject_did` is canonical and trustworthy** | §Algorithms identity linkage | Cross-holder attack if subject_did is forgeable | RFC-0903 virtual-key issuance policy |
-| **IA-6: Capability ask_id is canonical (matches bearer ask_id byte-for-byte)** | §Algorithms ask_id linkage | Cross-ask attack if ask_ids are not canonical | Test: TV11 |
+| **IA-4: 4-way dispatch semantics are agreed upon by all implementers** | §Dispatch Table | Inconsistent routing across gateway impls | Test: TV1-TV5 |
+| **IA-5: Virtual-key `subject_did` is canonical and trustworthy** | §Wallet-as-Specialized-Node `BearerVerification.subject_did` | Cross-holder attack if subject_did is forgeable (reachable only on bearer-only path post-v1.1) | RFC-0903 virtual-key issuance policy |
+| **IA-6: Capability `ask_id` is canonical** | §CapabilityVerification `ask_id` | Cross-ask attack if ask_id is forgeable (reachable only on capability-only path post-v1.1) | Test: TV11 |
 | **IA-7: `mint_dual` uses `txn.insert_dual` for atomic pair insert** | §Algorithms `mint_dual` | Double-insert → `AskAlreadyExists` | RFC-0957-A1 §TransactionExt |
 
 ## Compatibility
@@ -962,7 +962,7 @@ Expected: routing decision byte-identical across two independent gateway impleme
 | **(b) Capability-only gateway** | Clean | Legacy clients break | Rejected |
 | **(c) Two separate gateways** | Clear separation | Operational overhead | Rejected |
 | **(d) Single gateway, OR-gate** | Flexible | Downgrade attacks | Rejected |
-| **(e) Single gateway, AND-gate with identity linkage (this RFC)** | Secure; consistent | Requires dual-issuance | **Adopted** |
+| **(e) Single gateway, 4-way dispatch table (this RFC, v1.1)** | Secure; consistent; rejects cross-scheme misuse | No dual-issuance needed | **Adopted** |
 
 ## Upstream Dependencies (Round 3 R2 R1 C2/C5 fix)
 
@@ -970,7 +970,7 @@ This RFC depends on the following upstream amendments that MUST be in place befo
 
 1. **RFC-0009-B1: `WalletCrypto` trait.** Defines the `WalletCrypto` trait + methods used by `mint_dual` and `authenticate` (`identity_key()`, `sign()`, `hop_root_secret()`, `channel_session_key()`, `next_hop_counter()`, `channel_id()`, `buyer_encryption_pubkey()`). Without this, the algorithms cannot typecheck.
 
-2. **RFC-0903-B2: Virtual-Key Verify API.** Defines `VirtualKeyTable::verify(token) -> Result<BearerVerification, VirtualKeyError>`. `BearerVerification` MUST include `subject_did: String` and `ask_id: Option<[u8; 32]>` for the AND-gate identity linkage to function. Without this, the AND-gate check is impossible.
+2. **RFC-0903-B2: Virtual-Key Verify API.** Defines `VirtualKeyTable::verify(token) -> Result<BearerVerification, VirtualKeyError>`. `BearerVerification` MUST include `subject_did: String` and `ask_id: [u8; 32]`. Per v1.1 amendment, the AND-gate identity linkage check is REMOVED (unreachable per dispatch table); the bearer-only path uses `subject_did` directly in `AuthenticatedRequest`.
 
 3. **RFC-0903-C1-b: Virtual-Key Generation.** Defines the long-lived virtual-key generation algorithm (referenced by RFC-0959-A1 §mint_bearer_capsule but not by RFC-0903 itself). The capsule mint calls the generator; the generator returns the virtual key bytes; the capsule is the encrypted delivery.
 
@@ -1013,7 +1013,7 @@ These three amendments are PRE-REQUISITE for RFC-0969.
 
 Why this approach over alternatives?
 
-The dual-mode workflow requires both bearer and capability tokens to be accepted at the same gateway with identity linkage. The substrate is RFC-0903 (bearer) + RFC-0957 (capability) + RFC-0957-A1 (catalog + insert_dual). The mechanism is a header parser + AND-gate + identity linkage check + unified catalog.
+The dual-mode workflow requires both bearer and capability tokens to be accepted at the same gateway. The substrate is RFC-0903 (bearer) + RFC-0957 (capability) + RFC-0957-A1 (catalog + insert_dual). The mechanism is a header parser + 4-way dispatch table + per-scheme verification + unified catalog (v1.1 amendment; the v1.0 AND-gate + identity linkage is REMOVED).
 
 ## Version History
 
@@ -1081,9 +1081,9 @@ OR-gate (any path valid) is rejected because:
 - A valid bearer + invalid capability would still be accepted (downgrade).
 - A valid capability + invalid bearer would still be accepted (bearer header unused).
 - The holder's intent (dual-token) is ambiguous.
-- No identity linkage → cross-holder credential mixing is possible.
+- v1.0 used identity linkage → cross-holder credential mixing was possible (if linkage check itself was buggy). v1.1 closes this entirely by rejecting both-schemes at dispatch.
 
-The AND-gate with identity linkage is the only consistent interpretation.
+The 4-way dispatch table (reject `BothSchemesUnsupported`) is the v1.1 interpretation: single scheme per request, no cross-scheme path.
 
 ### C. Why Not Separate Gateways?
 

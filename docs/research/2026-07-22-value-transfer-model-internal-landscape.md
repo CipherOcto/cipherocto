@@ -14,9 +14,9 @@ Cipherocto is a blockchain (master plan §2; not conventional — SQL + stoolap 
 1. **A `transfers` table** — for moving value between DIDs (holders, providers, governance, treasuries)
 2. **An `escrow` table** — for Step 6 of the 11-step exercise ("OCTO-W escrow pre-auth") which is currently a `blake3::hash(b"escrow/v1")` placeholder
 
-RFC-0959 v1.0 (Accepted 2026-07-20) spec'd the **settlement receipt** (proof that a settlement completed). It did NOT spec the **value flow** that settlement triggers. Per master plan §7:
+RFC-0959 (Accepted 2026-07-20) spec'd the **settlement receipt** (proof that a settlement completed). It did NOT spec the **value flow** that settlement triggers. Per master plan §7:
 
-> On-chain settlement integration (waits for RFC-0959 v1.0 Accepted + on-chain binding per future RFC after RFC-0955 fiat ramp stabilizes)
+> On-chain settlement integration (waits for RFC-0959 Accepted + on-chain binding per future RFC after RFC-0955 fiat ramp stabilizes)
 
 So this is the gap. Before designing, scan what we already know.
 

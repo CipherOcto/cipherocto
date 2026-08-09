@@ -16,7 +16,7 @@ This mission adds the `PaymentCaveat` caveat type (RFC-0965 reserved range 0x1A�
 
 ## Summary
 
-Implement paid query via caveat composition. Three components: (1) `PaymentCaveat` — new caveat type carrying `(prepaid_amount: MicroOCTO_W, drain_per_query: MicroOCTO_W, expires_at_unix_ms: u64)` semantics; composes with existing caveat chain per RFC-0957 §caveat composition. (2) `RouterAnnouncePayload` extension: each announced payload_kind carries a pricing policy `(drain_per_query: MicroOCTO_W, accepted_payment_capabilities: HashSet<TokenId>)`. (3) Wallet authorization: wallet requests `RoutingDecision::Capability` with `Authorization::Capability(token)` carrying `PaymentCaveat`; quota router verifies caveat + drains capacity atomically per RFC-0862 atomic transaction; rejects if capability expired or balance insufficient.
+Implement paid query via caveat composition. Three components: (1) `PaymentCaveat` — new caveat type carrying `(prepaid_amount: MicroOCTO_W, drain_per_query: MicroOCTO_W, expires_at_unix_ms: u64)` semantics; composes with existing caveat chain per RFC-0957 §Algorithms (caveat verification step). (2) `RouterAnnouncePayload` extension: each announced payload_kind carries a pricing policy `(drain_per_query: MicroOCTO_W, accepted_payment_capabilities: HashSet<TokenId>)`. (3) Wallet authorization: wallet requests `RoutingDecision::Capability` with `Authorization::Capability(token)` carrying `PaymentCaveat`; quota router verifies caveat + drains capacity atomically per RFC-0862 atomic transaction substrate; rejects if capability expired or balance insufficient.
 
 ## Acceptance Criteria
 
@@ -25,7 +25,7 @@ Implement paid query via caveat composition. Three components: (1) `PaymentCavea
 - [ ] NEW: `crates/octo-cap-macaroon/src/caveat/payment.rs` — `PaymentCaveat { prepaid_amount: MicroOCTO_W, drain_per_query: MicroOCTO_W, expires_at_unix_ms: u64 }` per RFC-0965 reserved discriminator 0x1A (first slot in 0x1A-0xCF range; subsequent payment variants may follow)
 - [ ] `Caveat::verify` impl: rejects if `now_unix_ms > expires_at_unix_ms`; tracks remaining prepaid capacity per holder DID (via `HolderRegistry` lookup)
 - [ ] `Caveat::attenuate` impl: supports attenuation by reducing `prepaid_amount` (holder can transfer part of prepaid capacity to sub-capability)
-- [ ] Wire format: per RFC-0957 §Wire Format v1 + RFC-0965 §Encoding
+- [ ] Wire format: per RFC-0957 §Wire Format + RFC-0965 §2. Caveat envelope encoding
 - [ ] Caveat decoder in `octo-protocol::EnvelopeDispatcher::verify` recognizes `PaymentCaveat` discriminator
 
 ### Top-level: Pricing policy
@@ -38,7 +38,7 @@ Implement paid query via caveat composition. Three components: (1) `PaymentCavea
 ### Top-level: Atomic drain
 
 - [ ] NEW: `crates/quota-router-core/src/payment/drain.rs` — `drain_payment(holder_did, drain_amount) -> Result<Receipt, PaymentError>` per RFC-0862 atomic transaction
-- [ ] Atomic: deduct from holder's prepaid balance + emit `PaymentReceipt` event in single transaction (per RFC-0862 §Atomicity)
+- [ ] Atomic: deduct from holder's prepaid balance + emit `PaymentReceipt` event in single transaction (RFC-0862 atomic transaction substrate)
 - [ ] Reject if balance < drain_amount: `PaymentError::InsufficientBalance`
 - [ ] Reject if holder has no `PaymentCaveat` for this query: `PaymentError::NoPaymentCapability`
 - [ ] Reject if `PaymentCaveat.expires_at_unix_ms < now`: `PaymentError::ExpiredCapability`
@@ -59,10 +59,10 @@ Implement paid query via caveat composition. Three components: (1) `PaymentCavea
 ### Adversary coverage
 
 - [ ] Replay of paid query: envelope_id dedup + capability's `PaymentCaveat` debit-once semantics prevents double-spend
-- [ ] Capability forgery: macaroon HMAC + `PaymentCaveat` chain verified per RFC-0957 §Verification
+- [ ] Capability forgery: macaroon HMAC + `PaymentCaveat` chain verified per RFC-0957 §Algorithms (verification step)
 - [ ] Atomic drain bypass: drain is part of RFC-0862 atomic transaction — no partial drain possible
 - [ ] Stale payment capability: `PaymentCaveat.expires_at_unix_ms` check at every handler invocation
-- [ ] Pricing policy spoofing: `RouterAnnouncePayload` signed per RFC-0870 §HMAC; unsigned announcements rejected
+- [ ] Pricing policy spoofing: `RouterAnnouncePayload` signed per RFC-0870 HMAC scheme (`compute_hmac` over `RouterAnnouncePayload` with `network_key`); unsigned announcements rejected
 
 ### Backward compat
 
@@ -71,6 +71,24 @@ Implement paid query via caveat composition. Three components: (1) `PaymentCavea
 - [ ] `cargo test -p octo-wallet-node --lib` green (new paid-query handler)
 - [ ] `cargo clippy --workspace --all-targets --features full -- -D warnings` clean
 - [ ] `cargo fmt --check` clean
+
+## Type Coverage
+
+Per BLUEPRINT §Mission template. RFC-0871 §Implementation Phases Phase 5 + RFC-0965 + RFC-0957 types mapped to this mission:
+
+| RFC Type / Section | Implemented By |
+|---|---|
+| `PaymentCaveat` (RFC-0965 reserved discriminator 0x1A) | This mission — `crates/octo-cap-macaroon/src/caveat/payment.rs` |
+| `PricingPolicy` extension | This mission — `crates/quota-router-core/src/router_announce.rs` (amends existing `RouterAnnouncePayload`) |
+| `drain_payment` atomic primitive | This mission — `crates/quota-router-core/src/payment/drain.rs` |
+| `PaymentReceipt` event | This mission — RFC-0959 §Specification (receipt fields per RFC-0959 Data Structures) |
+| `WALLET_MINT_CAPABILITY` + `PaymentCaveat` flow | Mission `0871a-wallet-node.md` — wallet node's `mint.rs` handler extended to accept `PaymentCaveat` |
+| `handle_request` post-authenticate payment verification | This mission — amends `crates/quota-router-core/src/proxy.rs` |
+| `CapabilityToken` mint substrate (RFC-0957 §Algorithms) | Mission `0957-ext-macaroon-crate.md` — prerequisite (Phase 4 extraction); `PaymentCaveat` lives in extracted crate |
+| `HolderRegistry` substrate | RFC-0957-A1 existing |
+| `RouterAnnouncePayload` shape | Mission `0870-b-envelope-adoption.md` — RFC-0870 §NodeEnvelope Adoption |
+| `NodeEnvelope` envelope shape (consumed) | Mission `0871-protocol-core-envelope.md` — Phase 1 prerequisite |
+| Atomic transaction substrate | RFC-0862 existing |
 
 ## Dependencies
 
@@ -81,7 +99,7 @@ Implement paid query via caveat composition. Three components: (1) `PaymentCavea
 - RFC-0957 — capability token format + caveat composition
 - RFC-0870 — `RouterAnnouncePayload` shape (specialized node pattern)
 - RFC-0862 — atomic transaction substrate
-- RFC-0959 — settlement receipt (paid query emits payment receipt per RFC-0959 §Schema)
+- RFC-0959 — settlement receipt (paid query emits payment receipt per RFC-0959 §Specification, Data Structures — receipt carries prepaid_amount, drain_amount, holder_did, settlement_hash)
 - `crates/octo-protocol` — Phase 1 envelope types (mission `0871-protocol-core-envelope.md`)
 - `crates/octo-cap-macaroon` — macaroon substrate (Phase 4 extraction recommended: `0957-ext-macaroon-crate.md`)
 - `crates/octo-wallet-node` — wallet node (Phase 2: `0871a-wallet-node.md`)
@@ -90,7 +108,7 @@ Implement paid query via caveat composition. Three components: (1) `PaymentCavea
 
 - Mission `0871-protocol-core-envelope.md` MUST complete first (Phase 1 dependency)
 - Mission `0871a-wallet-node.md` MUST complete first (Phase 2 — wallet node provides mint handler)
-- Mission `0957-ext-macaroon-crate.md` SHOULD complete first (Phase 4 — `PaymentCaveat` lives in extracted crate)
+- Mission `0957-ext-macaroon-crate.md` MUST complete first (Phase 4 — `PaymentCaveat` lives in extracted `crates/octo-cap-macaroon/`, not in old monolithic `crates/octo-wallet/src/capability/macaroon.rs` path)
 
 **Parallel with (no dependency):**
 
@@ -116,7 +134,7 @@ Implement paid query via caveat composition. Three components: (1) `PaymentCavea
 
 ## Acceptance Cross-Ref
 
-Per RFC-0871 §Implementation Phases Phase 5 + RFC-0957 §caveat composition + RFC-0959 §Schema:
+Per RFC-0871 §Implementation Phases Phase 5 + RFC-0957 §Algorithms (caveat verification) + RFC-0959 §Specification:
 
 - [x] RFCs Accepted (RFC-0871, RFC-0965, RFC-0957)
 - [ ] Mission filed (this file)
@@ -139,8 +157,8 @@ Per RFC-0871 §Implementation Phases Phase 5 + RFC-0957 §caveat composition + R
 ## Notes
 
 - Layer E extension (caveat variant). Stability: per-extension. `PaymentCaveat` is one variant; future payment variants (subscription, per-token billing) follow the same registration pattern.
-- Atomicity is critical — drain MUST be in same RFC-0862 transaction as the forward-to-model-provider call. Partial drain + forward leaves the holder debited without service rendered (or vice versa). Per RFC-0862 §Atomicity, the entire request handling is one transaction.
-- Caveat composition: `PaymentCaveat` composes with existing caveat chain per RFC-0957 §caveat composition. A capability can carry `[MaxPerEpochCaveat, PaymentCaveat, RevocationCaveat]` simultaneously — all verified atomically.
+- Atomicity is critical — drain MUST be in same RFC-0862 transaction as the forward-to-model-provider call. Partial drain + forward leaves the holder debited without service rendered (or vice versa). Per RFC-0862 atomic transaction substrate, the entire request handling is one transaction.
+- Caveat composition: `PaymentCaveat` composes with existing caveat chain per RFC-0957 §Algorithms (caveat verification step). A capability can carry `[MaxPerEpochCaveat, PaymentCaveat, RevocationCaveat]` simultaneously — all verified atomically.
 - Backward compat: `RouterAnnouncePayload.pricing_policy` defaults to empty for legacy announce payloads (RFC-0870 §NodeEnvelope Adoption transition window). Legacy routers can still announce; new routers reject queries against legacy announces if `PaymentCaveat` is required.
 - This is OFF-CHAIN settlement (capability drain). On-chain settlement integration (per RFC-0959 future RFC) is a separate concern; `PaymentReceipt` can be later anchored to on-chain settlement.
 - Per CLAUDE.md crate stability: `PaymentCaveat` lives in `octo-cap-macaroon` (Layer E extension). Future payment variants (subscription, per-token) land in `octo-cap-payment/` or similar — each extension is its own crate per RFC-0871 §Layer E model.

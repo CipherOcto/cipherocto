@@ -39,7 +39,7 @@ Build `crates/octo-identity-resolver-node/` — the identity resolver specialize
 
 ### Registry backend
 
-- [ ] `DidRegistry` trait (RFC-0010 §Storage) defined in `crates/octo-identity-resolver-node/src/registry.rs`
+- [ ] `DidRegistry` trait (RFC-0010 codec crate substrate) defined in `crates/octo-identity-resolver-node/src/registry.rs`
 - [ ] `InMemoryDidRegistry` impl (test fixture, populates from `crates/octo-ident` existing storage)
 - [ ] `StoolapDidRegistry` impl (production, backed by RFC-0010 stoolap schema)
 - [ ] Migration: existing `DidRegistry` in `crates/octo-ident` is the source of truth; new crate wraps it (no duplicate state)
@@ -48,11 +48,11 @@ Build `crates/octo-identity-resolver-node/` — the identity resolver specialize
 
 - [ ] All handlers route through `octo_protocol::EnvelopeDispatcher` for envelope_id dedup + expiry check
 - [ ] All handlers verify `Vec<Authorization>` per `octo_protocol::Authorization::verify`
-- [ ] Resolution requires caller DID authenticated (no anonymous resolution per RFC-0009 §Identity substrate)
+- [ ] Resolution requires caller DID authenticated (no anonymous resolution per RFC-0009)
 
 ### Adversary coverage
 
-- [ ] DID spoofing rejected: canonical validation rejects arbitrary string substitution (RFC-0010 §Codec)
+- [ ] DID spoofing rejected: canonical validation rejects arbitrary string substitution (RFC-0010 codec crate)
 - [ ] Replay rejected: `DID_RESOLVE` envelope_id dedup enforced
 - [ ] Unauthorized lookup rejected: `Authorization::verify` requires valid signature from caller
 - [ ] Storage-backend DoS: rate-limited per RFC-0871 §Replay Protection
@@ -64,6 +64,23 @@ Build `crates/octo-identity-resolver-node/` — the identity resolver specialize
 - [ ] `cargo test -p octo-identity-resolver-node --lib` green (new crate)
 - [ ] `cargo clippy --workspace --all-targets --features full -- -D warnings` clean
 - [ ] `cargo fmt --check` clean
+
+## Type Coverage
+
+Per BLUEPRINT §Mission template. RFC-0871 §Roles and Authorities + RFC-0010 + RFC-0009 types mapped to this mission (Phase 3 identity resolver):
+
+| RFC Type / Section | Implemented By |
+|---|---|
+| `IdentityResolverNode` struct (RFC-0871 §Roles and Authorities) | This mission — `crates/octo-identity-resolver-node/src/node.rs` |
+| `NetworkReceiver` impl (RFC-0863 substrate) | This mission — `crates/octo-identity-resolver-node/src/node.rs` |
+| `DID_RESOLVE` payload kind | This mission — `crates/octo-identity-resolver-node/src/handlers/resolve.rs` |
+| `DID_LOOKUP` payload kind | This mission — `crates/octo-identity-resolver-node/src/handlers/lookup.rs` |
+| `IdentityResolverNode::broadcast_announce` | This mission — uses `RouterAnnouncePayload` extension |
+| `DidRegistry` trait + impls | This mission — wraps `crates/octo-ident` existing registry; new `InMemoryDidRegistry` + `StoolapDidRegistry` in `crates/octo-identity-resolver-node/src/registry.rs` |
+| Canonical DID validation | Mission `0010-d-wallet-audience-validation.md` — `octo_ident::CanonicalCodec::parse` enforcement is prerequisite |
+| Canonical wire-form + storage-pubkey dual-form split | RFC-0010 substrate (codec crate) |
+| `NodeEnvelope` envelope shape (consumed) | Mission `0871-protocol-core-envelope.md` — Phase 1 prerequisite |
+| Cross-domain DID resolution (resolver chains) | Deferred to RFC-0871 §Future Work — separate future mission |
 
 ## Dependencies
 
@@ -108,7 +125,7 @@ Build `crates/octo-identity-resolver-node/` — the identity resolver specialize
 
 ## Acceptance Cross-Ref
 
-Per RFC-0871 §Implementation Phases Phase 3 + RFC-0010 §Storage:
+Per RFC-0871 §Implementation Phases Phase 3 + RFC-0010 (codec crate):
 
 - [x] RFCs Accepted (RFC-0871, RFC-0010, RFC-0009)
 - [ ] Mission filed (this file)

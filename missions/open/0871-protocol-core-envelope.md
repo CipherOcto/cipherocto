@@ -63,6 +63,25 @@ Create `crates/octo-protocol/` Layer-1-stable crate owning the canonical envelop
 - [ ] `cargo test --workspace --lib` green
 - [ ] `cargo clippy --workspace --all-targets --features full -- -D warnings` green
 
+## Type Coverage
+
+Per BLUEPRINT §Mission template. RFC-0871 §Specification types mapped to this mission (Phase 1 base):
+
+| RFC-0871 Type / Section | Implemented By |
+|---|---|
+| `NodeEnvelope` (§Data Structures) | This mission — `crates/octo-protocol/src/envelope.rs` |
+| `PayloadKindId` (§Data Structures) | This mission — `crates/octo-protocol/src/payload_kind.rs` |
+| `Authorization` enum (§Data Structures) | This mission — `crates/octo-protocol/src/authorization.rs` (signature + capability + threshold + ZK + raw variants) |
+| `RecipientRef` (§Data Structures) | This mission — `crates/octo-protocol/src/recipient.rs` |
+| `ProtocolError` (§Error Handling) | This mission — `crates/octo-protocol/src/error.rs` |
+| `EnvelopeDispatcher` (§Algorithms) | This mission — `crates/octo-protocol/src/dispatch.rs` |
+| `envelope_id` derivation (§Algorithms) | This mission — `crates/octo-protocol/src/signing.rs` (domain-separated `blake3::derive_key("OCTO_NODEENVELOPE_V1_ID", ...)`) |
+| Signing preimage (§Algorithms) | This mission — `crates/octo-protocol/src/signing.rs` (domain-separated `blake3::derive_key("OCTO_NODEENVELOPE_V1_SIGNATURE", ...)`) |
+| Test vectors TV1–TV8 (§Test Vectors) | This mission — `crates/octo-protocol/tests/tv{1..8}_*.rs` |
+| `WalletNode` struct (§Wallet Node Lifecycle) | Mission `0871a-wallet-node.md` — consumes `NodeEnvelope` from this crate |
+| Per-extension crate adapter (§Per-Extension Crate Layout) | Missions `0957-ext-macaroon-crate.md`, `0957-ext-zk-crate.md` — register `CapabilitySpec` impls that produce `Authorization::Capability` / `Authorization::Proof` |
+| `PaymentCaveat` (§Implementation Phases Phase 5) | Mission `0871e-paid-query-caveat.md` — extends `Authorization::Capability` with payment caveat chain |
+
 ## Dependencies
 
 **Requires:**
@@ -106,7 +125,7 @@ Create `crates/octo-protocol/` Layer-1-stable crate owning the canonical envelop
 
 ## Acceptance Cross-Ref
 
-Per RFC-0871 §Acceptance Criteria (Phase 1):
+Per RFC-0871 §Implementation Phases Phase 1 (Core envelope acceptance):
 
 - [x] RFC Accepted (2026-08-09)
 - [ ] Mission filed (this file)

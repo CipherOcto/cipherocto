@@ -16,7 +16,7 @@ This mission creates `crates/octo-reputation-anchor-node/` — a specialized nod
 
 ## Summary
 
-Build `crates/octo-reputation-anchor-node/` — the reputation anchor specialized node. `ReputationAnchorNode` wraps RFC-0968 `ReputationRegistry` + RFC-0955-R1 anchoring substrate + `Arc<NodeTransport>`. It registers as `NetworkReceiver`, advertises payload kinds `REPUTATION_QUERY` (read), `REPUTATION_UPDATE` (write, requires authorization), `REPUTATION_ANCHOR` (on-chain binding per RFC-0955-R1). Reuses `octo-protocol::NodeEnvelope`. Authorization required for `UPDATE` + `ANCHOR` (reputation has economic implications); `QUERY` requires authenticated caller (no anonymous reads per RFC-0968 §Access Control).
+Build `crates/octo-reputation-anchor-node/` — the reputation anchor specialized node. `ReputationAnchorNode` wraps RFC-0968 `ReputationRegistry` + RFC-0955-R1 anchoring substrate + `Arc<NodeTransport>`. It registers as `NetworkReceiver`, advertises payload kinds `REPUTATION_QUERY` (read), `REPUTATION_UPDATE` (write, requires authorization), `REPUTATION_ANCHOR` (on-chain binding per RFC-0955-R1). Reuses `octo-protocol::NodeEnvelope`. Authorization required for `UPDATE` + `ANCHOR` (reputation has economic implications per the dual-stake model); `QUERY` requires authenticated caller (no anonymous reads).
 
 ## Acceptance Criteria
 
@@ -32,8 +32,8 @@ Build `crates/octo-reputation-anchor-node/` — the reputation anchor specialize
 
 ### Payload kinds
 
-- [ ] `REPUTATION_QUERY` handler: input = `did:octo:z<base58btc>`; validates via `octo_ident::CanonicalCodec::parse`; on success, queries `ReputationRegistry`; returns reputation record (score + history + reputation roots per RFC-0968 §Schema)
-- [ ] `REPUTATION_UPDATE` handler: input = `(did, reputation_delta, evidence_envelope_id)`; requires `Authorization::Capability(token)` with `ReputationUpdateCaveat` (RFC-0965 caveat type); applies delta to `ReputationRegistry`; emits reputation event (per RFC-0968 §Events); returns updated reputation record
+- [ ] `REPUTATION_QUERY` handler: input = `did:octo:z<base58btc>`; validates via `octo_ident::CanonicalCodec::parse`; on success, queries `ReputationRegistry`; returns reputation record (score + history + reputation roots per RFC-0968 §5. Storage Schema)
+- [ ] `REPUTATION_UPDATE` handler: input = `(did, reputation_delta, evidence_envelope_id)`; requires `Authorization::Capability(token)` with `ReputationUpdateCaveat` (RFC-0965 caveat type); applies delta to `ReputationRegistry`; emits reputation event (RFC-0968 §11. Audit Trail records the event); returns updated reputation record
 - [ ] `REPUTATION_ANCHOR` handler: input = `(reputation_root, period)`; requires `Authorization::Capability(token)` with `AnchorCapabilityCaveat` (RFC-0955-R1 caveat); submits anchoring proof via `ReputationAnchor`; returns anchoring receipt
 - [ ] All handlers: DID validation via `octo_ident::CanonicalCodec::parse(s, false)`
 - [ ] All handlers: rate-limited per RFC-0871 §Replay Protection
@@ -43,13 +43,13 @@ Build `crates/octo-reputation-anchor-node/` — the reputation anchor specialize
 - [ ] `REPUTATION_QUERY`: requires authenticated caller (any valid `Authorization::Signature`); no anonymous reads
 - [ ] `REPUTATION_UPDATE`: requires `Authorization::Capability(token)` carrying `ReputationUpdateCaveat` with bounded `max_delta_per_epoch`
 - [ ] `REPUTATION_ANCHOR`: requires `Authorization::Capability(token)` carrying `AnchorCapabilityCaveat` (RFC-0955-R1) with `anchored_period` matching period request
-- [ ] No anonymous writes — reputation has economic implications per RFC-0968 §Economic Implications
+- [ ] No anonymous writes — reputation has economic implications per the dual-stake model (whitepaper §Token role table)
 
 ### Replay + integrity
 
 - [ ] All handlers route through `octo_protocol::EnvelopeDispatcher` for envelope_id dedup + expiry check
 - [ ] All handlers verify `Vec<Authorization>` per `octo_protocol::Authorization::verify`
-- [ ] `REPUTATION_UPDATE` events are append-only per RFC-0968 §Schema; no in-place mutation
+- [ ] `REPUTATION_UPDATE` events are append-only per RFC-0968 §11. Audit Trail; no in-place mutation
 - [ ] `REPUTATION_ANCHOR` produces RFC-0955-R1 anchoring receipt (reputation_root + on-chain tx hash)
 
 ### Adversary coverage
@@ -66,6 +66,25 @@ Build `crates/octo-reputation-anchor-node/` — the reputation anchor specialize
 - [ ] `cargo test -p octo-reputation-anchor-node --lib` green (new crate)
 - [ ] `cargo clippy --workspace --all-targets --features full -- -D warnings` clean
 - [ ] `cargo fmt --check` clean
+
+## Type Coverage
+
+Per BLUEPRINT §Mission template. RFC-0871 §Roles and Authorities + RFC-0968 + RFC-0955-R1 types mapped to this mission (Phase 3 reputation anchor):
+
+| RFC Type / Section | Implemented By |
+|---|---|
+| `ReputationAnchorNode` struct (RFC-0871 §Roles and Authorities) | This mission — `crates/octo-reputation-anchor-node/src/node.rs` |
+| `NetworkReceiver` impl (RFC-0863 substrate) | This mission — `crates/octo-reputation-anchor-node/src/node.rs` |
+| `REPUTATION_QUERY` payload kind | This mission — `crates/octo-reputation-anchor-node/src/handlers/query.rs` |
+| `REPUTATION_UPDATE` payload kind | This mission — `crates/octo-reputation-anchor-node/src/handlers/update.rs` |
+| `REPUTATION_ANCHOR` payload kind | This mission — `crates/octo-reputation-anchor-node/src/handlers/anchor.rs` |
+| `ReputationAnchorNode::broadcast_announce` | This mission — uses `RouterAnnouncePayload` extension |
+| `ReputationRegistry` substrate | RFC-0968 existing — `crates/quota-router-core/src/reputation/` |
+| `ReputationAnchor` substrate (on-chain anchoring) | RFC-0955-R1 — `crates/octo-reputation-anchor-node/src/anchor.rs` |
+| `ReputationUpdateCaveat` (RFC-0965 reserved) | This mission — registers caveat in `crates/octo-cap-macaroon/src/caveat/reputation.rs` |
+| `AnchorCapabilityCaveat` (RFC-0955-R1 caveat) | Mission `missions/claimed/0968a-reputation-anchoring.md` — defines the caveat |
+| `NodeEnvelope` envelope shape (consumed) | Mission `0871-protocol-core-envelope.md` — Phase 1 prerequisite |
+| Cross-chain anchoring (specialized node ↔ external chain) | Deferred to RFC-0871 §Future Work — separate future mission |
 
 ## Dependencies
 
@@ -111,7 +130,7 @@ Build `crates/octo-reputation-anchor-node/` — the reputation anchor specialize
 
 ## Acceptance Cross-Ref
 
-Per RFC-0871 §Implementation Phases Phase 3 + RFC-0968 §Schema + RFC-0955-R1 §Anchoring:
+Per RFC-0871 §Implementation Phases Phase 3 + RFC-0968 §5. Storage Schema + RFC-0955-R1 anchoring substrate:
 
 - [x] RFCs Accepted (RFC-0871, RFC-0968, RFC-0955-R1)
 - [ ] Mission filed (this file)
@@ -120,7 +139,7 @@ Per RFC-0871 §Implementation Phases Phase 3 + RFC-0968 §Schema + RFC-0955-R1 �
 - [ ] RFC-0955-R1 anchoring substrate production-ready
 - [ ] `ReputationAnchorNode` struct + handlers implemented
 - [ ] 3 payload kinds (`REPUTATION_QUERY`, `REPUTATION_UPDATE`, `REPUTATION_ANCHOR`) registered
-- [ ] Reputation event emission per RFC-0968 §Events
+- [ ] Reputation event emission per RFC-0968 §11. Audit Trail
 
 ## Claimant
 
@@ -133,8 +152,8 @@ Per RFC-0871 §Implementation Phases Phase 3 + RFC-0968 §Schema + RFC-0955-R1 �
 ## Notes
 
 - Layer C crate (specialized node). Stability: per-RFC.
-- Reputation has economic implications (dual-stake model uses reputation for slashing weight per RFC-0968 §Economic Implications). `REPUTATION_UPDATE` MUST require `Authorization::Capability`, not raw signature.
-- Reputation events are append-only per RFC-0968 §Schema — never in-place mutate. This is enforced by the registry API; the node is a thin wrapper.
+- Reputation has economic implications (dual-stake model uses reputation for slashing weight). `REPUTATION_UPDATE` MUST require `Authorization::Capability`, not raw signature.
+- Reputation events are append-only per RFC-0968 §11. Audit Trail — never in-place mutate. This is enforced by the registry API; the node is a thin wrapper.
 - Cross-chain anchoring (specialized node ↔ external chain) is RFC-0871 §Future Work — not in this mission scope. Filed separately when needed.
 - Production deployment: reputation anchor is a stateful actor (RFC-0871 §Roles and Authorities). Coordinator role + election required for multi-node deployment. Single-node mission for now; multi-node federation deferred.
 - The dual-stake model (whitepaper §Token role table) uses reputation as a slashing weight; reputation inflation is an economic attack vector. `ReputationUpdateCaveat.max_delta_per_epoch` is the primary defense.

@@ -54,6 +54,24 @@ Build `crates/octo-wallet-node/` — the wallet's specialized-node adapter. `Wal
 - [ ] `cargo clippy --workspace --all-targets --features full -- -D warnings` clean (per `[[feedback_clippy_zero_warnings]]`)
 - [ ] `cargo fmt --check` clean (per `[[cargo-fmt-workflow]]`)
 
+## Type Coverage
+
+Per BLUEPRINT §Mission template. RFC-0871 §Wallet Node Lifecycle types mapped to this mission (Phase 2 wallet):
+
+| RFC-0871 Type / Section | Implemented By |
+|---|---|
+| `WalletNode` struct (§Wallet Node Lifecycle) | This mission — `crates/octo-wallet-node/src/node.rs` |
+| `NetworkReceiver` impl (RFC-0863 substrate) | This mission — `crates/octo-wallet-node/src/node.rs` |
+| `WALLET_SIGN_ED25519` payload kind (§Wallet Node Lifecycle) | This mission — `crates/octo-wallet-node/src/handlers/sign.rs` |
+| `WALLET_MINT_CAPABILITY` payload kind (§Wallet Node Lifecycle) | This mission — `crates/octo-wallet-node/src/handlers/mint.rs` |
+| `WALLET_ATTENUATE_CAPABILITY` payload kind (§Wallet Node Lifecycle) | This mission — `crates/octo-wallet-node/src/handlers/attenuate.rs` |
+| `WALLET_RESOLVE_DID` payload kind (§Wallet Node Lifecycle) | This mission — `crates/octo-wallet-node/src/handlers/resolve.rs` |
+| `WalletNode::broadcast_announce` (§Wallet Node Lifecycle) | This mission — uses `RouterAnnouncePayload` extension |
+| `RouterAnnouncePayload` extension shape | Mission `0870-b-envelope-adoption.md` — RFC-0870 v2.0 §NodeEnvelope Adoption defines the shape; this mission reuses |
+| `IdentityKey::sign` HSM routing (gap closure) | Mission `0009-a-hsm-routing.md` — prerequisite |
+| `AudienceId` canonical validation (gap closure) | Mission `0010-d-wallet-audience-validation.md` — prerequisite |
+| `NodeEnvelope` envelope shape (consumed) | Mission `0871-protocol-core-envelope.md` — Phase 1 prerequisite |
+
 ## Dependencies
 
 **Requires:**

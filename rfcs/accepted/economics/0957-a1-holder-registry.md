@@ -1293,7 +1293,7 @@ The mint signature amendment (drop to the canonical 4-arg persistence-free signa
 | 1.0     | 2026-08-01 | Initial draft (in-place amendment to RFC-0957) |
 | 1.1     | 2026-08-01 | Round 2: 4-kind enum; mint signature amendment to 4-arg persistence-free; 4 CapabilityCatalog methods (R7-N2 dropped stoolap()); revoked_at_millis_unix; lookup_by_ask + insert_dual; UNIQUE constraint; Debug redaction |
 | 2026-08-02 | **Promoted to Accepted.** Multi-round adversarial review R28-R64 converged (R64: no new findings after R63 cite correction); 2 maintainer approvals (@mmacedoeu + @cipherocto) completed; no blocking objections. Status header updated; file moved via `git mv` from `rfcs/draft/economics/` to `rfcs/accepted/economics/`. Cross-RFC anchors verified: DeliveryError variants at 0959-A1 L804/L822/L831; `deliver_at_settlement` function-def at L460, call-site at L593; `pure_forward_legacy_payload` MaxHopDepthExceeded site at 0970 L756; phantom types `IdentityKey::from_public_bytes` / `DestinationNonceStore` / `root_secret_for_root_secret_hash` all DEFERRED; all security-bearing structs have manual redacting Debug impls (MarketDeliveryEnvelopePreimage, EnvelopeId, DealSettled, DealSettledPayload, BearerCapsule, MarketDeliveryEnvelope). |
-| 1.2     | 2026-08-08 | **Capability as Authorization cross-reference.** Added cross-reference to RFC-0871 (Planned). The `CapabilityToken` defined here (RFC-0957 macaroon) IS one of the `Authorization` mechanisms in RFC-0871's `NodeEnvelope` (`Authorization::Capability(token)`). Macaroon attenuation invariant (§3.5) holds across the envelope boundary: a node receiving `Authorization::Capability(token)` enforces the same caveat constraints the issuer encoded at mint. The `HolderRegistry` substrate is the canonical lookup for `token.holder_did` resolution during envelope authorization verification. See `docs/research/2026-08-08-specialized-node-protocol-research.md` for the design lineage. No wire-format change to RFC-0957 macaroon; additive cross-reference only. |
+| 1.2     | 2026-08-08 | **Capability as Authorization cross-reference.** Added cross-reference to RFC-0871. The `CapabilityToken` defined here (RFC-0957 macaroon) IS one of the `Authorization` mechanisms in RFC-0871's `NodeEnvelope` (`Authorization::Capability(token)`). Macaroon attenuation invariant (§3.5) holds across the envelope boundary: a node receiving `Authorization::Capability(token)` enforces the same caveat constraints the issuer encoded at mint. The `HolderRegistry` substrate is the canonical lookup for `token.holder_did` resolution during envelope authorization verification. See `docs/research/2026-08-08-specialized-node-protocol-research.md` for the design lineage. No wire-format change to RFC-0957 macaroon; additive cross-reference only. |
 
 ## Related RFCs
 
@@ -1338,7 +1338,7 @@ This RFC is a dependency of:
 
 ### A. Schema Migration Path
 
-For nodes upgrading from RFC-0957 v1.0 (no registry) to RFC-0957-A1 (with registry):
+For nodes upgrading from pre-A1 RFC-0957 (no registry) to RFC-0957-A1 (with registry):
 
 1. On first boot post-upgrade, node creates `holder_registry` table with the 4-kind enum and UNIQUE constraint.
 2. Node scans local `wallet.toml` (or equivalent) for previously-issued credentials; inserts `HolderRecord` rows for each.

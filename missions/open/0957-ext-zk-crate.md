@@ -1,14 +1,14 @@
-# Mission: 0957-ext-zk — Extract ZK Capability to Per-Extension Crate (RFC-0957 v2.0)
+# Mission: 0957-ext-zk — Extract ZK Capability to Per-Extension Crate (RFC-0957)
 
 ## Status
 
-Open (2026-08-08). RFC-0957 v2.0 + RFC-0965 v1.4 amendments mandate per-extension crate layout.
+Open (2026-08-08). RFC-0957 + RFC-0965 amendments mandate per-extension crate layout.
 
 ## RFC
 
-RFC-0957 (Economics): Capability Token Format — Accepted v2.0 (2026-08-08 amendment)
-RFC-0958 (Proof Systems): ZK Capability Subclass — Accepted
-RFC-0965 (Economics): Capability Extension Format — Accepted v1.4 (2026-08-08 amendment)
+RFC-0957 (Economics): Capability Token Format
+RFC-0958 (Proof Systems): ZK Capability Subclass
+RFC-0965 (Economics): Capability Extension Format
 
 **BLUEPRINT gate note:** All three RFCs are Accepted. Mission 0957-ext-zk implements the ZK capability extraction mandate.
 
@@ -50,14 +50,14 @@ Extract the ZK-verified capability type into a dedicated `crates/octo-cap-zk/` c
 
 **Requires:**
 
-- RFC-0957 (Accepted v2.0) — per-extension crate layout mandate
-- RFC-0958 (Accepted) — ZK capability subclass specification
-- RFC-0965 (Accepted v1.4) — per-extension crate layout mandate
+- RFC-0957 — per-extension crate layout mandate
+- RFC-0958 — ZK capability subclass specification
+- RFC-0965 — per-extension crate layout mandate
 - `crates/octo-wallet/src/capability/zk_mint.rs` — source code to extract
 
 **Mission gates:**
 
-- RFC-0957 v2.0 + RFC-0965 v1.4 amendments (committed 2026-08-08)
+- RFC-0957 + RFC-0965 amendments (committed 2026-08-08)
 - Mission `0957-ext-macaroon-crate.md` (macaroon substrate extraction precedes ZK extraction)
 - Workspace `Cargo.toml` member registration
 
@@ -99,7 +99,7 @@ Per-extension crate extraction is multi-file (1 NEW crate + 1 source migration +
 
 | Version | Date | Change |
 | --- | --- | --- |
-| v0.1 | 2026-08-08 | Mission filed. RFC-0957 v2.0 + RFC-0965 v1.4 amendments mandate per-extension crate layout. Mission captures ZK extraction scope. Cross-references RFC-0958 ZK capability subclass. |
+| v0.1 | 2026-08-08 | Mission filed. RFC-0957 + RFC-0965 amendments mandate per-extension crate layout. Mission captures ZK extraction scope. Cross-references RFC-0958 ZK capability subclass. |
 
 Last Updated: 2026-08-08
 Version: 0.1

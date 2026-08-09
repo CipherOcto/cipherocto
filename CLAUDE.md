@@ -14,13 +14,15 @@ Generic SE principles that guide any new RFC, mission, or crate. Full reference:
 
 | Layer | Scope | Stability | Evolves when |
 |---|---|---|---|
-| **A** | Crypto primitives + canonical encoding | RFC-frozen, semver-major only | PQC migration (years) |
-| **B** | Identity substrate + transport + cable | RFC-driven, additive only | New RFC adds feature |
+| **A** | Crypto primitives + canonical encoding + semantic policies | RFC-frozen, semver-major only (years-stable) | PQC migration (years) |
+| **B** | Identity substrate + transport + cable + wallet-core | RFC-driven, additive only (years-stable) | New RFC adds feature |
 | **C** | Specialized nodes (one per node role) | Per-RFC | New node type = new RFC + new crate |
-| **D** | Transport adapters | Per-adapter | New adapter = new crate |
-| **E** | Capability extensions + user plugins | Per-extension | New ext = new crate + register |
+| **D** | Transport adapters (BLE/USB/TCP/QUIC/HID/...) | Per-adapter | New adapter = new crate |
+| **E** | Capability variants + user extensions | Per-extension | New ext = new crate + register |
 
-Layer direction: A → B → C → D/E. Never the reverse. Audit question for any new crate or dep: which layer? Does the dependency direction respect the layer model?
+Layer direction: A → B → C → D/E. Never the reverse. Layer B depends on A (stable substrate); Layer D depends on B (transport trait); Layer E registers into B (registry pattern), doesn't depend on it. Audit question for any new crate or dep: which layer? Does the dependency direction respect the layer model?
+
+**Why this works** — Crypto + identity survive 10-year migrations (PQC, key format evolution); business logic (capability variants, node specializations, user extensions) churns monthly without breaking crypto. The model survives cryptographic-curve transitions by isolating the blast radius to Layer A only.
 
 ### User extensibility (per-extension crates + registry)
 
@@ -36,18 +38,21 @@ For types with infinite extension surface, use **typed-discriminator + Raw escap
 
 ### Core engineering principles (always)
 
+> **Section refs not line refs** — these principle descriptions reference other RFCs/sections by §section_name or symbol, NEVER by file:line. The same rule applies to principle references themselves (see CLAUDE.md §RFC Reference Conventions Reaffirmed).
+
 1. **Separation of concerns** — each module owns ONE thing; don't conflate parsing/verification/decision/dispatch/policy.
 2. **Stable Abstractions Principle** — abstractions depend on stable things, not the reverse. Primitives stable; business logic churns.
 3. **No premature coupling** — caller should not reach into callee's dependencies (storage, business state). Go through a protocol boundary.
-4. **Open/Closed** — open to extension, closed to modification.
+4. **Open/Closed** — open to extension, closed to modification. New types added without central enum edits.
 5. **Dependency Inversion** — depend on abstractions (traits); the side owning data owns the impl.
 6. **Interface Segregation** — small focused traits > god-traits.
 7. **No god-objects** — split multi-concern structs early (before ~3k lines).
-8. **Push complexity to edges** — core stays simple; boundaries handle environment messiness.
-9. **Discipline at first call site pays off** — don't bypass an abstraction "just once". The first bypass becomes precedent.
-10. **No parallel abstractions** — use existing primitive (general transport, general codec, general identity), don't invent parallel.
-11. **Storage is not a protocol** — direct storage coupling forces business-rule replication. Use typed query/response boundary.
-12. **Attenuation invariants cross boundaries** — type-level invariant in module A still enforced by module B consuming A's output.
+8. **Composition over inheritance** — `Vec<TypedVariant>` with logical-AND semantics for multi-mechanism composition. Inheritance is upgrade-hostile; composition lets new variants land without touching the core type.
+9. **Push complexity to edges** — core stays simple; boundaries handle environment messiness.
+10. **Discipline at first call site pays off** — don't bypass an abstraction "just once". The second bypass becomes pattern; the third makes the abstraction dead code.
+11. **No parallel abstractions** — use existing primitive (general transport, general codec, general identity), don't invent parallel. Parallel abstractions duplicate adapter code and create two health-check systems.
+12. **Storage is not a protocol** — direct storage coupling forces business-rule replication. Use typed query/response boundary.
+13. **Attenuation invariants cross boundaries** — type-level invariant in module A still enforced by module B consuming A's output.
 
 ## Project Overview
 
@@ -180,6 +185,8 @@ Every `Cargo.toml` dependency entry that is non-trivial should carry a comment e
 # Wallet signing substrate (Layer B years-stable; RFC-0009 §Identity)
 ed25519-dalek = { version = "2.2", features = ["serde", "zeroize"] }
 ```
+
+(The example label uses "Layer B years-stable" — see the crate stability table above for the column this maps to.)
 
 For RFC / mission / specialized-node checklists (mandatory sections, naming conventions, decomposition thresholds, deferral rules, etc.) — see `docs/BLUEPRINT.md` §RFC Process, §Mission Lifecycle, §Multi-Mission Decomposition. CLAUDE.md captures the principles; BLUEPRINT.md is the operational playbook.
 

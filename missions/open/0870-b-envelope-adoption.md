@@ -1,14 +1,14 @@
-# Mission: 0870-b — Quota Router NodeEnvelope Adoption (RFC-0870 v2.0 Gap Closure)
+# Mission: 0870-b — Quota Router NodeEnvelope Adoption (RFC-0870 NodeEnvelope Gap Closure)
 
 ## Status
 
-Open (2026-08-08). RFC-0870 v2.0 amendment adds the NodeEnvelope adoption requirement; this mission implements the wire format migration.
+Open (2026-08-08). RFC-0870 amendment adds the NodeEnvelope adoption requirement; this mission implements the wire format migration.
 
 ## RFC
 
-RFC-0870 (Networking): Distributed Quota Router Network — Accepted v2.0 (2026-08-08 amendment)
+RFC-0870 (Networking): Distributed Quota Router Network
 
-**BLUEPRINT gate note:** RFC-0870 is Accepted. Mission 0870-b implements the v2.0 NodeEnvelope adoption mandate. **Implementation depends on RFC-0871 reaching Accepted status** (cross-mission dependency on the NodeEnvelope specification itself).
+**BLUEPRINT gate note:** RFC-0870 is Accepted. Mission 0870-b implements the NodeEnvelope adoption mandate. **Implementation depends on RFC-0871 reaching Accepted status** (cross-mission dependency on the NodeEnvelope specification itself; RFC-0871 is currently Draft per promotion 2026-08-08, commit `b355cb5b` + content commit pending).
 
 This mission closes the wire format heterogeneity gap surfaced by the 2026-08-08 specialized node protocol research. Today, quota router uses bespoke wire format (0xC3-0xCB discriminator + DCS-encoded payload + OCrypt AEAD). The amendment mandates encapsulation in the unified `NodeEnvelope` (RFC-0871) while preserving the existing AEAD encryption layer.
 
@@ -21,7 +21,7 @@ Migrate `QuotaRouterNode` outbound + inbound payloads to use the unified `NodeEn
 ### Top-level: NodeEnvelope adoption
 
 - [ ] `QuotaRouterNode` outbound payloads wrapped in `NodeEnvelope` per RFC-0871 §Data Structures
-- [ ] Existing per-payload-type discriminators (0xC3-0xCB) mapped to RFC-0870-namespaced UUIDs per RFC-0870 v2.0 §NodeEnvelope Adoption table:
+- [ ] Existing per-payload-type discriminators (0xC3-0xCB) mapped to RFC-0870-namespaced UUIDs per RFC-0870 §NodeEnvelope Adoption table (7 wire payloads):
   - `RouterAnnouncePayload` → UUID `0x87,0x00,...`
   - `RouterWithdrawPayload` → UUID `0x87,0x01,...`
   - `CapacityGossipPayload` → UUID `0x87,0x02,...`
@@ -31,7 +31,7 @@ Migrate `QuotaRouterNode` outbound + inbound payloads to use the unified `NodeEn
   - `ForwardRejectPayload` → UUID `0x87,0x12,...`
 - [ ] Each `NodeEnvelope` carries at least one `Authorization` per RFC-0871 §Authorization (existing signature/HMAC patterns preserved as `Authorization::Signature`)
 - [ ] `QuotaRouterHandler::on_receive` dispatches on `NodeEnvelope.payload_kind` UUID lookup (not the legacy 0xC3-0xCB wire-byte parsing)
-- [ ] Backward-compatibility: transitional phase accepts BOTH legacy discriminant-byte envelopes AND new `NodeEnvelope` envelopes (6-month deprecation window per RFC-0870 v2.0)
+- [ ] Backward-compatibility: transitional phase accepts BOTH legacy discriminant-byte envelopes AND new `NodeEnvelope` envelopes (6-month deprecation window per RFC-0870 §NodeEnvelope Adoption)
 - [ ] AEAD encryption layer preserved (RFC-0853 channel binding); `NodeEnvelope` adds `authorization` field layered above AEAD
 - [ ] All existing quota router tests pass: `cargo test -p quota-router-core --lib`
 - [ ] New tests: legacy envelope parsing → ok during compat window; legacy envelope parsing → fail after window expiry
@@ -52,20 +52,20 @@ Migrate `QuotaRouterNode` outbound + inbound payloads to use the unified `NodeEn
 
 **Requires:**
 
-- RFC-0870 (Accepted v2.0) — NodeEnvelope adoption requirement
-- RFC-0871 (Planned; MUST be Accepted before implementation starts)
-- RFC-0126 (Accepted) — Canonical serialization for payload bodies
-- RFC-0853 (Accepted) — AEAD encryption layer preserved
+- RFC-0870 — NodeEnvelope adoption requirement
+- RFC-0871 (Draft; MUST be Accepted before implementation starts)
+- RFC-0126 — Canonical serialization for payload bodies
+- RFC-0853 — AEAD encryption layer preserved
 
 **Mission gates:**
 
-- RFC-0870 v2.0 amendment (committed 2026-08-08; this mission)
+- RFC-0870 amendment (committed 2026-08-08; this mission)
 - RFC-0871 reaches Accepted (cross-mission dependency; tracked separately)
 
 **Not Requires:**
 
-- Production `WalletNode` implementation (RFC-0871 Phase 2; separate mission)
-- Per-extension crate extraction (RFC-0957 v2.0; separate missions)
+- Production `WalletNode` implementation (RFC-0871 §Implementation Phase 2; separate mission)
+- Per-extension crate extraction (RFC-0957; separate missions)
 
 ## Implementation Guide
 
@@ -98,7 +98,7 @@ RFC-0870 v2.0 NodeEnvelope adoption is multi-file (`node/{handler,mod,forward,go
 
 | Version | Date | Change |
 | --- | --- | --- |
-| v0.1 | 2026-08-08 | Mission filed. RFC-0870 v2.0 amendment adds NodeEnvelope Adoption requirement; mission captures wire format migration scope. Cross-references RFC-0871 §Implementation Phase 3 + RFC-0870 v2.0 §NodeEnvelope Adoption. |
+| v0.1 | 2026-08-08 | Mission filed. RFC-0870 amendment adds NodeEnvelope Adoption requirement; mission captures wire format migration scope. Cross-references RFC-0871 §Implementation Phase 3 + RFC-0870 §NodeEnvelope Adoption. |
 
 Last Updated: 2026-08-08
 Version: 0.1

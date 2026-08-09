@@ -2,6 +2,10 @@
 
 > **Status:** Draft (RFC-0871 input). Compiled 2026-08-08 from public sources + CipherOcto's own prior RFCs.
 
+## Methodology
+
+This is a **directional wide-survey** of protocol-envelope patterns in adjacent systems (blockchain, P2P networking, capability-based authorization), paired with an audit of CipherOcto's existing transport + identity + capability substrate. It is NOT benchmarked — claims are directional and traceable to public specs cited in §References. Findings flow into RFC-0871 as design lineage (see RFC-0871 §Version History v0.2 entry "Input research").
+
 ## Executive Summary
 
 CipherOcto's mesh today has one specialized node type: the Quota Router (RFC-0870). Identity resolution, reputation anchoring, capability issuance, and market settlement each have RFCs but no shared envelope — each would re-invent its own wire format. This survey maps the design space for a **uniform specialized-node protocol envelope** that lets any number of node types coexist without central enum constraints.
@@ -14,13 +18,13 @@ CipherOcto's grand-design mission family (RFC-0955 through RFC-0971) defines sev
 
 | Node | RFC | Today's state |
 |---|---|---|
-| Quota router | RFC-0870 (Accepted) | Reference impl in `crates/quota-router-core/src/node/mod.rs::QuotaRouterNode` |
+| Quota router | RFC-0870 | Reference impl in `crates/quota-router-core/src/node/mod.rs::QuotaRouterNode` |
 | Identity resolver | RFC-0009 + RFC-0010 | DID codec in `crates/octo-ident/`; no mesh node yet |
-| Reputation anchor | RFC-0968 (Accepted) | Substrate in `crates/octo-reputation/`; not network-wired |
-| Capability issuer | RFC-0957-A1 (Accepted) | `CapabilityCatalog` in `crates/octo-wallet/src/capability/macaroon.rs`; gossip via `NodeTransport::broadcast` |
-| Market node | RFC-0959-A1 (Accepted) | `MarketDeliveryEnvelope` substrate; settlement primitives in `octo-wallet/src/capability/settle.rs` |
+| Reputation anchor | RFC-0968 | Substrate in `crates/octo-reputation/`; not network-wired |
+| Capability issuer | RFC-0957-A1 | `CapabilityCatalog` in `crates/octo-wallet/src/capability/macaroon.rs`; gossip via `NodeTransport::broadcast` |
+| Market node | RFC-0959-A1 | `MarketDeliveryEnvelope` substrate; settlement primitives in `octo-wallet/src/capability/settle.rs` |
 | Wallet | (NEW) | `HsmAdapter` exists; not network-participating |
-| Future nodes | TBD | (governance, oracle, identity federation, ...) |
+| Beyond RFC-0871 scope: governance, oracle, identity federation (each = future RFC per Layer C per-RFC model) | TBD | Out of RFC-0871 scope |
 
 Each existing node speaks a slightly different wire format. Quota router has `RouterAnnouncePayload`. Capability issuer has `MarketDeliveryEnvelope`. Reputation has anchor batch gossip. Adding a new node today = invent a new envelope = bridge code per pair.
 
@@ -96,7 +100,7 @@ For each: extract the load-bearing abstraction, identify what CipherOcto already
 
 **What CipherOcto already has:** RFC-0010 (`crates/octo-ident::DidCodec`), RFC-0010 critique already identified that `octo-wallet::AudienceId::from_str` doesn't validate. **Wallet gap to close.**
 
-**Conflict risk:** DIDComm uses URI message types (`https://...`); CipherOcto uses UUID. Both work. UUIDs are easier to allocate centrally (RFC-numbered) without registering with W3C. **Adopt UUID-based; cross-reference DIDComm in Future Work.**
+**Conflict risk:** DIDComm uses URI message types (`https://...`); CipherOcto uses UUID. Both work. UUIDs are easier to allocate centrally (RFC-numbered) without registering with W3C. **Adopt UUID-based; DIDComm interop deferred to a future RFC-0XXX on DIDComm URI bridge if cross-ecosystem interop is required (Owner: TBD, Schedule: post-v2.0).**
 
 ### 6. Capability-based authorization (Cap'n Proto, E, KeyNote)
 
@@ -181,7 +185,7 @@ For each: extract the load-bearing abstraction, identify what CipherOcto already
 
 - RFC-0009 — Identity substrate, DID format
 - RFC-0010 — Canonical DID codec (octo-ident crate)
-- RFC-0010 v1.1 — Wallet Audience validation gap (PLANNED amendment)
+- RFC-0010 (Future Work: Wallet Audience validation gap — surfaced by this research, tracked via mission `0010-d-wallet-audience-validation.md`)
 - RFC-0126 — Canonical serialization
 - RFC-0853 — BLAKE3 + channel binding
 - RFC-0862 — Atomic transaction + gossip
@@ -200,18 +204,18 @@ For each: extract the load-bearing abstraction, identify what CipherOcto already
 
 ### External sources surveyed
 
-- Ethereum contract ABI specification — method selector via first 4 bytes of `keccak256(signature)`
-- Solana program instruction format — Anchor IDL discriminator from `sha256("global:<name>")[..8]`
-- Cosmos SDK module pattern — `Msg` interface with `Type()` returning string
-- IBC protocol spec — packet structure with source/destination channels + ack/timeout
-- Polkadot XCM v3 — instruction enum (`Xcm::ReserveAssetDeposited`, etc.)
-- libp2p request-response protocol — `/proto-name/version` IDs + multistream-select
-- W3C DID Core 1.0 — `did:method:identifier` + DID Resolution
-- W3C DIDComm v2 — `https://didcomm.org/...` message types
-- Cap'n Proto capability model — unforgeable references, attenuation via parent cap
-- E language capabilities — capability lists, `sealed` patterns
-- gRPC service definitions — typed methods + streaming
-- IPFS DAG-PB — typed content addressing (relevant for envelope_id content addressing)
+- Ethereum contract ABI specification — https://docs.soliditylang.org/en/latest/abi-spec.html §Function Selector and Argument Encoding (method selector via first 4 bytes of `keccak256(signature)`)
+- Solana program instruction format — https://anchor-lang.com/docs/account-constraints (Anchor IDL discriminator from `sha256("global:<name>")[..8]`)
+- Cosmos SDK module pattern — https://docs.cosmos.network/main/core/proto-encoding (Msg interface with Type() returning string)
+- IBC protocol spec — https://github.com/cosmos/ibc/blob/main/spec/core/ics-004-channel-and-packet-semantics (packet structure with source/destination channels + ack/timeout)
+- Polkadot XCM v3 — https://github.com/polkadot-evolution/parachain-frame-migrations (instruction enum Xcm::ReserveAssetDeposited, etc.)
+- libp2p request-response protocol — https://github.com/libp2p/specs/tree/master/request-response (`/proto-name/version` IDs + multistream-select)
+- W3C DID Core 1.0 — https://www.w3.org/TR/did-core/ (`did:method:identifier` + DID Resolution)
+- W3C DIDComm v2 — https://identity.foundation/didcomm-messaging/spec/ (`https://didcomm.org/...` message types)
+- Cap'n Proto capability model — https://capnproto.org/capnp-tool.html (unforgeable references, attenuation via parent cap)
+- E language capabilities — http://www.erights.org/ (capability lists, `sealed` patterns)
+- gRPC service definitions — https://grpc.io/docs/languages/proto/ (typed methods + streaming)
+- IPFS DAG-PB — https://github.com/ipfs/specs/blob/master/UNIXFS-1.md (typed content addressing — relevant for envelope_id content addressing)
 
 ### CipherOcto substrate surveyed
 
@@ -231,7 +235,7 @@ For each: extract the load-bearing abstraction, identify what CipherOcto already
 - `crates/octo-transport/src/node_transport.rs` — `NodeTransport` struct (broadcast, send_best, dispatch)
 - `crates/octo-cable/src/{ble,noise,tunnel,handshake,ctap2,framing,discovery,base10,assert}.rs` — cable transport stack
 - `crates/quota-router-core/src/node/mod.rs` — `QuotaRouterNode` (1400 lines, reference impl)
-- `crates/quota-router-core/src/proxy.rs::handle_request` — inline Bearer strip (L697-711) — orphan `GatewayAuthenticator` substrate in `octo-wallet/src/capability/gateway_authenticator.rs`
+- `crates/quota-router-core/src/proxy.rs::handle_request` — inline Bearer strip (see §Inline Bearer Strip pattern in this file) — orphan `GatewayAuthenticator` substrate in `octo-wallet/src/capability/gateway_authenticator.rs`
 
 ## Conclusion
 

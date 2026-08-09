@@ -1,16 +1,16 @@
-# Mission: 0009-a — Wallet HSM Routing (RFC-0009 v1.1 Gap Closure)
+# Mission: 0009-a — Wallet HSM Routing (RFC-0009 HsmAdapter Gap Closure)
 
 ## Status
 
-Open (2026-08-08). RFC-0009 v1.1 amendment adds the HSM routing requirement; this mission implements the gap closure.
+Open (2026-08-08). RFC-0009 amendment adds the HSM routing requirement; this mission implements the gap closure.
 
 ## RFC
 
-RFC-0009 (Process): Identity Management — Accepted v1.1 (2026-08-08 amendment)
+RFC-0009 (Process): Identity Management
 
-**BLUEPRINT gate note:** RFC-0009 is Accepted. Mission 0009-a implements the v1.1 HSM Integration mandate.
+**BLUEPRINT gate note:** RFC-0009 is Accepted. Mission 0009-a implements the HsmAdapter Integration mandate.
 
-This mission closes the wallet-side HSM routing gap surfaced by the 2026-08-08 specialized node protocol research (`docs/research/2026-08-08-specialized-node-protocol-research.md`). `IdentityKey::sign` at `crates/octo-wallet/src/identity.rs:71` currently calls `ed25519_dalek::SigningKey::from_bytes(...).sign(...)` directly — bypassing the `HsmAdapter` trait at `crates/octo-wallet/src/hsm.rs:33`. Hardware wallets (`LedgerSigner`) cannot sign capability tokens today.
+This mission closes the wallet-side HSM routing gap surfaced by the 2026-08-08 specialized node protocol research (`docs/research/2026-08-08-specialized-node-protocol-research.md`). `IdentityKey::sign` in `crates/octo-wallet/src/identity.rs` currently calls `ed25519_dalek::SigningKey::from_bytes(...).sign(...)` directly — bypassing the `HsmAdapter` trait in `crates/octo-wallet/src/hsm.rs`. Hardware wallets (`LedgerSigner`) cannot sign capability tokens today.
 
 ## Summary
 
@@ -20,8 +20,8 @@ Refactor `IdentityKey` (and every signing call site in `octo-wallet`) to route t
 
 ### Top-level: HSM routing closure
 
-- [ ] `crates/octo-wallet/src/identity.rs::IdentityKey` holds `signer: Arc<dyn HsmAdapter>` (CHANGED: was `SigningKey` directly per `crates/octo-wallet/src/identity.rs:25`)
-- [ ] `IdentityKey::sign(msg: &[u8]) -> Result<Signature, WalletError>` delegates to `self.signer.sign(msg)` and returns the wrapped `Signature` (CHANGED: was `self.0.sign(msg)` directly at line 71-73)
+- [ ] `crates/octo-wallet/src/identity.rs::IdentityKey` holds `signer: Arc<dyn HsmAdapter>` (CHANGED: was `SigningKey` directly)
+- [ ] `IdentityKey::sign(msg: &[u8]) -> Result<Signature, WalletError>` delegates to `self.signer.sign(msg)` and returns the wrapped `Signature` (CHANGED: was `self.0.sign(msg)` directly)
 - [ ] `IdentityKey::generate()` constructs `IdentityKey` with `signer: Arc::new(InMemorySigner::new(seed_bytes, public_key))` (default impl preserved for MVP)
 - [ ] `IdentityKey::from_seed(seed: [u8; 32]) -> Self` constructs with same default `InMemorySigner`
 - [ ] `HolderSignError` / `WalletError::Hsm(HsmError)` error variant exists for HSM failure propagation
@@ -32,7 +32,7 @@ Refactor `IdentityKey` (and every signing call site in `octo-wallet`) to route t
   - `crates/octo-wallet/src/capability/discharge.rs` (discharge macaroon signatures)
   - `crates/octo-wallet/src/capability/redemption.rs` (redemption signatures)
 - [ ] Test fixture: `InMemorySigner` produces byte-identical signatures to pre-refactor `ed25519_dalek::SigningKey::sign` for the same input (determinism parity check)
-- [ ] Test fixture: `LedgerSigner` smoke test (existing test at `crates/octo-wallet/src/hsm.rs:179`) continues to pass; production LedgerSigner (real APDU) deferred to separate mission
+- [ ] Test fixture: `LedgerSigner` smoke test (existing test in `crates/octo-wallet/src/hsm/tests/ledger_signer_smoke.rs`) continues to pass; production LedgerSigner (real APDU) deferred to separate mission
 - [ ] `cargo test -p octo-wallet --lib` green
 - [ ] `cargo test -p octo-wallet --test eleven_step_zk` green
 - [ ] `cargo test -p octo-wallet --test capability_zk_acceptance` green
@@ -45,7 +45,7 @@ Refactor `IdentityKey` (and every signing call site in `octo-wallet`) to route t
 - [ ] `cargo test --workspace --lib` green
 - [ ] `cargo clippy --workspace --all-targets --features full -- -D warnings` green
 
-### Adversary coverage (per RFC-0009 v1.1 A9 + A10)
+### Adversary coverage (per RFC-0009 A9 + A10)
 
 - [ ] A9 (host-side seed exfiltration): `IdentityKey::seed_bytes()` is REMOVED from public API. Seed exists only inside `InMemorySigner` (MVP) or hardware secure element (production). Unit test: pre-refactor `IdentityKey::seed_bytes()` does NOT compile.
 - [ ] A10 (malicious host signs for user): `LedgerSigner::sign` requires explicit on-device confirmation per `HsmError::UserRejected`. Hardware wallet test fixture: simulated reject returns `HsmError::UserRejected`, propagates as `WalletError::Hsm(HsmError::UserRejected)`.
@@ -54,18 +54,18 @@ Refactor `IdentityKey` (and every signing call site in `octo-wallet`) to route t
 
 **Requires:**
 
-- RFC-0009 (Accepted v1.1) — HSM routing requirement
+- RFC-0009 — HSM routing requirement
 - RFC-0853 §F2 — HSM substrate specification
 - `crates/octo-wallet/src/hsm.rs` — `HsmAdapter` trait + `InMemorySigner` + `LedgerSigner` impls (existing)
 
 **Mission gates:**
 
-- RFC-0009 v1.1 amendment (committed 2026-08-08; this mission)
+- RFC-0009 amendment (committed 2026-08-08; this mission)
 
 **Not Requires:**
 
-- Production LedgerSigner (APDU over USB HID) — separate mission (future `0850p-h-wallet-ledger`)
-- Per-extension crate extraction (RFC-0957 v2.0; separate missions `0957-ext-*`)
+- Production LedgerSigner (APDU over USB HID) — tracked under RFC-0850 §F2 future work; no mission filed yet (will file under `missions/open/` when production APDU work starts; not a phantom pointer per `[[no-phantom-mission-pointers]]` because the substrate is documented in RFC-0850)
+- Per-extension crate extraction (RFC-0957; separate missions `0957-ext-*`)
 
 ## Implementation Guide
 
@@ -90,14 +90,14 @@ RFC-0009 v1.1 HSM routing is multi-file (identity.rs + 4 capability files + test
 
 - This mission is the wallet-side complement to the 2026-08-08 specialized node protocol research + RFC-0871 §Implementation Phase 2.
 - Mission `0010-d-wallet-audience-validation.md` is the OTHER gap closure (AudienceId DID validation). These two missions together close the wallet-side foundational gaps surfaced by the audit. Both are independent of RFC-0871 acceptance — claimable today.
-- Per `[[deferred-vs-unspecified]]` named-owner rule: this mission has a concrete scope (RFC-0009 v1.1 HSM Integration). No further deferral.
-- Production LedgerSigner (real APDU over USB HID) is tracked separately (deferred to `missions/open/0850p-h-wallet-ledger.md` per RFC-0850 §F2 future work).
+- Per `[[deferred-vs-unspecified]]` named-owner rule: this mission has a concrete scope (RFC-0009 HsmAdapter Integration). No further deferral.
+- Production LedgerSigner (real APDU over USB HID) is tracked under RFC-0850 §F2 future work. No mission file exists today; will be filed at `missions/open/0850p-h-wallet-ledger.md` when production APDU work begins (not yet a phantom pointer per `[[no-phantom-mission-pointers]]` — the substrate is in RFC-0850).
 
 **Version History:**
 
 | Version | Date | Change |
 | --- | --- | --- |
-| v0.1 | 2026-08-08 | Mission filed. RFC-0009 v1.1 amendment adds HSM Integration requirement; mission captures gap closure scope. Cross-references RFC-0871 §Implementation Phase 2 + RFC-0009 v1.1 §HsmAdapter Integration. |
+| v0.1 | 2026-08-08 | Mission filed. RFC-0009 amendment adds HsmAdapter Integration requirement; mission captures gap closure scope. Cross-references RFC-0871 §Implementation Phase 2 + RFC-0009 §HsmAdapter Integration. |
 
 Last Updated: 2026-08-08
 Version: 0.1

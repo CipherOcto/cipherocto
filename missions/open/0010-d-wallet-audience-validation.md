@@ -2,15 +2,15 @@
 
 ## Status
 
-Open (2026-08-08). RFC-0010 v1.2 amendment adds F4 (Wallet audience validation) to the Future Work section, prompted by the 2026-08-08 specialized node protocol research (`docs/research/2026-08-08-specialized-node-protocol-research.md`).
+Open (2026-08-08). RFC-0010 amendment adds F4 (Wallet audience validation) to the Future Work section, prompted by the 2026-08-08 specialized node protocol research (`docs/research/2026-08-08-specialized-node-protocol-research.md`).
 
 ## RFC
 
-RFC-0010 (Process): Canonical OctoID Identifier Codec — Accepted v1.2 (2026-08-08 amendment)
+RFC-0010 (Process): Canonical OctoID Identifier Codec
 
 **BLUEPRINT gate note:** RFC-0010 is Accepted. Mission 0010-d implements the F4 future-work item.
 
-This mission closes the wallet-side gap surfaced by RFC-0010 §Motivation (the `AudienceId::from_str` accepts any non-empty string) and is the foundational piece of the broader specialized node protocol work (RFC-0871, Planned) which requires `from_did: WireDid` to be validated at every envelope boundary.
+This mission closes the wallet-side gap surfaced by RFC-0010 §Motivation (the `AudienceId::from_str` accepts any non-empty string) and is the foundational piece of the broader specialized node protocol work (RFC-0871, Draft) which requires `from_did: WireDid` to be validated at every envelope boundary.
 
 ## Summary
 
@@ -26,7 +26,7 @@ The change is intentionally surgical: ONE source file modification (`identity.rs
 - [ ] `allow_legacy_bare: false` for production paths (wallet API surface); `true` only inside `#[cfg(test)]` fixtures where legacy wire form literals exist (per RFC-0010 §Implementation phases note: "F1: reject bare `:name` literals during the deprecation window")
 - [ ] Every `AudienceId::new(String)` constructor also routes through `CanonicalCodec::parse` (defense in depth — constructors are not the parse path but should still validate)
 - [ ] Error type surfaces `octo_ident::DidError` directly OR a wrapper that preserves discriminant (`UnrecognizedShape` / `InvalidEncoding` / `InvalidLength` / `HashPartMismatch` / `LegacyFormExpired`)
-- [ ] `derive_capability_key(audience_did: &WireDid, ...)` (existing function at `crates/octo-wallet/src/identity.rs:200`) takes `WireDid` directly (no String parsing inside)
+- [ ] `derive_capability_key(audience_did: &WireDid, ...)` (existing function in `crates/octo-wallet/src/identity.rs`) takes `WireDid` directly (no String parsing inside)
 - [ ] Unit tests in `crates/octo-wallet/src/identity.rs` `mod tests`:
   - canonical `did:octo:z<base58btc>` accepted (`AudienceId::from_str` returns `Ok`)
   - legacy `did:octo:b<base32>` rejected when `allow_legacy_bare: false`
@@ -54,8 +54,8 @@ The change is intentionally surgical: ONE source file modification (`identity.rs
 
 **Requires:**
 
-- RFC-0009 (Accepted) — Identity substrate, DID format definition
-- RFC-0010 (Accepted v1.2) — Canonical DID codec, `crates/octo-ident::DidCodec` trait, `CanonicalCodec::parse()` function
+- RFC-0009 — Identity substrate, DID format definition
+- RFC-0010 — Canonical DID codec, `crates/octo-ident::DidCodec` trait, `CanonicalCodec::parse()` function
 
 **Mission gates:**
 
@@ -64,7 +64,7 @@ The change is intentionally surgical: ONE source file modification (`identity.rs
 
 **Not Requires:**
 
-- RFC-0871 (Planned) — this mission is foundational but does not depend on the full envelope RFC; closure of F4 enables RFC-0871 §Specification, doesn't block on it
+- RFC-0871 — this mission is foundational but does not depend on the full envelope RFC; closure of F4 enables RFC-0871 §Specification, doesn't block on it
 - HSM wiring — separate gap, tracked independently
 
 ## Implementation Guide
@@ -87,7 +87,7 @@ RFC-0010 F4 is a 1-source-file modification. Below the BLUEPRINT §Multi-Mission
 
 ## Notes
 
-- This mission was surfaced by the 2026-08-08 specialized node protocol research + RFC-0871 (Planned). It is **independent of RFC-0871 acceptance** — the wallet DID validation gap is real today and exists regardless of the broader envelope work. Claiming this mission before RFC-0871 reaches Accepted is encouraged.
+- This mission was surfaced by the 2026-08-08 specialized node protocol research + RFC-0871. It is **independent of RFC-0871 acceptance** — the wallet DID validation gap is real today and exists regardless of the broader envelope work. Claiming this mission before RFC-0871 reaches Accepted is encouraged.
 - Mission `0010-c-canonical-did-deprecation.md` is the open follow-up to close the legacy `did:octo:b<base32>` form. Coordinate: this mission (`0010-d`) tightens the parse path; `0010-c` flips the default `allow_legacy_bare` flag. Both are small surgical changes.
 - Per `[[deferred-vs-unspecified]]` named-owner rule: this mission has a concrete target (RFC-0010 F4 closure). No further deferral.
 
@@ -95,7 +95,7 @@ RFC-0010 F4 is a 1-source-file modification. Below the BLUEPRINT §Multi-Mission
 
 | Version | Date | Change |
 | --- | --- | --- |
-| v0.1 | 2026-08-08 | Mission filed. RFC-0010 v1.2 amendment adds F4; mission captures gap closure scope. Cross-references RFC-0871 (Planned) + `docs/research/2026-08-08-specialized-node-protocol-research.md`. |
+| v0.1 | 2026-08-08 | Mission filed. RFC-0010 amendment adds F4; mission captures gap closure scope. Cross-references RFC-0871 + `docs/research/2026-08-08-specialized-node-protocol-research.md`. |
 
 Last Updated: 2026-08-08
 Version: 0.1

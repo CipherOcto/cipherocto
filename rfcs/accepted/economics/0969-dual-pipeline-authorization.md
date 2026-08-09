@@ -31,7 +31,7 @@ Key elements:
 6. **`mint_dual` algorithm** — `mint_dual(buyer_did, buyer_holder_pub, ask_id, ask_ttl_unix, capability_root_secret, buyer_encryption_pubkey, wallet, db)` — 8 params (R22-N1 fix: dropped dead `bearer_root_secret`; canonical signature per §`mint_dual` Algorithm at line 475 uses 8 params with `&dyn WalletCrypto` + `&stoolap::Database`). Mints both tokens exactly once and writes both via `TransactionExt::insert_dual` (RFC-0957-A1 §TransactionExt). `CapabilityToken::mint(root_secret, holder, holder_did, initial_caveats)` is the 4-arg persistence-free signature (R6-C3 fix, R7-N6 fix: NO `Some(&mut txn)` parameter; mint is pure crypto, no post-write hook). The caller writes both `HolderRecord`s via `txn.insert_dual(...)` in the same transaction, preventing the double-insert contradiction. (R15-N16 fix: `mint_dual` is a preview/test utility; production writes happen ONLY in `deliver_at_settlement` per RFC-0959-A1 §Algorithms. Calling both paths for the same ask_id would hit `UNIQUE(ask_id, kind)` and fail. Documented as the single-write authority.)
 7. **Backward compat** — legacy clients (claude-code, hardcoded HTTP agents) using `Authorization: Bearer <sk-...>` continue working without client-side changes.
 8. **Forward compat** — new clients opt into capability by including the wallet-side signer and `X-Capability-Token` header.
-9. **Debug redaction** — `AuthHeader`, `DispatchSet`, `AuthenticatedIdentity`, `BearerVerification`, `CapabilityVerification` use manual `impl Debug` with redaction.
+9. **Debug redaction** — `AuthHeader`, `DispatchSet`, `AuthenticatedRequest`, `BearerVerification`, `CapabilityVerification` use manual `impl Debug` with redaction.
 
 ## Why Needed
 
@@ -365,125 +365,83 @@ pub fn from_headers(headers: &http::HeaderMap) -> Result<Self, ParseError> {
 #### `GatewayAuthenticator::authenticate()`
 
 ```rust
+/// v1.1 amendment (2026-08-08): rewritten per the 4-way dispatch table
+/// (see §Dispatch Table). The old AND-gate identity linkage step is
+/// REMOVED because the dispatch table REJECTS the "both schemes" case as
+/// client misconfig — linkage is unreachable per new semantics. The
+/// `routing_decision` is computed from `dispatch.headers` alone (header
+/// count, no side-channel lookup). Verifier traits (`BearerVerifier`,
+/// `CapabilityVerifier`) replace direct `VirtualKeyTable` + `HolderRegistry`
+/// access per RFC-0871 §Traits.
 pub fn authenticate(&self, dispatch: &DispatchSet)
-    -> Result<AuthenticatedIdentity, AuthError>
+    -> Result<AuthenticatedRequest, AuthError>
 {
-    let mut bearer_verification: Option<BearerVerification> = None;
-    let mut capability_verification: Option<CapabilityVerification> = None;
-    let mut capability_ask_id: Option<[u8; 32]> = None;     // Round 3 R2 M13 fix: flat type
-    let mut capability_did: Option<String> = None;
-    // R17-N1 fix: hoist active_holder_pub to function scope (was in match arm scope, then referenced outside the loop; unreachable for bearer-only path)
-    let mut active_holder_pub: Option<[u8; 32]> = None;
+    let mut bearer: Option<BearerVerification> = None;
+    let mut capability: Option<CapabilityVerification> = None;
 
     for header in &dispatch.headers {
         match header {
             AuthHeader::Bearer { token } => {
-                let v = self.virtual_key_table.verify(token)?;
-                bearer_verification = Some(v);
+                bearer = Some(self.bearer_verifier.verify(token)?);
             }
             AuthHeader::CapabilityToken { token } | AuthHeader::CipherOctoCap { token } => {
-                // Round 3 R2 C1 fix: extract macaroon's root_id from the wire's
-                // first segment, then cap_root_hash = BLAKE3(macaroon.root_id).
-                // The wire-only derivation matches the mint-time derivation
-                // (Round 3 R2 C8: revoked records rejected by lookup_active).
                 let macaroon = deserialize_macaroon_segment_1(token)?;
                 let cap_root_hash = BLAKE3(&macaroon.root_id);
                 let active = self.holder_registry.lookup_active(&cap_root_hash, &*self.clock)?
                     .ok_or(AuthError::UnknownHolderOrRevoked { cap_root_hash })?;
-                // R15-N1 + R17-N1 fix: assign to function-scope binding (was in match arm scope, then referenced outside the loop)
-                active_holder_pub = Some(active.holder_pub);
 
                 let ctx = VerifyContext {
                     discharges: DischargeSet::default(),
-                    channel_providers: self.channel_providers.clone(),
+                    channel_providers: self.capability_verifier.channel_providers(),
                     clock: self.clock.clone(),
-                    root_secret_lookup: self.root_secret_lookup.clone(),
+                    root_secret_lookup: self.capability_verifier.root_secret_lookup(),
                     holder_registry: self.holder_registry.clone(),
                 };
                 let cap_token = deserialize_wire(token, &active.holder_did, &active.holder_pub)?;
                 verify(&cap_token, &ctx)?;
 
-                capability_verification = Some(CapabilityVerification {
-                    cap_root_hash,
-                    caveats_satisfied: cap_token.caveats(),
+                capability = Some(CapabilityVerification {
+                    holder_did: active.holder_did.clone(),
                     ask_id: cap_token.ask_binding(),
                 });
-                capability_ask_id = cap_token.ask_binding();        // Round 3 R2 M13 fix
-                capability_did = Some(active.holder_did.clone());
             }
         }
     }
 
-    if bearer_verification.is_none() && capability_verification.is_none() {
-        return Err(AuthError::NoAuthHeader);
-    }
-
-    // AND-gate: identity linkage (flat types; round 3 R2 M13 fix).
-    if let (Some(bv), Some(cv)) = (&bearer_verification, &capability_verification) {
-        if let Some(cap_did) = &capability_did {
-            if bv.subject_did != *cap_did {
-                return Err(AuthError::IdentityMismatch {
-                    bearer_did: bv.subject_did.clone(),
-                    capability_did: cap_did.clone(),
-                });
-            }
+    // 4-way dispatch (see §Dispatch Table). Computed from header presence alone.
+    let routing_decision = match (bearer.is_some(), capability.is_some()) {
+        (true, false) => RoutingDecision::Bearer,
+        (false, true) => RoutingDecision::Capability,
+        (true, true) => {
+            // Per 2026-08-08 clarification: client sending both is a bug, not a routing decision.
+            return Err(AuthError::BothSchemesUnsupported);
         }
-        // R15-N21 fix: prior guard `if let (Some(bearer_ask), Some(cap_ask)) = ...`
-    // silently skipped the check when either side was None, allowing legacy
-    // bearer-without-ask_id + capability-with-ask_id to pass (cross-ask attack).
-    // Both sides must be Some; legacy bearer without ask_id is REJECTED, not
-    // silently allowed.
-    let bearer_ask = bv.ask_id.ok_or_else(|| AuthError::AskBindingMissing { field: "bearer" })?;
-    let cap_ask = capability_ask_id.ok_or_else(|| AuthError::AskBindingMissing { field: "capability" })?;
-    // R18-N7 + R19-N1 fix: outer ?-unwrapped lets above do the gating work; the if-let
-    // block below uses the unwrapped values directly. R19-N1 fix: the prior dangling
-    // closing braces after this block have been removed; the if-let block now closes
-    // once and the outer brace pair is balanced.
-    if bearer_ask != cap_ask {
-        return Err(AuthError::AskBindingMismatch {
-            bearer_ask,
-            capability_ask: cap_ask,
-        });
-    }
-    }  // R53-N1 fix: close the outer `if let (Some(bv), Some(cv))` block. The bearer_ask/cap_ask
-       // checks are inside the if-let (they use `bv`); the lets at L419+ use only function-scope
-       // vars and can live outside the if-let.
+        (false, false) => RoutingDecision::NoAuth,
+    };
 
-    let did = capability_did.unwrap_or_else(|| {
-        // R12-N8 fix: prior format `did:octo:bearer:<virtual_key_id>` (R11-N7 was a comment-only
-        // no-op) violates RFC-0009 §Identity Key Format. Use the real subject_did.
-        // R30-N5 fix: comment continuation + body indented to column 8 to match surrounding code.
-        bearer_verification.as_ref().unwrap().subject_did.clone()
-    });
-    let holder_pub = capability_verification.as_ref()
-        .map(|c| active_holder_pub.ok_or(AuthError::HolderPubMissing { cap_root_hash: c.cap_root_hash })).transpose()?;  // R18-N6 fix: typed AuthError instead of .expect() panic
-    let ask_id = capability_ask_id
-        .or_else(|| bearer_verification.as_ref().and_then(|b| b.ask_id));  // R29-N4 fix:
-                                                                            // the .or_else
-                                                                            // branch is
-                                                                            // reachable and
-                                                                            // REQUIRED for the
-                                                                            // bearer-only path
-                                                                            // (TV1); the prior
-                                                                            // R23-N8 was RESOLVED (R29-N4); the .or_else branch IS reached for bearer-only
-                                                                            // marker was
-                                                                            // wrong. The
-                                                                            // `if let (Some(bv), Some(cv))`
-                                                                            // gate at L392
-                                                                            // SKIPS for
-                                                                            // bearer-only,
-                                                                            // which is the
-                                                                            // primary use case
-                                                                            // for the bearer
-                                                                            // pipeline.
-                                                                            // R37-N10 fix: DEFERRED marker dropped per [[deferred-vs-unspecified]]; R23-N8 item is RESOLVED.
+    // Build AuthenticatedRequest. Single-scheme-only per dispatch semantics,
+    // so no identity linkage step is reachable. For NoAuth, identity fields
+    // are empty placeholders; the caller (quota-router-core::proxy::handle_request)
+    // treats NoAuth as provider-side decision per dispatch table.
+    let (subject_did, ask_id) = match routing_decision {
+        RoutingDecision::Bearer => {
+            let b = bearer.as_ref().expect("dispatch guarantees Some");
+            (b.subject_did.clone(), b.ask_id)
+        }
+        RoutingDecision::Capability => {
+            let c = capability.as_ref().expect("dispatch guarantees Some");
+            (c.holder_did.clone(), c.ask_id)
+        }
+        RoutingDecision::NoAuth => (String::new(), [0u8; 32]),
+        RoutingDecision::BothSchemesUnsupported => unreachable!("handled above"),
+    };
 
-    Ok(AuthenticatedIdentity {
-        did,
-        holder_pub,
+    Ok(AuthenticatedRequest {
+        subject_did,
         ask_id,
-        bearer_verification,
-        capability_verification,
+        bearer,
+        capability,
+        routing_decision,
     })
 }
 ```
@@ -605,7 +563,7 @@ On gateway restart: the Gateway Authenticator rebuilds its state from the local 
 
 - **`DispatchSet::from_headers()` ordering:** preserves header order.
 - **`authenticate()` ordering:** iterates headers in order; AND-gate is symmetric.
-- **`AuthenticatedIdentity.did` derivation:** from `HolderRegistry.holder_did` for capability path; from `BearerVerification.subject_did` (RFC-0903 virtual-key table) for bearer-only path. (R14-N5 fix: prior text said "synthesized from virtual-key ID" which violates RFC-0009 §Identity Key Format; the implementation at line 408-410 uses the actual `subject_did` per R12-N8.)
+- **`AuthenticatedRequest.subject_did` derivation:** from `CapabilityVerification.holder_did` for capability path; from `BearerVerification.subject_did` for bearer-only path. (R14-N5 fix: prior text said "synthesized from virtual-key ID" which violates RFC-0009 §Identity Key Format; the implementation uses the actual `subject_did` per R12-N8. v1.1 amendment: field renamed from `did` to `subject_did` for consistency with `BearerVerification.subject_did`.)
 - **Header precedence rules:** deterministic; same input → same output.
 
 ### RFC-0008 Execution Class Mapping
@@ -879,7 +837,16 @@ Verdict: NO RISK. Mandatory AND-gate with identity linkage.
 Input:
   Authorization: Bearer sk-cipherocto-abc123
   X-Request-Id: req_42
-Expected: Ok(AuthenticatedIdentity { did: "did:octo:<multibase>", bearer_verification: Some(...), capability_verification: None, ask_id: bearer.ask_id })  // R12-N8 fix: did is `BearerVerification.subject_did` (RFC-0009 multibase), not `did:octo:bearer:<virtual_key_id>`.
+Expected: Ok(AuthenticatedRequest {
+  subject_did: "did:octo:<multibase>",
+  ask_id: <bearer.ask_id>,
+  bearer: Some(BearerVerification { subject_did: "did:octo:<multibase>", ask_id: <bearer.ask_id> }),
+  capability: None,
+  routing_decision: RoutingDecision::Bearer,
+})
+// v1.1 amendment: did renamed to subject_did; bearer_verification/capability_verification
+// renamed to bearer/capability; routing_decision populated. Identity linkage step REMOVED
+// per dispatch semantics (single scheme only on this path).
 ```
 
 ### TV2: Capability-Only Request
@@ -887,34 +854,48 @@ Expected: Ok(AuthenticatedIdentity { did: "did:octo:<multibase>", bearer_verific
 ```
 Input:
   X-Capability-Token: <macaroon>
-Expected: Ok(AuthenticatedIdentity { did: <from registry>, bearer_verification: None, capability_verification: Some(...) })
+Expected: Ok(AuthenticatedRequest {
+  subject_did: <from registry>,
+  ask_id: <capability.ask_id>,
+  bearer: None,
+  capability: Some(CapabilityVerification { holder_did: <from registry>, ask_id: <capability.ask_id> }),
+  routing_decision: RoutingDecision::Capability,
+})
 ```
 
-### TV3: Bearer + Capability Request (Both Valid, Linked Identity)
+### TV3: Bearer + Capability Request (Both Schemes — REJECTED per v1.1 dispatch table)
 
 ```
 Input:
   Authorization: Bearer sk-cipherocto-abc123 (subject_did = "did:octo:buyer1", ask_id = H1)
   X-Capability-Token: <macaroon> (holder_did = "did:octo:buyer1", ask_id = H1)
-Expected: Ok(AuthenticatedIdentity { did: "did:octo:buyer1", bearer_verification: Some(...), capability_verification: Some(...), ask_id: Some(H1) })
+Expected: Err(AuthError::BothSchemesUnsupported)
+// v1.1 amendment: the v1.0 "both valid, linked identity" test case is REPLACED by
+// this rejection. The legitimate "both" case is RFC-0959-A1 market delivery
+// (server-side), NOT HTTP request ingress — see §Dispatch Table.
 ```
 
-### TV4: Bearer + Capability Request (Capability Invalid)
+### TV4: Bearer + Capability Request (Capability Invalid — Still Rejected as Both-Schemes)
 
 ```
 Input:
   Authorization: Bearer sk-cipherocto-abc123
   X-Capability-Token: <invalid macaroon>
-Expected: Err(AuthError::CapabilityVerificationFailed(...))
+Expected: Err(AuthError::BothSchemesUnsupported)
+// v1.1 amendment: dispatch decision happens BEFORE capability verification.
+// Both-schemes-present is rejected at the dispatch step regardless of validity.
+// To test capability-invalid on the single-scheme path, omit the Bearer header.
 ```
 
-### TV5: Bearer + Capability Request (Identity Mismatch)
+### TV5: Capability-Only Request (Capability Invalid — Single Scheme)
 
 ```
 Input:
-  Authorization: Bearer sk-cipherocto-abc123 (subject_did = "did:octo:buyer1")
-  X-Capability-Token: <macaroon> (holder_did = "did:octo:buyer2")
-Expected: Err(AuthError::IdentityMismatch { bearer_did: "did:octo:buyer1", capability_did: "did:octo:buyer2" })
+  X-Capability-Token: <invalid macaroon> (no Bearer header)
+Expected: Err(AuthError::CapabilityVerificationFailed(...))
+// v1.1 amendment: this replaces the prior TV5 identity-mismatch test, which is
+// unreachable under the new dispatch semantics (identity linkage requires both
+// schemes, which dispatch rejects).
 ```
 
 ### TV6: Duplicate Capability Header
@@ -1041,7 +1022,7 @@ The dual-mode workflow requires both bearer and capability tokens to be accepted
 | 1.0     | 2026-08-01 | Initial draft |
 | 1.1     | 2026-08-01 | Round 2: identity linkage (bearer.subject_did == cap.holder_did, bearer.ask_id == cap.ask_id); BearerVerification.subject_did + ask_id fields; mint_dual uses txn.insert_dual for atomic pair insert; Debug redaction; mint_dual has explicit ask_ttl_unix parameter |
 | 2026-08-02 | **Promoted to Accepted.** Multi-round adversarial review R28-R64 converged; 2 maintainer approvals (@mmacedoeu + @cipherocto) completed; no blocking objections. Status header updated; file moved via `git mv` to `rfcs/accepted/economics/`. Brace balance verified at `authenticate()` (R53-N1 fix); phantom `IdentityKey::from_public_bytes` call site at L507 properly DEFERRED to RFC-0957-A2; ParseError / MintError / AuthError all have manual redacting Debug impls; identity linkage rule (bearer.subject_did == cap.holder_did ∧ bearer.ask_id == cap.ask_id) is the canonical cross-holder credential mixing defense. |
-| 1.2 | 2026-08-08 | **Accepted (amendment) — GatewayAuthenticator relocation + dispatch table.** Surfaced by 2026-08-08 specialized node protocol research (`docs/research/2026-08-08-specialized-node-protocol-research.md`) + RFC-0871 (Planned). Four amendments: (1) **`GatewayAuthenticator` relocated** from `crates/octo-wallet/src/capability/gateway_authenticator.rs` (orphan substrate, 668 lines, 0 production callers per audit 2026-08-08) to `quota-router-core::ingress::authenticator`. Orchestrator co-locates with callers. (2) **`AuthenticatedIdentity` renamed to `AuthenticatedRequest`**; enrichment fields (`rate_limit_remaining`, `budget_remaining_octows`) DROPPED — the HTTP proxy gateway is transparent and MUST NOT enrich with business-rule data per user clarification 2026-08-07. Rate limits / budget / allowed-routes checked SEPARATELY in `quota-router-core::proxy.rs::handle_request` AFTER `authenticate()` returns Ok. (3) **4-way dispatch table** replaces `LinkageResult::Indeterminate` + `RoutingDecision::Dual` machinery: bearer-only → `RoutingDecision::Bearer`; capability-only → `RoutingDecision::Capability`; both → `RoutingDecision::BothSchemesUnsupported` (client misconfig per user clarification 2026-08-07); neither → `RoutingDecision::NoAuth` (pass-through to model provider, per user clarification 2026-08-07). The legitimate "both" case is RFC-0959-A1 market delivery (server-side), NOT HTTP request ingress. (4) **Verifier traits** (`BearerVerifier`, `CapabilityVerifier`) replace direct `HolderRegistry` + `VirtualKeyTable` + `ChannelProviderSet` access — traits live in `octo-wallet::verify::*` per RFC-0871 §Wallet as Specialized Node; orchestrator composes via `Arc<dyn Trait>`. Implementation mission: `missions/open/0969-a-gateway-relocation.md`. Cross-references: RFC-0871 §Implementation Phase 2; RFC-0870 v2.0 §NodeEnvelope Adoption; memory `rfc-0969-dual-pipeline-semantics.md`. |
+| 1.2 | 2026-08-08 | **Accepted (amendment) — GatewayAuthenticator relocation + dispatch table.** Surfaced by 2026-08-08 specialized node protocol research (`docs/research/2026-08-08-specialized-node-protocol-research.md`) + RFC-0871. Four amendments: (1) **`GatewayAuthenticator` relocated** from `crates/octo-wallet/src/capability/gateway_authenticator.rs` (orphan substrate, 0 production callers per audit 2026-08-08) to `quota-router-core::ingress::authenticator`. Orchestrator co-locates with callers. (2) **`AuthenticatedIdentity` renamed to `AuthenticatedRequest`**; enrichment fields (`rate_limit_remaining`, `budget_remaining_octows`) DROPPED — the HTTP proxy gateway is transparent and MUST NOT enrich with business-rule data per user clarification 2026-08-07. Rate limits / budget / allowed-routes checked SEPARATELY in `quota-router-core::proxy::handle_request` AFTER `authenticate()` returns Ok. (3) **4-way dispatch table** replaces `LinkageResult::Indeterminate` + `RoutingDecision::Dual` machinery: bearer-only → `RoutingDecision::Bearer`; capability-only → `RoutingDecision::Capability`; both → `RoutingDecision::BothSchemesUnsupported` (client misconfig per user clarification 2026-08-07); neither → `RoutingDecision::NoAuth` (pass-through to model provider, per user clarification 2026-08-07). The legitimate "both" case is RFC-0959-A1 market delivery (server-side), NOT HTTP request ingress. (4) **Verifier traits** (`BearerVerifier`, `CapabilityVerifier`) replace direct `HolderRegistry` + `VirtualKeyTable` + `ChannelProviderSet` access — traits live in `octo-wallet::verify::*` per RFC-0871 §Wallet Node Lifecycle; orchestrator composes via `Arc<dyn Trait>`. Implementation mission: `missions/open/0969-a-gateway-relocation.md`. Cross-references: RFC-0871 §Implementation Phase 2; RFC-0870 §NodeEnvelope Adoption; memory `rfc-0969-dual-pipeline-semantics.md`. Round-1 adversarial review (2026-08-08) also fixed half-applied rename: §Algorithms §authenticate() and §Test Vectors rewritten to construct `AuthenticatedRequest { subject_did, ask_id, bearer, capability, routing_decision }` matching the v1.2 data structure. Algorithm body rewritten to compute `routing_decision` from header count alone per the dispatch table (no AND-gate identity linkage, which is unreachable under new semantics). |
 
 ## Related RFCs
 

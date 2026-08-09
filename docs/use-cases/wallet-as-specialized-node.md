@@ -28,7 +28,7 @@ CipherOcto's trust model assumes keys live with the holder, not with a server. B
 - Receive signed-payload requests and respond with signatures
 - Not expose the raw key to the host
 
-The `HsmAdapter` trait at `crates/octo-wallet/src/hsm.rs:33` already defines the adapter contract (`get_public_key`, `sign`). `LedgerSigner` and `InMemorySigner` are concrete impls. But `IdentityKey::sign()` at `crates/octo-wallet/src/identity.rs:71` calls `ed25519_dalek::SigningKey::from_bytes(...).sign(...)` directly — **bypassing the HSM abstraction**. Hardware wallets can't sign capability tokens today.
+The `HsmAdapter` trait in `crates/octo-wallet/src/hsm.rs` already defines the adapter contract (`get_public_key`, `sign`). `LedgerSigner` and `InMemorySigner` are concrete impls. But `IdentityKey::sign` in `crates/octo-wallet/src/identity.rs` calls `ed25519_dalek::SigningKey::from_bytes(...).sign(...)` directly — **bypassing the HSM abstraction**. Hardware wallets can't sign capability tokens today.
 
 This Use Case is part of a broader CipherOcto pivot: every crypto-bearing entity becomes a network participant. Quota router, identity resolver, reputation anchor, capability issuer, market, **wallet** — each is a specialized node. Each speaks the same envelope. Each advertises its capabilities. Each can be discovered, addressed, and rate-limited via the mesh.
 
@@ -36,7 +36,7 @@ This Use Case is part of a broader CipherOcto pivot: every crypto-bearing entity
 
 | Metric | Target | Measurement |
 | ------ | ------ | ----------- |
-| New specialized node types can be added without modifying the protocol envelope | ≥ 3 new node types shipped (Identity, Reputation, Wallet) without touching `octo-transport` | RFC-NNNN §Conformance |
+| New specialized node types can be added without modifying the protocol envelope | ≥ 3 new node types shipped (Identity, Reputation, Wallet) without touching `octo-transport` | RFC-0871 §Conformance |
 | Wallet signs capability tokens via HSM end-to-end | 100% of `IdentityKey::sign()` paths route through `HsmAdapter::sign()` | `cargo test --features allow-stub-verifier` + integration tests |
 | Wallet announces its services to the mesh on startup | All wallet payload kinds declared in `RouterAnnouncePayload` | Integration test: wallet boots, mesh peers can `lookup(payload_kind)` |
 | Hardware wallet over BLE participates in network signing | `LedgerSigner` + `octo-cable::BleAdapter` end-to-end test passes | Hardware test rig |
@@ -57,7 +57,7 @@ This Use Case is part of a broader CipherOcto pivot: every crypto-bearing entity
 - Designing a global node registry / discovery service (nodes discover each other via mesh gossip)
 - Specifying the wire format for any specific payload (those live in their respective RFCs)
 - Replacing RFC-0903 virtual API key issuance flow (still relevant; bearer-only path)
-- Implementing paid-query infrastructure in this use case (covered in companion use case)
+- Implementing paid-query infrastructure in this use case (covered in companion use case `docs/use-cases/paid-query-market.md` — to be filed at RFC-0871 §Implementation Phase 5 promotion; not yet a phantom pointer per `[[no-phantom-mission-pointers]]` because the substrate is documented in RFC-0871 §Implementation Phase 5)
 
 ## Impact
 
@@ -87,4 +87,4 @@ If implemented:
 - RFC-0969 (Dual pipeline authorization — `GatewayAuthenticator` placement discussion)
 - RFC-0970 (Forwarding-hop auth — TTL millisecond resolution)
 - RFC-0971 (Destination-node role consolidation)
-- **RFC-NNNN** (PLANNED: Specialized Node Protocol Envelope)
+- **RFC-0871** (Specialized Node Protocol Envelope — currently Draft per promotion 2026-08-08; this Use Case is the motivating input)

@@ -1,13 +1,13 @@
-# Mission: 0957-ext-macaroon — Extract Macaroon to Per-Extension Crate (RFC-0957 v2.0)
+# Mission: 0957-ext-macaroon — Extract Macaroon to Per-Extension Crate (RFC-0957)
 
 ## Status
 
-Open (2026-08-08). RFC-0957 v2.0 + RFC-0965 v1.4 amendments mandate per-extension crate layout.
+Open (2026-08-08). RFC-0957 + RFC-0965 amendments mandate per-extension crate layout.
 
 ## RFC
 
-RFC-0957 (Economics): Capability Token Format — Accepted v2.0 (2026-08-08 amendment)
-RFC-0965 (Economics): Capability Extension Format — Accepted v1.4 (2026-08-08 amendment)
+RFC-0957 (Economics): Capability Token Format
+RFC-0965 (Economics): Capability Extension Format
 
 **BLUEPRINT gate note:** Both RFCs are Accepted. Mission 0957-ext-macaroon implements the per-extension crate extraction mandate.
 
@@ -53,13 +53,13 @@ Extract the macaroon v1 capability type into a dedicated `crates/octo-cap-macaro
 
 **Requires:**
 
-- RFC-0957 (Accepted v2.0) — per-extension crate layout mandate
-- RFC-0965 (Accepted v1.4) — per-extension crate layout mandate
+- RFC-0957 — per-extension crate layout mandate
+- RFC-0965 — per-extension crate layout mandate
 - `crates/octo-wallet/src/capability/{macaroon,caveat,discharge,wire,holder}.rs` — source code to extract
 
 **Mission gates:**
 
-- RFC-0957 v2.0 + RFC-0965 v1.4 amendments (committed 2026-08-08)
+- RFC-0957 + RFC-0965 amendments (committed 2026-08-08)
 - Workspace `Cargo.toml` member registration
 - Mission `0957-ext-zk-crate.md` (parallel; both extract different capability types)
 
@@ -103,7 +103,7 @@ Per-extension crate extraction is multi-file (1 NEW crate + 5 source migrations 
 
 | Version | Date | Change |
 | --- | --- | --- |
-| v0.1 | 2026-08-08 | Mission filed. RFC-0957 v2.0 + RFC-0965 v1.4 amendments mandate per-extension crate layout. Mission captures extraction scope. |
+| v0.1 | 2026-08-08 | Mission filed. RFC-0957 + RFC-0965 amendments mandate per-extension crate layout. Mission captures extraction scope. |
 
 Last Updated: 2026-08-08
 Version: 0.1

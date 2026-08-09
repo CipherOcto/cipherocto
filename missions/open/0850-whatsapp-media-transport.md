@@ -1,6 +1,6 @@
 # Mission: 0850 WhatsApp Native Media Transport
 
-> Implements RFC-0850 §8.6 `DOT/2/{msg_id}` mode for WhatsApp — sender + receiver + mode-selection dispatch + fallback to `DOT/1/`.
+> Implements RFC-0850's `DOT/2/{msg_id}` mode for WhatsApp — sender + receiver + mode-selection dispatch + fallback to `DOT/1/`.
 
 ## Status
 
@@ -10,7 +10,7 @@ Open
 
 RFC-0850 (Networking): Deterministic Overlay Transport — **the Platform Translation Layer payload-encoding rules (`DOT/2/{msg_id}` native upload mode + the mode-selection algorithm)** and **the dual-mode transport MUST-fallback when native upload fails**
 
-**Note on file naming:** this mission is filed under `0850-` (not `0850p-`) because it implements RFC-0850 §8.6/§9.4 directly. No companion RFC-0850p-b exists in `rfcs/`. See the "RFC compliance traceability" § below for the RFC amendment notes (§8.6 capability table, §9.4 enumeration, §8.6 mode coverage).
+**Note on file naming:** this mission is filed under `0850-` (not `0850p-`) because it implements the RFC-0850 native-upload mode + MUST-fallback rule directly. No companion RFC-0850p-b exists in `rfcs/`. See the "RFC compliance traceability" section below for the RFC amendment notes (capability table, native-upload enumeration, mode-selection coverage).
 
 ## Dependencies
 
@@ -28,20 +28,20 @@ RFC-0850 (Networking): Deterministic Overlay Transport — **the Platform Transl
 
 ## Summary
 
-Wire the WhatsApp Web adapter to the native media transport mode (`DOT/2/{msg_id}`) defined in RFC-0850 §8.6, replacing the text-only fallback with a dual-mode pipeline that uses WhatsApp's CDN-backed media upload for envelopes that exceed the text-mode threshold. The current `WhatsAppWebAdapter` declares `media_capabilities: None` and does not override `upload_media` / `download_media`, so every DOT envelope is forced through the 33%-overhead `DOT/1/{base64}` text path even when both endpoints could carry a 100 MB encrypted attachment for the same wire bytes. This mission closes that gap by:
+Wire the WhatsApp Web adapter to the native media transport mode (`DOT/2/{msg_id}`) defined in RFC-0850 (Platform Translation Layer payload encoding), replacing the text-only fallback with a dual-mode pipeline that uses WhatsApp's CDN-backed media upload for envelopes that exceed the text-mode threshold. The current `WhatsAppWebAdapter` declares `media_capabilities: None` and does not override `upload_media` / `download_media`, so every DOT envelope is forced through the 33%-overhead `DOT/1/{base64}` text path even when both endpoints could carry a 100 MB encrypted attachment for the same wire bytes. This mission closes that gap by:
 
-1. **Sender-side:** Extending `send_message` to dispatch on payload size via `octo_network::dot::transport::select_mode_with_max_text(payload_len, caps, 65_536)` — small envelopes use the existing `DOT/1/{base64}` text path; large envelopes call `upload_media` to push via WhatsApp's CDN and send a `DOT/2/{media_ref}` text reference. RFC-0850 §8.6/§9.4 MUST-fallback is implemented: if the native upload fails AND the envelope fits in text mode, fall back to `DOT/1/`.
+1. **Sender-side:** Extending `send_message` to dispatch on payload size via `octo_network::dot::transport::select_mode_with_max_text(payload_len, caps, 65_536)` — small envelopes use the existing `DOT/1/{base64}` text path; large envelopes call `upload_media` to push via WhatsApp's CDN and send a `DOT/2/{media_ref}` text reference. RFC-0850's MUST-fallback (Envelope Fragmentation / dual-mode transport) is implemented: if the native upload fails AND the envelope fits in text mode, fall back to `DOT/1/`.
 2. **Sender-side override:** Adding `upload_media` that calls `wacore::upload` (via `Client::upload`) with `MediaType::Document` and returns an opaque `MediaRef` blob (base64url-encoded JSON of `UploadResponse`-shaped fields) that round-trips every CDN field needed to redeliver the bytes
 3. **Receiver-side:** Extending `accept_message` to accept `DOT/2/` prefix (was `DOT/1/` only); extending the `on_event` handler to pre-download `DOT/2/{msg_id}` messages by calling `download_media` within the async context, then pushing the raw envelope wire bytes (not base64) to `inbound_tx`; extending `canonicalize` to handle two payload shapes (text base64 vs raw wire bytes)
 4. **Receiver-side override:** Adding `download_media` that decodes the `MediaRef`, reconstructs a `waproto::message::DocumentMessage`, and calls `Client::download` (which decrypts and `payload_hash`-verifies end-to-end via the Signal Protocol envelope)
 5. Populating `media_capabilities` in `capabilities()` with `max_upload_bytes = 100 MiB` (the WhatsApp server-side Document ceiling per public WhatsApp documentation) and a single MIME `application/octet-stream` (the only type the Document channel accepts)
-6. Adding unit tests for the `MediaRef` encode/decode round-trip + field-count drift guard + no-panic contract + no-leak contract, the receive-path `accept_message` extension, the native→text fallback, and the capability contract. Plus a feature-gated `live-whatsapp` integration test that uploads a real envelope and downloads it back through the same adapter to assert RFC-0850 §8.6 determinism guarantees (mode-independent `payload_hash`)
+6. Adding unit tests for the `MediaRef` encode/decode round-trip + field-count drift guard + no-panic contract + no-leak contract, the receive-path `accept_message` extension, the native→text fallback, and the capability contract. Plus a feature-gated `live-whatsapp` integration test that uploads a real envelope and downloads it back through the same adapter to assert RFC-0850 determinism guarantees (mode-independent `payload_hash`)
 
 Implements RFC-0850's `DOT/2/{msg_id}` native upload mode and the MUST-fallback to `DOT/1/` for the WhatsApp adapter. The mode-selection algorithm is implemented inside `WhatsAppWebAdapter::send_message` per the capability-driven rule. Closes the gap where 0850v (archived mission `0850v-dot-dual-binary-transport.md` "receiver auto-detect" claim) said "Receiver auto-detects mode from `DOT/` prefix" but the WhatsApp adapter never implemented the `DOT/2/` receive path.
 
 ## RFC compliance traceability
 
-This mission is justified **purely by RFC-0850 §8.6/§9.4** and the WhatsApp adapter's existing code. The following RFC traceability notes document what this mission changes about the RFC's characterization of WhatsApp:
+This mission is justified **purely by RFC-0850 (Platform Translation Layer payload encoding + Envelope Fragmentation dual-mode transport)** and the WhatsApp adapter's existing code. The following RFC traceability notes document what this mission changes about the RFC's characterization of WhatsApp:
 
 - **RFC-0850 capability table amendment:** RFC-0850's capability table currently characterizes WhatsApp as `"Text only, no fragmentation"`. This mission amends that characterization to: `"Text (up to 65 KB) and native upload (up to 100 MiB via WhatsApp CDN); no fragmentation needed in either mode"`. The amendment is implementation-driven — by declaring `media_capabilities` with `supports_upload: true` (per RFC-0850 mode-selection rule), the adapter satisfies the capability check that gates `DOT/2/{msg_id}` dispatch. A future RFC-0850 revision should update the capability table accordingly.
 
@@ -53,7 +53,7 @@ This mission is justified **purely by RFC-0850 §8.6/§9.4** and the WhatsApp ad
 
 ## Design
 
-See RFC-0850 §8.6 for the transport-mode selection algorithm. Companion doc with code-level patterns: this mission's "Implementation Guide" §.
+See RFC-0850 Platform Translation Layer for the transport-mode selection algorithm. Companion doc with code-level patterns: this mission's "Implementation Guide" section.
 
 ## Acceptance Criteria
 
@@ -83,8 +83,8 @@ See RFC-0850 §8.6 for the transport-mode selection algorithm. Companion doc wit
     1. Call `self.upload_media("envelope.bin", &wire_bytes, "application/octet-stream").await` to obtain the `DOT/2/{media_ref}` token
     2. Build `Message { conversation: Some(octo_network::dot::transport::encode_native_ref(&media_ref)), .. }` and send via `client.send_message`
     3. R1-M4: `upload_media` internally allocates `data.to_vec()` because `Client::upload` takes `Vec<u8>` by value (`whatsapp-rust/src/upload.rs:316-321`); this is the current wacore API contract and cannot be avoided without an SDK bump
-  - On `TransportMode::PayloadTooLarge` error: return `PlatformAdapterError::PayloadTooLarge { size: encoded.len(), max: caps.max_payload_bytes, platform: "whatsapp" }` (R8-H1: consistent with the threshold — the size reported is the on-wire body, which is what actually exceeded the platform's payload limit per RFC-0850 §8.6).
-  - **R1-H1 (RFC-0850 §8.6 + §9.4 MUST fallback):** if step 1 returns `PlatformAdapterError::Unreachable` AND `encoded.len() <= 65_536` (the on-wire text-message body fits in a single WhatsApp text message — see R8-H1 clarification above for why this is `encoded.len()` rather than `wire_bytes.len()`), fall back to `TransportMode::Text` and retry the send. Log the fallback at `tracing::warn!` level with the redacted error message (no `media_key` in the log — see R1-H4 below). If `encoded.len() > 65_536`, propagate the `Unreachable` error (no fallback possible; envelope is too large for text mode). The fallback is a single retry attempt — exponential backoff is the gateway's responsibility, not the adapter's.
+  - On `TransportMode::PayloadTooLarge` error: return `PlatformAdapterError::PayloadTooLarge { size: encoded.len(), max: caps.max_payload_bytes, platform: "whatsapp" }` (R8-H1: consistent with the threshold — the size reported is the on-wire body, which is what actually exceeded the platform's payload limit per RFC-0850 Platform Translation Layer).
+  - **R1-H1 (RFC-0850 MUST fallback):** if step 1 returns `PlatformAdapterError::Unreachable` AND `encoded.len() <= 65_536` (the on-wire text-message body fits in a single WhatsApp text message — see R8-H1 clarification above for why this is `encoded.len()` rather than `wire_bytes.len()`), fall back to `TransportMode::Text` and retry the send. Log the fallback at `tracing::warn!` level with the redacted error message (no `media_key` in the log — see R1-H4 below). If `encoded.len() > 65_536`, propagate the `Unreachable` error (no fallback possible; envelope is too large for text mode). The fallback is a single retry attempt — exponential backoff is the gateway's responsibility, not the adapter's.
 
 #### `upload_media` override
 
@@ -198,7 +198,7 @@ See RFC-0850 §8.6 for the transport-mode selection algorithm. Companion doc wit
   - For `dot_mode == "native"` (wire bytes from `DOT/2/` pre-download): pass `raw.payload` directly to `DeterministicEnvelope::from_wire_bytes` (no decode)
   - For `dot_mode == "text"` OR missing `dot_mode` (legacy `DOT/1/` text): existing path — `decode_envelope(text)` → base64-decode → wire bytes
   - The discriminator: `if raw.metadata.get("dot_mode").map(String::as_str) == Some("native") { /* raw path */ } else { /* text decode path */ }`. The `metadata["dot_mode"]` tag is set by the `download_rx` consumer task (R4-C1 fix step 4) with value `"native"`. **R4-L2 fix:** for `DOT/1/` messages, the existing on_event closure in `WhatsAppWebAdapter::on_event` must add `metadata.insert("dot_mode".to_string(), "text".to_string());` immediately before pushing the `RawPlatformMessage` into `inbound_tx`. The discriminator treats missing keys as `text`, so this insertion is for clarity/explicitness rather than correctness — but it pins the contract so future readers don't have to deduce the implicit fallback. The exact insertion point is after the existing `RawPlatformMessage { ... }` struct construction and before `.into_iter().collect()` — the field order in the Acceptance Criteria section is `(chat, sender, dot_mode)` and should match for `DOT/1/` messages to keep the metadata `HashMap` deterministic.
-  - R7-reinforced: `DeterministicEnvelope::from_wire_bytes` performs the `payload_hash` verification that RFC-0850 §8.6 mandates for mode-independent identity. A hash mismatch is `PlatformAdapterError::ApiError { code: 400 }`, NOT `Unreachable`. The `verify_payload_hash` method itself is at `crates/octo-network/src/dot/envelope.rs:449-452` (see R2-H1).
+  - R7-reinforced: `DeterministicEnvelope::from_wire_bytes` performs the `payload_hash` verification that RFC-0850 Platform Translation Layer mandates for mode-independent identity. A hash mismatch is `PlatformAdapterError::ApiError { code: 400 }`, NOT `Unreachable`. The `verify_payload_hash` method itself is at `crates/octo-network/src/dot/envelope.rs:449-452` (see R2-H1).
 
 #### `MediaRef` helper module
 
@@ -245,7 +245,7 @@ See RFC-0850 §8.6 for the transport-mode selection algorithm. Companion doc wit
   - **R1-C1 + R1-M2 fix:** `accept_message_accepts_dot1` (existing behavior pinned — `accept_message` accepts text starting with `DOT/1/`)
   - `accept_message_accepts_dot2` (new behavior pinned — `accept_message` accepts text starting with `DOT/2/`; `DOT/2/test_msg_id` returns `Accept`)
   - `accept_message_rejects_other_prefix` (e.g., `DOT/F/...` is rejected with reason `"not a DOT envelope"`; the `DOT/F/` receive path is out of scope for this mission)
-  - **R1-H1 fix:** `send_message_falls_back_to_text_when_native_fails` — stubbed test: configure the adapter with a stubbed `Client` whose `upload` method always returns `Err(Unreachable)`. Call `adapter.send_message(domain, envelope)` with an envelope whose `wire_bytes.len() == 5000` (above the 4096 default but well below 65_536). Assert the result is `Ok(DeliveryReceipt)` and that `client.send_message` was called with `DOT/1/{base64}` content (NOT `DOT/2/{...}`). Verifies RFC-0850 §8.6/§9.4 MUST fallback. The stubbed `Client` requires either a trait-object refactor (out of scope for this mission — flag in R2 if needed) or a test-only constructor that bypasses `start_bot`. Document the approach taken.
+  - **R1-H1 fix:** `send_message_falls_back_to_text_when_native_fails` — stubbed test: configure the adapter with a stubbed `Client` whose `upload` method always returns `Err(Unreachable)`. Call `adapter.send_message(domain, envelope)` with an envelope whose `wire_bytes.len() == 5000` (above the 4096 default but well below 65_536). Assert the result is `Ok(DeliveryReceipt)` and that `client.send_message` was called with `DOT/1/{base64}` content (NOT `DOT/2/{...}`). Verifies RFC-0850's MUST fallback (Platform Translation Layer + Envelope Fragmentation). The stubbed `Client` requires either a trait-object refactor (out of scope for this mission — flag in R2 if needed) or a test-only constructor that bypasses `start_bot`. Document the approach taken.
   - **R1-H1 fix:** `send_message_does_not_fall_back_when_payload_exceeds_text_threshold` — same setup as above, but `wire_bytes.len() == 70_000` (above the 65_536 text limit). Assert the result is `Err(PlatformAdapterError::Unreachable)` — no fallback attempt because the envelope wouldn't fit in text mode anyway.
 
 - [ ] **R3-M2 + R4-M3 fix:** `crates/octo-adapter-whatsapp/src/adapter.rs` — add async lifecycle tests for the `download_rx` consumer task in a new `#[cfg(test)] mod download_rx_tests` block. The tests use a test-only constructor `spawn_download_consumer_for_test` (R4-M3 fix — `start_bot` requires authenticated wacore session, so the tests can't call it):
@@ -336,7 +336,7 @@ See RFC-0850 §8.6 for the transport-mode selection algorithm. Companion doc wit
 
 ### Type Coverage
 
-| RFC-0850 §8.6 Type / Method | Implemented By |
+| RFC-0850 Platform Translation Layer Type / Method | Implemented By |
 |------------------------------|----------------|
 | `PlatformAdapter::upload_media` trait signature | Mission 0850v (Implemented) |
 | `PlatformAdapter::download_media` trait signature | Mission 0850v (Implemented) |
@@ -350,7 +350,7 @@ See RFC-0850 §8.6 for the transport-mode selection algorithm. Companion doc wit
 | `MediaRef` wire format (base64url JSON of `UploadResponse`-shaped struct) | This mission |
 | `MediaRef` <-> `DocumentMessage` conversion | This mission |
 | Pre-flight payload size check | This mission |
-| Native→text fallback (RFC-0850 §8.6/§9.4 MUST) | **This mission** (R1-H1 fix) |
+| Native→text fallback (RFC-0850 MUST fallback) | **This mission** (R1-H1 fix) |
 | `accept_message` `DOT/2/` prefix acceptance | **This mission** (R1-C1 + R1-M2 fix) |
 | `on_event` pre-download for `DOT/2/` messages | **This mission** (R1-C1 fix) |
 | `canonicalize` dual-mode payload dispatch | **This mission** (R1-C1 fix) |
@@ -464,7 +464,7 @@ WhatsApp's `Document` channel hardcodes `application/octet-stream` regardless of
 
 The mission makes the **adapter own mode selection** to avoid creating a mission whose implementation is permanently inert. RFC-0850's mode-selection text-mode branch specifies `If payload.len() <= max_text_bytes → DOT/1/{base64} (text mode)` and the native-mode branch specifies `If payload.len() > max_text_bytes && capabilities.supports_upload → DOT/2/{msg_id} (native mode)`. The adapter-local dispatch implements both branches of this decision tree in `WhatsAppWebAdapter::send_message`. The 65 KB text-mode threshold is WhatsApp-specific per RFC-0850's per-platform capability tables — using the RFC default of 4 KB would route too many envelopes to native mode unnecessarily. The gateway is unaware of per-adapter quirks; the dispatch is fully encapsulated per RFC-0850's capability-driven rule.
 
-A future mission `0850p-c` (or a `crates/octo-gateway` sub-task) can extract this dispatch into a shared helper once the gateway layer is built. For now, the adapter-local dispatch satisfies RFC-0850 §8.6 without requiring a cross-crate refactor.
+A future mission `0850p-c` (or a `crates/octo-gateway` sub-task) can extract this dispatch into a shared helper once the gateway layer is built. For now, the adapter-local dispatch satisfies RFC-0850 Platform Translation Layer without requiring a cross-crate refactor.
 
 ### Why the integration test is `live-whatsapp`-gated, not in CI
 
@@ -485,7 +485,7 @@ No SDK version bump is required for this mission.
 
 ### RFC status
 
-RFC-0850 is in `rfcs/accepted/networking/`. The §8.6 spec is already accepted. This mission implements the WhatsApp-side override; no RFC amendment is needed.
+RFC-0850 is in `rfcs/accepted/networking/`. The Platform Translation Layer spec is already accepted. This mission implements the WhatsApp-side override; no RFC amendment is needed.
 
 ### Open questions
 

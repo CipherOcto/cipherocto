@@ -6,6 +6,49 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **IMPORTANT:** Implementation has begun. The repository now contains both architectural planning (RFCs, Missions) and implementation code (crates/). The current focus is on RFC-0104 Deterministic Floating-Point (DFP) implementation starting with the determin/ crate.
 
+## Architectural Principles (Apply from Project Start)
+
+Generic SE principles that guide any new RFC, mission, or crate. Full reference: `~/.claude/projects/.../memory/cipherocto-design-principles.md`.
+
+### Rust crate-level stability (match crate stability to design depth)
+
+| Layer | Scope | Stability | Evolves when |
+|---|---|---|---|
+| **A** | Crypto primitives + canonical encoding | RFC-frozen, semver-major only | PQC migration (years) |
+| **B** | Identity substrate + transport + cable | RFC-driven, additive only | New RFC adds feature |
+| **C** | Specialized nodes (one per node role) | Per-RFC | New node type = new RFC + new crate |
+| **D** | Transport adapters | Per-adapter | New adapter = new crate |
+| **E** | Capability extensions + user plugins | Per-extension | New ext = new crate + register |
+
+Layer direction: A → B → C → D/E. Never the reverse. Audit question for any new crate or dep: which layer? Does the dependency direction respect the layer model?
+
+### User extensibility (per-extension crates + registry)
+
+- Define trait in core: `CapabilitySpec { type_id, validate_witness, ... }`
+- Each extension = own crate implementing the trait
+- Registry in core: `HashMap<TypeId, Arc<dyn Trait>>`
+- Extensions register at startup (init fn, feature flag, or compile-time)
+- Core code dispatches via registry lookup; core unchanged when new extensions land
+
+### Extension over enumeration (no central enums)
+
+For types with infinite extension surface, use **typed-discriminator + Raw escape hatch**, not central enums. UUID discriminator (128-bit) per type, RFC-allocated namespace + user extension range. Old code fails-closed on unknown discriminators. Enums are upgrade-hostile — every new type becomes a central edit + cross-crate review.
+
+### Core engineering principles (always)
+
+1. **Separation of concerns** — each module owns ONE thing; don't conflate parsing/verification/decision/dispatch/policy.
+2. **Stable Abstractions Principle** — abstractions depend on stable things, not the reverse. Primitives stable; business logic churns.
+3. **No premature coupling** — caller should not reach into callee's dependencies (storage, business state). Go through a protocol boundary.
+4. **Open/Closed** — open to extension, closed to modification.
+5. **Dependency Inversion** — depend on abstractions (traits); the side owning data owns the impl.
+6. **Interface Segregation** — small focused traits > god-traits.
+7. **No god-objects** — split multi-concern structs early (before ~3k lines).
+8. **Push complexity to edges** — core stays simple; boundaries handle environment messiness.
+9. **Discipline at first call site pays off** — don't bypass an abstraction "just once". The first bypass becomes precedent.
+10. **No parallel abstractions** — use existing primitive (general transport, general codec, general identity), don't invent parallel.
+11. **Storage is not a protocol** — direct storage coupling forces business-rule replication. Use typed query/response boundary.
+12. **Attenuation invariants cross boundaries** — type-level invariant in module A still enforced by module B consuming A's output.
+
 ## Project Overview
 
 CipherOcto is a planned next-generation private AI assistant platform designed to run across local infrastructure, private cloud, edge deployments, and hybrid blockchain networks. The mission is to build a sovereign intelligence layer where AI agents can reason privately, execute autonomously, coordinate securely, and operate anywhere.
@@ -48,6 +91,8 @@ Key documentation is in `/docs`:
 - `04-tokenomics/token-design.md` - Detailed multi-token economy design with role-based tokens (OCTO sovereign token + specialized role tokens)
 
 ## Core Architectural Concepts
+
+CipherOcto-specific manifestations of the **§Architectural Principles** above. When in doubt, defer to the principles.
 
 ### Data Flagging System
 
@@ -127,6 +172,17 @@ Creates the documentation directory structure in `/docs`.
 - Project tagline: "Private intelligence, everywhere"
 - Philosophy: AI should be private by default, distributed by design, sovereign by choice
 
+### Crate dependency rationale
+
+Every `Cargo.toml` dependency entry that is non-trivial should carry a comment explaining **why it's there** (which layer, which RFC mandates it, which substrate). This is what makes the layer model auditable; without rationale comments, dependency direction decays over time. Example:
+
+```toml
+# Wallet signing substrate (Layer B years-stable; RFC-0009 §Identity)
+ed25519-dalek = { version = "2.2", features = ["serde", "zeroize"] }
+```
+
+For RFC / mission / specialized-node checklists (mandatory sections, naming conventions, decomposition thresholds, deferral rules, etc.) — see `docs/BLUEPRINT.md` §RFC Process, §Mission Lifecycle, §Multi-Mission Decomposition. CLAUDE.md captures the principles; BLUEPRINT.md is the operational playbook.
+
 ## Branch Strategy
 
 CipherOcto uses **Trunk-Based + Feature Streams**:
@@ -140,7 +196,11 @@ CipherOcto uses **Trunk-Based + Feature Streams**:
 | `research/*` | Experimental | CI required |
 | `hotfix/*` | Emergency fixes | PR to main |
 
-**Golden Rule:** Nobody pushes directly to `main`.
+**Golden Rule:** Nobody pushes directly to `main`. Push + remote writes (`gh pr/issue/release`) require explicit user instruction per [[git-workflow]] + [[feedback_initiation_user_only]].
+
+## RFC Reference Conventions (Reaffirmed)
+
+When referencing RFCs in prose, cross-references, changelogs, and approval criteria — use only the number. Never include status, version pins, or metadata. Example: `RFC-0909` not `RFC-0903 (Accepted v63)`. **Why:** Status/version in references causes sync bugs and verbose noise. Only the RFC's own Status header and version history table carry version info. See **§Architectural Principles** for the broader referencing discipline (no central enums for extension-bearing types; section refs not line refs).
 
 Full documentation: `.github/BRANCH_STRATEGY.md`
 Branch protection rules: `.github/branch-protection-rules.md`

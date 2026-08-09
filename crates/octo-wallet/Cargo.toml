@@ -140,6 +140,10 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"
 # in library code (`crates/octo-wallet/src/capability/macaroon.rs`).
 async-trait = "0.1"
 
+# Mission 0010-d: AudienceId::from_str calls `CanonicalCodec::parse` to
+# validate canonical DID shape at the wallet boundary (RFC-0010 v1.2 F4).
+octo-ident = { path = "../octo-ident" }
+
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
@@ -160,9 +164,6 @@ proptest = "1"
 # security rationale for S3 (`StubVerifierDisabled` returns Err on
 # production builds) without breaking the test suite.
 zk-verifier = { path = "../zk-verifier", features = ["allow-stub-verifier"] }
-
-# Mission 0010-b: test fixtures use sample_did() from octo-ident test_helpers
-octo-ident = { path = "../octo-ident" }
 
 # Gap 3 / Task 3.4: eleven_step_zk.rs uses `verify_batch_capability_zk` +
 # `CapabilityVerifier` from quota-router-core. Dev-dep only — production

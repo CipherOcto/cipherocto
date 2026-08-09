@@ -20,6 +20,8 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 use crate::error::WalletError;
 use crate::hsm::{HsmAdapter, InMemorySigner};
 
+use octo_ident::DidCodec;
+
 /// Ed25519 identity keypair. Wraps an `Arc<dyn HsmAdapter>` + cached
 /// 32-byte public key.
 ///
@@ -187,11 +189,13 @@ impl CapabilityKey {
     }
 }
 
-/// Audience identifier (DID or channel-specific opaque string). Used as HKDF IKM.
+/// Audience identifier (canonical DID form). Used as HKDF IKM.
 ///
-/// Accepts any UTF-8 string. Per RFC-0009 §DID Format: `did:octo:{multibase}`.
-/// This module does not enforce the prefix — the wallet treats the audience
-/// identifier as an opaque IKM; protocol-level DID parsing lives in `octo-core`.
+/// Per RFC-0010 v1.2 F4 (Wallet audience validation): `AudienceId::from_str`
+/// MUST validate via `octo_ident::CanonicalCodec::parse(s, allow_legacy_bare: false)`.
+/// Legacy `did:octo:b<base32>` form is rejected post-deprecation window.
+/// Bare `did:octo:<suffix>` literals are rejected (`DidError::LegacyFormExpired`).
+/// Only canonical `did:octo:z<base58btc>` form (43-44 char suffix) is valid.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct AudienceId(String);
@@ -202,7 +206,15 @@ impl FromStr for AudienceId {
         if s.is_empty() {
             return Err(WalletError::InvalidAudienceId("empty".to_owned()));
         }
-        Ok(Self(s.to_owned()))
+        // RFC-0010 v1.2 F4: validate canonical DID shape via the codec.
+        // Production paths MUST use `allow_legacy_bare: false`; legacy form
+        // is rejected post-deprecation window. Test fixtures that need the
+        // legacy form can call `CanonicalCodec::parse(s, true)` directly.
+        octo_ident::CanonicalCodec::parse(s, false)
+            .map(|_| Self(s.to_owned()))
+            .map_err(|e| {
+                WalletError::InvalidAudienceId(format!("canonical DID validation failed: {e}"))
+            })
     }
 }
 
@@ -374,7 +386,9 @@ mod tests {
     #[test]
     fn derive_capability_key_succeeds_for_in_memory() {
         let k = IdentityKey::from_seed([7u8; 32]);
-        let aud: AudienceId = "did:octo:zTest".parse().unwrap();
+        let aud: AudienceId = octo_ident::test_helpers::sample_did(7)
+            .parse()
+            .expect("canonical audience");
         let ch: ChannelId = "channel-1".parse().unwrap();
         let _ = derive_capability_key(&k, &aud, &ch).expect("hkdf derive");
     }
@@ -408,13 +422,71 @@ mod tests {
             &ch,
         )
         .unwrap();
-        let cap_b = derive_capability_key(&k, &"did:octo:b".parse().unwrap(), &ch).unwrap();
+        // Use a second canonical DID (different pubkey → different hash)
+        // rather than the legacy `did:octo:b` form, which RFC-0010 v1.2 F4
+        // rejects post-deprecation. The HKDF IKM is the wire string, so
+        // distinct valid DIDs produce distinct capability keys.
+        let cap_b = derive_capability_key(
+            &k,
+            &octo_ident::test_helpers::sample_did(99).parse().unwrap(),
+            &ch,
+        )
+        .unwrap();
         assert_ne!(cap_a.as_bytes(), cap_b.as_bytes());
     }
 
     #[test]
     fn empty_audience_rejected() {
         assert!("".parse::<AudienceId>().is_err());
+    }
+
+    #[test]
+    fn canonical_did_audience_accepted() {
+        // RFC-0010 v1.2 F4: canonical `did:octo:z<base58btc>` accepted.
+        let canonical = octo_ident::test_helpers::sample_did(7);
+        let audience: AudienceId = canonical.parse().expect("canonical accepted");
+        assert_eq!(audience.to_string(), canonical);
+    }
+
+    #[test]
+    fn legacy_did_b_form_rejected_post_deprecation() {
+        // RFC-0010 v1.2 F4: legacy `did:octo:b<base32>` rejected.
+        // 52-char base32 payload satisfies `parse` step 2 *only when*
+        // `allow_legacy_bare: true`; the wallet surface uses `false`, so the
+        // legacy form must be rejected. We construct a syntactically valid
+        // 62-char legacy form (did:octo:b + 52 base32 chars).
+        let legacy = format!(
+            "did:octo:b{}",
+            (0..52)
+                .map(|i| match i % 32 {
+                    0 => b'a',
+                    1 => b'b',
+                    _ => b'c',
+                } as char)
+                .collect::<String>()
+        );
+        let r: Result<AudienceId, _> = legacy.parse();
+        assert!(r.is_err(), "legacy did:octo:b must be rejected");
+    }
+
+    #[test]
+    fn bare_did_octo_suffix_rejected_post_window() {
+        // RFC-0010 §`parse` step 3: bare `did:octo:<name>` is rejected
+        // post-deprecation window (allow_legacy_bare: false).
+        let r: Result<AudienceId, _> = "did:octo:evil".parse();
+        assert!(r.is_err(), "bare did:octo: suffix must be rejected");
+    }
+
+    #[test]
+    fn wrong_prefix_did_rejected() {
+        let r: Result<AudienceId, _> = "did:foo:zSomeBase58String".parse();
+        assert!(r.is_err(), "non-octo DID prefix must be rejected");
+    }
+
+    #[test]
+    fn malformed_did_truncated_rejected() {
+        let r: Result<AudienceId, _> = "did:octo:zabc".parse();
+        assert!(r.is_err(), "truncated canonical DID must be rejected");
     }
 
     #[test]

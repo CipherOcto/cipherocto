@@ -6,6 +6,7 @@ use octo_transport::receiver::{NetworkReceiver, ReceiveContext};
 use octo_transport::sender::{SendContext, TransportError};
 
 use super::announce::{RouterAnnouncePayload, RouterWithdrawPayload, SignedPayload};
+use super::envelope_v2::wrap_outbound_envelope;
 use super::forward::{
     ForwardRejectPayload, ForwardRejectReason, ForwardRequestPayload, ForwardResponsePayload,
 };
@@ -13,10 +14,6 @@ use super::gossip::CapacityGossipPayload;
 use super::provider::{LocalProvider, PeerTrust, ProviderCapacity, RouterNodeId};
 use super::scorer::{Destination, SelectionState};
 use super::QuotaRouterNode;
-use super::{
-    envelope, DISC_CAPACITY_GOSSIP, DISC_FORWARD_REJECT, DISC_FORWARD_REQUEST,
-    DISC_FORWARD_RESPONSE,
-};
 
 fn deserialize<'a, T: serde::Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, TransportError> {
     bincode::deserialize(bytes).map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))
@@ -220,7 +217,17 @@ impl QuotaRouterHandler {
                     let mut fwd = req.clone();
                     fwd.ttl -= 1;
                     fwd.hop_count += 1;
-                    envelope(DISC_FORWARD_REQUEST, &fwd)?
+                    let body = bincode::serialize(&fwd)
+                        .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
+                    wrap_outbound_envelope(
+                        &node.identity_key,
+                        &node.config.network_id,
+                        octo_protocol::payload_kind::QUOTA_FORWARD_REQUEST,
+                        body,
+                        u64::from(node.config.forwarding.max_ttl),
+                        crate::node::gossip::monotonic_now().saturating_mul(1000),
+                    )
+                    .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?
                 };
                 node.transport
                     .send_best(&fwd_bytes, &SendContext::default())
@@ -308,7 +315,17 @@ impl QuotaRouterHandler {
     ) -> Result<(), TransportError> {
         let node = self.upgrade_node()?;
         let gossip = node.build_capacity_gossip();
-        let payload_bytes = envelope(DISC_CAPACITY_GOSSIP, &gossip)?;
+        let body = bincode::serialize(&gossip)
+            .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
+        let payload_bytes = wrap_outbound_envelope(
+            &node.identity_key,
+            &node.config.network_id,
+            octo_protocol::payload_kind::QUOTA_CAPACITY_GOSSIP,
+            body,
+            60,
+            crate::node::gossip::monotonic_now().saturating_mul(1000),
+        )
+        .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
         node.transport
             .send_best(&payload_bytes, &SendContext::default())
             .await
@@ -340,7 +357,17 @@ impl QuotaRouterHandler {
             executed_by: node.primary_provider_id(),
             latency_ms: 0,
         };
-        let payload_bytes = envelope(DISC_FORWARD_RESPONSE, &payload)?;
+        let body = bincode::serialize(&payload)
+            .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
+        let payload_bytes = wrap_outbound_envelope(
+            &node.identity_key,
+            &node.config.network_id,
+            octo_protocol::payload_kind::QUOTA_FORWARD_RESPONSE,
+            body,
+            60,
+            crate::node::gossip::monotonic_now().saturating_mul(1000),
+        )
+        .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
         node.transport
             .send_best(&payload_bytes, &SendContext::default())
             .await
@@ -357,7 +384,17 @@ impl QuotaRouterHandler {
             peer_id: node.config.node_id,
             reason,
         };
-        let payload_bytes = envelope(DISC_FORWARD_REJECT, &payload)?;
+        let body = bincode::serialize(&payload)
+            .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
+        let payload_bytes = wrap_outbound_envelope(
+            &node.identity_key,
+            &node.config.network_id,
+            octo_protocol::payload_kind::QUOTA_FORWARD_REJECT,
+            body,
+            60,
+            crate::node::gossip::monotonic_now().saturating_mul(1000),
+        )
+        .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
         node.transport
             .send_best(&payload_bytes, &SendContext::default())
             .await
@@ -370,6 +407,9 @@ mod tests {
     use crate::node::provider::{ProviderAuth, ProviderConfig, RouterNodeId};
     use crate::node::request::{ForwardingConfig, RequestContext, RoutingPolicy};
     use crate::node::QuotaRouterNode;
+    use crate::node::{
+        envelope, DISC_CAPACITY_GOSSIP, DISC_FORWARD_REQUEST, DISC_FORWARD_RESPONSE,
+    };
     use std::sync::Arc;
 
     fn make_node() -> Arc<QuotaRouterNode> {
@@ -428,7 +468,6 @@ mod tests {
         let r = node.receive(&[], &ctx).await;
         assert!(r.is_err());
     }
-
     #[tokio::test]
     async fn handle_forward_request_ttl_zero_rejects() {
         let node = make_node();

@@ -20,6 +20,7 @@ use octo_transport::node_transport::NodeTransport;
 use octo_transport::sender::{NetworkSender, SendContext};
 
 use announce::{RouterAnnouncePayload, SignedPayload};
+use envelope_v2::wrap_outbound_envelope;
 use forward::{ForwardOutcome, ForwardRequestPayload, PendingRequests};
 use gossip::{monotonic_now, CapacityGossipPayload, GossipCache};
 use provider::{
@@ -401,7 +402,18 @@ impl QuotaRouterNode {
 
     pub async fn broadcast_gossip(&self) -> Result<usize, octo_transport::sender::TransportError> {
         let gossip = self.build_capacity_gossip();
-        let payload = envelope(DISC_CAPACITY_GOSSIP, &gossip)?;
+        let payload_body = bincode::serialize(&gossip).map_err(|e| {
+            octo_transport::sender::TransportError::EnvelopeConstruction(e.to_string())
+        })?;
+        let payload = wrap_outbound_envelope(
+            &self.identity_key,
+            &self.config.network_id,
+            octo_protocol::payload_kind::QUOTA_CAPACITY_GOSSIP,
+            payload_body,
+            60,
+            monotonic_now().saturating_mul(1000),
+        )
+        .map_err(|e| octo_transport::sender::TransportError::EnvelopeConstruction(e.to_string()))?;
         if let Some(m) = &self.metrics {
             m.add_gossip_bytes(payload.len());
         }
@@ -426,7 +438,18 @@ impl QuotaRouterNode {
             hmac: [0u8; 32],
         };
         announce.hmac = announce.compute_hmac(&self.network_key());
-        let payload = envelope(DISC_ROUTER_ANNOUNCE, &announce)?;
+        let payload_body = bincode::serialize(&announce).map_err(|e| {
+            octo_transport::sender::TransportError::EnvelopeConstruction(e.to_string())
+        })?;
+        let payload = wrap_outbound_envelope(
+            &self.identity_key,
+            &self.config.network_id,
+            octo_protocol::payload_kind::QUOTA_ROUTER_ANNOUNCE,
+            payload_body,
+            60,
+            monotonic_now().saturating_mul(1000),
+        )
+        .map_err(|e| octo_transport::sender::TransportError::EnvelopeConstruction(e.to_string()))?;
         if let Some(m) = &self.metrics {
             m.add_gossip_bytes(payload.len());
         }
@@ -522,8 +545,17 @@ impl QuotaRouterNode {
                 fwd.hmac = fwd.compute_hmac(&self.network_key());
                 let (tx, rx) = tokio::sync::oneshot::channel();
                 self.pending.insert(request_id, tx, self.config.node_id);
-                let fwd_bytes = envelope(DISC_FORWARD_REQUEST, &fwd)
+                let fwd_body = bincode::serialize(&fwd)
                     .map_err(|e| RouterNodeError::Serialization(e.to_string()))?;
+                let fwd_bytes = wrap_outbound_envelope(
+                    &self.identity_key,
+                    &self.config.network_id,
+                    octo_protocol::payload_kind::QUOTA_FORWARD_REQUEST,
+                    fwd_body,
+                    u64::from(self.config.forwarding.max_ttl),
+                    monotonic_now().saturating_mul(1000),
+                )
+                .map_err(|e| RouterNodeError::Serialization(e.to_string()))?;
                 if let Some(m) = &self.metrics {
                     m.active_forwards.inc();
                 }

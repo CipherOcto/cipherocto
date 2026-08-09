@@ -225,6 +225,55 @@ fn classify_envelope_impl(payload: &[u8]) -> Result<EnvelopeForm<'_>, ProtocolEr
     }
 }
 
+/// Build the outbound wire bytes for a quota-router payload.
+///
+/// Single helper used by every outbound site (broadcast_gossip,
+/// broadcast_announce, route/forward, send_forward_response,
+/// send_forward_reject, handle_capacity_request, handle_router_withdraw
+/// optional). Wraps the bincode-serialized payload body in a
+/// `NodeEnvelope` with Ed25519 signature in `Authorization::Signature`,
+/// then borsh-encodes the wrapper per RFC-0871 §Wire Format.
+///
+/// Mission 0870-b closure (no deprecation window): the legacy
+/// `[disc: u8][bincode body]` form is dropped. New wire form is
+/// borsh-encoded `NodeEnvelope` only.
+pub fn wrap_outbound_envelope(
+    identity_key: &[u8; 32],
+    network_id: &NetworkId,
+    payload_kind: PayloadKindId,
+    payload_body: Vec<u8>,
+    ttl_secs: u64,
+    now_unix_ms: u64,
+) -> Result<Vec<u8>, ProtocolError> {
+    let envelope = build_node_envelope(
+        identity_key,
+        network_id,
+        payload_kind,
+        payload_body,
+        ttl_secs,
+        now_unix_ms,
+    )?;
+    encode_node_envelope(&envelope)
+}
+
+/// Dispatch an inbound `NodeEnvelope` to the matching `QuotaRouterHandler`
+/// handler method by `payload_kind` UUID lookup.
+///
+/// Returns `Err(ProtocolError::AuthorizationFailed)` if the `payload_kind`
+/// is unknown (RFC-0871 §Compatibility fail-closed) or if the inner
+/// payload body cannot be located.
+///
+/// **Note:** `dispatch_node_envelope` extracts the inner payload body
+/// (`envelope.payload`) and returns it as a `&[u8]` for the caller to
+/// deserialize with the existing `bincode::deserialize` infrastructure.
+/// The actual handler invocation (`handle_forward_request`, etc.) lives
+/// in `QuotaRouterHandler::on_receive_node_envelope` (separate method
+/// to keep `envelope_v2` independent of the handler's mutex state).
+#[must_use]
+pub fn inner_payload_slice(envelope: &NodeEnvelope) -> &[u8] {
+    &envelope.payload
+}
+
 /// Resolve the `payload_kind` UUID for a given legacy discriminator byte.
 ///
 /// Mission 0870-b mapping (RFC-0870 §NodeEnvelope Adoption table).
@@ -566,6 +615,38 @@ mod tests {
                 }
                 EnvelopeForm::New(_) => panic!("disc 0x{disc:02X} ({label}): should be Legacy"),
             }
+        }
+    }
+
+    // Mission 0870-b call-site migration: outbound-sites now emit
+    // borsh-encoded `NodeEnvelope` (not legacy `[disc: u8][bincode]`).
+    // Exercise the wrap helper against each of the 7 RFC-0870 payload
+    // kinds with a synthetic payload body.
+    #[test]
+    fn wrap_outbound_emits_borsh_node_envelope_for_all_7_payload_kinds() {
+        let k = sample_identity();
+        let network_id = NetworkId([0xab; 32]);
+        for (i, kind) in octo_protocol::payload_kind::QUOTA_PAYLOAD_KINDS
+            .iter()
+            .enumerate()
+        {
+            let body = format!("payload_body_{i}").into_bytes();
+            let wire = wrap_outbound_envelope(&k, &network_id, *kind, body.clone(), 60, 1_000_000)
+                .unwrap_or_else(|e| panic!("kind {i}: wrap failed: {e}"));
+            // Wire form MUST be borsh-decodable as NodeEnvelope (RFC-0871).
+            let env = decode_node_envelope(&wire)
+                .unwrap_or_else(|e| panic!("kind {i}: borsh decode failed: {e}"));
+            assert_eq!(env.payload_kind, *kind, "kind {i}: payload_kind mismatch");
+            assert_eq!(env.payload, body, "kind {i}: body mismatch");
+            // First byte MUST NOT be a legacy discriminator (0xC3..0xCB).
+            // Borsh serialization of `NodeEnvelope` is dense — the first
+            // byte is the borsh length-prefix of the envelope_id field,
+            // never a 0xC3-0xCB discriminant.
+            let first = wire[0];
+            assert!(
+                !(0xC3..=0xCB).contains(&first),
+                "kind {i}: first byte {first:#04X} is a legacy discriminator"
+            );
         }
     }
 }

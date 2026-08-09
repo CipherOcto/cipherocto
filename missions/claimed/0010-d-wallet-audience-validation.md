@@ -83,7 +83,26 @@ RFC-0010 F4 is a 1-source-file modification. Below the BLUEPRINT §Multi-Mission
 
 ## Pull Request
 
-(unset)
+d9070a78 (local; push + remote writes await user instruction per [[git-workflow]])
+
+## Closure Summary
+
+Implementation landed in commit `d9070a78` on `next` branch. 3 files changed,
+184 insertions / 10 deletions. `AudienceId::from_str` now routes through
+`octo_ident::CanonicalCodec::parse(s, false)` per RFC-0010 v1.2 F4. Legacy
+`did:octo:b<base32>` form, bare `did:octo:<suffix>`, wrong prefixes, and
+truncated payloads all rejected at parse time. `octo-ident` moved from
+`[dev-dependencies]` to `[dependencies]` (was misplaced by mission 0010-b;
+runtime dep required by 0010-d for parse-time validation).
+
+320/320 unit tests pass; clippy -D warnings clean; fmt clean; workspace builds.
+
+Next serial-path mission: **`0957-ext-macaroon-crate`** — extract macaroon
++ caveat + discharge types from `crates/octo-wallet/src/capability/macaroon.rs`
+into a standalone `crates/octo-cap-macaroon/` Layer-4 extension crate;
+registers `CapabilitySpec` impl per RFC-0965. Depends on `0010-d` having
+landed (so the extension crate can use `CanonicalCodec::parse` for its own
+audience validation).
 
 ## Notes
 

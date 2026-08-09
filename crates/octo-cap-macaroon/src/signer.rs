@@ -232,4 +232,17 @@ mod tests {
             other => panic!("expected Signer error, got {other:?}"),
         }
     }
+
+    /// Symmetry with `box_dyn_propagates_malformed_error`. The `Arc<dyn>`
+    /// blanket impl is mechanically identical forwarding code; the
+    /// Malformed variant must be exercised on both blanket impls.
+    #[test]
+    fn arc_dyn_propagates_malformed_error() {
+        let failing = FailingTestSigner(CapabilitySignerError::Malformed("bad curve".into()));
+        let arc: std::sync::Arc<dyn CapabilitySigner> = std::sync::Arc::new(failing);
+        match arc.sign(b"any") {
+            Err(CapabilitySignerError::Malformed(msg)) => assert_eq!(msg, "bad curve"),
+            other => panic!("expected Malformed error, got {other:?}"),
+        }
+    }
 }

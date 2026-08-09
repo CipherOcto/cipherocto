@@ -846,6 +846,21 @@ mod tests {
         assert!(matches!(err, DischargeError::MissingDischarge { .. }));
     }
 
+    /// Smoke test: a token with no `ThirdParty` caveats must short-circuit
+    /// to `Ok(())` — `verify_discharges` iterates `token.macaroon.caveats`
+    /// and the `ThirdParty` arm is the only one that does work. Trivial
+    /// but uncovered; this test pins the no-op behavior.
+    #[test]
+    fn verify_discharges_no_third_party_caveats_is_ok() {
+        let registry = ChannelProviderRegistry::default();
+        let token = test_token(
+            &octo_ident::test_helpers::sample_did(101),
+            vec![], // no caveats at all
+        );
+        verify_discharges(&token, &registry, &HashMap::new())
+            .expect("token without ThirdParty caveats must verify cleanly");
+    }
+
     #[test]
     fn verify_discharges_unknown_channel_rejected() {
         let mut registry = ChannelProviderRegistry::default();

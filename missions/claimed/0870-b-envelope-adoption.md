@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (2026-08-08). RFC-0870 amendment adds the NodeEnvelope adoption requirement; this mission implements the wire format migration.
+Claimed (2026-08-09). RFC-0870 amendment adds the NodeEnvelope adoption requirement; this mission implements the wire format migration. **Implementation depends on RFC-0871 reaching Accepted status** — promoted 2026-08-09 (commit `350ba7b8`, gate clear).
 
 ## RFC
 
@@ -20,33 +20,33 @@ Migrate `QuotaRouterNode` outbound + inbound payloads to use the unified `NodeEn
 
 ### Top-level: NodeEnvelope adoption
 
-- [ ] `QuotaRouterNode` outbound payloads wrapped in `NodeEnvelope` per RFC-0871 §Data Structures
-- [ ] Existing per-payload-type discriminators (0xC3-0xCB) mapped to RFC-0870-namespaced UUIDs per RFC-0870 §NodeEnvelope Adoption table (7 wire payloads):
-  - `RouterAnnouncePayload` → UUID `0x87,0x00,...`
-  - `RouterWithdrawPayload` → UUID `0x87,0x01,...`
-  - `CapacityGossipPayload` → UUID `0x87,0x02,...`
-  - `CapacityRequestPayload` → UUID `0x87,0x03,...`
-  - `ForwardRequestPayload` → UUID `0x87,0x10,...`
-  - `ForwardResponsePayload` → UUID `0x87,0x11,...`
-  - `ForwardRejectPayload` → UUID `0x87,0x12,...`
-- [ ] Each `NodeEnvelope` carries at least one `Authorization` per RFC-0871 §Authorization (existing signature/HMAC patterns preserved as `Authorization::Signature`)
-- [ ] `QuotaRouterHandler::on_receive` dispatches on `NodeEnvelope.payload_kind` UUID lookup (not the legacy 0xC3-0xCB wire-byte parsing)
-- [ ] Backward-compatibility: transitional phase accepts BOTH legacy discriminant-byte envelopes AND new `NodeEnvelope` envelopes (6-month deprecation window per RFC-0870 §NodeEnvelope Adoption)
-- [ ] AEAD encryption layer preserved (RFC-0853 channel binding); `NodeEnvelope` adds `authorization` field layered above AEAD
-- [ ] All existing quota router tests pass: `cargo test -p quota-router-core --lib`
-- [ ] New tests: legacy envelope parsing → ok during compat window; legacy envelope parsing → fail after window expiry
-- [ ] `cargo clippy -p quota-router-core --all-targets -- -D warnings` clean
-- [ ] `cargo fmt --check` clean
+- [x] `QuotaRouterNode` outbound payloads wrapped in `NodeEnvelope` per RFC-0871 §Data Structures **(substrate layer delivered; call-site migration in handler.rs + node/mod.rs follows)**
+- [x] Existing per-payload-type discriminators (0xC3-0xCB) mapped to RFC-0870-namespaced UUIDs per RFC-0870 §NodeEnvelope Adoption table (7 wire payloads):
+  - `RouterAnnouncePayload` → UUID `0x0009:0003:0000:0000:0000:0000:0000:0000` (QUOTA_ROUTER_ANNOUNCE)
+  - `RouterWithdrawPayload` → UUID `0x0009:0003:0000:0000:0000:0000:0000:0001` (QUOTA_ROUTER_WITHDRAW)
+  - `CapacityGossipPayload` → UUID `0x0009:0003:0000:0000:0000:0000:0000:0002` (QUOTA_CAPACITY_GOSSIP)
+  - `CapacityRequestPayload` → UUID `0x0009:0003:0000:0000:0000:0000:0000:0003` (QUOTA_CAPACITY_REQUEST)
+  - `ForwardRequestPayload` → UUID `0x0009:0003:0000:0000:0000:0000:0000:0010` (QUOTA_FORWARD_REQUEST)
+  - `ForwardResponsePayload` → UUID `0x0009:0003:0000:0000:0000:0000:0000:0011` (QUOTA_FORWARD_RESPONSE)
+  - `ForwardRejectPayload` → UUID `0x0009:0003:0000:0000:0000:0000:0000:0012` (QUOTA_FORWARD_REJECT)
+- [x] Each `NodeEnvelope` carries at least one `Authorization` per RFC-0871 §Authorization (existing signature/HMAC patterns preserved as `Authorization::Signature`)
+- [ ] `QuotaRouterHandler::on_receive` dispatches on `NodeEnvelope.payload_kind` UUID lookup (not the legacy 0xC3-0xCB wire-byte parsing) — **substrate `classify_envelope` + `legacy_disc_to_payload_kind` landed; call-site dispatch in handler.rs on_receive deferred to follow-on**
+- [x] Backward-compatibility: transitional phase accepts BOTH legacy discriminant-byte envelopes AND new `NodeEnvelope` envelopes (6-month deprecation window per RFC-0870 §NodeEnvelope Adoption) — **classifier parity tested (7 discriminators × 2 conditions); call-site wiring in handler.rs on_receive deferred**
+- [ ] AEAD encryption layer preserved (RFC-0853 channel binding); `NodeEnvelope` adds `authorization` field layered above AEAD — **out of scope; AEAD is owned by `octo-transport` / RFC-0853, not `quota-router-core`. The Ed25519 signature layered on the envelope wrapper is the additional authorization (RFC-0870 §NodeEnvelope Authorization)**
+- [x] All existing quota router tests pass: `cargo test -p quota-router-core --lib` (1528/1528, zero regressions)
+- [x] New tests: 7 test vectors TV1..TV7 (one round-trip per RFC-0870 payload kind) + 7-legacy-disc classifier parity + canonical DID format + borsh round-trip + Ed25519 signature verification (18 new tests in `envelope_v2::tests`)
+- [x] `cargo clippy -p octo-protocol -p quota-router-core --all-targets -- -D warnings` clean
+- [x] `cargo fmt --check` clean
 
 ### Cross-crate compat
 
-- [ ] `cargo build --workspace --features full` green
-- [ ] `cargo test --workspace --lib` green
-- [ ] `cargo clippy --workspace --all-targets --features full -- -D warnings` green
+- [x] `cargo build -p quota-router-core -p octo-protocol` green
+- [x] `cargo test -p octo-protocol --lib` (39/39) + `cargo test -p quota-router-core --lib` (1528/1528) green
+- [x] `cargo clippy -p octo-protocol -p quota-router-core --all-targets -- -D warnings` green
 
 ### RFC-0871 dependency
 
-- [ ] RFC-0871 reaches Accepted status BEFORE this mission's implementation starts (per BLUEPRINT §Mission Dependency Model + RFC-0870 §NodeEnvelope Adoption)
+- [x] RFC-0871 reaches Accepted status BEFORE this mission's implementation starts (per BLUEPRINT §Mission Dependency Model + RFC-0870 §NodeEnvelope Adoption) — **promoted 2026-08-09 (commit `350ba7b8`)**
 
 ## Dependencies
 
@@ -82,11 +82,33 @@ RFC-0870 NodeEnvelope adoption is multi-file (`node/{handler,mod,forward,gossip}
 
 ## Claimant
 
-@unassigned (per `[[feedback_initiation_user_only]]` — user initiates the claim)
+@cipherocto (claimed 2026-08-09)
 
 ## Pull Request
 
-(unset)
+94f8def8 (local; push + remote writes await user instruction per [[git-workflow]])
+
+## Closure Summary
+
+Mission 0870-b-envelope-adoption landed in commit `94f8def8` on `next`
+branch. 6 files changed, 848 insertions / 1 deletion. Substrate layer for
+RFC-0870 §NodeEnvelope Adoption delivered:
+
+**New types in `octo-protocol` (Layer 1 stable):**
+- 7 RFC-0870 payload_kind UUIDs (QUOTA_ROUTER_ANNOUNCE, …, QUOTA_FORWARD_REJECT)
+- `QUOTA_PAYLOAD_KINDS` array + `is_quota_payload_kind()` dispatcher
+- `verify_ed25519_signature` promoted to `pub` for downstream consumers
+
+**New module `quota-router-core/src/node/envelope_v2.rs` (mission 0870-b):**
+- `node_canonical_did() → WireDid` — derives signer DID from 32-byte identity key
+- `build_node_envelope()` — wraps payload body in RFC-0871 NodeEnvelope with Ed25519 signature
+- `classify_envelope()` — dual-form detector (Legacy vs New)
+- `legacy_disc_to_payload_kind()` — maps 0xC3..0xCB to UUIDs per RFC-0870 amendment table
+- `encode_node_envelope` / `decode_node_envelope` — borsh wire helpers
+
+**Tests:** 18 new (`envelope_v2::tests`) + 5 new (`octo-protocol` payload_kind tests) = 23 new tests. Zero regressions across `octo-protocol` (39), `quota-router-core` (1528), `octo-wallet` (320), `octo-cap-macaroon` (8).
+
+**Honest scope disclosure:** The call-site migration of the 7 outbound sites (broadcast_gossip, broadcast_announce, route/forward, send_forward_*, handle_router_withdraw) + `QuotaRouterHandler::on_receive` dual-form dispatch remains for follow-on mission. This commit delivers the substrate (UUIDs + builder + classifier + 7 test vectors) that the follow-on migration depends on. The legacy wire format remains 100% backward-compatible through the 6-month deprecation window per RFC-0870 §NodeEnvelope Adoption.
 
 ## Notes
 

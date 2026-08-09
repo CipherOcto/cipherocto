@@ -144,6 +144,12 @@ async-trait = "0.1"
 # validate canonical DID shape at the wallet boundary (RFC-0010 v1.2 F4).
 octo-ident = { path = "../octo-ident" }
 
+# Mission 0957-ext-macaroon: Layer 4 extension crate owning the macaroon
+# cryptographic foundation (HMAC-BLAKE3 + macaroon_id derivation). Layer 4
+# registers CapabilitySpec impls per RFC-0965; the Macaroon struct + Caveat
+# types remain in octo-wallet for now (Phase 2 follow-on migration).
+octo-cap-macaroon = { path = "../octo-cap-macaroon" }
+
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"

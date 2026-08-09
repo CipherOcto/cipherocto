@@ -1,0 +1,21 @@
+[package]
+name = "octo-cap-macaroon"
+version = "0.1.0"
+edition = "2021"
+description = "Macaroon v1 capability substrate (RFC-0957 §3.1–3.2). Layer 4 extension crate; per RFC-0965 caveat discriminator pattern."
+license = "MIT OR Apache-2.0"
+authors = ["CipherOcto"]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# BLAKE3 keyed-hash primitive (Layer A per RFC-0853 §1.1) — used for
+# HMAC-BLAKE3 = blake3::keyed_hash per RFC-0957 §Algorithms.
+blake3 = "1.5"
+# hex for Debug redaction output (does NOT appear in wire form; safe).
+hex = "0.4"
+
+[dev-dependencies]
+# rand for property tests (no production usage; dev-only).
+rand = "0.9"

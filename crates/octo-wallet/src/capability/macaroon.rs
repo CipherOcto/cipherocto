@@ -37,43 +37,36 @@ use super::caveat::Caveat;
 
 /// Domain separator for `capability_id` derivation (RFC-0965 §3.7).
 /// `capability_id = BLAKE3(CAPABILITY_ID_DOMAIN || canonical_ser_unsigned(macaroon))`.
-pub const CAPABILITY_ID_DOMAIN: u8 = 0x05;
+///
+/// Mission 0957-ext-macaroon: re-exported from `octo_cap_macaroon` (Layer 4
+/// extension crate). The canonical home for this constant lives in the
+/// extension crate; this re-export preserves backward compat for octo-wallet
+/// consumers.
+pub use octo_cap_macaroon::CAPABILITY_ID_DOMAIN;
 
 /// Domain string for the macaroon-id derivation (`chain[0]`).
-/// Concatenated with the hex-encoded nonce as the BLAKE3 keyed-mode
-/// message input.
-pub const MACAR_ID_DOMAIN: &str = "cipherocto/macaroon/v1/id";
+///
+/// Mission 0957-ext-macaroon: re-exported from `octo_cap_macaroon`.
+pub use octo_cap_macaroon::MACAR_ID_DOMAIN;
 
 /// Macaroon identifier (16 bytes — first half of
-/// `blake3::keyed_hash(root_secret, MACAR_ID_DOMAIN || hex(nonce))`).
-pub type MacaroonId = [u8; 16];
+/// `blake3::keyed_hash(root_secret, nonce)`).
+///
+/// Mission 0957-ext-macaroon: re-exported from `octo_cap_macaroon`.
+pub type MacaroonId = octo_cap_macaroon::MacaroonId;
 
 /// BLAKE3-keyed MAC with 32-byte key. Thin wrapper around
 /// `blake3::keyed_hash` per RFC-0957 §Algorithms + RFC-0853 §1.1.
 ///
-/// # Why a wrapper and not a direct call?
-///
-/// 1. **Type signature stability**: callers pass `&&[u8; 32]` (root
-///    secret, hex output bytes). The wrapper preserves the 32-byte
-///    typed-key shape; `blake3::keyed_hash` accepts `&&[u8]`.
-/// 2. **Return type stability**: callers want `[u8; 32]` (fixed array),
-///    not `Hash` (which is a thin newtype around `&&[u8; 32]`).
-/// 3. **Single point of reference**: future migration to a different
-///    keyed-hash primitive (or to a hardware-accelerated variant) only
-///    needs to touch this one function.
-#[must_use]
-pub fn hmac_blake3(key: &[u8; 32], msg: &[u8]) -> [u8; 32] {
-    *blake3::keyed_hash(key, msg).as_bytes()
-}
+/// Mission 0957-ext-macaroon: re-exported from `octo_cap_macaroon`. The
+/// canonical home for this function lives in the extension crate; this
+/// re-export preserves backward compat for octo-wallet consumers.
+pub use octo_cap_macaroon::hmac_blake3;
 
 /// 16-byte truncation of HMAC-BLAKE3 output. Macaroon ID per RFC-0957 §3.2.
-#[must_use]
-pub fn macaroon_id(root_secret: &[u8; 32], nonce: &[u8; 16]) -> MacaroonId {
-    let mac = hmac_blake3(root_secret, nonce);
-    let mut id = [0u8; 16];
-    id.copy_from_slice(&mac[..16]);
-    id
-}
+///
+/// Mission 0957-ext-macaroon: re-exported from `octo_cap_macaroon`.
+pub use octo_cap_macaroon::macaroon_id;
 
 /// Convert a length to a big-endian `u32` length prefix. The macaroon's
 /// fields are bounded (chain < 2^16 entries, caveats < 2^16 entries) so

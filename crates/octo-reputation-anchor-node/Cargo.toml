@@ -1,0 +1,39 @@
+[package]
+name = "octo-reputation-anchor-node"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "CipherOcto reputation-anchor specialized-node adapter (RFC-0871 §Roles and Authorities, mission 0871c Phase 3). Phase 3 MVP stub — REPUTATION_ANCHOR_QUERY handler only; full REPUTATION_QUERY/UPDATE/ANCHOR surface lands in mission 0968a-reputation-anchoring follow-on."
+
+[lib]
+name = "octo_reputation_anchor_node"
+path = "src/lib.rs"
+
+[dependencies]
+# Layer 1 stable substrate (RFC-0871 §Data Structures)
+octo-protocol = { path = "../octo-protocol" }
+# Layer B identity (canonical DID codec, RFC-0010)
+octo-ident = { path = "../octo-ident" }
+# Layer D transport adapter (RFC-0863 NodeTransport)
+octo-transport = { path = "../../octo-transport" }
+
+# Async runtime for NetworkReceiver impl + broadcast_announce
+tokio = { version = "1", features = ["rt", "sync", "macros", "time"] }
+async-trait = "0.1"
+
+# Canonical coding (RFC-0126)
+borsh = "=1.5.0"
+# bs58 for deriving public-key DID wire form in tests (RFC-0010 v1.2 F4)
+bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
+
+# Errors
+thiserror = "1"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+# Mission 0871c MVP — strict pedantic lints deferred to follow-on polish pass.
+pedantic = "allow"

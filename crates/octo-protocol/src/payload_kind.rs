@@ -230,6 +230,46 @@ pub fn is_quota_payload_kind(kind: &PayloadKindId) -> bool {
     QUOTA_PAYLOAD_KINDS.contains(kind)
 }
 
+// RFC-0871 reputation anchor node payload kinds (RFC-0871 §Roles and
+// Authorities, mission 0871c-reputation-anchor-node Phase 3). Allocated
+// in the RFC-0871 `rfc_namespace` (`0x0009:...`) with sub-namespace
+// `0x0004` (mission 0871c — reputation anchor specialized node). The
+// full RFC-0968 / RFC-0955-R1 reputation surface (`REPUTATION_QUERY`,
+// `REPUTATION_UPDATE`, `REPUTATION_ANCHOR`) lands in follow-on missions
+// once the RFC-0968 reputation registry + RFC-0955-R1 anchoring substrate
+// are production-ready (mission 0968a-reputation-anchoring in flight).
+//
+// Mission 0871c AC exposes ONLY the `REPUTATION_ANCHOR_QUERY` adapter
+// stub — a typed hand-off point so the L1 quorum flow can route
+// reputation-anchor lookups without the registry substrate being live.
+
+/// Reputation anchor query (RFC-0871 §Roles and Authorities, mission 0871c).
+///
+/// Phase 3 MVP stub: validates a canonical DID via
+/// `octo_ident::CanonicalCodec::parse(s, false)` and returns a placeholder
+/// `(anchor_score, attestation_count)` response. The real lookup against
+/// `octo-reputation` registry lands in mission 0968a-reputation-anchoring.
+///
+/// UUID: `0x0009:0004:0000:0000:0000:0000:0000:0001`
+pub const REPUTATION_ANCHOR_QUERY: PayloadKindId = PayloadKindId([
+    0x00, 0x09, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+]);
+
+/// All reputation-anchor payload kinds served by `ReputationAnchorNode`
+/// (RFC-0871 §Roles and Authorities, mission 0871c-reputation-anchor-node).
+///
+/// Phase 3 MVP exposes only `REPUTATION_ANCHOR_QUERY`. Follow-on
+/// missions add `REPUTATION_QUERY` / `REPUTATION_UPDATE` / `REPUTATION_ANCHOR`
+/// once the RFC-0968 registry + RFC-0955-R1 anchoring substrate are wired.
+pub const REPUTATION_PAYLOAD_KINDS: &[PayloadKindId] = &[REPUTATION_ANCHOR_QUERY];
+
+/// True if `kind` is a reputation-anchor payload kind (RFC-0871
+/// §Roles and Authorities, mission 0871c).
+#[must_use]
+pub fn is_reputation_payload_kind(kind: &PayloadKindId) -> bool {
+    REPUTATION_PAYLOAD_KINDS.contains(kind)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,6 +356,66 @@ mod tests {
         // A non-quota RFC-0871 payload kind must NOT match.
         assert!(!is_quota_payload_kind(&IDENTITY_RESOLVE));
         assert!(!is_quota_payload_kind(&WALLET_SIGN_ED25519));
+    }
+
+    #[test]
+    fn reputation_anchor_query_uuid_matches_mission_0871c() {
+        // Mission 0871c AC: REPUTATION_ANCHOR_QUERY UUID =
+        // 0x0009:0004:0000:0000:0000:0000:0000:0001
+        let expected: [u8; 16] = [
+            0x00, 0x09, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x01,
+        ];
+        assert_eq!(REPUTATION_ANCHOR_QUERY.0, expected);
+    }
+
+    #[test]
+    fn reputation_payload_kinds_are_rfc_allocated() {
+        // Mission 0871c AC: every reputation-anchor payload kind MUST sit in
+        // the RFC-0871 `rfc_namespace` (0x0009:0000…0x0009:FFFF) with
+        // sub-namespace `0x0004` (mission 0871c — reputation anchor).
+        for kind in REPUTATION_PAYLOAD_KINDS {
+            assert!(
+                kind.is_rfc_allocated(),
+                "RFC-0871 reputation payload kind {kind:?} not in rfc_namespace"
+            );
+            assert_eq!(kind.0[0], 0x00);
+            assert_eq!(kind.0[1], 0x09);
+            assert_eq!(kind.0[2], 0x00);
+            assert_eq!(kind.0[3], 0x04);
+        }
+    }
+
+    #[test]
+    fn is_reputation_payload_kind_matches_array() {
+        for kind in REPUTATION_PAYLOAD_KINDS {
+            assert!(is_reputation_payload_kind(kind));
+        }
+        // A non-reputation RFC-0871 payload kind must NOT match.
+        assert!(!is_reputation_payload_kind(&IDENTITY_RESOLVE));
+        assert!(!is_reputation_payload_kind(&WALLET_SIGN_ED25519));
+        assert!(!is_reputation_payload_kind(&QUOTA_ROUTER_ANNOUNCE));
+    }
+
+    #[test]
+    fn reputation_payload_kinds_borsh_round_trip() {
+        for kind in REPUTATION_PAYLOAD_KINDS {
+            let bytes = borsh::to_vec(kind).unwrap();
+            let back: PayloadKindId = borsh::from_slice(&bytes).unwrap();
+            assert_eq!(back, *kind);
+        }
+    }
+
+    #[test]
+    fn reputation_anchor_query_does_not_collide_with_quota() {
+        // Mission 0871c AC: REPUTATION_ANCHOR_QUERY must NOT collide with
+        // the RFC-0870 quota-router sub-namespace (0x0003). The dispatcher
+        // classifies by exact UUID match; a collision would silently route
+        // reputation lookups to the quota-router receiver.
+        assert!(!is_quota_payload_kind(&REPUTATION_ANCHOR_QUERY));
+        assert!(!is_reputation_payload_kind(&QUOTA_ROUTER_ANNOUNCE));
+        assert_ne!(REPUTATION_ANCHOR_QUERY, QUOTA_ROUTER_ANNOUNCE);
+        assert_ne!(REPUTATION_ANCHOR_QUERY, WALLET_RESOLVE_DID);
     }
 
     #[test]

@@ -280,7 +280,7 @@ Companion guide for code-level patterns:
 - RFC-0850p-a §Algorithms (wait_for_connected pseudocode, sidecar shape, config JSON shape)
 - `crates/octo-matrix-onboard/` (binary+core split, clap surface, redaction layer, exit code table — primary reference)
 - `crates/octo-telegram-onboard/` (state-machine auth model — TDLib analog, useful for the polling-vs-Notify tradeoff)
-- `crates/octo-adapter-whatsapp/src/adapter.rs` (`WhatsAppWebAdapter::start_bot`, `Event::Connected` handler in §Connected path, `self_handle` in §Message dispatch)
+- `crates/octo-adapter-whatsapp/src/adapter.rs` (`WhatsAppWebAdapter::start_bot`, `Event::Connected` handler in the connected path, `self_handle` in the message dispatch path)
 - `crates/octo-adapter-whatsapp/src/adapter.rs` — `qr_login_token` accessor method + backing field (per RFC-0851p-a §Bootstrap Client Lifecycle)
 - `crates/octo-adapter-whatsapp/src/adapter.rs:25-36` (`WhatsAppConfig` schema — the on-disk JSON must deserialize into this)
 - `crates/octo-adapter-telegram/src/config.rs:94-110` (`TelegramConfig::validate()` — template for the adapter change)

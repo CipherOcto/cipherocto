@@ -346,6 +346,7 @@ Each error maps to a wire code in `crates/octo-reputation/src/error.rs::Reputati
 - F1: W3C DID method registration (IA-4). Out of MVP scope.
 - F2: Multi-chain DID resolution. Out of MVP scope.
 - F3: Capability key derivation against the codec (extend RFC-0009 §Capability Keys).
+- F4: **Wallet audience validation (closed 2026-08-08 audit).** `octo-wallet::AudienceId::from_str` at `crates/octo-wallet/src/identity.rs` accepts any non-empty string and MUST validate via `octo_ident::CanonicalCodec::parse(s, false)` to enforce canonical wire-form parsing at every entry point. Tracked by `missions/claimed/0010-d-wallet-audience-validation.md` (in flight per 2026-08-08 specialized node protocol research; see `docs/research/2026-08-08-specialized-node-protocol-research.md` + `rfcs/planned/networking/0871-specialized-node-protocol-envelope.md`).
 
 ## Rationale
 
@@ -359,6 +360,7 @@ Why the dual storage/wire split? Reputation storage already shipped migrations v
 | 0.2 | 2026-07-27 | Draft (review-fix) | Round-1 fixes: (H1) `wire_to_raw` re-derives version_discriminator via binding-domain, not stored; (H2) `RawDid` made structured type with explicit `hash` + `version_discriminator` fields rather than `#[repr(C)] [u8; 52]`; (M1) `parse` step 3 tightened to reject bare `:name` literals during deprecation window; (L1) added `mint(pubkey)` algorithm documenting canonical pubkey → raw DID path |
 | 1.0 | 2026-07-27 | Accepted | Promoted after single-round review; sibling to RFC-0009. Status header updated; file moved via `git mv` from `rfcs/draft/process/` to `rfcs/accepted/process/` |
 | 1.1 | 2026-08-03 | Accepted (audit) | Audit pass: stripped `(Process)`/`(Economics)` category parens from RFC references + H1 title per CLAUDE.md referencing rule; added §Economic Analysis (N/A justification); converted §Implementation Phases to `- [ ]` checkboxes per template §693; expanded Version History with Draft → Accepted progression |
+| 1.2 | 2026-08-08 | Accepted (amendment) | Added F4 (Wallet audience validation) per 2026-08-08 specialized node protocol research. `AudienceId::from_str` must call `CanonicalCodec::parse(s, false)` rather than accept any non-empty string. Foundation for RFC-0871 (specialized node protocol envelope) where `from_did: WireDid` is validated at every envelope boundary. Cross-references: `rfcs/planned/networking/0871-specialized-node-protocol-envelope.md`, `docs/research/2026-08-08-specialized-node-protocol-research.md` |
 
 ## Related RFCs
 

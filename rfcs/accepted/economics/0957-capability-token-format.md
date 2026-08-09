@@ -859,6 +859,62 @@ Canonical test cases for cross-implementation verification. Located at `crates/o
 | `crates/octo-wallet/tests/fuzz/capability_verify.rs`          | NEW — cargo-fuzz target                                                                                         |
 | `docs/07-developers/capability-token-implementation-guide.md` | NEW — companion implementation guide per BLUEPRINT §Tools                                                       |
 
+### Per-Extension Crate Layout (v2.0 amendment, 2026-08-08)
+
+The capability substrate is wide-cross-cutting with infinite business scenarios (macaroon v1, ZK subclass per RFC-0958, federation, time-lock, threshold-MPC, user-defined extensions). Stuffing all capability types into a single `crates/octo-wallet/src/capability/` module (macaroon.rs 1905 lines, caveat.rs 1382 lines, zk_mint.rs 781 lines, etc.) is unsustainable. The v2.0 amendment mandates a **per-extension crate** layout:
+
+```
+crates/
+├── octo-wallet/                    # Layer 1 stable core (identity, hsm, capability types)
+│   └── src/
+│       ├── identity.rs             # IdentityKey, CapabilityKey, HsmAdapter integration (RFC-0009 v1.1)
+│       ├── hsm.rs                  # HsmAdapter trait + impls
+│       ├── verify/                 # NEW: BearerVerifier + CapabilityVerifier traits (RFC-0871)
+│       └── capability/             # cross-cutting types + registry
+│           ├── mod.rs              # CapabilitySpec trait + CapabilityRegistry
+│           ├── audit_log.rs        # audit substrate
+│           └── ...                 # thin substrate, no business logic
+│
+├── octo-cap-macaroon/              # macaroon v1 capability (today's default)
+│   └── src/
+│       ├── lib.rs
+│       ├── mint.rs                 # CapabilityToken::mint
+│       ├── verify.rs               # RFC-0957 verification
+│       ├── caveat.rs               # 22 caveat types (RFC-0965)
+│       └── discharge.rs            # Escrow + Revocation + RateLimit providers
+│
+├── octo-cap-zk/                    # ZK-verified capabilities (RFC-0958)
+│   └── src/
+│       ├── lib.rs
+│       ├── zk_mint.rs              # mint_with_zk + ZK proof bundle
+│       └── zk_verify.rs            # ZK verification
+│
+├── octo-cap-federation/            # cross-domain delegation
+├── octo-cap-time-lock/             # time-bounded capabilities
+├── octo-cap-threshold-mpc/         # threshold-signed capabilities
+└── octo-cap-<user-extension>/      # user-defined extensions register via plugin
+```
+
+**`CapabilitySpec` trait (registered per extension):**
+
+```rust
+pub trait CapabilitySpec: Send + Sync {
+    fn type_id(&self) -> CapabilityTypeId;          // 128-bit UUID
+    fn validate_witness(&self, witness: &CapabilityWitness) -> Result<CapabilityProof, SpecError>;
+    fn caveat_predicates(&self) -> &[CaveatPredicate];
+    fn register(&self, registry: &mut CapabilityRegistry);
+}
+```
+
+Adding a new capability type = new crate, register via plugin. `octo-wallet` core unchanged. Wallet stable across decades (Layer 1); capability types evolve in their own crates (Layer 4 plugin space).
+
+**Implementation missions:**
+- `missions/open/0957-ext-macaroon-crate.md` — extract `macaroon.rs` to `octo-cap-macaroon/`
+- `missions/open/0957-ext-zk-crate.md` — extract `zk_mint.rs` to `octo-cap-zk/`
+- (future) `0957-ext-federation-crate.md`, etc.
+
+**Cross-references:** RFC-0965 v1.4 §Per-Extension Crate Layout; RFC-0871 §Implementation Phase 4; `docs/research/2026-08-08-specialized-node-protocol-research.md` §Layer 4 stability layering.
+
 ## Future Work
 
 - **F1:** ZK capability subclass (RFC-0958, S05).
@@ -890,6 +946,7 @@ BLAKE3 chosen over SHA-256 for HMAC because:
 | 0.2        | 2026-08-01                                                                                                                                                                                                                                                                                                                                                                                          | Accepted (Phase 3 R2 key-swap) | @mmacedoeu (mission 0957-b R2 audit + key-swap impl, commit `da83d8cd`) | §Phase 3 upgraded from stub to enforced: `egress::key_swap::attach_bearer` now wraps every outbound `Authorization` attachment in `proxy.rs` (8 sites) + `native_http/*` (24 sites) with brand-typed `ProviderApiKey` + cipherocto-internal prefix denylist. CI lint extended. §Adversary A5 defense-in-depth deeper than originally specified (was lint-only; now lint + runtime denylist + type brand). §Role/Authority Egress Module row + Provider Boundary Recipient row updated to reference the new boundary. Mission `0957-b-provider-boundary-exercise-path.md` cites this row in its In Scope item.                                                                                                                                                                 |
 | 0.2        | 2026-07-20                                                                                                                                                                                                                                                                                                                                                                                          | Draft (acceptance-prep)        | @mmacedoeu                                                              | Pre-acceptance additions (BLUEPRINT v1.3 template completeness): added §Authors, §Maintainers (relocated from §Status note to dedicated H2 per template); added §Economic Analysis (5-row cost table for mint/verify/attenuate/discharge-mint/discharge-verify; 5-row wire bytes table; 3-row storage footprint; economic incentive alignment section).                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | 2026-07-20 | **Promoted to Accepted.** 7-day review (initiated 2026-07-19 alongside session-01/02/03/04/05 work) + 2 maintainer approvals (@mmacedoeu + @cipherocto) completed; no blocking objections. Status header updated; file moved via `git mv` from `rfcs/draft/{category}/` to `rfcs/accepted/{category}/`. Pre-acceptance completeness fixes applied (see prior version rows 0.2-0.5/1.1/1.2.0/1.2.1). |
+| 2.0 | 2026-08-08 | **Accepted (amendment) — Per-extension crate layout.** Surfaced by 2026-08-08 specialized node protocol research (`docs/research/2026-08-08-specialized-node-protocol-research.md`) + RFC-0871 (Planned). Added §Per-Extension Crate Layout subsection mandating that capability types land in separate crates (`crates/octo-cap-{macaroon,zk,federation,time-lock,threshold-mpc}/` etc.), each registering a `CapabilitySpec` impl via plugin. Wallet core (`octo-wallet`) becomes thin substrate: identity, HSM, capability types registry, no business logic. Today's monolithic `crates/octo-wallet/src/capability/macaroon.rs` (1905 lines) + `caveat.rs` (1382 lines) + `zk_mint.rs` (781 lines) is the reference impl; future capability types do NOT extend these files. Implementation missions: `missions/open/0957-ext-macaroon-crate.md`, `missions/open/0957-ext-zk-crate.md`, plus future per-extension crates. Additive (no wire-format change to RFC-0957 macaroon); capability attenuation invariant (RFC-0957 §3.5) preserved across the crate boundary. Cross-references: RFC-0965 v1.4 §Per-Extension Crate Layout; RFC-0871 §Implementation Phase 4; Layer 4 stability layering in research report. |
 
 ---
 

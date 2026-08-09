@@ -214,56 +214,86 @@ impl std::fmt::Debug for DispatchSet {
 
 ```rust
 /// Per RFC-0969 §Roles.
+///
+/// **v1.1 amendment (2026-08-08):** relocated to
+/// `quota-router-core::ingress::authenticator`. The original location at
+/// `crates/octo-wallet/src/capability/gateway_authenticator.rs` was orphan
+/// substrate (668 lines, 0 production callers as of audit 2026-08-08). The
+/// new location co-locates the orchestrator with its callers (HTTP proxy
+/// `quota-router-core::proxy.rs::handle_request`).
 pub struct GatewayAuthenticator {
-    pub virtual_key_table: Arc<VirtualKeyTable>,        // RFC-0903
-    pub holder_registry: Arc<dyn HolderRegistry>,       // RFC-0957-A1
-    pub root_secret_lookup: Arc<dyn Fn(&[u8; 32]) -> Option<[u8; 32]>>,  // RFC-0957
-    pub channel_providers: ChannelProviderSet,          // RFC-0957
-    pub clock: Arc<dyn Clock>,                          // RFC-0957
+    pub bearer_verifier: Arc<dyn BearerVerifier>,         // RFC-0871 §Traits
+    pub capability_verifier: Arc<dyn CapabilityVerifier>, // RFC-0871 §Traits
+    pub holder_registry: Arc<dyn HolderRegistry>,         // RFC-0957-A1
+    pub clock: Arc<dyn Clock>,                            // quota-router-storage
 }
 
 impl GatewayAuthenticator {
-    pub fn authenticate(&self, dispatch: &DispatchSet)
-        -> Result<AuthenticatedIdentity, AuthError>;
+    pub fn authenticate(&self, headers: &[(String, String)])
+        -> Result<AuthenticatedRequest, AuthError>;
 }
 ```
 
-#### `AuthenticatedIdentity`
+#### `AuthenticatedRequest`
 
 ```rust
-pub struct AuthenticatedIdentity {
-    /// Canonical holder DID (after identity linkage check).
-    pub did: String,
-
-    /// Holder Ed25519 public key (from HolderRegistry). R13-N4 fix: `Option<[u8;32]>`
-    /// because the bearer-only path has no holder_pub; setting `[0u8;32]` would be an
-    /// invalid Ed25519 point that leaks downstream.
-    pub holder_pub: Option<[u8; 32]>,
-
-    /// Ask binding (from capability, validated against bearer).
-    pub ask_id: Option<[u8; 32]>,
-
-    /// RFC-0903 verification result.
-    pub bearer_verification: Option<BearerVerification>,
-
-    /// RFC-0957 verification result.
-    pub capability_verification: Option<CapabilityVerification>,
+/// **v1.1 amendment (2026-08-08):** renamed from `AuthenticatedIdentity`.
+/// Dropped enrichment fields (rate_limit_remaining, budget_remaining_octows)
+/// per the audit finding that the HTTP proxy gateway is transparent and MUST
+/// NOT enrich `AuthenticatedRequest` with business-rule data. Rate limits,
+/// budget, allowed-routes are checked SEPARATELY in
+/// `quota-router-core::proxy.rs::handle_request` AFTER `authenticate()`
+/// returns Ok.
+pub struct AuthenticatedRequest {
+    /// Canonical holder DID (post-linkage check).
+    pub subject_did: String,
+    pub ask_id: [u8; 32],
+    /// RFC-0903 verification result (None on capability-only path).
+    pub bearer: Option<BearerVerification>,
+    /// RFC-0957 verification result (None on bearer-only path).
+    pub capability: Option<CapabilityVerification>,
+    /// Routing decision per the 4-way dispatch table (see §Dispatch Table).
+    pub routing_decision: RoutingDecision,
 }
 
 pub struct BearerVerification {
-    pub virtual_key_id: String,
-    pub subject_did: String,       // NEW: canonical identity for linkage check
-    pub ask_id: Option<[u8; 32]>,  // NEW: ask binding for linkage check
-    pub rate_limit_remaining: u64,
-    pub budget_remaining_octows: u128,
+    pub subject_did: String,
+    pub ask_id: [u8; 32],
 }
 
 pub struct CapabilityVerification {
-    pub cap_root_hash: [u8; 32],
-    pub caveats_satisfied: Vec<Caveat>,
-    pub ask_id: Option<[u8; 32]>,
+    pub holder_did: String,
+    pub ask_id: [u8; 32],
 }
 ```
+
+#### `Dispatch Table` (v1.1 amendment, 2026-08-08)
+
+Per the 2026-08-08 specialized node protocol research + user clarification, the original `LinkageResult::Indeterminate` / `RoutingDecision::Dual` machinery is replaced with a 4-way dispatch table:
+
+| Request headers | RoutingDecision | Notes |
+| --- | --- | --- |
+| `Authorization: Bearer <x>` only (today's 100% traffic) | `RoutingDecision::Bearer` | RFC-0903 path |
+| `Authorization: CipherOcto-Cap <x>` only (future cipherocto clients) | `RoutingDecision::Capability` | RFC-0957 path |
+| Both `Authorization: Bearer <x>` AND `Authorization: CipherOcto-Cap <x>` | `RoutingDecision::BothSchemesUnsupported` (rejected as client misconfig) | Per 2026-08-08 clarification: client sending both is a bug, not a routing decision. The legitimate "both" case is RFC-0959-A1 market delivery, which is server-side delivery NOT HTTP request ingress. |
+| Neither (no Authorization header) | `RoutingDecision::NoAuth` (pass-through to model provider) | Per 2026-08-08 clarification: provider-side decision (e.g., free experimentation marketing). Gateway does NOT error. |
+
+`LinkageResult::Indeterminate` variant is REMOVED. `RoutingDecision::Dual` is REMOVED from the request-shape axis (only valid in RFC-0959-A1 delivery context, not HTTP request ingress). The dispatch is fully determined by request headers alone; no side-channel lookup needed for the dispatch decision itself.
+
+**Cross-reference:** RFC-0871 §Wallet as Specialized Node (planned); `docs/research/2026-08-08-specialized-node-protocol-research.md` §5 (W3C DID Resolution + DIDComm — dispatch decision can be made from headers alone).
+
+#### Removed types (v1.1 amendment)
+
+The following types are REMOVED in v1.1:
+- `LinkageResult::Indeterminate` — replaced by the 4-way dispatch table
+- `RoutingDecision::Dual` (in the HTTP request ingress axis) — only valid in RFC-0959-A1 market delivery
+- `AuthenticatedIdentity.rate_limit_remaining` — business-rule data, not gateway enrichment
+- `AuthenticatedIdentity.budget_remaining_octows` — business-rule data, not gateway enrichment
+- `BearerVerification.virtual_key_id` — duplicate of `subject_did` post-`IdentityKey` bridge
+- `BearerVerification.rate_limit_remaining` / `.budget_remaining_octows` — moved to gateway-side check
+- `CapabilityVerification.caveats_satisfied` — moved to post-`authenticate()` evaluation
+
+Implementation mission: `missions/open/0969-a-gateway-relocation.md`.
 
 ### Wire Format
 
@@ -1011,6 +1041,7 @@ The dual-mode workflow requires both bearer and capability tokens to be accepted
 | 1.0     | 2026-08-01 | Initial draft |
 | 1.1     | 2026-08-01 | Round 2: identity linkage (bearer.subject_did == cap.holder_did, bearer.ask_id == cap.ask_id); BearerVerification.subject_did + ask_id fields; mint_dual uses txn.insert_dual for atomic pair insert; Debug redaction; mint_dual has explicit ask_ttl_unix parameter |
 | 2026-08-02 | **Promoted to Accepted.** Multi-round adversarial review R28-R64 converged; 2 maintainer approvals (@mmacedoeu + @cipherocto) completed; no blocking objections. Status header updated; file moved via `git mv` to `rfcs/accepted/economics/`. Brace balance verified at `authenticate()` (R53-N1 fix); phantom `IdentityKey::from_public_bytes` call site at L507 properly DEFERRED to RFC-0957-A2; ParseError / MintError / AuthError all have manual redacting Debug impls; identity linkage rule (bearer.subject_did == cap.holder_did ∧ bearer.ask_id == cap.ask_id) is the canonical cross-holder credential mixing defense. |
+| 1.2 | 2026-08-08 | **Accepted (amendment) — GatewayAuthenticator relocation + dispatch table.** Surfaced by 2026-08-08 specialized node protocol research (`docs/research/2026-08-08-specialized-node-protocol-research.md`) + RFC-0871 (Planned). Four amendments: (1) **`GatewayAuthenticator` relocated** from `crates/octo-wallet/src/capability/gateway_authenticator.rs` (orphan substrate, 668 lines, 0 production callers per audit 2026-08-08) to `quota-router-core::ingress::authenticator`. Orchestrator co-locates with callers. (2) **`AuthenticatedIdentity` renamed to `AuthenticatedRequest`**; enrichment fields (`rate_limit_remaining`, `budget_remaining_octows`) DROPPED — the HTTP proxy gateway is transparent and MUST NOT enrich with business-rule data per user clarification 2026-08-07. Rate limits / budget / allowed-routes checked SEPARATELY in `quota-router-core::proxy.rs::handle_request` AFTER `authenticate()` returns Ok. (3) **4-way dispatch table** replaces `LinkageResult::Indeterminate` + `RoutingDecision::Dual` machinery: bearer-only → `RoutingDecision::Bearer`; capability-only → `RoutingDecision::Capability`; both → `RoutingDecision::BothSchemesUnsupported` (client misconfig per user clarification 2026-08-07); neither → `RoutingDecision::NoAuth` (pass-through to model provider, per user clarification 2026-08-07). The legitimate "both" case is RFC-0959-A1 market delivery (server-side), NOT HTTP request ingress. (4) **Verifier traits** (`BearerVerifier`, `CapabilityVerifier`) replace direct `HolderRegistry` + `VirtualKeyTable` + `ChannelProviderSet` access — traits live in `octo-wallet::verify::*` per RFC-0871 §Wallet as Specialized Node; orchestrator composes via `Arc<dyn Trait>`. Implementation mission: `missions/open/0969-a-gateway-relocation.md`. Cross-references: RFC-0871 §Implementation Phase 2; RFC-0870 v2.0 §NodeEnvelope Adoption; memory `rfc-0969-dual-pipeline-semantics.md`. |
 
 ## Related RFCs
 

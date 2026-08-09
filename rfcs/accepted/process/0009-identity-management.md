@@ -269,6 +269,60 @@ pub fn holder_sign(identity_key: &IdentityKey, root_hash: BLAKE3) -> Ed25519Sign
 
 **Sub-capability derivation:** downstream parties (e.g., a downstream node receiving an attenuated capability) derive their own capability key as child of the root per their own `(audience_did, channel_id)` pair. The derivation is per-call; no persistent state.
 
+### HsmAdapter Integration (v1.1 amendment, 2026-08-08)
+
+All signing operations in `octo-wallet` MUST route through the `HsmAdapter` trait defined at `crates/octo-wallet/src/hsm.rs:33` rather than direct `ed25519_dalek::SigningKey` access. The `HsmAdapter` contract is:
+
+```rust
+pub trait HsmAdapter: Send + Sync {
+    fn get_public_key(&self) -> Result<[u8; 32], HsmError>;
+    fn sign(&self, msg: &[u8]) -> Result<[u8; 64], HsmError>;
+}
+```
+
+Concrete impls:
+- **`InMemorySigner`** — wraps identity seed directly; MVP default; signs in-process
+- **`LedgerSigner`** — production stub for Ledger device via APDU over USB HID; delegates signing to hardware secure element
+- **Future:** `YubiHsmSigner`, `TpmSigner`, `TeeSigner` (per RFC-0853 §F2)
+
+`IdentityKey::sign(msg)` MUST delegate to `self.signer.sign(msg)` where `self.signer: Arc<dyn HsmAdapter>`. Today (pre-v1.1) the wallet bypasses this abstraction and signs directly via `ed25519-dalek::SigningKey::from_bytes(...).sign(msg)` at `crates/octo-wallet/src/identity.rs:71`. This is a known gap (audit 2026-08-08); closure tracked by `missions/open/0009-a-hsm-routing.md`.
+
+**Why:** hardware wallets (Ledger, YubiHSM, TEE) hold the private key in a secure element. Direct `ed25519-dalek` access exposes the seed to host memory and breaks the hardware-bound signing contract. With `HsmAdapter` routing, a wallet user can deploy a Ledger device and the wallet transparently delegates signing to the device — no host-side seed exposure.
+
+**Adapter invariant:** the `HsmAdapter::sign` contract guarantees (a) private key never leaves the device; (b) signing is constant-time at the transport layer; (c) public key discoverable via `get_public_key()`. Production adapters MUST enforce all three. `InMemorySigner` does NOT enforce (a) — it is MVP-only and MUST be replaced before production deployment per `crates/octo-wallet/src/hsm.rs:48-51`.
+
+**Performance overhead:**
+| Adapter | Per-sign latency | Notes |
+| --- | --- | --- |
+| `InMemorySigner` | ~10 µs (matches ed25519-dalek baseline) | MVP; no security boundary |
+| `LedgerSigner` | ~50-100 ms (APDU roundtrip + on-device confirmation) | Production; user confirms on-device |
+| `YubiHsmSigner` | ~5-15 ms (USB) | Production; no user interaction |
+| `TpmSigner` | ~1-5 ms (TEE) | Production; no user interaction |
+
+**Adversary coverage (added v1.1):**
+- **A9 — Host-side seed exfiltration.** Today's direct `ed25519_dalek` access leaves the seed in host memory; cold-boot attack or memory dump reveals the private key. **Defense:** `HsmAdapter` routing; seed exists only inside the secure element.
+- **A10 — Malicious host signs for the user.** Today, any code with host memory access can call `identity_key.sign(...)` without the user's knowledge. **Defense:** `LedgerSigner` requires explicit on-device confirmation per `HsmError::UserRejected`. Hardware wallets give the user veto power.
+
+### Wallet Audience Validation (v1.1 amendment, 2026-08-08)
+
+`AudienceId::from_str` (and every `AudienceId::new(String)` constructor) MUST call `octo_ident::CanonicalCodec::parse(s, false)` to enforce canonical wire-form parsing at every entry point. `allow_legacy_bare: false` for production paths; `true` only inside `#[cfg(test)]` fixtures where legacy wire form literals exist.
+
+```rust
+impl FromStr for AudienceId {
+    type Err = DidError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let wire = CanonicalCodec::parse(s, false)?; // RFC-0010 canonical validation
+        Ok(AudienceId(wire))
+    }
+}
+```
+
+Today (pre-v1.1) `AudienceId::from_str` accepts any non-empty string (per RFC-0010 §Motivation critique). This is a known gap (audit 2026-08-08); closure tracked by `missions/open/0010-d-wallet-audience-validation.md` (RFC-0010 v1.2 F4).
+
+**Why:** identity verification (RFC-0009 §Verification) checks (a) DID format, (b) signature validity. If the DID format check accepts arbitrary strings, an attacker can substitute `did:octo:attacker-controlled-string` and bypass format verification. Canonical codec validation closes this.
+
+**Cross-reference:** RFC-0010 v1.2 §Future Work F4 mandates this validation at every entry point.
+
 **Reconciliation note (2026-07-19):** Earlier draft of S01 plan §3 Step 5 listed the HKDF pattern as `salt="cipherocto/cap/v1", info=channel_id`. That pattern places the version string in the salt slot, not the info slot, and omits audience DID from IKM. The pattern adopted in this RFC (version in info, audience DID as IKM) is preferred because:
 1. Audience unlinkability requires audience DID to participate in derivation — putting it in salt would be semantically wrong (salt should be non-secret random or fixed)
 2. HKDF info strings are designed for protocol/version tagging; using info for `cipherocto/cap/v1/` is conventional
@@ -409,6 +463,8 @@ Notes: Linux flock(2) atomic exclusive; second opener MUST receive typed error.
 ## Future Work
 
 - **Post-quantum identity substrate (RFC-0853 §F1):** ML-DSA + SLH-DSA when NIST PQC standards stabilize. Crypto-agility hooks via `Signer` trait + curve identifier enum (already in RFC-0102).
+- **HSM routing for all signing paths (v1.1 in-flight, 2026-08-08):** `IdentityKey::sign` + capability mint + Ask signing + capability attenuation MUST route through `Arc<dyn HsmAdapter>` rather than direct `ed25519_dalek::SigningKey` access. Implementation mission: `missions/open/0009-a-hsm-routing.md`. Cross-reference: RFC-0009 §HsmAdapter Integration (v1.1 amendment).
+- **Canonical DID validation at every entry point (v1.1 in-flight, 2026-08-08):** `AudienceId::from_str` MUST call `octo_ident::CanonicalCodec::parse(s, false)`. Implementation mission: `missions/open/0010-d-wallet-audience-validation.md` (RFC-0010 v1.2 F4). Cross-reference: RFC-0009 §Wallet Audience Validation (v1.1 amendment).
 - **DID method registration (IA-4):** File `did:octo:` method specification with W3C DID Method Registry. Out of MVP scope; tracked separately.
 - **Capability attenuation protocols beyond pairwise:** Currently 1:1 audience (per §Capability Keys). Future: hierarchical attenuation chains (parent → child → grandchild) with revocation at any level. Tracked by RFC-0957 §Future Work.
 - **Vault offline recovery (Phase H of master plan):** Hardware wallet integration via Ledger/Trezor HID. Out of MVP scope.
@@ -652,6 +708,7 @@ Per BLUEPRINT.md:
 | 0.5 | 2026-07-20 | Draft (review-fix) | @mmacedoeu | Review R2 fix: added §Economic Analysis (N/A — process RFC defining identity substrate; no direct token mint/settlement; OCTO-W economics governed by RFC-0959 at marketplace layer). |
 | 2026-07-20 | **Promoted to Accepted.** 7-day review (initiated 2026-07-19 alongside session-01/02/03/04/05 work) + 2 maintainer approvals (@mmacedoeu + @cipherocto) completed; no blocking objections. Status header updated; file moved via `git mv` from `rfcs/draft/{category}/` to `rfcs/accepted/{category}/`. Pre-acceptance completeness fixes applied (see prior version rows 0.2-0.5/1.1/1.2.0/1.2.1). |
 | 1.0 | 2026-08-03 | Accepted (audit) | @mmacedoeu | Audit pass: stripped `(Process)`/`(Numeric)`/`(Economics)` category parens from RFC references + H1 title per CLAUDE.md referencing rule; added §Adversarial Review threat table (template §651 requirement); restructured §Implementation Phases to Phase 1 / Phase 2 with `- [ ]` checkboxes (template §693 requirement); added §Related Use Cases + §Appendices (template §731, §735). |
+| 1.1 | 2026-08-08 | Accepted (amendment) | @cipherocto + @mmacedoeu | **HSM routing + canonical DID validation requirements.** Surfaced by 2026-08-08 specialized node protocol research (`docs/research/2026-08-08-specialized-node-protocol-research.md`) + RFC-0871 (Planned). Two amendments: (1) **HSM routing**: all `IdentityKey::sign` paths in `octo-wallet` MUST route through `Arc<dyn HsmAdapter>` (defined at `crates/octo-wallet/src/hsm.rs:33`) rather than direct `ed25519-dalek::SigningKey` access. This enables hardware wallet support (Ledger, YubiHSM, TEE) for capability mint + Ask signing + capability attenuation. Foundation mission: `missions/open/0009-a-hsm-routing.md`. (2) **Canonical DID validation**: `AudienceId::from_str` (and every other `AudienceId::new(String)` constructor) MUST call `octo_ident::CanonicalCodec::parse(s, false)` to enforce canonical wire-form parsing at every entry point. Defense against DID spoofing via arbitrary string substitution. Companion mission: `missions/open/0010-d-wallet-audience-validation.md` (RFC-0010 v1.2 F4). Both amendments are additive (no wire-format change); production parity preserved via `InMemorySigner` default impl. Per RFC-0871 §Implementation Phase 2. |
 
 ## Related Use Cases
 

@@ -14,6 +14,8 @@ Accepted v1.1
 | v1.1 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** Added new caveat type `PolicyReference` (RFC-0967 Policy Object Graph). Capability now carries a `policy_id` reference instead of embedding all policy clauses. Backwards-compatible: existing caveat-only capabilities continue to work. Caveat total count: 21 → 22. Additive (non-breaking) bump. |
 | v1.1-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960, RFC-0961, RFC-0962, RFC-0963, RFC-0964, RFC-0967) promoted in lockstep on 2026-07-23. |
 | v1.2-Resolved | 2026-07-23 | @cipherocto + @mmacedoeu | **Risk-closure round.** All 6 Open Questions resolved: multi-`Permission` set union + RFC-0957 attenuation; `MaxUses` failsafe (`uses_consumed + 1 > max_uses` rejects even on partial sync); `Factory.Vet` per RFC-0126 + RFC-0964; `Sharded` caveat original-only; `PermissionKind` 2-byte expansion deferred v1.1 (schedule: post-v2.0); `AuditWindow` sync semantics (RFC-0862 delivers dispute; late = no effect). Additive (non-breaking) bump. |
+| v1.3-Referenced | 2026-08-08 | @cipherocto + @mmacedoeu | **Cross-reference to RFC-0871.** The caveat discriminator byte pattern (1-byte `0x01-0xCF` for RFC-allocated + `0xD0-0xFF` for application-specific) established by this RFC is the precedent for the larger 16-byte `PayloadKindId` discriminator in RFC-0871 (specialized node protocol envelope). The same `Raw { discriminator, body }` escape hatch pattern in RFC-0871's `Authorization` enum follows the `RawCaveat` pattern defined here. Both RFCs share the same extension principle: new types are added via RFC + reserved-range allocation + Raw escape hatch; old code fail-closes on unknown discriminators. See `docs/research/2026-08-08-specialized-node-protocol-research.md` for the design lineage. |
+| v1.4-CrateLayout | 2026-08-08 | @cipherocto + @mmacedoeu | **Per-extension crate layout.** Added §Per-Extension Crate Layout subsection mandating that caveat types AND capability types land in separate crates (`crates/octo-cap-{macaroon,zk,federation,time-lock,threshold-mpc}/` etc.), each registering a `CapabilitySpec` impl via plugin. Wallet core unchanged; capability attenuation invariant (RFC-0957 §3.5) preserved across the crate boundary. Migration path: today's single-crate `cipherocto-capability-ext` reference impl → `crates/octo-cap-macaroon/` per RFC-0957 v2.0. Implementation missions: `missions/open/0957-ext-macaroon-crate.md`, `missions/open/0957-ext-zk-crate.md`. Cross-references: RFC-0957 v2.0 §Per-Extension Crate Layout; RFC-0871 §Implementation Phase 4. |
 
 ## Authors
 
@@ -534,6 +536,36 @@ The producer publishes `(T0, D)` in the settlement receipt metadata (RFC-0959). 
 - **Discharge protocol details.** RFC-0957 §Third-Party Discharge covers the discharge bag semantics; unchanged.
 - **Capability delegation chains beyond `WrappedOnly`.** Hierarchical composition via `WrappedOnly` is the only mechanism. Other patterns (e.g., role-based) are out of scope.
 - **Capability marketplace.** Trading capabilities is a separate primitive (RFC-0970+ candidates).
+
+### Per-Extension Crate Layout (v1.4 amendment, 2026-08-08)
+
+The caveat discriminator byte pattern (1-byte `0x01-0xCF` for RFC-allocated + `0xD0-0xFF` for application-specific) established by this RFC generalizes to the **per-extension crate model** for the broader capability substrate. Per RFC-0957 v2.0 §Per-Extension Crate Layout, new caveat types AND new capability types live in separate crates:
+
+```
+crates/
+├── octo-cap-macaroon/              # 22 caveat types (RFC-0965) + Macaroon v1 substrate
+├── octo-cap-zk/                    # ZK-verified capabilities (RFC-0958)
+├── octo-cap-federation/            # cross-domain delegation caveats
+├── octo-cap-time-lock/             # time-bounded capabilities
+├── octo-cap-threshold-mpc/         # threshold-signed capabilities
+└── octo-cap-<user-extension>/      # user-defined extensions register via plugin
+```
+
+Each crate provides:
+- `Caveat` enum variants (RFC-0965 discriminator bytes)
+- `CapabilitySpec` impl registering via `octo-wallet::capability::CapabilityRegistry`
+- Mint + verify impls (RFC-0957 attenuation invariant preserved across crate boundary)
+
+Adding a new caveat type = new discriminator byte allocation per this RFC's pattern. Adding a new capability family = new crate. Wallet core (`octo-wallet`) unchanged.
+
+**Migration path from `cipherocto-capability-ext`:**
+- v1.0-v1.3: `cipherocto-capability-ext` is the single-crate reference impl
+- v1.4 (this amendment): extract to `crates/octo-cap-macaroon/` per RFC-0957 v2.0 §Per-Extension Crate Layout
+- Future: `crates/octo-cap-{zk,federation,time-lock,threshold-mpc,...}/` land as their own RFCs
+
+Implementation missions: `missions/open/0957-ext-macaroon-crate.md`, `missions/open/0957-ext-zk-crate.md`.
+
+**Cross-references:** RFC-0957 v2.0 §Per-Extension Crate Layout; RFC-0871 §Implementation Phase 4; `docs/research/2026-08-08-specialized-node-protocol-research.md` §Layer 4 stability layering.
 
 ## Status
 

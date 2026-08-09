@@ -2528,6 +2528,41 @@ All structures are DCS-encoded (RFC-0126) before encryption (OCrypt ChaCha20-Pol
 └──────────────────────────────────────────────────────┘
 ```
 
+### NodeEnvelope Adoption (v2.0 amendment, 2026-08-08)
+
+`QuotaRouterNode` outbound and inbound payloads MUST be encapsulated in the unified `NodeEnvelope` defined by RFC-0871 (Planned; will be Accepted before this amendment is implemented). The existing per-payload-type discriminators (0xC3–0xCB) and DCS-encoded payload structures are retained as the **payload body** of `NodeEnvelope`:
+
+| Existing payload | New `NodeEnvelope.payload_kind` UUID | Notes |
+| --- | --- | --- |
+| `RouterAnnouncePayload` | `UUID::from_bytes([0x87, 0x00, ...])` (RFC-0870 namespace) | Self-declared; quorum proof optional |
+| `RouterWithdrawPayload` | `UUID::from_bytes([0x87, 0x01, ...])` | Lifecyle transition |
+| `CapacityGossipPayload` | `UUID::from_bytes([0x87, 0x02, ...])` | Periodic gossip |
+| `CapacityRequestPayload` | `UUID::from_bytes([0x87, 0x03, ...])` | On-demand pull |
+| `ForwardRequestPayload` | `UUID::from_bytes([0x87, 0x10, ...])` | Includes `network_id` |
+| `ForwardResponsePayload` | `UUID::from_bytes([0x87, 0x11, ...])` | Includes provenance |
+| `ForwardRejectPayload` | `UUID::from_bytes([0x87, 0x12, ...])` | Includes `ForwardRejectReason` |
+| `ProviderHealthProbe` (F8 deferred) | `UUID::from_bytes([0x87, 0x20, ...])` | Optional |
+| `ProviderHealthReport` (F8 deferred) | `UUID::from_bytes([0x87, 0x21, ...])` | Optional |
+
+Existing wire bytes (DCS-encoded structs inside `OCrypt AEAD`) are unchanged. The amendment ONLY re-wraps them inside `NodeEnvelope`:
+- The `DeterministicEnvelope` header from RFC-0850 becomes a subset of `NodeEnvelope` (envelope_id, mission_id map to RFC-0871 `envelope_id` + recipient context)
+- The `Payload Discriminator (0xC3–0xCB)` byte is dropped; `NodeEnvelope.payload_kind` (16-byte UUID) replaces it
+- The `DCS-Encoded Payload` becomes `NodeEnvelope.payload` (borsh-encoded via RFC-0871 §Data Structures)
+- The `OCrypt AEAD` encryption layer is preserved (RFC-0853 channel binding); `NodeEnvelope` adds an `authorization: Vec<Authorization>` field layered above the AEAD
+
+**Authorization:** each `NodeEnvelope` carries at least one `Authorization` (RFC-0871 §Data Structures). For quota router payloads:
+- `ForwardRequestPayload` envelope: `Authorization::Signature { signer_did: RouterNodeId canonical DID, sig: Ed25519 over envelope_id || payload }`
+- `CapacityGossipPayload` envelope: `Authorization::Signature { signer_did: ... }`
+- High-value transitions (e.g., quorum-gated `RouterAnnounce`): `Authorization::ThresholdSignature { signers: Vec<WireDid>, sig: BlsSignature }` (per RFC-0871 §Authorization)
+
+**Reception:** `QuotaRouterHandler::on_receive` becomes a typed dispatch on `NodeEnvelope.payload_kind`. Existing discriminant logic (0xC3–0xCB) moves from wire-byte parsing to `NodeEnvelope.payload_kind` UUID lookup. Backward-compatibility: a transitional phase accepts BOTH legacy discriminant-byte envelopes AND new `NodeEnvelope` envelopes; the legacy path deprecates 6 months after this amendment reaches Accepted status.
+
+**Why:** today's quota router wire format is bespoke (determinant byte + DCS struct + OCrypt). Adding any new payload type = new discriminant byte allocation + handler update + cross-crate review. Migrating to `NodeEnvelope` lets new payload kinds be allocated via RFC without touching `octo-transport` or `quota-router-core` core types.
+
+**Mission:** `missions/open/0870-b-envelope-adoption.md` (implementation).
+
+**Cross-reference:** RFC-0871 §Wallet as Specialized Node (planned); RFC-0870 §Reference Specialized Node Pattern (v1.15 audit).
+
 ### Lifecycle Requirements
 
 The `QuotaRouterNode` has **7 states** (updated to include bootstrap phases):
@@ -2946,6 +2981,8 @@ This means the quota router network can be deployed and tested without waiting f
 | 1.12 | 2026-06-29 | Fixed wiring diagram to use RFC-0863 v1.7 `NodeTransport::register_receiver()`. Removed fictional `transport: Arc<NodeTransport>` field from `QuotaRouterHandler` spec. Updated handler to hold `Arc<QuotaRouterNode>` directly (no Mutex). Added inbound receive loop to startup diagram. |
 | 1.13 | 2026-06-30 | **Architectural cleanup — fake-binary removal.** Removed the fictitious `quota-router-node` binary from scope. `QuotaRouterNodeBuilder::build()` now returns a single, fully-wired `QuotaRouterNode` (the internal `QuotaRouterHandler` is constructed and registered with `NodeTransport` inside `build()` — no caller-side wiring). Added `QuotaRouterNode::receive()` public inbound API (symmetric to `route()`). Added §Public API subsection listing the three entry points. Added §Test Policy codifying "tests must target the production library; no fake tests, no workarounds". Missions 0870g and 0870i moved to `missions/deferred/` pending a real cross-process design discussion. |
 | 1.14 | 2026-06-30 | **SelectionState + PlatformAdapter receiver.** Added `SelectionState` enum (`Matched`, `CapacityExhausted`, `NoMatch`) to the scorer, replacing the bare empty `Vec<Destination>` as the rejection signal. The handler now emits `ForwardRejectReason::CapacityExhausted` (with pull-gossip trigger) vs `ForwardRejectReason::NoProvider` based on `SelectionState`. Added §PlatformAdapter Receiver documenting `PlatformAdapterPoller` — the inbound polling bridge that drains `PlatformAdapter::receive_messages` and feeds `NodeTransport::dispatch`. Closes the send-only gap: `PlatformAdapterBridge` (outbound) + `PlatformAdapterPoller` (inbound) make a `PlatformAdapter` fully usable from `NodeTransport`. Updated §Destination Ranking with `SelectionState` definition and design rationale. Updated §Inbound Path handler spec to use `select_destinations_with_state` and `DropAction::Reject(reason)`. |
+| 1.15 | 2026-08-08 | **Reference specialized node pattern.** Cross-reference to RFC-0871 (Planned): the QuotaRouterNode builder pattern (`QuotaRouterNode::builder().seed_list(path).provider(p).peer(p).build()`) is the reference implementation of the **specialized node** pattern. Any future node type (identity resolver, reputation anchor, capability issuer, market node, **wallet**) follows the same recipe: own `transport: Arc<NodeTransport>`, own handler implementing `NetworkReceiver`, advertise capabilities via `RouterAnnouncePayload`. RFC-0871 §Wallet as Specialized Node captures the wallet-specific adaptation (`IdentityKey::sign` routes through `HsmAdapter`, `WalletNode` registers `NetworkReceiver` impl, payload kinds `WALLET_SIGN_ED25519` / `WALLET_MINT_CAPABILITY` / `WALLET_ATTENUATE_CAPABILITY`). See `docs/research/2026-08-08-specialized-node-protocol-research.md` for the design rationale. |
+| 2.0 | 2026-08-08 | **Accepted (amendment) — NodeEnvelope adoption.** Added §NodeEnvelope Adoption subsection mandating that `QuotaRouterNode` outbound and inbound payloads be encapsulated in the unified `NodeEnvelope` from RFC-0871 (Planned). Existing per-payload-type discriminators (0xC3–0xCB) and DCS-encoded payload structures are retained as the **payload body** of `NodeEnvelope`. Eight existing payload types mapped to RFC-0870-namespaced UUIDs (`0x87,0x00,0x10,0x11,0x12,0x20,0x21,...`). Authorization added per-envelope (`Vec<Authorization>` per RFC-0871 §Data Structures); existing signature/ HMAC patterns preserved as `Authorization::Signature`. Backward-compat: transitional phase accepts BOTH legacy discriminant-byte envelopes AND new `NodeEnvelope` envelopes (6-month deprecation window for legacy). Implementation mission: `missions/open/0870-b-envelope-adoption.md`. No wire-format break for existing AEAD encryption layer (RFC-0853 channel binding preserved). Additive amendment; existing quota mesh interop preserved during transition window. |
 
 ## Related RFCs
 

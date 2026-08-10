@@ -587,6 +587,7 @@ mod tests {
             capacities: vec![],
             timestamp: 100,
             hmac: [0u8; 32],
+            pricing_policy: None,
         };
         let payload = envelope(super::super::DISC_ROUTER_ANNOUNCE, &announce).unwrap();
         let r = node.receive(&payload, &ctx).await;

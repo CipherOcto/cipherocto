@@ -129,6 +129,7 @@ async fn l2_t25_announce_hmac_rejected() {
         capacities: vec![],
         timestamp: monotonic_now(),
         hmac: [0u8; 32],
+        pricing_policy: None,
     };
     bad_announce.hmac = bad_announce.compute_hmac(&wrong_key);
     let body = bincode::serialize(&bad_announce).unwrap();

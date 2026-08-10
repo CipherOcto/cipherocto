@@ -165,13 +165,30 @@ impl IdentityResolverNode {
     /// shape (per RFC-0871 §Roles and Authorities) lands in mission
     /// 0870-b follow-on.
     pub async fn broadcast_announce(&self) -> Result<usize, TransportError> {
-        // Phase 1 MVP: emit a simple borsh-encoded announce envelope
-        // body. The full RouterAnnouncePayload shape lives in RFC-0870.
-        let announce_body = b"CIPHEROCTO_IDENTITY_RESOLVER_ANNOUNCE_V1:1_payload_kind";
-        // Resolver nodes are read-only; use a zeroed placeholder from_did
-        // for the announce (the receiver validates via CanonicalCodec::parse
-        // which rejects the bare `did:octo:` form — production wiring will
-        // inject a real resolver identity via a follow-on mission).
+        // Mission 0871e-phase5c: emit canonical RouterAnnouncePayload
+        // (replaces the Phase 1 MVP
+        // `CIPHEROCTO_IDENTITY_RESOLVER_ANNOUNCE_V1:1_payload_kind`
+        // stub bytes).
+        use quota_router_core::node::announce::{PricingPolicy, RouterAnnouncePayload};
+        let placeholder_pk = [0u8; 32];
+        let announce = RouterAnnouncePayload {
+            node_id: quota_router_core::node::provider::RouterNodeId(placeholder_pk),
+            network_id: quota_router_core::node::provider::NetworkId([0u8; 32]),
+            supported_models: vec![],
+            capacities: vec![],
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            hmac: [0u8; 32],
+            pricing_policy: Some(PricingPolicy {
+                drain_per_query: 0,
+                accepted_payment_capabilities: vec![],
+                settlement_recipient: None,
+            }),
+        };
+        let announce_body = serde_json::to_vec(&announce)
+            .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
         let from_did = match octo_protocol::wire_did(&format!(
             "did:octo:z{}",
             bs58::encode([0u8; 32]).into_string()
@@ -187,7 +204,7 @@ impl IdentityResolverNode {
             from_did,
             RecipientRef::Broadcast,
             octo_protocol::payload_kind::IDENTITY_RESOLVE,
-            announce_body.to_vec(),
+            announce_body,
             vec![],
             [0u8; 32],
             0,

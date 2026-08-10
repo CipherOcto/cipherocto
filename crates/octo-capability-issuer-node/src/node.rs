@@ -190,12 +190,30 @@ impl CapabilityIssuerNode {
     /// HSM-bound identity lands in mission 0957 Phase 2 follow-on
     /// alongside the macaroon substrate).
     pub async fn broadcast_announce(&self) -> Result<usize, TransportError> {
-        let announce_body = b"CIPHEROCTO_CAPABILITY_ISSUER_ANNOUNCE_V1:2_payload_kinds";
-        // Phase 3 MVP: placeholder from_did (canonical DID shape).
-        // The real bound identity (Arc<IdentityKey> via HSM) lands in
-        // mission 0957 Phase 2 follow-on alongside the macaroon
-        // substrate.
+        // Mission 0871e-phase5c: emit canonical RouterAnnouncePayload
+        // (replaces the Phase 3 MVP
+        // `CIPHEROCTO_CAPABILITY_ISSUER_ANNOUNCE_V1:2_payload_kinds`
+        // stub bytes).
+        use quota_router_core::node::announce::{PricingPolicy, RouterAnnouncePayload};
         let placeholder_pk = [0u8; 32];
+        let announce = RouterAnnouncePayload {
+            node_id: quota_router_core::node::provider::RouterNodeId(placeholder_pk),
+            network_id: quota_router_core::node::provider::NetworkId([0u8; 32]),
+            supported_models: vec![],
+            capacities: vec![],
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            hmac: [0u8; 32],
+            pricing_policy: Some(PricingPolicy {
+                drain_per_query: 0,
+                accepted_payment_capabilities: vec![],
+                settlement_recipient: None,
+            }),
+        };
+        let announce_body = serde_json::to_vec(&announce)
+            .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
         let placeholder_did = CanonicalCodec::mint(&placeholder_pk);
         let placeholder_wire =
             <CanonicalCodec as octo_ident::DidCodec>::raw_to_wire(&placeholder_did)
@@ -204,7 +222,7 @@ impl CapabilityIssuerNode {
             placeholder_wire,
             RecipientRef::Broadcast,
             octo_protocol::payload_kind::CAPABILITY_ISSUE,
-            announce_body.to_vec(),
+            announce_body,
             vec![],
             [0u8; 32],
             0,

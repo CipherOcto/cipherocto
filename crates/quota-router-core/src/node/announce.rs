@@ -1,5 +1,33 @@
 use super::provider::{NetworkId, ProviderCapacity, RouterNodeId};
 
+/// Paid-query pricing policy advertised by a router node (RFC-0871
+/// Phase 5 + RFC-0957 §Algorithms).
+///
+/// Attached to `RouterAnnouncePayload::pricing_policy` so wallets
+/// can construct `PaymentCaveat` chains matching the announced
+/// drain rate. The drain rate is a u128 to match the spend-ledger
+/// arithmetic type (RFC-0871 §Adversary A7 — overflow impossible
+/// at worst-case scale).
+///
+/// `accepted_payment_capabilities` is a set of macaroon root-ids
+/// the router will honor; empty set means "no capability gating,
+/// rate-limit only". `settlement_recipient` identifies the
+/// router's settlement address (placeholder `WireDid` until
+/// RFC-0862 on-chain binding lands per mission phase J).
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct PricingPolicy {
+    /// Micro-OCTO_W cost per single query at this router.
+    pub drain_per_query: u128,
+    /// Macaroon root-ids the router accepts as payment; empty =
+    /// rate-limit only (no paid-query gating).
+    pub accepted_payment_capabilities: Vec<[u8; 16]>,
+    /// Optional settlement recipient (placeholder DID string; uses
+    /// `String` not `WireDid` because `WireDid` is borsh-only and
+    /// `RouterAnnouncePayload` is serde-JSON canonicalized for HMAC).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settlement_recipient: Option<String>,
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct RouterAnnouncePayload {
     pub node_id: RouterNodeId,
@@ -8,6 +36,12 @@ pub struct RouterAnnouncePayload {
     pub capacities: Vec<ProviderCapacity>,
     pub timestamp: u64,
     pub hmac: [u8; 32],
+    /// Optional pricing policy (mission 0871e-phase5c). `serde(default)`
+    /// keeps backward compat with legacy announce payloads that
+    /// predate the field — they decode to `None` and wallets
+    /// treat the announce as rate-limit-only.
+    #[serde(default)]
+    pub pricing_policy: Option<PricingPolicy>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -114,6 +148,7 @@ mod tests {
             capacities: vec![],
             timestamp: 100,
             hmac: [0u8; 32],
+            pricing_policy: None,
         };
         announce.hmac = announce.compute_hmac(&test_key());
         assert!(announce.verify_hmac(&test_key()));
@@ -128,9 +163,43 @@ mod tests {
             capacities: vec![],
             timestamp: 100,
             hmac: [0u8; 32],
+            pricing_policy: None,
         };
         announce.hmac = announce.compute_hmac(&test_key());
         assert!(!announce.verify_hmac(&[99u8; 32]));
+    }
+
+    /// TV (mission 0871e-phase5c) — `pricing_policy` presence changes
+    /// the HMAC. Two payloads differing only in `pricing_policy`
+    /// produce different HMACs; a third-party attacker cannot mutate
+    /// the pricing without invalidating the signature.
+    #[test]
+    fn pricing_policy_changes_hmac() {
+        let key = test_key();
+        let mut with_policy = RouterAnnouncePayload {
+            node_id: RouterNodeId([1u8; 32]),
+            network_id: NetworkId([2u8; 32]),
+            supported_models: vec!["gpt-4o".into()],
+            capacities: vec![],
+            timestamp: 100,
+            hmac: [0u8; 32],
+            pricing_policy: Some(PricingPolicy {
+                drain_per_query: 1_000,
+                accepted_payment_capabilities: vec![],
+                settlement_recipient: None,
+            }),
+        };
+        with_policy.hmac = with_policy.compute_hmac(&key);
+        let mut without_policy = with_policy.clone();
+        without_policy.pricing_policy = None;
+        without_policy.hmac = [0u8; 32];
+        without_policy.hmac = without_policy.compute_hmac(&key);
+        assert_ne!(
+            with_policy.hmac, without_policy.hmac,
+            "pricing_policy presence must change HMAC"
+        );
+        assert!(with_policy.verify_hmac(&key));
+        assert!(without_policy.verify_hmac(&key));
     }
 
     #[test]

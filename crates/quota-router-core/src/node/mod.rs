@@ -436,6 +436,15 @@ impl QuotaRouterNode {
                 .collect(),
             timestamp: monotonic_now(),
             hmac: [0u8; 32],
+            // Mission 0871e-phase5c: router advertises a default
+            // pricing policy. Drain = 0 (rate-limit-only) until the
+            // economic policy module lands; accepted capabilities
+            // empty (no paid-query gating yet).
+            pricing_policy: Some(announce::PricingPolicy {
+                drain_per_query: 0,
+                accepted_payment_capabilities: vec![],
+                settlement_recipient: None,
+            }),
         };
         announce.hmac = announce.compute_hmac(&self.network_key());
         let payload_body = bincode::serialize(&announce).map_err(|e| {

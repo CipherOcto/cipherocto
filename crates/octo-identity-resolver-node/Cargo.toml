@@ -11,6 +11,9 @@ name = "octo_identity_resolver_node"
 path = "src/lib.rs"
 
 [dependencies]
+# Layer A core — RouterAnnouncePayload type (mission 0871e-phase5c)
+quota-router-core = { path = "../quota-router-core" }
+serde_json = "1"
 # Layer 1 stable substrate (RFC-0871 §Data Structures)
 octo-protocol = { path = "../octo-protocol" }
 # Layer B identity (canonical DID codec, RFC-0010 v1.2 F4)

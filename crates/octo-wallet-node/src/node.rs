@@ -194,18 +194,39 @@ impl WalletNode {
     /// shape (per RFC-0871 §Wallet Node Lifecycle) lands in mission
     /// 0870-b follow-on or a dedicated wallet-announce mission.
     pub async fn broadcast_announce(&self) -> Result<usize, TransportError> {
-        // Phase 1 MVP: emit a simple borsh-encoded announce envelope
-        // body. The full RouterAnnouncePayload shape lives in RFC-0870.
-        let announce_body = b"CIPHEROCTO_WALLET_ANNOUNCE_V1:4_payload_kinds";
-        let from_did = WireDid::new(format!(
-            "did:octo:z{}",
-            bs58::encode(self.config.identity.public_key_bytes()).into_string()
-        ));
+        // Mission 0871e-phase5c: emit canonical RouterAnnouncePayload
+        // (replaces the Phase 1 MVP
+        // `CIPHEROCTO_WALLET_ANNOUNCE_V1:4_payload_kinds` stub bytes).
+        // The wallet does not charge for verify operations so
+        // pricing_policy = None.
+        use quota_router_core::node::announce::{PricingPolicy, RouterAnnouncePayload};
+        let pk = self.config.identity.public_key_bytes();
+        let node_id = quota_router_core::node::provider::RouterNodeId(pk);
+        let network_id = quota_router_core::node::provider::NetworkId([0u8; 32]);
+        let announce = RouterAnnouncePayload {
+            node_id,
+            network_id,
+            supported_models: vec![],
+            capacities: vec![],
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            hmac: [0u8; 32],
+            pricing_policy: Some(PricingPolicy {
+                drain_per_query: 0,
+                accepted_payment_capabilities: vec![],
+                settlement_recipient: None,
+            }),
+        };
+        let announce_body = serde_json::to_vec(&announce)
+            .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
+        let from_did = WireDid::new(format!("did:octo:z{}", bs58::encode(pk).into_string()));
         let envelope = NodeEnvelope::build(
             from_did,
             RecipientRef::Broadcast,
             octo_protocol::payload_kind::WALLET_SIGN_ED25519,
-            announce_body.to_vec(),
+            announce_body,
             vec![],
             [0u8; 32],
             0,

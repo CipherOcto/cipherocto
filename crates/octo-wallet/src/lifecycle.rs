@@ -187,10 +187,10 @@ mod tests {
 
     #[test]
     fn can_transition_to_validates_all_edges() {
-        // l1 edges
+        // activation + revocation edges
         assert!(LifecycleState::Designated.can_transition_to(LifecycleState::Active));
         assert!(LifecycleState::Active.can_transition_to(LifecycleState::Revoked));
-        // l2 edges (declared here for totality; actual transitions land in l2)
+        // rotation edges (Active ↔ Rotating + Rotating → Revoked)
         assert!(LifecycleState::Active.can_transition_to(LifecycleState::Rotating));
         assert!(LifecycleState::Rotating.can_transition_to(LifecycleState::Active));
         assert!(LifecycleState::Rotating.can_transition_to(LifecycleState::Revoked));

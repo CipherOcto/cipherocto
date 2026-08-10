@@ -65,4 +65,29 @@ pub enum WalletError {
     /// (l2 mission owns rotation transitions).
     #[error("identity rotation in progress; complete or abort rotation first")]
     RotationInProgress,
+
+    // ----- Rotation errors (RFC-0009 §Lifecycle + RFC-0853 §12) -----
+    /// `complete_rotation()` or `abort_rotation()` called when lifecycle
+    /// state is not `Rotating`.
+    #[error("identity not rotating (current state: {current_state:?})")]
+    NotRotating { current_state: LifecycleState },
+
+    /// `begin_rotation()` invoked with `successor.public_key_bytes() ==
+    /// self.public_key_bytes()` (cannot rotate to self).
+    #[error("cannot rotate identity to itself (successor pubkey matches current)")]
+    SelfRotation,
+
+    /// `complete_rotation()` called before the 24-hour grace period elapsed
+    /// (RFC-0853 §12).
+    #[error(
+        "rotation grace period not elapsed (elapsed: {elapsed_secs}s, required: {required_secs}s)"
+    )]
+    GracePeriodNotElapsed {
+        elapsed_secs: u64,
+        required_secs: u64,
+    },
+
+    /// `verify_successor_proof()` rejected the proof signature.
+    #[error("invalid successor proof (signature verification failed)")]
+    InvalidSuccessorProof,
 }

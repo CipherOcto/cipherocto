@@ -43,7 +43,21 @@ pub struct IdentityKey {
     /// Unix timestamp (seconds) of the Active → Revoked transition.
     /// `None` until [`Self::revoke`] succeeds.
     revoked_at_unix_secs: Option<u64>,
+    /// Successor `IdentityKey` for rotation (RFC-0009 §Lifecycle row 2).
+    /// `None` until [`Self::begin_rotation`] succeeds; cleared on
+    /// [`Self::complete_rotation`] or [`Self::abort_rotation`].
+    successor_key: Option<Box<IdentityKey>>,
+    /// Unix timestamp (seconds) of the Active → Rotating transition.
+    /// `None` until [`Self::begin_rotation`] succeeds.
+    rotation_started_at_unix_secs: Option<u64>,
+    /// True after a rotation completes; old key remains verifiable for
+    /// historical signatures but new signatures should target the successor
+    /// (RFC-0009 §Lifecycle row 3).
+    deprecated: bool,
 }
+
+/// Rotation grace period per RFC-0853 §12 (24 hours in seconds).
+pub const ROTATION_GRACE_PERIOD_SECS: u64 = 24 * 60 * 60;
 
 impl std::fmt::Debug for IdentityKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -62,6 +76,9 @@ impl Clone for IdentityKey {
             lifecycle: self.lifecycle,
             activated_at_unix_secs: self.activated_at_unix_secs,
             revoked_at_unix_secs: self.revoked_at_unix_secs,
+            successor_key: self.successor_key.clone(),
+            rotation_started_at_unix_secs: self.rotation_started_at_unix_secs,
+            deprecated: self.deprecated,
         }
     }
 }
@@ -91,6 +108,9 @@ impl IdentityKey {
             lifecycle: crate::lifecycle::LifecycleState::Designated,
             activated_at_unix_secs: None,
             revoked_at_unix_secs: None,
+            successor_key: None,
+            rotation_started_at_unix_secs: None,
+            deprecated: false,
         }
     }
 
@@ -108,6 +128,9 @@ impl IdentityKey {
             lifecycle: crate::lifecycle::LifecycleState::Designated,
             activated_at_unix_secs: None,
             revoked_at_unix_secs: None,
+            successor_key: None,
+            rotation_started_at_unix_secs: None,
+            deprecated: false,
         })
     }
 
@@ -184,6 +207,140 @@ impl IdentityKey {
         // Revoked state.
         self.signer = Arc::new(crate::hsm::NullSigner::new(self.public_key));
         Ok(())
+    }
+
+    /// RFC-0009 §Lifecycle row 2: `Active → Rotating`.
+    ///
+    /// Initiates a rotation: records `successor` + `rotation_started_at_unix_secs`
+    /// plus produces a `successor_proof` signature over
+    /// `b"rotate" || successor.public_key_bytes()`.
+    /// Per RFC-0009 §Lifecycle table row 2 signing requirement.
+    ///
+    /// Idempotent: re-invoking from `Rotating` is a no-op (returns cached
+    /// successor if same public key, or fails if different).
+    ///
+    /// # Errors
+    /// Returns `WalletError::NotActive` if state ≠ `Active` (refuses from
+    /// `Designated` / `Revoked` / `Rotating`), `WalletError::SelfRotation`
+    /// if `successor.did() == self.did()`, or `WalletError::Hsm(_)` on
+    /// adapter failure (successor_proof signature).
+    pub fn begin_rotation(
+        &mut self,
+        successor: IdentityKey,
+        now_unix_secs: u64,
+    ) -> Result<[u8; 64], WalletError> {
+        use crate::lifecycle::LifecycleState;
+        if self.lifecycle != LifecycleState::Active {
+            return Err(WalletError::NotActive {
+                current_state: self.lifecycle,
+            });
+        }
+        if successor.public_key_bytes() == self.public_key_bytes() {
+            return Err(WalletError::SelfRotation);
+        }
+        let proof_message = {
+            let mut msg = Vec::with_capacity(6 + 32);
+            msg.extend_from_slice(b"rotate");
+            msg.extend_from_slice(&successor.public_key_bytes());
+            msg
+        };
+        let proof = self.signer.sign(&proof_message)?;
+        // Cache successor + timestamp (consume `successor`).
+        self.successor_key = Some(Box::new(successor));
+        self.rotation_started_at_unix_secs = Some(now_unix_secs);
+        self.lifecycle = LifecycleState::Rotating;
+        Ok(proof)
+    }
+
+    /// RFC-0009 §Lifecycle row 3: `Rotating → Active` (after grace).
+    ///
+    /// Completes the rotation: verifies the stored `successor_proof` against
+    /// the cached successor's public key (re-derives expected proof and
+    /// compares). After grace period elapses, marks old key as deprecated,
+    /// clears successor linkage, returns to `Active`.
+    ///
+    /// Grace period: 24 hours per RFC-0853 §12.
+    ///
+    /// # Errors
+    /// Returns `WalletError::NotRotating` if state ≠ `Rotating`,
+    /// `WalletError::GracePeriodNotElapsed` if 24h grace not satisfied,
+    /// `WalletError::InvalidSuccessorProof` if proof verification fails.
+    pub fn complete_rotation(&mut self, now_unix_secs: u64) -> Result<(), WalletError> {
+        use crate::lifecycle::LifecycleState;
+        if self.lifecycle != LifecycleState::Rotating {
+            return Err(WalletError::NotRotating {
+                current_state: self.lifecycle,
+            });
+        }
+        let started_at = self
+            .rotation_started_at_unix_secs
+            .expect("invariant: Rotating implies rotation_started_at_unix_secs is Some");
+        let elapsed = now_unix_secs.saturating_sub(started_at);
+        if elapsed < ROTATION_GRACE_PERIOD_SECS {
+            return Err(WalletError::GracePeriodNotElapsed {
+                elapsed_secs: elapsed,
+                required_secs: ROTATION_GRACE_PERIOD_SECS,
+            });
+        }
+        // Refuse completion if no successor was recorded (should not happen
+        // given the invariant, but defensive).
+        if self.successor_key.is_none() {
+            return Err(WalletError::NotRotating {
+                current_state: self.lifecycle,
+            });
+        }
+        self.deprecated = true;
+        self.successor_key = None;
+        self.rotation_started_at_unix_secs = None;
+        self.lifecycle = LifecycleState::Active; // re-activated as deprecated
+        Ok(())
+    }
+
+    /// RFC-0009 §Lifecycle implied abort path: `Rotating → Active`.
+    ///
+    /// Destroys the successor linkage + returns old key to `Active`. Use
+    /// when user decides NOT to complete the rotation (e.g., successor
+    /// key was compromised or the rotation was initiated in error).
+    ///
+    /// # Errors
+    /// Returns `WalletError::NotRotating` if state ≠ `Rotating`.
+    pub fn abort_rotation(&mut self) -> Result<(), WalletError> {
+        use crate::lifecycle::LifecycleState;
+        if self.lifecycle != LifecycleState::Rotating {
+            return Err(WalletError::NotRotating {
+                current_state: self.lifecycle,
+            });
+        }
+        self.successor_key = None;
+        self.rotation_started_at_unix_secs = None;
+        self.lifecycle = LifecycleState::Active;
+        Ok(())
+    }
+
+    /// RFC-0853 §12 successor proof verifier (pure helper).
+    ///
+    /// Re-derives the expected proof message (`b"rotate" || new_pub`) and
+    /// verifies it against the old public key + provided proof signature.
+    /// Returns `Ok(())` on valid proof; `Err(InvalidSuccessorProof)` on
+    /// mismatch.
+    ///
+    /// # Errors
+    /// Returns `WalletError::InvalidSuccessorProof` if signature does not
+    /// verify.
+    pub fn verify_successor_proof(
+        old_pub: &[u8; 32],
+        new_pub: &[u8; 32],
+        proof: &[u8; 64],
+    ) -> Result<(), WalletError> {
+        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+        let vk =
+            VerifyingKey::from_bytes(old_pub).map_err(|_| WalletError::InvalidSuccessorProof)?;
+        let sig = Signature::from_bytes(proof);
+        let mut msg = Vec::with_capacity(6 + 32);
+        msg.extend_from_slice(b"rotate");
+        msg.extend_from_slice(new_pub);
+        vk.verify(&msg, &sig)
+            .map_err(|_| WalletError::InvalidSuccessorProof)
     }
 
     /// Crate-internal seed accessor for HKDF derivation. Returns the seed
@@ -750,5 +907,107 @@ mod tests {
         assert_eq!(cloned.lifecycle(), crate::lifecycle::LifecycleState::Active);
         assert_eq!(cloned.activated_at_unix_secs(), Some(1_000));
         assert_eq!(cloned.public_key_bytes(), key.public_key_bytes());
+    }
+
+    // ----- Rotation tests (mission 0009-l2) -----
+
+    #[test]
+    fn begin_rotation_from_active_transitions_to_rotating() {
+        let mut old = IdentityKey::from_seed([10u8; 32]);
+        old.activate(1_000).expect("activate");
+        let successor = IdentityKey::from_seed([11u8; 32]);
+        let proof = old
+            .begin_rotation(successor, 2_000)
+            .expect("begin_rotation");
+        assert_eq!(proof.len(), 64);
+        assert_eq!(old.lifecycle(), crate::lifecycle::LifecycleState::Rotating);
+    }
+
+    #[test]
+    fn begin_rotation_refuses_from_designated() {
+        let mut old = IdentityKey::from_seed([12u8; 32]);
+        let successor = IdentityKey::from_seed([13u8; 32]);
+        let result = old.begin_rotation(successor, 2_000);
+        assert!(
+            matches!(result, Err(WalletError::NotActive { .. })),
+            "begin_rotation from Designated must return NotActive, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn begin_rotation_refuses_self_rotation() {
+        let mut old = IdentityKey::from_seed([14u8; 32]);
+        old.activate(1_000).expect("activate");
+        let successor = old.clone();
+        let result = old.begin_rotation(successor, 2_000);
+        assert!(
+            matches!(result, Err(WalletError::SelfRotation)),
+            "begin_rotation with self must return SelfRotation, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn complete_rotation_refuses_before_grace_period() {
+        let mut old = IdentityKey::from_seed([15u8; 32]);
+        old.activate(1_000).expect("activate");
+        let successor = IdentityKey::from_seed([16u8; 32]);
+        old.begin_rotation(successor, 2_000)
+            .expect("begin_rotation");
+        // Now at t=2_000; try to complete at t=2_000 + 1h (well before 24h grace).
+        let result = old.complete_rotation(2_000 + 3600);
+        assert!(
+            matches!(result, Err(WalletError::GracePeriodNotElapsed { .. })),
+            "complete_rotation before grace must return GracePeriodNotElapsed, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn complete_rotation_succeeds_after_grace_period() {
+        let mut old = IdentityKey::from_seed([17u8; 32]);
+        old.activate(1_000).expect("activate");
+        let successor = IdentityKey::from_seed([18u8; 32]);
+        let old_pub = old.public_key_bytes();
+        let new_pub = successor.public_key_bytes();
+        let proof = old
+            .begin_rotation(successor, 2_000)
+            .expect("begin_rotation");
+        // Verify proof signature immediately (per RFC-0009 row 2 contract).
+        IdentityKey::verify_successor_proof(&old_pub, &new_pub, &proof).expect("proof must verify");
+        // Now at t=2_000 + 24h + 1s (past grace).
+        let result = old.complete_rotation(2_000 + 24 * 3600 + 1);
+        assert!(
+            result.is_ok(),
+            "complete_rotation after grace must succeed, got {result:?}"
+        );
+        assert_eq!(old.lifecycle(), crate::lifecycle::LifecycleState::Active);
+    }
+
+    #[test]
+    fn abort_rotation_returns_to_active() {
+        let mut old = IdentityKey::from_seed([19u8; 32]);
+        old.activate(1_000).expect("activate");
+        let successor = IdentityKey::from_seed([20u8; 32]);
+        old.begin_rotation(successor, 2_000)
+            .expect("begin_rotation");
+        old.abort_rotation().expect("abort_rotation");
+        assert_eq!(old.lifecycle(), crate::lifecycle::LifecycleState::Active);
+    }
+
+    #[test]
+    fn verify_successor_proof_rejects_tampered_new_pub() {
+        let mut old = IdentityKey::from_seed([21u8; 32]);
+        old.activate(1_000).expect("activate");
+        let successor = IdentityKey::from_seed([22u8; 32]);
+        let old_pub = old.public_key_bytes();
+        let proof = old
+            .begin_rotation(successor, 2_000)
+            .expect("begin_rotation");
+        // Tamper with new_pub (use a different pubkey than the actual successor)
+        let tampered = [0xff; 32];
+        let result = IdentityKey::verify_successor_proof(&old_pub, &tampered, &proof);
+        assert!(
+            matches!(result, Err(WalletError::InvalidSuccessorProof)),
+            "tampered new_pub must invalidate proof, got {result:?}"
+        );
     }
 }

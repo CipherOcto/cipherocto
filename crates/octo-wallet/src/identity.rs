@@ -79,6 +79,11 @@ impl std::fmt::Debug for IdentityKey {
 }
 
 impl Clone for IdentityKey {
+    /// Clone the identity. Note: the signer (`Arc<dyn HsmAdapter>`) is
+    /// reference-counted — revoking one clone does NOT revoke the others.
+    /// If you clone an identity with intent to revoke the original,
+    /// the clone still holds a live signer + (for `InMemorySigner`) the
+    /// raw seed bytes. Use `revoke()` on every clone you intend to retire.
     fn clone(&self) -> Self {
         Self {
             signer: self.signer.clone(),
@@ -164,6 +169,19 @@ impl IdentityKey {
     #[must_use]
     pub fn revoked_at_unix_secs(&self) -> Option<u64> {
         self.revoked_at_unix_secs
+    }
+
+    /// True after `complete_rotation()` succeeds. A deprecated key has
+    /// successfully handed off to its successor; new signatures should
+    /// target the successor, but historical signatures remain verifiable
+    /// per RFC-0009 §Lifecycle row 3.
+    ///
+    /// Distinct from `Revoked` state: a deprecated key is still in
+    /// `Active` lifecycle state and can still sign during the grace
+    /// period, but the rotation is complete.
+    #[must_use]
+    pub fn is_deprecated(&self) -> bool {
+        self.deprecated
     }
 
     /// RFC-0009 §Lifecycle row 1: `Designated → Active`.
@@ -1188,5 +1206,69 @@ mod tests {
             matches!(result, Err(WalletError::InvalidRevocationProof)),
             "proof under wrong pubkey must fail, got {result:?}"
         );
+    }
+
+    /// F30: `is_deprecated()` is `false` by default, flips to `true` only
+    /// after `complete_rotation()` succeeds. Distinct from `Revoked` state.
+    #[test]
+    fn is_deprecated_flips_only_after_complete_rotation() {
+        let mut old = IdentityKey::from_seed([38u8; 32]);
+        assert!(!old.is_deprecated(), "fresh key must NOT be deprecated");
+
+        old.activate(1_000).expect("activate");
+        assert!(!old.is_deprecated(), "active key must NOT be deprecated");
+
+        let successor = IdentityKey::from_seed([39u8; 32]);
+        old.begin_rotation(successor, 2_000)
+            .expect("begin_rotation");
+        assert!(
+            !old.is_deprecated(),
+            "rotating key must NOT be deprecated (grace window)"
+        );
+
+        // complete_rotation after grace period: flips to deprecated.
+        old.complete_rotation(2_000 + 24 * 3600 + 1)
+            .expect("complete_rotation");
+        assert!(
+            old.is_deprecated(),
+            "key must be deprecated after complete_rotation"
+        );
+        // Lifecycle state remains Active (deprecated is orthogonal).
+        assert_eq!(old.lifecycle(), crate::lifecycle::LifecycleState::Active);
+
+        // Revoking a deprecated key still works (Revoked supersedes deprecated).
+        old.revoke(9_999).expect("revoke");
+        assert!(old.is_deprecated(), "deprecated flag persists past revoke");
+        assert_eq!(old.lifecycle(), crate::lifecycle::LifecycleState::Revoked);
+    }
+
+    /// F33: documented semantics — revoking one clone does NOT revoke the
+    /// others. Each clone retains its own signer Arc.
+    #[test]
+    fn clone_is_independent_of_revoke() {
+        let mut key = IdentityKey::from_seed([40u8; 32]);
+        key.activate(1_000).expect("activate");
+        let backup = key.clone();
+
+        // Revoke the original.
+        key.revoke(2_000).expect("revoke");
+        assert_eq!(key.lifecycle(), crate::lifecycle::LifecycleState::Revoked);
+        assert!(key.sign(b"msg").is_err(), "revoked key must NOT sign");
+
+        // Backup clone retains the Active lifecycle + live signer.
+        assert_eq!(
+            backup.lifecycle(),
+            crate::lifecycle::LifecycleState::Active,
+            "clone must retain independent lifecycle state"
+        );
+        assert!(
+            backup.sign(b"msg").is_ok(),
+            "clone of pre-revoke key must still sign"
+        );
+
+        // Backup must revoke() independently to be retired.
+        let mut backup = backup;
+        backup.revoke(3_000).expect("backup revoke");
+        assert!(backup.sign(b"msg").is_err());
     }
 }

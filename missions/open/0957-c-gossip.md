@@ -2,7 +2,13 @@
 
 ## Status
 
-Open (2026-08-09). Sub-mission of `missions/claimed/0957-c-holder-registry-impl.md` per [[deferred-vs-unspecified]] deferral rule (TV5 cross-node mint verifiability, owner @cipherocto, target 2026-08-28).
+Closed (2026-08-09). Claimed + implemented in commit `pending` (see below). Sub-mission of `missions/claimed/0957-c-holder-registry-impl.md` per [[deferred-vs-unspecified]] deferral rule (TV5 cross-node mint verifiability).
+
+**Substrate landed:** `serialize_for_gossip` + `apply_gossip_record` trait methods (RFC-0957-A1 §G5) at `crates/quota-router-storage/src/holder_registry.rs` + canonical JSON helpers at `crates/quota-router-storage/src/holder_record.rs` (`HolderRecord::canonical_ser` + `HolderRecord::canonical_de`). Integration test at `crates/octo-wallet/tests/holder_registry_cross_node_gossip.rs` (5/5 TV pass: TV5.1 cross-node mint verifiability + TV5.2 idempotent duplicate + TV5.3 missing record error + TV5.4 malformed bytes + TV5.5 revoked record not active). `sync_peers()` trait method kept as no-op stub (registry-wide sync; production wiring deferred to `0959-c3` `NodeTransport` fan-out per RFC-0862).
+
+**Design rationale:** `HolderRegistry` lives in Layer B-adjacent (quota-router-storage); adding `&dyn NodeTransport` to `sync_peers()` would couple Layer B → Layer D (forbidden per [[cipherocto-design-principles]] Layer direction table). Solution: `serialize_for_gossip` + `apply_gossip_record` are transport-agnostic; the test harness wires `tokio::sync::mpsc` as in-process gossip substitute. Production wiring (commit `4ed4ff1f` precedent: `NodeTransport::broadcast`) tracks in `0959-c3`.
+
+**Cross-crate compat:** `cargo test -p quota-router-storage --lib` 165/165 pass (zero regressions); `cargo test -p octo-wallet --lib capability` 145/145 pass (zero regressions); `cargo test -p octo-wallet --test holder_registry_cross_node_gossip` 5/5 pass; `cargo clippy -p quota-router-storage -p octo-wallet --all-targets -- -D warnings` clean; `cargo fmt --check` clean.
 
 ## RFC
 
@@ -82,23 +88,28 @@ Single-file mission: 1 integration test + 1 trait method upgrade. Below BLUEPRIN
 
 ## Claimant
 
-@unassigned (per `[[feedback_initiation_user_only]]` — user initiates the claim)
+@cipherocto (implementation)
 
 ## Pull Request
 
-(unset)
+(unset — local commit per [[feedback_initiation_user_only]]; push awaits user instruction)
 
-## Notes
+## Closure Notes (2026-08-09)
 
-- Mission captured in `0957-c-holder-registry-impl.md` §Cross-node mint verifiability (G5) deferral note 2026-08-06
-- Per `[[no-phantom-mission-pointers]]`: mission file now exists; the phantom pointer that existed in 0957-c status note is now resolved
-- Per `[[cargo-fmt-workflow]]` + `[[feedback_clippy_zero_warnings]]`: `cargo fmt` + `cargo clippy -D warnings` green before commit
+- **Trait extension:** added `serialize_for_gossip(&[u8; 32]) -> Result<Vec<u8>, RegistryError>` + `apply_gossip_record(&[u8]) -> Result<(), RegistryError>` to `HolderRegistry` trait with default impls. `sync_peers()` retained as no-op stub for registry-wide fan-out (production wiring tracked in `0959-c3`).
+- **Canonical JSON helpers:** `HolderRecord::canonical_ser()` + `HolderRecord::canonical_de()` use the existing `serde(Serialize, Deserialize)` derives (canonical form per RFC-0126 §canonical JSON for `#[derive(Serialize)]` named-field structs).
+- **Layer discipline preserved:** no new deps added; `quota-router-storage` stays Layer B-adjacent (no `octo-transport` dependency).
+- **Test fixture:** `crates/octo-wallet/tests/holder_registry_cross_node_gossip.rs` (NEW, 211 lines) — `TwoNodeFixture` struct + 5 integration tests covering the full gossip pipeline.
+- **Net diff:** +228 lines (production: +40 in `holder_record.rs`, +25 in `holder_registry.rs`; tests: +211 in new file). Zero production regressions.
+
+Per [[git-workflow]] push awaits user instruction. Per [[no-line-refs-anywhere]] all references use §section-name / symbol form. Per [[rfc-referencing-convention]] RFCs referenced by number only.
 
 **Version History:**
 
 | Version | Date | Change |
 | --- | --- | --- |
 | v0.1 | 2026-08-09 | Mission filed. Captures TV5 cross-node mint verifiability deferred from 0957-c Band A closure. RFC-0862 gossip substrate binding required. |
+| v0.2 | 2026-08-09 | Claimed + Closed (Band A). Trait methods + canonical helpers + 5-test integration suite landed. 165/165 + 145/145 + 5/5 zero regressions. Layer discipline preserved (no new deps). |
 
 Last Updated: 2026-08-09
-Version: 0.1
+Version: 0.2

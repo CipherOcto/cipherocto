@@ -74,6 +74,36 @@ pub trait HolderRegistry: Send + Sync {
 
     /// Sync registry state with the configured peer set (RFC-0862).
     fn sync_peers(&self) -> Result<(), RegistryError>;
+
+    /// RFC-0957-A1 §G5: serialize a single record for cross-node gossip
+    /// fan-out. Returns canonical JSON bytes (RFC-0126). Default impl
+    /// serializes via [`HolderRecord::canonical_ser`].
+    ///
+    /// # Errors
+    /// Returns `RegistryError::Storage` if serialization fails.
+    fn serialize_for_gossip(&self, cap_root_hash: &[u8; 32]) -> Result<Vec<u8>, RegistryError> {
+        let record = self.lookup(cap_root_hash)?.ok_or_else(|| {
+            RegistryError::Storage(format!("record not found: {cap_root_hash:?}"))
+        })?;
+        record
+            .canonical_ser()
+            .map_err(|e| RegistryError::Storage(format!("canonical_ser: {e}")))
+    }
+
+    /// RFC-0957-A1 §G5: apply a record received via cross-node gossip.
+    /// Default impl deserializes the bytes via [`HolderRecord::canonical_de`]
+    /// then inserts via [`Self::insert`]. Implementations MAY override
+    /// with batch / atomic apply paths.
+    ///
+    /// # Errors
+    /// Returns `RegistryError::Storage` if deserialization fails, or
+    /// `AlreadyExists` if the record is already present (gossip is
+    /// idempotent on content-addressable PK).
+    fn apply_gossip_record(&self, bytes: &[u8]) -> Result<(), RegistryError> {
+        let record = HolderRecord::canonical_de(bytes)
+            .map_err(|e| RegistryError::Storage(format!("canonical_de: {e}")))?;
+        self.insert(record)
+    }
 }
 
 #[cfg(test)]

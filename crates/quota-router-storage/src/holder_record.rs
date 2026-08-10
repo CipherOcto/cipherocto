@@ -106,6 +106,31 @@ mod serde_bytes_option_u64 {
 // (The struct spans an earlier location in this file; the impls are
 // anchored below.)
 
+impl HolderRecord {
+    /// RFC-0957-A1 §G5 cross-node mint verifiability: serialize the
+    /// record for gossip fan-out. Uses canonical JSON (serde_json with
+    /// `derive(Serialize, Deserialize)` on this struct produces sorted-
+    /// key output by default for `#[derive(Serialize)]` structs with
+    /// named fields; this is the canonical form for gossip transport
+    /// per RFC-0126 §canonical JSON).
+    ///
+    /// # Errors
+    /// Returns `serde_json::Error` if the record contains fields that
+    /// cannot be serialized (should not happen for the current schema).
+    pub fn canonical_ser(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(self)
+    }
+
+    /// Inverse of `canonical_ser`. See [`Self::canonical_ser`].
+    ///
+    /// # Errors
+    /// Returns `serde_json::Error` if the bytes do not decode to a
+    /// valid `HolderRecord` (truncated, malformed, or schema drift).
+    pub fn canonical_de(bytes: &[u8]) -> Result<Self, serde_json::Error> {
+        serde_json::from_slice(bytes)
+    }
+}
+
 // Manual Debug redaction per RFC-0957-A1 §Security.
 impl std::fmt::Debug for HolderRecord {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

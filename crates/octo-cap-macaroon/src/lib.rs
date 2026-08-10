@@ -66,9 +66,10 @@ pub mod bundle;
 
 // Re-exports for ergonomic single-import paths.
 pub use caveat::{
-    set_subsumes, set_subsumes_with_registry, ActionTemplate, AskId, Blake3, CachePolicy, Caveat,
-    CaveatName, FactoryVet, MicroOctoW, ModelRef, OverlayIdentity, PerAxisMax, PermissionKind,
-    ProviderId, RateLimit, RawCaveat, UnixTimeSecs, ISO3166,
+    set_subsumes, set_subsumes_with_registry, ActionTemplate, AskId, AttenuationError, Blake3,
+    CachePolicy, Caveat, CaveatName, FactoryVet, MicroOctoW, ModelRef, OverlayIdentity,
+    PaidQueryDecision, PaidQueryRejectionReason, PaymentCaveat, PerAxisMax, PermissionKind,
+    ProviderId, RateLimit, RawCaveat, UnixTimeSecs, ISO3166, PAID_QUERY_CAVEAT_NAME,
 };
 pub use discharge::{
     verify_discharges, ChannelProvider, ChannelProviderRegistry, ChannelProviderResolver,

@@ -68,16 +68,18 @@ use octo_ident::WireDid;
 use octo_protocol::PayloadKindId;
 use thiserror::Error;
 
-/// RFC-0965 caveat discriminator string for the paid-query variant.
+/// Re-export of the paid-query caveat type from the macaroon substrate
+/// (mission 0957-phase2b migration). The canonical home is now
+/// `octo_cap_macaroon::PaymentCaveat`; this re-export preserves all
+/// existing `octo-paid-query` call sites without churn.
 ///
-/// First slot in the 0x1A-0xCF reserved range per RFC-0871
-/// §Implementation Phases Phase 5. The string form (`"paid-query/v1"`)
-/// is the canonical wire-form discriminator; future payment variants
-/// (subscription, per-token billing, metered egress) get distinct
-/// discriminator strings (`"paid-query/subscription/v1"`, etc.) and
-/// distinct types — no central enum edit per
-/// [[cipherocto-design-principles]] §"Extension over enumeration".
-pub const PAID_QUERY_CAVEAT_NAME: &str = "paid-query/v1";
+/// Discriminator string is `PAID_QUERY_CAVEAT_NAME` (re-exported from
+/// cap-macaroon).
+pub use octo_cap_macaroon::PaymentCaveat as PaidQueryCaveat;
+
+/// Re-export for backward compat. Canonical home is
+/// `octo_cap_macaroon::PAID_QUERY_CAVEAT_NAME`.
+pub use octo_cap_macaroon::PAID_QUERY_CAVEAT_NAME;
 
 /// Paid-query verify payload-kind UUID (RFC-0871 §Wallet Node
 /// Lifecycle, mission 0871e).
@@ -101,69 +103,12 @@ pub type MicroOCTO_W = u128;
 
 /// Paid-query caveat (RFC-0965 reserved discriminator 0x1A).
 ///
-/// A `PaidQueryCaveat` is a single-element composition in the macaroon
-/// caveat chain that bounds the holder's spend against a `budget`
-/// over queries against `model`. The verifier (`verify_paid_query`)
-/// checks `budget >= query_cost` and atomically debits the cost from
-/// a `RateLimitBudget` keyed by `(holder_did, macaroon_id, model)`.
-///
-/// Wire form: `borsh::to_vec(&self)` (RFC-0957 §Wire Format +
-/// RFC-0965 §2 Caveat envelope encoding).
-#[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-pub struct PaidQueryCaveat {
-    /// RFC-0965 caveat discriminator string. Always
-    /// `"paid-query/v1"` for this variant; future variants carry
-    /// distinct strings (`"paid-query/subscription/v1"`, etc.).
-    pub caveat_name: String,
-    /// Prepaid spend budget in MicroOCTO_W. Holder can spend up to
-    /// this amount across all queries matching `model`. Drained by
-    /// `verify_paid_query` on each accepted query.
-    pub budget: MicroOCTO_W,
-    /// Model identifier this caveat applies to (e.g. `"gpt-4"`,
-    /// `"claude-3-opus"`, `"octo-router/multi"`). Empty string `""`
-    /// means "any model" — used for prepaid capacity subscriptions
-    /// that span the wallet's full set of routed models.
-    pub model: String,
-    /// Unix-time millisecond expiry (RFC-0871 §Adversary A10 — no
-    /// indefinite prepaid). After this instant, `verify_paid_query`
-    /// rejects the caveat regardless of remaining budget. `u64::MAX`
-    /// means "never expires" (used for indefinite prepaid plans;
-    /// revocation is then handled via the caveat chain's
-    /// `RevocationCaveat` per RFC-0957 §Algorithms).
-    pub expires_at_unix_ms: u64,
-}
-
-impl PaidQueryCaveat {
-    /// Construct a new paid-query caveat with the canonical name.
-    ///
-    /// Caller must supply budget, model, and expiry. The `caveat_name`
-    /// field is fixed to `"paid-query/v1"` (discriminator constant).
-    #[must_use]
-    pub fn new(budget: MicroOCTO_W, model: impl Into<String>, expires_at_unix_ms: u64) -> Self {
-        Self {
-            caveat_name: PAID_QUERY_CAVEAT_NAME.to_string(),
-            budget,
-            model: model.into(),
-            expires_at_unix_ms,
-        }
-    }
-
-    /// True if `now_unix_ms > expires_at_unix_ms`.
-    ///
-    /// `u64::MAX` expiry returns `false` (never expires).
-    #[must_use]
-    pub fn is_expired(&self, now_unix_ms: u64) -> bool {
-        self.expires_at_unix_ms != u64::MAX && now_unix_ms > self.expires_at_unix_ms
-    }
-
-    /// True if `model` matches the caveat's model scope. Empty
-    /// caveat `model` matches any query model (wildcard).
-    #[must_use]
-    pub fn matches_model(&self, query_model: &str) -> bool {
-        self.model.is_empty() || self.model == query_model
-    }
-}
-
+/// **Mission 0957-phase2b:** migrated to the macaroon substrate
+/// (`octo_cap_macaroon::PaymentCaveat`); this re-export preserves
+/// all existing call sites. Methods (`new`, `is_expired`,
+/// `matches_model`, `verify`, `attenuate`) live on the migrated
+/// type. See `crates/octo-cap-macaroon/src/caveat/payment.rs` for
+/// the canonical home.
 /// Decision returned by `verify_paid_query` after comparing the
 /// caveat against the proposed `query_cost`.
 ///

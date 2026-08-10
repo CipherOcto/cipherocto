@@ -12,6 +12,7 @@
 //! (caveats travel in subsequent attenuation envelope calls).
 
 use borsh::{BorshDeserialize, BorshSerialize};
+use octo_cap_macaroon::caveat::Caveat;
 use octo_cap_macaroon::wire::serialize_wire;
 use octo_ident::DidCodec;
 use octo_protocol::ProtocolError;
@@ -24,13 +25,21 @@ use super::{
 
 /// Request payload for `WALLET_MINT_CAPABILITY`.
 ///
-/// Wire form: borsh (`holder_did`, `capability_root`).
+/// Wire form: borsh (`holder_did`, `capability_root`,
+/// `payment_caveat`).
 #[derive(Clone, Debug, BorshSerialize, BorshDeserialize, PartialEq, Eq)]
 pub struct MintRequest {
     /// Canonical DID of the holder (`did:octo:z<base58btc>`).
     pub holder_did: String,
     /// 32-byte capability root secret (random nonce per mint).
     pub capability: [u8; 32],
+    /// Optional initial PaymentCaveat (RFC-0965 reserved discriminator
+    /// `0x1A`, mission 0957-phase2b). When present, the handler
+    /// appends it as the first caveat in the macaroon chain via
+    /// `CapabilityToken::mint(..., &[Caveat::Payment(p)])`. When
+    /// `None`, the minted token has no initial caveats (caveats
+    /// travel in subsequent attenuation envelope calls).
+    pub payment_caveat: Option<octo_cap_macaroon::PaymentCaveat>,
 }
 
 impl MintRequest {
@@ -73,8 +82,17 @@ impl<'a> MintHandler<'a> {
         // legacy form (RFC-0010 v1.2 F4 + 0010-d mission).
         octo_ident::CanonicalCodec::parse(&req.holder_did, false).map_err(did_error_to_protocol)?;
 
-        let token = CapabilityToken::mint(&req.capability, self.identity, &req.holder_did, &[])
-            .map_err(wallet_error_to_protocol)?;
+        let token = match req.payment_caveat.as_ref() {
+            Some(p) => CapabilityToken::mint(
+                &req.capability,
+                self.identity,
+                &req.holder_did,
+                &[Caveat::Payment(p.clone())],
+            )
+            .map_err(wallet_error_to_protocol)?,
+            None => CapabilityToken::mint(&req.capability, self.identity, &req.holder_did, &[])
+                .map_err(wallet_error_to_protocol)?,
+        };
 
         // Real macaroon wire form (RFC-0957 §3.7): 3 base64url-no-pad
         // segments separated by `.`. Replaces the Phase 1 MVP
@@ -121,10 +139,28 @@ mod tests {
         let req = MintRequest {
             holder_did: sample_did(),
             capability: [0xab; 32],
+            payment_caveat: None,
         };
         let bytes = req.to_borsh().unwrap();
         let back = MintRequest::from_borsh(&bytes).unwrap();
         assert_eq!(back, req);
+    }
+
+    #[test]
+    fn mint_request_borsh_round_trip_with_payment_caveat() {
+        // Mission 0957-phase2b: the optional PaymentCaveat field must
+        // roundtrip cleanly through borsh (the field embeds a serde-
+        // and-borsh-derive type from cap-macaroon).
+        let p = octo_cap_macaroon::PaymentCaveat::new(1_000_000, "gpt-4", u64::MAX);
+        let req = MintRequest {
+            holder_did: sample_did(),
+            capability: [0xab; 32],
+            payment_caveat: Some(p.clone()),
+        };
+        let bytes = req.to_borsh().unwrap();
+        let back = MintRequest::from_borsh(&bytes).unwrap();
+        assert_eq!(back, req);
+        assert_eq!(back.payment_caveat, Some(p));
     }
 
     #[test]
@@ -134,6 +170,7 @@ mod tests {
         let req = MintRequest {
             holder_did: "did:octo:bad".into(),
             capability: [0xab; 32],
+            payment_caveat: None,
         };
         let err = handler.handle(&req).unwrap_err();
         assert!(matches!(err, ProtocolError::InvalidDid(_)));
@@ -157,6 +194,7 @@ mod tests {
         let req = MintRequest {
             holder_did: sample_did(),
             capability: [0xab; 32],
+            payment_caveat: None,
         };
         let out = handler.handle(&req).unwrap();
         let payload = out.response_payload.unwrap();
@@ -192,6 +230,7 @@ mod tests {
         let req = MintRequest {
             holder_did: sample_did(),
             capability: [0xab; 32],
+            payment_caveat: None,
         };
         let out = handler.handle(&req).unwrap();
         let payload = out.response_payload.unwrap();
@@ -219,6 +258,7 @@ mod tests {
         let req = MintRequest {
             holder_did: sample_did(),
             capability: [0xab; 32],
+            payment_caveat: None,
         };
         let out = handler.handle(&req).unwrap();
         let payload = out.response_payload.unwrap();
@@ -241,6 +281,7 @@ mod tests {
         let req = MintRequest {
             holder_did: sample_did(),
             capability: [0xab; 32],
+            payment_caveat: None,
         };
         let out = handler.handle(&req).unwrap();
         let payload = out.response_payload.unwrap();
@@ -268,11 +309,67 @@ mod tests {
         let req = MintRequest {
             holder_did: "not-a-did-at-all".into(),
             capability: [0xab; 32],
+            payment_caveat: None,
         };
         let err = handler.handle(&req).unwrap_err();
         assert!(
             matches!(err, ProtocolError::InvalidDid(_)),
             "non-canonical DID must yield InvalidDid, got {err:?}"
+        );
+    }
+
+    /// TV6 (mission 0957-phase2b) — `MintRequest::payment_caveat =
+    /// Some(p)` mints a token whose caveat chain contains exactly one
+    /// `Caveat::Payment(p)` entry. Closes 0871e deferred item #7
+    /// (handler accepting PaymentCaveat mint requests).
+    #[test]
+    fn handle_mints_with_payment_caveat_as_initial_caveat() {
+        let id = sample_identity();
+        let handler = MintHandler::new(&id);
+        let payment = octo_cap_macaroon::PaymentCaveat::new(1_000_000, "gpt-4", u64::MAX);
+        let req = MintRequest {
+            holder_did: sample_did(),
+            capability: [0xab; 32],
+            payment_caveat: Some(payment.clone()),
+        };
+        let out = handler.handle(&req).unwrap();
+        let payload = out.response_payload.unwrap();
+        let wire = std::str::from_utf8(&payload).unwrap();
+        let restored = deserialize_wire(wire, req.holder_did.clone(), id.public_key_bytes())
+            .expect("wire deserialize");
+        // Exactly one caveat in the chain, and it is the Payment variant.
+        assert_eq!(restored.macaroon.caveats.len(), 1);
+        match &restored.macaroon.caveats[0] {
+            Caveat::Payment(p) => {
+                assert_eq!(p.budget, 1_000_000);
+                assert_eq!(p.model, "gpt-4");
+                assert_eq!(p.expires_at_unix_ms, u64::MAX);
+            }
+            other => panic!("expected Caveat::Payment, got {other:?}"),
+        }
+        // Holder sig still verifies after the roundtrip.
+        restored.verify_holder_sig().expect("holder sig verifies");
+    }
+
+    /// TV7 (mission 0957-phase2b) — `payment_caveat = None` preserves
+    /// the Phase 2a behavior: minted token has empty caveat chain.
+    #[test]
+    fn handle_mints_without_payment_caveat_has_empty_chain() {
+        let id = sample_identity();
+        let handler = MintHandler::new(&id);
+        let req = MintRequest {
+            holder_did: sample_did(),
+            capability: [0xab; 32],
+            payment_caveat: None,
+        };
+        let out = handler.handle(&req).unwrap();
+        let payload = out.response_payload.unwrap();
+        let wire = std::str::from_utf8(&payload).unwrap();
+        let restored = deserialize_wire(wire, req.holder_did.clone(), id.public_key_bytes())
+            .expect("wire deserialize");
+        assert!(
+            restored.macaroon.caveats.is_empty(),
+            "payment_caveat=None must yield empty caveat chain"
         );
     }
 }

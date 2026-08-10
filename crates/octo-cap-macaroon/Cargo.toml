@@ -38,6 +38,16 @@ cipherocto-encoding = { path = "../cipherocto-encoding" }
 ed25519-dalek = { version = "2.2", features = ["serde"] }
 # base64 for capability token wire format encoding (RFC-0957 §3.7).
 base64 = "0.22"
+# Borsh derives for `caveat::PaymentCaveat` only (mission
+# 0957-phase2b): the `PaidQueryRequest` envelope + the
+# `MintRequest::payment_caveat` field both derive
+# BorshSerialize/BorshDeserialize and embed `PaymentCaveat`. Adding
+# borsh ONLY here (not on the rest of the macaroon substrate) keeps
+# the coupling minimal — the canonical serde form remains the wire
+# substrate for `Macaroon` / `CapabilityToken` / `Caveat` (RFC-0126
+# + RFC-0957 §3.7). Borsh is required by the wallet-node + paid-query
+# envelope layer (Layer C / Layer E) which sit above the substrate.
+borsh = { version = "=1.5.0", features = ["derive"] }
 
 [dev-dependencies]
 # Property-based tests in `macaroon.rs` (`proptest!` macros).

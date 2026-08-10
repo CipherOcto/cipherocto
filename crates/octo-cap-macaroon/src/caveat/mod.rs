@@ -9,6 +9,12 @@ use std::collections::HashSet;
 use cipherocto_encoding::{encode as encode_constraint, Constraint};
 use serde::{Deserialize, Serialize};
 
+pub mod payment;
+pub use payment::{
+    AttenuationError, PaidQueryDecision, PaidQueryRejectionReason, PaymentCaveat,
+    PAID_QUERY_CAVEAT_NAME,
+};
+
 /// OCTO-W micro-denomination (u128). 1 OCTO-W = 1_000_000 micro-OCTO-W.
 pub type MicroOctoW = u128;
 
@@ -191,6 +197,14 @@ pub enum Caveat {
     /// specific shard.
     #[serde(rename = "sharded")]
     Sharded { shard_id: u32 },
+
+    /// Payment caveat (RFC-0965 §3 reserved discriminator `0x1A`,
+    /// mission 0957-phase2b). Bounds holder spend against `budget`
+    /// over queries against `model`. Subsumes monotonic narrowing
+    /// (child budget ≤ parent budget, child expiry ≤ parent expiry,
+    /// parent model empty OR matches child model).
+    #[serde(rename = "payment")]
+    Payment(PaymentCaveat),
 }
 
 /// Permission kind enum (RFC-0960 §2.2 + RFC-0965 §3.2).
@@ -274,6 +288,7 @@ pub enum CaveatName {
     ValidAfter,
     RedemptionContext,
     Sharded,
+    Payment,
 }
 
 impl CaveatName {
@@ -306,6 +321,7 @@ impl CaveatName {
             Self::ValidAfter => "cipherocto/cap/v1/caveat/valid_after",
             Self::RedemptionContext => "cipherocto/cap/v1/caveat/redemption_context",
             Self::Sharded => "cipherocto/cap/v1/caveat/sharded",
+            Self::Payment => "cipherocto/cap/v1/caveat/payment",
         }
     }
 }
@@ -504,6 +520,18 @@ fn parent_caveat_implies(parent: &[Caveat], child: &Caveat) -> bool {
             Caveat::Sharded { shard_id: p_shard } => p_shard == c_shard,
             _ => false,
         }),
+        // Payment caveat subsumption (RFC-0965 §3, mission 0957-phase2b):
+        // child budget ≤ parent budget, child expiry ≤ parent expiry,
+        // parent model empty OR matches child model. The child cannot
+        // widen to a wildcard model (RFC-0957 §3.5 monotonicity).
+        Caveat::Payment(c) => parent.iter().any(|p| match p {
+            Caveat::Payment(p_inner) => {
+                c.budget <= p_inner.budget
+                    && c.expires_at_unix_ms <= p_inner.expires_at_unix_ms
+                    && (p_inner.model.is_empty() || p_inner.model == c.model)
+            }
+            _ => false,
+        }),
     }
 }
 
@@ -579,6 +607,7 @@ impl Caveat {
             Self::ValidAfter { .. } => CaveatName::ValidAfter,
             Self::RedemptionContext { .. } => CaveatName::RedemptionContext,
             Self::Sharded { .. } => CaveatName::Sharded,
+            Self::Payment(_) => CaveatName::Payment,
         }
     }
 
@@ -690,6 +719,17 @@ impl Caveat {
             }
             Caveat::Sharded { shard_id } => {
                 serde_json::json!({"type": "sharded", "value": shard_id})
+            }
+            Caveat::Payment(p) => {
+                serde_json::json!({
+                    "type": "payment",
+                    "value": {
+                        "caveat_name": p.caveat_name,
+                        "budget": p.budget,
+                        "model": p.model,
+                        "expires_at_unix_ms": p.expires_at_unix_ms,
+                    }
+                })
             }
         };
         serde_json::to_vec(&value).expect("serializable")

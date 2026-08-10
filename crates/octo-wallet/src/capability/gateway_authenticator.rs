@@ -346,7 +346,7 @@ mod tests {
     struct StubCatalog;
 
     impl CapabilityCatalog for StubCatalog {
-        fn get(&self, _id: &[u8; 32]) -> Option<&crate::capability::macaroon::Macaroon> {
+        fn lookup(&self, _id: &[u8; 32]) -> Option<crate::capability::macaroon::Macaroon> {
             None
         }
     }

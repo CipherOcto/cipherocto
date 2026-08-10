@@ -160,7 +160,7 @@ mod tests {
 
     struct AlwaysFailCatalog;
     impl CapabilityCatalog for AlwaysFailCatalog {
-        fn get(&self, _id: &[u8; 32]) -> Option<&Macaroon> {
+        fn lookup(&self, _id: &[u8; 32]) -> Option<Macaroon> {
             None
         }
         fn gossip_to_buyer_sync(
@@ -174,7 +174,7 @@ mod tests {
 
     struct AlwaysOkCatalog;
     impl CapabilityCatalog for AlwaysOkCatalog {
-        fn get(&self, _id: &[u8; 32]) -> Option<&Macaroon> {
+        fn lookup(&self, _id: &[u8; 32]) -> Option<Macaroon> {
             None
         }
         fn gossip_to_buyer_sync(
@@ -189,7 +189,7 @@ mod tests {
     /// Permanent catalog: every call returns `Permanent`.
     struct AlwaysPermanentCatalog;
     impl CapabilityCatalog for AlwaysPermanentCatalog {
-        fn get(&self, _id: &[u8; 32]) -> Option<&Macaroon> {
+        fn lookup(&self, _id: &[u8; 32]) -> Option<Macaroon> {
             None
         }
         fn gossip_to_buyer_sync(
@@ -207,7 +207,7 @@ mod tests {
         calls: AtomicU32,
     }
     impl CapabilityCatalog for AlwaysTransientCatalog {
-        fn get(&self, _id: &[u8; 32]) -> Option<&Macaroon> {
+        fn lookup(&self, _id: &[u8; 32]) -> Option<Macaroon> {
             None
         }
         fn gossip_to_buyer_sync(
@@ -408,7 +408,7 @@ mod tests {
         }
     }
     impl CapabilityCatalog for AlwaysTransientThenOk {
-        fn get(&self, _id: &[u8; 32]) -> Option<&Macaroon> {
+        fn lookup(&self, _id: &[u8; 32]) -> Option<Macaroon> {
             None
         }
         fn gossip_to_buyer_sync(

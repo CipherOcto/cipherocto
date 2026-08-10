@@ -54,6 +54,8 @@ borsh = { version = "=1.5.0", features = ["derive"] }
 proptest = "1"
 # Test-only sample-DID helper used by `caveat.rs` + `macaroon.rs` tests.
 octo-ident = { path = "../octo-ident" }
+# Tokio for `CompositeCapabilityCatalog` async TV (mission 0959-c4).
+tokio = { version = "1", features = ["macros", "rt"] }
 
 [lints.rust]
 unsafe_code = "forbid"

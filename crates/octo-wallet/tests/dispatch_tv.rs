@@ -149,7 +149,7 @@ impl HolderRegistry for NoopHolderRegistry {
 struct StubCatalog;
 
 impl CapabilityCatalog for StubCatalog {
-    fn get(&self, _id: &[u8; 32]) -> Option<&Macaroon> {
+    fn lookup(&self, _id: &[u8; 32]) -> Option<Macaroon> {
         None
     }
 }

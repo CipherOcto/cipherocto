@@ -88,7 +88,7 @@ struct InProcessDeliveryCatalog {
 }
 
 impl CapabilityCatalog for InProcessDeliveryCatalog {
-    fn get(&self, _id: &[u8; 32]) -> Option<&octo_wallet::capability::macaroon::Macaroon> {
+    fn lookup(&self, _id: &[u8; 32]) -> Option<octo_wallet::capability::macaroon::Macaroon> {
         None
     }
 
@@ -208,7 +208,7 @@ struct FlakyDeliveryCatalog {
 }
 
 impl CapabilityCatalog for FlakyDeliveryCatalog {
-    fn get(&self, _id: &[u8; 32]) -> Option<&octo_wallet::capability::macaroon::Macaroon> {
+    fn lookup(&self, _id: &[u8; 32]) -> Option<octo_wallet::capability::macaroon::Macaroon> {
         None
     }
 

@@ -430,8 +430,11 @@ impl Macaroon {
 /// unknown parents with `WrappedParentNotFound` — a missing parent is an
 /// error, not a chain terminator.
 pub trait CapabilityCatalog {
-    /// Resolve a capability id to its `Macaroon`, or `None` if absent.
-    fn get(&self, id: &[u8; 32]) -> Option<&Macaroon>;
+    /// Resolve a capability id to its `Macaroon` (owned clone), or
+    /// `None` if absent. Returns owned `Macaroon` (not `&Macaroon`)
+    /// so the trait is dyn-compatible with `Arc<dyn CapabilityCatalog>`
+    /// dispatch (mission 0959-c4 composite catalog requirement).
+    fn lookup(&self, id: &[u8; 32]) -> Option<Macaroon>;
 
     /// Whether `name` is a registered `Caveat::Raw` escape-hatch name.
     /// Raw caveats are fail-closed: an unknown name MUST be rejected at
@@ -508,7 +511,7 @@ pub trait CapabilityCatalog {
 /// dyn-compatible on stable Rust; the shim produces a `Box<dyn Future>`
 /// return type that supports `&dyn CapabilityGossip` dispatch.
 #[async_trait]
-pub trait CapabilityGossip {
+pub trait CapabilityGossip: Send + Sync {
     /// Gossip `payload` to the buyer's peer set.
     ///
     /// # Errors
@@ -586,7 +589,7 @@ pub fn check_wrapped_chain(
     catalog: &dyn CapabilityCatalog,
 ) -> Result<(), MacaroonError> {
     let mut visited: std::collections::HashSet<[u8; 32]> = std::collections::HashSet::new();
-    let mut current = macaroon;
+    let mut current: Macaroon = macaroon.clone();
     let mut depth: u8 = 1;
     visited.insert(current.id);
     loop {
@@ -602,7 +605,7 @@ pub fn check_wrapped_chain(
         depth = depth
             .checked_add(1)
             .expect("depth bounded by MAX_WRAPPED_DEPTH < u8::MAX");
-        let Some(parent) = catalog.get(&parent_id) else {
+        let Some(parent) = catalog.lookup(&parent_id) else {
             return Err(MacaroonError::WrappedParentNotFound { parent_id });
         };
         current = parent;
@@ -705,8 +708,8 @@ impl InMemoryCatalog {
 }
 
 impl CapabilityCatalog for InMemoryCatalog {
-    fn get(&self, id: &[u8; 32]) -> Option<&Macaroon> {
-        self.by_id.get(id)
+    fn lookup(&self, id: &[u8; 32]) -> Option<Macaroon> {
+        self.by_id.get(id).cloned()
     }
 
     fn is_raw_name_registered(&self, name: &str) -> bool {

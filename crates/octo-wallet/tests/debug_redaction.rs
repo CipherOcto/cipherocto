@@ -46,8 +46,8 @@ struct TestCatalog {
 }
 
 impl CapabilityCatalog for TestCatalog {
-    fn get(&self, id: &[u8; 32]) -> Option<&Macaroon> {
-        self.by_id.get(id)
+    fn lookup(&self, id: &[u8; 32]) -> Option<Macaroon> {
+        self.by_id.get(id).cloned()
     }
     fn is_raw_name_registered(&self, name: &str) -> bool {
         self.raw_names.contains(name)

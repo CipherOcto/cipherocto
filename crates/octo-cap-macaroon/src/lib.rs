@@ -63,8 +63,10 @@ pub mod token;
 pub mod wire;
 
 pub mod bundle;
+pub mod catalog;
 
 // Re-exports for ergonomic single-import paths.
+pub use catalog::{CompositeCapabilityCatalog, CompositeGossip};
 pub use caveat::{
     set_subsumes, set_subsumes_with_registry, ActionTemplate, AskId, AttenuationError, Blake3,
     CachePolicy, Caveat, CaveatName, FactoryVet, MicroOctoW, ModelRef, OverlayIdentity,

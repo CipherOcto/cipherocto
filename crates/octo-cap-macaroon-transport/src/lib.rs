@@ -130,11 +130,11 @@ impl std::fmt::Debug for TransportDeliveryCatalog {
 }
 
 impl CapabilityCatalog for TransportDeliveryCatalog {
-    fn get(&self, _id: &[u8; 32]) -> Option<&Macaroon> {
+    fn lookup(&self, _id: &[u8; 32]) -> Option<Macaroon> {
         // TransportDeliveryCatalog owns gossip delivery only; it is not
         // the canonical macaroon storage path. Production wallets
         // compose a `CompositeCapabilityCatalog` that delegates
-        // `get` to the underlying storage catalog and `gossip_to_buyer`
+        // `lookup` to the underlying storage catalog and `gossip_to_buyer`
         // to this struct. Returning `None` keeps the default fallback
         // behavior consistent with `NodeTransport`-only catalogs.
         None
@@ -227,12 +227,12 @@ mod tests {
     }
 
     #[test]
-    fn get_returns_none() {
+    fn lookup_returns_none() {
         let catalog = TransportDeliveryCatalog {
             transport: Arc::new(octo_transport::NodeTransport::new(vec![])),
             source_peer: [0; 32],
             origin_gateway: [0; 32],
         };
-        assert!(catalog.get(&[0u8; 32]).is_none());
+        assert!(catalog.lookup(&[0u8; 32]).is_none());
     }
 }

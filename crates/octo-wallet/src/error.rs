@@ -60,9 +60,11 @@ pub enum WalletError {
     #[error("identity already revoked; cannot activate")]
     AlreadyRevoked,
 
-    /// `activate()` or `revoke()` called while identity is in the
-    /// `Rotating` state. Caller must complete or abort the rotation first
-    /// (l2 mission owns rotation transitions).
+    /// `activate()` called while identity is in the `Rotating` state.
+    /// Caller must `complete_rotation()` or `abort_rotation()` first
+    /// (rotation transitions: `Active ↔ Rotating` are owned by
+    /// `IdentityKey::begin_rotation` / `complete_rotation` /
+    /// `abort_rotation`).
     #[error("identity rotation in progress; complete or abort rotation first")]
     RotationInProgress,
 

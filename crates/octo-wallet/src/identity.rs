@@ -187,10 +187,12 @@ impl IdentityKey {
     /// RFC-0009 §Lifecycle row 1: `Designated → Active`.
     ///
     /// Idempotent from `Active` (no-op, no event emission). Refuses from
-    /// `Revoked` (terminal). Refuses from `Rotating` (l2 owns rotation
-    /// completion; caller must `complete_rotation` / `abort_rotation` first
-    /// — `Rotating → Active` is a valid state-machine edge but NOT a valid
-    /// activation path per RFC-0009 §Lifecycle row 3).
+    /// `Revoked` (terminal). Refuses from `Rotating` (rotation
+    /// transitions owned by `IdentityKey::begin_rotation` /
+    /// `complete_rotation` / `abort_rotation` — caller must complete or
+    /// abort the rotation first. `Rotating → Active` is a valid
+    /// state-machine edge but NOT a valid activation path per
+    /// RFC-0009 §Lifecycle row 3).
     ///
     /// # Errors
     /// Returns `WalletError::AlreadyRevoked` if state is `Revoked`, or

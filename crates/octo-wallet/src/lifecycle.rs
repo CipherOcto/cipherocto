@@ -5,14 +5,16 @@
 //! ```text
 //! Designated ──[activate]──→ Active ──[revoke]──→ Revoked (terminal)
 //!                                ↑
-//!                                └─── (l2) Rotating ──[complete|abort]──→ Active/Revoked
+//!                                └─── Rotating ──[complete|abort]──→ Active/Revoked
 //! ```
 //!
 //! ## Layer discipline
 //!
 //! This module is Layer B (identity substrate). It does NOT depend on
-//! `octo-transport` (Layer D). Revocation event fan-out ships in
-//! `0009-l2-rotation-successor-linkage` via `octo_transport::NodeTransport`.
+//! `octo-transport` (Layer D). Cross-node revocation event fan-out
+//! (the consumer of `IdentityKey::revoked_proof`) ships in a deferred
+//! follow-on mission — see [[grand-design-audit-refactor-2026-08-08]] RFC
+//! amendments + follow-on queue.
 //!
 //! ## Discriminant representation
 //!
@@ -86,8 +88,12 @@ impl LifecycleState {
 
     /// Valid state machine edges per RFC-0009 §Identity Lifecycle State Machine.
     ///
-    /// l1 owns: `Designated → Active`, `Active → Revoked`.
-    /// l2 owns: `Active ↔ Rotating`, `Rotating → Revoked`.
+    /// Transitions owned by `IdentityKey`:
+    /// - `Designated → Active` via `IdentityKey::activate`
+    /// - `Active ↔ Rotating` via `begin_rotation` / `abort_rotation` /
+    ///   `complete_rotation`
+    /// - `Active → Revoked` and `Rotating → Revoked` via `IdentityKey::revoke`
+    ///
     /// `Revoked` is terminal — no outbound edges.
     #[must_use]
     pub const fn can_transition_to(self, target: Self) -> bool {

@@ -42,7 +42,10 @@ use octo_transport::receiver::{NetworkReceiver, ReceiveContext};
 use octo_transport::sender::TransportError;
 use octo_transport::NodeTransport;
 
-use crate::handlers::{HandlerOutput, IssueHandler, IssueRequest, RevokeHandler, RevokeRequest};
+use crate::handlers::{
+    CapabilityLookupHandler, CapabilityLookupRequest, HandlerOutput, IssueHandler, IssueRequest,
+    RevokeHandler, RevokeRequest,
+};
 use crate::is_capability_payload_kind;
 
 /// Capability-issuer node configuration.
@@ -50,6 +53,12 @@ use crate::is_capability_payload_kind;
 pub struct CapabilityIssuerNodeConfig {
     /// Network transport (RFC-0863 NodeTransport).
     pub transport: Arc<NodeTransport>,
+    /// `HolderRegistry` substrate (RFC-0957-A1 §Algorithms; mission
+    /// 0957-phase2c). Used by `CAPABILITY_ISSUE` to register new
+    /// `HolderRecord`s, by `CAPABILITY_REVOKE` to mutate the
+    /// `revoked_at_millis_unix` field, and by `CAPABILITY_LOOKUP`
+    /// to query by `cap_root_hash` PK.
+    pub holder_registry: Arc<dyn quota_router_storage::holder_registry::HolderRegistry>,
 }
 
 /// Opaque handle returned by `CapabilityIssuerNode::start()`.
@@ -156,6 +165,10 @@ impl CapabilityIssuerNode {
                 let req = RevokeRequest::from_borsh(&envelope.payload)?;
                 RevokeHandler::new().handle(&req)
             }
+            k if k == octo_protocol::payload_kind::CAPABILITY_LOOKUP => {
+                let req = CapabilityLookupRequest::from_borsh(&envelope.payload)?;
+                CapabilityLookupHandler::new(&*self.config.holder_registry).handle(&req)
+            }
             _ => Err(ProtocolError::AuthorizationFailed(format!(
                 "unsupported payload kind: {:?}",
                 envelope.payload_kind
@@ -258,10 +271,22 @@ fn self_clone_to_receiver(node: &CapabilityIssuerNode) -> Arc<dyn NetworkReceive
 mod tests {
     use super::*;
     use crate::handlers::{IssueRequest, RevokeRequest};
+    use quota_router_storage::stoolap_holder_registry::StoolapHolderRegistry;
 
     fn test_transport() -> Arc<NodeTransport> {
         let senders: Vec<Arc<dyn octo_transport::sender::NetworkSender>> = vec![];
         Arc::new(NodeTransport::new(senders))
+    }
+
+    fn test_registry() -> Arc<dyn quota_router_storage::holder_registry::HolderRegistry> {
+        Arc::new(StoolapHolderRegistry::open_in_memory().unwrap())
+    }
+
+    fn test_config() -> CapabilityIssuerNodeConfig {
+        CapabilityIssuerNodeConfig {
+            transport: test_transport(),
+            holder_registry: test_registry(),
+        }
     }
 
     fn sample_did() -> String {
@@ -272,18 +297,14 @@ mod tests {
 
     #[test]
     fn capability_issuer_node_constructs_and_starts() {
-        let transport = test_transport();
-        let cfg = CapabilityIssuerNodeConfig { transport };
-        let node = CapabilityIssuerNode::new(cfg);
+        let node = CapabilityIssuerNode::new(test_config());
         let handle = node.start().expect("start should succeed");
         let _ = handle;
     }
 
     #[test]
     fn capability_issuer_node_rejects_double_start() {
-        let transport = test_transport();
-        let cfg = CapabilityIssuerNodeConfig { transport };
-        let node = CapabilityIssuerNode::new(cfg);
+        let node = CapabilityIssuerNode::new(test_config());
         let _ = node.start();
         let err = node.start().unwrap_err();
         assert!(matches!(err, CapabilityIssuerNodeError::AlreadyStarted));
@@ -291,10 +312,7 @@ mod tests {
 
     #[test]
     fn handle_envelope_rejects_unsupported_payload_kind() {
-        let transport = test_transport();
-        let cfg = CapabilityIssuerNodeConfig { transport };
-        let node = CapabilityIssuerNode::new(cfg);
-        // Build a payload with an unknown payload kind (use a random 16-byte UUID).
+        let node = CapabilityIssuerNode::new(test_config());
         let unknown_kind = PayloadKindId([0xAB; 16]);
         let placeholder_pk = [0u8; 32];
         let placeholder_did = CanonicalCodec::mint(&placeholder_pk);
@@ -317,9 +335,7 @@ mod tests {
 
     #[test]
     fn handle_envelope_routes_capability_issue() {
-        let transport = test_transport();
-        let cfg = CapabilityIssuerNodeConfig { transport };
-        let node = CapabilityIssuerNode::new(cfg);
+        let node = CapabilityIssuerNode::new(test_config());
         let placeholder_pk = [0u8; 32];
         let placeholder_did = CanonicalCodec::mint(&placeholder_pk);
         let placeholder_wire =
@@ -350,9 +366,7 @@ mod tests {
 
     #[test]
     fn handle_envelope_routes_capability_revoke() {
-        let transport = test_transport();
-        let cfg = CapabilityIssuerNodeConfig { transport };
-        let node = CapabilityIssuerNode::new(cfg);
+        let node = CapabilityIssuerNode::new(test_config());
         let placeholder_pk = [0u8; 32];
         let placeholder_did = CanonicalCodec::mint(&placeholder_pk);
         let placeholder_wire =
@@ -378,5 +392,50 @@ mod tests {
             out.response_payload_kind,
             Some(octo_protocol::payload_kind::CAPABILITY_REVOKE)
         );
+    }
+
+    #[test]
+    fn handle_envelope_routes_capability_lookup() {
+        // Mission 0957-phase2c TV: the new CAPABILITY_LOOKUP payload
+        // kind routes through `CapabilityLookupHandler` (handler +
+        // dispatcher entry).
+        let node = CapabilityIssuerNode::new(test_config());
+        let placeholder_pk = [0u8; 32];
+        let placeholder_did = CanonicalCodec::mint(&placeholder_pk);
+        let placeholder_wire =
+            <octo_ident::CanonicalCodec as octo_ident::DidCodec>::raw_to_wire(&placeholder_did)
+                .unwrap();
+        let req = CapabilityLookupRequest {
+            cap_root_hash: [0xab; 32],
+        };
+        let payload = req.to_borsh().unwrap();
+        let envelope = NodeEnvelope::build(
+            placeholder_wire,
+            RecipientRef::Broadcast,
+            octo_protocol::payload_kind::CAPABILITY_LOOKUP,
+            payload,
+            vec![],
+            [0u8; 32],
+            0,
+        )
+        .unwrap();
+        let out = node.handle_envelope(&envelope).unwrap();
+        assert!(out.response_payload.is_some());
+        assert_eq!(
+            out.response_payload_kind,
+            Some(octo_protocol::payload_kind::CAPABILITY_LOOKUP)
+        );
+    }
+
+    #[test]
+    fn capability_lookup_uuid_matches_documented_slot() {
+        // Defensive TV: pin the UUID byte-exact so a future refactor
+        // of the protocol payload_kind module surfaces immediately.
+        let uuid = octo_protocol::payload_kind::CAPABILITY_LOOKUP.as_bytes();
+        let expected: [u8; 16] = [
+            0x00, 0x09, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x03,
+        ];
+        assert_eq!(uuid, &expected);
     }
 }

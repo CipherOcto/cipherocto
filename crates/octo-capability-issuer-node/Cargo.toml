@@ -23,6 +23,10 @@ octo-ident = { path = "../octo-ident" }
 octo-cap-macaroon = { path = "../octo-cap-macaroon" }
 # Layer D transport adapter (RFC-0863 NodeTransport)
 octo-transport = { path = "../../octo-transport" }
+# Layer B HolderRegistry substrate (RFC-0957-A1 §Algorithms, mission
+# 0957-phase2c). Used by the issue / revoke / lookup handlers to
+# register / mutate / query `HolderRecord` state.
+quota-router-storage = { path = "../quota-router-storage" }
 
 # Async runtime for NetworkReceiver impl + broadcast_announce
 tokio = { version = "1", features = ["rt", "sync", "macros", "time"] }

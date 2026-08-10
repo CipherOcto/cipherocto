@@ -320,14 +320,29 @@ pub const CAPABILITY_REVOKE: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
 ]);
 
+/// Capability lookup (RFC-0871 §Roles and Authorities, mission
+/// 0957-phase2c). Returns the `HolderRecord` for a given 32-byte
+/// `cap_root_hash` PK (RFC-0957-A1 §Data Structures) or `None` if
+/// absent.
+///
+/// Wired in mission 0957-phase2c alongside the macaroon substrate +
+/// `HolderRegistry` production-readiness. UUID continues the
+/// capability-issuer sub-namespace `0x0005`.
+///
+/// UUID: `0x0009:0005:0000:0000:0000:0000:0000:0003`
+pub const CAPABILITY_LOOKUP: PayloadKindId = PayloadKindId([
+    0x00, 0x09, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
+]);
+
 /// All capability-issuer payload kinds served by `CapabilityIssuerNode`
 /// (RFC-0871 §Roles and Authorities, mission 0871d-capability-issuer-node).
 ///
-/// Phase 3 MVP exposes `CAPABILITY_ISSUE` + `CAPABILITY_REVOKE`. Follow-on
-/// missions add `CAPABILITY_LOOKUP` + `CAPABILITY_ATTENUATE` once the
-/// macaroon substrate (mission 0957 Phase 2) + `HolderRegistry`
-/// (RFC-0957-A1) are wired in production.
-pub const CAPABILITY_PAYLOAD_KINDS: &[PayloadKindId] = &[CAPABILITY_ISSUE, CAPABILITY_REVOKE];
+/// Phase 3 MVP exposes `CAPABILITY_ISSUE` + `CAPABILITY_REVOKE`. Mission
+/// 0957-phase2c adds `CAPABILITY_LOOKUP` once the macaroon substrate
+/// (mission 0957 Phase 2) + `HolderRegistry` (RFC-0957-A1) are wired
+/// in production. `CAPABILITY_ATTENUATE` lands in a follow-on mission.
+pub const CAPABILITY_PAYLOAD_KINDS: &[PayloadKindId] =
+    &[CAPABILITY_ISSUE, CAPABILITY_REVOKE, CAPABILITY_LOOKUP];
 
 /// True if `kind` is a capability-issuer payload kind (RFC-0871
 /// §Roles and Authorities, mission 0871d).

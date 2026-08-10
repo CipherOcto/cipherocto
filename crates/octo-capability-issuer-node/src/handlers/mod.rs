@@ -15,9 +15,11 @@
 use octo_protocol::ProtocolError;
 
 pub mod issue;
+pub mod lookup;
 pub mod revoke;
 
 pub use issue::{IssueHandler, IssueRequest, IssueResponse};
+pub use lookup::{CapabilityLookupHandler, CapabilityLookupRequest, CapabilityLookupResponse};
 pub use revoke::{RevokeHandler, RevokeRequest, RevokeResponse};
 
 /// Output of a capability-issuer handler invocation.

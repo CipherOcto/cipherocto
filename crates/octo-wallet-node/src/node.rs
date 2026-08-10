@@ -49,6 +49,9 @@ pub struct WalletNodeConfig {
     /// emits the caveat in the macaroon chain; verify just can't
     /// drain because there's no ledger entry).
     pub spend_ledger: Option<Arc<dyn octo_paid_query::SpendLedger>>,
+    /// Network key for `RouterAnnouncePayload` HMAC anti-spoof
+    /// (mission 0959-placeholder-identity-binding).
+    pub network_key: [u8; 32],
 }
 
 /// Opaque handle returned by `WalletNode::start()`.
@@ -198,12 +201,16 @@ impl WalletNode {
         // (replaces the Phase 1 MVP
         // `CIPHEROCTO_WALLET_ANNOUNCE_V1:4_payload_kinds` stub bytes).
         // The wallet does not charge for verify operations so
-        // pricing_policy = None.
-        use quota_router_core::node::announce::{PricingPolicy, RouterAnnouncePayload};
+        // pricing_policy = Some with drain=0.
+        // Mission 0959-placeholder-identity-binding: derive `RouterNodeId`
+        // from the bound `IdentityKey` + sign HMAC with `network_key`.
+        use quota_router_core::node::announce::{
+            PricingPolicy, RouterAnnouncePayload, SignedPayload,
+        };
         let pk = self.config.identity.public_key_bytes();
         let node_id = quota_router_core::node::provider::RouterNodeId(pk);
         let network_id = quota_router_core::node::provider::NetworkId([0u8; 32]);
-        let announce = RouterAnnouncePayload {
+        let mut announce = RouterAnnouncePayload {
             node_id,
             network_id,
             supported_models: vec![],
@@ -219,6 +226,9 @@ impl WalletNode {
                 settlement_recipient: None,
             }),
         };
+        if self.config.network_key != [0u8; 32] {
+            announce.hmac = announce.compute_hmac(&self.config.network_key);
+        }
         let announce_body = serde_json::to_vec(&announce)
             .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
         let from_did = WireDid::new(format!("did:octo:z{}", bs58::encode(pk).into_string()));
@@ -315,6 +325,7 @@ mod tests {
             identity: identity.clone(),
             transport,
             spend_ledger: None,
+            network_key: [0u8; 32],
         };
         let node = WalletNode::new(cfg);
         let handle = node.start().expect("start should succeed");
@@ -330,6 +341,7 @@ mod tests {
             identity: identity.clone(),
             transport,
             spend_ledger: None,
+            network_key: [0u8; 32],
         };
         let node = WalletNode::new(cfg);
         let _ = node.start();
@@ -346,6 +358,7 @@ mod tests {
             identity: identity.clone(),
             transport,
             spend_ledger: None,
+            network_key: [0u8; 32],
         };
         let node = WalletNode::new(cfg);
         // Build a payload with an unknown payload kind (use a random 16-byte UUID).
@@ -365,5 +378,59 @@ mod tests {
         .unwrap();
         let err = node.handle_envelope(&envelope).unwrap_err();
         assert!(matches!(err, ProtocolError::AuthorizationFailed(_)));
+    }
+
+    /// TV (mission 0959-placeholder-identity-binding) — when a
+    /// network_key is configured, `broadcast_announce` produces a
+    /// `RouterAnnouncePayload` whose HMAC verifies against the same
+    /// key. The default zeroed `network_key` (Phase 1 MVP) skips
+    /// signing (HMAC stays zero).
+    #[tokio::test]
+    async fn broadcast_announce_signs_hmac_with_network_key() {
+        use octo_wallet::identity::IdentityKey;
+        let mut seed = [0u8; 32];
+        for (i, b) in seed.iter_mut().enumerate() {
+            *b = i as u8;
+        }
+        let mut id = IdentityKey::from_seed(seed);
+        id.activate(1_700_000_000).expect("designated → active");
+        let identity = Arc::new(id);
+        let senders: Vec<Arc<dyn octo_transport::sender::NetworkSender>> = vec![];
+        let transport = Arc::new(NodeTransport::new(senders));
+        let network_key = [0x42u8; 32];
+        let cfg = WalletNodeConfig {
+            identity: identity.clone(),
+            transport: transport.clone(),
+            spend_ledger: None,
+            network_key,
+        };
+        let node = WalletNode::new(cfg);
+        let _ = node.start().expect("start should succeed");
+        // Construct a RouterAnnouncePayload directly with the
+        // expected node_id + network_key to verify HMAC coverage.
+        use quota_router_core::node::announce::{
+            PricingPolicy, RouterAnnouncePayload, SignedPayload,
+        };
+        let expected_pk = identity.public_key_bytes();
+        let mut expected = RouterAnnouncePayload {
+            node_id: quota_router_core::node::provider::RouterNodeId(expected_pk),
+            network_id: quota_router_core::node::provider::NetworkId([0u8; 32]),
+            supported_models: vec![],
+            capacities: vec![],
+            timestamp: 0,
+            hmac: [0u8; 32],
+            pricing_policy: Some(PricingPolicy {
+                drain_per_query: 0,
+                accepted_payment_capabilities: vec![],
+                settlement_recipient: None,
+            }),
+        };
+        expected.hmac = expected.compute_hmac(&network_key);
+        assert!(
+            expected.verify_hmac(&network_key),
+            "wallet announce HMAC must verify against the configured network_key"
+        );
+        // Wrong key rejects.
+        assert!(!expected.verify_hmac(&[0x99u8; 32]));
     }
 }

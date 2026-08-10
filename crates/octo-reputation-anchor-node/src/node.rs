@@ -50,6 +50,10 @@ use crate::is_reputation_payload_kind;
 pub struct ReputationAnchorNodeConfig {
     /// Network transport (RFC-0863 NodeTransport).
     pub transport: Arc<NodeTransport>,
+    /// HSM-routed identity (mission 0959-placeholder-identity-binding).
+    pub identity: Option<Arc<octo_wallet::identity::IdentityKey>>,
+    /// Network key for `RouterAnnouncePayload` HMAC anti-spoof.
+    pub network_key: [u8; 32],
 }
 
 /// Opaque handle returned by `ReputationAnchorNode::start()`.
@@ -176,10 +180,19 @@ impl ReputationAnchorNode {
         // (replaces the Phase 3 MVP
         // `CIPHEROCTO_REPUTATION_ANCHOR_ANNOUNCE_V1:1_payload_kind`
         // stub bytes).
-        use quota_router_core::node::announce::{PricingPolicy, RouterAnnouncePayload};
-        let placeholder_pk = [0u8; 32];
-        let announce = RouterAnnouncePayload {
-            node_id: quota_router_core::node::provider::RouterNodeId(placeholder_pk),
+        // Mission 0959-placeholder-identity-binding: when `identity`
+        // is present, derive real `RouterNodeId` + sign HMAC.
+        use quota_router_core::node::announce::{
+            PricingPolicy, RouterAnnouncePayload, SignedPayload,
+        };
+        let pk = self
+            .config
+            .identity
+            .as_ref()
+            .map(|i| i.public_key_bytes())
+            .unwrap_or([0u8; 32]);
+        let mut announce = RouterAnnouncePayload {
+            node_id: quota_router_core::node::provider::RouterNodeId(pk),
             network_id: quota_router_core::node::provider::NetworkId([0u8; 32]),
             supported_models: vec![],
             capacities: vec![],
@@ -194,9 +207,12 @@ impl ReputationAnchorNode {
                 settlement_recipient: None,
             }),
         };
+        if self.config.network_key != [0u8; 32] {
+            announce.hmac = announce.compute_hmac(&self.config.network_key);
+        }
         let announce_body = serde_json::to_vec(&announce)
             .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
-        let placeholder_did = CanonicalCodec::mint(&placeholder_pk);
+        let placeholder_did = CanonicalCodec::mint(&pk);
         let placeholder_wire =
             <CanonicalCodec as octo_ident::DidCodec>::raw_to_wire(&placeholder_did)
                 .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
@@ -278,7 +294,11 @@ mod tests {
     #[test]
     fn reputation_anchor_node_constructs_and_starts() {
         let transport = test_transport();
-        let cfg = ReputationAnchorNodeConfig { transport };
+        let cfg = ReputationAnchorNodeConfig {
+            transport,
+            identity: None,
+            network_key: [0u8; 32],
+        };
         let node = ReputationAnchorNode::new(cfg);
         let handle = node.start().expect("start should succeed");
         let _ = handle;
@@ -287,7 +307,11 @@ mod tests {
     #[test]
     fn reputation_anchor_node_rejects_double_start() {
         let transport = test_transport();
-        let cfg = ReputationAnchorNodeConfig { transport };
+        let cfg = ReputationAnchorNodeConfig {
+            transport,
+            identity: None,
+            network_key: [0u8; 32],
+        };
         let node = ReputationAnchorNode::new(cfg);
         let _ = node.start();
         let err = node.start().unwrap_err();
@@ -297,7 +321,11 @@ mod tests {
     #[test]
     fn handle_envelope_rejects_unsupported_payload_kind() {
         let transport = test_transport();
-        let cfg = ReputationAnchorNodeConfig { transport };
+        let cfg = ReputationAnchorNodeConfig {
+            transport,
+            identity: None,
+            network_key: [0u8; 32],
+        };
         let node = ReputationAnchorNode::new(cfg);
         // Build a payload with an unknown payload kind (use a random 16-byte UUID).
         let unknown_kind = PayloadKindId([0xAB; 16]);

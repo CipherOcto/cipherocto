@@ -59,6 +59,16 @@ pub struct CapabilityIssuerNodeConfig {
     /// `revoked_at_millis_unix` field, and by `CAPABILITY_LOOKUP`
     /// to query by `cap_root_hash` PK.
     pub holder_registry: Arc<dyn quota_router_storage::holder_registry::HolderRegistry>,
+    /// HSM-routed identity (mission 0959 placeholder-identity-binding).
+    /// When present, `broadcast_announce` derives the `RouterNodeId`
+    /// from `identity.public_key_bytes()` and signs the announce HMAC
+    /// with `network_key`. When absent (Phase 1 MVP), the announce uses
+    /// the zeroed placeholder + zero HMAC.
+    pub identity: Option<Arc<octo_wallet::identity::IdentityKey>>,
+    /// Network key for `RouterAnnouncePayload` HMAC anti-spoof
+    /// (RFC-0870 §Announce HMAC). Zeroed in Phase 1 MVP; populated
+    /// in production deployments.
+    pub network_key: [u8; 32],
 }
 
 /// Opaque handle returned by `CapabilityIssuerNode::start()`.
@@ -194,10 +204,19 @@ impl CapabilityIssuerNode {
         // (replaces the Phase 3 MVP
         // `CIPHEROCTO_CAPABILITY_ISSUER_ANNOUNCE_V1:2_payload_kinds`
         // stub bytes).
-        use quota_router_core::node::announce::{PricingPolicy, RouterAnnouncePayload};
-        let placeholder_pk = [0u8; 32];
-        let announce = RouterAnnouncePayload {
-            node_id: quota_router_core::node::provider::RouterNodeId(placeholder_pk),
+        // Mission 0959-placeholder-identity-binding: when `identity`
+        // is present, derive the real `RouterNodeId` + sign HMAC.
+        use quota_router_core::node::announce::{
+            PricingPolicy, RouterAnnouncePayload, SignedPayload,
+        };
+        let pk = self
+            .config
+            .identity
+            .as_ref()
+            .map(|i| i.public_key_bytes())
+            .unwrap_or([0u8; 32]);
+        let mut announce = RouterAnnouncePayload {
+            node_id: quota_router_core::node::provider::RouterNodeId(pk),
             network_id: quota_router_core::node::provider::NetworkId([0u8; 32]),
             supported_models: vec![],
             capacities: vec![],
@@ -212,9 +231,12 @@ impl CapabilityIssuerNode {
                 settlement_recipient: None,
             }),
         };
+        if self.config.network_key != [0u8; 32] {
+            announce.hmac = announce.compute_hmac(&self.config.network_key);
+        }
         let announce_body = serde_json::to_vec(&announce)
             .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
-        let placeholder_did = CanonicalCodec::mint(&placeholder_pk);
+        let placeholder_did = CanonicalCodec::mint(&pk);
         let placeholder_wire =
             <CanonicalCodec as octo_ident::DidCodec>::raw_to_wire(&placeholder_did)
                 .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
@@ -304,6 +326,8 @@ mod tests {
         CapabilityIssuerNodeConfig {
             transport: test_transport(),
             holder_registry: test_registry(),
+            identity: None,
+            network_key: [0u8; 32],
         }
     }
 

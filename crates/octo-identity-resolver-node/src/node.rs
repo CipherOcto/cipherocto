@@ -35,6 +35,14 @@ use crate::is_identity_resolver_payload_kind;
 pub struct IdentityResolverNodeConfig {
     /// Network transport (RFC-0863 NodeTransport).
     pub transport: Arc<NodeTransport>,
+    /// HSM-routed identity (mission 0959-placeholder-identity-binding).
+    /// Resolver nodes are read-only by default; identity is optional
+    /// and used only to bind the announce's `RouterNodeId` to a
+    /// trustworthy key. Production deployments inject a real
+    /// resolver identity via this slot.
+    pub identity: Option<Arc<octo_wallet::identity::IdentityKey>>,
+    /// Network key for `RouterAnnouncePayload` HMAC anti-spoof.
+    pub network_key: [u8; 32],
 }
 
 /// Opaque handle returned by `IdentityResolverNode::start()`.
@@ -169,10 +177,19 @@ impl IdentityResolverNode {
         // (replaces the Phase 1 MVP
         // `CIPHEROCTO_IDENTITY_RESOLVER_ANNOUNCE_V1:1_payload_kind`
         // stub bytes).
-        use quota_router_core::node::announce::{PricingPolicy, RouterAnnouncePayload};
-        let placeholder_pk = [0u8; 32];
-        let announce = RouterAnnouncePayload {
-            node_id: quota_router_core::node::provider::RouterNodeId(placeholder_pk),
+        // Mission 0959-placeholder-identity-binding: when `identity`
+        // is present, derive real `RouterNodeId` + sign HMAC.
+        use quota_router_core::node::announce::{
+            PricingPolicy, RouterAnnouncePayload, SignedPayload,
+        };
+        let pk = self
+            .config
+            .identity
+            .as_ref()
+            .map(|i| i.public_key_bytes())
+            .unwrap_or([0u8; 32]);
+        let mut announce = RouterAnnouncePayload {
+            node_id: quota_router_core::node::provider::RouterNodeId(pk),
             network_id: quota_router_core::node::provider::NetworkId([0u8; 32]),
             supported_models: vec![],
             capacities: vec![],
@@ -187,19 +204,21 @@ impl IdentityResolverNode {
                 settlement_recipient: None,
             }),
         };
+        if self.config.network_key != [0u8; 32] {
+            announce.hmac = announce.compute_hmac(&self.config.network_key);
+        }
         let announce_body = serde_json::to_vec(&announce)
             .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
-        let from_did = match octo_protocol::wire_did(&format!(
-            "did:octo:z{}",
-            bs58::encode([0u8; 32]).into_string()
-        )) {
-            Ok(d) => d,
-            Err(_) => {
-                return Err(TransportError::EnvelopeConstruction(
-                    "resolver announce: failed to construct placeholder from_did".into(),
-                ))
-            }
-        };
+        let from_did =
+            match octo_protocol::wire_did(&format!("did:octo:z{}", bs58::encode(pk).into_string()))
+            {
+                Ok(d) => d,
+                Err(_) => {
+                    return Err(TransportError::EnvelopeConstruction(
+                        "resolver announce: failed to construct placeholder from_did".into(),
+                    ))
+                }
+            };
         let envelope = NodeEnvelope::build(
             from_did,
             RecipientRef::Broadcast,
@@ -281,6 +300,8 @@ mod tests {
         let transport = fresh_transport();
         let cfg = IdentityResolverNodeConfig {
             transport: transport.clone(),
+            identity: None,
+            network_key: [0u8; 32],
         };
         let node = IdentityResolverNode::new(cfg);
         let handle = node.start().expect("start should succeed");
@@ -292,6 +313,8 @@ mod tests {
         let transport = fresh_transport();
         let cfg = IdentityResolverNodeConfig {
             transport: transport.clone(),
+            identity: None,
+            network_key: [0u8; 32],
         };
         let node = IdentityResolverNode::new(cfg);
         let _ = node.start();
@@ -304,6 +327,8 @@ mod tests {
         let transport = fresh_transport();
         let cfg = IdentityResolverNodeConfig {
             transport: transport.clone(),
+            identity: None,
+            network_key: [0u8; 32],
         };
         let node = IdentityResolverNode::new(cfg);
         // Build a payload with an unknown payload kind (random 16-byte UUID).
@@ -329,6 +354,8 @@ mod tests {
         let transport = fresh_transport();
         let cfg = IdentityResolverNodeConfig {
             transport: transport.clone(),
+            identity: None,
+            network_key: [0u8; 32],
         };
         let node = IdentityResolverNode::new(cfg);
         // Mint a canonical DID via the codec, then take the wire form.

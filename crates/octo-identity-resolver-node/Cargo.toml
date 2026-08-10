@@ -18,6 +18,9 @@ serde_json = "1"
 octo-protocol = { path = "../octo-protocol" }
 # Layer B identity (canonical DID codec, RFC-0010 v1.2 F4)
 octo-ident = { path = "../octo-ident" }
+# Layer B identity (HSM-routed IdentityKey for RouterAnnouncePayload
+# binding; mission 0959-placeholder-identity-binding).
+octo-wallet = { path = "../octo-wallet" }
 # Layer D transport adapter (RFC-0863 NodeTransport)
 octo-transport = { path = "../../octo-transport" }
 

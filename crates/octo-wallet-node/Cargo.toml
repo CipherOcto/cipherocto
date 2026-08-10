@@ -23,6 +23,12 @@ octo-transport = { path = "../../octo-transport" }
 # mission 0871e-paid-query-caveat). Owns the paid-query caveat
 # verification bridge consumed by the WALLET_PAID_QUERY_VERIFY handler.
 octo-paid-query = { path = "../octo-paid-query" }
+# Layer 4 extension: macaroon wire form substrate (RFC-0957 §3.7,
+# mission 0957-phase2a). `serialize_wire` / `deserialize_wire` /
+# `compute_cap_root_hash_from_wire` live here; the wallet-node handler
+# emits the real v1 wire form (replacing the Phase 1 MVP
+# `CIPHEROCTO_MINT_V1:*` placeholder).
+octo-cap-macaroon = { path = "../octo-cap-macaroon" }
 
 # Async runtime for NetworkReceiver impl + broadcast_announce
 tokio = { version = "1", features = ["rt", "sync", "macros", "time"] }

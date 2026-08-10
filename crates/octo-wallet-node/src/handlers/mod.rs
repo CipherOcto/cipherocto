@@ -76,3 +76,13 @@ pub fn wallet_error_to_protocol(e: impl std::fmt::Display) -> ProtocolError {
 pub fn did_error_to_protocol(e: impl std::fmt::Display) -> ProtocolError {
     ProtocolError::InvalidDid(e.to_string())
 }
+
+/// Map a `octo_cap_macaroon::wire::WireError` to a `ProtocolError`
+/// for the macaroon wire-form substrate (RFC-0957 §3.7, mission
+/// 0957-phase2a). The wire form is byte-string; serialization
+/// failures surface as `AuthorizationFailed` so callers don't
+/// mistake them for runtime state (the wire form is pure crypto,
+/// not envelope state).
+pub fn wire_error_to_protocol(e: octo_cap_macaroon::wire::WireError) -> ProtocolError {
+    ProtocolError::AuthorizationFailed(format!("capability wire form: {e}"))
+}

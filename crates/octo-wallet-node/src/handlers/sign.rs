@@ -71,7 +71,13 @@ mod tests {
         for (i, b) in seed.iter_mut().enumerate() {
             *b = i as u8;
         }
-        IdentityKey::from_seed(seed)
+        // RFC-0009 §Lifecycle: a fresh `from_seed` identity is
+        // `Designated` and cannot sign. Activate it before the
+        // HSM-routed sign call (mission 0957-phase2a fix; the test
+        // was broken by 0009-l1 lifecycle state-machine enforcement).
+        let mut id = IdentityKey::from_seed(seed);
+        id.activate(1_700_000_000).expect("designated → active");
+        id
     }
 
     #[test]

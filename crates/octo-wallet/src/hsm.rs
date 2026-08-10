@@ -11,7 +11,6 @@
 //! uniformly via the `HsmAdapter` trait.
 
 use ed25519_dalek::Signer;
-use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
 /// Adapter errors.
@@ -213,14 +212,6 @@ impl HsmAdapter for NullSigner {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
-}
-
-/// Device fingerprint (for audit + multi-device support).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeviceFingerprint {
-    pub vendor: String, // "ledger" | "yubihsm" | "tpm" | ...
-    pub model: String,
-    pub serial: String,
 }
 
 #[cfg(test)]

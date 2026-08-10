@@ -93,12 +93,21 @@ mod serde_bytes_option_32 {
 mod serde_bytes_option_u64 {
     use serde::{Deserialize, Deserializer, Serializer};
 
+    /// Symmetric with `deserialize`: `None` → JSON `null` (or omitted via
+    /// `skip_serializing_if`), `Some(n)` → JSON `n`. Matches the
+    /// `serde_bytes_option_32` pattern above.
     pub fn serialize<S: Serializer>(v: &Option<u64>, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_some(&v.unwrap_or(0))
+        match v {
+            Some(n) => s.serialize_some(n),
+            None => s.serialize_none(),
+        }
     }
 
+    /// Accepts both JSON `null` → `None` and bare `u64` → `Some(u64)`.
+    /// Forward-compatible with payloads that omit `skip_serializing_if`
+    /// (e.g. hand-crafted JSON for testing or migration).
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
-        Ok(Some(u64::deserialize(d)?))
+        Option::<u64>::deserialize(d)
     }
 }
 
@@ -463,6 +472,43 @@ mod tests {
         let s = serde_json::to_string(&r).unwrap();
         let back: HolderRecord = serde_json::from_str(&s).unwrap();
         assert_eq!(r, back);
+    }
+
+    /// Regression: `serde_bytes_option_u64` must accept JSON `null` for
+    /// `revoked_at_millis_unix` and produce `None` (active record).
+    /// Pre-fix, `None` would either fail to parse or coerce to `Some(0)`,
+    /// which corrupts the TV14 contract (`Some(0)` means "revoked at
+    /// epoch 0", not "active").
+    #[test]
+    fn serde_bytes_option_u64_accepts_json_null_as_none() {
+        use serde::Deserialize;
+        #[derive(Deserialize)]
+        struct Wrapper {
+            #[serde(with = "serde_bytes_option_u64")]
+            revoked_at_millis_unix: Option<u64>,
+        }
+        let v: Wrapper =
+            serde_json::from_str(r#"{"revoked_at_millis_unix":null}"#).expect("null deserializes");
+        assert_eq!(
+            v.revoked_at_millis_unix, None,
+            "JSON null must deserialize to None (active), not Some(0) (revoked at epoch 0)"
+        );
+    }
+
+    /// Regression: `serde_bytes_option_u64` must also accept a bare
+    /// `u64` and produce `Some(u64)`. Pre-fix, this was the only form
+    /// accepted; both forms must work after the symmetry fix.
+    #[test]
+    fn serde_bytes_option_u64_accepts_bare_u64_as_some() {
+        use serde::Deserialize;
+        #[derive(Deserialize)]
+        struct Wrapper {
+            #[serde(with = "serde_bytes_option_u64")]
+            revoked_at_millis_unix: Option<u64>,
+        }
+        let v: Wrapper = serde_json::from_str(r#"{"revoked_at_millis_unix":1700000000000}"#)
+            .expect("u64 deserializes");
+        assert_eq!(v.revoked_at_millis_unix, Some(1_700_000_000_000));
     }
 
     #[test]

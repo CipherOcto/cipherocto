@@ -85,20 +85,29 @@ RFC-0862 v1.2 (F8 promotion, parallel)
     └→ 0871e-f7-cross-instance-did-coordination (gated — same approach pick)
 ```
 
-## Approach Pick Required (user direction pending)
+## Approach Pick (RESOLVED 2026-08-10)
 
-Two substrate decisions block wave 4/5/6:
+**Option B (centralized aggregator)** picked per user direction
+2026-08-10. Both `DrainCoordinator` (mission `0871e-phase5c-1`) +
+`DidWriteCoordinator` (mission `0871e-f7`) share the substrate.
 
-1. **`DrainCoordinator` approach** (mission `0871e-phase5c-1`)
-   candidates: 2PC / centralized aggregator / CRDT LWW.
-   Recommendation: **Option B (centralized aggregator)** — production
-   HA deployments already elect a writer for `DatabaseSyncAdapter`
-   (RFC-0862 §Roles); piggybacking avoids a separate consensus layer.
+**Forward-thinking room for Option C (CRDT LWW)** — RFC-0862 v1.3
+NEW §Future Work F12 (HLC + LWW per-instance counter) + F13
+(reconciliation during failover window). Both coordinator traits
+expose a `local_fallback` extension point with fail-closed default
+impl; future amendment swaps the impl to LWW without changing the
+trait surface.
 
-2. **`DidWriteCoordinator` approach** (mission `0871e-f7`) — MUST
-   match `DrainCoordinator` pick (same substrate, same tradeoff).
+**Substrate amendment:** RFC-0862 v1.3 Draft filed
+`rfcs/draft/networking/0862-writer-election-bootstrap-v120.md`:
 
-User direction needed before either mission is claimed.
+- §Future Work F8 (writer election) promoted to §Specification
+- §Future Work F11 (bootstrap-orchestrated sync) promoted to §Specification
+- NEW §Future Work F12 (HLC + LWW) + F13 (reconciliation) added as
+  Option C extension hooks
+- `WriterElection` protocol + `DrainCoordinator` + `DidWriteCoordinator`
+  traits defined
+- `BootstrapSyncAdapter` wrapper defined
 
 ## Mission Files Filed This Session
 
@@ -183,10 +192,12 @@ update + plan). User must explicitly authorize `git push origin next`.
 
 1. **Claim 0871b-storage-backend** (highest priority — unblocks 4
    downstream missions).
-2. **Open R1 review of RFC-0009 v1.2** (gates 0957-f F4 V2 bundling).
-3. **User direction on `DrainCoordinator` approach pick** (gates wave 6).
-4. **Push the 12+ queued commits** (user-authorized remote write).
-5. **Schedule memory hygiene sweep** — update
+2. **Open R1 review of RFC-0009 v1.2 + RFC-0862 v1.3** (R1 review
+   2026-08-11+; gates 0957-f F4 V2 bundling + DrainCoordinator /
+   DidWriteCoordinator missions).
+3. **Push the 15+ queued commits** (user-authorized remote write per
+   [[feedback_initiation_user_only]]).
+4. **Schedule memory hygiene sweep** — update
    `mission-gap-closure-priorities-2026-08-10` to reflect F1/F2/F3/F4
    closeouts + new missions filed.
 

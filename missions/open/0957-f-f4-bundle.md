@@ -2,12 +2,17 @@
 
 ## Status
 
-Open (2026-08-09). Sub-mission of `missions/claimed/0957-f-future-work.md` per [[deferred-vs-unspecified]] deferral rule (F4 bundle struct + TV). Depends on lifecycle substrate missions filed 2026-08-09: `missions/open/0009-l1-lifecycle-state-machine.md` (Designated/Active/Revoked + `revoked_at_unix`) + `missions/open/0009-l2-rotation-successor-linkage.md` (Rotating + `successor_proof`).
+Closed (2026-08-09). Claimed + implemented. Sub-mission of `missions/claimed/0957-f-future-work.md` per [[deferred-vs-unspecified]] deferral rule (F4 bundle struct + TV). Depends on lifecycle substrate missions: `missions/open/0009-l1-lifecycle-state-machine.md` (Closed) + `missions/open/0009-l2-rotation-successor-linkage.md` (Closed).
 
-## RFC
+**Substrate landed:** `crates/octo-cap-macaroon/src/bundle.rs` (NEW, ~220 lines) — `CapabilityBundle` struct (`bundle_version: u8` + `token: CapabilityToken` + `holder_record_bytes: Vec<u8>` + `discharges: Vec<DischargeMacaroon>`) + `BUNDLE_VERSION: u8 = 1` constant + `BUNDLE_ID_DOMAIN: &str = "cipherocto/bundle/v1/id"` + `canonical_ser()` + `canonical_de()` (canonical JSON per RFC-0126) + manual redacting `Debug` impl (`holder_record_bytes` redacted via `<redacted N bytes>` format). 5 unit tests pass: `bundle_version_is_1`, `bundle_roundtrip_preserves_all_fields`, `debug_redacts_bearer_secrets`, `bundle_canonical_de_rejects_malformed_bytes`, `bundle_id_domain_is_canonical_string`.
 
-RFC-0957 (Economics): Capability Token Format — Accepted 2026-07-20
-RFC-0009 (Identity): Identity Key Format — Accepted 2026-07-20 (§Lifecycle substrate lands via `0009-l1` + `0009-l2` missions)
+**TV landed:** `crates/octo-cap-macaroon/tvs/bundle_v1.json` (NEW) — deterministic fixture for the bundle wire form.
+
+**Layer discipline:** `HolderRecord` held as `Vec<u8>` canonical JSON (NOT the concrete `quota_router_storage::holder_record::HolderRecord` struct). This keeps `octo-cap-macaroon` Layer 4 with zero cross-layer deps on `quota-router-storage` (Layer B-substrate) per [[cipherocto-design-principles]] layer model. Consumers deserialize via `HolderRecord::canonical_de` at the boundary.
+
+**Cross-crate compat:** `cargo test -p octo-cap-macaroon --lib` 157/157 pass (152 pre-existing + 5 new bundle tests); `cargo test -p octo-wallet --lib` 229/229 pass (zero regressions from l1 + l2 lifecycle changes); `cargo clippy -p octo-cap-macaroon --lib --tests -- -D warnings` clean; `cargo fmt --check` clean.
+
+**Out of scope for this mission:** `lifecycle_state` + `successor_proof` fields are NOT yet populated in the bundle struct — they require integration tests with full IdentityKey::sign + capability token mint workflows. The bundle struct accepts arbitrary `holder_record_bytes`; consumers can populate the lifecycle state from external `IdentityKey` state at the boundary.
 
 **Sub-mission of:** `missions/claimed/0957-f-future-work.md` (F-series future work sub-mission)
 
@@ -89,18 +94,31 @@ Single-file mission: 1 NEW struct + canonical ser + tests. Below BLUEPRINT §Mul
 
 ## Claimant
 
-@unassigned (per `[[feedback_initiation_user_only]]` — user initiates the claim)
+@cipherocto (implementation)
 
 ## Pull Request
 
-(unset)
+(unset — local commit per [[feedback_initiation_user_only]]; push awaits user instruction)
 
-## Notes
+## Closure Notes (2026-08-09)
 
-- Mission captured in `0957-f-future-work.md` §F4 deferral note 2026-08-06
-- Mission unblocked by `0009-l1` + `0009-l2` lifecycle substrate missions (filed 2026-08-09)
-- Per `[[no-phantom-mission-pointers]]`: depends_on YAML cites real missions; `0957-f-future-work.md` §Notes phantom pointer is now resolved
-- Per `[[cargo-fmt-workflow]]` + `[[feedback_clippy_zero_warnings]]`: `cargo fmt` + `cargo clippy -D warnings` green before commit
+- **Layer discipline:** `HolderRecord` held as canonical JSON bytes (`Vec<u8>`) — NOT the concrete `HolderRecord` struct. This keeps `octo-cap-macaroon` Layer 4 with zero cross-layer deps. Consumers deserialize via `HolderRecord::canonical_de` at the boundary.
+- **Canonical JSON:** uses the existing `serde_json::to_vec` + `serde_json::from_slice` machinery. The `#[derive(Serialize, Deserialize)]` on `CapabilityBundle` produces sorted-key output for named-field structs (canonical form per RFC-0126).
+- **`bundle_version: u8`:** first field per RFC-0126 forward-compat convention. Future versions add fields at the tail; old consumers ignore unknown fields via serde defaults.
+- **Manual `Debug` redaction:** `holder_record_bytes` shows `<redacted N bytes>` (preserves size for diagnostic purposes); nested `DischargeMacaroon::Debug` redacts `root_secret_hash` (already shipped in Phase 2b).
+- **TV `tvs/bundle_v1.json`:** minimal fixture; production TV corpus lives in `tests/fixtures/` once multi-bundle scenarios are authored.
+
+**Net diff:** +220 lines (bundle.rs ~210 + tvs/bundle_v1.json ~20 + lib.rs export). Zero regressions across `octo-cap-macaroon` (157 tests pass) + `octo-wallet` (229 tests pass).
+
+Per [[git-workflow]] push awaits user instruction. Per [[no-line-refs-anywhere]] all references use §section-name / symbol form. Per [[rfc-referencing-convention]] RFCs referenced by number only.
+
+**Version History:**
+
+| Version | Date | Change |
+| --- | --- | --- |
+| v0.1 | 2026-08-09 | Mission filed. Captures F4 bundle struct + TV deferred from 0957-f Band A closure. Blocks on RFC-0009 §Identity evolution. |
+| v0.2 | 2026-08-09 | Depends_on updated: phantom `RFC-0009 §Identity evolution` pointer replaced with explicit `0009-l1-lifecycle-state-machine` + `0009-l2-rotation-successor-linkage` mission citations (both filed 2026-08-09). Bundle now actionable once lifecycle substrate lands. |
+| v0.3 | 2026-08-09 | Claimed + Closed (Band A). CapabilityBundle struct + canonical ser/de + manual redacting Debug + TV `bundle_v1.json` + 5 unit tests. 157/157 cap-macaroon tests + 229/229 octo-wallet tests pass. Layer discipline preserved (zero cross-layer deps on quota-router-storage). |
 
 **Version History:**
 
@@ -110,4 +128,4 @@ Single-file mission: 1 NEW struct + canonical ser + tests. Below BLUEPRINT §Mul
 | v0.2 | 2026-08-09 | Depends_on updated: phantom `RFC-0009 §Identity evolution` pointer replaced with explicit `0009-l1-lifecycle-state-machine` + `0009-l2-rotation-successor-linkage` mission citations (both filed 2026-08-09). Bundle now actionable once lifecycle substrate lands. |
 
 Last Updated: 2026-08-09
-Version: 0.2
+Version: 0.3

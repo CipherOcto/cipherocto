@@ -62,6 +62,8 @@ pub mod signer;
 pub mod token;
 pub mod wire;
 
+pub mod bundle;
+
 // Re-exports for ergonomic single-import paths.
 pub use caveat::{
     set_subsumes, set_subsumes_with_registry, ActionTemplate, AskId, Blake3, CachePolicy, Caveat,

@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use octo_transport::node_transport::NodeTransport;
 use octo_transport::sender::{NetworkSender, SendContext};
 
-use announce::{RouterAnnouncePayload, SignedPayload};
+use announce::SignedPayload;
 use envelope_v2::wrap_outbound_envelope;
 use forward::{ForwardOutcome, ForwardRequestPayload, PendingRequests};
 use gossip::{monotonic_now, CapacityGossipPayload, GossipCache};
@@ -424,29 +424,26 @@ impl QuotaRouterNode {
     pub async fn broadcast_announce(
         &self,
     ) -> Result<usize, octo_transport::sender::TransportError> {
-        let mut announce = RouterAnnouncePayload {
-            node_id: self.config.node_id,
-            network_id: self.config.network_id,
-            supported_models: self.local_provider_models(),
-            capacities: self
-                .config
-                .providers
-                .iter()
-                .map(|p| ProviderCapacity::from_config(p, self.config.node_id))
-                .collect(),
-            timestamp: monotonic_now(),
-            hmac: [0u8; 32],
-            // Mission 0871e-phase5c: router advertises a default
-            // pricing policy. Drain = 0 (rate-limit-only) until the
-            // economic policy module lands; accepted capabilities
-            // empty (no paid-query gating yet).
-            pricing_policy: Some(announce::PricingPolicy {
-                drain_per_query: 0,
-                accepted_payment_capabilities: vec![],
-                settlement_recipient: None,
-            }),
-        };
-        announce.hmac = announce.compute_hmac(&self.network_key());
+        let announce =
+            announce::RouterAnnounceBuilder::new(self.config.node_id, self.config.network_id)
+                .supported_models(self.local_provider_models())
+                .capacities(
+                    self.config
+                        .providers
+                        .iter()
+                        .map(|p| ProviderCapacity::from_config(p, self.config.node_id))
+                        .collect(),
+                )
+                // Mission 0871e-phase5c: router advertises a default
+                // pricing policy. Drain = 0 (rate-limit-only) until the
+                // economic policy module lands.
+                .pricing_policy(Some(announce::PricingPolicy {
+                    drain_per_query: 0,
+                    accepted_payment_capabilities: vec![],
+                    settlement_recipient: None,
+                }))
+                .timestamp(monotonic_now())
+                .build(&self.network_key());
         let payload_body = bincode::serialize(&announce).map_err(|e| {
             octo_transport::sender::TransportError::EnvelopeConstruction(e.to_string())
         })?;

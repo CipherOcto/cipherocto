@@ -77,6 +77,94 @@ impl SignedPayload for RouterAnnouncePayload {
     }
 }
 
+/// Single-source-of-truth builder for `RouterAnnouncePayload`
+/// (mission 0871-phase5-router-dispatch-wiring).
+///
+/// Construct via [`RouterAnnounceBuilder::new`], then call
+/// [`RouterAnnounceBuilder::build`] to produce the canonical payload
+/// + signed HMAC (when `network_key` is non-zero). Replaces the
+/// 4-specialized-node inline struct literals (each duplicated the
+/// announce construction with drift risk).
+#[allow(clippy::doc_lazy_continuation)]
+#[derive(Clone, Debug)]
+pub struct RouterAnnounceBuilder {
+    node_id: RouterNodeId,
+    network_id: NetworkId,
+    supported_models: Vec<String>,
+    capacities: Vec<ProviderCapacity>,
+    pricing_policy: Option<PricingPolicy>,
+    timestamp: u64,
+}
+
+impl RouterAnnounceBuilder {
+    /// Construct a new builder with the current wall-clock timestamp.
+    #[must_use]
+    pub fn new(node_id: RouterNodeId, network_id: NetworkId) -> Self {
+        Self {
+            node_id,
+            network_id,
+            supported_models: Vec::new(),
+            capacities: Vec::new(),
+            pricing_policy: None,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        }
+    }
+
+    /// Set the supported-models list.
+    #[must_use]
+    pub fn supported_models(mut self, models: Vec<String>) -> Self {
+        self.supported_models = models;
+        self
+    }
+
+    /// Set the provider capacities list.
+    #[must_use]
+    pub fn capacities(mut self, capacities: Vec<ProviderCapacity>) -> Self {
+        self.capacities = capacities;
+        self
+    }
+
+    /// Set the pricing policy (mission 0871e-phase5c).
+    #[must_use]
+    pub fn pricing_policy(mut self, policy: Option<PricingPolicy>) -> Self {
+        self.pricing_policy = policy;
+        self
+    }
+
+    /// Override the timestamp (for test vectors + golden fixtures).
+    #[must_use]
+    pub fn timestamp(mut self, timestamp: u64) -> Self {
+        self.timestamp = timestamp;
+        self
+    }
+
+    /// Build the canonical payload + sign the HMAC.
+    ///
+    /// When `network_key` is the all-zero sentinel, no signing is
+    /// performed (HMAC stays zero — Phase 1 MVP compatibility).
+    /// Production deployments pass a non-zero key per RFC-0870
+    /// §Announce HMAC.
+    #[must_use]
+    pub fn build(self, network_key: &[u8; 32]) -> RouterAnnouncePayload {
+        let mut payload = RouterAnnouncePayload {
+            node_id: self.node_id,
+            network_id: self.network_id,
+            supported_models: self.supported_models,
+            capacities: self.capacities,
+            timestamp: self.timestamp,
+            hmac: [0u8; 32],
+            pricing_policy: self.pricing_policy,
+        };
+        if *network_key != [0u8; 32] {
+            payload.hmac = payload.compute_hmac(network_key);
+        }
+        payload
+    }
+}
+
 impl SignedPayload for RouterWithdrawPayload {
     fn compute_hmac(&self, network_key: &[u8; 32]) -> [u8; 32] {
         let mut clone = self.clone();
@@ -200,6 +288,43 @@ mod tests {
         );
         assert!(with_policy.verify_hmac(&key));
         assert!(without_policy.verify_hmac(&key));
+    }
+
+    /// TV (mission 0871-phase5-router-dispatch-wiring) — the
+    /// `RouterAnnounceBuilder` produces byte-equal payloads across
+    /// invocations with the same inputs + fixed timestamp. The
+    /// 5 broadcast paths (QuotaRouterNode + 4 specialized nodes)
+    /// delegate to this builder; the TV guarantees wire-form
+    /// stability across all callers.
+    #[test]
+    fn router_announce_builder_byte_equality() {
+        let key = [0x42u8; 32];
+        let node_id = RouterNodeId([0x07; 32]);
+        let network_id = NetworkId([0x08; 32]);
+        let a = RouterAnnounceBuilder::new(node_id, network_id)
+            .supported_models(vec!["gpt-4o".into()])
+            .capacities(vec![])
+            .pricing_policy(Some(PricingPolicy {
+                drain_per_query: 1_000,
+                accepted_payment_capabilities: vec![],
+                settlement_recipient: None,
+            }))
+            .timestamp(1_700_000_000)
+            .build(&key);
+        let b = RouterAnnounceBuilder::new(node_id, network_id)
+            .supported_models(vec!["gpt-4o".into()])
+            .capacities(vec![])
+            .pricing_policy(Some(PricingPolicy {
+                drain_per_query: 1_000,
+                accepted_payment_capabilities: vec![],
+                settlement_recipient: None,
+            }))
+            .timestamp(1_700_000_000)
+            .build(&key);
+        assert_eq!(a.hmac, b.hmac);
+        assert!(a.verify_hmac(&key));
+        assert!(b.verify_hmac(&key));
+        assert!(serde_json::to_vec(&a).unwrap() == serde_json::to_vec(&b).unwrap());
     }
 
     #[test]

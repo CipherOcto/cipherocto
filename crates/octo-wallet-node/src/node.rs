@@ -204,31 +204,20 @@ impl WalletNode {
         // pricing_policy = Some with drain=0.
         // Mission 0959-placeholder-identity-binding: derive `RouterNodeId`
         // from the bound `IdentityKey` + sign HMAC with `network_key`.
-        use quota_router_core::node::announce::{
-            PricingPolicy, RouterAnnouncePayload, SignedPayload,
-        };
+        // Mission 0871-phase5-router-dispatch-wiring: use the shared
+        // `RouterAnnounceBuilder` (single source of truth).
+        use quota_router_core::node::announce::{PricingPolicy, RouterAnnounceBuilder};
         let pk = self.config.identity.public_key_bytes();
-        let node_id = quota_router_core::node::provider::RouterNodeId(pk);
-        let network_id = quota_router_core::node::provider::NetworkId([0u8; 32]);
-        let mut announce = RouterAnnouncePayload {
-            node_id,
-            network_id,
-            supported_models: vec![],
-            capacities: vec![],
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
-            hmac: [0u8; 32],
-            pricing_policy: Some(PricingPolicy {
-                drain_per_query: 0,
-                accepted_payment_capabilities: vec![],
-                settlement_recipient: None,
-            }),
-        };
-        if self.config.network_key != [0u8; 32] {
-            announce.hmac = announce.compute_hmac(&self.config.network_key);
-        }
+        let announce = RouterAnnounceBuilder::new(
+            quota_router_core::node::provider::RouterNodeId(pk),
+            quota_router_core::node::provider::NetworkId([0u8; 32]),
+        )
+        .pricing_policy(Some(PricingPolicy {
+            drain_per_query: 0,
+            accepted_payment_capabilities: vec![],
+            settlement_recipient: None,
+        }))
+        .build(&self.config.network_key);
         let announce_body = serde_json::to_vec(&announce)
             .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
         let from_did = WireDid::new(format!("did:octo:z{}", bs58::encode(pk).into_string()));

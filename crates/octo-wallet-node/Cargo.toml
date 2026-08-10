@@ -29,6 +29,12 @@ octo-paid-query = { path = "../octo-paid-query" }
 # emits the real v1 wire form (replacing the Phase 1 MVP
 # `CIPHEROCTO_MINT_V1:*` placeholder).
 octo-cap-macaroon = { path = "../octo-cap-macaroon" }
+# Canonical-JSON serialization for the `Caveat` payload at the
+# `WALLET_ATTENUATE_CAPABILITY` request boundary (mission
+# 0957-phase2d). The new caveat arrives as canonical-JSON bytes
+# (NOT the typed `Caveat` enum directly — the central enum derives
+# serde-only, not borsh; the handler converts at the wire edge).
+serde_json = "1"
 
 # Async runtime for NetworkReceiver impl + broadcast_announce
 tokio = { version = "1", features = ["rt", "sync", "macros", "time"] }

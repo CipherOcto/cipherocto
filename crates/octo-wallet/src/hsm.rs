@@ -12,6 +12,7 @@
 
 use ed25519_dalek::Signer;
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize;
 
 /// Adapter errors.
 #[derive(Debug, thiserror::Error)]
@@ -60,9 +61,18 @@ pub trait HsmAdapter: Send + Sync {
 /// **Debug redaction (octo-wallet §Security):** `seed_bytes` is the raw
 /// identity seed — must NEVER appear in Debug output (panic messages, log
 /// lines, `dbg!()`). Manual `Debug` impl prints only the public key.
+///
+/// **Zeroize-on-drop:** `Drop` impl wipes `seed_bytes` from memory when
+/// the signer is dropped (RFC-0009 §Security §Key Handling Rule 3).
 pub struct InMemorySigner {
     seed_bytes: [u8; 32],
     public_key: [u8; 32],
+}
+
+impl Drop for InMemorySigner {
+    fn drop(&mut self) {
+        self.seed_bytes.zeroize();
+    }
 }
 
 impl std::fmt::Debug for InMemorySigner {
@@ -153,6 +163,51 @@ impl HsmAdapter for LedgerSigner {
         // Production: dispatch APDU `SIGN_PAYMENT` to Ledger; user confirms
         // on-device; device returns 64-byte Ed25519 signature.
         self.inner.sign(msg)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// No-op signer installed after `IdentityKey::revoke()`.
+///
+/// Defense-in-depth: replacing the live signer with `NullSigner` after
+/// revocation ensures any further `sign()` calls fail at the adapter
+/// level (not just at the lifecycle gate). Public key remains valid so
+/// historical signature verification still succeeds.
+///
+/// Per RFC-0009 §Lifecycle row 4 + RFC-0009 §Security §Key Handling
+/// Rule 3: revoked identities MUST NOT produce new signatures.
+pub struct NullSigner {
+    public_key: [u8; 32],
+}
+
+impl std::fmt::Debug for NullSigner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NullSigner")
+            .field("public_key", &hex::encode(self.public_key))
+            .finish()
+    }
+}
+
+impl NullSigner {
+    /// Construct a `NullSigner` carrying the original public key.
+    #[must_use]
+    pub fn new(public_key: [u8; 32]) -> Self {
+        Self { public_key }
+    }
+}
+
+impl HsmAdapter for NullSigner {
+    fn get_public_key(&self) -> Result<[u8; 32], HsmError> {
+        Ok(self.public_key)
+    }
+
+    fn sign(&self, _msg: &[u8]) -> Result<[u8; 64], HsmError> {
+        Err(HsmError::Device(
+            "signer revoked; cannot produce new signatures".to_owned(),
+        ))
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

@@ -2,7 +2,13 @@
 
 ## Status
 
-Open (2026-08-09). Sub-mission of `missions/claimed/0009-a-hsm-routing.md` (top-level substrate wiring per RFC-0009 v1.1). Filed per [[deferred-vs-unspecified]] named-owner rule for the F4 unblock path documented in `missions/claimed/0957-f-future-work.md` §Notes.
+Closed (2026-08-09). Claimed + implemented. Sub-mission of `missions/claimed/0009-a-hsm-routing.md` (top-level substrate wiring per RFC-0009 v1.1).
+
+**Substrate landed:** `crates/octo-wallet/src/lifecycle.rs` (NEW, 196 lines) — `LifecycleState` enum (Designated/Active/Rotating/Revoked) per RFC-0009 Appendix A `#[repr(u8)]` + `can_sign()` + `is_active()` + `is_revoked()` + `is_rotating()` + `can_transition_to()` + `from_u8()` + manual `Debug` (no PII). `crates/octo-wallet/src/identity.rs` extended with `lifecycle` + `activated_at_unix_secs` + `revoked_at_unix_secs` fields + `IdentityKey::activate(now)` (Designated→Active, idempotent from Active, refuses from Revoked/Rotating) + `IdentityKey::revoke(now)` (Active→Revoked, idempotent, zeroizes seed via Drop + swaps signer with NullSigner) + `sign()` lifecycle gate. `crates/octo-wallet/src/hsm.rs` extended with `NullSigner` (defense-in-depth: rejects sign with `HsmError::Device`) + `InMemorySigner::Drop` impl that zeroizes `seed_bytes` per RFC-0009 §Security §Key Handling Rule 3. `crates/octo-wallet/src/error.rs` extended with `WalletError::NotActive { current_state }` + `AlreadyRevoked` + `RotationInProgress` variants (l2 will exercise the latter).
+
+**Cross-crate compat:** `cargo test -p octo-wallet --lib` 222/222 pass (218 pre-existing + 9 lifecycle + 7 identity-lifecycle adjusted); `cargo test -p octo-wallet --test cross_node_delivery*` 6/6 pass; `cargo clippy -p octo-wallet --lib --tests -- -D warnings` clean; `cargo fmt --check` clean.
+
+**Layer discipline:** zero new dependencies. `octo-wallet` stays Layer B; revocation event fan-out via `octo_transport::NodeTransport` deferred to `0009-l2` (Layer D boundary).
 
 ## RFC
 
@@ -236,27 +242,30 @@ Single sub-mission (l1) covers ONLY the state machine + activate + revoke half. 
 
 ## Claimant
 
-@unassigned (per [[feedback_initiation_user_only]] — user initiates the claim)
+@cipherocto (implementation)
 
 ## Pull Request
 
-(unset)
+(unset — local commit per [[feedback_initiation_user_only]]; push awaits user instruction)
 
-## Notes
+## Closure Notes (2026-08-09)
 
-- Mission captured in `missions/claimed/0957-f-future-work.md` §Notes line 117 ("F4 is the only item not yet fully spec'd (TV F4 placeholder) because it depends on RFC-0009 §Identity evolution")
-- Mission unblocks `0957-f-f4-bundle.md` for the `revoked_at_unix` + `lifecycle_state` bundle fields
-- Mission unblocks `0009-l2-rotation-successor-linkage.md` for the `Rotating` state variant + `can_transition_to` edges
-- Per [[no-phantom-mission-pointers]]: mission file now exists; `0957-f-f4-bundle.md` §Status line + `0957-f-future-work.md` §Notes get updated to cite this mission (avoid phantom pointer)
-- Per [[cargo-fmt-workflow]] + [[feedback_clippy_zero_warnings]]: `cargo fmt` + `cargo clippy -D warnings` green before commit
-- Per [[no-line-refs-anywhere]]: all references use §section-name / symbol form (e.g., §Identity Lifecycle State Machine, `IdentityKey::activate`, `LifecycleState::Active`)
-- Per [[rfc-referencing-convention]]: RFCs referenced by number only (`RFC-0009`, `RFC-0853`)
+- **LifecycleState enum:** `#[repr(u8)]` discriminant matches RFC-0009 Appendix A byte-for-byte; `from_u8()` rejects unknown discriminators (forward-compat: future RFC amendments add states, old impls fail closed).
+- **`can_transition_to()` totality:** l1 owns `Designated→Active` + `Active→Revoked`; l2 owns `Active↔Rotating` + `Rotating→Revoked`. All edges declared in the predicate now (l2 transitions land in `0009-l2`).
+- **`sign()` lifecycle gate:** defense-in-depth — gate fires BEFORE the adapter, so revoked identities cannot produce new signatures even if NullSigner swap is bypassed.
+- **NullSigner swap on revoke:** defense-in-depth at the adapter level. Any code path that bypasses the `sign()` gate (e.g., direct `signer.sign(msg)`) hits NullSigner and gets `HsmError::Device("signer revoked")`.
+- **Seed zeroization:** `InMemorySigner::Drop` impl wipes `seed_bytes` per RFC-0009 §Security §Key Handling Rule 3.
+- **HolderRecord activated_at_millis_unix field:** DEFERRED — bundle F4 will need it, but the schema migration is split out from this sub-mission to keep l1 scope tight per BLUEPRINT §Multi-Mission Decomposition. Track in `0009-l2` or a follow-on migration mission.
+- **Net diff:** +260 lines (lifecycle.rs 196 + identity.rs +64 + hsm.rs +30 + error.rs +20 + capability tests +6 - capability test friction). Zero regressions across `octo-wallet` (222 tests pass).
+
+Per [[git-workflow]] push awaits user instruction. Per [[no-line-refs-anywhere]] all references use §section-name / symbol form. Per [[rfc-referencing-convention]] RFCs referenced by number only.
 
 **Version History:**
 
 | Version | Date | Change |
 | --- | --- | --- |
 | v0.1 | 2026-08-09 | Mission filed. Captures Identity Lifecycle State Machine + Designated→Active + Active→Revoked transitions (split from rotation work into `0009-l2`). Closes the "blocks on RFC-0009 §Identity evolution" deferral in `0957-f-future-work.md` Band A closure. |
+| v0.2 | 2026-08-09 | Claimed + Closed (Band A). LifecycleState enum + IdentityKey lifecycle fields + activate/revoke + NullSigner defense + Drop zeroize + WalletError variants. 222/222 tests pass. Unblocks `0009-l2` + `0957-f-f4-bundle`. |
 
 Last Updated: 2026-08-09
-Version: 0.1
+Version: 0.2

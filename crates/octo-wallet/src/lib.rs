@@ -18,6 +18,7 @@ pub mod hsm;
 pub mod identity;
 pub mod key_hierarchy;
 pub mod keystore;
+pub mod lifecycle;
 pub mod mpc;
 pub mod node;
 pub mod vault;

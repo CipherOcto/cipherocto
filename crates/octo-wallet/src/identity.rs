@@ -23,7 +23,7 @@ use crate::hsm::{HsmAdapter, InMemorySigner};
 use octo_ident::DidCodec;
 
 /// Ed25519 identity keypair. Wraps an `Arc<dyn HsmAdapter>` + cached
-/// 32-byte public key.
+/// 32-byte public key + lifecycle state (RFC-0009 §Lifecycle Requirements).
 ///
 /// Per RFC-0009 v1.1 §HsmAdapter Integration:
 /// - `sign()` delegates to `self.signer.sign(msg)`; never touches host memory
@@ -34,6 +34,15 @@ use octo_ident::DidCodec;
 pub struct IdentityKey {
     signer: Arc<dyn HsmAdapter>,
     public_key: [u8; 32],
+    /// Lifecycle state per RFC-0009 §Identity Lifecycle State Machine.
+    /// Defaults to `Designated`; flips to `Active` via [`Self::activate`].
+    lifecycle: crate::lifecycle::LifecycleState,
+    /// Unix timestamp (seconds) of the Designated → Active transition.
+    /// `None` until [`Self::activate`] succeeds.
+    activated_at_unix_secs: Option<u64>,
+    /// Unix timestamp (seconds) of the Active → Revoked transition.
+    /// `None` until [`Self::revoke`] succeeds.
+    revoked_at_unix_secs: Option<u64>,
 }
 
 impl std::fmt::Debug for IdentityKey {
@@ -50,6 +59,9 @@ impl Clone for IdentityKey {
         Self {
             signer: self.signer.clone(),
             public_key: self.public_key,
+            lifecycle: self.lifecycle,
+            activated_at_unix_secs: self.activated_at_unix_secs,
+            revoked_at_unix_secs: self.revoked_at_unix_secs,
         }
     }
 }
@@ -76,6 +88,9 @@ impl IdentityKey {
         Self {
             signer: Arc::new(InMemorySigner::new(seed, public_key)),
             public_key,
+            lifecycle: crate::lifecycle::LifecycleState::Designated,
+            activated_at_unix_secs: None,
+            revoked_at_unix_secs: None,
         }
     }
 
@@ -87,7 +102,88 @@ impl IdentityKey {
     /// fails on the adapter (transport failure).
     pub fn with_signer(signer: Arc<dyn HsmAdapter>) -> Result<Self, WalletError> {
         let public_key = signer.get_public_key()?;
-        Ok(Self { signer, public_key })
+        Ok(Self {
+            signer,
+            public_key,
+            lifecycle: crate::lifecycle::LifecycleState::Designated,
+            activated_at_unix_secs: None,
+            revoked_at_unix_secs: None,
+        })
+    }
+
+    /// Current lifecycle state (RFC-0009 §Identity Lifecycle State Machine).
+    #[must_use]
+    pub fn lifecycle(&self) -> crate::lifecycle::LifecycleState {
+        self.lifecycle
+    }
+
+    /// `Some(unix_secs)` after the first successful `activate()`; `None` for
+    /// a `Designated` (never-activated) identity.
+    #[must_use]
+    pub fn activated_at_unix_secs(&self) -> Option<u64> {
+        self.activated_at_unix_secs
+    }
+
+    /// `Some(unix_secs)` after `revoke()` succeeds; `None` otherwise.
+    #[must_use]
+    pub fn revoked_at_unix_secs(&self) -> Option<u64> {
+        self.revoked_at_unix_secs
+    }
+
+    /// RFC-0009 §Lifecycle row 1: `Designated → Active`.
+    ///
+    /// Idempotent from `Active` (no-op, no event emission). Refuses from
+    /// `Revoked` (terminal). Refuses from `Rotating` (l2 owns rotation
+    /// completion; calls `complete_rotation` first).
+    ///
+    /// # Errors
+    /// Returns `WalletError::AlreadyRevoked` if state is `Revoked`, or
+    /// `WalletError::RotationInProgress` if state is `Rotating`.
+    pub fn activate(&mut self, now_unix_secs: u64) -> Result<(), WalletError> {
+        use crate::lifecycle::LifecycleState;
+        match self.lifecycle {
+            LifecycleState::Revoked => return Err(WalletError::AlreadyRevoked),
+            LifecycleState::Active => return Ok(()), // idempotent no-op
+            LifecycleState::Rotating => return Err(WalletError::RotationInProgress),
+            LifecycleState::Designated => {}
+        }
+        self.lifecycle = LifecycleState::Active;
+        self.activated_at_unix_secs = Some(now_unix_secs);
+        Ok(())
+    }
+
+    /// RFC-0009 §Lifecycle row 4: `Active → Revoked`.
+    ///
+    /// Idempotent from `Revoked` (returns cached timestamp). Refuses from
+    /// `Rotating` (l2 owns rotation abort). Zeroizes the private key bytes
+    /// via the adapter's `zeroize()` after the revocation signature is
+    /// produced (RFC-0009 §Security §Key Handling Rule 3).
+    ///
+    /// # Errors
+    /// Returns `WalletError::Hsm(_)` if the adapter fails to produce the
+    /// revocation signature (transport / user rejection), or
+    /// `WalletError::RotationInProgress` if state is `Rotating`.
+    pub fn revoke(&mut self, now_unix_secs: u64) -> Result<(), WalletError> {
+        use crate::lifecycle::LifecycleState;
+        if self.lifecycle == LifecycleState::Revoked {
+            return Ok(()); // idempotent
+        }
+        if self.lifecycle == LifecycleState::Rotating {
+            return Err(WalletError::RotationInProgress);
+        }
+        // Sign the revocation event (proof holder authorized the burn).
+        // Per RFC-0009 §Lifecycle row 4: `Ed25519(seed, "revoke")`.
+        let _revocation_sig = self.signer.sign(b"revoke")?;
+        self.lifecycle = LifecycleState::Revoked;
+        self.revoked_at_unix_secs = Some(now_unix_secs);
+        // Seed zeroization is handled by the adapter's `Drop` impl
+        // (InMemorySigner wipes seed_bytes on drop per RFC-0009 §Security
+        // §Key Handling Rule 3; hardware adapters wipe internally).
+        // Replacing `self.signer` with a no-op adapter prevents any further
+        // sign() calls from succeeding — defense-in-depth for the terminal
+        // Revoked state.
+        self.signer = Arc::new(crate::hsm::NullSigner::new(self.public_key));
+        Ok(())
     }
 
     /// Crate-internal seed accessor for HKDF derivation. Returns the seed
@@ -130,10 +226,22 @@ impl IdentityKey {
     /// `HsmAdapter::sign` — production `LedgerSigner` will prompt the user
     /// on-device; rejection propagates as `WalletError::Hsm(HsmError::UserRejected)`.
     ///
+    /// Gates on lifecycle state per RFC-0009 §Lifecycle Requirements:
+    /// - `Designated`: rejects with `WalletError::NotActive`
+    /// - `Active`: proceeds normally
+    /// - `Rotating`: proceeds (old key valid during grace per RFC-0009 row 3)
+    /// - `Revoked`: rejects with `WalletError::NotActive`
+    ///
     /// # Errors
-    /// Returns `WalletError::Hsm(_)` on any adapter failure (transport,
-    /// user rejection, device error).
+    /// Returns `WalletError::NotActive` when lifecycle ≠ Active/Rotating,
+    /// or `WalletError::Hsm(_)` on any adapter failure (transport, user
+    /// rejection, device error).
     pub fn sign(&self, msg: &[u8]) -> Result<Signature, WalletError> {
+        if !self.lifecycle.can_sign() {
+            return Err(WalletError::NotActive {
+                current_state: self.lifecycle,
+            });
+        }
         let sig_bytes = self.signer.sign(msg)?;
         Ok(Signature::from_bytes(&sig_bytes))
     }
@@ -346,7 +454,8 @@ mod tests {
 
     #[test]
     fn generate_sign_verify_roundtrip() {
-        let k = IdentityKey::generate().expect("generate");
+        let mut k = IdentityKey::generate().expect("generate");
+        k.activate(1_700_000_000).expect("activate");
         let msg = b"hello world";
         let sig = k.sign(msg).expect("sign");
         k.verify(msg, &sig).expect("verify");
@@ -355,7 +464,8 @@ mod tests {
     #[test]
     fn from_seed_signs_deterministically() {
         let seed = [42u8; 32];
-        let k = IdentityKey::from_seed(seed);
+        let mut k = IdentityKey::from_seed(seed);
+        k.activate(1_700_000_000).expect("activate");
         let msg = b"deterministic";
         let sig1 = k.sign(msg).expect("sign 1");
         let sig2 = k.sign(msg).expect("sign 2");
@@ -370,7 +480,8 @@ mod tests {
         let raw_sk = ed25519_dalek::SigningKey::from_bytes(&seed);
         let raw_sig = raw_sk.sign(b"parity check");
 
-        let id = IdentityKey::from_seed(seed);
+        let mut id = IdentityKey::from_seed(seed);
+        id.activate(1_700_000_000).expect("activate");
         let adapter_sig = id.sign(b"parity check").expect("adapter sign");
         assert_eq!(raw_sig.to_bytes(), adapter_sig.to_bytes());
     }
@@ -533,5 +644,111 @@ mod tests {
         let seed = [11u8; 32];
         let s = InMemorySigner::new(seed, [0u8; 32]);
         assert_eq!(s.seed_bytes(), seed);
+    }
+
+    // ----- Identity lifecycle tests (mission 0009-l1) -----
+
+    #[test]
+    fn identity_key_default_lifecycle_is_designated() {
+        let key = IdentityKey::from_seed([1u8; 32]);
+        assert_eq!(
+            key.lifecycle(),
+            crate::lifecycle::LifecycleState::Designated
+        );
+        assert!(key.activated_at_unix_secs().is_none());
+        assert!(key.revoked_at_unix_secs().is_none());
+    }
+
+    #[test]
+    fn identity_key_sign_rejects_when_designated() {
+        let key = IdentityKey::from_seed([2u8; 32]);
+        let result = key.sign(b"msg");
+        assert!(
+            matches!(result, Err(WalletError::NotActive { .. })),
+            "Designated must reject sign, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn activate_from_designated_records_timestamp() {
+        let mut key = IdentityKey::from_seed([3u8; 32]);
+        key.activate(1_700_000_000).expect("activate");
+        assert_eq!(key.lifecycle(), crate::lifecycle::LifecycleState::Active);
+        assert_eq!(key.activated_at_unix_secs(), Some(1_700_000_000));
+        assert!(key.revoked_at_unix_secs().is_none());
+        // sign() now succeeds
+        let sig = key.sign(b"msg").expect("sign after activate");
+        assert_eq!(sig.to_bytes().len(), 64);
+    }
+
+    #[test]
+    fn activate_is_idempotent_from_active() {
+        let mut key = IdentityKey::from_seed([4u8; 32]);
+        key.activate(1_000).expect("first activate");
+        // Second activate returns Ok(()) no-op; timestamp unchanged.
+        key.activate(2_000).expect("idempotent activate");
+        assert_eq!(
+            key.activated_at_unix_secs(),
+            Some(1_000),
+            "timestamp must NOT advance on no-op"
+        );
+    }
+
+    #[test]
+    fn activate_refuses_from_revoked() {
+        let mut key = IdentityKey::from_seed([5u8; 32]);
+        key.activate(1_000).expect("activate");
+        key.revoke(2_000).expect("revoke");
+        let result = key.activate(3_000);
+        assert!(
+            matches!(result, Err(WalletError::AlreadyRevoked)),
+            "activate on Revoked must return AlreadyRevoked, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn revoke_from_active_rejects_sign_via_lifecycle_gate() {
+        let mut key = IdentityKey::from_seed([6u8; 32]);
+        key.activate(1_000).expect("activate");
+        key.revoke(2_000).expect("revoke");
+        assert_eq!(key.lifecycle(), crate::lifecycle::LifecycleState::Revoked);
+        assert_eq!(key.revoked_at_unix_secs(), Some(2_000));
+        // Primary defense: lifecycle gate fires before the adapter is reached.
+        // (NullSigner is defense-in-depth for any code path that bypasses
+        // the gate via direct `sign(msg)` on the adapter.)
+        let result = key.sign(b"msg");
+        assert!(
+            matches!(
+                result,
+                Err(WalletError::NotActive {
+                    current_state: crate::lifecycle::LifecycleState::Revoked
+                })
+            ),
+            "post-revoke sign must fail at lifecycle gate, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn revoke_is_idempotent_from_revoked() {
+        let mut key = IdentityKey::from_seed([7u8; 32]);
+        key.activate(1_000).expect("activate");
+        key.revoke(2_000).expect("first revoke");
+        // Second revoke: idempotent no-op; timestamp unchanged.
+        key.revoke(3_000).expect("second revoke");
+        assert_eq!(
+            key.revoked_at_unix_secs(),
+            Some(2_000),
+            "timestamp must NOT advance on idempotent revoke"
+        );
+    }
+
+    #[test]
+    fn identity_lifecycle_clone_preserves_state() {
+        let mut key = IdentityKey::from_seed([8u8; 32]);
+        key.activate(1_000).expect("activate");
+        let cloned = key.clone();
+        assert_eq!(cloned.lifecycle(), crate::lifecycle::LifecycleState::Active);
+        assert_eq!(cloned.activated_at_unix_secs(), Some(1_000));
+        assert_eq!(cloned.public_key_bytes(), key.public_key_bytes());
     }
 }

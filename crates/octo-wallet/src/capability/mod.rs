@@ -75,7 +75,8 @@ mod tests {
 
     #[test]
     fn mint_and_verify_holder_sig() {
-        let holder = IdentityKey::generate().unwrap();
+        let mut holder = IdentityKey::generate().unwrap();
+        holder.activate(1_700_000_000).expect("activate");
         let root_secret = [0x42; 32];
         let caveats = [Caveat::Model("gpt-4".to_owned())];
         let token = CapabilityToken::mint(
@@ -90,7 +91,8 @@ mod tests {
 
     #[test]
     fn attenuate_preserves_holder_pub() {
-        let holder = IdentityKey::generate().unwrap();
+        let mut holder = IdentityKey::generate().unwrap();
+        holder.activate(1_700_000_000).expect("activate");
         let root_secret = [0x42; 32];
         let catalog = empty_catalog();
         let token = CapabilityToken::mint(
@@ -109,7 +111,8 @@ mod tests {
 
     #[test]
     fn attenuate_without_signer_breaks_holder_sig() {
-        let holder = IdentityKey::generate().unwrap();
+        let mut holder = IdentityKey::generate().unwrap();
+        holder.activate(1_700_000_000).expect("activate");
         let root_secret = [0x42; 32];
         let catalog = empty_catalog();
         let token = CapabilityToken::mint(

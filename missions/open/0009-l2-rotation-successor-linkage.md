@@ -2,7 +2,18 @@
 
 ## Status
 
-Open (2026-08-09). Sub-mission of `missions/claimed/0009-a-hsm-routing.md` (top-level substrate wiring per RFC-0009 v1.1). Depends on `missions/open/0009-l1-lifecycle-state-machine.md` (lifecycle state machine + `Rotating` variant declaration). Filed per [[deferred-vs-unspecified]] named-owner rule for the F4 unblock path documented in `missions/claimed/0957-f-future-work.md` §Notes.
+Closed (2026-08-09). Claimed + implemented. Sub-mission of `missions/claimed/0009-a-hsm-routing.md` (top-level substrate wiring per RFC-0009 v1.1).
+
+**Substrate landed:** `IdentityKey` extended with `successor_key: Option<Box<IdentityKey>>` (Box breaks recursion) + `rotation_started_at_unix_secs` + `deprecated` fields. `ROTATION_GRACE_PERIOD_SECS: u64 = 24*3600` constant per RFC-0853 §12. NEW APIs: `begin_rotation(successor, now)` (Active → Rotating + produces successor proof signature); `complete_rotation(now)` (Rotating → Active after 24h grace); `abort_rotation()` (Rotating → Active, destroys successor); `verify_successor_proof(old_pub, new_pub, proof)` (pure helper re-derives expected proof and verifies). `WalletError` extended with `NotRotating { current_state }` + `SelfRotation` + `GracePeriodNotElapsed { elapsed_secs, required_secs }` + `InvalidSuccessorProof` variants.
+
+**DEFERRED (out of l2 pushable-unit scope):**
+- `HolderRecord` rotation columns (`rotation_started_at_millis_unix` + `deprecated: bool`) — separate migration mission
+- Revocation event gossip fan-out via `octo_transport::NodeTransport` — couples Layer B → Layer D (forbidden per [[cipherocto-design-principles]]); track in `0959-c3` or new mission
+- `IdentityRotated` + `IdentityRotationAborted` event structs — split to follow-on mission; l2 closures produce the proof signature but don't emit events yet (events depend on observability layer wiring)
+
+**Cross-crate compat:** `cargo test -p octo-wallet --lib` 229/229 pass (7 new rotation tests + 222 from l1); `cargo clippy -p octo-wallet --lib --tests -- -D warnings` clean; `cargo fmt --check` clean.
+
+**Layer discipline:** zero new deps. `octo-wallet` stays Layer B; gossip fan-out (Layer D boundary) deferred.
 
 ## RFC
 
@@ -256,26 +267,31 @@ Sub-mission `l2` covers rotation + successor linkage + grace + revocation gossip
 
 ## Claimant
 
-@unassigned (per [[feedback_initiation_user_only]] — user initiates the claim)
+@cipherocto (implementation)
 
 ## Pull Request
 
-(unset)
+(unset — local commit per [[feedback_initiation_user_only]]; push awaits user instruction)
 
-## Notes
+## Closure Notes (2026-08-09)
 
-- Mission captured in `missions/claimed/0957-f-future-work.md` §Notes line 117 ("F4 is the only item not yet fully spec'd (TV F4 placeholder) because it depends on RFC-0009 §Identity evolution")
-- Mission unblocks `0957-f-f4-bundle.md` for the `successor_proof: Option<Ed25519Signature>` bundle field (replay across rotation boundaries)
-- Per [[no-phantom-mission-pointers]]: mission file now exists; `0957-f-f4-bundle.md` §Status line + §Depends on YAML get updated to cite this mission (avoid phantom pointer)
-- Per [[cargo-fmt-workflow]] + [[feedback_clippy_zero_warnings]]: `cargo fmt` + `cargo clippy -D warnings` green before commit
-- Per [[no-line-refs-anywhere]]: all references use §section-name / symbol form
-- Per [[rfc-referencing-convention]]: RFCs referenced by number only
+- **`begin_rotation` proof signature:** `Ed25519(old_seed, b"rotate" || successor.public_key_bytes())` per RFC-0009 §Lifecycle table row 2. Deterministic — same `(old_seed, successor_pub)` always produces same proof bytes.
+- **`verify_successor_proof` is a pure helper:** usable by external verifiers (e.g., RFC-0853 §12 peer verification) without holding the `IdentityKey`. Verifies via `ed25519_dalek::Verifier::verify()`.
+- **`successor_key: Option<Box<IdentityKey>>`:** Box breaks the recursive type size; rotation creates a small graph (max depth 1 in practice — successor has no successor during the grace window).
+- **`deprecated: bool`:** flipped to `true` on `complete_rotation`; historical signatures remain verifiable (RFC-0009 row 3: "old key still valid during grace"), new signatures should target the successor.
+- **24h grace per RFC-0853 §12:** `ROTATION_GRACE_PERIOD_SECS` constant; `complete_rotation` rejects with `GracePeriodNotElapsed` if `now - rotation_started_at < 24h`.
+- **Gossip fan-out DEFERRED:** revocation + activation event broadcasting via `octo_transport::NodeTransport` would couple Layer B → Layer D (forbidden per [[cipherocto-design-principles]]). Tracked for `0959-c3` or new mission.
+
+**Net diff:** +284 lines (rotation methods + tests + error variants). Zero regressions across `octo-wallet` (229 tests pass).
+
+Per [[git-workflow]] push awaits user instruction. Per [[no-line-refs-anywhere]] all references use §section-name / symbol form. Per [[rfc-referencing-convention]] RFCs referenced by number only.
 
 **Version History:**
 
 | Version | Date | Change |
 | --- | --- | --- |
 | v0.1 | 2026-08-09 | Mission filed. Captures Active↔Rotating transitions + successor co-sign helper + 24h grace + revocation gossip fan-out per RFC-0009 §Lifecycle + RFC-0853 §12. Depends on `0009-l1` for `LifecycleState::Rotating` variant. Unblocks `0957-f-f4-bundle` for `successor_proof` field. |
+| v0.2 | 2026-08-09 | Claimed + Closed (Band A). begin_rotation + complete_rotation + abort_rotation + verify_successor_proof + ROTATION_GRACE_PERIOD_SECS + WalletError rotation variants. 229/229 tests pass. Gossip fan-out + HolderRecord rotation columns deferred to follow-on. Unblocks `0957-f-f4-bundle`. |
 
 Last Updated: 2026-08-09
-Version: 0.1
+Version: 0.2

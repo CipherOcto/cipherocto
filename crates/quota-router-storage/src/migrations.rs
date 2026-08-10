@@ -55,6 +55,11 @@ pub const BUILTIN_MIGRATIONS: &[Migration] = &[
         name: "create_outbox",
         sql: include_str!("../migrations/v006__create_outbox.sql"),
     },
+    Migration {
+        version: 7,
+        name: "create_spend_ledger",
+        sql: include_str!("../migrations/v007__create_spend_ledger.sql"),
+    },
 ];
 
 /// Migration errors.

@@ -108,11 +108,22 @@ mod serde_bytes_option_u64 {
 
 impl HolderRecord {
     /// RFC-0957-A1 §G5 cross-node mint verifiability: serialize the
-    /// record for gossip fan-out. Uses canonical JSON (serde_json with
-    /// `derive(Serialize, Deserialize)` on this struct produces sorted-
-    /// key output by default for `#[derive(Serialize)]` structs with
-    /// named fields; this is the canonical form for gossip transport
-    /// per RFC-0126 §canonical JSON).
+    /// record for gossip fan-out.
+    ///
+    /// **Determinism contract** (NOT canonical-JSON per RFC-8785):
+    /// bytes are produced by `serde_json::to_vec` on this struct, which
+    /// emits JSON keys in **struct field declaration order**. The bytes
+    /// are therefore stable iff the struct source is stable. Two nodes
+    /// compiling from the same source produce byte-identical gossip
+    /// payloads; two nodes with reordered fields do not. Reordering
+    /// fields is a breaking change for gossip and must be flagged as
+    /// such in PR review.
+    ///
+    /// Sorted-key RFC-8785 canonical JSON is **not** used here because:
+    /// (1) `serde_json` does not provide it natively, and (2) the
+    /// declaration-order guarantee is sufficient for cross-node mint
+    /// verifiability since both sides compile from the same pinned
+    /// `quota-router-storage` crate.
     ///
     /// # Errors
     /// Returns `serde_json::Error` if the record contains fields that
@@ -121,7 +132,7 @@ impl HolderRecord {
         serde_json::to_vec(self)
     }
 
-    /// Inverse of `canonical_ser`. See [`Self::canonical_ser`].
+    /// Inverse of [`Self::canonical_ser`].
     ///
     /// # Errors
     /// Returns `serde_json::Error` if the bytes do not decode to a

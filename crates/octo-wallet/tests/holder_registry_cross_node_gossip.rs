@@ -199,6 +199,45 @@ async fn apply_gossip_record_rejects_malformed_bytes() {
     );
 }
 
+/// TV5.6 — gossip fan-out of a record with a duplicate `(ask_id, kind)`
+/// UNIQUE constraint surfaces `AlreadyExists` (not just PK collision).
+#[tokio::test]
+async fn apply_gossip_record_rejects_duplicate_ask_id() {
+    let fixture = TwoNodeFixture::new();
+
+    // First record: unique ask_id, unique cap_root_hash.
+    let record_a = test_record(0xa1);
+    fixture
+        .node_b
+        .insert(record_a.clone())
+        .expect("node-B insert record_a");
+
+    // Second record: DIFFERENT cap_root_hash (so PK differs) but SAME
+    // ask_id (so UNIQUE (ask_id, kind) collides). Should fail on insert.
+    let mut record_b = test_record(0xb2);
+    record_b.ask_id = record_a.ask_id; // duplicate ask_id
+                                       // Force a different cap_root_hash to avoid the trivial PK collision.
+    record_b.cap_root_hash = [0x33; 32];
+
+    fixture
+        .node_a
+        .insert(record_b.clone())
+        .expect("node-A insert record_b");
+    let bytes = fixture
+        .node_a
+        .serialize_for_gossip(&record_b.cap_root_hash)
+        .expect("serialize record_b");
+
+    let result = fixture.node_b.apply_gossip_record(&bytes);
+    assert!(
+        matches!(
+            result,
+            Err(quota_router_storage::holder_registry::RegistryError::AlreadyExists)
+        ),
+        "duplicate (ask_id, kind) must surface AlreadyExists, got {result:?}"
+    );
+}
+
 /// TV5.5 — node-B `lookup_active` returns None for revoked synced records.
 #[tokio::test]
 async fn gossip_revoked_record_not_active_on_receiver() {

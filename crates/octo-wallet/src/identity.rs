@@ -43,6 +43,10 @@ pub struct IdentityKey {
     /// Unix timestamp (seconds) of the Active → Revoked transition.
     /// `None` until [`Self::revoke`] succeeds.
     revoked_at_unix_secs: Option<u64>,
+    /// `Ed25519(self.signer, "revoke")` produced at revocation time
+    /// (RFC-0009 §Lifecycle row 4). Audit proof that the holder
+    /// authorized the burn. `Some` only after `revoke()` succeeds.
+    revoked_proof: Option<[u8; 64]>,
     /// Successor `IdentityKey` for rotation (RFC-0009 §Lifecycle row 2).
     /// `None` until [`Self::begin_rotation`] succeeds; cleared on
     /// [`Self::complete_rotation`] or [`Self::abort_rotation`].
@@ -76,6 +80,7 @@ impl Clone for IdentityKey {
             lifecycle: self.lifecycle,
             activated_at_unix_secs: self.activated_at_unix_secs,
             revoked_at_unix_secs: self.revoked_at_unix_secs,
+            revoked_proof: self.revoked_proof,
             successor_key: self.successor_key.clone(),
             rotation_started_at_unix_secs: self.rotation_started_at_unix_secs,
             deprecated: self.deprecated,
@@ -108,6 +113,7 @@ impl IdentityKey {
             lifecycle: crate::lifecycle::LifecycleState::Designated,
             activated_at_unix_secs: None,
             revoked_at_unix_secs: None,
+            revoked_proof: None,
             successor_key: None,
             rotation_started_at_unix_secs: None,
             deprecated: false,
@@ -128,6 +134,7 @@ impl IdentityKey {
             lifecycle: crate::lifecycle::LifecycleState::Designated,
             activated_at_unix_secs: None,
             revoked_at_unix_secs: None,
+            revoked_proof: None,
             successor_key: None,
             rotation_started_at_unix_secs: None,
             deprecated: false,
@@ -157,7 +164,9 @@ impl IdentityKey {
     ///
     /// Idempotent from `Active` (no-op, no event emission). Refuses from
     /// `Revoked` (terminal). Refuses from `Rotating` (l2 owns rotation
-    /// completion; calls `complete_rotation` first).
+    /// completion; caller must `complete_rotation` / `abort_rotation` first
+    /// — `Rotating → Active` is a valid state-machine edge but NOT a valid
+    /// activation path per RFC-0009 §Lifecycle row 3).
     ///
     /// # Errors
     /// Returns `WalletError::AlreadyRevoked` if state is `Revoked`, or
@@ -170,41 +179,68 @@ impl IdentityKey {
             LifecycleState::Rotating => return Err(WalletError::RotationInProgress),
             LifecycleState::Designated => {}
         }
+        // Defense-in-depth: confirm the state-machine edge is valid.
+        debug_assert!(
+            LifecycleState::Designated.can_transition_to(LifecycleState::Active),
+            "activate() reached the transition step with an invalid edge"
+        );
         self.lifecycle = LifecycleState::Active;
         self.activated_at_unix_secs = Some(now_unix_secs);
         Ok(())
     }
 
-    /// RFC-0009 §Lifecycle row 4: `Active → Revoked`.
+    /// `Some(proof)` after `revoke()` succeeds; `None` for a not-yet-revoked
+    /// identity. The proof is `Ed25519(self.signer, "revoke")` per
+    /// RFC-0009 §Lifecycle row 4 — bind the holder's authorization to the
+    /// burn event for audit + cross-node revocation gossip.
+    #[must_use]
+    pub fn revoked_proof(&self) -> Option<[u8; 64]> {
+        self.revoked_proof
+    }
+
+    /// RFC-0009 §Lifecycle row 4: `Active → Revoked` (or
+    /// `Rotating → Revoked`).
     ///
-    /// Idempotent from `Revoked` (returns cached timestamp). Refuses from
-    /// `Rotating` (l2 owns rotation abort). Zeroizes the private key bytes
-    /// via the adapter's `zeroize()` after the revocation signature is
-    /// produced (RFC-0009 §Security §Key Handling Rule 3).
+    /// Idempotent from `Revoked` (no-op). Refuses from `Designated` (no
+    /// prior activation — there is no key to revoke per RFC-0009 §Lifecycle
+    /// state-machine edge table). Accepts from `Active` and `Rotating`
+    /// (both have valid `→ Revoked` edges).
+    ///
+    /// Produces a `revoked_proof` (`Ed25519(self.signer, "revoke")`) for
+    /// audit. After the proof is captured, replaces `self.signer` with a
+    /// `NullSigner` so any further `sign()` calls fail at the adapter
+    /// level (defense-in-depth — the lifecycle gate is the primary check).
     ///
     /// # Errors
-    /// Returns `WalletError::Hsm(_)` if the adapter fails to produce the
-    /// revocation signature (transport / user rejection), or
-    /// `WalletError::RotationInProgress` if state is `Rotating`.
+    /// Returns `WalletError::NotActive { current_state: Designated }` if
+    /// the identity was never activated. Returns `WalletError::Hsm(_)` on
+    /// adapter failure during the proof signature.
     pub fn revoke(&mut self, now_unix_secs: u64) -> Result<(), WalletError> {
         use crate::lifecycle::LifecycleState;
         if self.lifecycle == LifecycleState::Revoked {
             return Ok(()); // idempotent
         }
-        if self.lifecycle == LifecycleState::Rotating {
-            return Err(WalletError::RotationInProgress);
+        // Designated → Revoked is NOT a valid state-machine edge: refuse.
+        if self.lifecycle == LifecycleState::Designated {
+            return Err(WalletError::NotActive {
+                current_state: LifecycleState::Designated,
+            });
         }
-        // Sign the revocation event (proof holder authorized the burn).
-        // Per RFC-0009 §Lifecycle row 4: `Ed25519(seed, "revoke")`.
-        let _revocation_sig = self.signer.sign(b"revoke")?;
+        // Defense-in-depth: confirm the state-machine edge is valid
+        // (Active → Revoked or Rotating → Revoked).
+        debug_assert!(
+            self.lifecycle.can_transition_to(LifecycleState::Revoked),
+            "revoke() reached the transition step with an invalid edge from {:?}",
+            self.lifecycle
+        );
+        // Produce the audit proof per RFC-0009 §Lifecycle row 4.
+        let proof = self.signer.sign(b"revoke")?;
+        self.revoked_proof = Some(proof);
         self.lifecycle = LifecycleState::Revoked;
         self.revoked_at_unix_secs = Some(now_unix_secs);
-        // Seed zeroization is handled by the adapter's `Drop` impl
-        // (InMemorySigner wipes seed_bytes on drop per RFC-0009 §Security
-        // §Key Handling Rule 3; hardware adapters wipe internally).
-        // Replacing `self.signer` with a no-op adapter prevents any further
-        // sign() calls from succeeding — defense-in-depth for the terminal
-        // Revoked state.
+        // Replace signer with a NullSigner: any direct `sign()` calls on
+        // the adapter now fail at the adapter level (lifecycle gate is the
+        // primary check; this is defense-in-depth).
         self.signer = Arc::new(crate::hsm::NullSigner::new(self.public_key));
         Ok(())
     }
@@ -1009,5 +1045,81 @@ mod tests {
             matches!(result, Err(WalletError::InvalidSuccessorProof)),
             "tampered new_pub must invalidate proof, got {result:?}"
         );
+    }
+
+    // ----- Round 1 review fixes -----
+
+    /// F3: `activate()` from `Rotating` returns `RotationInProgress`.
+    #[test]
+    fn activate_refuses_from_rotating() {
+        let mut old = IdentityKey::from_seed([30u8; 32]);
+        old.activate(1_000).expect("activate");
+        let successor = IdentityKey::from_seed([31u8; 32]);
+        old.begin_rotation(successor, 2_000)
+            .expect("begin_rotation");
+        // Now in Rotating. activate() must refuse.
+        let result = old.activate(3_000);
+        assert!(
+            matches!(result, Err(WalletError::RotationInProgress)),
+            "activate from Rotating must return RotationInProgress, got {result:?}"
+        );
+    }
+
+    /// F4: `revoke()` from `Designated` is REFUSED (Designated → Revoked
+    /// is not a valid state-machine edge).
+    #[test]
+    fn revoke_refuses_from_designated() {
+        let mut key = IdentityKey::from_seed([32u8; 32]);
+        // Never activated. revoke() must NOT produce a revocation signature.
+        let result = key.revoke(1_000);
+        assert!(
+            matches!(
+                result,
+                Err(WalletError::NotActive {
+                    current_state: crate::lifecycle::LifecycleState::Designated,
+                })
+            ),
+            "revoke from Designated must return NotActive, got {result:?}"
+        );
+        // State unchanged; no proof produced.
+        assert_eq!(
+            key.lifecycle(),
+            crate::lifecycle::LifecycleState::Designated,
+            "Designated state must be preserved after refused revoke"
+        );
+        assert!(key.revoked_proof().is_none());
+    }
+
+    /// F5: `revoke()` from `Rotating` succeeds (Rotating → Revoked IS a
+    /// valid state-machine edge per RFC-0009 §Lifecycle table).
+    #[test]
+    fn revoke_succeeds_from_rotating() {
+        let mut old = IdentityKey::from_seed([33u8; 32]);
+        old.activate(1_000).expect("activate");
+        let successor = IdentityKey::from_seed([34u8; 32]);
+        old.begin_rotation(successor, 2_000)
+            .expect("begin_rotation");
+        assert_eq!(old.lifecycle(), crate::lifecycle::LifecycleState::Rotating);
+        // Revoke from Rotating should succeed and produce a proof.
+        old.revoke(3_000).expect("revoke from Rotating");
+        assert_eq!(old.lifecycle(), crate::lifecycle::LifecycleState::Revoked);
+        assert!(old.revoked_proof().is_some(), "proof must be captured");
+    }
+
+    /// F6: `revoke()` captures the `Ed25519(signer, "revoke")` audit proof;
+    /// it is `None` before, `Some(64 bytes)` after, and stable on idem-
+    /// potent re-invocation.
+    #[test]
+    fn revoke_captures_audit_proof() {
+        let mut key = IdentityKey::from_seed([35u8; 32]);
+        assert!(key.revoked_proof().is_none(), "no proof pre-revoke");
+        key.activate(1_000).expect("activate");
+        key.revoke(2_000).expect("revoke");
+        let proof1 = key.revoked_proof().expect("proof post-revoke");
+        assert_eq!(proof1.len(), 64);
+        // Idempotent re-revoke: timestamp unchanged, proof unchanged.
+        key.revoke(9_999).expect("idempotent revoke");
+        let proof2 = key.revoked_proof().expect("proof post-re-revoke");
+        assert_eq!(proof1, proof2, "proof must NOT change on idempotent revoke");
     }
 }

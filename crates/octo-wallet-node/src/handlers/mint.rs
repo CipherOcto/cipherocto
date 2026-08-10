@@ -11,10 +11,14 @@
 //! `octo_wallet::capability` re-export). Initial caveats are empty
 //! (caveats travel in subsequent attenuation envelope calls).
 
+use std::sync::Arc;
+
 use borsh::{BorshDeserialize, BorshSerialize};
 use octo_cap_macaroon::caveat::Caveat;
 use octo_cap_macaroon::wire::serialize_wire;
 use octo_ident::DidCodec;
+use octo_ident::WireDid;
+use octo_paid_query::SpendLedger;
 use octo_protocol::ProtocolError;
 use octo_wallet::capability::CapabilityToken;
 use octo_wallet::identity::IdentityKey;
@@ -61,13 +65,33 @@ impl MintRequest {
 /// `WALLET_MINT_CAPABILITY` handler implementation.
 pub struct MintHandler<'a> {
     identity: &'a IdentityKey,
+    /// Optional spend ledger (mission 0871e-phase5b). When present,
+    /// mints with a `payment_caveat` seed the ledger with
+    /// `(holder_did, capability_id) → caveat.budget`. Tests / non-paid
+    /// configurations pass `None`.
+    spend_ledger: Option<Arc<dyn SpendLedger>>,
 }
 
 impl<'a> MintHandler<'a> {
     /// Construct a new `MintHandler` bound to the given identity key.
+    /// No spend ledger (tests + non-paid deployments).
     #[must_use]
     pub const fn new(identity: &'a IdentityKey) -> Self {
-        Self { identity }
+        Self {
+            identity,
+            spend_ledger: None,
+        }
+    }
+
+    /// Construct a `MintHandler` with an injected spend ledger. Used
+    /// by production deployments to seed the ledger at mint time so
+    /// subsequent `WALLET_PAID_QUERY_VERIFY` calls can drain.
+    #[must_use]
+    pub fn with_ledger(identity: &'a IdentityKey, spend_ledger: Arc<dyn SpendLedger>) -> Self {
+        Self {
+            identity,
+            spend_ledger: Some(spend_ledger),
+        }
     }
 
     /// Mint a capability token + emit the canonical macaroon wire form
@@ -99,11 +123,33 @@ impl<'a> MintHandler<'a> {
         // `CIPHEROCTO_MINT_V1:<holder_did>` placeholder.
         let minted_wire = serialize_wire(&token).map_err(wire_error_to_protocol)?;
 
+        // Seed the spend ledger when a payment caveat was attached
+        // (mission 0871e-phase5b). Failure to seed surfaces as
+        // `AuthorizationFailed` so the mint is rejected — the proxy
+        // cannot drain against a missing balance record.
+        let note = if let (Some(p), Some(ledger)) =
+            (req.payment_caveat.as_ref(), self.spend_ledger.as_ref())
+        {
+            let holder_did = WireDid::new(req.holder_did.clone());
+            // Derive a stable MacaroonId from the capability root
+            // (capability_id = BLAKE3 keyed-hash per RFC-0957 §3.4).
+            let macaroon_id = token.macaroon.root_id;
+            ledger
+                .seed(&holder_did, &macaroon_id, p.budget)
+                .map_err(|e| ProtocolError::AuthorizationFailed(e.to_string()))?;
+            format!(
+                "minted for {} (payment caveat budget={} seeded to spend ledger)",
+                req.holder_did, p.budget
+            )
+        } else {
+            format!("minted for {}", req.holder_did)
+        };
+
         Ok(HandlerOutput::response(
             minted_wire.into_bytes(),
             octo_protocol::payload_kind::WALLET_MINT_CAPABILITY,
         )
-        .with_note(format!("minted for {}", req.holder_did)))
+        .with_note(note))
     }
 }
 
@@ -370,6 +416,39 @@ mod tests {
         assert!(
             restored.macaroon.caveats.is_empty(),
             "payment_caveat=None must yield empty caveat chain"
+        );
+    }
+
+    /// TV8 (mission 0871e-phase5b) — mint with a `PaymentCaveat`
+    /// AND a spend ledger seeds the ledger entry. Without the
+    /// ledger (default) the mint still succeeds — no drain
+    /// possible, but the caveat chain is preserved.
+    #[test]
+    fn handle_with_ledger_seeds_payment_caveat_budget() {
+        use octo_ident::WireDid;
+        let id = sample_identity();
+        let holder_did_str = sample_did();
+        let holder_did = WireDid::new(holder_did_str.clone());
+        let ledger = Arc::new(octo_paid_query::InMemorySpendLedger::new());
+        let handler = MintHandler::with_ledger(&id, ledger.clone());
+        let payment = octo_cap_macaroon::PaymentCaveat::new(1_000_000, "gpt-4", u64::MAX);
+        let req = MintRequest {
+            holder_did: holder_did_str.clone(),
+            capability: [0xab; 32],
+            payment_caveat: Some(payment.clone()),
+        };
+        let out = handler.handle(&req).unwrap();
+        let payload = out.response_payload.unwrap();
+        let wire = std::str::from_utf8(&payload).unwrap();
+        let restored = deserialize_wire(wire, req.holder_did.clone(), id.public_key_bytes())
+            .expect("wire deserialize");
+        // Ledger was seeded with caveat.budget.
+        assert_eq!(
+            ledger
+                .balance(&holder_did, &restored.macaroon.root_id)
+                .unwrap(),
+            Some(payment.budget),
+            "mint with payment caveat must seed the spend ledger"
         );
     }
 }

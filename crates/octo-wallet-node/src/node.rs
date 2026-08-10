@@ -42,6 +42,13 @@ pub struct WalletNodeConfig {
     pub identity: Arc<IdentityKey>,
     /// Network transport (RFC-0863 NodeTransport).
     pub transport: Arc<NodeTransport>,
+    /// Optional spend ledger (mission 0871e-phase5b). When present,
+    /// mints with a `PaymentCaveat` seed the ledger so subsequent
+    /// `WALLET_PAID_QUERY_VERIFY` calls can drain. When absent the
+    /// wallet serves all other payload kinds unchanged (mint still
+    /// emits the caveat in the macaroon chain; verify just can't
+    /// drain because there's no ledger entry).
+    pub spend_ledger: Option<Arc<dyn octo_paid_query::SpendLedger>>,
 }
 
 /// Opaque handle returned by `WalletNode::start()`.
@@ -152,7 +159,10 @@ impl WalletNode {
             }
             k if k == octo_protocol::payload_kind::WALLET_MINT_CAPABILITY => {
                 let req = MintRequest::from_borsh(&envelope.payload)?;
-                MintHandler::new(identity).handle(&req)
+                match self.config.spend_ledger.as_ref() {
+                    Some(ledger) => MintHandler::with_ledger(identity, ledger.clone()).handle(&req),
+                    None => MintHandler::new(identity).handle(&req),
+                }
             }
             k if k == octo_protocol::payload_kind::WALLET_ATTENUATE_CAPABILITY => {
                 let req = AttenuateRequest::from_borsh(&envelope.payload)?;
@@ -283,6 +293,7 @@ mod tests {
         let cfg = WalletNodeConfig {
             identity: identity.clone(),
             transport,
+            spend_ledger: None,
         };
         let node = WalletNode::new(cfg);
         let handle = node.start().expect("start should succeed");
@@ -297,6 +308,7 @@ mod tests {
         let cfg = WalletNodeConfig {
             identity: identity.clone(),
             transport,
+            spend_ledger: None,
         };
         let node = WalletNode::new(cfg);
         let _ = node.start();
@@ -312,6 +324,7 @@ mod tests {
         let cfg = WalletNodeConfig {
             identity: identity.clone(),
             transport,
+            spend_ledger: None,
         };
         let node = WalletNode::new(cfg);
         // Build a payload with an unknown payload kind (use a random 16-byte UUID).

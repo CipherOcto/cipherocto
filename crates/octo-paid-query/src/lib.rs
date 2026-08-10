@@ -62,6 +62,8 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+use std::sync::Arc;
+
 use borsh::{BorshDeserialize, BorshSerialize};
 use octo_cap_macaroon::MacaroonId;
 use octo_ident::WireDid;
@@ -167,51 +169,71 @@ pub enum PaidQueryRejectionReason {
 /// Per-holder rate-limit accumulator (Phase 5 MVP).
 ///
 /// Tracks prepaid spend per `(holder_did, macaroon_id)` so that
-/// `verify_paid_query` can drain atomically. Phase 5 MVP is in-memory
-/// (`parking_lot::Mutex<HashMap>`); the follow-on atomic-drain mission
-/// swaps the storage for the `HolderRegistry`-backed ledger per
-/// RFC-0862 atomic transaction substrate.
+/// `verify_paid_query` can drain atomically. Delegates to a
+/// `SpendLedger` backend (RFC-0862 atomic transaction substrate) —
+/// default backend is `InMemorySpendLedger`; production deployments
+/// inject a persistent ledger via `RateLimitBudget::with_ledger`.
 ///
 /// All mutations flow through `try_deduct` which returns the
 /// remaining balance (or a `PaidQueryError`). This is the single
-/// entry point so future persistence can be retrofitted without
-/// touching call sites.
-#[derive(Clone, Debug, Default)]
+/// entry point so persistence can be retrofitted without touching
+/// call sites.
+#[derive(Clone, Debug)]
 pub struct RateLimitBudget {
-    inner: std::sync::Arc<std::sync::Mutex<BudgetState>>,
+    ledger: Arc<dyn SpendLedger>,
 }
 
-#[derive(Debug, Default)]
-struct BudgetState {
-    per_holder: std::collections::HashMap<(WireDid, MacaroonId), MicroOCTO_W>,
+impl Default for RateLimitBudget {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RateLimitBudget {
-    /// Construct an empty in-memory budget.
+    /// Construct an in-memory budget (default backend).
     #[must_use]
     pub fn new() -> Self {
         Self {
-            inner: std::sync::Arc::new(std::sync::Mutex::new(BudgetState::default())),
+            ledger: Arc::new(InMemorySpendLedger::new()),
         }
+    }
+
+    /// Construct a budget backed by an injected `SpendLedger`. Used by
+    /// production deployments (Stoolap-backed ledger) and by tests
+    /// that supply a custom backend.
+    #[must_use]
+    pub fn with_ledger(ledger: Arc<dyn SpendLedger>) -> Self {
+        Self { ledger }
     }
 
     /// Seed the budget for a `(holder_did, macaroon_id)` pair. Used
     /// when the wallet provisions a capability — the caveat's budget
     /// is registered as the holder's prepaid balance.
-    pub fn seed(&self, holder_did: &WireDid, macaroon_id: &MacaroonId, budget: MicroOCTO_W) {
-        let mut state = self.inner.lock().expect("budget mutex poisoned");
-        state
-            .per_holder
-            .insert((holder_did.clone(), *macaroon_id), budget);
+    ///
+    /// # Errors
+    /// Returns `PaidQueryError::UnknownHolder` if the backend storage
+    /// fails (storage errors are mapped to `UnknownHolder` so the
+    /// handler fails closed).
+    pub fn seed(
+        &self,
+        holder_did: &WireDid,
+        macaroon_id: &MacaroonId,
+        budget: MicroOCTO_W,
+    ) -> Result<(), PaidQueryError> {
+        self.ledger
+            .seed(holder_did, macaroon_id, budget)
+            .map_err(Into::into)
     }
 
     /// Atomically deduct `cost` from the `(holder_did, macaroon_id)`
     /// balance. Returns the new remaining balance on success, or a
-    /// `PaidQueryError` on insufficient balance / missing record.
+    /// `PaidQueryError` on insufficient balance / missing record /
+    /// storage failure.
     ///
     /// # Errors
     /// - `PaidQueryError::UnknownHolder` if no balance exists for the
-    ///   `(holder_did, macaroon_id)` pair (wallet must `seed` first).
+    ///   `(holder_did, macaroon_id)` pair (wallet must `seed` first)
+    ///   OR if the backend storage fails (storage errors fail closed).
     /// - `PaidQueryError::InsufficientBalance` if balance < cost.
     pub fn try_deduct(
         &self,
@@ -219,30 +241,24 @@ impl RateLimitBudget {
         macaroon_id: &MacaroonId,
         cost: MicroOCTO_W,
     ) -> Result<MicroOCTO_W, PaidQueryError> {
-        let mut state = self.inner.lock().expect("budget mutex poisoned");
-        let key = (holder_did.clone(), *macaroon_id);
-        let balance = state
-            .per_holder
-            .get_mut(&key)
-            .ok_or(PaidQueryError::UnknownHolder)?;
-        if *balance < cost {
-            return Err(PaidQueryError::InsufficientBalance {
-                balance: *balance,
-                cost,
-            });
-        }
-        *balance -= cost;
-        Ok(*balance)
+        self.ledger
+            .try_deduct(holder_did, macaroon_id, cost)
+            .map_err(Into::into)
     }
 
     /// Read-only balance lookup. Returns `None` if no record exists.
-    #[must_use]
-    pub fn balance(&self, holder_did: &WireDid, macaroon_id: &MacaroonId) -> Option<MicroOCTO_W> {
-        let state = self.inner.lock().expect("budget mutex poisoned");
-        state
-            .per_holder
-            .get(&(holder_did.clone(), *macaroon_id))
-            .copied()
+    ///
+    /// # Errors
+    /// Returns `PaidQueryError::UnknownHolder` on backend storage
+    /// failure (fail closed).
+    pub fn balance(
+        &self,
+        holder_did: &WireDid,
+        macaroon_id: &MacaroonId,
+    ) -> Result<Option<MicroOCTO_W>, PaidQueryError> {
+        self.ledger
+            .balance(holder_did, macaroon_id)
+            .map_err(Into::into)
     }
 }
 
@@ -341,6 +357,9 @@ pub enum PaidQueryError {
     },
 }
 
+pub mod ledger;
+pub use ledger::{InMemorySpendLedger, SpendLedger, SpendLedgerError};
+
 /// Re-export the wallet `CapabilityToken` type so downstream crates
 /// (wallet-node handler) can refer to the full capability substrate
 /// without reaching into the wallet crate's `capability::` module
@@ -407,6 +426,12 @@ pub struct PaidQueryResponse {
     /// Phase 5 MVP; kept in the response so future variants can
     /// multiplex without rewriting the handler dispatch).
     pub request_payload_kind: PayloadKindId,
+    /// Atomic-drain receipt (mission 0871e-phase5b). Carries the
+    /// amount deducted from the spend ledger on a `Proceed`
+    /// decision and the remaining balance post-drain. On
+    /// `Partial` / `Reject` the receipt reports `drained_amount = 0`
+    /// and the prior balance (no mutation occurred).
+    pub receipt: PaymentReceipt,
 }
 
 impl PaidQueryResponse {
@@ -424,6 +449,40 @@ impl PaidQueryResponse {
     /// Returns `borsh::io::Error` on serialization failure.
     pub fn to_borsh(&self) -> Result<Vec<u8>, borsh::io::Error> {
         borsh::to_vec(self)
+    }
+}
+
+/// Atomic-drain receipt (RFC-0862 atomic transaction substrate,
+/// mission 0871e-phase5b).
+///
+/// Carries the post-drain state for the `(holder_did, macaroon_id)`
+/// spend-ledger entry. On `Proceed`, `drained_amount > 0` and
+/// `remaining_budget < pre_drain_budget`. On `Partial` / `Reject`,
+/// `drained_amount == 0` and `remaining_budget == pre_drain_budget`
+/// (no mutation occurred).
+///
+/// `drained_amount` is a `u128` to mirror the spend-ledger's
+/// arithmetic type (RFC-0871 §Adversary A7 — overflow impossible at
+/// worst-case scale).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub struct PaymentReceipt {
+    /// Amount deducted from the spend ledger on this call. Zero on
+    /// non-`Proceed` decisions.
+    pub drained_amount: MicroOCTO_W,
+    /// Remaining balance AFTER the drain. Equals `pre_drain_budget`
+    /// when no drain occurred (decision was `Partial` / `Reject`).
+    pub remaining_budget: MicroOCTO_W,
+}
+
+impl PaymentReceipt {
+    /// Construct a no-drain receipt (decision was `Partial` or
+    /// `Reject`; ledger unchanged).
+    #[must_use]
+    pub const fn no_drain(remaining_budget: MicroOCTO_W) -> Self {
+        Self {
+            drained_amount: 0,
+            remaining_budget,
+        }
     }
 }
 
@@ -567,7 +626,7 @@ mod tests {
         let b = RateLimitBudget::new();
         let holder = sample_holder();
         let mac = sample_macaroon_id();
-        b.seed(&holder, &mac, 1_000);
+        b.seed(&holder, &mac, 1_000).unwrap();
 
         // First deduct succeeds; remaining = 750.
         let remaining = b.try_deduct(&holder, &mac, 250).unwrap();
@@ -588,7 +647,7 @@ mod tests {
         );
 
         // Balance lookup unchanged after rejection.
-        assert_eq!(b.balance(&holder, &mac), Some(500));
+        assert_eq!(b.balance(&holder, &mac).unwrap(), Some(500));
     }
 
     #[test]
@@ -598,7 +657,7 @@ mod tests {
         let mac = sample_macaroon_id();
         let err = b.try_deduct(&holder, &mac, 1).unwrap_err();
         assert_eq!(err, PaidQueryError::UnknownHolder);
-        assert_eq!(b.balance(&holder, &mac), None);
+        assert_eq!(b.balance(&holder, &mac).unwrap(), None);
     }
 
     #[test]
@@ -607,14 +666,14 @@ mod tests {
         let h1 = WireDid::new("did:octo:zHolder1".to_string());
         let h2 = WireDid::new("did:octo:zHolder2".to_string());
         let mac = sample_macaroon_id();
-        b.seed(&h1, &mac, 100);
-        b.seed(&h2, &mac, 200);
+        b.seed(&h1, &mac, 100).unwrap();
+        b.seed(&h2, &mac, 200).unwrap();
 
         assert_eq!(b.try_deduct(&h1, &mac, 50).unwrap(), 50);
         assert_eq!(b.try_deduct(&h2, &mac, 50).unwrap(), 150);
         // h1 unaffected by h2's deduct.
-        assert_eq!(b.balance(&h1, &mac), Some(50));
-        assert_eq!(b.balance(&h2, &mac), Some(150));
+        assert_eq!(b.balance(&h1, &mac).unwrap(), Some(50));
+        assert_eq!(b.balance(&h2, &mac).unwrap(), Some(150));
     }
 
     #[test]
@@ -639,6 +698,7 @@ mod tests {
             },
             macaroon_id: sample_macaroon_id(),
             request_payload_kind: PAID_QUERY_VERIFY,
+            receipt: PaymentReceipt::no_drain(750),
         };
         let bytes = resp.to_borsh().unwrap();
         let back = PaidQueryResponse::from_borsh(&bytes).unwrap();

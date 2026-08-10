@@ -46,6 +46,12 @@ pub struct IdentityKey {
     /// `Ed25519(self.signer, "revoke")` produced at revocation time
     /// (RFC-0009 §Lifecycle row 4). Audit proof that the holder
     /// authorized the burn. `Some` only after `revoke()` succeeds.
+    ///
+    /// Forward-compat storage slot: this proof is consumed by the
+    /// deferred revocation-event gossip fan-out via `octo_transport`
+    /// (cross-node revocation propagation). The current surface
+    /// captures + exposes it; production gossip wiring ships in a
+    /// follow-on mission.
     revoked_proof: Option<[u8; 64]>,
     /// Successor `IdentityKey` for rotation (RFC-0009 §Lifecycle row 2).
     /// `None` until [`Self::begin_rotation`] succeeds; cleared on
@@ -377,6 +383,30 @@ impl IdentityKey {
         msg.extend_from_slice(new_pub);
         vk.verify(&msg, &sig)
             .map_err(|_| WalletError::InvalidSuccessorProof)
+    }
+
+    /// RFC-0009 §Lifecycle row 4 revocation proof verifier (pure helper).
+    ///
+    /// Re-derives the expected proof message (`b"revoke"`) and verifies
+    /// it against the identity's public key + captured proof signature.
+    /// Returns `Ok(())` on valid proof; `Err(InvalidRevocationProof)` on
+    /// mismatch.
+    ///
+    /// Mirrors `verify_successor_proof` for the revocation path. Used by
+    /// cross-node revocation gossip fan-out to confirm that a revocation
+    /// event was actually authorized by the holder (not forged).
+    ///
+    /// # Errors
+    /// Returns `WalletError::InvalidRevocationProof` if the public key
+    /// is not a valid Ed25519 point, the signature is malformed, or the
+    /// signature does not verify.
+    pub fn verify_revocation_proof(pubkey: &[u8; 32], proof: &[u8; 64]) -> Result<(), WalletError> {
+        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+        let vk =
+            VerifyingKey::from_bytes(pubkey).map_err(|_| WalletError::InvalidRevocationProof)?;
+        let sig = Signature::from_bytes(proof);
+        vk.verify(b"revoke", &sig)
+            .map_err(|_| WalletError::InvalidRevocationProof)
     }
 
     /// Crate-internal seed accessor for HKDF derivation. Returns the seed
@@ -1121,5 +1151,42 @@ mod tests {
         key.revoke(9_999).expect("idempotent revoke");
         let proof2 = key.revoked_proof().expect("proof post-re-revoke");
         assert_eq!(proof1, proof2, "proof must NOT change on idempotent revoke");
+    }
+
+    /// F14: captured `revoked_proof` actually verifies against the public
+    /// key as `Ed25519(pub, "revoke")`. Cross-node revocation gossip needs
+    /// this to confirm holder authorization (not forgery).
+    #[test]
+    fn revoke_captured_proof_verifies_against_pubkey() {
+        let mut key = IdentityKey::from_seed([36u8; 32]);
+        key.activate(1_000).expect("activate");
+        key.revoke(2_000).expect("revoke");
+        let proof = key.revoked_proof().expect("proof captured");
+        let pubkey = key.public_key_bytes();
+        IdentityKey::verify_revocation_proof(&pubkey, &proof)
+            .expect("captured proof must verify against pubkey");
+    }
+
+    /// F14 (tamper): tampered proof bytes or wrong pubkey must be rejected.
+    #[test]
+    fn verify_revocation_proof_rejects_tampered_proof() {
+        let mut key = IdentityKey::from_seed([37u8; 32]);
+        key.activate(1_000).expect("activate");
+        key.revoke(2_000).expect("revoke");
+        let mut tampered = key.revoked_proof().expect("proof captured");
+        tampered[0] ^= 0x01;
+        let result = IdentityKey::verify_revocation_proof(&key.public_key_bytes(), &tampered);
+        assert!(
+            matches!(result, Err(WalletError::InvalidRevocationProof)),
+            "tampered proof must invalidate, got {result:?}"
+        );
+        // Wrong pubkey (different identity).
+        let wrong_pub = [0xee; 32];
+        let proof = key.revoked_proof().expect("proof");
+        let result = IdentityKey::verify_revocation_proof(&wrong_pub, &proof);
+        assert!(
+            matches!(result, Err(WalletError::InvalidRevocationProof)),
+            "proof under wrong pubkey must fail, got {result:?}"
+        );
     }
 }

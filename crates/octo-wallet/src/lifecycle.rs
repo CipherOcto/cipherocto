@@ -19,8 +19,19 @@
 //! `#[repr(u8)]` values match RFC-0009 Appendix A:
 //! - `Designated = 0x00`
 //! - `Active     = 0x01`
-//! - `Rotating   = 0x02` (declared but no transitions in l1; l2 owns)
+//! - `Rotating   = 0x02` — `Active ↔ Rotating` transitions live in
+//!   `IdentityKey::begin_rotation` / `complete_rotation` / `abort_rotation`.
+//!   Both `Rotating → Revoked` and `Rotating → Active` are valid edges
+//!   per RFC-0009 §Lifecycle table.
 //! - `Revoked    = 0x03`
+//!
+//! ## Forward-compat surface
+//!
+//! `from_u8`, `is_active`, `is_revoked`, `is_rotating`, and
+//! `can_transition_to` are public API for the planned `IdentityKey` wire
+//! format (RFC-0009 v2) + state-machine introspection. Not called
+//! internally today; reserved for future cross-node state
+//! synchronization.
 
 use std::fmt;
 
@@ -35,8 +46,10 @@ pub enum LifecycleState {
     Designated = 0x00,
     /// Identity in use; signing operations live.
     Active = 0x01,
-    /// Successor link established; old key still valid during grace.
-    /// Declared here (l1); transitions land in l2.
+    /// Successor link established; old key valid during grace.
+    /// Transitions: `Active → Rotating` via `begin_rotation`,
+    /// `Rotating → Active` via `complete_rotation` or `abort_rotation`.
+    /// Old key may sign during the grace window per RFC-0009 §Lifecycle row 3.
     Rotating = 0x02,
     /// Identity retired; signature verification rejected. Terminal.
     Revoked = 0x03,

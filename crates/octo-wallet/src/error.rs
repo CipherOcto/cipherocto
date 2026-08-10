@@ -90,4 +90,10 @@ pub enum WalletError {
     /// `verify_successor_proof()` rejected the proof signature.
     #[error("invalid successor proof (signature verification failed)")]
     InvalidSuccessorProof,
+
+    /// `verify_revocation_proof()` rejected the proof signature.
+    /// Either the public key is not a valid Ed25519 point, the signature
+    /// is malformed, or the signature does not verify against `b"revoke"`.
+    #[error("invalid revocation proof (signature verification failed)")]
+    InvalidRevocationProof,
 }

@@ -57,8 +57,10 @@ Extend RFC-0009 §Capability Keys with:
     aggregated_pk_check).
 2. **`Xor2Of3Signer` additive `threshold_signer` field.**
 3. **`CapabilityBundleV2` NEW struct.**
-4. **`IdentityKey` 9 existing fields UNCHANGED + 3 new fields
-   ADDED** (per R9 H1 + R16 M4 — `coordinator` field added by R15 M3).
+4. **`IdentityKey` 9 existing fields UNCHANGED + 4 new fields
+   ADDED** (per R9 H1 + R16 M4 + R22 H1 — `coordinator` +
+   `shareholders` + `warned_threshold_misconfig` fields added
+   by R15 M3 / R19 M2 / R18 L10 respectively).
 5. **`Authorization::ThresholdSignature` struct variant EXTENDED
    in RFC-0871** (per R11 M3 + R12 H3 — ownership belongs to
    RFC-0871; this RFC documents the EXTENSION SCHEMA only;
@@ -129,7 +131,9 @@ This RFC is ready for promotion to Accepted when:
 5. **Phase 3 atomic with Phase 2** per RFC-0870 §NodeEnvelope
    Adoption.
 6. **`cargo test -p octo-wallet --lib -- --list phase1_tv_json | grep
-   -q .`** passes (per R11 H2 — corrected cargo test syntax).
+   -qE "phase1_tv_json_(v11_round_trip_equivalence|child_unlinkability|hsm_boundary_no_seed_exfil)"`**
+   passes (per R11 H2 + R22 L6 — enumerates all 3 TV functions;
+   previous grep pattern was too loose).
 7. **RFC-0870 §NodeEnvelope:PayloadKindId ordering:** all 7
    `PayloadKindId` UUIDs use V2 field ordering.
 8. **Mission `0957-f-v2-bundle` §Migration:** complete.
@@ -151,13 +155,13 @@ DischargeMacaroon` triplet to embed the full attenuation chain.
 
 **Requires:**
 
-- RFC-0009 (identity substrate) — Accepted
-- RFC-0853 §F3 — Accepted
+- RFC-0009 (identity substrate)
+- RFC-0853 §F3
 - **RFC-0871 §Specification** (per R10 H5 — `pub enum Authorization`
   variant; this RFC cross-references the extension; per R11 M3 —
   ownership belongs to RFC-0871)
 
-**Optional:** RFC-0958 (ZK capability circuit) — Draft
+**Optional:** RFC-0958 (ZK capability circuit)
 
 ## Roles and Authorities
 
@@ -276,10 +280,11 @@ pub struct IdentityKey {
     /// Per R19 M2: shareholders registered at ceremony (carried
     /// alongside threshold_signer).
     pub shareholders: Vec<ShareHolderId>,
-    /// Per R18 L10: set on `IdentityKey::new` when `threshold_signer`
-    /// is configured but `coordinator` is None (misconfiguration);
-    /// runtime warning logged once per IdentityKey instance.
-    pub warned_threshold_misconfig: AtomicBool,
+    /// Per R18 L10: REMOVED per R22 M2 — field was write-only
+    /// (initialized + set + assigned; never read). Warning happens
+    /// at construction; no once-guard needed.
+    /// (Placeholder removed; struct field count = 9 existing + 3
+    /// new = 12 per R22 H1.)
 }
 
 /// Per R11 C1: matches `HsmAdapter::sign` symbol in
@@ -330,7 +335,8 @@ pub enum GroupPublicKey {
 /// IdentityKey struct, set via `new`); `sign_threshold` uses the
 /// registry, not `from_index` placeholders.
 impl IdentityKey {
-    /// Per R18 L10: warn-once setter for threshold misconfiguration.
+    /// Per R18 L10 + R22 M2: warning happens at construction; no
+    /// once-guard needed (AtomicBool field removed per R22 M2).
     /// Per R19 M2: `shareholders` registered at ceremony.
     pub fn new(
         signer: Arc<dyn HsmAdapter>,
@@ -339,9 +345,7 @@ impl IdentityKey {
         coordinator: Option<Arc<dyn ThresholdCoordinator>>,
         shareholders: Vec<ShareHolderId>,
     ) -> Self {
-        let warned = AtomicBool::new(false);
         if threshold_signer.is_some() && coordinator.is_none() {
-            warned.store(true, Release);
             tracing::warn!("IdentityKey constructed with threshold_signer but no coordinator; sign_threshold will fail");
         }
         Self {
@@ -357,7 +361,6 @@ impl IdentityKey {
             threshold_signer,
             coordinator,
             shareholders,
-            warned_threshold_misconfig: warned,
         }
     }
 
@@ -613,9 +616,13 @@ vsss-rs = "=6.0.1"
 # Per R17 H2: 2.0.3 not on crates.io — use 2.2.0.
 frost-ed25519 = "=2.2.0"
 # Layer B-substrate — compile-time invariant assertions
-# (per R20 L7): `const _: () = assert!(MAX_M <= 7)` + chain depth
-# `const _: () = assert!(MAX_CHAIN_DEPTH <= 8)` (W3C VC-DID best
-# practice per G1).
+# (per R20 L7 + R22 L5): `const _: () = assert!(MAX_M >= 2)`
+# enforces M-of-N threshold floor (M-of-1 degenerate); chain depth
+# `const _: () = assert!(MAX_CHAIN_DEPTH >= 2)` enforces depth
+# floor for parent-child chain semantics. (Tautological
+# `MAX_M <= 7` / `MAX_CHAIN_DEPTH <= 8` removed per R22 L5 —
+# they didn't prevent future regressions; replaced with floor
+# sentinels that DO.)
 static_assertions = "=1.1.0"
 ```
 
@@ -688,13 +695,15 @@ Per RFC-0008 Execution Class mapping:
 - **Residual:** computationally infeasible (BLAKE3-256 security).
 - **Test:** `root_vs_child_distinct_keys`.
 
-### A2 — Chain depth > 8 DoS.
-- **Threat:** attacker mints chain at depth > 8.
+### A2 — Chain depth > `MAX_CHAIN_DEPTH` DoS.
+- **Threat:** attacker mints chain at depth > `MAX_CHAIN_DEPTH`.
 - **Attack:** verifier does exponential walk over chain.
 - **Defense:** `CapabilityError::ChainTooDeep` at mint time
-  (`depth > 8` returns error); no chain at depth > 8 exists.
+  (`depth > MAX_CHAIN_DEPTH` returns error); no chain at depth
+  > `MAX_CHAIN_DEPTH` exists. (Per R22 L4 — literal 8 replaced
+  with constant.)
 - **Residual:** soft cap (amendable).
-- **Test:** `chain-depth-bounded-at-8`.
+- **Test:** `chain-depth-bounded-at-MAX_CHAIN_DEPTH`.
 
 ### A3 — Threshold signing race.
 - **Threat:** attacker requests two concurrent sign ops.
@@ -856,6 +865,13 @@ pub struct CapabilityTokenV2 {
 - `OperatorId::pubkey()` method
 - **Clippy lint registration in `clippy.toml`** (per R21 L6 — owns
   §Configuration Validation threshold misconfig lint)
+- **`[[test]]` entry in `crates/octo-wallet/Cargo.toml`** (per R22 M3):
+  ```toml
+  [[test]]
+  name = "frost_nonce_determinism"
+  path = "tests/integration/frost_nonce_determinism.rs"
+  ```
+  Maps AC#8b subdirectory test path to binary name.
 
 **Commit 2 — impls + Xor2Of3Signer additive field:**
 - `BLS12381ThresholdSigner` impl
@@ -886,7 +902,9 @@ pub struct CapabilityTokenV2 {
 A4 enforced via:
 - `IdentityKey::sign` fails-closed with `ThresholdSignerRequired`
   when `threshold_signer` configured (per R11 M4)
-- `warned_threshold_misconfig: AtomicBool` runtime warning
+- `tracing::warn!` at construction when threshold_signer configured
+  but coordinator is None (per R22 M2 — AtomicBool removed; no
+  once-guard)
 - Clippy lint registered in `clippy.toml` (per R15 L9 — actual file
   is `clippy.toml`, not `cargo-clippy.toml`); owned by Commit 1
   per R21 L6 (substrate additions)

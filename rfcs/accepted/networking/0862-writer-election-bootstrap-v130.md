@@ -43,7 +43,7 @@ Extend RFC-0862 §Roles (writer/reader split) with:
 
 ## Breaking Changes
 
-1. **`DidDocument` uses RFC-0010 v1.3 + v1.4 amendment**.
+1. **`DidDocument` uses RFC-0010 v1.3 substrate + v1.5 amendment (rich 7-field shape + `VerificationMethod` enum)**.
 2. **Three-way `MissionId` type collision** → renamed
    `ShardMissionId`.
 3. **`NodeId` struct vs alias collision** → renamed
@@ -111,7 +111,7 @@ Two missions BLOCKED: `0871e-phase5c-1-cross-instance-drain` +
 **Requires:**
 
 - RFC-0855p-c §Platform-Mediated Handover
-- **RFC-0010 v1.4 amendment** (PENDING)
+- **RFC-0010 v1.4 + v1.5 amendments** (both FILED 2026-08-11; v1.4 = typed `ChainId`, v1.5 = rich `DidDocument` + `VerificationMethod`)
 - **RFC-0863 v1.9 amendment** (PENDING)
 - **RFC-0862 v1.2.1 patch** (per R11 H5 — v1.2 nodes MUST patch
   to v1.2.1+ before v1.3 rollout)
@@ -511,9 +511,12 @@ Per R11 H5 + R12 C1 rollout ordering:
   Phase 4: Decommission v1.2 nodes
 ```
 
-**`DidDocument` (per RFC-0010 v1.3 + v1.4 amendment — file INTRODUCED
-by the v1.4 amendment per R12 H8; pre-amendment `octo-ident` has
-only `lib.rs` + `test_helpers.rs`):**
+**`DidDocument` (per RFC-0010 v1.3 substrate + v1.5 amendment: v1.3
+storage extension INTRODUCED the 2-field struct (`public_key`,
+`revoked`) + `DidRegistry` trait + `InMemoryDidRegistry` impl;
+v1.5 EXTENDED to the rich 7-field shape + `VerificationMethod`
+enum consumed by this RFC §Specification §Substrate types.
+Pre-v1.3 `octo-ident` had only `lib.rs` + `test_helpers.rs`):**
 
 ```rust
 // Per R10 H11: feature-gated borsh derives (consistent with other types).
@@ -1081,7 +1084,7 @@ pub struct WalEntry {
     pub checksum: [u8; 32],     // blake3 over prefix_bytes || payload
 }
 
-// VerificationMethod (per RFC-0010 v1.4 amendment).
+// VerificationMethod (per RFC-0010 v1.5 amendment).
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
 pub enum VerificationMethod {
     Ed25519 { public_key: [u8; 32] },
@@ -1115,7 +1118,10 @@ V1.3 acceptance GATED on:
    H17 — v1.3 is BLOCKED on consolidation; consolidation is NOT
    BLOCKED on v1.3 as §Future Work previously implied).
 7. `NodeId` consolidation COMPLETED (same direction as AC#6).
-8. **RFC-0010 v1.4 amendment FILED**.
+8. **RFC-0010 v1.4 + v1.5 amendments FILED** (v1.4 = typed
+   `ChainId`; v1.5 = rich `DidDocument` + `VerificationMethod` —
+   both amendments shipped substrate required by §Specification §DidDocument
+   field shape referenced inline).
 9. **RFC-0863 v1.9 amendment FILED**.
 10. `force_relinquish_writer` lands via sealed trait pattern (per
     R12 H11 — `WriterElectionForceRelinquishSealed` supertrait) +
@@ -1692,8 +1698,10 @@ in §Future Work). Tracked here so cross-references from
 
 - **Cross-shard drain** — `DrainCoordinator` handles single-shard
   drains only. Cross-shard drain semantics undefined in v1.3;
-  tracked for v1.4 amendment (RFC-0862 v1.4). Until then, callers
-  MUST NOT route drain requests across shard boundaries.
+  v1.4 §Out of scope kept the same single-shard limit (the
+  concrete impl does not add cross-shard atomicity). Tracked for
+  a future amendment; until then, callers MUST NOT route drain
+  requests across shard boundaries.
 
 ## Future Work
 
@@ -1710,9 +1718,9 @@ in §Future Work). Tracked here so cross-references from
   blocks v1.3 acceptance per AC#12.**
 - Partition recovery via snapshot + replay — **per R14 L4 +
   R16 H1: tracked under mission `0871e-force-relinquish-governance`
-  v0.2 snapshot+replay AC. RFC-0862 v1.4 amendment will reference
-  this AC; concrete schema in §Specification lands with the v1.4
-  amendment (not v1.3).**
+  v0.2 snapshot+replay AC. v1.4 §Out of scope deferred the
+  concrete snapshot-recovery schema (only WAL replay landed);
+  full snapshot+replay AC remains a follow-on amendment.**
 - Byzantine coordinator defense — **per R14 L3 + R16 H2: tracked
   under mission `0871e-force-relinquish-governance` v0.2 Byzantine
   row AC; threshold-signature M-of-N quorum + sealed trait pattern

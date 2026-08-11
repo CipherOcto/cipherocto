@@ -128,13 +128,24 @@ pub enum DidWriteCoordinatorError {
     WalCorruption(String),
 }
 
-/// Sealed trait pattern: only the substrate crate (future
-/// `octo-sync`) can implement `DidWriteCoordinator`.
+/// Sealed trait pattern: only the substrate crate (`octo-sync`) can
+/// implement `DidWriteCoordinator`.
 ///
-/// This prevents downstream crates from inventing parallel coordinator
-/// interfaces (per [[cipherocto-design-principles]] §No parallel
-/// abstractions + §Stable Abstractions Principle).
-mod sealed {
+/// Per RFC-0862 v1.3 R12 + RFC-0862 v1.4 §Concrete Impl Extension:
+/// the substrate crate `octo-sync` provides the concrete
+/// `RaftLikeDidWriteCoordinator` impl. The seal is `pub` (not `pub(crate)`
+/// or private) so the substrate crate can `impl DidWriteCoordinatorSealed`
+/// at its own crate boundary. Downstream crates (consumers of the
+/// resolved `Arc<dyn DidWriteCoordinator>`) cannot add new impls
+/// because they have no reason to import `octo_ident::sealed` for
+/// production use — the trait is gated to the substrate crate via
+/// the layer model (per [[cipherocto-design-principles]] §Layer
+/// direction + §No parallel abstractions).
+pub mod sealed {
+    /// Sealed marker for `DidWriteCoordinator` impls. Only the
+    /// substrate crate (`octo-sync`) implements this trait. See
+    /// `octo_ident::write_coordinator` module docs for the layer
+    /// model rationale.
     pub trait DidWriteCoordinatorSealed {}
 }
 

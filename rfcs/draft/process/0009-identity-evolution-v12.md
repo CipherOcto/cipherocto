@@ -24,7 +24,7 @@ Extend RFC-0009 §Capability Keys with:
 
 ## Review State
 
-- **R1-R31 completed (2026-08-11); R32 in progress.**
+- **R1-R32 completed (2026-08-11); R33 in progress.**
 - **Termination condition:** convergence when a new round returns
   zero NEW findings.
 
@@ -109,19 +109,22 @@ R27 L2 + R30 L3 + R31 L1)
     `Authorization::ThresholdSignature` BC#5). Closes coverage
     gap for FROST-signed envelopes.
 
-## Additive Changes (per R28 M3 + R29 M1)
+## Additive Changes (per R28 M3 + R29 M1 + R33 M1)
 
-Per R28 M3 + R29 M1: BC#9 (`OperatorId` struct + `pubkey()`
-method) is ADDITIVE, not BREAKING (no prior identifier or symbol
-shadowed; OperatorId is fresh in v1.2 substrate). Moved here
-from §Breaking Changes. Other additive items in §Breaking Changes
-(BC#1a-1i NEW types/methods/errors, BC#2 additive field, BC#3
-NEW struct, BC#4 3 new fields ADDED, BC#6 NEW fn on NEW struct,
-BC#12 NEW variant) may also be listed here — not required, but
-documents additive/non-breaking scope explicitly.
+Per R28 M3 + R29 M1 + R33 M1: BC#9 (`OperatorId` struct +
+`pubkey()` method) is ADDITIVE, not BREAKING (no prior identifier
+or symbol shadowed; OperatorId is fresh in v1.2 substrate).
+**Mirrored to** this section (per R33 M1 — "Moved here" wording
+contradicted §Breaking Changes intro "mirrored" semantic; corrected).
+Other additive items in §Breaking Changes (BC#1a-1i NEW
+types/methods/errors, BC#2 additive field, BC#3 NEW struct,
+BC#4 3 new fields ADDED, BC#6 NEW fn on NEW struct, BC#12 NEW
+variant) may also be listed here — not required, but documents
+additive/non-breaking scope explicitly.
 
 - **9-ADDITIVE. `OperatorId` struct + `pubkey()` method** (per
-  R15 L4 + R28 M3) — fresh identifier in v1.2 substrate.
+  R15 L4 + R28 M3) — fresh identifier in v1.2 substrate;
+  mirrored from §Breaking Changes BC#9.
 
 ## Design Goals
 
@@ -348,6 +351,29 @@ pub trait HsmAdapter: Send + Sync {
     /// Per R12 H4: device transport can fail; Result wrapper required.
     fn get_public_key(&self) -> Result<PublicKeyBytes, HsmError>;
 }
+
+/// Per R33 L2: `IdentityHolderId` definition (referenced in
+/// §Roles and Authorities Source column).
+pub struct IdentityHolderId(pub [u8; 32]);
+
+/// Per R33 L3: `ShareHolderId` definition (referenced in
+/// §Roles and Authorities Source column + used in
+/// `ThresholdCoordinator::collect_shares` +
+/// `IdentityKey.shareholders` + `IdentityKey::new`).
+pub struct ShareHolderId(pub [u8; 32]);
+
+impl ShareHolderId {
+    /// Placeholder for ceremonial shareholder identification;
+    /// production wiring uses registry from RFC-0853 §F3 key-share
+    /// ceremony. Kept as separate constructor to make ceremony
+    /// registration explicit at call sites (replaces R15 M3
+    /// `from_index` placeholder which was undefined per R19 M2).
+    pub fn from_registry_index(_registry: &KeyShareRegistry, _index: u16) -> Self {
+        Self([0u8; 32])
+    }
+}
+
+pub struct KeyShareRegistry;
 
 pub type PublicKeyBytes = [u8; 32];
 
@@ -927,7 +953,9 @@ pub struct CapabilityTokenV2 {
 - NEW `ThresholdCoordinator` trait interface
 - Cargo deps pinned in `crates/octo-wallet/Cargo.toml`
 - `HsmAdapter::get_public_key` signature update
-- `OperatorId::pubkey()` method
+- `OperatorId::pubkey()` method + `OperatorId` struct definition
+  `pub struct OperatorId(pub [u8; 32]);` (per R33 L4 — Commit 1
+  owns struct definition, not just `pubkey()`)
 - **Clippy lint registration in `clippy.toml`** (per R21 L6 — owns
   §Configuration Validation threshold misconfig lint)
 - **`[[test]]` entry in `crates/octo-wallet/Cargo.toml`** (per R22 M3):
@@ -1105,6 +1133,6 @@ cargo doc --workspace --no-deps
 
 ## Review Process
 
-Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R31
+Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R32
 completed (2026-08-11). Convergence target: zero NEW findings per
-R33+.
+R34+.

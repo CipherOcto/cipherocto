@@ -24,16 +24,16 @@ Extend RFC-0009 §Capability Keys with:
 
 ## Review State
 
-- **R1-R29 completed (2026-08-11); R30 in progress.**
+- **R1-R30 completed (2026-08-11); R31 in progress.**
 - **Termination condition:** convergence when a new round returns
   zero NEW findings.
 
 ## Breaking Changes (10 main items + BC#9 ADDITIVE mirrored per
-R28 M3 / R30 L3 — corrected language per R11 M6 + R25 L4; BC#1
-expanded into 9 sub-items (1a-1i); section totals 19 numbered
-items (9 sub-items BC#1a-1i + 10 other main items BC#2-12 minus
-BC#9 ADDITIVE reclassified) per R18 M6 + R24 L3 + R25 L4 + R27 L2
-+ R30 L3)
+R28 M3 / R30 L3 / R31 L1 — corrected language per R11 M6 + R25 L4;
+BC#1 expanded into 9 sub-items (1a-1i); section totals 20 numbered
+items (9 sub-items BC#1a-1i + 11 main items BC#2-12 including BC#9
+mirrored to §Additive Changes) per R18 M6 + R24 L3 + R25 L4 +
+R27 L2 + R30 L3 + R31 L1)
 
 1a. **NEW: `ThresholdSigner::threshold_sign` method** (replaces
     `sign_combined`; no prior equivalent exists).
@@ -226,7 +226,7 @@ DischargeMacaroon` triplet to embed the full attenuation chain.
 | IdentityKey (logical) | `IdentityKey` (base + additive fields) | Sign; derive capability keys | Persistent per device (per R18 M3 — wraps HSM via `signer: Arc<dyn HsmAdapter>`) | RFC-0009 §Capability Keys |
 | Capability Issuer | `CapabilityTokenV2` (NOT CapabilityKey) carries `chain_depth` (per R11 H1) | Mint child keys | Stateless | RFC-0009 §Capability Keys |
 | Capability Holder | `CapabilityTokenV2` (NOT CapabilityKey) | Redeem | Per-capability expiry | RFC-0009 §Capability Keys |
-| Threshold Signer (object) | `BLS12381ThresholdSigner` / `SchnorrThresholdSigner` — role ID `threshold-signer` | Sign via M-of-N | Persistent per IdentityKey | `octo-wallet` §threshold (impls) + This RFC (trait) |
+| Threshold Signer (object) | role ID `threshold-signer` (impl types: `BLS12381ThresholdSigner` / `SchnorrThresholdSigner` per R31 L4) | Sign via M-of-N | Persistent per IdentityKey | `octo-wallet` §threshold (impls) + This RFC (trait) |
 | Key-Share Holder | `ShareHolderId` | Custody of one share | Persistent per device | This RFC |
 | Threshold Coordinator | `ThresholdCoordinator` (RFC-0853 §F3) | Collect M shares; aggregate | Per signing request | RFC-0853 §F3 |
 | Operator | `OperatorId` (per R15 L8 — NEW in v1.2) | Sign governance attestations (M-of-N) | Per ceremony | This RFC §MPC threshold identity |
@@ -664,9 +664,6 @@ these; AC#1 Commit 1 must ADD them):
 # Assumptions Audit Platform row (BLS12-381 deterministic across
 # x86_64 + ARM64).
 blst = "=0.3.11"
-# Per R25 L6: compile-time audit dep for A6 quartet (d); pins
-# the FROST nonce-reuse defense to a specific library version.
-cargo-audit = "=0.21.3"
 # Layer A — Shamir secret sharing (RFC-0009 §MPC threshold identity).
 # Per R17 H1: crate name is `vsss-rs` (NOT `vsss`); 0.5.2 not
 # on crates.io — use latest stable 6.0.1.
@@ -675,13 +672,14 @@ vsss-rs = "=6.0.1"
 # Per R17 H2: 2.0.3 not on crates.io — use 2.2.0.
 frost-ed25519 = "=2.2.0"
 # Layer B-substrate — compile-time invariant assertions
-# (per R20 L7 + R22 L5): `const _: () = assert!(MAX_M >= 2)`
-# enforces M-of-N threshold floor (M-of-1 degenerate); chain depth
-# `const _: () = assert!(MAX_CHAIN_DEPTH >= 2)` enforces depth
-# floor for parent-child chain semantics. (Tautological
-# `MAX_M <= 7` / `MAX_CHAIN_DEPTH <= 8` removed per R22 L5 —
-# they didn't prevent future regressions; replaced with floor
-# sentinels that DO.)
+# (per R20 L7 + R22 L5 + R31 M3): `const _: () = assert!(MAX_M >= 2)`
+# asserts the CONSTANT floor (prevents MAX_M < 2 future regression);
+# chain depth `const _: () = assert!(MAX_CHAIN_DEPTH >= 2)`
+# asserts depth constant floor. (Per R31 M3 — assertion guards
+# the constant, NOT runtime `m`; BoundedShareVec::new still
+# accepts m = 1 + threshold = 1 (M=1 degenerate). Add explicit
+# runtime `m >= 2` check below if M=1 must be forbidden at
+# runtime; for now M=1 is allowed.)
 static_assertions = "=1.1.0"
 ```
 
@@ -810,8 +808,9 @@ Per RFC-0008 Execution Class mapping:
   produce deterministic nonces (per R20 L8 + R21 L2 — 100K is a
   CI budget choice; large enough to detect cross-arch divergence
   without excessive runtime; NOT an RFC-9591 §5.3 mandated count);
-  (d) compile-time audit dep (`cargo-audit = "=0.21.3"` per R25 L6
-  — pinned in §Specification Cargo deps).
+  (d) **CI-tool audit dep** (per R31 M2 — `cargo audit` invoked
+  via §Validation exec command; NOT a `[dependencies]` entry; CI
+  tooling only).
 - **Residual:** library-level guarantee; trust boundary on
   `frost-ed25519` impl.
 - **Test:** `frost_nonce_determinism_100k_iterations`.
@@ -1067,7 +1066,7 @@ cargo test -p octo-wallet --lib -p octo-cap-macaroon --lib -p octo-cap-zk --lib
 cargo test -p octo-wallet --lib -- --list phase1_tv_json | grep -qE "phase1_tv_json_(v11_round_trip_equivalence|child_unlinkability|hsm_boundary_no_seed_exfil)"  # per R11 H2 + R22 L6 + R23 M2
 cargo test -p octo-wallet --lib phase1_tv_json_*  # per R11 L3 — actual test run
 cargo test -p octo-wallet --test frost_nonce_determinism  # per R21 L4 + AC#8b (R26 L4)
-cargo audit  # per R27 M1 — exercises A6 quartet (d) compile-time audit dep
+cargo audit  # per R27 M1 — exercises A6 quartet (d) CI-tool audit dep (R31 M2)
 cargo doc --workspace --no-deps
 ```
 
@@ -1106,6 +1105,6 @@ cargo doc --workspace --no-deps
 
 ## Review Process
 
-Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R29
+Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R30
 completed (2026-08-11). Convergence target: zero NEW findings per
-R31+.
+R32+.

@@ -57,7 +57,9 @@ pub use governance::{
 };
 pub use hlc::{ClockFn, HlcClock, HlcError, HlcTimestamp};
 pub use ids::{ConfigError, OperatorId, OperatorSet, ShardKey, ShardMissionId, WriterNodeId};
-pub use raft_like::{RaftLikeDidWriteCoordinator, RaftLikeWriterElection};
+pub use raft_like::{
+    RaftLikeDidWriteCoordinator, RaftLikeDrainCoordinator, RaftLikeWriterElection,
+};
 pub use records::{
     ActualDrained, BootstrapError, DidWriteCoordinatorError, DrainCoordinatorError, NonceRecord,
     PeerIdentity, WriterElectionError,

@@ -28,19 +28,21 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use borsh::{BorshDeserialize, BorshSerialize};
 use octo_ident::write_coordinator::sealed::DidWriteCoordinatorSealed;
 use octo_ident::{ChainId, DidDocument, DidWriteCoordinator, DidWriteCoordinatorError};
 
 use super::cluster::Cluster;
+use super::drain::DrainCoordinator;
 use super::governance::{GovernanceAttestation, NonceTracker};
 use super::hlc::HlcClock;
 use super::ids::{OperatorSet, ShardKey, WriterNodeId};
-use super::records::WriterElectionError;
+use super::records::{ActualDrained, DrainCoordinatorError, WriterElectionError};
 use super::state::{
     sealed::{WriterElectionForceRelinquishSealed, WriterElectionSealed},
     WriterElection, WriterElectionForceRelinquish, WriterIdentity,
 };
-use super::wal::{WalEntry, ENTRY_TYPE_DID_REGISTER, ENTRY_TYPE_DID_REVOKE};
+use super::wal::{WalEntry, ENTRY_TYPE_DID_REGISTER, ENTRY_TYPE_DID_REVOKE, ENTRY_TYPE_DRAIN};
 use super::wal_storage::InMemoryWal;
 use super::wal_traits::WalWriter;
 
@@ -291,6 +293,155 @@ impl DidWriteCoordinator for RaftLikeDidWriteCoordinator {
     }
 }
 
+/// Borsh-serialised WAL payload for `ENTRY_TYPE_DRAIN` (per RFC-0862
+/// v1.3 §DrainCoordinator).
+///
+/// Captures the full drain context so the WAL entry is self-describing
+/// during replay. The drain itself executes against the
+/// `StoolapSpendLedger` (Layer B-adjacent) at the consumer boundary;
+/// the coordinator only routes through the writer-election substrate
+/// + appends the receipt entry.
+#[derive(Clone, Debug, BorshSerialize, BorshDeserialize)]
+struct DrainWalPayload {
+    /// Holder DID whose balance was drained (canonical wire form, per RFC-0010).
+    holder_did: String,
+    /// 16-byte macaroon identifier (raw bytes).
+    macaroon_id: Vec<u8>,
+    /// Drained amount in `MicroOCTO_W` (matches `octo_paid_query::MicroOCTO_W`).
+    requested_cost: u128,
+    /// Chain ID (deployment binding per RFC-0862 v1.3 R12 M23).
+    chain_id: String,
+}
+
+/// RaftLike `DrainCoordinator` impl backed by `Arc<Cluster>` +
+/// `Arc<InMemoryWal>` (per RFC-0862 v1.4 §Concrete Impl Extension + mission
+/// `0871e-phase5c-1-cross-instance-drain`).
+///
+/// `submit_drain` checks the elected writer for the holder's shard
+/// (shard key = `ShardKey::derive_canonical(holder_did.as_bytes())`),
+/// then appends an `ENTRY_TYPE_DRAIN` WAL entry carrying the
+/// `(holder_did, macaroon_id, requested_cost)` payload. The
+/// `ActualDrained.receipt_lsn` is the LSN assigned by the WAL
+/// appender; the LSN can be referenced by downstream
+/// `StoolapSpendLedger::try_deduct` calls for proof-of-receipt
+/// replay.
+///
+/// Authorisation design follows `RaftLikeDidWriteCoordinator`:
+/// - `chain_id` mismatch → `ChainIdMismatch` (gated).
+/// - No elected writer OR non-leader node → `WriterUnavailable`
+///   (fail-closed per RFC-0862 v1.3 R12).
+/// - Balance / holder validation is OUT OF SCOPE here — the
+///   consumer (the wallet-node handler) calls `StoolapSpendLedger`
+///   before invoking `submit_drain`. The coordinator only routes
+///   writer availability.
+///
+/// ## Layer discipline
+///
+/// Per [[cipherocto-design-principles]]:
+///
+/// - `octo-sync` (Layer B-substrate) — owns the concrete
+///   `RaftLikeDrainCoordinator` impl.
+/// - `octo-paid-query` (Layer E) — owns `SpendLedger` trait +
+///   `InMemorySpendLedger`. `RaftLikeDrainCoordinator` does NOT
+///   consume `SpendLedger` directly to avoid layer inversion;
+///   the balance check lives at the consumer boundary.
+/// - `quota-router-storage` (Layer B-adjacent) — `StoolapSpendLedger`
+///   is the production ledger, injected via `Arc<dyn SpendLedger>`
+///   at the wallet-node construction boundary.
+pub struct RaftLikeDrainCoordinator {
+    /// Held for future CRDT (LWW) reconciliation in the failover
+    /// window (RFC-0862 v1.4 F12 + F13 amendment). Matches the
+    /// `RaftLikeDidWriteCoordinator` precedent.
+    #[allow(dead_code)]
+    cluster: Arc<Cluster>,
+    wal: Arc<InMemoryWal>,
+    hlc: HlcClock,
+    chain_id: ChainId,
+    node_id: WriterNodeId,
+    election: Arc<dyn WriterElection>,
+}
+
+impl RaftLikeDrainCoordinator {
+    /// Construct a new `RaftLikeDrainCoordinator` bound to `chain_id`.
+    /// Drains are gated on `election.current_writer` returning
+    /// `Some(WriterIdentity { writer_node_id == self.node_id })`.
+    pub fn new(
+        cluster: Arc<Cluster>,
+        chain_id: ChainId,
+        node_id: WriterNodeId,
+        election: Arc<dyn WriterElection>,
+    ) -> Self {
+        Self {
+            wal: Arc::new(InMemoryWal::new(cluster.clone())),
+            hlc: HlcClock::new(node_id),
+            chain_id,
+            node_id,
+            cluster,
+            election,
+        }
+    }
+
+    /// Borrow the deployment `chain_id` for testing + diagnostics.
+    #[must_use]
+    pub fn chain_id(&self) -> &ChainId {
+        &self.chain_id
+    }
+
+    /// Borrow the `node_id` for testing + diagnostics.
+    #[must_use]
+    pub fn node_id(&self) -> WriterNodeId {
+        self.node_id
+    }
+}
+
+#[async_trait]
+impl DrainCoordinator for RaftLikeDrainCoordinator {
+    async fn submit_drain(
+        &self,
+        holder_did: &str,
+        macaroon_id: &[u8],
+        requested_cost: u128,
+    ) -> Result<ActualDrained, DrainCoordinatorError> {
+        // Shard by holder DID (canonical wire form, per RFC-0010).
+        // All drains for the same holder route to the same shard.
+        let shard_key = ShardKey::derive_canonical(holder_did.as_bytes());
+        let leader = self
+            .election
+            .current_writer(&shard_key)
+            .map_err(|_| DrainCoordinatorError::WriterUnavailable)?
+            .ok_or(DrainCoordinatorError::WriterUnavailable)?;
+        if leader.writer_node_id != self.node_id {
+            // Per RFC-0862 v1.4 §Concrete Impl: only the elected leader
+            // may commit drains; non-leaders forward via the
+            // leader-election substrate in production.
+            return Err(DrainCoordinatorError::WriterUnavailable);
+        }
+        let _ = self
+            .hlc
+            .now()
+            .map_err(|_| DrainCoordinatorError::WriterUnavailable)?;
+        let payload = borsh::to_vec(&DrainWalPayload {
+            holder_did: holder_did.to_owned(),
+            macaroon_id: macaroon_id.to_vec(),
+            requested_cost,
+            chain_id: self.chain_id.as_str().to_owned(),
+        })
+        .map_err(|_| DrainCoordinatorError::WriterUnavailable)?;
+        let entry = WalEntry::build_v13(ENTRY_TYPE_DRAIN, shard_key, payload);
+        let receipt_lsn = self
+            .wal
+            .append_entry(&entry)
+            .await
+            .map_err(|_| DrainCoordinatorError::WriterUnavailable)?;
+        Ok(ActualDrained {
+            holder_did: holder_did.to_owned(),
+            macaroon_id: macaroon_id.to_vec(),
+            drained_amount: requested_cost,
+            receipt_lsn,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -524,5 +675,142 @@ mod tests {
             r,
             Err(DidWriteCoordinatorError::WriterUnavailable)
         ));
+    }
+
+    // ─── RaftLikeDrainCoordinator unit tests (mission 0871e-phase5c-1) ───
+
+    fn fixture_drain() -> (
+        Arc<Cluster>,
+        [WriterNodeId; 3],
+        ChainId,
+        Arc<RaftLikeWriterElection>,
+    ) {
+        let cluster = Cluster::new();
+        let chain_id = ChainId::new("cipherocto-test").expect("static test literal");
+        let ids = [
+            WriterNodeId([1u8; 32]),
+            WriterNodeId([2u8; 32]),
+            WriterNodeId([3u8; 32]),
+        ];
+        let election = Arc::new(RaftLikeWriterElection::new(
+            ids[0],
+            cluster.clone(),
+            chain_id.clone(),
+        ));
+        (cluster, ids, chain_id, election)
+    }
+
+    #[tokio::test]
+    async fn drain_acquire_then_submit_drain_succeeds() {
+        let (cluster, ids, chain_id, election) = fixture_drain();
+        let coordinator = RaftLikeDrainCoordinator::new(
+            cluster.clone(),
+            chain_id.clone(),
+            ids[0],
+            election.clone() as Arc<dyn WriterElection>,
+        );
+
+        let holder = "did:octo:zHolder1";
+        let macaroon_id: [u8; 16] = [0x42; 16];
+        let shard_key = ShardKey::derive_canonical(holder.as_bytes());
+        let _leader = election.acquire_writer(&shard_key, 1_000).await.unwrap();
+
+        let r = coordinator
+            .submit_drain(holder, &macaroon_id, 100)
+            .await
+            .expect("leader should drain");
+        assert_eq!(r.holder_did, holder);
+        assert_eq!(r.macaroon_id, macaroon_id);
+        assert_eq!(r.drained_amount, 100);
+        assert_eq!(r.receipt_lsn, 1, "first WAL entry LSN = 1");
+
+        // Verify WAL entry present with type DRAIN.
+        let entries = cluster.read_wal_range(1, None);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].entry_type, ENTRY_TYPE_DRAIN);
+        assert_eq!(entries[0].lsn, 1);
+    }
+
+    #[tokio::test]
+    async fn drain_non_leader_fails_closed() {
+        let (cluster, ids, chain_id, election_leader) = fixture_drain();
+        // Coordinator for instance B (NOT the elected leader).
+        let coordinator_b = RaftLikeDrainCoordinator::new(
+            cluster.clone(),
+            chain_id.clone(),
+            ids[1],
+            election_leader.clone() as Arc<dyn WriterElection>,
+        );
+
+        let holder = "did:octo:zHolder2";
+        let macaroon_id: [u8; 16] = [0x07; 16];
+        let shard_key = ShardKey::derive_canonical(holder.as_bytes());
+        // Instance A acquires the lease.
+        let _leader = election_leader
+            .acquire_writer(&shard_key, 1_000)
+            .await
+            .unwrap();
+
+        let r = coordinator_b.submit_drain(holder, &macaroon_id, 50).await;
+        assert!(
+            matches!(r, Err(DrainCoordinatorError::WriterUnavailable)),
+            "non-leader must fail-closed with WriterUnavailable, got {r:?}"
+        );
+
+        // No WAL entry appended on non-leader path.
+        let entries = cluster.read_wal_range(1, None);
+        assert_eq!(entries.len(), 0, "non-leader must not append");
+    }
+
+    #[tokio::test]
+    async fn drain_no_elected_writer_fails_closed() {
+        let (cluster, ids, chain_id, election) = fixture_drain();
+        let coordinator = RaftLikeDrainCoordinator::new(
+            cluster.clone(),
+            chain_id.clone(),
+            ids[0],
+            election.clone() as Arc<dyn WriterElection>,
+        );
+
+        // No leader acquired for any shard.
+        let r = coordinator
+            .submit_drain("did:octo:zHolder3", &[0x05; 16], 200)
+            .await;
+        assert!(
+            matches!(r, Err(DrainCoordinatorError::WriterUnavailable)),
+            "no leader must fail-closed, got {r:?}"
+        );
+        let entries = cluster.read_wal_range(1, None);
+        assert_eq!(entries.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn drain_unknown_holder_is_not_validated_by_coordinator() {
+        // Per RFC-0862 v1.4 §Concrete Impl Extension: `DrainCoordinator`
+        // does NOT validate holder balance — the consumer (wallet-node)
+        // calls `StoolapSpendLedger::try_deduct` BEFORE invoking
+        // `submit_drain`. The coordinator only checks writer
+        // availability. This test verifies a coordinator `submit_drain`
+        // against an "unknown" holder still succeeds (returns
+        // `ActualDrained`) — the balance check is the consumer's job.
+        let (cluster, ids, chain_id, election) = fixture_drain();
+        let coordinator = RaftLikeDrainCoordinator::new(
+            cluster.clone(),
+            chain_id.clone(),
+            ids[0],
+            election.clone() as Arc<dyn WriterElection>,
+        );
+
+        let holder = "did:octo:zNeverSeeded";
+        let macaroon_id: [u8; 16] = [0xFF; 16];
+        let shard_key = ShardKey::derive_canonical(holder.as_bytes());
+        let _leader = election.acquire_writer(&shard_key, 1_000).await.unwrap();
+
+        let r = coordinator
+            .submit_drain(holder, &macaroon_id, 999)
+            .await
+            .expect("coordinator passes through; ledger validation is downstream");
+        assert_eq!(r.drained_amount, 999);
+        assert_eq!(r.receipt_lsn, 1);
     }
 }

@@ -1178,7 +1178,7 @@ Per RFC-0008 Execution Class mapping:
 | Resource | Drain log bounded to 10k per read-replica | Unbounded growth | LRU + alarm |
 | Time | Election 3s + heartbeat 500ms | Wrong values | Profiling |
 | Operator | Coordinator quorum M-of-N | Single coordinator = SPOF | M-of-N governance |
-| Operator | Coordinator state survives restart | Coordinator restart loses `elected_at_hlc` | Persistent log + snapshot + WAL replay (per R14 L4 — concrete plan in mission `0871e-force-relinquish-governance` v1.4 amendment) |
+| Operator | Coordinator state survives restart | Coordinator restart loses `elected_at_hlc` | Persistent log + snapshot + WAL replay (per R14 L4 — concrete plan in mission `0871e-force-relinquish-governance` v0.2 snapshot+replay AC) |
 | Operator | `force_relinquish_writer` operator SET = same as key-share ceremony | Operator confusion | Document explicitly |
 | Resource | **HLC `last_logical: u32` overflow behavior** = refuse-new (per R11 M4) | Class A violation | `HlcError::LogicalOverflow` |
 
@@ -1309,17 +1309,19 @@ fn init_node(
 - Coordinator quorum M-of-N key share ceremony (governance) —
   **mission `0871e-force-relinquish-governance` FILED (R14 H1);
   blocks v1.3 acceptance per AC#12.**
-- Partition recovery via snapshot + replay — **per R14 L4: tracked
-  under mission `0871e-force-relinquish-governance` snapshot+replay
-  field; v1.4 amendment or follow-on mission files the concrete
-  schema (deferred from v1.3).**
-- Byzantine coordinator defense — **per R14 L3: tracked under
-  mission `0871e-force-relinquish-governance` Byzantine row;
-  threshold-signature M-of-N quorum + sealed trait pattern +
-  chain_id binding (R12 M23) is the v1.3 baseline. Full Byzantine
-  fault tolerance (BFT) consensus for coordinator cluster lands
-  v2.0 per `cipherocto-design-principles.md` (Layer A; RFC-mandated
-  before any production deployment).**
+- Partition recovery via snapshot + replay — **per R14 L4 +
+  R16 H1: tracked under mission `0871e-force-relinquish-governance`
+  v0.2 snapshot+replay AC. RFC-0862 v1.4 amendment will reference
+  this AC; concrete schema in §Specification lands with the v1.4
+  amendment (not v1.3).**
+- Byzantine coordinator defense — **per R14 L3 + R16 H2: tracked
+  under mission `0871e-force-relinquish-governance` v0.2 Byzantine
+  row AC; threshold-signature M-of-N quorum + sealed trait pattern
+  + chain_id binding (R12 M23) is the v1.3 baseline. Full
+  Byzantine fault tolerance (BFT) consensus for coordinator
+  cluster lands in `crates/octo-coordinator-bft/` (Layer A)
+  per `cipherocto-design-principles.md` once RFC-0862 v2.0
+  amendment is filed.**
 - `force_relinquish_writer` governance — mission `0871e-force-relinquish-governance`
   FILED (R14 H1).
 - ~~`MissionId` consolidation GATED on v1.3 acceptance~~ — RESOLVED

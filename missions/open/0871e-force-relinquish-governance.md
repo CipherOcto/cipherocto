@@ -36,6 +36,22 @@ operator role separation (RFC-0853 §F3 substrate).
 - [ ] Cross-crate dep audit: no B/E/L-D violation (force_relinquish
       substrate = Layer B; governance ceremony operator = governance
       layer per `cipherocto-design-principles.md`).
+- [ ] **Snapshot+replay field (per R16 H1):** coordinator state
+      recovery via persistent snapshot + WAL replay. Schema:
+      `Snapshot { elected_at_hlc: HlcTimestamp, term: u64,
+      operator_set: OperatorSet, writer_identity: WriterIdentity }`
+      written on `force_relinquish_writer` success + on
+      `relinquish_writer` flush success. Replay priority:
+      snapshot → WAL replay from snapshot tip_lsn → in-memory
+      state.
+- [ ] **Byzantine row (per R16 H2):** threshold-signature M-of-N
+      quorum (sealed trait + chain_id binding) is the v1.3
+      baseline. Full Byzantine fault tolerance (BFT) consensus
+      for coordinator cluster lands v2.0. BFT requires: (a) quorum
+      intersection proof (any two quorums share ≥1 honest member),
+      (b) view-change protocol, (c) PBFT-style prepare/commit
+      phases. Track in `crates/octo-coordinator-bft/` (Layer A)
+      once RFC-0862 v2.0 amendment is filed.
 
 ## Implementation Guide
 
@@ -71,3 +87,4 @@ Sequence:
 | Version | Date       | Status | Changes |
 | ------- | ---------- | ------ | ------- |
 | v0.1    | 2026-08-10 | open   | Mission filed per R14 H1 — phantom pointer resolution. End-to-end governance + sealed trait + durable nonce storage + chain_id binding substrate. |
+| v0.2    | 2026-08-10 | open   | Per R16 H1/H2 — added snapshot+replay field AC + Byzantine row AC for §Future Work cross-refs in RFC-0862 v1.3.0. |

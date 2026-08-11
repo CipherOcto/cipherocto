@@ -24,7 +24,7 @@ Extend RFC-0009 §Capability Keys with:
 
 ## Review State
 
-- **R1-R14 completed (2026-08-10).**
+- **R1-R15 completed (2026-08-10).**
 - **Termination condition:** convergence when a new round returns
   zero NEW findings.
 
@@ -57,8 +57,8 @@ Extend RFC-0009 §Capability Keys with:
     aggregated_pk_check).
 2. **`Xor2Of3Signer` additive `threshold_signer` field.**
 3. **`CapabilityBundleV2` NEW struct.**
-4. **`IdentityKey` 9 existing fields UNCHANGED + 2 new fields
-   ADDED** (per R9 H1).
+4. **`IdentityKey` 9 existing fields UNCHANGED + 3 new fields
+   ADDED** (per R9 H1 + R16 M4 — `coordinator` field added by R15 M3).
 5. **`Authorization::ThresholdSignature` struct variant EXTENDED
    in RFC-0871** (per R11 M3 + R12 H3 — ownership belongs to
    RFC-0871; this RFC documents the EXTENSION SCHEMA only;
@@ -244,7 +244,7 @@ depth.
 
 ```rust
 /// Per `crates/octo-wallet/src/identity.rs` — 9 existing fields
-/// UNCHANGED + 2 new fields ADDED.
+/// UNCHANGED + 3 new fields ADDED (per R16 M4).
 pub struct IdentityKey {
     pub signer: Arc<dyn HsmAdapter>,
     pub public_key: [u8; 32],
@@ -257,6 +257,8 @@ pub struct IdentityKey {
     pub deprecated: bool,
 
     pub threshold_signer: Option<Arc<dyn ThresholdSigner>>,
+    /// Per R15 M3 + R16 M3: coordinator handle (Option; None = single-key only).
+    pub coordinator: Option<Arc<dyn ThresholdCoordinator>>,
     pub warned_threshold_misconfig: AtomicBool,
 }
 
@@ -291,11 +293,10 @@ pub trait ThresholdSigner: Send + Sync {
 /// `Result<Signature, WalletError>` wrapping
 /// `ed25519_dalek::Signature`); threshold fallback rewrapped via
 /// `WalletError::Hsm(...)`.
-/// Per R15 M3: ThresholdCoordinator wired via IdentityKey field.
+/// Per R15 M3 + R16 M3: ThresholdCoordinator wired via `coordinator`
+/// field on IdentityKey struct (not impl block; Rust forbids
+/// field decls in impl).
 impl IdentityKey {
-    /// Per R15 M3: coordinator handle (Option; None = single-key only).
-    pub coordinator: Option<Arc<dyn ThresholdCoordinator>>,
-
     pub fn sign(&self, msg: &[u8]) -> Result<ed25519_dalek::Signature, WalletError> {
         if self.threshold_signer.is_some() {
             return Err(WalletError::Hsm(HsmError::ThresholdSignerRequired));
@@ -499,8 +500,10 @@ Per RFC-0008 Execution Class mapping:
 - **HKDF-BLAKE3 PRF property.**
 - **BLS aggregate PK check + DKG-based PK-set derivation.**
 - **FROST nonce reuse** defenses (per R11 H6 — quartet, not triplet):
-  (a) exact crate pin, (b) `blst` `DISABLE_PREFETCH` build flag,
-  (c) integration test, (d) compile-time audit dep.
+  (a) exact crate pin, (b) `frost-ed25519` cross-arch determinism
+  check (per R15 H1 — `blst` `DISABLE_PREFETCH` is BLS-specific,
+  not FROST nonce defense), (c) integration test, (d) compile-time
+  audit dep.
 - **Cascading revocation** purely cryptographic.
 - **HSM seed isolation.**
 - **Share-loss DoS.**
@@ -819,6 +822,6 @@ cargo doc --workspace --no-deps
 
 ## Review Process
 
-Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R14
+Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R15
 completed (2026-08-10). Convergence target: zero NEW findings per
-R15+.
+R16+.

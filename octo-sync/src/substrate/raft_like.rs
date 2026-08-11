@@ -56,16 +56,24 @@ pub struct RaftLikeWriterElection {
     node_id: WriterNodeId,
     hlc: HlcClock,
     cluster: Arc<Cluster>,
+    /// Deployment `chain_id` used for governance attestation verification
+    /// (per RFC-0862 v1.3 R12 M23 — `attestation.chain_id` MUST match this
+    /// configured deployment chain_id or the attestation is rejected with
+    /// `ChainIdMismatch`).
+    chain_id: ChainId,
 }
 
 impl RaftLikeWriterElection {
     /// Construct a new `RaftLikeWriterElection` for `node_id` backed by
-    /// the shared `cluster`.
-    pub fn new(node_id: WriterNodeId, cluster: Arc<Cluster>) -> Self {
+    /// the shared `cluster` and bound to deployment `chain_id` (per
+    /// RFC-0862 v1.3 R12 M23 — deployment binding for governance
+    /// attestations).
+    pub fn new(node_id: WriterNodeId, cluster: Arc<Cluster>, chain_id: ChainId) -> Self {
         Self {
             node_id,
             hlc: HlcClock::new(node_id),
             cluster,
+            chain_id,
         }
     }
 }
@@ -118,9 +126,12 @@ impl WriterElectionForceRelinquish for RaftLikeWriterElection {
         nonce_tracker: &NonceTracker,
     ) -> Result<(), WriterElectionError> {
         // Verify the attestation first (chain_id binding + M-of-N + nonce consume).
+        // Pass the configured deployment chain_id (NOT `attestation.chain_id`)
+        // so the deployment-binding check fires when the operator set tries
+        // to replay an attestation minted for a different deployment.
         super::governance::verify_governance_attestation(
             shard_key,
-            &attestation.chain_id,
+            &self.chain_id,
             attestation,
             configured_operator_set,
             nonce_tracker,
@@ -297,7 +308,11 @@ mod tests {
         let cluster = Cluster::new();
         let chain_id = ChainId::new("cipherocto-test").expect("static test literal");
         let node_id = WriterNodeId([1u8; 32]);
-        let election = Arc::new(RaftLikeWriterElection::new(node_id, cluster.clone()));
+        let election = Arc::new(RaftLikeWriterElection::new(
+            node_id,
+            cluster.clone(),
+            chain_id.clone(),
+        ));
         let coordinator = RaftLikeDidWriteCoordinator::new(
             cluster.clone(),
             chain_id.clone(),
@@ -326,7 +341,11 @@ mod tests {
         let cluster = Cluster::new();
         let chain_id = ChainId::new("cipherocto-test").expect("static test literal");
         let node_id = WriterNodeId([1u8; 32]);
-        let election = Arc::new(RaftLikeWriterElection::new(node_id, cluster.clone()));
+        let election = Arc::new(RaftLikeWriterElection::new(
+            node_id,
+            cluster.clone(),
+            chain_id.clone(),
+        ));
         let coordinator = RaftLikeDidWriteCoordinator::new(
             cluster.clone(),
             chain_id.clone(),
@@ -350,8 +369,16 @@ mod tests {
         let chain_id = ChainId::new("cipherocto-test").expect("static test literal");
         let leader_id = WriterNodeId([1u8; 32]);
         let follower_id = WriterNodeId([2u8; 32]);
-        let leader_election = Arc::new(RaftLikeWriterElection::new(leader_id, cluster.clone()));
-        let follower_election = Arc::new(RaftLikeWriterElection::new(follower_id, cluster.clone()));
+        let leader_election = Arc::new(RaftLikeWriterElection::new(
+            leader_id,
+            cluster.clone(),
+            chain_id.clone(),
+        ));
+        let follower_election = Arc::new(RaftLikeWriterElection::new(
+            follower_id,
+            cluster.clone(),
+            chain_id.clone(),
+        ));
         let d = doc(11);
         let hash = octo_ident::canonical_hash(&d);
         let shard_key = ShardKey::derive_canonical(&hash);
@@ -389,8 +416,13 @@ mod tests {
     #[tokio::test]
     async fn chain_id_mismatch_rejected() {
         let cluster = Cluster::new();
+        let chain_id = ChainId::new("cipherocto-test").expect("static test literal");
         let node_id = WriterNodeId([1u8; 32]);
-        let election = Arc::new(RaftLikeWriterElection::new(node_id, cluster.clone()));
+        let election = Arc::new(RaftLikeWriterElection::new(
+            node_id,
+            cluster.clone(),
+            chain_id.clone(),
+        ));
         let coordinator = RaftLikeDidWriteCoordinator::new(
             cluster.clone(),
             ChainId::new("cipherocto-test").expect("static test literal"),
@@ -412,7 +444,11 @@ mod tests {
         let cluster = Cluster::new();
         let chain_id = ChainId::new("cipherocto-test").expect("static test literal");
         let node_id = WriterNodeId([1u8; 32]);
-        let election = Arc::new(RaftLikeWriterElection::new(node_id, cluster.clone()));
+        let election = Arc::new(RaftLikeWriterElection::new(
+            node_id,
+            cluster.clone(),
+            chain_id.clone(),
+        ));
         let coordinator = RaftLikeDidWriteCoordinator::new(
             cluster.clone(),
             chain_id.clone(),
@@ -437,7 +473,11 @@ mod tests {
         let cluster = Cluster::new();
         let chain_id = ChainId::new("cipherocto-test").expect("static test literal");
         let node_id = WriterNodeId([1u8; 32]);
-        let election = Arc::new(RaftLikeWriterElection::new(node_id, cluster.clone()));
+        let election = Arc::new(RaftLikeWriterElection::new(
+            node_id,
+            cluster.clone(),
+            chain_id.clone(),
+        ));
         let coordinator = RaftLikeDidWriteCoordinator::new(
             cluster.clone(),
             chain_id.clone(),
@@ -463,7 +503,11 @@ mod tests {
         let cluster = Cluster::new();
         let chain_id = ChainId::new("cipherocto-test").expect("static test literal");
         let node_id = WriterNodeId([1u8; 32]);
-        let election = Arc::new(RaftLikeWriterElection::new(node_id, cluster.clone()));
+        let election = Arc::new(RaftLikeWriterElection::new(
+            node_id,
+            cluster.clone(),
+            chain_id.clone(),
+        ));
         let coordinator = RaftLikeDidWriteCoordinator::new(
             cluster.clone(),
             chain_id.clone(),

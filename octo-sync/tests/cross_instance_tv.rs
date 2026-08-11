@@ -68,7 +68,13 @@ async fn tv1_atomic_register() {
 
     let elections: Vec<Arc<RaftLikeWriterElection>> = ids
         .iter()
-        .map(|id| Arc::new(RaftLikeWriterElection::new(*id, cluster.clone())))
+        .map(|id| {
+            Arc::new(RaftLikeWriterElection::new(
+                *id,
+                cluster.clone(),
+                chain_id.clone(),
+            ))
+        })
         .collect();
     let coordinators: Vec<Arc<RaftLikeDidWriteCoordinator>> = ids
         .iter()
@@ -125,10 +131,19 @@ async fn tv1_atomic_register() {
 #[tokio::test]
 async fn tv2_leader_failover() {
     let (cluster, ids) = fixture();
+    let chain_id = ChainId::new("cipherocto-test").expect("static test literal");
     cluster.set_lease_duration_ms(1);
     let shard_key = ShardKey([7u8; 32]);
-    let writer_a = Arc::new(RaftLikeWriterElection::new(ids[0], cluster.clone()));
-    let writer_b = Arc::new(RaftLikeWriterElection::new(ids[1], cluster.clone()));
+    let writer_a = Arc::new(RaftLikeWriterElection::new(
+        ids[0],
+        cluster.clone(),
+        chain_id.clone(),
+    ));
+    let writer_b = Arc::new(RaftLikeWriterElection::new(
+        ids[1],
+        cluster.clone(),
+        chain_id.clone(),
+    ));
 
     let id_a = writer_a.acquire_writer(&shard_key, 1_000).await.unwrap();
     assert_eq!(id_a.writer_node_id, ids[0]);
@@ -153,8 +168,9 @@ async fn tv2_leader_failover() {
 #[tokio::test]
 async fn tv3_wal_replay() {
     let (cluster, ids) = fixture();
+    let chain_id = ChainId::new("cipherocto-test").expect("static test literal");
     let shard_key = ShardKey([7u8; 32]);
-    let writer = RaftLikeWriterElection::new(ids[0], cluster.clone());
+    let writer = RaftLikeWriterElection::new(ids[0], cluster.clone(), chain_id.clone());
     let _ = writer.acquire_writer(&shard_key, 1_000).await.unwrap();
     let wal = octo_sync::substrate::InMemoryWal::new(cluster.clone());
 
@@ -212,7 +228,11 @@ async fn tv4_fail_closed() {
     let (cluster, _ids) = fixture();
     let chain_id = ChainId::new("cipherocto-test").expect("static test literal");
     let node_id = WriterNodeId([99u8; 32]);
-    let election = Arc::new(RaftLikeWriterElection::new(node_id, cluster.clone()));
+    let election = Arc::new(RaftLikeWriterElection::new(
+        node_id,
+        cluster.clone(),
+        chain_id.clone(),
+    ));
     let coordinator = RaftLikeDidWriteCoordinator::new(
         cluster.clone(),
         chain_id.clone(),
@@ -236,7 +256,11 @@ async fn tv5_crdt_lww_succeeds_without_leader() {
     let (cluster, _ids) = fixture();
     let chain_id = ChainId::new("cipherocto-test").expect("static test literal");
     let node_id = WriterNodeId([55u8; 32]);
-    let election = Arc::new(RaftLikeWriterElection::new(node_id, cluster.clone()));
+    let election = Arc::new(RaftLikeWriterElection::new(
+        node_id,
+        cluster.clone(),
+        chain_id.clone(),
+    ));
     let coordinator = RaftLikeDidWriteCoordinator::new(
         cluster.clone(),
         chain_id.clone(),

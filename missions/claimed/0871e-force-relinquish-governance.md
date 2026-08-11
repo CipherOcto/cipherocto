@@ -1,7 +1,7 @@
 # Mission: 0871e-force-relinquish-governance — Operator-Set Governance for `force_relinquish_writer`
 
-**Status:** open (2026-08-10)
-**Claimant:** @unassigned
+**Status:** claimed (2026-08-10) → LANDED (2026-08-11)
+**Claimant:** @claude
 **Owner:** @cipherocto
 **RFC:** RFC-0862 v1.3.0 (Draft 2026-08-10) — AC#12
 
@@ -88,3 +88,29 @@ Sequence:
 | ------- | ---------- | ------ | ------- |
 | v0.1    | 2026-08-10 | open   | Mission filed per R14 H1 — phantom pointer resolution. End-to-end governance + sealed trait + durable nonce storage + chain_id binding substrate. |
 | v0.2    | 2026-08-10 | open   | Per R16 H1/H2 — added snapshot+replay field AC + Byzantine row AC for §Future Work cross-refs in RFC-0862 v1.3.0. |
+| v0.3    | 2026-08-11 | LANDED | Trait impl + 8 end-to-end TV (`governance_relinquish_tv`) + chain_id field on `RaftLikeWriterElection` (closes tautological chain_id check bug) + chain_id wired into all 16 call sites. |
+
+## LANDED substrate (2026-08-11)
+
+**New files**
+- `octo-sync/tests/governance_relinquish_tv.rs` (NEW, 8 TV).
+
+**Modified files**
+- `octo-sync/src/substrate/raft_like.rs` — added `chain_id: ChainId` field + constructor arg; `force_relinquish_writer` now passes `&self.chain_id` (deployment-configured) to `verify_governance_attestation` instead of the tautological `&attestation.chain_id`. Closes a real chain_id-binding bypass that the original code shipped with.
+- `octo-sync/src/substrate/raft_like.rs` — 7 unit tests updated for new constructor signature.
+- `octo-sync/tests/cross_instance_tv.rs` — 5 call sites + chain_id declarations updated for new constructor.
+
+**Test vectors landed (8)**
+- TV-1 two_of_three_force_relinquish_clears_lease (happy path)
+- TV-2 wrong_chain_id_rejected (`ChainIdMismatch`)
+- TV-3 replayed_nonce_rejected (`NonceReplayed` after first consume)
+- TV-4 unauthorized_signer_rejected (`UnauthorizedSigner`)
+- TV-5 below_threshold_rejected (`InsufficientSignatures`)
+- TV-6 invalid_signature_rejected (`InvalidSignature`)
+- TV-7 duplicate_signer_rejected (`DuplicateSigner`)
+- TV-8 shard_key_mismatch_rejected (`ShardKeyMismatch`)
+
+## Outstanding AC from mission v0.2
+
+- **Snapshot+replay field (R16 H1)** — `Snapshot { elected_at_hlc, term, operator_set, writer_identity }` written on `force_relinquish_writer` success + on `relinquish_writer` flush. Lands in a follow-on mission (state-recovery substrate per RFC-0862 v1.3 §Replay Protocol).
+- **Byzantine row (R16 H2)** — full BFT consensus for coordinator cluster deferred to RFC-0862 v2.0 + `crates/octo-coordinator-bft/` (Layer A).

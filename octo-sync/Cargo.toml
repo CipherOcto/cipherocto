@@ -52,7 +52,7 @@ octo-ident = { path = "../crates/octo-ident", features = ["borsh"] }
 # Property-based testing (RFC-0862 §Test Vectors)
 proptest = "1.4"
 # Async test runtime (sync feature needed for the multi-instance test harness)
-tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "sync"] }
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
 # Mutex for the cluster fixture in tests/cross_instance_tv.rs
 parking_lot = "0.12"
 # Enable the `test-util` feature for integration tests so they can use the
@@ -64,6 +64,10 @@ octo-sync = { path = ".", features = ["test-util"] }
 # to downstream crates (e.g., the cipherocto sync engine tests). The MockAdapter
 # is always available in this crate's own `cargo test` (gated on `#[cfg(test)]`).
 test-util = []
+# Opt-in CRDT (Last-Write-Wins) substrate for partition-tolerance
+# (RFC-0862 v1.4 §Motivation 4 + §Concrete Impl Extension §CRDT).
+# Default builds stay linearizable via the leader-election path.
+crdt = []
 
 [profile.release]
 codegen-units = 1

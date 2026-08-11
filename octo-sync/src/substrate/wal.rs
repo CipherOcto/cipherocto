@@ -53,7 +53,7 @@ pub const ENTRY_TYPE_DID_REVOKE: u8 = 0x22;
 /// prefix (`Magic..PayloadLength`). The checksum is `blake3(prefix_bytes
 /// || payload)` — tampering with LSN / EntryType / ShardKey invalidates
 /// the checksum (per R12 H16).
-#[derive(Clone, BorshSerialize, BorshDeserialize)]
+#[derive(Clone, Debug, BorshSerialize, BorshDeserialize)]
 pub struct WalEntry {
     /// Either `WAL_MAGIC_V12` or `WAL_MAGIC_V13`.
     pub magic: u32,
@@ -78,6 +78,65 @@ pub struct WalEntry {
     pub prefix_bytes: [u8; 60],
     /// blake3-256 over `prefix_bytes || payload`.
     pub checksum: [u8; 32],
+}
+
+impl WalEntry {
+    /// Construct a v1.3 WAL entry with valid 60-byte `prefix_bytes`
+    /// (per the §V2 WAL header_size extension) but placeholder LSN
+    /// fields. Use `finalize_with_lsns` to set the LSN chain + recompute
+    /// the checksum once the writer knows the assigned LSN.
+    ///
+    /// Layout (big-endian throughout, per the WAL spec):
+    /// - `prefix[0..4]` = `WAL_MAGIC_V13.to_be_bytes()`
+    /// - `prefix[4]` = `entry_type`
+    /// - `prefix[5]` = `1` (entry version for v1.3)
+    /// - `prefix[6..8]` = `[0, 0]` (reserved)
+    /// - `prefix[8..40]` = `shard_key.0`
+    /// - `prefix[40..48]` = `lsn.to_be_bytes()` (placeholder 0)
+    /// - `prefix[48..56]` = `previous_lsn.to_be_bytes()` (placeholder 0)
+    /// - `prefix[56..60]` = `payload_length.to_be_bytes()`
+    pub fn build_v13(entry_type: u8, shard_key: ShardKey, payload: Vec<u8>) -> Self {
+        let payload_length = payload.len() as u32;
+        let mut prefix = [0u8; 60];
+        prefix[0..4].copy_from_slice(&WAL_MAGIC_V13.to_be_bytes());
+        prefix[4] = entry_type;
+        prefix[5] = 1;
+        prefix[6..8].copy_from_slice(&[0u8; 2]);
+        prefix[8..40].copy_from_slice(&shard_key.0);
+        prefix[40..48].copy_from_slice(&0u64.to_be_bytes());
+        prefix[48..56].copy_from_slice(&0u64.to_be_bytes());
+        prefix[56..60].copy_from_slice(&payload_length.to_be_bytes());
+        let mut input = Vec::with_capacity(60 + payload.len());
+        input.extend_from_slice(&prefix);
+        input.extend_from_slice(&payload);
+        let checksum = *blake3::hash(&input).as_bytes();
+        Self {
+            magic: WAL_MAGIC_V13,
+            entry_type,
+            entry_version: 1,
+            reserved: [0, 0],
+            shard_key,
+            lsn: 0,
+            previous_lsn: 0,
+            payload_length,
+            payload,
+            prefix_bytes: prefix,
+            checksum,
+        }
+    }
+
+    /// Update the LSN chain fields + recompute the checksum. Called by
+    /// the WAL appender once it knows the assigned LSN.
+    pub fn finalize_with_lsns(&mut self, lsn: u64, previous_lsn: u64) {
+        self.lsn = lsn;
+        self.previous_lsn = previous_lsn;
+        self.prefix_bytes[40..48].copy_from_slice(&lsn.to_be_bytes());
+        self.prefix_bytes[48..56].copy_from_slice(&previous_lsn.to_be_bytes());
+        let mut input = Vec::with_capacity(60 + self.payload.len());
+        input.extend_from_slice(&self.prefix_bytes);
+        input.extend_from_slice(&self.payload);
+        self.checksum = *blake3::hash(&input).as_bytes();
+    }
 }
 
 #[cfg(test)]

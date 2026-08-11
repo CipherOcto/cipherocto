@@ -81,7 +81,7 @@ pub async fn replay_wal(
         attempted_entries,
     };
     let entries = wal.read_range(start_lsn, None).await?;
-    let mut prev_lsn = start_lsn;
+    let mut prev_lsn = start_lsn.saturating_sub(1);
     for entry in entries {
         attempted_entries += 1;
         if entry.lsn != prev_lsn + 1 {
@@ -147,4 +147,59 @@ pub async fn replay_wal(
 pub fn apply_entry(entry: &WalEntry, shard_key: &ShardKey) -> Result<(), WriterElectionError> {
     let _ = (entry, shard_key);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::substrate::cluster::Cluster;
+    use crate::substrate::wal_storage::InMemoryWal;
+    use std::sync::atomic::{AtomicBool, AtomicU32};
+
+    #[tokio::test]
+    async fn replay_from_lsn1_succeeds_with_3_entries() {
+        let cluster = Cluster::new();
+        let wal = InMemoryWal::new(cluster.clone());
+        let sk = ShardKey([0u8; 32]);
+        for i in 1u8..=3u8 {
+            let entry = WalEntry::build_v13(0x10, sk, vec![i]);
+            wal.append_entry(&entry).await.unwrap();
+        }
+        let mut ctx = WriterContext {
+            relinquish_pending: AtomicBool::new(false),
+            flush_attempts: AtomicU32::new(0),
+            max_attempts: 100,
+            replay_state: ReplayState::Idle,
+        };
+        let reader = InMemoryWal::new(cluster);
+        let tip = replay_wal(&mut ctx, 1, &sk, &reader).await.unwrap();
+        assert_eq!(tip, 3);
+        assert!(matches!(
+            ctx.replay_state,
+            ReplayState::Complete {
+                tip_lsn: 3,
+                total_entries: 3
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn replay_from_lsn0_succeeds() {
+        let cluster = Cluster::new();
+        let wal = InMemoryWal::new(cluster.clone());
+        let sk = ShardKey([0u8; 32]);
+        for i in 1u8..=2u8 {
+            let entry = WalEntry::build_v13(0x10, sk, vec![i]);
+            wal.append_entry(&entry).await.unwrap();
+        }
+        let mut ctx = WriterContext {
+            relinquish_pending: AtomicBool::new(false),
+            flush_attempts: AtomicU32::new(0),
+            max_attempts: 100,
+            replay_state: ReplayState::Idle,
+        };
+        let reader = InMemoryWal::new(cluster);
+        let tip = replay_wal(&mut ctx, 0, &sk, &reader).await.unwrap();
+        assert_eq!(tip, 2);
+    }
 }

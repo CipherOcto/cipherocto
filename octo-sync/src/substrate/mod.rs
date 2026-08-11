@@ -33,18 +33,22 @@
 //! task #120).
 
 pub mod bootstrap;
+pub mod cluster;
 pub mod did;
 pub mod drain;
 pub mod governance;
 pub mod hlc;
 pub mod ids;
+pub mod raft_like;
 pub mod records;
 pub mod state;
 pub mod wal;
+pub mod wal_storage;
 pub mod wal_traits;
 
 // Convenience re-exports for downstream callers.
 pub use bootstrap::BootstrapOrchestrator;
+pub use cluster::{Cluster, DEFAULT_LEASE_DURATION_MS};
 pub use did::{canonical_hash, EncodedDidDocument};
 pub use drain::DrainCoordinator;
 pub use governance::{
@@ -53,6 +57,7 @@ pub use governance::{
 };
 pub use hlc::{ClockFn, HlcClock, HlcError, HlcTimestamp};
 pub use ids::{ConfigError, OperatorId, OperatorSet, ShardKey, ShardMissionId, WriterNodeId};
+pub use raft_like::{RaftLikeDidWriteCoordinator, RaftLikeWriterElection};
 pub use records::{
     ActualDrained, BootstrapError, DidWriteCoordinatorError, DrainCoordinatorError, NonceRecord,
     PeerIdentity, WriterElectionError,
@@ -64,6 +69,7 @@ pub use wal::{
     WalEntry, ENTRY_TYPE_DID_REGISTER, ENTRY_TYPE_DID_REVOKE, ENTRY_TYPE_DRAIN,
     ENTRY_TYPE_NONCE_RECORD, WAL_MAGIC_V12, WAL_MAGIC_V13,
 };
+pub use wal_storage::InMemoryWal;
 pub use wal_traits::{apply_entry, replay_wal, WalNonceScanner, WalReader, WalWriter};
 
 #[allow(deprecated)]

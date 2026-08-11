@@ -295,7 +295,7 @@ mod tests {
     #[tokio::test]
     async fn acquire_then_submit_register_succeeds() {
         let cluster = Cluster::new();
-        let chain_id = ChainId::new("cipherocto-test");
+        let chain_id = ChainId::new("cipherocto-test").expect("static test literal");
         let node_id = WriterNodeId([1u8; 32]);
         let election = Arc::new(RaftLikeWriterElection::new(node_id, cluster.clone()));
         let coordinator = RaftLikeDidWriteCoordinator::new(
@@ -324,7 +324,7 @@ mod tests {
     #[tokio::test]
     async fn register_without_leader_fails_closed() {
         let cluster = Cluster::new();
-        let chain_id = ChainId::new("cipherocto-test");
+        let chain_id = ChainId::new("cipherocto-test").expect("static test literal");
         let node_id = WriterNodeId([1u8; 32]);
         let election = Arc::new(RaftLikeWriterElection::new(node_id, cluster.clone()));
         let coordinator = RaftLikeDidWriteCoordinator::new(
@@ -347,7 +347,7 @@ mod tests {
     #[tokio::test]
     async fn register_from_non_leader_fails() {
         let cluster = Cluster::new();
-        let chain_id = ChainId::new("cipherocto-test");
+        let chain_id = ChainId::new("cipherocto-test").expect("static test literal");
         let leader_id = WriterNodeId([1u8; 32]);
         let follower_id = WriterNodeId([2u8; 32]);
         let leader_election = Arc::new(RaftLikeWriterElection::new(leader_id, cluster.clone()));
@@ -393,7 +393,7 @@ mod tests {
         let election = Arc::new(RaftLikeWriterElection::new(node_id, cluster.clone()));
         let coordinator = RaftLikeDidWriteCoordinator::new(
             cluster.clone(),
-            ChainId::new("cipherocto-test"),
+            ChainId::new("cipherocto-test").expect("static test literal"),
             node_id,
             election.clone(),
         );
@@ -402,7 +402,7 @@ mod tests {
         let shard_key = ShardKey::derive_canonical(&hash);
         let _ = election.acquire_writer(&shard_key, 1_000).await.unwrap();
 
-        let wrong_chain = ChainId::new("other-chain");
+        let wrong_chain = ChainId::new("other-chain").expect("static test literal");
         let r = coordinator.submit_register(&hash, &wrong_chain, &d).await;
         assert!(matches!(r, Err(DidWriteCoordinatorError::ChainIdMismatch)));
     }
@@ -410,7 +410,7 @@ mod tests {
     #[tokio::test]
     async fn revoke_creates_revoke_entry() {
         let cluster = Cluster::new();
-        let chain_id = ChainId::new("cipherocto-test");
+        let chain_id = ChainId::new("cipherocto-test").expect("static test literal");
         let node_id = WriterNodeId([1u8; 32]);
         let election = Arc::new(RaftLikeWriterElection::new(node_id, cluster.clone()));
         let coordinator = RaftLikeDidWriteCoordinator::new(
@@ -435,7 +435,7 @@ mod tests {
     #[allow(deprecated)]
     async fn crdt_local_fallback_succeeds_without_leader() {
         let cluster = Cluster::new();
-        let chain_id = ChainId::new("cipherocto-test");
+        let chain_id = ChainId::new("cipherocto-test").expect("static test literal");
         let node_id = WriterNodeId([1u8; 32]);
         let election = Arc::new(RaftLikeWriterElection::new(node_id, cluster.clone()));
         let coordinator = RaftLikeDidWriteCoordinator::new(
@@ -461,7 +461,7 @@ mod tests {
     #[allow(deprecated)]
     async fn non_crdt_local_fallback_returns_writer_unavailable() {
         let cluster = Cluster::new();
-        let chain_id = ChainId::new("cipherocto-test");
+        let chain_id = ChainId::new("cipherocto-test").expect("static test literal");
         let node_id = WriterNodeId([1u8; 32]);
         let election = Arc::new(RaftLikeWriterElection::new(node_id, cluster.clone()));
         let coordinator = RaftLikeDidWriteCoordinator::new(

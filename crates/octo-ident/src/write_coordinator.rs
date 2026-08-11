@@ -52,52 +52,8 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
+use crate::chain::ChainId;
 use crate::registry::DidDocument;
-
-/// Typed wrapper for a chain identifier (e.g., `"cipherocto-mainnet"`,
-/// `"ethereum-attestation"`).
-///
-/// Per RFC-0010 v1.3 §Future Work F2, multi-chain DID resolution needs
-/// a chain discriminator on `DidRegistry::*` operations. The v1.3
-/// storage extension explicitly defers the chain-namespace semantics
-/// to a future RFC-0010 v1.4 amendment (mission
-/// `0010-f2-multi-chain-did-resolution`).
-///
-/// For now, `ChainId` is a stringly-typed newtype that gives the
-/// `DidWriteCoordinator` trait surface a stable identity parameter.
-/// Once v1.4 lands, `ChainId` will gain:
-/// - typed RFC-allocated namespace constants (per
-///   [[cipherocto-design-principles]] §Extension over enumeration)
-/// - validation that user-extension chains fall in the reserved range
-/// - canonical serialization for wire-form inclusion in coordinator RPCs
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(
-    feature = "borsh",
-    derive(borsh::BorshSerialize, borsh::BorshDeserialize)
-)]
-pub struct ChainId(pub String);
-
-impl ChainId {
-    /// Wrap a chain namespace string. Caller is responsible for
-    /// namespace validation; future RFC-0010 v1.4 will tighten this
-    /// to an RFC-allocated namespace + user-extension range.
-    #[must_use]
-    pub fn new(s: impl Into<String>) -> Self {
-        Self(s.into())
-    }
-
-    /// Borrow the inner string.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::fmt::Display for ChainId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
 
 /// Errors returned by `DidWriteCoordinator` operations.
 ///
@@ -312,7 +268,7 @@ mod tests {
 
     #[test]
     fn chain_id_round_trips_via_display() {
-        let cid = ChainId::new("cipherocto-mainnet");
+        let cid = ChainId::new("cipherocto-mainnet").expect("static literal");
         assert_eq!(cid.as_str(), "cipherocto-mainnet");
         assert_eq!(format!("{cid}"), "cipherocto-mainnet");
     }
@@ -390,7 +346,7 @@ mod tests {
         let coord = MockCoordinator::new();
         let doc = sample_doc(11);
         let hash = canonical_hash(&doc);
-        let chain = ChainId::new("test-chain");
+        let chain = ChainId::new("test-chain").expect("static literal");
 
         // Matching hash delegates to submit_register_validated.
         let result = coord.submit_register(&hash, &chain, &doc).await;
@@ -412,7 +368,7 @@ mod tests {
         let coord = MockCoordinator::new();
         let doc = sample_doc(13);
         let wrong_hash = [0xFFu8; 32];
-        let chain = ChainId::new("test-chain");
+        let chain = ChainId::new("test-chain").expect("static literal");
 
         let result = coord.submit_register(&wrong_hash, &chain, &doc).await;
         assert_eq!(
@@ -436,7 +392,7 @@ mod tests {
 
         let doc = sample_doc(17);
         let hash = canonical_hash(&doc);
-        let chain = ChainId::new("test-chain");
+        let chain = ChainId::new("test-chain").expect("static literal");
 
         let result = coord.submit_register(&hash, &chain, &doc).await;
         assert_eq!(
@@ -450,7 +406,7 @@ mod tests {
     async fn submit_revoke_records_call() {
         let coord = MockCoordinator::new();
         let hash = [0x42u8; 32];
-        let chain = ChainId::new("test-chain");
+        let chain = ChainId::new("test-chain").expect("static literal");
 
         let result = coord.submit_revoke(&hash, &chain).await;
         assert!(result.is_ok());
@@ -471,7 +427,7 @@ mod tests {
         let coord = MockCoordinator::new();
         let doc = sample_doc(19);
         let hash = canonical_hash(&doc);
-        let chain = ChainId::new("test-chain");
+        let chain = ChainId::new("test-chain").expect("static literal");
 
         let result = coord
             .submit_register_local_fallback(&hash, &chain, &doc)
@@ -490,7 +446,7 @@ mod tests {
         let coord: Arc<dyn DidWriteCoordinator> = Arc::new(MockCoordinator::new());
         let doc = sample_doc(23);
         let hash = canonical_hash(&doc);
-        let chain = ChainId::new("test-chain");
+        let chain = ChainId::new("test-chain").expect("static literal");
 
         let result = coord.submit_register(&hash, &chain, &doc).await;
         assert!(result.is_ok(), "dyn-dispatched call failed: {result:?}");

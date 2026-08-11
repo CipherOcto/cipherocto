@@ -259,7 +259,7 @@ mod tests {
     #[test]
     fn governance_message_is_deterministic() {
         let sk = ShardKey([1u8; 32]);
-        let cid = ChainId::new("cipherocto-mainnet");
+        let cid = ChainId::new("cipherocto-mainnet").expect("static literal");
         let m1 = governance_signature_message(&sk, &cid, 5, &[7u8; 32]);
         let m2 = governance_signature_message(&sk, &cid, 5, &[7u8; 32]);
         assert_eq!(m1, m2);
@@ -268,8 +268,8 @@ mod tests {
     #[test]
     fn governance_message_binds_chain_id() {
         let sk = ShardKey([1u8; 32]);
-        let cid1 = ChainId::new("chain-a");
-        let cid2 = ChainId::new("chain-b");
+        let cid1 = ChainId::new("chain-a").expect("static literal");
+        let cid2 = ChainId::new("chain-b").expect("static literal");
         let m1 = governance_signature_message(&sk, &cid1, 5, &[7u8; 32]);
         let m2 = governance_signature_message(&sk, &cid2, 5, &[7u8; 32]);
         assert_ne!(m1, m2);
@@ -278,7 +278,7 @@ mod tests {
     #[test]
     fn governance_message_binds_term() {
         let sk = ShardKey([1u8; 32]);
-        let cid = ChainId::new("cipherocto-mainnet");
+        let cid = ChainId::new("cipherocto-mainnet").expect("static literal");
         let m1 = governance_signature_message(&sk, &cid, 5, &[7u8; 32]);
         let m2 = governance_signature_message(&sk, &cid, 6, &[7u8; 32]);
         assert_ne!(m1, m2);
@@ -287,7 +287,7 @@ mod tests {
     #[test]
     fn governance_message_binds_nonce() {
         let sk = ShardKey([1u8; 32]);
-        let cid = ChainId::new("cipherocto-mainnet");
+        let cid = ChainId::new("cipherocto-mainnet").expect("static literal");
         let m1 = governance_signature_message(&sk, &cid, 5, &[7u8; 32]);
         let m2 = governance_signature_message(&sk, &cid, 5, &[8u8; 32]);
         assert_ne!(m1, m2);

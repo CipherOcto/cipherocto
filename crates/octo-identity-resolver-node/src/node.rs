@@ -184,10 +184,14 @@ impl IdentityResolverNode {
             .clone()
             .unwrap_or_else(|| Arc::new(InMemoryDidRegistry::default()));
         let write_coordinator = config.write_coordinator.clone();
-        let chain_id = config
-            .chain_id
-            .clone()
-            .unwrap_or_else(|| ChainId::new(DEFAULT_CHAIN_ID));
+        let chain_id = config.chain_id.clone().unwrap_or_else(|| {
+            // `DEFAULT_CHAIN_ID` is a 17-char static literal that
+            // passes RFC-0010 v1.4 validation (non-empty, ≤ 64 chars,
+            // no control chars). `.expect` documents the invariant
+            // at this call site.
+            ChainId::new(DEFAULT_CHAIN_ID)
+                .expect("DEFAULT_CHAIN_ID is a valid RFC-0010 v1.4 chain namespace")
+        });
         Self {
             config,
             registry,
@@ -209,10 +213,10 @@ impl IdentityResolverNode {
             .clone()
             .unwrap_or_else(|| Arc::new(InMemoryDidRegistry::default()));
         let write_coordinator = config.write_coordinator.clone();
-        let chain_id = config
-            .chain_id
-            .clone()
-            .unwrap_or_else(|| ChainId::new(DEFAULT_CHAIN_ID));
+        let chain_id = config.chain_id.clone().unwrap_or_else(|| {
+            ChainId::new(DEFAULT_CHAIN_ID)
+                .expect("DEFAULT_CHAIN_ID is a valid RFC-0010 v1.4 chain namespace")
+        });
         Self {
             config,
             registry,

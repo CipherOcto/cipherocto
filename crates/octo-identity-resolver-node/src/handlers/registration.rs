@@ -338,7 +338,11 @@ mod tests {
         // Mission 0871e-f7-impl-resolver-mediation fail-closed TV:
         // with no coordinator configured, register MUST refuse.
         let registry: Arc<dyn DidRegistry> = Arc::new(InMemoryDidRegistry::default());
-        let handler = RegisterHandler::new(registry.clone(), None, ChainId::new("test-chain"));
+        let handler = RegisterHandler::new(
+            registry.clone(),
+            None,
+            ChainId::new("test-chain").expect("static test literal"),
+        );
         let req = RegisterRequest {
             canonical_did: sample_did(),
             public_key: [0xAAu8; 32],
@@ -354,7 +358,11 @@ mod tests {
     #[tokio::test]
     async fn revoke_handler_refuses_without_coordinator() {
         let registry: Arc<dyn DidRegistry> = Arc::new(InMemoryDidRegistry::default());
-        let handler = RevokeHandler::new(registry, None, ChainId::new("test-chain"));
+        let handler = RevokeHandler::new(
+            registry,
+            None,
+            ChainId::new("test-chain").expect("static test literal"),
+        );
         let req = RevokeRequest(sample_did());
         let err = handler.handle(&req).await.unwrap_err();
         assert!(matches!(
@@ -366,7 +374,11 @@ mod tests {
     #[tokio::test]
     async fn register_handler_rejects_invalid_did() {
         let registry: Arc<dyn DidRegistry> = Arc::new(InMemoryDidRegistry::default());
-        let handler = RegisterHandler::new(registry, None, ChainId::new("test-chain"));
+        let handler = RegisterHandler::new(
+            registry,
+            None,
+            ChainId::new("test-chain").expect("static test literal"),
+        );
         let req = RegisterRequest {
             canonical_did: "did:octo:bad".to_owned(),
             public_key: [0xAAu8; 32],
@@ -379,7 +391,11 @@ mod tests {
     #[tokio::test]
     async fn revoke_handler_rejects_invalid_did() {
         let registry: Arc<dyn DidRegistry> = Arc::new(InMemoryDidRegistry::default());
-        let handler = RevokeHandler::new(registry, None, ChainId::new("test-chain"));
+        let handler = RevokeHandler::new(
+            registry,
+            None,
+            ChainId::new("test-chain").expect("static test literal"),
+        );
         let req = RevokeRequest("did:octo:bad".to_owned());
         let err = handler.handle(&req).await.unwrap_err();
         assert!(matches!(err, IdentityResolveError::InvalidDid(_)));

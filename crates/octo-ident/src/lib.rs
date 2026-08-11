@@ -21,16 +21,19 @@ use thiserror::Error;
 #[cfg(feature = "borsh")]
 use borsh::{BorshDeserialize, BorshSerialize};
 
+pub mod chain;
 pub mod in_memory_did_registry;
 pub mod registry;
 pub mod test_helpers;
 pub mod write_coordinator;
 
+pub use chain::{
+    ChainId, ChainNamespace, ChainNamespaceError, NamespaceVariant, CIPHEROCTO_MAINNET,
+    CIPHEROCTO_MAINNET_TAG, MAX_NAMESPACE_LEN, RFC_CHAIN_NAMESPACES,
+};
 pub use in_memory_did_registry::InMemoryDidRegistry;
 pub use registry::{DidDocument, DidRegistry, DidRegistryError};
-pub use write_coordinator::{
-    canonical_hash, ChainId, DidWriteCoordinator, DidWriteCoordinatorError,
-};
+pub use write_coordinator::{canonical_hash, DidWriteCoordinator, DidWriteCoordinatorError};
 
 /// Canonical 52-byte DID storage form.
 ///

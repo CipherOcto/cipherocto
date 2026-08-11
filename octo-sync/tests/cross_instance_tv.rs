@@ -61,7 +61,7 @@ fn sample_doc(seed: u8) -> DidDocument {
 #[tokio::test]
 async fn tv1_atomic_register() {
     let (cluster, ids) = fixture();
-    let chain_id = ChainId::new("cipherocto-test");
+    let chain_id = ChainId::new("cipherocto-test").expect("static test literal");
     let d = sample_doc(11);
     let did_hash = canonical_hash(&d);
     let shard_key = ShardKey::derive_canonical(&did_hash);
@@ -210,7 +210,7 @@ async fn tv3_wal_replay() {
 #[tokio::test]
 async fn tv4_fail_closed() {
     let (cluster, _ids) = fixture();
-    let chain_id = ChainId::new("cipherocto-test");
+    let chain_id = ChainId::new("cipherocto-test").expect("static test literal");
     let node_id = WriterNodeId([99u8; 32]);
     let election = Arc::new(RaftLikeWriterElection::new(node_id, cluster.clone()));
     let coordinator = RaftLikeDidWriteCoordinator::new(
@@ -234,7 +234,7 @@ async fn tv4_fail_closed() {
 #[allow(deprecated)]
 async fn tv5_crdt_lww_succeeds_without_leader() {
     let (cluster, _ids) = fixture();
-    let chain_id = ChainId::new("cipherocto-test");
+    let chain_id = ChainId::new("cipherocto-test").expect("static test literal");
     let node_id = WriterNodeId([55u8; 32]);
     let election = Arc::new(RaftLikeWriterElection::new(node_id, cluster.clone()));
     let coordinator = RaftLikeDidWriteCoordinator::new(

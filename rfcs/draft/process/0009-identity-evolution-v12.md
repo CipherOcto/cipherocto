@@ -117,7 +117,8 @@ This RFC is ready for promotion to Accepted when:
    - Commit 2: `BLS12381ThresholdSigner` +
      `SchnorrThresholdSigner` impls + `Xor2Of3Signer` additive
      field + `IdentityKey::sign` fail-closed when `threshold_signer`
-     configured.
+     configured + `InMemorySigner` + `LedgerSigner` + `YubiHsmSigner`
+     updated (per R20 L5 — §Implementation Phases Commit 2).
    - Commit 3: `derive_capability_key` 4-param + v11 shim +
      Phase 1 TV functions.
 2. **Mission `0957-f-v2-bundle` V2 work complete.**
@@ -132,6 +133,9 @@ This RFC is ready for promotion to Accepted when:
 7. **RFC-0870 §NodeEnvelope:PayloadKindId ordering:** all 7
    `PayloadKindId` UUIDs use V2 field ordering.
 8. **Mission `0957-f-v2-bundle` §Migration:** complete.
+8b. **`tests/integration/frost_nonce_determinism.rs` exists** (per R20 M3)
+    and asserts 100K ops produce deterministic nonces; gated by
+    `cargo test -p octo-wallet --test frost_nonce_determinism_100k_iterations`.
 
 ## Motivation
 
@@ -367,12 +371,13 @@ impl IdentityKey {
             .ok_or(ThresholdError::NoThresholdSigner)?;
         let coordinator = self.coordinator.as_ref()
             .ok_or(ThresholdError::NoThresholdCoordinator)?;
-        let (m, _n) = thresh.threshold_params();
-        // Per R19 M2: use shareholders registered at ceremony,
-        // NOT `from_index` placeholder.
+        // Per R20 H1: rename for clarity — `m` = threshold count
+        // (required shares), `n` = total registered shareholders.
+        let (m, n) = thresh.threshold_params();
         let shareholders = &self.shareholders;
-        if shareholders.len() != m {
-            return Err(ThresholdError::ShareholderCountMismatch { actual: shareholders.len(), expected: m });
+        // Per R20 H1: check against `n` (total), NOT `m` (threshold).
+        if shareholders.len() != n {
+            return Err(ThresholdError::ShareholderCountMismatch { actual: shareholders.len(), expected: n });
         }
         let shares = coordinator.collect_shares(msg, shareholders, m, 30_000).await?;
         // Per R19 L4: caller (sign_threshold) runs validate_shares_scheme
@@ -458,6 +463,9 @@ pub enum Authorization {
         signers: Vec<WireDid>,
         sig: FrostEd25519Signature,
         group_pk: [u8; 32],
+        // Forward-pointer (RFC-0871 §Future Work per R20 L6):
+        // nonce_proof: Vec<u8>,  // FROST nonce-binding proof
+        // dkg_proof: Vec<u8>,    // shared with ThresholdSignature
     },
     // ...
 }
@@ -472,7 +480,9 @@ fields.
 **`BoundedShareVec`:**
 
 ```rust
-pub const MAX_M: usize = 7;
+pub const MAX_M: usize = 7;  // per R20 L8 — bounds BoundedShareVec
+                                  // allocation (7 shareholders); aligned with
+                                  // `static_assertions` MAX_M <= 7 check below.
 
 pub struct BoundedShareVec {
     shares: Vec<ThresholdShare>,
@@ -563,7 +573,10 @@ vsss-rs = "=6.0.1"
 # Layer A — RFC-9591 FROST Ed25519 threshold signing.
 # Per R17 H2: 2.0.3 not on crates.io — use 2.2.0.
 frost-ed25519 = "=2.2.0"
-# Layer B-substrate — compile-time invariant assertions.
+# Layer B-substrate — compile-time invariant assertions
+# (per R20 L7): `const _: () = assert!(MAX_M <= 7)` + chain depth
+# `const _: () = assert!(MAX_CHAIN_DEPTH <= 8)` (W3C VC-DID best
+# practice per G1).
 static_assertions = "=1.1.0"
 ```
 
@@ -687,7 +700,10 @@ Per RFC-0008 Execution Class mapping:
   FROST nonce defense; correct fix is x86_64 + ARM64 CI test
   suite + per-implementation cross-arch nonce audit); (c)
   integration test `frost_nonce_determinism.rs` asserting 100K ops
-  produce deterministic nonces; (d) compile-time audit dep.
+  produce deterministic nonces (per R20 L8 — 100K is RFC-9591 §5.3
+  round-trip audit count for nonce determinism verification; large
+  enough to detect cross-arch divergence without excessive CI
+  runtime); (d) compile-time audit dep.
 - **Residual:** library-level guarantee; trust boundary on
   `frost-ed25519` impl.
 - **Test:** `frost_nonce_determinism_100k_iterations`.
@@ -695,11 +711,42 @@ Per RFC-0008 Execution Class mapping:
 ### A7 — Cascading revocation false negative.
 - **Threat:** holder of a child capability whose parent was revoked.
 - **Attack:** continue using revoked capability.
-- **Defense:** `check_wrapped_chain` cryptographically walks
-  `chain_parent` chain; revocation of any ancestor invalidates all
-  descendants.
+- **Defense:** `check_wrapped_chain` (per R20 M2 — defined below)
+  cryptographically walks `chain_parent` chain; revocation of any
+  ancestor invalidates all descendants.
 - **Residual:** none (cryptographic guarantee).
 - **Test:** `cascading_revocation_kills_descendants`.
+
+**`check_wrapped_chain` (per R20 M2):**
+
+```rust
+/// Multi-step chain walk for cascading revocation. Walks
+/// `chain_parent` chain from leaf to root, verifying each step
+/// via `verify_chain_parent`. Returns Ok if entire chain is
+/// valid + un-revoked; Err if any ancestor is revoked.
+pub fn check_wrapped_chain(
+    leaf: &CapabilityKey,
+    chain: &[CapabilityTokenV2],  // root..leaf order
+    revoked_set: &HashSet<[u8; 32]>,  // chain_parent hashes of revoked ancestors
+) -> Result<(), CapabilityError> {
+    for window in chain.windows(2) {
+        let parent = &window[0];
+        let child = &window[1];
+        if revoked_set.contains(&parent.chain_parent) {
+            return Err(CapabilityError::AncestorRevoked);
+        }
+        if !verify_chain_parent(
+            &parent.cap_key,
+            &child.cap_key,
+            &child.chain_parent,
+            child.chain_depth,
+        ) {
+            return Err(CapabilityError::ChainLinkInvalid);
+        }
+    }
+    Ok(())
+}
+```
 
 ### A8 — Share-loss DoS.
 - **Threat:** single shareholder refuses participation.
@@ -886,10 +933,16 @@ registers into B, not B → E. The macaroon substrate uses
 
 Dependency direction:
 - `octo-wallet` → `octo-protocol` (B → A; OK)
-- `octo-cap-macaroon` → `octo-wallet` (E → B registrar; OK per
-  design-principles)
+- `crates/octo-cap-macaroon` → `crates/octo-wallet-node` (E → C;
+  glue crate L4↔C per Phase 2c-1; OK)
 - `octo-cap-zk` → `octo-wallet` (E → B registrar; OK)
-- `crates/octo-cap-macaroon` → `crates/octo-ident` (E → B; OK)
+
+**Per R20 M4:** post Phase 2c cleanup (commit `a471843b` +
+`4cfe7165` on 2026-08-09), `octo-cap-macaroon` is a CLEAN Layer 4
+crate with zero cross-layer deps on L-B / L-D. The previous
+`octo-cap-macaroon` → `octo-wallet` (E → B registrar) line was
+true at Phase 2b but is now obsolete; the only L4↔L-coupling is
+through `crates/octo-cap-macaroon-transport/` glue crate.
 
 No reverse dependencies. ✓
 

@@ -376,10 +376,469 @@ its own owner + schedule per RFC-0871 §Future Work pattern):
   `crates/octo-identity-resolver-node/src/backend.rs` once the chain
   mission `0871b-cross-domain-resolution` is filed.
 - **Multi-chain DID resolution** (F2). Already out of MVP scope per
-  v1.2 §Future Work; the v1.3 extension does not move the goalpost.
+  v1.2 §Future Work; the v1.4 extension SPECIFIES the typed `ChainId`
+  namespace substrate required by F2; F2 itself (multi-chain
+  resolution routing) remains a follow-on amendment.
 - **DID Document extensions** (service endpoints, controller references,
   capability delegation proofs). v1.3 ships the minimum surface needed
-  by `IdentityResolverNode`; richer documents are future amendments.
+  by `IdentityResolverNode`. v1.5 SPECIFIES the rich 7-field
+  `DidDocument` + `VerificationMethod` enum (consumer substrate
+  ready); F8 itself (rich Document persistence in Stoolap
+  `did_registry` table — adding 5 new columns + migration v009) is a
+  follow-on amendment. Tracked by
+  `missions/open/0010-f8-rich-did-documents.md` (BLOCKED on this
+  RFC v1.5 per memory `mission-gap-closure-priorities-2026-08-10`).
+
+### ChainId Namespace Extension (v1.4, additive on v1.3)
+
+#### Motivation
+
+`octo_ident::ChainId` ships as `pub struct ChainId(pub String)` in
+v1.3 — a stringly-typed newtype that gives the `DidWriteCoordinator`
+trait surface a stable identity parameter. Production deployments
+need chain-namespace semantics:
+
+1. **RFC-allocated namespaces** prevent collisions across co-deployed
+   CipherOcto instances (e.g., a private partner running its own
+   `partner-mainnet` alongside the public `cipherocto-mainnet`).
+2. **Canonical serialization** makes the chain namespace
+   wire-stable for inclusion in `GovernanceAttestation` payloads
+   (per RFC-0862 v1.3 `chain_id: ChainId` field) and RPC audit logs.
+3. **Validation at the type boundary** rejects malformed namespaces
+   (empty string, control characters, length overflow) at construction
+   time so downstream coordinator substrate can trust the invariant.
+
+This extension is **additive on v1.3**: v1.3 `ChainId::new(s)` callers
+continue to work (the underlying type stays a `String`); v1.4 adds
+RFC-allocated constants, a `Namespace` newtype wrapper, and a validator
+on the raw-string path.
+
+#### Data Structures
+
+```rust
+/// Typed chain-namespace discriminator (RFC-0010 v1.4).
+///
+/// `ChainId` is a literal-string handle (operational ergonomics);
+/// `Namespace` is the canonical typed representation that anchors
+/// the BLAKE3-256 chain derivation domain. The two are linked via
+/// `ChainId::namespace()` which resolves any literal against the
+/// RFC-allocated namespace table.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ChainId(pub String);
+
+/// RFC-allocated namespace discriminant (per
+/// [[cipherocto-design-principles]] §Extension over enumeration —
+/// 128-bit UUID discriminator + Raw escape pattern; this is the
+/// per-deployment analogue).
+///
+/// Layout:
+///
+/// ```text
+/// [ variant: u8 (RFC / User / Reserved) | tag: [u8; 15] | length: u8 ]
+/// ```
+///
+/// Canonical serialization = 17 bytes (`ChainNamespace::canonical_bytes`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ChainNamespace {
+    variant: NamespaceVariant,
+    tag: [u8; 15],
+    length: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum NamespaceVariant {
+    /// RFC-allocated namespace (variant byte `0x01`).
+    Rfc = 0x01,
+    /// User-extension namespace (variant byte `0x02`).
+    User = 0x02,
+    /// Reserved for future amendments (variant byte `0x00`,
+        /// `0x03`-`0xFF`).
+    Reserved = 0x00,
+}
+
+/// Errors from `ChainId` / `ChainNamespace` validation.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ChainNamespaceError {
+    #[error("empty chain namespace")]
+    Empty,
+    #[error("chain namespace too long: {len} > max {max}")]
+    TooLong { len: usize, max: usize },
+    #[error("chain namespace contains control character: {0:?}")]
+    ControlChar(char),
+    #[error("unknown RFC chain namespace tag: {0}")]
+    UnknownRfcTag([u8; 15]),
+    #[error("reserved namespace variant: {0}")]
+    ReservedVariant(u8),
+}
+
+impl ChainId {
+    /// Construct a `ChainId` from a literal string. Validates the
+    /// namespace shape per RFC-0010 v1.4 §Validation.
+    ///
+    /// # Errors
+    /// Returns `ChainNamespaceError` variants if the literal is
+    /// empty, too long, or contains control characters.
+    pub fn new(s: impl Into<String>) -> Result<Self, ChainNamespaceError> {
+        let inner = s.into();
+        Self::validate(&inner)?;
+        Ok(Self(inner))
+    }
+
+    /// Wrap a literal string WITHOUT validation. Internal use only —
+    /// produced `ChainId` may fail later validation paths. Prefer
+    /// `ChainId::new` for all external entry points.
+    #[must_use]
+    pub fn new_unchecked(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
+
+    /// Borrow the inner string.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Resolve the `ChainId` to its `ChainNamespace`. The
+    /// RFC-allocated constant table is consulted first; user-extension
+    /// chains parse through the `User` variant.
+    ///
+    /// # Errors
+    /// Returns `ChainNamespaceError::UnknownRfcTag` if the literal
+    /// claims the `Rfc` variant but the tag is not in the table.
+    /// Returns `ChainNamespaceError::ReservedVariant` for
+    /// reserved-variant encodings.
+    pub fn namespace(&self) -> Result<ChainNamespace, ChainNamespaceError> {
+        ChainNamespace::from_literal(&self.0)
+    }
+
+    fn validate(s: &str) -> Result<(), ChainNamespaceError> {
+        const MAX_LEN: usize = 64;
+        if s.is_empty() { return Err(ChainNamespaceError::Empty); }
+        if s.len() > MAX_LEN {
+            return Err(ChainNamespaceError::TooLong { len: s.len(), max: MAX_LEN });
+        }
+        for c in s.chars() {
+            if c.is_control() {
+                return Err(ChainNamespaceError::ControlChar(c));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl ChainNamespace {
+    /// 17-byte canonical serialization (used in WAL entries,
+    /// `GovernanceAttestation.chain_id` field, RPC audit logs).
+    #[must_use]
+    pub fn canonical_bytes(&self) -> [u8; 17] {
+        let mut out = [0u8; 17];
+        out[0] = self.variant as u8;
+        out[1..16].copy_from_slice(&self.tag);
+        out[16] = self.length;
+        out
+    }
+
+    /// Reverse of `canonical_bytes`. Returns `Err` on unknown variant.
+    pub fn from_canonical_bytes(bytes: &[u8; 17]) -> Result<Self, ChainNamespaceError> {
+        let variant = match bytes[0] {
+            0x01 => NamespaceVariant::Rfc,
+            0x02 => NamespaceVariant::User,
+            v => return Err(ChainNamespaceError::ReservedVariant(v)),
+        };
+        let mut tag = [0u8; 15];
+        tag.copy_from_slice(&bytes[1..16]);
+        Ok(Self { variant, tag, length: bytes[16] })
+    }
+
+    /// Resolve an RFC-0010 literal (`cipherocto-mainnet`, ...) to its
+    /// typed `ChainNamespace`. Returns `Rfc` variant for known tags,
+    /// `User` variant for unrecognized but valid literals.
+    pub fn from_literal(literal: &str) -> Result<Self, ChainNamespaceError> {
+        ChainId::validate(literal)?;
+        let tag = *blake3::hash(
+            b"cipherocto/chain-namespace/v1".iter()
+                .chain(literal.as_bytes().iter())
+                .copied()
+                .collect::<Vec<u8>>()
+                .as_slice()
+        ).as_bytes();
+        let mut truncated_tag = [0u8; 15];
+        truncated_tag.copy_from_slice(&tag[..15]);
+        let variant = if RFC_CHAIN_NAMESPACES.contains(&truncated_tag) {
+            NamespaceVariant::Rfc
+        } else {
+            NamespaceVariant::User
+        };
+        Ok(Self {
+            variant,
+            tag: truncated_tag,
+            length: literal.len() as u8,
+        })
+    }
+}
+```
+
+#### RFC-allocated namespace constants
+
+The tag table is RFC-allocated per [[cipherocto-design-principles]]
+§Extension over enumeration. The reserved `cipherocto-mainnet`
+namespace ships as the only initial entry; subsequent deployments
+allocate new entries via RFC amendment.
+
+```rust
+/// RFC-0010 v1.4 §RFC-allocated namespaces.
+///
+/// Production CipherOcto deployments MUST use a tag from this
+/// table; user-extension chains fall in the `User` variant and
+/// require operator attestation per RFC-0862 §Governance.
+pub const RFC_CHAIN_NAMESPACES: &[[u8; 15]] = &[
+    /// Canonical CipherOcto mainnet deployment.
+    CIPHEROCTO_MAINNET_TAG,
+];
+
+/// Literal handle for the canonical mainnet namespace.
+pub const CIPHEROCTO_MAINNET: &str = "cipherocto-mainnet";
+
+/// BLAKE3-256 (15-byte truncation) of
+/// `b"cipherocto/chain-namespace/v1" || b"cipherocto-mainnet"`.
+pub const CIPHEROCTO_MAINNET_TAG: [u8; 15] = [
+    /* precomputed at RFC acceptance; see §Test Vectors */
+];
+```
+
+#### Test Vectors (v1.4)
+
+10 canonical namespaces are encoded in
+`crates/octo-ident/tests/chain_namespace_tv.rs`:
+
+1. `cipherocto-mainnet` → Rfc variant, canonical bytes match precomputed tag.
+2. `partner-mainnet` → User variant, BLAKE3-15 truncation = some known tag.
+3. Empty literal → `ChainNamespaceError::Empty`.
+4. 65-char literal → `ChainNamespaceError::TooLong`.
+5. Literal with NUL byte → `ChainNamespaceError::ControlChar`.
+6. Canonical-bytes round-trip: `from_canonical_bytes(canonical_bytes(ns)) == ns`.
+7. Cross-namespace distinct: two distinct literals → two distinct tags.
+8. RFC tag collision rejected: a literal hashing to a tag in
+   `RFC_CHAIN_NAMESPACES` but with different length → `User`
+   variant (tag + length combined disambiguate).
+9. Reserved-variant byte `0x00` rejected at `from_canonical_bytes`.
+10. `CIPHEROCTO_MAINNET` namespace → `rfc_variant_canonical_bytes_match`.
+
+#### Out of scope for v1.4 (deferred)
+
+- **Multi-chain DID resolution routing** (F2 follow-on). v1.4 ships
+  the typed-namespace substrate; the resolver-node cross-chain
+  routing logic remains future work, tracked under
+  `missions/open/0010-f2-multi-chain-did-resolution.md`.
+- **Registry keying by `(namespace, did_hash)` tuple**. v1.3
+  `DidRegistry` keys by wire form; v1.4 `ChainId` is a coordinator
+  parameter only. Schema migration to namespace-prefixed keys is F2
+  follow-on.
+- **`ChainNamespace` borsh-derive**. v1.4 ships the newtype; borsh
+  impls land with F2 when the migration to namespaced keys makes
+  borsh serialization necessary at the registry boundary.
+
+#### Compatibility
+
+- **Backward-compatible:** Yes (consumer-side). `ChainId::new(s)` in
+  v1.3 returned `Self` unconditionally; v1.4 returns
+  `Result<Self, ChainNamespaceError>`. Callers using `ChainId::new`
+  with a valid literal remain correct (validation is a strict subset
+  of pre-v1.4 acceptance — v1.3 accepted any non-empty string).
+  Callers passing empty strings or control characters gain an error
+  path that previously silently succeeded. The pre-existing
+  `ChainId::new_unchecked` escape hatch preserves v1.3 behavior
+  verbatim for internal callers.
+- **Forward-compatible:** Phase 1 MVP `IdentityResolverNode` keeps
+  its `DEFAULT_CHAIN_ID = "cipherocto-mainnet"` literal at the
+  resolver-node boundary (mission `0871e-f7-impl-resolver-mediation`).
+  v1.4 `ChainId::new(DEFAULT_CHAIN_ID)` succeeds since the literal
+  is a valid RFC namespace. Follow-on missions that touch the
+  registry call boundary will tighten via `ChainNamespace::from_literal`.
+- **Cross-impl:** Validation rules are pure functions; BLAKE3
+  derivation is RFC-0008 Class A. Test vector suite covers the
+  canonical encodings; cross-impl conformance measured against
+  reference impl in `crates/octo-ident/`.
+
+### Rich DidDocument Extension (v1.5, additive on v1.3)
+
+#### Motivation
+
+`octo_ident::DidDocument` ships in v1.3 with the minimum surface
+needed by `IdentityResolverNode` — a 32-byte storage-pubkey form
+plus a revocation flag. RFC-0862 v1.3 §Roles and Authorities already
+references the extended shape (`chain_depth` / `chain_parent` /
+`verification_method` / `authentication` / `assertion_method`)
+for cross-instance DID write coordination substrate, but the
+canonical type definition lives in `crates/octo-ident/` (Layer B
+substrate) and must land here for the Layer direction to hold.
+
+Production deployments need:
+
+1. **`chain_depth` + `chain_parent`**: enables DID rotation flows
+   (RFC-0010 v1.3 §Compatibility) where a rotated DID links back
+   to its predecessor for revocation propagation.
+2. **`verification_method`**: enables W3C DID Core 1.0 §Verification
+   Method relationships (Ed25519 / BLS12-381 / future PQC) for
+   capability delegation proofs.
+3. **`authentication` + `assertion_method`**: W3C DID Core 1.0
+   verification relationships; gates RFC-0871 `verify_capability`
+   flows (capability issuer accepts a `did:octo:...` if the
+   signing key appears in the subject's authentication array).
+
+This extension is **additive on v1.3**: v1.3 `DidDocument` callers
+that construct `DidDocument { public_key, revoked }` continue to
+work — the new fields default-construct (zero/`None`/`Vec::new()`).
+v1.5 makes all 7 fields `pub` and adds `VerificationMethod` enum.
+
+#### Data Structures
+
+```rust
+/// Rich DID Document (RFC-0010 v1.5).
+///
+/// v1.3 ships the minimum surface; v1.5 extends with chain-rotation
+/// fields + W3C DID Core 1.0 verification relationships. Lives in
+/// `crates/octo-ident/src/registry.rs` (Layer B substrate; same
+/// module as the v1.3 minimal version per [[cipherocto-design-principles]]
+/// §Layer B additive-only rule).
+#[cfg_attr(feature = "borsh", derive(BorshSerialize, BorshDeserialize))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DidDocument {
+    /// 32-byte storage-pubkey form (v1.3 field; matches `RawDid::hash`).
+    pub public_key: [u8; 32],
+    /// True if revoked. v1.3 field; resolve returns `None` when set.
+    pub revoked: bool,
+    /// DID rotation chain depth (v1 = 0). Incremented each rotation;
+    /// `chain_parent` carries the predecessor's `RawDid.hash`. Bounds
+    /// migration if the cap is ever raised.
+    pub chain_depth: u8,
+    /// Predecessor DID's hash (v1 = `None`).
+    pub chain_parent: Option<[u8; 32]>,
+    /// W3C DID Core 1.0 §Verification Method. Per
+    /// [[cipherocto-design-principles]] §Extension over enumeration —
+    /// 128-bit UUID discriminator + Raw escape; `Ed25519` / `Bls12381`
+    /// are RFC-allocated variants; future PQC variants land via
+    /// amendment without central-enum edits.
+    pub verification_method: Vec<VerificationMethod>,
+    /// W3C DID Core 1.0 authentication references (DID-relative URI
+    /// strings, e.g., `"#key-0"`). Capability issuer gates flow here.
+    pub authentication: Vec<String>,
+    /// W3C DID Core 1.0 assertion-method references.
+    pub assertion_method: Vec<String>,
+}
+
+/// Verification method relationship (RFC-0010 v1.5).
+///
+/// Same composition pattern as `CapabilitySpec` in RFC-0957-A1:
+/// typed-discriminator + payload, no central enum that future
+/// PQC variants must edit.
+#[cfg_attr(feature = "borsh", derive(BorshSerialize, BorshDeserialize))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VerificationMethod {
+    /// Ed25519 signature verification.
+    Ed25519 { public_key: [u8; 32] },
+    /// BLS12-381 signature verification.
+    Bls12381 { public_key: [u8; 48] },
+}
+
+impl DidDocument {
+    /// Construct the v1.3 minimal form (chain_depth = 0,
+    /// chain_parent = None, verification_method + authentication +
+    /// assertion_method empty). Backward-compatible constructor for
+    /// v1.3 callers + existing TV.
+    #[must_use]
+    pub fn v1_minimal(public_key: [u8; 32], revoked: bool) -> Self {
+        Self {
+            public_key,
+            revoked,
+            chain_depth: 0,
+            chain_parent: None,
+            verification_method: Vec::new(),
+            authentication: Vec::new(),
+            assertion_method: Vec::new(),
+        }
+    }
+
+    /// Returns `true` if `key_id` (DID-relative URI fragment, e.g.,
+    /// `"#key-0"`) appears in `authentication`. Used by capability
+    /// issuer to gate RFC-0871 verify flows on W3C DID Core 1.0
+    /// authentication relationships.
+    #[must_use]
+    pub fn authenticates(&self, key_id: &str) -> bool {
+        self.authentication.iter().any(|s| s == key_id)
+    }
+}
+```
+
+#### Test Vectors (v1.5)
+
+12 canonical Document shapes are encoded in
+`crates/octo-ident/tests/rich_did_document_tv.rs`:
+
+1. `DidDocument::v1_minimal(zero_pk, false)` — v1.3 round-trip
+   preserved (backward-compat TV).
+2. `DidDocument::v1_minimal(max_pk, true)` — v1.3 round-trip,
+   revoked form.
+3. Rich Document with `chain_depth=1` + `chain_parent=Some([0x42;32])`
+   — rotation case.
+4. Rich Document with `verification_method = [Ed25519{...}, Bls12381{...}]`
+   — multi-algorithm case.
+5. `authenticates("#key-0")` returns `true` when authentication
+   contains `"#key-0"`.
+6. `authenticates("#missing")` returns `false`.
+7. Borsh round-trip: 7-field struct, all variants populated.
+8. Hash stability: `canonical_hash(doc)` is byte-exact across
+   builds (RFC-0008 Class A determinism).
+9. `chain_depth` cap (255) → migration pinned to v2 schema if ever
+   raised.
+10. `VerificationMethod` discriminants are distinct (Ed25519 ≠ Bls12381
+    in the borsh-encoded tag byte).
+11. v1.3 construction pattern `DidDocument { public_key, revoked }` no
+    longer compiles in v1.5 (caller MUST use either
+    `DidDocument::v1_minimal` or explicit-all-7 constructor). Test
+    catches drift if the v1.5 fields become optional later.
+12. RFC-0862 v1.3 §Specification rich-Document shape byte-exact with
+    the v1.5 reference (consistency guard between RFC layers).
+
+#### Out of scope for v1.5 (deferred)
+
+- **Persistence migration to rich DidDocument in `did_registry` table.**
+  v1.5 SPECIFIES the type; the Stoolap schema migration adding the
+  5 new columns (`chain_depth`, `chain_parent`, `verification_method`,
+  `authentication`, `assertion_method`) is F8 follow-on. Until the
+  migration lands, `StoolapDidRegistry` continues to persist the
+  v1.3 minimum surface (`public_key`, `revoked`).
+- **`chain_depth` cap raise**: v1.5 ships depth=0..=255; RFC
+  amendment required if a deployment ever needs more than 255
+  rotations. Migration tracked.
+- **PQC verification methods** (Dilithium, SPHINCS+). v1.5 ships
+  Ed25519 + BLS12-381; PQC variants land via follow-on amendments
+  without central-enum edits (extension-over-enumeration pattern).
+- **Multi-document storage** (one DID → multiple Documents across
+  rotation). v1.5 ships single-Document-per-DID; F2 multi-chain
+  may add per-chain Documents if needed.
+
+#### Compatibility
+
+- **Backward-compatible:** Construction only. v1.3 callers who
+  constructed `DidDocument { public_key, revoked }` literally
+  cannot compile against v1.5 — the new fields are required public.
+  v1.5 ships `DidDocument::v1_minimal(public_key, revoked)` for the
+  exact v1.3 pattern. The `DidRegistry` trait surface
+  (register/resolve/revoke) is unchanged — the 5 new fields are
+  opaque to the trait. Wire form (`ResolveResponse`) is byte-exact
+  across the cutover for consumers that don't read Document fields.
+- **Forward-compatible:** Phase 1 MVP `IdentityResolverNode` +
+  `StoolapDidRegistry` continue to work with v1.5 `DidDocument`
+  because they only read `public_key` + `revoked` (per mission
+  `0871b-storage-backend`). Rich Document fields are wired into
+  resolver flows when follow-on missions gain consumers
+  (capability issuer verify, DID rotation migration).
+- **Cross-impl:** `DidDocument` borsh serialization is feature-gated
+  (per RFC-0862 v1.3 R10 H11) — reference impl builds with
+  `cargo test --features borsh`. Field order is canonical (matches
+  RFC-0862 v1.3 §Specification §Substrate types §DidDocument) so
+  cross-impl hashes are byte-exact.
 
 #### Compatibility
 
@@ -532,7 +991,7 @@ Each error maps to a wire code in `crates/octo-reputation/src/error.rs::Reputati
 ## Future Work
 
 - F1: W3C DID method registration (IA-4). Out of MVP scope.
-- F2: Multi-chain DID resolution. Out of MVP scope.
+- F2: Multi-chain DID resolution. **Substrate landed in v1.4** (`ChainNamespace` typed newtype + `ChainId` validator); resolver-node cross-chain routing logic remains future work. Tracked by `missions/open/0010-f2-multi-chain-did-resolution.md` (BLOCKED on this RFC per memory `mission-gap-closure-priorities-2026-08-10`).
 - F3: Capability key derivation against the codec (extend RFC-0009 §Capability Keys).
 - F4: **Wallet audience validation (closed 2026-08-08 audit; landed in v1.2).** `octo-wallet::AudienceId::from_str` at `crates/octo-wallet/src/identity.rs` accepts any non-empty string and MUST validate via `octo_ident::CanonicalCodec::parse(s, false)` to enforce canonical wire-form parsing at every entry point. Tracked by `missions/claimed/0010-d-wallet-audience-validation.md`.
 - F5: **DID storage trait extension (additive in v1.3).** `crates/octo-ident/` does NOT currently expose a public storage trait — the codec crate owns canonical encoding only, not the persistence layer. The Phase 1 MVP `IdentityResolverNode` (mission `0871b-identity-resolver-node`) returns a placeholder `public_key` derived from `RawDid::hash` because the storage backend substrate is missing. v1.3 introduces a `DidRegistry` trait + reference impls so production deployments can persist + resolve real DID Documents without an in-process placeholder. Tracked by `missions/open/0871b-storage-backend.md` (BLOCKED on this RFC per memory `mission-gap-closure-priorities-2026-08-10`).
@@ -553,6 +1012,8 @@ Why the dual storage/wire split? Reputation storage already shipped migrations v
 | 1.1     | 2026-08-03 | Accepted (audit)     | Audit pass: stripped `(Process)`/`(Economics)` category parens from RFC references + H1 title per CLAUDE.md referencing rule; added §Economic Analysis (N/A justification); converted §Implementation Phases to `- [ ]` checkboxes per template §693; expanded Version History with Draft → Accepted progression                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | 1.2     | 2026-08-08 | Accepted (amendment) | Added F4 (Wallet audience validation) per 2026-08-08 specialized node protocol research. `AudienceId::from_str` must call `CanonicalCodec::parse(s, false)` rather than accept any non-empty string. Foundation for RFC-0871 (specialized node protocol envelope) where `from_did: WireDid` is validated at every envelope boundary. Cross-references: `rfcs/accepted/networking/0871-specialized-node-protocol-envelope.md`, `docs/research/2026-08-08-specialized-node-protocol-research.md`                                                                                                                                                                                                                                                                                                 |
 | 1.3     | 2026-08-10 | Accepted (amendment) | Added §Storage Extension: `DidRegistry` trait in `crates/octo-ident/` (Layer B substrate) + `InMemoryDidRegistry` test impl + `StoolapDidRegistry` production impl in `crates/quota-router-storage/` (cipherocto-side migration v008). Mirrors `HolderRegistry` (RFC-0957-A1) trait shape. Unblocks mission `0871b-storage-backend` (BLOCKED on this RFC per memory `mission-gap-closure-priorities-2026-08-10`). Cross-instance coordination (F7) + `ResolverBackend` typed view (F6) + multi-chain resolution (F2) + rich DID Documents explicitly OUT of scope — owned by future RFC-0862 amendment / RFC-0871 §Future Work / F2 future work / future amendment respectively. F4 status moved to "closed" (landed in v1.2). New §Roles and Authorities row for `DID Storage Backend` actor. |
+| 1.4     | 2026-08-11 | Accepted (amendment) | Added §ChainId Namespace Extension: `ChainNamespace` typed newtype + `NamespaceVariant` enum (`Rfc`/`User`/`Reserved`) + `ChainId::new` now returns `Result<_, ChainNamespaceError>` (validator rejects empty / >64-char / control-char literals). New `ChainId::new_unchecked` escape hatch preserves pre-v1.4 behavior for internal callers; pre-v1.4 `ChainId::new("cipherocto-mainnet")` and similar valid literals remain correct (validation is a strict subset of pre-v1.4 acceptance). RFC-allocated namespace table ships with `CIPHEROCTO_MAINNET` as the only initial entry; user-extension chains parse through `NamespaceVariant::User`. 17-byte canonical serialization (`canonical_bytes`/`from_canonical_bytes`) anchors WAL entries + `GovernanceAttestation.chain_id` (per RFC-0862 v1.3 §Roles `chain_id: ChainId` field) + RPC audit logs. Unblocks mission `0010-f2-multi-chain-did-resolution` (BLOCKED on this RFC); F2 routing logic itself is a follow-on amendment. Cross-instance coordination (F7) + `ResolverBackend` typed view (F6) + rich DID Documents (F8) remain OUT of scope here. |
+| 1.5     | 2026-08-11 | Accepted (amendment) | Added §Rich DidDocument Extension: `DidDocument` extends from v1.3 `(public_key, revoked)` to 7-field struct (`chain_depth`, `chain_parent`, `verification_method`, `authentication`, `assertion_method`). New `VerificationMethod` enum (`Ed25519{public_key: [u8; 32]}` / `Bls12381{public_key: [u8; 48]}`) uses 128-bit UUID-discriminator + variant-payload shape per [[cipherocto-design-principles]] §Extension over enumeration (future PQC variants land via amendment). New `DidDocument::v1_minimal(public_key, revoked)` backward-compatible constructor preserves v1.3 call sites. New `DidDocument::authenticates(key_id)` method enables W3C DID Core 1.0 authentication-reference gating (capability issuer downstream). Cross-RFC consistency guard: v1.5 `DidDocument` byte-exact with the spec shape referenced from RFC-0862 v1.3 §Specification §Substrate types §DidDocument; no live-writer on the rich fields yet — concrete wire consumers land with F8 migration. Did NOT update the RFC-0862 v1.3 inline comment "v1.4 amendment" → out-of-band, follow-on if the comment drift surfaces in review. Unblocks mission `0010-f8-rich-did-documents` (BLOCKED on this RFC); F8 migration itself is a follow-on (Stoolap schema adding 5 columns). Cross-instance coordination (F7) + `ResolverBackend` typed view (F6) + multi-chain routing (F2 routing) remain OUT of scope here. |
 
 ## Related RFCs
 

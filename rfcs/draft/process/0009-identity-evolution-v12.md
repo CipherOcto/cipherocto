@@ -24,7 +24,7 @@ Extend RFC-0009 §Capability Keys with:
 
 ## Review State
 
-- **R1-R37 completed (2026-08-11); R38 in progress.**
+- **R1-R38 completed (2026-08-11); R39 in progress.**
 - **Termination condition:** convergence when a new round returns
   zero NEW findings.
 
@@ -1137,6 +1137,10 @@ cargo doc --workspace --no-deps
 
 ## Review Process
 
-Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R37
+Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R38
 completed (2026-08-11). Convergence target: zero NEW findings per
-R39+.
+R40+. Note: the "R-count" line in §Review State is a
+mechanical bookkeeping pointer — its drift each round is
+expected and is NOT classified as a substantive finding in
+the per-round report (per R39 meta-decision: drift is
+bookkeeping, not spec defect).

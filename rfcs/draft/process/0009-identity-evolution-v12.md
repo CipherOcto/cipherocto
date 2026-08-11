@@ -24,14 +24,16 @@ Extend RFC-0009 §Capability Keys with:
 
 ## Review State
 
-- **R1-R27 completed (2026-08-10); R28 in progress.**
+- **R1-R29 completed (2026-08-11); R30 in progress.**
 - **Termination condition:** convergence when a new round returns
   zero NEW findings.
 
-## Breaking Changes (11 main items per R11 M6 + R25 L4 — corrected language;
-BC#1 expanded into 9 sub-items (1a-1i); section totals 20 numbered
-items (9 sub-items BC#1a-1i + 11 other main items BC#2-12) per
-R18 M6 + R24 L3 + R25 L4 + R27 L2)
+## Breaking Changes (10 main items + BC#9 ADDITIVE mirrored per
+R28 M3 / R30 L3 — corrected language per R11 M6 + R25 L4; BC#1
+expanded into 9 sub-items (1a-1i); section totals 19 numbered
+items (9 sub-items BC#1a-1i + 10 other main items BC#2-12 minus
+BC#9 ADDITIVE reclassified) per R18 M6 + R24 L3 + R25 L4 + R27 L2
++ R30 L3)
 
 1a. **NEW: `ThresholdSigner::threshold_sign` method** (replaces
     `sign_combined`; no prior equivalent exists).
@@ -656,9 +658,11 @@ these; AC#1 Commit 1 must ADD them):
 ```toml
 [dependencies]
 # Layer A — BLS12-381 threshold primitives.
-# Per R17 L4: pinned to 0.3.11 for cross-arch CI baseline ABI;
-# bump requires re-running x86_64 + ARM64 determinism suite per
-# A6 + §Implicit Assumptions Audit.
+# Per R17 L4 + R30 L4: pinned to 0.3.11 for cross-arch CI baseline
+# ABI; bump requires re-running x86_64 + ARM64 determinism suite
+# per A5 (BLS12-381 deterministic cross-arch) + §Implicit
+# Assumptions Audit Platform row (BLS12-381 deterministic across
+# x86_64 + ARM64).
 blst = "=0.3.11"
 # Per R25 L6: compile-time audit dep for A6 quartet (d); pins
 # the FROST nonce-reuse defense to a specific library version.
@@ -1023,8 +1027,9 @@ is E registers into B, not B → E. The macaroon substrate uses
 - `octo-wallet` (Layer B) — registrar for capability extensions
 - `octo-protocol` (Layer A) — `Authorization::ThresholdSignature`
   variant EXTENDED (ownership: RFC-0871)
-- `octo-cap-zk` (Layer E) — sibling; registers into `octo-wallet`
-  registrar
+- `octo-cap-zk` (Layer 4 — per R30 L5 relabel from Layer E to
+  match octo-cap-macaroon post-Phase-2c convention) — sibling;
+  registers into `octo-wallet` registrar
 - **`octo-cap-macaroon` (Layer E) — REMOVED from layer table per R25 L8**
   (post Phase 2c cleanup: zero cross-layer deps; previously
   registered into `octo-wallet` registrar at Phase 2b; current
@@ -1101,6 +1106,6 @@ cargo doc --workspace --no-deps
 
 ## Review Process
 
-Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R27
-completed (2026-08-10). Convergence target: zero NEW findings per
-R29+.
+Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R29
+completed (2026-08-11). Convergence target: zero NEW findings per
+R31+.

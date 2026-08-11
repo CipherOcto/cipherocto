@@ -28,7 +28,7 @@ Extend RFC-0862 §Roles (writer/reader split) with:
 
 ## Review State
 
-- **R1-R14 completed (2026-08-10).**
+- **R1-R16 completed (2026-08-10).**
 - **Termination condition:** convergence when a new round returns
   zero NEW findings.
 
@@ -1453,6 +1453,6 @@ cargo doc --workspace --no-deps --manifest-path octo-transport/Cargo.toml
 
 ## Review Process
 
-Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R14
+Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R16
 completed (2026-08-10). Convergence target: zero NEW findings per
-R15+.
+R17+.

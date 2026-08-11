@@ -447,11 +447,17 @@ these; AC#1 Commit 1 must ADD them):
 ```toml
 [dependencies]
 # Layer A — BLS12-381 threshold primitives.
+# Per R17 L4: pinned to 0.3.11 for cross-arch CI baseline ABI;
+# bump requires re-running x86_64 + ARM64 determinism suite per
+# A6 + §Implicit Assumptions Audit.
 blst = "=0.3.11"
 # Layer A — Shamir secret sharing (RFC-0009 §MPC threshold identity).
-vsss = "=0.5.2"
+# Per R17 H1: crate name is `vsss-rs` (NOT `vsss`); 0.5.2 not
+# on crates.io — use latest stable 6.0.1.
+vsss-rs = "=6.0.1"
 # Layer A — RFC-9591 FROST Ed25519 threshold signing.
-frost-ed25519 = "=2.0.3"
+# Per R17 H2: 2.0.3 not on crates.io — use 2.2.0.
+frost-ed25519 = "=2.2.0"
 # Layer B-substrate — compile-time invariant assertions.
 static_assertions = "=1.1.0"
 ```
@@ -569,8 +575,9 @@ Per RFC-0008 Execution Class mapping:
 ### A6 — FROST nonce reuse.
 - **Threat:** attacker exploits FROST nonce reuse.
 - **Attack:** recover private key from two signatures with same nonce.
-- **Defense (per R11 H6 — quartet):** (a) `frost-ed25519 = "=2.0.3"`
-  exact pin; (b) `frost-ed25519` cross-arch determinism check
+- **Defense (per R11 H6 — quartet):** (a) `frost-ed25519 = "=2.2.0"`
+  exact pin (per R17 H2 — 2.0.3 not on crates.io); (b) `frost-ed25519`
+  cross-arch determinism check
   (per R15 H1 — `blst` `DISABLE_PREFETCH` is BLS-specific, not
   FROST nonce defense; correct fix is x86_64 + ARM64 CI test
   suite + per-implementation cross-arch nonce audit); (c)
@@ -731,7 +738,8 @@ A4 enforced via:
 - BLS12-381 over BN254: ZK-friendly.
 - FROST Ed25519 over MuSig: RFC-9591 (draft).
 - `parent_depth_be_bytes` as 4-byte BE.
-- `vsss` crate for Shamir.
+- `vsss-rs` crate for Shamir (per R17 H1 — crate name is
+  `vsss-rs`, not `vsss`; `vsss` does not exist on crates.io).
 - `BoundedShareVec::new` enforces m == threshold.
 - Separate `threshold_signer` field.
 - V2 = separate struct.
@@ -809,8 +817,12 @@ cargo doc --workspace --no-deps
   on `CapabilityTokenV2` only; per R11 M2 — fixture file count
   consistent with RFC: 1 file `tests/fixtures/phase1_tv.json` for
   RFC-0009 + 1 file `tests/fixtures/phase1_tv_0862.json` for
-  RFC-0862)
-- Mission `0957-phase1-fixture-author`
+  RFC-0862 + 1 file `tests/fixtures/v2_bundle_tv.json` for V2
+  wire form)
+- Mission `0957-phase1-fixture-author` (RFC-0009 Phase 1 fixture
+  scope; per R17 M3 — does NOT cover RFC-0862)
+- Mission `0862-phase1-tv-fixture` (RFC-0862 Phase 1 fixture scope;
+  FILED per R17 M3)
 
 ## Version History
 

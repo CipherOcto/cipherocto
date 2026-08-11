@@ -24,7 +24,7 @@ Extend RFC-0009 §Capability Keys with:
 
 ## Review State
 
-- **R1-R25 completed (2026-08-10); R26 in progress.**
+- **R1-R27 completed (2026-08-10); R28 in progress.**
 - **Termination condition:** convergence when a new round returns
   zero NEW findings.
 
@@ -90,7 +90,9 @@ R18 M6 + R24 L3 + R25 L4 + R27 L2)
    can fail).
 8. **`derive_capability_key` 4-param signature.**
 9. **NEW: `OperatorId` struct + `pubkey()` method** (per R15 L4 —
-   OperatorId is NEW in v1.2; not present in v1.0/v1.1 substrate).
+   OperatorId is NEW in v1.2; not present in v1.0/v1.1 substrate;
+   per R28 M3 — ADDITIVE change; moves to §Additive Changes below
+   since no prior identifier or symbol is shadowed).
 10. **`HsmAdapter::sign` NON-BREAKING** — current code uses
     `Result<[u8; 64], HsmError>` per `HsmAdapter::sign` symbol in
     `crates/octo-wallet/src/hsm.rs` + v1.1 baseline (per R11 C1).
@@ -104,6 +106,17 @@ R18 M6 + R24 L3 + R25 L4 + R27 L2)
     `dkg_proof` per RFC-0871 §Future Work (parallel pattern to
     `Authorization::ThresholdSignature` BC#5). Closes coverage
     gap for FROST-signed envelopes.
+
+## Additive Changes (per R28 M3)
+
+Per R28 M3: BC#9 (`OperatorId` struct + `pubkey()` method) is
+ADDITIVE, not BREAKING (no prior identifier or symbol shadowed;
+OperatorId is fresh in v1.2 substrate). Moved here from §Breaking
+Changes. Other additive changes that don't break v1.0/v1.1
+substrate should also be listed here, NOT in §Breaking Changes.
+
+- **9-ADDITIVE. `OperatorId` struct + `pubkey()` method** (per
+  R15 L4 + R28 M3) — fresh identifier in v1.2 substrate.
 
 ## Design Goals
 
@@ -176,6 +189,10 @@ This RFC is ready for promotion to Accepted when:
     RFC-0009 v1.2 promotion to Accepted. Until then, BC#5
     forward-pointer is ASPIRATIONAL (downgraded from MUST per
     R25 H1).
+10. **RFC-0871 amendment covers BC#12 `nonce_proof` field**
+    (per R28 M5) for FROST signatures; gates parallel to AC#9
+    for BC#5 `aggregated_pk_check` + `dkg_proof`. FROST
+    forward-pointer ASPIRATIONAL until AC#10 satisfied.
 
 ## Motivation
 
@@ -686,7 +703,7 @@ Per RFC-0008 Execution Class mapping:
 | Operator | Key-share ceremony with secure RNG | Ceremony compromise | Per-scheme ceremony + audit log |
 | Platform | BLS12-381 deterministic across x86_64 + ARM64 | Cross-arch divergence | blst `DISABLE_PREFETCH` + cross-arch CI |
 | Platform | FROST Ed25519 deterministic (RFC-9591 §5.3) | Same | frost-ed25519 deterministic nonce + cross-arch CI |
-| Platform | Linux baseline | BSD/Windows divergence | Linux baseline |
+| Platform | Linux baseline | BSD/Windows divergence | x86_64 Ubuntu 22.04 + ARM64 macOS runners in CI per A6 + A9 cross-arch defenses (per R28 L4 — concrete CI matrix documented; was tautological "Linux baseline") |
 | Platform | stoolap fork at pin | API drift | Pin commit hash |
 | Time | Chain depth ≤ 8 | Migration if raised | Depth cap constant |
 | Network | Threshold coordinator timeout | Coordinator failure stalls | Timeout (default 30s) + retry |
@@ -1071,6 +1088,6 @@ cargo doc --workspace --no-deps
 
 ## Review Process
 
-Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R25
+Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R27
 completed (2026-08-10). Convergence target: zero NEW findings per
-R27+.
+R29+.

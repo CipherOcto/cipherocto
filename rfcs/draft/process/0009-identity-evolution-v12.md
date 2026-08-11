@@ -38,6 +38,23 @@ Extend RFC-0009 §Capability Keys with:
     prior equivalent exists).
 1d. **NEW error: `ThresholdError`** (replaces `MpcError`; no prior
     equivalent exists).
+1e. **NEW error variant: `HsmError::ThresholdSignerRequired`** (per
+    R13 M1 — fail-closed sentinel for `IdentityKey::sign` when
+    `threshold_signer` configured).
+1f. **RENAMED: `ThresholdSigner::threshold()` + `share_count()` →
+    single `threshold_params() -> (M, N)`** (per R13 M3 — actual
+    `crates/octo-wallet/src/mpc.rs` §ThresholdSigner has 4 methods
+    including `threshold` + `share_count`; spec replaces with
+    single tuple-returning method).
+1g. **NEW trait: `ThresholdCoordinator`** (per R13 L4 — `async
+    collect_shares` + `aggregate` methods; RFC-0853 §F3 substrate
+    contract).
+1h. **NEW method: `IdentityKey::sign_threshold`** (per R13 M5 —
+    companion to fail-closed `sign` from BC#11; dispatches to
+    `threshold_signer.threshold_sign`).
+1i. **NEW method: `ThresholdSigner::group_public_key()`** (per
+    R12 M7 — group PK exposed for `Authorization::ThresholdSignature`
+    aggregated_pk_check).
 2. **`Xor2Of3Signer` additive `threshold_signer` field.**
 3. **`CapabilityBundleV2` NEW struct.**
 4. **`IdentityKey` 9 existing fields UNCHANGED + 2 new fields
@@ -48,6 +65,15 @@ Extend RFC-0009 §Capability Keys with:
    `aggregated_pk_check` + `dkg_proof` fields + verifier MUST
    semantics land in `crates/octo-cap-threshold-mpc/` per
    RFC-0871 §Future Work).
+   - **Per R13 M2:** RFC-0871 §Future Work currently lists
+     "Threshold-MPC for high-value transitions (BLS via
+     `Authorization::ThresholdSignature`)" but does NOT carry the
+     `aggregated_pk_check` + `dkg_proof` concrete fields. The
+     forward-pointer is dangling. Resolution: RFC-0871 amendment
+     (out of scope for RFC-0009 v1.2) MUST add the concrete
+     fields to §Future Work OR §Specification before v1.2
+     acceptance of this RFC. Until then, this RFC's cross-ref is
+     ASPIRATIONAL.
 6. **`BoundedShareVec::new` enforces m == threshold.**
 7. **`HsmAdapter::get_public_key` return type change.**
 8. **`derive_capability_key` 4-param signature.**

@@ -44,7 +44,12 @@ Extend RFC-0862 §Roles (writer/reader split) with:
 5. **`BootstrapOrchestrator` naming conflict** → renamed concrete
    to `BootstrapOrchestratorImpl`. Gated on **RFC-0863 v1.9
    amendment** (PENDING).
-6. **Path correction.**
+6. **Path correction (per R13 L10):** all leaf-workspace paths
+   in §Roles + §Specification corrected to use prefix
+   (`octo-sync/src/...`, `crates/octo-ident/src/...`,
+   `crates/quota-router-storage/src/...`). Prior v1.2 listed
+   unqualified paths which resolved against repo root in some
+   tools. AC#15 covers rollout ordering.
 7. **WAL header field-size breakdown corrected.**
 8. **`GovernanceAttestation` + `OperatorSignature` defined.**
 9. **Phantom mission pointer resolved.**
@@ -288,6 +293,11 @@ impl HlcClock {
     /// Per R11 M4: refuse-new on overflow (Class A determinism).
     /// Per R12 H13: takes `&self` — atomics make `&mut self` redundant
     /// and would defeat the lock-free design.
+    /// Per R13 M6: pseudocode simplified; real impl uses
+    /// `compare_exchange_weak` CAS loop on `last_physical_ms` +
+    /// `last_logical`. The presented load-store sequence would let
+    /// a lower-priority thread regress `last_logical` between the
+    /// load and the store.
     pub fn now(&self) -> Result<HlcTimestamp, HlcError> {
         let observed = (self.clock)();
         let physical_ms = observed.max(self.last_physical_ms.load(Acquire));
@@ -300,6 +310,8 @@ impl HlcClock {
         } else {
             0
         };
+        // Per R13 M6: CAS loop (simplified pseudocode; real impl
+        // uses `compare_exchange_weak` on both fields).
         self.last_physical_ms.store(physical_ms, Release);
         self.last_logical.store(logical, Release);
         Ok(HlcTimestamp { physical_ms, logical, writer_node_id: self.writer_node_id })
@@ -308,9 +320,14 @@ impl HlcClock {
     /// Per R12 H13: takes `&self`.
     /// Per R12 H14: overflow guards on BOTH remote-derived branches;
     /// skew cap `max_skew_ms` rejects poisoned `remote.physical_ms`.
+    /// Per R13 H1: skew cap = 1_000ms (10x alarm threshold from
+    /// §Implicit Assumptions Audit "NTP + alarm >100ms"). 60_000ms
+    /// was 600x too loose; broken NTP corrupted HLC silently for
+    /// ~60s before error fired.
+    /// Per R13 M6: pseudocode simplified; real impl uses CAS loop.
     pub fn observe(&self, remote: HlcTimestamp) -> Result<HlcTimestamp, HlcError> {
-        // Per R12 H14: skew cap.
-        let max_skew_ms: u64 = 60_000; // configurable
+        // Per R13 H1: skew cap aligned with baseline.
+        let max_skew_ms: u64 = 1_000; // 10x alarm threshold; configurable
         let observed = (self.clock)();
         if remote.physical_ms.abs_diff(observed) > max_skew_ms {
             return Err(HlcError::RemoteSkewExceedsCap { observed, remote: remote.physical_ms, cap_ms: max_skew_ms });
@@ -344,6 +361,8 @@ impl HlcClock {
         } else {
             0
         };
+        // Per R13 M6: CAS loop (simplified pseudocode; real impl
+        // uses `compare_exchange_weak` on both fields).
         self.last_physical_ms.store(physical_ms, Release);
         self.last_logical.store(logical, Release);
         Ok(HlcTimestamp { physical_ms, logical, writer_node_id: self.writer_node_id })
@@ -586,8 +605,10 @@ mod sealed {
 
 /// Per R11 H1: NonceTracker ACTUALLY writes to WAL on consume +
 /// replay on init.
+/// Per R13 M3: in-memory map carries `(term, nonce)` tuples so
+/// `gc_expired_nonces` can prune by term boundary.
 pub struct NonceTracker {
-    used_nonces: DashMap<ShardKey, HashSet<[u8; 32]>>,  // per R11 L1 — DashMap for per-shard locking
+    used_nonces: DashMap<ShardKey, HashSet<(u64, [u8; 32])>>,  // per R11 L1 — DashMap for per-shard locking; per R13 M3 — keyed by (term, nonce)
     wal: Arc<dyn WalAppender>,
 }
 
@@ -597,12 +618,12 @@ impl NonceTracker {
         Self { used_nonces, wal }
     }
 
-    fn replay_from_wal(wal: &dyn WalAppender) -> DashMap<ShardKey, HashSet<[u8; 32]>> {
+    fn replay_from_wal(wal: &dyn WalAppender) -> DashMap<ShardKey, HashSet<(u64, [u8; 32])>> {
         let mut map = DashMap::new();
         for nonce_record in wal.scan_nonce_records() {
             map.entry(nonce_record.shard_key)
                 .or_insert_with(HashSet::new)
-                .insert(nonce_record.nonce);
+                .insert((nonce_record.term, nonce_record.nonce));
         }
         map
     }
@@ -612,29 +633,39 @@ impl NonceTracker {
     /// replayed nonces do NOT grow the WAL unboundedly.
     /// Per R12 L1: per-shard locking via DashMap.
     /// Per R12 H13: takes `&self`.
-    pub fn consume(&self, shard_key: &ShardKey, nonce: &[u8; 32])
+    /// Per R13 M4: on WAL append failure, ROLL BACK in-memory insert
+    /// (else stale nonce blocks legitimate reuse after process
+    /// restart when WAL replay does not see it).
+    pub fn consume(&self, shard_key: &ShardKey, term: u64, nonce: &[u8; 32])
         -> Result<(), WriterElectionError>
     {
+        let key = (*term, *nonce);
         let mut set = self.used_nonces.entry(shard_key.clone()).or_insert_with(HashSet::new);
-        if !set.insert(*nonce) {
+        if !set.insert(key) {
             return Err(WriterElectionError::NonceReplayed);
         }
-        self.wal.append_nonce_record(&NonceRecord {
+        if let Err(e) = self.wal.append_nonce_record(&NonceRecord {
             shard_key: shard_key.clone(),
+            term,
             nonce: *nonce,
-        })?;
+        }) {
+            // Per R13 M4: roll back in-memory insert on WAL failure.
+            set.remove(&key);
+            return Err(e);
+        }
         Ok(())
     }
 
-    /// Per R12 H15: term-scoped GC. Drop nonces older than `term -
-    /// MAX_NONCE_RETENTION_TERMS`. Compaction runs on each new term
-    /// boundary.
+    /// Per R12 H15 + R13 M3: term-scoped GC. Drop nonces older than
+    /// `current_term - MAX_NONCE_RETENTION_TERMS`. Compaction runs
+    /// on each new term boundary.
     pub fn gc_expired_nonces(&self, current_term: u64) {
         const MAX_NONCE_RETENTION_TERMS: u64 = 1_000;
-        // Implementation: prune entries with `(term, nonce)` tuples
-        // where term < current_term - MAX_NONCE_RETENTION_TERMS.
-        // Requires extending the in-memory map to `(term, [u8; 32])`
-        // and replaying the term from `NonceRecord`.
+        for mut entry in self.used_nonces.iter_mut() {
+            entry.value_mut().retain(|(term, _)| {
+                *term + MAX_NONCE_RETENTION_TERMS >= current_term
+            });
+        }
     }
 }
 
@@ -864,7 +895,10 @@ pub trait DidWriteCoordinator: sealed::DidWriteCoordinatorSealed + Send + Sync {
         // Per R11 H2: use FREE FN `canonical_hash` (not trait method).
         // Per R12 H12: take `&DidDocument` directly; no downcast, no
         // `EncodedDidDocument` sealing claim (it is NOT sealed).
-        if canonical_did_hash != &super::canonical_hash(document) {
+        // Per R13 M5: `canonical_hash` lives in `octo_sync::did::`,
+        // NOT in parent of this module — full path required.
+        use crate::octo_sync::did::canonical_hash;
+        if canonical_did_hash != &canonical_hash(document) {
             return Err(DidWriteCoordinatorError::HashDocumentMismatch);
         }
         self.submit_register_validated(canonical_did_hash, chain_id, document).await
@@ -1017,6 +1051,9 @@ pub trait WalNonceScanner: Send + Sync {
 }
 
 // Legacy alias kept for transition (deprecation cycle).
+// Per R13 M2: #[async_trait] required for dyn-compat
+// (NonceTracker uses `Arc<dyn WalAppender>`).
+#[async_trait::async_trait]
 #[deprecated(since="1.3.0", note="use WalWriter + WalReader + WalNonceScanner")]
 pub trait WalAppender: WalWriter + WalNonceScanner {}
 
@@ -1129,6 +1166,7 @@ Per RFC-0008 Execution Class mapping:
 | Platform | stoolap fork at pin | API drift | Pin commit hash |
 | Platform | NTP-synced clocks | Clock skew → wrong HLC ordering | NTP + alarm >100ms |
 | Time | Clock skew ≤ 100ms | Higher skew → wrong HLC ordering | NTP alarm |
+| Time | HLC skew cap = 1_000ms (10x alarm; per R13 H1) | Broken NTP corrupts HLC silently beyond cap | HlcError::RemoteSkewExceedsCap |
 | Time | Chain depth ≤ 8 | Migration if raised | Depth cap |
 | Network | TCP heartbeat (consolidated) | Same | Same |
 | Upgrade | v1.3 WAL **breaking** (new Magic + ShardKey field + blake3); old via V2 `header_size` (v1.2.0 fails-open on unknown Magic — per R12 C1; v1.2.1+ MUST reject) | v1.2.0 silently accepts v1.3 unvalidated = corruption | Version-check + reject (mandatory v1.2.1 patch BEFORE v1.3 rollout per R12 C1) |
@@ -1232,6 +1270,22 @@ Deliverables:
   - TV-2: `hlc_logical_increment_constant_physical`
   - TV-3: `current_writer_returns_cached_identity`
   - TV-4: `bootstrap_acquisition_under_5s` against PRODUCTION impl
+
+**Init sequence (per R13 L9):** node startup MUST run
+`NonceTracker::new(wal)` BEFORE `replay_wal(...)`. Nonce records
+must be loaded into in-memory state BEFORE drain / DID register /
+revoke entries are replayed, else replayed nonces could be
+re-accepted (replay-during-replay attack). Mandated order:
+
+```rust
+fn init_node(wal: Arc<dyn WalAppender>, shard_key: &ShardKey) -> Result<(), ...> {
+    // 1. NonceTracker::new() loads nonce records from WAL.
+    let nonce_tracker = NonceTracker::new(wal.clone());
+    // 2. THEN replay_wal() applies drain + DID entries.
+    replay_wal(&mut writer_context, 0, shard_key, &*wal).await?;
+    Ok(())
+}
+```
 
 **Phase 2 — coordinator traits**
 
@@ -1373,10 +1427,11 @@ cargo doc --workspace --no-deps --manifest-path octo-transport/Cargo.toml
 | 1.0.0   | 2026-06-20 | Accepted | Initial specification                                                                                                        |
 | 1.1.0   | 2026-06-21 | Accepted | `DatabaseSyncAdapter` trait + `octo-sync` leaf-workspace                                                                     |
 | 1.2.0   | 2026-06-25 | Accepted | Bootstrap integration path clarified                                                                                         |
+| 1.2.1   | 2026-08-10 | Accepted | **Mandatory pre-v1.3 patch (per R11 H5 + R12 C1).** Flips `validate_wal_entry_crc32` behavior on unknown Magic from fail-open (returns `true`) to reject (`WalVersionTooNew`); HeaderSize-aware; dual-version cluster window compatible. Without this patch v1.2.0 nodes silently accept v1.3 WAL entries UNVALIDATED. |
 | 1.3.0   | 2026-08-10 | Draft    | `WriterElection` + bootstrap-orchestrated sync + `DrainCoordinator` + `DidWriteCoordinator` + CRDT-extension hooks (F12/F13) |
 
 ## Review Process
 
-Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R11
+Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R12
 completed (2026-08-10). Convergence target: zero NEW findings per
-R12+.
+R13+.

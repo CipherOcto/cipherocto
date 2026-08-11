@@ -2,10 +2,10 @@
 
 ## Status
 
-open (2026-08-10; renamed from `0957-f-f4-bundle.md` per R7 H1 fix;
-V2 work spec rewritten per R8 H1).
+claimed (2026-08-11; moved from `missions/open/` to `missions/claimed/`;
+RFC-0009 v1.2 Accepted 2026-08-11 unblocks V2 wire form authoring).
 
-**Substrate:** RFC-0009 v1.2 (Draft 2026-08-10) + Mission
+**Substrate:** RFC-0009 v1.2 (Accepted 2026-08-11) + Mission
 `0957-phase1-fixture-author` (R8 H1 fixture owner).
 
 ## Summary
@@ -73,3 +73,4 @@ attenuation chain verification. This is the new V2 work — the V1
 | ------- | ---------- | -------- | ------- |
 | v0.1    | 2026-08-09 | closed (F4 V1) | Original F4 bundle struct + TV landed |
 | v0.2    | 2026-08-10 | open (V2 spec) | Renamed from F4 → V2; content rewritten for V2 work per R8 H1 |
+| v0.3    | 2026-08-11 | claimed (V2 wire) | Mission moved `open/` → `claimed/`; V2 substrate authoring in progress |

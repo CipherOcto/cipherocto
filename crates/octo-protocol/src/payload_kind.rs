@@ -109,6 +109,30 @@ pub const IDENTITY_RESOLVE: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 ]);
 
+// RFC-0871 identity-write payload kinds (RFC-0862 v1.3 §DidWriteCoordinator,
+// mission 0871e-f7-impl-resolver-mediation). The resolver-node mediates
+// `register` / `revoke` calls through an injected
+// `Arc<dyn DidWriteCoordinator>` (Layer B substrate in `octo-ident`)
+// before delegating to the local `DidRegistry` backend. Wire form:
+// borsh-encoded `(canonical_did: String, document: DidDocument)`.
+//
+// Sub-namespace continues the identity allocation pattern: `0x0001`.
+// New UUIDs `0002` (register) + `0003` (revoke).
+
+/// Identity-register payload kind (RFC-0862 v1.3 §DidWriteCoordinator).
+///
+/// UUID: `0x0009:0001:0000:0000:0000:0000:0000:0002`
+pub const IDENTITY_REGISTER: PayloadKindId = PayloadKindId([
+    0x00, 0x09, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
+]);
+
+/// Identity-revoke payload kind (RFC-0862 v1.3 §DidWriteCoordinator).
+///
+/// UUID: `0x0009:0001:0000:0000:0000:0000:0000:0003`
+pub const IDENTITY_REVOKE: PayloadKindId = PayloadKindId([
+    0x00, 0x09, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
+]);
+
 /// Wallet sign Ed25519 (RFC-0871 §Wallet Node Lifecycle, Phase 2 mission 0871a).
 ///
 /// UUID: `0x0009:0002:0000:0000:0000:0000:0000:0001`
@@ -411,6 +435,50 @@ mod tests {
             0x00, 0x01,
         ];
         assert_eq!(IDENTITY_RESOLVE.0, expected);
+    }
+
+    #[test]
+    fn identity_register_uuid_matches_rfc_0862_v13() {
+        // Mission 0871e-f7-impl-resolver-mediation:
+        // IDENTITY_REGISTER = UUID 0x0009:0001:0000:0000:0000:0000:0000:0002
+        let expected: [u8; 16] = [
+            0x00, 0x09, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x02,
+        ];
+        assert_eq!(IDENTITY_REGISTER.0, expected);
+    }
+
+    #[test]
+    fn identity_revoke_uuid_matches_rfc_0862_v13() {
+        // Mission 0871e-f7-impl-resolver-mediation:
+        // IDENTITY_REVOKE = UUID 0x0009:0001:0000:0000:0000:0000:0000:0003
+        let expected: [u8; 16] = [
+            0x00, 0x09, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x03,
+        ];
+        assert_eq!(IDENTITY_REVOKE.0, expected);
+    }
+
+    #[test]
+    fn identity_payload_kinds_are_distinct() {
+        // Mission 0871e-f7-impl-resolver-mediation AC: 3 identity payload
+        // kinds must be pairwise distinct (no accidental UUID collision
+        // across `IDENTITY_RESOLVE` / `IDENTITY_REGISTER` / `IDENTITY_REVOKE`).
+        let kinds = [IDENTITY_RESOLVE, IDENTITY_REGISTER, IDENTITY_REVOKE];
+        assert_eq!(kinds.len(), 3);
+        for i in 0..kinds.len() {
+            for j in (i + 1)..kinds.len() {
+                assert_ne!(
+                    kinds[i], kinds[j],
+                    "duplicate UUID in identity payload kinds at indices {i} / {j}"
+                );
+            }
+        }
+        // Also assert they do NOT collide with the existing wallet kinds
+        // (different sub-namespace, but a defensive cross-check guards
+        // against future re-allocations).
+        assert_ne!(IDENTITY_REGISTER, WALLET_SIGN_ED25519);
+        assert_ne!(IDENTITY_REVOKE, WALLET_RESOLVE_DID);
     }
 
     #[test]

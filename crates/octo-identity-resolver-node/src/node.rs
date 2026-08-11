@@ -13,11 +13,24 @@
 //! coupling this Layer C crate to `quota-router-storage`. Default
 //! construction falls back to `InMemoryDidRegistry` for tests + Phase 1
 //! deployments.
+//!
+//! ## Mission 0871e-f7-impl-resolver-mediation
+//!
+//! `IdentityResolverNodeConfig.write_coordinator: Option<Arc<dyn
+//! DidWriteCoordinator>>` slot wires the cross-instance write
+//! coordination substrate (RFC-0862 v1.3 §DidWriteCoordinator) without
+//! coupling this Layer C crate to the future `octo-sync` crate. When
+//! `None`, the resolver-node refuses `IDENTITY_REGISTER` +
+//! `IDENTITY_REVOKE` with `IdentityResolveError::CoordinatorUnavailable`
+//! (fail-closed per RFC-0862 v1.3 R12). Production HA / sharded
+//! deployments inject a concrete coordinator; single-instance
+//! deployments may legitimately leave this slot `None` (writes are
+//! refused, which is the safe default for an unconfigured cluster).
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use octo_ident::{DidRegistry, InMemoryDidRegistry};
+use octo_ident::{ChainId, DidRegistry, DidWriteCoordinator, InMemoryDidRegistry};
 use octo_protocol::dispatch::ReferenceDispatcher;
 use octo_protocol::payload_kind::PayloadKindId;
 use octo_protocol::recipient::RecipientRef;
@@ -28,8 +41,20 @@ use octo_transport::receiver::{NetworkReceiver, ReceiveContext};
 use octo_transport::sender::TransportError;
 use octo_transport::NodeTransport;
 
-use crate::handlers::{resolver_error_to_protocol, ResolveHandler, ResolveRequest};
+use crate::handlers::{
+    resolver_error_to_protocol, RegisterHandler, RegisterRequest, ResolveHandler, ResolveRequest,
+    RevokeHandler, RevokeRequest,
+};
 use crate::is_identity_resolver_payload_kind;
+
+/// Default `ChainId` used when no explicit chain is configured.
+///
+/// Per RFC-0862 v1.3 R12 + RFC-0010 v1.3 §Future Work F2 the chain
+/// identifier gains typed-namespace + federation semantics in a future
+/// RFC-0010 v1.4 amendment. Until then, `"cipherocto-mainnet"` is the
+/// sole canonical chain and serves as the default for the
+/// `IDENTITY_REGISTER` + `IDENTITY_REVOKE` mediation path.
+pub const DEFAULT_CHAIN_ID: &str = "cipherocto-mainnet";
 
 /// Identity-resolver node configuration.
 #[derive(Clone)]
@@ -51,6 +76,38 @@ pub struct IdentityResolverNodeConfig {
     /// Injected via `Arc<dyn DidRegistry>` — no `quota-router-storage`
     /// dep at this Layer C crate (registry is a trait-object boundary).
     pub registry: Option<Arc<dyn DidRegistry>>,
+    /// Mission 0871e-f7-impl-resolver-mediation: cross-instance DID
+    /// write coordination substrate. When `None`, the resolver-node
+    /// refuses all writes with `CoordinatorUnavailable` (fail-closed).
+    /// Injected via `Arc<dyn DidWriteCoordinator>` — no `octo-sync` dep
+    /// at this Layer C crate (coordinator is a trait-object boundary;
+    /// sealed trait per RFC-0862 v1.3 prevents downstream extension).
+    pub write_coordinator: Option<Arc<dyn DidWriteCoordinator>>,
+    /// Mission 0871e-f7-impl-resolver-mediation: chain ID used for
+    /// the `IDENTITY_REGISTER` + `IDENTITY_REVOKE` mediation path.
+    /// Defaults to [`DEFAULT_CHAIN_ID`] when `None`. Operators with a
+    /// custom chain namespace pass `Some(ChainId::new("..."))`.
+    pub chain_id: Option<ChainId>,
+}
+
+impl Default for IdentityResolverNodeConfig {
+    /// Default config for tests + Phase 1 MVP callers: no transport,
+    /// no identity, no network key, no registry (defaults to
+    /// `InMemoryDidRegistry`), no coordinator (fail-closed writes),
+    /// no explicit chain (`DEFAULT_CHAIN_ID`).
+    ///
+    /// Production deployments construct via struct-literal with all
+    /// fields filled in.
+    fn default() -> Self {
+        Self {
+            transport: Arc::new(NodeTransport::new(Vec::new())),
+            identity: None,
+            network_key: [0u8; 32],
+            registry: None,
+            write_coordinator: None,
+            chain_id: None,
+        }
+    }
 }
 
 /// Opaque handle returned by `IdentityResolverNode::start()`.
@@ -85,6 +142,15 @@ pub struct IdentityResolverNode {
     /// Cached resolved registry (either the injected one or the default
     /// `InMemoryDidRegistry`). Cloned into handler instances per request.
     registry: Arc<dyn DidRegistry>,
+    /// Mission 0871e-f7-impl-resolver-mediation: cached coordinator
+    /// (cloned from `config.write_coordinator`) for the
+    /// `IDENTITY_REGISTER` + `IDENTITY_REVOKE` mediation path. `None`
+    /// means fail-closed (writes refused with
+    /// `IdentityResolveError::CoordinatorUnavailable`).
+    write_coordinator: Option<Arc<dyn DidWriteCoordinator>>,
+    /// Mission 0871e-f7-impl-resolver-mediation: resolved chain ID
+    /// (defaults to [`DEFAULT_CHAIN_ID`] when `config.chain_id` is `None`).
+    chain_id: ChainId,
     dispatcher: ReferenceDispatcher,
     started: std::sync::atomic::AtomicBool,
 }
@@ -97,15 +163,26 @@ impl IdentityResolverNode {
     /// keeps backward-compat with Phase 1 MVP callers that pre-date the
     /// storage substrate while allowing production deployments to inject
     /// `Arc::new(StoolapDidRegistry::open_path(...))`.
+    ///
+    /// Mission 0871e-f7-impl-resolver-mediation: `config.chain_id`
+    /// defaults to [`DEFAULT_CHAIN_ID`] when `None`; the coordinator
+    /// slot defaults to `None` (fail-closed writes).
     #[must_use]
     pub fn new(config: IdentityResolverNodeConfig) -> Self {
         let registry = config
             .registry
             .clone()
             .unwrap_or_else(|| Arc::new(InMemoryDidRegistry::default()));
+        let write_coordinator = config.write_coordinator.clone();
+        let chain_id = config
+            .chain_id
+            .clone()
+            .unwrap_or_else(|| ChainId::new(DEFAULT_CHAIN_ID));
         Self {
             config,
             registry,
+            write_coordinator,
+            chain_id,
             dispatcher: default_dispatcher(),
             started: std::sync::atomic::AtomicBool::new(false),
         }
@@ -121,9 +198,16 @@ impl IdentityResolverNode {
             .registry
             .clone()
             .unwrap_or_else(|| Arc::new(InMemoryDidRegistry::default()));
+        let write_coordinator = config.write_coordinator.clone();
+        let chain_id = config
+            .chain_id
+            .clone()
+            .unwrap_or_else(|| ChainId::new(DEFAULT_CHAIN_ID));
         Self {
             config,
             registry,
+            write_coordinator,
+            chain_id,
             dispatcher,
             started: std::sync::atomic::AtomicBool::new(false),
         }
@@ -168,7 +252,13 @@ impl IdentityResolverNode {
     /// # Errors
     /// Returns `ProtocolError::AuthorizationFailed` for unsupported
     /// payload kinds, borsh decode failures, or authorization failures.
-    pub fn handle_envelope(
+    ///
+    /// Mission 0871e-f7-impl-resolver-mediation: this method is `async`
+    /// because the `IDENTITY_REGISTER` + `IDENTITY_REVOKE` paths consult
+    /// an `Arc<dyn DidWriteCoordinator>` whose trait surface is
+    /// async (RFC-0862 v1.3). The `IDENTITY_RESOLVE` path remains
+    /// synchronous (registry lookup is sync).
+    pub async fn handle_envelope(
         &self,
         envelope: &NodeEnvelope,
     ) -> Result<crate::handlers::HandlerOutput, ProtocolError> {
@@ -183,6 +273,30 @@ impl IdentityResolverNode {
                 ResolveHandler::new(self.registry.clone())
                     .handle(&req)
                     .map_err(resolver_error_to_protocol)
+            }
+            k if k == octo_protocol::payload_kind::IDENTITY_REGISTER => {
+                let req = RegisterRequest::from_borsh(&envelope.payload)
+                    .map_err(resolver_error_to_protocol)?;
+                RegisterHandler::new(
+                    self.registry.clone(),
+                    self.write_coordinator.clone(),
+                    self.chain_id.clone(),
+                )
+                .handle(&req)
+                .await
+                .map_err(resolver_error_to_protocol)
+            }
+            k if k == octo_protocol::payload_kind::IDENTITY_REVOKE => {
+                let req = RevokeRequest::from_borsh(&envelope.payload)
+                    .map_err(resolver_error_to_protocol)?;
+                RevokeHandler::new(
+                    self.registry.clone(),
+                    self.write_coordinator.clone(),
+                    self.chain_id.clone(),
+                )
+                .handle(&req)
+                .await
+                .map_err(resolver_error_to_protocol)
             }
             _ => Err(ProtocolError::AuthorizationFailed(format!(
                 "unsupported payload kind: {:?}",
@@ -298,6 +412,7 @@ impl NetworkReceiver for IdentityResolverNodeReceiver {
             .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
         self.node
             .handle_envelope(&envelope)
+            .await
             .map(|_| ())
             .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))
     }
@@ -313,6 +428,8 @@ fn self_clone_to_receiver(node: &IdentityResolverNode) -> Arc<dyn NetworkReceive
     let arc = Arc::new(IdentityResolverNode {
         config: node.config.clone(),
         registry: node.registry.clone(),
+        write_coordinator: node.write_coordinator.clone(),
+        chain_id: node.chain_id.clone(),
         dispatcher: default_dispatcher(),
         started: std::sync::atomic::AtomicBool::new(true),
     });
@@ -337,6 +454,8 @@ mod tests {
             identity: None,
             network_key: [0u8; 32],
             registry: None,
+            write_coordinator: None,
+            chain_id: None,
         };
         let node = IdentityResolverNode::new(cfg);
         let handle = node.start().expect("start should succeed");
@@ -351,6 +470,8 @@ mod tests {
             identity: None,
             network_key: [0u8; 32],
             registry: None,
+            write_coordinator: None,
+            chain_id: None,
         };
         let node = IdentityResolverNode::new(cfg);
         let _ = node.start();
@@ -358,14 +479,16 @@ mod tests {
         assert!(matches!(err, IdentityResolverNodeError::AlreadyStarted));
     }
 
-    #[test]
-    fn handle_envelope_rejects_unsupported_payload_kind() {
+    #[tokio::test]
+    async fn handle_envelope_rejects_unsupported_payload_kind() {
         let transport = fresh_transport();
         let cfg = IdentityResolverNodeConfig {
             transport: transport.clone(),
             identity: None,
             network_key: [0u8; 32],
             registry: None,
+            write_coordinator: None,
+            chain_id: None,
         };
         let node = IdentityResolverNode::new(cfg);
         // Build a payload with an unknown payload kind (random 16-byte UUID).
@@ -382,12 +505,12 @@ mod tests {
             u64::MAX,
         )
         .unwrap();
-        let err = node.handle_envelope(&envelope).unwrap_err();
+        let err = node.handle_envelope(&envelope).await.unwrap_err();
         assert!(matches!(err, ProtocolError::AuthorizationFailed(_)));
     }
 
-    #[test]
-    fn handle_envelope_uses_injected_registry_when_provided() {
+    #[tokio::test]
+    async fn handle_envelope_uses_injected_registry_when_provided() {
         // Mission 0871b-storage-backend TV: `resolve_handler_uses_registry`.
         // Inject a custom registry returning a distinct `public_key`;
         // handler returns THAT key, NOT the placeholder hash.
@@ -417,6 +540,8 @@ mod tests {
             identity: None,
             network_key: [0u8; 32],
             registry: Some(registry.clone()),
+            write_coordinator: None,
+            chain_id: None,
         };
         let node = IdentityResolverNode::new(cfg);
         let req = ResolveRequest(wire_str.clone());
@@ -433,6 +558,7 @@ mod tests {
         .unwrap();
         let out = node
             .handle_envelope(&envelope)
+            .await
             .expect("handle should succeed");
         let resp_bytes = out.response_payload.expect("response payload present");
         let resp: crate::handlers::ResolveResponse = borsh::from_slice(&resp_bytes).unwrap();
@@ -440,8 +566,8 @@ mod tests {
         assert_eq!(resp.public_key, custom_pubkey);
     }
 
-    #[test]
-    fn handle_envelope_defaults_to_in_memory_registry_when_omitted() {
+    #[tokio::test]
+    async fn handle_envelope_defaults_to_in_memory_registry_when_omitted() {
         // Mission 0871b-storage-backend backward-compat: Phase 1 MVP callers
         // that pre-date the storage substrate still work — but resolve
         // returns `Storage("unknown DID")` because the default registry is
@@ -452,6 +578,8 @@ mod tests {
             identity: None,
             network_key: [0u8; 32],
             registry: None,
+            write_coordinator: None,
+            chain_id: None,
         };
         let node = IdentityResolverNode::new(cfg);
         // Pre-register the DID so the empty-registry case doesn't trip.
@@ -486,6 +614,7 @@ mod tests {
         .unwrap();
         let out = node
             .handle_envelope(&envelope)
+            .await
             .expect("handle should succeed");
         let resp_bytes = out.response_payload.expect("response payload present");
         let resp: crate::handlers::ResolveResponse = borsh::from_slice(&resp_bytes).unwrap();

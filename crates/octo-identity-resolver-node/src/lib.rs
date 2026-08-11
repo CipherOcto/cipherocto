@@ -39,21 +39,32 @@ pub mod handlers;
 pub mod node;
 
 pub use handlers::{
-    HandlerOutput, IdentityResolveError, ResolveHandler, ResolveRequest, ResolveResponse,
+    HandlerOutput, IdentityResolveError, RegisterHandler, RegisterRequest, RegisterResponse,
+    ResolveHandler, ResolveRequest, ResolveResponse, RevokeHandler, RevokeRequest, RevokeResponse,
 };
 pub use node::{
     IdentityResolverNode, IdentityResolverNodeConfig, IdentityResolverNodeError,
-    IdentityResolverNodeHandle,
+    IdentityResolverNodeHandle, DEFAULT_CHAIN_ID,
 };
 
 use octo_protocol::PayloadKindId;
 
-/// All payload kinds served by `IdentityResolverNode` (RFC-0871 §Roles and Authorities).
+/// All payload kinds served by `IdentityResolverNode` (RFC-0871 §Roles and
+/// Authorities, RFC-0862 v1.3 §DidWriteCoordinator).
 ///
 /// Public so callers can register handlers for these UUIDs on other
 /// dispatchers (e.g. quota-router's `EnvelopeDispatcher` for interop).
-pub const IDENTITY_RESOLVER_PAYLOAD_KINDS: &[PayloadKindId] =
-    &[octo_protocol::payload_kind::IDENTITY_RESOLVE];
+///
+/// Mission 0871e-f7-impl-resolver-mediation: extends the read-only
+/// `IDENTITY_RESOLVE` with the cross-instance write paths
+/// `IDENTITY_REGISTER` + `IDENTITY_REVOKE` that consult an injected
+/// `DidWriteCoordinator` (RFC-0862 v1.3) before delegating to the local
+/// `DidRegistry` backend.
+pub const IDENTITY_RESOLVER_PAYLOAD_KINDS: &[PayloadKindId] = &[
+    octo_protocol::payload_kind::IDENTITY_RESOLVE,
+    octo_protocol::payload_kind::IDENTITY_REGISTER,
+    octo_protocol::payload_kind::IDENTITY_REVOKE,
+];
 
 /// True if `kind` is an identity-resolver payload kind.
 #[must_use]

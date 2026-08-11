@@ -11,8 +11,13 @@
 use octo_ident::DidRegistryError;
 use octo_protocol::ProtocolError;
 
+pub mod registration;
 pub mod resolve;
 
+pub use registration::{
+    RegisterHandler, RegisterRequest, RegisterResponse, RevokeHandler, RevokeRequest,
+    RevokeResponse,
+};
 pub use resolve::{ResolveHandler, ResolveRequest, ResolveResponse};
 
 /// Output of an identity-resolver handler invocation.
@@ -63,6 +68,13 @@ impl HandlerOutput {
 /// of the resolver-node (a registry backend error is treated as
 /// "cannot authenticate the request", which is the same security class
 /// as a signature verification failure).
+///
+/// Mission 0871e-f7-impl-resolver-mediation: adds `Coordinator` +
+/// `CoordinatorUnavailable` for the `DidWriteCoordinator` mediation
+/// path. Coordinator errors are reported as `ProtocolError::InvalidDid`
+/// at the dispatch boundary — a coordinator failure is treated as
+/// "cannot authenticate the request to write", mirroring the storage
+/// security class.
 #[derive(Debug, thiserror::Error)]
 pub enum IdentityResolveError {
     /// Canonical DID validation failed.
@@ -78,6 +90,19 @@ pub enum IdentityResolveError {
     /// error at the dispatch boundary.
     #[error("registry storage error: {0}")]
     Storage(String),
+
+    /// No `DidWriteCoordinator` was configured for the resolver-node
+    /// (fail-closed per RFC-0862 v1.3 R12). Operator must inject a
+    /// concrete coordinator for writes to succeed.
+    #[error("coordinator unavailable: {0}")]
+    CoordinatorUnavailable(String),
+
+    /// Coordinator returned a `DidWriteCoordinatorError` (Debug-formatted
+    /// for operator observability). Treated as authorization-class
+    /// error at the dispatch boundary — the write was not applied to
+    /// the local registry.
+    #[error("coordinator error: {0}")]
+    Coordinator(String),
 }
 
 impl From<IdentityResolveError> for ProtocolError {
@@ -86,6 +111,16 @@ impl From<IdentityResolveError> for ProtocolError {
             IdentityResolveError::InvalidDid(msg) => ProtocolError::InvalidDid(msg),
             IdentityResolveError::Serialization(msg) => ProtocolError::SerializationError(msg),
             IdentityResolveError::Storage(msg) => ProtocolError::AuthorizationFailed(msg),
+            // Coordinator failures share the "cannot authenticate the
+            // request to write" security class with storage failures.
+            // The write was NOT applied; the caller MUST NOT retry
+            // without resolving the underlying coordinator error.
+            IdentityResolveError::CoordinatorUnavailable(msg) => {
+                ProtocolError::AuthorizationFailed(format!("coordinator unavailable: {msg}"))
+            }
+            IdentityResolveError::Coordinator(msg) => {
+                ProtocolError::AuthorizationFailed(format!("coordinator error: {msg}"))
+            }
         }
     }
 }

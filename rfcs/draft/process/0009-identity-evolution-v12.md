@@ -24,7 +24,7 @@ Extend RFC-0009 §Capability Keys with:
 
 ## Review State
 
-- **R1-R36 completed (2026-08-11); R37 in progress.**
+- **R1-R37 completed (2026-08-11); R38 in progress.**
 - **Termination condition:** convergence when a new round returns
   zero NEW findings.
 
@@ -603,7 +603,9 @@ fields.
 ```rust
 pub const MAX_M: usize = 7;  // per R20 L8 — bounds BoundedShareVec
                                   // allocation (7 shareholders); aligned with
-                                  // `static_assertions` MAX_M <= 7 check below.
+                                  // `static_assertions` MAX_M >= 2 check below
+                                  // (CONSTANT floor per R31 M3; MAX_M <= 7
+                                  // ceiling enforced by struct literal cap).
 /// Per R21 L3: chain depth cap (W3C VC-DID best practice per G1).
 pub const MAX_CHAIN_DEPTH: u8 = 8;
 
@@ -1135,6 +1137,6 @@ cargo doc --workspace --no-deps
 
 ## Review Process
 
-Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R36
+Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R37
 completed (2026-08-11). Convergence target: zero NEW findings per
-R38+.
+R39+.

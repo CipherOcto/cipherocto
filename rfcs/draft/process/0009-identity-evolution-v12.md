@@ -112,7 +112,8 @@ This RFC is ready for promotion to Accepted when:
      `ThresholdCoordinator` trait interface + Cargo deps pinned
      in `crates/octo-wallet/Cargo.toml` + `HsmAdapter::get_public_key`
      signature update (per R18 M4 — phase boundary matches
-     §Implementation Phases Commit 1).
+     §Implementation Phases Commit 1) + `OperatorId::pubkey()`
+     method (per R19 L3).
    - Commit 2: `BLS12381ThresholdSigner` +
      `SchnorrThresholdSigner` impls + `Xor2Of3Signer` additive
      field + `IdentityKey::sign` fail-closed when `threshold_signer`
@@ -262,6 +263,9 @@ pub struct IdentityKey {
     pub threshold_signer: Option<Arc<dyn ThresholdSigner>>,
     /// Per R15 M3 + R16 M3: coordinator handle (Option; None = single-key only).
     pub coordinator: Option<Arc<dyn ThresholdCoordinator>>,
+    /// Per R19 M2: shareholders registered at ceremony (carried
+    /// alongside threshold_signer).
+    pub shareholders: Vec<ShareHolderId>,
     /// Per R18 L10: set on `IdentityKey::new` when `threshold_signer`
     /// is configured but `coordinator` is None (misconfiguration);
     /// runtime warning logged once per IdentityKey instance.
@@ -312,13 +316,18 @@ pub enum GroupPublicKey {
 /// Per R15 M3 + R16 M3: ThresholdCoordinator wired via `coordinator`
 /// field on IdentityKey struct (not impl block; Rust forbids
 /// field decls in impl).
+/// Per R19 M2: `shareholders` registered at ceremony (carried on
+/// IdentityKey struct, set via `new`); `sign_threshold` uses the
+/// registry, not `from_index` placeholders.
 impl IdentityKey {
     /// Per R18 L10: warn-once setter for threshold misconfiguration.
+    /// Per R19 M2: `shareholders` registered at ceremony.
     pub fn new(
         signer: Arc<dyn HsmAdapter>,
         public_key: [u8; 32],
         threshold_signer: Option<Arc<dyn ThresholdSigner>>,
         coordinator: Option<Arc<dyn ThresholdCoordinator>>,
+        shareholders: Vec<ShareHolderId>,
     ) -> Self {
         let warned = AtomicBool::new(false);
         if threshold_signer.is_some() && coordinator.is_none() {
@@ -337,6 +346,7 @@ impl IdentityKey {
             deprecated: false,
             threshold_signer,
             coordinator,
+            shareholders,
             warned_threshold_misconfig: warned,
         }
     }
@@ -357,10 +367,23 @@ impl IdentityKey {
             .ok_or(ThresholdError::NoThresholdSigner)?;
         let coordinator = self.coordinator.as_ref()
             .ok_or(ThresholdError::NoThresholdCoordinator)?;
-        let (m, n) = thresh.threshold_params();
-        let shareholders: Vec<ShareHolderId> = (0..n).map(ShareHolderId::from_index).collect();
-        let shares = coordinator.collect_shares(msg, &shareholders, m, 30_000).await?;
-        thresh.threshold_sign(msg, &shares)
+        let (m, _n) = thresh.threshold_params();
+        // Per R19 M2: use shareholders registered at ceremony,
+        // NOT `from_index` placeholder.
+        let shareholders = &self.shareholders;
+        if shareholders.len() != m {
+            return Err(ThresholdError::ShareholderCountMismatch { actual: shareholders.len(), expected: m });
+        }
+        let shares = coordinator.collect_shares(msg, shareholders, m, 30_000).await?;
+        // Per R19 L4: caller (sign_threshold) runs validate_shares_scheme
+        // before sort + aggregate. ThresholdSigner::threshold_sign impls
+        // MAY re-check but MUST NOT be relied on for the property.
+        validate_shares_scheme(shares.as_slice())?;
+        let mut sortable = shares.as_slice().to_vec();
+        sort_shares_for_aggregation(&mut sortable);
+        // Reconstruct BoundedShareVec for threshold_sign.
+        let bounded = BoundedShareVec::new(sortable, m)?;
+        thresh.threshold_sign(msg, &bounded)
     }
 }
 ```
@@ -469,6 +492,10 @@ impl BoundedShareVec {
     }
 
     pub fn len(&self) -> usize { self.m }
+
+    /// Per R19 M1: accessor so callers can compose with
+    /// `sort_shares_for_aggregation` + `validate_shares_scheme`.
+    pub fn as_slice(&self) -> &[ThresholdShare] { &self.shares }
 }
 
 pub enum ThresholdShare {

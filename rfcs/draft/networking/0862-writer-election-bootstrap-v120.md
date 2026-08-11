@@ -28,7 +28,7 @@ Extend RFC-0862 §Roles (writer/reader split) with:
 
 ## Review State
 
-- **R1-R11 completed (2026-08-10).**
+- **R1-R14 completed (2026-08-10).**
 - **Termination condition:** convergence when a new round returns
   zero NEW findings.
 
@@ -1096,7 +1096,6 @@ pub fn ed25519_verify(pk: &[u8; 32], msg: &[u8], sig: &[u8; 64]) -> bool {
     ).is_ok()
 }
 ```
-```
 
 ## Acceptance Criteria for v1.3 Acceptance
 
@@ -1437,7 +1436,8 @@ cargo doc --workspace --no-deps --manifest-path octo-transport/Cargo.toml
 - Mission `0871e-phase5c-1-cross-instance-drain`
 - Mission `0871e-f7-cross-instance-did-coordination`
 - Mission `0871b-storage-backend`
-- Mission `0871e-force-relinquish-governance` (to be filed per AC#12)
+- Mission `0871e-force-relinquish-governance` (FILED per R14 H1;
+  AC#12 satisfied)
 
 ## Version History
 
@@ -1451,6 +1451,6 @@ cargo doc --workspace --no-deps --manifest-path octo-transport/Cargo.toml
 
 ## Review Process
 
-Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R12
+Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R14
 completed (2026-08-10). Convergence target: zero NEW findings per
-R13+.
+R15+.

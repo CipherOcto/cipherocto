@@ -24,7 +24,7 @@ Extend RFC-0009 §Capability Keys with:
 
 ## Review State
 
-- **R1-R11 completed (2026-08-10).**
+- **R1-R14 completed (2026-08-10).**
 - **Termination condition:** convergence when a new round returns
   zero NEW findings.
 
@@ -77,7 +77,8 @@ Extend RFC-0009 §Capability Keys with:
 6. **`BoundedShareVec::new` enforces m == threshold.**
 7. **`HsmAdapter::get_public_key` return type change.**
 8. **`derive_capability_key` 4-param signature.**
-9. **OperatorId → `pubkey()` method added.**
+9. **NEW: `OperatorId` struct + `pubkey()` method** (per R15 L4 —
+   OperatorId is NEW in v1.2; not present in v1.0/v1.1 substrate).
 10. **`HsmAdapter::sign` NON-BREAKING** — current code uses
     `Result<[u8; 64], HsmError>` per `HsmAdapter::sign` symbol in
     `crates/octo-wallet/src/hsm.rs` + v1.1 baseline (per R11 C1).
@@ -158,6 +159,7 @@ DischargeMacaroon` triplet to embed the full attenuation chain.
 | Threshold Signer (object) | `BLS12381ThresholdSigner` / `SchnorrThresholdSigner` — role ID `threshold-signer` | Sign via M-of-N | Persistent per IdentityKey | `octo-wallet` §threshold (impls) + This RFC (trait) |
 | Key-Share Holder | `ShareHolderId` | Custody of one share | Persistent per device | This RFC |
 | Threshold Coordinator | `ThresholdCoordinator` (RFC-0853 §F3) | Collect M shares; aggregate | Per signing request | RFC-0853 §F3 |
+| Operator | `OperatorId` (per R15 L8 — NEW in v1.2) | Sign governance attestations (M-of-N) | Per ceremony | This RFC §MPC threshold identity |
 
 ### Threshold Coordinator interface
 
@@ -289,7 +291,11 @@ pub trait ThresholdSigner: Send + Sync {
 /// `Result<Signature, WalletError>` wrapping
 /// `ed25519_dalek::Signature`); threshold fallback rewrapped via
 /// `WalletError::Hsm(...)`.
+/// Per R15 M3: ThresholdCoordinator wired via IdentityKey field.
 impl IdentityKey {
+    /// Per R15 M3: coordinator handle (Option; None = single-key only).
+    pub coordinator: Option<Arc<dyn ThresholdCoordinator>>,
+
     pub fn sign(&self, msg: &[u8]) -> Result<ed25519_dalek::Signature, WalletError> {
         if self.threshold_signer.is_some() {
             return Err(WalletError::Hsm(HsmError::ThresholdSignerRequired));
@@ -299,16 +305,17 @@ impl IdentityKey {
             .expect("HsmAdapter::sign returns 64-byte Ed25519 signature"))
     }
 
-    pub fn sign_threshold(&self, msg: &[u8])
+    pub async fn sign_threshold(&self, msg: &[u8])
         -> Result<ThresholdSigBytes, ThresholdError>
     {
-        match &self.threshold_signer {
-            Some(thresh) => {
-                let shares = /* share-provider */;
-                thresh.threshold_sign(msg, &shares)
-            }
-            None => Err(ThresholdError::NoThresholdSigner),
-        }
+        let thresh = self.threshold_signer.as_ref()
+            .ok_or(ThresholdError::NoThresholdSigner)?;
+        let coordinator = self.coordinator.as_ref()
+            .ok_or(ThresholdError::NoThresholdCoordinator)?;
+        let (m, n) = thresh.threshold_params();
+        let shareholders: Vec<ShareHolderId> = (0..n).map(ShareHolderId::from_index).collect();
+        let shares = coordinator.collect_shares(msg, &shareholders, m, 30_000).await?;
+        thresh.threshold_sign(msg, &shares)
     }
 }
 ```
@@ -485,7 +492,7 @@ Per RFC-0008 Execution Class mapping:
 | Identity | **M of N holders mutually distrusting AND evictable by Identity Holder** | Collusion attack | Governance + economic stake (RFC-0853 §F3 per R11 L2) |
 | Storage | M shares persist on ShareHolder devices | Host memory compromise | HSM-internal share persistence |
 | Resource | `BoundedShareVec::new` enforces m == threshold | Unbounded M | Runtime check |
-| Hash Construction | HKDF-BLAKE3 + HMAC-BLAKE3 | Implementer picks one | Both documented |
+| Hash Construction | HKDF-BLAKE3 | Implementer picks one | HKDF-BLAKE3 documented (HMAC-BLAKE3 has zero callsites per R15 M2 — dropped from audit) |
 
 ## Security Considerations
 
@@ -550,8 +557,9 @@ Per RFC-0008 Execution Class mapping:
 - **Attack:** aggregate signature over unintended message.
 - **Defense:** BLS aggregate verification includes PK check
   (RFC-0009 §Verification); DKG-based PK-set derivation (RFC-9591
-  §5 for FROST; BLS Shamir for BLS12-381); shares outside the key
-  set fail PK check.
+  §5 for FROST; Pedersen DKG / Joint-Feldman variant for BLS12-381
+  per R15 L5 — `BLS Shamir` is informal shorthand, not a real DKG
+  protocol); shares outside the key set fail PK check.
 - **Residual:** none.
 - **Test:** `bls_threshold_2_of_3_with_malicious_pk_share_fails`.
 
@@ -559,10 +567,12 @@ Per RFC-0008 Execution Class mapping:
 - **Threat:** attacker exploits FROST nonce reuse.
 - **Attack:** recover private key from two signatures with same nonce.
 - **Defense (per R11 H6 — quartet):** (a) `frost-ed25519 = "=2.0.3"`
-  exact pin; (b) `blst` `DISABLE_PREFETCH` build flag (cross-arch
-  determinism); (c) integration test `frost_nonce_determinism.rs`
-  asserting 100K ops produce deterministic nonces; (d) compile-time
-  audit dep.
+  exact pin; (b) `frost-ed25519` cross-arch determinism check
+  (per R15 H1 — `blst` `DISABLE_PREFETCH` is BLS-specific, not
+  FROST nonce defense; correct fix is x86_64 + ARM64 CI test
+  suite + per-implementation cross-arch nonce audit); (c)
+  integration test `frost_nonce_determinism.rs` asserting 100K ops
+  produce deterministic nonces; (d) compile-time audit dep.
 - **Residual:** library-level guarantee; trust boundary on
   `frost-ed25519` impl.
 - **Test:** `frost_nonce_determinism_100k_iterations`.
@@ -635,6 +645,29 @@ N/A. Identity-substrate gating.
 - V1 consumers reject V2 via unknown struct.
 - V2 consumers reject V1 via `bundle_version == 1` check.
 
+**`CapabilityBundleV2` struct (per R15 L6 — schema sketch lives in
+§Specification so implementers don't need cross-RFC jump):**
+
+```rust
+#[derive(Clone, BorshSerialize, BorshDeserialize)]
+pub struct CapabilityBundleV2 {
+    pub bundle_version: u8, // = 2
+    pub token: CapabilityTokenV2,
+    pub holder_record: HolderRecord,
+    pub discharge_macaroon: DischargeMacaroon,
+}
+
+#[derive(Clone, BorshSerialize, BorshDeserialize)]
+pub struct CapabilityTokenV2 {
+    pub chain_depth: u8,            // per R11 H1 — lives on token, not key
+    pub chain_parent: [u8; 32],     // per R11 C2 — binds parent || child || depth
+    pub audience_did: String,
+    pub channel_id: [u8; 16],
+    pub expires_at_unix_secs: u64,
+    pub issuer_did: String,
+}
+```
+
 ## Alternatives Considered
 
 1. **HKDF-BLAKE3 salt chain** (chosen).
@@ -681,7 +714,8 @@ A4 enforced via:
 - `IdentityKey::sign` fails-closed with `ThresholdSignerRequired`
   when `threshold_signer` configured (per R11 M4)
 - `warned_threshold_misconfig: AtomicBool` runtime warning
-- Clippy lint registered in `cargo-clippy.toml`
+- Clippy lint registered in `clippy.toml` (per R15 L9 — actual file
+  is `clippy.toml`, not `cargo-clippy.toml`)
 
 ## Future Work
 
@@ -785,6 +819,6 @@ cargo doc --workspace --no-deps
 
 ## Review Process
 
-Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R11
+Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R14
 completed (2026-08-10). Convergence target: zero NEW findings per
-R12+.
+R15+.

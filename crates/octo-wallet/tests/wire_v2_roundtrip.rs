@@ -80,6 +80,7 @@ fn v2_parser_extracts_proof_bundle_borsh() {
         casm_version: 1,
         security_bits: 128,
         witness_format: zk_vendor::prover_input::WitnessFormat::BytesFallback,
+        capability_v2: None,
     };
     let pb_bytes =
         octo_wallet::capability::zk_mint::proof_bundle_to_wire(&pb).expect("proof_bundle_to_wire");

@@ -29,7 +29,10 @@
 //! The full substrate lands in mission 0957 Phase 2 follow-on.
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use octo_cap_macaroon::{macaroon_id, MacaroonId};
+use octo_cap_macaroon::{
+    macaroon_id, BundleV2Error, CapabilityBundleV2, CapabilityBundleV2Envelope, CapabilityTokenV2,
+    MacaroonId,
+};
 use octo_ident::DidCodec;
 use octo_protocol::ProtocolError;
 
@@ -64,19 +67,30 @@ impl IssueRequest {
 
 /// Response payload for `CAPABILITY_ISSUE`.
 ///
-/// Wire form: borsh (`holder_did`, `token_id`).
+/// Wire form: borsh (`holder_did`, `token_id`, `v2_envelope_bytes`).
 ///
 /// Phase 3 MVP stub: `token_id` is a deterministic 16-byte derivation
 /// from the 32-byte `capability_root` (via `octo_cap_macaroon::macaroon_id`,
 /// truncated to 16 bytes — the same algorithm the full substrate uses
 /// for `MacaroonId`). The full macaroon wire form (caveat chain + HMAC
 /// tail + holder signature) lands in mission 0957 Phase 2 follow-on.
+///
+/// `v2_envelope_bytes` (mission `0957-f-v2-bundle-consumer-migration`):
+/// canonical_ser bytes of a `CapabilityBundleV2Envelope` wrapping a
+/// root bundle (`chain_depth = 0`, `chain_parent = [0u8; 32]`).
+/// Downstream V2 consumers (Wallet, `octo-cap-zk`) verify the
+/// envelope via `CapabilityBundleV2Envelope::canonical_de`.
 #[derive(Clone, Debug, BorshSerialize, BorshDeserialize, PartialEq, Eq)]
 pub struct IssueResponse {
     /// Canonical DID of the holder (echoed back).
     pub holder_did: String,
     /// 16-byte token id (`MacaroonId` per RFC-0957 §Wire Format).
     pub token_id: [u8; 16],
+    /// V2 bundle envelope bytes (mission
+    /// `0957-f-v2-bundle-consumer-migration`). Carries the root
+    /// bundle substrate; consumers decode via
+    /// `CapabilityBundleV2Envelope::canonical_de`.
+    pub v2_envelope_bytes: Vec<u8>,
 }
 
 /// `CAPABILITY_ISSUE` handler implementation.
@@ -116,15 +130,49 @@ impl IssueHandler {
         nonce.copy_from_slice(&req.capability[..16]);
         let token_id: MacaroonId = macaroon_id(&req.capability, &nonce);
 
+        // V2 root bundle envelope (mission 0957-f-v2-bundle-consumer-migration).
+        // Issuer mints a root bundle: chain_depth = 0, chain_parent =
+        // [0u8; 32]. `channel_id` is the MacaroonId (16-byte scope tag).
+        // `holder_record_bytes` carries the 32-byte capability_root as
+        // MVP placeholder (follow-on mission replaces with real
+        // HolderRecord bytes). MVP issuer lacks identity key —
+        // `issuer_did` is a canonical placeholder string.
+        let issuer_did = "did:octo:zIssuerMVPPlaceholder".to_owned();
+        let token_v2 = CapabilityTokenV2 {
+            chain_depth: 0,
+            chain_parent: [0u8; 32],
+            audience_did: req.holder_did.clone(),
+            channel_id: token_id,
+            expires_at_unix_secs: u64::MAX,
+            issuer_did,
+        };
+        let holder_record_bytes = req.capability.to_vec();
+        let discharge_macaroon_bytes: Vec<u8> = Vec::new();
+        let v2_bundle =
+            CapabilityBundleV2::new(token_v2, holder_record_bytes, discharge_macaroon_bytes)
+                .map_err(|e: BundleV2Error| {
+                    ProtocolError::AuthorizationFailed(format!("v2 bundle: {e}"))
+                })?;
+        let v2_envelope = CapabilityBundleV2Envelope::new(v2_bundle);
+        let v2_envelope_bytes = v2_envelope
+            .canonical_ser()
+            .map_err(|e| ProtocolError::AuthorizationFailed(format!("v2 envelope ser: {e}")))?;
+
         let response = IssueResponse {
             holder_did: req.holder_did.clone(),
             token_id,
+            v2_envelope_bytes: v2_envelope_bytes.clone(),
         };
         let payload = borsh::to_vec(&response)
             .map_err(|e| ProtocolError::AuthorizationFailed(e.to_string()))?;
         Ok(
             HandlerOutput::response(payload, octo_protocol::payload_kind::CAPABILITY_ISSUE)
-                .with_note(format!("issued (MVP stub) for {}", req.holder_did)),
+                .with_note(format!(
+                    "issued (MVP stub + V2 envelope {} bytes) for {}",
+                    v2_envelope_bytes.len(),
+                    req.holder_did
+                ))
+                .with_v2_envelope(v2_envelope_bytes),
         )
     }
 }
@@ -228,10 +276,49 @@ mod tests {
         let resp = IssueResponse {
             holder_did: sample_did(),
             token_id: [0xef; 16],
+            v2_envelope_bytes: vec![0u8; 0],
         };
         let bytes = resp.to_borsh_value();
         let back: IssueResponse = borsh::from_slice(&bytes).unwrap();
         assert_eq!(back, resp);
+    }
+
+    /// TV (mission 0957-f-v2-bundle-consumer-migration) — issue emits
+    /// a V2 `CapabilityBundleV2Envelope` as a root bundle
+    /// (`chain_depth = 0`, `chain_parent = [0u8; 32]`). The
+    /// `v2_envelope_bytes` field carries the canonical_ser bytes;
+    /// downstream V2 consumers decode via
+    /// `CapabilityBundleV2Envelope::canonical_de`.
+    #[test]
+    fn issue_emits_v2_root_bundle_envelope() {
+        use octo_cap_macaroon::{
+            CapabilityBundleV2Envelope, CIPHEROCTO_V2_BUNDLE_PREFIX, MAX_CHAIN_DEPTH,
+        };
+        let out = IssueHandler::new()
+            .handle(&IssueRequest {
+                holder_did: sample_did(),
+                capability: [0xab; 32],
+            })
+            .unwrap();
+        let resp: IssueResponse = borsh::from_slice(&out.response_payload.unwrap()).unwrap();
+        // Envelope bytes are non-empty + start with V2 prefix.
+        assert!(!resp.v2_envelope_bytes.is_empty());
+        assert_eq!(
+            &resp.v2_envelope_bytes[..16],
+            CIPHEROCTO_V2_BUNDLE_PREFIX.as_slice(),
+            "issue envelope must carry canonical V2 prefix"
+        );
+        // Decode roundtrip preserves root invariants.
+        let env = CapabilityBundleV2Envelope::canonical_de(&resp.v2_envelope_bytes).expect("de");
+        assert_eq!(env.bundle.token_v2.chain_depth, 0, "root mint = depth 0");
+        assert_eq!(
+            env.bundle.token_v2.chain_parent, [0u8; 32],
+            "root mint = null parent binding"
+        );
+        assert!(env.bundle.token_v2.chain_depth <= MAX_CHAIN_DEPTH);
+        assert_eq!(env.bundle.token_v2.audience_did, sample_did());
+        // HandlerOutput also surfaces the envelope bytes.
+        assert_eq!(out.v2_envelope_bytes, Some(resp.v2_envelope_bytes));
     }
 
     // Helper: derive borsh bytes for IssueResponse (no impl on the type

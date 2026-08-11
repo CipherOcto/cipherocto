@@ -231,6 +231,16 @@ pub struct ProofBundle {
     /// backward compat with pre-AC-3 serialized bundles.
     #[serde(default)]
     pub witness_format: zk_vendor::prover_input::WitnessFormat,
+    /// **Mission 0957-f-v2-bundle-consumer-migration:** optional V2
+    /// capability bundle that this proof attests to. When `Some`,
+    /// the ZK circuit public inputs include the bundle's
+    /// `chain_depth` + `chain_parent` (BLAKE3 binding) + `issuer_did`
+    /// so the verifier checks hierarchical attenuation chain state.
+    /// When `None`, the proof falls back to the legacy raw-macaroon
+    /// substrate (pre-V2). `#[serde(default)]` preserves
+    /// back-compat with pre-V2 serialized bundles.
+    #[serde(default)]
+    pub capability_v2: Option<octo_cap_macaroon::CapabilityBundleV2>,
 }
 
 impl std::fmt::Debug for ProofBundle {
@@ -533,6 +543,11 @@ pub fn mint_with_zk_and_signers(
         // `zk_vendor::prover_input` adapter). The marker records the
         // path at runtime for observability (kill switch + audit).
         witness_format: zk_vendor::prover_input::WitnessFormat::BytesFallback,
+        // V2 bundle substrate: not yet populated by `prove_batch_signature`
+        // (the AC-3 zk-circuit rewrite will populate this from
+        // `CapabilityBundleV2Envelope::canonical_de`). Default `None`
+        // preserves the pre-V2 substrate (raw macaroon bytes).
+        capability_v2: None,
     })
 }
 
@@ -839,5 +854,78 @@ mod tests {
         assert!(!NodeType::Wholesale.permits_zk_mint());
         assert!(NodeType::SelfHost.permits_zk_mint());
         assert!(NodeType::Hybrid.permits_zk_mint());
+    }
+
+    /// TV (mission 0957-f-v2-bundle-consumer-migration) — `ProofBundle`
+    /// accepts a `capability_v2: Option<CapabilityBundleV2>` field;
+    /// serde roundtrip preserves the field. The ZK circuit constraint
+    /// path (V2-aware verifier) consumes the field; the legacy path
+    /// ignores it (None → raw macaroon substrate).
+    #[test]
+    fn proof_bundle_capability_v2_field_roundtrip() {
+        use octo_cap_macaroon::{
+            CapabilityBundleV2, CapabilityBundleV2Envelope, CapabilityTokenV2,
+        };
+        let token_v2 = CapabilityTokenV2 {
+            chain_depth: 1,
+            chain_parent: [0xCC; 32],
+            audience_did: "did:octo:zZkTestHolder".to_owned(),
+            channel_id: [0xA1; 16],
+            expires_at_unix_secs: 1_700_003_600,
+            issuer_did: "did:octo:zZkTestIssuer".to_owned(),
+        };
+        let bundle_v2 =
+            CapabilityBundleV2::new(token_v2, br#"{"holder":"zk-test"}"#.to_vec(), vec![])
+                .expect("v2 bundle");
+        let env = CapabilityBundleV2Envelope::new(bundle_v2);
+        let env_bytes = env.canonical_ser().expect("env ser");
+        // Decode envelope back into bundle, surface as Option in
+        // ProofBundle, serde roundtrip preserves.
+        let env_decoded = CapabilityBundleV2Envelope::canonical_de(&env_bytes).expect("env de");
+        let pb = ProofBundle {
+            stark_proof: vec![0u8; 32],
+            public_inputs: sample_public_inputs_for_test(),
+            casm_hash: [0x42; 32],
+            casm_version: 1,
+            security_bits: 128,
+            witness_format: zk_vendor::prover_input::WitnessFormat::BytesFallback,
+            capability_v2: Some(env_decoded.bundle),
+        };
+        let ser = serde_json::to_string(&pb).expect("ser");
+        let back: ProofBundle = serde_json::from_str(&ser).expect("de");
+        let v2 = back
+            .capability_v2
+            .expect("capability_v2 must roundtrip through serde");
+        assert_eq!(v2.token_v2.chain_depth, 1);
+        assert_eq!(v2.token_v2.chain_parent, [0xCC; 32]);
+        assert_eq!(v2.token_v2.audience_did, "did:octo:zZkTestHolder");
+        // `None` preserves pre-V2 back-compat (no `capability_v2` field).
+        let pb_none = ProofBundle {
+            stark_proof: vec![0u8; 32],
+            public_inputs: sample_public_inputs_for_test(),
+            casm_hash: [0x42; 32],
+            casm_version: 1,
+            security_bits: 128,
+            witness_format: zk_vendor::prover_input::WitnessFormat::BytesFallback,
+            capability_v2: None,
+        };
+        let ser_none = serde_json::to_string(&pb_none).expect("ser");
+        let back_none: ProofBundle = serde_json::from_str(&ser_none).expect("de");
+        assert!(back_none.capability_v2.is_none());
+    }
+
+    /// Minimal `PublicInputs` for serde-only tests (the AC-3 zk-circuit
+    /// path constructs richer values via `prove_batch_signature`).
+    fn sample_public_inputs_for_test() -> PublicInputs {
+        PublicInputs {
+            ask_id: [0u8; 32],
+            cap_root_hash: [0u8; 32],
+            invocation_hash: [0u8; 32],
+            holder_did: "did:octo:zTest".to_owned(),
+            current_unix_time: 0,
+            provider_slot_id: "test-slot".to_owned(),
+            axes_consumed: vec![],
+            output_hash: None,
+        }
     }
 }

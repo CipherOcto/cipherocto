@@ -62,14 +62,13 @@ pub mod signer;
 pub mod token;
 pub mod wire;
 
-pub mod bundle;
 pub mod bundle_v2;
 pub mod catalog;
 
 // Re-exports for ergonomic single-import paths.
 pub use bundle_v2::{
-    BundleV2Error, CapabilityBundleV2, CapabilityTokenV2, BUNDLE_ID_DOMAIN_V2, BUNDLE_VERSION_V2,
-    MAX_CHAIN_DEPTH,
+    BundleV2Error, CapabilityBundleV2, CapabilityBundleV2Envelope, CapabilityTokenV2,
+    BUNDLE_ID_DOMAIN_V2, BUNDLE_VERSION_V2, CIPHEROCTO_V2_BUNDLE_PREFIX, MAX_CHAIN_DEPTH,
 };
 pub use catalog::{CompositeCapabilityCatalog, CompositeGossip};
 pub use caveat::{

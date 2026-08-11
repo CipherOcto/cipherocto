@@ -89,7 +89,9 @@ pub const MAX_CHAIN_DEPTH: u8 = 8;
 /// descendant) + `chain_parent` (BLAKE3-256 binding of parent key +
 /// child key + child depth per RFC-0009 v1.2 `verify_chain_parent`
 /// + `compute_chain_parent`).
-#[derive(Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[derive(
+    Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize, serde::Serialize, serde::Deserialize,
+)]
 pub struct CapabilityTokenV2 {
     /// Chain depth (0 = root; 1..=8 = descendant). Lives on the
     /// token, NOT on `CapabilityKey` (per RFC-0009 v1.2 R11 H1).
@@ -152,7 +154,9 @@ impl fmt::Debug for CapabilityTokenV2 {
 /// preserved: V2 carries ONE discharge (singular vs V1's `Vec`),
 /// accessible to the consumer after `canonical_de` via
 /// `DischargeMacaroon::canonical_de(&bundle.discharge_macaroon_bytes)`.
-#[derive(Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[derive(
+    Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize, serde::Serialize, serde::Deserialize,
+)]
 pub struct CapabilityBundleV2 {
     /// Wire format version discriminator (currently
     /// `BUNDLE_VERSION_V2` = 2). First field per forward-compat
@@ -300,6 +304,87 @@ impl CapabilityBundleV2 {
         hasher.update(BUNDLE_ID_DOMAIN_V2.as_bytes());
         hasher.update(&ser);
         *hasher.finalize().as_bytes()
+    }
+}
+
+/// Network wire prefix for V2 bundles (RFC-0009 v1.2 §Forward
+/// compatibility — receivers detect version from first 16 bytes
+/// without attempting full canonical_de).
+///
+/// Padded to 16 bytes with trailing `\x00` so `borsh::from_slice`
+/// reads it as a fixed `[u8; 16]` first field (no length prefix). The
+/// 12-byte `b"cipherocto/v2"` ASCII literal leaves 4 null bytes for
+/// future expansion (e.g. a 4-byte minor-version tag).
+pub const CIPHEROCTO_V2_BUNDLE_PREFIX: &[u8; 16] = b"cipherocto/v2\x00\x00\x00";
+
+/// V2 wire envelope (RFC-0009 v1.2 §Forward compatibility carrier).
+///
+/// `CapabilityBundleV2` substrate is the inner bundle; the envelope
+/// prepends the 16-byte version prefix so receivers can dispatch V2
+/// vs legacy raw `Macaroon` bytes without attempting full borsh
+/// decode on every payload.
+///
+/// `canonical_ser` produces 16-byte-prefix + borsh-encoded bundle
+/// bytes (deterministic, fixed layout). `canonical_de` rejects
+/// mismatched prefix OR `bundle_version != 2`.
+#[derive(Clone, Debug, BorshSerialize, BorshDeserialize, serde::Serialize, serde::Deserialize)]
+pub struct CapabilityBundleV2Envelope {
+    /// MUST equal [`CIPHEROCTO_V2_BUNDLE_PREFIX`] on the wire.
+    pub prefix: [u8; 16],
+    /// V2 bundle (inner).
+    pub bundle: CapabilityBundleV2,
+}
+
+impl CapabilityBundleV2Envelope {
+    /// Wrap a V2 bundle with the canonical 16-byte prefix.
+    #[must_use]
+    pub const fn new(bundle: CapabilityBundleV2) -> Self {
+        Self {
+            prefix: *CIPHEROCTO_V2_BUNDLE_PREFIX,
+            bundle,
+        }
+    }
+
+    /// Serialize to deterministic borsh bytes (prefix + bundle).
+    ///
+    /// # Errors
+    /// Returns [`BundleV2Error::Borsh`] if borsh serialization fails
+    /// (should not happen for the current schema).
+    pub fn canonical_ser(&self) -> Result<Vec<u8>, BundleV2Error> {
+        borsh::to_vec(self).map_err(|e| BundleV2Error::Borsh(e.to_string()))
+    }
+
+    /// Inverse of [`Self::canonical_ser`]. Rejects mismatched prefix
+    /// OR inner `bundle_version != BUNDLE_VERSION_V2`.
+    ///
+    /// # Errors
+    /// Returns [`BundleV2Error::Borsh`] on malformed bytes (incl. V1
+    /// raw `Macaroon` JSON which is not valid borsh). Returns
+    /// [`BundleV2Error::UnsupportedVersion`] on prefix mismatch or
+    /// `bundle_version != BUNDLE_VERSION_V2`. Returns
+    /// [`BundleV2Error::ChainDepthTooLarge`] when inner
+    /// `chain_depth > MAX_CHAIN_DEPTH`.
+    pub fn canonical_de(bytes: &[u8]) -> Result<Self, BundleV2Error> {
+        let env: Self =
+            borsh::from_slice(bytes).map_err(|e| BundleV2Error::Borsh(e.to_string()))?;
+        if &env.prefix != CIPHEROCTO_V2_BUNDLE_PREFIX {
+            return Err(BundleV2Error::UnsupportedVersion {
+                found: env.prefix[14],
+                expected: CIPHEROCTO_V2_BUNDLE_PREFIX[14],
+            });
+        }
+        if env.bundle.bundle_version != BUNDLE_VERSION_V2 {
+            return Err(BundleV2Error::UnsupportedVersion {
+                found: env.bundle.bundle_version,
+                expected: BUNDLE_VERSION_V2,
+            });
+        }
+        if env.bundle.token_v2.chain_depth > MAX_CHAIN_DEPTH {
+            return Err(BundleV2Error::ChainDepthTooLarge(
+                env.bundle.token_v2.chain_depth,
+            ));
+        }
+        Ok(env)
     }
 }
 
@@ -490,6 +575,73 @@ mod tests {
         assert!(
             s.contains("chain_parent"),
             "Debug must surface chain_parent hex, got {s}"
+        );
+    }
+
+    #[test]
+    fn v2_envelope_prefix_is_16_bytes() {
+        assert_eq!(CIPHEROCTO_V2_BUNDLE_PREFIX.len(), 16);
+        // First 13 bytes = ASCII "cipherocto/v2"; last 3 = padding.
+        assert_eq!(&CIPHEROCTO_V2_BUNDLE_PREFIX[..13], b"cipherocto/v2");
+        assert_eq!(&CIPHEROCTO_V2_BUNDLE_PREFIX[13..], &[0u8; 3]);
+    }
+
+    #[test]
+    fn v2_envelope_canonical_ser_roundtrip() {
+        let bundle = v2_root_fixture();
+        let env = CapabilityBundleV2Envelope::new(bundle.clone());
+        let bytes = env.canonical_ser().expect("ser");
+        // First 16 bytes MUST equal the prefix.
+        assert_eq!(
+            &bytes[..16],
+            CIPHEROCTO_V2_BUNDLE_PREFIX.as_slice(),
+            "canonical_ser must emit prefix as first 16 bytes"
+        );
+        // Roundtrip preserves inner bundle.
+        let decoded = CapabilityBundleV2Envelope::canonical_de(&bytes).expect("de");
+        assert_eq!(decoded.bundle, bundle);
+        assert_eq!(decoded.prefix, *CIPHEROCTO_V2_BUNDLE_PREFIX);
+    }
+
+    #[test]
+    fn v2_envelope_rejects_wrong_prefix() {
+        let bundle = v2_root_fixture();
+        let mut env = CapabilityBundleV2Envelope::new(bundle);
+        env.prefix = *b"cipherocto/v1\x00\x00\x00"; // mutate to V1-ish
+        let bytes = env.canonical_ser().expect("ser");
+        let result = CapabilityBundleV2Envelope::canonical_de(&bytes);
+        assert!(
+            matches!(result, Err(BundleV2Error::UnsupportedVersion { .. })),
+            "wrong prefix must be rejected, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn v2_envelope_rejects_truncated_bytes() {
+        let bundle = v2_root_fixture();
+        let env = CapabilityBundleV2Envelope::new(bundle);
+        let bytes = env.canonical_ser().expect("ser");
+        // Truncate after the prefix only — borsh will fail to decode
+        // the inner bundle.
+        let truncated = &bytes[..16];
+        let result = CapabilityBundleV2Envelope::canonical_de(truncated);
+        assert!(
+            result.is_err(),
+            "truncated envelope bytes must fail to decode, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn v2_envelope_legacy_v1_bytes_fail_decode() {
+        // V1 raw macaroon bytes (the wire form missions 0957-phase2a
+        // emit: 3 base64url-no-pad segments). The envelope prefix
+        // sniff rejects these — borsh fails to decode the leading
+        // ASCII bytes as a `[u8; 16]` prefix field.
+        let v1_wire = b"AgJkZjA0ZTM2YzAtNDg3OS00Y2I5LWE2NGItZTQ3MjQ5NDUyNjQ3.eyJ";
+        let result = CapabilityBundleV2Envelope::canonical_de(v1_wire);
+        assert!(
+            result.is_err(),
+            "V1 raw macaroon bytes must fail V2 envelope decode, got {result:?}"
         );
     }
 }

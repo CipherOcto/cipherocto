@@ -16,6 +16,9 @@ use std::sync::Arc;
 use borsh::{BorshDeserialize, BorshSerialize};
 use octo_cap_macaroon::caveat::Caveat;
 use octo_cap_macaroon::wire::serialize_wire;
+use octo_cap_macaroon::{
+    BundleV2Error, CapabilityBundleV2, CapabilityBundleV2Envelope, CapabilityTokenV2,
+};
 use octo_ident::DidCodec;
 use octo_ident::WireDid;
 use octo_paid_query::SpendLedger;
@@ -123,6 +126,43 @@ impl<'a> MintHandler<'a> {
         // `CIPHEROCTO_MINT_V1:<holder_did>` placeholder.
         let minted_wire = serialize_wire(&token).map_err(wire_error_to_protocol)?;
 
+        // V2 envelope (mission 0957-f-v2-bundle-consumer-migration):
+        // wrap the minted token in a V2 root bundle envelope. The
+        // wire form remains the canonical transport (legacy + downstream
+        // consumers); the envelope is the new authoritative bundle
+        // substrate (chain_depth = 0 root, chain_parent = [0u8; 32]).
+        // Envelope bytes are surfaced via `with_v2_envelope` so future
+        // cutover missions can flip `response_payload` to envelope
+        // bytes without modifying this handler.
+        let holder_record_bytes = {
+            use octo_cap_macaroon::macaroon::compute_capability_id;
+            let cap_id = compute_capability_id(&token.macaroon);
+            let mut buf = Vec::with_capacity(32);
+            buf.extend_from_slice(&cap_id);
+            buf
+        };
+        let discharge_macaroon_bytes: Vec<u8> = Vec::new();
+        let token_v2 = CapabilityTokenV2 {
+            chain_depth: 0,
+            chain_parent: [0u8; 32],
+            audience_did: req.holder_did.clone(),
+            channel_id: token.macaroon.root_id,
+            expires_at_unix_secs: u64::MAX, // macaroon substrate lacks expiry field; root TTL lives in caveat
+            issuer_did: format!(
+                "did:octo:z{}",
+                bs58::encode(self.identity.public_key_bytes()).into_string()
+            ),
+        };
+        let v2_bundle =
+            CapabilityBundleV2::new(token_v2, holder_record_bytes, discharge_macaroon_bytes)
+                .map_err(|e: BundleV2Error| {
+                    ProtocolError::AuthorizationFailed(format!("v2 bundle: {e}"))
+                })?;
+        let v2_envelope = CapabilityBundleV2Envelope::new(v2_bundle);
+        let v2_envelope_bytes = v2_envelope
+            .canonical_ser()
+            .map_err(|e| ProtocolError::AuthorizationFailed(format!("v2 envelope ser: {e}")))?;
+
         // Seed the spend ledger when a payment caveat was attached
         // (mission 0871e-phase5b). Failure to seed surfaces as
         // `AuthorizationFailed` so the mint is rejected — the proxy
@@ -138,18 +178,23 @@ impl<'a> MintHandler<'a> {
                 .seed(&holder_did, &macaroon_id, p.budget)
                 .map_err(|e| ProtocolError::AuthorizationFailed(e.to_string()))?;
             format!(
-                "minted for {} (payment caveat budget={} seeded to spend ledger)",
-                req.holder_did, p.budget
+                "minted for {} (payment caveat budget={} seeded to spend ledger; v2 envelope {} bytes)",
+                req.holder_did, p.budget, v2_envelope_bytes.len()
             )
         } else {
-            format!("minted for {}", req.holder_did)
+            format!(
+                "minted for {} (v2 envelope {} bytes)",
+                req.holder_did,
+                v2_envelope_bytes.len()
+            )
         };
 
         Ok(HandlerOutput::response(
             minted_wire.into_bytes(),
             octo_protocol::payload_kind::WALLET_MINT_CAPABILITY,
         )
-        .with_note(note))
+        .with_note(note)
+        .with_v2_envelope(v2_envelope_bytes))
     }
 }
 
@@ -450,5 +495,46 @@ mod tests {
             Some(payment.budget),
             "mint with payment caveat must seed the spend ledger"
         );
+    }
+
+    /// TV9 (mission 0957-f-v2-bundle-consumer-migration) — mint
+    /// surfaces a V2 `CapabilityBundleV2Envelope` alongside the V1
+    /// wire form. The envelope is verified by `octo-cap-zk` + V2
+    /// downstream consumers; the wire form remains the canonical
+    /// transport until the V2 cutover mission lands.
+    #[test]
+    fn handle_surfaces_v2_envelope_alongside_wire_form() {
+        use octo_cap_macaroon::{
+            CapabilityBundleV2Envelope, CIPHEROCTO_V2_BUNDLE_PREFIX, MAX_CHAIN_DEPTH,
+        };
+        let id = sample_identity();
+        let handler = MintHandler::new(&id);
+        let req = MintRequest {
+            holder_did: sample_did(),
+            capability: [0xab; 32],
+            payment_caveat: None,
+        };
+        let out = handler.handle(&req).unwrap();
+        // Legacy wire form is unchanged.
+        assert!(out.response_payload.is_some(), "wire payload still emitted");
+        // V2 envelope bytes are surfaced.
+        let env_bytes = out
+            .v2_envelope_bytes
+            .expect("V2 envelope must be surfaced post-migration");
+        // First 16 bytes = canonical prefix.
+        assert_eq!(
+            &env_bytes[..16],
+            CIPHEROCTO_V2_BUNDLE_PREFIX.as_slice(),
+            "envelope bytes must start with canonical V2 prefix"
+        );
+        // Decode roundtrip preserves inner bundle.
+        let env = CapabilityBundleV2Envelope::canonical_de(&env_bytes).expect("de");
+        assert_eq!(env.bundle.token_v2.chain_depth, 0, "root mint = depth 0");
+        assert_eq!(
+            env.bundle.token_v2.chain_parent, [0u8; 32],
+            "root mint = null parent binding"
+        );
+        assert!(env.bundle.token_v2.chain_depth <= MAX_CHAIN_DEPTH);
+        assert_eq!(env.bundle.token_v2.audience_did, req.holder_did);
     }
 }

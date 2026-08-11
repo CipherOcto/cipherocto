@@ -36,6 +36,13 @@ pub struct HandlerOutput {
     pub response_payload_kind: Option<octo_protocol::PayloadKindId>,
     /// Optional human-readable note (for logs; never on wire).
     pub note: Option<String>,
+    /// Optional V2 bundle envelope bytes (mission
+    /// `0957-f-v2-bundle-consumer-migration`). Surfaced alongside the
+    /// primary `response_payload` so downstream consumers can adopt V2
+    /// at their own pace; the primary payload retains the V1 wire
+    /// form for backward compatibility until the V2 cutover mission
+    /// lands. Never on wire (log/audit only).
+    pub v2_envelope_bytes: Option<Vec<u8>>,
 }
 
 impl HandlerOutput {
@@ -52,6 +59,7 @@ impl HandlerOutput {
             response_payload: Some(payload),
             response_payload_kind: Some(payload_kind),
             note: None,
+            v2_envelope_bytes: None,
         }
     }
 
@@ -59,6 +67,17 @@ impl HandlerOutput {
     #[must_use]
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
         self.note = Some(note.into());
+        self
+    }
+
+    /// Attach V2 bundle envelope bytes (mission
+    /// `0957-f-v2-bundle-consumer-migration`). Callers that adopt the
+    /// V2 wire form surface the envelope here alongside the primary
+    /// `response_payload`; the envelope is verified by `octo-cap-zk`
+    /// and downstream V2 consumers.
+    #[must_use]
+    pub fn with_v2_envelope(mut self, envelope_bytes: Vec<u8>) -> Self {
+        self.v2_envelope_bytes = Some(envelope_bytes);
         self
     }
 }

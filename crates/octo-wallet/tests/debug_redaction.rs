@@ -301,6 +301,7 @@ fn proof_bundle_debug_does_not_leak_stark_proof_bytes() {
         casm_version: 1,
         security_bits: 128,
         witness_format: zk_vendor::prover_input::WitnessFormat::BytesFallback,
+        capability_v2: None,
     };
     let out = format!("{bundle:?}");
     // stark_proof was 1024 bytes of 0x99 — would appear as

@@ -550,6 +550,7 @@ fn tv8_cross_impl_two_prover_paths_byte_equivalent() {
         casm_version: 1,
         security_bits: 128,
         witness_format: zk_vendor::prover_input::WitnessFormat::BytesFallback,
+        capability_v2: None,
     };
     let qr_b = qr_bundle_from(&path_b_bundle);
     verify_capability_zk(

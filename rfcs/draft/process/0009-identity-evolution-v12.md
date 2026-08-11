@@ -107,13 +107,16 @@ R18 M6 + R24 L3 + R25 L4 + R27 L2)
     `Authorization::ThresholdSignature` BC#5). Closes coverage
     gap for FROST-signed envelopes.
 
-## Additive Changes (per R28 M3)
+## Additive Changes (per R28 M3 + R29 M1)
 
-Per R28 M3: BC#9 (`OperatorId` struct + `pubkey()` method) is
-ADDITIVE, not BREAKING (no prior identifier or symbol shadowed;
-OperatorId is fresh in v1.2 substrate). Moved here from §Breaking
-Changes. Other additive changes that don't break v1.0/v1.1
-substrate should also be listed here, NOT in §Breaking Changes.
+Per R28 M3 + R29 M1: BC#9 (`OperatorId` struct + `pubkey()`
+method) is ADDITIVE, not BREAKING (no prior identifier or symbol
+shadowed; OperatorId is fresh in v1.2 substrate). Moved here
+from §Breaking Changes. Other additive items in §Breaking Changes
+(BC#1a-1i NEW types/methods/errors, BC#2 additive field, BC#3
+NEW struct, BC#4 3 new fields ADDED, BC#6 NEW fn on NEW struct,
+BC#12 NEW variant) may also be listed here — not required, but
+documents additive/non-breaking scope explicitly.
 
 - **9-ADDITIVE. `OperatorId` struct + `pubkey()` method** (per
   R15 L4 + R28 M3) — fresh identifier in v1.2 substrate.
@@ -949,7 +952,10 @@ pub struct CapabilityTokenV2 {
 
 **Commit 4 — V2 wire form** (atomic with Commit 5 per RFC-0870
 §NodeEnvelope Adoption):
-- `CapabilityBundleV2` struct
+- `CapabilityBundleV2` struct (per R29 L5 — embeds existing
+  `HolderRecord` + `DischargeMacaroon` types; these are
+  pre-existing substrate types from RFC-0009 §Capability Keys
+  + RFC-0957 §Capability Macaroon, NOT new in Commit 4)
 - `CapabilityTokenV2` struct (carries `chain_depth` + `chain_parent`
   — per R11 H1; `CapabilityKey` does NOT)
 
@@ -1008,8 +1014,9 @@ External acceptance artifact: `tests/fixtures/phase1_tv.json`.
 ## Layer direction
 
 **Per R11 H4:** `octo-wallet` (Layer B) does NOT depend on
-`octo-cap-macaroon` (Layer E) directly. The registrar pattern is E
-registers into B, not B → E. The macaroon substrate uses
+`octo-cap-macaroon` (Layer 4 — cleaned up per R25 L8; previous
+Layer E label stale per R29 L2) directly. The registrar pattern
+is E registers into B, not B → E. The macaroon substrate uses
 `Arc<dyn CapabilityToken>` interface injected at construction;
 `octo-wallet` registers as the registrar.
 
@@ -1027,6 +1034,10 @@ registers into B, not B → E. The macaroon substrate uses
 Dependency direction:
 - `octo-wallet` → `octo-protocol` (B → A; OK)
 - `octo-cap-zk` → `octo-wallet` (E → B registrar; OK)
+- `octo-cap-macaroon-transport` → `octo-cap-macaroon` (L4↔D glue
+  crate per R29 L3; mediates TransportDeliveryCatalog via
+  Phase 2c-1; OK — L4↔D coupling is isolated to this glue crate,
+  NOT a direct L4 → L-D dep)
 
 **Per R20 M4 + R23 M3 + R24 L4:** post Phase 2c cleanup (commit
 `a471843b` + `4cfe7165` on 2026-08-09), `octo-cap-macaroon` has
@@ -1062,8 +1073,10 @@ cargo doc --workspace --no-deps
   version pin dropped per RFC Reference Conventions)
 - RFC-0853 §F3
 - **RFC-0871 §Specification** (Authorization ownership — per R11 M3)
-- **RFC-0871 §Future Work** (concrete threshold-signature semantics,
-  `aggregated_pk_check` + `dkg_proof` — per R12 H3)
+- **RFC-0871 §Future Work** (field-named threshold-signature
+  semantics, `aggregated_pk_check` + `dkg_proof` — per R12 H3 +
+  R29 L4; ASPIRATIONAL per AC#9 + AC#10 until RFC-0871 amendment
+  FILED)
 - **RFC-0870 §NodeEnvelope Adoption** (atomicity invariant per R10 H18)
 - **RFC-0008 §Execution Class Mapping** (per R12 H1 — RFC-0104 has no
   Class A/B/C content; the taxonomy lives in RFC-0008)

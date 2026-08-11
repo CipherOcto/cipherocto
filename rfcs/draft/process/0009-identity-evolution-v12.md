@@ -135,7 +135,11 @@ This RFC is ready for promotion to Accepted when:
 8. **Mission `0957-f-v2-bundle` §Migration:** complete.
 8b. **`tests/integration/frost_nonce_determinism.rs` exists** (per R20 M3)
     and asserts 100K ops produce deterministic nonces; gated by
-    `cargo test -p octo-wallet --test frost_nonce_determinism_100k_iterations`.
+    `cargo test -p octo-wallet --test frost_nonce_determinism`
+    (per R21 L4 — file path `tests/integration/...` requires
+    `[[test]]` entry in Cargo.toml mapping binary name
+    `frost_nonce_determinism` to the file path; cargo `--test`
+    flag matches binary name, NOT file basename).
 
 ## Motivation
 
@@ -233,7 +237,9 @@ pub fn derive_capability_key(
 ```
 
 - **Root** (`None`): HKDF-BLAKE3 with `salt =
-  identity_key.seed_bytes()`, `ikm = audience_did`,
+  identity_key.seed_bytes_for_hkdf()` (per R21 L5 — matches actual
+  substrate API; hardware adapters refuse plain `seed_bytes()` by
+  design per mission `0009-a`), `ikm = audience_did`,
   `info = "cipherocto/cap/v1/" + channel_id`.
 - **Child** (`Some(key)`): HKDF-BLAKE3 with `salt =
   parent_cap_key.as_bytes()` (per R11 M1 — extraction), `ikm =
@@ -435,6 +441,37 @@ pub fn compute_chain_parent(
 }
 ```
 
+**`check_wrapped_chain` (per R21 L7 — moved here from §A7):**
+
+```rust
+/// Multi-step chain walk for cascading revocation. Walks
+/// `chain_parent` chain from leaf to root, verifying each step
+/// via `verify_chain_parent`. Returns Ok if entire chain is
+/// valid + un-revoked; Err if any ancestor is revoked.
+pub fn check_wrapped_chain(
+    leaf: &CapabilityKey,
+    chain: &[CapabilityTokenV2],  // root..leaf order
+    revoked_set: &HashSet<[u8; 32]>,  // chain_parent hashes of revoked ancestors
+) -> Result<(), CapabilityError> {
+    for window in chain.windows(2) {
+        let parent = &window[0];
+        let child = &window[1];
+        if revoked_set.contains(&parent.chain_parent) {
+            return Err(CapabilityError::AncestorRevoked);
+        }
+        if !verify_chain_parent(
+            &parent.cap_key,
+            &child.cap_key,
+            &child.chain_parent,
+            child.chain_depth,
+        ) {
+            return Err(CapabilityError::ChainLinkInvalid);
+        }
+    }
+    Ok(())
+}
+```
+
 **`Authorization::ThresholdSignature` extension (per R11 M3 + R12 H3):**
 
 ```rust
@@ -483,6 +520,8 @@ fields.
 pub const MAX_M: usize = 7;  // per R20 L8 — bounds BoundedShareVec
                                   // allocation (7 shareholders); aligned with
                                   // `static_assertions` MAX_M <= 7 check below.
+/// Per R21 L3: chain depth cap (W3C VC-DID best practice per G1).
+pub const MAX_CHAIN_DEPTH: u8 = 8;
 
 pub struct BoundedShareVec {
     shares: Vec<ThresholdShare>,
@@ -700,10 +739,10 @@ Per RFC-0008 Execution Class mapping:
   FROST nonce defense; correct fix is x86_64 + ARM64 CI test
   suite + per-implementation cross-arch nonce audit); (c)
   integration test `frost_nonce_determinism.rs` asserting 100K ops
-  produce deterministic nonces (per R20 L8 — 100K is RFC-9591 §5.3
-  round-trip audit count for nonce determinism verification; large
-  enough to detect cross-arch divergence without excessive CI
-  runtime); (d) compile-time audit dep.
+  produce deterministic nonces (per R20 L8 + R21 L2 — 100K is a
+  CI budget choice; large enough to detect cross-arch divergence
+  without excessive runtime; NOT an RFC-9591 §5.3 mandated count);
+  (d) compile-time audit dep.
 - **Residual:** library-level guarantee; trust boundary on
   `frost-ed25519` impl.
 - **Test:** `frost_nonce_determinism_100k_iterations`.
@@ -711,42 +750,12 @@ Per RFC-0008 Execution Class mapping:
 ### A7 — Cascading revocation false negative.
 - **Threat:** holder of a child capability whose parent was revoked.
 - **Attack:** continue using revoked capability.
-- **Defense:** `check_wrapped_chain` (per R20 M2 — defined below)
+- **Defense:** `check_wrapped_chain` (per R20 M2 — defined in
+  §Specification > Hierarchical attenuation chains per R21 L7)
   cryptographically walks `chain_parent` chain; revocation of any
   ancestor invalidates all descendants.
 - **Residual:** none (cryptographic guarantee).
 - **Test:** `cascading_revocation_kills_descendants`.
-
-**`check_wrapped_chain` (per R20 M2):**
-
-```rust
-/// Multi-step chain walk for cascading revocation. Walks
-/// `chain_parent` chain from leaf to root, verifying each step
-/// via `verify_chain_parent`. Returns Ok if entire chain is
-/// valid + un-revoked; Err if any ancestor is revoked.
-pub fn check_wrapped_chain(
-    leaf: &CapabilityKey,
-    chain: &[CapabilityTokenV2],  // root..leaf order
-    revoked_set: &HashSet<[u8; 32]>,  // chain_parent hashes of revoked ancestors
-) -> Result<(), CapabilityError> {
-    for window in chain.windows(2) {
-        let parent = &window[0];
-        let child = &window[1];
-        if revoked_set.contains(&parent.chain_parent) {
-            return Err(CapabilityError::AncestorRevoked);
-        }
-        if !verify_chain_parent(
-            &parent.cap_key,
-            &child.cap_key,
-            &child.chain_parent,
-            child.chain_depth,
-        ) {
-            return Err(CapabilityError::ChainLinkInvalid);
-        }
-    }
-    Ok(())
-}
-```
 
 ### A8 — Share-loss DoS.
 - **Threat:** single shareholder refuses participation.
@@ -845,6 +854,8 @@ pub struct CapabilityTokenV2 {
 - Cargo deps pinned in `crates/octo-wallet/Cargo.toml`
 - `HsmAdapter::get_public_key` signature update
 - `OperatorId::pubkey()` method
+- **Clippy lint registration in `clippy.toml`** (per R21 L6 — owns
+  §Configuration Validation threshold misconfig lint)
 
 **Commit 2 — impls + Xor2Of3Signer additive field:**
 - `BLS12381ThresholdSigner` impl
@@ -877,7 +888,8 @@ A4 enforced via:
   when `threshold_signer` configured (per R11 M4)
 - `warned_threshold_misconfig: AtomicBool` runtime warning
 - Clippy lint registered in `clippy.toml` (per R15 L9 — actual file
-  is `clippy.toml`, not `cargo-clippy.toml`)
+  is `clippy.toml`, not `cargo-clippy.toml`); owned by Commit 1
+  per R21 L6 (substrate additions)
 
 ## Future Work
 
@@ -888,7 +900,8 @@ A4 enforced via:
 - HKDF-BLAKE3 over HKDF-SHA256: faster.
 - Depth ≤ 8: W3C VC-DID best practice.
 - BLS12-381 over BN254: ZK-friendly.
-- FROST Ed25519 over MuSig: RFC-9591 (draft).
+- FROST Ed25519 over MuSig: RFC-9591 (Proposed Standard, June 2025 —
+  per R21 L1; stale "(draft)" qualifier dropped).
 - `parent_depth_be_bytes` as 4-byte BE.
 - `vsss-rs` crate for Shamir (per R17 H1 — crate name is
   `vsss-rs`, not `vsss`; `vsss` does not exist on crates.io).

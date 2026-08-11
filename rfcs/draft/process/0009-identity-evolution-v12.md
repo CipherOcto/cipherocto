@@ -57,10 +57,11 @@ Extend RFC-0009 §Capability Keys with:
     aggregated_pk_check).
 2. **`Xor2Of3Signer` additive `threshold_signer` field.**
 3. **`CapabilityBundleV2` NEW struct.**
-4. **`IdentityKey` 9 existing fields UNCHANGED + 4 new fields
-   ADDED** (per R9 H1 + R16 M4 + R22 H1 — `coordinator` +
-   `shareholders` + `warned_threshold_misconfig` fields added
-   by R15 M3 / R19 M2 / R18 L10 respectively).
+4. **`IdentityKey` 9 existing fields UNCHANGED + 3 new fields
+   ADDED** (per R9 H1 + R16 M4 + R23 H1 — `threshold_signer` +
+   `coordinator` + `shareholders` fields added by R9 H1 / R15 M3 /
+   R19 M2 respectively; `warned_threshold_misconfig` field removed
+   per R22 M2 as write-only dead code).
 5. **`Authorization::ThresholdSignature` struct variant EXTENDED
    in RFC-0871** (per R11 M3 + R12 H3 — ownership belongs to
    RFC-0871; this RFC documents the EXTENSION SCHEMA only;
@@ -168,8 +169,8 @@ DischargeMacaroon` triplet to embed the full attenuation chain.
 | Role | Identifier | Authority Scope | Lifecycle | Source |
 |------|------------|-----------------|-----------|--------|
 | Identity Holder | `IdentityHolderId` | Owns IdentityKey; revokes | Persistent | This RFC v1.2 |
-| HSM | `Arc<dyn HsmAdapter>` | Persists IdentityKey | Persistent per device | RFC-0009 v1.1 |
-| IdentityKey (logical) | `IdentityKey` (v1.1 base + v1.2 additive fields) | Sign; derive capability keys | Persistent per device (per R18 M3 — wraps HSM via `signer: Arc<dyn HsmAdapter>`) | RFC-0009 v1.1 (base) + v1.2 (additive) |
+| HSM | `Arc<dyn HsmAdapter>` | Persists IdentityKey | Persistent per device | RFC-0009 §HsmAdapter Integration |
+| IdentityKey (logical) | `IdentityKey` (base + additive fields) | Sign; derive capability keys | Persistent per device (per R18 M3 — wraps HSM via `signer: Arc<dyn HsmAdapter>`) | RFC-0009 §Capability Keys |
 | Capability Issuer | `CapabilityTokenV2` (NOT CapabilityKey) carries `chain_depth` (per R11 H1) | Mint child keys | Stateless | RFC-0009 §Capability Keys |
 | Capability Holder | `CapabilityTokenV2` (NOT CapabilityKey) | Redeem | Per-capability expiry | RFC-0009 §Capability Keys |
 | Threshold Signer (object) | `BLS12381ThresholdSigner` / `SchnorrThresholdSigner` — role ID `threshold-signer` | Sign via M-of-N | Persistent per IdentityKey | `octo-wallet` §threshold (impls) + This RFC (trait) |
@@ -964,16 +965,15 @@ registers into B, not B → E. The macaroon substrate uses
 
 Dependency direction:
 - `octo-wallet` → `octo-protocol` (B → A; OK)
-- `crates/octo-cap-macaroon` → `crates/octo-wallet-node` (E → C;
-  glue crate L4↔C per Phase 2c-1; OK)
 - `octo-cap-zk` → `octo-wallet` (E → B registrar; OK)
 
-**Per R20 M4:** post Phase 2c cleanup (commit `a471843b` +
+**Per R20 M4 + R23 M3:** post Phase 2c cleanup (commit `a471843b` +
 `4cfe7165` on 2026-08-09), `octo-cap-macaroon` is a CLEAN Layer 4
-crate with zero cross-layer deps on L-B / L-D. The previous
+crate with zero cross-layer deps on L-B / L-D / L-C. The previous
 `octo-cap-macaroon` → `octo-wallet` (E → B registrar) line was
 true at Phase 2b but is now obsolete; the only L4↔L-coupling is
-through `crates/octo-cap-macaroon-transport/` glue crate.
+through `crates/octo-cap-macaroon-transport/` glue crate to L-D
+(TransportDeliveryCatalog, per Phase 2c-1). No L4↔C coupling exists.
 
 No reverse dependencies. ✓
 
@@ -985,7 +985,7 @@ cargo fmt --all -- --check
 cargo clippy -p octo-wallet -p octo-cap-macaroon -p octo-cap-zk --all-targets -- -D warnings
 cargo build -p octo-wallet  # per R11 L3 — validates Phase 0 compile
 cargo test -p octo-wallet --lib -p octo-cap-macaroon --lib -p octo-cap-zk --lib
-cargo test -p octo-wallet --lib -- --list phase1_tv_json | grep -q .  # per R11 H2
+cargo test -p octo-wallet --lib -- --list phase1_tv_json | grep -qE "phase1_tv_json_(v11_round_trip_equivalence|child_unlinkability|hsm_boundary_no_seed_exfil)"  # per R11 H2 + R22 L6 + R23 M2
 cargo test -p octo-wallet --lib phase1_tv_json_*  # per R11 L3 — actual test run
 cargo doc --workspace --no-deps
 ```
@@ -993,8 +993,8 @@ cargo doc --workspace --no-deps
 ## Cross-references
 
 - RFC-0009 §Capability Keys
-- **RFC-0009 v1.1 §Wallet Audience Validation (v1.1 amendment,
-  2026-08-08)** (per R10 H4)
+- **RFC-0009 §Wallet Audience Validation** (per R10 H4; per R23 L4
+  version pin dropped per RFC Reference Conventions)
 - RFC-0853 §F3
 - **RFC-0871 §Specification** (Authorization ownership — per R11 M3)
 - **RFC-0871 §Future Work** (concrete threshold-signature semantics,

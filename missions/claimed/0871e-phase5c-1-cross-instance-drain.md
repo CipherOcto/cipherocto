@@ -1,6 +1,6 @@
 # 0871e-phase5c-1 — Cross-instance SpendLedger drain coordination
 
-**Status:** unassigned (wave 4; approach picked 2026-08-10 → Option B; RFC draft `0862-writer-election-bootstrap-v120.md` filed)
+**Status:** claimed 2026-08-11 (@claude) — `RaftLikeDrainCoordinator` substrate + 4 cross-instance TV + `StoolapSpendLedger` coordinator injection.
 **Substrate:** RFC-0862 v1.3 (Draft 2026-08-10) + RFC-0855p-c (handover)
 **Parent:** 0871e-phase5b-stoolap-ledger (landed `2b24796c`) per [[mission-0871e-phase5b-status]]
 

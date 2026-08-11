@@ -69,8 +69,7 @@ pub mod handlers;
 pub mod node;
 
 pub use handlers::{
-    HandlerOutput, IssueHandler, IssueRequest, IssueResponse, RevokeHandler, RevokeRequest,
-    RevokeResponse,
+    HandlerOutput, IssueHandler, IssueRequest, RevokeHandler, RevokeRequest, RevokeResponse,
 };
 pub use node::{
     default_dispatcher, CapabilityIssuerNode, CapabilityIssuerNodeConfig,

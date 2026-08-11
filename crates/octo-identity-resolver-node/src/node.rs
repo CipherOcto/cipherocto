@@ -53,7 +53,8 @@ use octo_transport::NodeTransport;
 
 use crate::handlers::{
     resolver_error_to_protocol, ChainResolveRequest, RegisterHandler, RegisterRequest,
-    ResolveChainHandler, ResolveHandler, ResolveRequest, RevokeHandler, RevokeRequest,
+    ResolveChainHandler, ResolveHandler, ResolveRequest, ResolveWithChainHandler,
+    ResolveWithChainRequest, RevokeHandler, RevokeRequest,
 };
 use crate::is_identity_resolver_payload_kind;
 
@@ -322,6 +323,18 @@ impl IdentityResolverNode {
                 let req = ChainResolveRequest::from_borsh(&envelope.payload)
                     .map_err(resolver_error_to_protocol)?;
                 ResolveChainHandler::new(self.registry.clone())
+                    .handle(&req)
+                    .map_err(resolver_error_to_protocol)
+            }
+            k if k == octo_protocol::payload_kind::IDENTITY_RESOLVE_WITH_CHAIN => {
+                // Mission 0010-f2-multi-chain-routing: chain-aware
+                // resolve. Routes a single resolve request to a
+                // specific chain namespace on a multi-chain
+                // deployment. Distinct from `IDENTITY_RESOLVE_CHAIN`
+                // (chain-of-resolvers, walks `Vec<ResolverHop>`).
+                let req = ResolveWithChainRequest::from_borsh(&envelope.payload)
+                    .map_err(resolver_error_to_protocol)?;
+                ResolveWithChainHandler::new(self.registry.clone())
                     .handle(&req)
                     .map_err(resolver_error_to_protocol)
             }

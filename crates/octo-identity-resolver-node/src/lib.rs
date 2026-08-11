@@ -41,8 +41,9 @@ pub mod node;
 pub use handlers::{
     ChainResolveRequest, ChainResolveResponse, HandlerOutput, IdentityResolveError,
     RegisterHandler, RegisterRequest, RegisterResponse, ResolveChainHandler, ResolveHandler,
-    ResolveRequest, ResolveResponse, ResolverChainContext, ResolverHop, RevokeHandler,
-    RevokeRequest, RevokeResponse, HOP_LATENCY_MS_ESTIMATE,
+    ResolveRequest, ResolveResponse, ResolveWithChainHandler, ResolveWithChainRequest,
+    ResolveWithChainResponse, ResolverChainContext, ResolverHop, RevokeHandler, RevokeRequest,
+    RevokeResponse, HOP_LATENCY_MS_ESTIMATE,
 };
 pub use node::{
     IdentityResolverNode, IdentityResolverNodeConfig, IdentityResolverNodeError,
@@ -74,6 +75,7 @@ pub const IDENTITY_RESOLVER_PAYLOAD_KINDS: &[PayloadKindId] = &[
     octo_protocol::payload_kind::IDENTITY_REGISTER,
     octo_protocol::payload_kind::IDENTITY_REVOKE,
     octo_protocol::payload_kind::IDENTITY_RESOLVE_CHAIN,
+    octo_protocol::payload_kind::IDENTITY_RESOLVE_WITH_CHAIN,
 ];
 
 /// True if `kind` is an identity-resolver payload kind.

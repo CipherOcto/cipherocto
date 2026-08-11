@@ -157,6 +157,20 @@ pub const IDENTITY_RESOLVE_CHAIN: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04,
 ]);
 
+/// Identity-resolve-with-chain payload kind (RFC-0010 v1.4 §ChainId
+/// Namespace Extension, mission `0010-f2-multi-chain-routing`).
+///
+/// Carries an explicit `ChainId` namespace in the request so the
+/// resolver can route to a specific chain namespace on a multi-chain
+/// deployment. Distinct from `IDENTITY_RESOLVE` (single-chain, mainnet
+/// default) and `IDENTITY_RESOLVE_CHAIN` (chain-of-resolvers, not
+/// chain-of-DIDs).
+///
+/// UUID: `0x0009:0001:0000:0000:0000:0000:0000:0005`
+pub const IDENTITY_RESOLVE_WITH_CHAIN: PayloadKindId = PayloadKindId([
+    0x00, 0x09, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05,
+]);
+
 /// Wallet sign Ed25519 (RFC-0871 §Wallet Node Lifecycle, Phase 2 mission 0871a).
 ///
 /// UUID: `0x0009:0002:0000:0000:0000:0000:0000:0001`
@@ -485,19 +499,23 @@ mod tests {
 
     #[test]
     fn identity_payload_kinds_are_distinct() {
-        // Mission 0871e-f7-impl-resolver-mediation AC: 4 identity payload
+        // Mission 0871e-f7-impl-resolver-mediation AC: 5 identity payload
         // kinds must be pairwise distinct (no accidental UUID collision
         // across `IDENTITY_RESOLVE` / `IDENTITY_REGISTER` /
-        // `IDENTITY_REVOKE` / `IDENTITY_RESOLVE_CHAIN`). Mission
+        // `IDENTITY_REVOKE` / `IDENTITY_RESOLVE_CHAIN` /
+        // `IDENTITY_RESOLVE_WITH_CHAIN`). Mission
         // 0871b-cross-domain-resolution-impl adds `IDENTITY_RESOLVE_CHAIN`
         // (UUID slot 0004 in identity sub-namespace 0x0009:0001:...).
+        // Mission 0010-f2-multi-chain-routing adds
+        // `IDENTITY_RESOLVE_WITH_CHAIN` (UUID slot 0005).
         let kinds = [
             IDENTITY_RESOLVE,
             IDENTITY_REGISTER,
             IDENTITY_REVOKE,
             IDENTITY_RESOLVE_CHAIN,
+            IDENTITY_RESOLVE_WITH_CHAIN,
         ];
-        assert_eq!(kinds.len(), 4);
+        assert_eq!(kinds.len(), 5);
         for i in 0..kinds.len() {
             for j in (i + 1)..kinds.len() {
                 assert_ne!(

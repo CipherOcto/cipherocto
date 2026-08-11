@@ -36,6 +36,13 @@ bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
 # Errors
 thiserror = "1"
 
+[dev-dependencies]
+# MultiChainMockRegistry in tests/resolve_with_chain.rs (mission
+# 0010-f2-multi-chain-routing). parking_lot::RwLock avoids the
+# poisoning semantics of std::sync::RwLock which complicates test
+# cleanup; same pattern as octo-ident::InMemoryDidRegistry.
+parking_lot = "0.12"
+
 [lints.rust]
 unsafe_code = "forbid"
 

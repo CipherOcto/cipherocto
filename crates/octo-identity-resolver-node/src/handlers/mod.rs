@@ -14,6 +14,7 @@ use octo_protocol::ProtocolError;
 pub mod chain;
 pub mod registration;
 pub mod resolve;
+pub mod resolve_with_chain;
 
 pub use chain::{
     ChainResolveRequest, ChainResolveResponse, ResolveChainHandler, ResolverChainContext,
@@ -24,6 +25,9 @@ pub use registration::{
     RevokeResponse,
 };
 pub use resolve::{ResolveHandler, ResolveRequest, ResolveResponse};
+pub use resolve_with_chain::{
+    ResolveWithChainHandler, ResolveWithChainRequest, ResolveWithChainResponse,
+};
 
 /// Output of an identity-resolver handler invocation.
 ///
@@ -121,6 +125,13 @@ pub enum IdentityResolveError {
     /// The handler aborts with no registry call.
     #[error("resolver chain TTL expired")]
     ChainTtlExpired,
+
+    /// Mission 0010-f2-multi-chain-routing: the supplied `ChainId`
+    /// literal failed RFC-0010 v1.4 validation (empty, > 64 chars,
+    /// or contained a control char). The handler aborts BEFORE any
+    /// registry call (fail-closed; no implicit default to mainnet).
+    #[error("invalid chain id: {0}")]
+    InvalidChainId(String),
 }
 
 impl From<IdentityResolveError> for ProtocolError {
@@ -148,6 +159,12 @@ impl From<IdentityResolveError> for ProtocolError {
             }
             IdentityResolveError::ChainTtlExpired => {
                 ProtocolError::AuthorizationFailed("resolver chain TTL expired".to_owned())
+            }
+            // Mission 0010-f2-multi-chain-routing: malformed chain_id
+            // literal — same authorization-class treatment as invalid
+            // DID. No registry call was made.
+            IdentityResolveError::InvalidChainId(msg) => {
+                ProtocolError::AuthorizationFailed(format!("invalid chain id: {msg}"))
             }
         }
     }

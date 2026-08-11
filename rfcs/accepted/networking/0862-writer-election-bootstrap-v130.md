@@ -1,8 +1,18 @@
-# RFC-0862 v1.3.0 — Writer Election + Bootstrap Integration
+# RFC-0862 v1.4.0 — Writer Election + Bootstrap Integration (concrete impl amendment)
 
-**Status:** Accepted (2026-08-11)
+**Status:** Accepted (2026-08-11) — v1.4.0 amendment adds concrete impl surface
 
 > **Promotion note (2026-08-11):** Promoted from `rfcs/draft/networking/0862-writer-election-bootstrap-v120.md` → `rfcs/accepted/networking/0862-writer-election-bootstrap-v130.md` (filename renamed per AC#13). Multi-round adversarial review completed; convergence reached at R19 (zero NEW findings, confirmed at R20). Round-by-round fix history lives in this file's git log.
+
+> **v1.4.0 amendment (2026-08-11):** In-place additive amendment.
+> Promotes §Future Work F12 (HLC + LWW per-instance counter) +
+> F13 (CRDT-style reconciliation) to §Specification. Adds concrete
+> `WriterElection` impl (`RaftLikeWriterElection`) + concrete
+> `DidWriteCoordinator` impl (`RaftLikeDidWriteCoordinator`).
+> Lands `octo-sync` as a workspace member (current = leaf-excluded
+> per root `Cargo.toml` `exclude = ["octo-sync", ...]`). Adds 4
+> cross-instance TV (atomic register, leader failover, WAL replay,
+> fail-closed).
 
 > **Filename note (RESOLVED per R19 acceptance):** file on disk is now `0862-writer-election-bootstrap-v130.md`. AC#13 satisfied.
 **Author:** @cipherocto + @mmacedoeu
@@ -1298,7 +1308,381 @@ fn init_node(
 
 **Phase 3 — consumer wiring (follow-on missions)**
 
-**Phase 4 — Option C migration (F12/F13 amendment; v1.4 acceptance)**
+**Phase 4 — concrete impl landing (v1.4.0 amendment, 2026-08-11)**
+
+Deliverables:
+- New workspace member `octo-sync/` (root `Cargo.toml` `exclude = [...]`
+  drops `"octo-sync"`; gated opt-in per RFC-0862 v1.4 §Acceptance Criteria).
+- Concrete `WriterElection` impl (`RaftLikeWriterElection`) using HLC +
+  LWW per-instance counter for cross-instance write ordering.
+- Concrete `DidWriteCoordinator` impl (`RaftLikeDidWriteCoordinator`)
+  backing cross-instance DID writes through the elected writer.
+- 4 cross-instance TV: atomic register, leader failover, WAL replay,
+  fail-closed.
+- **Optional `crdt` feature flag** — disabled by default; opt-in for
+  deployments needing partition-tolerance (CRDT LWW reconciliation).
+  Per [[cipherocto-design-principles]] §Open/Closed: feature flags
+  ADD extension without central-edit on the core impl.
+
+### Concrete Impl Extension (v1.4.0, additive on v1.3)
+
+#### Motivation
+
+v1.3 SPECIFIES the trait surface (`WriterElection`,
+`WriterElectionForceRelinquish`, `DrainCoordinator`,
+`DidWriteCoordinator`) and the sealed-trait pattern that prevents
+downstream crates from inventing parallel coordinator interfaces.
+v1.3 does NOT include a concrete impl — production deployments
+cannot ship without one, and the substrate crate `octo-sync`
+remains leaf-excluded from the root workspace.
+
+Production deployments need:
+
+1. **`RaftLikeWriterElection`** — concrete Raft-like consensus
+   impl with HLC + LWW per-instance counter. Uses the substrate
+   types (`HlcClock`, `WriterNodeId`, `ShardKey`, `ChainId`).
+   Election latency target ≤ 3s p99 (matches RFC-0862 §Performance
+   Targets G1). Leader failover target ≤ 3s (G4).
+2. **`RaftLikeDidWriteCoordinator`** — concrete `DidWriteCoordinator`
+   impl backing all cross-instance DID writes through the elected
+   writer. Submit path: validate canonical hash → route through
+   `WriterElection::acquire_writer` if no current writer → commit
+   to WAL (with HLC + nonce) → mark entry applied → return success.
+   Reads (resolve) do NOT require the writer lock (per
+   [[cipherocto-design-principles]] §Stable Abstractions Principle
+   reads are local-cache-fast; the trait's `resolve` is registry-side).
+3. **`octo-sync` workspace landing** — root `Cargo.toml` removes
+   `"octo-sync"` from `exclude = [...]`. The crate's `Cargo.toml`
+   was already specified in v1.3 §Crate dependencies (`borsh`
+   `dashmap` `blake3` `async-trait` `ed25519-dalek` `thiserror`
+   pins). Lifting the workspace membership means `cargo build
+   -p octo-sync` works from the root; the cross-RFC refactor to
+   `crates/octo-ident`/`crates/octo-paid-query` dependency
+   direction is unchanged.
+4. **4 cross-instance TV** — atomic register, leader failover, WAL
+   replay, fail-closed. Run against the concrete impls in a
+   multi-instance test harness (`crates/octo-sync/tests/multi_instance.rs`
+   preferred; that path becomes workspace-resolvable after this
+   amendment).
+
+This extension is **additive on v1.3**: all v1.3 trait surfaces
+unchanged; v1.4 adds NEW types + the workspace-membership lift.
+Pre-v1.4 deployments (fail-closed `submit_*_local_fallback`
+default impl) continue to work unchanged.
+
+#### Data Structures
+
+```rust
+// Per R12 H11: sealed trait pattern retained.
+// Per v1.4.0 M3: `octo-sync::RaftLikeWriterElection` is the
+// concrete impl; downstream crates cannot construct it directly
+// (no `pub fn new()` outside `octo-sync`).
+
+pub struct RaftLikeWriterElection {
+    inner: parking_lot::Mutex<RaftLikeState>,
+    hlc: Arc<HlcClock>,
+    wal: Arc<dyn WalWriter>,
+    nonce_tracker: Arc<NonceTracker>,
+    operator_set: OperatorSet,
+    chain_id: ChainId,
+}
+
+struct RaftLikeState {
+    current_term: u64,
+    voted_for: Option<WriterNodeId>,
+    current_writers: HashMap<ShardKey, WriterIdentity>,
+    heartbeat_deadlines: HashMap<ShardKey, Instant>,
+    shard_locks: HashMap<ShardKey, Arc<tokio::sync::Mutex<()>>>,
+}
+
+impl WriterElection for RaftLikeWriterElection {
+    async fn acquire_writer(...) -> ... { /* Raft-like acquire */ }
+    async fn relinquish_writer(...) -> ... { /* WalWriter::flush + handoff */ }
+    async fn heartbeat(...) -> ... { /* Heartbeat deadline extension */ }
+    fn current_writer(...) -> ... { /* cached identity */ }
+}
+
+impl sealed::WriterElectionForceRelinquishSealed for RaftLikeWriterElection {}
+impl WriterElectionForceRelinquish for RaftLikeWriterElection {
+    async fn force_relinquish_writer(...) -> ... {
+        // 1. validate signature set via verify_governance_attestation
+        // 2. wal.append_handover_marker (HLC-stamped)
+        // 3. clear current_writers entry
+    }
+}
+
+// DidWriteCoordinator impl (sealed).
+
+pub struct RaftLikeDidWriteCoordinator {
+    writer_election: Arc<dyn WriterElection>,
+    hlc: Arc<HlcClock>,
+    wal: Arc<dyn WalWriter>,
+    nonce_tracker: Arc<NonceTracker>,
+    chain_id: ChainId,
+}
+
+impl sealed::DidWriteCoordinatorSealed for RaftLikeDidWriteCoordinator {}
+#[async_trait]
+impl DidWriteCoordinator for RaftLikeDidWriteCoordinator {
+    async fn submit_register_validated(...) -> ... {
+        // 1. acquire_writer (or wait for current_writer within election_timeout_ms)
+        // 2. generate nonce (HLC-stamped)
+        // 3. nonce_tracker.consume(shard_key, term, nonce)
+        // 4. wal.append_entry(WalEntry {
+        //      ENTRY_TYPE_DID_REGISTER,
+        //      magic: WAL_MAGIC_V13,
+        //      shard_key: derived from canonical_did_hash,
+        //      payload: borsh(register_payload),
+        //      hlc_timestamp: hlc.now().await?,
+        //    })
+        // 5. on WAL append success: registry-side update happens via
+        //    follow-on mission; v1.4.0 implements only the WAL write path.
+    }
+    async fn submit_revoke(...) -> ... { /* mirror without DidDocument payload */ }
+    // submit_register default impl from v1.3 remains (calls submit_register_validated).
+}
+
+// Optional CRDT extension (feature-gated).
+
+#[cfg(feature = "crdt")]
+pub struct CrdtDidWriteCoordinator {
+    inner: RaftLikeDidWriteCoordinator,
+    lww_set: Arc<parking_lot::RwLock<LwwDidSet>>,
+}
+
+#[cfg(feature = "crdt")]
+#[derive(Default)]
+struct LwwDidSet {
+    per_did: HashMap<[u8; 32], LwwEntry>,
+}
+
+#[cfg(feature = "crdt")]
+#[derive(Clone)]
+struct LwwEntry {
+    hlc: HlcTimestamp,
+    document: DidDocument,
+    tombstone: bool, // revoke sets tombstone = true
+}
+```
+
+#### Algorithm: `submit_register_validated` (concrete)
+
+```
+input: canonical_did_hash ([u8; 32]), chain_id (ChainId),
+       document (&DidDocument)
+output: Result<(), DidWriteCoordinatorError>
+
+1.  acquire_writer_or_fail(shard_key = derive_canonical_shard(canonical_did_hash),
+                          election_timeout_ms = 3_000):
+    let identity = writer_election.acquire_writer(&shard_key, 3_000).await?;
+    Ok(identity)
+
+2.  hlc_now = hlc.observe(remote = None)?  // self.tick
+
+3.  nonce = hlc_now.canonical_bytes()  // 44-byte HLC serialization
+
+4.  nonce_tracker.consume(&shard_key, identity.term, &nonce)
+    on Err: return DidWriteCoordinatorError::NonceReplayed
+
+5.  let entry = WalEntry {
+        magic: WAL_MAGIC_V13,
+        entry_type: ENTRY_TYPE_DID_REGISTER,
+        entry_version: 1,
+        reserved: [0, 0],
+        shard_key,
+        lsn: wal.next_lsn()?,
+        previous_lsn: wal.current_lsn()?,
+        payload_length: borsh::serialized_size(payload)?,
+        payload: borsh::to_vec(payload)?,
+        prefix_bytes: canonicalize_entry_prefix(&entry)?,
+        checksum: [0; 32],  // filled in step 6
+    };
+    let mut entry = entry;
+    entry.checksum = compute_checksum(&entry);  // blake3(prefix || payload)
+
+6.  wal.append_entry(&entry).await
+    on Err: nonce_tracker.rollback(consumed_nonce)  // R13 M4
+            return Err
+
+7.  Ok(())
+```
+
+#### Algorithm: `submit_revoke` (concrete)
+
+```
+input: canonical_did_hash ([u8; 32]), chain_id (ChainId)
+output: Result<(), DidWriteCoordinatorError>
+
+mirror of submit_register_validated with:
+- payload = (canonical_did_hash, action: REVOKE)
+- wal.append_entry({ ENTRY_TYPE_DID_REVOKE, ... })
+- no DidDocument field in payload
+```
+
+#### Algorithm: `force_relinquish_writer` (operator governance)
+
+```
+input: shard_key (ShardKey), attestation (GovernanceAttestation),
+       configured_operator_set (OperatorSet), nonce_tracker (&NonceTracker)
+output: Result<(), WriterElectionError>
+
+1. verify_governance_attestation(...)  // M-of-N ed25519 + chain_id binding
+   on Err: return Err
+2. let handover_hlc = hlc.observe(remote = None)?;
+3. let entry = WalEntry { ..., payload: WAL_HANDOVER_MARKER, ... };
+4. wal.append_entry(&entry).await
+5. clear current_writers[shard_key]; bump current_term
+6. Ok(())
+```
+
+#### Crate landing: `octo-sync` workspace membership
+
+Root `Cargo.toml` change:
+
+```diff
+ exclude = [
+     "determin",
+-    "octo-sync",
+     "octo-transport",
+     ...
+ ];
+```
+
+`crates/octo-sync/Cargo.toml` (the existing crate file, no rename):
+
+```toml
+[package]
+name = "octo-sync"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+# Future-proofing: the crate is `octo-sync` (no `_v13` suffix).
+# Workspace + CI use `octo-sync` as the canonical name.
+
+[dependencies]
+# Per R12 H9 — pinned in v1.4.0 §Crate dependencies section above.
+borsh = "=1.5.0"
+dashmap = "=6.1.0"
+blake3 = "=1.5.4"
+async-trait = "=0.1.83"
+ed25519-dalek = { version = "=2.1.1", features = ["std"] }
+thiserror = "=1.0.63"
+tokio = { version = "1", features = ["full"] }
+parking_lot = "=0.12"
+
+[features]
+default = []
+# Per v1.4.0 §Motivation 4: opt-in CRDT LWW for deployments that
+# need partition-tolerance over linearizability.
+crdt = []
+```
+
+#### Test Vectors (v1.4.0)
+
+4 cross-instance TV in `crates/octo-sync/tests/cross_instance_tv.rs`:
+
+1. **TV-1 atomic_register**
+   - Setup: 3 instances (`A`, `B`, `C`), `RaftLikeDidWriteCoordinator`
+     + `RaftLikeWriterElection` per instance; same `ChainId`.
+   - Action: concurrent `submit_register_validated` from A + B + C
+     on the same canonical_did_hash.
+   - Expectation: exactly one writer commits; other two back off
+     OR queue per the leader-election lock; final state has ONE
+     entry in WAL; `nonce_tracker.consume` succeeds on winner
+     and `NonceReplayed` for others.
+
+2. **TV-2 leader_failover**
+   - Setup: A elected leader. Kill A's writer-election subprocess
+     (set `--max-heartbeats-missed 0` for fast failover).
+   - Expectation: B or C wins new election within `election_timeout_ms`
+     (≤ 3000ms p99); subsequent `submit_register_validated` succeeds
+     on the new leader.
+
+3. **TV-3 wal_replay**
+   - Setup: A committed 3 DID_REGISTER entries; crash A before
+     they propagated.
+   - Expectation: on A's restart, `NonceTracker::new(wal)` loads
+     nonce records; `replay_wal(...)` re-applies 3 entries in
+     order; final state matches A's pre-crash state byte-exact.
+
+4. **TV-4 fail_closed**
+   - Setup: Inject `WriterElection` that always returns
+     `WriterElectionError::WriterUnavailable` (mock — no real
+     failover).
+   - Expectation: every `submit_register_validated` and
+     `submit_revoke` returns `DidWriteCoordinatorError::WriterUnavailable`
+     deterministically; WAL remains unchanged; nonce_tracker unchanged.
+
+#### Out of scope for v1.4.0 (deferred)
+
+- **`octo-coordinator-bft` Layer A crate** for Byzantine fault tolerance
+  (per RFC-0862 v1.3 §Future Work). v1.4.0 ships crash-fault-tolerant
+  Raft-like consensus; BFT (threshold-signature M-of-N + sealed trait
+  + chain_id binding) lands in `octo-coordinator-bft` Layer A on a
+  future amendment (RFC-0862 v2.0 per
+  [[cipherocto-design-principles]] §Layer A additive-only).
+- **Cross-shard drain atomicity**. Per v1.3 §Out-of-scope +
+  R18 M1, `DrainCoordinator` handles single-shard drains only.
+  Cross-shard atomic drain remains future work; tracked.
+- **Snapshot + replay recovery plan** (per RFC-0862 v1.3 §Future Work).
+  Mission `0871e-force-relinquish-governance` v0.2 snapshot+replay
+  AC remains pending. v1.4.0 lands the WAL-replay half; snapshot
+  recovery is a follow-on.
+- **Coordinator HA via key-share ceremony + M-of-N operator quorum**.
+  Per RFC-0862 v1.3 §Future Work + AC#12, mission
+  `0871e-force-relinquish-governance` FILED 2026-08-11; the
+  `force_relinquish_writer` impl in v1.4.0 consumes the
+  `verify_governance_attestation` substrate from v1.3 but the
+  key-share ceremony deployment + multi-operator quorum setup
+  is mission-side work.
+
+#### Acceptance Criteria for v1.4.0 acceptance
+
+v1.4.0 acceptance GATED on:
+
+17. **Root `Cargo.toml` excludes `"octo-sync"`** (lifting the
+    leaf-exclusion; mission `0871e-f7-coordinator-impl` lands
+    the crate).
+18. **`RaftLikeWriterElection` impl** lands in `crates/octo-sync/src/election/raft_like.rs`
+    with TV-1 + TV-2 from §Test Vectors green.
+19. **`RaftLikeDidWriteCoordinator` impl** lands in
+    `crates/octo-sync/src/coordinator/raft_like_did.rs` with
+    TV-1 + TV-4 green.
+20. **Multi-instance harness** (`crates/octo-sync/tests/multi_instance.rs`)
+    spawns 3 instances in-process; TV-1 + TV-2 + TV-3 + TV-4 all
+    green.
+21. **`Optional `crdt` feature flag`** compiles + passes TV-1 + TV-4
+    under `cargo test --features crdt`.
+22. **Layer-direction audit:** `crates/octo-ident` does NOT depend
+    on `crates/octo-sync` directly (per RFC-0862 v1.3 R12 M19 + R13 M5
+    — `canonical_hash` lives in `octo-sync::did::canonical_hash`
+    and is imported at the substrate crate via re-export, not at
+    `octo-ident` directly). The `DidWriteCoordinator` trait in
+    `octo-ident` remains the only surface; `octo-sync` provides
+    the concrete impl.
+23. **`force_relinquish_writer` via sealed trait** (per RFC-0862
+    v1.3 AC#10) is reachable through `RaftLikeWriterElection`
+    (impls `WriterElectionForceRelinquishSealed`).
+24. **No new protocol-breaking change**: v1.4.0 is additive on
+    v1.3; the WAL v1.3 magic + entry layout remain the same; new
+    impls live downstream of the trait surface.
+
+#### Compatibility
+
+- **Backward-compatible:** v1.4.0 trait surfaces unchanged from
+  v1.3; `submit_*_local_fallback` fail-closed defaults retained.
+  Pre-v1.4 deployments that used the local-fallback path continue
+  to work (the fallback is still wired to `WriterUnavailable`).
+- **Forward-compatible:** Optional `crdt` feature flag is opt-in;
+  default builds stay linearizable. Existing TV do not require
+  `crdt`; new TV under that feature flag are acceptance-grade.
+- **Cross-impl:** Concrete impls use the v1.3 substrate types
+  (`HlcClock`, `WriterNodeId`, `ShardKey`, `ChainId`,
+  `OperatorSet`, `NonceTracker`, `WalWriter`, `WalReader`,
+  `WalNonceScanner`) without modification. Cross-impl conformance
+  measured via the 4 TV + the v1.3 §Performance Targets TV list
+  (8 vectors; Phase 3 perf TV still pending).
 
 ## Out-of-scope
 
@@ -1314,8 +1698,13 @@ in §Future Work). Tracked here so cross-references from
 ## Future Work
 
 - F1-F7, F9-F10: see RFC-0862 v1.2.0 §Future Work
-- F12 (NEW): HLC + LWW per-instance counter (deferred; v1.4)
-- F13 (NEW): CRDT-style reconciliation (deferred; v1.4)
+- F12 (NEW): HLC + LWW per-instance counter. **Promoted to
+  v1.4.0 §Concrete Impl Extension** (concrete `RaftLikeDidWriteCoordinator`
+  uses HLC + LWW for cross-instance drain / DID write coordination).
+- F13 (NEW): CRDT-style reconciliation. **Promoted to v1.4.0
+  §Concrete Impl Extension** as optional `crdt` feature flag —
+  default off (fail-closed); enable for deployments that need
+  partition-tolerance over the linearizability guarantee.
 - Coordinator quorum M-of-N key share ceremony (governance) —
   **mission `0871e-force-relinquish-governance` FILED (R14 H1);
   blocks v1.3 acceptance per AC#12.**
@@ -1460,6 +1849,7 @@ cargo doc --workspace --no-deps --manifest-path octo-transport/Cargo.toml
 | 1.2.0   | 2026-06-25 | Accepted | Bootstrap integration path clarified                                                                                         |
 | 1.2.1   | 2026-08-10 | Accepted | **Mandatory pre-v1.3 patch (per R11 H5 + R12 C1).** Flips `validate_wal_entry_crc32` behavior on unknown Magic from fail-open (returns `true`) to reject (`WalVersionTooNew`); HeaderSize-aware; dual-version cluster window compatible. Without this patch v1.2.0 nodes silently accept v1.3 WAL entries UNVALIDATED. |
 | 1.3.0   | 2026-08-10 | Draft    | `WriterElection` + bootstrap-orchestrated sync + `DrainCoordinator` + `DidWriteCoordinator` + CRDT-extension hooks (F12/F13) |
+| 1.4.0   | 2026-08-11 | Accepted (amendment) | §Concrete Impl Extension: `RaftLikeWriterElection` (concrete `WriterElection` impl) + `RaftLikeDidWriteCoordinator` (concrete `DidWriteCoordinator` impl) using HLC + LWW per-instance counter. `octo-sync` workspace membership lifted (root `Cargo.toml` `exclude = [...]` drops `"octo-sync"`). Optional `crdt` feature flag for partition-tolerant LWW deployments (opt-in; default linearizable). 4 cross-instance TV (atomic_register, leader_failover, wal_replay, fail_closed) spec'd in §Test Vectors. F12 + F13 promoted from §Future Work to §Specification. AC#17-#24 add 8 acceptance criteria on top of v1.3 AC#1-#16; ALL v1.3 AC#1-#16 still required (no retroactive loosening). Layer direction unchanged (`octo-ident` stays Layer B substrate; `octo-sync` provides concrete impl; `octo-ident` does NOT depend on `octo-sync`). Wal v1.3 magic + entry layout preserved (no protocol-breaking change). Mission `0871e-f7-coordinator-impl` GATED on this RFC landing. |
 
 ## Review Process
 

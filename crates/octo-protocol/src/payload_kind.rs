@@ -712,11 +712,22 @@ mod tests {
 
     #[test]
     fn capability_payload_kinds_are_distinct() {
-        // Mission 0871d AC: 2 capability-issuer payload kinds must be
+        // Mission 0871d AC: capability-issuer payload kinds must be
         // pairwise distinct (no two payloads share a UUID by accident).
+        // 0957-phase2c added `CAPABILITY_LOOKUP`; this assertion
+        // generalizes to an N-way distinctness check via `BTreeSet`.
         let kinds = CAPABILITY_PAYLOAD_KINDS;
-        assert_eq!(kinds.len(), 2);
-        assert_ne!(kinds[0], kinds[1]);
+        assert!(
+            kinds.len() >= 2,
+            "expected at least 2 capability payload kinds, got {}",
+            kinds.len()
+        );
+        let unique: std::collections::HashSet<_> = kinds.iter().collect();
+        assert_eq!(
+            unique.len(),
+            kinds.len(),
+            "capability payload kinds must be pairwise distinct"
+        );
     }
 
     #[test]

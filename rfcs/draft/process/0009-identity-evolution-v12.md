@@ -24,7 +24,7 @@ Extend RFC-0009 §Capability Keys with:
 
 ## Review State
 
-- **R1-R30 completed (2026-08-11); R31 in progress.**
+- **R1-R31 completed (2026-08-11); R32 in progress.**
 - **Termination condition:** convergence when a new round returns
   zero NEW findings.
 
@@ -1105,6 +1105,6 @@ cargo doc --workspace --no-deps
 
 ## Review Process
 
-Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R30
+Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R31
 completed (2026-08-11). Convergence target: zero NEW findings per
-R32+.
+R33+.

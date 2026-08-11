@@ -347,34 +347,27 @@ impl IdentityResolverNode {
         // stub bytes).
         // Mission 0959-placeholder-identity-binding: when `identity`
         // is present, derive real `RouterNodeId` + sign HMAC.
-        use quota_router_core::node::announce::{
-            PricingPolicy, RouterAnnouncePayload, SignedPayload,
-        };
+        // Mission 0871-phase5-router-dispatch-wiring: use the shared
+        // `RouterAnnounceBuilder` (single source of truth — matches
+        // `QuotaRouterNode::broadcast_announce` + 3 other specialized
+        // nodes).
+        use quota_router_core::node::announce::{PricingPolicy, RouterAnnounceBuilder};
         let pk = self
             .config
             .identity
             .as_ref()
             .map(|i| i.public_key_bytes())
             .unwrap_or([0u8; 32]);
-        let mut announce = RouterAnnouncePayload {
-            node_id: quota_router_core::node::provider::RouterNodeId(pk),
-            network_id: quota_router_core::node::provider::NetworkId([0u8; 32]),
-            supported_models: vec![],
-            capacities: vec![],
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
-            hmac: [0u8; 32],
-            pricing_policy: Some(PricingPolicy {
-                drain_per_query: 0,
-                accepted_payment_capabilities: vec![],
-                settlement_recipient: None,
-            }),
-        };
-        if self.config.network_key != [0u8; 32] {
-            announce.hmac = announce.compute_hmac(&self.config.network_key);
-        }
+        let announce = RouterAnnounceBuilder::new(
+            quota_router_core::node::provider::RouterNodeId(pk),
+            quota_router_core::node::provider::NetworkId([0u8; 32]),
+        )
+        .pricing_policy(Some(PricingPolicy {
+            drain_per_query: 0,
+            accepted_payment_capabilities: vec![],
+            settlement_recipient: None,
+        }))
+        .build(&self.config.network_key);
         let announce_body = serde_json::to_vec(&announce)
             .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
         let from_did =

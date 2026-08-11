@@ -1,6 +1,10 @@
 # RFC-0862 v1.3.0 — Writer Election + Bootstrap Integration
 
-**Status:** Draft (2026-08-10)
+**Status:** Accepted (2026-08-11)
+
+> **Promotion note (2026-08-11):** Promoted from `rfcs/draft/networking/0862-writer-election-bootstrap-v120.md` → `rfcs/accepted/networking/0862-writer-election-bootstrap-v130.md` (filename renamed per AC#13). Multi-round adversarial review completed; convergence reached at R19 (zero NEW findings, confirmed at R20). Round-by-round fix history lives in this file's git log.
+
+> **Filename note (RESOLVED per R19 acceptance):** file on disk is now `0862-writer-election-bootstrap-v130.md`. AC#13 satisfied.
 **Author:** @cipherocto + @mmacedoeu
 **Maintainers:** @cipherocto (primary), @mmacedoeu (review)
 **Substrate:** RFC-0862 v1.2.0 + RFC-0855p-c (handover) + RFC-0863 (bootstrap)
@@ -12,11 +16,6 @@
 
 > **Breaking changes acknowledged (per R4-R11):** See §Breaking
 > Changes + §Acceptance Criteria for the migration contract.
-
-> **Filename note (per R8 H3):** file on disk is currently
-> `0862-writer-election-bootstrap-v120.md`. Filename MUST be renamed
-> to `0862-writer-election-bootstrap-v130.md` BEFORE v1.3 acceptance
-> (AC#13).
 
 ## Summary
 

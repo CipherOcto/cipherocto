@@ -1,6 +1,8 @@
 # RFC-0009 v1.2 — Identity Evolution: Hierarchical Attenuation + MPC Threshold
 
-**Status:** Draft (2026-08-10)
+**Status:** Accepted (2026-08-11)
+
+> **Promotion note (2026-08-11):** Promoted from `rfcs/draft/process/0009-identity-evolution-v12.md` → `rfcs/accepted/process/0009-identity-evolution-v12.md` after multi-round adversarial review. 40 review rounds completed (R1-R40); convergence reached at R40 (zero NEW substantive findings). Round-by-round fix history lives in this file's git log; per-round commit hashes form the audit trail.
 **Author:** @cipherocto + @mmacedoeu
 **Maintainers:** @cipherocto (primary), @mmacedoeu (review)
 **Substrate:** RFC-0009 §Capability Keys + §HsmAdapter Integration

@@ -24,7 +24,7 @@ Extend RFC-0009 §Capability Keys with:
 
 ## Review State
 
-- **R1-R34 completed (2026-08-11); R35 in progress.**
+- **R1-R35 completed (2026-08-11); R36 in progress.**
 - **Termination condition:** convergence when a new round returns
   zero NEW findings.
 
@@ -219,7 +219,7 @@ DischargeMacaroon` triplet to embed the full attenuation chain.
   variant; this RFC cross-references the extension; per R11 M3 —
   ownership belongs to RFC-0871)
 
-**Optional:** RFC-0958 (ZK capability circuit)
+**Optional:** RFC-0958
 
 ## Roles and Authorities
 
@@ -846,7 +846,7 @@ Per RFC-0008 Execution Class mapping:
 - **Threat:** holder of a child capability whose parent was revoked.
 - **Attack:** continue using revoked capability.
 - **Defense:** `check_wrapped_chain` (per R20 M2 — defined in
-  §Specification > Hierarchical attenuation chains per R21 L7)
+  §Specification > MPC threshold identity per R21 L7)
   cryptographically walks `chain_parent` chain; revocation of any
   ancestor invalidates all descendants.
 - **Residual:** none (cryptographic guarantee).
@@ -1059,7 +1059,7 @@ is L4 registers into B, not B → L4. The macaroon substrate uses
 - `octo-cap-zk` (Layer 4 — per R30 L5 relabel from Layer E to
   match octo-cap-macaroon post-Phase-2c convention) — sibling;
   registers into `octo-wallet` registrar
-- **`octo-cap-macaroon` (Layer E) — REMOVED from layer table per R25 L8**
+- **`octo-cap-macaroon` (Layer 4) — REMOVED from layer table per R25 L8**
   (post Phase 2c cleanup: zero cross-layer deps; previously
   registered into `octo-wallet` registrar at Phase 2b; current
   L4↔L-D coupling is via `crates/octo-cap-macaroon-transport/`
@@ -1135,6 +1135,6 @@ cargo doc --workspace --no-deps
 
 ## Review Process
 
-Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R34
+Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R35
 completed (2026-08-11). Convergence target: zero NEW findings per
-R36+.
+R37+.

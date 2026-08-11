@@ -26,6 +26,16 @@
 //! deployments inject a concrete coordinator; single-instance
 //! deployments may legitimately leave this slot `None` (writes are
 //! refused, which is the safe default for an unconfigured cluster).
+//!
+//! ## Mission 0871b-cross-domain-resolution-impl
+//!
+//! `IDENTITY_RESOLVE_CHAIN` adds multi-hop DID resolution. The chain
+//! handler walks `Vec<ResolverHop>` with cycle detection + TTL budget
+//! against the local `DidRegistry`. Cross-node forwarding (network
+//! call hop N → hop N+1) requires a request/response substrate that
+//! does not yet exist in `octo-transport` — the chain-traversal LOGIC
+//! lands here; network forwarding lands in a follow-on mission when
+//! the substrate is available.
 
 use std::sync::Arc;
 
@@ -42,8 +52,8 @@ use octo_transport::sender::TransportError;
 use octo_transport::NodeTransport;
 
 use crate::handlers::{
-    resolver_error_to_protocol, RegisterHandler, RegisterRequest, ResolveHandler, ResolveRequest,
-    RevokeHandler, RevokeRequest,
+    resolver_error_to_protocol, ChainResolveRequest, RegisterHandler, RegisterRequest,
+    ResolveChainHandler, ResolveHandler, ResolveRequest, RevokeHandler, RevokeRequest,
 };
 use crate::is_identity_resolver_payload_kind;
 
@@ -216,8 +226,10 @@ impl IdentityResolverNode {
     /// Register the node as a `NetworkReceiver` on the underlying transport.
     ///
     /// After `start()`, the transport routes any incoming borsh-encoded
-    /// `NodeEnvelope` whose `payload_kind` is `IDENTITY_RESOLVE` to this
-    /// node's `on_receive` method.
+    /// `NodeEnvelope` whose `payload_kind` matches one of the
+    /// `IDENTITY_RESOLVER_PAYLOAD_KINDS` to this node's `on_receive`
+    /// method (`IDENTITY_RESOLVE`, `IDENTITY_REGISTER`,
+    /// `IDENTITY_REVOKE`, `IDENTITY_RESOLVE_CHAIN`).
     ///
     /// # Errors
     /// Returns `IdentityResolverNodeError::AlreadyStarted` if already registered.
@@ -297,6 +309,17 @@ impl IdentityResolverNode {
                 .handle(&req)
                 .await
                 .map_err(resolver_error_to_protocol)
+            }
+            k if k == octo_protocol::payload_kind::IDENTITY_RESOLVE_CHAIN => {
+                // Mission 0871b-cross-domain-resolution-impl: chain
+                // resolution. Handler body is sync (no cross-network
+                // I/O in this mission); the surrounding `async` keeps
+                // the dispatch shape consistent with the other arms.
+                let req = ChainResolveRequest::from_borsh(&envelope.payload)
+                    .map_err(resolver_error_to_protocol)?;
+                ResolveChainHandler::new(self.registry.clone())
+                    .handle(&req)
+                    .map_err(resolver_error_to_protocol)
             }
             _ => Err(ProtocolError::AuthorizationFailed(format!(
                 "unsupported payload kind: {:?}",

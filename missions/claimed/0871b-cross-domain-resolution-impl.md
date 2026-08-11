@@ -1,7 +1,8 @@
 # 0871b-cross-domain-resolution-impl — Resolver chains end-to-end
 
-**Status:** unassigned (wave 5; absorbed from RFC-0010 §Future Work F6 + RFC-0871 §Future Work on 2026-08-10)
-**Substrate:** RFC-0010 v1.3 `DidRegistry` (Accepted 2026-08-10, commit `2ace15e9`) + RFC-0871 (Accepted 2026-08-09) §Future Work
+**Status:** claimed 2026-08-11 (chain-traversal LOGIC substrate landed;
+cross-node forwarding deferred to follow-on mission)
+**Substrate:** RFC-0010 v1.3 `DidRegistry` (LANDED 2026-08-11, commit `71f8d745`) + RFC-0871 (Accepted 2026-08-09) §Future Work
 **Parent:** 0871b-storage-backend (LANDED 2026-08-11, commit `71f8d745`) + `0871b-cross-domain-resolution` (umbrella mission; scope TBD)
 
 ## Scope
@@ -89,7 +90,7 @@ cargo test --lib -p octo-identity-resolver-node
 
 ## Claimant
 
-@unassigned
+@claude
 
 ## Pull Request
 

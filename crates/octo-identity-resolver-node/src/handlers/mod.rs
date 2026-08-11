@@ -11,9 +11,14 @@
 use octo_ident::DidRegistryError;
 use octo_protocol::ProtocolError;
 
+pub mod chain;
 pub mod registration;
 pub mod resolve;
 
+pub use chain::{
+    ChainResolveRequest, ChainResolveResponse, ResolveChainHandler, ResolverChainContext,
+    ResolverHop, HOP_LATENCY_MS_ESTIMATE,
+};
 pub use registration::{
     RegisterHandler, RegisterRequest, RegisterResponse, RevokeHandler, RevokeRequest,
     RevokeResponse,
@@ -103,6 +108,19 @@ pub enum IdentityResolveError {
     /// the local registry.
     #[error("coordinator error: {0}")]
     Coordinator(String),
+
+    /// Mission 0871b-cross-domain-resolution-impl: a `ResolverHop`
+    /// re-visited a canonical DID already present in the chain's
+    /// `visited` set. The handler aborts BEFORE consuming the registry
+    /// (no registry I/O was performed for this request).
+    #[error("resolver chain cycle detected")]
+    ChainCycle,
+
+    /// Mission 0871b-cross-domain-resolution-impl: per-hop TTL budget
+    /// (`ttl_remaining_ms`) reached zero before the chain completed.
+    /// The handler aborts with no registry call.
+    #[error("resolver chain TTL expired")]
+    ChainTtlExpired,
 }
 
 impl From<IdentityResolveError> for ProtocolError {
@@ -120,6 +138,16 @@ impl From<IdentityResolveError> for ProtocolError {
             }
             IdentityResolveError::Coordinator(msg) => {
                 ProtocolError::AuthorizationFailed(format!("coordinator error: {msg}"))
+            }
+            // Chain traversal failures are a routing-class error from
+            // the caller's perspective — same authorization-class
+            // treatment as `Storage`. The chain never reached the
+            // terminal registry, so no partial state was committed.
+            IdentityResolveError::ChainCycle => {
+                ProtocolError::AuthorizationFailed("resolver chain cycle detected".to_owned())
+            }
+            IdentityResolveError::ChainTtlExpired => {
+                ProtocolError::AuthorizationFailed("resolver chain TTL expired".to_owned())
             }
         }
     }

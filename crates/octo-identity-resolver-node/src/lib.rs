@@ -39,8 +39,10 @@ pub mod handlers;
 pub mod node;
 
 pub use handlers::{
-    HandlerOutput, IdentityResolveError, RegisterHandler, RegisterRequest, RegisterResponse,
-    ResolveHandler, ResolveRequest, ResolveResponse, RevokeHandler, RevokeRequest, RevokeResponse,
+    ChainResolveRequest, ChainResolveResponse, HandlerOutput, IdentityResolveError,
+    RegisterHandler, RegisterRequest, RegisterResponse, ResolveChainHandler, ResolveHandler,
+    ResolveRequest, ResolveResponse, ResolverChainContext, ResolverHop, RevokeHandler,
+    RevokeRequest, RevokeResponse, HOP_LATENCY_MS_ESTIMATE,
 };
 pub use node::{
     IdentityResolverNode, IdentityResolverNodeConfig, IdentityResolverNodeError,
@@ -60,10 +62,18 @@ use octo_protocol::PayloadKindId;
 /// `IDENTITY_REGISTER` + `IDENTITY_REVOKE` that consult an injected
 /// `DidWriteCoordinator` (RFC-0862 v1.3) before delegating to the local
 /// `DidRegistry` backend.
+///
+/// Mission 0871b-cross-domain-resolution-impl: adds
+/// `IDENTITY_RESOLVE_CHAIN` for multi-hop DID resolution (RFC-0871
+/// §Future Work). The chain handler walks `Vec<ResolverHop>` with cycle
+/// detection + TTL budget against the local `DidRegistry`. Cross-node
+/// forwarding is OUT OF SCOPE for this mission — the substrate for
+/// real network forwarding lands in a follow-on mission.
 pub const IDENTITY_RESOLVER_PAYLOAD_KINDS: &[PayloadKindId] = &[
     octo_protocol::payload_kind::IDENTITY_RESOLVE,
     octo_protocol::payload_kind::IDENTITY_REGISTER,
     octo_protocol::payload_kind::IDENTITY_REVOKE,
+    octo_protocol::payload_kind::IDENTITY_RESOLVE_CHAIN,
 ];
 
 /// True if `kind` is an identity-resolver payload kind.

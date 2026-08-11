@@ -133,6 +133,30 @@ pub const IDENTITY_REVOKE: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
 ]);
 
+// RFC-0871 cross-domain resolution payload kind (mission
+// 0871b-cross-domain-resolution-impl). Allocated in the RFC-0871
+// `rfc_namespace` (`0x0009:...`) with sub-namespace `0x0001` (mission
+// 0871 — identity) and slot `0004` (next free slot after RESOLVE 0001,
+// REGISTER 0002, REVOKE 0003). Wire form: borsh-encoded
+// `ChainResolveRequest { target: String, hops: Vec<ResolverHop>,
+// ttl_remaining_ms: u64 }`.
+//
+// Cross-node forwarding (network call from hop N to hop N+1) requires
+// the request/response substrate that does not yet exist in
+// `octo-transport` (only `broadcast` and `send_best` fire-and-forget).
+// This payload kind carries the chain-traversal LOGIC substrate
+// (cycle detection + TTL budget + ordered hop list). A follow-on
+// mission wires a network-capable `ResolveChainHandler` when the
+// request/response substrate lands.
+
+/// Identity-resolve-chain payload kind (RFC-0871 §Future Work, mission
+/// 0871b-cross-domain-resolution-impl).
+///
+/// UUID: `0x0009:0001:0000:0000:0000:0000:0000:0004`
+pub const IDENTITY_RESOLVE_CHAIN: PayloadKindId = PayloadKindId([
+    0x00, 0x09, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04,
+]);
+
 /// Wallet sign Ed25519 (RFC-0871 §Wallet Node Lifecycle, Phase 2 mission 0871a).
 ///
 /// UUID: `0x0009:0002:0000:0000:0000:0000:0000:0001`
@@ -461,11 +485,19 @@ mod tests {
 
     #[test]
     fn identity_payload_kinds_are_distinct() {
-        // Mission 0871e-f7-impl-resolver-mediation AC: 3 identity payload
+        // Mission 0871e-f7-impl-resolver-mediation AC: 4 identity payload
         // kinds must be pairwise distinct (no accidental UUID collision
-        // across `IDENTITY_RESOLVE` / `IDENTITY_REGISTER` / `IDENTITY_REVOKE`).
-        let kinds = [IDENTITY_RESOLVE, IDENTITY_REGISTER, IDENTITY_REVOKE];
-        assert_eq!(kinds.len(), 3);
+        // across `IDENTITY_RESOLVE` / `IDENTITY_REGISTER` /
+        // `IDENTITY_REVOKE` / `IDENTITY_RESOLVE_CHAIN`). Mission
+        // 0871b-cross-domain-resolution-impl adds `IDENTITY_RESOLVE_CHAIN`
+        // (UUID slot 0004 in identity sub-namespace 0x0009:0001:...).
+        let kinds = [
+            IDENTITY_RESOLVE,
+            IDENTITY_REGISTER,
+            IDENTITY_REVOKE,
+            IDENTITY_RESOLVE_CHAIN,
+        ];
+        assert_eq!(kinds.len(), 4);
         for i in 0..kinds.len() {
             for j in (i + 1)..kinds.len() {
                 assert_ne!(
@@ -479,6 +511,38 @@ mod tests {
         // against future re-allocations).
         assert_ne!(IDENTITY_REGISTER, WALLET_SIGN_ED25519);
         assert_ne!(IDENTITY_REVOKE, WALLET_RESOLVE_DID);
+        assert_ne!(IDENTITY_RESOLVE_CHAIN, WALLET_RESOLVE_DID);
+    }
+
+    #[test]
+    fn identity_resolve_chain_uuid_matches_mission_0871b() {
+        // Mission 0871b-cross-domain-resolution-impl AC:
+        // IDENTITY_RESOLVE_CHAIN = UUID 0x0009:0001:0000:0000:0000:0000:0000:0004
+        // (next free slot in identity sub-namespace after RESOLVE/REGISTER/REVOKE).
+        let expected: [u8; 16] = [
+            0x00, 0x09, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x04,
+        ];
+        assert_eq!(IDENTITY_RESOLVE_CHAIN.0, expected);
+    }
+
+    #[test]
+    fn identity_resolve_chain_is_rfc_allocated() {
+        // Mission 0871b AC: IDENTITY_RESOLVE_CHAIN must sit in the
+        // RFC-0871 `rfc_namespace` (0x0009:0000…0x0009:FFFF) with
+        // sub-namespace 0x0001 (mission 0871 — identity).
+        assert!(IDENTITY_RESOLVE_CHAIN.is_rfc_allocated());
+        assert_eq!(IDENTITY_RESOLVE_CHAIN.0[0], 0x00);
+        assert_eq!(IDENTITY_RESOLVE_CHAIN.0[1], 0x09);
+        assert_eq!(IDENTITY_RESOLVE_CHAIN.0[2], 0x00);
+        assert_eq!(IDENTITY_RESOLVE_CHAIN.0[3], 0x01);
+    }
+
+    #[test]
+    fn identity_resolve_chain_borsh_round_trip() {
+        let bytes = borsh::to_vec(&IDENTITY_RESOLVE_CHAIN).unwrap();
+        let back: PayloadKindId = borsh::from_slice(&bytes).unwrap();
+        assert_eq!(back, IDENTITY_RESOLVE_CHAIN);
     }
 
     #[test]

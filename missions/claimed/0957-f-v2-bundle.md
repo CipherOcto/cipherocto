@@ -45,8 +45,9 @@ attenuation chain verification. This is the new V2 work — the V1
 - [ ] V1 parser rejects V2 via unknown enum variant (separate
   struct, not nested)
 - [ ] V2 wire format TV against
-  `tests/fixtures/v2_bundle_tv.json` (filed via Mission
-  `0957-phase1-fixture-author`)
+  `tests/bundle_v2_tv.rs` (filed via Mission
+  `0957-f-v2-bundle-tv-fixture`; inline `[u8;N]` arrays, not JSON
+  fixture — V1's `tvs/bundle_v1.json` is a dead file)
 - [ ] Consumers migrated in SAME commit as V2 wire (Wallet +
   Capability issuer + `octo-cap-zk`)
 - [ ] `cargo test -p octo-cap-macaroon --lib -- v2_bundle` passes

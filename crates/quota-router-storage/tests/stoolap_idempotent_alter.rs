@@ -47,57 +47,35 @@ fn apply_pending_is_idempotent_on_re_run_after_partial_migration() {
         .expect("row ok")
         .get(0)
         .unwrap_or(0);
-    assert_eq!(version_after_first, 10, "first apply reaches v010");
+    assert_eq!(version_after_first, 11, "first apply reaches v011");
 
-    // Simulate partial-v010 crash: drop the v010 version row (so
-    // re-apply_pending will attempt v010 again) AND drop
-    // capability_delegations column (so the migration's first
-    // statement — ADD COLUMN verification_methods — succeeds; only
-    // ADD COLUMN capability_delegations would hit "duplicate column"
-    // IF verification_methods were already there).
-    //
-    // Reverse: drop verification_methods so v010 statement 1 must
-    // re-add it; keep capability_delegations so v010 statement 2
-    // will hit "duplicate column" (no-op).
+    // Simulate partial-v010 crash: drop the v010 + v011 version rows
+    // (so re-apply_pending will attempt v010 + v011 again) AND drop
+    // capability_delegations column (so v010's first statement —
+    // ADD COLUMN verification_methods — fails as "duplicate
+    // column" → caught as no-op, second statement re-adds
+    // capability_delegations successfully).
     db.execute(
-        "DELETE FROM cipherocto_schema_version WHERE version = 10",
+        "DELETE FROM cipherocto_schema_version WHERE version IN (10, 11)",
         (),
     )
-    .expect("delete v010 version row");
+    .expect("delete v010 + v011 version rows");
 
-    // We can't easily DROP COLUMN via the public API path (stoolap
-    // ALTER TABLE DROP COLUMN support unverified for this test).
-    // Instead: drop the entire table and re-create the v008 schema
-    // manually with both new v009 columns present + only the first
-    // v010 column present (verification_methods), then keep
-    // capability_delegations present so re-apply hits duplicate.
-    //
-    // Simpler approach: drop v010's first column to force statement
-    // 1 to be the one that adds it back (and statement 2 hits the
-    // dup).
-    //
-    // Easiest: just drop BOTH v010 columns, so re-run performs both
-    // ADD COLUMNs cleanly — that's the "fully fresh retry" path
-    // (which already works pre-hardening). To exercise the
-    // hardening's idempotency catch, we need a column from v010 to
-    // remain present.
-    //
-    // Test path: re-run apply_pending without deleting v010 columns
-    // (they exist from the first apply) AND without the v010 version
-    // row. apply_pending will see catalog max = 9 and attempt v010
-    // again — the two ADD COLUMN statements will each fail with
-    // "duplicate column". Pre-hardening: MigrationFailed. Post-hardening:
-    // caught as no-op, version 10 recorded.
+    // Drop the capability_delegations column so v010 statement 2
+    // can re-add it after the "duplicate column" catch on
+    // statement 1.
     db.execute(
         "ALTER TABLE did_registry DROP COLUMN capability_delegations",
         (),
     )
     .expect("drop cap_delegations to force re-add");
 
-    // Re-run apply_pending. With hardening: ADD COLUMN
-    // verification_methods fails (dup) → no-op → ADD COLUMN
-    // capability_delegations succeeds (column was just dropped) →
-    // version 10 recorded.
+    // Re-run apply_pending. With hardening: v011 runs first (re-adds
+    // chain_id column + backfill + reindex — all no-ops for existing
+    // data + re-creates the unique index); v010 runs second —
+    // ADD COLUMN verification_methods fails (dup) → no-op → ADD
+    // COLUMN capability_delegations succeeds (column was just
+    // dropped) → version 11 re-recorded.
     migrations::apply_pending(&db).expect("retry apply_pending");
 
     // Catalog must record v010 again.
@@ -110,8 +88,8 @@ fn apply_pending_is_idempotent_on_re_run_after_partial_migration() {
         .get(0)
         .unwrap_or(0);
     assert_eq!(
-        version_after_retry, 10,
-        "retry apply_pending must record v010 (hardening swallowed partial dup)"
+        version_after_retry, 11,
+        "retry apply_pending must record v011 (hardening swallowed partial dup)"
     );
 
     // Both v010 columns must be present and queryable.
@@ -153,7 +131,7 @@ fn apply_pending_swallows_v009_dup_column_on_retry() {
         .get(0)
         .unwrap_or(0);
     assert_eq!(
-        version, 10,
-        "v009 dup must be swallowed; catalog still at v010"
+        version, 11,
+        "v009 dup must be swallowed; catalog still at v011"
     );
 }

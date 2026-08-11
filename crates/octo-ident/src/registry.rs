@@ -5,6 +5,18 @@
 //! Abstractions Principle) to a `DidDocument` (public_key + revoked flag
 //! + v1.5 rich surface).
 //!
+//! ## Multi-chain namespacing (RFC-0010 v1.4 + mission 0010-f2-registry-namespacing)
+//!
+//! The trait gains two ADDITIVE methods (`register_in_chain` +
+//! `resolve_in_chain`) with default impls that forward to the
+//! single-chain `register` / `resolve`. This preserves Layer B
+//! back-compat per [[cipherocto-design-principles]] §Stable
+//! Abstractions Principle — existing impls (`InMemoryDidRegistry`)
+//! continue to compile unchanged. Production storage
+//! (`StoolapDidRegistry` in `quota-router-storage`) overrides
+//! both methods with chain-aware SQL that filters on the
+//! `chain_id` BLOB column.
+//!
 //! ## Why raw byte slices (not typed `WireDid`)
 //!
 //! This trait lives in `octo-ident` (Layer B). The `StoolapDidRegistry`
@@ -171,4 +183,42 @@ pub trait DidRegistry: Send + Sync + 'static {
     /// # Errors
     /// - `DidRegistryError::Storage` on underlying storage failure.
     fn list(&self) -> Result<Vec<DidDocument>, DidRegistryError>;
+
+    /// Register a DID on an explicit chain namespace (RFC-0010 v1.4).
+    ///
+    /// Default impl forwards to `register` (single-chain mode) for
+    /// back-compat with existing `DidRegistry` impls. Production
+    /// storage overrides this with chain-aware SQL.
+    ///
+    /// # Errors
+    /// - `DidRegistryError::AlreadyRevoked` if existing record on
+    ///   the same chain is revoked.
+    /// - `DidRegistryError::Storage` on underlying storage failure.
+    fn register_in_chain(
+        &self,
+        _chain_id: &crate::chain::ChainId,
+        canonical_hash: &[u8; 32],
+        doc: DidDocument,
+    ) -> Result<(), DidRegistryError> {
+        self.register(canonical_hash, doc)
+    }
+
+    /// Resolve a DID on an explicit chain namespace (RFC-0010 v1.4).
+    ///
+    /// Default impl forwards to `resolve` (single-chain mode) for
+    /// back-compat with existing `DidRegistry` impls. Production
+    /// storage overrides this with chain-aware SQL.
+    ///
+    /// Returns `Ok(None)` for unknown DIDs (not registered on the
+    /// given chain) AND for revoked DIDs.
+    ///
+    /// # Errors
+    /// - `DidRegistryError::Storage` on underlying storage failure.
+    fn resolve_in_chain(
+        &self,
+        _chain_id: &crate::chain::ChainId,
+        canonical_hash: &[u8; 32],
+    ) -> Result<Option<DidDocument>, DidRegistryError> {
+        self.resolve(canonical_hash)
+    }
 }

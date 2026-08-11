@@ -77,6 +77,11 @@ pub const BUILTIN_MIGRATIONS: &[Migration] = &[
             "../migrations/v010__add_verification_methods_and_capability_delegations.sql"
         ),
     },
+    Migration {
+        version: 11,
+        name: "add_chain_id_namespace",
+        sql: include_str!("../migrations/v011__add_chain_id_namespace.sql"),
+    },
 ];
 
 /// Migration errors.

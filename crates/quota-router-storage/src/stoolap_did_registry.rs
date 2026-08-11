@@ -27,6 +27,16 @@
 //! Concurrent register on the same `canonical_hash` serializes via the
 //! FOR UPDATE lock — no torn writes possible.
 //!
+//! ## Multi-chain namespacing (RFC-0010 v1.4 + mission 0010-f2-registry-namespacing)
+//!
+//! Migration v011 adds a `chain_id` BLOB column carrying the
+//! 17-byte canonical encoding of the chain namespace (per
+//! `ChainNamespace::canonical_bytes()`). The single-chain
+//! `register` / `resolve` / `revoke` / `list` methods write / read
+//! the mainnet namespace via the `MAINNET_CHAIN_ID_BYTES` const;
+//! the `register_in_chain` / `resolve_in_chain` overrides accept
+//! an explicit `ChainId` and store its canonical bytes.
+//!
 //! ## Cipherocto-side migration
 //!
 //! Schema lives at `crates/quota-router-storage/migrations/v008__create_did_registry.sql`
@@ -41,10 +51,34 @@
 use std::sync::Arc;
 
 use octo_ident::DidDocument;
-use octo_ident::{CapabilityDelegation, ControllerReference, ServiceEndpoint, VerificationMethod};
+use octo_ident::{
+    CapabilityDelegation, ChainId, ControllerReference, ServiceEndpoint, VerificationMethod,
+};
 
 use crate::migrations;
 use octo_ident::DidRegistry;
+
+/// 17-byte canonical encoding of the `CIPHEROCTO_MAINNET` namespace
+/// (RFC-0010 v1.4 §ChainId Namespace Extension):
+/// `[variant: 0x01 (Rfc) | tag: 15 bytes (CIPHEROCTO_MAINNET_TAG)
+/// | length: 0x12 (18 chars for "cipherocto-mainnet")]`.
+///
+/// Verified against `ChainId::default().namespace().unwrap().canonical_bytes()`
+/// in `tests/stoolap_chain_namespace.rs::mainnet_bytes_match_chain_id_default`.
+pub const MAINNET_CHAIN_ID_BYTES: [u8; 17] = [
+    0x01, 0xeb, 0x30, 0x71, 0xb5, 0xe1, 0x13, 0x33, 0x0c, 0x87, 0x63, 0x09, 0x54, 0xe3, 0xcc, 0x08,
+    0x12,
+];
+
+/// Encode a `ChainId` to its 17-byte canonical form for BLOB storage.
+fn chain_id_to_canonical_bytes(
+    chain_id: &ChainId,
+) -> Result<[u8; 17], octo_ident::DidRegistryError> {
+    let namespace = chain_id
+        .namespace()
+        .map_err(|e| octo_ident::DidRegistryError::Storage(format!("chain_id namespace: {e}")))?;
+    Ok(namespace.canonical_bytes())
+}
 
 /// Errors returned by `StoolapDidRegistry` operations. Tunnels through
 /// `DidRegistryError` at the trait boundary (`From` impl below).
@@ -128,9 +162,12 @@ impl DidRegistry for StoolapDidRegistry {
         // SELECT existing (lock + visibility). Stoolap-fork does NOT
         // support `INSERT OR REPLACE`; use SELECT-then-INSERT/UPDATE
         // pattern (matches `StoolapSpendLedger::seed` v007).
+        // Mission 0010-f2-registry-namespacing: filter on
+        // chain_id = MAINNET_CHAIN_ID_BYTES (default namespace).
         let rows = self.db.query(
-            "SELECT revoked FROM did_registry WHERE canonical_hash = ? LIMIT 1",
-            (canonical_hash.to_vec(),),
+            "SELECT revoked FROM did_registry \
+             WHERE canonical_hash = ? AND chain_id = ? LIMIT 1",
+            (canonical_hash.to_vec(), MAINNET_CHAIN_ID_BYTES.to_vec()),
         );
         let mut iter = rows
             .map_err(|e| octo_ident::DidRegistryError::Storage(format!("register query: {e}")))?;
@@ -145,7 +182,7 @@ impl DidRegistry for StoolapDidRegistry {
                      SET public_key = ?, revoked = 0, updated_at_unix_ms = ?, \
                          service_endpoints = ?, controllers = ?, \
                          verification_methods = ?, capability_delegations = ? \
-                     WHERE canonical_hash = ?",
+                     WHERE canonical_hash = ? AND chain_id = ?",
                     (
                         doc.public_key.to_vec(),
                         now_ms(),
@@ -154,6 +191,7 @@ impl DidRegistry for StoolapDidRegistry {
                         verification_methods_blob,
                         capability_delegations_blob,
                         canonical_hash.to_vec(),
+                        MAINNET_CHAIN_ID_BYTES.to_vec(),
                     ),
                 );
                 result.map_err(|e| {
@@ -169,8 +207,8 @@ impl DidRegistry for StoolapDidRegistry {
                     "INSERT INTO did_registry \
                      (canonical_hash, public_key, revoked, updated_at_unix_ms, \
                       service_endpoints, controllers, \
-                      verification_methods, capability_delegations) \
-                     VALUES (?, ?, 0, ?, ?, ?, ?, ?)",
+                      verification_methods, capability_delegations, chain_id) \
+                     VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)",
                     (
                         canonical_hash.to_vec(),
                         doc.public_key.to_vec(),
@@ -179,6 +217,7 @@ impl DidRegistry for StoolapDidRegistry {
                         controllers_blob,
                         verification_methods_blob,
                         capability_delegations_blob,
+                        MAINNET_CHAIN_ID_BYTES.to_vec(),
                     ),
                 );
                 result.map_err(|e| {
@@ -198,8 +237,8 @@ impl DidRegistry for StoolapDidRegistry {
                     service_endpoints, controllers, \
                     verification_methods, capability_delegations \
              FROM did_registry \
-             WHERE canonical_hash = ? LIMIT 1",
-            (canonical_hash.to_vec(),),
+             WHERE canonical_hash = ? AND chain_id = ? LIMIT 1",
+            (canonical_hash.to_vec(), MAINNET_CHAIN_ID_BYTES.to_vec()),
         );
         let mut iter =
             rows.map_err(|e| octo_ident::DidRegistryError::Storage(format!("resolve query: {e}")))?;
@@ -269,8 +308,9 @@ impl DidRegistry for StoolapDidRegistry {
         // already-revoked DID is a no-op (UPDATE WHERE revoked=0 is a
         // no-op when row already has revoked=1).
         let rows = self.db.query(
-            "SELECT 1 FROM did_registry WHERE canonical_hash = ? LIMIT 1",
-            (canonical_hash.to_vec(),),
+            "SELECT 1 FROM did_registry \
+             WHERE canonical_hash = ? AND chain_id = ? LIMIT 1",
+            (canonical_hash.to_vec(), MAINNET_CHAIN_ID_BYTES.to_vec()),
         );
         let mut iter =
             rows.map_err(|e| octo_ident::DidRegistryError::Storage(format!("revoke query: {e}")))?;
@@ -278,8 +318,12 @@ impl DidRegistry for StoolapDidRegistry {
             Some(Ok(_)) => {
                 let result = self.db.execute(
                     "UPDATE did_registry SET revoked = 1, updated_at_unix_ms = ? \
-                     WHERE canonical_hash = ?",
-                    (now_ms(), canonical_hash.to_vec()),
+                     WHERE canonical_hash = ? AND chain_id = ?",
+                    (
+                        now_ms(),
+                        canonical_hash.to_vec(),
+                        MAINNET_CHAIN_ID_BYTES.to_vec(),
+                    ),
                 );
                 result.map_err(|e| {
                     octo_ident::DidRegistryError::Storage(format!("revoke update: {e}"))
@@ -294,12 +338,14 @@ impl DidRegistry for StoolapDidRegistry {
     }
 
     fn list(&self) -> Result<Vec<DidDocument>, octo_ident::DidRegistryError> {
-        // List active (revoked=0) documents, sorted by canonical_hash
-        // ascending for deterministic iteration.
+        // List active (revoked=0) documents on the mainnet chain,
+        // sorted by canonical_hash ascending for deterministic
+        // iteration.
         let rows = self.db.query(
-            "SELECT public_key FROM did_registry WHERE revoked = 0 \
+            "SELECT public_key FROM did_registry \
+             WHERE revoked = 0 AND chain_id = ? \
              ORDER BY canonical_hash ASC",
-            (),
+            (MAINNET_CHAIN_ID_BYTES.to_vec(),),
         );
         let iter =
             rows.map_err(|e| octo_ident::DidRegistryError::Storage(format!("list query: {e}")))?;
@@ -323,6 +369,165 @@ impl DidRegistry for StoolapDidRegistry {
             });
         }
         Ok(docs)
+    }
+
+    fn register_in_chain(
+        &self,
+        chain_id: &ChainId,
+        canonical_hash: &[u8; 32],
+        doc: DidDocument,
+    ) -> Result<(), octo_ident::DidRegistryError> {
+        let chain_bytes = chain_id_to_canonical_bytes(chain_id)?;
+        // Borsh-encode rich-document fields (same as single-chain path).
+        let service_endpoints_blob = borsh::to_vec(&doc.service_endpoints).map_err(|e| {
+            octo_ident::DidRegistryError::Storage(format!("borsh service_endpoints: {e}"))
+        })?;
+        let controllers_blob = borsh::to_vec(&doc.controllers).map_err(|e| {
+            octo_ident::DidRegistryError::Storage(format!("borsh controllers: {e}"))
+        })?;
+        let verification_methods_blob = borsh::to_vec(&doc.verification_methods).map_err(|e| {
+            octo_ident::DidRegistryError::Storage(format!("borsh verification_methods: {e}"))
+        })?;
+        let capability_delegations_blob =
+            borsh::to_vec(&doc.capability_delegations).map_err(|e| {
+                octo_ident::DidRegistryError::Storage(format!("borsh capability_delegations: {e}"))
+            })?;
+        // SELECT existing row on (canonical_hash, chain_id) composite.
+        let rows = self.db.query(
+            "SELECT revoked FROM did_registry \
+             WHERE canonical_hash = ? AND chain_id = ? LIMIT 1",
+            (canonical_hash.to_vec(), chain_bytes.to_vec()),
+        );
+        let mut iter = rows.map_err(|e| {
+            octo_ident::DidRegistryError::Storage(format!("register_in_chain query: {e}"))
+        })?;
+        match iter.next() {
+            Some(Ok(row)) => {
+                let revoked: i64 = row.get(0).unwrap_or(0);
+                if revoked != 0 {
+                    return Err(octo_ident::DidRegistryError::AlreadyRevoked);
+                }
+                let result = self.db.execute(
+                    "UPDATE did_registry \
+                     SET public_key = ?, revoked = 0, updated_at_unix_ms = ?, \
+                         service_endpoints = ?, controllers = ?, \
+                         verification_methods = ?, capability_delegations = ? \
+                     WHERE canonical_hash = ? AND chain_id = ?",
+                    (
+                        doc.public_key.to_vec(),
+                        now_ms(),
+                        service_endpoints_blob,
+                        controllers_blob,
+                        verification_methods_blob,
+                        capability_delegations_blob,
+                        canonical_hash.to_vec(),
+                        chain_bytes.to_vec(),
+                    ),
+                );
+                result.map_err(|e| {
+                    octo_ident::DidRegistryError::Storage(format!("register_in_chain update: {e}"))
+                })?;
+                Ok(())
+            }
+            Some(Err(e)) => Err(octo_ident::DidRegistryError::Storage(format!(
+                "register_in_chain iter: {e}"
+            ))),
+            None => {
+                let result = self.db.execute(
+                    "INSERT INTO did_registry \
+                     (canonical_hash, public_key, revoked, updated_at_unix_ms, \
+                      service_endpoints, controllers, \
+                      verification_methods, capability_delegations, chain_id) \
+                     VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)",
+                    (
+                        canonical_hash.to_vec(),
+                        doc.public_key.to_vec(),
+                        now_ms(),
+                        service_endpoints_blob,
+                        controllers_blob,
+                        verification_methods_blob,
+                        capability_delegations_blob,
+                        chain_bytes.to_vec(),
+                    ),
+                );
+                result.map_err(|e| {
+                    octo_ident::DidRegistryError::Storage(format!("register_in_chain insert: {e}"))
+                })?;
+                Ok(())
+            }
+        }
+    }
+
+    fn resolve_in_chain(
+        &self,
+        chain_id: &ChainId,
+        canonical_hash: &[u8; 32],
+    ) -> Result<Option<DidDocument>, octo_ident::DidRegistryError> {
+        let chain_bytes = chain_id_to_canonical_bytes(chain_id)?;
+        let rows = self.db.query(
+            "SELECT public_key, revoked, \
+                    service_endpoints, controllers, \
+                    verification_methods, capability_delegations \
+             FROM did_registry \
+             WHERE canonical_hash = ? AND chain_id = ? LIMIT 1",
+            (canonical_hash.to_vec(), chain_bytes.to_vec()),
+        );
+        let mut iter = rows.map_err(|e| {
+            octo_ident::DidRegistryError::Storage(format!("resolve_in_chain query: {e}"))
+        })?;
+        match iter.next() {
+            Some(Ok(row)) => {
+                let revoked: i64 = row.get(1).unwrap_or(0);
+                if revoked != 0 {
+                    return Ok(None);
+                }
+                let pk_bytes: Vec<u8> = row.get(0).unwrap_or_default();
+                if pk_bytes.len() != 32 {
+                    return Err(octo_ident::DidRegistryError::Storage(format!(
+                        "resolve_in_chain: public_key column length {} != 32",
+                        pk_bytes.len()
+                    )));
+                }
+                let mut pk = [0u8; 32];
+                pk.copy_from_slice(&pk_bytes);
+                let service_endpoints: Vec<ServiceEndpoint> = row
+                    .get::<Vec<u8>>(2)
+                    .map(|bytes| {
+                        borsh::from_slice::<Vec<ServiceEndpoint>>(&bytes).unwrap_or_default()
+                    })
+                    .unwrap_or_default();
+                let controllers: Vec<ControllerReference> = row
+                    .get::<Vec<u8>>(3)
+                    .map(|bytes| {
+                        borsh::from_slice::<Vec<ControllerReference>>(&bytes).unwrap_or_default()
+                    })
+                    .unwrap_or_default();
+                let verification_methods: Vec<VerificationMethod> = row
+                    .get::<Vec<u8>>(4)
+                    .map(|bytes| {
+                        borsh::from_slice::<Vec<VerificationMethod>>(&bytes).unwrap_or_default()
+                    })
+                    .unwrap_or_default();
+                let capability_delegations: Vec<CapabilityDelegation> = row
+                    .get::<Vec<u8>>(5)
+                    .map(|bytes| {
+                        borsh::from_slice::<Vec<CapabilityDelegation>>(&bytes).unwrap_or_default()
+                    })
+                    .unwrap_or_default();
+                Ok(Some(DidDocument {
+                    public_key: pk,
+                    revoked: false,
+                    service_endpoints,
+                    controllers,
+                    verification_methods,
+                    capability_delegations,
+                }))
+            }
+            Some(Err(e)) => Err(octo_ident::DidRegistryError::Storage(format!(
+                "resolve_in_chain iter: {e}"
+            ))),
+            None => Ok(None),
+        }
     }
 }
 

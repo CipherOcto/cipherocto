@@ -24,7 +24,7 @@ Extend RFC-0009 §Capability Keys with:
 
 ## Review State
 
-- **R1-R23 completed (2026-08-10); R24 in progress.**
+- **R1-R24 completed (2026-08-10); R25 in progress.**
 - **Termination condition:** convergence when a new round returns
   zero NEW findings.
 
@@ -80,6 +80,10 @@ BC#1 expanded into 9 sub-items (1a-1i); section totals 20 line items
      fields to §Future Work OR §Specification before v1.2
      acceptance of this RFC. Until then, this RFC's cross-ref is
      ASPIRATIONAL.
+   - **Per R25 H1:** softened — this is a SHOULD not a hard MUST;
+     RFC-0009 v1.2 documents the extension schema; verifier MUST
+     semantics gated by AC#9 (RFC-0871 amendment FILED before
+     RFC-0009 v1.2 promotion to Accepted).
 6. **`BoundedShareVec::new` enforces m == threshold.**
 7. **`HsmAdapter::get_public_key` return type change** (per R18 L8 —
    from `[u8; 32]` to `Result<[u8; 32], HsmError>`; device transport
@@ -94,6 +98,12 @@ BC#1 expanded into 9 sub-items (1a-1i); section totals 20 line items
 11. **`IdentityKey::sign` MUST fail-closed when `threshold_signer`
     configured** (per R11 M4) — refactor: change from "doesn't
     branch" to "fails with `ThresholdSignerRequired`".
+12. **NEW: `Authorization::FrostSignature` variant** (per R18 M5 +
+    R20 L6 + R25 L4) — FROST Ed25519 signatures with `signers`,
+    `sig`, `group_pk` + forward-pointers `nonce_proof` +
+    `dkg_proof` per RFC-0871 §Future Work (parallel pattern to
+    `Authorization::ThresholdSignature` BC#5). Closes coverage
+    gap for FROST-signed envelopes.
 
 ## Design Goals
 
@@ -120,7 +130,11 @@ This RFC is ready for promotion to Accepted when:
      in `crates/octo-wallet/Cargo.toml` + `HsmAdapter::get_public_key`
      signature update (per R18 M4 — phase boundary matches
      §Implementation Phases Commit 1) + `OperatorId::pubkey()`
-     method (per R19 L3).
+     method (per R19 L3) + Clippy lint registration in
+     `clippy.toml` (per R21 L6 + R25 M2) + `[[test]]` entry in
+     Cargo.toml mapping `frost_nonce_determinism` to
+     `tests/integration/frost_nonce_determinism.rs` (per R22 M3
+     + R25 M2).
    - Commit 2: `BLS12381ThresholdSigner` +
      `SchnorrThresholdSigner` impls + `Xor2Of3Signer` additive
      field + `IdentityKey::sign` fail-closed when `threshold_signer`
@@ -128,7 +142,11 @@ This RFC is ready for promotion to Accepted when:
      updated (per R20 L5 — §Implementation Phases Commit 2).
    - Commit 3: `derive_capability_key` 4-param + v11 shim +
      Phase 1 TV functions.
-2. **Mission `0957-f-v2-bundle` V2 work complete.**
+2. **Mission `0957-f-v2-bundle` V2 work complete** (per R25 L7 —
+   scope: V2 spec authoring, `CapabilityBundleV2` + `CapabilityTokenV2`
+   structs per §Forward compatibility; AC#8 covers mission §Migration
+   field separately — NO overlap with AC#4-5 which cover V2 wire
+   form + atomicity).
 3. **`tests/fixtures/phase1_tv.json` exists** (RFC-0009 TV-1..3 per
    R10 H3 disambiguation).
 4. **Phase 2 V2 wire form complete:** `CapabilityBundleV2` struct
@@ -141,7 +159,10 @@ This RFC is ready for promotion to Accepted when:
    previous grep pattern was too loose).
 7. **RFC-0870 §NodeEnvelope:PayloadKindId ordering:** all 7
    `PayloadKindId` UUIDs use V2 field ordering.
-8. **Mission `0957-f-v2-bundle` §Migration:** complete.
+8. **Mission `0957-f-v2-bundle` §Migration complete** (per R25 L7 —
+   scope: consumer migration to V2 wire form across wallet +
+   capability issuer + `octo-cap-macaroon` + `octo-cap-zk`;
+   distinct from AC#2 mission V2 authoring scope).
 8b. **`tests/integration/frost_nonce_determinism.rs` exists** (per R20 M3)
     and asserts 100K ops produce deterministic nonces; gated by
     `cargo test -p octo-wallet --test frost_nonce_determinism`
@@ -149,6 +170,12 @@ This RFC is ready for promotion to Accepted when:
     `[[test]]` entry in Cargo.toml mapping binary name
     `frost_nonce_determinism` to the file path; cargo `--test`
     flag matches binary name, NOT file basename).
+9. **RFC-0871 amendment FILED** (per R25 H1) with concrete
+    `aggregated_pk_check` + `dkg_proof` fields + verifier MUST
+    semantics added to §Future Work OR §Specification, BEFORE
+    RFC-0009 v1.2 promotion to Accepted. Until then, BC#5
+    forward-pointer is ASPIRATIONAL (downgraded from MUST per
+    R25 H1).
 
 ## Motivation
 
@@ -613,6 +640,9 @@ these; AC#1 Commit 1 must ADD them):
 # bump requires re-running x86_64 + ARM64 determinism suite per
 # A6 + §Implicit Assumptions Audit.
 blst = "=0.3.11"
+# Per R25 L6: compile-time audit dep for A6 quartet (d); pins
+# the FROST nonce-reuse defense to a specific library version.
+cargo-audit = "=0.21.3"
 # Layer A — Shamir secret sharing (RFC-0009 §MPC threshold identity).
 # Per R17 H1: crate name is `vsss-rs` (NOT `vsss`); 0.5.2 not
 # on crates.io — use latest stable 6.0.1.
@@ -756,7 +786,8 @@ Per RFC-0008 Execution Class mapping:
   produce deterministic nonces (per R20 L8 + R21 L2 — 100K is a
   CI budget choice; large enough to detect cross-arch divergence
   without excessive runtime; NOT an RFC-9591 §5.3 mandated count);
-  (d) compile-time audit dep.
+  (d) compile-time audit dep (`cargo-audit = "=0.21.3"` per R25 L6
+  — pinned in §Specification Cargo deps).
 - **Residual:** library-level guarantee; trust boundary on
   `frost-ed25519` impl.
 - **Test:** `frost_nonce_determinism_100k_iterations`.
@@ -828,7 +859,10 @@ N/A. Identity-substrate gating.
 
 - V2 wire = separate `CapabilityBundleV2` struct.
 - V1 consumers reject V2 via unknown struct.
-- V2 consumers reject V1 via `bundle_version == 1` check.
+- V2 consumers recognize V1 via `bundle_version == 1` field +
+  use V1 path (NOT reject; per R25 M3 — v11 shim 90-day
+  deprecation semantic; "reject" wording contradicted the
+  backwards-compat shim).
 
 **`CapabilityBundleV2` struct (per R15 L6 — schema sketch lives in
 §Specification so implementers don't need cross-RFC jump):**
@@ -962,10 +996,13 @@ registers into B, not B → E. The macaroon substrate uses
 - `octo-wallet` (Layer B) — registrar for capability extensions
 - `octo-protocol` (Layer A) — `Authorization::ThresholdSignature`
   variant EXTENDED (ownership: RFC-0871)
-- `octo-cap-macaroon` (Layer E) — `CapabilityBundleV2`; registers
-  into `octo-wallet` registrar
 - `octo-cap-zk` (Layer E) — sibling; registers into `octo-wallet`
   registrar
+- **`octo-cap-macaroon` (Layer E) — REMOVED from layer table per R25 L8**
+  (post Phase 2c cleanup: zero cross-layer deps; previously
+  registered into `octo-wallet` registrar at Phase 2b; current
+  L4↔L-D coupling is via `crates/octo-cap-macaroon-transport/`
+  glue crate to TransportDeliveryCatalog)
 
 Dependency direction:
 - `octo-wallet` → `octo-protocol` (B → A; OK)
@@ -1029,6 +1066,6 @@ cargo doc --workspace --no-deps
 
 ## Review Process
 
-Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R23
+Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R24
 completed (2026-08-10). Convergence target: zero NEW findings per
-R25+.
+R26+.

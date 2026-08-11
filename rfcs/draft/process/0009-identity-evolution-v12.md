@@ -24,7 +24,7 @@ Extend RFC-0009 §Capability Keys with:
 
 ## Review State
 
-- **R1-R33 completed (2026-08-11); R34 in progress.**
+- **R1-R34 completed (2026-08-11); R35 in progress.**
 - **Termination condition:** convergence when a new round returns
   zero NEW findings.
 
@@ -150,8 +150,8 @@ This RFC is ready for promotion to Accepted when:
      `ThresholdCoordinator` trait interface + Cargo deps pinned
      in `crates/octo-wallet/Cargo.toml` + `HsmAdapter::get_public_key`
      signature update (per R18 M4 — phase boundary matches
-     §Implementation Phases Commit 1) + `OperatorId::pubkey()`
-     struct (per R33 L4) + `OperatorId::pubkey()` method (per R19 L3)
+     §Implementation Phases Commit 1) + `OperatorId` struct (per
+     R33 L4) + `OperatorId::pubkey()` method (per R19 L3)
      + Clippy lint registration in
      `clippy.toml` (per R21 L6 + R25 M2) + `[[test]]` entry in
      Cargo.toml mapping `frost_nonce_determinism` to
@@ -918,7 +918,8 @@ N/A. Identity-substrate gating.
   backwards-compat shim).
 
 **`CapabilityBundleV2` struct (per R15 L6 — schema sketch lives in
-§Specification so implementers don't need cross-RFC jump):**
+§Compatibility > §Forward compatibility so implementers don't need
+cross-RFC jump):**
 
 ```rust
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
@@ -1048,7 +1049,7 @@ External acceptance artifact: `tests/fixtures/phase1_tv.json`.
 **Per R11 H4:** `octo-wallet` (Layer B) does NOT depend on
 `octo-cap-macaroon` (Layer 4 — cleaned up per R25 L8; previous
 Layer E label stale per R29 L2) directly. The registrar pattern
-is E registers into B, not B → E. The macaroon substrate uses
+is L4 registers into B, not B → L4. The macaroon substrate uses
 `Arc<dyn CapabilityToken>` interface injected at construction;
 `octo-wallet` registers as the registrar.
 
@@ -1079,7 +1080,7 @@ isolated to `crates/octo-cap-macaroon-transport/` glue crate
 (TransportDeliveryCatalog, per Phase 2c-1) — this is the only
 cross-layer coupling, mediated by an L4↔D glue crate (not a
 direct L4 → L-D dep). The previous `octo-cap-macaroon` →
-`octo-wallet` (E → B registrar) line was true at Phase 2b but
+`octo-wallet` (L4 → B registrar) line was true at Phase 2b but
 is now obsolete; no L4↔C coupling exists.
 
 No reverse dependencies. ✓
@@ -1134,6 +1135,6 @@ cargo doc --workspace --no-deps
 
 ## Review Process
 
-Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R33
+Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R34
 completed (2026-08-11). Convergence target: zero NEW findings per
-R35+.
+R36+.

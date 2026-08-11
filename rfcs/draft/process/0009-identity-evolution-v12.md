@@ -28,10 +28,10 @@ Extend RFC-0009 §Capability Keys with:
 - **Termination condition:** convergence when a new round returns
   zero NEW findings.
 
-## Breaking Changes (12 main items per R11 M6 + R25 L4 — corrected language;
-BC#1 expanded into 9 sub-items (1a-1i); section totals 21 line items
-(BC#1 header + 9 sub-items + 11 other main items BC#2-12) per R18 M6
-+ R24 L3 + R25 L4)
+## Breaking Changes (11 main items per R11 M6 + R25 L4 — corrected language;
+BC#1 expanded into 9 sub-items (1a-1i); section totals 20 numbered
+items (9 sub-items BC#1a-1i + 11 other main items BC#2-12) per
+R18 M6 + R24 L3 + R25 L4 + R27 L2)
 
 1a. **NEW: `ThresholdSigner::threshold_sign` method** (replaces
     `sign_combined`; no prior equivalent exists).
@@ -1034,6 +1034,7 @@ cargo test -p octo-wallet --lib -p octo-cap-macaroon --lib -p octo-cap-zk --lib
 cargo test -p octo-wallet --lib -- --list phase1_tv_json | grep -qE "phase1_tv_json_(v11_round_trip_equivalence|child_unlinkability|hsm_boundary_no_seed_exfil)"  # per R11 H2 + R22 L6 + R23 M2
 cargo test -p octo-wallet --lib phase1_tv_json_*  # per R11 L3 — actual test run
 cargo test -p octo-wallet --test frost_nonce_determinism  # per R21 L4 + AC#8b (R26 L4)
+cargo audit  # per R27 M1 — exercises A6 quartet (d) compile-time audit dep
 cargo doc --workspace --no-deps
 ```
 

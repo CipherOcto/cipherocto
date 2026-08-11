@@ -65,6 +65,18 @@ pub const BUILTIN_MIGRATIONS: &[Migration] = &[
         name: "create_did_registry",
         sql: include_str!("../migrations/v008__create_did_registry.sql"),
     },
+    Migration {
+        version: 9,
+        name: "add_service_endpoints_and_controllers",
+        sql: include_str!("../migrations/v009__add_service_endpoints_and_controllers.sql"),
+    },
+    Migration {
+        version: 10,
+        name: "add_verification_methods_and_capability_delegations",
+        sql: include_str!(
+            "../migrations/v010__add_verification_methods_and_capability_delegations.sql"
+        ),
+    },
 ];
 
 /// Migration errors.

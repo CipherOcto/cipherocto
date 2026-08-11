@@ -7,6 +7,10 @@ license.workspace = true
 description = "Cipherocto-side persistence for the quota-router domain (Ask + AskRepository + migrations + sync subscription). Owns consumer schema per [[stoolap-general-purpose-db]]; fork stays untouched."
 
 [dependencies]
+# Mission 0010-f8-rich-did-storage: borsh encoding for rich-document columns
+# (matches `octo-ident/borsh` feature + the `CapabilityBundleV2` borsh
+# precedent from mission 0957-f-v2-bundle).
+borsh = { version = "=1.5.0", features = ["derive"] }
 # Schema types + persistence — moved from octo-core 2026-07-21.
 # Cipherocto owns consumer schema; fork is a general-purpose DB.
 stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
@@ -45,4 +49,9 @@ tempfile = "3"
 # DidDocument + DidRegistryError types defined in octo-ident. Production code dep
 # (not dev-only) so consumers can construct trait objects without a dev-dep
 # opt-in.
+# Mission 0010-f8-rich-did-storage: enable `borsh` feature so the rich-document
+# types (ServiceEndpoint, ControllerReference, VerificationMethod,
+# CapabilityDelegation) expose their BorshSerialize/BorshDeserialize derives
+# for column persistence.
 path = "../octo-ident"
+features = ["borsh"]

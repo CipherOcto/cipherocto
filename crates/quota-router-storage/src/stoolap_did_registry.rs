@@ -41,6 +41,7 @@
 use std::sync::Arc;
 
 use octo_ident::DidDocument;
+use octo_ident::{CapabilityDelegation, ControllerReference, ServiceEndpoint, VerificationMethod};
 
 use crate::migrations;
 use octo_ident::DidRegistry;
@@ -107,6 +108,23 @@ impl DidRegistry for StoolapDidRegistry {
         canonical_hash: &[u8; 32],
         doc: DidDocument,
     ) -> Result<(), octo_ident::DidRegistryError> {
+        // Borsh-encode the 4 rich-document fields (mission
+        // 0010-f8-rich-did-storage). Matches the `WireDid`/`RawDid`
+        // borsh pattern + the `CapabilityBundleV2` borsh precedent
+        // from mission 0957-f-v2-bundle.
+        let service_endpoints_blob = borsh::to_vec(&doc.service_endpoints).map_err(|e| {
+            octo_ident::DidRegistryError::Storage(format!("borsh service_endpoints: {e}"))
+        })?;
+        let controllers_blob = borsh::to_vec(&doc.controllers).map_err(|e| {
+            octo_ident::DidRegistryError::Storage(format!("borsh controllers: {e}"))
+        })?;
+        let verification_methods_blob = borsh::to_vec(&doc.verification_methods).map_err(|e| {
+            octo_ident::DidRegistryError::Storage(format!("borsh verification_methods: {e}"))
+        })?;
+        let capability_delegations_blob =
+            borsh::to_vec(&doc.capability_delegations).map_err(|e| {
+                octo_ident::DidRegistryError::Storage(format!("borsh capability_delegations: {e}"))
+            })?;
         // SELECT existing (lock + visibility). Stoolap-fork does NOT
         // support `INSERT OR REPLACE`; use SELECT-then-INSERT/UPDATE
         // pattern (matches `StoolapSpendLedger::seed` v007).
@@ -124,9 +142,19 @@ impl DidRegistry for StoolapDidRegistry {
                 }
                 let result = self.db.execute(
                     "UPDATE did_registry \
-                     SET public_key = ?, revoked = 0, updated_at_unix_ms = ? \
+                     SET public_key = ?, revoked = 0, updated_at_unix_ms = ?, \
+                         service_endpoints = ?, controllers = ?, \
+                         verification_methods = ?, capability_delegations = ? \
                      WHERE canonical_hash = ?",
-                    (doc.public_key.to_vec(), now_ms(), canonical_hash.to_vec()),
+                    (
+                        doc.public_key.to_vec(),
+                        now_ms(),
+                        service_endpoints_blob,
+                        controllers_blob,
+                        verification_methods_blob,
+                        capability_delegations_blob,
+                        canonical_hash.to_vec(),
+                    ),
                 );
                 result.map_err(|e| {
                     octo_ident::DidRegistryError::Storage(format!("register update: {e}"))
@@ -139,9 +167,19 @@ impl DidRegistry for StoolapDidRegistry {
             None => {
                 let result = self.db.execute(
                     "INSERT INTO did_registry \
-                     (canonical_hash, public_key, revoked, updated_at_unix_ms) \
-                     VALUES (?, ?, 0, ?)",
-                    (canonical_hash.to_vec(), doc.public_key.to_vec(), now_ms()),
+                     (canonical_hash, public_key, revoked, updated_at_unix_ms, \
+                      service_endpoints, controllers, \
+                      verification_methods, capability_delegations) \
+                     VALUES (?, ?, 0, ?, ?, ?, ?, ?)",
+                    (
+                        canonical_hash.to_vec(),
+                        doc.public_key.to_vec(),
+                        now_ms(),
+                        service_endpoints_blob,
+                        controllers_blob,
+                        verification_methods_blob,
+                        capability_delegations_blob,
+                    ),
                 );
                 result.map_err(|e| {
                     octo_ident::DidRegistryError::Storage(format!("register insert: {e}"))
@@ -156,7 +194,10 @@ impl DidRegistry for StoolapDidRegistry {
         canonical_hash: &[u8; 32],
     ) -> Result<Option<DidDocument>, octo_ident::DidRegistryError> {
         let rows = self.db.query(
-            "SELECT public_key, revoked FROM did_registry \
+            "SELECT public_key, revoked, \
+                    service_endpoints, controllers, \
+                    verification_methods, capability_delegations \
+             FROM did_registry \
              WHERE canonical_hash = ? LIMIT 1",
             (canonical_hash.to_vec(),),
         );
@@ -178,10 +219,42 @@ impl DidRegistry for StoolapDidRegistry {
                 }
                 let mut pk = [0u8; 32];
                 pk.copy_from_slice(&pk_bytes);
+                // Borsh-decode the 4 rich-document fields. Legacy NULL
+                // rows (pre-v009) + malformed bytes decode to empty
+                // Vec via `unwrap_or_default()` (fail-soft: rich
+                // fields are optional metadata per RFC-0010 v1.5
+                // §Forward compatibility).
+                let service_endpoints: Vec<ServiceEndpoint> = row
+                    .get::<Vec<u8>>(2)
+                    .map(|bytes| {
+                        borsh::from_slice::<Vec<ServiceEndpoint>>(&bytes).unwrap_or_default()
+                    })
+                    .unwrap_or_default();
+                let controllers: Vec<ControllerReference> = row
+                    .get::<Vec<u8>>(3)
+                    .map(|bytes| {
+                        borsh::from_slice::<Vec<ControllerReference>>(&bytes).unwrap_or_default()
+                    })
+                    .unwrap_or_default();
+                let verification_methods: Vec<VerificationMethod> = row
+                    .get::<Vec<u8>>(4)
+                    .map(|bytes| {
+                        borsh::from_slice::<Vec<VerificationMethod>>(&bytes).unwrap_or_default()
+                    })
+                    .unwrap_or_default();
+                let capability_delegations: Vec<CapabilityDelegation> = row
+                    .get::<Vec<u8>>(5)
+                    .map(|bytes| {
+                        borsh::from_slice::<Vec<CapabilityDelegation>>(&bytes).unwrap_or_default()
+                    })
+                    .unwrap_or_default();
                 Ok(Some(DidDocument {
                     public_key: pk,
                     revoked: false,
-                    ..Default::default()
+                    service_endpoints,
+                    controllers,
+                    verification_methods,
+                    capability_delegations,
                 }))
             }
             Some(Err(e)) => Err(octo_ident::DidRegistryError::Storage(format!(

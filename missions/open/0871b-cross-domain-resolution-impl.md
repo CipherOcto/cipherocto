@@ -1,8 +1,8 @@
 # 0871b-cross-domain-resolution-impl — Resolver chains end-to-end
 
 **Status:** unassigned (wave 5; absorbed from RFC-0010 §Future Work F6 + RFC-0871 §Future Work on 2026-08-10)
-**Substrate:** RFC-0010 v1.3 `DidRegistry` + RFC-0871 §Future Work
-**Parent:** 0871b-storage-backend (mission `missions/open/0871b-storage-backend.md`) + `0871b-cross-domain-resolution` (already filed, scope TBD)
+**Substrate:** RFC-0010 v1.3 `DidRegistry` (Accepted 2026-08-10, commit `2ace15e9`) + RFC-0871 (Accepted 2026-08-09) §Future Work
+**Parent:** 0871b-storage-backend (LANDED 2026-08-11, commit `71f8d745`) + `0871b-cross-domain-resolution` (umbrella mission; scope TBD)
 
 ## Scope
 

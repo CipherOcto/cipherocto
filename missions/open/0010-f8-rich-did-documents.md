@@ -1,8 +1,9 @@
 # 0010-f8-rich-did-documents — Rich DID Document surface
 
 **Status:** unassigned (wave 5; absorbed from RFC-0010 §Storage Extension §Out of scope on 2026-08-10)
-**Substrate:** RFC-0010 v1.3 `DidDocument` (32-byte public_key + revoked flag)
-**Parent:** RFC-0010 v1.3 §Storage Extension §Out of scope
+**Substrate:** RFC-0010 v1.3 `DidDocument` (32-byte public_key + revoked flag; Accepted 2026-08-10, commit `2ace15e9`)
+**Parent:** RFC-0010 v1.3 §Storage Extension §Out of scope; DAG predecessor `0871b-storage-backend` (LANDED 2026-08-11, commit `71f8d745`)
+**RFC prerequisite:** RFC-0010 v1.5 amendment needed (extends `DidDocument` with service endpoints + controllers + capability delegations + verification methods). Per [[feedback_initiation_user_only]] RFC initiation requires user direction.
 
 ## Scope
 

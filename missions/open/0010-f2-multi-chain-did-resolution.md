@@ -1,8 +1,9 @@
 # 0010-f2-multi-chain-did-resolution — Cross-chain DID resolution
 
 **Status:** unassigned (wave 5; absorbed from RFC-0010 §Future Work F2 on 2026-08-10)
-**Substrate:** RFC-0010 v1.3 §Storage Extension (`DidRegistry` trait)
-**Parent:** RFC-0010 §Future Work F2 per `missions/open/0871b-storage-backend.md`
+**Substrate:** RFC-0010 v1.3 §Storage Extension (`DidRegistry` trait; Accepted 2026-08-10, commit `2ace15e9`)
+**Parent:** RFC-0010 §Future Work F2; DAG predecessor `0871b-storage-backend` (LANDED 2026-08-11, commit `71f8d745`)
+**RFC prerequisite:** RFC-0010 v1.4 amendment needed (adds `ChainId` + chain param). Per [[feedback_initiation_user_only]] RFC initiation requires user direction.
 
 ## Scope
 

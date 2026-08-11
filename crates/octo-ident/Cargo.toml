@@ -17,6 +17,10 @@ thiserror = "1"
 hex = "0.4"
 # Bitcoin base58btc encoder/decoder — RFC-0010 §Specification §raw_to_wire / §wire_to_raw
 bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
+# async-trait for dyn-compatible async trait surface on `DidWriteCoordinator`
+# (RFC-0862 v1.3 §DidWriteCoordinator). Used by the Layer B identity substrate
+# to expose cross-instance write coordination as `Arc<dyn DidWriteCoordinator>`.
+async-trait = "0.1"
 
 [features]
 default = []
@@ -39,3 +43,7 @@ optional = true
 # (Production deployments use StoolapDidRegistry in quota-router-storage;
 # parking_lot here is the test/single-process convenience impl.)
 version = "0.12"
+
+[dev-dependencies]
+# Test runtime for `#[tokio::test]` in write_coordinator module.
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

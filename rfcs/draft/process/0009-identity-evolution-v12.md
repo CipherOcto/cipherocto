@@ -24,14 +24,14 @@ Extend RFC-0009 §Capability Keys with:
 
 ## Review State
 
-- **R1-R24 completed (2026-08-10); R25 in progress.**
+- **R1-R25 completed (2026-08-10); R26 in progress.**
 - **Termination condition:** convergence when a new round returns
   zero NEW findings.
 
-## Breaking Changes (11 main items per R11 M6 — corrected language;
-BC#1 expanded into 9 sub-items (1a-1i); section totals 20 line items
-(BC#1 header + 9 sub-items + 10 other main items BC#2-11) per R18 M6
-+ R24 L3)
+## Breaking Changes (12 main items per R11 M6 + R25 L4 — corrected language;
+BC#1 expanded into 9 sub-items (1a-1i); section totals 21 line items
+(BC#1 header + 9 sub-items + 11 other main items BC#2-12) per R18 M6
++ R24 L3 + R25 L4)
 
 1a. **NEW: `ThresholdSigner::threshold_sign` method** (replaces
     `sign_combined`; no prior equivalent exists).
@@ -815,8 +815,11 @@ Per RFC-0008 Execution Class mapping:
 - **Threat:** malicious BLS shareholder constructs PK that aggregates
   with honest shares.
 - **Attack:** rogue-key attack on aggregate signature.
-- **Defense:** DKG-based PK-set derivation (RFC-9591 §5); PK-set
-  fixed at ceremony; malicious shareholder cannot inject.
+- **Defense:** DKG-based PK-set derivation (Pedersen DKG /
+  Joint-Feldman variant for BLS12-381 per R15 L5 — per R26 M2,
+  RFC-9591 §5 is FROST-specific, not BLS; A5 differentiates FROST
+  vs BLS schemes consistently with this fix); PK-set fixed at
+  ceremony; malicious shareholder cannot inject.
 - **Residual:** none.
 - **Test:** `rogue_pk_attack_mitigated_by_dkg`.
 
@@ -1030,6 +1033,7 @@ cargo build -p octo-wallet  # per R11 L3 — validates Phase 0 compile
 cargo test -p octo-wallet --lib -p octo-cap-macaroon --lib -p octo-cap-zk --lib
 cargo test -p octo-wallet --lib -- --list phase1_tv_json | grep -qE "phase1_tv_json_(v11_round_trip_equivalence|child_unlinkability|hsm_boundary_no_seed_exfil)"  # per R11 H2 + R22 L6 + R23 M2
 cargo test -p octo-wallet --lib phase1_tv_json_*  # per R11 L3 — actual test run
+cargo test -p octo-wallet --test frost_nonce_determinism  # per R21 L4 + AC#8b (R26 L4)
 cargo doc --workspace --no-deps
 ```
 
@@ -1066,6 +1070,6 @@ cargo doc --workspace --no-deps
 
 ## Review Process
 
-Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R24
+Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R25
 completed (2026-08-10). Convergence target: zero NEW findings per
-R26+.
+R27+.

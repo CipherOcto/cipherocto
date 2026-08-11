@@ -171,15 +171,45 @@ pub fn apply_pending(db: &stoolap::Database) -> Result<(), MigrationError> {
 }
 
 /// Run a single migration (split SQL on `;\n` boundaries, execute each).
+///
+/// `ALTER TABLE ADD COLUMN` errors with `Error::DuplicateColumn`
+/// (display: `"duplicate column"`) when the column already exists.
+/// For ADD COLUMN statements only, this error is treated as a no-op
+/// so a mid-`apply_pending` crash between two ADD COLUMNs of the same
+/// migration does not brick the DB on retry. See mission
+/// `0871b-storage-idempotent-alter-hardening`.
 fn run_one(db: &stoolap::Database, migration: &Migration) -> Result<(), MigrationError> {
     let statements = split_sql_statements(migration.sql);
     for stmt in &statements {
-        db.execute(stmt, ()).map_err(|e| {
-            MigrationError::MigrationFailed(migration.version, format!("{e}: {stmt}"))
-        })?;
+        match db.execute(stmt, ()) {
+            Ok(_) => {}
+            Err(e) => {
+                let msg = format!("{e}");
+                if is_idempotent_already_applied(&msg, stmt) {
+                    // ADD COLUMN on a column that already exists = no-op.
+                    // Migration was partially applied via a prior crash;
+                    // remaining statements proceed.
+                    continue;
+                }
+                return Err(MigrationError::MigrationFailed(
+                    migration.version,
+                    format!("{e}: {stmt}"),
+                ));
+            }
+        }
     }
     record_migration(db, migration.version, migration.name)?;
     Ok(())
+}
+
+/// Returns true when `err` represents an `ADD COLUMN` collision with a
+/// pre-existing column. Restricts the swallow to ADD COLUMN statements
+/// (not CREATE INDEX / CREATE TABLE — those use `IF NOT EXISTS` already)
+/// AND to the fork's exact `DuplicateColumn` display string.
+fn is_idempotent_already_applied(err: &str, stmt: &str) -> bool {
+    let upper = stmt.to_ascii_uppercase();
+    let is_add_column = upper.contains("ADD COLUMN") || upper.contains("ADD\tCOLUMN");
+    is_add_column && err.contains("duplicate column")
 }
 
 /// Split a multi-statement SQL string on `;` boundaries.

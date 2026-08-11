@@ -24,7 +24,7 @@ Extend RFC-0009 §Capability Keys with:
 
 ## Review State
 
-- **R1-R32 completed (2026-08-11); R33 in progress.**
+- **R1-R33 completed (2026-08-11); R34 in progress.**
 - **Termination condition:** convergence when a new round returns
   zero NEW findings.
 
@@ -93,7 +93,7 @@ R27 L2 + R30 L3 + R31 L1)
 8. **`derive_capability_key` 4-param signature.**
 9. **NEW: `OperatorId` struct + `pubkey()` method** (per R15 L4 —
    OperatorId is NEW in v1.2; not present in v1.0/v1.1 substrate;
-   per R28 M3 — ADDITIVE change; moves to §Additive Changes below
+   per R28 M3 — ADDITIVE change; mirrored to §Additive Changes below
    since no prior identifier or symbol is shadowed).
 10. **`HsmAdapter::sign` NON-BREAKING** — current code uses
     `Result<[u8; 64], HsmError>` per `HsmAdapter::sign` symbol in
@@ -151,7 +151,8 @@ This RFC is ready for promotion to Accepted when:
      in `crates/octo-wallet/Cargo.toml` + `HsmAdapter::get_public_key`
      signature update (per R18 M4 — phase boundary matches
      §Implementation Phases Commit 1) + `OperatorId::pubkey()`
-     method (per R19 L3) + Clippy lint registration in
+     struct (per R33 L4) + `OperatorId::pubkey()` method (per R19 L3)
+     + Clippy lint registration in
      `clippy.toml` (per R21 L6 + R25 M2) + `[[test]]` entry in
      Cargo.toml mapping `frost_nonce_determinism` to
      `tests/integration/frost_nonce_determinism.rs` (per R22 M3
@@ -1065,7 +1066,7 @@ is E registers into B, not B → E. The macaroon substrate uses
 
 Dependency direction:
 - `octo-wallet` → `octo-protocol` (B → A; OK)
-- `octo-cap-zk` → `octo-wallet` (E → B registrar; OK)
+- `octo-cap-zk` → `octo-wallet` (L4 → B registrar; OK)
 - `octo-cap-macaroon-transport` → `octo-cap-macaroon` (L4↔D glue
   crate per R29 L3; mediates TransportDeliveryCatalog via
   Phase 2c-1; OK — L4↔D coupling is isolated to this glue crate,
@@ -1133,6 +1134,6 @@ cargo doc --workspace --no-deps
 
 ## Review Process
 
-Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R32
+Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R33
 completed (2026-08-11). Convergence target: zero NEW findings per
-R34+.
+R35+.

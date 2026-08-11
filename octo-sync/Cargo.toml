@@ -1,5 +1,3 @@
-[workspace]
-
 [package]
 name = "octo-sync"
 version = "0.1.0"
@@ -53,8 +51,10 @@ octo-ident = { path = "../crates/octo-ident", features = ["borsh"] }
 [dev-dependencies]
 # Property-based testing (RFC-0862 §Test Vectors)
 proptest = "1.4"
-# Async test runtime
-tokio = { version = "1", features = ["macros", "rt"] }
+# Async test runtime (sync feature needed for the multi-instance test harness)
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "sync"] }
+# Mutex for the cluster fixture in tests/cross_instance_tv.rs
+parking_lot = "0.12"
 # Enable the `test-util` feature for integration tests so they can use the
 # MockAdapter. This is a self-referential dev-dependency on the same crate.
 octo-sync = { path = ".", features = ["test-util"] }

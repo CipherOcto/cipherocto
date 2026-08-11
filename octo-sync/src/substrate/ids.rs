@@ -42,7 +42,7 @@ pub struct ShardMissionId(pub [u8; 32]);
 /// over the canonical bytes). All writes to a shard MUST be addressed by
 /// the same `ShardKey`; the writer-election substrate rejects
 /// cross-shard writes at the WAL layer (entry.shard_key verification).
-#[derive(Clone, Debug, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize)]
 pub struct ShardKey(pub [u8; 32]);
 
 impl ShardKey {

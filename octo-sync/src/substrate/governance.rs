@@ -201,12 +201,12 @@ impl NonceTracker {
         nonce: &[u8; 32],
     ) -> Result<(), WriterElectionError> {
         let key = (term, *nonce);
-        let mut set = self.used_nonces.entry(shard_key.clone()).or_default();
+        let mut set = self.used_nonces.entry(*shard_key).or_default();
         if !set.insert(key) {
             return Err(WriterElectionError::NonceReplayed);
         }
         let record = NonceRecord {
-            shard_key: shard_key.clone(),
+            shard_key: *shard_key,
             term,
             nonce: *nonce,
         };

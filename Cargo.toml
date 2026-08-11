@@ -18,7 +18,12 @@
 members = ["crates/*"]
 exclude = [
     "determin",
-    "octo-sync",
+    # octo-sync was previously excluded (leaf workspace) to break a cycle with
+    # the Stoolap fork. Per RFC-0862 v1.4 AC#17 the crate is now a workspace
+    # member: the substrate port (commit `9f41cf72`) + sealed traits (commit
+    # `c39f2006`) + concrete impls (forthcoming) live alongside the cipherocto
+    # main workspace. The Stoolap fork continues to consume octo-sync via its
+    # git dep on `branch = "next"` (path-independent).
     "octo-transport",
     "quota-router",
     "sync-e2e-tests",

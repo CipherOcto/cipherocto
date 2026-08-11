@@ -62,6 +62,11 @@ pub struct ActualDrained {
 /// Writer-election errors (per RFC-0862 v1.3 §Supporting types + error enums).
 #[derive(Debug, thiserror::Error)]
 pub enum WriterElectionError {
+    /// No elected writer available for the shard (failover window,
+    /// partition, or bootstrap). Per RFC-0862 v1.3 R12 this is the
+    /// default `submit_register_local_fallback` return value.
+    #[error("writer unavailable")]
+    WriterUnavailable,
     /// WAL corruption detected (gap, non-monotonic LSN, checksum mismatch).
     #[error("WAL corruption detected")]
     WalCorruption,

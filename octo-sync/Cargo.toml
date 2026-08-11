@@ -4,7 +4,7 @@
 name = "octo-sync"
 version = "0.1.0"
 edition = "2021"
-description = "Wire-protocol primitives, DatabaseSyncAdapter trait, and Stoolap sync types for the CipherOcto Stoolap Data Sync Protocol (RFC-0862 v1.1.0)"
+description = "Wire-protocol primitives, DatabaseSyncAdapter trait, Stoolap sync types, and RFC-0862 v1.3/v1.4 writer-election + cross-instance DID coordination substrate for the CipherOcto Stoolap Data Sync Protocol"
 license = "Apache-2.0"
 repository = "https://github.com/CipherOcto/cipherocto"
 
@@ -14,6 +14,9 @@ thiserror = "1.0"
 
 # Concurrency
 parking_lot = "0.12"
+# DashMap for per-shard noncelock (RFC-0862 v1.3 R12 L1; RFC-0862 v1.4 §Concrete Impl).
+# Sibling crates use 5.0 — keep aligned.
+dashmap = "5.0"
 
 # Hash + crypto (matches cipherocto network deps per crates/octo-network/Cargo.toml)
 blake3 = "1.5"
@@ -29,11 +32,15 @@ lz4_flex = "0.12"
 # CRC32 for WAL entry validation (mission 0862m)
 crc32fast = "1.4"
 
-# Async traits (used by Carrier)
+# Async traits (used by Carrier + sealed trait pattern in RFC-0862 v1.3)
 async-trait = "0.1"
 
 # Concurrent fan-out for MultiCarrierSync::broadcast
 futures = "0.3"
+
+# Borsh serialization (RFC-0862 v1.3 §Substrate types: newtypes derive BorshSerialize / BorshDeserialize).
+# Same pin as octo-protocol / quota-router-core.
+borsh = { version = "=1.5.0", features = ["derive"] }
 
 [dev-dependencies]
 # Property-based testing (RFC-0862 §Test Vectors)

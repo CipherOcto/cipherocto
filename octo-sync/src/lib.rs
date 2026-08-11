@@ -1,12 +1,15 @@
 //! # octo-sync
 //!
-//! Wire-protocol primitives, the [`DatabaseSyncAdapter`] trait, and Stoolap sync types
-//! for the CipherOcto Stoolap Data Sync Protocol (RFC-0862 v1.1.0).
+//! Wire-protocol primitives, the [`DatabaseSyncAdapter`] trait, Stoolap sync types, and
+//! RFC-0862 v1.3 + v1.4 writer-election + cross-instance DID coordination substrate
+//! for the CipherOcto Stoolap Data Sync Protocol.
 //!
 //! This crate lives at `cipherocto/octo-sync/`, a **leaf workspace** excluded from the
-//! main cipherocto workspace via `workspace.exclude`. Both the cipherocto workspace and
-//! the Stoolap fork depend on this crate via git. The leaf-workspace pattern mirrors
-//! the existing `octo-determin` pattern (see `/home/mmacedoeu/_w/ai/cipherocto/determin/`).
+//! main cipherocto workspace via `workspace.exclude` (the exclusion is scheduled
+//! to be lifted per RFC-0862 v1.4 AC#17 in mission `0871e-f7-coordinator-impl`
+//! task #123). Both the cipherocto workspace and the Stoolap fork depend on this
+//! crate via git. The leaf-workspace pattern mirrors the existing `octo-determin`
+//! pattern (see `/home/mmacedoeu/_w/ai/cipherocto/determin/`).
 //!
 //! # Architecture
 //!
@@ -90,6 +93,7 @@ pub mod session;
 pub mod slash;
 pub mod state;
 pub mod stream;
+pub mod substrate;
 pub mod summary;
 pub mod types;
 

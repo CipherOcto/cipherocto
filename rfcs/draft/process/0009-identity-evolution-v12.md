@@ -24,11 +24,14 @@ Extend RFC-0009 §Capability Keys with:
 
 ## Review State
 
-- **R1-R15 completed (2026-08-10).**
+- **R1-R23 completed (2026-08-10); R24 in progress.**
 - **Termination condition:** convergence when a new round returns
   zero NEW findings.
 
-## Breaking Changes (11 main items per R11 M6 — corrected language; BC#1 has 9 sub-items 1a-1i for 19 sub-items total per R18 M6)
+## Breaking Changes (11 main items per R11 M6 — corrected language;
+BC#1 expanded into 9 sub-items (1a-1i); section totals 20 line items
+(BC#1 header + 9 sub-items + 10 other main items BC#2-11) per R18 M6
++ R24 L3)
 
 1a. **NEW: `ThresholdSigner::threshold_sign` method** (replaces
     `sign_combined`; no prior equivalent exists).
@@ -109,7 +112,8 @@ Extend RFC-0009 §Capability Keys with:
 
 This RFC is ready for promotion to Accepted when:
 
-1. **Phase 0+1 complete (5 commits per R18 H1):**
+1. **Phase 0+1 complete** (per R18 H1, R24 M2 — Phase 0+1 covers
+   Commits 1-3; Commits 4-5 covered by AC#4 + AC#5 below):
    - Commit 1: `ThresholdSigner::threshold_sign` NEW +
      `BoundedShareVec::new` (enforces m == threshold) +
      `ThresholdCoordinator` trait interface + Cargo deps pinned
@@ -967,13 +971,15 @@ Dependency direction:
 - `octo-wallet` → `octo-protocol` (B → A; OK)
 - `octo-cap-zk` → `octo-wallet` (E → B registrar; OK)
 
-**Per R20 M4 + R23 M3:** post Phase 2c cleanup (commit `a471843b` +
-`4cfe7165` on 2026-08-09), `octo-cap-macaroon` is a CLEAN Layer 4
-crate with zero cross-layer deps on L-B / L-D / L-C. The previous
-`octo-cap-macaroon` → `octo-wallet` (E → B registrar) line was
-true at Phase 2b but is now obsolete; the only L4↔L-coupling is
-through `crates/octo-cap-macaroon-transport/` glue crate to L-D
-(TransportDeliveryCatalog, per Phase 2c-1). No L4↔C coupling exists.
+**Per R20 M4 + R23 M3 + R24 L4:** post Phase 2c cleanup (commit
+`a471843b` + `4cfe7165` on 2026-08-09), `octo-cap-macaroon` has
+zero DIRECT cross-layer deps on L-B / L-C. L4↔L-D coupling is
+isolated to `crates/octo-cap-macaroon-transport/` glue crate
+(TransportDeliveryCatalog, per Phase 2c-1) — this is the only
+cross-layer coupling, mediated by an L4↔D glue crate (not a
+direct L4 → L-D dep). The previous `octo-cap-macaroon` →
+`octo-wallet` (E → B registrar) line was true at Phase 2b but
+is now obsolete; no L4↔C coupling exists.
 
 No reverse dependencies. ✓
 
@@ -1023,6 +1029,6 @@ cargo doc --workspace --no-deps
 
 ## Review Process
 
-Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R15
+Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R23
 completed (2026-08-10). Convergence target: zero NEW findings per
-R16+.
+R25+.

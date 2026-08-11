@@ -93,7 +93,7 @@ Extend RFC-0009 §Capability Keys with:
 | G1 | Chain depth bounded | ≤ 8 levels (W3C VC-DID best practice) |
 | G2 | Unlinkability | v1 root ↔ v2 child cryptographically independent |
 | G3 | Threshold signing latency | ≤ 2x single-key for 2-of-3 |
-| G4 | Key-share loss tolerance | (N − M + 1) lost shares recoverable |
+| G4 | Key-share loss tolerance | (N − M) lost shares recoverable (per R14 L1 — off-by-one; M-of-N tolerates N−M losses, not N−M+1) |
 | G5 | Cascading revocation | Cryptographic walk |
 | G6a | Root mint back-compat | v1.1 callers via `derive_capability_key_v11` shim |
 | G6b | Child mint is new | 4-param signature |

@@ -1179,7 +1179,7 @@ Per RFC-0008 Execution Class mapping:
 | Resource | Drain log bounded to 10k per read-replica | Unbounded growth | LRU + alarm |
 | Time | Election 3s + heartbeat 500ms | Wrong values | Profiling |
 | Operator | Coordinator quorum M-of-N | Single coordinator = SPOF | M-of-N governance |
-| Operator | Coordinator state survives restart | Coordinator restart loses `elected_at_hlc` | Persistent log + snapshot + WAL replay |
+| Operator | Coordinator state survives restart | Coordinator restart loses `elected_at_hlc` | Persistent log + snapshot + WAL replay (per R14 L4 — concrete plan in mission `0871e-force-relinquish-governance` v1.4 amendment) |
 | Operator | `force_relinquish_writer` operator SET = same as key-share ceremony | Operator confusion | Document explicitly |
 | Resource | **HLC `last_logical: u32` overflow behavior** = refuse-new (per R11 M4) | Class A violation | `HlcError::LogicalOverflow` |
 
@@ -1271,18 +1271,25 @@ Deliverables:
   - TV-3: `current_writer_returns_cached_identity`
   - TV-4: `bootstrap_acquisition_under_5s` against PRODUCTION impl
 
-**Init sequence (per R13 L9):** node startup MUST run
+**Init sequence (per R13 L9 + R14 M2):** node startup MUST run
 `NonceTracker::new(wal)` BEFORE `replay_wal(...)`. Nonce records
 must be loaded into in-memory state BEFORE drain / DID register /
 revoke entries are replayed, else replayed nonces could be
-re-accepted (replay-during-replay attack). Mandated order:
+re-accepted (replay-during-replay attack). Per R14 M2: WalAppender
+extends WalWriter + WalNonceScanner (NOT WalReader), so init
+signature MUST take both handles. Mandated order:
 
 ```rust
-fn init_node(wal: Arc<dyn WalAppender>, shard_key: &ShardKey) -> Result<(), ...> {
+fn init_node(
+    nonce_wal: Arc<dyn WalAppender>,    // WalWriter + WalNonceScanner
+    replay_wal_handle: Arc<dyn WalReader>,
+    shard_key: &ShardKey,
+) -> Result<(), WriterElectionError> {
     // 1. NonceTracker::new() loads nonce records from WAL.
-    let nonce_tracker = NonceTracker::new(wal.clone());
-    // 2. THEN replay_wal() applies drain + DID entries.
-    replay_wal(&mut writer_context, 0, shard_key, &*wal).await?;
+    let nonce_tracker = NonceTracker::new(nonce_wal.clone());
+    // 2. THEN replay_wal() applies drain + DID entries via
+    //    WalReader (separate handle per R14 M2).
+    replay_wal(&mut writer_context, 0, shard_key, &*replay_wal_handle).await?;
     Ok(())
 }
 ```
@@ -1300,10 +1307,22 @@ fn init_node(wal: Arc<dyn WalAppender>, shard_key: &ShardKey) -> Result<(), ...>
 - F1-F7, F9-F10: see RFC-0862 v1.2.0 §Future Work
 - F12 (NEW): HLC + LWW per-instance counter (deferred; v1.4)
 - F13 (NEW): CRDT-style reconciliation (deferred; v1.4)
-- Coordinator quorum M-of-N key share ceremony (governance)
-- Partition recovery via snapshot + replay
-- Byzantine coordinator defense
-- `force_relinquish_writer` governance (mission to be filed)
+- Coordinator quorum M-of-N key share ceremony (governance) —
+  **mission `0871e-force-relinquish-governance` FILED (R14 H1);
+  blocks v1.3 acceptance per AC#12.**
+- Partition recovery via snapshot + replay — **per R14 L4: tracked
+  under mission `0871e-force-relinquish-governance` snapshot+replay
+  field; v1.4 amendment or follow-on mission files the concrete
+  schema (deferred from v1.3).**
+- Byzantine coordinator defense — **per R14 L3: tracked under
+  mission `0871e-force-relinquish-governance` Byzantine row;
+  threshold-signature M-of-N quorum + sealed trait pattern +
+  chain_id binding (R12 M23) is the v1.3 baseline. Full Byzantine
+  fault tolerance (BFT) consensus for coordinator cluster lands
+  v2.0 per `cipherocto-design-principles.md` (Layer A; RFC-mandated
+  before any production deployment).**
+- `force_relinquish_writer` governance — mission `0871e-force-relinquish-governance`
+  FILED (R14 H1).
 - ~~`MissionId` consolidation GATED on v1.3 acceptance~~ — RESOLVED
   per R12 H17: AC#6/#7 require consolidation COMPLETED BEFORE v1.3
   acceptance; removed from §Future Work.

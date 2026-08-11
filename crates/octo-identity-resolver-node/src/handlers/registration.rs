@@ -83,6 +83,7 @@ impl RegisterRequest {
         DidDocument {
             public_key: self.public_key,
             revoked: self.revoked,
+            ..Default::default()
         }
     }
 }

@@ -181,6 +181,7 @@ impl DidRegistry for StoolapDidRegistry {
                 Ok(Some(DidDocument {
                     public_key: pk,
                     revoked: false,
+                    ..Default::default()
                 }))
             }
             Some(Err(e)) => Err(octo_ident::DidRegistryError::Storage(format!(
@@ -245,6 +246,7 @@ impl DidRegistry for StoolapDidRegistry {
             docs.push(DidDocument {
                 public_key: pk,
                 revoked: false,
+                ..Default::default()
             });
         }
         Ok(docs)
@@ -269,6 +271,7 @@ mod tests {
         DidDocument {
             public_key: sample_hash(seed),
             revoked: false,
+            ..Default::default()
         }
     }
 
@@ -277,7 +280,7 @@ mod tests {
         let r = StoolapDidRegistry::open_in_memory().expect("open");
         let h = sample_hash(1);
         let d = sample_doc(1);
-        r.register(&h, d).unwrap();
+        r.register(&h, d.clone()).unwrap();
         assert_eq!(r.resolve(&h).unwrap(), Some(d));
     }
 
@@ -289,8 +292,9 @@ mod tests {
         let new_doc = DidDocument {
             public_key: [0xFFu8; 32],
             revoked: false,
+            ..Default::default()
         };
-        r.register(&h, new_doc).unwrap();
+        r.register(&h, new_doc.clone()).unwrap();
         assert_eq!(r.resolve(&h).unwrap(), Some(new_doc));
     }
 
@@ -362,7 +366,7 @@ mod tests {
             handles.push(thread::spawn(move || {
                 let h = sample_hash(t);
                 let d = sample_doc(t);
-                r.register(&h, d).unwrap();
+                r.register(&h, d.clone()).unwrap();
                 let resolved = r.resolve(&h).unwrap();
                 assert_eq!(resolved, Some(d));
             }));

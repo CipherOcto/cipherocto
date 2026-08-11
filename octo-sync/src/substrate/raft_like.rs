@@ -300,6 +300,7 @@ mod tests {
         DidDocument {
             public_key: [seed; 32],
             revoked: false,
+            ..Default::default()
         }
     }
 

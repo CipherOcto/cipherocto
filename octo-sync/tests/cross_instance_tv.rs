@@ -53,6 +53,7 @@ fn sample_doc(seed: u8) -> DidDocument {
     DidDocument {
         public_key: [seed; 32],
         revoked: false,
+        ..Default::default()
     }
 }
 

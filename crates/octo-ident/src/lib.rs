@@ -24,6 +24,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 pub mod chain;
 pub mod in_memory_did_registry;
 pub mod registry;
+pub mod rich_document;
 pub mod test_helpers;
 pub mod write_coordinator;
 
@@ -33,6 +34,11 @@ pub use chain::{
 };
 pub use in_memory_did_registry::InMemoryDidRegistry;
 pub use registry::{DidDocument, DidRegistry, DidRegistryError};
+pub use rich_document::{
+    check_controller_cycles, CapabilityDelegation, ControllerCycleError, ControllerReference,
+    ServiceEndpoint, ServiceEndpointError, VerificationMethod, VerificationMethodKind,
+    MAX_CAPABILITY_DELEGATIONS, MAX_CONTROLLERS, MAX_SERVICE_ENDPOINTS, MAX_VERIFICATION_METHODS,
+};
 pub use write_coordinator::{canonical_hash, DidWriteCoordinator, DidWriteCoordinatorError};
 
 /// Canonical 52-byte DID storage form.

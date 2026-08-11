@@ -343,6 +343,7 @@ mod tests {
                 DidDocument {
                     public_key: custom_pubkey,
                     revoked: false,
+                    ..Default::default()
                 },
             )
             .unwrap();

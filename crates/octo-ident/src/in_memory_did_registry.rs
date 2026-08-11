@@ -60,7 +60,7 @@ impl DidRegistry for InMemoryDidRegistry {
     fn resolve(&self, canonical_hash: &[u8; 32]) -> Result<Option<DidDocument>, DidRegistryError> {
         let guard = self.inner.read();
         // Revoked → indistinguishable from unknown (fail-closed).
-        Ok(guard.get(canonical_hash).copied().filter(|d| !d.revoked))
+        Ok(guard.get(canonical_hash).cloned().filter(|d| !d.revoked))
     }
 
     fn revoke(&self, canonical_hash: &[u8; 32]) -> Result<(), DidRegistryError> {
@@ -76,7 +76,7 @@ impl DidRegistry for InMemoryDidRegistry {
 
     fn list(&self) -> Result<Vec<DidDocument>, DidRegistryError> {
         let guard = self.inner.read();
-        let mut docs: Vec<DidDocument> = guard.values().copied().filter(|d| !d.revoked).collect();
+        let mut docs: Vec<DidDocument> = guard.values().filter(|&d| !d.revoked).cloned().collect();
         // Sort by canonical_hash ascending for deterministic iteration.
         docs.sort_by_key(|d| {
             // DidDocument does not carry canonical_hash directly; consumers
@@ -105,6 +105,7 @@ mod tests {
         DidDocument {
             public_key: sample_hash(seed),
             revoked: false,
+            ..Default::default()
         }
     }
 
@@ -113,7 +114,7 @@ mod tests {
         let r = InMemoryDidRegistry::default();
         let h = sample_hash(1);
         let d = sample_doc(1);
-        r.register(&h, d).unwrap();
+        r.register(&h, d.clone()).unwrap();
         let resolved = r.resolve(&h).unwrap();
         assert_eq!(resolved, Some(d));
     }
@@ -126,8 +127,9 @@ mod tests {
         let new_doc = DidDocument {
             public_key: [0xFFu8; 32],
             revoked: false,
+            ..Default::default()
         };
-        r.register(&h, new_doc).unwrap();
+        r.register(&h, new_doc.clone()).unwrap();
         assert_eq!(r.resolve(&h).unwrap(), Some(new_doc));
     }
 

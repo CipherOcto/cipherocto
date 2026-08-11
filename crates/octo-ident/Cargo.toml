@@ -47,3 +47,7 @@ version = "0.12"
 [dev-dependencies]
 # Test runtime for `#[tokio::test]` in write_coordinator module.
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+# Borsh for the rich_did_document_tv round-trip tests. Re-uses the same
+# version pinned in `[dependencies.borsh]` so the dev-dep serializes
+# identically to what production consumers see.
+borsh = { version = "=1.5.0", features = ["derive"] }

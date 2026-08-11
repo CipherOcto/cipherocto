@@ -192,6 +192,7 @@ mod tests {
                 octo_ident::DidDocument {
                     public_key: custom_pubkey,
                     revoked: false,
+                    ..Default::default()
                 },
             )
             .unwrap();
@@ -222,6 +223,7 @@ mod tests {
                 octo_ident::DidDocument {
                     public_key: raw.hash,
                     revoked: false,
+                    ..Default::default()
                 },
             )
             .unwrap();

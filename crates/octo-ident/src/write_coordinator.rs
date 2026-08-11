@@ -238,6 +238,7 @@ mod tests {
         DidDocument {
             public_key,
             revoked: false,
+            ..Default::default()
         }
     }
 
@@ -327,7 +328,7 @@ mod tests {
             if let Some(err) = self.register_error.lock().clone() {
                 return Err(err);
             }
-            *self.last_register.lock() = Some((*canonical_did_hash, chain_id.clone(), *document));
+            *self.last_register.lock() = Some((*canonical_did_hash, chain_id.clone(), document.clone()));
             Ok(())
         }
 

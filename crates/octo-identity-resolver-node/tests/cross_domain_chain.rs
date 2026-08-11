@@ -61,6 +61,7 @@ fn register_custom(registry: &Arc<InMemoryDidRegistry>, seed: u8, pubkey: [u8; 3
             DidDocument {
                 public_key: pubkey,
                 revoked: false,
+                ..Default::default()
             },
         )
         .unwrap();

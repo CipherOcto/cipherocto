@@ -53,6 +53,7 @@ mod tests {
         let doc = DidDocument {
             public_key: [1u8; 32],
             revoked: false,
+            ..Default::default()
         };
         let h1 = canonical_hash(&doc);
         let h2 = ident_canonical_hash(&doc);
@@ -64,6 +65,7 @@ mod tests {
         let doc = DidDocument {
             public_key: [1u8; 32],
             revoked: false,
+            ..Default::default()
         };
         let encoded = doc.encode();
         let decoded = DidDocument::try_from_slice(&encoded).unwrap();

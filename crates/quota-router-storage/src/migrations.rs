@@ -60,6 +60,11 @@ pub const BUILTIN_MIGRATIONS: &[Migration] = &[
         name: "create_spend_ledger",
         sql: include_str!("../migrations/v007__create_spend_ledger.sql"),
     },
+    Migration {
+        version: 8,
+        name: "create_did_registry",
+        sql: include_str!("../migrations/v008__create_did_registry.sql"),
+    },
 ];
 
 /// Migration errors.

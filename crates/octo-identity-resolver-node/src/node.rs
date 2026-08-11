@@ -6,17 +6,18 @@
 //! (`octo-ident`) and registers as a `NetworkReceiver` via the Layer D
 //! transport (`octo-transport::NodeTransport`).
 //!
-//! ## Mission 0871b-identity-resolver-node
+//! ## Mission 0871b-storage-backend
 //!
-//! `IdentityResolverNode` advertises the `IDENTITY_RESOLVE` payload kind.
-//! Each request envelope is dispatched via `ReferenceDispatcher` (replay
-//! defense + signature verification) then routed to `ResolveHandler`,
-//! which validates the canonical DID shape and returns a placeholder
-//! storage-pubkey form (real backend wires up in a follow-on mission).
+//! `IdentityResolverNodeConfig.registry: Arc<dyn DidRegistry>` slot
+//! wires the production storage backend (`StoolapDidRegistry`) without
+//! coupling this Layer C crate to `quota-router-storage`. Default
+//! construction falls back to `InMemoryDidRegistry` for tests + Phase 1
+//! deployments.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use octo_ident::{DidRegistry, InMemoryDidRegistry};
 use octo_protocol::dispatch::ReferenceDispatcher;
 use octo_protocol::payload_kind::PayloadKindId;
 use octo_protocol::recipient::RecipientRef;
@@ -43,6 +44,13 @@ pub struct IdentityResolverNodeConfig {
     pub identity: Option<Arc<octo_wallet::identity::IdentityKey>>,
     /// Network key for `RouterAnnouncePayload` HMAC anti-spoof.
     pub network_key: [u8; 32],
+    /// Mission 0871b-storage-backend: production DID-document registry.
+    /// When `None` at construction time, `IdentityResolverNode::new`
+    /// defaults to `InMemoryDidRegistry` (test + Phase 1 deployments).
+    /// Production deployments pass `Arc::new(StoolapDidRegistry::open_path(...))`.
+    /// Injected via `Arc<dyn DidRegistry>` — no `quota-router-storage`
+    /// dep at this Layer C crate (registry is a trait-object boundary).
+    pub registry: Option<Arc<dyn DidRegistry>>,
 }
 
 /// Opaque handle returned by `IdentityResolverNode::start()`.
@@ -74,16 +82,30 @@ pub fn default_dispatcher() -> ReferenceDispatcher {
 /// Identity-resolver specialized-node adapter.
 pub struct IdentityResolverNode {
     config: IdentityResolverNodeConfig,
+    /// Cached resolved registry (either the injected one or the default
+    /// `InMemoryDidRegistry`). Cloned into handler instances per request.
+    registry: Arc<dyn DidRegistry>,
     dispatcher: ReferenceDispatcher,
     started: std::sync::atomic::AtomicBool,
 }
 
 impl IdentityResolverNode {
     /// Construct a new `IdentityResolverNode`.
+    ///
+    /// Mission 0871b-storage-backend: if `config.registry` is `None`,
+    /// defaults to `Arc::new(InMemoryDidRegistry::default())`. This
+    /// keeps backward-compat with Phase 1 MVP callers that pre-date the
+    /// storage substrate while allowing production deployments to inject
+    /// `Arc::new(StoolapDidRegistry::open_path(...))`.
     #[must_use]
     pub fn new(config: IdentityResolverNodeConfig) -> Self {
+        let registry = config
+            .registry
+            .clone()
+            .unwrap_or_else(|| Arc::new(InMemoryDidRegistry::default()));
         Self {
             config,
+            registry,
             dispatcher: default_dispatcher(),
             started: std::sync::atomic::AtomicBool::new(false),
         }
@@ -95,8 +117,13 @@ impl IdentityResolverNode {
         config: IdentityResolverNodeConfig,
         dispatcher: ReferenceDispatcher,
     ) -> Self {
+        let registry = config
+            .registry
+            .clone()
+            .unwrap_or_else(|| Arc::new(InMemoryDidRegistry::default()));
         Self {
             config,
+            registry,
             dispatcher,
             started: std::sync::atomic::AtomicBool::new(false),
         }
@@ -153,7 +180,7 @@ impl IdentityResolverNode {
             k if k == octo_protocol::payload_kind::IDENTITY_RESOLVE => {
                 let req = ResolveRequest::from_borsh(&envelope.payload)
                     .map_err(resolver_error_to_protocol)?;
-                ResolveHandler::new()
+                ResolveHandler::new(self.registry.clone())
                     .handle(&req)
                     .map_err(resolver_error_to_protocol)
             }
@@ -243,6 +270,12 @@ impl IdentityResolverNode {
     pub fn transport(&self) -> &Arc<NodeTransport> {
         &self.config.transport
     }
+
+    /// Borrow the registry (mission 0871b-storage-backend test surface).
+    #[must_use]
+    pub fn registry(&self) -> &Arc<dyn DidRegistry> {
+        &self.registry
+    }
 }
 
 /// Helper: `IdentityResolverNode` -> `Arc<dyn NetworkReceiver>`.
@@ -279,6 +312,7 @@ fn self_clone_to_receiver(node: &IdentityResolverNode) -> Arc<dyn NetworkReceive
     // configuration into a new Arc<IdentityResolverNode> for the receiver.
     let arc = Arc::new(IdentityResolverNode {
         config: node.config.clone(),
+        registry: node.registry.clone(),
         dispatcher: default_dispatcher(),
         started: std::sync::atomic::AtomicBool::new(true),
     });
@@ -288,7 +322,7 @@ fn self_clone_to_receiver(node: &IdentityResolverNode) -> Arc<dyn NetworkReceive
 #[cfg(test)]
 mod tests {
     use super::*;
-    use octo_ident::DidCodec;
+    use octo_ident::{DidCodec, DidDocument};
 
     fn fresh_transport() -> Arc<NodeTransport> {
         let senders: Vec<Arc<dyn octo_transport::sender::NetworkSender>> = vec![];
@@ -302,6 +336,7 @@ mod tests {
             transport: transport.clone(),
             identity: None,
             network_key: [0u8; 32],
+            registry: None,
         };
         let node = IdentityResolverNode::new(cfg);
         let handle = node.start().expect("start should succeed");
@@ -315,6 +350,7 @@ mod tests {
             transport: transport.clone(),
             identity: None,
             network_key: [0u8; 32],
+            registry: None,
         };
         let node = IdentityResolverNode::new(cfg);
         let _ = node.start();
@@ -329,6 +365,7 @@ mod tests {
             transport: transport.clone(),
             identity: None,
             network_key: [0u8; 32],
+            registry: None,
         };
         let node = IdentityResolverNode::new(cfg);
         // Build a payload with an unknown payload kind (random 16-byte UUID).
@@ -350,22 +387,38 @@ mod tests {
     }
 
     #[test]
-    fn handle_envelope_accepts_identity_resolve_kind() {
+    fn handle_envelope_uses_injected_registry_when_provided() {
+        // Mission 0871b-storage-backend TV: `resolve_handler_uses_registry`.
+        // Inject a custom registry returning a distinct `public_key`;
+        // handler returns THAT key, NOT the placeholder hash.
         let transport = fresh_transport();
+        let mut pk_bytes = [0u8; 32];
+        for (i, b) in pk_bytes.iter_mut().enumerate() {
+            *b = i as u8;
+        }
+        let raw = octo_ident::CanonicalCodec::mint(&pk_bytes);
+        let wire = octo_ident::CanonicalCodec::raw_to_wire(&raw).unwrap();
+        let wire_str = wire.as_str().to_owned();
+
+        let registry = Arc::new(InMemoryDidRegistry::default());
+        let custom_pubkey = [0xCCu8; 32];
+        registry
+            .register(
+                &raw.hash,
+                DidDocument {
+                    public_key: custom_pubkey,
+                    revoked: false,
+                },
+            )
+            .unwrap();
+
         let cfg = IdentityResolverNodeConfig {
             transport: transport.clone(),
             identity: None,
             network_key: [0u8; 32],
+            registry: Some(registry.clone()),
         };
         let node = IdentityResolverNode::new(cfg);
-        // Mint a canonical DID via the codec, then take the wire form.
-        let mut pk = [0u8; 32];
-        for (i, b) in pk.iter_mut().enumerate() {
-            *b = i as u8;
-        }
-        let raw = octo_ident::CanonicalCodec::mint(&pk);
-        let wire = octo_ident::CanonicalCodec::raw_to_wire(&raw).unwrap();
-        let wire_str = wire.as_str().to_owned();
         let req = ResolveRequest(wire_str.clone());
         let payload = req.to_borsh().unwrap();
         let envelope = NodeEnvelope::build(
@@ -384,6 +437,62 @@ mod tests {
         let resp_bytes = out.response_payload.expect("response payload present");
         let resp: crate::handlers::ResolveResponse = borsh::from_slice(&resp_bytes).unwrap();
         assert_eq!(resp.canonical_did, wire_str);
+        assert_eq!(resp.public_key, custom_pubkey);
+    }
+
+    #[test]
+    fn handle_envelope_defaults_to_in_memory_registry_when_omitted() {
+        // Mission 0871b-storage-backend backward-compat: Phase 1 MVP callers
+        // that pre-date the storage substrate still work — but resolve
+        // returns `Storage("unknown DID")` because the default registry is
+        // empty.
+        let transport = fresh_transport();
+        let cfg = IdentityResolverNodeConfig {
+            transport: transport.clone(),
+            identity: None,
+            network_key: [0u8; 32],
+            registry: None,
+        };
+        let node = IdentityResolverNode::new(cfg);
+        // Pre-register the DID so the empty-registry case doesn't trip.
+        let mut pk_bytes = [0u8; 32];
+        for (i, b) in pk_bytes.iter_mut().enumerate() {
+            *b = i as u8;
+        }
+        let raw = octo_ident::CanonicalCodec::mint(&pk_bytes);
+        let wire = octo_ident::CanonicalCodec::raw_to_wire(&raw).unwrap();
+        let wire_str = wire.as_str().to_owned();
+        node.registry()
+            .register(
+                &raw.hash,
+                DidDocument {
+                    public_key: raw.hash,
+                    revoked: false,
+                },
+            )
+            .unwrap();
+
+        let req = ResolveRequest(wire_str.clone());
+        let payload = req.to_borsh().unwrap();
+        let envelope = NodeEnvelope::build(
+            wire,
+            RecipientRef::Broadcast,
+            octo_protocol::payload_kind::IDENTITY_RESOLVE,
+            payload,
+            vec![],
+            [0u8; 32],
+            u64::MAX,
+        )
+        .unwrap();
+        let out = node
+            .handle_envelope(&envelope)
+            .expect("handle should succeed");
+        let resp_bytes = out.response_payload.expect("response payload present");
+        let resp: crate::handlers::ResolveResponse = borsh::from_slice(&resp_bytes).unwrap();
+        assert_eq!(resp.canonical_did, wire_str);
+        // Pre-cutover placeholder public_key (RawDid::hash) survives the
+        // cutover when the registry returns it explicitly — regression guard
+        // for `wire_shape_byte_exact_across_cutover` TV.
         assert_eq!(resp.public_key, raw.hash);
     }
 }

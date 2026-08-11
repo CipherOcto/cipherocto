@@ -341,7 +341,6 @@ mod tests {
         for _ in 0..20 {
             let l = l.clone();
             let h = h.to_owned();
-            let m = m;
             handles.push(thread::spawn(move || l.try_deduct(&h, &m, 100)));
         }
         let mut ok = 0;

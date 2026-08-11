@@ -5,15 +5,18 @@
 //! Returns: `<canonical_did: String, public_key: [u8; 32]>` — the canonical
 //! DID wire form + the resolved storage-pubkey form.
 //!
-//! Phase 1 MVP: validates the canonical DID shape via
-//! `octo_ident::CanonicalCodec::parse(s, false)`. The actual lookup
-//! (storage layer, upstream identity resolver node, etc.) lands in a
-//! follow-on mission that wires a `DidRegistry` backend. The placeholder
-//! `public_key` field returns the canonical DID's underlying 32-byte hash
-//! (deterministic, derived from `WireDid::as_str()`).
+//! Mission 0871b-storage-backend: the placeholder `RawDid::hash` derivation
+//! is replaced with a `DidRegistry::resolve(canonical_hash)` call. The
+//! `registry` is injected at handler construction time (DI from
+//! `IdentityResolverNodeConfig.registry`), enabling production storage
+//! wiring via `StoolapDidRegistry` without coupling this Layer C crate
+//! to `quota-router-storage`.
+
+use std::sync::Arc;
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use octo_ident::DidCodec;
+use octo_ident::DidRegistry;
 
 use super::{HandlerOutput, IdentityResolveError};
 
@@ -46,50 +49,66 @@ impl ResolveRequest {
 pub struct ResolveResponse {
     /// Canonical DID wire form (post-parse).
     pub canonical_did: String,
-    /// 32-byte storage-pubkey form (placeholder for real lookup backend).
+    /// 32-byte storage-pubkey form (from `DidDocument.public_key`).
     pub public_key: [u8; 32],
 }
 
 /// `IDENTITY_RESOLVE` handler.
 ///
-/// Phase 1 MVP: stateless. Validates the canonical DID shape via
-/// `octo_ident::CanonicalCodec::parse(s, false)`; returns the canonical
-/// wire form + a placeholder 32-byte public key derived from the DID's
-/// inner hash bytes. The real lookup backend (storage layer per RFC-0010
-/// dual storage/wire split) lands in a follow-on mission.
-pub struct ResolveHandler;
+/// Mission 0871b-storage-backend: holds an `Arc<dyn DidRegistry>` for
+/// production storage wiring. Replaces the placeholder
+/// `RawDid::hash`-as-`public_key` derivation.
+pub struct ResolveHandler {
+    registry: Arc<dyn DidRegistry>,
+}
 
 impl ResolveHandler {
-    /// Construct a new `ResolveHandler`.
+    /// Construct a new `ResolveHandler` bound to the supplied registry.
+    ///
+    /// The registry is injected (DI) — production deployments pass a
+    /// `StoolapDidRegistry`; tests pass an `InMemoryDidRegistry`. The
+    /// resolver-node consumer (`IdentityResolverNode::handle_envelope`)
+    /// passes the registry cloned from `IdentityResolverNodeConfig.registry`.
     #[must_use]
-    pub const fn new() -> Self {
-        Self
+    pub fn new(registry: Arc<dyn DidRegistry>) -> Self {
+        Self { registry }
     }
 
     /// Resolve the DID query.
     ///
-    /// Phase 1 MVP:
+    /// Mission 0871b-storage-backend:
     /// 1. Validates `query` is a canonical DID shape via
     ///    `octo_ident::CanonicalCodec::parse(s, false)`.
-    /// 2. Decodes the canonical wire form back to a `RawDid` and uses the
-    ///    leading 32-byte hash as the placeholder `public_key` (deterministic,
-    ///    no real storage backend required).
+    /// 2. Decodes the canonical wire form back to a `RawDid`; uses the
+    ///    leading 32-byte `hash` as the registry lookup key.
+    /// 3. Calls `registry.resolve(&raw.hash)`. Returns `Ok(None)` for
+    ///    unknown AND revoked DIDs (fail-closed; the response surfaces
+    ///    `Storage("unknown DID")` to the caller via `IdentityResolveError::Storage`).
+    /// 4. Returns the resolved `public_key` in `ResolveResponse`.
     ///
     /// # Errors
     /// Returns `IdentityResolveError::InvalidDid` if `query` is not a
     /// canonical DID shape (legacy `did:octo:b<base32>` rejected per
-    /// RFC-0010 v1.2 F4).
+    /// RFC-0010 v1.2 F4). Returns `IdentityResolveError::Storage` if the
+    /// underlying registry call fails.
     pub fn handle(&self, req: &ResolveRequest) -> Result<HandlerOutput, IdentityResolveError> {
         // 1. Validate canonical DID shape; reject legacy bare form.
         let wire = octo_ident::CanonicalCodec::parse(&req.0, false)
             .map_err(|e| IdentityResolveError::InvalidDid(e.to_string()))?;
 
-        // 2. Decode canonical wire form → RawDid for placeholder pubkey.
+        // 2. Decode canonical wire form → RawDid for lookup key.
         let raw = octo_ident::CanonicalCodec::wire_to_raw(&wire)
             .map_err(|e| IdentityResolveError::InvalidDid(e.to_string()))?;
+
+        // 3. Look up via registry.
+        let doc = self
+            .registry
+            .resolve(&raw.hash)?
+            .ok_or_else(|| IdentityResolveError::Storage("unknown DID".to_owned()))?;
+
         let response = ResolveResponse {
             canonical_did: wire.as_str().to_owned(),
-            public_key: raw.hash,
+            public_key: doc.public_key,
         };
         let payload = borsh::to_vec(&response)
             .map_err(|e| IdentityResolveError::Serialization(e.to_string()))?;
@@ -100,15 +119,10 @@ impl ResolveHandler {
     }
 }
 
-impl Default for ResolveHandler {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use octo_ident::InMemoryDidRegistry;
 
     fn sample_did_bytes() -> [u8; 32] {
         let mut pk = [0u8; 32];
@@ -135,7 +149,8 @@ mod tests {
 
     #[test]
     fn handle_rejects_invalid_did() {
-        let handler = ResolveHandler::new();
+        let registry = Arc::new(InMemoryDidRegistry::default());
+        let handler = ResolveHandler::new(registry);
         let req = ResolveRequest("did:octo:bad".into());
         let err = handler.handle(&req).unwrap_err();
         assert!(matches!(err, IdentityResolveError::InvalidDid(_)));
@@ -144,7 +159,8 @@ mod tests {
     #[test]
     fn handle_rejects_legacy_bare_form() {
         // `allow_legacy_bare=false` must reject legacy `did:octo:b<base32>` form.
-        let handler = ResolveHandler::new();
+        let registry = Arc::new(InMemoryDidRegistry::default());
+        let handler = ResolveHandler::new(registry);
         let legacy = "did:octo:babcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwxyz2345";
         let req = ResolveRequest(legacy.into());
         let err = handler.handle(&req).unwrap_err();
@@ -152,21 +168,69 @@ mod tests {
     }
 
     #[test]
-    fn handle_returns_canonical_did_and_placeholder_pubkey() {
-        let handler = ResolveHandler::new();
+    fn handle_returns_storage_error_for_unregistered_did() {
+        // No register() call — registry returns None → handler surfaces
+        // `IdentityResolveError::Storage("unknown DID")` (fail-closed).
+        let registry = Arc::new(InMemoryDidRegistry::default());
+        let handler = ResolveHandler::new(registry);
+        let req = ResolveRequest(sample_did());
+        let err = handler.handle(&req).unwrap_err();
+        assert!(matches!(err, IdentityResolveError::Storage(_)));
+    }
+
+    #[test]
+    fn handle_returns_canonical_did_and_registry_pubkey() {
+        // Register a custom public_key; handler returns THAT key, not
+        // the placeholder hash derived from the DID itself.
+        let registry = Arc::new(InMemoryDidRegistry::default());
         let did_str = sample_did();
+        let raw = octo_ident::CanonicalCodec::mint(&sample_did_bytes());
+        let custom_pubkey = [0xCCu8; 32];
+        registry
+            .register(
+                &raw.hash,
+                octo_ident::DidDocument {
+                    public_key: custom_pubkey,
+                    revoked: false,
+                },
+            )
+            .unwrap();
+        let handler = ResolveHandler::new(registry);
         let req = ResolveRequest(did_str.clone());
         let out = handler.handle(&req).unwrap();
         let payload = out.response_payload.unwrap();
         let resp: ResolveResponse = borsh::from_slice(&payload).unwrap();
         assert_eq!(resp.canonical_did, did_str);
-        // Placeholder public_key = leading 32-byte hash of RawDid (deterministic).
-        let expected_hash = octo_ident::CanonicalCodec::mint(&sample_did_bytes()).hash;
-        assert_eq!(resp.public_key, expected_hash);
+        assert_eq!(
+            resp.public_key, custom_pubkey,
+            "resolve_handler_uses_registry TV: public_key must come from registry, not placeholder hash"
+        );
     }
 
     #[test]
-    fn handler_unit_constructs() {
-        let _ = ResolveHandler;
+    fn handle_byte_exact_cutover_placeholder_vs_registry() {
+        // TV: wire_shape_byte_exact_across_cutover — when the registry's
+        // DidDocument.public_key IS the placeholder hash, the response
+        // is byte-equal to the pre-cutover placeholder output.
+        let registry = Arc::new(InMemoryDidRegistry::default());
+        let did_str = sample_did();
+        let raw = octo_ident::CanonicalCodec::mint(&sample_did_bytes());
+        // Register with public_key = raw.hash (the OLD placeholder).
+        registry
+            .register(
+                &raw.hash,
+                octo_ident::DidDocument {
+                    public_key: raw.hash,
+                    revoked: false,
+                },
+            )
+            .unwrap();
+        let handler = ResolveHandler::new(registry);
+        let req = ResolveRequest(did_str.clone());
+        let out = handler.handle(&req).unwrap();
+        let payload = out.response_payload.unwrap();
+        let resp: ResolveResponse = borsh::from_slice(&payload).unwrap();
+        assert_eq!(resp.canonical_did, did_str);
+        assert_eq!(resp.public_key, raw.hash);
     }
 }

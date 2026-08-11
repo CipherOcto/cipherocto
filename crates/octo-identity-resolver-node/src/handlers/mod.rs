@@ -8,6 +8,7 @@
 //! into raw crypto primitives. Validation always flows through
 //! `octo_ident::CanonicalCodec::parse(s, false)`.
 
+use octo_ident::DidRegistryError;
 use octo_protocol::ProtocolError;
 
 pub mod resolve;
@@ -55,10 +56,13 @@ impl HandlerOutput {
 
 /// Identity-resolver specific errors.
 ///
-/// Phase 1 MVP: surfaces `ProtocolError::InvalidDid` for malformed DID
-/// inputs and `ProtocolError::AuthorizationFailed` for borsh / encoding
-/// failures. Real backend errors (storage layer, registry not found)
-/// land in a follow-on mission once the `DidRegistry` trait is wired.
+/// Mission 0871b-storage-backend: storage-layer errors tunnel through
+/// `Storage(String)` after conversion from `DidRegistryError`. Storage
+/// errors are reported as `ProtocolError::AuthorizationFailed` at the
+/// dispatch boundary — this matches the fail-closed posture of the rest
+/// of the resolver-node (a registry backend error is treated as
+/// "cannot authenticate the request", which is the same security class
+/// as a signature verification failure).
 #[derive(Debug, thiserror::Error)]
 pub enum IdentityResolveError {
     /// Canonical DID validation failed.
@@ -68,6 +72,12 @@ pub enum IdentityResolveError {
     /// Borsh (de)serialization failure.
     #[error("serialization error: {0}")]
     Serialization(String),
+
+    /// Underlying registry storage failure (tunneled from
+    /// `DidRegistryError::Storage`). Treated as authorization-class
+    /// error at the dispatch boundary.
+    #[error("registry storage error: {0}")]
+    Storage(String),
 }
 
 impl From<IdentityResolveError> for ProtocolError {
@@ -75,6 +85,25 @@ impl From<IdentityResolveError> for ProtocolError {
         match e {
             IdentityResolveError::InvalidDid(msg) => ProtocolError::InvalidDid(msg),
             IdentityResolveError::Serialization(msg) => ProtocolError::SerializationError(msg),
+            IdentityResolveError::Storage(msg) => ProtocolError::AuthorizationFailed(msg),
+        }
+    }
+}
+
+impl From<DidRegistryError> for IdentityResolveError {
+    fn from(e: DidRegistryError) -> Self {
+        match e {
+            // `AlreadyRevoked` and `UnknownDid` are unexpected at
+            // resolve-time (the registry returns `Ok(None)` for both);
+            // tunnel them through `Storage` so they surface as
+            // authorization-class failures.
+            DidRegistryError::AlreadyRevoked => {
+                IdentityResolveError::Storage("registry: AlreadyRevoked".to_owned())
+            }
+            DidRegistryError::UnknownDid => {
+                IdentityResolveError::Storage("registry: UnknownDid".to_owned())
+            }
+            DidRegistryError::Storage(msg) => IdentityResolveError::Storage(msg),
         }
     }
 }

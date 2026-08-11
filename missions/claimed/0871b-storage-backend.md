@@ -1,6 +1,6 @@
 # 0871b-storage-backend — DidRegistry impls + resolver-node wiring
 
-**Status:** ready-to-claim (RFC-0010 v1.3 landed commit `2ace15e9`)
+**Status:** claimed (2026-08-11); substrate + impl in flight. RFC-0010 v1.3 landed commit `2ace15e9`.
 **Substrate:** RFC-0010 v1.3 §Storage Extension (Accepted 2026-08-10)
 **Parent:** 0871b-identity-resolver-node (claimed `3b1767d6`) per
 `missions/claimed/0871b-identity-resolver-node.md`
@@ -247,7 +247,7 @@ compiles ~150 test files = 2+ min).
 
 ## Claimant
 
-@unassigned
+@mmacedoeu
 
 ## Pull Request
 

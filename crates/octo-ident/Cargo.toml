@@ -33,3 +33,9 @@ borsh = ["dep:borsh"]
 version = "=1.5.0"
 features = ["derive"]
 optional = true
+
+[dependencies.parking_lot]
+# InMemoryDidRegistry uses parking_lot::RwLock for thread-safe HashMap.
+# (Production deployments use StoolapDidRegistry in quota-router-storage;
+# parking_lot here is the test/single-process convenience impl.)
+version = "0.12"

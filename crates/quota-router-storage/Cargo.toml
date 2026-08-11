@@ -38,5 +38,11 @@ toml = "0.8"
 
 [dev-dependencies]
 tempfile = "3"
+
+[dependencies.octo-ident]
 # Mission 0010-b: test fixtures use sample_did() from octo-ident test_helpers
-octo-ident = { path = "../octo-ident" }
+# Mission 0871b-storage-backend: StoolapDidRegistry impl uses DidRegistry trait +
+# DidDocument + DidRegistryError types defined in octo-ident. Production code dep
+# (not dev-only) so consumers can construct trait objects without a dev-dep
+# opt-in.
+path = "../octo-ident"

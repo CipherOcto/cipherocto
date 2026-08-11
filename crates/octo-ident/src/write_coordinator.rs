@@ -71,6 +71,10 @@ use crate::registry::DidDocument;
 /// - validation that user-extension chains fall in the reserved range
 /// - canonical serialization for wire-form inclusion in coordinator RPCs
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "borsh",
+    derive(borsh::BorshSerialize, borsh::BorshDeserialize)
+)]
 pub struct ChainId(pub String);
 
 impl ChainId {

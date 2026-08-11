@@ -42,6 +42,14 @@ futures = "0.3"
 # Same pin as octo-protocol / quota-router-core.
 borsh = { version = "=1.5.0", features = ["derive"] }
 
+# octo-ident (Layer B). Per RFC-0862 v1.3 R12 M19 + v1.4 §Concrete Impl:
+# octo-sync consumes ChainId, DidDocument, DidWriteCoordinator (sealed),
+# canonical_hash, and VerificationMethod from octo-ident. The `borsh`
+# feature is needed for borsh-derived DidDocument serialization in WAL
+# entry payloads. Layer direction: octo-sync (Layer B-substrate) -> octo-ident
+# (Layer B). One-way; no cycle.
+octo-ident = { path = "../crates/octo-ident", features = ["borsh"] }
+
 [dev-dependencies]
 # Property-based testing (RFC-0862 §Test Vectors)
 proptest = "1.4"

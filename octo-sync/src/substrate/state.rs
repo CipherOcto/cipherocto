@@ -1,4 +1,4 @@
-//! Writer state + replay state (per RFC-0862 v1.3 §Substrate types).
+//! Writer state + writer-election sealed traits (per RFC-0862 v1.3 §Substrate types + §WriterElection Protocol).
 //!
 //! `WriterIdentity` is the lease record returned by a successful
 //! `WriterElection::acquire_writer` call. `WriterContext` is the
@@ -6,15 +6,23 @@
 //! during a lease. `ReplayState` is the 4-variant state machine tracking
 //! WAL replay progress during `replay_wal` (separate from the 7-state
 //! `WriterLifecycle` defined in RFC-0862 v1.3 §Roles and Authorities).
+//!
+//! `WriterElection` (sealed trait) + `WriterElectionForceRelinquish`
+//! (extra sealed supertrait) define the substrate trait surface. The
+//! `WriterElectionForceRelinquishSealed` marker is `pub(crate)` — only
+//! the `octo-sync` crate can implement `WriterElectionForceRelinquish`,
+//! enforcing the layer model.
 
 use std::sync::atomic::{AtomicBool, AtomicU32};
 
+use async_trait::async_trait;
 use borsh::{BorshDeserialize, BorshSerialize};
 
 use super::hlc::HlcTimestamp;
 use super::ids::ShardKey;
 use super::ids::ShardMissionId;
 use super::ids::WriterNodeId;
+use super::records::WriterElectionError;
 
 /// Writer identity returned by a successful election acquire (per RFC-0862
 /// v1.3 §WriterElection Protocol).
@@ -35,6 +43,77 @@ pub struct WriterIdentity {
     pub elected_at_hlc: HlcTimestamp,
     /// Shard key for which the writer was elected.
     pub shard_key: ShardKey,
+}
+
+/// Per-RFC-0862 v1.3 §WriterElection Protocol.
+///
+/// Sealed trait pattern: only the substrate crate (`octo-sync`)
+/// implements this. Downstream crates cannot invent parallel
+/// election surfaces (per [[cipherocto-design-principles]] §No
+/// parallel abstractions + §Stable Abstractions Principle).
+///
+/// `#[async_trait]` for dyn-compatibility (per R12 M18): the trait
+/// is consumed via `Arc<dyn WriterElection>` at the
+/// `DidWriteCoordinator` construction boundary.
+#[async_trait]
+pub trait WriterElection: sealed::WriterElectionSealed + Send + Sync {
+    /// Acquire the writer lease for `shard_key`. Implementations
+    /// block until either the lease is won or `election_timeout_ms`
+    /// elapses.
+    async fn acquire_writer(
+        &self,
+        shard_key: &ShardKey,
+        election_timeout_ms: u64,
+    ) -> Result<WriterIdentity, WriterElectionError>;
+
+    /// Relinquish the writer lease for `shard_key`. Idempotent;
+    /// returns `Ok(())` if no lease is held.
+    async fn relinquish_writer(&self, shard_key: &ShardKey) -> Result<(), WriterElectionError>;
+
+    /// Refresh the lease TTL for `shard_key`. Returns
+    /// `Err(LeaseExpired)` if the lease is no longer held.
+    async fn heartbeat(&self, shard_key: &ShardKey) -> Result<(), WriterElectionError>;
+
+    /// Read the current writer for `shard_key` without acquiring.
+    fn current_writer(
+        &self,
+        shard_key: &ShardKey,
+    ) -> Result<Option<WriterIdentity>, WriterElectionError>;
+}
+
+/// Per-RFC-0862 v1.3 §WriterElection §Force-Relinquish supertrait.
+///
+/// Sealed (per [[cipherocto-design-principles]] §No parallel
+/// abstractions): only the substrate crate can implement. The seal
+/// is exposed because it appears in the trait bound chain on
+/// `WriterElectionForceRelinquish`; external crates consume the
+/// trait via `Arc<dyn WriterElectionForceRelinquish>` but cannot
+/// add new impls.
+#[async_trait]
+pub trait WriterElectionForceRelinquish:
+    WriterElection + sealed::WriterElectionForceRelinquishSealed
+{
+    /// Force-relinquish the lease for `shard_key` via a verified
+    /// governance attestation. Used by operator-set emergency
+    /// takeover without waiting for the current lease to expire.
+    async fn force_relinquish_writer(
+        &self,
+        shard_key: &ShardKey,
+        attestation: &super::governance::GovernanceAttestation,
+        configured_operator_set: &super::ids::OperatorSet,
+        nonce_tracker: &super::governance::NonceTracker,
+    ) -> Result<(), WriterElectionError>;
+}
+
+/// Sealed trait markers (per RFC-0862 v1.3 §WriterElection Protocol).
+///
+/// `pub(crate)` so external crates cannot add new impls. The
+/// substrate crate (`octo-sync`) is the only impl author.
+pub mod sealed {
+    /// Marker for `WriterElection` impls.
+    pub trait WriterElectionSealed {}
+    /// Marker for `WriterElectionForceRelinquish` impls.
+    pub trait WriterElectionForceRelinquishSealed {}
 }
 
 /// Per-shard in-memory state maintained by the writer-election substrate

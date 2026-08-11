@@ -42,6 +42,10 @@ use thiserror::Error;
 /// delegation) are explicitly OUT of scope per RFC-0010 v1.3 and ship
 /// in a future amendment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "borsh",
+    derive(borsh::BorshSerialize, borsh::BorshDeserialize)
+)]
 pub struct DidDocument {
     /// 32-byte Ed25519 public key bound to the DID.
     pub public_key: [u8; 32],

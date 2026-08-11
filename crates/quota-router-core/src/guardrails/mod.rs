@@ -12,6 +12,8 @@
 // capability tokens).
 #![allow(clippy::disallowed_methods)]
 
+pub mod adapter;
+pub mod engine;
 pub mod registry;
 
 use serde::{Deserialize, Serialize};

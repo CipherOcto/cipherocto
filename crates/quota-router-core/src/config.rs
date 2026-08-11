@@ -610,16 +610,23 @@ fn default_prompt_cache_ttl() -> u64 {
 }
 
 /// Guardrail system configuration (RFC-0946).
+///
+/// Field names accept both the canonical (`input` / `output`) and
+/// LiteLLM-compatible aliases (`input_guardrails` / `output_guardrails`).
+/// Per RFC-0946 §Configuration: operators using LiteLLM-style YAML can
+/// drop their config in unchanged.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GuardrailConfig {
     /// Enable guardrail system (default: false)
     #[serde(default)]
     pub enabled: bool,
-    /// Global input guardrails
-    #[serde(default)]
+    /// Global input guardrails (canonical name).
+    /// Also accepts `input_guardrails` (LiteLLM-compatible alias).
+    #[serde(default, alias = "input_guardrails")]
     pub input: Vec<crate::guardrails::Guardrail>,
-    /// Global output guardrails
-    #[serde(default)]
+    /// Global output guardrails (canonical name).
+    /// Also accepts `output_guardrails` (LiteLLM-compatible alias).
+    #[serde(default, alias = "output_guardrails")]
     pub output: Vec<crate::guardrails::Guardrail>,
     /// Per-model overrides
     #[serde(default)]

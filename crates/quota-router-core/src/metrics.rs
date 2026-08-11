@@ -17,6 +17,17 @@ pub struct Metrics {
     /// Callback delivery events dropped due to a full channel (RFC-0947).
     /// Wired via `CallbackExecutor::install_dropped_counter` at startup.
     pub callback_dropped_total: IntCounter,
+    /// Guardrail decisions (RFC-0946). Counts every check (input + output).
+    /// Wired via `GuardrailEngine::record_outcome` at every check.
+    pub guardrail_checks_total: IntCounter,
+    /// Guardrail Block outcomes (RFC-0946). Increments on final Block result.
+    pub guardrail_blocks_total: IntCounter,
+    /// Guardrail execution errors (RFC-0946). Increments when a per-guardrail
+    /// execution surfaces an Internal error (distinct from Block; covers
+    /// adapter failures, regex compile errors, moderation API timeouts).
+    pub guardrail_errors_total: IntCounter,
+    /// Guardrail execution latency (RFC-0946). Histogram across all checks.
+    pub guardrail_latency_seconds: Histogram,
     registry: Registry,
 }
 
@@ -100,6 +111,35 @@ impl Metrics {
         ))
         .unwrap();
 
+        let guardrail_checks_total = IntCounter::with_opts(Opts::new(
+            "guardrail_checks_total",
+            "Total guardrail checks executed (input + output) (RFC-0946)",
+        ))
+        .unwrap();
+
+        let guardrail_blocks_total = IntCounter::with_opts(Opts::new(
+            "guardrail_blocks_total",
+            "Guardrail Block outcomes (RFC-0946)",
+        ))
+        .unwrap();
+
+        let guardrail_errors_total = IntCounter::with_opts(Opts::new(
+            "guardrail_errors_total",
+            "Guardrail execution errors (RFC-0946)",
+        ))
+        .unwrap();
+
+        let guardrail_latency_seconds = Histogram::with_opts(
+            prometheus::HistogramOpts::new(
+                "guardrail_latency_seconds",
+                "Guardrail execution latency in seconds (RFC-0946)",
+            )
+            .buckets(vec![
+                0.0001, 0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0,
+            ]),
+        )
+        .unwrap();
+
         registry.register(Box::new(requests_total.clone())).unwrap();
         registry
             .register(Box::new(request_duration.clone()))
@@ -127,6 +167,18 @@ impl Metrics {
         registry
             .register(Box::new(callback_dropped_total.clone()))
             .unwrap();
+        registry
+            .register(Box::new(guardrail_checks_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(guardrail_blocks_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(guardrail_errors_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(guardrail_latency_seconds.clone()))
+            .unwrap();
 
         Self {
             requests_total,
@@ -142,6 +194,10 @@ impl Metrics {
             cache_misses,
             precall_check_failures,
             callback_dropped_total,
+            guardrail_checks_total,
+            guardrail_blocks_total,
+            guardrail_errors_total,
+            guardrail_latency_seconds,
             registry,
         }
     }
@@ -178,6 +234,9 @@ mod tests {
         assert_eq!(metrics.precall_check_failures.get(), 0);
         assert_eq!(metrics.budget_alerts.get(), 0);
         assert_eq!(metrics.callback_dropped_total.get(), 0);
+        assert_eq!(metrics.guardrail_checks_total.get(), 0);
+        assert_eq!(metrics.guardrail_blocks_total.get(), 0);
+        assert_eq!(metrics.guardrail_errors_total.get(), 0);
     }
 
     #[test]
@@ -194,6 +253,10 @@ mod tests {
         assert!(encoded.contains("rate_limit_hits_total"));
         assert!(encoded.contains("provider_errors_total"));
         assert!(encoded.contains("callback_dropped_total"));
+        assert!(encoded.contains("guardrail_checks_total"));
+        assert!(encoded.contains("guardrail_blocks_total"));
+        assert!(encoded.contains("guardrail_errors_total"));
+        assert!(encoded.contains("guardrail_latency_seconds"));
     }
 
     #[test]

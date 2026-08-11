@@ -1169,7 +1169,7 @@ Per RFC-0008 Execution Class mapping:
 | Time | Chain depth ≤ 8 | Migration if raised | Depth cap |
 | Network | TCP heartbeat (consolidated) | Same | Same |
 | Upgrade | v1.3 WAL **breaking** (new Magic + ShardKey field + blake3); old via V2 `header_size` (v1.2.0 fails-open on unknown Magic — per R12 C1; v1.2.1+ MUST reject) | v1.2.0 silently accepts v1.3 unvalidated = corruption | Version-check + reject (mandatory v1.2.1 patch BEFORE v1.3 rollout per R12 C1) |
-| Upgrade | Cross-shard drain = undefined | Cross-shard silently fails | Document in §Out-of-scope |
+| Upgrade | Cross-shard drain = undefined | Cross-shard silently fails | Document in §Out-of-scope (per R18 M1 — section now exists below) |
 | Config | Per-instance mutex RETAINED | Coordinator handshake delayed | Per-instance mutex serializes |
 | Config | Key-share ceremony operator | Ceremony compromise | M-of-N governance (deadline: before v1.4.0) |
 | Config | `force_relinquish_writer` via sealed trait + OperatorSet + durable nonce | Substrate-level defense | Sealed trait + NonceTracker (durable) |
@@ -1300,6 +1300,17 @@ fn init_node(
 **Phase 3 — consumer wiring (follow-on missions)**
 
 **Phase 4 — Option C migration (F12/F13 amendment; v1.4 acceptance)**
+
+## Out-of-scope
+
+Per R18 M1: items deferred-out of v1.3 (NEITHER in §Specification NOR
+in §Future Work). Tracked here so cross-references from
+§Implicit Assumptions Audit resolve.
+
+- **Cross-shard drain** — `DrainCoordinator` handles single-shard
+  drains only. Cross-shard drain semantics undefined in v1.3;
+  tracked for v1.4 amendment (RFC-0862 v1.4). Until then, callers
+  MUST NOT route drain requests across shard boundaries.
 
 ## Future Work
 

@@ -28,7 +28,7 @@ Extend RFC-0009 §Capability Keys with:
 - **Termination condition:** convergence when a new round returns
   zero NEW findings.
 
-## Breaking Changes (11 items per R11 M6 — corrected language)
+## Breaking Changes (11 main items per R11 M6 — corrected language; BC#1 has 9 sub-items 1a-1i for 19 sub-items total per R18 M6)
 
 1a. **NEW: `ThresholdSigner::threshold_sign` method** (replaces
     `sign_combined`; no prior equivalent exists).
@@ -75,7 +75,9 @@ Extend RFC-0009 §Capability Keys with:
      acceptance of this RFC. Until then, this RFC's cross-ref is
      ASPIRATIONAL.
 6. **`BoundedShareVec::new` enforces m == threshold.**
-7. **`HsmAdapter::get_public_key` return type change.**
+7. **`HsmAdapter::get_public_key` return type change** (per R18 L8 —
+   from `[u8; 32]` to `Result<[u8; 32], HsmError>`; device transport
+   can fail).
 8. **`derive_capability_key` 4-param signature.**
 9. **NEW: `OperatorId` struct + `pubkey()` method** (per R15 L4 —
    OperatorId is NEW in v1.2; not present in v1.0/v1.1 substrate).
@@ -98,21 +100,22 @@ Extend RFC-0009 §Capability Keys with:
 | G5 | Cascading revocation | Cryptographic walk |
 | G6a | Root mint back-compat | v1.1 callers via `derive_capability_key_v11` shim |
 | G6b | Child mint is new | 4-param signature |
-| G7 | Migration | 3 commits per R6 H3 + atomic Phase 2 per RFC-0870 §NodeEnvelope Adoption |
+| G7 | Migration | 5 commits per R18 H1 (Commits 1-5 listed in §Implementation Phases) + atomic Phase 2 per RFC-0870 §NodeEnvelope Adoption |
 
 ## Acceptance Criteria
 
 This RFC is ready for promotion to Accepted when:
 
-1. **Phase 0+1 complete (3 commits per R6 H3):**
+1. **Phase 0+1 complete (5 commits per R18 H1):**
    - Commit 1: `ThresholdSigner::threshold_sign` NEW +
      `BoundedShareVec::new` (enforces m == threshold) +
      `ThresholdCoordinator` trait interface + Cargo deps pinned
-     in `crates/octo-wallet/Cargo.toml`.
+     in `crates/octo-wallet/Cargo.toml` + `HsmAdapter::get_public_key`
+     signature update (per R18 M4 — phase boundary matches
+     §Implementation Phases Commit 1).
    - Commit 2: `BLS12381ThresholdSigner` +
      `SchnorrThresholdSigner` impls + `Xor2Of3Signer` additive
-     field + `HsmAdapter::get_public_key` signature update +
-     `IdentityKey::sign` fail-closed when `threshold_signer`
+     field + `IdentityKey::sign` fail-closed when `threshold_signer`
      configured.
    - Commit 3: `derive_capability_key` 4-param + v11 shim +
      Phase 1 TV functions.
@@ -153,7 +156,7 @@ DischargeMacaroon` triplet to embed the full attenuation chain.
 |------|------------|-----------------|-----------|--------|
 | Identity Holder | `IdentityHolderId` | Owns IdentityKey; revokes | Persistent | This RFC v1.2 |
 | HSM | `Arc<dyn HsmAdapter>` | Persists IdentityKey | Persistent per device | RFC-0009 v1.1 |
-| IdentityKey (logical) | `IdentityKey` (v1.1 base + v1.2 additive fields) | Sign; derive capability keys | Per session | RFC-0009 v1.1 (base) + v1.2 (additive) |
+| IdentityKey (logical) | `IdentityKey` (v1.1 base + v1.2 additive fields) | Sign; derive capability keys | Persistent per device (per R18 M3 — wraps HSM via `signer: Arc<dyn HsmAdapter>`) | RFC-0009 v1.1 (base) + v1.2 (additive) |
 | Capability Issuer | `CapabilityTokenV2` (NOT CapabilityKey) carries `chain_depth` (per R11 H1) | Mint child keys | Stateless | RFC-0009 §Capability Keys |
 | Capability Holder | `CapabilityTokenV2` (NOT CapabilityKey) | Redeem | Per-capability expiry | RFC-0009 §Capability Keys |
 | Threshold Signer (object) | `BLS12381ThresholdSigner` / `SchnorrThresholdSigner` — role ID `threshold-signer` | Sign via M-of-N | Persistent per IdentityKey | `octo-wallet` §threshold (impls) + This RFC (trait) |
@@ -259,6 +262,9 @@ pub struct IdentityKey {
     pub threshold_signer: Option<Arc<dyn ThresholdSigner>>,
     /// Per R15 M3 + R16 M3: coordinator handle (Option; None = single-key only).
     pub coordinator: Option<Arc<dyn ThresholdCoordinator>>,
+    /// Per R18 L10: set on `IdentityKey::new` when `threshold_signer`
+    /// is configured but `coordinator` is None (misconfiguration);
+    /// runtime warning logged once per IdentityKey instance.
     pub warned_threshold_misconfig: AtomicBool,
 }
 
@@ -284,7 +290,17 @@ pub trait ThresholdSigner: Send + Sync {
 
     /// Per R12 M7: group PK exposed for `Authorization::ThresholdSignature`
     /// aggregated_pk_check (forward-pointed per R12 H3).
-    fn group_public_key(&self) -> [u8; 32];
+    /// Per R18 H2: sum type — BLS12-381 PK is 48 bytes (NOT 32);
+    /// FROST Ed25519 PK is 32 bytes.
+    fn group_public_key(&self) -> GroupPublicKey;
+}
+
+/// Per R18 H2: sum type for group PKs (BLS12-381 = 48 bytes,
+/// Ed25519 = 32 bytes).
+#[derive(Clone, PartialEq, Eq)]
+pub enum GroupPublicKey {
+    Bls12381([u8; 48]),
+    SchnorrEd25519([u8; 32]),
 }
 
 /// Per R11 M4: fail-closed when threshold_signer configured.
@@ -297,6 +313,34 @@ pub trait ThresholdSigner: Send + Sync {
 /// field on IdentityKey struct (not impl block; Rust forbids
 /// field decls in impl).
 impl IdentityKey {
+    /// Per R18 L10: warn-once setter for threshold misconfiguration.
+    pub fn new(
+        signer: Arc<dyn HsmAdapter>,
+        public_key: [u8; 32],
+        threshold_signer: Option<Arc<dyn ThresholdSigner>>,
+        coordinator: Option<Arc<dyn ThresholdCoordinator>>,
+    ) -> Self {
+        let warned = AtomicBool::new(false);
+        if threshold_signer.is_some() && coordinator.is_none() {
+            warned.store(true, Release);
+            tracing::warn!("IdentityKey constructed with threshold_signer but no coordinator; sign_threshold will fail");
+        }
+        Self {
+            signer,
+            public_key,
+            lifecycle: crate::lifecycle::LifecycleState::Active,
+            activated_at_unix_secs: None,
+            revoked_at_unix_secs: None,
+            revoked_proof: None,
+            successor_key: None,
+            rotation_started_at_unix_secs: None,
+            deprecated: false,
+            threshold_signer,
+            coordinator,
+            warned_threshold_misconfig: warned,
+        }
+    }
+
     pub fn sign(&self, msg: &[u8]) -> Result<ed25519_dalek::Signature, WalletError> {
         if self.threshold_signer.is_some() {
             return Err(WalletError::Hsm(HsmError::ThresholdSignerRequired));
@@ -374,6 +418,11 @@ pub fn compute_chain_parent(
 // §Future Work. RFC-0009 v1.2 cross-references the extension
 // schema; verifier MUST semantics are ASPIRATIONAL until the
 // substrate lands.
+// Per R18 M5: ThresholdSignature variant is BLS-only; FROST
+// signatures emitted via `ThresholdSigBytes::SchnorrEd25519` use
+// a separate `Authorization::FrostSignature` envelope variant
+// (also defined in RFC-0871 §Future Work). Adding the FROST
+// variant prevents coverage gap for FROST-signed envelopes.
 pub enum Authorization {
     ThresholdSignature {
         signers: Vec<WireDid>,
@@ -381,6 +430,11 @@ pub enum Authorization {
         // Forward-pointer (RFC-0871 §Future Work):
         // aggregated_pk_check: bool,
         // dkg_proof: Vec<u8>,
+    },
+    FrostSignature {
+        signers: Vec<WireDid>,
+        sig: FrostEd25519Signature,
+        group_pk: [u8; 32],
     },
     // ...
 }
@@ -429,16 +483,40 @@ pub enum ThresholdSigBytes {
 
 /// Per R11 H5: sort by FULL 32-byte slice (NOT single byte `b[0]`).
 /// Class A determinism requires total order.
+/// Per R18 L7: mixed-scheme aggregation fails closed (returns
+/// `Ordering::Greater` to push mixed schemes to end + signals
+/// caller via separate `validate_shares_scheme` precondition
+/// check).
 pub fn sort_shares_for_aggregation(shares: &mut [ThresholdShare]) {
     shares.sort_by(|a, b| {
         let (a_bytes, b_bytes) = match (a, b) {
             (ThresholdShare::Bls12381(a), ThresholdShare::Bls12381(b)) => (a, b),
             (ThresholdShare::SchnorrEd25519(a), ThresholdShare::SchnorrEd25519(b)) => (a, b),
-            _ => return std::cmp::Ordering::Equal,  // mixed-scheme: don't aggregate
+            _ => return std::cmp::Ordering::Greater,  // mixed-scheme: fail-closed sort
         };
         a_bytes.cmp(b_bytes)
     });
 }
+
+/// Per R18 L7: separate precondition check that rejects mixed
+/// schemes before sort + aggregate.
+pub fn validate_shares_scheme(shares: &[ThresholdShare]) -> Result<(), ThresholdError> {
+    if shares.is_empty() { return Err(ThresholdError::InvalidShareCount { actual: 0, max: MAX_M }); }
+    let first = match shares[0] {
+        ThresholdShare::Bls12381(_) => Scheme::Bls12381,
+        ThresholdShare::SchnorrEd25519(_) => Scheme::SchnorrEd25519,
+    };
+    for s in &shares[1..] {
+        let s_scheme = match s {
+            ThresholdShare::Bls12381(_) => Scheme::Bls12381,
+            ThresholdShare::SchnorrEd25519(_) => Scheme::SchnorrEd25519,
+        };
+        if s_scheme != first { return Err(ThresholdError::MixedSchemes); }
+    }
+    Ok(())
+}
+
+enum Scheme { Bls12381, SchnorrEd25519 }
 ```
 
 **Cargo deps pinned exact** in `crates/octo-wallet/Cargo.toml`
@@ -493,8 +571,8 @@ Per RFC-0008 Execution Class mapping:
 | Network | Threshold coordinator timeout | Coordinator failure stalls | Timeout (default 30s) + retry |
 | Upgrade | v1.1 → v1.2 capability keys valid | v1.1 wallets reject `v2/child/` | Info-string discriminator check |
 | Config | `parent_cap_key` default `None` | Forgetting = security regression | `derive_capability_key_v11` shim + Clippy lint |
-| Identity | BLS threshold master key independent from Ed25519 | Cross-scheme confusion | Per-scheme key generation |
-| Identity | FROST Ed25519 threshold master key independent | Same | Per-scheme key generation |
+| Identity | BLS threshold master key independent from Ed25519 | Cross-scheme confusion | Per-scheme key generation (RFC-0853 §F3 — key-separation ceremony contract per R18 L9) |
+| Identity | FROST Ed25519 threshold master key independent | Same | Per-scheme key generation (RFC-0853 §F3 — key-separation ceremony contract per R18 L9) |
 | Identity | `chain_parent` bound via `blake3(parent || child || depth)` | Spoofing | `verify_chain_parent` predicate (per R11 C2 — binds child too) |
 | Identity | **M of N holders mutually distrusting AND evictable by Identity Holder** | Collusion attack | Governance + economic stake (RFC-0853 §F3 per R11 L2) |
 | Storage | M shares persist on ShareHolder devices | Host memory compromise | HSM-internal share persistence |

@@ -967,11 +967,39 @@ where
         return result;
     }
 
-    // /health and /ready — simple health checks
-    if path == "/health" || path == "/ready" {
+    // /health and /ready — simple health checks (legacy)
+    if path == "/health" {
         let resp = Response::builder()
             .status(StatusCode::OK)
             .body(SseBody::from_string(r#"{"status":"ok"}"#.to_string()))
+            .unwrap();
+        return Ok(resp);
+    }
+    if path == "/ready" {
+        let resp = Response::builder()
+            .status(StatusCode::OK)
+            .body(SseBody::from_string(r#"{"status":"ok"}"#.to_string()))
+            .unwrap();
+        return Ok(resp);
+    }
+
+    // /healthz and /healthz/ready — K8s-compatible health probes (RFC-0905)
+    if path == "/healthz" || path == "/healthz/ready" {
+        // HealthHandler is a synchronous handler; spawn it directly.
+        let handler = crate::health::HealthHandler::new(std::sync::Arc::new(
+            crate::health::DefaultDependencyChecker,
+        ));
+        let (status, body) = if path == "/healthz" {
+            handler.handle_liveness()
+        } else {
+            handler.handle_readiness()
+        };
+        let status_code = StatusCode::from_u16(status)
+            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        let resp = Response::builder()
+            .status(status_code)
+            .header("content-type", "application/json")
+            .body(SseBody::from_string(body))
             .unwrap();
         return Ok(resp);
     }
@@ -3895,6 +3923,79 @@ mod tests {
         .await
         .unwrap();
 
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_handle_request_healthz_liveness() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let dispatch_map = Arc::new(HashMap::new());
+
+        let req = Request::builder()
+            .uri("/healthz")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get("content-type")
+                .map(|v| v.to_str().unwrap_or("")),
+            Some("application/json")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_request_healthz_ready_ok() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let dispatch_map = Arc::new(HashMap::new());
+
+        let req = Request::builder()
+            .uri("/healthz/ready")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        // DefaultDependencyChecker returns Ok for all checks → 200 OK.
         assert_eq!(resp.status(), StatusCode::OK);
     }
 

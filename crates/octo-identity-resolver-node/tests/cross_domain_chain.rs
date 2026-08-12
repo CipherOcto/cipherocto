@@ -68,8 +68,8 @@ fn register_custom(registry: &Arc<InMemoryDidRegistry>, seed: u8, pubkey: [u8; 3
 }
 
 /// TV-1 chain_single_hop_resolves — chain = [hop A]; target at local.
-#[test]
-fn chain_single_hop_resolves() {
+#[tokio::test]
+async fn chain_single_hop_resolves() {
     let registry = Arc::new(InMemoryDidRegistry::default());
     let custom_pubkey = [0xCCu8; 32];
     register_custom(&registry, 11, custom_pubkey);
@@ -84,6 +84,7 @@ fn chain_single_hop_resolves() {
     };
     let out = handler
         .handle(&req, [0u8; 32])
+        .await
         .expect("chain resolve succeeds");
     let payload = out.response_payload.expect("response payload");
     let resp: octo_identity_resolver_node::ChainResolveResponse =
@@ -101,8 +102,8 @@ fn chain_single_hop_resolves() {
 /// single `InMemoryDidRegistry` (NOT 3 remote nodes; cross-node TV is
 /// deferred to `0871b-cross-node-forwarding`). Target at the local
 /// registry. All hops valid canonical DIDs.
-#[test]
-fn chain_three_hops_resolves_end_to_end() {
+#[tokio::test]
+async fn chain_three_hops_resolves_end_to_end() {
     let registry = Arc::new(InMemoryDidRegistry::default());
     let custom_pubkey = [0xDDu8; 32];
     register_custom(&registry, 33, custom_pubkey);
@@ -121,6 +122,7 @@ fn chain_three_hops_resolves_end_to_end() {
     };
     let out = handler
         .handle(&req, [0u8; 32])
+        .await
         .expect("3-hop chain resolves");
     let payload = out.response_payload.expect("response payload");
     let resp: octo_identity_resolver_node::ChainResolveResponse =
@@ -135,8 +137,8 @@ fn chain_three_hops_resolves_end_to_end() {
 /// `saturating_sub(5, 10) = 0` trips `ChainTtlExpired` immediately on
 /// hop 0 (NOT "hop 2" as the previous comment stated; off-by-one).
 /// 3 hops × 10 ms would require TTL ≥ 30 ms.
-#[test]
-fn chain_ttl_expiry_returns_error() {
+#[tokio::test]
+async fn chain_ttl_expiry_returns_error() {
     let registry = Arc::new(InMemoryDidRegistry::default());
     let handler = ResolveChainHandler::new_local(registry);
     let target = canonical_did(44);
@@ -152,7 +154,7 @@ fn chain_ttl_expiry_returns_error() {
         hops,
         ttl_remaining_ms: HOP_LATENCY_MS_ESTIMATE - 5,
     };
-    let err = handler.handle(&req, [0u8; 32]).unwrap_err();
+    let err = handler.handle(&req, [0u8; 32]).await.unwrap_err();
     assert!(matches!(
         err,
         octo_identity_resolver_node::IdentityResolveError::ChainTtlExpired
@@ -162,8 +164,8 @@ fn chain_ttl_expiry_returns_error() {
 /// TV-4 chain_cycle_detection_aborts — hop visits a DID that is also
 /// the target. The `visited` set is seeded with `target`, so the first
 /// hop whose `hop_did` equals the target trips cycle detection.
-#[test]
-fn chain_cycle_detection_aborts() {
+#[tokio::test]
+async fn chain_cycle_detection_aborts() {
     let registry = Arc::new(InMemoryDidRegistry::default());
     let handler = ResolveChainHandler::new_local(registry);
     let target = canonical_did(55);
@@ -177,7 +179,7 @@ fn chain_cycle_detection_aborts() {
         hops,
         ttl_remaining_ms: 1_000,
     };
-    let err = handler.handle(&req, [0u8; 32]).unwrap_err();
+    let err = handler.handle(&req, [0u8; 32]).await.unwrap_err();
     assert!(matches!(
         err,
         octo_identity_resolver_node::IdentityResolveError::ChainCycle
@@ -186,8 +188,8 @@ fn chain_cycle_detection_aborts() {
 
 /// TV-5 chain_invalid_hop_rejected — non-canonical hop DID rejected
 /// before any registry I/O.
-#[test]
-fn chain_invalid_hop_rejected() {
+#[tokio::test]
+async fn chain_invalid_hop_rejected() {
     let registry = Arc::new(InMemoryDidRegistry::default());
     let handler = ResolveChainHandler::new_local(registry);
     let target = canonical_did(66);
@@ -200,7 +202,7 @@ fn chain_invalid_hop_rejected() {
         hops,
         ttl_remaining_ms: 1_000,
     };
-    let err = handler.handle(&req, [0u8; 32]).unwrap_err();
+    let err = handler.handle(&req, [0u8; 32]).await.unwrap_err();
     assert!(matches!(
         err,
         octo_identity_resolver_node::IdentityResolveError::InvalidDid(_)
@@ -211,8 +213,8 @@ fn chain_invalid_hop_rejected() {
 /// hop, returns `ChainTtlExpired` on hop 2. Documents the boundary
 /// behavior (`saturating_sub` clamps to zero; the `== 0` check trips
 /// after the subtraction).
-#[test]
-fn chain_ttl_exactly_one_hop_succeeds() {
+#[tokio::test]
+async fn chain_ttl_exactly_one_hop_succeeds() {
     let registry = Arc::new(InMemoryDidRegistry::default());
     let custom_pubkey = [0xEEu8; 32];
     register_custom(&registry, 77, custom_pubkey);
@@ -226,7 +228,7 @@ fn chain_ttl_exactly_one_hop_succeeds() {
         hops: vec![ResolverHop::local(canonical_did(1))],
         ttl_remaining_ms: HOP_LATENCY_MS_ESTIMATE,
     };
-    let err = handler.handle(&req, [0u8; 32]).unwrap_err();
+    let err = handler.handle(&req, [0u8; 32]).await.unwrap_err();
     assert!(matches!(
         err,
         octo_identity_resolver_node::IdentityResolveError::ChainTtlExpired
@@ -235,8 +237,8 @@ fn chain_ttl_exactly_one_hop_succeeds() {
 
 /// Bonus TV: empty hops list is equivalent to IDENTITY_RESOLVE — target
 /// resolves locally without walking any hops.
-#[test]
-fn chain_empty_hops_resolves_locally() {
+#[tokio::test]
+async fn chain_empty_hops_resolves_locally() {
     let registry = Arc::new(InMemoryDidRegistry::default());
     let custom_pubkey = [0xFFu8; 32];
     register_custom(&registry, 88, custom_pubkey);
@@ -250,6 +252,7 @@ fn chain_empty_hops_resolves_locally() {
     };
     let out = handler
         .handle(&req, [0u8; 32])
+        .await
         .expect("empty chain resolves");
     let payload = out.response_payload.expect("response payload");
     let resp: octo_identity_resolver_node::ChainResolveResponse =

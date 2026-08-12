@@ -1,52 +1,57 @@
 //! `IDENTITY_RESOLVE_CHAIN` handler (RFC-0871 §Future Work +
-//! RFC-0010 v1.3 §Storage Extension, mission
-//! 0871b-cross-domain-resolution-impl).
+//! RFC-0010 v1.3 §Storage Extension, missions
+//! `0871b-cross-domain-resolution-impl` + `0871b-cross-node-forwarding`).
 //!
 //! Receives: `<target: String, hops: Vec<ResolverHop>, ttl_remaining_ms: u64>`
 //! — a canonical DID lookup target + an ordered list of intermediate
 //! resolver hops + a per-chain TTL budget.
-//! Returns: `<canonical_did: String, public_key: [u8; 32], hops_traversed: u8>`
-//! — the canonical DID wire form + the resolved storage-pubkey form +
-//! the number of hops the chain walked before reaching the terminal
-//! registry.
+//! Returns: 5-tuple `(canonical_did: String, public_key: [u8; 32],
+//! hops_traversed: u8, signature_chain: Vec<HopSignature>,
+//! envelope_id: [u8; 32])` per mission `0871b-cross-node-forwarding`,
+//! following RFC-0871 §Algorithms step 2 `envelope_id` semantics.
 //!
-//! # Mission 0871b-cross-domain-resolution-impl scope
+//! # Mission 0871b-cross-domain-resolution-impl scope (LOGIC substrate)
 //!
 //! This handler implements the chain-traversal LOGIC substrate:
 //!
+//! 0. Entry-point bounds (round-1 review): reject
+//!    `ttl_remaining_ms > MAX_CHAIN_TTL_MS` as `ChainTtlTooLarge` (DoS
+//!    defense against `u64::MAX` TTL bypass) and
+//!    `hops.len() > MAX_CHAIN_HOPS` as `ChainTooLong` (silent u8-cap
+//!    smell — `hops_traversed: u8` cannot represent larger chains).
 //! 1. Target DID validation via `CanonicalCodec::parse(s, false)`
 //!    (rejects legacy bare form per RFC-0010 v1.2 F4).
 //! 2. `ResolverChainContext` initialization: `visited` set seeded with
-//!    the target DID; `ttl_remaining_ms` from the request.
-//! 3. Hop iteration: each hop
-//!    - checks `visited.insert(hop.hop_did)` (cycle detection; abort
-//!      `ChainCycle` on collision)
-//!    - decrements `ttl_remaining_ms` by `HOP_LATENCY_MS_ESTIMATE` (10 ms
-//!      conservative default; abort `ChainTtlExpired` on underflow)
-//!    - validates `hop.hop_did` canonical shape (defense-in-depth;
-//!      reject `InvalidDid` for malformed hops)
-//! 4. Terminal registry call: walks the local `DidRegistry::resolve`
-//!    with `target_raw.hash`. Returns `Storage("unknown DID")` for
-//!    unregistered / revoked targets (fail-closed; matches the
-//!    `ResolveHandler` posture).
+//!    the canonical (post-parse) target wire form; `ttl_remaining_ms`
+//!    from the request.
+//! 3. Hop iteration (round-1 review: canonicalize FIRST):
+//!    - canonicalize `hop.hop_did` via `CanonicalCodec::parse` (reject
+//!      `InvalidDid` for malformed hops — NO state consumed on failure)
+//!    - `visited.insert(canonical_hop_did)` → `ChainCycle` on collision
+//!    - `ttl_remaining_ms = ttl_remaining_ms.saturating_sub(HOP_LATENCY_MS_ESTIMATE)`
+//!      → `ChainTtlExpired` on underflow to zero
+//! 4. Backend delegation: `self.backend.resolve_via(terminal_hop_did,
+//!    target_raw, &ctx).await` — `LocalResolverBackend` calls the local
+//!    `DidRegistry::resolve`; `RemoteResolverBackend` will perform
+//!    network I/O (once mission `0870k-transport-request-response`
+//!    lands). Returns `Storage("unknown DID")` for unregistered /
+//!    revoked targets (fail-closed; matches the `ResolveHandler`
+//!    posture).
 //!
 //! # Cross-node forwarding
 //!
-//! Mission `0871b-cross-node-forwarding` introduces the
+//! Mission `0871b-cross-node-forwarding` introduces the async
 //! `ResolverBackend` trait so the chain walk can intercept
-//! cross-network hops. The `LocalResolverBackend` wrapper preserves
-//! the in-process behavior (no cross-network I/O, no signing). The
-//! `RemoteResolverBackend` stub (in `octo-identity-resolver-node/src/backend.rs`)
-//! produces `IdentityResolveError::Unsupported` for every hop so the
-//! chain handler fails closed before the request/response substrate
-//! (mission `0870k-transport-request-response`) lands. Once that
-//! substrate ships, `RemoteResolverBackend::resolve_via` will issue
-//! real `IDENTITY_RESOLVE_CHAIN` envelopes per hop.
+//! cross-network hops. `LocalResolverBackend` wraps
+//! `DidRegistry::resolve`; `RemoteResolverBackend` (in
+//! `octo-identity-resolver-node/src/backend.rs`) returns
+//! `IdentityResolveError::Unsupported` until the request/response
+//! substrate (mission `0870k-transport-request-response`) lands.
 //!
 //! # Layer discipline
 //!
 //! Per [[cipherocto-design-principles]]:
-//! - `octo-protocol` (Layer A) — `IDENTITY_RESOLVE_CHAIN` payload kind UUID.
+//! - `octo-protocol` (Layer A) — `IDENTITY_RESOLVE_CHAIN` payload kind UUID + `HopSignature`.
 //! - `octo-ident` (Layer B) — `DidRegistry` trait (UNCHANGED).
 //! - `octo-identity-resolver-node` (Layer C) — handler + chain types
 //!   (extension-shaped; no modification to existing handlers).
@@ -54,6 +59,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use borsh::{BorshDeserialize, BorshSerialize};
 use octo_ident::{DidCodec, DidRegistry};
 use octo_protocol::HopSignature;
@@ -62,20 +68,30 @@ use super::{HandlerOutput, IdentityResolveError};
 
 /// Per-hop latency estimate subtracted from `ttl_remaining_ms`.
 ///
-/// Conservative default of 10 ms per hop — keeps the chain bounded even
-/// when individual hop latencies are not measured. A future mission
-/// that introduces a real request/response substrate will replace this
-/// with measured per-hop latency.
+/// Optimistic default of 10 ms per hop — keeps the chain bounded even
+/// when individual hop latencies are not measured. Real cross-network
+/// hops (50–200 ms RTT) will exceed this; the bound is loose enough
+/// that any practical chain stays well under `MAX_CHAIN_TTL_MS`. A
+/// future mission that introduces a real request/response substrate
+/// will replace this with measured per-hop latency.
 pub const HOP_LATENCY_MS_ESTIMATE: u64 = 10;
 
 /// Maximum `ttl_remaining_ms` value accepted at `handle()` entry.
 ///
 /// Defense against denial-of-service via `u64::MAX` TTL that would
-/// bypass per-hop TTL depletion. Set to 60 seconds — generous for any
-/// plausible cross-domain resolution chain (a 60 hop × 10 ms = 600 ms
-/// target with the rest reserved for `IDENTITY_RESOLVE_CHAIN` envelope
-/// transport + verification overhead).
+/// bypass per-hop TTL depletion. Set to 60 seconds — 6_000 hops at
+/// the optimistic 10 ms estimate, plus ample reserve for
+/// `IDENTITY_RESOLVE_CHAIN` envelope transport + verification
+/// overhead.
 pub const MAX_CHAIN_TTL_MS: u64 = 60_000;
+
+/// Maximum `hops.len()` accepted at `handle()` entry.
+///
+/// Wire-format invariant bound: `ChainResolveResponse.hops_traversed`
+/// is `u8`, so chains above `u8::MAX` hops cannot be faithfully
+/// represented in the response. Rejected as `ChainTooLong` rather
+/// than silently capped.
+pub const MAX_CHAIN_HOPS: usize = u8::MAX as usize;
 
 /// A single intermediate resolver hop in a chain resolution request.
 ///
@@ -194,7 +210,13 @@ pub struct ChainResolveResponse {
     pub signature_chain: Vec<HopSignature>,
     /// `envelope_id` of the originating `IDENTITY_RESOLVE_CHAIN`
     /// envelope (RFC-0871 §Algorithms step 2). Replay defense + request
-    /// correlation.
+    /// correlation. The handler threads this through from the dispatch
+    /// site but does NOT verify the value — the caller MUST supply the
+    /// genuine BLAKE3-256 envelope_id; passing `[0u8; 32]` silently
+    /// would defeat replay defense.
+    ///
+    /// Wire form: borsh `(canonical_did, public_key, hops_traversed,
+    /// signature_chain, envelope_id)` (5-tuple).
     pub envelope_id: [u8; 32],
 }
 
@@ -237,8 +259,14 @@ impl ResolveChainHandler {
     /// Walk the resolver chain.
     ///
     /// # Errors
+    /// - `IdentityResolveError::ChainTtlTooLarge` if `ttl_remaining_ms`
+    ///   exceeds `MAX_CHAIN_TTL_MS` (entry-point DoS bound).
+    /// - `IdentityResolveError::ChainTooLong` if `hops.len()` exceeds
+    ///   `MAX_CHAIN_HOPS` (entry-point wire-format bound).
     /// - `IdentityResolveError::InvalidDid` if `target` or any hop is
-    ///   not a canonical DID shape (legacy bare form rejected).
+    ///   not a canonical DID shape (legacy bare form rejected; NO state
+    ///   consumed on failure — canonicalization happens BEFORE cycle
+    ///   insert / TTL decrement).
     /// - `IdentityResolveError::ChainCycle` if any hop revisits a
     ///   previously-visited canonical DID.
     /// - `IdentityResolveError::ChainTtlExpired` if the TTL budget
@@ -249,7 +277,7 @@ impl ResolveChainHandler {
     /// RFC-0871 correlation key (BLAKE3-256 of the unsigned envelope)
     /// threaded in from the dispatch site so the response can bind
     /// back to the originating request envelope (replay defense).
-    pub fn handle(
+    pub async fn handle(
         &self,
         req: &ChainResolveRequest,
         envelope_id: [u8; 32],
@@ -259,8 +287,9 @@ impl ResolveChainHandler {
         if req.ttl_remaining_ms > MAX_CHAIN_TTL_MS {
             return Err(IdentityResolveError::ChainTtlTooLarge(req.ttl_remaining_ms));
         }
-        // 0b. Bound hop count (silent u8::MAX capping is a smell).
-        if req.hops.len() > u8::MAX as usize {
+        // 0b. Bound hop count (silent u8-cap smell — wire-format
+        //     `hops_traversed: u8` cannot represent larger chains).
+        if req.hops.len() > MAX_CHAIN_HOPS {
             return Err(IdentityResolveError::ChainTooLong(req.hops.len()));
         }
 
@@ -270,59 +299,53 @@ impl ResolveChainHandler {
         let target_raw = octo_ident::CanonicalCodec::wire_to_raw(&target_wire)
             .map_err(|e| IdentityResolveError::InvalidDid(e.to_string()))?;
 
-        // 2. Initialize chain context. Seed `visited` with the target
-        //    so a hop that re-uses the target DID triggers cycle detection.
+        // 2. Initialize chain context. Seed `visited` with the
+        //    post-parse canonical target wire form so a hop that re-uses
+        //    the target DID triggers cycle detection (regardless of the
+        //    input wire form the caller used).
         let mut ctx = ResolverChainContext {
             visited: BTreeSet::from([target_wire.as_str().to_owned()]),
             ttl_remaining_ms: req.ttl_remaining_ms,
         };
 
         // 3. Walk the hop chain. Each hop:
-        //    - validate hop canonical DID shape FIRST (defense-in-depth;
-        //      a malformed hop must not consume cycle/TTL state)
-        //    - check visited.insert(canonical_hop_did) → ChainCycle
+        //    - canonicalize hop DID FIRST (NO state consumed on failure —
+        //      a malformed hop must not leave half-walked state)
+        //    - visited.insert(canonical_hop_did) → ChainCycle
         //    - decrement ttl_remaining_ms → ChainTtlExpired on underflow
+        //    - capture canonical form for the terminal-hop handoff
+        let mut terminal_hop_canonical: String = target_wire.as_str().to_owned();
         for hop in &req.hops {
-            // Canonicalize hop DID for both validation and cycle check;
-            // the visited set must compare CANONICAL forms so the
-            // caller cannot bypass cycle detection with a non-canonical
-            // duplicate of an already-visited DID.
             let hop_wire = octo_ident::CanonicalCodec::parse(&hop.hop_did, false)
                 .map_err(|e| IdentityResolveError::InvalidDid(e.to_string()))?;
             let hop_canonical = hop_wire.as_str().to_owned();
-            if !ctx.visited.insert(hop_canonical) {
+            if !ctx.visited.insert(hop_canonical.clone()) {
                 return Err(IdentityResolveError::ChainCycle);
             }
             ctx.ttl_remaining_ms = ctx.ttl_remaining_ms.saturating_sub(HOP_LATENCY_MS_ESTIMATE);
             if ctx.ttl_remaining_ms == 0 {
                 return Err(IdentityResolveError::ChainTtlExpired);
             }
+            terminal_hop_canonical = hop_canonical;
         }
 
-        // 4. After walking all hops, delegate to the injected
-        //    `ResolverBackend`. The local backend calls
-        //    `DidRegistry::resolve`; a remote backend will perform
-        //    network I/O (once the request/response substrate lands).
+        // 4. Delegate to the injected `ResolverBackend`. The local
+        //    backend calls `DidRegistry::resolve`; a remote backend
+        //    will perform network I/O (once the request/response
+        //    substrate lands).
         //
-        //    Contract: when `req.hops` is empty, `hop_did` is the
-        //    canonical target wire form (informational only —
-        //    `LocalResolverBackend` ignores it; a future
-        //    `RemoteResolverBackend` MUST resolve `target` regardless).
-        //    When `req.hops` is non-empty, `hop_did` is the canonical
-        //    form of the last hop and the remote backend will use it
-        //    as the next-hop envelope recipient.
-        let terminal_hop_did = req
-            .hops
-            .last()
-            .map(|last| {
-                octo_ident::CanonicalCodec::parse(&last.hop_did, false)
-                    .map(|w| w.as_str().to_owned())
-                    .unwrap_or_else(|_| last.hop_did.clone())
-            })
-            .unwrap_or_else(|| target_wire.as_str().to_owned());
+        //    `terminal_hop_canonical`:
+        //    - `target_wire` when `req.hops` is empty (direct local
+        //      resolve — backend may ignore)
+        //    - canonical form of the LAST successful hop when non-empty
+        //      (next-hop envelope recipient for a remote backend)
+        //
+        //    `target_raw` is the canonical-form-decoded target the
+        //    terminal registry resolves against.
         let resp = self
             .backend
-            .resolve_via(&terminal_hop_did, &target_raw, &ctx)?;
+            .resolve_via(&terminal_hop_canonical, &target_raw, &ctx)
+            .await?;
 
         // 5. Assemble the 5-tuple response (mission
         //    `0871b-cross-node-forwarding` T5). `LocalResolverBackend`
@@ -335,7 +358,7 @@ impl ResolveChainHandler {
             canonical_did: target_wire.as_str().to_owned(),
             public_key: resp.public_key,
             hops_traversed: u8::try_from(req.hops.len())
-                .expect("hops.len() bounded <= u8::MAX at handle() entry"),
+                .expect("hops.len() bounded <= MAX_CHAIN_HOPS at handle() entry"),
             signature_chain: resp.signature_chain,
             envelope_id,
         };
@@ -376,18 +399,28 @@ pub struct BackendResolveOutcome {
 /// resolver chain. `ResolveChainHandler` consults this trait instead of
 /// `DidRegistry` directly so cross-node hops can be intercepted.
 ///
-/// Sync trait (not `async_trait`): `LocalResolverBackend` is sync (local
-/// `DidRegistry::resolve` is sync). When mission `0870k-transport-
-/// request-response` lands the request/response substrate, a sync
-/// `RemoteResolverBackend` will be implemented against it (or the
-/// trait will become async — deferred until the substrate exists).
+/// Async trait (`#[async_trait]`): `LocalResolverBackend::resolve_via`
+/// is sync internally but the trait signature is `async` so the wire
+/// stays stable when mission `0870k-transport-request-response` lands
+/// the request/response substrate + a real `RemoteResolverBackend` does
+/// network I/O. Adopting `async` from day-1 avoids a breaking trait
+/// signature change mid-substrate (Open/Closed: the trait is closed
+/// for modification once it ships).
+#[async_trait]
 pub trait ResolverBackend: Send + Sync {
     /// Resolve `target` at the hop identified by `hop_did`. `chain_ctx`
-    /// carries the visited set + remaining TTL so the backend can
-    /// participate in cycle detection (defensive: the handler has
-    /// already enforced this, but a remote backend may need the
-    /// context to apply chain_hash / signature preimage).
-    fn resolve_via(
+    /// is borrowed IMMUTABLY — the backend may inspect the visited set
+    /// + remaining TTL (e.g. for chain_hash preimage construction) but
+    /// MUST NOT mutate them. The handler has already enforced cycle
+    /// detection + TTL bounds before this call; a remote backend's
+    /// chain_hash / signature preimage construction (RFC-0970 §Data
+    /// Structures) reads from this context but does not extend it.
+    ///
+    /// Future extension: when `0870k-transport-request-response` lands,
+    /// this signature gains a `chain_hash: [u8; 32]` parameter (passed
+    /// by the handler from its internal accumulator). The
+    /// `&ResolverChainContext` borrow stays immutable.
+    async fn resolve_via(
         &self,
         hop_did: &str,
         target: &octo_ident::RawDid,
@@ -400,8 +433,9 @@ pub trait ResolverBackend: Send + Sync {
 /// behavior (no cross-network I/O, no signing).
 pub struct LocalResolverBackend(pub Arc<dyn DidRegistry>);
 
+#[async_trait]
 impl ResolverBackend for LocalResolverBackend {
-    fn resolve_via(
+    async fn resolve_via(
         &self,
         _hop_did: &str,
         target: &octo_ident::RawDid,
@@ -478,8 +512,8 @@ mod tests {
         assert_eq!(back, resp);
     }
 
-    #[test]
-    fn handle_empty_hops_chain_resolves_locally() {
+    #[tokio::test]
+    async fn handle_empty_hops_chain_resolves_locally() {
         let registry = Arc::new(InMemoryDidRegistry::default());
         let target_pk = sample_did_bytes(11);
         let target_raw = octo_ident::CanonicalCodec::mint(&target_pk);
@@ -500,7 +534,7 @@ mod tests {
             hops: vec![],
             ttl_remaining_ms: 100,
         };
-        let out = handler.handle(&req, [0u8; 32]).unwrap();
+        let out = handler.handle(&req, [0u8; 32]).await.unwrap();
         let payload = out.response_payload.unwrap();
         let resp: ChainResolveResponse = borsh::from_slice(&payload).unwrap();
         assert_eq!(resp.canonical_did, sample_did_str(11));
@@ -509,8 +543,8 @@ mod tests {
         assert_eq!(resp.envelope_id, [0u8; 32]);
     }
 
-    #[test]
-    fn handle_rejects_invalid_target_did() {
+    #[tokio::test]
+    async fn handle_rejects_invalid_target_did() {
         let registry = Arc::new(InMemoryDidRegistry::default());
         let handler = ResolveChainHandler::new_local(registry);
         let req = ChainResolveRequest {
@@ -518,12 +552,12 @@ mod tests {
             hops: vec![],
             ttl_remaining_ms: 100,
         };
-        let err = handler.handle(&req, [0u8; 32]).unwrap_err();
+        let err = handler.handle(&req, [0u8; 32]).await.unwrap_err();
         assert!(matches!(err, IdentityResolveError::InvalidDid(_)));
     }
 
-    #[test]
-    fn handle_rejects_legacy_bare_target() {
+    #[tokio::test]
+    async fn handle_rejects_legacy_bare_target() {
         let registry = Arc::new(InMemoryDidRegistry::default());
         let handler = ResolveChainHandler::new_local(registry);
         let legacy = "did:octo:babcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwxyz2345";
@@ -532,7 +566,7 @@ mod tests {
             hops: vec![],
             ttl_remaining_ms: 100,
         };
-        let err = handler.handle(&req, [0u8; 32]).unwrap_err();
+        let err = handler.handle(&req, [0u8; 32]).await.unwrap_err();
         assert!(matches!(err, IdentityResolveError::InvalidDid(_)));
     }
 
@@ -560,8 +594,8 @@ mod tests {
     /// AC-10: `ResolveChainHandler` consults the injected backend.
     /// Construct with `new(backend)`; a `SpyBackend` records whether
     /// `resolve_via` was called.
-    #[test]
-    fn chain_handler_uses_injected_backend() {
+    #[tokio::test]
+    async fn chain_handler_uses_injected_backend() {
         let registry = Arc::new(InMemoryDidRegistry::default());
         let target_pk = sample_did_bytes(11);
         let target_raw = octo_ident::CanonicalCodec::mint(&target_pk);
@@ -583,7 +617,10 @@ mod tests {
             hops: vec![],
             ttl_remaining_ms: 100,
         };
-        let out = handler.handle(&req, [0u8; 32]).expect("spy delegates");
+        let out = handler
+            .handle(&req, [0u8; 32])
+            .await
+            .expect("spy delegates");
         assert_eq!(spy.calls(), 1, "backend consulted exactly once");
         let payload = out.response_payload.unwrap();
         let resp: ChainResolveResponse = borsh::from_slice(&payload).unwrap();
@@ -617,8 +654,8 @@ mod tests {
     /// AC-12: handler propagates `envelope_id` into the response's
     /// 5-tuple `envelope_id` field (RFC-0871 correlation key,
     /// replay defense).
-    #[test]
-    fn chain_handler_propagates_envelope_id() {
+    #[tokio::test]
+    async fn chain_handler_propagates_envelope_id() {
         let registry = Arc::new(InMemoryDidRegistry::default());
         let target_pk = sample_did_bytes(11);
         let target_raw = octo_ident::CanonicalCodec::mint(&target_pk);
@@ -639,7 +676,10 @@ mod tests {
             hops: vec![],
             ttl_remaining_ms: 100,
         };
-        let out = handler.handle(&req, envelope_id).expect("local resolves");
+        let out = handler
+            .handle(&req, envelope_id)
+            .await
+            .expect("local resolves");
         let payload = out.response_payload.unwrap();
         let resp: ChainResolveResponse = borsh::from_slice(&payload).unwrap();
         assert_eq!(resp.envelope_id, envelope_id);
@@ -654,19 +694,22 @@ mod tests {
             Self(inner, std::sync::atomic::AtomicUsize::new(0))
         }
         fn calls(&self) -> usize {
-            self.1.load(std::sync::atomic::Ordering::SeqCst)
+            // Relaxed is sufficient for a monotonic test counter
+            // (canonical Rust idiom per [[cargo-fmt-workflow]] style).
+            self.1.load(std::sync::atomic::Ordering::Relaxed)
         }
     }
 
+    #[async_trait]
     impl ResolverBackend for SpyBackend {
-        fn resolve_via(
+        async fn resolve_via(
             &self,
             hop_did: &str,
             target: &octo_ident::RawDid,
             chain_ctx: &ResolverChainContext,
         ) -> Result<BackendResolveOutcome, IdentityResolveError> {
-            self.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            self.0.resolve_via(hop_did, target, chain_ctx)
+            self.1.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.0.resolve_via(hop_did, target, chain_ctx).await
         }
     }
 }

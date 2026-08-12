@@ -23,6 +23,8 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
+
 use crate::handlers::{
     chain::{BackendResolveOutcome, ResolverBackend, ResolverChainContext},
     IdentityResolveError,
@@ -33,9 +35,9 @@ use crate::handlers::{
 ///
 /// `resolve_via` returns `IdentityResolveError::Unsupported` for every
 /// hop. The chain handler aborts on the first cross-network hop,
-/// preventing silent local-only resolution when an operator mistakenly
-/// configures `IdentityResolverNodeConfig` for cross-node mode before
-/// mission `0870k-transport-request-response` is implemented.
+/// preventing silent local-only resolution when a remote backend is
+/// injected before mission `0870k-transport-request-response` is
+/// implemented.
 pub struct RemoteResolverBackend;
 
 impl RemoteResolverBackend {
@@ -46,8 +48,9 @@ impl RemoteResolverBackend {
     }
 }
 
+#[async_trait]
 impl ResolverBackend for RemoteResolverBackend {
-    fn resolve_via(
+    async fn resolve_via(
         &self,
         _hop_did: &str,
         _target: &octo_ident::RawDid,
@@ -57,8 +60,7 @@ impl ResolverBackend for RemoteResolverBackend {
         // lands the substrate. A real implementation will:
         // 1. Construct an `IDENTITY_RESOLVE_CHAIN` envelope to `hop_did`.
         // 2. Submit via `NodeTransport::send_request(envelope)`.
-        // 3. Await the response (correlated by `chain_ctx.envelope_id`
-        //    — to be added to `ResolverChainContext`).
+        // 3. Await the response (correlated by `envelope_id`).
         // 4. Verify the `HopSignature` chain on the response.
         // 5. Return `BackendResolveOutcome { public_key,
         //    signature_chain }`.

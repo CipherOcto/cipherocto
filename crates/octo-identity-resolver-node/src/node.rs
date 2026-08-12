@@ -347,6 +347,7 @@ impl IdentityResolverNode {
                     .map_err(resolver_error_to_protocol)?;
                 ResolveChainHandler::new(self.resolver_backend.clone())
                     .handle(&req, envelope.envelope_id)
+                    .await
                     .map_err(resolver_error_to_protocol)
             }
             k if k == octo_protocol::payload_kind::IDENTITY_RESOLVE_WITH_CHAIN => {

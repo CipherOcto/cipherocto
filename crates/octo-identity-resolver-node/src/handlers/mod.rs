@@ -198,10 +198,10 @@ impl From<IdentityResolveError> for ProtocolError {
             // Mission 0871b-cross-node-forwarding: cross-network hop
             // requested before the request/response substrate exists.
             // Same authorization-class treatment as the other failure
-            // modes — no partial resolution was committed.
-            IdentityResolveError::Unsupported(msg) => {
-                ProtocolError::AuthorizationFailed(format!("unsupported: {msg}"))
-            }
+            // modes — no partial resolution was committed. The
+            // upstream `#[error("unsupported: {0}")]` already prefixes
+            // with `unsupported: `; do NOT add a second prefix here.
+            IdentityResolveError::Unsupported(msg) => ProtocolError::AuthorizationFailed(msg),
             // Round-1 review: TTL too large / chain too long failed
             // validation BEFORE any registry call. No state was committed.
             IdentityResolveError::ChainTtlTooLarge(ms) => {

@@ -91,6 +91,11 @@ mod tests {
     fn hop_signature_zero_values_borsh_round_trip() {
         // Boundary: empty/zero signature + zero pubkey survives borsh
         // round-trip (defensive against accidental Option/skip attributes).
+        //
+        // STRUCTURAL-ONLY: `hop_did = String::new()` is NOT a valid
+        // canonical DID; if `HopSignature::new` ever gains a
+        // `CanonicalCodec::parse` validation pass this test will need
+        // to switch to a canonical form (e.g. `canonical_did(0)`).
         let sig = HopSignature::new(0, String::new(), [0u8; 64], [0u8; 32]);
         let bytes = borsh::to_vec(&sig).expect("serialize");
         let back: HopSignature = borsh::from_slice(&bytes).expect("deserialize");

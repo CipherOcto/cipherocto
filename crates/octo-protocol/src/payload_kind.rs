@@ -171,20 +171,9 @@ pub const IDENTITY_RESOLVE_WITH_CHAIN: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05,
 ]);
 
-// RFC-0871 cross-domain resolver chain response payload kind
-// (mission `0871b-cross-node-forwarding` T6) — REMOVED in round-1 review.
-//
-// The UUID slot `0006` was reserved for cross-network returns where
-// the destination resolver-node signs a per-hop accumulator and the
-// requester verifies it in-band. Round-1 adversarial review caught
-// that the constant was wire-dead: no dispatch arm registered for
-// it, and no in-process code path produced it (the handler emits
-// `IDENTITY_RESOLVE_CHAIN` for in-process returns). Per
-// [[no-phantom-mission-pointers]] + the layer model (no stale
-// wire-defined UUIDs that no code dispatches), the constant is
-// removed. The slot `0006` is now available for the production
-// cross-network response once mission `0870k-transport-request-
-// response` lands.
+// RESERVED: slot `:0006` reserved for production cross-network chain
+// response (mission `0870k-transport-request-response`). Removed in
+// round-1 review as wire-dead.
 
 /// Wallet sign Ed25519 (RFC-0871 §Wallet Node Lifecycle, Phase 2 mission 0871a).
 ///

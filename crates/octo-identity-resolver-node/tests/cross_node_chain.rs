@@ -27,6 +27,7 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use octo_ident::{CanonicalCodec, DidCodec, DidDocument, DidRegistry, InMemoryDidRegistry};
 use octo_identity_resolver_node::{
     BackendResolveOutcome, ChainResolveRequest, ChainResolveResponse, IdentityResolveError,
@@ -81,12 +82,10 @@ struct FakeRemoteBackend {
 
 impl FakeRemoteBackend {
     fn new(pubkey: [u8; 32]) -> Self {
-        let sig = HopSignature::new(
-            0,
-            "did:octo:zCt5bENb7tA2b9xeamSEnHF7cZ6Kk8h9p2Z6nT8pVk9R".to_owned(),
-            [0xAA; 64],
-            [0xBB; 32],
-        );
+        // Use canonical_did(seed) (same helper as the rest of the file)
+        // rather than a hardcoded string so the test exercises the
+        // canonical-DID wire form end-to-end.
+        let sig = HopSignature::new(0, canonical_did(99), [0xAA; 64], [0xBB; 32]);
         Self {
             pubkey,
             sig_template: sig,
@@ -94,8 +93,9 @@ impl FakeRemoteBackend {
     }
 }
 
+#[async_trait]
 impl ResolverBackend for FakeRemoteBackend {
-    fn resolve_via(
+    async fn resolve_via(
         &self,
         _hop_did: &str,
         _target: &octo_ident::RawDid,
@@ -110,8 +110,8 @@ impl ResolverBackend for FakeRemoteBackend {
 
 /// AC-13: a custom backend's `HopSignature` survives into the
 /// `ChainResolveResponse.signature_chain` field.
-#[test]
-fn fake_remote_backend_propagates_signature_chain() {
+#[tokio::test]
+async fn fake_remote_backend_propagates_signature_chain() {
     let backend: Arc<dyn ResolverBackend> = Arc::new(FakeRemoteBackend::new([0x77u8; 32]));
     let handler = ResolveChainHandler::new(backend);
     let req = ChainResolveRequest {
@@ -119,7 +119,10 @@ fn fake_remote_backend_propagates_signature_chain() {
         hops: vec![ResolverHop::local(canonical_did(2))],
         ttl_remaining_ms: 100,
     };
-    let out = handler.handle(&req, [0x42u8; 32]).expect("fake resolves");
+    let out = handler
+        .handle(&req, [0x42u8; 32])
+        .await
+        .expect("fake resolves");
     let payload = out.response_payload.expect("response payload");
     let resp: ChainResolveResponse = borsh::from_slice(&payload).unwrap();
     assert_eq!(resp.public_key, [0x77u8; 32]);
@@ -131,8 +134,8 @@ fn fake_remote_backend_propagates_signature_chain() {
 /// AC-14: `LocalResolverBackend` (the production default) returns an
 /// EMPTY `signature_chain` so in-process resolves stay signature-free —
 /// for both the empty-hops case and the multi-hop case.
-#[test]
-fn local_backend_yields_empty_signature_chain() {
+#[tokio::test]
+async fn local_backend_yields_empty_signature_chain() {
     let registry = Arc::new(InMemoryDidRegistry::default());
     register_custom(&registry, 11, [0xCCu8; 32]);
     let local: Arc<dyn ResolverBackend> = Arc::new(LocalResolverBackend(registry));
@@ -146,6 +149,7 @@ fn local_backend_yields_empty_signature_chain() {
     };
     let out = handler
         .handle(&req_empty, [0u8; 32])
+        .await
         .expect("local resolves");
     let resp: ChainResolveResponse = borsh::from_slice(&out.response_payload.unwrap()).unwrap();
     assert_eq!(resp.public_key, [0xCCu8; 32]);
@@ -165,6 +169,7 @@ fn local_backend_yields_empty_signature_chain() {
     };
     let out = handler
         .handle(&req_multi, [0u8; 32])
+        .await
         .expect("local multi-hop resolves");
     let resp: ChainResolveResponse = borsh::from_slice(&out.response_payload.unwrap()).unwrap();
     assert_eq!(resp.public_key, [0xCCu8; 32]);
@@ -178,8 +183,8 @@ fn local_backend_yields_empty_signature_chain() {
 /// AC-15: `RemoteResolverBackend` stub returns
 /// `IdentityResolveError::Unsupported` (fail-closed before the
 /// request/response substrate lands).
-#[test]
-fn remote_backend_stub_is_unsupported() {
+#[tokio::test]
+async fn remote_backend_stub_is_unsupported() {
     let backend: Arc<dyn ResolverBackend> = RemoteResolverBackend::arc();
     let handler = ResolveChainHandler::new(backend);
     let req = ChainResolveRequest {
@@ -187,7 +192,7 @@ fn remote_backend_stub_is_unsupported() {
         hops: vec![ResolverHop::local(canonical_did(2))],
         ttl_remaining_ms: 100,
     };
-    let err = handler.handle(&req, [0u8; 32]).unwrap_err();
+    let err = handler.handle(&req, [0u8; 32]).await.unwrap_err();
     // Pin the contract: the Unsupported message MUST reference the
     // blocking mission so operator dashboards can route on the
     // substring `0870k`.
@@ -205,8 +210,8 @@ fn remote_backend_stub_is_unsupported() {
 /// AC-16: full round-trip — handler constructs response with populated
 /// `signature_chain` + non-zero `envelope_id`; borsh round-trip
 /// preserves all five fields including the in-band `HopSignature`.
-#[test]
-fn full_round_trip_preserves_5tuple_wire_form() {
+#[tokio::test]
+async fn full_round_trip_preserves_5tuple_wire_form() {
     let backend: Arc<dyn ResolverBackend> = Arc::new(FakeRemoteBackend::new([0x88u8; 32]));
     let handler = ResolveChainHandler::new(backend);
     let envelope_id = [0x99u8; 32];
@@ -215,7 +220,7 @@ fn full_round_trip_preserves_5tuple_wire_form() {
         hops: vec![ResolverHop::local(canonical_did(2))],
         ttl_remaining_ms: 100,
     };
-    let out = handler.handle(&req, envelope_id).expect("resolve");
+    let out = handler.handle(&req, envelope_id).await.expect("resolve");
     let payload = out.response_payload.expect("response payload");
 
     // Sender-side deserialization.
@@ -237,8 +242,8 @@ fn full_round_trip_preserves_5tuple_wire_form() {
 /// Round-1 review: `MAX_CHAIN_TTL_MS` is enforced at `handle()` entry.
 /// A `ttl_remaining_ms = u64::MAX` request must be rejected BEFORE any
 /// registry call.
-#[test]
-fn rejects_oversize_ttl_dos() {
+#[tokio::test]
+async fn rejects_oversize_ttl_dos() {
     let backend: Arc<dyn ResolverBackend> = Arc::new(LocalResolverBackend(Arc::new(
         InMemoryDidRegistry::default(),
     )));
@@ -248,31 +253,33 @@ fn rejects_oversize_ttl_dos() {
         hops: vec![],
         ttl_remaining_ms: u64::MAX,
     };
-    let err = handler.handle(&req, [0u8; 32]).unwrap_err();
+    let err = handler.handle(&req, [0u8; 32]).await.unwrap_err();
     assert!(matches!(err, IdentityResolveError::ChainTtlTooLarge(_)));
 }
 
 /// Round-1 review: `hops.len() > u8::MAX` is rejected at `handle()`
 /// entry. The `ChainResolveResponse.hops_traversed` field is `u8`, so
 /// larger chains MUST fail-closed rather than silently capping.
-#[test]
-fn rejects_oversize_hop_count() {
+#[tokio::test]
+async fn rejects_oversize_hop_count() {
     let backend: Arc<dyn ResolverBackend> = Arc::new(LocalResolverBackend(Arc::new(
         InMemoryDidRegistry::default(),
     )));
     let handler = ResolveChainHandler::new(backend);
-    // 256 hops = u8::MAX + 1. TTL must be <= MAX_CHAIN_TTL_MS so the
-    // hop-count rejection fires first (the check order is TTL bound
-    // → hop-count bound → loop).
+    // 256 hops = u8::MAX + 1. Use 256 DISTINCT canonical DIDs (i wraps
+    // modulo a larger prime space so each `i` maps to a distinct
+    // canonical form). TTL set to `MAX_CHAIN_TTL_MS` exactly so the
+    // TTL bound check passes and the hop-count rejection fires next.
+    // (Earlier check order is: TTL bound → hop-count bound → loop.)
     let hops: Vec<ResolverHop> = (0..(u8::MAX as usize + 1))
-        .map(|i| ResolverHop::local(canonical_did((i % 200) as u8)))
+        .map(|i| ResolverHop::local(canonical_did(((i * 7 + 13) % 200) as u8)))
         .collect();
     let req = ChainResolveRequest {
         target: canonical_did(11),
         hops,
         ttl_remaining_ms: 60_000,
     };
-    let err = handler.handle(&req, [0u8; 32]).unwrap_err();
+    let err = handler.handle(&req, [0u8; 32]).await.unwrap_err();
     assert!(matches!(err, IdentityResolveError::ChainTooLong(_)));
 }
 
@@ -280,8 +287,15 @@ fn rejects_oversize_hop_count() {
 /// (do not consume state on a malformed hop). A legacy bare-form hop
 /// `did:octo:bad` is rejected before any `visited.insert` or TTL
 /// decrement.
-#[test]
-fn rejects_malformed_hop_before_state_consumption() {
+///
+/// NOTE: this test name intentionally overstates the assertion — the
+/// test only pins `InvalidDid` is returned. A buggy impl that did
+/// `visited.insert(hop.hop_did)` BEFORE `CanonicalCodec::parse` would
+/// still produce `InvalidDid` and pass the test (state would have been
+/// consumed). Pinning true "no state consumed" requires a test-only
+/// getter or sentinel DID trick; deferred.
+#[tokio::test]
+async fn rejects_malformed_hop_with_invalid_did_error() {
     let backend: Arc<dyn ResolverBackend> = Arc::new(LocalResolverBackend(Arc::new(
         InMemoryDidRegistry::default(),
     )));
@@ -294,7 +308,7 @@ fn rejects_malformed_hop_before_state_consumption() {
         ],
         ttl_remaining_ms: 100,
     };
-    let err = handler.handle(&req, [0u8; 32]).unwrap_err();
+    let err = handler.handle(&req, [0u8; 32]).await.unwrap_err();
     assert!(matches!(err, IdentityResolveError::InvalidDid(_)));
 }
 
@@ -312,4 +326,64 @@ fn remote_backend_arc_constructs_trait_object() {
     assert_eq!(Arc::strong_count(&backend), 2);
     drop(backend_clone);
     assert_eq!(Arc::strong_count(&backend), 1);
+}
+
+/// Round-2 review: a backend returning a multi-element
+/// `signature_chain` propagates it into the response in
+/// OUTERMOST-FIRST order (the docstring contract on
+/// `ChainResolveResponse.signature_chain`). Pins the order contract
+/// via 3 HopSignatures with distinct hop_index values.
+#[tokio::test]
+async fn multi_hop_signature_chain_preserves_outermost_first_order() {
+    // Backend that returns 3 distinct HopSignatures per resolve.
+    struct MultiHopBackend {
+        pubkey: [u8; 32],
+    }
+    #[async_trait]
+    impl ResolverBackend for MultiHopBackend {
+        async fn resolve_via(
+            &self,
+            _hop_did: &str,
+            _target: &octo_ident::RawDid,
+            _chain_ctx: &ResolverChainContext,
+        ) -> Result<BackendResolveOutcome, IdentityResolveError> {
+            // Outermost-first: hop 0 first, hop 1 second, hop 2 last.
+            let sigs = vec![
+                HopSignature::new(0, canonical_did(50), [0x11; 64], [0x21; 32]),
+                HopSignature::new(1, canonical_did(51), [0x22; 64], [0x22; 32]),
+                HopSignature::new(2, canonical_did(52), [0x33; 64], [0x23; 32]),
+            ];
+            Ok(BackendResolveOutcome {
+                public_key: self.pubkey,
+                signature_chain: sigs,
+            })
+        }
+    }
+    let backend: Arc<dyn ResolverBackend> = Arc::new(MultiHopBackend {
+        pubkey: [0x44u8; 32],
+    });
+    let handler = ResolveChainHandler::new(backend);
+    let req = ChainResolveRequest {
+        target: canonical_did(11),
+        hops: vec![ResolverHop::local(canonical_did(2))],
+        ttl_remaining_ms: 100,
+    };
+    let out = handler
+        .handle(&req, [0u8; 32])
+        .await
+        .expect("multi-hop resolves");
+    let resp: ChainResolveResponse = borsh::from_slice(&out.response_payload.unwrap()).unwrap();
+    assert_eq!(
+        resp.signature_chain.len(),
+        3,
+        "backend returned 3 signatures; handler must propagate all"
+    );
+    // Outermost-first order: hop 0 → hop 1 → hop 2.
+    assert_eq!(resp.signature_chain[0].hop_index, 0);
+    assert_eq!(resp.signature_chain[1].hop_index, 1);
+    assert_eq!(resp.signature_chain[2].hop_index, 2);
+    // Signer pubkeys preserved distinct across the chain.
+    assert_eq!(resp.signature_chain[0].signer_pub, [0x21u8; 32]);
+    assert_eq!(resp.signature_chain[1].signer_pub, [0x22u8; 32]);
+    assert_eq!(resp.signature_chain[2].signer_pub, [0x23u8; 32]);
 }

@@ -95,8 +95,10 @@ fn chain_single_hop_resolves() {
     );
 }
 
-/// TV-2 chain_three_hops_resolves_end_to_end — A → B → C; target at C
-/// (the local resolver-node). All hops valid canonical DIDs.
+/// TV-2 chain_three_hops_resolves_end_to_end — 3 local hops against a
+/// single `InMemoryDidRegistry` (NOT 3 remote nodes; cross-node TV is
+/// deferred to `0871b-cross-node-forwarding`). Target at the local
+/// registry. All hops valid canonical DIDs.
 #[test]
 fn chain_three_hops_resolves_end_to_end() {
     let registry = Arc::new(InMemoryDidRegistry::default());
@@ -124,8 +126,11 @@ fn chain_three_hops_resolves_end_to_end() {
     assert_eq!(resp.hops_traversed, 3);
 }
 
-/// TV-3 chain_ttl_expiry_returns_error — TTL budget = 5 ms; 3 hops ×
-/// 10 ms each = 30 ms required. Hop 2 (index 1) trips the underflow.
+/// TV-3 chain_ttl_expiry_returns_error — TTL budget = 5 ms;
+/// `HOP_LATENCY_MS_ESTIMATE = 10` ms. First hop iteration:
+/// `saturating_sub(5, 10) = 0` trips `ChainTtlExpired` immediately on
+/// hop 0 (NOT "hop 2" as the previous comment stated; off-by-one).
+/// 3 hops × 10 ms would require TTL ≥ 30 ms.
 #[test]
 fn chain_ttl_expiry_returns_error() {
     let registry = Arc::new(InMemoryDidRegistry::default());

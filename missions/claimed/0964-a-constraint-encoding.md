@@ -2,7 +2,7 @@
 |  | Accepted |
 |  | Accepted |#|  | Accepted |#|  | Accepted | |  | Accepted |S|  | Accepted |t|  | Accepted |a|  | Accepted |t|  | Accepted |u|  | Accepted |s|  | Accepted |
 |  | Accepted |
-|  | Accepted |C|  | Accepted |l|  | Accepted |a|  | Accepted |i|  | Accepted |m|  | Accepted |e|  | Accepted |d|  | Accepted | |  | Accepted |(|  | Accepted |2|  | Accepted |0|  | Accepted |2|  | Accepted |6|  | Accepted |-|  | Accepted |0|  | Accepted |7|  | Accepted |-|  | Accepted |2|  | Accepted |3|  | Accepted |)|  | Accepted |
+|  | Accepted |C|  | Accepted |l|  | Accepted |o|  | Accepted |s|  | Accepted |e|  | Accepted |d|  | Accepted | |  | Accepted |(|  | Accepted |2|  | Accepted |0|  | Accepted |2|  | Accepted |6|  | Accepted |-|  | Accepted |0|  | Accepted |8|  | Accepted |-|  | Accepted |1|  | Accepted |1|  | Accepted |)|  | Accepted | |  | Accepted |—|  | Accepted | |  | Accepted |C|  | Accepted |l|  | Accepted |a|  | Accepted |i|  | Accepted |m|  | Accepted |e|  | Accepted |d|  | Accepted | |  | Accepted |(|  | Accepted |2|  | Accepted |0|  | Accepted |2|  | Accepted |6|  | Accepted |-|  | Accepted |0|  | Accepted |7|  | Accepted |-|  | Accepted |2|  | Accepted |3|  | Accepted |)|  | Accepted | |  | Accepted |—|  | Accepted | |  | Accepted |L|  | Accepted |A|  | Accepted |N|  | Accepted |D|  | Accepted |E|  | Accepted |D|  | Accepted |.|
 |  | Accepted |
 |  | Accepted |#|  | Accepted |#|  | Accepted | |  | Accepted |R|  | Accepted |F|  | Accepted |C|  | Accepted |
 |  | Accepted |
@@ -142,5 +142,13 @@
 |  | Accepted |-|  | Accepted |-|  | Accepted |-|  | Accepted |
 |  | Accepted |
 |  | Accepted |*|  | Accepted |*|  | Accepted |S|  | Accepted |u|  | Accepted |b|  | Accepted |m|  | Accepted |i|  | Accepted |s|  | Accepted |s|  | Accepted |i|  | Accepted |o|  | Accepted |n|  | Accepted | |  | Accepted |D|  | Accepted |a|  | Accepted |t|  | Accepted |e|  | Accepted |:|  | Accepted |*|  | Accepted |*|  | Accepted | |  | Accepted |2|  | Accepted |0|  | Accepted |2|  | Accepted |6|  | Accepted |-|  | Accepted |0|  | Accepted |7|  | Accepted |-|  | Accepted |2|  | Accepted |3|  | Accepted |
-|  | Accepted |*|  | Accepted |*|  | Accepted |L|  | Accepted |a|  | Accepted |s|  | Accepted |t|  | Accepted | |  | Accepted |U|  | Accepted |p|  | Accepted |d|  | Accepted |a|  | Accepted |t|  | Accepted |e|  | Accepted |d|  | Accepted |:|  | Accepted |*|  | Accepted |*|  | Accepted | |  | Accepted |2|  | Accepted |0|  | Accepted |2|  | Accepted |6|  | Accepted |-|  | Accepted |0|  | Accepted |7|  | Accepted |-|  | Accepted |2|  | Accepted |3|  | Accepted |
+|  | Accepted |*|  | Accepted |*|  | Accepted |L|  | Accepted |a|  | Accepted |s|  | Accepted |t|  | Accepted | |  | Accepted |U|  | Accepted |p|  | Accepted |d|  | Accepted |a|  | Accepted |t|  | Accepted |e|  | Accepted |d|  | Accepted |:|  | Accepted |*|  | Accepted |*|  | Accepted | |  | Accepted |2|  | Accepted |0|  | Accepted |2|  | Accepted |6|  | Accepted |-|  | Accepted |0|  | Accepted |8|  | Accepted |-|  | Accepted |1|  | Accepted |1|
 |  | Accepted |*|  | Accepted |*|  | Accepted |V|  | Accepted |e|  | Accepted |r|  | Accepted |s|  | Accepted |i|  | Accepted |o|  | Accepted |n|  | Accepted |:|  | Accepted |*|  | Accepted |*|  | Accepted | |  | Accepted |1|  | Accepted |.|  | Accepted |0|  | Accepted | |  | Accepted |(|  | Accepted |C|  | Accepted |l|  | Accepted |a|  | Accepted |i|  | Accepted |m|  | Accepted |e|  | Accepted |d|  | Accepted |)|  | Accepted |
+
+
+## Version History
+
+| Version | Date | Change |
+| --- | --- | --- |
+| v0.1 | 2026-07-23 | Mission filed. RFC-0964 reaches Accepted v1.1 per RFC-0960 v2.0 promotion. Substrate expected in `crates/cipherocto-encoding/src/lib.rs`. |
+| v0.2 | 2026-08-11 | **Claimed + LANDED** by @claude. Substrate shipped in commit `d3fd7e27 feat(economics): RFC-0960/62/63/64/65/67 spec→impl conformance` (2026-07-24). 25-variant canonical `Constraint` enum + 1-byte namespace tag (0x01) + 1-byte high-bit version tag (0xA0) + 1-byte discriminator + 2-byte big-endian length-prefixed payload wire format per RFC-0960 §3 + RFC-0964 §1. BLAKE3 with 0xA1 domain separator for `constraint_hash` per RFC-0964 §5. 17 unit tests pass (namespace + version tag distinctness, all_23_variants_have_unique_discriminators, all_25_variants_roundtrip, encode_decode_roundtrip_*, decode_rejects_*). Cross-references: 0962-a-execution-envelope (sibling consumer), 0965-a-caveat-dsl (companion), 0967-a-policy-object-graph (consumer). |

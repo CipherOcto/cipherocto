@@ -67,6 +67,7 @@ picks them up at request routing time.
 - `crates/quota-router-core/src/proxy.rs` — route registration
 - `crates/quota-router-core/src/admin.rs` — pre-existing admin coverage
 - `crates/quota-router-core/src/config.rs` — `HealthConfig` re-export
+- `missions/open/0905-d-real-dependency-checks.md` — follow-on for `DefaultDependencyChecker` stub (per [[deferred-vs-unspecified]])
 
 ## Version History
 

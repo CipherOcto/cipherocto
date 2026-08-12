@@ -1,10 +1,14 @@
 //! Drain coordinator (per RFC-0862 v1.3 §DrainCoordinator).
 //!
 //! `DrainCoordinator` mediates `submit_drain` calls across instances,
-//! checking writer availability and holder balance before granting
-//! the drain. The `submit_drain_local_fallback` default is fail-closed
+//! checking **writer availability only** before granting the drain.
+//! Holder balance validation is the consumer's responsibility
+//! (wallet-node calls `StoolapSpendLedger::try_deduct` BEFORE invoking
+//! `submit_drain` per RFC-0862 v1.4 §Concrete Impl Extension;
+//! `drain_unknown_holder_is_not_validated_by_coordinator` pins this).
+//! The `submit_drain_local_fallback` default is fail-closed
 //! (returns `WriterUnavailable`) per RFC-0862 v1.3 R12 — the LWW
-//! fallback is gated behind a future RFC-0862 v1.4 amendment
+//! fallback is gated behind a future RFC-0862 v1.4 F12 + F13 amendment
 //! (per `drain-coordinator-approach-2026-08-10` Option C).
 
 use async_trait::async_trait;

@@ -24,8 +24,9 @@ Thumbs.db
 .gitnexus
 Cargo.lock
 
-# Worktrees
-.worktrees/
+# Worktrees (per-project root + nested under .claude/)
+/.worktrees/
+/.claude/worktrees/
 
 # Python
 .venv/

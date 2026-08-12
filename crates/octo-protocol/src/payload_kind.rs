@@ -108,6 +108,8 @@ impl RangeU128 {
 pub const IDENTITY_RESOLVE: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 ]);
+/// Companion `def_line` for `IDENTITY_RESOLVE` (compiler-resolved via `line!()`).
+pub(crate) const __DEF_LINE_IDENTITY_RESOLVE: u32 = line!();
 
 // RFC-0871 identity-write payload kinds (RFC-0862 v1.3 §DidWriteCoordinator,
 // mission 0871e-f7-impl-resolver-mediation). The resolver-node mediates
@@ -125,6 +127,8 @@ pub const IDENTITY_RESOLVE: PayloadKindId = PayloadKindId([
 pub const IDENTITY_REGISTER: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
 ]);
+/// Companion `def_line` for `IDENTITY_REGISTER` (compiler-resolved via `line!()`).
+pub(crate) const __DEF_LINE_IDENTITY_REGISTER: u32 = line!();
 
 /// Identity-revoke payload kind (RFC-0862 v1.3 §DidWriteCoordinator).
 ///
@@ -132,6 +136,8 @@ pub const IDENTITY_REGISTER: PayloadKindId = PayloadKindId([
 pub const IDENTITY_REVOKE: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
 ]);
+/// Companion `def_line` for `IDENTITY_REVOKE` (compiler-resolved via `line!()`).
+pub(crate) const __DEF_LINE_IDENTITY_REVOKE: u32 = line!();
 
 // RFC-0871 cross-domain resolution payload kind (mission
 // 0871b-cross-domain-resolution-impl). Allocated in the RFC-0871
@@ -156,6 +162,8 @@ pub const IDENTITY_REVOKE: PayloadKindId = PayloadKindId([
 pub const IDENTITY_RESOLVE_CHAIN: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04,
 ]);
+/// Companion `def_line` for `IDENTITY_RESOLVE_CHAIN` (compiler-resolved via `line!()`).
+pub(crate) const __DEF_LINE_IDENTITY_RESOLVE_CHAIN: u32 = line!();
 
 /// Identity-resolve-with-chain payload kind (RFC-0010 v1.4 §ChainId
 /// Namespace Extension, mission `0010-f2-multi-chain-routing`).
@@ -170,6 +178,8 @@ pub const IDENTITY_RESOLVE_CHAIN: PayloadKindId = PayloadKindId([
 pub const IDENTITY_RESOLVE_WITH_CHAIN: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05,
 ]);
+/// Companion `def_line` for `IDENTITY_RESOLVE_WITH_CHAIN` (compiler-resolved via `line!()`).
+pub(crate) const __DEF_LINE_IDENTITY_RESOLVE_WITH_CHAIN: u32 = line!();
 
 // RESERVED: slot `:0006` reserved for production cross-network chain
 // response (mission `0870k-transport-request-response`). Removed in
@@ -209,48 +219,141 @@ mod reserved_slot_tests {
     /// new constant in this file without updating the `known` array
     /// turns this test into a fail-closed guard for the new
     /// addition.
+    ///
+    /// DEFLINE-DRIFT (round-8 R2 fix): each entry's `def_line: u32`
+    /// references a `pub(crate) const __DEF_LINE_X: u32 = line!();`
+    /// companion co-located with its `pub const X: PayloadKindId`.
+    /// The companion captures the source line of itself at compile
+    /// time, so the diagnostic's `(defined at payload_kind.rs:{def_line})`
+    /// always points at a line near the actual const definition
+    /// (companion is ~3 lines below `pub const X`; maintainer scrolls
+    /// up to find the def). This eliminates the manual `def_line: u32`
+    /// literal-drift class that round-7 patched (16/21 stale values
+    /// off by +19 lines) and which round-2 originally flagged as
+    /// HIGH coupling fragility. **Why option (b) over (a):** Layer A
+    /// constraint (RFC-frozen, years-stable) rules out a `build.rs` +
+    /// `syn`-generated approach (toolchain surface area); `line!()`
+    /// is core Rust stable since 1.0 and adds zero deps.
     #[test]
     fn reserved_slot_0006_not_allocated() {
         let reserved = _RESERVED_SLOT_0006_CHAIN_RESPONSE;
-        // Each entry carries the `pub const X` definition line so a
-        // test-failure message can point the maintainer at the exact
-        // source site (round-6 R1 finding: cross-ref for navigation).
+        // Each entry carries the `pub const X` definition line (via
+        // compiler-resolved `__DEF_LINE_X` companion const) so a
+        // test-failure message can point the maintainer at the source
+        // site (round-6 R1 finding: cross-ref for navigation; round-8
+        // R2 fix: drift-free via `line!()`).
         let known: &[(&str, PayloadKindId, u32)] = &[
             // IDENTITY sub-namespace 0x0009:0001:...
-            ("IDENTITY_RESOLVE", IDENTITY_RESOLVE, 108),
-            ("IDENTITY_REGISTER", IDENTITY_REGISTER, 125),
-            ("IDENTITY_REVOKE", IDENTITY_REVOKE, 132),
-            ("IDENTITY_RESOLVE_CHAIN", IDENTITY_RESOLVE_CHAIN, 156),
+            (
+                "IDENTITY_RESOLVE",
+                IDENTITY_RESOLVE,
+                __DEF_LINE_IDENTITY_RESOLVE,
+            ),
+            (
+                "IDENTITY_REGISTER",
+                IDENTITY_REGISTER,
+                __DEF_LINE_IDENTITY_REGISTER,
+            ),
+            (
+                "IDENTITY_REVOKE",
+                IDENTITY_REVOKE,
+                __DEF_LINE_IDENTITY_REVOKE,
+            ),
+            (
+                "IDENTITY_RESOLVE_CHAIN",
+                IDENTITY_RESOLVE_CHAIN,
+                __DEF_LINE_IDENTITY_RESOLVE_CHAIN,
+            ),
             (
                 "IDENTITY_RESOLVE_WITH_CHAIN",
                 IDENTITY_RESOLVE_WITH_CHAIN,
-                170,
+                __DEF_LINE_IDENTITY_RESOLVE_WITH_CHAIN,
             ),
             // WALLET sub-namespace 0x0009:0002:...
-            ("WALLET_SIGN_ED25519", WALLET_SIGN_ED25519, 274),
-            ("WALLET_MINT_CAPABILITY", WALLET_MINT_CAPABILITY, 281),
+            (
+                "WALLET_SIGN_ED25519",
+                WALLET_SIGN_ED25519,
+                __DEF_LINE_WALLET_SIGN_ED25519,
+            ),
+            (
+                "WALLET_MINT_CAPABILITY",
+                WALLET_MINT_CAPABILITY,
+                __DEF_LINE_WALLET_MINT_CAPABILITY,
+            ),
             (
                 "WALLET_ATTENUATE_CAPABILITY",
                 WALLET_ATTENUATE_CAPABILITY,
-                288,
+                __DEF_LINE_WALLET_ATTENUATE_CAPABILITY,
             ),
-            ("WALLET_RESOLVE_DID", WALLET_RESOLVE_DID, 295),
+            (
+                "WALLET_RESOLVE_DID",
+                WALLET_RESOLVE_DID,
+                __DEF_LINE_WALLET_RESOLVE_DID,
+            ),
             // QUOTA sub-namespace 0x0009:0003:...
-            ("QUOTA_ROUTER_ANNOUNCE", QUOTA_ROUTER_ANNOUNCE, 323),
-            ("QUOTA_ROUTER_WITHDRAW", QUOTA_ROUTER_WITHDRAW, 330),
-            ("QUOTA_CAPACITY_GOSSIP", QUOTA_CAPACITY_GOSSIP, 337),
-            ("QUOTA_CAPACITY_REQUEST", QUOTA_CAPACITY_REQUEST, 344),
-            ("QUOTA_FORWARD_REQUEST", QUOTA_FORWARD_REQUEST, 351),
-            ("QUOTA_FORWARD_RESPONSE", QUOTA_FORWARD_RESPONSE, 358),
-            ("QUOTA_FORWARD_REJECT", QUOTA_FORWARD_REJECT, 365),
+            (
+                "QUOTA_ROUTER_ANNOUNCE",
+                QUOTA_ROUTER_ANNOUNCE,
+                __DEF_LINE_QUOTA_ROUTER_ANNOUNCE,
+            ),
+            (
+                "QUOTA_ROUTER_WITHDRAW",
+                QUOTA_ROUTER_WITHDRAW,
+                __DEF_LINE_QUOTA_ROUTER_WITHDRAW,
+            ),
+            (
+                "QUOTA_CAPACITY_GOSSIP",
+                QUOTA_CAPACITY_GOSSIP,
+                __DEF_LINE_QUOTA_CAPACITY_GOSSIP,
+            ),
+            (
+                "QUOTA_CAPACITY_REQUEST",
+                QUOTA_CAPACITY_REQUEST,
+                __DEF_LINE_QUOTA_CAPACITY_REQUEST,
+            ),
+            (
+                "QUOTA_FORWARD_REQUEST",
+                QUOTA_FORWARD_REQUEST,
+                __DEF_LINE_QUOTA_FORWARD_REQUEST,
+            ),
+            (
+                "QUOTA_FORWARD_RESPONSE",
+                QUOTA_FORWARD_RESPONSE,
+                __DEF_LINE_QUOTA_FORWARD_RESPONSE,
+            ),
+            (
+                "QUOTA_FORWARD_REJECT",
+                QUOTA_FORWARD_REJECT,
+                __DEF_LINE_QUOTA_FORWARD_REJECT,
+            ),
             // REPUTATION sub-namespace 0x0009:0004:...
-            ("REPUTATION_ANCHOR_QUERY", REPUTATION_ANCHOR_QUERY, 413),
+            (
+                "REPUTATION_ANCHOR_QUERY",
+                REPUTATION_ANCHOR_QUERY,
+                __DEF_LINE_REPUTATION_ANCHOR_QUERY,
+            ),
             // CAPABILITY sub-namespace 0x0009:0005:...
-            ("CAPABILITY_ISSUE", CAPABILITY_ISSUE, 465),
-            ("CAPABILITY_REVOKE", CAPABILITY_REVOKE, 478),
-            ("CAPABILITY_LOOKUP", CAPABILITY_LOOKUP, 492),
+            (
+                "CAPABILITY_ISSUE",
+                CAPABILITY_ISSUE,
+                __DEF_LINE_CAPABILITY_ISSUE,
+            ),
+            (
+                "CAPABILITY_REVOKE",
+                CAPABILITY_REVOKE,
+                __DEF_LINE_CAPABILITY_REVOKE,
+            ),
+            (
+                "CAPABILITY_LOOKUP",
+                CAPABILITY_LOOKUP,
+                __DEF_LINE_CAPABILITY_LOOKUP,
+            ),
             // PAID_QUERY sub-namespace 0x0009:0006:...
-            ("PAID_QUERY_VERIFY", PAID_QUERY_VERIFY, 541),
+            (
+                "PAID_QUERY_VERIFY",
+                PAID_QUERY_VERIFY,
+                __DEF_LINE_PAID_QUERY_VERIFY,
+            ),
         ];
         for (name, kind, def_line) in known {
             // Round-6 R1 finding: include the colliding constant's
@@ -274,6 +377,8 @@ mod reserved_slot_tests {
 pub const WALLET_SIGN_ED25519: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 ]);
+/// Companion `def_line` for `WALLET_SIGN_ED25519` (compiler-resolved via `line!()`).
+pub(crate) const __DEF_LINE_WALLET_SIGN_ED25519: u32 = line!();
 
 /// Wallet mint capability (RFC-0871 §Wallet Node Lifecycle, Phase 2 mission 0871a).
 ///
@@ -281,6 +386,8 @@ pub const WALLET_SIGN_ED25519: PayloadKindId = PayloadKindId([
 pub const WALLET_MINT_CAPABILITY: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
 ]);
+/// Companion `def_line` for `WALLET_MINT_CAPABILITY` (compiler-resolved via `line!()`).
+pub(crate) const __DEF_LINE_WALLET_MINT_CAPABILITY: u32 = line!();
 
 /// Wallet attenuate capability (RFC-0871 §Wallet Node Lifecycle, Phase 2 mission 0871a).
 ///
@@ -288,6 +395,8 @@ pub const WALLET_MINT_CAPABILITY: PayloadKindId = PayloadKindId([
 pub const WALLET_ATTENUATE_CAPABILITY: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
 ]);
+/// Companion `def_line` for `WALLET_ATTENUATE_CAPABILITY` (compiler-resolved via `line!()`).
+pub(crate) const __DEF_LINE_WALLET_ATTENUATE_CAPABILITY: u32 = line!();
 
 /// Wallet resolve DID (RFC-0871 §Test Vectors TV7).
 ///
@@ -295,6 +404,8 @@ pub const WALLET_ATTENUATE_CAPABILITY: PayloadKindId = PayloadKindId([
 pub const WALLET_RESOLVE_DID: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04,
 ]);
+/// Companion `def_line` for `WALLET_RESOLVE_DID` (compiler-resolved via `line!()`).
+pub(crate) const __DEF_LINE_WALLET_RESOLVE_DID: u32 = line!();
 
 // RFC-0870 quota router payload kinds (RFC-0870 §NodeEnvelope Adoption,
 // mission 0870-b-envelope-adoption). Allocated in the RFC-0871
@@ -323,6 +434,8 @@ pub const WALLET_RESOLVE_DID: PayloadKindId = PayloadKindId([
 pub const QUOTA_ROUTER_ANNOUNCE: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ]);
+/// Companion `def_line` for `QUOTA_ROUTER_ANNOUNCE` (compiler-resolved via `line!()`).
+pub(crate) const __DEF_LINE_QUOTA_ROUTER_ANNOUNCE: u32 = line!();
 
 /// Router withdraw (RFC-0870 §NodeEnvelope Adoption).
 ///
@@ -330,6 +443,8 @@ pub const QUOTA_ROUTER_ANNOUNCE: PayloadKindId = PayloadKindId([
 pub const QUOTA_ROUTER_WITHDRAW: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 ]);
+/// Companion `def_line` for `QUOTA_ROUTER_WITHDRAW` (compiler-resolved via `line!()`).
+pub(crate) const __DEF_LINE_QUOTA_ROUTER_WITHDRAW: u32 = line!();
 
 /// Capacity gossip (RFC-0870 §NodeEnvelope Adoption).
 ///
@@ -337,6 +452,8 @@ pub const QUOTA_ROUTER_WITHDRAW: PayloadKindId = PayloadKindId([
 pub const QUOTA_CAPACITY_GOSSIP: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
 ]);
+/// Companion `def_line` for `QUOTA_CAPACITY_GOSSIP` (compiler-resolved via `line!()`).
+pub(crate) const __DEF_LINE_QUOTA_CAPACITY_GOSSIP: u32 = line!();
 
 /// Capacity request (RFC-0870 §NodeEnvelope Adoption).
 ///
@@ -344,6 +461,8 @@ pub const QUOTA_CAPACITY_GOSSIP: PayloadKindId = PayloadKindId([
 pub const QUOTA_CAPACITY_REQUEST: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
 ]);
+/// Companion `def_line` for `QUOTA_CAPACITY_REQUEST` (compiler-resolved via `line!()`).
+pub(crate) const __DEF_LINE_QUOTA_CAPACITY_REQUEST: u32 = line!();
 
 /// Forward request (RFC-0870 §NodeEnvelope Adoption).
 ///
@@ -351,6 +470,8 @@ pub const QUOTA_CAPACITY_REQUEST: PayloadKindId = PayloadKindId([
 pub const QUOTA_FORWARD_REQUEST: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10,
 ]);
+/// Companion `def_line` for `QUOTA_FORWARD_REQUEST` (compiler-resolved via `line!()`).
+pub(crate) const __DEF_LINE_QUOTA_FORWARD_REQUEST: u32 = line!();
 
 /// Forward response (RFC-0870 §NodeEnvelope Adoption).
 ///
@@ -358,6 +479,8 @@ pub const QUOTA_FORWARD_REQUEST: PayloadKindId = PayloadKindId([
 pub const QUOTA_FORWARD_RESPONSE: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11,
 ]);
+/// Companion `def_line` for `QUOTA_FORWARD_RESPONSE` (compiler-resolved via `line!()`).
+pub(crate) const __DEF_LINE_QUOTA_FORWARD_RESPONSE: u32 = line!();
 
 /// Forward reject (RFC-0870 §NodeEnvelope Adoption).
 ///
@@ -365,6 +488,8 @@ pub const QUOTA_FORWARD_RESPONSE: PayloadKindId = PayloadKindId([
 pub const QUOTA_FORWARD_REJECT: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x12,
 ]);
+/// Companion `def_line` for `QUOTA_FORWARD_REJECT` (compiler-resolved via `line!()`).
+pub(crate) const __DEF_LINE_QUOTA_FORWARD_REJECT: u32 = line!();
 
 /// All RFC-0870 quota-router payload kinds (mission 0870-b-envelope-adoption).
 ///
@@ -413,6 +538,8 @@ pub fn is_quota_payload_kind(kind: &PayloadKindId) -> bool {
 pub const REPUTATION_ANCHOR_QUERY: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 ]);
+/// Companion `def_line` for `REPUTATION_ANCHOR_QUERY` (compiler-resolved via `line!()`).
+pub(crate) const __DEF_LINE_REPUTATION_ANCHOR_QUERY: u32 = line!();
 
 /// All reputation-anchor payload kinds served by `ReputationAnchorNode`
 /// (RFC-0871 §Roles and Authorities, mission 0871c-reputation-anchor-node).
@@ -465,6 +592,8 @@ pub fn is_reputation_payload_kind(kind: &PayloadKindId) -> bool {
 pub const CAPABILITY_ISSUE: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 ]);
+/// Companion `def_line` for `CAPABILITY_ISSUE` (compiler-resolved via `line!()`).
+pub(crate) const __DEF_LINE_CAPABILITY_ISSUE: u32 = line!();
 
 /// Capability revoke (RFC-0871 §Roles and Authorities, mission 0871d).
 ///
@@ -478,6 +607,8 @@ pub const CAPABILITY_ISSUE: PayloadKindId = PayloadKindId([
 pub const CAPABILITY_REVOKE: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
 ]);
+/// Companion `def_line` for `CAPABILITY_REVOKE` (compiler-resolved via `line!()`).
+pub(crate) const __DEF_LINE_CAPABILITY_REVOKE: u32 = line!();
 
 /// Capability lookup (RFC-0871 §Roles and Authorities, mission
 /// 0957-phase2c). Returns the `HolderRecord` for a given 32-byte
@@ -492,6 +623,8 @@ pub const CAPABILITY_REVOKE: PayloadKindId = PayloadKindId([
 pub const CAPABILITY_LOOKUP: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
 ]);
+/// Companion `def_line` for `CAPABILITY_LOOKUP` (compiler-resolved via `line!()`).
+pub(crate) const __DEF_LINE_CAPABILITY_LOOKUP: u32 = line!();
 
 /// All capability-issuer payload kinds served by `CapabilityIssuerNode`
 /// (RFC-0871 §Roles and Authorities, mission 0871d-capability-issuer-node).
@@ -541,6 +674,8 @@ pub fn is_capability_payload_kind(kind: &PayloadKindId) -> bool {
 pub const PAID_QUERY_VERIFY: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 ]);
+/// Companion `def_line` for `PAID_QUERY_VERIFY` (compiler-resolved via `line!()`).
+pub(crate) const __DEF_LINE_PAID_QUERY_VERIFY: u32 = line!();
 
 /// All paid-query payload kinds served by the paid-query verifier
 /// (RFC-0871 §Wallet Node Lifecycle, mission 0871e-paid-query-caveat).

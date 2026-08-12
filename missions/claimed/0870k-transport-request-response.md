@@ -2,7 +2,7 @@
 
 ## Status
 
-Open (filed 2026-08-12). Unblocks mission `0871b-cross-node-forwarding` (OPEN, same date).
+**Claimed** 2026-08-12 (session 9a316ae1). Owned-out from `missions/open/` to `missions/claimed/`. Unblocks 6 DEFERRED ACs in `0871b-cross-node-forwarding` (AC-6 wire-dead UUID + AC-11 hop-sign-verify + AC-13/14/15/16 3-node cross-node IV) — see `0871b-cross-node-forwarding.md` v0.15 row.
 
 ## Problem
 

@@ -190,6 +190,15 @@ mod reserved_slot_tests {
     /// future mission allocates this slot for an unrelated purpose
     /// (e.g. an unrelated `*_PAYLOAD_KIND` const), this test fails
     /// before the collision reaches the wire.
+    ///
+    /// SCOPE (round-4 R1 finding): this scan is
+    /// **compile-unit-local** — it only enumerates constants visible
+    /// in THIS translation unit. A future payload-kind constant
+    /// added to a sibling crate (e.g. `octo-wallet`) without the
+    /// `known` array being updated would not trip this guard.
+    /// Cross-crate protection would require a workspace-wide
+    /// `cargo metadata`-driven build script or a workspace-level
+    /// `tests/` integration test; deferred (out of round-4 scope).
     #[test]
     fn reserved_slot_0006_not_allocated() {
         let reserved = _RESERVED_SLOT_0006_CHAIN_RESPONSE;

@@ -309,14 +309,19 @@ impl ResolveChainHandler {
         };
 
         // 3. Walk the hop chain. Each hop:
-        //    - canonicalize hop DID FIRST (NO state consumed on failure —
-        //      a malformed hop must not leave half-walked state)
-        //    - decrement ttl_remaining_ms FIRST (round-3 review C2: TTL
-        //      check symmetric with `InvalidDid` — neither
-        //      `visited.insert` nor `ctx` mutates on a failing hop;
-        //      if either bound trips the loop returns and the local
-        //      `ctx` is dropped without partial state)
+        //    - canonicalize hop DID FIRST (the `let hop_canonical =` /
+        //      `let hop_wire =` bindings are local-stack; nothing
+        //      observable mutates on `InvalidDid` failure)
+        //    - decrement TTL, then check (round-4 R3 MEDIUM: this is
+        //      decrement-then-check, not check-then-decrement; the
+        //      symmetry with `InvalidDid` holds at the OBSERVABLE level
+        //      — `ctx` is `let mut ctx = ...` inside `handle()`, dropped
+        //      on any `Err` return, so no observer sees the transient
+        //      decrement on the failing hop). Round-3 C2 still holds
+        //      by virtue of local-only `ctx` lifetime.
         //    - visited.insert(canonical_hop_did) → ChainCycle
+        //      (cycle check happens AFTER canonicalize + TTL check so
+        //      a malformed or TTL-depleted hop never lands in `visited`)
         //    - capture canonical form for the terminal-hop handoff
         let mut terminal_hop_canonical: String = target_wire.as_str().to_owned();
         for hop in &req.hops {

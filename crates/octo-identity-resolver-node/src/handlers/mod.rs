@@ -326,4 +326,100 @@ mod tests {
             other => panic!("expected AuthorizationFailed, got {other:?}"),
         }
     }
+
+    /// Round-4 review (R1 finding C1.2 + C1.3 + C1.4): direct tests
+    /// for the remaining `From<IdentityResolveError> for ProtocolError`
+    /// mappings not covered by `unsupported_maps_to_authorization_failed_preserving_message`
+    /// or `chain_ttl_too_large_mapping_preserves_bound_cross_ref`. Each
+    /// variant is exercised from the unit-test level so the From-impl
+    /// (not just the handler-level error construction) is pinned.
+    /// Variants `ChainCycle` + `ChainTtlExpired` are also tested at the
+    /// handler level (`cross_node_chain.rs::rejects_oversize_*`) but
+    /// here we pin the From-impl specifically. `Storage` and the two
+    /// `Coordinator*` variants are NOT tested at handler level (they
+    /// require coordinator injection + storage backends); the From-impl
+    /// unit test is the only place they are surfaced.
+
+    #[test]
+    fn coordinator_unavailable_maps_to_authorization_failed() {
+        let err = IdentityResolveError::CoordinatorUnavailable("no backend wired".to_owned());
+        let proto: ProtocolError = err.into();
+        match proto {
+            ProtocolError::AuthorizationFailed(msg) => {
+                assert!(
+                    msg.contains("coordinator unavailable"),
+                    "CoordinatorUnavailable mapping must prefix the kind: {msg}"
+                );
+                assert!(
+                    msg.contains("no backend wired"),
+                    "CoordinatorUnavailable mapping must preserve the inner message: {msg}"
+                );
+            }
+            other => panic!("expected AuthorizationFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn coordinator_error_maps_to_authorization_failed() {
+        let err = IdentityResolveError::Coordinator("write contested".to_owned());
+        let proto: ProtocolError = err.into();
+        match proto {
+            ProtocolError::AuthorizationFailed(msg) => {
+                assert!(
+                    msg.contains("coordinator error"),
+                    "Coordinator mapping must prefix the kind: {msg}"
+                );
+                assert!(
+                    msg.contains("write contested"),
+                    "Coordinator mapping must preserve the inner message: {msg}"
+                );
+            }
+            other => panic!("expected AuthorizationFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn storage_maps_to_authorization_failed() {
+        let err = IdentityResolveError::Storage("disk full".to_owned());
+        let proto: ProtocolError = err.into();
+        match proto {
+            ProtocolError::AuthorizationFailed(msg) => {
+                assert_eq!(
+                    msg, "disk full",
+                    "Storage mapping is pass-through (no prefix)"
+                );
+            }
+            other => panic!("expected AuthorizationFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn chain_cycle_maps_to_authorization_failed_preserving_message() {
+        let err = IdentityResolveError::ChainCycle;
+        let proto: ProtocolError = err.into();
+        match proto {
+            ProtocolError::AuthorizationFailed(msg) => {
+                assert_eq!(
+                    msg, "resolver chain cycle detected",
+                    "ChainCycle mapping must produce the fixed message"
+                );
+            }
+            other => panic!("expected AuthorizationFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn chain_ttl_expired_maps_to_authorization_failed_preserving_message() {
+        let err = IdentityResolveError::ChainTtlExpired;
+        let proto: ProtocolError = err.into();
+        match proto {
+            ProtocolError::AuthorizationFailed(msg) => {
+                assert_eq!(
+                    msg, "resolver chain TTL expired",
+                    "ChainTtlExpired mapping must produce the fixed message"
+                );
+            }
+            other => panic!("expected AuthorizationFailed, got {other:?}"),
+        }
+    }
 }

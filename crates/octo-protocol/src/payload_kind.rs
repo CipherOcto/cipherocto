@@ -172,27 +172,19 @@ pub const IDENTITY_RESOLVE_WITH_CHAIN: PayloadKindId = PayloadKindId([
 ]);
 
 // RFC-0871 cross-domain resolver chain response payload kind
-// (mission `0871b-cross-node-forwarding`). Allocated as slot `0006` in
-// the identity sub-namespace (`0x0009:0001:...`) — next free slot
-// after `IDENTITY_RESOLVE_CHAIN` (`0004`) and
-// `IDENTITY_RESOLVE_WITH_CHAIN` (`0005`). Wire form: borsh-encoded
-// `ChainResolveResponse` (5-tuple: canonical_did + public_key +
-// hops_traversed + signature_chain + envelope_id per mission
-// `0871b-cross-node-forwarding` T5).
+// (mission `0871b-cross-node-forwarding` T6) — REMOVED in round-1 review.
 //
-// This kind is reserved for cross-network returns where the
-// destination resolver-node signs a per-hop accumulator and the
-// requester verifies it in-band. In-process dispatch (handler returns
-// synchronously) continues to emit `IDENTITY_RESOLVE_CHAIN` for
-// backward compatibility with the 7 in-process chain-traversal TV.
-
-/// Identity-resolve-chain-response payload kind
-/// (mission `0871b-cross-node-forwarding` T6).
-///
-/// UUID: `0x0009:0001:0000:0000:0000:0000:0000:0006`
-pub const IDENTITY_RESOLVE_CHAIN_RESPONSE: PayloadKindId = PayloadKindId([
-    0x00, 0x09, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06,
-]);
+// The UUID slot `0006` was reserved for cross-network returns where
+// the destination resolver-node signs a per-hop accumulator and the
+// requester verifies it in-band. Round-1 adversarial review caught
+// that the constant was wire-dead: no dispatch arm registered for
+// it, and no in-process code path produced it (the handler emits
+// `IDENTITY_RESOLVE_CHAIN` for in-process returns). Per
+// [[no-phantom-mission-pointers]] + the layer model (no stale
+// wire-defined UUIDs that no code dispatches), the constant is
+// removed. The slot `0006` is now available for the production
+// cross-network response once mission `0870k-transport-request-
+// response` lands.
 
 /// Wallet sign Ed25519 (RFC-0871 §Wallet Node Lifecycle, Phase 2 mission 0871a).
 ///
@@ -531,17 +523,16 @@ mod tests {
         // (UUID slot 0004 in identity sub-namespace 0x0009:0001:...).
         // Mission 0010-f2-multi-chain-routing adds
         // `IDENTITY_RESOLVE_WITH_CHAIN` (UUID slot 0005).
-        // Mission 0871b-cross-node-forwarding adds
-        // `IDENTITY_RESOLVE_CHAIN_RESPONSE` (UUID slot 0006).
+        // Round-1 review of mission `0871b-cross-node-forwarding`: dropped
+        // `IDENTITY_RESOLVE_CHAIN_RESPONSE` (slot 0006) — wire-dead.
         let kinds = [
             IDENTITY_RESOLVE,
             IDENTITY_REGISTER,
             IDENTITY_REVOKE,
             IDENTITY_RESOLVE_CHAIN,
             IDENTITY_RESOLVE_WITH_CHAIN,
-            IDENTITY_RESOLVE_CHAIN_RESPONSE,
         ];
-        assert_eq!(kinds.len(), 6);
+        assert_eq!(kinds.len(), 5);
         for i in 0..kinds.len() {
             for j in (i + 1)..kinds.len() {
                 assert_ne!(

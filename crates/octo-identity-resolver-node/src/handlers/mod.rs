@@ -139,8 +139,28 @@ pub enum IdentityResolveError {
     /// available (mission `0870k-transport-request-response` pending).
     /// The handler aborts with no registry call so cross-network
     /// resolution is never silently downgraded to local-only.
+    ///
+    /// Mapped to `ProtocolError::AuthorizationFailed` at the dispatch
+    /// boundary — same fail-closed security class as the other chain
+    /// errors (`ChainCycle`, `ChainTtlExpired`). The chain never reached
+    /// the terminal registry, so no partial resolution was committed.
     #[error("unsupported: {0}")]
     Unsupported(String),
+
+    /// Round-1 review (mission `0871b-cross-node-forwarding`): the
+    /// request's `ttl_remaining_ms` exceeds `MAX_CHAIN_TTL_MS`. Rejected
+    /// at `handle()` entry to prevent denial-of-service via `u64::MAX`
+    /// TTL that would bypass per-hop TTL depletion.
+    #[error("chain TTL too large: {0} ms exceeds MAX_CHAIN_TTL_MS")]
+    ChainTtlTooLarge(u64),
+
+    /// Round-1 review (mission `0871b-cross-node-forwarding`): the
+    /// request's `hops.len()` exceeds `u8::MAX`. Rejected at `handle()`
+    /// entry because `ChainResolveResponse.hops_traversed: u8` cannot
+    /// represent larger chains. The ceiling is `u8::MAX = 255`; chains
+    /// that large are a misconfiguration — bound the request instead.
+    #[error("chain too long: {0} hops exceeds u8::MAX")]
+    ChainTooLong(usize),
 }
 
 impl From<IdentityResolveError> for ProtocolError {
@@ -181,6 +201,14 @@ impl From<IdentityResolveError> for ProtocolError {
             // modes — no partial resolution was committed.
             IdentityResolveError::Unsupported(msg) => {
                 ProtocolError::AuthorizationFailed(format!("unsupported: {msg}"))
+            }
+            // Round-1 review: TTL too large / chain too long failed
+            // validation BEFORE any registry call. No state was committed.
+            IdentityResolveError::ChainTtlTooLarge(ms) => {
+                ProtocolError::AuthorizationFailed(format!("chain TTL too large: {ms} ms"))
+            }
+            IdentityResolveError::ChainTooLong(n) => {
+                ProtocolError::AuthorizationFailed(format!("chain too long: {n} hops"))
             }
         }
     }

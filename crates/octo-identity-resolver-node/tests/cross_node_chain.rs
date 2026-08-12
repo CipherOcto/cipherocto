@@ -77,8 +77,6 @@ struct FakeRemoteBackend {
     pubkey: [u8; 32],
     /// HopSignature template (filled in with hop_index = call_count).
     sig_template: HopSignature,
-    /// How many times `resolve_via` has been called.
-    calls: std::sync::atomic::AtomicUsize,
 }
 
 impl FakeRemoteBackend {
@@ -92,13 +90,7 @@ impl FakeRemoteBackend {
         Self {
             pubkey,
             sig_template: sig,
-            calls: std::sync::atomic::AtomicUsize::new(0),
         }
-    }
-
-    #[allow(dead_code)]
-    fn call_count(&self) -> usize {
-        self.calls.load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 
@@ -109,16 +101,9 @@ impl ResolverBackend for FakeRemoteBackend {
         _target: &octo_ident::RawDid,
         _chain_ctx: &ResolverChainContext,
     ) -> Result<BackendResolveOutcome, IdentityResolveError> {
-        let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let sig = HopSignature::new(
-            u8::try_from(n).unwrap_or(u8::MAX),
-            self.sig_template.hop_did.clone(),
-            self.sig_template.signature,
-            self.sig_template.signer_pub,
-        );
         Ok(BackendResolveOutcome {
             public_key: self.pubkey,
-            signature_chain: vec![sig],
+            signature_chain: vec![self.sig_template.clone()],
         })
     }
 }
@@ -126,7 +111,7 @@ impl ResolverBackend for FakeRemoteBackend {
 /// AC-13: a custom backend's `HopSignature` survives into the
 /// `ChainResolveResponse.signature_chain` field.
 #[test]
-fn cross_node_chain_with_fake_remote_backend_accumulates_hop_signatures() {
+fn fake_remote_backend_propagates_signature_chain() {
     let backend: Arc<dyn ResolverBackend> = Arc::new(FakeRemoteBackend::new([0x77u8; 32]));
     let handler = ResolveChainHandler::new(backend);
     let req = ChainResolveRequest {
@@ -144,25 +129,49 @@ fn cross_node_chain_with_fake_remote_backend_accumulates_hop_signatures() {
 }
 
 /// AC-14: `LocalResolverBackend` (the production default) returns an
-/// EMPTY `signature_chain` so in-process resolves stay signature-free.
+/// EMPTY `signature_chain` so in-process resolves stay signature-free —
+/// for both the empty-hops case and the multi-hop case.
 #[test]
-fn cross_node_chain_local_backend_yields_empty_signature_chain() {
+fn local_backend_yields_empty_signature_chain() {
     let registry = Arc::new(InMemoryDidRegistry::default());
     register_custom(&registry, 11, [0xCCu8; 32]);
     let local: Arc<dyn ResolverBackend> = Arc::new(LocalResolverBackend(registry));
     let handler = ResolveChainHandler::new(local);
-    let req = ChainResolveRequest {
+
+    // Empty hops — direct local resolve.
+    let req_empty = ChainResolveRequest {
         target: canonical_did(11),
         hops: vec![],
         ttl_remaining_ms: 100,
     };
-    let out = handler.handle(&req, [0u8; 32]).expect("local resolves");
-    let payload = out.response_payload.expect("response payload");
-    let resp: ChainResolveResponse = borsh::from_slice(&payload).unwrap();
+    let out = handler
+        .handle(&req_empty, [0u8; 32])
+        .expect("local resolves");
+    let resp: ChainResolveResponse = borsh::from_slice(&out.response_payload.unwrap()).unwrap();
     assert_eq!(resp.public_key, [0xCCu8; 32]);
     assert!(
         resp.signature_chain.is_empty(),
-        "LocalResolverBackend yields no HopSignature"
+        "LocalResolverBackend (empty hops) yields no HopSignature"
+    );
+
+    // Multi-hop — local terminal registry with intermediate hops.
+    let req_multi = ChainResolveRequest {
+        target: canonical_did(11),
+        hops: vec![
+            ResolverHop::local(canonical_did(1)),
+            ResolverHop::local(canonical_did(2)),
+        ],
+        ttl_remaining_ms: 100,
+    };
+    let out = handler
+        .handle(&req_multi, [0u8; 32])
+        .expect("local multi-hop resolves");
+    let resp: ChainResolveResponse = borsh::from_slice(&out.response_payload.unwrap()).unwrap();
+    assert_eq!(resp.public_key, [0xCCu8; 32]);
+    assert_eq!(resp.hops_traversed, 2);
+    assert!(
+        resp.signature_chain.is_empty(),
+        "LocalResolverBackend (multi-hop) yields no HopSignature"
     );
 }
 
@@ -170,7 +179,7 @@ fn cross_node_chain_local_backend_yields_empty_signature_chain() {
 /// `IdentityResolveError::Unsupported` (fail-closed before the
 /// request/response substrate lands).
 #[test]
-fn cross_node_chain_remote_backend_stub_is_unsupported() {
+fn remote_backend_stub_is_unsupported() {
     let backend: Arc<dyn ResolverBackend> = RemoteResolverBackend::arc();
     let handler = ResolveChainHandler::new(backend);
     let req = ChainResolveRequest {
@@ -179,17 +188,25 @@ fn cross_node_chain_remote_backend_stub_is_unsupported() {
         ttl_remaining_ms: 100,
     };
     let err = handler.handle(&req, [0u8; 32]).unwrap_err();
-    assert!(matches!(
-        err,
-        octo_identity_resolver_node::IdentityResolveError::Unsupported(_)
-    ));
+    // Pin the contract: the Unsupported message MUST reference the
+    // blocking mission so operator dashboards can route on the
+    // substring `0870k`.
+    match err {
+        IdentityResolveError::Unsupported(msg) => {
+            assert!(
+                msg.contains("0870k"),
+                "Unsupported message must mention 0870k mission reference: {msg}"
+            );
+        }
+        other => panic!("expected Unsupported, got {other:?}"),
+    }
 }
 
 /// AC-16: full round-trip — handler constructs response with populated
 /// `signature_chain` + non-zero `envelope_id`; borsh round-trip
 /// preserves all five fields including the in-band `HopSignature`.
 #[test]
-fn cross_node_chain_full_round_trip_preserves_hop_signature_and_envelope_id() {
+fn full_round_trip_preserves_5tuple_wire_form() {
     let backend: Arc<dyn ResolverBackend> = Arc::new(FakeRemoteBackend::new([0x88u8; 32]));
     let handler = ResolveChainHandler::new(backend);
     let envelope_id = [0x99u8; 32];
@@ -217,16 +234,82 @@ fn cross_node_chain_full_round_trip_preserves_hop_signature_and_envelope_id() {
     assert_eq!(resp_again, resp);
 }
 
+/// Round-1 review: `MAX_CHAIN_TTL_MS` is enforced at `handle()` entry.
+/// A `ttl_remaining_ms = u64::MAX` request must be rejected BEFORE any
+/// registry call.
+#[test]
+fn rejects_oversize_ttl_dos() {
+    let backend: Arc<dyn ResolverBackend> = Arc::new(LocalResolverBackend(Arc::new(
+        InMemoryDidRegistry::default(),
+    )));
+    let handler = ResolveChainHandler::new(backend);
+    let req = ChainResolveRequest {
+        target: canonical_did(11),
+        hops: vec![],
+        ttl_remaining_ms: u64::MAX,
+    };
+    let err = handler.handle(&req, [0u8; 32]).unwrap_err();
+    assert!(matches!(err, IdentityResolveError::ChainTtlTooLarge(_)));
+}
+
+/// Round-1 review: `hops.len() > u8::MAX` is rejected at `handle()`
+/// entry. The `ChainResolveResponse.hops_traversed` field is `u8`, so
+/// larger chains MUST fail-closed rather than silently capping.
+#[test]
+fn rejects_oversize_hop_count() {
+    let backend: Arc<dyn ResolverBackend> = Arc::new(LocalResolverBackend(Arc::new(
+        InMemoryDidRegistry::default(),
+    )));
+    let handler = ResolveChainHandler::new(backend);
+    // 256 hops = u8::MAX + 1. TTL must be <= MAX_CHAIN_TTL_MS so the
+    // hop-count rejection fires first (the check order is TTL bound
+    // → hop-count bound → loop).
+    let hops: Vec<ResolverHop> = (0..(u8::MAX as usize + 1))
+        .map(|i| ResolverHop::local(canonical_did((i % 200) as u8)))
+        .collect();
+    let req = ChainResolveRequest {
+        target: canonical_did(11),
+        hops,
+        ttl_remaining_ms: 60_000,
+    };
+    let err = handler.handle(&req, [0u8; 32]).unwrap_err();
+    assert!(matches!(err, IdentityResolveError::ChainTooLong(_)));
+}
+
+/// Round-1 review: hop canonicalization must precede cycle detection
+/// (do not consume state on a malformed hop). A legacy bare-form hop
+/// `did:octo:bad` is rejected before any `visited.insert` or TTL
+/// decrement.
+#[test]
+fn rejects_malformed_hop_before_state_consumption() {
+    let backend: Arc<dyn ResolverBackend> = Arc::new(LocalResolverBackend(Arc::new(
+        InMemoryDidRegistry::default(),
+    )));
+    let handler = ResolveChainHandler::new(backend);
+    let req = ChainResolveRequest {
+        target: canonical_did(11),
+        hops: vec![
+            ResolverHop::local("did:octo:bad".into()),
+            ResolverHop::local(canonical_did(2)),
+        ],
+        ttl_remaining_ms: 100,
+    };
+    let err = handler.handle(&req, [0u8; 32]).unwrap_err();
+    assert!(matches!(err, IdentityResolveError::InvalidDid(_)));
+}
+
 /// Bonus TV: `RemoteResolverBackend` constructor + trait-object
 /// boundary sanity.
 #[test]
-fn cross_node_remote_backend_arc_constructs_trait_object() {
+fn remote_backend_arc_constructs_trait_object() {
     let backend: Arc<dyn ResolverBackend> = RemoteResolverBackend::arc();
     // The Arc is Send + Sync — required by the trait bound.
     fn assert_send_sync<T: Send + Sync + ?Sized>() {}
     assert_send_sync::<dyn ResolverBackend>();
-    assert_eq!(
-        std::mem::size_of_val(&*backend),
-        std::mem::size_of::<RemoteResolverBackend>()
-    );
+    // Strong-count check: the original Arc exists; clone once and
+    // observe the count grow to 2.
+    let backend_clone = Arc::clone(&backend);
+    assert_eq!(Arc::strong_count(&backend), 2);
+    drop(backend_clone);
+    assert_eq!(Arc::strong_count(&backend), 1);
 }

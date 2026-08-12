@@ -16,7 +16,7 @@
 //!   pattern; preimage = `BLAKE3-256(canonical_ser((chain_hash,
 //!   hop_index, BLAKE3(inner_payload), envelope_id)))`).
 //!
-//! Layer B trait-object boundary: the backend consumes
+//! Layer C trait-object boundary: the backend consumes
 //! `Arc<dyn ResolverBackend>` from the chain handler. No coupling to
 //! `octo-transport` types in the stub shape — that coupling lands with
 //! the substrate.
@@ -36,7 +36,6 @@ use crate::handlers::{
 /// preventing silent local-only resolution when an operator mistakenly
 /// configures `IdentityResolverNodeConfig` for cross-node mode before
 /// mission `0870k-transport-request-response` is implemented.
-#[derive(Default)]
 pub struct RemoteResolverBackend;
 
 impl RemoteResolverBackend {

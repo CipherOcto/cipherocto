@@ -30,15 +30,18 @@
 //!    unregistered / revoked targets (fail-closed; matches the
 //!    `ResolveHandler` posture).
 //!
-//! # Cross-node forwarding (OUT OF SCOPE)
+//! # Cross-node forwarding
 //!
-//! The handler does NOT perform cross-node I/O. Real forwarding from
-//! hop N to hop N+1 requires an envelope request/response substrate
-//! that does not exist in `octo-transport` today (only `broadcast` and
-//! `send_best` fire-and-forget are present). The chain-traversal logic
-//! landing here is the substrate for a network-capable
-//! `ResolveChainHandler` that a follow-on mission will wire once the
-//! request/response substrate lands.
+//! Mission `0871b-cross-node-forwarding` introduces the
+//! `ResolverBackend` trait so the chain walk can intercept
+//! cross-network hops. The `LocalResolverBackend` wrapper preserves
+//! the in-process behavior (no cross-network I/O, no signing). The
+//! `RemoteResolverBackend` stub (in `octo-identity-resolver-node/src/backend.rs`)
+//! produces `IdentityResolveError::Unsupported` for every hop so the
+//! chain handler fails closed before the request/response substrate
+//! (mission `0870k-transport-request-response`) lands. Once that
+//! substrate ships, `RemoteResolverBackend::resolve_via` will issue
+//! real `IDENTITY_RESOLVE_CHAIN` envelopes per hop.
 //!
 //! # Layer discipline
 //!
@@ -64,6 +67,15 @@ use super::{HandlerOutput, IdentityResolveError};
 /// that introduces a real request/response substrate will replace this
 /// with measured per-hop latency.
 pub const HOP_LATENCY_MS_ESTIMATE: u64 = 10;
+
+/// Maximum `ttl_remaining_ms` value accepted at `handle()` entry.
+///
+/// Defense against denial-of-service via `u64::MAX` TTL that would
+/// bypass per-hop TTL depletion. Set to 60 seconds — generous for any
+/// plausible cross-domain resolution chain (a 60 hop × 10 ms = 600 ms
+/// target with the rest reserved for `IDENTITY_RESOLVE_CHAIN` envelope
+/// transport + verification overhead).
+pub const MAX_CHAIN_TTL_MS: u64 = 60_000;
 
 /// A single intermediate resolver hop in a chain resolution request.
 ///
@@ -242,6 +254,16 @@ impl ResolveChainHandler {
         req: &ChainResolveRequest,
         envelope_id: [u8; 32],
     ) -> Result<HandlerOutput, IdentityResolveError> {
+        // 0. Bound TTL at entry (DoS defense — `u64::MAX` would bypass
+        //    per-hop TTL depletion).
+        if req.ttl_remaining_ms > MAX_CHAIN_TTL_MS {
+            return Err(IdentityResolveError::ChainTtlTooLarge(req.ttl_remaining_ms));
+        }
+        // 0b. Bound hop count (silent u8::MAX capping is a smell).
+        if req.hops.len() > u8::MAX as usize {
+            return Err(IdentityResolveError::ChainTooLong(req.hops.len()));
+        }
+
         // 1. Validate target canonical DID shape; reject legacy bare form.
         let target_wire = octo_ident::CanonicalCodec::parse(&req.target, false)
             .map_err(|e| IdentityResolveError::InvalidDid(e.to_string()))?;
@@ -251,53 +273,69 @@ impl ResolveChainHandler {
         // 2. Initialize chain context. Seed `visited` with the target
         //    so a hop that re-uses the target DID triggers cycle detection.
         let mut ctx = ResolverChainContext {
-            visited: BTreeSet::from([req.target.clone()]),
+            visited: BTreeSet::from([target_wire.as_str().to_owned()]),
             ttl_remaining_ms: req.ttl_remaining_ms,
         };
 
         // 3. Walk the hop chain. Each hop:
-        //    - check visited.insert(hop.hop_did) → ChainCycle on collision
+        //    - validate hop canonical DID shape FIRST (defense-in-depth;
+        //      a malformed hop must not consume cycle/TTL state)
+        //    - check visited.insert(canonical_hop_did) → ChainCycle
         //    - decrement ttl_remaining_ms → ChainTtlExpired on underflow
-        //    - validate hop canonical DID shape → InvalidDid on bad shape
         for hop in &req.hops {
-            if !ctx.visited.insert(hop.hop_did.clone()) {
+            // Canonicalize hop DID for both validation and cycle check;
+            // the visited set must compare CANONICAL forms so the
+            // caller cannot bypass cycle detection with a non-canonical
+            // duplicate of an already-visited DID.
+            let hop_wire = octo_ident::CanonicalCodec::parse(&hop.hop_did, false)
+                .map_err(|e| IdentityResolveError::InvalidDid(e.to_string()))?;
+            let hop_canonical = hop_wire.as_str().to_owned();
+            if !ctx.visited.insert(hop_canonical) {
                 return Err(IdentityResolveError::ChainCycle);
             }
             ctx.ttl_remaining_ms = ctx.ttl_remaining_ms.saturating_sub(HOP_LATENCY_MS_ESTIMATE);
             if ctx.ttl_remaining_ms == 0 {
                 return Err(IdentityResolveError::ChainTtlExpired);
             }
-            // Defense-in-depth: reject malformed hops before consuming
-            // the backend. The canonical-DID validation is the same
-            // call shape used for `target` validation above.
-            octo_ident::CanonicalCodec::parse(&hop.hop_did, false)
-                .map_err(|e| IdentityResolveError::InvalidDid(e.to_string()))?;
         }
 
         // 4. After walking all hops, delegate to the injected
         //    `ResolverBackend`. The local backend calls
         //    `DidRegistry::resolve`; a remote backend will perform
         //    network I/O (once the request/response substrate lands).
-        let resp = self.backend.resolve_via(
-            &req.hops.last().map_or_else(
-                // Terminal hop is the local resolver itself when
-                // hops is empty; the local backend ignores hop_did
-                // and resolves `target` directly.
-                || req.target.clone(),
-                |last| last.hop_did.clone(),
-            ),
-            &target_raw,
-            &ctx,
-        )?;
+        //
+        //    Contract: when `req.hops` is empty, `hop_did` is the
+        //    canonical target wire form (informational only —
+        //    `LocalResolverBackend` ignores it; a future
+        //    `RemoteResolverBackend` MUST resolve `target` regardless).
+        //    When `req.hops` is non-empty, `hop_did` is the canonical
+        //    form of the last hop and the remote backend will use it
+        //    as the next-hop envelope recipient.
+        let terminal_hop_did = req
+            .hops
+            .last()
+            .map(|last| {
+                octo_ident::CanonicalCodec::parse(&last.hop_did, false)
+                    .map(|w| w.as_str().to_owned())
+                    .unwrap_or_else(|_| last.hop_did.clone())
+            })
+            .unwrap_or_else(|| target_wire.as_str().to_owned());
+        let resp = self
+            .backend
+            .resolve_via(&terminal_hop_did, &target_raw, &ctx)?;
 
         // 5. Assemble the 5-tuple response (mission
         //    `0871b-cross-node-forwarding` T5). `LocalResolverBackend`
         //    returns an empty `signature_chain`; `RemoteResolverBackend`
         //    populates it with one `HopSignature` per cross-network hop.
+        //
+        //    `hops_traversed` capped at `handle()` entry (see ChainTooLong
+        //    check above), so the `try_from` unwrap is safe.
         let resp = ChainResolveResponse {
             canonical_did: target_wire.as_str().to_owned(),
             public_key: resp.public_key,
-            hops_traversed: u8::try_from(req.hops.len()).unwrap_or(u8::MAX),
+            hops_traversed: u8::try_from(req.hops.len())
+                .expect("hops.len() bounded <= u8::MAX at handle() entry"),
             signature_chain: resp.signature_chain,
             envelope_id,
         };
@@ -307,34 +345,6 @@ impl ResolveChainHandler {
             payload,
             octo_protocol::payload_kind::IDENTITY_RESOLVE_CHAIN,
         ))
-    }
-
-    /// Borrow the chain context for inspection (test surface).
-    #[cfg(test)]
-    #[must_use]
-    pub fn context_after_walk(&self, req: &ChainResolveRequest) -> Option<ResolverChainContext> {
-        // Test helper: returns the chain context after a successful walk.
-        // Caller is expected to invoke `handle` first; this helper is
-        // only meaningful in tests where the handler has already
-        // validated the request. Returns `None` on validation failure.
-        let _ = octo_ident::CanonicalCodec::parse(&req.target, false).ok()?;
-        let mut ctx = ResolverChainContext {
-            visited: BTreeSet::from([req.target.clone()]),
-            ttl_remaining_ms: req.ttl_remaining_ms,
-        };
-        for hop in &req.hops {
-            if !ctx.visited.insert(hop.hop_did.clone()) {
-                return None;
-            }
-            ctx.ttl_remaining_ms = ctx.ttl_remaining_ms.saturating_sub(HOP_LATENCY_MS_ESTIMATE);
-            if ctx.ttl_remaining_ms == 0 {
-                return None;
-            }
-            if octo_ident::CanonicalCodec::parse(&hop.hop_did, false).is_err() {
-                return None;
-            }
-        }
-        Some(ctx)
     }
 }
 
@@ -362,7 +372,7 @@ pub struct BackendResolveOutcome {
     pub signature_chain: Vec<HopSignature>,
 }
 
-/// Layer B trait: abstracts the resolution mechanism for one hop in a
+/// Layer C trait: abstracts the resolution mechanism for one hop in a
 /// resolver chain. `ResolveChainHandler` consults this trait instead of
 /// `DidRegistry` directly so cross-node hops can be intercepted.
 ///
@@ -581,11 +591,11 @@ mod tests {
     }
 
     /// AC-11: `HopSignature` carries the four required fields and
-    /// round-trips the `chain_hash` preimage shape. Test pins the
-    /// structural fields (no real Ed25519 verification — that lands
-    /// with mission `0870k-transport-request-response`).
+    /// round-trips the borsh wire form. Test pins the structural fields
+    /// only — no real Ed25519 sign/verify (real sign/verify lands with
+    /// mission `0870k-transport-request-response`).
     #[test]
-    fn hop_signature_signs_and_verifies() {
+    fn hop_signature_struct_fields_and_borsh_round_trip() {
         let sig = octo_protocol::HopSignature::new(
             2,
             "did:octo:zCt5bENb7tA2b9xeamSEnHF7cZ6Kk8h9p2Z6nT8pVk9R".to_owned(),

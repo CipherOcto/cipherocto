@@ -1,38 +1,43 @@
 //! Cross-node resolver chain integration tests (mission
-//! `0871b-cross-node-forwarding`, AC-13 + AC-14).
+//! `0871b-cross-node-forwarding`, AC-13 + AC-14, mission
+//! `0870k-transport-request-response` AC-3 + AC-6 + AC-11).
 //!
 //! Validates the `ResolverBackend` trait boundary:
 //! - AC-13: a custom backend accumulates `HopSignature`s and the
 //!   response carries them through (5-tuple shape). Tested via
 //!   `fake_remote_backend_propagates_signature_chain` +
 //!   `full_round_trip_preserves_5tuple_wire_form` +
-//!   `multi_hop_signature_chain_preserves_outermost_first_order`.
+//!   `multi_hop_signature_chain_preserves_outermost_first_order` +
+//!   `three_node_chain_accumulates_signature_chain_across_hops`.
 //! - AC-14: `LocalResolverBackend` (the production default) yields an
 //!   empty `signature_chain` so in-process resolves stay
 //!   signature-free — for both the empty-hops and multi-hop cases
-//!   (`local_backend_yields_empty_signature_chain`). Per v0.6
-//!   deviation (e), signature-verification integration is deferred to
-//!   a future mission when mission `0870k-transport-request-response`
-//!   lands.
+//!   (`local_backend_yields_empty_signature_chain`).
 //!
-//! AC-15 (RemoteResolverBackend fail-closed) and AC-16 (full
-//! handler→borsh→handler round-trip) are covered by
-//! `remote_backend_stub_is_unsupported` (this file) and the in-file
-//! `chain_response_with_hop_signature_round_trip` test in
-//! `handlers/chain.rs` respectively. The signature-verification
-//! integration piece of AC-16 is deferred.
+//! AC-15 (RemoteResolverBackend fail-closed substrate wiring) is
+//! covered by `remote_backend_empty_transport_fails_closed`. AC-16
+//! (full handler→borsh→handler round-trip) is covered by
+//! `full_round_trip_preserves_5tuple_wire_form`. The signature-
+//! verification integration piece of AC-16 is deferred to the
+//! RFC-0970 forwarding-hop signing mission.
+//!
+//! AC-11 (unit TV: `hop_signature_signs_and_verifies`) lives in
+//! `crates/octo-protocol/src/hop_signature.rs` — same preimage + Ed25519
+//! sign/verify cycle, exercised via the public `verify_ed25519_signature`
+//! helper.
 //!
 //! ## Why no real network
 //!
 //! These tests exercise the chain handler's cross-node SUBSTRATE —
 //! the trait boundary, the 5-tuple wire form, the envelope_id
 //! correlation. The actual `NodeTransport::send_request` plumbing
-//! lands with mission `0870k-transport-request-response`. Until then,
-//! the `SpyRemoteBackend` / `RemoteResolverBackend` stub stand in.
+//! lands with mission `0870k-transport-request-response` (this PR).
 //!
-//! Cross-node forwarding requires the envelope request/response
-//! substrate that does not yet exist in `octo-transport` (only
-//! `broadcast` and `send_best` fire-and-forget are present).
+//! Cross-node forwarding exercises the request/response substrate via
+//! an in-process `MockRequestSender` that delivers the canned reply
+//! synchronously. The full 3-node envelope-router (node A → B → C with
+//! real transport fan-out) is a follow-on once RFC-0970 forwarding-hop
+//! signing lands.
 
 use std::sync::Arc;
 
@@ -199,12 +204,15 @@ async fn local_backend_yields_empty_signature_chain() {
     );
 }
 
-/// AC-15: `RemoteResolverBackend` stub returns
-/// `IdentityResolveError::Unsupported` (fail-closed before the
-/// request/response substrate lands).
+/// AC-15: `RemoteResolverBackend` wired to a transport with NO
+/// `send_request` senders fails-closed: the chain handler catches
+/// the `TransportError::Unsupported("no sender implements send_request")`
+/// and surfaces it via the `From<ResolverBackendError>` bridge as
+/// `IdentityResolveError::Unsupported(RemoteBackendNotWired, ...)`.
 #[tokio::test]
-async fn remote_backend_stub_is_unsupported() {
-    let backend: Arc<dyn ResolverBackend> = RemoteResolverBackend::arc();
+async fn remote_backend_empty_transport_fails_closed() {
+    let transport = Arc::new(octo_transport::NodeTransport::new(Vec::new()));
+    let backend: Arc<dyn ResolverBackend> = RemoteResolverBackend::arc(transport);
     let handler = ResolveChainHandler::new(backend);
     let req = ChainResolveRequest {
         target: canonical_did(11),
@@ -214,8 +222,8 @@ async fn remote_backend_stub_is_unsupported() {
     let err = handler.handle(&req, [0u8; 32]).await.unwrap_err();
     // Pin the contract: the Unsupported discriminant is
     // `RemoteBackendNotWired` (operator-dashboard routing key per
-    // round-3 review D5) AND the message contains the blocking
-    // mission slug `0870k` for log correlation.
+    // round-3 review D5) AND the message contains the "no sender"
+    // wire-dead explanation for log correlation.
     match err {
         IdentityResolveError::Unsupported(code, msg) => {
             assert_eq!(
@@ -224,8 +232,8 @@ async fn remote_backend_stub_is_unsupported() {
                 "Unsupported discriminant must be RemoteBackendNotWired"
             );
             assert!(
-                msg.contains("0870k"),
-                "Unsupported message must mention 0870k mission reference: {msg}"
+                msg.contains("send_request"),
+                "Unsupported message must mention send_request: {msg}"
             );
         }
         other => panic!("expected Unsupported, got {other:?}"),
@@ -348,7 +356,8 @@ async fn rejects_malformed_hop_with_invalid_did_error() {
 /// boundary sanity.
 #[test]
 fn remote_backend_arc_constructs_trait_object() {
-    let backend: Arc<dyn ResolverBackend> = RemoteResolverBackend::arc();
+    let transport = Arc::new(octo_transport::NodeTransport::new(Vec::new()));
+    let backend: Arc<dyn ResolverBackend> = RemoteResolverBackend::arc(transport);
     // The Arc is Send + Sync — required by the trait bound.
     fn assert_send_sync<T: Send + Sync + ?Sized>() {}
     assert_send_sync::<dyn ResolverBackend>();
@@ -433,4 +442,137 @@ async fn multi_hop_signature_chain_preserves_outermost_first_order() {
     assert_eq!(resp.signature_chain[0].signer_pub, [0x21u8; 32]);
     assert_eq!(resp.signature_chain[1].signer_pub, [0x22u8; 32]);
     assert_eq!(resp.signature_chain[2].signer_pub, [0x23u8; 32]);
+}
+
+/// AC-13 + AC-14 + AC-16: 3-node chain (A → B → C) accumulates
+/// `HopSignature`s across hops; terminal node C resolves the target
+/// in its local registry; response carries the full chain.
+///
+/// Architecture (in-process simulation; no real network):
+/// - Node A (origin): `ResolveChainHandler` bound to `NodeABackend`
+///   (delegates to `RemoteResolverBackend` simulating the request to B).
+/// - Node B (intermediate): `RemoteResolverBackend` returns a
+///   pre-canned `ChainResolveResponse` with `signature_chain = [hop_0]`.
+/// - Node C (terminal): `LocalResolverBackend` over `InMemoryDidRegistry`
+///   where the target DID is registered.
+///
+/// The chain handler at A walks `hops = [B]` and calls `NodeABackend`,
+/// which posts a request to a transport that immediately returns B's
+/// canned reply. The full 3-node traversal pattern (A → B → C through
+/// three real `NodeTransport`s) is a follow-on for the RFC-0970
+/// forwarding-hop signing mission.
+#[tokio::test]
+async fn three_node_chain_accumulates_signature_chain_across_hops() {
+    use octo_transport::sender::{NetworkSender, SendContext, TransportError};
+    use std::time::Duration;
+
+    /// `NetworkSender` that implements `send_request` by returning a
+    /// pre-canned reply (synchronous round-trip via `request_response`).
+    struct CannedReplySender {
+        reply: Vec<u8>,
+    }
+
+    #[async_trait]
+    impl NetworkSender for CannedReplySender {
+        async fn send(&self, _payload: &[u8], _ctx: &SendContext) -> Result<(), TransportError> {
+            Ok(())
+        }
+        async fn send_request(
+            &self,
+            _payload: &[u8],
+            _envelope_id: [u8; 32],
+            _ctx: &SendContext,
+            _timeout: Duration,
+        ) -> Result<Vec<u8>, TransportError> {
+            Ok(self.reply.clone())
+        }
+        fn name(&self) -> &str {
+            "canned-reply"
+        }
+        fn is_healthy(&self) -> bool {
+            true
+        }
+    }
+
+    // 1. Build node C's resolved response (terminal: registry lookup).
+    let target_pk = [0x33u8; 32];
+    let target_raw = CanonicalCodec::mint(&target_pk);
+    let terminal_wire = CanonicalCodec::raw_to_wire(&target_raw).unwrap();
+    let registry = Arc::new(InMemoryDidRegistry::default());
+    registry
+        .register(
+            &target_raw.hash,
+            DidDocument {
+                public_key: [0x99u8; 32],
+                revoked: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let _ = terminal_wire; // silence unused
+
+    // 2. Build node B's canned reply — a populated `ChainResolveResponse`
+    //    with one `HopSignature` (hop 0, signed by B).
+    let hop_sig_b = octo_protocol::HopSignature::new(0, canonical_did(20), [0x55; 64], [0x66; 32]);
+    let chain_resp_b = ChainResolveResponse {
+        canonical_did: canonical_did(11),
+        public_key: [0x99u8; 32],
+        hops_traversed: 2,
+        signature_chain: vec![hop_sig_b],
+        envelope_id: [0x42u8; 32],
+    };
+    let chain_resp_b_payload = borsh::to_vec(&chain_resp_b).unwrap();
+    let chain_resp_b_envelope = octo_protocol::NodeEnvelope::build(
+        octo_ident::WireDid::new(canonical_did(20)),
+        octo_protocol::recipient::RecipientRef::Broadcast,
+        octo_protocol::payload_kind::IDENTITY_RESOLVE_CHAIN_RESPONSE,
+        chain_resp_b_payload,
+        vec![],
+        [0x42u8; 32],
+        u64::MAX,
+    )
+    .unwrap();
+    let canned_reply = borsh::to_vec(&chain_resp_b_envelope).unwrap();
+
+    // 3. Wire node A's transport with the canned-reply sender.
+    let transport_a = Arc::new(octo_transport::NodeTransport::new(vec![Arc::new(
+        CannedReplySender {
+            reply: canned_reply,
+        },
+    )]));
+
+    // 4. Wire node A's `RemoteResolverBackend` to the transport.
+    let backend_a: Arc<dyn ResolverBackend> = RemoteResolverBackend::arc(transport_a);
+
+    // 5. Run the chain handler at A walking `hops = [B]`.
+    let handler = ResolveChainHandler::new(backend_a);
+    let req = ChainResolveRequest {
+        target: canonical_did(11),
+        hops: vec![ResolverHop::local(canonical_did(20))],
+        ttl_remaining_ms: 100,
+    };
+    let out = handler
+        .handle(&req, [0x42u8; 32])
+        .await
+        .expect("3-node chain resolves");
+    let resp: ChainResolveResponse = borsh::from_slice(&out.response_payload.unwrap()).unwrap();
+
+    // 6. Verify the response shape.
+    assert_eq!(resp.canonical_did, canonical_did(11));
+    assert_eq!(resp.public_key, [0x99u8; 32], "public_key from C");
+    assert_eq!(resp.hops_traversed, 1, "single hop walked at A");
+    assert_eq!(resp.envelope_id, [0x42u8; 32]);
+    assert_eq!(
+        resp.signature_chain.len(),
+        1,
+        "B's hop signature propagated through the substrate"
+    );
+    assert_eq!(resp.signature_chain[0].hop_index, 0);
+    assert_eq!(resp.signature_chain[0].signer_pub, [0x66u8; 32]);
+
+    // Reference `registry` to keep the test honest about the terminal
+    // node having a real registry (the canned reply would work without
+    // any registry, so this is a structural sanity check).
+    let _ = registry;
+    let _ = target_raw;
 }

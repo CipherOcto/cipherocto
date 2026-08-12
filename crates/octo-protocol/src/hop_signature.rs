@@ -101,4 +101,55 @@ mod tests {
         let back: HopSignature = borsh::from_slice(&bytes).expect("deserialize");
         assert_eq!(back, sig);
     }
+
+    /// AC-11 (mission `0870k-transport-request-response`): the `HopSignature`
+    /// wire form binds an Ed25519 signature over the preimage
+    /// `BLAKE3-256(canonical_ser((chain_hash, hop_index, BLAKE3(inner_payload), envelope_id)))`.
+    ///
+    /// Sign with `ed25519_dalek::SigningKey`; verify with
+    /// `verify_ed25519_signature` (which decodes the canonical DID into
+    /// the verifying key). The round-trip confirms the 5-tuple preimage
+    /// + `signature` + `signer_pub` binding holds end-to-end.
+    #[test]
+    fn hop_signature_signs_and_verifies() {
+        use crate::authorization::{verify_ed25519_signature, Ed25519SignatureBytes};
+        use ed25519_dalek::{Signer, SigningKey};
+
+        // 1. Generate a deterministic Ed25519 keypair from a 32-byte seed.
+        let mut seed = [0u8; 32];
+        for (i, b) in seed.iter_mut().enumerate() {
+            *b = i as u8;
+        }
+        let sk = SigningKey::from_bytes(&seed);
+        let pk_bytes = sk.verifying_key().to_bytes();
+        let hop_did = format!("did:octo:z{}", bs58::encode(&pk_bytes).into_string());
+        let hop_did = crate::WireDid::new(hop_did);
+
+        // 2. Build the preimage per RFC-0871 §Algorithms step 4 +
+        //    RFC-0970 forwarding-hop pattern:
+        //    `BLAKE3-256(canonical_ser((chain_hash, hop_index, BLAKE3(inner_payload), envelope_id)))`
+        let chain_hash = [0xABu8; 32];
+        let hop_index: u8 = 1;
+        let inner_payload = b"IDENTITY_RESOLVE_CHAIN payload bytes";
+        let inner_hash = blake3::hash(inner_payload);
+        let envelope_id = [0x42u8; 32];
+        let preimage_struct = (chain_hash, hop_index, *inner_hash.as_bytes(), envelope_id);
+        let preimage_bytes = borsh::to_vec(&preimage_struct).expect("canonical_ser preimage");
+        let preimage_hash = blake3::hash(&preimage_bytes);
+
+        // 3. Sign the BLAKE3-hashed preimage with Ed25519.
+        let sig = Ed25519SignatureBytes::from_signature(&sk.sign(preimage_hash.as_bytes()));
+        let hop_sig = HopSignature::new(hop_index, hop_did.as_str().to_owned(), sig.0, pk_bytes);
+
+        // 4. Verify the signature via the public `verify_ed25519_signature`
+        //    helper — same code path the `EnvelopeDispatcher` uses for
+        //    `Authorization::Signature` verification. This pins the
+        //    end-to-end sign/verify cycle over the 5-tuple preimage.
+        verify_ed25519_signature(&hop_did, preimage_hash.as_bytes(), &sig)
+            .expect("hop signature MUST verify against the 5-tuple preimage");
+        // Re-decode the `HopSignature` wire form to confirm the
+        // borsh layout is self-consistent end-to-end.
+        let hop_sig_bytes = borsh::to_vec(&hop_sig).expect("HopSignature borsh");
+        let _back: HopSignature = borsh::from_slice(&hop_sig_bytes).expect("HopSignature decode");
+    }
 }

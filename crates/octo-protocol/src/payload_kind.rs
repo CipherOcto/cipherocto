@@ -181,25 +181,45 @@ pub const IDENTITY_RESOLVE_WITH_CHAIN: PayloadKindId = PayloadKindId([
 /// Companion `def_line` for `IDENTITY_RESOLVE_WITH_CHAIN` (compiler-resolved via `line!()`).
 pub(crate) const __DEF_LINE_IDENTITY_RESOLVE_WITH_CHAIN: u32 = line!();
 
-// RESERVED: slot `:0006` reserved for production cross-network chain
-// response (mission `0870k-transport-request-response`). Removed in
-// round-1 review as wire-dead. The `_RESERVED_SLOT_*` const + sentinel
-// test below prevent a future mission from silently allocating this
-// slot for an unrelated purpose (compile-time guard; round-3 review C3).
-#[allow(dead_code)]
-const _RESERVED_SLOT_0006_CHAIN_RESPONSE: PayloadKindId = PayloadKindId([
-    0x00, 0x09, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+/// Identity-resolve-chain-response payload kind (RFC-0871 §Future Work,
+/// mission `0870k-transport-request-response` AC-6).
+///
+/// Allocated in the RFC-0871 `rfc_namespace` (`0x0009:...`) with
+/// sub-namespace `0x0001` (mission 0871 — identity) and slot `:0006`
+/// (next free slot after RESOLVE :0001, REGISTER :0002, REVOKE :0003,
+/// CHAIN :0004, WITH_CHAIN :0005). The cross-network chain reply
+/// envelope carries this payload kind so the wrapping node can
+/// distinguish the response from the request at the dispatch boundary.
+///
+/// Wire form: borsh-encoded `ChainResolveResponse` (canonical_did,
+/// public_key, hops_traversed, signature_chain, envelope_id — 5-tuple
+/// per RFC-0871 §Algorithms step 4).
+///
+/// Distinct from `IDENTITY_RESOLVE_CHAIN` (the request payload kind).
+/// The two share the same wire schema envelope but the dispatcher
+/// routes by `payload_kind` to know which decoder to apply.
+///
+/// UUID: `0x0009:0001:0000:0000:0000:0000:0000:0006`
+pub const IDENTITY_RESOLVE_CHAIN_RESPONSE: PayloadKindId = PayloadKindId([
+    0x00, 0x09, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06,
 ]);
+/// Companion `def_line` for `IDENTITY_RESOLVE_CHAIN_RESPONSE` (compiler-resolved via `line!()`).
+pub(crate) const __DEF_LINE_IDENTITY_RESOLVE_CHAIN_RESPONSE: u32 = line!();
 
 #[cfg(test)]
 mod reserved_slot_tests {
     use super::*;
 
-    /// Round-3 review (C3): asserts the reserved `:0006` slot is not
-    /// silently allocated by any known payload-kind constant. If a
-    /// future mission allocates this slot for an unrelated purpose
-    /// (e.g. an unrelated `*_PAYLOAD_KIND` const), this test fails
-    /// before the collision reaches the wire.
+    /// Mission `0870k-transport-request-response` AC-6: the public
+    /// `IDENTITY_RESOLVE_CHAIN_RESPONSE` payload kind exists at UUID
+    /// `0x0009:0001:0000:0000:0000:0000:0000:0006` (slot `:0006` in the
+    /// identity sub-namespace) and is pairwise distinct from every
+    /// other allocated payload kind in this file. The previous
+    /// "reserved sentinel" const + `reserved_slot_0006_not_allocated`
+    /// test was deleted along with the wire-dead reservation (the
+    /// reservation was at the wrong UUID — sub-namespace `:0006` instead
+    /// of slot `:0006`); the LIVE allocation now lands in the
+    /// documented identity slot.
     ///
     /// SCOPE (round-4 R1 finding): this scan is
     /// **compile-unit-local** — it only enumerates constants visible
@@ -213,9 +233,9 @@ mod reserved_slot_tests {
     /// deferred (out of round-4 scope).
     ///
     /// COVERAGE (round-5 R1 finding): the `known` array below
-    /// enumerates **21 entries total** of `PayloadKindId` constants
-    /// defined in this file (5 IDENTITY + 4 WALLET + 7 QUOTA +
-    /// 1 REPUTATION + 3 CAPABILITY + 1 PAID_QUERY = 21). Adding a
+    /// enumerates **22 entries total** of `PayloadKindId` constants
+    /// defined in this file (6 IDENTITY + 4 WALLET + 7 QUOTA +
+    /// 1 REPUTATION + 3 CAPABILITY + 1 PAID_QUERY = 22). Adding a
     /// new constant in this file without updating the `known` array
     /// turns this test into a fail-closed guard for the new
     /// addition.
@@ -235,8 +255,40 @@ mod reserved_slot_tests {
     /// `syn`-generated approach (toolchain surface area); `line!()`
     /// is core Rust stable since 1.0 and adds zero deps.
     #[test]
-    fn reserved_slot_0006_not_allocated() {
-        let reserved = _RESERVED_SLOT_0006_CHAIN_RESPONSE;
+    fn identity_resolve_chain_response_split_from_request() {
+        // AC-6 (mission 0870k-transport-request-response):
+        // `IDENTITY_RESOLVE_CHAIN_RESPONSE` (the cross-network reply
+        // payload kind) is allocated at UUID
+        // `0x0009:0001:0000:0000:0000:0000:0000:0006`. The companion
+        // request payload kind `IDENTITY_RESOLVE_CHAIN` sits at slot
+        // `:0004` (UUID `0x0009:0001:0000:0000:0000:0000:0000:0004`).
+        // The two MUST be distinct so the dispatcher can route reply
+        // vs request to the right decoder.
+        assert_ne!(
+            IDENTITY_RESOLVE_CHAIN_RESPONSE, IDENTITY_RESOLVE_CHAIN,
+            "IDENTITY_RESOLVE_CHAIN_RESPONSE must differ from IDENTITY_RESOLVE_CHAIN"
+        );
+        // Assert the new constant sits at the documented UUID slot
+        // `:0006` in the identity sub-namespace.
+        let expected: [u8; 16] = [
+            0x00, 0x09, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x06,
+        ];
+        assert_eq!(
+            IDENTITY_RESOLVE_CHAIN_RESPONSE.0, expected,
+            "IDENTITY_RESOLVE_CHAIN_RESPONSE must live at slot :0006 of identity sub-namespace"
+        );
+    }
+
+    /// Round-3 review (C3): asserts the new `IDENTITY_RESOLVE_CHAIN_RESPONSE`
+    /// payload kind does not collide with any of the 21 other known
+    /// payload-kind constants in this file. If a future mission
+    /// allocates this slot for an unrelated purpose (e.g. an
+    /// unrelated `*_PAYLOAD_KIND` const), this test fails before the
+    /// collision reaches the wire.
+    #[test]
+    fn identity_resolve_chain_response_distinct_from_known() {
+        let target = IDENTITY_RESOLVE_CHAIN_RESPONSE;
         // Each entry carries the `pub const X` definition line (via
         // compiler-resolved `__DEF_LINE_X` companion const) so a
         // test-failure message can point the maintainer at the source
@@ -362,10 +414,10 @@ mod reserved_slot_tests {
             // the file by hand.
             assert_ne!(
                 kind.0,
-                reserved.0,
-                "slot :0006 collision: {name} (defined at payload_kind.rs:{def_line}) collides with reserved chain-response slot; colliding UUID bytes = {:?}; reserved UUID bytes = {:?}",
+                target.0,
+                "slot :0006 chain-response collision: {name} (defined at payload_kind.rs:{def_line}) collides with IDENTITY_RESOLVE_CHAIN_RESPONSE; colliding UUID bytes = {:?}; target UUID bytes = {:?}",
                 kind.0,
-                reserved.0,
+                target.0,
             );
         }
     }
@@ -731,25 +783,28 @@ mod tests {
 
     #[test]
     fn identity_payload_kinds_are_distinct() {
-        // Mission 0871e-f7-impl-resolver-mediation AC: 5 identity payload
-        // kinds must be pairwise distinct (no accidental UUID collision
-        // across `IDENTITY_RESOLVE` / `IDENTITY_REGISTER` /
+        // Mission 0871e-f7-impl-resolver-mediation AC: 6 identity
+        // payload kinds must be pairwise distinct (no accidental UUID
+        // collision across `IDENTITY_RESOLVE` / `IDENTITY_REGISTER` /
         // `IDENTITY_REVOKE` / `IDENTITY_RESOLVE_CHAIN` /
-        // `IDENTITY_RESOLVE_WITH_CHAIN`). Mission
-        // 0871b-cross-domain-resolution-impl adds `IDENTITY_RESOLVE_CHAIN`
+        // `IDENTITY_RESOLVE_WITH_CHAIN` /
+        // `IDENTITY_RESOLVE_CHAIN_RESPONSE`).
+        // Mission 0871b-cross-domain-resolution-impl adds `IDENTITY_RESOLVE_CHAIN`
         // (UUID slot 0004 in identity sub-namespace 0x0009:0001:...).
         // Mission 0010-f2-multi-chain-routing adds
         // `IDENTITY_RESOLVE_WITH_CHAIN` (UUID slot 0005).
-        // Round-1 review of mission `0871b-cross-node-forwarding`: dropped
-        // `IDENTITY_RESOLVE_CHAIN_RESPONSE` (slot 0006) — wire-dead.
+        // Mission 0870k-transport-request-response AC-6 adds
+        // `IDENTITY_RESOLVE_CHAIN_RESPONSE` (UUID slot 0006 —
+        // cross-network chain reply payload kind).
         let kinds = [
             IDENTITY_RESOLVE,
             IDENTITY_REGISTER,
             IDENTITY_REVOKE,
             IDENTITY_RESOLVE_CHAIN,
             IDENTITY_RESOLVE_WITH_CHAIN,
+            IDENTITY_RESOLVE_CHAIN_RESPONSE,
         ];
-        assert_eq!(kinds.len(), 5);
+        assert_eq!(kinds.len(), 6);
         for i in 0..kinds.len() {
             for j in (i + 1)..kinds.len() {
                 assert_ne!(
@@ -764,6 +819,7 @@ mod tests {
         assert_ne!(IDENTITY_REGISTER, WALLET_SIGN_ED25519);
         assert_ne!(IDENTITY_REVOKE, WALLET_RESOLVE_DID);
         assert_ne!(IDENTITY_RESOLVE_CHAIN, WALLET_RESOLVE_DID);
+        assert_ne!(IDENTITY_RESOLVE_CHAIN_RESPONSE, WALLET_RESOLVE_DID);
     }
 
     #[test]

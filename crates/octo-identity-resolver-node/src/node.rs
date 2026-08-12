@@ -99,13 +99,24 @@ pub struct IdentityResolverNodeConfig {
     /// Defaults to [`DEFAULT_CHAIN_ID`] when `None`. Operators with a
     /// custom chain namespace pass `Some(ChainId::new("..."))`.
     pub chain_id: Option<ChainId>,
+    /// Mission `0870k-transport-request-response` + mission
+    /// `0871b-cross-node-forwarding` T4: opt-in `ResolverBackend`
+    /// for cross-node `IDENTITY_RESOLVE_CHAIN` walks. When `None`
+    /// at construction time, `IdentityResolverNode::new` defaults
+    /// to `LocalResolverBackend` over `self.registry` (in-process
+    /// walk; no network). Production deployments with cross-node
+    /// resolver chains inject `Some(RemoteResolverBackend::arc(self.transport.clone()))`
+    /// to route `IDENTITY_RESOLVE_CHAIN` hops through the
+    /// `NodeTransport::request_response` substrate.
+    pub resolver_backend: Option<Arc<dyn ResolverBackend>>,
 }
 
 impl Default for IdentityResolverNodeConfig {
     /// Default config for tests + Phase 1 MVP callers: no transport,
     /// no identity, no network key, no registry (defaults to
     /// `InMemoryDidRegistry`), no coordinator (fail-closed writes),
-    /// no explicit chain (`DEFAULT_CHAIN_ID`).
+    /// no explicit chain (`DEFAULT_CHAIN_ID`), no resolver backend
+    /// (defaults to `LocalResolverBackend`).
     ///
     /// Production deployments construct via struct-literal with all
     /// fields filled in.
@@ -117,6 +128,7 @@ impl Default for IdentityResolverNodeConfig {
             registry: None,
             write_coordinator: None,
             chain_id: None,
+            resolver_backend: None,
         }
     }
 }
@@ -186,6 +198,12 @@ impl IdentityResolverNode {
     /// Mission 0871e-f7-impl-resolver-mediation: `config.chain_id`
     /// defaults to [`DEFAULT_CHAIN_ID`] when `None`; the coordinator
     /// slot defaults to `None` (fail-closed writes).
+    ///
+    /// Mission `0870k-transport-request-response` T4 + mission
+    /// `0871b-cross-node-forwarding` T4: `config.resolver_backend`
+    /// defaults to `LocalResolverBackend` over `self.registry` when
+    /// `None`. Production deployments with cross-node resolver chains
+    /// inject `Some(RemoteResolverBackend::arc(self.transport.clone()))`.
     #[must_use]
     pub fn new(config: IdentityResolverNodeConfig) -> Self {
         let registry = config
@@ -201,8 +219,10 @@ impl IdentityResolverNode {
             ChainId::new(DEFAULT_CHAIN_ID)
                 .expect("DEFAULT_CHAIN_ID is a valid RFC-0010 v1.4 chain namespace")
         });
-        let resolver_backend: Arc<dyn ResolverBackend> =
-            LocalResolverBackend::new(registry.clone());
+        let resolver_backend: Arc<dyn ResolverBackend> = config
+            .resolver_backend
+            .clone()
+            .unwrap_or_else(|| LocalResolverBackend::new(registry.clone()));
         Self {
             config,
             registry,
@@ -229,8 +249,10 @@ impl IdentityResolverNode {
             ChainId::new(DEFAULT_CHAIN_ID)
                 .expect("DEFAULT_CHAIN_ID is a valid RFC-0010 v1.4 chain namespace")
         });
-        let resolver_backend: Arc<dyn ResolverBackend> =
-            LocalResolverBackend::new(registry.clone());
+        let resolver_backend: Arc<dyn ResolverBackend> = config
+            .resolver_backend
+            .clone()
+            .unwrap_or_else(|| LocalResolverBackend::new(registry.clone()));
         Self {
             config,
             registry,
@@ -518,6 +540,7 @@ mod tests {
             registry: None,
             write_coordinator: None,
             chain_id: None,
+            resolver_backend: None,
         };
         let node = IdentityResolverNode::new(cfg);
         let handle = node.start().expect("start should succeed");
@@ -534,6 +557,7 @@ mod tests {
             registry: None,
             write_coordinator: None,
             chain_id: None,
+            resolver_backend: None,
         };
         let node = IdentityResolverNode::new(cfg);
         let _ = node.start();
@@ -551,6 +575,7 @@ mod tests {
             registry: None,
             write_coordinator: None,
             chain_id: None,
+            resolver_backend: None,
         };
         let node = IdentityResolverNode::new(cfg);
         // Build a payload with an unknown payload kind (random 16-byte UUID).
@@ -605,6 +630,7 @@ mod tests {
             registry: Some(registry.clone()),
             write_coordinator: None,
             chain_id: None,
+            resolver_backend: None,
         };
         let node = IdentityResolverNode::new(cfg);
         let req = ResolveRequest(wire_str.clone());
@@ -643,6 +669,7 @@ mod tests {
             registry: None,
             write_coordinator: None,
             chain_id: None,
+            resolver_backend: None,
         };
         let node = IdentityResolverNode::new(cfg);
         // Pre-register the DID so the empty-registry case doesn't trip.

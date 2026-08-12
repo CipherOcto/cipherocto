@@ -194,22 +194,51 @@ mod reserved_slot_tests {
     /// SCOPE (round-4 R1 finding): this scan is
     /// **compile-unit-local** — it only enumerates constants visible
     /// in THIS translation unit. A future payload-kind constant
-    /// added to a sibling crate (e.g. `octo-wallet`) without the
+    /// added to **a different crate**, or added to this crate but
+    /// outside this file (separate translation unit), without the
     /// `known` array being updated would not trip this guard.
-    /// Cross-crate protection would require a workspace-wide
-    /// `cargo metadata`-driven build script or a workspace-level
-    /// `tests/` integration test; deferred (out of round-4 scope).
+    /// Cross-crate / cross-translation-unit protection would
+    /// require a workspace-wide `cargo metadata`-driven build
+    /// script or a workspace-level `tests/` integration test;
+    /// deferred (out of round-4 scope).
+    ///
+    /// COVERAGE (round-5 R1 finding): the `known` array below
+    /// enumerates all 21 `PayloadKindId` constants defined in this
+    /// file (5 IDENTITY + 4 WALLET + 7 QUOTA + 1 REPUTATION +
+    /// 3 CAPABILITY + 1 PAID_QUERY). Adding a new constant here
+    /// without updating the array turns this test into a fail-closed
+    /// guard for the new addition.
     #[test]
     fn reserved_slot_0006_not_allocated() {
         let reserved = _RESERVED_SLOT_0006_CHAIN_RESPONSE;
-        let known = [
+        let known: &[(&str, PayloadKindId)] = &[
+            // IDENTITY sub-namespace 0x0009:0001:...
             ("IDENTITY_RESOLVE", IDENTITY_RESOLVE),
             ("IDENTITY_REGISTER", IDENTITY_REGISTER),
             ("IDENTITY_REVOKE", IDENTITY_REVOKE),
             ("IDENTITY_RESOLVE_CHAIN", IDENTITY_RESOLVE_CHAIN),
             ("IDENTITY_RESOLVE_WITH_CHAIN", IDENTITY_RESOLVE_WITH_CHAIN),
+            // WALLET sub-namespace 0x0009:0002:...
             ("WALLET_SIGN_ED25519", WALLET_SIGN_ED25519),
             ("WALLET_MINT_CAPABILITY", WALLET_MINT_CAPABILITY),
+            ("WALLET_ATTENUATE_CAPABILITY", WALLET_ATTENUATE_CAPABILITY),
+            ("WALLET_RESOLVE_DID", WALLET_RESOLVE_DID),
+            // QUOTA sub-namespace 0x0009:0003:...
+            ("QUOTA_ROUTER_ANNOUNCE", QUOTA_ROUTER_ANNOUNCE),
+            ("QUOTA_ROUTER_WITHDRAW", QUOTA_ROUTER_WITHDRAW),
+            ("QUOTA_CAPACITY_GOSSIP", QUOTA_CAPACITY_GOSSIP),
+            ("QUOTA_CAPACITY_REQUEST", QUOTA_CAPACITY_REQUEST),
+            ("QUOTA_FORWARD_REQUEST", QUOTA_FORWARD_REQUEST),
+            ("QUOTA_FORWARD_RESPONSE", QUOTA_FORWARD_RESPONSE),
+            ("QUOTA_FORWARD_REJECT", QUOTA_FORWARD_REJECT),
+            // REPUTATION sub-namespace 0x0009:0004:...
+            ("REPUTATION_ANCHOR_QUERY", REPUTATION_ANCHOR_QUERY),
+            // CAPABILITY sub-namespace 0x0009:0005:...
+            ("CAPABILITY_ISSUE", CAPABILITY_ISSUE),
+            ("CAPABILITY_REVOKE", CAPABILITY_REVOKE),
+            ("CAPABILITY_LOOKUP", CAPABILITY_LOOKUP),
+            // PAID_QUERY sub-namespace 0x0009:0006:...
+            ("PAID_QUERY_VERIFY", PAID_QUERY_VERIFY),
         ];
         for (name, kind) in known {
             assert_ne!(

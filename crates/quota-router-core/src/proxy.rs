@@ -994,8 +994,7 @@ where
         } else {
             handler.handle_readiness()
         };
-        let status_code = StatusCode::from_u16(status)
-            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        let status_code = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         let resp = Response::builder()
             .status(status_code)
             .header("content-type", "application/json")
@@ -2393,10 +2392,16 @@ where
 /// Resolve prompt template and inject as system message (RFC-0948).
 /// If prompt_id is set, looks up the prompt, renders template with variables,
 /// and prepends a system message to the request.
+///
+/// `api_key_id` is the A/B-test priority anchor: when present it pins a
+/// given caller to the same arm across requests. Falls back to the
+/// request's `user` field (treated as the operator-supplied request
+/// identifier) then to a generated UUID.
 #[cfg(any(feature = "litellm-mode", feature = "full"))]
 fn resolve_prompt(
     request: &mut NativeHttpRequest,
     prompt_registry: Option<&mut crate::prompts::PromptRegistry>,
+    api_key_id: Option<&str>,
 ) -> Result<(), String> {
     let prompt_id = match &request.prompt_id {
         Some(id) => id.clone(),
@@ -2408,10 +2413,15 @@ fn resolve_prompt(
         None => return Err("Prompt registry not available".to_string()),
     };
 
-    // Generate request_id for A/B testing (priority: user field > generated UUID)
-    let request_id = request
-        .user
-        .clone()
+    // A/B request_id priority chain (RFC-0948 §Integration):
+    // 1. API key ID (highest — pins a caller across requests)
+    // 2. OpenAI `user` field (operator-supplied identifier)
+    // 3. Generated UUID (last-resort; collapses A/B to 50/50 across
+    //    unauthenticated callers).
+    let request_id = api_key_id
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .or_else(|| request.user.clone())
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     // Resolve prompt (handles A/B testing)
@@ -2469,9 +2479,18 @@ async fn handle_request_litellm(
 
     // Resolve prompt template if prompt_id is set (RFC-0948)
     // Lock and resolve before any .await (RwLockWriteGuard is not Send)
+    // Derive api_key_id from api_key (first 8 chars) for A/B pinning.
+    let api_key_id = api_key.map(|k| {
+        let trimmed = k.trim();
+        if trimmed.len() > 8 {
+            &trimmed[..8]
+        } else {
+            trimmed
+        }
+    });
     let resolve_result = {
         let mut prompt_guard = prompt_registry.as_ref().map(|r| r.write().unwrap());
-        resolve_prompt(&mut request, prompt_guard.as_deref_mut())
+        resolve_prompt(&mut request, prompt_guard.as_deref_mut(), api_key_id)
     };
     if let Err(e) = resolve_result {
         let resp = Response::builder()
@@ -3411,7 +3430,7 @@ mod tests {
             provider_params: None,
             timeout: None,
         };
-        let result = resolve_prompt(&mut req, None);
+        let result = resolve_prompt(&mut req, None, None);
         assert!(result.is_ok());
     }
 
@@ -10207,7 +10226,7 @@ mod tests {
             provider_params: None,
             timeout: None,
         };
-        let result = resolve_prompt(&mut req, None);
+        let result = resolve_prompt(&mut req, None, None);
         assert!(result.is_err());
         assert!(
             result
@@ -10250,7 +10269,7 @@ mod tests {
             timeout: None,
         };
         let mut registry = crate::prompts::PromptRegistry::new();
-        let result = resolve_prompt(&mut req, Some(&mut registry));
+        let result = resolve_prompt(&mut req, Some(&mut registry), None);
         assert!(result.is_err());
         let msg = result.unwrap_err();
         assert!(
@@ -10321,7 +10340,7 @@ mod tests {
             provider_params: None,
             timeout: None,
         };
-        let result = resolve_prompt(&mut req, Some(&mut registry));
+        let result = resolve_prompt(&mut req, Some(&mut registry), None);
         assert!(result.is_ok(), "expected Ok(()), got: {:?}", result);
         assert_eq!(req.messages.len(), 2, "system message prepended");
         assert_eq!(req.messages[0].role, "system");
@@ -10331,6 +10350,85 @@ mod tests {
             req.messages[1].content.as_deref(),
             Some("original question")
         );
+    }
+
+    /// Cluster 2411-2427 — A/B request_id priority chain
+    /// (RFC-0948 §Integration): api_key_id > user field > generated
+    /// UUID. Verifies (a) `api_key_id` accepts a non-empty anchor and
+    /// still resolves the prompt, (b) `Some("")` falls through to the
+    /// user field, (c) `None` falls through to the user field. The
+    /// arm-selection determinism itself is exercised by the `AbTest`
+    /// unit tests in `prompts::ab_test`.
+    #[test]
+    fn test_resolve_prompt_request_id_priority_chain_wiring() {
+        let mut registry = crate::prompts::PromptRegistry::new();
+        let prompt = crate::prompts::PromptTemplate {
+            id: "greet".into(),
+            name: "greeting".into(),
+            version: "1".into(),
+            team_id: None,
+            template: "Hello {{name}}!".into(),
+            defaults: [("name".to_string(), "World".to_string())]
+                .iter()
+                .cloned()
+                .collect(),
+            model: None,
+            tags: vec![],
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            created_by: "test".into(),
+        };
+        registry.create(prompt).expect("create");
+
+        let make_req = |user: Option<&str>| -> NativeHttpRequest {
+            NativeHttpRequest {
+                model: "gpt-4o".into(),
+                messages: vec![],
+                stream: None,
+                temperature: None,
+                max_tokens: None,
+                top_p: None,
+                stop: None,
+                n: None,
+                presence_penalty: None,
+                frequency_penalty: None,
+                user: user.map(String::from),
+                api_base: None,
+                tools: None,
+                tool_choice: None,
+                response_format: None,
+                seed: None,
+                logprobs: None,
+                top_logprobs: None,
+                parallel_tool_calls: None,
+                prompt_id: Some("greet".into()),
+                prompt_variables: Some(
+                    [("name".to_string(), "Alice".to_string())]
+                        .iter()
+                        .cloned()
+                        .collect(),
+                ),
+                provider_params: None,
+                timeout: None,
+            }
+        };
+
+        // (a) api_key_id provided — prompt resolves successfully
+        let mut r1 = make_req(None);
+        resolve_prompt(&mut r1, Some(&mut registry), Some("caller-a"))
+            .expect("resolve with api_key_id");
+        assert_eq!(r1.messages[0].content.as_deref(), Some("Hello Alice!"));
+
+        // (b) api_key_id = Some("") falls through to user
+        let mut r2 = make_req(Some("user-42"));
+        resolve_prompt(&mut r2, Some(&mut registry), Some(""))
+            .expect("resolve with empty api_key_id");
+        assert_eq!(r2.messages[0].content.as_deref(), Some("Hello Alice!"));
+
+        // (c) api_key_id = None falls through to user
+        let mut r3 = make_req(Some("user-42"));
+        resolve_prompt(&mut r3, Some(&mut registry), None).expect("resolve with no api_key_id");
+        assert_eq!(r3.messages[0].content.as_deref(), Some("Hello Alice!"));
     }
 
     // ====================================================================

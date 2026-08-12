@@ -1,6 +1,9 @@
+pub mod ab_test;
 pub mod cache;
 pub mod storage;
 pub mod template;
+
+pub use ab_test::{AbArm, AbTest, AbTestMetrics, AbTestMetricsAtomic};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -105,77 +108,6 @@ pub struct PromptFilter {
 pub struct PromptFields {
     pub prompt_id: Option<String>,
     pub prompt_variables: Option<HashMap<String, String>>,
-}
-
-// ============================================================================
-// A/B Testing
-// ============================================================================
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AbTest {
-    pub prompt_id: String,
-    pub version_a: String,
-    pub version_b: String,
-    pub weight_b: f64,
-    pub start_at: DateTime<Utc>,
-    pub end_at: Option<DateTime<Utc>>,
-    pub metrics: AbTestMetrics,
-}
-
-impl AbTest {
-    /// Select version based on deterministic hashing of request_id.
-    /// request_id source priority: API key ID > X-Request-Id > generated UUID.
-    pub fn select_version(&self, request_id: &str) -> &str {
-        // Check if test has ended
-        if let Some(end_at) = self.end_at {
-            if Utc::now() > end_at {
-                return &self.version_a;
-            }
-        }
-
-        // Deterministic hash
-        let hash = simple_hash(request_id);
-        if (hash % 1000) as f64 / 1000.0 < self.weight_b {
-            &self.version_b
-        } else {
-            &self.version_a
-        }
-    }
-}
-
-fn simple_hash(s: &str) -> u64 {
-    let mut hash: u64 = 5381;
-    for b in s.bytes() {
-        hash = hash.wrapping_mul(33).wrapping_add(b as u64);
-    }
-    hash
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AbTestMetrics {
-    pub requests_a: u64,
-    pub requests_b: u64,
-    pub avg_latency_a: f64,
-    pub avg_latency_b: f64,
-    pub error_rate_a: f64,
-    pub error_rate_b: f64,
-    pub avg_tokens_a: u64,
-    pub avg_tokens_b: u64,
-}
-
-impl Default for AbTestMetrics {
-    fn default() -> Self {
-        Self {
-            requests_a: 0,
-            requests_b: 0,
-            avg_latency_a: 0.0,
-            avg_latency_b: 0.0,
-            error_rate_a: 0.0,
-            error_rate_b: 0.0,
-            avg_tokens_a: 0,
-            avg_tokens_b: 0,
-        }
-    }
 }
 
 // ============================================================================
@@ -358,6 +290,49 @@ impl PromptRegistry {
         self.storage.remove_ab_test(prompt_id)
     }
 
+    /// Record an outcome against the A/B test for `prompt_id`. The arm
+    /// the request resolved to is supplied via `AbArm`. No-op when no
+    /// test exists.
+    pub fn record_ab_test_outcome(
+        &mut self,
+        prompt_id: &str,
+        arm: AbArm,
+        latency_ms: f64,
+        tokens: u64,
+        error: bool,
+    ) {
+        if let Some(metrics) = self.storage.live_ab_test_metrics(prompt_id) {
+            match arm {
+                AbArm::A => {
+                    metrics.inc_requests_a();
+                    metrics.add_latency_a(latency_ms);
+                    metrics.add_tokens_a(tokens);
+                    metrics.set_error_rate_a(if error { 1.0 } else { 0.0 });
+                }
+                AbArm::B => {
+                    metrics.inc_requests_b();
+                    metrics.add_latency_b(latency_ms);
+                    metrics.add_tokens_b(tokens);
+                    metrics.set_error_rate_b(if error { 1.0 } else { 0.0 });
+                }
+            }
+        }
+    }
+
+    /// Persist the live A/B metrics for `prompt_id` into durable storage.
+    /// In the in-memory substrate this writes a snapshot row; in the
+    /// stoolap-backed backend (future work) it executes an UPSERT.
+    pub fn persist_ab_test_metrics(
+        &mut self,
+        prompt_id: &str,
+    ) -> Result<(), crate::prompts::PromptError> {
+        let metrics = self
+            .storage
+            .live_ab_test_metrics(prompt_id)
+            .ok_or_else(|| PromptError::AbTestNotFound(prompt_id.to_string()))?;
+        Ok(self.storage.persist_ab_test_metrics(prompt_id, &metrics)?)
+    }
+
     pub fn get_ab_test(&self, prompt_id: &str) -> Result<&AbTest, PromptError> {
         Ok(self.storage.get_ab_test(prompt_id)?)
     }
@@ -424,15 +399,15 @@ mod tests {
 
     #[test]
     fn test_ab_test_deterministic() {
-        let test = AbTest {
-            prompt_id: "test".to_string(),
-            version_a: "1.0.0".to_string(),
-            version_b: "2.0.0".to_string(),
-            weight_b: 0.5,
-            start_at: Utc::now(),
-            end_at: None,
-            metrics: AbTestMetrics::default(),
-        };
+        let test = AbTest::new(
+            "test".to_string(),
+            "1.0.0".to_string(),
+            "2.0.0".to_string(),
+            0.5,
+            Utc::now(),
+            None,
+            &AbTestMetrics::default(),
+        );
         // Same request_id always gets same version
         let v1 = test.select_version("req-123");
         let v2 = test.select_version("req-123");
@@ -441,15 +416,15 @@ mod tests {
 
     #[test]
     fn test_ab_test_weight_boundaries() {
-        let mut test = AbTest {
-            prompt_id: "test".to_string(),
-            version_a: "1.0.0".to_string(),
-            version_b: "2.0.0".to_string(),
-            weight_b: 0.0,
-            start_at: Utc::now(),
-            end_at: None,
-            metrics: AbTestMetrics::default(),
-        };
+        let mut test = AbTest::new(
+            "test".to_string(),
+            "1.0.0".to_string(),
+            "2.0.0".to_string(),
+            0.0,
+            Utc::now(),
+            None,
+            &AbTestMetrics::default(),
+        );
         assert_eq!(test.select_version("any"), "1.0.0");
 
         test.weight_b = 1.0;
@@ -458,15 +433,15 @@ mod tests {
 
     #[test]
     fn test_ab_test_ended_fallback() {
-        let test = AbTest {
-            prompt_id: "test".to_string(),
-            version_a: "1.0.0".to_string(),
-            version_b: "2.0.0".to_string(),
-            weight_b: 1.0,
-            start_at: Utc::now() - chrono::Duration::hours(2),
-            end_at: Some(Utc::now() - chrono::Duration::hours(1)),
-            metrics: AbTestMetrics::default(),
-        };
+        let test = AbTest::new(
+            "test".to_string(),
+            "1.0.0".to_string(),
+            "2.0.0".to_string(),
+            1.0,
+            Utc::now() - chrono::Duration::hours(2),
+            Some(Utc::now() - chrono::Duration::hours(1)),
+            &AbTestMetrics::default(),
+        );
         // Ended test should fallback to version_a
         assert_eq!(test.select_version("any"), "1.0.0");
     }
@@ -549,5 +524,46 @@ mod tests {
             let msg = format!("{}", err);
             assert!(!msg.is_empty());
         }
+    }
+
+    #[test]
+    fn test_record_ab_test_outcome_increments_arm_counters() {
+        let mut registry = PromptRegistry::new();
+        registry.create(make_test_prompt("p1")).unwrap();
+        let test = AbTest::new(
+            "p1".into(),
+            "1.0.0".into(),
+            "2.0.0".into(),
+            0.5,
+            Utc::now(),
+            None,
+            &AbTestMetrics::default(),
+        );
+        registry.set_ab_test(test);
+
+        registry.record_ab_test_outcome("p1", AbArm::A, 100.0, 50, false);
+        registry.record_ab_test_outcome("p1", AbArm::A, 110.0, 60, false);
+        registry.record_ab_test_outcome("p1", AbArm::B, 200.0, 80, true);
+
+        registry.persist_ab_test_metrics("p1").unwrap();
+        let snap = registry.storage.get_ab_test_metrics("p1").unwrap();
+        assert_eq!(snap.requests_a, 2);
+        assert_eq!(snap.requests_b, 1);
+        assert_eq!(snap.avg_latency_a, 110.0);
+        assert_eq!(snap.avg_latency_b, 200.0);
+        assert_eq!(snap.avg_tokens_a, 110);
+        assert_eq!(snap.avg_tokens_b, 80);
+        assert_eq!(snap.error_rate_a, 0.0);
+        assert_eq!(snap.error_rate_b, 1.0);
+    }
+
+    #[test]
+    fn test_record_ab_test_outcome_no_test_is_noop() {
+        let mut registry = PromptRegistry::new();
+        registry.create(make_test_prompt("p1")).unwrap();
+        // No A/B test configured — should silently no-op
+        registry.record_ab_test_outcome("p1", AbArm::A, 100.0, 50, false);
+        // Persist on a prompt with no test returns Err
+        assert!(registry.persist_ab_test_metrics("p1").is_err());
     }
 }

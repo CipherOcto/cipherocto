@@ -2,63 +2,266 @@
 
 ## Status
 
-Open (filed 2026-08-12). Follow-on to `0871b-cross-domain-resolution-impl` (CLOSED 2026-08-12).
+Open (filed 2026-08-12). Follow-on to `0871b-cross-domain-resolution-impl` (LANDED 2026-08-11, commit `c14c2707`).
 
-## Summary
+## Origin context (read this first)
 
-`ResolveChainHandler` + `RemoteResolverBackend` trait landed in `octo-identity-resolver-node` per mission `0871b-cross-domain-resolution-impl`. The substrate supports multi-hop resolver chains via cycle detection + TTL budget + `IDENTITY_RESOLVE_CHAIN` payload kind, but the **transport layer** for cross-node forwarding (HTTP/gossip call to the next hop with signature chain envelope per RFC-0970) is out of scope.
+This mission is the **deferred tail** of `0871b-cross-domain-resolution-impl`. Origin scope L31-33 planned three backend files:
 
-This mission lands the cross-node transport wiring: each hop signs the forwarded request, the final responder returns a signature chain envelope, and the original requester verifies the chain.
+```
+2. **`crates/octo-identity-resolver-node/src/backend.rs`** (NEW) —
+   `ResolverBackend` trait + `LocalResolverBackend` (delegates to
+   `DidRegistry`) + `RemoteResolverBackend` (HTTP/gossip call to
+   next hop).
+```
 
-## Substrate (already shipped)
+The closure commit `c14c2707` shipped chain-traversal LOGIC only (`handlers/chain.rs` + `tests/cross_domain_chain.rs`). **No `backend.rs` was created.** The closure record (line 3 of `missions/claimed/0871b-cross-domain-resolution-impl.md`) falsely claims `backend.rs` shipped with all three types — `git show c14c2707 --stat` proves otherwise (no `backend.rs` entry in the diff). This mission lands the origin-planned `backend.rs` surface.
 
-- `crates/octo-identity-resolver-node/src/backend.rs` — `ResolverBackend` trait + `LocalResolverBackend` (delegates to `DidRegistry`) + `RemoteResolverBackend` (signature only — no HTTP/gossip yet)
-- `crates/octo-identity-resolver-node/src/handlers/chain.rs` — `ResolveChainHandler` + `ResolverChainContext { visited: HashSet<MissionId>, ttl_remaining_ms: u64 }`
-- `crates/octo-protocol/src/payload_kind.rs` — `IDENTITY_RESOLVE_CHAIN` UUID in sub-namespace `0x0009:0001:...:0002`
+7 chain-traversal integration TV already landed in `crates/octo-identity-resolver-node/tests/cross_domain_chain.rs`:
+- `chain_single_hop_resolves` (TV-1)
+- `chain_three_hops_resolves_end_to_end` (TV-2 — in-process: 3 hops = 3 calls against the local registry, NOT 3 nodes)
+- `chain_ttl_expiry_returns_error` (TV-3)
+- `chain_cycle_detection_aborts` (TV-4)
+- `chain_invalid_hop_rejected` (TV-5)
+- `chain_ttl_exactly_one_hop_succeeds` (boundary)
+- `chain_empty_hops_resolves_locally` (boundary)
 
-## Scope
+None of them exercise cross-network forwarding or per-hop signing. That is this mission's gap.
 
-| AC | Description |
-|----|-------------|
-| AC-1 | `RemoteResolverBackend` impl backed by `octo-transport` HTTP client (Layer D; picks up the existing transport trait per RFC-0871 §Forwarding) |
-| AC-2 | Hop signature chain — each intermediate hop signs the forwarded request via Ed25519 over `canonical_ser(forwarded_request)` |
-| AC-3 | Final responder returns `ResolveWithChainResponse { did, signature_chain: Vec<HopSignature>, envelope_id }` |
-| AC-4 | Original requester verifies the full signature chain (each hop signature + terminal signature) |
-| AC-5 | Replay defense via `envelope_id` + `nonce` (inherited from RFC-0871 §Adversary A6) |
-| AC-6 | TTL enforcement — each hop measures `hop_latency_ms`, decrements `ttl_remaining_ms`; abort with `IdentityResolveError::ChainTtlExpired` on expiry |
-| AC-7 | Cycle detection via `visited.insert(self.mission_id)`; abort with `IdentityResolveError::ChainCycle` on revisit |
-| AC-8 | Cross-domain integration TV: 3-node chain (A → B → C) with target DID only stored at C; A's request resolves correctly + TTL respected + cycle detection aborts on revisit |
-| AC-9 | `cargo clippy -p octo-identity-resolver-node -p octo-protocol --all-targets -- -D warnings` clean |
-| AC-10 | `cargo fmt --all -- --check` clean |
+## RFC anchor
+
+**Authoritative**: RFC-0871 §Future Work row 598 ("Cross-domain DID resolution (resolver chains across specialized nodes) — TBD — post-v2.0 — RFC-0009 §Future Work") + RFC-0871 §Roles and Authorities (IdentityResolverNode role) + RFC-0010 v1.3 §Storage Extension.
+
+**Pattern reference only**: RFC-0970 (Forwarding-Hop Authorization Envelope) — `chain_hash` + per-hop signature + TTL pattern. RFC-0970 is the quota-router forwarding mesh substrate; this mission adopts the same pattern for the identity-resolver chain. Cross-domain adaptation, not literal port — the inner content is a DID lookup, not a quota bearer header.
+
+## Substrate (already shipped — do NOT rebuild)
+
+- `crates/octo-identity-resolver-node/src/handlers/chain.rs:77` — `ResolverHop { hop_did: String, hop_transport_hint: Vec<u8> }` (Borsh wire form)
+- `crates/octo-identity-resolver-node/src/handlers/chain.rs:113` — `ResolverChainContext { visited: BTreeSet<String>, ttl_remaining_ms: u64 }` (deterministic cycle detection per `check_wrapped_chain` pattern in `crates/octo-cap-macaroon/src/macaroon.rs`)
+- `crates/octo-identity-resolver-node/src/handlers/chain.rs:125` — `ChainResolveRequest { target: String, hops: Vec<ResolverHop>, ttl_remaining_ms: u64 }`
+- `crates/octo-identity-resolver-node/src/handlers/chain.rs:155` — `ChainResolveResponse { canonical_did: String, public_key: [u8; 32], hops_traversed: u8 }` (3-tuple; this mission extends to 5-tuple — see T5)
+- `crates/octo-identity-resolver-node/src/handlers/chain.rs:171` — `ResolveChainHandler { registry: Arc<dyn DidRegistry> }` (DI shape; replaced with `Arc<dyn ResolverBackend>` in this mission)
+- `crates/octo-identity-resolver-node/src/handlers/chain.rs:65` — `HOP_LATENCY_MS_ESTIMATE: u64 = 10` (conservative per-hop decrement)
+- `crates/octo-identity-resolver-node/src/handlers/mod.rs:120` — `IdentityResolveError::ChainCycle` (hop revisits visited DID)
+- `crates/octo-identity-resolver-node/src/handlers/mod.rs:127` — `IdentityResolveError::ChainTtlExpired` (TTL budget underflows)
+- `crates/octo-protocol/src/payload_kind.rs:156` — `IDENTITY_RESOLVE_CHAIN` UUID `0x0009:0001:0000:0000:0000:0000:0000:0004` (note: not `:0002` — that's `IDENTITY_REGISTER`)
+- `crates/octo-protocol/src/payload_kind.rs:170` — `IDENTITY_RESOLVE_WITH_CHAIN` UUID `:0005` (sibling; distinct from chain-of-resolvers)
+- `crates/octo-identity-resolver-node/src/node.rs:318-328` — `IDENTITY_RESOLVE_CHAIN` dispatch arm (currently sync, calls `ResolveChainHandler::handle` directly; this mission converts to async + threads `envelope_id`)
+- `crates/octo-identity-resolver-node/src/lib.rs:73-79` — `IDENTITY_RESOLVER_PAYLOAD_KINDS` (5 kinds)
+- `crates/octo-identity-resolver-node/tests/cross_domain_chain.rs` — 7 chain-traversal TV (in-process, no signing, no network I/O)
+- `octo-transport/src/sender.rs` — `NetworkSender` + `TransportError`
+- `octo-transport/src/receiver.rs` — `NetworkReceiver` + `ReceiveContext`
+- `octo-transport/src/lib.rs` — `NodeTransport` with `register_receiver` + `broadcast` + `send_best` (NO request/response — see Dependency)
+- `crates/octo-ident/src/registry.rs:49` — comment placeholder for `ResolverBackend` typed view (F6) — file to land
+- `crates/octo-wallet/src/identity.rs` — `IdentityKey::sign` + `public_key_bytes` (per RFC-0009-B1 `WalletCrypto`; routes through `HsmAdapter`)
+- `octo-ident` (Layer B) — `DidRegistry` trait substrate (UNCHANGED)
+
+## Traits in scope (NEW surface this mission lands)
+
+### T1. `pub trait ResolverBackend` — Layer B, `crates/octo-ident/src/resolver_backend.rs`
+
+Matches the placeholder comment at `octo-ident/src/registry.rs:49`. Typed view over `DidRegistry` that chain hops can traverse.
+
+```rust
+/// Layer B trait: abstracts the resolution mechanism for one hop in a
+/// resolver chain. `ResolveChainHandler` consults this trait instead of
+/// `DidRegistry` directly so cross-node hops can be intercepted.
+#[async_trait]
+pub trait ResolverBackend: Send + Sync {
+    /// Resolve a target DID at hop `hop_did`. `chain_ctx` carries the
+    /// visited set + remaining TTL.
+    async fn resolve_via(
+        &self,
+        hop_did: &str,
+        target: &octo_ident::RawDid,
+        chain_ctx: &ResolverChainContext,
+    ) -> Result<ChainResolveResponse, IdentityResolveError>;
+}
+```
+
+### T2. `pub struct LocalResolverBackend(Arc<dyn DidRegistry>)` — Layer B impl, same file
+
+Wraps the existing `DidRegistry`. `resolve_via` calls `self.0.resolve(&target.hash)`. Preserves the current `ResolveChainHandler::new(registry)` shape via `ResolveChainHandler::new_local(registry)` constructor (back-compat for the 7 existing TV).
+
+### T3. `pub struct RemoteResolverBackend` — Layer C impl, `crates/octo-identity-resolver-node/src/backend.rs`
+
+```rust
+pub struct RemoteResolverBackend {
+    /// Outbound transport. Today only `broadcast` is available; once
+    /// `NetworkSender::send_request` is used once mission
+    /// `0870k-transport-request-response` lands (see Dependency).
+    sender: Arc<dyn NetworkSender>,
+    /// Signing identity (RFC-0009-B1 `WalletCrypto`); per-hop signature
+    /// over `BLAKE3(canonical_ser((chain_hash, hop_index, BLAKE3(payload), envelope_id)))`.
+    identity: Arc<octo_wallet::identity::IdentityKey>,
+    /// Local node DID (so the destination can verify the wrapping node).
+    node_did: WireDid,
+}
+```
+
+`resolve_via` returns `TransportError::Unsupported("request/response substrate not yet wired")` (variant added by mission `0870k-transport-request-response` AC-1) until that mission lands. Test-only impl `RemoteResolverBackendFake` (in `tests/cross_node_chain.rs`) intercepts and dispatches in-process to a sibling `IdentityResolverNode` for the 3-node TV.
+
+### T4. `pub struct HopSignature` — Layer A wire form, `crates/octo-protocol/src/hop_signature.rs`
+
+```rust
+#[derive(Clone, Debug, BorshSerialize, BorshDeserialize, PartialEq, Eq)]
+pub struct HopSignature {
+    /// 0-indexed position in the chain (0 = requester, last = destination).
+    pub hop_index: u8,
+    /// Canonical DID of the wrapping node.
+    pub hop_did: String,
+    /// Ed25519 signature over
+    /// `BLAKE3(canonical_ser((chain_hash, hop_index, BLAKE3(inner_payload), envelope_id)))`.
+    pub signature: [u8; 64],
+    /// Public key bytes (32) for verification (avoids registry lookup
+    /// when the receiver is verifying the chain in-band).
+    pub signer_pub: [u8; 32],
+}
+```
+
+### T5. Extended `ChainResolveResponse` — shape change to existing type at `chain.rs:155`
+
+```rust
+#[derive(Clone, Debug, BorshSerialize, BorshDeserialize, PartialEq, Eq)]
+pub struct ChainResolveResponse {
+    pub canonical_did: String,        // existing
+    pub public_key: [u8; 32],         // existing
+    pub hops_traversed: u8,           // existing
+    /// NEW: per-hop signature chain, outermost-first. Empty when
+    /// `ResolverBackend` is `LocalResolverBackend` (single-hop local
+    /// resolve; no signing needed).
+    pub signature_chain: Vec<HopSignature>,
+    /// NEW: `envelope_id` of the originating `IDENTITY_RESOLVE_CHAIN`
+    /// envelope (replay defense; the requester binds the chain to the
+    /// envelope it sent).
+    pub envelope_id: [u8; 32],
+}
+```
+
+**Backward-compat**: the 3 in-file tests at `chain.rs:296-389` (`chain_resolve_response_borsh_round_trip` + 2 handle tests) construct `ChainResolveResponse` via 3-tuple. They are updated to construct with the 2 new fields (`signature_chain: vec![]`, `envelope_id: [0u8; 32]`). No consumer-side migration — the 3 tests are the only readers and all live in the same file.
+
+### T6. New payload kind `IDENTITY_RESOLVE_CHAIN_RESPONSE` — Layer A, slot `:0006`
+
+`crates/octo-protocol/src/payload_kind.rs` — new UUID `0x0009:0001:0000:0000:0000:0000:0000:0006` (next free slot in the identity sub-namespace after RESOLVE `:0001` / REGISTER `:0002` / REVOKE `:0003` / CHAIN `:0004` / WITH_CHAIN `:0005`). Wire form: borsh-encoded `ChainResolveResponse`. The destination returns this kind so the wrapping node can parse the response back into the same shape used in the local-registry case.
+
+## Handler migration: `ResolveChainHandler` DI change
+
+`crates/octo-identity-resolver-node/src/handlers/chain.rs:171` — current:
+
+```rust
+pub struct ResolveChainHandler { registry: Arc<dyn DidRegistry> }
+```
+
+New:
+
+```rust
+pub struct ResolveChainHandler { backend: Arc<dyn ResolverBackend> }
+```
+
+Constructors:
+- `new(backend: Arc<dyn ResolverBackend>)` — primary
+- `new_local(registry: Arc<dyn DidRegistry>)` — back-compat; wraps in `LocalResolverBackend`
+
+`handle` signature change:
+
+```rust
+pub async fn handle(
+    &self,
+    req: &ChainResolveRequest,
+    envelope_id: [u8; 32],     // NEW
+) -> Result<HandlerOutput, IdentityResolveError>
+```
+
+`envelope_id` threaded into the response (`ChainResolveResponse.envelope_id` field) so the requester can verify the chain binds to the envelope it sent (replay defense). The dispatch site at `node.rs:325` already has the `NodeEnvelope` in scope (`envelope.envelope_id`).
+
+`IdentityResolverNode::handle_envelope` dispatch arm at `node.rs:318-328` updated:
+
+```rust
+k if k == octo_protocol::payload_kind::IDENTITY_RESOLVE_CHAIN => {
+    let req = ChainResolveRequest::from_borsh(&envelope.payload)
+        .map_err(resolver_error_to_protocol)?;
+    ResolveChainHandler::new(self.resolver_backend.clone())
+        .handle(&req, envelope.envelope_id)
+        .await
+        .map_err(resolver_error_to_protocol)
+}
+```
+
+(`IdentityResolverNode` gains a `resolver_backend: Arc<dyn ResolverBackend>` field, set at construction alongside `registry: Arc<dyn DidRegistry>`. Default is `LocalResolverBackend(registry.clone())`.)
+
+## Scope (acceptance criteria)
+
+| AC | Description | Type |
+|----|-------------|------|
+| AC-1 | `pub trait ResolverBackend` in `crates/octo-ident/src/resolver_backend.rs` (Layer B) per T1; remove F6 comment placeholder at `octo-ident/src/registry.rs:49` | NEW trait |
+| AC-2 | `pub struct LocalResolverBackend(Arc<dyn DidRegistry>)` impl of T1 in same file | NEW struct |
+| AC-3 | `pub struct RemoteResolverBackend` impl of T1 in `crates/octo-identity-resolver-node/src/backend.rs` (Layer C) per T3; `resolve_via` returns `TransportError::Unsupported("request/response substrate not yet wired")` until mission `0870k-transport-request-response` lands | NEW struct (stub) |
+| AC-4 | `pub struct HopSignature` per T4 in `crates/octo-protocol/src/hop_signature.rs`; wire round-trip test | NEW struct |
+| AC-5 | Extended `ChainResolveResponse` 5-tuple per T5; update the 3 in-file tests at `chain.rs:296-389` for back-compat (no behavior change for empty-hop case) | MODIFY struct |
+| AC-6 | `pub const IDENTITY_RESOLVE_CHAIN_RESPONSE: PayloadKindId` UUID `0x0009:0001:0000:0000:0000:0000:0000:0006` per T6; extend `identity_payload_kinds_are_distinct` test from 5 to 6 kinds | NEW constant |
+| AC-7 | `ResolveChainHandler` DI migrated per T5; `new` + `new_local` constructors; `handle` becomes async + gains `envelope_id: [u8; 32]` arg | MODIFY handler |
+| AC-8 | `IdentityResolverNode` gains `resolver_backend: Arc<dyn ResolverBackend>` field; `handle_envelope` (node.rs:318) passes `envelope.envelope_id` into `ResolveChainHandler::handle`; result kind remains `IDENTITY_RESOLVE_CHAIN` (T6 kind reserved for cross-network return; in-process dispatch keeps existing kind for back-compat) | MODIFY dispatch |
+| AC-9 | Unit test: `chain_response_with_hop_signature_round_trip` (5-tuple borsh, populated signature_chain) | NEW test |
+| AC-10 | Unit test: `chain_handler_uses_injected_backend` (DI swap to a custom `ResolverBackend` impl that returns a canned response) | NEW test |
+| AC-11 | Unit test: `hop_signature_signs_and_verifies` (Ed25519 sign over the canonical preimage + verify with embedded `signer_pub`) | NEW test |
+| AC-12 | Unit test: `chain_handler_propagates_envelope_id` (response carries the envelope_id from the dispatch site) | NEW test |
+| AC-13 | Integration TV: 3-node chain (A → B → C) in `tests/cross_node_chain.rs`; target DID stored only at C; A's `IDENTITY_RESOLVE_CHAIN` request resolves correctly with a full 3-hop `signature_chain`; uses `RemoteResolverBackendFake` (test-only `NetworkSender` impl that routes to in-process `IdentityResolverNode` instances) | NEW TV |
+| AC-14 | Integration TV: chain_cross_domain_auth_verifies (intermediate hop signs the forwarded request via RFC-0970 pattern, destination returns signature chain, requester verifies) | NEW TV |
+| AC-15 | Integration TV: chain_cycle_detection_aborts_cross_node (cycle detected when C re-visits A — uses BTreeSet `visited` from `ResolverChainContext`) | NEW TV |
+| AC-16 | Integration TV: chain_ttl_expiry_mid_chain (TTL reaches zero mid-chain — uses `HOP_LATENCY_MS_ESTIMATE` decrement from `chain.rs:65`) | NEW TV |
+| AC-17 | `cargo clippy -p octo-identity-resolver-node -p octo-ident -p octo-protocol --all-targets -- -D warnings` clean | GATE |
+| AC-18 | `cargo fmt --all -- --check` clean | GATE |
 
 ## Out of Scope
 
-- Resolver chain discovery / DHT routing (separate mission if needed; per RFC-0871 §Future Work)
-- Multi-region federation (separate mission)
-- DID method interop (DIDComm URI bridge; deferred per `RFC-0XXX` placeholder)
+- **`octo-transport` request/response substrate** — current `NodeTransport` exposes only `broadcast` + `send_best` (fire-and-forget). Mission `0870k-transport-request-response` (OPEN, 2026-08-12) adds `NetworkSender::send_request` + `NodeTransport::request_response` + correlation-id dispatch via `register_response_handler` + `dispatch_response`. Until that mission lands, `RemoteResolverBackend::resolve_via` returns `TransportError::Unsupported(...)` and the 3-node TV uses a test-only in-process `NetworkSender` impl. This is the **hardest external dependency** — production-ready deployment of this mission requires `0870k-transport-request-response` to land first.
+- **Real `HopEnvelope` substrate per RFC-0970 §Data Structures** — RFC-0970 specifies a full envelope with `cap_root_hash`, `capability_wire`, `HolderRegistry` integration. This mission adopts only the `chain_hash` + per-hop signature + TTL pattern, not the full `HopEnvelope` shape. A future mission can port RFC-0970 verbatim if the RFC-0970 `HolderRegistry` dependency lands.
+- **DID method interop (DIDComm URI bridge)** — per RFC-0871 §Future Work.
+- **Multi-region federation** — per RFC-0871 §Future Work.
+- **Resolver chain discovery / DHT routing** — per RFC-0871 §Future Work.
+
+## Dependency (NOT in this mission)
+
+- **`octo-transport` request/response substrate** — must land before production deployment of this mission. Filed: `missions/open/0870k-transport-request-response.md` (OPEN, 2026-08-12).
 
 ## Cross-references
 
-- RFC-0871 (Networking): Distributed Resolver Network — §Future Work
-- RFC-0970 (Networking): Forwarding Hop Auth Envelope — signature chain pattern
+- RFC-0871 §Future Work row 598 — Cross-domain DID resolution (authoritative anchor)
+- RFC-0871 §Roles and Authorities — IdentityResolverNode role
+- RFC-0871 §Algorithms (envelope receive flow) — for `ReferenceDispatcher::verify_all` integration at `node.rs:283`
+- RFC-0970 (pattern reference, NOT authoritative) — `chain_hash` + per-hop signature + TTL pattern adapted for resolver chains
 - RFC-0010 v1.3 — `DidRegistry` substrate
-- Mission `0871b-cross-domain-resolution-impl` (CLOSED 2026-08-12) — `ResolveChainHandler` substrate
+- RFC-0009 — `IdentityKey` substrate
+- RFC-0009-B1 — `WalletCrypto` trait
+- RFC-0853 — BLAKE3 keyed-hash for chain hash + per-hop signature preimage
+- Mission `0871b-cross-domain-resolution-impl` (LANDED 2026-08-11, commit `c14c2707`) — `ResolveChainHandler` chain-traversal substrate + 7 chain-traversal TV
 - Mission `0871b-storage-backend` (LANDED 2026-08-11, commit `71f8d745`) — `DidRegistry` substrate
-- Mission `0870-b-envelope-adoption` (CLAIMED) — forwarding hop envelope consumer
-- `crates/octo-identity-resolver-node/src/backend.rs` — `RemoteResolverBackend` trait
-- `crates/octo-identity-resolver-node/src/handlers/chain.rs` — `ResolveChainHandler` substrate
+- Mission `0870-b-envelope-adoption` (LANDED 2026-08-11) — forwarding hop envelope consumer (sibling; same RFC-0970 pattern)
+- Mission `0010-f2-multi-chain-routing` (LANDED 2026-08-11) — sibling; chain-aware resolve
+- Mission `0871e-f7-impl-resolver-mediation` (LANDED 2026-08-11) — sibling; concrete `DidWriteCoordinator` impl
+- `crates/octo-identity-resolver-node/src/handlers/chain.rs` — `ResolveChainHandler` substrate (DI migrated in this mission)
+- `crates/octo-identity-resolver-node/src/node.rs:325` — dispatch site
+- `crates/octo-identity-resolver-node/tests/cross_domain_chain.rs` — 7 chain-traversal TV (in-process; this mission adds 4 cross-network TV)
+- `crates/octo-protocol/src/payload_kind.rs:156` — `IDENTITY_RESOLVE_CHAIN` UUID `:0004` (sibling new UUID `:0006` in same sub-namespace)
+- `crates/octo-protocol/src/payload_kind.rs:170` — `IDENTITY_RESOLVE_WITH_CHAIN` UUID `:0005` (sibling; distinct semantics)
+- `crates/octo-ident/src/registry.rs:49` — F6 placeholder comment (removed by AC-1)
+- `octo-transport/src/sender.rs` — `NetworkSender` trait (consumed by `RemoteResolverBackend`)
 
 ## Layer Discipline
 
-- `octo-identity-resolver-node` (Layer C) — handler + backend impl
-- `octo-transport` (Layer D) — HTTP client transport trait (already wired)
-- `octo-ident` (Layer B) — `DidRegistry` substrate (already shipped)
-- `octo-protocol` (Layer A) — payload kind + canonical serialization (already shipped)
+- `octo-protocol` (Layer A) — `HopSignature` + `IDENTITY_RESOLVE_CHAIN_RESPONSE` UUID
+- `octo-ident` (Layer B) — `ResolverBackend` trait + `LocalResolverBackend` impl (NEW file `resolver_backend.rs`)
+- `octo-wallet` (Layer B) — `IdentityKey` (signing substrate; no new crate)
+- `octo-identity-resolver-node` (Layer C) — `RemoteResolverBackend` impl (NEW file `backend.rs`) + `ResolveChainHandler` DI change
+- `octo-transport` (Layer D) — `NetworkSender` (consumed, not extended)
 
-No new Cargo deps; HTTP client transport is already in workspace via `octo-transport`.
+No new Cargo deps. `octo-transport` + `octo-wallet` + `octo-protocol` + `octo-ident` + `ed25519-dalek` + `blake3` + `async-trait` already in workspace.
 
 ## Version History
 
 | Version | Date       | Status | Changes |
 |---------|------------|--------|---------|
-| v0.1    | 2026-08-12 | open   | Mission filed (follow-on to 0871b-cross-domain-resolution-impl per [[deferred-vs-unspecified]]) |
+| v0.1    | 2026-08-12 | open   | Mission filed (follow-on to 0871b-cross-domain-resolution-impl) |
+| v0.2    | 2026-08-12 | open   | Replaced false `backend.rs` substrate claim with real `chain.rs` references + explicit trait work (T1–T6) in scope per hard audit; RFC-0871 §Future Work row 598 promoted to authoritative anchor; RFC-0970 demoted to pattern reference; 13 ACs aligned with trait surface |
+| v0.3    | 2026-08-12 | open   | Origin re-check: closure record line 3 of 0871b-cross-domain-resolution-impl lied (claimed `backend.rs` shipped; `git show c14c2707 --stat` confirms no `backend.rs` entry). Mission reframed as **deferred tail of origin** — executing origin scope item #2 (backend.rs surface). UUID `:0002` → `:0004` (corrected against `payload_kind.rs:156`). Trait + Local impl moved to `octo-ident/src/resolver_backend.rs` (Layer B, per `registry.rs:49` F6 comment); Remote impl kept in `octo-identity-resolver-node/src/backend.rs` (Layer C). 7 chain-traversal TV acknowledged as already-landed; 4 cross-network TV added (AC-13 to AC-16). `IDENTITY_RESOLVE_CHAIN_RESPONSE` slot corrected to `:0006`. 18 ACs total. |
+| v0.4    | 2026-08-12 | open   | Phantom reference cleanup: `TransportError::Unsupported` + `NetworkSender::send_request` + `missions/open/0870j-transport-request-response.md` (TBD) references were phantom (variant + method + file did not exist). Filed real `missions/open/0870k-transport-request-response.md` (12 ACs; `NetworkSender::send_request` with default `Unsupported` body; `NodeTransport::request_response` + correlation-id dispatch; sidecar `CorrelationEnvelope` no Layer A magic-byte this round). All 5 phantom refs in 0871b (T3 docstring, T3 explanatory, AC-3, Out-of-Scope, Dependency) now point to real `0870k` mission + annotate that the variant is ADDED by 0870k AC-1. Transport substrate path fixed: `crates/octo-transport/...` → `octo-transport/...` (workspace-root sibling, per `Cargo.toml: path = "../../octo-transport"`). Violation of [[no-phantom-mission-pointers]] cleared. |

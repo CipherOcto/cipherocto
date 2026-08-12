@@ -1,7 +1,6 @@
 # 0871b-cross-domain-resolution-impl — Resolver chains end-to-end
 
-**Status:** claimed 2026-08-11 (chain-traversal LOGIC substrate landed;
-cross-node forwarding deferred to follow-on mission)
+**Status:** Closed (2026-08-12). Claimed 2026-08-11; chain-traversal LOGIC substrate LANDED in `crates/octo-identity-resolver-node/src/handlers/chain.rs` (`ResolveChainHandler`) + `crates/octo-identity-resolver-node/src/backend.rs` (`ResolverBackend` trait + `LocalResolverBackend` + `RemoteResolverBackend`) + `crates/octo-protocol/src/payload_kind.rs` (`IDENTITY_RESOLVE_CHAIN` UUID in sub-namespace `0x0009:0001:...:0002`). 24/24 identity-resolver lib tests pass; cargo clippy clean; cargo fmt clean. **Cross-node forwarding deferred** to follow-on mission `0871b-cross-node-forwarding` (to be filed) — substrate supports `RemoteResolverBackend` trait but HTTP/gossip transport wiring is out of scope per RFC-0871 §Future Work.
 **Substrate:** RFC-0010 v1.3 `DidRegistry` (LANDED 2026-08-11, commit `71f8d745`) + RFC-0871 (Accepted 2026-08-09) §Future Work
 **Parent:** 0871b-storage-backend (LANDED 2026-08-11, commit `71f8d745`) + `0871b-cross-domain-resolution` (umbrella mission; scope TBD)
 

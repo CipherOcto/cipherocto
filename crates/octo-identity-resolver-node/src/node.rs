@@ -52,9 +52,9 @@ use octo_transport::sender::TransportError;
 use octo_transport::NodeTransport;
 
 use crate::handlers::{
-    resolver_error_to_protocol, ChainResolveRequest, RegisterHandler, RegisterRequest,
-    ResolveChainHandler, ResolveHandler, ResolveRequest, ResolveWithChainHandler,
-    ResolveWithChainRequest, RevokeHandler, RevokeRequest,
+    resolver_error_to_protocol, ChainResolveRequest, LocalResolverBackend, RegisterHandler,
+    RegisterRequest, ResolveChainHandler, ResolveHandler, ResolveRequest, ResolveWithChainHandler,
+    ResolveWithChainRequest, ResolverBackend, RevokeHandler, RevokeRequest,
 };
 use crate::is_identity_resolver_payload_kind;
 
@@ -153,6 +153,14 @@ pub struct IdentityResolverNode {
     /// Cached resolved registry (either the injected one or the default
     /// `InMemoryDidRegistry`). Cloned into handler instances per request.
     registry: Arc<dyn DidRegistry>,
+    /// Mission `0871b-cross-node-forwarding`: cached resolver backend
+    /// (Layer B trait) used by `ResolveChainHandler` for chain walks.
+    /// Default-wrapped to `LocalResolverBackend` over `self.registry`
+    /// so the in-process behavior of mission
+    /// `0871b-cross-domain-resolution-impl` is preserved. A future
+    /// mission swaps this for `RemoteResolverBackend` once mission
+    /// `0870k-transport-request-response` lands the substrate.
+    resolver_backend: Arc<dyn ResolverBackend>,
     /// Mission 0871e-f7-impl-resolver-mediation: cached coordinator
     /// (cloned from `config.write_coordinator`) for the
     /// `IDENTITY_REGISTER` + `IDENTITY_REVOKE` mediation path. `None`
@@ -193,9 +201,12 @@ impl IdentityResolverNode {
             ChainId::new(DEFAULT_CHAIN_ID)
                 .expect("DEFAULT_CHAIN_ID is a valid RFC-0010 v1.4 chain namespace")
         });
+        let resolver_backend: Arc<dyn ResolverBackend> =
+            Arc::new(LocalResolverBackend(registry.clone()));
         Self {
             config,
             registry,
+            resolver_backend,
             write_coordinator,
             chain_id,
             dispatcher: default_dispatcher(),
@@ -218,9 +229,12 @@ impl IdentityResolverNode {
             ChainId::new(DEFAULT_CHAIN_ID)
                 .expect("DEFAULT_CHAIN_ID is a valid RFC-0010 v1.4 chain namespace")
         });
+        let resolver_backend: Arc<dyn ResolverBackend> =
+            Arc::new(LocalResolverBackend(registry.clone()));
         Self {
             config,
             registry,
+            resolver_backend,
             write_coordinator,
             chain_id,
             dispatcher,
@@ -320,10 +334,19 @@ impl IdentityResolverNode {
                 // resolution. Handler body is sync (no cross-network
                 // I/O in this mission); the surrounding `async` keeps
                 // the dispatch shape consistent with the other arms.
+                //
+                // Mission 0871b-cross-node-forwarding: thread
+                // `envelope.envelope_id` as the replay-defense
+                // correlation key into the chain response (5-tuple
+                // field added in mission T5). Use the cached
+                // `self.resolver_backend` (default `LocalResolverBackend`
+                // over `self.registry`) — production HA swaps this for
+                // `RemoteResolverBackend` once the request/response
+                // substrate lands.
                 let req = ChainResolveRequest::from_borsh(&envelope.payload)
                     .map_err(resolver_error_to_protocol)?;
-                ResolveChainHandler::new(self.registry.clone())
-                    .handle(&req)
+                ResolveChainHandler::new(self.resolver_backend.clone())
+                    .handle(&req, envelope.envelope_id)
                     .map_err(resolver_error_to_protocol)
             }
             k if k == octo_protocol::payload_kind::IDENTITY_RESOLVE_WITH_CHAIN => {
@@ -461,6 +484,7 @@ fn self_clone_to_receiver(node: &IdentityResolverNode) -> Arc<dyn NetworkReceive
     let arc = Arc::new(IdentityResolverNode {
         config: node.config.clone(),
         registry: node.registry.clone(),
+        resolver_backend: node.resolver_backend.clone(),
         write_coordinator: node.write_coordinator.clone(),
         chain_id: node.chain_id.clone(),
         dispatcher: default_dispatcher(),

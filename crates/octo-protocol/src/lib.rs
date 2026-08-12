@@ -45,6 +45,7 @@ pub mod authorization;
 pub mod dispatch;
 pub mod envelope;
 pub mod error;
+pub mod hop_signature;
 pub mod payload_kind;
 pub mod recipient;
 pub mod signing;
@@ -54,6 +55,7 @@ pub use authorization::{Authorization, BlsSignature, CapabilityToken, ProofBundl
 pub use dispatch::{DispatcherConfig, EnvelopeDispatcher, HandlerOutput, ValidationCache};
 pub use envelope::NodeEnvelope;
 pub use error::ProtocolError;
+pub use hop_signature::HopSignature;
 pub use payload_kind::PayloadKindId;
 pub use recipient::RecipientRef;
 pub use signing::{compute_envelope_id, signature_preimage, DOMAIN_ENVELOPE_ID, DOMAIN_SIGNATURE};

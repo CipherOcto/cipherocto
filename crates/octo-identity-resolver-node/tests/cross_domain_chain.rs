@@ -74,7 +74,7 @@ fn chain_single_hop_resolves() {
     let custom_pubkey = [0xCCu8; 32];
     register_custom(&registry, 11, custom_pubkey);
 
-    let handler = ResolveChainHandler::new(registry);
+    let handler = ResolveChainHandler::new_local(registry);
     let target = canonical_did(11);
     let hop = ResolverHop::local(canonical_did(2));
     let req = ChainResolveRequest {
@@ -82,7 +82,9 @@ fn chain_single_hop_resolves() {
         hops: vec![hop],
         ttl_remaining_ms: 100,
     };
-    let out = handler.handle(&req).expect("chain resolve succeeds");
+    let out = handler
+        .handle(&req, [0u8; 32])
+        .expect("chain resolve succeeds");
     let payload = out.response_payload.expect("response payload");
     let resp: octo_identity_resolver_node::ChainResolveResponse =
         borsh::from_slice(&payload).unwrap();
@@ -105,7 +107,7 @@ fn chain_three_hops_resolves_end_to_end() {
     let custom_pubkey = [0xDDu8; 32];
     register_custom(&registry, 33, custom_pubkey);
 
-    let handler = ResolveChainHandler::new(registry);
+    let handler = ResolveChainHandler::new_local(registry);
     let target = canonical_did(33);
     let hops = vec![
         ResolverHop::local(canonical_did(1)),
@@ -117,7 +119,9 @@ fn chain_three_hops_resolves_end_to_end() {
         hops,
         ttl_remaining_ms: 1_000,
     };
-    let out = handler.handle(&req).expect("3-hop chain resolves");
+    let out = handler
+        .handle(&req, [0u8; 32])
+        .expect("3-hop chain resolves");
     let payload = out.response_payload.expect("response payload");
     let resp: octo_identity_resolver_node::ChainResolveResponse =
         borsh::from_slice(&payload).unwrap();
@@ -134,7 +138,7 @@ fn chain_three_hops_resolves_end_to_end() {
 #[test]
 fn chain_ttl_expiry_returns_error() {
     let registry = Arc::new(InMemoryDidRegistry::default());
-    let handler = ResolveChainHandler::new(registry);
+    let handler = ResolveChainHandler::new_local(registry);
     let target = canonical_did(44);
     let hops = vec![
         ResolverHop::local(canonical_did(1)),
@@ -148,7 +152,7 @@ fn chain_ttl_expiry_returns_error() {
         hops,
         ttl_remaining_ms: HOP_LATENCY_MS_ESTIMATE - 5,
     };
-    let err = handler.handle(&req).unwrap_err();
+    let err = handler.handle(&req, [0u8; 32]).unwrap_err();
     assert!(matches!(
         err,
         octo_identity_resolver_node::IdentityResolveError::ChainTtlExpired
@@ -161,7 +165,7 @@ fn chain_ttl_expiry_returns_error() {
 #[test]
 fn chain_cycle_detection_aborts() {
     let registry = Arc::new(InMemoryDidRegistry::default());
-    let handler = ResolveChainHandler::new(registry);
+    let handler = ResolveChainHandler::new_local(registry);
     let target = canonical_did(55);
     let hops = vec![
         ResolverHop::local(canonical_did(1)),
@@ -173,7 +177,7 @@ fn chain_cycle_detection_aborts() {
         hops,
         ttl_remaining_ms: 1_000,
     };
-    let err = handler.handle(&req).unwrap_err();
+    let err = handler.handle(&req, [0u8; 32]).unwrap_err();
     assert!(matches!(
         err,
         octo_identity_resolver_node::IdentityResolveError::ChainCycle
@@ -185,7 +189,7 @@ fn chain_cycle_detection_aborts() {
 #[test]
 fn chain_invalid_hop_rejected() {
     let registry = Arc::new(InMemoryDidRegistry::default());
-    let handler = ResolveChainHandler::new(registry);
+    let handler = ResolveChainHandler::new_local(registry);
     let target = canonical_did(66);
     let hops = vec![
         ResolverHop::local("did:octo:bad".into()),
@@ -196,7 +200,7 @@ fn chain_invalid_hop_rejected() {
         hops,
         ttl_remaining_ms: 1_000,
     };
-    let err = handler.handle(&req).unwrap_err();
+    let err = handler.handle(&req, [0u8; 32]).unwrap_err();
     assert!(matches!(
         err,
         octo_identity_resolver_node::IdentityResolveError::InvalidDid(_)
@@ -213,7 +217,7 @@ fn chain_ttl_exactly_one_hop_succeeds() {
     let custom_pubkey = [0xEEu8; 32];
     register_custom(&registry, 77, custom_pubkey);
 
-    let handler = ResolveChainHandler::new(registry);
+    let handler = ResolveChainHandler::new_local(registry);
     let target = canonical_did(77);
     // Exactly one hop's worth of budget. Subtract 10 → 0 → abort ON the
     // first hop iteration; this is the boundary that TV-3 confirms.
@@ -222,7 +226,7 @@ fn chain_ttl_exactly_one_hop_succeeds() {
         hops: vec![ResolverHop::local(canonical_did(1))],
         ttl_remaining_ms: HOP_LATENCY_MS_ESTIMATE,
     };
-    let err = handler.handle(&req).unwrap_err();
+    let err = handler.handle(&req, [0u8; 32]).unwrap_err();
     assert!(matches!(
         err,
         octo_identity_resolver_node::IdentityResolveError::ChainTtlExpired
@@ -237,14 +241,16 @@ fn chain_empty_hops_resolves_locally() {
     let custom_pubkey = [0xFFu8; 32];
     register_custom(&registry, 88, custom_pubkey);
 
-    let handler = ResolveChainHandler::new(registry);
+    let handler = ResolveChainHandler::new_local(registry);
     let target = canonical_did(88);
     let req = ChainResolveRequest {
         target: target.clone(),
         hops: vec![],
         ttl_remaining_ms: 1_000,
     };
-    let out = handler.handle(&req).expect("empty chain resolves");
+    let out = handler
+        .handle(&req, [0u8; 32])
+        .expect("empty chain resolves");
     let payload = out.response_payload.expect("response payload");
     let resp: octo_identity_resolver_node::ChainResolveResponse =
         borsh::from_slice(&payload).unwrap();

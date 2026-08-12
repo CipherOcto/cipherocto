@@ -35,15 +35,18 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+pub mod backend;
 pub mod handlers;
 pub mod node;
 
+pub use backend::RemoteResolverBackend;
 pub use handlers::{
+    chain::{BackendResolveOutcome, LocalResolverBackend},
     ChainResolveRequest, ChainResolveResponse, HandlerOutput, IdentityResolveError,
     RegisterHandler, RegisterRequest, RegisterResponse, ResolveChainHandler, ResolveHandler,
     ResolveRequest, ResolveResponse, ResolveWithChainHandler, ResolveWithChainRequest,
-    ResolveWithChainResponse, ResolverChainContext, ResolverHop, RevokeHandler, RevokeRequest,
-    RevokeResponse, HOP_LATENCY_MS_ESTIMATE,
+    ResolveWithChainResponse, ResolverBackend, ResolverChainContext, ResolverHop, RevokeHandler,
+    RevokeRequest, RevokeResponse, HOP_LATENCY_MS_ESTIMATE,
 };
 pub use node::{
     IdentityResolverNode, IdentityResolverNodeConfig, IdentityResolverNodeError,

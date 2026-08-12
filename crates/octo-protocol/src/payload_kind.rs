@@ -171,6 +171,29 @@ pub const IDENTITY_RESOLVE_WITH_CHAIN: PayloadKindId = PayloadKindId([
     0x00, 0x09, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05,
 ]);
 
+// RFC-0871 cross-domain resolver chain response payload kind
+// (mission `0871b-cross-node-forwarding`). Allocated as slot `0006` in
+// the identity sub-namespace (`0x0009:0001:...`) — next free slot
+// after `IDENTITY_RESOLVE_CHAIN` (`0004`) and
+// `IDENTITY_RESOLVE_WITH_CHAIN` (`0005`). Wire form: borsh-encoded
+// `ChainResolveResponse` (5-tuple: canonical_did + public_key +
+// hops_traversed + signature_chain + envelope_id per mission
+// `0871b-cross-node-forwarding` T5).
+//
+// This kind is reserved for cross-network returns where the
+// destination resolver-node signs a per-hop accumulator and the
+// requester verifies it in-band. In-process dispatch (handler returns
+// synchronously) continues to emit `IDENTITY_RESOLVE_CHAIN` for
+// backward compatibility with the 7 in-process chain-traversal TV.
+
+/// Identity-resolve-chain-response payload kind
+/// (mission `0871b-cross-node-forwarding` T6).
+///
+/// UUID: `0x0009:0001:0000:0000:0000:0000:0000:0006`
+pub const IDENTITY_RESOLVE_CHAIN_RESPONSE: PayloadKindId = PayloadKindId([
+    0x00, 0x09, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06,
+]);
+
 /// Wallet sign Ed25519 (RFC-0871 §Wallet Node Lifecycle, Phase 2 mission 0871a).
 ///
 /// UUID: `0x0009:0002:0000:0000:0000:0000:0000:0001`
@@ -508,14 +531,17 @@ mod tests {
         // (UUID slot 0004 in identity sub-namespace 0x0009:0001:...).
         // Mission 0010-f2-multi-chain-routing adds
         // `IDENTITY_RESOLVE_WITH_CHAIN` (UUID slot 0005).
+        // Mission 0871b-cross-node-forwarding adds
+        // `IDENTITY_RESOLVE_CHAIN_RESPONSE` (UUID slot 0006).
         let kinds = [
             IDENTITY_RESOLVE,
             IDENTITY_REGISTER,
             IDENTITY_REVOKE,
             IDENTITY_RESOLVE_CHAIN,
             IDENTITY_RESOLVE_WITH_CHAIN,
+            IDENTITY_RESOLVE_CHAIN_RESPONSE,
         ];
-        assert_eq!(kinds.len(), 5);
+        assert_eq!(kinds.len(), 6);
         for i in 0..kinds.len() {
             for j in (i + 1)..kinds.len() {
                 assert_ne!(

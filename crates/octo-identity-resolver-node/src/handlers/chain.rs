@@ -53,6 +53,7 @@ use std::sync::Arc;
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use octo_ident::{DidCodec, DidRegistry};
+use octo_protocol::HopSignature;
 
 use super::{HandlerOutput, IdentityResolveError};
 
@@ -151,7 +152,21 @@ impl ChainResolveRequest {
 
 /// Response payload for `IDENTITY_RESOLVE_CHAIN`.
 ///
-/// Wire form: borsh `(canonical_did, public_key, hops_traversed)`.
+/// Wire form: borsh `(canonical_did, public_key, hops_traversed,
+/// signature_chain, envelope_id)`.
+///
+/// Mission `0871b-cross-node-forwarding` extends the original
+/// 3-tuple (RFC-0871 §Future Work + mission
+/// `0871b-cross-domain-resolution-impl`) with two new fields that bind
+/// cross-network chain integrity:
+///
+/// - `signature_chain`: per-hop Ed25519 signatures, outermost-first.
+///   Empty when `ResolverBackend` is `LocalResolverBackend` (single-hop
+///   local resolve; no signing needed).
+/// - `envelope_id`: BLAKE3-256 of the originating
+///   `IDENTITY_RESOLVE_CHAIN` envelope per RFC-0871 §Algorithms step 2.
+///   Replay defense: the requester binds the chain to the envelope it
+///   sent.
 #[derive(Clone, Debug, BorshSerialize, BorshDeserialize, PartialEq, Eq)]
 pub struct ChainResolveResponse {
     /// Canonical DID wire form (post-parse).
@@ -161,22 +176,50 @@ pub struct ChainResolveResponse {
     /// Number of hops traversed. Capped at `u8::MAX` (`hops.len()` is a
     /// `Vec` length so the realistic ceiling is well below that).
     pub hops_traversed: u8,
+    /// Per-hop Ed25519 signature chain, outermost-first. Empty for
+    /// in-process / local-registry resolves; populated by cross-network
+    /// hops via `RemoteResolverBackend`.
+    pub signature_chain: Vec<HopSignature>,
+    /// `envelope_id` of the originating `IDENTITY_RESOLVE_CHAIN`
+    /// envelope (RFC-0871 §Algorithms step 2). Replay defense + request
+    /// correlation.
+    pub envelope_id: [u8; 32],
 }
 
 /// `IDENTITY_RESOLVE_CHAIN` handler.
 ///
-/// Same DI shape as `ResolveHandler`: `Arc<dyn DidRegistry>` injected at
-/// construction time. The handler does not depend on the
-/// `DidWriteCoordinator` (chain resolution is read-only).
+/// Mission `0871b-cross-node-forwarding` migrates the DI shape from
+/// `Arc<dyn DidRegistry>` to `Arc<dyn ResolverBackend>` so the chain
+/// walk can intercept cross-network hops. The `LocalResolverBackend`
+/// wrapper preserves the in-process behavior (a no-op shim around
+/// `DidRegistry::resolve`); `RemoteResolverBackend` carries the
+/// request/response substrate payload once it lands.
+///
+/// The handler does not depend on the `DidWriteCoordinator` (chain
+/// resolution is read-only).
 pub struct ResolveChainHandler {
-    registry: Arc<dyn DidRegistry>,
+    backend: Arc<dyn ResolverBackend>,
 }
 
 impl ResolveChainHandler {
-    /// Construct a new `ResolveChainHandler` bound to the supplied registry.
+    /// Construct a new `ResolveChainHandler` bound to the supplied
+    /// `ResolverBackend`. Primary constructor (mission
+    /// `0871b-cross-node-forwarding` AC-7).
     #[must_use]
-    pub fn new(registry: Arc<dyn DidRegistry>) -> Self {
-        Self { registry }
+    pub fn new(backend: Arc<dyn ResolverBackend>) -> Self {
+        Self { backend }
+    }
+
+    /// Back-compat constructor: wrap an `Arc<dyn DidRegistry>` in a
+    /// `LocalResolverBackend` so existing callers (7 in-process
+    /// chain-traversal TV in `tests/cross_domain_chain.rs` + the
+    /// in-file tests below) keep compiling. Mission
+    /// `0871b-cross-node-forwarding` AC-7.
+    #[must_use]
+    pub fn new_local(registry: Arc<dyn DidRegistry>) -> Self {
+        Self {
+            backend: Arc::new(LocalResolverBackend(registry)),
+        }
     }
 
     /// Walk the resolver chain.
@@ -188,8 +231,17 @@ impl ResolveChainHandler {
     ///   previously-visited canonical DID.
     /// - `IdentityResolveError::ChainTtlExpired` if the TTL budget
     ///   reaches zero before the chain completes.
-    /// - `IdentityResolveError::Storage` if the local registry call fails.
-    pub fn handle(&self, req: &ChainResolveRequest) -> Result<HandlerOutput, IdentityResolveError> {
+    /// - `IdentityResolveError::Storage` if the backend call fails.
+    ///
+    /// Mission `0871b-cross-node-forwarding`: `envelope_id` is the
+    /// RFC-0871 correlation key (BLAKE3-256 of the unsigned envelope)
+    /// threaded in from the dispatch site so the response can bind
+    /// back to the originating request envelope (replay defense).
+    pub fn handle(
+        &self,
+        req: &ChainResolveRequest,
+        envelope_id: [u8; 32],
+    ) -> Result<HandlerOutput, IdentityResolveError> {
         // 1. Validate target canonical DID shape; reject legacy bare form.
         let target_wire = octo_ident::CanonicalCodec::parse(&req.target, false)
             .map_err(|e| IdentityResolveError::InvalidDid(e.to_string()))?;
@@ -216,25 +268,38 @@ impl ResolveChainHandler {
                 return Err(IdentityResolveError::ChainTtlExpired);
             }
             // Defense-in-depth: reject malformed hops before consuming
-            // the registry. The canonical-DID validation is the same
+            // the backend. The canonical-DID validation is the same
             // call shape used for `target` validation above.
             octo_ident::CanonicalCodec::parse(&hop.hop_did, false)
                 .map_err(|e| IdentityResolveError::InvalidDid(e.to_string()))?;
         }
 
-        // 4. After walking all hops, attempt local registry resolve on
-        //    the target. The "terminal" hop is the local resolver-node
-        //    itself — real cross-node forwarding lands in a follow-on
-        //    mission when the request/response substrate is available.
-        let doc = self
-            .registry
-            .resolve(&target_raw.hash)?
-            .ok_or_else(|| IdentityResolveError::Storage("unknown DID".to_owned()))?;
+        // 4. After walking all hops, delegate to the injected
+        //    `ResolverBackend`. The local backend calls
+        //    `DidRegistry::resolve`; a remote backend will perform
+        //    network I/O (once the request/response substrate lands).
+        let resp = self.backend.resolve_via(
+            &req.hops.last().map_or_else(
+                // Terminal hop is the local resolver itself when
+                // hops is empty; the local backend ignores hop_did
+                // and resolves `target` directly.
+                || req.target.clone(),
+                |last| last.hop_did.clone(),
+            ),
+            &target_raw,
+            &ctx,
+        )?;
 
+        // 5. Assemble the 5-tuple response (mission
+        //    `0871b-cross-node-forwarding` T5). `LocalResolverBackend`
+        //    returns an empty `signature_chain`; `RemoteResolverBackend`
+        //    populates it with one `HopSignature` per cross-network hop.
         let resp = ChainResolveResponse {
             canonical_did: target_wire.as_str().to_owned(),
-            public_key: doc.public_key,
+            public_key: resp.public_key,
             hops_traversed: u8::try_from(req.hops.len()).unwrap_or(u8::MAX),
+            signature_chain: resp.signature_chain,
+            envelope_id,
         };
         let payload =
             borsh::to_vec(&resp).map_err(|e| IdentityResolveError::Serialization(e.to_string()))?;
@@ -270,6 +335,76 @@ impl ResolveChainHandler {
             }
         }
         Some(ctx)
+    }
+}
+
+// --- ResolverBackend trait + LocalResolverBackend impl -----------
+//
+// Mission `0871b-cross-node-forwarding` T1 + T2. The trait abstracts
+// the resolution mechanism for one hop in a resolver chain;
+// `ResolveChainHandler` consults this trait instead of `DidRegistry`
+// directly so cross-node hops can be intercepted.
+//
+// `LocalResolverBackend` wraps `DidRegistry` for in-process / single-
+// node deployments; `RemoteResolverBackend` (mission T3, lives in
+// `octo-identity-resolver-node/src/backend.rs`) carries the
+// request/response substrate payload once it lands.
+
+/// Back-end shape returned by `ResolverBackend::resolve_via` — the
+/// chain-handler fills in the remaining response fields (canonical_did,
+/// hops_traversed, envelope_id).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BackendResolveOutcome {
+    /// 32-byte storage-pubkey form (from `DidDocument.public_key`).
+    pub public_key: [u8; 32],
+    /// Per-hop Ed25519 signatures accumulated by the backend
+    /// (outermost-first). Empty for `LocalResolverBackend`.
+    pub signature_chain: Vec<HopSignature>,
+}
+
+/// Layer B trait: abstracts the resolution mechanism for one hop in a
+/// resolver chain. `ResolveChainHandler` consults this trait instead of
+/// `DidRegistry` directly so cross-node hops can be intercepted.
+///
+/// Sync trait (not `async_trait`): `LocalResolverBackend` is sync (local
+/// `DidRegistry::resolve` is sync). When mission `0870k-transport-
+/// request-response` lands the request/response substrate, a sync
+/// `RemoteResolverBackend` will be implemented against it (or the
+/// trait will become async — deferred until the substrate exists).
+pub trait ResolverBackend: Send + Sync {
+    /// Resolve `target` at the hop identified by `hop_did`. `chain_ctx`
+    /// carries the visited set + remaining TTL so the backend can
+    /// participate in cycle detection (defensive: the handler has
+    /// already enforced this, but a remote backend may need the
+    /// context to apply chain_hash / signature preimage).
+    fn resolve_via(
+        &self,
+        hop_did: &str,
+        target: &octo_ident::RawDid,
+        chain_ctx: &ResolverChainContext,
+    ) -> Result<BackendResolveOutcome, IdentityResolveError>;
+}
+
+/// In-process `ResolverBackend` that delegates to the local
+/// `DidRegistry`. Preserves the mission `0871b-cross-domain-resolution-impl`
+/// behavior (no cross-network I/O, no signing).
+pub struct LocalResolverBackend(pub Arc<dyn DidRegistry>);
+
+impl ResolverBackend for LocalResolverBackend {
+    fn resolve_via(
+        &self,
+        _hop_did: &str,
+        target: &octo_ident::RawDid,
+        _chain_ctx: &ResolverChainContext,
+    ) -> Result<BackendResolveOutcome, IdentityResolveError> {
+        let doc = self
+            .0
+            .resolve(&target.hash)?
+            .ok_or_else(|| IdentityResolveError::Storage("unknown DID".to_owned()))?;
+        Ok(BackendResolveOutcome {
+            public_key: doc.public_key,
+            signature_chain: Vec::new(),
+        })
     }
 }
 
@@ -325,6 +460,8 @@ mod tests {
             canonical_did: sample_did_str(7),
             public_key: [0xAAu8; 32],
             hops_traversed: 3,
+            signature_chain: Vec::new(),
+            envelope_id: [0x42u8; 32],
         };
         let bytes = borsh::to_vec(&resp).unwrap();
         let back: ChainResolveResponse = borsh::from_slice(&bytes).unwrap();
@@ -347,44 +484,179 @@ mod tests {
                 },
             )
             .unwrap();
-        let handler = ResolveChainHandler::new(registry);
+        let handler = ResolveChainHandler::new_local(registry);
         let req = ChainResolveRequest {
             target: sample_did_str(11),
             hops: vec![],
             ttl_remaining_ms: 100,
         };
-        let out = handler.handle(&req).unwrap();
+        let out = handler.handle(&req, [0u8; 32]).unwrap();
         let payload = out.response_payload.unwrap();
         let resp: ChainResolveResponse = borsh::from_slice(&payload).unwrap();
         assert_eq!(resp.canonical_did, sample_did_str(11));
         assert_eq!(resp.public_key, custom_pubkey);
         assert_eq!(resp.hops_traversed, 0);
+        assert_eq!(resp.envelope_id, [0u8; 32]);
     }
 
     #[test]
     fn handle_rejects_invalid_target_did() {
         let registry = Arc::new(InMemoryDidRegistry::default());
-        let handler = ResolveChainHandler::new(registry);
+        let handler = ResolveChainHandler::new_local(registry);
         let req = ChainResolveRequest {
             target: "did:octo:bad".into(),
             hops: vec![],
             ttl_remaining_ms: 100,
         };
-        let err = handler.handle(&req).unwrap_err();
+        let err = handler.handle(&req, [0u8; 32]).unwrap_err();
         assert!(matches!(err, IdentityResolveError::InvalidDid(_)));
     }
 
     #[test]
     fn handle_rejects_legacy_bare_target() {
         let registry = Arc::new(InMemoryDidRegistry::default());
-        let handler = ResolveChainHandler::new(registry);
+        let handler = ResolveChainHandler::new_local(registry);
         let legacy = "did:octo:babcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwxyz2345";
         let req = ChainResolveRequest {
             target: legacy.into(),
             hops: vec![],
             ttl_remaining_ms: 100,
         };
-        let err = handler.handle(&req).unwrap_err();
+        let err = handler.handle(&req, [0u8; 32]).unwrap_err();
         assert!(matches!(err, IdentityResolveError::InvalidDid(_)));
+    }
+
+    // -- Mission 0871b-cross-node-forwarding AC-9..AC-12 --
+
+    /// AC-9: `ChainResolveResponse` 5-tuple with non-empty
+    /// `signature_chain` survives borsh round-trip.
+    #[test]
+    fn chain_response_with_hop_signature_round_trip() {
+        let sig1 = octo_protocol::HopSignature::new(0, sample_did_str(99), [0xAA; 64], [0xBB; 32]);
+        let sig2 = octo_protocol::HopSignature::new(1, sample_did_str(98), [0xCC; 64], [0xDD; 32]);
+        let resp = ChainResolveResponse {
+            canonical_did: sample_did_str(7),
+            public_key: [0xAAu8; 32],
+            hops_traversed: 2,
+            signature_chain: vec![sig1, sig2],
+            envelope_id: [0x42u8; 32],
+        };
+        let bytes = borsh::to_vec(&resp).expect("serialize");
+        let back: ChainResolveResponse = borsh::from_slice(&bytes).expect("deserialize");
+        assert_eq!(back, resp);
+        assert_eq!(back.signature_chain.len(), 2);
+    }
+
+    /// AC-10: `ResolveChainHandler` consults the injected backend.
+    /// Construct with `new(backend)`; a `SpyBackend` records whether
+    /// `resolve_via` was called.
+    #[test]
+    fn chain_handler_uses_injected_backend() {
+        let registry = Arc::new(InMemoryDidRegistry::default());
+        let target_pk = sample_did_bytes(11);
+        let target_raw = octo_ident::CanonicalCodec::mint(&target_pk);
+        registry
+            .register(
+                &target_raw.hash,
+                DidDocument {
+                    public_key: [0xCCu8; 32],
+                    revoked: false,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let local = Arc::new(LocalResolverBackend(registry.clone()));
+        let spy = Arc::new(SpyBackend::new(local.clone() as Arc<dyn ResolverBackend>));
+        let handler = ResolveChainHandler::new(spy.clone() as Arc<dyn ResolverBackend>);
+        let req = ChainResolveRequest {
+            target: sample_did_str(11),
+            hops: vec![],
+            ttl_remaining_ms: 100,
+        };
+        let out = handler.handle(&req, [0u8; 32]).expect("spy delegates");
+        assert_eq!(spy.calls(), 1, "backend consulted exactly once");
+        let payload = out.response_payload.unwrap();
+        let resp: ChainResolveResponse = borsh::from_slice(&payload).unwrap();
+        assert_eq!(resp.public_key, [0xCCu8; 32]);
+    }
+
+    /// AC-11: `HopSignature` carries the four required fields and
+    /// round-trips the `chain_hash` preimage shape. Test pins the
+    /// structural fields (no real Ed25519 verification — that lands
+    /// with mission `0870k-transport-request-response`).
+    #[test]
+    fn hop_signature_signs_and_verifies() {
+        let sig = octo_protocol::HopSignature::new(
+            2,
+            "did:octo:zCt5bENb7tA2b9xeamSEnHF7cZ6Kk8h9p2Z6nT8pVk9R".to_owned(),
+            [0x55; 64],
+            [0x66; 32],
+        );
+        assert_eq!(sig.hop_index, 2);
+        assert_eq!(
+            sig.hop_did,
+            "did:octo:zCt5bENb7tA2b9xeamSEnHF7cZ6Kk8h9p2Z6nT8pVk9R"
+        );
+        assert_eq!(sig.signature, [0x55u8; 64]);
+        assert_eq!(sig.signer_pub, [0x66u8; 32]);
+        let bytes = borsh::to_vec(&sig).expect("serialize");
+        let back: octo_protocol::HopSignature = borsh::from_slice(&bytes).expect("deserialize");
+        assert_eq!(back, sig);
+    }
+
+    /// AC-12: handler propagates `envelope_id` into the response's
+    /// 5-tuple `envelope_id` field (RFC-0871 correlation key,
+    /// replay defense).
+    #[test]
+    fn chain_handler_propagates_envelope_id() {
+        let registry = Arc::new(InMemoryDidRegistry::default());
+        let target_pk = sample_did_bytes(11);
+        let target_raw = octo_ident::CanonicalCodec::mint(&target_pk);
+        registry
+            .register(
+                &target_raw.hash,
+                DidDocument {
+                    public_key: [0xCCu8; 32],
+                    revoked: false,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let handler = ResolveChainHandler::new_local(registry);
+        let envelope_id = [0x42u8; 32];
+        let req = ChainResolveRequest {
+            target: sample_did_str(11),
+            hops: vec![],
+            ttl_remaining_ms: 100,
+        };
+        let out = handler.handle(&req, envelope_id).expect("local resolves");
+        let payload = out.response_payload.unwrap();
+        let resp: ChainResolveResponse = borsh::from_slice(&payload).unwrap();
+        assert_eq!(resp.envelope_id, envelope_id);
+    }
+
+    // --- SpyBackend: counts calls + delegates to wrapped backend ---
+
+    struct SpyBackend(Arc<dyn ResolverBackend>, std::sync::atomic::AtomicUsize);
+
+    impl SpyBackend {
+        fn new(inner: Arc<dyn ResolverBackend>) -> Self {
+            Self(inner, std::sync::atomic::AtomicUsize::new(0))
+        }
+        fn calls(&self) -> usize {
+            self.1.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl ResolverBackend for SpyBackend {
+        fn resolve_via(
+            &self,
+            hop_did: &str,
+            target: &octo_ident::RawDid,
+            chain_ctx: &ResolverChainContext,
+        ) -> Result<BackendResolveOutcome, IdentityResolveError> {
+            self.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.0.resolve_via(hop_did, target, chain_ctx)
+        }
     }
 }

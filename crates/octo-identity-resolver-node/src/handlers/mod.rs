@@ -17,8 +17,9 @@ pub mod resolve;
 pub mod resolve_with_chain;
 
 pub use chain::{
-    ChainResolveRequest, ChainResolveResponse, ResolveChainHandler, ResolverChainContext,
-    ResolverHop, HOP_LATENCY_MS_ESTIMATE,
+    BackendResolveOutcome, ChainResolveRequest, ChainResolveResponse, LocalResolverBackend,
+    ResolveChainHandler, ResolverBackend, ResolverChainContext, ResolverHop,
+    HOP_LATENCY_MS_ESTIMATE,
 };
 pub use registration::{
     RegisterHandler, RegisterRequest, RegisterResponse, RevokeHandler, RevokeRequest,
@@ -132,6 +133,14 @@ pub enum IdentityResolveError {
     /// registry call (fail-closed; no implicit default to mainnet).
     #[error("invalid chain id: {0}")]
     InvalidChainId(String),
+
+    /// Mission `0871b-cross-node-forwarding`: a `RemoteResolverBackend`
+    /// was injected but the request/response substrate is not yet
+    /// available (mission `0870k-transport-request-response` pending).
+    /// The handler aborts with no registry call so cross-network
+    /// resolution is never silently downgraded to local-only.
+    #[error("unsupported: {0}")]
+    Unsupported(String),
 }
 
 impl From<IdentityResolveError> for ProtocolError {
@@ -165,6 +174,13 @@ impl From<IdentityResolveError> for ProtocolError {
             // DID. No registry call was made.
             IdentityResolveError::InvalidChainId(msg) => {
                 ProtocolError::AuthorizationFailed(format!("invalid chain id: {msg}"))
+            }
+            // Mission 0871b-cross-node-forwarding: cross-network hop
+            // requested before the request/response substrate exists.
+            // Same authorization-class treatment as the other failure
+            // modes — no partial resolution was committed.
+            IdentityResolveError::Unsupported(msg) => {
+                ProtocolError::AuthorizationFailed(format!("unsupported: {msg}"))
             }
         }
     }

@@ -1,8 +1,6 @@
 # Mission: 0870-c — NodeEnvelope / Legacy Discriminator Compat Dispatch
 
-## Status
-
-Open (filed 2026-08-12). Pre-existing CI failure on `main..next` queue HEAD; surfaced by review-fix run.
+**Status:** claimed (filed 2026-08-12); LANDED 2026-08-12, commit `005e7f16`. Pre-existing CI failure on `main..next` queue HEAD; surfaced by review-fix run.
 
 ## Summary
 
@@ -98,3 +96,4 @@ Each test gets `#[ignore = "blocked on 0870-c (NodeEnvelope dispatch compat)"]`.
 | Version | Date       | Status | Changes |
 |---------|------------|--------|---------|
 | v0.1    | 2026-08-12 | open   | Mission filed (pre-existing CI failure surfaced by review-fix run; AC-1..AC-10 + 9-test ignore list + Layer B scope) |
+| v0.2    | 2026-08-12 | landed | AC-1..AC-10 closed; handler.on_receive reclassified via borsh-first classify_envelope; PricingPolicy::settlement_recipient skip_serializing_if removed (bincode tag asymmetry); l2_inbound_ttl_exceeded_emits_ttl_reject updated to wire-form-aware; 28 l2_* integration tests un-ignored; 1589 lib tests + 27 l2_* integration tests pass. Commit `005e7f16`. |

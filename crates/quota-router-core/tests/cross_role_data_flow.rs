@@ -96,7 +96,11 @@ fn sample_request_context(model: &str) -> RequestContext {
 #[test]
 fn cross_role_data_flow_deal_settlement_full_pipeline() {
     // 1. Set up three actors with IdentityKey + RoleBindingDeclaration.
-    let asker = IdentityKey::generate().expect("Asker identity generate");
+    // Newly-generated identities start in `Designated` state; asker must be
+    // `Active` because the pipeline calls `asker.sign(...)` for DealSettled
+    // (per RFC-0009 §Lifecycle row 1).
+    let mut asker = IdentityKey::generate().expect("Asker identity generate");
+    asker.activate(1_700_000_000).expect("Asker activate");
     let _token_issuer = IdentityKey::generate().expect("TokenIssuer identity generate");
     let _router = IdentityKey::generate().expect("Router identity generate");
 
@@ -274,7 +278,9 @@ fn cross_role_data_flow_deal_settlement_full_pipeline() {
 
 #[test]
 fn tv2_cross_role_data_flow_deal_settlement() {
-    let asker = IdentityKey::generate().expect("Asker identity generate");
+    // Asker must be `Active` to sign DealSettled (per RFC-0009 §Lifecycle).
+    let mut asker = IdentityKey::generate().expect("Asker identity generate");
+    asker.activate(1_700_000_000).expect("Asker activate");
     let asker_did = sample_did(201);
 
     let mut audit_log = RoleBindingAuditLog::new();

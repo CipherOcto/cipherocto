@@ -18,7 +18,12 @@ use octo_wallet::capability::{CapabilityToken, ProofBundle, PublicInputs};
 use octo_wallet::identity::IdentityKey;
 
 fn sample_token() -> (CapabilityToken, IdentityKey) {
-    let holder = IdentityKey::generate().expect("identity key");
+    let mut holder = IdentityKey::generate().expect("identity key");
+    // Newly-generated identities start in `Designated` state; `mint()` requires
+    // `Active` so the holder can sign the holder_msg (per RFC-0009 §Lifecycle
+    // row 1: `Designated → Active`). The activation timestamp is not security-
+    // sensitive in tests; use a fixed epoch.
+    holder.activate(1_700_000_000).expect("activate");
     let root_secret = [0x42; 32];
     let caveats = [Caveat::Before(1_700_000_000)];
     let token =

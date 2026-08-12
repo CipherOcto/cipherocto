@@ -48,7 +48,11 @@ fn fresh_root_secret() -> [u8; 32] {
 }
 
 fn fresh_holder() -> IdentityKey {
-    IdentityKey::generate().expect("identity key gen")
+    let mut k = IdentityKey::generate().expect("identity key gen");
+    // Newly-generated identities start in `Designated` state; `mint()` requires
+    // `Active` so the holder can sign (per RFC-0009 §Lifecycle row 1).
+    k.activate(1_700_000_000).expect("activate");
+    k
 }
 
 fn build_capability(caveats: &[Caveat]) -> CapabilityToken {

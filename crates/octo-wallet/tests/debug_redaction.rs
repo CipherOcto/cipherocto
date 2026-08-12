@@ -227,7 +227,9 @@ fn macaroon_debug_does_not_leak_chain_or_root_secret_hash() {
 
 #[test]
 fn capability_token_debug_does_not_leak_holder_sig_or_chain() {
-    let holder = IdentityKey::from_seed(SEED_MARKER);
+    // Holder must be `Active` so mint() can call sign() (per RFC-0009 §Lifecycle).
+    let mut holder = IdentityKey::from_seed(SEED_MARKER);
+    holder.activate(1_700_000_000).expect("activate");
     let caveats = [Caveat::Model("gpt-4".to_owned())];
     let token =
         CapabilityToken::mint(&ROOT_SECRET_MARKER, &holder, &sample_did(192), &caveats).unwrap();
@@ -249,7 +251,8 @@ fn capability_token_debug_does_not_leak_holder_sig_or_chain() {
 
 #[test]
 fn private_witness_debug_does_not_leak_root_secret_or_holder_sig() {
-    let holder = IdentityKey::from_seed(SEED_MARKER);
+    let mut holder = IdentityKey::from_seed(SEED_MARKER);
+    holder.activate(1_700_000_000).expect("activate");
     let token = CapabilityToken::mint(&ROOT_SECRET_MARKER, &holder, &sample_did(192), &[]).unwrap();
     let witness = PrivateWitness {
         cap_root_secret: ROOT_SECRET_MARKER,
@@ -408,8 +411,10 @@ fn debug_works_end_to_end_with_no_panic() {
     // Smoke: build a full CapabilityToken (the most security-sensitive
     // struct in the wallet) and assert Debug formatting doesn't panic.
     // This catches any field-ordering / generic-bound errors in the
-    // manual Debug impl.
-    let holder = IdentityKey::from_seed(SEED_MARKER);
+    // manual Debug impl. Holder must be `Active` so mint() can sign
+    // (per RFC-0009 §Lifecycle).
+    let mut holder = IdentityKey::from_seed(SEED_MARKER);
+    holder.activate(1_700_000_000).expect("activate");
     let caveats = [
         Caveat::Model("gpt-4".to_owned()),
         Caveat::Before(1_700_000_000),

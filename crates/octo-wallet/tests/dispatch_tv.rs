@@ -16,10 +16,14 @@ use std::sync::Arc;
 use octo_wallet::capability::dispatch::{
     AuthError, BearerError, BearerVerification, CapError, CapabilityVerification,
 };
-use octo_wallet::capability::gateway_authenticator::{
+// RFC-0969 mission 0969-a: GatewayAuthenticator relocated from
+// `octo_wallet::capability::gateway_authenticator` to
+// `quota_router_core::ingress::authenticator`. Tests follow the
+// relocation; new callers SHOULD use the new path.
+use octo_wallet::capability::macaroon::{CapabilityCatalog, Macaroon};
+use quota_router_core::ingress::authenticator::{
     BearerVerifier, CapabilityVerifier, GatewayAuthenticator, RoutingDecision,
 };
-use octo_wallet::capability::macaroon::{CapabilityCatalog, Macaroon};
 
 use quota_router_storage::clock::{Clock, FixedClock};
 use quota_router_storage::holder_kind::HolderKind;

@@ -1,5 +1,12 @@
 // RFC-0969 §Phase 1: dual-pipeline gateway authenticator.
 //
+// Relocated from `crates/octo-wallet/src/capability/gateway_authenticator.rs`
+// (mission 0969-a) so the authenticator sits in the same crate as its
+// primary consumer (`quota-router-core::proxy::handle_request`). The
+// orchestrator substrate (DispatchSet parsing + LinkageResult enum +
+// CapabilityCatalog trait) remains in `octo-wallet::capability::*` per
+// the per-extension crate model — only the orchestrator moves.
+//
 // Pipeline:
 //   1. parse_auth_headers(headers)        → DispatchSet (linkage evaluated)
 //   2. bearer_verifier.verify(token)      → BearerVerification  (if present)
@@ -11,11 +18,11 @@
 
 use std::sync::Arc;
 
-use crate::capability::dispatch::{
+use octo_wallet::capability::dispatch::{
     parse_auth_headers, AuthError, AuthHeader, BearerError, BearerVerification, CapError,
     CapabilityVerification, LinkageResult,
 };
-use crate::capability::macaroon::CapabilityCatalog;
+use octo_wallet::capability::macaroon::CapabilityCatalog;
 use quota_router_storage::clock::Clock;
 use quota_router_storage::holder_registry::HolderRegistry;
 
@@ -206,7 +213,7 @@ impl GatewayAuthenticator {
 
     fn verify_bearer(
         &self,
-        dispatch: &crate::capability::dispatch::DispatchSet,
+        dispatch: &octo_wallet::capability::dispatch::DispatchSet,
     ) -> Result<Option<BearerVerification>, AuthError> {
         match &dispatch.bearer {
             Some(AuthHeader::Bearer(token)) => Ok(Some(
@@ -220,7 +227,7 @@ impl GatewayAuthenticator {
 
     fn verify_capability(
         &self,
-        dispatch: &crate::capability::dispatch::DispatchSet,
+        dispatch: &octo_wallet::capability::dispatch::DispatchSet,
     ) -> Result<Option<CapabilityVerification>, AuthError> {
         match &dispatch.capability {
             Some(AuthHeader::CipherOctoCap(token)) => Ok(Some(
@@ -238,16 +245,16 @@ impl GatewayAuthenticator {
 /// itself lives in dispatch.rs). `evaluate_linkage` now lives next to
 /// the enum. This wrapper is preserved as a re-export for downstream
 /// callers (gateway_authenticator + tests).
-pub use crate::capability::dispatch::evaluate_linkage;
+pub use octo_wallet::capability::dispatch::evaluate_linkage;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::capability::dispatch::{
+    use octo_wallet::capability::dispatch::{
         BearerError, BearerVerification, CapError, CapabilityVerification, LinkageResult,
         ParseError,
     };
-    use crate::capability::macaroon::CapabilityCatalog;
+    use octo_wallet::capability::macaroon::CapabilityCatalog;
     use quota_router_storage::clock::{Clock, FixedClock};
     use quota_router_storage::holder_kind::HolderKind;
     use quota_router_storage::holder_record::HolderRecord;
@@ -269,7 +276,9 @@ mod tests {
     impl BearerVerifier for StubBearerVerifier {
         fn verify(&self, token: &str) -> Result<BearerVerification, BearerError> {
             // Delegate to dispatch stub (avoids duplicating decode logic).
-            Ok(crate::capability::dispatch::unverified_decode_bearer(token))
+            Ok(octo_wallet::capability::dispatch::unverified_decode_bearer(
+                token,
+            ))
         }
     }
 
@@ -279,9 +288,7 @@ mod tests {
 
     impl CapabilityVerifier for StubCapabilityVerifier {
         fn verify(&self, token: &str) -> Result<CapabilityVerification, CapError> {
-            Ok(crate::capability::dispatch::unverified_decode_capability(
-                token,
-            ))
+            Ok(octo_wallet::capability::dispatch::unverified_decode_capability(token))
         }
     }
 
@@ -346,7 +353,7 @@ mod tests {
     struct StubCatalog;
 
     impl CapabilityCatalog for StubCatalog {
-        fn lookup(&self, _id: &[u8; 32]) -> Option<crate::capability::macaroon::Macaroon> {
+        fn lookup(&self, _id: &[u8; 32]) -> Option<octo_wallet::capability::macaroon::Macaroon> {
             None
         }
     }
@@ -589,7 +596,7 @@ mod tests {
     // positives (e.g., `}` inside doc comments).
     #[test]
     fn authenticate_function_braces_balanced() {
-        let src = include_str!("gateway_authenticator.rs");
+        let src = include_str!("authenticator.rs");
         let auth_start = src
             .find("pub fn authenticate(")
             .expect("authenticate exists");

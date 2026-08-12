@@ -9,6 +9,13 @@
 //! trait provides a real body-parser via `OpenAiIngress` (default
 //! JSON shape used by OpenAI-compatible providers). Per-provider custom
 //! ingress impls can be added without changing the canonical surface.
+//!
+//! Mission 0969-a (RFC-0969): `authenticator` submodule provides the
+//! dual-pipeline `GatewayAuthenticator` orchestrator (relocated from
+//! `octo-wallet::capability::gateway_authenticator`). The provider-response
+//! ingress below remains the canonical egress-side ingestion point.
+
+pub mod authenticator;
 
 use serde::{Deserialize, Serialize};
 

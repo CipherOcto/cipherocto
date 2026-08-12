@@ -49,6 +49,14 @@ thiserror.workspace = true
 # Database
 stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
 
+# RFC-0969 mission 0969-a: GatewayAuthenticator relocated from
+# `octo-wallet::capability::gateway_authenticator` to
+# `quota-router-core::ingress::authenticator`. The orchestrator imports
+# `octo_wallet::capability::dispatch::*` (header parser substrate) +
+# `octo_wallet::capability::macaroon::CapabilityCatalog` (catalog trait).
+# Layer B → Layer B dependency (quota-router-core ↔ octo-wallet).
+octo-wallet = { path = "../octo-wallet" }
+
 # For HMAC-SHA256 key hashing
 hmac-sha256 = "1.1"
 
@@ -188,7 +196,6 @@ harness = false
 [dev-dependencies]
 criterion = "0.5"
 tempfile = "3"
-octo-wallet = { path = "../octo-wallet" }
 cipherocto-encoding = { path = "../cipherocto-encoding" }
 cipherocto-policy = { path = "../cipherocto-policy" }
 

@@ -252,7 +252,7 @@ impl ResolveChainHandler {
     #[must_use]
     pub fn new_local(registry: Arc<dyn DidRegistry>) -> Self {
         Self {
-            backend: Arc::new(LocalResolverBackend(registry)),
+            backend: LocalResolverBackend::new(registry),
         }
     }
 
@@ -311,20 +311,24 @@ impl ResolveChainHandler {
         // 3. Walk the hop chain. Each hop:
         //    - canonicalize hop DID FIRST (NO state consumed on failure —
         //      a malformed hop must not leave half-walked state)
+        //    - decrement ttl_remaining_ms FIRST (round-3 review C2: TTL
+        //      check symmetric with `InvalidDid` — neither
+        //      `visited.insert` nor `ctx` mutates on a failing hop;
+        //      if either bound trips the loop returns and the local
+        //      `ctx` is dropped without partial state)
         //    - visited.insert(canonical_hop_did) → ChainCycle
-        //    - decrement ttl_remaining_ms → ChainTtlExpired on underflow
         //    - capture canonical form for the terminal-hop handoff
         let mut terminal_hop_canonical: String = target_wire.as_str().to_owned();
         for hop in &req.hops {
             let hop_wire = octo_ident::CanonicalCodec::parse(&hop.hop_did, false)
                 .map_err(|e| IdentityResolveError::InvalidDid(e.to_string()))?;
             let hop_canonical = hop_wire.as_str().to_owned();
-            if !ctx.visited.insert(hop_canonical.clone()) {
-                return Err(IdentityResolveError::ChainCycle);
-            }
             ctx.ttl_remaining_ms = ctx.ttl_remaining_ms.saturating_sub(HOP_LATENCY_MS_ESTIMATE);
             if ctx.ttl_remaining_ms == 0 {
                 return Err(IdentityResolveError::ChainTtlExpired);
+            }
+            if !ctx.visited.insert(hop_canonical.clone()) {
+                return Err(IdentityResolveError::ChainCycle);
             }
             terminal_hop_canonical = hop_canonical;
         }
@@ -417,8 +421,10 @@ pub trait ResolverBackend: Send + Sync {
     /// Structures) reads from this context but does not extend it.
     ///
     /// Future extension: when `0870k-transport-request-response` lands,
-    /// this signature gains a `chain_hash: [u8; 32]` parameter (passed
-    /// by the handler from its internal accumulator). The
+    /// the BACKEND constructs the per-hop `chain_hash: [u8; 32]` from
+    /// `(hop_index, BLAKE3(payload), envelope_id)` internally — there
+    /// is no handler-side chain_hash accumulator (the handler performs
+    /// a single `resolve_via` call per chain walk). The
     /// `&ResolverChainContext` borrow stays immutable.
     async fn resolve_via(
         &self,
@@ -431,7 +437,26 @@ pub trait ResolverBackend: Send + Sync {
 /// In-process `ResolverBackend` that delegates to the local
 /// `DidRegistry`. Preserves the mission `0871b-cross-domain-resolution-impl`
 /// behavior (no cross-network I/O, no signing).
-pub struct LocalResolverBackend(pub Arc<dyn DidRegistry>);
+///
+/// Round-3 review (D2 encapsulation): the registry field is PRIVATE
+/// — callers construct via `LocalResolverBackend::new(registry)`. This
+/// prevents accidental bypass of the `ResolverBackend` trait surface
+/// (callers cannot `local.0.resolve(&hash)` directly). Mirrors the
+/// private-registry pattern in `crate::handlers::resolve::ResolveHandler`.
+pub struct LocalResolverBackend(Arc<dyn DidRegistry>);
+
+impl LocalResolverBackend {
+    /// Construct a `LocalResolverBackend` over the supplied registry.
+    /// Returns `Arc<dyn ResolverBackend>` directly so callers don't
+    /// need explicit coercion at the call site (round-3 D2
+    /// encapsulation — the field is private so callers cannot
+    /// construct via tuple-struct literal).
+    #[must_use]
+    #[allow(clippy::new_ret_no_self)] // intentional: Arc<dyn Trait> return skips caller coercion
+    pub fn new(registry: Arc<dyn DidRegistry>) -> Arc<dyn ResolverBackend> {
+        Arc::new(Self(registry))
+    }
+}
 
 #[async_trait]
 impl ResolverBackend for LocalResolverBackend {
@@ -609,7 +634,7 @@ mod tests {
                 },
             )
             .unwrap();
-        let local = Arc::new(LocalResolverBackend(registry.clone()));
+        let local = LocalResolverBackend::new(registry.clone());
         let spy = Arc::new(SpyBackend::new(local.clone() as Arc<dyn ResolverBackend>));
         let handler = ResolveChainHandler::new(spy.clone() as Arc<dyn ResolverBackend>);
         let req = ChainResolveRequest {
@@ -683,6 +708,50 @@ mod tests {
         let payload = out.response_payload.unwrap();
         let resp: ChainResolveResponse = borsh::from_slice(&payload).unwrap();
         assert_eq!(resp.envelope_id, envelope_id);
+    }
+
+    /// Round-3 review (C4): Send-future inference for
+    /// `pub trait ResolverBackend: Send` is a macro convention that
+    /// has shifted between minor releases of `async-trait`. Pin the
+    /// Send-bound by moving the trait-object future across a
+    /// `tokio::spawn` boundary (which requires the future to be Send).
+    /// Production cross-thread dispatch via
+    /// `NodeTransport::register_receiver → on_receive` exercises this
+    /// path; the multi_thread flavor + tokio::spawn is a faithful
+    /// compile-time smoke test.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn resolver_backend_send_across_thread_boundary() {
+        let registry = Arc::new(InMemoryDidRegistry::default());
+        let target_pk = sample_did_bytes(11);
+        let target_raw = octo_ident::CanonicalCodec::mint(&target_pk);
+        registry
+            .register(
+                &target_raw.hash,
+                DidDocument {
+                    public_key: [0xCCu8; 32],
+                    revoked: false,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let backend: Arc<dyn ResolverBackend> = LocalResolverBackend::new(registry);
+        let handler = ResolveChainHandler::new(backend);
+        let req = ChainResolveRequest {
+            target: sample_did_str(11),
+            hops: vec![],
+            ttl_remaining_ms: 100,
+        };
+        // tokio::spawn requires the future to be Send — the
+        // async-trait macro must add `+ Send` to the boxed future
+        // returned by `resolve_via` since `ResolverBackend: Send`.
+        let join = tokio::spawn(async move { handler.handle(&req, [0u8; 32]).await });
+        let out = join
+            .await
+            .expect("task should not panic")
+            .expect("resolves");
+        let payload = out.response_payload.unwrap();
+        let resp: ChainResolveResponse = borsh::from_slice(&payload).unwrap();
+        assert_eq!(resp.public_key, [0xCCu8; 32]);
     }
 
     // --- SpyBackend: counts calls + delegates to wrapped backend ---

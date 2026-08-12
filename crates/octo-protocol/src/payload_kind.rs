@@ -173,7 +173,43 @@ pub const IDENTITY_RESOLVE_WITH_CHAIN: PayloadKindId = PayloadKindId([
 
 // RESERVED: slot `:0006` reserved for production cross-network chain
 // response (mission `0870k-transport-request-response`). Removed in
-// round-1 review as wire-dead.
+// round-1 review as wire-dead. The `_RESERVED_SLOT_*` const + sentinel
+// test below prevent a future mission from silently allocating this
+// slot for an unrelated purpose (compile-time guard; round-3 review C3).
+#[allow(dead_code)]
+const _RESERVED_SLOT_0006_CHAIN_RESPONSE: PayloadKindId = PayloadKindId([
+    0x00, 0x09, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+]);
+
+#[cfg(test)]
+mod reserved_slot_tests {
+    use super::*;
+
+    /// Round-3 review (C3): asserts the reserved `:0006` slot is not
+    /// silently allocated by any known payload-kind constant. If a
+    /// future mission allocates this slot for an unrelated purpose
+    /// (e.g. an unrelated `*_PAYLOAD_KIND` const), this test fails
+    /// before the collision reaches the wire.
+    #[test]
+    fn reserved_slot_0006_not_allocated() {
+        let reserved = _RESERVED_SLOT_0006_CHAIN_RESPONSE;
+        let known = [
+            ("IDENTITY_RESOLVE", IDENTITY_RESOLVE),
+            ("IDENTITY_REGISTER", IDENTITY_REGISTER),
+            ("IDENTITY_REVOKE", IDENTITY_REVOKE),
+            ("IDENTITY_RESOLVE_CHAIN", IDENTITY_RESOLVE_CHAIN),
+            ("IDENTITY_RESOLVE_WITH_CHAIN", IDENTITY_RESOLVE_WITH_CHAIN),
+            ("WALLET_SIGN_ED25519", WALLET_SIGN_ED25519),
+            ("WALLET_MINT_CAPABILITY", WALLET_MINT_CAPABILITY),
+        ];
+        for (name, kind) in known {
+            assert_ne!(
+                kind.0, reserved.0,
+                "slot :0006 collision: {name} == reserved chain-response slot"
+            );
+        }
+    }
+}
 
 /// Wallet sign Ed25519 (RFC-0871 §Wallet Node Lifecycle, Phase 2 mission 0871a).
 ///

@@ -202,7 +202,7 @@ impl IdentityResolverNode {
                 .expect("DEFAULT_CHAIN_ID is a valid RFC-0010 v1.4 chain namespace")
         });
         let resolver_backend: Arc<dyn ResolverBackend> =
-            Arc::new(LocalResolverBackend(registry.clone()));
+            LocalResolverBackend::new(registry.clone());
         Self {
             config,
             registry,
@@ -230,7 +230,7 @@ impl IdentityResolverNode {
                 .expect("DEFAULT_CHAIN_ID is a valid RFC-0010 v1.4 chain namespace")
         });
         let resolver_backend: Arc<dyn ResolverBackend> =
-            Arc::new(LocalResolverBackend(registry.clone()));
+            LocalResolverBackend::new(registry.clone());
         Self {
             config,
             registry,
@@ -331,9 +331,13 @@ impl IdentityResolverNode {
             }
             k if k == octo_protocol::payload_kind::IDENTITY_RESOLVE_CHAIN => {
                 // Mission 0871b-cross-domain-resolution-impl: chain
-                // resolution. Handler body is sync (no cross-network
-                // I/O in this mission); the surrounding `async` keeps
-                // the dispatch shape consistent with the other arms.
+                // resolution. Handler is async since round-2
+                // (`#[async_trait] ResolverBackend`); no cross-network
+                // I/O in this mission but the trait signature stays
+                // stable for when mission
+                // `0870k-transport-request-response` lands. The `.await`
+                // here is the visible bit; `LocalResolverBackend` is
+                // sync internally but the trait dispatch is async.
                 //
                 // Mission 0871b-cross-node-forwarding: thread
                 // `envelope.envelope_id` as the replay-defense

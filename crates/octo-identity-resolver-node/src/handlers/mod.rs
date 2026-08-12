@@ -144,8 +144,15 @@ pub enum IdentityResolveError {
     /// boundary — same fail-closed security class as the other chain
     /// errors (`ChainCycle`, `ChainTtlExpired`). The chain never reached
     /// the terminal registry, so no partial resolution was committed.
-    #[error("unsupported: {0}")]
-    Unsupported(String),
+    ///
+    /// Round-3 review (D5): the discriminant is the operator-dashboard
+    /// routing key. The string field carries human-readable detail
+    /// (e.g. the pending mission slug) for log correlation. Operator
+    /// dashboards route on the `UnsupportedCode` discriminant, NOT on
+    /// substring matching the string field (which is fragile across
+    /// mission renames / mission merges).
+    #[error("unsupported: {1} (code: {0:?})")]
+    Unsupported(UnsupportedCode, String),
 
     /// Round-1 review (mission `0871b-cross-node-forwarding`): the
     /// request's `ttl_remaining_ms` exceeds `MAX_CHAIN_TTL_MS`. Rejected
@@ -161,6 +168,21 @@ pub enum IdentityResolveError {
     /// that large are a misconfiguration — bound the request instead.
     #[error("chain too long: {0} hops exceeds u8::MAX")]
     ChainTooLong(usize),
+}
+
+/// Typed discriminant for `IdentityResolveError::Unsupported` (round-3
+/// review D5). Operator dashboards route on the discriminant, NOT on
+/// substring matching the variant's `String` payload (which is
+/// fragile across mission renames / mission merges). Add a variant
+/// here when a new `Unsupported`-class failure mode lands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnsupportedCode {
+    /// Cross-network resolver backend was injected but the
+    /// request/response substrate (mission
+    /// `0870k-transport-request-response`) is not yet implemented.
+    /// The string payload carries the pending mission slug for log
+    /// correlation.
+    RemoteBackendNotWired,
 }
 
 impl From<IdentityResolveError> for ProtocolError {
@@ -198,14 +220,27 @@ impl From<IdentityResolveError> for ProtocolError {
             // Mission 0871b-cross-node-forwarding: cross-network hop
             // requested before the request/response substrate exists.
             // Same authorization-class treatment as the other failure
-            // modes — no partial resolution was committed. The
-            // upstream `#[error("unsupported: {0}")]` already prefixes
-            // with `unsupported: `; do NOT add a second prefix here.
-            IdentityResolveError::Unsupported(msg) => ProtocolError::AuthorizationFailed(msg),
+            // modes — no partial resolution was committed. Round-3
+            // review (D5): the `UnsupportedCode` discriminant is
+            // operator-dashboard-routing data; the `msg` String carries
+            // human-readable detail. Map the String to AuthorizationFailed;
+            // preserve the discriminant at the variant level (currently
+            // discarded at the protocol boundary — see v0.9 follow-on).
+            IdentityResolveError::Unsupported(_code, msg) => {
+                ProtocolError::AuthorizationFailed(msg)
+            }
             // Round-1 review: TTL too large / chain too long failed
             // validation BEFORE any registry call. No state was committed.
+            // Round-3 review: preserve the "exceeds MAX_CHAIN_TTL_MS"
+            // constant-bound cross-ref from the upstream `#[error(...)]`
+            // template so operator dashboards retain the bound name when
+            // triaging a DoS burst (asymmetric with `ChainTooLong` which
+            // never had a constant-bound cross-ref).
             IdentityResolveError::ChainTtlTooLarge(ms) => {
-                ProtocolError::AuthorizationFailed(format!("chain TTL too large: {ms} ms"))
+                ProtocolError::AuthorizationFailed(format!(
+                    "chain TTL too large: {ms} ms exceeds MAX_CHAIN_TTL_MS ({} ms)",
+                    chain::MAX_CHAIN_TTL_MS
+                ))
             }
             IdentityResolveError::ChainTooLong(n) => {
                 ProtocolError::AuthorizationFailed(format!("chain too long: {n} hops"))
@@ -237,4 +272,58 @@ impl From<DidRegistryError> for IdentityResolveError {
 /// `From` impl above, but named for clarity at call sites.
 pub fn resolver_error_to_protocol(e: IdentityResolveError) -> ProtocolError {
     e.into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Round-3 review (T2): direct test of the
+    /// `IdentityResolveError::Unsupported → ProtocolError` mapping.
+    /// `remote_backend_stub_is_unsupported` (in `tests/cross_node_chain.rs`)
+    /// only pins the variant from `handler.handle()`, not the `From`
+    /// impl. This test pins the mapping: the `UnsupportedCode` discriminant
+    /// is discarded at the protocol boundary (operator-dashboard routing
+    /// remains at the resolver-error variant level), and the human
+    /// `String` payload travels through unchanged.
+    #[test]
+    fn unsupported_maps_to_authorization_failed_preserving_message() {
+        let err = IdentityResolveError::Unsupported(
+            UnsupportedCode::RemoteBackendNotWired,
+            "remote backend not wired".to_owned(),
+        );
+        let proto: ProtocolError = err.into();
+        match proto {
+            ProtocolError::AuthorizationFailed(msg) => {
+                assert_eq!(
+                    msg, "remote backend not wired",
+                    "Unsupported mapping preserves the human message"
+                );
+            }
+            other => panic!("expected AuthorizationFailed, got {other:?}"),
+        }
+    }
+
+    /// Round-3 review (C1): the `ChainTtlTooLarge` mapping re-attaches
+    /// the "exceeds MAX_CHAIN_TTL_MS" constant-bound cross-ref so
+    /// operator dashboards retain the bound name when triaging a DoS
+    /// burst.
+    #[test]
+    fn chain_ttl_too_large_mapping_preserves_bound_cross_ref() {
+        let err = IdentityResolveError::ChainTtlTooLarge(120_000);
+        let proto: ProtocolError = err.into();
+        match proto {
+            ProtocolError::AuthorizationFailed(msg) => {
+                assert!(
+                    msg.contains("exceeds MAX_CHAIN_TTL_MS"),
+                    "ChainTtlTooLarge mapping must retain the bound cross-ref: {msg}"
+                );
+                assert!(
+                    msg.contains("60000 ms"),
+                    "ChainTtlTooLarge mapping must include the bound value: {msg}"
+                );
+            }
+            other => panic!("expected AuthorizationFailed, got {other:?}"),
+        }
+    }
 }

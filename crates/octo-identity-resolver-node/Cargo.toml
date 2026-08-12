@@ -26,7 +26,14 @@ octo-transport = { path = "../../octo-transport" }
 
 # Async runtime for NetworkReceiver impl + broadcast_announce
 tokio = { version = "1", features = ["rt", "sync", "macros", "time"] }
-async-trait = "0.1"
+# Round-3 review (C4): exact pin — Send-future inference for
+# `pub trait X: Send` is a macro convention that has shifted between
+# minor releases of async-trait. Cross-thread dispatch via
+# `NodeTransport::register_receiver` → `on_receive` (octo-transport)
+# requires the returned future to be `Send`. Pin to the latest 0.1.x
+# patch; the multi-thread TV in `chain.rs` (resolver_backend_send_
+# across_thread_boundary) exercises the Send bound at test time.
+async-trait = "=0.1.92"
 
 # Canonical coding (RFC-0126)
 borsh = "=1.5.0"

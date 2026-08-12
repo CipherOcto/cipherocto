@@ -46,7 +46,7 @@ pub use handlers::{
     RegisterHandler, RegisterRequest, RegisterResponse, ResolveChainHandler, ResolveHandler,
     ResolveRequest, ResolveResponse, ResolveWithChainHandler, ResolveWithChainRequest,
     ResolveWithChainResponse, ResolverBackend, ResolverChainContext, ResolverHop, RevokeHandler,
-    RevokeRequest, RevokeResponse, HOP_LATENCY_MS_ESTIMATE,
+    RevokeRequest, RevokeResponse, UnsupportedCode, HOP_LATENCY_MS_ESTIMATE,
 };
 pub use node::{
     IdentityResolverNode, IdentityResolverNodeConfig, IdentityResolverNodeError,

@@ -27,7 +27,7 @@ use async_trait::async_trait;
 
 use crate::handlers::{
     chain::{BackendResolveOutcome, ResolverBackend, ResolverChainContext},
-    IdentityResolveError,
+    IdentityResolveError, UnsupportedCode,
 };
 
 /// Cross-node `ResolverBackend` stub (mission
@@ -65,6 +65,7 @@ impl ResolverBackend for RemoteResolverBackend {
         // 5. Return `BackendResolveOutcome { public_key,
         //    signature_chain }`.
         Err(IdentityResolveError::Unsupported(
+            UnsupportedCode::RemoteBackendNotWired,
             "RemoteResolverBackend not implemented; mission 0870k-transport-request-response pending"
                 .to_owned(),
         ))

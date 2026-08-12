@@ -1,17 +1,26 @@
 //! Cross-node resolver chain integration tests (mission
-//! `0871b-cross-node-forwarding`, AC-13..AC-16).
+//! `0871b-cross-node-forwarding`, AC-13 + AC-14).
 //!
 //! Validates the `ResolverBackend` trait boundary:
 //! - AC-13: a custom backend accumulates `HopSignature`s and the
-//!   response carries them through (5-tuple shape).
-//! - AC-14: `IdentityResolverNodeConfig` routes through the injected
-//!   backend (`SpyRemoteBackend`).
-//! - AC-15: `RemoteResolverBackend` stub returns
-//!   `IdentityResolveError::Unsupported` (fail-closed before the
-//!   request/response substrate lands).
-//! - AC-16: `ChainResolveResponse` with a populated `signature_chain`
-//!   survives a full handler → borsh → handler round-trip with
-//!   envelope_id correlation intact.
+//!   response carries them through (5-tuple shape). Tested via
+//!   `fake_remote_backend_propagates_signature_chain` +
+//!   `full_round_trip_preserves_5tuple_wire_form` +
+//!   `multi_hop_signature_chain_preserves_outermost_first_order`.
+//! - AC-14: `LocalResolverBackend` (the production default) yields an
+//!   empty `signature_chain` so in-process resolves stay
+//!   signature-free — for both the empty-hops and multi-hop cases
+//!   (`local_backend_yields_empty_signature_chain`). Per v0.6
+//!   deviation (e), signature-verification integration is deferred to
+//!   a future mission when mission `0870k-transport-request-response`
+//!   lands.
+//!
+//! AC-15 (RemoteResolverBackend fail-closed) and AC-16 (full
+//! handler→borsh→handler round-trip) are covered by
+//! `remote_backend_stub_is_unsupported` (this file) and the in-file
+//! `chain_response_with_hop_signature_round_trip` test in
+//! `handlers/chain.rs` respectively. The signature-verification
+//! integration piece of AC-16 is deferred.
 //!
 //! ## Why no real network
 //!
@@ -32,7 +41,7 @@ use octo_ident::{CanonicalCodec, DidCodec, DidDocument, DidRegistry, InMemoryDid
 use octo_identity_resolver_node::{
     BackendResolveOutcome, ChainResolveRequest, ChainResolveResponse, IdentityResolveError,
     LocalResolverBackend, RemoteResolverBackend, ResolveChainHandler, ResolverBackend,
-    ResolverChainContext, ResolverHop,
+    ResolverChainContext, ResolverHop, UnsupportedCode,
 };
 
 use octo_protocol::HopSignature;
@@ -138,7 +147,7 @@ async fn fake_remote_backend_propagates_signature_chain() {
 async fn local_backend_yields_empty_signature_chain() {
     let registry = Arc::new(InMemoryDidRegistry::default());
     register_custom(&registry, 11, [0xCCu8; 32]);
-    let local: Arc<dyn ResolverBackend> = Arc::new(LocalResolverBackend(registry));
+    let local: Arc<dyn ResolverBackend> = LocalResolverBackend::new(registry);
     let handler = ResolveChainHandler::new(local);
 
     // Empty hops — direct local resolve.
@@ -153,6 +162,10 @@ async fn local_backend_yields_empty_signature_chain() {
         .expect("local resolves");
     let resp: ChainResolveResponse = borsh::from_slice(&out.response_payload.unwrap()).unwrap();
     assert_eq!(resp.public_key, [0xCCu8; 32]);
+    assert_eq!(
+        resp.hops_traversed, 0,
+        "empty-hops branch reports hops_traversed = 0"
+    );
     assert!(
         resp.signature_chain.is_empty(),
         "LocalResolverBackend (empty hops) yields no HopSignature"
@@ -193,11 +206,17 @@ async fn remote_backend_stub_is_unsupported() {
         ttl_remaining_ms: 100,
     };
     let err = handler.handle(&req, [0u8; 32]).await.unwrap_err();
-    // Pin the contract: the Unsupported message MUST reference the
-    // blocking mission so operator dashboards can route on the
-    // substring `0870k`.
+    // Pin the contract: the Unsupported discriminant is
+    // `RemoteBackendNotWired` (operator-dashboard routing key per
+    // round-3 review D5) AND the message contains the blocking
+    // mission slug `0870k` for log correlation.
     match err {
-        IdentityResolveError::Unsupported(msg) => {
+        IdentityResolveError::Unsupported(code, msg) => {
+            assert_eq!(
+                code,
+                UnsupportedCode::RemoteBackendNotWired,
+                "Unsupported discriminant must be RemoteBackendNotWired"
+            );
             assert!(
                 msg.contains("0870k"),
                 "Unsupported message must mention 0870k mission reference: {msg}"
@@ -244,9 +263,8 @@ async fn full_round_trip_preserves_5tuple_wire_form() {
 /// registry call.
 #[tokio::test]
 async fn rejects_oversize_ttl_dos() {
-    let backend: Arc<dyn ResolverBackend> = Arc::new(LocalResolverBackend(Arc::new(
-        InMemoryDidRegistry::default(),
-    )));
+    let backend: Arc<dyn ResolverBackend> =
+        LocalResolverBackend::new(Arc::new(InMemoryDidRegistry::default()));
     let handler = ResolveChainHandler::new(backend);
     let req = ChainResolveRequest {
         target: canonical_did(11),
@@ -262,17 +280,26 @@ async fn rejects_oversize_ttl_dos() {
 /// larger chains MUST fail-closed rather than silently capping.
 #[tokio::test]
 async fn rejects_oversize_hop_count() {
-    let backend: Arc<dyn ResolverBackend> = Arc::new(LocalResolverBackend(Arc::new(
-        InMemoryDidRegistry::default(),
-    )));
+    let backend: Arc<dyn ResolverBackend> =
+        LocalResolverBackend::new(Arc::new(InMemoryDidRegistry::default()));
     let handler = ResolveChainHandler::new(backend);
-    // 256 hops = u8::MAX + 1. Use 256 DISTINCT canonical DIDs (i wraps
-    // modulo a larger prime space so each `i` maps to a distinct
-    // canonical form). TTL set to `MAX_CHAIN_TTL_MS` exactly so the
-    // TTL bound check passes and the hop-count rejection fires next.
-    // (Earlier check order is: TTL bound → hop-count bound → loop.)
+    // 256 hops = u8::MAX + 1. Use 256 DISTINCT canonical DIDs.
+    //
+    // `% 257` is a prime > 256 so the affine map `i -> (i * 7 + 13) % 257`
+    // is a permutation of `[0, 256)`; every `i` produces a distinct
+    // canonical form. Without distinct forms, a buggy impl that moved
+    // the hop-count bound INTO the loop would short-circuit on
+    // `ChainCycle` and the test would silently break.
+    //
+    // (Previous round used `% 200` — 200 is composite; the map has period
+    // 200 so the 56 hops at `i ∈ [200, 256]` collided with `i ∈ [0, 55]`.
+    // Round-3 review flagged: comment claimed "prime" but 200 isn't.)
+    //
+    // Check order at `handle()` entry is: TTL bound → hop-count bound.
+    // TTL is set to `MAX_CHAIN_TTL_MS` exactly so the TTL bound passes
+    // and the hop-count rejection fires next.
     let hops: Vec<ResolverHop> = (0..(u8::MAX as usize + 1))
-        .map(|i| ResolverHop::local(canonical_did(((i * 7 + 13) % 200) as u8)))
+        .map(|i| ResolverHop::local(canonical_did(((i * 7 + 13) % 257) as u8)))
         .collect();
     let req = ChainResolveRequest {
         target: canonical_did(11),
@@ -296,9 +323,8 @@ async fn rejects_oversize_hop_count() {
 /// getter or sentinel DID trick; deferred.
 #[tokio::test]
 async fn rejects_malformed_hop_with_invalid_did_error() {
-    let backend: Arc<dyn ResolverBackend> = Arc::new(LocalResolverBackend(Arc::new(
-        InMemoryDidRegistry::default(),
-    )));
+    let backend: Arc<dyn ResolverBackend> =
+        LocalResolverBackend::new(Arc::new(InMemoryDidRegistry::default()));
     let handler = ResolveChainHandler::new(backend);
     let req = ChainResolveRequest {
         target: canonical_did(11),

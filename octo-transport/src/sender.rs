@@ -36,6 +36,16 @@ pub enum TransportError {
     /// decommissioned, sender kicked, lifecycle Rebooting).
     #[error("governance violation: {0}")]
     GovernanceViolation(String),
+
+    /// The transport does not implement the requested operation (e.g.
+    /// `send_request` on a fire-and-forget sender like the UDP adapter).
+    /// Carries a human-readable reason for diagnostics.
+    ///
+    /// Mission 0870k-transport-request-response: added to allow
+    /// `NodeTransport::request_response` to skip senders that don't
+    /// implement request/response.
+    #[error("operation not supported: {0}")]
+    Unsupported(String),
 }
 
 /// General-purpose outbound transport trait.
@@ -47,6 +57,36 @@ pub enum TransportError {
 pub trait NetworkSender: Send + Sync {
     /// Send a raw payload through this transport.
     async fn send(&self, payload: &[u8], context: &SendContext) -> Result<(), TransportError>;
+
+    /// Send a request and await a correlated response.
+    ///
+    /// Default body returns `Err(TransportError::Unsupported(...))` so
+    /// existing senders (UDP adapter, `PlatformAdapterBridge`, …) remain
+    /// source-compatible without modification.
+    ///
+    /// `envelope_id` MUST equal the `NodeEnvelope::envelope_id` field of
+    /// the wrapping envelope (RFC-0871 §Algorithms step 2). The receiver
+    /// echoes the same `envelope_id` back in its reply envelope;
+    /// `NodeTransport::dispatch_response` matches by id.
+    ///
+    /// `timeout` bounds the total time waiting for the response. On
+    /// expiry, returns `Err(TransportError::AllTransportsFailed)` (the
+    /// existing variant — no new error).
+    ///
+    /// Mission 0870k-transport-request-response: defaults to `Unsupported`
+    /// for backward-compat; real senders override this method to perform
+    /// the actual request/response round-trip.
+    async fn send_request(
+        &self,
+        _payload: &[u8],
+        _envelope_id: [u8; 32],
+        _context: &SendContext,
+        _timeout: std::time::Duration,
+    ) -> Result<Vec<u8>, TransportError> {
+        Err(TransportError::Unsupported(
+            "send_request not implemented".to_owned(),
+        ))
+    }
 
     /// Return the transport name for diagnostics.
     fn name(&self) -> &str;
@@ -98,6 +138,10 @@ mod tests {
             (
                 TransportError::GovernanceViolation("denied".into()),
                 "governance violation: denied",
+            ),
+            (
+                TransportError::Unsupported("send_request not implemented".into()),
+                "operation not supported: send_request not implemented",
             ),
         ];
         for (err, expected) in cases {

@@ -41,7 +41,6 @@ impl AdapterFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use octo_network::dot::adapters::registry::{AdapterHealth, RegistryEntry};
     use octo_network::dot::domain::PlatformType;
 
     fn make_domain() -> BroadcastDomainId {

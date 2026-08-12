@@ -34,6 +34,12 @@ None of them exercise cross-network forwarding or per-hop signing. That is this 
 
 **Pattern reference only**: RFC-0970 (Forwarding-Hop Authorization Envelope) — `chain_hash` + per-hop signature + TTL pattern. RFC-0970 is the quota-router forwarding mesh substrate; this mission adopts the same pattern for the identity-resolver chain. Cross-domain adaptation, not literal port — the inner content is a DID lookup, not a quota bearer header.
 
+**Two independent integrity dimensions**:
+- **Correlation**: RFC-0871 `NodeEnvelope.envelope_id` (BLAKE3-256 of unsigned envelope, RFC-0871 §Algorithms step 2 at `envelope.rs:200-201`). The `ChainResolveResponse.envelope_id` field binds the response to the originating request envelope for replay defense.
+- **Hop binding**: RFC-0970 `chain_hash` (per-hop accumulator binding forwarded request + cumulative hop state).
+
+These dimensions are orthogonal: `envelope_id` ties request↔response across the chain; `chain_hash` ties hop N to hop N-1 (RFC-0970 §Data Structures). The per-hop `HopSignature.signature` preimage binds BOTH into one Ed25519 signature per hop.
+
 ## Substrate (already shipped — do NOT rebuild)
 
 - `crates/octo-identity-resolver-node/src/handlers/chain.rs:77` — `ResolverHop { hop_did: String, hop_transport_hint: Vec<u8> }` (Borsh wire form)
@@ -112,6 +118,11 @@ pub struct HopSignature {
     pub hop_did: String,
     /// Ed25519 signature over
     /// `BLAKE3(canonical_ser((chain_hash, hop_index, BLAKE3(inner_payload), envelope_id)))`.
+    /// Binds TWO independent integrity dimensions into one Ed25519 signature:
+    /// - `chain_hash` (RFC-0970 §Data Structures) — hop binding
+    /// - `envelope_id` (RFC-0871 §Algorithms step 2) — request/response correlation
+    /// The verification side recomputes the same preimage + verifies
+    /// `signature` against `signer_pub` (no registry lookup needed).
     pub signature: [u8; 64],
     /// Public key bytes (32) for verification (avoids registry lookup
     /// when the receiver is verifying the chain in-band).
@@ -132,8 +143,12 @@ pub struct ChainResolveResponse {
     /// resolve; no signing needed).
     pub signature_chain: Vec<HopSignature>,
     /// NEW: `envelope_id` of the originating `IDENTITY_RESOLVE_CHAIN`
-    /// envelope (replay defense; the requester binds the chain to the
-    /// envelope it sent).
+    /// envelope per RFC-0871 §Algorithms step 2
+    /// (`envelope_id = BLAKE3-256(canonical_ser(envelope_without_id))`,
+    /// `octo-protocol/src/envelope.rs:200-201`). Replay defense: the
+    /// requester binds the chain to the envelope it sent; matches the
+    /// correlation key that `0870k-transport-request-response` uses
+    /// internally for `register_response_handler` / `dispatch_response`.
     pub envelope_id: [u8; 32],
 }
 ```
@@ -228,14 +243,15 @@ k if k == octo_protocol::payload_kind::IDENTITY_RESOLVE_CHAIN => {
 
 - RFC-0871 §Future Work row 598 — Cross-domain DID resolution (authoritative anchor)
 - RFC-0871 §Roles and Authorities — IdentityResolverNode role
-- RFC-0871 §Algorithms (envelope receive flow) — for `ReferenceDispatcher::verify_all` integration at `node.rs:283`
-- RFC-0970 (pattern reference, NOT authoritative) — `chain_hash` + per-hop signature + TTL pattern adapted for resolver chains
+- RFC-0871 §Algorithms (envelope receive flow) — for `ReferenceDispatcher::verify_all` integration at `node.rs:283` + `envelope_id` derivation step 2 (correlation key for `ChainResolveResponse.envelope_id`)
+- RFC-0970 (pattern reference, NOT authoritative) — `chain_hash` + per-hop signature + TTL pattern adapted for resolver chains (hop-binding dimension)
 - RFC-0010 v1.3 — `DidRegistry` substrate
 - RFC-0009 — `IdentityKey` substrate
 - RFC-0009-B1 — `WalletCrypto` trait
 - RFC-0853 — BLAKE3 keyed-hash for chain hash + per-hop signature preimage
 - Mission `0871b-cross-domain-resolution-impl` (LANDED 2026-08-11, commit `c14c2707`) — `ResolveChainHandler` chain-traversal substrate + 7 chain-traversal TV
 - Mission `0871b-storage-backend` (LANDED 2026-08-11, commit `71f8d745`) — `DidRegistry` substrate
+- Mission `0870k-transport-request-response` (OPEN, 2026-08-12) — `NetworkSender::send_request` + `NodeTransport::request_response` + correlation-keyed `register_response_handler`/`dispatch_response` keyed by RFC-0871 `envelope_id`. First consumer of `RemoteResolverBackend`.
 - Mission `0870-b-envelope-adoption` (LANDED 2026-08-11) — forwarding hop envelope consumer (sibling; same RFC-0970 pattern)
 - Mission `0010-f2-multi-chain-routing` (LANDED 2026-08-11) — sibling; chain-aware resolve
 - Mission `0871e-f7-impl-resolver-mediation` (LANDED 2026-08-11) — sibling; concrete `DidWriteCoordinator` impl
@@ -244,8 +260,9 @@ k if k == octo_protocol::payload_kind::IDENTITY_RESOLVE_CHAIN => {
 - `crates/octo-identity-resolver-node/tests/cross_domain_chain.rs` — 7 chain-traversal TV (in-process; this mission adds 4 cross-network TV)
 - `crates/octo-protocol/src/payload_kind.rs:156` — `IDENTITY_RESOLVE_CHAIN` UUID `:0004` (sibling new UUID `:0006` in same sub-namespace)
 - `crates/octo-protocol/src/payload_kind.rs:170` — `IDENTITY_RESOLVE_WITH_CHAIN` UUID `:0005` (sibling; distinct semantics)
+- `crates/octo-protocol/src/envelope.rs:154,200-201` — `NodeEnvelope.envelope_id` (RFC-0871 correlation key; `ChainResolveResponse.envelope_id` binds to originating request envelope)
 - `crates/octo-ident/src/registry.rs:49` — F6 placeholder comment (removed by AC-1)
-- `octo-transport/src/sender.rs` — `NetworkSender` trait (consumed by `RemoteResolverBackend`)
+- `octo-transport/src/sender.rs` — `NetworkSender` trait (consumed by `RemoteResolverBackend`; `send_request` lands in mission `0870k-transport-request-response`)
 
 ## Layer Discipline
 
@@ -265,3 +282,4 @@ No new Cargo deps. `octo-transport` + `octo-wallet` + `octo-protocol` + `octo-id
 | v0.2    | 2026-08-12 | open   | Replaced false `backend.rs` substrate claim with real `chain.rs` references + explicit trait work (T1–T6) in scope per hard audit; RFC-0871 §Future Work row 598 promoted to authoritative anchor; RFC-0970 demoted to pattern reference; 13 ACs aligned with trait surface |
 | v0.3    | 2026-08-12 | open   | Origin re-check: closure record line 3 of 0871b-cross-domain-resolution-impl lied (claimed `backend.rs` shipped; `git show c14c2707 --stat` confirms no `backend.rs` entry). Mission reframed as **deferred tail of origin** — executing origin scope item #2 (backend.rs surface). UUID `:0002` → `:0004` (corrected against `payload_kind.rs:156`). Trait + Local impl moved to `octo-ident/src/resolver_backend.rs` (Layer B, per `registry.rs:49` F6 comment); Remote impl kept in `octo-identity-resolver-node/src/backend.rs` (Layer C). 7 chain-traversal TV acknowledged as already-landed; 4 cross-network TV added (AC-13 to AC-16). `IDENTITY_RESOLVE_CHAIN_RESPONSE` slot corrected to `:0006`. 18 ACs total. |
 | v0.4    | 2026-08-12 | open   | Phantom reference cleanup: `TransportError::Unsupported` + `NetworkSender::send_request` + `missions/open/0870j-transport-request-response.md` (TBD) references were phantom (variant + method + file did not exist). Filed real `missions/open/0870k-transport-request-response.md` (12 ACs; `NetworkSender::send_request` with default `Unsupported` body; `NodeTransport::request_response` + correlation-id dispatch; sidecar `CorrelationEnvelope` no Layer A magic-byte this round). All 5 phantom refs in 0871b (T3 docstring, T3 explanatory, AC-3, Out-of-Scope, Dependency) now point to real `0870k` mission + annotate that the variant is ADDED by 0870k AC-1. Transport substrate path fixed: `crates/octo-transport/...` → `octo-transport/...` (workspace-root sibling, per `Cargo.toml: path = "../../octo-transport"`). Violation of [[no-phantom-mission-pointers]] cleared. |
+| v0.5    | 2026-08-12 | open   | RFC re-check audit clarified the two integrity dimensions: (a) **correlation** via RFC-0871 `NodeEnvelope.envelope_id` (BLAKE3-256 of unsigned envelope, `octo-protocol/src/envelope.rs:200-201`) — request/response binding; (b) **hop binding** via RFC-0970 `chain_hash` — per-hop accumulator. T4 `HopSignature` preimage binds BOTH into one Ed25519 signature per hop; docstring now names the dual RFC anchors explicitly. T5 `ChainResolveResponse.envelope_id` docstring now cites RFC-0871 §Algorithms step 2 + cross-refs to `0870k` for substrate-level correlation. Added RFC anchor paragraph in Summary section making the orthogonal dimensions explicit. Cross-references updated to cite `octo-protocol/src/envelope.rs:154,200-201` + mission `0870k-transport-request-response`. Companion commit to v0.2 of `0870k-transport-request-response` (which independently fixed its RFC anchors from RFC-0850/RFC-0970 to RFC-0870/RFC-0871). |

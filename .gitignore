@@ -40,6 +40,9 @@ Cargo.lock
 # Adversarial review artifacts (local scratchpads, not committed per memory rule)
 docs/reviews/
 
+# Session plan/ad-hoc scratchpads (local scratchpads, never committed per [[docs-plans-scratchpad]])
+/docs/plans/
+
 # CocoIndex
 .cocoindex_code/
 coco.toml

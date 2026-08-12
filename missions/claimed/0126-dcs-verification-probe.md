@@ -1,7 +1,8 @@
 # Mission: RFC-0126 DCS Verification Probe
 
 ## Status
-Claimed
+
+Closed (2026-08-12) — Claimed (2026-07-23) — LANDED.
 
 ## RFC
 RFC-0126 v2.5.1 (Numeric): Deterministic Serialization
@@ -57,3 +58,11 @@ Medium — requires correct byte encoding for each entry type
 - RFC-0126 §Merkle Root Computation
 - RFC-6962 (Certificate Transparency) for domain separation
 - scripts/compute_dcs_probe_root.py (Python reference)
+
+
+## Version History
+
+| Version | Date | Change |
+| --- | --- | --- |
+| v0.1 | 2026-07-23 | Mission filed. RFC-0126 v2.5.1 DCS substrate expected in `determin/src/dcs.rs` + `determin/src/probe.rs`. |
+| v0.2 | 2026-08-12 | **Claimed + LANDED** by @claude. Substrate shipped in `determin/src/dcs.rs` (DCS module: `DcsSerializable` trait, `dcs_serialize_*` helpers, `DcsError`, `DCS_MAX_LENGTH = 1 << 20`) + `determin/src/probe.rs::dcs_probe_tests` (`test_dcs_probe_merkle_root` verifies RFC-0126 reference Merkle root `2ed91a62f96f11151cd9211cf90aff36efc16c69d3ef910f4201592095abdaca`). SHA256(0x00 || leaf) + SHA256(0x01 || internal) domain separation per RFC 6962. Entry set covers DQA, DVEC, DMAT, String, Option, Enum, Bool, Numeric TRAP (24 bytes), Bool TRAP (0xFF), I128 (16 bytes BE), BIGINT (RFC-0110 limbs), DFP (RFC-0104), Struct field ordering. 29 DCS tests + 39 probe tests pass; 519 total `determin` lib tests pass. |

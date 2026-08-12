@@ -1,7 +1,7 @@
 use quota_router_integration_tests::TestCluster;
 
 #[tokio::test]
-#[ignore = "blocked on 0870-c (NodeEnvelope dispatch compat — mission filed missions/open/0870-c-envelope-dispatch-compat.md)"]
+
 async fn l2_t15_gossip_propagation() {
     let cluster = TestCluster::new(2, vec![vec!["gpt-4o".into()], vec!["gpt-4o".into()]]);
     cluster.start_all().await;
@@ -22,7 +22,7 @@ async fn l2_t15_gossip_propagation() {
 }
 
 #[tokio::test]
-#[ignore = "blocked on 0870-c (NodeEnvelope dispatch compat — mission filed missions/open/0870-c-envelope-dispatch-compat.md)"]
+
 async fn l2_t17_three_node_gossip_convergence() {
     let cluster = TestCluster::new(
         3,
@@ -49,7 +49,7 @@ async fn l2_t17_three_node_gossip_convergence() {
 }
 
 #[tokio::test]
-#[ignore = "blocked on 0870-c (NodeEnvelope dispatch compat — mission filed missions/open/0870-c-envelope-dispatch-compat.md)"]
+
 async fn l2_t18_gossip_capacity_update() {
     let cluster = TestCluster::new(2, vec![vec!["gpt-4o".into()], vec!["gpt-4o".into()]]);
     cluster.start_all().await;

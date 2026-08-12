@@ -24,7 +24,17 @@ pub struct PricingPolicy {
     /// Optional settlement recipient (placeholder DID string; uses
     /// `String` not `WireDid` because `WireDid` is borsh-only and
     /// `RouterAnnouncePayload` is serde-JSON canonicalized for HMAC).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ///
+    /// NOTE: no `skip_serializing_if = "Option::is_none"` here.
+    /// `PricingPolicy` is also bincode-serialized on the wire
+    /// (RFC-0870 §NodeEnvelope Adoption). bincode 1.x's deserializer
+    /// always reads the `Option` tag (1 byte), even when the value is
+    /// `None`. Skipping the field on serialize makes the producer
+    /// write 0 bytes for `None` while the consumer reads 1 byte →
+    /// `UnexpectedEof` on every None-settlement announce. HMAC is
+    /// computed over the JSON form (see `compute_hmac`), which is
+    /// unaffected by this attribute.
+    #[serde(default)]
     pub settlement_recipient: Option<String>,
 }
 

@@ -22,7 +22,7 @@ use quota_router_integration_tests::{make_request, TestCluster};
 /// `known_peers`. A node C receiving A's gossip should `try_add` B as
 /// a discovered peer (peer_count > 0) without ever having talked to B.
 #[tokio::test]
-#[ignore = "blocked on 0870-c (NodeEnvelope dispatch compat — mission filed missions/open/0870-c-envelope-dispatch-compat.md)"]
+
 async fn l2_t19_known_peers_in_gossip() {
     // Three nodes, all share `gpt-3.5-turbo`.
     let cluster = TestCluster::new(
@@ -58,7 +58,7 @@ async fn l2_t19_known_peers_in_gossip() {
 /// announce is processed by an existing peer, the existing peer's
 /// `peer_cache` should contain the newcomer.
 #[tokio::test]
-#[ignore = "blocked on 0870-c (NodeEnvelope dispatch compat — mission filed missions/open/0870-c-envelope-dispatch-compat.md)"]
+
 async fn l2_t20_announce_then_discover() {
     // Start with one node.
     let cluster = TestCluster::new(
@@ -89,7 +89,7 @@ async fn l2_t20_announce_then_discover() {
 /// The production handler deserializes, verifies HMAC, and calls
 /// `peer_cache.remove()` — exactly as in production.
 #[tokio::test]
-#[ignore = "blocked on 0870-c (NodeEnvelope dispatch compat — mission filed missions/open/0870-c-envelope-dispatch-compat.md)"]
+
 async fn l2_t21_withdraw_removes_peer() {
     let cluster = TestCluster::new(
         2,

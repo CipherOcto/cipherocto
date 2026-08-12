@@ -9,7 +9,7 @@ use quota_router_integration_tests::{make_request, TestCluster};
 /// Node A has no gpt-4o, Node C has gpt-4o. After gossip converges,
 /// A should forward to C and C's provider should be called.
 #[tokio::test]
-#[ignore = "blocked on 0870-c (NodeEnvelope dispatch compat — mission filed missions/open/0870-c-envelope-dispatch-compat.md)"]
+
 async fn l2_t11_three_node_fan_out() {
     let cluster = TestCluster::new(
         3,
@@ -70,7 +70,7 @@ async fn l2_t11_three_node_fan_out() {
 /// T12 — ttl_chain_exhaustion
 /// With TTL=0, the first hop rejects with TtlExpired.
 #[tokio::test]
-#[ignore = "blocked on 0870-c (NodeEnvelope dispatch compat — mission filed missions/open/0870-c-envelope-dispatch-compat.md)"]
+
 async fn l2_t12_ttl_chain_exhaustion() {
     let mut cluster = TestCluster::new(
         2,
@@ -121,7 +121,7 @@ async fn l2_t12_ttl_chain_exhaustion() {
 /// Node 0 has no gpt-4o. Nodes 1 and 2 both have it. Node 0 should
 /// route to the best available provider.
 #[tokio::test]
-#[ignore = "blocked on 0870-c (NodeEnvelope dispatch compat — mission filed missions/open/0870-c-envelope-dispatch-compat.md)"]
+
 async fn l2_t14_star_topology() {
     let cluster = TestCluster::new(
         3,

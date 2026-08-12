@@ -24,6 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use borsh::BorshDeserialize;
 use octo_transport::receiver::{NetworkReceiver, ReceiveContext};
 use octo_transport::sender::TransportError;
 use quota_router_core::node::announce::SignedPayload;
@@ -107,7 +108,7 @@ fn forward_request_with_ttl(
 /// The wire-level reject envelope is captured by a `TestObserver`
 /// registered on the RECEIVER's transport.
 #[tokio::test]
-#[ignore = "blocked on 0870-c (NodeEnvelope dispatch compat — mission filed missions/open/0870-c-envelope-dispatch-compat.md)"]
+
 async fn l2_inbound_ttl_exceeded_emits_ttl_reject() {
     let cluster = TestCluster::new(2, vec![vec!["gpt-4o".into()], vec!["gpt-4o".into()]]);
 
@@ -144,11 +145,32 @@ async fn l2_inbound_ttl_exceeded_emits_ttl_reject() {
     cluster.drive_all().await;
 
     // The observer on node 1 captured the reject envelope when
-    // node 1's driver dispatched it.
+    // node 1's driver dispatched it. Production outbound uses the
+    // borsh `NodeEnvelope` form (RFC-0871) — the captured bytes start
+    // with the 16-byte `payload_kind` UUID, not the legacy disc byte.
     let captured = observer.captured.lock().unwrap().clone();
-    let reject_env = captured
+    let reject_body = captured
         .iter()
-        .find(|e| !e.is_empty() && e[0] == quota_router_core::node::DISC_FORWARD_REJECT)
+        .find_map(|e| {
+            // Strip the framing and recover the bincode-serialized
+            // `ForwardRejectPayload` body regardless of wire form.
+            match quota_router_core::node::envelope_v2::classify_envelope(e).ok()? {
+                quota_router_core::node::envelope_v2::EnvelopeForm::Legacy { disc, body }
+                    if disc == quota_router_core::node::DISC_FORWARD_REJECT =>
+                {
+                    Some(body.to_vec())
+                }
+                quota_router_core::node::envelope_v2::EnvelopeForm::New(bytes) => {
+                    let env = octo_protocol::NodeEnvelope::try_from_slice(bytes).ok()?;
+                    if env.payload_kind == octo_protocol::payload_kind::QUOTA_FORWARD_REJECT {
+                        Some(env.payload)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        })
         .unwrap_or_else(|| {
             panic!(
                 "forward-reject envelope should be in captured (observer count={}, len={})",
@@ -157,7 +179,7 @@ async fn l2_inbound_ttl_exceeded_emits_ttl_reject() {
             )
         });
     let reject: ForwardRejectPayload =
-        bincode::deserialize(&reject_env[1..]).expect("deserialize reject body");
+        bincode::deserialize(&reject_body).expect("deserialize reject body");
     assert_eq!(reject.request_id, request_id);
     assert!(
         matches!(reject.reason, ForwardRejectReason::TtlExpired),
@@ -175,7 +197,7 @@ async fn l2_inbound_ttl_exceeded_emits_ttl_reject() {
 /// regardless of the underlying reason — the wire-level reason
 /// verification is covered by the test above.)
 #[tokio::test]
-#[ignore = "blocked on 0870-c (NodeEnvelope dispatch compat — mission filed missions/open/0870-c-envelope-dispatch-compat.md)"]
+
 async fn l2_inbound_ttl_exceeded_via_route() {
     let mut cluster = TestCluster::new(
         2,

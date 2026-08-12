@@ -33,6 +33,7 @@
 //! This converts the seed into the canonical `did:octo:z<base58btc>` form
 //! that RFC-0871 requires for `NodeEnvelope.from_did`.
 
+use borsh::BorshDeserialize;
 use octo_protocol::authorization::{Authorization, Ed25519SignatureBytes};
 use octo_protocol::payload_kind::PayloadKindId;
 use octo_protocol::recipient::RecipientRef;
@@ -187,19 +188,15 @@ pub fn decode_node_envelope(bytes: &[u8]) -> Result<NodeEnvelope, ProtocolError>
 /// `NodeEnvelope` envelopes (borsh-encoded). Detection rule:
 ///
 /// - If payload is empty → error (cannot dispatch).
-/// - If first byte is in `0xC3..=0xCB` (legacy quota router discriminators)
-///   OR `0xC8..=0xC9` (reserved provider health probes) → legacy form.
-/// - Otherwise → assume borsh `NodeEnvelope`; return `Ok(EnvelopeForm::New(bytes))`.
-///
-/// Pure heuristic — a borsh-valid envelope whose first byte happens to
-/// fall in 0xC3–0xCB is unambiguous because legacy discriminant bytes are
-/// fixed-width 1-byte discriminators with the next byte being a bincode
-/// tag (not borsh-shaped). The borsh-decoded envelope MAY happen to have
-/// a single byte 0xC3 if the first field starts with that value, but the
-/// preimage would be a 16-byte UUID (`payload_kind`) not a 1-byte
-/// discriminator, so the legacy path is selected for the migration window
-/// by checking the discriminator range and falling back to borsh when
-/// first byte is unrecognized.
+/// - Try to borsh-decode as `NodeEnvelope`. If it succeeds → `New`.
+///   Borsh is a strict schema validator: a valid legacy `[disc: u8][bincode body]`
+///   envelope will NOT decode as `NodeEnvelope` because the schema
+///   (fixed-size envelope_id + UUID payload_kind + ...) does not match
+///   a bare `[disc, ...]`. This avoids the prior bug where a borsh
+///   envelope whose first byte (random envelope_id[0]) happened to
+///   fall in 0xC3..=0xCB was misclassified as Legacy.
+/// - Else, if first byte is in `0xC3..=0xCB` → `Legacy`.
+/// - Else → error (unknown wire form).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EnvelopeForm<'a> {
     /// Legacy `[disc: u8][bincode body]` envelope (RFC-0870 v1.x).
@@ -216,11 +213,25 @@ pub fn classify_envelope(payload: &[u8]) -> Result<EnvelopeForm<'_>, ProtocolErr
 }
 
 fn classify_envelope_impl(payload: &[u8]) -> Result<EnvelopeForm<'_>, ProtocolError> {
-    let (disc, body) = payload
-        .split_first()
-        .ok_or_else(|| ProtocolError::AuthorizationFailed("empty payload".into()))?;
+    if payload.is_empty() {
+        return Err(ProtocolError::AuthorizationFailed("empty payload".into()));
+    }
+    // Strict borsh schema check first. Production traffic is borsh
+    // `NodeEnvelope`; legacy is reserved for unit tests + backward-compat
+    // windows. Borsh decoding is fast (no allocation for fixed-size
+    // fields) and unambiguous: a real borsh envelope always decodes,
+    // a legacy `[disc, ...]` envelope never decodes (schema mismatch).
+    if NodeEnvelope::try_from_slice(payload).is_ok() {
+        return Ok(EnvelopeForm::New(payload));
+    }
+    // Borsh decode failed. If the first byte is in the legacy disc
+    // range (0xC3..=0xCB), treat as Legacy — the handler will
+    // bincode-decode the body and dispatch by disc.
+    let (disc, body) = payload.split_first().expect("non-empty checked above");
     match *disc {
         0xC3..=0xCB => Ok(EnvelopeForm::Legacy { disc: *disc, body }),
+        // Otherwise return New so the handler's AC-4 silent-drop path
+        // catches it (a second borsh-decode attempt that fails).
         _ => Ok(EnvelopeForm::New(payload)),
     }
 }

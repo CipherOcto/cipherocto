@@ -41,7 +41,7 @@ pub mod node;
 
 pub use backend::RemoteResolverBackend;
 pub use handlers::{
-    chain::{BackendResolveOutcome, LocalResolverBackend},
+    chain::{BackendResolveOutcome, LocalResolverBackend, RawHopSignature, ResolverBackendError},
     ChainResolveRequest, ChainResolveResponse, HandlerOutput, IdentityResolveError,
     RegisterHandler, RegisterRequest, RegisterResponse, ResolveChainHandler, ResolveHandler,
     ResolveRequest, ResolveResponse, ResolveWithChainHandler, ResolveWithChainRequest,

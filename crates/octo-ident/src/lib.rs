@@ -24,6 +24,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 pub mod chain;
 pub mod in_memory_did_registry;
 pub mod registry;
+pub mod resolver_backend;
 pub mod rich_document;
 pub mod test_helpers;
 pub mod write_coordinator;
@@ -34,6 +35,10 @@ pub use chain::{
 };
 pub use in_memory_did_registry::InMemoryDidRegistry;
 pub use registry::{DidDocument, DidRegistry, DidRegistryError};
+pub use resolver_backend::{
+    BackendResolveOutcome, LocalResolverBackend, ResolverBackend, ResolverBackendError,
+    ResolverChainContext,
+};
 pub use rich_document::{
     check_controller_cycles, CapabilityDelegation, ControllerCycleError, ControllerReference,
     ServiceEndpoint, ServiceEndpointError, VerificationMethod, VerificationMethodKind,

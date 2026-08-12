@@ -46,7 +46,9 @@
 //! ## Out of scope (deferred to future RFCs)
 //!
 //! - Cross-instance write coordination (F7) — RFC-0862 amendment (separate mission)
-//! - `ResolverBackend` typed view (F6) — RFC-0871 §Future Work
+//! - `ResolverBackend` typed view — landed in `crate::resolver_backend`
+//!   (mission 0871b-cross-node-forwarding AC-1); consumer is
+//!   `octo-identity-resolver-node` Layer C.
 //! - Multi-chain DID resolution (F2) — RFC-0010 §Future Work
 //! - `StoolapDidRegistry` schema migration v009/v010 (rich-document JSON columns) — separate mission
 //! - `canonical_hash` over rich fields — currently hashes only the stable

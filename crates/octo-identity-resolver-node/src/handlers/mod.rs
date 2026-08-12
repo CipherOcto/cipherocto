@@ -267,6 +267,35 @@ impl From<DidRegistryError> for IdentityResolveError {
     }
 }
 
+/// Layer-B → Layer-C error bridge. `ResolverBackend::resolve_via`
+/// returns `Result<_, ResolverBackendError>` (octo-ident, Layer B);
+/// the handler's `?` operator implicitly converts to
+/// `IdentityResolveError` via this impl. Round-3 review (D5):
+/// the `UnsupportedCode` discriminant is the operator-dashboard
+/// routing key — centralized here so all backends route through the
+/// same code as the substrate (mission `0870k-transport-request-response`)
+/// lands.
+impl From<octo_ident::resolver_backend::ResolverBackendError> for IdentityResolveError {
+    fn from(e: octo_ident::resolver_backend::ResolverBackendError) -> Self {
+        use octo_ident::resolver_backend::ResolverBackendError as R;
+        match e {
+            // `Unsupported` carries the pending-mission slug for log
+            // correlation; the discriminant that operator dashboards
+            // route on is centralized at the IdentityResolveError::Unsupported
+            // variant (currently `RemoteBackendNotWired`).
+            R::Unsupported(msg) => Self::Unsupported(UnsupportedCode::RemoteBackendNotWired, msg),
+            // `Backing` is a registry/storage failure — same security class
+            // as `DidRegistryError::Storage` (above From impl).
+            R::Backing(msg) => Self::Storage(msg),
+            // `InvalidInput` is a malformed-hop / context-invariant
+            // failure — same security class as `InvalidDid`. The handler
+            // has already validated canonical form, so this is a defensive
+            // path (e.g. signature payload mismatch from a remote backend).
+            R::InvalidInput(msg) => Self::InvalidDid(msg),
+        }
+    }
+}
+
 /// Map `IdentityResolveError` into `ProtocolError` at the dispatch
 /// boundary (`IdentityResolverNode::handle_envelope`). Equivalent to the
 /// `From` impl above, but named for clarity at call sites.

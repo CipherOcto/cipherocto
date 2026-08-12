@@ -56,10 +56,8 @@
 //! - `octo-identity-resolver-node` (Layer C) — handler + chain types
 //!   (extension-shaped; no modification to existing handlers).
 
-use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use borsh::{BorshDeserialize, BorshSerialize};
 use octo_ident::{DidCodec, DidRegistry};
 use octo_protocol::HopSignature;
@@ -134,19 +132,15 @@ impl ResolverHop {
     }
 }
 
-/// Chain-traversal context: visited set + TTL budget.
-///
-/// `visited` is a `BTreeSet<String>` (not `HashSet`) for deterministic
-/// ordering — matches the `check_wrapped_chain` cycle-detection pattern
-/// in `crates/octo-cap-macaroon/src/macaroon.rs`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ResolverChainContext {
-    /// Canonical DID strings already visited in this chain (target +
-    /// each successfully-validated hop).
-    pub visited: BTreeSet<String>,
-    /// Remaining TTL budget in milliseconds.
-    pub ttl_remaining_ms: u64,
-}
+// NOTE: `ResolverChainContext` re-exported from Layer B
+// (`octo_ident::resolver_backend`, mission 0871b-cross-node-forwarding
+// AC-1). The local struct that previously lived here has been removed
+// and the handler body now uses the Layer-B shape (Vec<String> visited
+// + envelope_id + chain_hash + hop_index fields). Cycle detection
+// remains a `Vec::contains` check — the field-order determinism that
+// `BTreeSet` provided is no longer needed after the Handler-vs-Backend
+// split (handler owns the visited set; backend reads it for
+// chain_hash preimage construction only).
 
 /// Request payload for `IDENTITY_RESOLVE_CHAIN`.
 ///
@@ -302,10 +296,30 @@ impl ResolveChainHandler {
         // 2. Initialize chain context. Seed `visited` with the
         //    post-parse canonical target wire form so a hop that re-uses
         //    the target DID triggers cycle detection (regardless of the
-        //    input wire form the caller used).
+        //    input wire form the caller used). `chain_hash` is
+        //    initialized to the BLAKE3-256 of the canonical target DID
+        //    (entry-point accumulator seed — handler extends it with
+        //    each hop's contribution before `resolve_via`; the
+        //    `RemoteResolverBackend` then reads it for its Ed25519
+        //    preimage construction per RFC-0970 §Data Structures).
+        // 2. Initialize chain context. Seed `visited` with the
+        //    post-parse canonical target wire form so a hop that re-uses
+        //    the target DID triggers cycle detection (regardless of the
+        //    input wire form the caller used). `chain_hash` is the
+        //    per-hop accumulator — seeded to all-zero at entry, the
+        //    handler extends it with each hop's contribution before
+        //    `resolve_via`; the `RemoteResolverBackend` reads it for
+        //    its Ed25519 preimage construction per RFC-0970 §Data
+        //    Structures. `envelope_id` is threaded through from the
+        //    dispatch site (handler parameter) so the backend can
+        //    include it in the reply signature preimage (RFC-0871
+        //    §Algorithms step 2).
         let mut ctx = ResolverChainContext {
-            visited: BTreeSet::from([target_wire.as_str().to_owned()]),
+            visited: vec![target_wire.as_str().to_owned()],
             ttl_remaining_ms: req.ttl_remaining_ms,
+            envelope_id,
+            chain_hash: [0u8; 32],
+            hop_index: 0,
         };
 
         // 3. Walk the hop chain. Each hop:
@@ -332,9 +346,17 @@ impl ResolveChainHandler {
             if ctx.ttl_remaining_ms == 0 {
                 return Err(IdentityResolveError::ChainTtlExpired);
             }
-            if !ctx.visited.insert(hop_canonical.clone()) {
+            // Layer-B `ResolverChainContext.visited` is a `Vec<String>`,
+            // not a `BTreeSet` (was a `BTreeSet` in the previous Layer-C
+            // local definition — re-exported from `octo-ident` for cycle
+            // detection + chain_hash observability). Cycle defense is
+            // `contains` (linear scan, O(n) per hop — bounded by
+            // MAX_CHAIN_HOPS so amortized cost is trivial).
+            if ctx.visited.contains(&hop_canonical) {
                 return Err(IdentityResolveError::ChainCycle);
             }
+            ctx.visited.push(hop_canonical.clone());
+            ctx.hop_index = ctx.hop_index.saturating_add(1);
             terminal_hop_canonical = hop_canonical;
         }
 
@@ -351,7 +373,7 @@ impl ResolveChainHandler {
         //
         //    `target_raw` is the canonical-form-decoded target the
         //    terminal registry resolves against.
-        let resp = self
+        let backend_outcome = self
             .backend
             .resolve_via(&terminal_hop_canonical, &target_raw, &ctx)
             .await?;
@@ -360,15 +382,24 @@ impl ResolveChainHandler {
         //    `0871b-cross-node-forwarding` T5). `LocalResolverBackend`
         //    returns an empty `signature_chain`; `RemoteResolverBackend`
         //    populates it with one `HopSignature` per cross-network hop.
+        //    Convert Layer-B `RawHopSignature` → Layer-A `HopSignature`
+        //    (byte-identical wire form) at the handler boundary; per
+        //    `resolver_backend.rs` §"Why no `octo-protocol` dep?".
         //
         //    `hops_traversed` capped at `handle()` entry (see ChainTooLong
         //    check above), so the `try_from` unwrap is safe.
         let resp = ChainResolveResponse {
             canonical_did: target_wire.as_str().to_owned(),
-            public_key: resp.public_key,
+            public_key: backend_outcome.public_key,
             hops_traversed: u8::try_from(req.hops.len())
                 .expect("hops.len() bounded <= MAX_CHAIN_HOPS at handle() entry"),
-            signature_chain: resp.signature_chain,
+            signature_chain: backend_outcome
+                .signature_chain
+                .into_iter()
+                .map(|raw| {
+                    HopSignature::new(raw.hop_index, raw.hop_did, raw.signature, raw.signer_pub)
+                })
+                .collect(),
             envelope_id,
         };
         let payload =
@@ -380,111 +411,29 @@ impl ResolveChainHandler {
     }
 }
 
-// --- ResolverBackend trait + LocalResolverBackend impl -----------
+// --- ResolverBackend trait re-export from Layer B ----------------
 //
-// Mission `0871b-cross-node-forwarding` T1 + T2. The trait abstracts
-// the resolution mechanism for one hop in a resolver chain;
-// `ResolveChainHandler` consults this trait instead of `DidRegistry`
-// directly so cross-node hops can be intercepted.
+// Mission `0871b-cross-node-forwarding` AC-1 (Layer C → Layer B
+// relocation): the trait + `LocalResolverBackend` impl were moved to
+// `octo-ident/src/resolver_backend.rs` in this commit. The Layer C
+// handler re-exports the trait surface so internal callers + tests
+// keep their existing import paths byte-identical.
 //
-// `LocalResolverBackend` wraps `DidRegistry` for in-process / single-
-// node deployments; `RemoteResolverBackend` (mission T3, lives in
-// `octo-identity-resolver-node/src/backend.rs`) carries the
-// request/response substrate payload once it lands.
+// `RemoteResolverBackend` (Layer C, `octo-identity-resolver-node/src/backend.rs`)
+// carries the request/response substrate payload once it lands; the
+// `From<octo_ident::ResolverBackendError>` impl in `handlers/mod.rs`
+// bridges the new Layer-B error type into the existing
+// `IdentityResolveError` taxonomy.
 
-/// Back-end shape returned by `ResolverBackend::resolve_via` — the
-/// chain-handler fills in the remaining response fields (canonical_did,
-/// hops_traversed, envelope_id).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BackendResolveOutcome {
-    /// 32-byte storage-pubkey form (from `DidDocument.public_key`).
-    pub public_key: [u8; 32],
-    /// Per-hop Ed25519 signatures accumulated by the backend
-    /// (outermost-first). Empty for `LocalResolverBackend`.
-    pub signature_chain: Vec<HopSignature>,
-}
-
-/// Layer C trait: abstracts the resolution mechanism for one hop in a
-/// resolver chain. `ResolveChainHandler` consults this trait instead of
-/// `DidRegistry` directly so cross-node hops can be intercepted.
-///
-/// Async trait (`#[async_trait]`): `LocalResolverBackend::resolve_via`
-/// is sync internally but the trait signature is `async` so the wire
-/// stays stable when mission `0870k-transport-request-response` lands
-/// the request/response substrate + a real `RemoteResolverBackend` does
-/// network I/O. Adopting `async` from day-1 avoids a breaking trait
-/// signature change mid-substrate (Open/Closed: the trait is closed
-/// for modification once it ships).
-#[async_trait]
-pub trait ResolverBackend: Send + Sync {
-    /// Resolve `target` at the hop identified by `hop_did`. `chain_ctx`
-    /// is borrowed IMMUTABLY — the backend may inspect the visited set
-    /// + remaining TTL (e.g. for chain_hash preimage construction) but
-    /// MUST NOT mutate them. The handler has already enforced cycle
-    /// detection + TTL bounds before this call; a remote backend's
-    /// chain_hash / signature preimage construction (RFC-0970 §Data
-    /// Structures) reads from this context but does not extend it.
-    ///
-    /// Future extension: when `0870k-transport-request-response` lands,
-    /// the BACKEND constructs the per-hop `chain_hash: [u8; 32]` from
-    /// `(hop_index, BLAKE3(payload), envelope_id)` internally — there
-    /// is no handler-side chain_hash accumulator (the handler performs
-    /// a single `resolve_via` call per chain walk). The
-    /// `&ResolverChainContext` borrow stays immutable.
-    async fn resolve_via(
-        &self,
-        hop_did: &str,
-        target: &octo_ident::RawDid,
-        chain_ctx: &ResolverChainContext,
-    ) -> Result<BackendResolveOutcome, IdentityResolveError>;
-}
-
-/// In-process `ResolverBackend` that delegates to the local
-/// `DidRegistry`. Preserves the mission `0871b-cross-domain-resolution-impl`
-/// behavior (no cross-network I/O, no signing).
-///
-/// Round-3 review (D2 encapsulation): the registry field is PRIVATE
-/// — callers construct via `LocalResolverBackend::new(registry)`. This
-/// prevents accidental bypass of the `ResolverBackend` trait surface
-/// (callers cannot `local.0.resolve(&hash)` directly). Mirrors the
-/// private-registry pattern in `crate::handlers::resolve::ResolveHandler`.
-pub struct LocalResolverBackend(Arc<dyn DidRegistry>);
-
-impl LocalResolverBackend {
-    /// Construct a `LocalResolverBackend` over the supplied registry.
-    /// Returns `Arc<dyn ResolverBackend>` directly so callers don't
-    /// need explicit coercion at the call site (round-3 D2
-    /// encapsulation — the field is private so callers cannot
-    /// construct via tuple-struct literal).
-    #[must_use]
-    #[allow(clippy::new_ret_no_self)] // intentional: Arc<dyn Trait> return skips caller coercion
-    pub fn new(registry: Arc<dyn DidRegistry>) -> Arc<dyn ResolverBackend> {
-        Arc::new(Self(registry))
-    }
-}
-
-#[async_trait]
-impl ResolverBackend for LocalResolverBackend {
-    async fn resolve_via(
-        &self,
-        _hop_did: &str,
-        target: &octo_ident::RawDid,
-        _chain_ctx: &ResolverChainContext,
-    ) -> Result<BackendResolveOutcome, IdentityResolveError> {
-        let doc = self
-            .0
-            .resolve(&target.hash)?
-            .ok_or_else(|| IdentityResolveError::Storage("unknown DID".to_owned()))?;
-        Ok(BackendResolveOutcome {
-            public_key: doc.public_key,
-            signature_chain: Vec::new(),
-        })
-    }
-}
+pub use octo_ident::resolver_backend::{
+    BackendResolveOutcome, LocalResolverBackend, RawHopSignature, ResolverBackend,
+    ResolverBackendError, ResolverChainContext,
+};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
     use octo_ident::{DidDocument, InMemoryDidRegistry};
 
     fn sample_did_bytes(seed: u8) -> [u8; 32] {
@@ -781,7 +730,7 @@ mod tests {
             hop_did: &str,
             target: &octo_ident::RawDid,
             chain_ctx: &ResolverChainContext,
-        ) -> Result<BackendResolveOutcome, IdentityResolveError> {
+        ) -> Result<BackendResolveOutcome, ResolverBackendError> {
             self.1.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.0.resolve_via(hop_did, target, chain_ctx).await
         }

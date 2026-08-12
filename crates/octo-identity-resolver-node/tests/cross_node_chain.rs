@@ -40,11 +40,9 @@ use async_trait::async_trait;
 use octo_ident::{CanonicalCodec, DidCodec, DidDocument, DidRegistry, InMemoryDidRegistry};
 use octo_identity_resolver_node::{
     BackendResolveOutcome, ChainResolveRequest, ChainResolveResponse, IdentityResolveError,
-    LocalResolverBackend, RemoteResolverBackend, ResolveChainHandler, ResolverBackend,
-    ResolverChainContext, ResolverHop, UnsupportedCode,
+    LocalResolverBackend, RawHopSignature, RemoteResolverBackend, ResolveChainHandler,
+    ResolverBackend, ResolverBackendError, ResolverChainContext, ResolverHop, UnsupportedCode,
 };
-
-use octo_protocol::HopSignature;
 
 /// Mint a canonical DID wire form from a 32-byte seed-pubkey.
 fn canonical_did(seed: u8) -> String {
@@ -86,7 +84,10 @@ struct FakeRemoteBackend {
     /// Public key this fake "returns" for every resolve.
     pubkey: [u8; 32],
     /// HopSignature template (filled in with hop_index = call_count).
-    sig_template: HopSignature,
+    /// Layer-B `RawHopSignature` (the test backend's
+    /// `signature_chain` type — handler converts to wire-form
+    /// `HopSignature` at the response boundary).
+    sig_template: RawHopSignature,
 }
 
 impl FakeRemoteBackend {
@@ -94,7 +95,12 @@ impl FakeRemoteBackend {
         // Use canonical_did(seed) (same helper as the rest of the file)
         // rather than a hardcoded string so the test exercises the
         // canonical-DID wire form end-to-end.
-        let sig = HopSignature::new(0, canonical_did(99), [0xAA; 64], [0xBB; 32]);
+        let sig = RawHopSignature {
+            hop_index: 0,
+            hop_did: canonical_did(99),
+            signature: [0xAA; 64],
+            signer_pub: [0xBB; 32],
+        };
         Self {
             pubkey,
             sig_template: sig,
@@ -109,7 +115,7 @@ impl ResolverBackend for FakeRemoteBackend {
         _hop_did: &str,
         _target: &octo_ident::RawDid,
         _chain_ctx: &ResolverChainContext,
-    ) -> Result<BackendResolveOutcome, IdentityResolveError> {
+    ) -> Result<BackendResolveOutcome, ResolverBackendError> {
         Ok(BackendResolveOutcome {
             public_key: self.pubkey,
             signature_chain: vec![self.sig_template.clone()],
@@ -372,12 +378,27 @@ async fn multi_hop_signature_chain_preserves_outermost_first_order() {
             _hop_did: &str,
             _target: &octo_ident::RawDid,
             _chain_ctx: &ResolverChainContext,
-        ) -> Result<BackendResolveOutcome, IdentityResolveError> {
+        ) -> Result<BackendResolveOutcome, ResolverBackendError> {
             // Outermost-first: hop 0 first, hop 1 second, hop 2 last.
             let sigs = vec![
-                HopSignature::new(0, canonical_did(50), [0x11; 64], [0x21; 32]),
-                HopSignature::new(1, canonical_did(51), [0x22; 64], [0x22; 32]),
-                HopSignature::new(2, canonical_did(52), [0x33; 64], [0x23; 32]),
+                RawHopSignature {
+                    hop_index: 0,
+                    hop_did: canonical_did(50),
+                    signature: [0x11; 64],
+                    signer_pub: [0x21; 32],
+                },
+                RawHopSignature {
+                    hop_index: 1,
+                    hop_did: canonical_did(51),
+                    signature: [0x22; 64],
+                    signer_pub: [0x22; 32],
+                },
+                RawHopSignature {
+                    hop_index: 2,
+                    hop_did: canonical_did(52),
+                    signature: [0x33; 64],
+                    signer_pub: [0x23; 32],
+                },
             ];
             Ok(BackendResolveOutcome {
                 public_key: self.pubkey,

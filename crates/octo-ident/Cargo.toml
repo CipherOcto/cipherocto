@@ -20,7 +20,20 @@ bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
 # async-trait for dyn-compatible async trait surface on `DidWriteCoordinator`
 # (RFC-0862 v1.3 §DidWriteCoordinator). Used by the Layer B identity substrate
 # to expose cross-instance write coordination as `Arc<dyn DidWriteCoordinator>`.
-async-trait = "0.1"
+# async-trait for dyn-compatible async trait surface on `DidWriteCoordinator`
+# (RFC-0862 v1.3 §DidWriteCoordinator) AND `ResolverBackend` (mission
+# 0871b-cross-node-forwarding AC-1). Used by the Layer B identity substrate
+# to expose cross-instance write coordination + per-hop resolution as
+# `Arc<dyn Trait>`. Exact pin to 0.1.92 for matrix-sdk compatibility (the
+# resolver-node Layer C crate pins the same version — matches workspace-wide
+# pin per CL feedback "no parallel async-trait pins").
+async-trait = "=0.1.92"
+
+# NOTE: NO `octo-protocol = { path = "../octo-protocol" }` dep here — would
+# close a Cargo cycle (`octo-protocol → octo-ident`). Layer B per-hop
+# signature type (`RawHopSignature`) mirrors `octo_protocol::HopSignature`
+# wire form byte-for-byte; the Layer-C handler converts via `From` at the
+# wire boundary (Layer C → A is allowed).
 
 [features]
 default = []

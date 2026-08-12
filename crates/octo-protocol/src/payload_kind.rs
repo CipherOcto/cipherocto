@@ -203,47 +203,66 @@ mod reserved_slot_tests {
     /// deferred (out of round-4 scope).
     ///
     /// COVERAGE (round-5 R1 finding): the `known` array below
-    /// enumerates all 21 `PayloadKindId` constants defined in this
-    /// file (5 IDENTITY + 4 WALLET + 7 QUOTA + 1 REPUTATION +
-    /// 3 CAPABILITY + 1 PAID_QUERY). Adding a new constant here
-    /// without updating the array turns this test into a fail-closed
-    /// guard for the new addition.
+    /// enumerates **21 entries total** of `PayloadKindId` constants
+    /// defined in this file (5 IDENTITY + 4 WALLET + 7 QUOTA +
+    /// 1 REPUTATION + 3 CAPABILITY + 1 PAID_QUERY = 21). Adding a
+    /// new constant in this file without updating the `known` array
+    /// turns this test into a fail-closed guard for the new
+    /// addition.
     #[test]
     fn reserved_slot_0006_not_allocated() {
         let reserved = _RESERVED_SLOT_0006_CHAIN_RESPONSE;
-        let known: &[(&str, PayloadKindId)] = &[
+        // Each entry carries the `pub const X` definition line so a
+        // test-failure message can point the maintainer at the exact
+        // source site (round-6 R1 finding: cross-ref for navigation).
+        let known: &[(&str, PayloadKindId, u32)] = &[
             // IDENTITY sub-namespace 0x0009:0001:...
-            ("IDENTITY_RESOLVE", IDENTITY_RESOLVE),
-            ("IDENTITY_REGISTER", IDENTITY_REGISTER),
-            ("IDENTITY_REVOKE", IDENTITY_REVOKE),
-            ("IDENTITY_RESOLVE_CHAIN", IDENTITY_RESOLVE_CHAIN),
-            ("IDENTITY_RESOLVE_WITH_CHAIN", IDENTITY_RESOLVE_WITH_CHAIN),
+            ("IDENTITY_RESOLVE", IDENTITY_RESOLVE, 108),
+            ("IDENTITY_REGISTER", IDENTITY_REGISTER, 125),
+            ("IDENTITY_REVOKE", IDENTITY_REVOKE, 132),
+            ("IDENTITY_RESOLVE_CHAIN", IDENTITY_RESOLVE_CHAIN, 156),
+            (
+                "IDENTITY_RESOLVE_WITH_CHAIN",
+                IDENTITY_RESOLVE_WITH_CHAIN,
+                170,
+            ),
             // WALLET sub-namespace 0x0009:0002:...
-            ("WALLET_SIGN_ED25519", WALLET_SIGN_ED25519),
-            ("WALLET_MINT_CAPABILITY", WALLET_MINT_CAPABILITY),
-            ("WALLET_ATTENUATE_CAPABILITY", WALLET_ATTENUATE_CAPABILITY),
-            ("WALLET_RESOLVE_DID", WALLET_RESOLVE_DID),
+            ("WALLET_SIGN_ED25519", WALLET_SIGN_ED25519, 255),
+            ("WALLET_MINT_CAPABILITY", WALLET_MINT_CAPABILITY, 262),
+            (
+                "WALLET_ATTENUATE_CAPABILITY",
+                WALLET_ATTENUATE_CAPABILITY,
+                269,
+            ),
+            ("WALLET_RESOLVE_DID", WALLET_RESOLVE_DID, 276),
             // QUOTA sub-namespace 0x0009:0003:...
-            ("QUOTA_ROUTER_ANNOUNCE", QUOTA_ROUTER_ANNOUNCE),
-            ("QUOTA_ROUTER_WITHDRAW", QUOTA_ROUTER_WITHDRAW),
-            ("QUOTA_CAPACITY_GOSSIP", QUOTA_CAPACITY_GOSSIP),
-            ("QUOTA_CAPACITY_REQUEST", QUOTA_CAPACITY_REQUEST),
-            ("QUOTA_FORWARD_REQUEST", QUOTA_FORWARD_REQUEST),
-            ("QUOTA_FORWARD_RESPONSE", QUOTA_FORWARD_RESPONSE),
-            ("QUOTA_FORWARD_REJECT", QUOTA_FORWARD_REJECT),
+            ("QUOTA_ROUTER_ANNOUNCE", QUOTA_ROUTER_ANNOUNCE, 304),
+            ("QUOTA_ROUTER_WITHDRAW", QUOTA_ROUTER_WITHDRAW, 311),
+            ("QUOTA_CAPACITY_GOSSIP", QUOTA_CAPACITY_GOSSIP, 318),
+            ("QUOTA_CAPACITY_REQUEST", QUOTA_CAPACITY_REQUEST, 325),
+            ("QUOTA_FORWARD_REQUEST", QUOTA_FORWARD_REQUEST, 332),
+            ("QUOTA_FORWARD_RESPONSE", QUOTA_FORWARD_RESPONSE, 339),
+            ("QUOTA_FORWARD_REJECT", QUOTA_FORWARD_REJECT, 346),
             // REPUTATION sub-namespace 0x0009:0004:...
-            ("REPUTATION_ANCHOR_QUERY", REPUTATION_ANCHOR_QUERY),
+            ("REPUTATION_ANCHOR_QUERY", REPUTATION_ANCHOR_QUERY, 394),
             // CAPABILITY sub-namespace 0x0009:0005:...
-            ("CAPABILITY_ISSUE", CAPABILITY_ISSUE),
-            ("CAPABILITY_REVOKE", CAPABILITY_REVOKE),
-            ("CAPABILITY_LOOKUP", CAPABILITY_LOOKUP),
+            ("CAPABILITY_ISSUE", CAPABILITY_ISSUE, 446),
+            ("CAPABILITY_REVOKE", CAPABILITY_REVOKE, 459),
+            ("CAPABILITY_LOOKUP", CAPABILITY_LOOKUP, 473),
             // PAID_QUERY sub-namespace 0x0009:0006:...
-            ("PAID_QUERY_VERIFY", PAID_QUERY_VERIFY),
+            ("PAID_QUERY_VERIFY", PAID_QUERY_VERIFY, 522),
         ];
-        for (name, kind) in known {
+        for (name, kind, def_line) in known {
+            // Round-6 R1 finding: include the colliding constant's
+            // UUID bytes + the definition file:line in the failure
+            // message so a maintainer can diagnose without re-reading
+            // the file by hand.
             assert_ne!(
-                kind.0, reserved.0,
-                "slot :0006 collision: {name} == reserved chain-response slot"
+                kind.0,
+                reserved.0,
+                "slot :0006 collision: {name} (defined at payload_kind.rs:{def_line}) collides with reserved chain-response slot; colliding UUID bytes = {:?}; reserved UUID bytes = {:?}",
+                kind.0,
+                reserved.0,
             );
         }
     }

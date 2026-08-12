@@ -3157,6 +3157,12 @@ async fn try_fallback_models(
 mod tests {
     use super::*;
 
+    /// Serializes the `test_resolve_api_key_any_llm_*` tests so they don't
+    /// race on the global `ANY_LLM_KEY` env var (cargo test runs unit tests
+    /// in parallel; `set_var` is process-global). Without this lock, a
+    /// later test can read `universal-key` left over from an earlier one.
+    static ANY_LLM_KEY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_parse_request_body_extracts_api_base() {
         let body = r#"{
@@ -10115,8 +10121,14 @@ mod tests {
     /// Cluster 542-547 — `resolve_api_key` Priority 2: ANY_LLM_KEY env var.
     /// Fires when no config_key is supplied AND `{PROVIDER}_API_KEY` env is unset
     /// AND `ANY_LLM_KEY` is set + non-empty.
+    ///
+    /// NOTE: serializes with the other `resolve_api_key_any_llm_*` tests via
+    /// `ANY_LLM_KEY_LOCK` because they mutate the global `ANY_LLM_KEY` env
+    /// var and cargo test runs unit tests in parallel. Without serialization
+    /// the third test reads leftover state from the first.
     #[test]
     fn test_resolve_api_key_any_llm_env_fallback() {
+        let _guard = ANY_LLM_KEY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("TESTPROV_ANY_API_KEY");
         std::env::set_var("ANY_LLM_KEY", "universal-key");
         let provider = Provider::new("testprov_any", "https://example.com");
@@ -10128,8 +10140,11 @@ mod tests {
 
     /// Cluster 542-547 — ANY_LLM_KEY beats provider-specific env var when both
     /// are present and no config_key supplied. (Priority 2 > Priority 3.)
+    ///
+    /// Serialized via `ANY_LLM_KEY_LOCK` — see test above.
     #[test]
     fn test_resolve_api_key_any_llm_beats_provider_env() {
+        let _guard = ANY_LLM_KEY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("TESTPROV_ANY2_API_KEY", "prov-key");
         std::env::set_var("ANY_LLM_KEY", "universal-key");
         let provider = Provider::new("testprov_any2", "https://example.com");
@@ -10140,8 +10155,11 @@ mod tests {
     }
 
     /// Cluster 542-547 — empty ANY_LLM_KEY falls through to provider env var.
+    ///
+    /// Serialized via `ANY_LLM_KEY_LOCK` — see test above.
     #[test]
     fn test_resolve_api_key_any_llm_empty_falls_through() {
+        let _guard = ANY_LLM_KEY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("TESTPROV_ANY3_API_KEY", "prov-key");
         std::env::set_var("ANY_LLM_KEY", "");
         let provider = Provider::new("testprov_any3", "https://example.com");

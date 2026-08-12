@@ -2,7 +2,7 @@
 |  | Accepted |
 |  | Accepted |#|  | Accepted |#|  | Accepted | |  | Accepted |S|  | Accepted |t|  | Accepted |a|  | Accepted |t|  | Accepted |u|  | Accepted |s|  | Accepted |
 |  | Accepted |
-|  | Accepted |C|  | Accepted |l|  | Accepted |a|  | Accepted |i|  | Accepted |m|  | Accepted |e|  | Accepted |d|  | Accepted | |  | Accepted |(|  | Accepted |2|  | Accepted |0|  | Accepted |2|  | Accepted |6|  | Accepted |-|  | Accepted |0|  | Accepted |7|  | Accepted |-|  | Accepted |2|  | Accepted |3|  | Accepted |)|  | Accepted |
+|  | Accepted |C|  | Accepted |l|  | Accepted |o|  | Accepted |s|  | Accepted |e|  | Accepted |d|  | Accepted | |  | Accepted |(|  | Accepted |2|  | Accepted |0|  | Accepted |2|  | Accepted |6|  | Accepted |-|  | Accepted |0|  | Accepted |8|  | Accepted |-|  | Accepted |1|  | Accepted |1|  | Accepted |)|  | Accepted | |  | Accepted |—|  | Accepted | |  | Accepted |C|  | Accepted |l|  | Accepted |a|  | Accepted |i|  | Accepted |m|  | Accepted |e|  | Accepted |d|  | Accepted | |  | Accepted |(|  | Accepted |2|  | Accepted |0|  | Accepted |2|  | Accepted |6|  | Accepted |-|  | Accepted |0|  | Accepted |7|  | Accepted |-|  | Accepted |2|  | Accepted |3|  | Accepted |)|  | Accepted | |  | Accepted |—|  | Accepted | |  | Accepted |L|  | Accepted |A|  | Accepted |N|  | Accepted |D|  | Accepted |E|  | Accepted |D|  | Accepted |.|
 |  | Accepted |
 |  | Accepted |#|  | Accepted |#|  | Accepted | |  | Accepted |R|  | Accepted |F|  | Accepted |C|  | Accepted |
 |  | Accepted |
@@ -138,5 +138,13 @@
 |  | Accepted |-|  | Accepted |-|  | Accepted |-|  | Accepted |
 |  | Accepted |
 |  | Accepted |*|  | Accepted |*|  | Accepted |S|  | Accepted |u|  | Accepted |b|  | Accepted |m|  | Accepted |i|  | Accepted |s|  | Accepted |s|  | Accepted |i|  | Accepted |o|  | Accepted |n|  | Accepted | |  | Accepted |D|  | Accepted |a|  | Accepted |t|  | Accepted |e|  | Accepted |:|  | Accepted |*|  | Accepted |*|  | Accepted | |  | Accepted |2|  | Accepted |0|  | Accepted |2|  | Accepted |6|  | Accepted |-|  | Accepted |0|  | Accepted |7|  | Accepted |-|  | Accepted |2|  | Accepted |3|  | Accepted |
-|  | Accepted |*|  | Accepted |*|  | Accepted |L|  | Accepted |a|  | Accepted |s|  | Accepted |t|  | Accepted | |  | Accepted |U|  | Accepted |p|  | Accepted |d|  | Accepted |a|  | Accepted |t|  | Accepted |e|  | Accepted |d|  | Accepted |:|  | Accepted |*|  | Accepted |*|  | Accepted | |  | Accepted |2|  | Accepted |0|  | Accepted |2|  | Accepted |6|  | Accepted |-|  | Accepted |0|  | Accepted |7|  | Accepted |-|  | Accepted |2|  | Accepted |3|  | Accepted |
-|  | Accepted |*|  | Accepted |*|  | Accepted |V|  | Accepted |e|  | Accepted |r|  | Accepted |s|  | Accepted |i|  | Accepted |o|  | Accepted |n|  | Accepted |:|  | Accepted |*|  | Accepted |*|  | Accepted | |  | Accepted |1|  | Accepted |.|  | Accepted |0|  | Accepted | |  | Accepted |(|  | Accepted |C|  | Accepted |l|  | Accepted |a|  | Accepted |i|  | Accepted |m|  | Accepted |e|  | Accepted |d|  | Accepted |)|  | Accepted |
+|  | Accepted |*|  | Accepted |*|  | Accepted |L|  | Accepted |a|  | Accepted |s|  | Accepted |t|  | Accepted | |  | Accepted |U|  | Accepted |p|  | Accepted |d|  | Accepted |a|  | Accepted |t|  | Accepted |e|  | Accepted |d|  | Accepted |:|  | Accepted |*|  | Accepted |*|  | Accepted | |  | Accepted |2|  | Accepted |0|  | Accepted |2|  | Accepted |6|  | Accepted |-|  | Accepted |0|  | Accepted |8|  | Accepted |-|  | Accepted |1|  | Accepted |1|
+|  | Accepted |*|  | Accepted |*|  | Accepted |V|  | Accepted |e|  | Accepted |r|  | Accepted |s|  | Accepted |i|  | Accepted |o|  | Accepted |n|  | Accepted |:|  | Accepted |*|  | Accepted |*|  | Accepted | |  | Accepted |1|  | Accepted |.|  | Accepted |1|  | Accepted | |  | Accepted |(|  | Accepted |C|  | Accepted |l|  | Accepted |o|  | Accepted |s|  | Accepted |e|  | Accepted |d|  | Accepted |)|
+
+
+## Version History
+
+| Version | Date | Change |
+| --- | --- | --- |
+| v0.1 | 2026-07-23 | Mission filed. RFC-0962 reaches Accepted on RFC-0960 v2.0 promotion date. Substrate expected in `crates/quota-router-sm-engine/src/envelope.rs`. |
+| v0.2 | 2026-08-11 | **Claimed + LANDED** by @claude. Substrate shipped in commit `d3fd7e27 feat(economics): RFC-0960/62/63/64/65/67 spec→impl conformance` (2026-07-24). `ExecutionEnvelope` + `ProcInvocation` + `DdlOperation` + `MultiEnvelope` (with `CompletionRule`) + `EnvelopeError` + `ReplayIndex`/`ReplayIndexMut` traits + `sql_statements_hash` (BLAKE3 0xA3 domain per R6-F6) + Ed25519 signature over `canonical_ser(unsigned)`. Caps enforced: 1000 statements + 1 MB; nesting depth ≤ 4 (R8-F5). 30+ unit tests pass (exceeds 12 AC minimum). Cross-references: 0964-a-constraint-encoding (now CLOSED; substrate consumer), 0959-a-ask-pricing-stoolap (`Receipt` referenced for replay index), RFC-0961 CIPHERO_SQL (consumer; deferred per W8). |

@@ -71,6 +71,10 @@ pub enum SsoError {
     },
     #[error("SAML subject confirmation method invalid: expected 'bearer', got {actual:?}")]
     SamlSubjectConfirmationInvalid { actual: Vec<String> },
+    #[error("SAML subject confirmation data expired: not_on_or_after {not_on_or_after}")]
+    SamlSubjectConfirmationExpired { not_on_or_after: String },
+    #[error("SAML replay detected: assertion_id {assertion_id}")]
+    SamlReplayDetected { assertion_id: String },
     #[error("No API key mapping for SSO subject: {0}")]
     NoKeyMapping(String),
     #[error("SSO user deactivated: {0}")]
@@ -96,7 +100,9 @@ impl SsoError {
             Self::SamlSignatureInvalid(_)
             | Self::SamlAssertionExpired
             | Self::SamlAudienceMismatch { .. }
-            | Self::SamlSubjectConfirmationInvalid { .. } => 401,
+            | Self::SamlSubjectConfirmationInvalid { .. }
+            | Self::SamlSubjectConfirmationExpired { .. }
+            | Self::SamlReplayDetected { .. } => 401,
             Self::NoKeyMapping(_) | Self::UserDeactivated(_) => 403,
             Self::ProviderError(_) => 502,
             Self::RateLimited => 429,
@@ -117,7 +123,9 @@ impl SsoError {
             Self::SamlSignatureInvalid(_)
             | Self::SamlAssertionExpired
             | Self::SamlAudienceMismatch { .. }
-            | Self::SamlSubjectConfirmationInvalid { .. } => "authentication_error",
+            | Self::SamlSubjectConfirmationInvalid { .. }
+            | Self::SamlSubjectConfirmationExpired { .. }
+            | Self::SamlReplayDetected { .. } => "authentication_error",
             Self::NoKeyMapping(_) | Self::UserDeactivated(_) => "authorization_error",
             Self::ProviderError(_) => "provider_error",
             Self::RateLimited => "rate_limit_error",
@@ -153,6 +161,8 @@ impl SsoError {
             Self::SamlAssertionExpired => "sso_saml_assertion_expired",
             Self::SamlAudienceMismatch { .. } => "sso_saml_audience_mismatch",
             Self::SamlSubjectConfirmationInvalid { .. } => "sso_saml_subject_confirmation_invalid",
+            Self::SamlSubjectConfirmationExpired { .. } => "sso_saml_subject_confirmation_expired",
+            Self::SamlReplayDetected { .. } => "sso_saml_replay_detected",
             Self::NoKeyMapping(_) => "sso_no_key_mapping",
             Self::UserDeactivated(_) => "sso_user_deactivated",
             Self::ProviderError(_) => "sso_provider_error",

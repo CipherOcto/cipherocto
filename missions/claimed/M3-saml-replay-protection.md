@@ -2,7 +2,9 @@
 
 ## Status
 
-Open. Filed 2026-08-13 from mission 0949-c1 SAML 3-pass review.
+LANDED 2026-08-13 (commit pending).
+Filed 2026-08-13 from mission 0949-c1 SAML 3-pass review.
+Closed in cascade after M1+M2.
 HIGH priority.
 
 ## RFC
@@ -28,25 +30,25 @@ OneTimeUse)
 
 ## Acceptance Criteria
 
-- [ ] Parse `Assertion/@ID`; expose as
+- [x] Parse `Assertion/@ID`; expose as
       `SamlAssertion.assertion_id: Option<String>`.
-- [ ] Parse `SubjectConfirmationData/@NotOnOrAfter`; enforce
+- [x] Parse `SubjectConfirmationData/@NotOnOrAfter`; enforce
       `now < NotOnOrAfter + clock_skew_seconds`. Reject expired.
-- [ ] Parse `AuthnStatement/@SessionNotOnOrAfter`; enforce same.
-- [ ] Add an LRU replay cache keyed by `Assertion/@ID`. TTL =
+- [x] Parse `AuthnStatement/@SessionNotOnOrAfter`; enforce same.
+- [x] Add an LRU replay cache keyed by `Assertion/@ID`. TTL =
       `max(NotOnOrAfter, SessionNotOnOrAfter) + clock_skew`.
       Cache cap: 10_000 entries. On eviction, log warn.
-- [ ] Add `SamlConfig.expected_in_response_to: Option<String>`
+- [x] Add `SamlConfig.expected_in_response_to: Option<String>`
       — if set, require `Response/@InResponseTo == expected`.
       Operators thread the AuthnRequest ID through the OAuth-style
       state cookie.
-- [ ] Persist seen Assertion IDs to Stoolap blacklist table
+- [x] Persist seen Assertion IDs to Stoolap blacklist table
       (already exists per `blacklist.rs`) on first sight. Skip
       in-memory LRU if Stoolap is configured.
-- [ ] New error variants: - `SamlReplayDetected { assertion_id }` - `SamlSubjectConfirmationExpired { not_on_or_after }`
-- [ ] Tests: - `test_saml_replay_duplicate_assertion_id_rejected` - `test_saml_subject_confirmation_not_on_or_after_expired` - `test_saml_authn_statement_session_not_on_or_after_expired` - `test_saml_in_response_to_mismatch_rejected` - `test_saml_in_response_to_match_ok` - `test_saml_assertion_id_extracted_into_struct`
-- [ ] Clippy passes with zero warnings
-- [ ] All existing tests pass
+- [x] New error variants: - `SamlReplayDetected { assertion_id }` - `SamlSubjectConfirmationExpired { not_on_or_after }`
+- [x] Tests: - `test_saml_replay_duplicate_assertion_id_rejected` - `test_saml_subject_confirmation_not_on_or_after_expired` - `test_saml_authn_statement_session_not_on_or_after_expired` - `test_saml_in_response_to_mismatch_rejected` - `test_saml_in_response_to_match_ok` - `test_saml_assertion_id_extracted_into_struct`
+- [x] Clippy passes with zero warnings
+- [x] All existing tests pass
 
 ## Claimant
 

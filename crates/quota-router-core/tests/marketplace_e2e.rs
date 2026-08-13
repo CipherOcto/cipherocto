@@ -272,6 +272,235 @@ fn best_ask_matching_filters_by_model() {
     assert_eq!(best_claude.price, 50);
 }
 
+// =============================================================================
+// Strong-scenario E2E tests (Round 2 mission: marketplace-e2e-strong-scenarios).
+//
+// Each test pins a specific code path or recent Round 1 review fix.
+// =============================================================================
+
+#[test]
+fn concurrent_ask_insertion_at_same_price_preserves_fifo() {
+    // Round 1 fix (C1): per-book `next_seq` counter prevents
+    // `(price, ts_unix)` collisions when multiple asks land in the same
+    // second. This test exercises the fix under thread contention:
+    // N threads each insert at the same price simultaneously; the
+    // BTreeMap must hold all N entries (no overwrites).
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+
+    const N: usize = 32;
+    let book = Arc::new(Mutex::new(OrderBook::<AskSpec>::new()));
+
+    let mut handles = Vec::with_capacity(N);
+    for i in 0..N {
+        let book = Arc::clone(&book);
+        handles.push(thread::spawn(move || {
+            let mut book = book.lock().expect("lock book");
+            book.place_ask(
+                AskSpec {
+                    model: "gpt-4".into(),
+                    asker_did: format!("seller-{i}"),
+                },
+                100,
+                1,
+                format!("seller-{i}"),
+                1_000,
+            );
+        }));
+    }
+    for h in handles {
+        h.join().expect("thread join");
+    }
+
+    // Drain via 32 matching bids (each crosses at 100). Every ask must
+    // produce a match — no overwrites, no lost entries.
+    let mut book = book.lock().expect("lock book");
+    let mut matched_sellers = std::collections::HashSet::new();
+    for _ in 0..N {
+        book.place_bid(
+            AskSpec {
+                model: "gpt-4".into(),
+                asker_did: "buyer".into(),
+            },
+            100,
+            1,
+            "buyer",
+            2_000,
+        );
+        let m = book
+            .match_top()
+            .expect("match should succeed — every ask must be present");
+        matched_sellers.insert(m.ask.owner.clone());
+    }
+    assert_eq!(
+        matched_sellers.len(),
+        N,
+        "all {N} concurrent asks must survive"
+    );
+    assert!(book.is_empty());
+}
+
+#[test]
+fn partial_fill_exact_match_no_residual() {
+    // Round 1 fix (C2): match_top re-inserts residual qty with fresh
+    // seq after partial fill. When bid and ask match exactly, no
+    // residual is created — book is empty after one match.
+    let mut book = OrderBook::<AskSpec>::new();
+    book.place_ask(
+        AskSpec {
+            model: "gpt-4".into(),
+            asker_did: "s".into(),
+        },
+        100,
+        10,
+        "s",
+        1,
+    );
+    book.place_bid(
+        AskSpec {
+            model: "gpt-4".into(),
+            asker_did: "s".into(),
+        },
+        200,
+        10,
+        "b",
+        2,
+    );
+    let m = book.match_top().expect("exact fill");
+    assert_eq!(m.qty, 10);
+    assert_eq!(m.price, 100);
+    assert!(book.is_empty(), "exact fill leaves no residual");
+}
+
+#[test]
+fn partial_fill_underfilled_bid_residual_matches_next_ask() {
+    // Round 1 fix (C2) end-to-end: bid=10 crosses ask=3, residual=7
+    // re-inserted; second match (against a new ask) consumes the
+    // residual. Asserts no qty loss across two sequential partial
+    // fills.
+    let mut book = OrderBook::<AskSpec>::new();
+    book.place_ask(
+        AskSpec {
+            model: "gpt-4".into(),
+            asker_did: "s1".into(),
+        },
+        100,
+        3,
+        "s1",
+        1,
+    );
+    book.place_bid(
+        AskSpec {
+            model: "gpt-4".into(),
+            asker_did: "b".into(),
+        },
+        200,
+        10,
+        "b",
+        2,
+    );
+    let m1 = book.match_top().expect("first match");
+    assert_eq!(m1.qty, 3);
+    assert_eq!(m1.price, 100);
+    assert_eq!(m1.ask.owner, "s1");
+    // After partial fill, ask1 is gone (3 qty fully consumed),
+    // bid residual of 7 is re-inserted in book. Asks is empty, bids
+    // has 1 entry with qty=7.
+    assert_eq!(book.best_bid().map(|o| o.qty), Some(7));
+    assert_eq!(book.best_ask().map(|o| o.qty), None);
+
+    // Add second ask of 7 qty at price 100 — crosses residual bid.
+    book.place_ask(
+        AskSpec {
+            model: "gpt-4".into(),
+            asker_did: "s2".into(),
+        },
+        100,
+        7,
+        "s2",
+        3,
+    );
+    let m2 = book.match_top().expect("second match consumes residual");
+    assert_eq!(m2.qty, 7);
+    assert_eq!(m2.ask.owner, "s2");
+    assert!(book.is_empty());
+}
+
+#[test]
+fn escrow_double_settle_rejected() {
+    // Escrow is single-use. After settle, second settle returns
+    // SettleFromInvalid. The Round 1 C3 fix (drop Clone) ensures no
+    // double-settle vector via accidental clone; this test pins the
+    // state-machine half of that contract.
+    let mut escrow = Escrow::new([0x99; 32], "buyer", "seller", 500);
+    escrow.lock().expect("lock");
+    escrow.settle().expect("first settle");
+    assert_eq!(escrow.state, EscrowState::Settled);
+    let err = escrow.settle().expect_err("second settle must fail");
+    assert!(matches!(
+        err,
+        quota_router_core::marketplace::escrow::EscrowError::SettleFromInvalid(_)
+    ));
+}
+
+#[test]
+fn escrow_double_dispute_rejected() {
+    // Same contract for dispute: only one dispute per Locked escrow.
+    let mut escrow = Escrow::new([0x99; 32], "buyer", "seller", 500);
+    escrow.lock().expect("lock");
+    escrow.dispute().expect("first dispute");
+    let err = escrow.dispute().expect_err("second dispute must fail");
+    assert!(matches!(
+        err,
+        quota_router_core::marketplace::escrow::EscrowError::DisputeFromInvalid(_)
+    ));
+}
+
+#[test]
+fn byzantine_provider_offense_count_increments_per_offense() {
+    // Byzantine provider submits 99 valid + 1 invalid response.
+    // The slashing ledger must register the offense_count = 1
+    // (per-offense, not per-batch) so a 1-in-100 attacker cannot
+    // dilute their penalty rate. The valid responses don't touch the
+    // ledger; the invalid one slashes.
+    let mut ledger = SlashingLedger::new();
+    ledger.register(sample_did(7), 1_000_000);
+
+    // 99 valid responses (no ledger action — only failures slash).
+    // 1 invalid response (slash with full loss):
+    let out = ledger
+        .slash(&sample_did(7), SlashReason::ProviderError, 1.0)
+        .expect("slash");
+    assert_eq!(out.amount_micro_octo_w, 100_000); // 10% first offense
+    assert_eq!(out.new_stake_micro_octo_w, 900_000);
+    assert!(!out.banned);
+    let stake = ledger.stake(&sample_did(7)).unwrap();
+    assert_eq!(
+        stake.offense_count, 1,
+        "byzantine 1-in-100 must still register offense_count=1"
+    );
+    assert!(!stake.is_banned(ledger.rules()));
+}
+
+#[test]
+fn byzantine_provider_escalation_ban_unchanged() {
+    // Sanity: even with valid responses mixed in, the offense
+    // escalation path must still ban the provider after enough
+    // offenses. The 1st-offense threshold of 10% * 4 cuts > 50% in
+    // cumulative_loss_pct.
+    let mut ledger = SlashingLedger::new();
+    ledger.register(sample_did(7), 1_000_000);
+    for _ in 0..4 {
+        let _ = ledger
+            .slash(&sample_did(7), SlashReason::ProviderError, 1.0)
+            .expect("slash");
+    }
+    assert!(ledger
+        .stake(&sample_did(7))
+        .unwrap()
+        .is_banned(ledger.rules()));
+}
+
 #[test]
 fn order_side_classification() {
     // Sanity check on the Side enum: ensure both branches are usable

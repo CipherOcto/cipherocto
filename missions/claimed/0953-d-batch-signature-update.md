@@ -2,7 +2,8 @@
 
 ## Status
 
-Completed
+LANDED 2026-08-13 (commit b5a0debb).
+Filed 2026-08-13 from RFC-0953 §batch signature changes.
 
 ## RFC
 

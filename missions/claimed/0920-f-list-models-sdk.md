@@ -2,7 +2,8 @@
 
 ## Status
 
-Completed
+LANDED 2026-08-13 (commit 0ae2d7a9).
+Filed 2026-08-13 from RFC-0920 §list_models signature spec.
 
 ## RFC
 

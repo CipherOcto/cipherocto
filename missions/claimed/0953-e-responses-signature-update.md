@@ -2,7 +2,8 @@
 
 ## Status
 
-Completed
+LANDED 2026-08-13 (commit 28ff2145).
+Filed 2026-08-13 from RFC-0953 §responses signature changes.
 
 ## RFC
 

@@ -2,7 +2,8 @@
 
 ## Status
 
-Completed
+LANDED 2026-08-13 (commit 48bbd8c6).
+Filed 2026-08-13 from RFC-0953 §messages signature changes.
 
 ## RFC
 

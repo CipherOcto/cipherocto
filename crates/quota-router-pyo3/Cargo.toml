@@ -39,10 +39,20 @@ name = "quota_router_native"
 [features]
 default = ["full"]
 full = ["quota-router-core/full"]
+# `pyo3-extension-module` is enabled by maturin (see python/pyproject.toml
+# [tool.maturin] features). It is intentionally OFF in the default build so
+# that `cargo test` can link against libpython via the rlib path. Production
+# wheels built by maturin get the feature automatically.
+pyo3-extension-module = ["pyo3/extension-module"]
 
 [dependencies]
-# PyO3 for Python bindings - using 0.21 with experimental async
-pyo3 = { version = "0.21", features = ["extension-module", "experimental-async"] }
+# PyO3 for Python bindings - using 0.21 with experimental async.
+# `extension-module` is opt-in via the `pyo3-extension-module` feature so
+# that `cargo test --lib` can run tests without Python's import loader.
+# `auto-initialize` lets the rlib path spin up Python on demand (needed
+# by `cargo test` since the test binary is NOT loaded by Python's import
+# loader — maturin handles that path).
+pyo3 = { version = "0.21", features = ["experimental-async", "auto-initialize"] }
 
 # Core library - full mode enables both litellm (reqwest) and any-llm (PyO3) backends
 quota-router-core = { path = "../quota-router-core", default-features = false, features = ["full"] }
@@ -67,6 +77,16 @@ pyo3-asyncio-0-21 = { version = "0.21", features = ["tokio-runtime"] }
 
 # Lazy initialization for global state
 once_cell = "1.19"
+
+# Async trait support for implementing CallbackTarget from core callbacks module.
+# Pin matches workspace version (root [workspace.dependencies]).
+async-trait = "0.1"
+
+# Structured logging (matches workspace version).
+tracing = "0.1"
+
+# Time handling for CallbackEvent construction in tests.
+chrono = "0.4"
 
 [build-dependencies]
 pyo3-build-config = "0.21"

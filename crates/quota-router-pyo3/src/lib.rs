@@ -15,6 +15,7 @@
 #![allow(deprecated)]
 
 mod batch;
+mod callbacks;
 mod completion;
 mod exceptions;
 mod model;
@@ -108,6 +109,17 @@ fn quota_router_native(m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sdk::set_api_key, m)?)?;
     m.add_function(wrap_pyfunction!(sdk::get_budget_status, m)?)?;
     m.add_function(wrap_pyfunction!(sdk::get_metrics, m)?)?;
+
+    // Register callback functions (RFC-0947 §Python SDK)
+    m.add_function(wrap_pyfunction!(callbacks::set_input_callback, m)?)?;
+    m.add_function(wrap_pyfunction!(callbacks::set_success_callback, m)?)?;
+    m.add_function(wrap_pyfunction!(callbacks::set_failure_callback, m)?)?;
+    m.add_function(wrap_pyfunction!(callbacks::set_service_callback, m)?)?;
+    m.add_function(wrap_pyfunction!(callbacks::set_start_callback, m)?)?;
+    m.add_function(wrap_pyfunction!(callbacks::set_end_callback, m)?)?;
+    m.add_function(wrap_pyfunction!(callbacks::set_custom_callback, m)?)?;
+    m.add_function(wrap_pyfunction!(callbacks::callback_dropped_count, m)?)?;
+    m.add_function(wrap_pyfunction!(callbacks::callback_registry_snapshot, m)?)?;
 
     // Register provider functions
     m.add_function(wrap_pyfunction!(

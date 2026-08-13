@@ -61,7 +61,7 @@ pub enum StreamingCallbackPolicy {
 }
 
 /// Callback event type — maps to LiteLLM's 4 callback lists plus extensions.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum CallbackType {
     /// Input validation/transformation (pre-provider-call).
     /// Maps to LiteLLM's input_callback.

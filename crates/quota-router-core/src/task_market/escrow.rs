@@ -7,7 +7,7 @@
 //! double-settle vector on the wrapped `Escrow`. Use
 //! `TaskEscrowSnapshot` (cloneable) for audit/log capture.
 
-use crate::marketplace::escrow::{Escrow, EscrowError, EscrowSnapshot, EscrowState};
+use crate::marketplace::escrow::{Escrow, EscrowError, EscrowSnapshot, EscrowState, Party};
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum TaskEscrowError {
@@ -57,24 +57,41 @@ impl TaskEscrow {
         }
     }
 
-    pub fn lock(&mut self) -> Result<EscrowState, TaskEscrowError> {
-        Ok(self.base.lock()?)
+    #[must_use]
+    pub fn with_arbitrator(
+        id: [u8; 32],
+        task_id: [u8; 32],
+        request_id: [u8; 32],
+        buyer: impl Into<String>,
+        seller: impl Into<String>,
+        arbitrator: impl Into<String>,
+        amount_micro_octo_w: u128,
+    ) -> Self {
+        Self {
+            base: Escrow::with_arbitrator(id, buyer, seller, arbitrator, amount_micro_octo_w),
+            task_id,
+            request_id,
+        }
     }
 
-    pub fn settle(&mut self) -> Result<EscrowState, TaskEscrowError> {
-        Ok(self.base.settle()?)
+    pub fn lock(&mut self, caller: &Party) -> Result<EscrowState, TaskEscrowError> {
+        Ok(self.base.lock(caller)?)
     }
 
-    pub fn dispute(&mut self) -> Result<EscrowState, TaskEscrowError> {
-        Ok(self.base.dispute()?)
+    pub fn settle(&mut self, caller: &Party) -> Result<EscrowState, TaskEscrowError> {
+        Ok(self.base.settle(caller)?)
     }
 
-    pub fn resolve_valid(&mut self) -> Result<EscrowState, TaskEscrowError> {
-        Ok(self.base.resolve_valid()?)
+    pub fn dispute(&mut self, caller: &Party) -> Result<EscrowState, TaskEscrowError> {
+        Ok(self.base.dispute(caller)?)
     }
 
-    pub fn resolve_invalid(&mut self) -> Result<EscrowState, TaskEscrowError> {
-        Ok(self.base.resolve_invalid()?)
+    pub fn resolve_valid(&mut self, caller: &Party) -> Result<EscrowState, TaskEscrowError> {
+        Ok(self.base.resolve_valid(caller)?)
+    }
+
+    pub fn resolve_invalid(&mut self, caller: &Party) -> Result<EscrowState, TaskEscrowError> {
+        Ok(self.base.resolve_invalid(caller)?)
     }
 
     #[must_use]
@@ -85,5 +102,67 @@ impl TaskEscrow {
     #[must_use]
     pub fn is_terminal(&self) -> bool {
         self.base.is_terminal()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample() -> TaskEscrow {
+        TaskEscrow::with_arbitrator(
+            [0xaa; 32],
+            [0xbb; 32],
+            [0xcc; 32],
+            octo_ident::test_helpers::sample_did(130),
+            octo_ident::test_helpers::sample_did(95),
+            octo_ident::test_helpers::sample_did(50),
+            100_000,
+        )
+    }
+
+    fn buyer() -> Party {
+        Party::Buyer(octo_ident::test_helpers::sample_did(130))
+    }
+    fn seller() -> Party {
+        Party::Seller(octo_ident::test_helpers::sample_did(95))
+    }
+    fn arbiter() -> Party {
+        Party::Arbitrator(octo_ident::test_helpers::sample_did(50))
+    }
+
+    #[test]
+    fn task_escrow_full_happy_path() {
+        let mut t = sample();
+        t.lock(&buyer()).unwrap();
+        t.dispute(&buyer()).unwrap();
+        t.resolve_invalid(&arbiter()).unwrap();
+        assert_eq!(t.state(), EscrowState::Settled);
+        assert!(t.is_terminal());
+    }
+
+    #[test]
+    fn task_escrow_rejects_unauthorized_caller() {
+        // Seller trying to lock — must reject.
+        let mut t = sample();
+        assert!(matches!(
+            t.lock(&seller()).unwrap_err(),
+            TaskEscrowError::Escrow(EscrowError::UnauthorizedCaller {
+                required: "buyer",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn task_escrow_snapshot_carries_arbitrator() {
+        let t = sample();
+        let snap = TaskEscrowSnapshot::from(&t);
+        assert_eq!(
+            snap.base.arbitrator,
+            octo_ident::test_helpers::sample_did(50)
+        );
+        assert_eq!(snap.base.buyer, octo_ident::test_helpers::sample_did(130));
+        assert_eq!(snap.base.seller, octo_ident::test_helpers::sample_did(95));
     }
 }

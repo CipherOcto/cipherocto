@@ -12,8 +12,9 @@
 // ---------------------------------------------------------------------------
 
 use octo_ident::test_helpers::sample_did;
+use quota_router_core::marketplace::escrow::Party;
 use quota_router_core::task_market::{
-    Dispute, DisputeReason, Evidence, TaskEscrow, TaskMarket, TaskSpec, TaskType,
+    Dispute, DisputeReason, Evidence, TaskEscrow, TaskEscrowError, TaskMarket, TaskSpec, TaskType,
 };
 
 #[test]
@@ -219,24 +220,28 @@ fn task_escrow_happy_path_lock_then_settle() {
         sample_did(54),
         100_000,
     );
-    e.lock().expect("lock");
+    e.lock(&Party::Buyer(sample_did(236).to_string()))
+        .expect("lock");
     assert_eq!(e.state(), EscrowState::Locked);
-    e.settle().expect("settle");
+    e.settle(&Party::Seller(sample_did(54).to_string()))
+        .expect("settle");
     assert_eq!(e.state(), EscrowState::Settled);
     assert!(e.is_terminal());
 }
 
 #[test]
 fn task_escrow_dispute_valid_slashes_seller() {
-    let mut e = TaskEscrow::new(
+    let mut e = TaskEscrow::with_arbitrator(
         [0xaa; 32],
         [0x11; 32],
         [0x22; 32],
         sample_did(236),
         sample_did(54),
+        sample_did(50),
         100_000,
     );
-    e.lock().expect("lock");
+    e.lock(&Party::Buyer(sample_did(236).to_string()))
+        .expect("lock");
     let dispute = Dispute::new(
         [0xaa; 32],
         sample_did(236),
@@ -251,42 +256,50 @@ fn task_escrow_dispute_valid_slashes_seller() {
     assert_eq!(dispute.reason, DisputeReason::ResultMismatch);
     assert_eq!(dispute.evidence.expect("evidence").hash, [0x99; 32]);
 
-    e.dispute().expect("dispute");
+    e.dispute(&Party::Buyer(sample_did(236).to_string()))
+        .expect("dispute");
     assert_eq!(e.state(), EscrowState::Disputed);
-    e.resolve_valid().expect("resolve valid");
+    e.resolve_valid(&Party::Arbitrator(sample_did(50).to_string()))
+        .expect("resolve valid");
     assert_eq!(e.state(), EscrowState::Slashed);
     assert!(e.is_terminal());
 }
 
 #[test]
 fn task_escrow_dispute_invalid_confirms_payment() {
-    let mut e = TaskEscrow::new(
+    let mut e = TaskEscrow::with_arbitrator(
         [0xaa; 32],
         [0x11; 32],
         [0x22; 32],
         sample_did(236),
         sample_did(54),
+        sample_did(50),
         100_000,
     );
-    e.lock().expect("lock");
-    e.dispute().expect("dispute");
-    e.resolve_invalid().expect("resolve invalid");
+    e.lock(&Party::Buyer(sample_did(236).to_string()))
+        .expect("lock");
+    e.dispute(&Party::Buyer(sample_did(236).to_string()))
+        .expect("dispute");
+    e.resolve_invalid(&Party::Arbitrator(sample_did(50).to_string()))
+        .expect("resolve invalid");
     assert_eq!(e.state(), EscrowState::Settled);
     assert!(e.is_terminal());
 }
 
 #[test]
 fn task_escrow_rejects_lock_from_non_pending() {
-    let mut e = TaskEscrow::new(
+    let mut e = TaskEscrow::with_arbitrator(
         [0xaa; 32],
         [0x11; 32],
         [0x22; 32],
         sample_did(236),
         sample_did(54),
+        sample_did(50),
         100_000,
     );
-    e.lock().expect("lock");
-    assert!(e.lock().is_err());
+    e.lock(&Party::Buyer(sample_did(236).to_string()))
+        .expect("lock");
+    assert!(e.lock(&Party::Buyer(sample_did(236).to_string())).is_err());
 }
 
 #[test]
@@ -299,7 +312,9 @@ fn task_escrow_rejects_settle_from_pending() {
         sample_did(54),
         100_000,
     );
-    assert!(e.settle().is_err());
+    assert!(e
+        .settle(&Party::Seller(sample_did(54).to_string()))
+        .is_err());
 }
 
 #[test]
@@ -312,7 +327,9 @@ fn task_escrow_rejects_dispute_from_pending() {
         sample_did(54),
         100_000,
     );
-    assert!(e.dispute().is_err());
+    assert!(e
+        .dispute(&Party::Buyer(sample_did(236).to_string()))
+        .is_err());
 }
 
 #[test]
@@ -325,9 +342,14 @@ fn task_escrow_rejects_resolve_from_non_disputed() {
         sample_did(54),
         100_000,
     );
-    e.lock().expect("lock");
-    assert!(e.resolve_valid().is_err());
-    assert!(e.resolve_invalid().is_err());
+    e.lock(&Party::Buyer(sample_did(236).to_string()))
+        .expect("lock");
+    assert!(e
+        .resolve_valid(&Party::Arbitrator(sample_did(50).to_string()))
+        .is_err());
+    assert!(e
+        .resolve_invalid(&Party::Arbitrator(sample_did(50).to_string()))
+        .is_err());
 }
 
 #[test]
@@ -360,8 +382,12 @@ fn task_market_match_then_full_escrow_happy_path() {
         matched.ask.owner.clone(),
         matched.price * matched.qty as u128,
     );
-    escrow.lock().expect("lock");
-    escrow.settle().expect("settle");
+    escrow
+        .lock(&Party::Buyer(matched.bid.owner.clone()))
+        .expect("lock");
+    escrow
+        .settle(&Party::Seller(matched.ask.owner.clone()))
+        .expect("settle");
     assert_eq!(escrow.state(), EscrowState::Settled);
     assert_eq!(escrow.base.amount_micro_octo_w, 90);
 }
@@ -382,10 +408,25 @@ fn task_market_match_then_dispute_path() {
         matched.ask.owner.clone(),
         matched.price * matched.qty as u128,
     );
-    escrow.lock().expect("lock");
-    escrow.dispute().expect("dispute");
-    escrow.resolve_valid().expect("resolve valid");
-    assert_eq!(escrow.state(), EscrowState::Slashed);
+    escrow
+        .lock(&Party::Buyer(matched.bid.owner.clone()))
+        .expect("lock");
+    escrow
+        .dispute(&Party::Buyer(matched.bid.owner.clone()))
+        .expect("dispute");
+    // The escrow has no arbitrator wired → resolve_valid rejects on auth.
+    let err = escrow
+        .resolve_valid(&Party::Arbitrator("arb-1".to_string()))
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        TaskEscrowError::Escrow(
+            quota_router_core::marketplace::escrow::EscrowError::UnauthorizedCaller {
+                required: "arbitrator",
+                ..
+            }
+        )
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -536,7 +577,9 @@ fn full_rfc_0918_inference_flow_happy_path() {
         matched.price * matched.qty as u128,
     );
     assert_eq!(escrow.state(), EscrowState::Pending);
-    escrow.lock().expect("lock");
+    escrow
+        .lock(&Party::Buyer(matched.bid.owner.clone()))
+        .expect("lock");
     assert_eq!(escrow.state(), EscrowState::Locked);
 
     // 6. Worker executes the inference task (mocked).
@@ -544,7 +587,9 @@ fn full_rfc_0918_inference_flow_happy_path() {
     assert_eq!(result[0], 0x01);
 
     // 7. Happy path: settle the escrow → funds released to seller.
-    escrow.settle().expect("settle");
+    escrow
+        .settle(&Party::Seller(matched.ask.owner.clone()))
+        .expect("settle");
     assert_eq!(escrow.state(), EscrowState::Settled);
     assert!(escrow.is_terminal());
     assert_eq!(escrow.base.amount_micro_octo_w, 100);
@@ -572,15 +617,18 @@ fn full_rfc_0918_inference_flow_dispute_then_slash() {
 
     // Lock escrow.
     let escrow_id = [0x20; 32];
-    let mut escrow = TaskEscrow::new(
+    let mut escrow = TaskEscrow::with_arbitrator(
         escrow_id,
         [0x21; 32],
         [0x22; 32],
         matched.bid.owner.clone(),
         matched.ask.owner.clone(),
+        sample_did(50),
         matched.price * matched.qty as u128,
     );
-    escrow.lock().expect("lock");
+    escrow
+        .lock(&Party::Buyer(matched.bid.owner.clone()))
+        .expect("lock");
 
     // Worker returns garbage — buyer opens a dispute.
     let evidence = Evidence {
@@ -597,9 +645,13 @@ fn full_rfc_0918_inference_flow_dispute_then_slash() {
     assert_eq!(disputes.len(), 1);
 
     // Dispute resolves valid → seller is slashed.
-    escrow.dispute().expect("dispute");
+    escrow
+        .dispute(&Party::Buyer(matched.bid.owner.clone()))
+        .expect("dispute");
     assert_eq!(escrow.state(), EscrowState::Disputed);
-    escrow.resolve_valid().expect("resolve valid");
+    escrow
+        .resolve_valid(&Party::Arbitrator(sample_did(50).to_string()))
+        .expect("resolve valid");
     assert_eq!(escrow.state(), EscrowState::Slashed);
     assert!(escrow.is_terminal());
 
@@ -630,15 +682,18 @@ fn full_rfc_0918_inference_flow_dispute_invalid_keeps_payment() {
     assert_eq!(matched.price, 70);
 
     let escrow_id = [0x30; 32];
-    let mut escrow = TaskEscrow::new(
+    let mut escrow = TaskEscrow::with_arbitrator(
         escrow_id,
         [0x31; 32],
         [0x32; 32],
         matched.bid.owner.clone(),
         matched.ask.owner.clone(),
+        sample_did(50),
         matched.price * matched.qty as u128,
     );
-    escrow.lock().expect("lock");
+    escrow
+        .lock(&Party::Buyer(matched.bid.owner.clone()))
+        .expect("lock");
 
     // Buyer raises a bad-faith dispute (no evidence).
     disputes
@@ -649,8 +704,12 @@ fn full_rfc_0918_inference_flow_dispute_invalid_keeps_payment() {
             None,
         ))
         .expect("open");
-    escrow.dispute().expect("dispute");
-    escrow.resolve_invalid().expect("resolve invalid");
+    escrow
+        .dispute(&Party::Buyer(matched.bid.owner.clone()))
+        .expect("dispute");
+    escrow
+        .resolve_invalid(&Party::Arbitrator(sample_did(50).to_string()))
+        .expect("resolve invalid");
     assert_eq!(escrow.state(), EscrowState::Settled);
 
     disputes.resolve(&escrow_id).expect("resolve");

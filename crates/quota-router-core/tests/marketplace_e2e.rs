@@ -13,7 +13,7 @@
 //! 5. Banned provider: escalation crosses 50% loss → subsequent calls
 //!    rejected.
 
-use quota_router_core::marketplace::escrow::{Escrow, EscrowState};
+use quota_router_core::marketplace::escrow::{Escrow, EscrowState, Party};
 use quota_router_core::marketplace::orderbook::{MatchPair, Order, OrderBook, Side};
 use quota_router_core::marketplace::slashing::{SlashReason, SlashingLedger, SlashingRules};
 
@@ -62,7 +62,7 @@ fn setup_match(buyer: &str, seller: &str, model: &str, price: u128, qty: u64) ->
     let escrow_id = [0x42; 32];
     let amount = price * qty as u128;
     let mut escrow = Escrow::new(escrow_id, buyer, seller, amount);
-    escrow.lock().expect("lock");
+    escrow.lock(&Party::Buyer(buyer.to_string())).expect("lock");
     MarketTransaction { book, escrow }
 }
 
@@ -82,7 +82,9 @@ fn happy_path_bid_matches_ask_escrow_settles() {
     assert!(tx.book.is_empty());
 
     // Settle the escrow.
-    tx.escrow.settle().expect("settle");
+    tx.escrow
+        .settle(&Party::Seller(tx.escrow.seller.clone()))
+        .expect("settle");
     assert_eq!(tx.escrow.state, EscrowState::Settled);
     assert!(tx.escrow.is_terminal());
     assert_eq!(tx.escrow.amount_micro_octo_w, 500);
@@ -94,8 +96,12 @@ fn dispute_valid_slashes_seller() {
     let matched = match_and_populate(&mut tx);
     assert_eq!(matched.qty, 3);
 
-    tx.escrow.dispute().expect("dispute");
-    tx.escrow.resolve_valid().expect("resolve valid");
+    tx.escrow
+        .dispute(&Party::Buyer(tx.escrow.buyer.clone()))
+        .expect("dispute");
+    tx.escrow
+        .resolve_valid(&Party::Arbitrator("arb-1".to_string()))
+        .expect("resolve valid");
     assert_eq!(tx.escrow.state, EscrowState::Slashed);
     assert!(tx.escrow.is_terminal());
 
@@ -121,8 +127,12 @@ fn dispute_invalid_confirms_payment() {
     );
     match_and_populate(&mut tx);
 
-    tx.escrow.dispute().expect("dispute");
-    tx.escrow.resolve_invalid().expect("resolve invalid");
+    tx.escrow
+        .dispute(&Party::Buyer(tx.escrow.buyer.clone()))
+        .expect("dispute");
+    tx.escrow
+        .resolve_invalid(&Party::Arbitrator("arb-1".to_string()))
+        .expect("resolve invalid");
     assert_eq!(tx.escrow.state, EscrowState::Settled);
     assert_eq!(tx.escrow.amount_micro_octo_w, 500);
 }
@@ -433,10 +443,16 @@ fn escrow_double_settle_rejected() {
     // double-settle vector via accidental clone; this test pins the
     // state-machine half of that contract.
     let mut escrow = Escrow::new([0x99; 32], "buyer", "seller", 500);
-    escrow.lock().expect("lock");
-    escrow.settle().expect("first settle");
+    escrow
+        .lock(&Party::Buyer("buyer".to_string()))
+        .expect("lock");
+    escrow
+        .settle(&Party::Seller("seller".to_string()))
+        .expect("first settle");
     assert_eq!(escrow.state, EscrowState::Settled);
-    let err = escrow.settle().expect_err("second settle must fail");
+    let err = escrow
+        .settle(&Party::Seller("seller".to_string()))
+        .expect_err("second settle must fail");
     assert!(matches!(
         err,
         quota_router_core::marketplace::escrow::EscrowError::SettleFromInvalid(_)
@@ -447,9 +463,15 @@ fn escrow_double_settle_rejected() {
 fn escrow_double_dispute_rejected() {
     // Same contract for dispute: only one dispute per Locked escrow.
     let mut escrow = Escrow::new([0x99; 32], "buyer", "seller", 500);
-    escrow.lock().expect("lock");
-    escrow.dispute().expect("first dispute");
-    let err = escrow.dispute().expect_err("second dispute must fail");
+    escrow
+        .lock(&Party::Buyer("buyer".to_string()))
+        .expect("lock");
+    escrow
+        .dispute(&Party::Buyer("buyer".to_string()))
+        .expect("first dispute");
+    let err = escrow
+        .dispute(&Party::Buyer("buyer".to_string()))
+        .expect_err("second dispute must fail");
     assert!(matches!(
         err,
         quota_router_core::marketplace::escrow::EscrowError::DisputeFromInvalid(_)

@@ -378,6 +378,7 @@ impl ProxyServer {
                                     prompt_registry.clone(),
                                     logger.clone(),
                                     client.clone(),
+                                    None,
                                 )
                             }),
                         )
@@ -664,6 +665,7 @@ async fn handle_request<B>(
     prompt_registry: Option<Arc<std::sync::RwLock<crate::prompts::PromptRegistry>>>,
     logger: Option<Arc<StructuredLogger>>,
     client: reqwest::Client,
+    health_context: Option<Arc<crate::health::HealthContext>>,
 ) -> Result<Response<SseBody>, Infallible>
 where
     B: http_body::Body + 'static,
@@ -1000,13 +1002,22 @@ where
 
     // /healthz and /healthz/ready — K8s-compatible health probes (RFC-0905)
     if path == "/healthz" || path == "/healthz/ready" {
-        // HealthHandler is a synchronous handler; spawn it directly.
-        let handler = crate::health::HealthHandler::new(std::sync::Arc::new(
-            crate::health::DefaultDependencyChecker,
-        ));
+        // Liveness: always 200 (no dependency check).
+        // Readiness: prefer the async CompositeDependencyChecker when a
+        // HealthContext is supplied (mission 0905-d); fall back to the sync
+        // DefaultDependencyChecker placeholder when None (test fixture path).
         let (status, body) = if path == "/healthz" {
+            let handler = crate::health::HealthHandler::new(std::sync::Arc::new(
+                crate::health::DefaultDependencyChecker,
+            ));
             handler.handle_liveness()
+        } else if let Some(ctx) = health_context.as_ref() {
+            let composite = ctx.composite();
+            crate::health::handle_readiness_async(&composite).await
         } else {
+            let handler = crate::health::HealthHandler::new(std::sync::Arc::new(
+                crate::health::DefaultDependencyChecker,
+            ));
             handler.handle_readiness()
         };
         let status_code = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
@@ -3946,6 +3957,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -3980,6 +3992,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4015,6 +4028,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4048,6 +4062,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4081,6 +4096,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4120,12 +4136,76 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
 
         // DefaultDependencyChecker returns Ok for all checks → 200 OK.
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// AC-6 integration test: when a HealthContext is supplied whose stoolap
+    /// probe points at a non-existent file, `/healthz/ready` returns 503.
+    #[tokio::test]
+    async fn test_handle_request_healthz_ready_503_when_stoolap_unreachable() {
+        use crate::health::HealthContext;
+        use std::path::PathBuf;
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let dispatch_map = Arc::new(HashMap::new());
+
+        let req = Request::builder()
+            .uri("/healthz/ready")
+            .body(String::new())
+            .unwrap();
+
+        let providers_snapshot: Arc<dyn Fn() -> Vec<Provider> + Send + Sync> =
+            Arc::new(|| vec![Provider::new("openai", "https://api.openai.com")]);
+        let health_ctx = Arc::new(HealthContext::new(
+            PathBuf::from("/nonexistent/0905-d-stoolap-missing.db"),
+            PathBuf::from("/nonexistent/0905-d-config-missing.json"),
+            providers_snapshot,
+        ));
+        // Sanity-check that the composite wired into the handler actually
+        // detects the bad paths. If this changes we want the proxy test to
+        // fail loudly here rather than at the 503 assertion below.
+        let composite = health_ctx.composite();
+        assert_eq!(
+            composite.stoolap.db_path,
+            PathBuf::from("/nonexistent/0905-d-stoolap-missing.db")
+        );
+        assert_eq!(
+            composite.config.config_path,
+            PathBuf::from("/nonexistent/0905-d-config-missing.json")
+        );
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+            Some(health_ctx),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "stoolap probe must report 503 when DB path is unreachable"
+        );
     }
 
     #[tokio::test]
@@ -4170,6 +4250,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4209,6 +4290,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4249,6 +4331,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4288,6 +4371,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4322,6 +4406,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4357,6 +4442,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4433,6 +4519,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4510,6 +4597,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4631,6 +4719,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4664,6 +4753,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4697,6 +4787,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4732,6 +4823,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4767,6 +4859,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4801,6 +4894,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4890,6 +4984,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4947,6 +5042,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5008,6 +5104,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5060,6 +5157,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5120,6 +5218,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5156,6 +5255,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5188,6 +5288,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5240,6 +5341,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5301,6 +5403,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5362,6 +5465,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5427,6 +5531,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5478,6 +5583,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5527,6 +5633,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5574,6 +5681,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5623,6 +5731,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5665,6 +5774,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5705,6 +5815,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5744,6 +5855,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5784,6 +5896,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5816,6 +5929,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5854,6 +5968,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5887,6 +6002,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5919,6 +6035,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5951,6 +6068,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5995,6 +6113,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6033,6 +6152,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6073,6 +6193,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6113,6 +6234,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6145,6 +6267,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6178,6 +6301,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6210,6 +6334,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6273,6 +6398,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6323,6 +6449,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6373,6 +6500,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6408,6 +6536,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6450,6 +6579,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6487,6 +6617,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6525,6 +6656,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6562,6 +6694,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6599,6 +6732,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6655,6 +6789,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6688,6 +6823,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6723,6 +6859,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6758,6 +6895,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6789,6 +6927,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6824,6 +6963,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6855,6 +6995,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7147,6 +7288,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7184,6 +7326,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7216,6 +7359,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7294,6 +7438,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7332,6 +7477,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7375,6 +7521,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7425,6 +7572,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7474,6 +7622,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7527,6 +7676,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7582,6 +7732,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7627,6 +7778,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7691,6 +7843,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7727,6 +7880,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7782,6 +7936,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7818,6 +7973,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7860,6 +8016,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7898,6 +8055,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7940,6 +8098,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7972,6 +8131,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8004,6 +8164,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8050,6 +8211,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8088,6 +8250,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8124,6 +8287,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8159,6 +8323,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8227,6 +8392,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8295,6 +8461,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8363,6 +8530,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8403,6 +8571,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8452,6 +8621,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8492,6 +8662,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8528,6 +8699,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8564,6 +8736,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8599,6 +8772,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8646,6 +8820,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8688,6 +8863,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8734,6 +8910,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8775,6 +8952,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8855,6 +9033,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8913,6 +9092,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8964,6 +9144,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -9014,6 +9195,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -9121,6 +9303,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -9202,6 +9385,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -9276,6 +9460,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -9332,6 +9517,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -9375,6 +9561,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -9457,6 +9644,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -9504,6 +9692,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -9558,6 +9747,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -9596,6 +9786,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -9774,6 +9965,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -9830,6 +10022,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -9949,6 +10142,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -10053,6 +10247,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -10139,6 +10334,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -10583,6 +10779,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -10637,6 +10834,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -10699,6 +10897,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -10735,6 +10934,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -10780,6 +10980,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -10839,6 +11040,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -10934,6 +11136,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -10992,6 +11195,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -11094,6 +11298,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -11207,6 +11412,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -11312,6 +11518,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -11394,6 +11601,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -11466,6 +11674,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -11537,6 +11746,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -11593,6 +11803,7 @@ mod tests {
             None,
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -11648,6 +11859,7 @@ mod tests {
             Some(registry),
             None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();

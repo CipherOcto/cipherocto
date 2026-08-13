@@ -1,43 +1,42 @@
 # End-to-End Scenarios: From Local Prompt to Network-Routed Inference
 
-**Status:** Draft (2026-08-13)
-**Audience:** New contributors. Read this after `ARCHITECTURE.md` to understand how the pieces fit together through the lens of a single request.
-**Scope:** Buyer-seller flow across the local proxy, the marketplace, the mesh, and the seller node. Failures and adversarial cases included.
+- **Status:** Draft (2026-08-13)
+- **Audience:** New contributors. Read this after `ARCHITECTURE.md` to understand how the pieces fit together through the lens of a single request.
+- **Scope:** Buyer-seller flow across the local proxy, the marketplace, the mesh, and the seller node. Failures and adversarial cases included.
 
 > This document is **integrator glue**. Each scenario cross-links the deeper docs that own the specifics. Use it as a tour, then drill into the linked RFCs and architecture specs for protocol-level detail.
 
 ## Glossary
 
-| Term                   | Meaning                                                                                                                                                                                                                                                                            | Where                                                                           |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| **Hardened client**    | Production CipherOcto client (CLI / Python SDK / HTTP). Talks to local proxy on `localhost`.                                                                                                                                                                                       | `../quota-router-python-sdk.md`, `architecture/quota-router-architecture.md §4` |
-| **Local proxy**        | `quota-router-core` HTTP server running on the buyer's machine. First hop.                                                                                                                                                                                                         | `architecture/quota-router-architecture.md`                                     |
-| **Provider**           | LLM API (OpenAI, Anthropic, etc.). Reached by API key configured on the buyer or seller node.                                                                                                                                                                                      | `architecture/quota-router-architecture.md §5`                                  |
-| **`dispatch_map`**     | Map of `model_name → DispatchInfo { provider, api_base, rpm }`. Decides which provider serves which model.                                                                                                                                                                         | `architecture/quota-router-architecture.md §9.2`                                |
-| **CapabilityToken V2** | Bearer token signed by buyer; specifies model, max price, expiry, caveats. Outer envelope `CapabilityBundleV2`.                                                                                                                                                                    | `use-cases/dual-mode-authorization-workflow.md`, RFC-0957                       |
-| **CapabilityBundleV2** | RFC-0957 outer envelope. Inner carries caveats.                                                                                                                                                                                                                                    | RFC-0957                                                                        |
-| **Marketplace node**   | Discovery + reputation registry. Returns ranked offers for a requested model.                                                                                                                                                                                                      | `use-cases/ai-quota-marketplace.md`, RFC-0969                                   |
-| **Seller node**        | A `quota-router-core` operator who exposes their provider pool to the network. Earns revenue.                                                                                                                                                                                      | RFC-0969, `architecture/octo-network-architecture.md`                           |
-| **Wallet node**        | Mints + verifies capability tokens. Holds the buyer's signing key (HSM-mandated for production).                                                                                                                                                                                   | `use-cases/dual-mode-authorization-workflow.md`, mission `0009-a-hsm-routing`   |
-| **NodeEnvelope**       | Unified mesh wire envelope (`envelope_id`, `from_did`, `to_node_id`, `payload_kind`, `payload`, `authorization`, `nonce`, `expires_at_unix_ms`) — real struct at `crates/octo-protocol/src/envelope.rs`.                                                                           | `architecture/octo-network-architecture.md §3.3`, RFC-0871 §Data Structures     |
-| **`PayloadKindId`**    | UUID discriminator inside `NodeEnvelope` identifying the inner payload type. `octo-protocol` defines ~21 entries (`IDENTITY_*`, `WALLET_*`, `QUOTA_*`, `REPUTATION_*`, `CAPABILITY_*`, `PAID_QUERY_*`); the RFC-0870-allocated subset covers mesh-forwarded capability/auth flows. | mission `0870-b-envelope-adoption`, `crates/octo-protocol/src/payload_kind.rs`  |
-| **HopSignature**       | Per-hop Ed25519 signature over `BLAKE3-256(canonical_ser((chain_hash, hop_index, BLAKE3(inner_payload), envelope_id)))` (full preimage at `crates/octo-protocol/src/hop_signature.rs`). Struct fields: `hop_index: u8, hop_did: String, signature: [u8;64], signer_pub: [u8;32]`.  | RFC-0871 §Data Structures                                                       |
-| **Router node**        | Mesh relay. Forwards envelopes hop-by-hop, charges a relay fee.                                                                                                                                                                                                                    | `architecture/octo-network-architecture.md §9-11`                               |
-| **ORR**                | Onion Relay Routing. Router hops see only next hop, not final destination. Privacy by construction.                                                                                                                                                                                | `architecture/octo-network-architecture.md §11`                                 |
-| **PoRelay**            | Proof-of-Relay. Trust registry scoring router hops by stake weight + history.                                                                                                                                                                                                      | `architecture/octo-network-architecture.md §13`                                 |
-| **Balance**            | In-memory per-key monetary counter on the proxy. Decremented per request, checked pre-dispatch. Distinct from the                                                                                                                                                                  | `crates/quota-router-core/src/balance.rs`                                       |
-|                        | storage-layer `budget_limit` field (which is a top-of-funnel cap on key creation).                                                                                                                                                                                                 |                                                                                 |
-| **TokenBucket**        | Per-key rate-limiter on the proxy. Returns `bool` from `try_consume`. Refilled at configured RPM.                                                                                                                                                                                  | `crates/quota-router-core/src/key_rate_limiter.rs`                              |
-| **Escrow**             | Buyer pre-funds a payment vault tied to the capability. Released on successful response, refunded on failure.                                                                                                                                                                      | RFC-0969, marketplace facade                                                    |
-| **Settlement**         | Post-completion: escrow releases to seller node + router hops, reputation scores update.                                                                                                                                                                                           | `use-cases/reputation-persistence.md`                                           |
-| **seen-set**           | Seller-side cache of recently processed `envelope_id` values. Replay defense at the seller (real impl: `DotError::ReplayDetected` on `cache.check_and_insert(envelope_id, current_epoch)` at `octo-network/src/dot/replay.rs`).                                                    | `crates/octo-network/src/dot/replay.rs`, `crates/octo-network/src/dot/error.rs` |
+| Term                   | Meaning                                                                                                                                                                                                                                                                            | Where                                                                                |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| **Hardened client**    | Production CipherOcto client (CLI / Python SDK / HTTP). Talks to local proxy on `localhost`.                                                                                                                                                                                       | `../quota-router-python-sdk.md`, `quota-router-architecture.md §4`                   |
+| **Local proxy**        | `quota-router-core` HTTP server running on the buyer's machine. First hop.                                                                                                                                                                                                         | `architecture/quota-router-architecture.md`                                          |
+| **Provider**           | LLM API (OpenAI, Anthropic, etc.). Reached by API key configured on the buyer or seller node.                                                                                                                                                                                      | `architecture/quota-router-architecture.md §Provider Integration`                    |
+| **`dispatch_map`**     | Map of `model_name → DispatchInfo { provider, api_base, rpm }`. Decides which provider serves which model.                                                                                                                                                                         | `architecture/quota-router-architecture.md §Dispatch Map`                            |
+| **CapabilityToken V2** | Bearer token signed by buyer; specifies model, max price, expiry, caveats. Outer envelope `CapabilityBundleV2`.                                                                                                                                                                    | `use-cases/dual-mode-authorization-workflow.md`, RFC-0957                            |
+| **CapabilityBundleV2** | RFC-0957 outer envelope. Inner carries caveats.                                                                                                                                                                                                                                    | RFC-0957                                                                             |
+| **Marketplace node**   | Discovery + reputation registry. Returns ranked offers for a requested model.                                                                                                                                                                                                      | `use-cases/ai-quota-marketplace.md`, RFC-0969                                        |
+| **Seller node**        | A `quota-router-core` operator who exposes their provider pool to the network. Earns revenue.                                                                                                                                                                                      | RFC-0969, `architecture/octo-network-architecture.md`                                |
+| **Wallet node**        | Mints + verifies capability tokens. Holds the buyer's signing key (HSM-mandated for production).                                                                                                                                                                                   | `use-cases/dual-mode-authorization-workflow.md`, mission `0009-a-hsm-routing`        |
+| **NodeEnvelope**       | Unified mesh wire envelope (`envelope_id`, `from_did`, `to_node_id`, `payload_kind`, `payload`, `authorization`, `nonce`, `expires_at_unix_ms`) — real struct at `crates/octo-protocol/src/envelope.rs`.                                                                           | `architecture/octo-network-architecture.md §NodeEnvelope`, RFC-0871 §Data Structures |
+| **`PayloadKindId`**    | UUID discriminator inside `NodeEnvelope` identifying the inner payload type. `octo-protocol` defines ~22 entries (`IDENTITY_*`, `WALLET_*`, `QUOTA_*`, `REPUTATION_*`, `CAPABILITY_*`, `PAID_QUERY_*`); the RFC-0870-allocated subset covers mesh-forwarded capability/auth flows. | mission `0870-b-envelope-adoption`, `crates/octo-protocol/src/payload_kind.rs`       |
+| **HopSignature**       | Per-hop Ed25519 signature over `BLAKE3-256(canonical_ser((chain_hash, hop_index, BLAKE3(inner_payload), envelope_id)))` (full preimage at `crates/octo-protocol/src/hop_signature.rs`). Struct fields: `hop_index: u8, hop_did: String, signature: [u8;64], signer_pub: [u8;32]`.  | RFC-0871 §Data Structures                                                            |
+| **Router node**        | Mesh relay. Forwards envelopes hop-by-hop, charges a relay fee.                                                                                                                                                                                                                    | `architecture/octo-network-architecture.md §Router node`                             |
+| **ORR**                | Onion Relay Routing. Router hops see only next hop, not final destination. Privacy by construction.                                                                                                                                                                                | `architecture/octo-network-architecture.md §Onion Relay Routing`                     |
+| **PoRelay**            | Proof-of-Relay. Trust registry scoring router hops by stake weight + history.                                                                                                                                                                                                      | `architecture/octo-network-architecture.md §PoRelay`                                 |
+| **Balance**            | In-memory per-key monetary counter on the proxy. Decremented per request, checked pre-dispatch. Distinct from the storage-layer `budget_limit` field (which is a top-of-funnel cap on key creation).                                                                               | `crates/quota-router-core/src/balance.rs`                                            |
+| **TokenBucket**        | Per-key rate-limiter on the proxy. Returns `bool` from `try_consume`. Refilled at configured RPM.                                                                                                                                                                                  | `crates/quota-router-core/src/key_rate_limiter.rs`                                   |
+| **Escrow**             | Buyer pre-funds a payment vault tied to the capability. Released on successful response, refunded on failure.                                                                                                                                                                      | RFC-0969, marketplace facade                                                         |
+| **Settlement**         | Post-completion: escrow releases to seller node + router hops, reputation scores update.                                                                                                                                                                                           | `use-cases/reputation-persistence.md`                                                |
+| **seen-set**           | Seller-side cache of recently processed `envelope_id` values. Replay defense at the seller (real impl: `DotError::ReplayDetected` on `cache.check_and_insert(envelope_id, current_epoch)` at `crates/octo-network/src/dot/replay.rs`).                                             | `crates/octo-network/src/dot/replay.rs`, `crates/octo-network/src/dot/error.rs`      |
 
 > Throughout this doc, **"envelope"** is shorthand for `NodeEnvelope` (the full proper noun) outside formal type references. The abbreviated form is fine in prose; the formal name appears in code snippets and capability-witness fields.
 
 ## Cross-references
 
 - Top-level overview: [`ARCHITECTURE.md §Data Flow: End-to-End Inference`](../ARCHITECTURE.md#data-flow-end-to-end-inference) (the consensus view; this doc adds the buyer-seller perspective)
-- Local proxy request paths: [`architecture/quota-router-architecture.md §4`](../architecture/quota-router-architecture.md#4-request-flow)
+- Local proxy request paths: [`architecture/quota-router-architecture.md §Request Flow`](../architecture/quota-router-architecture.md#request-flow)
 - Mesh substrate: [`architecture/octo-network-architecture.md`](../architecture/octo-network-architecture.md) (DOT, GDP, MON, DRS, ORR, PCE, PoRelay)
 - Marketplace narrative: [`use-cases/ai-quota-marketplace.md`](../use-cases/ai-quota-marketplace.md)
 - Dual-mode auth flow: [`use-cases/dual-mode-authorization-workflow.md`](../use-cases/dual-mode-authorization-workflow.md)
@@ -45,7 +44,9 @@
 
 ---
 
-> Shorthand in the mermaid diagrams below: **RR** = `ReputationRegistry` (records `success` / `dispute` / `replay` outcomes; reputation scores for sellers, routers, buyers); **E** = `EscrowLedger` (the per-capability payment vault from Scenario 7); **ST** = PoRelay `Registry` (router/hop trust registry from Scenario 14 — exposes `get_stake(gateway_id: &[u8; 32])` and `get_score(gateway_id: &[u8; 32])` from `crates/octo-network/src/porelay/registry.rs`); **D** = "Dispute flow" (conceptual coordinator across `EscrowLedger` + `SlashingLedger` for Scenario 13 — not a discrete registry/struct); **ZK** = `ZK verifier` per RFC-0958 (capability issuance proof check in Scenario 9); **U** = human `Developer` actor (introductory use only in Scenario 1). Per-scenario ad-hoc labels (NOT in this list): **DM** = `dispatch_map` (renamed from `D` to avoid L48 shorthand collision with the Dispute flow), **TB** = per-key `TokenBucket`, **DB** = Stoolap balance store, **MK** = marketplace node, **ANT** = Anthropic provider, **OAI** = OpenAI provider. "Wallet node" / "Marketplace node" / "Router node" / "Seller node" remain the glossary terms above.
+## Diagram shorthand
+
+> Shorthand in the mermaid diagrams below: **RR** = `ReputationRegistry` (records `success` / `dispute` / `replay` outcomes; reputation scores for sellers, routers, buyers); **E** = `EscrowLedger` (the per-capability payment vault from Scenario 7); **ST** = PoRelay `TrustRegistry` (router/hop trust registry from Scenario 14 — exposes `get_stake(gateway_id: &[u8; 32])` and `get_score(gateway_id: &[u8; 32])` from `crates/octo-network/src/porelay/registry.rs`); **D** = "Dispute flow" (conceptual coordinator across `EscrowLedger` + `SlashingLedger` for Scenario 13 — not a discrete registry/struct); **ZK** = `ZK verifier` per RFC-0958 (capability issuance proof check in Scenario 9); **U** = human `Developer` actor (introductory use only in Scenario 1). Per-scenario ad-hoc labels (NOT in this list): **DM** = `dispatch_map` (renamed from `D` to avoid collision with the `D` shorthand in the diagram-legend block above), **TB** = per-key `TokenBucket`, **DB** = Stoolap balance store, **MK** = marketplace node, **ANT** = Anthropic provider, **OAI** = OpenAI provider, **SL** = `SlashingLedger` (Scenario 13 — receives `slash_with_pct` from Dispute flow D). "Wallet node" / "Marketplace node" / "Router node" / "Seller node" remain the glossary terms above.
 
 ## Scenario index
 
@@ -179,7 +180,7 @@ sequenceDiagram
 - **503 SERVICE_UNAVAILABLE** = no provider able to serve the model. Multiple sub-conditions (see consolidated 503 table below).
 - **504 GATEWAY_TIMEOUT** = reserved; not currently emitted by the proxy. `classify_http_error` maps incoming 504 responses from upstream to `RouterError::Timeout`, but the proxy itself does not synthesize 504 (streaming-buffer-overflow is not yet implemented).
 
-**Consolidated 503 sub-conditions (verified against `proxy.rs`):**
+**Consolidated 503 sub-conditions (verified against `crates/quota-router-core/src/proxy.rs`):**
 
 | Sub-condition                            | Trigger                                                                      | Body                                                                          | Where                                                                                                                             |
 | ---------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
@@ -209,7 +210,7 @@ sequenceDiagram
 
     C->>P: POST /v1/chat/completions
     P->>P: Validate API key
-    P->>DB: SELECT balance_cents FROM balances WHERE api_key = ?
+    P->>DB: SELECT balance_micro_octo_w FROM balances WHERE api_key = ?
     DB-->>P: 0
     P->>P: Balance::check(1) returns Err(BalanceError) (0 < 1)
     P-->>C: 402 PAYMENT_REQUIRED<br/>{ "error": "balance exhausted" }
@@ -217,8 +218,8 @@ sequenceDiagram
 
 **Step-by-step:**
 
-1. The proxy validates the API key, then calls `Balance::check(1)` (per RFC-0933 §5. Error Response, 402 PAYMENT_REQUIRED branch). The balance is read from Stoolap (CipherOcto's fork, `feat/blockchain-sql` branch).
-2. Balance is `0` (or below the per-request cost in cents). The proxy returns **402 PAYMENT_REQUIRED** without touching the provider.
+1. The proxy validates the API key, then calls `Balance::check(1)` (per RFC-0933 §Error Response, 402 PAYMENT_REQUIRED branch). The balance is read from Stoolap (CipherOcto's fork, `feat/blockchain-sql` branch).
+2. Balance is `0` (or below the per-request cost in micro_octo_w). The proxy returns **402 PAYMENT_REQUIRED** without touching the provider.
 3. The client surfaces the 402 to the user. To continue, the buyer tops up via the billing flow (out of scope here — handled by the team budget dashboard).
 
 **Why the `Balance` field, not the storage-layer `budget_limit`:** the proxy's 402 path reads the in-memory `Balance` field on the proxy state. The storage layer's per-key `budget_limit` field is validated only on key creation (rejects `budget_limit <= 0`). The two are intentionally separate: `budget_limit` is a hard cap (top-of-funnel), `Balance` is the running counter (per-request).
@@ -279,13 +280,13 @@ sequenceDiagram
     alt match found
         P->>P: Forward to configured provider (Scenario 2)
     else no match
-        P->>MK: DiscoverOffers {<br/>  model="claude-opus-4-5",<br/>  min_reputation=0.7,<br/>  max_price_cents=500<br/>}
+        P->>MK: DiscoverOffers {<br/>  model="claude-opus-4-5",<br/>  min_reputation=0.7,<br/>  max_price_micro_octo_w=500_000_000<br/>}
         MK->>MK: List registered sellers offering model
         loop marketplace nodes (k out of n)
             MK->>RR: query_reputation(seller_did)
             RR-->>MK: reputation score + history
         end
-        MK-->>P: Ranked offers [{<br/>  seller_did, price_cents,<br/>  reputation, latency_p50,<br/>  capacity_rpm<br/>}, ...]
+        MK-->>P: Ranked offers [{<br/>  seller_did, price_micro_octo_w,<br/>  reputation, latency_p50,<br/>  capacity_rpm<br/>}, ...]
         P-->>C: Offer list returned to client<br/>offers=[...]
     end
 ```
@@ -295,8 +296,8 @@ sequenceDiagram
 1. The proxy looks up the model in `dispatch_map`. No match.
 2. The proxy queries the marketplace (`DiscoverOffers` request, RFC-0969 §Discovery). The marketplace nodes are queried in parallel via the DGP gossip substrate.
 3. Each marketplace node checks its local reputation registry for sellers offering the requested model. The reputation score combines stake weight, performance history, and social validation (per the whitepaper §Proof of Reliability).
-4. The marketplace returns a ranked list of offers. Each offer carries: seller DID, price per request (cents), reputation score, p50 latency, available capacity (RPM).
-5. The proxy returns the offer list to the client. The client (or user) picks an offer. (Exact response status code + envelope shape are marketplace-facade-defined — see `architecture/ai-quota-marketplace.md` §Discovery Response.)
+4. The marketplace returns a ranked list of offers. Each offer carries: seller DID, price per request (micro_octo_w), reputation score, p50 latency, available capacity (RPM).
+5. The proxy returns the offer list to the client. The client (or user) picks an offer. (Exact response status code + envelope shape are marketplace-facade-defined — see `use-cases/ai-quota-marketplace.md` §Discovery Response.)
 
 **On the empty case:** if the marketplace returns zero offers (no seller serves this model), the proxy returns **503 SERVICE_UNAVAILABLE** with a different error body ("no marketplace offers for model X" — see consolidated 503 table above, row `marketplace-empty`). The client can then either retry later or reconfigure.
 
@@ -315,8 +316,8 @@ sequenceDiagram
     participant W as Wallet node
     participant E as Escrow ledger
 
-    C->>P: Pick offer { seller_did, max_price_cents }
-    P->>W: MintCapabilityTokenV2 {<br/>  audience=seller_did,<br/>  model="claude-opus-4-5",<br/>  max_price_cents=500,<br/>  expiry=now+5min,<br/>  caveats=[MaxUses { count: 1 }, ValidRange { valid_after_unix, valid_until_unix }]<br/>}
+    C->>P: Pick offer { seller_did, max_price_micro_octo_w }
+    P->>W: MintCapabilityTokenV2 {<br/>  audience=seller_did,<br/>  model="claude-opus-4-5",<br/>  max_price_micro_octo_w=500_000_000,<br/>  expiry=now+5min,<br/>  caveats=[MaxUses { count: 1 }, ValidRange { valid_after_unix, valid_until_unix }]<br/>}
     W-->>P: CapabilityTokenV2 (signed)
     P->>E: escrow.lock(buyer_party)
     Note over E: Escrow fields are id, buyer, seller,<br/>arbitrator, amount_micro_octo_w, state<br/>(real struct at escrow.rs §Escrow)
@@ -327,7 +328,7 @@ sequenceDiagram
 **Step-by-step:**
 
 1. The client (or proxy on the client's behalf) picks one offer from the marketplace list.
-2. The wallet node mints a `CapabilityTokenV2` (per RFC-0957). Caveats constrain the request: `MaxUses { count: 1 }` (one-shot, no replay), `ValidRange { valid_after_unix, valid_until_unix }` (time window), `MaxPerTx { amount_micro_octo_w }` (price ceiling), and any node-specific caveats (e.g. data flagging).
+2. The wallet node mints a `CapabilityTokenV2` (per RFC-0957). Caveats constrain the request: `MaxUses { count: 1 }` (one-shot, no replay), `ValidRange { valid_after_unix, valid_until_unix }` (time window), `MaxPerTx(u128 price_ceiling)` (price ceiling — tuple variant, real enum field at `crates/octo-cap-macaroon/src/caveat/mod.rs` §Caveat), and any node-specific caveats (e.g. data flagging).
 3. The proxy funds an escrow on the buyer's behalf by calling `escrow.lock(buyer_party)`. The agreed price is recorded as `amount_micro_octo_w` on the `Escrow` struct (real fields: `id, buyer, seller, arbitrator, amount_micro_octo_w, state`).
 4. The proxy now holds both a signed capability (to attach to the mesh request) and an escrow receipt (proof of payment intent).
 
@@ -365,8 +366,8 @@ sequenceDiagram
 
 **Step-by-step:**
 
-1. The buyer proxy constructs a `NodeEnvelope` (per RFC-0871 §Data Structures). Fields: `envelope_id` (BLAKE3-256 hash of canonical_ser(all other fields); deterministic per envelope content — `crates/octo-protocol/src/envelope.rs` + `signing.rs` `compute_envelope_id()`), `from_did` (canonical `did:octo:z...` form — buyer's wallet DID), `to_node_id` (seller's mesh node id), `payload_kind` (a `PayloadKindId` UUID allocated under RFC-0870; mesh-forwarded capability flows use the `WALLET_*` / identity-resolver subset — `crates/octo-protocol/src/payload_kind.rs` lists all ~22 entries), `payload` (Vec<u8> — inner request bytes, type depends on `payload_kind`), `authorization` (CapabilityTokenV2), `nonce`, `expires_at_unix_ms`.
-2. The envelope is wrapped in an ORR (Onion Relay Routing, `architecture/octo-network-architecture.md §11`) layer so intermediate router hops see only the next hop, not the final destination.
+1. The buyer proxy constructs a `NodeEnvelope` (per RFC-0871 §Data Structures). Fields: `envelope_id` (BLAKE3-256 hash of canonical_ser(all other fields); deterministic per envelope content — `crates/octo-protocol/src/envelope.rs` + `crates/octo-protocol/src/signing.rs` `compute_envelope_id()`), `from_did` (canonical `did:octo:z...` form — buyer's wallet DID), `to_node_id` (seller's mesh node id), `payload_kind` (a `PayloadKindId` UUID allocated under RFC-0870; mesh-forwarded capability flows use the `WALLET_*` / identity-resolver subset — `crates/octo-protocol/src/payload_kind.rs` lists all ~22 entries), `payload` (Vec<u8> — inner request bytes, type depends on `payload_kind`), `authorization` (CapabilityTokenV2), `nonce`, `expires_at_unix_ms`.
+2. The envelope is wrapped in an ORR (Onion Relay Routing, `architecture/octo-network-architecture.md §Onion Relay Routing`) layer so intermediate router hops see only the next hop, not the final destination.
 3. At each hop, the router:
    - Strips one ORR layer to reveal the next hop.
    - Verifies the previous hop's `HopSignature` over the chain hash (per RFC-0871 §Data Structures). Invalid signature → drop.
@@ -392,7 +393,7 @@ sequenceDiagram
     participant W as Wallet node (verify)
     participant ZK as ZK verifier (RFC-0958)
     participant RR as Reputation registry
-    participant DP as dispatch_map (seller-side)
+    participant DM as dispatch_map (seller-side)
     participant ANT as Anthropic API (seller's key)
 
     SN->>W: VerifyCapability(V2 token)
@@ -403,8 +404,8 @@ sequenceDiagram
     SN->>RR: score(buyer_did)
     RR-->>SN: score = 0.85, history = clean
     SN->>SN: Apply seller-side rate limit + budget
-    SN->>DP: dispatch_map.get("claude-opus-4-5")
-    DP-->>SN: DispatchInfo { provider="anthropic" }
+    SN->>DM: dispatch_map.get("claude-opus-4-5")
+    DM-->>SN: DispatchInfo { provider="anthropic" }
     SN->>ANT: POST /v1/messages (seller's API key)
     ANT-->>SN: SSE stream
 ```
@@ -414,7 +415,7 @@ sequenceDiagram
 1. The seller node's wallet verifies the CapabilityToken V2. This is a two-step process:
    - **ZK proof verification** (RFC-0958): the token was issued by a wallet node with valid signature, and the caveats hash commits to the declared caveats without revealing them.
    - **Caveat evaluation**: each caveat is checked against the request — pre-existing caveats (Audience, Before, Model) and RFC-0965 §3 caveats (MaxUses, MaxPerTx, ValidRange, AuditWindow, etc.). Failure on any caveat → reject with a specific reason.
-2. The seller node checks the buyer's reputation in the local reputation registry. Low reputation (below seller-configured threshold) → reject with **403 Forbidden** (emitted by the seller node, NOT the buyer's local proxy — `proxy.rs` does not synthesize 403 for reputation).
+2. The seller node checks the buyer's reputation in the local reputation registry. Low reputation (below seller-configured threshold) → reject with **403 Forbidden** (emitted by the seller node, NOT the buyer's local proxy — `crates/quota-router-core/src/proxy.rs` does not synthesize 403 for reputation).
 3. The seller node applies its own per-buyer rate limit and budget cap (preventing a malicious buyer from burning the seller's API quota).
 4. The seller node's `dispatch_map` resolves the model to its own provider (Anthropic in this case). The seller uses their own API key — the buyer's request never sees it.
 5. The seller proxies the request to Anthropic. Streams the response.
@@ -492,7 +493,7 @@ sequenceDiagram
     alt envelope_id seen before
         SN-->>P1: 409 Conflict<br/>{ "error": "envelope already processed" }
         Note over SN,RR: reputation update path differs:<br/>marketplace.record_outcome is asker-side only<br/>(records the legitimate buyer's outcome)<br/>router-hop reputation is on PoRelay (ST), not RR
-        SN->>ST: porelay::Registry::update_score(RelayScore {<br/>  gateway_id=attacker_gateway_id,<br/>  penalty=-0.5,<br/>  ..<br/>})
+        SN->>ST: porelay::TrustRegistry::update_score(RelayScore {<br/>  gateway_id=attacker_gateway_id,<br/>  penalty=-0.5,<br/>  ..<br/>})
         ST-->>SN: attacker reputation -0.5
     else envelope_id new
         SN->>SN: Process normally
@@ -504,7 +505,7 @@ sequenceDiagram
 1. The attacker captured a valid `NodeEnvelope` (e.g., from a compromised router hop, a misconfigured proxy log, or a side-channel).
 2. The attacker submits the same envelope to the mesh, hoping the seller will process it twice (charging the original buyer's escrow twice).
 3. The seller node's DOT cache checks the `envelope_id` against `cache.check_and_insert(envelope_id, current_epoch)` (real impl at `crates/octo-network/src/dot/replay.rs` §`check_and_insert`); a duplicate raises `DotError::ReplayDetected` (`crates/octo-network/src/dot/error.rs` §`ReplayDetected`). Cache eviction policy is epoch-scoped (per the DOT spec); the doc does not pin specific entry counts.
-4. The seller detects the duplicate and returns **409 Conflict** (NOT 200). The escrow is NOT settled. (Wire-level seller-reject contract; `proxy.rs` does NOT synthesize 409 — the buyer's local proxy forwards the seller's 409 verbatim. No `StatusCode::CONFLICT` emit site in the buyer-side proxy code.)
+4. The seller detects the duplicate and returns **409 Conflict** (NOT 200). The escrow is NOT settled. (Wire-level seller-reject contract; `crates/quota-router-core/src/proxy.rs` does NOT synthesize 409 — the buyer's local proxy forwards the seller's 409 verbatim. No `StatusCode::CONFLICT` emit site in the buyer-side proxy code.)
 5. The reputation registry records the replay attempt, reducing the attacker's reputation significantly.
 
 **Why not prevent at the router:** router hops do not maintain the seen-set (would require global state). Only the seller, who has the strongest interest in preventing double-processing, maintains it.
@@ -541,7 +542,7 @@ sequenceDiagram
     P2->>P1: ConnectionClosed
     P1->>P0: ConnectionClosed
     P0->>P0: Detect mid-stream failure<br/>Close SSE with 502 error event
-    P0-->>C: 502 BAD_GATEWAY<br/>{ "error": "seller offline mid-stream",<br/>  "tokens_received": 1,<br/>  "refund_cents": 499 }
+    P0-->>C: 502 BAD_GATEWAY<br/>{ "error": "seller offline mid-stream",<br/>  "tokens_received": 1,<br/>  "refund_micro_octo_w": 499_000_000 }
     P0->>E: escrow.dispute(buyer_party)
     Note over E: reason conveyed via dispute record<br/>state: Locked to Disputed to Refunded<br/>(no dedicated refund() method)
     E-->>P0: Refund receipt
@@ -576,7 +577,6 @@ sequenceDiagram
     participant D as Dispute flow (coordinator)
     participant E as Escrow ledger
     participant SL as Slashing ledger
-    participant ST as PoRelay registry
     participant RR as Reputation registry
 
     P0->>SN: Submit request (envelope)
@@ -595,7 +595,7 @@ sequenceDiagram
 **Step-by-step:**
 
 1. The buyer's wallet minted the capability with `audience=seller_A_did`. The buyer's proxy accidentally routed the request to `seller_B_did` (or `seller_A` rotated keys and the audience is now stale).
-2. The seller node's wallet fails the audience check. Returns **403 Forbidden** with a typed error (`audience mismatch`). (Emitted by the seller node — `proxy.rs` does not synthesize 403 for capability validation; it only maps incoming 403/401 to `RouterError::AuthError` via `proxy.rs::classify_http_error`.)
+2. The seller node's wallet fails the audience check. Returns **403 Forbidden** with a typed error (`audience mismatch`). (Emitted by the seller node — `crates/quota-router-core/src/proxy.rs` does not synthesize 403 for capability validation; it only maps incoming 403/401 to `RouterError::AuthError` via `crates/quota-router-core/src/proxy.rs::classify_http_error`.)
 3. The buyer proxy opens a dispute, attaching the capability bytes as evidence.
 4. The dispute registry:
    - Refunds the buyer's escrow in full (the seller did not perform work).
@@ -620,16 +620,16 @@ sequenceDiagram
     participant A as Attacker
     participant MK as Marketplace node (k/n)
     participant RR as Reputation registry
-    participant ST as PoRelay registry
+    participant ST as PoRelay TrustRegistry
     participant P0 as Buyer proxy
 
     A->>A: Create 1000 seller DIDs<br/>Mint cheap stake on each
     A->>MK: DiscoverOffers { model="claude-opus-4-5" }
     MK->>RR: query_reputation(all 1000)
     loop for each Sybil DID
-        RR->>ST: get_stake(gateway_id)
-        ST-->>RR: stake_cents
-        RR->>ST: get_score(gateway_id)
+        RR->>ST: TrustRegistry::get_stake(gateway_id)
+        ST-->>RR: stake_micro_octo_w
+        RR->>ST: TrustRegistry::get_score(gateway_id)
         ST-->>RR: RelayScore
     end
     RR->>RR: Aggregate: stake_weight × history_length
@@ -662,7 +662,7 @@ sequenceDiagram
 These gaps surfaced while writing this doc. Each should become either a follow-on mission or an RFC amendment.
 
 1. **CapabilityToken caveat schema** — RFC-0957 specifies the envelope but does not enumerate the full caveat set. The landed `Caveat` enum at `crates/octo-cap-macaroon/src/caveat/mod.rs` carries ~26 variants: pre-existing (AmountMax, PerAxisMax, Model, Provider, Before, Audience, RateLimit, InvocationHashBind, Jurisdiction, CacheStrategy, AskBinding, ThirdParty, Raw) + RFC-0965 §3 additions (Vault, Permission, ValidRange, MaxPerTx, AuditWindow, MaxUses, WrappedOnly, Factory, PolicyReference) + phase-2b additions (ValidAfter, RedemptionContext, Sharded, Payment). The mission `0965-a-caveat-dsl` mission card counts "9 new caveat types" — the RFC-0965-specific subset, not the total landed set. Distinct from RFC-0964 `Constraint` envelope variants (the Constraint envelope wraps capabilities at a different layer). This list should be cross-referenced from the deal scenario.
-2. **Settlement token unit** — Scenario 10 settles in cents. The actual ledger (stoolap off-chain vs on-chain) and the canonical currency (USD-pegged stablecoin vs OCTO token) is open.
+2. **Settlement token unit** — Scenario 10 settles in micro_octo_w. The actual ledger (stoolap off-chain vs on-chain) and the canonical currency (USD-pegged stablecoin vs OCTO token) is open.
 3. **Mid-stream refund formula** — Scenario 12 uses `tokens_received × per_token_rate`. The actual formula needs a spec (does the first token cost more? does context length matter?).
 4. **Dispute appeal SLA** — Scenario 13 mentions appeals but does not specify the SLA. Needs an RFC amendment.
 5. **Onion route key rotation** — Scenario 8 uses ORR but does not specify how the route keys rotate. The ORR section in `octo-network-architecture.md` mentions mission key hierarchy but not rotation cadence.
@@ -709,27 +709,35 @@ These gaps surfaced while writing this doc. Each should become either a follow-o
 
 ## Test coverage map
 
-| Scenario           | Existing tests                                                                                                                                                                                                                                                                                    | Tests needed                                                              |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| 1 Hello world      | `e2e_proxy::test_chat_completion_basic` (e2e_proxy.rs)                                                                                                                                                                                                                                            | —                                                                         |
-| 2 Multi-provider   | `e2e_wiremock_faults::test_dispatch_map_no_match_returns_503` (covers the asymmetric-guard path)                                                                                                                                                                                                  | Multi-provider resolution unit tests (positive match path)                |
-| 3 Provider 500     | `e2e_wiremock_faults::test_upstream_500_returns_502`, `test_no_fallback_config_upstream_500_surfaces_as_502`, `proxy::test_post_dispatch_5xx_triggers_fallback` (lib)                                                                                                                             | Fallback dance test (already covered by lib test, not by wiremock)        |
-| 4 Budget 402       | `e2e_wiremock_faults::test_budget_exhausted_returns_402`                                                                                                                                                                                                                                          | —                                                                         |
-| 5 Rate limit       | `e2e_proxy::test_rpm_rate_limit_returns_429` (e2e_proxy.rs), `key_rate_limiter::tests::test_token_bucket_basic` (lib)                                                                                                                                                                             | Wiremock pinning of `Retry-After: <seconds>` header value                 |
-| 6 Marketplace      | `marketplace_e2e` lib tests (24 tests pinning escrow/dispute/settlement invariants — `marketplace-e2e-strong-scenarios` mission); `crates/octo-network/tests/gdp_discovery.rs` + `gdp_deep.rs` cover the underlying GDP substrate used by marketplace nodes (NOT the marketplace-e2e flow itself) | Wiremock-style Sybil resistance at marketplace layer                      |
-| 7 Deal + escrow    | `0957-phase2b-payment-caveat` unit tests                                                                                                                                                                                                                                                          | CapabilityTokenV2 caveat exhaustiveness across the 9 RFC-0965 §3 variants |
-| 8 Mesh forwarding  | `0871b-cross-node-forwarding` (partial TV)                                                                                                                                                                                                                                                        | 3-node end-to-end TV (awaits `0870k`)                                     |
-| 9 Seller validate  | `0957-phase2b-payment-caveat` lib tests                                                                                                                                                                                                                                                           | ZK verification + reputation + provider dispatch integration              |
-| 10 Stream + settle | `e2e_wiremock_faults::test_streaming_response_carries_events`, `test_streaming_upstream_500_returns_502`                                                                                                                                                                                          | Mesh-streaming back-pressure (no test currently)                          |
-| 11 Replay          | (none)                                                                                                                                                                                                                                                                                            | Seen-set Bloom filter test                                                |
-| 12 Seller offline  | `e2e_wiremock_faults::test_streaming_upstream_500_returns_502` (partial)                                                                                                                                                                                                                          | Mid-stream TCP drop simulation (separate from upstream 500 path)          |
-| 13 Dispute         | (covered indirectly by `marketplace-escrow-caller-authorization` lib tests)                                                                                                                                                                                                                       | Appeal flow (no dedicated test yet)                                       |
-| 14 Sybil           | (network-layer tests in `crates/octo-network/tests/porelay_proofs.rs`)                                                                                                                                                                                                                            | Stake-weighted Sybil resistance at scale (1000+ identities)               |
+| Scenario           | Existing tests                                                                                                                                                                                                                                                                                                              | Tests needed                                                              |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| 1 Hello world      | `e2e_proxy::test_chat_completion_basic` (e2e_proxy.rs)                                                                                                                                                                                                                                                                      | —                                                                         |
+| 2 Multi-provider   | `e2e_wiremock_faults::test_dispatch_map_no_match_returns_503` (covers the asymmetric-guard path)                                                                                                                                                                                                                            | Multi-provider resolution unit tests (positive match path)                |
+| 3 Provider 500     | `e2e_wiremock_faults::test_upstream_500_returns_502`, `test_no_fallback_config_upstream_500_surfaces_as_502`, `proxy::test_post_dispatch_5xx_triggers_fallback` (lib)                                                                                                                                                       | Fallback dance test (already covered by lib test, not by wiremock)        |
+| 4 Budget 402       | `e2e_wiremock_faults::test_budget_exhausted_returns_402`                                                                                                                                                                                                                                                                    | —                                                                         |
+| 5 Rate limit       | `e2e_proxy::test_rpm_rate_limit_returns_429` (e2e_proxy.rs), `key_rate_limiter::tests::test_token_bucket_basic` (lib)                                                                                                                                                                                                       | Wiremock pinning of `Retry-After: <seconds>` header value                 |
+| 6 Marketplace      | `marketplace_e2e` lib tests (24 tests pinning escrow/dispute/settlement invariants — `marketplace-e2e-strong-scenarios` mission); `crates/octo-network/tests/gdp_discovery.rs` + `crates/octo-network/tests/gdp_deep.rs` cover the underlying GDP substrate used by marketplace nodes (NOT the marketplace-e2e flow itself) | Wiremock-style Sybil resistance at marketplace layer                      |
+| 7 Deal + escrow    | `0957-phase2b-payment-caveat` unit tests                                                                                                                                                                                                                                                                                    | CapabilityTokenV2 caveat exhaustiveness across the 9 RFC-0965 §3 variants |
+| 8 Mesh forwarding  | `0871b-cross-node-forwarding` (partial TV)                                                                                                                                                                                                                                                                                  | 3-node end-to-end TV (awaits `0870k`)                                     |
+| 9 Seller validate  | `0957-phase2b-payment-caveat` lib tests                                                                                                                                                                                                                                                                                     | ZK verification + reputation + provider dispatch integration              |
+| 10 Stream + settle | `e2e_wiremock_faults::test_streaming_response_carries_events`, `test_streaming_upstream_500_returns_502`                                                                                                                                                                                                                    | Mesh-streaming back-pressure (no test currently)                          |
+| 11 Replay          | (none)                                                                                                                                                                                                                                                                                                                      | Seen-set cache test (`crates/octo-network/src/dot/replay.rs`)             |
+| 12 Seller offline  | `e2e_wiremock_faults::test_streaming_upstream_500_returns_502` (partial)                                                                                                                                                                                                                                                    | Mid-stream TCP drop simulation (separate from upstream 500 path)          |
+| 13 Dispute         | (covered indirectly by `marketplace-escrow-caller-authorization` lib tests)                                                                                                                                                                                                                                                 | Appeal flow (no dedicated test yet)                                       |
+| 14 Sybil           | (network-layer tests in `crates/octo-network/tests/porelay_proofs.rs`)                                                                                                                                                                                                                                                      | Stake-weighted Sybil resistance at scale (1000+ identities)               |
 
 > **Note on `marketplace_e2e::test_*`:** `marketplace_e2e.rs` exists at `crates/quota-router-core/tests/marketplace_e2e.rs` with 24 e2e tests (mix of strong-scenario + legacy/baseline; the strong-vs-baseline split is not byte-identical to any single AC list). Named examples: `happy_path_bid_matches_ask_escrow_settles`, `dispute_valid_slashes_seller`, `escrow_recovery_from_locked_state_succeeds`, `concurrent_settlement_duplicate_rejected`. The coverage map above reflects this.
 
 ## Change log
 
-| Date       | Change                                      | Author          |
-| ---------- | ------------------------------------------- | --------------- |
-| 2026-08-13 | Initial draft, 14 scenarios across 8 phases | cc (brainstorm) |
+| Date       | Change                                                                       | Author          |
+| ---------- | ---------------------------------------------------------------------------- | --------------- |
+| 2026-08-13 | Initial draft, 14 scenarios across 8 phases                                  | cc (brainstorm) |
+| 2026-08-13 | Round 1 review (foundational checks)                                         | cc (review)     |
+| 2026-08-13 | Round 2 review (consistency sweep)                                           | cc (review)     |
+| 2026-08-13 | Round 3 review (api surface claims)                                          | cc (review)     |
+| 2026-08-13 | Round 4 review (api surface claims cont.)                                    | cc (review)     |
+| 2026-08-13 | Round 5 review (mermaid + prose)                                             | cc (review)     |
+| 2026-08-13 | Round 6 review (over-citation regression)                                    | cc (review)     |
+| 2026-08-13 | Round 7 review (SL routing fix)                                              | cc (review)     |
+| 2026-08-13 | Round 8 review (cents→micro_octo_w, TrustRegistry, MaxPerTx tuple, markdown) | cc (review)     |

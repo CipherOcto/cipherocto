@@ -392,6 +392,147 @@ impl Marketplace {
         self.cheapest_with_ranking(model, LatencyRanking::cheapest())
     }
 
+    /// Async cheapest — retirement-gate read path (mission
+    /// `marketplace-cheapest-with-ranking-async`).
+    ///
+    /// Reads reputation scores + the circuit-breaker exclusion gate
+    /// from the canonical `reputation_compat`
+    /// (`octo_reputation::ReputationStore`-backed) instead of the
+    /// legacy `ProviderReputationRegistry` shadow.
+    ///
+    /// Behavioural contract for the gate window: returns the same
+    /// `MarketplaceEntry` ordering as the sync
+    /// `cheapest_with_ranking` when the dual-read parity ≥ 0.999
+    /// holds in prod. On synthetic fixtures the two paths agree by
+    /// construction; on real traffic the gate observation is
+    /// required before the sync path is retired (mission
+    /// `marketplace-retirement-gate-flip` — TBD).
+    ///
+    /// Latency observations are read from
+    /// `reputation_compat.score()` which surfaces the canonical
+    /// `ReputationAggregate.score_ewma` (Dfp) into the legacy
+    /// `ProviderScore.latency_ms: u64` shape. The mapping
+    /// `(score_ewma.to_f64() as u64)` matches the legacy shadow for
+    /// non-pathological scores (≥ 0.0).
+    /// # Errors
+    /// Returns `ReputationError` on store failure (caller decides
+    /// whether to fall back to the sync shadow — fallback is not
+    /// built in; the caller is the gate's executor).
+    pub async fn cheapest_with_ranking_async(
+        &self,
+        model: &str,
+        ranking: LatencyRanking,
+    ) -> Result<Option<MarketplaceEntry>, octo_reputation::error::ReputationError> {
+        // Snapshot the in-memory book once. The lock is released by
+        // the time the loop below awaits `is_excluded_async` /
+        // `score` (clippy `await_holding_lock`).
+        let candidates: Vec<orderbook::Order<AskSpec>> = {
+            let book = self.book.lock();
+            book.asks_matching(|spec| spec.model == model)
+                .into_iter()
+                .cloned()
+                .collect()
+        };
+
+        // Async circuit-breaker exclusion gate.
+        let min = self.reputation_compat.min_reputation();
+        let mut accepted: Vec<orderbook::Order<AskSpec>> = Vec::with_capacity(candidates.len());
+        let mut latencies: std::collections::HashMap<String, u64> =
+            std::collections::HashMap::with_capacity(candidates.len());
+        for order in candidates {
+            let excluded = if min > 0.0 {
+                self.reputation_compat
+                    .is_excluded_async(&order.spec.asker_did)
+                    .await?
+            } else {
+                false
+            };
+            if !excluded {
+                let score = self.reputation_compat.score(&order.spec.asker_did).await?;
+                latencies.insert(order.spec.asker_did.clone(), score.latency_ms);
+                accepted.push(order);
+            }
+        }
+
+        if accepted.is_empty() {
+            return Ok(None);
+        }
+
+        // Price-only specialization (matches sync path).
+        if ranking.latency_weight == 0.0 {
+            return Ok(Some(self.entry_from_order_async(
+                &accepted[0],
+                latencies.get(&accepted[0].spec.asker_did).copied(),
+            )));
+        }
+
+        // Latency-aware ranking: identical math to sync path,
+        // latencies sourced from compat.
+        let (min_price, max_price) = accepted.iter().fold((u128::MAX, u128::MIN), |(lo, hi), o| {
+            (lo.min(o.price), hi.max(o.price))
+        });
+        let lats: Vec<u64> = accepted
+            .iter()
+            .map(|o| latencies.get(&o.spec.asker_did).copied().unwrap_or(0))
+            .collect();
+        let (min_lat, max_lat) = lats
+            .iter()
+            .copied()
+            .fold((u64::MAX, u64::MIN), |(lo, hi), l| (lo.min(l), hi.max(l)));
+
+        let mut best: Option<(f64, &orderbook::Order<AskSpec>)> = None;
+        for (order, latency_ms) in accepted.iter().zip(lats.iter()) {
+            let score = ranking.composite(
+                order.price,
+                *latency_ms,
+                min_price,
+                max_price,
+                min_lat,
+                max_lat,
+            );
+            let dominated = match &best {
+                None => true,
+                Some((best_score, best_order)) => {
+                    score < *best_score || (score == *best_score && order.price < best_order.price)
+                }
+            };
+            if dominated {
+                best = Some((score, order));
+            }
+        }
+        let (_, winner) = best.expect("accepted non-empty");
+        Ok(Some(self.entry_from_order_async(
+            winner,
+            latencies.get(&winner.spec.asker_did).copied(),
+        )))
+    }
+
+    /// Async entry builder — same shape as `entry_from_order` but
+    /// reads `latency_ms` from the caller-supplied compat-derived
+    /// map (avoids a second `reputation_compat.score()` round-trip
+    /// in `cheapest_with_ranking_async`).
+    fn entry_from_order_async(
+        &self,
+        order: &orderbook::Order<AskSpec>,
+        latency_ms: Option<u64>,
+    ) -> MarketplaceEntry {
+        let reputation_score_0_100 = None; // compat path does not
+                                           // yet surface the 0-100
+                                           // presentation score; the
+                                           // legacy shadow keeps
+                                           // producing it. Wire-up
+                                           // lands in mission
+                                           // `marketplace-caller-await-migration`.
+        MarketplaceEntry {
+            ask_id: order.spec.ask_id,
+            asker_did: order.spec.asker_did.clone(),
+            model: order.spec.model.clone(),
+            cost_per_1k: order.price,
+            latency_ms,
+            reputation_score_0_100,
+        }
+    }
+
     /// Latency-aware ranking (Gap 7.2). Scans every ask matching
     /// `model` and returns the one with the lowest composite score
     /// under `ranking`.

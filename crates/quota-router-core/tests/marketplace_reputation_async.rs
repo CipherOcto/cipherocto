@@ -144,3 +144,218 @@ fn blake3_runtime(pubkey: [u8; 32]) -> [u8; 32] {
     id.copy_from_slice(out.as_bytes());
     id
 }
+
+/// Current unix seconds — used by the dual-read comparison tests to
+/// seed ask `expires_at_unix` so the asks land in the in-memory book.
+fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+/// Build an `Ask` for integration-test fixtures. Mirrors the
+/// `sample_ask` helper inside `mod.rs::tests` (not reachable from
+/// here). Uses `nonce = [0x42; 16]` and a single axis at `rate_per_1k`
+/// to keep settlement math identical across providers.
+fn make_ask(
+    asker: &str,
+    model: &str,
+    rate_per_1k: u128,
+    expires: u64,
+) -> quota_router_storage::ask::Ask {
+    use quota_router_storage::ask::{Ask, AxisRate, ModelRateTable, ModelRef};
+    Ask {
+        asker_did: asker.to_owned(),
+        model: ModelRef::from(model),
+        rates: ModelRateTable {
+            model: ModelRef::from(model),
+            rates: vec![AxisRate {
+                axis: "input_tokens_per_1k".to_owned(),
+                rate_per_1k,
+            }],
+        },
+        nonce: [0x42; 16],
+        expires_at_unix: expires,
+    }
+}
+
+#[tokio::test]
+async fn dual_read_ranking_agrees_on_success_failure_mix() {
+    // Mission `marketplace-cheapest-with-ranking-async` AC: ≥3 records,
+    // success + failure mix, both `cheapest_with_ranking` and the new
+    // `cheapest_with_ranking_async` return the same `MarketplaceEntry`
+    // ordering. The compat path is seeded via `record_outcome_async`
+    // (canonical surface); the legacy shadow is seeded via
+    // `set_provider_score` to identical values. Both paths must
+    // surface the same winner on `cheapest_with_ranking_default`.
+    use quota_router_core::marketplace::scoring::LatencyRanking;
+    use quota_router_core::marketplace::scoring::ProviderScore;
+
+    let m = Marketplace::open_in_memory().expect("open_in_memory");
+    let now = now_unix();
+
+    // 3 asks at ascending prices; model gpt-4.
+    let cheap = sample_did(201);
+    let mid = sample_did(202);
+    let expensive = sample_did(203);
+    let expires = now + 3600;
+    m.put(&make_ask(&cheap, "openai/gpt-4", 10_000, expires))
+        .unwrap();
+    m.put(&make_ask(&mid, "openai/gpt-4", 30_000, expires))
+        .unwrap();
+    m.put(&make_ask(&expensive, "openai/gpt-4", 50_000, expires))
+        .unwrap();
+
+    // Seed BOTH surfaces with the same scores. Cheap + mid: high
+    // success. Expensive: low success.
+    let controller = blake3_runtime(GOV_PUBKEY);
+    // Cheap: 8 successes, 2 failures → high EWMA.
+    for i in 0..10u64 {
+        let success = i < 8;
+        m.record_outcome(&cheap, success, 100);
+        m.record_outcome_async(&cheap, success, 100, controller, now + i * 60)
+            .await
+            .expect("async record cheap");
+    }
+    m.set_provider_score(ProviderScore {
+        asker_did: cheap.clone(),
+        success_rate: 0.8,
+        latency_ms: 100,
+        samples: 10,
+    });
+    // Mid: 7 successes, 3 failures.
+    for i in 0..10u64 {
+        let success = i < 7;
+        m.record_outcome(&mid, success, 150);
+        m.record_outcome_async(&mid, success, 150, controller, now + i * 60)
+            .await
+            .expect("async record mid");
+    }
+    m.set_provider_score(ProviderScore {
+        asker_did: mid.clone(),
+        success_rate: 0.7,
+        latency_ms: 150,
+        samples: 10,
+    });
+    // Expensive: 3 successes, 7 failures → low EWMA.
+    for i in 0..10u64 {
+        let success = i < 3;
+        m.record_outcome(&expensive, success, 300);
+        m.record_outcome_async(&expensive, success, 300, controller, now + i * 60)
+            .await
+            .expect("async record expensive");
+    }
+    m.set_provider_score(ProviderScore {
+        asker_did: expensive.clone(),
+        success_rate: 0.3,
+        latency_ms: 300,
+        samples: 10,
+    });
+
+    // Price-only ranking: both paths must pick the cheapest.
+    let sync = m
+        .cheapest_with_ranking("openai/gpt-4", LatencyRanking::cheapest())
+        .expect("sync non-empty");
+    let async_path = m
+        .cheapest_with_ranking_async("openai/gpt-4", LatencyRanking::cheapest())
+        .await
+        .expect("async non-empty")
+        .expect("async Some");
+    assert_eq!(
+        sync.asker_did, async_path.asker_did,
+        "sync vs async must agree on cheapest asker"
+    );
+    assert_eq!(
+        sync.asker_did, cheap,
+        "price-only path must pick the cheapest-priced asker"
+    );
+    assert_eq!(sync.ask_id, async_path.ask_id);
+}
+
+#[tokio::test]
+async fn dual_read_ranking_agrees_under_prefer_latency() {
+    // Under `prefer_latency`, the mid-priced fast provider must
+    // outrank the cheap-but-slow provider on BOTH surfaces.
+    use quota_router_core::marketplace::scoring::LatencyRanking;
+    use quota_router_core::marketplace::scoring::ProviderScore;
+
+    let m = Marketplace::open_in_memory().expect("open_in_memory");
+    let now = now_unix();
+    let cheap_slow = sample_did(210);
+    let mid_fast = sample_did(211);
+    let expensive_slower = sample_did(212);
+    let expires = now + 3600;
+    m.put(&make_ask(&cheap_slow, "openai/gpt-4", 10_000, expires))
+        .unwrap();
+    m.put(&make_ask(&mid_fast, "openai/gpt-4", 30_000, expires))
+        .unwrap();
+    m.put(&make_ask(
+        &expensive_slower,
+        "openai/gpt-4",
+        50_000,
+        expires,
+    ))
+    .unwrap();
+
+    // Seed both paths with same latencies: cheap=5000ms, mid=100ms,
+    // expensive=4000ms.
+    let controller = blake3_runtime(GOV_PUBKEY);
+    for (did, lat) in [
+        (&cheap_slow, 5_000_u64),
+        (&mid_fast, 100),
+        (&expensive_slower, 4_000),
+    ] {
+        m.record_outcome(did, true, lat);
+        m.record_outcome_async(did, true, lat, controller, now)
+            .await
+            .unwrap();
+        m.set_provider_score(ProviderScore {
+            asker_did: did.clone(),
+            success_rate: 1.0,
+            latency_ms: lat,
+            samples: 1,
+        });
+    }
+
+    let sync = m
+        .cheapest_with_ranking("openai/gpt-4", LatencyRanking::prefer_latency())
+        .expect("sync non-empty");
+    let async_path = m
+        .cheapest_with_ranking_async("openai/gpt-4", LatencyRanking::prefer_latency())
+        .await
+        .expect("async non-empty")
+        .expect("async Some");
+    assert_eq!(
+        sync.asker_did, async_path.asker_did,
+        "sync vs async must agree on prefer_latency winner"
+    );
+    assert_eq!(
+        sync.asker_did, mid_fast,
+        "mid-fast must beat cheap-slow under prefer_latency"
+    );
+    // Latency surfaces on both entries (compat path surfaces
+    // `latency_ms` from the canonical aggregate).
+    assert_eq!(sync.latency_ms, async_path.latency_ms);
+    assert_eq!(sync.latency_ms, Some(100));
+}
+
+#[tokio::test]
+async fn dual_read_both_paths_return_none_on_empty_match() {
+    // Trivial API surface parity: with no asks matching the model,
+    // both `cheapest_with_ranking` (sync) and
+    // `cheapest_with_ranking_async` (async) return `Ok(None)` /
+    // `None`. This is the no-candidate contract from the mission
+    // AC "all existing tests pass + 3 new dual-read comparison tests".
+    use quota_router_core::marketplace::scoring::LatencyRanking;
+
+    let m = Marketplace::open_in_memory().expect("open_in_memory");
+    // No puts → empty book.
+    let sync = m.cheapest_with_ranking("openai/gpt-4", LatencyRanking::cheapest());
+    let async_path = m
+        .cheapest_with_ranking_async("openai/gpt-4", LatencyRanking::cheapest())
+        .await
+        .expect("async no error on empty");
+    assert!(sync.is_none(), "sync empty book = None");
+    assert!(async_path.is_none(), "async empty book = None");
+}

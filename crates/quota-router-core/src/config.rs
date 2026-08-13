@@ -914,6 +914,15 @@ pub struct CallbackConfig {
     /// Bounded channel capacity (default: 10000)
     #[serde(default = "default_channel_capacity")]
     pub channel_capacity: usize,
+    /// Streaming callback policy (default: `OncePerRequest`; mission 0947-c2).
+    ///
+    /// Controls how callbacks fire for SSE / chunked responses. The default
+    /// `OncePerRequest` matches LiteLLM behaviour (one Start at request begin,
+    /// one End + Success/Failure at stream completion). `PerChunk` re-fires
+    /// callbacks on every received chunk and can flood the channel; `Disabled`
+    /// suppresses all streaming callbacks.
+    #[serde(default)]
+    pub streaming_callback_policy: crate::callbacks::StreamingCallbackPolicy,
 }
 
 impl Default for CallbackConfig {
@@ -921,6 +930,7 @@ impl Default for CallbackConfig {
         Self {
             enabled: false,
             channel_capacity: 10000,
+            streaming_callback_policy: crate::callbacks::StreamingCallbackPolicy::default(),
         }
     }
 }

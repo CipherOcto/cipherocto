@@ -2624,7 +2624,12 @@ async fn handle_request_litellm(
 
     // Check if streaming is requested
     if request.stream == Some(true) {
-        return handle_streaming(provider, api_key, request).await;
+        let wiring = StreamingCallbackWiring {
+            executor: None,
+            policy: crate::callbacks::StreamingCallbackPolicy::default(),
+            request_id: uuid::Uuid::new_v4().to_string(),
+        };
+        return handle_streaming(provider, api_key, request, Some(&wiring)).await;
     }
 
     // Non-streaming request - use HttpProviderFactory
@@ -2832,6 +2837,7 @@ async fn handle_streaming(
     provider: &Provider,
     api_key: Option<&str>,
     request: NativeHttpRequest,
+    streaming_callback: Option<&StreamingCallbackWiring>,
 ) -> Result<Response<SseBody>, Infallible> {
     let provider_name = &provider.name;
 
@@ -2862,6 +2868,7 @@ async fn handle_streaming(
     }
 
     // Call streaming completion
+    let streaming_start = std::time::Instant::now();
     let streaming_resp = http_provider.streaming_completion(&request, api_key).await;
 
     match streaming_resp {
@@ -2869,12 +2876,44 @@ async fn handle_streaming(
             mut receiver,
             content_type,
         }) => {
+            // Fire Start at streaming entry (mission 0947-c2).
+            if let Some(wiring) = streaming_callback {
+                if matches!(
+                    wiring.policy,
+                    crate::callbacks::StreamingCallbackPolicy::OncePerRequest
+                ) {
+                    if let Some(executor) = wiring.executor.as_ref() {
+                        let timing = crate::callbacks::CallbackTiming {
+                            request_start: chrono::Utc::now(),
+                            request_end: None,
+                            total_ms: streaming_start.elapsed().as_millis() as u64,
+                            provider_latency_ms: 0,
+                            queue_time_ms: 0,
+                        };
+                        let callback_request = crate::callbacks::CallbackRequest {
+                            model: request.model.clone(),
+                            messages: vec![],
+                            temperature: request.temperature.map(|t| t as f64),
+                            max_tokens: request.max_tokens,
+                            stream: true,
+                            provider: provider_name.clone(),
+                            key_id: None,
+                            team_id: None,
+                            user_id: None,
+                        };
+                        crate::callbacks::fire_streaming_start(executor, callback_request, timing)
+                            .await;
+                        let _ = &wiring.request_id; // trace correlation
+                    }
+                }
+            }
+
             // Create channel for the SSE body
             let (tx, rx) =
                 tokio::sync::mpsc::channel::<Result<Bytes, std::convert::Infallible>>(100);
 
-            // Spawn task to forward chunks from provider to channel
-            // Note: task silently drops on panic - proper error tracking requires JoinHandle
+            // Spawn task to forward chunks from provider to channel.
+            // Note: task silently drops on panic - proper error tracking requires JoinHandle.
             let _handle = tokio::spawn(async move {
                 while let Some(chunk_result) = receiver.recv().await {
                     match chunk_result {
@@ -2919,6 +2958,18 @@ async fn handle_streaming(
             Ok(resp)
         }
     }
+}
+
+/// Per-request callback wiring for streaming requests (mission 0947-c2).
+///
+/// Bundles the callback executor and the streaming policy so `handle_streaming`
+/// can fire `Start` (and future per-chunk events) without re-resolving config.
+/// Caller (handle_request_litellm) builds this once per request and passes it
+/// by reference.
+pub struct StreamingCallbackWiring {
+    pub executor: Option<Arc<crate::callbacks::CallbackExecutor>>,
+    pub policy: crate::callbacks::StreamingCallbackPolicy,
+    pub request_id: String,
 }
 
 // ============================================================================

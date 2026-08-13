@@ -48,6 +48,11 @@
 //!
 //! ## Defense-in-depth reply checks
 //!
+//! Step 3 (outbound envelope) uses
+//! `RecipientRef::Domain(WireDid(hop_did))` to scope fan-out to the
+//! hop's domain — the layered defense complementing step 6a's
+//! `from_did == hop_did` spoofing defense.
+//!
 //! Step 6a (`from_did == hop_did`) defends against misrouted replies
 //! (where a peer other than the queried hop responded); the
 //! `NodeTransport` authentication layer is the primary defense. Step 6b

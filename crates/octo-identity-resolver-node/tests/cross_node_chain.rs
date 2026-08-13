@@ -806,3 +806,136 @@ async fn remote_backend_rejects_borsh_decode_failure_of_reply() {
         "error must surface the borsh decode failure (got: {msg})"
     );
 }
+
+/// T6 coverage: a reply carrying a `payload_kind` other than
+/// `IDENTITY_RESOLVE` or `IDENTITY_RESOLVE_CHAIN_RESPONSE` (e.g.,
+/// `IDENTITY_REGISTER`) MUST be rejected with `Backing`. The
+/// `other => ...` branch at `backend.rs` (around line 323) is the
+/// catch-all for unrecognized reply kinds.
+#[tokio::test]
+async fn remote_backend_rejects_unrecognized_reply_payload_kind() {
+    // Build a reply whose payload_kind is `IDENTITY_REGISTER` (not
+    // IDENTITY_RESOLVE / IDENTITY_RESOLVE_CHAIN_RESPONSE).
+    let reply_envelope = octo_protocol::NodeEnvelope::build(
+        octo_ident::WireDid::new(canonical_did(20)),
+        octo_protocol::recipient::RecipientRef::Broadcast,
+        octo_protocol::payload_kind::IDENTITY_REGISTER,
+        vec![0xAA, 0xBB, 0xCC, 0xDD],
+        vec![],
+        [0x42u8; 32],
+        u64::MAX,
+    )
+    .unwrap();
+    let canned_reply = borsh::to_vec(&reply_envelope).unwrap();
+
+    let canned = CannedReplySender::new(canned_reply);
+    let transport_a = Arc::new(octo_transport::NodeTransport::new(vec![canned.clone()]));
+    let backend_a: Arc<dyn ResolverBackend> = RemoteResolverBackend::arc(transport_a);
+
+    let handler = ResolveChainHandler::new(backend_a);
+    let req = ChainResolveRequest {
+        target: canonical_did(11),
+        hops: vec![ResolverHop::local(canonical_did(20))],
+        ttl_remaining_ms: 100,
+    };
+    let err = handler
+        .handle(&req, [0x42u8; 32])
+        .await
+        .expect_err("unrecognized payload_kind must be rejected");
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("expected IDENTITY_RESOLVE or IDENTITY_RESOLVE_CHAIN_RESPONSE")
+            || msg.contains("Storage"),
+        "error must surface the unrecognized-kind rejection (got: {msg})"
+    );
+}
+
+/// T6 coverage: bare `IDENTITY_RESOLVE` (single-hop) reply branch —
+/// decodes `ResolveResponse`, returns `BackendResolveOutcome` with
+/// `public_key` from the response + empty `signature_chain`. The
+/// single-hop branch at `backend.rs` (around line 268) is distinct
+/// from the `IDENTITY_RESOLVE_CHAIN_RESPONSE` branch and was
+/// previously untested end-to-end.
+#[tokio::test]
+async fn remote_backend_handles_bare_resolve_response_payload_kind() {
+    // Build a `ResolveResponse` carrying a 32-byte public_key + a
+    // borsh-encoded reply envelope wrapping it with payload_kind =
+    // IDENTITY_RESOLVE (single-hop bare resolve).
+    let resolve_resp = octo_identity_resolver_node::ResolveResponse {
+        canonical_did: canonical_did(11),
+        public_key: [0xCCu8; 32],
+    };
+    let resp_bytes = borsh::to_vec(&resolve_resp).unwrap();
+    let reply_envelope = octo_protocol::NodeEnvelope::build(
+        octo_ident::WireDid::new(canonical_did(20)),
+        octo_protocol::recipient::RecipientRef::Broadcast,
+        octo_protocol::payload_kind::IDENTITY_RESOLVE,
+        resp_bytes,
+        vec![],
+        [0x42u8; 32],
+        u64::MAX,
+    )
+    .unwrap();
+    let canned_reply = borsh::to_vec(&reply_envelope).unwrap();
+
+    let canned = CannedReplySender::new(canned_reply);
+    let transport_a = Arc::new(octo_transport::NodeTransport::new(vec![canned.clone()]));
+    let backend_a: Arc<dyn ResolverBackend> = RemoteResolverBackend::arc(transport_a);
+
+    let handler = ResolveChainHandler::new(backend_a);
+    let req = ChainResolveRequest {
+        target: canonical_did(11),
+        hops: vec![ResolverHop::local(canonical_did(20))],
+        ttl_remaining_ms: 100,
+    };
+    let out = handler
+        .handle(&req, [0x42u8; 32])
+        .await
+        .expect("bare IDENTITY_RESOLVE reply resolves successfully");
+    let resp: ChainResolveResponse = borsh::from_slice(&out.response_payload.unwrap()).unwrap();
+    assert_eq!(
+        resp.public_key, [0xCCu8; 32],
+        "bare ResolveResponse public_key must propagate through the substrate"
+    );
+    assert_eq!(
+        resp.signature_chain.len(),
+        0,
+        "bare IDENTITY_RESOLVE branch yields empty signature_chain (single-hop has no forwarding hops to sign)"
+    );
+}
+
+/// T6 coverage: reply envelope borsh decode failure (outer-level —
+/// the bytes returned by `send_request` are NOT a valid
+/// `NodeEnvelope`). Different from T5's payload-level borsh failure
+/// (which assumed the envelope decoded but the inner payload did
+/// not). Surfaces as `Backing` per the outer `borsh::from_slice` at
+/// `backend.rs` (around line 240).
+#[tokio::test]
+async fn remote_backend_rejects_outer_envelope_borsh_decode_failure() {
+    // 3 bytes is strictly less than any valid borsh-encoded
+    // NodeEnvelope (the envelope contains a u128 payload_kind, a
+    // String from_did, and a Vec<u8> payload — minimum wire size
+    // is well above 100 bytes). borsh::from_slice fails on too-
+    // short input.
+    let canned_reply: Vec<u8> = vec![0x01, 0x02, 0x03];
+
+    let canned = CannedReplySender::new(canned_reply);
+    let transport_a = Arc::new(octo_transport::NodeTransport::new(vec![canned.clone()]));
+    let backend_a: Arc<dyn ResolverBackend> = RemoteResolverBackend::arc(transport_a);
+
+    let handler = ResolveChainHandler::new(backend_a);
+    let req = ChainResolveRequest {
+        target: canonical_did(11),
+        hops: vec![ResolverHop::local(canonical_did(20))],
+        ttl_remaining_ms: 100,
+    };
+    let err = handler
+        .handle(&req, [0x42u8; 32])
+        .await
+        .expect_err("outer-envelope borsh decode failure must surface as Backing");
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("reply envelope borsh decode failed") || msg.contains("Storage"),
+        "error must surface the outer-envelope borsh decode failure (got: {msg})"
+    );
+}

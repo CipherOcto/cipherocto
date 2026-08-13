@@ -68,6 +68,38 @@ impl HopSignature {
             signer_pub,
         }
     }
+
+    /// Compute the 5-tuple preimage (post-`BLAKE3`) per RFC-0871
+    /// §Algorithms step 4 + RFC-0970 forwarding-hop pattern:
+    ///
+    /// ```text
+    /// preimage = BLAKE3-256(
+    ///     canonical_ser((chain_hash, hop_index, BLAKE3(inner_payload), envelope_id))
+    /// )
+    /// ```
+    ///
+    /// The chain handler (`ResolveChainHandler::step`) and the remote
+    /// resolver / verifier both call this helper so the wire-form
+    /// cannot drift between signer + verifier. The `hop_signature_signs_and_verifies`
+    /// unit test pins the end-to-end sign → verify → borsh-round-trip
+    /// cycle via this helper.
+    ///
+    /// `inner_payload` is the borsh-encoded inner envelope payload
+    /// (the `IDENTITY_RESOLVE` request bytes for hop 0, the
+    /// `ChainResolveResponse` accumulator for subsequent hops).
+    #[must_use]
+    pub fn signing_preimage(
+        chain_hash: [u8; 32],
+        hop_index: u8,
+        inner_payload: &[u8],
+        envelope_id: [u8; 32],
+    ) -> [u8; 32] {
+        let inner_hash = blake3::hash(inner_payload);
+        let preimage_struct = (chain_hash, hop_index, *inner_hash.as_bytes(), envelope_id);
+        let preimage_bytes =
+            borsh::to_vec(&preimage_struct).expect("canonical_ser preimage: tuple is fixed-shape");
+        *blake3::hash(&preimage_bytes).as_bytes()
+    }
 }
 
 #[cfg(test)]
@@ -108,8 +140,10 @@ mod tests {
     ///
     /// Sign with `ed25519_dalek::SigningKey`; verify with
     /// `verify_ed25519_signature` (which decodes the canonical DID into
-    /// the verifying key). The round-trip confirms the 5-tuple preimage
-    /// + `signature` + `signer_pub` binding holds end-to-end.
+    /// the verifying key). The preimage is built via
+    /// `HopSignature::signing_preimage` — the SAME helper the production
+    /// chain handler uses — so the test pins the production encoder,
+    /// not a hand-rolled preimage that could silently drift.
     #[test]
     fn hop_signature_signs_and_verifies() {
         use crate::authorization::{verify_ed25519_signature, Ed25519SignatureBytes};
@@ -125,27 +159,23 @@ mod tests {
         let hop_did = format!("did:octo:z{}", bs58::encode(&pk_bytes).into_string());
         let hop_did = crate::WireDid::new(hop_did);
 
-        // 2. Build the preimage per RFC-0871 §Algorithms step 4 +
-        //    RFC-0970 forwarding-hop pattern:
-        //    `BLAKE3-256(canonical_ser((chain_hash, hop_index, BLAKE3(inner_payload), envelope_id)))`
+        // 2. Compute the production preimage via the canonical helper.
         let chain_hash = [0xABu8; 32];
         let hop_index: u8 = 1;
         let inner_payload = b"IDENTITY_RESOLVE_CHAIN payload bytes";
-        let inner_hash = blake3::hash(inner_payload);
         let envelope_id = [0x42u8; 32];
-        let preimage_struct = (chain_hash, hop_index, *inner_hash.as_bytes(), envelope_id);
-        let preimage_bytes = borsh::to_vec(&preimage_struct).expect("canonical_ser preimage");
-        let preimage_hash = blake3::hash(&preimage_bytes);
+        let preimage_hash =
+            HopSignature::signing_preimage(chain_hash, hop_index, inner_payload, envelope_id);
 
         // 3. Sign the BLAKE3-hashed preimage with Ed25519.
-        let sig = Ed25519SignatureBytes::from_signature(&sk.sign(preimage_hash.as_bytes()));
+        let sig = Ed25519SignatureBytes::from_signature(&sk.sign(&preimage_hash));
         let hop_sig = HopSignature::new(hop_index, hop_did.as_str().to_owned(), sig.0, pk_bytes);
 
         // 4. Verify the signature via the public `verify_ed25519_signature`
         //    helper — same code path the `EnvelopeDispatcher` uses for
         //    `Authorization::Signature` verification. This pins the
         //    end-to-end sign/verify cycle over the 5-tuple preimage.
-        verify_ed25519_signature(&hop_did, preimage_hash.as_bytes(), &sig)
+        verify_ed25519_signature(&hop_did, &preimage_hash, &sig)
             .expect("hop signature MUST verify against the 5-tuple preimage");
         // Re-decode the `HopSignature` wire form to confirm the
         // borsh layout is self-consistent end-to-end.

@@ -25,9 +25,9 @@
 //!
 //! The full forwarding-chain pattern (sending `IDENTITY_RESOLVE_CHAIN`
 //! with the remaining hops so the destination can sign per RFC-0970
-//! forwarding-hop pattern + extend the chain) is a follow-on mission.
-//! T4 ships the SUBSTRATE so the substrate-following pattern is a
-//! wire-form-only change.
+//! forwarding-hop pattern + extend the chain) is a follow-on RFC-0970
+//! signing mission. T4 ships the SUBSTRATE so the substrate-following
+//! pattern is a wire-form-only change.
 //!
 //! ## Layer-C trait-object boundary
 //!
@@ -43,8 +43,16 @@
 //! T4 we use a placeholder resolver DID derived from the
 //! `chain_ctx.envelope_id` prefix bytes (deterministic per chain
 //! walk so test fixtures can pin behavior). Production deployments
-//! inject the local node's identity via a future mission's config
-//! slot (0871b-2b, deferred).
+//! inject the local node's identity via a future RFC-0970 follow-on
+//! config slot (deferred).
+//!
+//! ## Defense-in-depth reply checks
+//!
+//! Step 6a (envelope_id echo) defends against a future substrate
+//! refactor that drops per-id correlation. Step 6b (`from_did ==
+//! hop_did`) defends against misrouted replies. Step 6c
+//! (`signature_chain.len() <= MAX_CHAIN_HOPS`) defends against
+//! oversized-payload DoS.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -56,8 +64,11 @@ use octo_protocol::NodeEnvelope;
 use octo_transport::sender::SendContext;
 use octo_transport::NodeTransport;
 
-use crate::handlers::chain::{BackendResolveOutcome, ResolverBackend, ResolverChainContext};
+use crate::handlers::chain::{
+    BackendResolveOutcome, ResolverBackend, ResolverChainContext, MAX_CHAIN_HOPS,
+};
 use crate::handlers::resolve::{ResolveRequest, ResolveResponse};
+use octo_ident::resolver_backend::RawHopSignature;
 
 /// Default timeout for cross-node resolver request/response round-trip.
 ///
@@ -77,8 +88,8 @@ const RESOLVE_TIMEOUT: Duration = Duration::from_secs(5);
 /// envelope, computed by `NodeEnvelope::build`).
 ///
 /// `signature_chain` is always empty for T4 — the per-hop Ed25519
-/// signing pattern (RFC-0970 forwarding-hop) is a follow-on mission
-/// (0871b-2b). The 5-tuple `ChainResolveResponse.signature_chain`
+/// signing pattern (RFC-0970 forwarding-hop) is a follow-on RFC-0970
+/// signing mission. The 5-tuple `ChainResolveResponse.signature_chain`
 /// field remains empty bytes-by-bytes through this code path, keeping
 /// the cross-node wire form consistent with the in-process
 /// `LocalResolverBackend` (empty `signature_chain` is the production
@@ -115,13 +126,20 @@ impl RemoteResolverBackend {
     /// first 32 bytes of `envelope_id` form a valid Ed25519 pubkey
     /// (BLAKE3-256 output is treated as the DID payload, base58btc-
     /// encoded with the `did:octo:z` prefix). Real deployments inject
-    /// the local node's identity via the future 0871b-2b mission.
+    /// the local node's identity via the future RFC-0970 follow-on.
     fn placeholder_from_did(envelope_id: &[u8; 32]) -> octo_ident::WireDid {
         let mut pk = [0u8; 32];
         pk.copy_from_slice(&envelope_id[..32]);
         let raw = octo_ident::CanonicalCodec::mint(&pk);
-        octo_ident::CanonicalCodec::raw_to_wire(&raw)
-            .expect("placeholder_from_did: BLAKE3 output is 32 bytes; mint always succeeds")
+        // `raw_to_wire` is `Result` (length 11-64 bytes enforced), but
+        // for a 32-byte ed25519 pubkey (`mint(&[u8; 32])`) the canonical
+        // wire form is 53-54 chars (always inside the 11-64 range), so
+        // the unwrap is structural (no runtime failure path within the
+        // contract). A future `CanonicalCodec` change that tightens
+        // the pubkey shape would surface here as a panic.
+        octo_ident::CanonicalCodec::raw_to_wire(&raw).expect(
+            "placeholder_from_did: 32-byte ed25519 pubkey always encodes to 53-54 char canonical wire form",
+        )
     }
 }
 
@@ -129,7 +147,7 @@ impl RemoteResolverBackend {
 impl ResolverBackend for RemoteResolverBackend {
     async fn resolve_via(
         &self,
-        _hop_did: &str,
+        hop_did: &str,
         target: &octo_ident::RawDid,
         chain_ctx: &ResolverChainContext,
     ) -> Result<BackendResolveOutcome, octo_ident::ResolverBackendError> {
@@ -155,10 +173,16 @@ impl ResolverBackend for RemoteResolverBackend {
         //    per RFC-0871 §Algorithms step 2; we use the BLAKE3-derived
         //    placeholder for `from_did` so the resulting envelope_id is
         //    deterministic per chain walk.
+        //
+        //    `RecipientRef::Domain(WireDid(hop_did))` scopes the
+        //    fan-out to nodes serving the hop's domain (mesh narrows
+        //    to the relevant subset). The `from_did == hop_did` check
+        //    at step 6b is the substantive defense against spoofing;
+        //    Domain-scoping reduces the routing-layer attack surface.
         let from_did = Self::placeholder_from_did(&chain_ctx.envelope_id);
         let envelope = NodeEnvelope::build(
             from_did,
-            RecipientRef::Broadcast,
+            RecipientRef::Domain(octo_ident::WireDid::new(hop_did.to_owned())),
             octo_protocol::payload_kind::IDENTITY_RESOLVE,
             payload,
             vec![],
@@ -220,6 +244,21 @@ impl ResolverBackend for RemoteResolverBackend {
                 "reply envelope borsh decode failed: {e}"
             ))
         })?;
+
+        // 6a. Defense-in-depth: reject replies whose `from_did` does
+        //    not match the queried hop. The `NodeTransport`
+        //    authentication layer is the primary defense; this check
+        //    catches misrouted replies (where a peer other than the
+        //    queried hop responded) — matching the substrate's
+        //    invariant that the reply originates from the hop that
+        //    received the request. Mismatch → `Backing`.
+        if reply_envelope.from_did.as_str() != hop_did {
+            return Err(octo_ident::ResolverBackendError::Backing(format!(
+                "reply from_did mismatch: expected hop_did={hop_did}, got from_did={}",
+                reply_envelope.from_did.as_str()
+            )));
+        }
+
         let outcome = match reply_envelope.payload_kind {
             k if k == octo_protocol::payload_kind::IDENTITY_RESOLVE => {
                 let resp: ResolveResponse =
@@ -240,14 +279,34 @@ impl ResolverBackend for RemoteResolverBackend {
                             "ChainResolveResponse borsh decode failed: {e}"
                         ))
                     })?;
+
+                // 6b. Bounds-check `signature_chain.len()` against the
+                //    wire-format `MAX_CHAIN_HOPS` cap (255). A malicious
+                //    peer could send a `ChainResolveResponse` with
+                //    `signature_chain.len() >> MAX_CHAIN_HOPS` and force
+                //    O(n) memory + verification work on the receiver; the
+                //    local `MAX_CHAIN_HOPS` bound does NOT apply to
+                //    network INPUT. Surplus → `Backing`.
+                if resp.signature_chain.len() > MAX_CHAIN_HOPS {
+                    return Err(octo_ident::ResolverBackendError::Backing(format!(
+                        "oversized signature_chain: {} > MAX_CHAIN_HOPS={MAX_CHAIN_HOPS}",
+                        resp.signature_chain.len()
+                    )));
+                }
+
                 // `ChainResolveResponse` already carries the 5-tuple
                 // signature chain. Convert Layer-A `HopSignature`s
                 // (the wire form) to Layer-B `RawHopSignature`s (the
-                // trait-object surface) at the backend boundary.
+                // trait-object surface) at the backend boundary. The
+                // field copy relies on `RawHopSignature` + `HopSignature`
+                // having identical field NAMES + ORDER; a future struct
+                // drift would silently lose the new field. Production
+                // fix: move `From<HopSignature> for RawHopSignature` to
+                // `octo-ident` (single source of truth).
                 let signature_chain = resp
                     .signature_chain
                     .into_iter()
-                    .map(|h| octo_ident::resolver_backend::RawHopSignature {
+                    .map(|h| RawHopSignature {
                         hop_index: h.hop_index,
                         hop_did: h.hop_did,
                         signature: h.signature,

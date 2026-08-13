@@ -54,9 +54,15 @@ use octo_transport::NodeTransport;
 use crate::handlers::{
     resolver_error_to_protocol, ChainResolveRequest, LocalResolverBackend, RegisterHandler,
     RegisterRequest, ResolveChainHandler, ResolveHandler, ResolveRequest, ResolveWithChainHandler,
-    ResolveWithChainRequest, ResolverBackend, RevokeHandler, RevokeRequest,
+    ResolveWithChainRequest, RevokeHandler, RevokeRequest,
 };
 use crate::is_identity_resolver_payload_kind;
+// Import the `ResolverBackend` trait from its canonical Layer-B site
+// (`octo_ident::resolver_backend`) rather than the Layer-C re-export,
+// so the layer boundary is auditable in source (no indirection through
+// `crate::handlers`). `LocalResolverBackend` (the impl) is the
+// `crate::handlers` re-export because it lives at Layer C.
+use octo_ident::resolver_backend::ResolverBackend;
 
 /// Default `ChainId` used when no explicit chain is configured.
 ///
@@ -206,23 +212,10 @@ impl IdentityResolverNode {
     /// inject `Some(RemoteResolverBackend::arc(self.transport.clone()))`.
     #[must_use]
     pub fn new(config: IdentityResolverNodeConfig) -> Self {
-        let registry = config
-            .registry
-            .clone()
-            .unwrap_or_else(|| Arc::new(InMemoryDidRegistry::default()));
+        let registry = Self::materialize_registry(&config);
+        let resolver_backend = Self::materialize_resolver_backend(&config, &registry);
         let write_coordinator = config.write_coordinator.clone();
-        let chain_id = config.chain_id.clone().unwrap_or_else(|| {
-            // `DEFAULT_CHAIN_ID` is a 17-char static literal that
-            // passes RFC-0010 v1.4 validation (non-empty, ≤ 64 chars,
-            // no control chars). `.expect` documents the invariant
-            // at this call site.
-            ChainId::new(DEFAULT_CHAIN_ID)
-                .expect("DEFAULT_CHAIN_ID is a valid RFC-0010 v1.4 chain namespace")
-        });
-        let resolver_backend: Arc<dyn ResolverBackend> = config
-            .resolver_backend
-            .clone()
-            .unwrap_or_else(|| LocalResolverBackend::new(registry.clone()));
+        let chain_id = Self::materialize_chain_id(&config);
         Self {
             config,
             registry,
@@ -240,19 +233,10 @@ impl IdentityResolverNode {
         config: IdentityResolverNodeConfig,
         dispatcher: ReferenceDispatcher,
     ) -> Self {
-        let registry = config
-            .registry
-            .clone()
-            .unwrap_or_else(|| Arc::new(InMemoryDidRegistry::default()));
+        let registry = Self::materialize_registry(&config);
+        let resolver_backend = Self::materialize_resolver_backend(&config, &registry);
         let write_coordinator = config.write_coordinator.clone();
-        let chain_id = config.chain_id.clone().unwrap_or_else(|| {
-            ChainId::new(DEFAULT_CHAIN_ID)
-                .expect("DEFAULT_CHAIN_ID is a valid RFC-0010 v1.4 chain namespace")
-        });
-        let resolver_backend: Arc<dyn ResolverBackend> = config
-            .resolver_backend
-            .clone()
-            .unwrap_or_else(|| LocalResolverBackend::new(registry.clone()));
+        let chain_id = Self::materialize_chain_id(&config);
         Self {
             config,
             registry,
@@ -262,6 +246,44 @@ impl IdentityResolverNode {
             dispatcher,
             started: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Default `registry` from `IdentityResolverNodeConfig.registry`,
+    /// falling back to `Arc::new(InMemoryDidRegistry::default())`.
+    /// Single-purpose helper so `new()` + `with_dispatcher()` share the
+    /// defaulting logic without triggering `clippy::type_complexity` on
+    /// a multi-return helper.
+    fn materialize_registry(config: &IdentityResolverNodeConfig) -> Arc<dyn DidRegistry> {
+        config
+            .registry
+            .clone()
+            .unwrap_or_else(|| Arc::new(InMemoryDidRegistry::default()))
+    }
+
+    /// Default `chain_id` from `IdentityResolverNodeConfig.chain_id`,
+    /// falling back to [`DEFAULT_CHAIN_ID`].
+    fn materialize_chain_id(config: &IdentityResolverNodeConfig) -> ChainId {
+        config.chain_id.clone().unwrap_or_else(|| {
+            // `DEFAULT_CHAIN_ID` is a 17-char static literal that
+            // passes RFC-0010 v1.4 validation (non-empty, ≤ 64 chars,
+            // no control chars). `.expect` documents the invariant
+            // at this call site.
+            ChainId::new(DEFAULT_CHAIN_ID)
+                .expect("DEFAULT_CHAIN_ID is a valid RFC-0010 v1.4 chain namespace")
+        })
+    }
+
+    /// Default `resolver_backend` from
+    /// `IdentityResolverNodeConfig.resolver_backend`, falling back to a
+    /// `LocalResolverBackend` over the already-materialized `registry`.
+    fn materialize_resolver_backend(
+        config: &IdentityResolverNodeConfig,
+        registry: &Arc<dyn DidRegistry>,
+    ) -> Arc<dyn ResolverBackend> {
+        config
+            .resolver_backend
+            .clone()
+            .unwrap_or_else(|| LocalResolverBackend::new(registry.clone()))
     }
 
     /// Register the node as a `NetworkReceiver` on the underlying transport.

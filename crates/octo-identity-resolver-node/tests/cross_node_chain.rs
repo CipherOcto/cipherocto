@@ -34,7 +34,7 @@
 //! lands with mission `0870k-transport-request-response` (this PR).
 //!
 //! Cross-node forwarding exercises the request/response substrate via
-//! an in-process `MockRequestSender` that delivers the canned reply
+//! an in-process `CannedReplySender` that delivers the canned reply
 //! synchronously. The full 3-node envelope-router (node A → B → C with
 //! real transport fan-out) is a follow-on once RFC-0970 forwarding-hop
 //! signing lands.
@@ -449,18 +449,20 @@ async fn multi_hop_signature_chain_preserves_outermost_first_order() {
 /// in its local registry; response carries the full chain.
 ///
 /// Architecture (in-process simulation; no real network):
-/// - Node A (origin): `ResolveChainHandler` bound to `NodeABackend`
-///   (delegates to `RemoteResolverBackend` simulating the request to B).
-/// - Node B (intermediate): `RemoteResolverBackend` returns a
-///   pre-canned `ChainResolveResponse` with `signature_chain = [hop_0]`.
+/// - Node A (origin): `ResolveChainHandler` bound to
+///   `RemoteResolverBackend` posting an `IDENTITY_RESOLVE` to a
+///   transport that immediately returns B's canned reply.
+/// - Node B (intermediate): simulated by the `CannedReplySender`
+///   returning a pre-canned `ChainResolveResponse` with
+///   `signature_chain = [hop_0]`.
 /// - Node C (terminal): `LocalResolverBackend` over `InMemoryDidRegistry`
 ///   where the target DID is registered.
 ///
-/// The chain handler at A walks `hops = [B]` and calls `NodeABackend`,
-/// which posts a request to a transport that immediately returns B's
-/// canned reply. The full 3-node traversal pattern (A → B → C through
-/// three real `NodeTransport`s) is a follow-on for the RFC-0970
-/// forwarding-hop signing mission.
+/// The chain handler at A walks `hops = [B]` and the
+/// `RemoteResolverBackend` posts a request to a transport that
+/// immediately returns B's canned reply. The full 3-node traversal
+/// pattern (A → B → C through three real `NodeTransport`s) is a
+/// follow-on for the RFC-0970 forwarding-hop signing mission.
 #[tokio::test]
 async fn three_node_chain_accumulates_signature_chain_across_hops() {
     use octo_transport::sender::{NetworkSender, SendContext, TransportError};
@@ -494,25 +496,16 @@ async fn three_node_chain_accumulates_signature_chain_across_hops() {
         }
     }
 
-    // 1. Build node C's resolved response (terminal: registry lookup).
-    let target_pk = [0x33u8; 32];
-    let target_raw = CanonicalCodec::mint(&target_pk);
-    let terminal_wire = CanonicalCodec::raw_to_wire(&target_raw).unwrap();
-    let registry = Arc::new(InMemoryDidRegistry::default());
-    registry
-        .register(
-            &target_raw.hash,
-            DidDocument {
-                public_key: [0x99u8; 32],
-                revoked: false,
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    let _ = terminal_wire; // silence unused
+    // 1. Build node C's "resolved response" by setting the canned
+    //    reply's `public_key` field directly. The terminal registry
+    //    is NOT exercised here because the canned reply carries a
+    //    pre-determined `public_key`; the full 3-node walk through
+    //    a real `LocalResolverBackend` is the RFC-0970 follow-on.
 
     // 2. Build node B's canned reply — a populated `ChainResolveResponse`
-    //    with one `HopSignature` (hop 0, signed by B).
+    //    with one `HopSignature` (hop 0, signature bytes are a FIXTURE
+    //    PLACEHOLDER, not a real Ed25519 signature; production
+    //    signature-verification integration is the RFC-0970 follow-on).
     let hop_sig_b = octo_protocol::HopSignature::new(0, canonical_did(20), [0x55; 64], [0x66; 32]);
     let chain_resp_b = ChainResolveResponse {
         canonical_did: canonical_did(11),
@@ -569,10 +562,4 @@ async fn three_node_chain_accumulates_signature_chain_across_hops() {
     );
     assert_eq!(resp.signature_chain[0].hop_index, 0);
     assert_eq!(resp.signature_chain[0].signer_pub, [0x66u8; 32]);
-
-    // Reference `registry` to keep the test honest about the terminal
-    // node having a real registry (the canned reply would work without
-    // any registry, so this is a structural sanity check).
-    let _ = registry;
-    let _ = target_raw;
 }

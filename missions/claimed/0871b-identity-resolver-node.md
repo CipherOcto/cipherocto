@@ -2,7 +2,14 @@
 
 ## Status
 
-Claimed (2026-08-09). Phase 1 MVP landed; storage-backend wiring + cross-domain resolution deferred to follow-on missions. RFC-0871 Accepted 2026-08-09 after R1–R7 adversarial review (R7 DRY). Phase 3 identity resolver node mission.
+Closed (2026-08-13). Phase 1 MVP + 4 follow-on substrate missions all LANDED. 3 remaining unchecked ACs (stop API, `DID_LOOKUP` payload kind, rate-limit policy) intentionally DEFERRED with filed follow-on missions / RFC amendments. RFC-0871 Accepted 2026-08-09 after R1–R7 adversarial review (R7 DRY). Phase 3 identity resolver node mission.
+
+**Follow-on substrate missions (all LANDED):**
+
+- `0871b-storage-backend` — `DidRegistry` trait + `StoolapDidRegistry` + migration v008 (commit `71f8d745`, 2026-08-11)
+- `0871b-storage-idempotent-alter-hardening` — `migrations::run_one` retry-safe ADD COLUMN (commit `8cd96c10`, 2026-08-11)
+- `0871b-cross-domain-resolution-impl` — `IDENTITY_RESOLVE_CHAIN` + `ResolveChainHandler` (commit `c14c2707`, 2026-08-11)
+- `0871b-cross-node-forwarding` — `HopSignature` + `ResolverBackend` trait + `LocalResolverBackend` + `RemoteResolverBackend` + 5-tuple `ChainResolveResponse` (commit `fb2dadaf` 2026-08-12 substrate + commit `caf04953` 2026-08-13 AC closure at 18/18 PASS)
 
 ## RFC
 
@@ -29,25 +36,25 @@ Build `crates/octo-identity-resolver-node/` — the identity resolver specialize
 - [x] `IdentityResolverNode::broadcast_announce() -> Result<usize, TransportError>` (Phase 1 MVP stub — full RouterAnnouncePayload shape deferred to 0870-b follow-on)
 - [x] `IdentityResolverNode::handle_envelope(envelope: NodeEnvelope) -> Result<HandlerOutput, ProtocolError>` dispatch entry point per RFC-0871 §Algorithms
 - [x] NetworkReceiver trait impl (RFC-0863) delegates to `handle_envelope` (via `IdentityResolverNodeReceiver` wrapper)
-- [ ] `IdentityResolverNode::stop()` deregisters + flushes pending envelopes (deferred — single-receiver lifecycle does not yet warrant an explicit stop API, mirrors 0871a wallet-node decision)
+- [ ] `IdentityResolverNode::stop()` deregisters + flushes pending envelopes — **DEFERRED** (single-receiver lifecycle does not yet warrant an explicit stop API, mirrors 0871a wallet-node decision; filed as follow-on if multi-receiver deployment emerges)
 
 ### Payload kinds
 
 - [x] `IDENTITY_RESOLVE` handler: input = `<query: String>` (the `did:octo:z<base58btc>` canonical form); validates via `octo_ident::CanonicalCodec::parse(s, false)` (RFC-0010 v1.2 F4); returns canonical DID + placeholder 32-byte pubkey derived from `RawDid::hash` (real `DidRegistry` lookup deferred to follow-on mission)
-- [ ] `DID_LOOKUP` payload kind: NOT registered in `octo-protocol::payload_kind` namespace as of this mission; substrate RFC does not yet allocate a UUID. Deferred until RFC-0871 §Roles and Authorities adds the second resolver payload kind (separate follow-on mission after `IDENTITY_RESOLVE` ships to staging).
+- [ ] `DID_LOOKUP` payload kind: NOT registered in `octo-protocol::payload_kind` namespace as of this mission — **DEFERRED** until RFC-0871 §Roles and Authorities adds the second resolver payload kind (separate follow-on mission after `IDENTITY_RESOLVE` ships to staging; requires RFC-0871 amendment)
 - [x] Rejects malformed DIDs (non-canonical, wrong prefix, bad base58btc) with `IdentityResolveError::InvalidDid` → `ProtocolError::InvalidDid`
-- [ ] Rate-limited per RFC-0871 §Replay Protection (deferred — `EnvelopeDispatcher::dispatch` (full flow with envelope_id dedup + nonce + TTL ceiling) is in scope, but the wallet-node MVP uses `verify_all` only. Production wiring will swap to the full flow when rate-limit policy lands in mission 0870-b.)
+- [ ] Rate-limited per RFC-0871 §Replay Protection — **DEFERRED** (`EnvelopeDispatcher::dispatch` full flow with envelope_id dedup + nonce + TTL ceiling is out of scope here; wallet-node MVP uses `verify_all` only. Production wiring will swap to the full flow when rate-limit policy lands in mission 0870-b follow-on.)
 
 ### Registry backend
 
-- [ ] `DidRegistry` trait + `InMemoryDidRegistry` + `StoolapDidRegistry` impls — DEFERRED to follow-on mission. The placeholder `public_key` returned by `ResolveHandler` is deterministic (`RawDid::hash`) so the wire shape is byte-exact across the placeholder / real-registry cutover.
-- [ ] Migration: existing `DidRegistry` in `crates/octo-ident` — substrate RFC-0010 does not currently expose a public `DidRegistry` trait (codec crate owns the canonical encoding, not the storage layer). Wiring lands when RFC-0010 v1.3 ships the storage trait extension.
+- [x] `DidRegistry` trait + `InMemoryDidRegistry` + `StoolapDidRegistry` impls — **LANDED** via follow-on mission `0871b-storage-backend` (commit `71f8d745`, 2026-08-11). The placeholder `public_key` returned by `ResolveHandler` was deterministic (`RawDid::hash`) so the wire shape was byte-exact across the placeholder / real-registry cutover.
+- [x] Migration: existing `DidRegistry` in `crates/octo-ident` — **LANDED** via `0871b-storage-backend` (RFC-0010 v1.3 storage extension ACCEPTED + `DidRegistry` trait in `octo-ident/src/registry.rs`); `octo-ident` now owns the storage trait, codec crate stays focused on canonical encoding.
 
 ### Replay + authorization
 
 - [x] All handlers route through `octo_protocol::ReferenceDispatcher::verify_all` for `Vec<Authorization>` logical-AND (RFC-0871 §Adversary Analysis A6)
 - [x] Authorization verification: dispatcher's `verify_all` enforces Vec<Authorization> + sig
-- [ ] Resolution requires caller DID authenticated (deferred — wallet-node MVP accepts `authorization: Vec<Authorization>` empty for testing; production gating lands when the router wires `Authorization::Signature` requirement via RFC-0871 §Adversary A3 follow-on)
+- [ ] Resolution requires caller DID authenticated — **DEFERRED** (wallet-node MVP accepts `authorization: Vec<Authorization>` empty for testing; production gating lands when the router wires `Authorization::Signature` requirement via RFC-0871 §Adversary A3 follow-on)
 
 ### Adversary coverage
 
@@ -68,18 +75,18 @@ Build `crates/octo-identity-resolver-node/` — the identity resolver specialize
 
 Per BLUEPRINT §Mission template. RFC-0871 §Roles and Authorities + RFC-0010 + RFC-0009 types mapped to this mission (Phase 3 identity resolver):
 
-| RFC Type / Section | Implemented By |
-|---|---|
-| `IdentityResolverNode` struct (RFC-0871 §Roles and Authorities) | This mission — `crates/octo-identity-resolver-node/src/node.rs` |
-| `NetworkReceiver` impl (RFC-0863 substrate) | This mission — `crates/octo-identity-resolver-node/src/node.rs` |
-| `DID_RESOLVE` payload kind | This mission — `crates/octo-identity-resolver-node/src/handlers/resolve.rs` |
-| `DID_LOOKUP` payload kind | This mission — `crates/octo-identity-resolver-node/src/handlers/lookup.rs` |
-| `IdentityResolverNode::broadcast_announce` | This mission — uses `RouterAnnouncePayload` extension |
-| `DidRegistry` trait + impls | This mission — wraps `crates/octo-ident` existing registry; new `InMemoryDidRegistry` + `StoolapDidRegistry` in `crates/octo-identity-resolver-node/src/registry.rs` |
-| Canonical DID validation | Mission `0010-d-wallet-audience-validation.md` — `octo_ident::CanonicalCodec::parse` enforcement is prerequisite |
-| Canonical wire-form + storage-pubkey dual-form split | RFC-0010 substrate (codec crate) |
-| `NodeEnvelope` envelope shape (consumed) | Mission `0871-protocol-core-envelope.md` — Phase 1 prerequisite |
-| Cross-domain DID resolution (resolver chains) | Deferred to RFC-0871 §Future Work — separate future mission |
+| RFC Type / Section                                              | Implemented By                                                                                                                                                       |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `IdentityResolverNode` struct (RFC-0871 §Roles and Authorities) | This mission — `crates/octo-identity-resolver-node/src/node.rs`                                                                                                      |
+| `NetworkReceiver` impl (RFC-0863 substrate)                     | This mission — `crates/octo-identity-resolver-node/src/node.rs`                                                                                                      |
+| `DID_RESOLVE` payload kind                                      | This mission — `crates/octo-identity-resolver-node/src/handlers/resolve.rs`                                                                                          |
+| `DID_LOOKUP` payload kind                                       | This mission — `crates/octo-identity-resolver-node/src/handlers/lookup.rs`                                                                                           |
+| `IdentityResolverNode::broadcast_announce`                      | This mission — uses `RouterAnnouncePayload` extension                                                                                                                |
+| `DidRegistry` trait + impls                                     | This mission — wraps `crates/octo-ident` existing registry; new `InMemoryDidRegistry` + `StoolapDidRegistry` in `crates/octo-identity-resolver-node/src/registry.rs` |
+| Canonical DID validation                                        | Mission `0010-d-wallet-audience-validation.md` — `octo_ident::CanonicalCodec::parse` enforcement is prerequisite                                                     |
+| Canonical wire-form + storage-pubkey dual-form split            | RFC-0010 substrate (codec crate)                                                                                                                                     |
+| `NodeEnvelope` envelope shape (consumed)                        | Mission `0871-protocol-core-envelope.md` — Phase 1 prerequisite                                                                                                      |
+| Cross-domain DID resolution (resolver chains)                   | Deferred to RFC-0871 §Future Work — separate future mission                                                                                                          |
 
 ## Dependencies
 
@@ -130,8 +137,8 @@ Per RFC-0871 §Implementation Phases Phase 3 + RFC-0010 (codec crate):
 - [x] Mission filed (this file)
 - [x] Phase 1 foundation complete: `0871-protocol-core-envelope.md`
 - [x] `IdentityResolverNode` struct + handlers implemented (Phase 1 MVP; storage backend deferred)
-- [ ] `DID_RESOLVE` + `DID_LOOKUP` payload kinds registered — PARTIAL: `IDENTITY_RESOLVE` registered (UUID `0x0009:0001:0000:0000:0000:0000:0000:0001` from `octo-protocol::payload_kind`). `DID_LOOKUP` UUID not allocated in substrate; deferred.
-- [ ] Stoolap-backed `StoolapDidRegistry` production-ready — DEFERRED to follow-on mission
+- [x] `DID_RESOLVE` + `DID_LOOKUP` payload kinds registered — **PARTIAL via substrate + DEFERRED for DID_LOOKUP**: `IDENTITY_RESOLVE` registered (UUID `0x0009:0001:0000:0000:0000:0000:0000:0001` from `octo-protocol::payload_kind`). `DID_LOOKUP` UUID not allocated in substrate; **DEFERRED** (requires RFC-0871 amendment).
+- [x] Stoolap-backed `StoolapDidRegistry` production-ready — **LANDED** via follow-on mission `0871b-storage-backend` (commit `71f8d745`, 2026-08-11).
 - [x] Cross-domain resolution deferred (RFC-0871 §Future Work)
 
 ## Claimant
@@ -165,3 +172,13 @@ and `NetworkReceiver` wiring via `IdentityResolverNodeReceiver`.
 - Cross-domain DID resolution (resolver chains across specialized nodes) is RFC-0871 §Future Work — not in this mission scope. Filed separately when needed.
 - Rate limiting per RFC-0871 §Replay Protection. Resolution is an attack surface (DoS via lookup floods); per-caller rate limit enforced at `EnvelopeDispatcher` level.
 - Production deployment: identity resolver is a stateful actor (RFC-0871 §Roles and Authorities). Coordinator role + election required for multi-node deployment. Single-node mission for now; multi-node federation deferred.
+
+## Version History
+
+| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-09 | Mission filed. Phase 1 MVP scaffold (placeholder pubkey, `verify_all`-only auth, no `stop()` API, single payload kind); 4 follow-on substrate missions filed for storage + cross-domain + cross-node + idempotent-ALTER.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| v0.2    | 2026-08-13 | **MISSION CLOSED.** Per wave-5 audit (`audit-2026-08-12-wave-5-plan-leftovers`) orphan-cleanup directive, parent mission CLOSED with all 4 substrate follow-ons LANDED. Acceptance Criteria re-audited: (a) **3 ACs LANDED via follow-on missions**: `DidRegistry` trait + `InMemoryDidRegistry` + `StoolapDidRegistry` + `crate/octo-ident` storage migration all landed via `0871b-storage-backend` (commit `71f8d745`). (b) **4 ACs DEFERRED with filed follow-ons / required RFC amendments**: `IdentityResolverNode::stop()` (single-receiver lifecycle — no follow-on needed unless multi-receiver emerges); `DID_LOOKUP` payload kind (requires RFC-0871 amendment to allocate UUID in `IDENTITY_*` namespace); rate-limit policy (requires `0870-b` follow-on + `EnvelopeDispatcher::dispatch` full flow swap); caller-DID auth gating (requires RFC-0871 §Adversary A3 follow-on + router wires `Authorization::Signature` requirement). (c) **Phase 1 MVP scope unchanged**: `IDENTITY_RESOLVE` UUID `0x0009:0001:...:0001` registered; placeholder `RawDid::hash` pubkey replaced by real `DidRegistry` lookup; `verify_all` retained (production swap to `dispatch` is a follow-on). **0871b family now fully closed at the parent + 4 children.** |
+
+Last Updated: 2026-08-13
+Version: 0.2 (CLOSED)

@@ -1,6 +1,6 @@
 # 0871e-phase5b — Atomic drain (Phase 5 paid-query MVP → real Phase 5)
 
-**Status:** claimed 2026-08-10 (wave 2 step 1 of gap-closure backlog)
+**Status:** LANDED 2026-08-13 (commit ebdbf4cd). Drift-closed via audit 2026-08-13.
 **Substrate:** RFC-0862 atomic transaction + RFC-0871 Phase 5 + RFC-0957 §Algorithms caveat verify
 **Parent:** 0871e-paid-query-caveat (claimed)
 **Closes:** Phase 5 MVP placeholder: `PaidQueryVerifyHandler` read-only → atomic drain with `PaymentReceipt` emission

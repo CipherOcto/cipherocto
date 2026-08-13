@@ -1,6 +1,6 @@
 # 0959-placeholder-identity-binding — HSM-bound RouterNodeId for specialized nodes
 
-**Status:** unassigned (wave 3a step 3; gap surfaced 2026-08-10)
+**Status:** LANDED 2026-08-13 (commit db75a0e7). Drift-closed via audit 2026-08-13.
 **Substrate:** RFC-0009 HSM routing + RFC-0870 announce wire
 **Parent:** 0870-b envelope adoption (closed) per [[mission-0870-b-envelope-adoption-status]]
 

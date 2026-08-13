@@ -4,6 +4,7 @@
 
 Closed (2026-08-09). Claimed + implemented. Sub-mission of `missions/claimed/0009-a-hsm-routing.md` (top-level substrate wiring per RFC-0009 v1.1).
 
+**Closure Note (2026-08-13):** Drift-closure sweep moved this sub-mission from open/ → archived/ (Path B). Status was already `Closed (2026-08-09)`; substrate landed via parent mission `0009-a-hsm-routing` (RFC-0009 v1.1).
 **Substrate landed:** `crates/octo-wallet/src/lifecycle.rs` (NEW, 196 lines) — `LifecycleState` enum (Designated/Active/Rotating/Revoked) per RFC-0009 Appendix A `#[repr(u8)]` + `can_sign()` + `is_active()` + `is_revoked()` + `is_rotating()` + `can_transition_to()` + `from_u8()` + manual `Debug` (no PII). `crates/octo-wallet/src/identity.rs` extended with `lifecycle` + `activated_at_unix_secs` + `revoked_at_unix_secs` fields + `IdentityKey::activate(now)` (Designated→Active, idempotent from Active, refuses from Revoked/Rotating) + `IdentityKey::revoke(now)` (Active→Revoked, idempotent, zeroizes seed via Drop + swaps signer with NullSigner) + `sign()` lifecycle gate. `crates/octo-wallet/src/hsm.rs` extended with `NullSigner` (defense-in-depth: rejects sign with `HsmError::Device`) + `InMemorySigner::Drop` impl that zeroizes `seed_bytes` per RFC-0009 §Security §Key Handling Rule 3. `crates/octo-wallet/src/error.rs` extended with `WalletError::NotActive { current_state }` + `AlreadyRevoked` + `RotationInProgress` variants (l2 will exercise the latter).
 
 **Cross-crate compat:** `cargo test -p octo-wallet --lib` 222/222 pass (218 pre-existing + 9 lifecycle + 7 identity-lifecycle adjusted); `cargo test -p octo-wallet --test cross_node_delivery*` 6/6 pass; `cargo clippy -p octo-wallet --lib --tests -- -D warnings` clean; `cargo fmt --check` clean.
@@ -28,6 +29,7 @@ Wire the **Identity Lifecycle State Machine** defined in RFC-0009 §Lifecycle Re
 6. Manual redacting `Debug` on `LifecycleState` + `IdentityRevoked` event (preserve operational metadata: `activated_at_unix`, `revoked_at_unix`; redact DIDs)
 
 **OUT OF SCOPE for this sub-mission** (lands in `0009-l2-rotation-successor-linkage.md`):
+
 - `Active ↔ Rotating` transitions
 - Successor co-sign helper
 - Successor linkage persistence
@@ -262,10 +264,10 @@ Per [[git-workflow]] push awaits user instruction. Per [[no-line-refs-anywhere]]
 
 **Version History:**
 
-| Version | Date | Change |
-| --- | --- | --- |
-| v0.1 | 2026-08-09 | Mission filed. Captures Identity Lifecycle State Machine + Designated→Active + Active→Revoked transitions (split from rotation work into `0009-l2`). Closes the "blocks on RFC-0009 §Identity evolution" deferral in `0957-f-future-work.md` Band A closure. |
-| v0.2 | 2026-08-09 | Claimed + Closed (Band A). LifecycleState enum + IdentityKey lifecycle fields + activate/revoke + NullSigner defense + Drop zeroize + WalletError variants. 222/222 tests pass. Unblocks `0009-l2` + `0957-f-f4-bundle`. |
+| Version | Date       | Change                                                                                                                                                                                                                                                       |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| v0.1    | 2026-08-09 | Mission filed. Captures Identity Lifecycle State Machine + Designated→Active + Active→Revoked transitions (split from rotation work into `0009-l2`). Closes the "blocks on RFC-0009 §Identity evolution" deferral in `0957-f-future-work.md` Band A closure. |
+| v0.2    | 2026-08-09 | Claimed + Closed (Band A). LifecycleState enum + IdentityKey lifecycle fields + activate/revoke + NullSigner defense + Drop zeroize + WalletError variants. 222/222 tests pass. Unblocks `0009-l2` + `0957-f-f4-bundle`.                                     |
 
 Last Updated: 2026-08-09
 Version: 0.2

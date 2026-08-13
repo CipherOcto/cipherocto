@@ -4,9 +4,11 @@
 
 Closed (2026-08-09). Claimed + implemented. Sub-mission of `missions/claimed/0009-a-hsm-routing.md` (top-level substrate wiring per RFC-0009 v1.1).
 
+**Closure Note (2026-08-13):** Drift-closure sweep moved this sub-mission from open/ → archived/ (Path B). Status was already `Closed (2026-08-09)`; substrate landed via parent mission `0009-a-hsm-routing` (RFC-0009 v1.1).
 **Substrate landed:** `IdentityKey` extended with `successor_key: Option<Box<IdentityKey>>` (Box breaks recursion) + `rotation_started_at_unix_secs` + `deprecated` fields. `ROTATION_GRACE_PERIOD_SECS: u64 = 24*3600` constant per RFC-0853 §12. NEW APIs: `begin_rotation(successor, now)` (Active → Rotating + produces successor proof signature); `complete_rotation(now)` (Rotating → Active after 24h grace); `abort_rotation()` (Rotating → Active, destroys successor); `verify_successor_proof(old_pub, new_pub, proof)` (pure helper re-derives expected proof and verifies). `WalletError` extended with `NotRotating { current_state }` + `SelfRotation` + `GracePeriodNotElapsed { elapsed_secs, required_secs }` + `InvalidSuccessorProof` variants.
 
 **DEFERRED (out of l2 pushable-unit scope):**
+
 - `HolderRecord` rotation columns (`rotation_started_at_millis_unix` + `deprecated: bool`) — separate migration mission
 - Revocation event gossip fan-out via `octo_transport::NodeTransport` — couples Layer B → Layer D (forbidden per [[cipherocto-design-principles]]); track in `0959-c3` or new mission
 - `IdentityRotated` + `IdentityRotationAborted` event structs — split to follow-on mission; l2 closures produce the proof signature but don't emit events yet (events depend on observability layer wiring)
@@ -288,10 +290,10 @@ Per [[git-workflow]] push awaits user instruction. Per [[no-line-refs-anywhere]]
 
 **Version History:**
 
-| Version | Date | Change |
-| --- | --- | --- |
-| v0.1 | 2026-08-09 | Mission filed. Captures Active↔Rotating transitions + successor co-sign helper + 24h grace + revocation gossip fan-out per RFC-0009 §Lifecycle + RFC-0853 §12. Depends on `0009-l1` for `LifecycleState::Rotating` variant. Unblocks `0957-f-f4-bundle` for `successor_proof` field. |
-| v0.2 | 2026-08-09 | Claimed + Closed (Band A). begin_rotation + complete_rotation + abort_rotation + verify_successor_proof + ROTATION_GRACE_PERIOD_SECS + WalletError rotation variants. 229/229 tests pass. Gossip fan-out + HolderRecord rotation columns deferred to follow-on. Unblocks `0957-f-f4-bundle`. |
+| Version | Date       | Change                                                                                                                                                                                                                                                                                       |
+| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-09 | Mission filed. Captures Active↔Rotating transitions + successor co-sign helper + 24h grace + revocation gossip fan-out per RFC-0009 §Lifecycle + RFC-0853 §12. Depends on `0009-l1` for `LifecycleState::Rotating` variant. Unblocks `0957-f-f4-bundle` for `successor_proof` field.         |
+| v0.2    | 2026-08-09 | Claimed + Closed (Band A). begin_rotation + complete_rotation + abort_rotation + verify_successor_proof + ROTATION_GRACE_PERIOD_SECS + WalletError rotation variants. 229/229 tests pass. Gossip fan-out + HolderRecord rotation columns deferred to follow-on. Unblocks `0957-f-f4-bundle`. |
 
 Last Updated: 2026-08-09
 Version: 0.2

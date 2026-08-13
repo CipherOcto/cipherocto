@@ -1,6 +1,6 @@
 # 0957-phase2c — Capability Issuer Node wiring
 
-**Status:** claimed 2026-08-10 (wave 1 step 3 of gap-closure backlog)
+**Status:** LANDED 2026-08-13 (commit b19fe57f). Drift-closed via audit 2026-08-13.
 **Substrate:** RFC-0871 §Roles and Authorities + RFC-0957-A1 §Algorithms / §HolderRecord State Machine
 **Closes:** 0871d Phase 3 MVP gaps (IdentityKey + HolderRegistry slots; macaroon substrate; `CAPABILITY_LOOKUP` payload kind) + `crates/octo-capability-issuer-node/src/handlers/mod.rs:82` dead-code
 
@@ -60,7 +60,7 @@ state machine:
    re-exports for the new lookup handler.
 7. `crates/octo-capability-issuer-node/src/node.rs`:
    - `CapabilityIssuerNodeConfig` gains `identity: Arc<IdentityKey>`
-     + `registry: Arc<dyn HolderRegistry>` + `clock: Arc<dyn Clock>`.
+     - `registry: Arc<dyn HolderRegistry>` + `clock: Arc<dyn Clock>`.
    - `handle_envelope` routes the three payload kinds to their
      handlers + threads the new config fields.
 

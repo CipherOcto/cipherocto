@@ -1,6 +1,6 @@
 # 0959-c4 — CompositeCapabilityCatalog (gossip + storage delegation)
 
-**Status:** unassigned (wave 3a step 1; gap surfaced 2026-08-10)
+**Status:** LANDED 2026-08-13 (commit bbb70bc0). Drift-closed via audit 2026-08-13.
 **Substrate:** RFC-0862 gossip + RFC-0959-A1 market delivery + RFC-0957-A1 holder registry
 **Parent:** 0959-c3 (closed Band A) per [[mission-0959-c3-octo-transport-wiring]]
 

@@ -1,6 +1,6 @@
 # 0957-phase2b — PaymentCaveat migration + dispatcher decode
 
-**Status:** claimed 2026-08-10 (wave 1 step 2 of gap-closure backlog)
+**Status:** LANDED 2026-08-13 (commit 5cda2eb7). Drift-closed via audit 2026-08-13.
 **Substrate:** RFC-0871 §Implementation Phases Phase 5 + RFC-0957 §Algorithms + RFC-0965 §3 caveats
 **Closes:** 0871e deferred items #1 (caveat migration) + #2 (dispatcher-level decode) + #6 (macaroon HMAC verification + PaymentCaveat chain verify) + #7 (WALLET_MINT_CAPABILITY handler accepting PaymentCaveat mint requests)
 

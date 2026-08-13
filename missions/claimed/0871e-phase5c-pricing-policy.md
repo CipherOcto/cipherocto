@@ -1,6 +1,6 @@
 # 0871e-phase5c — Pricing policy announce (Phase 5 paid-query pricing surface)
 
-**Status:** claimed 2026-08-10 (wave 2 step 2 of gap-closure backlog)
+**Status:** LANDED 2026-08-13 (commit 0a5570bb). Drift-closed via audit 2026-08-13.
 **Substrate:** RFC-0870 §RouterAnnouncePayload + RFC-0871 Phase 5 + RFC-0862 atomic transaction
 **Parent:** 0871e-paid-query-caveat (claimed)
 **Closes:** Stub announce bodies (`CIPHEROCTO_*_ANNOUNCE_V1:*`) across 4 specialized nodes → real `RouterAnnouncePayload` with `pricing_policy`

@@ -1,6 +1,6 @@
 # 0957-phase2d — Macaroon attenuation stub closure
 
-**Status:** claimed 2026-08-10 (wave 1 step 4 of gap-closure backlog)
+**Status:** LANDED 2026-08-13 (commit 9fe9071c). Drift-closed via audit 2026-08-13.
 **Substrate:** RFC-0957 §3.2 + §3.5 + RFC-0965 §3 caveat chain
 **Closes:** wallet-node `handlers/attenuate.rs` `CIPHEROCTO_MINT_V1_ATTENUATED:*` placeholder → real macaroon attenuation via `CapabilityToken::attenuate`
 

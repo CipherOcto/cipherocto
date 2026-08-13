@@ -1,6 +1,6 @@
 # 0871e-phase5b-stoolap-ledger — Stoolap-backed SpendLedger impl
 
-**Status:** unassigned (wave 3a step 2; gap surfaced 2026-08-10)
+**Status:** LANDED 2026-08-13 (commit 2b24796c). Drift-closed via audit 2026-08-13.
 **Substrate:** RFC-0862 atomic transaction + stoolap-fork substrate
 **Parent:** 0871e-phase5b (landed `ebdbf4cd`) per [[mission-0871e-phase5b-status]]
 

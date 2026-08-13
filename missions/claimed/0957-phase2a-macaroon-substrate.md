@@ -1,6 +1,6 @@
 # 0957-phase2a — Macaroon Substrate (master unblocker root)
 
-**Status:** claimed 2026-08-10 (wave 1 of gap-closure backlog)
+**Status:** LANDED 2026-08-13 (commit 90306f45). Drift-closed via audit 2026-08-13.
 **Substrate:** RFC-0957 §3.1, RFC-0957-A1 §Persistence-Free Mint, RFC-0965 §3.7
 **Closes:** wallet-node `handlers/mint.rs` `CIPHEROCTO_MINT_V1:*` placeholder → real macaroon wire form
 

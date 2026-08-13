@@ -2,8 +2,66 @@
 
 ## Status
 
-Open. Filed 2026-08-13 from mission 0949-c1 SAML 3-pass review.
-MEDIUM priority — small diff, high clarity value.
+Claimed → v0.2 CLOSED 2026-08-13. Originally filed from mission
+0949-c1 SAML 3-pass review. MEDIUM priority — small diff, high
+clarity value.
+
+### Acceptance criteria — completed
+
+- [x] Expand module doc to enumerate coverage explicitly
+      (Coverage + DEFERRED sections landed at
+      `crates/quota-router-core/src/auth/sso/saml.rs`)
+- [x] Replace the false doc on `verify_xml_signature`
+      with STUB notice (signature verification remains a no-op;
+      landing real RSA-SHA256 verifier is M1-saml-signature-real)
+- [x] Add `pub issuer: Option<String>` and
+      `pub assertion_id: Option<String>` fields to `SamlAssertion`
+- [x] Parse `<Issuer>` element text (immediate child of Assertion
+      or Response); truncate to 256 chars as defense-in-depth
+      (`const ISSUER_TEXT_CAP: usize = 256` in parser)
+- [x] Test `test_saml_issuer_extracted_into_struct` — passes
+- [x] Test `test_saml_assertion_id_extracted_into_struct` — passes
+- [x] Tests include `<ds:Signature><ds:SignatureValue>...</ds:SignatureValue></ds:Signature>`
+      block so stub verifier accepts; non-empty byte blob
+      threads the validation path
+- [x] Clippy zero warnings (`cargo clippy -p quota-router-core --all-targets
+      --features full -- -D warnings` clean)
+- [x] All existing tests pass (42/42 in `auth::sso::saml` module)
+- [x] SAML module's own doc-build clean under `-D warnings`
+
+### Acceptance criteria — partial / external
+
+- [ ] `cargo doc --no-deps -- -D warnings` for the full
+      `quota-router-core` crate: BLOCKED by 5 pre-existing
+      unrelated doc warnings in `sso_context.rs:347`,
+      `secret_manager.rs:177`, `llm_router.rs` (URL not
+      auto-linked), plus 2-3 unresolved intra-doc-link
+      warnings (`sign_envelope_with`, `0`, `EMAIL_REDACTED`).
+      None introduced by M8. Fix tracked separately under
+      `mission-quota-router-core-doc-cleanup` (to file).
+      The M8-specific intent — that saml.rs itself has no
+      doc warnings — is satisfied; verified by
+      `RUSTDOCFLAGS="-D warnings" cargo doc -p quota-router-core
+      --no-deps 2>&1 | grep saml.rs` returning empty.
+
+### Diff summary
+
+- `crates/quota-router-core/src/auth/sso/saml.rs`:
+  - Module doc: added `## Coverage` (4 spec sections) +
+    `## DEFERRED` (6 known gaps with mission refs) +
+    production-safety warning
+  - `SamlAssertion`: 2 new `pub` fields with doc comments
+  - Parser state machine: 3 new fields
+    (`issuer`, `assertion_id`, `in_issuer`),
+    `const ISSUER_TEXT_CAP = 256`,
+    capture on `<Assertion ID="...">`, `<Issuer>...</Issuer>`,
+    text accumulation guarded by `text.is_empty()` +
+    256-char clamp
+  - `validate_signature` + `verify_xml_signature` STUB notices
+  - 2 new test functions (XML augmented with
+    `<ds:Signature><ds:SignatureValue>YWJjMTIz</ds:SignatureValue></ds:Signature>`)
+  - 1 doc-comment URL auto-linked (`SP entity ID` at line 100)
+  - 2 existing test-construction sites updated for new fields
 
 ## RFC
 

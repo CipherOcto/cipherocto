@@ -117,6 +117,10 @@ zk-verifier = { path = "../zk-verifier", features = ["allow-stub-verifier"] }
 # For constant-time comparison (master key bypass)
 subtle = "2.6"
 
+# For zeroizing SAML IdP cert / client_secret / scim_token on Drop
+# (M4-saml-crypto-hygiene, findings F1-010 / F2-004)
+zeroize = { version = "1.8", features = ["zeroize_derive"] }
+
 # Prometheus metrics (RFC-0937)
 prometheus = "0.14"
 

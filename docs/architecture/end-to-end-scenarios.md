@@ -20,6 +20,8 @@
 | **Seller node**        | A `quota-router-core` operator who exposes their provider pool to the network. Earns revenue.                                                                                                                                                                                      | RFC-0969, `architecture/octo-network-architecture.md`                                        |
 | **Wallet node**        | Mints + verifies capability tokens. Holds the buyer's signing key (HSM-mandated for production).                                                                                                                                                                                   | `use-cases/dual-mode-authorization-workflow.md`, mission `0009-a-hsm-routing`                |
 | **NodeEnvelope**       | Unified mesh wire envelope (`envelope_id`, `from_did`, `to_node_id`, `payload_kind`, `payload`, `authorization`, `nonce`, `expires_at_unix_ms`) — real struct at `crates/octo-protocol/src/envelope.rs`.                                                                           | `architecture/octo-network-architecture.md §15 Key Data Types`, RFC-0871 §Data Structures    |
+| **`envelope_id`**      | First field of `NodeEnvelope`. `BLAKE3-256` hash of canonical serialization of all other envelope fields; deterministic per envelope content. Computed by `compute_envelope_id()` at `crates/octo-protocol/src/signing.rs`. Used as the seen-set key (Scenario 11).                | `crates/octo-protocol/src/signing.rs` §`compute_envelope_id`                                 |
+| **`chain_hash`**       | Per-hop evolving hash binding the hop signature chain. Each router recomputes `chain_hash` from the prior value plus its own hop inputs (algorithm UNPINNED in code; design intent at RFC-0871 §Hop Signature).                                                                    | RFC-0871 §Hop Signature                                                                      |
 | **`PayloadKindId`**    | UUID discriminator inside `NodeEnvelope` identifying the inner payload type. `octo-protocol` defines ~22 entries (`IDENTITY_*`, `WALLET_*`, `QUOTA_*`, `REPUTATION_*`, `CAPABILITY_*`, `PAID_QUERY_*`); the RFC-0870-allocated subset covers mesh-forwarded capability/auth flows. | mission `0870-b-envelope-adoption`, `crates/octo-protocol/src/payload_kind.rs`               |
 | **HopSignature**       | Per-hop Ed25519 signature over `BLAKE3-256(canonical_ser((chain_hash, hop_index, BLAKE3(inner_payload), envelope_id)))` (full preimage at `crates/octo-protocol/src/hop_signature.rs`). Struct fields: `hop_index: u8, hop_did: String, signature: [u8;64], signer_pub: [u8;32]`.  | RFC-0871 §Data Structures                                                                    |
 | **Router node**        | Mesh relay. Forwards envelopes hop-by-hop, charges a relay fee.                                                                                                                                                                                                                    | `architecture/octo-network-architecture.md §9 DRS — Deterministic Route Selection`           |
@@ -46,28 +48,38 @@
 
 ## Diagram shorthand
 
-> Shorthand in the mermaid diagrams below: **RR** = `ReputationRegistry` (records `success` / `dispute` / `replay` outcomes; reputation scores for sellers, routers, buyers); **E** = `EscrowLedger` (the per-capability payment vault from Scenario 7); **ST** = PoRelay `TrustRegistry` (router/hop trust registry from Scenario 14 — exposes `get_stake(gateway_id: &[u8; 32])` and `get_score(gateway_id: &[u8; 32])` from `crates/octo-network/src/porelay/registry.rs`); **D** = "Dispute flow" (conceptual coordinator across `EscrowLedger` + `SlashingLedger` for Scenario 13 — not a discrete registry/struct); **ZK** = `ZK verifier` per RFC-0958 (capability issuance proof check in Scenario 9); **U** = human `Developer` actor (introductory use only in Scenario 1). Per-scenario ad-hoc labels (NOT in this list): **DM** = `dispatch_map` (renamed from `D` to avoid collision with the `D` shorthand in the diagram-legend block above), **TB** = per-key `TokenBucket`, **DB** = Stoolap balance store, **MK** = marketplace node, **ANT** = Anthropic provider, **OAI** = OpenAI provider, **SL** = `SlashingLedger` (Scenario 13 — receives `slash_with_pct` from Dispute flow D). "Wallet node" / "Marketplace node" / "Router node" / "Seller node" remain the glossary terms above.
+> Shorthand in the mermaid diagrams below. Main glossary (used across scenarios):
+>
+> - **RR** = `ReputationRegistry` — records `success` / `dispute` / `replay` outcomes; reputation scores for sellers, routers, buyers
+> - **E** = `EscrowLedger` — the per-capability payment vault from Scenario 7
+> - **ST** = PoRelay `TrustRegistry` — router/hop trust registry from Scenario 14; exposes `get_stake(gateway_id: &[u8; 32])` and `get_score(gateway_id: &[u8; 32])` from `crates/octo-network/src/porelay/registry.rs`
+> - **D** = "Dispute flow" — conceptual coordinator across `EscrowLedger` + `SlashingLedger` for Scenario 13 (not a discrete registry/struct)
+> - **ZK** = `ZK verifier` per RFC-0958 — capability issuance proof check in Scenario 9
+> - **U** = human `Developer` actor — introductory use only in Scenario 1
+> - **P1/P2** = router hop labels (hop 1 / hop 2) — used in Blocks 8/10/11/12 to denote `Router A` / `Router B` positions in the chain
+>
+> Per-scenario ad-hoc labels (NOT in the main glossary): **DM** = `dispatch_map` (renamed from **D** to avoid collision with the Dispute-flow shorthand above), **TB** = per-key `TokenBucket`, **DB** = Stoolap balance store, **MK** = marketplace node, **ANT** = Anthropic provider, **OAI** = OpenAI provider, **SL** = `SlashingLedger` (Scenario 13 — receives `slash_with_pct` from Dispute flow **D**). "Wallet node" / "Marketplace node" / "Router node" / "Seller node" remain the glossary terms above.
 
 ## Scenario index
 
 > **Note on numbering.** The P1–P8 labels below are **narrative phases** of the buyer-seller journey (Local → Local failure → Marketplace → Deal → Mesh → Seller → Settlement → Adversarial), NOT the cryptographic-architecture layers defined in `CLAUDE.md §Architectural Principles` (Layer A crypto substrate / B identity + transport / C specialized nodes / D transport adapters / E user extensions). Both schemes are correct in their respective contexts; they are kept distinct here to avoid collision.
 
-| #   | Phase                 | Title                                                           |
-| --- | --------------------- | --------------------------------------------------------------- |
-| 1   | P1 Local              | Hello world — single provider, no network                       |
-| 2   | P1 Local              | Multi-provider dispatch via `dispatch_map`                      |
-| 3   | P2 Local failure      | Provider 500 surfaces as 502 (pinned)                           |
-| 4   | P2 Local failure      | Budget exhausted → 402 (pinned)                                 |
-| 5   | P2 Local failure      | Rate limit exceeded → 429                                       |
-| 6   | P3 Marketplace        | Discovery — model not local, query marketplace                  |
-| 7   | P4 Deal               | Pick offer, mint CapabilityToken V2, fund escrow                |
-| 8   | P5 Mesh               | NodeEnvelope + 2-router-hop mesh + HopSignature chain           |
-| 9   | P6 Seller             | Verify capability (ZK + macaroon caveats), reputation, dispatch |
-| 10  | P7 Streaming + settle | SSE stream back through mesh, escrow release, reputation update |
-| 11  | P8 Adversarial        | Replay attack — stale envelope + replayed HopSignature          |
-| 12  | P8 Adversarial        | Seller offline mid-stream — partial response + 502 + refund     |
-| 13  | P8 Adversarial        | Capability fails server-side — dispute + slash seller stake     |
-| 14  | P8 Adversarial        | Sybil seller — fake reputation caught via stake + history       |
+| #   | Phase                 | Title                                                                     |
+| --- | --------------------- | ------------------------------------------------------------------------- |
+| 1   | P1 Local              | Hello world (single provider, no network)                                 |
+| 2   | P1 Local              | Multi-provider dispatch via `dispatch_map`                                |
+| 3   | P2 Local failure      | Provider 500 surfaces as 502 BAD_GATEWAY                                  |
+| 4   | P2 Local failure      | Budget exhausted returns 402 PAYMENT_REQUIRED                             |
+| 5   | P2 Local failure      | Rate limit exceeded returns 429                                           |
+| 6   | P3 Marketplace        | Marketplace discovery: model not local                                    |
+| 7   | P4 Deal               | Deal: pick offer, mint CapabilityToken V2, fund escrow                    |
+| 8   | P5 Mesh               | Mesh forwarding: NodeEnvelope + HopSignature chain                        |
+| 9   | P6 Seller             | Seller validation: capability verify, reputation check, provider dispatch |
+| 10  | P7 Streaming + settle | Streaming response + settlement                                           |
+| 11  | P8 Adversarial        | Adversarial: replay attack                                                |
+| 12  | P8 Adversarial        | Adversarial: seller offline mid-stream                                    |
+| 13  | P8 Adversarial        | Adversarial: capability fails server-side check                           |
+| 14  | P8 Adversarial        | Adversarial: Sybil seller with fake reputation                            |
 
 ---
 
@@ -189,7 +201,7 @@ sequenceDiagram
 | model-unhealthy (no fallback)            | Dispatch map has the model but health check marks it unhealthy, no fallbacks | `"Model unhealthy"`                                                           | inline in `handle_request_litellm` health-check Err arm                                                                           |
 | model-unhealthy (fallback exhausted)     | Primary unhealthy AND all configured fallback models failed                  | `"Model unhealthy and all fallback models failed"`                            | inline in `handle_request_litellm` fallback-exhausted Err arm                                                                     |
 | model-unhealthy (no fallback configured) | Primary unhealthy AND no fallback configured                                 | `"Model unhealthy and no fallback models configured"`                         | inline in `handle_request_litellm` no-fallback-configured Err arm                                                                 |
-| marketplace-empty                        | Marketplace returns zero offers for the requested model                      | `"no marketplace offers for model X"`                                         | Scenario 6                                                                                                                        |
+| marketplace-empty                        | Marketplace returns zero offers for the requested model                      | `"no marketplace offers for model X"` (body string design intent — TBD)       | Scenario 6                                                                                                                        |
 | stoolap-probe-unreachable (test fixture) | (Test-only) Stoolap DB path is unreachable during a probe                    | 503 emitted by the probe handler                                              | inline in the probe handler test assertion                                                                                        |
 
 **Why this matters:** Clients distinguish 5xx by source: 500 = bug, 502 = upstream, 503 = no provider. Each triggers a different recovery strategy (bug → report, upstream → retry/backoff, no-provider → reconfigure).
@@ -299,7 +311,7 @@ sequenceDiagram
 4. The marketplace returns a ranked list of offers. Each offer carries: seller DID, price per request (micro_octo_w), reputation score, p50 latency, available capacity (RPM).
 5. The proxy returns the offer list to the client. The client (or user) picks an offer. (Exact response status code + envelope shape are marketplace-facade-defined — see `use-cases/ai-quota-marketplace.md` §Discovery Response.)
 
-**On the empty case:** if the marketplace returns zero offers (no seller serves this model), the proxy returns **503 SERVICE_UNAVAILABLE** with a different error body ("no marketplace offers for model X" — see consolidated 503 table above, row `marketplace-empty`). The client can then either retry later or reconfigure.
+**On the empty case:** if the marketplace returns zero offers (no seller serves this model), the proxy returns **503 SERVICE_UNAVAILABLE** with a marketplace-empty error body (body string design intent — TBD; see consolidated 503 table above, row `marketplace-empty`). The client can then either retry later or reconfigure.
 
 **Trust model:** the marketplace is gossip-based; k of n responses must agree on the offer set before the proxy trusts the rank. Disagreement (Sybil attempt) is caught at the gossip layer via the PoRelay trust registry.
 
@@ -731,15 +743,16 @@ These gaps surfaced while writing this doc. Each should become either a follow-o
 
 ## Change log
 
-| Date       | Change                                                                               | Author          |
-| ---------- | ------------------------------------------------------------------------------------ | --------------- |
-| 2026-08-13 | Initial draft, 14 scenarios across 8 phases                                          | cc (brainstorm) |
-| 2026-08-13 | Round 1 review (foundational checks)                                                 | cc (review)     |
-| 2026-08-13 | Round 2 review (consistency sweep)                                                   | cc (review)     |
-| 2026-08-13 | Round 3 review (api surface claims)                                                  | cc (review)     |
-| 2026-08-13 | Round 4 review (api surface claims cont.)                                            | cc (review)     |
-| 2026-08-13 | Round 5 review (mermaid + prose)                                                     | cc (review)     |
-| 2026-08-13 | Round 6 review (over-citation regression)                                            | cc (review)     |
-| 2026-08-13 | Round 7 review (SL routing fix)                                                      | cc (review)     |
-| 2026-08-13 | Round 8 review (cents→micro_octo_w, TrustRegistry, MaxPerTx tuple, markdown)         | cc (review)     |
-| 2026-08-13 | Round 9 review (RelayScore fabrication, anchors, mermaid participants, phase labels) | cc (review)     |
+| Date       | Change                                                                                                 | Author          |
+| ---------- | ------------------------------------------------------------------------------------------------------ | --------------- |
+| 2026-08-13 | Initial draft, 14 scenarios across 8 phases                                                            | cc (brainstorm) |
+| 2026-08-13 | Round 1 review (foundational checks)                                                                   | cc (review)     |
+| 2026-08-13 | Round 2 review (consistency sweep)                                                                     | cc (review)     |
+| 2026-08-13 | Round 3 review (api surface claims)                                                                    | cc (review)     |
+| 2026-08-13 | Round 4 review (api surface claims cont.)                                                              | cc (review)     |
+| 2026-08-13 | Round 5 review (mermaid + prose)                                                                       | cc (review)     |
+| 2026-08-13 | Round 6 review (over-citation regression)                                                              | cc (review)     |
+| 2026-08-13 | Round 7 review (SL routing fix)                                                                        | cc (review)     |
+| 2026-08-13 | Round 8 review (cents→micro_octo_w, TrustRegistry, MaxPerTx tuple, markdown)                           | cc (review)     |
+| 2026-08-13 | Round 9 review (RelayScore fabrication, anchors, mermaid participants, phase labels)                   | cc (review)     |
+| 2026-08-13 | Round 10 review (index↔heading alignment, glossary rows, marketplace-empty caveat, bullet-list legend) | cc (review)     |

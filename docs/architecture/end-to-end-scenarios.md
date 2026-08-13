@@ -21,7 +21,7 @@
 | **Wallet node**        | Mints + verifies capability tokens. Holds the buyer's signing key (HSM-mandated for production).                                                                                                                                                                                                                                                                                                         | `use-cases/dual-mode-authorization-workflow.md`, mission `0009-a-hsm-routing`                |
 | **NodeEnvelope**       | Unified mesh wire envelope — fields (real types from `crates/octo-protocol/src/envelope.rs`): `envelope_id: [u8; 32]`, `from_did: WireDid`, `to_node_id: RecipientRef`, `payload_kind: PayloadKindId`, `payload: Vec<u8>`, `authorization: Vec<Authorization>` (logical-AND composition across multiple capabilities per RFC-0871 §Adversary Analysis A6), `nonce: [u8; 32]`, `expires_at_unix_ms: u64`. | `architecture/octo-network-architecture.md §15 Key Data Types`, RFC-0871 §Data Structures    |
 | **`envelope_id`**      | First field of `NodeEnvelope`. `BLAKE3-256` hash of canonical serialization of all other envelope fields; deterministic per envelope content. Computed by `compute_envelope_id()` at `crates/octo-protocol/src/signing.rs`. Used as the seen-set key (Scenario 11).                                                                                                                                      | `crates/octo-protocol/src/signing.rs` §`compute_envelope_id`                                 |
-| **`chain_hash`**       | Per-hop evolving hash binding the hop signature chain. Each router recomputes `chain_hash` from the prior value plus its own hop inputs (algorithm UNPINNED in code; design intent at RFC-0871 §Hop Signature).                                                                                                                                                                                          | RFC-0871 §Hop Signature                                                                      |
+| **`chain_hash`**       | Per-hop evolving hash binding the hop signature chain. Each router recomputes `chain_hash` from the prior value plus its own hop inputs (algorithm UNPINNED in code; design intent at RFC-0871 §Data Structures).                                                                                                                                                                                        | RFC-0871 §Data Structures (HopSignature fields)                                              |
 | **`PayloadKindId`**    | UUID discriminator inside `NodeEnvelope` identifying the inner payload type. `octo-protocol` defines ~22 entries (`IDENTITY_*`, `WALLET_*`, `QUOTA_*`, `REPUTATION_*`, `CAPABILITY_*`, `PAID_QUERY_*`); the RFC-0870-allocated subset covers mesh-forwarded capability/auth flows.                                                                                                                       | mission `0870-b-envelope-adoption`, `crates/octo-protocol/src/payload_kind.rs`               |
 | **HopSignature**       | Per-hop Ed25519 signature over `BLAKE3-256(canonical_ser((chain_hash, hop_index, BLAKE3(inner_payload), envelope_id)))` (full preimage at `crates/octo-protocol/src/hop_signature.rs`). Struct fields: `hop_index: u8, hop_did: String, signature: [u8;64], signer_pub: [u8;32]`.                                                                                                                        | RFC-0871 §Data Structures                                                                    |
 | **Router node**        | Mesh relay. Forwards envelopes hop-by-hop, charges a relay fee.                                                                                                                                                                                                                                                                                                                                          | `architecture/octo-network-architecture.md §9 DRS — Deterministic Route Selection`           |
@@ -678,44 +678,46 @@ Real `Caveat` enum at `crates/octo-cap-macaroon/src/caveat/mod.rs` carries exact
 
 **Pre-existing (13):**
 
-| Variant              | Shape                                                                                                                            |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `AmountMax`          | `AmountMax(u128)` — micro_octo_w cap                                                                                             |
-| `PerAxisMax`         | `PerAxisMax { axis: String, max_per_1k: u128 }`                                                                                  |
-| `Model`              | `Model(String)`                                                                                                                  |
-| `Provider`           | `Provider(String)`                                                                                                               |
-| `Before`             | `Before { before_unix: u64 }`                                                                                                    |
-| `Audience`           | `Audience { audience_did: WireDid }`                                                                                             |
-| `RateLimit`          | `RateLimit { rpm: u32, tpm: u32 }`                                                                                               |
-| `InvocationHashBind` | `InvocationHashBind { invocation_hash: [u8; 32] }`                                                                               |
-| `Jurisdiction`       | `Jurisdiction { allowed_iso3166: Vec<String> }`                                                                                  |
-| `CacheStrategy`      | `CacheStrategy(CachePolicy)` where `CachePolicy = Off \| OptIn { cache_key_hash: Option<[u8; 32]> } \| Always { ttl_secs: u32 }` |
-| `AskBinding`         | `AskBinding { ask_id: [u8; 32] }`                                                                                                |
-| `ThirdParty`         | `ThirdParty { auditor_did: WireDid }`                                                                                            |
-| `Raw`                | `Raw(Vec<u8>)`                                                                                                                   |
+| Variant              | Shape                                                                                                                                  |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `AmountMax`          | `AmountMax(MicroOctoW)` tuple where `MicroOctoW = u128` — micro_octo_w cap                                                             |
+| `PerAxisMax`         | `PerAxisMax(PerAxisMax)` tuple where `PerAxisMax { axis: String, max_per_1k: u128 }`                                                   |
+| `Model`              | `Model(ModelRef)` tuple where `ModelRef = String`                                                                                      |
+| `Provider`           | `Provider(Vec<ProviderId>)` tuple where `ProviderId = String`                                                                          |
+| `Before`             | `Before(UnixTimeSecs)` tuple where `UnixTimeSecs = u64` — capability expires at this Unix time (inclusive)                             |
+| `Audience`           | `Audience(OverlayIdentity)` tuple where `OverlayIdentity = String` (DID form)                                                          |
+| `RateLimit`          | `RateLimit(RateLimit)` tuple where `RateLimit { rpm: u32, tpm: u32 }`                                                                  |
+| `InvocationHashBind` | `InvocationHashBind(Blake3)` tuple where `Blake3 = [u8; 32]` — bind to specific request body hash (anti-replay)                        |
+| `Jurisdiction`       | `Jurisdiction(HashSet<ISO3166>)` tuple where `ISO3166 = String`                                                                        |
+| `CacheStrategy`      | `CacheStrategy(CachePolicy)` where `CachePolicy = Off \| OptIn { cache_key_hash: Option<Blake3> } \| Always { ttl_secs: u32 }`         |
+| `AskBinding`         | `AskBinding(AskId)` tuple where `AskId = [u8; 32]`                                                                                     |
+| `ThirdParty`         | `ThirdParty(String)` tuple — discharge channel id (escrow / audit endpoint)                                                            |
+| `Raw`                | `Raw(RawCaveat)` tuple where `RawCaveat { name: String, value: Vec<u8> }` — escape hatch for unknown caveat names (catalog-registered) |
 
 **RFC-0965 §3 (9):**
 
-| Variant           | Shape                                                         |
-| ----------------- | ------------------------------------------------------------- |
-| `Vault`           | `Vault { vault_id: [u8; 32] }`                                |
-| `Permission`      | `Permission { kind: PermissionKind }`                         |
-| `ValidRange`      | `ValidRange { valid_after_unix: u64, valid_until_unix: u64 }` |
-| `MaxPerTx`        | `MaxPerTx(u128)` — tuple variant; per-token price ceiling     |
-| `AuditWindow`     | `AuditWindow { duration_secs: u64 }` — 0 = instant            |
-| `MaxUses`         | `MaxUses { count: u32 }` — 0 = unlimited                      |
-| `WrappedOnly`     | `WrappedOnly { wrapper_kind: String }`                        |
-| `Factory`         | `Factory { factory_vet_pub: [u8; 32] }`                       |
-| `PolicyReference` | `PolicyReference { policy_id: [u8; 32] }`                     |
+| Variant           | Shape                                                                                                                                                                                                                                                                                           |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Vault`           | `Vault([u8; 32])` tuple — vault id                                                                                                                                                                                                                                                              |
+| `Permission`      | `Permission(PermissionKind)` tuple where `PermissionKind = NativeTokenTransfer \| Erc20TokenTransfer \| ContractCall \| Reservation \| VaultMutation`                                                                                                                                           |
+| `ValidRange`      | `ValidRange { valid_after_unix: u64, valid_until_unix: u64 }`                                                                                                                                                                                                                                   |
+| `MaxPerTx`        | `MaxPerTx(u128)` tuple — per-token price ceiling                                                                                                                                                                                                                                                |
+| `AuditWindow`     | `AuditWindow { duration_secs: u64 }` — 0 = instant                                                                                                                                                                                                                                              |
+| `MaxUses`         | `MaxUses { count: u32 }` — 0 = unlimited                                                                                                                                                                                                                                                        |
+| `WrappedOnly`     | `WrappedOnly { parent_capability: [u8; 32] }`                                                                                                                                                                                                                                                   |
+| `Factory`         | `Factory(FactoryVet)` tuple where `FactoryVet { target_vault_id: [u8; 32], action_template: ActionTemplate { selector: String, args: Vec<String> }, required_caller: Option<String>, pre_conditions: Vec<Constraint>, expiry_for_deploy_unix: u64 }` — typed invocation shape, NOT opaque bytes |
+| `PolicyReference` | `PolicyReference { policy_id: [u8; 32], policy_version_seq: u64, attenuation_witness: [u8; 64] }` — witness signature binds attenuation per RFC-0967 §8.2                                                                                                                                       |
 
 **Phase-2b (4):**
 
-| Variant             | Shape                                          |
-| ------------------- | ---------------------------------------------- |
-| `ValidAfter`        | `ValidAfter { valid_after_unix: u64 }`         |
-| `RedemptionContext` | `RedemptionContext { context_hash: [u8; 32] }` |
-| `Sharded`           | `Sharded { shard_id: u32, total_shards: u32 }` |
-| `Payment`           | `Payment { max_price_micro_octo_w: u128 }`     |
+| Variant             | Shape                                                                                                                                    |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `ValidAfter`        | `ValidAfter { not_before_unix: u64 }` — single timestamp; for ranges use `Constraint::ValidRange`                                        |
+| `RedemptionContext` | `RedemptionContext { context_hash: [u8; 32] }` — anti-replay domain separator per RFC-0965 §3.6                                          |
+| `Sharded`           | `Sharded { shard_id: u32 }`                                                                                                              |
+| `Payment`           | `Payment(PaymentCaveat)` tuple where `PaymentCaveat { caveat_name: String, budget: MicroOctoW, model: String, expires_at_unix_ms: u64 }` |
+
+Subsumption rule reference: `set_subsumes(parent, child)` at `crates/octo-cap-macaroon/src/caveat/mod.rs` enforces monotonic narrowing per RFC-0957 §3.5. Each variant's child ← parent rule is documented inline in the source (e.g. `ValidRange`: child range ⊆ parent range; `AuditWindow`: child duration ≥ parent duration per R7-F8; `WrappedOnly`: `parent_capability` hash equality; `Factory`: full canonical-vector equality).
 
 Distinct from RFC-0964 `Constraint` envelope variants (the Constraint envelope wraps capabilities at a different layer). The mission `0965-a-caveat-dsl` mission card counts "9 new caveat types" — the RFC-0965-specific subset, not the total landed set.
 
@@ -806,3 +808,4 @@ These gaps surfaced while writing this doc. Each should become either a follow-o
 | 2026-08-13 | Round 9 review (RelayScore fabrication, anchors, mermaid participants, phase labels)                                                | cc (review)     |
 | 2026-08-13 | Round 10 review (index↔heading alignment, glossary rows, marketplace-empty caveat, bullet-list legend)                              | cc (review)     |
 | 2026-08-13 | Round 11 review (NodeEnvelope field-type pinning, Caveat schema subsection, CapabilityBundleV2 4 fields, Scenario 12 design-intent) | cc (review)     |
+| 2026-08-13 | Round 13 review (Caveat schema 26-variant shape corrections, RFC-0871 §Hop Signature → §Data Structures) | cc (review)     |

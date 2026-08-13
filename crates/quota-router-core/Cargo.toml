@@ -167,6 +167,10 @@ quick-xml = { version = "0.40.1", features = ["serialize"] }
 jsonwebtoken = { version = "10.4.0", features = ["rsa", "p256", "p384"] }
 ring = "0.17.14"
 rsa = "0.9.10"
+# SAML XML-DSIG signature verification (M1-saml-signature-real).
+# Pure-Rust X.509 parser used to extract the SubjectPublicKeyInfo
+# from the IdP certificate so `rsa` can verify the SignedInfo signature.
+x509-parser = "0.16"
 
 [lib]
 name = "quota_router_core"
@@ -202,6 +206,9 @@ criterion = "0.5"
 tempfile = "3"
 cipherocto-encoding = { path = "../cipherocto-encoding" }
 cipherocto-policy = { path = "../cipherocto-policy" }
+# SAML XML-DSIG verifier tests (M1) share a single rcgen-built
+# self-signed X.509 cert as the IdP-cert fixture. Pure-Rust.
+rcgen = "0.13"
 
 # Mission 0958-b S2 (2026-08-05): zk_verify::capability tests gate
 # on `zk_vendor::vendor_state()` to skip stub-shaped assertions when

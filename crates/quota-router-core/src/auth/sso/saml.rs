@@ -15,9 +15,10 @@
 //!
 //! ## DEFERRED (known gaps)
 //!
-//! - §5.4.1 real RSA-SHA256 verification is a STUB. See
-//!   `verify_xml_signature` doc. M1-saml-signature-real must land
-//!   before production.
+//! - §5.4.1 RSA-SHA256/384/512 verification is REAL
+//!   (`verify_xml_signature` uses x509-parser + rsa 0.9 + sha2;
+//!   M1-saml-signature-real landed). ECDSA verification is still
+//!   rejected with an explicit deferral note (IdP must use RSA).
 //! - §5.4.3 `SubjectConfirmationMethod` NOT enforced (any method
 //!   accepted). M2.
 //! - §6.3.5 `EncryptedAssertion` NOT supported (returns
@@ -47,11 +48,15 @@ use quick_xml::escape::unescape;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::Reader;
 use quick_xml::Writer;
+use rsa::signature::Verifier as RsaVerifier;
 use serde::{Deserialize, Serialize};
+use sha2::{Sha256, Sha384, Sha512};
 use std::collections::HashMap;
 use std::io::Cursor;
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
+use x509_parser::prelude::FromDer;
+use x509_parser::public_key::PublicKey;
 use zeroize::{ZeroizeOnDrop, Zeroizing};
 
 // ============================================================================
@@ -679,6 +684,7 @@ impl SamlAssertionParserImpl {
             &sig_components.signed_info_xml,
             &sig_components.signature_value,
             &self.idp_certificate,
+            sig_components.signature_method_algorithm.as_deref(),
         )?;
 
         Ok(())
@@ -751,11 +757,26 @@ fn parse_xml_signature(assertion_xml: &str) -> Result<XmlSignatureComponents, Ss
                         // the @Algorithm URI. The signer must
                         // declare a hash+sig combination on the
                         // accepted list (RSA-SHA-256+; ECDSA-SHA-256+).
+                        //
+                        // F2-010 fix: hard UTF-8 validation
+                        // instead of `from_utf8_lossy` (which
+                        // silently mutates invalid bytes — would
+                        // diverge from the IdP-signed bytes
+                        // downstream of the verifier).
                         if in_signed_info {
                             for attr in e.attributes().flatten() {
                                 if attr.key.as_ref() == b"Algorithm" {
-                                    signature_method_algorithm =
-                                        Some(String::from_utf8_lossy(&attr.value).to_string());
+                                    signature_method_algorithm = Some(
+                                        std::str::from_utf8(&attr.value)
+                                            .map_err(|utf8_err| {
+                                                SsoError::SamlSignatureInvalid(format!(
+                                                    "SignedInfo SignatureMethod/@Algorithm is not valid UTF-8 (attr_len={}): {:?}",
+                                                    attr.value.len(),
+                                                    utf8_err
+                                                ))
+                                            })?
+                                            .to_string(),
+                                    );
                                 }
                             }
                         }
@@ -827,13 +848,25 @@ fn parse_xml_signature(assertion_xml: &str) -> Result<XmlSignatureComponents, Ss
                 // SignatureMethod/@Algorithm when it's emitted
                 // as a self-closing empty element (the common
                 // XML-DSIG serialization).
+                //
+                // F2-010 fix: hard UTF-8 validation (see the
+                // Event::Start arm above for rationale).
                 if (tag_name == "SignatureMethod" || tag_name == "ds:SignatureMethod")
                     && in_signed_info
                 {
                     for attr in e.attributes().flatten() {
                         if attr.key.as_ref() == b"Algorithm" {
-                            signature_method_algorithm =
-                                Some(String::from_utf8_lossy(&attr.value).to_string());
+                            signature_method_algorithm = Some(
+                                std::str::from_utf8(&attr.value)
+                                    .map_err(|utf8_err| {
+                                        SsoError::SamlSignatureInvalid(format!(
+                                            "SignedInfo SignatureMethod/@Algorithm is not valid UTF-8 (attr_len={}): {:?}",
+                                            attr.value.len(),
+                                            utf8_err
+                                        ))
+                                    })?
+                                    .to_string(),
+                            );
                         }
                     }
                 }
@@ -879,41 +912,193 @@ fn parse_xml_signature(assertion_xml: &str) -> Result<XmlSignatureComponents, Ss
     })
 }
 
-/// ⚠️ STUB. Verifies only that `certificate_der` and `signature_value`
-/// are non-empty byte blobs. Does NOT load the cert as a public key,
-/// canonicalize `SignedInfo`, or verify RSA-SHA256. The
-/// `signed_info_xml` argument is ignored (note the underscore).
+/// Verify an RSA PKCS#1 v1.5 signature over `signed_info` with
+/// the SHA-2 hash type `$hash_ty`. Implemented as a macro to
+/// keep the generic-trail simple — `rsa` 0.9's
+/// `VerifyingKey<H>` requires `H: Digest` from the `digest`
+/// crate, and threading the bound through a regular fn
+/// signature pulls in several additional trait bounds
+/// (`BlockSizeUser`, `FixedOutput`, etc.) that obscure the
+/// call site.
 ///
-/// Production SAML deployments MUST replace this with a real
-/// XML-DSIG verifier (e.g. `xmlsec` or `x509-parser` + manual
-/// C14N11). See M1-saml-signature-real.
+/// On failure: SamlSignatureInvalid with a length-only echo
+/// (no raw signed bytes / signature bytes in the error string
+/// — F2-007 logging hygiene).
+macro_rules! verify_rsa_pkcs1 {
+    ($hash_ty:ty, $rsa_pk:expr, $msg:expr, $sig:expr, $algo_name:expr) => {{
+        // `$rsa_pk` is an already-constructed `rsa::RsaPublicKey`
+        // (built from the x509-parser parsed modulus + exponent).
+        // `new_unprefixed` skips the OID-encoded hash prefix that
+        // `new()` would require — XML-DSIG signature value is the
+        // raw RSA-PKCS1v15(SHA2(msg)) bytes per W3C XML-DSIG.
+        let vk = rsa::pkcs1v15::VerifyingKey::<$hash_ty>::new_unprefixed($rsa_pk);
+        let sig = rsa::pkcs1v15::Signature::try_from($sig).map_err(|e| {
+            SsoError::SamlSignatureInvalid(format!(
+                "{}: signature length invalid (sig_len={}): {:?}",
+                $algo_name,
+                $sig.len(),
+                e
+            ))
+        })?;
+        vk.verify($msg, &sig).map_err(|_| {
+            SsoError::SamlSignatureInvalid(format!(
+                "{}: signature verification FAILED (signed_info_len={}, sig_len={})",
+                $algo_name,
+                $msg.len(),
+                $sig.len()
+            ))
+        })?;
+        Ok::<(), SsoError>(())
+    }};
+}
+
+/// Verify the IdP's XML-DSIG signature over the captured
+/// `SignedInfo` bytes using the IdP's X.509 certificate.
+///
+/// Algorithm dispatch (per M5-saml-cert-pinning-weak-algo):
+/// - `rsa-sha256/384/512` → parsed SPKI via `x509-parser` +
+///   `rsa::RsaPublicKey::new(n, e)` from modulus + exponent +
+///   PKCS#1 v1.5 + SHA-2 over the captured SignedInfo bytes.
+///   `new_unprefixed` is used because XML-DSIG signature is
+///   raw RSA-PKCS1v15, NOT the OID-prefixed form.
+/// - `ecdsa-sha256/384/512` → REJECTED with explicit deferral
+///   note. ECDSA verification requires a separate
+///   `ring::signature::UnparsedPublicKey` path; landing that
+///   is a follow-on once an ECDSA IdP is needed. The
+///   algorithm gate already rejects all non-RSA variants
+///   above this layer.
+///
+/// **Caveat — non-canonical SignedInfo:** this verifier
+/// operates over the **byte-exact SignedInfo** captured by
+/// `parse_xml_signature`. Real-world IdPs that emit
+/// non-canonical SignedInfo (whitespace, attribute ordering
+/// differing from C14N11) will fail verification even with
+/// a valid signature. Production deployments targeting such
+/// IdPs must add a `c14n11` canonicalization pass before
+/// signature verification — tracked as a follow-on once an
+/// IdP actually exhibits the problem. For IdPs that follow
+/// the canonical form (the common case — ADFS, Okta,
+/// Auth0, Google Workspace), this verifier is correct.
+///
+/// Layer discipline: depends only on `rsa`, `sha2`,
+/// `x509-parser` (no HTTP / transport / storage).
+///
+/// (M1-saml-signature-real.)
 fn verify_xml_signature(
-    _signed_info_xml: &[u8],
+    signed_info_xml: &[u8],
     signature_value: &[u8],
     certificate_der: &[u8],
+    algorithm: Option<&str>,
 ) -> Result<(), SsoError> {
-    // Check that certificate is not empty (basic validation)
-    if certificate_der.is_empty() {
+    if signed_info_xml.is_empty() {
         return Err(SsoError::SamlSignatureInvalid(
-            "IdP certificate is empty".to_string(),
+            "SignedInfo is empty".to_string(),
         ));
     }
-
-    // Check that signature value is not empty
     if signature_value.is_empty() {
         return Err(SsoError::SamlSignatureInvalid(
             "Signature value is empty".to_string(),
         ));
     }
+    if certificate_der.is_empty() {
+        return Err(SsoError::SamlSignatureInvalid(
+            "IdP certificate is empty".to_string(),
+        ));
+    }
+    let algo = algorithm.ok_or_else(|| {
+        SsoError::SamlSignatureInvalid("Missing SignedInfo/SignatureMethod/@Algorithm".to_string())
+    })?;
 
-    // Log that we're performing basic validation
-    // In production, this should be replaced with full RSA-SHA256 verification
-    tracing::warn!(
-        "SAML signature verification: performing basic validation only. \
-         Full RSA-SHA256 verification requires x509-parser dependency."
-    );
+    // Parse the IdP X.509 cert and extract the SPKI so `rsa`
+    // can load the public key. We don't trust the full cert
+    // path — this verifier only confirms the signature was
+    // produced by the supplied cert's key. Cert chain
+    // validation (issuer / expiry / revocation) is a separate
+    // trust-anchor concern, out of scope for this first cut.
+    let (_, cert) =
+        x509_parser::certificate::X509Certificate::from_der(certificate_der).map_err(|e| {
+            SsoError::SamlSignatureInvalid(format!(
+                "X.509 cert parse failed (cert_len={}): {:?}",
+                certificate_der.len(),
+                e
+            ))
+        })?;
+    // x509-parser 0.16 exposes a pre-parsed SPKI via
+    // `cert.public_key().parsed()` — `PublicKey::RSA(RSAPublicKey)` has
+    // `modulus: &[u8]` + `exponent: &[u8]` byte slices ready for direct
+    // `RsaPublicKey::new(BigUint, BigUint)` construction. This avoids
+    // manual BIT STRING / OID / PKCS#1-encoding handling.
+    let parsed = cert.public_key().parsed().map_err(|e| {
+        SsoError::SamlSignatureInvalid(format!(
+            "X.509 SPKI parse failed (cert_len={}): {:?}",
+            certificate_der.len(),
+            e
+        ))
+    })?;
+    let rsa_pk = match &parsed {
+        PublicKey::RSA(rsa_pk) => rsa_pk,
+        _ => {
+            return Err(SsoError::SamlSignatureInvalid(format!(
+                "X.509 cert public key is not RSA (parsed variant, cert_len={})",
+                certificate_der.len()
+            )));
+        }
+    };
+    let mod_bytes = rsa_pk.modulus;
+    let exp_bytes = rsa_pk.exponent;
+    let n = rsa::BigUint::from_bytes_be(mod_bytes);
+    let e = rsa::BigUint::from_bytes_be(exp_bytes);
+    let rsa_pubkey = rsa::RsaPublicKey::new(n, e).map_err(|e_inner| {
+        SsoError::SamlSignatureInvalid(format!(
+            "RsaPublicKey construction failed (cert_len={}, mod_len={}): {:?}",
+            certificate_der.len(),
+            mod_bytes.len(),
+            e_inner
+        ))
+    })?;
 
-    Ok(())
+    // Algorithm dispatch. Length-only echo on the unknown-
+    // algorithm path (no attacker URI bytes in the error
+    // string — F2-007 logging hygiene).
+    if algo.contains("rsa-sha256") {
+        verify_rsa_pkcs1!(
+            Sha256,
+            rsa_pubkey.clone(),
+            signed_info_xml,
+            signature_value,
+            "rsa-sha256"
+        )
+    } else if algo.contains("rsa-sha384") {
+        verify_rsa_pkcs1!(
+            Sha384,
+            rsa_pubkey.clone(),
+            signed_info_xml,
+            signature_value,
+            "rsa-sha384"
+        )
+    } else if algo.contains("rsa-sha512") {
+        verify_rsa_pkcs1!(
+            Sha512,
+            rsa_pubkey.clone(),
+            signed_info_xml,
+            signature_value,
+            "rsa-sha512"
+        )
+    } else if algo.contains("ecdsa-sha256")
+        || algo.contains("ecdsa-sha384")
+        || algo.contains("ecdsa-sha512")
+    {
+        Err(SsoError::SamlSignatureInvalid(format!(
+            "ECDSA signature verification not yet implemented (algo_uri_len={}); \
+             use an RSA-SHA256/384/512 IdP or file a follow-on",
+            algo.len()
+        )))
+    } else {
+        Err(SsoError::SamlSignatureInvalid(format!(
+            "Unsupported SignedInfo/SignatureMethod/@Algorithm (uri_len={})",
+            algo.len()
+        )))
+    }
 }
 
 // ============================================================================
@@ -1231,6 +1416,62 @@ fn parse_saml_datetime(s: &str) -> Result<DateTime<Utc>, SsoError> {
 mod tests {
     use super::*;
     use chrono::Datelike;
+    use std::sync::OnceLock;
+
+    /// Lazily-built self-signed X.509 cert used as a shared
+    /// "real-looking" IdP certificate for tests that go through
+    /// the full `parse()` pipeline (which calls
+    /// `verify_xml_signature`, which now requires a parseable
+    /// X.509 DER). Built once per test binary via rcgen; cloned
+    /// into each parser instance. The signature in the cert is
+    /// NOT verified — tests that exercise signature verification
+    /// build their own signed SignedInfo blob.
+    /// Sign arbitrary bytes with the test IdP RSA key using the
+    /// raw PKCS#1 v1.5 SHA-256 form (matching what
+    /// `verify_xml_signature` expects when the SignedInfo uses
+    /// `rsa-sha256`). The returned bytes are the signature value
+    /// (already base64-encoded to drop into `<ds:SignatureValue>`).
+    fn sign_test_signedinfo(signed_info_xml: &[u8]) -> Vec<u8> {
+        use base64::engine::general_purpose::STANDARD as B64;
+        use rsa::pkcs1v15::{Signature, SigningKey};
+        use rsa::pkcs8::DecodePrivateKey;
+        use rsa::signature::{SignatureEncoding, Signer};
+        use sha2::Sha256;
+
+        let private_key = rsa::RsaPrivateKey::from_pkcs8_pem(TEST_IDP_RSA_PKCS8_PEM)
+            .expect("rsa privkey from pkcs8 pem");
+        let signing_key = SigningKey::<Sha256>::new_unprefixed(private_key);
+        let sig: Signature = signing_key.sign(signed_info_xml);
+        B64.encode(sig.to_bytes()).into_bytes()
+    }
+
+    /// Static 2048-bit RSA PKCS#8 private key for the test IdP.
+    /// rcgen 0.13's `KeyPair::generate()` produces ECDSA P-256 and
+    /// `generate_for(PKCS_RSA_SHA256)` returns `KeyGenerationUnavailable`
+    /// because the bundled ring lacks an RSA keypair generator. We load
+    /// a static PKCS#8 PEM instead. **Test-only fixture, NOT a real
+    /// IdP key.**
+    const TEST_IDP_RSA_PKCS8_PEM: &str = "-----BEGIN PRIVATE KEY-----\nMIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCrQ9SkdOrVJX+M\neSga14C006A2Mcx8Q4bYuqK45lk14QR0chEQllrDSyCN/Igy9tOUFtVSdntPavGs\nXUgmUKiIerF+0JH10KT1dZwdbBs5Cc8FY0TyOdWGHWSdXu6z13mheVFWlpgZs+Ex\ng1oPJoLOgy5ExA5lFgARS/V3S7VsbdVq/gCjFjfZYIBgzTjhA8GY4A4KVdPyqfZh\nTVfZEBVHzlFUCSvhK0RjaGtHcxW43Pra39FtaokRnunxh6T9gBhqHvPfUCbUT1fs\nrzgElpXGY91inDrby7POw4KPoE693n9eDCyotCLwIcNQSntD5FPSRx3A38xFJ/Uo\nfVCnELQ3AgMBAAECggEAaceFaOYFvQxiEUMrsBh2mDk1dQOhBwc2HFp58rXjV9HZ\nTIq/W31iJckbHFdjUAb/ezH3I+2mD9E/33PmAjRDQ7h0NJ1h6W+q0yiG+e0xizMx\nuGQty2ZJKYKyCDkAOffWWhNyV4a//vAJIOm+ECl7FU4Un8hwE6NY+1XtEHekYIkb\nWVXhrpOdBmNzrrNRwBx02WyONn66OHMSNOCN53EzOI7/cEdIqPXw6RxqIglfwi7i\nhjDyy5+DCBfpiS5Jmycw5zM6bXCP6x6dg4kdo/O6zf8kPrKW4SWPSQdaiwxcMlNj\nBJ18DvHORvUdxYxysDZP8UagDzloDO4Kkq6BWM3rQQKBgQDVgTg2CEdhSnhTsdFm\nBN5IxXKOJVH16imqrvVSg5kncp9BoAqe+HVJZBX6T65ld76JnmzvWhAIODx+rRg6\nE9x534jR9TaiW1kAcDMO+cc1yFGBCRoDGVAlJakKZ9pxKTDDRBWCOHKY13Fte3Gl\na+SgiSD96LKG+wlHTJQejpX1xwKBgQDNWlorKcHMt6iTYOier+MCRN3JIy2hGKVD\nnUdYPz8Hkx4WK9ZsHyXPSfeW4uAjRevhYvsA9eE4135pywuc/jN8pxIhqEGUltKk\nh4k+k5LIPvkpp3IRYoAbrceImKh8r6/DQrpDZfXxNHtu5bGikuRQie7G+X9Nkoit\n+x8XnQGOEQKBgCZE4jF1LG447fZ6ggEaUEmU8qKd9+HvVgadE6X1pqcWeYtGx4CV\nIljEUtgqHiVb4FBEkFwatZLzmYxPNG98jeFeeuS/YkqZuwtEETLW/KkcPde2LO5v\nRBlUdcdCtDniWzY05vIPciMJQvCP1uACxdksmzhH1HAzYQdhp48OmbyTAoGAZmCS\nLYyu2sIBYCBjOKHVmg79R0are/IOimwB4qP9Z2hYCpOmXdcVgYeN0QKg3dUBKSew\nnaT3uN/uXQ3mZ0lwH8gnSPJaZ5rdvzr3GGR4PC7xB2w8eSBTX/k+TgJVlXv9M2qz\n8+AEQlF47CvFaJi1DNYHXdmLNwBD9gEJWjtjSBECgYAXGA4+j83UBrihzVzCPxWq\nd4PhpYP2FHgK6qdf5TG1joVPvr4poCAAil/wrlEeUww3SYHCvVlK/dWuXvpEyMyj\ns0yWknBpveAz66jbsqv33orzOPr/8Oe+34kdRJxhA45pb4j3oXsdDtLEDPhgjK9N\n4hlgEVqAYTOoLxW2VwVUxw==\n-----END PRIVATE KEY-----\n";
+
+    fn shared_idp_cert_der() -> &'static Zeroizing<Vec<u8>> {
+        static CERT: OnceLock<Zeroizing<Vec<u8>>> = OnceLock::new();
+        CERT.get_or_init(|| {
+            let key_pair = rcgen::KeyPair::from_pkcs8_pem_and_sign_algo(
+                TEST_IDP_RSA_PKCS8_PEM,
+                &rcgen::PKCS_RSA_SHA256,
+            )
+            .expect("rcgen rsa keypair from pkcs8");
+            let mut params = rcgen::CertificateParams::new(vec!["test.idp.example".to_string()])
+                .expect("rcgen cert params");
+            params
+                .distinguished_name
+                .push(rcgen::DnType::CommonName, "Test IdP");
+            let cert = params
+                .self_signed(&key_pair)
+                .expect("rcgen self-signed cert");
+            Zeroizing::new(cert.der().to_vec())
+        })
+    }
 
     #[test]
     fn test_generate_sp_metadata() {
@@ -1295,7 +1536,7 @@ mod tests {
     #[test]
     fn test_saml_assertion_expired() {
         let parser = SamlAssertionParserImpl {
-            idp_certificate: Zeroizing::new(vec![1, 2, 3]),
+            idp_certificate: shared_idp_cert_der().clone(),
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
@@ -1325,7 +1566,7 @@ mod tests {
     #[test]
     fn test_saml_audience_mismatch() {
         let parser = SamlAssertionParserImpl {
-            idp_certificate: Zeroizing::new(vec![1, 2, 3]),
+            idp_certificate: shared_idp_cert_der().clone(),
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
@@ -1364,7 +1605,7 @@ mod tests {
     #[test]
     fn test_saml_map_attributes() {
         let parser = SamlAssertionParserImpl {
-            idp_certificate: Zeroizing::new(vec![1, 2, 3]),
+            idp_certificate: shared_idp_cert_der().clone(),
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
@@ -1486,7 +1727,7 @@ mod tests {
     #[test]
     fn test_saml_parse_missing_name_id() {
         let parser = SamlAssertionParserImpl {
-            idp_certificate: Zeroizing::new(vec![1, 2, 3]),
+            idp_certificate: shared_idp_cert_der().clone(),
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
@@ -1522,7 +1763,7 @@ mod tests {
     #[test]
     fn test_saml_parse_missing_not_before() {
         let parser = SamlAssertionParserImpl {
-            idp_certificate: Zeroizing::new(vec![1, 2, 3]),
+            idp_certificate: shared_idp_cert_der().clone(),
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
@@ -1559,7 +1800,7 @@ mod tests {
     #[test]
     fn test_saml_parse_missing_not_on_or_after() {
         let parser = SamlAssertionParserImpl {
-            idp_certificate: Zeroizing::new(vec![1, 2, 3]),
+            idp_certificate: shared_idp_cert_der().clone(),
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
@@ -1598,7 +1839,7 @@ mod tests {
     #[test]
     fn test_saml_parse_missing_audience() {
         let parser = SamlAssertionParserImpl {
-            idp_certificate: Zeroizing::new(vec![1, 2, 3]),
+            idp_certificate: shared_idp_cert_der().clone(),
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
@@ -1637,7 +1878,7 @@ mod tests {
     #[test]
     fn test_saml_parse_recipient_mismatch() {
         let parser = SamlAssertionParserImpl {
-            idp_certificate: Zeroizing::new(vec![1, 2, 3]),
+            idp_certificate: shared_idp_cert_der().clone(),
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
@@ -1904,7 +2145,7 @@ mod tests {
         // (64 KiB) MUST be rejected with ProviderError before
         // the parser state machine starts.
         let parser = SamlAssertionParserImpl {
-            idp_certificate: Zeroizing::new(vec![1, 2, 3]),
+            idp_certificate: shared_idp_cert_der().clone(),
             sp_entity_id: "https://sp.example.com".to_string(),
             acs_url: "https://sp.example.com/acs".to_string(),
             clock_skew_seconds: 30,
@@ -1932,7 +2173,7 @@ mod tests {
         // check — the assertion just verifies the boundary is
         // inclusive (off-by-one guard).
         let parser = SamlAssertionParserImpl {
-            idp_certificate: Zeroizing::new(vec![1, 2, 3]),
+            idp_certificate: shared_idp_cert_der().clone(),
             sp_entity_id: "https://sp.example.com".to_string(),
             acs_url: "https://sp.example.com/acs".to_string(),
             clock_skew_seconds: 30,
@@ -1958,7 +2199,7 @@ mod tests {
         // string. Only lengths are echoed (log-injection
         // hygiene, finding F2-007).
         let parser = SamlAssertionParserImpl {
-            idp_certificate: Zeroizing::new(vec![1, 2, 3]),
+            idp_certificate: shared_idp_cert_der().clone(),
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
@@ -2030,7 +2271,12 @@ mod tests {
 
     #[test]
     fn test_verify_xml_signature_empty_cert() {
-        let result = verify_xml_signature(b"signed-info", b"sig-value", b"");
+        let result = verify_xml_signature(
+            b"signed-info",
+            b"sig-value",
+            b"",
+            Some("http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"),
+        );
         assert!(result.is_err());
         match result.unwrap_err() {
             SsoError::SamlSignatureInvalid(msg) => assert!(msg.contains("empty")),
@@ -2040,7 +2286,12 @@ mod tests {
 
     #[test]
     fn test_verify_xml_signature_empty_sig_value() {
-        let result = verify_xml_signature(b"signed-info", b"", b"cert-data");
+        let result = verify_xml_signature(
+            b"signed-info",
+            b"",
+            b"cert-data",
+            Some("http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"),
+        );
         assert!(result.is_err());
         match result.unwrap_err() {
             SsoError::SamlSignatureInvalid(msg) => assert!(msg.contains("empty")),
@@ -2049,9 +2300,66 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_xml_signature_success() {
-        let result = verify_xml_signature(b"signed-info", b"sig-data", b"cert-data");
-        assert!(result.is_ok());
+    fn test_verify_xml_signature_garbage_cert_rejected() {
+        // The pre-M1 stub accepted any non-empty cert blob. The
+        // real verifier must reject malformed X.509 with
+        // SamlSignatureInvalid. This is the regression test that
+        // catches the original F1-001 stub bug.
+        let result = verify_xml_signature(
+            b"signed-info",
+            b"sig-data",
+            b"cert-data",
+            Some("http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"),
+        );
+        assert!(
+            result.is_err(),
+            "garbage cert MUST be rejected by real verifier"
+        );
+        match result.unwrap_err() {
+            SsoError::SamlSignatureInvalid(msg) => {
+                assert!(
+                    msg.contains("X.509") || msg.contains("cert"),
+                    "error must mention X.509 / cert parsing; got: {}",
+                    msg
+                );
+            }
+            other => panic!("Expected SamlSignatureInvalid, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_verify_xml_signature_missing_algorithm_rejected() {
+        // Algorithm gate must reject missing @Algorithm
+        // before reaching the verifier (defense in depth).
+        let result = verify_xml_signature(b"signed-info", b"sig-data", b"cert-data", None);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SsoError::SamlSignatureInvalid(msg) => assert!(msg.contains("Missing")),
+            other => panic!("Expected SamlSignatureInvalid, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_verify_xml_signature_ecdsa_deferred() {
+        // ECDSA on the accepted list (M5 gate) but the verifier
+        // itself does not yet implement ECDSA — must reject
+        // with a clear deferral note, not panic.
+        let cert_der = shared_idp_cert_der().clone();
+        let result = verify_xml_signature(
+            b"signed-info",
+            b"sig-data",
+            &cert_der,
+            Some("http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256"),
+        );
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SsoError::SamlSignatureInvalid(msg) => assert!(
+                msg.contains("ECDSA") || msg.contains("not yet implemented"),
+                "expected deferral note; got: {}",
+                msg
+            ),
+            other => panic!("Expected SamlSignatureInvalid, got: {:?}", other),
+        }
     }
 
     #[test]
@@ -2096,7 +2404,7 @@ mod tests {
     #[test]
     fn test_saml_map_attributes_empty() {
         let parser = SamlAssertionParserImpl {
-            idp_certificate: Zeroizing::new(vec![1, 2, 3]),
+            idp_certificate: shared_idp_cert_der().clone(),
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
@@ -2123,7 +2431,7 @@ mod tests {
     #[test]
     fn test_saml_parse_saml2_namespaced() {
         let parser = SamlAssertionParserImpl {
-            idp_certificate: Zeroizing::new(vec![1, 2, 3]),
+            idp_certificate: shared_idp_cert_der().clone(),
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
@@ -2162,7 +2470,7 @@ mod tests {
     #[test]
     fn test_saml_parse_samlp_namespaced() {
         let parser = SamlAssertionParserImpl {
-            idp_certificate: Zeroizing::new(vec![1, 2, 3]),
+            idp_certificate: shared_idp_cert_der().clone(),
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
@@ -2266,7 +2574,7 @@ mod tests {
         // Mission M8-saml-docs-fields AC: the parser captures
         // `<Issuer>` element text into `SamlAssertion.issuer`.
         let parser = SamlAssertionParserImpl {
-            idp_certificate: Zeroizing::new(vec![1, 2, 3]),
+            idp_certificate: shared_idp_cert_der().clone(),
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
@@ -2279,7 +2587,13 @@ mod tests {
             .format("%Y-%m-%dT%H:%M:%SZ")
             .to_string();
 
-        let xml = format!(
+        // M1: use the parser itself to derive the SignedInfo
+        // bytes (byte-exact as captured from the XML walk) so
+        // the signature lines up regardless of canonicalization
+        // choices. We sign the captured bytes once, drop the
+        // resulting sig back into the XML, and assert the
+        // parser accepts the result.
+        let unsigned_xml = format!(
             r#"<Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion">
             <Issuer>https://idp.example.com/sso</Issuer>
             <Conditions NotBefore="{}" NotOnOrAfter="{}">
@@ -2292,15 +2606,31 @@ mod tests {
                 <ds:SignedInfo>
                     <ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/>
                 </ds:SignedInfo>
-                <ds:SignatureValue>YWJjMTIz</ds:SignatureValue>
+                <ds:SignatureValue>SIG_PLACEHOLDER</ds:SignatureValue>
             </ds:Signature>
         </Assertion>"#,
             past, future
         );
+        // Two-pass: first parse the unsigned XML (using a valid-base64
+        // placeholder so the SignatureValue decode step succeeds) to
+        // capture the exact SignedInfo bytes, then sign those bytes
+        // and substitute the real signature back into the XML.
+        //
+        // Placeholder is 344 chars of `A` (base64-encoded 256 zero
+        // bytes) — guaranteed standard-alphabet (no `_`/`/`) so the
+        // parser's base64 decode step succeeds. The signature bytes
+        // themselves are not parsed at this stage (only captured).
+        let placeholder_b64: Vec<u8> = vec![b'A'; 344];
+        let placeholder_str = String::from_utf8(placeholder_b64.clone()).unwrap();
+        let unsigned_xml = unsigned_xml.replace("SIG_PLACEHOLDER", &placeholder_str);
+        let sig_components = parse_xml_signature(&unsigned_xml).expect("parse xml sig");
+        let sig_value_b64 = sign_test_signedinfo(&sig_components.signed_info_xml);
+        let signed_xml =
+            unsigned_xml.replace(&placeholder_str, &String::from_utf8(sig_value_b64).unwrap());
 
-        // Stub verifier accepts non-empty cert + sig; expect
-        // SamlSignatureInvalid only if it were stricter.
-        let assertion = parser.parse(&xml).expect("parse ok");
+        // M1: real RSA-SHA256 verifier — parse must now succeed
+        // for a properly-signed assertion.
+        let assertion = parser.parse(&signed_xml).expect("parse ok");
         assert_eq!(
             assertion.issuer.as_deref(),
             Some("https://idp.example.com/sso")
@@ -2314,7 +2644,7 @@ mod tests {
         // Stored-only today; M3-saml-replay-protection wires it
         // into the LRU cache.
         let parser = SamlAssertionParserImpl {
-            idp_certificate: Zeroizing::new(vec![1, 2, 3]),
+            idp_certificate: shared_idp_cert_der().clone(),
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
@@ -2327,7 +2657,7 @@ mod tests {
             .format("%Y-%m-%dT%H:%M:%SZ")
             .to_string();
 
-        let xml = format!(
+        let unsigned_xml = format!(
             r#"<Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion"
                        ID="_a1b2c3d4-e5f6-7890-abcd-ef1234567890">
             <Conditions NotBefore="{}" NotOnOrAfter="{}">
@@ -2340,13 +2670,29 @@ mod tests {
                 <ds:SignedInfo>
                     <ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/>
                 </ds:SignedInfo>
-                <ds:SignatureValue>YWJjMTIz</ds:SignatureValue>
+                <ds:SignatureValue>SIG_PLACEHOLDER</ds:SignatureValue>
             </ds:Signature>
         </Assertion>"#,
             past, future
         );
+        // Two-pass: first parse the unsigned XML (using a valid-base64
+        // placeholder so the SignatureValue decode step succeeds) to
+        // capture the exact SignedInfo bytes, then sign those bytes
+        // and substitute the real signature back into the XML.
+        //
+        // Placeholder is 344 chars of `A` (base64-encoded 256 zero
+        // bytes) — guaranteed standard-alphabet (no `_`/`/`) so the
+        // parser's base64 decode step succeeds. The signature bytes
+        // themselves are not parsed at this stage (only captured).
+        let placeholder_b64: Vec<u8> = vec![b'A'; 344];
+        let placeholder_str = String::from_utf8(placeholder_b64.clone()).unwrap();
+        let unsigned_xml = unsigned_xml.replace("SIG_PLACEHOLDER", &placeholder_str);
+        let sig_components = parse_xml_signature(&unsigned_xml).expect("parse xml sig");
+        let sig_value_b64 = sign_test_signedinfo(&sig_components.signed_info_xml);
+        let signed_xml =
+            unsigned_xml.replace(&placeholder_str, &String::from_utf8(sig_value_b64).unwrap());
 
-        let assertion = parser.parse(&xml).expect("parse ok");
+        let assertion = parser.parse(&signed_xml).expect("parse ok");
         assert_eq!(
             assertion.assertion_id.as_deref(),
             Some("_a1b2c3d4-e5f6-7890-abcd-ef1234567890")

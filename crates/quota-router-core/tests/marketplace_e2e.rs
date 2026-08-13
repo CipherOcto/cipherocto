@@ -797,42 +797,113 @@ fn stale_view_after_restart_sees_writes() {
 }
 
 #[test]
-fn stake_withdrawal_rejected_after_ban() {
-    // Production failure mode (mission `marketplace-slashing-persistence`):
-    // a banned provider must NOT be able to re-register a fresh stake
-    // and have the prior offense history wiped. The slashing ledger
-    // must retain `offense_count` and `cumulative_loss_pct` across
-    // re-registrations; otherwise a banned provider could withdraw
-    // their slashed stake by re-registering.
+fn stake_withdrawal_full_amount_after_ban_rejected() {
+    // Production failure mode (mission `marketplace-stake-withdraw-api`):
+    // a banned provider must NOT be able to withdraw their stake.
+    // The `withdraw_stake` API exposes the ban gate; the prior
+    // re-register proxy covered the invariant indirectly. This test
+    // pins the production withdraw path.
     let mut ledger = SlashingLedger::new();
     let did = sample_did(99);
     ledger.register(&did, 1_000_000);
-    // Drive 4 offenses → ban.
     for _ in 0..4 {
         ledger
             .slash(&did, SlashReason::PROVIDER_ERROR, 1.0)
             .expect("slash");
     }
     assert!(ledger.stake(&did).unwrap().is_banned(ledger.rules()));
-    let pre = ledger.stake(&did).unwrap().clone();
-    // "Withdrawal" attempt: re-register with a larger stake to wipe
-    // the slate. The ledger must NOT clobber the existing record.
-    ledger.register(&did, 5_000_000);
-    let post = ledger.stake(&did).unwrap();
-    // Per the existing register() contract (see slashing.rs), a
-    // re-register resets the stake to the new amount; the ban
-    // contract is the operationally-relevant invariant: the
-    // cumulative_loss_pct carries forward and the provider is STILL
-    // banned after re-register (cumulative_loss_pct ≥ threshold).
-    assert!(
-        post.is_banned(ledger.rules()),
-        "re-registration must not clear the ban; cumulative_loss_pct={} threshold={}",
-        post.cumulative_loss_pct,
-        ledger.rules().permanent_ban_at
-    );
-    // Subsequent slash attempt on the "re-registered" banned
-    // provider must still be rejected.
-    let err = ledger.slash(&did, SlashReason::TIMEOUT, 1.0).unwrap_err();
+    let pre_offense_count = ledger.stake(&did).unwrap().offense_count;
+    let pre_cumulative = ledger.stake(&did).unwrap().cumulative_loss_pct;
+
+    // Attempt full withdrawal — must be rejected with BannedProvider.
+    let err = ledger
+        .withdraw_stake(&did, ledger.stake(&did).unwrap().stake_micro_octo_w)
+        .unwrap_err();
     assert!(matches!(err, SlashError::BannedProvider { .. }));
-    let _ = pre; // silence unused if compiler narrows
+
+    // State untouched: stake still present, offense_count + cumulative
+    // loss unchanged.
+    assert!(ledger.stake(&did).unwrap().is_banned(ledger.rules()));
+    assert_eq!(ledger.stake(&did).unwrap().offense_count, pre_offense_count);
+    assert_eq!(
+        ledger.stake(&did).unwrap().cumulative_loss_pct,
+        pre_cumulative
+    );
+}
+
+#[test]
+fn stake_withdrawal_partial_preserves_ledger_state() {
+    // Pre-ban: a partial withdrawal must NOT clear offense history or
+    // affect the ban-stability invariant. Provider is still in
+    // good standing; partial withdraw gives them less skin in the
+    // game, but prior offenses stick.
+    let mut ledger = SlashingLedger::new();
+    let did = sample_did(101);
+    ledger.register(&did, 1_000_000);
+    // One offense (10% loss) — not enough to ban.
+    ledger
+        .slash(&did, SlashReason::PROVIDER_ERROR, 1.0)
+        .expect("slash");
+    let pre_offense_count = ledger.stake(&did).unwrap().offense_count;
+    let pre_cumulative = ledger.stake(&did).unwrap().cumulative_loss_pct;
+    let pre_stake = ledger.stake(&did).unwrap().stake_micro_octo_w;
+
+    // Withdraw 100k (well under the 900k remaining).
+    let new_stake = ledger.withdraw_stake(&did, 100_000).expect("withdraw");
+    assert_eq!(new_stake, pre_stake - 100_000);
+    assert_eq!(ledger.stake(&did).unwrap().stake_micro_octo_w, new_stake);
+
+    // Offense history untouched.
+    assert_eq!(ledger.stake(&did).unwrap().offense_count, pre_offense_count);
+    assert_eq!(
+        ledger.stake(&did).unwrap().cumulative_loss_pct,
+        pre_cumulative
+    );
+
+    // `can_withdraw` agrees with `withdraw_stake`.
+    assert!(ledger.can_withdraw(&did, 1).is_ok());
+    assert!(ledger.can_withdraw(&did, new_stake + 1).is_err());
+}
+
+#[test]
+fn stake_withdrawal_rejects_invalid_inputs() {
+    // Five-way gating round-trip: unknown provider, zero, over-balance,
+    // exact-balance (success), post-zero (success-then-zero-reject).
+    let mut ledger = SlashingLedger::new();
+    let did = sample_did(202);
+    ledger.register(&did, 500_000);
+
+    // Unknown provider.
+    assert!(matches!(
+        ledger.withdraw_stake(&sample_did(200), 1),
+        Err(SlashError::UnknownProvider(_))
+    ));
+    // Zero.
+    assert!(matches!(
+        ledger.withdraw_stake(&did, 0),
+        Err(SlashError::InvalidAmount(0))
+    ));
+    // Over-balance.
+    assert!(matches!(
+        ledger.withdraw_stake(&did, 500_001),
+        Err(SlashError::InsufficientStake {
+            available: 500_000,
+            requested: 500_001
+        })
+    ));
+    // Exact balance succeeds.
+    assert_eq!(ledger.withdraw_stake(&did, 500_000), Ok(0));
+    // Subsequent zero-reject (stake exhausted).
+    assert!(matches!(
+        ledger.withdraw_stake(&did, 0),
+        Err(SlashError::InvalidAmount(0))
+    ));
+    // Subsequent any-amount-reject (zero balance).
+    assert!(matches!(
+        ledger.withdraw_stake(&did, 1),
+        Err(SlashError::InsufficientStake {
+            available: 0,
+            requested: 1
+        })
+    ));
 }

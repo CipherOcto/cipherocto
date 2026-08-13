@@ -393,6 +393,12 @@ pub enum SlashError {
         /// `tolerance * 1_000_000`, rounded.
         tolerance_bits: u64,
     },
+
+    #[error("withdraw amount must be > 0 (got {0})")]
+    InvalidAmount(u128),
+
+    #[error("withdraw requested {requested} exceeds available stake {available}")]
+    InsufficientStake { available: u128, requested: u128 },
 }
 
 /// Slashing ledger.
@@ -524,7 +530,93 @@ impl SlashingLedger {
         &self.rules
     }
 
-    /// Get the current stake state for a provider.
+    /// Withdraw a stake amount from a provider, returning the new
+    /// `stake_micro_octo_w` on success.
+    ///
+    /// Gating rules (each enforced before the mutation):
+    /// - `amount == 0` → `SlashError::InvalidAmount`
+    /// - `amount > stake_micro_octo_w` → `SlashError::InsufficientStake`
+    /// - provider not registered → `SlashError::UnknownProvider`
+    /// - provider permanently banned → `SlashError::BannedProvider`
+    ///
+    /// The `offense_count` and `cumulative_loss_pct` are NOT touched —
+    /// withdrawing stake preserves the ban-stability invariant; an
+    /// operator cannot exit a banned position by withdrawing stake.
+    ///
+    /// When a `store` is wired, the post-withdraw stake row is written
+    /// through (matching the `register` / `slash` write-through pattern
+    /// from mission `marketplace-slashing-persistence`).
+    /// # Errors
+    /// See gating rules above.
+    pub fn withdraw_stake(&mut self, provider_id: &str, amount: u128) -> Result<u128, SlashError> {
+        if amount == 0 {
+            return Err(SlashError::InvalidAmount(0));
+        }
+        let stake = self
+            .stakes
+            .get(provider_id)
+            .ok_or_else(|| SlashError::UnknownProvider(provider_id.to_owned()))?;
+        if stake.is_banned(&self.rules) {
+            return Err(SlashError::BannedProvider {
+                provider_id: provider_id.to_owned(),
+                cumulative_loss_pct_bits: (stake.cumulative_loss_pct * 1_000_000.0).round() as u64,
+            });
+        }
+        if amount > stake.stake_micro_octo_w {
+            return Err(SlashError::InsufficientStake {
+                available: stake.stake_micro_octo_w,
+                requested: amount,
+            });
+        }
+        // SAFETY: index by `provider_id` after `stakes.get(...)` returned
+        // Some — the HashMap is not concurrently mutated.
+        let entry = self
+            .stakes
+            .get_mut(provider_id)
+            .expect("stake entry just observed");
+        entry.stake_micro_octo_w -= amount;
+        let new_stake = entry.stake_micro_octo_w;
+        if let Some(store) = &self.store {
+            let row = quota_router_storage::slash_store::SlashLedgerRow {
+                provider_id: provider_id.to_owned(),
+                stake_micro_octo_w: new_stake,
+                initial_stake_micro_octo_w: entry.initial_stake_micro_octo_w,
+                offense_count: entry.offense_count,
+                cumulative_loss_pct_micro: (entry.cumulative_loss_pct * 1_000_000.0).round() as u64,
+                last_updated_unix: now_unix(),
+            };
+            let _ = store.upsert_stake(&row);
+        }
+        Ok(new_stake)
+    }
+
+    /// Non-mutating query: would `withdraw_stake(provider_id, amount)`
+    /// succeed? Returns `Ok(())` if so, or the same `SlashError` that
+    /// `withdraw_stake` would produce.
+    /// # Errors
+    /// See gating rules in `withdraw_stake`.
+    pub fn can_withdraw(&self, provider_id: &str, amount: u128) -> Result<(), SlashError> {
+        if amount == 0 {
+            return Err(SlashError::InvalidAmount(0));
+        }
+        let stake = self
+            .stakes
+            .get(provider_id)
+            .ok_or_else(|| SlashError::UnknownProvider(provider_id.to_owned()))?;
+        if stake.is_banned(&self.rules) {
+            return Err(SlashError::BannedProvider {
+                provider_id: provider_id.to_owned(),
+                cumulative_loss_pct_bits: (stake.cumulative_loss_pct * 1_000_000.0).round() as u64,
+            });
+        }
+        if amount > stake.stake_micro_octo_w {
+            return Err(SlashError::InsufficientStake {
+                available: stake.stake_micro_octo_w,
+                requested: amount,
+            });
+        }
+        Ok(())
+    }
     #[must_use]
     pub fn stake(&self, provider_id: &str) -> Option<&ProviderStake> {
         self.stakes.get(provider_id)

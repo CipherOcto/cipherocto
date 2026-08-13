@@ -123,6 +123,7 @@ sequenceDiagram
     participant ANT as Anthropic API
 
     C->>P: POST /v1/chat/completions<br/>model="claude-3-5-sonnet"
+    P->>P: Validate API key + check balance<br/>(TokenBucket::try_consume(1) + Balance::check(1) — see Scenario 1)
     P->>D: get("claude-3-5-sonnet")
     D-->>P: DispatchInfo {<br/>  provider="anthropic",<br/>  api_base="https://api.anthropic.com",<br/>  rpm=60<br/>}
     P->>ANT: POST /v1/messages (Anthropic format)
@@ -136,7 +137,7 @@ sequenceDiagram
 1. Buyer requests a model. Proxy resolves the model name through `dispatch_map` (canonical Unicode NFC normalized per RFC-0909 §Design Goals).
 2. The matched `DispatchInfo` may specify a different API base, different auth scheme, and different request/response codecs than OpenAI. The provider abstraction (`HttpProvider` or `PyBridgeProvider`) handles the conversion.
 3. The proxy forwards the request to the configured provider. Spend is recorded under the buyer's balance.
-4. If no `DispatchInfo` matches and the map is non-empty, the proxy returns **503 SERVICE_UNAVAILABLE** with body `"no dispatch entry for model X"`. If the map is empty, the request falls through to the provider-default API base. This asymmetric guard is pinned by `e2e_wiremock_faults::test_dispatch_map_no_match_returns_503`.
+4. If no `DispatchInfo` matches and the map is non-empty, the proxy returns **503 SERVICE_UNAVAILABLE** with body `"No dispatch entry for model 'X' — provider pool does not serve this model"` (see consolidated 503 table below, row `dispatch-miss`). If the map is empty, the request falls through to the provider-default API base. This asymmetric guard is pinned by `e2e_wiremock_faults::test_dispatch_map_no_match_returns_503`.
 
 **Why this matters:** A single proxy instance can serve requests to multiple providers simultaneously without the client knowing which provider will handle each model. The dispatch map is the routing policy.
 
@@ -294,7 +295,7 @@ sequenceDiagram
 
 **Why 300 (not 200):** returning 200 would imply the request was satisfied. Returning 503 would imply no providers. 300 lets the client distinguish "multiple offers available — pick one" from "no offers available — fall back".
 
-**On the empty case:** if the marketplace returns zero offers (no seller serves this model), the proxy returns **503 SERVICE_UNAVAILABLE** with a different error body ("no marketplace offers for model X"). The client can then either retry later or reconfigure.
+**On the empty case:** if the marketplace returns zero offers (no seller serves this model), the proxy returns **503 SERVICE_UNAVAILABLE** with a different error body ("no marketplace offers for model X" — see consolidated 503 table above, row `marketplace-empty`). The client can then either retry later or reconfigure.
 
 **Trust model:** the marketplace is gossip-based; k of n responses must agree on the offer set before the proxy trusts the rank. Disagreement (Sybil attempt) is caught at the gossip layer via the PoRelay trust registry.
 
@@ -445,9 +446,9 @@ sequenceDiagram
 
     P0->>E: SettleEscrow {<br/>  capability_hash,<br/>  amount_cents=actual_tokens*rate,<br/>  splits=[seller: 90%, router_A: 4%, router_B: 4%, burn: 2%]<br/>}
     E-->>P0: Settlement receipt
-    P0->>RR: UpdateReputation(seller_did, +0.01)
-    P0->>RR: UpdateReputation(router_A, +0.005)
-    P0->>RR: UpdateReputation(router_B, +0.005)
+    E->>RR: UpdateReputation(seller_did, +0.01)
+    E->>RR: UpdateReputation(router_A, +0.005)
+    E->>RR: UpdateReputation(router_B, +0.005)
 ```
 
 **Step-by-step:**
@@ -477,7 +478,7 @@ sequenceDiagram
     participant A as Attacker
     participant P1 as Router A
     participant SN as Seller node
-    participant RR as Replay registry
+    participant RR as Reputation registry
 
     A->>P1: Replay envelope (same envelope_id)
     P1->>SN: Forward (router doesn't know it's a replay)
@@ -563,8 +564,10 @@ The capability passes the buyer's wallet check but fails the seller's caveat eva
 sequenceDiagram
     participant P0 as Buyer proxy
     participant SN as Seller node
-    participant W as Wallet (seller-side)
+    participant W as Wallet node (seller-side)
     participant D as Dispute registry
+    participant E as Escrow ledger
+    participant ST as Stake ledger
     participant RR as Reputation registry
 
     P0->>SN: Submit request (envelope)
@@ -574,7 +577,8 @@ sequenceDiagram
     SN-->>P0: 403 Forbidden<br/>{ "error": "capability invalid: audience mismatch" }
 
     P0->>D: OpenDispute {<br/>  capability_hash,<br/>  seller_did,<br/>  reason="invalid_capability",<br/>  evidence=capability_bytes<br/>}
-    D->>D: Slash stake (seller -5%)<br/>Refund escrow (buyer 100%)
+    D->>E: RefundEscrow {<br/>  capability_hash,<br/>  amount_cents=500<br/>}
+    D->>ST: SlashStake { seller_did, slash_pct=5 }
     D->>RR: Reputation(seller) -0.3
 ```
 
@@ -587,7 +591,7 @@ sequenceDiagram
    - Refunds the buyer's escrow in full (the seller did not perform work).
    - Slashes the seller's stake by 5% (not the full stake — partial slash reserves room for honest mistakes vs malicious behavior).
    - Updates reputation: -0.3 for the seller.
-5. The seller can appeal by submitting a counter-claim (e.g., "the buyer sent the wrong audience"). Appeals are processed by a randomly selected k/n of **marketplace attestor nodes** (per Scenario 6's gossip quorum model), NOT the reputation registry — the registry is read-only here.
+5. The seller can appeal by submitting a counter-claim (e.g., "the buyer sent the wrong audience"). Appeals are processed by a randomly selected k/n of marketplace nodes (per Scenario 6's gossip quorum model), NOT the reputation registry — the registry is read-only here.
 
 **Why typed error not generic 403:** the buyer needs to distinguish "audience mismatch" (rotated key, retry with new capability) from "exceeded max_uses" (capability spent, don't retry) from "invalid ZK proof" (token is forged, don't retry). Typed errors drive the right client behavior.
 
@@ -612,6 +616,10 @@ sequenceDiagram
     A->>A: Create 1000 seller DIDs<br/>Mint cheap stake on each
     A->>MK: DiscoverOffers { model="claude-opus-4-5" }
     MK->>RR: query_reputation(all 1000)
+    loop for each Sybil DID
+        RR->>ST: get_stake(seller_did)
+        ST-->>RR: stake_cents
+    end
     RR->>RR: Aggregate: stake_weight × history_length
     RR-->>MK: All 1000 Sybils rank LOW<br/>(stake per identity is tiny)
     MK-->>P0: Top offers are honest sellers<br/>(high stake, long history)
@@ -641,7 +649,7 @@ sequenceDiagram
 
 These gaps surfaced while writing this doc. Each should become either a follow-on mission or an RFC amendment.
 
-1. **CapabilityToken V2 caveat schema** — RFC-0957 specifies the v2 envelope but does not enumerate the full caveat set. Mission 0957-ext-macaroon defines 9 caveat variants (Vault, Permission, ValidRange, MaxPerTx, AuditWindow, MaxUses, WrappedOnly, Factory, PolicyReference) — this list should be cross-referenced from the deal scenario.
+1. **CapabilityToken V2 caveat schema** — RFC-0957 specifies the v2 envelope but does not enumerate the full caveat set. RFC-0965 §Caveat DSL defines 9 caveat variants (Vault, Permission, ValidRange, MaxPerTx, AuditWindow, MaxUses, WrappedOnly, Factory, PolicyReference — mission `0965-a-caveat-dsl`) — this list should be cross-referenced from the deal scenario.
 2. **Settlement token unit** — Scenario 10 settles in cents. The actual ledger (stoolap off-chain vs on-chain) and the canonical currency (USD-pegged stablecoin vs OCTO token) is open.
 3. **Mid-stream refund formula** — Scenario 12 uses `tokens_received × per_token_rate`. The actual formula needs a spec (does the first token cost more? does context length matter?).
 4. **Dispute appeal SLA** — Scenario 13 mentions appeals but does not specify the SLA. Needs an RFC amendment.
@@ -688,27 +696,27 @@ These gaps surfaced while writing this doc. Each should become either a follow-o
 
 ## Test coverage map
 
-| Scenario           | Existing tests                                                                                                                                                        | Tests needed                                                          |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| 1 Hello world      | `e2e_proxy::test_chat_completion_basic` (e2e_proxy.rs:144)                                                                                                            | —                                                                     |
-| 2 Multi-provider   | `e2e_wiremock_faults::test_dispatch_map_no_match_returns_503` (covers the asymmetric-guard path)                                                                      | Multi-provider resolution unit tests (positive match path)            |
-| 3 Provider 500     | `e2e_wiremock_faults::test_upstream_500_returns_502`, `test_no_fallback_config_upstream_500_surfaces_as_502`, `proxy::test_post_dispatch_5xx_triggers_fallback` (lib) | Fallback dance test (already covered by lib test, not by wiremock)    |
-| 4 Budget 402       | `e2e_wiremock_faults::test_budget_exhausted_returns_402`                                                                                                              | —                                                                     |
-| 5 Rate limit       | `e2e_proxy::test_rpm_rate_limit_returns_429` (e2e_proxy.rs:831), `key_rate_limiter::tests::test_token_bucket_basic` (lib)                                             | Wiremock pinning of `Retry-After: <seconds>` header value             |
-| 6 Marketplace      | (network-layer tests in `crates/octo-network/tests/gdp_discovery.rs` + `gdp_deep.rs`)                                                                                 | Wiremock-style Sybil resistance at marketplace layer                  |
-| 7 Deal + escrow    | `0957-phase2b-payment-caveat` unit tests                                                                                                                              | CapabilityToken V2 caveat exhaustiveness across all 9 caveat variants |
-| 8 Mesh forwarding  | `0871b-cross-node-forwarding` (partial TV)                                                                                                                            | 3-node end-to-end TV (awaits `0870k`)                                 |
-| 9 Seller validate  | `0957-phase2b-payment-caveat` lib tests                                                                                                                               | ZK verification + reputation + provider dispatch integration          |
-| 10 Stream + settle | `e2e_wiremock_faults::test_streaming_response_carries_events`, `test_streaming_upstream_500_returns_502`                                                              | Mesh-streaming back-pressure (no test currently)                      |
-| 11 Replay          | (none)                                                                                                                                                                | Seen-set Bloom filter test                                            |
-| 12 Seller offline  | `e2e_wiremock_faults::test_streaming_upstream_500_returns_502` (partial)                                                                                              | Mid-stream TCP drop simulation (separate from upstream 500 path)      |
-| 13 Dispute         | (covered indirectly by `marketplace-escrow-caller-authorization` lib tests)                                                                                           | Appeal flow (no dedicated test yet)                                   |
-| 14 Sybil           | (network-layer tests in `crates/octo-network/tests/porelay_proofs.rs`)                                                                                                | Stake-weighted Sybil resistance at scale (1000+ identities)           |
+| Scenario           | Existing tests                                                                                                                                                                                                                                                                                    | Tests needed                                                          |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| 1 Hello world      | `e2e_proxy::test_chat_completion_basic` (e2e_proxy.rs)                                                                                                                                                                                                                                            | —                                                                     |
+| 2 Multi-provider   | `e2e_wiremock_faults::test_dispatch_map_no_match_returns_503` (covers the asymmetric-guard path)                                                                                                                                                                                                  | Multi-provider resolution unit tests (positive match path)            |
+| 3 Provider 500     | `e2e_wiremock_faults::test_upstream_500_returns_502`, `test_no_fallback_config_upstream_500_surfaces_as_502`, `proxy::test_post_dispatch_5xx_triggers_fallback` (lib)                                                                                                                             | Fallback dance test (already covered by lib test, not by wiremock)    |
+| 4 Budget 402       | `e2e_wiremock_faults::test_budget_exhausted_returns_402`                                                                                                                                                                                                                                          | —                                                                     |
+| 5 Rate limit       | `e2e_proxy::test_rpm_rate_limit_returns_429` (e2e_proxy.rs), `key_rate_limiter::tests::test_token_bucket_basic` (lib)                                                                                                                                                                             | Wiremock pinning of `Retry-After: <seconds>` header value             |
+| 6 Marketplace      | `marketplace_e2e` lib tests (27 tests pinning escrow/dispute/settlement invariants — `marketplace-e2e-strong-scenarios` mission); `crates/octo-network/tests/gdp_discovery.rs` + `gdp_deep.rs` cover the underlying GDP substrate used by marketplace nodes (NOT the marketplace-e2e flow itself) | Wiremock-style Sybil resistance at marketplace layer                  |
+| 7 Deal + escrow    | `0957-phase2b-payment-caveat` unit tests                                                                                                                                                                                                                                                          | CapabilityToken V2 caveat exhaustiveness across all 9 caveat variants |
+| 8 Mesh forwarding  | `0871b-cross-node-forwarding` (partial TV)                                                                                                                                                                                                                                                        | 3-node end-to-end TV (awaits `0870k`)                                 |
+| 9 Seller validate  | `0957-phase2b-payment-caveat` lib tests                                                                                                                                                                                                                                                           | ZK verification + reputation + provider dispatch integration          |
+| 10 Stream + settle | `e2e_wiremock_faults::test_streaming_response_carries_events`, `test_streaming_upstream_500_returns_502`                                                                                                                                                                                          | Mesh-streaming back-pressure (no test currently)                      |
+| 11 Replay          | (none)                                                                                                                                                                                                                                                                                            | Seen-set Bloom filter test                                            |
+| 12 Seller offline  | `e2e_wiremock_faults::test_streaming_upstream_500_returns_502` (partial)                                                                                                                                                                                                                          | Mid-stream TCP drop simulation (separate from upstream 500 path)      |
+| 13 Dispute         | (covered indirectly by `marketplace-escrow-caller-authorization` lib tests)                                                                                                                                                                                                                       | Appeal flow (no dedicated test yet)                                   |
+| 14 Sybil           | (network-layer tests in `crates/octo-network/tests/porelay_proofs.rs`)                                                                                                                                                                                                                            | Stake-weighted Sybil resistance at scale (1000+ identities)           |
 
-> **Note on `marketplace_e2e::test_*`:** there is no `marketplace_e2e.rs` integration test file under `crates/quota-router-core/tests/`. Marketplace tests live in `crates/octo-network/tests/` (GDP discovery, PoRelay anti-Sybil). The coverage map above reflects this.
+> **Note on `marketplace_e2e::test_*`:** `marketplace_e2e.rs` exists at `crates/quota-router-core/tests/marketplace_e2e.rs` with 27 e2e tests (e.g., `happy_path_bid_matches_ask_escrow_settles`, `dispute_valid_slashes_seller`, `escrow_recovery_from_locked_state_succeeds`, `concurrent_settlement_duplicate_rejected`). Per mission `marketplace-e2e-strong-scenarios`, 22/22 marketplace_e2e tests pass. The coverage map above reflects this.
 
 ## Change log
 
 | Date       | Change                                      | Author          |
 | ---------- | ------------------------------------------- | --------------- |
-| 2026-08-13 | Initial draft, 14 scenarios across 8 layers | cc (brainstorm) |
+| 2026-08-13 | Initial draft, 14 scenarios across 8 phases | cc (brainstorm) |

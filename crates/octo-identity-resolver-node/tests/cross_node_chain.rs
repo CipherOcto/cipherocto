@@ -810,8 +810,8 @@ async fn remote_backend_rejects_borsh_decode_failure_of_reply() {
 /// T6 coverage: a reply carrying a `payload_kind` other than
 /// `IDENTITY_RESOLVE` or `IDENTITY_RESOLVE_CHAIN_RESPONSE` (e.g.,
 /// `IDENTITY_REGISTER`) MUST be rejected with `Backing`. The
-/// `other => ...` branch at `backend.rs` (around line 323) is the
-/// catch-all for unrecognized reply kinds.
+/// catch-all `other => ...` branch in `RemoteResolverBackend::resolve_via`
+/// is the unrecognized-reply-kinds defense.
 #[tokio::test]
 async fn remote_backend_rejects_unrecognized_reply_payload_kind() {
     // Build a reply whose payload_kind is `IDENTITY_REGISTER` (not
@@ -853,9 +853,10 @@ async fn remote_backend_rejects_unrecognized_reply_payload_kind() {
 /// T6 coverage: bare `IDENTITY_RESOLVE` (single-hop) reply branch —
 /// decodes `ResolveResponse`, returns `BackendResolveOutcome` with
 /// `public_key` from the response + empty `signature_chain`. The
-/// single-hop branch at `backend.rs` (around line 268) is distinct
-/// from the `IDENTITY_RESOLVE_CHAIN_RESPONSE` branch and was
-/// previously untested end-to-end.
+/// single-hop match arm in `RemoteResolverBackend::resolve_via`
+/// (the `IDENTITY_RESOLVE => ...` arm) is distinct from the
+/// `IDENTITY_RESOLVE_CHAIN_RESPONSE` branch and was previously
+/// untested end-to-end.
 #[tokio::test]
 async fn remote_backend_handles_bare_resolve_response_payload_kind() {
     // Build a `ResolveResponse` carrying a 32-byte public_key + a
@@ -894,6 +895,11 @@ async fn remote_backend_handles_bare_resolve_response_payload_kind() {
         .expect("bare IDENTITY_RESOLVE reply resolves successfully");
     let resp: ChainResolveResponse = borsh::from_slice(&out.response_payload.unwrap()).unwrap();
     assert_eq!(
+        resp.canonical_did,
+        canonical_did(11),
+        "ChainResolveResponse.canonical_did must match the chain request target"
+    );
+    assert_eq!(
         resp.public_key, [0xCCu8; 32],
         "bare ResolveResponse public_key must propagate through the substrate"
     );
@@ -908,8 +914,9 @@ async fn remote_backend_handles_bare_resolve_response_payload_kind() {
 /// the bytes returned by `send_request` are NOT a valid
 /// `NodeEnvelope`). Different from T5's payload-level borsh failure
 /// (which assumed the envelope decoded but the inner payload did
-/// not). Surfaces as `Backing` per the outer `borsh::from_slice` at
-/// `backend.rs` (around line 240).
+/// not). Surfaces as `Backing` per the outer
+/// `borsh::from_slice::<NodeEnvelope>` decode in
+/// `RemoteResolverBackend::resolve_via`.
 #[tokio::test]
 async fn remote_backend_rejects_outer_envelope_borsh_decode_failure() {
     // 3 bytes is strictly less than any valid borsh-encoded

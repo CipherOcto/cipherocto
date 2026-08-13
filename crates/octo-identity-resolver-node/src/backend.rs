@@ -60,6 +60,15 @@
 //! oversized-payload DoS — the local hop-count bound does NOT apply
 //! to network INPUT, so inbound `signature_chain` length is
 //! independently bounds-checked against the wire-format cap (255).
+//!
+//! ## Success path
+//!
+//! On a successful `IDENTITY_RESOLVE` or `IDENTITY_RESOLVE_CHAIN_RESPONSE`
+//! reply that survives steps 6a + 6b, the decoded `public_key` (and
+//! any propagated `signature_chain` for the chain-response branch) is
+//! returned to the chain handler via `BackendResolveOutcome`. The
+//! handler assembles `ChainResolveResponse` with `public_key` from the
+//! backend + `signature_chain` carried through end-to-end.
 
 use std::sync::Arc;
 use std::time::Duration;

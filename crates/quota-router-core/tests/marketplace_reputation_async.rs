@@ -118,22 +118,22 @@ async fn dual_read_parity_unknown_did_returns_perfect_reputation() {
 async fn all_zero_controller_id_rejected() {
     // Per RFC-0968-A1 amendment 40: an all-zero controller_id is
     // reserved (never produced by the governance-pubkey derivation).
-    // The compat rejects it before issuing a `record_signal`.
+    // The compat rejects it via the canonical
+    // `ReputationError::ControllerIdMissing` (discriminant `0x34`,
+    // mission `octo-reputation-controller-id-missing-variant`).
+    use octo_reputation::error::ReputationError;
     let m = Marketplace::open_in_memory().expect("open_in_memory");
     let did = sample_did(99);
     let err = m
         .record_outcome_async(&did, true, 50, [0u8; 32], 1_700_000_000)
         .await
         .unwrap_err();
-    // The compat currently surfaces the rejection via
-    // `RecorderDidMalformed` (closest existing variant). When the
-    // canonical `ControllerIdMissing` lands, this assertion will need
-    // to be widened.
-    let msg = err.to_string();
+    // Canonical assertion: the compat now returns the dedicated variant.
     assert!(
-        msg.contains("controller_id") || msg.contains("ControllerId"),
-        "expected controller_id rejection, got: {msg}"
+        matches!(err, ReputationError::ControllerIdMissing),
+        "expected ControllerIdMissing, got: {err:?}"
     );
+    assert_eq!(err.discriminant(), 0x34, "discriminant must be 0x34");
 }
 
 fn blake3_runtime(pubkey: [u8; 32]) -> [u8; 32] {

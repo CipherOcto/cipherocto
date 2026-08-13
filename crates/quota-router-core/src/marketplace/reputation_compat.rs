@@ -195,15 +195,12 @@ impl<S: ReputationStore> ProviderReputationRegistryCompat<S> {
         // amendment 40: the canonical wiring derives
         // `controller_id = blake3(governance_pubkey)` (amendment 44),
         // which is never all-zero for a registered pubkey. The
-        // existing `ReputationError` taxonomy does not yet carry a
-        // dedicated `ControllerIdMissing` variant — surfacing the
-        // rejection via the closest semantic match
-        // (`RecorderDidMalformed`) keeps the failure mode observable
-        // until the canonical variant lands.
+        // canonical variant is `ControllerIdMissing = 0x34`
+        // (`0x2E` was the original reservation but is now claimed by
+        // `RotationProvenanceMissingTombstoned`; see mission
+        // `octo-reputation-controller-id-missing-variant`).
         if controller_id == [0u8; 32] {
-            return Err(ReputationError::RecorderDidMalformed(
-                "controller_id must be non-zero per RFC-0968-A1 amendment 40",
-            ));
+            return Err(ReputationError::ControllerIdMissing);
         }
         let controller_id = ControllerId::from_array(controller_id);
         let outcome_event = SignalEvent {

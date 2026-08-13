@@ -204,6 +204,18 @@ pub enum ReputationError {
     #[error("stake lock invalid")]
     StakeLockInvalid = 0x32,
 
+    /// All-zero `controller_id` rejected (RFC-0968-A1 amendment 40).
+    ///
+    /// Canonical `0x2E` was originally reserved for this variant, but
+    /// `0x2E` was claimed by `RotationProvenanceMissingTombstoned` in a
+    /// Round 7 follow-on. `0x34` is reserved going forward and the
+    /// `0x2E` reservation is RETIRED with this variant. Audit trail:
+    /// amendment 40 + amendment 44 (`controller_id =
+    /// blake3(governance_pubkey)`, never all-zero for a registered
+    /// governance pubkey).
+    #[error("controller id missing: must be non-zero per RFC-0968-A1 amendment 40")]
+    ControllerIdMissing = 0x34,
+
     // ----- 0x3A: federation / gossip -----
     /// Stale pubkey-keyed mapping rejected at gossip ingress (RFC-0968
     /// amendment 29). Carries the offending field name for diagnostics.
@@ -263,6 +275,7 @@ impl ReputationError {
             ReputationError::KindMismatchEventAggregate => 0x30,
             ReputationError::LayerMismatchEventAggregate => 0x31,
             ReputationError::StakeLockInvalid => 0x32,
+            ReputationError::ControllerIdMissing => 0x34,
             ReputationError::GossipEnvelopeInvalid(_) => 0x3A,
         }
     }
@@ -383,11 +396,12 @@ mod tests {
                 0x18,
             ),
             (ReputationError::GossipEnvelopeInvalid("x"), 0x3A),
+            (ReputationError::ControllerIdMissing, 0x34),
         ];
         assert_eq!(
             cases.len(),
-            45,
-            "45 variants defined here (44 prior + AnchorSubmitterRejected = 0x33 added in Round 2 review)"
+            46,
+            "46 variants defined here (45 prior + ControllerIdMissing = 0x34 added in mission octo-reputation-controller-id-missing-variant)"
         );
         for (variant, expected) in cases {
             assert_eq!(
@@ -398,6 +412,27 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[test]
+    fn controller_id_missing_round_trips_to_0x34() {
+        // Mission octo-reputation-controller-id-missing-variant: round-trip
+        // parity for the canonical discriminant. An earlier draft reserved
+        // `0x2E` (amendment 40), which is now `RotationProvenanceMissingTombstoned`.
+        // The `0x34` allocation is the canonical replacement.
+        let err = ReputationError::ControllerIdMissing;
+        assert_eq!(err.discriminant(), 0x34);
+        assert!(!ReputationError::is_reserved(0x34));
+        // Message is stable — consumers branching on the string retain
+        // behavior across one release cycle.
+        assert!(
+            err.to_string().contains("controller id missing"),
+            "error message must contain the variant name: got {err}"
+        );
+        assert!(
+            err.to_string().contains("amendment 40"),
+            "error message must cite the amendment for audit: got {err}"
+        );
     }
 
     #[test]

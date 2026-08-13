@@ -8,6 +8,9 @@
 //! - `orderbook` — price-time priority order book (Gap 5.1).
 //! - `escrow`    — escrow state machine (Gap 5.2).
 //! - `slashing`  — provider slashing model (Gap 5.3).
+//! - `reputation_compat` — async compat adapter over canonical
+//!   `octo_reputation::ReputationStore` (RFC-0968 retirement gate; see
+//!   `Marketplace::record_outcome_async` / `read_reputation_async`).
 
 pub mod escrow;
 pub mod orderbook;
@@ -120,7 +123,21 @@ pub struct Marketplace {
     repo: std::sync::Arc<DynAskRepository>,
     axes: Vec<PricingAxis>,
     book: parking_lot::Mutex<orderbook::OrderBook<AskSpec>>,
+    /// Legacy in-memory reputation registry. Retained as the read-side
+    /// hot path for `cheapest_with_ranking` / `provider_score` and as a
+    /// dual-read shadow during the RFC-0968 retirement gate window.
+    /// Reads continue to consult this until the dual-read parity gate
+    /// (24h ≥ 0.999) flips the read path onto `reputation_compat`.
     reputation: scoring::ProviderReputationRegistry,
+    /// Async compat adapter over the canonical
+    /// `octo_reputation::ReputationStore` (RFC-0968). Backs the new
+    /// `record_outcome_async` / `read_reputation_async` write+read
+    /// surface. The dual-read parity test
+    /// (`tests/marketplace_reputation_async.rs`) verifies the two paths
+    /// stay within the parity tolerance over a 24h synthetic fixture.
+    reputation_compat: reputation_compat::ProviderReputationRegistryCompat<
+        octo_reputation::store::InMemoryReputationStore,
+    >,
 }
 
 /// Order payload carried by `Marketplace`'s internal order book.
@@ -147,6 +164,9 @@ impl Marketplace {
             axes: PricingAxis::standard_axes(),
             book: parking_lot::Mutex::new(orderbook::OrderBook::new()),
             reputation: scoring::ProviderReputationRegistry::new(),
+            reputation_compat: reputation_compat::ProviderReputationRegistryCompat::new(
+                octo_reputation::store::InMemoryReputationStore::new(),
+            ),
         })
     }
 
@@ -201,6 +221,9 @@ impl Marketplace {
             axes,
             book: parking_lot::Mutex::new(book),
             reputation: scoring::ProviderReputationRegistry::new(),
+            reputation_compat: reputation_compat::ProviderReputationRegistryCompat::new(
+                octo_reputation::store::InMemoryReputationStore::new(),
+            ),
         })
     }
 
@@ -213,6 +236,9 @@ impl Marketplace {
             axes: PricingAxis::standard_axes(),
             book: parking_lot::Mutex::new(orderbook::OrderBook::new()),
             reputation: scoring::ProviderReputationRegistry::new(),
+            reputation_compat: reputation_compat::ProviderReputationRegistryCompat::new(
+                octo_reputation::store::InMemoryReputationStore::new(),
+            ),
         }
     }
 
@@ -262,6 +288,56 @@ impl Marketplace {
     /// `node::scorer` when it observes an HTTP completion.
     pub fn record_outcome(&self, asker_did: &str, success: bool, latency_ms: u64) {
         self.reputation.record(asker_did, success, latency_ms);
+    }
+
+    /// Async record (RFC-0968 retirement gate — mission
+    /// `marketplace-facade-reputation-async-migration`). Writes a
+    /// `SignalEvent { Outcome, score_delta: 1.0|0.0 }` and a
+    /// `SignalEvent { Latency, score_delta: latency_ms }` through the
+    /// canonical `octo_reputation::ReputationStore`. Both events carry
+    /// `ReputationLayer::Market`.
+    ///
+    /// `controller_id` MUST be non-zero — derive it from the operator's
+    /// governance pubkey via
+    /// `reputation_compat::controller_id_from_governance_pubkey(pubkey)`
+    /// (RFC-0968-A1 amendments 40 + 44). An all-zero `controller_id` is
+    /// rejected with `RecorderDidMalformed` (the closest existing
+    /// variant) until the canonical `ControllerIdMissing` lands in
+    /// `ReputationError`.
+    ///
+    /// This is the migration target for callers that move off the
+    /// legacy `record_outcome`. The dual-read parity test
+    /// (`tests/marketplace_reputation_async.rs::dual_read_parity_*`)
+    /// verifies that the two paths stay within the retirement-gate
+    /// tolerance over a 24h synthetic fixture.
+    /// # Errors
+    /// Returns `ReputationError` on store failure or
+    /// all-zero `controller_id`.
+    pub async fn record_outcome_async(
+        &self,
+        asker_did: &str,
+        success: bool,
+        latency_ms: u64,
+        controller_id: [u8; 32],
+        now_unix: u64,
+    ) -> Result<(u64, u64), octo_reputation::error::ReputationError> {
+        self.reputation_compat
+            .record_with_now(asker_did, success, latency_ms, controller_id, now_unix)
+            .await
+    }
+
+    /// Async read (RFC-0968 retirement gate). Returns the persisted
+    /// `ProviderScore` derived from the canonical
+    /// `ReputationStore` aggregate. Mirrors the legacy
+    /// `provider_score` shape (success_rate ∈ [-1, 1], latency_ms
+    /// non-negative).
+    /// # Errors
+    /// Returns `ReputationError` on store failure or malformed DID.
+    pub async fn read_reputation_async(
+        &self,
+        asker_did: &str,
+    ) -> Result<ProviderScore, octo_reputation::error::ReputationError> {
+        self.reputation_compat.score(asker_did).await
     }
 
     /// Insert (or replace) an Ask in the underlying repository AND

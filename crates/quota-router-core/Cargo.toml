@@ -204,3 +204,10 @@ cipherocto-policy = { path = "../cipherocto-policy" }
 # the real-zk FFI is loaded (R4 forgery-channel gate rejects
 # stub-shaped proofs under FFI). Dev-dep only.
 zk-vendor = { path = "../zk-vendor" }
+
+# Mission marketplace-facade-reputation-async-migration: dual-read
+# parity tests use `#[tokio::test]` to drive the async `ProviderReputationRegistryCompat`
+# record_with_now / score path. The `full` feature of this crate already
+# pulls in tokio at runtime; this dev-dep mirrors the same feature set
+# for the test binary.
+tokio = { version = "1.35", features = ["full"] }

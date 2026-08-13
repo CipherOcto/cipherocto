@@ -64,8 +64,13 @@ pub enum SsoError {
     SamlSignatureInvalid(String),
     #[error("SAML assertion expired")]
     SamlAssertionExpired,
-    #[error("SAML audience mismatch")]
-    SamlAudienceMismatch,
+    #[error("SAML audience mismatch: expected {expected}, got {actual:?}")]
+    SamlAudienceMismatch {
+        expected: String,
+        actual: Vec<String>,
+    },
+    #[error("SAML subject confirmation method invalid: expected 'bearer', got {actual:?}")]
+    SamlSubjectConfirmationInvalid { actual: Vec<String> },
     #[error("No API key mapping for SSO subject: {0}")]
     NoKeyMapping(String),
     #[error("SSO user deactivated: {0}")]
@@ -90,7 +95,8 @@ impl SsoError {
             Self::AudienceMismatch { .. } | Self::IssuerMismatch { .. } => 401,
             Self::SamlSignatureInvalid(_)
             | Self::SamlAssertionExpired
-            | Self::SamlAudienceMismatch => 401,
+            | Self::SamlAudienceMismatch { .. }
+            | Self::SamlSubjectConfirmationInvalid { .. } => 401,
             Self::NoKeyMapping(_) | Self::UserDeactivated(_) => 403,
             Self::ProviderError(_) => 502,
             Self::RateLimited => 429,
@@ -110,7 +116,8 @@ impl SsoError {
             Self::AudienceMismatch { .. } | Self::IssuerMismatch { .. } => "authentication_error",
             Self::SamlSignatureInvalid(_)
             | Self::SamlAssertionExpired
-            | Self::SamlAudienceMismatch => "authentication_error",
+            | Self::SamlAudienceMismatch { .. }
+            | Self::SamlSubjectConfirmationInvalid { .. } => "authentication_error",
             Self::NoKeyMapping(_) | Self::UserDeactivated(_) => "authorization_error",
             Self::ProviderError(_) => "provider_error",
             Self::RateLimited => "rate_limit_error",
@@ -144,7 +151,8 @@ impl SsoError {
             Self::IssuerMismatch { .. } => "sso_issuer_mismatch",
             Self::SamlSignatureInvalid(_) => "sso_saml_signature_invalid",
             Self::SamlAssertionExpired => "sso_saml_assertion_expired",
-            Self::SamlAudienceMismatch => "sso_saml_audience_mismatch",
+            Self::SamlAudienceMismatch { .. } => "sso_saml_audience_mismatch",
+            Self::SamlSubjectConfirmationInvalid { .. } => "sso_saml_subject_confirmation_invalid",
             Self::NoKeyMapping(_) => "sso_no_key_mapping",
             Self::UserDeactivated(_) => "sso_user_deactivated",
             Self::ProviderError(_) => "sso_provider_error",
@@ -650,7 +658,10 @@ mod tests {
             },
             SsoError::SamlSignatureInvalid("test".into()),
             SsoError::SamlAssertionExpired,
-            SsoError::SamlAudienceMismatch,
+            SsoError::SamlAudienceMismatch {
+                expected: "test".into(),
+                actual: vec!["test".into()],
+            },
             SsoError::NoKeyMapping("test".into()),
             SsoError::UserDeactivated("test".into()),
             SsoError::ProviderError("test".into()),
@@ -786,7 +797,13 @@ mod tests {
             ),
             (SsoError::SamlSignatureInvalid("test".into()), 401),
             (SsoError::SamlAssertionExpired, 401),
-            (SsoError::SamlAudienceMismatch, 401),
+            (
+                SsoError::SamlAudienceMismatch {
+                    expected: "test".into(),
+                    actual: vec!["test".into()],
+                },
+                401,
+            ),
             (SsoError::NoKeyMapping("test".into()), 403),
             (SsoError::UserDeactivated("test".into()), 403),
             (SsoError::ProviderError("test".into()), 502),

@@ -202,6 +202,12 @@ pub struct SamlAssertionParserImpl {
     acs_url: String,
     /// Clock skew tolerance
     clock_skew_seconds: i64,
+    /// Strict audience mode (M2-saml-audience-subject-conf):
+    /// `true` rejects assertions whose `<AudienceRestriction>` has
+    /// more than one `<Audience>` (each must equal `sp_entity_id`);
+    /// `false` accepts any list that includes `sp_entity_id`.
+    /// Defaults to `true` (SAML 2.0 §2.5.1.4 strict interpretation).
+    strict_audience: bool,
 }
 
 impl std::fmt::Debug for SamlAssertionParserImpl {
@@ -211,12 +217,13 @@ impl std::fmt::Debug for SamlAssertionParserImpl {
             .field("sp_entity_id", &self.sp_entity_id)
             .field("acs_url", &self.acs_url)
             .field("clock_skew_seconds", &self.clock_skew_seconds)
+            .field("strict_audience", &self.strict_audience)
             .finish()
     }
 }
 
 impl SamlAssertionParserImpl {
-    /// Create a new SAML assertion parser
+    /// Create a new SAML assertion parser (default `strict_audience: true`).
     pub fn new(
         idp_certificate: Vec<u8>,
         sp_entity_id: String,
@@ -228,10 +235,11 @@ impl SamlAssertionParserImpl {
             sp_entity_id,
             acs_url,
             clock_skew_seconds,
+            strict_audience: true,
         }
     }
 
-    /// Create parser from IdentityProvider config
+    /// Create parser from IdentityProvider config.
     pub fn from_provider(provider: &IdentityProvider, acs_url: &str) -> Result<Self, SsoError> {
         let certificate = provider
             .config
@@ -244,7 +252,17 @@ impl SamlAssertionParserImpl {
             sp_entity_id: provider.id.clone(),
             acs_url: acs_url.to_string(),
             clock_skew_seconds: 30,
+            strict_audience: true,
         })
+    }
+
+    /// Override the audience-strictness mode. `true` (default) requires
+    /// `<AudienceRestriction>` to contain exactly one `<Audience>` equal
+    /// to `sp_entity_id`; `false` accepts any list containing
+    /// `sp_entity_id`.
+    pub fn with_strict_audience(mut self, strict: bool) -> Self {
+        self.strict_audience = strict;
+        self
     }
 
     /// Parse and validate SAML assertion
@@ -277,10 +295,11 @@ impl SamlAssertionParserImpl {
         let mut attributes = HashMap::new();
         let mut not_before = None;
         let mut not_on_or_after = None;
-        let mut audience = None;
+        let mut audiences: Vec<String> = Vec::new();
         let mut recipient = None;
         let mut issuer: Option<String> = None;
         let mut assertion_id: Option<String> = None;
+        let mut subject_confirmation_methods: Vec<String> = Vec::new();
         let mut in_assertion = false;
         let mut in_conditions = false;
         let mut in_subject = false;
@@ -400,6 +419,32 @@ impl SamlAssertionParserImpl {
                                 }
                             }
                         }
+                        "SubjectConfirmation"
+                        | "saml2:SubjectConfirmation"
+                        | "saml:SubjectConfirmation" => {
+                            // M2-saml-audience-subject-conf: capture
+                            // `@Method`. SAML 2.0 §3.3 — only
+                            // `bearer` is accepted (Web Browser SSO
+                            // Profile).
+                            if in_subject {
+                                for attr in e.attributes().flatten() {
+                                    let key =
+                                        String::from_utf8_lossy(attr.key.as_ref()).to_string();
+                                    if key == "Method" {
+                                        let val = attr
+                                            .unescape_value()
+                                            .map_err(|e| {
+                                                SsoError::ProviderError(format!(
+                                                    "attribute unescape failed: {}",
+                                                    e
+                                                ))
+                                            })?
+                                            .to_string();
+                                        subject_confirmation_methods.push(val);
+                                    }
+                                }
+                            }
+                        }
                         "AttributeStatement"
                         | "saml2:AttributeStatement"
                         | "saml:AttributeStatement" => {
@@ -441,8 +486,11 @@ impl SamlAssertionParserImpl {
                         })?
                         .to_string();
                     // Check if we're reading an audience
+                    // (M2: collect ALL `<Audience>` entries across
+                    // every `<AudienceRestriction>` rather than
+                    // collapsing to a single value).
                     if in_audience && !text.is_empty() {
-                        audience = Some(text.clone());
+                        audiences.push(text.clone());
                         in_audience = false;
                     }
                     // Capture Issuer text (truncated to ISSUER_TEXT_CAP).
@@ -483,7 +531,7 @@ impl SamlAssertionParserImpl {
                                     })?
                                     .to_string();
                                 if key.is_empty() {
-                                    audience = Some(val);
+                                    audiences.push(val);
                                 }
                             }
                         }
@@ -591,21 +639,45 @@ impl SamlAssertionParserImpl {
             return Err(SsoError::SamlAssertionExpired);
         }
 
-        // Validate audience — constant-time compare
-        // (M4-saml-crypto-hygiene finding F1-007).
-        if let Some(aud) = audience {
-            if aud
-                .as_bytes()
-                .ct_eq(self.sp_entity_id.as_bytes())
-                .unwrap_u8()
-                == 0
-            {
-                return Err(SsoError::SamlAudienceMismatch);
-            }
-        } else {
+        // Validate audience — constant-time compare across the
+        // collected list (M2-saml-audience-subject-conf finding
+        // F1-004 / F3-005). Strict mode requires exactly one
+        // `<Audience>` equal to `sp_entity_id`; lenient mode
+        // accepts any list containing `sp_entity_id`.
+        if audiences.is_empty() {
             return Err(SsoError::ProviderError(
                 "Missing Audience in assertion".to_string(),
             ));
+        }
+        let audience_ok = if self.strict_audience {
+            audiences.len() == 1
+                && audiences[0]
+                    .as_bytes()
+                    .ct_eq(self.sp_entity_id.as_bytes())
+                    .unwrap_u8()
+                    == 1
+        } else {
+            audiences
+                .iter()
+                .any(|a| a.as_bytes().ct_eq(self.sp_entity_id.as_bytes()).unwrap_u8() == 1)
+        };
+        if !audience_ok {
+            return Err(SsoError::SamlAudienceMismatch {
+                expected: self.sp_entity_id.clone(),
+                actual: audiences,
+            });
+        }
+
+        // Validate subject confirmation method (M2 finding
+        // F1-003 / F3-006). Only `bearer` is accepted.
+        if !subject_confirmation_methods.is_empty()
+            && !subject_confirmation_methods
+                .iter()
+                .any(|m| m == "urn:oasis:names:tc:SAML:2.0:cm:bearer")
+        {
+            return Err(SsoError::SamlSubjectConfirmationInvalid {
+                actual: subject_confirmation_methods,
+            });
         }
 
         // Validate recipient — constant-time compare
@@ -1540,6 +1612,7 @@ mod tests {
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
+            strict_audience: true,
         };
 
         // Create an assertion with past expiry
@@ -1570,6 +1643,7 @@ mod tests {
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
+            strict_audience: true,
         };
 
         // Create an assertion with wrong audience
@@ -1597,7 +1671,222 @@ mod tests {
         let result = parser.parse(&assertion_xml);
         assert!(result.is_err());
         match result.unwrap_err() {
-            SsoError::SamlAudienceMismatch => {} // expected
+            SsoError::SamlAudienceMismatch { .. } => {} // expected
+            other => panic!("Expected SamlAudienceMismatch, got: {:?}", other),
+        }
+    }
+
+    // ---- M2-saml-audience-subject-conf tests ----
+
+    /// Build an unsigned assertion XML for the M2 audience /
+    /// subject-confirmation tests. The caller supplies the
+    /// `<AudienceRestriction>` block and the
+    /// `<SubjectConfirmation Method="..."/>` element so each
+    /// test pins the exact value being asserted.
+    fn m2_unsigned_xml(audiences_block: &str, subject_conf_method: &str) -> String {
+        let future = (Utc::now() + ChronoDuration::hours(1))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        let past = (Utc::now() - ChronoDuration::hours(1))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        let placeholder_b64: Vec<u8> = vec![b'A'; 344];
+        let placeholder = String::from_utf8(placeholder_b64).unwrap();
+        format!(
+            r#"<Assertion xmlns="urn:oasis:names:tc:SAML:2.0:assertion">
+            <Issuer>https://idp.example.com/sso</Issuer>
+            <Conditions NotBefore="{}" NotOnOrAfter="{}">
+                <AudienceRestriction>{}</AudienceRestriction>
+            </Conditions>
+            <Subject>
+                <NameID>user@example.com</NameID>
+                <SubjectConfirmation Method="{}">
+                    <SubjectConfirmationData Recipient="https://example.com/acs"/>
+                </SubjectConfirmation>
+            </Subject>
+            <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+                <ds:SignedInfo>
+                    <ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/>
+                </ds:SignedInfo>
+                <ds:SignatureValue>{}</ds:SignatureValue>
+            </ds:Signature>
+        </Assertion>"#,
+            past, future, audiences_block, subject_conf_method, placeholder
+        )
+    }
+
+    /// Sign + parse for M2 tests. Mirrors the pattern from M1
+    /// tests — captures byte-exact SignedInfo, signs with the
+    /// test RSA key, substitutes the real signature.
+    fn m2_parse_signed(
+        parser: &SamlAssertionParserImpl,
+        xml: String,
+    ) -> Result<SamlAssertion, SsoError> {
+        let sig_components = parse_xml_signature(&xml).expect("parse xml sig");
+        let sig_value_b64 = sign_test_signedinfo(&sig_components.signed_info_xml);
+        let placeholder_b64: Vec<u8> = vec![b'A'; 344];
+        let placeholder = String::from_utf8(placeholder_b64.clone()).unwrap();
+        let signed_xml = xml.replace(&placeholder, &String::from_utf8(sig_value_b64).unwrap());
+        parser.parse(&signed_xml)
+    }
+
+    #[test]
+    fn test_saml_multi_audience_match_strict() {
+        // F1-004: strict mode requires exactly one `<Audience>`
+        // equal to `sp_entity_id`.
+        let parser = SamlAssertionParserImpl {
+            idp_certificate: shared_idp_cert_der().clone(),
+            sp_entity_id: "https://example.com/saml".to_string(),
+            acs_url: "https://example.com/acs".to_string(),
+            clock_skew_seconds: 30,
+            strict_audience: true,
+        };
+        let xml = m2_unsigned_xml(
+            r#"<Audience>https://example.com/saml</Audience>"#,
+            "urn:oasis:names:tc:SAML:2.0:cm:bearer",
+        );
+        let assertion = m2_parse_signed(&parser, xml).expect("strict single-audience accept");
+        assert_eq!(assertion.name_id, "user@example.com");
+    }
+
+    #[test]
+    fn test_saml_multi_audience_no_match_strict() {
+        // F1-004 strict mode + 2 audiences (one mismatched)
+        // → reject.
+        let parser = SamlAssertionParserImpl {
+            idp_certificate: shared_idp_cert_der().clone(),
+            sp_entity_id: "https://example.com/saml".to_string(),
+            acs_url: "https://example.com/acs".to_string(),
+            clock_skew_seconds: 30,
+            strict_audience: true,
+        };
+        let xml = m2_unsigned_xml(
+            r#"<Audience>https://example.com/saml</Audience><Audience>https://other.example.com</Audience>"#,
+            "urn:oasis:names:tc:SAML:2.0:cm:bearer",
+        );
+        let err = m2_parse_signed(&parser, xml).expect_err("strict multi-audience reject");
+        match err {
+            SsoError::SamlAudienceMismatch { expected, actual } => {
+                assert_eq!(expected, "https://example.com/saml");
+                assert_eq!(actual.len(), 2);
+            }
+            other => panic!("Expected SamlAudienceMismatch, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_saml_multi_audience_allow_list_match() {
+        // F3-005 lenient mode (strict_audience=false) accepts
+        // a list containing `sp_entity_id` plus others.
+        let parser = SamlAssertionParserImpl::new(
+            shared_idp_cert_der().to_vec(),
+            "https://example.com/saml".to_string(),
+            "https://example.com/acs".to_string(),
+            30,
+        )
+        .with_strict_audience(false);
+        let xml = m2_unsigned_xml(
+            r#"<Audience>https://other.example.com</Audience><Audience>https://example.com/saml</Audience><Audience>https://third.example.com</Audience>"#,
+            "urn:oasis:names:tc:SAML:2.0:cm:bearer",
+        );
+        let assertion = m2_parse_signed(&parser, xml).expect("lenient multi-audience accept");
+        assert_eq!(assertion.name_id, "user@example.com");
+    }
+
+    #[test]
+    fn test_saml_subject_confirmation_method_bearer_ok() {
+        // F1-003 / F3-006: bearer is accepted.
+        let parser = SamlAssertionParserImpl {
+            idp_certificate: shared_idp_cert_der().clone(),
+            sp_entity_id: "https://example.com/saml".to_string(),
+            acs_url: "https://example.com/acs".to_string(),
+            clock_skew_seconds: 30,
+            strict_audience: true,
+        };
+        let xml = m2_unsigned_xml(
+            r#"<Audience>https://example.com/saml</Audience>"#,
+            "urn:oasis:names:tc:SAML:2.0:cm:bearer",
+        );
+        let assertion = m2_parse_signed(&parser, xml).expect("bearer accept");
+        assert_eq!(assertion.name_id, "user@example.com");
+    }
+
+    #[test]
+    fn test_saml_subject_confirmation_method_sender_vouches_rejected() {
+        // F1-003 / F3-006: sender-vouches is rejected.
+        let parser = SamlAssertionParserImpl {
+            idp_certificate: shared_idp_cert_der().clone(),
+            sp_entity_id: "https://example.com/saml".to_string(),
+            acs_url: "https://example.com/acs".to_string(),
+            clock_skew_seconds: 30,
+            strict_audience: true,
+        };
+        let xml = m2_unsigned_xml(
+            r#"<Audience>https://example.com/saml</Audience>"#,
+            "urn:oasis:names:tc:SAML:2.0:cm:sender-vouches",
+        );
+        let err = m2_parse_signed(&parser, xml).expect_err("sender-vouches reject");
+        match err {
+            SsoError::SamlSubjectConfirmationInvalid { actual } => {
+                assert_eq!(
+                    actual,
+                    vec!["urn:oasis:names:tc:SAML:2.0:cm:sender-vouches".to_string()]
+                );
+            }
+            other => panic!("Expected SamlSubjectConfirmationInvalid, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_saml_subject_confirmation_method_holder_of_key_rejected() {
+        // F1-003 / F3-006: holder-of-key is rejected.
+        let parser = SamlAssertionParserImpl {
+            idp_certificate: shared_idp_cert_der().clone(),
+            sp_entity_id: "https://example.com/saml".to_string(),
+            acs_url: "https://example.com/acs".to_string(),
+            clock_skew_seconds: 30,
+            strict_audience: true,
+        };
+        let xml = m2_unsigned_xml(
+            r#"<Audience>https://example.com/saml</Audience>"#,
+            "urn:oasis:names:tc:SAML:2.0:cm:holder-of-key",
+        );
+        let err = m2_parse_signed(&parser, xml).expect_err("holder-of-key reject");
+        match err {
+            SsoError::SamlSubjectConfirmationInvalid { actual } => {
+                assert_eq!(
+                    actual,
+                    vec!["urn:oasis:names:tc:SAML:2.0:cm:holder-of-key".to_string()]
+                );
+            }
+            other => panic!("Expected SamlSubjectConfirmationInvalid, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_saml_audience_mismatch_error_carries_payload() {
+        // F2-009: SamlAudienceMismatch now carries
+        // { expected, actual } payload (no longer a unit variant).
+        let parser = SamlAssertionParserImpl {
+            idp_certificate: shared_idp_cert_der().clone(),
+            sp_entity_id: "https://example.com/saml".to_string(),
+            acs_url: "https://example.com/acs".to_string(),
+            clock_skew_seconds: 30,
+            strict_audience: true,
+        };
+        let xml = m2_unsigned_xml(
+            r#"<Audience>https://attacker.example.com</Audience>"#,
+            "urn:oasis:names:tc:SAML:2.0:cm:bearer",
+        );
+        let err = m2_parse_signed(&parser, xml).expect_err("audience payload");
+        match err {
+            SsoError::SamlAudienceMismatch { expected, actual } => {
+                assert_eq!(expected, "https://example.com/saml");
+                assert_eq!(actual, vec!["https://attacker.example.com".to_string()]);
+                // Display string contains expected + actual for triage.
+                let s = format!("{}", SsoError::SamlAudienceMismatch { expected, actual });
+                assert!(s.contains("https://example.com/saml"));
+            }
             other => panic!("Expected SamlAudienceMismatch, got: {:?}", other),
         }
     }
@@ -1609,6 +1898,7 @@ mod tests {
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
+            strict_audience: true,
         };
 
         let mut attributes = HashMap::new();
@@ -1643,6 +1933,7 @@ mod tests {
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
+            strict_audience: true,
         };
 
         let result = parser.validate_signature("<Assertion/>");
@@ -1731,6 +2022,7 @@ mod tests {
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
+            strict_audience: true,
         };
 
         let future = (Utc::now() + ChronoDuration::hours(1))
@@ -1767,6 +2059,7 @@ mod tests {
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
+            strict_audience: true,
         };
 
         let future = (Utc::now() + ChronoDuration::hours(1))
@@ -1804,6 +2097,7 @@ mod tests {
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
+            strict_audience: true,
         };
 
         let past = (Utc::now() - ChronoDuration::hours(1))
@@ -1843,6 +2137,7 @@ mod tests {
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
+            strict_audience: true,
         };
 
         let future = (Utc::now() + ChronoDuration::hours(1))
@@ -1882,6 +2177,7 @@ mod tests {
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
+            strict_audience: true,
         };
 
         let future = (Utc::now() + ChronoDuration::hours(1))
@@ -2149,6 +2445,7 @@ mod tests {
             sp_entity_id: "https://sp.example.com".to_string(),
             acs_url: "https://sp.example.com/acs".to_string(),
             clock_skew_seconds: 30,
+            strict_audience: true,
         };
 
         // Build an XML string strictly larger than the cap.
@@ -2177,6 +2474,7 @@ mod tests {
             sp_entity_id: "https://sp.example.com".to_string(),
             acs_url: "https://sp.example.com/acs".to_string(),
             clock_skew_seconds: 30,
+            strict_audience: true,
         };
         let boundary = "A".repeat(MAX_SAML_XML_BYTES);
         // We expect `Err` (not Ok — because "AAAA..." is not
@@ -2203,6 +2501,7 @@ mod tests {
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
+            strict_audience: true,
         };
         let future = (Utc::now() + ChronoDuration::hours(1))
             .format("%Y-%m-%dT%H:%M:%SZ")
@@ -2408,6 +2707,7 @@ mod tests {
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
+            strict_audience: true,
         };
 
         let assertion = SamlAssertion {
@@ -2435,6 +2735,7 @@ mod tests {
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
+            strict_audience: true,
         };
 
         let future = (Utc::now() + ChronoDuration::hours(1))
@@ -2474,6 +2775,7 @@ mod tests {
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
+            strict_audience: true,
         };
 
         let future = (Utc::now() + ChronoDuration::hours(1))
@@ -2578,6 +2880,7 @@ mod tests {
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
+            strict_audience: true,
         };
 
         let future = (Utc::now() + ChronoDuration::hours(1))
@@ -2648,6 +2951,7 @@ mod tests {
             sp_entity_id: "https://example.com/saml".to_string(),
             acs_url: "https://example.com/acs".to_string(),
             clock_skew_seconds: 30,
+            strict_audience: true,
         };
 
         let future = (Utc::now() + ChronoDuration::hours(1))
@@ -2741,6 +3045,7 @@ mod tests {
             sp_entity_id: "https://sp.example.com".to_string(),
             acs_url: "https://sp.example.com/acs".to_string(),
             clock_skew_seconds: 30,
+            strict_audience: true,
         };
         // Verify the inner bytes are reachable via deref.
         assert_eq!(*parser.idp_certificate, vec![0xDE, 0xAD, 0xBE, 0xEF]);

@@ -149,13 +149,53 @@ impl Marketplace {
     }
 
     /// Open a marketplace backed by a file-backed AskRepository (production).
+    ///
+    /// **Load-on-open contract (Round 1 review fix, mission
+    /// `marketplace-book-load-on-open`):** on `open_path`, the
+    /// in-memory order book is hydrated from the repository's
+    /// non-expired Asks. Without this, a process restart would
+    /// leave the book empty even though `repo` still holds every
+    /// published Ask, silently dropping every `cheapest()` result
+    /// until each Ask was re-`put()`.
+    ///
+    /// Hydration iterates `repo.list_all_active_asks()` and places
+    /// each into the book with the same cost calculation as the
+    /// write-through path. Per-book `next_seq` is reset to 0
+    /// (Round 1 C1 fix) — insertion order during hydration is not
+    /// semantically meaningful; callers should sort by `cost` and
+    /// not rely on FIFO.
     /// # Errors
     /// Returns `RepoError` on open / migration failure.
     pub fn open_path(path: &str) -> Result<Self, RepoError> {
+        let repo = AskRepository::open_path(path)?;
+        let axes = PricingAxis::standard_axes();
+        let mut book = orderbook::OrderBook::new();
+        let now = current_unix();
+        // Hydrate: pull every non-expired Ask from the repo and place
+        // it in the in-memory book. Mirrors the cost computation in
+        // `put()` so `cheapest()` returns the same result as if all
+        // Asks had been re-inserted in this process.
+        let active = repo.list_all_active_asks(now)?;
+        for ask in &active {
+            let consumed = build_unit_consumed(ask, &axes);
+            let cost = settlement_cost(ask, &consumed, &axes);
+            let ask_id = compute_ask_id_static(ask);
+            book.place_ask(
+                AskSpec {
+                    ask_id,
+                    asker_did: ask.asker_did.clone(),
+                    model: ask.model.to_wire(),
+                },
+                cost,
+                1, // qty 1 per Ask; matches write-through
+                ask.asker_did.clone(),
+                now,
+            );
+        }
         Ok(Self {
-            repo: AskRepository::open_path(path)?,
-            axes: PricingAxis::standard_axes(),
-            book: parking_lot::Mutex::new(orderbook::OrderBook::new()),
+            repo,
+            axes,
+            book: parking_lot::Mutex::new(book),
             reputation: scoring::ProviderReputationRegistry::new(),
         })
     }
@@ -1075,5 +1115,244 @@ mod tests {
         let a = r.composite(100, 50, 100, 200, 50, 200);
         let b = r.composite(100, 200, 100, 200, 50, 200);
         assert_eq!(a, b, "price-only ranking must ignore latency");
+    }
+
+    // ========================================================================
+    // Load-on-open tests (mission: marketplace-book-load-on-open)
+    //
+    // Pins the contract: `open_path` hydrates the in-memory order book
+    // from the on-disk repository. Without this, a process restart
+    // would leave the book empty even though `repo` still holds every
+    // published Ask, silently dropping every `cheapest()` result.
+    // ========================================================================
+
+    /// Helper: build a unique temp file path for `open_path` tests.
+    /// Each test must use a unique path to avoid stoolap file-lock
+    /// contention when run in parallel.
+    fn unique_temp_path(tag: &str) -> String {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let pid = std::process::id();
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "cipherocto_marketplace_load_on_open_{tag}_{pid}_{n}.stoolap"
+        ));
+        // Defensive: ensure the file does not exist from a prior run.
+        let _ = std::fs::remove_file(&path);
+        // stoolap requires a DSN scheme; use file:// for the on-disk path.
+        format!("file://{}", path.to_string_lossy())
+    }
+
+    #[test]
+    fn open_path_hydrates_book_from_repo() {
+        // Populate the marketplace with N Asks via `put`, drop the
+        // process (close the in-memory book), reopen via `open_path`,
+        // and verify `cheapest()` returns the saved entry.
+        let path = unique_temp_path("hydrate");
+        let now = current_unix();
+
+        // First process: open, put 3 Asks across 2 models, drop.
+        {
+            let m = Marketplace::open_path(&path).expect("open_path 1");
+            m.put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(101),
+                "openai/gpt-4",
+                10_000,
+                now + 1_000,
+            ))
+            .unwrap();
+            m.put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(102),
+                "openai/gpt-4",
+                20_000,
+                now + 1_000,
+            ))
+            .unwrap();
+            m.put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(103),
+                "anthropic/claude",
+                15_000,
+                now + 1_000,
+            ))
+            .unwrap();
+            // m drops here; in-memory book is gone, but repo on disk
+            // still holds all 3 Asks.
+        }
+
+        // Second process: reopen via `open_path`. Book must be hydrated.
+        let m2 = Marketplace::open_path(&path).expect("open_path 2");
+        let gpt = m2
+            .cheapest("openai/gpt-4")
+            .expect("gpt-4 cheapest after restart");
+        assert_eq!(
+            gpt.asker_did,
+            octo_ident::test_helpers::sample_did(101),
+            "cheapest gpt-4 must be the lowest-priced (10_000) after restart"
+        );
+        let claude = m2
+            .cheapest("anthropic/claude")
+            .expect("claude cheapest after restart");
+        assert_eq!(
+            claude.asker_did,
+            octo_ident::test_helpers::sample_did(103),
+            "cheapest claude must be the saved entry after restart"
+        );
+
+        // Cleanup.
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn open_path_cheapest_matches_in_memory() {
+        // Restart equivalence: the same set of puts via `put` produces
+        // the same `cheapest()` result as a fresh `open_path` that
+        // hydrates from the same repo.
+        let path = unique_temp_path("equiv");
+        let now = current_unix();
+
+        // Process A: build in-memory marketplace with 4 Asks.
+        let in_memory = Marketplace::open_in_memory().unwrap();
+        in_memory
+            .put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(201),
+                "openai/gpt-4",
+                5_000,
+                now + 1_000,
+            ))
+            .unwrap();
+        in_memory
+            .put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(202),
+                "openai/gpt-4",
+                8_000,
+                now + 1_000,
+            ))
+            .unwrap();
+        in_memory
+            .put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(203),
+                "anthropic/claude",
+                12_000,
+                now + 1_000,
+            ))
+            .unwrap();
+        in_memory
+            .put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(204),
+                "anthropic/claude",
+                7_000,
+                now + 1_000,
+            ))
+            .unwrap();
+        let a_gpt = in_memory.cheapest("openai/gpt-4").unwrap();
+        let a_claude = in_memory.cheapest("anthropic/claude").unwrap();
+
+        // Process B: same Asks but written to disk, then reopen.
+        // We rebuild the on-disk marketplace by copying the same Asks
+        // through a fresh `open_path` (since `Marketplace` has no
+        // copy constructor; this is equivalent to "process restart
+        // with the same on-disk state").
+        let on_disk = Marketplace::open_path(&path).expect("open_path");
+        on_disk
+            .put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(201),
+                "openai/gpt-4",
+                5_000,
+                now + 1_000,
+            ))
+            .unwrap();
+        on_disk
+            .put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(202),
+                "openai/gpt-4",
+                8_000,
+                now + 1_000,
+            ))
+            .unwrap();
+        on_disk
+            .put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(203),
+                "anthropic/claude",
+                12_000,
+                now + 1_000,
+            ))
+            .unwrap();
+        on_disk
+            .put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(204),
+                "anthropic/claude",
+                7_000,
+                now + 1_000,
+            ))
+            .unwrap();
+        drop(on_disk);
+
+        // Reopen: hydrates book from disk.
+        let reopened = Marketplace::open_path(&path).expect("reopen");
+        let b_gpt = reopened.cheapest("openai/gpt-4").unwrap();
+        let b_claude = reopened.cheapest("anthropic/claude").unwrap();
+        assert_eq!(
+            a_gpt.asker_did, b_gpt.asker_did,
+            "gpt-4 cheapest must match in-memory vs after-restart"
+        );
+        assert_eq!(
+            a_gpt.cost_per_1k, b_gpt.cost_per_1k,
+            "gpt-4 cost must match"
+        );
+        assert_eq!(
+            a_claude.asker_did, b_claude.asker_did,
+            "claude cheapest must match"
+        );
+        assert_eq!(
+            a_claude.cost_per_1k, b_claude.cost_per_1k,
+            "claude cost must match"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn open_path_hydration_skips_expired_asks() {
+        // The hydration query filters on `expires_at_unix > now`, so
+        // expired Asks must not appear in the hydrated book.
+        let path = unique_temp_path("expired");
+        let now = current_unix();
+
+        {
+            let m = Marketplace::open_path(&path).expect("open_path");
+            // Active Ask.
+            m.put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(211),
+                "openai/gpt-4",
+                5_000,
+                now + 1_000,
+            ))
+            .unwrap();
+            // Expired Ask (expires_at < now).
+            m.put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(212),
+                "openai/gpt-4",
+                1_000, // very low cost — would be the cheapest if not expired
+                now.saturating_sub(1),
+            ))
+            .unwrap();
+        }
+
+        let m2 = Marketplace::open_path(&path).expect("reopen");
+        let cheapest = m2.cheapest("openai/gpt-4").expect("cheapest after restart");
+        // The expired 1_000-cost ask must NOT be returned; the active
+        // 5_000-cost ask from did 301 must be.
+        assert_eq!(
+            cheapest.asker_did,
+            octo_ident::test_helpers::sample_did(211),
+            "expired ask must not appear in hydrated book"
+        );
+        assert!(
+            cheapest.cost_per_1k > 1_000,
+            "cheapest must be the active 5_000-cost ask, not the expired 1_000-cost ask"
+        );
+
+        let _ = std::fs::remove_file(&path);
     }
 }

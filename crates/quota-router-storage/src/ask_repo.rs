@@ -305,6 +305,28 @@ impl AskRepository {
         Ok(out)
     }
 
+    /// List all non-expired Asks across all askers. Used by
+    /// `Marketplace::open_path` to hydrate the in-memory order book on
+    /// restart (mission `marketplace-book-load-on-open`).
+    /// # Errors
+    /// Returns `RepoError::Db` on query failure.
+    pub fn list_all_active_asks(&self, now_unix: u64) -> Result<Vec<Ask>, RepoError> {
+        let rows = self
+            .db
+            .query(
+                "SELECT ask_id, asker_did, model, rates_json, nonce, expires_at_unix, created_at_unix \
+                 FROM asks WHERE expires_at_unix > $1",
+                (now_unix as i64,),
+            )
+            .map_err(|e| RepoError::Db(format!("list_all_active_asks: {e}")))?;
+        let mut out = Vec::new();
+        for row_result in rows {
+            let row = row_result.map_err(|e| RepoError::Db(format!("row: {e}")))?;
+            out.push(row_to_ask(row)?);
+        }
+        Ok(out)
+    }
+
     /// Delete an Ask by id (used by settlement engine for one-shot consumption).
     /// # Errors
     /// Returns `RepoError::Db` on delete failure.

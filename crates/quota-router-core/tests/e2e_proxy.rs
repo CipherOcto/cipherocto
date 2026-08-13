@@ -26,8 +26,12 @@ use tokio::net::TcpListener;
 
 use quota_router_core::balance::Balance;
 use quota_router_core::config::DispatchInfo;
+use quota_router_core::key_rate_limiter::RateLimiterStore;
+use quota_router_core::keys::models::{ApiKey, KeyType};
 use quota_router_core::providers::Provider;
 use quota_router_core::proxy::ProxyServer;
+use quota_router_core::storage::StoolapKeyStorage;
+use quota_router_core::KeyStorage;
 
 // Re-export for convenience
 use std::collections::HashMap;
@@ -663,4 +667,263 @@ async fn test_chat_completion_metadata() {
     // Just verify the response is well-formed
     assert!(result.get("id").is_some());
     assert!(result.get("object").is_some());
+}
+
+// ============================================================================
+// Strong-scenario E2E tests (mission: proxy-strong-scenarios).
+//
+// Each test pins a specific failure-mode path in the proxy's auth /
+// rate-limit / budget layers. These tests run WITHOUT a live upstream —
+// they fail at the proxy's auth layer before reaching the LLM provider,
+// making them cheap and deterministic.
+// ============================================================================
+
+/// Helper: start a proxy with storage + rate limiter + master key.
+/// Pre-creates an API key with the given rpm_limit, returns
+/// (base_url, raw_key).
+async fn start_proxy_with_auth(rpm_limit: Option<i32>, budget_limit: i64) -> (String, String) {
+    let balance = Balance::new(1_000_000);
+    let provider = Provider::new("openai", TEST_API_BASE);
+    let dispatch_map = build_dispatch_map();
+
+    let db = stoolap::Database::open_in_memory().expect("in-memory db");
+    quota_router_core::schema::init_database(&db).expect("init schema");
+    let storage = Arc::new(StoolapKeyStorage::new(db));
+
+    // Pre-create a key with the requested rpm_limit.
+    let raw_key = quota_router_core::keys::generate_key_string();
+    let key_hash = quota_router_core::keys::compute_key_hash(&raw_key);
+    let api_key = ApiKey {
+        key_id: uuid::Uuid::new_v4().to_string(),
+        key_hash: key_hash.to_vec(),
+        key_prefix: "sk-qr-tes".to_string(),
+        team_id: None,
+        budget_limit,
+        rpm_limit,
+        tpm_limit: None,
+        created_at: 1_000_000,
+        expires_at: None,
+        revoked: false,
+        revoked_at: None,
+        revoked_by: None,
+        revocation_reason: None,
+        key_type: KeyType::Default,
+        allowed_routes: None,
+        auto_rotate: false,
+        rotation_interval_days: None,
+        description: None,
+        metadata: None,
+    };
+    storage.create_key(&api_key).expect("create_key");
+
+    let rate_limiter = Arc::new(RateLimiterStore::new());
+
+    // Bind a random port.
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    let mut server = ProxyServer::new(balance, provider, port, dispatch_map)
+        .with_storage(storage)
+        .with_rate_limiter(rate_limiter)
+        .with_master_key("sk-qr-master".to_string());
+
+    tokio::spawn(async move {
+        let _ = server.run().await;
+    });
+
+    let client = Client::new();
+    let base_url = format!("http://127.0.0.1:{}", port);
+    for attempt in 0..50 {
+        if client.get(&base_url).send().await.is_ok() {
+            break;
+        }
+        if attempt == 49 {
+            panic!("Server did not start within 5 seconds");
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    (base_url, raw_key)
+}
+
+#[tokio::test]
+async fn test_auth_missing_returns_401() {
+    // Strong scenario 1: client sends no auth header. Proxy must reject
+    // with 401 BEFORE reaching upstream. This protects against anonymous
+    // abuse — production deployments must not leak quota to unauth'd reqs.
+    let (base_url, _key) = start_proxy_with_auth(Some(100), 1_000_000).await;
+    let client = Client::new();
+
+    let resp = client
+        .post(format!("{}/v1/chat/completions", base_url))
+        .header("Content-Type", "application/json")
+        .json(&json!({
+            "model": TEST_MODEL,
+            "messages": [{"role": "user", "content": "hi"}]
+        }))
+        .send()
+        .await
+        .expect("request should reach proxy");
+
+    assert_eq!(resp.status().as_u16(), 401, "missing auth must 401");
+}
+
+#[tokio::test]
+async fn test_auth_invalid_returns_401() {
+    // Strong scenario 2: client sends a key that's not in storage.
+    // Proxy must reject with 401; an attacker enumerating keys cannot
+    // differentiate "valid format, unknown key" from "valid key" via
+    // timing (constant-time HMAC compare verified by code review).
+    let (base_url, _real_key) = start_proxy_with_auth(Some(100), 1_000_000).await;
+    let client = Client::new();
+
+    let resp = client
+        .post(format!("{}/v1/chat/completions", base_url))
+        .header("Content-Type", "application/json")
+        .header(
+            "Authorization",
+            "Bearer sk-qr-0000000000000000000000000000000000000000000000000000000000000000",
+        )
+        .json(&json!({
+            "model": TEST_MODEL,
+            "messages": [{"role": "user", "content": "hi"}]
+        }))
+        .send()
+        .await
+        .expect("request should reach proxy");
+
+    assert_eq!(resp.status().as_u16(), 401, "invalid key must 401");
+}
+
+#[tokio::test]
+async fn test_auth_master_key_bypasses_storage() {
+    // Strong scenario 3: master key configured on proxy must work even
+    // without a corresponding row in storage. This is the operator
+    // escape hatch for incident response + key rotation windows.
+    // (Note: this test does not depend on a live upstream; it verifies
+    // that master-key bypass reaches the upstream stage, where it
+    // would normally get a 502 because mimo is unreachable from CI.
+    // We assert the status is NOT 401, which is the auth-layer contract.)
+    let (base_url, _real_key) = start_proxy_with_auth(Some(100), 1_000_000).await;
+    let client = Client::new();
+
+    let resp = client
+        .post(format!("{}/v1/chat/completions", base_url))
+        .header("Content-Type", "application/json")
+        .header("Authorization", "Bearer sk-qr-master")
+        .json(&json!({
+            "model": TEST_MODEL,
+            "messages": [{"role": "user", "content": "hi"}]
+        }))
+        .send()
+        .await
+        .expect("request should reach proxy");
+
+    // Master key bypasses auth — must NOT be 401. May be 200/502/504
+    // depending on upstream reachability; the contract is "auth passed".
+    let status = resp.status().as_u16();
+    assert_ne!(status, 401, "master key must bypass auth (got {status})");
+    assert_ne!(status, 403, "master key must bypass auth (got {status})");
+}
+
+#[tokio::test]
+async fn test_rpm_rate_limit_returns_429() {
+    // Strong scenario 4: pre-create key with rpm_limit=2. Send 3
+    // requests. First 2 should NOT be 429 (they may be 502 if upstream
+    // unreachable, that's fine — the auth + rate-limit contract is
+    // "first 2 pass, 3rd is 429"). Pins RFC-0933 rate limiting.
+    let (base_url, real_key) = start_proxy_with_auth(Some(2), 1_000_000).await;
+    let client = Client::new();
+    let url = format!("{}/v1/chat/completions", base_url);
+
+    let send = || {
+        let client = client.clone();
+        let url = url.clone();
+        let key = real_key.clone();
+        async move {
+            client
+                .post(url)
+                .header("Content-Type", "application/json")
+                .header("Authorization", format!("Bearer {key}"))
+                .json(&json!({
+                    "model": TEST_MODEL,
+                    "messages": [{"role": "user", "content": "hi"}]
+                }))
+                .send()
+                .await
+                .expect("request should reach proxy")
+        }
+    };
+
+    let r1 = send().await;
+    let r2 = send().await;
+    let r3 = send().await;
+
+    // First 2 must NOT be 429 (rate limit not yet hit).
+    assert_ne!(
+        r1.status().as_u16(),
+        429,
+        "1st request should not be rate-limited"
+    );
+    assert_ne!(
+        r2.status().as_u16(),
+        429,
+        "2nd request should not be rate-limited"
+    );
+    // 3rd MUST be 429 — rate limit hit.
+    assert_eq!(
+        r3.status().as_u16(),
+        429,
+        "3rd request must be rate-limited"
+    );
+    // Retry-After header present on 429.
+    assert!(
+        r3.headers().contains_key("retry-after"),
+        "429 must include Retry-After"
+    );
+}
+
+#[tokio::test]
+async fn test_concurrent_auth_requests_deduped_per_key() {
+    // Strong scenario 5: N concurrent requests with the same valid key.
+    // The rate limiter (RPM=100) should allow all N through (N=10 << 100).
+    // Asserts no auth dedup regression: each request is a separate auth
+    // check, not memoized. A regression that accidentally dedupes would
+    // process 1 and drop 9.
+    let (base_url, real_key) = start_proxy_with_auth(Some(100), 1_000_000).await;
+    let client = Client::new();
+
+    let mut handles = Vec::new();
+    for _ in 0..10 {
+        let client = client.clone();
+        let url = format!("{}/v1/chat/completions", base_url);
+        let key = real_key.clone();
+        handles.push(tokio::spawn(async move {
+            client
+                .post(url)
+                .header("Content-Type", "application/json")
+                .header("Authorization", format!("Bearer {key}"))
+                .json(&json!({
+                    "model": TEST_MODEL,
+                    "messages": [{"role": "user", "content": "hi"}]
+                }))
+                .send()
+                .await
+        }));
+    }
+    let mut rate_limited = 0u32;
+    let mut auth_failed = 0u32;
+    for h in handles {
+        let resp = h.await.expect("join").expect("send");
+        match resp.status().as_u16() {
+            429 => rate_limited += 1,
+            401 | 403 => auth_failed += 1,
+            _ => {}
+        }
+    }
+    // None should be auth-failed (the contract: valid key passes auth).
+    assert_eq!(auth_failed, 0, "valid key must not return 401/403");
+    // None should be rate-limited at N=10 << rpm_limit=100.
+    assert_eq!(rate_limited, 0, "N=10 << rpm_limit=100 must not 429");
 }

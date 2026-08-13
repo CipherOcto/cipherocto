@@ -222,3 +222,12 @@ zk-vendor = { path = "../zk-vendor" }
 # pulls in tokio at runtime; this dev-dep mirrors the same feature set
 # for the test binary.
 tokio = { version = "1.35", features = ["full"] }
+
+# Mission proxy-strong-scenarios-phase2: programmatic HTTP mock server
+# for fault-injection tests (502 upstream timeout, 502 upstream 500,
+# 502 connection refused, 402 budget, 503 dispatch_map empty, 504
+# streaming cutoff, provider fallback). Dev-only — never reaches the
+# production dep graph. wiremock::MockServer is the same shape used
+# by upstream integration suites; provides delay + status + streaming
+# primitives that the existing `mock_http` test helper doesn't expose.
+wiremock = "0.6"

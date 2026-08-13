@@ -1947,6 +1947,31 @@ where
         })
     });
 
+    // Dispatch_map empty / no entry for the requested model — return 503
+    // SERVICE_UNAVAILABLE rather than silently forwarding to the
+    // provider's default API base. Per RFC-0933 §Provider Pool + mission
+    // proxy-strong-scenarios-phase2. Note: we only guard when the
+    // client sent a recognized model field; pure path-level passthrough
+    // requests (which never reach this code path) and auth-failed
+    // requests (which short-circuit before here) are unaffected.
+    if dispatch.is_none() {
+        if let Some(ref model) = request_model {
+            // dispatch_map must be non-empty AND not match. Per the
+            // spec, "no entry for the requested model" is a service
+            // configuration failure, not a client error.
+            if !dispatch_map.is_empty() {
+                let resp = Response::builder()
+                    .status(StatusCode::SERVICE_UNAVAILABLE)
+                    .body(SseBody::from_error(format!(
+                        "No dispatch entry for model '{}' — provider pool does not serve this model",
+                        model
+                    )))
+                    .unwrap();
+                return Ok(resp);
+            }
+        }
+    }
+
     // Resolve API key with priority chain (RFC-0929 §5):
     // 1. Per-request key from DispatchInfo.api_key (config-time resolved)
     // 2. Environment variable ({PROVIDER_NAME}_API_KEY)
@@ -2686,8 +2711,12 @@ async fn handle_request_litellm(
             Ok(resp)
         }
         Err(e) => {
+            // Upstream error (network, timeout, conn refused, 5xx). Wrap
+            // as 502 BAD_GATEWAY so callers can distinguish "our fault"
+            // (500) from "upstream's fault" (502). Per RFC-0933 §Failure
+            // Surface + mission proxy-strong-scenarios-phase2.
             let resp = Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .status(StatusCode::BAD_GATEWAY)
                 .body(SseBody::from_error(format!("Provider error: {}", e)))
                 .unwrap();
             Ok(resp)
@@ -2951,8 +2980,14 @@ async fn handle_streaming(
             Ok(resp)
         }
         Err(e) => {
+            // Streaming upstream error — wrap as 502 BAD_GATEWAY so
+            // callers can distinguish proxy-internal (500) from upstream
+            // (502). Per RFC-0933 §Failure Surface + mission
+            // proxy-strong-scenarios-phase2. NOTE: GATEWAY_TIMEOUT (504)
+            // is reserved for timeouts specifically — the wiremock
+            // fault-injection suite covers 504 in its own test.
             let resp = Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .status(StatusCode::BAD_GATEWAY)
                 .body(SseBody::from_error(format!("Streaming error: {}", e)))
                 .unwrap();
             Ok(resp)
@@ -3204,8 +3239,12 @@ async fn handle_embedding_request(
             Ok(resp)
         }
         Err(e) => {
+            // Embedding upstream error — wrap as 502 BAD_GATEWAY so
+            // callers can distinguish proxy-internal (500) from upstream
+            // (502). Per RFC-0933 §Failure Surface + mission
+            // proxy-strong-scenarios-phase2.
             let resp = Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .status(StatusCode::BAD_GATEWAY)
                 .body(SseBody::from_error(format!("Embedding error: {}", e)))
                 .unwrap();
             Ok(resp)
@@ -7901,8 +7940,10 @@ mod tests {
 
         let status = resp.status();
         assert!(
-            status.is_success() || status == StatusCode::INTERNAL_SERVER_ERROR,
-            "Expected success or provider error, got {}",
+            status.is_success()
+                || status == StatusCode::INTERNAL_SERVER_ERROR
+                || status == StatusCode::BAD_GATEWAY,
+            "Expected success or provider error (500/502), got {}",
             status
         );
     }
@@ -8450,8 +8491,10 @@ mod tests {
 
         let status = resp.status();
         assert!(
-            status.is_success() || status == StatusCode::INTERNAL_SERVER_ERROR,
-            "Expected success or provider error, got {}",
+            status.is_success()
+                || status == StatusCode::INTERNAL_SERVER_ERROR
+                || status == StatusCode::BAD_GATEWAY,
+            "Expected success or provider error (500/502), got {}",
             status
         );
     }
@@ -8519,8 +8562,10 @@ mod tests {
 
         let status = resp.status();
         assert!(
-            status.is_success() || status == StatusCode::INTERNAL_SERVER_ERROR,
-            "Expected success or provider error, got {}",
+            status.is_success()
+                || status == StatusCode::INTERNAL_SERVER_ERROR
+                || status == StatusCode::BAD_GATEWAY,
+            "Expected success or provider error (500/502), got {}",
             status
         );
     }
@@ -11859,7 +11904,12 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        // Mission proxy-strong-scenarios-phase2: upstream error maps
+        // to 502 BAD_GATEWAY (per RFC-0933 §Failure Surface), not 500.
+        // 500 is reserved for proxy-internal failures (config bugs,
+        // invariant violations), 502 specifically signals "upstream
+        // is the problem".
+        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
         let body_bytes = http_body_util::BodyExt::collect(resp.into_body())
             .await
             .unwrap()

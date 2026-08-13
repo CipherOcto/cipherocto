@@ -119,7 +119,10 @@ pub use scoring::{LatencyRanking, ProviderScore};
 ///   (RFC-0900 §Market Operations). Scans all matching asks and returns
 ///   the best by a min-max-normalized weighted blend of price and
 ///   observed latency.
-pub struct Marketplace {
+pub struct Marketplace<S = octo_reputation::store::InMemoryReputationStore>
+where
+    S: octo_reputation::store::ReputationStore,
+{
     repo: std::sync::Arc<DynAskRepository>,
     axes: Vec<PricingAxis>,
     book: parking_lot::Mutex<orderbook::OrderBook<AskSpec>>,
@@ -135,9 +138,14 @@ pub struct Marketplace {
     /// surface. The dual-read parity test
     /// (`tests/marketplace_reputation_async.rs`) verifies the two paths
     /// stay within the parity tolerance over a 24h synthetic fixture.
-    reputation_compat: reputation_compat::ProviderReputationRegistryCompat<
-        octo_reputation::store::InMemoryReputationStore,
-    >,
+    ///
+    /// Generic over `S` (mission `marketplace-generic-store`) so
+    /// production wiring can swap `InMemoryReputationStore` for
+    /// `StoolapReputationStore` (or any other `ReputationStore` impl)
+    /// via `open_in_memory_with_store` / `open_path_with_store`.
+    /// Default is `InMemoryReputationStore` so existing call sites
+    /// keep working without explicit type parameters.
+    reputation_compat: reputation_compat::ProviderReputationRegistryCompat<S>,
 }
 
 /// Order payload carried by `Marketplace`'s internal order book.
@@ -152,11 +160,19 @@ pub struct AskSpec {
     pub model: String,
 }
 
-impl Marketplace {
-    /// Open a marketplace backed by an in-memory AskRepository (test/dev).
+impl<S> Marketplace<S>
+where
+    S: octo_reputation::store::ReputationStore,
+{
+    /// Open a marketplace backed by an in-memory AskRepository, wired
+    /// to a caller-supplied canonical reputation store (mission
+    /// `marketplace-generic-store`). This is the production-wiring
+    /// entry point: replace the default `InMemoryReputationStore` with
+    /// a persistent impl (e.g. `StoolapReputationStore`) for restart
+    /// durability.
     /// # Errors
     /// Returns `RepoError` on stoolap open / migration failure.
-    pub fn open_in_memory() -> Result<Self, RepoError> {
+    pub fn open_in_memory_with_store(store: S) -> Result<Self, RepoError> {
         Ok(Self {
             repo: std::sync::Arc::new(
                 quota_router_storage::ask_repo::StoolapAskRepository::open_in_memory()?,
@@ -164,13 +180,16 @@ impl Marketplace {
             axes: PricingAxis::standard_axes(),
             book: parking_lot::Mutex::new(orderbook::OrderBook::new()),
             reputation: scoring::ProviderReputationRegistry::new(),
-            reputation_compat: reputation_compat::ProviderReputationRegistryCompat::new(
-                octo_reputation::store::InMemoryReputationStore::new(),
-            ),
+            reputation_compat: reputation_compat::ProviderReputationRegistryCompat::new(store),
         })
     }
 
-    /// Open a marketplace backed by a file-backed AskRepository (production).
+    /// Open a marketplace backed by a file-backed AskRepository,
+    /// wired to a caller-supplied canonical reputation store (mission
+    /// `marketplace-generic-store`). Production entry point — pair the
+    /// `StoolapAskRepository` (Ask persistence) with a
+    /// `StoolapReputationStore` (reputation persistence) for full
+    /// restart durability.
     ///
     /// **Load-on-open contract (Round 1 review fix, mission
     /// `marketplace-book-load-on-open`):** on `open_path`, the
@@ -188,7 +207,7 @@ impl Marketplace {
     /// not rely on FIFO.
     /// # Errors
     /// Returns `RepoError` on open / migration failure.
-    pub fn open_path(path: &str) -> Result<Self, RepoError> {
+    pub fn open_path_with_store(path: &str, store: S) -> Result<Self, RepoError> {
         let repo = std::sync::Arc::new(
             quota_router_storage::ask_repo::StoolapAskRepository::open_path(path)?,
         );
@@ -221,24 +240,21 @@ impl Marketplace {
             axes,
             book: parking_lot::Mutex::new(book),
             reputation: scoring::ProviderReputationRegistry::new(),
-            reputation_compat: reputation_compat::ProviderReputationRegistryCompat::new(
-                octo_reputation::store::InMemoryReputationStore::new(),
-            ),
+            reputation_compat: reputation_compat::ProviderReputationRegistryCompat::new(store),
         })
     }
 
     /// Wrap an existing AskRepository (Arc-ed so production and test
-    /// mocks share the trait-object consumer).
+    /// mocks share the trait-object consumer). Wires a
+    /// caller-supplied canonical reputation store.
     #[must_use]
-    pub fn from_repo(repo: std::sync::Arc<DynAskRepository>) -> Self {
+    pub fn from_repo_with_store(repo: std::sync::Arc<DynAskRepository>, store: S) -> Self {
         Self {
             repo,
             axes: PricingAxis::standard_axes(),
             book: parking_lot::Mutex::new(orderbook::OrderBook::new()),
             reputation: scoring::ProviderReputationRegistry::new(),
-            reputation_compat: reputation_compat::ProviderReputationRegistryCompat::new(
-                octo_reputation::store::InMemoryReputationStore::new(),
-            ),
+            reputation_compat: reputation_compat::ProviderReputationRegistryCompat::new(store),
         }
     }
 
@@ -658,6 +674,35 @@ impl Marketplace {
     /// Returns `RepoError` on stoolap failure.
     pub fn list_by_asker(&self, asker_did: &str) -> Result<Vec<Ask>, RepoError> {
         self.repo.list_by_asker(asker_did, current_unix())
+    }
+}
+
+/// Convenience methods for the default `Marketplace<InMemoryReputationStore>`
+/// instantiation. All existing call sites that don't care about the
+/// reputation store type continue to use these entry points without
+/// explicit type parameters.
+/// # Errors
+/// Returns `RepoError` on stoolap open / migration failure.
+impl Marketplace<octo_reputation::store::InMemoryReputationStore> {
+    /// Open a marketplace backed by an in-memory AskRepository (test/dev).
+    /// Convenience for
+    /// `Marketplace::open_in_memory_with_store(InMemoryReputationStore::new())`.
+    pub fn open_in_memory() -> Result<Self, RepoError> {
+        Self::open_in_memory_with_store(octo_reputation::store::InMemoryReputationStore::new())
+    }
+
+    /// Open a marketplace backed by a file-backed AskRepository
+    /// (production). Wires the in-memory reputation store.
+    pub fn open_path(path: &str) -> Result<Self, RepoError> {
+        Self::open_path_with_store(path, octo_reputation::store::InMemoryReputationStore::new())
+    }
+
+    /// Wrap an existing AskRepository (Arc-ed). Wires the in-memory
+    /// reputation store. Convenience for callers that don't need a
+    /// production reputation store.
+    #[must_use]
+    pub fn from_repo(repo: std::sync::Arc<DynAskRepository>) -> Self {
+        Self::from_repo_with_store(repo, octo_reputation::store::InMemoryReputationStore::new())
     }
 }
 

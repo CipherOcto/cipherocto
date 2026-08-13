@@ -1,8 +1,19 @@
 //! `AskRepository` — DAO over the cipherocto `asks` table (Phase C).
+#![allow(clippy::doc_lazy_continuation)]
 //!
 //! Per [[stoolap-general-purpose-db]] principle: cipherocto owns consumer schema;
 //! the fork is a general-purpose DB. Migrations live in `crates/octo-core/migrations/`
 //! and are run at startup via `migrations::apply_pending`.
+//!
+//! **Trait boundary** (mission `marketplace-repo-trait-decouple`):
+//! the public API is split into [`AskRead`] (cheapest / list_by_asker / get)
+//! + [`AskWrite`] (put / delete) and combined as [`AskRepository`]. The
+//! concrete [`StoolapAskRepository`] is the production implementation;
+//! consumers (notably `quota-router-core::Marketplace`) hold
+//! `Arc<dyn CombinedAskRepository + Send + Sync>` so test mocks and alternate
+//! backends plug in without a concrete-type dependency. Interface
+//! Segregation: callers that only read or only write may depend on
+//! the narrowest trait that fits (Stable Abstractions Principle).
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -97,16 +108,99 @@ fn now_unix() -> u64 {
         .unwrap_or(0)
 }
 
+/// Read-side trait for the `asks` table (mission
+/// `marketplace-repo-trait-decouple`).
+///
+/// Interface Segregation: read-only consumers (e.g., the marketplace
+/// `cheapest` hot path) can depend on `AskRead` without pulling in the
+/// write-side surface.
+pub trait AskRead: Send + Sync {
+    /// Fetch an Ask by its content-addressable id.
+    /// # Errors
+    /// Returns `RepoError::Db` on query failure.
+    fn get(&self, ask_id: &[u8; 32]) -> Result<Option<Ask>, RepoError>;
+
+    /// List all non-expired Asks for `model`, sorted by computed cost
+    /// ascending. `axes` supplies the standard pricing axes for cost
+    /// computation.
+    /// # Errors
+    /// Returns `RepoError::Db` on query failure, `RepoError::Serde` on
+    /// row decode failure.
+    fn cheapest(
+        &self,
+        model: &str,
+        now_unix: u64,
+        axes: &[PricingAxis],
+    ) -> Result<Option<Ask>, RepoError>;
+
+    /// List all non-expired Asks published by `asker_did`.
+    /// # Errors
+    /// Returns `RepoError::Db` on query failure.
+    fn list_by_asker(&self, asker_did: &str, now_unix: u64) -> Result<Vec<Ask>, RepoError>;
+
+    /// List all non-expired Asks across all askers (used by
+    /// `Marketplace::open_path` to hydrate the in-memory order book on
+    /// restart, mission `marketplace-book-load-on-open`).
+    /// # Errors
+    /// Returns `RepoError::Db` on query failure.
+    fn list_all_active_asks(&self, now_unix: u64) -> Result<Vec<Ask>, RepoError>;
+}
+
+/// Write-side trait for the `asks` table (mission
+/// `marketplace-repo-trait-decouple`).
+pub trait AskWrite: Send + Sync {
+    /// Insert or replace an Ask.
+    /// # Errors
+    /// Returns `RepoError` on stoolap / serialization failure.
+    fn put(&self, ask: &Ask) -> Result<(), RepoError>;
+
+    /// Delete an Ask by id (used by settlement engine for one-shot
+    /// consumption).
+    /// # Errors
+    /// Returns `RepoError::Db` on delete failure.
+    fn delete(&self, ask_id: &[u8; 32]) -> Result<(), RepoError>;
+}
+
+/// Combined read+write marker trait. Most consumers should depend on
+/// the narrower [`AskRead`] + [`AskWrite`] pair via the
+/// [`CombinedAskRepository`] supertrait (which is the
+/// `(dyn ... + Send + Sync)`-able surface); `AskRepository` is
+/// retained as a documentation handle for the historical "read+write
+/// DAO" concept (mission `marketplace-repo-trait-decouple`).
+pub trait AskRepository: AskRead + AskWrite {}
+
+/// Blanket impl: any type that is both `AskRead` + `AskWrite` is an
+/// `AskRepository`. The marketplace holds
+/// `Arc<dyn AskRead + AskWrite + Send + Sync>` (alias
+/// [`DynAskRepository`]) and every concrete impl is automatically
+/// usable. This is the Stable Abstractions Principle: the consumer
+/// depends on the narrowest surface (`AskRead + AskWrite`), not on
+/// the production struct.
+impl<T> AskRepository for T where T: AskRead + AskWrite {}
+
+/// Combined marker trait: any concrete `AskRead + AskWrite` impl is
+/// automatically `CombinedAskRepository`. Used to name the
+/// `(dyn CombinedAskRepository + Send + Sync)` trait object
+/// unambiguously (Rust forbids non-auto traits in `dyn` sums without
+/// parens; a named supertrait sidesteps the syntax).
+pub trait CombinedAskRepository: AskRead + AskWrite {}
+
+impl<T> CombinedAskRepository for T where T: AskRead + AskWrite {}
+
+/// Convenience alias for the trait object the marketplace stores.
+#[allow(dead_code)]
+pub type DynAskRepository = dyn CombinedAskRepository + Send + Sync;
+
 /// Cipherocto-side DAO for the `asks` table.
 ///
 /// Owns its embedded stoolap connection. All methods run queries via
 /// the embedded DB; no caching layer at MVP.
 #[derive(Clone)]
-pub struct AskRepository {
+pub struct StoolapAskRepository {
     db: stoolap::Database,
 }
 
-impl AskRepository {
+impl StoolapAskRepository {
     /// Open an in-memory DB, apply migrations, return the repository.
     /// Test-only convenience.
     /// # Errors
@@ -338,6 +432,44 @@ impl AskRepository {
     }
 }
 
+// ========================================================================
+// Trait impls (mission marketplace-repo-trait-decouple)
+// ========================================================================
+//
+// `StoolapAskRepository` is the production read+write impl. The trait
+// methods below delegate to the inherent methods above so callers may
+// hold the narrowest possible surface (e.g., a write-only consumer
+// imports only `AskWrite`).
+
+impl AskRead for StoolapAskRepository {
+    fn get(&self, ask_id: &[u8; 32]) -> Result<Option<Ask>, RepoError> {
+        StoolapAskRepository::get(self, ask_id)
+    }
+    fn cheapest(
+        &self,
+        model: &str,
+        now_unix: u64,
+        axes: &[PricingAxis],
+    ) -> Result<Option<Ask>, RepoError> {
+        StoolapAskRepository::cheapest(self, model, now_unix, axes)
+    }
+    fn list_by_asker(&self, asker_did: &str, now_unix: u64) -> Result<Vec<Ask>, RepoError> {
+        StoolapAskRepository::list_by_asker(self, asker_did, now_unix)
+    }
+    fn list_all_active_asks(&self, now_unix: u64) -> Result<Vec<Ask>, RepoError> {
+        StoolapAskRepository::list_all_active_asks(self, now_unix)
+    }
+}
+
+impl AskWrite for StoolapAskRepository {
+    fn put(&self, ask: &Ask) -> Result<(), RepoError> {
+        StoolapAskRepository::put(self, ask)
+    }
+    fn delete(&self, ask_id: &[u8; 32]) -> Result<(), RepoError> {
+        StoolapAskRepository::delete(self, ask_id)
+    }
+}
+
 /// Convert a stoolap `ResultRow` into an `Ask` (read typed columns via `FromValue`).
 fn row_to_ask(row: stoolap::ResultRow) -> Result<Ask, RepoError> {
     let ask_id: Vec<u8> = row
@@ -412,12 +544,12 @@ mod tests {
 
     #[test]
     fn open_in_memory_applies_migrations() {
-        let _repo = AskRepository::open_in_memory().expect("open");
+        let _repo = StoolapAskRepository::open_in_memory().expect("open");
     }
 
     #[test]
     fn put_and_get_roundtrip() {
-        let repo = AskRepository::open_in_memory().unwrap();
+        let repo = StoolapAskRepository::open_in_memory().unwrap();
         let ask = sample_ask(
             &octo_ident::test_helpers::sample_did(94),
             "openai/gpt-4",
@@ -435,7 +567,7 @@ mod tests {
 
     #[test]
     fn put_overwrites_existing() {
-        let repo = AskRepository::open_in_memory().unwrap();
+        let repo = StoolapAskRepository::open_in_memory().unwrap();
         let mut ask = sample_ask(
             &octo_ident::test_helpers::sample_did(94),
             "openai/gpt-4",
@@ -452,14 +584,14 @@ mod tests {
 
     #[test]
     fn get_missing_returns_none() {
-        let repo = AskRepository::open_in_memory().unwrap();
+        let repo = StoolapAskRepository::open_in_memory().unwrap();
         let missing = [0x99; 32];
         assert!(repo.get(&missing).unwrap().is_none());
     }
 
     #[test]
     fn cheapest_returns_lowest_rate() {
-        let repo = AskRepository::open_in_memory().unwrap();
+        let repo = StoolapAskRepository::open_in_memory().unwrap();
         let axes = PricingAxis::standard_axes();
         let now = 1_700_000_000;
         let cheap = sample_ask(
@@ -488,7 +620,7 @@ mod tests {
 
     #[test]
     fn cheapest_excludes_expired() {
-        let repo = AskRepository::open_in_memory().unwrap();
+        let repo = StoolapAskRepository::open_in_memory().unwrap();
         let axes = PricingAxis::standard_axes();
         let now = 1_700_000_000;
         let active = sample_ask(
@@ -511,7 +643,7 @@ mod tests {
 
     #[test]
     fn cheapest_unknown_model_returns_none() {
-        let repo = AskRepository::open_in_memory().unwrap();
+        let repo = StoolapAskRepository::open_in_memory().unwrap();
         let axes = PricingAxis::standard_axes();
         assert!(repo
             .cheapest("nonexistent", 1_700_000_000, &axes)
@@ -524,7 +656,7 @@ mod tests {
         // A zero-rate Ask wins cheapest() over a non-zero-rate Ask (free vs paid
         // for the same model). Documents that rate=0 doesn't crash division
         // and that the cost calculation handles edge values gracefully.
-        let repo = AskRepository::open_in_memory().unwrap();
+        let repo = StoolapAskRepository::open_in_memory().unwrap();
         let axes = PricingAxis::standard_axes();
         let now = 1_700_000_000;
         let free = sample_ask(
@@ -559,7 +691,7 @@ mod tests {
         // Smoke test: put() opens + commits a transaction. Run two puts serially
         // (the executor lock serializes; full concurrent test needs a thread pool
         // which is out of scope for the unit test).
-        let repo = AskRepository::open_in_memory().unwrap();
+        let repo = StoolapAskRepository::open_in_memory().unwrap();
         let now = 1_700_000_000;
         for i in 0..5 {
             let ask = sample_ask(
@@ -585,7 +717,7 @@ mod tests {
 
     #[test]
     fn list_by_asker_filters() {
-        let repo = AskRepository::open_in_memory().unwrap();
+        let repo = StoolapAskRepository::open_in_memory().unwrap();
         let now = 1_700_000_000;
         let a1 = sample_ask(
             &octo_ident::test_helpers::sample_did(94),
@@ -620,7 +752,7 @@ mod tests {
 
     #[test]
     fn delete_removes_ask() {
-        let repo = AskRepository::open_in_memory().unwrap();
+        let repo = StoolapAskRepository::open_in_memory().unwrap();
         let ask = sample_ask(
             &octo_ident::test_helpers::sample_did(94),
             "openai/gpt-4",
@@ -641,6 +773,143 @@ mod tests {
         migrations::apply_pending(&db).unwrap();
         migrations::apply_pending(&db).unwrap(); // must not error
     }
-}
 
-// Ensure file ends with the mod test block close brace.
+    // ========================================================================
+    // Trait-boundary mock tests (mission marketplace-repo-trait-decouple)
+    // ========================================================================
+    //
+    // Demonstrate that `AskRead` + `AskWrite` are dispatchable as
+    // `dyn CombinedAskRepository`, so test mocks + alternate backends
+    // can plug in without depending on `StoolapAskRepository`.
+
+    use std::sync::Mutex;
+
+    /// In-memory mock impl backed by a `Vec<Ask>`. Exists solely to
+    /// prove the trait boundary is not over-fitted to the stoolap
+    /// concrete struct.
+    struct InMemoryMockRepo {
+        rows: Mutex<Vec<Ask>>,
+    }
+
+    impl InMemoryMockRepo {
+        fn new() -> Self {
+            Self {
+                rows: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl AskRead for InMemoryMockRepo {
+        fn get(&self, ask_id: &[u8; 32]) -> Result<Option<Ask>, RepoError> {
+            Ok(self
+                .rows
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|a| a.id() == *ask_id)
+                .cloned())
+        }
+        fn cheapest(
+            &self,
+            model: &str,
+            _now_unix: u64,
+            _axes: &[PricingAxis],
+        ) -> Result<Option<Ask>, RepoError> {
+            Ok(self
+                .rows
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|a| a.model.to_wire() == model)
+                .cloned())
+        }
+        fn list_by_asker(&self, asker_did: &str, _now_unix: u64) -> Result<Vec<Ask>, RepoError> {
+            Ok(self
+                .rows
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|a| a.asker_did == asker_did)
+                .cloned()
+                .collect())
+        }
+        fn list_all_active_asks(&self, _now_unix: u64) -> Result<Vec<Ask>, RepoError> {
+            Ok(self.rows.lock().unwrap().clone())
+        }
+    }
+
+    impl AskWrite for InMemoryMockRepo {
+        fn put(&self, ask: &Ask) -> Result<(), RepoError> {
+            let id = ask.id();
+            let mut rows = self.rows.lock().unwrap();
+            if let Some(existing) = rows.iter_mut().find(|a| a.id() == id) {
+                *existing = ask.clone();
+            } else {
+                rows.push(ask.clone());
+            }
+            Ok(())
+        }
+        fn delete(&self, ask_id: &[u8; 32]) -> Result<(), RepoError> {
+            self.rows.lock().unwrap().retain(|a| a.id() != *ask_id);
+            Ok(())
+        }
+    }
+
+    fn mock_ask(asker: &str, model: &str, rate: u128, nonce_byte: u8) -> Ask {
+        use crate::ask::{AxisRate, ModelRateTable};
+        Ask {
+            asker_did: asker.to_owned(),
+            model: ModelRef::from(model),
+            rates: ModelRateTable {
+                model: ModelRef::from(model),
+                rates: vec![AxisRate {
+                    axis: "input_tokens_per_1k".to_owned(),
+                    rate_per_1k: rate,
+                }],
+            },
+            nonce: [nonce_byte; 16],
+            expires_at_unix: 1_900_000_000,
+        }
+    }
+
+    #[test]
+    fn cheapest_via_in_memory_mock() {
+        // A non-stoolap `Arc<dyn ...>` impl answers cheapest.
+        let repo: std::sync::Arc<DynAskRepository> = std::sync::Arc::new(InMemoryMockRepo::new());
+        repo.put(&mock_ask("did:octo:a", "openai/gpt-4", 10_000, 0x11))
+            .expect("put a");
+        repo.put(&mock_ask("did:octo:b", "openai/gpt-4", 20_000, 0x22))
+            .expect("put b");
+        let cheapest = repo
+            .cheapest("openai/gpt-4", 1_700_000_000, &PricingAxis::standard_axes())
+            .expect("cheapest")
+            .expect("some");
+        assert_eq!(cheapest.asker_did, "did:octo:a");
+        assert_eq!(cheapest.rates.rates[0].rate_per_1k, 10_000);
+    }
+
+    #[test]
+    fn list_by_asker_via_in_memory_mock() {
+        let repo: std::sync::Arc<DynAskRepository> = std::sync::Arc::new(InMemoryMockRepo::new());
+        repo.put(&mock_ask("did:octo:a", "openai/gpt-4", 10_000, 0x11))
+            .expect("put a1");
+        repo.put(&mock_ask("did:octo:a", "anthropic/claude", 20_000, 0x12))
+            .expect("put a2");
+        repo.put(&mock_ask("did:octo:b", "openai/gpt-4", 30_000, 0x21))
+            .expect("put b");
+        let alice = repo
+            .list_by_asker("did:octo:a", 1_700_000_000)
+            .expect("list_by_asker");
+        assert_eq!(alice.len(), 2);
+        for ask in &alice {
+            assert_eq!(ask.asker_did, "did:octo:a");
+        }
+    }
+
+    #[test]
+    fn get_on_missing_id_via_in_memory_mock() {
+        let repo: std::sync::Arc<DynAskRepository> = std::sync::Arc::new(InMemoryMockRepo::new());
+        let missing = [0xee; 32];
+        assert!(repo.get(&missing).expect("get").is_none());
+    }
+}

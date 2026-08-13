@@ -12,7 +12,7 @@
 use std::collections::BTreeMap;
 
 use quota_router_storage::ask::{Ask, AskError, AskId, AxisRate, ModelRateTable, PricingAxis};
-use quota_router_storage::ask_repo::{AskRepository, RepoError};
+use quota_router_storage::ask_repo::{RepoError, StoolapAskRepository};
 use serde::Deserialize;
 
 const FIXTURE_DIR: &str = "tests/fixtures/asks";
@@ -196,7 +196,7 @@ fn every_model_has_both_wholesale_and_selfhost() {
 #[test]
 fn insert_all_fixture_asks_succeeds() -> Result<(), RepoError> {
     let (_axes, asks) = load_canonical();
-    let repo = AskRepository::open_in_memory()?;
+    let repo = StoolapAskRepository::open_in_memory()?;
     for ask in &asks {
         repo.put(ask)?;
     }
@@ -216,7 +216,7 @@ fn insert_all_fixture_asks_succeeds() -> Result<(), RepoError> {
 #[test]
 fn selfhost_is_cheaper_than_wholesale_for_every_model() -> Result<(), RepoError> {
     let (_axes, asks) = load_canonical();
-    let repo = AskRepository::open_in_memory()?;
+    let repo = StoolapAskRepository::open_in_memory()?;
     for ask in &asks {
         repo.put(ask)?;
     }

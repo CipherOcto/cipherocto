@@ -52,7 +52,10 @@ pub use ask::{
     SettlementEnvelope, SettlementError, SettlementEvent, SettlementReceipt, TokenCount,
     SETTLEMENT_HASH_DOMAIN,
 };
-pub use ask_repo::{AskRepository, AskRow, RepoError};
+pub use ask_repo::{
+    AskRead, AskRepository, AskRow, AskWrite, CombinedAskRepository, DynAskRepository, RepoError,
+    StoolapAskRepository,
+};
 pub use axis_registry_toml::{
     is_snake_case, load_from_path as load_axis_registry_from_path,
     load_from_str as load_axis_registry_from_str, AxisRegistryTomlError, DEFAULT_MVP_TOML,

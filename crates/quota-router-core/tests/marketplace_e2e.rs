@@ -61,7 +61,7 @@ fn setup_match(buyer: &str, seller: &str, model: &str, price: u128, qty: u64) ->
     );
     let escrow_id = [0x42; 32];
     let amount = price * qty as u128;
-    let mut escrow = Escrow::new(escrow_id, buyer, seller, amount);
+    let mut escrow = Escrow::with_arbitrator(escrow_id, buyer, seller, "arb-1", amount);
     escrow.lock(&Party::Buyer(buyer.to_string())).expect("lock");
     MarketTransaction { book, escrow }
 }

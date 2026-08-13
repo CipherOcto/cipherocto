@@ -86,7 +86,7 @@ impl InMemoryMarketplace {
 // ============================================================================
 
 use quota_router_storage::ask::{settlement_cost, Ask, PricingAxis};
-use quota_router_storage::ask_repo::{AskRepository, RepoError};
+use quota_router_storage::ask_repo::{DynAskRepository, RepoError};
 
 pub use scoring::{LatencyRanking, ProviderScore};
 
@@ -117,7 +117,7 @@ pub use scoring::{LatencyRanking, ProviderScore};
 ///   the best by a min-max-normalized weighted blend of price and
 ///   observed latency.
 pub struct Marketplace {
-    repo: AskRepository,
+    repo: std::sync::Arc<DynAskRepository>,
     axes: Vec<PricingAxis>,
     book: parking_lot::Mutex<orderbook::OrderBook<AskSpec>>,
     reputation: scoring::ProviderReputationRegistry,
@@ -141,7 +141,9 @@ impl Marketplace {
     /// Returns `RepoError` on stoolap open / migration failure.
     pub fn open_in_memory() -> Result<Self, RepoError> {
         Ok(Self {
-            repo: AskRepository::open_in_memory()?,
+            repo: std::sync::Arc::new(
+                quota_router_storage::ask_repo::StoolapAskRepository::open_in_memory()?,
+            ),
             axes: PricingAxis::standard_axes(),
             book: parking_lot::Mutex::new(orderbook::OrderBook::new()),
             reputation: scoring::ProviderReputationRegistry::new(),
@@ -167,7 +169,9 @@ impl Marketplace {
     /// # Errors
     /// Returns `RepoError` on open / migration failure.
     pub fn open_path(path: &str) -> Result<Self, RepoError> {
-        let repo = AskRepository::open_path(path)?;
+        let repo = std::sync::Arc::new(
+            quota_router_storage::ask_repo::StoolapAskRepository::open_path(path)?,
+        );
         let axes = PricingAxis::standard_axes();
         let mut book = orderbook::OrderBook::new();
         let now = current_unix();
@@ -200,9 +204,10 @@ impl Marketplace {
         })
     }
 
-    /// Wrap an existing AskRepository.
+    /// Wrap an existing AskRepository (Arc-ed so production and test
+    /// mocks share the trait-object consumer).
     #[must_use]
-    pub fn from_repo(repo: AskRepository) -> Self {
+    pub fn from_repo(repo: std::sync::Arc<DynAskRepository>) -> Self {
         Self {
             repo,
             axes: PricingAxis::standard_axes(),

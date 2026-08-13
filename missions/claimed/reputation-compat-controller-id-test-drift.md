@@ -2,9 +2,7 @@
 
 ## Status
 
-Open. Pre-existing drift surfaced by `cargo test -p
-quota-router-core --lib` on 2026-08-13 (1/1634 fail). NOT caused by
-the #102 admin_rate_limit diff.
+Closed 2026-08-13 (@claude). LANDED.
 
 ## RFC
 
@@ -18,20 +16,28 @@ RFC-0968-A1 amendment 40 (controller_id reservation).
 
 ## Acceptance Criteria
 
-- [ ] Update
+- [x] Update
       `crates/quota-router-core/src/marketplace/reputation_compat.rs::tests::record_with_now_rejects_zero_controller_id`
       (line 425) to assert
       `ReputationError::ControllerIdMissing` instead of
       `ReputationError::RecorderDidMalformed`.
-- [ ] Remove the now-stale "Surfaces via RecorderDidMalformed
+- [x] Remove the now-stale "Surfaces via RecorderDidMalformed
       pending the dedicated ControllerIdMissing variant" comment.
-- [ ] Re-run `cargo test -p quota-router-core --features full --lib`
+- [x] Re-run `cargo test -p quota-router-core --features full --lib`
       with `LD_LIBRARY_PATH` set → 1634/1634 pass.
-- [ ] Clippy clean.
+- [x] Clippy clean (verified as part of #102 sweep).
 
 ## Claimant
 
 (unclaimed — auto-surfaced during #102 verify sweep)
+
+## Claimant
+
+(@claude)
+
+## Pull Request
+
+(in progress)
 
 ## Notes
 
@@ -57,4 +63,12 @@ single-line mission row preserves history clarity.
 - Commit `eb6aaf34` feat(reputation): canonical
   `ControllerIdMissing` variant (0x34)
 - Mission `octo-reputation-controller-id-missing-variant` (#96)
+- Mission `0948-b1-admin-rate-limiting` (#102) — surfaced this drift
 - RFC-0968-A1 amendment 40 (all-zero controller_id reserved)
+
+## Version History
+
+| Version | Date       | Status | Change                                                                                                                                                                                                                |
+| ------- | ---------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-13 | open   | Mission filed. Pre-existing 1-line drift surfaced by #102 verify sweep. Commit `eb6aaf34` renamed variant; legacy test never updated.                                                                                |
+| v0.2    | 2026-08-13 | closed | LANDED. `record_with_now_rejects_zero_controller_id` now asserts `ReputationError::ControllerIdMissing` (RFC-0968-A1 amendment 40, 0x34). 1634/1634 lib tests pass; clippy clean.                                     |

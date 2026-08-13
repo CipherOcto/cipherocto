@@ -419,9 +419,10 @@ mod tests {
             .record_with_now(&did, true, 100, [0u8; 32], 1_700_000_000)
             .await
             .unwrap_err();
-        // Surfaces via RecorderDidMalformed pending the dedicated
-        // ControllerIdMissing variant (Round 1 review Pass 1 #H1 +
-        // Pass 3 #5). Documented in the function's docstring.
-        assert!(matches!(err, ReputationError::RecorderDidMalformed(_)));
+        // All-zero controller_id rejected via the canonical
+        // ControllerIdMissing variant (RFC-0968-A1 amendment 40,
+        // discriminant 0x34). Surfaced via mission
+        // `octo-reputation-controller-id-missing-variant` (#96).
+        assert!(matches!(err, ReputationError::ControllerIdMissing));
     }
 }

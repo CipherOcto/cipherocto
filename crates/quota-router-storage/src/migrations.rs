@@ -82,6 +82,11 @@ pub const BUILTIN_MIGRATIONS: &[Migration] = &[
         name: "add_chain_id_namespace",
         sql: include_str!("../migrations/v011__add_chain_id_namespace.sql"),
     },
+    Migration {
+        version: 12,
+        name: "create_slash_ledger",
+        sql: include_str!("../migrations/v012__create_slash_ledger.sql"),
+    },
 ];
 
 /// Migration errors.

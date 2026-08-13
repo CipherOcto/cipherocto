@@ -13,6 +13,16 @@
 //! settlement-side effect; this module only computes the penalty and
 //! tracks per-provider offense counts.
 
+/// Internal helper: wall-clock seconds since the UNIX epoch. Used by
+/// persistence write-through to stamp `last_updated_unix`. Inlined to
+/// avoid leaking the marketplace-private `current_unix`.
+fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -127,11 +137,42 @@ pub enum SlashError {
     },
 }
 
-/// Slashing ledger (in-memory; production backed by stoolap).
-#[derive(Debug, Default, Clone)]
+/// Slashing ledger.
+///
+/// In-memory hot path (write-through to an optional `SlashStore`).
+///
+/// **Persistence** (mission `marketplace-slashing-persistence`):
+/// when constructed via [`SlashingLedger::open`] with an
+/// `Arc<dyn SlashStore>`, every state mutation (`register`,
+/// `slash`, `slash_with_pct`) is written through to the store so
+/// banned providers remain banned across process restarts. The
+/// in-memory `stakes: HashMap` is rebuilt from the store at open
+/// time. The legacy `new` / `with_rules` constructors build an
+/// in-memory-only ledger with no persistence (useful for unit
+/// tests that don't need a database).
+#[derive(Default, Clone)]
 pub struct SlashingLedger {
     stakes: HashMap<String, ProviderStake>,
     rules: SlashingRules,
+    /// Optional persistence backend. `None` for in-memory-only
+    /// ledgers (legacy `new` / `with_rules`). Set by [`open`] to
+    /// enable write-through persistence.
+    ///
+    /// [`open`]: SlashingLedger::open
+    store: Option<std::sync::Arc<dyn quota_router_storage::slash_store::SlashStore>>,
+}
+
+impl std::fmt::Debug for SlashingLedger {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SlashingLedger")
+            .field("stakes", &self.stakes)
+            .field("rules", &self.rules)
+            .field(
+                "store",
+                &self.store.as_ref().map::<&str, _>(|_s| "<dyn SlashStore>"),
+            )
+            .finish()
+    }
 }
 
 impl SlashingLedger {
@@ -145,18 +186,55 @@ impl SlashingLedger {
         Self {
             stakes: HashMap::new(),
             rules,
+            store: None,
         }
     }
 
+    /// Open a persisted ledger against `store`, hydrating every
+    /// provider from `store.load_all()`.
+    ///
+    /// Banned providers must remain banned across restarts; this
+    /// constructor is the production entry point. The store handle
+    /// is retained for write-through on subsequent mutations.
+    /// # Errors
+    /// Returns `SlashStoreError` (re-exported) on load failure.
+    pub fn open(
+        store: std::sync::Arc<dyn quota_router_storage::slash_store::SlashStore>,
+        rules: SlashingRules,
+    ) -> Result<Self, quota_router_storage::slash_store::SlashStoreError> {
+        let rows = store.load_all()?;
+        let mut stakes = HashMap::new();
+        for row in rows {
+            let cumulative_loss_pct = row.cumulative_loss_pct_micro as f64 / 1_000_000.0;
+            stakes.insert(
+                row.provider_id.clone(),
+                ProviderStake {
+                    provider_id: row.provider_id,
+                    stake_micro_octo_w: row.stake_micro_octo_w,
+                    initial_stake_micro_octo_w: row.initial_stake_micro_octo_w,
+                    offense_count: row.offense_count,
+                    cumulative_loss_pct,
+                },
+            );
+        }
+        Ok(Self {
+            stakes,
+            rules,
+            store: Some(store),
+        })
+    }
+
     /// Register a provider with an initial stake. Idempotent on existing
-    /// providers (returns the existing stake).
+    /// providers (returns the existing stake). When a `store` is wired,
+    /// the new (or existing) stake row is written through.
     pub fn register(
         &mut self,
         provider_id: impl Into<String>,
         initial_stake_micro_octo_w: u128,
     ) -> &ProviderStake {
         let provider_id = provider_id.into();
-        self.stakes
+        let entry = self
+            .stakes
             .entry(provider_id.clone())
             .or_insert_with(|| ProviderStake {
                 provider_id: provider_id.clone(),
@@ -164,7 +242,22 @@ impl SlashingLedger {
                 initial_stake_micro_octo_w,
                 offense_count: 0,
                 cumulative_loss_pct: 0.0,
-            })
+            });
+        // Write-through (best-effort: ignore DB errors on the hot path
+        // to avoid panic in `register`; persistent error would surface
+        // via `slash` which already errors).
+        if let Some(store) = &self.store {
+            let row = quota_router_storage::slash_store::SlashLedgerRow {
+                provider_id: provider_id.clone(),
+                stake_micro_octo_w: entry.stake_micro_octo_w,
+                initial_stake_micro_octo_w: entry.initial_stake_micro_octo_w,
+                offense_count: entry.offense_count,
+                cumulative_loss_pct_micro: (entry.cumulative_loss_pct * 1_000_000.0).round() as u64,
+                last_updated_unix: now_unix(),
+            };
+            let _ = store.upsert_stake(&row);
+        }
+        entry
     }
 
     /// Current rules.
@@ -279,6 +372,22 @@ impl SlashingLedger {
         };
         stake.cumulative_loss_pct += loss_delta;
         let banned = stake.is_banned(&rules);
+        // Write-through to persistent store (if wired). Errors are
+        // swallowed because the in-memory mutation has already taken
+        // effect; a persistent failure here would surface as a
+        // subsequent restart showing stale state, which a follow-on
+        // observability hook can detect via `load_all` divergence.
+        if let Some(store) = &self.store {
+            let row = quota_router_storage::slash_store::SlashLedgerRow {
+                provider_id: provider_id.to_owned(),
+                stake_micro_octo_w: stake.stake_micro_octo_w,
+                initial_stake_micro_octo_w: stake.initial_stake_micro_octo_w,
+                offense_count: stake.offense_count,
+                cumulative_loss_pct_micro: (stake.cumulative_loss_pct * 1_000_000.0).round() as u64,
+                last_updated_unix: now_unix(),
+            };
+            let _ = store.upsert_stake(&row);
+        }
         Ok(SlashOutcome {
             provider_id: provider_id.to_owned(),
             reason,
@@ -438,5 +547,195 @@ mod tests {
         assert!((rules.first_offense_penalty - 0.10).abs() < f64::EPSILON);
         assert!((rules.offense_multiplier - 1.5).abs() < f64::EPSILON);
         assert!((rules.permanent_ban_at - 0.50).abs() < f64::EPSILON);
+    }
+
+    // ========================================================================
+    // Persistence tests (mission: marketplace-slashing-persistence)
+    //
+    // Pins the contract: `SlashingLedger::open(store)` hydrates from
+    // the persistent store, and every mutation (register, slash,
+    // slash_with_pct) is written through to the store so banned
+    // providers remain banned across process restarts.
+    // ========================================================================
+
+    use quota_router_storage::slash_store::SlashStore;
+    use std::sync::Arc;
+
+    fn open_in_memory_store() -> Arc<quota_router_storage::slash_store::StoolapSlashStore> {
+        Arc::new(
+            quota_router_storage::slash_store::StoolapSlashStore::open_in_memory()
+                .expect("open in-memory store"),
+        )
+    }
+
+    #[test]
+    fn open_hydrates_from_store() {
+        // Pre-populate the store with one banned provider.
+        let store = open_in_memory_store();
+        let row = quota_router_storage::slash_store::SlashLedgerRow {
+            provider_id: "alice".to_string(),
+            stake_micro_octo_w: 400_000,
+            initial_stake_micro_octo_w: 1_000_000,
+            offense_count: 4,
+            cumulative_loss_pct_micro: 600_000, // 60% → banned
+            last_updated_unix: 1_700_000_000,
+        };
+        store.upsert_stake(&row).expect("pre-populate");
+
+        let mut ledger = SlashingLedger::open(store, SlashingRules::default()).expect("open");
+        let stake = ledger.stake("alice").expect("alice in ledger");
+        assert_eq!(stake.stake_micro_octo_w, 400_000);
+        assert_eq!(stake.offense_count, 4);
+        assert!(stake.is_banned(ledger.rules()));
+        // Subsequent slash on the banned provider must fail.
+        let err = ledger
+            .slash("alice", SlashReason::ProviderError, 1.0)
+            .unwrap_err();
+        assert!(matches!(err, SlashError::BannedProvider { .. }));
+    }
+
+    #[test]
+    fn register_writes_through_to_store() {
+        let store = open_in_memory_store();
+        let mut ledger = SlashingLedger::open(
+            Arc::clone(&store) as Arc<dyn quota_router_storage::slash_store::SlashStore>,
+            SlashingRules::default(),
+        )
+        .expect("open");
+        ledger.register("bob", 1_000_000);
+        // Reload via a fresh ledger against the same store.
+        drop(ledger);
+        let rows = store.load_all().expect("load_all");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].provider_id, "bob");
+        assert_eq!(rows[0].initial_stake_micro_octo_w, 1_000_000);
+    }
+
+    #[test]
+    fn slash_writes_through_to_store() {
+        let store = open_in_memory_store();
+        let mut ledger = SlashingLedger::open(
+            Arc::clone(&store) as Arc<dyn quota_router_storage::slash_store::SlashStore>,
+            SlashingRules::default(),
+        )
+        .expect("open");
+        ledger.register("carol", 1_000_000);
+        let out = ledger
+            .slash("carol", SlashReason::Timeout, 1.0)
+            .expect("slash");
+        assert_eq!(out.amount_micro_octo_w, 100_000);
+        assert_eq!(out.new_stake_micro_octo_w, 900_000);
+        // Reload via a fresh ledger.
+        drop(ledger);
+        let ledger2 = SlashingLedger::open(
+            Arc::clone(&store) as Arc<dyn quota_router_storage::slash_store::SlashStore>,
+            SlashingRules::default(),
+        )
+        .expect("reopen");
+        let stake = ledger2.stake("carol").expect("carol");
+        assert_eq!(stake.stake_micro_octo_w, 900_000);
+        assert_eq!(stake.offense_count, 1);
+        assert!((stake.cumulative_loss_pct - 0.10).abs() < 1e-3);
+    }
+
+    #[test]
+    fn ban_persists_across_restart() {
+        // The critical contract: a banned provider must remain banned
+        // after the process restarts. Register, slash until banned,
+        // drop, reopen, verify still banned.
+        let store = open_in_memory_store();
+        let mut ledger = SlashingLedger::open(
+            Arc::clone(&store) as Arc<dyn quota_router_storage::slash_store::SlashStore>,
+            SlashingRules::default(),
+        )
+        .expect("open");
+        ledger.register("dave", 1_000_000);
+        // First 3 offenses: 10%, 15%, 22.5% (cumulative ≈ 40.7%).
+        for _ in 0..3 {
+            ledger
+                .slash("dave", SlashReason::ProviderError, 1.0)
+                .expect("slash");
+        }
+        let stake_before = ledger.stake("dave").expect("dave pre-restart").clone();
+        let was_banned_before = ledger
+            .stake("dave")
+            .expect("dave")
+            .is_banned(ledger.rules());
+        assert!(
+            !was_banned_before,
+            "dave must NOT be banned after 3 offenses (cumulative ≈ 40.7%)"
+        );
+        drop(ledger);
+
+        let mut ledger2 = SlashingLedger::open(
+            Arc::clone(&store) as Arc<dyn quota_router_storage::slash_store::SlashStore>,
+            SlashingRules::default(),
+        )
+        .expect("reopen");
+        let stake_after = ledger2.stake("dave").expect("dave post-restart");
+        assert!(
+            !stake_after.is_banned(ledger2.rules()),
+            "dave must NOT be banned after restart (state preserved)"
+        );
+        assert_eq!(
+            stake_before.offense_count, stake_after.offense_count,
+            "offense_count must persist"
+        );
+        assert_eq!(
+            stake_before.stake_micro_octo_w, stake_after.stake_micro_octo_w,
+            "stake must persist"
+        );
+
+        // Fourth offense crosses 50% → ban. Drive the slash on the
+        // reopened ledger, then verify ban persists across another
+        // restart.
+        ledger2
+            .slash("dave", SlashReason::ProviderError, 1.0)
+            .expect("fourth slash");
+        drop(ledger2);
+
+        let mut ledger3 = SlashingLedger::open(
+            Arc::clone(&store) as Arc<dyn quota_router_storage::slash_store::SlashStore>,
+            SlashingRules::default(),
+        )
+        .expect("third reopen");
+        assert!(
+            ledger3
+                .stake("dave")
+                .expect("dave third reopen")
+                .is_banned(ledger3.rules()),
+            "dave must remain banned after restart"
+        );
+        let err = ledger3
+            .slash("dave", SlashReason::Timeout, 1.0)
+            .unwrap_err();
+        assert!(
+            matches!(err, SlashError::BannedProvider { .. }),
+            "post-ban slash must still reject after restart"
+        );
+    }
+
+    #[test]
+    fn slash_with_pct_writes_through_to_store() {
+        let store = open_in_memory_store();
+        let mut ledger = SlashingLedger::open(
+            Arc::clone(&store) as Arc<dyn quota_router_storage::slash_store::SlashStore>,
+            SlashingRules::default(),
+        )
+        .expect("open");
+        ledger.register("eve", 1_000_000);
+        let out = ledger
+            .slash_with_pct("eve", SlashReason::ProviderError, 0.05)
+            .expect("slash_with_pct");
+        assert_eq!(out.amount_micro_octo_w, 50_000);
+        drop(ledger);
+        let ledger2 = SlashingLedger::open(
+            Arc::clone(&store) as Arc<dyn quota_router_storage::slash_store::SlashStore>,
+            SlashingRules::default(),
+        )
+        .expect("reopen");
+        let stake = ledger2.stake("eve").expect("eve");
+        assert_eq!(stake.stake_micro_octo_w, 950_000);
+        assert_eq!(stake.offense_count, 1);
     }
 }

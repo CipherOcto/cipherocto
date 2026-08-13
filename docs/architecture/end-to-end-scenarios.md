@@ -15,7 +15,7 @@
 | **Provider**           | LLM API (OpenAI, Anthropic, etc.). Reached by API key configured on the buyer or seller node.                     | `architecture/quota-router-architecture.md §5`                                  |
 | **`dispatch_map`**     | Map of `model_name → DispatchInfo { provider, api_base, rpm }`. Decides which provider serves which model.        | `architecture/quota-router-architecture.md §9.2`                                |
 | **CapabilityToken V2** | Bearer token signed by buyer; specifies model, max price, expiry, caveats. Outer envelope `CapabilityBundleV2`.   | `use-cases/dual-mode-authorization-workflow.md`, RFC-0957                       |
-| **CapabilityBundleV2** | RFC-0957 stable outer envelope. Inner carries caveats. V2 is cutover target; V1 still accepted during migration.  | RFC-0957                                                                        |
+| **CapabilityBundleV2** | RFC-0957 stable outer envelope. Inner carries caveats. The current stable form during the cutover window.         | RFC-0957                                                                        |
 | **Marketplace node**   | Discovery + reputation registry. Returns ranked offers for a requested model.                                     | `use-cases/ai-quota-marketplace.md`, RFC-0969                                   |
 | **Seller node**        | A `quota-router-core` operator who exposes their provider pool to the network. Earns revenue.                     | RFC-0969, `architecture/octo-network-architecture.md`                           |
 | **Wallet node**        | Mints + verifies capability tokens. Holds the buyer's signing key (HSM-mandated for production).                  | `use-cases/dual-mode-authorization-workflow.md`, mission `0009-a-hsm-routing`   |
@@ -45,7 +45,7 @@
 
 ---
 
-> Shorthand in the mermaid diagrams below: **RR** = `ReputationRegistry` (records `success` / `dispute` / `replay` outcomes; reputation scores for sellers, routers, buyers); **E** = `EscrowLedger` (the per-capability payment vault from Scenario 7); **ST** = PoRelay `Registry` (router/hop trust registry from Scenario 14 — exposes `get_stake(did)`); **D** = `DisputeRegistry` (escrow + slashing coordinator from Scenario 13). "Wallet node" / "Marketplace node" / "Router node" / "Seller node" remain the glossary terms above.
+> Shorthand in the mermaid diagrams below: **RR** = `ReputationRegistry` (records `success` / `dispute` / `replay` outcomes; reputation scores for sellers, routers, buyers); **E** = `EscrowLedger` (the per-capability payment vault from Scenario 7); **ST** = PoRelay `Registry` (router/hop trust registry from Scenario 14 — exposes `get_stake(gateway_id)` and `get_score(gateway_id)`); **D** = "Dispute flow" (conceptual coordinator across `EscrowLedger` + `SlashingLedger` for Scenario 13); **ZK** = `ZK verifier` per RFC-0958 (capability issuance proof check in Scenario 9); **U** = human `Developer` actor (introductory use only in Scenario 1). "Wallet node" / "Marketplace node" / "Router node" / "Seller node" remain the glossary terms above.
 
 ## Scenario index
 
@@ -181,15 +181,15 @@ sequenceDiagram
 
 **Consolidated 503 sub-conditions (verified against `proxy.rs`):**
 
-| Sub-condition                            | Trigger                                                                      | Body                                                                          | Where                                                                                                            |
-| ---------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| dispatch-miss (asymmetric guard)         | `dispatch_map` non-empty, no entry for requested model                       | `"No dispatch entry for model 'X' — provider pool does not serve this model"` | `proxy.rs::dispatch_map_lookup_503_arm`; pinned by `e2e_wiremock_faults::test_dispatch_map_no_match_returns_503` |
-| dispatch-fall-through (map empty)        | `dispatch_map` empty, request falls through to provider's default API base   | falls through (NO 503 emitted here — see Scenario 2)                          | (asymmetric guard intentionally skips this branch)                                                               |
-| model-unhealthy (no fallback)            | Dispatch map has the model but health check marks it unhealthy, no fallbacks | `"Model unhealthy"`                                                           | `proxy.rs::health_check_503_arm_no_fallback`                                                                     |
-| model-unhealthy (fallback exhausted)     | Primary unhealthy AND all configured fallback models failed                  | `"Model unhealthy and all fallback models failed"`                            | `proxy.rs::health_check_503_arm_fallback_exhausted`                                                              |
-| model-unhealthy (no fallback configured) | Primary unhealthy AND no fallback configured                                 | `"Model unhealthy and no fallback models configured"`                         | `proxy.rs::health_check_503_arm_no_fallback_configured`                                                          |
-| marketplace-empty                        | Marketplace returns zero offers for the requested model                      | `"no marketplace offers for model X"`                                         | Scenario 6                                                                                                       |
-| stoolap-probe-unreachable (test fixture) | (Test-only) Stoolap DB path is unreachable during a probe                    | 503 emitted by the probe handler                                              | `proxy.rs::probe_handler_503_arm` (test assertion)                                                               |
+| Sub-condition                            | Trigger                                                                      | Body                                                                          | Where                                                                                                                             |
+| ---------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| dispatch-miss (asymmetric guard)         | `dispatch_map` non-empty, no entry for requested model                       | `"No dispatch entry for model 'X' — provider pool does not serve this model"` | inline in `handle_request_litellm` dispatch-miss Err arm; pinned by `e2e_wiremock_faults::test_dispatch_map_no_match_returns_503` |
+| dispatch-fall-through (map empty)        | `dispatch_map` empty, request falls through to provider's default API base   | falls through (NO 503 emitted here — see Scenario 2)                          | (asymmetric guard intentionally skips this branch)                                                                                |
+| model-unhealthy (no fallback)            | Dispatch map has the model but health check marks it unhealthy, no fallbacks | `"Model unhealthy"`                                                           | inline in `handle_request_litellm` health-check Err arm                                                                           |
+| model-unhealthy (fallback exhausted)     | Primary unhealthy AND all configured fallback models failed                  | `"Model unhealthy and all fallback models failed"`                            | inline in `handle_request_litellm` fallback-exhausted Err arm                                                                     |
+| model-unhealthy (no fallback configured) | Primary unhealthy AND no fallback configured                                 | `"Model unhealthy and no fallback models configured"`                         | inline in `handle_request_litellm` no-fallback-configured Err arm                                                                 |
+| marketplace-empty                        | Marketplace returns zero offers for the requested model                      | `"no marketplace offers for model X"`                                         | Scenario 6                                                                                                                        |
+| stoolap-probe-unreachable (test fixture) | (Test-only) Stoolap DB path is unreachable during a probe                    | 503 emitted by the probe handler                                              | inline in the probe handler test assertion                                                                                        |
 
 **Why this matters:** Clients distinguish 5xx by source: 500 = bug, 502 = upstream, 503 = no provider. Each triggers a different recovery strategy (bug → report, upstream → retry/backoff, no-provider → reconfigure).
 
@@ -205,12 +205,12 @@ The buyer's per-key `Balance` is zero (or below the request cost). The proxy ref
 sequenceDiagram
     participant C as Hardened client
     participant P as Local proxy
-    participant ST as Stoolap (Balance store)
+    participant DB as Stoolap (Balance store)
 
     C->>P: POST /v1/chat/completions
     P->>P: Validate API key
-    P->>ST: SELECT balance_cents FROM balances WHERE api_key = ?
-    ST-->>P: 0
+    P->>DB: SELECT balance_cents FROM balances WHERE api_key = ?
+    DB-->>P: 0
     P->>P: Balance::check(1) → false (0 < 1)
     P-->>C: 402 PAYMENT_REQUIRED<br/>{ "error": "balance exhausted" }
 ```
@@ -443,7 +443,7 @@ sequenceDiagram
     SN-->>P2: SSE (forwarded hop 3→2)
     P2-->>P1: SSE (forwarded hop 2→1)
     P1-->>P0: SSE (forwarded hop 1→0)
-    P0-->>P0: Accumulate tokens<br/>Append [DONE]
+    P0->>P0: Accumulate tokens<br/>Append [DONE]
     P0->>P0: Forward SSE to client
 
     ANT-->>SN: SSE: data: [DONE]
@@ -452,9 +452,9 @@ sequenceDiagram
     P0->>E: escrow.settle {<br/>  capability_hash,<br/>  amount_cents=actual_tokens*rate,<br/>  splits=[seller: 90%, router_A: 4%, router_B: 4%, burn: 2%]<br/>}
     E-->>P0: Settlement receipt
     Note over P0: P0 orchestrates settle-then-record:<br/>escrow ledger does NOT auto-update reputation
-    P0->>RR: marketplace.record_outcome(seller_did, success=true)
-    P0->>RR: marketplace.record_outcome(router_A, success=true)
-    P0->>RR: marketplace.record_outcome(router_B, success=true)
+    P0->>RR: marketplace.record_outcome(seller_did, success=true, latency_ms=...)
+    P0->>RR: marketplace.record_outcome(router_A, success=true, latency_ms=...)
+    P0->>RR: marketplace.record_outcome(router_B, success=true, latency_ms=...)
 ```
 
 **Step-by-step:**
@@ -492,7 +492,7 @@ sequenceDiagram
     alt envelope_id seen before
         SN-->>P1: 409 Conflict<br/>{ "error": "envelope already processed" }
         Note over SN,RR: attacker_hop_id = PoRelay relay metadata<br/>(envelope's signer_did = legitimate buyer)
-        SN->>RR: marketplace.record_outcome(attacker_hop_id, replay=true)
+        SN->>RR: marketplace.record_outcome(attacker_hop_id, success=false, latency_ms=0)
         RR-->>SN: attacker reputation -0.5
     else envelope_id new
         SN->>SN: Process normally
@@ -584,15 +584,15 @@ sequenceDiagram
     SN-->>P0: 403 Forbidden<br/>{ "error": "capability invalid: audience mismatch" }
 
     P0->>D: OpenDispute {<br/>  capability_hash,<br/>  seller_did,<br/>  reason="invalid_capability",<br/>  evidence=capability_bytes<br/>}
-    D->>E: escrow.dispute [state=Disputed]
-    D->>ST: slashing.slash [seller_did, SlashReason::CapabilityForgery, 5_pct, pre-appeal]
-    D->>RR: marketplace.record_outcome [seller_did, dispute=true]
+    D->>E: escrow.dispute(capability_hash, state=Disputed)
+    D->>ST: slashing.slash_with_pct(seller_did, SlashReason::FAILED_RESPONSE, 5.0)
+    D->>RR: marketplace.record_outcome(seller_did, success=false, latency_ms=0)
 ```
 
 **Step-by-step:**
 
 1. The buyer's wallet minted the capability with `audience=seller_A_did`. The buyer's proxy accidentally routed the request to `seller_B_did` (or `seller_A` rotated keys and the audience is now stale).
-2. The seller node's wallet fails the audience check. Returns **403 Forbidden** with a typed error (`audience mismatch`). (Emitted by the seller node — `proxy.rs` does not synthesize 403 for capability validation; it only maps incoming 403/401 to `RouterError::AuthError` via `proxy.rs::map_incoming_error_to_router_error`.)
+2. The seller node's wallet fails the audience check. Returns **403 Forbidden** with a typed error (`audience mismatch`). (Emitted by the seller node — `proxy.rs` does not synthesize 403 for capability validation; it only maps incoming 403/401 to `RouterError::AuthError` via `proxy.rs::classify_http_error`.)
 3. The buyer proxy opens a dispute, attaching the capability bytes as evidence.
 4. The dispute registry:
    - Refunds the buyer's escrow in full (the seller did not perform work).
@@ -626,7 +626,7 @@ sequenceDiagram
     loop for each Sybil DID
         RR->>ST: get_stake(seller_did)
         ST-->>RR: stake_cents
-        RR->>RR: get_history(seller_did)
+        RR->>RR: get_score(seller_did)
     end
     RR->>RR: Aggregate: stake_weight × history_length
     RR-->>MK: All 1000 Sybils rank LOW<br/>(stake per identity is tiny)
@@ -712,7 +712,7 @@ These gaps surfaced while writing this doc. Each should become either a follow-o
 | 3 Provider 500     | `e2e_wiremock_faults::test_upstream_500_returns_502`, `test_no_fallback_config_upstream_500_surfaces_as_502`, `proxy::test_post_dispatch_5xx_triggers_fallback` (lib)                                                                                                                             | Fallback dance test (already covered by lib test, not by wiremock)    |
 | 4 Budget 402       | `e2e_wiremock_faults::test_budget_exhausted_returns_402`                                                                                                                                                                                                                                          | —                                                                     |
 | 5 Rate limit       | `e2e_proxy::test_rpm_rate_limit_returns_429` (e2e_proxy.rs), `key_rate_limiter::tests::test_token_bucket_basic` (lib)                                                                                                                                                                             | Wiremock pinning of `Retry-After: <seconds>` header value             |
-| 6 Marketplace      | `marketplace_e2e` lib tests (27 tests pinning escrow/dispute/settlement invariants — `marketplace-e2e-strong-scenarios` mission); `crates/octo-network/tests/gdp_discovery.rs` + `gdp_deep.rs` cover the underlying GDP substrate used by marketplace nodes (NOT the marketplace-e2e flow itself) | Wiremock-style Sybil resistance at marketplace layer                  |
+| 6 Marketplace      | `marketplace_e2e` lib tests (24 tests pinning escrow/dispute/settlement invariants — `marketplace-e2e-strong-scenarios` mission); `crates/octo-network/tests/gdp_discovery.rs` + `gdp_deep.rs` cover the underlying GDP substrate used by marketplace nodes (NOT the marketplace-e2e flow itself) | Wiremock-style Sybil resistance at marketplace layer                  |
 | 7 Deal + escrow    | `0957-phase2b-payment-caveat` unit tests                                                                                                                                                                                                                                                          | CapabilityToken V2 caveat exhaustiveness across all 9 caveat variants |
 | 8 Mesh forwarding  | `0871b-cross-node-forwarding` (partial TV)                                                                                                                                                                                                                                                        | 3-node end-to-end TV (awaits `0870k`)                                 |
 | 9 Seller validate  | `0957-phase2b-payment-caveat` lib tests                                                                                                                                                                                                                                                           | ZK verification + reputation + provider dispatch integration          |

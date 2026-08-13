@@ -2386,6 +2386,91 @@ where
         }
     }
 
+    // Fire End + Success/Failure callbacks after response is built
+    // (RFC-0947 §End/Success/Failure wiring, mission 0947-c1). Best-effort:
+    // both fires go through `CallbackExecutor::fire` which uses mpsc
+    // try_send — request-path latency is bounded by channel capacity.
+    if let Some(ref executor) = callback_executor {
+        let request_meta = crate::callbacks::CallbackRequest {
+            model: request_model.clone(),
+            messages: vec![],
+            temperature: None,
+            max_tokens: None,
+            stream: body_str.contains("\"stream\":true"),
+            provider: provider.name.clone(),
+            key_id: validated_api_key.as_ref().map(|k| k.key_id.clone()),
+            team_id: validated_api_key
+                .as_ref()
+                .and_then(|k| k.team_id.map(|id| id.to_string())),
+            user_id: request_user.clone(),
+        };
+        let end_timing = crate::callbacks::CallbackTiming {
+            request_start: chrono::Utc::now(),
+            request_end: Some(chrono::Utc::now()),
+            total_ms: start.elapsed().as_millis() as u64,
+            provider_latency_ms: 0,
+            queue_time_ms: 0,
+        };
+        match &result {
+            Ok(resp) if resp.status().is_success() => {
+                let response_meta = crate::callbacks::CallbackResponse {
+                    id: String::new(),
+                    model: request_model.clone(),
+                    response_summary: crate::callbacks::ResponseSummary {
+                        choice_count: 0,
+                        finish_reason: None,
+                        total_content_length: 0,
+                    },
+                    usage: crate::callbacks::Usage {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        total_tokens: 0,
+                    },
+                    latency_ms: start.elapsed().as_millis() as u64,
+                    provider: provider.name.clone(),
+                    cached: false,
+                };
+                crate::callbacks::fire_end_success(
+                    executor,
+                    request_meta,
+                    response_meta,
+                    end_timing,
+                )
+                .await;
+            }
+            Ok(resp) => {
+                let error_detail = crate::callbacks::CallbackErrorDetail {
+                    error_type: "http_error".to_string(),
+                    message: format!("non-2xx status {}", resp.status().as_u16()),
+                    status_code: Some(resp.status().as_u16()),
+                    provider: Some(provider.name.clone()),
+                };
+                crate::callbacks::fire_end_failure(
+                    executor,
+                    request_meta,
+                    error_detail,
+                    end_timing,
+                )
+                .await;
+            }
+            Err(_) => {
+                let error_detail = crate::callbacks::CallbackErrorDetail {
+                    error_type: "internal_proxy_error".to_string(),
+                    message: "internal proxy error".to_string(),
+                    status_code: None,
+                    provider: Some(provider.name.clone()),
+                };
+                crate::callbacks::fire_end_failure(
+                    executor,
+                    request_meta,
+                    error_detail,
+                    end_timing,
+                )
+                .await;
+            }
+        }
+    }
+
     result
 }
 

@@ -346,6 +346,116 @@ impl Drop for CallbackExecutor {
 }
 
 // ============================================================================
+// Event Builders (RFC-0947 §End/Success/Failure wiring)
+// ============================================================================
+
+/// Build a `CallbackEvent` of type `End` — fires at request completion
+/// (success OR failure path). Always paired with exactly one of
+/// `Success` or `Failure`. `response` and `error` are mutually
+/// exclusive: pass `Some(response)` for success, `Some(error)` for
+/// failure, both `None` for an unexpected path.
+pub fn build_end_event(
+    request: CallbackRequest,
+    response: Option<CallbackResponse>,
+    error: Option<CallbackErrorDetail>,
+    timing: CallbackTiming,
+) -> CallbackEvent {
+    CallbackEvent {
+        event_id: uuid::Uuid::new_v4().to_string(),
+        callback_type: CallbackType::End,
+        timestamp: Utc::now(),
+        request,
+        response,
+        error,
+        key_metadata: None,
+        timing,
+    }
+}
+
+/// Build a `CallbackEvent` of type `Success` — fires after a
+/// successful provider response (2xx status). The `response` carries
+/// summary + usage + latency. Errors are always `None`.
+pub fn build_success_event(
+    request: CallbackRequest,
+    response: CallbackResponse,
+    timing: CallbackTiming,
+) -> CallbackEvent {
+    CallbackEvent {
+        event_id: uuid::Uuid::new_v4().to_string(),
+        callback_type: CallbackType::Success,
+        timestamp: Utc::now(),
+        request,
+        response: Some(response),
+        error: None,
+        key_metadata: None,
+        timing,
+    }
+}
+
+/// Build a `CallbackEvent` of type `Failure` — fires after a provider
+/// error (4xx/5xx status) or local proxy error. The `error` carries
+/// the classified code + provider source. Response is always `None`.
+pub fn build_failure_event(
+    request: CallbackRequest,
+    error: CallbackErrorDetail,
+    timing: CallbackTiming,
+) -> CallbackEvent {
+    CallbackEvent {
+        event_id: uuid::Uuid::new_v4().to_string(),
+        callback_type: CallbackType::Failure,
+        timestamp: Utc::now(),
+        request,
+        response: None,
+        error: Some(error),
+        key_metadata: None,
+        timing,
+    }
+}
+
+/// Fire `Success` + `End` in sequence (non-blocking). Convenience
+/// wrapper used by `proxy.rs` at the success-return branch. Both
+/// fires are best-effort — failures are swallowed (channel-full
+/// drops are tracked by the executor's `dropped_total`).
+pub async fn fire_end_success(
+    executor: &CallbackExecutor,
+    request: CallbackRequest,
+    response: CallbackResponse,
+    timing: CallbackTiming,
+) {
+    let _ = executor
+        .fire(build_success_event(
+            request.clone(),
+            response.clone(),
+            timing.clone(),
+        ))
+        .await;
+    let _ = executor
+        .fire(build_end_event(request, Some(response), None, timing))
+        .await;
+}
+
+/// Fire `Failure` + `End` in sequence (non-blocking). Convenience
+/// wrapper used by `proxy.rs` at the error-return branch (both
+/// provider-error and local-error paths). Best-effort delivery.
+pub async fn fire_end_failure(
+    executor: &CallbackExecutor,
+    request: CallbackRequest,
+    error: CallbackErrorDetail,
+    timing: CallbackTiming,
+) {
+    let _ = executor
+        .fire(build_failure_event(
+            request.clone(),
+            error.clone(),
+            timing.clone(),
+        ))
+        .await;
+    let _ = executor
+        .fire(build_end_event(request, None, Some(error), timing))
+        .await;
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -605,5 +715,172 @@ mod tests {
                 queue_time_ms: 0,
             },
         }
+    }
+
+    // === Builders for End/Success/Failure (RFC-0947 §End/Success/Failure wiring) ===
+
+    fn make_test_request(stream: bool) -> CallbackRequest {
+        CallbackRequest {
+            model: "gpt-4".into(),
+            messages: vec![MessageMetadata {
+                role: "user".into(),
+                content_length: 100,
+            }],
+            temperature: Some(0.7),
+            max_tokens: Some(1000),
+            stream,
+            provider: "openai".into(),
+            key_id: Some("key-1".into()),
+            team_id: None,
+            user_id: None,
+        }
+    }
+
+    fn make_test_response() -> CallbackResponse {
+        CallbackResponse {
+            id: "resp-1".into(),
+            model: "gpt-4".into(),
+            response_summary: ResponseSummary {
+                choice_count: 1,
+                finish_reason: Some("stop".into()),
+                total_content_length: 500,
+            },
+            usage: Usage {
+                prompt_tokens: 100,
+                completion_tokens: 50,
+                total_tokens: 150,
+            },
+            latency_ms: 500,
+            provider: "openai".into(),
+            cached: false,
+        }
+    }
+
+    fn make_test_error() -> CallbackErrorDetail {
+        CallbackErrorDetail {
+            error_type: "provider_error".into(),
+            message: "upstream 500".into(),
+            status_code: Some(500),
+            provider: Some("openai".into()),
+        }
+    }
+
+    fn make_test_timing_complete() -> CallbackTiming {
+        CallbackTiming {
+            request_start: Utc::now(),
+            request_end: Some(Utc::now()),
+            total_ms: 600,
+            provider_latency_ms: 500,
+            queue_time_ms: 100,
+        }
+    }
+
+    #[test]
+    fn test_build_end_event_success_path() {
+        let timing = make_test_timing_complete();
+        let event = build_end_event(
+            make_test_request(false),
+            Some(make_test_response()),
+            None,
+            timing.clone(),
+        );
+        assert_eq!(event.callback_type, CallbackType::End);
+        assert!(event.response.is_some());
+        assert!(event.error.is_none());
+        assert_eq!(event.timing.total_ms, timing.total_ms);
+        // End event has a non-None request_end (this is the terminal marker)
+        assert!(event.timing.request_end.is_some());
+    }
+
+    #[test]
+    fn test_build_end_event_failure_path() {
+        let event = build_end_event(
+            make_test_request(false),
+            None,
+            Some(make_test_error()),
+            make_test_timing_complete(),
+        );
+        assert_eq!(event.callback_type, CallbackType::End);
+        assert!(event.response.is_none());
+        let err = event.error.expect("error must be present on failure path");
+        assert_eq!(err.error_type, "provider_error");
+        assert_eq!(err.status_code, Some(500));
+    }
+
+    #[test]
+    fn test_build_success_event_carries_response() {
+        let timing = make_test_timing_complete();
+        let event = build_success_event(
+            make_test_request(true),
+            make_test_response(),
+            timing.clone(),
+        );
+        assert_eq!(event.callback_type, CallbackType::Success);
+        let resp = event.response.expect("success event must carry response");
+        assert_eq!(resp.model, "gpt-4");
+        assert_eq!(resp.usage.total_tokens, 150);
+        assert_eq!(resp.latency_ms, 500);
+        assert!(event.error.is_none());
+        assert!(
+            event.request.stream,
+            "stream flag must propagate from request"
+        );
+    }
+
+    #[test]
+    fn test_build_failure_event_carries_error() {
+        let event = build_failure_event(
+            make_test_request(false),
+            make_test_error(),
+            make_test_timing_complete(),
+        );
+        assert_eq!(event.callback_type, CallbackType::Failure);
+        assert!(event.response.is_none());
+        let err = event.error.expect("failure event must carry error");
+        assert_eq!(err.status_code, Some(500));
+        assert_eq!(err.provider.as_deref(), Some("openai"));
+    }
+
+    #[tokio::test]
+    async fn test_fire_end_success_emits_two_events() {
+        let executor = CallbackExecutor::new(10);
+        let target: Arc<dyn CallbackTarget> = Arc::new(MockCallbackTarget);
+        executor.register(CallbackType::Success, target.clone());
+        executor.register(CallbackType::End, target.clone());
+        fire_end_success(
+            &executor,
+            make_test_request(false),
+            make_test_response(),
+            make_test_timing_complete(),
+        )
+        .await;
+        // Give worker time to drain
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(
+            executor.dropped_count(),
+            0,
+            "both events should fit channel"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fire_end_failure_emits_two_events() {
+        let executor = CallbackExecutor::new(10);
+        let target: Arc<dyn CallbackTarget> = Arc::new(MockCallbackTarget);
+        executor.register(CallbackType::Failure, target.clone());
+        executor.register(CallbackType::End, target.clone());
+        fire_end_failure(
+            &executor,
+            make_test_request(false),
+            make_test_error(),
+            make_test_timing_complete(),
+        )
+        .await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(
+            executor.dropped_count(),
+            0,
+            "both events should fit channel"
+        );
     }
 }

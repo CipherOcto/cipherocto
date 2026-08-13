@@ -8,13 +8,21 @@
 //!                          ├─dispute()──▶ Disputed ──resolve_valid()──▶ Slashed
 //!                          │                 │
 //!                          │                 └─resolve_invalid()──▶ Settled
-//!                          │
-//!                          └─cancel()──▶ Pending
 //! ```
 //!
 //! The state machine is purely operational — it does not move funds
 //! itself. Callers (the routing layer / settle orchestrator) interpret
 //! the new state and run the corresponding balance / stake transitions.
+//!
+//! **No `cancel()` method** (Round 1 review fix): prior `cancel()`
+//! was a no-op (`Pending → Pending`) which made buyer abandonment
+//! indistinguishable from a never-cancelled escrow, and the
+//! documented `Locked → cancel() → Pending` transition was
+//! economically nonsensical (funds already locked; cancel should
+//! refund via the dispute path, not silently rollback). Buyers who
+//! wish to abandon a Pending escrow should simply not call `lock()`
+//! — `Escrow::drop` will leave it in `Pending` state and no funds
+//! are at risk.
 
 use serde::{Deserialize, Serialize};
 
@@ -43,8 +51,6 @@ pub enum EscrowError {
     SettleFromInvalid(EscrowState),
     #[error("cannot dispute escrow in state {0:?} (only Locked can be disputed)")]
     DisputeFromInvalid(EscrowState),
-    #[error("cannot cancel escrow in state {0:?} (only Pending can cancel)")]
-    CancelFromInvalid(EscrowState),
     #[error("cannot resolve dispute in state {0:?} (only Disputed can resolve)")]
     ResolveFromInvalid(EscrowState),
 }
@@ -53,13 +59,44 @@ pub enum EscrowError {
 ///
 /// `amount_micro_octo_w` is the locked amount. `buyer` / `seller` are
 /// the participant identities (DIDs or addresses).
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// **Not `Clone`** (Round 1 review fix): prior `#[derive(Clone)]`
+/// enabled a double-settle vector where two independently-cloned
+/// Escrows could both transition Pending → Locked → Settled without
+/// coordinating, allowing duplicate fund release. Callers that need
+/// a snapshot should use `EscrowSnapshot` (state + immutable fields)
+/// or `&Escrow` / `&mut Escrow` references.
+#[derive(Debug, PartialEq, Eq)]
 pub struct Escrow {
     pub id: [u8; 32],
     pub buyer: String,
     pub seller: String,
     pub amount_micro_octo_w: u128,
     pub state: EscrowState,
+}
+
+/// Immutable snapshot of an Escrow — safe to clone, cannot mutate.
+/// Use this when callers need to capture the escrow state at a point
+/// in time without holding the original (e.g., logging, audit trail).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EscrowSnapshot {
+    pub id: [u8; 32],
+    pub buyer: String,
+    pub seller: String,
+    pub amount_micro_octo_w: u128,
+    pub state: EscrowState,
+}
+
+impl From<&Escrow> for EscrowSnapshot {
+    fn from(e: &Escrow) -> Self {
+        Self {
+            id: e.id,
+            buyer: e.buyer.clone(),
+            seller: e.seller.clone(),
+            amount_micro_octo_w: e.amount_micro_octo_w,
+            state: e.state,
+        }
+    }
 }
 
 impl Escrow {
@@ -110,17 +147,6 @@ impl Escrow {
             return Err(EscrowError::DisputeFromInvalid(self.state));
         }
         self.state = EscrowState::Disputed;
-        Ok(self.state)
-    }
-
-    /// Cancel a Pending escrow (buyer abandons the purchase).
-    /// # Errors
-    /// Returns `EscrowError::CancelFromInvalid` if not currently Pending.
-    pub fn cancel(&mut self) -> Result<EscrowState, EscrowError> {
-        if self.state != EscrowState::Pending {
-            return Err(EscrowError::CancelFromInvalid(self.state));
-        }
-        self.state = EscrowState::Pending; // no-op terminal marker
         Ok(self.state)
     }
 
@@ -241,17 +267,6 @@ mod tests {
         assert_eq!(
             e.dispute().unwrap_err(),
             EscrowError::DisputeFromInvalid(EscrowState::Pending)
-        );
-    }
-
-    #[test]
-    fn cancel_only_from_pending() {
-        let mut e = sample();
-        e.cancel().unwrap(); // idempotent no-op
-        e.lock().unwrap();
-        assert_eq!(
-            e.cancel().unwrap_err(),
-            EscrowError::CancelFromInvalid(EscrowState::Locked)
         );
     }
 

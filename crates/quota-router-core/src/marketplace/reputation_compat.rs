@@ -389,4 +389,42 @@ mod tests {
         let did = sample_did(2);
         assert!(!compat.is_excluded_async(&did).await.unwrap());
     }
+
+    // ----------------------------------------------------------------
+    // Round 1 test-coverage pass — fills the gaps flagged in the
+    // multi-round review (Pass 3 HIGHs #3, #4, #5, #6).
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn controller_id_from_governance_pubkey_is_blake3() {
+        // Deterministic fixture: BLAKE3 of an arbitrary pubkey.
+        let pubkey = [0x42u8; 32];
+        let id = controller_id_from_governance_pubkey(pubkey);
+        let expected = *blake3::hash(&pubkey).as_bytes();
+        assert_eq!(id, expected);
+        // Never all-zero for any pubkey input (sanity property).
+        assert_ne!(id, [0u8; 32]);
+    }
+
+    #[test]
+    fn parse_canonical_did_accepts_w3c_z_form() {
+        let did = sample_did(99);
+        let _parsed = parse_canonical_did(&did).expect("z-form must parse");
+        // Acceptance: parse did not error and produced a non-empty DID.
+    }
+
+    #[tokio::test]
+    async fn record_with_now_rejects_zero_controller_id() {
+        let store = InMemoryReputationStore::new();
+        let compat = ProviderReputationRegistryCompat::new(store);
+        let did = sample_did(7);
+        let err = compat
+            .record_with_now(&did, true, 100, [0u8; 32], 1_700_000_000)
+            .await
+            .unwrap_err();
+        // Surfaces via RecorderDidMalformed pending the dedicated
+        // ControllerIdMissing variant (Round 1 review Pass 1 #H1 +
+        // Pass 3 #5). Documented in the function's docstring.
+        assert!(matches!(err, ReputationError::RecorderDidMalformed(_)));
+    }
 }

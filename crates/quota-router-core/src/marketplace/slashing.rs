@@ -256,7 +256,18 @@ impl SlashingLedger {
                 cumulative_loss_pct_bits: bits,
             });
         }
-        let amount = (stake.stake_micro_octo_w as f64 * pct).round() as u128;
+        // Round 1 fix: compute `amount` in u128 to avoid the f64
+        // mantissa-exhaustion precision loss that occurred for stakes
+        // above 2^53 (≈ 9.0 × 10^15 micro-OCTO-W). The percent is
+        // scaled to micro-percent (1e6) while still in [0, 1_000_000]
+        // — well within f64 exact-integer range — so the cast is
+        // exact. Then `(stake * pct_micro) / 1_000_000` stays in u128.
+        let pct_micro = (pct.clamp(0.0, 1.0) * 1_000_000.0).round() as u128;
+        let amount = stake
+            .stake_micro_octo_w
+            .checked_mul(pct_micro)
+            .expect("stake * pct_micro overflows u128 — stake > u128::MAX / 1e6");
+        let amount = amount / 1_000_000;
         // Cap deduction at remaining stake.
         let amount = amount.min(stake.stake_micro_octo_w);
         stake.stake_micro_octo_w -= amount;

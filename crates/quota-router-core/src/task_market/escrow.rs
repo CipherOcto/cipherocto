@@ -1,8 +1,13 @@
 //! Task escrow — task-scoped wrapper around `marketplace::escrow::Escrow`.
 //!
 //! Placeholder; full implementation lands in Task 6.3.
+//!
+//! **Not `Clone`** (Round 1 review fix): same reasoning as
+//! `marketplace::escrow::Escrow` — cloning would enable a
+//! double-settle vector on the wrapped `Escrow`. Use
+//! `TaskEscrowSnapshot` (cloneable) for audit/log capture.
 
-use crate::marketplace::escrow::{Escrow, EscrowError, EscrowState};
+use crate::marketplace::escrow::{Escrow, EscrowError, EscrowSnapshot, EscrowState};
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum TaskEscrowError {
@@ -10,11 +15,29 @@ pub enum TaskEscrowError {
     Escrow(#[from] EscrowError),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct TaskEscrow {
     pub base: Escrow,
     pub task_id: [u8; 32],
     pub request_id: [u8; 32],
+}
+
+/// Immutable, cloneable snapshot of a `TaskEscrow`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskEscrowSnapshot {
+    pub base: EscrowSnapshot,
+    pub task_id: [u8; 32],
+    pub request_id: [u8; 32],
+}
+
+impl From<&TaskEscrow> for TaskEscrowSnapshot {
+    fn from(t: &TaskEscrow) -> Self {
+        Self {
+            base: EscrowSnapshot::from(&t.base),
+            task_id: t.task_id,
+            request_id: t.request_id,
+        }
+    }
 }
 
 impl TaskEscrow {

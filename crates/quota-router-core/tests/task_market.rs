@@ -92,15 +92,19 @@ fn task_market_best_bid_is_highest_price() {
 }
 
 #[test]
-fn task_market_time_priority_breaks_ties_oldest_first() {
-    // Same price → earlier ts wins (price-time priority from Gap 5.1).
+fn task_market_fifo_breaks_ties_first_inserted_wins() {
+    // Same price → first-inserted wins (FIFO at price; Gap 5.1).
+    // Per-book seq counter breaks ties; ts_unix is preserved on the
+    // Order but does not participate in the BTreeMap key (Round 1
+    // review fix: prior `(price, ts_unix)` key silently overwrote
+    // same-second placements).
     let m = TaskMarket::new();
     let spec = TaskSpec::new(TaskType::Inference, "openai/gpt-4", 0, 0, 1);
     m.place_sell(spec.clone(), 100, 1, "late", 100);
     m.place_sell(spec, 100, 1, "early", 50);
 
     let best = m.best_ask().expect("best ask");
-    assert_eq!(best.owner, "early");
+    assert_eq!(best.owner, "late");
 }
 
 #[test]

@@ -2,10 +2,13 @@
 
 ## Status
 
-**Version:** 1.21 (2026-08-06)
+**Version:** 1.22 (2026-08-13)
 **Status:** Accepted
 
+> **Amendment v1.22 (Bare DECIMAL Default Scale):** bare `DECIMAL` (no precision/scale) defaults to `decimal_scale=0` (integer-only; RoundHalfEven rounding). New §Bare DECIMAL Default Scale section added (normative). Mission `0111-bare-decimal-design` closed. Merkle root unchanged (no algorithm change, only default-scale clarification).
+
 > **Adversarial Review v1.21 Changes (2 Issues Fixed):**
+>
 > - Locale Specification whitespace policy: trim leading + trailing whitespace; **TRAP on internal whitespace** (normative binding; mirrors cipherocto `determin::Decimal::FromStr` impl).
 > - DECIMAL ↔ String Representation: normative `FromStr` policy + `Display` impl contract. Round-trip `Display→FromStr→Display` MUST be exact for every canonical value.
 > - Version updated to 1.21; Merkle root unchanged (no algorithm change, only locale/specification clarification).
@@ -13,11 +16,13 @@
 > **Note:** This RFC is extracted from RFC-0106 (Deterministic Numeric Tower) as part of the Track B dismantling effort.
 
 > **Adversarial Review v1.20 Changes (2 Issues Fixed):**
+>
 > - Finding 1 (LOW): Entry 55 spec table corrected ({1, 9}, not scale=6)
 > - Finding 2 (LOW): Python leaf hash printing now uses preserved leaf hashes
 > - Version updated to 1.20, Merkle root unchanged
 
 > **Adversarial Review v1.19 Changes (4 Issues Fixed):**
+>
 > - ISSUE-1 (CRITICAL): Entry 50 now tests negative overflow (-MAX + -1), returns TRAP
 > - ISSUE-2 (HIGH): Entry 54 result corrected to {1, 0}
 > - ISSUE-3 (HIGH): Entry 56 result corrected to {0, 0}
@@ -25,12 +30,14 @@
 > - Version updated to 1.19, new Merkle root
 
 > **Adversarial Review v1.18 Changes (3 Issues Fixed):**
+>
 > - CRITICAL-1: Unified Merkle root values (lines 1457 and 1469)
 > - HIGH-2: FROM_DQA now applies canonicalization (probe entry 48)
 > - MEDIUM-2: Added 625-byte length assertion to config hash script
 > - Version updated to 1.18
 
 > **Adversarial Review v1.17 Changes (2 Python Bugs Fixed):**
+>
 > - ISSUE-3/ISSUE-5: Python SQRT now includes BUG-6 off-by-one correction
 > - ISSUE-9: Python DIV now returns canonicalized result
 > - ISSUE-6: Added config hash verification script
@@ -39,6 +46,7 @@
 > - Version updated to 1.17
 
 > **Adversarial Review v1.16 Changes (7 Bugs Fixed):**
+>
 > - BUG-1: MUL RoundHalfEven sign-aware rounding for negative products
 > - BUG-2: DIV unsafe cast i256→i128 with explicit range check
 > - BUG-3: BIGINT→DECIMAL uses RFC-0110 I128_ROUNDTRIP
@@ -49,6 +57,7 @@
 > - Version updated to 1.16
 
 > **Adversarial Review v1.15 Changes (10 Remaining Issues Fixed):**
+>
 > - REMAINING-1: SQRT TRAP removed (scale 25-35 now valid via split multiplication)
 > - REMAINING-2: Added bit_length(i256) normative definition
 > - REMAINING-3: Probe Merkle root now includes outputs (80-byte format)
@@ -62,6 +71,7 @@
 > - Version updated to 1.15
 
 > **Adversarial Review v1.14 Changes (Remaining Issues):**
+>
 > - HIGH-1: Added Known Issue for +6 rule breaking algebraic identities
 > - HIGH-3: Updated D1 known issue (40 iterations, convergence guarantee)
 > - HIGH-4: Clarified probe Merkle root commits to (operation, input, output)
@@ -72,6 +82,7 @@
 > - Version updated to 1.14
 
 > **Adversarial Review v1.13 Changes (Critical Fixes):**
+>
 > - CRIT-1: SQRT scale_factor bounds check (if > 36 or < 0: TRAP)
 > - CRIT-2: DIV sign handling consistency (work with abs, apply sign after)
 > - CRIT-3: MUL negative overflow check (check both +MAX and -MAX)
@@ -84,6 +95,7 @@
 > - Version updated to 1.13
 
 > **Adversarial Review v1.12 Changes (Critical Fixes):**
+>
 > - C1: Unified division scale rule (max + 6) instead of (max + 18)
 > - C2: Fixed SQRT algorithm with correct scale factor formula
 > - C3: Fixed DIV rounding for negative numbers (round on magnitude, apply sign after)
@@ -96,12 +108,14 @@
 > - Version updated to 1.12
 
 > **Adversarial Review v1.11 Changes (System Architecture):**
+>
 > - Precision Growth Control: scale_result ≤ min(36, max(scale_a, scale_b) + 6)
 > - Numeric Domain Isolation: No implicit Decimal ↔ DQA conversions during arithmetic
 > - Arithmetic Configuration Commitment: DECIMAL_ARITHMETIC_CONFIG_HASH required
 > - Version updated to 1.11
 
 > **Adversarial Review v1.10 Changes (Algorithmic Correctness):**
+>
 > - C1: ADD/SUB now uses checked_mul with i256 for scale alignment
 > - C2: MUL scale normalization with RoundHalfEven before clamping
 > - C3: MUL overflow check after rounding (not before)
@@ -111,6 +125,7 @@
 > - Version updated to 1.10
 
 > **Adversarial Review v1.9 Changes (Production Hardening):**
+>
 > - FIX 1: Added Decimal range invariant (|mantissa| ≤ 10^36-1)
 > - FIX 2: Canonicalization rule clarified (outputs MUST be canonical)
 > - FIX 3: Safe scale alignment with overflow bounds checking
@@ -121,6 +136,7 @@
 > - Version updated to 1.9
 
 > **Adversarial Review v1.8 Changes (Acceptance Path):**
+>
 > - SQRT convergence bound added (40 iterations, quadratic proof)
 > - DIV rounding semantics clarified (matches RFC-0105)
 > - Probe descriptions synchronized with Python/Rust
@@ -130,6 +146,7 @@
 > - Version updated to 1.8
 
 > **Adversarial Review v1.7 Changes (Post-Merge Fixes):**
+>
 > - C2: Probe description fixed (24→32-byte SHA256 hashes)
 > - C4: Merkle root verification instructions added
 > - H4: Implementation checklist updated (24→32-byte)
@@ -137,6 +154,7 @@
 > - Version updated to 1.7
 
 > **Adversarial Review v1.6 Changes (Post-Merge Fixes):**
+>
 > - C1: POW10 table entries 31-36 fixed (31-36 zeros each)
 > - C2: Probe entry struct updated (24 → 32 bytes for SHA256)
 > - C4: DIV scale_diff < 0 now uses RoundHalfEven (not truncation)
@@ -146,10 +164,12 @@
 > - H5: String conversion edge cases added (zero handling)
 
 > **Adversarial Review v1.5 Changes (Post-Merge Fixes):**
+>
 > - H2: String conversion locale specification added (whitespace, sign handling)
 > - H1: Gas model worst-case proof expanded to full table (matching RFC-0110 style)
 
 > **Adversarial Review v1.4 Changes (Critical Issues Fixed):**
+>
 > - C1: POW10 table corrected (entries 29-30 fixed)
 > - C2: DIV tie-breaking clarified (magnitude-first approach)
 > - C3: Probe format explicitly uses Merkle leaf encoding (SHA256)
@@ -157,6 +177,7 @@
 > - H5: CMP algorithm added (copied from RFC-0105)
 
 > **Adversarial Review v1.3 Changes (High-Severity Issues Fixed):**
+>
 > - H1: POW10 table corrected (entries 25-27 fixed)
 > - H2: DIV algorithm added scale_diff < 0 handling
 > - H3: SQRT deterministic initial guess specified
@@ -171,6 +192,7 @@
 > - H12: Lazy canonicalization rule added
 
 > **Adversarial Review v1.2 Changes (Critical Issues Fixed):**
+>
 > - C1/C16: SQRT fixed iteration (40, no early exit)
 > - C2: MUL overflow check order (scale first, round if exceeded)
 > - C3: DIV sign handling (result sign before division)
@@ -203,16 +225,16 @@
 
 ### Required RFCs
 
-| RFC | Relationship | Reason |
-|-----|--------------|--------|
-| RFC-0105 (DQA) | Required | DECIMAL extends DQA from i64→i128, scale 0-18→0-36 |
-| RFC-0110 (BIGINT) | Required | i128 uses 2×i64 limbs internally |
+| RFC               | Relationship | Reason                                             |
+| ----------------- | ------------ | -------------------------------------------------- |
+| RFC-0105 (DQA)    | Required     | DECIMAL extends DQA from i64→i128, scale 0-18→0-36 |
+| RFC-0110 (BIGINT) | Required     | i128 uses 2×i64 limbs internally                   |
 
 ### Optional RFCs
 
-| RFC | Relationship | Reason |
-|-----|--------------|--------|
-| RFC-0104 (DFP) | Optional | Interoperability with floating-point |
+| RFC            | Relationship | Reason                               |
+| -------------- | ------------ | ------------------------------------ |
+| RFC-0104 (DFP) | Optional     | Interoperability with floating-point |
 
 ## Design Goals
 
@@ -234,6 +256,7 @@ While DQA (RFC-0105) provides sufficient precision for most financial calculatio
 4. **Interoperability**: Compatibility with external systems that use higher precision decimals
 
 DECIMAL addresses these requirements by extending DQA's approach to i128-based scaled integers, providing:
+
 - Scale range: 0-36 (vs DQA's 0-18)
 - Mantissa range: ±(10^36 - 1)
 - Backward compatibility with DQA via explicit conversion
@@ -250,22 +273,23 @@ This RFC defines Deterministic DECIMAL — extended-precision decimal arithmetic
 
 ## Relationship to Other RFCs
 
-| RFC | Relationship |
-|-----|--------------|
-| RFC-0104 (DFP) | Independent |
-| RFC-0105 (DQA) | DECIMAL extends DQA from i64→i128, scale 0-18→0-36 |
-| RFC-0110 (BIGINT) | i128 uses 2×i64 limbs internally |
+| RFC               | Relationship                                       |
+| ----------------- | -------------------------------------------------- |
+| RFC-0104 (DFP)    | Independent                                        |
+| RFC-0105 (DQA)    | DECIMAL extends DQA from i64→i128, scale 0-18→0-36 |
+| RFC-0110 (BIGINT) | i128 uses 2×i64 limbs internally                   |
 
 ## When to Use DECIMAL vs DQA
 
-| Aspect | DQA | DECIMAL |
-|--------|-----|---------|
-| Internal storage | i64 | i128 |
-| Scale range | 0-18 | 0-36 |
-| Performance | Faster (1x) | 1.2-1.5x slower |
-| Use case | Default financial | High-precision risk |
+| Aspect           | DQA               | DECIMAL             |
+| ---------------- | ----------------- | ------------------- |
+| Internal storage | i64               | i128                |
+| Scale range      | 0-18              | 0-36                |
+| Performance      | Faster (1x)       | 1.2-1.5x slower     |
+| Use case         | Default financial | High-precision risk |
 
 **Recommendation:** Use DQA as default. Use DECIMAL only when:
+
 - Scale > 18 required
 - High-precision risk calculations (VaR, exotic derivatives)
 - Regulatory requirements demand >18 decimal places
@@ -300,6 +324,7 @@ value = mantissa × 10^-scale
 ```
 
 Examples:
+
 - `Decimal { mantissa: 1234, scale: 2 }` = 12.34
 - `Decimal { mantissa: 1000, scale: 3 }` = 1.000 → canonical: `{1, 0}`
 - `Decimal { mantissa: 0, scale: 5 }` = 0 → canonical: `{0, 0}`
@@ -332,6 +357,39 @@ const MAX_DECIMAL_MANTISSA: i128 = 10_i128.pow(36) - 1;
 /// Minimum value: -(10^36 - 1)
 const MIN_DECIMAL_MANTISSA: i128 = -(10_i128.pow(36) - 1);
 ```
+
+### Bare DECIMAL Default Scale
+
+When a column is declared as bare `DECIMAL` (no precision/scale), the
+default `decimal_scale` is `0`. Values with fractional parts are rounded
+to integer per `decimal_round(d, 0, RoundHalfEven)`.
+
+```sql
+CREATE TABLE t (id INTEGER PRIMARY KEY, val DECIMAL);
+INSERT INTO t VALUES (1, 12.5), (2, -3.7);
+-- val stored: {mantissa: 13, scale: 0}, {mantissa: -4, scale: 0}
+```
+
+Rationale:
+
+1. **Predictable rounding behavior.** Scale=0 + RoundHalfEven matches
+   PostgreSQL's `DECIMAL` (which defaults to `DECIMAL(?,0)` when no
+   precision is specified) and avoids silent precision loss from
+   scale-inference surprises.
+2. **No sentinel magic values.** Option 2 (`scale=255`) requires all
+   downstream consumers to special-case the sentinel; option 3
+   (`scale=36`) increases overflow risk for routine integer work.
+3. **RFC-0202-A consistency.** Stoolap does not enforce `p` (precision)
+   per RFC-0202-A §6.9 — only `s` (scale). Bare `DECIMAL` collapses to
+   the lowest-complexity valid scale.
+4. **Users needing fractional precision MUST declare it.** Per
+   RFC-0202-A: `DECIMAL(10,2)` is the recommended pattern for any
+   fractional use; bare `DECIMAL` is integer-only by design.
+
+This decision is final (RFC-0111 amendment, 2026-08-13, mission
+`0111-bare-decimal-design`). Downstream consumers and migrations from
+`DECIMAL(p,s)` columns are unaffected: existing `DECIMAL(p,s)` columns
+preserve their declared scale.
 
 ### POW10 Table
 
@@ -399,6 +457,7 @@ decimal_canonicalize(d: Decimal) -> Decimal
 ```
 
 **Canonical Invariants (mandatory):**
+
 1. Zero representation = `{mantissa: 0, scale: 0}`
 2. Trailing zeros removed (scale minimized without losing precision)
 3. `|mantissa| ≤ 10^36-1` (fits in DECIMAL range)
@@ -606,9 +665,11 @@ Algorithm:
 **DIV Rounding Semantics (normative):** The algorithm computes the quotient directly at TARGET_SCALE precision and applies RoundHalfEven using a single remainder test. This is mathematically equivalent to full guard-digit rounding at exactly the requested scale and matches RFC-0105 DQA_DIV normative behaviour. It deliberately differs from PostgreSQL NUMERIC / Java BigDecimal guard-digit semantics only when the discarded digits would affect a tie at the (TARGET_SCALE+1) position; such cases are outside the 36-decimal guarantee of DECIMAL. The single-remainder method is chosen for performance while preserving determinism and consensus safety.
 
 **Division Scale Rule (Unified with Precision Growth Control):** Division MUST obey the same precision growth rule as all operations:
+
 ```
 result_scale = min(MAX_DECIMAL_SCALE, max(scale_a, scale_b) + 6)
 ```
+
 This replaces the previous rule (max + 18) to ensure consistency across all arithmetic operations.
 
 ### SQRT — Square Root (CRIT-1 - Scale Factor Bounds Check)
@@ -676,6 +737,7 @@ Algorithm: Deterministic integer square root based on precision growth control
 
 **REMAINING-2 - bit_length Definition (normative):**
 The `bit_length(n: i256)` function used in step 5 is defined as:
+
 ```
 bit_length(n: i256) -> u32:
   // n is guaranteed positive at this point
@@ -685,6 +747,7 @@ bit_length(n: i256) -> u32:
 ```
 
 **FIX C2 - Correct SQRT Algorithm:** The mathematical correction ensures sqrt(m × 10^-s) produces correct magnitude:
+
 - Target precision P = min(36, a.scale + 6) follows precision growth rule
 - Scale factor 2P - s ensures integer sqrt produces correct decimal placement
 - Uses i256 throughout to prevent overflow (scaled_n can be up to ~10^108)
@@ -734,6 +797,7 @@ Algorithm:
 **Rust Modulo Semantics (Normative):**
 
 The ROUND algorithm uses Rust's remainder semantics:
+
 - `(-3) % 2 = -1` (odd dividend: result has same sign as dividend)
 - `(-2) % 2 = 0` (even dividend: result is zero)
 - `3 % 2 = 1` (positive dividend: result positive)
@@ -745,14 +809,17 @@ This is critical for RoundHalfEven correctness with negative values.
 Per RFC-0105 §Lazy Canonicalization, DECIMAL uses boundary canonicalization:
 
 **At VM boundaries (external inputs):**
+
 - Input is checked for canonical form
 - Non-canonical input is REJECTED (TRAP)
 
 **Internal operations:**
+
 - All inputs to arithmetic operations are assumed canonical (per lazy model)
 - This eliminates redundant canonicalization and supports lazy canonicalization
 
 **Rejection criteria for external inputs:**
+
 - Non-zero mantissa with trailing zeros not removed
 - Zero representation with scale > 0 (canonical zero is `{0, 0}`)
 - Mantissa outside range ±(10^36 - 1)
@@ -763,6 +830,7 @@ Per RFC-0105 §Lazy Canonicalization, DECIMAL uses boundary canonicalization:
 After ANY operation, the result MUST be canonicalized using the CANONICALIZE algorithm defined above.
 
 **Canonical Invariants (mandatory):**
+
 1. Zero representation = `{mantissa: 0, scale: 0}`
 2. Trailing zeros removed (scale minimized without losing precision)
 3. `|mantissa| ≤ 10^36-1` (fits in DECIMAL range)
@@ -774,19 +842,23 @@ After ANY operation, the result MUST be canonicalized using the CANONICALIZE alg
 Per RFC-0105 §Lazy Canonicalization, DECIMAL implements lazy canonicalization at VM boundaries:
 
 **On external input (deserialization, conversion from DQA/BIGINT):**
+
 - Input is checked for canonical form
 - Non-canonical input is REJECTED (TRAP)
 - This ensures all internal operations receive canonical inputs
 
 **On external output (serialization, conversion to DQA/BIGINT):**
+
 - Output is always in canonical form (canonicalized before output)
 - Results are guaranteed canonical
 
 **Internal operations:**
+
 - All arithmetic operations MUST canonicalize before returning
 - This ensures intermediate results are always canonical
 
 **Canonical form algorithm:**
+
 ```
 while mantissa % 10 == 0 and scale > 0:
     mantissa /= 10
@@ -859,6 +931,7 @@ fn cmp(a: Decimal, b: Decimal) -> i32
 ### Deserialization Algorithm
 
 ```
+
 decimal_deserialize(bytes: &[u8]) -> Decimal
 
 1. If bytes.len != 24: TRAP (invalid length)
@@ -870,13 +943,16 @@ decimal_deserialize(bytes: &[u8]) -> Decimal
 5. If bytes[5] != 0x00 or bytes[6] != 0x00 or bytes[7] != 0x00: TRAP (reserved)
 6. mantissa = i128::from_be_bytes(bytes[8..24])
 7. Return Decimal { mantissa, scale }
+
 ```
 
 ### Serialization Invariant
 
 ```
+
 DECIMAL → serialize → bytes → deserialize → DECIMAL'
 DECIMAL == DECIMAL' // MUST be true
+
 ```
 
 ## Conversions (FIX 9 - Explicit Quantization)
@@ -886,6 +962,7 @@ DECIMAL == DECIMAL' // MUST be true
 **Requires explicit quantum specification** (default: 10^-18):
 
 ```
+
 decimal_to_dqa(d: Decimal, quantum_scale: u8 = 18) -> Dqa
 
 // quantum_scale defines the quantization step: 10^-quantum_scale
@@ -903,45 +980,47 @@ If |d.mantissa| > i64::MAX: TRAP (overflow)
 diff = d.scale - quantum_scale
 
 if diff > 0:
-    // Reduce scale: divide with RoundHalfEven rounding
-    divisor = POW10[diff as usize]
-    // CRIT-5: Work with absolute values for correct rounding
-    abs_mantissa = abs(d.mantissa)
-    quotient = abs_mantissa / divisor
-    remainder = abs_mantissa % divisor
-    // RoundHalfEven on magnitude
-    half = divisor / 2
-    if remainder > half:
-        rounded_mantissa = quotient + 1
-    else if remainder == half:
-        // Round to even: if quotient is odd, round up
-        if quotient % 2 != 0:
-            rounded_mantissa = quotient + 1
-        else:
-            rounded_mantissa = quotient
-    else:
-        rounded_mantissa = quotient
-    // Apply original sign
-    if d.mantissa < 0 {
-        rounded_mantissa = -rounded_mantissa
-    }
+// Reduce scale: divide with RoundHalfEven rounding
+divisor = POW10[diff as usize]
+// CRIT-5: Work with absolute values for correct rounding
+abs_mantissa = abs(d.mantissa)
+quotient = abs_mantissa / divisor
+remainder = abs_mantissa % divisor
+// RoundHalfEven on magnitude
+half = divisor / 2
+if remainder > half:
+rounded_mantissa = quotient + 1
+else if remainder == half:
+// Round to even: if quotient is odd, round up
+if quotient % 2 != 0:
+rounded_mantissa = quotient + 1
+else:
+rounded_mantissa = quotient
+else:
+rounded_mantissa = quotient
+// Apply original sign
+if d.mantissa < 0 {
+rounded_mantissa = -rounded_mantissa
+}
 
 if diff < 0:
-    // Increase scale: multiply (exact, no rounding)
-    multiplier = POW10[(-diff) as usize]
-    match i128::from(d.mantissa).checked_mul(i128::from(multiplier)):
-        Some(v) => rounded_mantissa = v
-        None => TRAP: DECIMAL_OVERFLOW
+// Increase scale: multiply (exact, no rounding)
+multiplier = POW10[(-diff) as usize]
+match i128::from(d.mantissa).checked_mul(i128::from(multiplier)):
+Some(v) => rounded_mantissa = v
+None => TRAP: DECIMAL_OVERFLOW
 
 if diff == 0:
-    rounded_mantissa = d.mantissa
+rounded_mantissa = d.mantissa
 
 Return Dqa { value: rounded_mantissa as i64, scale: quantum_scale }
+
 ```
 
 ### DQA → DECIMAL
 
 ```
+
 dqa_to_decimal(d: Dqa) -> Decimal
 
 1. Create Decimal: result = Decimal { mantissa: d.value as i128, scale: d.scale }
@@ -950,6 +1029,7 @@ dqa_to_decimal(d: Dqa) -> Decimal
    result = canonicalize(result)
 
 3. Return result
+
 ```
 
 **FIX 9 Rationale:** DECIMAL ↔ DQA conversion requires explicit quantum specification to ensure deterministic quantization. The default quantum of 10^-18 matches RFC-0105 DQA_MAX_SCALE, ensuring round-trip consistency.
@@ -957,73 +1037,80 @@ dqa_to_decimal(d: Dqa) -> Decimal
 ### DECIMAL → BIGINT
 
 ```
+
 decimal_to_bigint(d: Decimal) -> BigInt
 
 1. If d.scale > 0: TRAP (precision loss)
 
 2. Canonicalize input:
-   d = canonicalize(d)  // ensure no trailing zeros
+   d = canonicalize(d) // ensure no trailing zeros
 
 3. Return BigInt::from(d.mantissa) per RFC-0110 From<i128> behavior
+
 ```
 
 ### BIGINT → DECIMAL
 
 ```
+
 bigint_to_decimal(b: BigInt) -> Decimal
 
 // BUG-3 Fix: Use RFC-0110 I128_ROUNDTRIP (op 0x000D) for proper conversion
 
 1. Use RFC-0110 I128_ROUNDTRIP (op 0x000D) to convert b to i128:
    match bigint_i128_roundtrip(b):
-     Ok(val) => mantissa = val
-     Err(_)  => TRAP: DECIMAL_OVERFLOW
+   Ok(val) => mantissa = val
+   Err(_) => TRAP: DECIMAL_OVERFLOW
 
 2. Check DECIMAL range (i128 > DECIMAL):
    if mantissa > MAX_DECIMAL_MANTISSA or mantissa < -MAX_DECIMAL_MANTISSA:
-     TRAP: DECIMAL_OVERFLOW
+   TRAP: DECIMAL_OVERFLOW
 
 3. Return Decimal { mantissa: mantissa, scale: 0 }
 
 4. Canonicalize result:
    result = canonicalize(result)
    return result
+
 ```
 
 ### DECIMAL → String
 
 ```
+
 decimal_to_string(d: Decimal) -> String
 
 Precondition: Result MUST NOT exceed 256 bytes (TRAP if exceeded)
 
 Algorithm:
-  1. Handle zero special case:
-     if d.mantissa == 0: return "0"  // Canonical zero always "0"
 
-  2. If d.scale == 0: return d.mantissa.to_string()
+1. Handle zero special case:
+   if d.mantissa == 0: return "0" // Canonical zero always "0"
 
-  3. Handle sign:
-     is_negative = d.mantissa < 0
-     abs_mantissa = |d.mantissa|
+2. If d.scale == 0: return d.mantissa.to_string()
 
-  4. Calculate parts:
-     divisor = POW10[d.scale as usize]
-     integer_part = abs_mantissa / divisor
-     fractional_part = abs_mantissa % divisor
+3. Handle sign:
+   is_negative = d.mantissa < 0
+   abs_mantissa = |d.mantissa|
 
-  5. Format fractional part:
-     fractional_str = fractional_part.to_string()
-     // Pad with leading zeros to d.scale digits
-     while fractional_str.len() < d.scale as usize {
-       fractional_str = "0" + fractional_str;
-     }
+4. Calculate parts:
+   divisor = POW10[d.scale as usize]
+   integer_part = abs_mantissa / divisor
+   fractional_part = abs_mantissa % divisor
 
-  6. Combine:
-     if is_negative:
-       return "-" + integer_part.to_string() + "." + fractional_str
-     else:
-       return integer_part.to_string() + "." + fractional_str
+5. Format fractional part:
+   fractional_str = fractional_part.to_string()
+   // Pad with leading zeros to d.scale digits
+   while fractional_str.len() < d.scale as usize {
+   fractional_str = "0" + fractional_str;
+   }
+
+6. Combine:
+   if is_negative:
+   return "-" + integer_part.to_string() + "." + fractional_str
+   else:
+   return integer_part.to_string() + "." + fractional_str
+
 ```
 
 **Note:** Canonical form ensures no trailing zeros in fractional part, so `1.000` is stored as `{mantissa=1, scale=0}` (returns `"1"`), not `{mantissa=1000, scale=3}`. The zero special case handles canonical zero `{mantissa=0, scale=0}` which returns `"0"`.
@@ -1110,16 +1197,20 @@ This guarantee holds **provided** implementations follow:
 Decimal operations can create precision amplification loops through repeated composition:
 
 ```
+
 x = 1
 repeat 100 times:
-    x = x / 3
-    x = x * 3
+x = x / 3
+x = x * 3
+
 ```
 
 Even with deterministic rounding, this creates precision drift:
 ```
+
 1 / 3 = 0.333333333333333333333333333333333333
-*3    = 0.999999999999999999999999999999999999
+*3 = 0.999999999999999999999999999999999999
+
 ```
 
 After canonicalization: `0.999...` ≠ `1`
@@ -1129,8 +1220,10 @@ This enables **precision arbitrage** - systematic value leakage through rounding
 ### Rule (Normative)
 
 ```
+
 All arithmetic operations MUST produce results with:
-    scale_result ≤ min(36, max(scale_a, scale_b) + 6)
+scale_result ≤ min(36, max(scale_a, scale_b) + 6)
+
 ```
 
 ### Rationale
@@ -1142,11 +1235,13 @@ All arithmetic operations MUST produce results with:
 ### Example
 
 ```
+
 Input A: 0.333333333333333333 (scale = 18)
 Input B: 1.0 (scale = 0)
 
 max(scale_a, scale_b) = 18
 Allowed result scale ≤ min(36, 18 + 6) = 24
+
 ```
 
 > **Known Issue (HIGH-1):** This rule may break expected algebraic identities in edge cases. For example, `(a × b) / b` does not always equal `a` due to the precision cap:
@@ -1166,7 +1261,9 @@ CipherOcto has three numeric domains that convert between each other:
 Conversion is **not mathematically bijective**:
 
 ```
+
 Decimal → DQA → Decimal
+
 ```
 
 may produce different mantissa/scale after intermediate rounding.
@@ -1174,11 +1271,13 @@ may produce different mantissa/scale after intermediate rounding.
 ### Example Failure
 
 ```
+
 Decimal: 0.333333333333333333 (scale=18)
 Convert to DQA (scale=18): 333333333333333333
 Round-trip to Decimal: 0.333333333333333333
 But if intermediate rounding occurs: 0.333333333333333334
 Canonicalization produces DIFFERENT mantissa
+
 ```
 
 This creates **cross-domain numeric representation drift** - different nodes may convert at different steps, causing economic divergence.
@@ -1186,12 +1285,15 @@ This creates **cross-domain numeric representation drift** - different nodes may
 ### Rule (Normative)
 
 ```
+
 Each numeric operation MUST execute entirely within a single numeric domain.
+
 - Decimal ops → Decimal only
 - DQA ops → DQA only
 - BigInt ops → BigInt only
 
 Implicit conversions during arithmetic evaluation are FORBIDDEN.
+
 ```
 
 ### Mandatory Conversion Boundaries
@@ -1219,7 +1321,9 @@ This creates a **conformance gap attack** - malicious implementation passes prob
 ### Required Constant (Normative)
 
 ```
+
 DECIMAL_ARITHMETIC_CONFIG_HASH: [u8; 32]
+
 ```
 
 **REMAINING-9 Fix - Canonical Hash Value:**
@@ -1228,20 +1332,24 @@ Hash of the following configuration serialized in canonical format (SHA256):
 
 **Serialization Format (BUG-5 Fix - Deterministic Big-Endian u128):**
 ```
+
 Serialization format (deterministic, all values big-endian):
-  [0..592]:   POW10[0..36] — 37 entries × 16 bytes each, big-endian u128
-  [592..605]: "RoundHalfEven" — 13 bytes ASCII
-  [605..618]: "RoundHalfEven" — 13 bytes ASCII (DIV)
-  [618]:      MAX_DECIMAL_SCALE = 36 — 1 byte u8
-  [619..623]: "TRAP" — 4 bytes ASCII
-  [623]:      SQRT_ITERATIONS = 40 — 1 byte u8
-  [624]:      PRECISION_CAP = 6 — 1 byte u8
-  Total: 625 bytes
+[0..592]: POW10[0..36] — 37 entries × 16 bytes each, big-endian u128
+[592..605]: "RoundHalfEven" — 13 bytes ASCII
+[605..618]: "RoundHalfEven" — 13 bytes ASCII (DIV)
+[618]: MAX_DECIMAL_SCALE = 36 — 1 byte u8
+[619..623]: "TRAP" — 4 bytes ASCII
+[623]: SQRT_ITERATIONS = 40 — 1 byte u8
+[624]: PRECISION_CAP = 6 — 1 byte u8
+Total: 625 bytes
+
 ```
 
 **Canonical Hash Value (BUG-5 Fix):**
 ```
+
 DECIMAL_ARITHMETIC_CONFIG_HASH: b071fa37d62a50318fde35fa5064464db49c2faaf03a5e2a58c209251f400a14
+
 ```
 
 ### Verification Requirement
@@ -1360,16 +1468,18 @@ DECIMAL verification probe uses 32-byte SHA256 leaf hashes (per RFC-0111 §Canon
 Each probe entry stores a SHA256 hash of the operation data INCLUDING OUTPUT:
 
 ```
+
 ┌─────────────────────────────────────────────────────────────┐
 │ Bytes 0-31: SHA256(op_id || input_a || input_b || result)│
-│   where:                                                    │
-│     - op_id: 8 bytes (little-endian u64 operation ID)     │
-│     - input_a: 24 bytes (DECIMAL canonical wire format)    │
-│     - input_b: 24 bytes (DECIMAL canonical wire format)    │
-│     - result: 24 bytes (DECIMAL canonical wire format)     │
-│   Total raw data: 80 bytes → SHA256 output: 32 bytes      │
+│ where: │
+│ - op_id: 8 bytes (little-endian u64 operation ID) │
+│ - input_a: 24 bytes (DECIMAL canonical wire format) │
+│ - input_b: 24 bytes (DECIMAL canonical wire format) │
+│ - result: 24 bytes (DECIMAL canonical wire format) │
+│ Total raw data: 80 bytes → SHA256 output: 32 bytes │
 └─────────────────────────────────────────────────────────────┘
-```
+
+````
 
 **FIX C5 - Probe Must Include Output:** The probe leaf MUST include the result to verify arithmetic correctness. Without the output, two implementations could produce different results yet have identical probe leaves, making the probe meaningless.
 
@@ -1510,15 +1620,17 @@ fn decimal_probe_root(probe: &DecimalProbe) -> [u8; 32] {
     }
     nodes[0]
 }
-```
+````
 
 **Probe Merkle Root (REMAINING-3 Fix - C3 Fix):**
+
 > **Reference Merkle Root (80-byte format):** `496bc8038e3fd38462f4308bf03088b3f872d000256a45ddb53d4932efff0c1c`
 >
 > This root is computed from all 57 probe entries using SHA256 Merkle tree construction (see Python reference: `scripts/compute_decimal_probe_root.py`).
 
 **Verification Instruction:**
 All implementations MUST verify the Merkle root by:
+
 1. Implementing all 57 probe entries per §Probe Entries table
 2. For each entry, executing the operation to compute the result
 3. Encoding each entry as 80-byte raw data (8-byte op_id + 24-byte input_a + 24-byte input_b + 24-byte result)
@@ -1528,12 +1640,14 @@ All implementations MUST verify the Merkle root by:
 7. Verifying root matches: `496bc8038e3fd38462f4308bf03088b3f872d000256a45ddb53d4932efff0c1c`
 
 **Cross-Verification:**
+
 - Python: `python3 scripts/compute_decimal_probe_root.py` → outputs root above
 - Rust: `cargo test decimal_tests::test_merkle_root` → verifies against reference
 
 ## Implementation Checklist
 
 **Core Implementation:**
+
 - [ ] Decimal struct with mantissa: i128, scale: u8
 - [ ] Canonical form enforcement (no trailing zeros, zero={0,0})
 - [ ] CANONICALIZE algorithm
@@ -1546,6 +1660,7 @@ All implementations MUST verify the Merkle root by:
 - [ ] CMP comparison algorithm
 
 **Conversions:**
+
 - [ ] From DQA conversion + canonicalize
 - [ ] To DQA conversion (with scale ≤ 18 check)
 - [ ] DECIMAL → BIGINT (canonicalize before, scale=0 check)
@@ -1554,6 +1669,7 @@ All implementations MUST verify the Merkle root by:
 - [ ] Serialize/Deserialize (24-byte canonical format)
 
 **Determinism & Safety:**
+
 - [ ] Gas calculation per operation (formula-based)
 - [ ] MAX_DECIMAL_SCALE enforcement
 - [ ] i128 intermediate range checks
@@ -1563,9 +1679,11 @@ All implementations MUST verify the Merkle root by:
 - [x] VM boundary lazy canonicalization (deserialization, DQA/BIGINT conversion) implemented and tested
 
 The VM must invoke CANONICALIZE on every value returned by deserialize, dqa_to_decimal, and bigint_to_decimal before the value enters any arithmetic operation.
+
 - [x] SQRT convergence bound (40 iterations, quadratic proof) documented and verified on all probe entries 20–24
 
 **Verification & Testing:**
+
 - [ ] Test vectors verified (40+ cases)
 - [ ] Verification probe (57 entries, 32-byte SHA256 leaf hashes)
 - [ ] Differential fuzzing (100,000+ random inputs vs rust_decimal)
@@ -1617,6 +1735,7 @@ flowchart TB
 ```
 
 **Architecture Notes:**
+
 - DECIMAL operates in the decimal domain, separate from INTEGER (BIGINT) and FLOAT (DFP) domains
 - All operations flow through CANONICALIZE to ensure deterministic canonical form
 - Conversions to DQA require explicit scale checks (scale ≤ 18)
@@ -1627,19 +1746,20 @@ flowchart TB
 
 DECIMAL uses the same `DqaError` enum as RFC-0105 for consistency:
 
-| Error | Variant | Condition |
-|-------|---------|-----------|
-| DEC_OVERFLOW | `DqaError::Overflow` | Result exceeds ±(10^36 - 1) |
-| DEC_SCALE_OVERFLOW | `DqaError::InvalidScale` | Scale exceeds 36 |
-| DEC_DIVISION_BY_ZERO | `DqaError::DivisionByZero` | Division by zero |
-| DEC_NEGATIVE_SQRT | `DqaError::InvalidInput` | Square root of negative |
-| DEC_PRECISION_LOSS | `DqaError::InvalidInput` | Conversion to DQA loses precision (scale > 18) |
-| DEC_INVALID_STRING | `DqaError::InvalidInput` | String parsing failure |
-| DEC_INVALID_ENCODING | `DqaError::InvalidEncoding` | Reserved bytes non-zero in wire format |
+| Error                | Variant                     | Condition                                      |
+| -------------------- | --------------------------- | ---------------------------------------------- |
+| DEC_OVERFLOW         | `DqaError::Overflow`        | Result exceeds ±(10^36 - 1)                    |
+| DEC_SCALE_OVERFLOW   | `DqaError::InvalidScale`    | Scale exceeds 36                               |
+| DEC_DIVISION_BY_ZERO | `DqaError::DivisionByZero`  | Division by zero                               |
+| DEC_NEGATIVE_SQRT    | `DqaError::InvalidInput`    | Square root of negative                        |
+| DEC_PRECISION_LOSS   | `DqaError::InvalidInput`    | Conversion to DQA loses precision (scale > 18) |
+| DEC_INVALID_STRING   | `DqaError::InvalidInput`    | String parsing failure                         |
+| DEC_INVALID_ENCODING | `DqaError::InvalidEncoding` | Reserved bytes non-zero in wire format         |
 
 ### Error Semantics
 
 All errors are fatal (TRAP) — no partial results or fallback behavior:
+
 - Contract execution reverts on any DECIMAL error
 - Gas is consumed up to the point of failure
 - Error code is logged for debugging
@@ -1656,12 +1776,12 @@ All errors are fatal (TRAP) — no partial results or fallback behavior:
 
 ### Attack Vectors
 
-| Vector | Mitigation |
-|--------|------------|
-| Malicious scale values | Scale limited to 0-36, enforced at boundaries |
-| Giant mantissa amplification | MAX_DECIMAL_MANTISSA bounds on all operations |
-| Reentrancy | DECIMAL operations are atomic (single function call) |
-| Front-running | Deterministic ordering eliminates race conditions |
+| Vector                       | Mitigation                                           |
+| ---------------------------- | ---------------------------------------------------- |
+| Malicious scale values       | Scale limited to 0-36, enforced at boundaries        |
+| Giant mantissa amplification | MAX_DECIMAL_MANTISSA bounds on all operations        |
+| Reentrancy                   | DECIMAL operations are atomic (single function call) |
+| Front-running                | Deterministic ordering eliminates race conditions    |
 
 ### Consensus Security
 
@@ -1673,21 +1793,21 @@ All errors are fatal (TRAP) — no partial results or fallback behavior:
 
 ### Review History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0 | 2026-03-14 | Initial draft |
-| 1.1 | 2026-03-15 | Fixed RoundHalfEven negative handling, added Newton-Raphson convergence |
+| Version | Date       | Changes                                                                 |
+| ------- | ---------- | ----------------------------------------------------------------------- |
+| 1.0     | 2026-03-14 | Initial draft                                                           |
+| 1.1     | 2026-03-15 | Fixed RoundHalfEven negative handling, added Newton-Raphson convergence |
 
 ### Known Issues
 
-| Issue ID | Severity | Description | Status |
-|----------|----------|-------------|--------|
-| D1 | Medium | Newton-Raphson iteration limit (40) lacks formal convergence proof for extreme scales (10^36 magnitude) | Open |
-| D2 | Low | Gas model not validated against real-world benchmarks | Open |
-| HIGH-1 | High | Precision growth rule (+6 per operation) may break expected algebraic identities (e.g., (a×b)/b ≠ a in edge cases due to rounding) | Open |
-| MED-2 | Medium | SQRT probe gap: no probe entry tests SQRT that produces perfect square with trailing zeros requiring canonicalization (e.g., √0.0400) | Open |
-| MED-3 | Medium | DQA↔DECIMAL round-trip conversion may have unbounded drift due to scale differences | Open |
-| MED-6 | Medium | Probe entry 48 tests max scale DQA but doesn't verify canonicalization behavior | Open |
+| Issue ID | Severity | Description                                                                                                                           | Status |
+| -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| D1       | Medium   | Newton-Raphson iteration limit (40) lacks formal convergence proof for extreme scales (10^36 magnitude)                               | Open   |
+| D2       | Low      | Gas model not validated against real-world benchmarks                                                                                 | Open   |
+| HIGH-1   | High     | Precision growth rule (+6 per operation) may break expected algebraic identities (e.g., (a×b)/b ≠ a in edge cases due to rounding)    | Open   |
+| MED-2    | Medium   | SQRT probe gap: no probe entry tests SQRT that produces perfect square with trailing zeros requiring canonicalization (e.g., √0.0400) | Open   |
+| MED-3    | Medium   | DQA↔DECIMAL round-trip conversion may have unbounded drift due to scale differences                                                   | Open   |
+| MED-6    | Medium   | Probe entry 48 tests max scale DQA but doesn't verify canonicalization behavior                                                       | Open   |
 
 ## Alternatives Considered
 
@@ -1696,10 +1816,12 @@ All errors are fatal (TRAP) — no partial results or fallback behavior:
 **Approach**: Extend DQA (RFC-0105) to support scale 0-36
 
 **Pros:**
+
 - No new type needed
 - Simpler codebase
 
 **Cons:**
+
 - DQA uses i64, insufficient for scale 36 (would require 128-bit intermediate)
 - Breaking change to DQA semantics
 
@@ -1710,9 +1832,11 @@ All errors are fatal (TRAP) — no partial results or fallback behavior:
 **Approach**: Support arbitrary scale beyond 36
 
 **Pros:**
+
 - Unlimited precision
 
 **Cons:**
+
 - Gas costs become unpredictable
 - No practical benefit (36 digits exceeds all known requirements)
 - Implementation complexity
@@ -1724,10 +1848,12 @@ All errors are fatal (TRAP) — no partial results or fallback behavior:
 **Approach**: Adopt IEEE 754 decimal128 format
 
 **Pros:**
+
 - Industry standard
 - Hardware support on some platforms
 
 **Cons:**
+
 - Not deterministic across implementations
 - Different encoding than other numeric types
 - Complex serialization
@@ -1736,22 +1862,23 @@ All errors are fatal (TRAP) — no partial results or fallback behavior:
 
 ## Version History
 
-| Version | Date | Author | Changes |
-|---------|------|--------|---------|
-| 1.0 | 2026-03-14 | TBD | Initial draft extracted from RFC-0106 |
-| 1.1 | 2026-03-15 | TBD | Fixed RoundHalfEven algorithm, added SQRT convergence |
-| 1.2 | 2026-03-16 | TBD | Fixed critical issues C1-C17 from adversarial review |
-| 1.3 | 2026-03-16 | TBD | Fixed high-severity issues H1-H12 from adversarial review |
-| 1.4 | 2026-03-16 | TBD | Fixed critical issues C1-C4 and H5 from adversarial review |
-| 1.5 | 2026-03-16 | TBD | Added locale specification, expanded gas proof, fixed POW10 31-36 |
-| 1.6 | 2026-03-16 | TBD | Fixed POW10 31-36, probe format (32-byte), DIV rounding, CMP note, gas proof, string edge cases |
-| 1.7 | 2026-03-16 | TBD | Fixed remaining 24→32-byte references, added Merkle root verification, POW10 verified |
-| 1.8 | 2026-03-16 | TBD | SQRT convergence proof, DIV rounding semantics, probe sync, VM canonicalization, ZK note |
-| 1.9 | 2026-03-16 | TBD | Production hardening: range invariant, safe alignment, 256-bit mul, division precision, DQA conversion quantum |
-| 1.14 | 2026-03-17 | TBD | Fixed HIGH-1, HIGH-3, HIGH-4, MED-2, MED-3, MED-4, MED-6 from adversarial review |
-| 1.16 | 2026-03-17 | TBD | Fixed BUG-1 (MUL sign-aware rounding), BUG-2 (DIV unsafe cast), BUG-3 (BIGINT→DECIMAL), BUG-4 (probe 24b), BUG-5 (config hash), BUG-6 (SQRT off-by-one), BUG-7 (ROUND encoding) |
-| 1.17 | 2026-03-17 | TBD | Fixed Python SQRT (BUG-6 off-by-one), Python DIV (canonicalize), added config hash script, fixed probe 25 description, updated Known Issues |
-| 1.21 | 2026-08-06 | ciphercito | Locale Specification: trim leading/trailing whitespace; TRAP on internal whitespace (normative). DECIMAL ↔ String: `FromStr` policy (sign, period-only, no thousands separators, no exponent, bare dot rejected, integer-only accepted, scale boundary at 36) + `Display` impl contract (delegates to `decimal_to_string`). Round-trip `Display→FromStr→Display` MUST be exact for canonical values. Cipherocto-side impl: `determin::decimal::impl FromStr for Decimal` + `impl fmt::Display for Decimal` + 14 unit tests (determin/src/decimal.rs). Missions 0111-decimal-display-error + 0111-decimal-whitespace-amendment closed. |
+| Version | Date       | Author     | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------- | ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0     | 2026-03-14 | TBD        | Initial draft extracted from RFC-0106                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 1.1     | 2026-03-15 | TBD        | Fixed RoundHalfEven algorithm, added SQRT convergence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 1.2     | 2026-03-16 | TBD        | Fixed critical issues C1-C17 from adversarial review                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 1.3     | 2026-03-16 | TBD        | Fixed high-severity issues H1-H12 from adversarial review                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 1.4     | 2026-03-16 | TBD        | Fixed critical issues C1-C4 and H5 from adversarial review                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 1.5     | 2026-03-16 | TBD        | Added locale specification, expanded gas proof, fixed POW10 31-36                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 1.6     | 2026-03-16 | TBD        | Fixed POW10 31-36, probe format (32-byte), DIV rounding, CMP note, gas proof, string edge cases                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 1.7     | 2026-03-16 | TBD        | Fixed remaining 24→32-byte references, added Merkle root verification, POW10 verified                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 1.8     | 2026-03-16 | TBD        | SQRT convergence proof, DIV rounding semantics, probe sync, VM canonicalization, ZK note                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 1.9     | 2026-03-16 | TBD        | Production hardening: range invariant, safe alignment, 256-bit mul, division precision, DQA conversion quantum                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 1.14    | 2026-03-17 | TBD        | Fixed HIGH-1, HIGH-3, HIGH-4, MED-2, MED-3, MED-4, MED-6 from adversarial review                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 1.16    | 2026-03-17 | TBD        | Fixed BUG-1 (MUL sign-aware rounding), BUG-2 (DIV unsafe cast), BUG-3 (BIGINT→DECIMAL), BUG-4 (probe 24b), BUG-5 (config hash), BUG-6 (SQRT off-by-one), BUG-7 (ROUND encoding)                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 1.17    | 2026-03-17 | TBD        | Fixed Python SQRT (BUG-6 off-by-one), Python DIV (canonicalize), added config hash script, fixed probe 25 description, updated Known Issues                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 1.21    | 2026-08-06 | ciphercito | Locale Specification: trim leading/trailing whitespace; TRAP on internal whitespace (normative). DECIMAL ↔ String: `FromStr` policy (sign, period-only, no thousands separators, no exponent, bare dot rejected, integer-only accepted, scale boundary at 36) + `Display` impl contract (delegates to `decimal_to_string`). Round-trip `Display→FromStr→Display` MUST be exact for canonical values. Cipherocto-side impl: `determin::decimal::impl FromStr for Decimal` + `impl fmt::Display for Decimal` + 14 unit tests (determin/src/decimal.rs). Missions 0111-decimal-display-error + 0111-decimal-whitespace-amendment closed. |
+| 1.22    | 2026-08-13 | ciphercito | Bare DECIMAL Default Scale amendment: bare `DECIMAL` (no precision/scale) defaults to `decimal_scale=0` (integer-only; RoundHalfEven rounding). New §Bare DECIMAL Default Scale section added (normative). Rationale: matches PostgreSQL default; no sentinel magic; consistent with RFC-0202-A's "precision not enforced, only scale" simplification; users needing fractional precision MUST declare `DECIMAL(p,s)` explicitly. Mission `0111-bare-decimal-design` closed.                                                                                                                                                          |
 
 ## Compatibility
 
@@ -1766,14 +1893,14 @@ All errors are fatal (TRAP) — no partial results or fallback behavior:
 
 ### Interoperability
 
-| From | To | Supported | Notes |
-|------|-----|-----------|-------|
-| DECIMAL | DQA | ✅ | Requires scale ≤ 18 |
-| DQA | DECIMAL | ✅ | Always valid |
-| DECIMAL | BIGINT | ✅ | Requires scale = 0 |
-| BIGINT | DECIMAL | ✅ | Always valid |
-| DECIMAL | String | ✅ | Full round-trip |
-| DECIMAL | DFP | ❌ | Not recommended (precision loss) |
+| From    | To      | Supported | Notes                            |
+| ------- | ------- | --------- | -------------------------------- |
+| DECIMAL | DQA     | ✅        | Requires scale ≤ 18              |
+| DQA     | DECIMAL | ✅        | Always valid                     |
+| DECIMAL | BIGINT  | ✅        | Requires scale = 0               |
+| BIGINT  | DECIMAL | ✅        | Always valid                     |
+| DECIMAL | String  | ✅        | Full round-trip                  |
+| DECIMAL | DFP     | ❌        | Not recommended (precision loss) |
 
 ## Related Use Cases
 

@@ -48,11 +48,13 @@
 //!
 //! ## Defense-in-depth reply checks
 //!
-//! Step 6a (envelope_id echo) defends against a future substrate
-//! refactor that drops per-id correlation. Step 6b (`from_did ==
-//! hop_did`) defends against misrouted replies. Step 6c
+//! Step 6a (`from_did == hop_did`) defends against misrouted replies
+//! (where a peer other than the queried hop responded); the
+//! `NodeTransport` authentication layer is the primary defense. Step 6b
 //! (`signature_chain.len() <= MAX_CHAIN_HOPS`) defends against
-//! oversized-payload DoS.
+//! oversized-payload DoS — the local hop-count bound does NOT apply
+//! to network INPUT, so inbound `signature_chain` length is
+//! independently bounds-checked against the wire-format cap (255).
 
 use std::sync::Arc;
 use std::time::Duration;

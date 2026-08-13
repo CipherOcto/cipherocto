@@ -81,6 +81,61 @@ fn register_custom(registry: &Arc<InMemoryDidRegistry>, seed: u8, pubkey: [u8; 3
         .unwrap();
 }
 
+/// `NetworkSender` that returns a pre-canned reply AND captures the
+/// outbound payload (so tests can assert on the outbound envelope's
+/// `recipient`, `from_did`, and `payload_kind` fields). Hoisted to
+/// file scope so the 3-node happy-path test + the 4 new defense-in-
+/// depth tests can share the implementation.
+struct CannedReplySender {
+    reply: Vec<u8>,
+    /// Captured outbound borsh-encoded `NodeEnvelope` bytes; `None`
+    /// until `send_request` is called at least once.
+    captured_outbound: std::sync::Mutex<Option<Vec<u8>>>,
+}
+
+impl CannedReplySender {
+    fn new(reply: Vec<u8>) -> Arc<Self> {
+        Arc::new(Self {
+            reply,
+            captured_outbound: std::sync::Mutex::new(None),
+        })
+    }
+
+    /// Snapshot of the captured outbound envelope bytes (after the
+    /// first `send_request` call). Returns `None` if no send has
+    /// happened yet.
+    fn captured_outbound(&self) -> Option<Vec<u8>> {
+        self.captured_outbound.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl octo_transport::sender::NetworkSender for CannedReplySender {
+    async fn send(
+        &self,
+        _payload: &[u8],
+        _ctx: &octo_transport::sender::SendContext,
+    ) -> Result<(), octo_transport::sender::TransportError> {
+        Ok(())
+    }
+    async fn send_request(
+        &self,
+        payload: &[u8],
+        _envelope_id: [u8; 32],
+        _ctx: &octo_transport::sender::SendContext,
+        _timeout: std::time::Duration,
+    ) -> Result<Vec<u8>, octo_transport::sender::TransportError> {
+        *self.captured_outbound.lock().unwrap() = Some(payload.to_vec());
+        Ok(self.reply.clone())
+    }
+    fn name(&self) -> &str {
+        "canned-reply"
+    }
+    fn is_healthy(&self) -> bool {
+        true
+    }
+}
+
 /// Fake cross-node `ResolverBackend` that pretends to resolve via a
 /// remote hop: returns a populated `signature_chain` (one fake
 /// `HopSignature` per call) without actually performing network I/O.
@@ -465,37 +520,6 @@ async fn multi_hop_signature_chain_preserves_outermost_first_order() {
 /// follow-on for the RFC-0970 forwarding-hop signing mission.
 #[tokio::test]
 async fn three_node_chain_accumulates_signature_chain_across_hops() {
-    use octo_transport::sender::{NetworkSender, SendContext, TransportError};
-    use std::time::Duration;
-
-    /// `NetworkSender` that implements `send_request` by returning a
-    /// pre-canned reply (synchronous round-trip via `request_response`).
-    struct CannedReplySender {
-        reply: Vec<u8>,
-    }
-
-    #[async_trait]
-    impl NetworkSender for CannedReplySender {
-        async fn send(&self, _payload: &[u8], _ctx: &SendContext) -> Result<(), TransportError> {
-            Ok(())
-        }
-        async fn send_request(
-            &self,
-            _payload: &[u8],
-            _envelope_id: [u8; 32],
-            _ctx: &SendContext,
-            _timeout: Duration,
-        ) -> Result<Vec<u8>, TransportError> {
-            Ok(self.reply.clone())
-        }
-        fn name(&self) -> &str {
-            "canned-reply"
-        }
-        fn is_healthy(&self) -> bool {
-            true
-        }
-    }
-
     // 1. Build node C's "resolved response" by setting the canned
     //    reply's `public_key` field directly. The terminal registry
     //    is NOT exercised here because the canned reply carries a
@@ -528,11 +552,8 @@ async fn three_node_chain_accumulates_signature_chain_across_hops() {
     let canned_reply = borsh::to_vec(&chain_resp_b_envelope).unwrap();
 
     // 3. Wire node A's transport with the canned-reply sender.
-    let transport_a = Arc::new(octo_transport::NodeTransport::new(vec![Arc::new(
-        CannedReplySender {
-            reply: canned_reply,
-        },
-    )]));
+    let canned = CannedReplySender::new(canned_reply);
+    let transport_a = Arc::new(octo_transport::NodeTransport::new(vec![canned.clone()]));
 
     // 4. Wire node A's `RemoteResolverBackend` to the transport.
     let backend_a: Arc<dyn ResolverBackend> = RemoteResolverBackend::arc(transport_a);
@@ -562,4 +583,226 @@ async fn three_node_chain_accumulates_signature_chain_across_hops() {
     );
     assert_eq!(resp.signature_chain[0].hop_index, 0);
     assert_eq!(resp.signature_chain[0].signer_pub, [0x66u8; 32]);
+}
+
+/// T5 coverage: when the canned reply's `from_did` does not match the
+/// queried hop's DID, `RemoteResolverBackend::resolve_via` must reject
+/// with `ResolverBackendError::Backing` (defense-in-depth against
+/// misrouted replies). The `NodeTransport` authentication layer is the
+/// primary defense; this test pins the layered defense.
+#[tokio::test]
+async fn remote_backend_rejects_from_did_mismatch_in_reply() {
+    // Build a canned reply whose `from_did = canonical_did(99)` does
+    // NOT match the queried hop's DID = `canonical_did(20)`.
+    let hop_sig_b = octo_protocol::HopSignature::new(0, canonical_did(99), [0x55; 64], [0x66; 32]);
+    let chain_resp_b = ChainResolveResponse {
+        canonical_did: canonical_did(11),
+        public_key: [0x99u8; 32],
+        hops_traversed: 1,
+        signature_chain: vec![hop_sig_b],
+        envelope_id: [0x42u8; 32],
+    };
+    let chain_resp_b_payload = borsh::to_vec(&chain_resp_b).unwrap();
+    let chain_resp_b_envelope = octo_protocol::NodeEnvelope::build(
+        octo_ident::WireDid::new(canonical_did(99)),
+        octo_protocol::recipient::RecipientRef::Broadcast,
+        octo_protocol::payload_kind::IDENTITY_RESOLVE_CHAIN_RESPONSE,
+        chain_resp_b_payload,
+        vec![],
+        [0x42u8; 32],
+        u64::MAX,
+    )
+    .unwrap();
+    let canned_reply = borsh::to_vec(&chain_resp_b_envelope).unwrap();
+
+    let canned = CannedReplySender::new(canned_reply);
+    let transport_a = Arc::new(octo_transport::NodeTransport::new(vec![canned.clone()]));
+    let backend_a: Arc<dyn ResolverBackend> = RemoteResolverBackend::arc(transport_a);
+
+    let handler = ResolveChainHandler::new(backend_a);
+    let req = ChainResolveRequest {
+        target: canonical_did(11),
+        hops: vec![ResolverHop::local(canonical_did(20))],
+        ttl_remaining_ms: 100,
+    };
+    let err = handler
+        .handle(&req, [0x42u8; 32])
+        .await
+        .expect_err("from_did mismatch must be rejected");
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("from_did mismatch") || msg.contains("Storage"),
+        "error must surface the from_did mismatch (got: {msg})"
+    );
+}
+
+/// T5 coverage: outbound `NodeEnvelope` built by `RemoteResolverBackend`
+/// must use `RecipientRef::Domain(WireDid(hop_did))` (scoped fan-out
+/// instead of `Broadcast`). The `from_did == hop_did` reply check is
+/// the substantive defense against spoofing; `Domain`-scoping is the
+/// layered defense that reduces the routing-layer attack surface.
+#[tokio::test]
+async fn remote_backend_asserts_domain_recipient_in_outbound_envelope() {
+    let hop_sig_b = octo_protocol::HopSignature::new(0, canonical_did(20), [0x55; 64], [0x66; 32]);
+    let chain_resp_b = ChainResolveResponse {
+        canonical_did: canonical_did(11),
+        public_key: [0x99u8; 32],
+        hops_traversed: 1,
+        signature_chain: vec![hop_sig_b],
+        envelope_id: [0x42u8; 32],
+    };
+    let chain_resp_b_payload = borsh::to_vec(&chain_resp_b).unwrap();
+    let chain_resp_b_envelope = octo_protocol::NodeEnvelope::build(
+        octo_ident::WireDid::new(canonical_did(20)),
+        octo_protocol::recipient::RecipientRef::Broadcast,
+        octo_protocol::payload_kind::IDENTITY_RESOLVE_CHAIN_RESPONSE,
+        chain_resp_b_payload,
+        vec![],
+        [0x42u8; 32],
+        u64::MAX,
+    )
+    .unwrap();
+    let canned_reply = borsh::to_vec(&chain_resp_b_envelope).unwrap();
+
+    let canned = CannedReplySender::new(canned_reply);
+    let transport_a = Arc::new(octo_transport::NodeTransport::new(vec![canned.clone()]));
+    let backend_a: Arc<dyn ResolverBackend> = RemoteResolverBackend::arc(transport_a);
+
+    let handler = ResolveChainHandler::new(backend_a);
+    let req = ChainResolveRequest {
+        target: canonical_did(11),
+        hops: vec![ResolverHop::local(canonical_did(20))],
+        ttl_remaining_ms: 100,
+    };
+    handler
+        .handle(&req, [0x42u8; 32])
+        .await
+        .expect("happy path resolves");
+
+    let captured = canned
+        .captured_outbound()
+        .expect("CannedReplySender MUST have captured the outbound envelope");
+    let outbound: octo_protocol::NodeEnvelope =
+        borsh::from_slice(&captured).expect("outbound envelope borsh");
+    match outbound.to_node_id {
+        octo_protocol::recipient::RecipientRef::Domain(wire_did) => {
+            assert_eq!(
+                wire_did.as_str(),
+                canonical_did(20),
+                "Domain recipient MUST scope fan-out to the queried hop's DID"
+            );
+        }
+        other => panic!("outbound recipient MUST be Domain(WireDid(hop_did)), got {other:?}"),
+    }
+    assert_eq!(
+        outbound.payload_kind,
+        octo_protocol::payload_kind::IDENTITY_RESOLVE,
+        "outbound payload_kind MUST be IDENTITY_RESOLVE"
+    );
+}
+
+/// T5 coverage: inbound `ChainResolveResponse.signature_chain.len() >
+/// MAX_CHAIN_HOPS = 255` MUST be rejected with `Backing`. The local
+/// hop-count bound does NOT apply to network INPUT; the wire-format
+/// cap is enforced independently on the inbound payload.
+#[tokio::test]
+async fn remote_backend_rejects_oversize_signature_chain_in_reply() {
+    // Build signature_chain with `MAX_CHAIN_HOPS + 1 = 256` entries.
+    // Each hop_did is unique (distinct seed) so the local backend
+    // doesn't trip its own cycle detector before the network input
+    // bounds check fires.
+    let oversized_chain: Vec<octo_protocol::HopSignature> = (0..=u8::MAX)
+        .map(|i| {
+            octo_protocol::HopSignature::new(
+                i,
+                canonical_did(i.wrapping_add(1)),
+                [0x55; 64],
+                [0x66; 32],
+            )
+        })
+        .collect();
+    assert_eq!(oversized_chain.len(), u8::MAX as usize + 1);
+
+    let chain_resp_b = ChainResolveResponse {
+        canonical_did: canonical_did(11),
+        public_key: [0x99u8; 32],
+        hops_traversed: 1,
+        signature_chain: oversized_chain,
+        envelope_id: [0x42u8; 32],
+    };
+    let chain_resp_b_payload = borsh::to_vec(&chain_resp_b).unwrap();
+    let chain_resp_b_envelope = octo_protocol::NodeEnvelope::build(
+        octo_ident::WireDid::new(canonical_did(20)),
+        octo_protocol::recipient::RecipientRef::Broadcast,
+        octo_protocol::payload_kind::IDENTITY_RESOLVE_CHAIN_RESPONSE,
+        chain_resp_b_payload,
+        vec![],
+        [0x42u8; 32],
+        u64::MAX,
+    )
+    .unwrap();
+    let canned_reply = borsh::to_vec(&chain_resp_b_envelope).unwrap();
+
+    let canned = CannedReplySender::new(canned_reply);
+    let transport_a = Arc::new(octo_transport::NodeTransport::new(vec![canned.clone()]));
+    let backend_a: Arc<dyn ResolverBackend> = RemoteResolverBackend::arc(transport_a);
+
+    let handler = ResolveChainHandler::new(backend_a);
+    let req = ChainResolveRequest {
+        target: canonical_did(11),
+        hops: vec![ResolverHop::local(canonical_did(20))],
+        ttl_remaining_ms: 100,
+    };
+    let err = handler
+        .handle(&req, [0x42u8; 32])
+        .await
+        .expect_err("oversized signature_chain must be rejected");
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("oversized signature_chain") || msg.contains("Storage"),
+        "error must surface the oversized-chain rejection (got: {msg})"
+    );
+}
+
+/// T5 coverage: borsh decode failure of an inbound reply payload
+/// (wire corruption OR peer implementing wrong schema) MUST surface
+/// as `ResolverBackendError::Backing` → `IdentityResolveError::Storage`,
+/// not panic or silently succeed.
+#[tokio::test]
+async fn remote_backend_rejects_borsh_decode_failure_of_reply() {
+    // Build a reply envelope whose payload is intentionally NOT a
+    // valid `ResolveResponse` (we use 4 arbitrary bytes that fail
+    // borsh decoding of the expected struct).
+    let garbage_payload = vec![0xDEu8, 0xAD, 0xBE, 0xEF];
+    let reply_envelope = octo_protocol::NodeEnvelope::build(
+        octo_ident::WireDid::new(canonical_did(20)),
+        octo_protocol::recipient::RecipientRef::Broadcast,
+        octo_protocol::payload_kind::IDENTITY_RESOLVE,
+        garbage_payload,
+        vec![],
+        [0x42u8; 32],
+        u64::MAX,
+    )
+    .unwrap();
+    let canned_reply = borsh::to_vec(&reply_envelope).unwrap();
+
+    let canned = CannedReplySender::new(canned_reply);
+    let transport_a = Arc::new(octo_transport::NodeTransport::new(vec![canned.clone()]));
+    let backend_a: Arc<dyn ResolverBackend> = RemoteResolverBackend::arc(transport_a);
+
+    let handler = ResolveChainHandler::new(backend_a);
+    let req = ChainResolveRequest {
+        target: canonical_did(11),
+        hops: vec![ResolverHop::local(canonical_did(20))],
+        ttl_remaining_ms: 100,
+    };
+    let err = handler
+        .handle(&req, [0x42u8; 32])
+        .await
+        .expect_err("borsh decode failure must surface as Backing");
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("borsh decode failed") || msg.contains("Storage"),
+        "error must surface the borsh decode failure (got: {msg})"
+    );
 }

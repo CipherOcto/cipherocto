@@ -109,7 +109,7 @@ fn dispute_valid_slashes_seller() {
     let mut ledger = SlashingLedger::new();
     ledger.register(sample_did(145), 1_000_000);
     let out = ledger
-        .slash(&sample_did(145), SlashReason::ProviderError, 1.0)
+        .slash(&sample_did(145), SlashReason::PROVIDER_ERROR, 1.0)
         .expect("slash");
     assert_eq!(out.amount_micro_octo_w, 100_000); // 10% first offense
     assert_eq!(out.new_stake_micro_octo_w, 900_000);
@@ -145,7 +145,7 @@ fn below_tolerance_miss_rate_does_not_slash() {
     });
     ledger.register(sample_did(145), 1_000_000);
     let err = ledger
-        .slash(&sample_did(145), SlashReason::Timeout, 0.01)
+        .slash(&sample_did(145), SlashReason::TIMEOUT, 0.01)
         .unwrap_err();
     assert!(matches!(
         err,
@@ -169,7 +169,7 @@ fn repeated_offenses_eventually_ban_provider() {
     // crosses 50% → banned.
     for _ in 0..4 {
         let _ = ledger
-            .slash(&sample_did(20), SlashReason::ProviderError, 1.0)
+            .slash(&sample_did(20), SlashReason::PROVIDER_ERROR, 1.0)
             .expect("slash");
     }
     assert!(ledger
@@ -179,7 +179,7 @@ fn repeated_offenses_eventually_ban_provider() {
 
     // Subsequent slashes rejected.
     let err = ledger
-        .slash(&sample_did(20), SlashReason::Timeout, 1.0)
+        .slash(&sample_did(20), SlashReason::TIMEOUT, 1.0)
         .unwrap_err();
     assert!(matches!(
         err,
@@ -491,7 +491,7 @@ fn byzantine_provider_offense_count_increments_per_offense() {
     // 99 valid responses (no ledger action — only failures slash).
     // 1 invalid response (slash with full loss):
     let out = ledger
-        .slash(&sample_did(7), SlashReason::ProviderError, 1.0)
+        .slash(&sample_did(7), SlashReason::PROVIDER_ERROR, 1.0)
         .expect("slash");
     assert_eq!(out.amount_micro_octo_w, 100_000); // 10% first offense
     assert_eq!(out.new_stake_micro_octo_w, 900_000);
@@ -514,7 +514,7 @@ fn byzantine_provider_escalation_ban_unchanged() {
     ledger.register(sample_did(7), 1_000_000);
     for _ in 0..4 {
         let _ = ledger
-            .slash(&sample_did(7), SlashReason::ProviderError, 1.0)
+            .slash(&sample_did(7), SlashReason::PROVIDER_ERROR, 1.0)
             .expect("slash");
     }
     assert!(ledger

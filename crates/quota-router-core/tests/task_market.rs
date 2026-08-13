@@ -442,7 +442,7 @@ fn task_market_slashing_register_then_slash_deducts_stake() {
     let mut slashing = TaskMarketSlashing::new();
     slashing.register(sample_did(251), 1_000_000);
     let out = slashing
-        .slash(&sample_did(251), SlashReason::Timeout, 1.0)
+        .slash(&sample_did(251), SlashReason::TIMEOUT, 1.0)
         .expect("slash");
     assert_eq!(out.amount_micro_octo_w, 100_000);
     assert_eq!(out.new_stake_micro_octo_w, 900_000);
@@ -454,11 +454,11 @@ fn task_market_slashing_repeated_offenses_escalate() {
     let mut slashing = TaskMarketSlashing::new();
     slashing.register(sample_did(63), 1_000_000);
     let o1 = slashing
-        .slash(&sample_did(63), SlashReason::ProviderError, 1.0)
+        .slash(&sample_did(63), SlashReason::PROVIDER_ERROR, 1.0)
         .expect("slash 1");
     assert_eq!(o1.amount_micro_octo_w, 100_000);
     let o2 = slashing
-        .slash(&sample_did(63), SlashReason::ProviderError, 1.0)
+        .slash(&sample_did(63), SlashReason::PROVIDER_ERROR, 1.0)
         .expect("slash 2");
     // 0.10 * 1.5 = 0.15 → 0.15 * 900_000 = 135_000
     assert_eq!(o2.amount_micro_octo_w, 135_000);
@@ -472,11 +472,11 @@ fn task_market_slashing_eventually_bans_provider() {
     // 4 consecutive offenses at default rules → banned.
     for _ in 0..4 {
         let _ = slashing
-            .slash(&sample_did(86), SlashReason::ProviderError, 1.0)
+            .slash(&sample_did(86), SlashReason::PROVIDER_ERROR, 1.0)
             .expect("slash");
     }
     let err = slashing
-        .slash(&sample_did(86), SlashReason::Timeout, 1.0)
+        .slash(&sample_did(86), SlashReason::TIMEOUT, 1.0)
         .unwrap_err();
     assert!(matches!(
         err,
@@ -495,7 +495,7 @@ fn task_market_slashing_below_tolerance_does_not_slash() {
         });
     slashing.register(sample_did(130), 1_000_000);
     let err = slashing
-        .slash(&sample_did(130), SlashReason::Timeout, 0.01)
+        .slash(&sample_did(130), SlashReason::TIMEOUT, 0.01)
         .unwrap_err();
     assert!(matches!(
         err,
@@ -509,7 +509,7 @@ fn task_market_slashing_below_tolerance_does_not_slash() {
 fn task_market_slashing_unknown_provider_errors() {
     let mut slashing = TaskMarketSlashing::new();
     let err = slashing
-        .slash("ghost", SlashReason::Timeout, 1.0)
+        .slash("ghost", SlashReason::TIMEOUT, 1.0)
         .unwrap_err();
     assert!(matches!(
         err,
@@ -657,7 +657,7 @@ fn full_rfc_0918_inference_flow_dispute_then_slash() {
 
     // Apply the slash (miss_rate = 1.0 → first-offense penalty 10%).
     let out = slashing
-        .slash(&sample_did(37), SlashReason::ProviderError, 1.0)
+        .slash(&sample_did(37), SlashReason::PROVIDER_ERROR, 1.0)
         .expect("slash");
     assert_eq!(out.amount_micro_octo_w, 100_000);
     assert_eq!(out.new_stake_micro_octo_w, 900_000);

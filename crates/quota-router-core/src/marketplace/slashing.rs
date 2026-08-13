@@ -27,33 +27,291 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Slashing reason classification (RFC-0900 §Dispute Evidence Challenge).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SlashReason {
-    /// Provider exceeded latency SLA (timeout).
-    Timeout,
-    /// Provider returned a 5xx / non-2xx response.
-    ProviderError,
-    /// Provider latency exceeded configured max.
-    LatencyHigh,
-    /// Response was garbage (manual review path; rare on-chain).
-    GarbageResponse,
-    /// Provider failed to return any response.
-    FailedResponse,
+///
+/// Mission `marketplace-slash-reason-typed-discriminator`:
+/// `SlashReason` is a typed-discriminator struct with a 128-bit
+/// `type_id` (RFC-0900 namespace prefix `0x0900:0001:...:NNNN`) and an
+/// opaque `payload` blob. Per CLAUDE.md §"Extension over enumeration":
+/// extension-bearing types use **typed-discriminator + Raw escape
+/// hatch**, NOT central enums, so adding `PrivacyBreach` / `KeyLeak` /
+/// etc. is a per-extension crate registration instead of a central
+/// edit + cross-crate review.
+///
+/// **Wire format**: the canonical bytes for a `SlashReason` are
+/// `type_id (16 bytes BE) || payload (varint length-prefixed)`. The
+/// 5 RFC-allocated constants below carry identity-only; the payload
+/// is currently empty (rejected without payload for non-zero
+/// `payload_len`).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SlashReason {
+    /// 128-bit type_id. RFC-0900 namespace prefix `0x0900:0001:...:NNNN`.
+    /// The NNNN suffix is allocated by RFC amendment.
+    pub type_id: [u8; 16],
+    /// Opaque payload (RFC-0900 §Slashing Model — empty for the 5
+    /// core reasons; extensions may carry arbitrary bytes).
+    #[serde(with = "serde_bytes_payload")]
+    pub payload: Vec<u8>,
 }
 
 impl SlashReason {
-    /// Verifiability weight — RFC-0900 §Dispute Evidence Challenge:
-    /// automatic reasons (Timeout / ProviderError / LatencyHigh /
-    /// FailedResponse) weight 1.0; manual-review reason
-    /// (GarbageResponse) weights 0.5 to reflect trust discount.
+    /// RFC-0900 namespace prefix (big-endian 4 bytes): `0x0900_0001`.
+    #[allow(dead_code)]
+    const NAMESPACE: [u8; 4] = [0x09, 0x00, 0x00, 0x01];
+
+    /// Provider exceeded latency SLA (timeout).
+    pub const TIMEOUT: SlashReason = SlashReason {
+        type_id: [
+            0x09, 0x00, 0x00, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ],
+        payload: Vec::new(),
+    };
+    /// Provider returned a 5xx / non-2xx response.
+    pub const PROVIDER_ERROR: SlashReason = SlashReason {
+        type_id: [
+            0x09, 0x00, 0x00, 0x01, 0x00, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ],
+        payload: Vec::new(),
+    };
+    /// Provider latency exceeded configured max.
+    pub const LATENCY_HIGH: SlashReason = SlashReason {
+        type_id: [
+            0x09, 0x00, 0x00, 0x01, 0x00, 0x03, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ],
+        payload: Vec::new(),
+    };
+    /// Response was garbage (manual review path; rare on-chain).
+    pub const GARBAGE_RESPONSE: SlashReason = SlashReason {
+        type_id: [
+            0x09, 0x00, 0x00, 0x01, 0x00, 0x04, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ],
+        payload: Vec::new(),
+    };
+    /// Provider failed to return any response.
+    pub const FAILED_RESPONSE: SlashReason = SlashReason {
+        type_id: [
+            0x09, 0x00, 0x00, 0x01, 0x00, 0x05, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ],
+        payload: Vec::new(),
+    };
+
+    /// Construct a SlashReason with non-empty payload (extensions).
     #[must_use]
-    pub fn verifiability(self) -> f64 {
-        match self {
-            Self::Timeout | Self::ProviderError | Self::LatencyHigh | Self::FailedResponse => 1.0,
-            Self::GarbageResponse => 0.5,
+    pub fn new(type_id: [u8; 16], payload: Vec<u8>) -> Self {
+        Self { type_id, payload }
+    }
+
+    /// True if this reason matches one of the 5 RFC-allocated core
+    /// reasons (case-sensitive 128-bit compare).
+    #[must_use]
+    pub fn is_rfc_core(&self) -> bool {
+        self == &Self::TIMEOUT
+            || self == &Self::PROVIDER_ERROR
+            || self == &Self::LATENCY_HIGH
+            || self == &Self::GARBAGE_RESPONSE
+            || self == &Self::FAILED_RESPONSE
+    }
+
+    /// Verifiability weight — RFC-0900 §Dispute Evidence Challenge.
+    ///
+    /// Looks up the registered [`SlashReasonSpec`] for this reason's
+    /// `type_id`. Unknown `type_id`s fail-closed at weight 0.0
+    /// (extension crates must register a spec before their reasons
+    /// are dispatched; this prevents accidental "treat unknown as
+    /// weight 1.0" silent acceptance).
+    #[must_use]
+    pub fn verifiability(&self) -> f64 {
+        default_registry().verifiability(&self.type_id)
+    }
+}
+
+// `Vec<u8>` payload serialization: hex-encode for human-readable JSON
+// (default for tests); binary protocol layers can swap in a more
+// compact codec. `serde_bytes::Bytes` would conflict with `&[u8]`
+// slice semantics for `payload: Vec<u8>`, so use a tiny inline
+// module.
+mod serde_bytes_payload {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(v: &Vec<u8>, s: S) -> Result<S::Ok, S::Error> {
+        v.serialize(s) // default Vec<u8> serialization is already a byte sequence
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
+        Vec::<u8>::deserialize(d)
+    }
+}
+
+// ========================================================================
+// SlashReasonSpec — per-reason verifiability (extension-bearing trait)
+// ========================================================================
+//
+// Per CLAUDE.md §"Extension over enumeration": new reason types register
+// a spec via `register_reason_spec`. Old code fails-closed on unknown
+// `type_id`s (returns 0.0 weight, which excludes the reason from any
+// automatic dispute-evidence path).
+
+/// Per-`SlashReason` behavior contract (mission
+/// `marketplace-slash-reason-typed-discriminator`).
+///
+/// The marketplace registers one spec per RFC-allocated reason.
+/// Extension crates register additional specs at startup. The default
+/// spec registry covers the 5 RFC-0900 core reasons.
+pub trait SlashReasonSpec: Send + Sync {
+    /// The 128-bit type_id this spec governs.
+    fn type_id(&self) -> [u8; 16];
+
+    /// Verifiability weight in the dispute-evidence challenge
+    /// (RFC-0900 §Dispute Evidence Challenge).
+    fn verifiability(&self) -> f64;
+
+    /// Short human-readable name (e.g., "timeout", "garbage_response").
+    fn name(&self) -> &str;
+}
+
+// ---------- RFC-0900 core specs ----------
+
+struct TimeoutSpec;
+impl SlashReasonSpec for TimeoutSpec {
+    fn type_id(&self) -> [u8; 16] {
+        SlashReason::TIMEOUT.type_id
+    }
+    fn verifiability(&self) -> f64 {
+        1.0
+    }
+    fn name(&self) -> &str {
+        "timeout"
+    }
+}
+struct ProviderErrorSpec;
+impl SlashReasonSpec for ProviderErrorSpec {
+    fn type_id(&self) -> [u8; 16] {
+        SlashReason::PROVIDER_ERROR.type_id
+    }
+    fn verifiability(&self) -> f64 {
+        1.0
+    }
+    fn name(&self) -> &str {
+        "provider_error"
+    }
+}
+struct LatencyHighSpec;
+impl SlashReasonSpec for LatencyHighSpec {
+    fn type_id(&self) -> [u8; 16] {
+        SlashReason::LATENCY_HIGH.type_id
+    }
+    fn verifiability(&self) -> f64 {
+        1.0
+    }
+    fn name(&self) -> &str {
+        "latency_high"
+    }
+}
+struct GarbageResponseSpec;
+impl SlashReasonSpec for GarbageResponseSpec {
+    fn type_id(&self) -> [u8; 16] {
+        SlashReason::GARBAGE_RESPONSE.type_id
+    }
+    fn verifiability(&self) -> f64 {
+        0.5
+    }
+    fn name(&self) -> &str {
+        "garbage_response"
+    }
+}
+struct FailedResponseSpec;
+impl SlashReasonSpec for FailedResponseSpec {
+    fn type_id(&self) -> [u8; 16] {
+        SlashReason::FAILED_RESPONSE.type_id
+    }
+    fn verifiability(&self) -> f64 {
+        1.0
+    }
+    fn name(&self) -> &str {
+        "failed_response"
+    }
+}
+
+// ---------- Registry ----------
+
+use std::sync::{Arc, OnceLock};
+
+/// Global spec registry. `OnceLock` because the marketplace crate
+/// has no `init()` lifecycle hook; the registry self-populates the
+/// 5 RFC-0900 core reasons on first access (via
+/// `default_registry()`).
+fn default_registry() -> &'static SlashReasonSpecRegistry {
+    static REG: OnceLock<SlashReasonSpecRegistry> = OnceLock::new();
+    REG.get_or_init(|| {
+        let r = SlashReasonSpecRegistry::new();
+        r.register(Arc::new(TimeoutSpec));
+        r.register(Arc::new(ProviderErrorSpec));
+        r.register(Arc::new(LatencyHighSpec));
+        r.register(Arc::new(GarbageResponseSpec));
+        r.register(Arc::new(FailedResponseSpec));
+        r
+    })
+}
+
+/// SlashReason spec registry (mission
+/// `marketplace-slash-reason-typed-discriminator`).
+///
+/// Thread-safe via internal `parking_lot::RwLock`. Extension crates
+/// call [`register`](Self::register) at startup.
+pub struct SlashReasonSpecRegistry {
+    specs: parking_lot::RwLock<HashMap<[u8; 16], Arc<dyn SlashReasonSpec>>>,
+}
+
+impl Default for SlashReasonSpecRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SlashReasonSpecRegistry {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            specs: parking_lot::RwLock::new(HashMap::new()),
         }
     }
+
+    /// Register a spec. Overwrites any existing spec for the same
+    /// `type_id` (last-write-wins; tests use this to override the
+    /// default RFC weight for fuzz scenarios).
+    pub fn register(&self, spec: Arc<dyn SlashReasonSpec>) {
+        let mut g = self.specs.write();
+        g.insert(spec.type_id(), spec);
+    }
+
+    /// Verifiability weight for `type_id`. Returns 0.0 (fail-closed)
+    /// for unknown type_ids.
+    #[must_use]
+    pub fn verifiability(&self, type_id: &[u8; 16]) -> f64 {
+        self.specs
+            .read()
+            .get(type_id)
+            .map_or(0.0, |s| s.verifiability())
+    }
+
+    /// Number of registered specs (test-only).
+    #[cfg(test)]
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.specs.read().len()
+    }
+
+    /// True when no specs are registered (test-only).
+    #[cfg(test)]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.specs.read().is_empty()
+    }
+}
+
+/// Register an extension reason spec against the default registry.
+/// Extension crates call this at startup.
+pub fn register_reason_spec(spec: Arc<dyn SlashReasonSpec>) {
+    default_registry().register(spec);
 }
 
 /// Slashing rules (RFC-0900 §Slashing Model defaults).
@@ -430,7 +688,7 @@ mod tests {
         let mut l = ledger_with(1_000_000);
         // first_offense_penalty = 0.10, miss_rate = 1.0, Timeout (verifiability 1.0)
         // → amount = 1_000_000 * 0.10 * 1.0 * 1.0 = 100_000
-        let out = l.slash("alice", SlashReason::Timeout, 1.0).unwrap();
+        let out = l.slash("alice", SlashReason::TIMEOUT, 1.0).unwrap();
         assert_eq!(out.amount_micro_octo_w, 100_000);
         assert_eq!(out.new_stake_micro_octo_w, 900_000);
         assert_eq!(out.cumulative_loss_pct, 0.10);
@@ -440,7 +698,7 @@ mod tests {
     #[test]
     fn slash_scales_with_miss_rate() {
         let mut l = ledger_with(1_000_000);
-        let out = l.slash("alice", SlashReason::ProviderError, 0.5).unwrap();
+        let out = l.slash("alice", SlashReason::PROVIDER_ERROR, 0.5).unwrap();
         // 0.10 * 0.5 = 0.05 → 50_000
         assert_eq!(out.amount_micro_octo_w, 50_000);
     }
@@ -448,7 +706,9 @@ mod tests {
     #[test]
     fn garbage_response_uses_half_verifiability() {
         let mut l = ledger_with(1_000_000);
-        let out = l.slash("alice", SlashReason::GarbageResponse, 1.0).unwrap();
+        let out = l
+            .slash("alice", SlashReason::GARBAGE_RESPONSE, 1.0)
+            .unwrap();
         // 0.10 * 1.0 * 0.5 = 0.05 → 50_000
         assert_eq!(out.amount_micro_octo_w, 50_000);
     }
@@ -457,20 +717,20 @@ mod tests {
     fn repeat_offenses_escalate_penalty() {
         let mut l = ledger_with(1_000_000);
         // 1st: 0.10 → 100_000
-        let o1 = l.slash("alice", SlashReason::Timeout, 1.0).unwrap();
+        let o1 = l.slash("alice", SlashReason::TIMEOUT, 1.0).unwrap();
         assert_eq!(o1.amount_micro_octo_w, 100_000);
         // 2nd: 0.10 * 1.5 = 0.15 → 0.15 * 900_000 = 135_000
-        let o2 = l.slash("alice", SlashReason::Timeout, 1.0).unwrap();
+        let o2 = l.slash("alice", SlashReason::TIMEOUT, 1.0).unwrap();
         assert_eq!(o2.amount_micro_octo_w, 135_000);
         // 3rd: 0.10 * 1.5^2 = 0.225 → 0.225 * 765_000 = 172_125
-        let o3 = l.slash("alice", SlashReason::Timeout, 1.0).unwrap();
+        let o3 = l.slash("alice", SlashReason::TIMEOUT, 1.0).unwrap();
         assert_eq!(o3.amount_micro_octo_w, 172_125);
     }
 
     #[test]
     fn cumulative_loss_pct_tracks_initial_stake() {
         let mut l = ledger_with(1_000_000);
-        l.slash("alice", SlashReason::Timeout, 1.0).unwrap();
+        l.slash("alice", SlashReason::TIMEOUT, 1.0).unwrap();
         let s = l.stake("alice").unwrap();
         assert_eq!(s.cumulative_loss_pct, 0.10);
     }
@@ -479,14 +739,14 @@ mod tests {
     fn permanent_ban_at_50pct_loss() {
         let mut l = ledger_with(1_000_000);
         // 1st: 0.10 → 900_000 left, cumulative 0.10
-        l.slash("alice", SlashReason::Timeout, 1.0).unwrap();
+        l.slash("alice", SlashReason::TIMEOUT, 1.0).unwrap();
         // 2nd: 0.15 → 900_000 * 0.15 = 135_000; left 765_000, cumulative 0.235
-        l.slash("alice", SlashReason::Timeout, 1.0).unwrap();
+        l.slash("alice", SlashReason::TIMEOUT, 1.0).unwrap();
         // 3rd: 0.225 → 765_000 * 0.225 = 172_125; left 592_875, cumulative 0.407125
-        l.slash("alice", SlashReason::Timeout, 1.0).unwrap();
+        l.slash("alice", SlashReason::TIMEOUT, 1.0).unwrap();
         // 4th: 0.3375 → 592_875 * 0.3375 = 200_095.31 ≈ 200_095; left 392_780,
         // cumulative 0.6072 ≥ 0.50 → banned
-        let out = l.slash("alice", SlashReason::Timeout, 1.0).unwrap();
+        let out = l.slash("alice", SlashReason::TIMEOUT, 1.0).unwrap();
         assert!(out.banned);
         assert!(l.stake("alice").unwrap().is_banned(l.rules()));
     }
@@ -495,16 +755,16 @@ mod tests {
     fn slashing_banned_provider_errors() {
         let mut l = ledger_with(1_000_000);
         // Drive alice to ban with a direct big penalty (arbitration path).
-        l.slash_with_pct("alice", SlashReason::Timeout, 0.6)
+        l.slash_with_pct("alice", SlashReason::TIMEOUT, 0.6)
             .unwrap();
-        let err = l.slash("alice", SlashReason::Timeout, 1.0).unwrap_err();
+        let err = l.slash("alice", SlashReason::TIMEOUT, 1.0).unwrap_err();
         assert!(matches!(err, SlashError::BannedProvider { .. }));
     }
 
     #[test]
     fn slashing_unknown_provider_errors() {
         let mut l = SlashingLedger::new();
-        let err = l.slash("ghost", SlashReason::Timeout, 1.0).unwrap_err();
+        let err = l.slash("ghost", SlashReason::TIMEOUT, 1.0).unwrap_err();
         assert_eq!(err, SlashError::UnknownProvider("ghost".to_owned()));
     }
 
@@ -515,7 +775,7 @@ mod tests {
             ..SlashingRules::default()
         });
         l.register("alice", 1_000_000);
-        let err = l.slash("alice", SlashReason::Timeout, 0.01).unwrap_err();
+        let err = l.slash("alice", SlashReason::TIMEOUT, 0.01).unwrap_err();
         assert!(matches!(err, SlashError::BelowTolerance { .. }));
     }
 
@@ -523,7 +783,7 @@ mod tests {
     fn slash_with_explicit_pct_bypasses_escalation() {
         let mut l = ledger_with(1_000_000);
         let out = l
-            .slash_with_pct("alice", SlashReason::GarbageResponse, 0.25)
+            .slash_with_pct("alice", SlashReason::GARBAGE_RESPONSE, 0.25)
             .unwrap();
         // 0.25 of 1_000_000 = 250_000
         assert_eq!(out.amount_micro_octo_w, 250_000);
@@ -535,7 +795,7 @@ mod tests {
         let mut l = ledger_with(100_000);
         // Apply an oversized explicit penalty; should cap at remaining stake.
         let out = l
-            .slash_with_pct("alice", SlashReason::Timeout, 1.5)
+            .slash_with_pct("alice", SlashReason::TIMEOUT, 1.5)
             .unwrap();
         assert_eq!(out.amount_micro_octo_w, 100_000);
         assert_eq!(out.new_stake_micro_octo_w, 0);
@@ -589,7 +849,7 @@ mod tests {
         assert!(stake.is_banned(ledger.rules()));
         // Subsequent slash on the banned provider must fail.
         let err = ledger
-            .slash("alice", SlashReason::ProviderError, 1.0)
+            .slash("alice", SlashReason::PROVIDER_ERROR, 1.0)
             .unwrap_err();
         assert!(matches!(err, SlashError::BannedProvider { .. }));
     }
@@ -621,7 +881,7 @@ mod tests {
         .expect("open");
         ledger.register("carol", 1_000_000);
         let out = ledger
-            .slash("carol", SlashReason::Timeout, 1.0)
+            .slash("carol", SlashReason::TIMEOUT, 1.0)
             .expect("slash");
         assert_eq!(out.amount_micro_octo_w, 100_000);
         assert_eq!(out.new_stake_micro_octo_w, 900_000);
@@ -653,7 +913,7 @@ mod tests {
         // First 3 offenses: 10%, 15%, 22.5% (cumulative ≈ 40.7%).
         for _ in 0..3 {
             ledger
-                .slash("dave", SlashReason::ProviderError, 1.0)
+                .slash("dave", SlashReason::PROVIDER_ERROR, 1.0)
                 .expect("slash");
         }
         let stake_before = ledger.stake("dave").expect("dave pre-restart").clone();
@@ -690,7 +950,7 @@ mod tests {
         // reopened ledger, then verify ban persists across another
         // restart.
         ledger2
-            .slash("dave", SlashReason::ProviderError, 1.0)
+            .slash("dave", SlashReason::PROVIDER_ERROR, 1.0)
             .expect("fourth slash");
         drop(ledger2);
 
@@ -707,7 +967,7 @@ mod tests {
             "dave must remain banned after restart"
         );
         let err = ledger3
-            .slash("dave", SlashReason::Timeout, 1.0)
+            .slash("dave", SlashReason::TIMEOUT, 1.0)
             .unwrap_err();
         assert!(
             matches!(err, SlashError::BannedProvider { .. }),
@@ -725,7 +985,7 @@ mod tests {
         .expect("open");
         ledger.register("eve", 1_000_000);
         let out = ledger
-            .slash_with_pct("eve", SlashReason::ProviderError, 0.05)
+            .slash_with_pct("eve", SlashReason::PROVIDER_ERROR, 0.05)
             .expect("slash_with_pct");
         assert_eq!(out.amount_micro_octo_w, 50_000);
         drop(ledger);
@@ -737,5 +997,82 @@ mod tests {
         let stake = ledger2.stake("eve").expect("eve");
         assert_eq!(stake.stake_micro_octo_w, 950_000);
         assert_eq!(stake.offense_count, 1);
+    }
+
+    // ========================================================================
+    // Typed-discriminator extension tests (mission
+    // marketplace-slash-reason-typed-discriminator)
+    // ========================================================================
+
+    /// Extension `SlashReasonSpec` for an out-of-tree reason (e.g.,
+    /// privacy breach), demonstrating the registry pattern.
+    struct PrivacyBreachSpec;
+    impl SlashReasonSpec for PrivacyBreachSpec {
+        fn type_id(&self) -> [u8; 16] {
+            // Extension namespace `0xFFFF:0001:...:0001` — outside the
+            // RFC-0900 core allocation.
+            [
+                0xFF, 0xFF, 0x00, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ]
+        }
+        fn verifiability(&self) -> f64 {
+            0.75
+        }
+        fn name(&self) -> &str {
+            "privacy_breach"
+        }
+    }
+
+    #[test]
+    fn slash_reason_core_constants_have_distinct_type_ids() {
+        // Each of the 5 RFC-0900 core reasons must carry a unique
+        // 128-bit type_id. Central enum → typed-discriminator migration
+        // invariant.
+        let ids = [
+            SlashReason::TIMEOUT.type_id,
+            SlashReason::PROVIDER_ERROR.type_id,
+            SlashReason::LATENCY_HIGH.type_id,
+            SlashReason::GARBAGE_RESPONSE.type_id,
+            SlashReason::FAILED_RESPONSE.type_id,
+        ];
+        for i in 0..ids.len() {
+            for j in (i + 1)..ids.len() {
+                assert_ne!(ids[i], ids[j], "core reason {i} == {j} type_id");
+            }
+        }
+        assert!(SlashReason::TIMEOUT.is_rfc_core());
+        assert!(SlashReason::PROVIDER_ERROR.is_rfc_core());
+        assert!(!SlashReason::new([0xAB; 16], vec![]).is_rfc_core());
+    }
+
+    #[test]
+    fn register_extension_spec_dispatches_weight_correctly() {
+        // Build a fresh registry (not the global one — tests must be
+        // hermetic), register an extension spec, fire a slash, verify
+        // the weight comes from the registered spec.
+        let reg = SlashReasonSpecRegistry::new();
+        reg.register(std::sync::Arc::new(PrivacyBreachSpec));
+        let breach = SlashReason::new(
+            [
+                0xFF, 0xFF, 0x00, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ],
+            vec![],
+        );
+        assert!((reg.verifiability(&breach.type_id) - 0.75).abs() < 1e-9);
+        // An unrelated type_id (not registered) fails-closed at 0.0.
+        let unknown = SlashReason::new([0x00; 16], vec![]);
+        assert_eq!(reg.verifiability(&unknown.type_id), 0.0);
+    }
+
+    #[test]
+    fn unknown_type_id_fails_closed_at_zero_weight() {
+        // The default registry contains the 5 RFC reasons; an
+        // unregistered type_id must NOT silently inherit a default
+        // weight (fail-closed, per spec).
+        let unknown = SlashReason::new([0xEE; 16], vec![]);
+        assert_eq!(unknown.verifiability(), 0.0);
+        // Sanity: the 5 RFC reasons DO have non-zero weights.
+        assert!(SlashReason::TIMEOUT.verifiability() > 0.0);
+        assert!(SlashReason::GARBAGE_RESPONSE.verifiability() > 0.0);
     }
 }

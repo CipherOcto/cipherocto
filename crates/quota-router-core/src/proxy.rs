@@ -672,6 +672,21 @@ where
 {
     let start = std::time::Instant::now();
 
+    // Extract W3C Trace Context from incoming request (RFC-0905 §W3C Trace Context)
+    // If absent or malformed, generate a fresh trace_id for this request.
+    // The resulting traceparent is propagated into outgoing provider requests below.
+    let outgoing_traceparent: String = req
+        .headers()
+        .get("traceparent")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| crate::tracing::extract_traceparent(s).is_some())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            let trace_id = crate::tracing::generate_trace_id();
+            let span_id = crate::tracing::generate_span_id();
+            crate::tracing::format_traceparent(&trace_id, &span_id, 0x01)
+        });
+
     // /metrics endpoint (RFC-0937) — bypass auth and proxy
     if req.uri().path() == "/metrics" {
         if let Some(ref m) = metrics {
@@ -1243,6 +1258,10 @@ where
                 .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, an upstream path populated api_key from a CipherOcto source — fix that path");
             req_builder = req_builder.header("Authorization", bearer);
         }
+        // W3C Trace Context propagation (RFC-0905 §W3C Trace Context)
+        // — inject the request's traceparent header so the upstream provider
+        // can correlate this hop into the distributed trace.
+        req_builder = req_builder.header("traceparent", &outgoing_traceparent);
         let resp = req_builder.send().await;
 
         match resp {

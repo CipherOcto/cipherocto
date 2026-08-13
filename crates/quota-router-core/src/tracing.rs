@@ -283,4 +283,19 @@ mod tests {
         assert_eq!(config.sampling_rate, 0.5);
         assert_eq!(config.deployment_environment, Some("staging".to_string()));
     }
+
+    /// Round-trip: format_traceparent → extract_traceparent must
+    /// recover the same trace_id + span_id (RFC-0905 §W3C Trace
+    /// Context propagation contract).
+    #[test]
+    fn test_traceparent_roundtrip() {
+        let trace_id = "0af7651916cd43dd8448eb211c80319c";
+        let span_id = "b7ad6b7169203331";
+        let flags = 0x01;
+        let header = format_traceparent(trace_id, span_id, flags);
+        let (t, s, f) = extract_traceparent(&header).expect("valid traceparent");
+        assert_eq!(t, trace_id);
+        assert_eq!(s, span_id);
+        assert_eq!(f, flags);
+    }
 }

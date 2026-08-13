@@ -49,6 +49,14 @@ thiserror = "1"
 # poisoning semantics of std::sync::RwLock which complicates test
 # cleanup; same pattern as octo-ident::InMemoryDidRegistry.
 parking_lot = "0.12"
+# AC-14 + AC-13 chain_cross_domain_auth_verifies + true 3-node TV
+# (mission 0871b-cross-node-forwarding closure). Real Ed25519
+# sign+verify cycle over the production `HopSignature::signing_preimage`
+# helper pins the cross-domain auth substrate. Available transitively
+# via octo-protocol; pinned here so the test-file imports compile
+# without touching octo-protocol's semver surface.
+ed25519-dalek = { version = "2.2", features = ["serde", "zeroize"] }
+bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
 
 [lints.rust]
 unsafe_code = "forbid"

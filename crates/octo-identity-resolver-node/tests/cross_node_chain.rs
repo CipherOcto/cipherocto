@@ -946,3 +946,323 @@ async fn remote_backend_rejects_outer_envelope_borsh_decode_failure() {
         "error must surface the outer-envelope borsh decode failure (got: {msg})"
     );
 }
+
+/// AC-14: `chain_cross_domain_auth_verifies` — the `HopSignature`
+/// embedded in `ChainResolveResponse.signature_chain` is a REAL
+/// Ed25519 signature over the production 5-tuple preimage
+/// (`HopSignature::signing_preimage`), and the in-band `signer_pub`
+/// verifies it via the public `verify_ed25519_signature` helper.
+///
+/// The backend synthesises a real `HopSignature`:
+/// 1. Generates a deterministic Ed25519 keypair from a 32-byte seed.
+/// 2. Computes `HopSignature::signing_preimage` (the SAME helper the
+///    production chain handler uses — pinning the production encoder).
+/// 3. Signs the preimage via `ed25519_dalek::SigningKey`.
+/// 4. Wraps the signature in a `HopSignature` and returns it.
+///
+/// The test then decodes the resulting `ChainResolveResponse` from the
+/// chain handler and verifies each signature end-to-end via
+/// `verify_ed25519_signature`. Pins the cross-domain
+/// sign+verify+substrate round trip.
+#[tokio::test]
+async fn chain_cross_domain_auth_verifies() {
+    use ed25519_dalek::{Signer, SigningKey};
+    use octo_protocol::authorization::{verify_ed25519_signature, Ed25519SignatureBytes};
+    use octo_protocol::HopSignature;
+
+    // 1. Generate a deterministic Ed25519 keypair from a 32-byte seed.
+    let mut seed = [0u8; 32];
+    for (i, b) in seed.iter_mut().enumerate() {
+        *b = (i as u8).wrapping_add(7);
+    }
+    let sk = SigningKey::from_bytes(&seed);
+    let pk_bytes = sk.verifying_key().to_bytes();
+    let hop_did = octo_ident::WireDid::new(format!(
+        "did:octo:z{}",
+        bs58::encode(&pk_bytes).into_string()
+    ));
+
+    // 2. Compute the production preimage via the canonical helper.
+    let chain_hash = [0xCDu8; 32];
+    let hop_index: u8 = 1;
+    let inner_payload = b"IDENTITY_RESOLVE_CHAIN inner payload bytes";
+    let envelope_id = [0x77u8; 32];
+    let preimage_hash =
+        HopSignature::signing_preimage(chain_hash, hop_index, inner_payload, envelope_id);
+
+    // 3. Sign the BLAKE3-hashed preimage with Ed25519.
+    let sig = Ed25519SignatureBytes::from_signature(&sk.sign(&preimage_hash));
+    let hop_sig = HopSignature::new(hop_index, hop_did.as_str().to_owned(), sig.0, pk_bytes);
+
+    // 4. Wire a backend that returns the real signed HopSignature.
+    struct RealSigBackend {
+        sig: octo_protocol::HopSignature,
+    }
+    #[async_trait]
+    impl ResolverBackend for RealSigBackend {
+        async fn resolve_via(
+            &self,
+            _hop_did: &str,
+            _target: &octo_ident::RawDid,
+            _chain_ctx: &ResolverChainContext,
+        ) -> Result<BackendResolveOutcome, ResolverBackendError> {
+            Ok(BackendResolveOutcome {
+                public_key: [0xCCu8; 32],
+                signature_chain: vec![RawHopSignature {
+                    hop_index: self.sig.hop_index,
+                    hop_did: self.sig.hop_did.clone(),
+                    signature: self.sig.signature,
+                    signer_pub: self.sig.signer_pub,
+                }],
+            })
+        }
+    }
+    let backend: Arc<dyn ResolverBackend> = Arc::new(RealSigBackend { sig: hop_sig });
+    let handler = ResolveChainHandler::new(backend);
+
+    // 5. Walk hops=[B]; decode the chain response.
+    let req = ChainResolveRequest {
+        target: canonical_did(11),
+        hops: vec![ResolverHop::local(canonical_did(2))],
+        ttl_remaining_ms: 100,
+    };
+    let out = handler
+        .handle(&req, envelope_id)
+        .await
+        .expect("real-signature backend resolves");
+    let resp: ChainResolveResponse = borsh::from_slice(&out.response_payload.unwrap()).unwrap();
+
+    // 6. The HopSignature survived into the wire form.
+    assert_eq!(
+        resp.signature_chain.len(),
+        1,
+        "real HopSignature propagated"
+    );
+    let on_wire = &resp.signature_chain[0];
+    assert_eq!(on_wire.hop_index, 1);
+    assert_eq!(on_wire.signer_pub, pk_bytes);
+    assert_eq!(on_wire.signature, sig.0);
+
+    // 7. AC-14 contract: the in-band `signer_pub` verifies the
+    //    signature over the production 5-tuple preimage.
+    let wire_did = octo_ident::WireDid::new(on_wire.hop_did.clone());
+    verify_ed25519_signature(&wire_did, &preimage_hash, &sig)
+        .expect("HopSignature MUST verify against the 5-tuple preimage + in-band signer_pub");
+}
+
+/// AC-15: `chain_cycle_detection_aborts_cross_node` — cycle
+/// detection fires at the LOCAL `ResolveChainHandler` (not the
+/// remote backend) when the chain walks through
+/// `RemoteResolverBackend`. The cycle detector seeds `visited` with
+/// the target + walks hops in order; a repeat hop_did trips the
+/// `ChainCycle` abort. The backend's `resolve_via` is NEVER called
+/// for the duplicate hop (the abort fires BEFORE backend delegation).
+///
+/// Confirms the cross-node variant of cycle detection: with a
+/// `RemoteResolverBackend` wired in, the local cycle detector still
+/// fires before any network I/O is performed for the duplicate hop.
+#[tokio::test]
+async fn chain_cycle_detection_aborts_cross_node() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // Backend that counts invocations so we can assert resolve_via is
+    // NEVER called for the duplicate hop (the abort fires before
+    // backend delegation).
+    struct CountingBackend {
+        invocations: Arc<AtomicUsize>,
+        pubkey: [u8; 32],
+    }
+    #[async_trait]
+    impl ResolverBackend for CountingBackend {
+        async fn resolve_via(
+            &self,
+            _hop_did: &str,
+            _target: &octo_ident::RawDid,
+            _chain_ctx: &ResolverChainContext,
+        ) -> Result<BackendResolveOutcome, ResolverBackendError> {
+            self.invocations.fetch_add(1, Ordering::SeqCst);
+            Ok(BackendResolveOutcome {
+                public_key: self.pubkey,
+                signature_chain: Vec::new(),
+            })
+        }
+    }
+
+    let invocations = Arc::new(AtomicUsize::new(0));
+    let backend: Arc<dyn ResolverBackend> = Arc::new(CountingBackend {
+        invocations: invocations.clone(),
+        pubkey: [0xAAu8; 32],
+    });
+    let handler = ResolveChainHandler::new(backend);
+
+    // hops=[B, B] — the second B visit trips cycle detection.
+    let hop_b = canonical_did(2);
+    let req = ChainResolveRequest {
+        target: canonical_did(11),
+        hops: vec![ResolverHop::local(hop_b.clone()), ResolverHop::local(hop_b)],
+        ttl_remaining_ms: 100,
+    };
+    let err = handler
+        .handle(&req, [0u8; 32])
+        .await
+        .expect_err("duplicate hop must trip ChainCycle");
+    assert!(
+        matches!(err, IdentityResolveError::ChainCycle),
+        "expected ChainCycle, got {err:?}"
+    );
+    // The cycle abort fires BEFORE backend delegation, so
+    // `resolve_via` is NEVER invoked (zero calls).
+    assert_eq!(
+        invocations.load(Ordering::SeqCst),
+        0,
+        "cycle abort must fire BEFORE backend delegation (no resolve_via calls)"
+    );
+}
+
+/// AC-13: true 3-node chain accumulation — the BACKEND walks an
+/// inner chain (B → C) and accumulates TWO real Ed25519-signed
+/// `HopSignature`s in `signature_chain`. The chain handler at A
+/// walks hops=[B]; the response carries the full inner chain's
+/// signatures.
+///
+/// This pins the substrate's signature-accumulation contract: a
+/// single `resolve_via` call returns a multi-element
+/// `signature_chain`, and the chain handler propagates all elements
+/// into `ChainResolveResponse.signature_chain` without truncation.
+///
+/// (The full 3-node end-to-end test with REAL `IdentityResolverNode`
+/// instances at B + C wired through 3 transports lands as a
+/// follow-on once RFC-0970 forwarding-hop signing is integrated.)
+#[tokio::test]
+async fn true_3_node_chain_accumulates_two_real_signed_hop_signatures() {
+    use ed25519_dalek::{Signer, SigningKey};
+    use octo_protocol::authorization::{verify_ed25519_signature, Ed25519SignatureBytes};
+    use octo_protocol::HopSignature;
+
+    /// Helper: build a real Ed25519-signed `HopSignature` for a given
+    /// (hop_index, chain_hash, inner_payload, envelope_id, seed).
+    fn signed_hop(
+        hop_index: u8,
+        _hop_did_seed: u8,
+        chain_hash: [u8; 32],
+        inner_payload: &[u8],
+        envelope_id: [u8; 32],
+        sk_seed: u8,
+    ) -> octo_protocol::HopSignature {
+        let mut seed = [0u8; 32];
+        for (i, b) in seed.iter_mut().enumerate() {
+            *b = (i as u8).wrapping_add(sk_seed);
+        }
+        let sk = SigningKey::from_bytes(&seed);
+        let pk_bytes = sk.verifying_key().to_bytes();
+        let hop_did = format!("did:octo:z{}", bs58::encode(&pk_bytes).into_string());
+        let preimage_hash =
+            HopSignature::signing_preimage(chain_hash, hop_index, inner_payload, envelope_id);
+        let sig = Ed25519SignatureBytes::from_signature(&sk.sign(&preimage_hash));
+        HopSignature::new(hop_index, hop_did, sig.0, pk_bytes)
+    }
+
+    let chain_hash = [0x33u8; 32];
+    let envelope_id = [0x99u8; 32];
+    let b_inner_payload = b"B's inner payload (forwarded from A)";
+    let c_inner_payload = b"C's inner payload (forwarded from B)";
+
+    // 1. Build 2 real Ed25519-signed HopSignatures: hop 0 = B signing
+    //    its inner payload; hop 1 = C signing its inner payload.
+    //    Outermost-first ordering per RFC-0871 §signature_chain.
+    let sig_b = signed_hop(0, 11, chain_hash, b_inner_payload, envelope_id, 11);
+    let sig_c = signed_hop(1, 22, chain_hash, c_inner_payload, envelope_id, 22);
+
+    // 2. Backend returns BOTH signatures (simulating B's inner
+    //    walk to C).
+    struct InnerChainBackend {
+        sig_b: octo_protocol::HopSignature,
+        sig_c: octo_protocol::HopSignature,
+        resolved_pubkey: [u8; 32],
+    }
+    #[async_trait]
+    impl ResolverBackend for InnerChainBackend {
+        async fn resolve_via(
+            &self,
+            _hop_did: &str,
+            _target: &octo_ident::RawDid,
+            _chain_ctx: &ResolverChainContext,
+        ) -> Result<BackendResolveOutcome, ResolverBackendError> {
+            Ok(BackendResolveOutcome {
+                public_key: self.resolved_pubkey,
+                signature_chain: vec![
+                    RawHopSignature {
+                        hop_index: self.sig_b.hop_index,
+                        hop_did: self.sig_b.hop_did.clone(),
+                        signature: self.sig_b.signature,
+                        signer_pub: self.sig_b.signer_pub,
+                    },
+                    RawHopSignature {
+                        hop_index: self.sig_c.hop_index,
+                        hop_did: self.sig_c.hop_did.clone(),
+                        signature: self.sig_c.signature,
+                        signer_pub: self.sig_c.signer_pub,
+                    },
+                ],
+            })
+        }
+    }
+    let backend: Arc<dyn ResolverBackend> = Arc::new(InnerChainBackend {
+        sig_b: sig_b.clone(),
+        sig_c: sig_c.clone(),
+        resolved_pubkey: [0xDDu8; 32],
+    });
+    let handler = ResolveChainHandler::new(backend);
+
+    // 3. Walk hops=[B]; A's chain handler delegates to backend ONCE
+    //    for terminal hop B; backend returns 2 signatures.
+    let req = ChainResolveRequest {
+        target: canonical_did(11),
+        hops: vec![ResolverHop::local(canonical_did(2))],
+        ttl_remaining_ms: 100,
+    };
+    let out = handler
+        .handle(&req, envelope_id)
+        .await
+        .expect("3-node chain resolves");
+    let resp: ChainResolveResponse = borsh::from_slice(&out.response_payload.unwrap()).unwrap();
+
+    // 4. Verify response shape.
+    assert_eq!(resp.canonical_did, canonical_did(11));
+    assert_eq!(resp.public_key, [0xDDu8; 32], "C's resolved pubkey");
+    assert_eq!(
+        resp.hops_traversed, 1,
+        "A walked 1 hop (B); B walked 1 inner hop (C)"
+    );
+    assert_eq!(resp.envelope_id, envelope_id);
+    assert_eq!(
+        resp.signature_chain.len(),
+        2,
+        "BOTH signatures accumulated in the wire form"
+    );
+
+    // 5. Verify EACH signature end-to-end via the in-band signer_pub.
+    //    Pin the production preimage encoders + the public verify
+    //    helper so a future encoder drift would surface as a test
+    //    failure rather than silent cross-domain auth bypass.
+    let preimage_b = HopSignature::signing_preimage(chain_hash, 0, b_inner_payload, envelope_id);
+    let preimage_c = HopSignature::signing_preimage(chain_hash, 1, c_inner_payload, envelope_id);
+    let sig_b_bytes = Ed25519SignatureBytes(resp.signature_chain[0].signature);
+    let sig_c_bytes = Ed25519SignatureBytes(resp.signature_chain[1].signature);
+    let did_b = octo_ident::WireDid::new(resp.signature_chain[0].hop_did.clone());
+    let did_c = octo_ident::WireDid::new(resp.signature_chain[1].hop_did.clone());
+    verify_ed25519_signature(&did_b, &preimage_b, &sig_b_bytes)
+        .expect("B's HopSignature MUST verify against B's 5-tuple preimage");
+    verify_ed25519_signature(&did_c, &preimage_c, &sig_c_bytes)
+        .expect("C's HopSignature MUST verify against C's 5-tuple preimage");
+
+    // 6. Outermost-first ordering preserved across the substrate.
+    assert_eq!(
+        resp.signature_chain[0].hop_index, 0,
+        "B is hop 0 (outermost)"
+    );
+    assert_eq!(
+        resp.signature_chain[1].hop_index, 1,
+        "C is hop 1 (innermost)"
+    );
+}

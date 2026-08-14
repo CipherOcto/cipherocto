@@ -877,14 +877,14 @@ Real `Caveat` enum at `crates/octo-cap-macaroon/src/caveat/mod.rs` carries exact
 | `Factory`         | `Factory(FactoryVet)` tuple where `FactoryVet { target_vault_id: [u8; 32], action_template: ActionTemplate { selector: String, args: Vec<String> }, required_caller: Option<String>, pre_conditions: Vec<Constraint>, expiry_for_deploy_unix: u64 }` — typed invocation shape, NOT opaque bytes |
 | `PolicyReference` | `PolicyReference { policy_id: [u8; 32], policy_version_seq: u64, attenuation_witness: [u8; 64] }` — witness signature binds attenuation per RFC-0967 §8.2                                                                                                                                       |
 
-**Phase-2b (4):**
+**RFC-0965 v1.1 acceptance bumps (3) + phase-2b (1):**
 
-| Variant             | Shape                                                                                                                                    |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `ValidAfter`        | `ValidAfter { not_before_unix: u64 }` — single timestamp; for ranges use `Constraint::ValidRange`                                        |
-| `RedemptionContext` | `RedemptionContext { context_hash: [u8; 32] }` — anti-replay domain separator per RFC-0965 §3.6                                          |
-| `Sharded`           | `Sharded { shard_id: u32 }`                                                                                                              |
-| `Payment`           | `Payment(PaymentCaveat)` tuple where `PaymentCaveat { caveat_name: String, budget: MicroOctoW, model: String, expires_at_unix_ms: u64 }` |
+| Variant             | Shape                                                                                                                                    | Source                      |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| `ValidAfter`        | `ValidAfter { not_before_unix: u64 }` — single timestamp; for ranges use `Constraint::ValidRange`                                        | RFC-0965 §3.3               |
+| `RedemptionContext` | `RedemptionContext { context_hash: [u8; 32] }` — anti-replay domain separator per RFC-0965 §3.6                                          | RFC-0965 §3.6               |
+| `Sharded`           | `Sharded { shard_id: u32 }`                                                                                                              | RFC-0965 §1.2 + RFC-0963 §6 |
+| `Payment`           | `Payment(PaymentCaveat)` tuple where `PaymentCaveat { caveat_name: String, budget: MicroOctoW, model: String, expires_at_unix_ms: u64 }` | mission `0957-phase2b`      |
 
 Subsumption rule reference: `set_subsumes(parent, child)` at `crates/octo-cap-macaroon/src/caveat/mod.rs` enforces monotonic narrowing per RFC-0957 §3.5.
 Each variant's child ← parent rule is documented inline in the source — examples:
@@ -941,9 +941,9 @@ These gaps surfaced while writing this doc. Each should become either a follow-o
 | `0870k-transport-request-response`        | CLAIMED 2026-08-12                                                                                      | 8, 10 (substrate)                                 |
 | `0871b-cross-node-forwarding`             | LANDED 2026-08-12                                                                                       | 8, 11 (hop signature)                             |
 | `0871b-storage-backend`                   | LANDED 2026-08-11 (commit `71f8d745`; mission file header still says "claimed" — drift-closure pending) | 4 (balance storage)                               |
-| `0010-f2-multi-chain-did-resolution`      | LANDED 2026-08-11                                                                                       | 6 (chain-aware DID)                               |
+| `0010-f2-multi-chain-did-resolution`      | LANDED 2026-08-11 (mission file header still says "claimed" — drift-closure pending)                    | 6 (chain-aware DID)                               |
 | `0010-f8-rich-did-documents`              | LANDED 2026-08-11                                                                                       | 6, 9 (rich DID for reputation)                    |
-| `0010-f8-rich-did-storage`                | LANDED 2026-08-11                                                                                       | 6 (storage layer)                                 |
+| `0010-f8-rich-did-storage`                | LANDED 2026-08-11 (mission file header still says "claimed" — drift-closure pending)                    | 6 (storage layer)                                 |
 | `marketplace-escrow-caller-authorization` | LANDED 2026-08-13                                                                                       | 6, 7 (escrow caller auth — Round 1 review C1 fix) |
 | `marketplace-e2e-strong-scenarios`        | LANDED 2026-08-13                                                                                       | 6, 7, 10, 12, 13, 14                              |
 | `0957-phase2b-payment-caveat`             | LANDED 2026-08-13                                                                                       | 7 (PaymentCaveat + macaroon HMAC)                 |
@@ -969,8 +969,9 @@ These gaps surfaced while writing this doc. Each should become either a follow-o
 | 14 Sybil           | (network-layer tests in `crates/octo-network/tests/porelay_proofs.rs`)                                                                                                                                                                                                                                                      | Stake-weighted Sybil resistance at scale (1000+ identities)               |
 
 > **Note on `marketplace_e2e::test_*`:** `marketplace_e2e.rs` exists at
-> `crates/quota-router-core/tests/marketplace_e2e.rs` with 23 e2e tests (plus 3 helpers
-> `setup_match`, `match_and_populate`, `order_side_classification` — not counted as tests).
+> `crates/quota-router-core/tests/marketplace_e2e.rs` with 24 e2e tests (all 24 are `#[test]`-marked
+> functions; `order_side_classification` is one of them, not a helper). No non-test helper functions
+> are tagged in the file.
 > Mix of strong-scenario + legacy/baseline; the strong-vs-baseline split is not byte-identical to any
 > single AC list.
 > Named examples: `happy_path_bid_matches_ask_escrow_settles`, `dispute_valid_slashes_seller`, `escrow_recovery_from_locked_state_succeeds`, `concurrent_settlement_duplicate_rejected`.
@@ -996,4 +997,5 @@ These gaps surfaced while writing this doc. Each should become either a follow-o
 | 2026-08-13 | Round 13 review (Caveat schema 26-variant shape corrections, RFC-0871 §Hop Signature → §Data Structures)                                                                       | cc (review)     |
 | 2026-08-13 | Round 14 review (TOC, prose wrap, mermaid split, Round 12 row, phantom-pointer cleanup, slash_with_pct arg rename)                                                             | cc (review)     |
 | 2026-08-13 | Round 15 review (2 CRIT line-wraps L411/L512, 6 LOW technical: capabilities→authorizations, RelayScore 9 fields, HopError format, test count 23, 0871b-storage-backend status) | cc (review)     |
-| 2026-08-13 | Round 16 review (L229 HIGH line wrap, L901 LOW §Caveat Schema → §Caveat schema casing)                                                                                                                          | cc (review)     |
+| 2026-08-13 | Round 16 review (L229 HIGH line wrap, L901 LOW §Caveat Schema → §Caveat schema casing)                                                                                         | cc (review)     |
+| 2026-08-13 | Round 16 technical (HIGH L972 marketplace_e2e 23→24 actual count, HIGH L944/946 mission-file drift-closure note, LOW §Caveat schema Phase-2b(4) → RFC-0965 v1.1(3)+phase-2b(1) with Source col) | cc (review)     |

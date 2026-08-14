@@ -6,6 +6,28 @@
 
 > This document is **integrator glue**. Each scenario cross-links the deeper docs that own the specifics. Use it as a tour, then drill into the linked RFCs and architecture specs for protocol-level detail.
 
+## Quick links
+
+- [Scenario 1 — Hello world](#scenario-1--hello-world-single-provider-no-network)
+- [Scenario 2 — Multi-provider dispatch](#scenario-2--multi-provider-dispatch-via-dispatch_map)
+- [Scenario 3 — Provider 500 → 502](#scenario-3--provider-500-surfaces-as-502-bad_gateway)
+- [Scenario 4 — Budget 402](#scenario-4--budget-exhausted-returns-402-payment_required)
+- [Scenario 5 — Rate limit 429](#scenario-5--rate-limit-exceeded-returns-429)
+- [Scenario 6 — Marketplace discovery](#scenario-6--marketplace-discovery-model-not-local)
+- [Scenario 7 — Deal + escrow](#scenario-7--deal-pick-offer-mint-capabilitytoken-v2-fund-escrow)
+- [Scenario 8 — Mesh forwarding](#scenario-8--mesh-forwarding-nodeenvelope--hopsignature-chain)
+- [Scenario 9 — Seller validation](#scenario-9--seller-validation-capability-verify-reputation-check-provider-dispatch)
+- [Scenario 10 — Streaming + settlement](#scenario-10--streaming-response--settlement)
+- [Scenario 11 — Replay attack](#scenario-11--adversarial-replay-attack)
+- [Scenario 12 — Seller offline mid-stream](#scenario-12--adversarial-seller-offline-mid-stream)
+- [Scenario 13 — Server-side check fail](#scenario-13--adversarial-capability-fails-server-side-check)
+- [Scenario 14 — Sybil seller](#scenario-14--adversarial-sybil-seller-with-fake-reputation)
+- [Caveat schema](#caveat-schema)
+- [Open questions](#open-questions)
+- [Related RFCs](#related-rfcs)
+- [Related missions](#related-missions)
+- [Test coverage map](#test-coverage-map)
+
 ## Glossary
 
 | Term                   | Meaning                                                                                                                                                                                                                                                                                                                                                                                                  | Where                                                                                        |
@@ -33,7 +55,8 @@
 | **Settlement**         | Post-completion: escrow releases to seller node + router hops, reputation scores update.                                                                                                                                                                                                                                                                                                                 | `use-cases/reputation-persistence.md`                                                        |
 | **seen-set**           | Seller-side cache of recently processed `envelope_id` values. Replay defense at the seller (real impl: `DotError::ReplayDetected` on `cache.check_and_insert(envelope_id, current_epoch)` at `crates/octo-network/src/dot/replay.rs`).                                                                                                                                                                   | `crates/octo-network/src/dot/replay.rs`, `crates/octo-network/src/dot/error.rs`              |
 
-> Throughout this doc, **"envelope"** is shorthand for `NodeEnvelope` (the full proper noun) outside formal type references. The abbreviated form is fine in prose; the formal name appears in code snippets and capability-witness fields.
+> Throughout this doc, **"envelope"** is shorthand for `NodeEnvelope` (the full proper noun) outside formal type references.
+> The abbreviated form is fine in prose; the formal name appears in code snippets and capability-witness fields.
 
 ## Cross-references
 
@@ -57,12 +80,14 @@
 > - **ZK** = `ZK verifier` per RFC-0958 — capability issuance proof check in Scenario 9
 > - **U** = human `Developer` actor — introductory use only in Scenario 1
 > - **P1/P2** = router hop labels (hop 1 / hop 2) — used in Blocks 8/10/11/12 to denote `Router A` / `Router B` positions in the chain
->
-> Per-scenario ad-hoc labels (NOT in the main glossary): **DM** = `dispatch_map` (renamed from **D** to avoid collision with the Dispute-flow shorthand above), **TB** = per-key `TokenBucket`, **DB** = Stoolap balance store, **MK** = marketplace node, **ANT** = Anthropic provider, **OAI** = OpenAI provider, **SL** = `SlashingLedger` (Scenario 13 — receives `slash_with_pct` from Dispute flow **D**). "Wallet node" / "Marketplace node" / "Router node" / "Seller node" remain the glossary terms above.
+
+> Per-scenario ad-hoc labels (NOT in the main glossary): **DM** = `dispatch_map` (renamed from **D** to avoid collision with the Dispute-flow shorthand above), **TB** = per-key `TokenBucket`, **DB** = Stoolap balance store, **MK** = marketplace node, **ANT** = Anthropic provider, **OAI** = OpenAI provider, **SL** = `SlashingLedger` (Scenario 13 — receives `slash_with_pct` from Dispute flow **D**).
+> "Wallet node" / "Marketplace node" / "Router node" / "Seller node" remain the glossary terms above.
 
 ## Scenario index
 
-> **Note on numbering.** The P1–P8 labels below are **narrative phases** of the buyer-seller journey (Local → Local failure → Marketplace → Deal → Mesh → Seller → Settlement → Adversarial), NOT the cryptographic-architecture layers defined in `CLAUDE.md §Architectural Principles` (Layer A crypto substrate / B identity + transport / C specialized nodes / D transport adapters / E user extensions). Both schemes are correct in their respective contexts; they are kept distinct here to avoid collision.
+> **Note on numbering.** The P1–P8 labels below are **narrative phases** of the buyer-seller journey (Local → Local failure → Marketplace → Deal → Mesh → Seller → Settlement → Adversarial), NOT the cryptographic-architecture layers defined in `CLAUDE.md §Architectural Principles`.
+> Both schemes (Layer A crypto substrate / B identity + transport / C specialized nodes / D transport adapters / E user extensions) are correct in their respective contexts; they are kept distinct here to avoid collision.
 
 | #   | Phase                 | Title                                                                     |
 | --- | --------------------- | ------------------------------------------------------------------------- |
@@ -183,14 +208,18 @@ sequenceDiagram
 1. OpenAI's `/chat/completions` endpoint returns 500 (transient internal error, not a client fault).
 2. The proxy's `handle_request_litellm` Err arm maps the upstream 500 → 502 BAD_GATEWAY. The same mapping applies to `handle_streaming` and `handle_embedding_request`. Per RFC-0933 §5. Error Response.
 3. The proxy does not retry on the client's behalf. The client is responsible for backoff.
-4. If the proxy has a fallback provider configured (e.g. Anthropic as backup), it tries the fallback. The fallback contract is pinned by `crates/quota-router-core/src/proxy.rs::test_post_dispatch_5xx_triggers_fallback`. (Scenario 1's happy path used no fallback.)
+4. If the proxy has a fallback provider configured (e.g. Anthropic as backup), it tries the fallback.
+   The fallback contract is pinned by `crates/quota-router-core/src/proxy.rs::test_post_dispatch_5xx_triggers_fallback`.
+   (Scenario 1's happy path used no fallback.)
 
 **Status-code semantics (pinned):**
 
 - **500 INTERNAL_SERVER_ERROR** = proxy-internal bug. Should not normally occur.
 - **502 BAD_GATEWAY** = upstream (provider) fault. Wraps upstream 500.
 - **503 SERVICE_UNAVAILABLE** = no provider able to serve the model. Multiple sub-conditions (see consolidated 503 table below).
-- **504 GATEWAY_TIMEOUT** = reserved; not currently emitted by the proxy. `classify_http_error` maps incoming 504 responses from upstream to `RouterError::Timeout`, but the proxy itself does not synthesize 504 (streaming-buffer-overflow is not yet implemented).
+- **504 GATEWAY_TIMEOUT** = reserved; not currently emitted by the proxy.
+  `classify_http_error` maps incoming 504 responses from upstream to `RouterError::Timeout`,
+  but the proxy itself does not synthesize 504 (streaming-buffer-overflow is not yet implemented).
 
 **Consolidated 503 sub-conditions (verified against `crates/quota-router-core/src/proxy.rs`):**
 
@@ -329,7 +358,8 @@ sequenceDiagram
     participant E as Escrow ledger
 
     C->>P: Pick offer { seller_did, max_price_micro_octo_w }
-    P->>W: MintCapabilityTokenV2 {<br/>  audience=seller_did,<br/>  model="claude-opus-4-5",<br/>  max_price_micro_octo_w=500_000_000,<br/>  expiry=now+5min,<br/>  caveats=[MaxUses { count: 1 }, ValidRange { valid_after_unix, valid_until_unix }]<br/>}
+    P->>W: MintCapabilityTokenV2 (request: audience, model, price, expiry, caveats)
+    Note over W: Mint template:<br/>  audience=seller_did,<br/>  model="claude-opus-4-5",<br/>  max_price_micro_octo_w=500_000_000,<br/>  expiry=now+5min,<br/>  caveats=[MaxUses { count: 1 }, ValidRange { valid_after_unix, valid_until_unix }]
     W-->>P: CapabilityTokenV2 (signed)
     P->>E: escrow.lock(buyer_party)
     Note over E: Escrow fields are id, buyer, seller,<br/>arbitrator, amount_micro_octo_w, state<br/>(real struct at crates/quota-router-core/src/marketplace/escrow.rs §Escrow)
@@ -411,7 +441,8 @@ sequenceDiagram
     SN->>W: VerifyCapability(V2 token)
     W->>ZK: Verify ZK proof of capability issuance
     ZK-->>W: valid
-    W->>W: Check caveats:<br/>  - Audience [pre-existing] == seller_did<br/>  - Before [pre-existing] not passed (expiry)<br/>  - Model [pre-existing] matches request<br/>  - MaxUses [RFC-0965 §3] not exceeded<br/>  - MaxPerTx [RFC-0965 §3] amount <= price ceiling
+    W->>W: Check caveats (eval every caveat)
+    Note over W: Caveat checklist:<br/>  - Audience [pre-existing] == seller_did<br/>  - Before [pre-existing] not passed (expiry)<br/>  - Model [pre-existing] matches request<br/>  - MaxUses [RFC-0965 §3] not exceeded<br/>  - MaxPerTx [RFC-0965 §3] amount <= price ceiling
     W-->>SN: Capability valid
     SN->>RR: score(buyer_did)
     RR-->>SN: score = 0.85, history = clean
@@ -602,7 +633,7 @@ sequenceDiagram
     P0->>E: escrow.dispute(buyer_party)
     E->>D: open dispute (state: Locked to Disputed)
     Note over D: Dispute flow (conceptual coordinator):<br/>no discrete OpenDispute method
-    D->>SL: slashing.slash_with_pct(seller_did, SlashReason::FAILED_RESPONSE, 0.05)
+    D->>SL: slashing.slash_with_pct(provider_id, SlashReason::FAILED_RESPONSE, 0.05)
     Note over D,SL: 0.05 = 5% slash<br/>5.0 would clamp to 100% (real signature clamps 0.0..=1.0)
     D->>RR: marketplace.record_outcome(asker_did=seller_did, success=false, latency_ms=0)
 ```
@@ -717,7 +748,10 @@ Real `Caveat` enum at `crates/octo-cap-macaroon/src/caveat/mod.rs` carries exact
 | `Sharded`           | `Sharded { shard_id: u32 }`                                                                                                              |
 | `Payment`           | `Payment(PaymentCaveat)` tuple where `PaymentCaveat { caveat_name: String, budget: MicroOctoW, model: String, expires_at_unix_ms: u64 }` |
 
-Subsumption rule reference: `set_subsumes(parent, child)` at `crates/octo-cap-macaroon/src/caveat/mod.rs` enforces monotonic narrowing per RFC-0957 §3.5. Each variant's child ← parent rule is documented inline in the source (e.g. `ValidRange`: child range ⊆ parent range; `AuditWindow`: child duration ≥ parent duration per R7-F8; `WrappedOnly`: `parent_capability` hash equality; `Factory`: full canonical-vector equality).
+Subsumption rule reference: `set_subsumes(parent, child)` at `crates/octo-cap-macaroon/src/caveat/mod.rs` enforces monotonic narrowing per RFC-0957 §3.5.
+Each variant's child ← parent rule is documented inline in the source — examples:
+`ValidRange` (child range ⊆ parent range), `AuditWindow` (child duration ≥ parent per R7-F8),
+`WrappedOnly` (`parent_capability` hash equality), `Factory` (full canonical-vector equality).
 
 Distinct from RFC-0964 `Constraint` envelope variants (the Constraint envelope wraps capabilities at a different layer). The mission `0965-a-caveat-dsl` mission card counts "9 new caveat types" — the RFC-0965-specific subset, not the total landed set.
 
@@ -725,11 +759,15 @@ Distinct from RFC-0964 `Constraint` envelope variants (the Constraint envelope w
 
 These gaps surfaced while writing this doc. Each should become either a follow-on mission or an RFC amendment.
 
-1. **CapabilityToken caveat schema** — See §Caveat Schema above for the full 26-variant enumeration with pinned field shapes. The RFC-0957 envelope spec does not enumerate the caveat set itself; the landed `Caveat` enum at `crates/octo-cap-macaroon/src/caveat/mod.rs` is the source of truth. The mission `0965-a-caveat-dsl` mission card counts "9 new caveat types" — the RFC-0965-specific subset, not the total landed set. Distinct from RFC-0964 `Constraint` envelope variants.
+1. **CapabilityToken caveat schema** — See §Caveat Schema above for the full 26-variant enumeration with pinned field shapes.
+   The RFC-0957 envelope spec does not enumerate the caveat set itself; the landed `Caveat` enum at `crates/octo-cap-macaroon/src/caveat/mod.rs` is the source of truth.
+   The mission `0965-a-caveat-dsl` mission card counts "9 new caveat types" — the RFC-0965-specific subset, not the total landed set.
+   Distinct from RFC-0964 `Constraint` envelope variants.
 2. **Settlement token unit** — Scenario 10 settles in micro_octo_w. The actual ledger (stoolap off-chain vs on-chain) and the canonical currency (USD-pegged stablecoin vs OCTO token) is open.
 3. **Mid-stream refund formula** — Scenario 12 uses `tokens_received × per_token_rate`. The actual formula needs a spec (does the first token cost more? does context length matter?).
 4. **Dispute appeal SLA** — Scenario 13 mentions appeals but does not specify the SLA. Needs an RFC amendment.
-5. **Onion route key rotation** — Scenario 8 uses ORR but does not specify how the route keys rotate. The ORR section in `architecture/octo-network-architecture.md` mentions mission key hierarchy but not rotation cadence.
+5. **Onion route key rotation** — Scenario 8 uses ORR but does not specify how the route keys rotate.
+   The ORR section in `architecture/octo-network-architecture.md` mentions mission key hierarchy but not rotation cadence.
 
 ## Related RFCs
 
@@ -750,7 +788,9 @@ These gaps surfaced while writing this doc. Each should become either a follow-o
 | RFC-0970    | Forwarding-Hop Authorization Envelope | 8                                             |
 | RFC-0971    | Destination-Node Role Consolidation   | 9                                             |
 
-> RFC-0943 ("Team Budget") is referenced in some code comments but **no RFC-0943 file exists** — the file was never filed. Treat any `RFC-0943` reference in code as a forward-ref to RFC-0933 (Rate Limiting) which absorbs team-budget semantics via the `Balance` field. A separate RFC-0943 filing mission is filed under `missions/archived/0943-b-per-team-budgets.md`.
+> RFC-0943 ("Team Budget") is referenced in some code comments but **no RFC-0943 file exists** — the file was never filed.
+> Treat any `RFC-0943` reference in code as a forward-ref to RFC-0933 (Rate Limiting) which absorbs team-budget semantics via the `Balance` field.
+> A separate RFC-0943 filing mission is filed under `missions/archived/0943-b-per-team-budgets.md`.
 
 ## Related missions
 
@@ -768,8 +808,6 @@ These gaps surfaced while writing this doc. Each should become either a follow-o
 | `marketplace-e2e-strong-scenarios`        | LANDED 2026-08-13  | 6, 7, 10, 12, 13, 14                              |
 | `0957-phase2b-payment-caveat`             | LANDED 2026-08-13  | 7 (PaymentCaveat + macaroon HMAC)                 |
 | `0957-phase2c-capability-issuer-wiring`   | LANDED 2026-08-13  | 7 (Capability Issuer Node wiring)                 |
-
-> **Phantom pointer alert:** `missions/open/marketplace-e2e-strong-scenarios.md` is a duplicate of the claimed file (per `no-phantom-mission-pointers` memory). The duplicate should be deleted in a follow-up sweep; this doc cites the `claimed/` file (the canonical version).
 
 ## Test coverage map
 
@@ -790,7 +828,9 @@ These gaps surfaced while writing this doc. Each should become either a follow-o
 | 13 Dispute         | (covered indirectly by `marketplace-escrow-caller-authorization` lib tests)                                                                                                                                                                                                                                                 | Appeal flow (no dedicated test yet)                                       |
 | 14 Sybil           | (network-layer tests in `crates/octo-network/tests/porelay_proofs.rs`)                                                                                                                                                                                                                                                      | Stake-weighted Sybil resistance at scale (1000+ identities)               |
 
-> **Note on `marketplace_e2e::test_*`:** `marketplace_e2e.rs` exists at `crates/quota-router-core/tests/marketplace_e2e.rs` with 24 e2e tests (mix of strong-scenario + legacy/baseline; the strong-vs-baseline split is not byte-identical to any single AC list). Named examples: `happy_path_bid_matches_ask_escrow_settles`, `dispute_valid_slashes_seller`, `escrow_recovery_from_locked_state_succeeds`, `concurrent_settlement_duplicate_rejected`. The coverage map above reflects this.
+> **Note on `marketplace_e2e::test_*`:** `marketplace_e2e.rs` exists at `crates/quota-router-core/tests/marketplace_e2e.rs` with 24 e2e tests (mix of strong-scenario + legacy/baseline; the strong-vs-baseline split is not byte-identical to any single AC list).
+> Named examples: `happy_path_bid_matches_ask_escrow_settles`, `dispute_valid_slashes_seller`, `escrow_recovery_from_locked_state_succeeds`, `concurrent_settlement_duplicate_rejected`.
+> The coverage map above reflects this.
 
 ## Change log
 
@@ -808,4 +848,6 @@ These gaps surfaced while writing this doc. Each should become either a follow-o
 | 2026-08-13 | Round 9 review (RelayScore fabrication, anchors, mermaid participants, phase labels)                                                | cc (review)     |
 | 2026-08-13 | Round 10 review (index↔heading alignment, glossary rows, marketplace-empty caveat, bullet-list legend)                              | cc (review)     |
 | 2026-08-13 | Round 11 review (NodeEnvelope field-type pinning, Caveat schema subsection, CapabilityBundleV2 4 fields, Scenario 12 design-intent) | cc (review)     |
-| 2026-08-13 | Round 13 review (Caveat schema 26-variant shape corrections, RFC-0871 §Hop Signature → §Data Structures) | cc (review)     |
+| 2026-08-13 | Round 12 review (no findings — STABLE; later overturned by Round 13)                                                                | cc (review)     |
+| 2026-08-13 | Round 13 review (Caveat schema 26-variant shape corrections, RFC-0871 §Hop Signature → §Data Structures)                            | cc (review)     |
+| 2026-08-13 | Round 14 review (TOC, prose wrap, mermaid split, Round 12 row, phantom-pointer cleanup, slash_with_pct arg rename)                  | cc (review)     |

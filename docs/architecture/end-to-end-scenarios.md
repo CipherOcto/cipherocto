@@ -10,20 +10,20 @@
 
 ## Quick links
 
-- [Scenario 1 — Hello world](#scenario-1--hello-world-single-provider-no-network)
-- [Scenario 2 — Multi-provider dispatch](#scenario-2--multi-provider-dispatch-via-dispatch_map)
-- [Scenario 3 — Provider 500 → 502](#scenario-3--provider-500-surfaces-as-502-bad_gateway)
-- [Scenario 4 — Budget 402](#scenario-4--budget-exhausted-returns-402-payment_required)
-- [Scenario 5 — Rate limit 429](#scenario-5--rate-limit-exceeded-returns-429)
-- [Scenario 6 — Marketplace discovery](#scenario-6--marketplace-discovery-model-not-local)
-- [Scenario 7 — Deal + escrow](#scenario-7--deal-pick-offer-mint-capabilitytoken-v2-fund-escrow)
-- [Scenario 8 — Mesh forwarding](#scenario-8--mesh-forwarding-nodeenvelope--hopsignature-chain)
-- [Scenario 9 — Seller validation](#scenario-9--seller-validation-capability-verify-reputation-check-provider-dispatch)
-- [Scenario 10 — Streaming + settlement](#scenario-10--streaming-response--settlement)
-- [Scenario 11 — Replay attack](#scenario-11--adversarial-replay-attack)
-- [Scenario 12 — Seller offline mid-stream](#scenario-12--adversarial-seller-offline-mid-stream)
-- [Scenario 13 — Server-side check fail](#scenario-13--adversarial-capability-fails-server-side-check)
-- [Scenario 14 — Sybil seller](#scenario-14--adversarial-sybil-seller-with-fake-reputation)
+- [Scenario 1 — Hello world](#scenario-1-hello-world-single-provider-no-network)
+- [Scenario 2 — Multi-provider dispatch](#scenario-2-multi-provider-dispatch-via-dispatch_map)
+- [Scenario 3 — Provider 500 → 502](#scenario-3-provider-500-surfaces-as-502-bad_gateway)
+- [Scenario 4 — Budget 402](#scenario-4-budget-exhausted-returns-402-payment_required)
+- [Scenario 5 — Rate limit 429](#scenario-5-rate-limit-exceeded-returns-429)
+- [Scenario 6 — Marketplace discovery](#scenario-6-marketplace-discovery-model-not-local)
+- [Scenario 7 — Deal + escrow](#scenario-7-deal-pick-offer-mint-capabilitytoken-v2-fund-escrow)
+- [Scenario 8 — Mesh forwarding](#scenario-8-mesh-forwarding-nodeenvelope-hopsignature-chain)
+- [Scenario 9 — Seller validation](#scenario-9-seller-validation-capability-verify-reputation-check-provider-dispatch)
+- [Scenario 10 — Streaming + settlement](#scenario-10-streaming-response-settlement)
+- [Scenario 11 — Replay attack](#scenario-11-adversarial-replay-attack)
+- [Scenario 12 — Seller offline mid-stream](#scenario-12-adversarial-seller-offline-mid-stream)
+- [Scenario 13 — Server-side check fail](#scenario-13-adversarial-capability-fails-server-side-check)
+- [Scenario 14 — Sybil seller](#scenario-14-adversarial-sybil-seller-with-fake-reputation)
 - [Caveat schema](#caveat-schema)
 - [Open questions](#open-questions)
 - [Related RFCs](#related-rfcs)
@@ -865,26 +865,26 @@ Real `Caveat` enum at `crates/octo-cap-macaroon/src/caveat/mod.rs` carries exact
 
 **RFC-0965 §3 (9):**
 
-| Variant           | Shape                                                                                                                                                                                                                                                                                           |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Vault`           | `Vault([u8; 32])` tuple — vault id                                                                                                                                                                                                                                                              |
-| `Permission`      | `Permission(PermissionKind)` tuple where `PermissionKind = NativeTokenTransfer \| Erc20TokenTransfer \| ContractCall \| Reservation \| VaultMutation`                                                                                                                                           |
-| `ValidRange`      | `ValidRange { valid_after_unix: u64, valid_until_unix: u64 }`                                                                                                                                                                                                                                   |
-| `MaxPerTx`        | `MaxPerTx(u128)` tuple — per-token price ceiling                                                                                                                                                                                                                                                |
-| `AuditWindow`     | `AuditWindow { duration_secs: u64 }` — 0 = instant                                                                                                                                                                                                                                              |
-| `MaxUses`         | `MaxUses { count: u32 }` — 0 = unlimited                                                                                                                                                                                                                                                        |
-| `WrappedOnly`     | `WrappedOnly { parent_capability: [u8; 32] }`                                                                                                                                                                                                                                                   |
-| `Factory`         | `Factory(FactoryVet)` tuple where `FactoryVet { target_vault_id: [u8; 32], action_template: ActionTemplate { selector: String, args: Vec<String> }, required_caller: Option<String>, pre_conditions: Vec<Constraint>, expiry_for_deploy_unix: u64 }` — typed invocation shape, NOT opaque bytes |
-| `PolicyReference` | `PolicyReference { policy_id: [u8; 32], policy_version_seq: u64, attenuation_witness: [u8; 64] }` — witness signature binds attenuation per RFC-0967 §8.2                                                                                                                                       |
+| Variant           | Shape                                                                                                                                                                                                                                                                |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Vault`           | `Vault([u8; 32])` tuple — vault id                                                                                                                                                                                                                                   |
+| `Permission`      | `Permission(PermissionKind)` tuple where `PermissionKind = NativeTokenTransfer \| Erc20TokenTransfer \| ContractCall \| Reservation \| VaultMutation`                                                                                                                |
+| `ValidRange`      | `ValidRange { valid_after_unix: u64, valid_until_unix: u64 }`                                                                                                                                                                                                        |
+| `MaxPerTx`        | `MaxPerTx(u128)` tuple — per-token price ceiling                                                                                                                                                                                                                     |
+| `AuditWindow`     | `AuditWindow { duration_secs: u64 }` — 0 = instant                                                                                                                                                                                                                   |
+| `MaxUses`         | `MaxUses { count: u32 }` — 0 = unlimited                                                                                                                                                                                                                             |
+| `WrappedOnly`     | `WrappedOnly { parent_capability: [u8; 32] }`                                                                                                                                                                                                                        |
+| `Factory`         | `Factory(FactoryVet)` tuple. `FactoryVet { target_vault_id: [u8; 32], action_template: ActionTemplate { selector: String, args: Vec<String> }, required_caller: Option<String>, pre_conditions: Vec<Constraint>, expiry_for_deploy_unix: u64 }` — typed, not opaque. |
+| `PolicyReference` | `PolicyReference { policy_id: [u8; 32], policy_version_seq: u64, attenuation_witness: [u8; 64] }` — witness signature binds attenuation per RFC-0967 §8.2                                                                                                            |
 
 **RFC-0965 v1.1 acceptance bumps (3) + phase-2b (1):**
 
-| Variant             | Shape                                                                                                                                    | Source                      |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
-| `ValidAfter`        | `ValidAfter { not_before_unix: u64 }` — single timestamp; for ranges use `Constraint::ValidRange`                                        | RFC-0965 §3.3               |
-| `RedemptionContext` | `RedemptionContext { context_hash: [u8; 32] }` — anti-replay domain separator per RFC-0965 §3.6                                          | RFC-0965 §3.6               |
-| `Sharded`           | `Sharded { shard_id: u32 }`                                                                                                              | RFC-0965 §1.2 + RFC-0963 §6 |
-| `Payment`           | `Payment(PaymentCaveat)` tuple where `PaymentCaveat { caveat_name: String, budget: MicroOctoW, model: String, expires_at_unix_ms: u64 }` | mission `0957-phase2b`      |
+| Variant             | Shape                                                                                                                               | Source                      |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| `ValidAfter`        | `ValidAfter { not_before_unix: u64 }` — single timestamp; for ranges use `Constraint::ValidRange`                                   | RFC-0965 §3.3               |
+| `RedemptionContext` | `RedemptionContext { context_hash: [u8; 32] }` — anti-replay domain separator per RFC-0965 §3.6                                     | RFC-0965 §3.6               |
+| `Sharded`           | `Sharded { shard_id: u32 }`                                                                                                         | RFC-0965 §1.2 + RFC-0963 §6 |
+| `Payment`           | `Payment(PaymentCaveat)` tuple. `PaymentCaveat { caveat_name: String, budget: MicroOctoW, model: String, expires_at_unix_ms: u64 }` | mission `0957-phase2b`      |
 
 Subsumption rule reference: `set_subsumes(parent, child)` at `crates/octo-cap-macaroon/src/caveat/mod.rs` enforces monotonic narrowing per RFC-0957 §3.5.
 Each variant's child ← parent rule is documented inline in the source — examples:
@@ -979,24 +979,25 @@ These gaps surfaced while writing this doc. Each should become either a follow-o
 
 ## Change log
 
-| Date       | Change                                                                                                                                                                         | Author          |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------- |
-| 2026-08-13 | Initial draft, 14 scenarios across 8 phases                                                                                                                                    | cc (brainstorm) |
-| 2026-08-13 | Round 1 review (foundational checks)                                                                                                                                           | cc (review)     |
-| 2026-08-13 | Round 2 review (consistency sweep)                                                                                                                                             | cc (review)     |
-| 2026-08-13 | Round 3 review (api surface claims)                                                                                                                                            | cc (review)     |
-| 2026-08-13 | Round 4 review (api surface claims cont.)                                                                                                                                      | cc (review)     |
-| 2026-08-13 | Round 5 review (mermaid + prose)                                                                                                                                               | cc (review)     |
-| 2026-08-13 | Round 6 review (over-citation regression)                                                                                                                                      | cc (review)     |
-| 2026-08-13 | Round 7 review (SL routing fix)                                                                                                                                                | cc (review)     |
-| 2026-08-13 | Round 8 review (cents→micro_octo_w, TrustRegistry, MaxPerTx tuple, markdown)                                                                                                   | cc (review)     |
-| 2026-08-13 | Round 9 review (RelayScore fabrication, anchors, mermaid participants, phase labels)                                                                                           | cc (review)     |
-| 2026-08-13 | Round 10 review (index↔heading alignment, glossary rows, marketplace-empty caveat, bullet-list legend)                                                                         | cc (review)     |
-| 2026-08-13 | Round 11 review (NodeEnvelope field-type pinning, Caveat schema subsection, CapabilityBundleV2 4 fields, Scenario 12 design-intent)                                            | cc (review)     |
-| 2026-08-13 | Round 12 review (no findings — STABLE; later overturned by Round 13)                                                                                                           | cc (review)     |
-| 2026-08-13 | Round 13 review (Caveat schema 26-variant shape corrections, RFC-0871 §Hop Signature → §Data Structures)                                                                       | cc (review)     |
-| 2026-08-13 | Round 14 review (TOC, prose wrap, mermaid split, Round 12 row, phantom-pointer cleanup, slash_with_pct arg rename)                                                             | cc (review)     |
-| 2026-08-13 | Round 15 review (2 CRIT line-wraps L411/L512, 6 LOW technical: capabilities→authorizations, RelayScore 9 fields, HopError format, test count 23, 0871b-storage-backend status) | cc (review)     |
-| 2026-08-13 | Round 16 review (L229 HIGH line wrap, L901 LOW §Caveat Schema → §Caveat schema casing)                                                                                         | cc (review)     |
+| Date       | Change                                                                                                                                                                                          | Author          |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| 2026-08-13 | Initial draft, 14 scenarios across 8 phases                                                                                                                                                     | cc (brainstorm) |
+| 2026-08-13 | Round 1 review (foundational checks)                                                                                                                                                            | cc (review)     |
+| 2026-08-13 | Round 2 review (consistency sweep)                                                                                                                                                              | cc (review)     |
+| 2026-08-13 | Round 3 review (api surface claims)                                                                                                                                                             | cc (review)     |
+| 2026-08-13 | Round 4 review (api surface claims cont.)                                                                                                                                                       | cc (review)     |
+| 2026-08-13 | Round 5 review (mermaid + prose)                                                                                                                                                                | cc (review)     |
+| 2026-08-13 | Round 6 review (over-citation regression)                                                                                                                                                       | cc (review)     |
+| 2026-08-13 | Round 7 review (SL routing fix)                                                                                                                                                                 | cc (review)     |
+| 2026-08-13 | Round 8 review (cents→micro_octo_w, TrustRegistry, MaxPerTx tuple, markdown)                                                                                                                    | cc (review)     |
+| 2026-08-13 | Round 9 review (RelayScore fabrication, anchors, mermaid participants, phase labels)                                                                                                            | cc (review)     |
+| 2026-08-13 | Round 10 review (index↔heading alignment, glossary rows, marketplace-empty caveat, bullet-list legend)                                                                                          | cc (review)     |
+| 2026-08-13 | Round 11 review (NodeEnvelope field-type pinning, Caveat schema subsection, CapabilityBundleV2 4 fields, Scenario 12 design-intent)                                                             | cc (review)     |
+| 2026-08-13 | Round 12 review (no findings — STABLE; later overturned by Round 13)                                                                                                                            | cc (review)     |
+| 2026-08-13 | Round 13 review (Caveat schema 26-variant shape corrections, RFC-0871 §Hop Signature → §Data Structures)                                                                                        | cc (review)     |
+| 2026-08-13 | Round 14 review (TOC, prose wrap, mermaid split, Round 12 row, phantom-pointer cleanup, slash_with_pct arg rename)                                                                              | cc (review)     |
+| 2026-08-13 | Round 15 review (2 CRIT line-wraps L411/L512, 6 LOW technical: capabilities→authorizations, RelayScore 9 fields, HopError format, test count 23, 0871b-storage-backend status)                  | cc (review)     |
+| 2026-08-13 | Round 16 review (L229 HIGH line wrap, L901 LOW §Caveat Schema → §Caveat schema casing)                                                                                                          | cc (review)     |
 | 2026-08-13 | Round 16 technical (HIGH L972 marketplace_e2e 23→24 actual count, HIGH L944/946 mission-file drift-closure note, LOW §Caveat schema Phase-2b(4) → RFC-0965 v1.1(3)+phase-2b(1) with Source col) | cc (review)     |
-| 2026-08-13 | Round 17 technical (MED L939 proxy-strong-scenarios LANDED 2026-08-12 → 2026-08-13 per commit 246574a1)                                                                                                  | cc (review)     |
+| 2026-08-13 | Round 17 technical (MED L939 proxy-strong-scenarios LANDED 2026-08-12 → 2026-08-13 per commit 246574a1)                                                                                         | cc (review)     |
+| 2026-08-13 | Round 18 markdown (14 CRIT TOC anchor double-dash collapse for em-dash headings; 17 MED §Caveat schema table-row widths 311c → 284c + 192c → 187c)                                              | cc (review)     |

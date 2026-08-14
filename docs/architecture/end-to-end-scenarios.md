@@ -226,7 +226,8 @@ sequenceDiagram
 **Step-by-step:**
 
 1. OpenAI's `/chat/completions` endpoint returns 500 (transient internal error, not a client fault).
-2. The proxy's `handle_request_litellm` Err arm maps the upstream 500 → 502 BAD_GATEWAY. The same mapping applies to `handle_streaming` and `handle_embedding_request`. Per RFC-0933 §5. Error Response.
+2. The proxy's `handle_request_litellm` Err arm maps the upstream 500 → 502 BAD_GATEWAY. The same mapping
+   applies to `handle_streaming` and `handle_embedding_request`. Per RFC-0933 §5. Error Response.
 3. The proxy does not retry on the client's behalf. The client is responsible for backoff.
 4. If the proxy has a fallback provider configured (e.g. Anthropic as backup), it tries the fallback.
    The fallback contract is pinned by `crates/quota-router-core/src/proxy.rs::test_post_dispatch_5xx_triggers_fallback`.
@@ -898,7 +899,7 @@ RFC-0965-specific subset, not the total landed set.
 
 These gaps surfaced while writing this doc. Each should become either a follow-on mission or an RFC amendment.
 
-1. **CapabilityToken caveat schema** — See §Caveat Schema above for the full 26-variant enumeration with pinned field shapes.
+1. **CapabilityToken caveat schema** — See §Caveat schema above for the full 26-variant enumeration with pinned field shapes.
    The RFC-0957 envelope spec does not enumerate the caveat set itself; the landed `Caveat` enum at `crates/octo-cap-macaroon/src/caveat/mod.rs` is the source of truth.
    The mission `0965-a-caveat-dsl` mission card counts "9 new caveat types" — the RFC-0965-specific subset, not the total landed set.
    Distinct from RFC-0964 `Constraint` envelope variants.
@@ -977,21 +978,22 @@ These gaps surfaced while writing this doc. Each should become either a follow-o
 
 ## Change log
 
-| Date       | Change                                                                                                                              | Author          |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------- | --------------- |
-| 2026-08-13 | Initial draft, 14 scenarios across 8 phases                                                                                         | cc (brainstorm) |
-| 2026-08-13 | Round 1 review (foundational checks)                                                                                                | cc (review)     |
-| 2026-08-13 | Round 2 review (consistency sweep)                                                                                                  | cc (review)     |
-| 2026-08-13 | Round 3 review (api surface claims)                                                                                                 | cc (review)     |
-| 2026-08-13 | Round 4 review (api surface claims cont.)                                                                                           | cc (review)     |
-| 2026-08-13 | Round 5 review (mermaid + prose)                                                                                                    | cc (review)     |
-| 2026-08-13 | Round 6 review (over-citation regression)                                                                                           | cc (review)     |
-| 2026-08-13 | Round 7 review (SL routing fix)                                                                                                     | cc (review)     |
-| 2026-08-13 | Round 8 review (cents→micro_octo_w, TrustRegistry, MaxPerTx tuple, markdown)                                                        | cc (review)     |
-| 2026-08-13 | Round 9 review (RelayScore fabrication, anchors, mermaid participants, phase labels)                                                | cc (review)     |
-| 2026-08-13 | Round 10 review (index↔heading alignment, glossary rows, marketplace-empty caveat, bullet-list legend)                              | cc (review)     |
-| 2026-08-13 | Round 11 review (NodeEnvelope field-type pinning, Caveat schema subsection, CapabilityBundleV2 4 fields, Scenario 12 design-intent) | cc (review)     |
-| 2026-08-13 | Round 12 review (no findings — STABLE; later overturned by Round 13)                                                                | cc (review)     |
-| 2026-08-13 | Round 13 review (Caveat schema 26-variant shape corrections, RFC-0871 §Hop Signature → §Data Structures)                            | cc (review)     |
-| 2026-08-13 | Round 14 review (TOC, prose wrap, mermaid split, Round 12 row, phantom-pointer cleanup, slash_with_pct arg rename)                  | cc (review)     |
+| Date       | Change                                                                                                                                                                         | Author          |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------- |
+| 2026-08-13 | Initial draft, 14 scenarios across 8 phases                                                                                                                                    | cc (brainstorm) |
+| 2026-08-13 | Round 1 review (foundational checks)                                                                                                                                           | cc (review)     |
+| 2026-08-13 | Round 2 review (consistency sweep)                                                                                                                                             | cc (review)     |
+| 2026-08-13 | Round 3 review (api surface claims)                                                                                                                                            | cc (review)     |
+| 2026-08-13 | Round 4 review (api surface claims cont.)                                                                                                                                      | cc (review)     |
+| 2026-08-13 | Round 5 review (mermaid + prose)                                                                                                                                               | cc (review)     |
+| 2026-08-13 | Round 6 review (over-citation regression)                                                                                                                                      | cc (review)     |
+| 2026-08-13 | Round 7 review (SL routing fix)                                                                                                                                                | cc (review)     |
+| 2026-08-13 | Round 8 review (cents→micro_octo_w, TrustRegistry, MaxPerTx tuple, markdown)                                                                                                   | cc (review)     |
+| 2026-08-13 | Round 9 review (RelayScore fabrication, anchors, mermaid participants, phase labels)                                                                                           | cc (review)     |
+| 2026-08-13 | Round 10 review (index↔heading alignment, glossary rows, marketplace-empty caveat, bullet-list legend)                                                                         | cc (review)     |
+| 2026-08-13 | Round 11 review (NodeEnvelope field-type pinning, Caveat schema subsection, CapabilityBundleV2 4 fields, Scenario 12 design-intent)                                            | cc (review)     |
+| 2026-08-13 | Round 12 review (no findings — STABLE; later overturned by Round 13)                                                                                                           | cc (review)     |
+| 2026-08-13 | Round 13 review (Caveat schema 26-variant shape corrections, RFC-0871 §Hop Signature → §Data Structures)                                                                       | cc (review)     |
+| 2026-08-13 | Round 14 review (TOC, prose wrap, mermaid split, Round 12 row, phantom-pointer cleanup, slash_with_pct arg rename)                                                             | cc (review)     |
 | 2026-08-13 | Round 15 review (2 CRIT line-wraps L411/L512, 6 LOW technical: capabilities→authorizations, RelayScore 9 fields, HopError format, test count 23, 0871b-storage-backend status) | cc (review)     |
+| 2026-08-13 | Round 16 review (L229 HIGH line wrap, L901 LOW §Caveat Schema → §Caveat schema casing)                                                                                                                          | cc (review)     |

@@ -703,8 +703,8 @@ sequenceDiagram
     P0->>P0: Detect mid-stream failure<br/>Close SSE with 502 error event
     P0-->>C: 502 BAD_GATEWAY<br/>{ "error": "seller offline mid-stream",<br/>  "tokens_received": 1,<br/>  "refund_micro_octo_w": 499_000_000 }
     P0->>E: escrow.dispute(buyer_party)
-    Note over E: reason conveyed via dispute record<br/>state: Locked to Disputed to Refunded<br/>(no dedicated refund() method)
-    E-->>P0: Refund receipt
+    Note over E: reason conveyed via dispute record<br/>state: Locked to Disputed<br/>(arbitrator resolve_invalid → Settled | resolve_valid → Slashed)
+    E-->>P0: Dispute receipt
 ```
 
 **Step-by-step:**
@@ -714,8 +714,9 @@ sequenceDiagram
 3. Router B signals router A, which signals the buyer proxy. The buyer proxy closes its SSE stream with a final 502 error event.
 4. The client SDK detects the truncated stream and surfaces the partial response + error to the user.
 5. The buyer proxy calls `escrow.dispute(buyer_party)` with a seller-offline dispute record. The dispute
-   transitions the escrow to `Disputed`, which terminates as `Refunded`. The refund amount is the escrow
-   total minus the per-token consumed (tokens received × per-token rate, ≈ 1_000_000 micro_octo_w here).
+   transitions the escrow to `Disputed`; the arbitrator's `resolve_invalid()` (a successful buyer-side
+   claim) advances to `Settled`, releasing the residual escrow amount to the buyer (escrow total minus
+   per-token consumed × per-token rate, ≈ 1_000_000 micro_octo_w here).
 6. The reputation registry records the seller's outage. Repeated outages cause reputation to decay below the marketplace threshold, eventually removing the seller from offer lists.
 
 **Why mid-stream failures are harder than pre-stream:** pre-stream failures are atomic (no partial
@@ -770,7 +771,8 @@ sequenceDiagram
    `crates/quota-router-core/src/proxy.rs::classify_http_error`.)
 3. The buyer proxy opens a dispute, attaching the capability bytes as evidence.
 4. The dispute registry:
-   - Refunds the buyer's escrow in full (the seller did not perform work).
+   - Releases the escrow balance to the buyer (`resolve_invalid()` advances `Disputed → Settled`; the
+     seller did not perform work, so the full escrow residual returns to the buyer).
    - Slashes the seller's stake by 5% (not the full stake — partial slash reserves room for honest mistakes vs malicious behavior).
    - Updates reputation: -0.3 for the seller.
 5. The seller can appeal by submitting a counter-claim (e.g., "the buyer sent the wrong audience"). Appeals
@@ -934,20 +936,20 @@ These gaps surfaced while writing this doc. Each should become either a follow-o
 
 ## Related missions
 
-| Mission                                   | Status                                                                                                  | Touches scenarios                                 |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| `proxy-strong-scenarios`                  | LANDED 2026-08-13                                                                                       | 1-5                                               |
-| `proxy-strong-scenarios-phase2`           | LANDED 2026-08-13                                                                                       | 3, 4                                              |
-| `0870k-transport-request-response`        | CLAIMED 2026-08-12                                                                                      | 8, 10 (substrate)                                 |
-| `0871b-cross-node-forwarding`             | LANDED 2026-08-12                                                                                       | 8, 11 (hop signature)                             |
-| `0871b-storage-backend`                   | LANDED 2026-08-11 (commit `71f8d745`; mission file header still says "claimed" — drift-closure pending) | 4 (balance storage)                               |
-| `0010-f2-multi-chain-did-resolution`      | LANDED 2026-08-11 (mission file header still says "claimed" — drift-closure pending)                    | 6 (chain-aware DID)                               |
-| `0010-f8-rich-did-documents`              | LANDED 2026-08-11                                                                                       | 6, 9 (rich DID for reputation)                    |
-| `0010-f8-rich-did-storage`                | LANDED 2026-08-11 (mission file header still says "claimed" — drift-closure pending)                    | 6 (storage layer)                                 |
-| `marketplace-escrow-caller-authorization` | LANDED 2026-08-13                                                                                       | 6, 7 (escrow caller auth — Round 1 review C1 fix) |
-| `marketplace-e2e-strong-scenarios`        | LANDED 2026-08-13                                                                                       | 6, 7, 10, 12, 13, 14                              |
-| `0957-phase2b-payment-caveat`             | LANDED 2026-08-13                                                                                       | 7 (PaymentCaveat + macaroon HMAC)                 |
-| `0957-phase2c-capability-issuer-wiring`   | LANDED 2026-08-13                                                                                       | 7 (Capability Issuer Node wiring)                 |
+| Mission                                   | Status                                                                                                                       | Touches scenarios                                 |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `proxy-strong-scenarios`                  | LANDED 2026-08-13                                                                                                            | 1-5                                               |
+| `proxy-strong-scenarios-phase2`           | LANDED 2026-08-13                                                                                                            | 3, 4                                              |
+| `0870k-transport-request-response`        | CLAIMED 2026-08-12                                                                                                           | 8, 10 (substrate)                                 |
+| `0871b-cross-node-forwarding`             | LANDED 2026-08-12                                                                                                            | 8, 11 (hop signature)                             |
+| `0871b-storage-backend`                   | LANDED 2026-08-11 (commit `71f8d745`; mission file header still says "claimed" — drift-closure pending)                      | 4 (balance storage)                               |
+| `0010-f2-multi-chain-did-resolution`      | LANDED 2026-08-11 (mission file header still says "claimed" — drift-closure pending)                                         | 6 (chain-aware DID)                               |
+| `0010-f8-rich-did-documents`              | LANDED 2026-08-11                                                                                                            | 6, 9 (rich DID for reputation)                    |
+| `0010-f8-rich-did-storage`                | LANDED 2026-08-11 (mission file header still says "claimed" — drift-closure pending)                                         | 6 (storage layer)                                 |
+| `marketplace-escrow-caller-authorization` | LANDED 2026-08-13                                                                                                            | 6, 7 (escrow caller auth — Round 1 review C1 fix) |
+| `marketplace-e2e-strong-scenarios`        | LANDED 2026-08-13                                                                                                            | 6, 7, 10, 12, 13, 14                              |
+| `0957-phase2b-payment-caveat`             | LANDED 2026-08-10 (commit `5cda2eb7`; mission file header still says "2026-08-13" — drift-closure-sweep date, not impl date) | 7 (PaymentCaveat + macaroon HMAC)                 |
+| `0957-phase2c-capability-issuer-wiring`   | LANDED 2026-08-10 (commit `b19fe57f`; mission file header still says "2026-08-13" — drift-closure-sweep date, not impl date) | 7 (Capability Issuer Node wiring)                 |
 
 ## Test coverage map
 
@@ -1001,3 +1003,4 @@ These gaps surfaced while writing this doc. Each should become either a follow-o
 | 2026-08-13 | Round 16 technical (HIGH L972 marketplace_e2e 23→24 actual count, HIGH L944/946 mission-file drift-closure note, LOW §Caveat schema Phase-2b(4) → RFC-0965 v1.1(3)+phase-2b(1) with Source col) | cc (review)     |
 | 2026-08-13 | Round 17 technical (MED L939 proxy-strong-scenarios LANDED 2026-08-12 → 2026-08-13 per commit 246574a1)                                                                                         | cc (review)     |
 | 2026-08-13 | Round 18 markdown (14 CRIT TOC anchor double-dash collapse for em-dash headings; 17 MED §Caveat schema table-row widths 311c → 284c + 192c → 187c)                                              | cc (review)     |
+| 2026-08-13 | Round 18 technical (HIGH L706/L707/L717/L773 Refunded→Disputed+Settled via resolve_invalid; MED L949/L950 0957-phase2b/2c LANDED 2026-08-13 → 2026-08-10 per commits 5cda2eb7/b19fe57f)         | cc (review)     |

@@ -60,7 +60,23 @@
 > Throughout this doc, **"envelope"** is shorthand for `NodeEnvelope` (the full proper noun) outside formal type references.
 > The abbreviated form is fine in prose; the formal name appears in code snippets and capability-witness fields.
 
-**NodeEnvelope fields** (real struct at `crates/octo-protocol/src/envelope.rs`): `envelope_id: [u8; 32]`, `from_did: WireDid`, `to_node_id: RecipientRef`, `payload_kind: PayloadKindId`, `payload: Vec<u8>`, `authorization: Vec<Authorization>`, `nonce: [u8; 32]`, `expires_at_unix_ms: u64`. **HopSignature fields** (real struct at `crates/octo-protocol/src/hop_signature.rs`): `hop_index: u8`, `hop_did: String`, `signature: [u8; 64]`, `signer_pub: [u8; 32]`.
+**NodeEnvelope fields** (real struct at `crates/octo-protocol/src/envelope.rs`):
+
+- `envelope_id: [u8; 32]`
+- `from_did: WireDid`
+- `to_node_id: RecipientRef`
+- `payload_kind: PayloadKindId`
+- `payload: Vec<u8>`
+- `authorization: Vec<Authorization>`
+- `nonce: [u8; 32]`
+- `expires_at_unix_ms: u64`
+
+**HopSignature fields** (real struct at `crates/octo-protocol/src/hop_signature.rs`):
+
+- `hop_index: u8`
+- `hop_did: String`
+- `signature: [u8; 64]`
+- `signer_pub: [u8; 32]`
 
 ## Cross-references
 
@@ -246,15 +262,15 @@ sequenceDiagram
 
 **Consolidated 503 sub-conditions (verified against `crates/quota-router-core/src/proxy.rs`):**
 
-| Sub-condition                            | Trigger                                                                      | Body                                                                          | Where                                                                                                                             |
-| ---------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| dispatch-miss (asymmetric guard)         | `dispatch_map` non-empty, no entry for requested model                       | `"No dispatch entry for model 'X' — provider pool does not serve this model"` | inline in `handle_request_litellm` dispatch-miss Err arm; pinned by `e2e_wiremock_faults::test_dispatch_map_no_match_returns_503` |
-| dispatch-fall-through (map empty)        | `dispatch_map` empty, request falls through to provider's default API base   | falls through (NO 503 emitted here — see Scenario 2)                          | (asymmetric guard intentionally skips this branch)                                                                                |
-| model-unhealthy (no fallback)            | Dispatch map has the model but health check marks it unhealthy, no fallbacks | `"Model unhealthy"`                                                           | inline in `handle_request_litellm` health-check Err arm                                                                           |
-| model-unhealthy (fallback exhausted)     | Primary unhealthy AND all configured fallback models failed                  | `"Model unhealthy and all fallback models failed"`                            | inline in `handle_request_litellm` fallback-exhausted Err arm                                                                     |
-| model-unhealthy (no fallback configured) | Primary unhealthy AND no fallback configured                                 | `"Model unhealthy and no fallback models configured"`                         | inline in `handle_request_litellm` no-fallback-configured Err arm                                                                 |
-| marketplace-empty                        | Marketplace returns zero offers for the requested model                      | `"no marketplace offers for model X"` (body string design intent — TBD)       | Scenario 6                                                                                                                        |
-| stoolap-probe-unreachable (test fixture) | (Test-only) Stoolap DB path is unreachable during a probe                    | 503 emitted by the probe handler                                              | inline in the probe handler test assertion                                                                                        |
+| Sub-condition                            | Trigger                                                                      | Body                                                                          | Where                                                                                                        |
+| ---------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| dispatch-miss (asymmetric guard)         | `dispatch_map` non-empty, no entry for requested model                       | `"No dispatch entry for model 'X' — provider pool does not serve this model"` | inline in `handle_request_litellm` dispatch-miss Err arm; pinned by `test_dispatch_map_no_match_returns_503` |
+| dispatch-fall-through (map empty)        | `dispatch_map` empty, request falls through to provider's default API base   | falls through (NO 503 emitted here — see Scenario 2)                          | (asymmetric guard intentionally skips this branch)                                                           |
+| model-unhealthy (no fallback)            | Dispatch map has the model but health check marks it unhealthy, no fallbacks | `"Model unhealthy"`                                                           | inline in `handle_request_litellm` health-check Err arm                                                      |
+| model-unhealthy (fallback exhausted)     | Primary unhealthy AND all configured fallback models failed                  | `"Model unhealthy and all fallback models failed"`                            | inline in `handle_request_litellm` fallback-exhausted Err arm                                                |
+| model-unhealthy (no fallback configured) | Primary unhealthy AND no fallback configured                                 | `"Model unhealthy and no fallback models configured"`                         | inline in `handle_request_litellm` no-fallback-configured Err arm                                            |
+| marketplace-empty                        | Marketplace returns zero offers for the requested model                      | `"no marketplace offers for model X"` (body string design intent — TBD)       | Scenario 6                                                                                                   |
+| stoolap-probe-unreachable (test fixture) | (Test-only) Stoolap DB path is unreachable during a probe                    | 503 emitted by the probe handler                                              | inline in the probe handler test assertion                                                                   |
 
 **Why this matters:** Clients distinguish 5xx by source: 500 = bug, 502 = upstream, 503 = no
 provider. Each triggers a different recovery strategy (bug → report, upstream → retry/backoff,
@@ -881,7 +897,7 @@ Real `Caveat` enum at `crates/octo-cap-macaroon/src/caveat/mod.rs` carries exact
 | `Factory`         | `Factory(FactoryVet)` tuple — typed, not opaque.                                                                                                          |
 | `PolicyReference` | `PolicyReference { policy_id: [u8; 32], policy_version_seq: u64, attenuation_witness: [u8; 64] }` — witness signature binds attenuation per RFC-0967 §8.2 |
 
-**RFC-0965 v1.1 acceptance bumps (3) + phase-2b (1):**
+**RFC-0965 acceptance bumps (3) + phase-2b (1):**
 
 | Variant             | Shape                                                                                                                               | Source                      |
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
@@ -955,22 +971,22 @@ These gaps surfaced while writing this doc. Each should become either a follow-o
 
 ## Test coverage map
 
-| Scenario           | Existing tests                                                                                                                                                                                                  | Tests needed                                                              |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| 1 Hello world      | `e2e_proxy::test_chat_completion_basic` (`crates/quota-router-core/tests/e2e_proxy.rs`)                                                                                                                         | —                                                                         |
-| 2 Multi-provider   | `e2e_wiremock_faults::test_dispatch_map_no_match_returns_503` (covers the asymmetric-guard path)                                                                                                                | Multi-provider resolution unit tests (positive match path)                |
-| 3 Provider 500     | `e2e_wiremock_faults::test_upstream_500_returns_502`, `test_no_fallback_config_upstream_500_surfaces_as_502`; lib: `crates/quota-router-core/src/proxy.rs::test_post_dispatch_5xx_triggers_fallback`            | Fallback dance test (already covered by lib test, not by wiremock)        |
-| 4 Budget 402       | `e2e_wiremock_faults::test_budget_exhausted_returns_402`                                                                                                                                                        | —                                                                         |
-| 5 Rate limit       | `e2e_proxy::test_rpm_rate_limit_returns_429` (`crates/quota-router-core/tests/e2e_proxy.rs`), `key_rate_limiter::tests::test_token_bucket_basic` (lib)                                                          | Wiremock pinning of `Retry-After: <seconds>` header value                 |
-| 6 Marketplace      | `marketplace_e2e` integration tests (24 tests pinning escrow/dispute/settlement invariants). GDP substrate: `gdp_discovery` + `gdp_deep` in `crates/octo-network/tests/` (NOT the marketplace-e2e flow itself). | Wiremock-style Sybil resistance at marketplace layer                      |
-| 7 Deal + escrow    | `0957-phase2b-payment-caveat` unit tests                                                                                                                                                                        | CapabilityTokenV2 caveat exhaustiveness across the 9 RFC-0965 §3 variants |
-| 8 Mesh forwarding  | `0871b-cross-node-forwarding` (partial TV)                                                                                                                                                                      | 3-node end-to-end TV (awaits `0870k`)                                     |
-| 9 Seller validate  | `0957-phase2b-payment-caveat` lib tests                                                                                                                                                                         | ZK verification + reputation + provider dispatch integration              |
-| 10 Stream + settle | `e2e_wiremock_faults::test_streaming_response_carries_events`, `test_streaming_upstream_500_returns_502`                                                                                                        | Mesh-streaming back-pressure (no test currently)                          |
-| 11 Replay          | (none)                                                                                                                                                                                                          | Seen-set cache test (`crates/octo-network/src/dot/replay.rs`)             |
-| 12 Seller offline  | `e2e_wiremock_faults::test_streaming_upstream_500_returns_502` (partial)                                                                                                                                        | Mid-stream TCP drop simulation (separate from upstream 500 path)          |
-| 13 Dispute         | (covered indirectly by `marketplace-escrow-caller-authorization` lib tests)                                                                                                                                     | Appeal flow (no dedicated test yet)                                       |
-| 14 Sybil           | (network-layer tests in `crates/octo-network/tests/porelay_proofs.rs`)                                                                                                                                          | Stake-weighted Sybil resistance at scale (1000+ identities)               |
+| Scenario           | Existing tests                                                                                                                                                                                       | Tests needed                                                              |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| 1 Hello world      | `e2e_proxy::test_chat_completion_basic` (`crates/quota-router-core/tests/e2e_proxy.rs`)                                                                                                              | —                                                                         |
+| 2 Multi-provider   | `e2e_wiremock_faults::test_dispatch_map_no_match_returns_503` (covers the asymmetric-guard path)                                                                                                     | Multi-provider resolution unit tests (positive match path)                |
+| 3 Provider 500     | `e2e_wiremock_faults::test_upstream_500_returns_502`, `test_no_fallback_config_upstream_500_surfaces_as_502`; lib: `crates/quota-router-core/src/proxy.rs::test_post_dispatch_5xx_triggers_fallback` | Fallback dance test (already covered by lib test, not by wiremock)        |
+| 4 Budget 402       | `e2e_wiremock_faults::test_budget_exhausted_returns_402`                                                                                                                                             | —                                                                         |
+| 5 Rate limit       | `e2e_proxy::test_rpm_rate_limit_returns_429` (`crates/quota-router-core/tests/e2e_proxy.rs`), `key_rate_limiter::tests::test_token_bucket_basic` (lib)                                               | Wiremock pinning of `Retry-After: <seconds>` header value                 |
+| 6 Marketplace      | `marketplace_e2e` integration tests (24 tests). GDP substrate: `gdp_discovery` + `gdp_deep` in `crates/octo-network/tests/` (NOT marketplace-e2e).                                                   | Wiremock-style Sybil resistance at marketplace layer                      |
+| 7 Deal + escrow    | `0957-phase2b-payment-caveat` unit tests                                                                                                                                                             | CapabilityTokenV2 caveat exhaustiveness across the 9 RFC-0965 §3 variants |
+| 8 Mesh forwarding  | `0871b-cross-node-forwarding` (partial TV)                                                                                                                                                           | 3-node end-to-end TV (awaits `0870k`)                                     |
+| 9 Seller validate  | `0957-phase2b-payment-caveat` lib tests                                                                                                                                                              | ZK verification + reputation + provider dispatch integration              |
+| 10 Stream + settle | `e2e_wiremock_faults::test_streaming_response_carries_events`, `test_streaming_upstream_500_returns_502`                                                                                             | Mesh-streaming back-pressure (no test currently)                          |
+| 11 Replay          | (none)                                                                                                                                                                                               | Seen-set cache test (`crates/octo-network/src/dot/replay.rs`)             |
+| 12 Seller offline  | `e2e_wiremock_faults::test_streaming_upstream_500_returns_502` (partial)                                                                                                                             | Mid-stream TCP drop simulation (separate from upstream 500 path)          |
+| 13 Dispute         | (covered indirectly by `marketplace-escrow-caller-authorization` lib tests)                                                                                                                          | Appeal flow (no dedicated test yet)                                       |
+| 14 Sybil           | (network-layer tests in `crates/octo-network/tests/porelay_proofs.rs`)                                                                                                                               | Stake-weighted Sybil resistance at scale (1000+ identities)               |
 
 > **Note on `marketplace_e2e::test_*`:** `marketplace_e2e.rs` exists at
 > `crates/quota-router-core/tests/marketplace_e2e.rs` with 24 e2e tests (all 24 are `#[test]`-marked
@@ -1002,7 +1018,7 @@ These gaps surfaced while writing this doc. Each should become either a follow-o
 | 2026-08-13 | Round 14 review (TOC, prose wrap, mermaid split, Round 12 row, phantom-pointer cleanup, slash_with_pct arg rename)                                                             | cc (review)     |
 | 2026-08-13 | Round 15 review (2 CRIT line-wraps L411/L512, 6 LOW technical: capabilities→authorizations, RelayScore 9 fields, HopError format, test count 23, 0871b-storage-backend status) | cc (review)     |
 | 2026-08-13 | Round 16 review (L229 HIGH line wrap, L901 LOW §Caveat Schema → §Caveat schema casing)                                                                                         | cc (review)     |
-| 2026-08-13 | Round 16 technical (HIGH L972 marketplace_e2e 23→24; HIGH L944/946 mission-file drift-closure; LOW §Caveat schema Phase-2b(4) → RFC-0965 v1.1(3)+phase-2b(1) with Source col)  | cc (review)     |
+| 2026-08-13 | Round 16 technical (HIGH L972 marketplace_e2e 23→24; HIGH L944/946 mission-file drift-closure; LOW §Caveat schema Phase-2b(4) → RFC-0965(3)+phase-2b(1) with Source col)       | cc (review)     |
 | 2026-08-13 | Round 17 technical (MED L939 proxy-strong-scenarios LANDED 2026-08-12 → 2026-08-13 per commit 246574a1)                                                                        | cc (review)     |
 | 2026-08-13 | Round 18 markdown (14 CRIT TOC anchor double-dash collapse for em-dash headings; 17 MED §Caveat schema table-row widths 311c → 284c + 192c → 187c)                             | cc (review)     |
 | 2026-08-13 | Round 18 technical (HIGH L706/L707/L717/L773 Refunded→Disputed+Settled via resolve_invalid; MED L949/L950 0957-phase2b/2c LANDED 2026-08-10 per commits 5cda2eb7/b19fe57f)     | cc (review)     |
@@ -1011,3 +1027,4 @@ These gaps surfaced while writing this doc. Each should become either a follow-o
 | 2026-08-14 | Round 20 markdown (7 CRIT L46/L49/L54/L879/L960/L963/L1007 + L1008 + 4 MED L47/L50/L46-50+L879 pattern/L41 + 4 LOW mermaid L400/L516/L754 + L41 fragment)                      | cc (review)     |
 | 2026-08-14 | Round 21 markdown (1 MED L46 NodeEnvelope Where col 227c; field list moved to post-table sub-line; 2 LOW L960/L963 test coverage map cells)                                    | cc (review)     |
 | 2026-08-14 | Round 21 technical (2 MED L949/L950 LANDED dates revert to 2026-08-13 per mission file canonical status; 1 LOW L963 lib tests → integration tests)                             | cc (review)     |
+| 2026-08-14 | Round 22 markdown (CRIT L63 457c prose split into bullet lists; CRIT L267/L981 table compressions; 2 MED L884/L1021 RFC-0965 v1.1 dropped)                                       | cc (review)     |

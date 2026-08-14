@@ -37,7 +37,7 @@
 | **Hardened client**    | Production CipherOcto client (CLI / Python SDK / HTTP). Talks to local proxy on `localhost`.                                                                                         | `../quota-router-python-sdk.md`, `architecture/quota-router-architecture.md §4 Request Flow`            |
 | **Local proxy**        | `quota-router-core` HTTP server running on the buyer's machine. First hop.                                                                                                           | `architecture/quota-router-architecture.md`                                                             |
 | **Provider**           | LLM API (OpenAI, Anthropic, etc.). Reached by API key configured on the buyer or seller node.                                                                                        | `architecture/quota-router-architecture.md §5 Provider System`                                          |
-| **`dispatch_map`**     | Map of `model_name → DispatchInfo { provider, api_base, rpm }`. Decides which provider serves which model.                                                                           | `architecture/quota-router-architecture.md §9.2 Dispatch Flow`                                          |
+| **`dispatch_map`**     | `model_name → DispatchInfo` map per RFC-0929. Per-deployment routing + key resolution. Not a keyless proxy.                                                                          | RFC-0929, `architecture/quota-router-architecture.md §9.2 Dispatch Flow`                                |
 | **CapabilityToken V2** | Bearer token signed by buyer. Model, max price, and request-shape constraints are caveats, not token fields.                                                                         | `crates/octo-cap-macaroon/src/bundle_v2.rs §CapabilityTokenV2`, RFC-0957                                |
 | **CapabilityBundleV2** | RFC-0957 outer envelope around `CapabilityTokenV2`.                                                                                                                                  | `crates/octo-cap-macaroon/src/bundle_v2.rs`, `use-cases/dual-mode-authorization-workflow.md`, RFC-0957  |
 | **Marketplace node**   | Discovery + reputation registry. Returns ranked offers for a requested model.                                                                                                        | `use-cases/ai-quota-marketplace.md`, RFC-0900                                                           |
@@ -186,7 +186,9 @@ sequenceDiagram
 
 ## Scenario 2 — Multi-provider dispatch via `dispatch_map`
 
-Same prompt, but the developer wants a model they don't have a direct key for. Their `dispatch_map` redirects the request through a different provider.
+Same prompt, but the buyer requests a model served by a different deployment than the default. `dispatch_map` resolves the model to a `DispatchInfo` entry per RFC-0929: which provider owns the API key, the resolved `api_base`, and the rate budget. All deployments require an API key — `dispatch_map` never proxies a keyless request.
+
+Format adaptation (OpenAI `/v1/chat/completions` ↔ Anthropic `/v1/messages`) lives **inside** the matched provider implementation (`OpenAIProvider`, `AnthropicProvider`), not in a generic translator.
 
 ```mermaid
 sequenceDiagram
@@ -207,12 +209,11 @@ sequenceDiagram
 
 **Step-by-step:**
 
-1. Buyer requests a model. Proxy resolves the model name through `dispatch_map` (canonical Unicode NFC normalized per RFC-0909 §Design Goals).
-2. The matched `DispatchInfo` may specify a different API base, different auth scheme, and different
-   request/response codecs than OpenAI. The provider abstraction (`HttpProvider` or `PyBridgeProvider`)
-   handles the conversion.
-3. The proxy forwards the request to the configured provider. Spend is recorded under the buyer's balance.
-4. If no `DispatchInfo` matches and the map is non-empty, the proxy returns **503 SERVICE_UNAVAILABLE** with
+1. Buyer requests a model. Proxy resolves the model name through `dispatch_map` (canonical Unicode NFC normalized per RFC-0909 §Design Goals). Each entry is a `DispatchInfo` per RFC-0929.
+2. The matched `DispatchInfo` specifies: provider name, `api_base` (per-deployment, resolved), `api_key` (resolved via `key_storage.get()` with `deployment.api_key` fallback per RFC-0929 §Implementation Requirements), `rpm`/`tpm` rate budget, optional `model_group`.
+3. Format adaptation (OpenAI ↔ Anthropic ↔ other) is handled inside the matched provider impl (`OpenAIProvider::completion`, `AnthropicProvider::completion`). Each provider owns its wire format — there is no general translation middleware.
+4. The proxy forwards the request to the configured provider. Spend is recorded under the buyer's balance.
+5. If no `DispatchInfo` matches and the map is non-empty, the proxy returns **503 SERVICE_UNAVAILABLE** with
    body `"No dispatch entry for model 'X' — provider pool does not serve this model"` (see consolidated 503
    table below, row `dispatch-miss`). If the map is empty, the request falls through to the provider-default
    API base. This asymmetric guard is pinned by
@@ -1055,3 +1056,4 @@ These gaps surfaced while writing this doc. Each should become either a follow-o
 | 2026-08-14 | Round 24 markdown (2 CRIT cell-cap trim; 3 MED spine→code; 3 MED RFC ref; 3 LOW mermaid)                                                                                       | cc (review)     |
 | 2026-08-14 | Round 25 technical (RFC-0969→RFC-0900: L43/L44/L56 glossary; L385 §Market Operations; L390 §Discovery Response drop; L599/L615/L699 split)                                     | cc (review)     |
 | 2026-08-14 | Round 25 markdown (1 HIGH L1056 round-24 row 195c trim)                                                                                                                        | cc (review)     |
+| 2026-08-14 | Audit (L189/L40/L191-192): dispatch_map is per-deployment routing per RFC-0929, not a keyless proxy; format adaptation lives inside provider impls, not a generic translator   | cc (review)     |

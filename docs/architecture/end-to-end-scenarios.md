@@ -40,8 +40,8 @@
 | **`dispatch_map`**     | Map of `model_name → DispatchInfo { provider, api_base, rpm }`. Decides which provider serves which model.                                                                           | `architecture/quota-router-architecture.md §9.2 Dispatch Flow`                                          |
 | **CapabilityToken V2** | Bearer token signed by buyer. Model, max price, and request-shape constraints are caveats, not token fields.                                                                         | `crates/octo-cap-macaroon/src/bundle_v2.rs §CapabilityTokenV2`, RFC-0957                                |
 | **CapabilityBundleV2** | RFC-0957 outer envelope around `CapabilityTokenV2`.                                                                                                                                  | `crates/octo-cap-macaroon/src/bundle_v2.rs`, `use-cases/dual-mode-authorization-workflow.md`, RFC-0957  |
-| **Marketplace node**   | Discovery + reputation registry. Returns ranked offers for a requested model.                                                                                                        | `use-cases/ai-quota-marketplace.md`, RFC-0969                                                           |
-| **Seller node**        | A `quota-router-core` operator who exposes their provider pool to the network. Earns revenue.                                                                                        | RFC-0969, `architecture/octo-network-architecture.md`                                                   |
+| **Marketplace node**   | Discovery + reputation registry. Returns ranked offers for a requested model.                                                                                                        | `use-cases/ai-quota-marketplace.md`, RFC-0900                                                           |
+| **Seller node**        | A `quota-router-core` operator who exposes their provider pool to the network. Earns revenue.                                                                                        | RFC-0900, `architecture/octo-network-architecture.md`                                                   |
 | **Wallet node**        | Mints + verifies capability tokens. Holds the buyer's signing key (HSM-mandated for production).                                                                                     | `use-cases/dual-mode-authorization-workflow.md`, mission `0009-a-hsm-routing`                           |
 | **NodeEnvelope**       | Unified mesh wire envelope. 8 fields. Logical-AND composition across multiple authorizations per RFC-0871 §Adversary Analysis A6.                                                    | `crates/octo-protocol/src/envelope.rs`, `architecture/octo-network-architecture.md §15 Key Data Types`  |
 | **`envelope_id`**      | First field of `NodeEnvelope`. `BLAKE3-256` of canonical serialization of all other envelope fields. Seen-set key.                                                                   | `crates/octo-protocol/src/signing.rs` §`compute_envelope_id`                                            |
@@ -53,7 +53,7 @@
 | **PoRelay**            | Proof-of-Relay. Trust registry scoring router hops by stake weight + history.                                                                                                        | `architecture/octo-network-architecture.md §13 PoRelay — Proof-of-Relay`                                |
 | **Balance**            | In-memory per-key monetary counter on the proxy. Decremented per request, checked pre-dispatch.                                                                                      | `crates/quota-router-core/src/balance.rs`                                                               |
 | **TokenBucket**        | Per-key rate-limiter on the proxy. Returns `bool` from `try_consume`. Refilled at configured RPM.                                                                                    | `crates/quota-router-core/src/key_rate_limiter.rs`                                                      |
-| **Escrow**             | Buyer pre-funds a payment vault tied to the capability. Released on success; failure routes through `escrow.dispute()` then `resolve_invalid()` → `Settled` (no `Refunded` variant). | RFC-0969, `crates/quota-router-core/src/marketplace/escrow.rs`                                          |
+| **Escrow**             | Buyer pre-funds a payment vault tied to the capability. Released on success; failure routes through `escrow.dispute()` then `resolve_invalid()` → `Settled` (no `Refunded` variant). | RFC-0900 §Escrow Flow, `crates/quota-router-core/src/marketplace/escrow.rs`                             |
 | **Settlement**         | Post-completion: escrow releases to seller node + router hops, reputation scores update.                                                                                             | `use-cases/reputation-persistence.md`                                                                   |
 | **seen-set**           | Seller-side cache of recently processed `envelope_id` values. Replay defense at the seller.                                                                                          | `crates/octo-network/src/dot/replay.rs`                                                                 |
 
@@ -382,14 +382,13 @@ sequenceDiagram
 **Step-by-step:**
 
 1. The proxy looks up the model in `dispatch_map`. No match.
-2. The proxy queries the marketplace (`DiscoverOffers` request, RFC-0969 §Discovery). The marketplace nodes are queried in parallel via the DGP gossip substrate.
+2. The proxy queries the marketplace (`DiscoverOffers` request, RFC-0900 §Market Operations). The marketplace nodes are queried in parallel via the DGP gossip substrate.
 3. Each marketplace node checks its local reputation registry for sellers offering the requested model.
    The reputation score combines stake weight, performance history, and social validation
    (per the whitepaper §Proof of Reliability).
 4. The marketplace returns a ranked list of offers. Each offer carries: seller DID, price per request (micro_octo_w), reputation score, p50 latency, available capacity (RPM).
 5. The proxy returns the offer list to the client. The client (or user) picks an offer. (Exact response
-   status code + envelope shape are marketplace-facade-defined — see `use-cases/ai-quota-marketplace.md`
-   §Discovery Response.)
+   status code + envelope shape are marketplace-facade-defined — see `use-cases/ai-quota-marketplace.md`.)
 
 **On the empty case:** if the marketplace returns zero offers (no seller serves this model), the proxy
 returns **503 SERVICE_UNAVAILABLE** with a marketplace-empty error body (body string design intent —
@@ -597,7 +596,7 @@ sequenceDiagram
     Note over SN,P0: [DONE] propagated
 
     P0->>E: escrow.settle(seller_party)
-    Note over E: core settle() takes caller only<br/>settlement split policy: design intent per RFC-0969<br/>(not implemented in escrow.rs today)
+    Note over E: core settle() takes caller only<br/>settlement split policy: design intent per RFC-0900<br/>(not implemented in escrow.rs today)
     E-->>P0: Settlement receipt
     Note over P0: P0 orchestrates settle-then-record:<br/>escrow ledger does NOT auto-update reputation
     P0->>RR: marketplace.record_outcome(asker_did=buyer_did, success=true, latency_ms=...)
@@ -613,7 +612,7 @@ sequenceDiagram
 3. After `[DONE]` arrives (or the connection closes), the buyer proxy settles the escrow:
    - Computes actual cost based on tokens consumed (token count × per-token rate).
    - Submits settlement to the ledger (split policy — seller share, router fees, network burn — is
-     design intent per RFC-0969; not yet pinned at the `crates/quota-router-core/src/marketplace/escrow.rs`
+     design intent per RFC-0900 §Settlement Model; not yet pinned at the `crates/quota-router-core/src/marketplace/escrow.rs`
      layer).
    - Updates the asker-side reputation record via
      `marketplace.record_outcome(asker_did=buyer_did, success=true, latency_ms=...)` (real signature in
@@ -697,7 +696,7 @@ A -0.5 reputation hit makes subsequent legitimate requests harder.
 > **Design intent — NOT IMPLEMENTED.** The mid-stream TCP-drop detection,
 > `tokens_received × per_token_rate` refund formula, and `seller_offline` dispute reason are NOT wired
 > into `crates/quota-router-core/src/proxy.rs` or `crates/quota-router-core/src/marketplace/escrow.rs`
-> today. Scenario 12 is filed for an RFC-0969 amendment + follow-on mission. The step-by-step below is
+> today. Scenario 12 is filed for an RFC-0900 amendment + follow-on mission. The step-by-step below is
 > the proposed behavior, not the current behavior.
 
 The seller's node crashes mid-response. The mesh detects, the buyer gets a partial response + 502 + refund.
@@ -1022,35 +1021,37 @@ These gaps surfaced while writing this doc. Each should become either a follow-o
 
 ## Change log
 
-| Date       | Change                                                                                                                                                                                              | Author          |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
-| 2026-08-13 | Initial draft, 14 scenarios across 8 phases                                                                                                                                                         | cc (brainstorm) |
-| 2026-08-13 | Round 1 review (foundational checks)                                                                                                                                                                | cc (review)     |
-| 2026-08-13 | Round 2 review (consistency sweep)                                                                                                                                                                  | cc (review)     |
-| 2026-08-13 | Round 3 review (api surface claims)                                                                                                                                                                 | cc (review)     |
-| 2026-08-13 | Round 4 review (api surface claims cont.)                                                                                                                                                           | cc (review)     |
-| 2026-08-13 | Round 5 review (mermaid + prose)                                                                                                                                                                    | cc (review)     |
-| 2026-08-13 | Round 6 review (over-citation regression)                                                                                                                                                           | cc (review)     |
-| 2026-08-13 | Round 7 review (SL routing fix)                                                                                                                                                                     | cc (review)     |
-| 2026-08-13 | Round 8 review (cents→micro_octo_w, TrustRegistry, MaxPerTx tuple, markdown)                                                                                                                        | cc (review)     |
-| 2026-08-13 | Round 9 review (RelayScore fabrication, anchors, mermaid participants, phase labels)                                                                                                                | cc (review)     |
-| 2026-08-13 | Round 10 review (index↔heading alignment, glossary rows, marketplace-empty caveat, bullet-list legend)                                                                                              | cc (review)     |
-| 2026-08-13 | Round 11 review (NodeEnvelope field-type pinning, Caveat schema subsection, CapabilityBundleV2 4 fields, Scenario 12 design-intent)                                                                 | cc (review)     |
-| 2026-08-13 | Round 12 review (no findings — STABLE; later overturned by Round 13)                                                                                                                                | cc (review)     |
-| 2026-08-13 | Round 13 review (Caveat schema 26-variant shape corrections, RFC-0871 §Hop Signature → §Data Structures)                                                                                            | cc (review)     |
-| 2026-08-13 | Round 14 review (TOC, prose wrap, mermaid split, Round 12 row, phantom-pointer cleanup, slash_with_pct arg rename)                                                                                  | cc (review)     |
-| 2026-08-13 | Round 15 review (2 CRIT line-wraps L411/L512, 6 LOW technical: capabilities→authorizations, RelayScore 9 fields, HopError format, test count 23, 0871b-storage-backend status)                      | cc (review)     |
-| 2026-08-13 | Round 16 review (L229 HIGH line wrap, L901 LOW §Caveat Schema → §Caveat schema casing)                                                                                                              | cc (review)     |
-| 2026-08-13 | Round 16 technical (HIGH L972 marketplace_e2e 23→24; HIGH L944/946 mission-file drift-closure; LOW §Caveat schema Phase-2b(4) → RFC-0965 + phase-2b (1) with Source col)                            | cc (review)     |
-| 2026-08-13 | Round 17 technical (MED L939 proxy-strong-scenarios LANDED 2026-08-12 → 2026-08-13 per commit 246574a1)                                                                                             | cc (review)     |
-| 2026-08-13 | Round 18 markdown (14 CRIT TOC anchor double-dash collapse for em-dash headings; 17 MED §Caveat schema table-row widths 311c → 284c + 192c → 187c)                                                  | cc (review)     |
-| 2026-08-13 | Round 18 technical (HIGH L706/L707/L717/L773 Refunded→Disputed+Settled via resolve_invalid; MED L949/L950 0957-phase2b/2c LANDED 2026-08-10 per commits 5cda2eb7/b19fe57f)                          | cc (review)     |
-| 2026-08-14 | Round 19 markdown (12 MED glossary cells + 2 LOW RFC-0943 parens + 2 LOW change-log rows)                                                                                                           | cc (review)     |
-| 2026-08-14 | Round 19 technical (3 HIGH HopSignature RFC-0871 mis-citations; 1 MED CapabilityToken V2 field-shape)                                                                                               | cc (review)     |
-| 2026-08-14 | Round 20 markdown (7 CRIT L46/L49/L54/L879/L960/L963/L1007 + L1008 + 4 MED L47/L50/L46-50+L879 pattern/L41 + 4 LOW mermaid L400/L516/L754 + L41 fragment)                                           | cc (review)     |
-| 2026-08-14 | Round 21 markdown (1 MED L46 NodeEnvelope Where col 227c; field list moved to post-table sub-line; 2 LOW L960/L963 test coverage map cells)                                                         | cc (review)     |
-| 2026-08-14 | Round 21 technical (2 MED L949/L950 LANDED dates revert to 2026-08-13 per mission file canonical status; 1 LOW L963 lib tests → integration tests)                                                  | cc (review)     |
-| 2026-08-14 | Round 22 markdown (CRIT L63 457c prose split into bullet lists; CRIT L267/L981 table compressions; 2 MED L884/L1021 RFC-0965 v1.1 dropped)                                                          | cc (review)     |
-| 2026-08-14 | Round 23 markdown (MED L978 test coverage map cell 196c drop wiremock + lib path; MED L1021 RFC-0965(3)→RFC-0965 per RFC ref rule)                                                                  | cc (review)     |
-| 2026-08-14 | Round 24 technical (MED L56 Escrow row 'refunded on failure' → dispute/resolve_invalid → Settled; L969/L970 LANDED dates retained at 2026-08-13 per mission file canonical status)                  | cc (review)     |
-| 2026-08-14 | Round 24 markdown (2 CRIT L1003/L1021 cell cap 189c trim; 3 MED L881/L892/L907 spine anti-pattern → code block; 3 MED L1021/L1030/L1031 RFC ref rule; 3 LOW L418/L534/L772 mermaid Note-over split) | cc (review)     |
+| Date       | Change                                                                                                                                                                         | Author          |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------- |
+| 2026-08-13 | Initial draft, 14 scenarios across 8 phases                                                                                                                                    | cc (brainstorm) |
+| 2026-08-13 | Round 1 review (foundational checks)                                                                                                                                           | cc (review)     |
+| 2026-08-13 | Round 2 review (consistency sweep)                                                                                                                                             | cc (review)     |
+| 2026-08-13 | Round 3 review (api surface claims)                                                                                                                                            | cc (review)     |
+| 2026-08-13 | Round 4 review (api surface claims cont.)                                                                                                                                      | cc (review)     |
+| 2026-08-13 | Round 5 review (mermaid + prose)                                                                                                                                               | cc (review)     |
+| 2026-08-13 | Round 6 review (over-citation regression)                                                                                                                                      | cc (review)     |
+| 2026-08-13 | Round 7 review (SL routing fix)                                                                                                                                                | cc (review)     |
+| 2026-08-13 | Round 8 review (cents→micro_octo_w, TrustRegistry, MaxPerTx tuple, markdown)                                                                                                   | cc (review)     |
+| 2026-08-13 | Round 9 review (RelayScore fabrication, anchors, mermaid participants, phase labels)                                                                                           | cc (review)     |
+| 2026-08-13 | Round 10 review (index↔heading alignment, glossary rows, marketplace-empty caveat, bullet-list legend)                                                                         | cc (review)     |
+| 2026-08-13 | Round 11 review (NodeEnvelope field-type pinning, Caveat schema subsection, CapabilityBundleV2 4 fields, Scenario 12 design-intent)                                            | cc (review)     |
+| 2026-08-13 | Round 12 review (no findings — STABLE; later overturned by Round 13)                                                                                                           | cc (review)     |
+| 2026-08-13 | Round 13 review (Caveat schema 26-variant shape corrections, RFC-0871 §Hop Signature → §Data Structures)                                                                       | cc (review)     |
+| 2026-08-13 | Round 14 review (TOC, prose wrap, mermaid split, Round 12 row, phantom-pointer cleanup, slash_with_pct arg rename)                                                             | cc (review)     |
+| 2026-08-13 | Round 15 review (2 CRIT line-wraps L411/L512, 6 LOW technical: capabilities→authorizations, RelayScore 9 fields, HopError format, test count 23, 0871b-storage-backend status) | cc (review)     |
+| 2026-08-13 | Round 16 review (L229 HIGH line wrap, L901 LOW §Caveat Schema → §Caveat schema casing)                                                                                         | cc (review)     |
+| 2026-08-13 | Round 16 technical (HIGH L972 marketplace_e2e 23→24; HIGH L944/946 mission-file drift-closure; LOW §Caveat schema Phase-2b(4) → RFC-0965 + phase-2b (1) with Source col)       | cc (review)     |
+| 2026-08-13 | Round 17 technical (MED L939 proxy-strong-scenarios LANDED 2026-08-12 → 2026-08-13 per commit 246574a1)                                                                        | cc (review)     |
+| 2026-08-13 | Round 18 markdown (14 CRIT TOC anchor double-dash collapse for em-dash headings; 17 MED §Caveat schema table-row widths 311c → 284c + 192c → 187c)                             | cc (review)     |
+| 2026-08-13 | Round 18 technical (HIGH L706/L707/L717/L773 Refunded→Disputed+Settled via resolve_invalid; MED L949/L950 0957-phase2b/2c LANDED 2026-08-10 per commits 5cda2eb7/b19fe57f)     | cc (review)     |
+| 2026-08-14 | Round 19 markdown (12 MED glossary cells + 2 LOW RFC-0943 parens + 2 LOW change-log rows)                                                                                      | cc (review)     |
+| 2026-08-14 | Round 19 technical (3 HIGH HopSignature RFC-0871 mis-citations; 1 MED CapabilityToken V2 field-shape)                                                                          | cc (review)     |
+| 2026-08-14 | Round 20 markdown (7 CRIT L46/L49/L54/L879/L960/L963/L1007 + L1008 + 4 MED L47/L50/L46-50+L879 pattern/L41 + 4 LOW mermaid L400/L516/L754 + L41 fragment)                      | cc (review)     |
+| 2026-08-14 | Round 21 markdown (1 MED L46 NodeEnvelope Where col 227c; field list moved to post-table sub-line; 2 LOW L960/L963 test coverage map cells)                                    | cc (review)     |
+| 2026-08-14 | Round 21 technical (2 MED L949/L950 LANDED dates revert to 2026-08-13 per mission file canonical status; 1 LOW L963 lib tests → integration tests)                             | cc (review)     |
+| 2026-08-14 | Round 22 markdown (CRIT L63 457c prose split into bullet lists; CRIT L267/L981 table compressions; 2 MED L884/L1021 RFC-0965 v1.1 dropped)                                     | cc (review)     |
+| 2026-08-14 | Round 23 markdown (MED L978 cell 196c trim; MED L1021 RFC-0965(3)→RFC-0965 per RFC ref rule)                                                                                   | cc (review)     |
+| 2026-08-14 | Round 24 technical (MED L56 Escrow row → dispute/resolve_invalid → Settled; L969/L970 LANDED dates per mission file)                                                           | cc (review)     |
+| 2026-08-14 | Round 24 markdown (2 CRIT cell-cap trim; 3 MED spine→code; 3 MED RFC ref; 3 LOW mermaid)                                                                                       | cc (review)     |
+| 2026-08-14 | Round 25 technical (RFC-0969→RFC-0900: L43/L44/L56 glossary; L385 §Market Operations; L390 §Discovery Response drop; L599/L615/L699 split)                                     | cc (review)     |
+| 2026-08-14 | Round 25 markdown (1 HIGH L1056 round-24 row 195c trim)                                                                                                                        | cc (review)     |

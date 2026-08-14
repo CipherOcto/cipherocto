@@ -936,7 +936,7 @@ These gaps surfaced while writing this doc. Each should become either a follow-o
 
 | Mission                                   | Status                                                                                                  | Touches scenarios                                 |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| `proxy-strong-scenarios`                  | LANDED 2026-08-12                                                                                       | 1-5                                               |
+| `proxy-strong-scenarios`                  | LANDED 2026-08-13                                                                                       | 1-5                                               |
 | `proxy-strong-scenarios-phase2`           | LANDED 2026-08-13                                                                                       | 3, 4                                              |
 | `0870k-transport-request-response`        | CLAIMED 2026-08-12                                                                                      | 8, 10 (substrate)                                 |
 | `0871b-cross-node-forwarding`             | LANDED 2026-08-12                                                                                       | 8, 11 (hop signature)                             |
@@ -999,3 +999,4 @@ These gaps surfaced while writing this doc. Each should become either a follow-o
 | 2026-08-13 | Round 15 review (2 CRIT line-wraps L411/L512, 6 LOW technical: capabilities→authorizations, RelayScore 9 fields, HopError format, test count 23, 0871b-storage-backend status) | cc (review)     |
 | 2026-08-13 | Round 16 review (L229 HIGH line wrap, L901 LOW §Caveat Schema → §Caveat schema casing)                                                                                         | cc (review)     |
 | 2026-08-13 | Round 16 technical (HIGH L972 marketplace_e2e 23→24 actual count, HIGH L944/946 mission-file drift-closure note, LOW §Caveat schema Phase-2b(4) → RFC-0965 v1.1(3)+phase-2b(1) with Source col) | cc (review)     |
+| 2026-08-13 | Round 17 technical (MED L939 proxy-strong-scenarios LANDED 2026-08-12 → 2026-08-13 per commit 246574a1)                                                                                                  | cc (review)     |

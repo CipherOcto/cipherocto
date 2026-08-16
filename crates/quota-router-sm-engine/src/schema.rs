@@ -67,11 +67,10 @@ pub(super) static BUILTIN_MIGRATION_CATALOG: &[&'static dyn octo_storage_core::M
 /// ([`octo_storage_core::apply_pending`]). The substrate's
 /// `ensure_tracker_table` brings the historical
 /// `cipherocto_migrations(version PK, applied_at)` table into the
-/// substrate-friendly shape in-place (`name`, `applied_at_unix` columns
-/// added; back-fill by step is implicitly safe because the substrate
-/// only reads `MAX(version)` from the existing PK column and writes its
-/// own marker rows via `name + applied_at_unix` — both columns ignored
-/// by this crate's other queries that SELECT only `version`).
+/// substrate-friendly shape in-place by idem-potently adding `name`
+/// and `applied_at_unix` columns; subsequent `record_migration` calls
+/// populate them. This crate's other queries only SELECT `version`
+/// from the table, so the legacy `applied_at` column is left untouched.
 pub fn apply_migrations(db: &stoolap::Database) -> Result<(), octo_storage_core::StorageError> {
     octo_storage_core::apply_pending(
         db,
@@ -79,6 +78,21 @@ pub fn apply_migrations(db: &stoolap::Database) -> Result<(), octo_storage_core:
         octo_storage_core::ApplyConfig::default().with_tracker_table("cipherocto_migrations"),
     )
 }
+
+/// Transitional type alias for the substrate's `StorageError`.
+///
+/// Pre-S2, this crate exposed a `MigrationError` enum (variants:
+/// `Db`, `MigrationFailed`, `UnknownMigration`). The enum was deleted
+/// in S2 in favor of the substrate's `StorageError`. This alias keeps
+/// any downstream code that imports `quota_router_sm_engine::MigrationError`
+/// source-compatible while centralizing the actual error type in the
+/// substrate. Deprecated as a name once the substrate's error surface
+/// stabilizes (planned for a future semver-major).
+#[deprecated(
+    since = "0.7.0",
+    note = "use `octo_storage_core::StorageError` (or `crate::store::StorageError::Migration` for the per-store wrapper)"
+)]
+pub type MigrationError = octo_storage_core::StorageError;
 
 #[cfg(test)]
 mod tests {

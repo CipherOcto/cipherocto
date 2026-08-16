@@ -24,7 +24,11 @@ pub mod shard;
 pub mod state_machine;
 pub mod store;
 
-pub use schema::apply_migrations;
+// Re-exported for downstream compatibility with pre-S2 callers. The
+// concrete type lives in `octo_storage_core::StorageError`; this alias
+// is a one-cycle deprecation shim (see `schema::MigrationError`).
+#[allow(deprecated)]
+pub use schema::{apply_migrations, MigrationError};
 pub use state_machine::{
     transition, transition_reservation, ReservationTransitionError, StateTransitionError,
 };

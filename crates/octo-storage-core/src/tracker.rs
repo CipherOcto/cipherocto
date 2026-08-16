@@ -840,6 +840,45 @@ mod tests {
     }
 
     #[test]
+    fn current_version_rejects_i64_min_plus_one() {
+        // Tests MEDIUM (Round 10): SQLite/Stoolap INTEGER is i64.
+        // Stoolap reserves i64::MIN itself as an empty-sentinel
+        // (fork `common/i64_map.rs:46`), so the INSERT itself fails
+        // before reaching the substrate's negative-check. The
+        // most-negative VALID Stoolap value is i64::MIN+1
+        // (-9_223_372_036_854_775_807) — still negative, still a
+        // worst-case hostile write, and exercises the `v < 0`
+        // catch-all branch. Mirrors
+        // `applied_version_rejects_i64_min_plus_one` (Round 5) for
+        // the symmetric `current_version` contract.
+        let db = stoolap::Database::open_in_memory().unwrap();
+        ensure_tracker_table(&db, "schema_migrations").unwrap();
+        db.execute(
+            "INSERT INTO schema_migrations (version, name, applied_at_unix) VALUES \
+             (-9223372036854775807, 'i64_min_plus_one', 1000)",
+            (),
+        )
+        .unwrap();
+        let err = current_version(&db, "schema_migrations").unwrap_err();
+        match err {
+            StorageError::Stoolap { operation, message } => {
+                assert_eq!(operation, "current_version");
+                assert!(
+                    message.contains("negative"),
+                    "operator-facing message must classify the failure; got: {message:?}"
+                );
+                // Message must surface the planted value (an extreme
+                // negative). The format prints i64::MIN+1 directly.
+                assert!(
+                    message.contains("-9223372036854775807"),
+                    "operator-facing message must surface the extreme negative value; got: {message:?}"
+                );
+            }
+            other => panic!("expected Stoolap (current_version op tag), got {other:?}"),
+        }
+    }
+
+    #[test]
     fn empty_tracker_table_returns_zero_state() {
         // Tests MEDIUM (Round 7): the "no migrations applied" state must
         // produce (current_version == 0, applied_version == empty HashSet).

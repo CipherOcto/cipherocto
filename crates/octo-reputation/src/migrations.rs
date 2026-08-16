@@ -1,23 +1,21 @@
 //! Migration runner — applies the canonical `migrations/*.sql` files on
-//! `StoolapReputationStore::open`. Idempotent: every migration is recorded
-//! in `schema_migrations` after `CREATE TABLE IF NOT EXISTS` succeeds, so a
-//! subsequent open is a no-op for already-applied versions.
+//! `StoolapReputationStore::open`.
 //!
-//! Per `feedback_stoolap-persistence.md` memory: stoolap-fork is the only
-//! storage layer, and per [[stoolap-general-purpose-db]] the consumer schema
-//! lives here, not in the fork. The runner pattern mirrors
-//! `crates/quota-router-storage/src/migrations.rs` but stays local — no
-//! quota-router-storage coupling.
+//! Layer B (mission `octo-storage-split` S2): the underlying migration
+//! runner is `octo_storage_core::apply_pending` (Layer A substrate).
+//! The `name` argument passed to each migration doubles as the
+//! historical `MigrationVersion::ALL` string key so existing ops
+//! tooling (status scripts, dashboards) continues to enumerate
+//! `Vec<String>` names.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(feature = "stoolap")]
 use crate::error::ReputationError;
 
-/// All built-in migrations in version order. The runner bootstraps the
-/// `schema_migrations` table (via `ensure_tracker_table`) BEFORE iterating
-/// `BUILTIN_MIGRATIONS`, so the per-migration INSERT step can always find
-/// a tracker table — including for the very first migration, `v001__`.
+/// All built-in migrations in version order, as `(name, sql)` pairs.
+/// Preserved for the catalog-validation tests (the tuple shape is
+/// stable and inspectable via the unit tests below).
 pub const BUILTIN_MIGRATIONS: &[(&str, &str)] = &[
     (
         "v001__reputation_events",
@@ -53,9 +51,12 @@ pub const BUILTIN_MIGRATIONS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Bootstrap SQL for the tracker table — idempotent. The runner runs this
-/// before iterating `BUILTIN_MIGRATIONS` so the per-migration
-/// `INSERT OR IGNORE INTO schema_migrations` step can find a table.
+/// Bootstrap SQL for the legacy `schema_migrations` table — kept as a
+/// public re-export because external status scripts and downstream
+/// tooling still reference it for documentation purposes. The substrate
+/// (`octo_storage_core::ensure_tracker_table`) supersedes the runtime
+/// path; this constant exists only so the `v003__schema_migrations`
+/// migration's body is byte-identical and shareable.
 pub const TRACKER_TABLE_SQL: &str = include_str!("../migrations/v003__schema_migrations.sql");
 
 /// Version-string constants for every built-in migration. Re-exported at
@@ -77,119 +78,88 @@ impl MigrationVersion {
     ];
 }
 
+/// Substrate-form migration catalog: `&[&'static dyn Migration]`. Numeric
+/// versions match the historical `v<NNN>` prefix encoded in each
+/// filename (1..=5 and 10..=12; v006..v009 reserved by RFC-0968 §28 but
+/// not yet implemented). Used by `stoolap_runner::apply` (Layer B
+/// facade) to delegate to `octo_storage_core::apply_pending`.
+#[cfg(feature = "stoolap")]
+pub(super) static BUILTIN_MIGRATION_CATALOG: &[&'static dyn octo_storage_core::Migration] = &[
+    &octo_storage_core::StaticMigration::new(
+        1,
+        "v001__reputation_events",
+        include_str!("../migrations/v001__reputation_events.sql"),
+    ),
+    &octo_storage_core::StaticMigration::new(
+        2,
+        "v002__reputation_recorders",
+        include_str!("../migrations/v002__reputation_recorders.sql"),
+    ),
+    &octo_storage_core::StaticMigration::new(
+        3,
+        "v003__schema_migrations",
+        include_str!("../migrations/v003__schema_migrations.sql"),
+    ),
+    &octo_storage_core::StaticMigration::new(
+        4,
+        "v004__reputation_attestations",
+        include_str!("../migrations/v004__reputation_attestations.sql"),
+    ),
+    &octo_storage_core::StaticMigration::new(
+        5,
+        "v005__reputation_gossip_seen",
+        include_str!("../migrations/v005__reputation_gossip_seen.sql"),
+    ),
+    &octo_storage_core::StaticMigration::new(
+        10,
+        "v010__reputation_anchors",
+        include_str!("../migrations/v010__reputation_anchors.sql"),
+    ),
+    &octo_storage_core::StaticMigration::new(
+        11,
+        "v011__reputation_events_anchor",
+        include_str!("../migrations/v011__reputation_events_anchor.sql"),
+    ),
+    &octo_storage_core::StaticMigration::new(
+        12,
+        "v012__reputation_anchors_governance",
+        include_str!("../migrations/v012__reputation_anchors_governance.sql"),
+    ),
+];
+
 #[cfg(feature = "stoolap")]
 pub mod stoolap_runner {
-    use super::{ReputationError, BUILTIN_MIGRATIONS, TRACKER_TABLE_SQL};
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn now_unix() -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-    }
+    use super::{ReputationError, BUILTIN_MIGRATION_CATALOG};
 
     /// Apply every migration that has not yet been recorded in
     /// `schema_migrations`. Synchronous — the `StoolapReputationStore`
     /// constructor wraps this in `spawn_blocking` so the tokio reactor
     /// is never stalled for long.
     ///
-    /// Order: bootstrap the `schema_migrations` tracker table first (so
-    /// the per-migration INSERT step can find it), then iterate
-    /// `BUILTIN_MIGRATIONS` in declared order.
+    /// Delegates to the Layer A substrate's
+    /// [`octo_storage_core::apply_pending`]. The substrate's
+    /// `ensure_tracker_table` performs the schema alignment (legacy
+    /// `id PK + name UNIQUE` → `version PK + name + applied_at_unix`)
+    /// PLUS the version-column backfill from `v<NNN>__<label>` filenames
+    /// for pre-substrate DBs, so a legacy DB opened for the first time
+    /// under the new code skips already-applied migrations cleanly.
     pub fn apply(db: &stoolap::Database) -> Result<(), ReputationError> {
-        db.execute(TRACKER_TABLE_SQL, ())
-            .map_err(|_e| ReputationError::ChainRefInvalid("migration:tracker_init"))?;
-        for (version, sql) in BUILTIN_MIGRATIONS {
-            // Idempotency guard: only run + record when this version is
-            // not already in `schema_migrations`.
-            let already_applied: bool = {
-                let mut q = db
-                    .query(
-                        "SELECT name FROM schema_migrations WHERE name = $1",
-                        vec![stoolap::Value::text((*version).to_string())],
-                    )
-                    .map_err(|_e| ReputationError::ChainRefInvalid("migration:guard_query"))?;
-                matches!(q.next(), Some(Ok(_)))
-            };
-            if already_applied {
-                continue;
-            }
-            let label = match *version {
-                "v001__reputation_events" => "migration:v001",
-                "v002__reputation_recorders" => "migration:v002",
-                "v003__schema_migrations" => "migration:v003",
-                "v004__reputation_attestations" => "migration:v004",
-                "v005__reputation_gossip_seen" => "migration:v005",
-                "v010__reputation_anchors" => "migration:v010",
-                "v011__reputation_events_anchor" => "migration:v011",
-                "v012__reputation_anchors_governance" => "migration:v012",
-                _ => "migration:unknown",
-            };
-            db.execute(sql, ())
-                .map_err(|_e| ReputationError::ChainRefInvalid(label))?;
-            let ts = now_unix();
-            // Idempotent guard: query first, only INSERT when missing.
-            // Stoolap-fork does not support `INSERT OR IGNORE` (its parser
-            // rejects the `OR IGNORE` modifier), so we roll the check at
-            // the Rust boundary. The race window is bounded to a single-
-            // process test; production deployments initialise the
-            // schema_migrations table out of band.
-            let already_applied: Option<String> = {
-                let mut q = db
-                    .query(
-                        "SELECT name FROM schema_migrations WHERE name = $1",
-                        vec![stoolap::Value::text((*version).to_string())],
-                    )
-                    .map_err(|_e| ReputationError::ChainRefInvalid("migration:guard_query"))?;
-                match q.next() {
-                    Some(Ok(row)) => row
-                        .get_by_name("name")
-                        .map(Some)
-                        .map_err(|_e| ReputationError::ChainRefInvalid("migration:guard_get"))?,
-                    Some(Err(_e)) => {
-                        return Err(ReputationError::ChainRefInvalid("migration:guard_iter"))
-                    }
-                    None => None,
-                }
-            };
-            if already_applied.is_none() {
-                // Lookup next id from MAX(id)+1 so the PK is satisfied.
-                let next_id: i64 = {
-                    let mut q = db
-                        .query("SELECT COALESCE(MAX(id), 0) + 1 FROM schema_migrations", ())
-                        .map_err(|_e| ReputationError::ChainRefInvalid("migration:next_id"))?;
-                    match q.next() {
-                        Some(Ok(row)) => row.get(0).map_err(|_e| {
-                            ReputationError::ChainRefInvalid("migration:next_id:get")
-                        })?,
-                        Some(Err(_e)) => {
-                            return Err(ReputationError::ChainRefInvalid("migration:next_id:iter"))
-                        }
-                        None => 1i64,
-                    }
-                };
-                db.execute(
-                    "INSERT INTO schema_migrations(id, name, applied_at_unix) VALUES ($1, $2, $3)",
-                    vec![
-                        stoolap::Value::integer(next_id),
-                        stoolap::Value::text((*version).to_string()),
-                        stoolap::Value::integer(ts as i64),
-                    ],
-                )
-                .map_err(|e| {
-                    eprintln!("migration:record ERR: {e:?}");
-                    ReputationError::ChainRefInvalid("migration:record")
-                })?;
-            }
-        }
+        octo_storage_core::apply_pending(
+            db,
+            BUILTIN_MIGRATION_CATALOG,
+            octo_storage_core::ApplyConfig::default(),
+        )
+        .map_err(|_e| ReputationError::ChainRefInvalid("migration:apply"))?;
         Ok(())
     }
 
-    /// Returns the list of version strings currently recorded as applied.
+    /// Returns the list of migration names currently recorded as
+    /// applied. The substrate writes the `name` field verbatim from
+    /// each `StaticMigration::new(..., name, sql)`, so the historical
+    /// `v<NNN>__<label>` strings surface here unchanged.
     pub fn applied_versions(db: &stoolap::Database) -> Result<Vec<String>, ReputationError> {
         let mut rows = db
-            .query("SELECT name FROM schema_migrations ORDER BY name", ())
+            .query("SELECT name FROM schema_migrations ORDER BY version", ())
             .map_err(|_e| ReputationError::ChainRefInvalid("migration:list"))?;
         let mut out = Vec::new();
         loop {
@@ -293,7 +263,7 @@ mod tests {
     fn now_unix_returns_recent_unix_seconds() {
         let t = now_unix();
         let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+            .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
         assert!((now as i64 - t as i64).abs() < 5);

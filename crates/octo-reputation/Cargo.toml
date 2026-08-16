@@ -19,7 +19,7 @@ parity-bin = ["dep:clap", "dep:serde_json"]
 # `ChainRefInvalid("stoolap_backend_unimplemented:<name>")` errors so
 # the `ReputationStore` trait is still nameable. Real impls gate on
 # `#[cfg(feature = "stoolap")]` so the build is hermetic in CI.
-stoolap = ["dep:stoolap", "dep:serde_json"]
+stoolap = ["dep:stoolap", "dep:serde_json", "dep:octo-storage-core"]
 
 [dependencies]
 # Deterministic Floating-Point per RFC-0104 — score_ewma / score_delta canonical encoding
@@ -45,6 +45,11 @@ serde_json = { version = "1", optional = true }
 # Git pin lives at workspace root in `[patch.crates-io]` for compatibility
 # with the rest of the workspace; this crate references it directly.
 stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql", optional = true }
+# Layer A storage substrate (mission octo-storage-split S2). The migration
+# runner + Database constructors that the historical `stoolap_runner`
+# module bundled are now re-exported from this substrate. Feature-gated
+# because the runner only makes sense with the stoolap backend active.
+octo-storage-core = { path = "../octo-storage-core", optional = true }
 
 [[bin]]
 name = "reputation-parity"

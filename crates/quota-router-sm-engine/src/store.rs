@@ -6,7 +6,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::schema::{apply_migrations, MigratableDatabase, MigrationError};
+use crate::schema::apply_migrations;
 use crate::{Ask, AskState, Receipt, SettlementError};
 
 /// Errors from the storage layer (distinct from settlement logic errors).
@@ -15,7 +15,7 @@ pub enum StorageError {
     #[error("stoolap error: {0}")]
     Stoolap(String),
     #[error("migration error: {0}")]
-    Migration(#[from] MigrationError),
+    Migration(#[from] octo_storage_core::StorageError),
     #[error("row decode error: {0}")]
     Decode(String),
 }
@@ -52,60 +52,19 @@ impl StoolapStore {
     pub fn open_in_memory() -> Result<Self, StorageError> {
         let db =
             StoolapDatabase::open_in_memory().map_err(|e| StorageError::Stoolap(e.to_string()))?;
-        let mut store = Self {
+        apply_migrations(&db)?;
+        Ok(Self {
             db: Arc::new(Mutex::new(db)),
-        };
-        apply_migrations(&mut store)?;
-        Ok(store)
+        })
     }
 
     /// Open a persistent stoolap database at the given path + apply migrations.
     pub fn open(path: &str) -> Result<Self, StorageError> {
         let db = StoolapDatabase::open(path).map_err(|e| StorageError::Stoolap(e.to_string()))?;
-        let mut store = Self {
+        apply_migrations(&db)?;
+        Ok(Self {
             db: Arc::new(Mutex::new(db)),
-        };
-        apply_migrations(&mut store)?;
-        Ok(store)
-    }
-}
-
-impl MigratableDatabase for StoolapStore {
-    fn execute(&mut self, sql: &str) -> Result<(), String> {
-        let db = self.db.lock().expect("stoolap mutex poisoned");
-        // stoolap execute returns Result<i64> (rows affected). For DDL we
-        // ignore the count. Pass empty params slice.
-        db.execute(sql, ()).map(|_| ()).map_err(|e| e.to_string())
-    }
-    fn applied_versions(&mut self) -> Result<std::collections::HashSet<u32>, String> {
-        let db = self.db.lock().expect("stoolap mutex poisoned");
-        let rows = db
-            .query("SELECT version FROM cipherocto_migrations", ())
-            .map_err(|e| e.to_string())?;
-        let mut set = std::collections::HashSet::new();
-        for row_result in rows {
-            let row = row_result.map_err(|e| e.to_string())?;
-            let v: i64 = row
-                .get(0)
-                .map_err(|e| StorageError::Decode(e.to_string()).to_string())?;
-            set.insert(v as u32);
-        }
-        Ok(set)
-    }
-    fn record_migration(&mut self, version: u32) -> Result<(), String> {
-        let db = self.db.lock().expect("stoolap mutex poisoned");
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| e.to_string())?
-            .as_secs();
-        db.execute(
-            &format!(
-                "INSERT INTO cipherocto_migrations (version, applied_at) VALUES ({version}, {now})"
-            ),
-            (),
-        )
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+        })
     }
 }
 

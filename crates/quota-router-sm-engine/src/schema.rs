@@ -3,6 +3,12 @@
 //! Migrations are compile-time baked via `include_str!`. Single source of
 //! truth; reproducible across builds. Cipherocto-owned schema per
 //! [[stoolap-general-purpose-db]] Path B.
+//!
+//! Layer B (mission `octo-storage-split` S2): the underlying migration
+//! runner is the Layer A substrate `octo_storage_core::apply_pending`.
+//! The custom `MigratableDatabase` trait that historically shimmed the
+//! Layer A interface is gone — substrate takes `&stoolap::Database`
+//! directly, so the trait-and-impl shim is unnecessary indirection.
 
 /// Migration table DDL + tracking table bootstrap.
 pub const BOOTSTRAP_SQL: &str = include_str!("../migrations/000_bootstrap.sql");
@@ -35,56 +41,43 @@ pub const MIGRATIONS: &[(u32, &str)] = &[
     (6, MIGRATION_006_SQL),
 ];
 
-/// Errors from migration runner.
-#[derive(Debug, thiserror::Error)]
-pub enum MigrationError {
-    #[error("stoolap error: {0}")]
-    Stoolap(String),
-    #[error("migration {0} not found in static list")]
-    MissingMigration(u32),
-    #[error("migration version mismatch: applied {applied}, expected {expected}")]
-    VersionMismatch { applied: u32, expected: u32 },
-}
+/// Substrate-form migration catalog: numeric versions + canonical `v<NNN>`
+/// labels, suitable for `octo_storage_core::apply_pending`. The labels
+/// follow the substrate's convention so ops tooling that reads back
+/// the `name` column from `cipherocto_migrations` sees stable
+/// `v001__create_asks`-style strings.
+pub(super) static BUILTIN_MIGRATION_CATALOG: &[&'static dyn octo_storage_core::Migration] = &[
+    &octo_storage_core::StaticMigration::new(1, "v001__create_asks", MIGRATION_001_SQL),
+    &octo_storage_core::StaticMigration::new(2, "v002__create_receipt_index", MIGRATION_002_SQL),
+    &octo_storage_core::StaticMigration::new(3, "v003__create_events_shard", MIGRATION_003_SQL),
+    &octo_storage_core::StaticMigration::new(4, "v004__create_shard_registry", MIGRATION_004_SQL),
+    &octo_storage_core::StaticMigration::new(5, "v005__create_policy_catalog", MIGRATION_005_SQL),
+    &octo_storage_core::StaticMigration::new(
+        6,
+        "v006__create_consumed_envelopes",
+        MIGRATION_006_SQL,
+    ),
+];
 
 /// Apply pending migrations to the given stoolap database.
 ///
 /// Idempotent: re-running on an already-migrated DB is a no-op.
 ///
-/// `db` is the cipherocto-side wrapper around `stoolap::Database`. We
-/// accept it via a thin trait to avoid leaking stoolap types into the
-/// public API (Path B keeps cipherocto as the schema owner; stoolap is
-/// just a SQL engine).
-pub fn apply_migrations(db: &mut impl MigratableDatabase) -> Result<(), MigrationError> {
-    db.execute(BOOTSTRAP_SQL)
-        .map_err(|e| MigrationError::Stoolap(e.to_string()))?;
-
-    let applied = db
-        .applied_versions()
-        .map_err(|e| MigrationError::Stoolap(e.to_string()))?;
-
-    for (version, sql) in MIGRATIONS {
-        if applied.contains(version) {
-            continue;
-        }
-        db.execute(sql)
-            .map_err(|e| MigrationError::Stoolap(e.to_string()))?;
-        db.record_migration(*version)
-            .map_err(|e| MigrationError::Stoolap(e.to_string()))?;
-    }
-    Ok(())
-}
-
-/// Thin trait over the stoolap database for migration operations.
-///
-/// Cipherocto's `StoolapStore` implements this trait. Keeps stoolap types
-/// out of the migration runner API.
-pub trait MigratableDatabase {
-    /// Execute a SQL statement (DDL or DML).
-    fn execute(&mut self, sql: &str) -> Result<(), String>;
-    /// Returns the set of applied migration versions.
-    fn applied_versions(&mut self) -> Result<std::collections::HashSet<u32>, String>;
-    /// Records a migration as applied.
-    fn record_migration(&mut self, version: u32) -> Result<(), String>;
+/// Thin delegation to the Layer A substrate
+/// ([`octo_storage_core::apply_pending`]). The substrate's
+/// `ensure_tracker_table` brings the historical
+/// `cipherocto_migrations(version PK, applied_at)` table into the
+/// substrate-friendly shape in-place (`name`, `applied_at_unix` columns
+/// added; back-fill by step is implicitly safe because the substrate
+/// only reads `MAX(version)` from the existing PK column and writes its
+/// own marker rows via `name + applied_at_unix` — both columns ignored
+/// by this crate's other queries that SELECT only `version`).
+pub fn apply_migrations(db: &stoolap::Database) -> Result<(), octo_storage_core::StorageError> {
+    octo_storage_core::apply_pending(
+        db,
+        BUILTIN_MIGRATION_CATALOG,
+        octo_storage_core::ApplyConfig::default().with_tracker_table("cipherocto_migrations"),
+    )
 }
 
 #[cfg(test)]

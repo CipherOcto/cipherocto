@@ -70,9 +70,7 @@ pub use circuit_breaker::{
 };
 pub use consumed_receipt_repo::ConsumedReceiptRepository;
 pub use marketplace::{MarketplaceIndex, ACTIVE_ASK_CAP};
-pub use migrations::{
-    apply_pending, list_migrations, Migration, MigrationError, BUILTIN_MIGRATIONS,
-};
+pub use migrations::{apply_pending, list_migrations, MigrationError, BUILTIN_MIGRATIONS};
 pub use settlement_event_repo::{
     PersistedSettlementEvent, SettlementEventInsert, SettlementEventRepository,
 };

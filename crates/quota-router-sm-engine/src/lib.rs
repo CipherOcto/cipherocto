@@ -24,7 +24,7 @@ pub mod shard;
 pub mod state_machine;
 pub mod store;
 
-pub use schema::{apply_migrations, MigrationError};
+pub use schema::apply_migrations;
 pub use state_machine::{
     transition, transition_reservation, ReservationTransitionError, StateTransitionError,
 };

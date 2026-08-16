@@ -16,6 +16,13 @@ path = "src/lib.rs"
 # Stoolap is the EMBEDDED SQL substrate; cipherocto owns schema + state machine.
 stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql", features = ["sync"] }
 
+# Layer A storage substrate (mission octo-storage-split S2). The migration
+# runner that the historical `schema::apply_migrations` bundled is now
+# re-exported from this substrate. Allowed by layer model: sm-engine
+# (Layer B-like owner of the asks + consumed_receipt_index schema) depends
+# on the Layer A substrate.
+octo-storage-core = { path = "../octo-storage-core" }
+
 # Workspace deps
 blake3.workspace = true
 hex.workspace = true

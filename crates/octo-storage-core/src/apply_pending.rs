@@ -381,6 +381,61 @@ mod tests {
     }
 
     #[test]
+    fn migration_with_keyword_substring_name_returns_redacted() {
+        // Tests LOW (Round 4): the existing M5 test uses migration
+        // name `v002__DROP` (full identifier overlap with the SQL
+        // keyword DROP). Strengthen with a name whose SQL-keyword
+        // substring is NOT a full identifier suffix — e.g.,
+        // `v002__dr_op` where `DROP` is broken across a non-keyword
+        // boundary. A regression that strips the migration name but
+        // preserves a partial-substring (e.g., a tokenizer that
+        // splits on `__` and leaks the second half) would surface
+        // here even though the existing M5 test would still pass.
+        let db = fresh_db();
+        const BAD_CATALOG: &[&'static dyn Migration] = &[
+            &StaticMigration::new(
+                1,
+                "create_x",
+                "CREATE TABLE x (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+            ),
+            &StaticMigration::new(
+                2,
+                "v002__dr_op",
+                "ALTER TABLE nonexistent ADD COLUMN foo TEXT",
+            ),
+        ];
+        let err = apply_pending(&db, BAD_CATALOG, ApplyConfig::default()).unwrap_err();
+        match err {
+            StorageError::MigrationFailed { message, .. } => {
+                // Full migration name MUST NOT leak.
+                assert!(
+                    !message.contains("v002__dr_op"),
+                    "migration name must not leak: {message:?}"
+                );
+                // Partial substrings of `DROP` MUST NOT leak either.
+                // `dr_op` is a deliberate deconstruction of `DROP`
+                // (with `_` as the middle separator) — a regression
+                // that leaks the name via a partial substring would
+                // surface `dr_op` here. Similarly for `DROP` /
+                // `drop` (case-insensitive).
+                assert!(
+                    !message.contains("dr_op"),
+                    "partial keyword substring dr_op must not leak: {message:?}"
+                );
+                assert!(
+                    !message.contains("DROP"),
+                    "uppercase DROP must not leak: {message:?}"
+                );
+                assert!(
+                    !message.contains("drop"),
+                    "lowercase drop must not leak: {message:?}"
+                );
+            }
+            other => panic!("expected MigrationFailed for v2, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn empty_migrations_slice_is_noop() {
         // Q5 (review): explicit behavior test. Empty slice returns Ok(())
         // (nothing to apply, nothing to fail). Future contract reinforcement.

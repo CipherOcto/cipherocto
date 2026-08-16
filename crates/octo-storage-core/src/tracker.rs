@@ -629,6 +629,30 @@ mod tests {
             v, MAX_REASONABLE_VERSION,
             "current_version must clamp at MAX_REASONABLE_VERSION on legacy id-PK shape; got {v}"
         );
+
+        // Tests MEDIUM (Round 4): data-preservation after the
+        // hostile UPDATE. The UPDATE targets only the `version`
+        // column, so `name` and `applied_at_unix` must survive
+        // unchanged. Pin them explicitly so a regression that
+        // mutates adjacent columns during the clamp path is caught.
+        let rows = db
+            .query(
+                "SELECT name, applied_at_unix FROM schema_migrations WHERE id = 1",
+                (),
+            )
+            .unwrap();
+        let mut iter = rows.into_iter();
+        let row = iter.next().unwrap().unwrap();
+        let name: String = row.get(0).unwrap();
+        let applied_at_unix: i64 = row.get(1).unwrap();
+        assert_eq!(
+            name, "v005__legit",
+            "name column preserved after hostile UPDATE"
+        );
+        assert_eq!(
+            applied_at_unix, 1000,
+            "applied_at_unix preserved after hostile UPDATE"
+        );
     }
 
     #[test]
@@ -657,6 +681,58 @@ mod tests {
             !applied.contains(&9999999_u32),
             "applied_version must NOT contain the planted out-of-range value; got: {applied:?}"
         );
+    }
+
+    #[test]
+    fn applied_version_at_exact_boundary_unclamped() {
+        // Tests MEDIUM (Round 4): `applied_version_clamps_above_max`
+        // tests an out-of-range value (9999999), but the exact
+        // boundary value (MAX_REASONABLE_VERSION = 10_000) is not
+        // explicitly pinned. A regression that clamps
+        // `>= MAX_REASONABLE_VERSION` (off-by-one in the clamp
+        // direction) would still pass the 9999999 test but fail
+        // here — pinning the `<` vs `<=` boundary in the clamp.
+        let db = stoolap::Database::open_in_memory().unwrap();
+        ensure_tracker_table(&db, "schema_migrations").unwrap();
+        db.execute(
+            "INSERT INTO schema_migrations (version, name, applied_at_unix) \
+             VALUES (10000, 'at_bound', 1000)",
+            (),
+        )
+        .unwrap();
+        let applied = applied_version(&db, "schema_migrations").unwrap();
+        assert!(
+            applied.contains(&10000_u32),
+            "applied_version must contain the exact-boundary value 10000 (no clamping); got: {applied:?}"
+        );
+    }
+
+    #[test]
+    fn applied_version_rejects_minus_two() {
+        // Tests MEDIUM (Round 4): `applied_version_rejects_negative_version`
+        // covers -1 only. The check is `v < 0` (catch-all), so a
+        // regression that special-cased -1 (e.g., `v == -1`) would
+        // pass the existing test but leak -2. Pin -2 as a distinct
+        // boundary value.
+        let db = stoolap::Database::open_in_memory().unwrap();
+        ensure_tracker_table(&db, "schema_migrations").unwrap();
+        db.execute(
+            "INSERT INTO schema_migrations (version, name, applied_at_unix) \
+             VALUES (-2, 'minus_two', 1000)",
+            (),
+        )
+        .unwrap();
+        let err = applied_version(&db, "schema_migrations").unwrap_err();
+        match err {
+            StorageError::Stoolap { operation, message } => {
+                assert_eq!(operation, "applied_version");
+                assert!(
+                    message.contains("negative version -2"),
+                    "error must surface the offending value: {message}"
+                );
+            }
+            other => panic!("expected Stoolap error for negative version -2, got {other:?}"),
+        }
     }
 
     #[test]
@@ -1283,6 +1359,36 @@ mod tests {
             }
             other => panic!("expected backfill_orphan error for v10001, got {other:?}"),
         }
+
+        // Tests MEDIUM (Round 4): data-preservation after the
+        // failed alignment. The orphan row's `id`, `name`, and
+        // `applied_at_unix` must survive unchanged — a regression
+        // that partially mutated the row before raising the error
+        // would corrupt the operator's audit data.
+        let rows = db
+            .query(
+                "SELECT id, name, applied_at_unix, version FROM schema_migrations",
+                (),
+            )
+            .unwrap();
+        let mut iter = rows.into_iter();
+        let row = iter.next().unwrap().unwrap();
+        let id: i64 = row.get(0).unwrap();
+        let name: String = row.get(1).unwrap();
+        let applied_at_unix: i64 = row.get(2).unwrap();
+        // `version` may be NULL (added by alignment, never backfilled
+        // for orphan rows) or already-NULL (legacy schema, no
+        // version column yet) — both are acceptable. We pin the
+        // non-NULL fields explicitly.
+        assert_eq!(id, 1, "orphan row id preserved after failed alignment");
+        assert_eq!(
+            name, "v10001__just_above",
+            "orphan row name preserved after failed alignment"
+        );
+        assert_eq!(
+            applied_at_unix, 1000,
+            "orphan row applied_at_unix preserved after failed alignment"
+        );
     }
 
     #[test]
@@ -1592,8 +1698,22 @@ mod tests {
         );
         // The two timestamps SHOULD mirror (per the path 3 contract
         // comment: "the substrate mirrors the value into both columns").
-        // Allow small skew (microsecond resolution) but they MUST be
-        // close — if path 3 stops mirroring, this catches it.
+        // Tests LOW (Round 4): assert applied_at_unix >= applied_at
+        // (unidirectional ordering, not just absolute diff). The
+        // substrate computes `now` ONCE per call and passes it to both
+        // columns, so `applied_at` and `applied_at_unix` are filled
+        // from the SAME `now` value. They can be equal (same second)
+        // or `applied_at_unix` can be strictly greater (if a clock
+        // tick lands between the two writes — vanishingly unlikely in
+        // a single SQL statement, but allowed). Pin the
+        // unidirectional ordering so a swapped-parameter regression
+        // (e.g., a future refactor that accidentally swaps the two
+        // `now` arguments) surfaces immediately.
+        assert!(
+            applied_at_unix >= applied_at,
+            "applied_at_unix ({applied_at_unix}) must be >= applied_at ({applied_at}); \
+             swapped parameters would violate this ordering"
+        );
         let diff = (applied_at - applied_at_unix).abs();
         assert!(
             diff <= 1,

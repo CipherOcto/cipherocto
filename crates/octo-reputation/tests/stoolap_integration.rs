@@ -47,8 +47,9 @@ async fn cold_boot_opens_and_applies_migrations() {
     let store = StoolapReputationStore::open_in_memory()
         .await
         .expect("open_in_memory");
-    let versions = octo_reputation::migrations::stoolap_runner::applied_versions(store.database())
-        .expect("applied_versions");
+    let versions =
+        octo_reputation::migrations::substrate_runner::applied_versions(store.database())
+            .expect("applied_versions");
     for needed in [
         "v001__reputation_events",
         "v002__reputation_recorders",
@@ -69,11 +70,11 @@ async fn apply_is_idempotent() {
         .await
         .expect("open");
     let v1 =
-        octo_reputation::migrations::stoolap_runner::applied_versions(store.database()).unwrap();
+        octo_reputation::migrations::substrate_runner::applied_versions(store.database()).unwrap();
     // Call apply again on the same backing Database — must be a no-op.
-    octo_reputation::migrations::stoolap_runner::apply(store.database()).unwrap();
+    octo_reputation::migrations::substrate_runner::apply(store.database()).unwrap();
     let v2 =
-        octo_reputation::migrations::stoolap_runner::applied_versions(store.database()).unwrap();
+        octo_reputation::migrations::substrate_runner::applied_versions(store.database()).unwrap();
     assert_eq!(v1, v2);
 }
 

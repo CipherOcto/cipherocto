@@ -3,7 +3,7 @@
 //! Per mission 0968 Phase 1.4 acceptance: persistent reputation storage over
 //! the workspace-wide stoolap fork (`CipherOcto/stoolap@feat/blockchain-sql`).
 //! Schema source of truth lives in `migrations/*.sql`; the runner is in
-//! `crate::migrations::stoolap_runner::apply` and is invoked by every
+//! `crate::migrations::substrate_runner::apply` and is invoked by every
 //! constructor.
 //!
 //! ## Feature gating
@@ -49,7 +49,7 @@ use crate::types::{
 #[cfg(feature = "stoolap")]
 use crate::auth::AssetTag;
 #[cfg(feature = "stoolap")]
-use crate::migrations::stoolap_runner;
+use crate::migrations::substrate_runner;
 #[cfg(feature = "stoolap")]
 use crate::types::{dfp_from_blob, dfp_to_blob};
 
@@ -87,7 +87,7 @@ mod real {
         pub async fn open(dsn: &str) -> Result<Self, ReputationError> {
             let db = stoolap::Database::open(dsn)
                 .map_err(|_e: stoolap::Error| ReputationError::ChainRefInvalid("stoolap_open"))?;
-            stoolap_runner::apply(&db)?;
+            substrate_runner::apply(&db)?;
             Ok(Self {
                 db: std::sync::Arc::new(db),
             })
@@ -98,7 +98,7 @@ mod real {
             let db = stoolap::Database::open_in_memory().map_err(|_e: stoolap::Error| {
                 ReputationError::ChainRefInvalid("stoolap_open_inmem")
             })?;
-            stoolap_runner::apply(&db)?;
+            substrate_runner::apply(&db)?;
             Ok(Self {
                 db: std::sync::Arc::new(db),
             })

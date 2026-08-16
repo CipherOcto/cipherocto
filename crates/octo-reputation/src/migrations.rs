@@ -81,7 +81,7 @@ impl MigrationVersion {
 /// Substrate-form migration catalog: `&[&'static dyn Migration]`. Numeric
 /// versions match the historical `v<NNN>` prefix encoded in each
 /// filename (1..=5 and 10..=12; v006..v009 reserved by RFC-0968 §28 but
-/// not yet implemented). Used by `stoolap_runner::apply` (Layer B
+/// not yet implemented). Used by `substrate_runner::apply` (Layer B
 /// facade) to delegate to `octo_storage_core::apply_pending`.
 #[cfg(feature = "stoolap")]
 pub(super) static BUILTIN_MIGRATION_CATALOG: &[&'static dyn octo_storage_core::Migration] = &[
@@ -128,7 +128,7 @@ pub(super) static BUILTIN_MIGRATION_CATALOG: &[&'static dyn octo_storage_core::M
 ];
 
 #[cfg(feature = "stoolap")]
-pub mod stoolap_runner {
+pub mod substrate_runner {
     use super::{ReputationError, BUILTIN_MIGRATION_CATALOG};
 
     /// Apply every migration that has not yet been recorded in
@@ -149,7 +149,15 @@ pub mod stoolap_runner {
             BUILTIN_MIGRATION_CATALOG,
             octo_storage_core::ApplyConfig::default(),
         )
-        .map_err(|_e| ReputationError::ChainRefInvalid("migration:apply"))?;
+        .map_err(|e| {
+            // Surface the substrate error to stderr even though the
+            // typed `ReputationError::ChainRefInvalid` discriminator
+            // cannot carry it. Operators rely on this for diagnostics
+            // when the legacy-alignment backfill fails (e.g. orphan
+            // names that don't match `v<NNN>__<label>`).
+            eprintln!("octo-reputation migration: substrate error during apply_pending: {e:?}");
+            ReputationError::ChainRefInvalid("migration:apply")
+        })?;
         Ok(())
     }
 
@@ -160,7 +168,12 @@ pub mod stoolap_runner {
     pub fn applied_versions(db: &stoolap::Database) -> Result<Vec<String>, ReputationError> {
         let mut rows = db
             .query("SELECT name FROM schema_migrations ORDER BY version", ())
-            .map_err(|_e| ReputationError::ChainRefInvalid("migration:list"))?;
+            .map_err(|e| {
+                eprintln!(
+                    "octo-reputation migration: substrate query failed (applied_versions): {e:?}"
+                );
+                ReputationError::ChainRefInvalid("migration:list")
+            })?;
         let mut out = Vec::new();
         loop {
             match rows.next() {
@@ -181,7 +194,7 @@ pub mod stoolap_runner {
 }
 
 #[cfg(feature = "stoolap")]
-pub use stoolap_runner::{applied_versions, apply};
+pub use substrate_runner::{applied_versions, apply};
 
 /// Time-of-day timestamp the runner records in `schema_migrations`. Exposed
 /// for tests that do not depend on the stoolap feature.
@@ -267,5 +280,28 @@ mod tests {
             .unwrap()
             .as_secs();
         assert!((now as i64 - t as i64).abs() < 5);
+    }
+
+    /// Compensating control for the triple source-of-truth storage
+    /// pattern (H3 finding from S2 Phase 2 review). `BUILTIN_MIGRATIONS`
+    /// (tuple slice), `MigrationVersion::ALL`, and `BUILTIN_MIGRATION_CATALOG`
+    /// all enumerate the same migrations. If a future PR adds a new v
+    /// entry to the tuple slice and forgets to update the catalog, the
+    /// substrate would silently skip it — this test catches that.
+    #[cfg(feature = "stoolap")]
+    #[test]
+    fn catalog_matches_builtin_migrations() {
+        use crate::migrations::BUILTIN_MIGRATION_CATALOG;
+        let tuple_names: Vec<&str> = BUILTIN_MIGRATIONS.iter().map(|(n, _)| *n).collect();
+        let catalog_names: Vec<&str> = BUILTIN_MIGRATION_CATALOG.iter().map(|m| m.name()).collect();
+        assert_eq!(
+            tuple_names.len(),
+            catalog_names.len(),
+            "tuple slice and catalog have different lengths; \
+             triple source-of-truth drift between BUILTIN_MIGRATIONS and BUILTIN_MIGRATION_CATALOG"
+        );
+        for (t, c) in tuple_names.iter().zip(catalog_names.iter()) {
+            assert_eq!(t, c, "name mismatch between tuple and catalog");
+        }
     }
 }

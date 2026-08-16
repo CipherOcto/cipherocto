@@ -6,6 +6,7 @@ Landed-mission status cards trimmed from index 2026-08-16 (historical records; g
 
 - [0870k transport request/response](mission-0870k-transport-request-response-status.md) — Layer D request/response substrate CLAIMED 2026-08-12. Unblocks 6 DEFERRED 0871b ACs.
 - [Stoolap fork stability audit](mission-stoolap-fork-stability-audit-status.md) — S1 LANDED 2026-08-16. Audit doc 409 lines. Fork head `a5c19d1c...` matches Cargo.lock (pin CURRENT). 10/11 ACs PASS; AC-11 RFC body deferred to S7. Recommendation: HOLD.
+- [octo-storage split](mission-octo-storage-split-status.md) — S2 Phase 1 LANDED 2026-08-16 (commit `da236630`). Layer A substrate `crates/octo-storage-core/` (1173 LoC, 30 tests pass, clippy + fmt clean). Phase 2 (Layer B facade + 3 owner migrations) pending.
 
 ## Reviews + audits
 

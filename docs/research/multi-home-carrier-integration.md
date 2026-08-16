@@ -128,7 +128,7 @@ See §8.2 for the phased approach.
 | Storage providers     | Storage layer       | Storage node discovery via network           | `docs/use-cases/storage-provider-network.md`      |
 | Quota marketplace     | Quota router        | Quota trading settlement transport           | `docs/use-cases/ai-quota-marketplace.md`          |
 | Data marketplace      | Marketplace         | Trustless data exchange via network          | `docs/use-cases/data-marketplace.md`              |
-| Orchestrator runtime  | Orchestrator        | Task routing across heterogeneous transports | `missions/orchestrator-runtime.md`                |
+| Orchestrator runtime  | Orchestrator        | Task routing across heterogeneous transports | `missions/archived/superseded/orchestrator-runtime.md` (legacy, superseded 2026-08-16) |
 
 #### Tier 4 — Already Implemented (but architecturally coupled)
 

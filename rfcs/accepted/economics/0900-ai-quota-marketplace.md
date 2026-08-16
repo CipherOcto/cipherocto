@@ -113,7 +113,7 @@ async function routePrompt(
 
 _Implementation phases have been moved to the Roadmap and Mission files._
 
-See: `missions/quota-router-mve.md`, `missions/quota-market-integration.md`
+See (legacy, superseded 2026-08-16): `missions/archived/superseded/quota-router-mve.md`, `missions/archived/superseded/quota-market-integration.md`. Canonical execution lives in the 0900-0999 economics RFC family + `missions/claimed/0902-*.md` + `missions/claimed/0959-a-ask-pricing-stoolap.md`.
 
 ## Settlement Model
 

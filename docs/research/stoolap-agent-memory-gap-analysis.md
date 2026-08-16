@@ -1197,4 +1197,4 @@ Stoolap: All features + ZK proofs ✨
 - RFC-0410
 - [Use Case: Verifiable Agent Memory Layer](../use-cases/verifiable-agent-memory-layer.md)
 - [Stoolap Research Report](./stoolap-research.md)
-- [Mission: Stoolap Provider Integration](../missions/stoolap-provider-integration.md)
+- [Mission: Stoolap Provider Integration](../missions/archived/superseded/stoolap-provider-integration.md) (legacy, superseded 2026-08-16)

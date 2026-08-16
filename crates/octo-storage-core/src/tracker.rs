@@ -641,15 +641,20 @@ mod tests {
         // while preserving name/applied_at_unix would be caught here.
         let rows = db
             .query(
-                "SELECT name, applied_at_unix, version FROM schema_migrations WHERE id = 1",
+                "SELECT id, name, applied_at_unix, version FROM schema_migrations WHERE id = 1",
                 (),
             )
             .unwrap();
         let mut iter = rows.into_iter();
         let row = iter.next().unwrap().unwrap();
-        let name: String = row.get(0).unwrap();
-        let applied_at_unix: i64 = row.get(1).unwrap();
-        let version: i64 = row.get(2).unwrap();
+        let id: i64 = row.get(0).unwrap();
+        let name: String = row.get(1).unwrap();
+        let applied_at_unix: i64 = row.get(2).unwrap();
+        let version: i64 = row.get(3).unwrap();
+        // Tests MEDIUM (Round 6): pin the row's `id` matches the
+        // WHERE id=1 predicate — catches a regression where the
+        // SELECT returns a different row than expected.
+        assert_eq!(id, 1, "clamped row id must match the WHERE id=1 predicate");
         assert_eq!(
             name, "v005__legit",
             "name column preserved after hostile UPDATE"
@@ -769,6 +774,34 @@ mod tests {
         assert!(
             !applied.contains(&10001_u32),
             "applied_version must NOT retain the planted out-of-range value; got: {applied:?}"
+        );
+    }
+
+    #[test]
+    fn applied_version_10000_and_10001_dedup_to_bound() {
+        // Tests MEDIUM (Round 6): when v=10000 (at bound) AND
+        // v=10001 (just above) are both planted, HashSet semantics
+        // collapse both to MAX_REASONABLE_VERSION. Verify the
+        // HashSet contains exactly 1 element (10000) — pinning that
+        // (a) the clamp is consistent across multiple rows AND
+        // (b) HashSet dedup does not lose the in-bound value.
+        let db = stoolap::Database::open_in_memory().unwrap();
+        ensure_tracker_table(&db, "schema_migrations").unwrap();
+        db.execute(
+            "INSERT INTO schema_migrations (version, name, applied_at_unix) VALUES \
+             (10000, 'at_bound', 1000), (10001, 'just_above', 2000)",
+            (),
+        )
+        .unwrap();
+        let applied = applied_version(&db, "schema_migrations").unwrap();
+        assert_eq!(
+            applied.len(),
+            1,
+            "HashSet must contain exactly 1 element after dedup; got: {applied:?}"
+        );
+        assert!(
+            applied.contains(&10000_u32),
+            "HashSet must contain MAX_REASONABLE_VERSION; got: {applied:?}"
         );
     }
 

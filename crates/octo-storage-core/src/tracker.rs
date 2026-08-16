@@ -670,6 +670,51 @@ mod tests {
     }
 
     #[test]
+    fn current_version_at_v10001_clamped_to_10000() {
+        // Tests MEDIUM (Round 7): boundary matrix gap. The applied_version
+        // path has `applied_version_just_above_boundary_clamped` for v=10001
+        // (mirrors this pattern at the Set level). The current_version path
+        // has `current_version_clamps_above_max` for v=9999999 (far above
+        // bound), but v=10001 (just above) is untested. Plant a single
+        // canonical-shape row at v=10001 and assert it clamps to
+        // MAX_REASONABLE_VERSION.
+        let db = stoolap::Database::open_in_memory().unwrap();
+        ensure_tracker_table(&db, "schema_migrations").unwrap();
+        db.execute(
+            "INSERT INTO schema_migrations (version, name, applied_at_unix) VALUES \
+             (10001, 'just_above_canon', 1000)",
+            (),
+        )
+        .unwrap();
+        let v = current_version(&db, "schema_migrations").unwrap();
+        assert_eq!(
+            v, MAX_REASONABLE_VERSION,
+            "current_version must clamp v=10001 (just-above-boundary) to MAX_REASONABLE_VERSION; got {v}"
+        );
+    }
+
+    #[test]
+    fn empty_tracker_table_returns_zero_state() {
+        // Tests MEDIUM (Round 7): the "no migrations applied" state must
+        // produce (current_version == 0, applied_version == empty HashSet).
+        // current_version uses `COALESCE(MAX(version), 0)` which depends on
+        // the empty-table → NULL → unwrap_or(0) path being exercised.
+        // applied_version iterates zero rows → empty HashSet.
+        let db = stoolap::Database::open_in_memory().unwrap();
+        ensure_tracker_table(&db, "schema_migrations").unwrap();
+        assert_eq!(
+            current_version(&db, "schema_migrations").unwrap(),
+            0,
+            "current_version on empty tracker table returns 0 (COALESCE NULL path)"
+        );
+        let applied = applied_version(&db, "schema_migrations").unwrap();
+        assert!(
+            applied.is_empty(),
+            "applied_version on empty tracker table returns empty HashSet; got: {applied:?}"
+        );
+    }
+
+    #[test]
     fn applied_version_clamps_above_max() {
         // Tests HIGH (Round 3): `applied_version` is a public
         // sister function to `current_version` and MUST share the
@@ -802,6 +847,11 @@ mod tests {
         assert!(
             applied.contains(&10000_u32),
             "HashSet must contain MAX_REASONABLE_VERSION; got: {applied:?}"
+        );
+        assert!(
+            !applied.contains(&10001_u32),
+            "HashSet must NOT contain the above-boundary value (clamped to 10000); \
+             regression signal: a Vec/HashMap swap or clamp-removal would leak 10001 here; got: {applied:?}"
         );
     }
 

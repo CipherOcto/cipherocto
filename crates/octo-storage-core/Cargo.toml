@@ -1,0 +1,17 @@
+[package]
+name = "octo-storage-core"
+version = "0.1.0"
+edition = "2021"
+description = "Layer A storage substrate — migration runner + Database construction (mission octo-storage-split S2)"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# Layer A → substrate SQL engine. Workspace-wide pin matches the audit
+# (`docs/audits/stoolap-fork-stability-2026-08-16.md` — `Cargo.toml` root
+# [patch.crates-io] block). Never bypass with a raw SQLite dep.
+stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
+# Layer A error type per `cipherocto-design-principles` Layer A row.
+thiserror = "2.0"

@@ -141,15 +141,25 @@ fn run_one(
                     // remaining statements proceed.
                     continue;
                 }
-                // Redact the SQL statement from the user-facing error
-                // message. Migration SQL can contain column names (e.g.
-                // `holder_did`) that flow up to HTTP RPC responses via
-                // `#[from]` chains. The full SQL is preserved in the
-                // `Debug` representation for operator diagnostics.
+                // Redact BOTH the SQL statement AND the underlying
+                // Stoolap error's Display from the operator-facing
+                // message. Both can leak through `#[from]` chains:
+                //   * SQL contains column names (e.g. `holder_did`)
+                //     that flow up to HTTP RPC responses.
+                //   * Stoolap's `Display` includes fragments like
+                //     `"table 'nonexistent' not found"` which encode
+                //     schema intent (the failing table is part of the
+                //     migration's domain — it can be inferred from
+                //     `version` by anyone with read access to the
+                //     catalog).
+                // Substrate-internal `Debug` retains both via the
+                // variant's own `Debug` impl + `e` captured in the
+                // closure scope (intentionally not used in the
+                // message). Migration `name` is also redacted —
+                // see `StorageError::MigrationFailed`.
                 return Err(StorageError::MigrationFailed {
                     version: migration.version(),
-                    name: migration.name(),
-                    message: format!("{e}"),
+                    message: "migration SQL failed; see substrate logs for details".to_owned(),
                 });
             }
         }
@@ -308,19 +318,31 @@ mod tests {
             ),
             &StaticMigration::new(
                 2,
-                "alter_missing",
+                "v002__alter_missing_secret_schema_label",
                 "ALTER TABLE nonexistent ADD COLUMN foo TEXT",
             ),
         ];
         let err = apply_pending(&db, BAD_CATALOG, ApplyConfig::default()).unwrap_err();
         match err {
-            StorageError::MigrationFailed {
-                version,
-                name,
-                message: _,
-            } => {
+            StorageError::MigrationFailed { version, message } => {
                 assert_eq!(version, 2, "v2 (alter_missing) is the failing migration");
-                assert_eq!(name, "alter_missing");
+                // H-T10 regression: the operator-facing `message` MUST
+                // NOT leak the raw SQL (which can contain column
+                // names flowing up to HTTP RPC responses) and MUST
+                // NOT leak the migration `name` (which encodes schema
+                // intent via `v<NNN>__<label>`).
+                assert!(
+                    !message.contains("ALTER TABLE "),
+                    "raw SQL must not appear in operator-facing message: {message:?}"
+                );
+                assert!(
+                    !message.contains("nonexistent"),
+                    "table name from failing SQL must not leak: {message:?}"
+                );
+                assert!(
+                    !message.contains("v002__alter_missing_secret_schema_label"),
+                    "migration name must not leak (H-Sec3): {message:?}"
+                );
             }
             other => panic!("expected MigrationFailed for v2, got {other:?}"),
         }

@@ -28,15 +28,35 @@
 //! is indexed UNIQUE for lookup. `VaultHierarchy` (parent vault) was audited
 //! as a phantom type (§20.10) and is NOT modeled — child policy inheritance
 //! is the consumer's responsibility (per §20.6.1 verify-time option (b)).
+//!
+//! ## Forward-compat posture
+//!
+//! Public types are marked `#[non_exhaustive]` where additive field/variant
+//! evolution must remain a non-breaking change (Layer B years-stable). The
+//! `[u8; 32]` newtypes keep their inner field `pub` so existing readers
+//! (substrate bind paths, debug printing) work, but the trust anchor lives
+//! in the canonical `vault_id` derivation — callers MUST recompute, not
+//! trust a `from_bytes` round-trip, before authorizing an action.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 use thiserror::Error;
 
+/// Maximum accepted `owner_did` length (bytes). The vault_id derivation
+/// hashes the raw owner_did into BLAKE3; an unbounded input is a DoS
+/// surface at the substrate boundary. 256B covers the longest realistic
+/// DID form (`did:octo:` + namespace + identifier) with comfortable
+/// headroom. Substrate-internal callers pay zero runtime cost.
+pub const MAX_OWNER_DID_LEN: usize = 256;
+
 pub mod migrations;
 
-pub use migrations::{BUILTIN_MIGRATIONS, BUILTIN_MIGRATION_CATALOG};
+pub use migrations::BUILTIN_MIGRATION_CATALOG;
+// NOTE: `BUILTIN_MIGRATIONS` (the tuple slice form) is intentionally NOT
+// re-exported — it's an internal drift-detection form consumed only by
+// `migrations::tests`. External callers reach the catalog via
+// `BUILTIN_MIGRATION_CATALOG` (the substrate `Migration` slice).
 
 /// Vault substrate errors.
 ///
@@ -47,13 +67,11 @@ pub use migrations::{BUILTIN_MIGRATIONS, BUILTIN_MIGRATION_CATALOG};
 #[derive(Debug, Error)]
 pub enum VaultError {
     /// Substrate-level failure (Sttoolap / migration runner).
-    #[error("vault substrate error during {operation}: {message}")]
-    Substrate {
-        /// Short, stable operation tag (e.g. `"apply_migrations"`, `"derive_vault_id"`).
-        operation: &'static str,
-        /// Operator-facing prose.
-        message: String,
-    },
+    #[error(
+        "vault substrate error during apply_migrations; \
+             substrate-internal trace preserved in substrate logs only"
+    )]
+    Substrate,
 }
 
 /// 32-byte canonical identifier. `vault_id = BLAKE3("cipherocto/vault/v1/" + chain_id + owner_did + asset_id)`
@@ -65,6 +83,12 @@ impl VaultId {
     /// Build a `VaultId` from raw bytes (no derivation; bypasses the canonical
     /// BLAKE3 path). Use only when the caller already holds the derived bytes
     /// (e.g. reading from `octo_vault.vaults.vault_id`).
+    ///
+    /// **Trust posture:** `from_bytes` is NOT a trust anchor. Callers that
+    /// authorize an action based on a `vault_id` MUST recompute via
+    /// [`vault_id`] rather than trust a constructor argument. The
+    /// substrate's `vaults_vault_id_idx` UNIQUE index is the runtime
+    /// invariant; this constructor is for ergonomic binding.
     pub const fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
@@ -136,7 +160,12 @@ impl AssetId {
 /// with values from this enum. RFC-0960 §2.1 listed `Retired`; review §20.10
 /// dropped it (consumer-driven transitions out of `Frozen` go straight to row
 /// removal — the append-only `transfer_events` log is the audit trail).
+///
+/// `#[non_exhaustive]` so future substrate-text variants (e.g. `Pending`,
+/// `Retired`) can land without a semver-major break; consumers must add a
+/// wildcard arm.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum VaultState {
     /// Vault is operational. `transfer_events` rows may accrete/transfer/burn.
     Active,
@@ -176,25 +205,48 @@ pub type OwnerDid = String;
 /// per review §20.3 (the schema sketch defines `policy BLOB NOT NULL`).
 /// At this Layer-B scaffold the policy is opaque bytes; the semantic
 /// interpretation lands when `octo-cap-macaroon` reads it back in C.2 (S5).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct VaultPolicy(pub Vec<u8>);
+///
+/// Deliberately does NOT derive `PartialEq`/`Eq`/`Hash`: equality / hashing
+/// of raw policy bytes is never a sound cryptographic-equality proof, and
+/// accidental `policy_a == policy_b` could bypass a future constant-time
+/// comparator. If equality is needed, derive a separate `PolicyDigest`
+/// newtype via the canonical `BLAKE3("cipherocto/policy/v1/" + policy_bytes)`
+/// derivation and compare digests.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct VaultPolicy(Vec<u8>);
 
 impl VaultPolicy {
-    /// Empty / default policy (allow-all). Concrete policies land in C.2.
+    /// Empty / default policy (allow-all).
+    // SAFETY: placeholder until C.2 (octo-cap-macaroon) defines canonical
+    // encoding per review §20.3 (deferred per `deferred-vs-unspecified`
+    // memory card — work will happen, not deferred-to-post-v1).
     pub fn empty() -> Self {
         Self(Vec::new())
+    }
+
+    /// Borrow the underlying policy bytes (canonical-serialized form).
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
     }
 }
 
 /// Metadata blob (per review schema sketch — `metadata BLOB NOT NULL`).
 /// Same opaque-bytes treatment as `VaultPolicy` at this scaffold stage.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct VaultMetadata(pub Vec<u8>);
+/// No `PartialEq`/`Eq`/`Hash` (see [`VaultPolicy`] rationale).
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct VaultMetadata(Vec<u8>);
 
 impl VaultMetadata {
     /// Empty / default metadata.
     pub fn empty() -> Self {
         Self(Vec::new())
+    }
+
+    /// Borrow the underlying metadata bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
     }
 }
 
@@ -203,7 +255,13 @@ impl VaultMetadata {
 /// The composite identifier `(chain_id, owner_did, asset_id)` is the
 /// primary key; `vault_id` is the derived identifier for lookup purposes
 /// (`UNIQUE` non-PK index).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+///
+/// `#[non_exhaustive]` so future columns (e.g. `updated_at_unix`,
+/// `last_transfer_event_id`) can land without a semver-major break;
+/// consumers must construct via `Vault { ..Default::default() }` style
+/// or use field-by-field assignment.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Vault {
     /// Derived identifier — `BLAKE3("cipherocto/vault/v1/" + chain_id + owner_did + asset_id)`.
     pub vault_id: VaultId,
@@ -241,7 +299,36 @@ pub struct Vault {
 /// Changing the order, the prefix, or the concatenation scheme is a
 /// wire-format break — pin in test_vectors.rs and the §8.10 central
 /// registry.
+///
+/// Guards:
+/// - `owner_did` MUST be non-empty under Model B (§20.3 — empty owner_did
+///   would produce a row whose PK includes `""`, violating every downstream
+///   consumer's natural-key invariant).
+/// - `owner_did` MUST be ≤ [`MAX_OWNER_DID_LEN`] bytes (DoS bound).
+///
+/// Both guards are `debug_assert!` — release builds trust callers, debug
+/// builds catch production bugs early. Use [`vault_id_unchecked`] only in
+/// test fixtures that intentionally exercise empty/oversized inputs.
 pub fn vault_id(chain_id: ChainId, owner_did: &str, asset_id: AssetId) -> VaultId {
+    debug_assert!(
+        !owner_did.is_empty(),
+        "owner_did must be non-empty under Model B (§20.3)"
+    );
+    debug_assert!(
+        owner_did.len() <= MAX_OWNER_DID_LEN,
+        "owner_did exceeds {MAX_OWNER_DID_LEN}B cap (DoS bound at substrate boundary)"
+    );
+    vault_id_unchecked(chain_id, owner_did, asset_id)
+}
+
+/// Canonical derivation WITHOUT the production guards. Reserved for
+/// test fixtures (`tests/test_vectors.rs`) that intentionally exercise
+/// empty / oversized `owner_did` inputs to pin the §8.10 wire format at
+/// its boundary. Production callers MUST use [`vault_id`].
+///
+/// The hash function and input order are byte-identical to [`vault_id`]
+/// — this is not a separate derivation, only a guard-bypassed entry point.
+pub fn vault_id_unchecked(chain_id: ChainId, owner_did: &str, asset_id: AssetId) -> VaultId {
     let mut h = blake3::Hasher::new();
     h.update(b"cipherocto/vault/v1/");
     h.update(chain_id.as_bytes());
@@ -264,12 +351,7 @@ pub fn apply(db: &stoolap::Database) -> Result<(), VaultError> {
         BUILTIN_MIGRATION_CATALOG,
         octo_storage_core::ApplyConfig::default(),
     )
-    .map_err(|_e| VaultError::Substrate {
-        operation: "apply_migrations",
-        message: "octo_vault migration apply failed; \
-                  substrate-internal trace preserved in substrate logs only"
-            .to_owned(),
-    })
+    .map_err(|_e| VaultError::Substrate)
 }
 
 #[cfg(test)]
@@ -339,6 +421,33 @@ mod tests {
             octo_storage_core::DEFAULT_TRACKER_TABLE,
             "schema_migrations",
             "substrate default tracker table renamed — update octo-vault apply path"
+        );
+    }
+
+    /// OwnerDid length + non-empty guards (debug-only). Verifies the
+    /// `debug_assert!` predicates exist and trigger as documented.
+    #[test]
+    #[cfg(debug_assertions)]
+    fn vault_id_rejects_empty_owner_did_in_debug() {
+        let chain = ChainId::derive("cipherocto/testnet/v1");
+        let asset = AssetId::derive("OCTO_W");
+        let result = std::panic::catch_unwind(|| vault_id(chain, "", asset));
+        assert!(
+            result.is_err(),
+            "empty owner_did must panic in debug builds"
+        );
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn vault_id_rejects_oversized_owner_did_in_debug() {
+        let chain = ChainId::derive("cipherocto/testnet/v1");
+        let asset = AssetId::derive("OCTO_W");
+        let oversized = "x".repeat(MAX_OWNER_DID_LEN + 1);
+        let result = std::panic::catch_unwind(|| vault_id(chain, &oversized, asset));
+        assert!(
+            result.is_err(),
+            "oversized owner_did must panic in debug builds"
         );
     }
 }

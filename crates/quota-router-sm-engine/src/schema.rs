@@ -86,11 +86,16 @@ pub fn apply_migrations(db: &stoolap::Database) -> Result<(), octo_storage_core:
 /// in S2 in favor of the substrate's `StorageError`. This alias keeps
 /// any downstream code that imports `quota_router_sm_engine::MigrationError`
 /// source-compatible while centralizing the actual error type in the
-/// substrate. Deprecated as a name once the substrate's error surface
-/// stabilizes (planned for a future semver-major).
+/// substrate.
+///
+/// **Removal target:** the alias will be deleted in the **0.9.0**
+/// release. By 0.9.0 all owner crates + downstream consumers must
+/// import `octo_storage_core::StorageError` directly. The current
+/// 0.7.0 release ships this alias with a `#[deprecated]` marker so
+/// rustc emits migration warnings at every callsite.
 #[deprecated(
     since = "0.7.0",
-    note = "use `octo_storage_core::StorageError` (or `crate::store::StorageError::Migration` for the per-store wrapper)"
+    note = "use `octo_storage_core::StorageError` (or `crate::store::StorageError::Migration` for the per-store wrapper); this alias is removed in 0.9.0"
 )]
 pub type MigrationError = octo_storage_core::StorageError;
 

@@ -6,6 +6,12 @@
 //! hosts the schema and orchestrates settlement; stoolap is just a
 //! general-purpose DB engine.
 //!
+//! **Layer C specialized node** (per `cipherocto-design-principles`):
+//! this crate implements ONE node role (the settlement matching
+//! engine). It depends on the Layer A substrate (`octo_storage_core`)
+//! for the migration runner + DB constructors, and is consumed by
+//! other Layer C crates (e.g. `octo-quota-router`).
+//!
 //! ## Mode gate (RFC-0917 invariant)
 //!
 //! Settlement operations are accessible via both the HTTP proxy and the
@@ -25,10 +31,19 @@ pub mod state_machine;
 pub mod store;
 
 // Re-exported for downstream compatibility with pre-S2 callers. The
-// concrete type lives in `octo_storage_core::StorageError`; this alias
-// is a one-cycle deprecation shim (see `schema::MigrationError`).
+// `apply_migrations` function lives in `schema`; the substrate
+// migration runner is `octo_storage_core::apply_pending`.
+//
+// The pre-S2 `MigrationError` re-export was dropped (see mission
+// `0871b-cross-node-forwarding` review): the underlying type is the
+// substrate's `StorageError`, and re-exporting a deprecated alias at
+// the crate root couples the crate's public surface to a deprecation
+// lifecycle that lives in `schema::MigrationError`. Downstream
+// callers should import `octo_storage_core::StorageError` directly
+// (or use `crate::store::StorageError::Migration` for the
+// per-store wrapper).
 #[allow(deprecated)]
-pub use schema::{apply_migrations, MigrationError};
+pub use schema::apply_migrations;
 pub use state_machine::{
     transition, transition_reservation, ReservationTransitionError, StateTransitionError,
 };

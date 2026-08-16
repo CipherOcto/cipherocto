@@ -145,9 +145,15 @@ impl From<octo_storage_core::StorageError> for MigrationError {
 /// `name`, `sql` fields). The struct was deleted in S2 in favor of
 /// the substrate's `StaticMigration`. This alias keeps any downstream
 /// code that imports `quota_router_storage::Migration` source-compatible.
+///
+/// **Removal target:** the alias is removed in the **0.9.0** release.
+/// By 0.9.0 all downstream consumers must import
+/// `octo_storage_core::StaticMigration` directly. The current 0.7.0
+/// release ships the alias with a `#[deprecated]` marker so rustc
+/// emits migration warnings at every callsite.
 #[deprecated(
     since = "0.7.0",
-    note = "use `octo_storage_core::StaticMigration` (the substrate's newtype)"
+    note = "use `octo_storage_core::StaticMigration` (the substrate's newtype); this alias is removed in 0.9.0"
 )]
 pub type Migration = octo_storage_core::StaticMigration;
 
@@ -202,21 +208,33 @@ mod tests {
     /// array + `BUILTIN_MIGRATION_CATALOG` reference slice). If a future
     /// PR adds a new entry to one and forgets to update the other, the
     /// substrate would silently skip it — this test catches that.
+    ///
+    /// H-T1 regression: pin BOTH version AND name to detect drift in
+    /// either field. A future PR that re-orders the catalog without
+    /// re-syncing names (or vice versa) would slip past a version-only
+    /// check.
     #[test]
     fn catalog_matches_builtin_migrations() {
-        let array: Vec<u32> = BUILTIN_MIGRATIONS.iter().map(|m| m.version()).collect();
-        let catalog: Vec<u32> = BUILTIN_MIGRATION_CATALOG
+        let array_versions: Vec<u32> = BUILTIN_MIGRATIONS.iter().map(|m| m.version()).collect();
+        let catalog_versions: Vec<u32> = BUILTIN_MIGRATION_CATALOG
             .iter()
             .map(|m| m.version())
             .collect();
         assert_eq!(
-            array, catalog,
-            "BUILTIN_MIGRATIONS and BUILTIN_MIGRATION_CATALOG diverged"
+            array_versions, catalog_versions,
+            "BUILTIN_MIGRATIONS and BUILTIN_MIGRATION_CATALOG version lists diverged"
         );
         assert_eq!(
-            array.len(),
+            array_versions.len(),
             BUILTIN_MIGRATION_CATALOG.len(),
-            "parallel source-of-truth drift"
+            "parallel source-of-truth drift (length mismatch)"
+        );
+
+        let array_names: Vec<&str> = BUILTIN_MIGRATIONS.iter().map(|m| m.name()).collect();
+        let catalog_names: Vec<&str> = BUILTIN_MIGRATION_CATALOG.iter().map(|m| m.name()).collect();
+        assert_eq!(
+            array_names, catalog_names,
+            "BUILTIN_MIGRATIONS and BUILTIN_MIGRATION_CATALOG name lists diverged"
         );
     }
 
@@ -262,7 +280,20 @@ mod tests {
                 catalog_max,
             } => {
                 assert_eq!(version, 999);
-                assert_eq!(catalog_max, 12, "catalog_max stays informative");
+                // H-T7 regression: derive catalog_max from the BUILTIN_MIGRATIONS
+                // length instead of hardcoding `12`. A future PR that adds a new
+                // migration to the catalog would otherwise need to update this
+                // assertion too — easy to forget, and the test would silently
+                // pass with the wrong value.
+                let expected_catalog_max = BUILTIN_MIGRATIONS
+                    .iter()
+                    .map(|m| m.version())
+                    .max()
+                    .expect("catalog must be non-empty");
+                assert_eq!(
+                    catalog_max, expected_catalog_max,
+                    "catalog_max stays informative; expected BUILTIN_MIGRATIONS.max() = {expected_catalog_max}"
+                );
             }
             other => panic!("expected UnknownMigration, got {other:?}"),
         }

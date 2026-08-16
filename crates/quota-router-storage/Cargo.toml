@@ -18,8 +18,8 @@ stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockc
 # Layer A storage substrate (mission octo-storage-split S2). The migration
 # runner that the local `apply_pending` historically bundled is now
 # re-exported from this substrate. Allowed by layer model: storage
-# (Layer A-adjacent per-crate schema owner) depends on the Layer A
-# substrate.
+# (Layer C specialized node for the quota-router domain) depends on
+# the Layer A substrate for the migration runner + DB constructors.
 octo-storage-core = { path = "../octo-storage-core" }
 
 # Per the persistence convention (RFC-0914-a / 0914-a-stoolap-persistence):

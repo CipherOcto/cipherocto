@@ -808,6 +808,38 @@ mod tests {
     }
 
     #[test]
+    fn current_version_rejects_minus_two() {
+        // Tests HIGH (Round 9): `current_version_rejects_negative_version`
+        // covers -1 only. The check is `v < 0` (catch-all), so a
+        // regression that special-cased -1 (e.g., `v == -1`) would
+        // pass the existing test but leak -2. Pin -2 as a distinct
+        // boundary value — mirrors `applied_version_rejects_minus_two`.
+        let db = stoolap::Database::open_in_memory().unwrap();
+        ensure_tracker_table(&db, "schema_migrations").unwrap();
+        db.execute(
+            "INSERT INTO schema_migrations (version, name, applied_at_unix) VALUES \
+             (-2, 'minus_two', 1000)",
+            (),
+        )
+        .unwrap();
+        let err = current_version(&db, "schema_migrations").unwrap_err();
+        match err {
+            StorageError::Stoolap { operation, message } => {
+                assert_eq!(operation, "current_version");
+                assert!(
+                    message.contains("-2"),
+                    "operator-facing message must surface the planted value; got: {message:?}"
+                );
+                assert!(
+                    message.contains("negative"),
+                    "operator-facing message must classify the failure; got: {message:?}"
+                );
+            }
+            other => panic!("expected Stoolap (current_version op tag), got {other:?}"),
+        }
+    }
+
+    #[test]
     fn empty_tracker_table_returns_zero_state() {
         // Tests MEDIUM (Round 7): the "no migrations applied" state must
         // produce (current_version == 0, applied_version == empty HashSet).
@@ -940,14 +972,24 @@ mod tests {
         // semantics (instead of in-memory HashSet collapsing) would corrupt
         // the planted version here.
         let rows = db
-            .query("SELECT version FROM schema_migrations", ())
+            .query(
+                "SELECT version, name, applied_at_unix FROM schema_migrations",
+                (),
+            )
             .unwrap();
         let mut iter = rows.into_iter();
         let row = iter.next().unwrap().unwrap();
         let version: i64 = row.get(0).unwrap();
+        let name: String = row.get(1).unwrap();
+        let applied_at_unix: i64 = row.get(2).unwrap();
         assert_eq!(
             version, 10001,
             "clamp must not mutate the planted row; planted version was 10001"
+        );
+        assert_eq!(name, "just_above", "name column preserved across clamp");
+        assert_eq!(
+            applied_at_unix, 1000,
+            "applied_at_unix preserved across clamp"
         );
     }
 
@@ -988,16 +1030,38 @@ mod tests {
         // implemented dedup via DELETE would leave only v=10000 in the
         // table, breaking `apply_pending`'s view of the migration history.
         let rows = db
-            .query("SELECT version FROM schema_migrations ORDER BY version", ())
+            .query(
+                "SELECT version, name, applied_at_unix FROM schema_migrations ORDER BY version",
+                (),
+            )
             .unwrap();
-        let versions: Vec<i64> = rows
+        let snapshots: Vec<(i64, String, i64)> = rows
             .into_iter()
-            .map(|r| r.unwrap().get::<i64>(0).unwrap())
+            .map(|r| {
+                let row = r.unwrap();
+                let v: i64 = row.get(0).unwrap();
+                let n: String = row.get(1).unwrap();
+                let t: i64 = row.get(2).unwrap();
+                (v, n, t)
+            })
             .collect();
+        let versions: Vec<i64> = snapshots.iter().map(|s| s.0).collect();
         assert_eq!(
             versions,
             vec![10000_i64, 10001],
             "both planted rows must remain in the table (dedup is in-memory); got: {versions:?}"
+        );
+        // Tests LOW (Round 9): pin name + applied_at_unix per row to
+        // verify column preservation across the dedup path.
+        assert_eq!(
+            snapshots[0],
+            (10000, "at_bound".to_owned(), 1000),
+            "at_bound row: (version, name, applied_at_unix) preserved"
+        );
+        assert_eq!(
+            snapshots[1],
+            (10001, "just_above".to_owned(), 2000),
+            "just_above row: (version, name, applied_at_unix) preserved (applied_at_unix is 2000 to verify distinct values)"
         );
     }
 

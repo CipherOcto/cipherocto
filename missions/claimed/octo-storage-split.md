@@ -102,7 +102,7 @@ facade for type aliases, but doing it now would inflate scope past MED.
    - Replace per-version `const MIGRATION_NNN_SQL` + `MigratableDatabase` trait + `apply_migrations(db)` with `octo_storage_core::apply_pending`
    - Keep `BOOTSTRAP_SQL` for the initial schema_migrations table OR absorb into octo-storage-core as the tracker-table DDL (decision documented in §Decision Points below)
 
-6. **Adapter trait TV fixtures (5)** per plan §24 reconciliation table:
+6. **Adapter trait TV fixtures (5)** per plan §3 (S2 row) + §4 (S2 verification gates):
    - `octo-storage-core::Migration` trait — 2 TV (idempotency + ordering invariants)
    - `octo-storage-core::apply_pending` — 2 TV (fresh DB + partially-applied DB)
    - `octo-storage-core::open` / `open_in_memory` — 1 TV (round-trip with `execute` + `query`)
@@ -207,7 +207,7 @@ wall-clock across 1-2 sessions.
 - [[cipherocto-design-principles]] — Layer A/B/C/D/E stability model
 - [[mission-stoolap-fork-stability-audit-status]] — S1 LANDED
 - `docs/reviews/2026-08-15-storage-layer-restructuring-analysis.md` §4.6 / §4.6.1
-- `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md` §2 B.2 + §3 S2 + §4 S2 + §24 (TV allocation)
+- `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md` §2 B.2 + §3 S2 + §4 S2 (verification gates)
 - `docs/BLUEPRINT.md` §RFC Process (Draft → Accepted lifecycle)
 - [[git-workflow]] — push + remote writes await user instruction
 - [[feedback_initiation_user_only]] — local commits free; push + remote writes need explicit user instruction

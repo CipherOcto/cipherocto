@@ -287,6 +287,91 @@ mod tests {
     }
 
     #[test]
+    fn migration_with_invalid_sql_returns_migration_failed() {
+        // M5 (review): the `StorageError::MigrationFailed` error path is
+        // reachable from `apply_pending` when a migration's SQL fails to
+        // execute. v1 is good; v2 references a nonexistent table, so its
+        // ALTER TABLE statement fails. After this test, v1 is recorded
+        // (success) and v2 is NOT recorded (failure leaves migration
+        // un-tracked so the next `apply_pending` call retries it).
+        let db = fresh_db();
+        const BAD_CATALOG: &[&'static dyn Migration] = &[
+            &StaticMigration::new(
+                1,
+                "create_x",
+                "CREATE TABLE x (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+            ),
+            &StaticMigration::new(
+                2,
+                "alter_missing",
+                "ALTER TABLE nonexistent ADD COLUMN foo TEXT",
+            ),
+        ];
+        let err = apply_pending(&db, BAD_CATALOG, ApplyConfig::default()).unwrap_err();
+        match err {
+            StorageError::MigrationFailed {
+                version,
+                name,
+                message: _,
+            } => {
+                assert_eq!(version, 2, "v2 (alter_missing) is the failing migration");
+                assert_eq!(name, "alter_missing");
+            }
+            other => panic!("expected MigrationFailed for v2, got {other:?}"),
+        }
+
+        // v1 must be recorded; v2 must NOT be (next apply_pending retries).
+        let applied = applied_version(&db, "schema_migrations").unwrap();
+        assert!(applied.contains(&1), "v1 should be recorded (success)");
+        assert!(
+            !applied.contains(&2),
+            "v2 must NOT be recorded after failure"
+        );
+
+        // A second call (v2 still fails — table does not exist) should hit
+        // the same error path; v1 is skipped (already recorded).
+        let err2 = apply_pending(&db, BAD_CATALOG, ApplyConfig::default()).unwrap_err();
+        assert!(
+            matches!(err2, StorageError::MigrationFailed { version: 2, .. }),
+            "second call still fails on v2"
+        );
+    }
+
+    #[test]
+    fn empty_migrations_slice_is_noop() {
+        // Q5 (review): explicit behavior test. Empty slice returns Ok(())
+        // (nothing to apply, nothing to fail). Future contract reinforcement.
+        let db = fresh_db();
+        let empty: &[&'static dyn Migration] = &[];
+        apply_pending(&db, empty, ApplyConfig::default()).unwrap();
+        // Tracker table still created.
+        let v = current_version(&db, "schema_migrations").unwrap();
+        assert_eq!(v, 0, "empty slice → tracker table created, version 0");
+    }
+
+    #[test]
+    fn non_contiguous_versions_silently_skip_gap() {
+        // Q1 (review): migration catalog [1, 3] with v2 missing. The runner
+        // walks versions in order; v3's version (3) is greater than last_applied
+        // (1), so it executes. No error, no warning — gaps are silently filled.
+        // Intentional behavior: the catalog defines WHAT to apply, and the
+        // last_applied guard prevents re-running. Document here for the
+        // reviewer audit trail.
+        let db = fresh_db();
+        const GAPPY: &[&'static dyn Migration] = &[
+            &StaticMigration::new(1, "create_x", "CREATE TABLE x (id INTEGER PRIMARY KEY)"),
+            &StaticMigration::new(3, "create_y", "CREATE TABLE y (id INTEGER PRIMARY KEY)"),
+        ];
+        apply_pending(&db, GAPPY, ApplyConfig::default()).unwrap();
+        let applied = applied_version(&db, "schema_migrations").unwrap();
+        assert_eq!(
+            applied,
+            [1_u32, 3].into_iter().collect(),
+            "both v1 and v3 are recorded even with v2 missing from catalog"
+        );
+    }
+
+    #[test]
     fn partial_apply_recovers_when_add_column_already_exists() {
         // v3 is two ADD COLUMN statements. Pre-create the first column so the
         // "duplicate column" path is exercised.

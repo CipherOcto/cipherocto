@@ -15,11 +15,14 @@ pub fn split_sql_statements(sql: &str) -> Vec<String> {
     let mut buf = String::new();
     let mut chars = sql.chars().peekable();
     while let Some(c) = chars.next() {
-        // Strip line comments (-- ... \n).
+        // Strip line comments (-- ... <EOL>). Accept LF, CR, or CRLF as the
+        // line terminator so SQL authored on Windows / old-Mac systems works.
+        // LF / CR chars are consumed entirely (dropped) — `buf` only captures
+        // meaningful characters.
         if c == '-' && chars.peek() == Some(&'-') {
             while let Some(&nc) = chars.peek() {
                 chars.next();
-                if nc == '\n' {
+                if nc == '\n' || nc == '\r' {
                     break;
                 }
             }
@@ -101,5 +104,32 @@ mod tests {
         let stmts = split_sql_statements(sql);
         // Naive split: 4 fragments (the embedded `;`s do cut).
         assert_eq!(stmts.len(), 4);
+    }
+
+    #[test]
+    fn handles_crlf_line_endings() {
+        // SQL authored on Windows systems has CRLF. The comment-strip loop
+        // must terminate on \r OR \n; otherwise trailing \r ends up inside
+        // the statement text and breaks a downstream execute.
+        let sql = "-- header\r\nCREATE TABLE x (id INT);\r\nCREATE TABLE y (id INT);\r\n";
+        let stmts = split_sql_statements(sql);
+        assert_eq!(stmts.len(), 2);
+        for stmt in &stmts {
+            assert!(
+                !stmt.contains('\r'),
+                "CR must be stripped from statement text: {stmt:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn handles_cr_only_line_endings() {
+        // Old Mac (pre-OSX) style. CRLF + LF + CR all terminate a comment.
+        let sql = "-- head\rCREATE TABLE x (id INT);\rCREATE TABLE y (id INT);\r";
+        let stmts = split_sql_statements(sql);
+        assert_eq!(stmts.len(), 2);
+        for stmt in &stmts {
+            assert!(!stmt.contains('\r'));
+        }
     }
 }

@@ -1,5 +1,6 @@
 //! Adapter trait TV fixtures for `octo-storage-core` per
-//! `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md` §24.
+//! `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md`
+//! §3 (S2 row) + §4 (S2 verification gates).
 //!
 //! 5 fixtures:
 //! 1. `Migration` trait — idempotency invariant

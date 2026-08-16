@@ -635,9 +635,13 @@ mod tests {
         // column, so `name` and `applied_at_unix` must survive
         // unchanged. Pin them explicitly so a regression that
         // mutates adjacent columns during the clamp path is caught.
+        // Tests MEDIUM (Round 5): also pin `version` to 9999999 (the
+        // hostile UPDATE value) — a regression that corrupted
+        // `version` to some intermediate value during the clamp path
+        // while preserving name/applied_at_unix would be caught here.
         let rows = db
             .query(
-                "SELECT name, applied_at_unix FROM schema_migrations WHERE id = 1",
+                "SELECT name, applied_at_unix, version FROM schema_migrations WHERE id = 1",
                 (),
             )
             .unwrap();
@@ -645,6 +649,7 @@ mod tests {
         let row = iter.next().unwrap().unwrap();
         let name: String = row.get(0).unwrap();
         let applied_at_unix: i64 = row.get(1).unwrap();
+        let version: i64 = row.get(2).unwrap();
         assert_eq!(
             name, "v005__legit",
             "name column preserved after hostile UPDATE"
@@ -652,6 +657,10 @@ mod tests {
         assert_eq!(
             applied_at_unix, 1000,
             "applied_at_unix preserved after hostile UPDATE"
+        );
+        assert_eq!(
+            version, 9999999,
+            "version column holds the hostile UPDATE value (clamp reads it, doesn't mutate)"
         );
     }
 
@@ -732,6 +741,70 @@ mod tests {
                 );
             }
             other => panic!("expected Stoolap error for negative version -2, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn applied_version_just_above_boundary_clamped() {
+        // Tests MEDIUM (Round 5): parallel to
+        // `legacy_v10001_just_above_boundary_rejected_as_orphan` (backfill
+        // path) — exercise the just-above-boundary case for the
+        // `applied_version` clamp path. Backfill uses `<=` inclusive
+        // and surfaces v=10001 as orphan; `applied_version` uses
+        // `min(MAX_REASONABLE_VERSION)` and clamps v=10001 to
+        // 10000. Both paths must agree on the boundary semantics.
+        let db = stoolap::Database::open_in_memory().unwrap();
+        ensure_tracker_table(&db, "schema_migrations").unwrap();
+        db.execute(
+            "INSERT INTO schema_migrations (version, name, applied_at_unix) \
+             VALUES (10001, 'just_above', 1000)",
+            (),
+        )
+        .unwrap();
+        let applied = applied_version(&db, "schema_migrations").unwrap();
+        assert!(
+            applied.contains(&10000_u32),
+            "applied_version must clamp v=10001 down to MAX_REASONABLE_VERSION; got: {applied:?}"
+        );
+        assert!(
+            !applied.contains(&10001_u32),
+            "applied_version must NOT retain the planted out-of-range value; got: {applied:?}"
+        );
+    }
+
+    #[test]
+    fn applied_version_rejects_i64_min_plus_one() {
+        // Tests LOW (Round 5): SQLite/Stoolap INTEGER is i64.
+        // Stoolap reserves i64::MIN itself as an empty-sentinel
+        // (fork `common/i64_map.rs:46`), so the INSERT itself fails
+        // before reaching the substrate's negative-check. The
+        // most-negative VALID Stoolap value is i64::MIN+1
+        // (-9_223_372_036_854_775_807) — still negative, still a
+        // worst-case hostile write, and exercises the `v < 0`
+        // catch-all branch.
+        let db = stoolap::Database::open_in_memory().unwrap();
+        ensure_tracker_table(&db, "schema_migrations").unwrap();
+        db.execute(
+            "INSERT INTO schema_migrations (version, name, applied_at_unix) \
+             VALUES (-9223372036854775807, 'i64_min_plus_one', 1000)",
+            (),
+        )
+        .unwrap();
+        let err = applied_version(&db, "schema_migrations").unwrap_err();
+        match err {
+            StorageError::Stoolap { operation, message } => {
+                assert_eq!(
+                    operation, "applied_version",
+                    "large-negative version must surface under applied_version op tag"
+                );
+                assert!(
+                    message.contains("negative version -9223372036854775807"),
+                    "error must surface the offending value: {message}"
+                );
+            }
+            other => {
+                panic!("expected Stoolap error for large negative version, got {other:?}")
+            }
         }
     }
 
@@ -1365,6 +1438,21 @@ mod tests {
         // `applied_at_unix` must survive unchanged — a regression
         // that partially mutated the row before raising the error
         // would corrupt the operator's audit data.
+        // Tests MEDIUM (Round 5): also verify the orphan row count
+        // is exactly 1 (no spurious rows created during alignment
+        // attempt) — catches a regression that might have INSERTed
+        // an extra row before raising the error.
+        let count_rows = db
+            .query("SELECT COUNT(*) FROM schema_migrations", ())
+            .unwrap();
+        let mut count_iter = count_rows.into_iter();
+        let count_row = count_iter.next().unwrap().unwrap();
+        let count: i64 = count_row.get(0).unwrap();
+        assert_eq!(
+            count, 1,
+            "exactly 1 orphan row survives after failed alignment; no spurious INSERTs"
+        );
+
         let rows = db
             .query(
                 "SELECT id, name, applied_at_unix, version FROM schema_migrations",

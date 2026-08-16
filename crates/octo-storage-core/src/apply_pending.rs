@@ -141,10 +141,15 @@ fn run_one(
                     // remaining statements proceed.
                     continue;
                 }
+                // Redact the SQL statement from the user-facing error
+                // message. Migration SQL can contain column names (e.g.
+                // `holder_did`) that flow up to HTTP RPC responses via
+                // `#[from]` chains. The full SQL is preserved in the
+                // `Debug` representation for operator diagnostics.
                 return Err(StorageError::MigrationFailed {
                     version: migration.version(),
                     name: migration.name(),
-                    message: format!("{e}: {stmt}"),
+                    message: format!("{e}"),
                 });
             }
         }

@@ -208,7 +208,13 @@ fn is_hardcoded_sql_type(s: &str) -> bool {
 /// Returns 0 if the table is empty.
 ///
 /// # Errors
-/// Returns `StorageError::stoolap` on `db.query` / row decode failure.
+/// Returns `StorageError::stoolap` on `db.query` / row decode failure,
+/// or when the tracker table contains a negative `version` (data
+/// corruption — every recorded version is `>= 1` per the substrate
+/// contract). Mirrors [`applied_version`]: negative values are not
+/// "out-of-range upper bound" (those are clamped silently) but invalid
+/// inputs that must surface as a typed error so an attacker planting
+/// `version=-1` cannot masquerade as an empty DB.
 pub fn current_version(db: &stoolap::Database, table_name: &str) -> Result<u32, StorageError> {
     if !is_safe_identifier(table_name) {
         return Err(StorageError::Unsupported(format!(
@@ -233,9 +239,28 @@ pub fn current_version(db: &stoolap::Database, table_name: &str) -> Result<u32, 
         // bound). Without this clamp, `apply_pending` would refuse
         // any further migrations via `UnknownMigration` — a
         // self-lockout DoS independent of the backfill path.
-        // Out-of-range values are silently coerced to the bound
-        // (operator-visible via `apply_pending`'s own diagnostic).
-        return Ok(v.unwrap_or(0).max(0).min(MAX_REASONABLE_VERSION as i64) as u32);
+        // Out-of-range upper-bound values are silently coerced to
+        // the bound.
+        //
+        // Negative values are NOT out-of-range — they are invalid
+        // per the substrate contract (every recorded version is
+        // `>= 1`) and signal data corruption. Mirroring
+        // [`applied_version`], reject as a typed error rather than
+        // silently coercing to 0: a hostile `version=-1` would
+        // otherwise masquerade as an empty DB and trigger
+        // `apply_pending` to re-apply every migration (the
+        // asymmetric "self-application" attack).
+        let v = v.unwrap_or(0);
+        if v < 0 {
+            return Err(StorageError::Stoolap {
+                operation: "current_version",
+                message: format!(
+                    "tracker table {table_name} contains negative version {v}; \
+                     substrate contract requires version >= 1"
+                ),
+            });
+        }
+        return Ok(v.min(MAX_REASONABLE_VERSION as i64) as u32);
     }
     Ok(0)
 }
@@ -691,6 +716,95 @@ mod tests {
             v, MAX_REASONABLE_VERSION,
             "current_version must clamp v=10001 (just-above-boundary) to MAX_REASONABLE_VERSION; got {v}"
         );
+
+        // Tests MEDIUM (Round 8): row re-read to verify the clamp is a
+        // pure read (does not mutate the planted row). A regression
+        // that added a mutating "optimization" to the clamp path would
+        // corrupt the planted version here.
+        let rows = db
+            .query(
+                "SELECT version, name, applied_at_unix FROM schema_migrations",
+                (),
+            )
+            .unwrap();
+        let mut iter = rows.into_iter();
+        let row = iter.next().unwrap().unwrap();
+        let version: i64 = row.get(0).unwrap();
+        let name: String = row.get(1).unwrap();
+        let applied_at_unix: i64 = row.get(2).unwrap();
+        assert_eq!(
+            version, 10001,
+            "clamp must not mutate the planted row; planted version was 10001"
+        );
+        assert_eq!(
+            name, "just_above_canon",
+            "name column preserved after clamp"
+        );
+        assert_eq!(
+            applied_at_unix, 1000,
+            "applied_at_unix preserved after clamp"
+        );
+    }
+
+    #[test]
+    fn current_version_at_v10000_exact_boundary_unclamped() {
+        // Tests HIGH (Round 8): boundary matrix gap. The clamp uses
+        // `min(MAX_REASONABLE_VERSION)` (inclusive at the bound), so a
+        // canonical-shape row at v=10000 must return 10000 — NOT be
+        // clamped down to 9999. An off-by-one in the clamp (`min` vs
+        // `min(MAX - 1)`) would be invisible without this test. The
+        // legacy-shape backfill acceptance of v=10000 is covered by
+        // `legacy_v10000_at_boundary_accepted`; this test covers the
+        // canonical-shape direct-insert path.
+        let db = stoolap::Database::open_in_memory().unwrap();
+        ensure_tracker_table(&db, "schema_migrations").unwrap();
+        db.execute(
+            "INSERT INTO schema_migrations (version, name, applied_at_unix) VALUES \
+             (10000, 'exact_bound_canon', 1000)",
+            (),
+        )
+        .unwrap();
+        let v = current_version(&db, "schema_migrations").unwrap();
+        assert_eq!(
+            v, MAX_REASONABLE_VERSION,
+            "current_version at v=10000 (exact bound) must return 10000, not clamped; got {v}"
+        );
+    }
+
+    #[test]
+    fn current_version_rejects_negative_version() {
+        // Tests MEDIUM (Round 8): production code previously used
+        // `.max(0)` to silently coerce negative values to 0 — a
+        // hostile `version=-1` would masquerade as an empty DB and
+        // trigger `apply_pending` to re-apply every migration
+        // (asymmetric "self-application" attack). Mirroring
+        // `applied_version_rejects_negative_version`, reject as a
+        // typed error with op tag `current_version` (NOT the
+        // general "stoolap" tag — distinguishes substrate-side vs
+        // db-side failures).
+        let db = stoolap::Database::open_in_memory().unwrap();
+        ensure_tracker_table(&db, "schema_migrations").unwrap();
+        db.execute(
+            "INSERT INTO schema_migrations (version, name, applied_at_unix) VALUES \
+             (-1, 'minus_one', 1000)",
+            (),
+        )
+        .unwrap();
+        let err = current_version(&db, "schema_migrations").unwrap_err();
+        match err {
+            StorageError::Stoolap { operation, message } => {
+                assert_eq!(operation, "current_version");
+                assert!(
+                    message.contains("-1"),
+                    "operator-facing message must surface the planted value; got: {message:?}"
+                );
+                assert!(
+                    message.contains("negative"),
+                    "operator-facing message must classify the failure; got: {message:?}"
+                );
+            }
+            other => panic!("expected Stoolap (current_version op tag), got {other:?}"),
+        }
     }
 
     #[test]
@@ -820,6 +934,21 @@ mod tests {
             !applied.contains(&10001_u32),
             "applied_version must NOT retain the planted out-of-range value; got: {applied:?}"
         );
+
+        // Tests LOW (Round 8): row re-read to verify the clamp is a
+        // pure read. A regression that implemented row-DELETE or row-UPDATE
+        // semantics (instead of in-memory HashSet collapsing) would corrupt
+        // the planted version here.
+        let rows = db
+            .query("SELECT version FROM schema_migrations", ())
+            .unwrap();
+        let mut iter = rows.into_iter();
+        let row = iter.next().unwrap().unwrap();
+        let version: i64 = row.get(0).unwrap();
+        assert_eq!(
+            version, 10001,
+            "clamp must not mutate the planted row; planted version was 10001"
+        );
     }
 
     #[test]
@@ -852,6 +981,23 @@ mod tests {
             !applied.contains(&10001_u32),
             "HashSet must NOT contain the above-boundary value (clamped to 10000); \
              regression signal: a Vec/HashMap swap or clamp-removal would leak 10001 here; got: {applied:?}"
+        );
+
+        // Tests LOW (Round 8): row re-read to verify dedup is in-memory
+        // HashSet collapsing (NOT a row DELETE). A regression that
+        // implemented dedup via DELETE would leave only v=10000 in the
+        // table, breaking `apply_pending`'s view of the migration history.
+        let rows = db
+            .query("SELECT version FROM schema_migrations ORDER BY version", ())
+            .unwrap();
+        let versions: Vec<i64> = rows
+            .into_iter()
+            .map(|r| r.unwrap().get::<i64>(0).unwrap())
+            .collect();
+        assert_eq!(
+            versions,
+            vec![10000_i64, 10001],
+            "both planted rows must remain in the table (dedup is in-memory); got: {versions:?}"
         );
     }
 

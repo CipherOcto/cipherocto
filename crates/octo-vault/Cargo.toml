@@ -24,5 +24,9 @@ stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockc
 blake3 = "1.5"
 # Layer B → substrate error type. Display operator-facing, Debug substrate-internal.
 thiserror = "2.0"
-# Test-only — hex encoding for byte-exact test vector fixtures (TV-V1).
+
+[dev-dependencies]
+# Hex encoding for byte-exact test vector fixtures (TV-V1) +
+# capture_tv_v1.rs example. Dev-only — keeps the production dep tree
+# minimal.
 hex = "0.4"

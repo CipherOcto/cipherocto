@@ -93,3 +93,135 @@ fn apply_is_idempotent() {
     assert!(applied.contains(&13));
     assert!(applied.contains(&14));
 }
+
+/// Locks the composite PK `(chain_id, owner_did, asset_id)` per review
+/// §20.3 Model B. A second row with the same composite PK must be rejected
+/// at the substrate level (otherwise the runner records a migration whose
+/// PK is silently broken — a wire-format break).
+#[test]
+fn vaults_composite_pk_rejects_duplicate() {
+    let db = open_in_memory().expect("open in-memory");
+    apply(&db).expect("apply");
+
+    let insert = || {
+        db.execute(
+            "INSERT INTO vaults \
+             (vault_id, chain_id, owner_did, asset_id, balance, policy, state, \
+              created_at_unix, metadata) \
+             VALUES (?, ?, 'did:octo:alice', ?, '1.5', ?, 'Active', 1700000000, ?)",
+            (
+                [0u8; 32].as_slice(),
+                [1u8; 32].as_slice(),
+                [2u8; 32].as_slice(),
+                vec![].as_slice(),
+                vec![].as_slice(),
+            ),
+        )
+    };
+    insert().expect("first insert");
+    let second = insert();
+    assert!(
+        second.is_err(),
+        "composite PK (chain_id, owner_did, asset_id) must reject duplicate; got {:?}",
+        second
+    );
+}
+
+/// Locks the `vaults_vault_id_idx` UNIQUE index per review §20.3 Model B.
+/// Two rows with DIFFERENT composite PKs but the same `vault_id` must be
+/// rejected — vault_id is the central-registry identity key (§8.10).
+#[test]
+fn vaults_vault_id_unique_index_rejects_duplicate() {
+    let db = open_in_memory().expect("open in-memory");
+    apply(&db).expect("apply");
+
+    // First row: (chain=1, owner=alice, asset=2)
+    db.execute(
+        "INSERT INTO vaults \
+         (vault_id, chain_id, owner_did, asset_id, balance, policy, state, \
+          created_at_unix, metadata) \
+         VALUES (?, ?, 'did:octo:alice', ?, '1.5', ?, 'Active', 1700000000, ?)",
+        (
+            [42u8; 32].as_slice(),
+            [1u8; 32].as_slice(),
+            [2u8; 32].as_slice(),
+            vec![].as_slice(),
+            vec![].as_slice(),
+        ),
+    )
+    .expect("first insert");
+
+    // Second row: SAME vault_id, DIFFERENT composite PK
+    // (chain=3, owner=bob, asset=4).
+    let second = db.execute(
+        "INSERT INTO vaults \
+         (vault_id, chain_id, owner_did, asset_id, balance, policy, state, \
+          created_at_unix, metadata) \
+         VALUES (?, ?, 'did:octo:bob', ?, '1.5', ?, 'Active', 1700000000, ?)",
+        (
+            [42u8; 32].as_slice(),
+            [3u8; 32].as_slice(),
+            [4u8; 32].as_slice(),
+            vec![].as_slice(),
+            vec![].as_slice(),
+        ),
+    );
+    assert!(
+        second.is_err(),
+        "UNIQUE INDEX vault_id must reject duplicate; got {:?}",
+        second
+    );
+}
+
+/// End-to-end wire alignment: derive vault_id via the public fn, insert,
+/// SELECT, compare bytes. Catches silent BLOB(32)↔[u8;32]↔BLAKE3 truncation
+/// or zero-padding in any Stoolap fork binding layer.
+#[test]
+fn vault_id_derive_insert_select_round_trips() {
+    use octo_storage_core::{applied_version, open_in_memory};
+    use octo_vault::{vault_id, AssetId, ChainId};
+
+    let db = open_in_memory().expect("open in-memory");
+    apply(&db).expect("apply");
+    assert!(applied_version(&db, "schema_migrations")
+        .expect("tracker")
+        .contains(&13));
+
+    let chain_id = ChainId::derive("cipherocto/testnet/v1");
+    let asset_id = AssetId::derive("OCTO_W");
+    let derived = vault_id(chain_id, "did:octo:round-trip-alice", asset_id);
+
+    db.execute(
+        "INSERT INTO vaults \
+         (vault_id, chain_id, owner_did, asset_id, balance, policy, state, \
+          created_at_unix, metadata) \
+         VALUES (?, ?, 'did:octo:round-trip-alice', ?, '1.5', ?, 'Active', 1700000000, ?)",
+        (
+            derived.as_bytes(),
+            chain_id.as_bytes(),
+            asset_id.as_bytes(),
+            vec![].as_slice(),
+            vec![].as_slice(),
+        ),
+    )
+    .expect("insert derived vault");
+
+    let rows = db
+        .query(
+            "SELECT vault_id FROM vaults WHERE owner_did = 'did:octo:round-trip-alice'",
+            (),
+        )
+        .expect("query derived vault");
+    let mut found = None;
+    for row in rows.into_iter() {
+        let r = row.unwrap();
+        let bytes: Vec<u8> = r.get(0).unwrap();
+        found = Some(bytes);
+    }
+    let found = found.expect("derived vault row must exist");
+    assert_eq!(
+        found.as_slice(),
+        derived.as_bytes(),
+        "BLOB(32) round-trip must be byte-exact (32 bytes back, no truncation/zero-padding)"
+    );
+}

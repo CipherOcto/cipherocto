@@ -25,7 +25,16 @@
 //! 10 scenarios cover:
 //! - TV-V1-01..04: deterministic chain / asset variation
 //! - TV-V1-05..07: DID form variation (long, short, with slash)
-//! - TV-V1-08..10: cross-chain + cross-asset boundary
+//! - TV-V1-08..09: cross-chain + cross-asset boundary
+//! - TV-V1-10: deterministic edge case (all-empty inputs)
+//!
+//! ## Sentinel value
+//!
+//! Per review §20.3 transfer_events: the literal `[0u8; 32]` zero-vault
+//! sentinel is reserved for the mint operation (no source vault). It is
+//! NOT a derivation output — pinning it here (`VAULT_ZERO_SENTINEL`)
+//! alongside TV-V1 prevents downstream consumers from confusing the
+//! literal zero with a derived vault_id.
 
 use octo_vault::{vault_id, AssetId, ChainId};
 
@@ -98,7 +107,7 @@ const TV_V1_VECTORS: &[VaultIdVector] = &[
         expected_vault_id_hex: TV_V1_07,
     },
     VaultIdVector {
-        name: "TV-V1-08_empty_owner_did_sentinel",
+        name: "TV-V1-08_empty_owner_did_derivation_deterministic",
         chain_string: "cipherocto/testnet/v1",
         owner_did: "",
         role_token: "OCTO_W",
@@ -112,7 +121,7 @@ const TV_V1_VECTORS: &[VaultIdVector] = &[
         expected_vault_id_hex: TV_V1_09,
     },
     VaultIdVector {
-        name: "TV-V1-10_zero_vault_sentinel_mint",
+        name: "TV-V1-10_all_empty_inputs_edge_case",
         chain_string: "",
         owner_did: "",
         role_token: "",
@@ -158,3 +167,26 @@ const TV_V1_07: &str = "d4ffce329e31897f5e4a5cc9db1dea8acbac5128a7868fcdae4e00cb
 const TV_V1_08: &str = "dd6442c70e4472a47ab054c37e9fd773ed47e6e321718c2fa5454720a42d60aa";
 const TV_V1_09: &str = "6e9ea7e3897887a16003774f9d3918f616ffa499c6d2574eddd8b30791815880";
 const TV_V1_10: &str = "de71a9d8e25af74c288e890b029283451634e048b1c7a2f4205075227415f161";
+
+/// Reserved mint sentinel per review §20.3: a literal `[0u8; 32]` used as
+/// `from_vault_id` in the `transfer_events` table when minting new supply
+/// (no source vault exists). NOT a derivation output — pinning it here
+/// keeps downstream consumers from confusing it with a BLAKE3-derived
+/// vault_id (which can never be all-zero by cryptographic design).
+pub const VAULT_ZERO_SENTINEL: [u8; 32] = [0u8; 32];
+
+#[test]
+fn zero_vault_sentinel_is_literal_all_zeros() {
+    // Sanity-check the pin: every byte must be zero, the value must NOT
+    // match any TV-V1 hex (which are BLAKE3 outputs and therefore cannot
+    // be all-zero by hash properties).
+    assert!(VAULT_ZERO_SENTINEL.iter().all(|&b| b == 0));
+    for v in TV_V1_VECTORS {
+        let zero_hex = hex::encode(VAULT_ZERO_SENTINEL);
+        assert_ne!(
+            zero_hex, v.expected_vault_id_hex,
+            "VAULT_ZERO_SENTINEL collides with {} (impossible if both pins correct)",
+            v.name
+        );
+    }
+}

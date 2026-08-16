@@ -344,6 +344,21 @@ mod tests {
                     "migration name must not leak (H-Sec3); \
                      even when name overlaps with SQL keywords: {message:?}"
                 );
+                // Tests LOW (Round 3): also assert the SQL keyword
+                // `DROP` is NOT present as a substring — defends
+                // against a regression that strips the `v002__`
+                // prefix but leaves the SQL keyword `DROP` leaking
+                // via partial-substring. The full migration name
+                // assertion above catches `v002__DROP`; this catches
+                // any `DROP` substring that may leak independently.
+                assert!(
+                    !message.contains("DROP"),
+                    "SQL keyword DROP must not leak via partial substring: {message:?}"
+                );
+                assert!(
+                    !message.contains("drop"),
+                    "lowercase drop must not leak via partial substring: {message:?}"
+                );
             }
             other => panic!("expected MigrationFailed for v2, got {other:?}"),
         }

@@ -244,8 +244,19 @@ pub fn current_version(db: &stoolap::Database, table_name: &str) -> Result<u32, 
 /// `quota-router-sm-engine`-style callers that operate on the set instead
 /// of the max.
 ///
+/// Mirrors [`current_version`]'s invariants:
+/// - **Out-of-range upper bound**: values above `MAX_REASONABLE_VERSION`
+///   are clamped to the bound (consistent with `current_version`'s
+///   self-lockout DoS defense; an attacker planting `version=9999999`
+///   does not pollute the returned set).
+/// - **Negative values**: treated as data corruption and surfaced as
+///   `StorageError::Stoolap` (a negative `version` is impossible per
+///   the substrate contract — every recorded version is `>= 1`).
+///
 /// # Errors
-/// Returns `StorageError::stoolap` on `db.query` / row decode failure.
+/// Returns `StorageError::stoolap` on `db.query` / row decode failure,
+/// on a negative-version row, or on a query that violates
+/// `is_safe_identifier(table_name)`.
 pub fn applied_version(
     db: &stoolap::Database,
     table_name: &str,
@@ -265,9 +276,22 @@ pub fn applied_version(
         let v: i64 = row
             .get(0)
             .map_err(|e| StorageError::stoolap("get version", e))?;
-        if v >= 0 {
-            out.insert(v as u32);
+        // Negative version is impossible per substrate contract —
+        // surface as a typed error rather than silently dropping.
+        if v < 0 {
+            return Err(StorageError::Stoolap {
+                operation: "applied_version",
+                message: format!(
+                    "tracker table {table_name} contains negative version {v}; \
+                     substrate contract requires version >= 1"
+                ),
+            });
         }
+        // Clamp at MAX_REASONABLE_VERSION: same DoS defense as
+        // current_version — an attacker planting `version=9999999`
+        // does not pollute the returned set.
+        let clamped = (v as u64).min(MAX_REASONABLE_VERSION as u64) as u32;
+        out.insert(clamped);
     }
     Ok(out)
 }
@@ -554,6 +578,119 @@ mod tests {
             MAX_REASONABLE_VERSION,
             "current_version must clamp at MAX_REASONABLE_VERSION ({MAX_REASONABLE_VERSION}); got {v}"
         );
+    }
+
+    #[test]
+    fn current_version_clamps_legacy_id_pk_shape() {
+        // Tests MEDIUM (Round 3): the canonical-shape clamp
+        // regression must also cover the legacy `id`-PK shape, since
+        // an attacker with write access on a legacy DB could plant
+        // `version=9999999` directly into the legacy shape's
+        // `version` column (which `ensure_tracker_table`'s backfill
+        // populates). The backfill path's `name`-derived bound
+        // excludes it (it surfaces as orphan — covered by
+        // `legacy_v_above_max_rejected_as_orphan`), but a hostile
+        // `ensure_tracker_table` would set `version=9999999` from
+        // a malicious legacy row before the clamp catches it.
+        // Direct `UPDATE` is the worst case — bypass backfill
+        // entirely. Verify the clamp catches both shapes.
+        let db = stoolap::Database::open_in_memory().unwrap();
+        // Legacy shape: id PK + name UNIQUE + applied_at_unix.
+        db.execute(
+            "CREATE TABLE schema_migrations (\
+             id INTEGER PRIMARY KEY, \
+             name TEXT NOT NULL UNIQUE, \
+             applied_at_unix INTEGER NOT NULL\
+             )",
+            (),
+        )
+        .unwrap();
+        // ensure_tracker_table ADDs the `version` column via the
+        // backfill path, which excludes out-of-range names. Insert
+        // a row that will be backfilled at the bound, then a
+        // direct UPDATE plants the hostile version.
+        db.execute(
+            "INSERT INTO schema_migrations (id, name, applied_at_unix) \
+             VALUES (1, 'v005__legit', 1000)",
+            (),
+        )
+        .unwrap();
+        ensure_tracker_table(&db, "schema_migrations").unwrap();
+        // After alignment, the legacy row has version=5
+        // (backfilled from 'v005__legit'). The hostile UPDATE
+        // plants version=9999999 directly.
+        db.execute(
+            "UPDATE schema_migrations SET version = 9999999 WHERE id = 1",
+            (),
+        )
+        .unwrap();
+        let v = current_version(&db, "schema_migrations").unwrap();
+        assert_eq!(
+            v, MAX_REASONABLE_VERSION,
+            "current_version must clamp at MAX_REASONABLE_VERSION on legacy id-PK shape; got {v}"
+        );
+    }
+
+    #[test]
+    fn applied_version_clamps_above_max() {
+        // Tests HIGH (Round 3): `applied_version` is a public
+        // sister function to `current_version` and MUST share the
+        // same MAX_REASONABLE_VERSION clamp. An attacker planting
+        // `version=9999999` directly would otherwise pollute the
+        // returned HashSet with an out-of-range value; downstream
+        // callers iterating applied versions would see the planted
+        // value and treat it as legitimate. Verify clamp.
+        let db = stoolap::Database::open_in_memory().unwrap();
+        ensure_tracker_table(&db, "schema_migrations").unwrap();
+        db.execute(
+            "INSERT INTO schema_migrations (version, name, applied_at_unix) \
+             VALUES (9999999, 'planted_max', 1000)",
+            (),
+        )
+        .unwrap();
+        let applied = applied_version(&db, "schema_migrations").unwrap();
+        assert!(
+            applied.contains(&MAX_REASONABLE_VERSION),
+            "applied_version must contain MAX_REASONABLE_VERSION (clamped); got: {applied:?}"
+        );
+        assert!(
+            !applied.contains(&9999999_u32),
+            "applied_version must NOT contain the planted out-of-range value; got: {applied:?}"
+        );
+    }
+
+    #[test]
+    fn applied_version_rejects_negative_version() {
+        // Layer-API MEDIUM (Round 3): `applied_version` must surface
+        // a negative version as a typed `StorageError::Stoolap`
+        // rather than silently dropping it (operator-facing Display
+        // must be truthful about DB state). A negative version is
+        // impossible per the substrate contract — every recorded
+        // version is >= 1 — so the only legitimate source is data
+        // corruption or hostile write access.
+        let db = stoolap::Database::open_in_memory().unwrap();
+        ensure_tracker_table(&db, "schema_migrations").unwrap();
+        // Stoolap INTEGER is i64; SQLite accepts negative literals.
+        db.execute(
+            "INSERT INTO schema_migrations (version, name, applied_at_unix) \
+             VALUES (-1, 'corrupt', 1000)",
+            (),
+        )
+        .unwrap();
+        let err = applied_version(&db, "schema_migrations").unwrap_err();
+        match err {
+            StorageError::Stoolap { operation, message } => {
+                assert_eq!(
+                    operation, "applied_version",
+                    "negative version must surface under applied_version op tag"
+                );
+                assert!(
+                    message.contains("negative version -1"),
+                    "error must surface the offending value: {message}"
+                );
+            }
+            other => panic!("expected Stoolap error for negative version, got {other:?}"),
+        }
     }
 
     #[test]
@@ -1077,6 +1214,78 @@ mod tests {
     }
 
     #[test]
+    fn legacy_v10000_at_boundary_accepted() {
+        // Tests MEDIUM (Round 3): the backfill `WHERE` clause uses
+        // `<= MAX_REASONABLE_VERSION` (inclusive upper bound, per the
+        // comment on `legacy_v_above_max_rejected_as_orphan`).
+        // Verify the boundary value `v10000` is accepted — not
+        // rejected as orphan. Independent from the lower-bound
+        // test (`legacy_v0_baseline_rejected_as_orphan` covers
+        // `v0` rejection). Pins the `<=` vs `<` off-by-one.
+        let db = stoolap::Database::open_in_memory().unwrap();
+        db.execute(
+            "CREATE TABLE schema_migrations (\
+             id INTEGER PRIMARY KEY, \
+             name TEXT NOT NULL UNIQUE, \
+             applied_at_unix INTEGER NOT NULL\
+             )",
+            (),
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO schema_migrations (id, name, applied_at_unix) \
+             VALUES (1, 'v10000__at_bound', 1000)",
+            (),
+        )
+        .unwrap();
+        ensure_tracker_table(&db, "schema_migrations").unwrap();
+        assert_eq!(
+            current_version(&db, "schema_migrations").unwrap(),
+            MAX_REASONABLE_VERSION,
+            "v10000 (at upper bound) must be accepted; not rejected as orphan"
+        );
+    }
+
+    #[test]
+    fn legacy_v10001_just_above_boundary_rejected_as_orphan() {
+        // Tests MEDIUM (Round 3): the backfill `WHERE` clause uses
+        // `<= MAX_REASONABLE_VERSION` (inclusive upper bound), so
+        // `v10001` (just above) must be rejected as orphan. Pins
+        // the upper-bound off-by-one in the opposite direction
+        // from `legacy_v10000_at_boundary_accepted`.
+        let db = stoolap::Database::open_in_memory().unwrap();
+        db.execute(
+            "CREATE TABLE schema_migrations (\
+             id INTEGER PRIMARY KEY, \
+             name TEXT NOT NULL UNIQUE, \
+             applied_at_unix INTEGER NOT NULL\
+             )",
+            (),
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO schema_migrations (id, name, applied_at_unix) \
+             VALUES (1, 'v10001__just_above', 1000)",
+            (),
+        )
+        .unwrap();
+        let err = ensure_tracker_table(&db, "schema_migrations").unwrap_err();
+        match err {
+            StorageError::Stoolap { operation, message } => {
+                assert_eq!(
+                    operation, "ensure_tracker_table:backfill_orphan",
+                    "v10001 (just above bound) must surface as orphan"
+                );
+                assert!(
+                    message.contains("v10001__just_above"),
+                    "error names the hostile row: {message}"
+                );
+            }
+            other => panic!("expected backfill_orphan error for v10001, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn legacy_v0_baseline_rejected_as_orphan() {
         // M-Corr3 regression: a stray `v0__baseline` row would
         // previously leave version=0 (interpreted as "no migrations
@@ -1321,5 +1530,74 @@ mod tests {
             "v006 at id=6 (retry recovered from id=5 collision)"
         );
         assert_eq!(entries[2].2, "v006__second");
+    }
+
+    #[test]
+    fn record_migration_legacy_applied_at_dispatch() {
+        // Tests MEDIUM (Round 3): direct test for path 3 — the
+        // `record_migration:legacy_applied_at` branch on a
+        // `quota-router-sm-engine`-shaped legacy table. Pre-create
+        // the table with `version PK + applied_at NOT NULL`, run
+        // `ensure_tracker_table` to align (adds `name` + `applied_at_unix`
+        // columns), then call `record_migration` directly. The 3-path
+        // dispatch must pick the `legacy_applied_at` branch (since
+        // `has_column('id')` is false but `has_column('applied_at')`
+        // is true). A regression that flips the dispatch to canonical
+        // path would silently fail the `applied_at` mirror — caught
+        // by verifying both columns are populated post-INSERT.
+        let db = stoolap::Database::open_in_memory().unwrap();
+        db.execute(
+            "CREATE TABLE cipherocto_migrations (\
+             version INTEGER PRIMARY KEY, \
+             applied_at INTEGER NOT NULL\
+             )",
+            (),
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO cipherocto_migrations (version, applied_at) VALUES (1, 100)",
+            (),
+        )
+        .unwrap();
+        // Alignment adds `name` + `applied_at_unix` columns.
+        ensure_tracker_table(&db, "cipherocto_migrations").unwrap();
+
+        // Direct `record_migration` invocation — must dispatch to
+        // path 3 (legacy_applied_at) and populate both `applied_at`
+        // and `applied_at_unix` for the new row.
+        record_migration(&db, "cipherocto_migrations", 2, "v002__path3").unwrap();
+
+        let rows = db
+            .query(
+                "SELECT version, name, applied_at, applied_at_unix \
+                 FROM cipherocto_migrations WHERE version = 2",
+                (),
+            )
+            .unwrap();
+        let mut iter = rows.into_iter();
+        let row = iter.next().unwrap().unwrap();
+        let version: i64 = row.get(0).unwrap();
+        let name: String = row.get(1).unwrap();
+        let applied_at: i64 = row.get(2).unwrap();
+        let applied_at_unix: i64 = row.get(3).unwrap();
+        assert_eq!(version, 2);
+        assert_eq!(name, "v002__path3");
+        assert!(
+            applied_at > 0,
+            "applied_at (legacy NOT NULL column) must be populated by path 3; got {applied_at}"
+        );
+        assert!(
+            applied_at_unix > 0,
+            "applied_at_unix (substrate-added column) must be populated by path 3; got {applied_at_unix}"
+        );
+        // The two timestamps SHOULD mirror (per the path 3 contract
+        // comment: "the substrate mirrors the value into both columns").
+        // Allow small skew (microsecond resolution) but they MUST be
+        // close — if path 3 stops mirroring, this catches it.
+        let diff = (applied_at - applied_at_unix).abs();
+        assert!(
+            diff <= 1,
+            "applied_at ({applied_at}) and applied_at_unix ({applied_at_unix}) must mirror; diff={diff}"
+        );
     }
 }

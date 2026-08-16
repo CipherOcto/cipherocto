@@ -18,8 +18,11 @@
 use thiserror::Error;
 
 // The `version()`/`name()` methods on `octo_storage_core::StaticMigration`
-// live on the `Migration` trait — must be in scope to call them.
-use octo_storage_core::Migration;
+// live on the `Migration` trait — must be in scope to call them. The
+// trait is imported under a private alias because the public
+// `Migration` type alias (see below) shadows the trait name in this
+// module's namespace.
+use octo_storage_core::Migration as _Migration;
 
 /// Built-in migrations for the cipherocto `octo-core` schema.
 ///
@@ -109,22 +112,44 @@ pub(super) static BUILTIN_MIGRATION_CATALOG: &[&'static dyn octo_storage_core::M
 /// Migration errors.
 #[derive(Debug, Error)]
 pub enum MigrationError {
+    /// Substrate-level failure (DDL, tracker-table initialization,
+    /// system-time, specific migration failed).
     #[error("substrate storage error: {0}")]
     Storage(octo_storage_core::StorageError),
-    #[error("migration version {version} not found in catalog (db has higher version than code)")]
-    UnknownMigration { version: u32 },
+    /// DB is at a higher version than this code's catalog allows
+    /// (downgrade scenario).
+    #[error(
+        "migration version {version} not found in catalog (catalog_max={catalog_max}, db has higher version than code)"
+    )]
+    UnknownMigration { version: u32, catalog_max: u32 },
 }
 
 impl From<octo_storage_core::StorageError> for MigrationError {
     fn from(e: octo_storage_core::StorageError) -> Self {
         match e {
-            octo_storage_core::StorageError::UnknownMigration { version, .. } => {
-                Self::UnknownMigration { version }
-            }
+            octo_storage_core::StorageError::UnknownMigration {
+                version,
+                catalog_max,
+            } => Self::UnknownMigration {
+                version,
+                catalog_max,
+            },
             other => Self::Storage(other),
         }
     }
 }
+
+/// Transitional type alias for the substrate's `StaticMigration`.
+///
+/// Pre-S2, this crate exposed a `Migration` struct (with `version`,
+/// `name`, `sql` fields). The struct was deleted in S2 in favor of
+/// the substrate's `StaticMigration`. This alias keeps any downstream
+/// code that imports `quota_router_storage::Migration` source-compatible.
+#[deprecated(
+    since = "0.7.0",
+    note = "use `octo_storage_core::StaticMigration` (the substrate's newtype)"
+)]
+pub type Migration = octo_storage_core::StaticMigration;
 
 /// Apply all pending migrations from `BUILTIN_MIGRATIONS` that are newer
 /// than the current database version.
@@ -135,12 +160,10 @@ impl From<octo_storage_core::StorageError> for MigrationError {
 ///
 /// # Errors
 /// - `MigrationError::Storage` for substrate-level failures (DDL,
-///   tracker-table initialization, system-time).
-/// - `MigrationError::UnknownMigration` if the DB is at a higher version
-///   than the code's catalog (downgrade scenario).
-/// - `MigrationError::Storage(octo_storage_core::StorageError::MigrationFailed)`
-///   when a specific migration's SQL fails after the ADD COLUMN swallow
-///   rule has been applied.
+///   tracker-table initialization, system-time, or a specific
+///   migration SQL failing per `StorageError::MigrationFailed`).
+/// - `MigrationError::UnknownMigration` if the DB is at a higher
+///   version than the code's catalog (downgrade scenario).
 pub fn apply_pending(db: &stoolap::Database) -> Result<(), MigrationError> {
     octo_storage_core::apply_pending(
         db,
@@ -173,6 +196,28 @@ mod tests {
                 m.version()
             );
         }
+    }
+
+    /// Compensating control for the dual source-of-truth pattern (`BUILTIN_MIGRATIONS`
+    /// array + `BUILTIN_MIGRATION_CATALOG` reference slice). If a future
+    /// PR adds a new entry to one and forgets to update the other, the
+    /// substrate would silently skip it — this test catches that.
+    #[test]
+    fn catalog_matches_builtin_migrations() {
+        let array: Vec<u32> = BUILTIN_MIGRATIONS.iter().map(|m| m.version()).collect();
+        let catalog: Vec<u32> = BUILTIN_MIGRATION_CATALOG
+            .iter()
+            .map(|m| m.version())
+            .collect();
+        assert_eq!(
+            array, catalog,
+            "BUILTIN_MIGRATIONS and BUILTIN_MIGRATION_CATALOG diverged"
+        );
+        assert_eq!(
+            array.len(),
+            BUILTIN_MIGRATION_CATALOG.len(),
+            "parallel source-of-truth drift"
+        );
     }
 
     #[test]
@@ -208,10 +253,19 @@ mod tests {
 
         // apply_pending should reject because catalog max is < DB version.
         let err = apply_pending(&db).unwrap_err();
-        assert!(matches!(
-            err,
-            MigrationError::UnknownMigration { version: 999 }
-        ));
+        // M1 regression: the substrate's `UnknownMigration { version, catalog_max }`
+        // is mapped 1:1 onto the local `MigrationError::UnknownMigration`. Wider
+        // shape preserves both fields for production diagnostics.
+        match err {
+            MigrationError::UnknownMigration {
+                version,
+                catalog_max,
+            } => {
+                assert_eq!(version, 999);
+                assert_eq!(catalog_max, 12, "catalog_max stays informative");
+            }
+            other => panic!("expected UnknownMigration, got {other:?}"),
+        }
     }
 
     #[test]

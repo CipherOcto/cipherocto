@@ -318,7 +318,7 @@ mod tests {
             ),
             &StaticMigration::new(
                 2,
-                "v002__alter_missing_secret_schema_label",
+                "v002__DROP",
                 "ALTER TABLE nonexistent ADD COLUMN foo TEXT",
             ),
         ];
@@ -340,8 +340,9 @@ mod tests {
                     "table name from failing SQL must not leak: {message:?}"
                 );
                 assert!(
-                    !message.contains("v002__alter_missing_secret_schema_label"),
-                    "migration name must not leak (H-Sec3): {message:?}"
+                    !message.contains("v002__DROP"),
+                    "migration name must not leak (H-Sec3); \
+                     even when name overlaps with SQL keywords: {message:?}"
                 );
             }
             other => panic!("expected MigrationFailed for v2, got {other:?}"),

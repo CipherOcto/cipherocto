@@ -28,16 +28,18 @@ pub enum StorageError {
 
     /// A specific migration failed during `apply_pending`. The
     /// migration's `name` field is intentionally **excluded** from the
-    /// public surface: it can leak schema intent to operators (the
+    /// public surface (it can leak schema intent — the
     /// `v<NNN>__<label>` label encodes the migration's purpose, e.g.
-    /// `"create_did_registry"`) and historically has been used in
-    /// attacker-controlled inputs via legacy DBs. The version is
+    /// `"create_did_registry"`, and historically has been used in
+    /// attacker-controlled inputs via legacy DBs). The version is
     /// retained because it is the only field the substrate uses to
     /// make a re-apply decision.
     ///
-    /// `Debug` retains `name` for substrate-internal debugging
-    /// (paired with `StorageError::stoolap`'s `Debug` retention). See
-    /// `apply_pending::run_one` for the redacting `Display` impl.
+    /// `Display` is operator-facing and redacted (only `version` +
+    /// generic prose). `Debug` (substrate-internal) is auto-derived
+    /// from the variant's struct fields; since `name` is not a
+    /// field, nothing leaks via `Debug` either — by construction.
+    /// See `apply_pending::run_one` for the redacting `Display` impl.
     #[error("migration v{version} failed: {message}")]
     MigrationFailed {
         /// Numeric migration version that failed.
@@ -141,20 +143,17 @@ mod tests {
         assert!(!s.contains("SELECT "));
     }
 
-    /// MigrationFailed Debug impl DOES retain `name` for substrate-
-    /// internal logging (paired with `StorageError::stoolap`'s
-    /// `Debug` retention). This is intentional: ops teams need
-    /// substrate-internal traces, but operators don't. The contract:
+    /// MigrationFailed Debug impl is auto-derived from the variant's
+    /// struct fields. Since the variant has only `version` + `message`
+    /// (no `name`), Debug retains only those two fields. The contract:
     /// `Display` is operator-facing (redacted); `Debug` is
-    /// substrate-internal (full).
+    /// substrate-internal but auto-derived, so it can only retain
+    /// what the variant exposes.
+    ///
+    /// Pin the absence of `name` in Debug so a future PR that adds
+    /// the field (and forgets the redaction review) is caught.
     #[test]
     fn migration_failed_debug_retains_structural_fields() {
-        // The current variant shape has no `name` field. This test
-        // documents the contract: if a future PR adds a `name`
-        // field, the substrate-internal `Debug` impl will retain it,
-        // but the operator-facing `Display` impl (and
-        // `migration_failed_display_does_not_leak_name` above) must
-        // continue to redact it. This test pins the CURRENT shape.
         let err = StorageError::MigrationFailed {
             version: 7,
             message: "boom".to_owned(),
@@ -163,6 +162,15 @@ mod tests {
         assert!(d.contains("MigrationFailed"));
         assert!(d.contains("7"), "version retained in Debug");
         assert!(d.contains("boom"), "message retained in Debug");
+        // Pin shape closed: NO `name` field can appear in Debug.
+        assert!(
+            !d.contains("name:"),
+            "Debug must not leak a `name:` field; got: {d}"
+        );
+        assert!(
+            !d.contains("name ="),
+            "Debug must not leak a `name =` field; got: {d}"
+        );
     }
 
     /// `StorageError` Display impl for the `UnknownMigration` variant

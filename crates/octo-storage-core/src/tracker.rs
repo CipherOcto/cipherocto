@@ -227,7 +227,15 @@ pub fn current_version(db: &stoolap::Database, table_name: &str) -> Result<u32, 
         let v: Option<i64> = row
             .get(0)
             .map_err(|e| StorageError::stoolap("get version", e))?;
-        return Ok(v.unwrap_or(0).max(0) as u32);
+        // Clamp at MAX_REASONABLE_VERSION: an attacker with write
+        // access to the tracker table can plant `version=9999999`
+        // directly (bypassing the backfill path's `name`-derived
+        // bound). Without this clamp, `apply_pending` would refuse
+        // any further migrations via `UnknownMigration` — a
+        // self-lockout DoS independent of the backfill path.
+        // Out-of-range values are silently coerced to the bound
+        // (operator-visible via `apply_pending`'s own diagnostic).
+        return Ok(v.unwrap_or(0).max(0).min(MAX_REASONABLE_VERSION as i64) as u32);
     }
     Ok(0)
 }
@@ -365,8 +373,16 @@ pub fn record_migration(
         // UNIQUE-collision to defend against the TOCTOU window when
         // two callers race on the same legacy DB (multi-process
         // startup, future async callers). Bounded retries avoid
-        // infinite loops under pathological contention.
-        const MAX_RETRIES: u32 = 8;
+        // DoS via bounded-collision exhaustion — an attacker with
+        // write access can pre-insert rows to keep colliding on
+        // every iteration's MAX(id)+1 pre-fetch.
+        //
+        // 3 retries is enough for benign TOCTOU (two-process race on
+        // startup); higher values give an attacker too many chances
+        // to exhaust the loop. After 3 collisions we surface the
+        // last substrate error verbatim — operator gets a real
+        // diagnostic instead of an opaque cap.
+        const MAX_RETRIES: u32 = 3;
         let sql = format!(
             "INSERT INTO {table_name} (id, version, name, applied_at_unix) \
              VALUES ($1, $2, $3, $4)"
@@ -513,6 +529,30 @@ mod tests {
         assert_eq!(
             applied_version(&db, "schema_migrations").unwrap(),
             [3_u32, 5_u32].into_iter().collect()
+        );
+    }
+
+    #[test]
+    fn current_version_clamps_above_max() {
+        // Security MEDIUM (Round 2): an attacker with write access
+        // to the tracker table can plant `version=9999999` directly
+        // (bypassing the backfill path's `name`-derived bound).
+        // Without clamping, `apply_pending` would refuse any further
+        // migrations via `UnknownMigration` — a self-lockout DoS
+        // independent of the backfill path. Verify `current_version`
+        // clamps at `MAX_REASONABLE_VERSION`.
+        let db = stoolap::Database::open_in_memory().unwrap();
+        ensure_tracker_table(&db, "schema_migrations").unwrap();
+        db.execute(
+            "INSERT INTO schema_migrations (version, name, applied_at_unix) VALUES (9999999, 'planted', 1000)",
+            (),
+        )
+        .unwrap();
+        let v = current_version(&db, "schema_migrations").unwrap();
+        assert_eq!(
+            v,
+            MAX_REASONABLE_VERSION,
+            "current_version must clamp at MAX_REASONABLE_VERSION ({MAX_REASONABLE_VERSION}); got {v}"
         );
     }
 
@@ -874,10 +914,14 @@ mod tests {
             other => panic!("expected Stoolap backfill_orphan error, got {other:?}"),
         }
 
-        // C-T5: error-determinism — calling ensure_tracker_table a
-        // second time must reproduce the SAME error (operation +
-        // message). A regression that silently swallowed the second
-        // call would leave the operator with a half-aligned DB.
+        // C-T5: error-determinism + data preservation — calling
+        // ensure_tracker_table a second time must reproduce the SAME
+        // error (operation + message) AND must NOT mutate the
+        // legacy row's data (the operator's audit marker must still
+        // be present unchanged in `schema_migrations`). A regression
+        // that silently swallowed the second call would leave the
+        // operator with a half-aligned DB AND possibly corrupted
+        // audit data.
         let err2 = ensure_tracker_table(&db, "schema_migrations").unwrap_err();
         match err2 {
             StorageError::Stoolap { operation, message } => {
@@ -889,6 +933,51 @@ mod tests {
                 panic!("second ensure_tracker_table must reproduce the orphan error, got {other:?}")
             }
         }
+
+        // Data preservation: the legacy row's id + name + applied_at_unix
+        // must be unchanged after the failed alignment. Pin them
+        // explicitly so a regression that silently mutated audit data
+        // during the error path is caught.
+        let rows = db
+            .query(
+                "SELECT id, name, applied_at_unix FROM schema_migrations ORDER BY id",
+                (),
+            )
+            .unwrap();
+        let mut entries: Vec<(i64, String, i64)> = Vec::new();
+        for row in rows.into_iter() {
+            let row = row.unwrap();
+            entries.push((
+                row.get(0).unwrap(),
+                row.get(1).unwrap(),
+                row.get(2).unwrap(),
+            ));
+        }
+        assert_eq!(entries.len(), 2, "both legacy rows preserved");
+        assert_eq!(
+            entries[0].0, 1,
+            "v001__legacy row id preserved after failed alignment"
+        );
+        assert_eq!(
+            entries[0].1, "v001__legacy",
+            "v001__legacy name preserved after failed alignment"
+        );
+        assert_eq!(
+            entries[0].2, 1000,
+            "v001__legacy applied_at_unix preserved after failed alignment"
+        );
+        assert_eq!(
+            entries[1].0, 2,
+            "manual_audit_marker row id preserved after failed alignment"
+        );
+        assert_eq!(
+            entries[1].1, "manual_audit_marker",
+            "manual_audit_marker name preserved after failed alignment"
+        );
+        assert_eq!(
+            entries[1].2, 2000,
+            "manual_audit_marker applied_at_unix preserved after failed alignment"
+        );
     }
 
     #[test]
@@ -939,6 +1028,51 @@ mod tests {
                 );
             }
             other => panic!("expected backfill_orphan error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn legacy_v_above_max_rejected_as_orphan() {
+        // H-Sec1 upper-bound regression: a hostile legacy DB
+        // pre-populating `name='v9999999__x'` (version above
+        // MAX_REASONABLE_VERSION) would force the substrate's
+        // `UnknownMigration` guard to refuse any further
+        // `apply_pending` (current_version would read MAX(version)
+        // greater than any catalog entry). The backfill `WHERE` clause
+        // bounds derived versions to `> 0 AND <= MAX_REASONABLE_VERSION`,
+        // so out-of-range rows are excluded from the backfill and
+        // surface as orphans in the post-backfill sanity check.
+        let db = stoolap::Database::open_in_memory().unwrap();
+        db.execute(
+            "CREATE TABLE schema_migrations (\
+             id INTEGER PRIMARY KEY, \
+             name TEXT NOT NULL UNIQUE, \
+             applied_at_unix INTEGER NOT NULL\
+             )",
+            (),
+        )
+        .unwrap();
+        // Pick a value clearly above MAX_REASONABLE_VERSION (10_000)
+        // and not in any future-reserved range.
+        db.execute(
+            "INSERT INTO schema_migrations (id, name, applied_at_unix) \
+             VALUES (1, 'v9999999__dos_self_lockout', 1000)",
+            (),
+        )
+        .unwrap();
+        let err = ensure_tracker_table(&db, "schema_migrations").unwrap_err();
+        match err {
+            StorageError::Stoolap { operation, message } => {
+                assert_eq!(
+                    operation, "ensure_tracker_table:backfill_orphan",
+                    "out-of-range version must surface as orphan"
+                );
+                assert!(
+                    message.contains("v9999999__dos_self_lockout"),
+                    "error names the hostile row"
+                );
+            }
+            other => panic!("expected backfill_orphan error for v9999999__dos, got {other:?}"),
         }
     }
 
@@ -1118,15 +1252,14 @@ mod tests {
         // retry loop. The retry loop retries on substrings "unique" /
         // "duplicate" in the error message. The Stoolap fork's UNIQUE
         // violation surfaces as a "UNIQUE constraint failed: ..." or
-        // similar. We can't force the race without a thread, but we
-        // CAN verify the retry loop's collision-detection substring
-        // logic by checking the helper's intent. This test
-        // documents the path; a future multi-process integration test
-        // will exercise the actual race.
+        // similar.
         //
-        // For now, verify that two record_migration calls in
-        // sequence on the same legacy table succeed (no collision)
-        // and produce distinct ids.
+        // Force a real collision by pre-seeding id=1..=3 (so
+        // MAX(id)=3) and pre-inserting id=5 BEFORE the second
+        // record_migration call. The second call's pre-fetch returns
+        // 5 (since MAX(id) is now 5 after the first call's id=4),
+        // collides with the pre-insert, retries, re-fetches MAX(id)+1
+        // = 6, and succeeds.
         let db = stoolap::Database::open_in_memory().unwrap();
         db.execute(
             "CREATE TABLE schema_migrations (\
@@ -1138,25 +1271,55 @@ mod tests {
             (),
         )
         .unwrap();
-        record_migration(&db, "schema_migrations", 1, "v001__x").unwrap();
-        record_migration(&db, "schema_migrations", 2, "v002__y").unwrap();
+        db.execute(
+            "INSERT INTO schema_migrations (id, name, applied_at_unix, version) VALUES \
+             (1, 'v001__seed_a', 1000, 1), \
+             (2, 'v002__seed_b', 2000, 2), \
+             (3, 'v003__seed_c', 3000, 3)",
+            (),
+        )
+        .unwrap();
+
+        // First insert: id=4 is free.
+        record_migration(&db, "schema_migrations", 4, "v004__first").unwrap();
+
+        // Pre-insert id=5 to force a collision on the NEXT call.
+        db.execute(
+            "INSERT INTO schema_migrations (id, name, applied_at_unix, version) VALUES \
+             (5, 'v005__raced_insert', 5000, 5)",
+            (),
+        )
+        .unwrap();
+
+        // Second insert must recover via the retry loop.
+        record_migration(&db, "schema_migrations", 6, "v006__second").unwrap();
+
+        // Verify v004 is at id=4, v005 (raced_insert) at id=5,
+        // v006 at id=6 (retry recovered from the id=5 collision).
         let rows = db
             .query(
-                "SELECT id, version FROM schema_migrations ORDER BY version",
+                "SELECT id, version, name FROM schema_migrations WHERE version IN (4, 5, 6) ORDER BY version",
                 (),
             )
             .unwrap();
-        let mut entries: Vec<(i64, i64)> = Vec::new();
+        let mut entries: Vec<(i64, i64, String)> = Vec::new();
         for row in rows.into_iter() {
             let row = row.unwrap();
-            entries.push((row.get(0).unwrap(), row.get(1).unwrap()));
+            entries.push((
+                row.get(0).unwrap(),
+                row.get(1).unwrap(),
+                row.get(2).unwrap(),
+            ));
         }
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].0, 1);
-        assert_eq!(entries[1].0, 2);
-        assert_ne!(
-            entries[0].0, entries[1].0,
-            "distinct ids on sequential insert"
+        assert_eq!(entries.len(), 3, "v004 + v005 + v006 all recorded");
+        assert_eq!(entries[0].0, 4, "v004 at id=4 (no collision)");
+        assert_eq!(entries[0].2, "v004__first");
+        assert_eq!(entries[1].0, 5, "v005 raced_insert at id=5 (pre-seeded)");
+        assert_eq!(entries[1].2, "v005__raced_insert");
+        assert_eq!(
+            entries[2].0, 6,
+            "v006 at id=6 (retry recovered from id=5 collision)"
         );
+        assert_eq!(entries[2].2, "v006__second");
     }
 }

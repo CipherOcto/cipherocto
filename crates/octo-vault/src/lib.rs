@@ -50,7 +50,7 @@ use thiserror::Error;
 /// headroom. Substrate-internal callers pay zero runtime cost.
 pub const MAX_OWNER_DID_LEN: usize = 256;
 
-pub mod migrations;
+pub(crate) mod migrations;
 
 pub use migrations::BUILTIN_MIGRATION_CATALOG;
 // NOTE: `BUILTIN_MIGRATIONS` (the tuple slice form) is intentionally NOT
@@ -328,6 +328,7 @@ pub fn vault_id(chain_id: ChainId, owner_did: &str, asset_id: AssetId) -> VaultI
 ///
 /// The hash function and input order are byte-identical to [`vault_id`]
 /// — this is not a separate derivation, only a guard-bypassed entry point.
+#[doc(hidden)]
 pub fn vault_id_unchecked(chain_id: ChainId, owner_did: &str, asset_id: AssetId) -> VaultId {
     let mut h = blake3::Hasher::new();
     h.update(b"cipherocto/vault/v1/");

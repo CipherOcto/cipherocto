@@ -11,6 +11,10 @@
 //! `version()` ascending per `octo_storage_core::Migration::version()`.
 
 /// All built-in migrations in version order as `(version, name, sql)` tuples.
+/// Consumed by the in-module drift-detection tests below; `pub(crate)`
+/// (not re-exported from the crate root) keeps it internal to the
+/// migrations module.
+#[allow(dead_code)] // drift tests in mod tests; rustc counts test usage separately
 pub const BUILTIN_MIGRATIONS: &[(u32, &str, &str)] = &[
     (
         13,

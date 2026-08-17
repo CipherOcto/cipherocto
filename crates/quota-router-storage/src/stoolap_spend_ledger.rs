@@ -127,23 +127,54 @@ impl StoolapSpendLedger {
     /// by the wallet at mint time when a `PaymentCaveat` is attached.
     /// `seed` is upsert semantics: existing row is overwritten with
     /// the new budget (per RFC-0957 §Algorithms caveat re-mint).
+    /// # Preconditions
+    /// - `budget.scale == 0` (MicroOctoW at scale=0; same invariant as
+    ///   `try_deduct`). Symmetric mirror of `try_deduct` precondition
+    ///   guarding `dqa_to_i64` (per mission 0862-c8).
+    /// - `budget.value >= 0`. Negative budget is rejected with
+    ///   `SpendLedgerError::NegativeCost` (same defense-in-depth as
+    ///   `try_deduct` against signed underflow in caller fee / wire
+    ///   decode paths). Per mission 0862-c8 (Round 1 fix was
+    ///   asymmetric — only `try_deduct` had the guard).
+    /// # Atomicity
+    /// Acquires `drain_lock` around the balance-read + UPDATE-or-INSERT
+    /// window so concurrent `seed()` calls on the same
+    /// `(holder_did, macaroon_id)` serialize (no double-mint, no
+    /// masked PRIMARY KEY violation). Per mission 0862-c8.
     /// # Errors
-    /// Returns `SpendLedgerError::Storage` on underlying storage failure.
+    /// - `SpendLedgerError::NegativeCost` if `budget.value < 0`.
+    /// - `SpendLedgerError::Storage` on underlying storage failure or
+    ///   lock poisoning.
     pub fn seed(
         &self,
         holder_did: &str,
         macaroon_id: &[u8],
         budget: MicroOctoW,
     ) -> Result<(), SpendLedgerError> {
+        // Preconditions (mirrors try_deduct, per mission 0862-c8).
+        assert_eq!(
+            budget.scale, 0,
+            "MicroOctoW at scale=0; scale invariant violated"
+        );
+        if budget.value < 0 {
+            return Err(SpendLedgerError::NegativeCost { cost: budget });
+        }
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
+        // Hold the per-instance drain lock for the
+        // SELECT-then-INSERT/UPDATE critical section. Without this,
+        // concurrent threads can race the read-modify-write and one
+        // thread's INSERT collides with another's PRIMARY KEY.
+        // Cross-instance coordination is a follow-on (0871e-phase5c-1).
+        let _guard = self
+            .drain_lock
+            .lock()
+            .map_err(|_| SpendLedgerError::Storage("drain_lock poisoned".to_owned()))?;
         // Stoolap-fork does NOT support `INSERT OR REPLACE` (parse
         // error at column 1). Use SELECT-then-INSERT/UPDATE pattern
-        // instead. Single-connection serialization via stoolap's
-        // per-connection write lock is sufficient for Phase 1 MVP
-        // (cross-connection serialization is the follow-on).
+        // instead.
         let existing = self.balance(holder_did, macaroon_id)?;
         let budget_i64 = dqa_to_i64(budget);
         match existing {

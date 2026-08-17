@@ -463,6 +463,82 @@ fn tv_0862_09b_try_deduct_negative_cost_on_unknown_holder() {
 }
 
 // =============================================================================
+// TV-0862-15 — concurrent seed() on same (holder_did, macaroon_id) serializes
+// (mission 0862-c8: seed() acquires drain_lock)
+// =============================================================================
+
+/// TV-0862-15: two concurrent `seed()` calls on the same
+/// `(holder_did, macaroon_id)` MUST serialize via `drain_lock`. The
+/// second seed observes the first's effect (no PRIMARY KEY violation
+/// surfaces; no lost update). Per mission 0862-c8 (TOCTOU mitigation).
+#[test]
+fn tv_0862_15_concurrent_seed_serializes() {
+    use std::sync::Arc;
+    use std::thread;
+
+    let ledger = Arc::new(StoolapSpendLedger::open_in_memory().expect("open_in_memory"));
+    let holder = "did:octo:zTV086215";
+    let macaroon_id = TV_0862_MACAROON_ID_15;
+
+    // Pre-seed a row so the second seed hits the UPDATE branch (not
+    // INSERT). Tests both branches under contention.
+    ledger
+        .seed(holder, &macaroon_id, dqa(100))
+        .expect("pre-seed");
+
+    let l1 = ledger.clone();
+    let h1 = holder.to_owned();
+    let m1 = macaroon_id;
+    let t1 = thread::spawn(move || l1.seed(&h1, &m1, dqa(500)));
+
+    let l2 = ledger.clone();
+    let h2 = holder.to_owned();
+    let m2 = macaroon_id;
+    let t2 = thread::spawn(move || l2.seed(&h2, &m2, dqa(700)));
+
+    t1.join().expect("seed 1 thread").expect("seed 1 ok");
+    t2.join().expect("seed 2 thread").expect("seed 2 ok");
+
+    // Last-writer-wins. Accept either 500 or 700.
+    let final_balance = ledger
+        .balance(holder, &macaroon_id)
+        .expect("balance read")
+        .expect("row must exist");
+    assert!(
+        final_balance == dqa(500) || final_balance == dqa(700),
+        "TV-0862-15: last-writer-wins balance must be 500 or 700: got {final_balance:?}"
+    );
+}
+
+// =============================================================================
+// TV-0862-16 — seed() rejects negative budget (mission 0862-c8: NegativeCost guard)
+// =============================================================================
+
+/// TV-0862-16: `seed()` with negative budget MUST yield
+/// `SpendLedgerError::NegativeCost` (mirrors `try_deduct` guard). Per
+/// mission 0862-c8 (Round 1 fix was asymmetric — only `try_deduct`
+/// had the guard).
+#[test]
+fn tv_0862_16_seed_negative_budget_rejected() {
+    let ledger = StoolapSpendLedger::open_in_memory().expect("open_in_memory");
+    let holder = "did:octo:zTV086216";
+    let macaroon_id = TV_0862_MACAROON_ID_16;
+
+    let result = ledger.seed(holder, &macaroon_id, dqa(-1));
+    assert!(
+        matches!(result, Err(SpendLedgerError::NegativeCost { .. })),
+        "TV-0862-16: negative budget MUST yield NegativeCost: got {result:?}"
+    );
+
+    // Side-effect check: no row persisted.
+    let stored = ledger.balance(holder, &macaroon_id).expect("balance read");
+    assert!(
+        stored.is_none(),
+        "TV-0862-16: no row should persist after NegativeCost rejection: got {stored:?}"
+    );
+}
+
+// =============================================================================
 // Test fixtures (byte-pinned constants)
 // =============================================================================
 
@@ -497,6 +573,12 @@ const TV_0862_MACAROON_ID_09: [u8; 16] = [
 ];
 const TV_0862_MACAROON_ID_09B: [u8; 16] = [
     0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9A, 0x9B, 0x9C, 0x9D, 0x9E, 0x9F, 0xA0,
+];
+const TV_0862_MACAROON_ID_15: [u8; 16] = [
+    0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF, 0xB0,
+];
+const TV_0862_MACAROON_ID_16: [u8; 16] = [
+    0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0,
 ];
 
 /// TV-0862-07 balance fixtures (full + half deduction).

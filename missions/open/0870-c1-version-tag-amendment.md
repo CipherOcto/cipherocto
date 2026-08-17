@@ -9,10 +9,14 @@ decision overrides §22 atomic-blocker bundle rule for this session).
 Pre-reqs verified landed: S3 (octo-vault crate), S4 (DFP codemod),
 S5 (verify-time invariant — LANDED 2026-08-17 in commit `d007de54`).
 
-**Acceptance gate:** all 5 ACs satisfied. TV-0870-01 5/5 pass.
-`cargo test --workspace --lib` clean (excluding 3 pre-existing S4 DFP
-Round 2 quota-router-cli failures unrelated to S6a). Clippy zero
-warnings. fmt clean. Mission YAML prettier-clean.
+**Acceptance gate:** all 5 ACs satisfied. TV-0870-01 7/7 pass
+(5 original + 2 added in Round 1 review fix commit `ab2b57b4`).
+`cargo test --workspace --lib` passes modulo 3 pre-existing S4 DFP
+Round 2 quota-router-cli failures unrelated to S6a (per AC #4
+explicit exclusion). Clippy zero warnings. fmt clean. Mission YAML
+prettier-clean. Round 1 adversarial review closed (13 findings, all
+fixed). Round 2 adversarial review closed (8 new findings, see
+`## Round 2 review fixes` row in Version history).
 
 ## RFC
 
@@ -69,8 +73,8 @@ documents the `version_tag` field requirement with explicit constants.
    - Pins VERSION_TAG_V2 export from `octo_protocol::envelope`
 4. Verification gate:
    ```bash
-   cargo test -p octo-protocol --test tv_0870_version_tag    # 1/1 pass
-   cargo test --workspace --lib                             # no regressions
+   cargo test -p octo-protocol --test tv_0870_version_tag    # 7/7 pass (Round 1: 5/5; +2 regression tests)
+   cargo test --workspace --lib                             # excludes 3 pre-existing S4 DFP Round 2 quota-router-cli::commands::tests::settle_* failures (commits 19faf380/4ab400bd/18edbe0d); unrelated to S6a
    cargo clippy --workspace --all-targets --features full -- -D warnings
    cargo fmt --all -- --check
    npx prettier --write missions/open/0870-c1-version-tag-amendment.md

@@ -19,6 +19,14 @@
 //!    `verify_version`, this is the version_tag-participates-in-hash
 //!    invariant, not a literal V1-replay-defense assertion. Future TV
 //!    can pin replay detection directly.)
+//! 6. The runtime gate (`verify_version`) rejects V1 and unknown
+//!    `version_tag` values even when the envelope is constructed via
+//!    struct literal (bypassing `NodeEnvelope::build`).
+//! 7. The `version_tag` field sits at byte offset 32 of the canonical
+//!    serialization (immediately after the 32-byte `envelope_id`).
+//! 8. Absent `version_tag` field at deserialization (truncated bytes
+//!    before offset 32) is rejected by `borsh::from_slice` — the field
+//!    is mandatory in canonical encoding, not silently defaulted.
 //!
 //! Pattern mirrors `crates/octo-protocol/tests/tv8_borsh_parity.rs` — byte-
 //! exact canonical_ser + BLAKE3-256 envelope_id pinning.
@@ -201,5 +209,29 @@ fn tv_0870_01_runtime_gate_rejects_bypassed_unknown_tag() {
             Err(ProtocolError::UnsupportedVersion(0xFF))
         ),
         "runtime gate MUST reject unknown tag even when struct-literal-bypassed"
+    );
+}
+
+#[test]
+fn tv_0870_01_absent_version_tag_field_rejected() {
+    // Per RFC-0870 §NodeEnvelope Version Tag Verify contract: "Absent
+    // `version_tag` field at deserialization is also rejected (the field
+    // is mandatory in canonical encoding; missing byte = borsh decode
+    // error, not silent zero)." Truncate the canonical bytes before
+    // `version_tag` and assert `borsh::from_slice` returns Err. A
+    // regression that adds `#[borsh(default)]` or `pub version_tag: u8
+    // = 0` would silently default to 0 and this test would fail loud.
+    let env = build_with_version_tag(VERSION_TAG_V2);
+    let mut bytes = borsh::to_vec(&env).expect("borsh serialize");
+    assert!(
+        bytes.len() > 32,
+        "sanity: serialized envelope must be longer than envelope_id"
+    );
+    bytes.truncate(32); // drop version_tag + everything after
+    let r: Result<NodeEnvelope, _> = borsh::from_slice(&bytes);
+    assert!(
+        r.is_err(),
+        "missing version_tag byte MUST borsh-decode-fail, not silently default to 0 (got {:?})",
+        r.map(|e| e.version_tag)
     );
 }

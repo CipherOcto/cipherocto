@@ -178,6 +178,12 @@ S6a deliverables (per mission YAML AC #1–#5):
 - RFC-0870 §Version History **v2.1 row** added (`rfcs/accepted/networking/0870-distributed-quota-router-network.md`)
 - RFC-0870 §**NodeEnvelope Version Tag** subsection added under §Specification
 - TV-0870-01 fixture (`crates/octo-protocol/tests/tv_0870_version_tag.rs`)
-  — 5/5 tests passing: V2 build + round-trip, V1 build (legacy),
+  — 7/7 tests passing (5 original + 2 added in Round 1 review fix
+  commit `ab2b57b4`): V2 build + round-trip, V1 build (legacy),
   unknown tag rejected, verify_version gate (V2 ok, V1 rejected,
-  unknown rejected), V1 vs V2 distinct envelope_id (replay defense)
+  unknown rejected), V1 vs V2 distinct envelope_id
+  (version_tag-participates-in-hash invariant, NOT literal
+  V1-replay-defense per Round 1 HIGH-2 fix), byte_position_pin
+  (`bytes[32] == 0xA1` for V2, `0xA0` for V1), and
+  runtime_gate_rejects_bypassed_unknown_tag (rejects even when
+  struct-literal-bypassed).

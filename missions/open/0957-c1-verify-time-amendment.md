@@ -136,12 +136,12 @@ macaroon v1 chain construction or attenuation invariant.
 
 ## Dependency edges (no changes)
 
-| From                                                | To                        | Why                                 | Layer direction        |
-| --------------------------------------------------- | ------------------------- | ----------------------------------- | ---------------------- |
-| RFC-0957 amendment text                             | RFC-0965 §3 + §3.2 + §3.7 | Cross-reference                     | n/a (RFC text only)    |
+| From                                                | To                                 | Why                                 | Layer direction        |
+| --------------------------------------------------- | ---------------------------------- | ----------------------------------- | ---------------------- |
+| RFC-0957 amendment text                             | RFC-0965 §3 + §3.2 + §3.7          | Cross-reference                     | n/a (RFC text only)    |
 | RFC-0957 amendment text                             | RFC-0870 §NodeEnvelope Version Tag | Cross-reference                     | n/a (RFC text only)    |
-| `crates/octo-cap-macaroon/tests/tv_0957_*.rs` (NEW) | `octo-cap-macaroon`       | Test consumer                       | test → lib             |
-| `octo-cap-macaroon`                                 | (none new)                | `VaultLookup` trait uses primitives | Layer B → Layer A only |
+| `crates/octo-cap-macaroon/tests/tv_0957_*.rs` (NEW) | `octo-cap-macaroon`                | Test consumer                       | test → lib             |
+| `octo-cap-macaroon`                                 | (none new)                         | `VaultLookup` trait uses primitives | Layer B → Layer A only |
 
 No new cyclic edges. No new crate deps.
 

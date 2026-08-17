@@ -237,7 +237,7 @@ fn tv_0957_05_audit_window_variant_wire_form() {
         json.contains("\"type\":\"audit_window\""),
         "TV-0957-05: AuditWindow discriminant MUST be \"audit_window\": got {json}"
     );
-    // Field name MUST be `duration_secs` (RFC-0965 §3.4 — distinct from
+    // Field name MUST be `duration_secs` (RFC-0965 §3.5 — distinct from
     // earlier draft's `start_unix_secs`/`end_unix_secs` design).
     assert!(
         json.contains("\"duration_secs\":3600"),
@@ -265,7 +265,7 @@ fn tv_0957_06_max_uses_variant_wire_form() {
         json.contains("\"type\":\"max_uses\""),
         "TV-0957-06: MaxUses discriminant MUST be \"max_uses\": got {json}"
     );
-    // Field name MUST be `count` (RFC-0965 §3.5).
+    // Field name MUST be `count` (RFC-0965 §3.6).
     assert!(
         json.contains("\"count\":7"),
         "MaxUses payload MUST be `{{\"count\":N}}`: got {json}"
@@ -345,7 +345,7 @@ fn tv_0957_08_factory_variant_wire_form() {
 fn tv_0957_09_policy_reference_variant_wire_form() {
     // `PolicyReference { policy_id, policy_version_seq, attenuation_witness }`
     // — discriminant `policy_reference`. All three fields MUST serialize
-    // verbatim (RFC-0965 §3.10 + RFC-0967 §8.2 — witness signature binds
+    // verbatim (RFC-0965 §3.9 + RFC-0967 §8.2 — witness signature binds
     // the attenuation).
     //
     // `attenuation_witness` is a `[u8; 64]` annotated with
@@ -620,58 +620,104 @@ fn tv_0957_15_wrapped_only_chain_walk_step_ok() {
 // TV-0957-16..20: regression tests (catch future refactors)
 // ===========================================================================
 
-/// Regression: frozen vault row (`is_active = false`) MUST be rejected.
-/// Catches a future refactor that skips step 4 of the algorithm.
+/// Regression: frozen vault row (`is_active = false`) on a
+/// WrappedOnly ANCESTOR (not leaf) MUST be rejected by the chain
+/// walker. Catches a future refactor that only inspects the leaf's
+/// own caveats and skips the chain walk (TV-0957-14 pins the
+/// leaf-local case; this pins the ancestor case).
 #[test]
-fn tv_0957_16_regression_frozen_vault_rejected() {
-    let (mac, catalog) = mint_vault_caveat_mac_with_catalog();
+fn tv_0957_16_regression_frozen_vault_in_ancestor_rejected() {
+    let mut catalog = TestCatalog::new();
+    // Parent has the Vault caveat (frozen).
+    let parent = Macaroon::mint(&TV_0957_ROOT_SECRET)
+        .expect("parent mint")
+        .attenuate(Caveat::Vault(TV_0957_VAULT_ID), &catalog)
+        .expect("parent attenuate Vault");
+    let parent_id = compute_capability_id(&parent);
+    catalog.insert(parent);
+    // Child extends via WrappedOnly — leaf has NO Vault caveat; only
+    // the ancestor carries one.
+    let child = Macaroon::mint(&TV_0957_ROOT_SECRET)
+        .expect("child mint")
+        .attenuate(
+            Caveat::WrappedOnly {
+                parent_capability: parent_id,
+            },
+            &catalog,
+        )
+        .expect("child attenuate WrappedOnly");
+
     let mut lookup = TestVaultLookup::empty();
     lookup.insert(
         TV_0957_VAULT_ID,
         VaultRowSnapshot {
             chain_id: TV_0957_OP_CHAIN_ID,
-            is_active: false,
+            is_active: false, // frozen
         },
     );
-    let result = mac.verify_for_vault_op(
+    let result = child.verify_for_vault_op(
         &TV_0957_ROOT_SECRET,
         &catalog,
         None,
         &TV_0957_OP_CHAIN_ID,
         &lookup,
     );
-    assert!(matches!(
-        result,
-        Err(VaultVerifyError::VaultNotActive { vault_id })
-        if vault_id == TV_0957_VAULT_ID
-    ));
+    assert!(
+        matches!(
+            result,
+            Err(VaultVerifyError::VaultNotActive { vault_id })
+            if vault_id == TV_0957_VAULT_ID
+        ),
+        "TV-0957-16: frozen vault in WrappedOnly ancestor MUST reject: got {result:?}"
+    );
 }
 
-/// Regression: chain mismatch MUST be rejected at step 3.
-/// Catches a future refactor that drops the chain-equality check.
+/// Regression: chain mismatch on a WrappedOnly ANCESTOR's Vault
+/// caveat MUST be rejected (TV-0957-13 pins the leaf-local case; this
+/// pins the ancestor case). Catches a future refactor that only
+/// validates the leaf's own vault row.
 #[test]
-fn tv_0957_17_regression_chain_mismatch_rejected() {
-    let (mac, catalog) = mint_vault_caveat_mac_with_catalog();
+fn tv_0957_17_regression_chain_mismatch_in_ancestor_rejected() {
+    let mut catalog = TestCatalog::new();
+    let parent = Macaroon::mint(&TV_0957_ROOT_SECRET)
+        .expect("parent mint")
+        .attenuate(Caveat::Vault(TV_0957_VAULT_ID), &catalog)
+        .expect("parent attenuate Vault");
+    let parent_id = compute_capability_id(&parent);
+    catalog.insert(parent);
+    let child = Macaroon::mint(&TV_0957_ROOT_SECRET)
+        .expect("child mint")
+        .attenuate(
+            Caveat::WrappedOnly {
+                parent_capability: parent_id,
+            },
+            &catalog,
+        )
+        .expect("child attenuate WrappedOnly");
+
     let mut lookup = TestVaultLookup::empty();
     lookup.insert(
         TV_0957_VAULT_ID,
         VaultRowSnapshot {
-            chain_id: TV_0957_OTHER_CHAIN_ID,
+            chain_id: TV_0957_OTHER_CHAIN_ID, // mismatched chain
             is_active: true,
         },
     );
-    let result = mac.verify_for_vault_op(
+    let result = child.verify_for_vault_op(
         &TV_0957_ROOT_SECRET,
         &catalog,
         None,
         &TV_0957_OP_CHAIN_ID,
         &lookup,
     );
-    assert!(matches!(
-        result,
-        Err(VaultVerifyError::ChainMismatch { vault_chain, op_chain })
-        if vault_chain == TV_0957_OTHER_CHAIN_ID && op_chain == TV_0957_OP_CHAIN_ID
-    ));
+    assert!(
+        matches!(
+            result,
+            Err(VaultVerifyError::ChainMismatch { vault_chain, op_chain })
+            if vault_chain == TV_0957_OTHER_CHAIN_ID && op_chain == TV_0957_OP_CHAIN_ID
+        ),
+        "TV-0957-17: chain mismatch in WrappedOnly ancestor MUST reject: got {result:?}"
+    );
 }
 
 /// Regression: missing root secret MUST surface as `Macaroon(RootSecretMismatch)`.
@@ -757,7 +803,6 @@ fn tv_0957_20_regression_attenuation_monotonicity_with_new_variants() {
             &catalog,
         )
         .expect("parent attenuate ValidRange");
-    let parent_id = compute_capability_id(&parent);
     let parent_caveats = parent.caveats.clone();
     catalog.insert(parent);
 
@@ -847,9 +892,6 @@ fn tv_0957_20_regression_attenuation_monotonicity_with_new_variants() {
         "TV-0957-20 negative: child valid_after<parent valid_after must reject: \
          got {neg:?}"
     );
-    // Parent's `parent_id` is bound (kept for symmetry; not used by
-    // tightened-only child).
-    let _ = parent_id;
 }
 
 // ===========================================================================
@@ -906,8 +948,9 @@ fn tv_0957_21_multilevel_wrapped_only_chain_depth_3() {
 
     // Verify the leaf; collector must walk BOTH ancestors and find
     // the Vault caveat. Lookup hit on the single vault_id succeeds
-    // (once per ancestor mention).
-    catalog.insert(leaf.clone());
+    // (once per ancestor mention). Leaf has no caveats of its own
+    // besides WrappedOnly, so the catalog lookup of `leaf` is not
+    // exercised — only the ancestors were inserted.
     let result = leaf.verify_for_vault_op(
         &TV_0957_ROOT_SECRET,
         &catalog,

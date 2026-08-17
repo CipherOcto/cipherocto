@@ -21,14 +21,14 @@ bundle for this session).
     Factory, PolicyReference) — landed in
     `crates/octo-cap-macaroon/src/caveat/`
   - `PermissionKind` enum (5 variants)
-  - `WrappedOnly` parent-no-Vault-binding reject per §20.6.1 line 1328
+  - `WrappedOnly` parent-no-Vault-binding reject per §Verify-Time Extension
 - **RFC-0957 §Verify-Time Extension subsection** added (under
   §Algorithms, after §Macaroon v1 chain construction)
   - `Macaroon::verify_for_vault_op` signature
   - 5-step algorithm verbatim per §20.6.1
   - `VaultLookup` trait injection (Layer B extension consumer)
   - `WrappedOnly` chain walk invariant
-  - Cross-reference to RFC-0965 §3 + RFC-0870 §14.1
+  - Cross-reference to RFC-0965 §3 + RFC-0870 §NodeEnvelope Version Tag
 - **RFC-0957 §Caveat DSL Extension subsection** added (under
   §Data Structures, after the `Caveat` enum definition):
   - 9 new variants enumerated with field types

@@ -292,11 +292,28 @@ fn tv_0862_07_dqa_v2_wire_form_pinned() {
     // compares `i64` as integer, not as bytes; endianness drift in
     // `from_dqa` would pass `PartialEq` while flipping wire form).
     let enc1 = DqaEncoding::from_dqa(&TV_0862_BALANCE_07_FULL);
+    // Canonical-form precondition: `from_dqa` calls the private
+    // `canonicalize(*dqa)` (see `determin::dqa`) which strips trailing
+    // zeros from the integer part. Fixtures MUST already be canonical
+    // or the byte-pin below would silently compare the canonicalized
+    // output (e.g. `1e15` at scale=3 → `1` at scale=0) instead of the
+    // literal fixture bytes. `TV_0862_BALANCE_07_FULL = 1_000_000_000_000`
+    // at `scale=0` is canonical (no trailing zeros to strip); the
+    // `canonicalize` short-circuit at scale=0 confirms. Future
+    // fixture changes MUST preserve canonical form — see TV-0862
+    // reviewer follow-up 0862-c5 (domain-sep hygiene) for related
+    // hash-prefix discipline.
     let enc1_bytes: &[u8; 16] = unsafe {
-        // SAFETY: `DqaEncoding` is `#[repr(C)]` with `value: i64` +
-        // `scale: u8` + `_reserved: [u8; 7]` = 16 bytes total, no
-        // padding. The cast produces a stable byte view that matches
-        // the on-wire form (BE value, scale, reserved).
+        // SAFETY: `DqaEncoding` is `#[repr(C)]` (per
+        // `determin/src/dqa.rs` — the load-bearing invariant is the
+        // `repr(C)` attribute, which guarantees the C ABI layout:
+        // `value: i64` at offset 0, `scale: u8` at offset 8,
+        // `_reserved: [u8; 7]` at offset 9, no implicit padding, total
+        // 16 bytes). Without `repr(C)` the compiler is free to reorder
+        // fields and this cast is UB. The compile-time assertion
+        // `assert!(size_of::<DqaEncoding>() == 16)` in the substrate
+        // is a secondary guard. The cast produces a stable byte view
+        // matching the on-wire form (BE value, scale, reserved).
         &*(&enc1 as *const DqaEncoding as *const [u8; 16])
     };
     // 1_000_000_000_000 = 0xE8D4A51000 (BE 8 bytes: 0x00 0x00 0x00

@@ -84,11 +84,17 @@ fn tv_0862_vault_id_cross_ref_deterministic() {
 }
 
 /// Domain separation: vault_id derivation MUST NOT collide with
-/// adjacent derivation prefixes (sweep covers `cipherocto/macaroon/v1/id`,
-/// `cipherocto/chain/v1/`, `cipherocto/asset/v1/`, `cipherocto/cap/v1/*`
-/// — all distinct prefixes, no prefix-of relation with `vault`).
-/// This test guards against an accidental `cipherocto/vault/v1/`
-/// prefix drift (e.g. typo to `cipherocto/vautl/v1/`).
+/// adjacent derivation prefixes. This test guards against an accidental
+/// `cipherocto/vault/v1/` prefix drift (e.g. typo to
+/// `cipherocto/vautl/v1/`) by asserting the production derivation
+/// differs from a one-character-prefix-typo derivation.
+///
+/// **Scope (S6c Round 2 code review LOW #6):** this is a single-point
+/// drift guard, NOT a full sweep over adjacent derivation prefixes
+/// (e.g. `cipherocto/macaroon/v1/`, `cipherocto/chain/v1/`,
+/// `cipherocto/asset/v1/`, `cipherocto/cap/v1/*`). Those sweep
+/// assertions are filed as follow-on `0862-c5-domain-sep` (untagged
+/// hash prefix hygiene mission).
 #[test]
 fn tv_0862_vault_id_cross_ref_domain_separation() {
     let owner_did: &str = "did:octo:zVaultId0862";

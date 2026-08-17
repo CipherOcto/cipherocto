@@ -8,9 +8,27 @@ finding #8: `dqa_to_i64`'s `scale == 0` invariant is an unconditional
 `assert!` (panic) reachable from a storage path — panic in a drain
 handler is an availability surface.
 
+## RFC
+
+- Primary: RFC-0862 v2.0 §StoolapSpendLedger substrate (adds
+  `SpendLedgerError::InvalidScale` variant to documented error
+  surface)
+- Co-RFC: RFC-0105 v1.9 (DqaEncoding invariant — substrate boundary
+  should propagate scale mismatch as typed error)
+
+## Dependency edges
+
+| From                                              | To                           | Why                | Layer direction     |
+| ------------------------------------------------- | ---------------------------- | ------------------ | ------------------- |
+| RFC-0862 v2.0 (error variant addition)            | RFC-0862 §StoolapSpendLedger | Same-RFC cross-ref | n/a (RFC text only) |
+| `crates/quota-router-storage` (InvalidScale impl) | `determin::DqaError`         | Error wrapping     | lib → lib           |
+
+No new cyclic edges. No new external crate deps.
+
 ## Problem
 
-`crates/quota-router-storage/src/stoolap_spend_ledger.rs:274-283`:
+`crates/quota-router-storage/src/stoolap_spend_ledger.rs` —
+`fn dqa_to_i64(v: MicroOctoW) -> i64` contains:
 
 ```rust
 fn dqa_to_i64(v: MicroOctoW) -> i64 {
@@ -33,17 +51,17 @@ proper error variants.)
 
 ## Acceptance Criteria
 
-1. `dqa_to_i64` returns `Result<i64, SpendLedgerError>` (or panic
-   in debug builds via `debug_assert_eq!` + error in release)
-2. New `SpendLedgerError::InvalidScale { expected: u8, actual: u8 }`
-   variant (or reuse `Storage`)
-3. All callsites in `seed` + `try_deduct` handle the error (no
-   silent `unwrap`)
-4. New TV-0862-12: passing `Dqa::new(100, 1)` (scale=1) to `seed`
-   yields `SpendLedgerError::InvalidScale`, NOT a panic
-5. RFC-0862 §StoolapSpendLedger substrate subsection updated:
-   add error variant + precondition clause
-6. Existing TV-0862-01..09 stay byte-stable
+- AC-1: `dqa_to_i64` returns `Result<i64, SpendLedgerError>` (or
+  panic in debug builds via `debug_assert_eq!` + error in release)
+- AC-2: New `SpendLedgerError::InvalidScale { expected: u8, actual: u8 }`
+  variant (or reuse `Storage`)
+- AC-3: All callsites in `seed` + `try_deduct` handle the error
+  (no silent `unwrap`)
+- AC-4: New TV-0862-12: passing `Dqa::new(100, 1)` (scale=1) to
+  `seed` yields `SpendLedgerError::InvalidScale`, NOT a panic
+- AC-5: RFC-0862 §StoolapSpendLedger substrate subsection updated:
+  add error variant + precondition clause
+- AC-6: Existing TV-0862-01..09b stay byte-stable
 
 ## Cross-reference
 
@@ -53,6 +71,22 @@ proper error variants.)
   `SpendLedgerError::Storage` should wrap + propagate
 - **Plan:** `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md`
   §3 row 6 (Stream A.1 S6c follow-on)
+
+## Critical files
+
+- `crates/quota-router-storage/src/stoolap_spend_ledger.rs` (modify
+  — `dqa_to_i64` return type + new `InvalidScale` variant + callsite
+  error handling)
+- `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs` (modify
+  — add TV-0862-12 scale-mismatch rejection)
+- `rfcs/accepted/networking/0862-writer-election-bootstrap-v130.md`
+  (modify — §StoolapSpendLedger error variant + precondition)
+
+## Out of scope
+
+- Renaming `dqa_to_i64` to `try_dqa_to_i64` (style-only; defer)
+- Wider substrate conversion of `unwrap` / `expect` to typed errors
+  (audit mission TBD; not S6c scope)
 
 ## Risks
 
@@ -66,6 +100,7 @@ proper error variants.)
 
 ## Version history
 
-| Date       | Author     | Change                                                                                         |
-| ---------- | ---------- | ---------------------------------------------------------------------------------------------- |
-| 2026-08-17 | @mmacedoeu | Initial filing per S6c Round 1 security review finding #8 (`dqa_to_i64` assert panic surface). |
+| Date       | Author     | Change                                                                                                                                                                                                    |
+| ---------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-17 | @mmacedoeu | Initial filing per S6c Round 1 security review finding #8 (`dqa_to_i64` assert panic surface).                                                                                                            |
+| 2026-08-17 | @mmacedoeu | Round 2 cleanup: drop `stoolap_spend_ledger.rs:274-283` line ref, add `## RFC` + `## Dependency edges` + `## Critical files` + `## Out of scope` sections consistent with parent 0862-c1, add AC anchors. |

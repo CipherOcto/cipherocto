@@ -291,20 +291,23 @@ impl StoolapSpendLedger {
 
 /// Convert a `MicroOctoW` (Dqa, integer-valued) into a stoolap-compatible i64.
 ///
-/// Stoolap's `INTEGER` column type maps to `i64`. `Dqa -> i64` is a
-/// narrowing conversion: overflow at `> i64::MAX` saturates to
-/// `i64::MAX`. At worst-case scale (`i64::MAX = ~9.2e18`), `MicroOctoW`
-/// denominated in `1/1_000_000 OCTO_W` represents ~9.2e12 OCTO_W
-/// per holder — well above any realistic paid-query budget per
-/// RFC-0871 §Adversary A7 (overflow impossible at worst-case scale).
+/// Stoolap's `INTEGER` column type maps to `i64`. `Dqa -> i64` is an
+/// **identity conversion** today (`Dqa::value` is `i64`, so the cast is
+/// a no-op at the type level). The function is preserved as the
+/// future-proofing anchor should `Dqa::value` widen to `i128`.
+///
+/// **Note (S6c Round 2 code review LOW #5):** this fn does NOT
+/// implement saturation. Future widening to `i128` will require an
+/// explicit `try_into()` + `SpendLedgerError::Storage` return on
+/// overflow (mirroring the `0862-c7` adjacent u64→i64 wrap
+/// mitigation in `quota-router-core`). See `0862-c4-assert-to-error`
+/// follow-on for the panic→error surface conversion this fn would
+/// also need.
 fn dqa_to_i64(v: MicroOctoW) -> i64 {
     assert_eq!(
         v.scale, 0,
         "MicroOctoW stored at scale=0; schema invariant violated"
     );
-    // `Dqa::value` is `i64`, so the cast is a no-op at the type level;
-    // the function remains as the future-proofing doc anchor should
-    // `Dqa::value` widen to `i128`.
     v.value
 }
 

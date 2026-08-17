@@ -126,10 +126,16 @@ pub fn load_from_str(src: &str) -> Result<PricingAxisRegistry, AxisRegistryTomlE
                 rate: ax.default_rate_per_1k,
             });
         }
+        let rate = octo_determin::Dqa::new(ax.default_rate_per_1k, 0).map_err(|_| {
+            AxisRegistryTomlError::NegativeRate {
+                axis: ax.id.clone(),
+                rate: ax.default_rate_per_1k,
+            }
+        })?;
         registry.register(PricingAxis {
             id: ax.id,
             name: ax.name,
-            default_rate_per_1k: ax.default_rate_per_1k as u128,
+            default_rate_per_1k: rate,
         })?;
     }
     // MVP axis check (RFC-0959 §Data Structures: registry ships with the

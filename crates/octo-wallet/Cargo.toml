@@ -77,6 +77,12 @@ zk-verifier = { path = "../zk-verifier" }
 # (mission 0959-a §CLI surface).
 quota-router-storage = { path = "../quota-router-storage" }
 
+# S4 codemod (RFC-0105 DFP): CLI bin constructs `AxisRate { rate_per_1k: Dqa }`
+# from a parsed u128 CLI arg. Git dep matches workspace version (avoids
+# serde-traits-from-different-serde-crate errors when mixing with the
+# git-pulled octo-determin from transitive workspace deps).
+octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
+
 # Identity crypto (RFC-0009 §Identity Key Format)
 ed25519-dalek = { version = "2.2", features = ["serde", "zeroize"] }
 # Mission 0970-a1: X25519 ECDH + ChaCha20-Poly1305 encryption for

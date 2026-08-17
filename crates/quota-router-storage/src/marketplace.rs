@@ -198,13 +198,14 @@ impl MarketplaceIndex {
                 .map(|r| (r.axis.clone(), 1000u64))
                 .collect();
             let cost = crate::ask::settlement_cost(ask, &consumed, axes);
-            if cost > budget_ceiling {
+            if octo_determin::dqa_cmp(cost, budget_ceiling) > 0 {
                 continue;
             }
             let replace = match &best {
                 None => true,
                 Some((best_cost, best_ask)) => {
-                    cost < *best_cost || (cost == *best_cost && ask.id() < best_ask.id())
+                    octo_determin::dqa_cmp(cost, *best_cost) < 0
+                        || (cost == *best_cost && ask.id() < best_ask.id())
                 }
             };
             if replace {
@@ -270,7 +271,11 @@ mod tests {
                 model: ModelRef::from(model),
                 rates: vec![AxisRate {
                     axis: "input_tokens_per_1k".to_owned(),
-                    rate_per_1k: rate,
+                    rate_per_1k: octo_determin::Dqa::new(
+                        i64::try_from(rate).expect("rate fits in i64"),
+                        0,
+                    )
+                    .expect("non-overflow"),
                 }],
             },
             [0x42; 16],
@@ -379,7 +384,13 @@ mod tests {
         idx.insert(expensive);
         let axes = PricingAxis::standard_axes();
         let picked = idx
-            .select_ask("openai/gpt-4", &[], 50_000, &axes, now)
+            .select_ask(
+                "openai/gpt-4",
+                &[],
+                octo_determin::Dqa::new(50_000, 0).expect("non-overflow"),
+                &axes,
+                now,
+            )
             .expect("pick");
         assert_eq!(picked.asker_did, octo_ident::test_helpers::sample_did(111));
     }
@@ -402,7 +413,13 @@ mod tests {
         idx.insert(b);
         let axes = PricingAxis::standard_axes();
         let picked = idx
-            .select_ask("openai/gpt-4", &[], 100_000, &axes, now)
+            .select_ask(
+                "openai/gpt-4",
+                &[],
+                octo_determin::Dqa::new(100_000, 0).expect("non-overflow"),
+                &axes,
+                now,
+            )
             .expect("pick");
         let expected = if id_a < id_b { id_a } else { id_b };
         assert_eq!(picked.id(), expected);
@@ -418,10 +435,16 @@ mod tests {
             30_000,
             now + 1000,
         );
-        ask.rates.rates[0].rate_per_1k = 200_000;
+        ask.rates.rates[0].rate_per_1k = octo_determin::Dqa::new(200_000, 0).expect("non-overflow");
         idx.insert(ask);
         let axes = PricingAxis::standard_axes();
-        let picked = idx.select_ask("openai/gpt-4", &[], 100_000, &axes, now);
+        let picked = idx.select_ask(
+            "openai/gpt-4",
+            &[],
+            octo_determin::Dqa::new(100_000, 0).expect("non-overflow"),
+            &axes,
+            now,
+        );
         assert!(picked.is_none(), "exceeds budget");
     }
 
@@ -443,7 +466,13 @@ mod tests {
         );
         idx.insert(ask);
         let axes = PricingAxis::standard_axes();
-        let picked = idx.select_ask("openai/gpt-4", &["EU".to_owned()], 100_000, &axes, now);
+        let picked = idx.select_ask(
+            "openai/gpt-4",
+            &["EU".to_owned()],
+            octo_determin::Dqa::new(100_000, 0).expect("non-overflow"),
+            &axes,
+            now,
+        );
         assert!(picked.is_some());
     }
 
@@ -451,7 +480,13 @@ mod tests {
     fn select_ask_unknown_model_returns_none() {
         let mut idx = MarketplaceIndex::new();
         let axes = PricingAxis::standard_axes();
-        let picked = idx.select_ask("nonexistent/model", &[], 100_000, &axes, 1_700_000_000);
+        let picked = idx.select_ask(
+            "nonexistent/model",
+            &[],
+            octo_determin::Dqa::new(100_000, 0).expect("non-overflow"),
+            &axes,
+            1_700_000_000,
+        );
         assert!(picked.is_none());
     }
 
@@ -467,7 +502,13 @@ mod tests {
         );
         idx.insert(expired);
         let axes = PricingAxis::standard_axes();
-        let picked = idx.select_ask("openai/gpt-4", &[], 100_000, &axes, now);
+        let picked = idx.select_ask(
+            "openai/gpt-4",
+            &[],
+            octo_determin::Dqa::new(100_000, 0).expect("non-overflow"),
+            &axes,
+            now,
+        );
         assert!(
             picked.is_none(),
             "expired ask must be evicted + not returned"

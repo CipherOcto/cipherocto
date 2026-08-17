@@ -23,7 +23,7 @@ stoolap = ["dep:stoolap", "dep:serde_json", "dep:octo-storage-core"]
 
 [dependencies]
 # Deterministic Floating-Point per RFC-0104 — score_ewma / score_delta canonical encoding
-octo-determin = { path = "../../determin" }
+octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
 # Canonical OctoID codec per RFC-0010 — `RecorderDid::to_wire()` delegate.
 octo-ident = { path = "../octo-ident" }
 # Hashing — 13 reputation domain separators + governance-set domain + RetirementEligibility envelope

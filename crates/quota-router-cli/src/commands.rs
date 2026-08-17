@@ -606,7 +606,7 @@ pub fn settle_list(asker_did: &str, db_path: Option<&str>) -> Result<()> {
     println!("asker_did = {}  events = {}", asker_did, events.len());
     for ev in &events {
         println!(
-            "settlement_hash = {}  ask_id = {}  nonce = {}  cost_micro_octo_w = {}  settled_at_unix = {}",
+            "settlement_hash = {}  ask_id = {}  nonce = {}  cost_micro_octo_w = {:?}  settled_at_unix = {}",
             hex::encode(ev.settlement_hash),
             hex::encode(ev.ask_id),
             hex::encode(&ev.nonce),

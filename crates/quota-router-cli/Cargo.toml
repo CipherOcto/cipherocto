@@ -18,7 +18,7 @@ quota-router-sm-engine = { path = "../quota-router-sm-engine" }
 # for `quota-router-cli settle` + `settle-replay` RPC-0959 §CLI subcommands.
 quota-router-storage = { path = "../quota-router-storage" }
 octo-reputation = { path = "../octo-reputation" }
-octo-determin = { path = "../../determin" }
+octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
 blake3.workspace = true
 
 # Transport + adapter for mesh daemon

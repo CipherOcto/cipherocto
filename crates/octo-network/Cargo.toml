@@ -39,7 +39,7 @@ futures = "0.3"
 serde_json = "1.0"
 tokio = { version = "1.35", features = ["sync", "rt-multi-thread", "macros"] }
 octo-sync = { path = "../../octo-sync", features = ["test-util"] }
-octo-determin = { path = "../../determin" }
+octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
 # Mission 0855p-b / 0968 Phase 4 — 2-node mesh integration test
 octo-adapter-p2p = { path = "../octo-adapter-p2p" }
 

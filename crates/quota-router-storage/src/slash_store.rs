@@ -18,8 +18,18 @@ use crate::migrations;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SlashLedgerRow {
     pub provider_id: String,
-    pub stake_micro_octo_w: u128,
-    pub initial_stake_micro_octo_w: u128,
+    /// S4 codemod: `u128 → DqaSerde` (DQA-encoded deterministic
+    /// floating-point). `DqaSerde` is a `#[repr(transparent)]` newtype
+    /// over `Dqa` that exposes serde `Serialize`/`Deserialize` via the
+    /// canonical 16-byte BE `DqaEncoding` wire format
+    /// (see `crate::dqa_serde`). Always stored at `scale = 0`
+    /// (integer micro-OCTO_W counts). Saturates to `i64::MAX` on
+    /// overflow (well above realistic stake sizes per RFC-0871
+    /// §Adversary A7).
+    #[serde(with = "crate::dqa_serde::field")]
+    pub stake_micro_octo_w: octo_determin::Dqa,
+    #[serde(with = "crate::dqa_serde::field")]
+    pub initial_stake_micro_octo_w: octo_determin::Dqa,
     pub offense_count: u32,
     /// `cumulative_loss_pct * 1_000_000`, rounded.
     pub cumulative_loss_pct_micro: u64,
@@ -57,7 +67,7 @@ pub trait SlashStore: Send + Sync {
         &self,
         _provider_id: &str,
         _reason: &str,
-        _amount_micro_octo_w: u128,
+        _amount_micro_octo_w: octo_determin::Dqa,
         _new_cumulative_loss_pct_micro: u64,
     ) -> Result<(), SlashStoreError> {
         Ok(())
@@ -130,14 +140,16 @@ impl SlashStore for StoolapSlashStore {
                 provider_id: r
                     .get::<String>(0)
                     .map_err(|e| SlashStoreError::Db(format!("provider_id: {e}")))?,
-                stake_micro_octo_w: r
-                    .get::<i64>(1)
-                    .map_err(|e| SlashStoreError::Db(format!("stake: {e}")))?
-                    as u128,
-                initial_stake_micro_octo_w: r
-                    .get::<i64>(2)
-                    .map_err(|e| SlashStoreError::Db(format!("initial_stake: {e}")))?
-                    as u128,
+                stake_micro_octo_w: i64_to_dqa(
+                    r.get::<i64>(1)
+                        .map_err(|e| SlashStoreError::Db(format!("stake: {e}")))?,
+                )
+                .map_err(|e| SlashStoreError::Db(format!("stake decode: {e:?}")))?,
+                initial_stake_micro_octo_w: i64_to_dqa(
+                    r.get::<i64>(2)
+                        .map_err(|e| SlashStoreError::Db(format!("initial_stake: {e}")))?,
+                )
+                .map_err(|e| SlashStoreError::Db(format!("initial_stake decode: {e:?}")))?,
                 offense_count: r
                     .get::<i64>(3)
                     .map_err(|e| SlashStoreError::Db(format!("offense_count: {e}")))?
@@ -181,8 +193,8 @@ impl SlashStore for StoolapSlashStore {
                  offense_count = $3, cumulative_loss_pct_micro = $4, last_updated_unix = $5 \
                  WHERE row_id = $6",
                 (
-                    row.stake_micro_octo_w as i64,
-                    row.initial_stake_micro_octo_w as i64,
+                    dqa_to_i64(row.stake_micro_octo_w),
+                    dqa_to_i64(row.initial_stake_micro_octo_w),
                     row.offense_count as i64,
                     row.cumulative_loss_pct_micro as i64,
                     row.last_updated_unix as i64,
@@ -213,8 +225,8 @@ impl SlashStore for StoolapSlashStore {
                 (
                     next_id,
                     row.provider_id.clone(),
-                    row.stake_micro_octo_w as i64,
-                    row.initial_stake_micro_octo_w as i64,
+                    dqa_to_i64(row.stake_micro_octo_w),
+                    dqa_to_i64(row.initial_stake_micro_octo_w),
                     row.offense_count as i64,
                     row.cumulative_loss_pct_micro as i64,
                     row.last_updated_unix as i64,
@@ -235,6 +247,23 @@ impl SlashStore for StoolapSlashStore {
     }
 }
 
+/// Saturating `Dqa -> i64` projection for stoolap INTEGER columns.
+/// See `dqa_to_i64` in `stoolap_spend_ledger` for the same rationale.
+///
+/// `Dqa::value` is `i64`, so a direct pass-through is safe under
+/// current types; the function name + Saturating comment pair stays
+/// as the future-proofing doc anchor should `Dqa::value` widen to
+/// `i128`.
+fn dqa_to_i64(v: octo_determin::Dqa) -> i64 {
+    debug_assert_eq!(v.scale, 0, "stake stored at scale=0");
+    v.value
+}
+
+/// Lossy `i64 -> Dqa` projection (stoolap INTEGER column read).
+fn i64_to_dqa(v: i64) -> Result<octo_determin::Dqa, octo_determin::DqaError> {
+    octo_determin::Dqa::new(v, 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,8 +280,9 @@ mod tests {
         let store = StoolapSlashStore::open_in_memory().expect("open");
         let row = SlashLedgerRow {
             provider_id: "alice".to_string(),
-            stake_micro_octo_w: 900_000,
-            initial_stake_micro_octo_w: 1_000_000,
+            stake_micro_octo_w: octo_determin::Dqa::new(900_000, 0).expect("non-overflow"),
+            initial_stake_micro_octo_w: octo_determin::Dqa::new(1_000_000, 0)
+                .expect("non-overflow"),
             offense_count: 1,
             cumulative_loss_pct_micro: 100_000,
             last_updated_unix: 1_700_000_000,
@@ -267,15 +297,15 @@ mod tests {
         let store = StoolapSlashStore::open_in_memory().expect("open");
         let r1 = SlashLedgerRow {
             provider_id: "bob".to_string(),
-            stake_micro_octo_w: 1_000,
-            initial_stake_micro_octo_w: 1_000,
+            stake_micro_octo_w: octo_determin::Dqa::new(1_000, 0).expect("non-overflow"),
+            initial_stake_micro_octo_w: octo_determin::Dqa::new(1_000, 0).expect("non-overflow"),
             offense_count: 0,
             cumulative_loss_pct_micro: 0,
             last_updated_unix: 1,
         };
         store.upsert_stake(&r1).expect("upsert 1");
         let r2 = SlashLedgerRow {
-            stake_micro_octo_w: 900,
+            stake_micro_octo_w: octo_determin::Dqa::new(900, 0).expect("non-overflow"),
             offense_count: 1,
             cumulative_loss_pct_micro: 100_000,
             last_updated_unix: 2,

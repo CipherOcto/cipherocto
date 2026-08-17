@@ -6,47 +6,127 @@
 use std::collections::HashMap;
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use octo_determin::{Dqa, DqaError};
 use serde::{Deserialize, Serialize};
 
-/// Micro-OCTO-W (u128). 1 OCTO-W = 1_000_000 micro-OCTO-W.
+/// Micro-OCTO-W (S4 codemod: now `Dqa` for deterministic-floating-point
+/// arithmetic). Direct construction via `Dqa::new(value, 0)` for integer
+/// values (e.g. 30_000 u128 → `Dqa::new(30_000, 0).expect("non-overflow")`).
 #[allow(non_camel_case_types)]
-pub type MicroOCTO_W = u128;
+pub type MicroOCTO_W = Dqa;
 
 /// Display-unit OCTO-W (RFC-0959 §Data Structures type-distinct newtype).
 ///
 /// NOT a type alias — this is a distinct newtype to prevent silent unit-conversion
 /// bugs (R1 critical fix; type aliases permitted silently otherwise).
 /// `to_micro()` / `from_micro()` enforce the conversion at the ingress boundary.
+///
+/// S4 codemod: backing field is `Dqa` (deterministic-floating-point). `Serialize`
+/// / `Deserialize` are manual impls via `DqaEncoding` 16-byte BE wire format
+/// (per `crate::dqa_serde`).
 #[allow(non_camel_case_types)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct OCTO_WAmount(pub u128);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct OCTO_WAmount(pub Dqa);
 
 /// On-wire micro-OCTO-W newtype. Pairs with [`OCTO_WAmount`] for type-safe display ↔ wire.
 #[allow(non_camel_case_types)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct MicroOCTO_WNewtype(pub u128);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MicroOCTO_WNewtype(pub Dqa);
 
 impl OCTO_WAmount {
-    /// 1 OCTO-W = 1_000_000 micro-OCTO-W.
-    pub const MICRO_PER_OCTOW: u128 = 1_000_000;
+    /// 1 OCTO-W = 1_000_000 micro-OCTO-W. Scale 0 (integer wire form).
+    pub const MICRO_PER_OCTOW: Dqa = Dqa {
+        value: 1_000_000,
+        scale: 0,
+    };
 
     /// Convert display-unit OCTO-W to on-wire micro-OCTO-W.
+    /// Multiply by `MICRO_PER_OCTOW` (scale 0 × scale 0 = scale 0).
     #[must_use]
-    pub const fn to_micro(self) -> u128 {
-        self.0 * Self::MICRO_PER_OCTOW
+    pub fn to_micro(self) -> Dqa {
+        self.0
+            .multiply(Self::MICRO_PER_OCTOW)
+            .expect("non-overflow")
     }
 
     /// Construct from on-wire micro-OCTO-W. Returns `None` if not aligned.
     #[must_use]
-    pub const fn from_micro(micro: u128) -> Option<Self> {
-        if micro.is_multiple_of(Self::MICRO_PER_OCTOW) {
-            Some(Self(micro / Self::MICRO_PER_OCTOW))
+    pub fn from_micro(micro: Dqa) -> Option<Self> {
+        // Aligned iff `micro / MICRO_PER_OCTOW` has no remainder.
+        let ratio = micro.divide(Self::MICRO_PER_OCTOW).ok()?;
+        let back = ratio.multiply(Self::MICRO_PER_OCTOW).ok()?;
+        if back == micro {
+            Some(Self(ratio))
         } else {
             None
         }
     }
+}
+
+/// Manual `Serialize` impl for `OCTO_WAmount` via `DqaEncoding` (16-byte BE).
+impl Serialize for OCTO_WAmount {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let bytes = crate::dqa_serde::dqa_to_bytes(&self.0);
+        s.serialize_bytes(&bytes)
+    }
+}
+
+impl<'de> Deserialize<'de> for OCTO_WAmount {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let bytes: Vec<u8> = serde::Deserialize::deserialize(d)?;
+        crate::dqa_serde::dqa_from_bytes(&bytes)
+            .map(Self)
+            .map_err(|e| Error::custom(format!("OCTO_WAmount decode: {e:?}")))
+    }
+}
+
+impl Serialize for MicroOCTO_WNewtype {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let bytes = crate::dqa_serde::dqa_to_bytes(&self.0);
+        s.serialize_bytes(&bytes)
+    }
+}
+
+impl<'de> Deserialize<'de> for MicroOCTO_WNewtype {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let bytes: Vec<u8> = serde::Deserialize::deserialize(d)?;
+        crate::dqa_serde::dqa_from_bytes(&bytes)
+            .map(Self)
+            .map_err(|e| Error::custom(format!("MicroOCTO_WNewtype decode: {e:?}")))
+    }
+}
+
+/// Helper: construct a `Dqa` from a `u128` literal at scale 0 (integer-valued).
+/// Panics on overflow (i64 max ~9.2e18; values above must construct explicitly).
+#[inline]
+#[must_use]
+pub const fn dqa_int(value: i64) -> Dqa {
+    Dqa { value, scale: 0 }
+}
+
+/// Free trait helper: arithmetic on `Dqa` returns `Result`; this crate prefers
+/// the `expect` form for known-bounded supply-side calculations.
+#[inline]
+pub fn dqa_add(a: Dqa, b: Dqa) -> Dqa {
+    octo_determin::dqa_add(a, b).expect("Dqa addition overflow")
+}
+
+#[inline]
+pub fn dqa_mul(a: Dqa, b: Dqa) -> Dqa {
+    octo_determin::dqa_mul(a, b).expect("Dqa multiplication overflow")
+}
+
+#[inline]
+pub fn dqa_cmp(a: Dqa, b: Dqa) -> i8 {
+    octo_determin::dqa_cmp(a, b)
+}
+
+#[inline]
+#[allow(clippy::double_must_use)]
+pub fn dqa_try_add(a: Dqa, b: Dqa) -> Result<Dqa, DqaError> {
+    octo_determin::dqa_add(a, b)
 }
 
 /// Token counter per axis (RFC-0959 §Data Structures).
@@ -294,6 +374,7 @@ pub struct PricingAxis {
     /// Human-readable name.
     pub name: String,
     /// Default rate (micro-OCTO-W per 1000 units) when no per-model override exists.
+    #[serde(with = "crate::dqa_serde::field")]
     pub default_rate_per_1k: MicroOCTO_W,
 }
 
@@ -305,17 +386,17 @@ impl PricingAxis {
             Self {
                 id: "input_tokens_per_1k".to_owned(),
                 name: "Input tokens per 1K".to_owned(),
-                default_rate_per_1k: 30_000, // 0.03 OCTO-W
+                default_rate_per_1k: Dqa::new(30_000, 0).expect("non-overflow"), // 0.03 OCTO-W
             },
             Self {
                 id: "output_tokens_per_1k".to_owned(),
                 name: "Output tokens per 1K".to_owned(),
-                default_rate_per_1k: 60_000, // 0.06 OCTO-W
+                default_rate_per_1k: Dqa::new(60_000, 0).expect("non-overflow"), // 0.06 OCTO-W
             },
             Self {
                 id: "cached_input_tokens_per_1k".to_owned(),
                 name: "Cached input tokens per 1K".to_owned(),
-                default_rate_per_1k: 3_000, // 0.003 OCTO-W
+                default_rate_per_1k: Dqa::new(3_000, 0).expect("non-overflow"), // 0.003 OCTO-W
             },
         ]
     }
@@ -331,6 +412,7 @@ impl PricingAxis {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AxisRate {
     pub axis: AxisId,
+    #[serde(with = "crate::dqa_serde::field")]
     pub rate_per_1k: MicroOCTO_W,
 }
 
@@ -355,7 +437,9 @@ impl ModelRateTable {
             .or_else(|| PricingAxis::find_by_id(axes, axis_id).map(|a| a.default_rate_per_1k))?;
         // cost = ceil(units / 1000) * rate_per_1k
         let blocks = units.div_ceil(1000);
-        Some(blocks as u128 * rate)
+        let blocks_dqa = Dqa::new(i64::try_from(blocks).expect("units"), 0).expect("non-overflow");
+        let cost = blocks_dqa.multiply(rate).expect("non-overflow");
+        Some(cost)
     }
 }
 
@@ -660,7 +744,7 @@ mod ask_signed_tests {
             model: ModelRef::from("openai/gpt-4"),
             rates: vec![AxisRate {
                 axis: "input_tokens_per_1k".to_owned(),
-                rate_per_1k: 30_000,
+                rate_per_1k: Dqa::new(30_000, 0).expect("non-overflow"),
             }],
         };
         AskUnsignedPayload {
@@ -704,7 +788,7 @@ mod ask_signed_tests {
         let pk = AskSigned::public_key_from_seed(&seed);
         let mut signed = AskSigned::sign(payload, &seed).unwrap();
         // Flip one byte in the rate table — payload && ask_id diverge.
-        signed.payload.rates.rates[0].rate_per_1k = 999;
+        signed.payload.rates.rates[0].rate_per_1k = Dqa::new(999, 0).expect("non-overflow");
         let err = signed.verify(&pk).unwrap_err();
         // Either AskIdMismatch (preferred) or AskSignatureInvalid — both are
         // acceptable defenses against tampering.
@@ -773,14 +857,18 @@ mod ask_signed_tests {
         // R1 critical fix: OCTO_WAmount must be a distinct newtype, NOT a type alias.
         // We verify the type system catches silent unit-conversion: `let _: u128 = x.0` is fine,
         // but `let _: u128 = x` is a compile error (intentional, prevents accidental ops).
-        let one_octow = OCTO_WAmount(1);
-        let one_micro = OCTO_WAmount(0).to_micro();
-        assert_eq!(one_octow.to_micro(), 1_000_000);
-        assert_eq!(one_micro, 0);
-        let back = OCTO_WAmount::from_micro(1_000_000).unwrap();
-        assert_eq!(back, OCTO_WAmount(1));
+        let one_octow = OCTO_WAmount(Dqa::new(1, 0).expect("non-overflow"));
+        let zero_octow = OCTO_WAmount(Dqa::new(0, 0).expect("non-overflow"));
+        let one_micro = zero_octow.to_micro();
+        assert_eq!(
+            one_octow.to_micro(),
+            Dqa::new(1_000_000, 0).expect("non-overflow")
+        );
+        assert_eq!(one_micro, Dqa::new(0, 0).expect("non-overflow"));
+        let back = OCTO_WAmount::from_micro(Dqa::new(1_000_000, 0).expect("non-overflow")).unwrap();
+        assert_eq!(back, OCTO_WAmount(Dqa::new(1, 0).expect("non-overflow")));
         assert!(
-            OCTO_WAmount::from_micro(1_000_001).is_none(),
+            OCTO_WAmount::from_micro(Dqa::new(1_000_001, 0).expect("non-overflow")).is_none(),
             "non-aligned must reject"
         );
     }
@@ -796,10 +884,10 @@ pub fn settlement_cost(
     consumed: &[AxisConsumption],
     axes: &[PricingAxis],
 ) -> MicroOCTO_W {
-    let mut total: MicroOCTO_W = 0;
+    let mut total: MicroOCTO_W = Dqa::new(0, 0).expect("zero");
     for (axis_id, units) in consumed {
         if let Some(c) = ask.rates.cost_for(axis_id, *units, axes) {
-            total += c;
+            total = dqa_add(total, c);
         }
     }
     total
@@ -912,6 +1000,7 @@ pub struct SettlementEnvelope {
     /// Settlement timestamp (Unix seconds).
     pub timestamp_unix: u64,
     /// Cost in micro-OCTO-W.
+    #[serde(with = "crate::dqa_serde::field")]
     pub cost: MicroOCTO_W,
 }
 
@@ -1007,8 +1096,8 @@ pub enum SettlementError {
         "cached axis consumed but cache_key_hash not provided (RFC-0959 §Cache Classification)"
     )]
     CacheStrategyRequired,
-    #[error("overflow in compute_cost for axis `{axis_id}` (partial sum = {partial_sum})")]
-    Overflow { axis_id: String, partial_sum: u128 },
+    #[error("overflow in compute_cost for axis `{axis_id}` (partial sum = {partial_sum:?})")]
+    Overflow { axis_id: String, partial_sum: Dqa },
     #[error("ask signature invalid (tampered payload or wrong key)")]
     AskSignatureInvalid,
     #[error("canonical_ser error: {0}")]
@@ -1077,6 +1166,7 @@ pub struct SettlementEvent {
     /// Per-axis consumption.
     pub axes_consumed: AxesConsumed,
     /// Computed cost in micro-OCTO-W (integer-only, no float).
+    #[serde(with = "crate::dqa_serde::field")]
     pub cost: MicroOCTO_W,
     /// Unix timestamp of settlement.
     pub settled_at_unix: u64,
@@ -1139,19 +1229,16 @@ pub fn compute_cost(
     if axes_consumed.requires_cache_strategy() && axes_consumed.cache_key_hash.is_none() {
         return Err(SettlementError::CacheStrategyRequired);
     }
-    let mut total: u128 = 0;
+    let mut total: Dqa = Dqa::new(0, 0).expect("zero");
     for (axis_id, &units) in &axes_consumed.axes {
         let rate = ask
             .rates
             .cost_for(axis_id, u64::from(units), registry)
             .ok_or_else(|| SettlementError::UnknownAxis(axis_id.clone()))?;
-        let new_total = total
-            .checked_add(rate)
-            .ok_or_else(|| SettlementError::Overflow {
-                axis_id: axis_id.clone(),
-                partial_sum: total,
-            })?;
-        total = new_total;
+        total = octo_determin::dqa_add(total, rate).map_err(|_| SettlementError::Overflow {
+            axis_id: axis_id.clone(),
+            partial_sum: total,
+        })?;
     }
     Ok(total)
 }
@@ -1242,11 +1329,11 @@ mod tests {
                 rates: vec![
                     AxisRate {
                         axis: "input_tokens_per_1k".to_owned(),
-                        rate_per_1k: 30_000,
+                        rate_per_1k: Dqa::new(30_000, 0).expect("non-overflow"),
                     },
                     AxisRate {
                         axis: "output_tokens_per_1k".to_owned(),
-                        rate_per_1k: 60_000,
+                        rate_per_1k: Dqa::new(60_000, 0).expect("non-overflow"),
                     },
                 ],
             },
@@ -1282,7 +1369,7 @@ mod tests {
         ];
         let cost = settlement_cost(&ask, &consumed, &axes);
         // 1 * 30_000 + 1 * 60_000 = 90_000 (500 rounds up to 1 block)
-        assert_eq!(cost, 90_000);
+        assert_eq!(cost, Dqa::new(90_000, 0).expect("non-overflow"));
     }
 
     #[test]
@@ -1318,7 +1405,7 @@ mod tests {
             ask_id: [1u8; 32],
             nonce: [2u8; 32],
             timestamp_unix: 1_700_000_000,
-            cost: 30_000,
+            cost: Dqa::new(30_000, 0).expect("non-overflow"),
         };
         let h = env.compute_settlement_hash();
         let h2 = env.compute_settlement_hash();
@@ -1336,7 +1423,7 @@ mod tests {
             ask_id: [1u8; 32],
             nonce: [2u8; 32],
             timestamp_unix: 1_700_000_000,
-            cost: 30_000,
+            cost: Dqa::new(30_000, 0).expect("non-overflow"),
         };
         let mut idx = ConsumedReceiptIndex::new();
         // Verify self-consistent first.
@@ -1359,7 +1446,7 @@ mod tests {
             ask_id: [1u8; 32],
             nonce: [2u8; 32],
             timestamp_unix: 1_700_000_000,
-            cost: 30_000,
+            cost: Dqa::new(30_000, 0).expect("non-overflow"),
         };
         env.settlement_hash = env.compute_settlement_hash();
         let mut idx = ConsumedReceiptIndex::new();
@@ -1377,7 +1464,7 @@ mod tests {
         let err = reg.register(PricingAxis {
             id: "input_tokens_per_1k".to_owned(),
             name: "dup".to_owned(),
-            default_rate_per_1k: 0,
+            default_rate_per_1k: Dqa::new(0, 0).expect("zero"),
         });
         assert!(matches!(err, Err(AxisRegistryError::Duplicate(_))));
     }
@@ -1396,7 +1483,7 @@ mod tests {
             ask_id: [0u8; 32],
             nonce: [0u8; 32],
             timestamp_unix: 0,
-            cost: 0,
+            cost: Dqa::new(0, 0).expect("zero"),
         };
         let mut env2 = env1.clone();
         env2.axes_consumed = vec![("b_per_1k".to_owned(), 2), ("a_per_1k".to_owned(), 1)];
@@ -1422,7 +1509,7 @@ mod settlement_engine_tests {
                 m.insert("output_tokens_per_1k".to_owned(), 500);
                 m
             }),
-            cost: 90_000,
+            cost: Dqa::new(90_000, 0).expect("non-overflow"),
             settled_at_unix: 1_700_000_000,
         }
     }
@@ -1484,7 +1571,7 @@ mod settlement_engine_tests {
                 model: ModelRef::from("openai/gpt-4"),
                 rates: vec![AxisRate {
                     axis: "cached_input_tokens_per_1k".to_owned(),
-                    rate_per_1k: 3_000,
+                    rate_per_1k: Dqa::new(3_000, 0).expect("non-overflow"),
                 }],
             },
             [0x42; 16],
@@ -1504,7 +1591,7 @@ mod settlement_engine_tests {
         let consumed_ok = consumed.with_cache_key_hash([0xAA; 32]);
         let cost = compute_cost(&ask, &consumed_ok, &axes).unwrap();
         // 100 tokens = ceil(100/1000) = 1 block * 3000 = 3000.
-        assert_eq!(cost, 3_000);
+        assert_eq!(cost, Dqa::new(3_000, 0).expect("non-overflow"));
     }
 
     #[test]
@@ -1539,7 +1626,7 @@ mod settlement_engine_tests {
                 model: ModelRef::from("openai/gpt-4"),
                 rates: vec![AxisRate {
                     axis: "input_tokens_per_1k".to_owned(),
-                    rate_per_1k: u128::MAX,
+                    rate_per_1k: Dqa::new(i64::MAX, 0).expect("non-overflow"),
                 }],
             },
             [0x42; 16],
@@ -1604,7 +1691,7 @@ mod settlement_engine_tests {
         let seed = [0xCDu8; 32];
         let pk = AskSigned::public_key_from_seed(&seed);
         let mut receipt = sign_settlement_receipt(event, &seed, [0xEE; 16]).unwrap();
-        receipt.event.cost += 1; // tamper
+        receipt.event.cost = dqa_add(receipt.event.cost, Dqa::new(1, 0).expect("non-overflow")); // tamper
         let expected_hash = compute_settlement_hash(&receipt.event).unwrap();
         let err = verify_settlement_receipt(&receipt, &pk, &expected_hash).unwrap_err();
         assert!(matches!(err, SettlementError::AskSignatureInvalid));
@@ -1645,7 +1732,7 @@ mod settlement_engine_tests {
                     .try_into()
                     .unwrap_or([0u8; 32]),
                 axes_consumed: AxesConsumed::new(axes),
-                cost: u128::from(next()),
+                cost: Dqa::new(i64::try_from(next()).unwrap_or(i64::MAX), 0).expect("non-overflow"),
                 settled_at_unix: next(),
             };
             let h1 = compute_settlement_hash(&event).unwrap();

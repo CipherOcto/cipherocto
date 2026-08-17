@@ -92,7 +92,7 @@ impl SettlementEventRepository {
         let next_id = self.next_row_id()?;
         let axes_canonical = serde_json::to_vec(&cargo.event.axes_consumed)
             .map_err(|e| RepoError::Serde(format!("canonical_ser axes_consumed: {e}")))?;
-        let cost_be = cargo.event.cost.to_be_bytes().to_vec();
+        let cost_be = crate::dqa_serde::dqa_to_bytes(&cargo.event.cost).to_vec();
         let result = self.db.execute(
             "INSERT INTO settlement_events \
              (row_id, settlement_hash, cap_root_hash, ask_id, asker_did, \
@@ -273,8 +273,8 @@ pub struct PersistedSettlementEvent {
     pub invocation_hash: [u8; 32],
     /// Per-axis consumption (canonical BTreeMap ordering preserved).
     pub axes_consumed: AxesConsumed,
-    /// Cost in micro-OCTO-W (parsed from 16-byte BE blob).
-    pub cost_micro_octo_w: u128,
+    /// Cost in micro-OCTO-W (parsed from 16-byte BE `DqaEncoding` blob).
+    pub cost_micro_octo_w: octo_determin::Dqa,
     /// Settlement timestamp (Unix seconds).
     pub settled_at_unix: u64,
     /// Router Ed25519 signature (64 bytes).
@@ -332,7 +332,8 @@ fn deserialize_event_at(
         .as_slice()
         .try_into()
         .map_err(|_| RepoError::Serde("cost_micro_octo_w length != 16".to_owned()))?;
-    let cost_micro_octo_w = u128::from_be_bytes(cost_arr);
+    let cost_micro_octo_w = crate::dqa_serde::dqa_from_bytes(&cost_arr)
+        .map_err(|e| RepoError::Serde(format!("cost_micro_octo_w decode: {e:?}")))?;
 
     let cap_root_hash_arr: [u8; 32] = cap_root_hash
         .as_slice()
@@ -377,7 +378,7 @@ mod tests {
                 axes,
                 cache_key_hash: None,
             },
-            cost: 30_000,
+            cost: octo_determin::Dqa::new(30_000, 0).expect("non-overflow"),
             settled_at_unix: 1_700_000_000,
         }
     }
@@ -407,7 +408,10 @@ mod tests {
         assert_eq!(persisted.settlement_hash, sh);
         assert_eq!(persisted.ask_id, event.ask_id);
         assert_eq!(persisted.asker_did, "did:octo:asker1");
-        assert_eq!(persisted.cost_micro_octo_w, 30_000);
+        assert_eq!(
+            persisted.cost_micro_octo_w,
+            octo_determin::Dqa::new(30_000, 0).expect("non-overflow")
+        );
         assert_eq!(persisted.axes_consumed.axes.len(), 1);
     }
 
@@ -457,12 +461,15 @@ mod tests {
     fn cost_roundtrips_through_16_byte_be_u128() {
         let repo = SettlementEventRepository::open_in_memory().unwrap();
         let mut event = sample_event([0x42; 32], [0x55; 16]);
-        event.cost = u128::MAX;
+        event.cost = octo_determin::Dqa::new(i64::MAX, 0).expect("non-overflow");
         let cargo = sample_cargo(&event, "did:octo:asker1", [0x55; 16]);
         repo.insert(&cargo).unwrap();
         let sh = compute_settlement_hash(&event).unwrap();
         let persisted = repo.get_by_settlement_hash(&sh).unwrap().expect("row");
-        assert_eq!(persisted.cost_micro_octo_w, u128::MAX);
+        assert_eq!(
+            persisted.cost_micro_octo_w,
+            octo_determin::Dqa::new(i64::MAX, 0).expect("non-overflow")
+        );
     }
 
     #[test]

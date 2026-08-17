@@ -255,7 +255,7 @@ mod tests {
             ask_id,
             nonce,
             timestamp_unix: 1_700_000_000,
-            cost: 30_000,
+            cost: octo_determin::Dqa::new(30_000, 0).expect("non-overflow"),
         }
     }
 

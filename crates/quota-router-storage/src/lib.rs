@@ -14,6 +14,7 @@
 //! - [`circuit_breaker`] — anti-fraud monitor state machine (RFC-0959 §Lifecycle)
 //! - [`anti_fraud`] — multi-layer AntiFraudMonitor wrapping the breaker (RFC-0959 §Adversary A5)
 //! - [`axis_registry_toml`] — TOML parser for `pricing-axes.toml` (RFC-0959 §Data Structures)
+//! - [`dqa_serde`] — manual `Serialize`/`Deserialize` for `Dqa` via `DqaEncoding` (S4 codemod)
 
 pub mod anti_fraud;
 pub mod ask;
@@ -24,6 +25,7 @@ pub mod cache_key;
 pub mod circuit_breaker;
 pub mod clock;
 pub mod consumed_receipt_repo;
+pub mod dqa_serde;
 pub mod holder_kind;
 pub mod holder_record;
 pub mod holder_registry;

@@ -369,7 +369,7 @@ impl StoolapAskRepository {
             let cost = settlement_cost(&ask, &consumed, axes);
             let replace = match &best {
                 None => true,
-                Some((best_cost, _)) => cost < *best_cost,
+                Some((best_cost, _)) => octo_determin::dqa_cmp(cost, *best_cost) < 0,
             };
             if replace {
                 best = Some((cost, ask));
@@ -534,7 +534,11 @@ mod tests {
                 model: ModelRef::from(model),
                 rates: vec![AxisRate {
                     axis: "input_tokens_per_1k".to_owned(),
-                    rate_per_1k: rate,
+                    rate_per_1k: octo_determin::Dqa::new(
+                        i64::try_from(rate).expect("rate fits in i64"),
+                        0,
+                    )
+                    .expect("non-overflow"),
                 }],
             },
             nonce: [0x42; 16],
@@ -576,10 +580,13 @@ mod tests {
         );
         repo.put(&ask).unwrap();
         // Update rate, keep same id (since nonce + asker + model + rates are identical).
-        ask.rates.rates[0].rate_per_1k = 25_000;
+        ask.rates.rates[0].rate_per_1k = octo_determin::Dqa::new(25_000, 0).expect("non-overflow");
         repo.put(&ask).unwrap();
         let got = repo.get(&ask.id()).unwrap().unwrap();
-        assert_eq!(got.rates.rates[0].rate_per_1k, 25_000);
+        assert_eq!(
+            got.rates.rates[0].rate_per_1k,
+            octo_determin::Dqa::new(25_000, 0).expect("non-overflow")
+        );
     }
 
     #[test]
@@ -615,7 +622,10 @@ mod tests {
             .unwrap()
             .expect("cheapest");
         assert_eq!(winner.asker_did, exp.asker_did);
-        assert_eq!(winner.rates.rates[0].rate_per_1k, 10_000);
+        assert_eq!(
+            winner.rates.rates[0].rate_per_1k,
+            octo_determin::Dqa::new(10_000, 0).expect("non-overflow")
+        );
     }
 
     #[test]
@@ -638,7 +648,10 @@ mod tests {
             .expect("cheapest");
         // The expired (cheaper) Ask MUST NOT be returned.
         assert_eq!(winner.asker_did, active.asker_did);
-        assert_eq!(winner.rates.rates[0].rate_per_1k, 50_000);
+        assert_eq!(
+            winner.rates.rates[0].rate_per_1k,
+            octo_determin::Dqa::new(50_000, 0).expect("non-overflow")
+        );
     }
 
     #[test]
@@ -683,7 +696,9 @@ mod tests {
         // Ask's rates table; rate=0 only for the axis explicitly listed in rates).
         let consumed: Vec<_> = axes.iter().map(|a| (a.id.clone(), 1000u64)).collect();
         let cost = crate::ask::settlement_cost(&winner, &consumed, &axes);
-        assert!(cost < crate::ask::settlement_cost(&paid, &consumed, &axes));
+        assert!(
+            octo_determin::dqa_cmp(cost, crate::ask::settlement_cost(&paid, &consumed, &axes),) < 0
+        );
     }
 
     #[test]
@@ -864,7 +879,11 @@ mod tests {
                 model: ModelRef::from(model),
                 rates: vec![AxisRate {
                     axis: "input_tokens_per_1k".to_owned(),
-                    rate_per_1k: rate,
+                    rate_per_1k: octo_determin::Dqa::new(
+                        i64::try_from(rate).expect("rate fits in i64"),
+                        0,
+                    )
+                    .expect("non-overflow"),
                 }],
             },
             nonce: [nonce_byte; 16],
@@ -885,7 +904,10 @@ mod tests {
             .expect("cheapest")
             .expect("some");
         assert_eq!(cheapest.asker_did, "did:octo:a");
-        assert_eq!(cheapest.rates.rates[0].rate_per_1k, 10_000);
+        assert_eq!(
+            cheapest.rates.rates[0].rate_per_1k,
+            octo_determin::Dqa::new(10_000, 0).expect("non-overflow")
+        );
     }
 
     #[test]

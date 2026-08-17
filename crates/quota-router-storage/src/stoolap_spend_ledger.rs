@@ -46,20 +46,22 @@ pub enum SpendLedgerError {
     #[error("no balance record for holder/macaroon; wallet must seed before deduct")]
     UnknownHolder,
     /// Balance < proposed cost. Carries both numbers for caller diagnostics.
-    #[error("insufficient balance: balance={balance}, cost={cost}")]
+    #[error("insufficient balance: balance={balance:?}, cost={cost:?}")]
     InsufficientBalance {
         /// Current balance (MicroOCTO_W).
-        balance: u128,
+        balance: octo_determin::Dqa,
         /// Proposed cost (MicroOCTO_W).
-        cost: u128,
+        cost: octo_determin::Dqa,
     },
     /// Underlying storage failure (e.g. Stoolap error).
     #[error("spend-ledger storage error: {0}")]
     Storage(String),
 }
 
-/// Micro-OCTO_W cost unit (matches `octo_paid_query::MicroOCTO_W`).
-pub type MicroOctoW = u128;
+/// Micro-OCTO_W cost unit. S4 codemod: now `Dqa` (deterministic
+/// floating-point) for cross-node consensus on overflow semantics.
+/// Always stored at `scale = 0` (integer micro-OCTO_W counts).
+pub type MicroOctoW = octo_determin::Dqa;
 
 /// Stoolap-backed spend ledger (production).
 #[derive(Clone)]
@@ -133,13 +135,14 @@ impl StoolapSpendLedger {
         // per-connection write lock is sufficient for Phase 1 MVP
         // (cross-connection serialization is the follow-on).
         let existing = self.balance(holder_did, macaroon_id)?;
+        let budget_i64 = dqa_to_i64(budget);
         match existing {
             Some(_) => {
                 let result = self.db.execute(
                     "UPDATE spend_ledger SET balance = ?, updated_at_unix_ms = ? \
                      WHERE holder_did = ? AND macaroon_id = ?",
                     (
-                        to_i64(budget),
+                        budget_i64,
                         now_ms,
                         holder_did.as_bytes().to_vec(),
                         macaroon_id.to_vec(),
@@ -158,7 +161,7 @@ impl StoolapSpendLedger {
                     (
                         holder_did.as_bytes().to_vec(),
                         macaroon_id.to_vec(),
-                        to_i64(budget),
+                        budget_i64,
                         now_ms,
                     ),
                 );
@@ -201,15 +204,18 @@ impl StoolapSpendLedger {
             Some(Err(e)) => return Err(SpendLedgerError::Storage(format!("iter: {e}"))),
             None => return Err(SpendLedgerError::UnknownHolder),
         };
-        let balance: i64 = row.get(0).unwrap_or(0);
-        let balance_u = balance as MicroOctoW;
-        if balance_u < cost {
+        let balance_raw: i64 = row.get(0).unwrap_or(0);
+        let balance_u = octo_determin::Dqa::new(balance_raw, 0)
+            .map_err(|e| SpendLedgerError::Storage(format!("balance decode: {e:?}")))?;
+        if octo_determin::dqa_cmp(balance_u, cost) < 0 {
             return Err(SpendLedgerError::InsufficientBalance {
                 balance: balance_u,
                 cost,
             });
         }
-        let new_balance = balance_u - cost;
+        let new_balance = balance_u
+            .subtract(cost)
+            .map_err(|e| SpendLedgerError::Storage(format!("deduct underflow: {e:?}")))?;
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
@@ -218,7 +224,7 @@ impl StoolapSpendLedger {
             "UPDATE spend_ledger SET balance = ?, updated_at_unix_ms = ? \
              WHERE holder_did = ? AND macaroon_id = ?",
             (
-                to_i64(new_balance),
+                dqa_to_i64(new_balance),
                 now_ms,
                 holder_did.as_bytes().to_vec(),
                 macaroon_id.to_vec(),
@@ -245,27 +251,32 @@ impl StoolapSpendLedger {
         );
         let mut iter = rows.map_err(|e| SpendLedgerError::Storage(format!("balance: {e}")))?;
         match iter.next() {
-            Some(Ok(row)) => Ok(Some(row.get(0).unwrap_or(0) as MicroOctoW)),
+            Some(Ok(row)) => {
+                let raw: i64 = row.get(0).unwrap_or(0);
+                let dqa = octo_determin::Dqa::new(raw, 0)
+                    .map_err(|e| SpendLedgerError::Storage(format!("balance decode: {e:?}")))?;
+                Ok(Some(dqa))
+            }
             Some(Err(e)) => Err(SpendLedgerError::Storage(format!("iter: {e}"))),
             None => Ok(None),
         }
     }
 }
 
-/// Convert a `MicroOctoW` (u128) into a stoolap-compatible i64.
+/// Convert a `MicroOctoW` (Dqa, integer-valued) into a stoolap-compatible i64.
 ///
-/// Stoolap's `INTEGER` column type maps to `i64`. `u128 -> i64` is a
+/// Stoolap's `INTEGER` column type maps to `i64`. `Dqa -> i64` is a
 /// narrowing conversion: overflow at `> i64::MAX` saturates to
 /// `i64::MAX`. At worst-case scale (`i64::MAX = ~9.2e18`), `MicroOctoW`
 /// denominated in `1/1_000_000 OCTO_W` represents ~9.2e12 OCTO_W
 /// per holder — well above any realistic paid-query budget per
 /// RFC-0871 §Adversary A7 (overflow impossible at worst-case scale).
-fn to_i64(v: MicroOctoW) -> i64 {
-    if v > i64::MAX as MicroOctoW {
-        i64::MAX
-    } else {
-        v as i64
-    }
+fn dqa_to_i64(v: MicroOctoW) -> i64 {
+    debug_assert_eq!(v.scale, 0, "MicroOctoW stored at scale=0");
+    // `Dqa::value` is `i64`, so the cast is a no-op at the type level;
+    // the function remains as the future-proofing doc anchor should
+    // `Dqa::value` widen to `i128`.
+    v.value
 }
 
 #[cfg(test)]
@@ -285,15 +296,19 @@ mod tests {
         id
     }
 
+    fn dqa(n: i64) -> MicroOctoW {
+        octo_determin::Dqa::new(n, 0).expect("non-overflow")
+    }
+
     #[test]
     fn seed_and_deduct_round_trip() {
         let l = StoolapSpendLedger::open_in_memory().expect("open");
         let h = sample_holder();
         let m = sample_macaroon_id();
-        l.seed(h, &m, 1_000).unwrap();
-        assert_eq!(l.balance(h, &m).unwrap(), Some(1_000));
-        assert_eq!(l.try_deduct(h, &m, 250).unwrap(), 750);
-        assert_eq!(l.balance(h, &m).unwrap(), Some(750));
+        l.seed(h, &m, dqa(1_000)).unwrap();
+        assert_eq!(l.balance(h, &m).unwrap(), Some(dqa(1_000)));
+        assert_eq!(l.try_deduct(h, &m, dqa(250)).unwrap(), dqa(750));
+        assert_eq!(l.balance(h, &m).unwrap(), Some(dqa(750)));
     }
 
     #[test]
@@ -301,7 +316,7 @@ mod tests {
         let l = StoolapSpendLedger::open_in_memory().expect("open");
         let h = sample_holder();
         let m = sample_macaroon_id();
-        let err = l.try_deduct(h, &m, 1).unwrap_err();
+        let err = l.try_deduct(h, &m, dqa(1)).unwrap_err();
         assert_eq!(err, SpendLedgerError::UnknownHolder);
     }
 
@@ -310,13 +325,13 @@ mod tests {
         let l = StoolapSpendLedger::open_in_memory().expect("open");
         let h = sample_holder();
         let m = sample_macaroon_id();
-        l.seed(h, &m, 100).unwrap();
-        let err = l.try_deduct(h, &m, 600).unwrap_err();
+        l.seed(h, &m, dqa(100)).unwrap();
+        let err = l.try_deduct(h, &m, dqa(600)).unwrap_err();
         assert_eq!(
             err,
             SpendLedgerError::InsufficientBalance {
-                balance: 100,
-                cost: 600
+                balance: dqa(100),
+                cost: dqa(600),
             }
         );
     }
@@ -326,9 +341,9 @@ mod tests {
         let l = StoolapSpendLedger::open_in_memory().expect("open");
         let h = sample_holder();
         let m = sample_macaroon_id();
-        l.seed(h, &m, 100).unwrap();
-        l.seed(h, &m, 500).unwrap();
-        assert_eq!(l.balance(h, &m).unwrap(), Some(500));
+        l.seed(h, &m, dqa(100)).unwrap();
+        l.seed(h, &m, dqa(500)).unwrap();
+        assert_eq!(l.balance(h, &m).unwrap(), Some(dqa(500)));
     }
 
     #[test]
@@ -336,12 +351,12 @@ mod tests {
         let l = Arc::new(StoolapSpendLedger::open_in_memory().expect("open"));
         let h = sample_holder();
         let m = sample_macaroon_id();
-        l.seed(h, &m, 1_000).unwrap();
+        l.seed(h, &m, dqa(1_000)).unwrap();
         let mut handles = vec![];
         for _ in 0..20 {
             let l = l.clone();
             let h = h.to_owned();
-            handles.push(thread::spawn(move || l.try_deduct(&h, &m, 100)));
+            handles.push(thread::spawn(move || l.try_deduct(&h, &m, dqa(100))));
         }
         let mut ok = 0;
         let mut insufficient = 0;
@@ -362,7 +377,7 @@ mod tests {
         );
         assert_eq!(
             l.balance(sample_holder(), &sample_macaroon_id()).unwrap(),
-            Some(0)
+            Some(dqa(0))
         );
     }
 }

@@ -302,7 +302,13 @@ fn ask_publish(
             .map_err(|e| format!("invalid rate for axis `{axis_id}`: {e}"))?;
         rates.push(quota_router_storage::ask::AxisRate {
             axis: axis_id.to_owned(),
-            rate_per_1k: rate,
+            rate_per_1k: {
+                let v: i64 = rate
+                    .try_into()
+                    .map_err(|_| format!("rate `{rate}` out of i64 range"))?;
+                octo_determin::Dqa::new(v, 0)
+                    .map_err(|e| format!("invalid rate `{rate}`: {e:?}"))?
+            },
         });
     }
     let rate_table = ModelRateTable {

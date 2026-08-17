@@ -74,8 +74,8 @@ pub struct RateLimit {
 
 /// Strongly-typed caveat enum + `Raw` escape hatch.
 ///
-/// **Attenuation invariant (RFC-0957 §3.5):** Attenuators MAY add caveats
-/// but MUST NOT remove caveats. The verify routine enforces this.
+/// **Attenuation invariant:** Attenuators MAY add caveats but MUST NOT
+/// remove caveats. The verify routine enforces this.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value")]
 pub enum Caveat {
@@ -136,45 +136,45 @@ pub enum Caveat {
     #[serde(rename = "vault")]
     Vault([u8; 32]),
 
-    /// Permission kind (RFC-0960 §2.2 + RFC-0965 §3.2).
+    /// Permission kind (RFC-0965 §3.2).
     #[serde(rename = "permission")]
     Permission(PermissionKind),
 
-    /// Valid time range (RFC-0960 §2.2 + RFC-0965 §3.3; supersedes single
-    /// `Before` for ranges).
+    /// Valid time range. New in RFC-0957 v2.1; for the legacy
+    /// single-timestamp variant see RFC-0965 §3.3 `ValidAfter`.
     #[serde(rename = "valid_range")]
     ValidRange {
         valid_after_unix: u64,
         valid_until_unix: u64,
     },
 
-    /// Per-transaction cap (RFC-0960 §2.2 + RFC-0965 §3.4; distinct from
-    /// `AmountMax` which is total budget).
+    /// Per-transaction cap. New in RFC-0957 v2.1; distinct from
+    /// `AmountMax` which is total budget.
     #[serde(rename = "max_per_tx")]
     MaxPerTx(u128),
 
-    /// Audit window duration (RFC-0960 §2.2 + RFC-0965 §3.5). 0 = instant.
+    /// Audit window duration (RFC-0965 §3.5). 0 = instant.
     #[serde(rename = "audit_window")]
     AuditWindow { duration_secs: u64 },
 
-    /// Max number of uses (RFC-0960 §2.2 + RFC-0965 §3.6; 0 = unlimited).
+    /// Max number of uses (RFC-0965 §3.4; 0 = unlimited).
     #[serde(rename = "max_uses")]
     MaxUses { count: u32 },
 
-    /// Wrapped-only (RFC-0960 §2.2 + RFC-0965 §3.7): capability only usable
-    /// through a parent capability. Chain depth bounded to 16 per RFC-0965
+    /// Wrapped-only (RFC-0965 §3.7): capability only usable through a
+    /// parent capability. Chain depth bounded to 16 per RFC-0965
     /// §3.7 R7-F1.
     #[serde(rename = "wrapped_only")]
     WrappedOnly { parent_capability: [u8; 32] },
 
-    /// Factory vet (RFC-0960 §2.2 + RFC-0965 §3.8): pre-validated invocation
+    /// Factory vet (RFC-0965 §3.8): pre-validated invocation
     /// (target + selector + arg template). NOT raw bytes (phishing vector).
     #[serde(rename = "factory")]
     Factory(FactoryVet),
 
-    /// Policy reference (RFC-0960 §2.2 + RFC-0965 §3.9 + RFC-0967).
-    /// Carries the policy_id hash + the policy version_seq + a witness
-    /// signature binding the attenuation per RFC-0967 §8.2.
+    /// Policy reference (RFC-0965 §3.10 + RFC-0967). Carries the
+    /// policy_id hash + the policy version_seq + a witness signature
+    /// binding the attenuation per RFC-0967 §8.2.
     #[serde(rename = "policy_reference")]
     PolicyReference {
         policy_id: [u8; 32],
@@ -183,8 +183,9 @@ pub enum Caveat {
         attenuation_witness: [u8; 64],
     },
 
-    /// Valid-after time bound (RFC-0965 §3.3). Single timestamp; for ranges
-    /// use the RFC-0964 `Constraint::ValidRange` instead.
+    /// Valid-after time bound (RFC-0965 §3.3). Single timestamp; for
+    /// ranges use `ValidRange` above (new in RFC-0957 v2.1) or the
+    /// RFC-0964 `Constraint::ValidRange`.
     #[serde(rename = "valid_after")]
     ValidAfter { not_before_unix: u64 },
 

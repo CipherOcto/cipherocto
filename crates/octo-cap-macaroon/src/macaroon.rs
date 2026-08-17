@@ -423,8 +423,9 @@ impl Macaroon {
         Ok(())
     }
 
-    /// Verify-time invariant for a `VaultOperation` target (review
-    /// §20.6.1 — 5-step algorithm). Distinct from `verify_full`:
+    /// Verify-time invariant for a `VaultOperation` target (per the
+    /// review doc §20.6.1 — 4-step algorithm). Distinct from
+    /// `verify_full`:
     ///
     /// 1. `verify_signature(root_secret)` — chain HMAC re-derivation.
     /// 2. `check_wrapped_chain(self, catalog)` — RFC-0965 §3.7 chain
@@ -435,7 +436,7 @@ impl Macaroon {
     ///    (a) exists, (b) `chain_id == op_chain_id`, (c) state=Active.
     ///    If no `Caveat::Vault` is present anywhere in the chain
     ///    (self + ancestors), `WrappedChainHasNoVault` — the
-    ///    chainless-parent safe default per §20.6.1 line 1328.
+    ///    chainless-parent safe default per review doc §20.6.1.
     /// 4. Attenuation subsumption vs `expected_parent` (if provided).
     ///
     /// # Errors
@@ -807,12 +808,13 @@ pub enum MacaroonError {
     #[error("capability_id does not match content-addressed derivation")]
     CapabilityIdMismatch,
 
-    /// Review §20.6.1 line 1328 — `WrappedOnly` chain has no
+    /// Review doc §20.6.1 — `WrappedOnly` chain has no
     /// `Caveat::Vault` in any ancestor (or the macaroon itself). Per
-    /// §20.6.1: "If the parent has NO `Caveat::Vault` ... the wrapped
-    /// capability is treated as chainless — verifier rejects any
-    /// `WrappedOnly` descendant that targets a chain (no parent chain
-    /// to inherit). This is the safe default; chains must be explicit."
+    /// review doc §20.6.1: "If the parent has NO `Caveat::Vault` ...
+    /// the wrapped capability is treated as chainless — verifier
+    /// rejects any `WrappedOnly` descendant that targets a chain (no
+    /// parent chain to inherit). This is the safe default; chains
+    /// must be explicit."
     #[error("WrappedOnly chain has no Caveat::Vault ancestor (chainless — safe default rejects)")]
     WrappedChainHasNoVault,
 }

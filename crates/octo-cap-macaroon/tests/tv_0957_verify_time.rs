@@ -1,7 +1,8 @@
 //! RFC-0957 §Verify-Time Extension + §Caveat DSL Extension — TV-0957
 //! byte-exact wire-form + verify-path pins (mission `0957-c1`).
 //!
-//! Twenty fixtures in four categories:
+//! Twenty-two fixtures in four categories (5+5 wire-form + 5
+//! verify-time + 5 regression + 2 deep-chain/boundary):
 //!
 //! - **TV-0957-01..05** — five Caveat DSL variant wire-form pins
 //!   (`Vault`, `Permission`, `ValidRange`, `MaxPerTx`, `AuditWindow`).
@@ -9,12 +10,20 @@
 //!   `WrappedOnly`, `Factory`, `PolicyReference`, `Raw` unknown-name
 //!   rejection).
 //! - **TV-0957-11..15** — five verify-time path pins (one per
-//!   RFC-0957 §20.6.1 algorithm step: signature verify, vault row
-//!   lookup, chain match, `state == Active`, `WrappedOnly` chain walk).
-//! - **TV-0957-16..20** — five regression tests (frozen vault
-//!   `is_active=false`, chain mismatch, missing root secret,
-//!   `WrappedChainHasNoVault`, attenuation-monotonicity invariant
-//!   with the v2.1 variants).
+//!   algorithm step in the review doc §20.6.1 4-step verify-time
+//!   path: signature verify, vault row lookup loop, `WrappedOnly`
+//!   chain walk, attenuation subsumption vs `expected_parent`,
+//!   `WrappedOnly` chain walk happy path).
+//! - **TV-0957-16..20** — five regression tests. TV-16/17 are
+//!   re-scoped (Round 2) to WrappedOnly ANCESTOR coverage
+//!   (frozen vault + chain mismatch on the ancestor's `Vault`
+//!   caveat, not the leaf's own) — proves the chain walker
+//!   traverses ancestors. TV-18 missing root secret, TV-19
+//!   `WrappedChainHasNoVault`, TV-20 attenuation-monotonicity
+//!   with the v2.1 variants.
+//! - **TV-0957-21** — multi-level WrappedOnly chain (depth=3).
+//! - **TV-0957-22** — MAX_WRAPPED_DEPTH=16 boundary (depth 17
+//!   reject per RFC-0965 §3.7 R7-F1).
 //!
 //! ## Wire form
 //!
@@ -32,14 +41,18 @@
 //! `tests/tv_c1_verify_time.rs`. Both store TV-C1's
 //! `TV_C1_OP_CHAIN_ID` / `TV_C1_VAULT_ID` constants; this file
 //! parallels its layout under a `TV_0957_*` namespace so the two
-//! fixtures are independently runnable.
+//! fixtures are independently runnable. The 4-step verify-time
+//! algorithm is per the review doc §20.6.1 (signature verify →
+//! wrapped-chain integrity → per-vault lookup loop → optional
+//! attenuation subsumption).
 //!
 //! ## Determinism
 //!
 //! All inputs are byte-pinned `TV_0957_*` constants. Root secret +
-//! chain id + vault ids + permission discriminants are fixed. No
-//! RNG. Re-running reproduces the verdict bit-for-bit per
-//! RFC-0008 Class A determinism.
+//! chain id + vault ids + permission discriminants are fixed.
+//! Verdict bits are deterministic per RFC-0008 Class A; per-macaroon
+//! bytes are not (the mint path samples a nonce via `rand::rng`)
+//! but the verdict path is reproducible.
 
 #![allow(missing_docs)] // fixtures self-document via test names
 
@@ -429,7 +442,7 @@ fn tv_0957_10_raw_unknown_name_rejected_at_attenuation() {
 }
 
 // ===========================================================================
-// TV-0957-11..15: verify-time path pins (RFC-0957 §20.6.1 algorithm steps)
+// TV-0957-11..15: verify-time path pins (review doc §20.6.1 4-step algorithm)
 // ===========================================================================
 
 /// Helper: mint a root macaroon + attenuate with `Caveat::Vault(TV_0957_VAULT_ID)`,
@@ -479,8 +492,9 @@ fn tv_0957_11_verify_time_happy_path_ok() {
 
 #[test]
 fn tv_0957_12_vault_row_lookup_step_missing() {
-    // Algorithm step 2: empty lookup returns `None` → VaultRowMissing.
-    // Pin the error variant and vault_id payload.
+    // Algorithm step 3a (per-vault lookup loop, lookup branch):
+    // empty lookup returns `None` → `VaultRowMissing`. Pin the error
+    // variant and `vault_id` payload.
     let (mac, catalog) = mint_vault_caveat_mac_with_catalog();
     let result = mac.verify_for_vault_op(
         &TV_0957_ROOT_SECRET,
@@ -504,8 +518,9 @@ fn tv_0957_12_vault_row_lookup_step_missing() {
 
 #[test]
 fn tv_0957_13_chain_match_step_mismatch() {
-    // Algorithm step 3: lookup row exists but with mismatched chain_id
-    // → ChainMismatch carrying both chains.
+    // Algorithm step 3b (per-vault lookup loop, chain-match branch):
+    // lookup row exists but with mismatched chain_id → `ChainMismatch`
+    // carrying both chains.
     let (mac, catalog) = mint_vault_caveat_mac_with_catalog();
     let mut lookup = TestVaultLookup::empty();
     lookup.insert(
@@ -544,8 +559,9 @@ fn tv_0957_13_chain_match_step_mismatch() {
 
 #[test]
 fn tv_0957_14_state_active_step_rejects_frozen() {
-    // Algorithm step 4: lookup row exists with matching chain but
-    // `is_active = false` → VaultNotActive. Pins the state check.
+    // Algorithm step 3c (per-vault lookup loop, state-Active branch):
+    // lookup row exists with matching chain but `is_active = false`
+    // → `VaultNotActive`. Pins the state check.
     let (mac, catalog) = mint_vault_caveat_mac_with_catalog();
     let mut lookup = TestVaultLookup::empty();
     lookup.insert(
@@ -574,9 +590,12 @@ fn tv_0957_14_state_active_step_rejects_frozen() {
 
 #[test]
 fn tv_0957_15_wrapped_only_chain_walk_step_ok() {
-    // Algorithm step 5: child with `Caveat::WrappedOnly { parent_capability }`
-    // where the parent carries `Caveat::Vault(vault_id)` AND the lookup
-    // row matches the chain → OK. Pins the chain walk.
+    // Algorithm step 3d (per-vault lookup loop, ancestor walk):
+    // child with `Caveat::WrappedOnly { parent_capability }` where
+    // the parent carries `Caveat::Vault(vault_id)` AND the lookup
+    // row matches the chain → Ok. Pins the ancestor chain walk
+    // (vault row lookup must traverse WrappedOnly ancestors via
+    // `collect_vault_caveats`, not just the leaf's own caveats).
     let mut catalog = TestCatalog::new();
     let parent_root = Macaroon::mint(&TV_0957_ROOT_SECRET).expect("parent mint");
     let parent = parent_root

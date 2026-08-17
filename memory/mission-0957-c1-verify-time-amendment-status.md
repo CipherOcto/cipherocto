@@ -1,6 +1,6 @@
 ---
 name: mission-0957-c1-verify-time-amendment-status
-description: S6b RFC-0957 v2.1 amendment + 22-byte-exact TV-0957 verify-time fixtures LANDED 2026-08-17 (Round 1 follow-on 22/22 pass). Mission YAML + RFC text + new crate test file.
+description: S6b RFC-0957 v2.1 amendment + 22-byte-exact TV-0957 verify-time fixtures LANDED 2026-08-17 (Round 1 commit `c9149128` 22/22 pass; Round 2 commit `4ec9779f` re-scoped TV-16/17 + dropped dead code; Round 4 commit reconciles §3.x drift + clears source phantom §20.6.1 line 1328). Mission YAML + RFC text + new crate test file + source doc-comments.
 metadata:
   type: project
 ---
@@ -15,24 +15,25 @@ bundle for this session).
 
 - **RFC-0957 §Version History v2.1 row** added:
   `rfcs/accepted/economics/0957-capability-token-format.md`
-  - `verify_for_vault_op` extension (RFC-0957 §20.6.1 5-step algorithm)
-  - 9 new Caveat variants per RFC-0965 §3 (Vault, Permission,
-    ValidRange, MaxPerTx, AuditWindow, MaxUses, WrappedOnly,
-    Factory, PolicyReference) — landed in
-    `crates/octo-cap-macaroon/src/caveat/`
-  - `PermissionKind` enum (5 variants)
-  - `WrappedOnly` parent-no-Vault-binding reject per §Verify-Time Extension
+  - `verify_for_vault_op` extension (per review doc §20.6.1 4-step algorithm)
+  - 9 new Caveat variants: Vault + Permission + WrappedOnly +
+    Factory + AuditWindow map to RFC-0965 §3.x; MaxUses maps to
+    §3.4; PolicyReference maps to §3.10; ValidRange + MaxPerTx
+    are NEW in RFC-0957 v2.1 (no RFC-0965 §3.x number) — landed
+    in `crates/octo-cap-macaroon/src/caveat/`
+  - `PermissionKind` enum (5 variants, PascalCase wire form)
+  - `WrappedOnly` parent-no-Vault-binding reject — `verify_for_vault_op` only (NOT `verify_full`)
 - **RFC-0957 §Verify-Time Extension subsection** added (under
   §Algorithms, after §Macaroon v1 chain construction)
   - `Macaroon::verify_for_vault_op` signature
-  - 5-step algorithm verbatim per §20.6.1
+  - 4-step algorithm verbatim per review doc §20.6.1
   - `VaultLookup` trait injection (Layer B extension consumer)
-  - `WrappedOnly` chain walk invariant
+  - `WrappedOnly` chain walk invariant (operational gate; structural `verify_full` explicitly NOT required)
   - Cross-reference to RFC-0965 §3 + RFC-0870 §NodeEnvelope Version Tag
 - **RFC-0957 §Caveat DSL Extension subsection** added (under
   §Data Structures, after the `Caveat` enum definition):
   - 9 new variants enumerated with field types
-  - `PermissionKind` enum (5 variants)
+  - `PermissionKind` enum (5 variants, no `serde(rename_all)` — PascalCase)
   - `FactoryVet` struct per RFC-0965 §3
   - Cross-reference to per-extension crate
 - **TV-0957 fixture**:
@@ -70,8 +71,8 @@ bundle for this session).
   - `tv_0957_15_wrapped_only_chain_walk_step_ok` (child `WrappedOnly`
     referencing parent with `Vault` + matching active lookup →
     `Ok(())`)
-  - `tv_0957_16_regression_frozen_vault_rejected` (frozen vault catch)
-  - `tv_0957_17_regression_chain_mismatch_rejected`
+  - `tv_0957_16_regression_frozen_vault_in_ancestor_rejected` (Round 2 re-scope — frozen vault on WrappedOnly ancestor; chain walker traversal pin)
+  - `tv_0957_17_regression_chain_mismatch_in_ancestor_rejected` (Round 2 re-scope — chain mismatch on WrappedOnly ancestor; chain walker traversal pin)
   - `tv_0957_18_regression_missing_root_secret_rejected`
     (`Macaroon(RootSecretMismatch)`)
   - `tv_0957_19_regression_wrapped_chain_has_no_vault`
@@ -79,8 +80,8 @@ bundle for this session).
   - `tv_0957_20_regression_attenuation_monotonicity_with_new_variants`
     (parent Vault + ValidRange + child keeps them + tightens
     ValidRange to subset range → passes; negative: child
-    valid_after<parent valid_after → AttenuationViolation; RFC-0965
-    §3 ValidRange rule)
+    valid_after<parent valid_after → AttenuationViolation; RFC-0957
+    v2.1 ValidRange supersedes RFC-0964 Constraint::ValidRange)
   - `tv_0957_21_multilevel_wrapped_only_chain_depth_3` (depth=3
     chain; collector walks ancestors; Vault found transitively)
   - `tv_0957_22_max_wrapped_depth_boundary_rejects_depth_17` (depth
@@ -136,6 +137,28 @@ breaks a named test) and the **4-step verify-time invariant** (so a
 refactor that drops a step trips a regression pin) + the
 multi-level chain + the depth-16 boundary.
 
+## Round 2 + Round 4 follow-ons (commit `4ec9779f` + Round 4 commit)
+
+Round 2 (`4ec9779f`): TV-0957-16/17 re-scoped from leaf-local
+duplicates of TV-0957-13/14 to distinct WrappedOnly ancestor
+coverage (frozen vault + chain mismatch on ancestor, not leaf);
+dead `let _ = parent_id;` + redundant `catalog.insert(leaf.clone())`
+removed.
+
+Round 4: §3.x numbering drift corrected in RFC pseudocode +
+caveat/mod.rs source comments (ValidRange + MaxPerTx have NO
+RFC-0965 §3.x number — they are NEW in RFC-0957 v2.1; MaxUses
+§3.6 → §3.4; PolicyReference §3.9 → §3.10; ValidAfter §3.3 stays).
+Source phantom `§20.6.1 line 1328` cleared from macaroon.rs:438 +
+810-811 + vault_verify_error.rs:17, 58 (RFC has no §20.6.1; ref is
+the review doc). `verify_full` claim that it ALSO enforces
+WrappedChainHasNoVault REVERTED — real verify_full does NOT call
+collect_vault_caveats, so the chainless-parent reject is
+operational-gate only. Caveat enum pseudocode gains
+`#[serde(tag = "type", content = "value")]` + drops
+`#[serde(rename_all = "snake_case")]` on PermissionKind (real wire
+form is PascalCase per TV-0957-02).
+
 ## Push authorization
 
 Commit queued on `next`. Push user-only per
@@ -170,4 +193,4 @@ storage). Out of scope for S6b.
 - Pre-req: `memory/mission-0965-a-caveat-dsl-status.md` (Caveat DSL
   extension source code)
 - Review source: `docs/reviews/2026-08-15-storage-layer-restructuring-analysis.md`
-  §20.6.1
+  (review doc §20.6.1)

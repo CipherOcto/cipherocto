@@ -36,10 +36,11 @@ commits `c7f99a47` + `ab2b57b4` + `4f3f3af4`).
 RFC-0957 §Algorithms `verify` (accepted 2026-07-20) describes HMAC
 chain re-derivation + caveat predicate evaluation + discharge
 resolution. S5 (LANDED 2026-08-17) extended the verify-time path
-with `Macaroon::verify_for_vault_op` (RFC-0957 §20.6.1 — 5-step
-algorithm: signature verify → vault row lookup → chain match →
-state=Active → WrappedOnly chain walk). S5.1 follow-on
-(`0957-g1-octo-vault-lookup-glue`) implements the substrate
+with `Macaroon::verify_for_vault_op` (per the review doc §20.6.1 —
+4-step algorithm: signature verify → wrapped-chain integrity →
+per-vault lookup loop (exist + chain match + state=Active) →
+optional attenuation subsumption vs `expected_parent`). S5.1
+follow-on (`0957-g1-octo-vault-lookup-glue`) implements the substrate
 adapter `OctoVaultLookup`. S6a (LANDED 2026-08-17) added the
 `version_tag` wire-form discriminator.
 
@@ -58,15 +59,17 @@ macaroon v1 chain construction or attenuation invariant.
 ## Acceptance Criteria
 
 1. **RFC-0957 §Version History v2.1 row added** documenting:
-   - `verify_for_vault_op` extension (RFC-0957 §20.6.1 5-step
-     algorithm) — Vault caveat verify-time path
-   - 9 new Caveat variants per RFC-0965 §3 (Vault, Permission,
-     ValidRange, MaxPerTx, AuditWindow, MaxUses, WrappedOnly,
-     Factory, PolicyReference) — landed in
-     `crates/octo-cap-macaroon/src/caveat/`
+   - `verify_for_vault_op` extension (per review doc §20.6.1
+     4-step algorithm) — Vault caveat verify-time path
+   - 9 new Caveat variants: Vault + Permission + WrappedOnly +
+     Factory + AuditWindow map to RFC-0965 §3.x; MaxUses maps
+     to §3.4; PolicyReference maps to §3.10; ValidRange +
+     MaxPerTx are NEW in RFC-0957 v2.1 (no RFC-0965 §3.x number)
+     — landed in `crates/octo-cap-macaroon/src/caveat/`
    - `PermissionKind` enum (5 variants per RFC-0965 §3.2)
-   - `WrappedOnly` parent-no-Vault-binding reject per RFC-0957
-     §Verify-Time Extension
+   - `WrappedOnly` parent-no-Vault-binding reject — ONLY in
+     `verify_for_vault_op` (operational gate), NOT in
+     `verify_full` (structural path)
    - Implementation mission: this file
      (`0957-c1-verify-time-amendment.md`)
    - Pre-req: S5 LANDED 2026-08-17 commit `d007de54`; S5.1
@@ -75,9 +78,11 @@ macaroon v1 chain construction or attenuation invariant.
    subsection under §Algorithms, after §Macaroon v1 chain
    construction):
    - `Macaroon::verify_for_vault_op` signature
-   - 5-step algorithm verbatim per §20.6.1
+   - 4-step algorithm verbatim per review doc §20.6.1
    - `VaultLookup` trait injection (Layer B extension consumer)
-   - `WrappedOnly` chain walk invariant
+   - `WrappedOnly` chain walk invariant (operational gate only;
+     `verify_full` explicitly NOT required to enforce chainless-
+     parent reject)
    - Cross-reference to RFC-0965 §3 + RFC-0870 §NodeEnvelope
      Version Tag
 3. **RFC-0957 §Caveat DSL Extension subsection added** (new
@@ -164,14 +169,15 @@ No new cyclic edges. No new crate deps.
 - RFC subsection format (RFC-0957 §Algorithms subsections) → new
   §Verify-Time Extension v2.1 subsection mirrors the pattern.
 - `tv_c1_verify_time.rs` byte-exact TV layout → new
-  `tv_0957_verify_time.rs` extends with 20 fixtures across 4
-  categories.
+  `tv_0957_verify_time.rs` extends with 22 fixtures across 4
+  categories (5+5 wire-form + 5 verify-time + 5 regression +
+  2 deep-chain/boundary).
 
 ## Risks
 
 - **B.3 verify-time invariant load-bearing** (HIGH per plan §5):
-  S5 implementation already passed gate; S6b amendment text + 20
-  TV is documentation-only + 20 fixtures. Low blast if anything
+  S5 implementation already passed gate; S6b amendment text + 22
+  TV is documentation-only + 22 fixtures. Low blast if anything
   regresses.
 - **§22 atomic-blocker rule bypass** (MED per plan §5): user-chosen
   S6 split-by-RFC decision lands each amendment separately, NOT in
@@ -181,7 +187,7 @@ No new cyclic edges. No new crate deps.
   RFC-0965 §3 + 5 PermissionKind enum = 14 new types. Each must be
   covered by at least one TV or its wire-form is unpinned.
 - **WrappedOnly chain walk complexity** (LOW): the S5
-  `Macaroon::verify_for_vault_op` already implements the 5-step
+  `Macaroon::verify_for_vault_op` already implements the 4-step
   algorithm + `WrappedChainHasNoVault` reject; S6b adds 5 TV
   fixtures pinning each step's error path.
 
@@ -202,11 +208,11 @@ No new cyclic edges. No new crate deps.
   §Version History v2.1 row + §Verify-Time Extension +
   §Caveat DSL Extension
 - Review source: `docs/reviews/2026-08-15-storage-layer-restructuring-analysis.md`
-  (RFC-0957 §20.6.1 5-step algorithm)
+  (review doc §20.6.1 4-step algorithm)
 
 ## Version history
 
-| Date       | Author     | Change                                                                                                                                                                                                                     |
-| ---------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-08-17 | @mmacedoeu | Initial proposal as S6b (second S6 sub-session per user split-by-RFC decision). RFC-0957 amendment back-fills S5 implementation + RFC-0965 §3 Caveat DSL extension. 20 TV fixtures pin verify-time path + Caveat variants. |
-| 2026-08-17 | @mmacedoeu | LANDED. RFC-0957 v2.1 row + §Verify-Time Extension + §Caveat DSL Extension subsections added. TV-0957 20/20 pass. Memory card cross-link added to S5 status card. Status flipped PROPOSED → LANDED after verify gate.      |
+| Date       | Author     | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-17 | @mmacedoeu | Initial proposal as S6b (second S6 sub-session per user split-by-RFC decision). RFC-0957 amendment back-fills S5 implementation + RFC-0965 §3 Caveat DSL extension. 22 TV fixtures pin verify-time path + Caveat variants.                                                                                                                                                                                                                                |
+| 2026-08-17 | @mmacedoeu | LANDED. RFC-0957 v2.1 row + §Verify-Time Extension + §Caveat DSL Extension subsections added. TV-0957 22/22 pass. Memory card cross-link added to S5 status card. Status flipped PROPOSED → LANDED after verify gate. Round 2 follow-on (`4ec9779f`) re-scoped TV-16/17 to ancestor coverage + dropped dead code; Round 3+4 follow-on reconciled §3.x numbering drift (caveat/mod.rs + RFC + pseudocode) + cleared source phantom §20.6.1 line 1328 refs. |

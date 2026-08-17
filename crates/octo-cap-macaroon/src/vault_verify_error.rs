@@ -6,7 +6,7 @@
 //! verifying a `VaultOperation` matches on the `VaultVerifyError`
 //! variants directly without traversing `MacaroonError` noise).
 //!
-//! Per review §20.6.1 algorithm steps 2-4:
+//! Per review doc §20.6.1 algorithm steps 2-4:
 //!
 //! ```text
 //! 2. vault_row = vaults.vaults_vault_id_idx.get(vault_id)?  // <- VaultRowMissing
@@ -14,9 +14,9 @@
 //! 4. Assert: vault_row.state == Active                         // <- VaultNotActive
 //! ```
 //!
-//! Plus §20.6.1 line 1328 (`WrappedOnly` chainless-parent rule) which
-//! surfaces as [`VaultVerifyError::WrappedChainHasNoVault`] — NOTE:
-//! its primary surface is `MacaroonError::WrappedChainHasNoVault`
+//! Plus review doc §20.6.1 (`WrappedOnly` chainless-parent rule)
+//! which surfaces as [`VaultVerifyError::WrappedChainHasNoVault`] —
+//! NOTE: its primary surface is `MacaroonError::WrappedChainHasNoVault`
 //! (added in `macaroon.rs`); this enum carries it for the
 //! `verify_for_vault_op` path's standalone returns.
 
@@ -30,14 +30,14 @@ use crate::macaroon::MacaroonError;
 /// and the [`crate::vault_lookup::VaultLookup`] adapter path.
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum VaultVerifyError {
-    /// Review §20.6.1 step 2 — vault row not found (look up returned `None`).
+    /// Review doc §20.6.1 step 2 — vault row not found (look up returned `None`).
     #[error("vault row missing for vault_id {vault_id:?}")]
     VaultRowMissing {
         /// The opaque 32-byte vault identifier from `Caveat::Vault(vault_id)`.
         vault_id: [u8; 32],
     },
 
-    /// Review §20.6.1 step 3 — vault row's `chain_id` does not match the
+    /// Review doc §20.6.1 step 3 — vault row's `chain_id` does not match the
     /// operation's target chain.
     #[error("vault chain {vault_chain:?} does not match op chain {op_chain:?}")]
     ChainMismatch {
@@ -47,7 +47,7 @@ pub enum VaultVerifyError {
         op_chain: [u8; 32],
     },
 
-    /// Review §20.6.1 step 4 — vault row's state is not `Active`.
+    /// Review doc §20.6.1 step 4 — vault row's state is not `Active`.
     /// `Frozen` and any future non-Active state map here.
     #[error("vault {vault_id:?} state is not Active (verify-time invariant rejects)")]
     VaultNotActive {
@@ -55,12 +55,12 @@ pub enum VaultVerifyError {
         vault_id: [u8; 32],
     },
 
-    /// Review §20.6.1 line 1328 — `WrappedOnly` chain has no
-    /// `Caveat::Vault` in any ancestor. Per §20.6.1: "If the parent has
-    /// NO `Caveat::Vault` ... the wrapped capability is treated as
-    /// chainless — verifier rejects any `WrappedOnly` descendant that
-    /// targets a chain (no parent chain to inherit). This is the safe
-    /// default; chains must be explicit."
+    /// Review doc §20.6.1 — `WrappedOnly` chain has no
+    /// `Caveat::Vault` in any ancestor. Per review doc §20.6.1: "If
+    /// the parent has NO `Caveat::Vault` ... the wrapped capability is
+    /// treated as chainless — verifier rejects any `WrappedOnly`
+    /// descendant that targets a chain (no parent chain to inherit).
+    /// This is the safe default; chains must be explicit."
     #[error("WrappedOnly chain has no Caveat::Vault ancestor (chainless — safe default rejects)")]
     WrappedChainHasNoVault,
 

@@ -11,13 +11,13 @@ to S5.1** — see `missions/open/0957-g1-octo-vault-lookup-glue.md`.
 
 ## RFC
 
-- Primary: RFC-0957 (verify-time bump) per review §20.6.1.
+- Primary: RFC-0957 (verify-time bump) per review doc §20.6.1.
 - Co-RFC: RFC-0870 (additive) — `NodeEnvelope.version_tag: u8` field
   per review §14.1.
 - Co-RFC: RFC-0965 §3.5 + §3.7 — `WrappedOnly` caveat + parent-no-
-  Vault-binding reject per review §20.6.1 line 1328.
+  Vault-binding reject per review doc §20.6.1.
 - Source review: `docs/reviews/2026-08-15-storage-layer-restructuring-analysis.md`
-  §14.1 (envelope.version_tag) + §20.6.1 (verify-time chain invariant)
+  RFC-0870 §NodeEnvelope Version Tag (envelope.version_tag) + review doc §20.6.1 (verify-time chain invariant)
   - §8.10 (TV-C1 anchor).
 
 ## Summary
@@ -31,13 +31,13 @@ Three pillars of plan §C.2 land in one crate family:
    rebuild.
 
 2. **`Caveat::Vault(vault_id)` verify-time UNIQUE INDEX lookup** per
-   §20.6.1 option (b) (adopted). `octo-cap-macaroon` gains a new
+   review doc §20.6.1 option (b) (adopted). `octo-cap-macaroon` gains a new
    `VaultLookup` trait consumed by `Macaroon::verify_for_vault_op()`;
    `octo-vault` will implement via the substrate-backed
    `vaults_vault_id_idx` UNIQUE index via an S5.1 glue crate.
 
 3. **`WrappedOnly` intra-chain-only rule + parent-no-Vault-binding
-   reject** per §20.6.1 line 1328. When `Macaroon::verify_for_vault_op`
+   reject** per review doc §20.6.1. When `Macaroon::verify_for_vault_op`
    walks a `WrappedOnly` chain for a `VaultOperation` target, the
    ancestor chain must contain at least one `Caveat::Vault(vault_id)`
    — chainless parent (e.g., pure `AmountMax` cap with no vault
@@ -48,10 +48,10 @@ Three pillars of plan §C.2 land in one crate family:
    `crates/octo-cap-macaroon/tests/tv_c1_verify_time.rs` per §8.10
    central registry.
 
-### Why option (b) over option (c) (§20.6.1)
+### Why option (b) over option (c) (review doc §20.6.1)
 
 Option (b) (vault row UNIQUE INDEX lookup) adopted as DEFAULT per
-§20.6.1 — no V2 wire-format bump required, +1 DB round-trip per
+review doc §20.6.1 — no V2 wire-format bump required, +1 DB round-trip per
 redemption (~1-3ms SSD). Option (c) (chain_id in payload) deferred to
 v3.0 if perf data demands.
 
@@ -114,7 +114,7 @@ structural path (`verify_full`) needs no adapter — it enforces the
    `TransportDeliveryCatalog` glue crate).
 7. `Macaroon::verify_for_vault_op(&self, root_secret, catalog,
 parent_discharge, op_chain_id, lookup) -> Result<(), VaultVerifyError>`
-   implements §20.6.1 5-step algorithm verbatim:
+   implements review doc §20.6.1 4-step algorithm verbatim:
    - step 1: signature verify via `verify_full`
    - step 2: `vault_row = lookup.lookup_vault(vault_id)?`
    - step 3: assert `vault_row.chain_id == op_chain_id`
@@ -208,7 +208,7 @@ sequenceDiagram
 ## Out of scope (deferred)
 
 - 7 RFC §22 atomic-blocker bundle (S6).
-- RFC-0957 v3.0 option (c) wire-format bump (deferred per §20.6.1 last
+- RFC-0957 v3.0 option (c) wire-format bump (deferred per review doc §20.6.1 last
   row, conditionally triggered by perf data).
 - 7 marketplace_strong_scenarios TV-D9 + TV-D10 fixtures (RFC-0105 +
   RFC-0965 amendment territory per S6).

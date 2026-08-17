@@ -39,7 +39,7 @@ bundle for this session).
     (version_tag-participates-in-hash invariant; NOT a literal
     V1-replay-defense assertion per Round 1 HIGH-2 fix)
   - `tv_0870_01_byte_position_pin` (Round 1 MED-4 — `bytes[32] ==
-    0xA1` for V2, `0xA0` for V1)
+0xA1` for V2, `0xA0` for V1)
   - `tv_0870_01_runtime_gate_rejects_bypassed_unknown_tag` (Round 1
     HIGH-3 — runtime gate rejects even when struct-literal-bypassed)
   - `tv_0870_01_absent_version_tag_field_rejected` (Round 2 M-1 —
@@ -54,7 +54,7 @@ bundle for this session).
 - `cargo test --workspace --lib` (excluding pre-existing S4 DFP
   Round 2 quota-router-cli failures) → all green
 - `cargo clippy --workspace --all-targets --features full -- -D
-  warnings` → clean
+warnings` → clean
 - `cargo fmt --all -- --check` → clean
 
 ## Why this matters
@@ -90,7 +90,7 @@ Commit `c7f99a47` queued on `next`. Push user-only per
 
 ## Next sub-session
 
-S6b RFC-0957 (20 TV) — verify-time + caveat DSL amendment + TV
+S6b RFC-0957 (22 TV) — verify-time + caveat DSL amendment + TV
 fixtures. Mission YAML to be filed at next claim.
 
 ## Cross-reference

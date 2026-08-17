@@ -12,7 +12,7 @@
 //!   operation's target chain (algorithm step 3 walks ancestors).
 //! - **TV-C1-04** — `WrappedOnly` chain WITHOUT any ancestor `Caveat::Vault`
 //!   (chainless parent) rejects with
-//!   `VaultVerifyError::WrappedChainHasNoVault` (review §20.6.1 line 1328
+//!   `VaultVerifyError::WrappedChainHasNoVault` (review doc §20.6.1
 //!   — "safe default; chains must be explicit").
 //!
 //! ## Test catalog + lookup
@@ -257,7 +257,7 @@ fn tv_c1_03_wrapped_only_chain_with_parent_vault_verifies() {
 fn tv_c1_04_wrapped_only_chain_without_parent_vault_rejects() {
     // Step 1: parent has NO Caveat::Vault — only some other caveat
     // (AmountMax) to keep it a valid attenuation. The WrappedOnly parent
-    // is "chainless" per §20.6.1 line 1328.
+    // is "chainless" per review doc §20.6.1.
     let mut catalog = TestCatalog::new();
     let parent_root = Macaroon::mint(&TV_C1_ROOT_SECRET).expect("parent mint");
     let parent = parent_root

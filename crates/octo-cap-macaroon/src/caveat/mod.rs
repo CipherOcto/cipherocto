@@ -208,7 +208,7 @@ pub enum Caveat {
     Payment(PaymentCaveat),
 }
 
-/// Permission kind enum (RFC-0960 §2.2 + RFC-0965 §3.2).
+/// Permission kind enum (RFC-0965 §3.2).
 ///
 /// Adding new kinds is a backwards-compatible variant add per RFC-0960 §R1-F6.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

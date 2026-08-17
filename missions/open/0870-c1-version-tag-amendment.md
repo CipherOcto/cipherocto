@@ -98,7 +98,7 @@ documents the `version_tag` field requirement with explicit constants.
 
 ## Out of scope (deferred beyond S6a)
 
-- S6b RFC-0957 amendment (20 TV) — next sub-session
+- S6b RFC-0957 amendment (22 TV) — next sub-session
 - S6c RFC-0862 amendment (8 TV)
 - S6d RFC-0900 amendment (10 TV)
 - S6e RFC-0105 amendment (109 TV)

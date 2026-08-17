@@ -39,7 +39,7 @@ VaultState` enum). Avoids Layer B → Layer B reverse dep — matches
 ### Pillar 2 step 3 — `Macaroon::verify_for_vault_op` method
 
 - `crates/octo-cap-macaroon/src/macaroon.rs` — new verify method
-  implementing RFC-0957 §20.6.1 5-step algorithm:
+  implementing the review doc §20.6.1 4-step algorithm:
   1. Signature verify via `verify_full`
   2. Vault row lookup via `VaultLookup`
   3. Chain match (`vault.chain_id == op_chain`)
@@ -188,7 +188,7 @@ S6a deliverables (per mission YAML AC #1–#5):
   runtime_gate_rejects_bypassed_unknown_tag (rejects even when
   struct-literal-bypassed).
 
-## S6b follow-on (RFC-0957 amendment + 20 TV)
+## S6b follow-on (RFC-0957 amendment + 22 TV)
 
 Follow-on mission `0957-c1-verify-time-amendment` (S6b of the
 storage restructure plan) back-fills the RFC-0957 amendment text +
@@ -200,7 +200,7 @@ S6b deliverables (per mission YAML AC #1–#5):
 
 - RFC-0957 §Version History **v2.1 row** added (`rfcs/accepted/economics/0957-capability-token-format.md`)
 - RFC-0957 §**Verify-Time Extension** subsection added under §Algorithms
-  (5-step algorithm verbatim per §20.6.1, `VaultLookup` trait
+  (4-step algorithm verbatim per review doc §20.6.1, `VaultLookup` trait
   injection, `WrappedOnly` chain walk invariant)
 - RFC-0957 §**Caveat DSL Extension** subsection added under §Data
   Structures (9 new `Caveat` variants per RFC-0965 §3 + `PermissionKind`
@@ -210,7 +210,7 @@ S6b deliverables (per mission YAML AC #1–#5):
   `Permission { kind, scope }`; `ValidRange { valid_after_unix,
 valid_until_unix }` not `ValidRange { axis, lower, upper }`; etc.)
 - TV-0957 fixture (`crates/octo-cap-macaroon/tests/tv_0957_verify_time.rs`)
-  — **20/20 tests passing** (4 categories × 5 tests):
+  — **22/22 tests passing** (4 categories × 5 tests + 2 deep-chain/boundary):
   - **TV-0957-01..05** — 5 Caveat DSL variant wire-form pins (Vault,
     Permission, ValidRange, MaxPerTx, AuditWindow)
   - **TV-0957-06..10** — 5 Caveat DSL variant wire-form pins (MaxUses,

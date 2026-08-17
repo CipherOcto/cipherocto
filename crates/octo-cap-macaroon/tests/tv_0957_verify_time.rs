@@ -161,23 +161,32 @@ fn tv_0957_01_vault_variant_wire_form() {
 fn tv_0957_02_permission_variant_wire_form() {
     // `Permission(PermissionKind)` — discriminant `permission`, content
     // is one of the five `PermissionKind` variants (snake_case in JSON).
-    for kind in [
-        PermissionKind::NativeTokenTransfer,
-        PermissionKind::Erc20TokenTransfer,
-        PermissionKind::ContractCall,
-        PermissionKind::Reservation,
-        PermissionKind::VaultMutation,
-    ] {
-        let c = Caveat::Permission(kind);
+    // Pin each variant's wire-form string exactly (regression: a rename
+    // of any kind would silently break macaroon signatures since the
+    // attested content participates in the verification).
+    let cases: &[(PermissionKind, &str)] = &[
+        (PermissionKind::NativeTokenTransfer, "native_token_transfer"),
+        (PermissionKind::Erc20TokenTransfer, "erc20_token_transfer"),
+        (PermissionKind::ContractCall, "contract_call"),
+        (PermissionKind::Reservation, "reservation"),
+        (PermissionKind::VaultMutation, "vault_mutation"),
+    ];
+    for (kind, wire) in cases {
+        let c = Caveat::Permission(*kind);
         let json = serde_json::to_string(&c).expect("serialize");
         assert!(
             json.contains("\"type\":\"permission\""),
             "TV-0957-02: Permission discriminant MUST be \"permission\": got {json}"
         );
+        let needle = format!("\"value\":\"{wire}\"");
+        assert!(
+            json.contains(&needle),
+            "TV-0957-02: PermissionKind {kind:?} MUST serialize as snake_case \"{wire}\": got {json}"
+        );
         let back: Caveat = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(
             back,
-            Caveat::Permission(kind),
+            Caveat::Permission(*kind),
             "PermissionKind round-trip must be exact for {kind:?}"
         );
     }

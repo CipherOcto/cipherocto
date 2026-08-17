@@ -21,7 +21,7 @@ bundle for this session).
     §3.4; PolicyReference maps to §3.10; ValidRange + MaxPerTx
     are NEW in RFC-0957 v2.1 (no RFC-0965 §3.x number) — landed
     in `crates/octo-cap-macaroon/src/caveat/`
-  - `PermissionKind` enum (5 variants, PascalCase wire form)
+  - `PermissionKind` enum (5 variants, snake_case wire form via `#[serde(rename_all = "snake_case")]` matching source-of-truth)
   - `WrappedOnly` parent-no-Vault-binding reject — `verify_for_vault_op` only (NOT `verify_full`)
 - **RFC-0957 §Verify-Time Extension subsection** added (under
   §Algorithms, after §Macaroon v1 chain construction)
@@ -145,19 +145,24 @@ coverage (frozen vault + chain mismatch on ancestor, not leaf);
 dead `let _ = parent_id;` + redundant `catalog.insert(leaf.clone())`
 removed.
 
-Round 4: §3.x numbering drift corrected in RFC pseudocode +
-caveat/mod.rs source comments (ValidRange + MaxPerTx have NO
-RFC-0965 §3.x number — they are NEW in RFC-0957 v2.1; MaxUses
-§3.6 → §3.4; PolicyReference §3.9 → §3.10; ValidAfter §3.3 stays).
-Source phantom `§20.6.1 line 1328` cleared from macaroon.rs:438 +
-810-811 + vault_verify_error.rs:17, 58 (RFC has no §20.6.1; ref is
-the review doc). `verify_full` claim that it ALSO enforces
-WrappedChainHasNoVault REVERTED — real verify_full does NOT call
-collect_vault_caveats, so the chainless-parent reject is
-operational-gate only. Caveat enum pseudocode gains
-`#[serde(tag = "type", content = "value")]` + drops
-`#[serde(rename_all = "snake_case")]` on PermissionKind (real wire
-form is PascalCase per TV-0957-02).
+Round 4 (`e5138420`): §3.x numbering drift corrected in RFC
+pseudocode + caveat/mod.rs source comments (ValidRange + MaxPerTx
+have NO RFC-0965 §3.x number — they are NEW in RFC-0957 v2.1;
+MaxUses §3.6 → §3.4; PolicyReference §3.9 → §3.10; ValidAfter
+§3.3 stays). Source phantom `§20.6.1 line 1328` cleared from
+macaroon.rs:438 + 810-811 + vault_verify_error.rs:17, 50, 40, 33
+
+- tv_c1_verify_time.rs:15, 260 (Round 5 verification surfaced the
+  test file was untouched in Round 4 — fixed in Round 6).
+  `verify_full` claim that it ALSO enforces WrappedChainHasNoVault
+  REVERTED — real verify_full does NOT call collect_vault_caveats,
+  so the chainless-parent reject is operational-gate only. Caveat
+  enum pseudocode gains `#[serde(tag = "type", content = "value")]`
+- KEEPS `#[serde(rename_all = "snake_case")]` on PermissionKind
+  (Round 4 commit msg incorrectly claimed real source was bare
+  PascalCase — source-of-truth `caveat/mod.rs:215` DOES have the
+  snake_case annotation; Round 5 verification surfaced this
+  self-inflicted divergence, restored in Round 6).
 
 ## Push authorization
 

@@ -150,7 +150,7 @@ macaroon_id))`
     - `missions/open/0862-c5-domain-sep.md` (domain-sep hygiene for untagged hash prefixes)
     - `missions/open/0862-c6-fixture-keyspace.md` (production keyspace fixture risk)
   - **Follow-ons (Round 2):**
-    - `missions/open/0862-c7-adjacent-wrap.md` (quota-router-core u64→i64 wrap at `storage.rs:744/911/1083`)
+    - `missions/open/0862-c7-adjacent-wrap.md` (quota-router-core u64→i64 wrap at `storage.rs:744/911/1083` + `cache.rs:211`) — **LANDED 2026-08-17 (commit `99fcfcf3`)**; status card `memory/mission-0862-c7-adjacent-wrap-status.md`
     - `missions/open/0862-c8-seed-hardening.md` (seed() TOCTOU + asymmetric NegativeCost guard)
 - **Status card:**
   `memory/mission-0862-c1-dqa-vault-bump-amendment-status.md`

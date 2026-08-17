@@ -8,10 +8,31 @@ metadata:
 # S6c — RFC-0862 v2.0 Dqa + vault bump (LANDED 2026-08-17)
 
 Mission `0862-c1-dqa-vault-bump-amendment` LANDED 2026-08-17
-(commits `2750caa7` + `b20c37dc` + Round 2 fixes follow-up). Third
-S6 sub-session per user split-by-RFC decision (after S6a RFC-0870
+(commits `2750caa7` + `b20c37dc` + `def497e3` + `1dfa1450` +
+`90341f6e`). Third S6 sub-session per user split-by-RFC decision
+(after S6a RFC-0870
 
 - S6b RFC-0957).
+
+## Commit chain
+
+- `2750caa7` — S6c initial LANDED (RFC v2.0 row + §SpendLedger
+  Substrate + 9 TV fixtures)
+- `b20c37dc` — Round 1 fixes (NegativeCost guard + RFC text
+  corrections + TV-09 + TV-06 relocated to octo-vault)
+- `def497e3` — Round 2 fixes (drop phantom strings in changelog row
+  - mission YAML; correct RFC-0965 §3.7 → §3.1; fix count drift 8+1
+    → 10+3 = 13; drop phantom `0861-c1` + `crates/octo-paid-query/handlers/`
+  - `RFC-0010 v1.6` + `RFC-0862 v2.1` forward refs; re-introduce
+    `## RFC` + `## Dependency edges` sections in c2..c6)
+- `1dfa1450` — Round 2 cleanup pass (c7 §cache-eviction-budget-gate
+  scope expansion in AC-2; c8 AC-3 scale=0 assert; c2
+  `octa-storage-core` typo → `octo-storage-core`; c5 drop phantom
+  §14.2 anchor; c1 drop RFC-0105 v2.0 forward pin; c1 substrate TV
+  range 01..08 → 01..05 + 07 + 08 + 04b + 09 + 09b; memory card
+  drop `determin::Dqa` line ref; tv_0862_spend_ledger docstring)
+- `90341f6e` — MEMORY.md commit chain + 7 follow-on queue +
+  cleanup pass scope
 
 ## What landed
 

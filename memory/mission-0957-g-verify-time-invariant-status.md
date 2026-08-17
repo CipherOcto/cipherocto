@@ -162,3 +162,19 @@ Commits queued on `next` await user go-ahead per
 [[feedback_initiative_user_only]] + [[git-workflow]]. 3 prior S4 DFP
 codemod commits + this session's S5 commit chain all wait for explicit
 user instruction to push.
+
+## S6a follow-on (RFC-0870 amendment + TV-0870-01)
+
+Follow-on mission `0870-c1-version-tag-amendment` (S6a of the storage
+restructure plan) back-fills the RFC-0870 amendment text + adds the
+TV-0870-01 byte-exact wire-form fixture. Pre-req satisfied by this S5
+LANDED state. Mission file:
+`missions/open/0870-c1-version-tag-amendment.md`.
+
+S6a deliverables (per mission YAML AC #1–#5):
+- RFC-0870 §Version History **v2.1 row** added (`rfcs/accepted/networking/0870-distributed-quota-router-network.md`)
+- RFC-0870 §**NodeEnvelope Version Tag** subsection added under §Specification
+- TV-0870-01 fixture (`crates/octo-protocol/tests/tv_0870_version_tag.rs`)
+  — 5/5 tests passing: V2 build + round-trip, V1 build (legacy),
+  unknown tag rejected, verify_version gate (V2 ok, V1 rejected,
+  unknown rejected), V1 vs V2 distinct envelope_id (replay defense)

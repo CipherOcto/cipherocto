@@ -1,8 +1,12 @@
-//! Mission 0010-f8-rich-did-storage + 0010-f2-registry-namespacing —
-//! migration chain TV.
+//! Mission 0010-f8-rich-did-storage + 0010-f2-registry-namespacing +
+//! 0871e-slasher — migration chain TV.
 //!
-//! Verifies that `apply_pending` brings a fresh DB up through v011
-//! and that the `did_registry` schema carries the expected 9 columns
+//! Verifies that `apply_pending` brings a fresh DB up through v012
+//! (the current HEAD: includes v011 chain_id column from 0010-f2 and
+//! v012 slash_ledger table from 0871e-slasher — the latter is in
+//! its OWN table per the slashing-persistence architecture, but the
+//! catalog version row records it as v012). And that the
+//! `did_registry` schema carries the expected 9 columns
 //! (4 legacy + 4 rich BLOB columns from v009/v010 + 1 chain_id BLOB
 //! column from v011).
 //!
@@ -19,7 +23,7 @@ use quota_router_storage::migrations;
 static MIGRATION_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
-fn migration_chain_reaches_v011_on_fresh_db() {
+fn migration_chain_reaches_v012_on_fresh_db() {
     let _guard = MIGRATION_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let db = stoolap::Database::open("memory://").expect("open in-memory");
     migrations::apply_pending(&db).expect("apply_pending");
@@ -32,7 +36,7 @@ fn migration_chain_reaches_v011_on_fresh_db() {
         .expect("row ok")
         .get(0)
         .unwrap_or(0);
-    assert_eq!(version, 11, "catalog must reach v011");
+    assert_eq!(version, 12, "catalog must reach v012");
 }
 
 #[test]
@@ -53,13 +57,12 @@ fn migration_chain_creates_all_4_rich_columns() {
 }
 
 #[test]
-fn migration_chain_reaches_v011_with_legacy_then_rich_then_chain_columns() {
+fn migration_chain_reaches_v012_with_legacy_then_rich_then_chain_columns() {
     let _guard = MIGRATION_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    // Single end-to-end: open fresh DB, apply all 11 migrations,
-    // verify catalog max = 11, verify the legacy 4 columns still
-    // exist (canonical_hash, public_key, revoked, updated_at_unix_ms)
-    // + the 4 rich BLOB columns from v009 + v010
-    // + the chain_id BLOB column from v011.
+    // Single end-to-end: open fresh DB, apply all 12 migrations,
+    // verify the legacy 4 columns still exist (canonical_hash,
+    // public_key, revoked, updated_at_unix_ms) + the 4 rich BLOB
+    // columns from v009 + v010 + the chain_id BLOB column from v011.
     let db = stoolap::Database::open("memory://").expect("open in-memory");
     migrations::apply_pending(&db).expect("apply_pending");
     for col in [

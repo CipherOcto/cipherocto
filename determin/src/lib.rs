@@ -72,6 +72,16 @@ pub use dqa::{
     dqa_abs, dqa_add, dqa_assign_to_column, dqa_cmp, dqa_div, dqa_mul, dqa_negate, dqa_sub, Dqa,
     DqaEncoding, DqaError, CANONICAL_ZERO,
 };
+
+/// Canonical `MicroOctoW` for the workspace. Used by RFC-0862
+/// `StoolapSpendLedger`, RFC-0965 caveat budget fields, and any
+/// other amount-bearing cross-crate payload. Always
+/// `scale = 0` (integer micro-OCTO_W counts) at the substrate
+/// boundary.
+///
+/// See RFC-0862 v2.0.3 §SpendLedger Substrate + RFC-0965 §3 caveat
+/// payload cross-ref.
+pub type MicroOctoW = Dqa;
 pub use dvec::{
     dot_product, norm, normalize, squared_distance, vec_add, vec_mul, vec_scale, vec_sub, DVec,
     DvecError, DvecScalar,
@@ -900,5 +910,17 @@ mod tests {
         let dfp2 = Dfp::new(6, 0, DfpClass::Normal, false); // 6 = 3 * 2^1
         assert_eq!(dfp2.mantissa, 3);
         assert_eq!(dfp2.exponent, 1);
+    }
+
+    /// `MicroOctoW` is the canonical `Dqa` alias for amount-bearing
+    /// cross-crate payloads (RFC-0862 v2.0.3 + RFC-0965 §3). Assert
+    /// type identity so consumer crates that re-export cannot diverge
+    /// from the Layer A substrate.
+    #[test]
+    fn micro_octow_is_dqa_alias() {
+        fn assert_micro_octow_is_dqa(_: MicroOctoW, _: Dqa) {}
+        let m: MicroOctoW = CANONICAL_ZERO;
+        let d: Dqa = m;
+        assert_micro_octow_is_dqa(d, CANONICAL_ZERO);
     }
 }

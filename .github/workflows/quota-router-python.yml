@@ -43,18 +43,17 @@ jobs:
           source .venv/bin/activate
           # Maturin invokes `cargo build` under the hood and respects
           # `[tool.maturin].features` in `python/pyproject.toml`. We pin
-          # `--no-default-features -F pyo3-extension-module` here too so
-          # the build is robust to future Cargo.toml default-feature
-          # changes: default = ["full"] enables `quota-router-core/full`
-          # (correct) BUT does NOT include `pyo3/extension-module`, so
-          # maturin checks manylinux and fails with "Your library links
-          # libpython". `--no-default-features -F pyo3-extension-module
-          # -F full` gives maturin both: full core features AND the
-          # pyo3 cdylib-stripping flag.
-          maturin develop --manifest-path crates/quota-router-pyo3/Cargo.toml \
-            --no-default-features \
-            -F pyo3-extension-module \
-            -F full
+          # `--no-default-features -F pyo3-extension-module -F full` here
+          # so the build is robust to Cargo.toml default-feature drift:
+          # default = ["full"] enables `quota-router-core/full` (correct)
+          # BUT does NOT include `pyo3/extension-module`, so maturin's
+          # manylinux check fails with "Your library links libpython".
+          # Argument layout MUST stay on ONE line or use shell line
+          # continuation: maturin passes trailing CLI args as positional
+          # `cargo rustc` inputs and a `\`-escaped new line inserts a
+          # leading-space + literal flag into the rustc argv, which cargo
+          # then fails with "multiple input filenames provided".
+          maturin develop --manifest-path crates/quota-router-pyo3/Cargo.toml --no-default-features -F pyo3-extension-module -F full
 
       # Install the user-facing Python package `quota_router` (in
       # python/). The native extension is installed as
@@ -111,10 +110,7 @@ jobs:
         run: |
           source .venv/bin/activate
           pip install maturin
-          maturin develop --manifest-path crates/quota-router-pyo3/Cargo.toml \
-            --no-default-features \
-            -F pyo3-extension-module \
-            -F full
+          maturin develop --manifest-path crates/quota-router-pyo3/Cargo.toml --no-default-features -F pyo3-extension-module -F full
           # Install the user-facing Python package `quota_router`
           # so mypy can resolve `from quota_router_native import ...`
           # inside `python/quota_router/`.
@@ -154,10 +150,7 @@ jobs:
         run: pip install --upgrade pip && pip install maturin
 
       - name: Build wheel
-        run: maturin build --manifest-path crates/quota-router-pyo3/Cargo.toml \
-          --no-default-features \
-          -F pyo3-extension-module \
-          -F full
+        run: maturin build --manifest-path crates/quota-router-pyo3/Cargo.toml --no-default-features -F pyo3-extension-module -F full
         env:
           MATURIN_PYTHON_TAGS: true
 

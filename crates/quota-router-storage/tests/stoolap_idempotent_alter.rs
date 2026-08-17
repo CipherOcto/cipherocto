@@ -47,19 +47,19 @@ fn apply_pending_is_idempotent_on_re_run_after_partial_migration() {
         .expect("row ok")
         .get(0)
         .unwrap_or(0);
-    assert_eq!(version_after_first, 11, "first apply reaches v011");
+    assert_eq!(version_after_first, 12, "first apply reaches v012");
 
-    // Simulate partial-v010 crash: drop the v010 + v011 version rows
-    // (so re-apply_pending will attempt v010 + v011 again) AND drop
+    // Simulate partial-v010 crash: drop the v010 + v011 + v012 version rows
+    // (so re-apply_pending will attempt v010 + v011 + v012 again) AND drop
     // capability_delegations column (so v010's first statement —
     // ADD COLUMN verification_methods — fails as "duplicate
     // column" → caught as no-op, second statement re-adds
     // capability_delegations successfully).
     db.execute(
-        "DELETE FROM cipherocto_schema_version WHERE version IN (10, 11)",
+        "DELETE FROM cipherocto_schema_version WHERE version IN (10, 11, 12)",
         (),
     )
-    .expect("delete v010 + v011 version rows");
+    .expect("delete v010 + v011 + v012 version rows");
 
     // Drop the capability_delegations column so v010 statement 2
     // can re-add it after the "duplicate column" catch on
@@ -88,8 +88,8 @@ fn apply_pending_is_idempotent_on_re_run_after_partial_migration() {
         .get(0)
         .unwrap_or(0);
     assert_eq!(
-        version_after_retry, 11,
-        "retry apply_pending must record v011 (hardening swallowed partial dup)"
+        version_after_retry, 12,
+        "retry apply_pending must record v012 (hardening swallowed partial dup)"
     );
 
     // Both v010 columns must be present and queryable.
@@ -131,7 +131,7 @@ fn apply_pending_swallows_v009_dup_column_on_retry() {
         .get(0)
         .unwrap_or(0);
     assert_eq!(
-        version, 11,
-        "v009 dup must be swallowed; catalog still at v011"
+        version, 12,
+        "v009 dup must be swallowed; catalog still at v012"
     );
 }

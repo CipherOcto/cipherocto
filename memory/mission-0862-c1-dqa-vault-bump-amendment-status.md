@@ -13,27 +13,47 @@ decision (after S6a RFC-0870 + S6b RFC-0957).
 
 ## What landed
 
-- **RFC-0862 v1.4.0 → v2.0 amendment**:
-  `rfcs/accepted/networking/0862-writer-election-bootstrap-v130.md`
-  - §StoolapSpendLedger substrate subsection (new H3 after §DrainCoordinator)
-  - §Version History v2.0 row added (Draft status pending review)
-  - Back-fills the production substrate spec that v1.4.0 left implicit
-    at line 171 + line 1801
-- **TV-0862-01..08 byte-exact fixtures**:
-  `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs` (NEW,
-  ~480 lines, 9 tests pass):
-  - `tv_0862_01_seed_creates_row` — seed inserts new row + balance round-trip
-  - `tv_0862_02_balance_read_unknown_returns_none` — pre/post seed None/Some
-  - `tv_0862_03_seed_idempotent_last_wins` — upsert semantics (re-mint)
-  - `tv_0862_04_try_deduct_atomic_decrement` — happy path decrement
-  - `tv_0862_04b_try_deduct_unknown_holder_errors` — UnknownHolder contract
-  - `tv_0862_05_dqa_encoding_round_trip` — 16-byte BE DqaEncoding
-  - `tv_0862_06_vault_id_derivation_blake3` — BLAKE3 derivation per
-    RFC-0960 §20.3
-  - `tv_0862_07_dqa_v2_wire_form_pinned` — V2 wire-form on substrate
-    side (positive + deduct + byte-stability)
-  - `tv_0862_08_multi_instance_in_memory_lock_isolation` — per-instance
-    drain_lock scope (cross-instance = 0871e-phase5c-1 territory)
+- **Initial LANDED (commit `2750caa7`)**:
+  - RFC-0862 v1.4.0 → v2.0 amendment
+  - TV-0862-01..08 + TV-0862-04b byte-exact fixtures
+    (9 tests in `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs`)
+- **Round 1 fixes (commit `b20c37dc`)**:
+  - **Substrate hardening**: new
+    `SpendLedgerError::NegativeCost` + `try_deduct` negative-cost
+    precondition guard (defense-in-depth against signed underflow
+    per S4 Round 2 + S6c Round 1 security finding #3)
+  - **RFC text corrections** (drop phantom line refs + phantom
+    RFC-0960 §20.3 + fix crate path `octo-determin/src/dqa.rs:104` →
+    `determin/src/dqa.rs:510` + drop non-load-bearing version pins
+    - fix 8 → 9 count + clarify Dqa storage form vs wire-form)
+  - **Test corrections** (remove MIGRATION_LOCK no-op, TV-05
+    schema column round-trip via substrate, TV-04b dedicated
+    macaroon_id, TV-07 explicit 16-byte BE byte-array pin + magic
+    literal constants, new TV-09 + TV-09b negative-cost rejection)
+  - **TV-06 moved**: `crates/octo-vault/tests/tv_0862_vault_id_cross_ref.rs`
+    (NEW, 3 tests) — vault_id derivation cross-ref owned by
+    octo-vault, uses production `octo_vault::vault_id(...)` not
+    local BLAKE3 reimplementation
+- **5 follow-on missions filed** (LOW findings deferred):
+  - `0862-c2-clock-trait` (SystemTime injection)
+  - `0862-c3-cross-process-drain` (file lock + transaction)
+  - `0862-c4-assert-to-error` (dqa_to_i64 panic → error)
+  - `0862-c5-domain-sep` (untagged hash prefixes sweep)
+  - `0862-c6-fixture-keyspace` (test DID production collision risk)
+
+## Round 1 multi-round adversarial review
+
+4 reviewers (spec/code/drift/security) returned:
+
+- 12 HIGH (drift: 3 + spec: 4 + code: 6 + security: 4 — some
+  overlap between drift and spec)
+- 11 MED (drift: 1 + spec: 3 + code: 5 + security: 4 — some
+  overlap)
+- 8 LOW (drift: 2 + spec: 3 + code: 3 + security: 4 — some
+  overlap)
+
+All HIGH + MED resolved in commit `b20c37dc`. All LOW deferred to
+5 follow-on missions (c2..c6) for next session.
 
 ## Pre-reqs (all LANDED 2026-08-17)
 

@@ -10,11 +10,11 @@
     "router_id": "did:octo:router-1"
   },
   "steps": {
-    "step10_settlement_hash_blake3": "a04f22fd9df64471be8a9af1680ba8002b48eb6baa32488c245cb206d5777574",
+    "step10_settlement_hash_blake3": "b98a0fab6269d2f70790f851f2fdc9938ed70ca605fe4d26ca1392fc36b799eb",
     "step1_idp_token_blake3": "b20a61b9e0bedfe8014c9470c599d0ad7ae0b74e9905c891535502ada774becf",
     "step2_vak_blake3": "ab9db5d6de8325c47ab5f7537f68ea0ff12bfdae9525d7d6a79b84ab460be7f5",
     "step3_cap_id_blake3": "5d9d92daf76f253fc571437af814168b371a71ca11c4cc78f071f47664c1894b",
-    "step6_escrow_id_blake3": "83580f89619118722d628b86b7d857321b0ccec31b8e71aa8f04c8f4866c67a9"
+    "step6_escrow_id_blake3": "eaac08ad5734dd2b38a830ede62407f3f8ab7dd30ac8ad7ed1f51ff721207b21"
   },
   "version": 1
 }

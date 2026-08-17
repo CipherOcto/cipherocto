@@ -272,7 +272,10 @@ impl StoolapSpendLedger {
 /// per holder — well above any realistic paid-query budget per
 /// RFC-0871 §Adversary A7 (overflow impossible at worst-case scale).
 fn dqa_to_i64(v: MicroOctoW) -> i64 {
-    debug_assert_eq!(v.scale, 0, "MicroOctoW stored at scale=0");
+    assert_eq!(
+        v.scale, 0,
+        "MicroOctoW stored at scale=0; schema invariant violated"
+    );
     // `Dqa::value` is `i64`, so the cast is a no-op at the type level;
     // the function remains as the future-proofing doc anchor should
     // `Dqa::value` widen to `i128`.

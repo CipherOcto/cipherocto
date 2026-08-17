@@ -230,7 +230,7 @@ where
                     model: ask.model.to_wire(),
                 },
                 {
-                    debug_assert_eq!(cost.scale, 0, "MicroOCTO_W is integer-valued (scale=0)");
+                    assert_eq!(cost.scale, 0, "place_ask: MicroOCTO_W is integer-valued (scale=0); API contract violation");
                     cost.value as u128
                 },
                 1, // qty 1 per Ask; matches write-through
@@ -380,7 +380,7 @@ where
                     model: ask.model.to_wire(),
                 },
                 {
-                    debug_assert_eq!(cost.scale, 0, "MicroOCTO_W is integer-valued (scale=0)");
+                    assert_eq!(cost.scale, 0, "place_ask: MicroOCTO_W is integer-valued (scale=0); API contract violation");
                     cost.value as u128
                 },
                 1, // qty 1 per Ask; RFC-0900 markets trade 1 prompt per Ask

@@ -255,7 +255,10 @@ impl SlashStore for StoolapSlashStore {
 /// as the future-proofing doc anchor should `Dqa::value` widen to
 /// `i128`.
 fn dqa_to_i64(v: octo_determin::Dqa) -> i64 {
-    debug_assert_eq!(v.scale, 0, "stake stored at scale=0");
+    assert_eq!(
+        v.scale, 0,
+        "stake stored at scale=0; schema invariant violated"
+    );
     v.value
 }
 

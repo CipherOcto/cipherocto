@@ -34,9 +34,11 @@ impl TaskMarketSlashing {
         &mut self,
         provider_id: impl Into<String>,
         initial_stake_micro_octo_w: octo_determin::Dqa,
-    ) {
-        self.ledger
-            .register(provider_id, initial_stake_micro_octo_w);
+    ) -> Result<&octo_determin::Dqa, crate::marketplace::slashing::SlashError> {
+        let stake = self
+            .ledger
+            .register(provider_id, initial_stake_micro_octo_w)?;
+        Ok(&stake.stake_micro_octo_w)
     }
 
     pub fn slash(

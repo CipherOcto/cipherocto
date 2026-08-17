@@ -114,7 +114,7 @@ fn dispute_valid_slashes_seller() {
 
     // Provider gets slashed.
     let mut ledger = SlashingLedger::new();
-    ledger.register(sample_did(145), dqa(1_000_000));
+    ledger.register(sample_did(145), dqa(1_000_000)).unwrap();
     let out = ledger
         .slash(&sample_did(145), SlashReason::PROVIDER_ERROR, 1.0)
         .expect("slash");
@@ -150,7 +150,7 @@ fn below_tolerance_miss_rate_does_not_slash() {
         miss_rate_tolerance: 0.05,
         ..SlashingRules::default()
     });
-    ledger.register(sample_did(145), dqa(1_000_000));
+    ledger.register(sample_did(145), dqa(1_000_000)).unwrap();
     let err = ledger
         .slash(&sample_did(145), SlashReason::TIMEOUT, 0.01)
         .unwrap_err();
@@ -169,7 +169,7 @@ fn below_tolerance_miss_rate_does_not_slash() {
 #[test]
 fn repeated_offenses_eventually_ban_provider() {
     let mut ledger = SlashingLedger::new();
-    ledger.register(sample_did(20), dqa(1_000_000));
+    ledger.register(sample_did(20), dqa(1_000_000)).unwrap();
 
     // First three offenses with default rules (10%, 15%, 22.5%) leave
     // cumulative ≈ 40.7%. Fourth offense (33.75% of remaining ≈ 30%)
@@ -493,7 +493,7 @@ fn byzantine_provider_offense_count_increments_per_offense() {
     // dilute their penalty rate. The valid responses don't touch the
     // ledger; the invalid one slashes.
     let mut ledger = SlashingLedger::new();
-    ledger.register(sample_did(7), dqa(1_000_000));
+    ledger.register(sample_did(7), dqa(1_000_000)).unwrap();
 
     // 99 valid responses (no ledger action — only failures slash).
     // 1 invalid response (slash with full loss):
@@ -518,7 +518,7 @@ fn byzantine_provider_escalation_ban_unchanged() {
     // offenses. The 1st-offense threshold of 10% * 4 cuts > 50% in
     // cumulative_loss_pct.
     let mut ledger = SlashingLedger::new();
-    ledger.register(sample_did(7), dqa(1_000_000));
+    ledger.register(sample_did(7), dqa(1_000_000)).unwrap();
     for _ in 0..4 {
         let _ = ledger
             .slash(&sample_did(7), SlashReason::PROVIDER_ERROR, 1.0)
@@ -668,7 +668,7 @@ fn provider_key_rotation_preserves_ledger_state() {
     // rotation is invisible to it.
     let mut ledger = SlashingLedger::new();
     let did = sample_did(50);
-    ledger.register(&did, dqa(1_000_000));
+    ledger.register(&did, dqa(1_000_000)).unwrap();
     // Provider gets 3 offenses (cumulative ~40.7%) under key_v1.
     for _ in 0..3 {
         ledger
@@ -810,7 +810,7 @@ fn stake_withdrawal_full_amount_after_ban_rejected() {
     // pins the production withdraw path.
     let mut ledger = SlashingLedger::new();
     let did = sample_did(99);
-    ledger.register(&did, dqa(1_000_000));
+    ledger.register(&did, dqa(1_000_000)).unwrap();
     for _ in 0..4 {
         ledger
             .slash(&did, SlashReason::PROVIDER_ERROR, 1.0)
@@ -844,7 +844,7 @@ fn stake_withdrawal_partial_preserves_ledger_state() {
     // game, but prior offenses stick.
     let mut ledger = SlashingLedger::new();
     let did = sample_did(101);
-    ledger.register(&did, dqa(1_000_000));
+    ledger.register(&did, dqa(1_000_000)).unwrap();
     // One offense (10% loss) — not enough to ban.
     ledger
         .slash(&did, SlashReason::PROVIDER_ERROR, 1.0)
@@ -879,7 +879,7 @@ fn stake_withdrawal_rejects_invalid_inputs() {
     // exact-balance (success), post-zero (success-then-zero-reject).
     let mut ledger = SlashingLedger::new();
     let did = sample_did(202);
-    ledger.register(&did, dqa(500_000));
+    ledger.register(&did, dqa(500_000)).unwrap();
 
     // Unknown provider.
     assert!(matches!(

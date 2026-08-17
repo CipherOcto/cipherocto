@@ -406,6 +406,48 @@ pub enum SlashError {
         available: octo_determin::Dqa,
         requested: octo_determin::Dqa,
     },
+
+    /// `MicroOctoW` amounts MUST be `scale=0` (integer-valued). Any
+    /// caller passing a non-canonical `Dqa` would silently lose 10^scale
+    /// orders of magnitude on the cast back to `u128` / `i64` at the
+    /// persistence boundary — caught at the API gate instead of
+    /// corrupting on-disk stake values.
+    #[error("parameter `{param}` must be scale=0 (integer-valued MicroOCTO_W); got scale={scale}")]
+    NonIntegerScale {
+        /// Parameter name (e.g., `"initial_stake_micro_octo_w"`).
+        param: &'static str,
+        /// The non-zero scale value the caller passed.
+        scale: u8,
+    },
+}
+
+/// Validate that a caller-supplied `Dqa` is integer-valued (`scale=0`).
+///
+/// `MicroOctoW` amounts flow through the cast at the persistence
+/// boundary (`dqa_to_i64`, `place_ask`'s `cost.value as u128`) where
+/// any non-zero scale would silently truncate the lower digits. This
+/// gate makes the truncation impossible — the API rejects non-canonical
+/// inputs with a typed error.
+fn require_integer_scale(d: &octo_determin::Dqa, param: &'static str) -> Result<(), SlashError> {
+    if d.scale != 0 {
+        return Err(SlashError::NonIntegerScale {
+            param,
+            scale: d.scale,
+        });
+    }
+    Ok(())
+}
+
+/// Validate that a caller-supplied `Dqa` is a strictly-positive integer.
+/// Combines the scale=0 invariant with a `value > 0` check — guards
+/// against negative inputs (which `subtract` would happily add to a
+/// stake) and the canonical zero.
+fn require_positive_integer(d: &octo_determin::Dqa, param: &'static str) -> Result<(), SlashError> {
+    require_integer_scale(d, param)?;
+    if d.value <= 0 {
+        return Err(SlashError::InvalidAmount(*d));
+    }
+    Ok(())
 }
 
 /// Slashing ledger.
@@ -498,11 +540,17 @@ impl SlashingLedger {
     /// Register a provider with an initial stake. Idempotent on existing
     /// providers (returns the existing stake). When a `store` is wired,
     /// the new (or existing) stake row is written through.
+    /// # Errors
+    /// Returns `SlashError::NonIntegerScale` if `initial_stake_micro_octo_w`
+    /// is not `scale=0` (the MicroOctoW wire invariant). Returning a
+    /// typed error here prevents silent 10^scale truncation at the
+    /// persistence boundary.
     pub fn register(
         &mut self,
         provider_id: impl Into<String>,
         initial_stake_micro_octo_w: octo_determin::Dqa,
-    ) -> &ProviderStake {
+    ) -> Result<&ProviderStake, SlashError> {
+        require_integer_scale(&initial_stake_micro_octo_w, "initial_stake_micro_octo_w")?;
         let provider_id = provider_id.into();
         let entry = self
             .stakes
@@ -528,7 +576,7 @@ impl SlashingLedger {
             };
             let _ = store.upsert_stake(&row);
         }
-        entry
+        Ok(entry)
     }
 
     /// Current rules.
@@ -560,11 +608,7 @@ impl SlashingLedger {
         provider_id: &str,
         amount: octo_determin::Dqa,
     ) -> Result<octo_determin::Dqa, SlashError> {
-        if amount.value == 0 {
-            return Err(SlashError::InvalidAmount(
-                octo_determin::Dqa::new(0, 0).expect("non-overflow"),
-            ));
-        }
+        require_positive_integer(&amount, "amount")?;
         let stake = self
             .stakes
             .get(provider_id)
@@ -616,11 +660,7 @@ impl SlashingLedger {
         provider_id: &str,
         amount: octo_determin::Dqa,
     ) -> Result<(), SlashError> {
-        if amount.value == 0 {
-            return Err(SlashError::InvalidAmount(
-                octo_determin::Dqa::new(0, 0).expect("non-overflow"),
-            ));
-        }
+        require_positive_integer(&amount, "amount")?;
         let stake = self
             .stakes
             .get(provider_id)
@@ -681,7 +721,8 @@ impl SlashingLedger {
                 .ok_or_else(|| SlashError::UnknownProvider(provider_id.to_owned()))?
                 .offense_count,
         );
-        let pct = offense_penalty * reason.verifiability() * miss_rate.clamp(0.0, 1.0);
+        let pct =
+            (offense_penalty * reason.verifiability() * miss_rate.clamp(0.0, 1.0)).clamp(0.0, 1.0);
         self.apply_penalty(provider_id, reason, pct, rules)
     }
 
@@ -785,8 +826,69 @@ impl SlashingLedger {
 }
 
 fn penalty_for_offense(first: f64, multiplier: f64, offense_count: u32) -> f64 {
-    let mult = multiplier.powi(offense_count as i32);
+    // `u32 -> i32` cast wraps for `offense_count > i32::MAX` (~2.1B); a
+    // wrapped negative exponent would shrink the multiplier instead of
+    // saturating to full penalty (`1.5.powi(-1) = 0.667` yields a ~6.7%
+    // slash where 100% is correct). Saturate via `try_from` to `i32::MAX`
+    // — for any multiplier > 1.0 the resulting `first * mult` blows up
+    // to `f64::INFINITY`, which `.min(1.0)` clamps to 1.0 (full slash).
+    // For multiplier in (0.0, 1.0] the result is bounded to [0.0, first]
+    // (multiplier^powi(large) -> 0.0), still safe — the caller clamps to
+    // [0.0, 1.0]. Practically unreachable since `permanent_ban_at` (~0.50)
+    // fires around offense_count=4 per RFC-0900 §Slashing Model; the
+    // saturation is the documented safe behavior for adversarial input.
+    let safe_count = i32::try_from(offense_count).unwrap_or(i32::MAX);
+    let mult = multiplier.powi(safe_count);
     (first * mult).min(1.0)
+}
+
+#[cfg(test)]
+mod tests_penalty {
+    //! Standalone unit tests for `penalty_for_offense` — kept separate
+    //! from the main `tests` module so the `i32::try_from` saturation
+    //! guard has explicit coverage independent of the slashing flow.
+    use super::penalty_for_offense;
+
+    #[test]
+    fn first_offense_zero_offenses_returns_first() {
+        // offense_count=0 → powi(0) = 1.0 → result = first.
+        assert_eq!(penalty_for_offense(0.10, 1.5, 0), 0.10);
+    }
+
+    #[test]
+    fn moderate_offense_grows_penalty() {
+        // offense_count=2 with multiplier 1.5 → 0.10 * 2.25 = 0.225.
+        let p = penalty_for_offense(0.10, 1.5, 2);
+        assert!((p - 0.225).abs() < 1e-9, "got {p}");
+    }
+
+    #[test]
+    fn high_offense_saturates_to_one() {
+        // offense_count=10 → 0.10 * 1.5^10 ≈ 57.7, clamps to 1.0.
+        assert_eq!(penalty_for_offense(0.10, 1.5, 10), 1.0);
+    }
+
+    #[test]
+    fn offense_count_above_i32_max_saturates_not_wraps() {
+        // Regression for CRITICAL #2 from S4 Round 1 review: the
+        // unwrapped `offense_count as i32` cast wrapped u32 > i32::MAX
+        // to a negative exponent, shrinking the penalty instead of
+        // saturating. With `try_from` + `unwrap_or(i32::MAX)` the
+        // saturation is `f64::INFINITY.min(1.0) = 1.0` regardless of
+        // how large `offense_count` grows — adversarial / corrupt
+        // `offense_count` values cannot produce a sub-1.0 penalty.
+        assert_eq!(
+            penalty_for_offense(0.10, 1.5, u32::MAX),
+            1.0,
+            "u32::MAX must saturate to 1.0, not wrap to ~0.067"
+        );
+        assert_eq!(penalty_for_offense(0.10, 1.5, i32::MAX as u32 + 1), 1.0);
+        assert_eq!(
+            penalty_for_offense(0.10, 1.5, u32::MAX - 1),
+            1.0,
+            "any count past saturation must still be 1.0"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -801,7 +903,7 @@ mod tests {
 
     fn ledger_with(stake: i64) -> SlashingLedger {
         let mut l = SlashingLedger::new();
-        l.register("alice", dqa(stake));
+        l.register("alice", dqa(stake)).unwrap();
         l
     }
 
@@ -814,6 +916,95 @@ mod tests {
         assert_eq!(s.offense_count, 0);
         assert_eq!(s.cumulative_loss_pct, 0.0);
         assert!(!s.is_banned(l.rules()));
+    }
+
+    #[test]
+    fn register_rejects_non_zero_scale() {
+        // Regression for MEDIUM #1 from S4 Round 1 review: the cast at
+        // the persistence boundary silently truncated 10^scale digits in
+        // release builds. The API gate returns a typed error instead.
+        let mut l = SlashingLedger::new();
+        let non_integer = octo_determin::Dqa::new(1_000, 3).expect("non-overflow");
+        let err = l.register("alice", non_integer).unwrap_err();
+        assert_eq!(
+            err,
+            SlashError::NonIntegerScale {
+                param: "initial_stake_micro_octo_w",
+                scale: 3,
+            },
+        );
+        // Also reject on the high-scale end (max representable scale).
+        let high_scale = octo_determin::Dqa::new(7, 18u8).expect("non-overflow");
+        let err = l.register("bob", high_scale).unwrap_err();
+        assert_eq!(
+            err,
+            SlashError::NonIntegerScale {
+                param: "initial_stake_micro_octo_w",
+                scale: 18u8,
+            },
+        );
+        // Verify rejection did NOT register the provider.
+        assert!(l.stake("alice").is_none());
+        assert!(l.stake("bob").is_none());
+    }
+
+    #[test]
+    fn register_accepts_scale_zero() {
+        // Sanity: scale=0 (canonical MicroOctoW) still works after the
+        // scale-gate landed. `Dqa::new(0, 0)` is the canonical zero.
+        let mut l = SlashingLedger::new();
+        let zero = octo_determin::Dqa::new(0, 0).expect("zero");
+        let s = l.register("alice", zero).unwrap();
+        assert_eq!(s.stake_micro_octo_w, zero);
+        assert_eq!(s.initial_stake_micro_octo_w, zero);
+    }
+
+    #[test]
+    fn withdraw_stake_rejects_non_zero_scale() {
+        let mut l = ledger_with(1_000_000);
+        let err = l
+            .withdraw_stake(
+                "alice",
+                octo_determin::Dqa::new(100, 6).expect("non-overflow"),
+            )
+            .unwrap_err();
+        assert_eq!(
+            err,
+            SlashError::NonIntegerScale {
+                param: "amount",
+                scale: 6,
+            },
+        );
+    }
+
+    #[test]
+    fn withdraw_stake_rejects_negative_amount() {
+        // Regression for LOW from S4 Round 1 review: a negative `amount`
+        // would silently ADD to the stake via `subtract(negative)`.
+        // The new `require_positive_integer` gate catches it.
+        let mut l = ledger_with(1_000_000);
+        let neg = octo_determin::Dqa::new(-100, 0).expect("non-overflow");
+        let err = l.withdraw_stake("alice", neg).unwrap_err();
+        assert_eq!(err, SlashError::InvalidAmount(neg));
+        // Stake unchanged.
+        assert_eq!(l.stake("alice").unwrap().stake_micro_octo_w, dqa(1_000_000));
+    }
+
+    #[test]
+    fn withdraw_stake_rejects_zero_amount() {
+        // Zero-amount is rejected (would otherwise no-op silently).
+        let mut l = ledger_with(1_000_000);
+        let zero = octo_determin::Dqa::new(0, 0).expect("zero");
+        let err = l.withdraw_stake("alice", zero).unwrap_err();
+        assert_eq!(err, SlashError::InvalidAmount(zero));
+    }
+
+    #[test]
+    fn can_withdraw_rejects_negative_amount() {
+        let l = ledger_with(1_000_000);
+        let neg = octo_determin::Dqa::new(-100, 0).expect("non-overflow");
+        let err = l.can_withdraw("alice", neg).unwrap_err();
+        assert_eq!(err, SlashError::InvalidAmount(neg));
     }
 
     #[test]
@@ -907,7 +1098,7 @@ mod tests {
             miss_rate_tolerance: 0.05,
             ..SlashingRules::default()
         });
-        l.register("alice", dqa(1_000_000));
+        l.register("alice", dqa(1_000_000)).unwrap();
         let err = l.slash("alice", SlashReason::TIMEOUT, 0.01).unwrap_err();
         assert!(matches!(err, SlashError::BelowTolerance { .. }));
     }
@@ -995,7 +1186,7 @@ mod tests {
             SlashingRules::default(),
         )
         .expect("open");
-        ledger.register("bob", dqa(1_000_000));
+        ledger.register("bob", dqa(1_000_000)).unwrap();
         // Reload via a fresh ledger against the same store.
         drop(ledger);
         let rows = store.load_all().expect("load_all");
@@ -1012,7 +1203,7 @@ mod tests {
             SlashingRules::default(),
         )
         .expect("open");
-        ledger.register("carol", dqa(1_000_000));
+        ledger.register("carol", dqa(1_000_000)).unwrap();
         let out = ledger
             .slash("carol", SlashReason::TIMEOUT, 1.0)
             .expect("slash");
@@ -1042,7 +1233,7 @@ mod tests {
             SlashingRules::default(),
         )
         .expect("open");
-        ledger.register("dave", dqa(1_000_000));
+        ledger.register("dave", dqa(1_000_000)).unwrap();
         // First 3 offenses: 10%, 15%, 22.5% (cumulative ≈ 40.7%).
         for _ in 0..3 {
             ledger
@@ -1116,7 +1307,7 @@ mod tests {
             SlashingRules::default(),
         )
         .expect("open");
-        ledger.register("eve", dqa(1_000_000));
+        ledger.register("eve", dqa(1_000_000)).unwrap();
         let out = ledger
             .slash_with_pct("eve", SlashReason::PROVIDER_ERROR, 0.05)
             .expect("slash_with_pct");

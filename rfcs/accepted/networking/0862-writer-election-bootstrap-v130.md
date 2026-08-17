@@ -15,10 +15,10 @@
 > fail-closed).
 
 > **Filename note (RESOLVED per R19 acceptance):** file on disk is now `0862-writer-election-bootstrap-v130.md`. AC#13 satisfied.
-**Author:** @cipherocto + @mmacedoeu
-**Maintainers:** @cipherocto (primary), @mmacedoeu (review)
-**Substrate:** RFC-0862 v1.2.0 + RFC-0855p-c (handover) + RFC-0863 (bootstrap)
-**Parent:** Mission `0871e-phase5c-1-cross-instance-drain` + Mission `0871e-f7-cross-instance-did-coordination`
+> **Author:** @cipherocto + @mmacedoeu
+> **Maintainers:** @cipherocto (primary), @mmacedoeu (review)
+> **Substrate:** RFC-0862 v1.2.0 + RFC-0855p-c (handover) + RFC-0863 (bootstrap)
+> **Parent:** Mission `0871e-phase5c-1-cross-instance-drain` + Mission `0871e-f7-cross-instance-did-coordination`
 
 > **Promotion note:** In-place additive amendment to RFC-0862 (fourth
 > update). Promotes §Future Work F8 + F11 to §Specification. Adds
@@ -74,32 +74,32 @@ Extend RFC-0862 §Roles (writer/reader split) with:
 
 ## Design Goals
 
-| Goal | Target | Metric |
-| ---- | ------ | ------ |
-| G1 | Election latency | ≤ 3s p99 |
-| G2 | Heartbeat interval | 500ms |
-| G3 | Drain throughput | ≥ 1000 txn/s per shard |
-| G4 | Failover pause | ≤ 3s |
-| G5 | Backward compat | `DatabaseSyncAdapter` consumers unchanged |
-| G6 | Forward compat | WAL dual-version cluster window (per R11 L4 + R12 H6; v1.3 entry format is BREAKING) |
-| G7 | Substrate extension | Option C migration = impl swap |
-| G8 | Path correctness | All leaf-workspace paths use prefix |
-| G9 | Type identity | All new types consolidated |
-| G10 | Cross-RFC consistency | All amendments FILED before v1.3 STABLE |
-| G11 | **Rollout ordering** | v1.2 nodes → v1.2.1 (HeaderSize-aware) → v1.3 |
+| Goal | Target                | Metric                                                                               |
+| ---- | --------------------- | ------------------------------------------------------------------------------------ |
+| G1   | Election latency      | ≤ 3s p99                                                                             |
+| G2   | Heartbeat interval    | 500ms                                                                                |
+| G3   | Drain throughput      | ≥ 1000 txn/s per shard                                                               |
+| G4   | Failover pause        | ≤ 3s                                                                                 |
+| G5   | Backward compat       | `DatabaseSyncAdapter` consumers unchanged                                            |
+| G6   | Forward compat        | WAL dual-version cluster window (per R11 L4 + R12 H6; v1.3 entry format is BREAKING) |
+| G7   | Substrate extension   | Option C migration = impl swap                                                       |
+| G8   | Path correctness      | All leaf-workspace paths use prefix                                                  |
+| G9   | Type identity         | All new types consolidated                                                           |
+| G10  | Cross-RFC consistency | All amendments FILED before v1.3 STABLE                                              |
+| G11  | **Rollout ordering**  | v1.2 nodes → v1.2.1 (HeaderSize-aware) → v1.3                                        |
 
 ## Performance Targets
 
-| Metric | Target | Acceptance Test |
-|---|---|---|
-| Election latency p99 | ≤ 3s | TV-`election_acquire_returns_within_3s` |
-| Heartbeat interval | 500ms ± 50ms | TV-`heartbeat_interval_500ms` |
-| Drain throughput | ≥ 1000 txn/s per shard | TV-`drain_throughput_1k_per_sec` |
-| Failover pause | ≤ 3s p99 | TV-`failover_pause_under_3s` |
-| WAL fan-out lag | ≤ 100ms p99 | TV-`wal_fanout_lag_under_100ms` |
-| Bootstrap peer acquisition | ≤ 5s p99 | TV-`bootstrap_acquisition_under_5s` |
-| HLC monotonicity (physical advance) | No reordering | TV-`hlc_monotonicity_10k_sequential` |
-| HLC logical increment | Logical advances per same-physical-ms call | TV-`hlc_logical_increment_constant_physical` |
+| Metric                              | Target                                     | Acceptance Test                              |
+| ----------------------------------- | ------------------------------------------ | -------------------------------------------- |
+| Election latency p99                | ≤ 3s                                       | TV-`election_acquire_returns_within_3s`      |
+| Heartbeat interval                  | 500ms ± 50ms                               | TV-`heartbeat_interval_500ms`                |
+| Drain throughput                    | ≥ 1000 txn/s per shard                     | TV-`drain_throughput_1k_per_sec`             |
+| Failover pause                      | ≤ 3s p99                                   | TV-`failover_pause_under_3s`                 |
+| WAL fan-out lag                     | ≤ 100ms p99                                | TV-`wal_fanout_lag_under_100ms`              |
+| Bootstrap peer acquisition          | ≤ 5s p99                                   | TV-`bootstrap_acquisition_under_5s`          |
+| HLC monotonicity (physical advance) | No reordering                              | TV-`hlc_monotonicity_10k_sequential`         |
+| HLC logical increment               | Logical advances per same-physical-ms call | TV-`hlc_logical_increment_constant_physical` |
 
 ## Motivation
 
@@ -162,14 +162,14 @@ checksum); `ed25519-dalek` (A) — operator attestation verify;
 
 ## Roles and Authorities
 
-| Role | Identifier | Authority Scope | Lifecycle | Source |
-|------|------------|-----------------|-----------|--------|
-| Writer Node | `WriterIdentity { writer_node_id, mission_id, term, elected_at_hlc, shard_key }` + `WriterContext` | Exclusive write for `ShardKey` during term | `WriterLifecycle` (7 states) | This RFC §WriterElection |
-| Reader Node | (no identity; cached lease) | Read-only; forwards writes | Stateful | RFC-0862 v1.2.0 §Roles |
-| Domain Coordinator | `DomainCoordinator` | Handover ceremony | `CoordinatorLifecycle` | RFC-0855p-c + RFC-0855p-b |
-| Bootstrap Orchestrator | `BootstrapOrchestrator` TRAIT; `BootstrapOrchestratorImpl` CONCRETE | Peer discovery via RFC-0851p-a Mode A | Per node startup | RFC-0863 (impl) + this RFC (trait) |
-| Drain Coordinator | `DrainCoordinator` trait impl | Cross-instance spend drain routing | Wired via `StoolapSpendLedger` | This RFC §DrainCoordinator |
-| DID Write Coordinator | `DidWriteCoordinator` trait impl | Cross-instance DID write routing | Wired via `StoolapDidRegistry` | This RFC §DidWriteCoordinator |
+| Role                   | Identifier                                                                                         | Authority Scope                            | Lifecycle                      | Source                             |
+| ---------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------ | ---------------------------------- |
+| Writer Node            | `WriterIdentity { writer_node_id, mission_id, term, elected_at_hlc, shard_key }` + `WriterContext` | Exclusive write for `ShardKey` during term | `WriterLifecycle` (7 states)   | This RFC §WriterElection           |
+| Reader Node            | (no identity; cached lease)                                                                        | Read-only; forwards writes                 | Stateful                       | RFC-0862 v1.2.0 §Roles             |
+| Domain Coordinator     | `DomainCoordinator`                                                                                | Handover ceremony                          | `CoordinatorLifecycle`         | RFC-0855p-c + RFC-0855p-b          |
+| Bootstrap Orchestrator | `BootstrapOrchestrator` TRAIT; `BootstrapOrchestratorImpl` CONCRETE                                | Peer discovery via RFC-0851p-a Mode A      | Per node startup               | RFC-0863 (impl) + this RFC (trait) |
+| Drain Coordinator      | `DrainCoordinator` trait impl                                                                      | Cross-instance spend drain routing         | Wired via `StoolapSpendLedger` | This RFC §DrainCoordinator         |
+| DID Write Coordinator  | `DidWriteCoordinator` trait impl                                                                   | Cross-instance DID write routing           | Wired via `StoolapDidRegistry` | This RFC §DidWriteCoordinator      |
 
 ### WriterLifecycle (7 states)
 
@@ -214,14 +214,14 @@ pub enum ReplayState {
 ### WriterLifecycle → CoordinatorLifecycle mapping
 
 | WriterLifecycle | CoordinatorLifecycle substates |
-|---|---|
-| Candidate | (pre-Designated) |
-| Elected | Elected |
-| Active | Active |
-| Suspect | Suspect |
-| CampaignTimeout | Designated |
-| SteppingDown | Handover |
-| Relinquished | Resigned |
+| --------------- | ------------------------------ |
+| Candidate       | (pre-Designated)               |
+| Elected         | Elected                        |
+| Active          | Active                         |
+| Suspect         | Suspect                        |
+| CampaignTimeout | Designated                     |
+| SteppingDown    | Handover                       |
+| Relinquished    | Resigned                       |
 
 ## Lifecycle Requirements
 
@@ -249,26 +249,26 @@ stateDiagram-v2
 
 **Transition table:**
 
-| From | To | Trigger | Guard | Deterministic? |
-|---|---|---|---|---|
-| (start) | Candidate | `acquire_writer` call | — | No |
-| Candidate | Elected | handover success | — | Yes |
-| Candidate | CampaignTimeout | timeout exceeded | — | Yes |
-| CampaignTimeout | Candidate | re-call `acquire_writer` | no CampaignTimeout block active | Yes |
-| Elected | Active | First `heartbeat` success | — | Yes |
-| Active | Active | Subsequent `heartbeat` success | — | Yes |
-| Active | Suspect | heartbeat close to expiry | `last_heartbeat_age * 5 > lease_window_ms * 3` | Yes |
-| Suspect | Active | heartbeat succeeds | — | Yes |
-| Suspect | SteppingDown | `relinquish_writer` | `!context.relinquish_pending` | Yes |
-| Suspect | Relinquished | lease expires | — | Yes |
-| **Elected** | **Relinquished** | **lease expires before first heartbeat** | **`!context.relinquish_pending`** | **Yes** |
-| Active | SteppingDown | `relinquish_writer` | `!context.relinquish_pending` | Yes |
-| Active | Relinquished | Lease expiry | `!context.relinquish_pending` | Yes |
-| SteppingDown | Relinquished | WAL flush success | — | Yes |
-| SteppingDown | SteppingDown | WAL flush retry | `context.flush_attempts < context.max_attempts` | Yes |
-| **SteppingDown** | **Relinquished** | **flush_attempts ≥ max_attempts** | **forced abandon** | **Yes** |
-| Relinquished | Candidate | next `acquire_writer` call | — | Yes |
-| Relinquished | (terminal) | Node shutdown | — | No |
+| From             | To               | Trigger                                  | Guard                                           | Deterministic? |
+| ---------------- | ---------------- | ---------------------------------------- | ----------------------------------------------- | -------------- |
+| (start)          | Candidate        | `acquire_writer` call                    | —                                               | No             |
+| Candidate        | Elected          | handover success                         | —                                               | Yes            |
+| Candidate        | CampaignTimeout  | timeout exceeded                         | —                                               | Yes            |
+| CampaignTimeout  | Candidate        | re-call `acquire_writer`                 | no CampaignTimeout block active                 | Yes            |
+| Elected          | Active           | First `heartbeat` success                | —                                               | Yes            |
+| Active           | Active           | Subsequent `heartbeat` success           | —                                               | Yes            |
+| Active           | Suspect          | heartbeat close to expiry                | `last_heartbeat_age * 5 > lease_window_ms * 3`  | Yes            |
+| Suspect          | Active           | heartbeat succeeds                       | —                                               | Yes            |
+| Suspect          | SteppingDown     | `relinquish_writer`                      | `!context.relinquish_pending`                   | Yes            |
+| Suspect          | Relinquished     | lease expires                            | —                                               | Yes            |
+| **Elected**      | **Relinquished** | **lease expires before first heartbeat** | **`!context.relinquish_pending`**               | **Yes**        |
+| Active           | SteppingDown     | `relinquish_writer`                      | `!context.relinquish_pending`                   | Yes            |
+| Active           | Relinquished     | Lease expiry                             | `!context.relinquish_pending`                   | Yes            |
+| SteppingDown     | Relinquished     | WAL flush success                        | —                                               | Yes            |
+| SteppingDown     | SteppingDown     | WAL flush retry                          | `context.flush_attempts < context.max_attempts` | Yes            |
+| **SteppingDown** | **Relinquished** | **flush_attempts ≥ max_attempts**        | **forced abandon**                              | **Yes**        |
+| Relinquished     | Candidate        | next `acquire_writer` call               | —                                               | Yes            |
+| Relinquished     | (terminal)       | Node shutdown                            | —                                               | No             |
 
 **flush_attempts increment policy (per R11 M2):**
 `context.flush_attempts += 1` on every WAL flush attempt that
@@ -888,9 +888,95 @@ pub trait DrainCoordinator: Send + Sync {
 }
 ```
 
-### DidWriteCoordinator trait (in `crates/octo-ident/src/write_coordinator.rs`)
+### StoolapSpendLedger substrate (v2.0, additive on v1.4.0)
+
+Per line 171 ("Wired via `StoolapSpendLedger`" + "This RFC §DrainCoordinator")
+
+- line 1801 (`StoolapSpendLedger` + `StoolapDidRegistry`), the
+  production drain substrate is the Stoolap-backed spend ledger.
+  v2.0 back-fills the substrate spec that v1.4.0 left implicit.
 
 ```rust
+/// Stoolap-backed production spend ledger.
+/// Lives in `crates/quota-router-storage/src/stoolap_spend_ledger.rs`.
+#[derive(Clone)]
+pub struct StoolapSpendLedger {
+    db: Arc<stoolap::Database>,
+    /// Per-instance drain lock. Serializes try_deduct calls.
+    drain_lock: Arc<std::sync::Mutex<()>>,
+}
+
+impl StoolapSpendLedger {
+    pub fn open_in_memory() -> Result<Self, SpendLedgerError>;
+    pub fn open_path(path: &str) -> Result<Self, SpendLedgerError>;
+    pub fn seed(&self, holder_did: &str, macaroon_id: &[u8],
+                budget: MicroOctoW) -> Result<(), SpendLedgerError>;
+    pub fn try_deduct(&self, holder_did: &str, macaroon_id: &[u8],
+                      cost: MicroOctoW) -> Result<MicroOctoW, SpendLedgerError>;
+    pub fn balance(&self, holder_did: &str, macaroon_id: &[u8])
+        -> Result<Option<MicroOctoW>, SpendLedgerError>;
+}
+```
+
+**Schema (RFC-0862 v2.0 + RFC-0960 §20.3):**
+
+```sql
+CREATE TABLE IF NOT EXISTS spend_ledger (
+    holder_did BLOB NOT NULL,
+    macaroon_id BLOB NOT NULL,
+    balance INTEGER NOT NULL,         -- Dqa at scale=0 (MicroOctoW, integer micro-OCTO_W)
+    updated_at_unix_ms INTEGER NOT NULL,
+    PRIMARY KEY (holder_did, macaroon_id)
+);
+CREATE INDEX IF NOT EXISTS spend_ledger_updated_at_idx
+    ON spend_ledger (updated_at_unix_ms);
+```
+
+**Dqa wire form (RFC-0862 v2.0 + RFC-0105 v1.9 DqaEncoding
+cross-ref):** `balance` is stored as `i64` at `Dqa::scale = 0` (integer
+micro-OCTO_W counts). Per `octo-determin/src/dqa.rs:104` the wire form
+is the canonical 16-byte BE DqaEncoding. Conversion
+`MicroOctoW → i64` via the `dqa_to_i64` helper at
+`crates/quota-router-storage/src/stoolap_spend_ledger.rs:274` is a
+no-op at the type level (`Dqa::value` is `i64`); the function is the
+doc anchor for future widening to `i128`.
+
+**Vault row cross-ref (RFC-0862 v2.0 + RFC-0960 §20.3):** spend ledger
+substrate is wired to vault substrate via the `(holder_did, macaroon_id)`
+key — the wallet mints a `Caveat::Vault(vault_id)` binding per
+RFC-0957 v2.1 + RFC-0965 §3.7. `vault_id` derivation per RFC-0960 §20.3:
+
+```
+vault_id = BLAKE3("cipherocto/vault/v1/" + chain_id + owner_did + asset_id)
+```
+
+`Macaroon::verify_for_vault_op` (RFC-0957 v2.1) rejects spend drain on
+vault rows that are missing, frozen, or chain-mismatched.
+
+**NodeEnvelope Version Tag cross-ref (RFC-0862 v2.0 + RFC-0870 v2.1
+per S6a):** spend-drain responses are wrapped in V2 envelopes
+(`version_tag = 0xA1` per `octo-protocol/src/envelope.rs`). V1
+envelopes (`version_tag = 0xA0` or absent) are hard-rejected at verify
+per RFC-0870 §14.1 + TV-0870-01.
+
+**Atomicity guarantee (RFC-0862 v2.0):** the per-instance `drain_lock`
+serializes `try_deduct` calls within a single `StoolapSpendLedger`
+instance. The cross-instance coordination substrate (mission
+`0871e-phase5c-1` per `RaftLikeDrainCoordinator` LANDED 2026-08-11) is
+the production follow-on; v2.0 spec does NOT change the lock surface.
+
+**Layer discipline (RFC-0862 v2.0 + R11 M7):** `StoolapSpendLedger`
+lives in `quota-router-storage` (Layer B-adjacent per R11 M7) and does
+NOT depend on `octo-paid-query` / `octo-wallet` (those crates
+transitively depend on this one — would create a cyclic crate
+dependency). The API uses raw byte slices for `holder_did` (string
+DID wire form) and `macaroon_id` (16-byte raw bytes) instead of the
+typed wrappers. A glue crate is the documented extension point if a
+typed-API surface becomes necessary.
+
+### DidWriteCoordinator trait (in `crates/octo-ident/src/write_coordinator.rs`)
+
+````rust
 mod sealed {
     pub trait DidWriteCoordinatorSealed {}
 }
@@ -1107,95 +1193,84 @@ pub fn ed25519_verify(pk: &[u8; 32], msg: &[u8], sig: &[u8; 64]) -> bool {
         &ed25519_dalek::Signature::from_bytes(sig).expect("64-byte sig"),
     ).is_ok()
 }
-```
+````
 
 ## Acceptance Criteria for v1.3 Acceptance
 
 V1.3 acceptance GATED on:
 
-1-5. (REMOVED per R7 M7 — F12/F13 acceptance moved to v1.4)
-6. `MissionId` consolidation COMPLETED (gating direction per R12
-   H17 — v1.3 is BLOCKED on consolidation; consolidation is NOT
-   BLOCKED on v1.3 as §Future Work previously implied).
-7. `NodeId` consolidation COMPLETED (same direction as AC#6).
-8. **RFC-0010 v1.4 + v1.5 amendments FILED** (v1.4 = typed
-   `ChainId`; v1.5 = rich `DidDocument` + `VerificationMethod` —
-   both amendments shipped substrate required by §Specification §DidDocument
-   field shape referenced inline).
-9. **RFC-0863 v1.9 amendment FILED**.
-10. `force_relinquish_writer` lands via sealed trait pattern (per
-    R12 H11 — `WriterElectionForceRelinquishSealed` supertrait) +
-    M-of-N operator-set check + nonce-freshness check + **durable
-    nonce storage** (per R11 H1) + **deployment binding via
-    `chain_id`** (per R12 M23).
-11. Mission `0871e-phase5c-1-cross-instance-drain` UPDATED.
+1-5. (REMOVED per R7 M7 — F12/F13 acceptance moved to v1.4) 6. `MissionId` consolidation COMPLETED (gating direction per R12
+H17 — v1.3 is BLOCKED on consolidation; consolidation is NOT
+BLOCKED on v1.3 as §Future Work previously implied). 7. `NodeId` consolidation COMPLETED (same direction as AC#6). 8. **RFC-0010 v1.4 + v1.5 amendments FILED** (v1.4 = typed
+`ChainId`; v1.5 = rich `DidDocument` + `VerificationMethod` —
+both amendments shipped substrate required by §Specification §DidDocument
+field shape referenced inline). 9. **RFC-0863 v1.9 amendment FILED**. 10. `force_relinquish_writer` lands via sealed trait pattern (per
+R12 H11 — `WriterElectionForceRelinquishSealed` supertrait) +
+M-of-N operator-set check + nonce-freshness check + **durable
+nonce storage** (per R11 H1) + **deployment binding via
+`chain_id`** (per R12 M23). 11. Mission `0871e-phase5c-1-cross-instance-drain` UPDATED.
 11b. Mission `0871e-f7-cross-instance-did-coordination` UPDATED
-    (per R12 M25 — pre-rename filename hard-coded in 4 sites;
-    blast radius in `sync-e2e-tests` + `sync-e2e-tests/stoolap-node`,
-    ~15 call sites, both excluded from root workspace).
+(per R12 M25 — pre-rename filename hard-coded in 4 sites;
+blast radius in `sync-e2e-tests` + `sync-e2e-tests/stoolap-node`,
+~15 call sites, both excluded from root workspace).
 11c. `BootstrapOrchestrator` → `BootstrapOrchestratorImpl` rename
-    blast radius documented (per R12 M25).
-12. Mission `0871e-force-relinquish-governance` FILED.
-13. **Filename renamed** to `0862-writer-election-bootstrap-v130.md`.
-14. **`DidDocument` borsh derives** tested with `--features borsh`.
-15. **Per R11 H5 + R12 C1 rollout ordering:** v1.2 nodes patched
-    to v1.2.1+ BEFORE v1.3 rollout. Document ordering in
-    deployment guide; v1.2.0 fail-open behavior (silently accepts
-    v1.3 unvalidated) is the failure mode the v1.2.1 patch
-    eliminates.
-16. **Per R12 H10:** Two-file mapping resolved — on v1.3 acceptance
-    this draft merges into `rfcs/accepted/networking/0862-stoolap-data-sync.md`
-    (current accepted v1.0.0–v1.2.0 entry) OR the promotion note
-    changes from "in-place additive" to "forked update with explicit
-    mapping". The two-file pattern is NOT acceptable for the
-    Accepted state.
+blast radius documented (per R12 M25). 12. Mission `0871e-force-relinquish-governance` FILED. 13. **Filename renamed** to `0862-writer-election-bootstrap-v130.md`. 14. **`DidDocument` borsh derives** tested with `--features borsh`. 15. **Per R11 H5 + R12 C1 rollout ordering:** v1.2 nodes patched
+to v1.2.1+ BEFORE v1.3 rollout. Document ordering in
+deployment guide; v1.2.0 fail-open behavior (silently accepts
+v1.3 unvalidated) is the failure mode the v1.2.1 patch
+eliminates. 16. **Per R12 H10:** Two-file mapping resolved — on v1.3 acceptance
+this draft merges into `rfcs/accepted/networking/0862-stoolap-data-sync.md`
+(current accepted v1.0.0–v1.2.0 entry) OR the promotion note
+changes from "in-place additive" to "forked update with explicit
+mapping". The two-file pattern is NOT acceptable for the
+Accepted state.
 
 ## Determinism Requirements
 
 Per RFC-0008 Execution Class mapping:
 
-| Operation | Class | Justification |
-|---|---|---|
-| HKDF derivation | **A** | Pure function |
-| Election term monotonicity | **A** | Raft term monotonicity |
-| HLC timestamp construction | **B** | Wall-clock dependent |
-| HLC remote observe | **B** | Wall-clock + remote input |
-| Ordering of HLC-stamped WAL entries | **A** | HLC total order |
-| `DatabaseSyncAdapter` fan-out | **B** | Network-dependent |
-| Drain atomicity within writer (post-fsync) | **A** | Single-node atomic |
-| Drain atomicity within writer (fsync) | **B** | Filesystem-dependent |
-| Bootstrap peer acquisition | **B** | Network-dependent |
-| **WAL replay** | **A** | Fail-closed on corruption |
-| **OperatorSet canonical serialization** | **A** | Sorted-by-OperatorId.0 deterministic |
-| **HLC `now()`/`observe()` refuse-new on overflow** | **A** | Deterministic Err |
+| Operation                                          | Class | Justification                        |
+| -------------------------------------------------- | ----- | ------------------------------------ |
+| HKDF derivation                                    | **A** | Pure function                        |
+| Election term monotonicity                         | **A** | Raft term monotonicity               |
+| HLC timestamp construction                         | **B** | Wall-clock dependent                 |
+| HLC remote observe                                 | **B** | Wall-clock + remote input            |
+| Ordering of HLC-stamped WAL entries                | **A** | HLC total order                      |
+| `DatabaseSyncAdapter` fan-out                      | **B** | Network-dependent                    |
+| Drain atomicity within writer (post-fsync)         | **A** | Single-node atomic                   |
+| Drain atomicity within writer (fsync)              | **B** | Filesystem-dependent                 |
+| Bootstrap peer acquisition                         | **B** | Network-dependent                    |
+| **WAL replay**                                     | **A** | Fail-closed on corruption            |
+| **OperatorSet canonical serialization**            | **A** | Sorted-by-OperatorId.0 deterministic |
+| **HLC `now()`/`observe()` refuse-new on overflow** | **A** | Deterministic Err                    |
 
 ## Implicit Assumptions Audit
 
-| Category | Assumption | Risk | Mitigation |
-|---|---|---|---|
-| Operator | Key-share ceremony with secure RNG | Ceremony compromise | Per-scheme ceremony + audit log |
-| Platform | TCP heartbeat | UDP packet loss | Default TCP |
-| Platform | Linux baseline | BSD/Windows divergence | Linux baseline |
-| Platform | FIPS NOT required | FIPS deployments break | Document non-FIPS |
-| Platform | stoolap fork at pin | API drift | Pin commit hash |
-| Platform | NTP-synced clocks | Clock skew → wrong HLC ordering | NTP + alarm >100ms |
-| Time | Clock skew ≤ 100ms | Higher skew → wrong HLC ordering | NTP alarm |
-| Time | HLC skew cap = 1_000ms (10x alarm; per R13 H1) | Broken NTP corrupts HLC silently beyond cap | HlcError::RemoteSkewExceedsCap |
-| Time | Chain depth ≤ 8 | Migration if raised | Depth cap |
-| Network | TCP heartbeat (consolidated) | Same | Same |
-| Upgrade | v1.3 WAL **breaking** (new Magic + ShardKey field + blake3); old via V2 `header_size` (v1.2.0 fails-open on unknown Magic — per R12 C1; v1.2.1+ MUST reject) | v1.2.0 silently accepts v1.3 unvalidated = corruption | Version-check + reject (mandatory v1.2.1 patch BEFORE v1.3 rollout per R12 C1) |
-| Upgrade | Cross-shard drain = undefined | Cross-shard silently fails | Document in §Out-of-scope (per R18 M1 — section now exists below) |
-| Config | Per-instance mutex RETAINED | Coordinator handshake delayed | Per-instance mutex serializes |
-| Config | Key-share ceremony operator | Ceremony compromise | M-of-N governance (deadline: before v1.4.0) |
-| Config | `force_relinquish_writer` via sealed trait + OperatorSet + durable nonce | Substrate-level defense | Sealed trait + NonceTracker (durable) |
-| Identity | `MissionId` consolidation GATED | Type collision | Consolidate |
-| Identity | `WriterNodeId` vs `NodeId` consolidation GATED | Type collision | Consolidate |
-| Resource | Drain log bounded to 10k per read-replica | Unbounded growth | LRU + alarm |
-| Time | Election 3s + heartbeat 500ms | Wrong values | Profiling |
-| Operator | Coordinator quorum M-of-N | Single coordinator = SPOF | M-of-N governance |
-| Operator | Coordinator state survives restart | Coordinator restart loses `elected_at_hlc` | Persistent log + snapshot + WAL replay (per R14 L4 — concrete plan in mission `0871e-force-relinquish-governance` v0.2 snapshot+replay AC) |
-| Operator | `force_relinquish_writer` operator SET = same as key-share ceremony | Operator confusion | Document explicitly |
-| Resource | **HLC `last_logical: u32` overflow behavior** = refuse-new (per R11 M4) | Class A violation | `HlcError::LogicalOverflow` |
+| Category | Assumption                                                                                                                                                   | Risk                                                  | Mitigation                                                                                                                                 |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Operator | Key-share ceremony with secure RNG                                                                                                                           | Ceremony compromise                                   | Per-scheme ceremony + audit log                                                                                                            |
+| Platform | TCP heartbeat                                                                                                                                                | UDP packet loss                                       | Default TCP                                                                                                                                |
+| Platform | Linux baseline                                                                                                                                               | BSD/Windows divergence                                | Linux baseline                                                                                                                             |
+| Platform | FIPS NOT required                                                                                                                                            | FIPS deployments break                                | Document non-FIPS                                                                                                                          |
+| Platform | stoolap fork at pin                                                                                                                                          | API drift                                             | Pin commit hash                                                                                                                            |
+| Platform | NTP-synced clocks                                                                                                                                            | Clock skew → wrong HLC ordering                       | NTP + alarm >100ms                                                                                                                         |
+| Time     | Clock skew ≤ 100ms                                                                                                                                           | Higher skew → wrong HLC ordering                      | NTP alarm                                                                                                                                  |
+| Time     | HLC skew cap = 1_000ms (10x alarm; per R13 H1)                                                                                                               | Broken NTP corrupts HLC silently beyond cap           | HlcError::RemoteSkewExceedsCap                                                                                                             |
+| Time     | Chain depth ≤ 8                                                                                                                                              | Migration if raised                                   | Depth cap                                                                                                                                  |
+| Network  | TCP heartbeat (consolidated)                                                                                                                                 | Same                                                  | Same                                                                                                                                       |
+| Upgrade  | v1.3 WAL **breaking** (new Magic + ShardKey field + blake3); old via V2 `header_size` (v1.2.0 fails-open on unknown Magic — per R12 C1; v1.2.1+ MUST reject) | v1.2.0 silently accepts v1.3 unvalidated = corruption | Version-check + reject (mandatory v1.2.1 patch BEFORE v1.3 rollout per R12 C1)                                                             |
+| Upgrade  | Cross-shard drain = undefined                                                                                                                                | Cross-shard silently fails                            | Document in §Out-of-scope (per R18 M1 — section now exists below)                                                                          |
+| Config   | Per-instance mutex RETAINED                                                                                                                                  | Coordinator handshake delayed                         | Per-instance mutex serializes                                                                                                              |
+| Config   | Key-share ceremony operator                                                                                                                                  | Ceremony compromise                                   | M-of-N governance (deadline: before v1.4.0)                                                                                                |
+| Config   | `force_relinquish_writer` via sealed trait + OperatorSet + durable nonce                                                                                     | Substrate-level defense                               | Sealed trait + NonceTracker (durable)                                                                                                      |
+| Identity | `MissionId` consolidation GATED                                                                                                                              | Type collision                                        | Consolidate                                                                                                                                |
+| Identity | `WriterNodeId` vs `NodeId` consolidation GATED                                                                                                               | Type collision                                        | Consolidate                                                                                                                                |
+| Resource | Drain log bounded to 10k per read-replica                                                                                                                    | Unbounded growth                                      | LRU + alarm                                                                                                                                |
+| Time     | Election 3s + heartbeat 500ms                                                                                                                                | Wrong values                                          | Profiling                                                                                                                                  |
+| Operator | Coordinator quorum M-of-N                                                                                                                                    | Single coordinator = SPOF                             | M-of-N governance                                                                                                                          |
+| Operator | Coordinator state survives restart                                                                                                                           | Coordinator restart loses `elected_at_hlc`            | Persistent log + snapshot + WAL replay (per R14 L4 — concrete plan in mission `0871e-force-relinquish-governance` v0.2 snapshot+replay AC) |
+| Operator | `force_relinquish_writer` operator SET = same as key-share ceremony                                                                                          | Operator confusion                                    | Document explicitly                                                                                                                        |
+| Resource | **HLC `last_logical: u32` overflow behavior** = refuse-new (per R11 M4)                                                                                      | Class A violation                                     | `HlcError::LogicalOverflow`                                                                                                                |
 
 ## Security Considerations
 
@@ -1211,16 +1286,16 @@ Per RFC-0008 Execution Class mapping:
 
 ## Adversary Analysis (7-column format)
 
-| A# | Adversary | Q1 Beneficiary | Q2 Cost to Attacker | Q3 Gain if Successful | Q4 Defense | Q5 Residual Risk |
-|---|---|---|---|---|---|---|
-| A1 | Writer election split-brain | Attacker inducing partition | Network partition + CPU | Concurrent write authority | Raft-like consensus | ~3000 stale writes/incident |
-| A2 | Heartbeat false renewal | Old writer during partition | Network partition tolerance | Lease retention = stale writes | Lease-based | Lease window (3s) |
-| A3 | Bootstrap peer spoofing | Malicious node injecting peers | Mission-key signature forgery | Sync against poisoned state | Ed25519 + OverlayIdentity + nonce binding | Trust boundary on OverlayIdentity |
-| A4 | WAL replay divergence | Attacker tampering with WAL | Node compromise | Inconsistent state | New writer resumes from `elected_at_hlc`; fail-closed on checksum | ~3000 stale writes/incident |
-| A5 | Coordinator HA | Attacker compromising coordinator | Coordinator compromise | Writer election hijack | M-of-N operator quorum | Coordinator quorum compromise |
-| A6 | Drain refusal storm during failover | Attacker triggering rapid drain | Coordinator partition | UX degradation | Holder retry per RFC-0871 | UX degradation within budget |
-| A7 | Option C (LWW) double-spend | Attacker exploiting LWW in F12 | Concurrent drain attempts | Double-spend | v1.3 fail-closed + sealed trait | v1.3 fail-closed; F12 MUST solve |
-| A8 | Concurrent partition residual | Attacker inducing simultaneous partition | Network partition tolerance window | Stale writes during partition | Heartbeat + lease bounds window to ~3s | See A1 |
+| A#  | Adversary                           | Q1 Beneficiary                           | Q2 Cost to Attacker                | Q3 Gain if Successful          | Q4 Defense                                                        | Q5 Residual Risk                  |
+| --- | ----------------------------------- | ---------------------------------------- | ---------------------------------- | ------------------------------ | ----------------------------------------------------------------- | --------------------------------- |
+| A1  | Writer election split-brain         | Attacker inducing partition              | Network partition + CPU            | Concurrent write authority     | Raft-like consensus                                               | ~3000 stale writes/incident       |
+| A2  | Heartbeat false renewal             | Old writer during partition              | Network partition tolerance        | Lease retention = stale writes | Lease-based                                                       | Lease window (3s)                 |
+| A3  | Bootstrap peer spoofing             | Malicious node injecting peers           | Mission-key signature forgery      | Sync against poisoned state    | Ed25519 + OverlayIdentity + nonce binding                         | Trust boundary on OverlayIdentity |
+| A4  | WAL replay divergence               | Attacker tampering with WAL              | Node compromise                    | Inconsistent state             | New writer resumes from `elected_at_hlc`; fail-closed on checksum | ~3000 stale writes/incident       |
+| A5  | Coordinator HA                      | Attacker compromising coordinator        | Coordinator compromise             | Writer election hijack         | M-of-N operator quorum                                            | Coordinator quorum compromise     |
+| A6  | Drain refusal storm during failover | Attacker triggering rapid drain          | Coordinator partition              | UX degradation                 | Holder retry per RFC-0871                                         | UX degradation within budget      |
+| A7  | Option C (LWW) double-spend         | Attacker exploiting LWW in F12           | Concurrent drain attempts          | Double-spend                   | v1.3 fail-closed + sealed trait                                   | v1.3 fail-closed; F12 MUST solve  |
+| A8  | Concurrent partition residual       | Attacker inducing simultaneous partition | Network partition tolerance window | Stale writes during partition  | Heartbeat + lease bounds window to ~3s                            | See A1                            |
 
 ## Economic Analysis
 
@@ -1245,7 +1320,7 @@ N/A. Coordination substrate.
 ### Forward compatibility
 
 - v1.3 reader reading v1.2 WAL: works via V2 `header_size` (32 bytes)
-  + Magic dispatch (`WAL_MAGIC_V12`).
+  - Magic dispatch (`WAL_MAGIC_V12`).
 - v1.2.1 reader reading v1.3 WAL: rejects with `WalVersionTooNew`
   (per R11 H3 — does NOT attempt entry parse).
 - v1.2.0 reader reading v1.3 WAL: **silently accepts UNVALIDATED**
@@ -1267,6 +1342,7 @@ N/A. Coordination substrate.
 **Phase 1 — substrate**
 
 Deliverables:
+
 - Substrate types with `borsh::{BorshSerialize, BorshDeserialize}` derives.
 - `WriterElection` trait + `WriterElectionForceRelinquish` sealed trait.
 - `WriterLifecycle` enum (7 states) + `WriterContext` struct.
@@ -1317,6 +1393,7 @@ fn init_node(
 **Phase 4 — concrete impl landing (v1.4.0 amendment, 2026-08-11)**
 
 Deliverables:
+
 - New workspace member `octo-sync/` (root `Cargo.toml` `exclude = [...]`
   drops `"octo-sync"`; gated opt-in per RFC-0862 v1.4 §Acceptance Criteria).
 - Concrete `WriterElection` impl (`RaftLikeWriterElection`) using HLC +
@@ -1362,7 +1439,7 @@ Production deployments need:
    was already specified in v1.3 §Crate dependencies (`borsh`
    `dashmap` `blake3` `async-trait` `ed25519-dalek` `thiserror`
    pins). Lifting the workspace membership means `cargo build
-   -p octo-sync` works from the root; the cross-RFC refactor to
+-p octo-sync` works from the root; the cross-RFC refactor to
    `crates/octo-ident`/`crates/octo-paid-query` dependency
    direction is unchanged.
 4. **4 cross-instance TV** — atomic register, leader failover, WAL
@@ -1590,7 +1667,7 @@ crdt = []
 
 1. **TV-1 atomic_register**
    - Setup: 3 instances (`A`, `B`, `C`), `RaftLikeDidWriteCoordinator`
-     + `RaftLikeWriterElection` per instance; same `ChainId`.
+     - `RaftLikeWriterElection` per instance; same `ChainId`.
    - Action: concurrent `submit_register_validated` from A + B + C
      on the same canonical_did_hash.
    - Expectation: exactly one writer commits; other two back off
@@ -1625,9 +1702,9 @@ crdt = []
 - **`octo-coordinator-bft` Layer A crate** for Byzantine fault tolerance
   (per RFC-0862 v1.3 §Future Work). v1.4.0 ships crash-fault-tolerant
   Raft-like consensus; BFT (threshold-signature M-of-N + sealed trait
-  + chain_id binding) lands in `octo-coordinator-bft` Layer A on a
-  future amendment (RFC-0862 v2.0 per
-  [[cipherocto-design-principles]] §Layer A additive-only).
+  - chain_id binding) lands in `octo-coordinator-bft` Layer A on a
+    future amendment (RFC-0862 v2.0 per
+    [[cipherocto-design-principles]] §Layer A additive-only).
 - **Cross-shard drain atomicity**. Per v1.3 §Out-of-scope +
   R18 M1, `DrainCoordinator` handles single-shard drains only.
   Cross-shard atomic drain remains future work; tracked.
@@ -1724,11 +1801,11 @@ in §Future Work). Tracked here so cross-references from
 - Byzantine coordinator defense — **per R14 L3 + R16 H2: tracked
   under mission `0871e-force-relinquish-governance` v0.2 Byzantine
   row AC; threshold-signature M-of-N quorum + sealed trait pattern
-  + chain_id binding (R12 M23) is the v1.3 baseline. Full
-  Byzantine fault tolerance (BFT) consensus for coordinator
-  cluster lands in `crates/octo-coordinator-bft/` (Layer A)
-  per `cipherocto-design-principles.md` once RFC-0862 v2.0
-  amendment is filed.**
+  - chain_id binding (R12 M23) is the v1.3 baseline. Full
+    Byzantine fault tolerance (BFT) consensus for coordinator
+    cluster lands in `crates/octo-coordinator-bft/` (Layer A)
+    per `cipherocto-design-principles.md` once RFC-0862 v2.0
+    amendment is filed.**
 - `force_relinquish_writer` governance — mission `0871e-force-relinquish-governance`
   FILED (R14 H1).
 - ~~`MissionId` consolidation GATED on v1.3 acceptance~~ — RESOLVED
@@ -1801,6 +1878,7 @@ assigned to phases below; the 4 unassigned vectors
   `StoolapSpendLedger` + `StoolapDidRegistry`
 
 Dependency direction:
+
 - `octo-sync` → `octo-protocol` (B-substrate → A; OK)
 - `octo-transport` → `octo-sync` (D → B-substrate; OK)
 - `crates/octo-paid-query` → `octo-sync` (E → B-substrate; OK)
@@ -1850,14 +1928,15 @@ cargo doc --workspace --no-deps --manifest-path octo-transport/Cargo.toml
 
 ## Version History
 
-| Version | Date       | Status   | Changes                                                                                                                      |
-| ------- | ---------- | -------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| 1.0.0   | 2026-06-20 | Accepted | Initial specification                                                                                                        |
-| 1.1.0   | 2026-06-21 | Accepted | `DatabaseSyncAdapter` trait + `octo-sync` leaf-workspace                                                                     |
-| 1.2.0   | 2026-06-25 | Accepted | Bootstrap integration path clarified                                                                                         |
-| 1.2.1   | 2026-08-10 | Accepted | **Mandatory pre-v1.3 patch (per R11 H5 + R12 C1).** Flips `validate_wal_entry_crc32` behavior on unknown Magic from fail-open (returns `true`) to reject (`WalVersionTooNew`); HeaderSize-aware; dual-version cluster window compatible. Without this patch v1.2.0 nodes silently accept v1.3 WAL entries UNVALIDATED. |
-| 1.3.0   | 2026-08-10 | Draft    | `WriterElection` + bootstrap-orchestrated sync + `DrainCoordinator` + `DidWriteCoordinator` + CRDT-extension hooks (F12/F13) |
-| 1.4.0   | 2026-08-11 | Accepted (amendment) | §Concrete Impl Extension: `RaftLikeWriterElection` (concrete `WriterElection` impl) + `RaftLikeDidWriteCoordinator` (concrete `DidWriteCoordinator` impl) using HLC + LWW per-instance counter. `octo-sync` workspace membership lifted (root `Cargo.toml` `exclude = [...]` drops `"octo-sync"`). Optional `crdt` feature flag for partition-tolerant LWW deployments (opt-in; default linearizable). 4 cross-instance TV (atomic_register, leader_failover, wal_replay, fail_closed) spec'd in §Test Vectors. F12 + F13 promoted from §Future Work to §Specification. AC#17-#24 add 8 acceptance criteria on top of v1.3 AC#1-#16; ALL v1.3 AC#1-#16 still required (no retroactive loosening). Layer direction unchanged (`octo-ident` stays Layer B substrate; `octo-sync` provides concrete impl; `octo-ident` does NOT depend on `octo-sync`). Wal v1.3 magic + entry layout preserved (no protocol-breaking change). Mission `0871e-f7-coordinator-impl` GATED on this RFC landing. |
+| Version | Date       | Status                | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------- | ---------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1.0.0   | 2026-06-20 | Accepted              | Initial specification                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 1.1.0   | 2026-06-21 | Accepted              | `DatabaseSyncAdapter` trait + `octo-sync` leaf-workspace                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 1.2.0   | 2026-06-25 | Accepted              | Bootstrap integration path clarified                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 1.2.1   | 2026-08-10 | Accepted              | **Mandatory pre-v1.3 patch (per R11 H5 + R12 C1).** Flips `validate_wal_entry_crc32` behavior on unknown Magic from fail-open (returns `true`) to reject (`WalVersionTooNew`); HeaderSize-aware; dual-version cluster window compatible. Without this patch v1.2.0 nodes silently accept v1.3 WAL entries UNVALIDATED.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 1.3.0   | 2026-08-10 | Draft                 | `WriterElection` + bootstrap-orchestrated sync + `DrainCoordinator` + `DidWriteCoordinator` + CRDT-extension hooks (F12/F13)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 1.4.0   | 2026-08-11 | Accepted (amendment)  | §Concrete Impl Extension: `RaftLikeWriterElection` (concrete `WriterElection` impl) + `RaftLikeDidWriteCoordinator` (concrete `DidWriteCoordinator` impl) using HLC + LWW per-instance counter. `octo-sync` workspace membership lifted (root `Cargo.toml` `exclude = [...]` drops `"octo-sync"`). Optional `crdt` feature flag for partition-tolerant LWW deployments (opt-in; default linearizable). 4 cross-instance TV (atomic_register, leader_failover, wal_replay, fail_closed) spec'd in §Test Vectors. F12 + F13 promoted from §Future Work to §Specification. AC#17-#24 add 8 acceptance criteria on top of v1.3 AC#1-#16; ALL v1.3 AC#1-#16 still required (no retroactive loosening). Layer direction unchanged (`octo-ident` stays Layer B substrate; `octo-sync` provides concrete impl; `octo-ident` does NOT depend on `octo-sync`). Wal v1.3 magic + entry layout preserved (no protocol-breaking change). Mission `0871e-f7-coordinator-impl` GATED on this RFC landing.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 2.0.0   | 2026-08-17 | Draft (S6c amendment) | §StoolapSpendLedger substrate (additive on v1.4.0): back-fills the production substrate spec that v1.4.0 left implicit at line 171 + line 1801. Adds (a) `StoolapSpendLedger` API surface (`open_in_memory` / `open_path` / `seed` / `try_deduct` / `balance`) per `crates/quota-router-storage/src/stoolap_spend_ledger.rs`; (b) `spend_ledger` table schema with `(holder_did BLOB, macaroon_id BLOB, balance INTEGER, updated_at_unix_ms INTEGER, PK(holder_did, macaroon_id))` + `spend_ledger_updated_at_idx`; (c) Dqa wire-form (16-byte BE DqaEncoding per RFC-0105 v1.9 DqaEncoding, stored as `i64` at `Dqa::scale = 0`); (d) vault row cross-ref per RFC-0960 §20.3 vault_id derivation; (e) NodeEnvelope V2 wire-form cross-ref per RFC-0870 v2.1 (S6a) `version_tag = 0xA1` + verify-time hard-reject of V1 per RFC-0870 §14.1; (f) atomicity guarantee via per-instance `drain_lock` (cross-instance coordination is mission `0871e-phase5c-1` per `RaftLikeDrainCoordinator` LANDED 2026-08-11, not v2.0 spec change). 8 byte-exact TV (TV-0862-01..08) in `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs` pin spend_ledger row creation, balance read, seed idempotency, atomic drain, Dqa encoding round-trip, vault_id cross-ref, V2 wire-form with version_tag, multi-instance drain coordination. Implementation mission `missions/open/0862-c1-dqa-vault-bump-amendment.md`. Pre-req: S3 (octo-vault) + S4 (Dqa codemod) + S5 (verify-time) + S6a (RFC-0870 v2.1) + S6b (RFC-0957 v2.1) all LANDED 2026-08-17. Plan: `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md` §3 row 6 (Stream A.1 S6c) + §4 S6 verify gate. §22 atomic-blocker rule applies to the 7 B0 amendments, but user-chosen S6 split-by-RFC decision (S6a/S6b/S6c precedent) lands each amendment separately; production deployment must coordinate the 7 sub-sessions' commits at push time (S8). |
 
 ## Review Process
 

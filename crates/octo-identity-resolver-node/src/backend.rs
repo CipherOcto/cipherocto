@@ -75,6 +75,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use octo_ident::DidCodec;
+use octo_protocol::envelope::VERSION_TAG_V2;
 use octo_protocol::recipient::RecipientRef;
 use octo_protocol::NodeEnvelope;
 use octo_transport::sender::SendContext;
@@ -204,6 +205,7 @@ impl ResolverBackend for RemoteResolverBackend {
             vec![],
             chain_ctx.envelope_id, // nonce: reuse envelope_id for replay-defense alignment
             u64::MAX,              // expires_at_unix_ms: no TTL ceiling on a request envelope
+            VERSION_TAG_V2,
         )
         .map_err(|e| {
             octo_ident::ResolverBackendError::Backing(format!("NodeEnvelope::build failed: {e}"))

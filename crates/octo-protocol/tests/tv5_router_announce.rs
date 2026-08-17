@@ -16,7 +16,7 @@ use octo_protocol::authorization::{Authorization, Ed25519SignatureBytes};
 use octo_protocol::dispatch::{
     DispatcherConfig, EnvelopeDispatcher, ReferenceDispatcher, ValidationCache,
 };
-use octo_protocol::envelope::NodeEnvelope;
+use octo_protocol::envelope::{NodeEnvelope, VERSION_TAG_V2};
 use octo_protocol::error::ProtocolError;
 use octo_protocol::payload_kind::{IDENTITY_RESOLVE, WALLET_MINT_CAPABILITY, WALLET_SIGN_ED25519};
 use octo_protocol::recipient::RecipientRef;
@@ -46,6 +46,7 @@ fn signed_envelope(
         vec![],
         [0x77; 32],
         1_735_689_600_000,
+        VERSION_TAG_V2,
     )
     .unwrap();
     let preimage = signature_preimage(&env.envelope_id, env.from_did.as_str(), &payload);

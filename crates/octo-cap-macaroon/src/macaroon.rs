@@ -34,6 +34,8 @@ use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
 
 use crate::caveat::Caveat;
+use crate::vault_lookup::VaultLookupExt;
+use crate::VaultVerifyError;
 
 // Re-export crate-root items into the `macaroon` module namespace so
 // `octo_cap_macaroon::macaroon::*` glob imports catch everything
@@ -420,6 +422,74 @@ impl Macaroon {
         }
         Ok(())
     }
+
+    /// Verify-time invariant for a `VaultOperation` target (review
+    /// §20.6.1 — 5-step algorithm). Distinct from `verify_full`:
+    ///
+    /// 1. `verify_signature(root_secret)` — chain HMAC re-derivation.
+    /// 2. `check_wrapped_chain(self, catalog)` — RFC-0965 §3.7 chain
+    ///    integrity (cycle, depth, missing parent).
+    /// 3. `verify_vault_chain(self, op_chain_id, vault_lookup)` —
+    ///    walk the macaroon + its `WrappedOnly` ancestors, find every
+    ///    `Caveat::Vault(vault_id)`, and assert each vault row:
+    ///    (a) exists, (b) `chain_id == op_chain_id`, (c) state=Active.
+    ///    If no `Caveat::Vault` is present anywhere in the chain
+    ///    (self + ancestors), `WrappedChainHasNoVault` — the
+    ///    chainless-parent safe default per §20.6.1 line 1328.
+    /// 4. Attenuation subsumption vs `expected_parent` (if provided).
+    ///
+    /// # Errors
+    /// - `MacaroonError::ChainMismatch` / `RootSecretMismatch` /
+    ///   `CapabilityIdMismatch` from `verify_signature`.
+    /// - `MacaroonError::WrappedCycle` / `WrappedDepthExceeded` /
+    ///   `WrappedParentNotFound` from `check_wrapped_chain`.
+    /// - `MacaroonError::AttenuationViolation` if subsumption fails.
+    /// - `VaultVerifyError::VaultRowMissing` / `ChainMismatch` /
+    ///   `VaultNotActive` from the vault-row lookup.
+    /// - `VaultVerifyError::WrappedChainHasNoVault` if no `Caveat::Vault`
+    ///   ancestor exists for a `WrappedOnly` chain that targets a chain.
+    pub fn verify_for_vault_op(
+        &self,
+        root_secret: &[u8; 32],
+        catalog: &dyn CapabilityCatalog,
+        expected_parent: Option<&[Caveat]>,
+        op_chain_id: &[u8; 32],
+        vault_lookup: &dyn crate::vault_lookup::VaultLookup,
+    ) -> Result<(), crate::VaultVerifyError> {
+        // Steps 1 + 2: standard chain re-derivation + wrapped-chain integrity.
+        self.verify_signature(root_secret)?;
+        check_wrapped_chain(self, catalog)?;
+
+        // Step 3: walk self + WrappedOnly ancestors, collect every Caveat::Vault.
+        let vault_caveats = collect_vault_caveats(self, catalog)?;
+        if vault_caveats.is_empty() {
+            return Err(VaultVerifyError::WrappedChainHasNoVault);
+        }
+        for vault_id in vault_caveats {
+            let row = vault_lookup.require_vault(&vault_id)?;
+            if row.chain_id != *op_chain_id {
+                return Err(VaultVerifyError::ChainMismatch {
+                    vault_chain: row.chain_id,
+                    op_chain: *op_chain_id,
+                });
+            }
+            if !row.is_active {
+                return Err(VaultVerifyError::VaultNotActive { vault_id });
+            }
+        }
+
+        // Step 4: attenuation subsumption against expected_parent (if provided).
+        if let Some(parent_caveats) = expected_parent {
+            let all_match =
+                super::caveat::set_subsumes_with_registry(parent_caveats, &self.caveats, |name| {
+                    catalog.is_raw_name_registered(name)
+                });
+            if !all_match {
+                return Err(MacaroonError::AttenuationViolation.into());
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Capability catalog: resolves a parent `WrappedOnly` reference to a macaroon.
@@ -634,8 +704,62 @@ pub fn check_wrapped_depth(macaroon: &Macaroon, count: u8) -> Result<(), Macaroo
     Ok(())
 }
 
+/// Walk the `WrappedOnly` chain rooted at `macaroon`, collecting every
+/// `Caveat::Vault(vault_id)` (this macaroon + each ancestor). Mirrors
+/// the cycle + depth + missing-parent checks of `check_wrapped_chain`
+/// (RFC-0965 §3.7) — a chain that fails integrity MUST surface as a
+/// `VaultVerifyError::Macaroon(MacaroonError)` rather than silently
+/// returning an empty list (which would yield `WrappedChainHasNoVault`).
+///
+/// # Errors
+/// Returns `MacaroonError::WrappedCycle` / `WrappedDepthExceeded` /
+/// `WrappedParentNotFound` — surfaced via the `VaultVerifyError::Macaroon`
+/// variant. Mirrors `check_wrapped_chain` invariants exactly; do NOT
+/// use this helper without first calling `check_wrapped_chain` if the
+/// caller has not already validated the chain.
+fn collect_vault_caveats(
+    macaroon: &Macaroon,
+    catalog: &dyn CapabilityCatalog,
+) -> Result<Vec<[u8; 32]>, VaultVerifyError> {
+    let mut out = Vec::new();
+    let mut visited: std::collections::HashSet<[u8; 32]> = std::collections::HashSet::new();
+    let mut current: Macaroon = macaroon.clone();
+    let mut depth: u8 = 1;
+    visited.insert(current.id);
+
+    for c in &current.caveats {
+        if let Caveat::Vault(vault_id) = c {
+            out.push(*vault_id);
+        }
+    }
+
+    loop {
+        if depth > MAX_WRAPPED_DEPTH {
+            return Err(MacaroonError::WrappedDepthExceeded(usize::from(depth)).into());
+        }
+        let Some(parent_id) = current.parent_capability().copied() else {
+            return Ok(out);
+        };
+        if !visited.insert(parent_id) {
+            return Err(MacaroonError::WrappedCycle.into());
+        }
+        depth = depth
+            .checked_add(1)
+            .expect("depth bounded by MAX_WRAPPED_DEPTH < u8::MAX");
+        let Some(parent) = catalog.lookup(&parent_id) else {
+            return Err(MacaroonError::WrappedParentNotFound { parent_id }.into());
+        };
+        for c in &parent.caveats {
+            if let Caveat::Vault(vault_id) = c {
+                out.push(*vault_id);
+            }
+        }
+        current = parent;
+    }
+}
+
 /// Macaroon errors.
-#[derive(Debug, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum MacaroonError {
     #[error("OS RNG failure: {0}")]
     OsRng(String),
@@ -682,6 +806,15 @@ pub enum MacaroonError {
     /// per RFC-0965 §3.7.
     #[error("capability_id does not match content-addressed derivation")]
     CapabilityIdMismatch,
+
+    /// Review §20.6.1 line 1328 — `WrappedOnly` chain has no
+    /// `Caveat::Vault` in any ancestor (or the macaroon itself). Per
+    /// §20.6.1: "If the parent has NO `Caveat::Vault` ... the wrapped
+    /// capability is treated as chainless — verifier rejects any
+    /// `WrappedOnly` descendant that targets a chain (no parent chain
+    /// to inherit). This is the safe default; chains must be explicit."
+    #[error("WrappedOnly chain has no Caveat::Vault ancestor (chainless — safe default rejects)")]
+    WrappedChainHasNoVault,
 }
 
 /// Maximum depth of a `WrappedOnly` chain (RFC-0965 §3.7 — "Maximum

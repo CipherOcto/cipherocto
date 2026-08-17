@@ -33,6 +33,7 @@ use async_trait::async_trait;
 use octo_ident::CanonicalCodec;
 use octo_ident::DidCodec;
 use octo_protocol::dispatch::ReferenceDispatcher;
+use octo_protocol::envelope::VERSION_TAG_V2;
 use octo_protocol::payload_kind::PayloadKindId;
 use octo_protocol::recipient::RecipientRef;
 use octo_protocol::NodeEnvelope;
@@ -239,6 +240,7 @@ impl CapabilityIssuerNode {
             vec![],
             [0u8; 32],
             0,
+            VERSION_TAG_V2,
         )
         .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
         let bytes = borsh::to_vec(&envelope)
@@ -360,6 +362,7 @@ mod tests {
             vec![],
             [0u8; 32],
             0,
+            VERSION_TAG_V2,
         )
         .unwrap();
         let err = node.handle_envelope(&envelope).unwrap_err();
@@ -387,6 +390,7 @@ mod tests {
             vec![],
             [0u8; 32],
             0,
+            VERSION_TAG_V2,
         )
         .unwrap();
         let out = node.handle_envelope(&envelope).unwrap();
@@ -417,6 +421,7 @@ mod tests {
             vec![],
             [0u8; 32],
             0,
+            VERSION_TAG_V2,
         )
         .unwrap();
         let out = node.handle_envelope(&envelope).unwrap();
@@ -450,6 +455,7 @@ mod tests {
             vec![],
             [0u8; 32],
             0,
+            VERSION_TAG_V2,
         )
         .unwrap();
         let out = node.handle_envelope(&envelope).unwrap();

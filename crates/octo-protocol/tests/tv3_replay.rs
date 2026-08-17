@@ -4,7 +4,7 @@ use ed25519_dalek::Signer;
 use ed25519_dalek::SigningKey;
 use octo_protocol::authorization::{Authorization, Ed25519SignatureBytes};
 use octo_protocol::dispatch::{test_dispatcher, EnvelopeDispatcher};
-use octo_protocol::envelope::NodeEnvelope;
+use octo_protocol::envelope::{NodeEnvelope, VERSION_TAG_V2};
 use octo_protocol::error::ProtocolError;
 use octo_protocol::payload_kind::IDENTITY_RESOLVE;
 use octo_protocol::recipient::RecipientRef;
@@ -28,6 +28,7 @@ fn tv3_rejects_replayed_envelope() {
         vec![],
         [0xee; 32],
         1_735_689_600_000,
+        VERSION_TAG_V2,
     )
     .unwrap();
     let preimage = signature_preimage(&env.envelope_id, env.from_did.as_str(), &payload);

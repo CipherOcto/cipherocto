@@ -134,6 +134,7 @@ pub fn build_node_envelope(
         vec![], // authorization filled in below
         nonce,
         now_unix_ms.saturating_add(ttl_secs.saturating_mul(1000)),
+        octo_protocol::envelope::VERSION_TAG_V2,
     )?;
 
     // Compute signature preimage + sign.

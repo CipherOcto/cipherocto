@@ -13,7 +13,7 @@
 use ed25519_dalek::Signer;
 use ed25519_dalek::SigningKey;
 use octo_protocol::authorization::{Authorization, Ed25519SignatureBytes};
-use octo_protocol::envelope::NodeEnvelope;
+use octo_protocol::envelope::{NodeEnvelope, VERSION_TAG_V2};
 use octo_protocol::payload_kind::WALLET_SIGN_ED25519;
 use octo_protocol::recipient::RecipientRef;
 use octo_protocol::signing::signature_preimage;
@@ -36,6 +36,7 @@ fn tv6_inmemory_and_mock_ledger_produce_identical_signatures() {
         vec![],
         [0x55; 32],
         1_735_689_600_000,
+        VERSION_TAG_V2,
     )
     .unwrap();
     let preimage_a = signature_preimage(&env_a.envelope_id, env_a.from_did.as_str(), &payload);
@@ -54,6 +55,7 @@ fn tv6_inmemory_and_mock_ledger_produce_identical_signatures() {
         vec![],
         [0x55; 32],
         1_735_689_600_000,
+        VERSION_TAG_V2,
     )
     .unwrap();
     let preimage_b = signature_preimage(&env_b.envelope_id, env_b.from_did.as_str(), &payload);

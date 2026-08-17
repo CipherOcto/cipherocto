@@ -65,6 +65,9 @@ pub mod wire;
 pub mod bundle_v2;
 pub mod catalog;
 
+pub mod vault_lookup;
+pub mod vault_verify_error;
+
 // Re-exports for ergonomic single-import paths.
 pub use bundle_v2::{
     BundleV2Error, CapabilityBundleV2, CapabilityBundleV2Envelope, CapabilityTokenV2,
@@ -89,6 +92,8 @@ pub use macaroon::{
 };
 pub use signer::{CapabilitySigner, CapabilitySignerError};
 pub use token::{CapabilityToken, DischargeMacaroon, MintError};
+pub use vault_lookup::{VaultLookup, VaultLookupExt, VaultRowSnapshot};
+pub use vault_verify_error::VaultVerifyError;
 pub use wire::{
     compute_cap_root_hash_from_wire, deserialize_wire, deserialize_wire_v2, serialize_wire,
     serialize_wire_v2, WireError, WireV2,

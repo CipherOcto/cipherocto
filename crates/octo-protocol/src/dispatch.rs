@@ -400,6 +400,7 @@ mod tests {
             vec![],
             nonce,
             expires_at_unix_ms,
+            crate::envelope::VERSION_TAG_V2,
         )
         .unwrap();
         let preimage = signature_preimage(&env.envelope_id, env.from_did.as_str(), &payload);

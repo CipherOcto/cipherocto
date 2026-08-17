@@ -79,6 +79,7 @@ mod tests {
             vec![],
             [0xff; 32],
             1_735_689_600_000,
+            crate::envelope::VERSION_TAG_V2,
         )
         .unwrap();
         let env_b = NodeEnvelope::build(
@@ -89,6 +90,7 @@ mod tests {
             vec![],
             [0xff; 32],
             1_735_689_600_000,
+            crate::envelope::VERSION_TAG_V2,
         )
         .unwrap();
         assert_eq!(env_a.envelope_id, env_b.envelope_id);
@@ -105,6 +107,7 @@ mod tests {
             vec![],
             [0; 32],
             1_735_689_600_000,
+            crate::envelope::VERSION_TAG_V2,
         )
         .unwrap();
         let env_b = NodeEnvelope::build(
@@ -115,6 +118,7 @@ mod tests {
             vec![],
             [0; 32],
             1_735_689_600_000,
+            crate::envelope::VERSION_TAG_V2,
         )
         .unwrap();
         assert_ne!(env_a.envelope_id, env_b.envelope_id);

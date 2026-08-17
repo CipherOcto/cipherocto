@@ -15,7 +15,7 @@ use ed25519_dalek::Signer;
 use ed25519_dalek::SigningKey;
 use octo_protocol::authorization::{Authorization, Ed25519SignatureBytes};
 use octo_protocol::dispatch::{test_dispatcher, EnvelopeDispatcher, HandlerOutput};
-use octo_protocol::envelope::NodeEnvelope;
+use octo_protocol::envelope::{NodeEnvelope, VERSION_TAG_V2};
 use octo_protocol::payload_kind::WALLET_RESOLVE_DID;
 use octo_protocol::recipient::RecipientRef;
 use octo_protocol::signing::signature_preimage;
@@ -49,6 +49,7 @@ fn tv7_cross_domain_envelope_echoes_payload() {
         vec![],
         [0x99; 32],
         1_735_689_600_000,
+        VERSION_TAG_V2,
     )
     .unwrap();
     let preimage = signature_preimage(&env.envelope_id, env.from_did.as_str(), &payload);

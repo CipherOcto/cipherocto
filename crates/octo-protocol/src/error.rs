@@ -72,6 +72,14 @@ pub enum ProtocolError {
     /// Borsh (de)serialization error.
     #[error("serialization error: {0}")]
     SerializationError(String),
+
+    /// Wire version discriminator was not `VERSION_TAG_V1` or `VERSION_TAG_V2`
+    /// at `NodeEnvelope::build` time, OR a received envelope's `version_tag`
+    /// is not `VERSION_TAG_V2` at `NodeEnvelope::verify_version` time.
+    /// Per RFC-0871 §14.1: V1 receipts are hard-rejected post-cutover; the
+    /// inner `u8` is the observed value for operator diagnostics.
+    #[error("unsupported envelope wire version: 0x{0:02x}")]
+    UnsupportedVersion(u8),
 }
 
 impl From<DidError> for ProtocolError {

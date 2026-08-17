@@ -7,7 +7,7 @@
 use ed25519_dalek::Signer;
 use ed25519_dalek::SigningKey;
 use octo_protocol::authorization::{Authorization, Ed25519SignatureBytes};
-use octo_protocol::envelope::NodeEnvelope;
+use octo_protocol::envelope::{NodeEnvelope, VERSION_TAG_V2};
 use octo_protocol::payload_kind::IDENTITY_RESOLVE;
 use octo_protocol::recipient::RecipientRef;
 use octo_protocol::signing::{compute_envelope_id, signature_preimage};
@@ -43,6 +43,7 @@ fn tv1_envelope_id_is_byte_exact() {
         vec![], // authorization filled in below
         TV1_NONCE,
         TV1_EXPIRES_AT_UNIX_MS,
+        VERSION_TAG_V2,
     )
     .expect("TV1 envelope build");
     let expected_id = compute_envelope_id(&env);
@@ -74,6 +75,7 @@ fn tv1_signature_is_byte_exact() {
         vec![],
         TV1_NONCE,
         TV1_EXPIRES_AT_UNIX_MS,
+        VERSION_TAG_V2,
     )
     .expect("TV1 envelope build");
     // RFC-0871 §Algorithms step 3: preimage = blake3::derive_key(
@@ -116,6 +118,7 @@ fn tv1_full_envelope_serializes_byte_exact() {
         vec![],
         TV1_NONCE,
         TV1_EXPIRES_AT_UNIX_MS,
+        VERSION_TAG_V2,
     )
     .expect("TV1 envelope build");
     let preimage = signature_preimage(&env.envelope_id, env.from_did.as_str(), &payload);

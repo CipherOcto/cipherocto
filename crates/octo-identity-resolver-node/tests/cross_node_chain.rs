@@ -539,6 +539,7 @@ async fn three_node_chain_accumulates_signature_chain_across_hops() {
         envelope_id: [0x42u8; 32],
     };
     let chain_resp_b_payload = borsh::to_vec(&chain_resp_b).unwrap();
+    use octo_protocol::envelope::VERSION_TAG_V2;
     let chain_resp_b_envelope = octo_protocol::NodeEnvelope::build(
         octo_ident::WireDid::new(canonical_did(20)),
         octo_protocol::recipient::RecipientRef::Broadcast,
@@ -547,6 +548,7 @@ async fn three_node_chain_accumulates_signature_chain_across_hops() {
         vec![],
         [0x42u8; 32],
         u64::MAX,
+        VERSION_TAG_V2,
     )
     .unwrap();
     let canned_reply = borsh::to_vec(&chain_resp_b_envelope).unwrap();
@@ -603,6 +605,7 @@ async fn remote_backend_rejects_from_did_mismatch_in_reply() {
         envelope_id: [0x42u8; 32],
     };
     let chain_resp_b_payload = borsh::to_vec(&chain_resp_b).unwrap();
+    use octo_protocol::envelope::VERSION_TAG_V2;
     let chain_resp_b_envelope = octo_protocol::NodeEnvelope::build(
         octo_ident::WireDid::new(canonical_did(99)),
         octo_protocol::recipient::RecipientRef::Broadcast,
@@ -611,6 +614,7 @@ async fn remote_backend_rejects_from_did_mismatch_in_reply() {
         vec![],
         [0x42u8; 32],
         u64::MAX,
+        VERSION_TAG_V2,
     )
     .unwrap();
     let canned_reply = borsh::to_vec(&chain_resp_b_envelope).unwrap();
@@ -652,6 +656,7 @@ async fn remote_backend_asserts_domain_recipient_in_outbound_envelope() {
         envelope_id: [0x42u8; 32],
     };
     let chain_resp_b_payload = borsh::to_vec(&chain_resp_b).unwrap();
+    use octo_protocol::envelope::VERSION_TAG_V2;
     let chain_resp_b_envelope = octo_protocol::NodeEnvelope::build(
         octo_ident::WireDid::new(canonical_did(20)),
         octo_protocol::recipient::RecipientRef::Broadcast,
@@ -660,6 +665,7 @@ async fn remote_backend_asserts_domain_recipient_in_outbound_envelope() {
         vec![],
         [0x42u8; 32],
         u64::MAX,
+        VERSION_TAG_V2,
     )
     .unwrap();
     let canned_reply = borsh::to_vec(&chain_resp_b_envelope).unwrap();
@@ -731,6 +737,7 @@ async fn remote_backend_rejects_oversize_signature_chain_in_reply() {
         envelope_id: [0x42u8; 32],
     };
     let chain_resp_b_payload = borsh::to_vec(&chain_resp_b).unwrap();
+    use octo_protocol::envelope::VERSION_TAG_V2;
     let chain_resp_b_envelope = octo_protocol::NodeEnvelope::build(
         octo_ident::WireDid::new(canonical_did(20)),
         octo_protocol::recipient::RecipientRef::Broadcast,
@@ -739,6 +746,7 @@ async fn remote_backend_rejects_oversize_signature_chain_in_reply() {
         vec![],
         [0x42u8; 32],
         u64::MAX,
+        VERSION_TAG_V2,
     )
     .unwrap();
     let canned_reply = borsh::to_vec(&chain_resp_b_envelope).unwrap();
@@ -774,6 +782,7 @@ async fn remote_backend_rejects_borsh_decode_failure_of_reply() {
     // valid `ResolveResponse` (we use 4 arbitrary bytes that fail
     // borsh decoding of the expected struct).
     let garbage_payload = vec![0xDEu8, 0xAD, 0xBE, 0xEF];
+    use octo_protocol::envelope::VERSION_TAG_V2;
     let reply_envelope = octo_protocol::NodeEnvelope::build(
         octo_ident::WireDid::new(canonical_did(20)),
         octo_protocol::recipient::RecipientRef::Broadcast,
@@ -782,6 +791,7 @@ async fn remote_backend_rejects_borsh_decode_failure_of_reply() {
         vec![],
         [0x42u8; 32],
         u64::MAX,
+        VERSION_TAG_V2,
     )
     .unwrap();
     let canned_reply = borsh::to_vec(&reply_envelope).unwrap();
@@ -816,6 +826,7 @@ async fn remote_backend_rejects_borsh_decode_failure_of_reply() {
 async fn remote_backend_rejects_unrecognized_reply_payload_kind() {
     // Build a reply whose payload_kind is `IDENTITY_REGISTER` (not
     // IDENTITY_RESOLVE / IDENTITY_RESOLVE_CHAIN_RESPONSE).
+    use octo_protocol::envelope::VERSION_TAG_V2;
     let reply_envelope = octo_protocol::NodeEnvelope::build(
         octo_ident::WireDid::new(canonical_did(20)),
         octo_protocol::recipient::RecipientRef::Broadcast,
@@ -824,6 +835,7 @@ async fn remote_backend_rejects_unrecognized_reply_payload_kind() {
         vec![],
         [0x42u8; 32],
         u64::MAX,
+        VERSION_TAG_V2,
     )
     .unwrap();
     let canned_reply = borsh::to_vec(&reply_envelope).unwrap();
@@ -867,6 +879,7 @@ async fn remote_backend_handles_bare_resolve_response_payload_kind() {
         public_key: [0xCCu8; 32],
     };
     let resp_bytes = borsh::to_vec(&resolve_resp).unwrap();
+    use octo_protocol::envelope::VERSION_TAG_V2;
     let reply_envelope = octo_protocol::NodeEnvelope::build(
         octo_ident::WireDid::new(canonical_did(20)),
         octo_protocol::recipient::RecipientRef::Broadcast,
@@ -875,6 +888,7 @@ async fn remote_backend_handles_bare_resolve_response_payload_kind() {
         vec![],
         [0x42u8; 32],
         u64::MAX,
+        VERSION_TAG_V2,
     )
     .unwrap();
     let canned_reply = borsh::to_vec(&reply_envelope).unwrap();

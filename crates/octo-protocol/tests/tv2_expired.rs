@@ -4,7 +4,7 @@ use octo_protocol::authorization::{Authorization, Ed25519SignatureBytes};
 use octo_protocol::dispatch::{
     DispatcherConfig, EnvelopeDispatcher, ReferenceDispatcher, ValidationCache,
 };
-use octo_protocol::envelope::NodeEnvelope;
+use octo_protocol::envelope::{NodeEnvelope, VERSION_TAG_V2};
 use octo_protocol::error::ProtocolError;
 use octo_protocol::payload_kind::IDENTITY_RESOLVE;
 use octo_protocol::recipient::RecipientRef;
@@ -34,6 +34,7 @@ fn tv2_rejects_expired_envelope() {
         vec![],
         [0xff; 32],
         1_000_000,
+        VERSION_TAG_V2,
     )
     .unwrap();
     let preimage = signature_preimage(&env.envelope_id, env.from_did.as_str(), &payload);

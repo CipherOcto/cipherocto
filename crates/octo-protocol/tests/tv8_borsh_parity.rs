@@ -12,7 +12,7 @@
 use ed25519_dalek::Signer;
 use ed25519_dalek::SigningKey;
 use octo_protocol::authorization::{Authorization, Ed25519SignatureBytes};
-use octo_protocol::envelope::NodeEnvelope;
+use octo_protocol::envelope::{NodeEnvelope, VERSION_TAG_V2};
 use octo_protocol::payload_kind::{PayloadKindId, IDENTITY_RESOLVE};
 use octo_protocol::recipient::RecipientRef;
 use octo_protocol::signing::signature_preimage;
@@ -38,6 +38,7 @@ fn build_signed_envelope(seed_byte: u8, nonce: [u8; 32]) -> NodeEnvelope {
         vec![],
         nonce,
         1_735_689_600_000 + (seed_byte as u64) * 1000,
+        VERSION_TAG_V2,
     )
     .unwrap();
     let preimage = signature_preimage(&env.envelope_id, env.from_did.as_str(), &payload);
@@ -87,6 +88,7 @@ fn tv8_envelope_id_byte_exact() {
         vec![], // no authorization at build time
         nonce,
         1_735_689_600_000,
+        VERSION_TAG_V2,
     )
     .unwrap();
     // Re-derive via the canonical helper.

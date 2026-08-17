@@ -30,9 +30,9 @@ Substrate half (OctoVaultLookup glue crate) deferred to **S5.1**.
 
 - `crates/octo-cap-macaroon/src/vault_lookup.rs` (new, 156 lines) —
   `pub struct VaultRowSnapshot { chain_id: [u8; 32], is_active: bool }`
-  + `pub trait VaultLookup: Send + Sync` + `VaultLookupExt::require_vault`.
+  - `pub trait VaultLookup: Send + Sync` + `VaultLookupExt::require_vault`.
 - **Layer model**: primitive `bool` for `is_active` (NOT `octo_vault::
-  VaultState` enum). Avoids Layer B → Layer B reverse dep — matches
+VaultState` enum). Avoids Layer B → Layer B reverse dep — matches
   the existing `CapabilityCatalog` pattern.
 - 4 unit tests for `InMemoryLookup` hit/miss/require_vault.
 
@@ -67,7 +67,7 @@ Substrate half (OctoVaultLookup glue crate) deferred to **S5.1**.
   know the target chain). The split is correct: `verify_full` enforces
   the structural invariant (chain must contain Vault); `verify_for_vault_op`
   enforces the full operational invariant (vault exists + chain matches
-  + state=Active).
+  - state=Active).
 
 ### TV-C1 fixtures — 4 byte-exact vectors + tests
 
@@ -113,11 +113,13 @@ Substrate half (OctoVaultLookup glue crate) deferred to **S5.1**.
 ## Files changed (this session)
 
 NEW:
+
 - `crates/octo-cap-macaroon/src/vault_lookup.rs`
 - `crates/octo-cap-macaroon/src/vault_verify_error.rs`
 - `crates/octo-cap-macaroon/tests/tv_c1_verify_time.rs`
 
 MODIFIED:
+
 - `crates/octo-cap-macaroon/src/lib.rs` (re-exports)
 - `crates/octo-cap-macaroon/src/macaroon.rs` (verify_for_vault_op +
   WrappedChainHasNoVault variant + MacaroonError derives)
@@ -172,6 +174,7 @@ LANDED state. Mission file:
 `missions/open/0870-c1-version-tag-amendment.md`.
 
 S6a deliverables (per mission YAML AC #1–#5):
+
 - RFC-0870 §Version History **v2.1 row** added (`rfcs/accepted/networking/0870-distributed-quota-router-network.md`)
 - RFC-0870 §**NodeEnvelope Version Tag** subsection added under §Specification
 - TV-0870-01 fixture (`crates/octo-protocol/tests/tv_0870_version_tag.rs`)

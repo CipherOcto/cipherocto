@@ -14,9 +14,11 @@
 //!    `Err(UnsupportedVersion(v))` for V1 and any other value (RFC-0870
 //!    §14.1: V1 hard-rejected at verify post-cutover).
 //! 5. V1 and V2 receipts of identical (other) inputs produce DISTINCT
-//!    `envelope_id` values (the `envelope_id` derivation includes
-//!    `version_tag` — replay defense across the V1→V2 cutover per
-//!    RFC-0870 §14.1).
+//!    `envelope_id` values — the `envelope_id` derivation includes
+//!    `version_tag`. (NB: since V1 receipts are hard-rejected at
+//!    `verify_version`, this is the version_tag-participates-in-hash
+//!    invariant, not a literal V1-replay-defense assertion. Future TV
+//!    can pin replay detection directly.)
 //!
 //! Pattern mirrors `crates/octo-protocol/tests/tv8_borsh_parity.rs` — byte-
 //! exact canonical_ser + BLAKE3-256 envelope_id pinning.
@@ -135,13 +137,69 @@ fn tv_0870_01_verify_version_gate() {
 
 #[test]
 fn tv_0870_01_v1_and_v2_envelope_ids_differ() {
-    // RFC-0870 §14.1: `envelope_id` derivation includes `version_tag`, so V1
-    // and V2 receipts of the same logical payload produce distinct IDs.
-    // This is the replay-defense invariant across the V1→V2 cutover.
+    // `envelope_id` derivation includes `version_tag`, so V1 and V2
+    // receipts of the same logical payload produce distinct IDs. Since
+    // V1 receipts are hard-rejected at `verify_version`, this pins the
+    // version_tag-participates-in-hash invariant rather than a literal
+    // V1-replay-defense assertion.
     let v1 = build_with_version_tag(VERSION_TAG_V1);
     let v2 = build_with_version_tag(VERSION_TAG_V2);
     assert_ne!(
         v1.envelope_id, v2.envelope_id,
-        "TV-0870: V1 and V2 receipts MUST have distinct envelope_id (replay defense)"
+        "TV-0870: V1 and V2 receipts MUST have distinct envelope_id (version_tag is hashed)"
+    );
+}
+
+#[test]
+fn tv_0870_01_byte_position_pin() {
+    // Pins the wire-form byte position of `version_tag` per RFC-0870 §NodeEnvelope
+    // Version Tag: after the 32-byte `envelope_id`, before `from_did`. Borsh
+    // serializes struct fields in declaration order; this test fails fast if
+    // the field order ever drifts and silently changes the wire form.
+    let env = build_with_version_tag(VERSION_TAG_V2);
+    let bytes = borsh::to_vec(&env).expect("borsh serialize");
+    // 32 bytes for envelope_id, then version_tag.
+    assert_eq!(
+        bytes[32], 0xA1,
+        "TV-0870 byte position: version_tag MUST sit at offset 32 (immediately after envelope_id)"
+    );
+    let env_v1 = build_with_version_tag(VERSION_TAG_V1);
+    let bytes_v1 = borsh::to_vec(&env_v1).expect("borsh serialize v1");
+    assert_eq!(
+        bytes_v1[32], 0xA0,
+        "TV-0870 byte position: V1 version_tag byte MUST be 0xA0 at offset 32"
+    );
+}
+
+#[test]
+fn tv_0870_01_runtime_gate_rejects_bypassed_unknown_tag() {
+    // Regression pin for HIGH-3: even if a future refactor removes the
+    // build-time guard and relies on a post-construction `validate_*`
+    // step, the runtime gate MUST still reject `version_tag = 0xFF` when
+    // the envelope is constructed via struct literal (bypassing
+    // `NodeEnvelope::build`). This test fails fast if the runtime gate
+    // ever drifts.
+    let env_v2 = build_with_version_tag(VERSION_TAG_V2);
+    let bypassed_v1 = NodeEnvelope {
+        version_tag: VERSION_TAG_V1,
+        ..env_v2.clone()
+    };
+    assert!(
+        matches!(
+            bypassed_v1.verify_version(),
+            Err(ProtocolError::UnsupportedVersion(VERSION_TAG_V1))
+        ),
+        "runtime gate MUST reject V1 even when struct-literal-bypassed"
+    );
+    let bypassed_bad = NodeEnvelope {
+        version_tag: 0xFF,
+        ..env_v2
+    };
+    assert!(
+        matches!(
+            bypassed_bad.verify_version(),
+            Err(ProtocolError::UnsupportedVersion(0xFF))
+        ),
+        "runtime gate MUST reject unknown tag even when struct-literal-bypassed"
     );
 }

@@ -80,6 +80,18 @@ documents the `version_tag` field requirement with explicit constants.
    already covers the version_tag implementation; back-link added
    from this mission's `## Cross-reference` section.
 
+## Cross-reference
+
+- **Pre-req:** `memory/mission-0957-g-verify-time-invariant-status.md`
+  (S5 LANDED 2026-08-17, commit `d007de54`) — back-link to this S6a
+  mission added in S6a commit `c7f99a47` (post-implementation).
+- **Status card:** `memory/mission-0870-c1-version-tag-amendment-status.md`
+  (this session's LANDED receipt).
+- **Plan:** `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md`
+  §3 row 6 (Stream A.1 S6a continuation).
+- **Review source:** `docs/reviews/2026-08-15-storage-layer-restructuring-analysis.md`
+  §14.1 (NodeEnvelope.version_tag spec origin).
+
 ## Out of scope (deferred beyond S6a)
 
 - S6b RFC-0957 amendment (20 TV) — next sub-session
@@ -136,6 +148,16 @@ No new cyclic edges. No new crate deps.
   this amendment is the FIRST place V2 is documented. Future
   consumer migrations (RFC-0870 S7 territory) MUST rebuild against
   the V2 wire form.
+- **MED-1 from Round-1 review (accept-at-build / reject-at-verify split)**:
+  `NodeEnvelope::build(..., VERSION_TAG_V1)` is accepted by the
+  constructor (rejection is at `verify_version`). Intentional design —
+  `build` rejects ONLY unknown tags; verify-time gates V1. Rationale:
+  (a) preserves the ability to round-trip historical V1 fixtures in
+  tests, (b) `verify_version` is the canonical operational gate, (c)
+  dual-message is more permissive at construction + stricter at verify
+  than the inverse (reject-at-build would silently drop V1 fixtures
+  before they could be inspected by a future replay/recovery tool).
+  Documented in TV-0870-01 test #2 (`v1_build_accepts_legacy_path`).
 
 ## Version history
 

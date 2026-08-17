@@ -75,7 +75,10 @@ impl NodeEnvelope {
     /// accepted; any other value returns `ProtocolError::UnsupportedVersion`.
     /// (Build-time validation catches typos loud; verify-time
     /// `verify_version` is the runtime gate for incoming receipts.)
-    #[allow(clippy::too_many_arguments)] // RFC-0871 §14.1 mandates wire-form parameter ordering; version_tag field added in S5 (RFC-0870 §14.1)
+    #[allow(clippy::too_many_arguments)]
+    // Parameter ordering is pinned by RFC-0871 §14.1 (wire-form canonical
+    // signature). The `version_tag` argument was added per RFC-0870 §14.1
+    // (S5, commit d007de54).
     pub fn build(
         from_did: WireDid,
         to_node_id: RecipientRef,

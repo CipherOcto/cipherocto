@@ -41,7 +41,20 @@ jobs:
       - name: Build and install
         run: |
           source .venv/bin/activate
-          maturin develop --manifest-path crates/quota-router-pyo3/Cargo.toml
+          # Maturin invokes `cargo build` under the hood and respects
+          # `[tool.maturin].features` in `python/pyproject.toml`. We pin
+          # `--no-default-features -F pyo3-extension-module` here too so
+          # the build is robust to future Cargo.toml default-feature
+          # changes: default = ["full"] enables `quota-router-core/full`
+          # (correct) BUT does NOT include `pyo3/extension-module`, so
+          # maturin checks manylinux and fails with "Your library links
+          # libpython". `--no-default-features -F pyo3-extension-module
+          # -F full` gives maturin both: full core features AND the
+          # pyo3 cdylib-stripping flag.
+          maturin develop --manifest-path crates/quota-router-pyo3/Cargo.toml \
+            --no-default-features \
+            -F pyo3-extension-module \
+            -F full
 
       # Install the user-facing Python package `quota_router` (in
       # python/). The native extension is installed as
@@ -98,7 +111,10 @@ jobs:
         run: |
           source .venv/bin/activate
           pip install maturin
-          maturin develop --manifest-path crates/quota-router-pyo3/Cargo.toml
+          maturin develop --manifest-path crates/quota-router-pyo3/Cargo.toml \
+            --no-default-features \
+            -F pyo3-extension-module \
+            -F full
           # Install the user-facing Python package `quota_router`
           # so mypy can resolve `from quota_router_native import ...`
           # inside `python/quota_router/`.
@@ -138,7 +154,10 @@ jobs:
         run: pip install --upgrade pip && pip install maturin
 
       - name: Build wheel
-        run: maturin build --manifest-path crates/quota-router-pyo3/Cargo.toml
+        run: maturin build --manifest-path crates/quota-router-pyo3/Cargo.toml \
+          --no-default-features \
+          -F pyo3-extension-module \
+          -F full
         env:
           MATURIN_PYTHON_TAGS: true
 

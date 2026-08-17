@@ -37,12 +37,24 @@ crate-type = ["cdylib", "rlib"]
 name = "quota_router_native"
 
 [features]
+# There are three feature constellations:
+# - default = ["full"]: `cargo test --lib --features full` (or unset) runs
+#   the rlib test path and links libpython. The lib's pyfunction call
+#   sites work because `auto-initialize` is on.
+# - `pyo3-extension-module`: produced as the additive feature passed by
+#   maturin (via `python/pyproject.toml [tool.maturin].features = ["pyo3-extension-module"]`
+#   AND explicitly via `-F pyo3-extension-module` in the CI workflow).
+#   Activating this enables `pyo3/extension-module` which strips the
+#   libpython link from the cdylib so maturin doesn't fail the
+#   manylinux check with "Your library links libpython".
+# - maturin's full wheel build uses
+#   `--no-default-features -F pyo3-extension-module -F full` — see
+#   `.github/workflows/quota-router-python.yml` — so the wheel gets
+#   both `quota-router-core/full` (litellm + any-llm backends) AND
+#   the extension-module flag. That's the only combo where cdylib
+#   builds without libpython.
 default = ["full"]
 full = ["quota-router-core/full"]
-# `pyo3-extension-module` is enabled by maturin (see python/pyproject.toml
-# [tool.maturin] features). It is intentionally OFF in the default build so
-# that `cargo test` can link against libpython via the rlib path. Production
-# wheels built by maturin get the feature automatically.
 pyo3-extension-module = ["pyo3/extension-module"]
 
 [dependencies]

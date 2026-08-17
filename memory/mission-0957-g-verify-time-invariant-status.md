@@ -187,3 +187,44 @@ S6a deliverables (per mission YAML AC #1–#5):
   (`bytes[32] == 0xA1` for V2, `0xA0` for V1), and
   runtime_gate_rejects_bypassed_unknown_tag (rejects even when
   struct-literal-bypassed).
+
+## S6b follow-on (RFC-0957 amendment + 20 TV)
+
+Follow-on mission `0957-c1-verify-time-amendment` (S6b of the
+storage restructure plan) back-fills the RFC-0957 amendment text +
+adds the TV-0957 20-fixture suite. Pre-req satisfied by this S5
+LANDED state. Mission file:
+`missions/open/0957-c1-verify-time-amendment.md`.
+
+S6b deliverables (per mission YAML AC #1–#5):
+
+- RFC-0957 §Version History **v2.1 row** added (`rfcs/accepted/economics/0957-capability-token-format.md`)
+- RFC-0957 §**Verify-Time Extension** subsection added under §Algorithms
+  (5-step algorithm verbatim per §20.6.1, `VaultLookup` trait
+  injection, `WrappedOnly` chain walk invariant)
+- RFC-0957 §**Caveat DSL Extension** subsection added under §Data
+  Structures (9 new `Caveat` variants per RFC-0965 §3 + `PermissionKind`
+  enum + `FactoryVet` struct, all field names matched to the real
+  `crates/octo-cap-macaroon/src/caveat/mod.rs` source after the
+  Round 1 drift catch — `Permission(PermissionKind)` not
+  `Permission { kind, scope }`; `ValidRange { valid_after_unix,
+valid_until_unix }` not `ValidRange { axis, lower, upper }`; etc.)
+- TV-0957 fixture (`crates/octo-cap-macaroon/tests/tv_0957_verify_time.rs`)
+  — **20/20 tests passing** (4 categories × 5 tests):
+  - **TV-0957-01..05** — 5 Caveat DSL variant wire-form pins (Vault,
+    Permission, ValidRange, MaxPerTx, AuditWindow)
+  - **TV-0957-06..10** — 5 Caveat DSL variant wire-form pins (MaxUses,
+    WrappedOnly, Factory, PolicyReference, Raw unknown-name rejection
+    at attenuation per `macaroon.rs:242-243`)
+  - **TV-0957-11..15** — 5 verify-time path pins (happy path
+    signature-verify + all steps transitively, lookup step missing,
+    chain match step, state-active step, WrappedOnly chain walk step)
+  - **TV-0957-16..20** — 5 regression tests (frozen vault, chain
+    mismatch, missing root secret → `Macaroon(RootSecretMismatch)`,
+    `WrappedChainHasNoVault`, attenuation-monotonicity with new
+    variants)
+
+Status: **LANDED 2026-08-17** (this session). Pre-req verified: S5
+LANDED, S6a LANDED. Drift catch: RFC amendment text initially
+drafted Rust pseudocode with WRONG field names; corrected against
+real `caveat/mod.rs` source before TV fixtures written.

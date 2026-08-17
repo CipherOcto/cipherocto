@@ -247,6 +247,109 @@ pub fn canonical_ser(caveat: &Caveat) -> Vec<u8> {
 }
 ```
 
+### Caveat DSL Extension (v2.1 amendment, 2026-08-17)
+
+Per RFC-0965 §3 (Capability Extension Format), the v1 `Caveat` enum above is extended with 9 typed-discriminator variants. These are ADDITIVE — existing variants remain unchanged; new variants register via the `octo-cap-macaroon` extension crate per the v2.0 §Per-Extension Crate Layout amendment. No central enum edits.
+
+```rust
+// Implemented in `crates/octo-cap-macaroon/src/caveat/mod.rs`.
+// Type-level discriminator (RFC-0957 §Architectural Principles —
+// "Extension over enumeration").
+
+/// v2.1 Caveat DSL additions (RFC-0965 §3):
+pub enum Caveat {
+    // ... v1 variants above unchanged ...
+
+    // --- v2.1 additions (RFC-0965 §3) ---
+
+    /// Vault binding: token valid only against this vault row.
+    /// Verify-time check via `VaultLookup` trait (RFC-0957 §20.6.1).
+    #[serde(rename = "vault")]
+    Vault([u8; 32]),                                 // vault_id
+
+    /// Permission kind enum binding (RFC-0965 §3.2).
+    #[serde(rename = "permission")]
+    Permission(PermissionKind),
+
+    /// Valid time range (RFC-0965 §3.3; supersedes single `Before` for ranges).
+    #[serde(rename = "valid_range")]
+    ValidRange { valid_after_unix: u64, valid_until_unix: u64 },
+
+    /// Per-transaction cap (RFC-0965 §3.4; distinct from `AmountMax`).
+    #[serde(rename = "max_per_tx")]
+    MaxPerTx(u128),
+
+    /// Audit window duration (RFC-0965 §3.5; 0 = instant).
+    #[serde(rename = "audit_window")]
+    AuditWindow { duration_secs: u64 },
+
+    /// Max number of uses (RFC-0965 §3.6; 0 = unlimited).
+    #[serde(rename = "max_uses")]
+    MaxUses { count: u32 },
+
+    /// WrappedOnly caveat (RFC-0965 §3.7): token only usable through a
+    /// parent capability. Chain depth bounded to 16 per RFC-0965 §3.7 R7-F1.
+    /// Verify-time check (RFC-0957 §20.6.1 line 1328): parent chain MUST
+    /// contain a `Vault` binding or `WrappedChainHasNoVault` is returned.
+    #[serde(rename = "wrapped_only")]
+    WrappedOnly { parent_capability: [u8; 32] },
+
+    /// Factory vet (RFC-0965 §3.8): pre-validated invocation. NOT raw
+    /// bytes (phishing vector) — typed `ActionTemplate` only.
+    #[serde(rename = "factory")]
+    Factory(FactoryVet),
+
+    /// Policy reference (RFC-0965 §3.9 + RFC-0967). Carries the
+    /// policy_id hash + policy_version_seq + attenuation_witness
+    /// binding the attenuation per RFC-0967 §8.2.
+    #[serde(rename = "policy_reference")]
+    PolicyReference {
+        policy_id: [u8; 32],
+        policy_version_seq: u64,
+        attenuation_witness: [u8; 64],
+    },
+}
+
+/// Permission kind enum (RFC-0965 §3.2).
+///
+/// Adding new kinds is a backwards-compatible variant add per RFC-0960 §R1-F6.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionKind {
+    NativeTokenTransfer,
+    Erc20TokenTransfer,
+    ContractCall,
+    Reservation,
+    VaultMutation,
+}
+
+/// Factory vet (RFC-0965 §3.8).
+///
+/// Canonicalised by RFC-0126. NOT opaque bytes — the verifier runs the
+/// same constraint pipeline against the deployed target before redeeming.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct FactoryVet {
+    pub target_vault_id: [u8; 32],
+    pub action_template: ActionTemplate,
+    pub required_caller: Option<String>,
+    pub pre_conditions: Vec<Constraint>,
+    pub expiry_for_deploy_unix: u64,
+}
+
+/// Canonical action template (RFC-0965 §3.8).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ActionTemplate {
+    pub selector: String,
+    pub args: Vec<String>,
+}
+```
+
+**Attenuation invariant preservation:** The 9 new variants participate in the v1 HMAC chain construction (`canonical_ser(caveat)` → BLAKE3 keyed hash) identically to v1 variants. Monotonic restriction rules for the new variants are defined per RFC-0965 §3 (e.g., `MaxPerTx(new) ⊆ MaxPerTx(old)` iff `new ≤ old`; `ValidRange` axes shrink monotonically).
+
+**Wire-form pinning:** Each new variant MUST have at least one byte-exact TV fixture in `crates/octo-cap-macaroon/tests/tv_0957_verify_time.rs` (TV-0957-01..09 cover the 9 variants; TV-0957-10 covers the `Raw` unknown-name rejection path; TV-0957-11..15 pin the verify-time steps; TV-0957-16..20 are regression tests).
+
+**Cross-reference:** RFC-0965 §3 (variant field types + attenuation rules); RFC-0965 §3.5 (`PermissionKind` enum); RFC-0965 §3 (FactoryVet struct); `crates/octo-cap-macaroon/src/caveat/mod.rs` (implementation).
+
 ### Algorithms
 
 #### Macaroon v1 chain construction
@@ -364,6 +467,75 @@ fn verify_discharge(discharge: &DischargeMacaroon, channel_id: &ChannelId, ctx: 
     Ok(())
 }
 ```
+
+#### Verify-Time Extension (v2.1 amendment, 2026-08-17)
+
+Per RFC-0957 §20.6.1 (5-step algorithm), `Macaroon::verify_for_vault_op` extends the structural `verify` path above with substrate lookups and chain walks that require runtime context not available to the HMAC chain re-derivation alone.
+
+```rust
+/// Vault-aware verify path. Distinct from `verify` (which is structural
+/// only — no substrate adapter required). Implemented in
+/// `crates/octo-cap-macaroon/src/macaroon.rs::verify_for_vault_op`.
+///
+/// 5-step algorithm per RFC-0957 §20.6.1:
+///   step 1: signature verify via `verify` (above) — HMAC chain
+///           re-derivation + caveat predicate evaluation
+///   step 2: vault_row = lookup.lookup_vault(vault_id)?   — UNIQUE INDEX
+///           lookup against vaults_vault_id_idx (~1-3ms SSD)
+///   step 3: assert vault_row.chain_id == op_chain_id     — chain match
+///   step 4: assert vault_row.is_active == true           — state check
+///   step 5: WrappedOnly chain walk — at least one ancestor caveat MUST
+///           be Caveat::Vault(vault_id); chainless parent yields
+///           VaultVerifyError::WrappedChainHasNoVault
+fn verify_for_vault_op(
+    &self,
+    root_secret: &[u8; 32],
+    catalog: &dyn CapabilityCatalog,
+    parent_discharge: Option<&DischargeMacaroon>,
+    op_chain_id: &[u8; 32],
+    lookup: &dyn VaultLookup,
+) -> Result<(), VaultVerifyError> {
+    // step 1: structural verify
+    let mut ctx = VerifyContext::default();
+    ctx.root_secret_lookup = Box::new(|h: &[u8; 32]| if h == &self.root_secret_hash { Some(*root_secret) } else { None });
+    self.verify(&ctx)?;
+
+    // step 5 (run first because it's structural): WrappedOnly chain walk
+    if self.caveats.iter().any(|c| matches!(c, Caveat::WrappedOnly)) {
+        let has_vault_ancestor = self.caveats.iter().any(|c| matches!(c, Caveat::Vault(_)));
+        if !has_vault_ancestor {
+            return Err(VaultVerifyError::WrappedChainHasNoVault);
+        }
+    }
+
+    // find the Vault caveat (one per token by convention)
+    let vault_id = self.caveats.iter().find_map(|c| match c {
+        Caveat::Vault(vid) => Some(*vid),
+        _ => None,
+    }).ok_or(VaultVerifyError::VaultCaveatMissing)?;
+
+    // step 2: substrate lookup
+    let vault_row = lookup.require_vault(&vault_id)?;
+
+    // step 3: chain match
+    if vault_row.chain_id != *op_chain_id {
+        return Err(VaultVerifyError::ChainMismatch { expected: *op_chain_id, observed: vault_row.chain_id });
+    }
+
+    // step 4: state check
+    if !vault_row.is_active {
+        return Err(VaultVerifyError::VaultNotActive { vault_id });
+    }
+
+    Ok(())
+}
+```
+
+**`VaultLookup` trait injection:** `verify_for_vault_op` REQUIRES a `VaultLookup` adapter at config time. Production consumers wire `OctoVaultLookup` (S5.1 glue crate at `crates/octo-cap-macaroon-vault/` — pattern matches `TransportDeliveryCatalog`). The trait uses primitive types (`chain_id: [u8; 32]`, `is_active: bool`) — no `octo_vault::VaultState` enum import — to maintain Layer B → Layer A isolation per the §Architectural Principles.
+
+**WrappedOnly invariant:** `Macaroon::verify` (structural) ALSO enforces `WrappedOnly` parent-no-Vault-binding reject when traversing the chain (not just `verify_for_vault_op`). This is the structural gate; the operational gate in `verify_for_vault_op` adds the substrate lookup on top. Both reject chainless parents to ensure the invariant holds across verify paths.
+
+**Cross-reference:** RFC-0965 §3 (9 new Caveat variants including Vault + WrappedOnly); RFC-0870 §14.1 (wire-form `version_tag` byte participates in `envelope_id` derivation — replay-defense across the V1→V2 cutover); RFC-0957 §20.6.1 (algorithm source).
 
 #### Attenuation Invariant
 
@@ -947,6 +1119,7 @@ BLAKE3 chosen over SHA-256 for HMAC because:
 | 0.2        | 2026-07-20                                                                                                                                                                                                                                                                                                                                                                                          | Draft (acceptance-prep)        | @mmacedoeu                                                              | Pre-acceptance additions (BLUEPRINT v1.3 template completeness): added §Authors, §Maintainers (relocated from §Status note to dedicated H2 per template); added §Economic Analysis (5-row cost table for mint/verify/attenuate/discharge-mint/discharge-verify; 5-row wire bytes table; 3-row storage footprint; economic incentive alignment section).                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | 2026-07-20 | **Promoted to Accepted.** 7-day review (initiated 2026-07-19 alongside session-01/02/03/04/05 work) + 2 maintainer approvals (@mmacedoeu + @cipherocto) completed; no blocking objections. Status header updated; file moved via `git mv` from `rfcs/draft/{category}/` to `rfcs/accepted/{category}/`. Pre-acceptance completeness fixes applied (see prior version rows 0.2-0.5/1.1/1.2.0/1.2.1). |
 | 2.0 | 2026-08-08 | **Accepted (amendment) — Per-extension crate layout.** Surfaced by 2026-08-08 specialized node protocol research (`docs/research/2026-08-08-specialized-node-protocol-research.md`) + RFC-0871. Added §Per-Extension Crate Layout subsection mandating that capability types land in separate crates (`crates/octo-cap-{macaroon,zk,federation,time-lock,threshold-mpc}/` etc.), each registering a `CapabilitySpec` impl via plugin. Wallet core (`octo-wallet`) becomes thin substrate: identity, HSM, capability types registry, no business logic. Today's monolithic `crates/octo-wallet/src/capability/macaroon.rs` (1905 lines) + `caveat.rs` (1382 lines) + `zk_mint.rs` (781 lines) is the reference impl; future capability types do NOT extend these files. Implementation missions: `missions/open/0957-ext-macaroon-crate.md`, `missions/open/0957-ext-zk-crate.md`, plus future per-extension crates. Additive (no wire-format change to RFC-0957 macaroon); capability attenuation invariant (RFC-0957 §3.5) preserved across the crate boundary. Cross-references: RFC-0965 §Per-Extension Crate Layout; RFC-0871 §Wallet Node Lifecycle; Layer 4 stability layering in research report. |
+| 2.1 | 2026-08-17 | **Accepted (amendment) — Verify-time invariant + Caveat DSL extension.** Added §Verify-Time Extension subsection documenting `Macaroon::verify_for_vault_op` (5-step algorithm per §20.6.1: signature verify → vault row lookup → chain match → state=Active → WrappedOnly chain walk) + `VaultLookup` trait injection (Layer B extension consumer) + `WrappedOnly` parent-no-Vault-binding reject. Added §Caveat DSL Extension subsection enumerating the 9 new Caveat variants per RFC-0965 §3 (Vault, Permission, ValidRange, MaxPerTx, AuditWindow, MaxUses, WrappedOnly, Factory, PolicyReference) + `PermissionKind` enum (5 variants) + `FactoryVet` struct — all implemented in `crates/octo-cap-macaroon/src/caveat/` per the v2.0 Per-Extension Crate Layout. Implementation mission: `missions/open/0957-c1-verify-time-amendment.md`; pre-req is mission `0957-g-verify-time-invariant` (LANDED 2026-08-17, commit `d007de54`). S5.1 substrate adapter `OctoVaultLookup` deferred to `0957-g1-octo-vault-lookup-glue` (Layer B glue crate pattern matches `TransportDeliveryCatalog`). Wire-form pins: 20 byte-exact TV fixtures in `crates/octo-cap-macaroon/tests/tv_0957_verify_time.rs` (5 Caveat DSL variant pins + 5 Caveat DSL variant pins + 5 verify-time step pins + 5 regression tests). Attenuation monotonicity invariant preserved (new variants are typed-discriminator additions, no central enum edits). **Risk acceptance:** landed outside §22 atomic-blocker bundle per user-chosen split-by-RFC decision (2026-08-17); see `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md` §3 row 6. |
 
 ---
 

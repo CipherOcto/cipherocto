@@ -30,7 +30,11 @@ impl TaskMarketSlashing {
         }
     }
 
-    pub fn register(&mut self, provider_id: impl Into<String>, initial_stake_micro_octo_w: u128) {
+    pub fn register(
+        &mut self,
+        provider_id: impl Into<String>,
+        initial_stake_micro_octo_w: octo_determin::Dqa,
+    ) {
         self.ledger
             .register(provider_id, initial_stake_micro_octo_w);
     }
@@ -46,7 +50,7 @@ impl TaskMarketSlashing {
 
     /// Current remaining stake for `provider_id`, or `None` if unregistered.
     #[must_use]
-    pub fn ledger_stake(&self, provider_id: &str) -> Option<u128> {
+    pub fn ledger_stake(&self, provider_id: &str) -> Option<octo_determin::Dqa> {
         self.ledger.stake(provider_id).map(|s| s.stake_micro_octo_w)
     }
 

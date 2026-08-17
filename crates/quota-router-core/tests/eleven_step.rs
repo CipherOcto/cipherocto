@@ -264,7 +264,7 @@ fn run_settlement(
         ask_id,
         nonce,
         timestamp_unix,
-        cost: 30_000_u128,
+        cost: octo_determin::Dqa::new(30_000, 0).expect("non-overflow"),
     };
     let computed = envelope.compute_settlement_hash();
 
@@ -321,7 +321,7 @@ fn eleven_step_exercise_green() {
             model: ModelRef::from("openai/gpt-4"),
             rates: vec![quota_router_storage::ask::AxisRate {
                 axis: "input_tokens_per_1k".to_owned(),
-                rate_per_1k: 30_000,
+                rate_per_1k: octo_determin::Dqa::new(30_000, 0).expect("non-overflow"),
             }],
         },
         nonce: [0x42; 16],
@@ -446,7 +446,7 @@ fn sample_envelope(ask_id: [u8; 32], nonce: [u8; 32]) -> SettlementEnvelope {
         ask_id,
         nonce,
         timestamp_unix: 1_700_000_000,
-        cost: 30_000_u128,
+        cost: octo_determin::Dqa::new(30_000, 0).expect("non-overflow"),
     };
     let hash = envelope.compute_settlement_hash();
     SettlementEnvelope {
@@ -516,7 +516,7 @@ fn eleven_step_replay_defense_full_path() {
             model: ModelRef::from("openai/gpt-4"),
             rates: vec![quota_router_storage::ask::AxisRate {
                 axis: "input_tokens_per_1k".to_owned(),
-                rate_per_1k: 30_000,
+                rate_per_1k: octo_determin::Dqa::new(30_000, 0).expect("non-overflow"),
             }],
         },
         nonce: [0x42; 16],
@@ -572,7 +572,7 @@ fn eleven_step_replay_defense_full_path() {
         ask_id,
         nonce,
         timestamp_unix: receipt.timestamp_unix,
-        cost: 30_000_u128,
+        cost: octo_determin::Dqa::new(30_000, 0).expect("non-overflow"),
     };
     let computed = envelope.compute_settlement_hash();
     // NOTE: sm-engine settlement_hash uses blake3(canonical_ser(ask || receipt))
@@ -682,7 +682,7 @@ fn cross_impl_tv1_settlement_hash_matches() {
         ask_id: ask_id_arr,
         nonce,
         timestamp_unix: 1_700_000_000,
-        cost: 30_000_u128,
+        cost: octo_determin::Dqa::new(30_000, 0).expect("non-overflow"),
     };
     let h1 = tv_settlement_hash_impl1(&env);
     let h2 = tv_settlement_hash_impl2(
@@ -722,7 +722,7 @@ fn cross_impl_tv2_settlement_hash_matches() {
         ask_id: ask_id_arr,
         nonce,
         timestamp_unix: 1_800_000_000,
-        cost: 75_000_u128,
+        cost: octo_determin::Dqa::new(75_000, 0).expect("non-overflow"),
     };
     let h1 = tv_settlement_hash_impl1(&env);
     let h2 = tv_settlement_hash_impl2(
@@ -762,7 +762,7 @@ fn step10_settlement_hash_cross_impl_byte_equivalent() {
         ask_id: [0xAA; 32],
         nonce: [0x55; 32],
         timestamp_unix: 1_700_000_000,
-        cost: 30_000_u128,
+        cost: octo_determin::Dqa::new(30_000, 0).expect("non-overflow"),
     };
     let h1 = tv_settlement_hash_impl1(&canonical_env);
     let h2 = tv_settlement_hash_impl2(
@@ -790,7 +790,7 @@ fn step10_settlement_hash_cross_impl_byte_equivalent() {
             model: ModelRef::from(MODEL),
             rates: vec![quota_router_storage::ask::AxisRate {
                 axis: "input_tokens_per_1k".to_owned(),
-                rate_per_1k: 30_000,
+                rate_per_1k: octo_determin::Dqa::new(30_000, 0).expect("non-overflow"),
             }],
         },
         nonce: [0x42; 16],
@@ -823,7 +823,7 @@ fn step10_settlement_hash_cross_impl_byte_equivalent() {
         ask_id,
         nonce: [0x55; 32],
         timestamp_unix: 1_700_000_000,
-        cost: 30_000_u128,
+        cost: octo_determin::Dqa::new(30_000, 0).expect("non-overflow"),
     };
     let golden_hash = tv_settlement_hash_impl1(&golden_env);
     assert_eq!(

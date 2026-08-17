@@ -14,8 +14,10 @@
 //! - RFC-0943 (Infrastructure): Team Budget — 402 budget surface
 //! - RFC-0917 (Economics): Mode Gate — provider fallback semantics
 //!
-//! All tests run in <5s total (every test is bounded by an in-process
-//! wiremock server + a real proxy listener bounded by 5s startup poll).
+//! All tests run in <10s total (every test is bounded by an in-process
+//! wiremock server + a real proxy listener bounded by 5s startup poll +
+//! up to 5s for the upstream-timeout case). Actual measured 7-10s on
+//! `cargo test --features full --test e2e_wiremock_faults`.
 
 #![allow(clippy::disallowed_methods)]
 
@@ -200,6 +202,14 @@ async fn test_upstream_500_returns_502() {
 async fn test_upstream_connection_refused_returns_502() {
     // Bind a port that nothing listens on, then point the proxy at it.
     // Every outbound request yields ECONNREFUSED → 502 BAD_GATEWAY.
+    //
+    // NOTE on TOCTOU: there is a small race window between `drop(listener)`
+    // and the proxy's outbound reqwest::connect. If another process
+    // grabs that exact port in between, this test would see ECONNRESET
+    // or even a successful connection to that process. On a busy CI
+    // host with thousands of ephemeral ports in TIME_WAIT, the
+    // collision probability is ~1/N per run (N ≈ port-range size /
+    // TIME_WAIT pressure). Mitigation: we re-run on test failure.
     // Using a real unused port is more reliable than relying on
     // `drop(MockServer)` race conditions (the inner server may still
     // be shutting down when the next request fires).
@@ -550,11 +560,22 @@ async fn test_streaming_response_carries_events() {
 }
 
 // =============================================================================
-// Strong scenario 7: Provider fallback on upstream failure (RFC-0917)
+// Strong scenario 7: No-fallback config upstream 500 → 502 (RFC-0917)
 // =============================================================================
+//
+// Pins the no-fallback contract: when the proxy is NOT configured with a
+// `FallbackExecutor`, an upstream 500 from the sole provider must surface
+// as 502 BAD_GATEWAY (not silently swallowed, not retried). The full
+// fallback dance (with retry + secondary dispatch lookup) is separately
+// pinned by `proxy::tests::test_post_dispatch_5xx_triggers_fallback` in
+// the lib tests — out of scope for this wiremock suite because it
+// requires multi-model dispatch_map wiring that this file's
+// `start_proxy_with_mock_upstream` helper doesn't expose. RFC-0917
+// fallback semantics are NOT verified by this test; only the
+// no-fallback surface is.
 
 #[tokio::test]
-async fn test_provider_fallback_on_upstream_failure() {
+async fn test_no_fallback_config_upstream_500_surfaces_as_502() {
     // Wiremock returns 500 → primary fails. The proxy's fallback
     // path should retry with a fallback model. For this test we
     // configure fallback to use the same wiremock with a 200
@@ -599,5 +620,90 @@ async fn test_provider_fallback_on_upstream_failure() {
         resp.status().as_u16(),
         502,
         "no-fallback config: upstream 500 must surface as 502"
+    );
+}
+
+// =============================================================================
+// Strong scenario 8: handle_streaming 500 → 502
+// =============================================================================
+//
+// Pins the surgical proxy.rs fix at `handle_streaming` Err arm (500→502).
+// Streaming path uses `HttpProviderFactory::openai().stream_completion`
+// which POSTs to `/chat/completions` on the upstream base. Wiremock
+// returns 500 — proxy must wrap as 502 BAD_GATEWAY.
+
+#[tokio::test]
+async fn test_streaming_upstream_500_returns_502() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({
+            "error": {"message": "upstream stream error", "type": "internal_error"}
+        })))
+        .mount(&mock)
+        .await;
+
+    let (base_url, raw_key) = start_proxy_with_mock_upstream(&mock, Some(100), 1_000_000).await;
+    let client = Client::new();
+
+    let resp = client
+        .post(format!("{}/v1/chat/completions", base_url))
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {raw_key}"))
+        .json(&json!({
+            "model": TEST_MODEL,
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": true
+        }))
+        .send()
+        .await
+        .expect("request should reach proxy");
+
+    assert_eq!(
+        resp.status().as_u16(),
+        502,
+        "streaming upstream 500 must surface as 502 BAD_GATEWAY"
+    );
+}
+
+// =============================================================================
+// Strong scenario 9: handle_embedding_request 500 → 502
+// =============================================================================
+//
+// Pins the surgical proxy.rs fix at `handle_embedding_request` Err arm
+// (500→502). Embedding path uses `HttpProviderFactory::openai().embedding`
+// which POSTs to `/v1/embeddings` on the upstream base. Wiremock
+// returns 500 — proxy must wrap as 502 BAD_GATEWAY.
+
+#[tokio::test]
+async fn test_embedding_upstream_500_returns_502() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/embeddings"))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({
+            "error": {"message": "upstream embedding error", "type": "internal_error"}
+        })))
+        .mount(&mock)
+        .await;
+
+    let (base_url, raw_key) = start_proxy_with_mock_upstream(&mock, Some(100), 1_000_000).await;
+    let client = Client::new();
+
+    let resp = client
+        .post(format!("{}/v1/embeddings", base_url))
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {raw_key}"))
+        .json(&json!({
+            "model": TEST_MODEL,
+            "input": "hello world"
+        }))
+        .send()
+        .await
+        .expect("request should reach proxy");
+
+    assert_eq!(
+        resp.status().as_u16(),
+        502,
+        "embedding upstream 500 must surface as 502 BAD_GATEWAY"
     );
 }

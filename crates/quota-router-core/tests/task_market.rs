@@ -440,35 +440,35 @@ use quota_router_core::task_market::TaskMarketSlashing;
 #[test]
 fn task_market_slashing_register_then_slash_deducts_stake() {
     let mut slashing = TaskMarketSlashing::new();
-    slashing.register(sample_did(251), 1_000_000);
+    slashing.register(sample_did(251), dqa(1_000_000));
     let out = slashing
         .slash(&sample_did(251), SlashReason::TIMEOUT, 1.0)
         .expect("slash");
-    assert_eq!(out.amount_micro_octo_w, 100_000);
-    assert_eq!(out.new_stake_micro_octo_w, 900_000);
+    assert_eq!(out.amount_micro_octo_w, dqa(100_000));
+    assert_eq!(out.new_stake_micro_octo_w, dqa(900_000));
     assert!(!out.banned);
 }
 
 #[test]
 fn task_market_slashing_repeated_offenses_escalate() {
     let mut slashing = TaskMarketSlashing::new();
-    slashing.register(sample_did(63), 1_000_000);
+    slashing.register(sample_did(63), dqa(1_000_000));
     let o1 = slashing
         .slash(&sample_did(63), SlashReason::PROVIDER_ERROR, 1.0)
         .expect("slash 1");
-    assert_eq!(o1.amount_micro_octo_w, 100_000);
+    assert_eq!(o1.amount_micro_octo_w, dqa(100_000));
     let o2 = slashing
         .slash(&sample_did(63), SlashReason::PROVIDER_ERROR, 1.0)
         .expect("slash 2");
     // 0.10 * 1.5 = 0.15 → 0.15 * 900_000 = 135_000
-    assert_eq!(o2.amount_micro_octo_w, 135_000);
+    assert_eq!(o2.amount_micro_octo_w, dqa(135_000));
     assert!(!o2.banned);
 }
 
 #[test]
 fn task_market_slashing_eventually_bans_provider() {
     let mut slashing = TaskMarketSlashing::new();
-    slashing.register(sample_did(86), 1_000_000);
+    slashing.register(sample_did(86), dqa(1_000_000));
     // 4 consecutive offenses at default rules → banned.
     for _ in 0..4 {
         let _ = slashing
@@ -493,7 +493,7 @@ fn task_market_slashing_below_tolerance_does_not_slash() {
             miss_rate_tolerance: 0.05,
             ..quota_router_core::marketplace::slashing::SlashingRules::default()
         });
-    slashing.register(sample_did(130), 1_000_000);
+    slashing.register(sample_did(130), dqa(1_000_000));
     let err = slashing
         .slash(&sample_did(130), SlashReason::TIMEOUT, 0.01)
         .unwrap_err();
@@ -527,6 +527,11 @@ fn task_market_slashing_unknown_provider_errors() {
 
 use quota_router_core::task_market::DisputeRegistry;
 
+/// Test helper: integer-literal Dqa constructor (scale=0).
+fn dqa(n: i64) -> octo_determin::Dqa {
+    octo_determin::Dqa::new(n, 0).expect("non-overflow")
+}
+
 /// Simulated inference execution. Returns the result hash and a
 /// `success` flag so the calling test can drive the happy / failure
 /// branch deterministically.
@@ -546,7 +551,7 @@ fn full_rfc_0918_inference_flow_happy_path() {
     let market = TaskMarket::new();
     let mut slashing = TaskMarketSlashing::new();
     let disputes = DisputeRegistry::new();
-    slashing.register(sample_did(99), 1_000_000);
+    slashing.register(sample_did(99), dqa(1_000_000));
 
     // 2. Buyer places a buy order (max 120 micro-OCTO-W).
     let buyer_spec = TaskSpec::new(TaskType::Inference, "openai/gpt-4", 120, 0, 1);
@@ -597,7 +602,7 @@ fn full_rfc_0918_inference_flow_happy_path() {
     // 8. No dispute opened; provider stake untouched.
     assert!(disputes.is_empty());
     let stake = slashing.ledger_stake(&sample_did(99)).unwrap();
-    assert_eq!(stake, 1_000_000);
+    assert_eq!(stake, dqa(1_000_000));
 }
 
 #[test]
@@ -605,7 +610,7 @@ fn full_rfc_0918_inference_flow_dispute_then_slash() {
     let market = TaskMarket::new();
     let mut slashing = TaskMarketSlashing::new();
     let mut disputes = DisputeRegistry::new();
-    slashing.register(sample_did(37), 1_000_000);
+    slashing.register(sample_did(37), dqa(1_000_000));
 
     // Place + match.
     let buyer_spec = TaskSpec::new(TaskType::Inference, "openai/gpt-4", 200, 0, 1);
@@ -659,8 +664,8 @@ fn full_rfc_0918_inference_flow_dispute_then_slash() {
     let out = slashing
         .slash(&sample_did(37), SlashReason::PROVIDER_ERROR, 1.0)
         .expect("slash");
-    assert_eq!(out.amount_micro_octo_w, 100_000);
-    assert_eq!(out.new_stake_micro_octo_w, 900_000);
+    assert_eq!(out.amount_micro_octo_w, dqa(100_000));
+    assert_eq!(out.new_stake_micro_octo_w, dqa(900_000));
     assert!(!out.banned);
 
     // Close the dispute (admin path).

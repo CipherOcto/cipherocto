@@ -65,7 +65,11 @@ fn build_ask(spec: &AskSpec) -> Result<Ask, AskError> {
         .iter()
         .map(|(axis, rate)| AxisRate {
             axis: axis.clone(),
-            rate_per_1k: *rate,
+            rate_per_1k: octo_determin::Dqa::new(
+                i64::try_from(*rate).expect("rate fits in i64"),
+                0,
+            )
+            .expect("non-overflow"),
         })
         .collect();
     Ask::new(
@@ -89,7 +93,11 @@ fn load_canonical() -> (Vec<PricingAxis>, Vec<Ask>) {
         .map(|a| PricingAxis {
             id: a.id,
             name: a.name,
-            default_rate_per_1k: a.default_rate_per_1k,
+            default_rate_per_1k: octo_determin::Dqa::new(
+                i64::try_from(a.default_rate_per_1k).expect("rate fits in i64"),
+                0,
+            )
+            .expect("non-overflow"),
         })
         .collect();
     let asks: Vec<Ask> = fixture.asks.iter().map(build_ask).collect::<Result<_, _>>().expect(

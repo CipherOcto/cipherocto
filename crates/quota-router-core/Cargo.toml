@@ -81,7 +81,7 @@ octo-ident = { path = "../octo-ident" }
 # router outbound to wrap existing 0xC3–0xCB discriminator payloads in
 # the unified `NodeEnvelope` envelope per RFC-0870 §NodeEnvelope Adoption.
 octo-protocol = { path = "../octo-protocol" }
-octo-determin = { path = "../../determin" }
+octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
 quota-router-storage = { path = "../quota-router-storage" }
 quota-router-sm-engine = { path = "../quota-router-sm-engine" }
 
@@ -224,10 +224,12 @@ zk-vendor = { path = "../zk-vendor" }
 tokio = { version = "1.35", features = ["full"] }
 
 # Mission proxy-strong-scenarios-phase2: programmatic HTTP mock server
-# for fault-injection tests (502 upstream timeout, 502 upstream 500,
-# 502 connection refused, 402 budget, 503 dispatch_map empty, 504
-# streaming cutoff, provider fallback). Dev-only — never reaches the
-# production dep graph. wiremock::MockServer is the same shape used
-# by upstream integration suites; provides delay + status + streaming
-# primitives that the existing `mock_http` test helper doesn't expose.
+# for fault-injection tests (502 upstream 500, 502 connection refused,
+# 502 upstream timeout, 402 budget zero, 503 dispatch_map missing-model,
+# 503 dispatch_map truly-empty, streaming-shape roundtrip, provider
+# no-fallback, plus the two pinning tests for `handle_streaming` and
+# `handle_embedding_request` 500→502 surface fixes). Dev-only — never
+# reaches the production dep graph. wiremock::MockServer gives us delay
+# + status primitives; the existing `mock_http` helper only supports
+# static JSON/static echo, not configurable status codes or delays.
 wiremock = "0.6"

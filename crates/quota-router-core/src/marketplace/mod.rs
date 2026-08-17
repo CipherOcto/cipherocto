@@ -229,7 +229,10 @@ where
                     asker_did: ask.asker_did.clone(),
                     model: ask.model.to_wire(),
                 },
-                cost,
+                {
+                    debug_assert_eq!(cost.scale, 0, "MicroOCTO_W is integer-valued (scale=0)");
+                    cost.value as u128
+                },
                 1, // qty 1 per Ask; matches write-through
                 ask.asker_did.clone(),
                 now,
@@ -376,7 +379,10 @@ where
                     asker_did: ask.asker_did.clone(),
                     model: ask.model.to_wire(),
                 },
-                cost,
+                {
+                    debug_assert_eq!(cost.scale, 0, "MicroOCTO_W is integer-valued (scale=0)");
+                    cost.value as u128
+                },
                 1, // qty 1 per Ask; RFC-0900 markets trade 1 prompt per Ask
                 ask.asker_did.clone(),
                 now,
@@ -783,7 +789,11 @@ mod tests {
                 model: ModelRef::from(model),
                 rates: vec![AxisRate {
                     axis: "input_tokens_per_1k".to_owned(),
-                    rate_per_1k: rate,
+                    rate_per_1k: octo_determin::Dqa::new(
+                        i64::try_from(rate).expect("sample rate fits in i64"),
+                        0,
+                    )
+                    .expect("non-overflow"),
                 }],
             },
             nonce: [0x42; 16],

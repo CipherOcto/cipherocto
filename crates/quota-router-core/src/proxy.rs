@@ -1715,6 +1715,15 @@ where
             .and_then(|v| v.get("model")?.as_str().map(String::from));
 
         // Map model to provider: rerank* → cohere, jina* → jina
+        //
+        // Note: /v1/rerank intentionally diverges from the chat-completions
+        // and /v1/embeddings 503 guard pattern. The `or_else` below falls
+        // back to ANY cohere/jina provider entry when no model-specific
+        // dispatch match is found, so the rerank surface always has a
+        // base_url. The asymmetry is documented but not enforced as a
+        // 503 — a future refactor could move rerank onto the same
+        // missing-model guard (TODO: filed with mission
+        // proxy-strong-scenarios-phase2).
         let dispatch = request_model.as_ref().and_then(|model| {
             dispatch_map.values().find(|d| {
                 d.model == *model
@@ -1947,28 +1956,41 @@ where
         })
     });
 
-    // Dispatch_map empty / no entry for the requested model — return 503
-    // SERVICE_UNAVAILABLE rather than silently forwarding to the
+    // Dispatch_map non-empty but no entry for the requested model — return
+    // 503 SERVICE_UNAVAILABLE rather than silently forwarding to the
     // provider's default API base. Per RFC-0933 §Provider Pool + mission
-    // proxy-strong-scenarios-phase2. Note: we only guard when the
-    // client sent a recognized model field; pure path-level passthrough
-    // requests (which never reach this code path) and auth-failed
-    // requests (which short-circuit before here) are unaffected.
-    if dispatch.is_none() {
+    // proxy-strong-scenarios-phase2.
+    //
+    //    Guard fires when:
+    //      (a) dispatch_map is non-empty but no entry matches the requested model
+    //
+    //    NOT fired when:
+    //      (b) dispatch_map is empty — the request would have failed at the
+    //          provider layer anyway (no api_base configured); we let the
+    //          existing fall-through path surface the same outcome via the
+    //          provider-default fallback.
+    //
+    //    We only guard when the client sent a recognized model field; pure
+    //    path-level passthrough requests (which never reach this code path)
+    //    and auth-failed requests (which short-circuit before here via the
+    //    GatewayAuthenticator check) are unaffected.
+    //
+    //    Precedence: balance check (402) runs before this guard in
+    //    `handle_request_litellm`, so zero-balance still returns 402 even
+    //    when the model is also missing from dispatch_map. Fallback
+    //    executor runs AFTER this guard (later in the same function), so
+    //    a missing primary model prevents fallback attempts — fallback
+    //    itself only triggers on upstream 5xx, not on misconfigured pools.
+    if dispatch.is_none() && !dispatch_map.is_empty() {
         if let Some(ref model) = request_model {
-            // dispatch_map must be non-empty AND not match. Per the
-            // spec, "no entry for the requested model" is a service
-            // configuration failure, not a client error.
-            if !dispatch_map.is_empty() {
-                let resp = Response::builder()
-                    .status(StatusCode::SERVICE_UNAVAILABLE)
-                    .body(SseBody::from_error(format!(
-                        "No dispatch entry for model '{}' — provider pool does not serve this model",
-                        model
-                    )))
-                    .unwrap();
-                return Ok(resp);
-            }
+            let resp = Response::builder()
+                .status(StatusCode::SERVICE_UNAVAILABLE)
+                .body(SseBody::from_error(format!(
+                    "No dispatch entry for model '{}' — provider pool does not serve this model",
+                    model
+                )))
+                .unwrap();
+            return Ok(resp);
         }
     }
 
@@ -2983,9 +3005,16 @@ async fn handle_streaming(
             // Streaming upstream error — wrap as 502 BAD_GATEWAY so
             // callers can distinguish proxy-internal (500) from upstream
             // (502). Per RFC-0933 §Failure Surface + mission
-            // proxy-strong-scenarios-phase2. NOTE: GATEWAY_TIMEOUT (504)
-            // is reserved for timeouts specifically — the wiremock
-            // fault-injection suite covers 504 in its own test.
+            // proxy-strong-scenarios-phase2.
+            //
+            // Note: streaming and non-streaming share the same upstream
+            // error path (both → 502 BAD_GATEWAY). True 504 GATEWAY_TIMEOUT
+            // would require a proxy-internal streaming buffer overflow
+            // or a per-stream timeout — neither is fault-injectable via
+            // wiremock (no "close after N bytes" primitive). See
+            // `test_streaming_response_carries_events` in
+            // `crates/quota-router-core/tests/e2e_wiremock_faults.rs`
+            // for the streaming shape contract.
             let resp = Response::builder()
                 .status(StatusCode::BAD_GATEWAY)
                 .body(SseBody::from_error(format!("Streaming error: {}", e)))
@@ -8359,6 +8388,27 @@ mod tests {
     async fn test_embeddings_unknown_provider() {
         let balance = Arc::new(Mutex::new(Balance::new(1000)));
         let provider = Provider::new("unknown_embedding_provider", "https://api.example.com");
+        // Mission proxy-strong-scenarios-phase2 round-1 fix: dispatch_map
+        // must contain the test model so the request reaches the provider
+        // factory (which then returns the unknown-provider 500 path).
+        // Without this entry, the 503 missing-model guard short-circuits
+        // before the unknown-provider contract is exercised.
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "text-embedding-ada-002".to_string(),
+            DispatchInfo {
+                deployment_id: "text-embedding-ada-002".to_string(),
+                provider: "openai".to_string(),
+                model: "text-embedding-ada-002".to_string(),
+                api_key: None,
+                api_base: None,
+                rpm: 1000,
+                tpm: 1_000_000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
         let req = Request::builder()
             .uri("/v1/embeddings")
             .body(r#"{"model":"text-embedding-ada-002","input":"hello"}"#.to_string())
@@ -11875,7 +11925,27 @@ mod tests {
 
         let balance = Arc::new(Mutex::new(Balance::new(1000)));
         let provider = Provider::new("openai", &mock.base_url());
-        let dispatch_map = Arc::new(HashMap::new());
+        // Mission proxy-strong-scenarios-phase2 round-1 fix: dispatch_map
+        // must contain the test model or the new 503 guard short-circuits
+        // before reaching the upstream error path. This test pins the
+        // 500→502 wrap contract, not the missing-model contract.
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "text-embedding-ada-002".to_string(),
+            DispatchInfo {
+                deployment_id: "text-embedding-ada-002".to_string(),
+                provider: "openai".to_string(),
+                model: "text-embedding-ada-002".to_string(),
+                api_key: None,
+                api_base: Some(mock.base_url()),
+                rpm: 1000,
+                tpm: 1_000_000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+        let dispatch_map = Arc::new(dispatch_map);
 
         let body = r#"{"input":"hi","model":"text-embedding-ada-002"}"#;
         let req = Request::builder()

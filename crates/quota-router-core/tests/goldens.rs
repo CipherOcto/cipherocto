@@ -70,7 +70,7 @@ fn compute_goldens() -> Goldens {
             model: ModelRef::from(MODEL),
             rates: vec![quota_router_storage::ask::AxisRate {
                 axis: "input_tokens_per_1k".to_owned(),
-                rate_per_1k: 30_000,
+                rate_per_1k: octo_determin::Dqa::new(30_000, 0).expect("non-overflow"),
             }],
         },
         nonce: [0x42; 16],
@@ -102,7 +102,7 @@ fn compute_goldens() -> Goldens {
         ask_id, // reused from the step-6 calculation above
         nonce: [0x55; 32],
         timestamp_unix: 1_700_000_000,
-        cost: 30_000_u128,
+        cost: octo_determin::Dqa::new(30_000, 0).expect("non-overflow"),
     };
     let step10 = hex::encode(envelope.compute_settlement_hash());
 

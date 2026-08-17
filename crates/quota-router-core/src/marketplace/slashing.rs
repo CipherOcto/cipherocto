@@ -346,9 +346,11 @@ impl Default for SlashingRules {
 pub struct ProviderStake {
     pub provider_id: String,
     /// Current stake remaining (micro-OCTO-W).
-    pub stake_micro_octo_w: u128,
+    #[serde(with = "quota_router_storage::dqa_serde::field")]
+    pub stake_micro_octo_w: octo_determin::Dqa,
     /// Initial stake at registration (micro-OCTO-W).
-    pub initial_stake_micro_octo_w: u128,
+    #[serde(with = "quota_router_storage::dqa_serde::field")]
+    pub initial_stake_micro_octo_w: octo_determin::Dqa,
     /// Number of slashes applied so far.
     pub offense_count: u32,
     /// Cumulative fraction of initial stake lost (0.0-1.0).
@@ -369,8 +371,10 @@ impl ProviderStake {
 pub struct SlashOutcome {
     pub provider_id: String,
     pub reason: SlashReason,
-    pub amount_micro_octo_w: u128,
-    pub new_stake_micro_octo_w: u128,
+    #[serde(with = "quota_router_storage::dqa_serde::field")]
+    pub amount_micro_octo_w: octo_determin::Dqa,
+    #[serde(with = "quota_router_storage::dqa_serde::field")]
+    pub new_stake_micro_octo_w: octo_determin::Dqa,
     pub cumulative_loss_pct: f64,
     pub banned: bool,
 }
@@ -394,11 +398,14 @@ pub enum SlashError {
         tolerance_bits: u64,
     },
 
-    #[error("withdraw amount must be > 0 (got {0})")]
-    InvalidAmount(u128),
+    #[error("withdraw amount must be > 0 (got {0:?})")]
+    InvalidAmount(octo_determin::Dqa),
 
-    #[error("withdraw requested {requested} exceeds available stake {available}")]
-    InsufficientStake { available: u128, requested: u128 },
+    #[error("withdraw requested {requested:?} exceeds available stake {available:?}")]
+    InsufficientStake {
+        available: octo_determin::Dqa,
+        requested: octo_determin::Dqa,
+    },
 }
 
 /// Slashing ledger.
@@ -494,7 +501,7 @@ impl SlashingLedger {
     pub fn register(
         &mut self,
         provider_id: impl Into<String>,
-        initial_stake_micro_octo_w: u128,
+        initial_stake_micro_octo_w: octo_determin::Dqa,
     ) -> &ProviderStake {
         let provider_id = provider_id.into();
         let entry = self
@@ -548,9 +555,15 @@ impl SlashingLedger {
     /// from mission `marketplace-slashing-persistence`).
     /// # Errors
     /// See gating rules above.
-    pub fn withdraw_stake(&mut self, provider_id: &str, amount: u128) -> Result<u128, SlashError> {
-        if amount == 0 {
-            return Err(SlashError::InvalidAmount(0));
+    pub fn withdraw_stake(
+        &mut self,
+        provider_id: &str,
+        amount: octo_determin::Dqa,
+    ) -> Result<octo_determin::Dqa, SlashError> {
+        if amount.value == 0 {
+            return Err(SlashError::InvalidAmount(
+                octo_determin::Dqa::new(0, 0).expect("non-overflow"),
+            ));
         }
         let stake = self
             .stakes
@@ -562,7 +575,7 @@ impl SlashingLedger {
                 cumulative_loss_pct_bits: (stake.cumulative_loss_pct * 1_000_000.0).round() as u64,
             });
         }
-        if amount > stake.stake_micro_octo_w {
+        if octo_determin::dqa_cmp(amount, stake.stake_micro_octo_w) > 0 {
             return Err(SlashError::InsufficientStake {
                 available: stake.stake_micro_octo_w,
                 requested: amount,
@@ -574,7 +587,10 @@ impl SlashingLedger {
             .stakes
             .get_mut(provider_id)
             .expect("stake entry just observed");
-        entry.stake_micro_octo_w -= amount;
+        entry.stake_micro_octo_w = entry
+            .stake_micro_octo_w
+            .subtract(amount)
+            .expect("withdraw: stake >= amount enforced above");
         let new_stake = entry.stake_micro_octo_w;
         if let Some(store) = &self.store {
             let row = quota_router_storage::slash_store::SlashLedgerRow {
@@ -595,9 +611,15 @@ impl SlashingLedger {
     /// `withdraw_stake` would produce.
     /// # Errors
     /// See gating rules in `withdraw_stake`.
-    pub fn can_withdraw(&self, provider_id: &str, amount: u128) -> Result<(), SlashError> {
-        if amount == 0 {
-            return Err(SlashError::InvalidAmount(0));
+    pub fn can_withdraw(
+        &self,
+        provider_id: &str,
+        amount: octo_determin::Dqa,
+    ) -> Result<(), SlashError> {
+        if amount.value == 0 {
+            return Err(SlashError::InvalidAmount(
+                octo_determin::Dqa::new(0, 0).expect("non-overflow"),
+            ));
         }
         let stake = self
             .stakes
@@ -609,7 +631,7 @@ impl SlashingLedger {
                 cumulative_loss_pct_bits: (stake.cumulative_loss_pct * 1_000_000.0).round() as u64,
             });
         }
-        if amount > stake.stake_micro_octo_w {
+        if octo_determin::dqa_cmp(amount, stake.stake_micro_octo_w) > 0 {
             return Err(SlashError::InsufficientStake {
                 available: stake.stake_micro_octo_w,
                 requested: amount,
@@ -706,19 +728,32 @@ impl SlashingLedger {
         // — well within f64 exact-integer range — so the cast is
         // exact. Then `(stake * pct_micro) / 1_000_000` stays in u128.
         let pct_micro = (pct.clamp(0.0, 1.0) * 1_000_000.0).round() as u128;
-        let amount = stake
+        let pct_micro_dqa =
+            octo_determin::Dqa::new(i64::try_from(pct_micro).expect("pct_micro fits in i64"), 0)
+                .expect("non-overflow");
+        let raw_amount = stake
             .stake_micro_octo_w
-            .checked_mul(pct_micro)
-            .expect("stake * pct_micro overflows u128 — stake > u128::MAX / 1e6");
-        let amount = amount / 1_000_000;
+            .multiply(pct_micro_dqa)
+            .expect("stake * pct_micro overflows");
+        let denominator = octo_determin::Dqa::new(1_000_000, 0).expect("non-overflow");
+        let amount = raw_amount
+            .divide(denominator)
+            .expect("non-overflow: denominator is positive constant");
         // Cap deduction at remaining stake.
-        let amount = amount.min(stake.stake_micro_octo_w);
-        stake.stake_micro_octo_w -= amount;
+        let amount = if octo_determin::dqa_cmp(amount, stake.stake_micro_octo_w) > 0 {
+            stake.stake_micro_octo_w
+        } else {
+            amount
+        };
+        stake.stake_micro_octo_w = stake
+            .stake_micro_octo_w
+            .subtract(amount)
+            .expect("slash: cap enforced to remaining");
         stake.offense_count += 1;
-        let loss_delta = if stake.initial_stake_micro_octo_w == 0 {
+        let loss_delta = if stake.initial_stake_micro_octo_w.value == 0 {
             0.0
         } else {
-            amount as f64 / stake.initial_stake_micro_octo_w as f64
+            amount.value as f64 / stake.initial_stake_micro_octo_w.value as f64
         };
         stake.cumulative_loss_pct += loss_delta;
         let banned = stake.is_banned(&rules);
@@ -758,9 +793,15 @@ fn penalty_for_offense(first: f64, multiplier: f64, offense_count: u32) -> f64 {
 mod tests {
     use super::*;
 
-    fn ledger_with(stake: u128) -> SlashingLedger {
+    /// Test helper: construct a `Dqa` from an `i64` literal at scale=0
+    /// (the wire invariant for MicroOCTO_W; see module docs).
+    fn dqa(n: i64) -> octo_determin::Dqa {
+        octo_determin::Dqa::new(n, 0).expect("non-overflow")
+    }
+
+    fn ledger_with(stake: i64) -> SlashingLedger {
         let mut l = SlashingLedger::new();
-        l.register("alice", stake);
+        l.register("alice", dqa(stake));
         l
     }
 
@@ -768,8 +809,8 @@ mod tests {
     fn register_creates_provider_stake() {
         let l = ledger_with(1_000_000);
         let s = l.stake("alice").unwrap();
-        assert_eq!(s.stake_micro_octo_w, 1_000_000);
-        assert_eq!(s.initial_stake_micro_octo_w, 1_000_000);
+        assert_eq!(s.stake_micro_octo_w, dqa(1_000_000));
+        assert_eq!(s.initial_stake_micro_octo_w, dqa(1_000_000));
         assert_eq!(s.offense_count, 0);
         assert_eq!(s.cumulative_loss_pct, 0.0);
         assert!(!s.is_banned(l.rules()));
@@ -781,8 +822,8 @@ mod tests {
         // first_offense_penalty = 0.10, miss_rate = 1.0, Timeout (verifiability 1.0)
         // → amount = 1_000_000 * 0.10 * 1.0 * 1.0 = 100_000
         let out = l.slash("alice", SlashReason::TIMEOUT, 1.0).unwrap();
-        assert_eq!(out.amount_micro_octo_w, 100_000);
-        assert_eq!(out.new_stake_micro_octo_w, 900_000);
+        assert_eq!(out.amount_micro_octo_w, dqa(100_000));
+        assert_eq!(out.new_stake_micro_octo_w, dqa(900_000));
         assert_eq!(out.cumulative_loss_pct, 0.10);
         assert!(!out.banned);
     }
@@ -792,7 +833,7 @@ mod tests {
         let mut l = ledger_with(1_000_000);
         let out = l.slash("alice", SlashReason::PROVIDER_ERROR, 0.5).unwrap();
         // 0.10 * 0.5 = 0.05 → 50_000
-        assert_eq!(out.amount_micro_octo_w, 50_000);
+        assert_eq!(out.amount_micro_octo_w, dqa(50_000));
     }
 
     #[test]
@@ -802,7 +843,7 @@ mod tests {
             .slash("alice", SlashReason::GARBAGE_RESPONSE, 1.0)
             .unwrap();
         // 0.10 * 1.0 * 0.5 = 0.05 → 50_000
-        assert_eq!(out.amount_micro_octo_w, 50_000);
+        assert_eq!(out.amount_micro_octo_w, dqa(50_000));
     }
 
     #[test]
@@ -810,13 +851,13 @@ mod tests {
         let mut l = ledger_with(1_000_000);
         // 1st: 0.10 → 100_000
         let o1 = l.slash("alice", SlashReason::TIMEOUT, 1.0).unwrap();
-        assert_eq!(o1.amount_micro_octo_w, 100_000);
+        assert_eq!(o1.amount_micro_octo_w, dqa(100_000));
         // 2nd: 0.10 * 1.5 = 0.15 → 0.15 * 900_000 = 135_000
         let o2 = l.slash("alice", SlashReason::TIMEOUT, 1.0).unwrap();
-        assert_eq!(o2.amount_micro_octo_w, 135_000);
+        assert_eq!(o2.amount_micro_octo_w, dqa(135_000));
         // 3rd: 0.10 * 1.5^2 = 0.225 → 0.225 * 765_000 = 172_125
         let o3 = l.slash("alice", SlashReason::TIMEOUT, 1.0).unwrap();
-        assert_eq!(o3.amount_micro_octo_w, 172_125);
+        assert_eq!(o3.amount_micro_octo_w, dqa(172_125));
     }
 
     #[test]
@@ -866,7 +907,7 @@ mod tests {
             miss_rate_tolerance: 0.05,
             ..SlashingRules::default()
         });
-        l.register("alice", 1_000_000);
+        l.register("alice", dqa(1_000_000));
         let err = l.slash("alice", SlashReason::TIMEOUT, 0.01).unwrap_err();
         assert!(matches!(err, SlashError::BelowTolerance { .. }));
     }
@@ -878,7 +919,7 @@ mod tests {
             .slash_with_pct("alice", SlashReason::GARBAGE_RESPONSE, 0.25)
             .unwrap();
         // 0.25 of 1_000_000 = 250_000
-        assert_eq!(out.amount_micro_octo_w, 250_000);
+        assert_eq!(out.amount_micro_octo_w, dqa(250_000));
         assert_eq!(out.cumulative_loss_pct, 0.25);
     }
 
@@ -889,8 +930,8 @@ mod tests {
         let out = l
             .slash_with_pct("alice", SlashReason::TIMEOUT, 1.5)
             .unwrap();
-        assert_eq!(out.amount_micro_octo_w, 100_000);
-        assert_eq!(out.new_stake_micro_octo_w, 0);
+        assert_eq!(out.amount_micro_octo_w, dqa(100_000));
+        assert_eq!(out.new_stake_micro_octo_w, dqa(0));
     }
 
     #[test]
@@ -926,8 +967,8 @@ mod tests {
         let store = open_in_memory_store();
         let row = quota_router_storage::slash_store::SlashLedgerRow {
             provider_id: "alice".to_string(),
-            stake_micro_octo_w: 400_000,
-            initial_stake_micro_octo_w: 1_000_000,
+            stake_micro_octo_w: dqa(400_000),
+            initial_stake_micro_octo_w: dqa(1_000_000),
             offense_count: 4,
             cumulative_loss_pct_micro: 600_000, // 60% → banned
             last_updated_unix: 1_700_000_000,
@@ -936,7 +977,7 @@ mod tests {
 
         let mut ledger = SlashingLedger::open(store, SlashingRules::default()).expect("open");
         let stake = ledger.stake("alice").expect("alice in ledger");
-        assert_eq!(stake.stake_micro_octo_w, 400_000);
+        assert_eq!(stake.stake_micro_octo_w, dqa(400_000));
         assert_eq!(stake.offense_count, 4);
         assert!(stake.is_banned(ledger.rules()));
         // Subsequent slash on the banned provider must fail.
@@ -954,13 +995,13 @@ mod tests {
             SlashingRules::default(),
         )
         .expect("open");
-        ledger.register("bob", 1_000_000);
+        ledger.register("bob", dqa(1_000_000));
         // Reload via a fresh ledger against the same store.
         drop(ledger);
         let rows = store.load_all().expect("load_all");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].provider_id, "bob");
-        assert_eq!(rows[0].initial_stake_micro_octo_w, 1_000_000);
+        assert_eq!(rows[0].initial_stake_micro_octo_w, dqa(1_000_000));
     }
 
     #[test]
@@ -971,12 +1012,12 @@ mod tests {
             SlashingRules::default(),
         )
         .expect("open");
-        ledger.register("carol", 1_000_000);
+        ledger.register("carol", dqa(1_000_000));
         let out = ledger
             .slash("carol", SlashReason::TIMEOUT, 1.0)
             .expect("slash");
-        assert_eq!(out.amount_micro_octo_w, 100_000);
-        assert_eq!(out.new_stake_micro_octo_w, 900_000);
+        assert_eq!(out.amount_micro_octo_w, dqa(100_000));
+        assert_eq!(out.new_stake_micro_octo_w, dqa(900_000));
         // Reload via a fresh ledger.
         drop(ledger);
         let ledger2 = SlashingLedger::open(
@@ -985,7 +1026,7 @@ mod tests {
         )
         .expect("reopen");
         let stake = ledger2.stake("carol").expect("carol");
-        assert_eq!(stake.stake_micro_octo_w, 900_000);
+        assert_eq!(stake.stake_micro_octo_w, dqa(900_000));
         assert_eq!(stake.offense_count, 1);
         assert!((stake.cumulative_loss_pct - 0.10).abs() < 1e-3);
     }
@@ -1001,7 +1042,7 @@ mod tests {
             SlashingRules::default(),
         )
         .expect("open");
-        ledger.register("dave", 1_000_000);
+        ledger.register("dave", dqa(1_000_000));
         // First 3 offenses: 10%, 15%, 22.5% (cumulative ≈ 40.7%).
         for _ in 0..3 {
             ledger
@@ -1075,11 +1116,11 @@ mod tests {
             SlashingRules::default(),
         )
         .expect("open");
-        ledger.register("eve", 1_000_000);
+        ledger.register("eve", dqa(1_000_000));
         let out = ledger
             .slash_with_pct("eve", SlashReason::PROVIDER_ERROR, 0.05)
             .expect("slash_with_pct");
-        assert_eq!(out.amount_micro_octo_w, 50_000);
+        assert_eq!(out.amount_micro_octo_w, dqa(50_000));
         drop(ledger);
         let ledger2 = SlashingLedger::open(
             Arc::clone(&store) as Arc<dyn quota_router_storage::slash_store::SlashStore>,
@@ -1087,7 +1128,7 @@ mod tests {
         )
         .expect("reopen");
         let stake = ledger2.stake("eve").expect("eve");
-        assert_eq!(stake.stake_micro_octo_w, 950_000);
+        assert_eq!(stake.stake_micro_octo_w, dqa(950_000));
         assert_eq!(stake.offense_count, 1);
     }
 

@@ -172,7 +172,11 @@ fn make_ask(
             model: ModelRef::from(model),
             rates: vec![AxisRate {
                 axis: "input_tokens_per_1k".to_owned(),
-                rate_per_1k,
+                rate_per_1k: octo_determin::Dqa::new(
+                    i64::try_from(rate_per_1k).expect("rate fits in i64"),
+                    0,
+                )
+                .expect("non-overflow"),
             }],
         },
         nonce: [0x42; 16],

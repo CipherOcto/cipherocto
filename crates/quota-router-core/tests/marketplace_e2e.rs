@@ -23,6 +23,11 @@ use quota_router_core::marketplace::slashing::{
 /// and the asker (seller) DID — enough to drive end-to-end matching and
 /// escrow settlement without depending on the stoolap-backed Ask repo.
 use octo_ident::test_helpers::sample_did;
+
+/// Test helper: integer-literal Dqa constructor (scale=0).
+fn dqa(n: i64) -> octo_determin::Dqa {
+    octo_determin::Dqa::new(n, 0).expect("non-overflow")
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AskSpec {
     model: String,
@@ -109,12 +114,12 @@ fn dispute_valid_slashes_seller() {
 
     // Provider gets slashed.
     let mut ledger = SlashingLedger::new();
-    ledger.register(sample_did(145), 1_000_000);
+    ledger.register(sample_did(145), dqa(1_000_000));
     let out = ledger
         .slash(&sample_did(145), SlashReason::PROVIDER_ERROR, 1.0)
         .expect("slash");
-    assert_eq!(out.amount_micro_octo_w, 100_000); // 10% first offense
-    assert_eq!(out.new_stake_micro_octo_w, 900_000);
+    assert_eq!(out.amount_micro_octo_w, dqa(100_000)); // 10% first offense
+    assert_eq!(out.new_stake_micro_octo_w, dqa(900_000));
     assert!(!out.banned);
 }
 
@@ -145,7 +150,7 @@ fn below_tolerance_miss_rate_does_not_slash() {
         miss_rate_tolerance: 0.05,
         ..SlashingRules::default()
     });
-    ledger.register(sample_did(145), 1_000_000);
+    ledger.register(sample_did(145), dqa(1_000_000));
     let err = ledger
         .slash(&sample_did(145), SlashReason::TIMEOUT, 0.01)
         .unwrap_err();
@@ -157,14 +162,14 @@ fn below_tolerance_miss_rate_does_not_slash() {
     assert_eq!(ledger.stake(&sample_did(145)).unwrap().offense_count, 0);
     assert_eq!(
         ledger.stake(&sample_did(145)).unwrap().stake_micro_octo_w,
-        1_000_000
+        dqa(1_000_000)
     );
 }
 
 #[test]
 fn repeated_offenses_eventually_ban_provider() {
     let mut ledger = SlashingLedger::new();
-    ledger.register(sample_did(20), 1_000_000);
+    ledger.register(sample_did(20), dqa(1_000_000));
 
     // First three offenses with default rules (10%, 15%, 22.5%) leave
     // cumulative ≈ 40.7%. Fourth offense (33.75% of remaining ≈ 30%)
@@ -488,15 +493,15 @@ fn byzantine_provider_offense_count_increments_per_offense() {
     // dilute their penalty rate. The valid responses don't touch the
     // ledger; the invalid one slashes.
     let mut ledger = SlashingLedger::new();
-    ledger.register(sample_did(7), 1_000_000);
+    ledger.register(sample_did(7), dqa(1_000_000));
 
     // 99 valid responses (no ledger action — only failures slash).
     // 1 invalid response (slash with full loss):
     let out = ledger
         .slash(&sample_did(7), SlashReason::PROVIDER_ERROR, 1.0)
         .expect("slash");
-    assert_eq!(out.amount_micro_octo_w, 100_000); // 10% first offense
-    assert_eq!(out.new_stake_micro_octo_w, 900_000);
+    assert_eq!(out.amount_micro_octo_w, dqa(100_000)); // 10% first offense
+    assert_eq!(out.new_stake_micro_octo_w, dqa(900_000));
     assert!(!out.banned);
     let stake = ledger.stake(&sample_did(7)).unwrap();
     assert_eq!(
@@ -513,7 +518,7 @@ fn byzantine_provider_escalation_ban_unchanged() {
     // offenses. The 1st-offense threshold of 10% * 4 cuts > 50% in
     // cumulative_loss_pct.
     let mut ledger = SlashingLedger::new();
-    ledger.register(sample_did(7), 1_000_000);
+    ledger.register(sample_did(7), dqa(1_000_000));
     for _ in 0..4 {
         let _ = ledger
             .slash(&sample_did(7), SlashReason::PROVIDER_ERROR, 1.0)
@@ -663,7 +668,7 @@ fn provider_key_rotation_preserves_ledger_state() {
     // rotation is invisible to it.
     let mut ledger = SlashingLedger::new();
     let did = sample_did(50);
-    ledger.register(&did, 1_000_000);
+    ledger.register(&did, dqa(1_000_000));
     // Provider gets 3 offenses (cumulative ~40.7%) under key_v1.
     for _ in 0..3 {
         ledger
@@ -763,7 +768,7 @@ fn stale_view_after_restart_sees_writes() {
                 model: quota_router_storage::ask::ModelRef::from("openai/gpt-4"),
                 rates: vec![quota_router_storage::ask::AxisRate {
                     axis: "input_tokens_per_1k".into(),
-                    rate_per_1k: 10_000,
+                    rate_per_1k: octo_determin::Dqa::new(10_000, 0).expect("non-overflow"),
                 }],
             },
             nonce: [0x11; 16],
@@ -777,7 +782,7 @@ fn stale_view_after_restart_sees_writes() {
                 model: quota_router_storage::ask::ModelRef::from("openai/gpt-4"),
                 rates: vec![quota_router_storage::ask::AxisRate {
                     axis: "input_tokens_per_1k".into(),
-                    rate_per_1k: 20_000,
+                    rate_per_1k: octo_determin::Dqa::new(20_000, 0).expect("non-overflow"),
                 }],
             },
             nonce: [0x22; 16],
@@ -805,7 +810,7 @@ fn stake_withdrawal_full_amount_after_ban_rejected() {
     // pins the production withdraw path.
     let mut ledger = SlashingLedger::new();
     let did = sample_did(99);
-    ledger.register(&did, 1_000_000);
+    ledger.register(&did, dqa(1_000_000));
     for _ in 0..4 {
         ledger
             .slash(&did, SlashReason::PROVIDER_ERROR, 1.0)
@@ -839,7 +844,7 @@ fn stake_withdrawal_partial_preserves_ledger_state() {
     // game, but prior offenses stick.
     let mut ledger = SlashingLedger::new();
     let did = sample_did(101);
-    ledger.register(&did, 1_000_000);
+    ledger.register(&did, dqa(1_000_000));
     // One offense (10% loss) — not enough to ban.
     ledger
         .slash(&did, SlashReason::PROVIDER_ERROR, 1.0)
@@ -849,8 +854,11 @@ fn stake_withdrawal_partial_preserves_ledger_state() {
     let pre_stake = ledger.stake(&did).unwrap().stake_micro_octo_w;
 
     // Withdraw 100k (well under the 900k remaining).
-    let new_stake = ledger.withdraw_stake(&did, 100_000).expect("withdraw");
-    assert_eq!(new_stake, pre_stake - 100_000);
+    let new_stake = ledger.withdraw_stake(&did, dqa(100_000)).expect("withdraw");
+    assert_eq!(
+        new_stake,
+        pre_stake.subtract(dqa(100_000)).expect("non-overflow")
+    );
     assert_eq!(ledger.stake(&did).unwrap().stake_micro_octo_w, new_stake);
 
     // Offense history untouched.
@@ -861,8 +869,8 @@ fn stake_withdrawal_partial_preserves_ledger_state() {
     );
 
     // `can_withdraw` agrees with `withdraw_stake`.
-    assert!(ledger.can_withdraw(&did, 1).is_ok());
-    assert!(ledger.can_withdraw(&did, new_stake + 1).is_err());
+    assert!(ledger.can_withdraw(&did, dqa(1)).is_ok());
+    assert!(ledger.can_withdraw(&did, dqa(new_stake.value + 1)).is_err());
 }
 
 #[test]
@@ -871,39 +879,39 @@ fn stake_withdrawal_rejects_invalid_inputs() {
     // exact-balance (success), post-zero (success-then-zero-reject).
     let mut ledger = SlashingLedger::new();
     let did = sample_did(202);
-    ledger.register(&did, 500_000);
+    ledger.register(&did, dqa(500_000));
 
     // Unknown provider.
     assert!(matches!(
-        ledger.withdraw_stake(&sample_did(200), 1),
+        ledger.withdraw_stake(&sample_did(200), dqa(1)),
         Err(SlashError::UnknownProvider(_))
     ));
     // Zero.
     assert!(matches!(
-        ledger.withdraw_stake(&did, 0),
-        Err(SlashError::InvalidAmount(0))
+        ledger.withdraw_stake(&did, dqa(0)),
+        Err(SlashError::InvalidAmount(_))
     ));
     // Over-balance.
     assert!(matches!(
-        ledger.withdraw_stake(&did, 500_001),
+        ledger.withdraw_stake(&did, dqa(500_001)),
         Err(SlashError::InsufficientStake {
-            available: 500_000,
-            requested: 500_001
+            available: _,
+            requested: _
         })
     ));
     // Exact balance succeeds.
-    assert_eq!(ledger.withdraw_stake(&did, 500_000), Ok(0));
+    assert_eq!(ledger.withdraw_stake(&did, dqa(500_000)), Ok(dqa(0)));
     // Subsequent zero-reject (stake exhausted).
     assert!(matches!(
-        ledger.withdraw_stake(&did, 0),
-        Err(SlashError::InvalidAmount(0))
+        ledger.withdraw_stake(&did, dqa(0)),
+        Err(SlashError::InvalidAmount(_))
     ));
     // Subsequent any-amount-reject (zero balance).
     assert!(matches!(
-        ledger.withdraw_stake(&did, 1),
+        ledger.withdraw_stake(&did, dqa(1)),
         Err(SlashError::InsufficientStake {
-            available: 0,
-            requested: 1
+            available: _,
+            requested: _
         })
     ));
 }

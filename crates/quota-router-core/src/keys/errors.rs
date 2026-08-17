@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use super::models::SpendEventError;
+
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum KeyError {
     #[error("Key not found")]
@@ -37,6 +39,17 @@ pub enum KeyError {
 
     #[error("Route not allowed: {0}")]
     RouteNotAllowed(String),
+
+    /// SpendEvent boundary validation failure (mission 0862-c7).
+    /// Carries the `SpendEventError` for diagnostic context.
+    #[error("Spend event validation failed: {0}")]
+    SpendEvent(SpendEventError),
+}
+
+impl From<SpendEventError> for KeyError {
+    fn from(e: SpendEventError) -> Self {
+        KeyError::SpendEvent(e)
+    }
 }
 
 /// Budget enforcement errors for cost computation and balance operations.

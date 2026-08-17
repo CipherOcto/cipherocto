@@ -3,9 +3,9 @@ pub mod models;
 
 pub use errors::{BudgetError, KeyError, QuotaRouterError, StorageError};
 pub use models::{
-    ApiKey, CreateTeamRequest, GenerateKeyRequest, GenerateKeyResponse, KeyRotationEvent, KeySpend,
-    KeyType, KeyUpdates, MerkleNode, PricingModel, RevokeKeyRequest, SpendEvent, Team, TokenSource,
-    UpdateTeamRequest, KEY_ROTATION_GRACE_SECS,
+    cost_u64_to_i64, ApiKey, CreateTeamRequest, GenerateKeyRequest, GenerateKeyResponse,
+    KeyRotationEvent, KeySpend, KeyType, KeyUpdates, MerkleNode, PricingModel, RevokeKeyRequest,
+    SpendEvent, SpendEventError, Team, TokenSource, UpdateTeamRequest, KEY_ROTATION_GRACE_SECS,
 };
 
 use hmac_sha256::HMAC;

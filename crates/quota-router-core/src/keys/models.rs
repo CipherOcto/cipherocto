@@ -1,4 +1,37 @@
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+/// Errors produced by `SpendEvent` boundary validation.
+///
+/// `CostOverflow` enforces the S4 Round 2 / S6c Round 1 invariant
+/// that `cost_amount: u64` MUST be representable in the i64 column
+/// used by `spend_ledger` and the budget-gate arithmetic. Failure
+/// is closed — silently narrowing via `as i64` would let
+/// `cost_amount > i64::MAX` wrap to negative, defeating the gate
+/// (mission 0862-c7 adjacent-module wrap mitigation).
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
+pub enum SpendEventError {
+    #[error("cost_amount overflow: cost={cost} exceeds i64::MAX ({max})")]
+    CostOverflow { cost: u64, max: i64 },
+}
+
+/// Convert a `u64` cost to its `i64` representation, failing closed
+/// when the value exceeds `i64::MAX`.
+///
+/// Used at every boundary where `cost_amount` is narrowed to `i64`
+/// for `spend_ledger` column storage or budget-gate arithmetic.
+/// Pattern: `let cost_i64 = cost_u64_to_i64(cost)?;` (mission
+/// 0862-c7). Pair with `From<SpendEventError> for KeyError` to
+/// propagate via `?`.
+pub fn cost_u64_to_i64(cost: u64) -> Result<i64, SpendEventError> {
+    if cost > i64::MAX as u64 {
+        return Err(SpendEventError::CostOverflow {
+            cost,
+            max: i64::MAX,
+        });
+    }
+    Ok(cost as i64)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -134,6 +167,18 @@ pub struct SpendEvent {
     pub tokenizer_version: Option<String>,
     pub provider_usage_json: Option<String>,
     pub timestamp: i64,
+}
+
+impl SpendEvent {
+    /// Returns `cost_amount` as `i64`, failing closed when the value
+    /// exceeds `i64::MAX`. Per mission 0862-c7 + S4 Round 2 / S6c
+    /// Round 1 signed-underflow mitigation. Callers that previously
+    /// used `event.cost_amount as i64` MUST switch to this getter
+    /// (or the free function `cost_u64_to_i64`) to avoid silent
+    /// wrap.
+    pub fn cost_amount_i64(&self) -> Result<i64, SpendEventError> {
+        cost_u64_to_i64(self.cost_amount)
+    }
 }
 
 /// Key generation request (LiteLLM compatible) per RFC-0903 §GenerateKeyRequest

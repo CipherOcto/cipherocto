@@ -6,7 +6,7 @@
 // handled gracefully by falling back to DB lookup. Budget enforcement
 // happens atomically in record_spend_ledger() at the storage layer.
 
-use crate::keys::{ApiKey, KeyError};
+use crate::keys::{cost_u64_to_i64, ApiKey, KeyError};
 use crate::storage::KeyStorage;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -208,7 +208,9 @@ pub fn check_budget_soft_limit(
         .map_err(|e| KeyError::Storage(e.to_string()))?;
 
     // Check if estimated would exceed
-    if current + estimated_max_cost as i64 > key_budget {
+    // Per mission 0862-c7: validate u64→i64 narrowing at boundary.
+    let estimated_max_cost_i64 = cost_u64_to_i64(estimated_max_cost)?;
+    if current + estimated_max_cost_i64 > key_budget {
         return Err(KeyError::BudgetExceeded {
             current: current as u64,
             limit: key_budget as u64,

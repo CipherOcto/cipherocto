@@ -1,6 +1,6 @@
 use crate::keys::{
-    blob_16_to_uuid, hex_to_blob_32, tokenizer_version_to_id, uuid_to_blob_16, ApiKey, KeyError,
-    KeySpend, KeyType, KeyUpdates, SpendEvent, Team, TokenSource,
+    blob_16_to_uuid, cost_u64_to_i64, hex_to_blob_32, tokenizer_version_to_id, uuid_to_blob_16,
+    ApiKey, KeyError, KeySpend, KeyType, KeyUpdates, SpendEvent, Team, TokenSource,
 };
 use sha2::{Digest, Sha256};
 
@@ -741,7 +741,9 @@ impl KeyStorage for StoolapKeyStorage {
         }
 
         // 4. Verify budget against cost_amount
-        let cost_i64 = event.cost_amount as i64;
+        // Per mission 0862-c7: validate u64→i64 narrowing at boundary
+        // (fails closed if cost > i64::MAX instead of silently wrapping).
+        let cost_i64 = event.cost_amount_i64()?;
         if current + cost_i64 > budget {
             return Err(KeyError::BudgetExceeded {
                 current: current as u64,
@@ -908,7 +910,8 @@ impl KeyStorage for StoolapKeyStorage {
         }
 
         // 6. Verify both budgets
-        let cost_i64 = event.cost_amount as i64;
+        // Per mission 0862-c7: validate u64→i64 narrowing at boundary.
+        let cost_i64 = event.cost_amount_i64()?;
         if key_current + cost_i64 > key_budget {
             return Err(KeyError::BudgetExceeded {
                 current: key_current as u64,
@@ -1076,11 +1079,13 @@ impl KeyStorage for StoolapKeyStorage {
 
     fn deduct_octo_w(&self, key_id: &str, cost_amount: u64) -> Result<u64, KeyError> {
         // Atomic deduction: UPDATE ... WHERE balance >= cost_amount
+        // Per mission 0862-c7: validate u64→i64 narrowing at boundary.
+        let cost_i64 = cost_u64_to_i64(cost_amount)?;
         let rows_affected = self
             .db
             .execute(
                 "UPDATE octo_w_balances SET balance = balance - $2, updated_at = strftime('%s', 'now') WHERE key_id = $1 AND balance >= $2",
-                vec![key_id.into(), (cost_amount as i64).into()],
+                vec![key_id.into(), cost_i64.into()],
             )
             .map_err(|e| KeyError::Storage(e.to_string()))?;
 

@@ -17,7 +17,9 @@ finding #6: sweep of `crates/` surfaced untagged legacy hashers —
 - Co-RFC: RFC-0105 v1.9 (DqaEncoding prefix is the canonical
   reference pattern)
 - Audit source: `docs/reviews/2026-08-15-storage-layer-restructuring-analysis.md`
-  §14.2 (domain separator hygiene)
+  (domain separator hygiene — audit result lives in source
+  `octo-vault::vault_id_unchecked` + `crates/quota-router-sm-engine/src/lib.rs`,
+  not as a numbered section in the review doc)
 
 ## Dependency edges
 

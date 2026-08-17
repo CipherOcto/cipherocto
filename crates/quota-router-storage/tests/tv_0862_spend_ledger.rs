@@ -1,10 +1,15 @@
-//! TV-0862-01..05 + TV-0862-07 + TV-0862-08 + TV-0862-04b + TV-0862-09
-//! — RFC-0862 v2.0 StoolapSpendLedger byte-exact fixtures.
+//! TV-0862-01..05 + TV-0862-07 + TV-0862-08 + TV-0862-04b +
+//! TV-0862-09 + TV-0862-09b — RFC-0862 StoolapSpendLedger byte-exact
+//! fixtures.
 //!
 //! Per `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md`
-//! §3 row 6 (Stream A.1 S6c) + §4 S6 verify gate. 9 byte-exact
+//! §3 row 6 (Stream A.1 S6c) + §4 S6 verify gate. 10 byte-exact
 //! test vectors pinning the `StoolapSpendLedger` substrate added in
-//! RFC-0862 v2.0 (Dqa + vault bump):
+//! RFC-0862 (Dqa + vault bump amendment):
+//!
+//! (TV-06 vault_id cross-ref lives in
+//! `crates/octo-vault/tests/tv_0862_vault_id_cross_ref.rs` per
+//! Round 1 review — 3 additional tests there.)
 //!
 //! - TV-01: row creation via seed
 //! - TV-02: balance read (None for unknown, Some for known)

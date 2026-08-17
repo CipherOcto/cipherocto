@@ -27,9 +27,10 @@ hardening — TOCTOU + asymmetric NegativeCost).
   Integration) — `rfcs/accepted/networking/0862-writer-election-bootstrap-v130.md`
   §Future Work F12 + F13 (promoted from deferred list).
 - Co-RFC: RFC-0105 (Numeric) — coordinate with S6g (RFC-0105
-  asset_id addendum + 109 TV). Dqa bump lands in RFC-0105 v2.0
-  (S6g); RFC-0862 v2.0 back-fills only the spend_ledger substrate
-  integration surface, deferring the Dqa wire-form bump itself.
+  asset_id addendum + 109 TV). Dqa bump lands in RFC-0105 (S6g) at
+  the version once §addendum lands; RFC-0862 back-fills only the
+  spend_ledger substrate integration surface, deferring the Dqa
+  wire-form bump itself.
 - Source review: `docs/reviews/2026-08-15-storage-layer-restructuring-analysis.md`
   §14.1 + §20.6.1 (wire-format blast + verify-time invariant context).
 
@@ -94,10 +95,11 @@ macaroon_id))`
   - Cross-reference to RFC-0870 §NodeEnvelope Version Tag (V2
     wire-form per S6a amendment)
   - Negative-cost precondition (new in v2.0)
-- AC-3: **TV-0862-01..08 + TV-0862-04b + TV-0862-09 + TV-0862-09b
-  byte-exact fixtures** in
+- AC-3: **TV-0862-01..05 + TV-0862-07 + TV-0862-08 + TV-0862-04b +
+  TV-0862-09 + TV-0862-09b byte-exact fixtures** in
   `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs`
-  (NEW, 10 tests) + TV-0862 vault_id cross-ref in
+  (NEW, 10 tests; TV-06 moved to octo-vault per Round 1) + TV-0862
+  vault_id cross-ref in
   `crates/octo-vault/tests/tv_0862_vault_id_cross_ref.rs` (NEW,
   3 tests):
   - 13 byte-exact TV per plan §3 S6 row 6 "RFC-0862: 8 spend_ledger"
@@ -116,7 +118,7 @@ macaroon_id))`
   - Test inputs byte-pinned (`TV_0862_*` constants); no RNG
 - AC-4: Verification gate (per plan §4 S6):
   ```bash
-  cargo test -p quota-router-storage --test tv_0862_spend_ledger  # 10/10 pass (8 spec + 04b regression + 09 + 09b)
+  cargo test -p quota-router-storage --test tv_0862_spend_ledger  # 10/10 pass (7 spec + 04b regression + 09 + 09b; TV-06 lives in octo-vault)
   cargo test -p octo-vault --test tv_0862_vault_id_cross_ref      # 3/3 pass
   cargo test --workspace --lib                                     # excludes 3 pre-existing S4 DFP Round 2 quota-router-cli::commands::tests::settle_* failures (commits 19faf380/4ab400bd/18edbe0d); unrelated to S6c
   cargo clippy --workspace --all-targets --features full -- -D warnings

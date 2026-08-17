@@ -41,7 +41,7 @@ reuse that shape.
 
 ## Acceptance Criteria
 
-- AC-1: `trait Clock` defined in `crates/octa-storage-core/` (or
+- AC-1: `trait Clock` defined in `crates/octo-storage-core/` (or
   `quota-router-storage/` per layer decision):
   - `fn now_unix_ms(&self) -> i64`
   - Default impl: `SystemClock` (production)

@@ -1,6 +1,6 @@
 ---
 name: mission-0862-c1-dqa-vault-bump-amendment-status
-description: S6c RFC-0862 v2.0 (Dqa + vault bump) + TV-0862-01..08 byte-exact spend_ledger fixtures LANDED 2026-08-17 (commit 2750caa7). 13/13 TV pass (10 substrate + 3 cross-ref); pre-reqs S3/S4/S5/S6a/S6b all LANDED.
+description: S6c RFC-0862 (Dqa + vault bump) + TV-0862-01..05 + 07 + 08 + 04b + 09 + 09b byte-exact spend_ledger fixtures + 3 vault_id cross-ref TV LANDED 2026-08-17 (commit 2750caa7). 13/13 TV pass (10 substrate + 3 cross-ref); pre-reqs S3/S4/S5/S6a/S6b all LANDED.
 metadata:
   type: project
 ---
@@ -10,7 +10,8 @@ metadata:
 Mission `0862-c1-dqa-vault-bump-amendment` LANDED 2026-08-17
 (commits `2750caa7` + `b20c37dc` + Round 2 fixes follow-up). Third
 S6 sub-session per user split-by-RFC decision (after S6a RFC-0870
-+ S6b RFC-0957).
+
+- S6b RFC-0957).
 
 ## What landed
 
@@ -24,8 +25,8 @@ S6 sub-session per user split-by-RFC decision (after S6a RFC-0870
     precondition guard (defense-in-depth against signed underflow
     per S4 Round 2 + S6c Round 1 security finding #3)
   - **RFC text corrections** (drop phantom line refs + phantom
-    RFC-0960 §20.3 + fix crate path `octo-determin/src/dqa.rs:104` →
-    `determin::Dqa` + drop non-load-bearing version pins
+    RFC-0960 §20.3 + fix crate path → `determin::Dqa` + drop
+    non-load-bearing version pins
     - fix 8 → 9 count + clarify Dqa storage form vs wire-form)
   - **Test corrections** (remove MIGRATION_LOCK no-op, TV-05
     schema column round-trip via substrate, TV-04b dedicated

@@ -53,6 +53,16 @@ pub enum SpendLedgerError {
         /// Proposed cost (MicroOCTO_W).
         cost: octo_determin::Dqa,
     },
+    /// Cost is negative. `try_deduct` rejects negative cost as a
+    /// precondition violation (defense-in-depth against signed
+    /// underflow in caller fee-computation paths and wire-decoded
+    /// `i64` amounts that would otherwise inflate the balance).
+    /// Per RFC-0862 §StoolapSpendLedger preconditions.
+    #[error("negative cost rejected: cost={cost:?}")]
+    NegativeCost {
+        /// The rejected cost.
+        cost: octo_determin::Dqa,
+    },
     /// Underlying storage failure (e.g. Stoolap error).
     #[error("spend-ledger storage error: {0}")]
     Storage(String),
@@ -175,7 +185,12 @@ impl StoolapSpendLedger {
 
     /// Atomically deduct `cost` from the `(holder_did, macaroon_id)`
     /// balance. Returns the new remaining balance on success.
+    /// # Preconditions
+    /// - `cost.value >= 0`. Negative cost is rejected with
+    ///   `SpendLedgerError::NegativeCost` (defense-in-depth against
+    ///   signed underflow in caller fee-computation paths).
     /// # Errors
+    /// - `SpendLedgerError::NegativeCost` if `cost.value < 0`.
     /// - `SpendLedgerError::UnknownHolder` if no balance record exists.
     /// - `SpendLedgerError::InsufficientBalance` if balance < cost.
     /// - `SpendLedgerError::Storage` on underlying storage failure.
@@ -185,6 +200,17 @@ impl StoolapSpendLedger {
         macaroon_id: &[u8],
         cost: MicroOctoW,
     ) -> Result<MicroOctoW, SpendLedgerError> {
+        // Precondition: reject negative cost. `dqa_subtract` on
+        // negative cost returns a "larger" value (i64 underflow
+        // would inflate balance otherwise) — S4 Round 2 surfaced
+        // the same class of bug elsewhere; pin it closed here.
+        assert_eq!(
+            cost.scale, 0,
+            "MicroOctoW at scale=0; scale invariant violated"
+        );
+        if cost.value < 0 {
+            return Err(SpendLedgerError::NegativeCost { cost });
+        }
         // Hold the per-instance drain lock for the SELECT-then-UPDATE
         // critical section. Without this, concurrent threads can race
         // the read-modify-write and double-spend. Cross-instance

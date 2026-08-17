@@ -890,11 +890,10 @@ pub trait DrainCoordinator: Send + Sync {
 
 ### StoolapSpendLedger substrate (v2.0, additive on v1.4.0)
 
-Per line 171 ("Wired via `StoolapSpendLedger`" + "This RFC §DrainCoordinator")
-
-- line 1801 (`StoolapSpendLedger` + `StoolapDidRegistry`), the
-  production drain substrate is the Stoolap-backed spend ledger.
-  v2.0 back-fills the substrate spec that v1.4.0 left implicit.
+Per §Future Work F12 + F13 (promoted from v1.4.0 deferred list)
++ §Layer Direction table (`StoolapSpendLedger` + `StoolapDidRegistry`),
+the production drain substrate is the Stoolap-backed spend ledger.
+v2.0 back-fills the substrate spec that v1.4.0 left implicit.
 
 ```rust
 /// Stoolap-backed production spend ledger.
@@ -911,6 +910,9 @@ impl StoolapSpendLedger {
     pub fn open_path(path: &str) -> Result<Self, SpendLedgerError>;
     pub fn seed(&self, holder_did: &str, macaroon_id: &[u8],
                 budget: MicroOctoW) -> Result<(), SpendLedgerError>;
+    /// # Preconditions
+    /// - `cost.value >= 0`; negative cost rejected with
+    ///   `SpendLedgerError::NegativeCost`.
     pub fn try_deduct(&self, holder_did: &str, macaroon_id: &[u8],
                       cost: MicroOctoW) -> Result<MicroOctoW, SpendLedgerError>;
     pub fn balance(&self, holder_did: &str, macaroon_id: &[u8])
@@ -918,7 +920,7 @@ impl StoolapSpendLedger {
 }
 ```
 
-**Schema (RFC-0862 v2.0 + RFC-0960 §20.3):**
+**Schema (RFC-0862 v2.0):**
 
 ```sql
 CREATE TABLE IF NOT EXISTS spend_ledger (
@@ -932,38 +934,47 @@ CREATE INDEX IF NOT EXISTS spend_ledger_updated_at_idx
     ON spend_ledger (updated_at_unix_ms);
 ```
 
-**Dqa wire form (RFC-0862 v2.0 + RFC-0105 v1.9 DqaEncoding
-cross-ref):** `balance` is stored as `i64` at `Dqa::scale = 0` (integer
-micro-OCTO_W counts). Per `octo-determin/src/dqa.rs:104` the wire form
-is the canonical 16-byte BE DqaEncoding. Conversion
-`MicroOctoW → i64` via the `dqa_to_i64` helper at
-`crates/quota-router-storage/src/stoolap_spend_ledger.rs:274` is a
-no-op at the type level (`Dqa::value` is `i64`); the function is the
-doc anchor for future widening to `i128`.
+**Dqa storage form (RFC-0862 v2.0 + RFC-0105 v1.9 DqaEncoding
+cross-ref):** `balance` column stores `i64` (stoolap `INTEGER`
+maps to `i64`). The `i64` carries `Dqa::value` at `scale = 0` — no
+transformation. The 16-byte BE `DqaEncoding` struct defined in
+RFC-0105 v1.9 (`DqaEncoding::from_dqa` impl in
+`determin/src/dqa.rs`) is the canonical serialization form for
+on-wire payloads (used by `octo-protocol` envelopes), NOT the
+SQLite storage form. The `dqa_to_i64` helper is the doc anchor
+for future widening (`Dqa::value` → `i128`); it is a no-op cast
+at the type level today.
 
-**Vault row cross-ref (RFC-0862 v2.0 + RFC-0960 §20.3):** spend ledger
-substrate is wired to vault substrate via the `(holder_did, macaroon_id)`
-key — the wallet mints a `Caveat::Vault(vault_id)` binding per
-RFC-0957 v2.1 + RFC-0965 §3.7. `vault_id` derivation per RFC-0960 §20.3:
+**Vault row cross-ref (RFC-0862 v2.0):** spend ledger substrate is
+wired to vault substrate via the `(holder_did, macaroon_id)` key —
+the wallet mints a `Caveat::Vault(vault_id)` binding per RFC-0957
++ RFC-0965 §3.7. `vault_id` derivation (per
+`crates/octo-vault/src/lib.rs` `vault_id_unchecked`):
 
 ```
 vault_id = BLAKE3("cipherocto/vault/v1/" + chain_id + owner_did + asset_id)
 ```
 
-`Macaroon::verify_for_vault_op` (RFC-0957 v2.1) rejects spend drain on
+`Macaroon::verify_for_vault_op` (RFC-0957) rejects spend drain on
 vault rows that are missing, frozen, or chain-mismatched.
 
-**NodeEnvelope Version Tag cross-ref (RFC-0862 v2.0 + RFC-0870 v2.1
-per S6a):** spend-drain responses are wrapped in V2 envelopes
-(`version_tag = 0xA1` per `octo-protocol/src/envelope.rs`). V1
-envelopes (`version_tag = 0xA0` or absent) are hard-rejected at verify
-per RFC-0870 §14.1 + TV-0870-01.
+**NodeEnvelope Version Tag cross-ref (RFC-0862 v2.0 + S6a):** spend-drain
+responses are wrapped in V2 envelopes (`version_tag = 0xA1` per
+`crates/octo-protocol/src/envelope.rs`). V1 envelopes (`version_tag =
+0xA0` or absent) are hard-rejected at verify per RFC-0870 §14.1 +
+TV-0870-01.
 
 **Atomicity guarantee (RFC-0862 v2.0):** the per-instance `drain_lock`
 serializes `try_deduct` calls within a single `StoolapSpendLedger`
 instance. The cross-instance coordination substrate (mission
 `0871e-phase5c-1` per `RaftLikeDrainCoordinator` LANDED 2026-08-11) is
 the production follow-on; v2.0 spec does NOT change the lock surface.
+
+**Negative-cost precondition (RFC-0862 v2.0 + S4 Round 2):**
+`try_deduct` rejects `cost.value < 0` with `SpendLedgerError::NegativeCost`.
+`Dqa::subtract` on negative cost would otherwise inflate the balance
+(defense-in-depth against signed underflow in caller fee-computation
+paths and wire-decoded `i64` amounts).
 
 **Layer discipline (RFC-0862 v2.0 + R11 M7):** `StoolapSpendLedger`
 lives in `quota-router-storage` (Layer B-adjacent per R11 M7) and does
@@ -1936,7 +1947,7 @@ cargo doc --workspace --no-deps --manifest-path octo-transport/Cargo.toml
 | 1.2.1   | 2026-08-10 | Accepted              | **Mandatory pre-v1.3 patch (per R11 H5 + R12 C1).** Flips `validate_wal_entry_crc32` behavior on unknown Magic from fail-open (returns `true`) to reject (`WalVersionTooNew`); HeaderSize-aware; dual-version cluster window compatible. Without this patch v1.2.0 nodes silently accept v1.3 WAL entries UNVALIDATED.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | 1.3.0   | 2026-08-10 | Draft                 | `WriterElection` + bootstrap-orchestrated sync + `DrainCoordinator` + `DidWriteCoordinator` + CRDT-extension hooks (F12/F13)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | 1.4.0   | 2026-08-11 | Accepted (amendment)  | §Concrete Impl Extension: `RaftLikeWriterElection` (concrete `WriterElection` impl) + `RaftLikeDidWriteCoordinator` (concrete `DidWriteCoordinator` impl) using HLC + LWW per-instance counter. `octo-sync` workspace membership lifted (root `Cargo.toml` `exclude = [...]` drops `"octo-sync"`). Optional `crdt` feature flag for partition-tolerant LWW deployments (opt-in; default linearizable). 4 cross-instance TV (atomic_register, leader_failover, wal_replay, fail_closed) spec'd in §Test Vectors. F12 + F13 promoted from §Future Work to §Specification. AC#17-#24 add 8 acceptance criteria on top of v1.3 AC#1-#16; ALL v1.3 AC#1-#16 still required (no retroactive loosening). Layer direction unchanged (`octo-ident` stays Layer B substrate; `octo-sync` provides concrete impl; `octo-ident` does NOT depend on `octo-sync`). Wal v1.3 magic + entry layout preserved (no protocol-breaking change). Mission `0871e-f7-coordinator-impl` GATED on this RFC landing.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| 2.0.0   | 2026-08-17 | Draft (S6c amendment) | §StoolapSpendLedger substrate (additive on v1.4.0): back-fills the production substrate spec that v1.4.0 left implicit at line 171 + line 1801. Adds (a) `StoolapSpendLedger` API surface (`open_in_memory` / `open_path` / `seed` / `try_deduct` / `balance`) per `crates/quota-router-storage/src/stoolap_spend_ledger.rs`; (b) `spend_ledger` table schema with `(holder_did BLOB, macaroon_id BLOB, balance INTEGER, updated_at_unix_ms INTEGER, PK(holder_did, macaroon_id))` + `spend_ledger_updated_at_idx`; (c) Dqa wire-form (16-byte BE DqaEncoding per RFC-0105 v1.9 DqaEncoding, stored as `i64` at `Dqa::scale = 0`); (d) vault row cross-ref per RFC-0960 §20.3 vault_id derivation; (e) NodeEnvelope V2 wire-form cross-ref per RFC-0870 v2.1 (S6a) `version_tag = 0xA1` + verify-time hard-reject of V1 per RFC-0870 §14.1; (f) atomicity guarantee via per-instance `drain_lock` (cross-instance coordination is mission `0871e-phase5c-1` per `RaftLikeDrainCoordinator` LANDED 2026-08-11, not v2.0 spec change). 8 byte-exact TV (TV-0862-01..08) in `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs` pin spend_ledger row creation, balance read, seed idempotency, atomic drain, Dqa encoding round-trip, vault_id cross-ref, V2 wire-form with version_tag, multi-instance drain coordination. Implementation mission `missions/open/0862-c1-dqa-vault-bump-amendment.md`. Pre-req: S3 (octo-vault) + S4 (Dqa codemod) + S5 (verify-time) + S6a (RFC-0870 v2.1) + S6b (RFC-0957 v2.1) all LANDED 2026-08-17. Plan: `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md` §3 row 6 (Stream A.1 S6c) + §4 S6 verify gate. §22 atomic-blocker rule applies to the 7 B0 amendments, but user-chosen S6 split-by-RFC decision (S6a/S6b/S6c precedent) lands each amendment separately; production deployment must coordinate the 7 sub-sessions' commits at push time (S8). |
+| 2.0.0   | 2026-08-17 | Draft (S6c amendment) | §StoolapSpendLedger substrate (additive on v1.4.0): back-fills the production substrate spec that v1.4.0 left implicit at §Future Work F12/F13 + §Layer Direction. Adds (a) `StoolapSpendLedger` API surface (`open_in_memory` / `open_path` / `seed` / `try_deduct` / `balance`) per `crates/quota-router-storage/src/stoolap_spend_ledger.rs`; (b) `spend_ledger` table schema with `(holder_did BLOB, macaroon_id BLOB, balance INTEGER, updated_at_unix_ms INTEGER, PK(holder_did, macaroon_id))` + `spend_ledger_updated_at_idx`; (c) Dqa storage form (stoolap `INTEGER` ↔ `i64` carrying `Dqa::value` at `scale = 0`; canonical on-wire form is 16-byte BE `DqaEncoding` per RFC-0105 v1.9); (d) vault row cross-ref per RFC-0965 §3.7 `Caveat::Vault(vault_id)` binding + vault_id BLAKE3 derivation (prefix `"cipherocto/vault/v1/"`) per `crates/octo-vault/src/lib.rs`; (e) NodeEnvelope V2 wire-form cross-ref per RFC-0870 (S6a) `version_tag = 0xA1` + verify-time hard-reject of V1 per RFC-0870 §14.1; (f) atomicity guarantee via per-instance `drain_lock` (cross-instance coordination is mission `0871e-phase5c-1` per `RaftLikeDrainCoordinator` LANDED 2026-08-11, not v2.0 spec change); (g) **negative-cost precondition** — `try_deduct` rejects `cost.value < 0` with `SpendLedgerError::NegativeCost` (defense-in-depth per S4 Round 2). 9 byte-exact TV (TV-0862-01..08 + TV-0862-04b + TV-0862-09) split across `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs` (8 substrate TV) + `crates/octo-vault/tests/tv_0862_vault_id_cross_ref.rs` (1 vault_id derivation cross-ref TV) pin spend_ledger row creation, balance read, seed idempotency, atomic drain + UnknownHolder rejection, Dqa encoding round-trip + i64 schema column round-trip, vault_id cross-ref, V2 wire-form on substrate side, multi-instance drain coordination, **negative-cost rejection** (TV-09). Implementation mission `missions/open/0862-c1-dqa-vault-bump-amendment.md`. Pre-req: S3 (octo-vault) + S4 (Dqa codemod) + S5 (verify-time) + S6a (RFC-0870) + S6b (RFC-0957) all LANDED 2026-08-17. Round 1 review fixes: drop phantom line refs (1801/1629/1730), drop phantom RFC-0960 §20.3, fix crate path `octo-determin/src/dqa.rs:104` → `determin/src/dqa.rs`, drop non-load-bearing version pins `RFC-0870 v2.1` / `RFC-0957 v2.1` (keep `RFC-0105 v1.9` as load-bearing DqaEncoding exception), add NegativeCost precondition + substrate hardening. Plan: `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md` §3 row 6 (Stream A.1 S6c) + §4 S6 verify gate. §22 atomic-blocker rule applies to the 7 B0 amendments, but user-chosen S6 split-by-RFC decision (S6a/S6b/S6c precedent) lands each amendment separately; production deployment must coordinate the 7 sub-sessions' commits at push time (S8). Follow-ons filed: 0862-c2 (Clock trait), 0862-c3 (cross-process drain + advisory file lock), 0862-c4 (`dqa_to_i64` assert → error), 0862-c5 (domain-sep hygiene), 0862-c6 (production keyspace fixture risk). |
 
 ## Review Process
 

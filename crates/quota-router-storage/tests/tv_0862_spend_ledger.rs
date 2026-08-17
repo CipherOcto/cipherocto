@@ -1,24 +1,35 @@
-//! TV-0862-01..08 — RFC-0862 v2.0 StoolapSpendLedger byte-exact fixtures
+//! TV-0862-01..05 + TV-0862-07 + TV-0862-08 + TV-0862-04b + TV-0862-09
+//! — RFC-0862 v2.0 StoolapSpendLedger byte-exact fixtures.
 //!
 //! Per `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md`
-//! §3 row 6 (Stream A.1 S6c) + §4 S6 verify gate. 8 byte-exact
+//! §3 row 6 (Stream A.1 S6c) + §4 S6 verify gate. 9 byte-exact
 //! test vectors pinning the `StoolapSpendLedger` substrate added in
-//! RFC-0862 v2.0 (Dqa + vault bump).
+//! RFC-0862 v2.0 (Dqa + vault bump):
+//!
+//! - TV-01: row creation via seed
+//! - TV-02: balance read (None for unknown, Some for known)
+//! - TV-03: seed idempotency (last-wins upsert)
+//! - TV-04: atomic try_deduct happy path
+//! - TV-04b: try_deduct UnknownHolder error (regression split out
+//!   from TV-04 per S6c Round 1 review)
+//! - TV-05: Dqa encoding round-trip + i64 schema column round-trip
+//! - TV-07: V2 wire-form on substrate side (Dqa round-trip + UPDATE)
+//! - TV-08: multi-instance drain coordination (per-instance lock scope)
+//! - TV-09: negative-cost rejection (substrate hardening per S4
+//!   Round 2 + S6c Round 1 security review)
+//!
+//! TV-06 (vault_id derivation cross-ref) moved to
+//! `crates/octo-vault/tests/tv_0862_vault_id_cross_ref.rs` per
+//! S6c Round 1 code review finding #4 (vault_id derivation is
+//! owned by octo-vault, not quota-router-storage).
 //!
 //! All inputs byte-pinned (`TV_0862_*` constants); no RNG. Schema +
 //! API surface mirrors `crates/quota-router-storage/src/stoolap_spend_ledger.rs`.
-
-use std::sync::Mutex;
 
 use octo_determin::{Dqa, DqaEncoding};
 use quota_router_storage::stoolap_spend_ledger::{
     MicroOctoW, SpendLedgerError, StoolapSpendLedger,
 };
-
-// Serialize concurrent access — stoolap `memory://` shares global
-// catalog state across threads (per existing `stoolap_chain_namespace.rs`
-// pattern).
-static MIGRATION_LOCK: Mutex<()> = Mutex::new(());
 
 // =============================================================================
 // TV-0862-01 — row creation via seed
@@ -29,7 +40,6 @@ static MIGRATION_LOCK: Mutex<()> = Mutex::new(());
 /// `balance` returns the same `MicroOctoW`.
 #[test]
 fn tv_0862_01_seed_creates_row() {
-    let _guard = MIGRATION_LOCK.lock().unwrap();
     let ledger = StoolapSpendLedger::open_in_memory().expect("open_in_memory");
     let holder = "did:octo:zTV086201";
     let macaroon_id = TV_0862_MACAROON_ID_01;
@@ -59,7 +69,6 @@ fn tv_0862_01_seed_creates_row() {
 /// the wallet-node relies on for pre-deduct visibility.
 #[test]
 fn tv_0862_02_balance_read_unknown_returns_none() {
-    let _guard = MIGRATION_LOCK.lock().unwrap();
     let ledger = StoolapSpendLedger::open_in_memory().expect("open_in_memory");
     let holder = "did:octo:zTV086202";
     let macaroon_id = TV_0862_MACAROON_ID_02;
@@ -91,7 +100,6 @@ fn tv_0862_02_balance_read_unknown_returns_none() {
 /// on `PaymentCaveat` re-mint; the new budget supersedes the old.
 #[test]
 fn tv_0862_03_seed_idempotent_last_wins() {
-    let _guard = MIGRATION_LOCK.lock().unwrap();
     let ledger = StoolapSpendLedger::open_in_memory().expect("open_in_memory");
     let holder = "did:octo:zTV086203";
     let macaroon_id = TV_0862_MACAROON_ID_03;
@@ -129,10 +137,10 @@ fn tv_0862_03_seed_idempotent_last_wins() {
 
 /// TV-0862-04: `try_deduct` atomically decrements the balance and
 /// returns the new remainder. The deduction runs inside a per-instance
-/// `drain_lock` critical section (per RFC-0862 §DrainCoordinator).
+/// `drain_lock` critical section (per RFC-0862 §StoolapSpendLedger
+/// `Atomicity guarantee`).
 #[test]
 fn tv_0862_04_try_deduct_atomic_decrement() {
-    let _guard = MIGRATION_LOCK.lock().unwrap();
     let ledger = StoolapSpendLedger::open_in_memory().expect("open_in_memory");
     let holder = "did:octo:zTV086204";
     let macaroon_id = TV_0862_MACAROON_ID_04;
@@ -163,11 +171,12 @@ fn tv_0862_04_try_deduct_atomic_decrement() {
 
 /// TV-0862-04b: `try_deduct` on an unknown holder returns
 /// `UnknownHolder` (NOT `Storage` or a panic).
+/// Dedicated macaroon_id constant (per S6c Round 1 code review
+/// finding #8 — no cross-test coupling).
 #[test]
 fn tv_0862_04b_try_deduct_unknown_holder_errors() {
-    let _guard = MIGRATION_LOCK.lock().unwrap();
     let ledger = StoolapSpendLedger::open_in_memory().expect("open_in_memory");
-    let result = ledger.try_deduct("did:octo:zTV086204b", &TV_0862_MACAROON_ID_04, dqa(1));
+    let result = ledger.try_deduct("did:octo:zTV086204b", &TV_0862_MACAROON_ID_04B, dqa(1));
     assert!(
         matches!(result, Err(SpendLedgerError::UnknownHolder)),
         "TV-0862-04b: unknown holder must yield UnknownHolder: got {result:?}"
@@ -175,22 +184,30 @@ fn tv_0862_04b_try_deduct_unknown_holder_errors() {
 }
 
 // =============================================================================
-// TV-0862-05 — Dqa encoding round-trip
+// TV-0862-05 — Dqa encoding round-trip + i64 schema column round-trip
 // =============================================================================
 
 /// TV-0862-05: `MicroOctoW` is `Dqa` at `scale = 0` (integer
 /// micro-OCTO_W counts). `DqaEncoding` is the canonical 16-byte BE
-/// consensus wire form per `determin/src/dqa.rs:495-502`. Encode +
-/// re-decode must round-trip exactly. Pin a non-trivial value to
-/// guard against endianness / scale sign regressions.
+/// consensus wire form per RFC-0105 v1.9 §DqaEncoding struct.
+/// Round-trip must be exact AND the substrate's `i64` column
+/// (stoolap `INTEGER` ↔ `i64`) must carry `Dqa::value` losslessly
+/// via the `seed → balance` cycle.
+///
+/// Pin a non-trivial value to guard against endianness / scale sign /
+/// schema-mapping regressions (S6c Round 1 code review finding #6:
+/// the prior test only asserted `value.value == N`, which is
+/// tautological — the substrate's `dqa_to_i64` helper was never
+/// exercised).
 #[test]
-fn tv_0862_05_dqa_encoding_round_trip() {
+fn tv_0862_05_dqa_encoding_round_trip_and_i64_schema_column() {
     let value = dqa(1_234_567_890);
     assert_eq!(
         value.scale, 0,
         "TV-0862-05: MicroOctoW MUST be stored at scale=0"
     );
 
+    // (a) DqaEncoding round-trip (canonical 16-byte BE wire form).
     let encoding = DqaEncoding::from_dqa(&value);
     assert_eq!(
         std::mem::size_of::<DqaEncoding>(),
@@ -198,101 +215,55 @@ fn tv_0862_05_dqa_encoding_round_trip() {
         "TV-0862-05: DqaEncoding wire form MUST be exactly 16 bytes"
     );
 
-    // Round-trip: encode + decode the canonical form.
     let round_trip = encoding.to_dqa().expect("decode to Dqa");
     assert_eq!(
         round_trip, value,
         "TV-0862-05: DqaEncoding round-trip must be exact: got {round_trip:?}"
     );
 
-    // The schema persists `i64` (`dqa_to_i64` helper) — the
-    // `Dqa::value` field IS the `i64` representation. No precision
-    // loss in the i64 <-> Dqa step.
-    let i64_form = value.value;
+    // (b) i64 schema column round-trip via the substrate.
+    // The seed path writes `dqa_to_i64(value)` (carrying Dqa::value
+    // as i64) into the `balance` INTEGER column; the balance read
+    // path decodes it back into Dqa at scale=0. This exercises the
+    // actual storage contract — the prior test did NOT exercise it.
+    let ledger = StoolapSpendLedger::open_in_memory().expect("open_in_memory");
+    let holder = "did:octo:zTV086205";
+    let macaroon_id = TV_0862_MACAROON_ID_05;
+    ledger.seed(holder, &macaroon_id, value).expect("seed");
+    let stored = ledger
+        .balance(holder, &macaroon_id)
+        .expect("balance read")
+        .expect("row must exist");
     assert_eq!(
-        i64_form, 1_234_567_890,
-        "TV-0862-05: Dqa::value must equal the i64 column value"
+        stored.value, 1_234_567_890,
+        "TV-0862-05: i64 schema column round-trip MUST equal input Dqa::value"
+    );
+    assert_eq!(
+        stored.scale, 0,
+        "TV-0862-05: schema column decode MUST preserve scale=0"
     );
 }
 
 // =============================================================================
-// TV-0862-06 — vault_id cross-ref (BLAKE3 derivation per RFC-0960 §20.3)
-// =============================================================================
-
-/// TV-0862-06: `vault_id` derivation per RFC-0960 §20.3:
-///
-/// ```text
-/// vault_id = BLAKE3("cipherocto/vault/v1/" + chain_id + owner_did + asset_id)
-/// ```
-///
-/// Pin the canonical input format + 32-byte output. The
-/// `StoolapSpendLedger` does NOT validate `vault_id` directly — the
-/// `Macaroon::verify_for_vault_op` (RFC-0957 v2.1) does — but the
-/// cross-ref substrate shares the canonical derivation. A drift in
-/// the derivation breaks the vault_id ↔ spend_ledger binding.
-#[test]
-fn tv_0862_06_vault_id_derivation_blake3() {
-    let chain_id = TV_0862_CHAIN_ID;
-    let owner_did = b"did:octo:zTV086206";
-    let asset_id = b"cipherocto/asset/v1/role_a";
-
-    // Canonical input per RFC-0960 §20.3 — pin the prefix string
-    // (regression: prefix drift silently breaks the vault_id space).
-    let prefix = b"cipherocto/vault/v1/";
-    let mut input =
-        Vec::with_capacity(prefix.len() + chain_id.len() + owner_did.len() + asset_id.len());
-    input.extend_from_slice(prefix);
-    input.extend_from_slice(&chain_id);
-    input.extend_from_slice(owner_did);
-    input.extend_from_slice(asset_id);
-
-    let expected_vault_id: [u8; 32] = blake3::hash(&input).into();
-    assert_eq!(
-        expected_vault_id.len(),
-        32,
-        "TV-0862-06: BLAKE3 output must be exactly 32 bytes"
-    );
-    // The vault_id is non-zero (regression: empty-input BLAKE3).
-    assert_ne!(
-        expected_vault_id, [0u8; 32],
-        "TV-0862-06: vault_id MUST be non-zero for canonical input"
-    );
-
-    // Cross-ref invariant: same inputs MUST yield the same vault_id
-    // (deterministic).
-    let rehash: [u8; 32] = blake3::hash(&input).into();
-    assert_eq!(
-        rehash, expected_vault_id,
-        "TV-0862-06: vault_id derivation MUST be deterministic"
-    );
-}
-
-// =============================================================================
-// TV-0862-07 — V2 wire-form (Dqa 16-byte BE on the spend_ledger row)
+// TV-0862-07 — V2 wire-form on substrate side
 // =============================================================================
 
 /// TV-0862-07: The `spend_ledger.balance` column stores the `i64`
-/// form of `Dqa` at `scale = 0`. On read, the substrate decodes
-/// the `i64` back into `Dqa` and asserts `scale = 0` (via
-/// `dqa_to_i64` debug assertion + storage helper). Pin the encoding
-/// contract: encoding round-trips through `DqaEncoding::to_bytes` ↔
-/// `DqaEncoding::from_bytes` + `Dqa` ↔ `i64` interop.
+/// form of `Dqa` at `scale = 0`. The substrate's UPDATE path
+/// (deduct → new_balance) must round-trip through the column.
 ///
-/// This is the V2 wire-form on the substrate side.
-///
-/// The on-wire `NodeEnvelope.version_tag = 0xA1` cross-ref per
-/// RFC-0870 v2.1 + RFC-0862 v2.0 §StoolapSpendLedger substrate is
-/// enforced at the dispatch layer; this TV pins the substrate-side
-/// encoding.
+/// This pins the V2 wire-form on the SUBSTRATE side. The on-wire
+/// `NodeEnvelope.version_tag = 0xA1` cross-ref per RFC-0870 (S6a)
+/// is enforced at the dispatch layer; the dispatch-layer envelope
+/// test lives in `crates/octo-protocol/tests/tv_0870_envelope.rs`.
 #[test]
 fn tv_0862_07_dqa_v2_wire_form_pinned() {
-    let _guard = MIGRATION_LOCK.lock().unwrap();
     let ledger = StoolapSpendLedger::open_in_memory().expect("open_in_memory");
     let holder = "did:octo:zTV086207";
     let macaroon_id = TV_0862_MACAROON_ID_07;
 
-    // Seed a value that exercises both positive + zero scale.
-    let positive = dqa(1_000_000_000_000); // 1e12 micro-OCTO_W
+    // Seed a value that exercises the V2 wire-form round-trip path.
+    let positive = TV_0862_BALANCE_07_FULL; // 1e12 micro-OCTO_W
     ledger
         .seed(holder, &macaroon_id, positive)
         .expect("seed positive");
@@ -306,26 +277,33 @@ fn tv_0862_07_dqa_v2_wire_form_pinned() {
     );
 
     // Deduct half — exercises the V2 wire-form UPDATE path.
-    let half = dqa(500_000_000_000);
+    let half = TV_0862_BALANCE_07_HALF;
     let remainder = ledger
         .try_deduct(holder, &macaroon_id, half)
         .expect("try_deduct");
     assert_eq!(
-        remainder,
-        dqa(500_000_000_000),
+        remainder, TV_0862_BALANCE_07_HALF,
         "TV-0862-07: V2 wire-form UPDATE must reflect new balance"
     );
 
     // Encoding contract: 16-byte BE form must be deterministic
-    // across `Dqa` ↔ `DqaEncoding` round-trips. `DqaEncoding` is
-    // `#[repr(C)]` 16-byte struct (BE value + scale + reserved);
-    // struct equality suffices for byte-stability (PartialEq + Eq
-    // derived).
-    let enc1 = DqaEncoding::from_dqa(&positive);
-    let enc2 = DqaEncoding::from_dqa(&Dqa::new(positive.value, 0).expect("re-dqa"));
+    // across `Dqa` ↔ `DqaEncoding` round-trips. Pin the byte array
+    // explicitly (S6c Round 1 code review finding #2 — `PartialEq`
+    // compares `i64` as integer, not as bytes; endianness drift in
+    // `from_dqa` would pass `PartialEq` while flipping wire form).
+    let enc1 = DqaEncoding::from_dqa(&TV_0862_BALANCE_07_FULL);
+    let enc1_bytes: &[u8; 16] = unsafe {
+        // SAFETY: `DqaEncoding` is `#[repr(C)]` with `value: i64` +
+        // `scale: u8` + `_reserved: [u8; 7]` = 16 bytes total, no
+        // padding. The cast produces a stable byte view that matches
+        // the on-wire form (BE value, scale, reserved).
+        &*(&enc1 as *const DqaEncoding as *const [u8; 16])
+    };
+    // 1_000_000_000_000 = 0xE8D4A51000 (BE 8 bytes: 0x00 0x00 0x00
+    // 0xE8 0xD4 0xA5 0x10 0x00) + scale 0x00 + reserved 0x00 * 7.
     assert_eq!(
-        enc1, enc2,
-        "TV-0862-07: DqaEncoding MUST be byte-stable across equal values"
+        enc1_bytes, &TV_0862_DQA_ENCODING_07_BYTES,
+        "TV-0862-07: DqaEncoding 16-byte wire form MUST match pinned BE layout"
     );
 }
 
@@ -335,19 +313,19 @@ fn tv_0862_07_dqa_v2_wire_form_pinned() {
 
 /// TV-0862-08: The per-instance `drain_lock` serializes
 /// `try_deduct` within a single `StoolapSpendLedger` instance. Two
-/// separate instances pointing at the same file path coordinate
-/// only via the underlying stoolap per-statement transaction; in
-/// the in-memory case, two instances are independent.
+/// separate in-memory instances are independent (each owns its own
+/// `Database::open_in_memory`).
 ///
-/// This TV pins the documented contract (per source-of-truth at
-/// `stoolap_spend_ledger.rs:73-74` comment + RFC-0862 §Atomicity):
-/// in-memory instances have NO cross-instance coordination; the
-/// production follow-on is mission `0871e-phase5c-1`
-/// (`RaftLikeDrainCoordinator` LANDED 2026-08-11) which provides
-/// cross-instance drain coordination via the consensus substrate.
+/// Per RFC-0862 §StoolapSpendLedger `Atomicity guarantee`: in-memory
+/// instances have NO cross-instance coordination; cross-instance
+/// coordination is mission `0871e-phase5c-1`
+/// (`RaftLikeDrainCoordinator` LANDED 2026-08-11).
+///
+/// Cross-process file-backed coordination is OUT OF SCOPE for S6c
+/// and is filed as follow-on `0862-c3-cross-process-drain` (S6c
+/// Round 1 security review finding #4).
 #[test]
 fn tv_0862_08_multi_instance_in_memory_lock_isolation() {
-    let _guard = MIGRATION_LOCK.lock().unwrap();
     let ledger_a = StoolapSpendLedger::open_in_memory().expect("open_in_memory A");
     let ledger_b = StoolapSpendLedger::open_in_memory().expect("open_in_memory B");
     let holder = "did:octo:zTV086208";
@@ -406,6 +384,63 @@ fn tv_0862_08_multi_instance_in_memory_lock_isolation() {
 }
 
 // =============================================================================
+// TV-0862-09 — negative-cost rejection (substrate hardening per S4 Round 2)
+// =============================================================================
+
+/// TV-0862-09: `try_deduct` rejects negative `cost` with
+/// `SpendLedgerError::NegativeCost` (defense-in-depth against signed
+/// underflow in caller fee-computation paths and wire-decoded `i64`
+/// amounts — S6c Round 1 security review finding #3, S4 Round 2
+/// surfaced the same class of bug elsewhere).
+///
+/// Rejection is precondition-only (no DB hit, no lock acquired,
+/// state unchanged).
+#[test]
+fn tv_0862_09_try_deduct_negative_cost_rejected() {
+    let ledger = StoolapSpendLedger::open_in_memory().expect("open_in_memory");
+    let holder = "did:octo:zTV086209";
+    let macaroon_id = TV_0862_MACAROON_ID_09;
+
+    // Seed a positive balance so the negative-cost path is
+    // unambiguous (rejection must precede the
+    // UnknownHolder/InsufficientBalance arms).
+    ledger
+        .seed(holder, &macaroon_id, dqa(10_000))
+        .expect("seed");
+
+    let negative = dqa(-1);
+    let result = ledger.try_deduct(holder, &macaroon_id, negative);
+    assert!(
+        matches!(result, Err(SpendLedgerError::NegativeCost { .. })),
+        "TV-0862-09: negative cost MUST yield NegativeCost: got {result:?}"
+    );
+
+    // State unchanged after rejection (balance still 10_000).
+    let stored = ledger
+        .balance(holder, &macaroon_id)
+        .expect("balance read")
+        .expect("row must exist after rejection");
+    assert_eq!(
+        stored,
+        dqa(10_000),
+        "TV-0862-09: balance MUST be unchanged after NegativeCost rejection"
+    );
+}
+
+/// TV-0862-09b: `try_deduct` with negative cost on an UNKNOWN holder
+/// still rejects with `NegativeCost` (precondition check precedes
+/// the UnknownHolder path).
+#[test]
+fn tv_0862_09b_try_deduct_negative_cost_on_unknown_holder() {
+    let ledger = StoolapSpendLedger::open_in_memory().expect("open_in_memory");
+    let result = ledger.try_deduct("did:octo:zTV086209b", &TV_0862_MACAROON_ID_09B, dqa(-1));
+    assert!(
+        matches!(result, Err(SpendLedgerError::NegativeCost { .. })),
+        "TV-0862-09b: negative cost on unknown holder MUST yield NegativeCost (precondition precedes UnknownHolder): got {result:?}"
+    );
+}
+
+// =============================================================================
 // Test fixtures (byte-pinned constants)
 // =============================================================================
 
@@ -423,17 +458,49 @@ const TV_0862_MACAROON_ID_03: [u8; 16] = [
 const TV_0862_MACAROON_ID_04: [u8; 16] = [
     0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x40,
 ];
-const TV_0862_MACAROON_ID_07: [u8; 16] = [
+const TV_0862_MACAROON_ID_04B: [u8; 16] = [
+    0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50,
+];
+const TV_0862_MACAROON_ID_05: [u8; 16] = [
     0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F, 0x60,
 ];
-const TV_0862_MACAROON_ID_08: [u8; 16] = [
+const TV_0862_MACAROON_ID_07: [u8; 16] = [
     0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E, 0x6F, 0x70,
 ];
+const TV_0862_MACAROON_ID_08: [u8; 16] = [
+    0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F, 0x80,
+];
+const TV_0862_MACAROON_ID_09: [u8; 16] = [
+    0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8A, 0x8B, 0x8C, 0x8D, 0x8E, 0x8F, 0x90,
+];
+const TV_0862_MACAROON_ID_09B: [u8; 16] = [
+    0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9A, 0x9B, 0x9C, 0x9D, 0x9E, 0x9F, 0xA0,
+];
 
-/// 32-byte chain_id fixture (zero-distinct).
-const TV_0862_CHAIN_ID: [u8; 32] = [
-    0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF, 0xB0,
-    0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0,
+/// TV-0862-07 balance fixtures (full + half deduction).
+/// 1_000_000_000_000 = 1 OCTO_W times 1e6 micro-OCTO_W times 1e3 = 1e12.
+const TV_0862_BALANCE_07_FULL: MicroOctoW = TV_0862_BALANCE_VALUE;
+const TV_0862_BALANCE_07_HALF: MicroOctoW = TV_0862_BALANCE_HALF_VALUE;
+const TV_0862_BALANCE_VALUE: MicroOctoW = Dqa {
+    value: 1_000_000_000_000,
+    scale: 0,
+};
+const TV_0862_BALANCE_HALF_VALUE: MicroOctoW = Dqa {
+    value: 500_000_000_000,
+    scale: 0,
+};
+
+/// TV-0862-07 DqaEncoding byte-array pin (regression: endianness
+/// drift in `DqaEncoding::from_dqa`).
+///
+/// Layout: `value: i64 BE` (8 B) + `scale: u8` (1 B) +
+/// `_reserved: [u8; 7]` (7 B) = 16 B.
+///
+/// 1_000_000_000_000 = 0x00000000E8D4A51000 BE.
+const TV_0862_DQA_ENCODING_07_BYTES: [u8; 16] = [
+    0x00, 0x00, 0x00, 0xE8, 0xD4, 0xA5, 0x10, 0x00, // value BE
+    0x00, // scale
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // reserved
 ];
 
 /// Helper: build a `MicroOctoW` (Dqa at scale=0) from an integer.

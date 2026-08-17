@@ -1081,6 +1081,22 @@ network_id = "0202020202020202020202020202020202020202020202020202020202020202"
     use quota_router_storage::ask::ModelRef;
 
     fn sample_envelope_json() -> String {
+        // `cost` is `octo_determin::Dqa` post S4 codemod; the canonical wire
+        // form is 16 bytes via `dqa_serde::field` (see
+        // quota-router-storage/src/dqa_serde.rs §serialize_bytes). Layout
+        // (per determin/src/dqa.rs §DqaEncoding):
+        //   bytes 0..8   i64 BE   (value)
+        //   byte  8      u8        (scale)
+        //   bytes 9..16  [u8; 7]   (reserved = 0, validated)
+        // 30_000 with scale=0: value = 0x7530, BE → [0,0,0,0,0,0,0x75,0x30].
+        let cost_be = {
+            let mut bytes = [0_u8; 16];
+            bytes[6] = 0x75;
+            bytes[7] = 0x30;
+            // scale = 0 → byte 8 stays 0
+            // reserved = [0; 7] → bytes 9..16 stay 0
+            bytes.to_vec()
+        };
         serde_json::json!({
             "settlement_hash": vec![0_u8; 32],
             "asker_did": "did:octo:asker1",
@@ -1094,7 +1110,7 @@ network_id = "0202020202020202020202020202020202020202020202020202020202020202"
             "ask_id": vec![0x42_u8; 32],
             "nonce": vec![0x55_u8; 32],
             "timestamp_unix": 1_700_000_000_u64,
-            "cost": 30_000_u128,
+            "cost": cost_be,
         })
         .to_string()
     }

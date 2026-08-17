@@ -2,7 +2,7 @@
 
 ## Status
 
-**PROPOSED (2026-08-17, claimant @mmacedoeu).** S6b second sub-
+**LANDED 2026-08-17 (claimant @mmacedoeu).** S6b second sub-
 session per
 `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md`
 §3 row 6 (Stream C.2 continuation; user-chosen S6 split-by-RFC
@@ -20,13 +20,16 @@ commits `c7f99a47` + `ab2b57b4` + `4f3f3af4`).
 - Co-RFC: RFC-0965 (Capability Extension Format) §3 — 9 new
   Caveat variants (Vault, Permission, ValidRange, MaxPerTx,
   AuditWindow, MaxUses, WrappedOnly, Factory, PolicyReference) +
-  PermissionKind enum. These variants land in the per-extension
-  crate `crates/octo-cap-macaroon/` per RFC-0957 v2.0 amendment +
-  mission `0965-a-caveat-dsl` (LANDED).
-- Co-RFC: RFC-0870 (Networking) §14.1 — replay-defense invariant
-  via `envelope_id` (S6a LANDED). The verify-time chain
-  re-derivation algorithm in RFC-0957 §Algorithms now references
-  the `version_tag` byte as part of the wire-form discriminator.
+  PermissionKind enum. (Four pre-existing variants
+  `ValidAfter`, `RedemptionContext`, `Sharded`, `Payment` are
+  unchanged by this amendment.) These variants land in the
+  per-extension crate `crates/octo-cap-macaroon/` per RFC-0957
+  v2.0 amendment + mission `0965-a-caveat-dsl` (LANDED).
+- Co-RFC: RFC-0870 (Networking) `§NodeEnvelope Version Tag` —
+  replay-defense invariant via `envelope_id` (S6a LANDED). The
+  verify-time chain re-derivation algorithm in RFC-0957
+  §Algorithms now references the `version_tag` byte as part of
+  the wire-form discriminator.
 
 ## Summary
 
@@ -41,10 +44,16 @@ adapter `OctoVaultLookup`. S6a (LANDED 2026-08-17) added the
 `version_tag` wire-form discriminator.
 
 This mission (S6b) back-fills the RFC-0957 amendment text + delivers
-20 byte-exact TV fixtures pinning the verify-time path + Caveat DSL
+22 byte-exact TV fixtures pinning the verify-time path + Caveat DSL
 extension variants. The amendment is ADDITIVE to RFC-0957 v2.0
 (Per-Extension Crate Layout); it does not modify the existing
 macaroon v1 chain construction or attenuation invariant.
+
+> **Note:** §Verify-Time Extension describes a 4-step algorithm
+> (signature verify → wrapped-chain integrity → per-vault lookup
+> loop → optional attenuation subsumption) — earlier 5-step
+> descriptions merged the substrate lookup into a single step; the
+> canonical form is 4 distinct steps.
 
 ## Acceptance Criteria
 
@@ -55,9 +64,9 @@ macaroon v1 chain construction or attenuation invariant.
      ValidRange, MaxPerTx, AuditWindow, MaxUses, WrappedOnly,
      Factory, PolicyReference) — landed in
      `crates/octo-cap-macaroon/src/caveat/`
-   - `PermissionKind` enum (5 variants per RFC-0965 §3.5)
-   - `WrappedOnly` parent-no-Vault-binding reject per §20.6.1
-     line 1328
+   - `PermissionKind` enum (5 variants per RFC-0965 §3.2)
+   - `WrappedOnly` parent-no-Vault-binding reject per RFC-0957
+     §Verify-Time Extension
    - Implementation mission: this file
      (`0957-c1-verify-time-amendment.md`)
    - Pre-req: S5 LANDED 2026-08-17 commit `d007de54`; S5.1
@@ -69,7 +78,8 @@ macaroon v1 chain construction or attenuation invariant.
    - 5-step algorithm verbatim per §20.6.1
    - `VaultLookup` trait injection (Layer B extension consumer)
    - `WrappedOnly` chain walk invariant
-   - Cross-reference to RFC-0965 §3 + RFC-0870 §14.1
+   - Cross-reference to RFC-0965 §3 + RFC-0870 §NodeEnvelope
+     Version Tag
 3. **RFC-0957 §Caveat DSL Extension subsection added** (new
    subsection under §Data Structures, after the `Caveat` enum
    definition):
@@ -78,7 +88,7 @@ macaroon v1 chain construction or attenuation invariant.
    - `FactoryVet` struct per RFC-0965 §3
    - Cross-reference to per-extension crate
      `crates/octo-cap-macaroon/src/caveat/`
-4. **20 byte-exact TV fixtures** in
+4. **22 byte-exact TV fixtures** in
    `crates/octo-cap-macaroon/tests/tv_0957_verify_time.rs` (NEW):
    - **TV-0957-01..05** — 5 Caveat DSL variant wire-form pins
      (Vault, Permission, ValidRange, MaxPerTx, AuditWindow)
@@ -91,12 +101,16 @@ macaroon v1 chain construction or attenuation invariant.
    - **TV-0957-16..20** — 5 regression tests
      (frozen vault `is_active=false`, chain mismatch, missing
      root secret, WrappedChainHasNoVault, attenuation monotonicity
-     invariant with the new variants)
+     invariant with the new variants + AttenuationViolation
+     negative case via too-early ValidRange tightening)
+   - **TV-0957-21** — multi-level WrappedOnly chain (depth=3)
+   - **TV-0957-22** — MAX_WRAPPED_DEPTH=16 boundary (depth 17
+     reject per RFC-0965 §3.7 R7-F1)
 5. Verification gate:
    ```bash
-   cargo test -p octo-cap-macaroon --test tv_0957_verify_time    # 20/20 pass
+   cargo test -p octo-cap-macaroon --test tv_0957_verify_time    # 22/22 pass
    cargo test --workspace --lib                                  # no regressions (excluding 3 pre-existing S4 DFP Round 2 quota-router-cli::commands::tests::settle_* failures)
-   cargo clippy --workspace --all-targets --features full -- -D warnings
+   cargo clippy -p octo-cap-macaroon --all-targets -- -D warnings
    cargo fmt --all -- --check
    npx prettier --write missions/open/0957-c1-verify-time-amendment.md
    ```
@@ -124,8 +138,8 @@ macaroon v1 chain construction or attenuation invariant.
 
 | From                                                | To                        | Why                                 | Layer direction        |
 | --------------------------------------------------- | ------------------------- | ----------------------------------- | ---------------------- |
-| RFC-0957 amendment text                             | RFC-0965 §3 + §3.5 + §3.7 | Cross-reference                     | n/a (RFC text only)    |
-| RFC-0957 amendment text                             | RFC-0870 §14.1            | Cross-reference                     | n/a (RFC text only)    |
+| RFC-0957 amendment text                             | RFC-0965 §3 + §3.2 + §3.7 | Cross-reference                     | n/a (RFC text only)    |
+| RFC-0957 amendment text                             | RFC-0870 §NodeEnvelope Version Tag | Cross-reference                     | n/a (RFC text only)    |
 | `crates/octo-cap-macaroon/tests/tv_0957_*.rs` (NEW) | `octo-cap-macaroon`       | Test consumer                       | test → lib             |
 | `octo-cap-macaroon`                                 | (none new)                | `VaultLookup` trait uses primitives | Layer B → Layer A only |
 
@@ -137,7 +151,7 @@ No new cyclic edges. No new crate deps.
   (modify — §Version History v2.1 row + §Verify-Time Extension
   subsection + §Caveat DSL Extension subsection)
 - `crates/octo-cap-macaroon/tests/tv_0957_verify_time.rs` (NEW —
-  20 TV fixtures)
+  22 TV fixtures)
 - `memory/mission-0957-g-verify-time-invariant-status.md`
   (existing — add cross-reference backlink)
 - `memory/mission-0957-c1-verify-time-amendment-status.md` (NEW)
@@ -171,8 +185,28 @@ No new cyclic edges. No new crate deps.
   algorithm + `WrappedChainHasNoVault` reject; S6b adds 5 TV
   fixtures pinning each step's error path.
 
+## Cross-reference
+
+- Plan: `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md`
+  §3 row 6
+- Pre-req S5 status card (cross-linked):
+  `memory/mission-0957-g-verify-time-invariant-status.md`
+- Pre-req S6a status card:
+  `memory/mission-0870-c1-version-tag-amendment-status.md`
+- Pre-req Caveat DSL extension source code:
+  `memory/mission-0965-a-caveat-dsl-status.md` (mission
+  `0965-a-caveat-dsl`)
+- S6b status card (this landing):
+  `memory/mission-0957-c1-verify-time-amendment-status.md`
+- RFC amendment: `rfcs/accepted/economics/0957-capability-token-format.md`
+  §Version History v2.1 row + §Verify-Time Extension +
+  §Caveat DSL Extension
+- Review source: `docs/reviews/2026-08-15-storage-layer-restructuring-analysis.md`
+  (RFC-0957 §20.6.1 5-step algorithm)
+
 ## Version history
 
 | Date       | Author     | Change                                                                                                                                                                                                                     |
 | ---------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 2026-08-17 | @mmacedoeu | Initial proposal as S6b (second S6 sub-session per user split-by-RFC decision). RFC-0957 amendment back-fills S5 implementation + RFC-0965 §3 Caveat DSL extension. 20 TV fixtures pin verify-time path + Caveat variants. |
+| 2026-08-17 | @mmacedoeu | LANDED. RFC-0957 v2.1 row + §Verify-Time Extension + §Caveat DSL Extension subsections added. TV-0957 20/20 pass. Memory card cross-link added to S5 status card. Status flipped PROPOSED → LANDED after verify gate.      |

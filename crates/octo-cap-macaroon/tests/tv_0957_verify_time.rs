@@ -206,19 +206,24 @@ fn tv_0957_03_valid_range_variant_wire_form() {
 #[test]
 fn tv_0957_04_max_per_tx_variant_wire_form() {
     // `MaxPerTx(u128)` — discriminant `max_per_tx`, content is u128.
-    let c = Caveat::MaxPerTx(42_000_000_000u128);
+    // Value MUST exceed u64::MAX to actually exercise the u128 wire
+    // form (a value <= u64::MAX would pass even under a u64 type —
+    // u64::MAX + 8 = 18_446_744_073_709_551_623).
+    let val: u128 = u64::MAX as u128 + 8;
+    let c = Caveat::MaxPerTx(val);
     let json = serde_json::to_string(&c).expect("serialize");
     assert!(
         json.contains("\"type\":\"max_per_tx\""),
         "TV-0957-04: MaxPerTx discriminant MUST be \"max_per_tx\": got {json}"
     );
-    // u128 content must round-trip exactly (no f64 drift).
+    // u128 content must round-trip exactly (no f64 drift); the value
+    // MUST appear as a single decimal literal (not split / truncated).
     assert!(
-        json.contains("42000000000"),
-        "MaxPerTx u128 payload must be preserved: got {json}"
+        json.contains(&format!("\"value\":{}", val)),
+        "MaxPerTx u128 payload must round-trip with full u128 precision: got {json}"
     );
     let back: Caveat = serde_json::from_str(&json).expect("deserialize");
-    assert_eq!(back, Caveat::MaxPerTx(42_000_000_000u128));
+    assert_eq!(back, Caveat::MaxPerTx(val));
 }
 
 #[test]
@@ -232,7 +237,7 @@ fn tv_0957_05_audit_window_variant_wire_form() {
         json.contains("\"type\":\"audit_window\""),
         "TV-0957-05: AuditWindow discriminant MUST be \"audit_window\": got {json}"
     );
-    // Field name MUST be `duration_secs` (RFC-0965 §3.5 — distinct from
+    // Field name MUST be `duration_secs` (RFC-0965 §3.4 — distinct from
     // earlier draft's `start_unix_secs`/`end_unix_secs` design).
     assert!(
         json.contains("\"duration_secs\":3600"),
@@ -260,7 +265,7 @@ fn tv_0957_06_max_uses_variant_wire_form() {
         json.contains("\"type\":\"max_uses\""),
         "TV-0957-06: MaxUses discriminant MUST be \"max_uses\": got {json}"
     );
-    // Field name MUST be `count` (RFC-0965 §3.6).
+    // Field name MUST be `count` (RFC-0965 §3.5).
     assert!(
         json.contains("\"count\":7"),
         "MaxUses payload MUST be `{{\"count\":N}}`: got {json}"
@@ -340,8 +345,13 @@ fn tv_0957_08_factory_variant_wire_form() {
 fn tv_0957_09_policy_reference_variant_wire_form() {
     // `PolicyReference { policy_id, policy_version_seq, attenuation_witness }`
     // — discriminant `policy_reference`. All three fields MUST serialize
-    // verbatim (RFC-0965 §3.9 + RFC-0967 §8.2 — witness signature binds
+    // verbatim (RFC-0965 §3.10 + RFC-0967 §8.2 — witness signature binds
     // the attenuation).
+    //
+    // `attenuation_witness` is a `[u8; 64]` annotated with
+    // `#[serde(with = "serde_bytes_arr64")]` — wire form is a 128-char
+    // lowercase hex string, NOT an array of numbers (a JSON-array form
+    // would be ~700 bytes for 64 bytes; hex string is 128 bytes).
     let c = Caveat::PolicyReference {
         policy_id: [0x11; 32],
         policy_version_seq: 42,
@@ -353,16 +363,20 @@ fn tv_0957_09_policy_reference_variant_wire_form() {
         "TV-0957-09: PolicyReference discriminant MUST be \"policy_reference\": got {json}"
     );
     assert!(
-        json.contains("policy_id"),
-        "must carry `policy_id`: got {json}"
+        json.contains("\"policy_id\":["),
+        "policy_id must serialize as a JSON array of u8s (default serde): got {json}"
     );
     assert!(
-        json.contains("policy_version_seq"),
-        "must carry `policy_version_seq`: got {json}"
+        json.contains("\"policy_version_seq\":42"),
+        "policy_version_seq must be a plain number: got {json}"
     );
+    // Byte-exact hex pin for attenuation_witness: 64 bytes of 0x22 =
+    // 128 lowercase hex chars of `2` (no array form, no quotes inside).
+    let expected_witness_hex = "\"attenuation_witness\":\"".to_owned() + &"2".repeat(128) + "\"";
     assert!(
-        json.contains("attenuation_witness"),
-        "must carry `attenuation_witness`: got {json}"
+        json.contains(&expected_witness_hex),
+        "attenuation_witness MUST be hex-string form (serde_bytes_arr64): \
+         expected substring {expected_witness_hex:?} in {json}"
     );
     let back: Caveat = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(
@@ -396,8 +410,9 @@ fn tv_0957_10_raw_unknown_name_rejected_at_attenuation() {
         "TV-0957-10: attenuation of unregistered Raw MUST be rejected (got Ok): {result:?}"
     );
 
-    // Sanity: known-name Raw succeeds (proves the rejection is
-    // specifically about registration, not all Raw caveats).
+    // Sanity: known-name Raw succeeds AND produces a DIFFERENT capability
+    // id from the un-attenuated root (proves attenuation is non-trivial
+    // — adds a HMAC chain step, not a no-op).
     let known_raw = Caveat::Raw(RawCaveat {
         name: "known_name".to_owned(),
         value: vec![0x04, 0x05],
@@ -405,19 +420,11 @@ fn tv_0957_10_raw_unknown_name_rejected_at_attenuation() {
     let ok = root
         .attenuate(known_raw, &catalog)
         .expect("TV-0957-10 known Raw must succeed");
-    assert_eq!(
+    assert_ne!(
         compute_capability_id(&ok),
-        compute_capability_id(
-            &root
-                .attenuate(
-                    Caveat::Raw(RawCaveat {
-                        name: "known_name".to_owned(),
-                        value: vec![0x04, 0x05],
-                    }),
-                    &catalog
-                )
-                .expect("second known Raw attenuation")
-        )
+        compute_capability_id(&root),
+        "attenuating with a known Raw MUST change the capability_id \
+         (HMAC chain step is non-trivial)"
     );
 }
 
@@ -689,15 +696,15 @@ fn tv_0957_18_regression_missing_root_secret_rejected() {
 }
 
 /// Regression: `WrappedOnly` chain WITHOUT any ancestor `Caveat::Vault`
-/// MUST reject with `WrappedChainHasNoVault` per §20.6.1 line 1328
-/// (chainless parent = safe default = reject).
+/// MUST reject with `WrappedChainHasNoVault` per RFC-0957 §Verify-Time
+/// Extension (chainless parent = safe default = reject).
 #[test]
 fn tv_0957_19_regression_wrapped_chain_has_no_vault() {
     let mut catalog = TestCatalog::new();
     let parent_root = Macaroon::mint(&TV_0957_ROOT_SECRET).expect("parent mint");
     let parent = parent_root
         .attenuate(
-            // No Vault caveat — chainless parent per §20.6.1 line 1328.
+            // No Vault caveat — chainless parent per §Verify-Time Extension.
             Caveat::MaxUses { count: 1 },
             &catalog,
         )
@@ -751,23 +758,28 @@ fn tv_0957_20_regression_attenuation_monotonicity_with_new_variants() {
         )
         .expect("parent attenuate ValidRange");
     let parent_id = compute_capability_id(&parent);
+    let parent_caveats = parent.caveats.clone();
     catalog.insert(parent);
 
-    // Child: adds Permission(PermissionKind) + WrappedOnly referencing
-    // parent (chain extends through parent). The child's caveat set is
-    // STRICTLY additive over the parent's (RFC-0957 §3.5).
+    // Child: inherits parent Vault + ValidRange, tightens ValidRange
+    // (after: 2 vs parent 1, until: u64::MAX - 1 vs parent u64::MAX).
+    // Subsumption passes because ValidRange child ⊆ ValidRange parent,
+    // and Vault child == Vault parent (per caveat/mod.rs RFC-0965 §3
+    // subsumption rules). Demonstrates attenuation-monotonicity for
+    // the new variants.
     let child_root = Macaroon::mint(&TV_0957_ROOT_SECRET).expect("child mint");
     let child = child_root
-        .attenuate(Caveat::Permission(PermissionKind::VaultMutation), &catalog)
-        .expect("child attenuate Permission");
+        .attenuate(Caveat::Vault(TV_0957_VAULT_ID), &catalog)
+        .expect("child attenuate Vault");
     let child = child
         .attenuate(
-            Caveat::WrappedOnly {
-                parent_capability: parent_id,
+            Caveat::ValidRange {
+                valid_after_unix: 2,
+                valid_until_unix: u64::MAX - 1,
             },
             &catalog,
         )
-        .expect("child attenuate WrappedOnly");
+        .expect("child attenuate tighter ValidRange");
 
     let mut lookup = TestVaultLookup::empty();
     lookup.insert(
@@ -780,7 +792,7 @@ fn tv_0957_20_regression_attenuation_monotonicity_with_new_variants() {
     let result = child.verify_for_vault_op(
         &TV_0957_ROOT_SECRET,
         &catalog,
-        None,
+        Some(parent_caveats.as_slice()),
         &TV_0957_OP_CHAIN_ID,
         &lookup,
     );
@@ -789,7 +801,180 @@ fn tv_0957_20_regression_attenuation_monotonicity_with_new_variants() {
         "TV-0957-20 must verify (attenuation-monotonicity holds for new variants): \
          got {result:?}"
     );
-    // Parent's `parent_id` is referenced in `WrappedOnly.parent_capability`;
-    // bind to silence unused warning.
+    // Negative case: child tightens ValidRange BEYOND parent's range
+    // (valid_after < parent's valid_after) → subsumption fails per
+    // RFC-0965 §3 ValidRange rule (child valid_after must be >= parent).
+    let parent2 = Macaroon::mint(&TV_0957_ROOT_SECRET)
+        .expect("parent2 mint")
+        .attenuate(Caveat::Vault(TV_0957_VAULT_ID), &catalog)
+        .expect("parent2 attenuate Vault")
+        .attenuate(
+            Caveat::ValidRange {
+                valid_after_unix: 100,
+                valid_until_unix: u64::MAX,
+            },
+            &catalog,
+        )
+        .expect("parent2 attenuate ValidRange");
+    let parent2_caveats = parent2.caveats.clone();
+    catalog.insert(parent2);
+    let child2 = Macaroon::mint(&TV_0957_ROOT_SECRET)
+        .expect("child2 mint")
+        .attenuate(Caveat::Vault(TV_0957_VAULT_ID), &catalog)
+        .expect("child2 attenuate Vault")
+        .attenuate(
+            Caveat::ValidRange {
+                valid_after_unix: 50, // BEFORE parent2's 100 — invalid tighten
+                valid_until_unix: u64::MAX,
+            },
+            &catalog,
+        )
+        .expect("child2 attenuate too-early ValidRange");
+    let neg = child2.verify_for_vault_op(
+        &TV_0957_ROOT_SECRET,
+        &catalog,
+        Some(parent2_caveats.as_slice()),
+        &TV_0957_OP_CHAIN_ID,
+        &lookup,
+    );
+    assert!(
+        matches!(
+            neg,
+            Err(crate::VaultVerifyError::Macaroon(
+                crate::MacaroonError::AttenuationViolation,
+            ))
+        ),
+        "TV-0957-20 negative: child valid_after<parent valid_after must reject: \
+         got {neg:?}"
+    );
+    // Parent's `parent_id` is bound (kept for symmetry; not used by
+    // tightened-only child).
     let _ = parent_id;
+}
+
+// ===========================================================================
+// TV-0957-21..22: deeper chain + MAX_WRAPPED_DEPTH boundary
+// ===========================================================================
+
+/// Multi-level WrappedOnly chain (depth=3): root → child → grandchild.
+/// Each link carries a `Vault` caveat with the SAME vault_id; the
+/// collector walks the chain and finds one Vault (or many — both
+/// resolve OK against the populated lookup).
+#[test]
+fn tv_0957_21_multilevel_wrapped_only_chain_depth_3() {
+    let mut catalog = TestCatalog::new();
+    let mut lookup = TestVaultLookup::empty();
+    lookup.insert(
+        TV_0957_VAULT_ID,
+        VaultRowSnapshot {
+            chain_id: TV_0957_OP_CHAIN_ID,
+            is_active: true,
+        },
+    );
+
+    // Root has Vault.
+    let root = Macaroon::mint(&TV_0957_ROOT_SECRET)
+        .expect("root mint")
+        .attenuate(Caveat::Vault(TV_0957_VAULT_ID), &catalog)
+        .expect("root attenuate Vault");
+    let root_id = compute_capability_id(&root);
+    catalog.insert(root);
+
+    // Child extends via WrappedOnly(root_id).
+    let child = Macaroon::mint(&TV_0957_ROOT_SECRET)
+        .expect("child mint")
+        .attenuate(
+            Caveat::WrappedOnly {
+                parent_capability: root_id,
+            },
+            &catalog,
+        )
+        .expect("child attenuate WrappedOnly");
+    let child_id = compute_capability_id(&child);
+    catalog.insert(child);
+
+    // Grandchild extends via WrappedOnly(child_id) — depth 3 chain.
+    let leaf = Macaroon::mint(&TV_0957_ROOT_SECRET)
+        .expect("grandchild mint")
+        .attenuate(
+            Caveat::WrappedOnly {
+                parent_capability: child_id,
+            },
+            &catalog,
+        )
+        .expect("grandchild attenuate WrappedOnly");
+
+    // Verify the leaf; collector must walk BOTH ancestors and find
+    // the Vault caveat. Lookup hit on the single vault_id succeeds
+    // (once per ancestor mention).
+    catalog.insert(leaf.clone());
+    let result = leaf.verify_for_vault_op(
+        &TV_0957_ROOT_SECRET,
+        &catalog,
+        None,
+        &TV_0957_OP_CHAIN_ID,
+        &lookup,
+    );
+    assert!(
+        result.is_ok(),
+        "TV-0957-21: depth-3 WrappedOnly chain MUST verify when Vault ancestor exists: \
+         got {result:?}"
+    );
+}
+
+/// Boundary: chain depth = MAX_WRAPPED_DEPTH (16) is the last ALLOWED
+/// depth per RFC-0965 §3.7 R7-F1. The 17th attenuate MUST reject with
+/// `WrappedDepthExceeded`. Pin the boundary so a refactor that
+/// off-by-ones the bound trips this test.
+#[test]
+fn tv_0957_22_max_wrapped_depth_boundary_rejects_depth_17() {
+    let mut catalog = TestCatalog::new();
+    let mut prev_id: [u8; 32] = {
+        let root = Macaroon::mint(&TV_0957_ROOT_SECRET).expect("root mint");
+        let id = compute_capability_id(&root);
+        catalog.insert(root);
+        id
+    };
+    // Build up to chain length 15 (root=1 + 14 attenuates = 15).
+    for _ in 0..14 {
+        let m = Macaroon::mint(&TV_0957_ROOT_SECRET)
+            .expect("mint")
+            .attenuate(
+                Caveat::WrappedOnly {
+                    parent_capability: prev_id,
+                },
+                &catalog,
+            )
+            .expect("attenuate WrappedOnly");
+        prev_id = compute_capability_id(&m);
+        catalog.insert(m);
+    }
+    // 15th attenuate = chain length 16 = depth 16 (last allowed) — succeeds.
+    let leaf15 = Macaroon::mint(&TV_0957_ROOT_SECRET)
+        .expect("leaf15 mint")
+        .attenuate(
+            Caveat::WrappedOnly {
+                parent_capability: prev_id,
+            },
+            &catalog,
+        )
+        .expect("leaf15 attenuate (depth=16, last allowed)");
+    let leaf15_id = compute_capability_id(&leaf15);
+    catalog.insert(leaf15);
+
+    // 16th attenuate = chain length 17 = depth 17 (MAX_WRAPPED_DEPTH + 1)
+    // — MUST reject at attenuate time, before any verify call.
+    let result = Macaroon::mint(&TV_0957_ROOT_SECRET)
+        .expect("leaf16 mint")
+        .attenuate(
+            Caveat::WrappedOnly {
+                parent_capability: leaf15_id,
+            },
+            &catalog,
+        );
+    assert!(
+        matches!(result, Err(crate::MacaroonError::WrappedDepthExceeded(_))),
+        "TV-0957-22: chain depth 17 (MAX_WRAPPED_DEPTH+1) MUST reject \
+         at attenuate time with WrappedDepthExceeded: got {result:?}"
+    );
 }

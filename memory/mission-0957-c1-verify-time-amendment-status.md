@@ -1,6 +1,6 @@
 ---
 name: mission-0957-c1-verify-time-amendment-status
-description: S6b RFC-0957 v2.1 amendment + 20-byte-exact TV-0957 verify-time fixtures LANDED 2026-08-17. 20/20 tests pass. Mission YAML + RFC text + new crate test file.
+description: S6b RFC-0957 v2.1 amendment + 22-byte-exact TV-0957 verify-time fixtures LANDED 2026-08-17 (Round 1 follow-on 22/22 pass). Mission YAML + RFC text + new crate test file.
 metadata:
   type: project
 ---
@@ -36,8 +36,8 @@ bundle for this session).
   - `FactoryVet` struct per RFC-0965 §3
   - Cross-reference to per-extension crate
 - **TV-0957 fixture**:
-  `crates/octo-cap-macaroon/tests/tv_0957_verify_time.rs` (NEW, 20/20
-  tests passing — 4 categories × 5 fixtures):
+  `crates/octo-cap-macaroon/tests/tv_0957_verify_time.rs` (NEW, 22/22
+  tests passing — 4 categories × 5 fixtures + 2 deep-chain fixtures):
   - `tv_0957_01_vault_variant_wire_form` (Vault discriminant pin)
   - `tv_0957_02_permission_variant_wire_form` (Permission +
     PermissionKind × 5 round-trip pin)
@@ -77,8 +77,15 @@ bundle for this session).
   - `tv_0957_19_regression_wrapped_chain_has_no_vault`
     (chainless parent → `WrappedChainHasNoVault`)
   - `tv_0957_20_regression_attenuation_monotonicity_with_new_variants`
-    (parent Vault + ValidRange + child adds Permission + WrappedOnly
-    → all adds, no removal; RFC-0957 §3.5 invariant)
+    (parent Vault + ValidRange + child keeps them + tightens
+    ValidRange to subset range → passes; negative: child
+    valid_after<parent valid_after → AttenuationViolation; RFC-0965
+    §3 ValidRange rule)
+  - `tv_0957_21_multilevel_wrapped_only_chain_depth_3` (depth=3
+    chain; collector walks ancestors; Vault found transitively)
+  - `tv_0957_22_max_wrapped_depth_boundary_rejects_depth_17` (depth
+    16 last allowed per RFC-0965 §3.7 R7-F1; 17th attenuate rejects
+    with `WrappedDepthExceeded`)
 
 ## Drift catch (session)
 
@@ -106,7 +113,7 @@ that future TV fixtures reference.
 ## Verify gate (this session)
 
 - `cargo test -p octo-cap-macaroon --test tv_0957_verify_time` →
-  20/20 pass
+  22/22 pass
 - `cargo test -p octo-cap-macaroon --lib` → 193/193 pass
 - `cargo test --workspace --lib` → all green except 3 pre-existing
   S4 DFP Round 2 `quota-router-cli::commands::tests::settle_*`
@@ -123,10 +130,11 @@ that future TV fixtures reference.
 RFC-0957 v2.1 backs the S5 verify-time invariant (`d007de54`) +
 RFC-0965 §3 Caveat DSL extensions (landed in
 `crates/octo-cap-macaroon/src/caveat/`) with the spec text future
-implementers will reference. The 20 TV fixtures pin both the
+implementers will reference. The 22 TV fixtures pin both the
 **wire form** of the 9 new caveat variants (so a schema drift
-breaks a named test) and the **5-step verify-time invariant** (so a
-refactor that drops a step trips a regression pin).
+breaks a named test) and the **4-step verify-time invariant** (so a
+refactor that drops a step trips a regression pin) + the
+multi-level chain + the depth-16 boundary.
 
 ## Push authorization
 

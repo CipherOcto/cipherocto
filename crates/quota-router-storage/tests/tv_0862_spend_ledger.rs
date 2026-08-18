@@ -990,6 +990,170 @@ fn tv_0862_21_lock_file_permissions_are_0600() {
 }
 
 // =============================================================================
+// TV-0862-22 — try_deduct with cost=0 is a no-op (mission 0862-c11
+// TV-coverage finding #13: zero-cost edge).
+// =============================================================================
+
+/// TV-0862-22: `try_deduct` with `cost = Dqa(0, 0)` MUST succeed
+/// and leave the balance unchanged. The substrate treats zero-cost
+/// deduction as a meaningful no-op (free-tier query / sanity ping).
+/// Not covered by TV-04 (cost=100) or TV-09 (cost=-1 rejected).
+#[test]
+fn tv_0862_22_try_deduct_zero_cost_no_op() {
+    let ledger = StoolapSpendLedger::open_in_memory().expect("open_in_memory");
+    let holder = "did:octo:zTV086222";
+    let macaroon_id = TV_0862_MACAROON_ID_22;
+
+    ledger.seed(holder, &macaroon_id, dqa(1_000)).expect("seed");
+
+    let zero_cost = dqa(0);
+    let returned = ledger
+        .try_deduct(holder, &macaroon_id, zero_cost)
+        .expect("try_deduct zero cost");
+    assert_eq!(
+        returned,
+        dqa(1_000),
+        "TV-0862-22: zero-cost try_deduct returns current balance (unchanged): got {returned:?}"
+    );
+
+    let stored = ledger
+        .balance(holder, &macaroon_id)
+        .expect("balance read")
+        .expect("row must exist");
+    assert_eq!(
+        stored,
+        dqa(1_000),
+        "TV-0862-22: balance MUST be unchanged after zero-cost try_deduct: got {stored:?}"
+    );
+}
+
+// =============================================================================
+// TV-0862-24 — macaroon_id accepts any byte slice (mission 0862-c11
+// TV-coverage finding #15: macaroon_id axis parallel to holder_did).
+// =============================================================================
+
+/// TV-0862-24: `StoolapSpendLedger` accepts ANY byte slice as
+/// `macaroon_id` — no length / format / canonical-16-byte check at
+/// substrate (per mission 0862-c6: substrate contract is "any bytes;
+/// canonical validation lives at wallet-node boundary"). Mirrors
+/// TV-14 (holder_did axis) for the macaroon_id axis. Four
+/// representative shapes exercised:
+///   1. empty slice (zero-length)
+///   2. single byte
+///   3. canonical 16-byte raw (production form per RFC-0957)
+///   4. 64-byte binary garbage (oversized / arbitrary shape)
+///
+/// Distinct macaroon_id values store DISTINCT rows — the substrate
+/// uses raw bytes as the key without canonicalization.
+#[test]
+fn tv_0862_24_macaroon_id_accepts_any_bytes() {
+    let ledger = StoolapSpendLedger::open_in_memory().expect("open_in_memory");
+    let holder = "did:octo:zTV086224";
+
+    // 1. Empty macaroon_id — substrate accepts.
+    let empty: [u8; 0] = [];
+    ledger
+        .seed(holder, &empty, dqa(100))
+        .expect("empty macaroon_id accepted by substrate");
+    assert_eq!(
+        ledger.balance(holder, &empty).expect("balance read"),
+        Some(dqa(100)),
+        "empty macaroon_id persisted"
+    );
+
+    // 2. Single-byte macaroon_id — substrate accepts.
+    let one_byte: [u8; 1] = [0x42];
+    ledger
+        .seed(holder, &one_byte, dqa(200))
+        .expect("single-byte macaroon_id accepted by substrate");
+    assert_eq!(
+        ledger.balance(holder, &one_byte).expect("balance read"),
+        Some(dqa(200)),
+        "single-byte macaroon_id persisted"
+    );
+
+    // 3. Canonical 16-byte — substrate accepts.
+    let canonical: [u8; 16] = [
+        0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE,
+        0xAF,
+    ];
+    ledger
+        .seed(holder, &canonical, dqa(300))
+        .expect("canonical 16-byte macaroon_id accepted by substrate");
+    assert_eq!(
+        ledger.balance(holder, &canonical).expect("balance read"),
+        Some(dqa(300)),
+        "canonical 16-byte macaroon_id persisted"
+    );
+
+    // 4. 64-byte binary garbage — substrate accepts.
+    let garbage: [u8; 64] = [
+        0x00, 0xFF, 0x7F, 0x80, 0x01, 0xFE, 0x42, 0xA5, 0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA,
+        0xBE, 0x13, 0x37, 0x42, 0x42, 0xFF, 0x00, 0x80, 0x80, 0x55, 0xAA, 0x33, 0xCC, 0x99, 0x66,
+        0x11, 0x22, 0x44, 0x88, 0xCC, 0x00, 0xFF, 0xFE, 0xFD, 0xFC, 0xFB, 0xFA, 0xF9, 0xF8, 0xF7,
+        0xF6, 0xF5, 0xF4, 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE,
+        0xDC, 0xBA, 0x98, 0x76,
+    ];
+    ledger
+        .seed(holder, &garbage, dqa(400))
+        .expect("64-byte garbage macaroon_id accepted by substrate");
+    assert_eq!(
+        ledger.balance(holder, &garbage).expect("balance read"),
+        Some(dqa(400)),
+        "64-byte garbage macaroon_id persisted"
+    );
+
+    // Cross-shape assertion: each macaroon_id shape stores a DISTINCT
+    // row. The substrate uses raw bytes as the key — no canonicalization
+    // collapses them.
+    let _ = ledger
+        .balance(holder, &one_byte)
+        .expect("balance read one_byte");
+}
+
+// =============================================================================
+// TV-0862-25 — seed with budget=0 persists a zero-balance row
+// (mission 0862-c11 TV-coverage finding #16: seed-side zero edge).
+// =============================================================================
+
+/// TV-0862-25: `seed(holder, mac, Dqa(0, 0))` MUST succeed and
+/// persist a row with balance = 0. Pairs with TV-22 (try_deduct
+/// zero-cost no-op) for the seed side. The substrate treats
+/// zero-budget seed as a meaningful state — the row exists for
+/// later try_deduct calls (which will surface `InsufficientBalance`
+/// because balance=0 < cost=anything-positive).
+#[test]
+fn tv_0862_25_seed_zero_budget_persists() {
+    let ledger = StoolapSpendLedger::open_in_memory().expect("open_in_memory");
+    let holder = "did:octo:zTV086225";
+    let macaroon_id = TV_0862_MACAROON_ID_25;
+
+    ledger
+        .seed(holder, &macaroon_id, dqa(0))
+        .expect("seed zero budget");
+
+    let stored = ledger
+        .balance(holder, &macaroon_id)
+        .expect("balance read")
+        .expect("row must exist after zero-budget seed");
+    assert_eq!(
+        stored,
+        dqa(0),
+        "TV-0862-25: zero-budget seed MUST persist balance=0 row: got {stored:?}"
+    );
+
+    // Cross-check: any positive-cost try_deduct against the
+    // zero-balance row surfaces InsufficientBalance (proves the row
+    // is wired into the substrate's check path, not a phantom
+    // insert).
+    let result = ledger.try_deduct(holder, &macaroon_id, dqa(1));
+    assert!(
+        matches!(result, Err(SpendLedgerError::InsufficientBalance { .. })),
+        "TV-0862-25: try_deduct cost=1 against balance=0 MUST yield InsufficientBalance: got {result:?}"
+    );
+}
+
+// =============================================================================
 // Test fixtures (byte-pinned constants)
 // =============================================================================
 
@@ -1049,6 +1213,16 @@ const TV_0862_MACAROON_ID_14: [u8; 16] = [
 /// TV-0862-11 macaroon_id fixture. Distinct byte range from c2/c6.
 const TV_0862_MACAROON_ID_11: [u8; 16] = [
     0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0,
+];
+
+/// TV-0862-22 macaroon_id fixture (zero-cost try_deduct no-op).
+const TV_0862_MACAROON_ID_22: [u8; 16] = [
+    0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x30,
+];
+
+/// TV-0862-25 macaroon_id fixture (seed zero-budget persistence).
+const TV_0862_MACAROON_ID_25: [u8; 16] = [
+    0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x40,
 ];
 
 /// TV-0862-07 balance fixtures (full + half deduction).

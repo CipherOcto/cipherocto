@@ -38,6 +38,14 @@ hex = "0.4"
 num-bigint = "0.4"
 num-integer = "0.1"
 num-traits = "0.2"
+# Borsh wire form for `Dqa` (RFC-0105 §Canonical Encoding; mission
+# 0862-c9-c9 — additive Layer A change shipping `BorshSerialize` /
+# `BorshDeserialize` on `Dqa` so wallet-node envelopes can return
+# to the borsh wire form after the 0862-c9-RETIRED kill of the
+# `MicroOctoW` alias). Encoding reuses the canonical 16-byte BE
+# `DqaEncoding` shape (value: 8B BE + scale: 1B + _reserved: 7B).
+# Pin matches the wallet-node + cap-macaroon envelope pin.
+borsh = { version = "=1.5.0", features = ["derive"] }
 
 [features]
 default = []

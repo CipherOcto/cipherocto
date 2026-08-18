@@ -109,6 +109,85 @@ pub struct Dqa {
     pub scale: u8,
 }
 
+// -----------------------------------------------------------------------------
+// Display impl — mission 0862-c9-c9 additive.
+//
+// `Dqa` previously had no `Display` impl (the rationale was that
+// `value: i64` + `scale: u8` is a fixed-point numerator/denominator
+// pair; the user-meaningful representation depends on the consuming
+// context, e.g. `OctoWallet` formats as `value × 10^-scale` while
+// `quota-router-storage` formats as decimal). The 0862-c9-RETIRED
+// kill of the `MicroOctoW` alias exposed every `format!("...={dqa}")`
+// call site (thiserror + log notes) to a `Debug`-only fallback. The
+// streamlined text repr below is unambiguous (state the pair
+// verbatim; no scale-dependent rounding) and lets consumers drop
+// the `{:?}` workaround.
+impl std::fmt::Display for Dqa {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Dqa {{ value: {}, scale: {} }}", self.value, self.scale)
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Borsh wire form — mission 0862-c9-c9 additive.
+//
+// Encoding reuses the canonical 16-byte BE `DqaEncoding` shape
+// (`value: 8B BE + scale: 1B + _reserved: 7B`) per RFC-0105 §3.
+// `canonicalize` normalizes the value before encoding so equivalent
+// representations (e.g. `Dqa { value: 100, scale: 2 }` vs
+// `Dqa { value: 1, scale: 0 }`) produce identical bytes — the
+// invariant consumers rely on for Merkle hashing and TV fixtures.
+//
+// `to_dqa` enforces the same invariants as `DqaEncoding::to_dqa`:
+// reserved bytes MUST be zero (forward-compat padding for future
+// version bumps remains zeroed on the wire).
+impl borsh::BorshSerialize for Dqa {
+    fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        let encoding = DqaEncoding::from_dqa(self);
+        borsh::BorshSerialize::serialize(&encoding, writer)
+    }
+}
+
+impl borsh::BorshDeserialize for Dqa {
+    fn deserialize_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+        let encoding = DqaEncoding::deserialize_reader(reader)?;
+        encoding.to_dqa().map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Dqa::BorshDeserialize: {e:?}"),
+            )
+        })
+    }
+}
+
+// Also impl on `DqaEncoding` directly so the 16-byte wire form is
+// reachable for type-level borsh round-trip tests.
+impl borsh::BorshSerialize for DqaEncoding {
+    fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        // 16-byte big-endian: value (8B) + scale (1B) + _reserved (7B).
+        writer.write_all(&self.value.to_be_bytes())?;
+        writer.write_all(&[self.scale])?;
+        writer.write_all(&self._reserved)?;
+        Ok(())
+    }
+}
+
+impl borsh::BorshDeserialize for DqaEncoding {
+    fn deserialize_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+        let mut buf = [0u8; 16];
+        reader.read_exact(&mut buf)?;
+        let value = i64::from_be_bytes(buf[..8].try_into().unwrap());
+        let scale = buf[8];
+        let mut _reserved = [0u8; 7];
+        _reserved.copy_from_slice(&buf[9..16]);
+        Ok(DqaEncoding {
+            value,
+            scale,
+            _reserved,
+        })
+    }
+}
+
 /// Canonical zero value (value=0, scale=0)
 pub const CANONICAL_ZERO: Dqa = Dqa { value: 0, scale: 0 };
 
@@ -979,5 +1058,66 @@ mod tests {
         assert_eq!(canonicalize(dqa(1200, 3)), dqa(12, 1));
         // negative with trailing zeros: -100 scale 2 → canonical -1,0
         assert_eq!(canonicalize(dqa(-100, 2)), dqa(-1, 0));
+    }
+
+    // ---- Borsh wire-form round-trip (mission 0862-c9 RETIRED
+    // → Borsh on Dqa re-introduction). Locks the 16-byte BE encoding
+    // shape (8B value BE + 1B scale + 7B _reserved) that wallet-node
+    // envelopes depend on. ----
+
+    #[test]
+    fn borsh_dqa_round_trip_zero() {
+        let d = dqa(0, 0);
+        let bytes = borsh::to_vec(&d).expect("encode");
+        assert_eq!(bytes.len(), 16, "Dqa wire form is exactly 16 bytes");
+        let back: Dqa = borsh::from_slice(&bytes).expect("decode");
+        assert_eq!(back, d);
+    }
+
+    #[test]
+    fn borsh_dqa_round_trip_nonzero_with_scale() {
+        let d = dqa(123_456_789, 3);
+        let bytes = borsh::to_vec(&d).expect("encode");
+        assert_eq!(bytes.len(), 16);
+        let back: Dqa = borsh::from_slice(&bytes).expect("decode");
+        assert_eq!(back, d);
+    }
+
+    #[test]
+    fn borsh_dqa_round_trip_negative() {
+        let d = dqa(-987_654_321, 2);
+        let bytes = borsh::to_vec(&d).expect("encode");
+        let back: Dqa = borsh::from_slice(&bytes).expect("decode");
+        assert_eq!(back, d);
+    }
+
+    #[test]
+    fn borsh_dqa_round_trip_max_value_max_scale() {
+        let d = dqa(i64::MAX, MAX_SCALE);
+        let bytes = borsh::to_vec(&d).expect("encode");
+        let back: Dqa = borsh::from_slice(&bytes).expect("decode");
+        assert_eq!(back, d);
+    }
+
+    #[test]
+    fn borsh_dqa_encoding_round_trip_byte_exact() {
+        // Pin the wire form to the canonical 16-byte BE shape so a
+        // future refactor of `DqaEncoding` can't silently change the
+        // envelope wire form (mission 0862-c9 → borsh re-introduction
+        // invariant).
+        let enc = DqaEncoding {
+            value: 0x0123_4567_89AB_CDEFi64,
+            scale: 5,
+            _reserved: [0u8; 7],
+        };
+        let bytes = borsh::to_vec(&enc).expect("encode");
+        assert_eq!(bytes.len(), 16);
+        // value BE check: 01 23 45 67 89 AB CD EF
+        assert_eq!(&bytes[..8], &[0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF]);
+        assert_eq!(bytes[8], 5);
+        assert_eq!(&bytes[9..16], &[0u8; 7]);
+        let back: DqaEncoding = borsh::from_slice(&bytes).expect("decode");
+        assert_eq!(back.value, enc.value);
+        assert_eq!(back.scale, enc.scale);
     }
 }

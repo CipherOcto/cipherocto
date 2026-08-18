@@ -110,6 +110,7 @@
 //! the typed wrappers. A glue crate is the documented extension point
 //! if a typed-API surface becomes necessary.
 
+use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
 
 use crate::clock::{Clock, SystemClock};
@@ -155,6 +156,18 @@ pub enum SpendLedgerError {
         path: String,
         /// Underlying fs2 / OS error.
         reason: String,
+    },
+    /// Lock file path is a symlink (mission 0862-c11 AC-1, S6c Round 3
+    /// `toctou-symlink-race` HIGH finding). `open_path_with_clock`
+    /// rejects any pre-existing symlink at
+    /// `<dsn-dir>/.spend_ledger.lock` to prevent the lock being
+    /// acquired on an attacker-controlled inode. The substrate is
+    /// fail-closed — symlinks surface this error rather than
+    /// silently flocking the symlink target.
+    #[error("lock path is a symlink: {path}")]
+    LockPathSymlink {
+        /// Path of the lock file that is a symlink.
+        path: String,
     },
     /// `Dqa` scale outside the schema's accepted range. The spend
     /// ledger schema stores balances as `INTEGER` (i64) at `scale=0`
@@ -294,15 +307,45 @@ impl StoolapSpendLedger {
         use fs2::FileExt;
         let fs_path = path.strip_prefix("file://").unwrap_or(path);
         let lock_path = std::path::Path::new(fs_path).join(".spend_ledger.lock");
+        // Mission 0862-c11 AC-1: pre-open symlink check. Reject any
+        // pre-existing symlink at <dsn-dir>/.spend_ledger.lock to
+        // prevent the lock being acquired on an attacker-controlled
+        // inode (S6c Round 3 `toctou-symlink-race` HIGH finding).
+        // Pre-check narrows the race window to the few microseconds
+        // between symlink_metadata() and open(); a strict O_NOFOLLOW
+        // fix would require a libc dep (1 line) which we accept the
+        // alternative path for now.
+        match std::fs::symlink_metadata(&lock_path) {
+            Ok(md) if md.file_type().is_symlink() => {
+                return Err(SpendLedgerError::LockPathSymlink {
+                    path: lock_path.display().to_string(),
+                });
+            }
+            // ENOENT (file doesn't exist) is fine — create(true) handles it.
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                return Err(SpendLedgerError::Storage(format!(
+                    "lock stat({}): {e}",
+                    lock_path.display()
+                )));
+            }
+            _ => {}
+        }
         let lock_file = std::fs::OpenOptions::new()
             .create(true)
-            .truncate(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&lock_path)
             .map_err(|e| {
                 SpendLedgerError::Storage(format!("lock open({}): {e}", lock_path.display()))
             })?;
+        // Mission 0862-c11 AC-2: lock the file to 0600 (owner-only) so a
+        // different uid cannot unlink + recreate to defeat serialization
+        // (S6c Round 3 `lock-bypass` HIGH finding). Best-effort: chmod
+        // failure surfaces as Storage error (e.g. read-only fs).
+        std::fs::set_permissions(&lock_path, std::fs::Permissions::from_mode(0o600)).map_err(
+            |e| SpendLedgerError::Storage(format!("lock chmod({}): {e}", lock_path.display())),
+        )?;
         lock_file
             .try_lock_exclusive()
             .map_err(|e| SpendLedgerError::LockUnavailable {

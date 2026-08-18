@@ -909,6 +909,87 @@ fn tv_0862_14_substrate_accepts_any_bytes_as_holder_did() {
 }
 
 // =============================================================================
+// TV-0862-20 — open_path fails-closed on pre-existing symlink at
+// .spend_ledger.lock (mission 0862-c11 AC-1, S6c Round 3
+// `toctou-symlink-race` HIGH finding).
+// =============================================================================
+
+/// TV-0862-20: `open_path` MUST surface
+/// `SpendLedgerError::LockPathSymlink` when an attacker pre-creates
+/// `<dsn-dir>/.spend_ledger.lock` as a symlink before substrate open.
+/// Per mission 0862-c11 AC-1: the substrate pre-checks
+/// `symlink_metadata` on the lock path and rejects any pre-existing
+/// symlink to prevent `flock(2)` being acquired on an
+/// attacker-controlled inode. The pre-check narrows the
+/// check-then-open race window but does NOT eliminate it; a strict
+/// O_NOFOLLOW fix would require a libc dep which is reserved for a
+/// separate RFC. This test pins the fail-closed contract against
+/// the pre-check surface.
+#[test]
+fn tv_0862_20_open_path_rejects_symlink_at_lock_path() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let fs_path = tmp.path().to_str().expect("utf8 path");
+    let lock_path = tmp.path().join(".spend_ledger.lock");
+
+    // Pre-create the lock path as a symlink pointing to /etc/passwd
+    // (any non-existent path is fine; the substrate must reject the
+    // symlink BEFORE attempting to follow it). The choice of
+    // /etc/passwd is illustrative: even if the substrate followed the
+    // symlink, the resulting flock would lock an unrelated file.
+    std::os::unix::fs::symlink("/etc/passwd", &lock_path).expect("symlink create");
+
+    let dsn = format!("file://{fs_path}");
+    let result = StoolapSpendLedger::open_path(&dsn);
+    assert!(
+        matches!(result, Err(SpendLedgerError::LockPathSymlink { .. })),
+        "TV-0862-20: open_path MUST fail-closed with LockPathSymlink when .spend_ledger.lock is a symlink: got {result:?}"
+    );
+
+    // Side-effect check: the symlink target was not flocked. The lock
+    // target must still be a symlink (the substrate rejected before
+    // open). This is an integrity assertion: the substrate did NOT
+    // unlink + recreate the path to defeat the symlink.
+    let md = std::fs::symlink_metadata(&lock_path).expect("symlink_metadata");
+    assert!(
+        md.file_type().is_symlink(),
+        "TV-0862-20: substrate MUST leave the symlink in place (no clobber): file_type={:?}",
+        md.file_type()
+    );
+}
+
+// =============================================================================
+// TV-0862-21 — open_path locks .spend_ledger.lock to 0600 (mission
+// 0862-c11 AC-2, S6c Round 3 `lock-bypass` HIGH finding).
+// =============================================================================
+
+/// TV-0862-21: after `open_path` succeeds, the substrate-created
+/// `.spend_ledger.lock` file MUST have mode `0o600` (owner read +
+/// write only). Per mission 0862-c11 AC-2: a 0o644 default would
+/// let a different uid unlink + recreate the lock file to defeat
+/// serialization. Best-effort chmod to 0o600 prevents that attack
+/// surface. The `set_permissions` call returns `Err` if the FS is
+/// read-only — surfaced as `SpendLedgerError::Storage` by the
+/// substrate (not asserted here).
+#[test]
+fn tv_0862_21_lock_file_permissions_are_0600() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let fs_path = tmp.path().to_str().expect("utf8 path");
+    let lock_path = tmp.path().join(".spend_ledger.lock");
+
+    let dsn = format!("file://{fs_path}");
+    let _ledger = StoolapSpendLedger::open_path(&dsn).expect("open_path succeeds");
+
+    let md = std::fs::metadata(&lock_path).expect("lock file must exist after open");
+    let mode = md.permissions().mode() & 0o777;
+    assert_eq!(
+        mode, 0o600,
+        "TV-0862-21: .spend_ledger.lock permissions MUST be 0o600 (owner-only): got {mode:o}"
+    );
+}
+
+// =============================================================================
 // Test fixtures (byte-pinned constants)
 // =============================================================================
 

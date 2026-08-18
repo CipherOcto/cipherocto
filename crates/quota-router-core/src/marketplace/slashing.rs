@@ -26,6 +26,8 @@ fn now_unix() -> u64 {
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use quota_router_storage::slash_store::DEFAULT_CHAIN_ID;
+
 /// Slashing reason classification (RFC-0900 §Dispute Evidence Challenge).
 ///
 /// Mission `marketplace-slash-reason-typed-discriminator`:
@@ -567,6 +569,7 @@ impl SlashingLedger {
         // via `slash` which already errors).
         if let Some(store) = &self.store {
             let row = quota_router_storage::slash_store::SlashLedgerRow {
+                chain_id: DEFAULT_CHAIN_ID,
                 provider_id: provider_id.clone(),
                 stake_micro_octo_w: entry.stake_micro_octo_w,
                 initial_stake_micro_octo_w: entry.initial_stake_micro_octo_w,
@@ -638,6 +641,7 @@ impl SlashingLedger {
         let new_stake = entry.stake_micro_octo_w;
         if let Some(store) = &self.store {
             let row = quota_router_storage::slash_store::SlashLedgerRow {
+                chain_id: DEFAULT_CHAIN_ID,
                 provider_id: provider_id.to_owned(),
                 stake_micro_octo_w: new_stake,
                 initial_stake_micro_octo_w: entry.initial_stake_micro_octo_w,
@@ -805,6 +809,7 @@ impl SlashingLedger {
         // observability hook can detect via `load_all` divergence.
         if let Some(store) = &self.store {
             let row = quota_router_storage::slash_store::SlashLedgerRow {
+                chain_id: DEFAULT_CHAIN_ID,
                 provider_id: provider_id.to_owned(),
                 stake_micro_octo_w: stake.stake_micro_octo_w,
                 initial_stake_micro_octo_w: stake.initial_stake_micro_octo_w,
@@ -1157,6 +1162,7 @@ mod tests {
         // Pre-populate the store with one banned provider.
         let store = open_in_memory_store();
         let row = quota_router_storage::slash_store::SlashLedgerRow {
+            chain_id: DEFAULT_CHAIN_ID,
             provider_id: "alice".to_string(),
             stake_micro_octo_w: dqa(400_000),
             initial_stake_micro_octo_w: dqa(1_000_000),

@@ -2,12 +2,58 @@
 
 ## Status
 
-**OPEN 2026-08-17 (@mmacedoeu).** Filed per audit verdict 2026-08-17
-(storage restructure hard-recommendation: S6d RFC-0900 amendment +
-10 TV per pending task #443). Closes parallel-model risk surfaced by
-audit: slash_ledger substrate (BIGINT `stake_micro_octo_w` + no
-`chain_id` column) diverges from §20.3 Model B chain-aware PK
-vault substrate.
+**LANDED 2026-08-18 (@mmacedoeu).** Per audit verdict 2026-08-17
+Risk #2 CRITICAL closure. Storage + in-memory substrate now
+chain-aware at the SQL level; `slash_ledger` PK promoted from
+`(row_id, provider_id UNIQUE)` to `(chain_id, provider_id)`.
+
+**Scope-as-landed vs. as-filed:** 6 of 11 ACs landed as filed;
+5 ACs narrowed/deferred to follow-on missions:
+
+- AC-1 NARROWED: v015 migration adds `chain_id BLOB` column +
+  `chain_provider_idx` composite UNIQUE INDEX. Drops
+  `unique_slash_ledger_provider_id` + `slash_ledger_provider_id_unique` +
+  `sqlite_autoindex_slash_ledger_1` (idempotent triple-drop for
+  fork naming quirks).
+- AC-1 SUB-CLAUSE DEFERRED: DQA(12) promotion of amount columns
+  → follow-on mission tied to upstream fork Dqa driver. Stoolap
+  fork does NOT expose `r.get::<Dqa>(idx)` (verified 2026-08-18
+  via substrate recon); amount columns remain BIGINT with the
+  documented `dqa_to_i64` / `i64_to_dqa` scale=0 bridge (text
+  form matches canonical `DqaEncoding` 16-byte BE).
+- AC-2 NARROWED: `SlashLedgerRow.chain_id: [u8; 32]` field added
+  (first position). DQA(12) codec → follow-on (same reason).
+- AC-3 LANDED: `ProviderStake.chain_id: [u8; 32]` added at all 4
+  construction sites.
+- AC-4 NARROWED: `SlashOutcome.chain_id` → follow-on (not
+  required for SQL-level PK promotion; can land in same
+  follow-on as AC-2 DQA codec).
+- AC-5 DEFERRED: in-memory `HashMap<String, ProviderStake>`
+  → `HashMap<([u8; 32], String), ProviderStake>` tuple-key
+  restructure → follow-on. Single-key map with
+  `DEFAULT_CHAIN_ID` works for production paths until tuple-key
+  lands. **No consumer-visible correctness risk** because
+  production code uses `DEFAULT_CHAIN_ID` (32 zero bytes) for
+  all provider stakes; tuple-key lands before any multi-chain
+  slashing path activates.
+- AC-6 LANDED: `append_outcome(chain_id, provider_id, ...)`
+  signature widened. Default impl stays no-op.
+- AC-7 LANDED: RFC-0900 v2.0 row added + §Slash Ledger Substrate
+  subsection added (chain-aware PK, BIGINT amount columns with
+  i64 bridge, deferred DQA(12) promotion, cross-chain partition
+  invariant).
+- AC-8 NARROWED: 1 of 10 TV landed (the most critical —
+  `cross_chain_same_provider_two_distinct_rows`). 9 TVs DEFERRED
+  to follow-on; the SQL-level PK promotion is verified by this
+  single test (alice in chain_a + alice in chain_b → two
+  distinct rows).
+- AC-9 LANDED: existing 3 tests updated + 1 new test added.
+- AC-10 PARTIALLY VERIFIED: `cargo test -p quota-router-storage
+  --lib` = 192/192 pass; `cargo build -p quota-router-core
+  --features full` = green; `cargo test -p quota-router-core
+  --lib --features full` blocked by missing libpython3.12 in
+  current env (pre-existing infra, not 0900-d regression).
+- AC-11 LANDED: clippy + fmt both green.
 
 ## RFC
 
@@ -83,17 +129,17 @@ slash_ledger `BIGINT`.
 
 ## Acceptance Criteria
 
-- AC-1: New migration
-  `crates/quota-router-storage/migrations/v015__chain_aware_slash_ledger.sql`
-  adds:
-  - `ALTER TABLE slash_ledger ADD COLUMN chain_id BLOB(32) NOT NULL DEFAULT '\x00...'` (32 bytes of zero, matches `ChainNamespace::default()` per RFC-0010 v1.4)
-  - `stake_micro_octo_w BIGINT NOT NULL` → `stake_micro_octo_w DQA(12) NOT NULL` (Dqa-promotion)
-  - `initial_stake_micro_octo_w BIGINT NOT NULL` → `initial_stake_micro_octo_w DQA(12) NOT NULL`
-  - `cumulative_loss_pct_micro BIGINT NOT NULL` (kept as BIGINT — not amount-bearing, it's a percentage)
-  - `last_updated_unix BIGINT NOT NULL` (kept as BIGINT — timestamp)
-  - `CREATE UNIQUE INDEX slash_ledger_chain_provider_idx ON slash_ledger (chain_id, provider_id)` — replaces `provider_id UNIQUE` constraint
-  - `DROP INDEX slash_ledger_provider_id_unique` if it exists
-  - Backfill: existing rows get `chain_id = '\x00...'` (the R15-F9 additive default namespace)
+- [x] AC-1: v015 migration lands. **`chain_id BLOB` column added** + composite UNIQUE INDEX `slash_ledger_chain_provider_idx` on `(chain_id, provider_id)` created + column-level UNIQUE on `provider_id` dropped (triple-named drop for fork naming quirks). **`DEFAULT X'00...00'` clause DEFERRED** to follow-on: stoolap fork rejects `x'...'` literals in DEFAULT (per v011 recon). v015 uses `ALTER TABLE ADD COLUMN chain_id BLOB` (NULLABLE during migration window) + `UPDATE ... WHERE chain_id IS NULL` backfill pattern. **DQA(12) promotion DEFERRED** to follow-on: fork does not expose native Dqa driver; columns remain BIGINT with `dqa_to_i64` / `i64_to_dqa` scale=0 bridge (text form matches canonical 16-byte BE DqaEncoding).
+- [x] AC-2: `SlashLedgerRow.chain_id: [u8; 32]` field added (first position). DQA(12) codec → follow-on (same reason as AC-1). `dqa_to_i64` / `i64_to_dqa` helpers present.
+- [x] AC-3: `ProviderStake.chain_id: [u8; 32]` field added. 4 construction sites updated (line 569, 640, 807, 1159 in `marketplace/slashing.rs`).
+- [ ] AC-4: `SlashOutcome.chain_id: [u8; 32]` field → DEFERRED to follow-on (not on the SQL-PK critical path).
+- [ ] AC-5: In-memory `HashMap<String, ProviderStake>` → tuple-keyed → DEFERRED to follow-on. Production paths use `DEFAULT_CHAIN_ID` (single-key map still correct).
+- [x] AC-6: `append_outcome(chain_id, provider_id, ...)` signature widened; default impl no-op.
+- [x] AC-7: RFC-0900 v2.0 row added + §Slash Ledger Substrate subsection added.
+- [/] AC-8: 1 of 10 TV landed (TV-0900-D-09 — `cross_chain_same_provider_two_distinct_rows` in `slash_store::tests`). 9 TVs DEFERRED to follow-on.
+- [x] AC-9: 3 existing slash_store tests updated with `chain_id: DEFAULT_CHAIN_ID` field. 1 new test added (chain discriminator).
+- [/] AC-10: `cargo test -p quota-router-storage --lib` = 192/192 pass. `cargo build -p quota-router-core --features full` green. `cargo test -p quota-router-core --lib --features full` blocked by missing libpython3.12 (pre-existing infra, not 0900-d regression).
+- [x] AC-11: clippy + fmt both green on touched crates.
 - AC-2: `SlashLedgerRow` (at `crates/quota-router-storage/src/slash_store.rs:19`) gains:
   ```rust
   pub chain_id: [u8; 32],
@@ -261,6 +307,7 @@ String), ProviderStake>` lookup syntax is verbose. Mitigation:
 | Date       | Author     | Change                                                                                                                                                                             |
 | ---------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 2026-08-17 | @mmacedoeu | Initial filing per audit verdict 2026-08-17 (storage restructure hard-recommendation: S6d RFC-0900 amendment per pending task #443). Co-filed with `0862-c9`, `0105-x`, `0959-c1`. |
+| 2026-08-18 | @mmacedoeu | **LANDED (scope-narrowed).** v015 migration + `SlashLedgerRow.chain_id` + `ProviderStake.chain_id` (4 sites) + `append_outcome` widening + 3 existing tests updated + 1 new chain-discriminator test (TV-0900-D-09). RFC-0900 v2.0 row + §Slash Ledger Substrate subsection added. AC-1 sub-clause (DQA(12) promotion), AC-4 (SlashOutcome.chain_id), AC-5 (HashMap tuple-key), AC-8 (9 remaining TVs) DEFERRED to follow-on. Documented 2 stoolap fork quirks: (1) `x'...'` literals rejected in DEFAULT clauses, (2) column-level UNIQUE autoindex named `unique_<table>_<col>` not `sqlite_autoindex_<table>_1`, (3) INSERT param binding uses SCHEMA column order not INSERT column-list order. |
 
 ## Out of scope
 

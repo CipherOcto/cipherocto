@@ -89,6 +89,11 @@ pub const BUILTIN_MIGRATIONS: &[octo_storage_core::StaticMigration] = &[
         "create_slash_ledger",
         include_str!("../migrations/v012__create_slash_ledger.sql"),
     ),
+    octo_storage_core::StaticMigration::new(
+        15,
+        "chain_aware_slash_ledger",
+        include_str!("../migrations/v015__chain_aware_slash_ledger.sql"),
+    ),
 ];
 
 /// Substrate-form reference slice. `&[&'static dyn Migration]` is what
@@ -107,6 +112,7 @@ pub(super) static BUILTIN_MIGRATION_CATALOG: &[&'static dyn octo_storage_core::M
     &BUILTIN_MIGRATIONS[9],
     &BUILTIN_MIGRATIONS[10],
     &BUILTIN_MIGRATIONS[11],
+    &BUILTIN_MIGRATIONS[12],
 ];
 
 /// Migration errors.

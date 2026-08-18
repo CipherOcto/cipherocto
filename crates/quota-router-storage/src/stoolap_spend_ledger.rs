@@ -69,15 +69,6 @@ pub enum SpendLedgerError {
     Storage(String),
 }
 
-/// Micro-OCTO_W cost unit. Canonical alias =
-/// `octo_determin::Dqa` (= `Dqa` at `scale = 0` per RFC-0862
-/// v2.0.3 + RFC-0965 §3 + mission 0862-c9). The previous local
-/// `pub type Dqa = octo_determin::Dqa` definition was removed
-/// in 0862-c9 AC-2 — all call sites in this module now import
-/// `octo_determin::Dqa` directly. The crate-level re-export
-/// in `quota_router_storage::Dqa` keeps external consumers
-/// working byte-identically.
-
 /// Stoolap-backed spend ledger (production).
 #[derive(Clone)]
 pub struct StoolapSpendLedger {

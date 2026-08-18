@@ -18,14 +18,6 @@ use serde::{Deserialize, Serialize};
 // for in-crate consumers (the original pre-retirement path was
 // `crate::ask::MicroOCTO_W`).
 
-/// Micro-OCTO-W (S4 codemod: now `Dqa` for deterministic-floating-point
-/// arithmetic). Direct construction via `Dqa::new(value, 0)` for integer
-/// values (e.g. 30_000 u128 → `Dqa::new(30_000, 0).expect("non-overflow")`).
-//
-// `Dqa` directly imported from `octo_determin` (mission 0862-c9 RETIRED —
-// local `MicroOctoW` alias killed project-wide). No local `pub type
-// Dqa = ...;` re-export is needed.
-
 /// Display-unit OCTO-W (RFC-0959 §Data Structures type-distinct newtype).
 ///
 /// NOT a type alias — this is a distinct newtype to prevent silent unit-conversion

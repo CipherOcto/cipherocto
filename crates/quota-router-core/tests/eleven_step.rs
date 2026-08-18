@@ -902,9 +902,15 @@ use quota_router_sm_engine::shard::{num_shards_for, shard_for_segment};
 fn wave_integration_w4_caveat_subsumes_amount_max() {
     use octo_wallet::capability::caveat::set_subsumes;
     use octo_wallet::capability::caveat::Caveat;
-    let parent = vec![Caveat::AmountMax(1_000_000_000)];
-    let child_narrow = vec![Caveat::AmountMax(500_000_000)];
-    let child_widen = vec![Caveat::AmountMax(2_000_000_000)];
+    let parent = vec![Caveat::AmountMax(
+        octo_determin::Dqa::new(1_000_000_000, 0).unwrap(),
+    )];
+    let child_narrow = vec![Caveat::AmountMax(
+        octo_determin::Dqa::new(500_000_000, 0).unwrap(),
+    )];
+    let child_widen = vec![Caveat::AmountMax(
+        octo_determin::Dqa::new(2_000_000_000, 0).unwrap(),
+    )];
     assert!(set_subsumes(&parent, &child_narrow));
     assert!(!set_subsumes(&parent, &child_widen));
 }

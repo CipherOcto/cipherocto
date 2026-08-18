@@ -5,6 +5,7 @@
 //! attacker with a `PolicyReference` caveat could mint capabilities that
 //! violate the parent policy.
 
+use octo_determin::Dqa;
 use octo_wallet::capability::caveat::Caveat;
 use octo_wallet::capability::redemption::{
     redeem_capability, redeem_capability_token, PolicyCatalog, RedemptionError,
@@ -107,7 +108,7 @@ fn redeem_rejects_capability_exceeding_policy() {
             policy_version_seq: 1,
             attenuation_witness: [0u8; 64],
         },
-        Caveat::AmountMax(1_000_000),
+        Caveat::AmountMax(Dqa::new(1_000_000, 0).unwrap()),
     ]);
 
     let mut catalog = TestPolicyCatalog::default();
@@ -136,7 +137,7 @@ fn redeem_accepts_capability_within_policy() {
             policy_version_seq: 1,
             attenuation_witness: [0u8; 64],
         },
-        Caveat::AmountMax(500_000),
+        Caveat::AmountMax(Dqa::new(500_000, 0).unwrap()),
     ]);
 
     let mut catalog = TestPolicyCatalog::default();
@@ -148,7 +149,7 @@ fn redeem_accepts_capability_within_policy() {
 #[test]
 fn redeem_rejects_missing_policy_reference() {
     // No PolicyReference caveat ⇒ error.
-    let cap = build_capability(&[Caveat::AmountMax(1_000)]);
+    let cap = build_capability(&[Caveat::AmountMax(Dqa::new(1_000, 0).unwrap())]);
 
     let catalog = TestPolicyCatalog::default();
     let err = redeem_capability(&cap, &catalog).unwrap_err();
@@ -239,7 +240,7 @@ fn capability_redeem_runs_holder_sig_then_subgraph_check() {
             policy_version_seq: 1,
             attenuation_witness: [0u8; 64],
         },
-        Caveat::AmountMax(1_000_000),
+        Caveat::AmountMax(Dqa::new(1_000_000, 0).unwrap()),
     ]);
 
     let mut catalog = TestPolicyCatalog::default();
@@ -266,7 +267,7 @@ fn capability_redeem_accepts_in_policy_capability() {
             policy_version_seq: 1,
             attenuation_witness: [0u8; 64],
         },
-        Caveat::AmountMax(500_000),
+        Caveat::AmountMax(Dqa::new(500_000, 0).unwrap()),
     ]);
 
     let mut catalog = TestPolicyCatalog::default();

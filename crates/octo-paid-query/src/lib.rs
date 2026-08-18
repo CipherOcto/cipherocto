@@ -64,13 +64,14 @@
 
 use std::sync::Arc;
 
-// `borsh` crate import REMOVED (mission 0862-c9 RETIRED). Borsh
-// derives on `PaidQueryDecision`/`PaidQueryRequest`/`PaidQueryResponse`/
-// `PaymentReceipt` were dropped because `Dqa` does not impl
-// `BorshSerialize`/`BorshDeserialize` in the upstream git-dep
-// `octo-determin` crate. The crate-level dependency is still
-// retained for any future re-introduction when the substrate
-// gains Borsh impls.
+// Borsh derives enabled (mission 0862-c9-c9 — additive Layer A
+// change). The upstream `octo-determin` crate now ships
+// `BorshSerialize` / `BorshDeserialize` impls for `Dqa` (16-byte
+// BE `DqaEncoding` wire form per RFC-0105 §3), so the
+// `PaidQueryRequest` / `PaidQueryResponse` / `PaymentReceipt`
+// envelopes can return to the borsh wire form after the
+// 0862-c9-RETIRED `MicroOctoW` kill.
+use borsh::{BorshDeserialize, BorshSerialize};
 use octo_cap_macaroon::MacaroonId;
 use octo_determin::{dqa_cmp, dqa_sub, Dqa};
 use octo_ident::WireDid;
@@ -104,7 +105,12 @@ pub use octo_protocol::payload_kind::PAID_QUERY_VERIFY;
 /// (integer-valued) per RFC-0862 v2.0.3 + RFC-0965 §3. Arithmetic
 /// uses `dqa_cmp`/`dqa_sub` (the `Dqa` type does not implement
 /// `Ord`/`Sub` directly — see `determin/src/dqa.rs`).
-
+///
+/// (2026-08-17) Borsh re-introduction: `Dqa` now ships
+/// `BorshSerialize`/`BorshDeserialize` impls upstream (Layer A
+/// additive change) so the paid-query envelope wire form is back to
+/// borsh per `octo-cap-macaroon` substrate alignment. See
+/// `determin/src/dqa.rs` for the encoding details.
 /// Paid-query caveat (RFC-0965 reserved discriminator 0x1A).
 ///
 /// **Mission 0957-phase2b:** migrated to the macaroon substrate
@@ -120,17 +126,7 @@ pub use octo_protocol::payload_kind::PAID_QUERY_VERIFY;
 /// the decision via its own `RateLimitBudget` mutation. Follow-on
 /// missions (atomic drain, RFC-0862) will return the mutation inside
 /// the decision so the proxy can apply it transactionally.
-//
-// Borsh derives intentionally OMITTED (mission 0862-c9 RETIRED):
-// `Dqa` does not impl `BorshSerialize`/`BorshDeserialize` in the
-// upstream git-dep `octo-determin` crate. Adopting Borsh for `Dqa`
-// is an additive Layer A change that requires pushing the determin
-// crate to `next` first (deferred — not authorized today).
-// Consumers needing borsh wire form for these structs must wait
-// for the follow-on mission that ships `BorshSerialize`/`BorshDeserialize`
-// impls for `Dqa` in the substrate. The non-borsh wire shape (JSON
-// + canonical serde) is preserved by the upstream call sites.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub enum PaidQueryDecision {
     /// Query is authorized; full cost can be deducted; remaining
     /// budget = `caveat.budget - query_cost`.
@@ -164,13 +160,7 @@ impl PaidQueryDecision {
 }
 
 /// Reason a paid-query was rejected.
-//
-// Borsh derives intentionally OMITTED (mission 0862-c9 RETIRED): the
-// `borsh` crate import is currently unused in this module after
-// dropping borsh on `Dqa`-bearing structs. The enum has no `Dqa`
-// fields and could trivially re-add Borsh, but the import was
-// dropped for consistency.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize)]
 pub enum PaidQueryRejectionReason {
     /// `caveat.budget == 0` (no prepaid capacity left).
     BudgetExhausted,
@@ -399,12 +389,7 @@ pub use octo_wallet::CapabilityKey;
 ///
 /// Borsh schema is fixed-position (struct-of-fields); order MUST be
 /// `macaroon_id, caveat, query_cost, query_model, now_unix_ms`.
-//
-// Borsh derives intentionally OMITTED (mission 0862-c9 RETIRED):
-// `Dqa` does not impl `BorshSerialize`/`BorshDeserialize` in the
-// upstream git-dep `octo-determin` crate. See NOTE on
-// `PaidQueryDecision` for context.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct PaidQueryRequest {
     /// Macaroon identifier of the capability being verified.
     pub macaroon_id: MacaroonId,
@@ -419,23 +404,26 @@ pub struct PaidQueryRequest {
 }
 
 impl PaidQueryRequest {
-    // Borsh methods intentionally OMITTED (mission 0862-c9 RETIRED,
-    // follows from the dropped `BorshSerialize`/`BorshDeserialize`
-    // derives — see NOTE on `PaidQueryDecision`). Callers needing the
-    // borsh wire form for these structs await the follow-on mission
-    // that ships `Borsh` impls for `Dqa` upstream.
+    /// Decode from borsh wire form.
+    /// # Errors
+    /// Returns `borsh::io_err` if borsh decode fails.
+    pub fn from_borsh(bytes: &[u8]) -> Result<Self, std::io::Error> {
+        borsh::from_slice(bytes)
+    }
+
+    /// Encode to borsh wire form.
+    /// # Errors
+    /// Returns `borsh::io_err` if borsh encode fails.
+    pub fn to_borsh(&self) -> Result<Vec<u8>, std::io::Error> {
+        borsh::to_vec(self)
+    }
 }
 
 /// Wire form for the `PaidQueryDecision` response envelope. The
 /// `PaidQueryDecision` enum is the canonical type, but the response
 /// also carries the `payload_kind` for the originating request so
 /// the receiver can route it back to the correct handler context.
-//
-// Borsh derives intentionally OMITTED (mission 0862-c9 RETIRED):
-// `Dqa` does not impl `BorshSerialize`/`BorshDeserialize` in the
-// upstream git-dep `octo-determin` crate. See NOTE on
-// `PaidQueryDecision` for context.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct PaidQueryResponse {
     /// Decision returned by `verify_paid_query`.
     pub decision: PaidQueryDecision,
@@ -455,11 +443,19 @@ pub struct PaidQueryResponse {
 }
 
 impl PaidQueryResponse {
-    // Borsh methods intentionally OMITTED (mission 0862-c9 RETIRED,
-    // follows from the dropped `BorshSerialize`/`BorshDeserialize`
-    // derives — see NOTE on `PaidQueryDecision`). Callers needing the
-    // borsh wire form for these structs await the follow-on mission
-    // that ships `Borsh` impls for `Dqa` upstream.
+    /// Decode from borsh wire form.
+    /// # Errors
+    /// Returns `borsh::io_err` if borsh decode fails.
+    pub fn from_borsh(bytes: &[u8]) -> Result<Self, std::io::Error> {
+        borsh::from_slice(bytes)
+    }
+
+    /// Encode to borsh wire form.
+    /// # Errors
+    /// Returns `borsh::io_err` if borsh encode fails.
+    pub fn to_borsh(&self) -> Result<Vec<u8>, std::io::Error> {
+        borsh::to_vec(self)
+    }
 }
 
 /// Atomic-drain receipt (RFC-0862 atomic transaction substrate,
@@ -471,15 +467,9 @@ impl PaidQueryResponse {
 /// `drained_amount == 0` and `remaining_budget == pre_drain_budget`
 /// (no mutation occurred).
 ///
-/// `drained_amount` is a `u128` to mirror the spend-ledger's
-/// arithmetic type (RFC-0871 §Adversary A7 — overflow impossible at
-/// worst-case scale).
-//
-// Borsh derives intentionally OMITTED (mission 0862-c9 RETIRED):
-// `Dqa` does not impl `BorshSerialize`/`BorshDeserialize` in the
-// upstream git-dep `octo-determin` crate. See NOTE on
-// `PaidQueryDecision` for context.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// `drained_amount` is a `Dqa` (the canonical amount-bearing
+/// cross-crate payload type per RFC-0862 v2.0.3 + RFC-0965 §3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct PaymentReceipt {
     /// Amount deducted from the spend ledger on this call. Zero on
     /// non-`Proceed` decisions.
@@ -702,11 +692,10 @@ mod tests {
         assert_eq!(b.balance(&h2, &mac).unwrap(), Some(dqa(150)));
     }
 
-    // Borsh round-trip tests (`paid_query_request_borsh_round_trip` /
-    // `paid_query_response_borsh_round_trip`) intentionally REMOVED
-    // (mission 0862-c9 RETIRED). `BorshSerialize`/`BorshDeserialize`
-    // for `Dqa` is an additive Layer A change awaiting the determin
-    // substrate push. Re-add when the upstream borsh impls land.
+    // Borsh round-trip tests restored (mission 0862-c9 RETIRED
+    // → borsh re-introduction): `BorshSerialize`/`BorshDeserialize`
+    // for `Dqa` is now additive Layer A — wallet-node envelopes
+    // returned to the borsh wire form.
 
     #[test]
     fn paid_query_payload_kind_is_the_documented_uuid() {
@@ -718,5 +707,51 @@ mod tests {
             0x00, 0x01,
         ];
         assert_eq!(PAID_QUERY_VERIFY.as_bytes(), &expected);
+    }
+
+    #[test]
+    fn paid_query_request_borsh_round_trip() {
+        let req = PaidQueryRequest {
+            macaroon_id: [0x42u8; 16],
+            caveat: fresh_caveat(1_000_000, "gpt-4", u64::MAX),
+            query_cost: Dqa::new(123_456, 0).expect("scale=0"),
+            query_model: "gpt-4".to_owned(),
+            now_unix_ms: 1_700_000_000_000,
+        };
+        let bytes = req.to_borsh().expect("encode");
+        let back = PaidQueryRequest::from_borsh(&bytes).expect("decode");
+        assert_eq!(back, req);
+    }
+
+    #[test]
+    fn paid_query_response_borsh_round_trip() {
+        let resp = PaidQueryResponse {
+            decision: PaidQueryDecision::Proceed {
+                remaining_budget: Dqa::new(99_999, 0).expect("scale=0"),
+            },
+            macaroon_id: [0x42u8; 16],
+            request_payload_kind: PAID_QUERY_VERIFY,
+            receipt: PaymentReceipt {
+                drained_amount: Dqa::new(1, 0).expect("scale=0"),
+                remaining_budget: Dqa::new(99_999, 0).expect("scale=0"),
+            },
+        };
+        let bytes = resp.to_borsh().expect("encode");
+        let back = PaidQueryResponse::from_borsh(&bytes).expect("decode");
+        assert_eq!(back, resp);
+    }
+
+    #[test]
+    fn paid_query_rejection_reason_borsh_round_trip() {
+        for reason in [
+            PaidQueryRejectionReason::BudgetExhausted,
+            PaidQueryRejectionReason::Expired,
+            PaidQueryRejectionReason::ModelMismatch,
+            PaidQueryRejectionReason::CostExceedsBudget,
+        ] {
+            let bytes = borsh::to_vec(&reason).expect("encode");
+            let back: PaidQueryRejectionReason = borsh::from_slice(&bytes).expect("decode");
+            assert_eq!(back, reason);
+        }
     }
 }

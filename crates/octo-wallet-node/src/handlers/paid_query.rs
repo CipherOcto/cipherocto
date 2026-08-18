@@ -39,7 +39,7 @@
 //! longer carry borsh derives (`Dqa` does not impl
 //! `BorshSerialize` / `BorshDeserialize` in the upstream
 //! `octo-determin` git dep). The wallet-node envelope uses JSON via
-//! `paid_query_wire::request_to_bytes` / `response_to_bytes`.
+//! `PaidQueryResponse::to_borsh` / `from_borsh`.
 //! `Dqa` encodes as `{"value": <i64>, "scale": <0..=255>}`; macaroon
 //! / payload-kind UUIDs encode as 32-char hex strings.
 
@@ -53,15 +53,14 @@ use octo_paid_query::{
 };
 use octo_protocol::ProtocolError;
 
-use super::paid_query_wire;
 use super::HandlerOutput;
 
 /// Request payload for `WALLET_PAID_QUERY_VERIFY`.
 ///
-/// Wire form: JSON — see `paid_query_wire::request_to_bytes` /
-/// `request_from_bytes`. Fixed-position `{macaroon_id, caveat,
-/// query_cost, query_model, now_unix_ms}` per `octo-paid-query`
-/// §PaidQueryRequest.
+/// Wire form: borsh via `PaidQueryRequest::to_borsh` /
+/// `from_borsh` (mission 0862-c9 RETIRED → borsh re-introduction).
+/// Fixed-position `{macaroon_id, caveat, query_cost, query_model,
+/// now_unix_ms}` per `octo-paid-query` §PaidQueryRequest.
 pub type PaidQueryVerifyRequest = PaidQueryRequest;
 
 /// `WALLET_PAID_QUERY_VERIFY` handler implementation.
@@ -192,8 +191,9 @@ impl PaidQueryVerifyHandler {
             request_payload_kind: octo_paid_query::PAID_QUERY_VERIFY,
             receipt,
         };
-        let payload = paid_query_wire::response_to_bytes(&response)
-            .map_err(|e| ProtocolError::AuthorizationFailed(e))?;
+        let payload = response
+            .to_borsh()
+            .map_err(|e| ProtocolError::AuthorizationFailed(format!("{e}")))?;
         Ok(HandlerOutput::response(payload, octo_paid_query::PAID_QUERY_VERIFY).with_note(note))
     }
 }
@@ -283,7 +283,7 @@ mod tests {
             .handle_with_holder(&req, Some(&sample_holder()))
             .unwrap();
         let payload = out.response_payload.expect("response_payload set");
-        let response = paid_query_wire::response_from_bytes(&payload).unwrap();
+        let response = PaidQueryResponse::from_borsh(&payload).unwrap();
         assert_eq!(response.macaroon_id, req.macaroon_id);
         assert!(matches!(
             response.decision,
@@ -311,7 +311,7 @@ mod tests {
             .handle_with_holder(&req, Some(&sample_holder()))
             .unwrap();
         let payload = out.response_payload.expect("response_payload set");
-        let response = paid_query_wire::response_from_bytes(&payload).unwrap();
+        let response = PaidQueryResponse::from_borsh(&payload).unwrap();
         assert_eq!(
             response.receipt,
             PaymentReceipt {
@@ -338,7 +338,7 @@ mod tests {
             .handle_with_holder(&req, Some(&sample_holder()))
             .unwrap();
         let payload = out.response_payload.expect("response_payload set");
-        let response = paid_query_wire::response_from_bytes(&payload).unwrap();
+        let response = PaidQueryResponse::from_borsh(&payload).unwrap();
         assert!(matches!(
             response.decision,
             PaidQueryDecision::Reject {
@@ -360,7 +360,7 @@ mod tests {
         };
         let out = PaidQueryVerifyHandler::new().handle(&req).unwrap();
         let payload = out.response_payload.expect("response_payload set");
-        let response = paid_query_wire::response_from_bytes(&payload).unwrap();
+        let response = PaidQueryResponse::from_borsh(&payload).unwrap();
         assert!(matches!(
             response.decision,
             PaidQueryDecision::Reject { .. }

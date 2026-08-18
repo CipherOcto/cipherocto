@@ -28,6 +28,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use borsh::{BorshDeserialize, BorshSerialize};
 use octo_determin::{dqa_cmp, dqa_sub, Dqa};
 
 use crate::dqa_serde;
@@ -50,7 +51,7 @@ pub const PAID_QUERY_CAVEAT_NAME: &str = "paid-query/v1";
 /// tagging in `caveat/mod.rs`). Amount-bearing fields use `Dqa` with
 /// `#[serde(with = "dqa_serde::field")]` to encode the 16-byte BE
 /// `DqaEncoding` wire form (per RFC-0105 §Canonical Encoding).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, BorshSerialize, BorshDeserialize)]
 pub struct PaymentCaveat {
     /// RFC-0965 caveat discriminator string. Always
     /// `"paid-query/v1"` for this variant; future variants carry

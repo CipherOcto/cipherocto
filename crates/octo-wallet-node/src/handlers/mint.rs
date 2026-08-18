@@ -13,6 +13,7 @@
 
 use std::sync::Arc;
 
+use borsh::{BorshDeserialize, BorshSerialize};
 use octo_cap_macaroon::caveat::Caveat;
 use octo_cap_macaroon::wire::serialize_wire;
 use octo_cap_macaroon::{
@@ -31,13 +32,11 @@ use super::{
 
 /// Request payload for `WALLET_MINT_CAPABILITY`.
 ///
-/// Wire form: JSON via `mint_wire::request_to_bytes` / `request_from_bytes`.
-/// Borsh derives intentionally OMITTED (mission 0862-c9 RETIRED):
-/// `PaymentCaveat::budget` is `Dqa`, which does not impl
-/// `BorshSerialize` / `BorshDeserialize` in the upstream git dep. The
-/// eventual re-introduction of borsh awaits the follow-on mission
-/// that ships `Borsh` impls for `Dqa` upstream.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Wire form: borsh via `MintRequest::to_borsh` / `from_borsh`
+/// (mission 0862-c9 RETIRED → borsh re-introduction: Layer A
+/// `BorshSerialize`/`BorshDeserialize` impls on `Dqa` shipped
+/// upstream in the determin additive change).
+#[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct MintRequest {
     /// Canonical DID of the holder (`did:octo:z<base58btc>`).
     pub holder_did: String,
@@ -53,11 +52,19 @@ pub struct MintRequest {
 }
 
 impl MintRequest {
-    // Borsh methods intentionally OMITTED (mission 0862-c9 RETIRED,
-    // follows from the dropped `BorshSerialize`/`BorshDeserialize`
-    // derives — `PaymentCaveat::budget` is `Dqa` which doesn't impl
-    // borsh). Callers needing the wire form use
-    // `mint_wire::request_to_bytes` / `request_from_bytes`.
+    /// Decode from borsh wire form.
+    /// # Errors
+    /// Returns `borsh::io_err` if borsh decode fails.
+    pub fn from_borsh(bytes: &[u8]) -> Result<Self, std::io::Error> {
+        borsh::from_slice(bytes)
+    }
+
+    /// Encode to borsh wire form.
+    /// # Errors
+    /// Returns `borsh::io_err` if borsh encode fails.
+    pub fn to_borsh(&self) -> Result<Vec<u8>, std::io::Error> {
+        borsh::to_vec(self)
+    }
 }
 
 /// `WALLET_MINT_CAPABILITY` handler implementation.
@@ -253,17 +260,18 @@ mod tests {
             capability: [0xab; 32],
             payment_caveat: None,
         };
-        let bytes = crate::handlers::mint_wire::request_to_bytes(&req).unwrap();
-        let back = crate::handlers::mint_wire::request_from_bytes(&bytes).unwrap();
+        let bytes = req.to_borsh().unwrap();
+        let back = MintRequest::from_borsh(&bytes).unwrap();
         assert_eq!(back, req);
     }
 
     #[test]
     fn mint_request_wire_round_trip_with_payment_caveat() {
         // Mission 0957-phase2b: the optional PaymentCaveat field must
-        // roundtrip cleanly through the dispatch wire form (former
-        // borsh path retired in 0862-c9 — `PaymentCaveat::budget` is
-        // `Dqa` which does not impl borsh).
+        // roundtrip cleanly through the borsh wire form (Layer A
+        // `BorshSerialize`/`BorshDeserialize` impls on `Dqa` shipped
+        // upstream — borsh re-introduction after mission 0862-c9
+        // RETIRED).
         let p = octo_cap_macaroon::PaymentCaveat::new(
             octo_determin::Dqa::new(1_000_000, 0).expect("scale=0 valid"),
             "gpt-4",
@@ -274,8 +282,8 @@ mod tests {
             capability: [0xab; 32],
             payment_caveat: Some(p.clone()),
         };
-        let bytes = crate::handlers::mint_wire::request_to_bytes(&req).unwrap();
-        let back = crate::handlers::mint_wire::request_from_bytes(&bytes).unwrap();
+        let bytes = req.to_borsh().unwrap();
+        let back = MintRequest::from_borsh(&bytes).unwrap();
         assert_eq!(back, req);
         assert_eq!(back.payment_caveat, Some(p));
     }

@@ -30,8 +30,9 @@ use octo_transport::NodeTransport;
 use octo_wallet::identity::IdentityKey;
 
 use crate::handlers::{
-    AttenuateHandler, AttenuateRequest, HandlerOutput, MintHandler, PaidQueryVerifyHandler,
-    ResolveDIDHandler, ResolveDIDRequest, SignHandler, SignRequest,
+    AttenuateHandler, AttenuateRequest, HandlerOutput, MintHandler, MintRequest,
+    PaidQueryVerifyHandler, PaidQueryVerifyRequest, ResolveDIDHandler, ResolveDIDRequest,
+    SignHandler, SignRequest,
 };
 use crate::is_wallet_payload_kind;
 
@@ -161,8 +162,8 @@ impl WalletNode {
                 SignHandler::new(identity).handle(&req)
             }
             k if k == octo_protocol::payload_kind::WALLET_MINT_CAPABILITY => {
-                let req = crate::handlers::mint_wire::request_from_bytes(&envelope.payload)
-                    .map_err(ProtocolError::AuthorizationFailed)?;
+                let req = MintRequest::from_borsh(&envelope.payload)
+                    .map_err(|e| ProtocolError::AuthorizationFailed(format!("{e}")))?;
                 match self.config.spend_ledger.as_ref() {
                     Some(ledger) => MintHandler::with_ledger(identity, ledger.clone()).handle(&req),
                     None => MintHandler::new(identity).handle(&req),
@@ -177,8 +178,8 @@ impl WalletNode {
                 ResolveDIDHandler::new(identity).handle(&req)
             }
             k if k == octo_paid_query::PAID_QUERY_VERIFY => {
-                let req = crate::handlers::paid_query_wire::request_from_bytes(&envelope.payload)
-                    .map_err(ProtocolError::AuthorizationFailed)?;
+                let req = PaidQueryVerifyRequest::from_borsh(&envelope.payload)
+                    .map_err(|e| ProtocolError::AuthorizationFailed(format!("{e}")))?;
                 PaidQueryVerifyHandler::new().handle(&req)
             }
             _ => Err(ProtocolError::AuthorizationFailed(format!(

@@ -162,3 +162,11 @@ stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockc
 # NO `skipping duplicate package octo-sync` warning on every build.
 [patch."https://github.com/CipherOcto/cipherocto"]
 octo-sync = { path = "octo-sync" }
+# `octo-determin` path override (mission 0862-c9 RETIRED + Borsh on
+# Dqa re-introduction): the Layer A `BorshSerialize`/`BorshDeserialize`
+# impls on `Dqa` (added by commit landing the determin additive
+# change) need to reach consumers via this patch until the determin
+# commit is pushed to `next`. After push the patch becomes redundant
+# (the git dep at branch `next` will resolve to the version that has
+# the Borsh impls) and can be removed in a follow-up commit.
+octo-determin = { path = "determin" }

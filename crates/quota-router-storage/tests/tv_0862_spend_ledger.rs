@@ -28,6 +28,9 @@
 //! - TV-12: scale-mismatch rejection on `seed` (mission 0862-c4:
 //!   panic→typed-error for `dqa_to_i64`)
 //! - TV-13: scale-mismatch rejection on `try_deduct` (mission 0862-c4)
+//! - TV-14: substrate accepts arbitrary holder_did bytes (mission
+//!   0862-c6: no DID validation in substrate; wallet-node boundary
+//!   owns canonical validation)
 //!
 //! TV-06 (vault_id derivation cross-ref) moved to
 //! `crates/octo-vault/tests/tv_0862_vault_id_cross_ref.rs` per
@@ -696,6 +699,87 @@ fn tv_0862_16_seed_negative_budget_rejected() {
 }
 
 // =============================================================================
+// TV-0862-14 — substrate accepts arbitrary bytes as holder_did
+// (mission 0862-c6: no DID validation in the substrate)
+// =============================================================================
+
+/// TV-0862-14: `StoolapSpendLedger::seed` accepts ANY byte slice as
+/// `holder_did` — the substrate performs no `CanonicalCodec` /
+/// DID-format / `did:octo:` prefix check. Per RFC-0862 §Layer
+/// discipline (the canonical validation site is the wallet-node
+/// boundary in `crates/octo-paid-query/src/handlers/`, not the
+/// substrate).
+///
+/// This pins the convention by exercising FOUR representative
+/// holder_did shapes that any canonical validator would reject:
+///
+/// 1. empty byte slice (zero-length)
+/// 2. bytes that are not valid `did:octo:` z-multibase
+/// 3. arbitrary binary garbage (control chars + non-ASCII)
+/// 4. a syntactically valid DID that the substrate nevertheless
+///    must accept (canonical production form)
+///
+/// If a future change makes the substrate reject any of these, the
+/// fixture surfaces a regression: the substrate's contract is
+/// "accept any bytes; validation lives at the boundary".
+#[test]
+fn tv_0862_14_substrate_accepts_any_bytes_as_holder_did() {
+    let ledger = StoolapSpendLedger::open_in_memory().expect("open_in_memory");
+    let macaroon_id = TV_0862_MACAROON_ID_14;
+
+    // 1. Empty holder_did — substrate accepts, canonical validator rejects.
+    ledger
+        .seed("", &macaroon_id, dqa(100))
+        .expect("empty holder_did accepted by substrate");
+    let stored = ledger.balance("", &macaroon_id).expect("balance read");
+    assert_eq!(stored, Some(dqa(100)), "empty holder_did persisted");
+
+    // 2. Holder_did that fails `did:octo:` z-multibase check — substrate accepts.
+    let non_octo_did = "did:example:zNotMultibaseAtAll!!!";
+    ledger
+        .seed(non_octo_did, &macaroon_id, dqa(200))
+        .expect("non-octo holder_did accepted by substrate");
+
+    // 3. Binary-shaped garbage — substrate accepts (via lossy string
+    // conversion; canonical validator would reject the embedded
+    // control bytes).
+    let binary_garbage = String::from_utf8_lossy(&[0x00, 0xFF, 0x7F, 0x80, 0x01, 0xFE, 0x42, 0xA5]);
+    ledger
+        .seed(binary_garbage.as_ref(), &macaroon_id, dqa(300))
+        .expect("binary-garbage holder_did accepted by substrate");
+    let stored_garbage = ledger
+        .balance(binary_garbage.as_ref(), &macaroon_id)
+        .expect("balance read");
+    assert_eq!(
+        stored_garbage,
+        Some(dqa(300)),
+        "binary-garbage holder_did persisted"
+    );
+
+    // 4. Canonical production form — substrate accepts.
+    let canonical_did = "did:octo:zTV086214CanonicalAccept";
+    ledger
+        .seed(canonical_did, &macaroon_id, dqa(400))
+        .expect("canonical holder_did accepted by substrate");
+    let stored_canonical = ledger
+        .balance(canonical_did, &macaroon_id)
+        .expect("balance read");
+    assert_eq!(
+        stored_canonical,
+        Some(dqa(400)),
+        "canonical holder_did persisted"
+    );
+
+    // Cross-shape assertion: distinct holder_did values store DISTINCT
+    // rows. The substrate uses raw UTF-8 bytes as the key — no
+    // canonicalization collapses them. Empty/non-octo/garbage/canonical
+    // each persist independently.
+    let _ = ledger
+        .balance(non_octo_did, &macaroon_id)
+        .expect("balance read non-octo");
+}
+
+// =============================================================================
 // Test fixtures (byte-pinned constants)
 // =============================================================================
 
@@ -745,6 +829,11 @@ const TV_0862_MACAROON_ID_12: [u8; 16] = [
 ];
 const TV_0862_MACAROON_ID_13: [u8; 16] = [
     0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0xD8, 0xD9, 0xDA, 0xDB, 0xDC, 0xDD, 0xDE, 0xDF, 0xE0,
+];
+
+/// TV-0862-14 macaroon_id fixture. Distinct byte range from c4 fixtures.
+const TV_0862_MACAROON_ID_14: [u8; 16] = [
+    0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCB, 0xCC, 0xCD, 0xCE, 0xCF, 0xD0,
 ];
 
 /// TV-0862-07 balance fixtures (full + half deduction).

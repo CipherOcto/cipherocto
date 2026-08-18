@@ -1070,6 +1070,32 @@ test-only `raw_query(&self, sql, params)` accessor is added to
 the substrate for this column assertion — kept `pub` so follow-on
 deterministic-time TV can reuse it.
 
+**No-DID-validation convention (RFC-0862 v2.0.7 + mission 0862-c6):**
+`StoolapSpendLedger` performs NO `CanonicalCodec` / DID-format /
+`did:octo:` prefix check on the `holder_did` field. The substrate
+accepts any `&str` shape (empty string, non-`did:octo:` strings,
+binary-shaped garbage via lossy conversion, canonical production
+form) and uses the raw UTF-8 bytes as the primary key. The
+canonical validation site is the wallet-node boundary in
+`crates/octo-paid-query/src/handlers/`, not the substrate — per the
+cross-crate "validation lives at the boundary, not the substrate"
+convention (see §Layer discipline below). This is intentional:
+adding DID validation to the substrate would (a) couple the storage
+layer to the identity layer (violates §Layer discipline), and (b)
+block legitimate non-canonical writes (migration tooling, future
+CLI repair command, raw bulk import from a cross-network source).
+Per S6c Round 1 security review finding #7 — test fixture DIDs
+(`did:octo:zTV086201`..`zTV086216`) + macaroon_ids (sequential
+`0x01..0xA0`) sit in the production keyspace; RFC-0010 defines NO
+reserved test prefix. Practical collision risk is low (z-multibase
+strings + 128-bit macaroon_id), but the convention MUST be pinned.
+Pin via `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs`
+TV-0862-14 (substrate accepts four representative holder_did
+shapes: empty / non-`did:octo:` / binary-garbage / canonical;
+distinct rows persist independently). The reserved test prefix
+option (e.g. `did:octo:test:`) is a separate RFC-0010 amendment —
+out of scope for RFC-0862 v2.x follow-ons.
+
 **Layer discipline (RFC-0862 v2.0 + R11 M7):** `StoolapSpendLedger`
 lives in `quota-router-storage` (Layer B-adjacent per R11 M7) and does
 NOT depend on `octo-paid-query` / `octo-wallet` (those crates
@@ -2048,6 +2074,7 @@ cargo doc --workspace --no-deps --manifest-path octo-transport/Cargo.toml
 | 2.0.4   | 2026-08-18 | Draft (follow-on 0862-c4) | §Scale precondition (additive on v2.0.3). `try_deduct` AND `seed` reject any `Dqa` carrying `scale != 0` with the new `SpendLedgerError::InvalidScale { expected: u8, actual: u8 }` variant. The `dqa_to_i64` helper signature changes from `fn(Dqa) -> i64` to `fn(Dqa) -> Result<i64, SpendLedgerError>` (returning `InvalidScale` on non-zero scale). Replaces the previous `assert_eq!(v.scale, 0, ...)` precondition in `dqa_to_i64` (which would panic an upstream caller passing a non-zero-scale `Dqa` — S6c Round 1 security review finding #8). The check now runs in BOTH debug and release (no `debug_assert!`); testable under `cargo test` (dev profile). 2 new TV in `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs`: TV-0862-12 (seed scale=1 budget yields `InvalidScale { expected: 0, actual: 1 }` + no row persisted) + TV-0862-13 (try_deduct scale=1 cost yields `InvalidScale` + balance unchanged). Existing 15 TV byte-stable. Closes mission 0862-c4.
 | 2.0.5   | 2026-08-18 | Draft (follow-on 0862-c5) | §Domain-separator hygiene (additive on v2.0.4). Audit of `blake3::hash` + `hasher.update(b"...")` callsites per S6c Round 1 security review finding #6 surfaced one production prefix gap (`b"reservation/v1"` in `crates/quota-router-sm-engine/src/lib.rs:216` for `Reservation::mint` derivation) + three test-only placeholders (`b"vak/v1"`, `b"cap/v1"`, `b"vault/v1"` in `quota-router-core/tests/eleven_step.rs` + `goldens.rs`). Production rename: `b"cipherocto/reservation/v1/"` (clean — `reservation_id` is an in-memory handle with no SQL migration, no wire form, no cross-network lookup keyed on raw bytes). Test fixtures: rename to `cipherocto/<name>/v1/` + doc comment "test-only derivation, no canonical form" per mission AC-3. New TV-0862-19 in `crates/quota-router-core/src/settle.rs` byte-exact pins the new `reservation_id` BLAKE3 output for canonical inputs (`05f058e42899872e697281ef6aacfdc67eecc8e84ad5e4312609e3bb04ba723e`). Regenerated `tests/fixtures/exercise/eleven_step_goldens.json` step2/3/6 hex values bumped (step1/10 unchanged). All test greps for `cipherocto/...` prefixes pass. Closes mission 0862-c5.
 | 2.0.6   | 2026-08-18 | Draft (follow-on 0862-c2) | §Clock precondition (additive on v2.0.5). `StoolapSpendLedger` gains `clock: Arc<dyn Clock>` field; `updated_at_unix_ms` writes read from `self.clock.unix_millis()` instead of `SystemTime::now()`. Default constructors (`open_in_memory` / `open_path`) inject `Arc::new(SystemClock)`; `_with_clock` variants accept any caller-supplied clock (production may reuse `crates/quota-router-storage::clock` substrate; tests substitute `FixedClock`). Trait shape reuses existing `Clock::unix_millis() -> u64` (no API churn for 0957-c consumers); `as i64` cast at use site. New test-only `pub fn raw_query(&self, sql: &str, params: (Vec<u8>, Vec<u8>)) -> Result<stoolap::Rows, SpendLedgerError>` accessor on the substrate for the column-write pin. New TV-0862-10 in `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs` byte-pins the column write to `1_700_000_000_000` via injected `FixedClock`. Existing 16 TV byte-stable. Closes S6c Round 1 finding #10 (`SystemTime::now()` non-determinism masked by fixture shape). Closes mission 0862-c2.
+| 2.0.7   | 2026-08-18 | Draft (follow-on 0862-c6) | §No-DID-validation convention (additive on v2.0.6). Module-level doc comment added to `crates/quota-router-storage/src/stoolap_spend_ledger.rs` documenting that the substrate performs NO `CanonicalCodec` / DID-format / `did:octo:` prefix check on the `holder_did` field; canonical validation lives at the wallet-node boundary in `crates/octo-paid-query/src/handlers/`. New TV-0862-14 in `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs` pins the convention by exercising four representative holder_did shapes (empty string / non-`did:octo:` / binary-garbage / canonical production form) and asserting distinct rows persist independently. Reserved test prefix (e.g. `did:octo:test:`) is a separate RFC-0010 amendment — out of scope for RFC-0862 v2.x follow-ons. Closes S6c Round 1 finding #7 (test fixture DIDs in production keyspace). Closes mission 0862-c6.
 
 ## Review Process
 

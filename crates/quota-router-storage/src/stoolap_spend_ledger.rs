@@ -27,6 +27,21 @@
 //! `crates/quota-router-storage/src/clock.rs` (mission 0957-c); this
 //! mission only rewires the spend-ledger call sites.
 //!
+//! ## No DID validation (mission 0862-c6)
+//!
+//! `StoolapSpendLedger` accepts any byte slice as `holder_did` and any
+//! 16-byte raw slice as `macaroon_id` — the substrate performs NO
+//! `CanonicalCodec` / DID-format / `did:octo:` prefix check. The
+//! canonical validation site is the wallet-node boundary in
+//! `crates/octo-paid-query/src/handlers/` (per RFC-0862 §Layer
+//! discipline + the cross-crate "validation lives at the boundary,
+//! not the substrate" convention). A direct DB write (e.g. migration
+//! tooling, a future CLI repair command) can therefore insert
+//! non-canonical DIDs by design. Pin via
+//! `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs`
+//! TV-0862-14 (substrate accepts arbitrary byte slice as
+//! `holder_did`; no format check; no rejection).
+//!
 //! ## Cipherocto-side migration
 //!
 //! Schema lives at `crates/quota-router-storage/migrations/v007__create_spend_ledger.sql`

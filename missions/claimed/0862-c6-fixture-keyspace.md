@@ -2,11 +2,34 @@
 
 ## Status
 
-**OPEN 2026-08-17 (@mmacedoeu).** Follow-on to `0862-c1-dqa-vault-bump-amendment`
+**LANDED 2026-08-18 (@mmacedoeu).** Follow-on to `0862-c1-dqa-vault-bump-amendment`
 (S6c LANDED 2026-08-17). Filed per S6c Round 1 security review
-finding #7: TV fixture DIDs (`did:octo:zTV086201`..`zTV086209b`) +
+finding #7: TV fixture DIDs (`did:octo:zTV086201`..`zTV086216`) +
 macaroon_ids (sequential `0x01..0xA0`) sit in the production
 keyspace; RFC-0010 defines NO reserved test prefix.
+
+### Resolution
+
+- **Chose option AC-2** (minimal): documented the convention that
+  `StoolapSpendLedger` performs no DID validation + relies on the
+  wallet-node boundary.
+- Module-level doc comment added to
+  `crates/quota-router-storage/src/stoolap_spend_ledger.rs` under a
+  new `## No DID validation (mission 0862-c6)` section. The comment
+  names the canonical validation site, enumerates the four
+  representative holder_did shapes the substrate accepts, and
+  explicitly calls out the migration-tooling / CLI-repair / bulk-import
+  use cases that depend on the substrate's permissive contract.
+- New TV-0862-14 in
+  `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs` pins the
+  convention by exercising FOUR holder_did shapes (empty string /
+  non-`did:octo:` / binary-garbage / canonical production form) and
+  asserting distinct rows persist independently.
+- RFC-0862 v2.0.7 row + `§No-DID-validation convention` paragraph
+  added.
+- **Option AC-1** (reserved test prefix in RFC-0010) is OUT OF SCOPE
+  for RFC-0862 v2.x follow-ons; will be filed as a separate
+  RFC-0010 amendment if/when a real collision risk surfaces.
 
 ## RFC
 
@@ -37,16 +60,18 @@ fixture DIDs are still in production keyspace.
 
 ## Acceptance Criteria
 
-- AC-1: **Either** propose reserved test prefix in RFC-0010
-  (e.g. `did:octo:test:`); new section §Reserved test prefixes
-  with TV pinning the reservation prefix itself
-- AC-2: **Or** (minimal) document in RFC-0862 §StoolapSpendLedger
+- [ ] AC-1: **DEFERRED** — reserved test prefix in RFC-0010
+  (e.g. `did:octo:test:`); separate RFC-0010 amendment. Out of scope
+  for RFC-0862 v2.x follow-ons.
+- [x] AC-2: **CHOSEN** — documented in RFC-0862 §StoolapSpendLedger
   that `StoolapSpendLedger` performs no DID validation + relies on
-  the wallet-node boundary (the existing convention)
-- AC-3: New TV-0862-14: pinning the convention that the substrate
-  accepts ANY byte slice as `holder_did` (regression: over-strict
-  validation in the substrate)
-- AC-4: Existing TV-0862-01..09b stay byte-stable
+  the wallet-node boundary. Module-level doc comment + RFC-0862
+  v2.0.7 paragraph.
+- [x] AC-3: New TV-0862-14 pins the convention: substrate accepts
+  ANY holder_did shape (empty / non-`did:octo:` / binary-garbage /
+  canonical); distinct rows persist independently. Regression
+  guard against future over-strict substrate validation.
+- [x] AC-4: Existing 17 TV stay byte-stable (no regression).
 
 ## Cross-reference
 

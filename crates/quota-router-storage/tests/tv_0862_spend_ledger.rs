@@ -22,6 +22,9 @@
 //! - TV-08: multi-instance drain coordination (per-instance lock scope)
 //! - TV-09: negative-cost rejection (substrate hardening per S4
 //!   Round 2 + S6c Round 1 security review)
+//! - TV-10: injected `Clock` sources `updated_at_unix_ms`
+//!   deterministically (mission 0862-c2: `SystemTime::now` masked
+//!   by fixture shape — now asserted via `FixedClock`)
 //! - TV-12: scale-mismatch rejection on `seed` (mission 0862-c4:
 //!   panic→typed-error for `dqa_to_i64`)
 //! - TV-13: scale-mismatch rejection on `try_deduct` (mission 0862-c4)
@@ -35,6 +38,7 @@
 //! API surface mirrors `crates/quota-router-storage/src/stoolap_spend_ledger.rs`.
 
 use octo_determin::{Dqa, DqaEncoding};
+use quota_router_storage::clock::FixedClock;
 use quota_router_storage::stoolap_spend_ledger::{SpendLedgerError, StoolapSpendLedger};
 
 // =============================================================================
@@ -461,6 +465,73 @@ fn tv_0862_09b_try_deduct_negative_cost_on_unknown_holder() {
 }
 
 // =============================================================================
+// TV-0862-10 — injected `Clock` pins `updated_at_unix_ms`
+// deterministically (mission 0862-c2: `SystemTime::now()` masked by
+// fixture shape; fixed-clock test forces the column to the pinned value
+// so the substrate becomes deterministically replayable)
+// =============================================================================
+
+/// TV-0862-10: `seed()` + `try_deduct()` with an injected
+/// `FixedClock` MUST record `updated_at_unix_ms == clock.unix_millis()`.
+/// Production path uses `SystemClock` (now-millis); tests substitute
+/// a `FixedClock` to assert exact column values byte-exact.
+///
+/// The fixture uses a pinned millis-unix value (`1_700_000_000_000`,
+/// i.e. 2023-11-14T22:13:20Z) — chosen as a stable round-number so
+/// the assertion is readable. If the substrate ever changes the
+/// `Clock` → `i64` cast shape (e.g. widening `as i64` to a checked
+/// `try_into()`), this TV will surface immediately as either a
+/// pin drift or a type-mismatch compile error.
+///
+/// The row is then read back via a raw stoolap `SELECT` — the
+/// substrate's `balance()` accessor does not surface the column,
+/// but the column has to be readable to migrate / replay
+/// eventually (per RFC-0862 §Future Work).
+#[test]
+fn tv_0862_10_injected_clock_pins_updated_at_unix_ms() {
+    use std::sync::Arc;
+
+    let clock_ms: u64 = 1_700_000_000_000;
+    let pinned_clock = Arc::new(FixedClock::new(clock_ms));
+
+    let ledger = StoolapSpendLedger::open_in_memory_with_clock(pinned_clock.clone())
+        .expect("open with clock");
+    let holder = "did:octo:zTV086210";
+    let macaroon_id = TV_0862_MACAROON_ID_10;
+
+    // (1) seed → first updated_at_unix_ms write.
+    ledger
+        .seed(holder, &macaroon_id, dqa(1_000))
+        .expect("seed with pinned clock");
+
+    // (2) try_deduct → second updated_at_unix_ms write with the same
+    // pinned clock (no advancement).
+    let remaining = ledger
+        .try_deduct(holder, &macaroon_id, dqa(250))
+        .expect("deduct with pinned clock");
+    assert_eq!(remaining, dqa(750));
+
+    // (3) Substrate-level column assertion: the row's
+    // `updated_at_unix_ms` MUST equal the pinned clock value.
+    // Read it via raw stoolap query (the substrate's `balance()`
+    // accessor does not surface the column).
+    let rows = ledger
+        .raw_query(
+            "SELECT updated_at_unix_ms FROM spend_ledger \
+             WHERE holder_did = ? AND macaroon_id = ? LIMIT 1",
+            (holder.as_bytes().to_vec(), macaroon_id.to_vec()),
+        )
+        .expect("raw_query");
+    let mut iter = rows;
+    let row = iter.next().expect("row exists").expect("row ok");
+    let column_value: i64 = row.get(0).unwrap_or(0);
+    assert_eq!(
+        column_value, clock_ms as i64,
+        "TV-0862-10: updated_at_unix_ms MUST equal injected FixedClock value"
+    );
+}
+
+// =============================================================================
 // TV-0862-15 — concurrent seed() on same (holder_did, macaroon_id) serializes
 // (mission 0862-c8: seed() acquires drain_lock)
 // =============================================================================
@@ -665,6 +736,9 @@ const TV_0862_MACAROON_ID_15: [u8; 16] = [
 ];
 const TV_0862_MACAROON_ID_16: [u8; 16] = [
     0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0,
+];
+const TV_0862_MACAROON_ID_10: [u8; 16] = [
+    0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7, 0xE8, 0xE9, 0xEA, 0xEB, 0xEC, 0xED, 0xEE, 0xEF, 0xF0,
 ];
 const TV_0862_MACAROON_ID_12: [u8; 16] = [
     0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCB, 0xCC, 0xCD, 0xCE, 0xCF, 0xD0,

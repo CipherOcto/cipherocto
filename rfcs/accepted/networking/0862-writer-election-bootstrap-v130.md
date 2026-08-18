@@ -1050,6 +1050,26 @@ via `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs`
 TV-0862-15 (concurrent seed serializes) + TV-0862-16 (negative budget
 yields NegativeCost + no row persisted).
 
+**Clock precondition (RFC-0862 v2.0.6 + mission 0862-c2):** the
+substrate's `updated_at_unix_ms` column is written from a `Clock`
+trait object held as `Arc<dyn Clock>` on `StoolapSpendLedger`. Default
+constructor variants (`open_in_memory` / `open_path`) inject
+`SystemClock`; `_with_clock` variants accept any caller-supplied
+`Arc<dyn Clock>` (production wiring may reuse the wallet-node `Clock`
+substrate; tests substitute `FixedClock` to make the column write
+byte-pinned). The trait shape reuses `crates/quota-router-storage::clock::Clock::unix_millis() -> u64`
+(consumers cast to `i64` at the call site); the substrate does NOT
+rely on `SystemTime::now()` directly. Per S6c Round 1 security
+review finding #10 — `SystemTime::now()` non-determinism was
+masked by fixture shape but surfaces the moment any test asserts a
+precise `updated_at_unix_ms` value. Pin via
+`crates/quota-router-storage/tests/tv_0862_spend_ledger.rs` TV-0862-10
+(injected `FixedClock(1_700_000_000_000)` pins the column write
+exactly; raw SQL `SELECT updated_at_unix_ms` round-trip). A
+test-only `raw_query(&self, sql, params)` accessor is added to
+the substrate for this column assertion — kept `pub` so follow-on
+deterministic-time TV can reuse it.
+
 **Layer discipline (RFC-0862 v2.0 + R11 M7):** `StoolapSpendLedger`
 lives in `quota-router-storage` (Layer B-adjacent per R11 M7) and does
 NOT depend on `octo-paid-query` / `octo-wallet` (those crates
@@ -2027,6 +2047,7 @@ cargo doc --workspace --no-deps --manifest-path octo-transport/Cargo.toml
 | 2.0.3   | 2026-08-17 | Draft (follow-on 0862-c9) | §SpendLedger Substrate — canonical `MicroOctoW` alias (additive on v2.0.2). Workspace-wide type-system coherence: `pub type MicroOctoW = Dqa` added to `determin/src/lib.rs` (Layer A frozen substrate). Three local `pub type MicroOctoW = ...` aliases REMOVED from `crates/octo-cap-macaroon/src/caveat/mod.rs` (was `u128`) + `crates/octo-cap-macaroon/src/caveat/payment.rs` (was `u128`) + `crates/quota-router-storage/src/stoolap_spend_ledger.rs` (was `octo_determin::Dqa`); all three sites now re-export via `pub use octo_determin::MicroOctoW`. `crates/octo-cap-macaroon/Cargo.toml` gains `octo-determin` git dep (Layer B → Layer A allowed). New TV-0862-17 (cross-crate `MicroOctoW` round-trip at `scale=0` byte-exact via `caveat::PaymentCaveat::new` decode path) + TV-0862-18 (caveat payload bytes unchanged when caller uses `u128` literal vs `Dqa` literal at scale=0). Existing 13 TV byte-stable. Cross-ref: RFC-0105 §substrate type coherence + RFC-0965 §3 caveat payload codec. Type invariant: `MicroOctoW.scale == 0` everywhere at the substrate boundary (integer micro-OCTO_W counts); mirrors `StoolapSpendLedger::seed` + `try_deduct` preconditions. Closes audit verdict 2026-08-17 Risk #1 (CRITICAL parallel-model). Closes mission 0862-c9.
 | 2.0.4   | 2026-08-18 | Draft (follow-on 0862-c4) | §Scale precondition (additive on v2.0.3). `try_deduct` AND `seed` reject any `Dqa` carrying `scale != 0` with the new `SpendLedgerError::InvalidScale { expected: u8, actual: u8 }` variant. The `dqa_to_i64` helper signature changes from `fn(Dqa) -> i64` to `fn(Dqa) -> Result<i64, SpendLedgerError>` (returning `InvalidScale` on non-zero scale). Replaces the previous `assert_eq!(v.scale, 0, ...)` precondition in `dqa_to_i64` (which would panic an upstream caller passing a non-zero-scale `Dqa` — S6c Round 1 security review finding #8). The check now runs in BOTH debug and release (no `debug_assert!`); testable under `cargo test` (dev profile). 2 new TV in `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs`: TV-0862-12 (seed scale=1 budget yields `InvalidScale { expected: 0, actual: 1 }` + no row persisted) + TV-0862-13 (try_deduct scale=1 cost yields `InvalidScale` + balance unchanged). Existing 15 TV byte-stable. Closes mission 0862-c4.
 | 2.0.5   | 2026-08-18 | Draft (follow-on 0862-c5) | §Domain-separator hygiene (additive on v2.0.4). Audit of `blake3::hash` + `hasher.update(b"...")` callsites per S6c Round 1 security review finding #6 surfaced one production prefix gap (`b"reservation/v1"` in `crates/quota-router-sm-engine/src/lib.rs:216` for `Reservation::mint` derivation) + three test-only placeholders (`b"vak/v1"`, `b"cap/v1"`, `b"vault/v1"` in `quota-router-core/tests/eleven_step.rs` + `goldens.rs`). Production rename: `b"cipherocto/reservation/v1/"` (clean — `reservation_id` is an in-memory handle with no SQL migration, no wire form, no cross-network lookup keyed on raw bytes). Test fixtures: rename to `cipherocto/<name>/v1/` + doc comment "test-only derivation, no canonical form" per mission AC-3. New TV-0862-19 in `crates/quota-router-core/src/settle.rs` byte-exact pins the new `reservation_id` BLAKE3 output for canonical inputs (`05f058e42899872e697281ef6aacfdc67eecc8e84ad5e4312609e3bb04ba723e`). Regenerated `tests/fixtures/exercise/eleven_step_goldens.json` step2/3/6 hex values bumped (step1/10 unchanged). All test greps for `cipherocto/...` prefixes pass. Closes mission 0862-c5.
+| 2.0.6   | 2026-08-18 | Draft (follow-on 0862-c2) | §Clock precondition (additive on v2.0.5). `StoolapSpendLedger` gains `clock: Arc<dyn Clock>` field; `updated_at_unix_ms` writes read from `self.clock.unix_millis()` instead of `SystemTime::now()`. Default constructors (`open_in_memory` / `open_path`) inject `Arc::new(SystemClock)`; `_with_clock` variants accept any caller-supplied clock (production may reuse `crates/quota-router-storage::clock` substrate; tests substitute `FixedClock`). Trait shape reuses existing `Clock::unix_millis() -> u64` (no API churn for 0957-c consumers); `as i64` cast at use site. New test-only `pub fn raw_query(&self, sql: &str, params: (Vec<u8>, Vec<u8>)) -> Result<stoolap::Rows, SpendLedgerError>` accessor on the substrate for the column-write pin. New TV-0862-10 in `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs` byte-pins the column write to `1_700_000_000_000` via injected `FixedClock`. Existing 16 TV byte-stable. Closes S6c Round 1 finding #10 (`SystemTime::now()` non-determinism masked by fixture shape). Closes mission 0862-c2.
 
 ## Review Process
 

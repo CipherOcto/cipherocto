@@ -2,11 +2,33 @@
 
 ## Status
 
-**OPEN 2026-08-17 (@mmacedoeu).** Follow-on to `0862-c1-dqa-vault-bump-amendment`
+**LANDED 2026-08-18 (@mmacedoeu).** Follow-on to `0862-c1-dqa-vault-bump-amendment`
 (S6c LANDED 2026-08-17, commit `2750caa7` + Round 1 fixes). Filed per
 S6c Round 1 code review finding #10: `seed()` and `try_deduct()`
 write `SystemTime::now()` non-deterministically, masked only because
 TV fixtures never read `updated_at_unix_ms`.
+
+### Resolution
+
+- `StoolapSpendLedger` gains `clock: Arc<dyn Clock>` field; the
+  existing `crates/quota-router-storage::clock::Clock` trait
+  (`unix_millis() -> u64`, with `SystemClock` + `FixedClock`
+  impls wired in mission 0957-c) is reused — no new trait
+  definition, no API churn for 0957-c consumers.
+- Default constructors (`open_in_memory` / `open_path`) inject
+  `Arc::new(SystemClock)`; new `_with_clock(clock: Arc<dyn Clock>)`
+  variants accept any caller-supplied clock (production wiring
+  may reuse the existing wallet-node clock substrate).
+- Two `SystemTime::now()` sites replaced with
+  `self.clock.unix_millis() as i64` (cast at use site).
+- New test-only `pub fn raw_query(&self, sql: &str,
+  params: (Vec<u8>, Vec<u8>)) -> Result<stoolap::Rows,
+  SpendLedgerError>` accessor on the substrate so the column
+  write can be asserted by TV.
+- New TV-0862-10 in `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs`
+  byte-pins `updated_at_unix_ms = 1_700_000_000_000` via injected
+  `FixedClock::new(...)`.
+- RFC-0862 v2.0.6 row + `§Clock precondition` paragraph added.
 
 ## RFC
 
@@ -41,24 +63,26 @@ reuse that shape.
 
 ## Acceptance Criteria
 
-- AC-1: `trait Clock` defined in `crates/octo-storage-core/` (or
-  `quota-router-storage/` per layer decision):
-  - `fn now_unix_ms(&self) -> i64`
-  - Default impl: `SystemClock` (production)
-  - `MockClock` (test fixture)
-- AC-2: `StoolapSpendLedger` holds `Arc<dyn Clock>`; constructor
-  accepts `Clock` parameter (default `SystemClock`)
-- AC-3: `seed()` + `try_deduct()` read clock from injected instance
-- AC-4: TV-0862-10 (new) pins deterministic clock: seed + read back,
-  assert `updated_at_unix_ms == expected_unix_ms`
-- AC-5: Existing TV-0862-01..09b stay byte-stable (no regression)
-- AC-6: RFC-0862 §StoolapSpendLedger substrate subsection updated:
-  add `Clock` to API surface + `Clock` precondition note
+- [x] AC-1: `Clock` trait available at the substrate boundary
+  (reused `crates/quota-router-storage::clock::Clock::unix_millis() -> u64`,
+  not a new trait; `SystemClock` production + `FixedClock` test
+  fixture both already exist from mission 0957-c)
+- [x] AC-2: `StoolapSpendLedger` holds `clock: Arc<dyn Clock>` field;
+  default constructors inject `SystemClock`; `_with_clock` variants
+  accept caller-supplied clock
+- [x] AC-3: `seed()` + `try_deduct()` read clock from injected
+  instance (`self.clock.unix_millis() as i64`)
+- [x] AC-4: TV-0862-10 byte-pins `updated_at_unix_ms` via injected
+  `FixedClock(1_700_000_000_000)` + raw SQL round-trip
+- [x] AC-5: Existing 16 TV stay byte-stable (no regression)
+- [x] AC-6: RFC-0862 v2.0.6 row + `§Clock precondition` paragraph
+  added to `§StoolapSpendLedger`
 
 ## Cross-reference
 
 - **Parent:** `missions/open/0862-c1-dqa-vault-bump-amendment.md` (LANDED)
-- **Pattern:** `crates/octo-cap-macaroon/src/vault_lookup.rs` `Clock` trait
+- **Pattern:** `crates/quota-router-storage::clock::Clock` trait (mission
+  0957-c wired the `SystemClock` + `FixedClock` impls)
 - **Plan:** `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md`
   §3 row 6 (Stream A.1 S6c follow-on)
 

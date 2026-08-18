@@ -17,6 +17,16 @@
 //! Concurrent drains on the same `(holder_did, macaroon_id)` key
 //! serialize via the FOR UPDATE lock — no double-spend possible.
 //!
+//! ## Clock injection (mission 0862-c2)
+//!
+//! `updated_at_unix_ms` is sourced from an injected [`crate::clock::Clock`]
+//! trait (default impl: `SystemClock`). Production deployments use
+//! `SystemClock`; tests pin a deterministic `FixedClock` to validate
+//! the column without time-mocking. Trait re-uses the
+//! RFC-0957-A1 §Algorithms `Clock` already exported from
+//! `crates/quota-router-storage/src/clock.rs` (mission 0957-c); this
+//! mission only rewires the spend-ledger call sites.
+//!
 //! ## Cipherocto-side migration
 //!
 //! Schema lives at `crates/quota-router-storage/migrations/v007__create_spend_ledger.sql`
@@ -34,6 +44,7 @@
 
 use std::sync::Arc;
 
+use crate::clock::{Clock, SystemClock};
 use crate::migrations;
 use octo_determin::Dqa;
 
@@ -94,6 +105,11 @@ pub struct StoolapSpendLedger {
     /// a follow-on (the cross-node drain substrate is mission
     /// 0871e-phase5c-1).
     drain_lock: Arc<std::sync::Mutex<()>>,
+    /// Wall-clock source for `updated_at_unix_ms` column writes.
+    /// Injected per mission 0862-c2 (RFC-0862 §StoolapSpendLedger
+    /// substrate §Clock subsection). Default: `SystemClock`.
+    /// Tests substitute `FixedClock` (mission 0862-c2 TV-0862-10).
+    clock: Arc<dyn Clock>,
 }
 
 impl std::fmt::Debug for StoolapSpendLedger {
@@ -104,10 +120,22 @@ impl std::fmt::Debug for StoolapSpendLedger {
 
 impl StoolapSpendLedger {
     /// Open a fresh in-memory database with the spend_ledger schema
-    /// applied. Test + single-process convenience.
+    /// applied. Test + single-process convenience. Defaults to
+    /// `SystemClock` for the `updated_at_unix_ms` column; tests
+    /// needing deterministic time use
+    /// [`Self::open_in_memory_with_clock`].
     /// # Errors
     /// Returns `SpendLedgerError::Storage` on DB open / migration failure.
     pub fn open_in_memory() -> Result<Self, SpendLedgerError> {
+        Self::open_in_memory_with_clock(Arc::new(SystemClock))
+    }
+
+    /// Open a fresh in-memory database with the spend_ledger schema
+    /// applied and an injected wall-clock source. Test fixture used
+    /// by mission 0862-c2 TV-0862-10 to pin `updated_at_unix_ms`.
+    /// # Errors
+    /// Returns `SpendLedgerError::Storage` on DB open / migration failure.
+    pub fn open_in_memory_with_clock(clock: Arc<dyn Clock>) -> Result<Self, SpendLedgerError> {
         let db = stoolap::Database::open_in_memory()
             .map_err(|e| SpendLedgerError::Storage(format!("open_in_memory: {e}")))?;
         migrations::apply_pending(&db)
@@ -115,15 +143,28 @@ impl StoolapSpendLedger {
         Ok(Self {
             db: Arc::new(db),
             drain_lock: Arc::new(std::sync::Mutex::new(())),
+            clock,
         })
     }
 
     /// Open a file-backed database at `path` with the spend_ledger
     /// schema applied. Production deployments persist balances
-    /// across restarts.
+    /// across restarts. Defaults to `SystemClock`.
     /// # Errors
     /// Returns `SpendLedgerError::Storage` on DB open / migration failure.
     pub fn open_path(path: &str) -> Result<Self, SpendLedgerError> {
+        Self::open_path_with_clock(path, Arc::new(SystemClock))
+    }
+
+    /// Open a file-backed database with an injected wall-clock source.
+    /// Production deployments that need to pin time (e.g. replay
+    /// tools) use this constructor.
+    /// # Errors
+    /// Returns `SpendLedgerError::Storage` on DB open / migration failure.
+    pub fn open_path_with_clock(
+        path: &str,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self, SpendLedgerError> {
         let db = stoolap::Database::open(path)
             .map_err(|e| SpendLedgerError::Storage(format!("open({path}): {e}")))?;
         migrations::apply_pending(&db)
@@ -131,6 +172,7 @@ impl StoolapSpendLedger {
         Ok(Self {
             db: Arc::new(db),
             drain_lock: Arc::new(std::sync::Mutex::new(())),
+            clock,
         })
     }
 
@@ -178,10 +220,11 @@ impl StoolapSpendLedger {
         if budget.value < 0 {
             return Err(SpendLedgerError::NegativeCost { cost: budget });
         }
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0);
+        // Mission 0862-c2: `updated_at_unix_ms` now sourced from the
+        // injected `Clock` (default `SystemClock`). Production path
+        // unchanged for callers (`SystemClock` default); tests pin
+        // `FixedClock` for deterministic TV.
+        let now_ms = self.clock.unix_millis() as i64;
         // Hold the per-instance drain lock for the
         // SELECT-then-INSERT/UPDATE critical section. Without this,
         // concurrent threads can race the read-modify-write and one
@@ -302,10 +345,8 @@ impl StoolapSpendLedger {
         let new_balance = balance_u
             .subtract(cost)
             .map_err(|e| SpendLedgerError::Storage(format!("deduct underflow: {e:?}")))?;
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0);
+        // Mission 0862-c2: injected `Clock` (see `seed` analogue above).
+        let now_ms = self.clock.unix_millis() as i64;
         let result = self.db.execute(
             "UPDATE spend_ledger SET balance = ?, updated_at_unix_ms = ? \
              WHERE holder_did = ? AND macaroon_id = ?",
@@ -346,6 +387,28 @@ impl StoolapSpendLedger {
             Some(Err(e)) => Err(SpendLedgerError::Storage(format!("iter: {e}"))),
             None => Ok(None),
         }
+    }
+
+    /// Test-only raw SQL query accessor.
+    ///
+    /// **Should NOT be used outside tests.** Production paths use the
+    /// typed substrate methods (`seed` / `try_deduct` / `balance`);
+    /// this accessor exists for fixture-level assertions that need to
+    /// read columns the typed API does not surface (e.g. mission
+    /// 0862-c2 TV-0862-10 asserts that the injected `Clock` value is
+    /// written to the `updated_at_unix_ms` column — the typed
+    /// `balance()` accessor returns only the `balance` column).
+    ///
+    /// # Errors
+    /// Returns `SpendLedgerError::Storage` on underlying SQL error.
+    pub fn raw_query(
+        &self,
+        sql: &str,
+        params: (Vec<u8>, Vec<u8>),
+    ) -> Result<stoolap::Rows, SpendLedgerError> {
+        self.db
+            .query(sql, params)
+            .map_err(|e| SpendLedgerError::Storage(format!("raw_query: {e}")))
     }
 }
 

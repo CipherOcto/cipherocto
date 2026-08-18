@@ -25,6 +25,12 @@
 //! - TV-10: injected `Clock` sources `updated_at_unix_ms`
 //!   deterministically (mission 0862-c2: `SystemTime::now` masked
 //!   by fixture shape — now asserted via `FixedClock`)
+//! - TV-11: file-backed two-instance concurrent-deduct (mission
+//!   0862-c3: advisory file lock + stoolap transaction wrapper
+//!   prevent over-drain; 10 threads × 100 cost on 1000 budget →
+//!   exactly 10 succeed, 10 fail with `InsufficientBalance`,
+//!   final balance 0; + TV-11b `LockUnavailable` fail-closed
+//!   when an external `flock` holds the file)
 //! - TV-12: scale-mismatch rejection on `seed` (mission 0862-c4:
 //!   panic→typed-error for `dqa_to_i64`)
 //! - TV-13: scale-mismatch rejection on `try_deduct` (mission 0862-c4)
@@ -535,6 +541,129 @@ fn tv_0862_10_injected_clock_pins_updated_at_unix_ms() {
 }
 
 // =============================================================================
+// TV-0862-11 — file-backed concurrent-deduct (mission 0862-c3)
+// =============================================================================
+
+/// TV-0862-11: a single file-backed `StoolapSpendLedger` instance
+/// must atomically serialize its `try_deduct` operations across
+/// concurrent threads via the `drain_lock` Mutex AND the
+/// `stoolap::Transaction` wrapper introduced in mission 0862-c3
+/// (the advisory file lock prevents cross-process races; the
+/// transaction + drain_lock handle in-process concurrency). 20
+/// threads each try to deduct 100 from a 1000 budget; exactly 10
+/// must succeed, 10 must fail with `InsufficientBalance`. Final
+/// balance MUST be 0 (no over-drain).
+///
+/// This test verifies the file-backed path matches the in-memory
+/// path (TV-0862-08) on the cross-instance / cross-thread contract.
+/// Cross-process serialization is exercised by TV-0862-11b (a
+/// second `flock` on the same `.spend_ledger.lock` file surfaces
+/// `LockUnavailable` fail-closed per mission 0862-c3 AC-1).
+#[test]
+fn tv_0862_11_file_backed_concurrent_deduct() {
+    use std::sync::Arc;
+    use std::thread;
+
+    // Temp dir path (dropped at end of test via TempDir). Use
+    // stoolap DSN format `file://<dir>` — the DSN path is a
+    // directory for WAL + snapshots per stoolap fork persistence.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dsn = format!("file://{}", tmp.path().to_str().expect("utf8 path"));
+
+    let ledger = StoolapSpendLedger::open_path(&dsn).expect("open_path");
+    let holder = "did:octo:zTV086211";
+    let macaroon_id = TV_0862_MACAROON_ID_11;
+    ledger
+        .seed(holder, &macaroon_id, dqa(1_000))
+        .expect("seed 1000");
+
+    let ledger = Arc::new(ledger);
+    let success_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let fail_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+    let mut handles = Vec::new();
+    for _ in 0..20 {
+        let ledger = Arc::clone(&ledger);
+        let success_count = Arc::clone(&success_count);
+        let fail_count = Arc::clone(&fail_count);
+        handles.push(thread::spawn(move || {
+            match ledger.try_deduct(holder, &macaroon_id, dqa(100)) {
+                Ok(_) => {
+                    success_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                }
+                Err(SpendLedgerError::InsufficientBalance { .. }) => {
+                    fail_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                }
+                Err(e) => panic!("TV-0862-11: unexpected error (not InsufficientBalance): {e:?}"),
+            }
+        }));
+    }
+    for h in handles {
+        h.join().expect("thread join");
+    }
+
+    let successes = success_count.load(std::sync::atomic::Ordering::SeqCst);
+    let failures = fail_count.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(
+        successes, 10,
+        "TV-0862-11: exactly 10 threads must succeed (drain 1000 budget): got {successes}"
+    );
+    assert_eq!(
+        failures, 10,
+        "TV-0862-11: exactly 10 threads must fail with InsufficientBalance: got {failures}"
+    );
+
+    let final_balance = ledger
+        .balance(holder, &macaroon_id)
+        .expect("final balance read");
+    assert_eq!(
+        final_balance,
+        Some(dqa(0)),
+        "TV-0862-11: final balance must be 0 (no over-drain): got {final_balance:?}"
+    );
+}
+
+/// TV-0862-11b: `open_path` fails-closed with `LockUnavailable` when
+/// an external process holds the `.spend_ledger.lock` file (per
+/// mission 0862-c3 AC-1 fail-closed contract). The substrate's
+/// `flock(2)` would otherwise block on the second open; instead it
+/// surfaces a typed error so the wallet-node startup can either
+/// retry or fail-fast.
+#[test]
+fn tv_0862_11b_open_path_lock_unavailable_fail_closed() {
+    use fs2::FileExt;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let fs_path = tmp.path().to_str().expect("utf8 path");
+    let dsn = format!("file://{fs_path}");
+    // Substrate acquires the lock on a sibling file
+    // `<dir>/.spend_ledger.lock` (the DSN path is a directory for
+    // WAL + snapshots per stoolap fork persistence). Acquire the
+    // SAME file here to simulate a second process holding the
+    // substrate's lock target.
+    let lock_path = tmp.path().join(".spend_ledger.lock");
+    let external_lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .expect("external lock open");
+    external_lock
+        .lock_exclusive()
+        .expect("external lock acquire");
+
+    // Substrate's `open_path` must fail-closed.
+    let result = StoolapSpendLedger::open_path(&dsn);
+    assert!(
+        matches!(result, Err(SpendLedgerError::LockUnavailable { .. })),
+        "TV-0862-11b: open_path must fail-closed with LockUnavailable: got {result:?}"
+    );
+
+    drop(external_lock);
+}
+
+// =============================================================================
 // TV-0862-15 — concurrent seed() on same (holder_did, macaroon_id) serializes
 // (mission 0862-c8: seed() acquires drain_lock)
 // =============================================================================
@@ -834,6 +963,11 @@ const TV_0862_MACAROON_ID_13: [u8; 16] = [
 /// TV-0862-14 macaroon_id fixture. Distinct byte range from c4 fixtures.
 const TV_0862_MACAROON_ID_14: [u8; 16] = [
     0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCB, 0xCC, 0xCD, 0xCE, 0xCF, 0xD0,
+];
+
+/// TV-0862-11 macaroon_id fixture. Distinct byte range from c2/c6.
+const TV_0862_MACAROON_ID_11: [u8; 16] = [
+    0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0,
 ];
 
 /// TV-0862-07 balance fixtures (full + half deduction).

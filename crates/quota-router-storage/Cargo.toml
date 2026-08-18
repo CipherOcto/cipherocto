@@ -47,6 +47,14 @@ thiserror = "2.0"
 # TOML parser for the PricingAxis registry (RFC-0959 §Data Structures)
 toml = "0.8"
 
+# Cross-process advisory file lock (mission 0862-c3). `fs2` provides
+# flock(2) / LockFileEx wrappers for the spend_ledger DB file so two
+# wallet-node processes on the same path serialize their
+# SELECT-then-UPDATE critical section (per S6c Round 1 finding #4 —
+# `drain_lock: Arc<Mutex<()>>` is per-instance, not per-process).
+# MIT/Apache-2.0 dual; small + zero transitive deps beyond std.
+fs2 = "0.4"
+
 [dev-dependencies]
 tempfile = "3"
 

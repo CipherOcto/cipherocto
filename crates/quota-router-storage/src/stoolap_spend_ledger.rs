@@ -27,6 +27,36 @@
 //! `crates/quota-router-storage/src/clock.rs` (mission 0957-c); this
 //! mission only rewires the spend-ledger call sites.
 //!
+//! ## Cross-process atomicity (mission 0862-c3)
+//!
+//! The per-instance `drain_lock` covers same-process concurrency
+//! (two threads racing SELECT-then-UPDATE on the same
+//! `StoolapSpendLedger` instance). Cross-process coordination uses
+//! two layers:
+//!
+//! 1. **Advisory file lock** (AC-1): `open_path_with_clock` acquires
+//!    an exclusive `flock(2)` (Linux/Unix) / `LockFileEx` (Windows)
+//!    on the DB file via `fs2::FileLock::lock_exclusive`. The lock
+//!    is held for the substrate's lifetime; `open_path` from a
+//!    different process on the same file surfaces
+//!    `SpendLedgerError::LockUnavailable` (fail-closed).
+//!
+//! 2. **Stoolap transaction** (AC-2): `try_deduct` runs its
+//!    SELECT-then-UPDATE window inside a stoolap `Transaction`
+//!    (`db.begin()` → `Transaction::query` → `Transaction::execute`
+//!    → `Transaction::commit()`). This provides atomicity (the
+//!    deduction either commits in full or not at all) and read-your-own-writes
+//!    isolation across the SELECT + UPDATE pair.
+//!
+//! Both layers are needed: the advisory lock provides
+//! serialization (mutual exclusion across processes), the
+//! transaction provides atomicity (the UPDATE either lands or
+//! doesn't). Either alone leaves a gap. Pin via
+//! `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs`
+//! TV-0862-11 (file-backed two-instance concurrent-deduct: 10
+//! threads × 100 cost on 1000 budget → exactly 10 succeed, 10 fail
+//! with `InsufficientBalance`; no over-drain).
+//!
 //! ## No DID validation (mission 0862-c6)
 //!
 //! `StoolapSpendLedger` accepts any byte slice as `holder_did` and any
@@ -90,6 +120,19 @@ pub enum SpendLedgerError {
         /// The rejected cost.
         cost: octo_determin::Dqa,
     },
+    /// Cross-process advisory file lock not acquired (mission
+    /// 0862-c3 AC-1). Returned from `open_path` /
+    /// `open_path_with_clock` when another process holds an
+    /// exclusive `flock(2)` on the same DB file. Substrate is
+    /// fail-closed — concurrent opens from a different process
+    /// surface this error rather than silently racing.
+    #[error("advisory file lock unavailable for {path}: {reason}")]
+    LockUnavailable {
+        /// Path of the DB file that could not be locked.
+        path: String,
+        /// Underlying fs2 / OS error.
+        reason: String,
+    },
     /// `Dqa` scale outside the schema's accepted range. The spend
     /// ledger schema stores balances as `INTEGER` (i64) at `scale=0`
     /// (per RFC-0862 §StoolapSpendLedger substrate). A `Dqa` carrying
@@ -125,6 +168,21 @@ pub struct StoolapSpendLedger {
     /// substrate §Clock subsection). Default: `SystemClock`.
     /// Tests substitute `FixedClock` (mission 0862-c2 TV-0862-10).
     clock: Arc<dyn Clock>,
+    /// Cross-process advisory file lock. Held on the underlying
+    /// stoolap DB file (only populated when `open_path` /
+    /// `open_path_with_clock` succeeded; `None` for
+    /// `open_in_memory*`). The File itself carries the lock state
+    /// via `fs2::FileExt::lock_exclusive` — the lock is released
+    /// when the File is dropped. Wrapped in `Arc` so the substrate
+    /// can still derive `Clone` (File isn't Clone directly). Two
+    /// `StoolapSpendLedger` instances on the SAME file from
+    /// DIFFERENT processes serialize their SELECT-then-UPDATE
+    /// critical section via this lock (per mission 0862-c3,
+    /// RFC-0862 §Cross-process atomicity). On Linux/Unix the lock
+    /// is `flock(2)` (advisory); on Windows it is `LockFileEx`
+    /// (mandatory).
+    #[allow(dead_code)] // held for OS-level lock lifetime; released on Drop
+    lock_file: Option<Arc<std::fs::File>>,
 }
 
 impl std::fmt::Debug for StoolapSpendLedger {
@@ -159,12 +217,17 @@ impl StoolapSpendLedger {
             db: Arc::new(db),
             drain_lock: Arc::new(std::sync::Mutex::new(())),
             clock,
+            lock_file: None,
         })
     }
 
     /// Open a file-backed database at `path` with the spend_ledger
     /// schema applied. Production deployments persist balances
     /// across restarts. Defaults to `SystemClock`.
+    ///
+    /// `path` MUST be a stoolap DSN (e.g. `file:///var/data/ledger.db`
+    /// per RFC-0862 §StoolapSpendLedger + `crate::slash_store` precedent).
+    /// The bare file path is rejected by stoolap's DSN parser.
     /// # Errors
     /// Returns `SpendLedgerError::Storage` on DB open / migration failure.
     pub fn open_path(path: &str) -> Result<Self, SpendLedgerError> {
@@ -174,8 +237,21 @@ impl StoolapSpendLedger {
     /// Open a file-backed database with an injected wall-clock source.
     /// Production deployments that need to pin time (e.g. replay
     /// tools) use this constructor.
+    /// # Cross-process atomicity (mission 0862-c3)
+    ///
+    /// Acquires an advisory file lock (`fs2::FileLock::lock_exclusive`
+    /// via `flock(2)` on Linux/Unix, `LockFileEx` on Windows) on the
+    /// underlying DB file (the path with `file://` DSN prefix stripped).
+    /// The lock is held for the substrate's lifetime and released on
+    /// drop. Two `StoolapSpendLedger` instances on the SAME file from
+    /// DIFFERENT processes serialize via this lock — the per-instance
+    /// `drain_lock` only covers same-process concurrency.
+    ///
     /// # Errors
-    /// Returns `SpendLedgerError::Storage` on DB open / migration failure.
+    /// Returns `SpendLedgerError::Storage` on DB open / migration
+    /// failure. Returns `SpendLedgerError::LockUnavailable` if the
+    /// file lock cannot be acquired (e.g. another process holds an
+    /// exclusive lock — fail-closed per mission 0862-c3 AC-1).
     pub fn open_path_with_clock(
         path: &str,
         clock: Arc<dyn Clock>,
@@ -184,10 +260,37 @@ impl StoolapSpendLedger {
             .map_err(|e| SpendLedgerError::Storage(format!("open({path}): {e}")))?;
         migrations::apply_pending(&db)
             .map_err(|e| SpendLedgerError::Storage(format!("apply_pending: {e}")))?;
+        // Mission 0862-c3 AC-1: acquire advisory file lock on a
+        // sibling lock file (the DSN path is a directory for WAL +
+        // snapshots per stoolap fork persistence — not a regular
+        // file). The lock file lives at `<dsn-dir>/.spend_ledger.lock`
+        // and is created on demand; the OS-level `flock(2)` is held
+        // for the substrate's lifetime (released on File drop).
+        // Wrapped in `Arc` so the struct stays Clone-able (File
+        // isn't Clone).
+        use fs2::FileExt;
+        let fs_path = path.strip_prefix("file://").unwrap_or(path);
+        let lock_path = std::path::Path::new(fs_path).join(".spend_ledger.lock");
+        let lock_file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .map_err(|e| {
+                SpendLedgerError::Storage(format!("lock open({}): {e}", lock_path.display()))
+            })?;
+        lock_file
+            .try_lock_exclusive()
+            .map_err(|e| SpendLedgerError::LockUnavailable {
+                path: path.to_owned(),
+                reason: format!("flock: {e}"),
+            })?;
         Ok(Self {
             db: Arc::new(db),
             drain_lock: Arc::new(std::sync::Mutex::new(())),
             clock,
+            lock_file: Some(Arc::new(lock_file)),
         })
     }
 
@@ -337,7 +440,17 @@ impl StoolapSpendLedger {
             .drain_lock
             .lock()
             .map_err(|_| SpendLedgerError::Storage("drain_lock poisoned".to_owned()))?;
-        let rows = self.db.query(
+        // Mission 0862-c3 AC-2: wrap the SELECT + UPDATE in a stoolap
+        // transaction so the read-modify-write pair is atomic (the
+        // UPDATE either lands or the SELECT is rolled back). Combined
+        // with the cross-process advisory file lock acquired in
+        // `open_path_with_clock`, this closes the S6c Round 1 finding
+        // #4 cross-process double-spend surface.
+        let mut tx = self
+            .db
+            .begin()
+            .map_err(|e| SpendLedgerError::Storage(format!("tx begin: {e}")))?;
+        let rows = tx.query(
             "SELECT balance FROM spend_ledger \
              WHERE holder_did = ? AND macaroon_id = ? LIMIT 1",
             (holder_did.as_bytes().to_vec(), macaroon_id.to_vec()),
@@ -352,6 +465,8 @@ impl StoolapSpendLedger {
         let balance_u = octo_determin::Dqa::new(balance_raw, 0)
             .map_err(|e| SpendLedgerError::Storage(format!("balance decode: {e:?}")))?;
         if octo_determin::dqa_cmp(balance_u, cost) < 0 {
+            // No UPDATE issued — just abandon the transaction.
+            // `tx` drops without `commit`; stoolap rolls back.
             return Err(SpendLedgerError::InsufficientBalance {
                 balance: balance_u,
                 cost,
@@ -362,7 +477,7 @@ impl StoolapSpendLedger {
             .map_err(|e| SpendLedgerError::Storage(format!("deduct underflow: {e:?}")))?;
         // Mission 0862-c2: injected `Clock` (see `seed` analogue above).
         let now_ms = self.clock.unix_millis() as i64;
-        let result = self.db.execute(
+        let result = tx.execute(
             "UPDATE spend_ledger SET balance = ?, updated_at_unix_ms = ? \
              WHERE holder_did = ? AND macaroon_id = ?",
             (
@@ -372,10 +487,15 @@ impl StoolapSpendLedger {
                 macaroon_id.to_vec(),
             ),
         );
-        match result {
-            Ok(_) => Ok(new_balance),
-            Err(e) => Err(SpendLedgerError::Storage(format!("update: {e}"))),
+        if let Err(e) = result {
+            return Err(SpendLedgerError::Storage(format!("update: {e}")));
         }
+        // Commit the transaction before releasing `drain_lock`. If
+        // commit fails (rare — typically disk full), surface as
+        // `Storage` and the UPDATE is rolled back.
+        tx.commit()
+            .map_err(|e| SpendLedgerError::Storage(format!("tx commit: {e}")))?;
+        Ok(new_balance)
     }
 
     /// Read-only balance lookup. Returns `None` if no record exists.

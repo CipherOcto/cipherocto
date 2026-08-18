@@ -1070,6 +1070,46 @@ test-only `raw_query(&self, sql, params)` accessor is added to
 the substrate for this column assertion — kept `pub` so follow-on
 deterministic-time TV can reuse it.
 
+**Cross-process atomicity (RFC-0862 v2.0.8 + mission 0862-c3):**
+`StoolapSpendLedger` closes the cross-process double-spend surface
+via two complementary layers — EITHER alone leaves a gap:
+
+1. **Advisory file lock** (`fs2::FileExt::try_lock_exclusive` via
+   `flock(2)` on Linux/Unix, `LockFileEx` on Windows) on a sibling
+   lock file `<dsn-dir>/.spend_ledger.lock` (the DSN path is a
+   directory for WAL + snapshots per stoolap fork persistence,
+   not a regular file — the substrate opens the sibling lock
+   file in `create + read + write` mode). The lock is held for
+   the substrate's lifetime (released on File drop). Two
+   `StoolapSpendLedger` instances on the SAME dir from DIFFERENT
+   processes: the second `open_path` surfaces
+   `SpendLedgerError::LockUnavailable` (fail-closed; non-blocking
+   `try_lock_exclusive` so a wallet-node startup never deadlocks
+   on a contended lock).
+
+2. **Stoolap transaction** (`db.begin() -> Transaction::query ->
+   Transaction::execute -> Transaction::commit()`) wrapping the
+   `try_deduct` SELECT-then-UPDATE window. Provides atomicity:
+   either the UPDATE lands or the SELECT is rolled back. Read-your-own-writes
+   isolation across the SELECT + UPDATE pair. Combined with the
+   advisory file lock: lock = serialization (mutual exclusion
+   across processes), transaction = atomicity (the UPDATE either
+   commits or doesn't).
+
+Multi-node consensus drain is a separate concern handled by
+`RaftLikeDrainCoordinator` (mission 0871e-phase5c-1 LANDED
+2026-08-11) — `StoolapSpendLedger`'s advisory lock is the
+**single-node** cross-process layer. Pin via
+`crates/quota-router-storage/tests/tv_0862_spend_ledger.rs`
+TV-0862-11 (single-instance file-backed concurrent-deduct: 20
+threads × 100 cost on 1000 budget → exactly 10 succeed, 10 fail
+with `InsufficientBalance`, final balance 0 — no over-drain;
+validates `drain_lock` Mutex + stoolap Transaction together on
+the file-backed path matching the in-memory path per TV-0862-08)
++ TV-0862-11b (external `flock` held on `.spend_ledger.lock`
+surfaces `LockUnavailable` from `open_path` — fail-closed per
+mission 0862-c3 AC-1).
+
 **No-DID-validation convention (RFC-0862 v2.0.7 + mission 0862-c6):**
 `StoolapSpendLedger` performs NO `CanonicalCodec` / DID-format /
 `did:octo:` prefix check on the `holder_did` field. The substrate
@@ -2075,6 +2115,7 @@ cargo doc --workspace --no-deps --manifest-path octo-transport/Cargo.toml
 | 2.0.5   | 2026-08-18 | Draft (follow-on 0862-c5) | §Domain-separator hygiene (additive on v2.0.4). Audit of `blake3::hash` + `hasher.update(b"...")` callsites per S6c Round 1 security review finding #6 surfaced one production prefix gap (`b"reservation/v1"` in `crates/quota-router-sm-engine/src/lib.rs:216` for `Reservation::mint` derivation) + three test-only placeholders (`b"vak/v1"`, `b"cap/v1"`, `b"vault/v1"` in `quota-router-core/tests/eleven_step.rs` + `goldens.rs`). Production rename: `b"cipherocto/reservation/v1/"` (clean — `reservation_id` is an in-memory handle with no SQL migration, no wire form, no cross-network lookup keyed on raw bytes). Test fixtures: rename to `cipherocto/<name>/v1/` + doc comment "test-only derivation, no canonical form" per mission AC-3. New TV-0862-19 in `crates/quota-router-core/src/settle.rs` byte-exact pins the new `reservation_id` BLAKE3 output for canonical inputs (`05f058e42899872e697281ef6aacfdc67eecc8e84ad5e4312609e3bb04ba723e`). Regenerated `tests/fixtures/exercise/eleven_step_goldens.json` step2/3/6 hex values bumped (step1/10 unchanged). All test greps for `cipherocto/...` prefixes pass. Closes mission 0862-c5.
 | 2.0.6   | 2026-08-18 | Draft (follow-on 0862-c2) | §Clock precondition (additive on v2.0.5). `StoolapSpendLedger` gains `clock: Arc<dyn Clock>` field; `updated_at_unix_ms` writes read from `self.clock.unix_millis()` instead of `SystemTime::now()`. Default constructors (`open_in_memory` / `open_path`) inject `Arc::new(SystemClock)`; `_with_clock` variants accept any caller-supplied clock (production may reuse `crates/quota-router-storage::clock` substrate; tests substitute `FixedClock`). Trait shape reuses existing `Clock::unix_millis() -> u64` (no API churn for 0957-c consumers); `as i64` cast at use site. New test-only `pub fn raw_query(&self, sql: &str, params: (Vec<u8>, Vec<u8>)) -> Result<stoolap::Rows, SpendLedgerError>` accessor on the substrate for the column-write pin. New TV-0862-10 in `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs` byte-pins the column write to `1_700_000_000_000` via injected `FixedClock`. Existing 16 TV byte-stable. Closes S6c Round 1 finding #10 (`SystemTime::now()` non-determinism masked by fixture shape). Closes mission 0862-c2.
 | 2.0.7   | 2026-08-18 | Draft (follow-on 0862-c6) | §No-DID-validation convention (additive on v2.0.6). Module-level doc comment added to `crates/quota-router-storage/src/stoolap_spend_ledger.rs` documenting that the substrate performs NO `CanonicalCodec` / DID-format / `did:octo:` prefix check on the `holder_did` field; canonical validation lives at the wallet-node boundary in `crates/octo-paid-query/src/handlers/`. New TV-0862-14 in `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs` pins the convention by exercising four representative holder_did shapes (empty string / non-`did:octo:` / binary-garbage / canonical production form) and asserting distinct rows persist independently. Reserved test prefix (e.g. `did:octo:test:`) is a separate RFC-0010 amendment — out of scope for RFC-0862 v2.x follow-ons. Closes S6c Round 1 finding #7 (test fixture DIDs in production keyspace). Closes mission 0862-c6.
+| 2.0.8   | 2026-08-18 | Draft (follow-on 0862-c3) | §Cross-process atomicity (additive on v2.0.7). Two complementary layers close the S6c Round 1 finding #4 cross-process double-spend surface. (1) **Advisory file lock**: `StoolapSpendLedger` gains `lock_file: Option<Arc<std::fs::File>>` field; `open_path_with_clock` opens sibling file `<dsn-dir>/.spend_ledger.lock` in `create + read + write` mode and acquires `fs2::FileExt::try_lock_exclusive` (non-blocking; surfaces `SpendLedgerError::LockUnavailable` on contention — fail-closed per AC-1; no deadlock on contended locks). Lock released on File drop. `open_in_memory*` constructors set `lock_file: None`. (2) **Stoolap transaction**: `try_deduct` SELECT-then-UPDATE wrapped in `db.begin() -> Transaction::query -> Transaction::execute -> Transaction::commit()` for atomicity + read-your-own-writes. `LockUnavailable` variant added to `SpendLedgerError` (path + reason fields). New `fs2 = "0.4"` dep in `crates/quota-router-storage/Cargo.toml`. Two new TV: TV-0862-11 (single-instance file-backed concurrent-deduct: 20 threads × 100 cost on 1000 budget → exactly 10 succeed, 10 fail with `InsufficientBalance`, final balance 0 — validates `drain_lock` + stoolap Transaction together on file-backed path matching in-memory path per TV-0862-08) + TV-0862-11b (external `flock` held on `.spend_ledger.lock` surfaces `LockUnavailable` from `open_path` — fail-closed contract). Multi-node consensus drain remains `RaftLikeDrainCoordinator` (mission 0871e-phase5c-1 LANDED 2026-08-11) — this RFC adds the single-node cross-process layer only. Existing 16 TV byte-stable. Closes mission 0862-c3.
 
 ## Review Process
 

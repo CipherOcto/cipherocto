@@ -24,6 +24,7 @@
 //! — `Escrow::drop` will leave it in `Pending` state and no funds
 //! are at risk.
 
+use octo_determin::Dqa;
 use serde::{Deserialize, Serialize};
 
 /// Escrow state per RFC-0900 §Escrow Flow.
@@ -151,7 +152,11 @@ pub struct Escrow {
     /// Empty when the marketplace has no arbiter wired; in that
     /// state, all `resolve_*` calls fail with `UnauthorizedCaller`.
     pub arbitrator: String,
-    pub amount_micro_octo_w: u128,
+    /// Escrow amount at integer scale 0 (`Dqa { value, scale: 0 }`).
+    /// Mission 0105-x: migrated from `u128` to canonical Layer A
+    /// `octo_determin::Dqa` per RFC-0105 §Numeric Substrate +
+    /// RFC-0862 §StoolapSpendLedger pattern (scale=0 invariant).
+    pub amount_micro_octo_w: Dqa,
     pub state: EscrowState,
 }
 
@@ -164,7 +169,9 @@ pub struct EscrowSnapshot {
     pub buyer: String,
     pub seller: String,
     pub arbitrator: String,
-    pub amount_micro_octo_w: u128,
+    /// Snapshot of `Escrow::amount_micro_octo_w` — mission 0105-x
+    /// migrated from `u128` to `Dqa` to match the substrate field type.
+    pub amount_micro_octo_w: Dqa,
     pub state: EscrowState,
 }
 
@@ -189,7 +196,7 @@ impl Escrow {
         id: [u8; 32],
         buyer: impl Into<String>,
         seller: impl Into<String>,
-        amount_micro_octo_w: u128,
+        amount_micro_octo_w: Dqa,
     ) -> Self {
         Self {
             id,
@@ -209,7 +216,7 @@ impl Escrow {
         buyer: impl Into<String>,
         seller: impl Into<String>,
         arbitrator: impl Into<String>,
-        amount_micro_octo_w: u128,
+        amount_micro_octo_w: Dqa,
     ) -> Self {
         Self {
             id,
@@ -342,7 +349,7 @@ mod tests {
             octo_ident::test_helpers::sample_did(130),
             octo_ident::test_helpers::sample_did(95),
             octo_ident::test_helpers::sample_did(50),
-            100_000,
+            octo_determin::Dqa::new(100_000, 0).expect("scale=0 always valid"),
         )
     }
 
@@ -570,7 +577,7 @@ mod tests {
             [0xaa; 32],
             octo_ident::test_helpers::sample_did(130),
             octo_ident::test_helpers::sample_did(95),
-            100_000,
+            octo_determin::Dqa::new(100_000, 0).expect("scale=0 always valid"),
         );
         e.lock(&buyer()).unwrap();
         e.dispute(&buyer()).unwrap();

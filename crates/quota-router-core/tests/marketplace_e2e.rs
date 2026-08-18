@@ -67,7 +67,7 @@ fn setup_match(buyer: &str, seller: &str, model: &str, price: u128, qty: u64) ->
         1_500,
     );
     let escrow_id = [0x42; 32];
-    let amount = price * qty as u128;
+    let amount = dqa((price * qty as u128) as i64);
     let mut escrow = Escrow::with_arbitrator(escrow_id, buyer, seller, "arb-1", amount);
     escrow.lock(&Party::Buyer(buyer.to_string())).expect("lock");
     MarketTransaction { book, escrow }
@@ -94,7 +94,7 @@ fn happy_path_bid_matches_ask_escrow_settles() {
         .expect("settle");
     assert_eq!(tx.escrow.state, EscrowState::Settled);
     assert!(tx.escrow.is_terminal());
-    assert_eq!(tx.escrow.amount_micro_octo_w, 500);
+    assert_eq!(tx.escrow.amount_micro_octo_w, dqa(500));
 }
 
 #[test]
@@ -141,7 +141,7 @@ fn dispute_invalid_confirms_payment() {
         .resolve_invalid(&Party::Arbitrator("arb-1".to_string()))
         .expect("resolve invalid");
     assert_eq!(tx.escrow.state, EscrowState::Settled);
-    assert_eq!(tx.escrow.amount_micro_octo_w, 500);
+    assert_eq!(tx.escrow.amount_micro_octo_w, dqa(500));
 }
 
 #[test]
@@ -449,7 +449,7 @@ fn escrow_double_settle_rejected() {
     // SettleFromInvalid. The Round 1 C3 fix (drop Clone) ensures no
     // double-settle vector via accidental clone; this test pins the
     // state-machine half of that contract.
-    let mut escrow = Escrow::new([0x99; 32], "buyer", "seller", 500);
+    let mut escrow = Escrow::new([0x99; 32], "buyer", "seller", dqa(500));
     escrow
         .lock(&Party::Buyer("buyer".to_string()))
         .expect("lock");
@@ -469,7 +469,7 @@ fn escrow_double_settle_rejected() {
 #[test]
 fn escrow_double_dispute_rejected() {
     // Same contract for dispute: only one dispute per Locked escrow.
-    let mut escrow = Escrow::new([0x99; 32], "buyer", "seller", 500);
+    let mut escrow = Escrow::new([0x99; 32], "buyer", "seller", dqa(500));
     escrow
         .lock(&Party::Buyer("buyer".to_string()))
         .expect("lock");
@@ -645,7 +645,7 @@ fn escrow_recovery_from_locked_state_dispute_works() {
         sample_did(238),
         sample_did(145),
         "arb-1",
-        500,
+        dqa(500),
     );
     recovered
         .lock(&Party::Buyer(sample_did(238).to_string()))

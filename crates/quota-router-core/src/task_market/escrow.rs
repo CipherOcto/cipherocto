@@ -8,6 +8,7 @@
 //! `TaskEscrowSnapshot` (cloneable) for audit/log capture.
 
 use crate::marketplace::escrow::{Escrow, EscrowError, EscrowSnapshot, EscrowState, Party};
+use octo_determin::Dqa;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum TaskEscrowError {
@@ -48,7 +49,7 @@ impl TaskEscrow {
         request_id: [u8; 32],
         buyer: impl Into<String>,
         seller: impl Into<String>,
-        amount_micro_octo_w: u128,
+        amount_micro_octo_w: Dqa,
     ) -> Self {
         Self {
             base: Escrow::new(id, buyer, seller, amount_micro_octo_w),
@@ -65,7 +66,7 @@ impl TaskEscrow {
         buyer: impl Into<String>,
         seller: impl Into<String>,
         arbitrator: impl Into<String>,
-        amount_micro_octo_w: u128,
+        amount_micro_octo_w: Dqa,
     ) -> Self {
         Self {
             base: Escrow::with_arbitrator(id, buyer, seller, arbitrator, amount_micro_octo_w),
@@ -117,7 +118,7 @@ mod tests {
             octo_ident::test_helpers::sample_did(130),
             octo_ident::test_helpers::sample_did(95),
             octo_ident::test_helpers::sample_did(50),
-            100_000,
+            Dqa::new(100_000, 0).expect("scale=0 always valid"),
         )
     }
 

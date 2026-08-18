@@ -17,6 +17,11 @@ use quota_router_core::task_market::{
     Dispute, DisputeReason, Evidence, TaskEscrow, TaskEscrowError, TaskMarket, TaskSpec, TaskType,
 };
 
+/// Test helper: integer-literal Dqa constructor (scale=0).
+fn dqa(n: i64) -> octo_determin::Dqa {
+    octo_determin::Dqa::new(n, 0).expect("non-overflow")
+}
+
 #[test]
 fn task_type_inference_constructor_is_distinct() {
     let a = TaskType::Inference;
@@ -202,7 +207,7 @@ fn task_escrow_new_starts_pending() {
         [0x22; 32],
         sample_did(236),
         sample_did(54),
-        100_000,
+        dqa(100_000),
     );
     assert_eq!(e.state(), EscrowState::Pending);
     assert_eq!(e.task_id, [0x11; 32]);
@@ -218,7 +223,7 @@ fn task_escrow_happy_path_lock_then_settle() {
         [0x22; 32],
         sample_did(236),
         sample_did(54),
-        100_000,
+        dqa(100_000),
     );
     e.lock(&Party::Buyer(sample_did(236).to_string()))
         .expect("lock");
@@ -238,7 +243,7 @@ fn task_escrow_dispute_valid_slashes_seller() {
         sample_did(236),
         sample_did(54),
         sample_did(50),
-        100_000,
+        dqa(100_000),
     );
     e.lock(&Party::Buyer(sample_did(236).to_string()))
         .expect("lock");
@@ -274,7 +279,7 @@ fn task_escrow_dispute_invalid_confirms_payment() {
         sample_did(236),
         sample_did(54),
         sample_did(50),
-        100_000,
+        dqa(100_000),
     );
     e.lock(&Party::Buyer(sample_did(236).to_string()))
         .expect("lock");
@@ -295,7 +300,7 @@ fn task_escrow_rejects_lock_from_non_pending() {
         sample_did(236),
         sample_did(54),
         sample_did(50),
-        100_000,
+        dqa(100_000),
     );
     e.lock(&Party::Buyer(sample_did(236).to_string()))
         .expect("lock");
@@ -310,7 +315,7 @@ fn task_escrow_rejects_settle_from_pending() {
         [0x22; 32],
         sample_did(236),
         sample_did(54),
-        100_000,
+        dqa(100_000),
     );
     assert!(e
         .settle(&Party::Seller(sample_did(54).to_string()))
@@ -325,7 +330,7 @@ fn task_escrow_rejects_dispute_from_pending() {
         [0x22; 32],
         sample_did(236),
         sample_did(54),
-        100_000,
+        dqa(100_000),
     );
     assert!(e
         .dispute(&Party::Buyer(sample_did(236).to_string()))
@@ -340,7 +345,7 @@ fn task_escrow_rejects_resolve_from_non_disputed() {
         [0x22; 32],
         sample_did(236),
         sample_did(54),
-        100_000,
+        dqa(100_000),
     );
     e.lock(&Party::Buyer(sample_did(236).to_string()))
         .expect("lock");
@@ -380,7 +385,7 @@ fn task_market_match_then_full_escrow_happy_path() {
         [0x22; 32],
         matched.bid.owner.clone(),
         matched.ask.owner.clone(),
-        matched.price * matched.qty as u128,
+        dqa((matched.price * matched.qty as u128) as i64),
     );
     escrow
         .lock(&Party::Buyer(matched.bid.owner.clone()))
@@ -389,7 +394,7 @@ fn task_market_match_then_full_escrow_happy_path() {
         .settle(&Party::Seller(matched.ask.owner.clone()))
         .expect("settle");
     assert_eq!(escrow.state(), EscrowState::Settled);
-    assert_eq!(escrow.base.amount_micro_octo_w, 90);
+    assert_eq!(escrow.base.amount_micro_octo_w, dqa(90));
 }
 
 #[test]
@@ -406,7 +411,7 @@ fn task_market_match_then_dispute_path() {
         [0x22; 32],
         matched.bid.owner.clone(),
         matched.ask.owner.clone(),
-        matched.price * matched.qty as u128,
+        dqa((matched.price * matched.qty as u128) as i64),
     );
     escrow
         .lock(&Party::Buyer(matched.bid.owner.clone()))
@@ -527,11 +532,6 @@ fn task_market_slashing_unknown_provider_errors() {
 
 use quota_router_core::task_market::DisputeRegistry;
 
-/// Test helper: integer-literal Dqa constructor (scale=0).
-fn dqa(n: i64) -> octo_determin::Dqa {
-    octo_determin::Dqa::new(n, 0).expect("non-overflow")
-}
-
 /// Simulated inference execution. Returns the result hash and a
 /// `success` flag so the calling test can drive the happy / failure
 /// branch deterministically.
@@ -579,7 +579,7 @@ fn full_rfc_0918_inference_flow_happy_path() {
         request_id,
         matched.bid.owner.clone(),
         matched.ask.owner.clone(),
-        matched.price * matched.qty as u128,
+        dqa((matched.price * matched.qty as u128) as i64),
     );
     assert_eq!(escrow.state(), EscrowState::Pending);
     escrow
@@ -597,7 +597,7 @@ fn full_rfc_0918_inference_flow_happy_path() {
         .expect("settle");
     assert_eq!(escrow.state(), EscrowState::Settled);
     assert!(escrow.is_terminal());
-    assert_eq!(escrow.base.amount_micro_octo_w, 100);
+    assert_eq!(escrow.base.amount_micro_octo_w, dqa(100));
 
     // 8. No dispute opened; provider stake untouched.
     assert!(disputes.is_empty());
@@ -629,7 +629,7 @@ fn full_rfc_0918_inference_flow_dispute_then_slash() {
         matched.bid.owner.clone(),
         matched.ask.owner.clone(),
         sample_did(50),
-        matched.price * matched.qty as u128,
+        dqa((matched.price * matched.qty as u128) as i64),
     );
     escrow
         .lock(&Party::Buyer(matched.bid.owner.clone()))
@@ -694,7 +694,7 @@ fn full_rfc_0918_inference_flow_dispute_invalid_keeps_payment() {
         matched.bid.owner.clone(),
         matched.ask.owner.clone(),
         sample_did(50),
-        matched.price * matched.qty as u128,
+        dqa((matched.price * matched.qty as u128) as i64),
     );
     escrow
         .lock(&Party::Buyer(matched.bid.owner.clone()))

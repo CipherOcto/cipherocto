@@ -162,6 +162,53 @@ mod tests {
         assert_eq!(r1, r2); // deterministic
     }
 
+    /// TV-0862-19 — canonical `reservation_id` byte-pin (mission 0862-c5).
+    ///
+    /// Pins the **byte-exact** BLAKE3 output for the canonical inputs
+    /// used by `mint_reservation_content_addressed`. Per mission 0862-c5
+    /// (S6c Round 1 review finding #6 — domain-separator hygiene):
+    /// the production prefix changed from `b"reservation/v1"` to
+    /// `b"cipherocto/reservation/v1/"`. Any future change to either
+    /// the prefix OR the input ordering will surface as a byte-pin
+    /// drift here. If this assertion fails after a deliberate
+    /// derivation change, regenerate the hex by re-running the test
+    /// and inspecting the panic message, then justify in the PR per
+    /// the goldens convention.
+    ///
+    /// The expected hex was computed by `BLAKE3` over:
+    /// `cipherocto/reservation/v1/ || VAULT || CAP || ASK || axis ||
+    ///  amount_le || expires_le || audit_le || created_le`
+    /// for the canonical all-`0x01..03` inputs below.
+    #[test]
+    fn tv_0862_19_reservation_id_byte_exact_pin() {
+        let r = mint_reservation(
+            [0x01; 32],
+            [0x02; 32],
+            [0x03; 32],
+            "input_tokens_per_1k".to_owned(),
+            1_000_000,
+            1_800_000_000,
+            86400,
+            1_700_000_000,
+        );
+        let actual = hex::encode(r);
+        assert_eq!(
+            actual.len(),
+            64,
+            "reservation_id must be 32 bytes (64 hex chars)"
+        );
+        // Pin the exact BLAKE3 bytes for the canonical ciph-prefixed
+        // derivation. Captured at the time of landing (mission
+        // 0862-c5 2026-08-18); justification per PR description.
+        assert_eq!(
+            actual, "05f058e42899872e697281ef6aacfdc67eecc8e84ad5e4312609e3bb04ba723e",
+            "TV-0862-19: reservation_id byte-pin drifted. \
+             Re-run with `cargo test tv_0862_19 -- --nocapture` \
+             after a deliberate prefix / ordering change, copy the \
+             printed hex, and justify in the PR per mission 0862-c5."
+        );
+    }
+
     #[test]
     fn mint_ask_carries_axes() {
         let a = mint_ask(

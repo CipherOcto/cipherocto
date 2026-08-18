@@ -36,19 +36,23 @@ fn compute_goldens() -> Goldens {
     h.update(HOLDER_DID.as_bytes());
     let step1 = hex::encode(h.finalize().as_bytes());
 
-    // Step 2 = BLAKE3(step1 || "vak/v1")
+    // Step 2 = BLAKE3(step1 || "cipherocto/vak/v1/") (mission 0862-c5:
+    // ciph-prefixed, no canonical derivation — test-only mirror of
+    // eleven_step.rs step 2).
     let step1_bytes: [u8; 32] = *blake3::hash(HOLDER_DID.as_bytes()).as_bytes();
     let mut h = Hasher::new();
     h.update(&step1_bytes);
-    h.update(b"vak/v1");
+    h.update(b"cipherocto/vak/v1/");
     let step2 = hex::encode(h.finalize().as_bytes());
 
-    // Step 3 = BLAKE3(step2 || "cap/v1")
+    // Step 3 = BLAKE3(step2 || "cipherocto/cap/v1/") (mission 0862-c5:
+    // ciph-prefixed, no canonical derivation — test-only mirror of
+    // eleven_step.rs step 3).
     let step2_bytes: [u8; 32] = *blake3::hash(
         {
-            let mut buf = Vec::with_capacity(32 + 6);
+            let mut buf = Vec::with_capacity(32 + 14);
             buf.extend_from_slice(&step1_bytes);
-            buf.extend_from_slice(b"vak/v1");
+            buf.extend_from_slice(b"cipherocto/vak/v1/");
             buf
         }
         .as_slice(),
@@ -56,7 +60,7 @@ fn compute_goldens() -> Goldens {
     .as_bytes();
     let mut h = Hasher::new();
     h.update(&step2_bytes);
-    h.update(b"cap/v1");
+    h.update(b"cipherocto/cap/v1/");
     let step3 = hex::encode(h.finalize().as_bytes());
 
     // Ask = full Ask struct; ask_id = BLAKE3(asker_did || model || axes_hash || nonce)
@@ -78,10 +82,15 @@ fn compute_goldens() -> Goldens {
     };
     let ask_id: [u8; 32] = ask.id();
 
-    // Step 6 = BLAKE3(ask_id || "escrow/v1")
+    // Step 6 = BLAKE3(ask_id || "cipherocto/escrow/v1/") (mission
+    // 0862-c5: test-only prefix; the production escrow_id derivation
+    // is `Reservation::mint` in `crates/quota-router-sm-engine` with
+    // prefix "cipherocto/reservation/v1/" — see step 6 in
+    // `eleven_step::step6_escrow_preauth` which now calls the real
+    // `Reservation::mint` per RFC-0960 R1-F1 fix).
     let mut h = Hasher::new();
     h.update(&ask_id);
-    h.update(b"escrow/v1");
+    h.update(b"cipherocto/escrow/v1/");
     let step6 = hex::encode(h.finalize().as_bytes());
 
     // Step 10 settlement_hash — R1 carryover M-3 fix: now derives from the

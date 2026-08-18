@@ -12,9 +12,9 @@
   "steps": {
     "step10_settlement_hash_blake3": "b98a0fab6269d2f70790f851f2fdc9938ed70ca605fe4d26ca1392fc36b799eb",
     "step1_idp_token_blake3": "b20a61b9e0bedfe8014c9470c599d0ad7ae0b74e9905c891535502ada774becf",
-    "step2_vak_blake3": "ab9db5d6de8325c47ab5f7537f68ea0ff12bfdae9525d7d6a79b84ab460be7f5",
-    "step3_cap_id_blake3": "5d9d92daf76f253fc571437af814168b371a71ca11c4cc78f071f47664c1894b",
-    "step6_escrow_id_blake3": "eaac08ad5734dd2b38a830ede62407f3f8ab7dd30ac8ad7ed1f51ff721207b21"
+    "step2_vak_blake3": "dd8e76e84779b76203c44cb895e69ea2f83b27895f2a4e6599f0fa9ca8f19f76",
+    "step3_cap_id_blake3": "d2c0b793b06769b12147729360ada9e602cca73af1b1f56f4cffe7575699b3d4",
+    "step6_escrow_id_blake3": "c055e0aefd202c15b7699bde5b159454bcddd00121bd54955ab88ca664c0b9b7"
   },
   "version": 1
 }

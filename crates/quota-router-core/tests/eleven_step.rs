@@ -53,19 +53,32 @@ fn step1_sso_login() -> [u8; 32] {
 }
 
 /// Step 2: Org gateway key mints virtual API key.
+///
+/// **Test-only prefix (`"cipherocto/vak/v1/"`)** per mission 0862-c5
+/// (S6c Round 1 review finding #6 — untagged hash prefix sweep). The
+/// prefix is `cipherocto/`-namespaced but the value derivation is a
+/// test placeholder (no canonical `vak_id` exists in production).
+/// Mirrored in `goldens.rs` step 2.
 fn step2_mint_virtual_key(idp_token: &[u8; 32]) -> [u8; 32] {
     let mut hasher = Hasher::new();
     hasher.update(idp_token);
-    hasher.update(b"vak/v1");
+    hasher.update(b"cipherocto/vak/v1/");
     let vak = hasher.finalize();
     *vak.as_bytes()
 }
 
 /// Step 3: Mint capability token (stub: derive token ID; macaroon itself is RFC-0957 layer).
+///
+/// **Test-only prefix (`"cipherocto/cap/v1/"`)** per mission 0862-c5.
+/// The production capability derivation lives in
+/// `crates/octo-cap-macaroon/src/macaroon.rs` and uses a distinct
+/// canonical prefix; this test fixture isolates the 11-step envelope
+/// shape without depending on the macaroon crate. Mirrored in
+/// `goldens.rs` step 3.
 fn step3_mint_capability_token(vak: &[u8; 32]) -> [u8; 32] {
     let mut hasher = Hasher::new();
     hasher.update(vak);
-    hasher.update(b"cap/v1");
+    hasher.update(b"cipherocto/cap/v1/");
     let cap_id = hasher.finalize();
     *cap_id.as_bytes()
 }
@@ -115,8 +128,19 @@ fn step6_escrow_preauth(
 ) -> Reservation {
     // Vault ID is derived from holder DID for this test; production code
     // would resolve it from the capability's `vault_id` caveat (RFC-0957).
+    //
+    // **Test-only placeholder (`"cipherocto/vault/v1/"`)** per mission
+    // 0862-c5 (S6c Round 1 review finding #6): the prefix is
+    // `cipherocto/`-namespaced for hygiene, but the derivation here
+    // (holder DID only) is NOT the production vault_id form — production
+    // uses `octo_vault::vault_id_unchecked` with the prefix
+    // `"cipherocto/vault/v1/" + chain_id + owner_did + asset_id` per
+    // RFC-0960 §8.10. The derivation bytes differ from production's;
+    // this test stub isolates the 11-step shape without depending on
+    // the octo-vault crate's substrate dependency. Production callers
+    // MUST go through `octo_vault::vault_id_unchecked`.
     let mut vault_hasher = Hasher::new();
-    vault_hasher.update(b"vault/v1");
+    vault_hasher.update(b"cipherocto/vault/v1/");
     vault_hasher.update(holder_did.as_bytes());
     let vault_id = *vault_hasher.finalize().as_bytes();
 

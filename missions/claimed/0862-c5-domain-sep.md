@@ -2,13 +2,21 @@
 
 ## Status
 
-**OPEN 2026-08-17 (@mmacedoeu).** Follow-on to `0862-c1-dqa-vault-bump-amendment`
+**LANDED 2026-08-18 (@mmacedoeu).** Follow-on to `0862-c1-dqa-vault-bump-amendment`
 (S6c LANDED 2026-08-17). Filed per S6c Round 1 security review
 finding #6: sweep of `crates/` surfaced untagged legacy hashers —
 `update(b"vault/v1")` (`quota-router-core/tests/eleven_step.rs`),
 `b"cap/v1"`, `b"escrow/v1"`, `b"reservation/v1"`
 (`quota-router-sm-engine/src/lib.rs`) — a second, unnamespaced
 "vault/v1" hash space coexisting with the canonical one.
+
+## Resolution
+
+- **Production rename:** `crates/quota-router-sm-engine/src/lib.rs:216` `b"reservation/v1"` → `b"cipherocto/reservation/v1/"`. Safe — `reservation_id` is an in-memory content-addressed handle consumed only by `quota-router-core::settle::mint_reservation` (no SQL migration, no wire form, no cross-network lookup keyed on raw bytes). Clean rename, no migration.
+- **Test fixtures renamed** (`b"vak/v1"` → `cipherocto/vak/v1/`, `b"cap/v1"` → `cipherocto/cap/v1/`, `b"vault/v1"` → `cipherocto/vault/v1/`); test-only placeholders annotated with doc comments naming production derivation divergence where applicable (e.g. `eleven_step.rs:118-128` annotates the test-only vault_id hash vs production `octo_vault::vault_id_unchecked`).
+- **New TV-0862-19** in `crates/quota-router-core/src/settle.rs` byte-exact pins `reservation_id = 05f058e42899872e697281ef6aacfdc67eecc8e84ad5e4312609e3bb04ba723e` for canonical inputs.
+- **Goldens fixture regenerated** (`eleven_step_goldens.json`): step2/3/6 hex bumped to new prefix outputs (step1/10 unchanged — neither uses these prefixes).
+- **RFC-0862 v2.0.5 row + §Domain-separator hygiene** paragraph in §StoolapSpendLedger `Vault row cross-ref`.
 
 ## RFC
 

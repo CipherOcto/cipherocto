@@ -958,6 +958,32 @@ vault_id = BLAKE3("cipherocto/vault/v1/" + chain_id + owner_did + asset_id)
 `Macaroon::verify_for_vault_op` (RFC-0957) rejects spend drain on
 vault rows that are missing, frozen, or chain-mismatched.
 
+**Domain-separator hygiene (RFC-0862 v2.0.5 + mission 0862-c5):** all
+spend-ledger-adjacent hash derivations use the `cipherocto/<name>/v1/`
+namespace prefix per RFC-0105 v1.9 DqaEncoding-prefix cross-reference
+pattern. The `Reservation::mint` derivation in
+`crates/quota-router-sm-engine/src/lib.rs` (RFC-0126) was renamed
+from the unnamespaced `b"reservation/v1"` to
+`b"cipherocto/reservation/v1/"`; the change is a clean rename
+(`reservation_id` is an in-memory content-addressed handle consumed
+only by `quota-router-core::settle::build_reservation_id` — no SQL
+migration, no wire form, no cross-network lookup keyed on the raw
+bytes). The corresponding TV is
+`crates/quota-router-core/src/settle.rs::tv_0862_19_reservation_id_byte_exact_pin`
+(BLAKE3 of `"cipherocto/reservation/v1/"` + canonical inputs =
+`05f058e42899872e697281ef6aacfdc67eecc8e84ad5e4312609e3bb04ba723e`).
+Sweep result (per mission 0862-c5 audit):
+`crates/quota-router-sm-engine/src/lib.rs:216` (production rename);
+`crates/quota-router-core/tests/eleven_step.rs` lines 59, 68, 119
+(test-only placeholders annotated + renamed to
+`cipherocto/<name>/v1/` for hygiene);
+`crates/quota-router-core/tests/goldens.rs` lines 43, 59, 86
+(test-only mirror fixture, goldens fixture regenerated with new
+prefixes — step2/3/6 hex values bumped; step1/10 unchanged). The
+canonical `vault_id` derivation ABOVE was already namespaced per
+RFC-0862 v2.0 + S3 landing; the audit confirms no other
+production-prefix gap exists at the spend-ledger boundary.
+
 **NodeEnvelope Version Tag cross-ref (RFC-0862 v2.0 + S6a):** spend-drain
 responses are wrapped in V2 envelopes (`version_tag = 0xA1` per
 `crates/octo-protocol/src/envelope.rs`). V1 envelopes (`version_tag =
@@ -2000,6 +2026,7 @@ cargo doc --workspace --no-deps --manifest-path octo-transport/Cargo.toml
 | 2.0.2   | 2026-08-17 | Draft (follow-on 0862-c8) | §Seed hardening (additive on v2.0.0). `StoolapSpendLedger::seed()` acquires `drain_lock` around the balance-read + UPDATE-or-INSERT window (mirrors `try_deduct` lock acquisition). Adds `NegativeCost` precondition (rejects `budget.value < 0` with `SpendLedgerError::NegativeCost { cost: budget }`) + explicit `assert_eq!(budget.scale, 0, ...)` precondition (mirrors `try_deduct`). 2 new TV in `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs`: TV-0862-15 (concurrent seed serializes; no PRIMARY KEY violation surfaces) + TV-0862-16 (negative budget yields NegativeCost + no row persisted). Existing 10 TV byte-stable. Closes mission 0862-c8.
 | 2.0.3   | 2026-08-17 | Draft (follow-on 0862-c9) | §SpendLedger Substrate — canonical `MicroOctoW` alias (additive on v2.0.2). Workspace-wide type-system coherence: `pub type MicroOctoW = Dqa` added to `determin/src/lib.rs` (Layer A frozen substrate). Three local `pub type MicroOctoW = ...` aliases REMOVED from `crates/octo-cap-macaroon/src/caveat/mod.rs` (was `u128`) + `crates/octo-cap-macaroon/src/caveat/payment.rs` (was `u128`) + `crates/quota-router-storage/src/stoolap_spend_ledger.rs` (was `octo_determin::Dqa`); all three sites now re-export via `pub use octo_determin::MicroOctoW`. `crates/octo-cap-macaroon/Cargo.toml` gains `octo-determin` git dep (Layer B → Layer A allowed). New TV-0862-17 (cross-crate `MicroOctoW` round-trip at `scale=0` byte-exact via `caveat::PaymentCaveat::new` decode path) + TV-0862-18 (caveat payload bytes unchanged when caller uses `u128` literal vs `Dqa` literal at scale=0). Existing 13 TV byte-stable. Cross-ref: RFC-0105 §substrate type coherence + RFC-0965 §3 caveat payload codec. Type invariant: `MicroOctoW.scale == 0` everywhere at the substrate boundary (integer micro-OCTO_W counts); mirrors `StoolapSpendLedger::seed` + `try_deduct` preconditions. Closes audit verdict 2026-08-17 Risk #1 (CRITICAL parallel-model). Closes mission 0862-c9.
 | 2.0.4   | 2026-08-18 | Draft (follow-on 0862-c4) | §Scale precondition (additive on v2.0.3). `try_deduct` AND `seed` reject any `Dqa` carrying `scale != 0` with the new `SpendLedgerError::InvalidScale { expected: u8, actual: u8 }` variant. The `dqa_to_i64` helper signature changes from `fn(Dqa) -> i64` to `fn(Dqa) -> Result<i64, SpendLedgerError>` (returning `InvalidScale` on non-zero scale). Replaces the previous `assert_eq!(v.scale, 0, ...)` precondition in `dqa_to_i64` (which would panic an upstream caller passing a non-zero-scale `Dqa` — S6c Round 1 security review finding #8). The check now runs in BOTH debug and release (no `debug_assert!`); testable under `cargo test` (dev profile). 2 new TV in `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs`: TV-0862-12 (seed scale=1 budget yields `InvalidScale { expected: 0, actual: 1 }` + no row persisted) + TV-0862-13 (try_deduct scale=1 cost yields `InvalidScale` + balance unchanged). Existing 15 TV byte-stable. Closes mission 0862-c4.
+| 2.0.5   | 2026-08-18 | Draft (follow-on 0862-c5) | §Domain-separator hygiene (additive on v2.0.4). Audit of `blake3::hash` + `hasher.update(b"...")` callsites per S6c Round 1 security review finding #6 surfaced one production prefix gap (`b"reservation/v1"` in `crates/quota-router-sm-engine/src/lib.rs:216` for `Reservation::mint` derivation) + three test-only placeholders (`b"vak/v1"`, `b"cap/v1"`, `b"vault/v1"` in `quota-router-core/tests/eleven_step.rs` + `goldens.rs`). Production rename: `b"cipherocto/reservation/v1/"` (clean — `reservation_id` is an in-memory handle with no SQL migration, no wire form, no cross-network lookup keyed on raw bytes). Test fixtures: rename to `cipherocto/<name>/v1/` + doc comment "test-only derivation, no canonical form" per mission AC-3. New TV-0862-19 in `crates/quota-router-core/src/settle.rs` byte-exact pins the new `reservation_id` BLAKE3 output for canonical inputs (`05f058e42899872e697281ef6aacfdc67eecc8e84ad5e4312609e3bb04ba723e`). Regenerated `tests/fixtures/exercise/eleven_step_goldens.json` step2/3/6 hex values bumped (step1/10 unchanged). All test greps for `cipherocto/...` prefixes pass. Closes mission 0862-c5.
 
 ## Review Process
 

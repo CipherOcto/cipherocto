@@ -200,6 +200,23 @@ impl Reservation {
     /// `reservation_id` is derived from the canonical inputs so two nodes
     /// constructing the same reservation independently produce the same id
     /// (RFC-0126 deterministic encoding).
+    ///
+    /// **Domain separator (mission 0862-c5 + S6c Round 1 review
+    /// finding #6):** uses the canonical `"cipherocto/reservation/v1/"`
+    /// prefix per RFC-0105 DqaEncoding-prefix cross-reference pattern.
+    /// Replaces the prior short `b"reservation/v1"` prefix (which
+    /// occupied an unnamespaced second hash space adjacent to the
+    /// canonical `b"cipherocto/vault/v1/"` derivation in `octo-vault`).
+    /// The new prefix is `cipherocto/`-namespaced to prevent future
+    /// collisions with derivations that adopt the canonical vault
+    /// schema. The change is a clean rename — `reservation_id` is an
+    /// in-memory content-addressed handle consumed only by
+    /// `quota-router-core::settle::build_reservation_id` (no SQL
+    /// migration, no wire form, no cross-network lookup keyed on the
+    /// raw bytes), so the new derivation produces byte-different
+    /// `reservation_id` values without breaking any persisted state.
+    /// Pin via `crates/quota-router-sm-engine/tests/tv_0862_c5_reservation_id.rs`
+    /// (TV-0862-19 — new derivation for canonical inputs).
     #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub fn mint(
@@ -213,7 +230,7 @@ impl Reservation {
         created_at_unix: u64,
     ) -> Self {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(b"reservation/v1");
+        hasher.update(b"cipherocto/reservation/v1/");
         hasher.update(&vault_id);
         hasher.update(&capability_id);
         hasher.update(&ask_id);

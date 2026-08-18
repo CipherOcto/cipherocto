@@ -8,14 +8,37 @@
 //!
 //! ## Atomicity (RFC-0862)
 //!
-//! `try_deduct` runs inside a stoolap transaction:
-//! 1. `SELECT balance FROM spend_ledger WHERE (holder_did, macaroon_id) = (...) FOR UPDATE`
-//! 2. Check `balance >= cost` (else abort with `InsufficientBalance`)
-//! 3. `UPDATE spend_ledger SET balance = balance - cost, updated_at_unix_ms = ?`
-//! 4. COMMIT
+//! `try_deduct` runs inside a stoolap transaction wrapped by the
+//! per-instance `drain_lock` (S6c Round 2 documented here; pre-c3
+//! doc claimed `SELECT ... FOR UPDATE` row-locking — the stoolap
+//! fork does not implement `FOR UPDATE` and the SQL never carried
+//! the clause; corrected in mission 0862-c10):
 //!
-//! Concurrent drains on the same `(holder_did, macaroon_id)` key
-//! serialize via the FOR UPDATE lock — no double-spend possible.
+//! 1. Acquire `drain_lock` (per-instance `Mutex<()>`, mission 0862-c8)
+//! 2. Begin stoolap `Transaction` (`db.begin() -> Transaction`)
+//!    — mission 0862-c3 AC-2 layer.
+//! 3. `Transaction::query("SELECT balance FROM spend_ledger WHERE
+//!    holder_did = ? AND macaroon_id = ? LIMIT 1")`.
+//!    No `FOR UPDATE` (stoolap storage layer returns
+//!    `NotSupported` for `FOR UPDATE` locking; the substrate relies
+//!    on drain_lock + tx wrapper + cross-process flock, not row locks).
+//! 4. Decode balance via `dqa_to_i64` (returns `Result<i64,
+//!    SpendLedgerError>` post-mission 0862-c4).
+//! 5. Check `balance >= cost` (else abort with `InsufficientBalance`;
+//!    tx drops on early-return, no commit).
+//! 6. `Transaction::execute("UPDATE spend_ledger SET balance = ?,
+//!    updated_at_unix_ms = ? WHERE holder_did = ? AND macaroon_id =
+//!    ?")` with `self.clock.unix_millis() as i64` for the timestamp
+//!    (mission 0862-c2).
+//! 7. `Transaction::commit()`. Lock released on Drop.
+//!
+//! Serialization in this process comes from `drain_lock` (a single
+//! global `Mutex` per `StoolapSpendLedger` instance, NOT per-key —
+//! see TV-0862-15). Cross-process serialization comes from the
+//! `fs2` advisory flock on `<dsn-dir>/.spend_ledger.lock` (see
+//! ## Cross-process atomicity paragraph below). No double-spend
+//! under concurrent drains on the same `(holder_did, macaroon_id)`
+//! key.
 //!
 //! ## Clock injection (mission 0862-c2)
 //!

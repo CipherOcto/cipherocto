@@ -7,11 +7,18 @@
 -- the (holder_did, macaroon_id) -> budget entry on mint; subsequent
 -- WALLET_PAID_QUERY_VERIFY calls deduct query_cost atomically.
 --
--- Concurrency: row-level locking via stoolap's per-statement
--- transaction. The drain path runs `SELECT ... FOR UPDATE` then
--- `UPDATE balance = balance - ?` then COMMIT. Concurrent drains on
--- the same (holder_did, macaroon_id) serialize so a double-spend
--- is impossible (atomic per-key guarantee).
+-- Concurrency: per-instance `drain_lock` (Mutex<()>) wrapping a
+-- stoolap `Transaction` (`db.begin()` -> `Transaction::query` ->
+-- `Transaction::execute` -> `Transaction::commit()`). The drain path
+-- does NOT use `SELECT ... FOR UPDATE` — the stoolap fork's storage
+-- layer returns `NotSupported` for `FOR UPDATE` locking (see
+-- `storage/traits/table.rs`); pre-c3 doc claimed `FOR UPDATE` row
+-- locking which never shipped. Actual serialization: drain_lock
+-- (intra-process) + cross-process `fs2` advisory flock on
+-- `<dsn-dir>/.spend_ledger.lock` (mission 0862-c3, 0862-c8).
+-- Concurrent drains on the same (holder_did, macaroon_id) serialize
+-- so a double-spend is impossible (atomic per-key guarantee).
+-- Corrected in mission 0862-c10 (S6c Round 3 doc-drift consolidation).
 --
 -- Cipherocto-side migration per [[stoolap-general-purpose-db]]:
 -- schema lives in cipherocto crate, NOT in the stoolap fork.

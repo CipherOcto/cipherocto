@@ -1113,7 +1113,10 @@ mod tests {
         let bytes = borsh::to_vec(&enc).expect("encode");
         assert_eq!(bytes.len(), 16);
         // value BE check: 01 23 45 67 89 AB CD EF
-        assert_eq!(&bytes[..8], &[0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF]);
+        assert_eq!(
+            &bytes[..8],
+            &[0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF]
+        );
         assert_eq!(bytes[8], 5);
         assert_eq!(&bytes[9..16], &[0u8; 7]);
         let back: DqaEncoding = borsh::from_slice(&bytes).expect("decode");

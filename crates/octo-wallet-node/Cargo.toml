@@ -26,6 +26,13 @@ quota-router-core = { path = "../quota-router-core" }
 # mission 0871e-paid-query-caveat). Owns the paid-query caveat
 # verification bridge consumed by the WALLET_PAID_QUERY_VERIFY handler.
 octo-paid-query = { path = "../octo-paid-query" }
+# Layer A amount-bearing substrate (mission 0862-c9 RETIRED). The
+# `WALLET_PAID_QUERY_VERIFY` handler constructs `Dqa` values directly
+# (no `MicroOctoW` alias — that alias was killed project-wide per
+# user mandate 2026-08-17). Git dep required because `octo-determin`
+# is workspace-excluded. Cost arithmetic uses `dqa_cmp` / `dqa_sub`
+# helpers exposed by the substrate.
+octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
 # Layer 4 extension: macaroon wire form substrate (RFC-0957 §3.7,
 # mission 0957-phase2a). `serialize_wire` / `deserialize_wire` /
 # `compute_cap_root_hash_from_wire` live here; the wallet-node handler

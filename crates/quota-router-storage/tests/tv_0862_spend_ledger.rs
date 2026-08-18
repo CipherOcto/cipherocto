@@ -32,9 +32,7 @@
 //! API surface mirrors `crates/quota-router-storage/src/stoolap_spend_ledger.rs`.
 
 use octo_determin::{Dqa, DqaEncoding};
-use quota_router_storage::stoolap_spend_ledger::{
-    MicroOctoW, SpendLedgerError, StoolapSpendLedger,
-};
+use quota_router_storage::stoolap_spend_ledger::{SpendLedgerError, StoolapSpendLedger};
 
 // =============================================================================
 // TV-0862-01 — row creation via seed
@@ -42,7 +40,7 @@ use quota_router_storage::stoolap_spend_ledger::{
 
 /// TV-0862-01: `StoolapSpendLedger::seed` inserts a new row when no
 /// existing `(holder_did, macaroon_id)` row exists. After seed,
-/// `balance` returns the same `MicroOctoW`.
+/// `balance` returns the same `Dqa`.
 #[test]
 fn tv_0862_01_seed_creates_row() {
     let ledger = StoolapSpendLedger::open_in_memory().expect("open_in_memory");
@@ -70,7 +68,7 @@ fn tv_0862_01_seed_creates_row() {
 
 /// TV-0862-02: `balance` returns `None` for an unknown
 /// `(holder_did, macaroon_id)` key. After seed, the same lookup
-/// returns `Some(MicroOctoW)`. This is the read-path contract that
+/// returns `Some(Dqa)`. This is the read-path contract that
 /// the wallet-node relies on for pre-deduct visibility.
 #[test]
 fn tv_0862_02_balance_read_unknown_returns_none() {
@@ -192,7 +190,7 @@ fn tv_0862_04b_try_deduct_unknown_holder_errors() {
 // TV-0862-05 — Dqa encoding round-trip + i64 schema column round-trip
 // =============================================================================
 
-/// TV-0862-05: `MicroOctoW` is `Dqa` at `scale = 0` (integer
+/// TV-0862-05: `Dqa` is `Dqa` at `scale = 0` (integer
 /// micro-OCTO_W counts). `DqaEncoding` is the canonical 16-byte BE
 /// consensus wire form per RFC-0105 v1.9 §DqaEncoding struct.
 /// Round-trip must be exact AND the substrate's `i64` column
@@ -207,10 +205,7 @@ fn tv_0862_04b_try_deduct_unknown_holder_errors() {
 #[test]
 fn tv_0862_05_dqa_encoding_round_trip_and_i64_schema_column() {
     let value = dqa(1_234_567_890);
-    assert_eq!(
-        value.scale, 0,
-        "TV-0862-05: MicroOctoW MUST be stored at scale=0"
-    );
+    assert_eq!(value.scale, 0, "TV-0862-05: Dqa MUST be stored at scale=0");
 
     // (a) DqaEncoding round-trip (canonical 16-byte BE wire form).
     let encoding = DqaEncoding::from_dqa(&value);
@@ -583,13 +578,13 @@ const TV_0862_MACAROON_ID_16: [u8; 16] = [
 
 /// TV-0862-07 balance fixtures (full + half deduction).
 /// 1_000_000_000_000 = 1 OCTO_W times 1e6 micro-OCTO_W times 1e3 = 1e12.
-const TV_0862_BALANCE_07_FULL: MicroOctoW = TV_0862_BALANCE_VALUE;
-const TV_0862_BALANCE_07_HALF: MicroOctoW = TV_0862_BALANCE_HALF_VALUE;
-const TV_0862_BALANCE_VALUE: MicroOctoW = Dqa {
+const TV_0862_BALANCE_07_FULL: Dqa = TV_0862_BALANCE_VALUE;
+const TV_0862_BALANCE_07_HALF: Dqa = TV_0862_BALANCE_HALF_VALUE;
+const TV_0862_BALANCE_VALUE: Dqa = Dqa {
     value: 1_000_000_000_000,
     scale: 0,
 };
-const TV_0862_BALANCE_HALF_VALUE: MicroOctoW = Dqa {
+const TV_0862_BALANCE_HALF_VALUE: Dqa = Dqa {
     value: 500_000_000_000,
     scale: 0,
 };
@@ -607,7 +602,7 @@ const TV_0862_DQA_ENCODING_07_BYTES: [u8; 16] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // reserved
 ];
 
-/// Helper: build a `MicroOctoW` (Dqa at scale=0) from an integer.
-fn dqa(n: i64) -> MicroOctoW {
+/// Helper: build a `Dqa` (at scale=0) from an integer.
+fn dqa(n: i64) -> Dqa {
     Dqa::new(n, 0).expect("Dqa::new scale=0")
 }

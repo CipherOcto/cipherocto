@@ -40,9 +40,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use octo_cap_macaroon::MacaroonId;
+use octo_determin::{dqa_cmp, dqa_sub};
 use octo_ident::WireDid;
 
-use crate::{MicroOCTO_W, PaidQueryError};
+use crate::{Dqa, PaidQueryError};
 
 /// Spend-ledger backend trait.
 ///
@@ -60,7 +61,7 @@ pub trait SpendLedger: Send + Sync + std::fmt::Debug {
         &self,
         holder_did: &WireDid,
         macaroon_id: &MacaroonId,
-        budget: MicroOCTO_W,
+        budget: Dqa,
     ) -> Result<(), SpendLedgerError>;
 
     /// Atomically deduct `cost` from the `(holder_did, macaroon_id)`
@@ -75,8 +76,8 @@ pub trait SpendLedger: Send + Sync + std::fmt::Debug {
         &self,
         holder_did: &WireDid,
         macaroon_id: &MacaroonId,
-        cost: MicroOCTO_W,
-    ) -> Result<MicroOCTO_W, SpendLedgerError>;
+        cost: Dqa,
+    ) -> Result<Dqa, SpendLedgerError>;
 
     /// Read-only balance lookup. Returns `None` if no record exists.
     ///
@@ -87,7 +88,7 @@ pub trait SpendLedger: Send + Sync + std::fmt::Debug {
         &self,
         holder_did: &WireDid,
         macaroon_id: &MacaroonId,
-    ) -> Result<Option<MicroOCTO_W>, SpendLedgerError>;
+    ) -> Result<Option<Dqa>, SpendLedgerError>;
 }
 
 /// Spend-ledger errors (trait-impl-shared; `PaidQueryError` re-exports
@@ -100,12 +101,12 @@ pub enum SpendLedgerError {
     UnknownHolder,
     /// Balance < proposed cost. Carries both numbers for caller
     /// diagnostics.
-    #[error("insufficient balance: balance={balance}, cost={cost}")]
+    #[error("insufficient balance: balance={balance:?}, cost={cost:?}")]
     InsufficientBalance {
-        /// Current balance (MicroOCTO_W).
-        balance: MicroOCTO_W,
-        /// Proposed cost (MicroOCTO_W).
-        cost: MicroOCTO_W,
+        /// Current balance (Dqa).
+        balance: Dqa,
+        /// Proposed cost (Dqa).
+        cost: Dqa,
     },
     /// Underlying storage failure (e.g. Stoolap transaction error).
     #[error("spend-ledger storage error: {0}")]
@@ -136,7 +137,7 @@ pub struct InMemorySpendLedger {
 
 #[derive(Debug, Default)]
 struct LedgerState {
-    per_holder: HashMap<(WireDid, MacaroonId), MicroOCTO_W>,
+    per_holder: HashMap<(WireDid, MacaroonId), Dqa>,
 }
 
 impl InMemorySpendLedger {
@@ -154,7 +155,7 @@ impl SpendLedger for InMemorySpendLedger {
         &self,
         holder_did: &WireDid,
         macaroon_id: &MacaroonId,
-        budget: MicroOCTO_W,
+        budget: Dqa,
     ) -> Result<(), SpendLedgerError> {
         let mut state = self
             .inner
@@ -170,8 +171,8 @@ impl SpendLedger for InMemorySpendLedger {
         &self,
         holder_did: &WireDid,
         macaroon_id: &MacaroonId,
-        cost: MicroOCTO_W,
-    ) -> Result<MicroOCTO_W, SpendLedgerError> {
+        cost: Dqa,
+    ) -> Result<Dqa, SpendLedgerError> {
         let mut state = self
             .inner
             .lock()
@@ -181,13 +182,13 @@ impl SpendLedger for InMemorySpendLedger {
             .per_holder
             .get_mut(&key)
             .ok_or(SpendLedgerError::UnknownHolder)?;
-        if *balance < cost {
+        if dqa_cmp(*balance, cost) < 0 {
             return Err(SpendLedgerError::InsufficientBalance {
                 balance: *balance,
                 cost,
             });
         }
-        *balance -= cost;
+        *balance = dqa_sub(*balance, cost).expect("guarded by dqa_cmp >= 0");
         Ok(*balance)
     }
 
@@ -195,7 +196,7 @@ impl SpendLedger for InMemorySpendLedger {
         &self,
         holder_did: &WireDid,
         macaroon_id: &MacaroonId,
-    ) -> Result<Option<MicroOCTO_W>, SpendLedgerError> {
+    ) -> Result<Option<Dqa>, SpendLedgerError> {
         let state = self
             .inner
             .lock()
@@ -223,14 +224,19 @@ mod tests {
         WireDid::new("did:octo:zTestHolderLedger".to_string())
     }
 
+    /// Test helper: build a `Dqa` at `scale = 0` from an integer literal.
+    fn dqa(n: i64) -> Dqa {
+        Dqa::new(n, 0).expect("scale=0 always valid")
+    }
+
     #[test]
     fn seed_and_deduct_round_trip() {
         let l = InMemorySpendLedger::new();
         let h = sample_holder();
         let m = sample_macaroon_id();
-        l.seed(&h, &m, 1_000).unwrap();
-        assert_eq!(l.try_deduct(&h, &m, 250).unwrap(), 750);
-        assert_eq!(l.try_deduct(&h, &m, 250).unwrap(), 500);
+        l.seed(&h, &m, dqa(1_000)).unwrap();
+        assert_eq!(l.try_deduct(&h, &m, dqa(250)).unwrap(), dqa(750));
+        assert_eq!(l.try_deduct(&h, &m, dqa(250)).unwrap(), dqa(500));
     }
 
     #[test]
@@ -238,7 +244,7 @@ mod tests {
         let l = InMemorySpendLedger::new();
         let h = sample_holder();
         let m = sample_macaroon_id();
-        let err = l.try_deduct(&h, &m, 1).unwrap_err();
+        let err = l.try_deduct(&h, &m, dqa(1)).unwrap_err();
         assert_eq!(err, SpendLedgerError::UnknownHolder);
     }
 
@@ -247,13 +253,13 @@ mod tests {
         let l = InMemorySpendLedger::new();
         let h = sample_holder();
         let m = sample_macaroon_id();
-        l.seed(&h, &m, 100).unwrap();
-        let err = l.try_deduct(&h, &m, 600).unwrap_err();
+        l.seed(&h, &m, dqa(100)).unwrap();
+        let err = l.try_deduct(&h, &m, dqa(600)).unwrap_err();
         assert_eq!(
             err,
             SpendLedgerError::InsufficientBalance {
-                balance: 100,
-                cost: 600
+                balance: dqa(100),
+                cost: dqa(600)
             }
         );
     }

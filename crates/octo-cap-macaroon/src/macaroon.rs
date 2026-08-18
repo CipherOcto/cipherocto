@@ -24,6 +24,8 @@
 //! explicitly specifies `blake3::keyed_hash`). R7 replaces the body with
 //! a thin wrapper over `blake3::keyed_hash`.
 
+#[cfg(test)]
+use octo_determin::Dqa;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
@@ -1139,11 +1141,15 @@ mod tests {
         let catalog = empty_catalog();
         let child = m
             .clone()
-            .attenuate(Caveat::AmountMax(500), &catalog)
+            .attenuate(Caveat::AmountMax(Dqa::new(500, 0).unwrap()), &catalog)
             .unwrap();
         // expected_parent says child must have AmountMax <= 100.
         let err = child
-            .verify_full(&secret, &catalog, Some(&[Caveat::AmountMax(100)]))
+            .verify_full(
+                &secret,
+                &catalog,
+                Some(&[Caveat::AmountMax(Dqa::new(100, 0).unwrap())]),
+            )
             .unwrap_err();
         assert!(
             matches!(err, MacaroonError::AttenuationViolation),
@@ -1151,7 +1157,11 @@ mod tests {
         );
 
         // Correct parent (AmountMax(1000)) accepts the child.
-        let ok = child.verify_full(&secret, &catalog, Some(&[Caveat::AmountMax(1000)]));
+        let ok = child.verify_full(
+            &secret,
+            &catalog,
+            Some(&[Caveat::AmountMax(Dqa::new(1000, 0).unwrap())]),
+        );
         assert!(ok.is_ok(), "stronger parent must accept the child");
 
         // No parent (None) skips the subsumption check.
@@ -1188,7 +1198,9 @@ mod tests {
             let catalog = empty_catalog();
             let mut m = m0;
             for &a in &mono {
-                m = m.attenuate(Caveat::AmountMax(a), &catalog).unwrap();
+                m = m
+                    .attenuate(Caveat::AmountMax(Dqa::new(a as i64, 0).unwrap()), &catalog)
+                    .unwrap();
             }
             // verify_signature MUST succeed for the original root secret.
             m.verify_signature(&secret).expect("verify must succeed for monotonic chain");
@@ -1252,7 +1264,12 @@ mod tests {
             let catalog = empty_catalog();
             let mut m = m0;
             for &a in &mono {
-                m = m.attenuate(Caveat::AmountMax(u128::from(a)), &catalog).unwrap();
+                m = m
+                    .attenuate(
+                        Caveat::AmountMax(Dqa::new(a as i64, 0).unwrap()),
+                        &catalog,
+                    )
+                    .unwrap();
             }
             m.verify_signature(&secret)
                 .expect("post-R7 macaroon chain MUST re-derive across random narrowing sequences");

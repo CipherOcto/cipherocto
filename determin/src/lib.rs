@@ -73,15 +73,6 @@ pub use dqa::{
     DqaEncoding, DqaError, CANONICAL_ZERO,
 };
 
-/// Canonical `MicroOctoW` for the workspace. Used by RFC-0862
-/// `StoolapSpendLedger`, RFC-0965 caveat budget fields, and any
-/// other amount-bearing cross-crate payload. Always
-/// `scale = 0` (integer micro-OCTO_W counts) at the substrate
-/// boundary.
-///
-/// See RFC-0862 v2.0.3 §SpendLedger Substrate + RFC-0965 §3 caveat
-/// payload cross-ref.
-pub type MicroOctoW = Dqa;
 pub use dvec::{
     dot_product, norm, normalize, squared_distance, vec_add, vec_mul, vec_scale, vec_sub, DVec,
     DvecError, DvecScalar,
@@ -912,15 +903,14 @@ mod tests {
         assert_eq!(dfp2.exponent, 1);
     }
 
-    /// `MicroOctoW` is the canonical `Dqa` alias for amount-bearing
-    /// cross-crate payloads (RFC-0862 v2.0.3 + RFC-0965 §3). Assert
-    /// type identity so consumer crates that re-export cannot diverge
-    /// from the Layer A substrate.
+    /// `Dqa` is the canonical amount-bearing cross-crate payload
+    /// type (RFC-0862 v2.0.3 + RFC-0965 §3). Asserts the canonical
+    /// zero canonicalizes to `scale = 0` so consumers can rely on
+    /// the `scale = 0` invariant for amount-bearing fields.
     #[test]
-    fn micro_octow_is_dqa_alias() {
-        fn assert_micro_octow_is_dqa(_: MicroOctoW, _: Dqa) {}
-        let m: MicroOctoW = CANONICAL_ZERO;
-        let d: Dqa = m;
-        assert_micro_octow_is_dqa(d, CANONICAL_ZERO);
+    fn dqa_canonical_zero_is_scale_zero() {
+        let z: Dqa = CANONICAL_ZERO;
+        assert_eq!(z.scale, 0);
+        assert_eq!(z.value, 0);
     }
 }

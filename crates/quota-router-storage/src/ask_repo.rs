@@ -355,7 +355,7 @@ impl StoolapAskRepository {
                 (model.to_string(), now_unix as i64, CHEAPEST_CANDIDATE_LIMIT),
             )
             .map_err(|e| RepoError::Db(format!("cheapest query: {e}")))?;
-        let mut best: Option<(crate::ask::MicroOCTO_W, Ask)> = None;
+        let mut best: Option<(crate::ask::Dqa, Ask)> = None;
         for row_result in rows {
             let row = row_result.map_err(|e| RepoError::Db(format!("row: {e}")))?;
             let ask = row_to_ask(row)?;

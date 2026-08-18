@@ -48,11 +48,10 @@ pub use ask::{
     cache_key_hash, compute_cost, compute_settlement_hash, settlement_cost,
     sign_settlement_receipt, verify_settlement_receipt, Ask, AskError, AskId, AskSigned,
     AskSignedError, AskUnsignedPayload, AskerDid, AxesConsumed, AxisConsumption, AxisId, AxisRate,
-    AxisRegistryError, CacheClassification, CachePolicy, ConsumedReceiptIndex, Ed25519PublicKey,
-    Ed25519Signature, MicroOCTO_W, MicroOCTO_WNewtype, ModelRateTable, ModelRef, ModelRefError,
-    NodeType, NodeTypeParseError, OCTO_WAmount, PricingAxis, PricingAxisRegistry,
-    SettlementEnvelope, SettlementError, SettlementEvent, SettlementReceipt, TokenCount,
-    SETTLEMENT_HASH_DOMAIN,
+    AxisRegistryError, CacheClassification, CachePolicy, ConsumedReceiptIndex, Dqa, DqaNewtype,
+    Ed25519PublicKey, Ed25519Signature, ModelRateTable, ModelRef, ModelRefError, NodeType,
+    NodeTypeParseError, OCTO_WAmount, PricingAxis, PricingAxisRegistry, SettlementEnvelope,
+    SettlementError, SettlementEvent, SettlementReceipt, TokenCount, SETTLEMENT_HASH_DOMAIN,
 };
 pub use ask_repo::{
     AskRead, AskRepository, AskRow, AskWrite, CombinedAskRepository, DynAskRepository, RepoError,

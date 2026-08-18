@@ -12,7 +12,9 @@ use octo_protocol::ProtocolError;
 
 pub mod attenuate;
 pub mod mint;
+pub mod mint_wire;
 pub mod paid_query;
+pub mod paid_query_wire;
 pub mod resolve;
 pub mod sign;
 

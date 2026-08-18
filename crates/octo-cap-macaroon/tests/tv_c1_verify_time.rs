@@ -40,6 +40,7 @@ use octo_cap_macaroon::{
     compute_capability_id, Caveat, Macaroon, MacaroonError, VaultLookup, VaultRowSnapshot,
     VaultVerifyError,
 };
+use octo_determin::Dqa;
 
 // ===========================================================================
 // Test fixtures: byte-pinned constants
@@ -262,7 +263,7 @@ fn tv_c1_04_wrapped_only_chain_without_parent_vault_rejects() {
     let parent_root = Macaroon::mint(&TV_C1_ROOT_SECRET).expect("parent mint");
     let parent = parent_root
         .attenuate(
-            Caveat::AmountMax(1_000_000), // some cap, no Vault binding
+            Caveat::AmountMax(Dqa::new(1_000_000, 0).unwrap()), // some cap, no Vault binding
             &catalog,
         )
         .expect("parent attenuate (AmountMax, no Vault)");

@@ -26,7 +26,7 @@ pub mod wire;
 pub mod zk_mint;
 
 pub use bearer_capsule_re_export::BearerCapsule;
-pub use caveat::{Caveat, CaveatName, MicroOctoW, UnixTimeSecs};
+pub use caveat::{Caveat, CaveatName, UnixTimeSecs};
 pub use discharge::{
     verify_discharges, ChannelProvider, ChannelProviderRegistry, ChannelProviderResolver,
     DischargeChannel, DischargeError, DischargeRequest, DischargeVerification, EscrowBalance,

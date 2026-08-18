@@ -160,7 +160,7 @@ impl MarketplaceIndex {
     /// Tie-break: lowest `ask_id` wins (deterministic across calls / nodes).
     /// Evicts expired asks lazily before selection.
     ///
-    /// `budget_ceiling` is the maximum cost in `MicroOCTO_W` the caller is
+    /// `budget_ceiling` is the maximum cost in `Dqa` the caller is
     /// willing to pay for a synthetic `1k-token` consumption per axis (matches
     /// `AskerRepository::cheapest` proxy).
     /// `axes` supplies the standard pricing axes for cost computation.
@@ -171,7 +171,7 @@ impl MarketplaceIndex {
         &mut self,
         model: &str,
         jurisdiction: &[String],
-        budget_ceiling: crate::ask::MicroOCTO_W,
+        budget_ceiling: crate::ask::Dqa,
         axes: &[crate::ask::PricingAxis],
         now_unix: u64,
     ) -> Option<Ask> {
@@ -185,7 +185,7 @@ impl MarketplaceIndex {
         // so jurisdiction_matches() returns true for all entries; the
         // filter is preserved for the future case where the marketplace
         // holds the payload form.
-        let mut best: Option<(crate::ask::MicroOCTO_W, Ask)> = None;
+        let mut best: Option<(crate::ask::Dqa, Ask)> = None;
         for id in candidates {
             let ask = self.indexed.get(id)?;
             if !jurisdiction_matches(&[], jurisdiction) {

@@ -178,7 +178,8 @@ pub(crate) fn capability_to_surface(cap: &CapabilityToken) -> PolicySurface {
     for caveat in &cap.macaroon.caveats {
         match caveat {
             Caveat::AmountMax(amount) => {
-                max_total_spend = Some(max_total_spend.map_or(*amount, |m| m.min(*amount)));
+                let amount_u128 = amount.value as u128;
+                max_total_spend = Some(max_total_spend.map_or(amount_u128, |m| m.min(amount_u128)));
             }
             Caveat::Model(m) => {
                 allowed_models
@@ -191,7 +192,7 @@ pub(crate) fn capability_to_surface(cap: &CapabilityToken) -> PolicySurface {
                     .extend(p.iter().cloned());
             }
             Caveat::PerAxisMax(p) => {
-                per_axis_caps.push((p.axis.clone(), p.max_per_1k));
+                per_axis_caps.push((p.axis.clone(), p.max_per_1k.value as u128));
             }
             _ => {}
         }

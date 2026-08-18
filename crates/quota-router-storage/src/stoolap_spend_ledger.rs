@@ -35,6 +35,7 @@
 use std::sync::Arc;
 
 use crate::migrations;
+use octo_determin::Dqa;
 
 /// Errors returned by `StoolapSpendLedger` operations. Mirrors the
 /// `SpendLedgerError` taxonomy in `octo-paid-query` so the wallet-node
@@ -48,9 +49,9 @@ pub enum SpendLedgerError {
     /// Balance < proposed cost. Carries both numbers for caller diagnostics.
     #[error("insufficient balance: balance={balance:?}, cost={cost:?}")]
     InsufficientBalance {
-        /// Current balance (MicroOCTO_W).
+        /// Current balance (Dqa).
         balance: octo_determin::Dqa,
-        /// Proposed cost (MicroOCTO_W).
+        /// Proposed cost (Dqa).
         cost: octo_determin::Dqa,
     },
     /// Cost is negative. `try_deduct` rejects negative cost as a
@@ -68,10 +69,14 @@ pub enum SpendLedgerError {
     Storage(String),
 }
 
-/// Micro-OCTO_W cost unit. S4 codemod: now `Dqa` (deterministic
-/// floating-point) for cross-node consensus on overflow semantics.
-/// Always stored at `scale = 0` (integer micro-OCTO_W counts).
-pub type MicroOctoW = octo_determin::Dqa;
+/// Micro-OCTO_W cost unit. Canonical alias =
+/// `octo_determin::Dqa` (= `Dqa` at `scale = 0` per RFC-0862
+/// v2.0.3 + RFC-0965 §3 + mission 0862-c9). The previous local
+/// `pub type Dqa = octo_determin::Dqa` definition was removed
+/// in 0862-c9 AC-2 — all call sites in this module now import
+/// `octo_determin::Dqa` directly. The crate-level re-export
+/// in `quota_router_storage::Dqa` keeps external consumers
+/// working byte-identically.
 
 /// Stoolap-backed spend ledger (production).
 #[derive(Clone)]
@@ -128,7 +133,7 @@ impl StoolapSpendLedger {
     /// `seed` is upsert semantics: existing row is overwritten with
     /// the new budget (per RFC-0957 §Algorithms caveat re-mint).
     /// # Preconditions
-    /// - `budget.scale == 0` (MicroOctoW at scale=0; same invariant as
+    /// - `budget.scale == 0` (Dqa at scale=0; same invariant as
     ///   `try_deduct`). Symmetric mirror of `try_deduct` precondition
     ///   guarding `dqa_to_i64` (per mission 0862-c8).
     /// - `budget.value >= 0`. Negative budget is rejected with
@@ -149,13 +154,10 @@ impl StoolapSpendLedger {
         &self,
         holder_did: &str,
         macaroon_id: &[u8],
-        budget: MicroOctoW,
+        budget: Dqa,
     ) -> Result<(), SpendLedgerError> {
         // Preconditions (mirrors try_deduct, per mission 0862-c8).
-        assert_eq!(
-            budget.scale, 0,
-            "MicroOctoW at scale=0; scale invariant violated"
-        );
+        assert_eq!(budget.scale, 0, "Dqa at scale=0; scale invariant violated");
         if budget.value < 0 {
             return Err(SpendLedgerError::NegativeCost { cost: budget });
         }
@@ -229,16 +231,13 @@ impl StoolapSpendLedger {
         &self,
         holder_did: &str,
         macaroon_id: &[u8],
-        cost: MicroOctoW,
-    ) -> Result<MicroOctoW, SpendLedgerError> {
+        cost: Dqa,
+    ) -> Result<Dqa, SpendLedgerError> {
         // Precondition: reject negative cost. `dqa_subtract` on
         // negative cost returns a "larger" value (i64 underflow
         // would inflate balance otherwise) — S4 Round 2 surfaced
         // the same class of bug elsewhere; pin it closed here.
-        assert_eq!(
-            cost.scale, 0,
-            "MicroOctoW at scale=0; scale invariant violated"
-        );
+        assert_eq!(cost.scale, 0, "Dqa at scale=0; scale invariant violated");
         if cost.value < 0 {
             return Err(SpendLedgerError::NegativeCost { cost });
         }
@@ -300,7 +299,7 @@ impl StoolapSpendLedger {
         &self,
         holder_did: &str,
         macaroon_id: &[u8],
-    ) -> Result<Option<MicroOctoW>, SpendLedgerError> {
+    ) -> Result<Option<Dqa>, SpendLedgerError> {
         let rows = self.db.query(
             "SELECT balance FROM spend_ledger \
              WHERE holder_did = ? AND macaroon_id = ? LIMIT 1",
@@ -320,7 +319,7 @@ impl StoolapSpendLedger {
     }
 }
 
-/// Convert a `MicroOctoW` (Dqa, integer-valued) into a stoolap-compatible i64.
+/// Convert a `Dqa` (Dqa, integer-valued) into a stoolap-compatible i64.
 ///
 /// Stoolap's `INTEGER` column type maps to `i64`. `Dqa -> i64` is an
 /// **identity conversion** today (`Dqa::value` is `i64`, so the cast is
@@ -334,10 +333,10 @@ impl StoolapSpendLedger {
 /// mitigation in `quota-router-core`). See `0862-c4-assert-to-error`
 /// follow-on for the panic→error surface conversion this fn would
 /// also need.
-fn dqa_to_i64(v: MicroOctoW) -> i64 {
+fn dqa_to_i64(v: Dqa) -> i64 {
     assert_eq!(
         v.scale, 0,
-        "MicroOctoW stored at scale=0; schema invariant violated"
+        "Dqa stored at scale=0; schema invariant violated"
     );
     v.value
 }
@@ -359,8 +358,8 @@ mod tests {
         id
     }
 
-    fn dqa(n: i64) -> MicroOctoW {
-        octo_determin::Dqa::new(n, 0).expect("non-overflow")
+    fn dqa(n: i64) -> Dqa {
+        Dqa::new(n, 0).expect("non-overflow")
     }
 
     #[test]

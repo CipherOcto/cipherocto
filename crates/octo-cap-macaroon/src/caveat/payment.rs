@@ -19,14 +19,18 @@
 //! carries the discriminator so future variants
 //! (`"paid-query/subscription/v1"`, etc.) can be distinguished on
 //! decode without changing the schema.
+//!
+//! **Type note (2026-08-17):** the `MicroOctoW` type alias was RETIRED
+//! project-wide. Amount-bearing fields use `octo_determin::Dqa`
+//! directly with `scale = 0` enforced at the substrate boundary.
+//! Arithmetic uses `dqa_cmp`/`dqa_sub` (the `Dqa` type does not
+//! implement `Ord`/`Sub` directly — see `determin/src/dqa.rs`).
 
-use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 
-/// OCTO-W micro-denomination (`u128`). One OCTO_W = 1_000_000
-/// MicroOCTO_W. Re-exported from `octo_cap_macaroon::caveat` for the
-/// payment-extension surface.
-pub type MicroOctoW = u128;
+use octo_determin::{dqa_cmp, dqa_sub, Dqa};
+
+use crate::dqa_serde;
 
 /// RFC-0965 caveat discriminator string for the paid-query variant.
 ///
@@ -43,18 +47,20 @@ pub const PAID_QUERY_CAVEAT_NAME: &str = "paid-query/v1";
 /// (proceed / partial / reject).
 ///
 /// Wire form: `serde_json` (canonical, per `Caveat::Payment` variant
-/// tagging in `caveat/mod.rs`). Also derives `BorshSerialize` /
-/// `BorshDeserialize` so the type embeds cleanly into borsh-encoded
-/// request envelopes (`PaidQueryRequest`, `MintRequest`).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, BorshSerialize, BorshDeserialize)]
+/// tagging in `caveat/mod.rs`). Amount-bearing fields use `Dqa` with
+/// `#[serde(with = "dqa_serde::field")]` to encode the 16-byte BE
+/// `DqaEncoding` wire form (per RFC-0105 §Canonical Encoding).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaymentCaveat {
     /// RFC-0965 caveat discriminator string. Always
     /// `"paid-query/v1"` for this variant; future variants carry
     /// distinct strings.
     pub caveat_name: String,
-    /// Prepaid spend budget in MicroOCTO_W. Holder can spend up to
-    /// this amount across all queries matching `model`.
-    pub budget: MicroOctoW,
+    /// Prepaid spend budget. Holder can spend up to this amount
+    /// across all queries matching `model`. `Dqa` at `scale = 0`
+    /// (integer micro-OCTO_W).
+    #[serde(with = "dqa_serde::field")]
+    pub budget: Dqa,
     /// Model identifier this caveat applies to (`"gpt-4"`,
     /// `"claude-3-opus"`, etc.). Empty string `""` means "any
     /// model".
@@ -67,7 +73,7 @@ pub struct PaymentCaveat {
 impl PaymentCaveat {
     /// Construct a new payment caveat with the canonical name.
     #[must_use]
-    pub fn new(budget: MicroOctoW, model: impl Into<String>, expires_at_unix_ms: u64) -> Self {
+    pub fn new(budget: Dqa, model: impl Into<String>, expires_at_unix_ms: u64) -> Self {
         Self {
             caveat_name: PAID_QUERY_CAVEAT_NAME.to_string(),
             budget,
@@ -105,10 +111,10 @@ impl PaymentCaveat {
     /// `u64::MAX` new is allowed — both "never expires").
     pub fn attenuate(
         &self,
-        new_budget: MicroOctoW,
+        new_budget: Dqa,
         new_expires_at_unix_ms: u64,
     ) -> Result<Self, AttenuationError> {
-        if new_budget > self.budget {
+        if dqa_cmp(new_budget, self.budget) > 0 {
             return Err(AttenuationError::BudgetWidened {
                 current: self.budget,
                 proposed: new_budget,
@@ -145,7 +151,7 @@ impl PaymentCaveat {
     #[must_use]
     pub fn verify(
         &self,
-        query_cost: MicroOctoW,
+        query_cost: Dqa,
         query_model: &str,
         now_unix_ms: u64,
     ) -> PaidQueryDecision {
@@ -159,18 +165,21 @@ impl PaymentCaveat {
                 reason: PaidQueryRejectionReason::ModelMismatch,
             };
         }
-        if self.budget == 0 {
+        if self.budget.value == 0 {
             return PaidQueryDecision::Reject {
                 reason: PaidQueryRejectionReason::BudgetExhausted,
             };
         }
-        if query_cost > self.budget {
+        if dqa_cmp(query_cost, self.budget) > 0 {
             return PaidQueryDecision::Partial {
                 max_allowed_cost: self.budget,
             };
         }
+        // dqa_sub returns `Result` — for `scale = 0` operands with
+        // `cost <= budget` it is always `Ok` (no underflow). Unwrap
+        // is safe under the `dqa_cmp > 0` guard above.
         PaidQueryDecision::Proceed {
-            remaining_budget: self.budget - query_cost,
+            remaining_budget: dqa_sub(self.budget, query_cost).expect("guarded by dqa_cmp"),
         }
     }
 }
@@ -180,13 +189,15 @@ impl PaymentCaveat {
 pub enum PaidQueryDecision {
     /// Query is authorized; remaining budget after deduction.
     Proceed {
-        /// Remaining budget after this query (MicroOCTO_W).
-        remaining_budget: MicroOctoW,
+        /// Remaining budget after this query (Dqa at scale=0).
+        #[serde(with = "dqa_serde::field")]
+        remaining_budget: Dqa,
     },
     /// Query exceeds caveat budget; caller may downgrade model.
     Partial {
         /// Highest cost the verifier will accept (`caveat.budget`).
-        max_allowed_cost: MicroOctoW,
+        #[serde(with = "dqa_serde::field")]
+        max_allowed_cost: Dqa,
     },
     /// Query is rejected with a discriminator reason.
     Reject {
@@ -222,12 +233,12 @@ pub enum PaidQueryRejectionReason {
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum AttenuationError {
     /// Proposed `budget > self.budget`. Attenuation must only narrow.
-    #[error("budget widened: current={current}, proposed={proposed}")]
+    #[error("budget widened: current={current:?}, proposed={proposed:?}")]
     BudgetWidened {
-        /// Current budget (MicroOCTO_W).
-        current: MicroOctoW,
-        /// Proposed (rejected) budget (MicroOCTO_W).
-        proposed: MicroOctoW,
+        /// Current budget (Dqa at scale=0).
+        current: Dqa,
+        /// Proposed (rejected) budget (Dqa at scale=0).
+        proposed: Dqa,
     },
     /// Proposed `expires_at_unix_ms > self.expires_at_unix_ms`. The
     /// `u64::MAX` ↔ `u64::MAX` edge case (both "never expires") is
@@ -245,8 +256,14 @@ pub enum AttenuationError {
 mod tests {
     use super::*;
 
-    fn sample(budget: MicroOctoW, model: &str, expires: u64) -> PaymentCaveat {
-        PaymentCaveat::new(budget, model, expires)
+    /// Build a `Dqa` at `scale = 0` from an integer literal. Test
+    /// helper (production code uses `Dqa::new(n, 0).expect(...)`).
+    fn dqa(n: i64) -> Dqa {
+        Dqa::new(n, 0).expect("scale=0 always valid")
+    }
+
+    fn sample(budget: i64, model: &str, expires: u64) -> PaymentCaveat {
+        PaymentCaveat::new(dqa(budget), model, expires)
     }
 
     #[test]
@@ -282,8 +299,9 @@ mod tests {
     #[test]
     fn attenuate_narrows_budget_and_expiry() {
         let c = sample(1_000, "gpt-4", 2_000_000);
-        let narrower = c.attenuate(500, 1_500_000).expect("narrow");
-        assert_eq!(narrower.budget, 500);
+        let narrower = c.attenuate(dqa(500), 1_500_000).expect("narrow");
+        assert_eq!(narrower.budget.value, 500);
+        assert_eq!(narrower.budget.scale, 0);
         assert_eq!(narrower.expires_at_unix_ms, 1_500_000);
         assert_eq!(narrower.model, "gpt-4");
     }
@@ -291,32 +309,32 @@ mod tests {
     #[test]
     fn attenuate_rejects_budget_widening() {
         let c = sample(100, "gpt-4", u64::MAX);
-        let err = c.attenuate(200, u64::MAX).unwrap_err();
+        let err = c.attenuate(dqa(200), u64::MAX).unwrap_err();
         assert!(matches!(err, AttenuationError::BudgetWidened { .. }));
     }
 
     #[test]
     fn attenuate_rejects_expiry_widening() {
         let c = sample(100, "gpt-4", 1_000_000);
-        let err = c.attenuate(100, 2_000_000).unwrap_err();
+        let err = c.attenuate(dqa(100), 2_000_000).unwrap_err();
         assert!(matches!(err, AttenuationError::ExpiryWidened { .. }));
     }
 
     #[test]
     fn attenuate_allows_never_expires_to_never_expires() {
         let c = sample(100, "gpt-4", u64::MAX);
-        let same = c.attenuate(100, u64::MAX).expect("same");
+        let same = c.attenuate(dqa(100), u64::MAX).expect("same");
         assert_eq!(same.expires_at_unix_ms, u64::MAX);
     }
 
     #[test]
     fn verify_proceeds_when_budget_covers_cost() {
         let c = sample(1_000, "gpt-4", u64::MAX);
-        let d = c.verify(250, "gpt-4", 0);
+        let d = c.verify(dqa(250), "gpt-4", 0);
         assert_eq!(
             d,
             PaidQueryDecision::Proceed {
-                remaining_budget: 750
+                remaining_budget: dqa(750)
             }
         );
     }
@@ -324,11 +342,11 @@ mod tests {
     #[test]
     fn verify_partial_when_cost_exceeds_budget() {
         let c = sample(100, "gpt-4", u64::MAX);
-        let d = c.verify(500, "gpt-4", 0);
+        let d = c.verify(dqa(500), "gpt-4", 0);
         assert_eq!(
             d,
             PaidQueryDecision::Partial {
-                max_allowed_cost: 100
+                max_allowed_cost: dqa(100)
             }
         );
     }
@@ -336,7 +354,7 @@ mod tests {
     #[test]
     fn verify_rejects_expired() {
         let c = sample(1_000, "gpt-4", 100);
-        let d = c.verify(10, "gpt-4", 200);
+        let d = c.verify(dqa(10), "gpt-4", 200);
         assert_eq!(
             d,
             PaidQueryDecision::Reject {
@@ -348,7 +366,7 @@ mod tests {
     #[test]
     fn verify_rejects_model_mismatch() {
         let c = sample(1_000, "gpt-4", u64::MAX);
-        let d = c.verify(10, "claude-3-opus", 0);
+        let d = c.verify(dqa(10), "claude-3-opus", 0);
         assert_eq!(
             d,
             PaidQueryDecision::Reject {
@@ -360,7 +378,7 @@ mod tests {
     #[test]
     fn verify_rejects_budget_exhausted() {
         let c = sample(0, "gpt-4", u64::MAX);
-        let d = c.verify(1, "gpt-4", 0);
+        let d = c.verify(dqa(1), "gpt-4", 0);
         assert_eq!(
             d,
             PaidQueryDecision::Reject {

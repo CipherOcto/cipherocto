@@ -7,7 +7,10 @@
 use std::collections::HashSet;
 
 use cipherocto_encoding::{encode as encode_constraint, Constraint};
+use octo_determin::{dqa_cmp, Dqa};
 use serde::{Deserialize, Serialize};
+
+use crate::dqa_serde;
 
 pub mod payment;
 pub use payment::{
@@ -15,8 +18,11 @@ pub use payment::{
     PAID_QUERY_CAVEAT_NAME,
 };
 
-/// OCTO-W micro-denomination (u128). 1 OCTO-W = 1_000_000 micro-OCTO-W.
-pub type MicroOctoW = u128;
+// (2026-08-17) `MicroOctoW` type alias was RETIRED project-wide. All
+// amount-bearing caveat payload fields use `octo_determin::Dqa`
+// directly at `scale = 0`. The `Dqa` type does not derive serde, so
+// each `Dqa` field uses `#[serde(with = "dqa_serde::field")]` to
+// encode the 16-byte BE `DqaEncoding` wire form (determin/src/dqa.rs).
 
 /// Provider identifier (opaque string).
 pub type ProviderId = String;
@@ -62,7 +68,8 @@ pub enum CachePolicy {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PerAxisMax {
     pub axis: String,
-    pub max_per_1k: MicroOctoW,
+    #[serde(with = "dqa_serde::field")]
+    pub max_per_1k: Dqa,
 }
 
 /// Rate-limit bounds.
@@ -80,8 +87,12 @@ pub struct RateLimit {
 #[serde(tag = "type", content = "value")]
 pub enum Caveat {
     /// Total budget cap (implied sum over all axes at settlement time).
-    #[serde(rename = "amount_max")]
-    AmountMax(MicroOctoW),
+    #[serde(
+        rename = "amount_max",
+        serialize_with = "dqa_serde::field::serialize",
+        deserialize_with = "dqa_serde::field::deserialize"
+    )]
+    AmountMax(Dqa),
 
     /// Per-axis cap. Holder may settle up to `max_per_1k` per 1000 units.
     #[serde(rename = "per_axis_max")]
@@ -395,10 +406,10 @@ fn parent_caveat_implies(parent: &[Caveat], child: &Caveat) -> bool {
     match child {
         Caveat::AmountMax(c) => parent
             .iter()
-            .any(|p| matches!(p, Caveat::AmountMax(p) if *c <= *p)),
+            .any(|p| matches!(p, Caveat::AmountMax(p) if dqa_cmp(*c, *p) <= 0)),
         Caveat::PerAxisMax(c) => parent.iter().any(|p| match p {
             Caveat::PerAxisMax(p_inner) => {
-                p_inner.axis == c.axis && c.max_per_1k <= p_inner.max_per_1k
+                p_inner.axis == c.axis && dqa_cmp(c.max_per_1k, p_inner.max_per_1k) <= 0
             }
             _ => false,
         }),
@@ -527,7 +538,7 @@ fn parent_caveat_implies(parent: &[Caveat], child: &Caveat) -> bool {
         // widen to a wildcard model (RFC-0957 §3.5 monotonicity).
         Caveat::Payment(c) => parent.iter().any(|p| match p {
             Caveat::Payment(p_inner) => {
-                c.budget <= p_inner.budget
+                dqa_cmp(c.budget, p_inner.budget) <= 0
                     && c.expires_at_unix_ms <= p_inner.expires_at_unix_ms
                     && (p_inner.model.is_empty() || p_inner.model == c.model)
             }
@@ -624,7 +635,7 @@ impl Caveat {
         // build the JSON value manually. HashSet + Vec<ProviderId> are sorted
         // for determinism (HMAC input stability across orderings).
         let value = match self {
-            Caveat::AmountMax(v) => serde_json::json!({"type": "amount_max", "value": v}),
+            Caveat::AmountMax(v) => serde_json::json!({"type": "amount_max", "value": v.value}),
             Caveat::PerAxisMax(p) => serde_json::json!({"type": "per_axis_max", "value": p}),
             Caveat::Model(m) => serde_json::json!({"type": "model", "value": m}),
             Caveat::Provider(p) => {
@@ -726,7 +737,7 @@ impl Caveat {
                     "type": "payment",
                     "value": {
                         "caveat_name": p.caveat_name,
-                        "budget": p.budget,
+                        "budget": p.budget.value,
                         "model": p.model,
                         "expires_at_unix_ms": p.expires_at_unix_ms,
                     }
@@ -765,7 +776,7 @@ mod tests {
 
     #[test]
     fn canonical_ser_stable_across_runs() {
-        let c = Caveat::AmountMax(1_000_000);
+        let c = Caveat::AmountMax(Dqa::new(1_000_000, 0).unwrap());
         assert_eq!(c.canonical_ser(), c.canonical_ser());
     }
 
@@ -794,13 +805,13 @@ mod tests {
             // Primitive payloads.
             // Note: avoid `u128::MAX` — `json!` macro rejects values outside
             // the i64 range. Use modest values that fit in JSON numbers.
-            Caveat::AmountMax(1_000_000u128),
+            Caveat::AmountMax(Dqa::new(1_000_000, 0).unwrap()),
             Caveat::Before(1_700_000_000),
             Caveat::MaxPerTx(50_000u128),
             // Struct payloads.
             Caveat::PerAxisMax(PerAxisMax {
                 axis: "input_tokens".to_owned(),
-                max_per_1k: 500u128,
+                max_per_1k: Dqa::new(500, 0).unwrap(),
             }),
             Caveat::RateLimit(RateLimit {
                 rpm: 60,
@@ -847,7 +858,7 @@ mod tests {
         // disambiguates). Two structurally different caveats serialize to
         // different output (the type tag in the JSON object differs).
         let before_bytes = Caveat::Before(1_700_000_000).canonical_ser();
-        let amountmax_bytes = Caveat::AmountMax(0u128).canonical_ser();
+        let amountmax_bytes = Caveat::AmountMax(Dqa::new(0, 0).unwrap()).canonical_ser();
         assert_ne!(
             before_bytes, amountmax_bytes,
             "distinct Caveat variants must yield distinct canonical_ser output"
@@ -881,10 +892,16 @@ mod tests {
     #[test]
     fn subsumes_amount_max_narrows() {
         // parent 1000 OCTO-W; child 500 OCTO-W (narrowing) ⇒ child ⊆ parent
-        let parent = vec![Caveat::AmountMax(1_000_000_000)];
-        assert!(set_subsumes(&parent, &[Caveat::AmountMax(500_000_000)]));
+        let parent = vec![Caveat::AmountMax(Dqa::new(1_000_000_000, 0).unwrap())];
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::AmountMax(Dqa::new(500_000_000, 0).unwrap())]
+        ));
         // child 1500 OCTO-W (widening) ⇒ reject
-        assert!(!set_subsumes(&parent, &[Caveat::AmountMax(1_500_000_000)]));
+        assert!(!set_subsumes(
+            &parent,
+            &[Caveat::AmountMax(Dqa::new(1_500_000_000, 0).unwrap())]
+        ));
     }
 
     #[test]
@@ -952,11 +969,11 @@ mod tests {
     fn subsumes_per_axis_same_axis_narrows() {
         let parent = vec![Caveat::PerAxisMax(PerAxisMax {
             axis: "input_tokens".to_owned(),
-            max_per_1k: 1_000,
+            max_per_1k: Dqa::new(1_000, 0).unwrap(),
         })];
         let child = vec![Caveat::PerAxisMax(PerAxisMax {
             axis: "input_tokens".to_owned(),
-            max_per_1k: 500,
+            max_per_1k: Dqa::new(500, 0).unwrap(),
         })];
         assert!(set_subsumes(&parent, &child));
     }
@@ -965,11 +982,11 @@ mod tests {
     fn subsumes_per_axis_different_axis_rejects() {
         let parent = vec![Caveat::PerAxisMax(PerAxisMax {
             axis: "input_tokens".to_owned(),
-            max_per_1k: 1_000,
+            max_per_1k: Dqa::new(1_000, 0).unwrap(),
         })];
         let child = vec![Caveat::PerAxisMax(PerAxisMax {
             axis: "output_tokens".to_owned(),
-            max_per_1k: 500,
+            max_per_1k: Dqa::new(500, 0).unwrap(),
         })];
         assert!(!set_subsumes(&parent, &child));
     }
@@ -1489,10 +1506,10 @@ mod tests {
         };
 
         let samples: Vec<Caveat> = vec![
-            Caveat::AmountMax(1_000_000u128),
+            Caveat::AmountMax(Dqa::new(1_000_000, 0).unwrap()),
             Caveat::PerAxisMax(PerAxisMax {
                 axis: "input_tokens".to_owned(),
-                max_per_1k: 500u128,
+                max_per_1k: Dqa::new(500, 0).unwrap(),
             }),
             Caveat::Model("gpt-4".to_owned()),
             Caveat::Provider(vec!["provider-a".to_owned(), "provider-b".to_owned()]),

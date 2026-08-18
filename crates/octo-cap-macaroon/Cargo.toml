@@ -27,6 +27,15 @@ async-trait = "0.1"
 thiserror = "1"
 # RFC-0964 constraint encoding (used by `caveat::FactoryVet::pre_conditions`).
 cipherocto-encoding = { path = "../cipherocto-encoding" }
+# `octo-determin` (mission 0862-c9 RETIRED — local `MicroOctoW`
+# alias killed project-wide per user mandate 2026-08-17): provides
+# the canonical amount-bearing type `Dqa` (RFC-0862 v2.0.3 + RFC-0105
+# §3) used directly across all amount-bearing caveat payload fields
+# (`PaymentCaveat.budget`, `RateLimit.max_per_1k`, `Caveat::AmountMax`,
+# `query_cost`, etc.). NO `MicroOctoW` re-exports exist in this
+# crate — `Dqa` is the canonical type. Path dep used during local
+# dev (the `determin` crate at repo root is workspace-excluded).
+octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
 # Layer B `HolderRegistry` accessor on `CapabilityCatalog` was REMOVED
 # in Phase 2c-2 (mission 0957-ext-macaroon). The accessor had zero call
 # sites (verified 2026-08-09 across workspace) so dropping it removes

@@ -63,16 +63,11 @@ tempfile = "3"
 path = "../octo-ident"
 features = ["borsh"]
 
-# S4 codemod (RFC-0105 DFP): replace u128 amounts with `Dqa` (deterministic
-# floating-point). `Dqa` does not derive `Serialize`/`Deserialize` (per
-# `determin/src/dqa.rs:104`), so we use `DqaEncoding`'s canonical 16-byte BE
-# wire format via the manual impls in `crate::dqa_serde`. Arithmetic uses
-# `Dqa`'s inherent methods (`add`/`multiply`/`compare`) returning `Result`.
-# Git dep (not crates.io / path) to match the workspace-wide
-# `octo-determin` version pulled in transitively by octo-vault /
-# octo-storage-core — mixing path + git creates serde-traits-from-different-
-# serde-crate errors (Dqa is local to octo-determin; its Serialize impl
-# is from a specific serde version).
 [dependencies.octo-determin]
+# Mission 0862-c9 RETIRED: `MicroOctoW` alias killed project-wide —
+# amount-bearing fields use `octo_determin::Dqa` directly (RFC-0862
+# v2.0.3 + RFC-0105 §3). Git dep (the `determin` crate at repo
+# root is workspace-excluded, so path dep requires removing it
+# from root Cargo.toml `exclude` first — deferred).
 git = "https://github.com/CipherOcto/cipherocto"
 branch = "next"

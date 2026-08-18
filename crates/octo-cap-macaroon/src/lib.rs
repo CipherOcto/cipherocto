@@ -57,6 +57,7 @@
 
 pub mod caveat;
 pub mod discharge;
+pub mod dqa_serde;
 pub mod macaroon;
 pub mod signer;
 pub mod token;
@@ -76,9 +77,9 @@ pub use bundle_v2::{
 pub use catalog::{CompositeCapabilityCatalog, CompositeGossip};
 pub use caveat::{
     set_subsumes, set_subsumes_with_registry, ActionTemplate, AskId, AttenuationError, Blake3,
-    CachePolicy, Caveat, CaveatName, FactoryVet, MicroOctoW, ModelRef, OverlayIdentity,
-    PaidQueryDecision, PaidQueryRejectionReason, PaymentCaveat, PerAxisMax, PermissionKind,
-    ProviderId, RateLimit, RawCaveat, UnixTimeSecs, ISO3166, PAID_QUERY_CAVEAT_NAME,
+    CachePolicy, Caveat, CaveatName, FactoryVet, ModelRef, OverlayIdentity, PaidQueryDecision,
+    PaidQueryRejectionReason, PaymentCaveat, PerAxisMax, PermissionKind, ProviderId, RateLimit,
+    RawCaveat, UnixTimeSecs, ISO3166, PAID_QUERY_CAVEAT_NAME,
 };
 pub use discharge::{
     verify_discharges, ChannelProvider, ChannelProviderRegistry, ChannelProviderResolver,

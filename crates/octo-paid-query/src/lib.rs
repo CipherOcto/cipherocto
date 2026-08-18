@@ -64,8 +64,15 @@
 
 use std::sync::Arc;
 
-use borsh::{BorshDeserialize, BorshSerialize};
+// `borsh` crate import REMOVED (mission 0862-c9 RETIRED). Borsh
+// derives on `PaidQueryDecision`/`PaidQueryRequest`/`PaidQueryResponse`/
+// `PaymentReceipt` were dropped because `Dqa` does not impl
+// `BorshSerialize`/`BorshDeserialize` in the upstream git-dep
+// `octo-determin` crate. The crate-level dependency is still
+// retained for any future re-introduction when the substrate
+// gains Borsh impls.
 use octo_cap_macaroon::MacaroonId;
+use octo_determin::{dqa_cmp, dqa_sub, Dqa};
 use octo_ident::WireDid;
 use octo_protocol::PayloadKindId;
 use thiserror::Error;
@@ -92,16 +99,11 @@ pub use octo_cap_macaroon::PAID_QUERY_CAVEAT_NAME;
 /// dependency on `octo-protocol` minimal in calling code.
 pub use octo_protocol::payload_kind::PAID_QUERY_VERIFY;
 
-/// Cost unit (MicroOCTO_W). One OCTO_W = 1_000_000 MicroOCTO_W.
-///
-/// Phase 5 MVP uses `u128` for cost arithmetic so that overflow in
-/// budget accumulation is impossible even at the worst-case scale
-/// (RFC-0853 §Adversary A7 — arithmetic overflow in accounting
-/// primitives). The follow-on atomic-drain mission may swap this
-/// for a more typed `MicroOctoW` newtype once `crates/octo-wallet`'s
-/// economics substrate stabilises.
-#[allow(non_camel_case_types)]
-pub type MicroOCTO_W = u128;
+/// (2026-08-17) `MicroOctoW` type alias was RETIRED project-wide. Cost
+/// arithmetic uses `octo_determin::Dqa` directly at `scale = 0`
+/// (integer-valued) per RFC-0862 v2.0.3 + RFC-0965 §3. Arithmetic
+/// uses `dqa_cmp`/`dqa_sub` (the `Dqa` type does not implement
+/// `Ord`/`Sub` directly — see `determin/src/dqa.rs`).
 
 /// Paid-query caveat (RFC-0965 reserved discriminator 0x1A).
 ///
@@ -118,13 +120,23 @@ pub type MicroOCTO_W = u128;
 /// the decision via its own `RateLimitBudget` mutation. Follow-on
 /// missions (atomic drain, RFC-0862) will return the mutation inside
 /// the decision so the proxy can apply it transactionally.
-#[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+//
+// Borsh derives intentionally OMITTED (mission 0862-c9 RETIRED):
+// `Dqa` does not impl `BorshSerialize`/`BorshDeserialize` in the
+// upstream git-dep `octo-determin` crate. Adopting Borsh for `Dqa`
+// is an additive Layer A change that requires pushing the determin
+// crate to `next` first (deferred — not authorized today).
+// Consumers needing borsh wire form for these structs must wait
+// for the follow-on mission that ships `BorshSerialize`/`BorshDeserialize`
+// impls for `Dqa` in the substrate. The non-borsh wire shape (JSON
+// + canonical serde) is preserved by the upstream call sites.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PaidQueryDecision {
     /// Query is authorized; full cost can be deducted; remaining
     /// budget = `caveat.budget - query_cost`.
     Proceed {
-        /// Remaining budget after this query (MicroOCTO_W).
-        remaining_budget: MicroOCTO_W,
+        /// Remaining budget after this query (Dqa).
+        remaining_budget: Dqa,
     },
     /// Query exceeds caveat budget but could proceed at a partial
     /// cost. `max_allowed_cost = caveat.budget` is the highest cost
@@ -132,7 +144,7 @@ pub enum PaidQueryDecision {
     /// downgrade the model or reject.
     Partial {
         /// Highest cost the verifier will accept (caveat.budget).
-        max_allowed_cost: MicroOCTO_W,
+        max_allowed_cost: Dqa,
     },
     /// Query is rejected. `reason` carries a discriminator byte so
     /// the caller can log + surface to the holder without parsing
@@ -152,7 +164,13 @@ impl PaidQueryDecision {
 }
 
 /// Reason a paid-query was rejected.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize)]
+//
+// Borsh derives intentionally OMITTED (mission 0862-c9 RETIRED): the
+// `borsh` crate import is currently unused in this module after
+// dropping borsh on `Dqa`-bearing structs. The enum has no `Dqa`
+// fields and could trivially re-add Borsh, but the import was
+// dropped for consistency.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PaidQueryRejectionReason {
     /// `caveat.budget == 0` (no prepaid capacity left).
     BudgetExhausted,
@@ -218,7 +236,7 @@ impl RateLimitBudget {
         &self,
         holder_did: &WireDid,
         macaroon_id: &MacaroonId,
-        budget: MicroOCTO_W,
+        budget: Dqa,
     ) -> Result<(), PaidQueryError> {
         self.ledger
             .seed(holder_did, macaroon_id, budget)
@@ -239,8 +257,8 @@ impl RateLimitBudget {
         &self,
         holder_did: &WireDid,
         macaroon_id: &MacaroonId,
-        cost: MicroOCTO_W,
-    ) -> Result<MicroOCTO_W, PaidQueryError> {
+        cost: Dqa,
+    ) -> Result<Dqa, PaidQueryError> {
         self.ledger
             .try_deduct(holder_did, macaroon_id, cost)
             .map_err(Into::into)
@@ -255,7 +273,7 @@ impl RateLimitBudget {
         &self,
         holder_did: &WireDid,
         macaroon_id: &MacaroonId,
-    ) -> Result<Option<MicroOCTO_W>, PaidQueryError> {
+    ) -> Result<Option<Dqa>, PaidQueryError> {
         self.ledger
             .balance(holder_did, macaroon_id)
             .map_err(Into::into)
@@ -276,7 +294,7 @@ impl RateLimitBudget {
 ///   verified (16 bytes, RFC-0957 §Wire Format).
 /// - `caveat` — the `PaidQueryCaveat` being asserted (RFC-0965
 ///   reserved discriminator 0x1A).
-/// - `query_cost` — proposed query cost in MicroOCTO_W.
+/// - `query_cost` — proposed query cost in Dqa.
 /// - `query_model` — proposed model identifier; must match
 ///   `caveat.model` (unless caveat model is `""` wildcard).
 /// - `now_unix_ms` — current time in unix milliseconds; used for
@@ -293,7 +311,7 @@ impl RateLimitBudget {
 pub fn verify_paid_query(
     macaroon_id: &MacaroonId,
     caveat: &PaidQueryCaveat,
-    query_cost: MicroOCTO_W,
+    query_cost: Dqa,
     query_model: &str,
     now_unix_ms: u64,
 ) -> PaidQueryDecision {
@@ -321,19 +339,21 @@ pub fn verify_paid_query(
     }
 
     // Budget gate — query must fit within caveat budget.
-    if caveat.budget == 0 {
+    if caveat.budget.value == 0 {
         return PaidQueryDecision::Reject {
             reason: PaidQueryRejectionReason::BudgetExhausted,
         };
     }
-    if query_cost > caveat.budget {
+    if dqa_cmp(query_cost, caveat.budget) > 0 {
         return PaidQueryDecision::Partial {
             max_allowed_cost: caveat.budget,
         };
     }
 
+    // dqa_sub returns `Result` — for `scale = 0` operands with
+    // `cost <= budget` (guarded by dqa_cmp above) it is always `Ok`.
     PaidQueryDecision::Proceed {
-        remaining_budget: caveat.budget - query_cost,
+        remaining_budget: dqa_sub(caveat.budget, query_cost).expect("guarded by dqa_cmp"),
     }
 }
 
@@ -348,12 +368,12 @@ pub enum PaidQueryError {
     UnknownHolder,
     /// Balance < proposed cost. Carries both numbers for caller
     /// diagnostics.
-    #[error("insufficient balance: balance={balance}, cost={cost}")]
+    #[error("insufficient balance: balance={balance:?}, cost={cost:?}")]
     InsufficientBalance {
-        /// Current balance (MicroOCTO_W).
-        balance: MicroOCTO_W,
-        /// Proposed cost (MicroOCTO_W).
-        cost: MicroOCTO_W,
+        /// Current balance (Dqa).
+        balance: Dqa,
+        /// Proposed cost (Dqa).
+        cost: Dqa,
     },
 }
 
@@ -379,14 +399,19 @@ pub use octo_wallet::CapabilityKey;
 ///
 /// Borsh schema is fixed-position (struct-of-fields); order MUST be
 /// `macaroon_id, caveat, query_cost, query_model, now_unix_ms`.
-#[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+//
+// Borsh derives intentionally OMITTED (mission 0862-c9 RETIRED):
+// `Dqa` does not impl `BorshSerialize`/`BorshDeserialize` in the
+// upstream git-dep `octo-determin` crate. See NOTE on
+// `PaidQueryDecision` for context.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PaidQueryRequest {
     /// Macaroon identifier of the capability being verified.
     pub macaroon_id: MacaroonId,
     /// Caveat composition being asserted.
     pub caveat: PaidQueryCaveat,
-    /// Proposed query cost (MicroOCTO_W).
-    pub query_cost: MicroOCTO_W,
+    /// Proposed query cost (Dqa).
+    pub query_cost: Dqa,
     /// Proposed model identifier.
     pub query_model: String,
     /// Current time (unix milliseconds) for expiry check.
@@ -394,28 +419,23 @@ pub struct PaidQueryRequest {
 }
 
 impl PaidQueryRequest {
-    /// Decode from borsh wire form.
-    ///
-    /// # Errors
-    /// Returns `borsh::io::Error` on malformed payload.
-    pub fn from_borsh(bytes: &[u8]) -> Result<Self, borsh::io::Error> {
-        borsh::from_slice(bytes)
-    }
-
-    /// Encode to borsh wire form.
-    ///
-    /// # Errors
-    /// Returns `borsh::io::Error` on serialization failure.
-    pub fn to_borsh(&self) -> Result<Vec<u8>, borsh::io::Error> {
-        borsh::to_vec(self)
-    }
+    // Borsh methods intentionally OMITTED (mission 0862-c9 RETIRED,
+    // follows from the dropped `BorshSerialize`/`BorshDeserialize`
+    // derives — see NOTE on `PaidQueryDecision`). Callers needing the
+    // borsh wire form for these structs await the follow-on mission
+    // that ships `Borsh` impls for `Dqa` upstream.
 }
 
 /// Wire form for the `PaidQueryDecision` response envelope. The
 /// `PaidQueryDecision` enum is the canonical type, but the response
 /// also carries the `payload_kind` for the originating request so
 /// the receiver can route it back to the correct handler context.
-#[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+//
+// Borsh derives intentionally OMITTED (mission 0862-c9 RETIRED):
+// `Dqa` does not impl `BorshSerialize`/`BorshDeserialize` in the
+// upstream git-dep `octo-determin` crate. See NOTE on
+// `PaidQueryDecision` for context.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PaidQueryResponse {
     /// Decision returned by `verify_paid_query`.
     pub decision: PaidQueryDecision,
@@ -435,21 +455,11 @@ pub struct PaidQueryResponse {
 }
 
 impl PaidQueryResponse {
-    /// Decode from borsh wire form.
-    ///
-    /// # Errors
-    /// Returns `borsh::io::Error` on malformed payload.
-    pub fn from_borsh(bytes: &[u8]) -> Result<Self, borsh::io::Error> {
-        borsh::from_slice(bytes)
-    }
-
-    /// Encode to borsh wire form.
-    ///
-    /// # Errors
-    /// Returns `borsh::io::Error` on serialization failure.
-    pub fn to_borsh(&self) -> Result<Vec<u8>, borsh::io::Error> {
-        borsh::to_vec(self)
-    }
+    // Borsh methods intentionally OMITTED (mission 0862-c9 RETIRED,
+    // follows from the dropped `BorshSerialize`/`BorshDeserialize`
+    // derives — see NOTE on `PaidQueryDecision`). Callers needing the
+    // borsh wire form for these structs await the follow-on mission
+    // that ships `Borsh` impls for `Dqa` upstream.
 }
 
 /// Atomic-drain receipt (RFC-0862 atomic transaction substrate,
@@ -464,23 +474,33 @@ impl PaidQueryResponse {
 /// `drained_amount` is a `u128` to mirror the spend-ledger's
 /// arithmetic type (RFC-0871 §Adversary A7 — overflow impossible at
 /// worst-case scale).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+//
+// Borsh derives intentionally OMITTED (mission 0862-c9 RETIRED):
+// `Dqa` does not impl `BorshSerialize`/`BorshDeserialize` in the
+// upstream git-dep `octo-determin` crate. See NOTE on
+// `PaidQueryDecision` for context.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PaymentReceipt {
     /// Amount deducted from the spend ledger on this call. Zero on
     /// non-`Proceed` decisions.
-    pub drained_amount: MicroOCTO_W,
+    pub drained_amount: Dqa,
     /// Remaining balance AFTER the drain. Equals `pre_drain_budget`
     /// when no drain occurred (decision was `Partial` / `Reject`).
-    pub remaining_budget: MicroOCTO_W,
+    pub remaining_budget: Dqa,
 }
 
 impl PaymentReceipt {
     /// Construct a no-drain receipt (decision was `Partial` or
     /// `Reject`; ledger unchanged).
+    ///
+    /// `drained_amount` is the canonical zero (RFC-0862 v2.0.3 §3
+    /// — `CANONICAL_ZERO`). The field is set via the exposed
+    /// public-field initialization since `Dqa::new` is not a
+    /// `const fn` (returns `Result`).
     #[must_use]
-    pub const fn no_drain(remaining_budget: MicroOCTO_W) -> Self {
+    pub const fn no_drain(remaining_budget: Dqa) -> Self {
         Self {
-            drained_amount: 0,
+            drained_amount: Dqa { value: 0, scale: 0 },
             remaining_budget,
         }
     }
@@ -502,16 +522,22 @@ mod tests {
         WireDid::new("did:octo:zTestHolderPaidQuery".to_string())
     }
 
-    fn fresh_caveat(budget: MicroOCTO_W, model: &str, expires_at: u64) -> PaidQueryCaveat {
-        PaidQueryCaveat::new(budget, model, expires_at)
+    /// Test helper: build a `Dqa` at `scale = 0` from an integer literal.
+    fn dqa(n: i64) -> Dqa {
+        Dqa::new(n, 0).expect("scale=0 always valid")
+    }
+
+    fn fresh_caveat(budget: i64, model: &str, expires_at: u64) -> PaidQueryCaveat {
+        PaidQueryCaveat::new(dqa(budget), model, expires_at)
     }
 
     #[test]
     fn caveat_constructor_sets_canonical_name() {
-        let c = PaidQueryCaveat::new(1_000_000, "gpt-4", u64::MAX);
+        let c = PaidQueryCaveat::new(dqa(1_000_000), "gpt-4", u64::MAX);
         assert_eq!(c.caveat_name, PAID_QUERY_CAVEAT_NAME);
         assert_eq!(c.caveat_name, "paid-query/v1");
-        assert_eq!(c.budget, 1_000_000);
+        assert_eq!(c.budget.value, 1_000_000);
+        assert_eq!(c.budget.scale, 0);
         assert_eq!(c.model, "gpt-4");
         assert_eq!(c.expires_at_unix_ms, u64::MAX);
     }
@@ -544,12 +570,12 @@ mod tests {
     fn verify_proceeds_when_budget_covers_cost() {
         let mac = sample_macaroon_id();
         let c = fresh_caveat(1_000, "gpt-4", u64::MAX);
-        let d = verify_paid_query(&mac, &c, 250, "gpt-4", 0);
+        let d = verify_paid_query(&mac, &c, dqa(250), "gpt-4", 0);
         assert!(d.is_proceed());
         assert_eq!(
             d,
             PaidQueryDecision::Proceed {
-                remaining_budget: 750
+                remaining_budget: dqa(750)
             }
         );
     }
@@ -558,11 +584,11 @@ mod tests {
     fn verify_partial_when_cost_exceeds_budget() {
         let mac = sample_macaroon_id();
         let c = fresh_caveat(100, "gpt-4", u64::MAX);
-        let d = verify_paid_query(&mac, &c, 500, "gpt-4", 0);
+        let d = verify_paid_query(&mac, &c, dqa(500), "gpt-4", 0);
         assert_eq!(
             d,
             PaidQueryDecision::Partial {
-                max_allowed_cost: 100
+                max_allowed_cost: dqa(100)
             }
         );
     }
@@ -571,7 +597,7 @@ mod tests {
     fn verify_rejects_when_expired() {
         let mac = sample_macaroon_id();
         let c = fresh_caveat(1_000, "gpt-4", 100);
-        let d = verify_paid_query(&mac, &c, 10, "gpt-4", 200);
+        let d = verify_paid_query(&mac, &c, dqa(10), "gpt-4", 200);
         assert_eq!(
             d,
             PaidQueryDecision::Reject {
@@ -584,7 +610,7 @@ mod tests {
     fn verify_rejects_when_model_mismatch() {
         let mac = sample_macaroon_id();
         let c = fresh_caveat(1_000, "gpt-4", u64::MAX);
-        let d = verify_paid_query(&mac, &c, 10, "claude-3-opus", 0);
+        let d = verify_paid_query(&mac, &c, dqa(10), "claude-3-opus", 0);
         assert_eq!(
             d,
             PaidQueryDecision::Reject {
@@ -597,7 +623,7 @@ mod tests {
     fn verify_rejects_when_budget_exhausted() {
         let mac = sample_macaroon_id();
         let c = fresh_caveat(0, "gpt-4", u64::MAX);
-        let d = verify_paid_query(&mac, &c, 1, "gpt-4", 0);
+        let d = verify_paid_query(&mac, &c, dqa(1), "gpt-4", 0);
         assert_eq!(
             d,
             PaidQueryDecision::Reject {
@@ -612,7 +638,7 @@ mod tests {
         // uninitialised identifier — never authorise.
         let mac = [0u8; 16];
         let c = fresh_caveat(1_000, "gpt-4", u64::MAX);
-        let d = verify_paid_query(&mac, &c, 10, "gpt-4", 0);
+        let d = verify_paid_query(&mac, &c, dqa(10), "gpt-4", 0);
         assert_eq!(
             d,
             PaidQueryDecision::Reject {
@@ -626,28 +652,28 @@ mod tests {
         let b = RateLimitBudget::new();
         let holder = sample_holder();
         let mac = sample_macaroon_id();
-        b.seed(&holder, &mac, 1_000).unwrap();
+        b.seed(&holder, &mac, dqa(1_000)).unwrap();
 
         // First deduct succeeds; remaining = 750.
-        let remaining = b.try_deduct(&holder, &mac, 250).unwrap();
-        assert_eq!(remaining, 750);
+        let remaining = b.try_deduct(&holder, &mac, dqa(250)).unwrap();
+        assert_eq!(remaining, dqa(750));
 
         // Second deduct brings remaining to 500.
-        let remaining = b.try_deduct(&holder, &mac, 250).unwrap();
-        assert_eq!(remaining, 500);
+        let remaining = b.try_deduct(&holder, &mac, dqa(250)).unwrap();
+        assert_eq!(remaining, dqa(500));
 
         // Insufficient balance.
-        let err = b.try_deduct(&holder, &mac, 600).unwrap_err();
+        let err = b.try_deduct(&holder, &mac, dqa(600)).unwrap_err();
         assert_eq!(
             err,
             PaidQueryError::InsufficientBalance {
-                balance: 500,
-                cost: 600
+                balance: dqa(500),
+                cost: dqa(600)
             }
         );
 
         // Balance lookup unchanged after rejection.
-        assert_eq!(b.balance(&holder, &mac).unwrap(), Some(500));
+        assert_eq!(b.balance(&holder, &mac).unwrap(), Some(dqa(500)));
     }
 
     #[test]
@@ -655,7 +681,7 @@ mod tests {
         let b = RateLimitBudget::new();
         let holder = sample_holder();
         let mac = sample_macaroon_id();
-        let err = b.try_deduct(&holder, &mac, 1).unwrap_err();
+        let err = b.try_deduct(&holder, &mac, dqa(1)).unwrap_err();
         assert_eq!(err, PaidQueryError::UnknownHolder);
         assert_eq!(b.balance(&holder, &mac).unwrap(), None);
     }
@@ -666,44 +692,21 @@ mod tests {
         let h1 = WireDid::new("did:octo:zHolder1".to_string());
         let h2 = WireDid::new("did:octo:zHolder2".to_string());
         let mac = sample_macaroon_id();
-        b.seed(&h1, &mac, 100).unwrap();
-        b.seed(&h2, &mac, 200).unwrap();
+        b.seed(&h1, &mac, dqa(100)).unwrap();
+        b.seed(&h2, &mac, dqa(200)).unwrap();
 
-        assert_eq!(b.try_deduct(&h1, &mac, 50).unwrap(), 50);
-        assert_eq!(b.try_deduct(&h2, &mac, 50).unwrap(), 150);
+        assert_eq!(b.try_deduct(&h1, &mac, dqa(50)).unwrap(), dqa(50));
+        assert_eq!(b.try_deduct(&h2, &mac, dqa(50)).unwrap(), dqa(150));
         // h1 unaffected by h2's deduct.
-        assert_eq!(b.balance(&h1, &mac).unwrap(), Some(50));
-        assert_eq!(b.balance(&h2, &mac).unwrap(), Some(150));
+        assert_eq!(b.balance(&h1, &mac).unwrap(), Some(dqa(50)));
+        assert_eq!(b.balance(&h2, &mac).unwrap(), Some(dqa(150)));
     }
 
-    #[test]
-    fn paid_query_request_borsh_round_trip() {
-        let req = PaidQueryRequest {
-            macaroon_id: sample_macaroon_id(),
-            caveat: fresh_caveat(1_000, "gpt-4", u64::MAX),
-            query_cost: 100,
-            query_model: "gpt-4".to_string(),
-            now_unix_ms: 1_700_000_000_000,
-        };
-        let bytes = req.to_borsh().unwrap();
-        let back = PaidQueryRequest::from_borsh(&bytes).unwrap();
-        assert_eq!(back, req);
-    }
-
-    #[test]
-    fn paid_query_response_borsh_round_trip() {
-        let resp = PaidQueryResponse {
-            decision: PaidQueryDecision::Proceed {
-                remaining_budget: 750,
-            },
-            macaroon_id: sample_macaroon_id(),
-            request_payload_kind: PAID_QUERY_VERIFY,
-            receipt: PaymentReceipt::no_drain(750),
-        };
-        let bytes = resp.to_borsh().unwrap();
-        let back = PaidQueryResponse::from_borsh(&bytes).unwrap();
-        assert_eq!(back, resp);
-    }
+    // Borsh round-trip tests (`paid_query_request_borsh_round_trip` /
+    // `paid_query_response_borsh_round_trip`) intentionally REMOVED
+    // (mission 0862-c9 RETIRED). `BorshSerialize`/`BorshDeserialize`
+    // for `Dqa` is an additive Layer A change awaiting the determin
+    // substrate push. Re-add when the upstream borsh impls land.
 
     #[test]
     fn paid_query_payload_kind_is_the_documented_uuid() {

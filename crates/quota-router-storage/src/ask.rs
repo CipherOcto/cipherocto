@@ -6,14 +6,25 @@
 use std::collections::HashMap;
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use octo_determin::{Dqa, DqaError};
+pub use octo_determin::Dqa;
+use octo_determin::DqaError;
 use serde::{Deserialize, Serialize};
+
+// `pub use octo_determin::Dqa;` (mission 0862-c9 RETIRED —
+// `MicroOctoW` alias killed project-wide). `Dqa` is now imported
+// under its canonical name directly from the Layer A substrate;
+// no local `pub type Dqa = ...;` re-alias exists. The `pub`
+// re-export preserves ergonomic access via `crate::ask::Dqa`
+// for in-crate consumers (the original pre-retirement path was
+// `crate::ask::MicroOCTO_W`).
 
 /// Micro-OCTO-W (S4 codemod: now `Dqa` for deterministic-floating-point
 /// arithmetic). Direct construction via `Dqa::new(value, 0)` for integer
 /// values (e.g. 30_000 u128 → `Dqa::new(30_000, 0).expect("non-overflow")`).
-#[allow(non_camel_case_types)]
-pub type MicroOCTO_W = Dqa;
+//
+// `Dqa` directly imported from `octo_determin` (mission 0862-c9 RETIRED —
+// local `MicroOctoW` alias killed project-wide). No local `pub type
+// Dqa = ...;` re-export is needed.
 
 /// Display-unit OCTO-W (RFC-0959 §Data Structures type-distinct newtype).
 ///
@@ -31,7 +42,7 @@ pub struct OCTO_WAmount(pub Dqa);
 /// On-wire micro-OCTO-W newtype. Pairs with [`OCTO_WAmount`] for type-safe display ↔ wire.
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct MicroOCTO_WNewtype(pub Dqa);
+pub struct DqaNewtype(pub Dqa);
 
 impl OCTO_WAmount {
     /// 1 OCTO-W = 1_000_000 micro-OCTO-W. Scale 0 (integer wire form).
@@ -81,20 +92,20 @@ impl<'de> Deserialize<'de> for OCTO_WAmount {
     }
 }
 
-impl Serialize for MicroOCTO_WNewtype {
+impl Serialize for DqaNewtype {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         let bytes = crate::dqa_serde::dqa_to_bytes(&self.0);
         s.serialize_bytes(&bytes)
     }
 }
 
-impl<'de> Deserialize<'de> for MicroOCTO_WNewtype {
+impl<'de> Deserialize<'de> for DqaNewtype {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         use serde::de::Error;
         let bytes: Vec<u8> = serde::Deserialize::deserialize(d)?;
         crate::dqa_serde::dqa_from_bytes(&bytes)
             .map(Self)
-            .map_err(|e| Error::custom(format!("MicroOCTO_WNewtype decode: {e:?}")))
+            .map_err(|e| Error::custom(format!("DqaNewtype decode: {e:?}")))
     }
 }
 
@@ -375,7 +386,7 @@ pub struct PricingAxis {
     pub name: String,
     /// Default rate (micro-OCTO-W per 1000 units) when no per-model override exists.
     #[serde(with = "crate::dqa_serde::field")]
-    pub default_rate_per_1k: MicroOCTO_W,
+    pub default_rate_per_1k: Dqa,
 }
 
 impl PricingAxis {
@@ -413,7 +424,7 @@ impl PricingAxis {
 pub struct AxisRate {
     pub axis: AxisId,
     #[serde(with = "crate::dqa_serde::field")]
-    pub rate_per_1k: MicroOCTO_W,
+    pub rate_per_1k: Dqa,
 }
 
 /// Per-model rate table.
@@ -428,7 +439,7 @@ pub struct ModelRateTable {
 impl ModelRateTable {
     /// Compute cost for a (model, axis_id, units) tuple. Returns `None` if model unknown.
     #[must_use]
-    pub fn cost_for(&self, axis_id: &str, units: u64, axes: &[PricingAxis]) -> Option<MicroOCTO_W> {
+    pub fn cost_for(&self, axis_id: &str, units: u64, axes: &[PricingAxis]) -> Option<Dqa> {
         let rate = self
             .rates
             .iter()
@@ -879,12 +890,8 @@ pub type AxisConsumption = (AxisId, u64);
 
 /// Compute settlement cost for an `Ask` given per-axis consumption.
 #[must_use]
-pub fn settlement_cost(
-    ask: &Ask,
-    consumed: &[AxisConsumption],
-    axes: &[PricingAxis],
-) -> MicroOCTO_W {
-    let mut total: MicroOCTO_W = Dqa::new(0, 0).expect("zero");
+pub fn settlement_cost(ask: &Ask, consumed: &[AxisConsumption], axes: &[PricingAxis]) -> Dqa {
+    let mut total: Dqa = Dqa::new(0, 0).expect("zero");
     for (axis_id, units) in consumed {
         if let Some(c) = ask.rates.cost_for(axis_id, *units, axes) {
             total = dqa_add(total, c);
@@ -1001,7 +1008,7 @@ pub struct SettlementEnvelope {
     pub timestamp_unix: u64,
     /// Cost in micro-OCTO-W.
     #[serde(with = "crate::dqa_serde::field")]
-    pub cost: MicroOCTO_W,
+    pub cost: Dqa,
 }
 
 impl SettlementEnvelope {
@@ -1167,7 +1174,7 @@ pub struct SettlementEvent {
     pub axes_consumed: AxesConsumed,
     /// Computed cost in micro-OCTO-W (integer-only, no float).
     #[serde(with = "crate::dqa_serde::field")]
-    pub cost: MicroOCTO_W,
+    pub cost: Dqa,
     /// Unix timestamp of settlement.
     pub settled_at_unix: u64,
 }
@@ -1225,7 +1232,7 @@ pub fn compute_cost(
     ask: &Ask,
     axes_consumed: &AxesConsumed,
     registry: &[PricingAxis],
-) -> Result<MicroOCTO_W, SettlementError> {
+) -> Result<Dqa, SettlementError> {
     if axes_consumed.requires_cache_strategy() && axes_consumed.cache_key_hash.is_none() {
         return Err(SettlementError::CacheStrategyRequired);
     }

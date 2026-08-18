@@ -976,6 +976,24 @@ the production follow-on; v2.0 spec does NOT change the lock surface.
 (defense-in-depth against signed underflow in caller fee-computation
 paths and wire-decoded `i64` amounts).
 
+**Scale precondition (RFC-0862 v2.0.4 + mission 0862-c4):** the
+substrate's `spend_ledger.balance` column is `INTEGER` (i64) at
+`scale = 0`. `try_deduct` AND `seed` reject any `Dqa` carrying
+`scale != 0` with
+`SpendLedgerError::InvalidScale { expected: 0, actual: <caller-scale> }`
+rather than panicking. The check runs in BOTH debug and release
+profiles (no `debug_assert!`) so the typed-error path is testable
+under `cargo test` (dev profile). Per mission 0862-c4 (S6c Round 1
+security review finding #8 — `assert!` is not an error path; an
+upstream caller passing a `Dqa` with non-zero scale would otherwise
+crash the wallet-node at the `dqa_to_i64` precondition). Pin via
+`crates/quota-router-storage/tests/tv_0862_spend_ledger.rs`
+TV-0862-12 (seed scale mismatch rejected; no row persisted) +
+TV-0862-13 (try_deduct scale mismatch rejected; balance unchanged).
+The `dqa_to_i64` helper gains the same `Result<i64, SpendLedgerError>`
+return type — it is the sole gatekeeper for the scale constraint at
+the storage boundary.
+
 **Adjacent-module u64→i64 wrap mitigation (RFC-0862 v2.0 + mission
 0862-c7):** callers in `crates/quota-router-core` that narrow
 `cost_amount: u64` to `i64` for the `spend_ledger` column + budget-gate
@@ -994,12 +1012,12 @@ exact-edge overflow + at-max passes + zero passes + `SpendEvent`
 method mirrors free fn).
 
 **Seed hardening (RFC-0862 v2.0 + mission 0862-c8):** `seed()` MUST
-mirror the `try_deduct` precondition guards (NegativeCost +
-`scale == 0` assert) and acquire `drain_lock` around the
-balance-read + UPDATE-or-INSERT window. Without the lock, concurrent
-`seed()` on the same `(holder_did, macaroon_id)` races the
-SELECT-then-INSERT branch and one thread's INSERT collides with
-another's PRIMARY KEY (stoolap surfaces as
+mirror the `try_deduct` precondition guards (NegativeCost + the
+scale precondition per v2.0.4 below) and acquire `drain_lock`
+around the balance-read + UPDATE-or-INSERT window. Without the
+lock, concurrent `seed()` on the same `(holder_did, macaroon_id)`
+races the SELECT-then-INSERT branch and one thread's INSERT
+collides with another's PRIMARY KEY (stoolap surfaces as
 `SpendLedgerError::Storage`, masking the real fault). Per
 `crates/quota-router-storage/src/stoolap_spend_ledger.rs` §seed. Pin
 via `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs`
@@ -1981,6 +1999,7 @@ cargo doc --workspace --no-deps --manifest-path octo-transport/Cargo.toml
 | 2.0.1   | 2026-08-17 | Draft (follow-on 0862-c7) | §Adjacent-module u64→i64 wrap mitigation (additive on v2.0.0). Adds `SpendEvent::cost_amount_i64()` + free function `cost_u64_to_i64(...)` (in `crates/quota-router-core/src/keys/models.rs`) that fail closed with `SpendEventError::CostOverflow { cost: u64, max: i64 }` when `cost_amount > i64::MAX`. Bridges to `KeyError::SpendEvent(SpendEventError)` via `From<SpendEventError> for KeyError`. Replaces 4 silent-wrap `cost_amount as i64` call sites: §budget-gate-deduct-team + §budget-gate-deduct-key + §deduct-octo-w-execute in `crates/quota-router-core/src/storage.rs` + §cache-eviction-budget-gate in `crates/quota-router-core/src/cache.rs`. 4 byte-exact TV in `crates/quota-router-core/tests/tv_0862_c7_cost_overflow.rs` (exact-edge overflow + at-max passes + zero passes + `SpendEvent` method mirrors free fn). Closes mission 0862-c7.
 | 2.0.2   | 2026-08-17 | Draft (follow-on 0862-c8) | §Seed hardening (additive on v2.0.0). `StoolapSpendLedger::seed()` acquires `drain_lock` around the balance-read + UPDATE-or-INSERT window (mirrors `try_deduct` lock acquisition). Adds `NegativeCost` precondition (rejects `budget.value < 0` with `SpendLedgerError::NegativeCost { cost: budget }`) + explicit `assert_eq!(budget.scale, 0, ...)` precondition (mirrors `try_deduct`). 2 new TV in `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs`: TV-0862-15 (concurrent seed serializes; no PRIMARY KEY violation surfaces) + TV-0862-16 (negative budget yields NegativeCost + no row persisted). Existing 10 TV byte-stable. Closes mission 0862-c8.
 | 2.0.3   | 2026-08-17 | Draft (follow-on 0862-c9) | §SpendLedger Substrate — canonical `MicroOctoW` alias (additive on v2.0.2). Workspace-wide type-system coherence: `pub type MicroOctoW = Dqa` added to `determin/src/lib.rs` (Layer A frozen substrate). Three local `pub type MicroOctoW = ...` aliases REMOVED from `crates/octo-cap-macaroon/src/caveat/mod.rs` (was `u128`) + `crates/octo-cap-macaroon/src/caveat/payment.rs` (was `u128`) + `crates/quota-router-storage/src/stoolap_spend_ledger.rs` (was `octo_determin::Dqa`); all three sites now re-export via `pub use octo_determin::MicroOctoW`. `crates/octo-cap-macaroon/Cargo.toml` gains `octo-determin` git dep (Layer B → Layer A allowed). New TV-0862-17 (cross-crate `MicroOctoW` round-trip at `scale=0` byte-exact via `caveat::PaymentCaveat::new` decode path) + TV-0862-18 (caveat payload bytes unchanged when caller uses `u128` literal vs `Dqa` literal at scale=0). Existing 13 TV byte-stable. Cross-ref: RFC-0105 §substrate type coherence + RFC-0965 §3 caveat payload codec. Type invariant: `MicroOctoW.scale == 0` everywhere at the substrate boundary (integer micro-OCTO_W counts); mirrors `StoolapSpendLedger::seed` + `try_deduct` preconditions. Closes audit verdict 2026-08-17 Risk #1 (CRITICAL parallel-model). Closes mission 0862-c9.
+| 2.0.4   | 2026-08-18 | Draft (follow-on 0862-c4) | §Scale precondition (additive on v2.0.3). `try_deduct` AND `seed` reject any `Dqa` carrying `scale != 0` with the new `SpendLedgerError::InvalidScale { expected: u8, actual: u8 }` variant. The `dqa_to_i64` helper signature changes from `fn(Dqa) -> i64` to `fn(Dqa) -> Result<i64, SpendLedgerError>` (returning `InvalidScale` on non-zero scale). Replaces the previous `assert_eq!(v.scale, 0, ...)` precondition in `dqa_to_i64` (which would panic an upstream caller passing a non-zero-scale `Dqa` — S6c Round 1 security review finding #8). The check now runs in BOTH debug and release (no `debug_assert!`); testable under `cargo test` (dev profile). 2 new TV in `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs`: TV-0862-12 (seed scale=1 budget yields `InvalidScale { expected: 0, actual: 1 }` + no row persisted) + TV-0862-13 (try_deduct scale=1 cost yields `InvalidScale` + balance unchanged). Existing 15 TV byte-stable. Closes mission 0862-c4.
 
 ## Review Process
 

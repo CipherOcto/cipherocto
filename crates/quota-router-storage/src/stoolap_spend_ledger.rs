@@ -64,6 +64,21 @@ pub enum SpendLedgerError {
         /// The rejected cost.
         cost: octo_determin::Dqa,
     },
+    /// `Dqa` scale outside the schema's accepted range. The spend
+    /// ledger schema stores balances as `INTEGER` (i64) at `scale=0`
+    /// (per RFC-0862 §StoolapSpendLedger substrate). A `Dqa` carrying
+    /// a non-zero scale would lose precision on round-trip through
+    /// the storage layer, so it is rejected here as a typed error
+    /// rather than panicking. Per mission 0862-c4 (S6c Round 1
+    /// security review finding #8 — `assert!` is not an error path).
+    #[error("invalid Dqa scale: expected={expected}, actual={actual}")]
+    InvalidScale {
+        /// Scale the schema expects (currently 0; future widening
+        /// to a multi-scale schema would bump this).
+        expected: u8,
+        /// Scale the caller supplied.
+        actual: u8,
+    },
     /// Underlying storage failure (e.g. Stoolap error).
     #[error("spend-ledger storage error: {0}")]
     Storage(String),
@@ -138,6 +153,7 @@ impl StoolapSpendLedger {
     /// `(holder_did, macaroon_id)` serialize (no double-mint, no
     /// masked PRIMARY KEY violation). Per mission 0862-c8.
     /// # Errors
+    /// - `SpendLedgerError::InvalidScale` if `budget.scale != 0`.
     /// - `SpendLedgerError::NegativeCost` if `budget.value < 0`.
     /// - `SpendLedgerError::Storage` on underlying storage failure or
     ///   lock poisoning.
@@ -147,8 +163,18 @@ impl StoolapSpendLedger {
         macaroon_id: &[u8],
         budget: Dqa,
     ) -> Result<(), SpendLedgerError> {
-        // Preconditions (mirrors try_deduct, per mission 0862-c8).
-        assert_eq!(budget.scale, 0, "Dqa at scale=0; scale invariant violated");
+        // Scale precondition: schema stores INTEGER at scale=0 only.
+        // A non-zero scale would lose precision on round-trip; surface
+        // as a typed error per mission 0862-c4 (S6c Round 1 security
+        // review finding #8) before touching the DB.
+        if budget.scale != 0 {
+            return Err(SpendLedgerError::InvalidScale {
+                expected: 0,
+                actual: budget.scale,
+            });
+        }
+        // Negative-cost defense (mirrors try_deduct, per mission
+        // 0862-c8).
         if budget.value < 0 {
             return Err(SpendLedgerError::NegativeCost { cost: budget });
         }
@@ -169,7 +195,7 @@ impl StoolapSpendLedger {
         // error at column 1). Use SELECT-then-INSERT/UPDATE pattern
         // instead.
         let existing = self.balance(holder_did, macaroon_id)?;
-        let budget_i64 = dqa_to_i64(budget);
+        let budget_i64 = dqa_to_i64(budget)?;
         match existing {
             Some(_) => {
                 let result = self.db.execute(
@@ -214,6 +240,7 @@ impl StoolapSpendLedger {
     ///   `SpendLedgerError::NegativeCost` (defense-in-depth against
     ///   signed underflow in caller fee-computation paths).
     /// # Errors
+    /// - `SpendLedgerError::InvalidScale` if `cost.scale != 0`.
     /// - `SpendLedgerError::NegativeCost` if `cost.value < 0`.
     /// - `SpendLedgerError::UnknownHolder` if no balance record exists.
     /// - `SpendLedgerError::InsufficientBalance` if balance < cost.
@@ -224,11 +251,23 @@ impl StoolapSpendLedger {
         macaroon_id: &[u8],
         cost: Dqa,
     ) -> Result<Dqa, SpendLedgerError> {
+        // Scale precondition: schema stores INTEGER at scale=0 only.
+        // A non-zero scale would be normalized by `dqa_cmp`/`subtract`
+        // and silently drain a fraction of the perceived cost — the
+        // caller likely intends integer units. Surface as a typed
+        // error per mission 0862-c4 BEFORE the DB hit / arithmetic
+        // so an upstream caller bug surfaces cleanly without a
+        // hidden partial-deduct.
+        if cost.scale != 0 {
+            return Err(SpendLedgerError::InvalidScale {
+                expected: 0,
+                actual: cost.scale,
+            });
+        }
         // Precondition: reject negative cost. `dqa_subtract` on
         // negative cost returns a "larger" value (i64 underflow
         // would inflate balance otherwise) — S4 Round 2 surfaced
         // the same class of bug elsewhere; pin it closed here.
-        assert_eq!(cost.scale, 0, "Dqa at scale=0; scale invariant violated");
         if cost.value < 0 {
             return Err(SpendLedgerError::NegativeCost { cost });
         }
@@ -271,7 +310,7 @@ impl StoolapSpendLedger {
             "UPDATE spend_ledger SET balance = ?, updated_at_unix_ms = ? \
              WHERE holder_did = ? AND macaroon_id = ?",
             (
-                dqa_to_i64(new_balance),
+                dqa_to_i64(new_balance)?,
                 now_ms,
                 holder_did.as_bytes().to_vec(),
                 macaroon_id.to_vec(),
@@ -317,19 +356,28 @@ impl StoolapSpendLedger {
 /// a no-op at the type level). The function is preserved as the
 /// future-proofing anchor should `Dqa::value` widen to `i128`.
 ///
+/// **Precondition (mission 0862-c4):** `Dqa::scale` MUST be `0` —
+/// the spend-ledger schema stores balances as `INTEGER`, which is
+/// scale-implicit; a non-zero scale would lose precision on
+/// round-trip. We enforce this as a typed
+/// `SpendLedgerError::InvalidScale` (carries `expected = 0`,
+/// `actual = v.scale`) rather than `panic!`. The check runs in both
+/// debug and release so TV-0862-12 can pin the typed-error path
+/// under `cargo test` (dev profile).
+///
 /// **Note (S6c Round 2 code review LOW #5):** this fn does NOT
 /// implement saturation. Future widening to `i128` will require an
 /// explicit `try_into()` + `SpendLedgerError::Storage` return on
 /// overflow (mirroring the `0862-c7` adjacent u64→i64 wrap
-/// mitigation in `quota-router-core`). See `0862-c4-assert-to-error`
-/// follow-on for the panic→error surface conversion this fn would
-/// also need.
-fn dqa_to_i64(v: Dqa) -> i64 {
-    assert_eq!(
-        v.scale, 0,
-        "Dqa stored at scale=0; schema invariant violated"
-    );
-    v.value
+/// mitigation in `quota-router-core`).
+fn dqa_to_i64(v: Dqa) -> Result<i64, SpendLedgerError> {
+    if v.scale != 0 {
+        return Err(SpendLedgerError::InvalidScale {
+            expected: 0,
+            actual: v.scale,
+        });
+    }
+    Ok(v.value)
 }
 
 #[cfg(test)]

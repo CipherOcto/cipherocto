@@ -2,11 +2,21 @@
 
 ## Status
 
-**OPEN 2026-08-17 (@mmacedoeu).** Follow-on to `0862-c1-dqa-vault-bump-amendment`
+**LANDED 2026-08-18 (@mmacedoeu).** Follow-on to `0862-c1-dqa-vault-bump-amendment`
 (S6c LANDED 2026-08-17). Filed per S6c Round 1 security review
 finding #8: `dqa_to_i64`'s `scale == 0` invariant is an unconditional
 `assert!` (panic) reachable from a storage path — panic in a drain
 handler is an availability surface.
+
+## Resolution
+
+- Added `SpendLedgerError::InvalidScale { expected: u8, actual: u8 }`.
+- `dqa_to_i64` signature: `fn(Dqa) -> i64` → `fn(Dqa) -> Result<i64, SpendLedgerError>`.
+- `seed` + `try_deduct` reject scale != 0 at function ENTRY (precede DB hit, mirror NegativeCost guard).
+- Inline `assert_eq!` in `dqa_to_i64` removed; replaced with `if v.scale != 0` runtime Err (no `debug_assert!` so the typed-error path is testable under `cargo test`).
+- 2 new byte-exact TV: TV-0862-12 (seed) + TV-0862-13 (try_deduct).
+- RFC-0862 v2.0.4 entry + new §Scale precondition subsection.
+- All 16 TV in `tv_0862_spend_ledger.rs` green; clippy zero warnings; dependents (`octo-wallet`, `octo-paid-query`) build clean.
 
 ## RFC
 

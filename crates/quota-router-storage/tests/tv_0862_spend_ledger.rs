@@ -1,6 +1,6 @@
 //! TV-0862-01..05 + TV-0862-07 + TV-0862-08 + TV-0862-04b +
-//! TV-0862-09 + TV-0862-09b — RFC-0862 StoolapSpendLedger byte-exact
-//! fixtures.
+//! TV-0862-09 + TV-0862-09b + TV-0862-12 + TV-0862-13 — RFC-0862
+//! StoolapSpendLedger byte-exact fixtures.
 //!
 //! Per `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md`
 //! §3 row 6 (Stream A.1 S6c) + §4 S6 verify gate. 10 byte-exact
@@ -22,6 +22,9 @@
 //! - TV-08: multi-instance drain coordination (per-instance lock scope)
 //! - TV-09: negative-cost rejection (substrate hardening per S4
 //!   Round 2 + S6c Round 1 security review)
+//! - TV-12: scale-mismatch rejection on `seed` (mission 0862-c4:
+//!   panic→typed-error for `dqa_to_i64`)
+//! - TV-13: scale-mismatch rejection on `try_deduct` (mission 0862-c4)
 //!
 //! TV-06 (vault_id derivation cross-ref) moved to
 //! `crates/octo-vault/tests/tv_0862_vault_id_cross_ref.rs` per
@@ -506,6 +509,94 @@ fn tv_0862_15_concurrent_seed_serializes() {
 }
 
 // =============================================================================
+// TV-0862-12 + TV-0862-13 — scale-mismatch rejection (mission 0862-c4:
+// `dqa_to_i64` returns `SpendLedgerError::InvalidScale` instead of panicking)
+// =============================================================================
+
+/// TV-0862-12: `seed()` with a `Dqa` carrying a non-zero `scale`
+/// MUST yield `SpendLedgerError::InvalidScale { expected: 0, actual: 1 }`,
+/// NOT panic. Per mission 0862-c4 (S6c Round 1 security review
+/// finding #8 — `assert!` is not an error path; a scale=1 input from
+/// an upstream caller would otherwise crash the wallet-node on the
+/// `dqa_to_i64` precondition).
+///
+/// Pre-seeding is unnecessary: the scale check fires BEFORE the
+/// drain_lock / DB hit (the call path is `budget.value >= 0` →
+/// `dqa_to_i64(budget)?`). State must be unchanged on rejection.
+#[test]
+fn tv_0862_12_seed_scale_mismatch_rejected() {
+    let ledger = StoolapSpendLedger::open_in_memory().expect("open_in_memory");
+    let holder = "did:octo:zTV086212";
+    let macaroon_id = TV_0862_MACAROON_ID_12;
+
+    // Dqa at scale=1 (sub-octet fractional data) — not storable as
+    // INTEGER (scale=0) per RFC-0862 §StoolapSpendLedger substrate.
+    let scale_1_dqa = Dqa::new(100, 1).expect("Dqa::new(100, 1)");
+
+    let result = ledger.seed(holder, &macaroon_id, scale_1_dqa);
+    assert!(
+        matches!(
+            result,
+            Err(SpendLedgerError::InvalidScale {
+                expected: 0,
+                actual: 1
+            })
+        ),
+        "TV-0862-12: scale=1 budget MUST yield InvalidScale {{ expected: 0, actual: 1 }}: got {result:?}"
+    );
+
+    // Side-effect check: no row persisted (rejection precedes
+    // drain_lock + balance read + INSERT).
+    let stored = ledger.balance(holder, &macaroon_id).expect("balance read");
+    assert!(
+        stored.is_none(),
+        "TV-0862-12: no row should persist after InvalidScale rejection: got {stored:?}"
+    );
+}
+
+/// TV-0862-13: `try_deduct()` with a `Dqa` carrying a non-zero
+/// `scale` MUST yield `SpendLedgerError::InvalidScale`, NOT panic.
+/// Mirrors TV-0862-12 on the deduct path (the new `dqa_to_i64` is
+/// the sole gatekeeper for both). Pre-seeding a row ensures we
+/// exercise the scale check on a known holder, isolating the error
+/// from `UnknownHolder`.
+#[test]
+fn tv_0862_13_try_deduct_scale_mismatch_rejected() {
+    let ledger = StoolapSpendLedger::open_in_memory().expect("open_in_memory");
+    let holder = "did:octo:zTV086213";
+    let macaroon_id = TV_0862_MACAROON_ID_13;
+
+    ledger
+        .seed(holder, &macaroon_id, dqa(10_000))
+        .expect("seed");
+
+    let scale_1_dqa = Dqa::new(100, 1).expect("Dqa::new(100, 1)");
+    let result = ledger.try_deduct(holder, &macaroon_id, scale_1_dqa);
+    assert!(
+        matches!(
+            result,
+            Err(SpendLedgerError::InvalidScale {
+                expected: 0,
+                actual: 1
+            })
+        ),
+        "TV-0862-13: scale=1 cost MUST yield InvalidScale {{ expected: 0, actual: 1 }}: got {result:?}"
+    );
+
+    // Side-effect check: balance unchanged after rejection (rejection
+    // precedes drain_lock + SELECT / UPDATE).
+    let stored = ledger
+        .balance(holder, &macaroon_id)
+        .expect("balance read")
+        .expect("row must exist after rejection");
+    assert_eq!(
+        stored,
+        dqa(10_000),
+        "TV-0862-13: balance MUST be unchanged after InvalidScale rejection"
+    );
+}
+
+// =============================================================================
 // TV-0862-16 — seed() rejects negative budget (mission 0862-c8: NegativeCost guard)
 // =============================================================================
 
@@ -574,6 +665,12 @@ const TV_0862_MACAROON_ID_15: [u8; 16] = [
 ];
 const TV_0862_MACAROON_ID_16: [u8; 16] = [
     0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0xC0,
+];
+const TV_0862_MACAROON_ID_12: [u8; 16] = [
+    0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCB, 0xCC, 0xCD, 0xCE, 0xCF, 0xD0,
+];
+const TV_0862_MACAROON_ID_13: [u8; 16] = [
+    0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0xD8, 0xD9, 0xDA, 0xDB, 0xDC, 0xDD, 0xDE, 0xDF, 0xE0,
 ];
 
 /// TV-0862-07 balance fixtures (full + half deduction).

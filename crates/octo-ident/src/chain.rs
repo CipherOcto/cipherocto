@@ -120,6 +120,27 @@ impl ChainId {
         &self.0
     }
 
+    /// 32-byte canonical BLAKE3-256 derivation for storage PK use
+    /// (RFC-0010 v1.6 §32-byte addendum).
+    ///
+    /// `as_bytes = BLAKE3("cipherocto/chain/v1/" || chain_string)`
+    ///
+    /// Domain-separator convention matches `AssetId::as_bytes`
+    /// (`"cipherocto/asset/v1/"`) and `vault_id`
+    /// (`"cipherocto/vault/v1/"`) per Layer A frozen substrate
+    /// pattern (§20.3.2). Storage column type `BLOB(32)` (per
+    /// RFC-0960 v3.0 + RFC-0900 v2.0) carries this 32-byte form.
+    /// Coexists with `canonical_bytes()` 17-byte form (RFC-0010
+    /// v1.4) — both serve distinct purposes (storage PK vs
+    /// WAL/audit log wire form).
+    #[must_use]
+    pub fn as_bytes(&self) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"cipherocto/chain/v1/");
+        hasher.update(self.0.as_bytes());
+        *hasher.finalize().as_bytes()
+    }
+
     /// Resolve the `ChainId` to its `ChainNamespace`.
     ///
     /// The RFC-allocated constant table (`RFC_CHAIN_NAMESPACES`) is

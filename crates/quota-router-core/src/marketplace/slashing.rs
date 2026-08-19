@@ -346,6 +346,12 @@ impl Default for SlashingRules {
 /// Per-provider state tracked by the slashing ledger.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProviderStake {
+    /// Mission 0900-d1: typed `ChainId` per RFC-0010 v1.4. Mirrors
+    /// `SlashLedgerRow.chain_id` + the substrate PK shape
+    /// `(chain_id, provider_id)`. Production paths use
+    /// `DEFAULT_CHAIN_ID`; multi-chain slashing activates after this
+    /// field is plumbed through callers (separate RFC owed).
+    pub chain_id: [u8; 32],
     pub provider_id: String,
     /// Current stake remaining (micro-OCTO-W).
     #[serde(with = "quota_router_storage::dqa_serde::field")]
@@ -371,6 +377,11 @@ impl ProviderStake {
 /// Outcome of a `slash()` call.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SlashOutcome {
+    /// Mission 0900-d1: chain partition this outcome applies to. Mirrors
+    /// `ProviderStake.chain_id` + `SlashLedgerRow.chain_id`. Carried for
+    /// audit-table chain attribution when slash events are recorded in
+    /// out-of-tree dispute-resolution subsystems.
+    pub chain_id: [u8; 32],
     pub provider_id: String,
     pub reason: SlashReason,
     #[serde(with = "quota_router_storage::dqa_serde::field")]
@@ -452,6 +463,19 @@ fn require_positive_integer(d: &octo_determin::Dqa, param: &'static str) -> Resu
     Ok(())
 }
 
+/// Build a `(chain_id, provider_id)` tuple key for the in-memory
+/// `stakes` map. Production paths use `DEFAULT_CHAIN_ID` (single-chain
+/// pre-multi-chain-slashing activation). The helper centralises the
+/// key shape so all `stakes.get/get_mut/entry` sites use the same
+/// canonical tuple.
+///
+/// Mission 0900-d1 AC-3: HashMap tuple-key restructure mirroring the
+/// substrate PK `(chain_id, provider_id)` per §20.3 Model B.
+#[inline]
+fn stake_key(provider_id: &str) -> ([u8; 32], String) {
+    (DEFAULT_CHAIN_ID, provider_id.to_owned())
+}
+
 /// Slashing ledger.
 ///
 /// In-memory hot path (write-through to an optional `SlashStore`).
@@ -465,9 +489,16 @@ fn require_positive_integer(d: &octo_determin::Dqa, param: &'static str) -> Resu
 /// time. The legacy `new` / `with_rules` constructors build an
 /// in-memory-only ledger with no persistence (useful for unit
 /// tests that don't need a database).
+///
+/// Mission 0900-d1: `stakes` keyed by `([u8; 32], String)` to mirror
+/// the substrate PK `(chain_id, provider_id)`. Public API still takes
+/// `provider_id` only (single-arg); internal lookups use
+/// `stake_key(provider_id)` which always resolves to
+/// `(DEFAULT_CHAIN_ID, provider_id)` until multi-chain slashing
+/// activates.
 #[derive(Default, Clone)]
 pub struct SlashingLedger {
-    stakes: HashMap<String, ProviderStake>,
+    stakes: HashMap<([u8; 32], String), ProviderStake>,
     rules: SlashingRules,
     /// Optional persistence backend. `None` for in-memory-only
     /// ledgers (legacy `new` / `with_rules`). Set by [`open`] to
@@ -521,9 +552,14 @@ impl SlashingLedger {
         let mut stakes = HashMap::new();
         for row in rows {
             let cumulative_loss_pct = row.cumulative_loss_pct_micro as f64 / 1_000_000.0;
+            // Mission 0900-d1: tuple-key `(chain_id, provider_id)`.
+            // Production rows are backfilled to `DEFAULT_CHAIN_ID` by
+            // v015 migration, so this lookup matches the substrate PK
+            // shape end-to-end (storage row → in-memory map).
             stakes.insert(
-                row.provider_id.clone(),
+                (row.chain_id, row.provider_id.clone()),
                 ProviderStake {
+                    chain_id: row.chain_id,
                     provider_id: row.provider_id,
                     stake_micro_octo_w: row.stake_micro_octo_w,
                     initial_stake_micro_octo_w: row.initial_stake_micro_octo_w,
@@ -556,8 +592,9 @@ impl SlashingLedger {
         let provider_id = provider_id.into();
         let entry = self
             .stakes
-            .entry(provider_id.clone())
+            .entry(stake_key(&provider_id))
             .or_insert_with(|| ProviderStake {
+                chain_id: DEFAULT_CHAIN_ID,
                 provider_id: provider_id.clone(),
                 stake_micro_octo_w: initial_stake_micro_octo_w,
                 initial_stake_micro_octo_w,
@@ -614,7 +651,7 @@ impl SlashingLedger {
         require_positive_integer(&amount, "amount")?;
         let stake = self
             .stakes
-            .get(provider_id)
+            .get(&stake_key(provider_id))
             .ok_or_else(|| SlashError::UnknownProvider(provider_id.to_owned()))?;
         if stake.is_banned(&self.rules) {
             return Err(SlashError::BannedProvider {
@@ -632,7 +669,7 @@ impl SlashingLedger {
         // Some — the HashMap is not concurrently mutated.
         let entry = self
             .stakes
-            .get_mut(provider_id)
+            .get_mut(&stake_key(provider_id))
             .expect("stake entry just observed");
         entry.stake_micro_octo_w = entry
             .stake_micro_octo_w
@@ -667,7 +704,7 @@ impl SlashingLedger {
         require_positive_integer(&amount, "amount")?;
         let stake = self
             .stakes
-            .get(provider_id)
+            .get(&stake_key(provider_id))
             .ok_or_else(|| SlashError::UnknownProvider(provider_id.to_owned()))?;
         if stake.is_banned(&self.rules) {
             return Err(SlashError::BannedProvider {
@@ -685,7 +722,7 @@ impl SlashingLedger {
     }
     #[must_use]
     pub fn stake(&self, provider_id: &str) -> Option<&ProviderStake> {
-        self.stakes.get(provider_id)
+        self.stakes.get(&stake_key(provider_id))
     }
 
     /// Apply a slash to a provider for `reason`. Penalty = `stake *
@@ -756,7 +793,7 @@ impl SlashingLedger {
     ) -> Result<SlashOutcome, SlashError> {
         let stake = self
             .stakes
-            .get_mut(provider_id)
+            .get_mut(&stake_key(provider_id))
             .ok_or_else(|| SlashError::UnknownProvider(provider_id.to_owned()))?;
         if stake.is_banned(&rules) {
             // Encode the percent as integer bits to keep SlashError Eq.
@@ -820,6 +857,7 @@ impl SlashingLedger {
             let _ = store.upsert_stake(&row);
         }
         Ok(SlashOutcome {
+            chain_id: stake.chain_id,
             provider_id: provider_id.to_owned(),
             reason,
             amount_micro_octo_w: amount,
@@ -1404,5 +1442,81 @@ mod tests {
         // Sanity: the 5 RFC reasons DO have non-zero weights.
         assert!(SlashReason::TIMEOUT.verifiability() > 0.0);
         assert!(SlashReason::GARBAGE_RESPONSE.verifiability() > 0.0);
+    }
+
+    // ========================================================================
+    // Mission 0900-d1 TVs (chain-aware slash ledger follow-on)
+    //
+    // TV-0900-D-05 (HashMap tuple-key) + TV-0900-D-10 (cross-crate
+    // `open()` flow loads chain-tagged rows) + TV-0900-D-11
+    // (`SlashOutcome.chain_id` populated). Runtime execution blocked
+    // by libpython3.12 infra (mission 0900-d1 AC-10) — compile-check
+    // via `cargo build -p quota-router-core --features full --tests`
+    // verifies shape.
+    // ========================================================================
+
+    #[test]
+    fn tv_0900_d_05_hashmap_tuple_key_lookup_returns_chain_tagged_stake() {
+        // Register a provider, query by `provider_id` (single-arg
+        // public API), verify the returned `ProviderStake.chain_id`
+        // is `DEFAULT_CHAIN_ID` — pins that the `stake_key(provider_id)`
+        // tuple lookup resolves to the DEFAULT_CHAIN_ID namespace.
+        let mut l = SlashingLedger::new();
+        l.register("alice", dqa(1_000_000)).expect("register");
+        let s = l.stake("alice").expect("alice in ledger");
+        assert_eq!(
+            s.chain_id, DEFAULT_CHAIN_ID,
+            "ProviderStake.chain_id must equal DEFAULT_CHAIN_ID post-tuple-key restructure"
+        );
+        assert_eq!(s.provider_id, "alice");
+        assert_eq!(s.stake_micro_octo_w, dqa(1_000_000));
+    }
+
+    #[test]
+    fn tv_0900_d_10_open_flow_loads_chain_tagged_rows() {
+        // Insert via StoolapSlashStore (substrate row with
+        // chain_id = DEFAULT_CHAIN_ID), reopen via
+        // SlashingLedger::open, verify ProviderStake.chain_id
+        // matches the substrate row.
+        let store = open_in_memory_store();
+        let row = quota_router_storage::slash_store::SlashLedgerRow {
+            chain_id: DEFAULT_CHAIN_ID,
+            provider_id: "carol".to_string(),
+            stake_micro_octo_w: dqa(900_000),
+            initial_stake_micro_octo_w: dqa(1_000_000),
+            offense_count: 1,
+            cumulative_loss_pct_micro: 100_000,
+            last_updated_unix: 1_700_000_000,
+        };
+        store.upsert_stake(&row).expect("pre-populate");
+        let ledger = SlashingLedger::open(
+            Arc::clone(&store) as Arc<dyn quota_router_storage::slash_store::SlashStore>,
+            SlashingRules::default(),
+        )
+        .expect("open");
+        let s = ledger.stake("carol").expect("carol in ledger");
+        assert_eq!(
+            s.chain_id, DEFAULT_CHAIN_ID,
+            "open() hydration must preserve substrate chain_id"
+        );
+        assert_eq!(s.stake_micro_octo_w, dqa(900_000));
+        assert_eq!(s.offense_count, 1);
+    }
+
+    #[test]
+    fn tv_0900_d_11_slash_outcome_chain_id_populated_from_stake() {
+        // Slash a provider, verify SlashOutcome.chain_id matches
+        // ProviderStake.chain_id (the chain partition the outcome
+        // applies to, for audit-table chain attribution).
+        let mut l = ledger_with(1_000_000);
+        let out = l.slash("alice", SlashReason::TIMEOUT, 1.0).expect("slash");
+        assert_eq!(
+            out.chain_id, DEFAULT_CHAIN_ID,
+            "SlashOutcome.chain_id must mirror ProviderStake.chain_id"
+        );
+        // Sanity: other fields still pinned.
+        assert_eq!(out.amount_micro_octo_w, dqa(100_000));
+        assert_eq!(out.new_stake_micro_octo_w, dqa(900_000));
+        assert!(!out.banned);
     }
 }

@@ -36,7 +36,10 @@ fn migration_chain_reaches_v012_on_fresh_db() {
         .expect("row ok")
         .get(0)
         .unwrap_or(0);
-    assert_eq!(version, 12, "catalog must reach v012");
+    assert_eq!(
+        version, 15,
+        "catalog must reach v015 (current max migration version)"
+    );
 }
 
 #[test]

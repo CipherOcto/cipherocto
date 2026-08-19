@@ -65,8 +65,20 @@ use octo_sync::substrate::{
     HlcClock, HlcTimestamp, PeerIdentity, ShardKey, ShardMissionId, WriterIdentity, WriterNodeId,
 };
 
-/// Path to the JSON fixture, relative to the repo root.
-const FIXTURE_PATH: &str = "../../../tests/fixtures/phase1_tv_0862.json";
+/// Path to the JSON fixture. Use `CARGO_MANIFEST_DIR` for
+/// absolute determinism (cargo sets this env var to the
+/// package root at compile time) — relative paths via
+/// `current_dir()` are flaky because cargo test CWD varies
+/// per-test-binary vs combined `--tests` runs. The package
+/// root is `octo-sync/`, so `../tests/fixtures/...` is one
+/// level up = the repo root. The previous
+/// `../../../tests/fixtures/...` was a pre-existing drift that
+/// happened to pass under standalone test runs but broke when
+/// `phase3_tv_0862` was added to the same `cargo test --tests`
+/// sweep; fixed in mission `0862-phase3-tv-fixture` to use
+/// `CARGO_MANIFEST_DIR` for absolute determinism.
+const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/fixtures");
+const FIXTURE_NAME: &str = "phase1_tv_0862.json";
 
 /// TV-1: HLC monotonicity across an advancing wall-clock.
 ///
@@ -512,13 +524,13 @@ fn extract_number(obj: &str, key: &str) -> Result<String, String> {
     Ok(rest[..end].to_string())
 }
 
-/// Resolve the fixture path from the test's CWD (which is the
-/// `octo-sync/` crate directory when running under `cargo test`).
+/// Resolve the fixture path via the compile-time
+/// `CARGO_MANIFEST_DIR` constant. Absolute + deterministic
+/// (does not depend on `cargo test`'s CWD, which varies per
+/// integration test binary vs combined `--tests` sweep).
 fn fixture_path() -> PathBuf {
-    // `cargo test` runs each integration test with CWD = the crate
-    // root. The fixture lives one level up at the repo root.
-    let mut p = std::env::current_dir().expect("cwd");
-    p.push(FIXTURE_PATH);
+    let mut p = PathBuf::from(FIXTURE_DIR);
+    p.push(FIXTURE_NAME);
     p
 }
 

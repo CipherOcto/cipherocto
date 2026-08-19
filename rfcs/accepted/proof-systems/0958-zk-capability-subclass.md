@@ -49,9 +49,9 @@ The subclass is **non-breaking**: existing v1 macaroons continue to verify via R
 
 ### Out of Scope
 
-- **On-chain settlement discharge** — RFC-0959 v1.0 (S03 + S04 independent settlement chain) handles settlement engine execution; the ZK subclass verifies capability claims independent of settlement (ZK verify path is independent of RFC-0959 settlement engine execution per §Dependencies Optional entry). ZK proof may settle on-chain in a future RFC (F8) after RFC-0955 fiat ramp stabilizes. **v1.2 M7 fix:** "independent of settlement engine execution" means the ZK verify path does not require settlement engine state at verify time. However, self-host mode (`output_hash == Some(_)`) POI binding is OPTIONAL via `inference_trace` private witness — the same circuit binds capability + optional PoI, but PoI is consumed inside the circuit assertion, not by RFC-0959 settlement engine.
+- **On-chain settlement discharge** — RFC-0959 (S03 + S04 independent settlement chain) handles settlement engine execution; the ZK subclass verifies capability claims independent of settlement (ZK verify path is independent of RFC-0959 settlement engine execution per §Dependencies Optional entry). ZK proof may settle on-chain in a future RFC (F8) after RFC-0955 fiat ramp stabilizes. **v1.2 M7 fix:** "independent of settlement engine execution" means the ZK verify path does not require settlement engine state at verify time. However, self-host mode (`output_hash == Some(_)`) POI binding is OPTIONAL via `inference_trace` private witness — the same circuit binds capability + optional PoI, but PoI is consumed inside the circuit assertion, not by RFC-0959 settlement engine.
 - **S04 exercise path optional ZK flag** — `missions/open/0957-b-provider-boundary-exercise-path.md` (S04) MAY consume ZK-bearing caps via optional ZK flag in the 11-step exercise path; this RFC defines the ZK format (wire + verify) but NOT the exercise path integration logic — that lives in mission 0957-b if/when its author chooses to enable the optional ZK flag.
-- **ZK over cache hit detection** — already handled by axis classification in S03 (RFC-0959 v1.0 §Algorithms `cache_classify`); ZK subclass consumes `cache_key_hash` as public input rather than re-proving cache hits. (v1.2 L11 fix: cross-ref RFC-0959 v1.0 §Algorithms for the upstream `cache_classify` function that ZK subclass consumes via `cache_key_hash: [u8;32]` public input.)
+- **ZK over cache hit detection** — already handled by axis classification in S03 (RFC-0959 §Algorithms `cache_classify`); ZK subclass consumes `cache_key_hash` as public input rather than re-proving cache hits. (v1.2 L11 fix: cross-ref RFC-0959 §Algorithms for the upstream `cache_classify` function that ZK subclass consumes via `cache_key_hash: [u8;32]` public input.)
 - **ZK for ML fairness proofs** — out of CipherOcto MVP scope. (v1.2 L4 fix: cross-link to `docs/use-cases/hybrid-ai-blockchain-runtime.md` §"Fairness attestation" deferred to post-MVP; not in RFC scope per Out-of-Scope rationale.)
 - **Multi-axes ZK extensions** (priority_lane, etc.) — registry allows extension; tracked as F1.
 - **Hardware wallet + MPC integration** — Phase H (RFC-0853 F2) and Phase I (RFC-0853 F3); ZK signing key custody inherits from RFC-0009 §Vault.
@@ -66,11 +66,11 @@ The subclass is **non-breaking**: existing v1 macaroons continue to verify via R
 - **RFC-0853 (Networking: Overlay Cryptography)** — Accepted 2026-07-20 (numeric dep). BLAKE3 primitive used inside circuit for HMAC chain re-derivation + `cache_key_hash`.
 - **RFC-0630 (Proof Systems: Proof-of-Inference Consensus)** — Accepted 2026-07-20, sibling. The ZK subclass binds to RFC-0630's PoI proof in self-host mode (`output_hash` + `inference_execution_trace`).
 - **RFC-0126 (Numeric: Deterministic Serialization)** — Accepted. `canonical_ser` for caveat values consumed by circuit.
-- **RFC-0909 (Economics: Deterministic Quota Accounting)** — Accepted (v69, folder `final/`). Coexistence only — RFC-0958 has no direct dependency; referenced for symmetry with RFC-0959 v1.0 (which is independent of RFC-0909 per Option A).
+- **RFC-0909 (Economics: Deterministic Quota Accounting)** — Accepted (v69, folder `final/`). Coexistence only — RFC-0958 has no direct dependency; referenced for symmetry with RFC-0959 (which is independent of RFC-0909 per Option A).
 
 **Optional:**
 
-- **RFC-0959 v1.0 (Economics: Independent Settlement Chain)** — Accepted 2026-07-20 v1.0. The ZK subclass consumes `AskId` + `MicroOCTO_W` types from RFC-0959 v1.0 §Data Structures as public inputs (`ask_id`, `axes_consumed`); the ZK verify path is INDEPENDENT of RFC-0959 settlement engine execution. RFC-0959 is NOT a Requires dependency (ZK verify can be exercised with synthetic `AskId` + `MicroOCTO_W` values); it is referenced for type compatibility. Per master plan §8 Risk #7: RFC-0909 v69 ↔ v70 transition sync N/A per Option A — RFC-0959 v1.0 is independent of RFC-0909; no v70 bump required; coexistence only.
+- **RFC-0959 (Economics: Independent Settlement Chain)** — Accepted 2026-07-20 v1.0. The ZK subclass consumes `AskId` + `MicroOCTO_W` types from RFC-0959 §Data Structures as public inputs (`ask_id`, `axes_consumed`); the ZK verify path is INDEPENDENT of RFC-0959 settlement engine execution. RFC-0959 is NOT a Requires dependency (ZK verify can be exercised with synthetic `AskId` + `MicroOCTO_W` values); it is referenced for type compatibility. Per master plan §8 Risk #7: RFC-0909 v69 ↔ v70 transition sync N/A per Option A — RFC-0959 is independent of RFC-0909; no v70 bump required; coexistence only.
 - **RFC-0955 (Economics: Model Liquidity Layer)** — Draft. Fiat-ramp layer above settlement; ZK subclass may feed receipt attestation upstream in a future amendment.
 
 > **Dependency Validation Rules (per BLUEPRINT.md v1.3):** All "Requires" RFCs MUST be Accepted before this RFC can be Accepted (BLUEPRINT.md §Dependency Validation Rule 1). All 5 Required RFCs (RFC-0957 + RFC-0009 + RFC-0102 + RFC-0853 + RFC-0630) + RFC-0126 reached Accepted on 2026-07-20 per BLUEPRINT.md Rule 1; this RFC (RFC-0958) promotion to Accepted is unblocked 2026-07-21.
@@ -194,8 +194,8 @@ pub struct ProofBundle {
 /// IDs (e.g., `"slot-alpha-001"`) — no sentinel placeholders.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicInputs {
-    pub ask_id: AskId,                       // RFC-0959 v1.0
-    pub axes_consumed: Vec<(PricingAxis, MicroOCTO_W)>,  // RFC-0959 v1.0 canonical
+    pub ask_id: AskId,                       // RFC-0959
+    pub axes_consumed: Vec<(PricingAxis, MicroOCTO_W)>,  // RFC-0959 canonical
     pub cap_root_hash: [u8; 32],             // BLAKE3(root_secret)
     pub invocation_hash: [u8; 32],           // BLAKE3(canonical_ser(request_body))
     pub holder_did: DID,                     // RFC-0009
@@ -418,7 +418,7 @@ stateDiagram-v2
     InFlight --> ZkVerifyError: STARK verify fails
     InFlight --> PublicInputMismatch: proof.public_inputs != expected
     InFlight --> ClockSkewExceeded: |proof.current_unix_time - verifier_local| > MAX_SKEW_SECS (R3 N5 fix)
-    Verified --> Consumed: settlement complete (RFC-0959 v1.0)
+    Verified --> Consumed: settlement complete (RFC-0959)
     ProofStale --> [*]
     WholesaleAttempt --> [*]
     ZkVerifyError --> [*]
@@ -575,7 +575,7 @@ pub enum ZkVerifyError {
 
 - **PublicInputMismatch**: proof rejected if `public_inputs != expected_public_inputs` (defense against replay with different inputs).
 - **InvocationHashBind**: proof's `invocation_hash` binds the proof to a specific request body (inherited from RFC-0957 §Caveat::InvocationHashBind).
-- **No nonce-based dedup**: STARK proofs are not replay-deduped; verifiers rely on `PublicInputMismatch` + downstream settlement receipt uniqueness (RFC-0959 v1.0 §Algorithms `ConsumedReceiptIndex` provides nonce-based settlement-side dedup; cross-ref). (v1.2 L6 fix: settlement-side ConsumedReceiptIndex catches replay attempts at settlement time even if the ZK proof itself is accepted — defense-in-depth, two independent dedup layers.)
+- **No nonce-based dedup**: STARK proofs are not replay-deduped; verifiers rely on `PublicInputMismatch` + downstream settlement receipt uniqueness (RFC-0959 §Algorithms `ConsumedReceiptIndex` provides nonce-based settlement-side dedup; cross-ref). (v1.2 L6 fix: settlement-side ConsumedReceiptIndex catches replay attempts at settlement time even if the ZK proof itself is accepted — defense-in-depth, two independent dedup layers.)
 
 ## Roles and Authorities
 
@@ -596,7 +596,7 @@ pub enum ZkVerifyError {
 ### Out-of-Scope Roles
 
 - **ZK Consumer (downstream service)** — out of scope: any service holding the compiled CASM can verify; this RFC does not enumerate consumers.
-- **On-Chain Settlement Receiver** — RFC-0959 v1.0; the ZK subclass may feed receipt attestation upstream in a future amendment.
+- **On-Chain Settlement Receiver** — RFC-0959; the ZK subclass may feed receipt attestation upstream in a future amendment.
 - **Hardware Wallet / MPC signer** — Phase H / I (RFC-0853 F2/F3); ZK signing key custody inherits from RFC-0009 §Vault.
 
 ## Adversary Analysis (5-Question Test)
@@ -742,10 +742,10 @@ Per BLUEPRINT.md, every RFC MUST include an Implicit Assumptions Audit. Entries 
 
 ### Token flow
 
-RFC-0958 does NOT alter token flow. Settlement continues per RFC-0959 v1.0 (independent settlement chain) and RFC-0909 (coexistence). The ZK subclass is a **cryptographic authorization layer** above the existing settlement chain:
+RFC-0958 does NOT alter token flow. Settlement continues per RFC-0959 (independent settlement chain) and RFC-0909 (coexistence). The ZK subclass is a **cryptographic authorization layer** above the existing settlement chain:
 
-- Asker pays per RFC-0959 v1.0 settlement (no ZK surcharge in MVP).
-- Provider earns per RFC-0959 v1.0 settlement.
+- Asker pays per RFC-0959 settlement (no ZK surcharge in MVP).
+- Provider earns per RFC-0959 settlement.
 - Router bears ZK verify cost (G2 <100ms) as part of marketplace operation.
 - SelfHost inference worker bears ZK proof gen cost (G1 <2s) as part of self-host attestation.
 - ZK receipt may settle on-chain in future amendment (F8) after RFC-0955 fiat ramp stabilizes.
@@ -897,7 +897,7 @@ See §Cross-Repo Coordination for repo coordination details (stoolap fork pin, P
 - **F5:** NodeType attestation quorum (multi-attestor signature on NodeType registration).
 - **F6:** Hardware attestation for inference workers (TPM / secure enclave).
 - **F7:** Recursive proof composition (smaller aggregated proofs across multiple invocations).
-- **F8:** On-chain settlement binding (RFC-0959 v1.0 receipt may carry ZK proof in future amendment).
+- **F8:** On-chain settlement binding (RFC-0959 receipt may carry ZK proof in future amendment).
 
 ## Rationale
 
@@ -935,7 +935,7 @@ Subclass (not supersede) chosen because:
 - RFC-0630 (Proof Systems: Proof-of-Inference Consensus) — Accepted 2026-07-20; self-host PoI binding.
 - RFC-0126 (Numeric: Deterministic Serialization) — Accepted; canonical_ser substrate.
 - RFC-0909 (Economics: Deterministic Quota Accounting) — Accepted v69; coexistence reference.
-- RFC-0959 v1.0 (Economics: Independent Settlement Chain) — Accepted 2026-07-20 v1.0; settlement may consume ZK receipt in future amendment.
+- RFC-0959 (Economics: Independent Settlement Chain) — Accepted 2026-07-20 v1.0; settlement may consume ZK receipt in future amendment.
 
 ## Related Use Cases
 

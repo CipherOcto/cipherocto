@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 2.2 (2026-08-19)
+**Version:** 2.3 (2026-08-19)
 **Status:** Accepted
 
 > **Note:** This RFC was originally numbered RFC-0105 under the legacy numbering system. It remains at 0105 as it belongs to the Numeric/Math category.
@@ -284,7 +284,7 @@ Where:
 The mantissa is computed as: drop the decimal point, prepend a `-` if
 the literal began with `-`, interpret the result as a base-10 integer.
 This integer MUST fit in `i64` (range `[-2^63, 2^63 - 1]`); literals
-outside this range raise `DqaError::MantissaOverflow`.
+outside this range raise `DqaError::Overflow`.
 
 Examples:
 
@@ -300,8 +300,11 @@ DQA(3) '1.5'            -- Dqa { value:   1500, scale: 3 } (padded with zeros)
 
 | Expression                           | Result                                                           |
 | ------------------------------------ | ---------------------------------------------------------------- |
+| `CAST(BIGINT '42' AS DQA(0))`        | `DQA { value: 42, scale: 0 }` (BIGINT always scale=0)            |
 | `CAST(DQA '12345' AS BIGINT)`        | `BIGINT 12345` (raw mantissa; requires `scale == 0`)             |
-| `CAST(DQA '1.5' AS BIGINT)`          | Error: `DqaError::ConversionLoss` (scale > 0, loss of `0.5`)     |
+| `CAST(DQA '1.5' AS BIGINT)`          | Error: `DqaError::Overflow` (scale > 0, loss of `0.5`)           |
+| `CAST(DQA(6) '1.234567' AS BIGINT)`  | Error: `DqaError::Overflow` (non-zero scale → truncation loss)   |
+| `CAST(DQA '1.5' AS DECIMAL)`         | `DECIMAL '1.5'` (scale=1 → DECIMAL scale=1)                      |
 | `CAST(DQA(6) '1.234567' AS DECIMAL)` | `DECIMAL '1.234567'` (scale=6 → DECIMAL scale=6)                 |
 | `CAST(DQA '12345' AS DQA(6))`        | `DQA { value: 12345000000, scale: 6 }` (scale-up pads mantissa)  |
 | `CAST(DQA(6) '1.234567' AS DQA(0))`  | `DQA { value: 1, scale: 0 }` (RoundHalfEven rounding to scale=0) |
@@ -1437,6 +1440,7 @@ DQA integration MUST include:
 
 **Submission Date:** 2025-03-06
 **Last Updated:** 2026-04-01
+**Revision:** v2.3 - R1 adversarial review fixes (mission `0105-dqa-literal-syntax`): (a) `DqaError::MantissaOverflow` → `DqaError::Overflow` (phantom variant; existing enum variant covers literal mantissa overflow); (b) `DqaError::ConversionLoss` → `DqaError::Overflow` (phantom variant; same reason); (c) CAST interaction table expanded with 3 missing rows: `CAST(BIGINT AS DQA(0))`, `CAST(DQA '1.5' AS DECIMAL)`, `CAST(DQA(6) AS BIGINT)` (truncation error case).
 **Revision:** v2.2 - Formalize §DQA Typed Literal Syntax (`DQA '...'` / `DQA(n) '...'`) — establishes the canonical SQL ingress grammar for DQA literals; CAST interaction table with BIGINT/DECIMAL/DQA targets; mantissa overflow range `i64`. Spec-only; parser implementation lands in fork per mission `0105-dqa-literal-syntax` AC-2/AC-3.
 **Revision:** v2.14 - Architecture amendment: unified runtime dispatch, cross-type comparison, single casting truth, validation on extraction, persistence validation, display/string representation, verification requirements
 **Revision:** v2.1 - Canonicalize role-token literal form: `OCTO_W` / `OCTO_A` → `OCTO-W` / `OCTO-A` (hyphen form, per §Asset ID Derivation enumeration). Affects 8 fixture/crate sites; TV-D9 + TV-V1-01..10 hex constants regenerated (BLAKE3 input string change). No spec text change — `asset_id_for` derivation rule unchanged. Mission `0105-v2`.

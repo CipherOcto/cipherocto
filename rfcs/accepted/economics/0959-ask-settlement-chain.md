@@ -360,7 +360,7 @@ Hash inputs (5 fields + version tag):
 The v2.0 `SettlementEnvelope` carries two new optional fields:
 
 - `cost_vault_id: Option<[u8; 32]>` — the vault row that the settlement draws against. `None` for pre-v2.0 envelopes (legacy v1.0 settlement_events rows); `Some(vault_id)` for v2.0 envelopes.
-- `chain_id: Option<[u8; 32]>` — the chain scope of the settlement, encoded as `BLAKE3("cipherocto/chain/v1/" || chain_string)` per RFC-0010 v1.6 §ChainId 32-byte addendum. `None` for pre-v2.0 envelopes; `Some(chain_id)` for v2.0 envelopes.
+- `chain_id: Option<[u8; 32]>` — the chain scope of the settlement, encoded as `BLAKE3("cipherocto/chain/v1/" || chain_string)` per RFC-0010 §ChainId 32-byte addendum. `None` for pre-v2.0 envelopes; `Some(chain_id)` for v2.0 envelopes.
 
 **Verification flow (3-step algorithm):**
 

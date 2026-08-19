@@ -43,7 +43,7 @@ Extend RFC-0862 §Roles (writer/reader split) with:
 
 ## Breaking Changes
 
-1. **`DidDocument` uses RFC-0010 v1.3 substrate + v1.5 amendment (rich 7-field shape + `VerificationMethod` enum)**.
+1. **`DidDocument` uses RFC-0010 substrate + v1.5 amendment (rich 7-field shape + `VerificationMethod` enum)**.
 2. **Three-way `MissionId` type collision** → renamed
    `ShardMissionId`.
 3. **`NodeId` struct vs alias collision** → renamed
@@ -51,7 +51,7 @@ Extend RFC-0862 §Roles (writer/reader split) with:
 4. **`octo-protocol` does NOT depend on `octo-ident`** (canonical-
    hash bytes only).
 5. **`BootstrapOrchestrator` naming conflict** → renamed concrete
-   to `BootstrapOrchestratorImpl`. Gated on **RFC-0863 v1.9
+   to `BootstrapOrchestratorImpl`. Gated on **RFC-0863
    amendment** (PENDING).
 6. **Path correction (per R13 L10):** all leaf-workspace paths
    in §Roles + §Specification corrected to use prefix
@@ -111,8 +111,8 @@ Two missions BLOCKED: `0871e-phase5c-1-cross-instance-drain` +
 **Requires:**
 
 - RFC-0855p-c §Platform-Mediated Handover
-- **RFC-0010 v1.4 + v1.5 amendments** (both FILED 2026-08-11; v1.4 = typed `ChainId`, v1.5 = rich `DidDocument` + `VerificationMethod`)
-- **RFC-0863 v1.9 amendment** (PENDING)
+- **RFC-0010 + v1.5 amendments** (both FILED 2026-08-11; v1.4 = typed `ChainId`, v1.5 = rich `DidDocument` + `VerificationMethod`)
+- **RFC-0863 amendment** (PENDING)
 - **RFC-0862 v1.2.1 patch** (per R11 H5 — v1.2 nodes MUST patch
   to v1.2.1+ before v1.3 rollout)
 - RFC-0851p-a §Bootstrap Envelope Types
@@ -511,7 +511,7 @@ Per R11 H5 + R12 C1 rollout ordering:
   Phase 4: Decommission v1.2 nodes
 ```
 
-**`DidDocument` (per RFC-0010 v1.3 substrate + v1.5 amendment: v1.3
+**`DidDocument` (per RFC-0010 substrate + v1.5 amendment: v1.3
 storage extension INTRODUCED the 2-field struct (`public_key`,
 `revoked`) + `DidRegistry` trait + `InMemoryDidRegistry` impl;
 v1.5 EXTENDED to the rich 7-field shape + `VerificationMethod`
@@ -934,11 +934,11 @@ CREATE INDEX IF NOT EXISTS spend_ledger_updated_at_idx
     ON spend_ledger (updated_at_unix_ms);
 ```
 
-**Dqa storage form (RFC-0862 v2.0 + RFC-0105 v1.9 DqaEncoding
+**Dqa storage form (RFC-0862 v2.0 + RFC-0105 DqaEncoding
 cross-ref):** `balance` column stores `i64` (stoolap `INTEGER`
 maps to `i64`). The `i64` carries `Dqa::value` at `scale = 0` — no
 transformation. The 16-byte BE `DqaEncoding` struct defined in
-RFC-0105 v1.9 (`DqaEncoding::from_dqa` impl in
+RFC-0105 (`DqaEncoding::from_dqa` impl in
 `determin/src/dqa.rs`) is the canonical serialization form for
 on-wire payloads (used by `octo-protocol` envelopes), NOT the
 SQLite storage form. The `dqa_to_i64` helper is the doc anchor
@@ -960,7 +960,7 @@ vault rows that are missing, frozen, or chain-mismatched.
 
 **Domain-separator hygiene (RFC-0862 v2.0.5 + mission 0862-c5):** all
 spend-ledger-adjacent hash derivations use the `cipherocto/<name>/v1/`
-namespace prefix per RFC-0105 v1.9 DqaEncoding-prefix cross-reference
+namespace prefix per RFC-0105 DqaEncoding-prefix cross-reference
 pattern. The `Reservation::mint` derivation in
 `crates/quota-router-sm-engine/src/lib.rs` (RFC-0126) was renamed
 from the unnamespaced `b"reservation/v1"` to
@@ -1341,7 +1341,7 @@ pub struct WalEntry {
     pub checksum: [u8; 32],     // blake3 over prefix_bytes || payload
 }
 
-// VerificationMethod (per RFC-0010 v1.5 amendment).
+// VerificationMethod (per RFC-0010 amendment).
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
 pub enum VerificationMethod {
     Ed25519 { public_key: [u8; 32] },
@@ -1372,10 +1372,10 @@ V1.3 acceptance GATED on:
 
 1-5. (REMOVED per R7 M7 — F12/F13 acceptance moved to v1.4) 6. `MissionId` consolidation COMPLETED (gating direction per R12
 H17 — v1.3 is BLOCKED on consolidation; consolidation is NOT
-BLOCKED on v1.3 as §Future Work previously implied). 7. `NodeId` consolidation COMPLETED (same direction as AC#6). 8. **RFC-0010 v1.4 + v1.5 amendments FILED** (v1.4 = typed
+BLOCKED on v1.3 as §Future Work previously implied). 7. `NodeId` consolidation COMPLETED (same direction as AC#6). 8. **RFC-0010 + v1.5 amendments FILED** (v1.4 = typed
 `ChainId`; v1.5 = rich `DidDocument` + `VerificationMethod` —
 both amendments shipped substrate required by §Specification §DidDocument
-field shape referenced inline). 9. **RFC-0863 v1.9 amendment FILED**. 10. `force_relinquish_writer` lands via sealed trait pattern (per
+field shape referenced inline). 9. **RFC-0863 amendment FILED**. 10. `force_relinquish_writer` lands via sealed trait pattern (per
 R12 H11 — `WriterElectionForceRelinquishSealed` supertrait) +
 M-of-N operator-set check + nonce-freshness check + **durable
 nonce storage** (per R11 H1) + **deployment binding via
@@ -2082,7 +2082,7 @@ cargo doc --workspace --no-deps --manifest-path octo-transport/Cargo.toml
 - RFC-0855p-c §Platform-Mediated Handover
 - RFC-0855p-b §CoordinatorLifecycle
 - RFC-0863 §BootstrapOrchestrator (impl, renamed to
-  `BootstrapOrchestratorImpl` per RFC-0863 v1.9 amendment)
+  `BootstrapOrchestratorImpl` per RFC-0863 amendment)
 - RFC-0851p-a §Bootstrap Envelope Types
 - RFC-0853 §Sovereign Identity Model
 - RFC-0862 §WAL Format

@@ -403,7 +403,7 @@ need chain-namespace semantics:
    `partner-mainnet` alongside the public `cipherocto-mainnet`).
 2. **Canonical serialization** makes the chain namespace
    wire-stable for inclusion in `GovernanceAttestation` payloads
-   (per RFC-0862 v1.3 `chain_id: ChainId` field) and RPC audit logs.
+   (per RFC-0862 `chain_id: ChainId` field) and RPC audit logs.
 3. **Validation at the type boundary** rejects malformed namespaces
    (empty string, control characters, length overflow) at construction
    time so downstream coordinator substrate can trust the invariant.
@@ -666,7 +666,7 @@ pub const CIPHEROCTO_MAINNET_TAG: [u8; 15] = [
 
 `octo_ident::DidDocument` ships in v1.3 with the minimum surface
 needed by `IdentityResolverNode` — a 32-byte storage-pubkey form
-plus a revocation flag. RFC-0862 v1.3 §Roles and Authorities already
+plus a revocation flag. RFC-0862 §Roles and Authorities already
 references the extended shape (`chain_depth` / `chain_parent` /
 `verification_method` / `authentication` / `assertion_method`)
 for cross-instance DID write coordination substrate, but the
@@ -797,7 +797,7 @@ impl DidDocument {
     longer compiles in v1.5 (caller MUST use either
     `DidDocument::v1_minimal` or explicit-all-7 constructor). Test
     catches drift if the v1.5 fields become optional later.
-12. RFC-0862 v1.3 §Specification rich-Document shape byte-exact with
+12. RFC-0862 §Specification rich-Document shape byte-exact with
     the v1.5 reference (consistency guard between RFC layers).
 
 #### Out of scope for v1.5 (deferred)
@@ -835,9 +835,9 @@ impl DidDocument {
   resolver flows when follow-on missions gain consumers
   (capability issuer verify, DID rotation migration).
 - **Cross-impl:** `DidDocument` borsh serialization is feature-gated
-  (per RFC-0862 v1.3 R10 H11) — reference impl builds with
+  (per RFC-0862 R10 H11) — reference impl builds with
   `cargo test --features borsh`. Field order is canonical (matches
-  RFC-0862 v1.3 §Specification §Substrate types §DidDocument) so
+  RFC-0862 §Specification §Substrate types §DidDocument) so
   cross-impl hashes are byte-exact.
 
 #### Compatibility

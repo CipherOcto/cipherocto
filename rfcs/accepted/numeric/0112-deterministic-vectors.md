@@ -77,7 +77,7 @@
 > - ISSUE-2.4: NORMALIZE operation added to Python reference implementation
 > - ISSUE-2.5: New Merkle root: `f2255b50e4b887cd97377a39ebf55b761b949d668d640c8424fa6dbb94402238`
 > - ISSUE-2.6: Entry 3 comment clarified (raw → canonical explanation)
-> - ISSUE-2.7: TRAP sentinel reference added (RFC-0111 v1.20)
+> - ISSUE-2.7: TRAP sentinel reference added (RFC-0111)
 > - ISSUE-2.8: DQA zero-extension rationale documented
 
 ## Summary
@@ -272,10 +272,10 @@ fn norm<T: NumericScalar + MaxScale>(a: &[T]) -> Result<T, Error>
 
 Preconditions:
   - For Dqa: TRAP (UNSUPPORTED_OPERATION - DQA lacks SQRT per RFC-0105)
-  - For Decimal: a[0].scale <= 9 (required for SQRT per RFC-0111 v1.20)
+  - For Decimal: a[0].scale <= 9 (required for SQRT per RFC-0111)
     - **Derivation:** input_scale <= 9 is a design constraint:
       1. dot(a,a) has scale = 2 × input_scale
-      2. RFC-0111 v1.20 §SQRT algorithm produces result at scale P = min(36, dot_scale + 6)
+      2. RFC-0111 §SQRT algorithm produces result at scale P = min(36, dot_scale + 6)
       3. For input_scale = 9: dot_scale = 18, P = 24 (fits in DECIMAL)
       4. For input_scale > 9: result scale grows beyond 24, increasing precision requirements
       5. The limit aligns NORM output precision with practical embedding use cases
@@ -283,7 +283,7 @@ Preconditions:
 Algorithm:
   1. If T is Dqa: TRAP(UNSUPPORTED_OPERATION)
   2. dot = dot_product(a, a)?
-  3. result = sqrt_rfc0111(dot)  // Per RFC-0111 v1.20: P = min(36, scale+6), scale_factor = 2*P - scale
+  3. result = sqrt_rfc0111(dot)  // Per RFC-0111: P = min(36, scale+6), scale_factor = 2*P - scale
   4. Return result.canonicalize()
 
 ⚠️ **Zero Vector**: If all elements are zero, return zero (not an error).
@@ -447,7 +447,7 @@ TRAP = { mantissa: 0x8000000000000000 (i64 min), scale: 0xFF }
 
 This sentinel is encoded using the same 24-byte format as normal values, with mantissa set to the minimum i64 value (signifying error) and scale set to 0xFF (255) as the error indicator.
 
-> **Reference:** See RFC-0111 v1.20 Section 13.3 (Verification Probe) for the canonical definition.
+> **Reference:** See RFC-0111 Section 13.3 (Verification Probe) for the canonical definition.
 
 ### Merkle Tree Structure (57 Entries)
 

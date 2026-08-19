@@ -221,7 +221,7 @@ pub struct DMat<T: NumericScalar> {
 
 > **Note:** This RFC uses `NumericScalar` trait for generic element operations, enabling composition with DVEC (RFC-0112). The trait approach replaces the earlier enum-based `Numeric` type for better composability across the Deterministic Numeric Tower.
 >
-> **Trait Evolution (HIGH-NEW-1):** This RFC **supersedes** the `NumericScalar` trait definition in RFC-0112 v1.12 by adding `const MAX_MANTISSA: i128` and `fn new(mantissa: i128, scale: u8) -> Self`.
+> **Trait Evolution (HIGH-NEW-1):** This RFC **supersedes** the `NumericScalar` trait definition in RFC-0112 by adding `const MAX_MANTISSA: i128` and `fn new(mantissa: i128, scale: u8) -> Self`.
 > **Normative requirement:** Any type implementing `NumericScalar` that is intended to be used inside `DMat<T>` (via MAT_MUL, MAT_VEC_MUL, MAT_SCALE, etc.) **MUST** implement the RFC-0113 version of the trait with `MAX_MANTISSA` and `new(...)`. Implementations that only target pure DVEC usage MAY continue using the RFC-0112 trait definition until they adopt matrix operations.
 >
 > **Trait Version Enforcement (CRITICAL):** The `NumericScalar` trait defined in this RFC is the **canonical and exclusive** trait definition for all consensus-critical numeric operations involving DMAT.
@@ -1039,7 +1039,7 @@ TRAP = { mantissa: -(1 << 63), scale: 0xFF }  # i64::MIN as signed integer
 
 ```
 
-Per RFC-0111 v1.20 §Verification Probe (TRAP Sentinel Definition).
+Per RFC-0111 §Verification Probe (TRAP Sentinel Definition).
 Encoding: 24-byte canonical format per RFC-0111 §Canonical Byte Format.
 
 ## Implementation Checklist

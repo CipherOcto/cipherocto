@@ -351,6 +351,13 @@ pub struct ProviderStake {
     /// `(chain_id, provider_id)`. Production paths use
     /// `DEFAULT_CHAIN_ID`; multi-chain slashing activates after this
     /// field is plumbed through callers (separate RFC owed).
+    ///
+    /// Mission 0900-d2: `#[serde(default)]` keeps backward-compat
+    /// deserialization for pre-`0900-d1` payloads that lack this
+    /// field. Default = `[0_u8; 32]` (`<[u8; 32] as Default>::default()`)
+    /// which matches the production `DEFAULT_CHAIN_ID` sentinel used
+    /// at all 5 construction sites + 2 key sites in this file.
+    #[serde(default)]
     pub chain_id: [u8; 32],
     pub provider_id: String,
     /// Current stake remaining (micro-OCTO-W).

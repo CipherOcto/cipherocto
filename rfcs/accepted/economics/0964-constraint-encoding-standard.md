@@ -608,6 +608,10 @@ This keeps interactive envelopes under the 5ms response budget (RFC-0962 §6) wh
 
 Verifier-side enforcement: at parse time, count `len(capability.constraints)`. Reject with `E_CONSTRAINT_OVERFLOW` if >256.
 
+## Cross-reference (RFC-0960 chain-aware bump, 2026-08-17)
+
+RFC-0960 v3.0 amended §2.1 root-vault example (removed; replaced with §20.3 lattice note) + added §Vault Substrate subsection. Constraint encoding (§6 EIP-712 typed-data hash, §7/§8 worked examples) is unaffected — constraint types (`RateLimit`, `Budget`, etc.) operate on canonical values that already include `asset_id` (per RFC-0105 v2.0 §Asset ID Derivation); the new `(chain_id, ...)` substrate PK does not introduce new constraint variants. §11 Constraint count budget unchanged.
+
 ## Out of Scope
 
 - **Constraint verification algorithms.** This RFC defines encoding only. Verifier lives in the constraint pipeline (separate crate).

@@ -625,6 +625,10 @@ The validator recomputes `envelope_final_id = BLAKE3(0xA3 || canonical_ser(envel
 - `E_WAL_SEGMENT_MISSING` — `wal_segment_hash_final` not found in WAL chain at validator's height.
 - `E_WAL_OUT_OF_ORDER` — referenced segment is not yet committed (validator height < segment height).
 
+## Cross-reference (RFC-0960 chain-aware bump, 2026-08-17)
+
+RFC-0960 v3.0 amended §2.1 root-vault example (removed; replaced with §20.3 lattice note) + added §Vault Substrate subsection. ExecutionEnvelope signature aggregation + ZK commitment + reconciliation semantics (§6) are unaffected — chain_id is now part of the vault_id composite PK + transfer_event PK (`(chain_id, event_id)`), but the envelope hashes the underlying operation set rather than the substrate row, so the §6 envelope semantics remain identical. No change to mode, version_tag, or signature aggregation required.
+
 ## Out of Scope
 
 - **Session recovery.** If a capability holder's node crashes mid-session, the session is abandoned. Application layer handles retry.

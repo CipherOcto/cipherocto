@@ -533,6 +533,10 @@ N1 evaluates: T1 > T0 + D → E_DISPUTE_WINDOW_EXPIRED → reject.
 
 The producer publishes `(T0, D)` in the settlement receipt metadata (RFC-0959). Offline nodes can compute remaining window from receipt + current clock, even before sync delivers dispute events.
 
+## Cross-reference (RFC-0960 chain-aware bump, 2026-08-17)
+
+RFC-0960 v3.0 amended §2.1 root-vault example (removed; replaced with §20.3 lattice note) + added §Vault Substrate subsection. Caveat encoding (§6 envelope shape, §7/§8 worked examples) is unaffected — `WrappedOnly` (the cross-asset-policy-attachment mechanism per RFC-0960 v2.1-Resolved) is now the sole path for hierarchical capability composition; vault hierarchy is explicitly REMOVED. §10 AuditWindow semantics unchanged. Per-extension crate layout (§1.4 amendment) unchanged.
+
 ## Out of Scope
 
 - **Caveat verification algorithms.** This RFC defines encoding only. Verifier lives in the constraint pipeline + macaroon verifier.

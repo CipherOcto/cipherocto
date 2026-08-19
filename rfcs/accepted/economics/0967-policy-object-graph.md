@@ -309,6 +309,10 @@ There is no forced migration. The `PolicyObject` is an additive optimization for
 
 **DAG check:** `0967 ← {0960, 0957, 0964, 0965, 0126, 0102, 0009}` — acyclic. No back-edges. RFC-0960, RFC-0964, RFC-0965 promoted to Accepted on 2026-07-23; their hard-blocks resolved. RFC-0009 remains Draft; not a hard-block for current RFC-0967 promotion (RFC-0009 reach Accepted is a separate workstream; this RFC is self-contained for the policy artifact shape, attenuation rules, and DAG consistency).
 
+## 14.1 Cross-reference (RFC-0960 chain-aware bump, 2026-08-17)
+
+RFC-0960 v3.0 amended §2.1 root-vault example (removed; replaced with §20.3 lattice note) + added §Vault Substrate subsection. `PolicyObject` lineage (§5) + subgraph relation + cross-lineage intersection (§8.2) are unaffected — `policy_id` references operate on canonical policy bytes (the policy is opaque to the substrate); the new `(chain_id, ...)` vault PK does not introduce new policy variants. §15.1 Resolved Decisions unchanged. Audit action WAL event shape unchanged.
+
 ## 15. Open questions
 
 - **Q1**: Should `PolicyObject` support delegation (one policy references another as a sub-policy)? Deferred to v2.

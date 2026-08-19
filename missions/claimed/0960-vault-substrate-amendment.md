@@ -2,13 +2,36 @@
 
 ## Status
 
-**OPEN 2026-08-17 (@mmacedoeu).** Filed per audit verdict 2026-08-17
+**LANDED 2026-08-18 (@mmacedoeu).** Filed per audit verdict 2026-08-17
 (storage restructure hard-recommendation: S6f RFC-0960 amendment +
 108 TV per pending task #458). Closes parallel-model risk surfaced by
-audit: RFC-0960 v2.1-Resolved §2.1 contains a hierarchical root-vault
+audit: RFC-0960 v2.1-Resolved §2.1 contained a hierarchical root-vault
 example (Global → Regional → ... → Capability) that the §20.3 Model B
 chain-aware substrate explicitly REMOVES (per review §20.8 lock
 "no organizational intermediates").
+
+## What landed (2026-08-18)
+
+- **RFC-0960 v3.0 row added** to `§Version History` (chain-aware bump; PK + derivation cross-references; 108 TV matrix anchor; companion RFC §References cross-refs).
+- **§2.1 root-vault example REMOVED**: hierarchical `parent_vault: Option<VaultID>` field dropped from `Vault` struct definition; 13-line hierarchy block replaced with §20.3 lattice note pointing at §Vault Substrate + RFC-0965 `WrappedOnly` capability-decoration layer.
+- **`§Vault Substrate` subsection added (§2.6)**: canonical PK = `(chain_id, owner_did, asset_id)`; UNIQUE INDEX on `vault_id`; column-type map (`vault_id BLOB(32)`, `chain_id BLOB(32)`, `owner_did TEXT`, `asset_id BLOB(32)`, `balance DQA(12)`, `policy BLOB`, `state TEXT`, `created_at_unix BIGINT`, `metadata BLOB`); transfer events table PK = `(chain_id, event_id)`; bump compatibility note (non-additive text change + additive substrate — no migration owed); cross-RFC pin to §20.3.1 role-token enumeration (RFC-0105 v2.0) + §20.3.2 chain_id derivation (RFC-0010 v1.4 ChainNamespace) + §8.10 TV-V1 derivation (`octo_vault::vault_id` + `vault_id_unchecked`).
+- **§References updated**: added review-doc citation (§9.5 + §20.3 + §20.7 + §20.8), plan-doc citation (§3 S6 row + §24 per-RFC TV count table), RFC-0105 v2.0 + RFC-0010 v1.4 cross-refs, LANDED substrate anchors (v013 + v014 migrations + `octo_vault::vault_id` + central-registry fixture).
+- **6 companion RFCs §References cross-refs** (light touch — single bullet each, pointing at RFC-0960 v3.0 chain-aware bump): RFC-0961 (CIPHERO_SQL), RFC-0962 (ExecutionEnvelope), RFC-0963 (shard routing), RFC-0964 (constraint encoding), RFC-0965 (capability extension), RFC-0967 (PolicyObject). Each notes substrate-unaffected impact (per-companion scope).
+- **108 byte-exact TV added** at `crates/octo-vault/tests/test_vectors.rs::tv_v1_vault_id_matrix`:
+  - `VaultIdFixture` struct + `vault_id_unchecked_fixt` helper (AC-6 anti-drift guard).
+  - `MATRIX_ROLE_TOKENS` (9 canonical per RFC-0105 v2.0 §Asset ID Derivation — OCTO-A/B/D/M/N/O/S/H/W; Sovereign OCTO excluded per review §1336).
+  - `matrix_chains()` (3 chains per AC-5 — canonical-default `[0u8; 32]` sentinel, mainnet, testnet).
+  - `MATRIX_OWNER_DIDS` (4 owners per AC-5 — alice + bob user DIDs, escrow-svc + reputation-svc service DIDs).
+  - 7 new TV: `tv_v1_vault_id_matrix_is_108_fixtures`, `tv_v1_vault_id_matrix_matches_self_derivation`, `tv_v1_vault_id_matrix_covers_canonical_role_tokens`, `tv_v1_vault_id_matrix_covers_three_chains`, `tv_v1_vault_id_matrix_covers_four_owners`, `tv_v1_vault_id_matrix_all_vault_ids_distinct`, `tv_v1_vault_id_matrix_no_vault_equals_zero_sentinel`.
+  - Self-derivation anti-drift: each fixture's `vault_id` field is computed via `vault_id_unchecked_fixt` (which calls canonical `vault_id_unchecked`); test re-derives + asserts byte equality on every run.
+
+## Verify (2026-08-18)
+
+- `cargo test -p octo-vault --test test_vectors` → 15/15 green (8 prior TV + 7 new TV-V1-MATRIX).
+- `cargo test -p octo-vault --lib` → 10/10 green (substrate derivation tests byte-stable).
+- `cargo test -p octo-cap-macaroon --lib` → 193/193 green (WrappedOnly chain invariant preserved; cross-crate regression zero).
+- `cargo clippy -p octo-vault --all-targets -- -D warnings` → clean.
+- `cargo fmt --all -- --check` → clean.
 
 ## RFC
 
@@ -280,6 +303,7 @@ BIGINT`, `metadata BLOB`. `vault_id_unchecked` derivation: see
 | Date       | Author     | Change                                                                                                                                                                                                 |
 | ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 2026-08-17 | @mmacedoeu | Initial filing per audit verdict 2026-08-17 (storage restructure hard-recommendation: S6f RFC-0960 chain-aware bump + 108 TV per pending task #458). Co-filed with `c9` + `x-mission` + `S6e` + `S6d`. |
+| 2026-08-18 | @mmacedoeu | LANDED. RFC-0960 v3.0 row + §2.1 root-vault example REMOVED + §Vault Substrate subsection (§2.6) added + §References cross-refs added (review-doc §20.3/§20.7/§20.8 + plan-doc §24 + RFC-0105 v2.0 + RFC-0010 v1.4 + LANDED substrate anchors) + 6 companion RFCs §References cross-refs (0961/0962/0963/0964/0965/0967 light-touch bullets) + 108 byte-exact TV at `crates/octo-vault/tests/test_vectors.rs::tv_v1_vault_id_matrix` (9 role-token × 3 chain × 4 owner = 108 per §24 central registry; `VaultIdFixture` struct + `vault_id_unchecked_fixt` anti-drift helper + 7 new TV). Mission file moved `open/` → `claimed/`. 15/15 octo-vault test_vectors green + 10/10 octo-vault lib green + 193/193 octo-cap-macaroon lib green + clippy + fmt clean. |
 
 ## Out of scope
 

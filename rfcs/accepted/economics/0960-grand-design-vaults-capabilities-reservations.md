@@ -29,6 +29,7 @@ Accepted v2.0
 | v2.0 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** WAL is now the primary protocol primitive (§1.1). ConsensusSession renamed to ExecutionEnvelope (companion RFC-0962). `Consensus-Safe SQL` renamed to `Deterministic SQL` (companion RFC-0961). Capability → `policy_id` reference pattern added (RFC-0967). Five new database-ergonomic primitive sections added: §14 Time Travel, §15 Materialized Views, §16 Event Store/CQRS, §17 Git-style branches/merge, §18 Deterministic Cost Model. Strategic positioning rewritten (§11 + §1.4): "Run your existing enterprise application unchanged while replacing the trust model underneath it." |
 | v2.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Six companion RFCs (0961/0962/0963/0964/0965/0967) promoted in lockstep on the same promotion date. Accepted status reflects that the architectural reframe (WAL primary + ExecutionEnvelope + Deterministic SQL + Policy Object + 5 new DB primitives) is internally consistent across all seven RFCs. |
 | v2.1-Resolved | 2026-07-23 | @cipherocto + @mmacedoeu | **Risk-closure round (R28+).** Last Open Question resolved: hierarchical vault policy lattice → already covered by RFC-0957 attenuation chain (`parent_capability` references) + RFC-0965 `WrappedOnly` caveat. RFC-0957 §Attenuation specifies monotonic narrowing via parent chain; no new primitive required. Companion RFCs (0961/0962/0963/0964/0965/0967) bumped in lockstep with concrete resolutions (session-size caps, WAL two-phase hash, MultiEnvelope audit/offline semantics, `RequireProof`, 256-constraint cap, MaxUses failsafe, PolicyObject subgraph relation). Additive (non-breaking) bump. |
+| v3.0 | 2026-08-17 | @mmacedoeu | **Chain-aware bump.** §2.1 root-vault example REMOVED per review §20.8 lock (no organizational intermediates). §Vault Substrate subsection added: PK = `(chain_id, owner_did, asset_id)` per §20.3 Model B lattice; `vault_id = BLAKE3("cipherocto/vault/v1/" + chain_id + owner_did + asset_id)` per §8.10 TV-V1 canonical anchor. §2.5 `transfer_events` chain-aware shape: PK = `(chain_id, event_id)`. LANDED substrate: `crates/octo-vault/migrations/v013__create_vaults.sql` + `v014__create_transfer_events.sql`. 108 byte-exact TV (9 role-token × 3 chain × 4 owner matrix per §8.10 + §24) added at `crates/octo-vault/tests/test_vectors.rs::tv_v1_vault_id_matrix`. Companion RFCs (0961/0962/0963/0964/0965/0967) §References cross-refs updated. Non-additive for §2.1 text removal; additive for substrate (PK shape + UNIQUE INDEX + DQA column type already landed in v013/v014). |
 
 ## R1 Self-Review (multi-round adversarial)
 
@@ -708,8 +709,7 @@ Vault {
     owner_did:       DID,
     token:           AssetID,
     policy:          VaultPolicy,
-    current_state:   VaultState ∈ {Active | Frozen | Retired},
-    parent_vault:    Option<VaultID>,
+    current_state:   VaultState ∈ {Active | Frozen},
     created_at:      Timestamp,
     metadata:        Metadata,
 }
@@ -730,21 +730,7 @@ Semantic vault types (each is a `Vault` with a typed `policy`):
 | Compliance Vault | Compliance-gated funds |
 | Regional Vault | Geographic partitioning |
 
-Hierarchical vaults form a capability-security lattice (grand design §11):
-
-```text
-Global Treasury
-  └─ Regional Treasury (Americas)
-       └─ Marketplace Vault (US-East)
-            └─ Provider Vault (OpenAI shadow)
-                 └─ Mission Vault (gpt-4-eu-prod)
-                      └─ Task Vault (batch-2026-07-22)
-                           └─ Capability (Claude, 50 OCTO-W, daily)
-                                └─ Reservation (req-12345)
-                                     └─ Settlement (proof-abc)
-```
-
-Each child vault inherits parent policy; child cannot violate parent constraints.
+> **Note (per §20.3 lattice, no organizational intermediates):** The earlier hierarchical example (Global → Regional → Marketplace → Provider → Mission → Task → Capability → Reservation) is REMOVED from this RFC. Vault layer is a flat lattice of `(chain_id, owner_did, asset_id)` leaf rows per §20.3 Model B; cross-asset policies attach via RFC-0965 capability decoration (`WrappedOnly` + parent-capability chain per RFC-0957 §Attenuation), NOT via vault hierarchy. See §Vault Substrate below.
 
 #### §2.2 Capability
 
@@ -917,6 +903,66 @@ TransferRow {           // PROJECTION — never writeable directly; only readabl
 ```
 
 Balance = `SUM(in) - SUM(out) - SUM(active escrow holds)` over `transfer_events`. Materialised as a cached projection (the existing `octo_w_balances` table). The cache is a cache — the source is the log. Direct UPDATE on the cache from non-event-log code paths is forbidden (Phase 4 §4.4 trigger).
+
+#### §2.6 Vault Substrate (v3.0 NEW — canonical PK + derivation)
+
+Per review §20.3 Model B lattice (chain-aware substrate, no organizational intermediates), the canonical substrate for vault + transfer-event storage is:
+
+**Vaults table (canonical PK + derivation):**
+
+```text
+PK = (chain_id, owner_did, asset_id)        -- composite natural key
+UNIQUE INDEX on vault_id                    -- derived lookup key
+vault_id     BLOB(32) NOT NULL              -- BLAKE3("cipherocto/vault/v1/" + chain_id + owner_did + asset_id) per §8.10 TV-V1
+chain_id     BLOB(32) NOT NULL              -- BLAKE3("cipherocto/chain/v1/" + chain_string) per §20.3.2 + RFC-0010 v1.4 ChainNamespace
+owner_did    TEXT     NOT NULL              -- DID (canonical serialization per calling domain; opaque to substrate)
+asset_id     BLOB(32) NOT NULL              -- BLAKE3("cipherocto/asset/v1/" + role_token) per §20.3.1 (canonical 9 role-token enumeration in RFC-0105 v2.0 §Asset ID Derivation)
+balance      DQA(12)  NOT NULL              -- Stoolap native DECIMAL(12,0) per §8.4.1 + §18 lock
+policy       BLOB     NOT NULL              -- canonical_ser(VaultPolicy)
+state        TEXT     NOT NULL              -- 'Active' | 'Frozen' (substrate-boundary; future variants require migration)
+created_at_unix BIGINT NOT NULL             -- UNIX seconds
+metadata     BLOB     NOT NULL              -- canonical_ser(Metadata)
+```
+
+LANDED at `crates/octo-vault/migrations/v013__create_vaults.sql`.
+
+**Transfer events table (canonical PK + chain-aware projection):**
+
+```text
+PK = (chain_id, event_id)                   -- chain-prefixed; intra-chain transfer semantics per §20.7
+UNIQUE INDEX on (settlement_ref) WHERE event_type='TransferApplied' AND settlement_ref IS NOT NULL
+event_id         BIGINT NOT NULL
+event_type       TEXT   NOT NULL            -- 'TransferApplied' | 'TransferCorrected' | 'Mint' | 'Burn'
+tx_id            BLOB(32) NOT NULL          -- groups atomic event sets
+schema_version   INT NOT NULL
+visibility       TEXT NOT NULL              -- 'Public' | 'Confidential' | 'Private'
+timestamp_unix   BIGINT NOT NULL
+attributes       BLOB NOT NULL              -- canonical_ser(Tag, key, value) triples
+corrections      BLOB NULL                  -- canonical_ser(Vec<event_id>) ascending
+signature        BLOB(32) NOT NULL
+zk_proof         BLOB NULL                  -- present iff visibility='Private'
+from_vault_id    BLOB(32) NULL              -- NULL = mint; otherwise references vaults.vault_id
+to_vault_id      BLOB(32) NULL              -- NULL = burn; otherwise references vaults.vault_id
+amount_micro     BIGINT NULL                -- i64 (post RFC-0862 v2.0 boundary guard)
+asset_id         BLOB(32) NULL
+settlement_ref   BLOB(32) NULL              -- ReceiptId if triggered by settlement
+```
+
+LANDED at `crates/octo-vault/migrations/v014__create_transfer_events.sql`.
+
+**Bump compatibility (v3.0 → v3.0.0):**
+
+- §2.1 example REMOVAL is non-additive text change; no substrate behavior change (already leaf-only per §20.8 lock + §9.5 `parent_vault_id` removal).
+- PK shape, UNIQUE INDEX, DQA column type all LANDED in v013 + v014. Spec update matches substrate.
+- No migration owed; spec-text reconciliation only.
+- 108 byte-exact TV added at `crates/octo-vault/tests/test_vectors.rs::tv_v1_vault_id_matrix` (9 role-token × 3 chain × 4 owner matrix per §24).
+
+**Cross-RFC pin:**
+
+- §20.3 lattice (review): `docs/reviews/2026-08-15-storage-layer-restructuring-analysis.md` §20.3 + §20.7 + §20.8 + §9.5.
+- §20.3.1 role-token enumeration: RFC-0105 v2.0 §Asset ID Derivation (9 canonical role-tokens).
+- §20.3.2 chain_id derivation: RFC-0010 v1.4 `ChainNamespace`.
+- §8.10 TV-V1 derivation: `crates/octo-vault/src/lib.rs::vault_id` + `vault_id_unchecked` (canonical BLAKE3 derivation).
 
 ### §3 Constraint Set
 
@@ -1681,6 +1727,8 @@ All companion RFCs' Open Questions resolved in lockstep with concrete answers; s
 - `docs/research/2026-07-22-external-capability-based-spend-systems.md` — Phase 3 (EIP-7715, EIP-4337, Starknet, Sui, MACI)
 - `docs/research/2026-07-22-event-sourced-ledger-precedents.md` — Phase 4 (Datomic, EventStoreDB, Kafka, Cosmos)
 - `docs/research/2026-07-22-enterprise-migration-playbooks.md` — Phase 5 (PostgreSQL, ShardingSphere, Hibernate)
+- `docs/reviews/2026-08-15-storage-layer-restructuring-analysis.md` — §9.5 `parent_vault_id` removal + §20.3 Model B lattice + §20.7 intra-chain transfer semantics + §20.8 no-organizational-intermediates lock (v3.0 amendment driver)
+- `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md` — §3 S6 row (Stream B.3 / v013 + v014 substrate land) + §24 per-RFC TV count table (108 vault_id fixture row)
 
 ### Internal RFCs
 
@@ -1691,6 +1739,16 @@ All companion RFCs' Open Questions resolved in lockstep with concrete answers; s
 - RFC-0102 (Numeric): Wallet Cryptography — Accepted
 - RFC-0862 (Networking): Stoolap Sync Layer — Accepted
 - RFC-0909 (Economics): Deterministic Quota Accounting — Accepted (coexistence)
+- RFC-0105 (Numeric): Deterministic Quant Arithmetic — Accepted v2.0 §Asset ID Derivation (canonical 9 role-token enumeration per §20.3.1)
+- RFC-0010 (Identity): DID Format — Accepted v1.4 `ChainNamespace` typed wire form for `chain_id BLOB(32)` per §20.3.2
+- RFC-0961 / RFC-0962 / RFC-0963 / RFC-0964 / RFC-0965 / RFC-0967 — Companion RFCs (lockstep bump to v2.1-Resolved; v3.0 §References cross-refs only — substrate scope per companion RFC)
+
+### Substrate anchors (LANDED)
+
+- `crates/octo-vault/migrations/v013__create_vaults.sql` — PK = `(chain_id, owner_did, asset_id)`, `vaults_vault_id_idx` UNIQUE INDEX, `balance DQA(12)`, no `parent_vault_id` column (§20.8 lock)
+- `crates/octo-vault/migrations/v014__create_transfer_events.sql` — PK = `(chain_id, event_id)`, `from_vault_id` + `to_vault_id` FK references, chain-prefixed transfer semantics per §20.7
+- `crates/octo-vault/src/lib.rs::vault_id` + `vault_id_unchecked` — canonical BLAKE3 derivation per §8.10 TV-V1
+- `crates/octo-vault/tests/test_vectors.rs::tv_v1_vault_id_matrix` — 108 byte-exact vault_id matrix fixture (9 role-token × 3 chain × 4 owner per §24 central registry)
 
 ### External
 

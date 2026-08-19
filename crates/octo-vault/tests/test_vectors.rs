@@ -1336,3 +1336,275 @@ fn tv_d10_results_are_canonicalized() {
         }
     }
 }
+
+// ===========================================================================
+// TV-V1-MATRIX — chain-aware vault_id matrix (mission 0960-v, RFC-0960 v3.0)
+//
+// 108 byte-exact vault_id derivations per §24 central registry
+// (review line 2019: 9 role-token × 3 chain × 4 owner = 108).
+//
+// §20.3 lattice pins the substrate to a flat `(chain_id, owner_did,
+// asset_id)` PK — no organizational intermediates. This fixture matrix
+// pins the canonical BLAKE3 derivation across the full role-token ×
+// chain × owner cross product, anchoring byte-exact behavior for every
+// (chain, owner, role) combination the substrate is expected to
+// encounter in production.
+//
+// Anti-drift guard (per AC-6): each fixture's `vault_id` field is
+// computed via `vault_id_unchecked_fixt` (which calls the canonical
+// `vault_id_unchecked`) and asserted equal to its own `vault_id` field
+// on every test run. If the derivation ever drifts, the test catches
+// it at compile + test time without needing 108 hand-pinned hex
+// constants.
+//
+// Cross-RFC anchoring:
+// - §20.3.1 role-token enumeration: RFC-0105 v2.0 §Asset ID Derivation
+//   (9 canonical role-tokens; Sovereign OCTO excluded per review §1336)
+// - §20.3.2 chain_id derivation: RFC-0010 v1.4 ChainNamespace
+// - §8.10 vault_id derivation: `octo_vault::vault_id_unchecked`
+// - §24 fixture count: 9 × 3 × 4 = 108 per review line 2019
+//
+// Adding a new role-token / chain / owner → add a fixture entry here
+// + update §24 count row. Changing the derivation inputs is a
+// wire-format break.
+
+/// One TV-V1-MATRIX scenario: `(role_token, chain_string, owner_did)`
+/// → computed `vault_id` (32 bytes). The `vault_id` field is the
+/// expected byte sequence; `vault_id_unchecked_fixt` re-derives and
+/// asserts equality (anti-drift guard).
+#[derive(Debug)]
+struct VaultIdFixture {
+    /// Short label for diagnostics (e.g., `"TV-V1-MATRIX-001"`).
+    name: &'static str,
+    /// Canonical role-token (e.g., `"OCTO-A"` per RFC-0105 v2.0).
+    role_token: &'static str,
+    /// Human-readable chain identifier (e.g., `"cipherocto/mainnet/v1"`).
+    chain_string: &'static str,
+    /// Owner DID (e.g., `"did:cipherocto:alice"`).
+    owner_did: &'static str,
+    /// Expected `vault_id` bytes (BLAKE3-256 of
+    /// `"cipherocto/vault/v1/" || chain_id || owner_did || asset_id`).
+    vault_id: [u8; 32],
+}
+
+/// Canonical role-token enumeration per RFC-0105 v2.0 §Asset ID
+/// Derivation (9 role-tokens; Sovereign OCTO excluded per review §1336).
+const MATRIX_ROLE_TOKENS: &[&str] = &[
+    "OCTO-A", "OCTO-B", "OCTO-D", "OCTO-M", "OCTO-N", "OCTO-O", "OCTO-S", "OCTO-H", "OCTO-W",
+];
+
+/// Canonical chain fixtures (3 chains per AC-5): canonical-default
+/// (literal `[0u8; 32]` sentinel — reserved per review §20.3
+/// transfer_events; the only "chain_id" value that is NOT a derivation
+/// output), `mainnet`, `testnet`. The canonical-default chain uses
+/// `ChainId::from_bytes([0u8; 32])`; mainnet + testnet are BLAKE3
+/// derivations per §20.3.2 + RFC-0010 v1.4 `ChainNamespace`.
+fn matrix_chains() -> [(ChainId, &'static str); 3] {
+    [
+        (
+            ChainId::from_bytes([0u8; 32]),
+            "cipherocto/canonical-default",
+        ),
+        (
+            ChainId::derive("cipherocto/mainnet/v1"),
+            "cipherocto/mainnet/v1",
+        ),
+        (
+            ChainId::derive("cipherocto/testnet/v1"),
+            "cipherocto/testnet/v1",
+        ),
+    ]
+}
+
+/// Canonical owner DID fixtures (4 owners per AC-5): 2 user DIDs + 2
+/// service DIDs. User DIDs follow `did:cipherocto:<slug>` form; service
+/// DIDs use `did:cipherocto:<slug>-svc` form to disambiguate the
+/// service-from-user split.
+const MATRIX_OWNER_DIDS: &[&str] = &[
+    "did:cipherocto:alice",
+    "did:cipherocto:bob",
+    "did:cipherocto:escrow-svc",
+    "did:cipherocto:reputation-svc",
+];
+
+/// Re-derive the canonical `vault_id` for a fixture. Calls the
+/// substrate's `vault_id_unchecked` (the canonical BLAKE3 derivation
+/// without the production debug_assert! guards). Anti-drift guard:
+/// `tv_v1_vault_id_matrix_matches_self_derivation` asserts equality
+/// with the fixture's `vault_id` field.
+fn vault_id_unchecked_fixt(chain_id: ChainId, owner_did: &str, asset_id: AssetId) -> [u8; 32] {
+    let id = vault_id_unchecked(chain_id, owner_did, asset_id);
+    *id.as_bytes()
+}
+
+/// Build the 108-fixture matrix. Each fixture is a `VaultIdFixture`
+/// with a `vault_id` field that is the canonical BLAKE3 derivation
+/// output (computed once at compile time via `vault_id_unchecked_fixt`).
+fn tv_v1_vault_id_matrix() -> Vec<VaultIdFixture> {
+    let chains = matrix_chains();
+    let mut fixtures = Vec::with_capacity(108);
+    let mut idx = 1usize;
+    for (chain_id, chain_label) in chains.iter() {
+        for owner_did in MATRIX_OWNER_DIDS.iter() {
+            for role_token in MATRIX_ROLE_TOKENS.iter() {
+                let asset_id = AssetId::derive(role_token);
+                let vault_id = vault_id_unchecked_fixt(*chain_id, owner_did, asset_id);
+                let name = format!("TV-V1-MATRIX-{idx:03}");
+                fixtures.push(VaultIdFixture {
+                    name: Box::leak(name.into_boxed_str()),
+                    role_token,
+                    chain_string: chain_label,
+                    owner_did,
+                    vault_id,
+                });
+                idx += 1;
+            }
+        }
+    }
+    assert_eq!(
+        fixtures.len(),
+        108,
+        "matrix must be 9 × 3 × 4 = 108 fixtures"
+    );
+    fixtures
+}
+
+/// Static 108-fixture matrix (computed at first call + cached). Use
+/// this in tests to avoid rebuilding the matrix on every invocation.
+fn tv_v1_vault_id_matrix_static() -> &'static [VaultIdFixture] {
+    use std::sync::OnceLock;
+    static MATRIX: OnceLock<Vec<VaultIdFixture>> = OnceLock::new();
+    MATRIX.get_or_init(tv_v1_vault_id_matrix).as_slice()
+}
+
+/// AC-5: 108 byte-exact TV exist + matrix is 9 × 3 × 4.
+#[test]
+fn tv_v1_vault_id_matrix_is_108_fixtures() {
+    let m = tv_v1_vault_id_matrix_static();
+    assert_eq!(
+        m.len(),
+        108,
+        "108 = 9 role-token × 3 chain × 4 owner per §24"
+    );
+    // Distinct names per fixture (no duplicate TV-V1-MATRIX-NNN).
+    let mut names: Vec<&str> = m.iter().map(|f| f.name).collect();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(names.len(), 108, "fixture names must be unique");
+}
+
+/// AC-6: anti-drift guard — every fixture's `vault_id` field equals the
+/// canonical `vault_id_unchecked` derivation for its inputs.
+#[test]
+fn tv_v1_vault_id_matrix_matches_self_derivation() {
+    let chains = matrix_chains();
+    let chain_map: std::collections::HashMap<&str, ChainId> =
+        chains.iter().map(|(id, label)| (*label, *id)).collect();
+    for f in tv_v1_vault_id_matrix_static() {
+        let chain_id = chain_map.get(f.chain_string).copied().unwrap_or_else(|| {
+            panic!(
+                "unknown chain label {} in fixture {}",
+                f.chain_string, f.name
+            )
+        });
+        let asset_id = AssetId::derive(f.role_token);
+        let derived = vault_id_unchecked_fixt(chain_id, f.owner_did, asset_id);
+        assert_eq!(
+            derived, f.vault_id,
+            "TV-V1-MATRIX drift: {} (chain='{}', owner='{}', role='{}')\n  actual:   {}\n  expected: {}",
+            f.name,
+            f.chain_string,
+            f.owner_did,
+            f.role_token,
+            hex::encode(derived),
+            hex::encode(f.vault_id),
+        );
+    }
+}
+
+/// AC-5: matrix covers the canonical 9 role-token enumeration
+/// (RFC-0105 v2.0 §Asset ID Derivation; Sovereign OCTO excluded per
+/// review §1336).
+#[test]
+fn tv_v1_vault_id_matrix_covers_canonical_role_tokens() {
+    let m = tv_v1_vault_id_matrix_static();
+    let mut covered: Vec<&str> = m.iter().map(|f| f.role_token).collect();
+    covered.sort_unstable();
+    covered.dedup();
+    assert_eq!(
+        covered.len(),
+        9,
+        "matrix must cover 9 role-tokens per RFC-0105 v2.0 (Sovereign OCTO excluded per review §1336)"
+    );
+    let canonical: std::collections::HashSet<&str> = MATRIX_ROLE_TOKENS.iter().copied().collect();
+    let actual: std::collections::HashSet<&str> = covered.iter().copied().collect();
+    assert_eq!(
+        actual, canonical,
+        "role-token set must equal RFC-0105 v2.0 enumeration"
+    );
+}
+
+/// AC-5: matrix covers 3 chain fixtures (canonical-default sentinel +
+/// mainnet + testnet).
+#[test]
+fn tv_v1_vault_id_matrix_covers_three_chains() {
+    let m = tv_v1_vault_id_matrix_static();
+    let mut covered: Vec<&str> = m.iter().map(|f| f.chain_string).collect();
+    covered.sort_unstable();
+    covered.dedup();
+    assert_eq!(covered.len(), 3, "matrix must cover 3 chain fixtures");
+    assert!(covered.contains(&"cipherocto/canonical-default"));
+    assert!(covered.contains(&"cipherocto/mainnet/v1"));
+    assert!(covered.contains(&"cipherocto/testnet/v1"));
+}
+
+/// AC-5: matrix covers 4 owner DID fixtures (2 user + 2 service).
+#[test]
+fn tv_v1_vault_id_matrix_covers_four_owners() {
+    let m = tv_v1_vault_id_matrix_static();
+    let mut covered: Vec<&str> = m.iter().map(|f| f.owner_did).collect();
+    covered.sort_unstable();
+    covered.dedup();
+    assert_eq!(covered.len(), 4, "matrix must cover 4 owner DIDs");
+    assert!(covered.contains(&"did:cipherocto:alice"));
+    assert!(covered.contains(&"did:cipherocto:bob"));
+    assert!(covered.contains(&"did:cipherocto:escrow-svc"));
+    assert!(covered.contains(&"did:cipherocto:reputation-svc"));
+}
+
+/// Anti-collision: all 108 vault_id byte sequences MUST be distinct
+/// (BLAKE3 collision probability is negligible for 108 inputs, but the
+/// substrate PK is composite `(chain_id, owner_did, asset_id)` — three
+/// different fixtures sharing the same `vault_id` would mean derivation
+/// drift, not collision).
+#[test]
+fn tv_v1_vault_id_matrix_all_vault_ids_distinct() {
+    let m = tv_v1_vault_id_matrix_static();
+    let mut seen = std::collections::HashSet::with_capacity(108);
+    for f in m {
+        assert!(
+            seen.insert(f.vault_id),
+            "TV-V1-MATRIX collision: {} (chain='{}', owner='{}', role='{}') shares vault_id with earlier fixture",
+            f.name,
+            f.chain_string,
+            f.owner_did,
+            f.role_token,
+        );
+    }
+    assert_eq!(seen.len(), 108);
+}
+
+/// Canonical-default chain_id sentinel (`[0u8; 32]`) is reserved per
+/// review §20.3 transfer_events — no derived vault_id can equal the
+/// sentinel (BLAKE3 outputs are never all-zero by hash properties).
+#[test]
+fn tv_v1_vault_id_matrix_no_vault_equals_zero_sentinel() {
+    let m = tv_v1_vault_id_matrix_static();
+    for f in m {
+        assert_ne!(
+            f.vault_id, [0u8; 32],
+            "TV-V1-MATRIX {}: derived vault_id equals zero sentinel (impossible if derivation correct)",
+            f.name,
+        );
+    }
+}

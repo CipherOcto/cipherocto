@@ -628,7 +628,11 @@ All §11 Open Questions resolved inline with concrete answers (R28+ risk-closure
 
 ---
 
-## 12. Out of scope
+## 12. Cross-reference (RFC-0960 chain-aware bump, 2026-08-17)
+
+RFC-0960 v3.0 amended §2.1 root-vault example (removed; replaced with §20.3 lattice note) + added §Vault Substrate subsection (PK = `(chain_id, owner_did, asset_id)`, `vault_id = BLAKE3("cipherocto/vault/v1/" + chain_id + owner_did + asset_id)`). Deterministic SQL profile (§7) is unaffected — vault_id + transfer_event substrate sit below the dialect layer. No change to CIPHERO_SQL syntax, determinism registry, or §11 Resolved Decisions required.
+
+## 13. Out of scope
 
 - **Triggers.** Triggers are forbidden in CIPHERO_SQL because they introduce non-deterministic ordering. CipherOcto triggers, if needed, are a separate RFC.
 - **Views with non-deterministic functions.** Materialized views can only reference DETERMINISTIC procedures.
@@ -637,7 +641,7 @@ All §11 Open Questions resolved inline with concrete answers (R28+ risk-closure
 
 ---
 
-## 13. Status
+## 14. Status
 
 This RFC = CIPHERO_SQL **Deterministic SQL Dialect** companion to RFC-0960 §1 (Deterministic SQL Engine). Status: **Accepted v2.0** (strategic reframe; "Consensus-Safe SQL" → "Deterministic SQL"). Promoted from Draft on 2026-07-23 in lockstep with RFC-0960, RFC-0962, RFC-0963, RFC-0964, RFC-0965, and RFC-0967.
 

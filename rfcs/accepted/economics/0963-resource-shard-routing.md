@@ -397,6 +397,10 @@ Re-sharding triggers from §4.1 (drain+refill) and §4.2 (live migration) are bo
 4. **Bounded throughput impact.** Live migration uses ≤10% of shard throughput (§4.2). Producer nodes publish throughput estimates every 1000 events to the registry so migration budget is shared fairly across shards.
 5. **Atomic switch.** Step 3 of §4.2 (`switch reads to destination`) is a single height-bounded operation: all nodes observe the switch at the same WAL segment height. No client-visible inconsistency window.
 
+## Cross-reference (RFC-0960 chain-aware bump, 2026-08-17)
+
+RFC-0960 v3.0 amended §2.1 root-vault example (removed; replaced with §20.3 lattice note) + added §Vault Substrate subsection. Shard routing now uses `chain_id` as a top-level partition prefix (substrate PK = `(chain_id, owner_did, asset_id)` per §20.3) — shard routing algorithm (§3) is unchanged because routing already keys on `vault_id` (which now includes chain_id). No migration owed; routing already derived chain-aware. Resolved Decisions §4.3 re-sharding safety unchanged.
+
 ## Out of Scope
 
 - **State sharding vs. transaction sharding.** RFC-0963 shards state (events). Some systems shard transactions instead; we don't.

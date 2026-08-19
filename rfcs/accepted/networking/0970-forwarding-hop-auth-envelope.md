@@ -720,7 +720,7 @@ pub fn pure_forward(
     next_hop: &str,
 ) -> Result<ForwardRequestPayload, ForwardError> {
     if payload.hop_envelope.is_none() {
-        // R11-N8 fix: RFC-0870 v1.0 legacy forwarders use the `payload` field
+        // R11-N8 fix: RFC-0870 legacy forwarders use the `payload` field
         // directly without `hop_envelope`. Mixed-version mesh requires this
         // branch to preserve the legacy contract instead of rejecting.
         return pure_forward_legacy_payload(payload, next_hop);
@@ -742,7 +742,7 @@ pub fn pure_forward(
 #### `pure_forward_legacy_payload` (R17-N6 fix: defined here)
 
 ```rust
-/// Per RFC-0970 §Algorithms. RFC-0870 v1.0 backward-compat path:
+/// Per RFC-0970 §Algorithms. RFC-0870 backward-compat path:
 /// forwards the opaque `payload: Vec<u8>` field without any HopEnvelope wrapping.
 /// Increment hop_count, decrement ttl, reject ttl==0 (Round 3 R2 C19 fix).
 pub fn pure_forward_legacy_payload(

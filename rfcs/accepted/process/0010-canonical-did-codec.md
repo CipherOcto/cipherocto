@@ -416,7 +416,7 @@ on the raw-string path.
 #### Data Structures
 
 ```rust
-/// Typed chain-namespace discriminator (RFC-0010 v1.4).
+/// Typed chain-namespace discriminator (RFC-0010).
 ///
 /// `ChainId` is a literal-string handle (operational ergonomics);
 /// `Namespace` is the canonical typed representation that anchors
@@ -473,7 +473,7 @@ pub enum ChainNamespaceError {
 
 impl ChainId {
     /// Construct a `ChainId` from a literal string. Validates the
-    /// namespace shape per RFC-0010 v1.4 §Validation.
+    /// namespace shape per RFC-0010 §Validation.
     ///
     /// # Errors
     /// Returns `ChainNamespaceError` variants if the literal is
@@ -586,7 +586,7 @@ namespace ships as the only initial entry; subsequent deployments
 allocate new entries via RFC amendment.
 
 ```rust
-/// RFC-0010 v1.4 §RFC-allocated namespaces.
+/// RFC-0010 §RFC-allocated namespaces.
 ///
 /// Production CipherOcto deployments MUST use a tag from this
 /// table; user-extension chains fall in the `User` variant and
@@ -676,7 +676,7 @@ substrate) and must land here for the Layer direction to hold.
 Production deployments need:
 
 1. **`chain_depth` + `chain_parent`**: enables DID rotation flows
-   (RFC-0010 v1.3 §Compatibility) where a rotated DID links back
+   (RFC-0010 §Compatibility) where a rotated DID links back
    to its predecessor for revocation propagation.
 2. **`verification_method`**: enables W3C DID Core 1.0 §Verification
    Method relationships (Ed25519 / BLS12-381 / future PQC) for
@@ -694,7 +694,7 @@ v1.5 makes all 7 fields `pub` and adds `VerificationMethod` enum.
 #### Data Structures
 
 ```rust
-/// Rich DID Document (RFC-0010 v1.5).
+/// Rich DID Document (RFC-0010).
 ///
 /// v1.3 ships the minimum surface; v1.5 extends with chain-rotation
 /// fields + W3C DID Core 1.0 verification relationships. Lives in
@@ -727,7 +727,7 @@ pub struct DidDocument {
     pub assertion_method: Vec<String>,
 }
 
-/// Verification method relationship (RFC-0010 v1.5).
+/// Verification method relationship (RFC-0010).
 ///
 /// Same composition pattern as `CapabilitySpec` in RFC-0957-A1:
 /// typed-discriminator + payload, no central enum that future

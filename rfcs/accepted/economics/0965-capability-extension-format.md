@@ -187,7 +187,7 @@ For caveats that wrap a `Constraint` (RFC-0964), the payload is a constraint env
 
 ### 3. New caveat payload encodings
 
-**Amount-bearing payload type.** All caveat payload fields carrying an amount (e.g., `PaymentCaveat.budget`, `AmountMax`, `PerAxisMax.max_per_1k`, `PaymentCaveat.query_cost`) use the canonical alias `octo_determin::MicroOctoW` (= `Dqa` at `scale = 0`, integer micro-OCTO_W counts). The canonical alias lives in `determin/src/lib.rs` (Layer A frozen substrate per RFC-0105 §substrate); see RFC-0862 v2.0.3 §SpendLedger Substrate for the workspace-wide type-system coherence invariant. Prior local `pub type MicroOctoW = u128` aliases in `crates/octo-cap-macaroon/src/caveat/mod.rs` + `crates/octo-cap-macaroon/src/caveat/payment.rs` were removed by mission `0862-c9` (audit verdict 2026-08-17 Risk #1); construction is now `Dqa { value: <i64>, scale: 0 }` at the substrate boundary. Mission `0862-c9` TV-0862-17 + TV-0862-18 pin byte-exact round-trip.
+**Amount-bearing payload type.** All caveat payload fields carrying an amount (e.g., `PaymentCaveat.budget`, `AmountMax`, `PerAxisMax.max_per_1k`, `PaymentCaveat.query_cost`) use the canonical alias `octo_determin::MicroOctoW` (= `Dqa` at `scale = 0`, integer micro-OCTO_W counts). The canonical alias lives in `determin/src/lib.rs` (Layer A frozen substrate per RFC-0105 §substrate); see RFC-0862.3 §SpendLedger Substrate for the workspace-wide type-system coherence invariant. Prior local `pub type MicroOctoW = u128` aliases in `crates/octo-cap-macaroon/src/caveat/mod.rs` + `crates/octo-cap-macaroon/src/caveat/payment.rs` were removed by mission `0862-c9` (audit verdict 2026-08-17 Risk #1); construction is now `Dqa { value: <i64>, scale: 0 }` at the substrate boundary. Mission `0862-c9` TV-0862-17 + TV-0862-18 pin byte-exact round-trip.
 
 #### 3.1 Vault (0x10)
 
@@ -535,7 +535,7 @@ The producer publishes `(T0, D)` in the settlement receipt metadata (RFC-0959). 
 
 ## Cross-reference (RFC-0960 chain-aware bump, 2026-08-17)
 
-RFC-0960 v3.0 amended §2.1 root-vault example (removed; replaced with §20.3 lattice note) + added §Vault Substrate subsection. Caveat encoding (§6 envelope shape, §7/§8 worked examples) is unaffected — `WrappedOnly` (the cross-asset-policy-attachment mechanism per RFC-0960 v2.1-Resolved) is now the sole path for hierarchical capability composition; vault hierarchy is explicitly REMOVED. §10 AuditWindow semantics unchanged. Per-extension crate layout (§1.4 amendment) unchanged.
+RFC-0960 amended §2.1 root-vault example (removed; replaced with §20.3 lattice note) + added §Vault Substrate subsection. Caveat encoding (§6 envelope shape, §7/§8 worked examples) is unaffected — `WrappedOnly` (the cross-asset-policy-attachment mechanism per RFC-0960-Resolved) is now the sole path for hierarchical capability composition; vault hierarchy is explicitly REMOVED. §10 AuditWindow semantics unchanged. Per-extension crate layout (§1.4 amendment) unchanged.
 
 ## Out of Scope
 

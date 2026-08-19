@@ -201,7 +201,7 @@ interface SlashingRules {
 
 ### Slash Ledger Substrate
 
-RFC-0900 v2.0 (mission 0900-d, audit verdict 2026-08-17 Risk #2
+RFC-0900 (mission 0900-d, audit verdict 2026-08-17 Risk #2
 CRITICAL closure) specifies the storage + in-memory substrate
 shape that backs §Slashing Model. Per §20.3 Model B, slash ledger
 mirrors the vault substrate's chain-aware PK lattice.
@@ -213,7 +213,7 @@ mirrors the vault substrate's chain-aware PK lattice.
   partitioning). Parallel to vault v013 PK pattern `(chain_id,
   owner_did, asset_id)`.
 - **`chain_id` BLOB(32)** carries the typed `ChainId` per
-  RFC-0010 v1.4. Default namespace = 32 bytes of zero (`ChainId::default()`).
+  RFC-0010. Default namespace = 32 bytes of zero (`ChainId::default()`).
 - **Amount columns** `stake_micro_octo_w` +
   `initial_stake_micro_octo_w` are BIGINT at scale=0 via the
   `dqa_to_i64` / `i64_to_dqa` bridge. The bridge text form is
@@ -235,7 +235,7 @@ mirrors the vault substrate's chain-aware PK lattice.
 
 ```rust
 struct ProviderStake {
-    chain_id: [u8; 32],       // RFC-0010 v1.4 ChainId
+    chain_id: [u8; 32],       // RFC-0010 ChainId
     provider_id: String,
     stake_micro_octo_w: Dqa,  // canonical 16-byte BE wire form
     initial_stake_micro_octo_w: Dqa,

@@ -399,7 +399,7 @@ Re-sharding triggers from §4.1 (drain+refill) and §4.2 (live migration) are bo
 
 ## Cross-reference (RFC-0960 chain-aware bump, 2026-08-17)
 
-RFC-0960 v3.0 amended §2.1 root-vault example (removed; replaced with §20.3 lattice note) + added §Vault Substrate subsection. Shard routing now uses `chain_id` as a top-level partition prefix (substrate PK = `(chain_id, owner_did, asset_id)` per §20.3) — shard routing algorithm (§3) is unchanged because routing already keys on `vault_id` (which now includes chain_id). No migration owed; routing already derived chain-aware. Resolved Decisions §4.3 re-sharding safety unchanged.
+RFC-0960 amended §2.1 root-vault example (removed; replaced with §20.3 lattice note) + added §Vault Substrate subsection. Shard routing now uses `chain_id` as a top-level partition prefix (substrate PK = `(chain_id, owner_did, asset_id)` per §20.3) — shard routing algorithm (§3) is unchanged because routing already keys on `vault_id` (which now includes chain_id). No migration owed; routing already derived chain-aware. Resolved Decisions §4.3 re-sharding safety unchanged.
 
 ## Out of Scope
 

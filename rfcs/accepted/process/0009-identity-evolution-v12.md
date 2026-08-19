@@ -1,4 +1,4 @@
-# RFC-0009 v1.2 — Identity Evolution: Hierarchical Attenuation + MPC Threshold
+# RFC-0009 — Identity Evolution: Hierarchical Attenuation + MPC Threshold
 
 **Status:** Accepted (2026-08-11)
 
@@ -80,14 +80,14 @@ R27 L2 + R30 L3 + R31 L1)
      `Authorization::ThresholdSignature`)" but does NOT carry the
      `aggregated_pk_check` + `dkg_proof` concrete fields. The
      forward-pointer is dangling. Resolution: RFC-0871 amendment
-     (out of scope for RFC-0009 v1.2) MUST add the concrete
+     (out of scope for RFC-0009) MUST add the concrete
      fields to §Future Work OR §Specification before v1.2
      acceptance of this RFC. Until then, this RFC's cross-ref is
      ASPIRATIONAL.
    - **Per R25 H1:** softened — this is a SHOULD not a hard MUST;
-     RFC-0009 v1.2 documents the extension schema; verifier MUST
+     RFC-0009 documents the extension schema; verifier MUST
      semantics gated by AC#9 (RFC-0871 amendment FILED before
-     RFC-0009 v1.2 promotion to Accepted).
+     RFC-0009 promotion to Accepted).
 6. **`BoundedShareVec::new` enforces m == threshold.**
 7. **`HsmAdapter::get_public_key` return type change** (per R18 L8 —
    from `[u8; 32]` to `Result<[u8; 32], HsmError>`; device transport
@@ -197,7 +197,7 @@ This RFC is ready for promotion to Accepted when:
 9. **RFC-0871 amendment FILED** (per R25 H1) with concrete
     `aggregated_pk_check` + `dkg_proof` fields + verifier MUST
     semantics added to §Future Work OR §Specification, BEFORE
-    RFC-0009 v1.2 promotion to Accepted. Until then, BC#5
+    RFC-0009 promotion to Accepted. Until then, BC#5
     forward-pointer is ASPIRATIONAL (downgraded from MUST per
     R25 H1).
 10. **RFC-0871 amendment covers BC#12 `nonce_proof` field**
@@ -566,7 +566,7 @@ pub fn check_wrapped_chain(
 // `dkg_proof` fields are NOT in substrate. Concrete threshold-
 // signature semantics (BLS aggregate, key registration, DKG proof)
 // land in `crates/octo-cap-threshold-mpc/` per RFC-0871
-// §Future Work. RFC-0009 v1.2 cross-references the extension
+// §Future Work. RFC-0009 cross-references the extension
 // schema; verifier MUST semantics are ASPIRATIONAL until the
 // substrate lands.
 // Per R18 M5: ThresholdSignature variant is BLS-only; FROST
@@ -597,7 +597,7 @@ pub enum Authorization {
 **Per R12 H3:** BC#5 revised — this RFC documents the EXTENSION
 SCHEMA only. `aggregated_pk_check` + `dkg_proof` fields + verifier
 MUST semantics land in `crates/octo-cap-threshold-mpc/` per
-RFC-0871 §Future Work. RFC-0009 v1.2 does NOT commit to substrate
+RFC-0871 §Future Work. RFC-0009 does NOT commit to substrate
 fields.
 
 **`BoundedShareVec`:**
@@ -1043,7 +1043,7 @@ A4 enforced via:
 
 External acceptance artifact: `tests/fixtures/phase1_tv.json`.
 
-- **Phase 1 TV (RFC-0009 v1.2):**
+- **Phase 1 TV (RFC-0009):**
   - TV-1: `phase1_tv_json_v11_round_trip_equivalence`
   - TV-2: `phase1_tv_json_child_unlinkability`
   - TV-3: `phase1_tv_json_hsm_boundary_no_seed_exfil`

@@ -630,7 +630,7 @@ All §11 Open Questions resolved inline with concrete answers (R28+ risk-closure
 
 ## 12. Cross-reference (RFC-0960 chain-aware bump, 2026-08-17)
 
-RFC-0960 v3.0 amended §2.1 root-vault example (removed; replaced with §20.3 lattice note) + added §Vault Substrate subsection (PK = `(chain_id, owner_did, asset_id)`, `vault_id = BLAKE3("cipherocto/vault/v1/" + chain_id + owner_did + asset_id)`). Deterministic SQL profile (§7) is unaffected — vault_id + transfer_event substrate sit below the dialect layer. No change to CIPHERO_SQL syntax, determinism registry, or §11 Resolved Decisions required.
+RFC-0960 amended §2.1 root-vault example (removed; replaced with §20.3 lattice note) + added §Vault Substrate subsection (PK = `(chain_id, owner_did, asset_id)`, `vault_id = BLAKE3("cipherocto/vault/v1/" + chain_id + owner_did + asset_id)`). Deterministic SQL profile (§7) is unaffected — vault_id + transfer_event substrate sit below the dialect layer. No change to CIPHERO_SQL syntax, determinism registry, or §11 Resolved Decisions required.
 
 ## 13. Out of scope
 

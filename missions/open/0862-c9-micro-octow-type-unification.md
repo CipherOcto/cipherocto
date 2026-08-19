@@ -2,7 +2,28 @@
 
 ## Status
 
-**OPEN 2026-08-17 (@mmacedoeu).** Filed per audit verdict 2026-08-17
+**RETIRED 2026-08-19 (drift closure).** Superseded by USER MANDATE
+2026-08-17 (per memory card `mission-0862-c9-retired-kill-microoctow.md`):
+"kill every variant of the alias (`MicroOctoW`, `MicroOCTO_W`,
+`MicroOCToW`, `MicroOCTO_WNewtype`) project-wide; use
+`octo_determin::Dqa` directly." Original canonical-aliasing plan
+(ababged in favor of total alias removal. Original mission scope
+("`pub type MicroOctoW = Dqa` + remove redundant definitions")
+was **abandoned**; mandate goes further by removing the alias
+entirely (not just unifying definitions).
+
+**Implementation status:** Already LANDED via separate commits:
+- `2750caa7` + `b20c37dc` — initial alias kill (LANDED 2026-08-17)
+- `2a610c3d` — MicroOctoW removed from 27 files (mission `0862-c9 RETIRED kill MicroOctoW`)
+- `01a6d43d` + `0ff3e5a3` — borsh re-introduction (subset re-add per mission `0862-c9 borsh re-introduction`)
+
+**This mission file is drift-closed** — superseded by the mandate
+above + the actual alias-kill commits. No new ACs apply.
+
+**RFC**
+
+- Primary: RFC-0862 (`StoolapSpendLedger` substrate — type-system
+  coherence with the DQA-based spending model per §Future Work F12)
 (storage restructure hard-recommendation #1). Closes parallel-model
 risk surfaced by audit of `MicroOctoW` type-alias split: 3
 definitions, 2 distinct underlying types (`u128` vs
@@ -190,6 +211,9 @@ caveat::PaymentCaveat::new(budget)`. **Migration is
 | Date       | Author     | Change                                                                                                                                                                                        |
 | ---------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 2026-08-17 | @mmacedoeu | Initial filing per audit verdict 2026-08-17 (storage restructure hard-recommendation #1, parallel-model Risk #1 CRITICAL). Co-filed with `0105-x-s4-deferred-codemod-sites` for Risk #4 HIGH. |
+| 2026-08-17 | (mandate)  | USER MANDATE: kill every `MicroOctoW`-variant alias project-wide. Original canonical-aliasing plan abandoned. Implementation via separate commits `2750caa7` + `b20c37dc` + `2a610c3d`. |
+| 2026-08-18 | (commits)  | Borsh re-introduction subset per mission `0862-c9 borsh re-introduction` (`01a6d43d` + `0ff3e5a3`). `BorshSerialize`/`BorshDeserialize` for `Dqa` shipped (Layer A additive change). |
+| 2026-08-19 | @mmacedoeu | Drift closure — mission file superseded by mandate + landed commits. Status → RETIRED. No new ACs. |
 
 ## Out of scope
 

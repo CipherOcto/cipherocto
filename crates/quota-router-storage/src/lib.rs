@@ -33,6 +33,7 @@ pub mod marketplace;
 pub mod migrations;
 pub mod outbox;
 pub mod settlement_event_repo;
+pub mod settlement_verify;
 pub mod slash_store;
 pub mod stoolap_did_registry;
 pub mod stoolap_holder_registry;

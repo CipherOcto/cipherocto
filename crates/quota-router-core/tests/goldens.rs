@@ -112,6 +112,8 @@ fn compute_goldens() -> Goldens {
         nonce: [0x55; 32],
         timestamp_unix: 1_700_000_000,
         cost: octo_determin::Dqa::new(30_000, 0).expect("non-overflow"),
+        cost_vault_id: None,
+        chain_id: None,
     };
     let step10 = hex::encode(envelope.compute_settlement_hash());
 

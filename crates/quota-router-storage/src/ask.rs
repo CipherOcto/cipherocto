@@ -976,10 +976,31 @@ impl CachePolicy {
     }
 }
 
-/// Settlement envelope (RFC-0959 v1.0 canonical wire).
+/// Settlement envelope (RFC-0959 v2.0 canonical wire).
 ///
-/// `envelope = borsh_compat(model || axes_consumed || ask_id || nonce || timestamp || cost_micro_octo_w || settlement_hash)`
-/// where `settlement_hash = BLAKE3(canonical_ser(model || axes_consumed || ask_id || nonce || timestamp))`.
+/// v2.0 adds `cost_vault_id: Option<[u8; 32]>` + `chain_id: Option<[u8; 32]>`
+/// fields per review §20.7 (cross-chain settlement reject). v1.0 used
+/// `borsh_compat(model || axes_consumed || ask_id || nonce || timestamp ||
+/// cost_micro_octo_w || settlement_hash)`; v2.0 appends the 2 new
+/// fields (with Option-encoding prefix byte) to the canonical
+/// preimage so existing v1.0 hashes are NOT replayed as v2.0.
+///
+/// v2.0 canonical preimage (computed by [`compute_settlement_hash_v2`]):
+/// ```text
+/// model_wire
+/// || serde_json::to_vec(axes_consumed)
+/// || ask_id (32 bytes)
+/// || nonce (32 bytes)
+/// || timestamp_unix.to_le_bytes() (8 bytes)
+/// || cost_vault_id_opt_prefix (1 byte: 0x00 = None, 0x01 = Some)
+/// || [if Some] cost_vault_id (32 bytes)
+/// || chain_id_opt_prefix (1 byte: 0x00 = None, 0x01 = Some)
+/// || [if Some] chain_id (32 bytes)
+/// ```
+///
+/// v1.0 `compute_settlement_hash` is preserved verbatim as a
+/// deprecated alias for backward-compat with pre-v2.0 settlement
+/// events in the `settlement_events` table.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettlementEnvelope {
     /// Settlement hash (BLAKE3 32 bytes).
@@ -1001,21 +1022,55 @@ pub struct SettlementEnvelope {
     /// Cost in micro-OCTO-W.
     #[serde(with = "crate::dqa_serde::field")]
     pub cost: Dqa,
+    /// Vault row the settlement draws against (RFC-0959 v2.0 §Wire
+    /// Format + review §20.7). `None` for pre-v2.0 settlements (no
+    /// cross-chain reject enforced). When `Some`, the settlement-time
+    /// verifier MUST find a vault row at this id (via `VaultLookup`)
+    /// and that row's `chain_id` MUST match `chain_id` below.
+    pub cost_vault_id: Option<[u8; 32]>,
+    /// Chain scope of this settlement (RFC-0959 v2.0 §Wire Format +
+    /// RFC-0010 v1.6 §ChainId 32-byte addendum). `None` for pre-v2.0
+    /// settlements; `Some` carries
+    /// `BLAKE3("cipherocto/chain/v1/" || chain_string)`.
+    pub chain_id: Option<[u8; 32]>,
 }
 
 impl SettlementEnvelope {
-    /// Compute settlement hash from canonical fields.
+    /// Compute settlement hash from canonical fields (v2.0 preimage).
+    ///
+    /// v2.0 prepends the v1.0 preimage with the new
+    /// `cost_vault_id` + `chain_id` Option-encoded bytes (1-byte
+    /// presence tag + 32 bytes if Some). This breaks v1.0 hash
+    /// replay — intentional (the v2.0 fields carry new attestation
+    /// semantics).
     #[must_use]
     pub fn compute_settlement_hash(&self) -> [u8; 32] {
         let model_wire = self.model.to_wire();
-        let mut msg =
-            Vec::with_capacity(model_wire.len() + 32 + 32 + self.axes_consumed.len() * 32 + 32);
+        let mut msg = Vec::with_capacity(
+            model_wire.len() + 32 + 32 + self.axes_consumed.len() * 32 + 32 + 70,
+        );
         msg.extend_from_slice(model_wire.as_bytes());
         let axes_canonical = serde_json::to_vec(&self.axes_consumed).expect("serializable");
         msg.extend_from_slice(&axes_canonical);
         msg.extend_from_slice(&self.ask_id);
         msg.extend_from_slice(&self.nonce);
         msg.extend_from_slice(&self.timestamp_unix.to_le_bytes());
+        // v2.0 Option<[u8; 32]> canonical encoding: 1-byte presence
+        // tag (0x00 = None, 0x01 = Some) + 32 bytes if Some.
+        match &self.cost_vault_id {
+            None => msg.push(0x00),
+            Some(bytes) => {
+                msg.push(0x01);
+                msg.extend_from_slice(bytes);
+            }
+        }
+        match &self.chain_id {
+            None => msg.push(0x00),
+            Some(bytes) => {
+                msg.push(0x01);
+                msg.extend_from_slice(bytes);
+            }
+        }
         *blake3::hash(&msg).as_bytes()
     }
 
@@ -1101,6 +1156,28 @@ pub enum SettlementError {
     AskSignatureInvalid,
     #[error("canonical_ser error: {0}")]
     CanonicalSer(#[from] serde_json::Error),
+    /// v2.0 settlement envelope missing required `cost_vault_id` field
+    /// (RFC-0959 v2.0 §Wire Format + review §20.7). Cross-chain
+    /// settlement reject cannot proceed without a vault row key.
+    #[error(
+        "settlement envelope missing required `cost_vault_id` field (RFC-0959 v2.0 §Wire Format)"
+    )]
+    CostVaultIdMissing,
+    /// v2.0 settlement envelope's `chain_id` does not match the
+    /// `chain_id` of the vault row at `cost_vault_id` (RFC-0959 v2.0
+    /// §Cross-Chain Settlement Reject + review §20.7).
+    #[error(
+        "cross-chain settlement reject: vault {vault_id:?} belongs to chain {vault_chain_id:?}, \
+        envelope carries chain {envelope_chain_id:?}"
+    )]
+    ChainMismatch {
+        /// Vault row id (32 bytes).
+        vault_id: [u8; 32],
+        /// Vault row's `chain_id` (32 bytes).
+        vault_chain_id: [u8; 32],
+        /// Settlement envelope's `chain_id` (32 bytes).
+        envelope_chain_id: [u8; 32],
+    },
 }
 
 // ============================================================================
@@ -1405,6 +1482,8 @@ mod tests {
             nonce: [2u8; 32],
             timestamp_unix: 1_700_000_000,
             cost: Dqa::new(30_000, 0).expect("non-overflow"),
+            cost_vault_id: None,
+            chain_id: None,
         };
         let h = env.compute_settlement_hash();
         let h2 = env.compute_settlement_hash();
@@ -1423,6 +1502,8 @@ mod tests {
             nonce: [2u8; 32],
             timestamp_unix: 1_700_000_000,
             cost: Dqa::new(30_000, 0).expect("non-overflow"),
+            cost_vault_id: None,
+            chain_id: None,
         };
         let mut idx = ConsumedReceiptIndex::new();
         // Verify self-consistent first.
@@ -1446,6 +1527,8 @@ mod tests {
             nonce: [2u8; 32],
             timestamp_unix: 1_700_000_000,
             cost: Dqa::new(30_000, 0).expect("non-overflow"),
+            cost_vault_id: None,
+            chain_id: None,
         };
         env.settlement_hash = env.compute_settlement_hash();
         let mut idx = ConsumedReceiptIndex::new();
@@ -1483,6 +1566,8 @@ mod tests {
             nonce: [0u8; 32],
             timestamp_unix: 0,
             cost: Dqa::new(0, 0).expect("zero"),
+            cost_vault_id: None,
+            chain_id: None,
         };
         let mut env2 = env1.clone();
         env2.axes_consumed = vec![("b_per_1k".to_owned(), 2), ("a_per_1k".to_owned(), 1)];

@@ -57,6 +57,22 @@ fs2 = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
+# Mission 0959-c1 TV-0959-11..15: byte-exact derivation cross-ref
+# between `cost_vault_id` field and `octo_vault::vault_id_unchecked`
+# (the canonical substrate surface). The TV does not depend on the
+# substrate's runtime; it only stitches the canonical derivation
+# inputs to the wire-form bytes. (Layer B -> Layer B intra-dep
+# allowed per RFC-0957-A1 §Layer Discipline.)
+octo-vault = { path = "../octo-vault" }
+
+[dependencies.octo-cap-macaroon]
+# Mission 0959-c1: settlement-time vault row lookup reuses the
+# `VaultLookup` trait from octo-cap-macaroon (RFC-0957 §Verify-Time
+# Extension). Settlement-time verifier in
+# `crates/quota-router-storage/src/settlement_verify.rs` takes
+# `&dyn VaultLookup` directly (no shadow impl per audit #5 HIGH).
+# Intra-Layer B dep — allowed per RFC-0957-A1 §Layer Discipline.
+path = "../octo-cap-macaroon"
 
 [dependencies.octo-ident]
 # Mission 0010-b: test fixtures use sample_did() from octo-ident test_helpers

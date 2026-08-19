@@ -289,6 +289,8 @@ fn run_settlement(
         nonce,
         timestamp_unix,
         cost: octo_determin::Dqa::new(30_000, 0).expect("non-overflow"),
+        cost_vault_id: None,
+        chain_id: None,
     };
     let computed = envelope.compute_settlement_hash();
 
@@ -471,6 +473,8 @@ fn sample_envelope(ask_id: [u8; 32], nonce: [u8; 32]) -> SettlementEnvelope {
         nonce,
         timestamp_unix: 1_700_000_000,
         cost: octo_determin::Dqa::new(30_000, 0).expect("non-overflow"),
+        cost_vault_id: None,
+        chain_id: None,
     };
     let hash = envelope.compute_settlement_hash();
     SettlementEnvelope {
@@ -597,6 +601,8 @@ fn eleven_step_replay_defense_full_path() {
         nonce,
         timestamp_unix: receipt.timestamp_unix,
         cost: octo_determin::Dqa::new(30_000, 0).expect("non-overflow"),
+        cost_vault_id: None,
+        chain_id: None,
     };
     let computed = envelope.compute_settlement_hash();
     // NOTE: sm-engine settlement_hash uses blake3(canonical_ser(ask || receipt))
@@ -673,9 +679,18 @@ fn manual_axes_canonical(axes: &[(String, u64)]) -> Vec<u8> {
 
 /// Independent impl path #2: hand-rolled reference impl that mirrors
 /// `SettlementEnvelope::compute_settlement_hash` byte-for-byte (same
-/// field concatenation: model || axes_json || ask_id || nonce || ts_le).
+/// field concatenation: model || axes_json || ask_id || nonce || ts_le
+/// || cost_vault_id_opt_prefix || chain_id_opt_prefix).
 /// No `serde_json` runtime dependency inside impl2 — the canonical
 /// axes JSON is constructed manually via `manual_axes_canonical`.
+///
+/// v2.0 wire form (RFC-0959 v2.0 §Wire Format + mission 0959-c1):
+/// the v2.0 preimage appends a 1-byte Option prefix for
+/// `cost_vault_id` (0x00 = None, 0x01 = Some) and a 1-byte Option
+/// prefix for `chain_id`. The cross-impl TV fixtures use `None` for
+/// both (legacy pre-v2.0 envelopes) so the suffix is two 0x00 bytes.
+/// v2.0 envelopes with `Some(...)` would append 1 + 32 = 33 bytes
+/// per field.
 fn tv_settlement_hash_impl2(
     model: &str,
     axes: &[(String, u64)],
@@ -683,12 +698,16 @@ fn tv_settlement_hash_impl2(
     nonce: &[u8; 32],
     ts: u64,
 ) -> [u8; 32] {
-    let mut msg = Vec::with_capacity(model.len() + 64 + 8);
+    let mut msg = Vec::with_capacity(model.len() + 64 + 8 + 2);
     msg.extend_from_slice(model.as_bytes());
     msg.extend_from_slice(&manual_axes_canonical(axes));
     msg.extend_from_slice(ask_id);
     msg.extend_from_slice(nonce);
     msg.extend_from_slice(&ts.to_le_bytes());
+    // v2.0 Option<[u8; 32]> canonical encoding (None case — the
+    // cross-impl TV fixtures use None for both new fields).
+    msg.push(0x00); // cost_vault_id: None
+    msg.push(0x00); // chain_id: None
     *blake3::hash(&msg).as_bytes()
 }
 
@@ -707,6 +726,8 @@ fn cross_impl_tv1_settlement_hash_matches() {
         nonce,
         timestamp_unix: 1_700_000_000,
         cost: octo_determin::Dqa::new(30_000, 0).expect("non-overflow"),
+        cost_vault_id: None,
+        chain_id: None,
     };
     let h1 = tv_settlement_hash_impl1(&env);
     let h2 = tv_settlement_hash_impl2(
@@ -747,6 +768,8 @@ fn cross_impl_tv2_settlement_hash_matches() {
         nonce,
         timestamp_unix: 1_800_000_000,
         cost: octo_determin::Dqa::new(75_000, 0).expect("non-overflow"),
+        cost_vault_id: None,
+        chain_id: None,
     };
     let h1 = tv_settlement_hash_impl1(&env);
     let h2 = tv_settlement_hash_impl2(
@@ -787,6 +810,8 @@ fn step10_settlement_hash_cross_impl_byte_equivalent() {
         nonce: [0x55; 32],
         timestamp_unix: 1_700_000_000,
         cost: octo_determin::Dqa::new(30_000, 0).expect("non-overflow"),
+        cost_vault_id: None,
+        chain_id: None,
     };
     let h1 = tv_settlement_hash_impl1(&canonical_env);
     let h2 = tv_settlement_hash_impl2(
@@ -848,6 +873,8 @@ fn step10_settlement_hash_cross_impl_byte_equivalent() {
         nonce: [0x55; 32],
         timestamp_unix: 1_700_000_000,
         cost: octo_determin::Dqa::new(30_000, 0).expect("non-overflow"),
+        cost_vault_id: None,
+        chain_id: None,
     };
     let golden_hash = tv_settlement_hash_impl1(&golden_env);
     assert_eq!(

@@ -37,8 +37,8 @@ fn migration_chain_reaches_v012_on_fresh_db() {
         .get(0)
         .unwrap_or(0);
     assert_eq!(
-        version, 15,
-        "catalog must reach v015 (current max migration version)"
+        version, 16,
+        "catalog must reach v016 (current max migration version; v016 = 0959-c1 settlement_chain_vault)"
     );
 }
 

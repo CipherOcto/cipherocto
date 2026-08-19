@@ -55,6 +55,9 @@ proptest = "1.4"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
 # Mutex for the cluster fixture in tests/cross_instance_tv.rs
 parking_lot = "0.12"
+# Hex codec for fixture encoding in tests/phase1_tv_0862.rs (mission
+# `0862-phase1-tv-fixture`). RFC-0862 v1.3.0 Phase 1 TV gate.
+hex = "0.4"
 # Enable the `test-util` feature for integration tests so they can use the
 # MockAdapter. This is a self-referential dev-dependency on the same crate.
 octo-sync = { path = ".", features = ["test-util"] }

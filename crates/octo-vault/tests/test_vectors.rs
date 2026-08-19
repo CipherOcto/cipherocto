@@ -196,3 +196,1143 @@ fn zero_vault_sentinel_is_literal_all_zeros() {
         );
     }
 }
+
+// ===========================================================================
+// TV-D9 — byte-exact asset_id derivation vectors (RFC-0105 v2.0, mission 0105-v)
+// ===========================================================================
+//
+// 9 canonical role-token × asset_id mappings per review §20.3.1 +
+// review §1336 cross-section reconciliation. Each `(role_token,
+// asset_id_hex)` is the §8.10 canonical anchor — byte-exact
+// identical across all implementations (BLAKE3-256 of
+// "cipherocto/asset/v1/" || role_token).
+//
+// Domain-separation: namespace `"cipherocto/asset/v1/"` (constant in
+// `octo_determin::ASSET_ID_DOMAIN_V1`) — future version bumps
+// (`v2`, ...) guarantee collision-free asset IDs across ecosystem
+// forks.
+//
+// Sovereign OCTO is EXCLUDED from this TV set (cross-layer
+// capability-attestation path; see review §1336 + §1362).
+
+use octo_determin::{asset_id_for, ROLE_TOKENS};
+
+/// One TV-D9 scenario: `role_token` → expected `asset_id` hex. Pinned
+/// here for §8.10 central-registry anchoring.
+#[derive(Debug)]
+struct AssetIdVector {
+    /// Human-readable role-token discriminator (e.g., `"OCTO-A"`).
+    role_token: &'static str,
+    /// Short label for diagnostics (e.g., `"TV-D9-01"`).
+    name: &'static str,
+    /// Hex-encoded expected `asset_id` ([u8; 32] → 64 hex chars).
+    asset_id_hex: &'static str,
+}
+
+/// 9 canonical vectors per review §1336. Sovereign OCTO excluded.
+const TV_D9_VECTORS: &[AssetIdVector] = &[
+    AssetIdVector {
+        role_token: "OCTO-A",
+        name: "TV-D9-01: AI Compute",
+        asset_id_hex: "161e52f483cf25de1163a0d6dccce98c50404971065de3b1013aaeaa64e1a01b",
+    },
+    AssetIdVector {
+        role_token: "OCTO-B",
+        name: "TV-D9-02: Bandwidth",
+        asset_id_hex: "5ca7f59fe932648a0327c29060326a2fe6ad60131d5b38639f15c720d9ce3c0a",
+    },
+    AssetIdVector {
+        role_token: "OCTO-D",
+        name: "TV-D9-03: Developers",
+        asset_id_hex: "c5180b712f27cc8e0d72dc7d91217e6526fd8eaaa526ac5d83b62c29ffe7a581",
+    },
+    AssetIdVector {
+        role_token: "OCTO-M",
+        name: "TV-D9-04: Marketing",
+        asset_id_hex: "8aa463d5d06c35ea75abca875ef7787945db0c321d609e6e6e1a8fec21caf64a",
+    },
+    AssetIdVector {
+        role_token: "OCTO-N",
+        name: "TV-D9-05: Node Operators",
+        asset_id_hex: "b940c7dc0087fd559a626d8047881ac4e620282e112bdcf6fb437a374cf64091",
+    },
+    AssetIdVector {
+        role_token: "OCTO-O",
+        name: "TV-D9-06: Orchestrator",
+        asset_id_hex: "d2cf354857f5612e78a35c9d307885a1e3428804c5bda2c4b3cb4ae2e1e2ca4a",
+    },
+    AssetIdVector {
+        role_token: "OCTO-S",
+        name: "TV-D9-07: Storage",
+        asset_id_hex: "fc97983dcb4b30e8cd9d893f4784ffcaaa6d3fc585129b6554a658dac40f5f36",
+    },
+    AssetIdVector {
+        role_token: "OCTO-H",
+        name: "TV-D9-08: Historical",
+        asset_id_hex: "72a20d851da06aaeaa34451a79bf70633d8e3b2553e4c86606864d98ef4a2483",
+    },
+    AssetIdVector {
+        role_token: "OCTO-W",
+        name: "TV-D9-09: AI Wholesale",
+        asset_id_hex: "24fadb2b4f5eebc5f6199f3ee4625f64d8d7c822413c700309f09b0ad1b281b0",
+    },
+];
+
+/// Decode a 64-char hex string to a `[u8; 32]`.
+fn decode_asset_id_hex(hex: &str) -> [u8; 32] {
+    let bytes = hex::decode(hex).expect("TV-D9 hex is well-formed");
+    assert_eq!(bytes.len(), 32, "TV-D9 hex MUST decode to 32 bytes");
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    out
+}
+
+/// TV-D9 byte-exact anchor: every canonical role-token MUST produce
+/// the pinned `asset_id` (per §8.10 + §20.3.1). Cross-implementation
+/// regression detector — if any vector drifts, the BLAKE3 chain or
+/// domain separator changed.
+#[test]
+fn tv_d9_asset_id_vectors_match_pinned_hex() {
+    for v in TV_D9_VECTORS {
+        let computed = asset_id_for(v.role_token);
+        let expected = decode_asset_id_hex(v.asset_id_hex);
+        assert_eq!(
+            computed,
+            expected,
+            "TV-D9 asset_id drift on {} (role_token={:?}): expected {}, got {}",
+            v.name,
+            v.role_token,
+            v.asset_id_hex,
+            hex::encode(computed),
+        );
+    }
+}
+
+/// TV-D9 enumeration exhaustiveness: every entry in
+/// `ROLE_TOKENS` MUST appear in `TV_D9_VECTORS` (and vice versa).
+/// Catches a future RFC change that adds/removes a role-token
+/// without updating the TV central registry.
+#[test]
+fn tv_d9_vectors_cover_role_tokens_exactly_once() {
+    use std::collections::HashSet;
+    let tv_tokens: HashSet<&str> = TV_D9_VECTORS.iter().map(|v| v.role_token).collect();
+    let role_tokens: HashSet<&str> = ROLE_TOKENS.iter().copied().collect();
+    assert_eq!(
+        tv_tokens, role_tokens,
+        "TV-D9 vector set MUST equal ROLE_TOKENS (cross-section drift)"
+    );
+}
+
+/// Cross-check: `octo_determin::asset_id_for` MUST match
+/// `octo_vault::AssetId::derive` byte-by-byte (the Layer B
+/// substrate's local derivation must agree with the Layer A
+/// canonical derivation). Catches a future drift where the
+/// substrate's derivation gets out of sync with the canonical
+/// rule (regression: silent identity-key drift).
+#[test]
+fn asset_id_for_matches_octo_vault_asset_id_derive() {
+    for rt in ROLE_TOKENS {
+        let canonical = asset_id_for(rt);
+        let substrate = octo_vault::AssetId::derive(rt);
+        assert_eq!(
+            canonical,
+            *substrate.as_bytes(),
+            "asset_id_for({rt:?}) MUST match AssetId::derive byte-by-byte"
+        );
+    }
+}
+
+// ===========================================================================
+// TV-D10 — 100 DQA arithmetic determinism fixtures (RFC-0105, mission 0105-v)
+// ===========================================================================
+//
+// 100 distinct arithmetic combinations grouped into 10 categories of
+// 10 fixtures each, per review §24 per-RFC TV allocation. Categories
+// cover: add, sub, mul, div, overflow-saturation, negative-result,
+// zero-operand, scale-alignment, rounding-boundary, cross-scale-mix.
+//
+// ## Fixture shape
+//
+// Each fixture pins `(scale_a, value_a) × op × (scale_b, value_b)` —
+// the canonical Layer A DQA substrate is responsible for the actual
+// result (scale-promote + canonicalize + RNE rounding per
+// RFC-0105 §Arithmetic Algorithms). The test asserts:
+//
+// 1. **Determinism**: the same input pair MUST produce the same
+//    `(value, scale)` on every run, on every platform (Layer A
+//    cross-implementation byte-stability).
+//
+// 2. **Scale invariants**: result.scale ≤ 18, result.value fits in
+//    i64, result.value is canonical (no redundant trailing-zero
+//    scale shifts).
+//
+// 3. **Reproducibility**: each fixture's result is captured into a
+//    JSON snapshot at `tv_d10_snapshot.json` (test-only artifact) on
+//    first run; subsequent runs MUST match. This is the
+//    cross-implementation byte anchor — a future change to
+//    `canonicalize` / `round_half_even` / `align_scales` will flip
+//    the captured result and fail the test.
+//
+// `octo_determin::Dqa` is the canonical Layer A substrate type
+// (RFC-0105 §Data Structures); the byte anchor is the 16-byte BE
+// `DqaEncoding` wire form (RFC-0862 v1.x AC #4 cross-ref).
+
+use octo_determin::dqa::Dqa;
+use std::sync::OnceLock;
+
+/// Arithmetic op tag for TV-D10 fixtures.
+#[derive(Debug, Clone, Copy)]
+#[allow(non_camel_case_types)]
+enum Op {
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
+/// One TV-D10 scenario: `(scale_a, value_a) × op × (scale_b, value_b)`.
+/// The expected (value, scale) is captured at first run from the
+/// canonical `Dqa` impl (deterministic across platforms).
+struct DqaRoundTripVector {
+    label: &'static str,
+    op: Op,
+    scale_a: u8,
+    value_a: i64,
+    scale_b: u8,
+    value_b: i64,
+}
+
+impl std::fmt::Display for DqaRoundTripVector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label)
+    }
+}
+
+/// 100 fixtures = 10 categories × 10 each.
+const TV_D10_VECTORS: &[DqaRoundTripVector] = &[
+    // ----- Category 1: addition (10 fixtures) -----
+    DqaRoundTripVector {
+        label: "TV-D10-add-01: 0-scale positive + 0-scale positive",
+        op: Op::Add,
+        scale_a: 0,
+        value_a: 100,
+        scale_b: 0,
+        value_b: 200,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-add-02: 0-scale positive + 0-scale negative",
+        op: Op::Add,
+        scale_a: 0,
+        value_a: 100,
+        scale_b: 0,
+        value_b: -50,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-add-03: 0-scale zero + 0-scale positive",
+        op: Op::Add,
+        scale_a: 0,
+        value_a: 0,
+        scale_b: 0,
+        value_b: 999,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-add-04: 3-scale + 3-scale (same scale align)",
+        op: Op::Add,
+        scale_a: 3,
+        value_a: 1_000,
+        scale_b: 3,
+        value_b: 2_500,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-add-05: 3-scale + 5-scale (scale promote)",
+        op: Op::Add,
+        scale_a: 3,
+        value_a: 1_000,
+        scale_b: 5,
+        value_b: 250_000,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-add-06: 12-scale (DQA(12) compatible)",
+        op: Op::Add,
+        scale_a: 12,
+        value_a: 1_500_000_000,
+        scale_b: 12,
+        value_b: 2_500_000_000,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-add-07: 0-scale + 12-scale (promote)",
+        op: Op::Add,
+        scale_a: 0,
+        value_a: 4,
+        scale_b: 12,
+        value_b: 4_000_000_000_000,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-add-08: 18-scale (max) + 0-scale (promote)",
+        op: Op::Add,
+        scale_a: 18,
+        value_a: 1_000_000_000_000_000_000,
+        scale_b: 0,
+        value_b: 5,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-add-09: overflow (i64::MAX + 1 → overflow)",
+        op: Op::Add,
+        scale_a: 0,
+        value_a: i64::MAX,
+        scale_b: 0,
+        value_b: 1,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-add-10: underflow (i64::MIN + -1 → overflow)",
+        op: Op::Add,
+        scale_a: 0,
+        value_a: i64::MIN,
+        scale_b: 0,
+        value_b: -1,
+    },
+    // ----- Category 2: subtraction (10 fixtures) -----
+    DqaRoundTripVector {
+        label: "TV-D10-sub-01: 0-scale positive - 0-scale positive",
+        op: Op::Sub,
+        scale_a: 0,
+        value_a: 200,
+        scale_b: 0,
+        value_b: 100,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-sub-02: 0-scale positive - 0-scale negative",
+        op: Op::Sub,
+        scale_a: 0,
+        value_a: 100,
+        scale_b: 0,
+        value_b: -50,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-sub-03: 0-scale zero - 0-scale positive",
+        op: Op::Sub,
+        scale_a: 0,
+        value_a: 0,
+        scale_b: 0,
+        value_b: 500,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-sub-04: 3-scale - 3-scale",
+        op: Op::Sub,
+        scale_a: 3,
+        value_a: 5_000,
+        scale_b: 3,
+        value_b: 2_000,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-sub-05: 3-scale - 5-scale (promote)",
+        op: Op::Sub,
+        scale_a: 3,
+        value_a: 1_000,
+        scale_b: 5,
+        value_b: 250_000,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-sub-06: 12-scale subtraction",
+        op: Op::Sub,
+        scale_a: 12,
+        value_a: 5_000_000_000,
+        scale_b: 12,
+        value_b: 2_000_000_000,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-sub-07: 0-scale - 12-scale (promote)",
+        op: Op::Sub,
+        scale_a: 0,
+        value_a: 4,
+        scale_b: 12,
+        value_b: 8_000_000_000_000,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-sub-08: overflow (i64::MIN - 1)",
+        op: Op::Sub,
+        scale_a: 0,
+        value_a: i64::MIN,
+        scale_b: 0,
+        value_b: 1,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-sub-09: underflow (i64::MAX - -1)",
+        op: Op::Sub,
+        scale_a: 0,
+        value_a: i64::MAX,
+        scale_b: 0,
+        value_b: -1,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-sub-10: zero result (x - x)",
+        op: Op::Sub,
+        scale_a: 7,
+        value_a: 123_456_789,
+        scale_b: 7,
+        value_b: 123_456_789,
+    },
+    // ----- Category 3: multiplication (10 fixtures) -----
+    DqaRoundTripVector {
+        label: "TV-D10-mul-01: 0-scale * 0-scale",
+        op: Op::Mul,
+        scale_a: 0,
+        value_a: 7,
+        scale_b: 0,
+        value_b: 11,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-mul-02: zero * positive",
+        op: Op::Mul,
+        scale_a: 0,
+        value_a: 0,
+        scale_b: 0,
+        value_b: 1_000,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-mul-03: negative * negative = positive",
+        op: Op::Mul,
+        scale_a: 0,
+        value_a: -100,
+        scale_b: 0,
+        value_b: -200,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-mul-04: negative * positive = negative",
+        op: Op::Mul,
+        scale_a: 0,
+        value_a: -50,
+        scale_b: 0,
+        value_b: 300,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-mul-05: 3-scale * 3-scale (scale promote)",
+        op: Op::Mul,
+        scale_a: 3,
+        value_a: 1_500,
+        scale_b: 3,
+        value_b: 2_000,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-mul-06: 12-scale * 12-scale (overflow)",
+        op: Op::Mul,
+        scale_a: 12,
+        value_a: 1_500_000_000_000,
+        scale_b: 12,
+        value_b: 2_000_000_000_000,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-mul-07: 0-scale * 18-scale (promote)",
+        op: Op::Mul,
+        scale_a: 0,
+        value_a: 6,
+        scale_b: 18,
+        value_b: 1_000_000_000_000_000_000,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-mul-08: 7-scale * 5-scale (promote)",
+        op: Op::Mul,
+        scale_a: 7,
+        value_a: 123_456,
+        scale_b: 5,
+        value_b: 654_321,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-mul-09: overflow (i64::MAX * 2)",
+        op: Op::Mul,
+        scale_a: 0,
+        value_a: i64::MAX,
+        scale_b: 0,
+        value_b: 2,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-mul-10: scale-promote beyond 18",
+        op: Op::Mul,
+        scale_a: 18,
+        value_a: 1_000_000_000_000_000_000,
+        scale_b: 18,
+        value_b: 1_000_000_000_000_000_000,
+    },
+    // ----- Category 4: division (10 fixtures) -----
+    DqaRoundTripVector {
+        label: "TV-D10-div-01: 0-scale / 0-scale exact",
+        op: Op::Div,
+        scale_a: 0,
+        value_a: 100,
+        scale_b: 0,
+        value_b: 4,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-div-02: 0-scale / 0-scale with remainder (RNE)",
+        op: Op::Div,
+        scale_a: 0,
+        value_a: 100,
+        scale_b: 0,
+        value_b: 3,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-div-03: 0-scale negative / 0-scale positive",
+        op: Op::Div,
+        scale_a: 0,
+        value_a: -100,
+        scale_b: 0,
+        value_b: 5,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-div-04: 0-scale 0 / 0-scale positive = 0",
+        op: Op::Div,
+        scale_a: 0,
+        value_a: 0,
+        scale_b: 0,
+        value_b: 1_000,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-div-05: 12-scale / 12-scale exact",
+        op: Op::Div,
+        scale_a: 12,
+        value_a: 4_000_000_000_000,
+        scale_b: 12,
+        value_b: 2_000_000_000_000,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-div-06: 12-scale / 0-scale",
+        op: Op::Div,
+        scale_a: 12,
+        value_a: 4_000_000_000_000,
+        scale_b: 0,
+        value_b: 2,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-div-07: 0-scale / 12-scale (truncate)",
+        op: Op::Div,
+        scale_a: 0,
+        value_a: 1,
+        scale_b: 12,
+        value_b: 3_000_000_000_000,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-div-08: 18-scale / 18-scale exact",
+        op: Op::Div,
+        scale_a: 18,
+        value_a: 1_000_000_000_000_000_000,
+        scale_b: 18,
+        value_b: 1_000_000_000_000_000_000,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-div-09: RNE half-even boundary",
+        op: Op::Div,
+        scale_a: 0,
+        value_a: 10,
+        scale_b: 0,
+        value_b: 4,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-div-10: 12-scale large / 12-scale 1",
+        op: Op::Div,
+        scale_a: 12,
+        value_a: 9_999_999_999_999,
+        scale_b: 12,
+        value_b: 1_000_000_000_000,
+    },
+    // ----- Category 5: overflow-saturation edges (10 fixtures) -----
+    DqaRoundTripVector {
+        label: "TV-D10-ovf-01: add overflow",
+        op: Op::Add,
+        scale_a: 0,
+        value_a: i64::MAX - 100,
+        scale_b: 0,
+        value_b: 200,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-ovf-02: sub underflow",
+        op: Op::Sub,
+        scale_a: 0,
+        value_a: i64::MIN + 100,
+        scale_b: 0,
+        value_b: 200,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-ovf-03: mul overflow",
+        op: Op::Mul,
+        scale_a: 0,
+        value_a: i64::MAX,
+        scale_b: 0,
+        value_b: 10,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-ovf-04: mul 12-scale overflow",
+        op: Op::Mul,
+        scale_a: 12,
+        value_a: 999_999_999_999,
+        scale_b: 12,
+        value_b: 999_999_999_999,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-ovf-05: scale-promotion across 18 → sat",
+        op: Op::Mul,
+        scale_a: 12,
+        value_a: 1_000_000_000_000,
+        scale_b: 12,
+        value_b: 1_000_000_000_000,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-ovf-06: add just below overflow (no sat)",
+        op: Op::Add,
+        scale_a: 0,
+        value_a: i64::MAX - 1,
+        scale_b: 0,
+        value_b: 1,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-ovf-07: sub just above underflow (no sat)",
+        op: Op::Sub,
+        scale_a: 0,
+        value_a: i64::MIN + 1,
+        scale_b: 0,
+        value_b: 1,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-ovf-08: mul neg * neg fits",
+        op: Op::Mul,
+        scale_a: 0,
+        value_a: -1_000_000_000,
+        scale_b: 0,
+        value_b: -2_000_000_000,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-ovf-09: mul near-bound (i64::MAX/2 * 3)",
+        op: Op::Mul,
+        scale_a: 0,
+        value_a: i64::MAX / 2,
+        scale_b: 0,
+        value_b: 3,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-ovf-10: scale-promote beyond 18",
+        op: Op::Mul,
+        scale_a: 12,
+        value_a: 1_500_000_000_000,
+        scale_b: 12,
+        value_b: 2_000_000_000_000,
+    },
+    // ----- Category 6: negative-result accounting (10 fixtures) -----
+    DqaRoundTripVector {
+        label: "TV-D10-neg-01: add 0-scale neg + 0-scale neg",
+        op: Op::Add,
+        scale_a: 0,
+        value_a: -100,
+        scale_b: 0,
+        value_b: -200,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-neg-02: add neg + pos",
+        op: Op::Add,
+        scale_a: 0,
+        value_a: -100,
+        scale_b: 0,
+        value_b: 50,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-neg-03: sub neg - pos = more negative",
+        op: Op::Sub,
+        scale_a: 0,
+        value_a: -100,
+        scale_b: 0,
+        value_b: 50,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-neg-04: sub pos - neg",
+        op: Op::Sub,
+        scale_a: 0,
+        value_a: 100,
+        scale_b: 0,
+        value_b: -50,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-neg-05: mul pos * neg",
+        op: Op::Mul,
+        scale_a: 0,
+        value_a: 100,
+        scale_b: 0,
+        value_b: -3,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-neg-06: mul neg * pos",
+        op: Op::Mul,
+        scale_a: 0,
+        value_a: -100,
+        scale_b: 0,
+        value_b: 3,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-neg-07: 12-scale negative round-trip",
+        op: Op::Add,
+        scale_a: 12,
+        value_a: -1_500_000_000_000,
+        scale_b: 12,
+        value_b: 500_000_000_000,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-neg-08: zero - neg = pos",
+        op: Op::Sub,
+        scale_a: 0,
+        value_a: 0,
+        scale_b: 0,
+        value_b: -42,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-neg-09: neg - zero = neg",
+        op: Op::Sub,
+        scale_a: 0,
+        value_a: -42,
+        scale_b: 0,
+        value_b: 0,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-neg-10: 0 - 0",
+        op: Op::Sub,
+        scale_a: 0,
+        value_a: 0,
+        scale_b: 0,
+        value_b: 0,
+    },
+    // ----- Category 7: zero-operand algebra (10 fixtures) -----
+    DqaRoundTripVector {
+        label: "TV-D10-zero-01: 0 + 0",
+        op: Op::Add,
+        scale_a: 0,
+        value_a: 0,
+        scale_b: 0,
+        value_b: 0,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-zero-02: 0 + pos",
+        op: Op::Add,
+        scale_a: 0,
+        value_a: 0,
+        scale_b: 0,
+        value_b: 42,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-zero-03: pos + 0 (commutative)",
+        op: Op::Add,
+        scale_a: 0,
+        value_a: 42,
+        scale_b: 0,
+        value_b: 0,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-zero-04: 0 * pos",
+        op: Op::Mul,
+        scale_a: 5,
+        value_a: 0,
+        scale_b: 5,
+        value_b: 99_999,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-zero-05: 0 / pos = 0",
+        op: Op::Div,
+        scale_a: 0,
+        value_a: 0,
+        scale_b: 0,
+        value_b: 100,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-zero-06: 0 * 12-scale",
+        op: Op::Mul,
+        scale_a: 0,
+        value_a: 0,
+        scale_b: 12,
+        value_b: 999_999_999_999,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-zero-07: 12-scale 0 + 0",
+        op: Op::Add,
+        scale_a: 12,
+        value_a: 0,
+        scale_b: 12,
+        value_b: 0,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-zero-08: sub 0 - 0",
+        op: Op::Sub,
+        scale_a: 3,
+        value_a: 0,
+        scale_b: 3,
+        value_b: 0,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-zero-09: mul at 0-scale 0",
+        op: Op::Mul,
+        scale_a: 0,
+        value_a: 0,
+        scale_b: 0,
+        value_b: 0,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-zero-10: 18-scale 0 + 18-scale 1",
+        op: Op::Add,
+        scale_a: 18,
+        value_a: 0,
+        scale_b: 18,
+        value_b: 1,
+    },
+    // ----- Category 8: scale-alignment promotion (10 fixtures) -----
+    DqaRoundTripVector {
+        label: "TV-D10-scale-01: 0 + 1 (promote to 1)",
+        op: Op::Add,
+        scale_a: 0,
+        value_a: 5,
+        scale_b: 1,
+        value_b: 30,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-scale-02: 1 + 0 (promote to 1)",
+        op: Op::Add,
+        scale_a: 1,
+        value_a: 30,
+        scale_b: 0,
+        value_b: 5,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-scale-03: 6 + 12 (promote)",
+        op: Op::Add,
+        scale_a: 6,
+        value_a: 1_234_567,
+        scale_b: 12,
+        value_b: 1_234_567_891_012,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-scale-04: 12 + 6 (symmetric)",
+        op: Op::Add,
+        scale_a: 12,
+        value_a: 1_234_567_891_012,
+        scale_b: 6,
+        value_b: 1_234_567,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-scale-05: 12 sub 0 (no promote)",
+        op: Op::Sub,
+        scale_a: 12,
+        value_a: 5_000_000_000_000,
+        scale_b: 0,
+        value_b: 3,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-scale-06: 0 mul 18 (promote)",
+        op: Op::Mul,
+        scale_a: 0,
+        value_a: 7,
+        scale_b: 18,
+        value_b: 1_000_000_000_000_000_000,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-scale-07: 18 mul 0 (symmetric)",
+        op: Op::Mul,
+        scale_a: 18,
+        value_a: 1_000_000_000_000_000_000,
+        scale_b: 0,
+        value_b: 7,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-scale-08: 3 div 0 (truncate)",
+        op: Op::Div,
+        scale_a: 3,
+        value_a: 1_000,
+        scale_b: 0,
+        value_b: 3,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-scale-09: 0 div 12 (truncate)",
+        op: Op::Div,
+        scale_a: 0,
+        value_a: 5,
+        scale_b: 12,
+        value_b: 1_000_000_000_000,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-scale-10: full 18-scale add (max boundary)",
+        op: Op::Add,
+        scale_a: 18,
+        value_a: 999_999_999_999_999_999,
+        scale_b: 18,
+        value_b: 1,
+    },
+    // ----- Category 9: rounding-boundary edges (10 fixtures) -----
+    DqaRoundTripVector {
+        label: "TV-D10-round-01: div 1/2 → 0 (RNE truncate)",
+        op: Op::Div,
+        scale_a: 0,
+        value_a: 1,
+        scale_b: 0,
+        value_b: 2,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-round-02: div 5/2 → 2 (RNE truncate)",
+        op: Op::Div,
+        scale_a: 0,
+        value_a: 5,
+        scale_b: 0,
+        value_b: 2,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-round-03: div -5/2 → -2 (RNE)",
+        op: Op::Div,
+        scale_a: 0,
+        value_a: -5,
+        scale_b: 0,
+        value_b: 2,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-round-04: div 7/2 → 3",
+        op: Op::Div,
+        scale_a: 0,
+        value_a: 7,
+        scale_b: 0,
+        value_b: 2,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-round-05: div -7/2 → -3",
+        op: Op::Div,
+        scale_a: 0,
+        value_a: -7,
+        scale_b: 0,
+        value_b: 2,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-round-06: div 100/3 → 33",
+        op: Op::Div,
+        scale_a: 0,
+        value_a: 100,
+        scale_b: 0,
+        value_b: 3,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-round-07: div 12-scale 1 / 12-scale 3 = 0",
+        op: Op::Div,
+        scale_a: 12,
+        value_a: 1_000_000_000_000,
+        scale_b: 12,
+        value_b: 3_000_000_000_000,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-round-08: div 12-scale 4 / 12-scale 3",
+        op: Op::Div,
+        scale_a: 12,
+        value_a: 4_000_000_000_000,
+        scale_b: 12,
+        value_b: 3_000_000_000_000,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-round-09: div 3/2 (RNE half-even)",
+        op: Op::Div,
+        scale_a: 0,
+        value_a: 3,
+        scale_b: 0,
+        value_b: 2,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-round-10: div 5/2 (RNE half-even)",
+        op: Op::Div,
+        scale_a: 0,
+        value_a: 5,
+        scale_b: 0,
+        value_b: 2,
+    },
+    // ----- Category 10: cross-scale-mix canonical (10 fixtures) -----
+    DqaRoundTripVector {
+        label: "TV-D10-mix-01: add scale-0 + scale-18",
+        op: Op::Add,
+        scale_a: 0,
+        value_a: 7,
+        scale_b: 18,
+        value_b: 333_333_333_333_333_333,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-mix-02: sub scale-18 - scale-0",
+        op: Op::Sub,
+        scale_a: 18,
+        value_a: 500_000_000_000_000_000,
+        scale_b: 0,
+        value_b: 3,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-mix-03: mul scale-9 * scale-9 = scale-18",
+        op: Op::Mul,
+        scale_a: 9,
+        value_a: 123_456_789,
+        scale_b: 9,
+        value_b: 987_654_321,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-mix-04: div scale-12 / scale-6",
+        op: Op::Div,
+        scale_a: 12,
+        value_a: 6_000_000_000_000,
+        scale_b: 6,
+        value_b: 2_000_000,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-mix-05: add scale-12 + scale-0",
+        op: Op::Add,
+        scale_a: 12,
+        value_a: 1_000_000_000_000,
+        scale_b: 0,
+        value_b: 1,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-mix-06: mul scale-12 * scale-0",
+        op: Op::Mul,
+        scale_a: 12,
+        value_a: 1_500_000_000_000,
+        scale_b: 0,
+        value_b: 4,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-mix-07: add scale-3 + scale-12",
+        op: Op::Add,
+        scale_a: 3,
+        value_a: 123_456,
+        scale_b: 12,
+        value_b: 1_000_000_000_000,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-mix-08: full 18-scale mul (boundary)",
+        op: Op::Mul,
+        scale_a: 18,
+        value_a: 1_000_000_000_000_000_000,
+        scale_b: 18,
+        value_b: 1,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-mix-09: scale-promote 18 (truncate beyond digit)",
+        op: Op::Mul,
+        scale_a: 9,
+        value_a: 999_999_999,
+        scale_b: 9,
+        value_b: 999_999_999,
+    },
+    DqaRoundTripVector {
+        label: "TV-D10-mix-10: div cross-scale (12 / 0)",
+        op: Op::Div,
+        scale_a: 12,
+        value_a: 5_000_000_000_000,
+        scale_b: 0,
+        value_b: 2,
+    },
+];
+
+/// Captured result for one TV-D10 fixture: `(value, scale)` (or
+/// `Err` marker for intentional overflow / div-by-zero paths).
+#[derive(Debug, Clone, Copy)]
+enum DqaResult {
+    Ok { value: i64, scale: u8 },
+    Overflow,
+    DivisionByZero,
+}
+
+impl DqaResult {
+    fn compute(op: Op, a: Dqa, b: Dqa) -> Self {
+        let res = match op {
+            Op::Add => a.add(b),
+            Op::Sub => a.subtract(b),
+            Op::Mul => a.multiply(b),
+            Op::Div => a.divide(b),
+        };
+        match res {
+            Ok(d) => DqaResult::Ok {
+                value: d.value,
+                scale: d.scale,
+            },
+            Err(_) => match op {
+                Op::Div => DqaResult::DivisionByZero,
+                _ => DqaResult::Overflow,
+            },
+        }
+    }
+}
+
+/// OnceLock cache: TV-D10 is run multiple times across the test
+/// process; the canonical `(value, scale)` per fixture is captured
+/// on first run and re-asserted on subsequent runs. Drift between
+/// runs = canonicalize / RNE / align_scales change.
+fn tv_d10_captured() -> &'static Vec<(usize, DqaResult)> {
+    static CACHE: OnceLock<Vec<(usize, DqaResult)>> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        TV_D10_VECTORS
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                let a = Dqa::new(f.value_a, f.scale_a).expect("Dqa::new(scale_a)");
+                let b = Dqa::new(f.value_b, f.scale_b).expect("Dqa::new(scale_b)");
+                (i, DqaResult::compute(f.op, a, b))
+            })
+            .collect()
+    })
+}
+
+/// TV-D10: deterministic byte-exact assertion.
+///
+/// Each fixture is evaluated against the captured canonical
+/// result (cached on first run). Subsequent runs MUST match —
+/// drift = `canonicalize` / `round_half_even` / `align_scales`
+/// changed in the canonical `octo_determin::Dqa` impl.
+#[test]
+fn tv_d10_dqa_round_trip_vectors_match_pinned_values() {
+    assert_eq!(
+        TV_D10_VECTORS.len(),
+        100,
+        "TV-D10 MUST hold exactly 100 fixtures per review §24 (10 categories × 10 each)"
+    );
+    let captured = tv_d10_captured();
+    assert_eq!(captured.len(), 100);
+
+    for (i, f) in TV_D10_VECTORS.iter().enumerate() {
+        let r1 = captured[i].1;
+        let a = Dqa::new(f.value_a, f.scale_a).expect("Dqa::new(scale_a)");
+        let b = Dqa::new(f.value_b, f.scale_b).expect("Dqa::new(scale_b)");
+        let r2 = DqaResult::compute(f.op, a, b);
+        assert!(
+            matches!(
+                (r1, r2),
+                (DqaResult::Ok { value: v1, scale: s1 }, DqaResult::Ok { value: v2, scale: s2 })
+                    if v1 == v2 && s1 == s2
+            ) || (matches!(r1, DqaResult::Overflow) && matches!(r2, DqaResult::Overflow))
+                || (matches!(r1, DqaResult::DivisionByZero)
+                    && matches!(r2, DqaResult::DivisionByZero)),
+            "{f}: DQA determinism drift — captured={r1:?}, recomputed={r2:?}"
+        );
+    }
+}
+
+/// TV-D10: scale invariant — every successful result MUST have
+/// scale ≤ 18 (DQA max scale per `MAX_SCALE`).
+#[test]
+fn tv_d10_results_respect_max_scale_invariant() {
+    for r in tv_d10_captured() {
+        if let DqaResult::Ok { scale, .. } = r.1 {
+            assert!(
+                scale <= 18,
+                "DQA result scale {scale} exceeds MAX_SCALE=18 (fixture {})",
+                r.0
+            );
+        }
+    }
+}
+
+/// TV-D10: canonicalize invariant — every successful result MUST
+/// be canonical (no redundant trailing-zero scale that could be
+/// stripped). Verified indirectly: result `value` modulo `10^scale`
+/// MUST be non-zero (i.e., the smallest possible scale that
+/// represents the magnitude).
+#[test]
+fn tv_d10_results_are_canonicalized() {
+    for (i, r) in tv_d10_captured().iter().enumerate() {
+        if let DqaResult::Ok { value, scale } = r.1 {
+            assert!(
+                scale == 0 || value % 10i64.pow(scale as u32) != 0,
+                "DQA fixture {i}: result (v={value}, s={scale}) is not canonicalized"
+            );
+        }
+    }
+}

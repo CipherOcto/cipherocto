@@ -24,6 +24,16 @@ stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockc
 blake3 = "1.5"
 # Layer B → substrate error type. Display operator-facing, Debug substrate-internal.
 thiserror = "2.0"
+# `octo-determin` (Layer A frozen substrate, RFC-frozen per
+# `cipherocto-design-principles.md`). `asset_id_for` is the canonical
+# §20.3.1 derivation rule (RFC-0105 v2.0, mission 0105-v); the TV
+# fixtures in `tests/test_vectors.rs::tv_d9_asset_id` reference it
+# directly. Version bump + Cargo.lock update owed on `octo-determin`
+# v0.1.0 → v0.2.0 when this mission pushes. Local path via root
+# `[patch."https://github.com/CipherOcto/cipherocto"]` so the new
+# module is visible WITHOUT a remote push (per
+# `feedback_initiation_user_only`).
+octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
 
 [dev-dependencies]
 # Hex encoding for byte-exact test vector fixtures (TV-V1) +

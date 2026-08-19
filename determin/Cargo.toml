@@ -46,6 +46,10 @@ num-traits = "0.2"
 # `DqaEncoding` shape (value: 8B BE + scale: 1B + _reserved: 7B).
 # Pin matches the wallet-node + cap-macaroon envelope pin.
 borsh = { version = "=1.5.0", features = ["derive"] }
+# BLAKE3-256 for `asset_id_for` derivation (RFC-0105 v2.0 §Asset ID
+# Derivation; mission 0105-v). Same workspace dep as `octo-vault`'s
+# `AssetId::derive` — single-bit anchor per §20.3.1.
+blake3 = "1.5"
 
 [features]
 default = []

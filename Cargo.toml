@@ -162,3 +162,10 @@ stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockc
 # NO `skipping duplicate package octo-sync` warning on every build.
 [patch."https://github.com/CipherOcto/cipherocto"]
 octo-sync = { path = "octo-sync" }
+# `octo-determin` — local path override for mission `0105-v` so the
+# new `asset_id_for` fn (RFC-0105 v2.0) lands + is consumable by TV in
+# `crates/octo-vault/tests/test_vectors.rs` without forcing a remote
+# push (per `feedback_initiation_user_only`). Layer A frozen
+# substrate; the path patch is in-place for this commit only —
+# revert once `octo-determin` is pushed to `next`.
+octo-determin = { path = "determin" }

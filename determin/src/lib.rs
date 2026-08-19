@@ -29,6 +29,8 @@ pub const BIGINT_SPEC_VERSION: u32 = 1;
 pub const DECIMAL_SPEC_VERSION: u32 = 1;
 
 mod arithmetic;
+pub mod asset_id;
+pub use asset_id::{asset_id_for, ASSET_ID_DOMAIN_V1, ROLE_TOKENS};
 pub mod bigint;
 pub mod consensus;
 pub mod dact;

@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.9 (2026-03-19)
+**Version:** 2.0 (2026-08-18)
 **Status:** Accepted
 
 > **Note:** This RFC was originally numbered RFC-0105 under the legacy numbering system. It remains at 0105 as it belongs to the Numeric/Math category.
@@ -10,6 +10,13 @@
 > **Cross-RFC Amendment v1.9:**
 > - Added §NumericScalar Implementation — establishes Dqa as canonical implementation of the RFC-0113 NumericScalar trait
 > - Documents cross-RFC relationships: RFC-0112 (original trait), RFC-0113 (canonical trait), RFC-0105 (implementation)
+
+> **Cross-RFC Amendment v2.0:**
+> - Added §Asset ID Derivation — establishes `asset_id_for(role_token)` as the canonical BLAKE3-256 derivation rule for role-token identity (Layer A frozen substrate, mission 0105-v)
+> - Pinned 9-role-token enumeration (Sovereign `OCTO` excluded per cross-layer capability-attestation path): `OCTO-A/B/D/M/N/O/S/H/W`
+> - Anchored in central TV registry: TV-D9 (9 byte-exact BLAKE3-256 vectors) + TV-D10 (100 DQA arithmetic determinism fixtures)
+> - Cross-RFC relationships established: RFC-0960 (vault identity substrate), RFC-0964 (constraint encoding) — both reuse `asset_id_for` for vault/constraint identity binding
+> - `octo_determin::asset_id_for` becomes canonical Layer A identity primitive; `octo_determin::ROLE_TOKENS` becomes canonical 9-token enumeration; TV-D9 anchors byte-exact cross-implementation behavior
 
 ## Summary
 
@@ -574,6 +581,108 @@ For hot paths in VM execution, canonicalization after every operation can be exp
 ```
 
 **VM Canonicalization Rule (Normative)**: VM registers MAY contain non-canonical DQA values during intermediate evaluation. Before a value is used for comparison, serialization, hashing, storage, control-flow evaluation, or returning from a VM frame, it MUST be canonicalized. This guarantees cross-node state equivalence.
+
+### Asset ID Derivation
+
+> **Section added in v2.0 (mission 0105-v).** Establishes the canonical
+> BLAKE3-256 derivation rule for role-token identity primitives. This
+> section lives in Layer A frozen substrate (per
+> `cipherocto-design-principles.md`) — semver-major changes to the
+> derivation rule, namespace, or role-token enumeration require an RFC
+> revision.
+
+#### Canonical derivation rule
+
+```text
+asset_id = BLAKE3-256("cipherocto/asset/v1/" || role_token_bytes)[:32]
+```
+
+The output is a 32-byte sequence (BLAKE3-256 truncated to its native
+output length — the truncation is defensive; BLAKE3-256's natural
+output is already 32 bytes). Inputs MUST be a non-empty ASCII string;
+the canonical role-token enumeration is fixed at 9 slots (see §Role-token
+enumeration).
+
+#### Domain-separated namespace
+
+The namespace prefix `"cipherocto/asset/v1/"` (constant
+`ASSET_ID_DOMAIN_V1` in `octo_determin::asset_id`) is the only
+normative namespace. Future version bumps (`v2`, `v3`, ...) MUST
+change this string to guarantee collision-free asset IDs across
+ecosystem forks. Any namespace change is a semver-major break for
+`octo-determin`.
+
+#### Role-token enumeration
+
+The canonical 9-role-token enumeration (cross-section reconciliation
+per review §1336):
+
+| Role-token   | Function                       |
+| ------------ | ------------------------------ |
+| `OCTO-A`     | AI Compute                     |
+| `OCTO-B`     | Bandwidth                      |
+| `OCTO-D`     | Developers                     |
+| `OCTO-M`     | Marketing                      |
+| `OCTO-N`     | Node Operators                 |
+| `OCTO-O`     | Orchestrator                   |
+| `OCTO-S`     | Storage                        |
+| `OCTO-H`     | Historical                     |
+| `OCTO-W`     | AI Wholesale                   |
+
+Sovereign `OCTO` is EXCLUDED from this enumeration — it follows a
+separate cross-layer capability-attestation path (review §1362). Future
+token additions (`OCTO-X`, ...) expand the TV-D9 fixture count via an
+additive v2.x enumeration extension.
+
+#### Layer placement
+
+The `asset_id_for` function lives in `octo_determin::asset_id`
+(Layer A frozen substrate). Consumer crates (Layer B/C/D) reach it via
+the canonical re-export chain:
+
+```text
+octo_determin::asset_id::asset_id_for   (canonical definition)
+    └─ octo_determin::asset_id_for       (re-export at crate root)
+        └─ consumer crates via git dep   (octo-determin)
+```
+
+The Layer B `octo-vault::AssetId::derive` MUST agree byte-by-byte
+with `octo_determin::asset_id_for` for every role-token — this is
+cross-implementation drift detection (regression: silent identity-key
+drift across vault substrate + canonical Layer A).
+
+#### Test vectors (TV-D9)
+
+9 byte-exact BLAKE3-256 fixtures pinned in the central registry
+(`crates/octo-vault/tests/test_vectors.rs::tv_d9_asset_id`):
+
+```text
+("OCTO-A", "161e52f483cf25de1163a0d6dccce98c50404971065de3b1013aaeaa64e1a01b")
+("OCTO-B", "5ca7f59fe932648a0327c29060326a2fe6ad60131d5b38639f15c720d9ce3c0a")
+("OCTO-D", "c5180b712f27cc8e0d72dc7d91217e6526fd8eaaa526ac5d83b62c29ffe7a581")
+("OCTO-M", "8aa463d5d06c35ea75abca875ef7787945db0c321d609e6e6e1a8fec21caf64a")
+("OCTO-N", "b940c7dc0087fd559a626d8047881ac4e620282e112bdcf6fb437a374cf64091")
+("OCTO-O", "d2cf354857f5612e78a35c9d307885a1e3428804c5bda2c4b3cb4ae2e1e2ca4a")
+("OCTO-S", "fc97983dcb4b30e8cd9d893f4784ffcaaa6d3fc585129b6554a658dac40f5f36")
+("OCTO-H", "72a20d851da06aaeaa34451a79bf70633d8e3b2553e4c86606864d98ef4a2483")
+("OCTO-W", "24fadb2b4f5eebc5f6199f3ee4625f64d8d7c822413c700309f09b0ad1b281b0")
+```
+
+These vectors are anchored at the central registry (§8.10). Any
+namespace, hash-function, or role-token enumeration change MUST
+re-anchor all 9 vectors (the failure mode: vector mismatch surfaces in
+`tv_d9_asset_id_vectors_match_pinned_hex`).
+
+#### Cross-RFC relationships
+
+- **RFC-0960 (vault identity substrate)**: vault identity binding
+  uses `asset_id_for(role_token)` for role-aware vault-key derivation.
+- **RFC-0964 (constraint encoding)**: constraint-encoding layer
+  pins the role-token enumeration as the canonical constraint
+  discriminator set.
+
+Both consumers MUST route through `octo_determin::asset_id_for` — no
+parallel re-implementations.
 
 ### Deterministic Power Table
 

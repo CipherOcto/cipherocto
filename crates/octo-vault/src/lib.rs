@@ -41,6 +41,8 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+use std::sync::Arc;
+
 use thiserror::Error;
 
 /// Maximum accepted `owner_did` length (bytes). The vault_id derivation
@@ -353,6 +355,89 @@ pub fn apply(db: &stoolap::Database) -> Result<(), VaultError> {
         octo_storage_core::ApplyConfig::default(),
     )
     .map_err(|_e| VaultError::Substrate)
+}
+
+/// Substrate handle — thin wrapper around the Stoolap-fork `Database`
+/// handle that owns the `vaults_vault_id_idx` UNIQUE INDEX lookup
+/// primitive.
+///
+/// Mission 0957-g1 (Layer B glue-crate pattern, mirrors
+/// `TransportDeliveryCatalog` in `crates/octo-cap-macaroon-transport/`):
+/// the substrate handle is exported here so consumer crates (the glue
+/// crate `octo-cap-macaroon-vault`) can wire the canonical
+/// `VaultLookup` lookup primitive without taking a direct `stoolap`
+/// dep — keeping `octo-cap-macaroon` free of substrate-internal types
+/// per the layer direction (B → B is allowed only through this typed
+/// handle, never through raw `stoolap::Database` re-export).
+///
+/// Production deployment wiring (config-time injection of an
+/// `Arc<VaultSubstrate>` into the verify path) lands in `octo-vault-node`
+/// (Layer C) — see mission 0957-g1 AC-2.
+#[derive(Clone)]
+pub struct VaultSubstrate {
+    db: Arc<stoolap::Database>,
+}
+
+impl std::fmt::Debug for VaultSubstrate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Operator-facing diagnostic only — do not leak the underlying
+        // database connection identifier. Same defense-in-depth as
+        // `TransportDeliveryCatalog` Debug redaction.
+        f.debug_struct("VaultSubstrate").finish_non_exhaustive()
+    }
+}
+
+impl VaultSubstrate {
+    /// Construct a `VaultSubstrate` from a shared Stoolap-fork
+    /// `Database` handle. Caller is responsible for running [`apply`]
+    /// (and any other migrations) on the database before the substrate
+    /// handle is constructed; the substrate handle does not auto-migrate.
+    pub fn new(db: Arc<stoolap::Database>) -> Self {
+        Self { db }
+    }
+
+    /// Look up a vault row by its derived `vault_id` (32 bytes). Backed
+    /// by the `vaults_vault_id_idx` UNIQUE INDEX per review §20.6.1
+    /// algorithm step 2 (~1-3ms SSD on cold cache; warmed by substrate
+    /// page cache thereafter).
+    ///
+    /// Returns:
+    /// - `Ok(Some((chain_id, state)))` if a row with that `vault_id`
+    ///   exists.
+    /// - `Ok(None)` if no row exists (mirrors `VaultLookup::lookup_vault`
+    ///   contract; verify path maps this to `VaultVerifyError::VaultRowMissing`).
+    /// - `Err(VaultError::Substrate)` on substrate-level failure
+    ///   (Stoolap error / migration not applied / etc.).
+    pub fn lookup_by_vault_id(
+        &self,
+        vault_id: &VaultId,
+    ) -> Result<Option<(ChainId, VaultState)>, VaultError> {
+        let mut rows = self
+            .db
+            .query(
+                "SELECT chain_id, state FROM vaults WHERE vault_id = ?",
+                (vault_id.as_bytes().as_slice(),),
+            )
+            .map_err(|_e| VaultError::Substrate)?;
+        // UNIQUE INDEX guarantees at most one row; take the first.
+        if let Some(row_result) = rows.next() {
+            let r = row_result.map_err(|_e| VaultError::Substrate)?;
+            let chain_bytes: Vec<u8> = r.get(0).map_err(|_e| VaultError::Substrate)?;
+            let state_str: String = r.get(1).map_err(|_e| VaultError::Substrate)?;
+            let mut chain_arr = [0u8; 32];
+            if chain_bytes.len() != 32 {
+                return Err(VaultError::Substrate);
+            }
+            chain_arr.copy_from_slice(&chain_bytes);
+            let chain_id = ChainId::from_bytes(chain_arr);
+            let state = match VaultState::parse(&state_str) {
+                Some(s) => s,
+                None => return Err(VaultError::Substrate),
+            };
+            return Ok(Some((chain_id, state)));
+        }
+        Ok(None)
+    }
 }
 
 #[cfg(test)]

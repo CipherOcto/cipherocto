@@ -2,7 +2,7 @@
 
 ## Status
 
-**OPEN 2026-08-17 (@mmacedoeu).** Follow-on to `0862-c1-dqa-vault-bump-amendment`
+**LANDED 2026-08-18 (@mmacedoeu).** Follow-on to `0862-c1-dqa-vault-bump-amendment`
 (S6c LANDED 2026-08-17). Filed per S6c Round 2 security review
 findings #1 + #2: `StoolapSpendLedger::seed()` has two gaps
 uncovered by Round 1 fix (which only added NegativeCost to
@@ -118,3 +118,4 @@ Err(SpendLedgerError::NegativeCost { cost: budget }) }` (matches
 | 2026-08-17 | @mmacedoeu | Initial filing per S6c Round 2 security review findings #1 + #2 (seed TOCTOU + asymmetric NegativeCost guard).                                                                                           |
 | 2026-08-17 | @mmacedoeu | Round 3 expansion: added AC-3 (scale=0 assert) per Round 3 security review finding #2.                                                                                                                   |
 | 2026-08-17 | @mmacedoeu | Round 3 cleanup: drop `v007:24` line ref from ## Problem section; drop `RFC-0862 v2.0` version pin from ## RFC section per CLAUDE.md referencing rule; expand AC-6 to clarify TV-06 lives in octo-vault. |
+| 2026-08-18 | @mmacedoeu | Close-out audit: substrate guards (drain_lock + NegativeCost precondition + `SpendLedgerError::InvalidScale` for scale=0 per `0862-c4` typed-error conversion) + TV-0862-15/16 (in `tests/tv_0862_spend_ledger.rs`) + RFC-0862 §StoolapSpendLedger seed hardening amend (line 1040-1051) were all already in place. Mission file moved `open/` → `claimed/`. 23/23 quota-router-storage TV green. |

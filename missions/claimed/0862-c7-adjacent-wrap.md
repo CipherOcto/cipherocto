@@ -2,7 +2,7 @@
 
 ## Status
 
-**OPEN 2026-08-17 (@mmacedoeu).** Follow-on to `0862-c1-dqa-vault-bump-amendment`
+**LANDED 2026-08-18 (@mmacedoeu).** Follow-on to `0862-c1-dqa-vault-bump-amendment`
 (S6c LANDED 2026-08-17). Filed per S6c Round 2 security review
 finding #3: same S4 Round 2 -class signed-underflow bug at adjacent
 module `quota-router-core/src/storage.rs`, NOT covered by Round 1
@@ -114,4 +114,5 @@ Round 1 audit did not cover (audit was scoped to
 | ---------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 2026-08-17 | @mmacedoeu | Initial filing per S6c Round 2 security review finding #3 (S4 Round 2 -class adjacent wrap in quota-router-core).                                                                |
 | 2026-08-17 | @mmacedoeu | Round 3 expansion: added §cache-eviction-budget-gate to AC-2 (per Round 3 security review finding #1, `cache.rs:211` is same S4 Round 2 -class adjacent wrap missed by Round 2). |
+| 2026-08-18 | @mmacedoeu | Close-out audit: `SpendEvent::cost_amount_i64()` boundary guard (in `crates/quota-router-core/src/keys/models.rs` §2-3) + `cost_u64_to_i64` free fn + 4 narrow sites (storage.rs §budget-gate-deduct-team + §budget-gate-deduct-key + §deduct-octo-w-execute + cache.rs §cache-eviction-budget-gate) + 4 TV (at-boundary / at-max / zero / SpendEvent method mirrors free fn) in `tests/tv_0862_c7_cost_overflow.rs` + RFC-0862 v2.0.1 amend at line 1029 + version history v2.0.1 row at line 2111 all already landed. Mission file moved `open/` → `claimed/`. 4/4 TV green. |
 | 2026-08-17 | @mmacedoeu | Round 3 cleanup: drop line refs from ## Problem + ## Critical files sections; drop version pins from ## RFC section per CLAUDE.md referencing rule.                              |

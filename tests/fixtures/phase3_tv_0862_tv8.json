@@ -1,0 +1,17 @@
+{
+  "_comment": "RFC-0862 v1.3.0 Phase 3 performance test vector TV-8 ONLY (wal_fanout_lag_under_100ms). Phase 3 TVs are PERFORMANCE BUDGETS — not byte-exact. The fixture stores the budget (`budget_ms`, `ci_slack_factor`, `iterations`); the gate test measures fresh and asserts under CI slack. Re-bootstrap via `UPDATE_PHASE3_TV=1 cargo test -p octo-sync --test phase3_tv_0862_tv8 phase3_tv_0862_tv8_dump -- --nocapture`. Per RFC-0008 Class A determinism: the budget is canonical; the substrate must stay under it.",
+  "_rfc": "RFC-0862 v1.3.0",
+  "_phase": "Phase 3",
+  "_scope": "TV-8 ONLY. Sibling to phase3_tv_0862.json (TV-5, LANDED 2026-08-19). Separate file per R17 M3 scope discipline (each TV owns its own fixture file). TV-6/7 land in separate follow-on missions.",
+  "entries": [
+    {
+      "name": "TV-8",
+      "description": "WAL fan-out lag under 100 ms p99: 100 sequential `Cluster::append_wal_entry` + `Cluster::read_wal_range(from_lsn, from_lsn+1)` round-trips on a single Cluster (writer + reader share `Arc<Cluster>` state — no separate replication layer in test harness) MUST complete with p99 round-trip ≤ 100 ms wall-clock. Per RFC-0862 v1.3.0 §Performance Targets. CI slack factor 10x = 1000 ms assertion threshold. Substrate fan-out = mutex acquire + HashMap insert; observed well under 1 ms in current substrate.",
+      "test_function": "wal_fanout_lag_under_100ms",
+      "budget_ms": 100,
+      "ci_slack_factor": 10,
+      "iterations": 100,
+      "verification_command": "cargo test -p octo-sync --test phase3_tv_0862_tv8 phase3_tv_0862_tv8_wal_fanout_lag_under_100ms -- --nocapture"
+    }
+  ]
+}

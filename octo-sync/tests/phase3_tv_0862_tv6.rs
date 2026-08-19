@@ -12,6 +12,14 @@
 //!   §Performance Targets). CI slack factor of 10× (assertion threshold
 //!   = 10 ms p99) absorbs CI jitter without false-failing the gate.
 //!
+//!   **Post-loop WAL integrity check** (R1 MED fix): after the 100-iter
+//!   loop, the cluster's WAL MUST contain exactly 100 entries with
+//!   monotonically-increasing sequence numbers and the leader's writer
+//!   node_id. This guards against the silent-pass risk where
+//!   `submit_drain` returns `Ok` but no entry is appended (or where a
+//!   stub implementation trivially satisfies the perf budget by doing
+//!   nothing).
+//!
 //! ## Why async harness (unlike TV-5/7/8 sync substrate)
 //!
 //! `RaftLikeDrainCoordinator::submit_drain` is `async fn` (per
@@ -69,10 +77,10 @@ const FIXTURE_NAME: &str = "phase3_tv_0862_tv6.json";
 ///
 /// 100 sequential `RaftLikeDrainCoordinator::submit_drain` calls on a
 /// single shard. Lease acquired once upfront via
-/// `RaftLikeWriterElection::acquire_writer` (60 s lease — long enough
-/// to cover all 100 drains). Each iter submits a drain with a unique
-/// `requested_cost` (avoids any idempotency check); per-iter wall-clock
-/// measured via `Instant::now()`.
+/// `RaftLikeWriterElection::acquire_writer` (300 s lease — long enough
+/// to cover all 100 drains with CI headroom). Each iter submits a
+/// drain with a unique `requested_cost` (avoids any idempotency check);
+/// per-iter wall-clock measured via `Instant::now()`.
 ///
 /// Inputs (declared in fixture):
 /// - `budget_ms = 1` (RFC-0862 §Performance Targets; 1000 txn/s per shard)
@@ -106,9 +114,12 @@ async fn tv6_drain_throughput_1k_per_sec(iterations: u32) -> Vec<u8> {
     let macaroon_id: [u8; 16] = [0xA6; 16];
     let shard_key = ShardKey::derive_canonical(holder.as_bytes());
 
-    // Acquire leader lease once upfront (60 s lease covers all 100 iters).
+    // Acquire leader lease once upfront (300 s lease — R1 MED fix: 60s
+    // was tight enough that an overloaded CI runner could trigger
+    // lease expiry mid-loop and panic on submit_drain. 300s gives
+    // 5× headroom over typical TV-6 run time of <1s).
     election
-        .acquire_writer(&shard_key, 60_000)
+        .acquire_writer(&shard_key, 300_000)
         .await
         .expect("acquire_writer must succeed for leader");
 
@@ -124,6 +135,40 @@ async fn tv6_drain_throughput_1k_per_sec(iterations: u32) -> Vec<u8> {
         per_iter_us.push(t0.elapsed().as_micros() as u64);
     }
     let total_ms = start.elapsed().as_millis() as u64;
+
+    // Post-loop WAL integrity check (R1 MED fix): guards against the
+    // silent-pass risk where submit_drain returns Ok but appends
+    // nothing. Each iter MUST produce exactly one ENTRY_TYPE_DRAIN
+    // entry; LSNs MUST be monotonic (1..=iterations) with each
+    // previous_lsn == lsn - 1.
+    use octo_sync::substrate::wal::ENTRY_TYPE_DRAIN;
+    let wal_entries = cluster.read_wal_range(1, None);
+    assert_eq!(
+        wal_entries.len(),
+        iterations as usize,
+        "TV-6 WAL INTEGRITY: expected exactly {iterations} WAL entries after loop, got {}",
+        wal_entries.len()
+    );
+    for (i, entry) in wal_entries.iter().enumerate() {
+        let expected_lsn = (i + 1) as u64;
+        assert_eq!(
+            entry.lsn, expected_lsn,
+            "TV-6 WAL INTEGRITY: entry[{i}].lsn = {}, expected {expected_lsn}",
+            entry.lsn
+        );
+        assert_eq!(
+            entry.entry_type, ENTRY_TYPE_DRAIN,
+            "TV-6 WAL INTEGRITY: entry[{i}].entry_type = {}, expected ENTRY_TYPE_DRAIN",
+            entry.entry_type
+        );
+        assert_eq!(
+            entry.previous_lsn,
+            entry.lsn.saturating_sub(1),
+            "TV-6 WAL INTEGRITY: entry[{i}].previous_lsn = {}, expected {} (lsn-1)",
+            entry.previous_lsn,
+            entry.lsn.saturating_sub(1)
+        );
+    }
 
     // p99 = per_iter_us[iterations - 1] after sort. Cheap p99: sort a copy.
     let mut sorted_us = per_iter_us.clone();

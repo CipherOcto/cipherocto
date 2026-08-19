@@ -1,0 +1,17 @@
+{
+  "_comment": "RFC-0862 v1.3.0 Phase 3 performance test vector TV-6 ONLY (drain_throughput_1k_per_sec). Phase 3 TVs are PERFORMANCE BUDGETS — not byte-exact. The fixture stores the budget (`budget_ms`, `ci_slack_factor`, `iterations`); the gate test measures fresh and asserts under CI slack. Re-bootstrap via `UPDATE_PHASE3_TV=1 cargo test -p octo-sync --test phase3_tv_0862_tv6 phase3_tv_0862_tv6_dump -- --nocapture`. Per RFC-0008 Class A determinism: the budget is canonical; the substrate must stay under it.",
+  "_rfc": "RFC-0862 v1.3.0",
+  "_phase": "Phase 3",
+  "_scope": "TV-6 ONLY. Sibling to phase3_tv_0862.json (TV-5) + phase3_tv_0862_tv7.json (TV-7) + phase3_tv_0862_tv8.json (TV-8). Separate file per R17 M3 scope discipline (each TV owns its own fixture file). Last of RFC-0862 v1.3.0 Phase 3 perf-budget TVs.",
+  "entries": [
+    {
+      "name": "TV-6",
+      "description": "Drain throughput ≥ 1000 txn/s per shard: 100 sequential `RaftLikeDrainCoordinator::submit_drain` calls on a single shard (lease acquired once upfront, all 100 drains commit via the leader-election path) MUST complete with per-iter wall-clock ≤ 1 ms p99 (1000 txn/s = 1 ms/op budget). Per RFC-0862 v1.3.0 §Performance Targets. CI slack factor 10x = 10 ms assertion threshold. Substrate submit_drain = leader check + WAL append (sync via cluster mutex); observed well under 1 ms in current substrate.",
+      "test_function": "drain_throughput_1k_per_sec",
+      "budget_ms": 1,
+      "ci_slack_factor": 10,
+      "iterations": 100,
+      "verification_command": "cargo test -p octo-sync --test phase3_tv_0862_tv6 phase3_tv_0862_tv6_drain_throughput_1k_per_sec -- --nocapture"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "_comment": "RFC-0862 v1.3.0 Phase 3 performance test vector TV-7 ONLY (failover_pause_under_3s). Phase 3 TVs are PERFORMANCE BUDGETS — not byte-exact. The fixture stores the budget (`budget_ms`, `ci_slack_factor`, `iterations`); the gate test measures fresh and asserts under CI slack. Re-bootstrap via `UPDATE_PHASE3_TV=1 cargo test -p octo-sync --test phase3_tv_0862_tv7 phase3_tv_0862_tv7_dump -- --nocapture`. Per RFC-0008 Class A determinism: the budget is canonical; the substrate must stay under it.",
+  "_rfc": "RFC-0862 v1.3.0",
+  "_phase": "Phase 3",
+  "_scope": "TV-7 ONLY. Sibling to phase3_tv_0862.json (TV-5) + phase3_tv_0862_tv8.json (TV-8). Separate file per R17 M3 scope discipline (each TV owns its own fixture file). TV-6 lands in separate follow-on mission.",
+  "entries": [
+    {
+      "name": "TV-7",
+      "description": "Failover pause under 3 s p99: 100 lease-expiry-path failover rounds on a fresh Cluster (lease_duration_ms = 0; node_a acquires leader, node_b immediately re-acquires via lease-expiry path; same shard_key; new term > 1 MUST be returned) MUST complete with per-iter re-acquire wall-clock ≤ 3 s p99. Per RFC-0862 v1.3.0 §Performance Targets. CI slack factor 5x = 15 s assertion threshold. Substrate re-acquire = HashMap remove + insert + term increment; observed well under 1 ms in current substrate.",
+      "test_function": "failover_pause_under_3s",
+      "budget_ms": 3000,
+      "ci_slack_factor": 5,
+      "iterations": 100,
+      "verification_command": "cargo test -p octo-sync --test phase3_tv_0862_tv7 phase3_tv_0862_tv7_failover_pause_under_3s -- --nocapture"
+    }
+  ]
+}

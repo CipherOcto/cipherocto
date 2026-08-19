@@ -1,0 +1,41 @@
+
+  "_comment": "RFC-0009 v1.2 Phase 1 test vectors (TV-1..TV-3). Regenerate via `UPDATE_PHASE1_TV=1 cargo test -p octo-wallet --lib phase1_tv_json phase1_tv_json_dump -- --nocapture`. Per RFC-0008 Class A determinism: every output is byte-exact reproducible from the declared inputs.",
+  "_rfc": "RFC-0009 v1.2",
+  "_phase": "Phase 1",
+  "_scope": "TV-1..TV-3 ONLY. Phase 3 TV-4..TV-7 land in a separate fixture + mission per RFC-0009 v1.2 §Test Vectors.",
+  "entries": [
+    {
+      "name": "TV-1",
+      "description": "MissionId serde_json round-trip equivalence (v1.1 wire form unchanged in v1.2) — to_string ∘ from_str ∘ to_string produces byte-exact equivalence.",
+      "inputs": {
+        "asker_did_utf8": "6469643a6f63746f3a30303031",
+        "model_utf8": "6f70656e61692f6770742d34"
+      },
+      "outputs_hex": "7b2261736b65725f646964223a226469643a6f63746f3a30303031222c226d6f64656c223a226f70656e61692f6770742d34227d",
+      "byte_len": 52,
+      "verification_command": "cargo test -p octo-wallet --lib phase1_tv_json phase1_tv_json_v11_round_trip_equivalence -- --nocapture"
+    },
+    {
+      "name": "TV-2",
+      "description": "Child key unlinkability: 2 sibling MissionKeys derived via HKDF-BLAKE3 from a single KeyHierarchy seed + distinct MissionIds produce 64 concatenation bytes that differ bytewise AND have no shared 16-byte prefix.",
+      "inputs": {
+        "identity_seed": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      "outputs_hex": "575a7143967a06f8badb59034c24ca800da0923f780f67f4ca74d2757d883565695eea1e2b1a8997c6206c370054c4a025e2d57480c0167071c85f55e8dbdf96",
+      "byte_len": 64,
+      "verification_command": "cargo test -p octo-wallet --lib phase1_tv_json phase1_tv_json_child_unlinkability -- --nocapture"
+    },
+    {
+      "name": "TV-3",
+      "description": "HSM boundary no seed exfiltration: InMemorySigner.sign(msg) returns 64-byte Ed25519 signature; signature bytes do NOT contain the seed prefix (no exfil via sig channel), AND Debug impl redacts the seed field (no exfil via log/dbg channel).",
+      "inputs": {
+        "seed_bytes": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+        "public_key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "msg_utf8": "6369706865726f63746f2f746573742d766563746f722d332d68736d2d626f756e64617279"
+      },
+      "outputs_hex": "46320a86de6a7599c260f10520f6d65fd4f27c98c61424d4e495c2f5f6f8dac873729db740a75cec15d2e511150754e0c9092a8c086c7f68d52d87c9be727901",
+      "byte_len": 64,
+      "verification_command": "cargo test -p octo-wallet --lib phase1_tv_json phase1_tv_json_hsm_boundary_no_seed_exfil -- --nocapture"
+    }
+  ]
+}

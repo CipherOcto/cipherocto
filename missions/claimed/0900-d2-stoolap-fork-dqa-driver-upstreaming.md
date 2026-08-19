@@ -20,13 +20,13 @@ surface, forcing i64 bridge at scale=0 with `dqa_to_i64` /
 
 ## Dependency edges
 
-| From | To | Why | Layer direction |
-| --- | --- | --- | --- |
-| Stoolap fork `crate::dqa` module (NEW) | `octo_determin::Dqa` | driver impl | substrate → lib |
-| Stoolap fork `Row::get::<Dqa>` + `Statement::set::<Dqa>` | `octo_determin::Dqa` codec | wire form | substrate → lib |
-| `crates/quota-router-storage/src/slash_store.rs` (modify) | Stoolap fork `Dqa` driver | DQA(12) codec | lib → substrate |
-| `crates/quota-router-storage/src/stoolap_spend_ledger.rs` (modify) | Stoolap fork `Dqa` driver | DQA(12) codec | lib → substrate |
-| `crates/quota-router-storage/src/settlement_event_repo.rs` (modify) | Stoolap fork `Dqa` driver | DQA(12) codec | lib → substrate |
+| From                                                                | To                         | Why           | Layer direction |
+| ------------------------------------------------------------------- | -------------------------- | ------------- | --------------- |
+| Stoolap fork `crate::dqa` module (NEW)                              | `octo_determin::Dqa`       | driver impl   | substrate → lib |
+| Stoolap fork `Row::get::<Dqa>` + `Statement::set::<Dqa>`            | `octo_determin::Dqa` codec | wire form     | substrate → lib |
+| `crates/quota-router-storage/src/slash_store.rs` (modify)           | Stoolap fork `Dqa` driver  | DQA(12) codec | lib → substrate |
+| `crates/quota-router-storage/src/stoolap_spend_ledger.rs` (modify)  | Stoolap fork `Dqa` driver  | DQA(12) codec | lib → substrate |
+| `crates/quota-router-storage/src/settlement_event_repo.rs` (modify) | Stoolap fork `Dqa` driver  | DQA(12) codec | lib → substrate |
 
 Dependent: 0900-d (LANDED 2026-08-18, commit `58c4c2ce`).
 Unblocks: 0900-d1 AC-1 + AC-2.
@@ -74,8 +74,8 @@ helpers (LANDED 0900-d) works but:
   equivalent) for prepared-statement parameter binding. Wire form
   matches `DqaEncoding` 16-byte BE.
 - AC-4: Stoolap fork RFC documents the driver surface + wire form
-  + integration tests. RFC file location:
-  `rfcs/draft/stoolap-fork/dqa-driver.md` (NEW).
+  - integration tests. RFC file location:
+    `rfcs/draft/stoolap-fork/dqa-driver.md` (NEW).
 - AC-5: Downstream consumers migrate off the i64 bridge:
   - `slash_store.rs::dqa_to_i64` / `i64_to_dqa` → use the substrate
     driver directly
@@ -169,8 +169,8 @@ helpers (LANDED 0900-d) works but:
 
 ## Version history
 
-| Date       | Author     | Change |
-| ---------- | ---------- | ------ |
+| Date       | Author     | Change                                                                                                          |
+| ---------- | ---------- | --------------------------------------------------------------------------------------------------------------- |
 | 2026-08-18 | @mmacedoeu | Initial filing. Unblocks 0900-d1 AC-1 + AC-2. Closes 0900-d's third documented fork quirk (Dqa driver surface). |
 
 ## Out of scope

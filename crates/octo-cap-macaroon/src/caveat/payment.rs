@@ -59,7 +59,7 @@ pub struct PaymentCaveat {
     pub caveat_name: String,
     /// Prepaid spend budget. Holder can spend up to this amount
     /// across all queries matching `model`. `Dqa` at `scale = 0`
-    /// (integer micro-OCTO_W).
+    /// (integer micro-OCTO-W).
     #[serde(with = "dqa_serde::field")]
     pub budget: Dqa,
     /// Model identifier this caveat applies to (`"gpt-4"`,

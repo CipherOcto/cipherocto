@@ -16,7 +16,7 @@ use super::provider::{NetworkId, ProviderCapacity, RouterNodeId};
 /// RFC-0862 on-chain binding lands per mission phase J).
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PricingPolicy {
-    /// Micro-OCTO_W cost per single query at this router.
+    /// Micro-OCTO-W cost per single query at this router.
     pub drain_per_query: u128,
     /// Macaroon root-ids the router accepts as payment; empty =
     /// rate-limit only (no paid-query gating).

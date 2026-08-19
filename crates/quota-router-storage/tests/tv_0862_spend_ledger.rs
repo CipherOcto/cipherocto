@@ -63,7 +63,7 @@ fn tv_0862_01_seed_creates_row() {
     let holder = "did:octo:zTV086201";
     let macaroon_id = TV_0862_MACAROON_ID_01;
 
-    let budget = dqa(1_000_000); // 1 OCTO_W at scale=0
+    let budget = dqa(1_000_000); // 1 OCTO-W at scale=0
     ledger
         .seed(holder, &macaroon_id, budget)
         .expect("seed new row");
@@ -207,7 +207,7 @@ fn tv_0862_04b_try_deduct_unknown_holder_errors() {
 // =============================================================================
 
 /// TV-0862-05: `Dqa` is `Dqa` at `scale = 0` (integer
-/// micro-OCTO_W counts). `DqaEncoding` is the canonical 16-byte BE
+/// micro-OCTO-W counts). `DqaEncoding` is the canonical 16-byte BE
 /// consensus wire form per RFC-0105 v1.9 §DqaEncoding struct.
 /// Round-trip must be exact AND the substrate's `i64` column
 /// (stoolap `INTEGER` ↔ `i64`) must carry `Dqa::value` losslessly
@@ -279,7 +279,7 @@ fn tv_0862_07_dqa_v2_wire_form_pinned() {
     let macaroon_id = TV_0862_MACAROON_ID_07;
 
     // Seed a value that exercises the V2 wire-form round-trip path.
-    let positive = TV_0862_BALANCE_07_FULL; // 1e12 micro-OCTO_W
+    let positive = TV_0862_BALANCE_07_FULL; // 1e12 micro-OCTO-W
     ledger
         .seed(holder, &macaroon_id, positive)
         .expect("seed positive");
@@ -1226,7 +1226,7 @@ const TV_0862_MACAROON_ID_25: [u8; 16] = [
 ];
 
 /// TV-0862-07 balance fixtures (full + half deduction).
-/// 1_000_000_000_000 = 1 OCTO_W times 1e6 micro-OCTO_W times 1e3 = 1e12.
+/// 1_000_000_000_000 = 1 OCTO-W times 1e6 micro-OCTO-W times 1e3 = 1e12.
 const TV_0862_BALANCE_07_FULL: Dqa = TV_0862_BALANCE_VALUE;
 const TV_0862_BALANCE_07_HALF: Dqa = TV_0862_BALANCE_HALF_VALUE;
 const TV_0862_BALANCE_VALUE: Dqa = Dqa {

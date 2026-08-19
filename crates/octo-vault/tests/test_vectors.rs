@@ -64,66 +64,66 @@ struct VaultIdVector {
 /// registry).
 const TV_V1_VECTORS: &[VaultIdVector] = &[
     VaultIdVector {
-        name: "TV-V1-01_did_octo_test_alice_octo_w_testnet",
+        name: "TV-V1-01_did_octo_test_alice_octo-w_testnet",
         chain_string: "cipherocto/testnet/v1",
         owner_did: "did:octo:test-alice",
-        role_token: "OCTO_W",
+        role_token: "OCTO-W",
         expected_vault_id_hex: TV_V1_01,
     },
     VaultIdVector {
-        name: "TV-V1-02_did_octo_test_bob_octo_w_testnet",
+        name: "TV-V1-02_did_octo_test_bob_octo-w_testnet",
         chain_string: "cipherocto/testnet/v1",
         owner_did: "did:octo:test-bob",
-        role_token: "OCTO_W",
+        role_token: "OCTO-W",
         expected_vault_id_hex: TV_V1_02,
     },
     VaultIdVector {
-        name: "TV-V1-03_did_octo_test_alice_octo_a_testnet",
+        name: "TV-V1-03_did_octo_test_alice_octo-a_testnet",
         chain_string: "cipherocto/testnet/v1",
         owner_did: "did:octo:test-alice",
-        role_token: "OCTO_A",
+        role_token: "OCTO-A",
         expected_vault_id_hex: TV_V1_03,
     },
     VaultIdVector {
-        name: "TV-V1-04_did_octo_test_alice_octo_w_mainnet",
+        name: "TV-V1-04_did_octo_test_alice_octo-w_mainnet",
         chain_string: "cipherocto/mainnet/v1",
         owner_did: "did:octo:test-alice",
-        role_token: "OCTO_W",
+        role_token: "OCTO-W",
         expected_vault_id_hex: TV_V1_04,
     },
     VaultIdVector {
-        name: "TV-V1-05_long_did_with_slash_octo_w_testnet",
+        name: "TV-V1-05_long_did_with_slash_octo-w_testnet",
         chain_string: "cipherocto/testnet/v1",
         owner_did: "did:octo:long-form-identifier-with-many-segments/and/nested/path",
-        role_token: "OCTO_W",
+        role_token: "OCTO-W",
         expected_vault_id_hex: TV_V1_05,
     },
     VaultIdVector {
-        name: "TV-V1-06_short_did_min_form_octo_w_testnet",
+        name: "TV-V1-06_short_did_min_form_octo-w_testnet",
         chain_string: "cipherocto/testnet/v1",
         owner_did: "did:octo:x",
-        role_token: "OCTO_W",
+        role_token: "OCTO-W",
         expected_vault_id_hex: TV_V1_06,
     },
     VaultIdVector {
-        name: "TV-V1-07_unicode_did_octo_w_testnet",
+        name: "TV-V1-07_unicode_did_octo-w_testnet",
         chain_string: "cipherocto/testnet/v1",
         owner_did: "did:octo:ß",
-        role_token: "OCTO_W",
+        role_token: "OCTO-W",
         expected_vault_id_hex: TV_V1_07,
     },
     VaultIdVector {
         name: "TV-V1-08_empty_owner_did_derivation_deterministic",
         chain_string: "cipherocto/testnet/v1",
         owner_did: "",
-        role_token: "OCTO_W",
+        role_token: "OCTO-W",
         expected_vault_id_hex: TV_V1_08,
     },
     VaultIdVector {
         name: "TV-V1-09_cross_chain_cross_asset_boundary",
         chain_string: "cipherocto/mainnet/v1",
         owner_did: "did:octo:test-bob",
-        role_token: "OCTO_A",
+        role_token: "OCTO-A",
         expected_vault_id_hex: TV_V1_09,
     },
     VaultIdVector {
@@ -163,15 +163,15 @@ fn tv_v1_vault_id_vectors_match_pinned_hex() {
 // the constants here breaks the test — go fix the impl OR fix the inputs,
 // never both.
 
-const TV_V1_01: &str = "cf9d419878c8379ce7012fc6b2b249eee8f6d57705c6dada544ee98f194c68f1";
-const TV_V1_02: &str = "acd181ab89461f158e866f7927d564c4a7925d1033781a62c39b03cb38a6627e";
-const TV_V1_03: &str = "c1469f017522388298d27ce423be9be48cac5a2bc26496be35866d2c3b84ecbe";
-const TV_V1_04: &str = "94a23693b0052e44aaaa2c5a0783a018a98150aee16dd6f2abe8a6aa7f3db5cb";
-const TV_V1_05: &str = "32cad9fa8929e00c544462b76855eecbf161f31afa59da2185e5ebcc80cb9b4b";
-const TV_V1_06: &str = "e547e01c3e601d899dd5921a2d1663f89b36406181c0782f15cc19eeb646917f";
-const TV_V1_07: &str = "d4ffce329e31897f5e4a5cc9db1dea8acbac5128a7868fcdae4e00cb051b4d6f";
-const TV_V1_08: &str = "dd6442c70e4472a47ab054c37e9fd773ed47e6e321718c2fa5454720a42d60aa";
-const TV_V1_09: &str = "6e9ea7e3897887a16003774f9d3918f616ffa499c6d2574eddd8b30791815880";
+const TV_V1_01: &str = "2d5b470ba690b80ea35d5a60c864014304fd72a52093c0ad66ba9290d153691c";
+const TV_V1_02: &str = "15e6dc8e1a8ad6ac0154ff6e37542c45240c5e60afea090c254fffebea1ab005";
+const TV_V1_03: &str = "933cf5e9faad773123e152adc9086ee3c553d4250e51c2d649dcf44a8a521507";
+const TV_V1_04: &str = "c9865eb6a7bd0f4bb3421f90d1a8531558d3e1cd6ba1696bce0ffea4ee9f264c";
+const TV_V1_05: &str = "0802967ed296b4952627db7c6efd109ec062476623c21c6431731b6d08dd455c";
+const TV_V1_06: &str = "0daf5a1015f93e65479e17f7e02bc8961919c281c57d18782a5ffa7f3540576b";
+const TV_V1_07: &str = "118c29c7b438a3aab3ce76de3c78d233d97987c84be837685334529633abc401";
+const TV_V1_08: &str = "7c3ce4092304130eb7bb7151fbd9484d43f154f560430acb2d2a45c481383476";
+const TV_V1_09: &str = "7b925bbabda7c5db5f8973605ee3f05c96e5a9e7bac5e0c9c5a40c64c537f239";
 const TV_V1_10: &str = "de71a9d8e25af74c288e890b029283451634e048b1c7a2f4205075227415f161";
 
 /// Reserved mint sentinel per review §20.3: a literal `[0u8; 32]` used as

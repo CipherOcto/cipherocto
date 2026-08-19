@@ -450,7 +450,7 @@ mod tests {
     fn vault_id_uses_canonical_blake3_derivation() {
         let chain = ChainId::derive("cipherocto/testnet/v1");
         let owner = "did:octo:test-alice";
-        let asset = AssetId::derive("OCTO_W");
+        let asset = AssetId::derive("OCTO-W");
         let id = vault_id(chain, owner, asset);
         // BLAKE3 produces 32-byte output. Pin length + non-zero (sanity).
         assert_eq!(id.as_bytes().len(), 32);
@@ -463,7 +463,7 @@ mod tests {
     fn vault_id_is_deterministic() {
         let chain = ChainId::derive("cipherocto/testnet/v1");
         let owner = "did:octo:test-alice";
-        let asset = AssetId::derive("OCTO_W");
+        let asset = AssetId::derive("OCTO-W");
         let a = vault_id(chain, owner, asset);
         let b = vault_id(chain, owner, asset);
         assert_eq!(a, b);
@@ -478,8 +478,8 @@ mod tests {
         let other_chain = ChainId::derive("cipherocto/mainnet/v1");
         let owner = "did:octo:test-alice";
         let other_owner = "did:octo:test-bob";
-        let asset = AssetId::derive("OCTO_W");
-        let other_asset = AssetId::derive("OCTO_A");
+        let asset = AssetId::derive("OCTO-W");
+        let other_asset = AssetId::derive("OCTO-A");
 
         let a = vault_id(chain, owner, asset);
         assert_ne!(a, vault_id(other_chain, owner, asset), "chain changes id");
@@ -516,7 +516,7 @@ mod tests {
     #[cfg(debug_assertions)]
     fn vault_id_rejects_empty_owner_did_in_debug() {
         let chain = ChainId::derive("cipherocto/testnet/v1");
-        let asset = AssetId::derive("OCTO_W");
+        let asset = AssetId::derive("OCTO-W");
         let result = std::panic::catch_unwind(|| vault_id(chain, "", asset));
         assert!(
             result.is_err(),
@@ -528,7 +528,7 @@ mod tests {
     #[cfg(debug_assertions)]
     fn vault_id_rejects_oversized_owner_did_in_debug() {
         let chain = ChainId::derive("cipherocto/testnet/v1");
-        let asset = AssetId::derive("OCTO_W");
+        let asset = AssetId::derive("OCTO-W");
         let oversized = "x".repeat(MAX_OWNER_DID_LEN + 1);
         let result = std::panic::catch_unwind(|| vault_id(chain, &oversized, asset));
         assert!(

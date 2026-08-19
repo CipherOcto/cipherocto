@@ -41,7 +41,7 @@ pub struct SlashLedgerRow {
     /// over `Dqa` that exposes serde `Serialize`/`Deserialize` via the
     /// canonical 16-byte BE `DqaEncoding` wire format
     /// (see `crate::dqa_serde`). Always stored at `scale = 0`
-    /// (integer micro-OCTO_W counts). Saturates to `i64::MAX` on
+    /// (integer micro-OCTO-W counts). Saturates to `i64::MAX` on
     /// overflow (well above realistic stake sizes per RFC-0871
     /// §Adversary A7).
     #[serde(with = "crate::dqa_serde::field")]

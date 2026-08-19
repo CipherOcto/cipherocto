@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 2.0 (2026-08-18)
+**Version:** 2.1 (2026-08-19)
 **Status:** Accepted
 
 > **Note:** This RFC was originally numbered RFC-0105 under the legacy numbering system. It remains at 0105 as it belongs to the Numeric/Math category.
@@ -1376,6 +1376,7 @@ DQA integration MUST include:
 **Submission Date:** 2025-03-06
 **Last Updated:** 2026-04-01
 **Revision:** v2.14 - Architecture amendment: unified runtime dispatch, cross-type comparison, single casting truth, validation on extraction, persistence validation, display/string representation, verification requirements
+**Revision:** v2.1 - Canonicalize role-token literal form: `OCTO_W` / `OCTO_A` → `OCTO-W` / `OCTO-A` (hyphen form, per §Asset ID Derivation enumeration). Affects 8 fixture/crate sites; TV-D9 + TV-V1-01..10 hex constants regenerated (BLAKE3 input string change). No spec text change — `asset_id_for` derivation rule unchanged. Mission `0105-v2`.
 **Revision:** v2.13 - Tightened MUL clamping wording, added large-value chain test, added >90% note to DQA_CMP fast-path
 **Revision:** v2.12 - Added SQL vs canonical representation clarification, fixed division rounding wording (TARGET_SCALE precision), strengthened SIMD determinism rule, enforced canonicalization in encoding API, added control-flow to VM canonicalization rule, added power<=36 invariant, added scale alignment overflow test vector
 **Revision:** v2.11 - Fixed DIV negative test vector (-12 not -13), added i64 range check to DQA_ASSIGN_TO_COLUMN, added CANONICALIZE to DIV return, unified scale overflow references, fixed test vector notes, added DIV canonicalization test vector, fixed MAX_I128_DIGITS to 39

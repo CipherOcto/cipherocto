@@ -188,7 +188,7 @@ fn vault_id_derive_insert_select_round_trips() {
         .contains(&13));
 
     let chain_id = ChainId::derive("cipherocto/testnet/v1");
-    let asset_id = AssetId::derive("OCTO_W");
+    let asset_id = AssetId::derive("OCTO-W");
     let derived = vault_id(chain_id, "did:octo:round-trip-alice", asset_id);
 
     db.execute(

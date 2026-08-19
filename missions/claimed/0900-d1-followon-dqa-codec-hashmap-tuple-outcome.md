@@ -2,12 +2,64 @@
 
 ## Status
 
-**OPEN 2026-08-18 (@mmacedoeu).** Filed immediately after mission
+**LANDED 2026-08-18 (@mmacedoeu).** Filed immediately after mission
 0900-d LANDED (commit `58c4c2ce`). Closes the 5 ACs deliberately
 narrowed/deferred to keep the audit-verdict-critical-path (RFC-0900
 v2.0 PK promotion) on a single commit. None of the deferred items
 are pre-requisites for the PK promotion; they tighten the substrate
 shape and TV coverage.
+
+**Scope as landed (5/7 implementable ACs + 1/2 deferred to 0900-d2):**
+- AC-3 ✅ — `HashMap<([u8; 32], String), ProviderStake>` tuple-key
+  restructure in `SlashingLedger::stakes`. Public API keeps
+  single-arg `provider_id`; internal `stake_key(provider_id)` helper
+  resolves to `(DEFAULT_CHAIN_ID, provider_id)`. 6 production call
+  sites + 2 ProviderStake literals + 1 SlashOutcome literal updated.
+- AC-4 ✅ — `SlashOutcome.chain_id: [u8; 32]` field added (first
+  position). `apply_penalty` populates from `stake.chain_id` so
+  audit-table chain attribution is automatic.
+- AC-5 partial ✅ (7/9 TVs implementable):
+  - TV-0900-D-02 ✅ — covered by existing
+    `cross_chain_same_provider_two_distinct_rows` unit test in
+    `slash_store.rs` (mission 0900-d LANDED).
+  - TV-0900-D-03 ✅ — `tests/tv_0900_d1_chain_slash_remaining.rs`
+    (UNIQUE INDEX UPDATE-in-place test).
+  - TV-0900-D-05 ✅ — added to
+    `marketplace/slashing.rs::tests` module
+    (compile-check verified — runtime blocked by libpython3.12).
+  - TV-0900-D-06 ✅ — same test file
+    (append_outcome signature widening compile-pin).
+  - TV-0900-D-07 ✅ — same test file
+    (DEFAULT_CHAIN_ID post-migration load).
+  - TV-0900-D-08 ✅ — same test file
+    (cumulative_loss_pct_micro BIGINT round-trip).
+  - TV-0900-D-10 ✅ — added to
+    `marketplace/slashing.rs::tests` module
+    (cross-crate open() flow, compile-check verified).
+  - TV-0900-D-11 ✅ — added to
+    `marketplace/slashing.rs::tests` module
+    (SlashOutcome.chain_id population, compile-check verified).
+  - TV-0900-D-01 + TV-0900-D-04 ⏸️ — DEFERRED to mission 0900-d2
+    (stoolap fork Dqa driver upstreaming). Mission 0900-d2 filed
+    (`8dac8bf0`) on 2026-08-18.
+- AC-6 ✅ — 192/192 storage lib tests + 23/23 migration chain tests
+  + 4/4 new TVs + 2/2 pre-existing migration test fixes (v012 → v015
+  hardcoded MAX(version) assertions in `stoolap_idempotent_alter.rs`
+  + `stoolap_migration_chain.rs`).
+- AC-7 ✅ — `cargo fmt --all` clean,
+  `cargo clippy -p quota-router-storage --all-targets -- -D warnings`
+  clean,
+  `cargo clippy -p quota-router-core --all-targets --features full -- -D warnings`
+  clean.
+
+**Deferred to 0900-d2 (2/9 TVs):**
+- TV-0900-D-01 (DQA(12) byte-exact round-trip)
+- TV-0900-D-04 (scale=0 invariant via DQA(12))
+
+**Out-of-scope (per AC-10):**
+- `cargo test -p quota-router-core --lib` runtime — blocked by
+  pre-existing missing libpython3.12 in current env (sysadmin track).
+  Compile-check verified via `cargo build --tests`.
 
 ## RFC
 
@@ -170,6 +222,7 @@ Dependent: 0900-d (LANDED 2026-08-18, commit `58c4c2ce`).
 
 | Date       | Author     | Change |
 | ---------- | ---------- | ------ |
+| 2026-08-18 | @mmacedoeu | LANDED. AC-3 (HashMap tuple-key) + AC-4 (SlashOutcome.chain_id) + 7/9 TVs landed. AC-1 + AC-2 + TV-01 + TV-04 deferred to 0900-d2 (fork Dqa driver upstreaming). |
 | 2026-08-18 | @mmacedoeu | Initial filing immediately after 0900-d LANDED (commit `58c4c2ce`). Closes 5 deferred ACs. |
 
 ## Out of scope

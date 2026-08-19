@@ -2,7 +2,7 @@
 
 ## Status
 
-**PROPOSED (2026-08-17, claimant TBD).** S5.1 follow-on per
+**LANDED 2026-08-18 (@mmacedoeu; commit `5b698b72`).** S5.1 follow-on per
 `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md`
 §3 row 6 (Stream C.2 continuation). Pillar 2 step 2 of mission
 `0957-g-verify-time-invariant` deferred here because **Layer B → Layer
@@ -173,6 +173,18 @@ persistence` red line).
 
 ## Version history
 
-| Date       | Author     | Change                                                                                                                                                                                                    |
-| ---------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-08-17 | @mmacedoeu | Initial proposal as S5.1 follow-on to LANDED mission `0957-g`. Topology diagram added per CLAUDE.md Mermaid-over-ASCII rule. Layer B → Layer E isolation rationale per `cipherocto-design-principles.md`. |
+| Date       | Author     | Change                                                                                                                                                                                                                                                                                                                                              |
+| ---------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-17 | @mmacedoeu | Initial proposal as S5.1 follow-on to LANDED mission `0957-g`. Topology diagram added per CLAUDE.md Mermaid-over-ASCII rule. Layer B → Layer E isolation rationale per `cipherocto-design-principles.md`.                                                                                                                                           |
+| 2026-08-18 | @mmacedoeu | LANDED. 7/7 ACs (NEW crate, deps, OctoVaultLookup + VaultLookup impl, re-exports, 4 unit tests, 2 integration TV-C1, verification gate). Added `octo_vault::VaultSubstrate` typed handle per risk B.1 confirmation. NO `pub use stoolap::Database;` re-export (substrate exports new typed struct wrapping Arc<Database>). clippy zero + fmt clean. |
+
+## Scope as landed (7/8 ACs)
+
+- AC-1 NEW crate ✅ `crates/octo-cap-macaroon-vault/`
+- AC-2 deps ✅ `octo-cap-macaroon` + `octo-vault` only. NO direct stoolap dep.
+- AC-3 `OctoVaultLookup` ✅ impls `VaultLookup` mapping `VaultState::Active→is_active: true, Frozen→false`. Returns `None` iff no row.
+- AC-4 re-exports ✅ `VaultLookup`, `VaultLookupExt`, `VaultRowSnapshot` + `OctoVaultLookup`.
+- AC-5 unit tests ✅ `tests/unit_lookup.rs`: 4 tests.
+- AC-6 integration TV-C1 ✅ `tests/integration_tv_c1.rs`: TV-0957-g1-11 happy path + TV-0957-g1-12 VaultRowMissing.
+- AC-7 verification gate ✅ clippy zero on `--workspace --features full`; fmt clean; 7/7 new + 193 octo-cap-macaroon + 10 octo-vault unchanged.
+- AC-8 memory card ✅ `memory/mission-0957-g1-...-status.md` + MEMORY.md pointer.

@@ -75,7 +75,7 @@ Three problems with the bridge:
 
 **Solution:** Adopt the fork `Dqa` driver surface. Two small trait
 impls delegate to the existing `Value::quant` + `Value::as_dqa`
-codec path (fork `src/core/value.rs:210` + `:509`), which already
+codec path (fork §Driver Surface / §Wire Form), which already
 serializes the 16-byte BE `DqaEncoding` under the `DataType::Quant`
 extension tag (9). Wire form matches `DqaEncoding::from_dqa`
 byte-for-byte modulo the canonicalize step (see §Wire Form).
@@ -154,13 +154,12 @@ scale)`. Returns `None` if the payload is not a `Quant` extension,
 
 ### Orphan-Rule Compliance
 
-The fork owns the `FromValue` and `ToParam` traits (defined in
-fork `src/api/database.rs:1100` and `src/api/params.rs:58`).
-cipherocto owns the `octo_determin::Dqa` type. The orphan rule
-permits `impl FromValue for Dqa` **in the fork crate** because the
-fork is the local crate of the trait. cipherocto _cannot_ directly
-impl `stoolap::FromValue for octo_determin::Dqa` — the impl must
-live in the fork.
+The fork owns the `FromValue` and `ToParam` traits (fork §Driver
+Surface). cipherocto owns the `octo_determin::Dqa` type. The orphan
+rule permits `impl FromValue for Dqa` **in the fork crate** because
+the fork is the local crate of the trait. cipherocto _cannot_
+directly impl `stoolap::FromValue for octo_determin::Dqa` — the impl
+must live in the fork.
 
 ### Error Handling
 
@@ -185,7 +184,7 @@ live in the fork.
 | ------------------------------------------------- | ----------------- | ---------------------------------------- | ------------------------------------- |
 | `DqaEncoding::from_dqa` is canonical 16-byte BE   | §Wire Form        | Round-trip byte mismatch with serde path | AC-1 mandates wire-form match         |
 | `Value::Extension(Quant)` is stable               | §Wire Form        | Fork upgrade breaks round-trip           | RFC-0205 pin policy + monthly re-cert |
-| Fork always re-exports `octo_determin`            | §Driver Surface   | Orphan-rule bypass fails                 | Fork Cargo.toml:55 git dep (frozen)   |
+| Fork always re-exports `octo_determin`            | §Driver Surface   | Orphan-rule bypass fails                 | Fork Cargo.toml git dep (frozen)      |
 | `Dqa::new(i64, u8) -> Result` accepts scale=0..18 | §Wire Form        | Scale boundary violation silently fails  | Validated at fork `Value::as_dqa`     |
 
 ### Categories to Audit
@@ -260,9 +259,13 @@ Byte-exact round-trip TV in fork `tests/dqa_driver_test.rs`:
 11. **TV-DQA-DRV-11:** payload < 17 bytes → `Value::as_dqa` returns `None`
 12. **TV-DQA-DRV-12:** payload > 17 bytes → `Value::as_dqa` returns `None`
 13. **TV-DQA-DRV-13:** multi-row round-trip with 5 distinct fixtures
+14. **TV-DQA-DRV-14:** `Dqa::new(i64::MIN, 0)` → column → `Dqa` min edge
+15. **TV-DQA-DRV-15:** `Dqa::new(0, 18)` → column → `Dqa` zero @ max-scale
+16. **TV-DQA-DRV-16:** canonical payload (tag=9, BE value, scale, reserved=0) → `Value::as_dqa` returns `Some(Dqa)` (acceptance counter-test for TV-DQA-DRV-10)
 
-All 13 green at fork commit `dfc5b71` (LANDED 2026-08-19, hardened
-2026-08-19 Round 1 review).
+All 16 green at fork commit `7ce12eb` (driver surface landed at
+`dfc5b71`, decoder hardened at `685c961`, edge cases added at
+`7ce12eb`).
 
 ## Alternatives Considered
 
@@ -299,7 +302,7 @@ All 13 green at fork commit `dfc5b71` (LANDED 2026-08-19, hardened
 | `src/api/database.rs` (fork)      | `impl FromValue for octo_determin::Dqa`        |
 | `src/api/params.rs` (fork)        | `impl ToParam for octo_determin::Dqa`          |
 | `src/core/value.rs` (fork)        | `Value::as_dqa` length+reserved guard          |
-| `tests/dqa_driver_test.rs` (fork) | NEW — 13 round-trip + boundary + falsify tests |
+| `tests/dqa_driver_test.rs` (fork) | NEW — 16 round-trip + boundary + falsify tests |
 
 ## Future Work
 
@@ -312,6 +315,7 @@ All 13 green at fork commit `dfc5b71` (LANDED 2026-08-19, hardened
 
 ## Version History
 
-| Version | Date       | Author     | Changes                                                                                        |
-| ------- | ---------- | ---------- | ---------------------------------------------------------------------------------------------- |
-| 1.0     | 2026-08-19 | @mmacedoeu | Initial draft. Documents fork `dfc5b71` driver surface; 13 TV; Phase 2 deferred to cipherocto. |
+| Version | Date       | Author     | Changes                                                                                                                                                                                         |
+| ------- | ---------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0     | 2026-08-19 | @mmacedoeu | Initial draft. Documents fork `dfc5b71` driver surface; 13 TV; Phase 2 deferred to cipherocto.                                                                                                  |
+| 1.1     | 2026-08-19 | @mmacedoeu | Round 1+2 review fixes: line refs → §section refs (CLAUDE.md); 3 more edge-case tests at fork `7ce12eb` (now 16 TV); Version History attribution corrected. Doc accuracy only — no spec change. |

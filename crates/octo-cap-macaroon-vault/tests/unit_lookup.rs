@@ -26,7 +26,7 @@ fn lookup_vault_hit_with_active_row_returns_snapshot() {
     // INDEX lookup primitive). Mirrors `apply_migrations.rs` insert
     // pattern.
     let chain_id = ChainId::derive("cipherocto/testnet/v1");
-    let asset_id = AssetId::derive("OCTO_W");
+    let asset_id = AssetId::derive("OCTO-W");
     let vault_id = octo_vault::vault_id(chain_id, "did:octo:test-alice", asset_id);
     db.execute(
         "INSERT INTO vaults \
@@ -62,7 +62,7 @@ fn lookup_vault_hit_with_frozen_row_returns_snapshot_inactive() {
     apply(&db).expect("apply migrations");
 
     let chain_id = ChainId::derive("cipherocto/testnet/v1");
-    let asset_id = AssetId::derive("OCTO_A");
+    let asset_id = AssetId::derive("OCTO-A");
     let vault_id = octo_vault::vault_id(chain_id, "did:octo:test-bob", asset_id);
     db.execute(
         "INSERT INTO vaults \

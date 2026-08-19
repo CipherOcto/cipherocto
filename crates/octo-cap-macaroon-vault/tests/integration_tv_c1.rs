@@ -92,7 +92,7 @@ fn substrate_with_active_vault_row() -> VaultSubstrate {
     // asset_id)` — `vault_id` is UNIQUE INDEX but not PK, so this
     // works.
     let chain_id_raw = OP_CHAIN_ID;
-    let asset_id = AssetId::derive("OCTO_W");
+    let asset_id = AssetId::derive("OCTO-W");
     // Derive the row's composite PK's owner_did consistently.
     let owner_did = "did:octo:integration-alice";
     // We use the canonical `vault_id` derivation for owner_did +

@@ -76,7 +76,7 @@ The envelope replaces ad-hoc per-node wire formats with a single canonical shape
 
 CipherOcto's mesh today has one specialized node type: the Quota Router (RFC-0870). Identity resolution, reputation anchoring, capability issuance, and market settlement each have RFCs but no shared envelope — each would re-invent its own wire format.
 
-Concrete gap: `GatewayAuthenticator` at `crates/octo-wallet/src/capability/gateway_authenticator.rs` (orphan substrate, no production caller) co-locates with `quota-router-core::proxy::handle_request` doing its own inline Bearer strip (RFC-0969 amendment `missions/open/0969-a-gateway-relocation.md` closes this gap). The two are unrelated — no shared envelope.
+Concrete gap: `GatewayAuthenticator` at `crates/octo-wallet/src/capability/gateway_authenticator.rs` (orphan substrate, no production caller) co-locates with `quota-router-core::proxy::handle_request` doing its own inline Bearer strip (RFC-0969 v1.2 amendment `missions/open/0969-a-gateway-relocation.md` closes this gap). The two are unrelated — no shared envelope.
 
 Concrete gap: `IdentityKey::sign` in `crates/octo-wallet/src/identity.rs` calls `ed25519_dalek::SigningKey::from_bytes(...).sign(...)` directly — bypassing the `HsmAdapter` trait at `crates/octo-wallet/src/hsm.rs`. Hardware wallets (`LedgerSigner`) cannot sign capability tokens today. Mission `missions/open/0009-a-hsm-routing.md` closes this gap.
 
@@ -507,7 +507,7 @@ Test vectors below use a fixed test identity for reproducibility. The seed byte 
 
 ### TV6 — Test-only `MockLedgerSigner` signs capability mint request
 
-**Input:** Same as TV1 but with `signer = Arc::new(MockLedgerSigner::new(seed, public_key))` (TEST-ONLY adapter; see test fixture `crates/octo-wallet/src/hsm/tests/mock_ledger_signer.rs`). The production `LedgerSigner` accepts a device handle, NOT a host seed — see RFC-0009 HsmAdapter mandate and `crates/octo-wallet/src/hsm.rs::LedgerSigner::connect`.
+**Input:** Same as TV1 but with `signer = Arc::new(MockLedgerSigner::new(seed, public_key))` (TEST-ONLY adapter; see test fixture `crates/octo-wallet/src/hsm/tests/mock_ledger_signer.rs`). The production `LedgerSigner` accepts a device handle, NOT a host seed — see RFC-0009 v1.1 HsmAdapter mandate and `crates/octo-wallet/src/hsm.rs::LedgerSigner::connect`.
 
 **Expected output:** Identical envelope bytes to TV1 (deterministic Ed25519 is signer-agnostic). The DIFFERENCE from TV1 in PRODUCTION: the Ledger device prompts the user on-device to confirm signing; if the user rejects, `HsmError::UserRejected` propagates as `WalletError::Hsm(HsmError::UserRejected)`.
 

@@ -610,7 +610,7 @@ Verifier-side enforcement: at parse time, count `len(capability.constraints)`. R
 
 ## Cross-reference (RFC-0960 chain-aware bump, 2026-08-17)
 
-RFC-0960 amended §2.1 root-vault example (removed; replaced with §20.3 lattice note) + added §Vault Substrate subsection. Constraint encoding (§6 EIP-712 typed-data hash, §7/§8 worked examples) is unaffected — constraint types (`RateLimit`, `Budget`, etc.) operate on canonical values that already include `asset_id` (per RFC-0105 §Asset ID Derivation); the new `(chain_id, ...)` substrate PK does not introduce new constraint variants. §11 Constraint count budget unchanged.
+RFC-0960 v3.0 amended §2.1 root-vault example (removed; replaced with §20.3 lattice note) + added §Vault Substrate subsection. Constraint encoding (§6 EIP-712 typed-data hash, §7/§8 worked examples) is unaffected — constraint types (`RateLimit`, `Budget`, etc.) operate on canonical values that already include `asset_id` (per RFC-0105 v2.0 §Asset ID Derivation); the new `(chain_id, ...)` substrate PK does not introduce new constraint variants. §11 Constraint count budget unchanged.
 
 ## Out of Scope
 

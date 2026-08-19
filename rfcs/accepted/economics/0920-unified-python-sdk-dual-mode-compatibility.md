@@ -2567,7 +2567,7 @@ async def abatch_completion_models(
 ║   - Python adds ONLY: marshaling overhead (<2ms)                                          ║
 ║                                                                                           ║
 ║   See RFC-0920 version history for removal details.                                       ║
-║   See RFC-0917+ for authoritative heavy-lifting definitions.                      ║
+║   See RFC-0917 v2.44+ for authoritative heavy-lifting definitions.                      ║
 ║                                                                                           ║
 ╚═══════════════════════════════════════════════════════════════════════════════════════════╝
 ```
@@ -2588,7 +2588,7 @@ Rust RouterHandle (quota-router-core)
 
 #### RouterHandle / RustRouterHandle — Concrete Definition
 
-**Location:** `quota-router-core/src/python_sdk_entry.rs` (per RFC-0917)
+**Location:** `quota-router-core/src/python_sdk_entry.rs` (per RFC-0917 v2.38)
 
 **Purpose:** PyO3-exposed entry point for `quota-router-pyo3`. All routing, state, caching, and telemetry are owned by Rust core. Python SDK adds only marshaling overhead (<2ms).
 
@@ -2720,11 +2720,11 @@ class Router:
         return self._rust.batch_completion_models_all(models=models, messages=messages, **kwargs)
 ```
 
-**Note:** `RouterHandle`/`RustRouterHandle` is referenced throughout this RFC but was never concretely defined here. RFC-0917 provides the concrete definition in `python_sdk_entry` module with full 22-parameter signature and all three batch methods. The implementation must create `quota-router-core/src/python_sdk_entry.rs` with this `RouterHandle` struct.
+**Note:** `RouterHandle`/`RustRouterHandle` is referenced throughout this RFC but was never concretely defined here. RFC-0917 v2.38 provides the concrete definition in `python_sdk_entry` module with full 22-parameter signature and all three batch methods. The implementation must create `quota-router-core/src/python_sdk_entry.rs` with this `RouterHandle` struct.
 
 #### Direct Rust Client Entry Point
 
-**Location:** `quota-router-core/src/client.rs` (per RFC-0917)
+**Location:** `quota-router-core/src/client.rs` (per RFC-0917 v2.38)
 
 External Rust programs (CLI tools, other crates) can call quota-router-core directly without HTTP serialization or PyO3 overhead.
 

@@ -311,7 +311,7 @@ There is no forced migration. The `PolicyObject` is an additive optimization for
 
 ## 14.1 Cross-reference (RFC-0960 chain-aware bump, 2026-08-17)
 
-RFC-0960 amended §2.1 root-vault example (removed; replaced with §20.3 lattice note) + added §Vault Substrate subsection. `PolicyObject` lineage (§5) + subgraph relation + cross-lineage intersection (§8.2) are unaffected — `policy_id` references operate on canonical policy bytes (the policy is opaque to the substrate); the new `(chain_id, ...)` vault PK does not introduce new policy variants. §15.1 Resolved Decisions unchanged. Audit action WAL event shape unchanged.
+RFC-0960 v3.0 amended §2.1 root-vault example (removed; replaced with §20.3 lattice note) + added §Vault Substrate subsection. `PolicyObject` lineage (§5) + subgraph relation + cross-lineage intersection (§8.2) are unaffected — `policy_id` references operate on canonical policy bytes (the policy is opaque to the substrate); the new `(chain_id, ...)` vault PK does not introduce new policy variants. §15.1 Resolved Decisions unchanged. Audit action WAL event shape unchanged.
 
 ## 15. Open questions
 

@@ -914,9 +914,9 @@ Per review §20.3 Model B lattice (chain-aware substrate, no organizational inte
 PK = (chain_id, owner_did, asset_id)        -- composite natural key
 UNIQUE INDEX on vault_id                    -- derived lookup key
 vault_id     BLOB(32) NOT NULL              -- BLAKE3("cipherocto/vault/v1/" + chain_id + owner_did + asset_id) per §8.10 TV-V1
-chain_id     BLOB(32) NOT NULL              -- BLAKE3("cipherocto/chain/v1/" + chain_string) per §20.3.2 + RFC-0010 ChainNamespace
+chain_id     BLOB(32) NOT NULL              -- BLAKE3("cipherocto/chain/v1/" + chain_string) per §20.3.2 + RFC-0010 v1.4 ChainNamespace
 owner_did    TEXT     NOT NULL              -- DID (canonical serialization per calling domain; opaque to substrate)
-asset_id     BLOB(32) NOT NULL              -- BLAKE3("cipherocto/asset/v1/" + role_token) per §20.3.1 (canonical 9 role-token enumeration in RFC-0105 §Asset ID Derivation)
+asset_id     BLOB(32) NOT NULL              -- BLAKE3("cipherocto/asset/v1/" + role_token) per §20.3.1 (canonical 9 role-token enumeration in RFC-0105 v2.0 §Asset ID Derivation)
 balance      DQA(12)  NOT NULL              -- Stoolap native DECIMAL(12,0) per §8.4.1 + §18 lock
 policy       BLOB     NOT NULL              -- canonical_ser(VaultPolicy)
 state        TEXT     NOT NULL              -- 'Active' | 'Frozen' (substrate-boundary; future variants require migration)
@@ -943,7 +943,7 @@ signature        BLOB(32) NOT NULL
 zk_proof         BLOB NULL                  -- present iff visibility='Private'
 from_vault_id    BLOB(32) NULL              -- NULL = mint; otherwise references vaults.vault_id
 to_vault_id      BLOB(32) NULL              -- NULL = burn; otherwise references vaults.vault_id
-amount_micro     BIGINT NULL                -- i64 (post RFC-0862 boundary guard)
+amount_micro     BIGINT NULL                -- i64 (post RFC-0862 v2.0 boundary guard)
 asset_id         BLOB(32) NULL
 settlement_ref   BLOB(32) NULL              -- ReceiptId if triggered by settlement
 ```
@@ -960,8 +960,8 @@ LANDED at `crates/octo-vault/migrations/v014__create_transfer_events.sql`.
 **Cross-RFC pin:**
 
 - §20.3 lattice (review): `docs/reviews/2026-08-15-storage-layer-restructuring-analysis.md` §20.3 + §20.7 + §20.8 + §9.5.
-- §20.3.1 role-token enumeration: RFC-0105 §Asset ID Derivation (9 canonical role-tokens).
-- §20.3.2 chain_id derivation: RFC-0010 `ChainNamespace`.
+- §20.3.1 role-token enumeration: RFC-0105 v2.0 §Asset ID Derivation (9 canonical role-tokens).
+- §20.3.2 chain_id derivation: RFC-0010 v1.4 `ChainNamespace`.
 - §8.10 TV-V1 derivation: `crates/octo-vault/src/lib.rs::vault_id` + `vault_id_unchecked` (canonical BLAKE3 derivation).
 
 ### §3 Constraint Set

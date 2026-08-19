@@ -104,7 +104,7 @@ This amendment closes that gap by binding the delivery to the settlement chain i
 | **G2: Dual-mode coverage** | Every settled deal results in exactly one bearer + exactly one capability delivered | Grep audit: every `DealSettled` has non-empty `bearer_capsule_hash` AND non-empty `cap_root_hash` |
 | **G3: Forward-compat** | Legacy verifiers (pre-A1) skip `DealSettled` events without rejecting the chain | Backwards-compat test: pre-A1 verifier consumes post-A1 chain |
 | **G4: Sync convergence** | MarketDeliveryEnvelope reaches buyer's peer set in ≤ 30s | RFC-0862 gossip benchmark |
-| **G5: Settlement chain integrity** | Adding DealSettled does not break existing chain hash | Diff harness: replay RFC-0959 chain, assert byte-identical hash for pre-A1 events |
+| **G5: Settlement chain integrity** | Adding DealSettled does not break existing chain hash | Diff harness: replay RFC-0959 v1.0 chain, assert byte-identical hash for pre-A1 events |
 | **G6: Atomicity rollback** | Failed bearer insert OR capability insert rolls back the DealSettled event | Test: forced failure at each insert point |
 | **G7: Chain-tip TOCTOU** | Two concurrent `deliver_at_settlement` on the same rail do not fork the chain | Integration test: 100 concurrent deliveries, all succeed or all retry |
 | **G8: Debug redaction** | Zero credential material in `Debug` output | Test: TV9 |
@@ -1053,9 +1053,9 @@ Post-state: envelope in buyer's peer set
 ### TV5: Backward Compat — Legacy Verifier
 
 ```
-Pre-state: settlement chain contains Ask, SettlementEvent, SettlementReceipt (RFC-0959)
+Pre-state: settlement chain contains Ask, SettlementEvent, SettlementReceipt (RFC-0959 v1.0)
             + DealSettled (RFC-0959-A1) appended
-Action: legacy verifier (RFC-0959 only) consumes the chain
+Action: legacy verifier (RFC-0959 v1.0 only) consumes the chain
 Expected output: legacy verifier parses Ask + SettlementEvent + SettlementReceipt, skips DealSettled
                   (does not error; chain hash continuity preserved; uses stored event_hash as new tip)
 ```
@@ -1080,7 +1080,7 @@ Post-state: node B has MarketDeliveryEnvelope for buyer_did
 ### TV8: Chain Hash Continuity
 
 ```
-Pre-state: chain_tip = H0 (from RFC-0959 chain)
+Pre-state: chain_tip = H0 (from RFC-0959 v1.0 chain)
 Action: deliver_at_settlement appends DealSettled
 Expected output: chain_tip = H1 = BLAKE3(H0 || canonical_ser(DealSettledPayload w/o signature))
 Verify: H1 == compute_chain_hash_from_chain([Ask, SettlementEvent, SettlementReceipt, DealSettled])
@@ -1263,7 +1263,7 @@ The Seller role is a naming convenience. The seller's node IS the Asker + Router
 
 ### C. Forward-Compat Behavior for Legacy Verifiers
 
-A legacy verifier (RFC-0959 only) consuming a post-A1 chain:
+A legacy verifier (RFC-0959 v1.0 only) consuming a post-A1 chain:
 
 ```rust
 match event {

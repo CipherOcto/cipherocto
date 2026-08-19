@@ -1,4 +1,4 @@
-# RFC-0862.0 — Writer Election + Bootstrap Integration (concrete impl amendment)
+# RFC-0862 v1.4.0 — Writer Election + Bootstrap Integration (concrete impl amendment)
 
 **Status:** Accepted (2026-08-11) — v1.4.0 amendment adds concrete impl surface
 
@@ -17,7 +17,7 @@
 > **Filename note (RESOLVED per R19 acceptance):** file on disk is now `0862-writer-election-bootstrap-v130.md`. AC#13 satisfied.
 > **Author:** @cipherocto + @mmacedoeu
 > **Maintainers:** @cipherocto (primary), @mmacedoeu (review)
-> **Substrate:** RFC-0862.0 + RFC-0855p-c (handover) + RFC-0863 (bootstrap)
+> **Substrate:** RFC-0862 v1.2.0 + RFC-0855p-c (handover) + RFC-0863 (bootstrap)
 > **Parent:** Mission `0871e-phase5c-1-cross-instance-drain` + Mission `0871e-f7-cross-instance-did-coordination`
 
 > **Promotion note:** In-place additive amendment to RFC-0862 (fourth
@@ -43,7 +43,7 @@ Extend RFC-0862 §Roles (writer/reader split) with:
 
 ## Breaking Changes
 
-1. **`DidDocument` uses RFC-0010 substrate + v1.5 amendment (rich 7-field shape + `VerificationMethod` enum)**.
+1. **`DidDocument` uses RFC-0010 v1.3 substrate + v1.5 amendment (rich 7-field shape + `VerificationMethod` enum)**.
 2. **Three-way `MissionId` type collision** → renamed
    `ShardMissionId`.
 3. **`NodeId` struct vs alias collision** → renamed
@@ -51,7 +51,7 @@ Extend RFC-0862 §Roles (writer/reader split) with:
 4. **`octo-protocol` does NOT depend on `octo-ident`** (canonical-
    hash bytes only).
 5. **`BootstrapOrchestrator` naming conflict** → renamed concrete
-   to `BootstrapOrchestratorImpl`. Gated on **RFC-0863
+   to `BootstrapOrchestratorImpl`. Gated on **RFC-0863 v1.9
    amendment** (PENDING).
 6. **Path correction (per R13 L10):** all leaf-workspace paths
    in §Roles + §Specification corrected to use prefix
@@ -111,9 +111,9 @@ Two missions BLOCKED: `0871e-phase5c-1-cross-instance-drain` +
 **Requires:**
 
 - RFC-0855p-c §Platform-Mediated Handover
-- **RFC-0010 + v1.5 amendments** (both FILED 2026-08-11; v1.4 = typed `ChainId`, v1.5 = rich `DidDocument` + `VerificationMethod`)
-- **RFC-0863 amendment** (PENDING)
-- **RFC-0862.1 patch** (per R11 H5 — v1.2 nodes MUST patch
+- **RFC-0010 v1.4 + v1.5 amendments** (both FILED 2026-08-11; v1.4 = typed `ChainId`, v1.5 = rich `DidDocument` + `VerificationMethod`)
+- **RFC-0863 v1.9 amendment** (PENDING)
+- **RFC-0862 v1.2.1 patch** (per R11 H5 — v1.2 nodes MUST patch
   to v1.2.1+ before v1.3 rollout)
 - RFC-0851p-a §Bootstrap Envelope Types
 - RFC-0853 §Sovereign Identity Model
@@ -165,7 +165,7 @@ checksum); `ed25519-dalek` (A) — operator attestation verify;
 | Role                   | Identifier                                                                                         | Authority Scope                            | Lifecycle                      | Source                             |
 | ---------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------ | ---------------------------------- |
 | Writer Node            | `WriterIdentity { writer_node_id, mission_id, term, elected_at_hlc, shard_key }` + `WriterContext` | Exclusive write for `ShardKey` during term | `WriterLifecycle` (7 states)   | This RFC §WriterElection           |
-| Reader Node            | (no identity; cached lease)                                                                        | Read-only; forwards writes                 | Stateful                       | RFC-0862.0 §Roles             |
+| Reader Node            | (no identity; cached lease)                                                                        | Read-only; forwards writes                 | Stateful                       | RFC-0862 v1.2.0 §Roles             |
 | Domain Coordinator     | `DomainCoordinator`                                                                                | Handover ceremony                          | `CoordinatorLifecycle`         | RFC-0855p-c + RFC-0855p-b          |
 | Bootstrap Orchestrator | `BootstrapOrchestrator` TRAIT; `BootstrapOrchestratorImpl` CONCRETE                                | Peer discovery via RFC-0851p-a Mode A      | Per node startup               | RFC-0863 (impl) + this RFC (trait) |
 | Drain Coordinator      | `DrainCoordinator` trait impl                                                                      | Cross-instance spend drain routing         | Wired via `StoolapSpendLedger` | This RFC §DrainCoordinator         |
@@ -511,7 +511,7 @@ Per R11 H5 + R12 C1 rollout ordering:
   Phase 4: Decommission v1.2 nodes
 ```
 
-**`DidDocument` (per RFC-0010 substrate + v1.5 amendment: v1.3
+**`DidDocument` (per RFC-0010 v1.3 substrate + v1.5 amendment: v1.3
 storage extension INTRODUCED the 2-field struct (`public_key`,
 `revoked`) + `DidRegistry` trait + `InMemoryDidRegistry` impl;
 v1.5 EXTENDED to the rich 7-field shape + `VerificationMethod`
@@ -920,7 +920,7 @@ impl StoolapSpendLedger {
 }
 ```
 
-**Schema (RFC-0862):**
+**Schema (RFC-0862 v2.0):**
 
 ```sql
 CREATE TABLE IF NOT EXISTS spend_ledger (
@@ -934,18 +934,18 @@ CREATE INDEX IF NOT EXISTS spend_ledger_updated_at_idx
     ON spend_ledger (updated_at_unix_ms);
 ```
 
-**Dqa storage form (RFC-0862 + RFC-0105 DqaEncoding
+**Dqa storage form (RFC-0862 v2.0 + RFC-0105 v1.9 DqaEncoding
 cross-ref):** `balance` column stores `i64` (stoolap `INTEGER`
 maps to `i64`). The `i64` carries `Dqa::value` at `scale = 0` — no
 transformation. The 16-byte BE `DqaEncoding` struct defined in
-RFC-0105 (`DqaEncoding::from_dqa` impl in
+RFC-0105 v1.9 (`DqaEncoding::from_dqa` impl in
 `determin/src/dqa.rs`) is the canonical serialization form for
 on-wire payloads (used by `octo-protocol` envelopes), NOT the
 SQLite storage form. The `dqa_to_i64` helper is the doc anchor
 for future widening (`Dqa::value` → `i128`); it is a no-op cast
 at the type level today.
 
-**Vault row cross-ref (RFC-0862):** spend ledger substrate is
+**Vault row cross-ref (RFC-0862 v2.0):** spend ledger substrate is
 wired to vault substrate via the `(holder_did, macaroon_id)` key —
 the wallet mints a `Caveat::Vault(vault_id)` binding per RFC-0957
 + RFC-0965 §3.1. `vault_id` derivation (per `octo-vault`
@@ -958,9 +958,9 @@ vault_id = BLAKE3("cipherocto/vault/v1/" + chain_id + owner_did + asset_id)
 `Macaroon::verify_for_vault_op` (RFC-0957) rejects spend drain on
 vault rows that are missing, frozen, or chain-mismatched.
 
-**Domain-separator hygiene (RFC-0862.5 + mission 0862-c5):** all
+**Domain-separator hygiene (RFC-0862 v2.0.5 + mission 0862-c5):** all
 spend-ledger-adjacent hash derivations use the `cipherocto/<name>/v1/`
-namespace prefix per RFC-0105 DqaEncoding-prefix cross-reference
+namespace prefix per RFC-0105 v1.9 DqaEncoding-prefix cross-reference
 pattern. The `Reservation::mint` derivation in
 `crates/quota-router-sm-engine/src/lib.rs` (RFC-0126) was renamed
 from the unnamespaced `b"reservation/v1"` to
@@ -981,28 +981,28 @@ Sweep result (per mission 0862-c5 audit):
 (test-only mirror fixture, goldens fixture regenerated with new
 prefixes — step2/3/6 hex values bumped; step1/10 unchanged). The
 canonical `vault_id` derivation ABOVE was already namespaced per
-RFC-0862 + S3 landing; the audit confirms no other
+RFC-0862 v2.0 + S3 landing; the audit confirms no other
 production-prefix gap exists at the spend-ledger boundary.
 
-**NodeEnvelope Version Tag cross-ref (RFC-0862 + S6a):** spend-drain
+**NodeEnvelope Version Tag cross-ref (RFC-0862 v2.0 + S6a):** spend-drain
 responses are wrapped in V2 envelopes (`version_tag = 0xA1` per
 `crates/octo-protocol/src/envelope.rs`). V1 envelopes (`version_tag =
 0xA0` or absent) are hard-rejected at verify per RFC-0870 §14.1 +
 TV-0870-01.
 
-**Atomicity guarantee (RFC-0862):** the per-instance `drain_lock`
+**Atomicity guarantee (RFC-0862 v2.0):** the per-instance `drain_lock`
 serializes `try_deduct` calls within a single `StoolapSpendLedger`
 instance. The cross-instance coordination substrate (mission
 `0871e-phase5c-1` per `RaftLikeDrainCoordinator` LANDED 2026-08-11) is
 the production follow-on; v2.0 spec does NOT change the lock surface.
 
-**Negative-cost precondition (RFC-0862 + S4 Round 2):**
+**Negative-cost precondition (RFC-0862 v2.0 + S4 Round 2):**
 `try_deduct` rejects `cost.value < 0` with `SpendLedgerError::NegativeCost`.
 `Dqa::subtract` on negative cost would otherwise inflate the balance
 (defense-in-depth against signed underflow in caller fee-computation
 paths and wire-decoded `i64` amounts).
 
-**Scale precondition (RFC-0862.4 + mission 0862-c4):** the
+**Scale precondition (RFC-0862 v2.0.4 + mission 0862-c4):** the
 substrate's `spend_ledger.balance` column is `INTEGER` (i64) at
 `scale = 0`. `try_deduct` AND `seed` reject any `Dqa` carrying
 `scale != 0` with
@@ -1020,7 +1020,7 @@ The `dqa_to_i64` helper gains the same `Result<i64, SpendLedgerError>`
 return type — it is the sole gatekeeper for the scale constraint at
 the storage boundary.
 
-**Adjacent-module u64→i64 wrap mitigation (RFC-0862 + mission
+**Adjacent-module u64→i64 wrap mitigation (RFC-0862 v2.0 + mission
 0862-c7):** callers in `crates/quota-router-core` that narrow
 `cost_amount: u64` to `i64` for the `spend_ledger` column + budget-gate
 arithmetic MUST use `SpendEvent::cost_amount_i64()` or the free
@@ -1037,7 +1037,7 @@ four narrow sites are §budget-gate-deduct-team +
 exact-edge overflow + at-max passes + zero passes + `SpendEvent`
 method mirrors free fn).
 
-**Seed hardening (RFC-0862 + mission 0862-c8):** `seed()` MUST
+**Seed hardening (RFC-0862 v2.0 + mission 0862-c8):** `seed()` MUST
 mirror the `try_deduct` precondition guards (NegativeCost + the
 scale precondition per v2.0.4 below) and acquire `drain_lock`
 around the balance-read + UPDATE-or-INSERT window. Without the
@@ -1050,7 +1050,7 @@ via `crates/quota-router-storage/tests/tv_0862_spend_ledger.rs`
 TV-0862-15 (concurrent seed serializes) + TV-0862-16 (negative budget
 yields NegativeCost + no row persisted).
 
-**Clock precondition (RFC-0862.6 + mission 0862-c2):** the
+**Clock precondition (RFC-0862 v2.0.6 + mission 0862-c2):** the
 substrate's `updated_at_unix_ms` column is written from a `Clock`
 trait object held as `Arc<dyn Clock>` on `StoolapSpendLedger`. Default
 constructor variants (`open_in_memory` / `open_path`) inject
@@ -1070,7 +1070,7 @@ test-only `raw_query(&self, sql, params)` accessor is added to
 the substrate for this column assertion — kept `pub` so follow-on
 deterministic-time TV can reuse it.
 
-**Cross-process atomicity (RFC-0862.8 + mission 0862-c3):**
+**Cross-process atomicity (RFC-0862 v2.0.8 + mission 0862-c3):**
 `StoolapSpendLedger` closes the cross-process double-spend surface
 via two complementary layers — EITHER alone leaves a gap:
 
@@ -1110,7 +1110,7 @@ the file-backed path matching the in-memory path per TV-0862-08)
 surfaces `LockUnavailable` from `open_path` — fail-closed per
 mission 0862-c3 AC-1).
 
-**No-DID-validation convention (RFC-0862.7 + mission 0862-c6):**
+**No-DID-validation convention (RFC-0862 v2.0.7 + mission 0862-c6):**
 `StoolapSpendLedger` performs NO `CanonicalCodec` / DID-format /
 `did:octo:` prefix check on the `holder_did` field. The substrate
 accepts any `&str` shape (empty string, non-`did:octo:` strings,
@@ -1136,7 +1136,7 @@ distinct rows persist independently). The reserved test prefix
 option (e.g. `did:octo:test:`) is a separate RFC-0010 amendment —
 out of scope for RFC-0862 v2.x follow-ons.
 
-**Layer discipline (RFC-0862 + R11 M7):** `StoolapSpendLedger`
+**Layer discipline (RFC-0862 v2.0 + R11 M7):** `StoolapSpendLedger`
 lives in `quota-router-storage` (Layer B-adjacent per R11 M7) and does
 NOT depend on `octo-paid-query` / `octo-wallet` (those crates
 transitively depend on this one — would create a cyclic crate
@@ -1341,7 +1341,7 @@ pub struct WalEntry {
     pub checksum: [u8; 32],     // blake3 over prefix_bytes || payload
 }
 
-// VerificationMethod (per RFC-0010 amendment).
+// VerificationMethod (per RFC-0010 v1.5 amendment).
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
 pub enum VerificationMethod {
     Ed25519 { public_key: [u8; 32] },
@@ -1372,10 +1372,10 @@ V1.3 acceptance GATED on:
 
 1-5. (REMOVED per R7 M7 — F12/F13 acceptance moved to v1.4) 6. `MissionId` consolidation COMPLETED (gating direction per R12
 H17 — v1.3 is BLOCKED on consolidation; consolidation is NOT
-BLOCKED on v1.3 as §Future Work previously implied). 7. `NodeId` consolidation COMPLETED (same direction as AC#6). 8. **RFC-0010 + v1.5 amendments FILED** (v1.4 = typed
+BLOCKED on v1.3 as §Future Work previously implied). 7. `NodeId` consolidation COMPLETED (same direction as AC#6). 8. **RFC-0010 v1.4 + v1.5 amendments FILED** (v1.4 = typed
 `ChainId`; v1.5 = rich `DidDocument` + `VerificationMethod` —
 both amendments shipped substrate required by §Specification §DidDocument
-field shape referenced inline). 9. **RFC-0863 amendment FILED**. 10. `force_relinquish_writer` lands via sealed trait pattern (per
+field shape referenced inline). 9. **RFC-0863 v1.9 amendment FILED**. 10. `force_relinquish_writer` lands via sealed trait pattern (per
 R12 H11 — `WriterElectionForceRelinquishSealed` supertrait) +
 M-of-N operator-set check + nonce-freshness check + **durable
 nonce storage** (per R11 H1) + **deployment binding via
@@ -1566,7 +1566,7 @@ fn init_node(
 Deliverables:
 
 - New workspace member `octo-sync/` (root `Cargo.toml` `exclude = [...]`
-  drops `"octo-sync"`; gated opt-in per RFC-0862 §Acceptance Criteria).
+  drops `"octo-sync"`; gated opt-in per RFC-0862 v1.4 §Acceptance Criteria).
 - Concrete `WriterElection` impl (`RaftLikeWriterElection`) using HLC +
   LWW per-instance counter for cross-instance write ordering.
 - Concrete `DidWriteCoordinator` impl (`RaftLikeDidWriteCoordinator`)
@@ -1871,20 +1871,20 @@ crdt = []
 #### Out of scope for v1.4.0 (deferred)
 
 - **`octo-coordinator-bft` Layer A crate** for Byzantine fault tolerance
-  (per RFC-0862 §Future Work). v1.4.0 ships crash-fault-tolerant
+  (per RFC-0862 v1.3 §Future Work). v1.4.0 ships crash-fault-tolerant
   Raft-like consensus; BFT (threshold-signature M-of-N + sealed trait
   - chain_id binding) lands in `octo-coordinator-bft` Layer A on a
-    future amendment (RFC-0862 per
+    future amendment (RFC-0862 v2.0 per
     [[cipherocto-design-principles]] §Layer A additive-only).
 - **Cross-shard drain atomicity**. Per v1.3 §Out-of-scope +
   R18 M1, `DrainCoordinator` handles single-shard drains only.
   Cross-shard atomic drain remains future work; tracked.
-- **Snapshot + replay recovery plan** (per RFC-0862 §Future Work).
+- **Snapshot + replay recovery plan** (per RFC-0862 v1.3 §Future Work).
   Mission `0871e-force-relinquish-governance` v0.2 snapshot+replay
   AC remains pending. v1.4.0 lands the WAL-replay half; snapshot
   recovery is a follow-on.
 - **Coordinator HA via key-share ceremony + M-of-N operator quorum**.
-  Per RFC-0862 §Future Work + AC#12, mission
+  Per RFC-0862 v1.3 §Future Work + AC#12, mission
   `0871e-force-relinquish-governance` FILED 2026-08-11; the
   `force_relinquish_writer` impl in v1.4.0 consumes the
   `verify_governance_attestation` substrate from v1.3 but the
@@ -1909,7 +1909,7 @@ v1.4.0 acceptance GATED on:
 21. **`Optional `crdt` feature flag`** compiles + passes TV-1 + TV-4
     under `cargo test --features crdt`.
 22. **Layer-direction audit:** `crates/octo-ident` does NOT depend
-    on `crates/octo-sync` directly (per RFC-0862 R12 M19 + R13 M5
+    on `crates/octo-sync` directly (per RFC-0862 v1.3 R12 M19 + R13 M5
     — `canonical_hash` lives in `octo-sync::did::canonical_hash`
     and is imported at the substrate crate via re-export, not at
     `octo-ident` directly). The `DidWriteCoordinator` trait in
@@ -1953,7 +1953,7 @@ in §Future Work). Tracked here so cross-references from
 
 ## Future Work
 
-- F1-F7, F9-F10: see RFC-0862.0 §Future Work
+- F1-F7, F9-F10: see RFC-0862 v1.2.0 §Future Work
 - F12 (NEW): HLC + LWW per-instance counter. **Promoted to
   v1.4.0 §Concrete Impl Extension** (concrete `RaftLikeDidWriteCoordinator`
   uses HLC + LWW for cross-instance drain / DID write coordination).
@@ -1975,7 +1975,7 @@ in §Future Work). Tracked here so cross-references from
   - chain_id binding (R12 M23) is the v1.3 baseline. Full
     Byzantine fault tolerance (BFT) consensus for coordinator
     cluster lands in `crates/octo-coordinator-bft/` (Layer A)
-    per `cipherocto-design-principles.md` once RFC-0862
+    per `cipherocto-design-principles.md` once RFC-0862 v2.0
     amendment is filed.**
 - `force_relinquish_writer` governance — mission `0871e-force-relinquish-governance`
   FILED (R14 H1).
@@ -2082,7 +2082,7 @@ cargo doc --workspace --no-deps --manifest-path octo-transport/Cargo.toml
 - RFC-0855p-c §Platform-Mediated Handover
 - RFC-0855p-b §CoordinatorLifecycle
 - RFC-0863 §BootstrapOrchestrator (impl, renamed to
-  `BootstrapOrchestratorImpl` per RFC-0863 amendment)
+  `BootstrapOrchestratorImpl` per RFC-0863 v1.9 amendment)
 - RFC-0851p-a §Bootstrap Envelope Types
 - RFC-0853 §Sovereign Identity Model
 - RFC-0862 §WAL Format

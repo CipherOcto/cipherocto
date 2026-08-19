@@ -272,12 +272,12 @@ pub enum Caveat {
     #[serde(rename = "permission")]
     Permission(PermissionKind),
 
-    /// Valid time range. New in RFC-0957; for the legacy
+    /// Valid time range. New in RFC-0957 v2.1; for the legacy
     /// single-timestamp variant see RFC-0965 §3.3 `ValidAfter`.
     #[serde(rename = "valid_range")]
     ValidRange { valid_after_unix: u64, valid_until_unix: u64 },
 
-    /// Per-transaction cap. New in RFC-0957; distinct from
+    /// Per-transaction cap. New in RFC-0957 v2.1; distinct from
     /// `AmountMax` which is total budget.
     #[serde(rename = "max_per_tx")]
     MaxPerTx(u128),
@@ -350,7 +350,7 @@ pub struct ActionTemplate {
 }
 ```
 
-> **Pre-existing variants:** the v1 Caveat enum (RFC-0957..v2.0) already contained four variants that are NOT modified by this amendment: `ValidAfter`, `RedemptionContext`, `Sharded`, `Payment`. The 9 listed above are the ADDITIVE v2.1 set per RFC-0965 §3.
+> **Pre-existing variants:** the v1 Caveat enum (RFC-0957 v0.1..v2.0) already contained four variants that are NOT modified by this amendment: `ValidAfter`, `RedemptionContext`, `Sharded`, `Payment`. The 9 listed above are the ADDITIVE v2.1 set per RFC-0965 §3.
 
 **Attenuation invariant preservation:** The 9 new variants participate in the v1 HMAC chain construction (`canonical_ser(caveat)` → BLAKE3 keyed hash) identically to v1 variants. Monotonic restriction rules for the new variants are defined per RFC-0965 §3 (e.g., `MaxPerTx(new) ⊆ MaxPerTx(old)` iff `new ≤ old`; `ValidRange` axes shrink monotonically).
 

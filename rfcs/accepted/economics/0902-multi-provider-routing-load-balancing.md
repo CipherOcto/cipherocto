@@ -369,7 +369,7 @@ response = await router.acompletion(
 | `crates/quota-router-core/src/providers.rs` | Provider definitions, health checking |
 | `crates/quota-router-core/src/config.rs` | RouterConfig, routing settings |
 
-> **Note:** The code uses `ProviderWithState` (not `ProviderState` as shown in the pseudocode). The struct name difference is a pre-existing discrepancy; the field semantics match RFC-0902.
+> **Note:** The code uses `ProviderWithState` (not `ProviderState` as shown in the pseudocode). The struct name difference is a pre-existing discrepancy; the field semantics match RFC-0902 v1.3.
 
 ## Implementation Phases
 

@@ -1152,7 +1152,7 @@ Expected output: all 4 rows present; all 4 lookup-able; all 4 round-trip canonic
 ```
 Pre-state: capability token v1 wire bytes W
 Action: parse W with `deserialize_wire(W, "did:octo:abc", &[0x01; 32])`
-Expected output: Ok(CapabilityToken) — identical to RFC-0957 parse output
+Expected output: Ok(CapabilityToken) — identical to RFC-0957 v1.0 parse output
 ```
 
 ### TV8: 100K Lookup Benchmark

@@ -168,7 +168,10 @@ impl StoolapKeyStorage {
         Self { db }
     }
 
-    pub fn row_to_api_key(&self, row: &stoolap::ResultRow) -> Result<ApiKey, KeyError> {
+    pub fn row_to_api_key(
+        &self,
+        row: &octo_storage_core::stoolap::ResultRow,
+    ) -> Result<ApiKey, KeyError> {
         let key_type_str: String = row
             .get_by_name("key_type")
             .map_err(|e| KeyError::Storage(e.to_string()))?;
@@ -268,17 +271,21 @@ impl KeyStorage for StoolapKeyStorage {
 
         let key_type_str = key.key_type.to_string();
         // Pass key_hash as raw bytes for BYTEA(32) column
-        let key_hash_value = stoolap::core::Value::blob(key.key_hash.clone());
+        let key_hash_value = octo_storage_core::stoolap::Value::blob(key.key_hash.clone());
 
-        // Helper to convert Option<i64> to stoolap::Value (None = Null)
-        let opt_i64_to_value = |opt: Option<i64>| -> stoolap::Value {
+        // Helper to convert Option<i64> to octo_storage_core::stoolap::Value (None = Null)
+        let opt_i64_to_value = |opt: Option<i64>| -> octo_storage_core::stoolap::Value {
             opt.map(|v| v.into())
-                .unwrap_or(stoolap::Value::Null(stoolap::DataType::Null))
+                .unwrap_or(octo_storage_core::stoolap::Value::Null(
+                    stoolap::DataType::Null,
+                ))
         };
-        // Helper to convert Option<i32> to stoolap::Value (None = Null)
-        let opt_i32_to_value = |opt: Option<i32>| -> stoolap::Value {
+        // Helper to convert Option<i32> to octo_storage_core::stoolap::Value (None = Null)
+        let opt_i32_to_value = |opt: Option<i32>| -> octo_storage_core::stoolap::Value {
             opt.map(|v| v.into())
-                .unwrap_or(stoolap::Value::Null(stoolap::DataType::Null))
+                .unwrap_or(octo_storage_core::stoolap::Value::Null(
+                    stoolap::DataType::Null,
+                ))
         };
 
         // Convert key_id and team_id to BLOB(16) for storage per RFC-0903-C1
@@ -287,13 +294,15 @@ impl KeyStorage for StoolapKeyStorage {
         let team_id_blob: Option<Vec<u8>> =
             key.team_id.as_ref().map(|t| uuid_to_blob_16(t).to_vec());
 
-        let params: Vec<stoolap::Value> = vec![
-            stoolap::core::Value::blob(key_id_blob.to_vec()),
+        let params: Vec<octo_storage_core::stoolap::Value> = vec![
+            octo_storage_core::stoolap::Value::blob(key_id_blob.to_vec()),
             key_hash_value,
             key.key_prefix.clone().into(),
             team_id_blob
-                .map(stoolap::core::Value::blob)
-                .unwrap_or_else(|| stoolap::Value::Null(stoolap::DataType::Null)),
+                .map(octo_storage_core::stoolap::Value::blob)
+                .unwrap_or_else(|| {
+                    octo_storage_core::stoolap::Value::Null(stoolap::DataType::Null)
+                }),
             key.budget_limit.into(),
             opt_i32_to_value(key.rpm_limit),
             opt_i32_to_value(key.tpm_limit),
@@ -325,8 +334,8 @@ impl KeyStorage for StoolapKeyStorage {
 
     fn lookup_by_hash(&self, key_hash: &[u8]) -> Result<Option<ApiKey>, KeyError> {
         // Pass key_hash as raw bytes for BYTEA(32) column
-        let key_hash_blob = stoolap::core::Value::blob(key_hash.to_vec());
-        let params: Vec<stoolap::Value> = vec![key_hash_blob];
+        let key_hash_blob = octo_storage_core::stoolap::Value::blob(key_hash.to_vec());
+        let params: Vec<octo_storage_core::stoolap::Value> = vec![key_hash_blob];
 
         let mut rows = self
             .db
@@ -346,7 +355,7 @@ impl KeyStorage for StoolapKeyStorage {
     fn update_key(&self, key_id: &str, updates: &KeyUpdates) -> Result<(), KeyError> {
         // Build dynamic update query
         let mut set_clauses = Vec::new();
-        let mut params: Vec<stoolap::Value> = Vec::new();
+        let mut params: Vec<octo_storage_core::stoolap::Value> = Vec::new();
 
         if let Some(budget_limit) = updates.budget_limit {
             set_clauses.push(format!("budget_limit = ${}", params.len() + 1));
@@ -407,7 +416,9 @@ impl KeyStorage for StoolapKeyStorage {
 
         // Note: updating key_id itself changes the primary key - this is allowed
         set_clauses.push(format!("key_id = ${}", params.len() + 1));
-        params.push(stoolap::core::Value::blob(key_id_blob.to_vec()));
+        params.push(octo_storage_core::stoolap::Value::blob(
+            key_id_blob.to_vec(),
+        ));
 
         let sql = format!(
             "UPDATE api_keys SET {} WHERE key_id = ${}",
@@ -427,8 +438,10 @@ impl KeyStorage for StoolapKeyStorage {
             // Convert team_id to BLOB(16) per RFC-0903-C1
             let team_id_blob =
                 uuid_to_blob_16(&uuid::Uuid::parse_str(tid).expect("valid team_id UUID"));
-            let params: Vec<stoolap::Value> =
-                vec![stoolap::core::Value::blob(team_id_blob.to_vec())];
+            let params: Vec<octo_storage_core::stoolap::Value> =
+                vec![octo_storage_core::stoolap::Value::blob(
+                    team_id_blob.to_vec(),
+                )];
             self.db
                 .query("SELECT * FROM api_keys WHERE team_id = $1", params)
                 .map_err(|e| KeyError::Storage(e.to_string()))?
@@ -455,7 +468,9 @@ impl KeyStorage for StoolapKeyStorage {
             .db
             .query(
                 "SELECT COUNT(*) FROM api_keys WHERE team_id = $1 AND revoked = 0",
-                vec![stoolap::core::Value::blob(team_id_blob.to_vec())],
+                vec![octo_storage_core::stoolap::Value::blob(
+                    team_id_blob.to_vec(),
+                )],
             )
             .map_err(|e| KeyError::Storage(e.to_string()))?;
 
@@ -476,7 +491,7 @@ impl KeyStorage for StoolapKeyStorage {
             .execute(
                 "INSERT INTO teams (team_id, name, budget_limit, created_at) VALUES ($1, $2, $3, $4)",
                 vec![
-                    stoolap::core::Value::blob(team_id_blob.to_vec()),
+                    octo_storage_core::stoolap::Value::blob(team_id_blob.to_vec()),
                     team.name.clone().into(),
                     team.budget_limit.into(),
                     team.created_at.into(),
@@ -494,7 +509,9 @@ impl KeyStorage for StoolapKeyStorage {
             .db
             .query(
                 "SELECT * FROM teams WHERE team_id = $1",
-                vec![stoolap::core::Value::blob(team_id_blob.to_vec())],
+                vec![octo_storage_core::stoolap::Value::blob(
+                    team_id_blob.to_vec(),
+                )],
             )
             .map_err(|e| KeyError::Storage(e.to_string()))?;
 
@@ -535,7 +552,7 @@ impl KeyStorage for StoolapKeyStorage {
                 vec![
                     name.into(),
                     budget_limit.into(),
-                    stoolap::core::Value::blob(team_id_blob.to_vec()),
+                    octo_storage_core::stoolap::Value::blob(team_id_blob.to_vec()),
                 ],
             )
             .map_err(|e| KeyError::Storage(e.to_string()))?;
@@ -586,7 +603,9 @@ impl KeyStorage for StoolapKeyStorage {
         self.db
             .execute(
                 "DELETE FROM teams WHERE team_id = $1",
-                vec![stoolap::core::Value::blob(team_id_blob.to_vec())],
+                vec![octo_storage_core::stoolap::Value::blob(
+                    team_id_blob.to_vec(),
+                )],
             )
             .map_err(|e| KeyError::Storage(e.to_string()))?;
         Ok(())
@@ -704,7 +723,9 @@ impl KeyStorage for StoolapKeyStorage {
         let budget: i64 = tx
             .query(
                 "SELECT budget_limit FROM api_keys WHERE key_id = $1 FOR UPDATE",
-                vec![stoolap::core::Value::blob(key_id_blob.to_vec())],
+                vec![octo_storage_core::stoolap::Value::blob(
+                    key_id_blob.to_vec(),
+                )],
             )
             .map_err(|e| KeyError::Storage(e.to_string()))?
             .next()
@@ -719,7 +740,9 @@ impl KeyStorage for StoolapKeyStorage {
         let mut rows = tx
             .query(
                 "SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE key_id = $1",
-                vec![stoolap::core::Value::blob(key_id_blob.to_vec())],
+                vec![octo_storage_core::stoolap::Value::blob(
+                    key_id_blob.to_vec(),
+                )],
             )
             .map_err(|e| KeyError::Storage(e.to_string()))?;
 
@@ -770,23 +793,27 @@ impl KeyStorage for StoolapKeyStorage {
             .as_ref()
             .map(|v| tokenizer_version_to_id(v).to_vec());
 
-        let params: Vec<stoolap::Value> = vec![
-            stoolap::core::Value::blob(hex_to_blob_32(&event.event_id).to_vec()),
-            stoolap::core::Value::blob(request_id_bytes.to_vec()),
-            stoolap::core::Value::blob(key_id_blob.to_vec()),
+        let params: Vec<octo_storage_core::stoolap::Value> = vec![
+            octo_storage_core::stoolap::Value::blob(hex_to_blob_32(&event.event_id).to_vec()),
+            octo_storage_core::stoolap::Value::blob(request_id_bytes.to_vec()),
+            octo_storage_core::stoolap::Value::blob(key_id_blob.to_vec()),
             team_id_blob
-                .map(stoolap::core::Value::blob)
-                .unwrap_or_else(|| stoolap::Value::Null(stoolap::DataType::Null)),
+                .map(octo_storage_core::stoolap::Value::blob)
+                .unwrap_or_else(|| {
+                    octo_storage_core::stoolap::Value::Null(stoolap::DataType::Null)
+                }),
             event.provider.clone().into(),
             event.model.clone().into(),
             event.input_tokens.into(),
             event.output_tokens.into(),
             cost_i64.into(),
-            stoolap::core::Value::blob(event.pricing_hash.to_vec()),
+            octo_storage_core::stoolap::Value::blob(event.pricing_hash.to_vec()),
             token_source_str.into(),
             tokenizer_id_blob
-                .map(stoolap::core::Value::blob)
-                .unwrap_or_else(|| stoolap::Value::Null(stoolap::DataType::Null)),
+                .map(octo_storage_core::stoolap::Value::blob)
+                .unwrap_or_else(|| {
+                    octo_storage_core::stoolap::Value::Null(stoolap::DataType::Null)
+                }),
             event.tokenizer_version.clone().into(),
             event.provider_usage_json.clone().into(),
             event.timestamp.into(),
@@ -805,7 +832,7 @@ impl KeyStorage for StoolapKeyStorage {
             params,
         ) {
             Ok(_) => {}
-            Err(stoolap::Error::UniqueConstraint { .. }) => {
+            Err(octo_storage_core::stoolap::Error::UniqueConstraint { .. }) => {
                 // Idempotent: another transaction already recorded this event
             }
             Err(e) => return Err(KeyError::Storage(e.to_string())),
@@ -872,7 +899,9 @@ impl KeyStorage for StoolapKeyStorage {
         let mut rows = tx
             .query(
                 "SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE key_id = $1",
-                vec![stoolap::core::Value::blob(key_id_blob.to_vec())],
+                vec![octo_storage_core::stoolap::Value::blob(
+                    key_id_blob.to_vec(),
+                )],
             )
             .map_err(|e| KeyError::Storage(e.to_string()))?;
 
@@ -888,7 +917,9 @@ impl KeyStorage for StoolapKeyStorage {
         let mut rows = tx
             .query(
                 "SELECT COALESCE(SUM(cost_amount), 0) FROM spend_ledger WHERE team_id = $1",
-                vec![stoolap::core::Value::blob(team_id_blob.to_vec())],
+                vec![octo_storage_core::stoolap::Value::blob(
+                    team_id_blob.to_vec(),
+                )],
             )
             .map_err(|e| KeyError::Storage(e.to_string()))?;
 
@@ -942,21 +973,23 @@ impl KeyStorage for StoolapKeyStorage {
             .as_ref()
             .map(|v| tokenizer_version_to_id(v).to_vec());
 
-        let params: Vec<stoolap::Value> = vec![
-            stoolap::core::Value::blob(hex_to_blob_32(&event.event_id).to_vec()),
-            stoolap::core::Value::blob(request_id_bytes.to_vec()),
-            stoolap::core::Value::blob(key_id_blob.to_vec()),
-            stoolap::core::Value::blob(team_id_blob.to_vec()),
+        let params: Vec<octo_storage_core::stoolap::Value> = vec![
+            octo_storage_core::stoolap::Value::blob(hex_to_blob_32(&event.event_id).to_vec()),
+            octo_storage_core::stoolap::Value::blob(request_id_bytes.to_vec()),
+            octo_storage_core::stoolap::Value::blob(key_id_blob.to_vec()),
+            octo_storage_core::stoolap::Value::blob(team_id_blob.to_vec()),
             event.provider.clone().into(),
             event.model.clone().into(),
             event.input_tokens.into(),
             event.output_tokens.into(),
             cost_i64.into(),
-            stoolap::core::Value::blob(event.pricing_hash.to_vec()),
+            octo_storage_core::stoolap::Value::blob(event.pricing_hash.to_vec()),
             token_source_str.into(),
             tokenizer_id_blob
-                .map(stoolap::core::Value::blob)
-                .unwrap_or_else(|| stoolap::Value::Null(stoolap::DataType::Null)),
+                .map(octo_storage_core::stoolap::Value::blob)
+                .unwrap_or_else(|| {
+                    octo_storage_core::stoolap::Value::Null(stoolap::DataType::Null)
+                }),
             event.tokenizer_version.clone().into(),
             event.provider_usage_json.clone().into(),
             event.timestamp.into(),
@@ -974,7 +1007,7 @@ impl KeyStorage for StoolapKeyStorage {
             params,
         ) {
             Ok(_) => {}
-            Err(stoolap::Error::UniqueConstraint { .. }) => {
+            Err(octo_storage_core::stoolap::Error::UniqueConstraint { .. }) => {
                 // Idempotent: another transaction already recorded this event
             }
             Err(e) => return Err(KeyError::Storage(e.to_string())),
@@ -996,7 +1029,7 @@ impl KeyStorage for StoolapKeyStorage {
     ///
     /// This is the DB-backed implementation of the stub in `keys/mod.rs::tokenizer_id_to_version`.
     fn resolve_tokenizer(&self, tokenizer_id: &[u8; 16]) -> Result<Option<String>, KeyError> {
-        let param = stoolap::core::Value::blob(tokenizer_id.to_vec());
+        let param = octo_storage_core::stoolap::Value::blob(tokenizer_id.to_vec());
         let mut rows = self
             .db
             .query(
@@ -1037,8 +1070,8 @@ impl KeyStorage for StoolapKeyStorage {
         let version_param: String = version.into();
         let provider_param: Option<String> = provider.map(|p| p.to_string());
 
-        let params: Vec<stoolap::Value> = vec![
-            stoolap::core::Value::blob(tokenizer_id.to_vec()),
+        let params: Vec<octo_storage_core::stoolap::Value> = vec![
+            octo_storage_core::stoolap::Value::blob(tokenizer_id.to_vec()),
             version_param.into(),
             provider_param.into(),
         ];
@@ -1049,7 +1082,7 @@ impl KeyStorage for StoolapKeyStorage {
         );
         // Idempotent: if UNIQUE constraint violated (same version+provider already registered),
         // that's fine — the tokenizer_id is the same anyway. All other errors propagate.
-        if let Err(stoolap::Error::UniqueConstraint { .. }) = result {
+        if let Err(octo_storage_core::stoolap::Error::UniqueConstraint { .. }) = result {
             // Already registered — OK
         } else if let Err(e) = result {
             return Err(KeyError::Storage(e.to_string()));
@@ -1129,10 +1162,10 @@ impl KeyStorage for StoolapKeyStorage {
             .unwrap()
             .as_secs() as i64;
 
-        let params: Vec<stoolap::Value> = vec![
+        let params: Vec<octo_storage_core::stoolap::Value> = vec![
             id.clone().into(),
             provider.into(),
-            stoolap::core::Value::blob(api_key_hash.to_vec()),
+            octo_storage_core::stoolap::Value::blob(api_key_hash.to_vec()),
             prefix.into(),
             label.map(|l| l.to_string()).into(),
             now.into(),
@@ -1150,7 +1183,7 @@ impl KeyStorage for StoolapKeyStorage {
     }
 
     fn list_provider_keys(&self, provider: Option<&str>) -> Result<Vec<ProviderKeyInfo>, KeyError> {
-        let (query, params): (String, Vec<stoolap::Value>) = match provider {
+        let (query, params): (String, Vec<octo_storage_core::stoolap::Value>) = match provider {
             Some(p) => (
                 "SELECT id, provider, api_key_prefix, label, created_at, is_active FROM provider_api_keys WHERE is_active = 1 AND provider = $1".to_string(),
                 vec![p.into()],
@@ -1202,7 +1235,7 @@ impl KeyStorage for StoolapKeyStorage {
         &self,
         api_key_hash: &[u8],
     ) -> Result<Option<ProviderKeyInfo>, KeyError> {
-        let hash_blob = stoolap::core::Value::blob(api_key_hash.to_vec());
+        let hash_blob = octo_storage_core::stoolap::Value::blob(api_key_hash.to_vec());
         let mut rows = self
             .db
             .query(
@@ -1242,11 +1275,11 @@ impl KeyStorage for StoolapKeyStorage {
         if existing.is_some() {
             let soft_limit_value = match soft_limit_pct {
                 Some(v) => v.into(),
-                None => stoolap::Value::Null(stoolap::DataType::Null),
+                None => octo_storage_core::stoolap::Value::Null(stoolap::DataType::Null),
             };
             let webhook_value = match alert_webhook {
                 Some(s) => s.to_string().into(),
-                None => stoolap::Value::Null(stoolap::DataType::Null),
+                None => octo_storage_core::stoolap::Value::Null(stoolap::DataType::Null),
             };
 
             self.db.execute(
@@ -1268,11 +1301,11 @@ impl KeyStorage for StoolapKeyStorage {
 
             let soft_limit_value = match soft_limit_pct {
                 Some(v) => v.into(),
-                None => stoolap::Value::Null(stoolap::DataType::Null),
+                None => octo_storage_core::stoolap::Value::Null(stoolap::DataType::Null),
             };
             let webhook_value = match alert_webhook {
                 Some(s) => s.to_string().into(),
-                None => stoolap::Value::Null(stoolap::DataType::Null),
+                None => octo_storage_core::stoolap::Value::Null(stoolap::DataType::Null),
             };
 
             self.db.execute(
@@ -1394,7 +1427,7 @@ impl KeyStorage for StoolapKeyStorage {
         let mut sql = String::from(
             "SELECT event_id, key_id, team_id, cost_amount, input_tokens, output_tokens, model, created_at FROM spend_ledger WHERE 1=1",
         );
-        let mut params: Vec<stoolap::Value> = Vec::new();
+        let mut params: Vec<octo_storage_core::stoolap::Value> = Vec::new();
         let mut param_idx = 1;
 
         if let Some(kid) = key_id {
@@ -1827,18 +1860,18 @@ mod tests {
         db.execute(
             "INSERT INTO spend_ledger (event_id, key_id, cost_amount) VALUES ($1, $2, $3)",
             vec![
-                stoolap::core::Value::text("event1"),
-                stoolap::core::Value::text(key_id),
-                stoolap::core::Value::integer(100),
+                octo_storage_core::stoolap::Value::text("event1"),
+                octo_storage_core::stoolap::Value::text(key_id),
+                octo_storage_core::stoolap::Value::integer(100),
             ],
         )
         .unwrap();
         db.execute(
             "INSERT INTO spend_ledger (event_id, key_id, cost_amount) VALUES ($1, $2, $3)",
             vec![
-                stoolap::core::Value::text("event2"),
-                stoolap::core::Value::text(key_id),
-                stoolap::core::Value::integer(200),
+                octo_storage_core::stoolap::Value::text("event2"),
+                octo_storage_core::stoolap::Value::text(key_id),
+                octo_storage_core::stoolap::Value::integer(200),
             ],
         )
         .unwrap();
@@ -1848,7 +1881,7 @@ mod tests {
         let mut rows = tx
             .query(
                 "SELECT SUM(cost_amount) FROM spend_ledger WHERE key_id = $1",
-                vec![stoolap::core::Value::text(key_id)],
+                vec![octo_storage_core::stoolap::Value::text(key_id)],
             )
             .unwrap();
 

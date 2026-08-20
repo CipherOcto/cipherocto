@@ -85,8 +85,11 @@ mod real {
         /// Applies migrations synchronously on first run; subsequent opens
         /// are no-ops.
         pub async fn open(dsn: &str) -> Result<Self, ReputationError> {
-            let db = octo_storage_core::Database::open(dsn)
-                .map_err(|_e: stoolap::Error| ReputationError::ChainRefInvalid("stoolap_open"))?;
+            let db = octo_storage_core::Database::open(dsn).map_err(
+                |_e: octo_storage_core::stoolap::Error| {
+                    ReputationError::ChainRefInvalid("stoolap_open")
+                },
+            )?;
             substrate_runner::apply(&db)?;
             Ok(Self {
                 db: std::sync::Arc::new(db),
@@ -95,10 +98,11 @@ mod real {
 
         /// Open an in-memory store. Used for tests and ephemeral deployments.
         pub async fn open_in_memory() -> Result<Self, ReputationError> {
-            let db =
-                octo_storage_core::Database::open_in_memory().map_err(|_e: stoolap::Error| {
+            let db = octo_storage_core::Database::open_in_memory().map_err(
+                |_e: octo_storage_core::stoolap::Error| {
                     ReputationError::ChainRefInvalid("stoolap_open_inmem")
-                })?;
+                },
+            )?;
             substrate_runner::apply(&db)?;
             Ok(Self {
                 db: std::sync::Arc::new(db),
@@ -254,26 +258,26 @@ mod real {
 
     // -- value helpers ------------------------------------------------
 
-    fn did_blob(d: &RecorderDid) -> stoolap::Value {
-        stoolap::Value::blob(d.as_bytes().to_vec())
+    fn did_blob(d: &RecorderDid) -> octo_storage_core::stoolap::Value {
+        octo_storage_core::stoolap::Value::blob(d.as_bytes().to_vec())
     }
 
-    fn dfp_blob(arr: [u8; 24]) -> stoolap::Value {
-        stoolap::Value::blob(arr.to_vec())
+    fn dfp_blob(arr: [u8; 24]) -> octo_storage_core::stoolap::Value {
+        octo_storage_core::stoolap::Value::blob(arr.to_vec())
     }
 
-    fn controller_blob(c: &ControllerId) -> stoolap::Value {
-        stoolap::Value::blob(c.as_bytes().to_vec())
+    fn controller_blob(c: &ControllerId) -> octo_storage_core::stoolap::Value {
+        octo_storage_core::stoolap::Value::blob(c.as_bytes().to_vec())
     }
 
-    fn event_id_blob(e: EventId) -> stoolap::Value {
-        stoolap::Value::blob(e.as_bytes().to_vec())
+    fn event_id_blob(e: EventId) -> octo_storage_core::stoolap::Value {
+        octo_storage_core::stoolap::Value::blob(e.as_bytes().to_vec())
     }
 
-    fn u64_to_value(v: u64) -> stoolap::Value {
+    fn u64_to_value(v: u64) -> octo_storage_core::stoolap::Value {
         // u64 → i64 lossy at values > i64::MAX; reputation timestamps fit
         // comfortably in i64 for the foreseeable future.
-        stoolap::Value::integer(v as i64)
+        octo_storage_core::stoolap::Value::integer(v as i64)
     }
 
     fn i64_to_u64(v: i64) -> u64 {
@@ -318,21 +322,21 @@ mod real {
             let kind_d = event.signal_kind.discriminant();
             let layer_d = event.layer.discriminant();
 
-            let params: Vec<stoolap::Value> = vec![
+            let params: Vec<octo_storage_core::stoolap::Value> = vec![
                 did_blob(&event.recorder_did),
                 event_id_blob(eid),
                 controller_blob(&event.controller_id),
-                stoolap::Value::integer(kind_d as i64),
-                stoolap::Value::integer(layer_d as i64),
+                octo_storage_core::stoolap::Value::integer(kind_d as i64),
+                octo_storage_core::stoolap::Value::integer(layer_d as i64),
                 dfp_blob(score_bytes),
                 u64_to_value(event.recorded_at_unix),
                 match rot_blob {
-                    Some(b) => stoolap::Value::blob(b),
-                    None => stoolap::Value::null_unknown(),
+                    Some(b) => octo_storage_core::stoolap::Value::blob(b),
+                    None => octo_storage_core::stoolap::Value::null_unknown(),
                 },
                 match audit_blob {
-                    Some(b) => stoolap::Value::blob(b),
-                    None => stoolap::Value::null_unknown(),
+                    Some(b) => octo_storage_core::stoolap::Value::blob(b),
+                    None => octo_storage_core::stoolap::Value::null_unknown(),
                 },
             ];
             self.db
@@ -368,10 +372,10 @@ mod real {
                 }
                 None => (dfp_to_blob(&event.score_delta), 1u64),
             };
-            let params: Vec<stoolap::Value> = vec![
+            let params: Vec<octo_storage_core::stoolap::Value> = vec![
                 did_blob(&event.recorder_did),
-                stoolap::Value::integer(kind_d as i64),
-                stoolap::Value::integer(layer_d as i64),
+                octo_storage_core::stoolap::Value::integer(kind_d as i64),
+                octo_storage_core::stoolap::Value::integer(layer_d as i64),
                 dfp_blob(next_ewma_bytes),
                 u64_to_value(samples_next),
                 u64_to_value(0),
@@ -398,8 +402,8 @@ mod real {
                      WHERE recorder_did = $1 AND signal_kind = $2 AND layer = $3",
                     vec![
                         did_blob(&event.recorder_did),
-                        stoolap::Value::integer(kind_d as i64),
-                        stoolap::Value::integer(layer_d as i64),
+                        octo_storage_core::stoolap::Value::integer(kind_d as i64),
+                        octo_storage_core::stoolap::Value::integer(layer_d as i64),
                     ],
                 )
                 .map_err(|_e| {
@@ -427,7 +431,7 @@ mod real {
                 existing_severity
             };
             if exists {
-                let update_params: Vec<stoolap::Value> = vec![
+                let update_params: Vec<octo_storage_core::stoolap::Value> = vec![
                     dfp_blob(next_ewma_bytes),
                     u64_to_value(samples_next),
                     u64_to_value(severity_for_upsert),
@@ -435,8 +439,8 @@ mod real {
                     u64_to_value(event.recorded_at_unix),
                     u64_to_value(event.recorded_at_unix),
                     did_blob(&event.recorder_did),
-                    stoolap::Value::integer(kind_d as i64),
-                    stoolap::Value::integer(layer_d as i64),
+                    octo_storage_core::stoolap::Value::integer(kind_d as i64),
+                    octo_storage_core::stoolap::Value::integer(layer_d as i64),
                 ];
                 self.db
                     .execute(
@@ -473,10 +477,10 @@ mod real {
             kind: SignalKind,
             layer: ReputationLayer,
         ) -> StoreResult<ReputationAggregate> {
-            let params: Vec<stoolap::Value> = vec![
+            let params: Vec<octo_storage_core::stoolap::Value> = vec![
                 did_blob(did),
-                stoolap::Value::integer(kind.discriminant() as i64),
-                stoolap::Value::integer(layer.discriminant() as i64),
+                octo_storage_core::stoolap::Value::integer(kind.discriminant() as i64),
+                octo_storage_core::stoolap::Value::integer(layer.discriminant() as i64),
             ];
             let mut rows = self
                 .db
@@ -550,9 +554,12 @@ mod real {
             }
             // Build `WHERE layer IN ($1, $2, ...)` with positional params.
             let mut placeholders: Vec<String> = Vec::with_capacity(layers.len());
-            let mut params: Vec<stoolap::Value> = Vec::with_capacity(layers.len() + 1);
+            let mut params: Vec<octo_storage_core::stoolap::Value> =
+                Vec::with_capacity(layers.len() + 1);
             params.push(did_blob(did));
-            params.push(stoolap::Value::integer(kind.discriminant() as i64));
+            params.push(octo_storage_core::stoolap::Value::integer(
+                kind.discriminant() as i64,
+            ));
             for (i, _) in layers.iter().enumerate() {
                 placeholders.push(format!("${}", i + 3));
             }
@@ -564,7 +571,9 @@ mod real {
                 placeholders.join(", ")
             );
             for l in layers {
-                params.push(stoolap::Value::integer(l.discriminant() as i64));
+                params.push(octo_storage_core::stoolap::Value::integer(
+                    l.discriminant() as i64
+                ));
             }
             let mut rows = self
                 .db
@@ -655,10 +664,10 @@ mod real {
             let cutoff = now_unix.saturating_sub(window_secs);
             let kind_d = kind.discriminant();
             let layer_d = layer.discriminant();
-            let params: Vec<stoolap::Value> = vec![
+            let params: Vec<octo_storage_core::stoolap::Value> = vec![
                 did_blob(did),
-                stoolap::Value::integer(kind_d as i64),
-                stoolap::Value::integer(layer_d as i64),
+                octo_storage_core::stoolap::Value::integer(kind_d as i64),
+                octo_storage_core::stoolap::Value::integer(layer_d as i64),
                 u64_to_value(cutoff),
                 // `now_unix` clamped at `i64::MAX` to avoid a `u64::MAX →
                 // -1` wrap that would make `<= $5` always false. Real
@@ -739,7 +748,7 @@ mod real {
             if since_unix > until_unix {
                 return Err(ReputationError::ReplayWindowInverted);
             }
-            let params: Vec<stoolap::Value> = vec![
+            let params: Vec<octo_storage_core::stoolap::Value> = vec![
                 did_blob(did),
                 // Cap at `i64::MAX` (signed) to avoid the `u64::MAX → -1`
                 // wrap that would silently drop the upper bound. Callers
@@ -873,7 +882,7 @@ mod real {
         }
 
         async fn prune_event(&self, event_id: EventId) -> StoreResult<()> {
-            let params: Vec<stoolap::Value> = vec![event_id_blob(event_id)];
+            let params: Vec<octo_storage_core::stoolap::Value> = vec![event_id_blob(event_id)];
             self.db
                 .execute("DELETE FROM reputation_events WHERE event_id = $1", params)
                 .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_prune_event"))?;
@@ -886,16 +895,16 @@ mod real {
         ) -> StoreResult<RecorderId> {
             crate::recorder::verify_registration(&chain_ref)?;
             let rid = RecorderId::from_u64(self.next_recorder_id()?);
-            let params: Vec<stoolap::Value> = vec![
-                stoolap::Value::integer(rid.to_u64() as i64),
+            let params: Vec<octo_storage_core::stoolap::Value> = vec![
+                octo_storage_core::stoolap::Value::integer(rid.to_u64() as i64),
                 did_blob(&chain_ref.recorder_did),
                 controller_blob(&chain_ref.recorder_did_placeholder_controller()),
                 u64_to_value(chain_ref.octo_stake),
                 u64_to_value(chain_ref.role_stake),
-                stoolap::Value::integer(chain_ref.role_token_kind as i64),
-                stoolap::Value::integer(chain_ref.chain_id as i64),
+                octo_storage_core::stoolap::Value::integer(chain_ref.role_token_kind as i64),
+                octo_storage_core::stoolap::Value::integer(chain_ref.chain_id as i64),
                 u64_to_value(chain_ref.block_height),
-                stoolap::Value::blob(chain_ref.tx_hash.to_vec()),
+                octo_storage_core::stoolap::Value::blob(chain_ref.tx_hash.to_vec()),
                 u64_to_value(chain_ref.lock_until_unix),
                 u64_to_value(crate::migrations::now_unix()),
                 u64_to_value(crate::migrations::now_unix()),
@@ -949,9 +958,9 @@ mod real {
             let snapshot = auth.snapshot.clone();
             self.verify_governance_suspension(&auth, &snapshot, now_unix)
                 .await?;
-            let params: Vec<stoolap::Value> = vec![
+            let params: Vec<octo_storage_core::stoolap::Value> = vec![
                 u64_to_value(now_unix),
-                stoolap::Value::integer(recorder_id.to_u64() as i64),
+                octo_storage_core::stoolap::Value::integer(recorder_id.to_u64() as i64),
             ];
             let n = self
                 .db
@@ -996,9 +1005,9 @@ mod real {
             if proof.slash_amount == 0 {
                 return Err(ReputationError::ChainRefInvalid("slash_amount"));
             }
-            let params: Vec<stoolap::Value> = vec![
+            let params: Vec<octo_storage_core::stoolap::Value> = vec![
                 u64_to_value(crate::migrations::now_unix()),
-                stoolap::Value::integer(proof.recorder_id.to_u64() as i64),
+                octo_storage_core::stoolap::Value::integer(proof.recorder_id.to_u64() as i64),
             ];
             let n = self
                 .db
@@ -1072,15 +1081,15 @@ mod real {
             self.db
                 .execute(
                     "DELETE FROM reputation_attestors WHERE attestor_did = $1",
-                    vec![stoolap::Value::blob(did_bytes.to_vec())],
+                    vec![octo_storage_core::stoolap::Value::blob(did_bytes.to_vec())],
                 )
                 .map_err(|_e| {
                     ReputationError::ChainRefInvalid("stoolap_register_attestor:delete")
                 })?;
-            let params: Vec<stoolap::Value> = vec![
-                stoolap::Value::blob(did_bytes.to_vec()),
-                stoolap::Value::blob(registration.pubkey.to_vec()),
-                stoolap::Value::blob(registration.peer_set_id.to_vec()),
+            let params: Vec<octo_storage_core::stoolap::Value> = vec![
+                octo_storage_core::stoolap::Value::blob(did_bytes.to_vec()),
+                octo_storage_core::stoolap::Value::blob(registration.pubkey.to_vec()),
+                octo_storage_core::stoolap::Value::blob(registration.peer_set_id.to_vec()),
                 u64_to_value(registration.requested_at_unix),
                 u64_to_value(registration.registered_at_unix),
             ];
@@ -1109,7 +1118,9 @@ mod real {
                             requested_at_unix, registered_at_unix
                      FROM reputation_attestors
                      WHERE attestor_did = $1",
-                    vec![stoolap::Value::blob(attestor_did.as_bytes().to_vec())],
+                    vec![octo_storage_core::stoolap::Value::blob(
+                        attestor_did.as_bytes().to_vec(),
+                    )],
                 )
                 .map_err(|_e| {
                     ReputationError::ChainRefInvalid("stoolap_attestor_lookup_did:query")
@@ -1180,9 +1191,9 @@ mod real {
                         "SELECT attestation_id FROM reputation_attestations
                          WHERE attestor_did = $1 AND recorder_did = $2 AND event_id = $3",
                         vec![
-                            stoolap::Value::blob(attestor_bytes.to_vec()),
-                            stoolap::Value::blob(recorder_bytes.to_vec()),
-                            stoolap::Value::blob(event_bytes.to_vec()),
+                            octo_storage_core::stoolap::Value::blob(attestor_bytes.to_vec()),
+                            octo_storage_core::stoolap::Value::blob(recorder_bytes.to_vec()),
+                            octo_storage_core::stoolap::Value::blob(event_bytes.to_vec()),
                         ],
                     )
                     .map_err(|_e| {
@@ -1209,16 +1220,16 @@ mod real {
                 return Ok(id);
             }
             let id = self.next_attestation_id()?;
-            let params: Vec<stoolap::Value> = vec![
-                stoolap::Value::integer(id as i64),
-                stoolap::Value::blob(attestor_bytes.to_vec()),
-                stoolap::Value::blob(recorder_bytes.to_vec()),
-                stoolap::Value::blob(event_bytes.to_vec()),
-                stoolap::Value::blob(attestation.signature.clone()),
+            let params: Vec<octo_storage_core::stoolap::Value> = vec![
+                octo_storage_core::stoolap::Value::integer(id as i64),
+                octo_storage_core::stoolap::Value::blob(attestor_bytes.to_vec()),
+                octo_storage_core::stoolap::Value::blob(recorder_bytes.to_vec()),
+                octo_storage_core::stoolap::Value::blob(event_bytes.to_vec()),
+                octo_storage_core::stoolap::Value::blob(attestation.signature.clone()),
                 u64_to_value(attestation.observed_at_unix),
                 u64_to_value(attestation.received_at_unix),
-                stoolap::Value::text(attestation.source_mission.clone()),
-                stoolap::Value::text(attestation.source_domain.clone()),
+                octo_storage_core::stoolap::Value::text(attestation.source_mission.clone()),
+                octo_storage_core::stoolap::Value::text(attestation.source_domain.clone()),
             ];
             self.db
                 .execute(
@@ -1257,8 +1268,8 @@ mod real {
                      WHERE recorder_did = $1 AND event_id > $2
                      ORDER BY observed_at_unix",
                     vec![
-                        stoolap::Value::blob(recorder_bytes.to_vec()),
-                        stoolap::Value::blob(since_bytes.to_vec()),
+                        octo_storage_core::stoolap::Value::blob(recorder_bytes.to_vec()),
+                        octo_storage_core::stoolap::Value::blob(since_bytes.to_vec()),
                     ],
                 )
                 .map_err(|_e| {
@@ -1351,7 +1362,9 @@ mod real {
                 .query(
                     "SELECT COUNT(DISTINCT attestor_did) FROM reputation_attestations
                      WHERE event_id = $1",
-                    vec![stoolap::Value::blob(event_bytes.to_vec())],
+                    vec![octo_storage_core::stoolap::Value::blob(
+                        event_bytes.to_vec(),
+                    )],
                 )
                 .map_err(|_e| {
                     ReputationError::ChainRefInvalid("stoolap_attestor_quorum_reached:query")
@@ -1392,7 +1405,9 @@ mod real {
                      FROM reputation_events
                      WHERE event_id > $1
                      ORDER BY event_id",
-                    vec![stoolap::Value::blob(since_bytes.to_vec())],
+                    vec![octo_storage_core::stoolap::Value::blob(
+                        since_bytes.to_vec(),
+                    )],
                 )
                 .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_gossip_catch_up:query"))?;
             let mut out = Vec::new();
@@ -1490,8 +1505,12 @@ mod real {
                                     "SELECT 1 FROM reputation_gossip_seen
                                      WHERE recorder_did = $1 AND event_id = $2",
                                     vec![
-                                        stoolap::Value::blob(recorder_bytes.to_vec()),
-                                        stoolap::Value::blob(event_id_bytes.clone()),
+                                        octo_storage_core::stoolap::Value::blob(
+                                            recorder_bytes.to_vec(),
+                                        ),
+                                        octo_storage_core::stoolap::Value::blob(
+                                            event_id_bytes.clone(),
+                                        ),
                                     ],
                                 )
                                 .map_err(|_e| {
@@ -1502,12 +1521,12 @@ mod real {
                             matches!(q.next(), Some(Ok(_)))
                         };
                         if !already_seen {
-                            let seen_params: Vec<stoolap::Value> = vec![
-                                stoolap::Value::blob(recorder_bytes.to_vec()),
-                                stoolap::Value::blob(event_id_bytes.clone()),
-                                stoolap::Value::blob(attestor_bytes),
+                            let seen_params: Vec<octo_storage_core::stoolap::Value> = vec![
+                                octo_storage_core::stoolap::Value::blob(recorder_bytes.to_vec()),
+                                octo_storage_core::stoolap::Value::blob(event_id_bytes.clone()),
+                                octo_storage_core::stoolap::Value::blob(attestor_bytes),
                                 u64_to_value(now),
-                                stoolap::Value::blob(vec![0u8; 32]),
+                                octo_storage_core::stoolap::Value::blob(vec![0u8; 32]),
                             ];
                             if let Err(_e) = self.db.execute(
                                 "INSERT INTO reputation_gossip_seen (
@@ -1562,7 +1581,7 @@ mod real {
                      WHERE anchor_tx_hash IS NULL
                      ORDER BY event_id
                      LIMIT $1",
-                    vec![stoolap::Value::from(batch_size as i64)],
+                    vec![octo_storage_core::stoolap::Value::from(batch_size as i64)],
                 )
                 .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_anchor_pending:query"))?;
             let mut rows = row_results;
@@ -1574,7 +1593,7 @@ mod real {
                             ReputationError::ChainRefInvalid("stoolap_anchor_pending:event_id_get")
                         })?;
                         let event_id_bytes: Vec<u8> = match &event_id_value {
-                            stoolap::Value::Blob(arc) => arc.to_vec(),
+                            octo_storage_core::stoolap::Value::Blob(arc) => arc.to_vec(),
                             _ => {
                                 return Err(ReputationError::ChainRefInvalid(
                                     "stoolap_anchor_pending:event_id_blob",
@@ -1652,7 +1671,9 @@ mod real {
                 .query(
                     "SELECT recorder_did FROM reputation_events
                      WHERE event_id = $1",
-                    vec![stoolap::Value::blob(event_id_bytes.to_vec())],
+                    vec![octo_storage_core::stoolap::Value::blob(
+                        event_id_bytes.to_vec(),
+                    )],
                 )
                 .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_set_anchor:probe_count"))?;
             let mut all_matches: Vec<Vec<u8>> = Vec::new();
@@ -1663,7 +1684,7 @@ mod real {
                 let bytes: Vec<u8> = match row.get(0).map_err(|_e| {
                     ReputationError::ChainRefInvalid("stoolap_set_anchor:probe_count_col")
                 })? {
-                    stoolap::Value::Blob(arc) => arc.to_vec(),
+                    octo_storage_core::stoolap::Value::Blob(arc) => arc.to_vec(),
                     _ => {
                         // R11 review: a non-Blob recorder_did means
                         // data corruption; refuse rather than
@@ -1717,9 +1738,9 @@ mod real {
                      WHERE recorder_did = $2 AND event_id = $3
                        AND (anchor_tx_hash IS NULL OR anchor_tx_hash = $1)",
                     vec![
-                        stoolap::Value::blob(anchor_tx_hash.to_vec()),
-                        stoolap::Value::blob(recorder_did_blob),
-                        stoolap::Value::blob(event_id_bytes.to_vec()),
+                        octo_storage_core::stoolap::Value::blob(anchor_tx_hash.to_vec()),
+                        octo_storage_core::stoolap::Value::blob(recorder_did_blob),
+                        octo_storage_core::stoolap::Value::blob(event_id_bytes.to_vec()),
                     ],
                 )
                 .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_set_anchor:update"))?;
@@ -1755,7 +1776,9 @@ mod real {
                      WHERE controller_id = $1
                        AND anchor_tx_hash IS NOT NULL
                      ORDER BY recorded_at_unix ASC, event_id ASC",
-                    vec![stoolap::Value::blob(controller_id.as_bytes().to_vec())],
+                    vec![octo_storage_core::stoolap::Value::blob(
+                        controller_id.as_bytes().to_vec(),
+                    )],
                 )
                 .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_query_anchors:select"))?;
             let mut out: Vec<AnchorRecord> = Vec::new();
@@ -1766,14 +1789,14 @@ mod real {
                     .get(0)
                     .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_query_anchors:col0"))?;
                 let event_id_blob: Vec<u8> = match &event_id_value {
-                    stoolap::Value::Blob(arc) => arc.to_vec(),
+                    octo_storage_core::stoolap::Value::Blob(arc) => arc.to_vec(),
                     _ => continue,
                 };
                 let anchor_value = row
                     .get(1)
                     .map_err(|_e| ReputationError::ChainRefInvalid("stoolap_query_anchors:col1"))?;
                 let anchor_blob: Vec<u8> = match &anchor_value {
-                    stoolap::Value::Blob(arc) => arc.to_vec(),
+                    octo_storage_core::stoolap::Value::Blob(arc) => arc.to_vec(),
                     _ => continue,
                 };
                 let recorded_at: i64 = row

@@ -19,7 +19,7 @@ parity-bin = ["dep:clap", "dep:serde_json"]
 # `ChainRefInvalid("stoolap_backend_unimplemented:<name>")` errors so
 # the `ReputationStore` trait is still nameable. Real impls gate on
 # `#[cfg(feature = "stoolap")]` so the build is hermetic in CI.
-stoolap = ["dep:stoolap", "dep:serde_json", "dep:octo-storage-core"]
+stoolap = ["dep:serde_json", "dep:octo-storage-core"]
 
 [dependencies]
 # Deterministic Floating-Point per RFC-0104 — score_ewma / score_delta canonical encoding
@@ -41,21 +41,11 @@ futures-lite = "2"
 # Session 4 parity binary — CLI parsing + JSON output
 clap = { version = "4", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
-# Session 6 — StoolapReputationStore (file-backed + in-memory DSN).
-# Git pin lives at workspace root in `[patch.crates-io]` for compatibility
-# with the rest of the workspace; this crate references it directly.
-# Per RFC-0206 v2.1 §Cargo.toml Cross-Cuts + HIGH 6 consumer-crate
-# exemption, the substrate redesign v3.0 does NOT yet re-export
-# `stoolap::ResultRow` / `stoolap::ApiTransaction` / `stoolap::Rows`
-# / `stoolap::Error` — the reputation store decodes rows directly.
-# A v2.2 RFC-0206 amendment (filed as 0206-011b) is the proper scope
-# to add a `pub mod stoolap` re-export to the substrate. Until then,
-# the direct dep stays (feature-gated so hermetic builds skip it).
-stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql", optional = true }
 # Layer A storage substrate (mission octo-storage-split S2). The migration
 # runner that the historical `substrate_runner` module bundled is now
-# delegated to the substrate's `apply_pending`. Feature-gated because the
-# runner only makes sense with the stoolap backend active.
+# delegated to the substrate's `apply_pending`. The substrate also re-exports
+# `stoolap::{Error, Value}` (RFC-0206 v2.2 §Substrate Re-export Block),
+# so the store module no longer takes a direct `stoolap` Cargo.toml dep.
 octo-storage-core = { path = "../octo-storage-core", optional = true }
 
 [[bin]]

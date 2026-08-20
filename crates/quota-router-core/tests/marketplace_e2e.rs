@@ -757,7 +757,7 @@ fn stale_view_after_restart_sees_writes() {
     ));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("m.db");
-    let dsn = format!("file://{}", path.display());
+    let dsn = path.to_string_lossy().to_string();
     // Process A: open, write 2 asks, drop.
     {
         let m = Marketplace::open_path(&dsn).expect("open A");

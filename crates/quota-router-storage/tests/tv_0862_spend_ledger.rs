@@ -568,7 +568,7 @@ fn tv_0862_11_file_backed_concurrent_deduct() {
     // stoolap DSN format `file://<dir>` — the DSN path is a
     // directory for WAL + snapshots per stoolap fork persistence.
     let tmp = tempfile::tempdir().expect("tempdir");
-    let dsn = format!("file://{}", tmp.path().to_str().expect("utf8 path"));
+    let dsn = tmp.path().to_str().expect("utf8 path").to_string();
 
     let ledger = StoolapSpendLedger::open_path(&dsn).expect("open_path");
     let holder = "did:octo:zTV086211";
@@ -635,7 +635,7 @@ fn tv_0862_11b_open_path_lock_unavailable_fail_closed() {
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let fs_path = tmp.path().to_str().expect("utf8 path");
-    let dsn = format!("file://{fs_path}");
+    let dsn = fs_path.to_string();
     // Substrate acquires the lock on a sibling file
     // `<dir>/.spend_ledger.lock` (the DSN path is a directory for
     // WAL + snapshots per stoolap fork persistence). Acquire the
@@ -938,7 +938,7 @@ fn tv_0862_20_open_path_rejects_symlink_at_lock_path() {
     // symlink, the resulting flock would lock an unrelated file.
     std::os::unix::fs::symlink("/etc/passwd", &lock_path).expect("symlink create");
 
-    let dsn = format!("file://{fs_path}");
+    let dsn = fs_path.to_string();
     let result = StoolapSpendLedger::open_path(&dsn);
     assert!(
         matches!(result, Err(SpendLedgerError::LockPathSymlink { .. })),
@@ -978,7 +978,7 @@ fn tv_0862_21_lock_file_permissions_are_0600() {
     let fs_path = tmp.path().to_str().expect("utf8 path");
     let lock_path = tmp.path().join(".spend_ledger.lock");
 
-    let dsn = format!("file://{fs_path}");
+    let dsn = fs_path.to_string();
     let _ledger = StoolapSpendLedger::open_path(&dsn).expect("open_path succeeds");
 
     let md = std::fs::metadata(&lock_path).expect("lock file must exist after open");

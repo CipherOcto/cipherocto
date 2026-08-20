@@ -421,8 +421,11 @@ pub async fn reputation_show(
             // migrations on first run, and reads the canonical aggregate.
             #[cfg(feature = "stoolap")]
             {
-                let dsn = format!("file://{}", db_path.display());
-                let store = octo_reputation::StoolapReputationStore::open(&dsn).await?;
+                // substrate's `Database::open` accepts the bare path
+                // and prepends `file://` internally.
+                let store =
+                    octo_reputation::StoolapReputationStore::open(&db_path.to_string_lossy())
+                        .await?;
                 let outcome = store
                     .read_aggregate(&recorder_did, SignalKind::Outcome, ReputationLayer::Market)
                     .await;

@@ -13,11 +13,11 @@
 ## Maintainers
 
 - Maintainer: octo-storage owner
-- Co-maintainer: per-owner adapter crate owners (octo-cap-macaroon-storage, octo-ident-storage, octo-policy-storage, octo-vault-storage, octo-market-storage)
+- Co-maintainer: per-owner adapter crate owners (octo-cap-macaroon-storage, octo-ident-storage, octo-policy-storage, octo-vault-storage; `octo-market-storage/` deferred per plan §4.2 B.4)
 
 ## Summary
 
-Splits `crates/octo-storage` into a Layer A frozen substrate (`octo-storage-core`, RFC-frozen, years-stable) holding the Stoolap fork handle + typed migration runner, and a Layer B re-export facade (`octo-storage`, RFC-driven, additive) aggregating per-owner adapter crates. Closes the review §4.6 MED blocker; resolves the §4.4 / §4.6 owner-crate cycle risk by enforcing per-owner adapter placement.
+Splits `crates/octo-storage` into a Layer A frozen substrate (`octo-storage-core`, RFC-frozen, years-stable) holding the Stoolap fork handle + typed migration runner, and a Layer B re-export facade (`octo-storage`, RFC-driven, additive) aggregating per-owner adapter crates. Closes the review §4.6.1 MED blocker; resolves the §4.4 / §4.6 / §4.6.1 owner-crate cycle risk by enforcing per-owner adapter placement.
 
 ## Dependencies
 
@@ -46,9 +46,9 @@ Splits `crates/octo-storage` into a Layer A frozen substrate (`octo-storage-core
 
 ## Motivation
 
-`docs/reviews/2026-08-15-storage-layer-restructuring-analysis.md` §4.6 audit identified that `crates/octo-storage = B/A?` was undecided: the migrator is non-stable, but Layer A requires years-stable primitives. Owner crates (octo-ident, octo-cap-macaroon, octo-market, octo-policy) each constructed `stoolap::Database` directly, duplicating migration-runner logic and creating a cycle risk: owner-trait crate → storage-core → owner-trait crate.
+`docs/reviews/2026-08-15-storage-layer-restructuring-analysis.md` §4.6.1 audit identified that `crates/octo-storage = B/A?` was undecided: the migrator is non-stable, but Layer A requires years-stable primitives. Owner crates (octo-ident, octo-cap-macaroon, octo-policy) each constructed `stoolap::Database` directly, duplicating migration-runner logic and creating a cycle risk: owner-trait crate → storage-core → owner-trait crate.
 
-**Solution:** Adopt the §4.6 resolution — split into Layer A frozen core + Layer B re-export facade + per-owner adapter crates.
+**Solution:** Adopt the §4.6.1 resolution — split into Layer A frozen core + Layer B re-export facade + per-owner adapter crates.
 
 ## Roles and Authorities
 
@@ -92,8 +92,9 @@ octo-cap-macaroon-storage/   → impl HolderRegistry for StoolapHolderRegistry
 octo-ident-storage/          → impl DidRegistry for StoolapDidRegistry (verify placement)
 octo-policy-storage/         → impl PolicyStore for StoolapPolicyStore
 octo-vault-storage/          → impl VaultStore for StoolapVaultStore (NEW per §20.3)
-octo-market-storage/         → impl OrderBookStore, EscrowStore for Stoolap* (NEW per §4.2)
 ```
+
+> **Note:** `octo-market-storage/` is **deferred** per plan §4.2 B.4 (octo-market primitive extraction is out of scope for this restructure cycle). When/if the marketplace primitive crate ships, a follow-on RFC adds the corresponding adapter. This RFC explicitly does NOT name it in §Key Files Modified or §TV.
 
 ### Cargo.toml Templates
 
@@ -105,11 +106,11 @@ name = "octo-storage-core"
 
 [dependencies]
 # Layer A → substrate SQL engine. Until RFC-0205 freeze ships
-# `octo-stoolap-frozen` as a published crate, octo-storage-core pins
-# the active fork by branch (matches the workspace root `[patch.crates-io]`
-# block in the audit). When RFC-0205 Phase 1 Task 1 lands, replace
-# `branch = "feat/blockchain-sql"` with `rev = "<sha>"` and migrate
-# the dep name to `octo-stoolap-frozen`.
+# `octo-stoolap-frozen` as a workspace pin / `[patch.crates-io]` entry,
+# octo-storage-core pins the active fork by branch (matches the
+# workspace root `[patch.crates-io]` block in the audit). When
+# RFC-0205 Phase 1 Task 1 lands, replace `branch = "feat/blockchain-sql"`
+# with `rev = "<sha>"` and migrate the dep name to `octo-stoolap-frozen`.
 stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
 # Layer A error type per `cipherocto-design-principles` Layer A row.
 thiserror = "2.0"
@@ -128,7 +129,7 @@ octo-storage-core = { path = "../octo-storage-core" }
 # Phase 3 will add per-owner adapter crate deps here as they land.
 # Until each adapter crate ships, the facade remains a pure re-export.
 # NOT a dep (today): octo-cap-macaroon-storage, octo-ident-storage,
-# octo-policy-storage, octo-vault-storage, octo-market-storage
+# octo-policy-storage, octo-vault-storage
 # NOT a dep (ever): octo-transport, quota-router-core
 ```
 
@@ -244,7 +245,7 @@ No new tokens or stake implications. Cost: ~0.5 FTE/quarter for adapter maintain
 
 ## Compatibility
 
-- **Backward:** owner-trait crates that today construct `stoolap::*` directly (none confirmed in the workspace at RFC-0206 v1.0; the workspace audit `docs/audits/stoolap-fork-stability-2026-08-16.md` found all owner crates go through `octo-storage` already) continue to compile, but are flagged by Clippy lint per TV-0206-06 once adapter crates ship. Migration window from any future direct `stoolap::*` use to `octo-storage-core`: 90 days.
+- **Backward:** owner-trait crates that today construct `stoolap::*` directly (none confirmed in the workspace at RFC-0206 drafting time; the workspace audit `docs/audits/stoolap-fork-stability-2026-08-16.md` found all owner crates go through `octo-storage` already) continue to compile, but are flagged by Clippy lint per TV-0206-06 once adapter crates ship. Migration window from any future direct `stoolap::*` use to `octo-storage-core`: 90 days.
 - **Forward:** adding new adapter = additive; facade auto-re-exports. No new RFC required for adding an adapter IF the adapter implements an existing owner-trait.
 
 ## Test Vectors
@@ -256,7 +257,7 @@ Governance TV — structural verification:
 3. **TV-0206-03:** `crates/octo-storage/` source contains only `pub use` re-exports; no `impl` blocks for owner traits.
 4. **TV-0206-04:** Each adapter crate's `Cargo.toml` depends on exactly one owner-trait crate + `octo-storage-core`. **Forward requirement** — gates each adapter crate landing; none exist on disk yet (see §Implementation Phases).
 5. **TV-0206-05:** CI graph audit rejects any cycle in adapter → owner-trait → adapter direction. Implemented as `cargo metadata --format-version 1` + `jq` reverse-DB scan over the adapter subtree (analogous to RFC-0205 TV-0205-04).
-6. **TV-0206-06:** CI grep rejects any `stoolap::*` direct construction in owner-trait crates (must go through `octo-storage-core`). Implemented as `! rg 'use stoolap::' crates/octo-{ident,cap-macaroon,policy,vault,market}/src/` in CI.
+6. **TV-0206-06:** CI grep rejects any `stoolap::*` direct construction in owner-trait crates (must go through `octo-storage-core`). Implemented as `! rg 'use stoolap::' crates/octo-{ident,cap-macaroon}/src/ crates/cipherocto-policy/src/ crates/octo-vault/src/` in CI. (Note: `crates/octo-market/` does not exist on disk today; `crates/octo-policy/` was renamed to `crates/cipherocto-policy/` per workspace audit — the pattern above matches on-disk crate names. `octo-market-storage/` is deferred per plan §4.2 B.4; once shipped, extend the pattern.)
 7. **TV-0206-07:** Per-adapter test suite covers `register(Arc<Database>) → Arc<dyn OwnerTrait>` round-trip. Forward requirement — one test file per adapter crate landing.
 
 ## Alternatives Considered
@@ -280,7 +281,7 @@ Governance TV — structural verification:
 ### Phase 2: Adapter Crates
 
 - [ ] Task 5: Create `octo-cap-macaroon-storage/` + `octo-ident-storage/` + `octo-policy-storage/` adapters
-- [ ] Task 6: Create `octo-vault-storage/` + `octo-market-storage/` adapters (per §20.3 + §4.2)
+- [ ] Task 6: Create `octo-vault-storage/` adapter (per §20.3); `octo-market-storage/` is DEFERRED to a follow-on RFC per plan §4.2 B.4
 - [ ] Task 7: Verify per-adapter test suite passes `register` round-trip
 
 ### Phase 3: Layer B Facade
@@ -291,12 +292,14 @@ Governance TV — structural verification:
 
 ## Promotion Path
 
-Per `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md` §S7 termination conditions, this RFC reaches Accepted after:
+This RFC reaches Accepted after all of the following are satisfied:
 
-1. RFC-0205 reaches Accepted (sibling; defines the Layer A substrate `octo-stoolap-frozen` that RFC-0206 Phase 1 Task 3 depends on).
-2. Phase 2 adapter crates ship (or are explicitly deferred with rationale to a follow-on sub-RFC).
-3. Phase 1 Task 4 CI graph audit + Clippy lint lands.
-4. Multi-round adversarial review per `docs/BLUEPRINT.md` §Adversarial Review Process passes.
+1. **Sibling RFC frozen:** RFC-0205 reaches Accepted (defines the Layer A substrate `octo-stoolap-frozen` that RFC-0206 Phase 1 Task 3 depends on).
+2. **Adapter crates shipped or explicitly deferred:** at least `octo-cap-macaroon-storage/` + `octo-ident-storage/` + `octo-vault-storage/` land; `octo-policy-storage/` may be deferred if the naming discrepancy (see §Future Work) is unresolved. `octo-market-storage/` is OUT OF SCOPE per plan §4.2 B.4 and is tracked by a separate sub-RFC.
+3. **CI gates land:** Phase 1 Task 4 (`cargo metadata` cycle audit + Clippy owner-trait lint) merged to `.github/workflows/ci.yml`.
+4. **Multi-round review passes:** per `docs/BLUEPRINT.md` §Adversarial Review Process.
+
+> **Cross-ref:** these four conditions originate from `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md` §S7 termination conditions; the plan doc is a tracking artifact, not the source of truth — this section is authoritative for the RFC's promotion.
 
 ## Key Files to Modify
 
@@ -311,19 +314,21 @@ Per `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md` §S7 t
 | `crates/octo-ident-storage/Cargo.toml`        | NEW — adapter (workspace audit shows `crates/octo-ident` exists but storage adapter is NEW)                                                             |
 | `crates/octo-policy-storage/Cargo.toml`       | NEW — adapter (workspace audit shows `crates/cipherocto-policy/` is the actual name; align on `octo-policy-storage` or document the rename in this RFC) |
 | `crates/octo-vault-storage/Cargo.toml`        | NEW — adapter                                                                                                                                           |
-| `crates/octo-market-storage/Cargo.toml`       | NEW — adapter                                                                                                                                           |
 | `.github/workflows/ci.yml`                    | Add graph audit + Clippy lint                                                                                                                           |
+
+> **Note:** `crates/octo-market-storage/Cargo.toml` is **NOT** in scope for this RFC (deferred per plan §4.2 B.4). When/if the marketplace primitive crate ships, a follow-on RFC adds the corresponding adapter.
 
 ## Future Work
 
-- Sub-mission `octo-storage-facade-versioning.md` (**to be filed**) for facade semver policy.
-- Sub-mission `octo-storage-core-deprecation.md` (**to be filed**) for Layer B → Layer A migration.
+- Sub-mission `octo-storage-facade-versioning.md` (`to be filed`) for facade semver policy.
+- Sub-mission `octo-storage-core-deprecation.md` (`to be filed`) for Layer B → Layer A migration.
 - Adapter `Stoolap<OwnerTrait>` naming-convention enforcement (Clippy lint).
 - Resolve naming discrepancy `crates/cipherocto-policy/` vs proposed `crates/octo-policy-storage/` (decide via follow-on RFC; the workspace currently has `cipherocto-policy/`, not `octo-policy/`).
 
 ## Version History
 
-| Version | Date       | Author     | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| ------- | ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1.0     | 2026-08-19 | @mmacedoeu | Initial draft. Three-tier architecture (Layer A core + Layer B facade + adapter crates) per review §4.6; Cargo.toml templates; per-owner migration placement; CI gates for cycle + Layer A pollution; 7 governance TV.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| 1.1     | 2026-08-19 | @mmacedoeu | Round 1 review fixes: phantom `RFC-0914-a` → `RFC-0914 (Economics)`; phantom `RFC-0001`/`RFC-0008` → `BLUEPRINT.md` ref + inline Operation Class Mapping; phantom `§4.6.1` → `§4.6` (review doc has §4.6, no §4.6.1); Cargo.toml templates aligned with current on-disk state (Phase 1 Tasks 1/2/8 LANDED, Phase 1 Tasks 3/4 + Phase 2/3 forward); `MigrationsHandle::apply_pending` → `octo_storage_core::apply_pending` (free fn); adapter crate naming gap `cipherocto-policy/` vs `octo-policy-storage/` flagged in §Future Work; Implementation Phases checkboxes corrected (Phase 1 Tasks 1/2 + Phase 3 Task 8 marked `[x]`); Layer self-declaration added to Status; Roles Source/Ref column updated to precise §names. Doc accuracy only — no spec change. |
+| Version | Date       | Author     | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------- | ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1.0     | 2026-08-19 | @mmacedoeu | Initial draft. Three-tier architecture (Layer A core + Layer B facade + adapter crates) per review §4.6; Cargo.toml templates; per-owner migration placement; CI gates for cycle + Layer A pollution; 7 governance TV.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 1.1     | 2026-08-19 | @mmacedoeu | Round 1 review fixes: phantom `RFC-0914-a` → `RFC-0914 (Economics)`; phantom `RFC-0001`/`RFC-0008` → `BLUEPRINT.md` ref + inline Operation Class Mapping; consolidated §refs to `§4.4` / `§4.6` / `§4.6.1` (review doc carries §4.6.1 at the layer-assignment MED blocker); Cargo.toml templates aligned with current on-disk state (Phase 1 Tasks 1/2/8 LANDED, Phase 1 Tasks 3/4 + Phase 2/3 forward); `MigrationsHandle::apply_pending` → `octo_storage_core::apply_pending` (free fn); adapter crate naming gap `cipherocto-policy/` vs `octo-policy-storage/` flagged in §Future Work; Implementation Phases checkboxes corrected (Phase 1 Tasks 1/2 + Phase 3 Task 8 marked `[x]`); Layer self-declaration added to Status; Roles Source/Ref column updated to precise §names. Doc accuracy only — no spec change.                                                                                                                                                                                                                                                                                                 |
+| 1.2     | 2026-08-19 | @mmacedoeu | Round 2 review fixes: reverted §4.6 → §4.6.1 in Summary + Motivation (R1 reviewer claim that §4.6.1 was phantom was incorrect — review doc line 1732 carries `# §4.6.1 octo-storage layer assignment (MED blocker)`); removed `octo-market-storage` from Maintainers co-maintainer list, §Adapter Crate List (Initial), §Cargo.toml Templates Layer B facade "NOT a dep" list, §Implementation Phases Phase 2 Task 6, and §Key Files Modified (workspace has no `crates/octo-market/`; plan §4.2 B.4 explicitly defers octo-market primitive extraction out of scope); fixed TV-0206-06 grep pattern (`market` and `policy` → `cipherocto-policy/` to match on-disk crate names); tightened "as a published crate" phrasing in §Cargo.toml Templates to "as a workspace pin / `[patch.crates-io]` entry" (the frozen fork is a workspace dep until upstream crates-io publish); dropped inline `RFC-0206 v1.0` version pin in §Compatibility Backward (per CLAUDE.md rule, Version History is the only place version pins belong); backticked `to be filed` markers in §Future Work. Doc accuracy only — no spec change. |

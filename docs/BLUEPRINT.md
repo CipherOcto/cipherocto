@@ -499,10 +499,15 @@ One-paragraph overview of what this RFC defines.
 - RFC-XXXX: [Title]
 
 > **Dependency Validation Rules:**
+>
 > 1. Dependencies MUST form a DAG (no cycles)
 > 2. All "Requires" RFCs MUST be listed as mission prerequisites
 > 3. Optional dependencies MUST be documented separately from required
 > 4. Dependencies on "Planned" RFCs MUST note the assumption they will be Accepted
+> 5. **2-Cycle Atomic Promotion** (amendment 2026-08-20): Two RFCs declaring a 2-cycle sibling MUST (a) be reviewed in the same RFC-review Cycle by a single board; (b) both reach Accepted in the same Cycle, OR both stay at Draft; (c) asymmetry (one Accepted, other Draft) is an explicit process defect flagged at the next re-cert.
+>    - Rationale: structural 2-cycles (RFC-0205 ↔ RFC-0206) cannot be ordered topologically; the DAG rule's exemption applies only via this explicit 2-cycle atomic-promotion mechanism.
+>    - §Promotion Path naming: "Sibling RFC frozen at Accepted" becomes "Sibling RFC at Accepted (coupled)" for both directions.
+>    - RFCs in a 2-cycle MUST cite rule 5 in their §Promotion Path Condition 1 AND name the reviewer board that owns the coupled-pair promotion.
 
 ## Design Goals
 
@@ -526,12 +531,12 @@ MUST enumerate:
 1. **Roles** — every distinct class of actor (human, automated, on-chain, off-chain). For each: stable identifier, base capabilities, who can assume it, who can revoke it.
 2. **Authorities** — every action that requires authorization. For each: granting role, scope (read/write/admin/none), expiry (term-limited / permanent / epoch-bounded), audit trail.
 3. **Role transitions** — every state change a role can undergo. For each: trigger, deterministic?, side effects, signing requirement.
-4. **Out-of-scope roles** — actors the design explicitly does NOT address (e.g., "the platform operator manages physical group membership, which is out of scope for this RFC"). The *out-of-scope* statement itself is a named responsibility transfer; if unstated, it is an implicit assumption and MUST appear in the Implicit Assumptions Audit.
+4. **Out-of-scope roles** — actors the design explicitly does NOT address (e.g., "the platform operator manages physical group membership, which is out of scope for this RFC"). The _out-of-scope_ statement itself is a named responsibility transfer; if unstated, it is an implicit assumption and MUST appear in the Implicit Assumptions Audit.
 
 ### Role/Authority Coverage Table
 
-| Role | Identifier | Authority Scope | Lifecycle | Source/Ref |
-|------|------------|-----------------|-----------|------------|
+| Role   | Identifier           | Authority Scope         | Lifecycle                                          | Source/Ref          |
+| ------ | -------------------- | ----------------------- | -------------------------------------------------- | ------------------- |
 | [Role] | [enum/struct/string] | [read/write/admin/none] | [state machine, or "stateless" with justification] | [RFC §X / external] |
 
 If a role has no lifecycle, mark "stateless" with a one-line justification (e.g., "validation function with no persistent state").
@@ -585,12 +590,12 @@ enum CoordinatorLifecycle {
 }
 ```
 
-| From | To | Trigger | Deterministic? | Side Effects | Signing |
-|------|----|---------|----------------|--------------|---------|
-| Designated | Elected | Election tally meets quorum | Yes | Record `coordinator_term_id` | Election envelope |
-| Active | Suspect | `current_epoch - last_heartbeat > 2 × heartbeat_interval` | Yes | Emit liveness alert | n/a |
-| Suspect | Handover | Grace period exceeded | Yes | Trigger successor election | n/a |
-| Active | Demoting | Slash proof + governance vote | Yes | Slash OCTO-O stake | Slash proof |
+| From       | To       | Trigger                                                   | Deterministic? | Side Effects                 | Signing           |
+| ---------- | -------- | --------------------------------------------------------- | -------------- | ---------------------------- | ----------------- |
+| Designated | Elected  | Election tally meets quorum                               | Yes            | Record `coordinator_term_id` | Election envelope |
+| Active     | Suspect  | `current_epoch - last_heartbeat > 2 × heartbeat_interval` | Yes            | Emit liveness alert          | n/a               |
+| Suspect    | Handover | Grace period exceeded                                     | Yes            | Trigger successor election   | n/a               |
+| Active     | Demoting | Slash proof + governance vote                             | Yes            | Slash OCTO-O stake           | Slash proof       |
 
 ### Determinism Requirements
 
@@ -600,9 +605,9 @@ MUST specify deterministic behavior if affecting consensus, proofs, or verificat
 
 Every RFC MUST include a table mapping its operations to execution classes:
 
-| Operation | Class | Rationale |
-|-----------|-------|-----------|
-| [operation] | A/B/C | [why] |
+| Operation   | Class | Rationale |
+| ----------- | ----- | --------- |
+| [operation] | A/B/C | [why]     |
 
 This is required for all RFCs, not just those touching consensus. If an RFC has no consensus-critical operations, state "All operations are Class C" explicitly.
 
@@ -621,8 +626,8 @@ Error codes and recovery strategies.
 
 > **The "Nothing should be implied" rule (validation layer):** Every assumption the design relies on that is not enforced by types, runtime validation, or test coverage MUST be listed here. Each assumption MUST have its blast radius and its mitigation. ACCEPTED RISK entries are permitted but require rationale and a deadline for closure.
 
-| Assumption | Where Relied Upon | Blast Radius if False | Mitigation / Status |
-|------------|-------------------|----------------------|---------------------|
+| Assumption                  | Where Relied Upon  | Blast Radius if False                              | Mitigation / Status                                          |
+| --------------------------- | ------------------ | -------------------------------------------------- | ------------------------------------------------------------ |
 | [single-sentence statement] | [§X.Y / file:line] | [what breaks, who is affected, recoverable or not] | [test / runtime check / ACCEPTED RISK: rationale + deadline] |
 
 An empty audit is acceptable ONLY for trivial RFCs (state "No implicit assumptions"). Most RFCs will have 3+ entries.
@@ -778,6 +783,7 @@ Reference material.
 **Location:** `missions/`
 
 **Lifecycle:**
+
 ```text
 missions/open/ → Available to claim
 missions/claimed/ → Someone working on it
@@ -813,9 +819,9 @@ Missions that must be completed before this one:
 
 For each RFC type defined in the Specification section, note which mission implements it:
 
-| RFC Type | Implemented By |
-|----------|---------------|
-| TypeName1 | This mission |
+| RFC Type  | Implemented By    |
+| --------- | ----------------- |
+| TypeName1 | This mission      |
 | TypeName2 | Sub-mission 0850a |
 
 If types are deferred to sub-missions, list them explicitly. No RFC type should be unaccounted for.
@@ -851,15 +857,16 @@ Implementation notes, blockers, decisions.
 
 When an RFC has 10+ types, 4+ phases, or 1000+ lines of specification, decompose into multiple missions:
 
-| Mission | Naming | Purpose |
-|---------|--------|---------|
-| Base mission | `0850-dot-core-envelope.md` | Core types, foundation |
-| Feature missions | `0850a-dot-envelope-fragmentation.md` | Major subsystems |
-| Feature missions | `0850b-dot-gateway-federation.md` | Additional features |
+| Mission          | Naming                                | Purpose                |
+| ---------------- | ------------------------------------- | ---------------------- |
+| Base mission     | `0850-dot-core-envelope.md`           | Core types, foundation |
+| Feature missions | `0850a-dot-envelope-fragmentation.md` | Major subsystems       |
+| Feature missions | `0850b-dot-gateway-federation.md`     | Additional features    |
 
 **Naming convention:** `{RFC-number}{letter}-{abbreviation}-{description}.md` (e.g., `0850a`, `0850b`)
 
 **When to split:**
+
 - RFC has >10 specification types
 - RFC has >4 implementation phases
 - Some features are Phase 2+ while core is Phase 1
@@ -927,14 +934,15 @@ The key distinction: **Humans provide intent, agents provide implementation deta
 
 Agents may fail during implementation (API errors, tool failures, stuck processes). Recovery guidance:
 
-| Failure Type | Detection | Action |
-|-------------|-----------|--------|
-| Agent stuck (>10 min no output) | Check output file line count | Relaunch with fresh agent |
-| Repeated tool failures | Check error messages in output | Check partial progress, relaunch |
-| Fork-inside-fork error | Agent reports "fork not available" | Relaunch without subagent nesting |
-| File conflict (Edit NotFound) | Agent reports file modified | Re-read file before editing |
+| Failure Type                    | Detection                          | Action                            |
+| ------------------------------- | ---------------------------------- | --------------------------------- |
+| Agent stuck (>10 min no output) | Check output file line count       | Relaunch with fresh agent         |
+| Repeated tool failures          | Check error messages in output     | Check partial progress, relaunch  |
+| Fork-inside-fork error          | Agent reports "fork not available" | Relaunch without subagent nesting |
+| File conflict (Edit NotFound)   | Agent reports file modified        | Re-read file before editing       |
 
 **Partial progress verification:**
+
 1. Check `git diff` for uncommitted changes from the failed agent
 2. Run `cargo check` / `cargo test` to verify code state
 3. Run `grep -c` to verify what was actually changed
@@ -981,12 +989,12 @@ Agents may fail during implementation (API errors, tool failures, stuck processe
 
 ### Severity Classification
 
-| Severity | Definition | Action |
-|----------|-----------|--------|
-| **CRITICAL** | Consensus-breaking, security vulnerability, or spec violation | MUST fix before Accept |
-| **HIGH** | Missing required sections, incorrect types, broken cross-references | SHOULD fix before Accept |
-| **MEDIUM** | Incomplete coverage, naming inconsistencies, missing optional sections | SHOULD fix |
-| **LOW** | Style, dead code, minor improvements | NICE to fix |
+| Severity     | Definition                                                             | Action                   |
+| ------------ | ---------------------------------------------------------------------- | ------------------------ |
+| **CRITICAL** | Consensus-breaking, security vulnerability, or spec violation          | MUST fix before Accept   |
+| **HIGH**     | Missing required sections, incorrect types, broken cross-references    | SHOULD fix before Accept |
+| **MEDIUM**   | Incomplete coverage, naming inconsistencies, missing optional sections | SHOULD fix               |
+| **LOW**      | Style, dead code, minor improvements                                   | NICE to fix              |
 
 ### Multi-Round Review Loop
 
@@ -1042,18 +1050,18 @@ A finding that fails any of the 5 questions is incomplete and MUST be reworked b
 
 Before accepting any RFC that is part of a family:
 
-| Check | Description |
-|-------|-------------|
-| **Shared types** | Types defined in multiple RFCs must be identical or explicitly extended |
-| **Token economics** | RFCs touching participation/staking MUST reference the dual-stake model |
-| **Execution classes** | Every RFC MUST include an RFC-0008 execution class mapping table |
-| **Dependency graph** | Dependencies MUST form a DAG (no cycles) |
-| **Prerequisite alignment** | Mission prerequisites MUST match RFC "Requires" section |
-| **Section references** | Mission RFC section references MUST point to existing sections |
-| **Roles and Authorities** | RFCs that define or grant authority MUST include a Role/Authority Coverage Table; every role has a stable identifier, scope, and lifecycle |
-| **Implicit Assumptions** | Every RFC MUST include an Implicit Assumptions Audit; entries with non-trivial blast radius MUST be tracked to closure |
-| **Adversary Analysis** | RFCs touching security-sensitive surfaces (see "Multi-Round Review" in the template) MUST include a 5-Question Adversary Test decision table; CRITICAL findings MUST be mitigated before Accept |
-| **Lifecycle Requirements** | RFCs defining stateful actors MUST include a state machine and transition table; transitions MUST be deterministic when consensus-critical |
+| Check                      | Description                                                                                                                                                                                     |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Shared types**           | Types defined in multiple RFCs must be identical or explicitly extended                                                                                                                         |
+| **Token economics**        | RFCs touching participation/staking MUST reference the dual-stake model                                                                                                                         |
+| **Execution classes**      | Every RFC MUST include an RFC-0008 execution class mapping table                                                                                                                                |
+| **Dependency graph**       | Dependencies MUST form a DAG (no cycles)                                                                                                                                                        |
+| **Prerequisite alignment** | Mission prerequisites MUST match RFC "Requires" section                                                                                                                                         |
+| **Section references**     | Mission RFC section references MUST point to existing sections                                                                                                                                  |
+| **Roles and Authorities**  | RFCs that define or grant authority MUST include a Role/Authority Coverage Table; every role has a stable identifier, scope, and lifecycle                                                      |
+| **Implicit Assumptions**   | Every RFC MUST include an Implicit Assumptions Audit; entries with non-trivial blast radius MUST be tracked to closure                                                                          |
+| **Adversary Analysis**     | RFCs touching security-sensitive surfaces (see "Multi-Round Review" in the template) MUST include a 5-Question Adversary Test decision table; CRITICAL findings MUST be mitigated before Accept |
+| **Lifecycle Requirements** | RFCs defining stateful actors MUST include a state machine and transition table; transitions MUST be deterministic when consensus-critical                                                      |
 
 ### Dependency Validation Rules
 
@@ -1075,6 +1083,7 @@ Available for RFC cross-referencing, code pattern discovery, and spec completene
 ```
 
 Use cases:
+
 - **RFC cross-referencing:** Find all references to a type, struct, or concept across RFCs
 - **Code pattern discovery:** Find existing implementations that ground spec decisions
 - **Spec completeness:** Verify all RFC types appear in mission acceptance criteria
@@ -1082,6 +1091,7 @@ Use cases:
 ### Implementation Guides
 
 For complex RFCs (10+ types, 4+ phases), create a companion implementation guide at `docs/07-developers/{topic}-implementation-guide.md` with:
+
 - Module tree (exact `mod.rs` layout)
 - Compilable Rust code for core types
 - Error type definitions with `thiserror`
@@ -1111,15 +1121,15 @@ graph TD
     H -.->|Blocker resolved| B
 ```
 
-| State | Location | Trigger |
-|-------|----------|---------|
-| Open | `missions/open/` | RFC Accepted, no claimant |
-| Claimed | `missions/claimed/` | `git claim` |
-| With PR | `missions/with-pr/` | PR opened |
-| Deferred | `missions/deferred/` | Upstream blocker (RFC pending, external dep, governance decision) — see procedure below |
-| Archived (completed) | `missions/archived/completed/` | PR Accepted |
-| Archived (superseded) | `missions/archived/superseded/` | Accepted RFC with `Supersedes:` line pointing at the mission path |
-| Archived (rejected/abandoned) | `missions/archived/rejected/` | Rejection or abandonment |
+| State                         | Location                        | Trigger                                                                                 |
+| ----------------------------- | ------------------------------- | --------------------------------------------------------------------------------------- |
+| Open                          | `missions/open/`                | RFC Accepted, no claimant                                                               |
+| Claimed                       | `missions/claimed/`             | `git claim`                                                                             |
+| With PR                       | `missions/with-pr/`             | PR opened                                                                               |
+| Deferred                      | `missions/deferred/`            | Upstream blocker (RFC pending, external dep, governance decision) — see procedure below |
+| Archived (completed)          | `missions/archived/completed/`  | PR Accepted                                                                             |
+| Archived (superseded)         | `missions/archived/superseded/` | Accepted RFC with `Supersedes:` line pointing at the mission path                       |
+| Archived (rejected/abandoned) | `missions/archived/rejected/`   | Rejection or abandonment                                                                |
 
 **Timeouts:**
 
@@ -1279,3 +1289,4 @@ When in doubt, return to the Blueprint.
 ---
 
 _"We are not documenting a repository. We are defining how autonomous intelligence collaborates to build infrastructure."_
+````

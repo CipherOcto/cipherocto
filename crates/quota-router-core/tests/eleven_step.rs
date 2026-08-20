@@ -932,12 +932,12 @@ fn capability_token_stripped_at_egress_boundary() {
 //   W2: settlement engine (sm-engine)
 //   W3: constraint encoding (cipherocto-encoding)
 //   W4: caveat DSL extensions (octo-wallet)
-//   W5: policy graph (cipherocto-policy)
+//   W5: policy graph (octo-policy)
 //   W6: ExecutionEnvelope (sm-engine)
 //   W7: shard routing (sm-engine)
 
 use cipherocto_encoding::{decode, encode, Constraint, MAX_ENCODED_SIZE};
-use cipherocto_policy::{intersect, is_subgraph, PolicyObject, PolicySurface};
+use octo_policy::{intersect, is_subgraph, PolicyObject, PolicySurface};
 use quota_router_core::{
     egress::validate_provider_caveats,
     receipt::{wrap_receipt_envelope, CacheClassifyMeta},

@@ -230,8 +230,8 @@ fn is_read_verb(kw: &str) -> bool {
 
 /// Coerce a stoolap [`Value`] into a `serde_json::Value`. Falls back to
 /// stringification when the type doesn't map cleanly.
-fn stoolap_value_to_json(v: &stoolap::Value) -> serde_json::Value {
-    use stoolap::Value as SV;
+fn stoolap_value_to_json(v: &octo_storage_core::stoolap::Value) -> serde_json::Value {
+    use octo_storage_core::stoolap::Value as SV;
     match v {
         SV::Null(_) => serde_json::Value::Null,
         SV::Integer(i) => serde_json::Value::Number((*i).into()),
@@ -257,8 +257,8 @@ fn hex_lower(b: &[u8]) -> String {
     s
 }
 
-/// Map `stoolap::Error` into an RPC `InternalError`.
-fn stoolap_err(method: &str, e: stoolap::Error) -> RpcError {
+/// Map `octo_storage_core::stoolap::Error` into an RPC `InternalError`.
+fn stoolap_err(method: &str, e: octo_storage_core::stoolap::Error) -> RpcError {
     RpcError {
         code: RpcErrorCode::InternalError.as_i32(),
         message: format!("{method}: {e}"),

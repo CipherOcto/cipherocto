@@ -32,14 +32,15 @@ use std::time::{Duration, Instant};
 
 use crate::query::embedder::Embedder;
 use crate::query::ingester::{QueryError, QueryIngester};
-use stoolap::{Database, Value};
+use octo_storage_core::Database;
+use octo_storage_core::stoolap::Value;
 use thiserror::Error;
 
 /// Errors the job queue can surface at construction or in tests.
 #[derive(Debug, Error)]
 pub enum JobError {
     #[error("stoolap error: {0}")]
-    Stoolap(#[from] stoolap::Error),
+    Stoolap(#[from] octo_storage_core::stoolap::Error),
     #[error("embedder error: {0}")]
     Embedder(#[from] crate::query::embedder::EmbedError),
     #[error("persistence error: {0}")]
@@ -324,8 +325,8 @@ fn process_batch(
             ],
         ) {
             Ok(_) => {}
-            Err(stoolap::Error::PrimaryKeyConstraint { .. })
-            | Err(stoolap::Error::UniqueConstraint { .. }) => {
+            Err(octo_storage_core::stoolap::Error::PrimaryKeyConstraint { .. })
+            | Err(octo_storage_core::stoolap::Error::UniqueConstraint { .. }) => {
                 // Re-embed (same model_id) already exists for this
                 // event_id. Skip silently.
             }

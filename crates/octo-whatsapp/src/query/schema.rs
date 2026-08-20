@@ -137,7 +137,7 @@ const CREATE_DISAPPEARING_MODE_CHANGES_INDEXES: &[&str] =
     &["CREATE INDEX IF NOT EXISTS idx_dmc_jid_ts ON disappearing_mode_changes(jid, ts_unix_ms)"];
 
 /// Run the full bootstrap DDL. Safe to call multiple times.
-pub fn migrate(db: &Database) -> Result<(), stoolap::Error> {
+pub fn migrate(db: &Database) -> Result<(), octo_storage_core::stoolap::Error> {
     migrate_v1(db)?;
     migrate_v2(db)?;
     Ok(())
@@ -147,7 +147,7 @@ pub fn migrate(db: &Database) -> Result<(), stoolap::Error> {
 /// public `migrate()` entrypoint always applies both v1 + v2 in order;
 /// callers that want to inspect a v1-only state can still exercise
 /// this path explicitly.
-fn migrate_v1(db: &Database) -> Result<(), stoolap::Error> {
+fn migrate_v1(db: &Database) -> Result<(), octo_storage_core::stoolap::Error> {
     db.execute(CREATE_EVENTS_TABLE, ())?;
     for stmt in CREATE_EVENTS_INDEXES {
         db.execute(stmt, ())?;
@@ -168,7 +168,7 @@ fn migrate_v1(db: &Database) -> Result<(), stoolap::Error> {
 /// Phase 7.K v2 migration. Additive columns on `messages` plus two new
 /// tables. Each step is gated by a column-existence probe so it's safe
 /// to run on a v1-already-applied database OR a fresh-install one.
-fn migrate_v2(db: &Database) -> Result<(), stoolap::Error> {
+fn migrate_v2(db: &Database) -> Result<(), octo_storage_core::stoolap::Error> {
     // Probe the first new column: if `SELECT view_once FROM messages`
     // errors with `ColumnNotFound`, the column is absent and the ALTER
     // must run. Stoolap surfaces both ColumnNotFound and the parse
@@ -204,14 +204,14 @@ fn migrate_v2(db: &Database) -> Result<(), stoolap::Error> {
 }
 
 /// True if `SELECT <column> FROM <table> LIMIT 0` returns Ok.
-fn has_column(db: &Database, table: &str, column: &str) -> Result<bool, stoolap::Error> {
+fn has_column(db: &Database, table: &str, column: &str) -> Result<bool, octo_storage_core::stoolap::Error> {
     // Stoolap has no `PRAGMA table_info(...)` equivalent yet; the cheapest
     // probe is to try a query that references the column. Any error
     // (ColumnNotFound or a parse error) means the column is absent.
     let sql = format!("SELECT {column} FROM {table} LIMIT 0");
     match db.query(&sql, ()) {
         Ok(_) => Ok(true),
-        Err(stoolap::Error::ColumnNotFound(_)) => Ok(false),
+        Err(octo_storage_core::stoolap::Error::ColumnNotFound(_)) => Ok(false),
         Err(_) => Ok(false),
     }
 }

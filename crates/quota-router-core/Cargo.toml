@@ -95,6 +95,11 @@ octo-ident = { path = "../octo-ident" }
 octo-protocol = { path = "../octo-protocol" }
 octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
 quota-router-storage = { path = "../quota-router-storage" }
+# HolderRegistry + Clock + HolderKind + HolderRecord moved quota-router-storage
+# → octo-cap-macaroon in 0206-003 v3.0. quota-router-core/src/ingress/authenticator.rs
+# references these traits directly (RFC-0969 dual-pipeline authenticator),
+# so the macaroon substrate dep is required here.
+octo-cap-macaroon = { path = "../octo-cap-macaroon" }
 quota-router-sm-engine = { path = "../quota-router-sm-engine" }
 
 # For SHA256 (used in event_id computation)

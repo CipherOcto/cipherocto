@@ -24,8 +24,9 @@
 
 use crate::query::ingester::QueryIngester;
 use crate::query::tantivy_sidecar::TantivySidecar;
+use octo_storage_core::Database;
+use octo_storage_core::stoolap::Value;
 use serde::{Deserialize, Serialize};
-use stoolap::{Database, Value};
 use thiserror::Error;
 
 /// One search hit surfaced to callers. Joined result of BM25 + SQL.
@@ -66,7 +67,7 @@ pub enum ServiceError {
     #[error("tantivy error: {0}")]
     Tantivy(#[from] crate::query::tantivy_sidecar::TantivyError),
     #[error("stoolap error: {0}")]
-    Stoolap(#[from] stoolap::Error),
+    Stoolap(#[from] octo_storage_core::stoolap::Error),
     #[error("invalid filter: {0}")]
     InvalidFilter(String),
 }
@@ -415,7 +416,7 @@ impl QueryService {
 /// `Option<String>` that is `None` for NULL columns (where the
 /// FromValue conversion returns an empty string) and for any
 /// type-conversion error.
-fn opt_str_opt(r: std::result::Result<String, stoolap::Error>) -> Option<String> {
+fn opt_str_opt(r: std::result::Result<String, octo_storage_core::stoolap::Error>) -> Option<String> {
     r.ok().filter(|s| !s.is_empty())
 }
 
@@ -435,11 +436,11 @@ fn cosine_dot(a: &[f32], b: &[f32]) -> f32 {
 /// Helper: extract a column as `String`, defaulting to empty on NULL
 /// or type-conversion failure (only used for `text` where NULL is
 /// legal; NOT NULL columns fall through to the actual value).
-fn get_str(row: &stoolap::ResultRow, idx: usize) -> String {
+fn get_str(row: &octo_storage_core::stoolap::ResultRow, idx: usize) -> String {
     row.get::<String>(idx).unwrap_or_default()
 }
 
-fn get_i64(row: &stoolap::ResultRow, idx: usize) -> i64 {
+fn get_i64(row: &octo_storage_core::stoolap::ResultRow, idx: usize) -> i64 {
     row.get::<i64>(idx).unwrap_or(0)
 }
 

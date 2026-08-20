@@ -14,13 +14,14 @@ use std::result::Result as StdResult;
 use thiserror::Error;
 
 use crate::events::{InboundEvent, MessageKind};
-use stoolap::{Database, Value};
+use octo_storage_core::Database;
+use octo_storage_core::stoolap::Value;
 
 /// Errors the ingester can surface to the broadcast-loop driver.
 #[derive(Debug, Error)]
 pub enum QueryError {
     #[error("stoolap error: {0}")]
-    Stoolap(#[from] stoolap::Error),
+    Stoolap(#[from] octo_storage_core::stoolap::Error),
     #[error("serialize event: {0}")]
     Serialize(#[from] serde_json::Error),
 }
@@ -167,8 +168,8 @@ impl QueryIngester {
     fn insert_idempotent(&self, sql: &str, params: Vec<Value>) -> Result<()> {
         match self.db.execute(sql, params) {
             Ok(_) => Ok(()),
-            Err(stoolap::Error::PrimaryKeyConstraint { .. })
-            | Err(stoolap::Error::UniqueConstraint { .. }) => Ok(()),
+            Err(octo_storage_core::stoolap::Error::PrimaryKeyConstraint { .. })
+            | Err(octo_storage_core::stoolap::Error::UniqueConstraint { .. }) => Ok(()),
             Err(e) => Err(QueryError::from(e)),
         }
     }

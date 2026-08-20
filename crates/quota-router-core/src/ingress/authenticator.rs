@@ -23,8 +23,8 @@ use octo_wallet::capability::dispatch::{
     CapabilityVerification, LinkageResult,
 };
 use octo_wallet::capability::macaroon::CapabilityCatalog;
-use quota_router_storage::clock::Clock;
-use quota_router_storage::holder_registry::HolderRegistry;
+use octo_cap_macaroon::clock::Clock;
+use octo_cap_macaroon::holder_registry::HolderRegistry;
 
 /// Bearer verifier trait (RFC-0969 §Phase 1).
 ///
@@ -255,10 +255,10 @@ mod tests {
         ParseError,
     };
     use octo_wallet::capability::macaroon::CapabilityCatalog;
-    use quota_router_storage::clock::{Clock, FixedClock};
-    use quota_router_storage::holder_kind::HolderKind;
-    use quota_router_storage::holder_record::HolderRecord;
-    use quota_router_storage::holder_registry::{HolderRegistry, RegistryError};
+    use octo_cap_macaroon::clock::{Clock, FixedClock};
+    use octo_cap_macaroon::holder_kind::HolderKind;
+    use octo_cap_macaroon::holder_record::HolderRecord;
+    use octo_cap_macaroon::holder_registry::{HolderRegistry, RegistryError};
     use std::sync::Arc;
 
     // Compile-time check that `ParseError → AuthError` conversion exists.

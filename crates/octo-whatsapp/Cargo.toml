@@ -97,18 +97,17 @@ octo-storage-core   = { path = "../octo-storage-core" }
 
 # Query layer (Phase 0 of `2026-07-11-whatsapp-query-layer-design.md`).
 # All optional, gated by `query` feature so default builds stay slim.
-# - stoolap: embedded SQL DB (file mode); fork at feat/blockchain-sql
 # - tantivy: FTS sidecar index (BM25 with simple() tokenizer)
 # - candle-*: local embedding model (all-MiniLM-L6-v2 Q4, 384d)
 #
-# Per RFC-0206 v2.1 §Cargo.toml Cross-Cuts + HIGH 6 consumer-crate
-# exemption, the substrate redesign v3.0 does NOT yet re-export
-# `stoolap::ResultRow` / `stoolap::ApiTransaction` / `stoolap::Rows`
-# / `stoolap::Error` — the query layer decodes rows + runs
-# transactions directly. A v2.2 RFC-0206 amendment (filed as
-# 0206-011b) is the proper scope to add a `pub mod stoolap`
-# re-export to the substrate. Until then, the direct dep stays.
-stoolap             = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql", optional = true }
+# Per RFC-0206 v2.2 §Substrate Re-export Block, the substrate
+# `pub mod stoolap` re-export covers `Error`, `ResultRow`,
+# `ApiTransaction`, `Rows`, `Value`. Consumers (this crate
+# included) use `octo_storage_core::stoolap::*` instead of taking
+# a direct `stoolap` Cargo.toml dep, preserving the substrate as
+# the abstraction layer (CLAUDE.md §Core Engineering Principles).
+# The underlying fork still pins at feat/blockchain-sql, but the
+# dep is now owned by `octo-storage-core` only.
 tantivy             = { version = "0.24", optional = true }
 candle-core         = { version = "0.9", optional = true }
 candle-nn           = { version = "0.9", optional = true }
@@ -194,7 +193,6 @@ otlp = [
 # Off by default in v1 to keep default builds slim; flip to default once
 # Phases 0-4 land (commit 20 in the plan).
 query = [
-  "dep:stoolap",
   "dep:tantivy",
   "dep:candle-core",
   "dep:candle-nn",

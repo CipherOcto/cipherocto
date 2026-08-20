@@ -91,7 +91,9 @@ impl std::fmt::Debug for QuerySubsystem {
 #[derive(Debug, Error)]
 pub enum SubsystemError {
     #[error("stoolap error: {0}")]
-    Stoolap(#[from] stoolap::Error),
+    Stoolap(#[from] octo_storage_core::stoolap::Error),
+    #[error("substrate error: {0}")]
+    Substrate(#[from] octo_storage_core::SubstrateError),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("tantivy error: {0}")]

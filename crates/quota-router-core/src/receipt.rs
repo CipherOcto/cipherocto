@@ -43,9 +43,9 @@ pub struct Receipt {
 ///
 /// `axes_consumed` axis names share the taxonomy with
 /// `quota_router_sm_engine::Reservation::axes_consumed`. A single
-/// `AxisId` type alias (e.g., `cipherocto_policy::AxisId`) is the
+/// `AxisId` type alias (e.g., `octo_policy::AxisId`) is the
 /// cross-crate sharing target; the sm-engine migration is a follow-up
-/// (the `cipherocto_policy` dep is currently `[dev-dependencies]`-only
+/// (the `octo_policy` dep is currently `[dev-dependencies]`-only
 /// in `quota-router-core`, so this lib uses the bare `String` form).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CacheClassifyMeta {

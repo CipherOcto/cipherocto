@@ -97,27 +97,45 @@ strict-typed-query = []
 
 ```rust
 // crates/octo-storage-core/src/lib.rs (v2.2)
-// 8 top-level pub-use statements (≤ 8 cap per §Substrate Newtype Refactor)
-pub use crate::database::Database;
-pub use crate::typed_statement::TypedStatement;
-pub use crate::allowlist::AdapterAllowlist;
-pub use crate::allowlist::AdapterId;
-pub use crate::error::SubstrateError;
-pub use crate::error::Result;
-pub use crate::open::{open, open_in_memory};
-pub use crate::DEFAULT_TRACKER_TABLE;
-pub mod migrations;
-// migrations module (3 nested pub-use — substrate-private migration runner helpers):
-//   pub use crate::tracker::ensure_tracker_table;
-//   pub use crate::tracker::current_version;
-//   pub use crate::tracker::applied_version;
+// 8 top-level pub-use statements (≤ 8 cap per §Substrate Newtype Refactor).
+// The 6 additional `pub use as _legacy_*` aliases below are carve-out per
+// §Migration Order ≥ 6-month legacy coexistence window; they do NOT
+// count toward the 8-pub-use production-surface cap.
+pub use allowlist::AdapterAllowlist;
+pub use allowlist::AdapterId;
+pub use database::Database;
+pub use error::Result;
+pub use error::SubstrateError;
+pub use open::open;
+pub use open::open_in_memory;
+pub use typed_statement::TypedStatement;
+pub const DEFAULT_TRACKER_TABLE: &str = "schema_migrations";
+pub mod migrations {
+    pub use crate::tracker::applied_version;
+    pub use crate::tracker::current_version;
+    pub use crate::tracker::ensure_tracker_table;
+}
 pub mod stoolap;
 // stoolap re-export block (5 nested re-exports — NEW v2.2):
-//   pub use crate::stoolap::Error;
-//   pub use crate::stoolap::ApiTransaction;
-//   pub use crate::stoolap::ResultRow;
-//   pub use crate::stoolap::Rows;
-//   pub use crate::stoolap::Value;
+//   pub use stoolap::core::Error;
+//   pub use stoolap::ApiTransaction;
+//   pub use stoolap::ResultRow;
+//   pub use stoolap::Rows;
+//   pub use stoolap::Value;
+
+// Legacy carve-out (6 `pub use as _legacy_*`, deprecated, removed in v3.0):
+#[allow(deprecated)]
+pub use error::StorageError as _legacy_StorageError;
+#[deprecated(since = "2.0.0", note = "use typed `Database::execute_checked`; this legacy runner will be removed in v3.0")]
+pub use apply_pending::apply_pending as _legacy_apply_pending;
+#[deprecated(since = "2.0.0", note = "use typed `Database::execute_checked`; this legacy config will be removed in v3.0")]
+pub use apply_pending::ApplyConfig as _legacy_ApplyConfig;
+#[deprecated(since = "2.0.0", note = "use `TypedStatement`; this legacy trait will be removed in v3.0")]
+pub use migration::Migration as _legacy_Migration;
+#[deprecated(since = "2.0.0", note = "use `TypedStatement`; this legacy newtype will be removed in v3.0")]
+pub use migration::StaticMigration as _legacy_StaticMigration;
+#[deprecated(since = "2.0.0", note = "use typed `Database::execute_checked`; this legacy helper will be removed in v3.0")]
+pub use tracker::record_migration as _legacy_record_migration;
 ```
 
 **v2.1 change rationale:** v2.0 showed 11 top-level `pub use` statements in §Cargo.toml Templates Layer A, violating §Substrate Newtype Refactor "≤ 8 cap". v2.1 reduces to 8 top-level + `pub mod migrations` with 3 nested. Typed query families (`SqlSelect`/`SqlInsert`/`SqlUpdate`/`SqlDelete`/`DdlTemplate`/`DdlOperation`) are accessible via `TypedStatement` enum variants, not re-exported at top level.

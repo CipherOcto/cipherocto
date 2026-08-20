@@ -147,16 +147,11 @@ impl StoolapSessionStore {
     /// Open a file-backed store at `db_path` (created if missing).
     /// Calls `init_schema` on success.
     pub fn new<P: AsRef<Path>>(db_path: P) -> Result<Self, SessionStoreError> {
-        // stoolap's `Database::open` takes a DSN like `file:///path/to.db`,
-        // not a bare path. `file://` opens (or creates) an on-disk
-        // engine; `memory://` is the in-memory variant.
+        // stoolap's `Database::open` accepts either a bare filesystem
+        // path or a DSN; substrate's `Database::open` detects which and
+        // forwards to stoolap. We pass the bare path here.
         let path = db_path.as_ref().to_string_lossy().to_string();
-        let dsn = if path.starts_with("://") || path.contains("://") {
-            path
-        } else {
-            format!("file://{}", path)
-        };
-        let db = octo_storage_core::Database::open(&dsn).map_err(substrate_err)?;
+        let db = octo_storage_core::Database::open(&path).map_err(substrate_err)?;
         let store = Self { db };
         crate::schema::init_schema(&store.db)?;
         Ok(store)

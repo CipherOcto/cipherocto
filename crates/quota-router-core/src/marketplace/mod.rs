@@ -1417,8 +1417,9 @@ mod tests {
         ));
         // Defensive: ensure the file does not exist from a prior run.
         let _ = std::fs::remove_file(&path);
-        // stoolap requires a DSN scheme; use file:// for the on-disk path.
-        format!("file://{}", path.to_string_lossy())
+        // Bare path — substrate's `Database::open` prepends `file://`
+        // before dispatching to stoolap.
+        path.to_string_lossy().to_string()
     }
 
     #[test]

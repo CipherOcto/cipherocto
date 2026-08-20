@@ -90,8 +90,9 @@ pub async fn proxy(proxy_port: u16, admin_port: u16) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
 
-    // Open database and initialize schema
-    let db = octo_storage_core::Database::open(&format!("file://{}", config.db_path.display()))?;
+    // Open database and initialize schema. substrate's `Database::open`
+    // accepts the bare path; it prepends `file://` internally.
+    let db = octo_storage_core::Database::open(&config.db_path.to_string_lossy())?;
     init_database(&db)?;
 
     // Create storage and admin server

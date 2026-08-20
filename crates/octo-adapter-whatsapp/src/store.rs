@@ -115,14 +115,12 @@ impl StoolapStore {
         let path = db_path.as_ref().to_string_lossy().to_string();
         // R9 / zeroclaw parity: stoolap requires a DSN
         // (`file://path` or `memory://`), not a bare file path.
-        // Wrap the bare path in a `file://` DSN before opening.
-        // zeroclaw's `RusqliteStore::new` (whatsapp_storage.rs:88)
-        // takes a bare path because rusqlite's `Connection::open`
-        // accepts either; stoolap's `Database::open` requires the
-        // DSN form. Without this, `start_bot` panics with
-        // "Invalid DSN format: expected scheme://path".
-        let dsn = format!("file://{path}");
-        let db = octo_storage_core::Database::open(&dsn)?;
+        // substrate's `Database::open` accepts the bare filesystem path
+        // directly and prepends `file://` internally. zeroclaw's
+        // `RusqliteStore::new` (whatsapp_storage.rs:88) takes a bare
+        // path because rusqlite's `Connection::open` accepts either;
+        // substrate's `Database::open` is the stoolap analog.
+        let db = octo_storage_core::Database::open(&path)?;
         let store = Self {
             db: tokio::sync::Mutex::new(db),
             device_id: 1,

@@ -32,8 +32,19 @@ impl Database {
     /// Open a persistent database at `path`. Thin wrapper around
     /// `stoolap::Database::open` that surfaces failures as
     /// [`SubstrateError::Storage`].
+    ///
+    /// Accepts either a bare filesystem path (e.g. `/var/lib/foo.db`)
+    /// or a full stoolap DSN (`file:///var/lib/foo.db`, `memory://…`).
+    /// Already-prefixed DSNs are forwarded unchanged so callers that
+    /// construct them upstream (e.g. test fixtures, runtime config
+    /// parsers) don't get a double `file://` prefix that the fork
+    /// would silently misroute to a bogus path.
     pub fn open(path: &str) -> Result<Self> {
-        let dsn = format!("file://{path}");
+        let dsn = if path.starts_with("file://") || path.starts_with("memory://") {
+            path.to_string()
+        } else {
+            format!("file://{path}")
+        };
         stoolap::Database::open(&dsn)
             .map(Database)
             .map_err(|e| SubstrateError::Storage {

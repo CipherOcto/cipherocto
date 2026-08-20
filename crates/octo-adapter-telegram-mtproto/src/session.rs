@@ -202,13 +202,12 @@ pub struct StoolapSession {
 
 impl StoolapSession {
     /// Open a session backed by a stoolap file at `path`.
-    /// The path is interpreted as a `file://` DSN (the
-    /// canonical stoolap form; see
-    /// `crates/octo-matrix-session-store/src/store.rs`).
+    /// The bare path is forwarded to substrate's `Database::open`,
+    /// which prepends `file://` and dispatches to stoolap.
     /// Creates the file if it does not exist.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Arc<Self>, MtprotoSessionError> {
-        let dsn = format!("file://{}", path.as_ref().display());
-        let db = Database::open(&dsn).map_err(MtprotoSessionError::from)?;
+        let db = Database::open(path.as_ref().to_string_lossy().as_ref())
+            .map_err(MtprotoSessionError::from)?;
         let session = Arc::new(Self::init(db)?);
         Ok(session)
     }

@@ -34,16 +34,6 @@ octo-ident = { path = "../octo-ident" }
 # 0206-008.
 octo-storage-core = { path = "../octo-storage-core" }
 
-# Database
-# Per RFC-0206 v2.1 §Cargo.toml Cross-Cuts + HIGH 6 consumer-crate
-# exemption, the substrate redesign v3.0 does NOT yet re-export
-# `stoolap::ResultRow` / `stoolap::ApiTransaction` / `stoolap::Rows`
-# / `stoolap::Error` — the CLI's reputation-show path decodes rows
-# directly. A v2.2 RFC-0206 amendment (filed as 0206-011b) is the
-# proper scope to add a `pub mod stoolap` re-export to the substrate.
-# Until then, the direct dep stays.
-stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
-
 # CLI
 clap.workspace = true
 

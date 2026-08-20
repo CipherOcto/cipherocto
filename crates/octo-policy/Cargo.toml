@@ -1,13 +1,13 @@
 [package]
-name = "cipherocto-policy"
+name = "octo-policy"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Policy Object Graph: separable, versioned, shareable authorization policy (RFC-0967)"
+description = "Policy Object Graph: separable, versioned, shareable authorization policy (RFC-0967). Renamed from cipherocto-policy per RFC-0206 v2.1 §Adapter Crate List row 5."
 
 [lib]
-name = "cipherocto_policy"
+name = "octo_policy"
 path = "src/lib.rs"
 
 [dependencies]

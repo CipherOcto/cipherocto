@@ -217,7 +217,7 @@ harness = false
 criterion = "0.5"
 tempfile = "3"
 cipherocto-encoding = { path = "../cipherocto-encoding" }
-cipherocto-policy = { path = "../cipherocto-policy" }
+octo-policy = { path = "../octo-policy" }
 # SAML XML-DSIG verifier tests (M1) share a single rcgen-built
 # self-signed X.509 cert as the IdP-cert fixture. Pure-Rust.
 rcgen = "0.13"

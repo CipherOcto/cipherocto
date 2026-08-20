@@ -4,6 +4,7 @@
 
 **Version:** 1.0 (2026-08-19)
 **Status:** Draft
+**Layer:** B (introduces a new Layer A substrate crate `octo-storage-core`; the substrate itself is the Layer A boundary change; the rest of the RFC is Layer B facade + adapter wiring)
 
 ## Authors
 
@@ -16,14 +17,14 @@
 
 ## Summary
 
-Splits `crates/octo-storage` into a Layer A frozen substrate (`octo-storage-core`, RFC-frozen, years-stable) holding the Stoolap fork handle + typed migration runner, and a Layer B re-export facade (`octo-storage`, RFC-driven, additive) aggregating per-owner adapter crates. Closes the review §4.6.1 MED blocker; resolves the §4.4 / §4.6 / §4.6.1 owner-crate cycle risk by enforcing per-owner adapter placement.
+Splits `crates/octo-storage` into a Layer A frozen substrate (`octo-storage-core`, RFC-frozen, years-stable) holding the Stoolap fork handle + typed migration runner, and a Layer B re-export facade (`octo-storage`, RFC-driven, additive) aggregating per-owner adapter crates. Closes the review §4.6 MED blocker; resolves the §4.4 / §4.6 owner-crate cycle risk by enforcing per-owner adapter placement.
 
 ## Dependencies
 
 **Requires:**
 
-- RFC-0914-a (Storage): Stoolap-only persistence convention
-- RFC-0205 (Storage): Stoolap fork stability certification — defines `octo-stoolap-frozen` Layer A substrate consumed by `octo-storage-core`
+- RFC-0914 (Economics): Stoolap-only quota-router persistence convention — establishes the Stoolap-only invariant this RFC extends with a per-owner adapter surface
+- RFC-0205 (Storage): Stoolap fork stability certification — defines `octo-stoolap-frozen` Layer A substrate consumed by `octo-storage-core` (Draft; sibling RFC; must reach Accepted before RFC-0206 reaches Accepted per §Promotion Path)
 - RFC-0105 (Numeric): Deterministic Quant Arithmetic — DQA wire form consumed by core
 - RFC-0010 (Process): Canonical DID Codec + 32-byte chain_id addendum — `octo-ident-storage` adapter depends on typed `ChainId`
 
@@ -32,22 +33,22 @@ Splits `crates/octo-storage` into a Layer A frozen substrate (`octo-storage-core
 - RFC-0960 (Storage): Vault substrate — `octo-vault-storage` adapter implements `VaultStore`
 - RFC-0957 (Storage): Capability verify-time invariant — `octo-cap-macaroon-storage` adapter implements `HolderRegistry`
 
-> **Dependency Validation Rules:** All upstream RFCs Accepted (RFC-0914-a, RFC-0205 Draft, RFC-0105, RFC-0010). This RFC introduces a new Layer A substrate crate (`octo-storage-core`); all consumer crates depend on it through the Layer B facade `octo-storage`.
+> **Dependency Validation Rules:** Required RFCs at minimum Draft status before RFC-0206 reaches Accepted. Currently: RFC-0205 is Draft (sibling); RFC-0105, RFC-0010, RFC-0914 are Accepted. This RFC introduces a new Layer A substrate crate (`octo-storage-core`); all consumer crates depend on it through the Layer B facade `octo-storage`.
 
 ## Design Goals
 
 | Goal | Target                | Metric                                                                       |
 | ---- | --------------------- | ---------------------------------------------------------------------------- |
 | G1   | Zero cycle risk       | `cargo metadata` audit: no owner-trait crate in `octo-storage-core` dep tree |
-| G2   | ≤ 1 migration surface | All migrations routed via `octo_storage_core::MigrationsHandle`              |
+| G2   | ≤ 1 migration surface | All migrations routed via `octo_storage_core::apply_pending` (free fn)       |
 | G3   | Single import path    | Downstream uses `octo_storage::StoolapHolderRegistry` (facade)               |
 | G4   | Per-owner isolation   | `octo-cap-macaroon-storage` does NOT depend on `octo-ident-storage`          |
 
 ## Motivation
 
-`docs/reviews/2026-08-15-storage-layer-restructuring-analysis.md` §4.6.1 audit identified that `crates/octo-storage = B/A?` was undecided: the migrator is non-stable, but Layer A requires years-stable primitives. Owner crates (octo-ident, octo-cap-macaroon, octo-market, octo-policy) each constructed `stoolap::Database` directly, duplicating migration-runner logic and creating a cycle risk: owner-trait crate → storage-core → owner-trait crate.
+`docs/reviews/2026-08-15-storage-layer-restructuring-analysis.md` §4.6 audit identified that `crates/octo-storage = B/A?` was undecided: the migrator is non-stable, but Layer A requires years-stable primitives. Owner crates (octo-ident, octo-cap-macaroon, octo-market, octo-policy) each constructed `stoolap::Database` directly, duplicating migration-runner logic and creating a cycle risk: owner-trait crate → storage-core → owner-trait crate.
 
-**Solution:** Adopt the §4.6.1 resolution — split into Layer A frozen core + Layer B re-export facade + per-owner adapter crates.
+**Solution:** Adopt the §4.6 resolution — split into Layer A frozen core + Layer B re-export facade + per-owner adapter crates.
 
 ## Roles and Authorities
 
@@ -56,12 +57,12 @@ Splits `crates/octo-storage` into a Layer A frozen substrate (`octo-storage-core
 3. **Adapter crate owners** — one per owner-trait (HolderRegistry, DidRegistry, PolicyStore, VaultStore, OrderBookStore, EscrowStore); file RFCs to add new adapters.
 4. **RFC reviewer** — signs off on new adapter crates and migration additions to `octo-storage-core`.
 
-| Role                      | Identifier                                | Authority Scope                                       | Lifecycle                 | Source/Ref                  |
-| ------------------------- | ----------------------------------------- | ----------------------------------------------------- | ------------------------- | --------------------------- |
-| octo-storage-core owner   | GitHub team `@octo-storage-core-owners`   | Layer A substrate; migration runner                   | Active until role revoked | RFC-0206 §Specification     |
-| octo-storage facade owner | GitHub team `@octo-storage-facade-owners` | Re-export glue; adapter registry                      | Active until role revoked | RFC-0206 §Specification     |
-| Adapter crate owner       | Per-adapter GitHub team                   | Owner-trait impl; register(Arc<Database>) constructor | Per-adapter               | RFC-0206 §Adapter Crates    |
-| RFC reviewer              | RFC process role                          | New adapter + migration approval                      | Per-RFC                   | RFC-0001 §Mission Lifecycle |
+| Role                      | Identifier                                | Authority Scope                                       | Lifecycle                 | Source/Ref                             |
+| ------------------------- | ----------------------------------------- | ----------------------------------------------------- | ------------------------- | -------------------------------------- |
+| octo-storage-core owner   | GitHub team `@octo-storage-core-owners`   | Layer A substrate; migration runner                   | Active until role revoked | RFC-0206 §Three-Tier Architecture      |
+| octo-storage facade owner | GitHub team `@octo-storage-facade-owners` | Re-export glue; adapter registry                      | Active until role revoked | RFC-0206 §Three-Tier Architecture      |
+| Adapter crate owner       | Per-adapter GitHub team                   | Owner-trait impl; register(Arc<Database>) constructor | Per-adapter               | RFC-0206 §Adapter Crate List (Initial) |
+| RFC reviewer              | RFC process role                          | New adapter + migration approval                      | Per-RFC                   | RFC-0206 §Promotion Path               |
 
 ## Specification
 
@@ -96,39 +97,39 @@ octo-market-storage/         → impl OrderBookStore, EscrowStore for Stoolap* (
 
 ### Cargo.toml Templates
 
-**Layer A — `octo-storage-core/Cargo.toml`:**
+**Layer A — `octo-storage-core/Cargo.toml`** (current on-disk state at `crates/octo-storage-core/Cargo.toml`; post-Phase-1 Task 1 target):
 
 ```toml
 [package]
 name = "octo-storage-core"
 
 [dependencies]
-# Layer A frozen substrate per RFC-0205
-octo-stoolap-frozen = { git = "https://github.com/CipherOcto/stoolap", rev = "<sha>" }
-# Layer A primitive substrate
-octo-determin = { path = "../../determin" }
-# Hash + encoding
-blake3 = { version = "1", features = ["serde"] }
-borsh = { version = "1", features = ["derive"] }
+# Layer A → substrate SQL engine. Until RFC-0205 freeze ships
+# `octo-stoolap-frozen` as a published crate, octo-storage-core pins
+# the active fork by branch (matches the workspace root `[patch.crates-io]`
+# block in the audit). When RFC-0205 Phase 1 Task 1 lands, replace
+# `branch = "feat/blockchain-sql"` with `rev = "<sha>"` and migrate
+# the dep name to `octo-stoolap-frozen`.
+stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
+# Layer A error type per `cipherocto-design-principles` Layer A row.
+thiserror = "2.0"
 # NOT a dep: octo-transport, quota-router-core, owner-trait crates
 ```
 
-**Layer B facade — `octo-storage/Cargo.toml`:**
+**Layer B facade — `octo-storage/Cargo.toml`** (current on-disk state; thin re-export of `octo-storage-core` only — adapter wiring is Phase 3 future work):
 
 ```toml
 [package]
 name = "octo-storage"
 
 [dependencies]
-# Layer B → Layer A
+# Layer B → Layer A substrate
 octo-storage-core = { path = "../octo-storage-core" }
-# Layer B → Layer B (re-export only, no domain impls here)
-octo-cap-macaroon-storage = { path = "../octo-cap-macaroon-storage" }
-octo-ident-storage = { path = "../octo-ident-storage" }
-octo-policy-storage = { path = "../octo-policy-storage" }
-octo-vault-storage = { path = "../octo-vault-storage" }
-octo-market-storage = { path = "../octo-market-storage" }
-# NOT a dep: octo-transport, quota-router-core
+# Phase 3 will add per-owner adapter crate deps here as they land.
+# Until each adapter crate ships, the facade remains a pure re-export.
+# NOT a dep (today): octo-cap-macaroon-storage, octo-ident-storage,
+# octo-policy-storage, octo-vault-storage, octo-market-storage
+# NOT a dep (ever): octo-transport, quota-router-core
 ```
 
 **Per-owner adapter — `octo-cap-macaroon-storage/Cargo.toml`:**
@@ -159,14 +160,16 @@ Each adapter crate exposes a `register(Arc<Database>) -> Arc<dyn OwnerTrait>` co
 - `octo-stoolap-frozen` rev pin per RFC-0205 §Release-Tag Pin Policy.
 - DQA wire form unchanged across re-cert.
 
-### RFC-0008 Execution Class Mapping
+### Operation Class Mapping
 
-| Operation                         | Class | Rationale                       |
-| --------------------------------- | ----- | ------------------------------- |
-| `MigrationsHandle::apply_pending` | A     | Layer A substrate; years-stable |
-| Adapter `register(Arc<Database>)` | C     | Initialization glue; per-owner  |
-| New adapter crate addition        | C     | RFC-driven additive             |
-| Migration SQL file addition       | A     | Schema substrate; requires RFC  |
+| Operation                          | Class | Rationale                       |
+| ---------------------------------- | ----- | ------------------------------- |
+| `octo_storage_core::apply_pending` | A     | Layer A substrate; years-stable |
+| Adapter `register(Arc<Database>)`  | C     | Initialization glue; per-owner  |
+| New adapter crate addition         | C     | RFC-driven additive             |
+| Migration SQL file addition        | A     | Schema substrate; requires RFC  |
+
+> **Note:** Operation Class A/B/C taxonomy per `docs/BLUEPRINT.md` §RFC Process. No separate RFC-NNNN anchors this taxonomy; it is defined inline in the process doc.
 
 ### Error Handling
 
@@ -241,20 +244,20 @@ No new tokens or stake implications. Cost: ~0.5 FTE/quarter for adapter maintain
 
 ## Compatibility
 
-- **Backward:** pre-RFC-0206 owner crates directly using `stoolap::*` continue to compile but are flagged by Clippy lint. Migration window: 90 days.
+- **Backward:** owner-trait crates that today construct `stoolap::*` directly (none confirmed in the workspace at RFC-0206 v1.0; the workspace audit `docs/audits/stoolap-fork-stability-2026-08-16.md` found all owner crates go through `octo-storage` already) continue to compile, but are flagged by Clippy lint per TV-0206-06 once adapter crates ship. Migration window from any future direct `stoolap::*` use to `octo-storage-core`: 90 days.
 - **Forward:** adding new adapter = additive; facade auto-re-exports. No new RFC required for adding an adapter IF the adapter implements an existing owner-trait.
 
 ## Test Vectors
 
 Governance TV — structural verification:
 
-1. **TV-0206-01:** `crates/octo-storage-core/Cargo.toml` depends only on Layer A crates (`octo-determin`, `octo-stoolap-frozen`, `blake3`, `borsh`).
+1. **TV-0206-01:** `crates/octo-storage-core/Cargo.toml` depends only on Layer A crates. Current on-disk state: `stoolap` (active fork branch) + `thiserror`. Post-RFC-0205 Phase 1 Task 1 target: `octo-stoolap-frozen` (rev-pinned) + `thiserror`.
 2. **TV-0206-02:** `crates/octo-storage-core/` source contains zero references to `HolderRegistry`, `DidRegistry`, `PolicyStore`, `VaultStore`, `OrderBookStore`, `EscrowStore`.
 3. **TV-0206-03:** `crates/octo-storage/` source contains only `pub use` re-exports; no `impl` blocks for owner traits.
-4. **TV-0206-04:** Each adapter crate's `Cargo.toml` depends on exactly one owner-trait crate + `octo-storage-core`.
-5. **TV-0206-05:** CI graph audit rejects any cycle in adapter → owner-trait → adapter direction.
-6. **TV-0206-06:** CI grep rejects any `stoolap::*` direct construction in owner-trait crates (must go through `octo-storage-core`).
-7. **TV-0206-07:** Per-adapter test suite covers `register(Arc<Database>) → Arc<dyn OwnerTrait>` round-trip.
+4. **TV-0206-04:** Each adapter crate's `Cargo.toml` depends on exactly one owner-trait crate + `octo-storage-core`. **Forward requirement** — gates each adapter crate landing; none exist on disk yet (see §Implementation Phases).
+5. **TV-0206-05:** CI graph audit rejects any cycle in adapter → owner-trait → adapter direction. Implemented as `cargo metadata --format-version 1` + `jq` reverse-DB scan over the adapter subtree (analogous to RFC-0205 TV-0205-04).
+6. **TV-0206-06:** CI grep rejects any `stoolap::*` direct construction in owner-trait crates (must go through `octo-storage-core`). Implemented as `! rg 'use stoolap::' crates/octo-{ident,cap-macaroon,policy,vault,market}/src/` in CI.
+7. **TV-0206-07:** Per-adapter test suite covers `register(Arc<Database>) → Arc<dyn OwnerTrait>` round-trip. Forward requirement — one test file per adapter crate landing.
 
 ## Alternatives Considered
 
@@ -269,9 +272,9 @@ Governance TV — structural verification:
 
 ### Phase 1: Layer A Core
 
-- [ ] Task 1: Create `crates/octo-storage-core/` with migration runner + Database handle
-- [ ] Task 2: Add `octo-storage-core` to workspace `Cargo.toml`
-- [ ] Task 3: Migrate Stoolap fork dep from owner crates to `octo-storage-core` (one crate at a time)
+- [x] Task 1: Create `crates/octo-storage-core/` with migration runner + Database handle (LANDED 2026-08-19 per `missions/claimed/octo-storage-split.md` R1-F5; commits `34e6025d` + `003f3a45`)
+- [x] Task 2: Add `octo-storage-core` to workspace `Cargo.toml` (LANDED 2026-08-19)
+- [ ] Task 3: Migrate Stoolap fork dep from owner crates to `octo-storage-core` (one crate at a time) — gated on RFC-0205 Phase 1 Task 1 freeze
 - [ ] Task 4: Add CI graph audit + Clippy lint for owner-trait cycle
 
 ### Phase 2: Adapter Crates
@@ -282,34 +285,45 @@ Governance TV — structural verification:
 
 ### Phase 3: Layer B Facade
 
-- [ ] Task 8: Create `crates/octo-storage/` re-export facade
-- [ ] Task 9: Update downstream consumers to import from `octo-storage::Stoolap*`
-- [ ] Task 10: Remove direct `stoolap` deps from owner-trait crates (90-day migration window)
+- [x] Task 8: Create `crates/octo-storage/` re-export facade (LANDED 2026-08-19; thin re-export of `octo-storage-core` per current `src/lib.rs`)
+- [ ] Task 9: Update downstream consumers to import from `octo-storage::Stoolap*` (gated on Phase 2 adapter crate landings)
+- [ ] Task 10: Remove direct `stoolap` deps from owner-trait crates (90-day migration window; gated on Phase 2)
+
+## Promotion Path
+
+Per `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md` §S7 termination conditions, this RFC reaches Accepted after:
+
+1. RFC-0205 reaches Accepted (sibling; defines the Layer A substrate `octo-stoolap-frozen` that RFC-0206 Phase 1 Task 3 depends on).
+2. Phase 2 adapter crates ship (or are explicitly deferred with rationale to a follow-on sub-RFC).
+3. Phase 1 Task 4 CI graph audit + Clippy lint lands.
+4. Multi-round adversarial review per `docs/BLUEPRINT.md` §Adversarial Review Process passes.
 
 ## Key Files to Modify
 
-| File                                          | Change                                                             |
-| --------------------------------------------- | ------------------------------------------------------------------ |
-| `Cargo.toml` (workspace)                      | Add `octo-storage-core`, `octo-storage`, adapter crates to members |
-| `crates/octo-storage-core/Cargo.toml`         | NEW — Layer A substrate deps                                       |
-| `crates/octo-storage-core/src/lib.rs`         | NEW — Database handle + migration runner                           |
-| `crates/octo-storage/Cargo.toml`              | NEW — facade re-exports                                            |
-| `crates/octo-storage/src/lib.rs`              | NEW — `pub use` aggregations                                       |
-| `crates/octo-cap-macaroon-storage/Cargo.toml` | NEW — adapter                                                      |
-| `crates/octo-ident-storage/Cargo.toml`        | VERIFY — already exists, verify placement                          |
-| `crates/octo-policy-storage/Cargo.toml`       | NEW — adapter                                                      |
-| `crates/octo-vault-storage/Cargo.toml`        | NEW — adapter                                                      |
-| `crates/octo-market-storage/Cargo.toml`       | NEW — adapter                                                      |
-| `.github/workflows/ci.yml`                    | Add graph audit + Clippy lint                                      |
+| File                                          | Status                                                                                                                                                  |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Cargo.toml` (workspace)                      | Add `octo-storage-core`, `octo-storage`, adapter crates to members                                                                                      |
+| `crates/octo-storage-core/Cargo.toml`         | LANDED — Layer A substrate deps (`stoolap` branch + `thiserror`)                                                                                        |
+| `crates/octo-storage-core/src/lib.rs`         | LANDED — Database handle + migration runner (`apply_pending` etc.)                                                                                      |
+| `crates/octo-storage/Cargo.toml`              | LANDED — facade re-exports (`octo-storage-core` only)                                                                                                   |
+| `crates/octo-storage/src/lib.rs`              | LANDED — `pub use` aggregations                                                                                                                         |
+| `crates/octo-cap-macaroon-storage/Cargo.toml` | NEW — adapter                                                                                                                                           |
+| `crates/octo-ident-storage/Cargo.toml`        | NEW — adapter (workspace audit shows `crates/octo-ident` exists but storage adapter is NEW)                                                             |
+| `crates/octo-policy-storage/Cargo.toml`       | NEW — adapter (workspace audit shows `crates/cipherocto-policy/` is the actual name; align on `octo-policy-storage` or document the rename in this RFC) |
+| `crates/octo-vault-storage/Cargo.toml`        | NEW — adapter                                                                                                                                           |
+| `crates/octo-market-storage/Cargo.toml`       | NEW — adapter                                                                                                                                           |
+| `.github/workflows/ci.yml`                    | Add graph audit + Clippy lint                                                                                                                           |
 
 ## Future Work
 
-- Sub-mission `octo-storage-facade-versioning.md` for facade semver policy.
-- Sub-mission `octo-storage-core-deprecation.md` for Layer B → Layer A migration.
+- Sub-mission `octo-storage-facade-versioning.md` (**to be filed**) for facade semver policy.
+- Sub-mission `octo-storage-core-deprecation.md` (**to be filed**) for Layer B → Layer A migration.
 - Adapter `Stoolap<OwnerTrait>` naming-convention enforcement (Clippy lint).
+- Resolve naming discrepancy `crates/cipherocto-policy/` vs proposed `crates/octo-policy-storage/` (decide via follow-on RFC; the workspace currently has `cipherocto-policy/`, not `octo-policy/`).
 
 ## Version History
 
-| Version | Date       | Author     | Changes                                                                                                                                                                                                                  |
-| ------- | ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1.0     | 2026-08-19 | @mmacedoeu | Initial draft. Three-tier architecture (Layer A core + Layer B facade + adapter crates) per review §4.6.1; Cargo.toml templates; per-owner migration placement; CI gates for cycle + Layer A pollution; 7 governance TV. |
+| Version | Date       | Author     | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------- | ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1.0     | 2026-08-19 | @mmacedoeu | Initial draft. Three-tier architecture (Layer A core + Layer B facade + adapter crates) per review §4.6; Cargo.toml templates; per-owner migration placement; CI gates for cycle + Layer A pollution; 7 governance TV.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 1.1     | 2026-08-19 | @mmacedoeu | Round 1 review fixes: phantom `RFC-0914-a` → `RFC-0914 (Economics)`; phantom `RFC-0001`/`RFC-0008` → `BLUEPRINT.md` ref + inline Operation Class Mapping; phantom `§4.6.1` → `§4.6` (review doc has §4.6, no §4.6.1); Cargo.toml templates aligned with current on-disk state (Phase 1 Tasks 1/2/8 LANDED, Phase 1 Tasks 3/4 + Phase 2/3 forward); `MigrationsHandle::apply_pending` → `octo_storage_core::apply_pending` (free fn); adapter crate naming gap `cipherocto-policy/` vs `octo-policy-storage/` flagged in §Future Work; Implementation Phases checkboxes corrected (Phase 1 Tasks 1/2 + Phase 3 Task 8 marked `[x]`); Layer self-declaration added to Status; Roles Source/Ref column updated to precise §names. Doc accuracy only — no spec change. |

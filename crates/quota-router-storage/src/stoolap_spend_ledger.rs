@@ -113,8 +113,8 @@
 use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
 
-use crate::clock::{Clock, SystemClock};
 use crate::migrations;
+use octo_cap_macaroon::{Clock, SystemClock};
 use octo_determin::Dqa;
 
 /// Errors returned by `StoolapSpendLedger` operations. Mirrors the

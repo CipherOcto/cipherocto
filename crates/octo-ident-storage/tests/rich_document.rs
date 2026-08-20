@@ -1,21 +1,24 @@
-//! Mission 0010-f8-rich-did-storage — StoolapDidRegistry rich-document
+//! Mission 0010-f8-rich-did-storage — `StoolapDidRegistry` rich-document
 //! persistence TV.
 //!
 //! Verifies that `StoolapDidRegistry` round-trips the 4 RFC-0010 v1.5
 //! rich-document fields (`service_endpoints`, `controllers`,
 //! `verification_methods`, `capability_delegations`) via v009/v010
 //! schema migrations + borsh-encoded BLOBs.
+//!
+//! Moved from `crates/quota-router-storage/tests/stoolap_rich_did.rs`
+//! in mission 0206-003 v3.0.
 
 use octo_ident::{
     CapabilityDelegation, ControllerReference, DidDocument, DidRegistry, ServiceEndpoint,
     VerificationMethod,
 };
-use quota_router_storage::stoolap_did_registry::StoolapDidRegistry;
+use octo_ident_storage::StoolapDidRegistry;
 
 fn sample_hash(seed: u8) -> [u8; 32] {
     let mut h = [0u8; 32];
     for (i, b) in h.iter_mut().enumerate() {
-        *b = seed.wrapping_add(i as u8);
+        *b = seed.wrapping_add(u8::try_from(i).expect("loop index fits in u8"));
     }
     h
 }
@@ -23,7 +26,11 @@ fn sample_hash(seed: u8) -> [u8; 32] {
 fn sample_pk(seed: u8) -> [u8; 32] {
     let mut k = [0u8; 32];
     for (i, b) in k.iter_mut().enumerate() {
-        *b = seed.wrapping_add((i as u8).wrapping_mul(3));
+        *b = seed.wrapping_add(
+            u8::try_from(i)
+                .expect("loop index fits in u8")
+                .wrapping_mul(3),
+        );
     }
     k
 }
@@ -37,7 +44,7 @@ fn rich_doc(seed: u8) -> DidDocument {
             ServiceEndpoint::new("inbox".to_owned(), "https://inbox.example.com").unwrap(),
         ],
         controllers: vec![
-            ControllerReference::new(format!("did:octo:zController{:02x}", seed)),
+            ControllerReference::new(format!("did:octo:zController{seed:02x}")),
             ControllerReference::new(format!("did:octo:zController{:02x}", seed.wrapping_add(1))),
         ],
         verification_methods: vec![
@@ -160,7 +167,9 @@ fn register_with_max_verification_methods() {
     };
     for i in 0..MAX_VERIFICATION_METHODS {
         doc.verification_methods
-            .push(VerificationMethod::ed25519(sample_pk(i as u8)));
+            .push(VerificationMethod::ed25519(sample_pk(
+                u8::try_from(i).expect("loop index fits in u8"),
+            )));
     }
     reg.register(&hash, doc.clone()).expect("register max");
     let resolved = reg.resolve(&hash).expect("resolve").expect("present");

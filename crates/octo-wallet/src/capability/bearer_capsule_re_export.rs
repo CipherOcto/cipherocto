@@ -3,4 +3,4 @@
 // canonical type lives in storage per [[stoolap-general-purpose-db]] red line
 // (cipherocto-side persistence in the storage crate).
 
-pub use quota_router_storage::bearer_capsule_stub::BearerCapsule;
+pub use quota_router_storage::BearerCapsule;

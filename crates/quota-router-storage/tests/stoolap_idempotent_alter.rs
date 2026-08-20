@@ -15,6 +15,16 @@
 //! **NOTE:** Tests serialize via Mutex because stoolap `memory://`
 //! shares global catalog state across threads (PK collisions on
 //! concurrent `apply_pending`).
+//!
+//! Mission 0206-003 v3.0: schema migrations v008..v011 (`did_registry`)
+//! REMAIN in quota-router-storage's catalog (sole source of truth for
+//! `cipherocto_schema_version` tracker table) — octo-ident-storage's
+//! `StoolapDidRegistry` impl calls `quota_router_storage::migrations::apply_pending`
+//! in its constructor to set up the schema. The split was reverted
+//! because the substrate's `apply_pending` skips migrations with
+//! version <= current DB version, so a split catalog caused
+//! quota-router's v001-v007 to be skipped when ident had already
+//! brought the DB to v011.
 
 use std::sync::Mutex;
 
@@ -38,7 +48,7 @@ fn apply_pending_is_idempotent_on_re_run_after_partial_migration() {
     let db = octo_storage_core::open_in_memory().expect("open in-memory");
     migrations::apply_pending(&db).expect("first apply");
 
-    // Verify v010 was applied (catalog max = 10).
+    // Verify v016 was applied (catalog max = 16).
     let version_after_first: i64 = db
         .query("SELECT MAX(version) FROM cipherocto_schema_version", ())
         .expect("version query")
@@ -81,7 +91,7 @@ fn apply_pending_is_idempotent_on_re_run_after_partial_migration() {
     // dropped) → version 11 re-recorded.
     migrations::apply_pending(&db).expect("retry apply_pending");
 
-    // Catalog must record v010 again.
+    // Catalog must record v016 again.
     let version_after_retry: i64 = db
         .query("SELECT MAX(version) FROM cipherocto_schema_version", ())
         .expect("version query")

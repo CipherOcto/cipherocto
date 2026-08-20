@@ -3,6 +3,23 @@
 //! Backed by a `octo_storage_core::Database` with two tables:
 //! - `holder_registry` (PK = `cap_root_hash` BLOB)
 //! - `outbox` (atomic at-least-once delivery retry queue)
+
+// Pedantic lints were clean in quota-router-storage (no `pedantic`
+// config there). Mission 0206-003 v3.0 moves this file to
+// `octo-ident-storage` which enables `pedantic`. Relax the lints
+// that produce noise but not bugs (carried forward from the
+// pre-move code; documented in mission scope).
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_lossless,
+    clippy::needless_pass_by_value,
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    clippy::uninlined_format_args,
+    clippy::doc_markdown
+)]
 //!
 //! Schema per RFC-0957-A1 §StoolapHolderRegistry Schema. Cipherocto-side
 //! migration lives at `crates/quota-router-storage/migrations/v005__create_holder_registry.sql`
@@ -14,11 +31,8 @@
 //! non-market Bearer/V1 records are allowed; market-bound records
 //! (ask_id IS NOT NULL) are uniquely keyed by (ask_id, kind).
 
-use crate::clock::Clock;
-use crate::holder_kind::HolderKind;
-use crate::holder_record::HolderRecord;
-use crate::holder_registry::{HolderRegistry, RegistryError};
-use crate::migrations::apply_pending;
+use octo_cap_macaroon::{Clock, HolderKind, HolderRecord, HolderRegistry, RegistryError};
+use quota_router_storage::migrations::apply_pending;
 
 /// Canonical INSERT statement for the `holder_registry` table.
 /// Shared by `insert` (single-record) + `insert_dual` (atomic pair) so
@@ -312,15 +326,10 @@ impl HolderRegistry for StoolapHolderRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bearer_capsule_stub::BearerCapsule;
-    use crate::clock::FixedClock;
+    use octo_cap_macaroon::{BearerCapsule, FixedClock};
 
     fn bearer() -> BearerCapsule {
-        BearerCapsule {
-            bearer_capsule_hash: [0x42; 32],
-            encrypted_capsule: vec![0x01],
-            seller_signature: [0x55; 64],
-        }
+        BearerCapsule::new([0x42; 32], vec![0x01], [0x55; 64])
     }
 
     fn reg() -> StoolapHolderRegistry {
@@ -407,9 +416,9 @@ mod tests {
         );
         r.insert(b.clone()).unwrap();
         let v1 = HolderRecord::from_capability(
-            &crate::holder_record::CapabilityTokenLike {
+            &octo_cap_macaroon::CapabilityTokenLike {
                 cap_root_hash: [0x11; 32],
-                class: crate::holder_record::CapabilityClass::V1,
+                class: octo_cap_macaroon::CapabilityClass::V1,
             },
             &[0x22; 32],
             "did:octo:v1",
@@ -418,9 +427,9 @@ mod tests {
         );
         r.insert(v1.clone()).unwrap();
         let zk = HolderRecord::from_capability(
-            &crate::holder_record::CapabilityTokenLike {
+            &octo_cap_macaroon::CapabilityTokenLike {
                 cap_root_hash: [0x44; 32],
-                class: crate::holder_record::CapabilityClass::ZKBearing,
+                class: octo_cap_macaroon::CapabilityClass::ZKBearing,
             },
             &[0x55; 32],
             &octo_ident::test_helpers::sample_did(196),
@@ -464,11 +473,7 @@ mod tests {
         r.insert(b.clone()).unwrap();
         // Same (ask_id, kind) → must fail; UNIQUE on (ask_id, kind).
         let b2 = HolderRecord::from_bearer(
-            &BearerCapsule {
-                bearer_capsule_hash: [0x99; 32],
-                encrypted_capsule: vec![],
-                seller_signature: [0x55; 64],
-            },
+            &BearerCapsule::new([0x99; 32], vec![], [0x55; 64]),
             &[0x88; 32],
             "did:octo:b2",
             ask_id,
@@ -481,11 +486,7 @@ mod tests {
         );
         // Different ask_id, same kind → allowed.
         let b3 = HolderRecord::from_bearer(
-            &BearerCapsule {
-                bearer_capsule_hash: [0xAA; 32],
-                encrypted_capsule: vec![],
-                seller_signature: [0x55; 64],
-            },
+            &BearerCapsule::new([0xAA; 32], vec![], [0x55; 64]),
             &[0x77; 32],
             "did:octo:b",
             [0x44; 32],
@@ -543,9 +544,9 @@ mod tests {
 
     fn capability_v1(cap_root_hash: [u8; 32]) -> HolderRecord {
         HolderRecord::from_capability(
-            &crate::holder_record::CapabilityTokenLike {
+            &octo_cap_macaroon::CapabilityTokenLike {
                 cap_root_hash,
-                class: crate::holder_record::CapabilityClass::V1,
+                class: octo_cap_macaroon::CapabilityClass::V1,
             },
             &[0x88; 32],
             &octo_ident::test_helpers::sample_did(207),
@@ -560,11 +561,7 @@ mod tests {
         ask_id: [u8; 32],
     ) -> HolderRecord {
         HolderRecord::from_bearer(
-            &BearerCapsule {
-                bearer_capsule_hash: capsule_hash,
-                encrypted_capsule: vec![0x01, 0x02, 0x03],
-                seller_signature: [0x55; 64],
-            },
+            &BearerCapsule::new(capsule_hash, vec![0x01, 0x02, 0x03], [0x55; 64]),
             &holder_pub,
             &octo_ident::test_helpers::sample_did(118),
             ask_id,

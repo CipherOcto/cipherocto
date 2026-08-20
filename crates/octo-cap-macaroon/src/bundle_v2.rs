@@ -134,7 +134,8 @@ impl fmt::Debug for CapabilityTokenV2 {
 ///
 /// `holder_record_bytes` is the serialized form of the `HolderRecord`;
 /// consumers deserialize via
-/// `quota_router_storage::holder_record::HolderRecord::canonical_de`.
+/// `octo_cap_macaroon::HolderRecord::canonical_de` (moved from
+/// `quota_router_storage::holder_record` in mission 0206-003 v3.0).
 ///
 /// `discharge_macaroon_bytes` is the serialized form of a
 /// `DischargeMacaroon`; consumers deserialize via

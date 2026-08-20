@@ -13,9 +13,7 @@
 
 use thiserror::Error;
 
-use crate::bearer_capsule_stub::BearerCapsule;
-use crate::holder_record::HolderRecord;
-use crate::holder_registry::RegistryError;
+use octo_cap_macaroon::{BearerCapsule, HolderRecord, RegistryError};
 
 /// Atomic transaction boundary.
 pub struct Transaction {
@@ -108,11 +106,7 @@ mod tests {
             _inner: std::marker::PhantomData,
         };
         let rec = HolderRecord::from_bearer(
-            &BearerCapsule {
-                bearer_capsule_hash: [0x42; 32],
-                encrypted_capsule: vec![],
-                seller_signature: [0x55; 64],
-            },
+            &BearerCapsule::new([0x42; 32], vec![], [0x55; 64]),
             &[0x77; 32],
             &octo_ident::test_helpers::sample_did(137),
             [0x33; 32],

@@ -76,6 +76,10 @@ zk-verifier = { path = "../zk-verifier" }
 # `octo-wallet ask publish/list/show/revoke` CLI subcommand set
 # (mission 0959-a §CLI surface).
 quota-router-storage = { path = "../quota-router-storage" }
+# Mission 0206-003 v3.0: StoolapHolderRegistry impl lives in
+# octo-ident-storage; octo-wallet test fixtures import directly from
+# the new declarer crate (Layer C adapter).
+octo-ident-storage = { path = "../octo-ident-storage" }
 
 # S4 codemod (RFC-0105 DFP): CLI bin constructs `AxisRate { rate_per_1k: Dqa }`
 # from a parsed u128 CLI arg. Git dep matches workspace version (avoids
@@ -116,7 +120,7 @@ octo-cap-zk = { path = "../octo-cap-zk" }
 cipherocto-encoding = { path = "../cipherocto-encoding" }
 
 # Policy Object Graph (RFC-0967) — subgraph check at redemption (Gap 1)
-cipherocto-policy = { path = "../cipherocto-policy" }
+octo-policy = { path = "../octo-policy" }
 
 # Vault encryption (RFC-0009 §Vault + RFC-0102 §Key Storage post-amendment)
 argon2 = "0.5"

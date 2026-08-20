@@ -32,10 +32,10 @@ use octo_wallet::capability::market_delivery::{
     DealSettled, DealSettledPayload, MarketDeliveryEnvelope, RoleTag,
 };
 
-use quota_router_storage::holder_kind::HolderKind;
-use quota_router_storage::holder_record::{CapabilityClass, CapabilityTokenLike, HolderRecord};
-use quota_router_storage::holder_registry::HolderRegistry;
-use quota_router_storage::stoolap_holder_registry::StoolapHolderRegistry;
+use octo_ident_storage::StoolapHolderRegistry;
+use quota_router_storage::HolderKind;
+use quota_router_storage::HolderRegistry;
+use quota_router_storage::{CapabilityClass, CapabilityTokenLike, HolderRecord};
 
 /// Buyer DID used throughout the test (canonical RFC-0968 DID format).
 fn buyer_did() -> String {

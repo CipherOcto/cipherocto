@@ -14,8 +14,8 @@
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use octo_protocol::ProtocolError;
-use quota_router_storage::holder_record::HolderRecord;
-use quota_router_storage::holder_registry::HolderRegistry;
+use quota_router_storage::HolderRecord;
+use quota_router_storage::HolderRegistry;
 
 use super::HandlerOutput;
 
@@ -152,7 +152,7 @@ impl<'a> CapabilityLookupHandler<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quota_router_storage::stoolap_holder_registry::StoolapHolderRegistry;
+    use octo_ident_storage::StoolapHolderRegistry;
 
     fn sample_registry() -> std::sync::Arc<dyn HolderRegistry> {
         std::sync::Arc::new(StoolapHolderRegistry::open_in_memory().unwrap())

@@ -13,7 +13,7 @@ use octo_wallet::capability::redemption::{
 use octo_wallet::capability::CapabilityToken;
 use octo_wallet::identity::IdentityKey;
 
-use cipherocto_policy::{PolicyObject, PolicySurface};
+use octo_policy::{PolicyObject, PolicySurface};
 
 use std::collections::{HashMap, HashSet};
 

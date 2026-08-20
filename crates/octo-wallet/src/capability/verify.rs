@@ -7,8 +7,8 @@
 
 use std::sync::Arc;
 
-use quota_router_storage::clock::Clock;
-use quota_router_storage::holder_registry::HolderRegistry;
+use quota_router_storage::Clock;
+use quota_router_storage::HolderRegistry;
 
 use super::wire::{compute_cap_root_hash_from_wire, deserialize_wire, WireError};
 use super::CapabilityToken;
@@ -64,7 +64,7 @@ pub enum VerifyError {
     #[error("wire error: {0}")]
     Wire(#[from] WireError),
     #[error("registry error: {0}")]
-    Registry(#[from] quota_router_storage::holder_registry::RegistryError),
+    Registry(#[from] quota_router_storage::RegistryError),
     #[error("holder not found in registry: cap_root_hash=<redacted 32 bytes>")]
     HolderNotFound,
     #[error("holder record is not active (revoked or expired)")]
@@ -127,10 +127,10 @@ pub fn verify_with_resolve(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quota_router_storage::clock::FixedClock;
-    use quota_router_storage::holder_kind::HolderKind;
-    use quota_router_storage::holder_record::{CapabilityClass, CapabilityTokenLike, HolderRecord};
-    use quota_router_storage::stoolap_holder_registry::StoolapHolderRegistry;
+    use octo_ident_storage::StoolapHolderRegistry;
+    use quota_router_storage::FixedClock;
+    use quota_router_storage::HolderKind;
+    use quota_router_storage::{CapabilityClass, CapabilityTokenLike, HolderRecord};
 
     fn test_registry() -> Arc<dyn HolderRegistry> {
         Arc::new(StoolapHolderRegistry::open_in_memory().unwrap())

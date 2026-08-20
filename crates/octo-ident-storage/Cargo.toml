@@ -11,14 +11,44 @@ name = "octo_ident_storage"
 path = "src/lib.rs"
 
 [dependencies]
-# Layer A substrate (mission 0206-001). StoolapDidRegistry holds
-# `octo_storage_core::Database`; constructor returns
-# `Result<Database, SubstrateError>`.
+# Layer A substrate (mission 0206-001). StoolapDidRegistry +
+# StoolapHolderRegistry hold `octo_storage_core::Database`; constructor
+# returns `Result<Database, SubstrateError>`.
 octo-storage-core = { path = "../octo-storage-core" }
 
 # DidRegistry trait + DidDocument + ChainId + DidRegistryError types.
 # Layer B (octo-ident owns the trait + shape types per RFC-0010 v1.3).
-octo-ident = { path = "../octo-ident" }
+# `borsh` feature required: `StoolapDidRegistry` borsh-encodes the
+# 4 rich-document fields (mission 0010-f8-rich-did-storage); the
+# derives on `ServiceEndpoint`/`ControllerReference`/`VerificationMethod`/
+# `CapabilityDelegation` are gated behind `#[cfg_attr(feature = "borsh", ...)]`
+# in octo-ident.
+octo-ident = { path = "../octo-ident", features = ["borsh"] }
+
+# Mission 0206-003 v3.0: HolderRegistry trait + RegistryError +
+# Clock + HolderKind + HolderRecord + BearerCapsule types live in
+# octo-cap-macaroon (Layer B). StoolapHolderRegistry impl uses them.
+octo-cap-macaroon = { path = "../octo-cap-macaroon" }
+
+# D1 deviation (carried forward from mission 0206-008): the substrate
+# does not yet re-export `stoolap::ApiTransaction` / `stoolap::ResultRow`.
+# The HolderRegistry impl uses these directly for atomicity
+# (transaction-scoped SELECT/UPDATE). `0206-011b` v2.2 amendment is the
+# proper scope to add a `pub mod stoolap` re-export to the substrate.
+# Until then, the direct dep stays.
+stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
+
+# Layer B — sole home of `apply_pending` migration runner + the
+# `did_registry` schema migrations (v008..v011). The StoolapDidRegistry
+# constructor calls `migrations::apply_pending` to set up the table.
+# Layer C → Layer B dep allowed per RFC-0957-A1 §Layer Discipline.
+# Mission 0206-003 v3.0 R1 review: schema migrations STAY here
+# (sole source of truth for `cipherocto_schema_version` tracker table)
+# because the substrate's `apply_pending` skips migrations with
+# version <= current DB version — a split catalog would silently
+# skip quota-router's v001-v007 when octo-ident-storage had already
+# bumped the DB to v011.
+quota-router-storage = { path = "../quota-router-storage" }
 
 # Borsh encoding for rich-document columns (mission 0010-f8-rich-did-storage).
 borsh = { version = "=1.5.0", features = ["derive"] }

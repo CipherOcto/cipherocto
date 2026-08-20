@@ -17,6 +17,10 @@ blake3 = "1.5"
 hex = "0.4"
 # Serde derives for Caveat + Macaroon + CapabilityCatalog (RFC-0126 canonical ser).
 serde = { version = "1", features = ["derive"] }
+# serde_bytes for `HolderRecord` 32-byte field wrappers (`cap_root_hash`,
+# `holder_pub`, `ask_id`) — mission 0206-003 v3.0 moved HolderRecord
+# into this crate from quota-router-storage.
+serde_bytes = "0.11"
 # serde_json for `caveat::canonical_ser` JSON serialization (RFC-0126).
 serde_json = "1"
 # RNG for the 16-byte macaroon nonce (RFC-0957 §3.2 root_id derivation).

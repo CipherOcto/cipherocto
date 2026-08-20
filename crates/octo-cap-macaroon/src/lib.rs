@@ -69,7 +69,19 @@ pub mod catalog;
 pub mod vault_lookup;
 pub mod vault_verify_error;
 
+// Mission 0206-003 v3.0 trait move: HolderRegistry + RegistryError +
+// the domain types (Clock, HolderKind, HolderRecord, BearerCapsule,
+// CapabilityTokenLike, CapabilityClass) all moved here from
+// `crates/quota-router-storage/`. Sole source of truth for the
+// capability-macaroon domain types per RFC-0206 v2.1 §Layer B.
+pub mod bearer_capsule_stub;
+pub mod clock;
+pub mod holder_kind;
+pub mod holder_record;
+pub mod holder_registry;
+
 // Re-exports for ergonomic single-import paths.
+pub use bearer_capsule_stub::BearerCapsule;
 pub use bundle_v2::{
     BundleV2Error, CapabilityBundleV2, CapabilityBundleV2Envelope, CapabilityTokenV2,
     BUNDLE_ID_DOMAIN_V2, BUNDLE_VERSION_V2, CIPHEROCTO_V2_BUNDLE_PREFIX, MAX_CHAIN_DEPTH,
@@ -81,12 +93,16 @@ pub use caveat::{
     PaidQueryRejectionReason, PaymentCaveat, PerAxisMax, PermissionKind, ProviderId, RateLimit,
     RawCaveat, UnixTimeSecs, ISO3166, PAID_QUERY_CAVEAT_NAME,
 };
+pub use clock::{Clock, FixedClock, SystemClock};
 pub use discharge::{
     verify_discharges, ChannelProvider, ChannelProviderRegistry, ChannelProviderResolver,
     DischargeChannel, DischargeError, DischargeRequest, DischargeVerification, EscrowBalance,
     EscrowDischargeProvider, RateLimitContext, RateLimitDischargeProvider,
     RevocationDischargeProvider, REVOCATION_DISCHARGE_TTL_SECS,
 };
+pub use holder_kind::HolderKind;
+pub use holder_record::{CapabilityClass, CapabilityTokenLike, HolderRecord};
+pub use holder_registry::{HolderRegistry, RegistryError};
 pub use macaroon::{
     check_wrapped_chain, check_wrapped_depth, compute_capability_id, CapabilityCatalog,
     CapabilityGossip, CatalogGossipError, Macaroon, MacaroonError, MAX_WRAPPED_DEPTH,

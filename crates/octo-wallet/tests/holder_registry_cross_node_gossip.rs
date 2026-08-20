@@ -25,11 +25,11 @@
 
 use std::sync::Arc;
 
-use quota_router_storage::clock::FixedClock;
-use quota_router_storage::holder_kind::HolderKind;
-use quota_router_storage::holder_record::HolderRecord;
-use quota_router_storage::holder_registry::HolderRegistry;
-use quota_router_storage::stoolap_holder_registry::StoolapHolderRegistry;
+use octo_ident_storage::StoolapHolderRegistry;
+use quota_router_storage::FixedClock;
+use quota_router_storage::HolderKind;
+use quota_router_storage::HolderRecord;
+use quota_router_storage::HolderRegistry;
 
 /// Two-node fixture: separate in-memory `StoolapHolderRegistry` instances
 /// (each backed by its own Stoolap DB) connected by an mpsc gossip channel.
@@ -163,7 +163,7 @@ async fn gossip_apply_is_idempotent_on_duplicate() {
     assert!(
         matches!(
             result,
-            Err(quota_router_storage::holder_registry::RegistryError::AlreadyExists)
+            Err(quota_router_storage::RegistryError::AlreadyExists)
         ),
         "duplicate gossip apply must return AlreadyExists, got {result:?}"
     );
@@ -176,10 +176,7 @@ async fn serialize_for_gossip_missing_record_errors() {
     let missing = [0xee; 32];
     let result = fixture.node_a.serialize_for_gossip(&missing);
     assert!(
-        matches!(
-            result,
-            Err(quota_router_storage::holder_registry::RegistryError::Storage(_))
-        ),
+        matches!(result, Err(quota_router_storage::RegistryError::Storage(_))),
         "missing record must return Storage error, got {result:?}"
     );
 }
@@ -191,10 +188,7 @@ async fn apply_gossip_record_rejects_malformed_bytes() {
     let garbage = b"not json {{{";
     let result = fixture.node_b.apply_gossip_record(garbage);
     assert!(
-        matches!(
-            result,
-            Err(quota_router_storage::holder_registry::RegistryError::Storage(_))
-        ),
+        matches!(result, Err(quota_router_storage::RegistryError::Storage(_))),
         "malformed bytes must return Storage error, got {result:?}"
     );
 }
@@ -232,7 +226,7 @@ async fn apply_gossip_record_rejects_duplicate_ask_id() {
     assert!(
         matches!(
             result,
-            Err(quota_router_storage::holder_registry::RegistryError::AlreadyExists)
+            Err(quota_router_storage::RegistryError::AlreadyExists)
         ),
         "duplicate (ask_id, kind) must surface AlreadyExists, got {result:?}"
     );

@@ -25,10 +25,10 @@ use quota_router_core::ingress::authenticator::{
     BearerVerifier, CapabilityVerifier, GatewayAuthenticator, RoutingDecision,
 };
 
-use quota_router_storage::clock::{Clock, FixedClock};
-use quota_router_storage::holder_kind::HolderKind;
-use quota_router_storage::holder_record::HolderRecord;
-use quota_router_storage::holder_registry::{HolderRegistry, RegistryError};
+use quota_router_storage::HolderKind;
+use quota_router_storage::HolderRecord;
+use quota_router_storage::{Clock, FixedClock};
+use quota_router_storage::{HolderRegistry, RegistryError};
 
 // =========================================================================
 // Test fixtures

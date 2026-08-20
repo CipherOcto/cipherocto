@@ -2,8 +2,8 @@
 //!
 //! Locks TV-0206-A10: the adapter registers itself with the substrate
 //! facade + a roundtrip write+read produces the inserted payload.
-//! Full StoolapDidRegistry impl lands in mission 0206-003; this stub
-//! exercises the open_in_memory + apply_pending substrate path.
+//! Full `StoolapDidRegistry` impl lands in mission 0206-003; this stub
+//! exercises the `open_in_memory` + `apply_pending` substrate path.
 
 use octo_ident_storage::StoolapDidRegistry;
 

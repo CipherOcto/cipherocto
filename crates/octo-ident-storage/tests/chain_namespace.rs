@@ -8,18 +8,22 @@
 //!
 //! **NOTE:** Tests serialize via Mutex because stoolap `memory://`
 //! shares global catalog state across threads.
+//!
+//! Moved from `crates/quota-router-storage/tests/stoolap_chain_namespace.rs`
+//! in mission 0206-003 v3.0 (the DID registry adapter now lives in
+//! `octo-ident-storage`).
 
-use std::sync::Mutex;
+use std::sync::{Mutex, PoisonError};
 
 use octo_ident::{ChainId, DidRegistry};
-use quota_router_storage::stoolap_did_registry::{StoolapDidRegistry, MAINNET_CHAIN_ID_BYTES};
+use octo_ident_storage::{StoolapDidRegistry, MAINNET_CHAIN_ID_BYTES};
 
 static MIGRATION_LOCK: Mutex<()> = Mutex::new(());
 
 fn sample_hash(seed: u8) -> [u8; 32] {
     let mut h = [0u8; 32];
     for (i, b) in h.iter_mut().enumerate() {
-        *b = seed.wrapping_add(i as u8);
+        *b = seed.wrapping_add(u8::try_from(i).expect("loop index fits in u8"));
     }
     h
 }
@@ -27,7 +31,11 @@ fn sample_hash(seed: u8) -> [u8; 32] {
 fn sample_pk(seed: u8) -> [u8; 32] {
     let mut k = [0u8; 32];
     for (i, b) in k.iter_mut().enumerate() {
-        *b = seed.wrapping_add((i as u8).wrapping_mul(3));
+        *b = seed.wrapping_add(
+            u8::try_from(i)
+                .expect("loop index fits in u8")
+                .wrapping_mul(3),
+        );
     }
     k
 }
@@ -44,7 +52,9 @@ fn sample_doc(seed: u8) -> octo_ident::DidDocument {
 /// both resolve independently under their respective chain.
 #[test]
 fn register_in_chain_isolates_dids_across_chains() {
-    let _guard = MIGRATION_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _guard = MIGRATION_LOCK
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
     let reg = StoolapDidRegistry::open_in_memory().expect("open");
 
     let mainnet = ChainId::default();

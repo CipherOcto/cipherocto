@@ -59,7 +59,7 @@ pub struct CapabilityIssuerNodeConfig {
     /// `HolderRecord`s, by `CAPABILITY_REVOKE` to mutate the
     /// `revoked_at_millis_unix` field, and by `CAPABILITY_LOOKUP`
     /// to query by `cap_root_hash` PK.
-    pub holder_registry: Arc<dyn quota_router_storage::holder_registry::HolderRegistry>,
+    pub holder_registry: Arc<dyn quota_router_storage::HolderRegistry>,
     /// HSM-routed identity (mission 0959 placeholder-identity-binding).
     /// When present, `broadcast_announce` derives the `RouterNodeId`
     /// from `identity.public_key_bytes()` and signs the announce HMAC
@@ -304,14 +304,14 @@ fn self_clone_to_receiver(node: &CapabilityIssuerNode) -> Arc<dyn NetworkReceive
 mod tests {
     use super::*;
     use crate::handlers::{IssueRequest, RevokeRequest};
-    use quota_router_storage::stoolap_holder_registry::StoolapHolderRegistry;
+    use octo_ident_storage::StoolapHolderRegistry;
 
     fn test_transport() -> Arc<NodeTransport> {
         let senders: Vec<Arc<dyn octo_transport::sender::NetworkSender>> = vec![];
         Arc::new(NodeTransport::new(senders))
     }
 
-    fn test_registry() -> Arc<dyn quota_router_storage::holder_registry::HolderRegistry> {
+    fn test_registry() -> Arc<dyn quota_router_storage::HolderRegistry> {
         Arc::new(StoolapHolderRegistry::open_in_memory().unwrap())
     }
 

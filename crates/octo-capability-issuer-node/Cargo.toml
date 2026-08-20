@@ -27,6 +27,10 @@ octo-transport = { path = "../../octo-transport" }
 # 0957-phase2c). Used by the issue / revoke / lookup handlers to
 # register / mutate / query `HolderRecord` state.
 quota-router-storage = { path = "../quota-router-storage" }
+# Mission 0206-003 v3.0: StoolapHolderRegistry impl lives in
+# octo-ident-storage (Layer C adapter); capability-issuer-node wires
+# the production holder registry via the new declarer crate.
+octo-ident-storage = { path = "../octo-ident-storage" }
 # Layer A core — RouterAnnouncePayload type (mission 0871e-phase5c;
 # broadcast_announce emits canonical shape instead of stub bytes)
 quota-router-core = { path = "../quota-router-core" }

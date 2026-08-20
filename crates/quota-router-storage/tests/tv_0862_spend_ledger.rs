@@ -47,8 +47,8 @@
 //! API surface mirrors `crates/quota-router-storage/src/stoolap_spend_ledger.rs`.
 
 use octo_determin::{Dqa, DqaEncoding};
-use quota_router_storage::clock::FixedClock;
 use quota_router_storage::stoolap_spend_ledger::{SpendLedgerError, StoolapSpendLedger};
+use quota_router_storage::FixedClock;
 
 // =============================================================================
 // TV-0862-01 — row creation via seed

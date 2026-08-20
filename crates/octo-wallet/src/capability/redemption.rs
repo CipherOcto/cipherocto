@@ -35,7 +35,7 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use cipherocto_policy::{is_subgraph, PolicyObject, PolicySurface};
+use octo_policy::{is_subgraph, PolicyObject, PolicySurface};
 use thiserror::Error;
 
 use super::caveat::Caveat;

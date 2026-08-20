@@ -20,23 +20,16 @@ pub mod anti_fraud;
 pub mod ask;
 pub mod ask_repo;
 pub mod axis_registry_toml;
-pub mod bearer_capsule_stub;
 pub mod cache_key;
 pub mod circuit_breaker;
-pub mod clock;
 pub mod consumed_receipt_repo;
 pub mod dqa_serde;
-pub mod holder_kind;
-pub mod holder_record;
-pub mod holder_registry;
 pub mod marketplace;
 pub mod migrations;
 pub mod outbox;
 pub mod settlement_event_repo;
 pub mod settlement_verify;
 pub mod slash_store;
-pub mod stoolap_did_registry;
-pub mod stoolap_holder_registry;
 pub mod stoolap_spend_ledger;
 pub mod sync;
 pub mod transaction;
@@ -72,7 +65,17 @@ pub use circuit_breaker::{
 };
 pub use consumed_receipt_repo::ConsumedReceiptRepository;
 pub use marketplace::{MarketplaceIndex, ACTIVE_ASK_CAP};
+
+// Mission 0206-003 v3.0: re-export capability-macaroon domain types
+// (moved here from quota-router-storage). Back-compat for downstream
+// crates that still import these via `quota_router_storage::...`.
+// Sole source of truth lives in `octo_cap_macaroon` per
+// RFC-0206 v2.1 §Layer B.
 pub use migrations::{apply_pending, list_migrations, MigrationError, BUILTIN_MIGRATIONS};
+pub use octo_cap_macaroon::{
+    BearerCapsule, CapabilityClass, CapabilityTokenLike, Clock, FixedClock, HolderKind,
+    HolderRecord, HolderRegistry, RegistryError, SystemClock,
+};
 pub use settlement_event_repo::{
     PersistedSettlementEvent, SettlementEventInsert, SettlementEventRepository,
 };

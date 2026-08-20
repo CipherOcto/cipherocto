@@ -1,6 +1,6 @@
 //! `StoolapSpendLedger` (mission 0871e-phase5b-stoolap-ledger).
 //!
-//! Persistent spend-ledger backed by a `stoolap::Database` with the
+//! Persistent spend-ledger backed by a `octo_storage_core::Database` with the
 //! `spend_ledger` table (migration v007). Replaces the in-memory
 //! `InMemorySpendLedger` for production deployments where the spend
 //! ledger MUST survive process restarts and be shareable across
@@ -192,7 +192,7 @@ pub enum SpendLedgerError {
 /// Stoolap-backed spend ledger (production).
 #[derive(Clone)]
 pub struct StoolapSpendLedger {
-    db: Arc<stoolap::Database>,
+    db: Arc<octo_storage_core::Database>,
     /// Per-instance drain lock. Serializes `try_deduct` calls so the
     /// SELECT-then-UPDATE race is impossible within a single
     /// `StoolapSpendLedger` instance. Cross-instance coordination is
@@ -245,7 +245,7 @@ impl StoolapSpendLedger {
     /// # Errors
     /// Returns `SpendLedgerError::Storage` on DB open / migration failure.
     pub fn open_in_memory_with_clock(clock: Arc<dyn Clock>) -> Result<Self, SpendLedgerError> {
-        let db = stoolap::Database::open_in_memory()
+        let db = octo_storage_core::Database::open_in_memory()
             .map_err(|e| SpendLedgerError::Storage(format!("open_in_memory: {e}")))?;
         migrations::apply_pending(&db)
             .map_err(|e| SpendLedgerError::Storage(format!("apply_pending: {e}")))?;
@@ -292,7 +292,7 @@ impl StoolapSpendLedger {
         path: &str,
         clock: Arc<dyn Clock>,
     ) -> Result<Self, SpendLedgerError> {
-        let db = stoolap::Database::open(path)
+        let db = octo_storage_core::Database::open(path)
             .map_err(|e| SpendLedgerError::Storage(format!("open({path}): {e}")))?;
         migrations::apply_pending(&db)
             .map_err(|e| SpendLedgerError::Storage(format!("apply_pending: {e}")))?;

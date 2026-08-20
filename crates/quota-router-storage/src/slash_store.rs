@@ -110,11 +110,11 @@ pub enum SlashStoreError {
 
 /// Stoolap-backed `SlashStore` impl (production).
 ///
-/// Wraps a `stoolap::Database` handle. The database must have had
+/// Wraps a `octo_storage_core::Database` handle. The database must have had
 /// `migrations::apply_pending` invoked at startup; `open_in_memory`
 /// and `open_path` helpers apply pending migrations for convenience.
 pub struct StoolapSlashStore {
-    db: stoolap::Database,
+    db: octo_storage_core::Database,
 }
 
 impl StoolapSlashStore {
@@ -122,7 +122,7 @@ impl StoolapSlashStore {
     /// # Errors
     /// Returns `SlashStoreError` on open / migration failure.
     pub fn open_in_memory() -> Result<Self, SlashStoreError> {
-        let db = stoolap::Database::open_in_memory()
+        let db = octo_storage_core::Database::open_in_memory()
             .map_err(|e| SlashStoreError::Db(format!("open_in_memory: {e}")))?;
         migrations::apply_pending(&db)?;
         Ok(Self { db })
@@ -133,7 +133,7 @@ impl StoolapSlashStore {
     /// # Errors
     /// Returns `SlashStoreError` on open / migration failure.
     pub fn open_path(path: &str) -> Result<Self, SlashStoreError> {
-        let db = stoolap::Database::open(path)
+        let db = octo_storage_core::Database::open(path)
             .map_err(|e| SlashStoreError::Db(format!("open({path}): {e}")))?;
         migrations::apply_pending(&db)?;
         Ok(Self { db })
@@ -142,7 +142,7 @@ impl StoolapSlashStore {
     /// Wrap an existing database handle. Caller is responsible for
     /// applying pending migrations at startup.
     #[must_use]
-    pub fn from_db(db: stoolap::Database) -> Self {
+    pub fn from_db(db: octo_storage_core::Database) -> Self {
         Self { db }
     }
 }

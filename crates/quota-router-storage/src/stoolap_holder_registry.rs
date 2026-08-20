@@ -1,6 +1,6 @@
 //! `StoolapHolderRegistry` reference impl (RFC-0957-A1 §Schema).
 //!
-//! Backed by a `stoolap::Database` with two tables:
+//! Backed by a `octo_storage_core::Database` with two tables:
 //! - `holder_registry` (PK = `cap_root_hash` BLOB)
 //! - `outbox` (atomic at-least-once delivery retry queue)
 //!
@@ -78,8 +78,11 @@ fn classify_insert_err(e: stoolap::Error) -> RegistryError {
     }
 }
 
-/// Execute `INSERT_HOLDER_SQL` against a `stoolap::Database`.
-fn execute_insert_db(db: &stoolap::Database, record: &HolderRecord) -> Result<(), RegistryError> {
+/// Execute `INSERT_HOLDER_SQL` against a `octo_storage_core::Database`.
+fn execute_insert_db(
+    db: &octo_storage_core::Database,
+    record: &HolderRecord,
+) -> Result<(), RegistryError> {
     db.execute(INSERT_HOLDER_SQL, insert_params(record))
         .map(|_| ())
         .map_err(classify_insert_err)
@@ -98,7 +101,7 @@ fn execute_insert_tx(
 
 /// Stoolap-backed registry implementation.
 pub struct StoolapHolderRegistry {
-    db: stoolap::Database,
+    db: octo_storage_core::Database,
 }
 
 impl std::fmt::Debug for StoolapHolderRegistry {
@@ -111,14 +114,14 @@ impl std::fmt::Debug for StoolapHolderRegistry {
 impl StoolapHolderRegistry {
     /// Open a fresh in-memory database with the holder_registry schema applied.
     pub fn open_in_memory() -> Result<Self, RegistryError> {
-        let db = stoolap::Database::open_in_memory()
+        let db = octo_storage_core::Database::open_in_memory()
             .map_err(|e| RegistryError::Storage(format!("open_in_memory: {e}")))?;
         apply_pending(&db).map_err(|e| RegistryError::Storage(format!("apply_pending: {e}")))?;
         Ok(Self { db })
     }
 
-    /// Wrap an existing `stoolap::Database` (does NOT call `apply_pending`).
-    pub fn from_database(db: stoolap::Database) -> Self {
+    /// Wrap an existing `octo_storage_core::Database` (does NOT call `apply_pending`).
+    pub fn from_database(db: octo_storage_core::Database) -> Self {
         Self { db }
     }
 

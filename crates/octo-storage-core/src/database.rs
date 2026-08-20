@@ -19,6 +19,13 @@ use crate::typed_statement::TypedStatement;
 /// Newtype wrapping `stoolap::Database`. The substrate's only public
 /// SQL execution path is [`Database::execute_checked`], which enforces
 /// the per-adapter [`AdapterAllowlist`] before forwarding to Stoolap.
+///
+/// `Clone` is derived because the inner `stoolap::Database` is itself
+/// `Clone` (cheap handle clone); consumer crates that embed `Database`
+/// in `#[derive(Clone)]` structs (e.g. `StoolapAskRepository`) rely on
+/// this impl. Cloning does NOT bypass the allowlist — every clone is
+/// independently subject to [`Database::execute_checked`] on use.
+#[derive(Clone)]
 pub struct Database(stoolap::Database);
 
 impl Database {

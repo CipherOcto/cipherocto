@@ -54,7 +54,7 @@ impl VerifyOutcome {
 /// embedded DB; no caching layer at MVP.
 #[derive(Clone)]
 pub struct ConsumedReceiptRepository {
-    db: stoolap::Database,
+    db: octo_storage_core::Database,
 }
 
 impl ConsumedReceiptRepository {
@@ -63,7 +63,7 @@ impl ConsumedReceiptRepository {
     /// # Errors
     /// Returns `RepoError::Db` on DB open failure, `RepoError::Migration` if migrations fail.
     pub fn open_in_memory() -> Result<Self, RepoError> {
-        let db = stoolap::Database::open_in_memory()
+        let db = octo_storage_core::Database::open_in_memory()
             .map_err(|e| RepoError::Db(format!("open_in_memory: {e}")))?;
         migrations::apply_pending(&db)?;
         Ok(Self { db })
@@ -73,7 +73,7 @@ impl ConsumedReceiptRepository {
     /// # Errors
     /// Returns `RepoError::Db` on DB open failure, `RepoError::Migration` if migrations fail.
     pub fn open_path(path: &str) -> Result<Self, RepoError> {
-        let db = stoolap::Database::open(path)
+        let db = octo_storage_core::Database::open(path)
             .map_err(|e| RepoError::Db(format!("open({path}): {e}")))?;
         migrations::apply_pending(&db)?;
         Ok(Self { db })
@@ -82,7 +82,7 @@ impl ConsumedReceiptRepository {
     /// Wrap an existing stoolap connection (caller-owned). Caller is responsible
     /// for invoking `migrations::apply_pending(db)` at startup.
     #[must_use]
-    pub fn from_db(db: stoolap::Database) -> Self {
+    pub fn from_db(db: octo_storage_core::Database) -> Self {
         Self { db }
     }
 

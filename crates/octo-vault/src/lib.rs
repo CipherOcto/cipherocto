@@ -9,7 +9,7 @@
 //!   field later dropped as a phantom type, see §20.10).
 //! - [`vault_id`] canonical BLAKE3 derivation per §8.10 TV-V1.
 //! - [`apply`] delegating to the Layer A substrate
-//!   [`octo_storage_core::apply_pending`].
+//!   [`octo_storage_core::_legacy_apply_pending`].
 //!
 //! ## Layer model
 //!
@@ -348,11 +348,11 @@ pub fn vault_id_unchecked(chain_id: ChainId, owner_did: &str, asset_id: AssetId)
 /// `apply_pending` (S2). Migration runner is synchronous; the
 /// `octo-vault-node` Layer C crate (NOT this scaffold) wraps it in
 /// `spawn_blocking`.
-pub fn apply(db: &stoolap::Database) -> Result<(), VaultError> {
-    octo_storage_core::apply_pending(
+pub fn apply(db: &octo_storage_core::Database) -> Result<(), VaultError> {
+    octo_storage_core::_legacy_apply_pending(
         db,
         BUILTIN_MIGRATION_CATALOG,
-        octo_storage_core::ApplyConfig::default(),
+        octo_storage_core::_legacy_ApplyConfig::default(),
     )
     .map_err(|_e| VaultError::Substrate)
 }
@@ -368,14 +368,14 @@ pub fn apply(db: &stoolap::Database) -> Result<(), VaultError> {
 /// `VaultLookup` lookup primitive without taking a direct `stoolap`
 /// dep — keeping `octo-cap-macaroon` free of substrate-internal types
 /// per the layer direction (B → B is allowed only through this typed
-/// handle, never through raw `stoolap::Database` re-export).
+/// handle, never through raw `octo_storage_core::Database` re-export).
 ///
 /// Production deployment wiring (config-time injection of an
 /// `Arc<VaultSubstrate>` into the verify path) lands in `octo-vault-node`
 /// (Layer C) — see mission 0957-g1 AC-2.
 #[derive(Clone)]
 pub struct VaultSubstrate {
-    db: Arc<stoolap::Database>,
+    db: Arc<octo_storage_core::Database>,
 }
 
 impl std::fmt::Debug for VaultSubstrate {
@@ -392,7 +392,7 @@ impl VaultSubstrate {
     /// `Database` handle. Caller is responsible for running [`apply`]
     /// (and any other migrations) on the database before the substrate
     /// handle is constructed; the substrate handle does not auto-migrate.
-    pub fn new(db: Arc<stoolap::Database>) -> Self {
+    pub fn new(db: Arc<octo_storage_core::Database>) -> Self {
         Self { db }
     }
 

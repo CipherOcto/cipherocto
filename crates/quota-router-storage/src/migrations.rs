@@ -5,7 +5,7 @@
 //! runs all migrations with higher version in order, idempotently.
 //!
 //! Layer B (mission `octo-storage-split` S2): the underlying migration
-//! runner is the Layer A substrate `octo_storage_core::apply_pending`.
+//! runner is the Layer A substrate `octo_storage_core::_legacy_apply_pending`.
 //! The bespoke `ensure_version_table`, `current_version`, `run_one`, and
 //! `split_sql_statements` quartet is gone; the substrate provides all
 //! four. This crate retains the catalog view and the `MigrationError`
@@ -17,84 +17,84 @@
 
 use thiserror::Error;
 
-// The `version()`/`name()` methods on `octo_storage_core::StaticMigration`
+// The `version()`/`name()` methods on `octo_storage_core::_legacy_StaticMigration`
 // live on the `Migration` trait — must be in scope to call them. The
 // trait is imported under a private alias because the public
 // `Migration` type alias (see below) shadows the trait name in this
 // module's namespace.
-use octo_storage_core::Migration as _Migration;
+use octo_storage_core::_legacy_Migration as _Migration;
 
 /// Built-in migrations for the cipherocto `octo-core` schema.
 ///
 /// Add new migrations to the END of this list. Never reorder or remove
 /// already-released migrations.
-pub const BUILTIN_MIGRATIONS: &[octo_storage_core::StaticMigration] = &[
-    octo_storage_core::StaticMigration::new(
+pub const BUILTIN_MIGRATIONS: &[octo_storage_core::_legacy_StaticMigration] = &[
+    octo_storage_core::_legacy_StaticMigration::new(
         1,
         "create_asks_table",
         include_str!("../migrations/v001__create_asks_table.sql"),
     ),
-    octo_storage_core::StaticMigration::new(
+    octo_storage_core::_legacy_StaticMigration::new(
         2,
         "create_asks_indexes",
         include_str!("../migrations/v002__create_asks_indexes.sql"),
     ),
-    octo_storage_core::StaticMigration::new(
+    octo_storage_core::_legacy_StaticMigration::new(
         3,
         "create_consumed_receipt_index",
         include_str!("../migrations/v003__create_consumed_receipt_index.sql"),
     ),
-    octo_storage_core::StaticMigration::new(
+    octo_storage_core::_legacy_StaticMigration::new(
         4,
         "create_settlement_events",
         include_str!("../migrations/v004__create_settlement_events.sql"),
     ),
-    octo_storage_core::StaticMigration::new(
+    octo_storage_core::_legacy_StaticMigration::new(
         5,
         "create_holder_registry",
         include_str!("../migrations/v005__create_holder_registry.sql"),
     ),
-    octo_storage_core::StaticMigration::new(
+    octo_storage_core::_legacy_StaticMigration::new(
         6,
         "create_outbox",
         include_str!("../migrations/v006__create_outbox.sql"),
     ),
-    octo_storage_core::StaticMigration::new(
+    octo_storage_core::_legacy_StaticMigration::new(
         7,
         "create_spend_ledger",
         include_str!("../migrations/v007__create_spend_ledger.sql"),
     ),
-    octo_storage_core::StaticMigration::new(
+    octo_storage_core::_legacy_StaticMigration::new(
         8,
         "create_did_registry",
         include_str!("../migrations/v008__create_did_registry.sql"),
     ),
-    octo_storage_core::StaticMigration::new(
+    octo_storage_core::_legacy_StaticMigration::new(
         9,
         "add_service_endpoints_and_controllers",
         include_str!("../migrations/v009__add_service_endpoints_and_controllers.sql"),
     ),
-    octo_storage_core::StaticMigration::new(
+    octo_storage_core::_legacy_StaticMigration::new(
         10,
         "add_verification_methods_and_capability_delegations",
         include_str!("../migrations/v010__add_verification_methods_and_capability_delegations.sql"),
     ),
-    octo_storage_core::StaticMigration::new(
+    octo_storage_core::_legacy_StaticMigration::new(
         11,
         "add_chain_id_namespace",
         include_str!("../migrations/v011__add_chain_id_namespace.sql"),
     ),
-    octo_storage_core::StaticMigration::new(
+    octo_storage_core::_legacy_StaticMigration::new(
         12,
         "create_slash_ledger",
         include_str!("../migrations/v012__create_slash_ledger.sql"),
     ),
-    octo_storage_core::StaticMigration::new(
+    octo_storage_core::_legacy_StaticMigration::new(
         15,
         "chain_aware_slash_ledger",
         include_str!("../migrations/v015__chain_aware_slash_ledger.sql"),
     ),
-    octo_storage_core::StaticMigration::new(
+    octo_storage_core::_legacy_StaticMigration::new(
         16,
         "settlement_chain_vault",
         include_str!("../migrations/v016__settlement_chain_vault.sql"),
@@ -102,9 +102,10 @@ pub const BUILTIN_MIGRATIONS: &[octo_storage_core::StaticMigration] = &[
 ];
 
 /// Substrate-form reference slice. `&[&'static dyn Migration]` is what
-/// `octo_storage_core::apply_pending` consumes. Built from
+/// `octo_storage_core::_legacy_apply_pending` consumes. Built from
 /// `BUILTIN_MIGRATIONS` via a const adapter.
-pub(super) static BUILTIN_MIGRATION_CATALOG: &[&'static dyn octo_storage_core::Migration] = &[
+pub(super) static BUILTIN_MIGRATION_CATALOG:
+    &[&'static dyn octo_storage_core::_legacy_Migration] = &[
     &BUILTIN_MIGRATIONS[0],
     &BUILTIN_MIGRATIONS[1],
     &BUILTIN_MIGRATIONS[2],
@@ -122,12 +123,14 @@ pub(super) static BUILTIN_MIGRATION_CATALOG: &[&'static dyn octo_storage_core::M
 ];
 
 /// Migration errors.
+#[allow(deprecated)]
+// _legacy_StorageError alias retained for ≥ 6-month transition window per RFC-0206 v2.1 §Migration Order.
 #[derive(Debug, Error)]
 pub enum MigrationError {
     /// Substrate-level failure (DDL, tracker-table initialization,
     /// system-time, specific migration failed).
     #[error("substrate storage error: {0}")]
-    Storage(octo_storage_core::StorageError),
+    Storage(octo_storage_core::_legacy_StorageError),
     /// DB is at a higher version than this code's catalog allows
     /// (downgrade scenario).
     #[error(
@@ -136,10 +139,11 @@ pub enum MigrationError {
     UnknownMigration { version: u32, catalog_max: u32 },
 }
 
-impl From<octo_storage_core::StorageError> for MigrationError {
-    fn from(e: octo_storage_core::StorageError) -> Self {
+#[allow(deprecated)] // _legacy_StorageError alias retained for ≥ 6-month transition window per RFC-0206 v2.1 §Migration Order.
+impl From<octo_storage_core::_legacy_StorageError> for MigrationError {
+    fn from(e: octo_storage_core::_legacy_StorageError) -> Self {
         match e {
-            octo_storage_core::StorageError::UnknownMigration {
+            octo_storage_core::_legacy_StorageError::UnknownMigration {
                 version,
                 catalog_max,
             } => Self::UnknownMigration {
@@ -160,14 +164,14 @@ impl From<octo_storage_core::StorageError> for MigrationError {
 ///
 /// **Removal target:** the alias is removed in the **0.9.0** release.
 /// By 0.9.0 all downstream consumers must import
-/// `octo_storage_core::StaticMigration` directly. The current 0.7.0
+/// `octo_storage_core::_legacy_StaticMigration` directly. The current 0.7.0
 /// release ships the alias with a `#[deprecated]` marker so rustc
 /// emits migration warnings at every callsite.
 #[deprecated(
     since = "0.7.0",
-    note = "use `octo_storage_core::StaticMigration` (the substrate's newtype); this alias is removed in 0.9.0"
+    note = "use `octo_storage_core::_legacy_StaticMigration` (the substrate's newtype); this alias is removed in 0.9.0"
 )]
-pub type Migration = octo_storage_core::StaticMigration;
+pub type Migration = octo_storage_core::_legacy_StaticMigration;
 
 /// Apply all pending migrations from `BUILTIN_MIGRATIONS` that are newer
 /// than the current database version.
@@ -182,11 +186,12 @@ pub type Migration = octo_storage_core::StaticMigration;
 ///   migration SQL failing per `StorageError::MigrationFailed`).
 /// - `MigrationError::UnknownMigration` if the DB is at a higher
 ///   version than the code's catalog (downgrade scenario).
-pub fn apply_pending(db: &stoolap::Database) -> Result<(), MigrationError> {
-    octo_storage_core::apply_pending(
+pub fn apply_pending(db: &octo_storage_core::Database) -> Result<(), MigrationError> {
+    octo_storage_core::_legacy_apply_pending(
         db,
         BUILTIN_MIGRATION_CATALOG,
-        octo_storage_core::ApplyConfig::default().with_tracker_table("cipherocto_schema_version"),
+        octo_storage_core::_legacy_ApplyConfig::default()
+            .with_tracker_table("cipherocto_schema_version"),
     )?;
     Ok(())
 }
@@ -271,7 +276,7 @@ mod tests {
     #[test]
     fn apply_pending_rejects_downgrade() {
         // Apply migrations to bring DB to current state.
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         apply_pending(&db).unwrap();
 
         // Manually record a higher version (simulating a newer DB than our catalog).
@@ -324,7 +329,7 @@ mod tests {
         //
         // Pragmatic alternative: verify that `run_one` propagates the error.
         // We test the building block directly.
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         apply_pending(&db).unwrap();
 
         // Now drop a column that v002 expects (v002 is index-only so this is
@@ -336,7 +341,7 @@ mod tests {
 
     #[test]
     fn v003_creates_consumed_receipt_index_table() {
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         apply_pending(&db).unwrap();
 
         // Schema-version table records v003 as applied.
@@ -448,7 +453,7 @@ mod tests {
 
     #[test]
     fn v004_creates_settlement_events_table() {
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         apply_pending(&db).unwrap();
 
         // Schema-version table records v004 as applied.

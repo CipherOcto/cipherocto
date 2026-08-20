@@ -8,7 +8,7 @@
 //! Catalog numbering continues from adjacent owner crates
 //! (`quota-router-storage` last = v012). The substrate's `apply_pending`
 //! owns ordering; the catalog here provides a typed slice sorted by
-//! `version()` ascending per `octo_storage_core::Migration::version()`.
+//! `version()` ascending per `octo_storage_core::_legacy_Migration::version()`.
 
 /// All built-in migrations in version order as `(version, name, sql)` tuples.
 /// Consumed by the in-module drift-detection tests below; `pub(crate)`
@@ -29,13 +29,13 @@ pub const BUILTIN_MIGRATIONS: &[(u32, &str, &str)] = &[
 ];
 
 /// Substrate-form migration catalog: `&[&'static dyn Migration]`.
-pub static BUILTIN_MIGRATION_CATALOG: &[&'static dyn octo_storage_core::Migration] = &[
-    &octo_storage_core::StaticMigration::new(
+pub static BUILTIN_MIGRATION_CATALOG: &[&'static dyn octo_storage_core::_legacy_Migration] = &[
+    &octo_storage_core::_legacy_StaticMigration::new(
         13,
         "v013__create_vaults",
         include_str!("../migrations/v013__create_vaults.sql"),
     ),
-    &octo_storage_core::StaticMigration::new(
+    &octo_storage_core::_legacy_StaticMigration::new(
         14,
         "v014__create_transfer_events",
         include_str!("../migrations/v014__create_transfer_events.sql"),

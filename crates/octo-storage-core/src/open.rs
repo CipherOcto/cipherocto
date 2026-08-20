@@ -4,32 +4,34 @@
 //! `memory://` for in-memory. [`open`] prepends `file://` to its input;
 //! callers pass a plain filesystem path (no scheme prefix required).
 
+use crate::database::Database;
 use crate::error::SubstrateError;
 
-/// Open the fork's `stoolap::Database` at `path`.
+/// Open a persistent [`Database`] at `path`.
 ///
-/// Thin wrapper around `stoolap::Database::open` that surfaces failures
-/// as [`SubstrateError::stoolap`]. Owner crates should call this rather
-/// than touching `stoolap::Database::open` directly, so errors carry
-/// the operation tag (`"open"`) and don't leak `stoolap` types into
-/// the API.
+/// Thin wrapper around `stoolap::Database::open` that wraps the result
+/// in the substrate's `Database` newtype. Owner crates should call this
+/// (or [`Database::open`]) rather than touching `stoolap::Database::open`
+/// directly, so the substrate owns the newtype boundary and every
+/// execution path routes through [`Database::execute_checked`].
 ///
 /// # Errors
-/// Returns `SubstrateError::stoolap("open", _)` on underlying failure.
-pub fn open(path: &str) -> Result<stoolap::Database, SubstrateError> {
-    let dsn = format!("file://{path}");
-    stoolap::Database::open(&dsn).map_err(|e| SubstrateError::stoolap("open", e))
+/// Returns [`SubstrateError::Storage`] with operation tag `"open"` on
+/// underlying failure.
+pub fn open(path: &str) -> Result<Database, SubstrateError> {
+    Database::open(path)
 }
 
-/// Open an ephemeral in-memory `stoolap::Database`.
+/// Open an ephemeral in-memory [`Database`].
 ///
-/// Equivalent to `Database::open_in_memory()`; surface shim so owner
+/// Equivalent to [`Database::open_in_memory`]; surface shim so owner
 /// crates have one error type for "storage failed".
 ///
 /// # Errors
-/// Returns `SubstrateError::stoolap("open_in_memory", _)` on underlying failure.
-pub fn open_in_memory() -> Result<stoolap::Database, SubstrateError> {
-    stoolap::Database::open_in_memory().map_err(|e| SubstrateError::stoolap("open_in_memory", e))
+/// Returns [`SubstrateError::Storage`] with operation tag `"open_in_memory"`
+/// on underlying failure.
+pub fn open_in_memory() -> Result<Database, SubstrateError> {
+    Database::open_in_memory()
 }
 
 #[cfg(test)]

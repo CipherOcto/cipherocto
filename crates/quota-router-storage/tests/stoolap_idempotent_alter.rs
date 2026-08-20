@@ -35,7 +35,7 @@ static MIGRATION_LOCK: Mutex<()> = Mutex::new(());
 #[test]
 fn apply_pending_is_idempotent_on_re_run_after_partial_migration() {
     let _guard = MIGRATION_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let db = stoolap::Database::open("memory://").expect("open in-memory");
+    let db = octo_storage_core::open_in_memory().expect("open in-memory");
     migrations::apply_pending(&db).expect("first apply");
 
     // Verify v010 was applied (catalog max = 10).
@@ -110,7 +110,7 @@ fn apply_pending_is_idempotent_on_re_run_after_partial_migration() {
 #[test]
 fn apply_pending_swallows_v009_dup_column_on_retry() {
     let _guard = MIGRATION_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let db = stoolap::Database::open("memory://").expect("open in-memory");
+    let db = octo_storage_core::open_in_memory().expect("open in-memory");
     migrations::apply_pending(&db).expect("first apply");
 
     // Drop v009 version row — re-apply will attempt v009 again.

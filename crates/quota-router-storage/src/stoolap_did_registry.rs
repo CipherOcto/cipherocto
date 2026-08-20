@@ -1,6 +1,6 @@
 //! `StoolapDidRegistry` (mission 0871b-storage-backend).
 //!
-//! Persistent DID-document registry backed by a `stoolap::Database` with
+//! Persistent DID-document registry backed by a `octo_storage_core::Database` with
 //! the `did_registry` table (migration v008). Replaces the in-memory
 //! `InMemoryDidRegistry` for production deployments where the DID
 //! registry MUST survive process restarts and be shareable across
@@ -92,7 +92,7 @@ pub enum DidRegistryStorageError {
 /// Stoolap-backed DID registry (production).
 #[derive(Clone)]
 pub struct StoolapDidRegistry {
-    db: Arc<stoolap::Database>,
+    db: Arc<octo_storage_core::Database>,
 }
 
 impl std::fmt::Debug for StoolapDidRegistry {
@@ -107,7 +107,7 @@ impl StoolapDidRegistry {
     /// # Errors
     /// Returns `DidRegistryStorageError::Storage` on DB open / migration failure.
     pub fn open_in_memory() -> Result<Self, DidRegistryStorageError> {
-        let db = stoolap::Database::open_in_memory()
+        let db = octo_storage_core::Database::open_in_memory()
             .map_err(|e| DidRegistryStorageError::Storage(format!("open_in_memory: {e}")))?;
         migrations::apply_pending(&db)
             .map_err(|e| DidRegistryStorageError::Storage(format!("apply_pending: {e}")))?;
@@ -120,7 +120,7 @@ impl StoolapDidRegistry {
     /// # Errors
     /// Returns `DidRegistryStorageError::Storage` on DB open / migration failure.
     pub fn open_path(path: &str) -> Result<Self, DidRegistryStorageError> {
-        let db = stoolap::Database::open(path)
+        let db = octo_storage_core::Database::open(path)
             .map_err(|e| DidRegistryStorageError::Storage(format!("open({path}): {e}")))?;
         migrations::apply_pending(&db)
             .map_err(|e| DidRegistryStorageError::Storage(format!("apply_pending: {e}")))?;

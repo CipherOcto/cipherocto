@@ -25,7 +25,7 @@ static MIGRATION_LOCK: Mutex<()> = Mutex::new(());
 #[test]
 fn migration_chain_reaches_v012_on_fresh_db() {
     let _guard = MIGRATION_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let db = stoolap::Database::open("memory://").expect("open in-memory");
+    let db = octo_storage_core::open_in_memory().expect("open in-memory");
     migrations::apply_pending(&db).expect("apply_pending");
     let mut rows = db
         .query("SELECT MAX(version) FROM cipherocto_schema_version", ())
@@ -45,7 +45,7 @@ fn migration_chain_reaches_v012_on_fresh_db() {
 #[test]
 fn migration_chain_creates_all_4_rich_columns() {
     let _guard = MIGRATION_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let db = stoolap::Database::open("memory://").expect("open in-memory");
+    let db = octo_storage_core::open_in_memory().expect("open in-memory");
     migrations::apply_pending(&db).expect("apply_pending");
     for col in [
         "service_endpoints",
@@ -66,7 +66,7 @@ fn migration_chain_reaches_v012_with_legacy_then_rich_then_chain_columns() {
     // verify the legacy 4 columns still exist (canonical_hash,
     // public_key, revoked, updated_at_unix_ms) + the 4 rich BLOB
     // columns from v009 + v010 + the chain_id BLOB column from v011.
-    let db = stoolap::Database::open("memory://").expect("open in-memory");
+    let db = octo_storage_core::open_in_memory().expect("open in-memory");
     migrations::apply_pending(&db).expect("apply_pending");
     for col in [
         "canonical_hash",

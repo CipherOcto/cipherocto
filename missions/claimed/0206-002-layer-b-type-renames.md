@@ -6,15 +6,26 @@ metadata:
   type: project
   originSessionId: 9a316ae1-cb15-46f4-801f-99c2545bccf7
   created: 2026-08-20T00:00:00.000Z
-  v: "2.1"
-  supersedes: v2.0
+  v: "3.0"
+  supersedes: v2.1
   depends_on:
     - 0206-001-substrate-newtype
     - RFC-0205
     - RFC-0206
 ---
 
-# Mission `0206-002-layer-b-type-renames` v2.1 — OPEN 2026-08-20
+# Mission `0206-002-layer-b-type-renames` v3.0 — CLAIMED 2026-08-20
+
+## v3.0 Changes from v2.1
+
+Per substrate redesign plan (`/home/mmacedoeu/.claude/plans/sparkling-mapping-kahan.md` §0206-002 v3.0):
+
+- Bumped from v2.1 (OPEN) to v3.0 (CLAIMED) — scope unchanged (42 explicit sites
+  across 9 files = 35 TYPE + 7 DOC). The plan supersedes v2.1 with the same
+  scope; v3.0 = paperwork versioning for the redesign stream.
+- No scope expansion here. Expansion to 8+ other crates is owned by `0206-008-layer-b-type-renames-expansion` (parallel mission in the redesign stream).
+
+
 
 ## v2.1 Changes from v2.0
 
@@ -212,3 +223,4 @@ No BLOCKED-ON-AUDIT deferred sites in v2.1. The 42-hits table above is exhaustiv
 | v1.0    | 2026-08-20 | Initial filing (29 sites claimed, unverifiable)                                                                                                                                                                            |
 | v2.0    | 2026-08-20 | R1 fix: 17 explicit + 12 BLOCKED-ON-AUDIT; 3 deps added; 2 audit gates added                                                                                                                                               |
 | v2.1    | 2026-08-20 | R2 fix: 42 grep hits regenerated from disk (35 TYPE + 7 DOC across 9 files); CRIT 1-4 (sites table) + HIGH 1-6 + 5 MED applied; 0206-003 + 0206-004 dropped from `depends_on:`; HIGH 6 consumer-crate exemption documented |
+| v3.0    | 2026-08-20 | Substrate redesign plan supersedes v2.1; same scope (42 sites), version bump only; expansion to 8+ other crates owned by `0206-008` |

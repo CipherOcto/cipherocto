@@ -14,11 +14,14 @@ crate-type = ["rlib"]
 # centralized and bounded by the substrate's audit trail (per
 # `feedback_stoolap_persistence` memory card + plan §B.2).
 octo-storage-core = { path = "../octo-storage-core" }
-# Layer B → Stoolap fork (`Database` handle for `apply` / future row
-# reads). Same workspace-wide pin as the substrate (root `Cargo.toml`
-# `[patch.crates-io]` + `feedback_stoolap_persistence`). The substrate
-# does NOT re-export `stoolap::Database`; owner crates that need the
-# handle signature must depend on the fork directly.
+# Layer B → Stoolap fork (`Database` handle + `ResultRow` + `ApiTransaction`).
+# The substrate redesign v3.0 (§Substrate Newtype Refactor) wraps
+# `stoolap::Database` behind a newtype but does NOT re-export
+# `ResultRow` / `ApiTransaction` / `Rows` / `Error`. Consumer crates
+# that decode rows or run transactions need direct fork access. A
+# v2.2 RFC-0206 amendment (filed as 0206-011b) is the proper scope
+# for the substrate to re-export these types; until then, the direct
+# dep stays per HIGH 6 exemption.
 stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
 # Layer B → vault_id canonical derivation (§8.10 TV-V1). Pure-Rust hash.
 blake3 = "1.5"

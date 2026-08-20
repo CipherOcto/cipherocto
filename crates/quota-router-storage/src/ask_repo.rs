@@ -197,7 +197,7 @@ pub type DynAskRepository = dyn CombinedAskRepository + Send + Sync;
 /// the embedded DB; no caching layer at MVP.
 #[derive(Clone)]
 pub struct StoolapAskRepository {
-    db: stoolap::Database,
+    db: octo_storage_core::Database,
 }
 
 impl StoolapAskRepository {
@@ -206,7 +206,7 @@ impl StoolapAskRepository {
     /// # Errors
     /// Returns `RepoError::Db` on DB open failure, `RepoError::Migration` if migrations fail.
     pub fn open_in_memory() -> Result<Self, RepoError> {
-        let db = stoolap::Database::open_in_memory()
+        let db = octo_storage_core::Database::open_in_memory()
             .map_err(|e| RepoError::Db(format!("open_in_memory: {e}")))?;
         migrations::apply_pending(&db)?;
         Ok(Self { db })
@@ -216,7 +216,7 @@ impl StoolapAskRepository {
     /// # Errors
     /// Returns `RepoError::Db` on DB open failure, `RepoError::Migration` if migrations fail.
     pub fn open_path(path: &str) -> Result<Self, RepoError> {
-        let db = stoolap::Database::open(path)
+        let db = octo_storage_core::Database::open(path)
             .map_err(|e| RepoError::Db(format!("open({path}): {e}")))?;
         migrations::apply_pending(&db)?;
         Ok(Self { db })
@@ -225,7 +225,7 @@ impl StoolapAskRepository {
     /// Wrap an existing stoolap connection (caller-owned). Caller is responsible
     /// for invoking `migrations::apply_pending(db)` at startup.
     #[must_use]
-    pub fn from_db(db: stoolap::Database) -> Self {
+    pub fn from_db(db: octo_storage_core::Database) -> Self {
         Self { db }
     }
 
@@ -784,7 +784,7 @@ mod tests {
     #[test]
     fn apply_pending_is_idempotent() {
         // Run apply_pending twice on the same DB; second call MUST be no-op.
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         migrations::apply_pending(&db).unwrap();
         migrations::apply_pending(&db).unwrap(); // must not error
     }

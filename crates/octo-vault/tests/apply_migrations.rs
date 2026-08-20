@@ -13,7 +13,8 @@
 //! - Re-running `apply()` is a no-op (idempotency).
 //! - DQA(12) insert + read round-trips with canonical scale.
 
-use octo_storage_core::{applied_version, open_in_memory};
+use octo_storage_core::migrations::applied_version;
+use octo_storage_core::open_in_memory;
 use octo_vault::apply;
 
 #[test]
@@ -178,7 +179,8 @@ fn vaults_vault_id_unique_index_rejects_duplicate() {
 /// or zero-padding in any Stoolap fork binding layer.
 #[test]
 fn vault_id_derive_insert_select_round_trips() {
-    use octo_storage_core::{applied_version, open_in_memory};
+    use octo_storage_core::migrations::applied_version;
+    use octo_storage_core::open_in_memory;
     use octo_vault::{vault_id, AssetId, ChainId};
 
     let db = open_in_memory().expect("open in-memory");

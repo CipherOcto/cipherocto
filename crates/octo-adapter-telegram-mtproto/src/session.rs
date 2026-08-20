@@ -672,7 +672,7 @@ async fn persist_dc_option(db: &Database, opt: &DcOption) -> Result<(), MtprotoS
         .auth_key
         .as_ref()
         .map(|k| Value::blob(k.to_vec()))
-        .unwrap_or(Value::Null(stoolap::core::DataType::Blob));
+        .unwrap_or(Value::Null(octo_storage_core::stoolap::DataType::Blob));
     db.execute(
         "INSERT INTO mtproto_dc_option (dc_id, ipv4, ipv6, auth_key) VALUES ($1, $2, $3, $4)",
         vec![
@@ -710,13 +710,13 @@ async fn persist_peer(db: &Database, info: &PeerInfo) -> Result<(), MtprotoSessi
     };
     let hash_v = hash
         .map(Value::integer)
-        .unwrap_or(Value::Null(stoolap::core::DataType::Integer));
+        .unwrap_or(Value::Null(octo_storage_core::stoolap::DataType::Integer));
     let bot_v = bot
         .map(Value::integer)
-        .unwrap_or(Value::Null(stoolap::core::DataType::Integer));
+        .unwrap_or(Value::Null(octo_storage_core::stoolap::DataType::Integer));
     let kind_v = channel_kind
         .map(Value::integer)
-        .unwrap_or(Value::Null(stoolap::core::DataType::Integer));
+        .unwrap_or(Value::Null(octo_storage_core::stoolap::DataType::Integer));
     // Upsert via DELETE + INSERT (stoolap doesn't have
     // INSERT OR REPLACE).
     db.execute(

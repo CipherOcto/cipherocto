@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted (v2.2) — amended 2026-08-20 from v2.1 to resolve D1 deviation documented in 0206-002 v3.0 (`docs/audits/0206-002-layer-b-type-renames-audit.md` §D1 Deviation) + 0206-008 (`docs/audits/0206-008-layer-b-type-renames-expansion-audit.md` §D1 Deviation). RFC-only amendment adding §Substrate Re-export Block — substrate exposes `pub mod stoolap` re-exporting 5 `stoolap` types (`ResultRow`, `ApiTransaction`, `Rows`, `Error`, `Value`) so consumer crates can drop direct `stoolap` Cargo.toml dep after Phase 2.6 (`0206-008b`). Precedes `0206-001-substrate-newtype-v3.0b` substrate impl + Layer A semver-major version bump (1.0.0 → 2.0.0).
+Accepted (v2.3) — amended 2026-08-20 from v2.2 to resolve R6 substrate-abstraction leak (`docs/audits/0206-008b-r6-substantive-review.md` finding #1). RFC-only amendment growing §Substrate Re-export Block from 5 → 6 nested re-exports — adds `pub use stoolap::core::DataType;` (typed-Value discriminant enum) so consumer code no longer leaks `stoolap::DataType::{Null,Integer,Blob}` raw upstream references via `Value::Null(DataType::Variant)` constructor calls. Precedes `0206-001-substrate-newtype-v3.0c` substrate impl + `0206-008c` consumer rewrites (`octo-adapter-whatsapp` × 5 sites, `octo-adapter-telegram-mtproto` × 4 sites, `quota-router-core` × 13 sites). 8 top-level `pub use` cap UNCHANGED (re-export block is `pub mod`, not 6 top-level `pub use`).
+
+**History:** v2.0 wholesale rewrite per R9 multi-reviewer structural-trigger (promoted Accepted 2026-08-20 by direct user instruction). v2.1 RFC-only amendment resolving 4 CRIT blockers + 2 HIGH improvements identified in R3 multi-round review (pub-use cap contradiction, Layer B TYPE renames table expansion, Wiring Pattern concrete signatures, RFC Process Audit Condition 2 reworded, Migration Order added, Escape Hatch Enumeration subsection). v2.2 RFC-only amendment adding §Substrate Re-export Block — substrate exposes `pub mod stoolap` re-exporting 5 `stoolap` types (`ResultRow`, `ApiTransaction`, `Rows`, `Error`, `Value`) so consumer crates can drop direct `stoolap` Cargo.toml dep after Phase 2.6 (`0206-008b`). Preceded `0206-001-substrate-newtype-v3.0b` substrate impl + Layer A semver-major version bump (1.0.0 → 2.0.0).
 
 **Supersedes:** RFC-0206 v2.1 (amended 2026-08-20 → v2.2); v2.1 superseded v2.0 (amended 2026-08-20); v2.0 superseded v1.8 (archived 2026-08-20)
 
@@ -93,7 +95,7 @@ allow-listed-ddl = []
 strict-typed-query = []
 ```
 
-**Re-exported set (8 top-level pub-use + 6 top-level `_legacy_*` aliases + pub mod migrations with 3 nested pub-use + pub mod stoolap with 5 nested re-exports — resolves v2.0 internal contradiction with §Substrate Newtype Refactor "≤ 8 cap" for production surface):**
+**Re-exported set (8 top-level pub-use + 6 top-level `_legacy_*` aliases + pub mod migrations with 3 nested pub-use + pub mod stoolap with 6 nested re-exports — resolves v2.0 internal contradiction with §Substrate Newtype Refactor "≤ 8 cap" for production surface; v2.3 amendment adds `DataType` to substrate re-export block):**
 
 ```rust
 // crates/octo-storage-core/src/lib.rs (v2.2)
@@ -116,7 +118,8 @@ pub mod migrations {
     pub use crate::tracker::ensure_tracker_table;
 }
 pub mod stoolap;
-// stoolap re-export block (5 nested re-exports — NEW v2.2):
+// stoolap re-export block (6 nested re-exports — NEW v2.2, v2.3 adds `DataType`):
+//   pub use stoolap::core::DataType;
 //   pub use stoolap::core::Error;
 //   pub use stoolap::ApiTransaction;
 //   pub use stoolap::ResultRow;
@@ -140,7 +143,9 @@ pub use tracker::record_migration as _legacy_record_migration;
 
 **v2.1 change rationale:** v2.0 showed 11 top-level `pub use` statements in §Cargo.toml Templates Layer A, violating §Substrate Newtype Refactor "≤ 8 cap". v2.1 reduces to 8 top-level + `pub mod migrations` with 3 nested. Typed query families (`SqlSelect`/`SqlInsert`/`SqlUpdate`/`SqlDelete`/`DdlTemplate`/`DdlOperation`) are accessible via `TypedStatement` enum variants, not re-exported at top level.
 
-**v2.2 addition:** §Substrate Re-export Block — `pub mod stoolap` with 5 nested re-exports of `stoolap` types consumers need to decode rows returned by `Database::execute_checked`. The re-export block is `pub mod` (NOT 5 top-level `pub use`), so the 8-pub-use production-surface cap remains satisfied. Consumers `use octo_storage_core::stoolap::{ResultRow, ...}` and can drop direct `stoolap` Cargo.toml dep after Phase 2.6 (`0206-008b`).
+**v2.2 addition:** §Substrate Re-export Block — `pub mod stoolap` with 5 nested re-exports of `stoolap` types consumers need to decode rows returned by `Database::execute_checked`. The re-export block is `pub mod` (NOT 5 top-level `pub use`), so the 8-pub-use production-surface cap remains satisfied. Consumers `use octo_storage_core::stoolap::{ResultRow, ...}` and can drop direct `stoolap` Cargo.toml dep after Phase 2.6 (`0206-008b`). **v2.3 amendment:** grows 5 → 6 — adds `pub use stoolap::core::DataType;` (typed-Value discriminant; see §Substrate Re-export Block Properties below + Version History 2.3 row).
+
+**v2.3 amendment:** §Substrate Re-export Block grows from 5 → 6 nested re-exports — `pub use stoolap::core::DataType;` added to expose the typed-Value discriminant enum. Without it, consumer code leaks `stoolap::DataType::{Null,Integer,Blob}` raw upstream references via `Value::Null(DataType::Variant)` constructor calls. Re-exporting `DataType` preserves the substrate abstraction layer per CLAUDE.md §Core Engineering Principles ("no parallel abstractions"). Upstream is `#[non_exhaustive]`; consumers must use only the listed variants. Migration `0206-011c` lands substrate + 4 consumer rewrites (`octo-adapter-whatsapp` × 5 sites, `octo-adapter-telegram-mtproto` × 4 sites, `quota-router-core` × 13 sites).
 
 Notes:
 
@@ -390,31 +395,32 @@ impl Database {
 - Wildcard detector: `rg '\b\*\s*[,;}]' crates/octo-storage/src/lib.rs` MUST equal 0
 - Substrate `pub use foo::*;` MUST NOT appear (lint-enforced)
 
-## §Substrate Re-export Block (NEW v2.2)
+## §Substrate Re-export Block (NEW v2.2, expanded v2.3)
 
-The substrate acts as the abstraction layer for the `stoolap` fork. Per CLAUDE.md §Core Engineering Principles "no parallel abstractions", consumers MUST NOT import from `stoolap::*` directly. However, `Database::execute_checked` returns typed result values whose intermediate row types live in `stoolap` (`ResultRow`, `ApiTransaction`, `Rows`, `Error`). Without a substrate re-export, consumers would need direct `stoolap` Cargo.toml dep to type their row-decoding code, defeating the abstraction layer.
+The substrate acts as the abstraction layer for the `stoolap` fork. Per CLAUDE.md §Core Engineering Principles "no parallel abstractions", consumers MUST NOT import from `stoolap::*` directly. However, `Database::execute_checked` returns typed result values whose intermediate row types live in `stoolap` (`ResultRow`, `ApiTransaction`, `Rows`, `Error`, `DataType`, `Value`). Without a substrate re-export, consumers would need direct `stoolap` Cargo.toml dep to type their row-decoding code, defeating the abstraction layer.
 
-**Resolution:** substrate exposes a `pub mod stoolap` re-export block with 1:1 aliases for the 5 `stoolap` types consumers need.
+**Resolution:** substrate exposes a `pub mod stoolap` re-export block with 1:1 aliases for the 6 `stoolap` types consumers need (v2.3 adds `DataType`).
 
 ```rust
-// crates/octo-storage-core/src/stoolap.rs (NEW v2.2)
+// crates/octo-storage-core/src/stoolap.rs (v2.3 — DataType added per 0206-011c)
+pub use stoolap::core::DataType;
 pub use stoolap::core::Error;
 pub use stoolap::ApiTransaction;
 pub use stoolap::ResultRow;
 pub use stoolap::Rows;
 pub use stoolap::Value;
 
-// crates/octo-storage-core/src/lib.rs (v2.2)
+// crates/octo-storage-core/src/lib.rs (v2.3)
 // ...
 pub mod stoolap;
 ```
 
 **Properties:**
 
-- `pub mod stoolap` is NOT 5 top-level `pub use` — the 8-pub-use cap per §Substrate Newtype Refactor is UNCHANGED
-- 5 nested `pub use stoolap::*` inside the module do not count toward the cap (same principle as `pub mod migrations` 3 nested)
-- Consumers use `use octo_storage_core::stoolap::{ResultRow, ApiTransaction, Rows, Error, Value}` — no direct `stoolap` import
-- Substrate `stoolap.rs` is substrate-private modulo the 5 re-exports (it does NOT re-export `stoolap::Database` itself; that's the reverse escape hatch the substrate prevents)
+- `pub mod stoolap` is NOT 6 top-level `pub use` — the 8-pub-use cap per §Substrate Newtype Refactor is UNCHANGED
+- 6 nested `pub use stoolap::*` inside the module do not count toward the cap (same principle as `pub mod migrations` 3 nested)
+- Consumers use `use octo_storage_core::stoolap::{ResultRow, ApiTransaction, Rows, Error, Value, DataType}` — no direct `stoolap` import
+- Substrate `stoolap.rs` is substrate-private modulo the 6 re-exports (it does NOT re-export `stoolap::Database` itself; that's the reverse escape hatch the substrate prevents)
 - Renamed-or-removed stoolap types must propagate to this re-export block within the ≥ 6-month migration window
 
 **TV-0206-A9(b) gate:** `rg -l '^\s*stoolap\s*=' crates/*/Cargo.toml | wc -l` ≤ 5. After Phase 2.6 (`0206-008b`) lands, 13 → ≤ 5 (Layer A substrate + 4 Layer A internal allowlisted pins).
@@ -447,7 +453,7 @@ RFC v2.0 substrate redesign breaks current `apply_pending` / `Migration` trait /
 **Phase 2.5 — Substrate re-export block** (`0206-001 v3.0b` mission, RFC-0206 v2.2):
 
 - Substrate `crates/octo-storage-core/src/stoolap.rs` declared as `pub mod stoolap` in substrate `lib.rs`
-- 5 nested re-exports: `ResultRow`, `ApiTransaction`, `Rows`, `Error`, `Value` (1:1 aliases for `stoolap::*`)
+- 6 nested re-exports (v2.3): `DataType`, `ResultRow`, `ApiTransaction`, `Rows`, `Error`, `Value` (1:1 aliases for `stoolap::*`; `DataType` added v2.3)
 - Layer A semver-major version bump: `1.0.0 → 2.0.0` (per CLAUDE.md §Layer Stability rule for Layer A changes)
 - 8 top-level `pub use` cap UNCHANGED (re-export block is `pub mod`, not 5 top-level `pub use`)
 - Prerequisite for Phase 2.6: without `pub mod stoolap`, consumer crates MUST keep direct `stoolap` Cargo.toml dep
@@ -663,6 +669,7 @@ Cross-RFC atomicity mechanism is BLUEPRINT.md amendment, not RFC-internal langua
 | **2.0** | **2026-08-20** | **Accepted.** Wholesale rewrite per R9 multi-reviewer structural-trigger: scope-expanded with substrate newtype refactor (pub struct Database(stoolap::Database)), 29 Layer B TYPE renames, TypedStatement enum at substrate level, 5 adapter crates with on-disk Cargo.toml + src/lib.rs + tests/, 4 trait declarations + 1 trait move (HolderRegistry) + 1 impl move (StoolapDidRegistry), wildcard detector, per-adapter fixtures, format-bypass substrate-level guard, 8-pub-use cap with wildcard detector; phantom v1.8 changelog claims removed (TV-0206-A10..A14 renumbered to A6-A14; §Security Considerations format!() defense claim now enforced at substrate level; §Promotion Path Condition 1 strengthened via BLUEPRINT.md rule; TV-0206-A1 --pcre2 flag dropped; 12 pub-use items corrected; Core↔Facade Mermaid direction reversed); Mermaid direction fixes (Core → Facade reversed per three-tier direction); 14 ground-truth TVs (was 16 phantom). Promoted Accepted 2026-08-20 by direct user instruction. |
 | **2.1** | **2026-08-20** | **RFC-only amendment** resolving 4 CRIT blockers + 2 HIGH scope improvements identified in R3 multi-round review (`docs/audits/missions-r3-findings-2026-08-20.md`). No code changes; precedes `0206-001-substrate-newtype-v3.0` landing. (a) **CRIT-1**: §Cargo.toml Templates Layer A reduced from 11 top-level `pub use` statements (v2.0 §Cargo.toml Templates Layer A) to **8 top-level `pub use`** + `pub mod migrations` (3 nested pub-use) per §Substrate Newtype Refactor "≤ 8 cap". (b) **CRIT-2**: §Layer B TYPE Renames table expanded from 17 explicit rows + 1 placeholder (29 sites / 2 crates) to enumerated rows for all 11 crates (90+ sites) per `docs/audits/octo-storage-trait-surface-2026-08-19.md` ground truth. (c) **CRIT-3**: §Wiring Pattern comment-only `pub trait VaultStore { /* ... */ }` stub + `todo!()` body replaced with concrete method signatures for VaultStore (get/put/delete), ReputationStore (add/get), SessionStore (insert/fetch), PolicyStore (check/grant); VaultLookup signature preserved. (d) **CRIT-4**: §RFC Process Audit Condition 2 reworded from "substrate newtype + 29 TYPE renames + 5 adapter crates" to "substrate newtype + 90+ TYPE renames across 11 crates + 5 adapter crates + 5 per-adapter fixture suites + Cargo.toml dep reductions". (e) **HIGH-1**: §Migration Order section added (4-phase transition: pre-landing → coexistence → consumer migration → legacy removal; ≥ 6-month legacy coexistence window per `_legacy_*` re-export pattern). (f) **HIGH-2**: §Escape Hatch Enumeration subsection added within §Layer B TYPE Renames (legitimate `From<Database>` sites: substrate internal API + 5 adapter crates; NOT legitimate: 11 consumer crates). §Implementation Phases 1.3 expanded with [features] section + facade migration scope; 1.4 split into 1.4a (RFC table part, owned by `0206-002 v3.0`) + 1.4b (non-RFC part, owned by `0206-008`). Mission `0206-011-rfc-0206-v21-amendment` filed + landing via `chore(rfc): 0206-011 RFC-0206 v2.1 amendment` commit. |
 | **2.2** | **2026-08-20** | **RFC-only amendment** adding §Substrate Re-export Block: substrate exposes `pub mod stoolap` re-exporting 5 `stoolap` types (`ResultRow`, `ApiTransaction`, `Rows`, `Error`, `Value`) so consumer crates can drop direct `stoolap` Cargo.toml dep. Resolves D1 deviation documented in 0206-002 v3.0 §D1 Deviation + 0206-008 §D1 Deviation. 8 top-level `pub use` cap UNCHANGED (re-export block is `pub mod`, not 5 top-level `pub use`). §Migration Order adds Phase 2.5 (`0206-001 v3.0b` substrate re-export block + Layer A semver-major bump `1.0.0 → 2.0.0`) + Phase 2.6 (`0206-008b` 13 consumer crates drop direct `stoolap` Cargo.toml dep). §RFC Process Audit Condition 2 reworded: "13 → ≤ 5 stoolap Cargo.toml deps" is achievable after Phase 2.6 closure. Mission `0206-011b-rfc-0206-v22-amendment-stoolap-reexport` filed. Phase 2.5 + 2.6 land via `0206-001 v3.0b` + `0206-008b` missions. TV-0206-A9(b) gate currently FAILS at 13 deps; projected PASS at 5 after Phase 2.6 closure. |
+| **2.3** | **2026-08-20** | **RFC-only amendment** growing §Substrate Re-export Block from 5 → 6 nested re-exports — adds `pub use stoolap::core::DataType;` (typed-Value discriminant enum used in `Value::Null(DataType::Variant)` constructor calls). Resolves R6 substrate-abstraction leak (`docs/audits/0206-008b-r6-substantive-review.md` finding #1): without `DataType` re-export, consumer code leaks `stoolap::DataType::{Null,Integer,Blob}` raw upstream references — defeats the substrate abstraction layer per CLAUDE.md §Core Engineering Principles ("no parallel abstractions"). 8 top-level `pub use` cap UNCHANGED (re-export block is `pub mod`, not 6 top-level `pub use`). Mission `0206-011c-rfc-0206-v23-amendment-datatype-reexport` filed. Substrate + 4 consumer rewrites (`octo-adapter-whatsapp` × 5 sites, `octo-adapter-telegram-mtproto` × 4 sites, `quota-router-core` × 13 sites) land via `0206-001 v3.0c` + `0206-008c`. |
 
 ## §References
 

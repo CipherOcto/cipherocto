@@ -277,14 +277,14 @@ impl KeyStorage for StoolapKeyStorage {
         let opt_i64_to_value = |opt: Option<i64>| -> octo_storage_core::stoolap::Value {
             opt.map(|v| v.into())
                 .unwrap_or(octo_storage_core::stoolap::Value::Null(
-                    stoolap::DataType::Null,
+                    octo_storage_core::stoolap::DataType::Null,
                 ))
         };
         // Helper to convert Option<i32> to octo_storage_core::stoolap::Value (None = Null)
         let opt_i32_to_value = |opt: Option<i32>| -> octo_storage_core::stoolap::Value {
             opt.map(|v| v.into())
                 .unwrap_or(octo_storage_core::stoolap::Value::Null(
-                    stoolap::DataType::Null,
+                    octo_storage_core::stoolap::DataType::Null,
                 ))
         };
 
@@ -301,7 +301,9 @@ impl KeyStorage for StoolapKeyStorage {
             team_id_blob
                 .map(octo_storage_core::stoolap::Value::blob)
                 .unwrap_or_else(|| {
-                    octo_storage_core::stoolap::Value::Null(stoolap::DataType::Null)
+                    octo_storage_core::stoolap::Value::Null(
+                        octo_storage_core::stoolap::DataType::Null,
+                    )
                 }),
             key.budget_limit.into(),
             opt_i32_to_value(key.rpm_limit),
@@ -800,7 +802,9 @@ impl KeyStorage for StoolapKeyStorage {
             team_id_blob
                 .map(octo_storage_core::stoolap::Value::blob)
                 .unwrap_or_else(|| {
-                    octo_storage_core::stoolap::Value::Null(stoolap::DataType::Null)
+                    octo_storage_core::stoolap::Value::Null(
+                        octo_storage_core::stoolap::DataType::Null,
+                    )
                 }),
             event.provider.clone().into(),
             event.model.clone().into(),
@@ -812,7 +816,9 @@ impl KeyStorage for StoolapKeyStorage {
             tokenizer_id_blob
                 .map(octo_storage_core::stoolap::Value::blob)
                 .unwrap_or_else(|| {
-                    octo_storage_core::stoolap::Value::Null(stoolap::DataType::Null)
+                    octo_storage_core::stoolap::Value::Null(
+                        octo_storage_core::stoolap::DataType::Null,
+                    )
                 }),
             event.tokenizer_version.clone().into(),
             event.provider_usage_json.clone().into(),
@@ -988,7 +994,9 @@ impl KeyStorage for StoolapKeyStorage {
             tokenizer_id_blob
                 .map(octo_storage_core::stoolap::Value::blob)
                 .unwrap_or_else(|| {
-                    octo_storage_core::stoolap::Value::Null(stoolap::DataType::Null)
+                    octo_storage_core::stoolap::Value::Null(
+                        octo_storage_core::stoolap::DataType::Null,
+                    )
                 }),
             event.tokenizer_version.clone().into(),
             event.provider_usage_json.clone().into(),
@@ -1275,11 +1283,15 @@ impl KeyStorage for StoolapKeyStorage {
         if existing.is_some() {
             let soft_limit_value = match soft_limit_pct {
                 Some(v) => v.into(),
-                None => octo_storage_core::stoolap::Value::Null(stoolap::DataType::Null),
+                None => octo_storage_core::stoolap::Value::Null(
+                    octo_storage_core::stoolap::DataType::Null,
+                ),
             };
             let webhook_value = match alert_webhook {
                 Some(s) => s.to_string().into(),
-                None => octo_storage_core::stoolap::Value::Null(stoolap::DataType::Null),
+                None => octo_storage_core::stoolap::Value::Null(
+                    octo_storage_core::stoolap::DataType::Null,
+                ),
             };
 
             self.db.execute(
@@ -1301,11 +1313,15 @@ impl KeyStorage for StoolapKeyStorage {
 
             let soft_limit_value = match soft_limit_pct {
                 Some(v) => v.into(),
-                None => octo_storage_core::stoolap::Value::Null(stoolap::DataType::Null),
+                None => octo_storage_core::stoolap::Value::Null(
+                    octo_storage_core::stoolap::DataType::Null,
+                ),
             };
             let webhook_value = match alert_webhook {
                 Some(s) => s.to_string().into(),
-                None => octo_storage_core::stoolap::Value::Null(stoolap::DataType::Null),
+                None => octo_storage_core::stoolap::Value::Null(
+                    octo_storage_core::stoolap::DataType::Null,
+                ),
             };
 
             self.db.execute(

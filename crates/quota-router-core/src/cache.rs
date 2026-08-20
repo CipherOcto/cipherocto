@@ -134,7 +134,7 @@ pub async fn validate_key_with_cache(
     }
 
     // Cache miss - lookup in DB
-    let key_hash_blob = stoolap::core::Value::blob(key_hash.to_vec());
+    let key_hash_blob = octo_storage_core::stoolap::Value::blob(key_hash.to_vec());
     let mut rows = db
         .query(
             "SELECT * FROM api_keys WHERE key_hash = $1 AND revoked = 0 LIMIT 1",

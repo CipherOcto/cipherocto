@@ -12,6 +12,15 @@
 //! block would defeat the newtype abstraction; consumers must use
 //! `octo_storage_core::Database` + the `From<Database>` escape hatch
 //! (substrate-internal usage) per §Substrate Newtype Refactor.
+//!
+//! **`DataType` IS re-exported** (added in RFC-0206 v2.3 §Substrate
+//! Re-export Block amendment) — it is the typed-Value discriminant
+//! enum used in `Value::Null(DataType::Null)` constructor calls.
+//! Without it, consumer code leaks `octo_storage_core::stoolap::DataType::*` raw upstream
+//! references; re-exporting it here preserves the substrate abstraction
+//! layer per CLAUDE.md §Core Engineering Principles ("no parallel
+//! abstractions"). Upstream is `#[non_exhaustive]`; consumers must use
+//! the listed variants only.
 
 // `pub use` re-exports — clippy unused_imports false-positive: these
 // are intentional public re-exports without internal consumers; they
@@ -19,6 +28,7 @@
 // octo_storage_core::stoolap::{...}`.
 #![allow(unused_imports)]
 
+pub use stoolap::core::DataType;
 pub use stoolap::core::Error;
 // NB: stoolap's top-level `Transaction` re-export (lib.rs line 144,
 // `pub use storage::{..., Transaction, ...}`) binds to the

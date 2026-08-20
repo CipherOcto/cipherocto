@@ -1187,7 +1187,7 @@ impl ProtocolStore for StoolapStore {
             vec![record.user.clone().into(), (self.device_id as i64).into()],
         )?;
         exec_tx(&mut tx, "INSERT INTO device_registry (user_id, devices_json, timestamp, phash, raw_id, device_id, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-            vec![record.user.into(), devices_json.into(), record.timestamp.into(), record.phash.unwrap_or_default().into(), record.raw_id.map(|r| (r as i64).into()).unwrap_or(octo_storage_core::stoolap::Value::Null(stoolap::DataType::Null)), (self.device_id as i64).into(), now.into()])?;
+            vec![record.user.into(), devices_json.into(), record.timestamp.into(), record.phash.unwrap_or_default().into(), record.raw_id.map(|r| (r as i64).into()).unwrap_or(octo_storage_core::stoolap::Value::Null(octo_storage_core::stoolap::DataType::Null)), (self.device_id as i64).into(), now.into()])?;
         tx.commit().map_err(to_store_err)
     }
 
@@ -1615,14 +1615,14 @@ impl DeviceStore for StoolapStore {
                 (device.signed_pre_key_id as i64).into(),
                 octo_storage_core::stoolap::Value::blob(device.signed_pre_key_signature.to_vec()),
                 octo_storage_core::stoolap::Value::blob(device.adv_secret_key.to_vec()),
-                account.map(octo_storage_core::stoolap::Value::blob).unwrap_or(octo_storage_core::stoolap::Value::Null(stoolap::DataType::Null)),
+                account.map(octo_storage_core::stoolap::Value::blob).unwrap_or(octo_storage_core::stoolap::Value::Null(octo_storage_core::stoolap::DataType::Null)),
                 device.push_name.clone().into(),
                 (device.app_version_primary as i64).into(), (device.app_version_secondary as i64).into(), (device.app_version_tertiary as i64).into(), device.app_version_last_fetched_ms.into(),
-                device.edge_routing_info.clone().map(octo_storage_core::stoolap::Value::blob).unwrap_or(octo_storage_core::stoolap::Value::Null(stoolap::DataType::Null)),
+                device.edge_routing_info.clone().map(octo_storage_core::stoolap::Value::blob).unwrap_or(octo_storage_core::stoolap::Value::Null(octo_storage_core::stoolap::DataType::Null)),
                 device.props_hash.clone().unwrap_or_default().into(),
                 (device.next_pre_key_id as i64).into(), (device.server_has_prekeys as i64).into(),
-                device.nct_salt.clone().map(octo_storage_core::stoolap::Value::blob).unwrap_or(octo_storage_core::stoolap::Value::Null(stoolap::DataType::Null)),
-                cert_chain.map(octo_storage_core::stoolap::Value::blob).unwrap_or(octo_storage_core::stoolap::Value::Null(stoolap::DataType::Null)),
+                device.nct_salt.clone().map(octo_storage_core::stoolap::Value::blob).unwrap_or(octo_storage_core::stoolap::Value::Null(octo_storage_core::stoolap::DataType::Null)),
+                cert_chain.map(octo_storage_core::stoolap::Value::blob).unwrap_or(octo_storage_core::stoolap::Value::Null(octo_storage_core::stoolap::DataType::Null)),
                 (device.login_counter as i64).into(),
             ]) {
             // Log the FULL error chain, not just the wrapper.

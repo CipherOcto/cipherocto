@@ -35,8 +35,8 @@ fn r14_h1_upsert_on_composite_unique_works_in_cipherocto() {
             vec![
                 "critical_block".to_string().into(),
                 1i64.into(),
-                stoolap::core::Value::blob(vec![0xAA; 32]),
-                stoolap::core::Value::blob(vec![0x11; 32]),
+                octo_storage_core::stoolap::Value::blob(vec![0xAA; 32]),
+                octo_storage_core::stoolap::Value::blob(vec![0x11; 32]),
                 42i64.into(),
             ],
         )
@@ -54,8 +54,8 @@ fn r14_h1_upsert_on_composite_unique_works_in_cipherocto() {
             vec![
                 "critical_block".to_string().into(),
                 2i64.into(),
-                stoolap::core::Value::blob(vec![0xAA; 32]),
-                stoolap::core::Value::blob(vec![0x22; 32]),
+                octo_storage_core::stoolap::Value::blob(vec![0xAA; 32]),
+                octo_storage_core::stoolap::Value::blob(vec![0x22; 32]),
                 42i64.into(),
             ],
         )
@@ -69,7 +69,7 @@ fn r14_h1_upsert_on_composite_unique_works_in_cipherocto() {
              WHERE name = $1 AND index_mac = $2 AND device_id = $3",
             vec![
                 "critical_block".to_string().into(),
-                stoolap::core::Value::blob(vec![0xAA; 32]),
+                octo_storage_core::stoolap::Value::blob(vec![0xAA; 32]),
                 42i64.into(),
             ],
         )
@@ -83,7 +83,7 @@ fn r14_h1_upsert_on_composite_unique_works_in_cipherocto() {
              WHERE name = $1 AND index_mac = $2 AND device_id = $3",
             vec![
                 "critical_block".to_string().into(),
-                stoolap::core::Value::blob(vec![0xAA; 32]),
+                octo_storage_core::stoolap::Value::blob(vec![0xAA; 32]),
                 42i64.into(),
             ],
         )
@@ -122,8 +122,8 @@ fn r14_h1_upsert_in_transaction_works_in_cipherocto() {
             vec![
                 "critical_block".to_string().into(),
                 1i64.into(),
-                stoolap::core::Value::blob(vec![0xAA; 32]),
-                stoolap::core::Value::blob(vec![0x11; 32]),
+                octo_storage_core::stoolap::Value::blob(vec![0xAA; 32]),
+                octo_storage_core::stoolap::Value::blob(vec![0x11; 32]),
                 42i64.into(),
             ],
         )
@@ -143,8 +143,8 @@ fn r14_h1_upsert_in_transaction_works_in_cipherocto() {
             vec![
                 "critical_block".to_string().into(),
                 2i64.into(),
-                stoolap::core::Value::blob(vec![0xAA; 32]),
-                stoolap::core::Value::blob(vec![0x22; 32]),
+                octo_storage_core::stoolap::Value::blob(vec![0xAA; 32]),
+                octo_storage_core::stoolap::Value::blob(vec![0x22; 32]),
                 42i64.into(),
             ],
         )
@@ -159,7 +159,7 @@ fn r14_h1_upsert_in_transaction_works_in_cipherocto() {
              WHERE name = $1 AND index_mac = $2 AND device_id = $3",
             vec![
                 "critical_block".to_string().into(),
-                stoolap::core::Value::blob(vec![0xAA; 32]),
+                octo_storage_core::stoolap::Value::blob(vec![0xAA; 32]),
                 42i64.into(),
             ],
         )
@@ -172,7 +172,7 @@ fn r14_h1_upsert_in_transaction_works_in_cipherocto() {
              WHERE name = $1 AND index_mac = $2 AND device_id = $3",
             vec![
                 "critical_block".to_string().into(),
-                stoolap::core::Value::blob(vec![0xAA; 32]),
+                octo_storage_core::stoolap::Value::blob(vec![0xAA; 32]),
                 42i64.into(),
             ],
         )

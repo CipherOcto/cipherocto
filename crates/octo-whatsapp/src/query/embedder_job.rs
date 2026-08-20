@@ -32,8 +32,8 @@ use std::time::{Duration, Instant};
 
 use crate::query::embedder::Embedder;
 use crate::query::ingester::{QueryError, QueryIngester};
-use octo_storage_core::Database;
 use octo_storage_core::stoolap::Value;
+use octo_storage_core::Database;
 use thiserror::Error;
 
 /// Errors the job queue can surface at construction or in tests.

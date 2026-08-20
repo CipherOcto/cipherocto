@@ -14,8 +14,8 @@ use std::result::Result as StdResult;
 use thiserror::Error;
 
 use crate::events::{InboundEvent, MessageKind};
-use octo_storage_core::Database;
 use octo_storage_core::stoolap::Value;
+use octo_storage_core::Database;
 
 /// Errors the ingester can surface to the broadcast-loop driver.
 #[derive(Debug, Error)]

@@ -204,7 +204,11 @@ fn migrate_v2(db: &Database) -> Result<(), octo_storage_core::stoolap::Error> {
 }
 
 /// True if `SELECT <column> FROM <table> LIMIT 0` returns Ok.
-fn has_column(db: &Database, table: &str, column: &str) -> Result<bool, octo_storage_core::stoolap::Error> {
+fn has_column(
+    db: &Database,
+    table: &str,
+    column: &str,
+) -> Result<bool, octo_storage_core::stoolap::Error> {
     // Stoolap has no `PRAGMA table_info(...)` equivalent yet; the cheapest
     // probe is to try a query that references the column. Any error
     // (ColumnNotFound or a parse error) means the column is absent.

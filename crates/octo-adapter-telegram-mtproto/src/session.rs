@@ -82,9 +82,9 @@ use grammers_session::types::{
     ChannelKind, DcOption, PeerAuth, PeerId, PeerInfo, UpdateState, UpdatesState,
 };
 use grammers_session::Session;
+use octo_storage_core::stoolap::Value;
 use octo_storage_core::Database;
 use parking_lot::Mutex;
-use stoolap::core::Value;
 use tracing::warn;
 
 /// Wrapper around a 256-byte `auth_key` that zeroizes on drop.
@@ -776,7 +776,7 @@ async fn persist_update_state(
 #[derive(Debug, thiserror::Error)]
 pub enum MtprotoSessionError {
     #[error("stoolap error: {0}")]
-    Stoolap(#[from] stoolap::Error),
+    Stoolap(#[from] octo_storage_core::stoolap::Error),
     // RFC-0206 v2.1 §Substrate Newtype Refactor: substrate returns
     // `SubstrateError` from `Database::open` / `open_in_memory`. We
     // forward via `From<SubstrateError>` so session open surfaces the

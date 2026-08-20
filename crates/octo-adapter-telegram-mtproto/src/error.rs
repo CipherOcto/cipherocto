@@ -281,8 +281,8 @@ impl MtprotoTelegramError {
     }
 }
 
-impl From<stoolap::Error> for MtprotoTelegramError {
-    fn from(e: stoolap::Error) -> Self {
+impl From<octo_storage_core::stoolap::Error> for MtprotoTelegramError {
+    fn from(e: octo_storage_core::stoolap::Error) -> Self {
         MtprotoTelegramError::Session(format!("stoolap: {}", e))
     }
 }

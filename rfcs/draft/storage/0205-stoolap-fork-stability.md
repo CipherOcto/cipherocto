@@ -4,6 +4,7 @@
 
 **Version:** 1.0 (2026-08-19)
 **Status:** Draft
+**Layer:** B (governance; introduces no Layer A boundary change — constrains how an existing Layer B dependency is layered)
 
 ## Authors
 
@@ -43,7 +44,7 @@ Formalizes a two-tier split of the Stoolap fork substrate: a **Layer A frozen sn
 
 ## Motivation
 
-`docs/reviews/2026-08-15-storage-layer-restructuring-analysis.md` §8.1.7 audit identified that the Stoolap fork (workspace `Cargo.toml:156`, `branch = "feat/blockchain-sql"`) is **NOT CERTIFIED** for Layer A stability:
+`docs/reviews/2026-08-15-storage-layer-restructuring-analysis.md` §8.1.7 audit identified that the Stoolap fork (workspace root `Cargo.toml` `[patch.crates-io]` block, `branch = "feat/blockchain-sql"`) is **NOT CERTIFIED** for Layer A stability:
 
 - No release tag, no commit SHA pin
 - Active fork maintained by CipherOcto team; merge-to-upstream plan not started
@@ -62,24 +63,32 @@ The Stoolap fork hosts critical substrate features consumed across the chain: `D
 
 | Role                | Identifier                          | Authority Scope                                | Lifecycle                 | Source/Ref                       |
 | ------------------- | ----------------------------------- | ---------------------------------------------- | ------------------------- | -------------------------------- |
-| Stoolap steward     | GitHub team `@stoolap-stewards`     | Fork maintenance, freeze, re-cert              | Active until role revoked | RFC-0205 §Specification          |
-| octo-determin owner | GitHub team `@octo-determin-owners` | Layer A consumption, fork-side change flagging | Active until role revoked | RFC-0205 §Specification          |
-| RFC reviewer        | RFC process role                    | Rev bump approval, CVE bypass co-sign          | Per-RFC                   | RFC-0001 §Mission Lifecycle      |
+| Stoolap steward     | GitHub team `@stoolap-stewards`     | Fork maintenance, freeze, re-cert              | Active until role revoked | RFC-0205 §Two-Tier Architecture  |
+| octo-determin owner | GitHub team `@octo-determin-owners` | Layer A consumption, fork-side change flagging | Active until role revoked | RFC-0205 §Two-Tier Architecture  |
+| RFC reviewer        | RFC process role                    | Rev bump approval, CVE bypass co-sign          | Per-RFC                   | RFC-0205 §Release-Tag Pin Policy |
 | On-call security    | Rotation role                       | 24-hour CVE bypass co-sign                     | Per-incident              | RFC-0205 §Release-Tag Pin Policy |
 
 ## Specification
 
 ### Two-Tier Architecture
 
-```text
-Layer A (years-stable, RFC-frozen):
-  - crates/octo-determin: DQA substrate (already certified per review §8.1.1)
-  - Stoolap fork pinned to commit SHA; frozen as octo-stoolap-frozen
-    crate dependency; cannot be upgraded without RFC + major version bump
-
-Layer B (RFC-driven, additive):
-  - Active Stoolap fork at feat/blockchain-sql
-  - Used by crates/octo-storage and consumer crates via Cargo.toml dep
+```mermaid
+graph TD
+    subgraph LayerA["Layer A (years-stable, RFC-frozen)"]
+        Determin["crates/octo-determin<br/>DQA substrate<br/>certified per review §8.1.1"]
+        Frozen["octo-stoolap-frozen<br/>commit-pinned snapshot"]
+        Determin --> Frozen
+    end
+    subgraph LayerB["Layer B (RFC-driven, additive)"]
+        Fork["Active Stoolap fork<br/>feat/blockchain-sql"]
+        Storage["crates/octo-storage"]
+        Consumers["consumer crates<br/>(quota-router-storage, etc.)"]
+        Storage --> Fork
+        Consumers --> Storage
+    end
+    Determin -. MUST NOT .-> Fork
+    Storage -. MUST NOT .-> Frozen
+    Consumers -. MUST NOT .-> Frozen
 ```
 
 **Dependency direction rule (enforced by `cargo metadata` audit + CI gate):**
@@ -115,14 +124,14 @@ branch = "feat/blockchain-sql"
 
 ### Release-Tag Pin Policy
 
-| Trigger                        | Action                                                                                                                             | Owner                              | SLA                                      |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- | ---------------------------------------- |
-| Initial freeze                 | Pin `rev = "<sha>"` of `feat/blockchain-sql` HEAD; tag `octo-stoolap-frozen-v0`                                                    | Stoolap steward team               | one-time                                 |
-| Upstream Stoolap major release | File RFC to bump `octo-stoolap-frozen` rev; security audit + RFC-major bump required                                               | Stoolap steward + RFC reviewer     | 7 days for CRITICAL CVE; 90 days for LOW |
-| For-Layer-A consumer request   | `octo-determin` only; never directly consumed by other crates                                                                      | octo-determin owner                | 30 days                                  |
-| Emergency CVE bypass           | `octo-determin` may consume active fork temporarily with audit log entry per consumption                                           | on-call security + Stoolap steward | 24 hours for CRITICAL CVE                |
-| Monthly re-cert                | Re-certify the frozen commit-applies checklist (CI green, security audit clean, no upstream regressions in the dependency surface) | Stoolap steward                    | 30 days                                  |
-| Quarterly re-cert              | Full review of the two-tier split, cargo-pinning health, merge-to-upstream progress                                                | Stoolap steward + RFC reviewer     | 90 days                                  |
+| Trigger                        | Action                                                                                                                                                                                                                                                         | Owner                              | SLA                                      |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- | ---------------------------------------- |
+| Initial freeze                 | Pin `rev = "<sha>"` of `feat/blockchain-sql` HEAD; tag `octo-stoolap-frozen-v0`                                                                                                                                                                                | Stoolap steward team               | one-time                                 |
+| Upstream Stoolap major release | File RFC to bump `octo-stoolap-frozen` rev; security audit + RFC-major bump required                                                                                                                                                                           | Stoolap steward + RFC reviewer     | 7 days for CRITICAL CVE; 90 days for LOW |
+| For-Layer-A consumer request   | `octo-determin` only; never directly consumed by other crates                                                                                                                                                                                                  | octo-determin owner                | 30 days                                  |
+| Emergency CVE bypass           | `octo-determin` may consume active fork temporarily with audit log entry per consumption                                                                                                                                                                       | on-call security + Stoolap steward | 24 hours for CRITICAL CVE                |
+| Monthly re-cert                | Re-certify the frozen commit-applies checklist (CI green, security audit clean, no upstream regressions in the dependency surface). Calendar trigger: 30 days after last freeze tag (not calendar-month 1st — deterministic sliding window from freeze event). | Stoolap steward                    | 30 days                                  |
+| Quarterly re-cert              | Full review of the two-tier split, cargo-pinning health, merge-to-upstream progress                                                                                                                                                                            | Stoolap steward + RFC reviewer     | 90 days                                  |
 
 ### Determinism Requirements
 
@@ -130,7 +139,7 @@ branch = "feat/blockchain-sql"
 - DQA(scale) wire form (16-byte BE) MUST NOT change across re-cert without an RFC bump.
 - `encode_decimal_lexicographic` byte output MUST be pinned across re-cert.
 
-### RFC-0008 Execution Class Mapping
+### Operation Class Mapping
 
 | Operation              | Class | Rationale                                 |
 | ---------------------- | ----- | ----------------------------------------- |
@@ -138,6 +147,8 @@ branch = "feat/blockchain-sql"
 | Monthly re-cert        | C     | Operational; no consensus impact          |
 | Emergency CVE bypass   | C     | Operational; gated by audit log + co-sign |
 | Quarterly split review | C     | Governance; no consensus impact           |
+
+> **Note:** Operation Class A/B/C taxonomy per `docs/BLUEPRINT.md` §RFC Process. No separate RFC-NNNN anchors this taxonomy; it is defined inline in the process doc.
 
 ### Error Handling
 
@@ -167,7 +178,7 @@ branch = "feat/blockchain-sql"
 
 ### Categories to Audit
 
-- **Operator trust** — Stoolap steward team is trusted; compromise → MITM via poisoned SHA. Mitigation: RFC reviewer co-sign on rev bump; CI verifies `Cargo.toml` rev matches git tag.
+- **Operator trust** — Stoolap steward team is trusted; compromise → MITM via poisoned SHA. Mitigation: RFC reviewer co-sign on rev bump (separate GitHub team; co-signer key NOT co-located with steward account); CI verifies `Cargo.toml` rev matches git tag.
 - **Platform trust** — GitHub is trusted as fork host; outage → `Cargo.toml` resolution fails. Mitigation: mirror to internal registry; quarterly failover drill.
 - **Time source** — re-cert cadence is calendar-based (30/90 days); clock skew does not affect.
 - **Network partition** — fork fetch requires network access; offline CI fails. Mitigation: vendor fork tarball in offline mode.
@@ -185,11 +196,11 @@ branch = "feat/blockchain-sql"
 
 ## Adversary Analysis
 
-| Decision               | Q1 Beneficiary                          | Q2 Cost to Attacker        | Q3 Gain if Successful                        | Q4 Defense (cost to legit op)                                        | Q5 Residual Risk                   |
-| ---------------------- | --------------------------------------- | -------------------------- | -------------------------------------------- | -------------------------------------------------------------------- | ---------------------------------- |
-| Pin fork to commit SHA | Compromised steward                     | Steward account compromise | Inject malicious DQA codec → consensus split | RFC reviewer co-sign + git tag signature + CI byte-verify (low cost) | LOW — multi-party co-sign required |
-| Two-tier split         | Fork maintainer pushing breaking change | Reputation cost            | Force Layer A to upgrade early               | CI rejects cross-tier deps (low cost)                                | LOW — automatic gate               |
-| Monthly re-cert        | Lazy steward                            | None (passive)             | CVE goes unpatched                           | 30-day SLA; escalation to RFC reviewer (low cost)                    | MED — depends on steward vigilance |
+| Decision               | Q1 Beneficiary                          | Q2 Cost to Attacker        | Q3 Gain if Successful                        | Q4 Defense (cost to legit op)                                                                                                                                      | Q5 Residual Risk                   |
+| ---------------------- | --------------------------------------- | -------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------- |
+| Pin fork to commit SHA | Compromised steward                     | Steward account compromise | Inject malicious DQA codec → consensus split | RFC reviewer co-sign via out-of-band channel (HW security key held by separate person, not GitHub team membership) + git tag signature + CI byte-verify (low cost) | LOW — multi-party co-sign required |
+| Two-tier split         | Fork maintainer pushing breaking change | Reputation cost            | Force Layer A to upgrade early               | CI rejects cross-tier deps (low cost)                                                                                                                              | LOW — automatic gate               |
+| Monthly re-cert        | Lazy steward                            | None (passive)             | CVE goes unpatched                           | 30-day SLA; escalation to RFC reviewer (low cost)                                                                                                                  | MED — depends on steward vigilance |
 
 ### Severity Classification
 
@@ -221,8 +232,8 @@ No byte-exact TV — this is a governance RFC. Verification is structural:
 2. **TV-0205-02:** `octo-determin/Cargo.toml` depends on `octo-stoolap-frozen`, not `stoolap`.
 3. **TV-0205-03:** `octo-storage/Cargo.toml` depends on `stoolap` (active fork), not `octo-stoolap-frozen`.
 4. **TV-0205-04:** CI graph audit rejects any other crate depending on `octo-stoolap-frozen`.
-5. **TV-0205-05:** CI verifies frozen `rev` resolves to a commit reachable from `feat/blockchain-sql` branch tip.
-6. **TV-0205-06:** Monthly re-cert checklist passes (script: `scripts/stoolap_recert.sh`).
+5. **TV-0205-05:** CI verifies frozen `rev` is an **ancestor of** `feat/blockchain-sql` branch tip (`git merge-base --is-ancestor <rev> origin/feat/blockchain-sql`). Rebases of the branch tip retain the frozen rev as an ancestor; force-push history-rewrites that drop the frozen rev fail this gate.
+6. **TV-0205-06:** Monthly re-cert checklist passes (script: `scripts/stoolap_recert.sh` — **NEW** per §Implementation Phases Phase 1 Task 4; not yet present on disk; TV gates once script exists).
 
 ## Alternatives Considered
 
@@ -259,12 +270,13 @@ No byte-exact TV — this is a governance RFC. Verification is structural:
 
 ## Future Work
 
-- Sub-mission `stoolap-fork-merge-to-upstream.md` for upstream contribution strategy.
-- Sub-mission `octo-stoolap-frozen-release-process.md` for tagging + signing convention.
+- Sub-mission `stoolap-fork-merge-to-upstream.md` (**to be filed**) for upstream contribution strategy.
+- Sub-mission `octo-stoolap-frozen-release-process.md` (**to be filed**) for tagging + signing convention.
 - Per-Phase-2 quarterly split review audits.
 
 ## Version History
 
-| Version | Date       | Author     | Changes                                                                                            |
-| ------- | ---------- | ---------- | -------------------------------------------------------------------------------------------------- |
-| 1.0     | 2026-08-19 | @mmacedoeu | Initial draft. Two-tier split per review §8.1.7; release-tag pin policy table; Cargo.toml pinning. |
+| Version | Date       | Author     | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------- | ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0     | 2026-08-19 | @mmacedoeu | Initial draft. Two-tier split per review §8.1.7; release-tag pin policy table; Cargo.toml pinning.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 1.1     | 2026-08-19 | @mmacedoeu | Round 1 review fixes: `Cargo.toml:156` line ref → `Cargo.toml` `[patch.crates-io]` block; phantom `RFC-0001`/`RFC-0008` → `BLUEPRINT.md` ref + inline Operation Class Mapping; Two-Tier ASCII → Mermaid graph; "monthly re-cert" trigger clarified (30 days from last freeze, not calendar-month 1st); TV-0205-05 "reachable from" → "ancestor of" + `git merge-base --is-ancestor`; TV-0205-06 marked as **NEW** (script not yet on disk); Roles Source/Ref column updated to precise §names; Layer self-declaration added to Status; Adversary Q1 mitigation clarified (HW security key held by separate person, not GitHub team); Future Work phantom mission pointers marked **to be filed**. Doc accuracy only — no spec change. |

@@ -40,7 +40,7 @@ pub enum SessionStoreError {
     NoDefaultPath,
 }
 
-pub(crate) fn stoolap_err(e: stoolap::Error) -> SessionStoreError {
+pub(crate) fn stoolap_err(e: octo_storage_core::stoolap::Error) -> SessionStoreError {
     SessionStoreError::Stoolap(e.to_string())
 }
 
@@ -181,9 +181,11 @@ fn now_epoch() -> i64 {
     crate::now_epoch()
 }
 
-/// Convert a `stoolap::ResultRow` to a `SessionRow`. Returns
+/// Convert a `octo_storage_core::stoolap::ResultRow` to a `SessionRow`. Returns
 /// `SessionStoreError::Stoolap` on column-mismatch errors.
-fn row_to_session(row: &stoolap::ResultRow) -> Result<SessionRow, SessionStoreError> {
+fn row_to_session(
+    row: &octo_storage_core::stoolap::ResultRow,
+) -> Result<SessionRow, SessionStoreError> {
     let login_type_str: String = row
         .get_by_name("login_type")
         .map_err(|e| SessionStoreError::Stoolap(e.to_string()))?;
@@ -241,7 +243,7 @@ impl SessionStore for StoolapSessionStore {
             // With force=true, delete the existing row before re-inserting.
             // The new row gets a fresh login_timestamp and the next
             // monotonic position.
-            let del_params: Vec<stoolap::Value> =
+            let del_params: Vec<octo_storage_core::stoolap::Value> =
                 vec![row.user_id.clone().into(), row.device_id.clone().into()];
             self.db
                 .execute(
@@ -274,7 +276,7 @@ impl SessionStore for StoolapSessionStore {
         };
 
         let now = now_epoch();
-        let params: Vec<stoolap::Value> = vec![
+        let params: Vec<octo_storage_core::stoolap::Value> = vec![
             row.user_id.clone().into(),
             row.device_id.clone().into(),
             row.homeserver_url.clone().into(),
@@ -312,7 +314,7 @@ impl SessionStore for StoolapSessionStore {
                 device_id: row.device_id.clone(),
             });
         }
-        let params: Vec<stoolap::Value> = vec![
+        let params: Vec<octo_storage_core::stoolap::Value> = vec![
             row.access_token.clone().into(),
             row.refresh_token.clone().into(),
             row.display_name.clone().into(),
@@ -339,7 +341,7 @@ impl SessionStore for StoolapSessionStore {
         user_id: &str,
         device_id: &str,
     ) -> Result<Option<SessionRow>, SessionStoreError> {
-        let params: Vec<stoolap::Value> =
+        let params: Vec<octo_storage_core::stoolap::Value> =
             vec![user_id.to_string().into(), device_id.to_string().into()];
         let mut rows = self
             .db
@@ -428,7 +430,7 @@ impl SessionStore for StoolapSessionStore {
                 device_id: device_id.to_string(),
             });
         }
-        let params: Vec<stoolap::Value> = vec![
+        let params: Vec<octo_storage_core::stoolap::Value> = vec![
             now.into(),
             user_id.to_string().into(),
             device_id.to_string().into(),
@@ -454,7 +456,7 @@ impl SessionStore for StoolapSessionStore {
                 device_id: device_id.to_string(),
             });
         }
-        let params: Vec<stoolap::Value> =
+        let params: Vec<octo_storage_core::stoolap::Value> =
             vec![user_id.to_string().into(), device_id.to_string().into()];
         self.db
             .execute(

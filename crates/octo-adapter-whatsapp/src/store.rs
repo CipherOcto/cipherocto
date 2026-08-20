@@ -29,7 +29,7 @@ fn to_store_err<E: std::error::Error + Send + Sync + 'static>(
 
 /// Helper to execute a statement and map to ()
 fn exec(
-    db: &stoolap::Database,
+    db: &octo_storage_core::Database,
     sql: &str,
     params: Vec<stoolap::Value>,
 ) -> wacore::store::error::Result<()> {
@@ -38,7 +38,7 @@ fn exec(
 
 /// Helper to query and return rows iterator
 fn query(
-    db: &stoolap::Database,
+    db: &octo_storage_core::Database,
     sql: &str,
     params: Vec<stoolap::Value>,
 ) -> wacore::store::error::Result<stoolap::Rows> {
@@ -85,7 +85,7 @@ fn query_tx(
 /// "database operation error" because stoolap only allows one
 /// active transaction per executor.
 pub struct StoolapStore {
-    db: tokio::sync::Mutex<stoolap::Database>,
+    db: tokio::sync::Mutex<octo_storage_core::Database>,
     device_id: i32,
 }
 
@@ -122,7 +122,7 @@ impl StoolapStore {
         // DSN form. Without this, `start_bot` panics with
         // "Invalid DSN format: expected scheme://path".
         let dsn = format!("file://{path}");
-        let db = stoolap::Database::open(&dsn)?;
+        let db = octo_storage_core::Database::open(&dsn)?;
         let store = Self {
             db: tokio::sync::Mutex::new(db),
             device_id: 1,
@@ -135,7 +135,7 @@ impl StoolapStore {
     }
 
     pub fn new_in_memory() -> anyhow::Result<Self> {
-        let db = stoolap::Database::open_in_memory()?;
+        let db = octo_storage_core::Database::open_in_memory()?;
         let store = Self {
             db: tokio::sync::Mutex::new(db),
             device_id: 1,
@@ -206,7 +206,7 @@ impl StoolapStore {
         )))
     }
 
-    fn init_schema_with(&self, db: &stoolap::Database) -> anyhow::Result<()> {
+    fn init_schema_with(&self, db: &octo_storage_core::Database) -> anyhow::Result<()> {
         // R9 / stoolap parser: stoolap's strict SQL parser
         // doesn't accept `PRIMARY KEY (col1, col2)` (the `KEY`
         // token is rejected as a reserved keyword). The fix

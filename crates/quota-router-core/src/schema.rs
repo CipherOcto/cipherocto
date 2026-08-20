@@ -1,7 +1,7 @@
 use crate::keys::KeyError;
 
 /// Initialize database with api_keys and teams tables
-pub fn init_database(db: &stoolap::Database) -> Result<(), KeyError> {
+pub fn init_database(db: &octo_storage_core::Database) -> Result<(), KeyError> {
     // Create api_keys table
     // key_id and team_id are BLOB(16) per RFC-0903-C1 (raw UUID bytes).
     // key_hash is BYTEA(32) for HMAC-SHA256 binary storage.
@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn test_init_database() {
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         init_database(&db).unwrap();
     }
 }

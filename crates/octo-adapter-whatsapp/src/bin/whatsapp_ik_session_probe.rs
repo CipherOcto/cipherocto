@@ -391,7 +391,7 @@ struct CertInfo {
 fn read_cert_chain(session_path: &std::path::Path) -> Result<Option<CertInfo>> {
     use anyhow::Context;
     let dsn = format!("file://{}", session_path.display());
-    let db = stoolap::Database::open(&dsn).context("stoolap open")?;
+    let db = octo_storage_core::Database::open(&dsn).context("stoolap open")?;
     let mut rows = db
         .query("SELECT server_cert_chain FROM device WHERE id = 1", ())
         .context("SELECT server_cert_chain")?;

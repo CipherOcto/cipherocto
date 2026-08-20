@@ -21,7 +21,7 @@
 //! (a) add a direct `octo-vault` dep to `octo-cap-macaroon` (forbidden —
 //!     layer direction A → B → C → D/E; consumer extensions don't depend
 //!     on Layer B substrate owners), or
-//! (b) `pub use stoolap::Database` in `octo-vault` (forbidden — violates
+//! (b) `pub use octo_storage_core::Database` in `octo-vault` (forbidden — violates
 //!     `feedback_stoolap_persistence` red line; owner crates depend on
 //!     the fork directly, never re-export the fork handle).
 //!

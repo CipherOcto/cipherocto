@@ -161,7 +161,7 @@ impl StoolapDependencyChecker {
                     .ok_or_else(|| format!("db_path is not valid UTF-8: {db_path:?}"))?;
                 format!("file://{p}")
             };
-            let _db = stoolap::Database::open(&dsn).map_err(|e| format!("open: {e}"))?;
+            let _db = octo_storage_core::Database::open(&dsn).map_err(|e| format!("open: {e}"))?;
             Ok(())
         });
         match tokio::time::timeout(Duration::from_millis(200), probe).await {

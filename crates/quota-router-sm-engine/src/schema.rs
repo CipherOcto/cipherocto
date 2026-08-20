@@ -1,13 +1,19 @@
 //! Schema migrations for the asks + consumed_receipt_index tables.
 //!
+//! RFC-0206 v2.1 §Migration Order: substrate exposes legacy
+//! `_legacy_*` aliases for the previous `Migration`/`apply_pending`
+//! API during the v3.0 transition. This module uses them; the
+//! deprecation noise is silenced at module level.
+#![allow(deprecated)]
+//!
 //! Migrations are compile-time baked via `include_str!`. Single source of
 //! truth; reproducible across builds. Cipherocto-owned schema per
 //! [[stoolap-general-purpose-db]] Path B.
 //!
 //! Layer B (mission `octo-storage-split` S2): the underlying migration
-//! runner is the Layer A substrate `octo_storage_core::apply_pending`.
+//! runner is the Layer A substrate `octo_storage_core::_legacy_apply_pending`.
 //! The custom `MigratableDatabase` trait that historically shimmed the
-//! Layer A interface is gone — substrate takes `&stoolap::Database`
+//! Layer A interface is gone — substrate takes `&octo_storage_core::Database`
 //! directly, so the trait-and-impl shim is unnecessary indirection.
 
 /// Migration table DDL + tracking table bootstrap.
@@ -42,17 +48,34 @@ pub const MIGRATIONS: &[(u32, &str)] = &[
 ];
 
 /// Substrate-form migration catalog: numeric versions + canonical `v<NNN>`
-/// labels, suitable for `octo_storage_core::apply_pending`. The labels
+/// labels, suitable for `octo_storage_core::_legacy_apply_pending`. The labels
 /// follow the substrate's convention so ops tooling that reads back
 /// the `name` column from `cipherocto_migrations` sees stable
 /// `v001__create_asks`-style strings.
-pub(super) static BUILTIN_MIGRATION_CATALOG: &[&'static dyn octo_storage_core::Migration] = &[
-    &octo_storage_core::StaticMigration::new(1, "v001__create_asks", MIGRATION_001_SQL),
-    &octo_storage_core::StaticMigration::new(2, "v002__create_receipt_index", MIGRATION_002_SQL),
-    &octo_storage_core::StaticMigration::new(3, "v003__create_events_shard", MIGRATION_003_SQL),
-    &octo_storage_core::StaticMigration::new(4, "v004__create_shard_registry", MIGRATION_004_SQL),
-    &octo_storage_core::StaticMigration::new(5, "v005__create_policy_catalog", MIGRATION_005_SQL),
-    &octo_storage_core::StaticMigration::new(
+pub(super) static BUILTIN_MIGRATION_CATALOG:
+    &[&'static dyn octo_storage_core::_legacy_Migration] = &[
+    &octo_storage_core::_legacy_StaticMigration::new(1, "v001__create_asks", MIGRATION_001_SQL),
+    &octo_storage_core::_legacy_StaticMigration::new(
+        2,
+        "v002__create_receipt_index",
+        MIGRATION_002_SQL,
+    ),
+    &octo_storage_core::_legacy_StaticMigration::new(
+        3,
+        "v003__create_events_shard",
+        MIGRATION_003_SQL,
+    ),
+    &octo_storage_core::_legacy_StaticMigration::new(
+        4,
+        "v004__create_shard_registry",
+        MIGRATION_004_SQL,
+    ),
+    &octo_storage_core::_legacy_StaticMigration::new(
+        5,
+        "v005__create_policy_catalog",
+        MIGRATION_005_SQL,
+    ),
+    &octo_storage_core::_legacy_StaticMigration::new(
         6,
         "v006__create_consumed_envelopes",
         MIGRATION_006_SQL,
@@ -64,18 +87,21 @@ pub(super) static BUILTIN_MIGRATION_CATALOG: &[&'static dyn octo_storage_core::M
 /// Idempotent: re-running on an already-migrated DB is a no-op.
 ///
 /// Thin delegation to the Layer A substrate
-/// ([`octo_storage_core::apply_pending`]). The substrate's
+/// ([`octo_storage_core::_legacy_apply_pending`]). The substrate's
 /// `ensure_tracker_table` brings the historical
 /// `cipherocto_migrations(version PK, applied_at)` table into the
 /// substrate-friendly shape in-place by idem-potently adding `name`
 /// and `applied_at_unix` columns; subsequent `record_migration` calls
 /// populate them. This crate's other queries only SELECT `version`
 /// from the table, so the legacy `applied_at` column is left untouched.
-pub fn apply_migrations(db: &stoolap::Database) -> Result<(), octo_storage_core::StorageError> {
-    octo_storage_core::apply_pending(
+pub fn apply_migrations(
+    db: &octo_storage_core::Database,
+) -> Result<(), octo_storage_core::_legacy_StorageError> {
+    octo_storage_core::_legacy_apply_pending(
         db,
         BUILTIN_MIGRATION_CATALOG,
-        octo_storage_core::ApplyConfig::default().with_tracker_table("cipherocto_migrations"),
+        octo_storage_core::_legacy_ApplyConfig::default()
+            .with_tracker_table("cipherocto_migrations"),
     )
 }
 
@@ -90,14 +116,14 @@ pub fn apply_migrations(db: &stoolap::Database) -> Result<(), octo_storage_core:
 ///
 /// **Removal target:** the alias will be deleted in the **0.9.0**
 /// release. By 0.9.0 all owner crates + downstream consumers must
-/// import `octo_storage_core::StorageError` directly. The current
+/// import `octo_storage_core::_legacy_StorageError` directly. The current
 /// 0.7.0 release ships this alias with a `#[deprecated]` marker so
 /// rustc emits migration warnings at every callsite.
 #[deprecated(
     since = "0.7.0",
-    note = "use `octo_storage_core::StorageError` (or `crate::store::StorageError::Migration` for the per-store wrapper); this alias is removed in 0.9.0"
+    note = "use `octo_storage_core::_legacy_StorageError` (or `crate::store::StorageError::Migration` for the per-store wrapper); this alias is removed in 0.9.0"
 )]
-pub type MigrationError = octo_storage_core::StorageError;
+pub type MigrationError = octo_storage_core::_legacy_StorageError;
 
 #[cfg(test)]
 mod tests {

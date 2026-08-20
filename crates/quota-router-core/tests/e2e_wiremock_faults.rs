@@ -78,7 +78,7 @@ async fn start_proxy_with_mock_upstream(
     let provider = Provider::new("openai", &mock_uri);
     let dispatch_map = dispatch_map_for(&mock_uri);
 
-    let db = stoolap::Database::open_in_memory().expect("in-memory db");
+    let db = octo_storage_core::Database::open_in_memory().expect("in-memory db");
     quota_router_core::schema::init_database(&db).expect("init schema");
     let storage = Arc::new(StoolapKeyStorage::new(db));
 
@@ -224,7 +224,7 @@ async fn test_upstream_connection_refused_returns_502() {
     let provider = Provider::new("openai", &dead_uri);
     let dispatch_map = dispatch_map_for(&dead_uri);
 
-    let db = stoolap::Database::open_in_memory().expect("in-memory db");
+    let db = octo_storage_core::Database::open_in_memory().expect("in-memory db");
     quota_router_core::schema::init_database(&db).expect("init schema");
     let storage = Arc::new(StoolapKeyStorage::new(db));
     let raw_key = quota_router_core::keys::generate_key_string();
@@ -419,7 +419,7 @@ async fn test_dispatch_map_no_match_returns_503() {
         },
     );
 
-    let db = stoolap::Database::open_in_memory().expect("in-memory db");
+    let db = octo_storage_core::Database::open_in_memory().expect("in-memory db");
     quota_router_core::schema::init_database(&db).expect("init schema");
     let storage = Arc::new(StoolapKeyStorage::new(db));
     let raw_key = quota_router_core::keys::generate_key_string();

@@ -62,14 +62,14 @@ mod real {
     use super::*;
     use crate::store::AnchorRecord;
 
-    /// `StoolapReputationStore` (real). Owns one `stoolap::Database` behind
+    /// `StoolapReputationStore` (real). Owns one `octo_storage_core::Database` behind
     /// `Arc` so trait methods can hold shared references. All mutating SQL
     /// operations execute under default MVCC isolation; we do not wrap them
     /// in transactions because every method issues one SQL statement and
     /// the trait's correctness contract is single-row atomicity.
     #[derive(Clone)]
     pub struct StoolapReputationStore {
-        db: std::sync::Arc<stoolap::Database>,
+        db: std::sync::Arc<octo_storage_core::Database>,
     }
 
     impl std::fmt::Debug for StoolapReputationStore {
@@ -85,7 +85,7 @@ mod real {
         /// Applies migrations synchronously on first run; subsequent opens
         /// are no-ops.
         pub async fn open(dsn: &str) -> Result<Self, ReputationError> {
-            let db = stoolap::Database::open(dsn)
+            let db = octo_storage_core::Database::open(dsn)
                 .map_err(|_e: stoolap::Error| ReputationError::ChainRefInvalid("stoolap_open"))?;
             substrate_runner::apply(&db)?;
             Ok(Self {
@@ -95,9 +95,10 @@ mod real {
 
         /// Open an in-memory store. Used for tests and ephemeral deployments.
         pub async fn open_in_memory() -> Result<Self, ReputationError> {
-            let db = stoolap::Database::open_in_memory().map_err(|_e: stoolap::Error| {
-                ReputationError::ChainRefInvalid("stoolap_open_inmem")
-            })?;
+            let db =
+                octo_storage_core::Database::open_in_memory().map_err(|_e: stoolap::Error| {
+                    ReputationError::ChainRefInvalid("stoolap_open_inmem")
+                })?;
             substrate_runner::apply(&db)?;
             Ok(Self {
                 db: std::sync::Arc::new(db),
@@ -107,14 +108,14 @@ mod real {
         /// Construct over an existing `Database` handle without applying
         /// migrations. Useful for tests that pre-init schema and want to
         /// skip the apply step.
-        pub fn from_db(db: stoolap::Database) -> Self {
+        pub fn from_db(db: octo_storage_core::Database) -> Self {
             Self {
                 db: std::sync::Arc::new(db),
             }
         }
 
         /// Borrow the underlying `Database`.
-        pub fn database(&self) -> &stoolap::Database {
+        pub fn database(&self) -> &octo_storage_core::Database {
             &self.db
         }
 

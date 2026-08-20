@@ -8,7 +8,7 @@
 //! See `docs/plans/2026-07-11-whatsapp-query-layer-design.md` Schema
 //! section for the full design rationale.
 
-use stoolap::Database;
+use octo_storage_core::Database;
 
 /// Bumped when a non-additive schema change lands; reset to 0 for a
 /// fresh table on first install. Replays of the same `SCHEMA_VERSION`

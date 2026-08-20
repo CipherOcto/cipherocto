@@ -218,7 +218,7 @@ mod tests {
     use crate::keys::KeyType;
 
     fn create_test_middleware() -> KeyMiddleware<crate::storage::StoolapKeyStorage> {
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = crate::storage::StoolapKeyStorage::new(db);
         KeyMiddleware::new(Arc::new(storage))

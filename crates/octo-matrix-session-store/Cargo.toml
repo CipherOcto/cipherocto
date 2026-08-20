@@ -12,6 +12,18 @@ edition = "2021"
 # `Database::open(path)` / `Database::open_in_memory()` + `db.execute(sql, params)`
 # and `db.query(sql, params) -> stoolap::Rows`. See
 # `crates/quota-router-core/src/storage.rs` for the canonical pattern.
+# Layer A storage substrate (mission 0206-001). Re-exports `Database`
+# newtype wrapping `stoolap::Database`. The store uses
+# `octo_storage_core::Database` in field/return positions.
+octo-storage-core = { path = "../octo-storage-core" }
+
+# Per RFC-0206 v2.1 §Cargo.toml Cross-Cuts + HIGH 6 consumer-crate
+# exemption, the substrate redesign v3.0 does NOT yet re-export
+# `stoolap::ResultRow` / `stoolap::ApiTransaction` / `stoolap::Rows`
+# / `stoolap::Error` — consumer crates that decode rows or run
+# transactions need direct fork access. A v2.2 RFC-0206 amendment
+# (filed as 0206-011b) is the proper scope to add a `pub mod stoolap`
+# re-export to the substrate. Until then, the direct dep stays.
 stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
 # Serialization for the row model.
 serde = { workspace = true }

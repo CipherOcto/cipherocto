@@ -118,7 +118,7 @@ impl Default for KeyCache {
 ///
 /// Returns `Arc<ApiKey>` to avoid cloning on cache hits.
 pub async fn validate_key_with_cache(
-    db: &stoolap::Database,
+    db: &octo_storage_core::Database,
     cache: &KeyCache,
     key: &str,
 ) -> Result<Arc<ApiKey>, KeyError> {
@@ -171,7 +171,7 @@ pub async fn validate_key_with_cache(
 ///
 /// Note: The authoritative check happens atomically in `record_spend_ledger()`.
 pub fn check_budget_soft_limit(
-    db: &stoolap::Database,
+    db: &octo_storage_core::Database,
     key_id: &str,
     estimated_max_cost: u64,
 ) -> Result<(), KeyError> {
@@ -226,7 +226,11 @@ pub fn check_budget_soft_limit(
 /// - `auto_rotate = 1` AND `expires_at < now`
 ///
 /// Logs failures but continues processing other keys.
-pub async fn rotation_worker(db: &stoolap::Database, cache: &KeyCache, interval_secs: u64) {
+pub async fn rotation_worker(
+    db: &octo_storage_core::Database,
+    cache: &KeyCache,
+    interval_secs: u64,
+) {
     use crate::keys::generate_key_id;
     use crate::keys::generate_key_string;
 
@@ -1041,7 +1045,7 @@ mod tests {
     async fn test_validate_key_with_cache_miss() {
         use crate::storage::{KeyStorage, StoolapKeyStorage};
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = StoolapKeyStorage::new(db.clone());
 
@@ -1084,7 +1088,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_key_with_cache_hit() {
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
 
         let key_str = crate::keys::generate_key_string();
@@ -1123,7 +1127,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_key_with_cache_miss_not_found() {
-        use stoolap::Database;
+        use octo_storage_core::Database;
 
         let db = Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
@@ -1418,7 +1422,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_budget_soft_limit_key_not_found() {
-        use stoolap::Database;
+        use octo_storage_core::Database;
 
         let db = Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();

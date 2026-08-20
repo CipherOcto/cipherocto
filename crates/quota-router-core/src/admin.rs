@@ -2263,7 +2263,7 @@ mod tests {
     use crate::storage::StoolapKeyStorage;
 
     fn create_test_storage() -> StoolapKeyStorage {
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         StoolapKeyStorage::new(db)
     }
@@ -2484,7 +2484,7 @@ mod tests {
     // =====================================================================
 
     fn make_storage() -> StoolapKeyStorage {
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         StoolapKeyStorage::new(db)
     }

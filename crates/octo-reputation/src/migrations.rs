@@ -143,7 +143,7 @@ pub mod substrate_runner {
     /// PLUS the version-column backfill from `v<NNN>__<label>` filenames
     /// for pre-substrate DBs, so a legacy DB opened for the first time
     /// under the new code skips already-applied migrations cleanly.
-    pub fn apply(db: &stoolap::Database) -> Result<(), ReputationError> {
+    pub fn apply(db: &octo_storage_core::Database) -> Result<(), ReputationError> {
         octo_storage_core::apply_pending(
             db,
             BUILTIN_MIGRATION_CATALOG,
@@ -165,7 +165,9 @@ pub mod substrate_runner {
     /// applied. The substrate writes the `name` field verbatim from
     /// each `StaticMigration::new(..., name, sql)`, so the historical
     /// `v<NNN>__<label>` strings surface here unchanged.
-    pub fn applied_versions(db: &stoolap::Database) -> Result<Vec<String>, ReputationError> {
+    pub fn applied_versions(
+        db: &octo_storage_core::Database,
+    ) -> Result<Vec<String>, ReputationError> {
         let mut rows = db
             .query("SELECT name FROM schema_migrations ORDER BY version", ())
             .map_err(|_e| ReputationError::ChainRefInvalid("migration:list"))?;
@@ -332,7 +334,7 @@ mod tests {
         // calling ensure_tracker_table on a DB that has a legacy
         // orphan row (which the substrate's
         // `ensure_tracker_table:backfill_orphan` guard rejects).
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         db.execute(
             "CREATE TABLE schema_migrations (\
              id INTEGER PRIMARY KEY, \

@@ -8,7 +8,7 @@
 // cipherocto consumer level: it must work with the schema and SQL the
 // adapter actually issues.
 
-use stoolap::Database;
+use octo_storage_core::Database;
 
 #[test]
 fn r14_h1_upsert_on_composite_unique_works_in_cipherocto() {

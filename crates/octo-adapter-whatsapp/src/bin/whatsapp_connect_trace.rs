@@ -192,7 +192,7 @@ fn probe_device(store: &StoolapStore, session_path: &std::path::Path) -> Option<
 
 fn probe_cert_chain(session_path: &std::path::Path) -> Option<(usize, i64, i64)> {
     let dsn = format!("file://{}", session_path.display());
-    let db = stoolap::Database::open(&dsn).ok()?;
+    let db = octo_storage_core::Database::open(&dsn).ok()?;
     let mut rows = db
         .query("SELECT server_cert_chain FROM device WHERE id = 1", ())
         .ok()?;
@@ -223,7 +223,7 @@ fn probe_cert_chain(session_path: &std::path::Path) -> Option<(usize, i64, i64)>
 
 fn read_pn_column(session_path: &std::path::Path) -> Option<String> {
     let dsn = format!("file://{}", session_path.display());
-    let db = stoolap::Database::open(&dsn).ok()?;
+    let db = octo_storage_core::Database::open(&dsn).ok()?;
     let mut rows = db.query("SELECT pn FROM device WHERE id = 1", ()).ok()?;
     let row = rows.next()?;
     row.ok()?.get::<String>(0).ok()
@@ -231,7 +231,7 @@ fn read_pn_column(session_path: &std::path::Path) -> Option<String> {
 
 fn dump_device_row(session_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     let dsn = format!("file://{}", session_path.display());
-    let db = stoolap::Database::open(&dsn)?;
+    let db = octo_storage_core::Database::open(&dsn)?;
     let cols = [
         "pn",
         "lid",

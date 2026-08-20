@@ -44,7 +44,7 @@ fn benchmark_key_hash_storage(c: &mut Criterion) {
         b.iter(|| {
             let text_dir = TempDir::new().unwrap();
             let text_db_path = text_dir.path().join("bench.db");
-            let db = stoolap::Database::open(&format!("file://{}", text_db_path.to_str().unwrap())).unwrap();
+            let db = octo_storage_core::Database::open(&format!("file://{}", text_db_path.to_str().unwrap())).unwrap();
             db.execute(
                 "CREATE TABLE api_keys (
                     key_id TEXT NOT NULL UNIQUE,
@@ -78,7 +78,7 @@ fn benchmark_key_hash_storage(c: &mut Criterion) {
         b.iter(|| {
             let bytea_dir = TempDir::new().unwrap();
             let bytea_db_path = bytea_dir.path().join("bench.db");
-            let db = stoolap::Database::open(&format!("file://{}", bytea_db_path.to_str().unwrap())).unwrap();
+            let db = octo_storage_core::Database::open(&format!("file://{}", bytea_db_path.to_str().unwrap())).unwrap();
             db.execute(
                 "CREATE TABLE api_keys (
                     key_id TEXT NOT NULL UNIQUE,

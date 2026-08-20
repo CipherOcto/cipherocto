@@ -46,7 +46,7 @@ use crate::query::embedder_job::{EmbedderJob, EmbedderQueue, JobConfig};
 use crate::query::ingester::{QueryError, QueryIngester};
 use crate::query::schema;
 use crate::query::tantivy_sidecar::{IndexedMessage, TantivyError, TantivySidecar};
-use stoolap::Database;
+use octo_storage_core::Database;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 

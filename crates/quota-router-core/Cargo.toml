@@ -46,7 +46,19 @@ opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
 anyhow.workspace = true
 thiserror.workspace = true
 
+# Layer A storage substrate (mission 0206-001). Core storage traits
+# (`ProxyStorage`, `RateLimitStorage`, `HealthStorage`) and admin/cache
+# stores use `octo_storage_core::Database` after mission 0206-008.
+octo-storage-core = { path = "../octo-storage-core" }
+
 # Database
+# Per RFC-0206 v2.1 §Cargo.toml Cross-Cuts + HIGH 6 consumer-crate
+# exemption, the substrate redesign v3.0 does NOT yet re-export
+# `stoolap::ResultRow` / `stoolap::ApiTransaction` / `stoolap::Rows`
+# / `stoolap::Error` — core storage traits + adapter wiring decode
+# rows directly. A v2.2 RFC-0206 amendment (filed as 0206-011b) is
+# the proper scope to add a `pub mod stoolap` re-export to the
+# substrate. Until then, the direct dep stays.
 stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
 
 # RFC-0969 mission 0969-a: GatewayAuthenticator relocated from

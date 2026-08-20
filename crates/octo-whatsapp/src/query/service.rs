@@ -484,7 +484,7 @@ mod tests {
     use crate::query::ingester::QueryIngester;
     use crate::query::schema::migrate;
     use crate::query::tantivy_sidecar::{IndexedMessage, TantivySidecar};
-    use stoolap::Database;
+    use octo_storage_core::Database;
 
     fn synth(id: u64, peer: &str, text: &str, ts: i64) -> InboundEvent {
         InboundEvent::parse(EventEnvelope {

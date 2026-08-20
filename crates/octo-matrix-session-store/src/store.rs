@@ -44,6 +44,15 @@ pub(crate) fn stoolap_err(e: stoolap::Error) -> SessionStoreError {
     SessionStoreError::Stoolap(e.to_string())
 }
 
+// RFC-0206 v2.1 §Substrate Newtype Refactor: `Database::open` /
+// `open_in_memory` return `Result<Database, SubstrateError>`. The
+// substrate error wraps the underlying stoolap error; we string-format
+// it so callers don't need to add `From<SubstrateError>` on
+// `SessionStoreError`.
+pub(crate) fn substrate_err(e: octo_storage_core::SubstrateError) -> SessionStoreError {
+    SessionStoreError::Stoolap(e.to_string())
+}
+
 /// Direct-getter session store (mission 0850h-d).
 ///
 /// All methods are `async` to match the rest of the platform
@@ -118,14 +127,14 @@ pub trait SessionStore: Send + Sync {
 
 /// Stoolap-backed `SessionStore` (mission 0850h-d).
 ///
-/// The implementation uses `stoolap::Database` directly (no
+/// The implementation uses `octo_storage_core::Database` directly (no
 /// connection pool — stoolap's embedded engine is single-process by
 /// design; multi-process deployments route through the matrix-sdk's
 /// own distributed locks if needed, which is out of scope for this
 /// mission).
 #[derive(Clone)]
 pub struct StoolapSessionStore {
-    db: stoolap::Database,
+    db: octo_storage_core::Database,
 }
 
 impl std::fmt::Debug for StoolapSessionStore {
@@ -147,7 +156,7 @@ impl StoolapSessionStore {
         } else {
             format!("file://{}", path)
         };
-        let db = stoolap::Database::open(&dsn).map_err(stoolap_err)?;
+        let db = octo_storage_core::Database::open(&dsn).map_err(substrate_err)?;
         let store = Self { db };
         crate::schema::init_schema(&store.db)?;
         Ok(store)
@@ -157,7 +166,7 @@ impl StoolapSessionStore {
     /// that store sessions elsewhere (e.g., a network-mounted
     /// secret manager).
     pub fn new_in_memory() -> Result<Self, SessionStoreError> {
-        let db = stoolap::Database::open_in_memory().map_err(stoolap_err)?;
+        let db = octo_storage_core::Database::open_in_memory().map_err(substrate_err)?;
         let store = Self { db };
         crate::schema::init_schema(&store.db)?;
         Ok(store)

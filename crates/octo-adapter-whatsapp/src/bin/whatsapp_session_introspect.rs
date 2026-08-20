@@ -70,7 +70,7 @@ fn dsn(p: &std::path::Path) -> String {
 }
 
 fn count_table(p: &std::path::Path, table: &str) -> i64 {
-    let Ok(db) = stoolap::Database::open(&dsn(p)) else {
+    let Ok(db) = octo_storage_core::Database::open(&dsn(p)) else {
         return -1;
     };
     let Ok(mut rows) = db.query(&format!("SELECT COUNT(*) FROM {table}"), ()) else {
@@ -164,7 +164,7 @@ fn dump_text(path: &std::path::Path) {
     dump_decoded_blob(path, "account", "device", "id = 1");
 
     // identities.
-    if let Ok(db) = stoolap::Database::open(&dsn(path)) {
+    if let Ok(db) = octo_storage_core::Database::open(&dsn(path)) {
         if let Ok(mut rows) = db.query("SELECT address, length(\"key\") FROM identities", ()) {
             println!("\n-- identities --");
             let mut any = false;
@@ -289,7 +289,7 @@ fn dump_text(path: &std::path::Path) {
 }
 
 fn dump_decoded_blob(p: &std::path::Path, col: &str, table: &str, where_: &str) {
-    let Ok(db) = stoolap::Database::open(&dsn(p)) else {
+    let Ok(db) = octo_storage_core::Database::open(&dsn(p)) else {
         return;
     };
     let sql = format!("SELECT {col} FROM {table} WHERE {where_}");

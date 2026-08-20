@@ -19,9 +19,9 @@
 //! All three handlers inherit the daemon-wide bearer-token gate
 //! (see `ipc/server.rs`) — no relaxation here.
 
+use octo_storage_core::Database;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use stoolap::Database;
 
 use super::super::protocol::{RpcError, RpcErrorCode};
 use super::super::server::RpcHandler;

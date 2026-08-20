@@ -160,11 +160,11 @@ pub struct BudgetRow {
 }
 
 pub struct StoolapKeyStorage {
-    db: stoolap::Database,
+    db: octo_storage_core::Database,
 }
 
 impl StoolapKeyStorage {
-    pub fn new(db: stoolap::Database) -> Self {
+    pub fn new(db: octo_storage_core::Database) -> Self {
         Self { db }
     }
 
@@ -1463,7 +1463,7 @@ impl KeyStorage for StoolapKeyStorage {
 pub static STORAGE: std::sync::LazyLock<StoolapKeyStorage> = std::sync::LazyLock::new(|| {
     let db_path =
         std::env::var("QUOTA_ROUTER_DB").unwrap_or_else(|_| ".quota_router.db".to_string());
-    let db = stoolap::Database::open(&db_path).expect("Failed to open database");
+    let db = octo_storage_core::Database::open(&db_path).expect("Failed to open database");
     crate::schema::init_database(&db).expect("Failed to initialize schema");
     StoolapKeyStorage::new(db)
 });
@@ -1472,10 +1472,10 @@ pub static STORAGE: std::sync::LazyLock<StoolapKeyStorage> = std::sync::LazyLock
 mod tests {
     use super::*;
     use crate::keys::KeyType;
-    use stoolap::Database;
+    use octo_storage_core::Database;
 
     fn create_test_storage() -> StoolapKeyStorage {
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         StoolapKeyStorage::new(db)
     }

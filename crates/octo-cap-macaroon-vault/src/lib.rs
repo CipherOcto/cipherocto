@@ -14,7 +14,7 @@
 //! lives behind the trait boundary. Without this glue crate, the
 //! production wiring would either force an `octo-vault` dep on
 //! `octo-cap-macaroon` (forbidden — layer direction) or expose
-//! `stoolap::Database` from `octo-vault` (forbidden — fork-persistence
+//! `octo_storage_core::Database` from `octo-vault` (forbidden — fork-persistence
 //! red line per `feedback_stoolap_persistence`).
 //!
 //! This glue crate sits between, owning the [`VaultState`] →

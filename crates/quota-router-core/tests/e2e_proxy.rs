@@ -686,7 +686,7 @@ async fn start_proxy_with_auth(rpm_limit: Option<i32>, budget_limit: i64) -> (St
     let provider = Provider::new("openai", TEST_API_BASE);
     let dispatch_map = build_dispatch_map();
 
-    let db = stoolap::Database::open_in_memory().expect("in-memory db");
+    let db = octo_storage_core::Database::open_in_memory().expect("in-memory db");
     quota_router_core::schema::init_database(&db).expect("init schema");
     let storage = Arc::new(StoolapKeyStorage::new(db));
 

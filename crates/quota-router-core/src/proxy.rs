@@ -3606,7 +3606,7 @@ mod tests {
     fn test_proxy_server_with_storage() {
         let balance = Balance::new(1000);
         let provider = Provider::new("openai", "https://api.openai.com");
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
         let server =
@@ -4052,7 +4052,7 @@ mod tests {
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -4383,7 +4383,7 @@ mod tests {
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -4424,7 +4424,7 @@ mod tests {
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -4780,7 +4780,7 @@ mod tests {
     async fn test_proxy_server_builder_chain() {
         let balance = Balance::new(1000);
         let provider = Provider::new("openai", "https://api.openai.com");
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
         let metrics = Arc::new(Metrics::new());
@@ -7528,7 +7528,7 @@ mod tests {
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -7571,7 +7571,7 @@ mod tests {
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -7611,7 +7611,7 @@ mod tests {
         let dispatch_map = Arc::new(HashMap::new());
         let rl = Arc::new(crate::key_rate_limiter::RateLimiterStore::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -7656,7 +7656,7 @@ mod tests {
         let dispatch_map = Arc::new(HashMap::new());
         let rl = Arc::new(crate::key_rate_limiter::RateLimiterStore::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -7712,7 +7712,7 @@ mod tests {
         let dispatch_map = Arc::new(HashMap::new());
         let rl = Arc::new(crate::key_rate_limiter::RateLimiterStore::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -7756,7 +7756,7 @@ mod tests {
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -7815,7 +7815,7 @@ mod tests {
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -7866,7 +7866,7 @@ mod tests {
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -8303,7 +8303,7 @@ mod tests {
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -8941,7 +8941,7 @@ mod tests {
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -8984,7 +8984,7 @@ mod tests {
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -9027,7 +9027,7 @@ mod tests {
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -9374,7 +9374,7 @@ mod tests {
         let server = MockHttpServer::with_json(&mock_response).await;
         let base_url = server.base_url();
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 

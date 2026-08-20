@@ -1,5 +1,8 @@
 //! Stoolap-backed implementation of the settlement store.
 //!
+//! RFC-0206 v2.1 §Migration Order: `Migration`/`apply_pending` legacy
+//! aliases; deprecation noise silenced at module level.
+#![allow(deprecated)]
 //! Cipherocto wraps stoolap as an embedded SQL engine. Schema lives in
 //! cipherocto (`schema.rs` + migrations); stoolap is the storage layer
 //! per [[stoolap-general-purpose-db]] Path B.
@@ -15,7 +18,7 @@ pub enum StorageError {
     #[error("stoolap error: {0}")]
     Stoolap(String),
     #[error("migration error: {0}")]
-    Migration(#[from] octo_storage_core::StorageError),
+    Migration(#[from] octo_storage_core::_legacy_StorageError),
     #[error("row decode error: {0}")]
     Decode(String),
 }
@@ -33,7 +36,7 @@ pub trait SettlementStore {
 
 /// Re-export the CipherOcto fork of stoolap's Database so the rest of
 /// cipherocto depends on this crate, not stoolap directly. Path B.
-pub use stoolap::Database as StoolapDatabase;
+pub use octo_storage_core::Database as StoolapDatabase;
 
 /// CipherOcto-side wrapper around an embedded stoolap database.
 #[derive(Clone)]

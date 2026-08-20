@@ -9,12 +9,12 @@ use chrono::{DateTime, Utc};
 
 /// Production token blacklist storage backed by stoolap.
 pub struct StoolapTokenBlacklistStorage {
-    db: stoolap::Database,
+    db: octo_storage_core::Database,
 }
 
 impl StoolapTokenBlacklistStorage {
     /// Create a new StoolapTokenBlacklistStorage.
-    pub fn new(db: stoolap::Database) -> Self {
+    pub fn new(db: octo_storage_core::Database) -> Self {
         Self { db }
     }
 }
@@ -84,7 +84,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_blacklist_add_and_contains() {
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         db.execute(
             "CREATE TABLE token_blacklist (token_id TEXT NOT NULL, expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL)",
             (),
@@ -101,7 +101,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_blacklist_expired_not_contained() {
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         db.execute(
             "CREATE TABLE token_blacklist (token_id TEXT NOT NULL, expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL)",
             (),
@@ -119,7 +119,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_blacklist_cleanup() {
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         db.execute(
             "CREATE TABLE token_blacklist (token_id TEXT NOT NULL, expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL)",
             (),

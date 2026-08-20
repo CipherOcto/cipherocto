@@ -91,7 +91,7 @@ pub async fn proxy(proxy_port: u16, admin_port: u16) -> Result<()> {
     }
 
     // Open database and initialize schema
-    let db = stoolap::Database::open(&format!("file://{}", config.db_path.display()))?;
+    let db = octo_storage_core::Database::open(&format!("file://{}", config.db_path.display()))?;
     init_database(&db)?;
 
     // Create storage and admin server

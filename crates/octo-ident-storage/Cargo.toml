@@ -30,14 +30,6 @@ octo-ident = { path = "../octo-ident", features = ["borsh"] }
 # octo-cap-macaroon (Layer B). StoolapHolderRegistry impl uses them.
 octo-cap-macaroon = { path = "../octo-cap-macaroon" }
 
-# D1 deviation (carried forward from mission 0206-008): the substrate
-# does not yet re-export `stoolap::ApiTransaction` / `stoolap::ResultRow`.
-# The HolderRegistry impl uses these directly for atomicity
-# (transaction-scoped SELECT/UPDATE). `0206-011b` v2.2 amendment is the
-# proper scope to add a `pub mod stoolap` re-export to the substrate.
-# Until then, the direct dep stays.
-stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
-
 # Layer B — sole home of `apply_pending` migration runner + the
 # `did_registry` schema migrations (v008..v011). The StoolapDidRegistry
 # constructor calls `migrations::apply_pending` to set up the table.

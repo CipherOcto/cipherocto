@@ -79,7 +79,7 @@ fn insert_params(record: &HolderRecord) -> InsertParams {
 /// Map a Stoolap `execute` error to the canonical `RegistryError`
 /// taxonomy. `AlreadyExists` on UNIQUE/PK collisions; `Storage` for
 /// everything else.
-fn classify_insert_err(e: stoolap::Error) -> RegistryError {
+fn classify_insert_err(e: octo_storage_core::stoolap::Error) -> RegistryError {
     let msg = format!("{e}");
     if msg.contains("UNIQUE")
         || msg.contains("unique")
@@ -102,10 +102,10 @@ fn execute_insert_db(
         .map_err(classify_insert_err)
 }
 
-/// Execute `INSERT_HOLDER_SQL` against a `stoolap::ApiTransaction`.
+/// Execute `INSERT_HOLDER_SQL` against a `octo_storage_core::stoolap::ApiTransaction`.
 /// Used by `insert_dual` so both records run in the same Stoolap tx.
 fn execute_insert_tx(
-    tx: &mut stoolap::ApiTransaction,
+    tx: &mut octo_storage_core::stoolap::ApiTransaction,
     record: &HolderRecord,
 ) -> Result<(), RegistryError> {
     tx.execute(INSERT_HOLDER_SQL, insert_params(record))
@@ -139,7 +139,9 @@ impl StoolapHolderRegistry {
         Self { db }
     }
 
-    fn row_to_record(row: stoolap::ResultRow) -> Result<HolderRecord, RegistryError> {
+    fn row_to_record(
+        row: octo_storage_core::stoolap::ResultRow,
+    ) -> Result<HolderRecord, RegistryError> {
         let kind_byte: i64 = row
             .get(1)
             .map_err(|e| RegistryError::Storage(format!("kind: {e}")))?;

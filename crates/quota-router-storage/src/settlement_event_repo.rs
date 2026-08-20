@@ -358,7 +358,7 @@ impl SettlementEventHash for SettlementEvent {
 
 fn deserialize_event(
     settlement_hash: &[u8; 32],
-    row: &stoolap::ResultRow,
+    row: &octo_storage_core::stoolap::ResultRow,
 ) -> Result<PersistedSettlementEvent, RepoError> {
     deserialize_event_at(settlement_hash, row, 0)
 }
@@ -369,7 +369,7 @@ fn deserialize_event(
 /// SELECT starts with `settlement_hash` followed by `cap_root_hash`).
 fn deserialize_event_at(
     settlement_hash: &[u8; 32],
-    row: &stoolap::ResultRow,
+    row: &octo_storage_core::stoolap::ResultRow,
     offset: usize,
 ) -> Result<PersistedSettlementEvent, RepoError> {
     let cap_root_hash: Vec<u8> = row.get(offset).unwrap_or_default();

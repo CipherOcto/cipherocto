@@ -13,14 +13,11 @@ description = "Cipherocto-side persistence for the quota-router domain (Ask + As
 borsh = { version = "=1.5.0", features = ["derive"] }
 # Schema types + persistence — moved from octo-core 2026-07-21.
 # Cipherocto owns consumer schema; fork is a general-purpose DB.
-# Per RFC-0206 v2.1 §Cargo.toml Cross-Cuts + HIGH 6 consumer-crate
-# exemption, the substrate redesign v3.0 does NOT yet re-export
-# `stoolap::ResultRow` / `stoolap::ApiTransaction` / `stoolap::Rows`
-# / `stoolap::Error` — consumer crates need direct fork access for
-# these types. A v2.2 RFC-0206 amendment (filed as 0206-011b) is
-# the proper scope to add a `pub mod stoolap` re-export to the
-# substrate. Until then, the direct dep stays.
-stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
+# Phase 2.6 (RFC-0206 v2.2 §Substrate Re-export Block, mission 0206-008b):
+# the substrate's `pub mod stoolap` re-export block now exposes
+# `ResultRow` / `ApiTransaction` / `Rows` / `Error` / `Value`, so
+# this crate no longer needs a direct `stoolap` Cargo.toml dep
+# (consumers use `octo_storage_core::stoolap::*` instead).
 
 # Layer A storage substrate (mission octo-storage-split S2). The migration
 # runner that the local `apply_pending` historically bundled is now

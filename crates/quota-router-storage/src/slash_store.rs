@@ -150,7 +150,10 @@ impl StoolapSlashStore {
 /// Read a 32-byte BLOB column into a `[u8; 32]` array. Stoolap exposes
 /// `r.get::<Vec<u8>>(idx)` for BLOB columns on the iterator's
 /// `ResultRow`; pad/truncate to 32 bytes.
-fn read_chain_id(r: &stoolap::ResultRow, idx: usize) -> Result<[u8; 32], SlashStoreError> {
+fn read_chain_id(
+    r: &octo_storage_core::stoolap::ResultRow,
+    idx: usize,
+) -> Result<[u8; 32], SlashStoreError> {
     let v: Vec<u8> = r
         .get::<Vec<u8>>(idx)
         .map_err(|e| SlashStoreError::Db(format!("chain_id: {e}")))?;

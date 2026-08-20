@@ -606,7 +606,7 @@ impl StoolapSpendLedger {
         &self,
         sql: &str,
         params: (Vec<u8>, Vec<u8>),
-    ) -> Result<stoolap::Rows, SpendLedgerError> {
+    ) -> Result<octo_storage_core::stoolap::Rows, SpendLedgerError> {
         self.db
             .query(sql, params)
             .map_err(|e| SpendLedgerError::Storage(format!("raw_query: {e}")))

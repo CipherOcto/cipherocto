@@ -258,7 +258,11 @@ impl StoolapAskRepository {
     }
 
     /// put() body executed inside a transaction (private helper).
-    fn put_in_tx(&self, tx: &mut stoolap::ApiTransaction, row: &AskRow) -> Result<(), RepoError> {
+    fn put_in_tx(
+        &self,
+        tx: &mut octo_storage_core::stoolap::ApiTransaction,
+        row: &AskRow,
+    ) -> Result<(), RepoError> {
         // Check if row already exists by ask_id.
         let mut existing = tx
             .query(
@@ -471,7 +475,7 @@ impl AskWrite for StoolapAskRepository {
 }
 
 /// Convert a stoolap `ResultRow` into an `Ask` (read typed columns via `FromValue`).
-fn row_to_ask(row: stoolap::ResultRow) -> Result<Ask, RepoError> {
+fn row_to_ask(row: octo_storage_core::stoolap::ResultRow) -> Result<Ask, RepoError> {
     let ask_id: Vec<u8> = row
         .get::<Vec<u8>>(0)
         .map_err(|e| RepoError::Db(format!("ask_id: {e}")))?;

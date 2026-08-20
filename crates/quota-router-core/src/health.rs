@@ -150,18 +150,20 @@ impl StoolapDependencyChecker {
     pub async fn check(&self) -> CheckResult {
         let db_path = self.db_path.clone();
         let probe = tokio::task::spawn_blocking(move || -> Result<(), String> {
-            // stoolap expects a DSN (`file://path` or `memory://`); build one
-            // from the configured PathBuf so production and tests share the
-            // same call shape.
-            let dsn = if db_path.as_os_str() == ":memory:" {
-                "memory://".to_string()
-            } else {
-                let p = db_path
-                    .to_str()
-                    .ok_or_else(|| format!("db_path is not valid UTF-8: {db_path:?}"))?;
-                format!("file://{p}")
-            };
-            let _db = octo_storage_core::Database::open(&dsn).map_err(|e| format!("open: {e}"))?;
+            // substrate's `Database::open` already prepends `file://` to the
+            // path arg; passing an already-prefixed DSN here would produce
+            // `file://file:///...`, which the fork parses as scheme=file +
+            // path=file:///... — a different (valid) filesystem location.
+            // For `:memory:` we bypass `open` entirely.
+            if db_path.as_os_str() == ":memory:" {
+                let _db = octo_storage_core::Database::open_in_memory()
+                    .map_err(|e| format!("open_in_memory: {e}"))?;
+                return Ok(());
+            }
+            let p = db_path
+                .to_str()
+                .ok_or_else(|| format!("db_path is not valid UTF-8: {db_path:?}"))?;
+            let _db = octo_storage_core::Database::open(p).map_err(|e| format!("open: {e}"))?;
             Ok(())
         });
         match tokio::time::timeout(Duration::from_millis(200), probe).await {
@@ -466,6 +468,25 @@ impl HealthHandler {
 mod tests {
     use super::*;
     use std::sync::Arc;
+    use tempfile::TempDir;
+
+    /// Build a DB path that `Database::open` will deterministically reject.
+    ///
+    /// Stoolap's `file://` engine refuses to open a path whose target
+    /// already exists as a regular file (returns "File exists (os error
+    /// 17)"). Pre-creating an empty regular file at the probe path gives
+    /// us a portably-unreachable DB regardless of whether the host FS
+    /// allows creating the parent dir (which is what made the previous
+    /// `/nonexistent/...` paths fail-open on some CI runners).
+    ///
+    /// The returned `TempDir` must be kept alive for the duration of
+    /// the test; dropping it removes the file.
+    fn unreachable_db_path() -> (std::path::PathBuf, TempDir) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("not_a_db");
+        std::fs::write(&path, b"").expect("write empty file");
+        (path, dir)
+    }
 
     struct MockChecker {
         stoolap_ok: bool,
@@ -662,9 +683,8 @@ mod tests {
 
     #[tokio::test]
     async fn stoolap_check_unhealthy_on_missing_path() {
-        let checker = StoolapDependencyChecker::new(std::path::PathBuf::from(
-            "/nonexistent/path/does/not/exist/db.stoolap",
-        ));
+        let (path, _dir) = unreachable_db_path();
+        let checker = StoolapDependencyChecker::new(path);
         let result = checker.check().await;
         assert_eq!(result.status, HealthStatus::Unhealthy);
         assert!(result.message.is_some());
@@ -677,13 +697,12 @@ mod tests {
         // We simulate the timeout by checking that 200ms is the documented upper
         // bound: the probe must return within ~250ms wall-clock even when the
         // path cannot be opened.
-        let checker = StoolapDependencyChecker::new(std::path::PathBuf::from(
-            "/proc/this/path/should/never/exist/stoolap.db",
-        ));
+        let (path, _dir) = unreachable_db_path();
+        let checker = StoolapDependencyChecker::new(path);
         let start = std::time::Instant::now();
         let result = checker.check().await;
         let elapsed = start.elapsed();
-        // Must NOT hit the 200ms timeout — the path doesn't exist so it
+        // Must NOT hit the 200ms timeout — the path can't be opened so it
         // fails immediately via the synchronous open() error.
         assert!(elapsed < std::time::Duration::from_millis(200));
         assert_eq!(result.status, HealthStatus::Unhealthy);
@@ -789,8 +808,8 @@ mod tests {
 
     #[tokio::test]
     async fn composite_check_all_propagates_unhealthy_stoolap() {
-        let stoolap =
-            StoolapDependencyChecker::new(std::path::PathBuf::from("/nonexistent/path/db.stoolap"));
+        let (db_path, _dir) = unreachable_db_path();
+        let stoolap = StoolapDependencyChecker::new(db_path);
         let config = ConfigDependencyChecker::new(std::path::PathBuf::from(
             "/nonexistent/cfg-composite-0905-d-bad.json",
         ));

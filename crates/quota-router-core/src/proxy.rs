@@ -4280,10 +4280,16 @@ mod tests {
             .body(String::new())
             .unwrap();
 
+        // Build a DB path that `Database::open` deterministically refuses:
+        // an existing empty regular file. See health::tests::unreachable_db_path.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let unreachable_db = dir.path().join("not_a_db");
+        std::fs::write(&unreachable_db, b"").expect("write empty file");
+
         let providers_snapshot: Arc<dyn Fn() -> Vec<Provider> + Send + Sync> =
             Arc::new(|| vec![Provider::new("openai", "https://api.openai.com")]);
         let health_ctx = Arc::new(HealthContext::new(
-            PathBuf::from("/nonexistent/0905-d-stoolap-missing.db"),
+            unreachable_db.clone(),
             PathBuf::from("/nonexistent/0905-d-config-missing.json"),
             providers_snapshot,
         ));
@@ -4291,10 +4297,7 @@ mod tests {
         // detects the bad paths. If this changes we want the proxy test to
         // fail loudly here rather than at the 503 assertion below.
         let composite = health_ctx.composite();
-        assert_eq!(
-            composite.stoolap.db_path,
-            PathBuf::from("/nonexistent/0905-d-stoolap-missing.db")
-        );
+        assert_eq!(composite.stoolap.db_path, unreachable_db);
         assert_eq!(
             composite.config.config_path,
             PathBuf::from("/nonexistent/0905-d-config-missing.json")

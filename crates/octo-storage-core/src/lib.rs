@@ -1,4 +1,4 @@
-//! Layer A storage substrate — RFC-0206 v2.1 §Substrate Newtype Refactor.
+//! Layer A storage substrate — RFC-0206 v2.2 §Substrate Newtype Refactor + §Substrate Re-export Block.
 //!
 //! Per the Layer A stability principle (CLAUDE.md), this crate is
 //! RFC-frozen: any change to the public surface requires a semver-major
@@ -80,6 +80,17 @@ pub mod migrations {
     pub use crate::tracker::current_version;
     pub use crate::tracker::ensure_tracker_table;
 }
+
+// === `pub mod stoolap` (5 nested pub-use per RFC v2.2 §Substrate Re-export Block) ===
+//
+// 5 nested `pub use stoolap::*` re-exports so consumer crates can
+// `use octo_storage_core::stoolap::{ResultRow, ApiTransaction, Rows,
+// Error, Value}` instead of taking a direct `stoolap` Cargo.toml dep.
+// Deliberately excludes `stoolap::Database` (the inner type behind
+// the `Database` newtype — reverse escape hatch substrate prevents).
+// 8 top-level `pub use` cap UNCHANGED (re-export block is `pub mod`,
+// not 5 top-level `pub use`).
+pub mod stoolap;
 
 // === Legacy `_legacy_*` re-exports per §Migration Order ===
 //

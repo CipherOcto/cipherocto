@@ -1,8 +1,8 @@
 [package]
 name = "octo-storage-core"
-version = "1.0.0"
+version = "2.0.0"
 edition = "2021"
-description = "Layer A storage substrate — Database newtype + TypedStatement + AdapterAllowlist (RFC-0206 v2.1 §Substrate Newtype Refactor)"
+description = "Layer A storage substrate — Database newtype + TypedStatement + AdapterAllowlist + pub mod stoolap re-export block (RFC-0206 v2.2 §Substrate Newtype Refactor + §Substrate Re-export Block)"
 license = "Apache-2.0"
 
 [lib]

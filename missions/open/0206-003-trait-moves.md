@@ -6,7 +6,7 @@ metadata:
   type: project
   originSessionId: 9a316ae1-cb15-46f4-801f-834acacd23ae
   created: 2026-08-20T12:00:00.000Z
-  v: "2.0"
+  v: "2.1"
   supersedes: v1.0
   depends_on:
     - 0206-001-substrate-newtype
@@ -58,7 +58,7 @@ Covers two moves:
 - `cargo test --workspace --lib` green
 - `cargo clippy --workspace --all-targets --features full -- -D warnings` green (per `quota-router-core-feature-mutex` memory: NEVER use `--all-features` on this workspace)
 - `cargo fmt --all -- --check` green (R1 MED 2)
-- **DDL allowlist registration AC (R1 MED 4):** adapter store types register via `octo_storage::register::<StoreType>(db, store_arc)` per RFC-0206 v2.0 §Wiring Pattern; verify in `0206-004-adapter-crates` adapter fixtures that each moved store calls `octo_storage::register` (this mission ensures moved code does not bypass registration)
+- **DDL allowlist registration AC (R1 MED 4):** adapter store types register via `octo_storage::register::<StoreType>(db, store_arc)` per RFC-0206 v2.0 §Wiring Pattern; concrete verification: `rg 'octo_storage::register::<' crates/octo-cap-macaroon/src/holder_registry.rs crates/octo-ident-storage/src/did_registry.rs` exits 0 (both moved files call `octo_storage::register`); final cross-check happens in `0206-004-adapter-crates` adapter fixtures
 
 ## Files / Artifacts
 
@@ -67,9 +67,9 @@ Covers two moves:
 - Edit: `crates/quota-router-storage/src/lib.rs` (remove `holder_registry` module + `stoolap_did_registry` module, add re-exports `pub use octo_cap_macaroon::HolderRegistry;` and `pub use octo_ident_storage::StoolapDidRegistry;`)
 - Edit: `crates/octo-cap-macaroon/src/lib.rs` (add `holder_registry` module declaration)
 - Edit: `crates/octo-cap-macaroon/Cargo.toml` — add `octo-storage-core = { path = "../octo-storage-core" }` + add `octo-storage = { path = "../octo-storage" }` facade (per RFC-0206 v2.0 §Cargo.toml Cross-Cuts)
-- Edit: `crates/quota-router-storage/Cargo.toml` — remove `HolderRegistry` module entries (line 33 trait decl moves); add `pub use octo_cap_macaroon::HolderRegistry;` if re-export is done via Cargo.toml re-export rather than lib.rs `pub use`
-- Edit: `crates/octo-ident-storage/Cargo.toml` — add (will be created by `0206-005-octoident-storage-crate`); this mission only adds deps if 005 created a skeleton
-- **Intra-crate use-site cleanup (R1 LOW 2):** Edit `crates/octo-ident/src/did_registry.rs` import sites to use `octo_ident_storage::StoolapDidRegistry` (or keep re-export path through `quota-router-storage` — either is acceptable; document choice in commit message)
+- Edit: `crates/quota-router-storage/Cargo.toml` — remove `HolderRegistry` module entries (line 33 trait decl moves); add `pub use octo_cap_macaroon::HolderRegistry;` to lib.rs (per Move 1 step 'update module declaration in crates/octo-cap-macaroon/src/lib.rs')
+- Edit: `crates/octo-ident-storage/Cargo.toml` — owned by `0206-005-octoident-storage-crate`; this mission does not edit Cargo.toml
+- **Intra-crate use-site cleanup (R1 LOW 2):** Edit `crates/octo-ident/src/did_registry.rs` import sites to use `octo_ident_storage::StoolapDidRegistry` (per Move 2 re-export rule mandating quota-router-storage re-export)
 - **Intra-crate use-site cleanup (R1 LOW 2):** Edit any `crates/*/src/*.rs` files that import `HolderRegistry` or `StoolapDidRegistry` to point at the new declarer crates
 
 ## Cross-references
@@ -89,15 +89,30 @@ Covers two moves:
 - `VaultLookup` trait declaration + impl move (owned by `0206-004-adapter-crates`; per R1 MED 3 ambiguity clarification)
 - DDL allowlist registration implementation (verified in `0206-004` adapter fixtures; per R1 MED 4)
 - Crate directory creation for `crates/octo-ident-storage/` (owned by `0206-005`)
+- Defensive boundary: `0206-002-layer-b-type-renames` MUST NOT modify `crates/quota-router-storage/src/holder_registry.rs:33` (line moves to octo-cap-macaroon per this mission)
 
 ## Dependencies
 
-- `0206-001-substrate-newtype` (substrate `Database` type) — no ordering constraint
+- `0206-001-substrate-newtype` (substrate `Database` type) — MUST complete BEFORE this mission starts
 - `0206-002-layer-b-type-renames` (TYPE renames in moved files) — MUST complete BEFORE this mission starts
 - `0206-005-octoident-storage-crate` (target crate for StoolapDidRegistry impl) — MUST complete BEFORE this mission starts
 - `0206-004-adapter-crates` (parallel or later; owns VaultLookup + 4 new trait declarations + 5 adapter crates) — no ordering constraint
 - RFC-0206 v2.0 (acceptance precondition per BLUEPRINT.md rule 5)
 - RFC-0205 v2.0 (coupled pair)
+
+## v2.1 Changes from v2.0
+
+| Finding | Severity                                                                                                                       | Fix                                                                                                                                                                               |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| HIGH 1  | Substrate newtype ordering implicit (line 95 said `no ordering constraint`)                                                    | Added explicit ordering: `0206-001-substrate-newtype` MUST complete BEFORE this mission starts                                                                                    |
+| HIGH 2  | `crates/quota-router-storage/Cargo.toml` re-export clause incoherent (Cargo.toml has no re-export)                             | Replaced with explicit lib.rs `pub use` directive per Move 1 step ('update module declaration in crates/octo-cap-macaroon/src/lib.rs')                                            |
+| HIGH 3  | `crates/octo-ident-storage/Cargo.toml` edit ownership ambiguous (was: `this mission only adds deps if 005 created a skeleton`) | Clarified: Cargo.toml owned by `0206-005-octoident-storage-crate`; this mission does not edit Cargo.toml                                                                          |
+| MED 1   | Cross-reference cite `RFC-0206 v2.0 §Adapter Crate List` not re-verified for §Trait Move Schedule                              | No change to cite pending verification                                                                                                                                            |
+| MED 2   | Intra-crate use-site cleanup dual-path (allowed `octo_ident_storage` OR `quota-router-storage` re-export)                      | Removed alternative path; mandated `octo_ident_storage::StoolapDidRegistry` per Move 2 re-export rule                                                                             |
+| MED 3   | DDL allowlist registration AC verification abstract                                                                            | Added concrete verification step: `rg 'octo_storage::register::<' crates/octo-cap-macaroon/src/holder_registry.rs crates/octo-ident-storage/src/did_registry.rs` exits 0          |
+| MED 4   | Function signature generic form                                                                                                | No change (not applicable to current file content)                                                                                                                                |
+| MED 5   | Defensive boundary on `crates/quota-router-storage/src/holder_registry.rs:33` missing                                          | Added to Out of scope: `0206-002-layer-b-type-renames` MUST NOT modify `crates/quota-router-storage/src/holder_registry.rs:33` (line moves to octo-cap-macaroon per this mission) |
+| LOW 1   | (R2 LOW finding)                                                                                                               | No file change required                                                                                                                                                           |
 
 ## v2.0 Changes from v1.0
 
@@ -117,7 +132,8 @@ Covers two moves:
 
 ## Version History
 
-| Version | Date       | Change                                                                                                                                                                                                                                                                                                                    |
-| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v1.0    | 2026-08-20 | Initial filing (superseded)                                                                                                                                                                                                                                                                                               |
-| v2.0    | 2026-08-20 | R1 findings applied: 2 CRIT + 3 HIGH + 4 MED + 2 LOW (11 total); added `depends_on:` 0206-002 + 0206-005; pinned ordering; added impl-move gates; added Cargo.toml edits enumeration; added fmt gate; corrected clippy flag; clarified VaultLookup scope; added DDL allowlist AC; fixed timestamp; added use-site cleanup |
+| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v1.0    | 2026-08-20 | Initial filing (superseded)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| v2.0    | 2026-08-20 | R1 findings applied: 2 CRIT + 3 HIGH + 4 MED + 2 LOW (11 total); added `depends_on:` 0206-002 + 0206-005; pinned ordering; added impl-move gates; added Cargo.toml edits enumeration; added fmt gate; corrected clippy flag; clarified VaultLookup scope; added DDL allowlist AC; fixed timestamp; added use-site cleanup                                                                                                                                                                                                                     |
+| v2.1    | 2026-08-20 | R2 findings applied: 0 CRIT + 3 HIGH + 5 MED + 1 LOW (9 total); added explicit substrate-newtype ordering (0206-001 MUST complete BEFORE 0206-003); fixed Cargo.toml re-export clause (lib.rs `pub use` not Cargo.toml); clarified octo-ident-storage Cargo.toml ownership (owned by 0206-005, this mission does not edit); removed use-site cleanup dual-path; added concrete DDL allowlist registration verification (`rg` gate); added defensive boundary (0206-002 MUST NOT modify crates/quota-router-storage/src/holder_registry.rs:33) |

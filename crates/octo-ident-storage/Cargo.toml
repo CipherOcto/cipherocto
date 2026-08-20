@@ -1,0 +1,42 @@
+[package]
+name = "octo-ident-storage"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Persistent DID registry adapter backed by CipherOcto's stoolap fork (RFC-0010 v1.3 storage extension). Sole home of StoolapDidRegistry impl per RFC-0206 v2.1 §Adapter Crate List row 3."
+
+[lib]
+name = "octo_ident_storage"
+path = "src/lib.rs"
+
+[dependencies]
+# Layer A substrate (mission 0206-001). StoolapDidRegistry holds
+# `octo_storage_core::Database`; constructor returns
+# `Result<Database, SubstrateError>`.
+octo-storage-core = { path = "../octo-storage-core" }
+
+# DidRegistry trait + DidDocument + ChainId + DidRegistryError types.
+# Layer B (octo-ident owns the trait + shape types per RFC-0010 v1.3).
+octo-ident = { path = "../octo-ident" }
+
+# Borsh encoding for rich-document columns (mission 0010-f8-rich-did-storage).
+borsh = { version = "=1.5.0", features = ["derive"] }
+
+# Standard workspace deps.
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+# `octo-storage` facade for the per-adapter register_roundtrip fixture
+# (RFC-0206 v2.1 §Format Bypass Defense).
+octo-storage = { path = "../octo-storage" }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"

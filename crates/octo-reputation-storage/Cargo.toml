@@ -1,0 +1,18 @@
+[package]
+name = "octo-reputation-storage"
+version = "0.1.0"
+edition = "2021"
+description = "Substrate adapter crate for octo-reputation (RFC-0206 v2.1 §Adapter Crate List)"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Layer A substrate (per RFC-0206 v2.1 §Cargo.toml Cross-Cuts lines 333-338).
+octo-storage-core = { path = "../octo-storage-core" }
+# Owner crate — declares the `ReputationStore` trait that this crate implements.
+octo-reputation = { path = "../octo-reputation" }
+
+[dev-dependencies]
+octo-storage-core = { path = "../octo-storage-core" }

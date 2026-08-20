@@ -1,0 +1,23 @@
+[package]
+name = "octo-cap-macaroon-vault-storage"
+version = "0.1.0"
+edition = "2021"
+description = "Substrate adapter crate for octo-cap-macaroon VaultLookup (RFC-0206 v2.1 §Adapter Crate List)"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Layer A substrate (per RFC-0206 v2.1 §Cargo.toml Cross-Cuts lines 333-338).
+octo-storage-core = { path = "../octo-storage-core" }
+# Owner crate — declares the `VaultLookup` trait that this crate implements.
+octo-cap-macaroon = { path = "../octo-cap-macaroon" }
+# `VaultId` constructor + `VaultState` for `VaultRowSnapshot` translation.
+octo-vault = { path = "../octo-vault" }
+# Peer adapter — provides the underlying `VaultStore` whose
+# `VaultSubstrate::lookup_by_vault_id` powers the `VaultLookup` impl.
+octo-vault-storage = { path = "../octo-vault-storage" }
+
+[dev-dependencies]
+octo-storage-core = { path = "../octo-storage-core" }

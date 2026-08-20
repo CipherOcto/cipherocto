@@ -43,6 +43,11 @@ docs/reviews/
 # Session plan/ad-hoc scratchpads (local scratchpads, never committed per [[docs-plans-scratchpad]])
 /docs/plans/
 
+# Audit scratchpads (R1-R10 review findings + multi-round post-landing audits,
+# local-only per [[docs-audits-scratchpad]]). 12 previously-tracked files
+# untracked via `git rm --cached -r docs/audits/` on 2026-08-20.
+docs/audits/
+
 # CocoIndex
 .cocoindex_code/
 coco.toml

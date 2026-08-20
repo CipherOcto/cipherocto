@@ -4,21 +4,21 @@
 //! `memory://` for in-memory. [`open`] prepends `file://` to its input;
 //! callers pass a plain filesystem path (no scheme prefix required).
 
-use crate::error::StorageError;
+use crate::error::SubstrateError;
 
 /// Open the fork's `stoolap::Database` at `path`.
 ///
 /// Thin wrapper around `stoolap::Database::open` that surfaces failures
-/// as [`StorageError::stoolap`]. Owner crates should call this rather
+/// as [`SubstrateError::stoolap`]. Owner crates should call this rather
 /// than touching `stoolap::Database::open` directly, so errors carry
 /// the operation tag (`"open"`) and don't leak `stoolap` types into
 /// the API.
 ///
 /// # Errors
-/// Returns `StorageError::stoolap("open", _)` on underlying failure.
-pub fn open(path: &str) -> Result<stoolap::Database, StorageError> {
+/// Returns `SubstrateError::stoolap("open", _)` on underlying failure.
+pub fn open(path: &str) -> Result<stoolap::Database, SubstrateError> {
     let dsn = format!("file://{path}");
-    stoolap::Database::open(&dsn).map_err(|e| StorageError::stoolap("open", e))
+    stoolap::Database::open(&dsn).map_err(|e| SubstrateError::stoolap("open", e))
 }
 
 /// Open an ephemeral in-memory `stoolap::Database`.
@@ -27,9 +27,9 @@ pub fn open(path: &str) -> Result<stoolap::Database, StorageError> {
 /// crates have one error type for "storage failed".
 ///
 /// # Errors
-/// Returns `StorageError::stoolap("open_in_memory", _)` on underlying failure.
-pub fn open_in_memory() -> Result<stoolap::Database, StorageError> {
-    stoolap::Database::open_in_memory().map_err(|e| StorageError::stoolap("open_in_memory", e))
+/// Returns `SubstrateError::stoolap("open_in_memory", _)` on underlying failure.
+pub fn open_in_memory() -> Result<stoolap::Database, SubstrateError> {
+    stoolap::Database::open_in_memory().map_err(|e| SubstrateError::stoolap("open_in_memory", e))
 }
 
 #[cfg(test)]

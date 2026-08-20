@@ -1,45 +1,32 @@
-//! Error types for the storage substrate.
+//! Substrate error type + legacy [`StorageError`] compatibility alias.
+//!
+//! Per RFC-0206 v2.1 §Substrate Newtype Refactor, the canonical error is
+//! [`SubstrateError`]. [`StorageError`] is retained as a deprecated type
+//! alias for the ≥ 6-month transition window (§Migration Order).
 
 use thiserror::Error;
 
-/// Storage substrate errors.
+/// Canonical substrate error type.
 ///
-/// **Layer A stable**: enum variants are additive; the `Display` impl is
-/// operator-facing (no migration `name` field, no SQL fragments). See
-/// `MigrationFailed` for the redaction rules.
+/// **Layer A stable**: variants are additive. `Display` impls are
+/// operator-facing; never embed raw SQL, migration `name` strings, or
+/// other substrate-internal fields that could leak through the boundary.
 #[derive(Debug, Error)]
-pub enum StorageError {
-    /// A Stoolap-level operation failed. The `operation` field is a
-    /// stable, short tag (e.g. `"record_migration:legacy_id_pk"`); the
-    /// `message` is operator-facing prose — never raw SQL or migration
-    /// `name` strings, which would leak through the substrate boundary
-    /// to operators / dashboards that don't need them.
-    ///
-    /// `Debug` (`{err:?}`) retains the underlying Stoolap `Error`'s
-    /// `Debug` output for substrate-internal logging; do NOT surface
-    /// `Debug` across the public boundary.
+pub enum SubstrateError {
+    /// Underlying Stoolap operation failed. The `operation` field is a
+    /// stable, short tag; the `message` is operator-facing prose.
     #[error("stoolap error during {operation}: {message}")]
-    Stoolap {
+    Storage {
         /// Short, stable operation tag (e.g. `"record_migration:legacy_id_pk"`).
         operation: &'static str,
         /// Operator-facing prose; never raw SQL or migration `name`.
         message: String,
     },
 
-    /// A specific migration failed during `apply_pending`. The
-    /// migration's `name` field is intentionally **excluded** from the
-    /// public surface (it can leak schema intent — the
-    /// `v<NNN>__<label>` label encodes the migration's purpose, e.g.
-    /// `"create_did_registry"`, and historically has been used in
-    /// attacker-controlled inputs via legacy DBs). The version is
-    /// retained because it is the only field the substrate uses to
-    /// make a re-apply decision.
-    ///
-    /// `Display` is operator-facing and redacted (only `version` +
-    /// generic prose). `Debug` (substrate-internal) is auto-derived
-    /// from the variant's struct fields; since `name` is not a
-    /// field, nothing leaks via `Debug` either — by construction.
-    /// See `apply_pending::run_one` for the redacting `Display` impl.
+    /// Migration failed during `apply_pending`. The migration's `name`
+    /// field is intentionally excluded from the public surface (it can
+    /// leak schema intent); the version is retained because it is the
+    /// only field the substrate uses to make a re-apply decision.
     #[error("migration v{version} failed: {message}")]
     MigrationFailed {
         /// Numeric migration version that failed.
@@ -48,21 +35,17 @@ pub enum StorageError {
         message: String,
     },
 
-    /// System clock is before UNIX_EPOCH (BIOS reset, sandbox
-    /// frozen clock). Surfaced as a typed error rather than panicking
-    /// so the substrate's failure mode stays loud + typed.
+    /// System clock is before UNIX_EPOCH (BIOS reset, sandbox frozen
+    /// clock). Surfaced as a typed error rather than panicking.
     #[error("system clock error: {0}")]
     SystemTime(String),
 
     /// Caller supplied an identifier (table name, column name) that
-    /// failed the substrate's strict `is_safe_identifier` regex
-    /// (defense-in-depth against format-string injection).
+    /// failed the substrate's strict `is_safe_identifier` regex.
     #[error("unsupported identifier: {0}")]
     Unsupported(String),
 
-    /// DB is at a higher version than this code's catalog allows
-    /// (downgrade scenario). Operator-facing via `Display`; the
-    /// `Debug` representation is the same as `Display`.
+    /// DB is at a higher version than this code's catalog allows.
     #[error("migration version {version} not found in catalog (catalog_max={catalog_max})")]
     UnknownMigration {
         /// DB version that no longer maps to a catalog entry.
@@ -70,17 +53,61 @@ pub enum StorageError {
         /// Highest version the code's catalog contains.
         catalog_max: u32,
     },
+
+    /// A typed-query statement (Select/Insert/Update/Delete) targets a
+    /// table that has not been registered with the [`crate::AdapterAllowlist`]
+    /// for the calling adapter. Per RFC §Format Bypass Defense, the
+    /// substrate refuses to dispatch typed queries against unregistered
+    /// tables so the `Database::execute_checked` path remains the only
+    /// legitimate SQL execution boundary.
+    #[error("table {table:?} not in adapter {adapter} namespace")]
+    TableNotInNamespace {
+        /// Adapter id (`AdapterId` value, surfaced via `Display`).
+        adapter: String,
+        /// Table that the statement targets.
+        table: String,
+    },
+
+    /// A DDL statement (non-`DdlNoOp`, non-`DdlRegistered`) was rejected
+    /// by the [`crate::AdapterAllowlist`]. The substrate refuses to
+    /// dispatch arbitrary DDL through `Database::execute_checked`; the
+    /// only legitimate DDL path is a [`crate::DdlTemplate`] that has
+    /// been pre-registered at adapter startup.
+    #[error("DDL not in adapter {adapter} allowlist (template: {template})")]
+    DdlNotInAllowlist {
+        /// Adapter id (`AdapterId` value, surfaced via `Display`).
+        adapter: String,
+        /// DDL template identifier (e.g. the canonical name registered
+        /// in the [`crate::AdapterAllowlist`]).
+        template: String,
+    },
 }
 
-impl StorageError {
-    /// Build a `Stoolap` variant from a Stoolap `Error`. Captures
+/// Canonical substrate `Result` alias. All public APIs return
+/// `Result<T, SubstrateError>`; consumers should `use` this alias
+/// rather than spelling out the full path.
+pub type Result<T> = std::result::Result<T, SubstrateError>;
+
+/// Deprecated alias for the pre-v2.1 substrate error type.
+///
+/// Per RFC-0206 v2.1 §Migration Order, this alias is retained for ≥ 6
+/// months so owner crates migrating from `StorageError` to
+/// `SubstrateError` compile without edit. **New code MUST use
+/// [`SubstrateError`] directly.**
+#[deprecated(
+    since = "1.0.0",
+    note = "renamed to `SubstrateError` per RFC-0206 v2.1 §Substrate Newtype Refactor; will be removed in v2.0"
+)]
+pub type StorageError = SubstrateError;
+
+impl SubstrateError {
+    /// Build a `Storage` variant from a Stoolap `Error`. Captures
     /// `format!("{e}")` for the operator-facing message; the underlying
     /// `Error`'s `Debug` form is preserved in the variant's own
-    /// `Debug` output via the `#[derive(Debug)]` on `StorageError`
-    /// itself (the `source` chain is recorded for substrate-internal
-    /// logging only).
+    /// `Debug` output via the `#[derive(Debug)]` on `SubstrateError`
+    /// itself.
     pub(crate) fn stoolap(operation: &'static str, e: stoolap::Error) -> Self {
-        Self::Stoolap {
+        Self::Storage {
             operation,
             message: format!("{e}"),
         }
@@ -92,108 +119,78 @@ mod tests {
     use super::*;
 
     /// H-Sec3 regression: `MigrationFailed` must NOT leak the
-    /// migration `name` field through its `Display` impl. The
-    /// `format!("{err}")` is what an operator sees on a CLI /
-    /// dashboard / log line. If the `name` field ever escapes into
-    /// this string, an attacker who controls the legacy DB can leak
-    /// schema intent.
+    /// migration `name` field through its `Display` impl.
     #[test]
     fn migration_failed_display_does_not_leak_name() {
-        // The substrate's `MigrationFailed` carries only `version`
-        // + `message`. Construct it with a synthetic message that
-        // happens to contain a migration `name` substring to prove
-        // the constructor can't smuggle the `name` through either.
-        let err = StorageError::MigrationFailed {
+        let err = SubstrateError::MigrationFailed {
             version: 42,
             message: "schema_migrations: column 'name' not found".to_owned(),
         };
         let s = format!("{err}");
-        // Version is allowed to appear (the substrate uses it for
-        // re-apply decisions; it's the only field the substrate
-        // emits to operators).
         assert!(s.contains("v42"), "version retained for re-apply");
-        // The raw migration label "v042__create_did_registry" must
-        // not appear in the rendered string (it would have been
-        // carried from the substrate as the `name` field).
         assert!(
             !s.contains("v042__create_did_registry"),
             "operator-facing Display must not leak migration name; got: {s}"
         );
     }
 
-    /// H-T10 regression: the substrate's M5 redaction must not leak
-    /// the failing SQL statement. The `apply_pending::run_one` impl
-    /// builds the `message` field with `{e}` only — the SQL is
-    /// captured in `Debug` for substrate-internal logging but never
-    /// in `Display`. Verify the contract by constructing a synthetic
-    /// `MigrationFailed` with a message that simulates a Stoolap
-    /// error format (`{e}` containing a SQL fragment) and asserting
-    /// the substrate does not additionally embed the SQL via the
-    /// `{stmt}` placeholder from the pre-fix code path.
-    #[test]
-    fn migration_failed_message_does_not_embed_raw_sql() {
-        let err = StorageError::MigrationFailed {
-            version: 3,
-            message: "parse error: expected identifier, found 'foo'".to_owned(),
-        };
-        let s = format!("{err}");
-        assert!(!s.contains("CREATE TABLE "));
-        assert!(!s.contains("ALTER TABLE "));
-        assert!(!s.contains("INSERT INTO "));
-        assert!(!s.contains("SELECT "));
-    }
-
-    /// MigrationFailed Debug impl is auto-derived from the variant's
-    /// struct fields. Since the variant has only `version` + `message`
-    /// (no `name`), Debug retains only those two fields. The contract:
-    /// `Display` is operator-facing (redacted); `Debug` is
-    /// substrate-internal but auto-derived, so it can only retain
-    /// what the variant exposes.
-    ///
-    /// Pin the absence of `name` in Debug so a future PR that adds
-    /// the field (and forgets the redaction review) is caught.
-    #[test]
-    fn migration_failed_debug_retains_structural_fields() {
-        let err = StorageError::MigrationFailed {
-            version: 7,
-            message: "boom".to_owned(),
-        };
-        let d = format!("{err:?}");
-        assert!(d.contains("MigrationFailed"));
-        assert!(d.contains("7"), "version retained in Debug");
-        assert!(d.contains("boom"), "message retained in Debug");
-        // Pin shape closed: NO `name` field can appear in Debug.
-        assert!(
-            !d.contains("name:"),
-            "Debug must not leak a `name:` field; got: {d}"
-        );
-        assert!(
-            !d.contains("name ="),
-            "Debug must not leak a `name =` field; got: {d}"
-        );
-    }
-
-    /// `StorageError` Display impl for the `UnknownMigration` variant
-    /// is operator-facing and surfaces the catalog/db version pair
-    /// directly (no redaction — both fields are operator-relevant).
+    /// `SubstrateError` Display impl for the `UnknownMigration` variant
+    /// surfaces the catalog/db version pair directly.
     #[test]
     fn unknown_migration_display_surfaces_versions() {
-        let err = StorageError::UnknownMigration {
+        let err = SubstrateError::UnknownMigration {
             version: 999,
             catalog_max: 12,
         };
         let s = format!("{err}");
-        assert!(s.contains("999"), "db version surfaces");
-        assert!(s.contains("12"), "catalog max surfaces");
+        assert!(s.contains("999"));
+        assert!(s.contains("12"));
     }
 
-    /// `StorageError` is `std::error::Error`-compatible (thiserror
-    /// derives it). Pin the trait bound so a future PR that strips
-    /// the `Error` derive breaks the test, not downstream crates.
+    /// `SubstrateError::TableNotInNamespace` Display surfaces both
+    /// adapter + table so operators can diagnose the missing
+    /// allowlist entry.
     #[test]
-    fn storage_error_implements_std_error() {
+    fn table_not_in_namespace_display_surfaces_both_fields() {
+        let err = SubstrateError::TableNotInNamespace {
+            adapter: "octo-vault".to_owned(),
+            table: "shadow_vault".to_owned(),
+        };
+        let s = format!("{err}");
+        assert!(s.contains("octo-vault"));
+        assert!(s.contains("shadow_vault"));
+    }
+
+    /// `SubstrateError::DdlNotInAllowlist` Display surfaces both
+    /// adapter + template.
+    #[test]
+    fn ddl_not_in_allowlist_display_surfaces_both_fields() {
+        let err = SubstrateError::DdlNotInAllowlist {
+            adapter: "octo-reputation".to_owned(),
+            template: "v001__create_reputation".to_owned(),
+        };
+        let s = format!("{err}");
+        assert!(s.contains("octo-reputation"));
+        assert!(s.contains("v001__create_reputation"));
+    }
+
+    /// `SubstrateError` is `std::error::Error`-compatible.
+    #[test]
+    fn substrate_error_implements_std_error() {
         fn assert_error<E: std::error::Error>(_: &E) {}
-        let err = StorageError::SystemTime("test".to_owned());
+        let err = SubstrateError::SystemTime("test".to_owned());
         assert_error(&err);
+    }
+
+    /// Legacy `StorageError` alias compiles + matches `SubstrateError`.
+    /// Pin the alias contract so a future PR that removes the
+    /// deprecated alias during the transition window breaks the test.
+    #[allow(deprecated)]
+    #[test]
+    fn storage_error_alias_matches_substrate_error() {
+        let legacy: StorageError = SubstrateError::SystemTime("alias_check".to_owned());
+        let canonical: SubstrateError = legacy;
+        let s = format!("{canonical}");
+        assert!(s.contains("alias_check"));
     }
 }

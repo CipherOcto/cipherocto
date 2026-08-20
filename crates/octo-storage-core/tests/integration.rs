@@ -9,9 +9,17 @@
 //! 4. `apply_pending` — partially-applied DB picks up remaining migrations
 //! 5. `open` / `open_in_memory` — round-trip persistence + ephemerality
 
+// Per RFC-0206 v2.1 §Migration Order, the legacy `Migration` trait +
+// `apply_pending` runner are retained under `_legacy_*` aliases for the
+// ≥ 6-month transition window. New code should use the typed
+// `Database::execute_checked` path; this fixture exercises the legacy
+// surface to verify backward compat during the coexistence phase.
+use octo_storage_core::migrations::{applied_version, current_version, ensure_tracker_table};
+#[allow(deprecated)]
 use octo_storage_core::{
-    applied_version, apply_pending, current_version, ensure_tracker_table, open, open_in_memory,
-    record_migration, ApplyConfig, Migration, StaticMigration, DEFAULT_TRACKER_TABLE,
+    _legacy_ApplyConfig as ApplyConfig, _legacy_Migration as Migration,
+    _legacy_StaticMigration as StaticMigration, _legacy_apply_pending as apply_pending,
+    _legacy_record_migration as record_migration, open, open_in_memory, DEFAULT_TRACKER_TABLE,
 };
 
 const FIXTURES: &[&'static dyn Migration] = &[

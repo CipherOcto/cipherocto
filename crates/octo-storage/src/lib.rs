@@ -1,77 +1,93 @@
 //! Layer B storage facade for the cipherocto workspace.
 //!
-//! Pure re-export of [`octo_storage_core`]. Owner crates that prefer a
-//! non-`-core` import path can `use octo_storage::apply_pending` instead
-//! of `use octo_storage_core::apply_pending`.
+//! Per RFC-0206 v2.1 §Cargo.toml Templates Layer B, this facade exposes
+//! exactly **4-item re-export** (Database + TypedStatement +
+//! AdapterAllowlist + register helper). The legacy `apply_pending` /
+//! `Migration` surface lives under `_legacy_*` aliases in
+//! `octo_storage_core` per §Migration Order.
 //!
 //! ## Layer model
 //!
 //! Per `cipherocto-design-principles` Layer B, this crate is
-//! **RFC-driven, additive only**. The re-export surface here mirrors
-//! `octo_storage_core`'s public API byte-for-byte. New types land in
-//! the substrate first; this facade pulls them in on the next semver
-//! minor of the underlying crate.
-//!
-//! ## Why explicit (not `pub use *`)
-//!
-//! The substrate has a large public surface (`StorageError`,
-//! `Migration`, `StaticMigration`, `ApplyConfig`, ...). A `pub use *`
-//! glob would couple the facade's API to the substrate's private
-//! `pub use`/re-export hygiene, plus accidentally re-export any
-//! future internal-only types that the substrate adds. The explicit
-//! list below pins the facade's API contract in code review — adding
-//! a new symbol is a deliberate, visible change to this crate.
-//!
-//! This mirrors the RFC-0870 typed-discriminator discipline: typed
-//! surfaces > glob re-exports for stable library APIs.
+//! **RFC-driven, additive only**. The re-export surface mirrors the
+//! substrate's public API byte-for-byte. New types land in the substrate
+//! first; this facade pulls them in on the next semver minor of the
+//! underlying crate.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-// Explicit curated re-export list. Adding a new symbol requires a
-// deliberate edit here AND in the test below — a regression that
-// drops a symbol from the substrate will fail the facade test
-// instead of silently dropping the symbol from owner crates.
-pub use octo_storage_core::apply_pending;
-pub use octo_storage_core::open;
-pub use octo_storage_core::open_in_memory;
-pub use octo_storage_core::ApplyConfig;
-pub use octo_storage_core::Migration;
-pub use octo_storage_core::StaticMigration;
-pub use octo_storage_core::StorageError;
-pub use octo_storage_core::DEFAULT_TRACKER_TABLE;
+// Explicit curated re-export list per RFC v2.1 §Cargo.toml Templates
+// Layer B. Adding a new symbol requires a deliberate edit here AND in
+// the test below — a regression that drops a symbol from the substrate
+// will fail the facade test instead of silently dropping the symbol
+// from owner crates.
+pub use octo_storage_core::AdapterAllowlist;
+pub use octo_storage_core::Database;
+pub use octo_storage_core::TypedStatement;
+
+/// Adapter registration helper. Owner crates pass their
+/// `VaultStore`/`ReputationStore`/etc. impl + an
+/// [`AdapterAllowlist`](AdapterAllowlist); the facade wires them into
+/// the substrate's typed execution surface.
+///
+/// The signature is intentionally minimal (returns the `Arc`-wrapped
+/// impl back to the caller). Concrete adapter crates will specialize
+/// the helper via per-trait impls in downstream missions
+/// (`0206-009-adapter-crate-creation`).
+pub fn register<A>(
+    allowlist: std::sync::Arc<AdapterAllowlist>,
+    adapter: std::sync::Arc<A>,
+) -> std::sync::Arc<A>
+where
+    A: Send + Sync + 'static,
+{
+    // Phase 1.9 hook: full registration body (writes `allowlist` to a
+    // process-global registry; consumes `adapter` into the same) lands
+    // in `0206-009`. For now, this is the typed-surface witness:
+    // callers MUST construct an `AdapterAllowlist` + typed adapter
+    // before calling `register`, so the substrate redesign's load-bearing
+    // type system invariants are enforced even before the runtime
+    // registration logic exists.
+    let _ = allowlist;
+    adapter
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use octo_storage_core::typed_statement::{DdlOperation, DdlTemplate, SqlInsert, SqlSelect};
 
     /// Compile-time guarantee that the substrate symbols this facade
     /// is meant to expose actually round-trip through the explicit
     /// `pub use` list above. If the substrate ever drops or renames
     /// any of these, this test fails to compile.
-    ///
-    /// `use super::*;` pulls the facade re-exports into scope so the
-    /// test body references them via the facade path — a regression
-    /// that accidentally bypasses the re-export would still fail to
-    /// compile here.
     #[test]
     fn facade_round_trips_substrate_surface() {
-        // === Functions ===
-        let _ = apply_pending;
-        let _ = open;
-        let _ = open_in_memory;
-
-        // === Constants ===
-        let _ = DEFAULT_TRACKER_TABLE;
-
         // === Types ===
-        let _cfg: ApplyConfig = ApplyConfig::default();
-        let _err: StorageError = StorageError::UnknownMigration {
-            version: 0,
-            catalog_max: 0,
-        };
-        let _trait_marker: Option<&dyn Migration> = None;
-        let _static: StaticMigration =
-            StaticMigration::new(1_u32, "facade_round_trips_substrate_surface", "SELECT 1;");
+        let _db: std::sync::Arc<Database> =
+            std::sync::Arc::new(Database::open_in_memory().unwrap());
+        let _allowlist: AdapterAllowlist =
+            AdapterAllowlist::new(octo_storage_core::AdapterId::new("facade_test"));
+        let _stmt: TypedStatement = TypedStatement::Select(SqlSelect {
+            tables: vec!["t".to_owned()],
+        });
+
+        // === register helper ===
+        let allowlist = std::sync::Arc::new(AdapterAllowlist::with_registrations(
+            octo_storage_core::AdapterId::new("facade_test"),
+            ["t".to_owned()],
+            [DdlTemplate {
+                id: "create_t".to_owned(),
+                operation: DdlOperation::CreateTable,
+            }],
+        ));
+        let adapter = std::sync::Arc::new(42_i32);
+        let _registered = register(allowlist, adapter);
+
+        // === typed insert round-trip ===
+        let _stmt2: TypedStatement = TypedStatement::Insert(SqlInsert {
+            table: "t".to_owned(),
+        });
     }
 }

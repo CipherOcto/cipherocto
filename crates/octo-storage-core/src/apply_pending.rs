@@ -9,10 +9,10 @@
 //!   mission `0871b-storage-idempotent-alter-hardening` for the ADD
 //!   COLUMN swallow rule.
 //! - **Downgrade refusal** — DB at higher version than catalog →
-//!   [`StorageError::UnknownMigration`] (no silent `apply_pending` on
+//!   [`SubstrateError::UnknownMigration`] (no silent `apply_pending` on
 //!   downgraded code).
 
-use crate::error::StorageError;
+use crate::error::SubstrateError;
 use crate::migration::Migration;
 use crate::sql_split::split_sql_statements;
 use crate::tracker::{current_version, ensure_tracker_table, record_migration};
@@ -60,9 +60,9 @@ impl ApplyConfig {
 /// (the runner does NOT sort — that's the caller's responsibility).
 ///
 /// # Errors
-/// - [`StorageError::Stoolap`]: tracker-table DDL / current-version read fails.
-/// - [`StorageError::UnknownMigration`]: DB version exceeds catalog.
-/// - [`StorageError::MigrationFailed`]: a migration's SQL failed (after
+/// - [`SubstrateError::Storage`]: tracker-table DDL / current-version read fails.
+/// - [`SubstrateError::UnknownMigration`]: DB version exceeds catalog.
+/// - [`SubstrateError::MigrationFailed`]: a migration's SQL failed (after
 ///   the ADD COLUMN swallow rule is applied — see
 ///   [`is_idempotent_already_applied`]). The migration is NOT recorded
 ///   in the tracker table; the caller may retry once the underlying
@@ -84,7 +84,7 @@ pub fn apply_pending(
     db: &stoolap::Database,
     migrations: &[&'static dyn Migration],
     cfg: ApplyConfig,
-) -> Result<(), StorageError> {
+) -> Result<(), SubstrateError> {
     ensure_tracker_table(db, cfg.tracker_table)?;
     let current = current_version(db, cfg.tracker_table)?;
 
@@ -92,7 +92,7 @@ pub fn apply_pending(
     // (downgrade or unknown-migration scenario).
     if let Some(highest) = migrations.iter().map(|m| m.version()).max() {
         if current > highest {
-            return Err(StorageError::UnknownMigration {
+            return Err(SubstrateError::UnknownMigration {
                 version: current,
                 catalog_max: highest,
             });
@@ -128,7 +128,7 @@ fn run_one(
     db: &stoolap::Database,
     tracker_table: &str,
     migration: &'static dyn Migration,
-) -> Result<(), StorageError> {
+) -> Result<(), SubstrateError> {
     let statements = split_sql_statements(migration.sql());
     for stmt in &statements {
         match db.execute(stmt, ()) {
@@ -156,8 +156,8 @@ fn run_one(
                 // variant's own `Debug` impl + `e` captured in the
                 // closure scope (intentionally not used in the
                 // message). Migration `name` is also redacted —
-                // see `StorageError::MigrationFailed`.
-                return Err(StorageError::MigrationFailed {
+                // see `SubstrateError::MigrationFailed`.
+                return Err(SubstrateError::MigrationFailed {
                     version: migration.version(),
                     message: "migration SQL failed; see substrate logs for details".to_owned(),
                 });
@@ -274,7 +274,7 @@ mod tests {
 
         let err = apply_pending(&db, MIGRATIONS, ApplyConfig::default()).unwrap_err();
         match err {
-            StorageError::UnknownMigration {
+            SubstrateError::UnknownMigration {
                 version,
                 catalog_max,
             } => {
@@ -303,7 +303,7 @@ mod tests {
 
     #[test]
     fn migration_with_invalid_sql_returns_migration_failed() {
-        // M5 (review): the `StorageError::MigrationFailed` error path is
+        // M5 (review): the `SubstrateError::MigrationFailed` error path is
         // reachable from `apply_pending` when a migration's SQL fails to
         // execute. v1 is good; v2 references a nonexistent table, so its
         // ALTER TABLE statement fails. After this test, v1 is recorded
@@ -324,7 +324,7 @@ mod tests {
         ];
         let err = apply_pending(&db, BAD_CATALOG, ApplyConfig::default()).unwrap_err();
         match err {
-            StorageError::MigrationFailed { version, message } => {
+            SubstrateError::MigrationFailed { version, message } => {
                 assert_eq!(version, 2, "v2 (alter_missing) is the failing migration");
                 // H-T10 regression: the operator-facing `message` MUST
                 // NOT leak the raw SQL (which can contain column
@@ -375,7 +375,7 @@ mod tests {
         // the same error path; v1 is skipped (already recorded).
         let err2 = apply_pending(&db, BAD_CATALOG, ApplyConfig::default()).unwrap_err();
         assert!(
-            matches!(err2, StorageError::MigrationFailed { version: 2, .. }),
+            matches!(err2, SubstrateError::MigrationFailed { version: 2, .. }),
             "second call still fails on v2"
         );
     }
@@ -406,7 +406,7 @@ mod tests {
         ];
         let err = apply_pending(&db, BAD_CATALOG, ApplyConfig::default()).unwrap_err();
         match err {
-            StorageError::MigrationFailed { message, .. } => {
+            SubstrateError::MigrationFailed { message, .. } => {
                 // Full migration name MUST NOT leak.
                 assert!(
                     !message.contains("v002__dr_op"),

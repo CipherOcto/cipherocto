@@ -3,7 +3,7 @@
 //! Default tracker table name: [`crate::DEFAULT_TRACKER_TABLE`] = `"schema_migrations"`.
 //! Owner crates can override via [`crate::ApplyConfig::with_tracker_table`].
 
-use crate::error::StorageError;
+use crate::error::SubstrateError;
 
 /// Sentinel upper bound for any `v<NNN>` prefix the substrate will accept
 /// from a legacy row's `name` column during alignment. Rows whose
@@ -43,14 +43,17 @@ const MAX_REASONABLE_VERSION: u32 = 10_000;
 /// themselves.
 ///
 /// # Errors
-/// Returns `StorageError::stoolap` or `StorageError::Unsupported` on
+/// Returns `SubstrateError::stoolap` or `SubstrateError::Unsupported` on
 /// identifier-validation / DDL failure. Alignment-backfill failures
 /// (a row whose `name` cannot be parsed into a version) are surfaced as
-/// `StorageError::stoolap` with `operation: "ensure_tracker_table:backfill_orphan"`
+/// `SubstrateError::stoolap` with `operation: "ensure_tracker_table:backfill_orphan"`
 /// to prevent silent partial-application.
-pub fn ensure_tracker_table(db: &stoolap::Database, table_name: &str) -> Result<(), StorageError> {
+pub fn ensure_tracker_table(
+    db: &stoolap::Database,
+    table_name: &str,
+) -> Result<(), SubstrateError> {
     if !is_safe_identifier(table_name) {
-        return Err(StorageError::Unsupported(format!(
+        return Err(SubstrateError::Unsupported(format!(
             "tracker table name must match [a-z_][a-z0-9_]*; got {table_name:?}"
         )));
     }
@@ -65,7 +68,7 @@ pub fn ensure_tracker_table(db: &stoolap::Database, table_name: &str) -> Result<
     );
     db.execute(&ddl, ())
         .map(|_| ())
-        .map_err(|e| StorageError::stoolap("ensure_tracker_table", e))?;
+        .map_err(|e| SubstrateError::stoolap("ensure_tracker_table", e))?;
 
     // Steps 2-4 — add the three substrate columns idempotently. Each
     // ADD COLUMN fails with `"duplicate column"` on the fresh-DB path
@@ -111,7 +114,7 @@ pub fn ensure_tracker_table(db: &stoolap::Database, table_name: &str) -> Result<
     );
     db.execute(&backfill, ())
         .map(|_| ())
-        .map_err(|e| StorageError::stoolap("ensure_tracker_table:backfill", e))?;
+        .map_err(|e| SubstrateError::stoolap("ensure_tracker_table:backfill", e))?;
 
     // Step 6 — post-backfill sanity check. If any row still has
     // `version IS NULL` after the backfill AND the table has a `name`
@@ -124,13 +127,13 @@ pub fn ensure_tracker_table(db: &stoolap::Database, table_name: &str) -> Result<
     let orphans = format!("SELECT COUNT(*) FROM {table_name} WHERE version IS NULL");
     let rows = db
         .query(&orphans, ())
-        .map_err(|e| StorageError::stoolap("ensure_tracker_table:orphan_count", e))?;
+        .map_err(|e| SubstrateError::stoolap("ensure_tracker_table:orphan_count", e))?;
     let mut iter = rows.into_iter();
     if let Some(row_result) = iter.next() {
-        let row = row_result.map_err(|e| StorageError::stoolap("orphan row", e))?;
+        let row = row_result.map_err(|e| SubstrateError::stoolap("orphan row", e))?;
         let n: i64 = row
             .get(0)
-            .map_err(|e| StorageError::stoolap("orphan count get", e))?;
+            .map_err(|e| SubstrateError::stoolap("orphan count get", e))?;
         if n > 0 {
             // Fetch up to 5 sample orphan names to surface in the error
             // message (avoids forcing the operator to re-query the DB).
@@ -144,7 +147,7 @@ pub fn ensure_tracker_table(db: &stoolap::Database, table_name: &str) -> Result<
                     }
                 }
             }
-            return Err(StorageError::Stoolap {
+            return Err(SubstrateError::Storage {
                 operation: "ensure_tracker_table:backfill_orphan",
                 message: format!(
                     "{n} rows in {table_name} have a name that does not match the v<NNN>__<label> convention \
@@ -172,14 +175,14 @@ fn add_column_idempotent(
     table_name: &str,
     column_name: &str,
     sql_type: &str,
-) -> Result<(), StorageError> {
+) -> Result<(), SubstrateError> {
     if !is_safe_identifier(column_name) {
-        return Err(StorageError::Unsupported(format!(
+        return Err(SubstrateError::Unsupported(format!(
             "column name must match [a-z_][a-z0-9_]*; got {column_name:?}"
         )));
     }
     if !is_hardcoded_sql_type(sql_type) {
-        return Err(StorageError::Unsupported(format!(
+        return Err(SubstrateError::Unsupported(format!(
             "column sql type must be a hardcoded literal in {{TEXT, INTEGER, BLOB, REAL, BOOLEAN, ANY}}; got {sql_type:?}"
         )));
     }
@@ -191,7 +194,10 @@ fn add_column_idempotent(
             if msg.contains("duplicate column") {
                 Ok(())
             } else {
-                Err(StorageError::stoolap("ensure_tracker_table:add_column", e))
+                Err(SubstrateError::stoolap(
+                    "ensure_tracker_table:add_column",
+                    e,
+                ))
             }
         }
     }
@@ -208,31 +214,31 @@ fn is_hardcoded_sql_type(s: &str) -> bool {
 /// Returns 0 if the table is empty.
 ///
 /// # Errors
-/// Returns `StorageError::stoolap` on `db.query` / row decode failure,
+/// Returns `SubstrateError::stoolap` on `db.query` / row decode failure,
 /// or when the tracker table contains a negative `version` (data
 /// corruption — every recorded version is `>= 1` per the substrate
 /// contract). Mirrors [`applied_version`]: negative values are not
 /// "out-of-range upper bound" (those are clamped silently) but invalid
 /// inputs that must surface as a typed error so an attacker planting
 /// `version=-1` cannot masquerade as an empty DB.
-pub fn current_version(db: &stoolap::Database, table_name: &str) -> Result<u32, StorageError> {
+pub fn current_version(db: &stoolap::Database, table_name: &str) -> Result<u32, SubstrateError> {
     if !is_safe_identifier(table_name) {
-        return Err(StorageError::Unsupported(format!(
+        return Err(SubstrateError::Unsupported(format!(
             "tracker table name must match [a-z_][a-z0-9_]*; got {table_name:?}"
         )));
     }
     let sql = format!("SELECT MAX(version) FROM {table_name}");
     let rows = db
         .query(&sql, ())
-        .map_err(|e| StorageError::stoolap("current_version", e))?;
+        .map_err(|e| SubstrateError::stoolap("current_version", e))?;
     let mut iter = rows.into_iter();
     if let Some(row_result) = iter.next() {
-        let row = row_result.map_err(|e| StorageError::stoolap("row decode", e))?;
+        let row = row_result.map_err(|e| SubstrateError::stoolap("row decode", e))?;
         // MAX(version) returns NULL when the table is empty (no migrations yet).
         // `Row::get::<Option<i64>>` returns Ok(None) in that case.
         let v: Option<i64> = row
             .get(0)
-            .map_err(|e| StorageError::stoolap("get version", e))?;
+            .map_err(|e| SubstrateError::stoolap("get version", e))?;
         // Clamp at MAX_REASONABLE_VERSION: an attacker with write
         // access to the tracker table can plant `version=9999999`
         // directly (bypassing the backfill path's `name`-derived
@@ -252,7 +258,7 @@ pub fn current_version(db: &stoolap::Database, table_name: &str) -> Result<u32, 
         // asymmetric "self-application" attack).
         let v = v.unwrap_or(0);
         if v < 0 {
-            return Err(StorageError::Stoolap {
+            return Err(SubstrateError::Storage {
                 operation: "current_version",
                 message: format!(
                     "tracker table {table_name} contains negative version {v}; \
@@ -275,36 +281,36 @@ pub fn current_version(db: &stoolap::Database, table_name: &str) -> Result<u32, 
 ///   self-lockout DoS defense; an attacker planting `version=9999999`
 ///   does not pollute the returned set).
 /// - **Negative values**: treated as data corruption and surfaced as
-///   `StorageError::Stoolap` (a negative `version` is impossible per
+///   `SubstrateError::Storage` (a negative `version` is impossible per
 ///   the substrate contract — every recorded version is `>= 1`).
 ///
 /// # Errors
-/// Returns `StorageError::stoolap` on `db.query` / row decode failure,
+/// Returns `SubstrateError::stoolap` on `db.query` / row decode failure,
 /// on a negative-version row, or on a query that violates
 /// `is_safe_identifier(table_name)`.
 pub fn applied_version(
     db: &stoolap::Database,
     table_name: &str,
-) -> Result<std::collections::HashSet<u32>, StorageError> {
+) -> Result<std::collections::HashSet<u32>, SubstrateError> {
     if !is_safe_identifier(table_name) {
-        return Err(StorageError::Unsupported(format!(
+        return Err(SubstrateError::Unsupported(format!(
             "tracker table name must match [a-z_][a-z0-9_]*; got {table_name:?}"
         )));
     }
     let sql = format!("SELECT version FROM {table_name}");
     let rows = db
         .query(&sql, ())
-        .map_err(|e| StorageError::stoolap("applied_version", e))?;
+        .map_err(|e| SubstrateError::stoolap("applied_version", e))?;
     let mut out = std::collections::HashSet::new();
     for row_result in rows.into_iter() {
-        let row = row_result.map_err(|e| StorageError::stoolap("row decode", e))?;
+        let row = row_result.map_err(|e| SubstrateError::stoolap("row decode", e))?;
         let v: i64 = row
             .get(0)
-            .map_err(|e| StorageError::stoolap("get version", e))?;
+            .map_err(|e| SubstrateError::stoolap("get version", e))?;
         // Negative version is impossible per substrate contract —
         // surface as a typed error rather than silently dropping.
         if v < 0 {
-            return Err(StorageError::Stoolap {
+            return Err(SubstrateError::Storage {
                 operation: "applied_version",
                 message: format!(
                     "tracker table {table_name} contains negative version {v}; \
@@ -375,7 +381,7 @@ fn has_ambiguous_legacy_shape(db: &stoolap::Database, table_name: &str) -> bool 
 ///    mirrors the value into both columns).
 ///
 /// If both `id` and `applied_at` columns exist (the ambiguous shape),
-/// the function errors out with `StorageError::Stoolap`
+/// the function errors out with `SubstrateError::Storage`
 /// (operation=`record_migration:ambiguous_legacy_shape`) rather than
 /// silently picking the `id`-PK path and triggering a NOT NULL
 /// violation on the omitted `applied_at` column. The legacy shape is
@@ -389,25 +395,25 @@ fn has_ambiguous_legacy_shape(db: &stoolap::Database, table_name: &str) -> bool 
 /// schema shape invariants are owner concerns, not substrate concerns.
 ///
 /// # Errors
-/// Returns `StorageError::SystemTime` or `StorageError::stoolap`.
+/// Returns `SubstrateError::SystemTime` or `SubstrateError::stoolap`.
 pub fn record_migration(
     db: &stoolap::Database,
     table_name: &str,
     version: u32,
     name: &'static str,
-) -> Result<(), StorageError> {
+) -> Result<(), SubstrateError> {
     if !is_safe_identifier(table_name) {
-        return Err(StorageError::Unsupported(format!(
+        return Err(SubstrateError::Unsupported(format!(
             "tracker table name must match [a-z_][a-z0-9_]*; got {table_name:?}"
         )));
     }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| StorageError::SystemTime(e.to_string()))?
+        .map_err(|e| SubstrateError::SystemTime(e.to_string()))?
         .as_secs() as i64;
 
     if has_ambiguous_legacy_shape(db, table_name) {
-        return Err(StorageError::Stoolap {
+        return Err(SubstrateError::Storage {
             operation: "record_migration:ambiguous_legacy_shape",
             message: format!(
                 "tracker table {table_name} has both `id` PK and `applied_at` columns; \
@@ -436,23 +442,23 @@ pub fn record_migration(
             "INSERT INTO {table_name} (id, version, name, applied_at_unix) \
              VALUES ($1, $2, $3, $4)"
         );
-        let mut last_err: Option<StorageError> = None;
+        let mut last_err: Option<SubstrateError> = None;
         for _ in 0..MAX_RETRIES {
             let next_id_sql = format!("SELECT COALESCE(MAX(id), 0) + 1 FROM {table_name}");
             let rows = db
                 .query(&next_id_sql, ())
-                .map_err(|e| StorageError::stoolap("record_migration:next_id", e))?;
+                .map_err(|e| SubstrateError::stoolap("record_migration:next_id", e))?;
             let mut iter = rows.into_iter();
             let row = iter
                 .next()
-                .ok_or_else(|| StorageError::Stoolap {
+                .ok_or_else(|| SubstrateError::Storage {
                     operation: "record_migration:next_id",
                     message: "MAX(id) subquery returned no rows".to_owned(),
                 })?
-                .map_err(|e| StorageError::stoolap("record_migration:next_id_row", e))?;
+                .map_err(|e| SubstrateError::stoolap("record_migration:next_id_row", e))?;
             let next_id: i64 = row
                 .get(0)
-                .map_err(|e| StorageError::stoolap("record_migration:next_id_get", e))?;
+                .map_err(|e| SubstrateError::stoolap("record_migration:next_id_get", e))?;
             match db.execute(&sql, (next_id, version as i64, name, now)) {
                 Ok(_) => return Ok(()),
                 Err(e) => {
@@ -462,17 +468,18 @@ pub fn record_migration(
                     if msg.to_ascii_lowercase().contains("unique")
                         || msg.to_ascii_lowercase().contains("duplicate")
                     {
-                        last_err = Some(StorageError::stoolap("record_migration:legacy_id_pk", e));
+                        last_err =
+                            Some(SubstrateError::stoolap("record_migration:legacy_id_pk", e));
                         continue;
                     }
-                    return Err(StorageError::stoolap("record_migration:legacy_id_pk", e));
+                    return Err(SubstrateError::stoolap("record_migration:legacy_id_pk", e));
                 }
             }
         }
         // Exhausted retries — return the last UNIQUE-collision error
         // so the operator sees a real substrate error rather than an
         // opaque "max retries exceeded".
-        Err(last_err.unwrap_or_else(|| StorageError::Stoolap {
+        Err(last_err.unwrap_or_else(|| SubstrateError::Storage {
             operation: "record_migration:legacy_id_pk",
             message: "exhausted UNIQUE-collision retries".to_owned(),
         }))
@@ -485,7 +492,7 @@ pub fn record_migration(
         );
         db.execute(&sql, (version as i64, now, name, now))
             .map(|_| ())
-            .map_err(|e| StorageError::stoolap("record_migration:legacy_applied_at", e))
+            .map_err(|e| SubstrateError::stoolap("record_migration:legacy_applied_at", e))
     } else {
         // Canonical: version PK.
         let sql = format!(
@@ -493,7 +500,7 @@ pub fn record_migration(
         );
         db.execute(&sql, (version as i64, name, now))
             .map(|_| ())
-            .map_err(|e| StorageError::stoolap("record_migration", e))
+            .map_err(|e| SubstrateError::stoolap("record_migration", e))
     }
 }
 
@@ -792,7 +799,7 @@ mod tests {
         .unwrap();
         let err = current_version(&db, "schema_migrations").unwrap_err();
         match err {
-            StorageError::Stoolap { operation, message } => {
+            SubstrateError::Storage { operation, message } => {
                 assert_eq!(operation, "current_version");
                 assert!(
                     message.contains("-1"),
@@ -824,7 +831,7 @@ mod tests {
         .unwrap();
         let err = current_version(&db, "schema_migrations").unwrap_err();
         match err {
-            StorageError::Stoolap { operation, message } => {
+            SubstrateError::Storage { operation, message } => {
                 assert_eq!(operation, "current_version");
                 assert!(
                     message.contains("-2"),
@@ -861,7 +868,7 @@ mod tests {
         .unwrap();
         let err = current_version(&db, "schema_migrations").unwrap_err();
         match err {
-            StorageError::Stoolap { operation, message } => {
+            SubstrateError::Storage { operation, message } => {
                 assert_eq!(operation, "current_version");
                 assert!(
                     message.contains("negative"),
@@ -968,7 +975,7 @@ mod tests {
         .unwrap();
         let err = applied_version(&db, "schema_migrations").unwrap_err();
         match err {
-            StorageError::Stoolap { operation, message } => {
+            SubstrateError::Storage { operation, message } => {
                 assert_eq!(operation, "applied_version");
                 assert!(
                     message.contains("negative version -2"),
@@ -1124,7 +1131,7 @@ mod tests {
         .unwrap();
         let err = applied_version(&db, "schema_migrations").unwrap_err();
         match err {
-            StorageError::Stoolap { operation, message } => {
+            SubstrateError::Storage { operation, message } => {
                 assert_eq!(
                     operation, "applied_version",
                     "large-negative version must surface under applied_version op tag"
@@ -1143,7 +1150,7 @@ mod tests {
     #[test]
     fn applied_version_rejects_negative_version() {
         // Layer-API MEDIUM (Round 3): `applied_version` must surface
-        // a negative version as a typed `StorageError::Stoolap`
+        // a negative version as a typed `SubstrateError::Storage`
         // rather than silently dropping it (operator-facing Display
         // must be truthful about DB state). A negative version is
         // impossible per the substrate contract — every recorded
@@ -1160,7 +1167,7 @@ mod tests {
         .unwrap();
         let err = applied_version(&db, "schema_migrations").unwrap_err();
         match err {
-            StorageError::Stoolap { operation, message } => {
+            SubstrateError::Storage { operation, message } => {
                 assert_eq!(
                     operation, "applied_version",
                     "negative version must surface under applied_version op tag"
@@ -1178,10 +1185,10 @@ mod tests {
     fn unsafe_table_name_returns_unsupported() {
         let db = stoolap::Database::open_in_memory().unwrap();
         let err = ensure_tracker_table(&db, "foo;DROP TABLE x;--").unwrap_err();
-        assert!(matches!(err, StorageError::Unsupported(_)));
+        assert!(matches!(err, SubstrateError::Unsupported(_)));
 
         let err = current_version(&db, "BAD!").unwrap_err();
-        assert!(matches!(err, StorageError::Unsupported(_)));
+        assert!(matches!(err, SubstrateError::Unsupported(_)));
     }
 
     #[test]
@@ -1206,7 +1213,7 @@ mod tests {
         db.execute("CREATE TABLE noop (id INTEGER PRIMARY KEY)", ())
             .unwrap();
         let err = add_column_idempotent(&db, "noop", "foo;DROP TABLE x;--", "TEXT").unwrap_err();
-        assert!(matches!(err, StorageError::Unsupported(_)));
+        assert!(matches!(err, SubstrateError::Unsupported(_)));
     }
 
     #[test]
@@ -1215,7 +1222,7 @@ mod tests {
         db.execute("CREATE TABLE noop (id INTEGER PRIMARY KEY)", ())
             .unwrap();
         let err = add_column_idempotent(&db, "noop", "extra", "TEXT; DROP TABLE noop").unwrap_err();
-        assert!(matches!(err, StorageError::Unsupported(_)));
+        assert!(matches!(err, SubstrateError::Unsupported(_)));
     }
 
     #[test]
@@ -1509,7 +1516,7 @@ mod tests {
 
         let err = ensure_tracker_table(&db, "schema_migrations").unwrap_err();
         match err {
-            StorageError::Stoolap { operation, message } => {
+            SubstrateError::Storage { operation, message } => {
                 assert_eq!(operation, "ensure_tracker_table:backfill_orphan");
                 // H-T3: pin the contract substrings so a regression
                 // that drops the count, table name, or remediation
@@ -1542,7 +1549,7 @@ mod tests {
         // audit data.
         let err2 = ensure_tracker_table(&db, "schema_migrations").unwrap_err();
         match err2 {
-            StorageError::Stoolap { operation, message } => {
+            SubstrateError::Storage { operation, message } => {
                 assert_eq!(operation, "ensure_tracker_table:backfill_orphan");
                 assert!(message.contains("manual_audit_marker"));
                 assert!(message.contains("1 rows"));
@@ -1624,7 +1631,7 @@ mod tests {
         .unwrap();
         let err = ensure_tracker_table(&db, "schema_migrations").unwrap_err();
         match err {
-            StorageError::Stoolap { operation, message } => {
+            SubstrateError::Storage { operation, message } => {
                 assert_eq!(operation, "ensure_tracker_table:backfill_orphan");
                 assert!(message.contains("6 rows"), "count reflects all 6 orphans");
                 // Exactly 5 samples should appear in the message
@@ -1680,7 +1687,7 @@ mod tests {
         .unwrap();
         let err = ensure_tracker_table(&db, "schema_migrations").unwrap_err();
         match err {
-            StorageError::Stoolap { operation, message } => {
+            SubstrateError::Storage { operation, message } => {
                 assert_eq!(
                     operation, "ensure_tracker_table:backfill_orphan",
                     "out-of-range version must surface as orphan"
@@ -1752,7 +1759,7 @@ mod tests {
         .unwrap();
         let err = ensure_tracker_table(&db, "schema_migrations").unwrap_err();
         match err {
-            StorageError::Stoolap { operation, message } => {
+            SubstrateError::Storage { operation, message } => {
                 assert_eq!(
                     operation, "ensure_tracker_table:backfill_orphan",
                     "v10001 (just above bound) must surface as orphan"
@@ -1836,7 +1843,7 @@ mod tests {
         .unwrap();
         let err = ensure_tracker_table(&db, "schema_migrations").unwrap_err();
         match err {
-            StorageError::Stoolap { operation, .. } => {
+            SubstrateError::Storage { operation, .. } => {
                 assert_eq!(operation, "ensure_tracker_table:backfill_orphan");
             }
             other => panic!("expected backfill_orphan error for v0__baseline, got {other:?}"),
@@ -1916,7 +1923,7 @@ mod tests {
         .unwrap();
         let err = record_migration(&db, "ambiguous", 1, "v001__x").unwrap_err();
         match err {
-            StorageError::Stoolap { operation, message } => {
+            SubstrateError::Storage { operation, message } => {
                 assert_eq!(operation, "record_migration:ambiguous_legacy_shape");
                 assert!(message.contains("ambiguous"));
                 assert!(message.contains("id"));

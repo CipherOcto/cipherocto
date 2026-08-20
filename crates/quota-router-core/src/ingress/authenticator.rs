@@ -18,13 +18,13 @@
 
 use std::sync::Arc;
 
+use octo_cap_macaroon::clock::Clock;
+use octo_cap_macaroon::holder_registry::HolderRegistry;
 use octo_wallet::capability::dispatch::{
     parse_auth_headers, AuthError, AuthHeader, BearerError, BearerVerification, CapError,
     CapabilityVerification, LinkageResult,
 };
 use octo_wallet::capability::macaroon::CapabilityCatalog;
-use octo_cap_macaroon::clock::Clock;
-use octo_cap_macaroon::holder_registry::HolderRegistry;
 
 /// Bearer verifier trait (RFC-0969 §Phase 1).
 ///
@@ -250,15 +250,15 @@ pub use octo_wallet::capability::dispatch::evaluate_linkage;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use octo_cap_macaroon::clock::{Clock, FixedClock};
+    use octo_cap_macaroon::holder_kind::HolderKind;
+    use octo_cap_macaroon::holder_record::HolderRecord;
+    use octo_cap_macaroon::holder_registry::{HolderRegistry, RegistryError};
     use octo_wallet::capability::dispatch::{
         BearerError, BearerVerification, CapError, CapabilityVerification, LinkageResult,
         ParseError,
     };
     use octo_wallet::capability::macaroon::CapabilityCatalog;
-    use octo_cap_macaroon::clock::{Clock, FixedClock};
-    use octo_cap_macaroon::holder_kind::HolderKind;
-    use octo_cap_macaroon::holder_record::HolderRecord;
-    use octo_cap_macaroon::holder_registry::{HolderRegistry, RegistryError};
     use std::sync::Arc;
 
     // Compile-time check that `ParseError → AuthError` conversion exists.

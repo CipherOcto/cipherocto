@@ -103,44 +103,44 @@ pub mod stoolap;
 /// Legacy error type alias (deprecated; use `SubstrateError` instead).
 #[allow(deprecated)]
 #[deprecated(
-    since = "1.0.0",
-    note = "use `SubstrateError` from the top-level surface; this legacy alias will be removed in v2.0"
+    since = "2.0.0",
+    note = "use `SubstrateError` from the top-level surface; this legacy alias will be removed in v3.0"
 )]
 pub use error::StorageError as _legacy_StorageError;
 
 /// Legacy apply-pending free function. Prefer
 /// `migrations::ensure_tracker_table` + `Database::execute_checked`.
 #[deprecated(
-    since = "1.0.0",
-    note = "use the typed `Database::execute_checked` path; this legacy runner will be removed in v2.0"
+    since = "2.0.0",
+    note = "use the typed `Database::execute_checked` path; this legacy runner will be removed in v3.0"
 )]
 pub use apply_pending::apply_pending as _legacy_apply_pending;
 
 /// Legacy migration config struct.
 #[deprecated(
-    since = "1.0.0",
-    note = "use the typed `Database::execute_checked` path; this legacy config will be removed in v2.0"
+    since = "2.0.0",
+    note = "use the typed `Database::execute_checked` path; this legacy config will be removed in v3.0"
 )]
 pub use apply_pending::ApplyConfig as _legacy_ApplyConfig;
 
 /// Legacy `Migration` trait (substrate-side; replaced by `TypedStatement`).
 #[deprecated(
-    since = "1.0.0",
-    note = "use `TypedStatement`; this legacy trait will be removed in v2.0"
+    since = "2.0.0",
+    note = "use `TypedStatement`; this legacy trait will be removed in v3.0"
 )]
 pub use migration::Migration as _legacy_Migration;
 
 /// Legacy `StaticMigration` zero-erased newtype.
 #[deprecated(
-    since = "1.0.0",
-    note = "use `TypedStatement`; this legacy newtype will be removed in v2.0"
+    since = "2.0.0",
+    note = "use `TypedStatement`; this legacy newtype will be removed in v3.0"
 )]
 pub use migration::StaticMigration as _legacy_StaticMigration;
 
 /// Legacy `record_migration` helper.
 #[deprecated(
-    since = "1.0.0",
-    note = "use the typed `Database::execute_checked` path; this legacy helper will be removed in v2.0"
+    since = "2.0.0",
+    note = "use the typed `Database::execute_checked` path; this legacy helper will be removed in v3.0"
 )]
 pub use tracker::record_migration as _legacy_record_migration;
 

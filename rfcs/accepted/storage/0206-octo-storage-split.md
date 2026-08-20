@@ -93,7 +93,7 @@ allow-listed-ddl = []
 strict-typed-query = []
 ```
 
-**Re-exported set (8 top-level pub-use + pub mod migrations with 3 nested pub-use + pub mod stoolap with 5 nested re-exports — resolves v2.0 internal contradiction with §Substrate Newtype Refactor "≤ 8 cap"):**
+**Re-exported set (8 top-level pub-use + 6 top-level `_legacy_*` aliases + pub mod migrations with 3 nested pub-use + pub mod stoolap with 5 nested re-exports — resolves v2.0 internal contradiction with §Substrate Newtype Refactor "≤ 8 cap" for production surface):**
 
 ```rust
 // crates/octo-storage-core/src/lib.rs (v2.2)
@@ -122,14 +122,14 @@ pub mod stoolap;
 
 **v2.1 change rationale:** v2.0 showed 11 top-level `pub use` statements in §Cargo.toml Templates Layer A, violating §Substrate Newtype Refactor "≤ 8 cap". v2.1 reduces to 8 top-level + `pub mod migrations` with 3 nested. Typed query families (`SqlSelect`/`SqlInsert`/`SqlUpdate`/`SqlDelete`/`DdlTemplate`/`DdlOperation`) are accessible via `TypedStatement` enum variants, not re-exported at top level.
 
-**v2.2 addition:** §Substrate Re-export Block — `pub mod stoolap` with 5 nested re-exports of `stoolap` types consumers need to decode rows returned by `Database::execute_checked`. The re-export block is `pub mod` (NOT 5 top-level `pub use`), so the 8-pub-use cap remains satisfied. Consumers `use octo_storage_core::stoolap::{ResultRow, ...}` and can drop direct `stoolap` Cargo.toml dep after Phase 2.6 (`0206-008b`).
+**v2.2 addition:** §Substrate Re-export Block — `pub mod stoolap` with 5 nested re-exports of `stoolap` types consumers need to decode rows returned by `Database::execute_checked`. The re-export block is `pub mod` (NOT 5 top-level `pub use`), so the 8-pub-use production-surface cap remains satisfied. Consumers `use octo_storage_core::stoolap::{ResultRow, ...}` and can drop direct `stoolap` Cargo.toml dep after Phase 2.6 (`0206-008b`).
 
 Notes:
 
 - `Database` is the newtype; `stoolap::Database` not re-exported
 - Wildcard `pub use foo::*;` FAIL at lint level per §Format Bypass Defense
 - Module attrs `#[doc = ...]` referencing RFC-0206 DROPPED (v1.8 rejected)
-- 8-pub-use cap is on top-level statements only; nested `pub use` inside `pub mod migrations` AND nested re-exports inside `pub mod stoolap` do not count toward cap (per §Substrate Newtype Refactor "MOVE 3 to module attrs" + v2.2 §Substrate Re-export Block)
+- 8-pub-use cap is on top-level **production surface** statements only; nested `pub use` inside `pub mod migrations` AND nested re-exports inside `pub mod stoolap` do not count toward cap. The 6 top-level `_legacy_*` aliases (per §Migration Order, ≥ 6-month legacy coexistence window) are carve-out — they are deprecated `pub use as _legacy_*` re-exports promoting pre-substrate symbols (`apply_pending`, `ApplyConfig`, `StorageError`, `Migration`, `StaticMigration`, `record_migration`) to the top-level for backward compat. The cap rule applies to the 8 production-surface `pub use` statements, which is resolved in v2.0/v2.1/v2.2 cycle.
 - `pub mod stoolap` re-exported types are 1:1 aliases for `stoolap::*`; consumers MUST import via substrate path for abstraction layering
 
 ### Layer B (facade Cargo.toml)

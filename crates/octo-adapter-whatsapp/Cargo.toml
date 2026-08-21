@@ -92,15 +92,11 @@ uuid = { version = "1", features = ["v4"] }
 # 0206-008.
 octo-storage-core = { path = "../octo-storage-core" }
 
-# SQL storage (CipherOcto stoolap fork). Per RFC-0206 v2.1
-# §Cargo.toml Cross-Cuts + HIGH 6 consumer-crate exemption, the
-# substrate redesign v3.0 does NOT yet re-export `stoolap::ResultRow`
-# / `stoolap::ApiTransaction` / `stoolap::Rows` / `stoolap::Error` —
-# the adapter's session store + crypto helpers still decode rows
-# directly. A v2.2 RFC-0206 amendment (filed as 0206-011b) is the
-# proper scope to add a `pub mod stoolap` re-export to the substrate.
-# Until then, the direct dep stays.
-stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
+# Stoolap direct dep REMOVED 2026-08-20 by mission 0206-008b. Substrate
+# `pub mod stoolap` re-export block (DataType, Error, ApiTransaction,
+# ResultRow, Rows, Value) covers all consumer types. Substrate remains
+# sole owner of direct stoolap dep per RFC-0206 §Cargo.toml Templates
+# Layer A invariant.
 
 # DOT types from sibling crate
 octo-network = { path = "../octo-network" }

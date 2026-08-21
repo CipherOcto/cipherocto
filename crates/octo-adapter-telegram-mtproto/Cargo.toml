@@ -119,23 +119,11 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"], option
 # `octo_storage_core::Database` for the Stoolap-backed `Session` impl.
 octo-storage-core = { path = "../octo-storage-core" }
 
-# Stoolap fork on `feat/blockchain-sql` (see
-# crates/octo-matrix-session-store/Cargo.toml for the canonical
-# pattern). API surface used: `Database::open(&dsn) /
-# Database::open_in_memory()`, `db.execute(sql, params) ->
-# Result<i64>`, `db.query(sql, params) -> Result<Rows>`, where
-# `params = []` for no-arg statements and
-# `vec![stoolap::core::Value::text(...), ...]` for parameterised
-# statements.
-#
-# Per RFC-0206 v2.1 §Cargo.toml Cross-Cuts + HIGH 6 consumer-crate
-# exemption, the substrate redesign v3.0 does NOT yet re-export
-# `stoolap::ResultRow` / `stoolap::ApiTransaction` / `stoolap::Rows`
-# / `stoolap::Error` — the Session trait impl decodes rows directly.
-# A v2.2 RFC-0206 amendment (filed as 0206-011b) is the proper scope
-# to add a `pub mod stoolap` re-export to the substrate. Until then,
-# the direct dep stays.
-stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
+# Stoolap direct dep REMOVED 2026-08-20 by mission 0206-008b. Substrate
+# `pub mod stoolap` re-export block (DataType, Error, ApiTransaction,
+# ResultRow, Rows, Value) covers all consumer types. Substrate remains
+# sole owner of direct stoolap dep per RFC-0206 §Cargo.toml Templates
+# Layer A invariant.
 
 [dev-dependencies]
 tokio = { workspace = true }

@@ -43,3 +43,40 @@ pub use stoolap::ApiTransaction;
 pub use stoolap::ResultRow;
 pub use stoolap::Rows;
 pub use stoolap::Value;
+
+// === `pub mod pubsub` (RFC-0206 v2.4 §Substrate Re-export Block extension) ===
+//
+// 7 `stoolap::pubsub` types + nested `pub mod wal_pubsub` re-export so
+// consumer crates can `use octo_storage_core::stoolap::pubsub::{EventBus,
+// WalPubSub, DatabaseEvent, ...}` instead of taking a direct `stoolap`
+// Cargo.toml dep. Resolves qrc 34+ `stoolap::pubsub::*` blocker (see
+// `0206-008c-stoolap-pubsub-block-extension`).
+//
+// `parse_event` lives in `stoolap::pubsub::wal_pubsub` (NOT re-exported
+// at the `pubsub` module level by upstream) — exposed via nested
+// `pub mod wal_pubsub` so consumers keep `pubsub::wal_pubsub::parse_event`
+// traversal pattern.
+pub mod pubsub {
+    //! `stoolap::pubsub` re-exports — RFC-0206 v2.4 §Substrate Re-export Block
+    //! extension. Consumers `use octo_storage_core::stoolap::pubsub::{EventBus,
+    //! WalPubSub, DatabaseEvent, InvalidationReason, SchemaChangeType,
+    //! OperationType, generate_event_id}` instead of taking a direct `stoolap`
+    //! Cargo.toml dep. Preserves substrate abstraction layer per CLAUDE.md
+    //! §Core Engineering Principles ("no parallel abstractions").
+    #![allow(unused_imports)]
+
+    pub use stoolap::pubsub::generate_event_id;
+    pub use stoolap::pubsub::DatabaseEvent;
+    pub use stoolap::pubsub::EventBus;
+    pub use stoolap::pubsub::InvalidationReason;
+    pub use stoolap::pubsub::OperationType;
+    pub use stoolap::pubsub::SchemaChangeType;
+    pub use stoolap::pubsub::WalPubSub;
+
+    /// `stoolap::pubsub::wal_pubsub` re-exports — `parse_event` is NOT
+    /// re-exported by upstream `stoolap::pubsub` mod.rs; consume via nested
+    /// `pubsub::wal_pubsub::parse_event` path.
+    pub mod wal_pubsub {
+        pub use stoolap::pubsub::wal_pubsub::parse_event;
+    }
+}

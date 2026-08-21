@@ -49,20 +49,14 @@ thiserror.workspace = true
 # Layer A storage substrate (mission 0206-001). Core storage traits
 # (`ProxyStorage`, `RateLimitStorage`, `HealthStorage`) and admin/cache
 # stores use `octo_storage_core::Database` after mission 0206-008.
+# Includes the §Substrate Re-export Block — `pub mod stoolap` re-exports
+# 6 types (DataType/Error/ApiTransaction/ResultRow/Rows/Value) and the
+# `pub mod pubsub` extension (EventBus/WalPubSub/DatabaseEvent/
+# InvalidationReason/SchemaChangeType/OperationType/generate_event_id +
+# nested `wal_pubsub::parse_event`) per RFC-0206 v2.4. quota-router-core
+# uses `octo_storage_core::stoolap::pubsub::*` for cache.rs EventBus/WalPubSub
+# paths (mission 0206-008c) — no direct `stoolap` Cargo.toml dep needed.
 octo-storage-core = { path = "../octo-storage-core" }
-
-# Database
-# Per RFC-0206 v2.2 §Substrate Re-export Block, the substrate
-# re-exports `ResultRow` / `ApiTransaction` / `Rows` / `Error` via
-# `octo_storage_core::stoolap::*`. The direct dep stays because
-# quota-router-core STILL reaches `stoolap::pubsub::*` (EventBus,
-# WalPubSub, DatabaseEvent, InvalidationReason, SchemaChangeType,
-# OperationType, generate_event_id, parse_event) — 34+ sites in
-# src/cache.rs alone — NOT in the v2.3 re-export block. Adding
-# `pubsub` to the re-export block is mission 0206-008c scope
-# (substrate re-export block v2.4 extension). Until then, this
-# crate retains the direct dep as approved internal pin.
-stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
 
 # RFC-0969 mission 0969-a: GatewayAuthenticator relocated from
 # `octo-wallet::capability::gateway_authenticator` to

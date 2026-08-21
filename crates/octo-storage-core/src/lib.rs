@@ -83,6 +83,11 @@ pub mod migrations {
 
 // === `pub mod stoolap` (5 nested pub-use per RFC v2.2 §Substrate Re-export Block) ===
 //
+// v2.3 grows 5 → 6 (`DataType`); v2.4 adds `pub mod pubsub` (7 nested
+// re-exports + nested `pub mod wal_pubsub`). 8 top-level `pub use` cap
+// UNCHANGED across all amendments (re-export block is `pub mod`, not
+// top-level `pub use`).
+//
 // 5 nested `pub use stoolap::*` re-exports so consumer crates can
 // `use octo_storage_core::stoolap::{ResultRow, ApiTransaction, Rows,
 // Error, Value}` instead of taking a direct `stoolap` Cargo.toml dep.

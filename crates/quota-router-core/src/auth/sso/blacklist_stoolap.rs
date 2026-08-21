@@ -31,7 +31,7 @@ impl TokenBlacklistStorage for StoolapTokenBlacklistStorage {
         );
         match result {
             Ok(_) => Ok(()),
-            Err(stoolap::Error::UniqueConstraint { .. }) => {
+            Err(octo_storage_core::stoolap::Error::UniqueConstraint { .. }) => {
                 // Token already blacklisted — update expiration
                 self.db
                     .execute(

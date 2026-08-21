@@ -84,7 +84,8 @@ impl MigrationVersion {
 /// not yet implemented). Used by `substrate_runner::apply` (Layer B
 /// facade) to delegate to `octo_storage_core::apply_pending`.
 #[cfg(feature = "stoolap")]
-pub(super) static BUILTIN_MIGRATION_CATALOG: &[&'static dyn octo_storage_core::_legacy_Migration] = &[
+pub(super) static BUILTIN_MIGRATION_CATALOG:
+    &[&'static dyn octo_storage_core::_legacy_Migration] = &[
     &octo_storage_core::_legacy_StaticMigration::new(
         1,
         "v001__reputation_events",

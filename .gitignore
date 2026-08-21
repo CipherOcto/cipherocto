@@ -26,7 +26,9 @@ Cargo.lock
 
 # Worktrees (per-project root + nested under .claude/)
 /.worktrees/
-/.claude/worktrees/
+
+# Claude Code (entire .claude/ — projects + settings.local.json + worktrees)
+/.claude/
 
 # Python
 .venv/
@@ -34,7 +36,7 @@ Cargo.lock
 **/__pycache__/
 *.egg-info/
 
-# Claude Code
+# Claude Code (legacy explicit entries, now covered by /.claude/ above)
 .claude/plans/
 
 # Adversarial review artifacts (local scratchpads, not committed per memory rule)
@@ -101,3 +103,10 @@ uv.lock
 
 # Local debug screenshots (WA Web reconnect drills)
 /wa-*.png
+
+# Stoolap fork `file:[dsn]` artifact directories — pre-existing fork
+# behavior emitted `file:/` subdirs when called with a path that already
+# started with `file:`. Substrate smart-DSN logic (octo-storage-core
+# `Database::open`) prevents new emissions; these are leftover from
+# pre-fix test runs. Pattern `file:*/` matches any DSN-shaped stub path.
+file:*/

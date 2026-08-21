@@ -85,11 +85,9 @@ mod real {
         /// Applies migrations synchronously on first run; subsequent opens
         /// are no-ops.
         pub async fn open(dsn: &str) -> Result<Self, ReputationError> {
-            let db = octo_storage_core::Database::open(dsn).map_err(
-                |_e: octo_storage_core::stoolap::Error| {
-                    ReputationError::ChainRefInvalid("stoolap_open")
-                },
-            )?;
+            let db = octo_storage_core::Database::open(dsn).map_err(|_e| {
+                ReputationError::ChainRefInvalid("stoolap_open")
+            })?;
             substrate_runner::apply(&db)?;
             Ok(Self {
                 db: std::sync::Arc::new(db),
@@ -98,11 +96,9 @@ mod real {
 
         /// Open an in-memory store. Used for tests and ephemeral deployments.
         pub async fn open_in_memory() -> Result<Self, ReputationError> {
-            let db = octo_storage_core::Database::open_in_memory().map_err(
-                |_e: octo_storage_core::stoolap::Error| {
-                    ReputationError::ChainRefInvalid("stoolap_open_inmem")
-                },
-            )?;
+            let db = octo_storage_core::Database::open_in_memory().map_err(|_e| {
+                ReputationError::ChainRefInvalid("stoolap_open_inmem")
+            })?;
             substrate_runner::apply(&db)?;
             Ok(Self {
                 db: std::sync::Arc::new(db),

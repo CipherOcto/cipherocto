@@ -839,9 +839,9 @@ async fn stoolap_next_event_id_rejects_malformed_blob() {
                 severity_total, last_event_id, last_event_unix, updated_at_unix
              ) VALUES ($1, 1, 1, $2, 0, 0, $3, 0, 0)",
             vec![
-                stoolap::Value::blob(did_bytes),
-                stoolap::Value::blob(score_blob),
-                stoolap::Value::blob(corrupt_blob),
+                octo_storage_core::stoolap::Value::blob(did_bytes),
+                octo_storage_core::stoolap::Value::blob(score_blob),
+                octo_storage_core::stoolap::Value::blob(corrupt_blob),
             ],
         )
         .expect("insert corrupt aggregate");
@@ -886,10 +886,10 @@ async fn stoolap_set_anchor_rejects_cross_recorder_ambiguous() {
                   score_delta, recorded_at_unix, rotation_provenance)
                  VALUES ($1, $2, $3, 1, 1, $4, 1000, NULL)",
                 vec![
-                    stoolap::Value::blob(did_bytes),
-                    stoolap::Value::blob(eid_1.clone()),
-                    stoolap::Value::blob([0u8; 32].to_vec()),
-                    stoolap::Value::blob(score_blob.clone()),
+                    octo_storage_core::stoolap::Value::blob(did_bytes),
+                    octo_storage_core::stoolap::Value::blob(eid_1.clone()),
+                    octo_storage_core::stoolap::Value::blob([0u8; 32].to_vec()),
+                    octo_storage_core::stoolap::Value::blob(score_blob.clone()),
                 ],
             )
             .expect("insert event");
@@ -911,7 +911,7 @@ async fn stoolap_set_anchor_rejects_cross_recorder_ambiguous() {
         .query(
             "SELECT COUNT(*) FROM reputation_events
              WHERE event_id = $1 AND anchor_tx_hash IS NOT NULL",
-            vec![stoolap::Value::blob(eid_1)],
+            vec![octo_storage_core::stoolap::Value::blob(eid_1)],
         )
         .expect("count");
     let n: i64 = rows.next().expect("row").expect("ok").get(0).expect("col");
@@ -984,7 +984,7 @@ async fn stoolap_set_anchor_rejects_cross_recorder_ambiguous_via_public_api() {
             .get(0)
             .ok()
             .map(|v| {
-                if let stoolap::Value::Blob(b) = v {
+                if let octo_storage_core::stoolap::Value::Blob(b) = v {
                     b.to_vec()
                 } else {
                     Vec::new()
@@ -992,7 +992,7 @@ async fn stoolap_set_anchor_rejects_cross_recorder_ambiguous_via_public_api() {
             })
             .unwrap_or_default();
         let anc: Option<Vec<u8>> = r.get(1).ok().and_then(|v| {
-            if let stoolap::Value::Blob(b) = v {
+            if let octo_storage_core::stoolap::Value::Blob(b) = v {
                 Some(b.to_vec())
             } else {
                 None
@@ -1043,9 +1043,9 @@ async fn stoolap_next_event_id_boundary_max_minus_one_to_max() {
                 severity_total, last_event_id, last_event_unix, updated_at_unix
              ) VALUES ($1, 1, 1, $2, 0, 0, $3, 0, 0)",
             vec![
-                stoolap::Value::blob(did_bytes.clone()),
-                stoolap::Value::blob(score_blob),
-                stoolap::Value::blob(max_minus_one),
+                octo_storage_core::stoolap::Value::blob(did_bytes.clone()),
+                octo_storage_core::stoolap::Value::blob(score_blob),
+                octo_storage_core::stoolap::Value::blob(max_minus_one),
             ],
         )
         .expect("insert max-1 aggregate");
@@ -1064,7 +1064,7 @@ async fn stoolap_next_event_id_boundary_max_minus_one_to_max() {
         .query(
             "SELECT last_event_id FROM reputation_aggregates
              WHERE recorder_did = $1",
-            vec![stoolap::Value::blob(did_bytes)],
+            vec![octo_storage_core::stoolap::Value::blob(did_bytes)],
         )
         .expect("select aggregate");
     let mut aggregate_last_eid: Option<u64> = None;
@@ -1074,7 +1074,7 @@ async fn stoolap_next_event_id_boundary_max_minus_one_to_max() {
             .get(0)
             .ok()
             .and_then(|v| {
-                if let stoolap::Value::Blob(b) = v {
+                if let octo_storage_core::stoolap::Value::Blob(b) = v {
                     Some(b.to_vec())
                 } else {
                     None
@@ -1159,7 +1159,7 @@ async fn stoolap_set_anchor_middle_row_single_recorder() {
             .get(0)
             .ok()
             .and_then(|v| {
-                if let stoolap::Value::Blob(b) = v {
+                if let octo_storage_core::stoolap::Value::Blob(b) = v {
                     Some(b.to_vec())
                 } else {
                     None
@@ -1167,7 +1167,7 @@ async fn stoolap_set_anchor_middle_row_single_recorder() {
             })
             .unwrap_or_default();
         let anc: Option<Vec<u8>> = r.get(1).ok().and_then(|v| {
-            if let stoolap::Value::Blob(b) = v {
+            if let octo_storage_core::stoolap::Value::Blob(b) = v {
                 Some(b.to_vec())
             } else {
                 None
@@ -1205,7 +1205,7 @@ async fn stoolap_set_anchor_middle_row_single_recorder() {
             .get(0)
             .ok()
             .and_then(|v| {
-                if let stoolap::Value::Blob(b) = v {
+                if let octo_storage_core::stoolap::Value::Blob(b) = v {
                     Some(b.to_vec())
                 } else {
                     None
@@ -1213,7 +1213,7 @@ async fn stoolap_set_anchor_middle_row_single_recorder() {
             })
             .unwrap_or_default();
         let anc: Option<Vec<u8>> = r.get(1).ok().and_then(|v| {
-            if let stoolap::Value::Blob(b) = v {
+            if let octo_storage_core::stoolap::Value::Blob(b) = v {
                 Some(b.to_vec())
             } else {
                 None
@@ -1445,10 +1445,10 @@ async fn stoolap_set_anchor_rejects_five_recorders_share_event_id() {
                   score_delta, recorded_at_unix, rotation_provenance)
                  VALUES ($1, $2, $3, 1, 1, $4, 1000, NULL)",
                 vec![
-                    stoolap::Value::blob(did),
-                    stoolap::Value::blob(eid_1.clone()),
-                    stoolap::Value::blob([0u8; 32].to_vec()),
-                    stoolap::Value::blob(score_blob.clone()),
+                    octo_storage_core::stoolap::Value::blob(did),
+                    octo_storage_core::stoolap::Value::blob(eid_1.clone()),
+                    octo_storage_core::stoolap::Value::blob([0u8; 32].to_vec()),
+                    octo_storage_core::stoolap::Value::blob(score_blob.clone()),
                 ],
             )
             .expect("insert event");
@@ -1460,7 +1460,7 @@ async fn stoolap_set_anchor_rejects_five_recorders_share_event_id() {
         .database()
         .query(
             "SELECT recorder_did FROM reputation_events WHERE event_id = $1",
-            vec![stoolap::Value::blob(eid_1.clone())],
+            vec![octo_storage_core::stoolap::Value::blob(eid_1.clone())],
         )
         .expect("count seeded");
     let mut seeded_dids: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
@@ -1470,7 +1470,7 @@ async fn stoolap_set_anchor_rejects_five_recorders_share_event_id() {
             .get(0)
             .ok()
             .map(|v| {
-                if let stoolap::Value::Blob(b) = v {
+                if let octo_storage_core::stoolap::Value::Blob(b) = v {
                     b.to_vec()
                 } else {
                     Vec::new()
@@ -1504,7 +1504,7 @@ async fn stoolap_set_anchor_rejects_five_recorders_share_event_id() {
         .query(
             "SELECT COUNT(*) FROM reputation_events
              WHERE event_id = $1 AND anchor_tx_hash IS NOT NULL",
-            vec![stoolap::Value::blob(eid_1)],
+            vec![octo_storage_core::stoolap::Value::blob(eid_1)],
         )
         .expect("count");
     let n: i64 = rows.next().expect("row").expect("ok").get(0).expect("col");
@@ -1584,7 +1584,7 @@ async fn stoolap_set_anchor_full_error_paths_single_recorder() {
             .get(0)
             .ok()
             .and_then(|v| {
-                if let stoolap::Value::Blob(b) = v {
+                if let octo_storage_core::stoolap::Value::Blob(b) = v {
                     Some(b.to_vec())
                 } else {
                     None
@@ -1592,7 +1592,7 @@ async fn stoolap_set_anchor_full_error_paths_single_recorder() {
             })
             .unwrap_or_default();
         let anc: Option<Vec<u8>> = r.get(1).ok().and_then(|v| {
-            if let stoolap::Value::Blob(b) = v {
+            if let octo_storage_core::stoolap::Value::Blob(b) = v {
                 Some(b.to_vec())
             } else {
                 None
@@ -1640,9 +1640,9 @@ async fn stoolap_next_event_id_rejects_u64_max_saturation() {
                 severity_total, last_event_id, last_event_unix, updated_at_unix
              ) VALUES ($1, 1, 1, $2, 0, 0, $3, 0, 0)",
             vec![
-                stoolap::Value::blob(did_bytes),
-                stoolap::Value::blob(score_blob),
-                stoolap::Value::blob(max_bytes),
+                octo_storage_core::stoolap::Value::blob(did_bytes),
+                octo_storage_core::stoolap::Value::blob(score_blob),
+                octo_storage_core::stoolap::Value::blob(max_bytes),
             ],
         )
         .expect("insert saturated aggregate");
@@ -1884,9 +1884,9 @@ async fn stoolap_next_event_id_rejects_all_wrong_blob_lengths() {
                     severity_total, last_event_id, last_event_unix, updated_at_unix
                  ) VALUES ($1, 1, 1, $2, 0, 0, $3, 0, 0)",
                 vec![
-                    stoolap::Value::blob(did_bytes),
-                    stoolap::Value::blob(score_blob),
-                    stoolap::Value::blob(corrupt_blob),
+                    octo_storage_core::stoolap::Value::blob(did_bytes),
+                    octo_storage_core::stoolap::Value::blob(score_blob),
+                    octo_storage_core::stoolap::Value::blob(corrupt_blob),
                 ],
             )
             .expect("insert corrupt aggregate");

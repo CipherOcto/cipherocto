@@ -84,43 +84,43 @@ impl MigrationVersion {
 /// not yet implemented). Used by `substrate_runner::apply` (Layer B
 /// facade) to delegate to `octo_storage_core::apply_pending`.
 #[cfg(feature = "stoolap")]
-pub(super) static BUILTIN_MIGRATION_CATALOG: &[&'static dyn octo_storage_core::Migration] = &[
-    &octo_storage_core::StaticMigration::new(
+pub(super) static BUILTIN_MIGRATION_CATALOG: &[&'static dyn octo_storage_core::_legacy_Migration] = &[
+    &octo_storage_core::_legacy_StaticMigration::new(
         1,
         "v001__reputation_events",
         include_str!("../migrations/v001__reputation_events.sql"),
     ),
-    &octo_storage_core::StaticMigration::new(
+    &octo_storage_core::_legacy_StaticMigration::new(
         2,
         "v002__reputation_recorders",
         include_str!("../migrations/v002__reputation_recorders.sql"),
     ),
-    &octo_storage_core::StaticMigration::new(
+    &octo_storage_core::_legacy_StaticMigration::new(
         3,
         "v003__schema_migrations",
         include_str!("../migrations/v003__schema_migrations.sql"),
     ),
-    &octo_storage_core::StaticMigration::new(
+    &octo_storage_core::_legacy_StaticMigration::new(
         4,
         "v004__reputation_attestations",
         include_str!("../migrations/v004__reputation_attestations.sql"),
     ),
-    &octo_storage_core::StaticMigration::new(
+    &octo_storage_core::_legacy_StaticMigration::new(
         5,
         "v005__reputation_gossip_seen",
         include_str!("../migrations/v005__reputation_gossip_seen.sql"),
     ),
-    &octo_storage_core::StaticMigration::new(
+    &octo_storage_core::_legacy_StaticMigration::new(
         10,
         "v010__reputation_anchors",
         include_str!("../migrations/v010__reputation_anchors.sql"),
     ),
-    &octo_storage_core::StaticMigration::new(
+    &octo_storage_core::_legacy_StaticMigration::new(
         11,
         "v011__reputation_events_anchor",
         include_str!("../migrations/v011__reputation_events_anchor.sql"),
     ),
-    &octo_storage_core::StaticMigration::new(
+    &octo_storage_core::_legacy_StaticMigration::new(
         12,
         "v012__reputation_anchors_governance",
         include_str!("../migrations/v012__reputation_anchors_governance.sql"),
@@ -144,10 +144,10 @@ pub mod substrate_runner {
     /// for pre-substrate DBs, so a legacy DB opened for the first time
     /// under the new code skips already-applied migrations cleanly.
     pub fn apply(db: &octo_storage_core::Database) -> Result<(), ReputationError> {
-        octo_storage_core::apply_pending(
+        octo_storage_core::_legacy_apply_pending(
             db,
             BUILTIN_MIGRATION_CATALOG,
-            octo_storage_core::ApplyConfig::default(),
+            octo_storage_core::_legacy_ApplyConfig::default(),
         )
         .map_err(|_e| {
             // Static label only — do NOT leak the substrate error's
@@ -355,11 +355,11 @@ mod tests {
         // substrate's ensure_tracker_table will fail BEFORE any
         // catalog migration runs — this exercises the
         // `.map_err(|_e| ...)` arm without surfacing `e`.
-        let minimal_catalog: &[&'static dyn octo_storage_core::Migration] = &[];
-        let result = octo_storage_core::apply_pending(
+        let minimal_catalog: &[&'static dyn octo_storage_core::_legacy_Migration] = &[];
+        let result = octo_storage_core::_legacy_apply_pending(
             &db,
             minimal_catalog,
-            octo_storage_core::ApplyConfig::default(),
+            octo_storage_core::_legacy_ApplyConfig::default(),
         );
         assert!(result.is_err(), "orphan row must trigger substrate error");
     }

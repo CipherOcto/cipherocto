@@ -1,8 +1,8 @@
-# RFC-0963 (Economics): Resource Shard Routing (v2.0 Strategic Reframe)
+# RFC-0963 (Economics): Resource Shard Routing (v3.1 §9 Worked-Example Reconciliation)
 
 ## Status
 
-Accepted v2.0
+Accepted v3.1 (v2.0 Accepted 2026-07-23; v3.1 §9 amendment 2026-08-21)
 
 > **Note:** Companion RFC to RFC-0960 §10 (Horizontal Scalability — Resource Sharding). Defines the shard routing algorithm, cross-shard transaction protocol, per-shard Merkle commitment, and horizontal scaling invariants. Builds on RFC-0862 (sync as propagation), RFC-0959 (SettlementReceipt), RFC-0960 §7 (MultiSettlement / atomic swaps), and Phase 4 finding (event-sourced ledger precedents) which corrected the draft routing key from event-type to vault-id.
 
@@ -14,6 +14,7 @@ Accepted v2.0
 | v2.0 | 2026-07-23 | @cipherocto + @mmacedoeu | **Strategic reframe (R17+).** `MultiSession` → `MultiEnvelope` (RFC-0962 rename). `shard_id` derivation now keyed on `wal_segment_id` (RFC-0960 §1.1 WAL primary) instead of `session_id`. Shard routing is a projection of the WAL, not a projection of envelopes. Bumped to v2.0. |
 | v2.0-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | **Promoted Draft → Accepted.** R1-R28 multi-round adversarial review closed with R28 clean round (zero actionable defects). Companion RFCs (RFC-0960, RFC-0961, RFC-0962, RFC-0964, RFC-0965, RFC-0967) promoted in lockstep on 2026-07-23. |
 | v2.1-Resolved | 2026-07-23 | @cipherocto + @mmacedoeu | **Risk-closure round.** All 6 Open Questions resolved with concrete answers: `num_shards = ceil(sqrt(N))` bounded `[4, 256]`; 1y Retired archive GC; MultiCapability + MultiEnvelope for cross-shard; ~10ms p99 cross-shard read budget; per-shard ZK proof + cross-shard MMR inclusion (256B at 256 shards); shard_id immutable per session. §4.1 drain timeout already specified (7d abort → live migration). Additive (non-breaking) bump. |
+| v3.1-Resolved | 2026-08-21 | @cipherocto + @mmacedoeu | **§9 Worked-example reconciliation.** Step 1 sub_envelopes replaced `UPDATE vaults SET balance = balance ± 100` with `INSERT INTO transfer_events` per RFC-0960 §2.5 (event-sourced ledger, no direct UPDATE on cached balance). Both sub_envelopes append `TransferApplied` rows sharing one `tx_id`; cached `vaults.balance` is a projection over the log. The `Timeout case` already aligned (appends `TransferCorrected`). See §9.5 for prior-text rationale. RFC-only amendment; no substrate change. |
 
 ## Authors
 
@@ -342,13 +343,15 @@ Capability {
 
 MultiEnvelope {
     sub_envelopes: [
-        ExecutionEnvelope { shard_id: 0, sql: [UPDATE vaults SET balance = balance - 100 WHERE vault_id = alice_vault] },
-        ExecutionEnvelope { shard_id: 3, sql: [UPDATE vaults SET balance = balance + 100 WHERE vault_id = bob_vault] },
+        ExecutionEnvelope { shard_id: 0, sql: [INSERT INTO transfer_events (event_type, tx_id, from_vault_id, to_vault_id, amount_micro, settlement_ref) VALUES ('TransferApplied', :tx_id, :alice_vault, :bob_vault, 100, :settlement_ref)] },
+        ExecutionEnvelope { shard_id: 3, sql: [INSERT INTO transfer_events (event_type, tx_id, from_vault_id, to_vault_id, amount_micro, settlement_ref) VALUES ('TransferApplied', :tx_id, :alice_vault, :bob_vault, 100, :settlement_ref)] },
     ],
     completion: AllRequired,
     timeout_unix_ms: 5000,
 }
 ```
+
+Both sub_envelopes share one `tx_id` (groups the atomic event set across shards per RFC-0960 §2.5); each sub_envelope is replayed by its shard's replayer and the cached `vaults.balance` is recomputed by projection over `transfer_events` (RFC-0960 §2.5: "Balance = `SUM(in) - SUM(out) - SUM(active escrow holds)` over `transfer_events`. Materialised as a cached projection ... Direct UPDATE on the cache from non-event-log code paths is forbidden").
 
 **Step 2: Broadcast.** Alice's router sends the MultiEnvelope to block producers for shards 0 and 3.
 
@@ -362,6 +365,20 @@ MultiEnvelope {
 **Step 5: Replay.** Every node receives both sub-envelopes via RFC-0862 sync. Replays both in deterministic order. State converges.
 
 **Timeout case:** If shard 3 producer is offline > 5s, `fallback_action = Abort`. Shard 0's debit is reverted (a `TransferCorrected` event is appended).
+
+### §9.5 Worked-example reconciliation (v3.1, 2026-08-21)
+
+The §9 Step 1 sub_envelopes prior to v3.1 carried direct-SQL `UPDATE vaults SET balance = balance ± 100`. RFC-0960 §2.5 (the canonical transfer substrate, Accepted v3.0 on 2026-08-17) explicitly **forbids** direct UPDATE on the balance cache from non-event-log code paths:
+
+> "Direct UPDATE on the cache from non-event-log code paths is forbidden (Phase 4 §4.4 trigger)."
+
+The v3.1 amendment replaces the direct UPDATE with `INSERT INTO transfer_events` per RFC-0960 §2.5 — both sub_envelopes append a `TransferApplied` row sharing one `tx_id` (groups the atomic event set across shards). The cached `vaults.balance` is recomputed by projection over the log; replayers on each shard deterministically derive the same balance. No substrate migration owed; spec-text reconciliation only.
+
+The §9 `Timeout case` already aligned with RFC-0960 §2.5 (appends `TransferCorrected`) — only the happy-path Step 1 sub_envelopes were stale text carried from the v2.0 draft (pre-RFC-0960 v3.0 acceptance). The v3.0 chain-aware cross-reference (§cross-reference, line 400) noted the substrate amendment but did not catch the §9 example drift. v3.1 closes the contradiction.
+
+Routing algorithm (§1, §2, §3, §4) + Resolved Decisions §4.3 re-sharding safety + Open Questions §10 are unchanged. The §cross-reference RFC-0960 v3.0 amendment paragraph remains accurate post-v3.1.
+
+**Cross-ref:** RFC-0960 §2.5 (canonical `transfer_events` schema + event-sourced projection) + RFC-0960 v3.0 §Vault Substrate (chain-aware PK lattice) + RFC-0962 §7 (`MultiEnvelope` completion rules, replay contract).
 
 ## Open Questions
 
@@ -410,7 +427,7 @@ RFC-0960 amended §2.1 root-vault example (removed; replaced with §20.3 lattice
 
 ## Status
 
-This RFC = Resource shard routing. Status: **Accepted v2.0** (promoted from Draft on 2026-07-23 in lockstep with RFC-0960, RFC-0961, RFC-0962, RFC-0964, RFC-0965, and RFC-0967).
+This RFC = Resource shard routing. Status: **Accepted v3.1** (promoted from Draft on 2026-07-23 in lockstep with RFC-0960, RFC-0961, RFC-0962, RFC-0964, RFC-0965, and RFC-0967; §9 worked-example reconciliation landed 2026-08-21 per RFC-0960 §2.5 event-sourced substrate).
 
 All companion RFCs reached Accepted in lockstep on 2026-07-23.
 

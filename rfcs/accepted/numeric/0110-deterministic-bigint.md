@@ -1,3 +1,19 @@
+---
+title: "RFC-0110: Deterministic BIGINT"
+status: Accepted
+version: 2.14.0
+created: 2026-04-11
+updated: 2026-08-22
+authors:
+  - CipherOcto Core Team
+rfc_authority: RFC-0110
+related:
+  - RFC-0106 (Numeric): Deterministic Numeric Tower
+  - RFC-0104 (Numeric): Deterministic Floating-Point
+  - RFC-0105 (Numeric): Deterministic Quant Arithmetic
+execution_class: A
+---
+
 # RFC-0110 (Numeric/Math): Deterministic BIGINT
 
 ## Status

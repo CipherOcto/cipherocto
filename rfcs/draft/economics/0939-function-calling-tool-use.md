@@ -167,6 +167,12 @@ All new fields are `Option<T>` with `#[serde(skip_serializing_if = "Option::is_n
 - [ ] Function calling works end-to-end for Anthropic (with format conversion)
 - [ ] All existing tests pass (backward compatible)
 
+## Version History
+
+| Version | Date | Change |
+|---------|------|--------|
+| 0.1.0 | 2026-05-16 | Initial Draft — function calling types + Message/HttpCompletionRequest extensions + provider format conversion matrix (per Phase 5 R6 closure of F-P5.3-2 actionable surface) |
+
 ## References
 
 - OpenAI Function Calling: https://platform.openai.com/docs/guides/function-calling

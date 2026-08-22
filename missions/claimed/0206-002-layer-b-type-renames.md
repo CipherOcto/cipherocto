@@ -1,6 +1,6 @@
 ---
 name: 0206-002-layer-b-type-renames
-description: Open 2026-08-20 v2.1; RFC-0206 v2.0 §Layer B TYPE Renames — apply on-disk regenerated TYPE rename sites across quota-router-storage + octo-vault (see Explicit Sites table for file:line breakdown). Closes TV-0206-A7 quota-router-storage + octo-vault paths; remaining 2 paths closed by 0206-003.
+description: Open 2026-08-20 v3.0; RFC-0206 §Layer B TYPE Renames — apply on-disk regenerated TYPE rename sites across quota-router-storage + octo-vault (see Explicit Sites table for file:line breakdown). Closes TV-0206-A7 quota-router-storage + octo-vault paths; remaining 2 paths closed by 0206-003.
 metadata:
   node_type: mission
   type: project
@@ -12,6 +12,13 @@ metadata:
     - 0206-001-substrate-newtype
     - RFC-0205
     - RFC-0206
+phase: 1.4 RFC table part
+layer: B
+rfc_authority: RFC-0206
+tvs:
+  - TV-0206-A7
+  - TV-0206-A9
+status: done
 ---
 
 # Mission `0206-002-layer-b-type-renames` v3.0 — CLAIMED 2026-08-20
@@ -62,11 +69,11 @@ R1 findings applied:
 - MED: 29 SITES ≠ 29 FILES clarified (~8 files)
 - MED: TV-0206-A7 reworded — partial closure (2 of 4 paths)
 - LOW: call-site enumeration gate added
-- LOW: RFC-0205 v2.0 cross-ref added per BLUEPRINT.md rule 5
+- LOW: RFC-0205 cross-ref added per BLUEPRINT.md rule 5
 
 ## Scope
 
-Apply RFC-0206 v2.0 §Layer B TYPE Renames across 35 EXPLICIT TYPE positions + 7 doc comments in 9 files (regenerated from disk 2026-08-20). Closes TV-0206-A7 for `quota-router-storage` + `octo-vault` paths; remaining 2 paths closed by `0206-003-trait-moves`.
+Apply RFC-0206 §Layer B TYPE Renames across 35 EXPLICIT TYPE positions + 7 doc comments in 9 files (regenerated from disk 2026-08-20). Closes TV-0206-A7 for `quota-router-storage` + `octo-vault` paths; remaining 2 paths closed by `0206-003-trait-moves`.
 
 ### Explicit Sites (42 grep hits across 9 files; 35 TYPE + 7 DOC)
 
@@ -164,7 +171,7 @@ No BLOCKED-ON-AUDIT deferred sites in v2.1. The 42-hits table above is exhaustiv
 
 - Each renamed crate MUST drop `stoolap` direct dep (verified by AC gate; see "stoolap = line absent" gate below)
 - `octo-storage-core = { path = "../octo-storage-core" }` dep is ALREADY present in both `crates/quota-router-storage/Cargo.toml:23` and `crates/octo-vault/Cargo.toml:16` (verified 2026-08-20); no Cargo.toml edit required for substrate dep
-- **HIGH 6 exemption rationale**: RFC-0206 §Cargo.toml Cross-Cuts scopes the "Adapter crates MUST declare `octo-storage` (NOT direct substrate)" rule to Tier 3 adapter crates. `quota-router-storage` + `octo-vault` are Layer B consumer crates that hold the `Database` newtype directly in struct fields and constructor signatures; they require direct substrate path access for the type alias. Routing through the `octo-storage` facade would also be valid (facade re-exports substrate) but adds an unnecessary dependency layer; direct `octo-storage-core` is the substrate's documented public API.
+- **HIGH 6 exemption rationale**: RFC-0206 (Cargo.toml Cross-Cuts section in v2.4 body) scopes the "Adapter crates MUST declare `octo-storage` (NOT direct substrate)" rule to Tier 3 adapter crates. `quota-router-storage` + `octo-vault` are Layer B consumer crates that hold the `Database` newtype directly in struct fields and constructor signatures; they require direct substrate path access for the type alias. Routing through the `octo-storage` facade would also be valid (facade re-exports substrate) but adds an unnecessary dependency layer; direct `octo-storage-core` is the substrate's documented public API. (Section name §Cargo.toml Cross-Cuts refers to v2.4 RFC body; v3.0 draft renames this section.)
 - Exception: typed-query allowlist sites per RFC §Substrate Newtype Refactor — use `From<Database> for stoolap::Database` escape hatch. Escape-hatch sites are documented in `docs/audits/0206-002-escape-hatch-audit.md` and SUBTRACTED from the rg count (rg gate accommodates escape-hatch sites).
 
 ## Acceptance Criterion
@@ -194,11 +201,11 @@ No BLOCKED-ON-AUDIT deferred sites in v2.1. The 42-hits table above is exhaustiv
 
 ## Cross-references
 
-- RFC-0206 v2.0 §Layer B TYPE Renames (note: RFC §Layer B TYPE Renames table line refs are WRONG — see Explicit Sites §Notes on RFC table discrepancies)
-- RFC-0206 v2.0 TV-0206-A7 (partial closure 2 of 4 paths; full closure requires `0206-003`)
-- RFC-0206 v2.0 §Substrate Newtype Refactor (`From<Database>` escape hatch)
-- RFC-0206 v2.0 §Cargo.toml Cross-Cuts (consumer-crate exemption per HIGH 6)
-- RFC-0205 v2.0 (coupled pair per BLUEPRINT.md §Dependency Validation Rules → 2-Cycle Atomic Promotion rule 5)
+- RFC-0206 §Layer B TYPE Renames (note: RFC §Layer B TYPE Renames table line refs are WRONG — see Explicit Sites §Notes on RFC table discrepancies)
+- RFC-0206 TV-0206-A7 (partial closure 2 of 4 paths; full closure requires `0206-003`)
+- RFC-0206 §Substrate Newtype Refactor (`From<Database>` escape hatch)
+- RFC-0206 (Cargo.toml Cross-Cuts section in v2.4 body) (consumer-crate exemption per HIGH 6; section name from v2.4 RFC body)
+- RFC-0205 (coupled pair per BLUEPRINT.md §Dependency Validation Rules → 2-Cycle Atomic Promotion rule 5)
 - Mission `0206-001-substrate-newtype` (substrate Database type)
 
 ## Out of scope
@@ -212,8 +219,8 @@ No BLOCKED-ON-AUDIT deferred sites in v2.1. The 42-hits table above is exhaustiv
 ## Dependencies
 
 - `0206-001-substrate-newtype` (substrate Database type must exist)
-- RFC-0205 v2.0 (coupled pair)
-- RFC-0206 v2.0 (acceptance precondition)
+- RFC-0205 (coupled pair)
+- RFC-0206 (acceptance precondition)
 - **Ordering clause (not a `depends_on:` cycle)**: `0206-003-trait-moves` must run AFTER this mission (0206-003 lists 0206-002 as its dep)
 
 ## Version History

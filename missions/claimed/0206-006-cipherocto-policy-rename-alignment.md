@@ -6,15 +6,21 @@ metadata:
   type: project
   originSessionId: 9a316ae1-cb15-46f4-801f-99c2545bccf7
   created: 2026-08-20T00:00:00.000Z
+  v: "1.0"
+  supersedes: null
   depends_on:
     - RFC-0206
+phase: orthogonal
+layer: B
+rfc_authority: RFC-0206
+tvs: []
 ---
 
 # Mission `0206-006-cipherocto-policy-rename-alignment` — OPEN 2026-08-20
 
 ## Scope
 
-Rename crate `cipherocto-policy` → `octo-policy` per RFC-0206 v2.0 §Adapter Crate List row 5 + §Summary Updates vs v1.8 corrections table. Workspace `Cargo.toml` uses `members = ["crates/*"]` glob, so renaming the directory is the load-bearing change; `[package].name` rename makes `use octo_policy::` paths resolve.
+Rename crate `cipherocto-policy` → `octo-policy` per 5 + §Summary Updates vs v1.8 corrections table. Workspace `Cargo.toml` uses `members = ["crates/*"]` glob, so renaming the directory is the load-bearing change; `[package].name` rename makes `use octo_policy::` paths resolve.
 
 Covers:
 
@@ -44,20 +50,20 @@ Covers:
 
 ## Cross-references
 
-- RFC-0206 v2.0 §Adapter Crate List row 5 (octo-policy adapter)
-- RFC-0206 v2.0 §Summary Updates vs v1.8 corrections (canonical naming)
-- RFC-0206 v2.0 §Three-Tier Architecture Tier 3 (adapter crate naming convention)
-- RFC-0205 v2.0 (coupled pair per BLUEPRINT.md §Dependency Validation Rules → 2-Cycle Atomic Promotion rule 5)
+- 5 (octo-policy adapter)
+- 1.8 corrections (canonical naming)
+- -Tier Architecture Tier 3 (adapter crate naming convention)
+- RFC-0205 (coupled pair per BLUEPRINT.md §Dependency Validation Rules → 2-Cycle Atomic Promotion rule 5)
 - Mission `0206-004-adapter-crates` (requires `octo-policy/` directory on disk)
 
 ## Out of scope
 
-- `PolicyStore` trait declaration (lives in `octo-policy/src/lib.rs` per RFC-0206 v2.0 §Adapter Crate List; owned by `0206-004-adapter-crates`)
+- `PolicyStore` trait declaration (lives in `octo-policy/src/lib.rs` per ; owned by `0206-004-adapter-crates`)
 - `octo-policy-storage/` adapter crate creation (owned by `0206-004-adapter-crates`)
 
 ## Dependencies
 
-- RFC-0206 v2.0 (acceptance precondition per BLUEPRINT.md rule 5)
+- RFC-0206 (acceptance precondition per BLUEPRINT.md rule 5)
 
 ## Version History
 

@@ -20,6 +20,7 @@ tvs:
   - TV-0206-A10
   - TV-0206-A11
   - TV-0206-A12
+status: done
 ---
 
 # Mission `0206-005-octoident-storage-crate` — OPEN 2026-08-20
@@ -87,3 +88,4 @@ Covers:
 | Version | Date       | Change                                                            |
 | ------- | ---------- | ----------------------------------------------------------------- |
 | v1.0    | 2026-08-20 | Initial filing per R1 finding from `0206-003-trait-moves` CRIT #1 |
+| v3.0    | 2026-08-22 | Phase 3 close-out per long-horizon plan v1.5 §Mission layout. AC verification per memory card : LANDED 7833125e (2026-08-20). octo-ident-storage adapter crate on disk at  (NO direct stoolap dep). Mission YAML edits per R10.5 scope discipline. Status transitions open→done. |

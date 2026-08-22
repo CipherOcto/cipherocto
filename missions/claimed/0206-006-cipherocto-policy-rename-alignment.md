@@ -70,3 +70,4 @@ Covers:
 | Version | Date       | Change                                                                    |
 | ------- | ---------- | ------------------------------------------------------------------------- |
 | v1.0    | 2026-08-20 | Initial filing per R1 finding from `0206-004-adapter-crates` CRIT #2 + #3 |
+| v3.0    | 2026-08-22 | Phase 3 close-out per long-horizon plan v1.5 §Mission layout. AC verification per memory card : LANDED 7833125e (2026-08-20). cipherocto-policy → octo-policy rename complete (4 source consumers migrated). Mission YAML edits per R10.5 scope discipline. Status transitions open→done. |

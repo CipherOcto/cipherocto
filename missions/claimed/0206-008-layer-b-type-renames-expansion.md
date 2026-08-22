@@ -19,6 +19,7 @@ rfc_authority: RFC-0206
 tvs:
   - TV-0206-A7
   - TV-0206-A9
+status: done
 ---
 
 # Mission `0206-008-layer-b-type-renames-expansion` v1.0 — CLAIMED 2026-08-20
@@ -173,8 +174,6 @@ octo-vault from mission 0206-002).
 
 - Mission `0206-002-layer-b-type-renames` (sibling; same D1 deviation pattern)
 - Mission `0206-001-substrate-newtype` (substrate `Database` newtype)
-- 
-- -Cuts (HIGH 6 consumer-crate exemption)
 
 ## Out of scope
 
@@ -195,3 +194,4 @@ octo-vault from mission 0206-002).
 | Version | Date | Change |
 |---------|------|--------|
 | v1.0 | 2026-08-20 | Initial filing (NEW per substrate redesign plan); 89 sites / 38 files enumerated from disk; D1 deviation pattern inherited from 0206-002 |
+| v3.0    | 2026-08-22 | Phase 3 close-out per long-horizon plan v1.5 §Mission layout. AC verification per memory card `mission-0206-008-layer-b-type-renames-expansion-status.md`: LANDED 927008d6 (2026-08-20). 89 sites / 38 files / 9 consumer crates TYPE renames applied; TV-A7 paths 5-17 closed. Mission YAML edits per R10.5 scope discipline. Status transitions open→done. |

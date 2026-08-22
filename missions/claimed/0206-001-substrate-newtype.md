@@ -1,6 +1,6 @@
 ---
 name: 0206-001-substrate-newtype
-description: Open 2026-08-20 v3.0; RFC-0206 v2.1 §Substrate Newtype Refactor — create Database newtype + TypedStatement 6-variant enum + AdapterAllowlist + register helper + [features] section + facade migration. Closes TV-0206-A1..A5, A13, A14. Supersedes v2.1 (substrate-newtype body only; facade migration per R2 CRIT 3).
+description: Open 2026-08-20 v3.0; RFC-0206 §Substrate Newtype Refactor — create Database newtype + TypedStatement 6-variant enum + AdapterAllowlist + register helper + [features] section + facade migration. Closes TV-0206-A1..A5, A13, A14. Supersedes v2.1 (substrate-newtype body only; facade migration per R2 CRIT 3).
 metadata:
   node_type: mission
   type: project
@@ -10,14 +10,26 @@ metadata:
   supersedes: v2.1
   depends_on:
     - 0206-011-rfc-0206-v21-amendment
-    - RFC-0206 v2.1
+    - RFC-0206
+phase: 1.2 + 1.3 + facade
+layer: A
+rfc_authority: RFC-0206
+tvs:
+  - TV-0206-A1
+  - TV-0206-A2
+  - TV-0206-A3
+  - TV-0206-A4
+  - TV-0206-A5
+  - TV-0206-A13
+  - TV-0206-A14
+status: done
 ---
 
 # Mission `0206-001-substrate-newtype` v3.0 — OPEN 2026-08-20
 
 ## v3.0 Changes from v2.1
 
-RFC-0206 v2.1 amendment (`0206-011`) re-baselines substrate spec:
+RFC-0206 amendment (`0206-011`) re-baselines substrate spec:
 
 - **8-pub-use cap** per RFC §Cargo.toml Templates Layer A v2.1: Database + TypedStatement + AdapterAllowlist + AdapterId + SubstrateError + Result + open/open_in_memory + DEFAULT_TRACKER_TABLE = 8 top-level `pub use` statements + `pub mod migrations` (3 nested pub-use for `ensure_tracker_table`, `current_version`, `applied_version`)
 - **Facade migration** per R2 CRIT 3: `crates/octo-storage/src/lib.rs` becomes 4-item re-export (Database + TypedStatement + AdapterAllowlist + register) per RFC §Cargo.toml Templates Layer B v2.1; v2.1 mission handed facade ownership to this mission per R2 closure
@@ -29,7 +41,7 @@ RFC-0206 v2.1 amendment (`0206-011`) re-baselines substrate spec:
 R2 findings applied:
 
 - 4 decomposed AC gates summing to 11 types: `Database` (newtype + Deref + one-way From) + `TypedStatement` (6-variant enum) + `SqlSelect`/`SqlInsert`/`SqlUpdate`/`SqlDelete` (table-typed query structs) + `DdlTemplate` + `DdlOperation` + `AdapterAllowlist` + `AdapterId` + `SubstrateError` + `Result<T>` + `register<V: VaultStore>`
-- RFC-0206 v2.0 Accepted precondition: depends_on RFC-0206 (already satisfied per memory card `rfc-0205-0206-r9-v20-status.md`)
+- RFC-0206 Accepted precondition: depends_on RFC-0206 (already satisfied per memory card `rfc-0205-0206-r9-v20-status.md`)
 - `AdapterId` visibility added (NEW type from RFC §Substrate Newtype Refactor)
 
 ## v2.0 Changes from v1.0
@@ -38,7 +50,7 @@ R1 wholesale rewrite: 4 decomposed AC gates summing to 11 types per RFC §Substr
 
 ## Scope
 
-Create Layer A substrate body per RFC-0206 v2.1 §Substrate Newtype Refactor + facade migration per §Cargo.toml Templates Layer B. Substrate redesign = Layer A semver-major change.
+Create Layer A substrate body per RFC-0206 §Substrate Newtype Refactor + facade migration per §Cargo.toml Templates Layer B. Substrate redesign = Layer A semver-major change.
 
 ### New files
 
@@ -96,13 +108,7 @@ Create Layer A substrate body per RFC-0206 v2.1 §Substrate Newtype Refactor + f
 
 ## Cross-references
 
-- RFC-0206 v2.1 §Substrate Newtype Refactor (lines 218-247)
-- RFC-0206 v2.1 §Cargo.toml Templates Layer A (lines 96-128 v2.1)
-- RFC-0206 v2.1 §Cargo.toml Templates Layer B (lines 130-136 v2.1)
-- RFC-0206 v2.1 §Wiring Pattern (lines 150-185 v2.1)
-- RFC-0206 v2.1 §Format Bypass Defense (lines 248-280)
-- RFC-0206 v2.1 §Migration Order (lines added v2.1)
-- RFC-0206 v2.1 §Escape Hatch Enumeration (added v2.1)
+- RFC-0206
 - TV-0206-A1..A5, A13, A14
 - Mission `0206-011-rfc-0206-v21-amendment` (RFC-only amendment unblocks this mission)
 
@@ -112,14 +118,14 @@ Create Layer A substrate body per RFC-0206 v2.1 §Substrate Newtype Refactor + f
 - Trait moves (owned by `0206-003 v3.0`)
 - Adapter crate creation (owned by `0206-009`)
 - Per-adapter fixtures (owned by `0206-010`)
-- VaultStore/ReputationStore/SessionStore/PolicyStore trait declarations (owned by `0206-009` per §Wiring Pattern v2.1)
-- Phase 2 typed-query expansion (RFC v3.0 deferred per §Implementation Phases 2.1)
+- VaultStore/ReputationStore/SessionStore/PolicyStore trait declarations (owned by `0206-009` per §Wiring Pattern RFC-0206)
+- Phase 2 typed-query expansion (RFC v3.0 deferred per §Implementation Phases RFC-0206)
 - Phase 3 legacy removal (RFC v3.0 ≥ 2027-02-20)
 
 ## Dependencies
 
 - `0206-011-rfc-0206-v21-amendment` (RFC spec re-baseline; LANDED 2026-08-20)
-- RFC-0206 v2.1 (Accepted per amendment)
+- RFC-0206 (Accepted per amendment)
 
 ## Version History
 
@@ -128,4 +134,5 @@ Create Layer A substrate body per RFC-0206 v2.1 §Substrate Newtype Refactor + f
 | v1.0    | 2026-08-20 | Initial filing (4 decomposed AC gates summing to 11 types)                                                                                                                                                                  |
 | v2.0    | 2026-08-20 | R1 wholesale rewrite (11-type surface spec)                                                                                                                                                                                  |
 | v2.1    | 2026-08-20 | R2 closure (AdapterId visibility + facade ownership transferred from 0206-004 per R2 CRIT 3)                                                                                                                                |
-| v3.0    | 2026-08-20 | RFC-0206 v2.1 amendment alignment: 8-pub-use cap + facade migration scope (per RFC §Cargo.toml Templates Layer B v2.1) + §Migration Order legacy coexistence + §Escape Hatch Enumeration (7 legitimate sites documented) |
+| v3.0    | 2026-08-20 | RFC-0206 amendment alignment: 8-pub-use cap + facade migration scope (per RFC §Cargo.toml Templates Layer B) + §Migration Order legacy coexistence + §Escape Hatch Enumeration (7 legitimate sites documented) |
+| v3.0.1  | 2026-08-22 | Phase 3.2 close-out per long-horizon plan v1.5 §Mission layout. AC verification per memory card `mission-0206-001-substrate-newtype-v30-status.md`: LANDED 996f9cd1 (2026-08-20). 8 top-level pub use cap + Database newtype + TypedStatement 6-variant + AdapterAllowlist + SubstrateError/Result + 6 _legacy_* aliases + [features] section + facade migration to 4-item re-export + semver-major 1.0.0 version bump. 106 substrate + 1 facade tests green + clippy + fmt green. RFC-only YAML edits per R10.5 scope discipline (substrate code untouched). Pre-commit §cite validation: version pins stripped from RFC-0206 cites per BLUEPRINT.md §RFC Reference Conventions. Status transitions open→done. |

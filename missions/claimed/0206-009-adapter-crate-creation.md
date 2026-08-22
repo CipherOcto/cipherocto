@@ -107,3 +107,4 @@ Each adapter crate:
 | Version | Date       | Change                                       |
 | ------- | ---------- | -------------------------------------------- |
 | v1.0    | 2026-08-20 | Initial filing; 5 adapter crates landed     |
+| v1.1    | 2026-08-22 | Phase 3.6 close-out per long-horizon plan v1.5 §Mission layout. AC verification per memory card `mission-0206-009-adapter-crate-creation-status.md`: LANDED 6ca2c943 (2026-08-20). 5 NEW adapter crates on disk (octo-vault-storage, octo-reputation-storage, octo-cap-macaroon-vault-storage, octo-matrix-session-store-storage, octo-policy-storage) + build_allowlist() + register() helpers + register_roundtrip fixtures per adapter. TV-A6 + A9(a) + A10 PASS. RFC-only YAML edits per R10.5 scope discipline. Mission file git mv open → claimed + status open → done. |

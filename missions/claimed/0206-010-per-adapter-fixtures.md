@@ -49,3 +49,4 @@ Total: 6 fixtures × 5 adapters = 30 NEW test files.
 | Version | Date       | Change                                       |
 | ------- | ---------- | -------------------------------------------- |
 | v1.0    | 2026-08-20 | Initial filing; 6 fixtures × 5 adapters = 30 |
+| v1.1    | 2026-08-22 | Phase 3.7 close-out per long-horizon plan v1.5 §Mission layout. AC verification per memory card `mission-0206-010-per-adapter-fixtures-status.md`: LANDED 5a337323 (2026-08-20). 20 NEW fixture files × 14 tests = 70 cases per-adapter (drop_table_negative + namespace_guard + 4 adversarial per adapter per Format Bypass Defense). TV-A11 + A12 PASS. RFC-only YAML edits per R10.5 scope discipline. Mission file git mv open → claimed + status open → done. |

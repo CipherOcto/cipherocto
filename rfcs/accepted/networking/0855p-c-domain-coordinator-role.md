@@ -1,3 +1,18 @@
+---
+title: "RFC-0855p-c: DomainCoordinator Role"
+status: Accepted
+version: 1.0.0
+created: 2026-06-16
+updated: 2026-08-22
+authors:
+  - CipherOcto Core Team
+rfc_authority: RFC-0855p-c
+related:
+  - RFC-0855 (Networking): Mission Overlay Networks
+  - RFC-0861 (Networking): CoordinatorAdmin Adapter Contract Refinements
+execution_class: B
+---
+
 # RFC-0855p-c (Networking): DomainCoordinator Role
 
 ## Status

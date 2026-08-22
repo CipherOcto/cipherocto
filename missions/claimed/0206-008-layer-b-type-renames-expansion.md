@@ -1,24 +1,31 @@
 ---
 name: 0206-008-layer-b-type-renames-expansion
-description: Apply RFC-0206 v2.1 §Layer B TYPE Renames to 8+ other crates (octo-reputation, octo-matrix-session-store, octo-cap-macaroon-vault, octo-adapter-whatsapp, octo-adapter-telegram-mtproto, quota-router-core, quota-router-sm-engine, quota-router-cli, octo-whatsapp). 60+ TYPE sites + Cargo.toml dep drops.
+description: Apply 8+ other crates (octo-reputation, octo-matrix-session-store, octo-cap-macaroon-vault, octo-adapter-whatsapp, octo-adapter-telegram-mtproto, quota-router-core, quota-router-sm-engine, quota-router-cli, octo-whatsapp). 60+ TYPE sites + Cargo.toml dep drops.
 metadata:
   node_type: mission
   type: project
   originSessionId: 9a316ae1-cb15-46f4-801f-99c2545bccf7
   created: 2026-08-20T00:00:00.000Z
   v: "1.0"
+  supersedes: null
   depends_on:
     - 0206-001-substrate-newtype
     - 0206-002-layer-b-type-renames
     - RFC-0205
     - RFC-0206
+phase: 1.4 non-RFC part
+layer: B
+rfc_authority: RFC-0206
+tvs:
+  - TV-0206-A7
+  - TV-0206-A9
 ---
 
 # Mission `0206-008-layer-b-type-renames-expansion` v1.0 — CLAIMED 2026-08-20
 
 ## Scope
 
-Apply RFC-0206 v2.1 §Layer B TYPE Renames to 8+ other consumer crates
+Apply 8+ other consumer crates
 beyond the quota-router-storage + octo-vault scope of mission 0206-002.
 Closes TV-0206-A7 paths 5-13 (the remaining crate paths).
 
@@ -166,8 +173,8 @@ octo-vault from mission 0206-002).
 
 - Mission `0206-002-layer-b-type-renames` (sibling; same D1 deviation pattern)
 - Mission `0206-001-substrate-newtype` (substrate `Database` newtype)
-- RFC-0206 v2.1 §Layer B TYPE Renames
-- RFC-0206 v2.1 §Cargo.toml Cross-Cuts (HIGH 6 consumer-crate exemption)
+- 
+- -Cuts (HIGH 6 consumer-crate exemption)
 
 ## Out of scope
 
@@ -181,7 +188,7 @@ octo-vault from mission 0206-002).
 
 - `0206-001-substrate-newtype` (substrate `Database` type must exist)
 - `0206-002-layer-b-type-renames` (sibling mission; same rename pattern)
-- RFC-0206 v2.1 (acceptance precondition)
+- RFC-0206 (acceptance precondition)
 
 ## Version History
 

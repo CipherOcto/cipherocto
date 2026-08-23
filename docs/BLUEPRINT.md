@@ -1179,6 +1179,23 @@ When the blocker resolves, the mission is re-claimed from `deferred/`:
 
 Example existing conformant mission: `missions/deferred/0870g-l3-cross-process-tcp-e2e.md` (defers L3 cross-process TCP end-to-end test pending design discussion; carries the "must NOT be re-implemented by re-introducing a test-only binary" guardrail). `missions/claimed/0968a-reputation-anchoring.md` defers anchoring BLOB schema pending RFC-0955 acceptance (live chain-side binding patch: `missions/claimed/0968a2-reputation-anchoring-binding.md`).
 
+**2-Cycle Atomic Promotion gate** (amendment 2026-08-22 per research §20 decision #2; references BLUEPRINT rule 5 at §RFC Process). Two RFCs declaring a 2-cycle sibling MUST satisfy the following mission-side gate before either RFC can promote from `Draft` to `Accepted`:
+
+1. Both RFCs carry an explicit `## 2-Cycle Atomic Promotion Tag` section naming the sibling RFC number (e.g., RFC-0205 + RFC-0206 pairs). The tag is the canonical marker the gate consults.
+2. A single mission YAML MUST own both promotions: the mission `depends_on:` field lists both RFC numbers and a `pair: 2-Cycle Atomic Promotion` metadata block.
+3. On board review completion: either both RFCs reach `Accepted` in the same review cycle, OR both remain `Draft`. Asymmetry (one Accepted, the other Draft) is treated as an explicit process defect per BLUEPRINT rule 5 + flagged at the next re-certification cycle.
+4. The mission `## Status` header MUST reflect the gate state: `Claimed (awaiting 2-Cycle review)` is the canonical intermediate state between sibling RFC `Draft` and `Accepted`. The mission MUST NOT advance past `claimed/` until both sibling RFCs land.
+5. Pre-commit cite validation MUST surface both RFC numbers in the mission YAML and both RFCs' Status headers MUST agree on version pin (or both omit, per CLAUDE.md §RFC Reference Conventions).
+
+The 2-Cycle Atomic Promotion gate applies to:
+
+- RFC-0205 / RFC-0206 (storage substrate redesign cascade — applies to both v3.0 and v3.3 drafts per research §20 decision #9 Tier 3 promotion sequence)
+
+Prerequisite amendments for gate enablement (research §20 decisions #3 + #4):
+
+- RFC-0003 v1.1 (Process/Meta): Deterministic Execution Standard — adds explicit 2-Cycle Atomic Promotion cross-reference
+- RFC-0008 v1.0 (Process/Meta): Deterministic AI Execution Boundary — post-promotion first tracked amendment; bumps Status header to v1.1 per M37 corpus-wide sync; appends VH row citing RFC-0003 v1.1 cross-reference
+
 ---
 
 ## Future Decentralization Path

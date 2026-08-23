@@ -2,8 +2,8 @@
 
 ## Status
 
-**Version:** 1.0
-**Status:** Draft
+**Version:** 1.1
+**Status:** Draft v1.1 (2026-08-22)
 
 > **Note:** This RFC was originally numbered RFC-0003 under the legacy numbering system. It remains at 0003 as it belongs to the Process/Meta category.
 
@@ -30,13 +30,13 @@ This RFC ensures that:
 
 **Requires:**
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower (numeric types)
+- RFC-0104/0105/0110/0111 (Numeric): DFP/DQA/BigInt/Decimal (replaces archived RFC-0106 DNT v28)
 
 **Optional:**
 
-- RFC-0148 (Numeric/Math): Deterministic Linear Algebra Engine
-- RFC-0149 (Retrieval): Deterministic Vector Index
-- RFC-0155 (AI Execution): Deterministic Model Execution Engine
+- RFC-0109 (Numeric): Deterministic Linear Algebra Engine (replaces legacy numeric alias)
+- RFC-0303 (Retrieval): Deterministic Vector Index (replaces legacy numeric alias)
+- RFC-0555 (AI Execution): Deterministic Model Execution Engine (replaces legacy numeric alias)
 
 ## Motivation
 
@@ -78,14 +78,14 @@ This RFC governs determinism across:
 
 ### 1. Numeric Determinism
 
-All numeric operations **MUST** use the Deterministic Numeric Tower defined in RFC-0106.
+All numeric operations **MUST** use the Deterministic Numeric Tower defined in RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal).
 
 **Allowed numeric types:**
 
-- DInt
-- DFloat
-- DDecimal
-- DQuant
+- BigInt (RFC-0110)
+- DFP (RFC-0104)
+- Decimal (RFC-0111)
+- DQA (RFC-0105)
 
 **Disallowed:**
 
@@ -100,7 +100,7 @@ unless explicitly specified.
 
 ### 2. Linear Algebra Determinism
 
-All vector/matrix operations **MUST** comply with RFC-0148.
+All vector/matrix operations **MUST** comply with RFC-0109.
 
 **Constraints:**
 
@@ -115,7 +115,7 @@ All protocol objects **MUST** use canonical serialization.
 **Canonical format:**
 
 - CBOR deterministic mode
-- OR canonical protobuf
+- OR DCS (Deterministic Canonical Serialization, RFC-0126)
 
 **Rules:**
 
@@ -184,7 +184,7 @@ Native floating-point operations **MUST NOT** influence:
 
 ### 8. AI Model Execution
 
-AI model execution **MUST** follow RFC-0155.
+AI model execution **MUST** follow RFC-0555.
 
 **Requirements:**
 
@@ -203,7 +203,7 @@ Approximate search **MUST** produce deterministic results.
 - Fixed random seeds
 - Fixed candidate ordering
 
-Defined in RFC-0149.
+Defined in RFC-0303.
 
 ### 10. Deterministic Time
 
@@ -243,6 +243,16 @@ Nodes failing determinism tests:
 ## Determinism Requirements
 
 All RFCs that affect consensus, proofs, verification, storage, or query execution **MUST** comply with this standard. Implementations **MUST** document how they ensure deterministic behavior.
+
+## 2-Cycle Atomic Promotion Cross-Reference
+
+Per BLUEPRINT rule 5 (amendment 2026-08-20; reference at §RFC Process) and BLUEPRINT §Mission Lifecycle 2-Cycle Atomic Promotion gate (amendment 2026-08-22), this RFC is the canonical cross-reference target for all 2-Cycle sibling RFC pairings. The cross-reference is procedure-only — no determinism properties change — but it formalizes the gate semantics for storage-substrate and process-meta RFC pairs.
+
+Sibling pairs invoking this gate (canonical list maintained at BLUEPRINT §Mission Lifecycle 2-Cycle Atomic Promotion gate):
+
+- RFC-0205 + RFC-0206 (storage substrate redesign cascade; Tier 3 promotion sequence in research §20 decision #9)
+
+Future sibling pairs MUST register here as a VH row under the relevant vN.N entry.
 
 ## Test Vectors
 
@@ -286,9 +296,9 @@ This standard ensures all nodes produce identical results for identical inputs.
 
 ### Phase 2: Integration
 
-- [ ] Verify RFC-0106 compliance
-- [ ] Verify RFC-0148 compliance
-- [ ] Verify RFC-0149 compliance
+- [ ] Verify RFC-0104/0105/0110/0111 compliance
+- [ ] Verify RFC-0109 compliance
+- [ ] Verify RFC-0303 compliance
 
 ### Phase 3: Enforcement
 
@@ -304,17 +314,19 @@ This standard ensures all nodes produce identical results for identical inputs.
 
 ## Version History
 
-| Version | Date       | Changes       |
-| ------- | ---------- | ------------- |
-| 1.0     | 2026-03-10 | Initial draft |
+| Version | Date       | Changes                                                                                                                                                                                                       |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.1     | 2026-08-22 | R20 lens 1 fix: phantom dep cleanup (legacy numeric RFC range → canonical numeric range per R20 phantom dep closure: BigInt/DFP/Decimal/DQA + Linear Algebra + Vector Index + AI Execution modules); vocabulary drift fix (DInt/DFloat/DDecimal/DQuant → BigInt/DFP/Decimal/DQA; canonical protobuf → DCS) |
+| 1.1     | 2026-08-22 | R37 follow-up: add 2-Cycle Atomic Promotion Cross-Reference §2-Cycle section per research §20 decision #3 (Path B gate prerequisite for RFC-0008 promotion pathway formalization). Body-only — no determinism property changes. |
+| 1.0     | 2026-03-10 | Initial draft                                                                                                                                                                                                 |
 
 ## Related RFCs
 
 - RFC-0008 (Process/Meta): Deterministic AI Execution Boundary
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
-- RFC-0148 (Numeric/Math): Deterministic Linear Algebra Engine
-- RFC-0149 (Retrieval): Deterministic Vector Index
-- RFC-0155 (AI Execution): Deterministic Model Execution Engine
+- RFC-0104/0105/0110/0111 (Numeric): DFP/DQA/BigInt/Decimal
+- RFC-0109 (Numeric): Deterministic Linear Algebra Engine
+- RFC-0303 (Retrieval): Deterministic Vector Index
+- RFC-0555 (AI Execution): Deterministic Model Execution Engine
 
 ## Related Use Cases
 

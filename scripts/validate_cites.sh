@@ -33,29 +33,64 @@ find_rfc_path() {
     local rfc_num="$1"
     local rfc_id="RFC-${rfc_num}"
 
-    # Try exact match first (RFC-XXXX or RFC-XXXX-suffix)
-    local rfc_file
+    # Detect sub-amendment suffix (-a1, -a2, -d1, -r1, etc.) per R16 cite-validator
+    # audit + A2 v0.2.0 pre-commit blocker: bare RFC cite to parent must not lexically
+    # pick a sub-amendment file. Sub-amendment cite with no own file (folded into parent,
+    # e.g., RFC-0968-A1) falls back to parent.
+    local prefix="${rfc_num%%-*}"
+    local has_suffix=0
+    if [ "$prefix" != "$rfc_num" ]; then
+        has_suffix=1
+    fi
+
     # Case-insensitive per R16 cite-validator audit: RFC-0967-A1 sub-amendment lives at
     # rfcs/.../0967-a1-policy-registry.md (lowercase a1) per Linux filename convention;
     # prior case-sensitive find produced false PHANTOM for every cite referencing
     # sub-amendments A1/A2/R1/etc.
-    rfc_file=$(find "$RFC_ROOT" -type f -iname "${rfc_num}*.md" 2>/dev/null | head -1 || true)
-    if [ -n "$rfc_file" ]; then
-        echo "$rfc_file"
-        return 0
+    local matches
+    matches=$(find "$RFC_ROOT" -type f -iname "${rfc_num}*.md" 2>/dev/null || true)
+
+    # Sub-amendment cite with no own file (folded into parent): fall back to bare RFC.
+    if [ -z "$matches" ] && [ "$has_suffix" -eq 1 ]; then
+        matches=$(find "$RFC_ROOT" -type f -iname "${prefix}*.md" 2>/dev/null | grep -iv "/[0-9]\+-[a-z][0-9]*-" || true)
+        has_suffix=0
     fi
 
-    # Try with category prefix
-    for cat in numeric proof-systems process economics networking storage; do
-        local cat_file
-        cat_file=$(find "$RFC_ROOT/$cat" -type f -iname "${rfc_num}*.md" 2>/dev/null | head -1 || true)
-        if [ -n "$cat_file" ]; then
-            echo "$cat_file"
+    if [ -z "$matches" ]; then
+        # Try with category prefix (legacy fallback for old RFC layout)
+        for cat in numeric proof-systems process economics networking storage; do
+            local cat_file
+            cat_file=$(find "$RFC_ROOT/$cat" -type f -iname "${rfc_num}*.md" 2>/dev/null | head -1 || true)
+            if [ -n "$cat_file" ]; then
+                echo "$cat_file"
+                return 0
+            fi
+        done
+        return 1
+    fi
+
+    # For bare RFC cites: prefer accepted/ (more authoritative); exclude sub-amendment
+    # files whose filename carries a -aN/-dN/-rN suffix. Per A2 v0.2.0 pre-commit
+    # blocker (RFC-0968 cite lexical-first picked 0968-a2 before 0968 parent).
+    if [ "$has_suffix" -eq 0 ]; then
+        local accepted
+        accepted=$(echo "$matches" | grep "/accepted/" | head -1 || true)
+        if [ -n "$accepted" ]; then
+            echo "$accepted"
             return 0
         fi
-    done
+        # No accepted/ match: take first non-sub-amendment
+        local non_subamend
+        non_subamend=$(echo "$matches" | grep -ivE "/${prefix}-[a-z][0-9]*-" | head -1 || true)
+        if [ -n "$non_subamend" ]; then
+            echo "$non_subamend"
+            return 0
+        fi
+    fi
 
-    return 1
+    # Sub-amendment cite (or no non-sub-amendment fallback found): take first match.
+    echo "$matches" | head -1
+    return 0
 }
 
 # Helper: normalize §section text for matching

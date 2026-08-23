@@ -72,9 +72,12 @@ find_rfc_path() {
     # For bare RFC cites: prefer accepted/ (more authoritative); exclude sub-amendment
     # files whose filename carries a -aN/-dN/-rN suffix. Per A2 v0.2.0 pre-commit
     # blocker (RFC-0968 cite lexical-first picked 0968-a2 before 0968 parent).
+    # Per A2 v0.8.1 promotion: same exclusion applies to accepted/ files
+    # (without exclusion, RFC-0968 bare cite resolves to 0968-a2-discriminant-stability.md
+    # instead of 0968-reputation-registry.md).
     if [ "$has_suffix" -eq 0 ]; then
         local accepted
-        accepted=$(echo "$matches" | grep "/accepted/" | head -1 || true)
+        accepted=$(echo "$matches" | grep "/accepted/" | grep -ivE "/${prefix}-[a-z][0-9]*-" | head -1 || true)
         if [ -n "$accepted" ]; then
             echo "$accepted"
             return 0

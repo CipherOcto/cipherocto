@@ -1,7 +1,7 @@
 ---
 rfc: 0959-v2.1
 title: SettlementEnvelope burn_event wire form + DQA(12) cost_micro_octo_w migration
-status: Draft
+status: Accepted
 version: 2.1
 date: 2026-08-22
 extends: RFC-0959 v2.0 (does not redefine — additive)
@@ -42,6 +42,7 @@ pub struct BurnEventRef {
 ```
 
 Wire form (CBOR canonical per RFC-0126):
+
 ```
 { "burn_id": [u8;16], "chain_id": [u8;32], "vault_id": [u8;32],
   "amount_dqa_micros": i64, "burn_policy_hash": [u8;32], "finalized_at_unix": i64 }
@@ -52,6 +53,7 @@ Wire form (CBOR canonical per RFC-0126):
 ## 3. DQA(12) Cost Migration
 
 ### 3.1 Before
+
 ```sql
 -- v004__create_settlement_events.sql
 CREATE TABLE settlement_events (
@@ -61,6 +63,7 @@ CREATE TABLE settlement_events (
 ```
 
 ### 3.2 After
+
 ```sql
 -- v019__migrate_cost_to_dqa.sql
 CREATE TABLE settlement_events (
@@ -70,6 +73,7 @@ CREATE TABLE settlement_events (
 ```
 
 ### 3.3 Migration path
+
 - v019 migration: read BLOB(16), parse as u128 BE, convert to DQA(12) via `dqa_from_u128(amount, scale=0)`, INSERT into new column
 - Verify: `SELECT cost_micro_octo_w FROM settlement_events WHERE amount != 0` returns non-zero DQA(12) values
 - Old BLOB column dropped post-migration verification
@@ -96,11 +100,11 @@ GROUP BY lu.user_id;
 
 ## 5. Execution Class Mapping (RFC-0008 §RFC-0008 Execution Class Mapping)
 
-| Surface | Class | Justification |
-|---|---|---|
-| SettlementEnvelope::burn_event | A | Deterministic reference |
-| cost_micro_octo_w BLOB→DQA(12) migration | A | Deterministic conversion |
-| litellm_users_spend view | A | Deterministic sum |
+| Surface                                  | Class | Justification            |
+| ---------------------------------------- | ----- | ------------------------ |
+| SettlementEnvelope::burn_event           | A     | Deterministic reference  |
+| cost_micro_octo_w BLOB→DQA(12) migration | A     | Deterministic conversion |
+| litellm_users_spend view                 | A     | Deterministic sum        |
 
 ## 6. Cross-References
 
@@ -113,7 +117,7 @@ GROUP BY lu.user_id;
 
 ## 7. Version History
 
-| Version | Date | Change |
-|---|---|---|
-| 2.1 | 2026-08-22 | Initial draft. Additive to v2.0. Adds burn_event wire form. Migrates cost_micro_octo_w BLOB→DQA(12). Resolves R2 finding on litellm_users_spend view filter (uses 'Burn' not 'BurnFinalized') + on-disk event_type column encoding (maintains TEXT per RFC-0960 §2.5). |
-| 2.1 | 2026-08-22 | **R16 promotion:** Draft → Accepted per long-horizon plan v1.6 Phase 4 Tier 1 promotion sequence. Status bumper. BurnEventRef wire form + DQA(12) migration + litellm_users_spend view preserved. |
+| Version | Date       | Change                                                                                                                                                                                                                                                                 |
+| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2.1     | 2026-08-22 | Initial draft. Additive to v2.0. Adds burn_event wire form. Migrates cost_micro_octo_w BLOB→DQA(12). Resolves R2 finding on litellm_users_spend view filter (uses 'Burn' not 'BurnFinalized') + on-disk event_type column encoding (maintains TEXT per RFC-0960 §2.5). |
+| 2.1     | 2026-08-22 | **R16 promotion:** Draft → Accepted per long-horizon plan v1.6 Phase 4 Tier 1 promotion sequence. Status bumper. BurnEventRef wire form + DQA(12) migration + litellm_users_spend view preserved.                                                                      |

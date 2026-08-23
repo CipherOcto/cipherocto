@@ -1,7 +1,7 @@
 ---
 rfc: 0105-v3.0
 title: Private Asset ID Namespace (Sovereign/Private Boundary Clarification)
-status: Draft
+status: Accepted
 version: 3.0
 date: 2026-08-22
 amends: RFC-0105 v2.3
@@ -31,12 +31,12 @@ v2.3 (2026-08-19) silently excludes OCTO as sovereign. v3.0 makes the boundary e
 
 ### 2.1 Sovereign namespace (`namespace = 0x01`)
 
-| Asset | Derivation |
-|---|---|
-| `OCTO-W` | BLAKE3("cipherocto/asset/v1/" || "OCTO-W")[:16] |
-| `OCTO-A` | BLAKE3("cipherocto/asset/v1/" || "OCTO-A")[:16] |
-| (other OCTO-* tokens) | analogous |
-| `OCTO-PrivateProvider-Stake` | BLAKE3("cipherocto/asset/v1/" || "OCTO-PrivateProvider-Stake")[:16] |
+| Asset                        | Derivation                    |
+| ---------------------------- | ----------------------------- |
+| `OCTO-W`                     | BLAKE3("cipherocto/asset/v1/" |     | "OCTO-W")[:16]                     |
+| `OCTO-A`                     | BLAKE3("cipherocto/asset/v1/" |     | "OCTO-A")[:16]                     |
+| (other OCTO-* tokens)        | analogous                     |
+| `OCTO-PrivateProvider-Stake` | BLAKE3("cipherocto/asset/v1/" |     | "OCTO-PrivateProvider-Stake")[:16] |
 
 **Namespace-byte overwrite semantics** (R13 fix F-R12-LENS-CROSS-CONSISTENCY-004): For sovereign-namespace assets (`namespace = 0x01`), `asset_id[0]` is the **asset-namespace byte** per `AssetNamespace` enum. Per RFC-0010 v1.7 §3 `derive_chain_id` parallel, the substrate runs `BLAKE3("cipherocto/asset/v1/" || role_token)[..16]` to obtain a 16-byte hash, then **overwrites** `out[0] = AssetNamespace as u8` post-hash. So `asset_id[0] = 0x01` for sovereign assets is a NAMESPACE-BYTE OVERWRITE, not a hash byte. The 15 bytes `[1..16]` are the BLAKE3 output. The overwrite applies to BOTH sovereign (`0x01`) and private (`0x02`) namespaces; the §2.2 `PRIVATE-XYZ` derivation inherits the same overwrite pattern (R13 fix F-R12-LENS-CROSS-CONSISTENCY-004 closure).
 
@@ -46,9 +46,9 @@ Authority: octo treasury only. RFC-0105 §Asset ID Derivation (canonical asset_i
 
 ### 2.2 Private namespace (`namespace = 0x02`)
 
-| Asset | Derivation |
-|---|---|
-| `PRIVATE-{chain_id_32B}-{asset_name}` | BLAKE3("cipherocto/asset/v1/" || "PRIVATE-" || chain_id || "-" || asset_name)[:16] |
+| Asset                                 | Derivation                    |
+| ------------------------------------- | ----------------------------- |
+| `PRIVATE-{chain_id_32B}-{asset_name}` | BLAKE3("cipherocto/asset/v1/" |     | "PRIVATE-" |     | chain_id |     | "-" |     | asset_name)[:16] |
 
 **Namespace-byte overwrite semantics** (R13 fix F-R12-LENS-CROSS-CONSISTENCY-004 closure): For private-namespace assets (`namespace = 0x02`), `asset_id[0]` is overwritten with `AssetNamespace::Private as u8 = 0x02` post-BLAKE3 (parallel to §2.1 sovereign overwrite). The remaining 15 bytes `[1..16]` are the BLAKE3 output.
 
@@ -60,19 +60,19 @@ Future allocation. Per RFC-0010 v1.7 §3 Chain-id Derivation reserved-namespace 
 
 ## 3. Authority-to-Issue Table
 
-| Namespace | Authority DID | Registration path |
-|---|---|---|
-| 0x01 (sovereign) | octo treasury DID | `policy_kind_authority` row registered by octo treasury |
-| 0x02 (private) | corporate chain operator DID | `policy_kind_authority` row registered by chain operator at chain registration |
+| Namespace        | Authority DID                | Registration path                                                              |
+| ---------------- | ---------------------------- | ------------------------------------------------------------------------------ |
+| 0x01 (sovereign) | octo treasury DID            | `policy_kind_authority` row registered by octo treasury                        |
+| 0x02 (private)   | corporate chain operator DID | `policy_kind_authority` row registered by chain operator at chain registration |
 
 ## 4. Execution Class Mapping (RFC-0008 §RFC-0008 Execution Class Mapping)
 
-| Surface | Class | Justification |
-|---|---|---|
-| `asset_id_for(PRIVATE-*)` | A | Deterministic BLAKE3 derivation |
-| Sovereign asset registration | A | octo treasury signing |
-| Private asset registration | A | Corporate chain operator signing |
-| Asset namespace collision check | A | BLAKE3 first-16-byte uniqueness |
+| Surface                         | Class | Justification                    |
+| ------------------------------- | ----- | -------------------------------- |
+| `asset_id_for(PRIVATE-*)`       | A     | Deterministic BLAKE3 derivation  |
+| Sovereign asset registration    | A     | octo treasury signing            |
+| Private asset registration      | A     | Corporate chain operator signing |
+| Asset namespace collision check | A     | BLAKE3 first-16-byte uniqueness  |
 
 ## 5. Cross-References
 
@@ -84,7 +84,7 @@ Future allocation. Per RFC-0010 v1.7 §3 Chain-id Derivation reserved-namespace 
 
 ## 6. Version History
 
-| Version | Date | Change |
-|---|---|---|
-| 3.0 | 2026-08-22 | Initial draft. Sovereign/private boundary explicit. Two namespaces (0x01 sovereign / 0x02 private / 0x03-0xFF reserved). Authority-to-Issue table added. SEMVER-MAJOR per R2 finding. |
-| 3.0 | 2026-08-22 | **R16 promotion:** Draft → Accepted per long-horizon plan v1.6 Phase 4 Tier 1 promotion sequence (RFC-0105 v3.0 first in Tier 1). Status bumper + citation trail. Two-namespace model + Authority-to-Issue table + Execution Class Mapping preserved. |
+| Version | Date       | Change                                                                                                                                                                                                                                                |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 3.0     | 2026-08-22 | Initial draft. Sovereign/private boundary explicit. Two namespaces (0x01 sovereign / 0x02 private / 0x03-0xFF reserved). Authority-to-Issue table added. SEMVER-MAJOR per R2 finding.                                                                 |
+| 3.0     | 2026-08-22 | **R16 promotion:** Draft → Accepted per long-horizon plan v1.6 Phase 4 Tier 1 promotion sequence (RFC-0105 v3.0 first in Tier 1). Status bumper + citation trail. Two-namespace model + Authority-to-Issue table + Execution Class Mapping preserved. |

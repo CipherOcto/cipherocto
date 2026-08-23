@@ -1,7 +1,7 @@
 ---
 rfc: 0960-v3.1
 title: Vault Path Taxonomy (Corporate vs Mesh)
-status: Draft
+status: Accepted
 version: 3.1
 date: 2026-08-22
 amends: RFC-0960
@@ -46,6 +46,7 @@ RFC-0960 defines the vault substrate with chain-aware PK `(chain_id, owner_did, 
 ### 2.3 Same Substrate, Different Policy Bindings
 
 Both paths share:
+
 - `vaults` table (PK `(chain_id, owner_did, asset_id)` per RFC-0960)
 - `transfer_events` table (event-sourced per RFC-0960 §2.5)
 - `ValueTransfer` trait (RFC-0206)
@@ -58,12 +59,12 @@ The path differs only in policy bindings (`chain_metadata` columns per RFC-0010 
 
 ## 4. Execution Class Mapping (RFC-0008 §RFC-0008 Execution Class Mapping)
 
-| Surface | Class | Justification |
-|---|---|---|
-| `chain_metadata.workflow_kind_hashes` resolution | A | Deterministic Vec traversal |
-| Path taxonomy registration (no-bridge, Class A) | A | Deterministic `INSERT INTO chain_metadata` + Ed25519 sig verify (per RFC-0010 §4 flow) |
+| Surface                                                                        | Class                | Justification                                                                                        |
+| ------------------------------------------------------------------------------ | -------------------- | ---------------------------------------------------------------------------------------------------- |
+| `chain_metadata.workflow_kind_hashes` resolution                               | A                    | Deterministic Vec traversal                                                                          |
+| Path taxonomy registration (no-bridge, Class A)                                | A                    | Deterministic `INSERT INTO chain_metadata` + Ed25519 sig verify (per RFC-0010 §4 flow)               |
 | Path taxonomy registration (atomic-swap / wrapped, Class A or B-with-ZK-proof) | A or B-with-ZK-proof | Per RFC-0967-A1 §2.1 (InteropPolicy trait declaration) + ZK capability proof per RFC-0958 + RFC-0965 |
-| Burn policy resolution | A | Per RFC-0967-A1 §2.1 (BurnPolicy trait declaration) |
+| Burn policy resolution                                                         | A                    | Per RFC-0967-A1 §2.1 (BurnPolicy trait declaration)                                                  |
 
 ## 5. Cross-References
 
@@ -76,10 +77,10 @@ The path differs only in policy bindings (`chain_metadata` columns per RFC-0010 
 
 ## 6. Version History
 
-| Version | Date | Change |
-|---|---|---|
-| 3.1 | 2026-08-22 | Initial draft. Additive to v3.0. Mesh open path vs corporate closed path taxonomy on same substrate. Same `vaults` + `transfer_events` tables; different `chain_metadata` policy bindings. Resolves R2 finding on path taxonomy ambiguity. |
-| 3.1 | 2026-08-22 | [R13 fix F-R12-XR-CROSS-RFC-INTEROP-DRIFT closure: aligned interop default with RFC-0967-A1 v1.5 §2.6 UUID registry.] |
-| 3.1 | 2026-08-22 | [R15 fix F-R15-FD-1 cascade + F-R15-FD-5: RFC-0967-A1 v1.4 → v1.5.] |
-| 3.1 | 2026-08-22 | [R15 fix F-R15-FD-5b: replaced phantom v3.2 amendment parenthetical with section anchor §2.1 Mesh Open Path per CLAUDE.md §No line refs anywhere.] |
-| 3.1 | 2026-08-22 | **R16 promotion:** Draft → Accepted per long-horizon plan v1.6 Phase 4 Tier 1 promotion sequence (Tier 1 final). Status bumper + citation cleanup (3 pre-existing STALE v3.0 pins + 1 STALE v3.3 pin + 2 INVALID non-heading §InteropPolicy/§BurnPolicy anchors all stripped/fixed). Mesh open vs corporate closed path taxonomy + same-substrate binding preserved. |
+| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                               |
+| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 3.1     | 2026-08-22 | Initial draft. Additive to v3.0. Mesh open path vs corporate closed path taxonomy on same substrate. Same `vaults` + `transfer_events` tables; different `chain_metadata` policy bindings. Resolves R2 finding on path taxonomy ambiguity.                                                                                                                           |
+| 3.1     | 2026-08-22 | [R13 fix F-R12-XR-CROSS-RFC-INTEROP-DRIFT closure: aligned interop default with RFC-0967-A1 v1.5 §2.6 UUID registry.]                                                                                                                                                                                                                                                |
+| 3.1     | 2026-08-22 | [R15 fix F-R15-FD-1 cascade + F-R15-FD-5: RFC-0967-A1 v1.4 → v1.5.]                                                                                                                                                                                                                                                                                                  |
+| 3.1     | 2026-08-22 | [R15 fix F-R15-FD-5b: replaced phantom v3.2 amendment parenthetical with section anchor §2.1 Mesh Open Path per CLAUDE.md §No line refs anywhere.]                                                                                                                                                                                                                   |
+| 3.1     | 2026-08-22 | **R16 promotion:** Draft → Accepted per long-horizon plan v1.6 Phase 4 Tier 1 promotion sequence (Tier 1 final). Status bumper + citation cleanup (3 pre-existing STALE v3.0 pins + 1 STALE v3.3 pin + 2 INVALID non-heading §InteropPolicy/§BurnPolicy anchors all stripped/fixed). Mesh open vs corporate closed path taxonomy + same-substrate binding preserved. |

@@ -1,8 +1,8 @@
 ---
 rfc: 0010-v1.7
 title: Chain-id Registration Authority + ledger_chain_registry Table
-status: Draft
-version: 1.7
+status: Accepted
+version: 1.9
 date: 2026-08-22
 amends: RFC-0010
 builds_on:
@@ -77,12 +77,12 @@ fn derive_chain_id(namespace: ChainNamespace, seed: &[u8]) -> [u8;32] {
 
 ## 5. Execution Class Mapping (RFC-0008 §RFC-0008 Execution Class Mapping)
 
-| Surface | Class | Justification |
-|---|---|---|
-| `derive_chain_id` | A | Deterministic BLAKE3 derivation |
-| `ledger_chain_registry` INSERT | A | Operator-signed registration |
-| Collision detection | A | Deterministic PK lookup |
-| `chain_metadata.ledger_chain_registry` FK | A | Soft-ref until v1.7 lands |
+| Surface                                   | Class | Justification                   |
+| ----------------------------------------- | ----- | ------------------------------- |
+| `derive_chain_id`                         | A     | Deterministic BLAKE3 derivation |
+| `ledger_chain_registry` INSERT            | A     | Operator-signed registration    |
+| Collision detection                       | A     | Deterministic PK lookup         |
+| `chain_metadata.ledger_chain_registry` FK | A     | Soft-ref until v1.7 lands       |
 
 ## 6. Cross-References
 
@@ -94,9 +94,9 @@ fn derive_chain_id(namespace: ChainNamespace, seed: &[u8]) -> [u8;32] {
 
 ## 7. Version History
 
-| Version | Date | Change |
-|---|---|---|
-| 1.9 | 2026-08-22 | **R14 fix trail (cross-RFC consistency lens):** §v1.9 row itself — version bump from v1.8 to v1.9 reflects R14 round on RFC-0010 v1.7; aligns with research doc §17 v3.9 + RFC-0008 v1.1 + RFC-0206 R14 cascade. |
-| 1.8 | 2026-08-22 | **R13 fix trail (post-R12 fresh lens):** §v1.8 row itself — version bump from v1.7 to v1.8 reflects R13 round on RFC-0010 v1.7; aligns with research doc §17 v3.8 + RFC-0967-A1 v1.4 + RFC-0008 v1.0 R12 cascade. |
-| 1.7 | 2026-08-22 | Initial draft. Additive to v1.6. ledger_chain_registry table + chain_id BLAKE3 derivation + authority registration flow. P0 BLOCKER for chain_metadata substrate (soft-ref until v1.7 lands). Resolves R2 finding on RFC-0010 v1.7 authorization gap. |
-| 1.9 | 2026-08-22 | **R16 promotion:** Draft → Accepted per long-horizon plan v1.6 Phase 4 Tier 1 promotion sequence. Status bumper + citation cleanup (4 pre-existing STALE pins stripped to bare RFC numbers per CLAUDE.md §RFC Reference Conventions). ledger_chain_registry + chain_id BLAKE3 derivation + authority registration flow preserved. |
+| Version | Date       | Change                                                                                                                                                                                                                                                                                                                            |
+| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.9     | 2026-08-22 | **R14 fix trail (cross-RFC consistency lens):** §v1.9 row itself — version bump from v1.8 to v1.9 reflects R14 round on RFC-0010 v1.7; aligns with research doc §17 v3.9 + RFC-0008 v1.1 + RFC-0206 R14 cascade.                                                                                                                  |
+| 1.8     | 2026-08-22 | **R13 fix trail (post-R12 fresh lens):** §v1.8 row itself — version bump from v1.7 to v1.8 reflects R13 round on RFC-0010 v1.7; aligns with research doc §17 v3.8 + RFC-0967-A1 v1.4 + RFC-0008 v1.0 R12 cascade.                                                                                                                 |
+| 1.7     | 2026-08-22 | Initial draft. Additive to v1.6. ledger_chain_registry table + chain_id BLAKE3 derivation + authority registration flow. P0 BLOCKER for chain_metadata substrate (soft-ref until v1.7 lands). Resolves R2 finding on RFC-0010 v1.7 authorization gap.                                                                             |
+| 1.9     | 2026-08-22 | **R16 promotion:** Draft → Accepted per long-horizon plan v1.6 Phase 4 Tier 1 promotion sequence. Status bumper + citation cleanup (4 pre-existing STALE pins stripped to bare RFC numbers per CLAUDE.md §RFC Reference Conventions). ledger_chain_registry + chain_id BLAKE3 derivation + authority registration flow preserved. |

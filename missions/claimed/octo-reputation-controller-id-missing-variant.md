@@ -6,8 +6,8 @@ Closed 2026-08-13 (@claude). LANDED.
 
 ## RFC
 
-RFC-0968-A1 amendment 40: canonical `ControllerIdMissing` discriminant
-reserved at `0x2E`. Mission
+RFC-0968-A1 amendment 40 (deferred to RFC-0968-A2 — ControllerIdMissing discriminant codepoint reservation): canonical `ControllerIdMissing` discriminant
+reserved at `0x34`. Mission
 `marketplace-facade-reputation-async-migration` v0.2 deferred this
 work — the compat `record_with_now` currently surfaces the
 all-zero `controller_id` rejection through `RecorderDidMalformed`
@@ -18,7 +18,7 @@ all-zero `controller_id` rejection through `RecorderDidMalformed`
 
 - Mission `marketplace-facade-reputation-async-migration` v0.2
   (compat writer must switch to the canonical variant)
-- RFC-0968-A1 amendment 40 (canonical `0x2E` codepoint for the variant)
+- RFC-0968-A1 amendment 40 (deferred to RFC-0968-A2 — ControllerIdMissing discriminant codepoint reservation) (canonical `0x34` codepoint for the variant)
 
 ## Acceptance Criteria
 
@@ -30,7 +30,7 @@ all-zero `controller_id` rejection through `RecorderDidMalformed`
 - [x] Add a round-trip test for the new variant (encode/decode parity)
 - [x] Update `reputation_compat::record_with_now` to return
       `ControllerIdMissing` instead of `RecorderDidMalformed` for the
-      all-zero `controller_id` case (RFC-0968-A1 amendment 40)
+      all-zero `controller_id` case (RFC-0968-A1 amendment 40 (deferred to RFC-0968-A2 — ControllerIdMissing discriminant codepoint reservation))
 - [x] Update `tests/marketplace_reputation_async.rs::all_zero_controller_id_rejected`
       to assert on the new variant name
 - [x] Clippy passes with zero warnings
@@ -46,8 +46,8 @@ all-zero `controller_id` rejection through `RecorderDidMalformed`
 
 ## Notes
 
-**Discriminant choice:** RFC-0968-A1 amendment 40 originally reserved
-`0x2E` for `ControllerIdMissing`, but `octo-reputation` v0.x already
+**Discriminant choice:** RFC-0968-A1 amendment 40 (deferred to RFC-0968-A2 — ControllerIdMissing discriminant codepoint reservation) originally reserved
+`0x2E` (superseded by `0x34` per RFC-0968-A2 amendment 40) for `ControllerIdMissing`, but `octo-reputation` v0.x already
 allocates `0x2E` to `RotationProvenanceMissingTombstoned` (added in a
 Round 7 follow-on to gate tombstone-did slashing at the API boundary).
 The canonical codepoint is therefore RETIRED-in-error in this crate;
@@ -82,13 +82,13 @@ now self-describing.
 
 - Mission `marketplace-facade-reputation-async-migration` v0.2 (filed
   follow-on DEFERRED row)
-- RFC-0968-A1 amendment 40 (`ControllerIdMissing` codepoint
+- RFC-0968-A1 amendment 40 (deferred to RFC-0968-A2 — ControllerIdMissing discriminant codepoint reservation) (`ControllerIdMissing` codepoint
   reservation)
-- RFC-0968-A1 amendment 44 (`controller_id = blake3(governance_pubkey)`)
+- RFC-0968-A1 amendment 44 (deferred to RFC-0968-A2 — controller_id = blake3(governance_pubkey) derivation) (`controller_id = blake3(governance_pubkey)`)
 
 ## Version History
 
-| Version | Date       | Status  | Change                                                                                                                                                                       |
-| ------- | ---------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-08-13 | claimed | Mission filed from v0.2 deferred row of marketplace-facade-reputation-async-migration.                                                                                       |
-| v0.2    | 2026-08-13 | closed  | `ControllerIdMissing = 0x34` variant added; compat switched; e2e tightened to discriminant match. 211 octo-reputation lib tests + 4 marketplace_reputation_async tests pass. |
+| Version | Date       | Status  | Change                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------- | ---------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-13 | claimed | Mission filed from v0.2 deferred row of marketplace-facade-reputation-async-migration.                                                                                                                                                                                                                                                                                                                    |
+| v0.2    | 2026-08-13 | closed  | `ControllerIdMissing = 0x34` variant added; compat switched; e2e tightened to discriminant match. 211 octo-reputation lib tests + 8 marketplace_reputation_async tests pass. (Subsequent to v0.2 close, A2 v0.4.0 renumbered amendments 40 + 44 to 28 + 29 — this mission's "amendments 40 + 44" labels in Dependencies above are therefore stale; the canonical numbering is now 28 + 29 per A2 v0.5.0.) |

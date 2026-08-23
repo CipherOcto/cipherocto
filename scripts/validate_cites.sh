@@ -35,7 +35,11 @@ find_rfc_path() {
 
     # Try exact match first (RFC-XXXX or RFC-XXXX-suffix)
     local rfc_file
-    rfc_file=$(find "$RFC_ROOT" -type f -name "${rfc_num}*.md" 2>/dev/null | head -1 || true)
+    # Case-insensitive per R16 cite-validator audit: RFC-0967-A1 sub-amendment lives at
+    # rfcs/.../0967-a1-policy-registry.md (lowercase a1) per Linux filename convention;
+    # prior case-sensitive find produced false PHANTOM for every cite referencing
+    # sub-amendments A1/A2/R1/etc.
+    rfc_file=$(find "$RFC_ROOT" -type f -iname "${rfc_num}*.md" 2>/dev/null | head -1 || true)
     if [ -n "$rfc_file" ]; then
         echo "$rfc_file"
         return 0
@@ -44,7 +48,7 @@ find_rfc_path() {
     # Try with category prefix
     for cat in numeric proof-systems process economics networking storage; do
         local cat_file
-        cat_file=$(find "$RFC_ROOT/$cat" -type f -name "${rfc_num}*.md" 2>/dev/null | head -1 || true)
+        cat_file=$(find "$RFC_ROOT/$cat" -type f -iname "${rfc_num}*.md" 2>/dev/null | head -1 || true)
         if [ -n "$cat_file" ]; then
             echo "$cat_file"
             return 0

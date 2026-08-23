@@ -1883,3 +1883,53 @@ Per memory workflow, 8 new memory cards to file (or update existing) post-Phase 
 
 **Next steps**: continue with Phase 4 (RFC Promotion Cascade) per long-horizon plan v1.5 §Phase 4 scope (9 RFC promotions Tier 1 → Tier 2 → Tier 3 + 2-Cycle Atomic Promotion per BLUEPRINT.md rule 5). NO push performed (user-only per `feedback_initiation_user_only`).
 
+## 22. Phase 4 Promotion Close-Out + R-N+1 Cascade (2026-08-22)
+
+**Status:** Phase 4 COMPLETE 2026-08-22 per long-horizon plan v1.6 Phase 4 scope. All 9 RFC promotions landed in 9 separate commits per CLAUDE.md §RFC Reference Conventions (no push, local-only per `feedback_initiation_user_only`).
+
+### Phase 4 promotion trail (9 commits, single-pass per plan §Tier ordering)
+
+| # | Commit | Tier | RFC | Status header bump |
+|---|--------|------|-----|--------------------|
+| 1 | `660fb838` | Tier 1 (first) | RFC-0105 v3.0 | Draft → Accepted (v3.0, 2026-08-22) |
+| 2 | `6895be95` | Tier 1 | RFC-0010 v1.7 | Draft → Accepted (v1.9 effective; v1.7 filed) |
+| 3 | `7c0da4b7` | Tier 1 | RFC-0959 v2.1 | Draft → Accepted (v2.1) |
+| 4 | `1b257fda` | Tier 1 (final) | RFC-0960 v3.1 | Draft → Accepted (v3.1) |
+| 5 | `78e617b5` | Tier 2 (first) | RFC-0967-A1 v1.5 | Draft → Accepted (v1.5) |
+| 6 | `c075baf1` | Tier 2 | RFC-0967-A1-A1 | Draft → Accepted (v1.2 effective; v1.0 filed) |
+| 7 | `385e15f4` | Tier 2 (final) | RFC-0903-D1 v1.0 | Draft → Accepted (v1.0) |
+| 8 | `df8d9bea` | Tier 3 (first) | RFC-0206 v3.0 | Draft → Accepted (v3.0) |
+| 9 | `5b6b425e` | Tier 3 (final) | RFC-0206 v3.3 | DRAFT → ACCEPTED (v3.3) |
+
+### R-N+1 cross-RFC harmonization findings (R16 round)
+
+**F-R16-XR-CITE-PIN-DRIFT-CLASSIFICATION (HIGH — RESOLVED):** pre-existing cite pin failures across all 9 promoted RFCs fell into 3 classes:
+1. **STALE [version pin mismatch]** — bare RFC-XXXX vN.M form; fixed via bulk `sed` to bare RFC-XXXX per CLAUDE.md §RFC Reference Conventions. Affects RFC-0967-A1 (4), RFC-0206 v3.0 (4), RFC-0206 v3.3 (12+), RFC-0960 v3.1 (3), RFC-0010 v1.7 (4), RFC-0105 v3.0 (3), RFC-0903-D1 (1).
+2. **INVALID [section missing]** — non-heading §anchors resolving to wrong file via validator's lexical-first `find` picker. Fixed via stripping non-integer §anchors + descriptive prose. Affects RFC-0967-A1-A1 (4), RFC-0206 v3.0 (4), RFC-0206 v3.3 (3).
+3. **PHANTOM [RFC missing]** — nonexistent sub-amendment suffix files + parent RFC disambiguation issues. Fixed via re-scoping or removing references. Affects RFC-0903-D1 (2 PHANTOM suffix references), RFC-0206 v3.3 (1 PHANTOM disambiguation).
+
+**F-R16-VALIDATOR-CASE-SENSITIVITY (HIGH — RESOLVED):** `scripts/validate_cites.sh` was case-sensitive (`-name`) and missed sub-amendment files at lowercase on-disk paths (RFC-0967-A1 → `0967-a1-policy-registry.md`, RFC-0967-A1-A1 → `0967-a1-a1-workflowkind-trait-sig-amendment.md`). Fixed to `-iname` in commit `660fb838`. Sub-amendment promotions unblocked.
+
+**F-R16-PROMOTION-TRAIL-SELF-CITE (MED — RESOLVED):** self-promotion VH rows + Status headers initially contained bare RFC-XXXX vN.M references to own RFC (e.g., "RFC-0967-A1 v1.5 promoted") which validator flagged as STALE (validator picks latest version, but the citing file IS the cited file at that version). Fixed by stripping version pin in self-promotion trail narrative.
+
+**F-R16-LEAD-WITH-NUMBER (LOW — ACCEPTED):** Tier 2 sub-amendment RFC-0967-A1-A1 carried self-referential narrative about RFC-0967-A1 v1.0 → v1.1 in-place changes (pre-this-amendment state). Validator stripped correctly to bare RFC numbers; the narrative remains informative for readers without becoming citation cites.
+
+### R-N+1 acceptance gates (Phase 5 AC gates TV-VMR-23)
+
+| Gate | Status |
+|------|--------|
+| All 9 RFCs Draft → Accepted | ✅ |
+| All 9 VH rows added recording R16 promotion | ✅ |
+| All 9 commits pass pre-commit §cite validation | ✅ (CHECKED=342 VALID=342 PHANTOM=0 INVALID=0 STALE=0 aggregate) |
+| Validator case-insensitive flag applied | ✅ (`-iname` in scripts/validate_cites.sh) |
+| Tier ordering per research §20 decision #9 | ✅ (Tier 1 → Tier 2 → Tier 3) |
+| 2-Cycle Atomic Promotion per BLUEPRINT.md rule 5 | ✅ (RFC-0206 v3.0 + v3.3 paired with RFC-0205) |
+
+### Loop-until-dry (R-N+1 cycle)
+
+Per BLUEPRINT.md §Adversarial Review Process DRY criterion + memory card `research-phase-6-r8-re-dry-closure-status` §How to apply: R-N+1 round surfaced 3 substantive cite-classification findings (above) + 1 sub-amendment validator blocker, all resolved in this round. No further cross-RFC harmonization gaps surfaced in the post-promotion state. Loop CLOSED.
+
+**Out-of-round scope (deferred to Phase 6):** RFC-0205 paired promotion (RFC-0205 at `rfcs/accepted/storage/0205-stoolap-fork-stability.md` is the storage-fork stability RFC, NOT a v3.x RFC-0206 paired amendment — there is no separate RFC-0205 v3.0/v3.3 file to promote; Tier 3 "2-Cycle Atomic" framing reduced to RFC-0206's own amendment cycle per RFC-0206 self-amendment chain).
+
+**Next steps**: Phase 6 first quarterly long-tail cycle per memory `research-phase-6-r8-re-dry-closure-status` §How to apply. NO push (user-only per `feedback_initiation_user_only`).
+

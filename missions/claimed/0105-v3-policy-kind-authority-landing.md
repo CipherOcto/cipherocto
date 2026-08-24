@@ -28,7 +28,7 @@ RFC-0105 (economics amendment) also notes: "RFC-defined substrate-pending landin
 
 ### Step 1: Migration v017 — `policy_kind_authority` table
 
-Create `migrations/v017__create_policy_kind_authority.sql` per RFC-0206 §Layer B additive-only rule (no `DROP` / no destructive `ALTER` of existing `policy_objects` table):
+Create `crates/octo-policy-storage/migrations/v017__create_policy_kind_authority.sql` per RFC-0206 §4 Layer B additive-only rule (no `DROP` / no destructive `ALTER` of existing `policy_objects` table; per-crate migrations dir layout matches existing pattern `crates/octo-vault/migrations/v013__create_vaults.sql` + `crates/quota-router-storage/migrations/v016__settlement_chain_vault.sql`):
 
 ```sql
 -- Migration v017: policy_kind_authority substrate table
@@ -130,7 +130,7 @@ Two `policy_kind_authority` rows seeded via separate onboarding transactions (NO
 
 ## Acceptance Criterion
 
-- `migrations/v017__create_policy_kind_authority.sql` exists + applies green
+- `crates/octo-policy-storage/migrations/v017__create_policy_kind_authority.sql` exists + applies green
 - `cargo run -p octo-storage-core --bin migrate apply --to v017` exits 0
 - `policy_kind_authority` table exists post-migration (verified via `sqlite3 ... ".schema policy_kind_authority"`)
 - 2 bootstrap rows seeded with `zeroblob(16)` kind_uuid + `zeroblob(32)` signer_did + `'octo_treasury' | 'corp_admin'` (live DIDs inserted via separate onboarding tx, NOT migration tx)
@@ -140,7 +140,7 @@ Two `policy_kind_authority` rows seeded via separate onboarding transactions (NO
   - FK-style lookup of `policy_kind_authority.required_signer_did` BEFORE policy INSERT
 - `PolicyRegistryError` enum has `UnknownKindUuid` + `UnauthorizedRegistrar` variants
 - `register_policy` doctring cites RFC-0967-A1 §2.5 + RFC-0105 §3 + RFC-0010 §4
-- AC gate: `rg '^CREATE TABLE policy_kind_authority' migrations/v017*` → 1 hit
+- AC gate: `rg '^CREATE TABLE policy_kind_authority' crates/octo-policy-storage/migrations/v017*` → 1 hit
 - AC gate: `rg 'register_policy' crates/octo-policy-storage/src/lib.rs` → ≥1 hit (function def)
 - AC gate: `rg 'PolicyRegistryError::UnauthorizedRegistrar' crates/octo-policy-storage/src/` → ≥1 hit (error variant used)
 - `cargo build --workspace --all-targets` green
@@ -151,7 +151,7 @@ Two `policy_kind_authority` rows seeded via separate onboarding transactions (NO
 
 ## Files / Artifacts
 
-- New: `migrations/v017__create_policy_kind_authority.sql`
+- New: `crates/octo-policy-storage/migrations/v017__create_policy_kind_authority.sql`
 - Edit: `crates/octo-policy-storage/src/lib.rs` (register_policy function + PolicyRegistryError enum)
 - Edit: `crates/octo-policy-storage/Cargo.toml` (no new deps; uses existing thiserror + blake3 + octo_determin)
 - Doctring cite refs (no file edits; substrate doctring carries the §-anchors)

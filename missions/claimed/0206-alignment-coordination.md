@@ -19,6 +19,8 @@ metadata:
     - 0206-011b-mv
     - RFC-0206
 status: OPEN
+
+**Retro-supersession (2026-08-24 Session 7 cross-RFC harmonization):** 8 coordination missions filed for 6 RFCs in scope (RFC-0008 + RFC-0010 + RFC-0903-D1 + RFC-0959 + RFC-0960 + RFC-0967-A1 + RFC-0968-A2 + RFC-0206 = 8 missions). Cross-RFC harmonization edits to research doc + companion RFC cross-refs remain DEFERRED to follow-up phase per historical pattern (research doc edits reverted per user instruction 2026-08-22 "don't edit the original research to insert audits or progress, put it all in the docs/audit scratchpad, stop editing the original research without my explicit approval"). Per claim-and-implement scope, research doc cross-refs remain out of scope (user-gated). Coordination missions preserve audit traceability + cross-RFC cite patterns. NO PUSH per `feedback_initiation_user_only`.
 ---
 
 # Mission `0206-alignment-coordination` v1.0 — OPEN 2026-08-24

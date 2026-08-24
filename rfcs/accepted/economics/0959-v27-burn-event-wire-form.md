@@ -1,8 +1,8 @@
 ---
-rfc: 0959-v2.6
+rfc: 0959-v2.7
 title: SettlementEnvelope burn_event wire form + DQA(12) cost_micro_octo_w migration
 status: Accepted
-version: 2.6
+version: 2.7
 date: 2026-08-24
 extends: RFC-0959 v2.0 (does not redefine — additive)
 builds_on:
@@ -12,13 +12,13 @@ builds_on:
   - docs/research/2026-08-21-vault-monetary-representation-redesign.md
 ---
 
-# RFC-0959 v2.6 — SettlementEnvelope burn_event wire form
+# RFC-0959 v2.7 — SettlementEnvelope burn_event wire form
 
 ## 0. Status
 
-**Accepted (v2.6, 2026-08-24).** EXTENDS RFC-0959 v2.0 (does not redefine). Additive to v2.0's `cost_vault_id: Option<[u8;32]>` + `chain_id: Option<[u8;32]>` fields.
+**Accepted (v2.7, 2026-08-24).** EXTENDS RFC-0959 v2.0 (does not redefine). Additive to v2.0's `cost_vault_id: Option<[u8;32]>` + `chain_id: Option<[u8;32]>` fields.
 
-**Promotion trail:** v2.1 initial draft 2026-08-22 → Accepted 2026-08-23 → v2.2 R5 fix-all 2026-08-23 → v2.3 R7 fix-all 2026-08-23 → v2.4 R9 fix-all 2026-08-23 → v2.5 R13 fix-all 2026-08-24 → v2.6 R17 fix-all 2026-08-24 per long-horizon plan v1.6 Phase 4 Tier 1 promotion sequence (RFC-0959 third in Tier 1 order per research doc §20 decision #9). BurnEventRef wire form + DQA(12) cost migration + litellm_users_spend view all preserved.
+**Promotion trail:** v2.1 initial draft 2026-08-22 → Accepted 2026-08-23 → v2.2 R5 fix-all 2026-08-23 → v2.3 R7 fix-all 2026-08-23 → v2.4 R9 fix-all 2026-08-23 → v2.5 R13 fix-all 2026-08-24 → v2.6 R17 fix-all 2026-08-24 → v2.7 cross-RFC harmonization amendment 2026-08-24 per long-horizon plan v1.6 §Cross-RFC Harmonization. BurnEventRef wire form + DQA(12) cost migration + litellm_users_spend view all preserved. v2.7 byte-0 overwrite amendment: §2 BurnEventRef struct comment chain_id[0] NAMESPACE-BYTE OVERWRITE claim REMOVED per substrate truth (chain_id[0] is a regular BLAKE3 output byte per RFC-0010 v1.7 §3 + RFC-0105 v3.4 §2.1 substrate); §6 Cross-References RFC-0206 v3.3 stale byte-0 claim REMOVED + redirected to RFC-0206 v3.4 §2.3 + §2.5 substrate-truth statements.
 
 ## 1. Motivation
 
@@ -39,11 +39,22 @@ RFC-0959 v2.0 defines `SettlementEvent.cost: MicroOCTO_W` where `MicroOCTO_W(pub
 // RFC-0959 §2 wire form (no on-disk impl yet — pending 0206 series)
 pub struct BurnEventRef {
     pub burn_id: [u8;16],
-    pub chain_id: [u8;32],   // chain_id[0] = NAMESPACE-BYTE OVERWRITE post-BLAKE3 per RFC-0206 v3.3 §2.3
-                             // (e.g., 0x01 = Mainnet); the 31 bytes [1..32] are the BLAKE3 output
-                             // per RFC-0010 §3 derive_chain_id. Consumers MUST NOT treat chain_id
-                             // as a generic 32-byte BLAKE3 hash; the namespace byte at [0] is
-                             // context-specific per the RFC-0206 v3.3 §2.5 disambiguation table.
+    pub chain_id: [u8;32],   // chain_id[0] is a regular BLAKE3 output byte (NOT a post-hash
+                             // namespace-byte overwrite) per RFC-0206 v3.4 §2.3 + RFC-0010 v1.7 §3
+                             // substrate (`ChainId::as_bytes` + `ChainId::derive` produce raw
+                             // BLAKE3 output with NO byte-0 overwrite). The 0x01 value seen in
+                             // concrete chain_ids is a regular BLAKE3 output byte that happens to
+                             // coincide with substrate `NamespaceVariant::Rfc = 0x01` per
+                             // `octo-ident/src/chain.rs` §NamespaceVariant impl, NOT a namespace
+                             // overwrite. Consumers MUST NOT treat chain_id[0] as a generic
+                             // namespace marker; the source-of-truth for the chain-namespace is
+                             // the `chain_metadata.chain_namespace` column per RFC-0010 v1.7 §2
+                             // substrate-vs-RFC divergence header, NOT chain_id[0]. v2.7 cross-RFC
+                             // harmonization amendment per long-horizon plan v1.6 §Cross-RFC
+                             // Harmonization (2026-08-24) — prior v2.6 L42-L46 NAMESPACE-BYTE
+                             // OVERWRITE wording contradicted substrate per RFC-0010 v1.7 §3 cite
+                             // loop + RFC-0105 v3.4 §2.2 cross-RFC drift note + RFC-0206 v3.4
+                             // §2.3 amendment.
     pub vault_id: [u8;32],   // vault_id[0] is also a BLAKE3 output byte (NOT a namespace-byte
                              // overwrite) per RFC-0206 v3.0 §3 ValueTransfer Trait vault_id
                              // parameter — distinct from chain_id[0] semantics; do not conflate.
@@ -177,14 +188,15 @@ NOTE on substrate landing: the `event_type TEXT` column is NOT yet on disk at v0
 - RFC-0126 Part 3 §Deterministic Canonical Serialization (DCS wire form)
 - RFC-0206 v3.0 §3 ValueTransfer Trait (burn_event source: `burn_pending` sets amount, `finalize_burn` consumes burn_id per state machine)
 - RFC-0206 v3.0 §4 Substrate Migration v015–v018 (policy_registry DDL + burn_pending→policy_registry binding; actual on-disk numbering diverges per §3 substrate-vs-RFC divergence header)
-- RFC-0206 v3.3 §2.3 chain_id[0] NAMESPACE-BYTE OVERWRITE semantics (overwrite post-BLAKE3 per RFC-0010 §3 derive_chain_id; e.g., 0x01 = Mainnet) — applies to BurnEventRef.chain_id per §2 struct comment
-- RFC-0206 v3.3 §2.5 `0x01` namespace byte disambiguation table (chain_id namespace-byte vs asset_id namespace-byte vs ExecutionClass enum discriminant)
+- RFC-0206 v3.4 §2.3 chain_id[0] regular BLAKE3 output byte semantics (no post-hash namespace-byte overwrite per substrate `ChainId::as_bytes` + `ChainId::derive`) — applies to BurnEventRef.chain_id per §2 struct comment
+- RFC-0206 v3.4 §2.5 `0x01` byte disambiguation table (chain_id[0] regular BLAKE3 byte vs asset_id[0] regular BLAKE3 byte vs ExecutionClass enum discriminant vs ZK envelope discriminator; `0x01 = Rfc` per substrate `NamespaceVariant::Rfc = 0x01` — context-specific, NOT a generic namespace marker)
 - `docs/research/2026-08-21-vault-monetary-representation-redesign.md` §5.3 + §7.2 + §7.3 + §8.6 + §11 Phase 1 (v019 rollback slot) + §9 amendment table + §20 decision #9 (RFC promotion priority order)
 
 ## 7. Version History
 
 | Version | Date | Change |
 | ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2.7 | 2026-08-24 | **Cross-RFC harmonization amendment per long-horizon plan v1.6 §Cross-RFC Harmonization (2026-08-24).** Resolves 3 RFC cite loops that flagged RFC-0959 byte-0 overwrite cite as stale: (a) RFC-0010 v1.7 §3 cite loop — "RFC-0206 v3.3 §2.3 + §2.5 claim substrate overwrites... which contradicts this RFC §3 (substrate does NOT overwrite byte 0) — RFC-0206 v3.3 should be amended"; (b) RFC-0105 v3.4 §2.2 cross-RFC drift note — "RFC-0206 v3.3 §2.3 byte-0 overwrite claim is stale relative to this RFC's substrate; tracked separately"; (c) RFC-0206 v3.4 amendment (commit f05d91d0) — byte-0 overwrite claim REMOVED from RFC-0206 §2.3 + §2.5 per substrate truth. This RFC-0959 v2.6 §2 BurnEventRef struct comment (L42-L46 prior) cited the now-stale RFC-0206 v3.3 §2.3 + §2.5 byte-0 overwrite claim verbatim; v2.7 amendment REMOVES that claim and replaces it with substrate-truth statement aligned with RFC-0010 v1.7 §3 + RFC-0105 v3.4 §2.1 + RFC-0206 v3.4 §2.3/§2.5. §6 Cross-References RFC-0206 v3.3 §2.3 + §2.5 stale cite entries REPLACED with RFC-0206 v3.4 §2.3 + §2.5 substrate-truth cite entries. frontmatter Status + Version + YAML rfc field bumped to v2.7; filename 0959-v26 → 0959-v27 via git mv per filename-version parity (R17/R19 precedent); §0 Status block + Promotion trail updated to v2.7; §7 v2.7 VH row added. |
 | 2.6 | 2026-08-24 | **R17 fix-all (R16 findings):** 6 R16 findings applied (pure in-RFC drift, no substrate change). (a) §4 prose stale self-reference `(out of scope for RFC-0959 v2.4 R9)` → `(out of scope for RFC-0959 v2.5 R13)` corrected (R16 finding: R15 fix-all updated v2.4→v2.5 but missed R9→R13 round identifier). (b) v2.1 VH row `R16 promotion` → `R1 promotion` corrected per MEMORY card "5-Draft-RFC R1 fix-all 2026-08-23" (actual promotion round was R1 of the 5-Draft-RFC fix-all, not R16 of the long-horizon plan); promotion date 2026-08-23 added per same MEMORY card. (c) v2.5 VH row item (b) audit-trail text rewritten: L-prefixed anchors + quoted line-ref content (line-number ranges, `file:line` anchors, lone `:line` snippets) now described abstractly across §research §7.3, §ask.rs, §RFC-0105 §SQL Column Scale Semantics, §research §8.6, §v014__create_transfer_events.sql, §v014 column anchors; no literal line-refs quoted in audit-trail per `no-line-refs-anywhere.md`. (d) v2.5 VH row item (c) audit-trail text rewritten: trailing line-number content within research doc §20 anchor now described abstractly per `no-line-refs-anywhere.md`; no literal line-refs quoted. (e) YAML metadata updated to v2.6: version 2.5 → 2.6; date 2026-08-24 (unchanged); YAML rfc field 0959-v2.5 → 0959-v2.6; Title line updated to v2.6. (f) §0 Status block updated to v2.6 + R17 fix-all entry in Promotion trail. (g) Filename renamed v25 → v26 for parity with version 2.6 (YAML/Status/VH all saying v2.6). |
 | 2.5 | 2026-08-24 | **R13 fix-all (R12 findings):** 3 R12 findings applied (pure in-RFC drift). (a) Filename renamed v21 → v25 for parity with version 2.5 (R12 finding: filename encoded stale v2.1; R15 finding: filename v24 → v25 to match YAML/Status/VH all saying v2.5). (b) VH v2.4 row item (d) cleaned: L-prefixed line-ref anchors + quoted line-ref content (line-number ranges, `file:line` anchors, lone `:line` snippets) stripped from §research §7.3, §ask.rs, §RFC-0105 §SQL Column Scale Semantics, §research §8.6, §v014__create_transfer_events.sql, §v014 column anchors per `no-line-refs-anywhere.md`; replaced with bare §section ref labels. (c) VH v2.4 row item (k) cleaned: trailing line-number content within the research doc §20 anchor stripped per `no-line-refs-anywhere.md`; replaced with bare §20 anchor. (d) YAML metadata updated to v2.5: version 2.4 → 2.5; date 2026-08-23 → 2026-08-24; YAML rfc field 0959-v2.4 → 0959-v2.5; Title line updated to v2.5 (R15 finding: items (d)(e)(f) previously overlapped — (d)+(e) merged into discrete items, (f) absorbed). (e) §0 Status block updated to v2.5 + R13 fix-all entry in Promotion trail; §4 prose stale self-reference `v2.4` → `v2.5` corrected (R15 finding). |
 | 2.4 | 2026-08-23 | **R9 fix-all (R8 findings):** 22 R8 findings applied. (a) §0 Status header v2.2 → v2.4 (R8 surfaced stale-version defect despite YAML v2.3 + VH v2.3 row); YAML `version: 2.3 → 2.4`; `date:` 2026-08-23 (unchanged). (b) §0 Promotion trail extended with v2.4 R9 fix-all entry. (c) §1 Motivation substrate-vs-RFC column-type note: on-disk `cost_micro_octo_w` column type is `BLOB NOT NULL` (no length specifier), NOT `BLOB(16)`; the "16-byte" payload size is a logical-payload description in the v004 column comment, not a column-shape constraint; migrated DDL retargeted from `BLOB(16)` (RFC claim) to `BLOB NOT NULL` carrying 16-byte BE u128 (substrate truth). (d) Line-ref anchors stripped throughout per `no-line-refs-anywhere.md`: research §7.3 → bare §section ref; ask.rs → §SettlementEnvelope struct; RFC-0105 §SQL Column Scale Semantics → bare §section ref; research §8.6 table cell → bare §section ref; v014__create_transfer_events.sql → §transfer_events table on-disk column shape; research §8.6 + v014 column → §section ref + §transfer_events table; v014 amount column → §transfer_events table. (e) §2 BurnEventRef struct updated: `chain_id: [u8;32]` annotated with RFC-0206 v3.3 §2.3 NAMESPACE-BYTE OVERWRITE semantics (chain_id[0] = 0x01 Mainnet namespace byte overwrite post-BLAKE3 per RFC-0010 §3 derive_chain_id; 31 bytes [1..32] are the BLAKE3 output). (f) `vault_id: [u8;32]` annotated as BLAKE3 output (no namespace-byte overwrite) to contrast with chain_id. (g) §3.2 inline marker added clarifying SQL block is RFC-defined extension pending substrate landing (not RFC-0105 §SQL Column Scale Semantics canonical). (h) §3.3 scale-semantics claim reconciled: per RFC-0105 §Expression-to-Column Assignment Coercion, `Dqa { value: 1_000_000, scale: 0 }` in `DQA(12)` (canonical scale 12) coerces to `10^18` with scale 12 (= 0.000000001 OCTO-W), NOT `1_000_000` with scale 0; mission implementer MUST either (a) use `DQA(0)` integer-scale (pending Stoolap substrate confirmation per §3.2) or (b) accept RFC-0105 canonical and pre-scale to fractional form. (i) §4 litellm_users_spend view cite acknowledged: research doc §5.3 references `te.amount_dqa_micros` (stale pre-v14 column name); SQL uses `te.amount` matching on-disk v14 substrate `transfer_events.amount DQA(12) NOT NULL`. (j) §6 Cross-References expanded: added RFC-0206 v3.3 §2.3 chain_id namespace-byte overwrite cite; added RFC-0206 v3.3 §2.5 disambiguation table cite. (k) VH v2.3 row cleaned: research doc §20 anchor stripped per no-line-refs-anywhere rule. YAML version: 2.3 → 2.4; date: 2026-08-23 (unchanged); §0 Status block updated to v2.4 + R9 fix-all entry. |

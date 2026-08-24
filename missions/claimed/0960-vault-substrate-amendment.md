@@ -10,6 +10,8 @@ example (Global → Regional → ... → Capability) that the §20.3 Model B
 chain-aware substrate explicitly REMOVES (per review §20.8 lock
 "no organizational intermediates").
 
+**Retro-supersession (2026-08-24 audit, RFC-0960 v3.5 supersession):** Umbrella RFC-0960 bumped to v3.5 (2026-08-23) by amendment `rfcs/accepted/economics/0960-v35-vault-path-taxonomy.md` — adds Mesh Open Path (chain_namespace=0x01) vs Corporate Closed Path (chain_namespace=0x02) taxonomy on same substrate; introduces PENDING substrate (chain_metadata + ledger_chain_registry + policy_registry + policy_kind_authority tables + ValueTransfer trait surface). This mission LANDED state preserved per historical-mission-preservation principle; mission text + AC text unchanged per R19 scope discipline. v3.0 row remains canonical entry in §Version History; v3.5 row added by separate amendment file (per RFC process: amendment files preserve parent version history; amendments stack). Cross-link to v3.5 amendment + `0960-v3.5-landing` follow-on mission filed 2026-08-24.
+
 ## What landed (2026-08-18)
 
 - **RFC-0960 v3.0 row added** to `§Version History` (chain-aware bump; PK + derivation cross-references; 108 TV matrix anchor; companion RFC §References cross-refs).
@@ -273,7 +275,7 @@ BIGINT`, `metadata BLOB`. `vault_id_unchecked` derivation: see
 - **9 role-token enumeration ambiguity** (MED): §20.3.1 mentions
   role-tokens (`OCTO`, `OCTO-A`, `OCTO-B`, `OCTO-D`, etc.) but the
   exact 9-element set is not enumerated in RFC-0960 itself.
-  Mitigation: cross-reference RFC-0105 v1.6 §Asset ID Addendum for
+  Mitigation: cross-reference RFC-0105 v2.3 §Asset ID Derivation for
   the canonical enumeration (9 distinct role-token string inputs
   fed to BLAKE3("cipherocto/asset/v1/" + role_token)). If RFC-0105
   amendment (S6g, 109 TV) does not finalize the 9 list, default to
@@ -300,10 +302,11 @@ BIGINT`, `metadata BLOB`. `vault_id_unchecked` derivation: see
 
 ## Version history
 
-| Date       | Author     | Change                                                                                                                                                                                                 |
-| ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 2026-08-17 | @mmacedoeu | Initial filing per audit verdict 2026-08-17 (storage restructure hard-recommendation: S6f RFC-0960 chain-aware bump + 108 TV per pending task #458). Co-filed with `c9` + `x-mission` + `S6e` + `S6d`. |
+| Date       | Author     | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ---------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-17 | @mmacedoeu | Initial filing per audit verdict 2026-08-17 (storage restructure hard-recommendation: S6f RFC-0960 chain-aware bump + 108 TV per pending task #458). Co-filed with `c9` + `x-mission` + `S6e` + `S6d`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | 2026-08-18 | @mmacedoeu | LANDED. RFC-0960 v3.0 row + §2.1 root-vault example REMOVED + §Vault Substrate subsection (§2.6) added + §References cross-refs added (review-doc §20.3/§20.7/§20.8 + plan-doc §24 + RFC-0105 v2.0 + RFC-0010 v1.4 + LANDED substrate anchors) + 6 companion RFCs §References cross-refs (0961/0962/0963/0964/0965/0967 light-touch bullets) + 108 byte-exact TV at `crates/octo-vault/tests/test_vectors.rs::tv_v1_vault_id_matrix` (9 role-token × 3 chain × 4 owner = 108 per §24 central registry; `VaultIdFixture` struct + `vault_id_unchecked_fixt` anti-drift helper + 7 new TV). Mission file moved `open/` → `claimed/`. 15/15 octo-vault test_vectors green + 10/10 octo-vault lib green + 193/193 octo-cap-macaroon lib green + clippy + fmt clean. |
+| 2026-08-23 | —          | RFC-0960 superseded by v3.5 (amendment `rfcs/accepted/economics/0960-v35-vault-path-taxonomy.md` 2026-08-23). This mission v3.0 row preserved per RFC process amendment-stacking discipline + per historical-mission-preservation principle (R19). v3.5 substrate landing owned by separate mission `0960-v3.5-landing`. Retro-supersession note added to Status block per audit 2026-08-24.                                                                                                                                                                                                                                                                                                                                                                    |
 
 ## Out of scope
 

@@ -17,6 +17,8 @@
 
 > **BLUEPRINT gate:** RFC-0960 reached Accepted v2.0 on 2026-07-23 (R1-R28 multi-round review closed; six companion RFCs promoted in lockstep). Per BLUEPRINT.md Mission Lifecycle, mission is CLAIMABLE. Claim filed 2026-07-23.
 
+**Retro-supersession (2026-08-24 audit, RFC-0960 v3.5 supersession):** Umbrella RFC-0960 bumped to v3.5 (2026-08-23) by amendment `rfcs/accepted/economics/0960-v35-vault-path-taxonomy.md` (Mesh Open Path vs Corporate Closed Path taxonomy on same substrate; chain_metadata + ledger_chain_registry + policy_registry + policy_kind_authority + ValueTransfer trait surface documented as PENDING landing per research §16 mission `vault-chain-metadata`). Mission text + doc text preserved per historical-mission-preservation + R19 scope discipline. Follow-on substrate landing owned by mission `0960-v3.5-landing` (OPEN 2026-08-24). Constraint variant count drift: mission spec §3 says "23 variants"; doc §3 says "25 variants" (RFC-0960 grew during v3.1-v3.5 amendments); doc count = ground truth.
+
 ## Summary
 
 Author the canonical navigation reference at `docs/architecture/grand-design.md` summarizing the 7-RFC economics stack (RFC-0960 umbrella + RFC-0961/0962/0963/0964/0965/0967 companions). The doc covers the WAL-primary architecture reframe (RFC-0960 v2.0), the four primitives (Vault, Capability, Reservation, Settlement), the 23-variant Constraint set, the audit-window state machine, the event-sourced ledger, the Economic VM, the Execution Envelope (RFC-0962), resource shard routing (RFC-0963), the Policy Object Graph (RFC-0967), the five new database-ergonomic primitives (Time Travel, Materialized Views, Event Store/CQRS, Git-Style Branches, Deterministic Cost Model), the multi-settlement + cross-chain surface, hierarchical vaults, and the central error code registry.
@@ -49,29 +51,29 @@ The doc is **navigation only** — every section points to the canonical RFC-096
 
 This mission is a documentation mission. Coverage is per **section** of the umbrella doc, not per code type.
 
-| RFC-0960 Section                           | Doc Section Pointer | For                                                  |
-| ------------------------------------------ | ------------------- | ---------------------------------------------------- |
-| §1 Architecture (WAL primary)              | Doc §1              | v2.0 reframe; capability-as-WAL-write-authorization  |
-| §1.1 Deterministic WAL Protocol            | Doc §1.1            | `WALSegment`, `WALEntry`                             |
-| §1.2 ExecutionEnvelope as WAL Projection   | Doc §1.1            | envelope → SQL ops → WAL entries                     |
-| §1.3 Capability as WAL-Write Authorization | Doc §1.3            | capability ↔ policy_id ↔ WAL entry                   |
-| §1.4 Strategic Positioning                 | Doc §1.4            | enterprise migration pitch                           |
-| §2 Primitives (4)                          | Doc §2              | Vault, Capability, Reservation, Settlement           |
-| §3 Constraint Set (23 variants)            | Doc §3              | Categorized table; encoded per RFC-0964              |
-| §4 Audit Window                            | Doc §4              | Reservation state machine                            |
-| §5 Event-Sourced Ledger                    | Doc §5              | `transfer_events` schema                             |
-| §6 Economic VM                             | Doc §6              | declarative policy language                          |
-| §7 Atomic Swaps + Cross-Chain              | Doc §7              | MultiSettlement                                      |
-| §8 Hierarchical Vaults                     | Doc §8              | capability-security lattice                          |
-| §9 Horizontal Scalability                  | Doc §9              | shard routing; → RFC-0963                            |
-| §10 Execution Envelope                     | Doc §10             | detailed; → RFC-0962                                 |
-| §14 Time Travel                            | Doc §14             | ASOF queries                                         |
-| §15 Materialized Views                     | Doc §15             | chained hash projection                              |
-| §16 Event Store/CQRS                       | Doc §16             | `event_log` + projection views                       |
-| §17 Git-Style Branches                     | Doc §17             | Branch + Merge first-class                           |
-| §18 Deterministic Cost Model               | Doc §18             | gas enum (DB-cost units)                             |
-| Central Error Code Registry                | Doc §20             | 33 codes from RFC-0960/0961/0962/0963/0964/0965/0967 |
-| Companion RFC map                          | Doc §21             | W0–W7 wave assignment                                |
+| RFC-0960 Section                            | Doc Section Pointer | For                                                                               |
+| ------------------------------------------- | ------------------- | --------------------------------------------------------------------------------- |
+| §1 Architecture (WAL primary)               | Doc §1              | v2.0 reframe; capability-as-WAL-write-authorization                               |
+| §1.1 Deterministic WAL Protocol             | Doc §1.1            | `WALSegment`, `WALEntry`                                                          |
+| §1.2 ExecutionEnvelope as WAL Projection    | Doc §1.1            | envelope → SQL ops → WAL entries                                                  |
+| §1.3 Capability as WAL-Write Authorization  | Doc §1.3            | capability ↔ policy_id ↔ WAL entry                                                |
+| §1.4 Strategic Positioning                  | Doc §1.4            | enterprise migration pitch                                                        |
+| §2 Primitives (4)                           | Doc §2              | Vault, Capability, Reservation, Settlement                                        |
+| §3 Constraint Set (25 variants — post v3.5) | Doc §3              | Categorized table; encoded per RFC-0964; mission spec said "23 variants" pre-v3.5 |
+| §4 Audit Window                             | Doc §4              | Reservation state machine                                                         |
+| §5 Event-Sourced Ledger                     | Doc §5              | `transfer_events` schema                                                          |
+| §6 Economic VM                              | Doc §6              | declarative policy language                                                       |
+| §7 Atomic Swaps + Cross-Chain               | Doc §7              | MultiSettlement                                                                   |
+| §8 Hierarchical Vaults                      | Doc §8              | capability-security lattice                                                       |
+| §9 Horizontal Scalability                   | Doc §9              | shard routing; → RFC-0963                                                         |
+| §10 Execution Envelope                      | Doc §10             | detailed; → RFC-0962                                                              |
+| §14 Time Travel                             | Doc §14             | ASOF queries                                                                      |
+| §15 Materialized Views                      | Doc §15             | chained hash projection                                                           |
+| §16 Event Store/CQRS                        | Doc §16             | `event_log` + projection views                                                    |
+| §17 Git-Style Branches                      | Doc §17             | Branch + Merge first-class                                                        |
+| §18 Deterministic Cost Model                | Doc §18             | gas enum (DB-cost units)                                                          |
+| Central Error Code Registry                 | Doc §20             | 33 codes from RFC-0960/0961/0962/0963/0964/0965/0967                              |
+| Companion RFC map                           | Doc §21             | W0–W7 wave assignment                                                             |
 
 ## In Scope
 
@@ -171,6 +173,8 @@ This mission is a documentation mission. Coverage is per **section** of the umbr
 - [ ] **AC-6:** Every RFC reference uses bare-number form (RFC-0960, not RFC-0960 (Accepted v2.0))
 - [ ] **AC-7:** Prettier formatting clean (`npx prettier --write docs/architecture/grand-design.md`)
 - [ ] **AC-8:** Mission advances from `claimed/` to `with-pr/` once PR opened; to `archived/` once merged
+
+**Retro-supersession note (2026-08-24 audit, RFC-0960 v3.5 supersession):** Per audit findings 2026-08-24: (a) doc line count = 578 (over 200-400 target by 45%); (b) §3 Constraint Set count = 25 variants (mission spec said 23 pre-v3.5); (c) RFC-0960 umbrella now at v3.5 (per amendment `rfcs/accepted/economics/0960-v35-vault-path-taxonomy.md` 2026-08-23). Doc substantively complete; ACs left unchecked for future close-out pass + v3.5 cross-link update. Per R19 scope discipline + historical-mission-preservation: AC text preserved, retro-supersession note documents drift. v3.5 substrate landing owned by mission `0960-v3.5-landing`.
 
 ## Risks (this mission)
 

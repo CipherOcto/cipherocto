@@ -17,6 +17,8 @@ metadata:
     - 0206-009-adapter-crate-creation
     - RFC-0010
 status: OPEN
+
+**Retro-supersession (2026-08-24 Session 6 RFC-0008 audit + RFC-0010-v17):** RFC-0010-v17 is at v1.9.2 Accepted (`rfcs/accepted/process/0010-v17-chain-id-registration-authority.md`) — chain-id registration authority + `ledger_chain_registry` table schema. Per RFC §0 Status, "P0 BLOCKER" = substrate-side migration `v017__add_chain_metadata_and_policy_registry.sql` (per RFC-0206 v3.0 §Substrate Migration v015-v018) remains PENDING on disk via Phase 1 mission `vault-chain-metadata` per research doc §16. Audit reveals no `vault-chain-metadata` mission file exists in `missions/open/` or `missions/claimed/`. RFC-0008 audit (covered in `0008-alignment-coordination` filed `92c7a806`) confirmed RFC-0008 is meta-RFC with 0 substrate work; 95/95 RFC coverage G1 metric. RFC-0010-v17 substrate audit: `ledger_chain_registry` table NOT YET MIGRATED to `crates/quota-router-storage/migrations/` (no v017 file exists). Per claim-and-implement scope, this substrate migration is the natural follow-up commit after Session 6 audit. NO PUSH per `feedback_initiation_user_only`.
 ---
 
 # Mission `0010-alignment-coordination` v1.0 — OPEN 2026-08-24

@@ -14,6 +14,7 @@ phase: orthogonal
 layer: B
 rfc_authority: RFC-0206
 tvs: []
+status: OPEN
 ---
 
 # Mission `0206-006-cipherocto-policy-rename-alignment` — OPEN 2026-08-20

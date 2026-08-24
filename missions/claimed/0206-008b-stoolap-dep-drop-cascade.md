@@ -12,6 +12,7 @@ metadata:
     - 0206-002-layer-b-type-renames
     - 0206-008-layer-b-type-renames-expansion
     - RFC-0206
+status: OPEN
 ---
 
 # Mission `0206-008b-stoolap-dep-drop-cascade` v1.0 — OPEN 2026-08-20

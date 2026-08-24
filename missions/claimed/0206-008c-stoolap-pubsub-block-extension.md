@@ -11,6 +11,7 @@ metadata:
     - 0206-001-substrate-newtype
     - 0206-008b-stoolap-dep-drop-cascade
     - RFC-0206
+status: OPEN
 ---
 
 # Mission `0206-008c-stoolap-pubsub-block-extension` v1.0 — OPEN 2026-08-20

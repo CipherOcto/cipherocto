@@ -6,7 +6,7 @@ Accepted (2026-07-27, v1.6 amendment 2026-08-19)
 
 > **Promotion note:** Promoted from Draft to Accepted on 2026-07-27 after single-round review. Round-1 fixes: (H1) `wire_to_raw` was self-referential — clarified the version_discriminator is RE-DERIVED from the wire hash via the binding-domain, not stored; (H2) `RawDid` made a structured type with explicit `hash` + `version_discriminator` fields rather than `#[repr(C)] [u8; 52]`; (M1) `parse` step 3 tightened to reject bare `:name` literals during the deprecation window; (L1) added `mint(pubkey)` algorithm so the canonical path from a fresh pubkey to a raw DID is documented.
 
-> **Note:** This RFC is a sibling of RFC-0009. The two are coupled: RFC-0009 §Identity Struct specifies the canonical wire form `did:octo:z<base58btc of 32 bytes>`; this RFC introduces the codec crate `octo-ident` and the dual-form storage/wire split.
+> **Note:** This RFC is a sibling of RFC-0009. The two are coupled: RFC-0009 specifies the canonical wire form `did:octo:z<base58btc of 32 bytes>`; this RFC introduces the codec crate `octo-ident` and the dual-form storage/wire split.
 
 ## Authors
 
@@ -69,7 +69,7 @@ The 347-literal surface (test fixtures + integration tests + market tests) uses 
 | Codec Author        | `octo_ident::DidCodec` impl block | translate raw bytes ↔ wire string                                | stateless (transform-only function)                          | This RFC §Specification     |
 | Identity Resolver   | `octo_ident::DidResolver` trait   | resolve canonical form + detect legacy form during compat window | stateless (lookup function)                                  | This RFC §Specification     |
 | Recorded Subject    | `RecorderDid (52 bytes)`          | read/write reputation events on the canonical store              | persistent across rotations (DID rotation per RFC-0968 §3.7) | RFC-0968 §3                 |
-| Wallet Audience     | `AudienceId (W3C wire form)`      | derive capability key per RFC-0009 §Capability Keys              | persistent until identity rotation                           | RFC-0009 §Capability Keys   |
+| Wallet Audience     | `AudienceId (W3C wire form)`      | derive capability key per RFC-0009                              | persistent until identity rotation                           | RFC-0009                    |
 | DID Storage Backend | `DidRegistry` trait (v1.3)        | persist + retrieve `DidDocument` records keyed by canonical DID  | persistent until DID rotation or revocation                  | This RFC §Storage Extension |
 
 ### Stateful actors
@@ -108,7 +108,7 @@ graph LR
 
 ```rust
 /// Raw 52-byte DID storage form. Encoded `BLAKE3-256 hash (32 bytes) || version discriminator (20 bytes)`.
-/// Aliases RFC-0968 §3 `RecorderDid` storage form (post-v011 migration; see Implicit Assumptions Audit).
+/// Same byte layout as RFC-0968 §3 `RecorderDid` storage form (post-v011 migration; see Implicit Assumptions Audit).
 pub struct RawDid {
     pub hash: [u8; 32],
     pub version_discriminator: [u8; 20],
@@ -200,7 +200,7 @@ The codec is **deterministic across compilers and platforms** (RFC-0008 Class A)
 - Encoding round-trip is byte-exact for any input.
 - Decoding is byte-exact for any input.
 - The version discriminator appends **exactly 20 zero bytes** (NOT a random IV) so two implementations hashing the same subject pubkey produce identical raw bytes.
-- Base58btc alphabet is Bitcoin (RFC-0009 §Identity Struct); no lowercase-variant ambiguity.
+- Base58btc alphabet is Bitcoin (RFC-0009); no lowercase-variant ambiguity.
 
 ### RFC-0008 Execution Class Mapping
 
@@ -416,7 +416,7 @@ on the raw-string path.
 #### Data Structures
 
 ```rust
-/// Typed chain-namespace discriminator (RFC-0010 v1.4).
+/// Typed chain-namespace discriminator (RFC-0010 v1.6).
 ///
 /// `ChainId` is a literal-string handle (operational ergonomics);
 /// `Namespace` is the canonical typed representation that anchors
@@ -473,7 +473,7 @@ pub enum ChainNamespaceError {
 
 impl ChainId {
     /// Construct a `ChainId` from a literal string. Validates the
-    /// namespace shape per RFC-0010 v1.4 §Validation.
+    /// namespace shape per RFC-0010.
     ///
     /// # Errors
     /// Returns `ChainNamespaceError` variants if the literal is
@@ -586,11 +586,11 @@ namespace ships as the only initial entry; subsequent deployments
 allocate new entries via RFC amendment.
 
 ```rust
-/// RFC-0010 v1.4 §RFC-allocated namespaces.
+/// RFC-0010 v1.6 §RFC-allocated namespaces.
 ///
 /// Production CipherOcto deployments MUST use a tag from this
 /// table; user-extension chains fall in the `User` variant and
-/// require operator attestation per RFC-0862 §Governance.
+/// require operator attestation per RFC-0862.
 pub const RFC_CHAIN_NAMESPACES: &[[u8; 15]] = &[
     /// Canonical CipherOcto mainnet deployment.
     CIPHEROCTO_MAINNET_TAG,
@@ -676,7 +676,7 @@ substrate) and must land here for the Layer direction to hold.
 Production deployments need:
 
 1. **`chain_depth` + `chain_parent`**: enables DID rotation flows
-   (RFC-0010 v1.3 §Compatibility) where a rotated DID links back
+   (RFC-0010 v1.6 §Compatibility) where a rotated DID links back
    to its predecessor for revocation propagation.
 2. **`verification_method`**: enables W3C DID Core 1.0 §Verification
    Method relationships (Ed25519 / BLS12-381 / future PQC) for
@@ -694,7 +694,7 @@ v1.5 makes all 7 fields `pub` and adds `VerificationMethod` enum.
 #### Data Structures
 
 ```rust
-/// Rich DID Document (RFC-0010 v1.5).
+/// Rich DID Document (RFC-0010 v1.6).
 ///
 /// v1.3 ships the minimum surface; v1.5 extends with chain-rotation
 /// fields + W3C DID Core 1.0 verification relationships. Lives in
@@ -727,7 +727,7 @@ pub struct DidDocument {
     pub assertion_method: Vec<String>,
 }
 
-/// Verification method relationship (RFC-0010 v1.5).
+/// Verification method relationship (RFC-0010 v1.6).
 ///
 /// Same composition pattern as `CapabilitySpec` in RFC-0957-A1:
 /// typed-discriminator + payload, no central enum that future
@@ -864,7 +864,7 @@ pub enum DidError {
     InvalidEncoding,
     /// Decoded payload is not 32 bytes (wire) or 52 bytes (legacy wire).
     InvalidLength,
-    /// Hash mismatch during decode (RFC-0009 §Verification step 1).
+    /// Hash mismatch during decode (RFC-0009).
     HashPartMismatch,
     /// 6-month deprecation window closed for legacy form.
     LegacyFormExpired,
@@ -889,7 +889,7 @@ Each error maps to a wire code in `crates/octo-reputation/src/error.rs::Reputati
 | W3C multibase-z form is byte-stable across W3C DID Core revisions                                                         | §Data Structures                      | Prefix `did:octo:z` is internally managed (no W3C method registration yet per IA-4); revision risk is low              | Wire form is gated on `did:octo:` namespace owned by CipherOcto, not on W3C registration                                                                                                                         |
 | 6-month deprecation window is communicated to downstream consumers before closure                                         | §parse step 3                         | Operators depending on legacy form fail at parse                                                                       | Mission C (deprecation) flips the gate; cli flag `--disable-legacy-did-deprecation` extends for an operator who needs more time                                                                                  |
 | BLAKE3-256 of `(canonical binding domain \|\| subject pubkey)` is what the codec expects                                  | §wire_to_raw step 5                   | If the reputation layer stored something else (e.g. SHA-256), wire decode fails with `HashPartMismatch`                | Pre-flight check: codec is invoked only on rows persisted under known migrations. Migrations v001-v010 are checked into the registry.                                                                            |
-| Base58btc alphabet equals Bitcoin base58btc                                                                               | §raw_to_wire step 2                   | Encoding differs across implementations → wire forms diverge                                                           | Reference impl: the canonical base58btc alphabet is `b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"` (matches RFC-0009 §Identity Struct). Codec crate's test suite includes 10 canonical vectors. |
+| Base58btc alphabet equals Bitcoin base58btc                                                                               | §raw_to_wire step 2                   | Encoding differs across implementations → wire forms diverge                                                           | Reference impl: the canonical base58btc alphabet is `b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"` (matches RFC-0009). Codec crate's test suite includes 10 canonical vectors. |
 
 ### Categories Audited
 
@@ -992,7 +992,7 @@ Each error maps to a wire code in `crates/octo-reputation/src/error.rs::Reputati
 
 - F1: W3C DID method registration (IA-4). Out of MVP scope.
 - F2: Multi-chain DID resolution. **Substrate landed in v1.4** (`ChainNamespace` typed newtype + `ChainId` validator); resolver-node cross-chain routing logic remains future work. Tracked by `missions/open/0010-f2-multi-chain-did-resolution.md` (BLOCKED on this RFC per memory `mission-gap-closure-priorities-2026-08-10`).
-- F3: Capability key derivation against the codec (extend RFC-0009 §Capability Keys).
+- F3: Capability key derivation against the codec (extend RFC-0009).
 - F4: **Wallet audience validation (closed 2026-08-08 audit; landed in v1.2).** `octo-wallet::AudienceId::from_str` at `crates/octo-wallet/src/identity.rs` accepts any non-empty string and MUST validate via `octo_ident::CanonicalCodec::parse(s, false)` to enforce canonical wire-form parsing at every entry point. Tracked by `missions/claimed/0010-d-wallet-audience-validation.md`.
 - F5: **DID storage trait extension (additive in v1.3).** `crates/octo-ident/` does NOT currently expose a public storage trait — the codec crate owns canonical encoding only, not the persistence layer. The Phase 1 MVP `IdentityResolverNode` (mission `0871b-identity-resolver-node`) returns a placeholder `public_key` derived from `RawDid::hash` because the storage backend substrate is missing. v1.3 introduces a `DidRegistry` trait + reference impls so production deployments can persist + resolve real DID Documents without an in-process placeholder. Tracked by `missions/open/0871b-storage-backend.md` (BLOCKED on this RFC per memory `mission-gap-closure-priorities-2026-08-10`).
 - F6: **Cross-domain DID resolution (resolver chains).** Out of scope for this RFC — owned by RFC-0871 §Future Work. Resolver chains traverse multiple specialized nodes (resolver hops + cross-domain authorization); needs the `ResolverBackend` typed view over `DidRegistry` (separate amendment once F5 substrate lands). Tracked by `missions/open/0871b-cross-domain-resolution.md`.
@@ -1012,8 +1012,8 @@ Why the dual storage/wire split? Reputation storage already shipped migrations v
 | 1.1     | 2026-08-03 | Accepted (audit)     | Audit pass: stripped `(Process)`/`(Economics)` category parens from RFC references + H1 title per CLAUDE.md referencing rule; added §Economic Analysis (N/A justification); converted §Implementation Phases to `- [ ]` checkboxes per template §693; expanded Version History with Draft → Accepted progression                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | 1.2     | 2026-08-08 | Accepted (amendment) | Added F4 (Wallet audience validation) per 2026-08-08 specialized node protocol research. `AudienceId::from_str` must call `CanonicalCodec::parse(s, false)` rather than accept any non-empty string. Foundation for RFC-0871 (specialized node protocol envelope) where `from_did: WireDid` is validated at every envelope boundary. Cross-references: `rfcs/accepted/networking/0871-specialized-node-protocol-envelope.md`, `docs/research/2026-08-08-specialized-node-protocol-research.md`                                                                                                                                                                                                                                                                                                 |
 | 1.3     | 2026-08-10 | Accepted (amendment) | Added §Storage Extension: `DidRegistry` trait in `crates/octo-ident/` (Layer B substrate) + `InMemoryDidRegistry` test impl + `StoolapDidRegistry` production impl in `crates/quota-router-storage/` (cipherocto-side migration v008). Mirrors `HolderRegistry` (RFC-0957-A1) trait shape. Unblocks mission `0871b-storage-backend` (BLOCKED on this RFC per memory `mission-gap-closure-priorities-2026-08-10`). Cross-instance coordination (F7) + `ResolverBackend` typed view (F6) + multi-chain resolution (F2) + rich DID Documents explicitly OUT of scope — owned by future RFC-0862 amendment / RFC-0871 §Future Work / F2 future work / future amendment respectively. F4 status moved to "closed" (landed in v1.2). New §Roles and Authorities row for `DID Storage Backend` actor. |
-| 1.4     | 2026-08-11 | Accepted (amendment) | Added §ChainId Namespace Extension: `ChainNamespace` typed newtype + `NamespaceVariant` enum (`Rfc`/`User`/`Reserved`) + `ChainId::new` now returns `Result<_, ChainNamespaceError>` (validator rejects empty / >64-char / control-char literals). New `ChainId::new_unchecked` escape hatch preserves pre-v1.4 behavior for internal callers; pre-v1.4 `ChainId::new("cipherocto-mainnet")` and similar valid literals remain correct (validation is a strict subset of pre-v1.4 acceptance). RFC-allocated namespace table ships with `CIPHEROCTO_MAINNET` as the only initial entry; user-extension chains parse through `NamespaceVariant::User`. 17-byte canonical serialization (`canonical_bytes`/`from_canonical_bytes`) anchors WAL entries + `GovernanceAttestation.chain_id` (per RFC-0862 v1.3 §Roles `chain_id: ChainId` field) + RPC audit logs. Unblocks mission `0010-f2-multi-chain-did-resolution` (BLOCKED on this RFC); F2 routing logic itself is a follow-on amendment. Cross-instance coordination (F7) + `ResolverBackend` typed view (F6) + rich DID Documents (F8) remain OUT of scope here. |
-| 1.5     | 2026-08-11 | Accepted (amendment) | Added §Rich DidDocument Extension: `DidDocument` extends from v1.3 `(public_key, revoked)` to 7-field struct (`chain_depth`, `chain_parent`, `verification_method`, `authentication`, `assertion_method`). New `VerificationMethod` enum (`Ed25519{public_key: [u8; 32]}` / `Bls12381{public_key: [u8; 48]}`) uses 128-bit UUID-discriminator + variant-payload shape per [[cipherocto-design-principles]] §Extension over enumeration (future PQC variants land via amendment). New `DidDocument::v1_minimal(public_key, revoked)` backward-compatible constructor preserves v1.3 call sites. New `DidDocument::authenticates(key_id)` method enables W3C DID Core 1.0 authentication-reference gating (capability issuer downstream). Cross-RFC consistency guard: v1.5 `DidDocument` byte-exact with the spec shape referenced from RFC-0862 v1.3 §Specification §Substrate types §DidDocument; no live-writer on the rich fields yet — concrete wire consumers land with F8 migration. Did NOT update the RFC-0862 v1.3 inline comment "v1.4 amendment" → out-of-band, follow-on if the comment drift surfaces in review. Unblocks mission `0010-f8-rich-did-documents` (BLOCKED on this RFC); F8 migration itself is a follow-on (Stoolap schema adding 5 columns). Cross-instance coordination (F7) + `ResolverBackend` typed view (F6) + multi-chain routing (F2 routing) remain OUT of scope here. |
+| 1.4     | 2026-08-11 | Accepted (amendment) | Added §ChainId Namespace Extension: `ChainNamespace` typed newtype + `NamespaceVariant` enum (`Rfc`/`User`/`Reserved`) + `ChainId::new` now returns `Result<_, ChainNamespaceError>` (validator rejects empty / >64-char / control-char literals). New `ChainId::new_unchecked` escape hatch preserves pre-v1.4 behavior for internal callers; pre-v1.4 `ChainId::new("cipherocto-mainnet")` and similar valid literals remain correct (validation is a strict subset of pre-v1.4 acceptance). RFC-allocated namespace table ships with `CIPHEROCTO_MAINNET` as the only initial entry; user-extension chains parse through `NamespaceVariant::User`. 17-byte canonical serialization (`canonical_bytes`/`from_canonical_bytes`) anchors WAL entries + `GovernanceAttestation.chain_id` (per RFC-0862 §Roles `chain_id: ChainId` field) + RPC audit logs. Unblocks mission `0010-f2-multi-chain-did-resolution` (BLOCKED on this RFC); F2 routing logic itself is a follow-on amendment. Cross-instance coordination (F7) + `ResolverBackend` typed view (F6) + rich DID Documents (F8) remain OUT of scope here. |
+| 1.5     | 2026-08-11 | Accepted (amendment) | Added §Rich DidDocument Extension: `DidDocument` extends from v1.3 `(public_key, revoked)` to 7-field struct (`chain_depth`, `chain_parent`, `verification_method`, `authentication`, `assertion_method`). New `VerificationMethod` enum (`Ed25519{public_key: [u8; 32]}` / `Bls12381{public_key: [u8; 48]}`) uses 128-bit UUID-discriminator + variant-payload shape per [[cipherocto-design-principles]] §Extension over enumeration (future PQC variants land via amendment). New `DidDocument::v1_minimal(public_key, revoked)` backward-compatible constructor preserves v1.3 call sites. New `DidDocument::authenticates(key_id)` method enables W3C DID Core 1.0 authentication-reference gating (capability issuer downstream). Cross-RFC consistency guard: v1.5 `DidDocument` byte-exact with the spec shape referenced from RFC-0862 §Specification §Substrate types §DidDocument; no live-writer on the rich fields yet — concrete wire consumers land with F8 migration. Did NOT update the RFC-0862 inline comment "v1.4 amendment" → out-of-band, follow-on if the comment drift surfaces in review. Unblocks mission `0010-f8-rich-did-documents` (BLOCKED on this RFC); F8 migration itself is a follow-on (Stoolap schema adding 5 columns). Cross-instance coordination (F7) + `ResolverBackend` typed view (F6) + multi-chain routing (F2 routing) remain OUT of scope here. |
 | 1.6     | 2026-08-19 | Accepted (amendment) | Added §32-byte Addendum: `ChainId::as_bytes()` returns `[u8; 32]` via `BLAKE3("cipherocto/chain/v1/" || chain_string)`. Domain-separator convention matches `AssetId::as_bytes` (`"cipherocto/asset/v1/"`) and `vault_id` (`"cipherocto/vault/v1/"`) per Layer A frozen substrate pattern (§20.3.2). Storage column type `BLOB(32)` (per RFC-0960 v3.0 + RFC-0900 v2.0 + 0900-d1) carries this 32-byte form. Coexists with v1.4 `ChainNamespace::canonical_bytes()` 17-byte form (legacy WAL/audit log wire form) — both serve distinct purposes (storage PK vs WAL/audit log). Implementation mission `0010-c-32-byte-addendum`; 3 byte-exact TV in `crates/octo-ident/tests/tv_0010_chain_id_32byte.rs` (TV-1 determinism, TV-2 BLAKE3 known-vector `eb200e7d...411eeab`, TV-3 17-byte + 32-byte coexistence). Storage substrate unchanged (already uses `[u8; 32]`); only the canonical derivation method is newly specified. Cross-instance coordination (F7) + `ResolverBackend` typed view (F6) + multi-chain routing (F2 routing) remain OUT of scope here. |
 
 ## Related RFCs

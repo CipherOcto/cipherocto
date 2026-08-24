@@ -46,7 +46,7 @@ This mission captures the audit findings + references the 1 new sibling mission 
 
 ### Gap 1: 6 policy-kind traits PENDING landing
 
-RFC-0967-A1 v1.9.2 §v1.7 row documents 6-trait surface (AuthorityPolicy, MembershipPolicy, InteropPolicy, BurnPolicy, WorkflowKind, AuditPolicy). Per v1.9.2 VH row 1.5: all 6 traits are "RFC-defined extension pending substrate landing via 0206-001 v3.0 + 0206-009".
+RFC-0967-A1 v1.9.2 VH row v1.7 row documents 6-trait surface (AuthorityPolicy, MembershipPolicy, InteropPolicy, BurnPolicy, WorkflowKind, AuditPolicy). Per v1.9.2 VH row 1.5: all 6 traits are "RFC-defined extension pending substrate landing via 0206-001 v3.0 + 0206-009".
 
 **Coverage gap:** `rg 'AuthorityPolicy|MembershipPolicy|InteropPolicy|BurnPolicy|WorkflowKind|AuditPolicy' crates/octo-policy/src/ crates/octo-policy-storage/src/` returns 0 hits. Mission `0967-a-policy-object-graph` (LANDED 2026-08-07) implements PolicyObject + intersect + is_subgraph only — 6 new traits not yet landed.
 
@@ -62,7 +62,7 @@ RFC-0967-A1 v1.9.2 §2.6 table documents 30 per-policy-kind UUIDv5 fixtures (6 A
 
 ### Gap 3: `domain_separators` (canonical `octo/` prefix) PENDING landing
 
-RFC-0967-A1 v1.9.2 §v1.7 row + F-R8-DOMSEP-PREFIX-DRIFT: `AUDIT_VARIANT_HASH_DOMAIN` migrated from `cipherocto/audit/v1/` → canonical `octo/audit/v1/`. Per F-R8 fix-all cascade.
+RFC-0967-A1 v1.9.2 VH row v1.7 row + F-R8-DOMSEP-PREFIX-DRIFT: `AUDIT_VARIANT_HASH_DOMAIN` migrated from `cipherocto/audit/v1/` → canonical `octo/audit/v1/`. Per F-R8 fix-all cascade.
 
 **Coverage gap:** No `domain_separators.rs` module exists on disk. AuditPolicy `AUDIT_VARIANT_HASH_DOMAIN` constant stale or absent.
 
@@ -70,7 +70,7 @@ RFC-0967-A1 v1.9.2 §v1.7 row + F-R8-DOMSEP-PREFIX-DRIFT: `AUDIT_VARIANT_HASH_DO
 
 ### Gap 4: `PolicyRegistry` trait extension PENDING landing
 
-RFC-0967-A1 v1.9.2 §PolicyRegistry documents 3-method trait (lookup_policy, register_policy, delegate_authority) consuming v016 `policy_registry` + `policy_kind_authority` tables from `0960-v3.5-landing`.
+RFC-0967-A1 v1.9.2 PolicyRegistry trait documents 3-method trait (lookup_policy, register_policy, delegate_authority) consuming v016 `policy_registry` + `policy_kind_authority` tables from `0960-v3.5-landing`.
 
 **Coverage gap:** No `policy_registry.rs` module in `crates/octo-policy-storage/src/`. Adapter crate substrate exists per `0206-009` LANDED per MEMORY; trait extension PENDING.
 

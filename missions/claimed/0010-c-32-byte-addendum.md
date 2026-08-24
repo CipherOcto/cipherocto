@@ -11,6 +11,8 @@ depends_on:
   - 0010-f8
 ---
 
+> **Retro-supersession (2026-08-24 audit):** Mission substrate effectively LANDED — `ChainId::as_bytes()` method present at `crates/octo-ident/src/chain.rs:137` (BLAKE3 derivation via domain separator `b"cipherocto/chain/v1/"` per Layer A frozen substrate pattern); `crates/octo-ident/tests/tv_0010_chain_id_32byte.rs` (NEW file, 3 byte-exact TV) PASSES (TV-1 determinism + TV-2 known-vector `eb200e7d...411eeab` + TV-3 17-byte + 32-byte coexistence); RFC-0010 v1.6 amendment VH row at `rfcs/accepted/process/0010-canonical-did-codec.md:1017` documents the 32-byte addendum + cross-ref to this mission + the 3 TV; `cargo test -p octo-ident --lib` 69/69 PASS (no regression in `canonical_bytes()` 17-byte form); `cargo clippy -p octo-ident --test tv_0010_chain_id_32byte -- -D warnings` clean. AC-1, AC-2, AC-3, AC-4, AC-5, AC-6, AC-8 PASS. Only AC-7 (all-targets clippy on `octo-ident`) blocked by pre-existing borsh generic bounds defect in `rich_did_document_tv` (per F-P5.2-3 RETAIN framework — substrate fabrication category, separate mission `0010-f8-rich-did-documents-clippy-fix`). Mission status preserved OPEN per historical-mission-preservation + R19 scope discipline; substrate landing owned by inline retro-supersession note (not separate closure pass).
+
 # 0010-c — RFC-0010 32-byte addendum (ChainId::as_bytes)
 
 ## Context
@@ -55,7 +57,7 @@ form (legacy WAL/audit log wire form). The 32-byte form is additive
 - **AC-1:** `ChainId::as_bytes()` method added at
   `crates/octo-ident/src/chain.rs` returning `[u8; 32]`,
   implementation: `*blake3::hash(format!("cipherocto/chain/v1/{}",
-  self.0).as_bytes()).as_bytes()` (or `Hasher::new()` form).
+self.0).as_bytes()).as_bytes()` (or `Hasher::new()` form).
 - **AC-2:** RFC-0010 v1.5 → v1.6 §Status version bump +
   §Version History v1.6 row documenting the 32-byte addendum.
 - **AC-3:** RFC-0010 §Storage Substrate subsection (new or

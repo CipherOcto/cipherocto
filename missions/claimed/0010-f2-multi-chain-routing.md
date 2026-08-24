@@ -7,6 +7,8 @@ open (filed 2026-08-11). Builds on
 `register_in_chain` + `resolve_in_chain` trait methods + v011
 schema migration).
 
+> **Retro-supersession (2026-08-24 audit):** Substrate LANDED 2026-08-11. `IDENTITY_RESOLVE_WITH_CHAIN` payload kind UUID `0x0009:0001:...:0005` in `crates/octo-protocol/src/payload_kind.rs` + `IDENTITY_RESOLVER_PAYLOAD_KINDS` array + `identity_payload_kinds_are_distinct` test (5 distinct kinds). `ResolveWithChainHandler` + `ResolveWithChainRequest` in `crates/octo-identity-resolver-node/src/handlers/resolve_with_chain.rs` (NEW) + `handle_envelope` dispatch arm + re-exports. 1 TV `resolve_with_chain_isolates_dids_across_chains` in `crates/octo-identity-resolver-node/tests/resolve_with_chain.rs` (102-line test exercising dispatch + handler + mainnet vs partner chain isolation). Mission status preserved `open` per historical-mission-preservation + R19 scope discipline; bare version pin (`RFC-0010 v1.4`) → `RFC-0010` per CLAUDE.md §RFC Reference Conventions.
+
 ## Problem
 
 RFC-0010 v1.4 introduced `ChainId` + `ChainNamespace` substrate.
@@ -27,6 +29,7 @@ the `IDENTITY_REGISTER` / `IDENTITY_REVOKE` mediation paths
 which always reads the mainnet namespace.
 
 Recon:
+
 - Identity sub-namespace `0x0009:0001:...` slots: `0001` resolve,
   `0002` register, `0003` revoke, `0004` resolve_chain. Next
   free: `0005` (= `IDENTITY_RESOLVE_WITH_CHAIN`).
@@ -110,8 +113,7 @@ for existing callers. The new payload kind is purely additive.
 - [ ] `IDENTITY_RESOLVER_PAYLOAD_KINDS` array gains the new kind.
 - [ ] `identity_payload_kinds_are_distinct` test updated to assert
       5 distinct kinds.
-- [ ] NEW: `handlers/resolve_with_chain.rs` with `ResolveWithChainRequest`
-      + `ResolveWithChainHandler` + borsh (de)serialization.
+- [ ] NEW: `handlers/resolve_with_chain.rs` with `ResolveWithChainRequest` + `ResolveWithChainHandler` + borsh (de)serialization.
 - [ ] `IdentityResolverNode::handle_envelope` adds the dispatch arm.
 - [ ] NEW TV `tests/resolve_with_chain.rs` (1 TV):
       `resolve_with_chain_isolates_dids_across_chains`: register same

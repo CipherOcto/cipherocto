@@ -4,7 +4,9 @@
 
 open (filed 2026-08-11). Builds on
 `0010-f2-multi-chain-did-resolution` (commit `f6478bda`, RFC-0010
-v1.4 ACCEPTED) + `0010-f8-rich-did-storage` (commit `269cf923`).
+ACCEPTED) + `0010-f8-rich-did-storage` (commit `269cf923`).
+
+> **Retro-supersession (2026-08-24 audit):** Substrate LANDED 2026-08-11 (commit `a7efaabb`). `pub trait DidRegistry: Send + Sync + 'static` at `crates/octo-ident/src/registry.rs:71` (gains two ADDITIVE methods `register_in_chain` at `:199` + `resolve_in_chain` at `:219` with default impls forwarding to single-chain methods per Layer B additive-only rule). `MAINNET_CHAIN_ID_BYTES` const + 4 SQL filter updates in `crates/octo-ident-storage/src/did_registry.rs` (re-exported from `crates/octo-ident-storage/src/lib.rs:34`). Migration file `v011__add_chain_id_namespace.sql` exists in `crates/quota-router-storage/migrations/` (per `0206-009` adapter crate pattern — substrate moved to `octo-ident-storage` crate but migrations remained in quota-router-storage path; cross-references corrected). 1 TV `register_in_chain_isolates_dids_across_chains` in `crates/octo-ident-storage/tests/chain_namespace.rs`. Mission status preserved `open` per historical-mission-preservation + R19 scope discipline; bare version pin (`RFC-0010 v1.4`) → `RFC-0010` per CLAUDE.md §RFC Reference Conventions.
 
 ## Problem
 
@@ -17,6 +19,7 @@ blocks RFC-0010 v1.4's intent that each `(chain_id, canonical_hash)`
 pair is a unique registry row.
 
 Recon:
+
 - `octo-ident` (Layer B) — `ChainId` + `ChainNamespace` substrate
   LANDED (commit `f6478bda`). 17-byte canonical form is stable.
 - `quota-router-storage` (Layer B-adjacent) — `did_registry`
@@ -42,6 +45,7 @@ ALTER TABLE did_registry ADD COLUMN chain_id BLOB NOT NULL
 The default is the 17-byte canonical encoding of
 `CIPHEROCTO_MAINNET` (`ChainId::default()` →
 `ChainNamespace::Rfc` + tag + length=18):
+
 ```
 variant = 0x01 (Rfc)
 tag     = 0xeb3071b5e113330c8763 09 54e3cc08 (CIPHEROCTO_MAINNET_TAG, 15 bytes)
@@ -103,7 +107,7 @@ impls (single-chain mode for tests; production uses stoolap).
 - `register` (unchanged signature): SQL gains `chain_id` bind;
   internally writes `chain_id = MAINNET_CHAIN_ID_BYTES`.
 - `resolve` (unchanged signature): SQL gains `WHERE chain_id = ?
-  AND canonical_hash = ?`.
+AND canonical_hash = ?`.
 - `revoke` (unchanged signature): same SQL change as `register`.
 - `list` (unchanged signature): filter on `chain_id = MAINNET_CHAIN_ID_BYTES`.
 - `register_in_chain` / `resolve_in_chain` (new methods): SQL
@@ -130,17 +134,17 @@ impls (single-chain mode for tests; production uses stoolap).
   - `MAINNET_CHAIN_ID_BYTES` const matches
     `ChainId::default().namespace().unwrap().canonical_bytes()`.
 - [ ] `octo-ident::DidRegistry` trait gains
-  `register_in_chain` + `resolve_in_chain` with default impls.
+      `register_in_chain` + `resolve_in_chain` with default impls.
 - [ ] NEW TV `stoolap_chain_namespace.rs` (1 TV):
-  `register_in_chain_isolates_dids_across_chains`: register same
-  `canonical_hash` on two distinct `ChainId` values (e.g.,
-  `cipherocto-mainnet` + a user-extension chain); both resolve
-  independently under their respective chain.
+      `register_in_chain_isolates_dids_across_chains`: register same
+      `canonical_hash` on two distinct `ChainId` values (e.g.,
+      `cipherocto-mainnet` + a user-extension chain); both resolve
+      independently under their respective chain.
 - [ ] Existing TV in `tests/stoolap_rich_did.rs` +
-  `tests/stoolap_migration_chain.rs` + `tests/stoolap_idempotent_alter.rs`
-  still pass (no regression; chain_id = mainnet for existing tests).
+      `tests/stoolap_migration_chain.rs` + `tests/stoolap_idempotent_alter.rs`
+      still pass (no regression; chain_id = mainnet for existing tests).
 - [ ] Migration chain test gains `migration_chain_reaches_v011_on_fresh_db`
-  + `migration_chain_creates_chain_id_column`.
+  - `migration_chain_creates_chain_id_column`.
 
 ## Files
 

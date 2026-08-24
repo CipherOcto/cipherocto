@@ -6,6 +6,8 @@ claimed (2026-08-11). Mission moved `open/` → `claimed/` after plan
 approval; v0.2 corrects encoding (borsh, not serde_json) + field
 names per recon.
 
+> **Retro-supersession (2026-08-24 audit):** Substrate LANDED 2026-08-11. Per `0206-009` adapter crate pattern, StoolapDidRegistry moved from `crates/quota-router-storage/src/stoolap_did_registry.rs` → `crates/octo-ident-storage/src/did_registry.rs` (mission text path references preserved verbatim per historical-mission-preservation; actual substrate = `octo-ident-storage`). Migration files `v009__add_service_endpoints_and_controllers.sql` + `v010__add_verification_methods_and_capability_delegations.sql` exist in `crates/quota-router-storage/migrations/`. Borsh serialization of 4 rich fields at `crates/octo-ident-storage/src/did_registry.rs:162-173` (`borsh::to_vec(&doc.service_endpoints)` etc.) + SQL bind params at `:202-204,229-231`. `cargo test -p octo-ident-storage --lib` 20/20 PASS. Mission status preserved `claimed` per historical-mission-preservation + R19 scope discipline.
+
 **Substrate:** RFC-0010 v1.5 ACCEPTED 2026-08-11 (commit `a5ffd8ef`,
 mission `0010-f8-rich-did-documents`) added `service_endpoints` +
 `verification_methods` + `controllers` + `capability_delegations`
@@ -83,14 +85,14 @@ deserializing the rich fields).
 - [ ] `StoolapDidRegistry::register` writes 4 new BLOB columns via borsh
 - [ ] `StoolapDidRegistry::resolve` reads + borsh-decodes; NULL → empty `Vec`
 - [ ] 5 new unit TV in
-  `crates/quota-router-storage/tests/stoolap_rich_did.rs`:
+      `crates/quota-router-storage/tests/stoolap_rich_did.rs`:
   - `register_resolve_round_trip_preserves_rich_fields`
   - `register_upsert_overwrites_rich_fields`
   - `resolve_legacy_row_returns_empty_vevs`
   - `register_with_max_service_endpoints`
   - `register_with_max_verification_methods`
 - [ ] 1 integration TV:
-  `migration_chain_v008_to_v010`
+      `migration_chain_v008_to_v010`
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings`
       passes on `octo-ident` + `quota-router-storage`
 - [ ] `cargo fmt --all -- --check` passes
@@ -115,8 +117,9 @@ deserializing the rich fields).
 
 ## Cross-references
 
-- RFC-0010 v1.5 §ServiceEndpoint + §VerificationMethod +
-  §ControllerReference + §CapabilityDelegation
+- RFC-0010 rich-document substrate types (`ServiceEndpoint` +
+  `VerificationMethod` + `ControllerReference` + `CapabilityDelegation`
+  at `crates/octo-ident/src/rich_document.rs`)
 - Mission `0010-f8-rich-did-documents` (commit `a5ffd8ef`)
 - Mission `0871b-storage-backend` (commit `71f8d745`)
 - `crates/quota-router-storage/migrations/v008__create_did_registry.sql`
@@ -129,7 +132,7 @@ deserializing the rich fields).
 
 ## Version History
 
-| Version | Date       | Status   | Changes |
-| ------- | ---------- | -------- | ------- |
-| v0.1    | 2026-08-11 | open     | Filed after RFC-0010 v1.5 ACCEPTED; initial scope (wrong: serde_json encoding + wrong field names) |
-| v0.2    | 2026-08-11 | claimed  | Recon corrected: borsh encoding (existing `octo-ident/borsh` feature); field names corrected to `service_endpoints`, `verification_methods`, `controllers`, `capability_delegations` |
+| Version | Date       | Status  | Changes                                                                                                                                                                              |
+| ------- | ---------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| v0.1    | 2026-08-11 | open    | Filed after RFC-0010 v1.5 ACCEPTED; initial scope (wrong: serde_json encoding + wrong field names)                                                                                   |
+| v0.2    | 2026-08-11 | claimed | Recon corrected: borsh encoding (existing `octo-ident/borsh` feature); field names corrected to `service_endpoints`, `verification_methods`, `controllers`, `capability_delegations` |

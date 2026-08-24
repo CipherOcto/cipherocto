@@ -1,7 +1,10 @@
 # 0010-f2-multi-chain-did-resolution — Cross-chain DID resolution
 
 **Status:** claimed 2026-08-11
-**Substrate:** RFC-0010 v1.3 `DidRegistry` (LANDED 2026-08-11, commit `71f8d745`) + RFC-0010 v1.4 (ACCEPTED 2026-08-11, commit `8b80e124`) typed `ChainId` + `ChainNamespace`
+
+> **Retro-supersession (2026-08-24 audit):** Substrate LANDED 2026-08-11 (commit `f6478bda`). `pub struct ChainId(pub String)` at `crates/octo-ident/src/chain.rs:81` + `pub struct ChainNamespace` at `:220` + `pub enum NamespaceVariant` at `:308` + `CIPHEROCTO_MAINNET_TAG` const at `:55` + `ChainNamespace::canonical_bytes()` 17-byte form at `:257`. Mission status preserved `claimed` per historical-mission-preservation + R19 scope discipline. Inline retro-supersession note + bare version pin correction per CLAUDE.md §RFC Reference Conventions: `RFC-0010 v1.3` → `RFC-0010`; `RFC-0010 v1.4` → `RFC-0010` (umbrella only).
+
+**Substrate:** RFC-0010 `DidRegistry` (LANDED 2026-08-11, commit `71f8d745`) + RFC-0010 (ACCEPTED 2026-08-11, commit `8b80e124`) typed `ChainId` + `ChainNamespace`
 **Parent:** RFC-0010 §Future Work F2; DAG predecessor `0871b-storage-backend` (LANDED 2026-08-11, commit `71f8d745`)
 
 ## Scope
@@ -41,7 +44,7 @@ either:
 
 ### RFC amendment (v1.4)
 
-In-place additive amendment to RFC-0010 (mirrors v1.2 → v1.3 pattern):
+In-place additive amendment to RFC-0010 (mirrors v1.2 → v1.3 pattern). Mission text references bare RFC-0010 per CLAUDE.md §RFC Reference Conventions — version pin removed; amendment file is `rfcs/accepted/process/0010-canonical-did-codec.md` (canonical Accepted v1.6 amendment 2026-08-19 per Status header).
 
 - Add `ChainId` type + `DidRegistry` `chain` parameter
 - Add `CompositeDidRegistry` impl

@@ -18,7 +18,7 @@ builds_on:
 
 **Accepted (v2.6, 2026-08-24).** EXTENDS RFC-0959 v2.0 (does not redefine). Additive to v2.0's `cost_vault_id: Option<[u8;32]>` + `chain_id: Option<[u8;32]>` fields.
 
-**Promotion trail:** v2.1 initial draft 2026-08-22 → Accepted 2026-08-22 → v2.2 R5 fix-all 2026-08-23 → v2.3 R7 fix-all 2026-08-23 → v2.4 R9 fix-all 2026-08-23 → v2.5 R13 fix-all 2026-08-24 → v2.6 R17 fix-all 2026-08-24 per long-horizon plan v1.6 Phase 4 Tier 1 promotion sequence (RFC-0959 third in Tier 1 order per research doc §20 decision #9). BurnEventRef wire form + DQA(12) cost migration + litellm_users_spend view all preserved.
+**Promotion trail:** v2.1 initial draft 2026-08-22 → Accepted 2026-08-23 → v2.2 R5 fix-all 2026-08-23 → v2.3 R7 fix-all 2026-08-23 → v2.4 R9 fix-all 2026-08-23 → v2.5 R13 fix-all 2026-08-24 → v2.6 R17 fix-all 2026-08-24 per long-horizon plan v1.6 Phase 4 Tier 1 promotion sequence (RFC-0959 third in Tier 1 order per research doc §20 decision #9). BurnEventRef wire form + DQA(12) cost migration + litellm_users_spend view all preserved.
 
 ## 1. Motivation
 
@@ -159,7 +159,7 @@ For this RFC (RFC-0959 v2.5), the `litellm_users_spend` view MUST match RFC-0960
 
 NOTE on substrate landing: the `event_type TEXT` column is NOT yet on disk at v014 (substrate currently exposes `attributes BLOB NOT NULL`); the TEXT shape is the post-v015+ migration target per RFC-0960 v3.0 grand-design §2.5. The v015+ migration is pending landing via mission 0206 v3.0 series (per research §10 Mission DAG Phase 1).
 
-## 5. Execution Class Mapping (RFC-0008 §RFC-0008 Execution Class Mapping)
+## 5. Execution Class Mapping (RFC-0008 §Execution Class Mapping)
 
 | Surface                                  | Class | Justification            |
 | ---------------------------------------- | ----- | ------------------------ |

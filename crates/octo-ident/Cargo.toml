@@ -64,3 +64,16 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 # version pinned in `[dependencies.borsh]` so the dev-dep serializes
 # identically to what production consumers see.
 borsh = { version = "=1.5.0", features = ["derive"] }
+
+# The rich_did_document_tv suite exercises borsh round-trips on
+# `octo_ident::DidDocument` + the rich document field types. Per
+# `octo-identity-resolver-node/src/handlers/registration.rs` design
+# intent ("keep `octo-ident::DidDocument` free of borsh derives" — the
+# storage layer uses its own `RichDidDocument` mirror with borsh, not
+# the canonical identity substrate), the canonical `DidDocument` derives
+# are gated behind the `borsh` feature. The TV suite therefore requires
+# the feature to be enabled at test compile time.
+[[test]]
+name = "rich_did_document_tv"
+path = "tests/rich_did_document_tv.rs"
+required-features = ["borsh"]

@@ -12,6 +12,8 @@ ACs documented per Round 3 review). Mission 0968a covered the
 in-memory batch envelope + Merkle-root aggregation + ledger table
 scaffolding; this mission 0968a2 covers the LIVE chain-side binding
 
+> **Retro-supersession (2026-08-24 audit):** Mission status = PARTIAL LANDED — **8 of 27 ACs GREEN `[x]`** + **19 ACs `[ ]` DEFERRED** to chain-substrate selection RFC external blocker (not owned by this mission). All substrate-side LANDED ACs: `StakeBelowMinimum` 0x2D verification (`013a5676`); `ReputationAnchorBatch` 3 governance fields + `batch_size: u32` + `chain_block_height: Option<u64>` (`72bf19d7` + `48cf9978` at `crates/octo-reputation/src/anchor.rs:174-208`); `AnchorLeaf::digest` field order (`b0660c39` at `anchor.rs:143-161`); v012 migration `governance_snapshot` + `governance_proof` + `governance_set_hash` columns (`crates/octo-reputation/migrations/v012__reputation_anchors_governance.sql`); anchor-specific verifier types `AnchorGovernanceSnapshot` / `AnchorGovernanceSigner` / `AnchorGovernanceProof` (`72bf19d7` at `auth.rs:399-603`). DEFERRED ACs (Live `ChainAnchorSubmitter` impl + reorg handler + DID-rotation finality + governance signature verification runtime wire-up + per-deployment config + idempotency test + failure isolation test + gossip cross-ref + 3 canonical test vector re-pinning) blocked on chain-substrate selection RFC (RFC-0927-adjacent; config crate TBD). Mission status preserved `claimed` per historical-mission-preservation + R19 scope discipline. Coordination summary: `0968-A2-alignment-coordination` (NEW).
+
 - governance/quorum wiring + reorg-aware resubmission + the IMPL/RFC
   cross-document drift identified in mission 0968a's Round 4 review N8
 - N9.
@@ -119,8 +121,8 @@ if governance prefers spec-first for any remaining cross-RFC drift.
       `72bf19d7` (Round 1: `b0660c39`; Round 2: `48cf9978`). IMPL at
       `crates/octo-reputation/src/anchor.rs:174-208` now has the 5
       original fields + the 3 governance fields (`governance_snapshot:
-    AnchorGovernanceSnapshot`, `governance_proof:
-    AnchorGovernanceProof`, `governance_set_hash: [u8; 32]`) +
+AnchorGovernanceSnapshot`, `governance_proof:
+AnchorGovernanceProof`, `governance_set_hash: [u8; 32]`) +
       `batch_size: u32` (per RFC-0955-R1 line 173). `chain_block_height`
       typed `Option<u64>` per RFC-0955-R1 line 170 (`None` at submission,
       `Some(_)` post-`MIN_FINALITY_BLOCKS` finality). `digest()`
@@ -149,10 +151,10 @@ if governance prefers spec-first for any remaining cross-RFC drift.
       and broken the wire schema.
 
                                       **Also: fix `AnchorLeaf::digest` field-order bug in IMPL** (per
-                                          `crates/octo-reputation/src/anchor.rs:80-100`) — the IMPL hashes
-                                          `last_event_unix`, `samples`, `severity_total`, then
-                                          `score_ewma_raw`. RFC-0955-R1 line 420-422 requires the canonical
-                                          order `(did, signal_kind, layer, last_event_id, score_ewma_raw,
+                                                      `crates/octo-reputation/src/anchor.rs:80-100`) — the IMPL hashes
+                                                      `last_event_unix`, `samples`, `severity_total`, then
+                                                      `score_ewma_raw`. RFC-0955-R1 line 420-422 requires the canonical
+                                                      order `(did, signal_kind, layer, last_event_id, score_ewma_raw,
 
 last_event_unix, samples, severity_total)`— i.e.,`score_ewma_raw`      at position 5 (after`last_event_id`, before the counters). The
       current IMPL puts `score_ewma_raw`last. This breaks

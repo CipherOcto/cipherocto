@@ -12,6 +12,8 @@ metadata:
     - 0206-008b-stoolap-dep-drop-cascade
     - RFC-0206
 status: OPEN
+
+**Retro-supersession (2026-08-24 Session 5 RFC-0206 substrate + S6 atomic-blocker):** Substrate LANDING DEFERRED — atomic-blocker per `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md` §22 B0. Per active storage restructure plan (per `2026-08-16-storage-restructuring-plan-active` memory card), the `pubsub` module re-export extension requires coordination with the atomic-blocker resolution (S6 §22 B0) which depends on: (a) RFC-0206 v3.4 §2.5 0x01 namespace byte disambiguation (LANDED `f05d91d0` cross-RFC harmonization); (b) RFC-0959 v2.7 struct comment update (LANDED `e41edff9`); (c) canonical execution class taxonomy per RFC-0008. The pubsub re-export block extension remains calendar-gated until atomic-blocker S6 §22 B0 clears, which unblocks the `pubsub` re-export block extension + the direct `stoolap` Cargo.toml dep drop. Mission text preserved per historical-mission-preservation + R19 scope discipline. Per claim-and-implement scope, substrate landing remains OPEN until storage restructure plan S6 phase clears. NO PUSH per `feedback_initiation_user_only`.
 ---
 
 # Mission `0206-008c-stoolap-pubsub-block-extension` v1.0 — OPEN 2026-08-20
@@ -99,6 +101,6 @@ DROP `stoolap = { git = "..." }` direct dep from `crates/quota-router-core/Cargo
 
 ## Version History
 
-| Version | Date | Change |
-|---------|------|--------|
-| v1.0 | 2026-08-20 | Initial filing; substrate re-export block v2.3 → v2.4 extension (pubsub module); qrc dep drop after 34+ path replacements |
+| Version | Date       | Change                                                                                                                    |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------- |
+| v1.0    | 2026-08-20 | Initial filing; substrate re-export block v2.3 → v2.4 extension (pubsub module); qrc dep drop after 34+ path replacements |

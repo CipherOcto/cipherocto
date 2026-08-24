@@ -16,6 +16,15 @@ metadata:
     - RFC-0010
     - RFC-0008
 status: OPEN
+
+**Retro-supersession (2026-08-24 Session 2 RFC-0903-D1 substrate audit):** Substrate LANDING DEFERRED — schema migration numbering conflict. `crates/quota-router-storage/migrations/v006` through `v010` already occupied by substrate indexes from prior missions:
+- `v006__create_outbox.sql` (quota-router-storage substrate, occupied)
+- `v007__create_spend_ledger.sql` (quota-router-storage substrate, occupied)
+- `v008__create_did_registry.sql` (quota-router-storage substrate, occupied)
+- `v009__add_service_endpoints_and_controllers.sql` (octo-reputation substrate, occupied)
+- `v010__add_verification_methods_and_capability_delegations.sql` (octo-reputation substrate, occupied)
+
+Per RFC-0903-D1 v1.0 §2 substrate mandate, the LiteLLM persistence migrations need migration numbers `v011__create_litellm_users.sql` through `v015__create_scim_group_members.sql` (next free numbers after v010). Mission text preserved with original `v006-v010` per historical-mission-preservation + R19 scope discipline. Stoolap registry impls + 25 TV byte-exact fixtures ALSO NOT LANDED — substrate landing requires coordinated migration renumbering + 5 registry trait impls + test fixture generation, beyond single-session scope. Per claim-and-implement scope, substrate landing remains OPEN for follow-up commit when migration renumbering can be coordinated with quota-router-storage + octo-reputation owners. Cross-RFC harmonization + Layer B additive-only compliance verification per RFC-0206 §4 remains IN SCOPE. NO PUSH per `feedback_initiation_user_only`.
 ---
 
 # Mission `0903-D1-substrate-landing` v1.0 — OPEN 2026-08-24

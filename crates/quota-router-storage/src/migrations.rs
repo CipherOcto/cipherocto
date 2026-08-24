@@ -99,6 +99,11 @@ pub const BUILTIN_MIGRATIONS: &[octo_storage_core::_legacy_StaticMigration] = &[
         "settlement_chain_vault",
         include_str!("../migrations/v016__settlement_chain_vault.sql"),
     ),
+    octo_storage_core::_legacy_StaticMigration::new(
+        17,
+        "add_chain_metadata_and_policy_registry",
+        include_str!("../migrations/v017__add_chain_metadata_and_policy_registry.sql"),
+    ),
 ];
 
 /// Substrate-form reference slice. `&[&'static dyn Migration]` is what
@@ -120,6 +125,7 @@ pub(super) static BUILTIN_MIGRATION_CATALOG:
     &BUILTIN_MIGRATIONS[11],
     &BUILTIN_MIGRATIONS[12],
     &BUILTIN_MIGRATIONS[13],
+    &BUILTIN_MIGRATIONS[14],
 ];
 
 /// Migration errors.

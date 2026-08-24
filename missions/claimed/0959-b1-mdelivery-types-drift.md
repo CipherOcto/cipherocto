@@ -6,7 +6,7 @@
 `missions/claimed/0959-b-market-delivery-impl.md` (Status: Claimed 2026-08-04;
 12/35 ACs GREEN, 23 deferred — 5 to 0959-b2-deliver-algorithm, 7 to 0959-b3-settlement-chain,
 2 to 0959-b1-mdelivery-types-drift [this mission], others to follow-up missions).
-Substrate work landed at commit `<TBD>`. Owner: @cipherocto.
+Substrate work landed at commit `eec6fb51` (per `git log --oneline -- crates/octo-wallet/src/capability/market_delivery.rs`). Owner: @cipherocto.
 
 Per [[git-workflow]] push awaits user instruction. Per [[no-line-refs-anywhere]]
 all references use §symbol-name form. Per [[rfc-referencing-convention]] RFCs
@@ -65,7 +65,7 @@ aligns `RoleTag` variants to the RFC-0971 canonical set.
 
 - [x] **AC-D1.** `DeliveryError` extends from 6 variants to 14 variants
       per RFC-0959-A1 §Error Handling.
-      **Closure:** landed at commit `<TBD>`. (a) 8 new variants added:
+      **Closure:** landed at commit `eec6fb51`. (a) 8 new variants added:
       `AskNotFound { ask_id: [u8;32] }`, `GossipError { attempts: u32, reason: String }`,
       `InvalidSettledAtUnix { observed: u64, expected_window_secs: u64 }`,
       `RoleBindingMismatch { role: String }`, `StoolapTxnError { reason: String }`,
@@ -82,7 +82,7 @@ aligns `RoleTag` variants to the RFC-0971 canonical set.
       Owner: @cipherocto. Target: 2026-09-30. **CLOSED 2026-08-07.**
 - [x] **AC-D2.** `RoleTag` variants aligned to RFC-0971 canonical set:
       `Buyer → Asker`, `Seller → TokenIssuer`, `Router → Router`.
-      **Closure:** landed at commit `<TBD>`. (a) Variants renamed in
+      **Closure:** landed at commit `eec6fb51`. (a) Variants renamed in
       `crates/octo-wallet/src/capability/market_delivery.rs::RoleTag`.
       (b) All call sites updated: `tests/cross_node_delivery.rs`,
       `tests/cross_node_delivery_transport.rs`, `tests/cross_role_data_flow.rs`,

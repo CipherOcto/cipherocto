@@ -77,6 +77,7 @@ depends_on:
 - The fixture uses a single `StoolapHolderRegistry::open_in_memory()` for the buyer side (per [[stoolap-general-purpose-db]] hard red line: cipherocto business/consumer schema stays cipherocto-side; the test uses an ephemeral in-memory registry to avoid contaminating production state). Seller-side registry is not needed for TV7 since the seller only broadcasts the envelope; the buyer is the consumer.
 - RFC-0862 gossip channel binding is a cross-crate wiring operation; the production wiring is tracked by `missions/open/0959-c3-octo-transport-wiring.md` (new follow-up filed 2026-08-06).
 - TV7 is the previously-deferred AC-6 from mission `0959-c` Band A closure.
+- **Retro-supersession (2026-08-24, audit):** `crates/octo-wallet/tests/cross_node_delivery_transport.rs` added by `0959-c3-octo-transport-wiring.md` Band A closure (commit landed 2026-08-07) — production-wiring TV7 driven through `TransportDeliveryCatalog` + `octo_cap_macaroon_transport::NodeTransport`. Both test files (`cross_node_delivery.rs` + `cross_node_delivery_transport.rs`) coexist; 4/4 in-process harness + 6/6 production-wiring tests green. Mission AC text updated retroactively to reference both files per R19 scope discipline + historical-mission-preservation principle.
 
 ## Closure (2026-08-06)
 

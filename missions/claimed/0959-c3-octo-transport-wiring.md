@@ -11,12 +11,13 @@ Closed (Band A — 2026-08-07). Claimed (2026-08-07) by @mmacedoeu.
 RFC-0862 (Networking): Stoolap Data Sync Protocol — Gossip Substrate
 RFC-0959-A1 (Economics): Market Delivery Envelope (Amendment) — Accepted 2026-08-02
 RFC-0957-A1 (Economics): Capability Holder Registry — Accepted
+RFC-0959 (Economics): Ask Settlement Chain — Accepted v2.0 (wire-format amendment 2026-08-19; mission `0959-c1-wire-format-amendment` covers settlement-time cross-chain reject algorithm; this mission covers gossip substrate only)
 
 ## Summary
 
-The 0959-c2 Band A closure proved the cross-node delivery contract end-to-end (TV7: seller builds `MarketDeliveryEnvelope` → gossip retry → buyer inbox → `StoolapHolderRegistry::lookup_by_ask`) using an in-process `InProcessDeliveryCatalog` test harness. The production `CapabilityCatalog` impl that delegates to `octo_transport::NodeTransport::broadcast` was deferred because:
+The 0959-c2 Band A closure proved the cross-node delivery contract end-to-end (TV7: seller builds `MarketDeliveryEnvelope` → gossip retry → buyer inbox → `StoolapHolderRegistry::lookup_by_ask`) using an in-process `InProcessDeliveryCatalog` test harness. The production `CapabilityCatalog` impl that delegates to `octo_cap_macaroon_transport::NodeTransport::broadcast` via `TransportDeliveryCatalog` was deferred because:
 
-1. **Dep inversion**: `octo-wallet` does NOT depend on `octo-transport` (wallet would need to add `octo-transport = { path = "../../octo-transport" }` to `crates/octo-wallet/Cargo.toml`). The current `crates/octo-wallet/Cargo.toml` is a consumer of `octo-network` (sync envelope types) and `quota-router-storage` (registry types) but not transport. Adding the dep is straightforward but the production catalog must thread an `Arc<NodeTransport>` + a `SendContext` builder through the constructor (no global state).
+1. **Dep inversion**: `octo-wallet` does NOT depend on `octo-transport` (wallet would need to add `octo-transport = { path = "../../octo-transport" }` to `crates/octo-wallet/Cargo.toml`). **Substrate correction (2026-08-24 audit):** production substrate landed at `crates/octo-cap-macaroon-transport/src/lib.rs:73` (`pub struct TransportDeliveryCatalog`) — substrate home = `octo_cap_macaroon_transport` crate (Layer B extension glue crate per RFC-0957-A1 §Layer Discipline), NOT `octo_transport::NodeTransport`. Mission slug + Summary text kept for historical preservation; substrate home documented retroactively.
 
 2. **SendContext construction**: `NetworkSender::send(payload, &SendContext)` requires `mission_id`, `priority`, `source_peer`, `origin_gateway` — fields that the wallet currently has no clean source for. The seller side needs to derive them from the `MarketDeliveryEnvelope` (mission_id from `ask_id`, priority from `role_tag`, source_peer from `seller_did` hex-decode, origin_gateway from a node-config slot).
 
@@ -60,11 +61,13 @@ The 0959-c2 Band A closure proved the cross-node delivery contract end-to-end (T
 ## Dependencies
 
 **Requires (RFC gates):**
+
 - RFC-0862 — Gossip Substrate (provides `octo_transport::NodeTransport`)
 - RFC-0959-A1 — Market Delivery Envelope (Amendment)
 - RFC-0957-A1 — Capability Holder Registry
 
 **Requires (mission gates):**
+
 - `missions/claimed/0959-c2-cross-node-delivery.md` (Band A closed 2026-08-06) — provides the in-process harness pattern + TV7 contract; production wiring builds on top
 
 ```yaml
@@ -130,9 +133,9 @@ cargo fmt -p octo-wallet -- --check                                           # 
 
 **Version History:**
 
-| Version | Date       | Change                                                                                                                                                                                                                                                                |
-| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-08-06 | Filed open by mission `0959-c2` Band A closure. 12 ACs.                                                                                                                                                                                                              |
+| Version | Date       | Change                                                                                                                                                                                                                                                                                                                                                                   |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| v0.1    | 2026-08-06 | Filed open by mission `0959-c2` Band A closure. 12 ACs.                                                                                                                                                                                                                                                                                                                  |
 | v0.2    | 2026-08-07 | Claimed + closed Band A same-session. 12/12 ACs green. Production `TransportDeliveryCatalog` + 6 production-wiring tests landed. Async API surface decision: Option A with refined split (sync shim + `CapabilityGossip` async trait via `async_trait`). 0959-c2 4/4 TV7 preserved. Clippy + fmt clean. Status header flipped Open→Claimed→Closed (Band A — 2026-08-07). |
 
 Last Updated: 2026-08-07

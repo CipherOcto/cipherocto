@@ -166,6 +166,7 @@ fn hmac_forgery_rejected_on_announce() {
         capacities: vec![],
         timestamp: 100,
         hmac: [0u8; 32],
+        pricing_policy: None,
     };
     announce.hmac = announce.compute_hmac(&key);
     assert!(announce.verify_hmac(&key));
@@ -272,6 +273,7 @@ fn hmac_wrong_key_rejected() {
         capacities: vec![],
         timestamp: 100,
         hmac: [0u8; 32],
+        pricing_policy: None,
     };
     announce.hmac = announce.compute_hmac(&key_a);
     assert!(!announce.verify_hmac(&key_b));

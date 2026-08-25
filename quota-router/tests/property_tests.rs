@@ -292,12 +292,32 @@ proptest! {
     ) {
         let limiter = RateLimiter::new(max_sustained, max_burst);
         let consumer = [1u8; 32];
+        let start = std::time::Instant::now();
         let mut allowed = 0;
         for _ in 0..requests {
             if limiter.check_consumer(&consumer) {
                 allowed += 1;
             }
         }
-        prop_assert!(allowed <= max_burst as usize);
+        // Token-bucket invariant: over a time window of `elapsed`,
+        // the bucket allows at most `max_burst + elapsed_secs *
+        // refill_rate` tokens, where `refill_rate = max_sustained`
+        // tokens/sec. The un-bounded `allowed <= max_burst` version
+        // is non-deterministic under proptest SourceParallel
+        // (wall-clock `Instant::now()` refill pushes allowed above
+        // max_burst when the loop runs for >~1ms).
+        let elapsed_secs = start.elapsed().as_secs_f64();
+        let max_allowed =
+            max_burst as f64 + elapsed_secs * max_sustained as f64;
+        // Add 2.0 tokens of slop for sub-millisecond refill
+        // measurement rounding.
+        prop_assert!(
+            allowed as f64 <= max_allowed + 2.0,
+            "allowed={} max_burst={} max_sustained={} elapsed={:?}",
+            allowed,
+            max_burst,
+            max_sustained,
+            elapsed_secs
+        );
     }
 }

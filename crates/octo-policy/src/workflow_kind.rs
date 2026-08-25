@@ -8,6 +8,7 @@
 //! phantom carrying proof bytes).
 
 use crate::domain_separators::blake3_prefix;
+use crate::kind_uuid_registry::kind_uuid_from_namespace;
 use crate::policy_kinds::{
     AuditField, AuditPolicy, AuditVariant, AuthorityError, BurnError, CapabilityKind,
     ChainNamespace, ExecutionClass, InteropError, InteropOutcome, InteropSelector,
@@ -20,13 +21,6 @@ pub const VAULT_CREATION_NS: &str = "octo/workflow/vault-creation/v1";
 pub const SUBJECT_PROVISION_NS: &str = "octo/workflow/subject-provision/v1";
 pub const USER_INFO_READ_NS: &str = "octo/workflow/user-info-read/v1";
 pub const USER_UPDATE_NS: &str = "octo/workflow/user-update/v1";
-
-/// Helper: derive per-policy-kind UUIDv5 from namespace string (RFC-0967-A1 §2.6).
-fn kind_uuid_from_namespace(ns: &str) -> u128 {
-    let namespace =
-        uuid::Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").expect("OID namespace parse");
-    uuid::Uuid::new_v5(&namespace, ns.as_bytes()).as_u128()
-}
 
 /// `VaultCreationWorkflow` — primitive proof: &[u8] (no phantom WorkflowContext).
 #[derive(Debug, Clone)]
@@ -124,7 +118,8 @@ impl WorkflowKind for VaultCreationWorkflow {
 #[derive(Debug, Clone, Default)]
 pub struct FullAuditPolicy;
 
-const FULL_AUDIT_NS: &str = "octo/audit/full-emit/v1";
+// Aligned to RFC-0967-A1 §2.6 audit "testnet-verbose" entry per F9 drift fix.
+const FULL_AUDIT_NS: &str = "octo/audit/testnet/v1";
 
 impl FullAuditPolicy {
     pub fn new() -> Self {
@@ -167,7 +162,8 @@ impl AuditPolicy for FullAuditPolicy {
 #[derive(Debug, Clone, Default)]
 pub struct TimedUnlockBurnPolicy;
 
-const TIMED_UNLOCK_BURN_NS: &str = "octo/burn/timed-unlock/v1";
+// Aligned to RFC-0967-A1 §2.6 burn "time-locked" entry per F9 drift fix.
+const TIMED_UNLOCK_BURN_NS: &str = "octo/burn/timelock/v1";
 
 impl TimedUnlockBurnPolicy {
     pub fn new() -> Self {
@@ -217,7 +213,9 @@ impl crate::policy_kinds::BurnPolicy for TimedUnlockBurnPolicy {
 #[derive(Debug, Clone, Default)]
 pub struct DidAttestationMembershipPolicy;
 
-const DID_ATTESTATION_NS: &str = "octo/membership/did-attestation/v1";
+// Aligned to RFC-0967-A1 §2.6 membership "didattestation" entry per F9
+// drift fix (RFC §2.6 uses no-kebab `didattestation`, not `did-attestation`).
+const DID_ATTESTATION_NS: &str = "octo/membership/didattestation/v1";
 
 impl crate::policy_kinds::MembershipPolicy for DidAttestationMembershipPolicy {
     fn kind_uuid(&self) -> u128 {
@@ -328,8 +326,11 @@ impl crate::policy_kinds::InteropPolicy for PrimaryOrSecondaryInteropPolicy {
 }
 
 /// Reference selector kind_uuid for InteropSelector trait object (RFC-0967-A1 §2.6).
-pub const BYAMOUNT_SELECTOR_KIND_UUID: u128 = 1; // placeholder literal; actual derivation below.
-
+///
+/// Per F8 fix: removed the `pub const BYAMOUNT_SELECTOR_KIND_UUID: u128 = 1`
+/// placeholder; callers must invoke `kind_uuid_from_namespace(BYAMOUNT_SELECTOR_NS)`
+/// directly. The derivation is deterministic and yields the value asserted
+/// in `byamount_selector_kind_uuid_derivation` below.
 #[cfg(test)]
 mod tests {
     use super::*;

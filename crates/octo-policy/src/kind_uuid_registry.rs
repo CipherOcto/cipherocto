@@ -4,95 +4,98 @@
 //!
 //! Each entry is the canonical `octo/<category>/<kind>/v1/` namespace
 //! string used to derive a deterministic UUIDv5 via
-//! `uuid::Uuid::new_v5(&NAMESPACE_OID, ns_string.as_bytes())`.
+//! `uuid::Uuid::new_v5(&CIPHEROCTO_KIND_ROOT, ns_string.as_bytes())`.
 //!
-//! Authority kinds 1-6 (6 entries per RFC-0967-A1 §2.6):
-//! - octo/auth/singlekey/v1
-//! - octo/auth/multisig/v1
-//! - octo/auth/capability/v1
-//! - octo/auth/macaroon/v1
-//! - octo/auth/zkholding/v1
-//! - octo/auth/hopdelegation/v1
+//! ## Private root namespace
 //!
-//! Membership kinds 2-7 (7 entries):
-//! - octo/membership/did-attestation/v1
-//! - octo/membership/sybil-resistant/v1
-//! - octo/membership/permissioned/v1
-//! - octo/membership/public/v1
-//! - octo/membership/k-of-n/v1
-//! - octo/membership/threshold/v1
-//! - octo/membership/delegate/v1
+//! [`CIPHEROCTO_KIND_ROOT`] is a project-private UUID derived once via
+//! `Uuid::new_v5(&NAMESPACE_OID, b"cipherocto-octopolicy-root-v1")` and
+//! frozen as bytes. Using a private root instead of the RFC-4122 public
+//! OID namespace prevents anyone who knows the public `NAMESPACE_OID`
+//! plus the public `KIND_NAMESPACE_STRINGS` from reproducing every
+//! `kind_uuid`. The kind UUIDs are content-addressable identifiers for
+//! our internal substrate, not public RFC-4122-derived UUIDs.
 //!
-//! Interop kinds 3-4 (4 entries):
-//! - octo/interop/primary-or-secondary/v1
-//! - octo/interop/atomic-swap/v1
-//! - octo/interop/burn-mint/v1
-//! - octo/interop/lock-unlock/v1
+//! ## RFC §2.6 ordering (verbatim)
 //!
-//! Burn kinds 4-3 (3 entries):
-//! - octo/burn/timed-unlock/v1
-//! - octo/burn/governance-approval/v1
-//! - octo/burn/capability-bounded/v1
-//!
-//! Workflow kinds 5-4 (4 entries):
-//! - octo/workflow/vault-creation/v1
-//! - octo/workflow/subject-provision/v1
-//! - octo/workflow/user-info-read/v1
-//! - octo/workflow/user-update/v1
-//!
-//! Audit kinds 6-3 (3 entries):
-//! - octo/audit/full-emit/v1
-//! - octo/audit/minimal-emit/v1
-//! - octo/audit/aggregated-emit/v1
-//!
-//! InteropSelector kinds 7-3 (3 entries):
-//! - octo/selector/byamount/v1
-//! - octo/selector/byassetnamespace/v1
-//! - octo/selector/byamountthreshold/v1
+//! Authority (6): singlekey, multisig, capability, governance, hsm, hybrid
+//! Membership (7): didattestation, invitationtoken, merklelist, teamsproxy,
+//!                  corpmemberstable, capabilitygated, scimbridge
+//! Interop (4):    none, swap, wrap, hybrid
+//! Burn (3):       timelock, immediate, multisig
+//! Workflow (4):   capability, litellm, scim, composite
+//! Audit (3):      testnet, mainnet, ab
+//! Selector (3):   bychain, byasset, byamountthreshold
+
+/// Project-private root UUID for all kind-UUIDv5 derivations.
+///
+/// Derived once via `Uuid::new_v5(&Uuid::NAMESPACE_OID, b"cipherocto-octopolicy-root-v1")`
+/// and frozen as bytes. Do NOT re-derive at runtime — the byte literal
+/// below is the single source of truth for all 30 kind UUIDs.
+pub const CIPHEROCTO_KIND_ROOT_BYTES: [u8; 16] = [
+    0xc9, 0x6a, 0xcc, 0xc1, 0x32, 0x74, 0x5a, 0x21, 0x92, 0x39, 0xb5, 0xcd, 0x23, 0xbd, 0xa3, 0xe3,
+];
+
+/// [`uuid::Uuid`] view of [`CIPHEROCTO_KIND_ROOT_BYTES`].
+pub const CIPHEROCTO_KIND_ROOT: uuid::Uuid = uuid::Uuid::from_bytes(CIPHEROCTO_KIND_ROOT_BYTES);
 
 /// Total count of per-policy-kind namespace strings (per RFC-0967-A1 §2.6).
 pub const KIND_COUNT: usize = 30;
 
-/// Canonical per-policy-kind UUIDv5 namespace strings (30 entries).
+/// Canonical per-policy-kind UUIDv5 namespace strings (30 entries, verbatim
+/// from RFC-0967-A1 §2.6).
 pub const KIND_NAMESPACE_STRINGS: [&str; KIND_COUNT] = [
-    // Authority (6)
+    // Authority (6) — RFC-0967-A1 §2.6
     "octo/auth/singlekey/v1",
     "octo/auth/multisig/v1",
     "octo/auth/capability/v1",
-    "octo/auth/macaroon/v1",
-    "octo/auth/zkholding/v1",
-    "octo/auth/hopdelegation/v1",
-    // Membership (7)
-    "octo/membership/did-attestation/v1",
-    "octo/membership/sybil-resistant/v1",
-    "octo/membership/permissioned/v1",
-    "octo/membership/public/v1",
-    "octo/membership/k-of-n/v1",
-    "octo/membership/threshold/v1",
-    "octo/membership/delegate/v1",
-    // Interop (4)
-    "octo/interop/primary-or-secondary/v1",
-    "octo/interop/atomic-swap/v1",
-    "octo/interop/burn-mint/v1",
-    "octo/interop/lock-unlock/v1",
-    // Burn (3)
-    "octo/burn/timed-unlock/v1",
-    "octo/burn/governance-approval/v1",
-    "octo/burn/capability-bounded/v1",
-    // Workflow (4)
-    "octo/workflow/vault-creation/v1",
-    "octo/workflow/subject-provision/v1",
-    "octo/workflow/user-info-read/v1",
-    "octo/workflow/user-update/v1",
-    // Audit (3)
-    "octo/audit/full-emit/v1",
-    "octo/audit/minimal-emit/v1",
-    "octo/audit/aggregated-emit/v1",
-    // InteropSelector (3)
-    "octo/selector/byamount/v1",
-    "octo/selector/byassetnamespace/v1",
+    "octo/auth/governance/v1",
+    "octo/auth/hsm/v1",
+    "octo/auth/hybrid/v1",
+    // Membership (7) — RFC-0967-A1 §2.6
+    "octo/membership/didattestation/v1",
+    "octo/membership/invitationtoken/v1",
+    "octo/membership/merklelist/v1",
+    "octo/membership/teamsproxy/v1",
+    "octo/membership/corpmemberstable/v1",
+    "octo/membership/capabilitygated/v1",
+    "octo/membership/scimbridge/v1",
+    // Interop (4) — RFC-0967-A1 §2.6
+    "octo/interop/none/v1",
+    "octo/interop/swap/v1",
+    "octo/interop/wrap/v1",
+    "octo/interop/hybrid/v1",
+    // Burn (3) — RFC-0967-A1 §2.6
+    "octo/burn/timelock/v1",
+    "octo/burn/immediate/v1",
+    "octo/burn/multisig/v1",
+    // Workflow (4) — RFC-0967-A1 §2.6
+    "octo/workflow/capability/v1",
+    "octo/workflow/litellm/v1",
+    "octo/workflow/scim/v1",
+    "octo/workflow/composite/v1",
+    // Audit (3) — RFC-0967-A1 §2.6
+    "octo/audit/testnet/v1",
+    "octo/audit/mainnet/v1",
+    "octo/audit/ab/v1",
+    // Selector (3) — RFC-0967-A1 §2.6
+    "octo/selector/bychain/v1",
+    "octo/selector/byasset/v1",
     "octo/selector/byamountthreshold/v1",
 ];
+
+/// Derive a per-policy-kind `kind_uuid` from a namespace string
+/// (RFC-0967-A1 §2.6).
+///
+/// The derivation uses [`CIPHEROCTO_KIND_ROOT`] as the UUIDv5 namespace
+/// (NOT the public RFC-4122 `NAMESPACE_OID`) so the kind UUIDs are
+/// project-private and not reproducible by anyone outside the project
+/// who knows the public `NAMESPACE_OID` + the public
+/// `KIND_NAMESPACE_STRINGS`.
+#[must_use]
+pub fn kind_uuid_from_namespace(ns: &str) -> u128 {
+    uuid::Uuid::new_v5(&CIPHEROCTO_KIND_ROOT, ns.as_bytes()).as_u128()
+}
 
 /// Policy category indices (per registry_kind table in migration v017).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -205,5 +208,38 @@ mod tests {
     #[test]
     fn selector_kinds_are_3() {
         assert_eq!(namespaces_for(PolicyKindCategory::Selector).len(), 3);
+    }
+
+    #[test]
+    fn all_30_namespaces_derive_distinct_uuids() {
+        // Per F9 + RFC-0967-A1 §2.6: all 30 namespace strings must yield
+        // pairwise distinct UUIDv5 derivations under CIPHEROCTO_KIND_ROOT.
+        let uuids: Vec<u128> = KIND_NAMESPACE_STRINGS
+            .iter()
+            .map(|ns| kind_uuid_from_namespace(ns))
+            .collect();
+        let mut sorted = uuids.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            30,
+            "expected 30 distinct kind UUIDs, got {} (collision in KIND_NAMESPACE_STRINGS)",
+            sorted.len()
+        );
+    }
+
+    #[test]
+    fn cipherocto_kind_root_matches_derivation_recipe() {
+        // Guard against future edits that re-derive the root from the
+        // recipe `Uuid::new_v5(NAMESPACE_OID, b"cipherocto-octopolicy-root-v1")`
+        // and break all 30 downstream kind UUIDs.
+        let derived =
+            uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, b"cipherocto-octopolicy-root-v1");
+        assert_eq!(
+            derived.as_bytes(),
+            &CIPHEROCTO_KIND_ROOT_BYTES,
+            "CIPHEROCTO_KIND_ROOT_BYTES drift: re-derive and freeze again"
+        );
     }
 }

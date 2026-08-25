@@ -16,6 +16,8 @@ blake3.workspace = true
 hex.workspace = true
 thiserror.workspace = true
 cipherocto-encoding = { path = "../cipherocto-encoding" }
+# Per-policy-kind UUIDv5 derivation (RFC-0967-A1 v1.9.2 §2.6)
+uuid = { version = "1", features = ["v5"] }
 
 [dev-dependencies]
 serde_json.workspace = true

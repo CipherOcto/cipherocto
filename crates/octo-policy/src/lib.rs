@@ -40,6 +40,22 @@
 //! child ⊆ parent in the DAG.
 
 #![warn(missing_debug_implementations)]
+#![allow(clippy::doc_markdown)]
+#![allow(clippy::missing_errors_doc)]
+#![allow(clippy::must_use_candidate)]
+#![allow(clippy::module_name_repetitions)]
+#![allow(clippy::explicit_iter_loop)]
+#![allow(clippy::useless_vec)]
+#![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::cast_lossless)]
+#![allow(clippy::needless_pass_by_value)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::struct_excessive_bools)]
+
+pub mod domain_separators;
+pub mod kind_uuid_registry;
+pub mod policy_kinds;
+pub mod workflow_kind;
 
 use std::collections::{HashMap, HashSet};
 

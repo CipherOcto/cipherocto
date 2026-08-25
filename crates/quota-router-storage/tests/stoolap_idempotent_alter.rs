@@ -58,21 +58,21 @@ fn apply_pending_is_idempotent_on_re_run_after_partial_migration() {
         .get(0)
         .unwrap_or(0);
     assert_eq!(
-        version_after_first, 16,
-        "first apply reaches v016 (current max migration version; v016 = 0959-c1 settlement_chain_vault)"
+        version_after_first, 19,
+        "first apply reaches v019 (current max migration version; v019 = litellm_user_vault_link bridge table)"
     );
 
-    // Simulate partial-v010 crash: drop the v010 + v011 + v012 + v013 + v014 + v015 + v016 version rows
-    // (so re-apply_pending will attempt v010–v016 again) AND drop
+    // Simulate partial-v010 crash: drop the v010 + v011 + v012 + v013 + v014 + v015 + v016 + v017 + v018 + v019 version rows
+    // (so re-apply_pending will attempt v010–v019 again) AND drop
     // capability_delegations column (so v010's first statement —
     // ADD COLUMN verification_methods — fails as "duplicate
     // column" → caught as no-op, second statement re-adds
     // capability_delegations successfully).
     db.execute(
-        "DELETE FROM cipherocto_schema_version WHERE version IN (10, 11, 12, 13, 14, 15, 16)",
+        "DELETE FROM cipherocto_schema_version WHERE version IN (10, 11, 12, 13, 14, 15, 16, 17, 18, 19)",
         (),
     )
-    .expect("delete v010 + v011 + v012 + v013 + v014 + v015 + v016 version rows");
+    .expect("delete v010 + v011 + v012 + v013 + v014 + v015 + v016 + v017 + v018 + v019 version rows");
 
     // Drop the capability_delegations column so v010 statement 2
     // can re-add it after the "duplicate column" catch on
@@ -101,8 +101,8 @@ fn apply_pending_is_idempotent_on_re_run_after_partial_migration() {
         .get(0)
         .unwrap_or(0);
     assert_eq!(
-        version_after_retry, 16,
-        "retry apply_pending must record v016 (current max; v016 = 0959-c1 settlement_chain_vault)"
+        version_after_retry, 19,
+        "retry apply_pending must record v019 (current max; v019 = litellm_user_vault_link bridge table)"
     );
 
     // Both v010 columns must be present and queryable.
@@ -144,7 +144,7 @@ fn apply_pending_swallows_v009_dup_column_on_retry() {
         .get(0)
         .unwrap_or(0);
     assert_eq!(
-        version, 16,
-        "v009 dup must be swallowed; catalog still at v016 (current max)"
+        version, 19,
+        "v009 dup must be swallowed; catalog still at v019 (current max)"
     );
 }

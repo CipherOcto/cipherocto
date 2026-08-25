@@ -1,7 +1,7 @@
 -- Migration v018: RFC-0903-D1 LiteLLM Persistence.
 --
 -- 5 tables (litellm_users + litellm_keys + scim_users + scim_groups +
--- scim_group_members) + 1 view (litellm_users_spend) per RFC-0903-D1 §2.
+-- scim_group_members) per RFC-0903-D1 §2.
 --
 -- Mission `0903-d1-litellm-persistence` (Session 5 deferred per
 -- F-P5.2-3 RETAIN → implemented per claim-and-implement scope
@@ -138,25 +138,10 @@ CREATE TABLE IF NOT EXISTS scim_group_members (
 CREATE INDEX IF NOT EXISTS scim_group_members_user_idx
     ON scim_group_members(user_id);
 
--- ─────────────────────────────────────────────────────────────────────
--- View: litellm_users_spend (RFC-0903-D1 §2.1)
--- ─────────────────────────────────────────────────────────────────────
--- Stoolap fork supports CREATE VIEW per substrate recon 2026-08-23.
--- The view JOINs litellm_users → vaults → transfer_events for the
--- `spend` field used by GET /user/info endpoint.
---
--- Note: vaults + transfer_events tables are NOT created by this
--- migration (they pre-exist in earlier migrations of the cipherocto
--- core schema per [[stoolap-general-purpose-db]] principle). The
--- view is defined here as a logical dependency on those tables; if
--- either table is absent at apply time, the view creation fails with
--- a substrate error. Since this migration is appended after v017 and
--- vaults/transfer_events exist in earlier migrations, the view will
--- resolve successfully.
-CREATE VIEW IF NOT EXISTS litellm_users_spend AS
-SELECT lu.user_id, COALESCE(SUM(te.amount_dqa_micros), 0) AS spend_dqa_micros
-FROM litellm_users lu
-LEFT JOIN vaults v ON v.owner_did = lu.user_id
-LEFT JOIN transfer_events te ON te.from_vault_id = v.vault_id
-                              AND te.event_type IN ('TransferApplied', 'Burn')
-GROUP BY lu.user_id;
+-- view removed per R2 review: cross-crate ownership ambiguity + phantom column references
+-- (te.amount_dqa_micros and te.event_type do not exist in transfer_events;
+-- vaults.owner_did is TEXT NOT NULL but litellm_users.user_id is BLOB(16)).
+-- Spend aggregation belongs in `octo-vault-storage::aggregate_user_spend(user_id: &[u8; 16]) -> Dqa`
+-- as an application-layer method (owner of vaults + transfer_events tables),
+-- not a cipherocto-side SQL view. The cipherocto-side cross-crate link table
+-- is now v019__litellm_user_vault_link.sql.

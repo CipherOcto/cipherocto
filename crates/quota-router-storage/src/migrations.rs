@@ -104,6 +104,16 @@ pub const BUILTIN_MIGRATIONS: &[octo_storage_core::_legacy_StaticMigration] = &[
         "add_chain_metadata_and_policy_registry",
         include_str!("../migrations/v017__add_chain_metadata_and_policy_registry.sql"),
     ),
+    octo_storage_core::_legacy_StaticMigration::new(
+        18,
+        "litellm_scim_persistence",
+        include_str!("../migrations/v018__litellm_scim_persistence.sql"),
+    ),
+    octo_storage_core::_legacy_StaticMigration::new(
+        19,
+        "litellm_user_vault_link",
+        include_str!("../migrations/v019__litellm_user_vault_link.sql"),
+    ),
 ];
 
 /// Substrate-form reference slice. `&[&'static dyn Migration]` is what
@@ -126,6 +136,8 @@ pub(super) static BUILTIN_MIGRATION_CATALOG:
     &BUILTIN_MIGRATIONS[12],
     &BUILTIN_MIGRATIONS[13],
     &BUILTIN_MIGRATIONS[14],
+    &BUILTIN_MIGRATIONS[15],
+    &BUILTIN_MIGRATIONS[16],
 ];
 
 /// Migration errors.

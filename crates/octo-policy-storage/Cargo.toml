@@ -13,6 +13,12 @@ path = "src/lib.rs"
 octo-storage-core = { path = "../octo-storage-core" }
 # Owner crate — declares the `PolicyStore` trait that this crate implements.
 octo-policy = { path = "../octo-policy" }
+# Layer A primitive (CLAUDE.md §Architectural Principles — crypto primitives
+# stable, semver-major only). Required for constant-time BLAKE3 hash
+# comparison in `PolicyRegistry::register_policy` so an attacker cannot
+# mount a timing-side-channel to recover the expected 32-byte digest.
+subtle = "2.6"
+thiserror.workspace = true
 
 [dev-dependencies]
 octo-storage-core = { path = "../octo-storage-core" }

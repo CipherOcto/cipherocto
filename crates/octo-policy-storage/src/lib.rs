@@ -16,6 +16,8 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod policy_registry;
+
 use std::sync::Arc;
 
 use octo_storage_core::typed_statement::{DdlOperation, DdlTemplate};

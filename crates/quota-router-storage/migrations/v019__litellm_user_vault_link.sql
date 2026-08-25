@@ -23,6 +23,25 @@
 --   3. Bridge table is cipherocto-side only; octo-vault owns the
 --      canonical vaults table. No DDL dependencies on octo-vault
 --      migrations (decoupled substrate layers per RFC-0206).
+--   4. (R4 fix D3 — 2026-08-24) Stoolap fork does NOT enforce
+--      BLOB(16)+BLOB(16) composite PRIMARY KEY; the PRIMARY KEY
+--      column constraint is accepted-but-not-enforced at the
+--      storage layer. Application-layer SELECT-EXISTS pre-check in
+--      `litellm_user_vault_link_lookup` (called BEFORE the INSERT)
+--      is the load-bearing defense for "one-active-link per
+--      user_id" enforcement. Without the pre-check, a second
+--      INSERT with the same `(user_id, vault_id)` tuple would
+--      silently succeed (verified 2026-08-24 substrate recon;
+--      same pattern as `policy_registry` duplicate guard in
+--      R4 fix B2).
+--   5. (R4 fix D4 — 2026-08-24) The `CHECK (length(user_id) = 16)`
+--      and `CHECK (length(vault_id) = 16)` clauses are
+--      accepted-but-not-enforced by the Stoolap fork at runtime.
+--      Application-layer length validation (i.e. the
+--      `litellm_user_vault_link_lookup` handler validating the
+--      BLOB length before the INSERT) is REQUIRED for the byte-
+--      length invariant. Without application-layer enforcement,
+--      a malformed BLOB(8) user_id could land in the table.
 
 -- ─────────────────────────────────────────────────────────────────────
 -- Table: litellm_user_vault_link

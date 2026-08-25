@@ -18,6 +18,13 @@
 
 pub mod policy_registry;
 
+// R4 fix C1: re-export the `PolicyRegistry` trait + `PolicyRegistryError`
+// from the owner crate (`octo_policy::policy_registry`) so existing
+// callers can keep using `octo_policy_storage::PolicyRegistry` paths
+// while the trait surface lives in `octo-policy` (the Layer A owner
+// crate per the Stable Abstractions Principle).
+pub use octo_policy::policy_registry::{PolicyRegistry, PolicyRegistryError};
+
 use std::sync::Arc;
 
 use octo_storage_core::typed_statement::{DdlOperation, DdlTemplate};

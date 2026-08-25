@@ -55,6 +55,7 @@
 pub mod domain_separators;
 pub mod kind_uuid_registry;
 pub mod policy_kinds;
+pub mod policy_registry;
 pub mod workflow_kind;
 
 use std::collections::{HashMap, HashSet};

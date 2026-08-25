@@ -17,6 +17,26 @@ use crate::policy_kinds::{
     VaultCreationRequest, WorkflowError, WorkflowKind, ZK_ENVELOPE_MARKER,
 };
 
+// R5 fix N7 (MINOR): the 4 `*_NS` constants below are EXAMPLE-ONLY
+// identifiers that are NOT in canonical RFC-0967-A1 §2.6. The §2.6
+// workflow namespace strings are: `octo/workflow/capability/v1`,
+// `octo/workflow/litellm/v1`, `octo/workflow/scim/v1`,
+// `octo/workflow/composite/v1`. The demo constants here use
+// example-only suffixes (`vault-creation`, `subject-provision`,
+// `user-info-read`, `user-update`) that demonstrate the
+// `WorkflowKind` trait API surface WITHOUT claiming a canonical kind
+// registry entry.
+//
+// Per the F-P5.2-3 RETAIN framework: substrate truth wins for
+// derivation rules but RFC §2.6 is canonical for which strings
+// yield distinct canonical kind_uuids. These constants will derive
+// non-canonical UUIDs that no `policy_registry` row will ever match;
+// they are kept as in-tree demos so the trait is exercisable
+// without forcing a canonical-mapping decision on every reader.
+//
+// Downstream consumers that need a workflow kind_uuid that
+// resolves to a real registry row MUST use one of the 4 canonical
+// §2.6 workflow NS strings (or add a new RFC-allocated one).
 pub const VAULT_CREATION_NS: &str = "octo/workflow/vault-creation/v1";
 pub const SUBJECT_PROVISION_NS: &str = "octo/workflow/subject-provision/v1";
 pub const USER_INFO_READ_NS: &str = "octo/workflow/user-info-read/v1";
@@ -269,8 +289,20 @@ impl crate::policy_kinds::AuthorityPolicy for SingleKeyAuthorityPolicy {
 #[derive(Debug, Clone, Default)]
 pub struct PrimaryOrSecondaryInteropPolicy;
 
+// R6 fix F6 (LOW): canonical rename per RFC-0967-A1 §2.6 selector
+// namespace table. The canonical selector NS for the
+// amount-threshold selector is `octo/selector/byamountthreshold/v1`
+// (NOT `octo/selector/byamount/v1` — the substrate historically
+// used the seed string but RFC §2.6 ratifies `byamountthreshold`).
+// The kind_uuid derived from this constant is therefore DIFFERENT
+// from prior substrate compilations: any consumer pinning the
+// previous seed-derived UUID must re-derive via the canonical
+// constant (the substrate now agrees with RFC §2.6 row 3 of the
+// selector table). All in-tree consumers use the constant,
+// so no external test churn — the UUID delta is observable only
+// to readers pinning the prior literal string.
 pub const PRIMARY_OR_SECONDARY_NS: &str = "octo/interop/primary-or-secondary/v1";
-pub const BYAMOUNT_SELECTOR_NS: &str = "octo/selector/byamount/v1";
+pub const BYAMOUNT_SELECTOR_NS: &str = "octo/selector/byamountthreshold/v1";
 
 #[derive(Debug, Clone, Default)]
 pub struct ByAmountSelector;

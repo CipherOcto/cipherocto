@@ -44,12 +44,13 @@ pub struct RegisteredPolicy {
 /// All variants are RFC-anchored:
 /// - `HashMismatch`: Layer A primitive — expected_hash mismatch.
 /// - `NotFound`: lookup miss (RFC-0967-A1 §2.5 fail-closed).
-/// - `ClassBRequiresZkProof`: Class B without marker (advisory,
-///   not enforced by `register_policy`'s current impl which uses
-///   `InvalidClassBProof`; retained for forward compatibility).
 /// - `InvalidClassBProof`: R4 fix D2 — Class B registration gate
 ///   rejects body bytes without the ZK envelope marker at
-///   `body[16..20]`.
+///   `body[16..20]`. (R6 fix F5: the formerly-declared
+///   `ClassBRequiresZkProof` variant was a dead-code overlay;
+///   `register_policy` only ever returns `InvalidClassBProof`
+///   for Class B ZK marker absence — the two names were
+///   redundant. Removed for substrate-truth concordance.)
 /// - `AlreadyRegistered`: R4 fix B2 — duplicate `policy_hash`
 ///   guard rejects the second insert.
 /// - `NotRegistrant`: R4 fix B1 — `delegate_authority` rejects
@@ -69,9 +70,6 @@ pub enum PolicyRegistryError {
     /// Lookup query returned no rows.
     #[error("policy not found: {0}")]
     NotFound(String),
-    /// Class B execution requires a ZK envelope marker.
-    #[error("class B policy requires ZK envelope marker at proof[16..20]")]
-    ClassBRequiresZkProof,
     /// R4 fix D2: Class B registration gate. Body bytes lack
     /// the ZK envelope marker at `[16..20]`. The substrate
     /// rejects the insert before any row is written to either
@@ -168,6 +166,52 @@ pub trait PolicyRegistry: Send + Sync {
 pub fn verify_class_b_zk_marker(proof: &[u8]) -> bool {
     proof.len() >= 20 && proof[16..20] == ZK_ENVELOPE_MARKER
 }
+
+/// Verify the Class C advisory marker (R5 fix G3 coverage).
+///
+/// Per RFC-0967-A1 §3 row 6 (Class C): Class C policies are
+/// "registration-time rejected" — they exist in the registry for
+/// audit visibility only, and consumers cannot act on Class C body
+/// content through the standard lookup path (per R4 fix D1).
+///
+/// A canonical Class C body MUST carry a `CLASS_C_ADVISORY_MARKER`
+/// at `body[0..4]` so the substrate can recognize the advisory
+/// nature at registration time. This helper performs the marker
+/// check; the substrate's `register_policy` does NOT reject on a
+/// missing marker (Class C registration is allowed regardless of
+/// the marker; the marker is metadata, not a gate), but the lookup
+/// path strips the body to enforce advisory-only semantics.
+///
+/// R5 fix G3: this helper mirrors `verify_class_b_zk_marker` so the
+/// Class C advisory contract is testable in isolation. The
+/// documentation in §3 row 6 is intentionally recorded here as a
+/// substrate-truth anchor — future substrate maintainers can verify
+/// the advisory contract by inspecting this function + the D1
+/// strip in `StoolapPolicyRegistry::lookup_policy`.
+///
+/// **Class C enforcement contract (RFC-0967-A1 §3 row 6):**
+/// 1. Registration gate: the marker is OPTIONAL (body may be empty
+///    or marker-less — Class C is advisory, no executable
+///    contract to validate).
+/// 2. Lookup gate: the body bytes are STRIPPED to `Vec::new()`
+///    regardless of marker presence (R4 fix D1).
+/// 3. The marker exists so audit tooling can distinguish a
+///    registry slot that was deliberately registered as
+///    "advisory-only" (marker present) from one that landed in
+///    the Class C bucket by accident (marker absent).
+#[must_use]
+pub fn verify_class_c_marker(body: &[u8]) -> bool {
+    body.len() >= 4 && body[0..4] == CLASS_C_ADVISORY_MARKER
+}
+
+/// Canonical Class C advisory marker (4-byte magic at `body[0..4]`).
+///
+/// R5 fix G3: parallel to `ZK_ENVELOPE_MARKER` for Class B. The
+/// marker is intentionally distinct from the ZK envelope marker
+/// (`[0x01, 0x7a, 0x6b, 0x00]`) so a body cannot satisfy both
+/// checks simultaneously — Class C bodies are advisory; Class B
+/// bodies require a ZK envelope.
+pub const CLASS_C_ADVISORY_MARKER: [u8; 4] = [0x02, 0x63, 0x6c, 0x73]; // "02cls"
 
 #[cfg(test)]
 mod tests {

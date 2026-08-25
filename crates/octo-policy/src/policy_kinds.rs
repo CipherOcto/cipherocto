@@ -33,6 +33,22 @@ impl ExecutionClass {
             _ => None,
         }
     }
+
+    /// Canonical TEXT form per RFC-0967-A1 §2.4 `execution_class`
+    /// column (single ASCII char: "A" / "B" / "C").
+    ///
+    /// R5 fix D3: substrate persists `execution_class` as TEXT, not
+    /// INTEGER. The byte representation (`as_byte`) is preserved for
+    /// wire-format interop (RFC-0008 §Data Structures discriminant),
+    /// but storage column bindings MUST go through this method so
+    /// the substrate's TEXT type-check accepts the value.
+    pub fn as_text(&self) -> &'static str {
+        match self {
+            ExecutionClass::A => "A",
+            ExecutionClass::B => "B",
+            ExecutionClass::C => "C",
+        }
+    }
 }
 
 /// ChainNamespace 1-byte variant (RFC-0967-A1 v1.9.2 + RFC-0010 §Data Model).

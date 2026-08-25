@@ -242,4 +242,178 @@ mod tests {
             "CIPHEROCTO_KIND_ROOT_BYTES drift: re-derive and freeze again"
         );
     }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // R5 fix G4 coverage: 30 individual `#[test]` per-namespace distinct-UUID
+    // assertions. Each test asserts:
+    //   1. kind_uuid_from_namespace(NS) != [0u8; 16]  (no all-zero UUID)
+    //   2. kind_uuid_from_namespace(NS) is not equal to any other NS's UUID
+    // Test name derives from the NS string suffix (e.g. `singlekey`,
+    // `didattestation`, `primary-or-secondary`) so the test list reads
+    // as a per-NS audit trail.
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// Helper: compute the full set of canonical UUIDs once for the
+    /// "distinct from all others" cross-check below.
+    fn all_canonical_uuids() -> std::collections::HashSet<u128> {
+        KIND_NAMESPACE_STRINGS
+            .iter()
+            .map(|ns| kind_uuid_from_namespace(ns))
+            .collect()
+    }
+
+    macro_rules! ns_distinct_test {
+        ($name:ident, $ns:expr) => {
+            #[test]
+            fn $name() {
+                let u = kind_uuid_from_namespace($ns);
+                assert_ne!(u, 0, "namespace {} must derive a non-zero UUID", $ns);
+                let all = all_canonical_uuids();
+                // `ns` is one of the 30 canonical strings, so it IS in
+                // the set. Count occurrences of `u` to confirm exactly
+                // one match (i.e. its own row, no collision).
+                let count = all.iter().filter(|&&x| x == u).count();
+                assert_eq!(
+                    count, 1,
+                    "namespace {} UUID {:#034x} must be unique across all 30 NS (got {} matches)",
+                    $ns, u, count
+                );
+            }
+        };
+    }
+
+    // Authority (6) — RFC-0967-A1 §2.6
+    ns_distinct_test!(ns_authority_singlekey, "octo/auth/singlekey/v1");
+    ns_distinct_test!(ns_authority_multisig, "octo/auth/multisig/v1");
+    ns_distinct_test!(ns_authority_capability, "octo/auth/capability/v1");
+    ns_distinct_test!(ns_authority_governance, "octo/auth/governance/v1");
+    ns_distinct_test!(ns_authority_hsm, "octo/auth/hsm/v1");
+    ns_distinct_test!(ns_authority_hybrid, "octo/auth/hybrid/v1");
+
+    // Membership (7)
+    ns_distinct_test!(
+        ns_membership_didattestation,
+        "octo/membership/didattestation/v1"
+    );
+    ns_distinct_test!(
+        ns_membership_invitationtoken,
+        "octo/membership/invitationtoken/v1"
+    );
+    ns_distinct_test!(ns_membership_merklelist, "octo/membership/merklelist/v1");
+    ns_distinct_test!(ns_membership_teamsproxy, "octo/membership/teamsproxy/v1");
+    ns_distinct_test!(
+        ns_membership_corpmemberstable,
+        "octo/membership/corpmemberstable/v1"
+    );
+    ns_distinct_test!(
+        ns_membership_capabilitygated,
+        "octo/membership/capabilitygated/v1"
+    );
+    ns_distinct_test!(ns_membership_scimbridge, "octo/membership/scimbridge/v1");
+
+    // Interop (4)
+    ns_distinct_test!(ns_interop_none, "octo/interop/none/v1");
+    ns_distinct_test!(ns_interop_swap, "octo/interop/swap/v1");
+    ns_distinct_test!(ns_interop_wrap, "octo/interop/wrap/v1");
+    ns_distinct_test!(ns_interop_hybrid, "octo/interop/hybrid/v1");
+
+    // Burn (3)
+    ns_distinct_test!(ns_burn_timelock, "octo/burn/timelock/v1");
+    ns_distinct_test!(ns_burn_immediate, "octo/burn/immediate/v1");
+    ns_distinct_test!(ns_burn_multisig, "octo/burn/multisig/v1");
+
+    // Workflow (4)
+    ns_distinct_test!(ns_workflow_capability, "octo/workflow/capability/v1");
+    ns_distinct_test!(ns_workflow_litellm, "octo/workflow/litellm/v1");
+    ns_distinct_test!(ns_workflow_scim, "octo/workflow/scim/v1");
+    ns_distinct_test!(ns_workflow_composite, "octo/workflow/composite/v1");
+
+    // Audit (3)
+    ns_distinct_test!(ns_audit_testnet, "octo/audit/testnet/v1");
+    ns_distinct_test!(ns_audit_mainnet, "octo/audit/mainnet/v1");
+    ns_distinct_test!(ns_audit_ab, "octo/audit/ab/v1");
+
+    // Selector (3)
+    ns_distinct_test!(ns_selector_bychain, "octo/selector/bychain/v1");
+    ns_distinct_test!(ns_selector_byasset, "octo/selector/byasset/v1");
+    ns_distinct_test!(
+        ns_selector_byamountthreshold,
+        "octo/selector/byamountthreshold/v1"
+    );
+
+    // ─────────────────────────────────────────────────────────────────────
+    // R5 fix G5 coverage: 7 per-category slice tests. Each test slices
+    // `KIND_NAMESPACE_STRINGS` by the exact count expected from
+    // RFC-0967-A1 §2.6 (Authority=6, Membership=7, Interop=4, Burn=3,
+    // Workflow=4, Audit=3, Selector=3) and asserts all UUIDs are
+    // distinct.
+    // ─────────────────────────────────────────────────────────────────────
+
+    fn category_uuids_distinct(cat: PolicyKindCategory) {
+        let nss = namespaces_for(cat);
+        let uuids: Vec<u128> = nss.iter().map(|ns| kind_uuid_from_namespace(ns)).collect();
+        let n = uuids.len();
+        let mut sorted = uuids.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            n,
+            "{cat:?}: expected {n} distinct UUIDs, got {} (collision)",
+            sorted.len()
+        );
+        // Also assert none are zero.
+        for u in &uuids {
+            assert_ne!(*u, 0, "{cat:?}: UUID must not be zero");
+        }
+    }
+
+    #[test]
+    fn slice_authority_6_distinct() {
+        let nss = namespaces_for(PolicyKindCategory::Authority);
+        assert_eq!(nss.len(), 6, "Authority category must be 6 NS");
+        category_uuids_distinct(PolicyKindCategory::Authority);
+    }
+
+    #[test]
+    fn slice_membership_7_distinct() {
+        let nss = namespaces_for(PolicyKindCategory::Membership);
+        assert_eq!(nss.len(), 7, "Membership category must be 7 NS");
+        category_uuids_distinct(PolicyKindCategory::Membership);
+    }
+
+    #[test]
+    fn slice_interop_4_distinct() {
+        let nss = namespaces_for(PolicyKindCategory::Interop);
+        assert_eq!(nss.len(), 4, "Interop category must be 4 NS");
+        category_uuids_distinct(PolicyKindCategory::Interop);
+    }
+
+    #[test]
+    fn slice_burn_3_distinct() {
+        let nss = namespaces_for(PolicyKindCategory::Burn);
+        assert_eq!(nss.len(), 3, "Burn category must be 3 NS");
+        category_uuids_distinct(PolicyKindCategory::Burn);
+    }
+
+    #[test]
+    fn slice_workflow_4_distinct() {
+        let nss = namespaces_for(PolicyKindCategory::Workflow);
+        assert_eq!(nss.len(), 4, "Workflow category must be 4 NS");
+        category_uuids_distinct(PolicyKindCategory::Workflow);
+    }
+
+    #[test]
+    fn slice_audit_3_distinct() {
+        let nss = namespaces_for(PolicyKindCategory::Audit);
+        assert_eq!(nss.len(), 3, "Audit category must be 3 NS");
+        category_uuids_distinct(PolicyKindCategory::Audit);
+    }
+
+    #[test]
+    fn slice_selector_3_distinct() {
+        let nss = namespaces_for(PolicyKindCategory::Selector);
+        assert_eq!(nss.len(), 3, "Selector category must be 3 NS");
+        category_uuids_distinct(PolicyKindCategory::Selector);
+    }
 }

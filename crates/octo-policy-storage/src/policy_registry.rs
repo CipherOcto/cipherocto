@@ -9,6 +9,8 @@ use std::sync::Arc;
 
 use octo_policy::kind_uuid_registry::PolicyKindCategory;
 use octo_policy::policy_kinds::ExecutionClass;
+#[cfg(test)]
+use octo_policy::policy_registry::verify_class_c_marker;
 use octo_policy::policy_registry::{
     verify_class_b_zk_marker, PolicyRegistry, PolicyRegistryError, RegisteredPolicy,
 };
@@ -101,17 +103,29 @@ impl PolicyRegistry for StoolapPolicyRegistry {
         // `Err(NotFound)` (the `policy_kind_authority` row may be missing,
         // revoked, or never inserted; substrate fails closed).
         //
-        // Column layout for `policy_registry` (per migration v017):
-        //   0: policy_hash
-        //   1: registry_kind
-        //   2: crate_name
-        //   3: trait_spec  ← canonical CBOR body blob (RFC-0967-A1 §2.4)
-        //   4: registered_at_unix
-        //   5: revoked_at_unix
+        // Column layout for `policy_registry` (per migration v020 — R5
+        // fix D2/D3/N6 substrate alignment with RFC-0967-A1 §2.4):
+        //   0:  policy_hash
+        //   1:  registry_kind
+        //   2:  crate_name
+        //   3:  body               ← canonical CBOR body blob (R5 fix D2)
+        //   4:  registered_at_unix
+        //   5:  revoked_at_unix
+        //   6:  kind_uuid          ← R5 fix D3 (was null in v017)
+        //   7:  execution_class    ← R5 fix D3 (DEFAULT 'A')
+        //   8:  registered_by_did  ← R5 fix D3 (was null in v017)
+        //   9:  revoked_by_did     ← R5 fix D3
+        //   10: revocation_reason  ← R5 fix D3
+        //   11: superseding_policy_hash ← R5 fix N6
+        //
+        // The `trait_spec` column from v017 is retained for the migration
+        // window (a historical alias); new code reads `body`. Substrate-
+        // truth: v020 ADDED `body` + backfilled from `trait_spec`, leaving
+        // both columns populated for any v017 row.
         //
         // Column layout for `policy_kind_authority` (per migration v017):
-        //   6: policy_kind_uuid
-        //   7: registrant_did
+        //   12: policy_kind_uuid
+        //   13: registrant_did
         let mut rows = self
             .db
             .query(
@@ -119,9 +133,15 @@ impl PolicyRegistry for StoolapPolicyRegistry {
                     pr.policy_hash, \
                     pr.registry_kind, \
                     pr.crate_name, \
-                    pr.trait_spec, \
+                    pr.body, \
                     pr.registered_at_unix, \
                     pr.revoked_at_unix, \
+                    pr.kind_uuid, \
+                    pr.execution_class, \
+                    pr.registered_by_did, \
+                    pr.revoked_by_did, \
+                    pr.revocation_reason, \
+                    pr.superseding_policy_hash, \
                     pka.policy_kind_uuid, \
                     pka.registrant_did \
                  FROM policy_registry pr \
@@ -139,22 +159,39 @@ impl PolicyRegistry for StoolapPolicyRegistry {
             let registry_kind: i64 = row.get(1).unwrap_or(0);
             let body: Vec<u8> = row.get(3).unwrap_or_default();
             let registered_at_unix: i64 = row.get(4).unwrap_or(0);
-            // LEFT JOIN miss → no active `policy_kind_authority` row. Per
-            // RFC-0967-A1 §2.5 this is `Err(NotFound)` (fail closed). The
-            // nullable columns from the LEFT JOIN round-trip as
-            // `Result<Option<Vec<u8>>, stoolap::Error>` (per `FromValue`
-            // impls); an inner `None` signals a JOIN miss.
-            let kind_uuid_bytes: Option<Vec<u8>> = row.get::<Option<Vec<u8>>>(6).map_err(|e| {
-                PolicyRegistryError::AuthorityDelegationDenied(format!("kind_uuid column: {e}"))
-            })?;
-            let registrant_did_bytes: Option<Vec<u8>> =
-                row.get::<Option<Vec<u8>>>(7).map_err(|e| {
-                    PolicyRegistryError::AuthorityDelegationDenied(format!(
-                        "registrant_did column: {e}"
-                    ))
-                })?;
-            let (kind_uuid, registered_by_did) =
-                match (kind_uuid_bytes.as_deref(), registrant_did_bytes.as_deref()) {
+            // R5 fix D2/D3: read kind_uuid + execution_class +
+            // registered_by_did from the denormalized columns on
+            // policy_registry (added in v020). The LEFT JOIN to
+            // policy_kind_authority is preserved as a fallback but
+            // the canonical read is now from the registry row
+            // directly (avoids the Stoolap fork's LEFT JOIN miss on
+            // BLOB(32) equality that was documented as a
+            // substrate-truth limitation in R4).
+            let kind_uuid_bytes: Vec<u8> = row.get(6).unwrap_or_default();
+            let execution_class_text: String = row.get(7).unwrap_or_default();
+            let registered_by_did_bytes: Vec<u8> = row.get(8).unwrap_or_default();
+            let revoked_by_did_bytes: Option<Vec<u8>> =
+                row.get::<Option<Vec<u8>>>(9).ok().flatten();
+            let revocation_reason_text: Option<String> =
+                row.get::<Option<String>>(10).ok().flatten();
+            let superseding_policy_hash_bytes: Option<Vec<u8>> =
+                row.get::<Option<Vec<u8>>>(11).ok().flatten();
+            // R5 fix: prefer the LEFT JOIN's policy_kind_authority
+            // source-of-truth (the authority table is the
+            // substrate-canonical kind_uuid reference per RFC-0967-A1
+            // §2.4). The registry's denormalized kind_uuid is used as
+            // a fallback when the JOIN misses (legacy v017 row that
+            // doesn't have an authority row — fail closed to NotFound
+            // for those).
+            let (kind_uuid, registered_by_did) = {
+                let pka_kind_uuid_bytes: Option<Vec<u8>> =
+                    row.get::<Option<Vec<u8>>>(12).ok().flatten();
+                let pka_registrant_did_bytes: Option<Vec<u8>> =
+                    row.get::<Option<Vec<u8>>>(13).ok().flatten();
+                match (
+                    pka_kind_uuid_bytes.as_deref(),
+                    pka_registrant_did_bytes.as_deref(),
+                ) {
                     (Some(uuid), Some(did)) if uuid.len() == 16 && did.len() == 32 => {
                         let mut u = [0u8; 16];
                         u.copy_from_slice(uuid);
@@ -163,15 +200,38 @@ impl PolicyRegistry for StoolapPolicyRegistry {
                         (u, d)
                     }
                     _ => {
-                        return Err(PolicyRegistryError::NotFound(format!(
-                            "no active policy_kind_authority row for policy_hash {}",
-                            hex32(policy_hash)
-                        )));
+                        // R5: fall back to the denormalized columns
+                        // (R5 fix D3) so the lookup survives the
+                        // Stoolap fork's LEFT JOIN miss on
+                        // BLOB(32) equality. R4 relied on
+                        // Err(NotFound); R5 uses the in-row denorm
+                        // for backwards compatibility with v017
+                        // data.
+                        if kind_uuid_bytes.len() == 16 && registered_by_did_bytes.len() == 32 {
+                            let mut u = [0u8; 16];
+                            u.copy_from_slice(&kind_uuid_bytes);
+                            let mut d = [0u8; 32];
+                            d.copy_from_slice(&registered_by_did_bytes);
+                            (u, d)
+                        } else {
+                            return Err(PolicyRegistryError::NotFound(format!(
+                                "no active policy_kind_authority row for policy_hash {}",
+                                hex32(policy_hash)
+                            )));
+                        }
                     }
-                };
-            // Decode `execution_class` from `registry_kind` via the reverse
-            // of the F2 mapping (registry_kind=1→A, 3→B, 5→C; unknown→A).
-            let execution_class = registry_kind_to_execution_class(registry_kind);
+                }
+            };
+            // R5 fix D3: prefer the row's denormalized execution_class
+            // (TEXT column populated by register_policy); fall back
+            // to the registry_kind-derived mapping for legacy v017
+            // rows where execution_class defaulted to 'A'.
+            let execution_class = if execution_class_text.is_empty() {
+                registry_kind_to_execution_class(registry_kind)
+            } else {
+                ExecutionClass::from_byte(execution_class_text.as_bytes()[0])
+                    .unwrap_or_else(|| registry_kind_to_execution_class(registry_kind))
+            };
             // R4 fix D1 (N4 MINOR): Class C policies are advisory.
             // The body bytes are stripped from the returned
             // `RegisteredPolicy` so callers cannot act on Class C
@@ -188,6 +248,24 @@ impl PolicyRegistry for StoolapPolicyRegistry {
             } else {
                 body
             };
+            // R5 fix D3: surface revocation metadata + supersession
+            // pointer from the denormalized columns.
+            let revoked_by_did = revoked_by_did_bytes
+                .as_deref()
+                .filter(|b| b.len() == 32)
+                .map(|b| {
+                    let mut d = [0u8; 32];
+                    d.copy_from_slice(b);
+                    d
+                });
+            let superseding_policy_hash = superseding_policy_hash_bytes
+                .as_deref()
+                .filter(|b| b.len() == 32)
+                .map(|b| {
+                    let mut h = [0u8; 32];
+                    h.copy_from_slice(b);
+                    h
+                });
             return Ok(Some(RegisteredPolicy {
                 policy_hash: *policy_hash,
                 kind_uuid,
@@ -196,9 +274,9 @@ impl PolicyRegistry for StoolapPolicyRegistry {
                 registered_at_unix,
                 registered_by_did,
                 revoked_at_unix: None,
-                revoked_by_did: None,
-                revocation_reason: None,
-                superseding_policy_hash: None,
+                revoked_by_did,
+                revocation_reason: revocation_reason_text,
+                superseding_policy_hash,
             }));
         }
         Ok(None)
@@ -309,16 +387,43 @@ impl PolicyRegistry for StoolapPolicyRegistry {
 
         let result: Result<(), PolicyRegistryError> = (|| {
             // Write `policy_registry` row first.
+            //
+            // R5 fix D2: `body` is the canonical column name per
+            // RFC-0967-A1 §2.4. The legacy `trait_spec` column from
+            // v017 is populated alongside `body` for the migration
+            // window — substrate-truth: v020 ADDED `body` without
+            // dropping `trait_spec`, so any v017-era consumer still
+            // reading `trait_spec` continues to work.
+            //
+            // R5 fix D3: the 6 new columns (kind_uuid, execution_class,
+            // registered_by_did) are populated from the register call
+            // parameters. The 3 revocation/supersession columns
+            // (revoked_by_did, revocation_reason, superseding_policy_hash)
+            // are NOT NULL but explicitly set to NULL here for the
+            // fresh-registration case.
             tx.execute(
                 "INSERT INTO policy_registry \
-                 (policy_hash, registry_kind, crate_name, trait_spec, registered_at_unix, revoked_at_unix) \
-                 VALUES (?, ?, ?, ?, ?, NULL)",
+                 (policy_hash, registry_kind, crate_name, trait_spec, body, \
+                  registered_at_unix, revoked_at_unix, \
+                  kind_uuid, execution_class, registered_by_did, \
+                  revoked_by_did, revocation_reason, superseding_policy_hash) \
+                 VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, NULL, NULL)",
                 (
                     actual_hash.as_slice(),
                     registry_kind,
                     "octo-policy-storage/v1",
                     body.to_vec(),
+                    body.to_vec(),
                     registered_at_unix,
+                    kind_uuid.as_slice(),
+                    // R5 fix D3: `execution_class` is stored as TEXT
+                    // (single-char canonical: "A" / "B" / "C").
+                    // Stoolap fork's column type is TEXT, so we
+                    // bind a String. `ExecutionClass::as_byte()` returns
+                    // a u8 numeric which the column rejects (the
+                    // substrate type-checks against TEXT literal).
+                    execution_class.as_text(),
+                    registered_by_did.as_slice(),
                 ),
             )
             .map_err(|e| {
@@ -536,30 +641,30 @@ impl PolicyRegistry for StoolapPolicyRegistry {
         // exposes `.begin()` directly (consistent with
         // quota-router-storage `SlashStore::upsert_row` precedent
         // + octo-ident-storage `HolderRegistry::insert_dual`).
+        //
+        // R5 fix N6: the `superseding_policy_hash` column lands in
+        // v020 (added 2026-08-24 per RFC-0967-A1 §2.5 R6 fix
+        // F-R6-013). The delegate flow now writes `new_hash` into
+        // the old row's `superseding_policy_hash` column as part of
+        // the same atomic UPDATE — eliminating the previous
+        // revoke-only TOCTOU window (where the old row was revoked
+        // and the caller separately called `register_policy`,
+        // which could fail after the revoke had already committed).
         let mut tx = self.db.begin().map_err(|e| {
             PolicyRegistryError::AuthorityDelegationDenied(format!("begin tx: {e}"))
         })?;
 
         let update_result: Result<(), PolicyRegistryError> = (|| {
-            // Revoke old. `superseding_policy_hash` column is NOT
-            // present in v017 schema (would be a v019 migration per
-            // RFC §2.5 R6 fix F-R6-013 — the column is
-            // "RFC-defined substrate-pending"). Until that
-            // migration lands, delegation is **revoke-only**: the
-            // new row is inserted by a separate `register_policy`
-            // call after this method returns.
-            //
-            // TODO: v019 migration — add `superseding_policy_hash
-            // BLOB(32)` column to `policy_registry` schema and
-            // write `new_hash` here (atomic with the UPDATE).
-            // Tracked under RFC-0967-A1 §2.5 R6 fix F-R6-013
-            // substrate-pending work.
-            let _ = new_hash; // TODO(v019): write to superseding_policy_hash column
-
+            // R5 fix N6: write the supersession pointer in the
+            // same UPDATE that records the revoke timestamp.
+            // pre-v020 substrate was `revoke-only`; v020 lands
+            // the `superseding_policy_hash` column so the chain
+            // (old_hash → new_hash) is durable + atomic.
             tx.execute(
-                "UPDATE policy_registry SET revoked_at_unix = ? WHERE policy_hash = ? \
-                 AND revoked_at_unix IS NULL",
-                (registered_at_unix, old_hash.as_slice()),
+                "UPDATE policy_registry \
+                 SET revoked_at_unix = ?, superseding_policy_hash = ? \
+                 WHERE policy_hash = ? AND revoked_at_unix IS NULL",
+                (registered_at_unix, new_hash.as_slice(), old_hash.as_slice()),
             )
             .map_err(|e| {
                 PolicyRegistryError::AuthorityDelegationDenied(format!("update revoke: {e}"))
@@ -619,48 +724,66 @@ mod tests {
     // ─────────────────────────────────────────────────────────────────────
     // 4 CRITICAL coverage tests per adversarial review of commit 39b42b05.
     //
-    // Each test owns a fresh in-memory DB and brings the v017
-    // (policy_registry + policy_kind_authority) tables up via `ensure_v017`.
+    // Each test owns a fresh in-memory DB and brings the v020
+    // (policy_registry + policy_kind_authority) tables up via `ensure_v020`.
     // Cross-RFC substrate-truth pattern: substrate-valid DDL is
     // substrate-enforced; tests verify the typed-error path (not the
     // substrate fork's CHECK clause accept-but-not-enforce semantics).
     // ─────────────────────────────────────────────────────────────────────
 
-    /// In-memory DB + v017 subset schema (policy_registry + policy_kind_authority).
+    /// In-memory DB + v020 subset schema (policy_registry + policy_kind_authority).
     ///
     /// Stoolap fork accepts CHECK clauses in DDL but does NOT enforce at
     /// runtime (verified 2026-08-24 substrate recon, per
-    /// `tv_0903_d1_litellm_persistence.rs`). The DDL below is verbatim from
-    /// `crates/quota-router-storage/migrations/v017__add_chain_metadata_and_policy_registry.sql`
-    /// (only the two tables the registry reads/writes are inlined; the v017
-    /// `ledger_chain_registry` + `chain_metadata` tables are not exercised
-    /// by these registry tests). FKs omitted per fork constraint
-    /// (no FOREIGN KEY enforcement; substrate enforces via application-layer
-    /// lookup before write).
+    /// `tv_0903_d1_litellm_persistence.rs`). The DDL below mirrors the
+    /// POST-v020 schema per `crates/quota-router-storage/migrations/v020__policy_registry_columns_v2.sql`:
+    /// 10 columns per RFC-0967-A1 §2.4 (`body` canonical + `trait_spec`
+    /// legacy alias retained; `kind_uuid` / `execution_class` /
+    /// `registered_by_did` / `revoked_by_did` / `revocation_reason` /
+    /// `superseding_policy_hash`).
+    ///
+    /// FKs omitted per fork constraint (no FOREIGN KEY enforcement;
+    /// substrate enforces via application-layer lookup before write).
     ///
     /// **Test isolation (R4 fix context):** Stoolap's `memory://` DSN
     /// is shared across the test process, so leftover rows from one
     /// test are visible to the next (cross-test bleed-through). The
     /// `DROP TABLE IF EXISTS` + `CREATE TABLE` pair guarantees a
-    /// fresh schema per `ensure_v017()` call. This is a TEST-ONLY
+    /// fresh schema per `ensure_v020()` call. This is a TEST-ONLY
     /// convenience — production migrations use `CREATE TABLE IF NOT
     /// EXISTS` for additive idempotency.
-    fn ensure_v017() -> Arc<Database> {
+    ///
+    /// Renamed `ensure_v017` → `ensure_v020` per R5 fix D3 (v020 lands
+    /// the RFC-0967-A1 §2.4 columns that the substrate test schema
+    /// needs to exercise R5 fix D2/D3/N6 + B.4 lookup behavior).
+    fn ensure_v020() -> Arc<Database> {
         let db = octo_storage_core::open_in_memory().expect("open in-memory");
         // Test isolation: drop any leftover tables from prior
         // tests in the same process (Stoolap `memory://` DSN
         // persists across `open_in_memory()` calls).
         let _ = db.execute("DROP TABLE IF EXISTS policy_registry", ());
         let _ = db.execute("DROP TABLE IF EXISTS policy_kind_authority", ());
-        // policy_registry (RFC-0967-A1 v1.9.2 §2 + v017 migration cols).
+        // policy_registry (RFC-0967-A1 v1.9.2 §2 + v020 columns).
+        // v020 ADDED: `body` (canonical, was `trait_spec` in v017),
+        // `kind_uuid`, `execution_class`, `registered_by_did`,
+        // `revoked_by_did`, `revocation_reason`,
+        // `superseding_policy_hash`. `trait_spec` kept for the
+        // migration-window backward-compat.
         db.execute(
             "CREATE TABLE IF NOT EXISTS policy_registry (\
                  policy_hash BLOB(32) NOT NULL PRIMARY KEY, \
                  registry_kind INTEGER NOT NULL, \
                  crate_name TEXT NOT NULL, \
                  trait_spec BLOB NOT NULL, \
+                 body BLOB, \
                  registered_at_unix INTEGER NOT NULL, \
                  revoked_at_unix INTEGER, \
+                 kind_uuid BLOB(16), \
+                 execution_class TEXT NOT NULL DEFAULT 'A', \
+                 registered_by_did BLOB(32), \
+                 revoked_by_did BLOB(32), \
+                 revocation_reason TEXT, \
+                 superseding_policy_hash BLOB(32), \
                  CHECK (length(policy_hash) = 32), \
                  CHECK (registry_kind BETWEEN 1 AND 8), \
                  CHECK (length(crate_name) > 0), \
@@ -701,7 +824,7 @@ mod tests {
     //    Err(HashMismatch).
     #[test]
     fn register_policy_hash_mismatch_returns_error() {
-        let db = ensure_v017();
+        let db = ensure_v020();
         let registry = StoolapPolicyRegistry::new(db);
 
         let body = b"sample_policy_body_v1";
@@ -767,7 +890,7 @@ mod tests {
     //    marker check) but with all zeros in the marker slot.
     #[test]
     fn register_policy_class_b_requires_zk_marker() {
-        let db = ensure_v017();
+        let db = ensure_v020();
         let registry = StoolapPolicyRegistry::new(db);
 
         // Body bytes: 64 bytes total, but body[16..20] is all-zeros
@@ -813,7 +936,7 @@ mod tests {
     //    ("JOIN miss → no active authority row → fail closed").
     #[test]
     fn register_then_lookup_round_trip() {
-        let db = ensure_v017();
+        let db = ensure_v020();
         let registry = StoolapPolicyRegistry::new(Arc::clone(&db));
 
         let body: Vec<u8> = b"round_trip_body_v1_unique".to_vec();
@@ -917,7 +1040,7 @@ mod tests {
     //    bearing defense.
     #[test]
     fn register_duplicate_policy_hash_fails() {
-        let db = ensure_v017();
+        let db = ensure_v020();
         let registry = StoolapPolicyRegistry::new(db);
 
         let body = b"unique_policy_body_v1";
@@ -989,14 +1112,33 @@ mod tests {
     }
 
     // 5. `delegate_authority_atomic_with_correct_registrant_succeeds`
-    //    — R4 fix B1 + B3 coverage: when `registrant_did` matches the
-    //    row's `registered_by_did`, the delegation succeeds and the
-    //    old row is marked revoked. Uses a non-trivial registrant DID
-    //    (NOT all-zeros) so the test exercises the actual compare,
-    //    not a vacuous match.
+    //    — R4 fix B1 + B3 coverage + R6 fix F4 strengthening:
+    //    when `registrant_did` matches the row's
+    //    `registered_by_did`, the delegation succeeds and the
+    //    old row is marked revoked + the supersession pointer is
+    //    durably written in the SAME atomic UPDATE (R5 fix N6).
+    //    Uses a non-trivial registrant DID (NOT all-zeros) so
+    //    the test exercises the actual compare, not a vacuous
+    //    match.
+    //
+    //    R6 fix F4: this test now exercises the FULL success
+    //    path end-to-end: it registers BOTH the OLD and the NEW
+    //    policies (success path = the delegation chain has a
+    //    successor), then asserts:
+    //      (a) the OLD row's `superseding_policy_hash` column
+    //          equals `new_hash` (R5 N6 substrate truth),
+    //      (b) the OLD row's `revoked_at_unix` was set in the
+    //          SAME UPDATE,
+    //      (c) the NEW row exists in `policy_registry` (success
+    //          path = delegation chain target),
+    //      (d) the NEW row exists in `policy_kind_authority`
+    //          (the B3 atomic twin-insert guarantee must hold
+    //          for the successor too — a NEW row in
+    //          policy_registry without a matching authority row
+    //          would be a fail-open lookup target).
     #[test]
     fn delegate_authority_atomic_with_correct_registrant_succeeds() {
-        let db = ensure_v017();
+        let db = ensure_v020();
         let registry = StoolapPolicyRegistry::new(Arc::clone(&db));
 
         let body = b"delegatable_policy_body_v1";
@@ -1006,9 +1148,10 @@ mod tests {
             d[31] = 0xEF;
             d
         };
-        let policy_hash = octo_policy::domain_separators::blake3_prefix::derive_policy_hash(body);
+        let old_policy_hash =
+            octo_policy::domain_separators::blake3_prefix::derive_policy_hash(body);
 
-        // Register the policy first.
+        // Register the OLD policy first.
         registry
             .register_policy(
                 &[0xAB; 16],
@@ -1017,26 +1160,63 @@ mod tests {
                 &registrant_did,
                 &[0xAB; 64],
                 1_700_000_000,
-                &policy_hash,
+                &old_policy_hash,
             )
-            .expect("register must succeed");
+            .expect("register OLD policy must succeed");
+
+        // Register the NEW policy (the successor that the
+        // delegation chain points to). Distinct body so the
+        // policy_hash differs from the OLD one (the delegation
+        // contract per RFC-0967-A1 §2.5: the supersession
+        // pointer MUST point at a distinct registered policy).
+        let new_body = b"delegatable_policy_body_v1_successor";
+        let new_policy_hash =
+            octo_policy::domain_separators::blake3_prefix::derive_policy_hash(new_body);
+        registry
+            .register_policy(
+                &[0xCD; 16],
+                new_body,
+                ExecutionClass::A,
+                &registrant_did,
+                &[0xCD; 64],
+                1_700_000_400,
+                &new_policy_hash,
+            )
+            .expect("register NEW successor policy must succeed");
+
+        // Sanity: the OLD + NEW policy_hashes must differ (a
+        // self-delegation would be a degenerate loop, not a
+        // success-path delegation chain).
+        assert_ne!(
+            old_policy_hash, new_policy_hash,
+            "OLD and NEW policy_hashes must differ for a meaningful delegation chain"
+        );
 
         // Delegate with the correct registrant_did — must succeed.
-        let new_hash: [u8; 32] = [0xFF; 32];
         registry
-            .delegate_authority(&policy_hash, &new_hash, &registrant_did, 1_700_000_500)
+            .delegate_authority(
+                &old_policy_hash,
+                &new_policy_hash,
+                &registrant_did,
+                1_700_000_500,
+            )
             .expect("delegate_authority with matching registrant must succeed");
 
-        // Verify the old row is marked revoked.
+        // R6 fix F4 (a) + (b): the OLD row's `superseding_policy_hash`
+        // and `revoked_at_unix` columns were BOTH written by the
+        // same atomic UPDATE per R5 fix N6.
+        //
+        // Substrate-truth workaround (R4 fork constraint): SELECT
+        // with multiple columns AND a parameterized WHERE filter
+        // returns a synthetic row (NULL second column) even when
+        // COUNT(*) reports a match. We use single-column SELECTs
+        // to dodge the fork quirk.
         let mut rows = db
             .query(
                 "SELECT revoked_at_unix FROM policy_registry WHERE policy_hash = ?",
-                (policy_hash.as_slice(),),
+                (old_policy_hash.as_slice(),),
             )
-            .expect("query revoked");
-        // Read first row. Stoolap `?` placeholder quirk may
-        // return a synthetic default row + the matched row;
-        // we use the FIRST non-empty result.
+            .expect("query OLD revoked_at_unix");
         let mut revoked_at: i64 = 0;
         for _ in 0..3 {
             if let Some(Ok(row)) = rows.next() {
@@ -1051,7 +1231,81 @@ mod tests {
         }
         assert_eq!(
             revoked_at, 1_700_000_500,
-            "policy_registry row must be revoked at 1_700_000_500 (got revoked_at_unix = {revoked_at})"
+            "OLD row must be revoked at the delegated timestamp (got {revoked_at})"
+        );
+
+        let rows = db
+            .query(
+                "SELECT superseding_policy_hash FROM policy_registry WHERE policy_hash = ?",
+                (old_policy_hash.as_slice(),),
+            )
+            .expect("query OLD superseding_policy_hash");
+        let mut superseding_bytes: Vec<u8> = Vec::new();
+        for r in rows {
+            let r = r.expect("row ok");
+            let v: Vec<u8> = r.get(0).unwrap_or_default();
+            if v.len() == 32 {
+                superseding_bytes = v;
+                break;
+            }
+        }
+        assert_eq!(
+            superseding_bytes.len(),
+            32,
+            "OLD.superseding_policy_hash must be 32 bytes (got len={})",
+            superseding_bytes.len()
+        );
+        let mut superseding = [0u8; 32];
+        superseding.copy_from_slice(&superseding_bytes);
+        assert_eq!(
+            superseding, new_policy_hash,
+            "OLD.superseding_policy_hash MUST equal the registered new_policy_hash"
+        );
+
+        // R6 fix F4 (c): the NEW row must exist in `policy_registry`
+        // (the delegation chain has a successor target). Existence
+        // check via COUNT(*) (parameter-binding-friendly pattern
+        // per R4 fork constraint).
+        let mut count_rows = db
+            .query(
+                "SELECT COUNT(*) FROM policy_registry WHERE policy_hash = ?",
+                (new_policy_hash.as_slice(),),
+            )
+            .expect("count NEW in policy_registry");
+        let count: i64 = count_rows
+            .next()
+            .expect("row")
+            .expect("row ok")
+            .get(0)
+            .unwrap_or(0);
+        assert_eq!(
+            count, 1,
+            "NEW successor MUST exist in policy_registry after delegation (got count = {count})"
+        );
+
+        // R6 fix F4 (d): the NEW row must also exist in
+        // `policy_kind_authority` (R4 fix B3 atomic twin-insert
+        // guarantee applies to every register_policy call —
+        // the successor was registered BEFORE the delegation,
+        // so the authority row existed at delegation time).
+        // Without this assertion, the delegation chain would
+        // land on an advisory slot with no backing authority
+        // — the lookup_policy LEFT JOIN miss path.
+        let mut count_rows = db
+            .query(
+                "SELECT COUNT(*) FROM policy_kind_authority WHERE policy_hash = ?",
+                (new_policy_hash.as_slice(),),
+            )
+            .expect("count NEW in policy_kind_authority");
+        let count: i64 = count_rows
+            .next()
+            .expect("row")
+            .expect("row ok")
+            .get(0)
+            .unwrap_or(0);
+        assert_eq!(
+            count, 1,
+            "NEW successor MUST exist in policy_kind_authority (B3 atomic twin-insert guarantee)"
         );
     }
 
@@ -1067,7 +1321,7 @@ mod tests {
     //    "only the original registrant can delegate" invariant.
     #[test]
     fn delegate_authority_rejects_wrong_registrant() {
-        let db = ensure_v017();
+        let db = ensure_v020();
         let registry = StoolapPolicyRegistry::new(Arc::clone(&db));
 
         let body = b"policy_body_for_registrant_check_v1";
@@ -1123,7 +1377,7 @@ mod tests {
     //    through). This is the "atomic twin-insert" guarantee.
     #[test]
     fn register_policy_creates_authority_row() {
-        let db = ensure_v017();
+        let db = ensure_v020();
         let registry = StoolapPolicyRegistry::new(Arc::clone(&db));
 
         let body = b"authority_row_body_v1";
@@ -1198,98 +1452,216 @@ mod tests {
     //    (`Vec::new()`). Substrate fails-closed on Class C body
     //    exposure; consumers cannot act on Class C body content
     //    through the standard lookup path.
+    //
+    //    R6 fix F3 B.4 strengthening: the prior test (R5) used a
+    //    tautological stub `if ExecutionClass::C == ExecutionClass::C
+    //    { Vec::new() } else { self.raw.clone() }` that did NOT
+    //    exercise the actual production code path. The fix calls
+    //    `StoolapPolicyRegistry::lookup_policy` directly so the
+    //    test asserts the production strip semantics end-to-end.
+    //    The StubClassCRegistry below is retained (dead-code-
+    //    free of any registry reference) so future readers can
+    //    see the historical contract pattern — but the lookup
+    //    assertion now exercises the production path.
     #[test]
     fn lookup_policy_class_c_advisory_strips_body() {
-        let db = ensure_v017();
+        let db = ensure_v020();
         let registry = StoolapPolicyRegistry::new(Arc::clone(&db));
 
-        // Build a body with sentinel bytes so we can detect whether
-        // it was preserved or stripped on lookup.
-        let mut body = vec![0u8; 64];
-        body[0] = 0xCC;
-        body[63] = 0xEE;
-        let policy_hash = octo_policy::domain_separators::blake3_prefix::derive_policy_hash(&body);
+        // R6 fix F3: end-to-end production-path exercise.
+        //
+        // Step 1: register a Class C policy. `register_policy`'s
+        // B3 atomic twin-insert populates BOTH tables
+        // (policy_registry + policy_kind_authority) AND the
+        // R5 D3 denormalized columns on the policy_registry row
+        // (`kind_uuid`, `execution_class`, `registered_by_did`).
+        // These denormalized columns are what allow
+        // `lookup_policy` to fall back when the Stoolap fork's
+        // LEFT JOIN on BLOB(32) misses (substrate-truth 2026-08-24).
+        let production_body: Vec<u8> = b"class_c_strip_test_body_v1".to_vec();
+        let production_hash =
+            octo_policy::domain_separators::blake3_prefix::derive_policy_hash(&production_body);
+        let kind_uuid: [u8; 16] = [0xC3; 16];
+        let registrant_did: [u8; 32] = [0xC4; 32];
+        let registrant_sig: [u8; 64] = [0xC5; 64];
+        let registered_at: i64 = 1_700_000_000;
 
-        // Register as Class C (registry_kind = Workflow per the
-        // F2 mapping table).
-        registry
+        let registered = registry
             .register_policy(
-                &[0xC3; 16],
-                &body,
+                &kind_uuid,
+                &production_body,
                 ExecutionClass::C,
-                &[0xC4; 32],
-                &[0xC5; 64],
-                1_700_000_000,
-                &policy_hash,
+                &registrant_did,
+                &registrant_sig,
+                registered_at,
+                &production_hash,
             )
-            .expect("register Class C policy must succeed");
+            .expect("register_policy must accept a Class C body (Class C is advisory, not gated)");
 
-        // The lookup is fork-blocked (BLOB JOIN miss), but we can
-        // verify the advisory strip via the registered return
-        // value's fields directly: kind_uuid + execution_class
-        // are surfaced, body is preserved at register time. The
-        // lookup-side strip is exercised below by manually
-        // inserting a matching policy_kind_authority row (mirrors
-        // what B3's atomic twin-insert does in a healthy fork).
-        let registered = registry.register_policy(
-            &[0xC3; 16],
-            &body,
-            ExecutionClass::C,
-            &[0xC4; 32],
-            &[0xC5; 64],
-            1_700_000_001,
-            &policy_hash,
-        );
-        // The second register hits the duplicate guard.
-        assert!(
-            matches!(registered, Err(PolicyRegistryError::AlreadyRegistered(_))),
-            "second register with same hash must trigger AlreadyRegistered"
-        );
-
-        // Manually insert a `policy_kind_authority` row so the
-        // fork-blocked LEFT JOIN can still be tested for the body
-        // strip behavior on Class C.
-        db.execute(
-            "INSERT INTO policy_kind_authority \
-             (policy_kind_uuid, policy_hash, registrant_did, registrant_signature, \
-              registration_body, registered_at_unix, revoked_at_unix) \
-             VALUES (?, ?, ?, ?, ?, ?, NULL)",
-            (
-                [0xC3; 16].as_slice(),
-                policy_hash.as_slice(),
-                [0xC4; 32].as_slice(),
-                [0xC5; 64].as_slice(),
-                body.clone(),
-                1_700_000_000_i64,
-            ),
-        )
-        .expect("manual authority insert");
-
-        // The lookup is still fork-blocked, so we exercise the
-        // strip path via the registry's return value: the
-        // `RegisteredPolicy` returned from register preserves
-        // body (D1 only strips at lookup time, not at register).
-        // However the key invariant we test here is the strip
-        // logic itself: re-implement the strip logic in the test
-        // to confirm the body bytes would be zeroed for Class C.
-        // (The integration with lookup_policy is fork-blocked and
-        // documented elsewhere.)
-        let stripped_body = if ExecutionClass::C == ExecutionClass::C {
-            Vec::new()
-        } else {
-            body.clone()
-        };
-        assert!(
-            stripped_body.is_empty(),
-            "D1 invariant: Class C body must be stripped to empty"
+        // Strip contract (R4 fix D1) ONLY fires at LOOKUP time,
+        // not at REGISTER time. Verify register preserves the
+        // canonical body bytes.
+        assert_eq!(
+            registered.body, production_body,
+            "register_policy must preserve canonical body bytes (strip only fires at lookup)"
         );
         assert_eq!(
-            stripped_body.len(),
-            0,
-            "D1: stripped Class C body length must be zero; was {} before strip",
-            body.len()
+            registered.execution_class,
+            ExecutionClass::C,
+            "registered.execution_class is what we passed in"
+        );
+
+        // Step 2 (R6 fix F3): call the PRODUCTION
+        // `StoolapPolicyRegistry::lookup_policy` directly — NOT
+        // a stub. The stub's tautological strip is what R5
+        // landed; this assertion now exercises the real
+        // production code path.
+        //
+        // Substrate-truth: the Stoolap fork's LEFT JOIN on
+        // BLOB(32) returns NULL for the joined columns even
+        // when a matching policy_kind_authority row exists
+        // (verified empirically in R4). The R5 fix D3
+        // denormalized-column fallback lets lookup_policy
+        // succeed via the in-row `kind_uuid` +
+        // `registered_by_did` columns (which register_policy
+        // populates as part of B3). So `lookup_policy` returns
+        // `Ok(Some(row))` here — NOT `Err(NotFound)`.
+        let looked_up = registry
+            .lookup_policy(&production_hash)
+            .expect("lookup_policy must succeed via R5 D3 denormalized fallback")
+            .expect("row must be present after register_policy");
+
+        // Step 3: assert the actual strip semantics
+        // (replaces the R5 tautology `if C == C { empty }`).
+        assert_eq!(
+            looked_up.body,
+            Vec::<u8>::new(),
+            "Class C body MUST be stripped to Vec::new() at lookup time (R4 fix D1 advisory contract; \
+             RFC-0967-A1 §3 row 6)"
+        );
+        assert!(
+            looked_up.body.is_empty(),
+            "Class C body MUST be empty (advisory-only contract)"
+        );
+
+        // Advisory metadata survives the strip — the strip is on
+        // body only, not a blanket-zeroing destructor. Consumers
+        // can still recover kind_uuid / registered_by_did /
+        // execution_class for audit purposes.
+        assert_eq!(
+            looked_up.kind_uuid, kind_uuid,
+            "advisory metadata: kind_uuid survives the strip"
+        );
+        assert_eq!(
+            looked_up.registered_by_did, registrant_did,
+            "advisory metadata: registered_by_did survives the strip"
+        );
+        assert_eq!(
+            looked_up.execution_class,
+            ExecutionClass::C,
+            "advisory metadata: execution_class survives the strip"
+        );
+
+        // Negative path: B2 application-layer pre-check guards
+        // against a duplicate register with the SAME policy_hash.
+        // This is a regression guard against future substrate
+        // changes that could let duplicate PK inserts land.
+        let dup = registry.register_policy(
+            &kind_uuid,
+            &production_body,
+            ExecutionClass::C,
+            &registrant_did,
+            &registrant_sig,
+            1_700_000_001,
+            &production_hash,
+        );
+        assert!(
+            matches!(dup, Err(PolicyRegistryError::AlreadyRegistered(_))),
+            "second register with same policy_hash MUST trigger AlreadyRegistered (B2 pre-check)"
         );
     }
+
+    // 9. `register_policy_class_c_advisory_marker_optional` — R5 fix
+    //    G3 coverage: the Class C advisory marker (`CLASS_C_ADVISORY_MARKER`
+    //    at `body[0..4]`) is REQUIRED for verification but OPTIONAL
+    //    at registration time. The substrate's `register_policy`
+    //    accepts Class C bodies regardless of marker presence
+    //    (per RFC-0967-A1 §3 row 6: Class C is "registration-time
+    //    rejected" → but the rejection is at LOOKUP, not
+    //    register). This test asserts:
+    //      - `verify_class_c_marker` returns false on a body without
+    //        the marker
+    //      - `verify_class_c_marker` returns true on a body with the
+    //        marker at `body[0..4]`
+    //      - The substrate's `register_policy` accepts a Class C
+    //        body WITHOUT the marker (registration is advisory-only;
+    //        marker is metadata, not a gate)
+    #[test]
+    fn register_policy_class_c_advisory_marker_optional() {
+        // Helper invariants first.
+        assert!(
+            !verify_class_c_marker(&[]),
+            "empty body must not satisfy Class C marker check"
+        );
+        assert!(
+            !verify_class_c_marker(&[0u8; 3]),
+            "body shorter than 4 bytes must not satisfy marker check"
+        );
+        assert!(
+            !verify_class_c_marker(&[0u8; 4]),
+            "all-zero body must not satisfy marker check (zero is not the canonical marker)"
+        );
+        let mut marked = vec![0u8; 64];
+        marked[0..4].copy_from_slice(&octo_policy::policy_registry::CLASS_C_ADVISORY_MARKER);
+        assert!(
+            verify_class_c_marker(&marked),
+            "body with CLASS_C_ADVISORY_MARKER at [0..4] must satisfy marker check"
+        );
+        // Cross-check: a body that would satisfy the Class B ZK
+        // marker check does NOT satisfy the Class C marker check
+        // (markers are disjoint by construction).
+        let mut class_b_body = vec![0u8; 64];
+        class_b_body[16..20].copy_from_slice(&ZK_ENVELOPE_MARKER);
+        assert!(
+            !verify_class_c_marker(&class_b_body),
+            "Class B ZK marker must not be detected as Class C marker"
+        );
+
+        // Substrate register path: Class C body WITHOUT marker is
+        // accepted by register_policy (marker is OPTIONAL at
+        // registration per §3 row 6).
+        let db = ensure_v020();
+        let registry = StoolapPolicyRegistry::new(db);
+        let body_no_marker = b"class_c_no_marker_body_v1".to_vec();
+        let policy_hash =
+            octo_policy::domain_separators::blake3_prefix::derive_policy_hash(&body_no_marker);
+        registry
+            .register_policy(
+                &[0xC7; 16],
+                &body_no_marker,
+                ExecutionClass::C,
+                &[0xC8; 32],
+                &[0xC9; 64],
+                1_700_000_777,
+                &policy_hash,
+            )
+            .expect("Class C register without advisory marker must succeed (marker is OPTIONAL)");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // R5 fix B.4 — `StubClassCRegistry` impl REMOVED in R6 fix F3.
+    //
+    // The R5 stub overrode `lookup_policy` with a tautological
+    // strip (`if execution_class == ExecutionClass::C { Vec::new()
+    // } else { self.raw.clone() }`) that did NOT exercise the
+    // production `StoolapPolicyRegistry::lookup_policy` code
+    // path. R6 fix F3 replaces the stub with a direct call to
+    // the production registry's `lookup_policy`, exercising the
+    // actual strip semantics end-to-end (including the R5 D3
+    // denormalized-column fallback path). The test now asserts
+    // the production strip invariant — not a tautology that
+    // happens to compile.
+    // ─────────────────────────────────────────────────────────────────────
 }
 
 #[cfg(test)]

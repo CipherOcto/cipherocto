@@ -114,6 +114,11 @@ pub const BUILTIN_MIGRATIONS: &[octo_storage_core::_legacy_StaticMigration] = &[
         "litellm_user_vault_link",
         include_str!("../migrations/v019__litellm_user_vault_link.sql"),
     ),
+    octo_storage_core::_legacy_StaticMigration::new(
+        20,
+        "policy_registry_columns_v2",
+        include_str!("../migrations/v020__policy_registry_columns_v2.sql"),
+    ),
 ];
 
 /// Substrate-form reference slice. `&[&'static dyn Migration]` is what
@@ -138,6 +143,7 @@ pub(super) static BUILTIN_MIGRATION_CATALOG:
     &BUILTIN_MIGRATIONS[14],
     &BUILTIN_MIGRATIONS[15],
     &BUILTIN_MIGRATIONS[16],
+    &BUILTIN_MIGRATIONS[17],
 ];
 
 /// Migration errors.

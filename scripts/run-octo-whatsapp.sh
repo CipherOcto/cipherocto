@@ -341,6 +341,7 @@ EOF
         # >>log 2>&1      break stdout/stderr to a file in CAPTURE_LOG_DIR
         # ──────────────────────────────────────────────────────────────────
         setsid -f env \
+            RUST_LOG="${RUST_LOG:-}" \
             OCTO_WHATSAPP_DATA_DIR="$DATA_DIR" \
             OCTO_WHATSAPP_SOCKET_DIR="$SOCKET_DIR" \
             OCTO_WHATSAPP_LOG_DIR="$LOG_DIR" \

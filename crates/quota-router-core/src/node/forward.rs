@@ -49,6 +49,13 @@ pub enum ForwardRejectReason {
     BudgetExceeded,
     AuthFailure,
     PayloadTooLarge,
+    /// Receiver-side rate limit denied (per-peer or per-consumer).
+    /// Receiver sends this reason back to the sender so the sender's
+    /// `route()` resolves `ForwardOutcome::Rejected(RateLimited)`
+    /// instead of timing out via `ForwardOutcome::Timeout`. Without
+    /// this reason, the sender cannot distinguish rate-limit denial
+    /// from generic transport timeout.
+    RateLimited,
 }
 
 pub enum ForwardOutcome {

@@ -219,11 +219,19 @@ impl QuotaRouterHandler {
         // When the sender is identifiable we charge its bucket; otherwise
         // we fall back to a synthetic per-consumer bucket derived from
         // the consumer_id inside the request context.
+        //
+        // On denial we send a `ForwardReject` with `RateLimited` reason
+        // so the sender's `route()` resolves via the oneshot channel
+        // instead of timing out. Pre-fix the handler returned
+        // `TransportError::AdapterFailure` here without sending a
+        // reject, which caused sender-side `ForwardTimeout` errors that
+        // were indistinguishable from generic transport timeouts and
+        // broke the L2 T29 forwarded-rate-limit test.
         if let Some(sender) = sender_node_id {
             if !node.rate_limiter.lock().unwrap().check_peer(&sender) {
-                return Err(TransportError::AdapterFailure(
-                    "peer rate limit exceeded".into(),
-                ));
+                self.send_forward_reject(req.request_id, ForwardRejectReason::RateLimited)
+                    .await?;
+                return Ok(());
             }
         } else if !node
             .rate_limiter
@@ -231,9 +239,9 @@ impl QuotaRouterHandler {
             .unwrap()
             .check_consumer(&req.context.consumer_id)
         {
-            return Err(TransportError::AdapterFailure(
-                "consumer rate limit exceeded".into(),
-            ));
+            self.send_forward_reject(req.request_id, ForwardRejectReason::RateLimited)
+                .await?;
+            return Ok(());
         }
 
         if req.ttl == 0 {

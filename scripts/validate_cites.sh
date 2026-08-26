@@ -51,8 +51,9 @@ find_rfc_path() {
     matches=$(find "$RFC_ROOT" -type f -iname "${rfc_num}*.md" 2>/dev/null || true)
 
     # Sub-amendment cite with no own file (folded into parent): fall back to bare RFC.
+    # Sub-amendment pattern: -aN / -dN / -rN (NOT -vN which is versioned-amendment pattern).
     if [ -z "$matches" ] && [ "$has_suffix" -eq 1 ]; then
-        matches=$(find "$RFC_ROOT" -type f -iname "${prefix}*.md" 2>/dev/null | grep -iv "/[0-9]\+-[a-z][0-9]*-" || true)
+        matches=$(find "$RFC_ROOT" -type f -iname "${prefix}*.md" 2>/dev/null | grep -iv "/[0-9]\+-\(a\|d\|r\)[0-9]\+-" || true)
         has_suffix=0
     fi
 
@@ -70,21 +71,26 @@ find_rfc_path() {
     fi
 
     # For bare RFC cites: prefer accepted/ (more authoritative); exclude sub-amendment
-    # files whose filename carries a -aN/-dN/-rN suffix. Per A2 v0.2.0 pre-commit
-    # blocker (RFC-0968 cite lexical-first picked 0968-a2 before 0968 parent).
-    # Per A2 v0.8.1 promotion: same exclusion applies to accepted/ files
-    # (without exclusion, RFC-0968 bare cite resolves to 0968-a2-discriminant-stability.md
-    # instead of 0968-reputation-registry.md).
+    # files whose filename carries a -aN/-dN/-rN suffix (NOT -vN which is versioned).
+    # Per A2 v0.2.0 pre-commit blocker (RFC-0968 cite lexical-first picked 0968-a2
+    # before 0968 parent). Per A2 v0.8.1 promotion: same exclusion applies to
+    # accepted/ files. Per asset-generic-payment-caveat-review-DRY-2026-08-26:
+    # prefer the LATEST versioned amendment over the original numeric parent when
+    # multiple accepted/ files exist (e.g., RFC-0105 v3.5 supersedes v3.4 and the
+    # numeric parent).
     if [ "$has_suffix" -eq 0 ]; then
         local accepted
-        accepted=$(echo "$matches" | grep "/accepted/" | grep -ivE "/${prefix}-[a-z][0-9]*-" | head -1 || true)
+        accepted=$(echo "$matches" | grep "/accepted/" | grep -ivE "/${prefix}-(a|d|r)[0-9]+-" || true)
         if [ -n "$accepted" ]; then
-            echo "$accepted"
+            # Pick latest by version (highest semver first)
+            local latest
+            latest=$(echo "$accepted" | sort -t- -k2 -V -r | head -1 || true)
+            echo "$latest"
             return 0
         fi
-        # No accepted/ match: take first non-sub-amendment
+        # No accepted/ match: take latest non-sub-amendment
         local non_subamend
-        non_subamend=$(echo "$matches" | grep -ivE "/${prefix}-[a-z][0-9]*-" | head -1 || true)
+        non_subamend=$(echo "$matches" | grep -ivE "/${prefix}-(a|d|r)[0-9]+-" | sort -t- -k2 -V -r | head -1 || true)
         if [ -n "$non_subamend" ]; then
             echo "$non_subamend"
             return 0

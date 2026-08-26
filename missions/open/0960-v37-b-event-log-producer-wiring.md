@@ -69,11 +69,13 @@ Wire the producer side of RFC-0960 v3.7: introduce `EventLogProducer` trait
    ```
 
    Per RFC-0960 v3.7 §2.5 L474-516: trait uses associated type `Input`,
-   `drain_lock()` accessor, 4-param `validate_pre_insert`, 5-param
-   `to_transfer_event` (input + registry + asset_resolver + nonce_registry)
-   returning `TransferEventRef`, and 7-param `produce` (excluding self)
-   default body returning `TransferEventRef` that bundles
-   drain-lock + validate + transform + insert + bus-emit.
+   `drain_lock()` accessor, 4-param `validate_pre_insert` (including
+   `&self`), 5-param `to_transfer_event` (including `&self`; args =
+   input + registry + asset_resolver + nonce_registry) returning
+   `TransferEventRef`, and 8-param `produce` (including `&self`; args =
+   input + registry + asset_resolver + nonce_registry + log + bus +
+   current_unix_seconds) default body returning `TransferEventRef` that
+   bundles drain-lock + validate + transform + insert + bus-emit.
    `drain_lock: Arc<Mutex<()>>` shared across all 3 impls enforces serial
    access to `TransferEventLog::insert`. Atomicity guarantee per §2.4.
 
@@ -82,29 +84,40 @@ Wire the producer side of RFC-0960 v3.7: introduce `EventLogProducer` trait
    `PaymentCaveat.asset_id` per RFC-0965 §2.1. Mission B TV includes grep
    verification that the wire site exists at landing time.
 
-3. **`SettlementEventProducer` impl** — same file
-   (`crates/octo-vault/src/event_log_producer.rs`). Wraps
-   `SettlementEvent::new` (struct per RFC-0959 v2.8 §2.1, lands at
-   `crates/quota-router-sm-engine/src/settlement_event.rs` via Mission G)
-   ATOMICALLY: the wrap site must be inside the existing settlement-event
-   txn boundary so `validate_pre_insert` + `log.insert` + commit-coupled
-   NOTIFY all fire within the same Stoolap transaction (RFC-0913 consumer
-   pattern). **Note:** Mission G/RFC-0959 v2.8 substrate has no
-   `consume()` function (nonce observation is bundled into `new()` Gate 7
-   per Mission G §2.2 L130); producer wrap site calls `new()` not
-   `consume()`.
+3. **`SettlementEventProducer` impl** —
+   `crates/quota-router-sm-engine/src/event_log_producer.rs` (NEW,
+   Layer C — co-located with `SettlementEvent` substrate from Mission
+   G). Wraps `SettlementEvent::new` (struct per RFC-0959 v2.8 §2.1,
+   lands at `crates/quota-router-sm-engine/src/settlement_event.rs`
+   via Mission G) ATOMICALLY: the wrap site must be inside the
+   existing settlement-event txn boundary so `validate_pre_insert` +
+   `log.insert` + commit-coupled NOTIFY all fire within the same
+   Stoolap transaction (RFC-0913 consumer pattern). **Note:** Mission
+   G/RFC-0959 v2.8 substrate has no `consume()` function (nonce
+   observation is bundled into `new()` Gate 7 per Mission G §2.2
+   L130); producer wrap site calls `new()` not `consume()`.
    **Layer note:** the existing `SettlementEventRepository::insert`
    substrate crate remains at `crates/quota-router-storage/src/
 settlement_event_repo.rs` (Layer C); the NEW `SettlementEvent` struct
    lands at `crates/quota-router-sm-engine/src/settlement_event.rs`
    (Layer C). The producer's `to_transfer_event` consumes the NEW
    struct (output of `SettlementEvent::new`) and feeds the EXISTING
-   repository via the internal sink boundary.
+   repository via the internal sink boundary. **Producer impl lives
+   in Layer C crate (quota-router-sm-engine) per
+   [[cipherocto-design-principles]] — producer is Layer C
+   specialization of Layer B `EventLogProducer` trait; impl cannot
+   live in `octo-vault/src/event_log_producer.rs` (Layer B) because
+   that would create Layer B → Layer C dependency inversion.**
 
-4. **`BurnEventProducer` impl** — same file. Wraps `BurnEventRef::consume`
-   (struct per RFC-0960 §2 BurnEventRef Specification). Wire site is AFTER
-   nonce observation + audit-sink write, BEFORE the burn-event record is
-   marked consumed.
+4. **`BurnEventProducer` impl** —
+   `crates/octo-policy/src/event_log_producer.rs` (NEW, Layer C —
+   co-located with `BurnEventRef` substrate from Mission F). Wraps
+   `BurnEventRef::consume` (struct per RFC-0960 §2 BurnEventRef
+   Specification). Wire site is AFTER nonce observation + audit-sink
+   write, BEFORE the burn-event record is marked consumed. **Layer
+   note:** producer impl lives in Layer C crate (octo-policy) per
+   [[cipherocto-design-principles]] — producer is Layer C
+   specialization of Layer B `EventLogProducer` trait.
 
 5. **`VaultProjectionInvalidationEmitter` trait** — same file. Emits
    `VaultProjectionInvalidationEnvelope { chain_id, vault_id, source_kind }`
@@ -187,7 +200,7 @@ bash scripts/validate_cites.sh  # Mission B edits must not break §-cite validat
 - `BurnEventRef::consume` signature unchanged (wrap is at call site)
 - `MintHandler` payment-issuance code path gains a producer call BEFORE the
   existing payment record write; existing behavior preserved when producer
-  returns `Ok(())`
+  returns `Ok(TransferEventRef)`
 
 ## Cross-references
 

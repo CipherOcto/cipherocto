@@ -3,7 +3,7 @@
 **Status:** Open
 **Substrate:** RFC-0960 §5.1 (3-cycle deprecation timeline)
 **Parent:** RFC-0960 §6 Implementation Path Mission C
-**Depends on:** Mission A (`0960-v37-a-vault-balance-projection-substrate.md`) — provides the replacement `VaultBalanceProjection` substrate this mission deprecates against; Mission B (`0960-v37-b-event-log-producer-wiring.md`) — producer wiring must land first to provide the replacement path for `KeyStorage` callers
+**Depends on:** Mission A (`0960-v37-a-vault-balance-projection-substrate.md`) — provides the replacement `VaultBalanceProjection` substrate this mission deprecates against; Mission B (`0960-v37-b-event-log-producer-wiring.md`) — producer wiring for `VaultProjectionInvalidationEnvelope` over `cache:projection:<hex(vault_id)>` channel (RFC-0913 pub/sub); Mission B has zero `KeyStorage` references — R7 finding removed fabricated claim
 
 ## Scope
 
@@ -16,7 +16,7 @@ substrate; Mission B wires the producers; Mission C deletes the legacy.
 **Cycle 1 — Deprecation stub (default ON):**
 
 1. **`Balance { amount: u64 }` struct** (`crates/quota-router-core/src/balance.rs:9`).
-   Add `#[deprecated(note = "use VaultBalanceProjection per RFC-0960 §2.1")]` to
+   Add `#[deprecated(note = "use VaultBalanceProjection per RFC-0960 v3.7 §2.1")]` to
    the struct + all methods (`new`, `add`, `subtract`, `as_u64`, etc.). Verify
    5 callers of `Balance::new` migrate to `VaultBalanceProjection::get_or_compute`
    in same PR OR carry `#[allow(deprecated)]` with TODO comment + ticket.
@@ -147,7 +147,7 @@ The 3-cycle window gives downstream consumers 3 releases to migrate.
 - RFC-0960 §6 Mission C — canonical scope
 - RFC-0904 — `octo_w_balances` external consumer (Cycle-3 refusal trigger if external adoption detected)
 - Mission A (`0960-v37-a-vault-balance-projection-substrate.md`) — provides replacement `VaultBalanceProjection`
-- Mission B (`0960-v37-b-event-log-producer-wiring.md`) — provides replacement `EventLogProducer` wiring for `KeyStorage` callers
+- Mission B (`0960-v37-b-event-log-producer-wiring.md`) — provides replacement `EventLogProducer` wiring for vault-balance cache invalidation
 
 ## Refusal log
 

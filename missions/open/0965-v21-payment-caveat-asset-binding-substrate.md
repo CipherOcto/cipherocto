@@ -22,7 +22,7 @@ ScaleMismatch` / `AssetUnknown` / `StaleSnapshot` / `Replay` /
 694 + RFC-0965 v2.1 §2.3 L218); implement `verify()` and `validate()`
 gates with scale-binding + NonceRegistry observation; implement custom
 `Deserialize` rejecting legacy `amount_micro_octo_w` form on non-OCTO-W
-context (§2.4 L397-415); add `Caveat::Vault(asset_id)` co-bound rule (§5).
+context (§2.4 L397-415); add `Caveat::AssetBinding(asset_id)` co-bound rule (§5).
 
 ### Mission E sub-steps
 
@@ -54,7 +54,7 @@ context (§2.4 L397-415); add `Caveat::Vault(asset_id)` co-bound rule (§5).
        new_budget: Dqa,
        new_expires_at_unix_ms: u64,
        new_asset_id: AssetId,        // NEW
-       registry: &dyn AssetRegistry, // NEW (RFC-0105 §3.1)
+       registry: &dyn AssetRegistry, // NEW (RFC-0105 v3.5 §3.1)
    ) -> Result<Self, AttenuationError>
    ```
 
@@ -130,17 +130,22 @@ PaidQueryRejectionReason = PaymentRejectionReason;` **Removal
    maintained). Document removal in substrate crate deprecation log.
 
 6. **`verify()` gates** — `crates/octo-cap-macaroon/src/caveat/payment.rs`
-   (amend). Per §2.3 L278-338. 7 gates:
+   (amend). Per §2.3 L278-338. **8 gates**:
    - Gate 0: `AssetRegistry::metadata(&self.asset_id)` resolves +
      not tombstoned (else `AssetUnknown`)
    - Gate 1: scale-binding — `query_cost.wire_scale == self.budget.wire_scale
 == meta.wire_scale` (else `ScaleMismatch`)
    - Gate 2: stale-snapshot detection — `current_epoch.0 <
 self.registry_snapshot_epoch.0` (else `StaleSnapshot`)
-   - Gate 3: anti-replay — `nonce_registry.observe(&pk, &self.nonce.0)`
-     with `pk = meta.governance_pubkey.unwrap_or_else(||
+   - Gate 3: anti-replay — `nonce_registry.observe(NonceEventKind::Payment,
+&pk, &self.nonce.0)` with `pk = meta.governance_pubkey.unwrap_or_else(||
 sovereign_nonce_namespace(&self.asset_id))` (else `Replay`); Round 4
-     CRITICAL #1 keying by `governance_pubkey` per §2.4 L381
+     CRITICAL #1 keying by `governance_pubkey` per §2.4 L381.
+     `event_kind = NonceEventKind::Payment` discriminator (per
+     Mission D v3.5-r8 PROPOSAL surface change) namespaces PaymentCaveat
+     nonces distinctly from BurnEventRef (NonceEventKind::Burn)
+     and SettlementEvent (NonceEventKind::Settlement) — same
+     `pk + nonce` pair across event types uses distinct LRU buckets
    - Gate 4: expiry (existing, unchanged)
    - Gate 5: model match (existing, unchanged)
    - Gate 6: budget exhaust (existing, unchanged)
@@ -161,9 +166,12 @@ sovereign_nonce_namespace(&self.asset_id))` (else `Replay`); Round 4
    `LegacyFormOnNonOctoWContext { claimed_asset_id }` error. Happy path:
    re-serialize through JSON + delegate to derived impl.
 
-9. **`Caveat::Vault(asset_id)` co-bound rule** — `crates/octo-cap-macaroon/src/caveat/mod.rs`
-   (amend). Per RFC-0965 v2.1 §5 L444-521. When a `PaymentCaveat`
-   co-occurs with a `Caveat::Vault(asset_id)` in the same caveat chain,
+9. **`Caveat::AssetBinding(asset_id)` co-bound rule** — `crates/octo-cap-macaroon/src/caveat/mod.rs`
+   (amend). Per RFC-0965 v2.1 §5 L444-520 (canonical variant name
+   per §5 L446 + §8 L544; prior `Caveat::Vault` name deprecated —
+   the variant binds to a specific asset, not a vault, hence the
+   rename). When a `PaymentCaveat` co-occurs with a
+   `Caveat::AssetBinding(asset_id)` in the same caveat chain,
    the verifier MUST enforce `vault_asset_id == payment.asset_id`
    (Round 1 CRITICAL #5 mitigation — prevents PermissionKind bypass).
    The verifier lives at `Caveat::verify_chain` (substrate anchor at
@@ -198,8 +206,9 @@ Per RFC-0965 v2.1 §10 (Pending, concrete test vectors).
   `Reject { reason: AssetUnknown }`
 - TV-PC7: `verify()` with `current_epoch.0 < self.registry_snapshot_epoch.0`
   returns `Reject { reason: StaleSnapshot { snapshot, live } }`
-- TV-PC8: `verify()` with `nonce_registry.observe(pk, nonce) ==
-Err(AlreadyObserved)` returns `Reject { reason: Replay }`
+- TV-PC8: `verify()` with `nonce_registry.observe(NonceEventKind::Payment,
+&pk, &self.nonce.0) == Err(AlreadyObserved)` returns `Reject { reason:
+Replay }`
 - TV-PC9: `verify()` sovereign-asset nonce keying —
   `meta.governance_pubkey == None` falls back to
   `sovereign_nonce_namespace(&self.asset_id)`
@@ -215,14 +224,14 @@ Err(AlreadyObserved)` returns `Reject { reason: Replay }`
   context (`{amount_micro_octo_w: i64}` with no asset_id field defaults
   to OCTO_W_ASSET_ID)
 - TV-PC14: `Caveat::verify_chain` with `PaymentCaveat(asset_id=X)` +
-  `Caveat::Vault(asset_id=Y)` where `X != Y` rejects with co-bound
+  `Caveat::AssetBinding(asset_id=Y)` where `X != Y` rejects with co-bound
   violation (Round 1 CRITICAL #5 mitigation)
 - TV-PC15: `Caveat::verify_chain` with matching asset_ids proceeds
   normally
 - TV-PC16: wire form round-trip — `BorshSerialize → BorshDeserialize`
   preserves all fields including `asset_id` / `registry_snapshot_epoch`
   / `nonce`
-- TV-PC17: audit-batch replay path (RFC-0105 §3.13 L669) bypasses
+- TV-PC17: audit-batch replay path (RFC-0105 v3.5 §3.13 L669) bypasses
   per-event validate() cache and runs fresh `verify()` pairwise check
   on every `(caveat, burn, settlement)` tuple; cache HIT must NOT
   short-circuit the batch-replay path
@@ -280,7 +289,7 @@ cargo test -p octo-paid-query --lib  # PaymentRejectionReason consumer tests
 - RFC-0965 v2.1 §3 — wire form (L418-434)
 - RFC-0965 v2.1 §4 — discriminator unchanged (`"paid-query/v1"`)
 - RFC-0965 v2.1 §4.1 — "one cycle" = 6 weeks (HARD cutoff)
-- RFC-0965 v2.1 §5 — PermissionKind Co-Bound Caveat (Caveat::Vault)
+- RFC-0965 v2.1 §5 L444-520 — PermissionKind Co-Bound Caveat (Caveat::AssetBinding)
 - RFC-0105 v3.5 §3.13 — tri-invariant declaration (consumer anchor)
 - RFC-0105 v3.5 §3.13 L669 — **audit-batch replay enforcement** (NEW
   v3.5-r6): per-tuple fresh pairwise check on every

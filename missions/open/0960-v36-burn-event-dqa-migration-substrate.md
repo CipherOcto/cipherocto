@@ -6,7 +6,7 @@
 **Depends on:**
 
 - Mission D (`0105-v35-asset-registry-nonce-registry-substrate.md`) — provides `AssetRegistry`, `AssetError`, `AssetKind`, `AssetMetadata`, `MAX_SCALE`, `NonceRegistry`, `NonceError`, `newtypes::{Nonce, Epoch, GovernanceSignature}`, `sovereign_nonce_namespace`, `verify_governance_signature`, `blake3_hash` canonical substrate imports (per RFC-0960 v3.6 §2.1 L54-60)
-- Mission E (`0965-v21-payment-caveat-asset-binding-substrate.md`) — provides `PaymentCaveat` for `verify_burn_against_caveat` audit invariant (RFC-0105 §3.13 tri-invariant)
+- Mission E (`0965-v21-payment-caveat-asset-binding-substrate.md`) — provides `PaymentCaveat` for `verify_burn_against_caveat` audit invariant (RFC-0105 v3.5 §3.13 tri-invariant)
 - RFC-0960 v3.5 (already landed: `VaultId`, `AssetId`, `VaultRegistry`, `transfer_events` v014 schema)
 
 ## Scope
@@ -17,7 +17,7 @@ wrapper + custom `Deserialize` for legacy-form rejection + `new()`
 constructor with scale-binding + governance signature + NonceRegistry
 observation + vault-contains-asset check + body_hash commitment +
 sovereign-asset exemption + `verify_burn_against_caveat` audit invariant
-(RFC-0105 §3.13 tri-invariant pair) + wire form.
+(RFC-0105 v3.5 §3.13 tri-invariant pair) + wire form.
 
 ### Mission F sub-steps
 
@@ -81,7 +81,7 @@ sovereign-asset exemption + `verify_burn_against_caveat` audit invariant
      returns `Ok(())` (else map error variants: `UnknownVault` →
      `VaultUnknown`, `VaultAssetMismatch` → `VaultAssetMismatch`) —
      fails fast on cheap lookup before expensive crypto (RFC-0960 v3.6
-     §2.2 L240-247)
+     §2.2 L226-230)
    - Gate 4: resolve `governance_pubkey` from `meta` — sovereign
      fallback uses `sovereign_nonce_namespace(&asset_id)` for
      body_hash commitment (Round 3 IMPORTANT #3 + Round 4 CRITICAL #2;
@@ -94,14 +94,14 @@ sovereign-asset exemption + `verify_burn_against_caveat` audit invariant
 
    **Note:** nonce observation (Gate 7), stale-snapshot detection
    (Gate 8), and asset_kind assert (Gate 9) are NOT in `new()`. Per
-   RFC-0960 v3.6 §2.1 L300-308 (asset_kind) + L309-313 (stale_snapshot)
+   RFC-0960 v3.6 §2.2 L300-308 (asset_kind) + L309-313 (stale_snapshot)
    belong to `validate()`; per L337-368 (nonce_registry.observe) belongs
    to `consume()`. This split is substrate-mandated (Round 1 CRITICAL #4
    TOCTOU mitigation) — nonce marking MUST be bundled into `consume()`
    alongside audit-sink commit to prevent observation-without-commit.
 
 6. **`validate()` post-deser check (separate function)** — same file. Per
-   §2.1 L279-332. **7 checks** (RFC-0960 v3.6 §2.2 validate() L269-323):
+   §2.2 L279-332. **7 checks** (RFC-0960 v3.6 §2.2 validate() L279-332):
    - (a) re-run Gate 0: `registry.metadata(&asset_id)` resolves +
      not tombstoned (else `AssetUnknown`; DIRECT-DESERIALIZE BYPASS
      MITIGATION per RFC §2.2 L283-289)
@@ -126,18 +126,77 @@ InvalidSignature}` for offline audit integrity check (Round 1
    - (c) re-runs (Round 3 SECURITY HIGH finding F1).
 
 7. **`consume()` nonce observe + audit sink write** — same file. Per
-   §2.1 L337-368. Steps:
+   §2.2 L337-368. Steps:
    - Call `validate()` (returns Err on first failed gate)
-   - Call `nonce_registry.observe(&governance_pubkey, &nonce.0)` —
-     returns `Err(NonceError::AlreadyObserved)` mapped to
-     `BurnEventError::Replay { prior_height }`
-   - Write to `AuditSink`. Failure returns
-     `AuditSinkFailed { sink_error }` (Round 3 MED #7 — distinct from
-     `InvalidSignature`; sink failure is infrastructure fault NOT
-     cryptographic rejection; callers MUST be able to retry)
+   - Call `nonce_registry.observe(NonceEventKind::Burn,
+&governance_pubkey, &nonce.0)` — `governance_pubkey` is the
+     PINNED `[u8;32]` struct field set at `new()` Gate 4: managed
+     assets use `meta.governance_pubkey`; sovereign role tokens use
+     `sovereign_nonce_namespace(&asset_id)` (per RFC-0960 v3.6 §3.3
+     L510). Single-role equivalence: body_hash commitment AND
+     NonceRegistry observation key both derive from this single
+     pinned value. Sovereign burns therefore NEVER collide on
+     `[0u8; 32]` zero-pubkey namespace. Returns
+     `Err(NonceError::AlreadyObserved)` mapped to
+     `BurnEventError::Replay { prior_height }`.
+   - **Atomicity guarantee (Round 5 fix + R6 substrate completion +
+     R7 CRITICAL #3 cross-sink extension):**
+     `consume()` orchestrates THREE sinks in sequence:
+     (1) `nonce_registry.observe(NonceEventKind::Burn, &pk, &nonce)`
+     (2) `audit_sink.write(...)`
+     (3) `producer.log.insert(...)` (the TransferEventLog write
+     triggered via Mission B's `BurnEventProducer::produce()`;
+     `consume()` invokes the producer between audit_sink.write
+     and the consumed-mark step).
+
+     If ANY sink fails AFTER a prior sink succeeded, ALL prior
+     sinks MUST be rolled back atomically:
+     - **(3) fails** → rollback (2) via
+       `audit_sink.compensate(...)` + rollback (1) via
+       `nonce_registry.unobserve(NonceEventKind::Burn,
+       &governance_pubkey, &nonce.0)`. Return
+       `BurnEventError::AuditSinkFailed { sink_error:
+       AuditError::LogInsertFailed { sink: Box::AuditError,
+       nonce_rolled_back: true, audit_compensated: true } }`.
+     - **(2) fails** → rollback (1) via
+       `nonce_registry.unobserve(NonceEventKind::Burn,
+       &governance_pubkey, &nonce.0)`. Return
+       `BurnEventError::AuditSinkFailed { sink_error: AuditError::UnobserveFailed(inner) }`
+       with structured log + alert (NOT silently swallowed).
+     - **(1) fails** → no rollback needed (nothing to undo); return
+       `Err(NonceError::AlreadyObserved)` mapped to
+       `BurnEventError::Replay { prior_height }`.
+
+     If `unobserve` itself fails (WAL outage during rollback),
+     return
+     `BurnEventError::AuditSinkFailed { sink_error: AuditError::UnobserveFailed(inner) }`
+     with structured log + alert (NOT silently swallowed). The
+     retry-friendly error variant from Round 3 MED #7 is preserved
+     (sink failure = infrastructure fault, not cryptographic
+     rejection), but the contract is now atomic across all three
+     sinks: a failed `consume()` leaves no observable side-effect
+     (no nonce bucket consumed + no audit record + no log row
+     without the other two matching). Without 3-sink rollback,
+     a log-insert failure would burn the nonce bucket + write
+     audit + skip the TransferEventLog — caller sees `Replay` on
+     retry but `VaultBalanceProjection` is silently short by the
+     burn amount (fund accounting drift, R7 #3 CRITICAL finding).
+     **Cross-event isolation:** the `event_kind
+     = NonceEventKind::Burn` discriminator (per Mission D v3.5-r8
+     PROPOSAL surface change) namespaces the observe key per event
+     type; BurnEventRef vs SettlementEvent vs PaymentCaveat nonces
+     each use distinct LRU buckets via `(event_kind, pk, nonce)`
+     triple. For sovereign role tokens with the same asset_id, the
+     SAME `sovereign_nonce_namespace(&asset_id)` pk is shared by
+     both BurnEventRef and SettlementEvent — without event_kind
+     discriminator the nonces would collide; with it, they are
+     distinct buckets.
    - GREENFIELD `AuditSink` trait + `AuditError` enum are declared
      **inline** within the same `burn_event.rs` file per RFC-0960 v3.6
-     §2.2 L408-411 (NOT a separate `audit_sink.rs` file).
+     §2.2 L408-411 (NOT a separate `audit_sink.rs` file). `AuditError`
+     extended (R7 CRITICAL #3) with `LogInsertFailed { sink,
+     nonce_rolled_back, audit_compensated }` variant for the
+     3-sink rollback path.
 
 8. **`verify_burn_against_caveat` audit invariant** — same file. Per §2.3.
    Tri-invariant pairwise check per RFC-0105 v3.5 §3.13:
@@ -157,8 +216,9 @@ InvalidSignature}` for offline audit integrity check (Round 1
    when `meta.governance_pubkey.is_none()`. Body_hash commitment uses
    `sovereign_nonce_namespace(&asset_id)` resolved value
    (= `blake3_hash(b"octo:sovereign-nonce-ns:v1" || asset_id.0)` per
-   RFC-0105 §3.12 + §3.11 L633), NOT all-zeros. All-zeros is reserved
-   for the wire-form signature field ONLY (RFC-0960 v3.6 §3.3 L484).
+   RFC-0105 v3.5 §3.12 + §3.11 L633), NOT all-zeros. All-zeros is reserved
+   for the wire-form signature field ONLY (RFC-0960 v3.6 §3.1 L484
+   wire-form line, with §3.3 sovereign-exemption context).
 
 10. **Wire form** — same file. Per §3 L470-512. Borsh field order per
     §3.1: `chain_id | vault_id | asset_id | asset_kind | amount |
@@ -184,8 +244,15 @@ Per RFC-0960 v3.6 §9 (Pending, concrete test vectors).
   `Err(InvalidSignature)`
 - TV-BE7: Gate 6 sovereign exemption — sovereign role token burn
   succeeds WITHOUT governance signature verification
-- TV-BE8: gate 7 violation — `nonce_registry.observe(pk, nonce) ==
-Err(AlreadyObserved)` returns `Err(Replay)`
+- TV-BE7a: sovereign single-role equivalence — `governance_pubkey`
+  pinned struct field = `sovereign_nonce_namespace(&asset_id)` for
+  sovereign path (RFC-0960 v3.6 §3.3 L510); body_hash commitment AND
+  NonceRegistry observation key both derive from this single pinned
+  value (single-role equivalence, distinct from Mission G TV-SE10a's
+  two-role distinction where body_hash uses `[0u8;32]` sentinel and
+  NonceRegistry uses the namespace per RFC-0959 v2.8 §3.3 L506-511)
+- TV-BE8: gate 7 violation — `nonce_registry.observe(NonceEventKind::Burn,
+&pk, &nonce.0) == Err(AlreadyObserved)` returns `Err(Replay)`
 - TV-BE9: gate 9 violation — `stored asset_kind != registered
 asset_kind` returns `Err(AssetKindMismatch { claimed, registered })`
 - TV-BE10: custom `Deserialize` accepts modern envelope
@@ -200,13 +267,34 @@ asset_kind` returns `Err(AssetKindMismatch { claimed, registered })`
 - TV-BE14: `verify_burn_against_caveat` matches when
   `burn.asset_id == caveat.asset_id`
 - TV-BE15: `verify_burn_against_caveat` rejects when
-  `burn.asset_id != caveat.asset_id` (RFC-0105 §3.13 tri-invariant pair)
+  `burn.asset_id != caveat.asset_id` (RFC-0105 v3.5 §3.13 tri-invariant pair)
 - TV-BE16: wire form round-trip — `BorshSerialize → BorshDeserialize`
   preserves all 11 fields
-- TV-BE17: audit-batch replay path (RFC-0105 §3.13 L669) bypasses
+- TV-BE17: audit-batch replay path (RFC-0105 v3.5 §3.13 L669) bypasses
   per-event validate() cache and runs fresh `verify_burn_against_caveat`
   pairwise check on every `(caveat, burn, settlement)` tuple; cache HIT
   must NOT short-circuit the batch-replay path
+- TV-BE18: `consume()` 3-sink atomicity — `producer.log.insert` failure
+  triggers `audit_sink.compensate(...)` + `nonce_registry.unobserve(...)`;
+  returns `AuditSinkFailed { sink_error: LogInsertFailed { sink,
+  nonce_rolled_back: true, audit_compensated: true } }`. R7 CRITICAL #3
+  cross-sink rollback coverage.
+- TV-BE19: `body_hash` stability under perturbation (RFC-0960 v3.6 §9
+  Round 3 MED #4 + Round 4 CRITICAL #2) — re-encode + perturb any
+  contributing field by 1 byte → body_hash changes
+- TV-BE20: nonce replay-by-variation (RFC-0960 v3.6 §9 Round 5 CRIT-1) —
+  two BurnEventRef events with identical body fields but distinct
+  nonces produce distinct `(event_kind, pk, nonce)` bucket hashes;
+  neither collides
+- TV-BE21: `validate()` signature re-verify after governance rotation
+  (RFC-0960 v3.6 §9 Round 4 LOW #11) — BurnEventRef signed by `pk_old`
+  rejected with `Err(InvalidSignature)` when registry's current
+  `meta.governance_pubkey` is `Some(pk_new)`; validate() MUST re-run
+  Gate 6 against the CURRENT registry state, not the snapshot used at
+  `new()` time
+- TV-BE22: `validate()` StaleSnapshot (RFC-0960 v3.6 §9 Round 4 LOW #11) —
+  BurnEventRef with `registry_snapshot_epoch.0 > current_epoch.0`
+  returns `Err(StaleSnapshot { snapshot: <future>, live: <current> })`
 
 ## Layer direction (per [[cipherocto-design-principles]])
 
@@ -244,7 +332,7 @@ cargo test -p octo-policy --lib burn_event
 - RFC-0960 v3.6 §1 — motivation (asset-binding + audit-invariant)
 - RFC-0960 v3.6 §2.1 — BurnEventRef + BurnEventError substrate (L39-172)
 - RFC-0960 v3.6 §2.2 — construction + scale-binding invariant + new() (L173+)
-- RFC-0960 v3.6 §2.3 — audit-invariant: verify_burn_against_caveat (RFC-0105 §3.13)
+- RFC-0960 v3.6 §2.3 — audit-invariant: verify_burn_against_caveat (RFC-0105 v3.5 §3.13)
 - RFC-0960 v3.6 §2.4 — AssetKind cryptographic commitment (kind_tag + blake3)
 - RFC-0960 v3.6 §2.5 — error scenario matrix
 - RFC-0960 v3.6 §3 — wire form + legacy-form migration

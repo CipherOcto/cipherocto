@@ -116,22 +116,33 @@ crates/*/migrations/`): `octo-reputation` has v001-v012,
   `Err(ProducerError::TriInvariantViolation)` (Mission B canonical
   error type name) BEFORE log insert; log row count unchanged after
   rejection
-- TV-VP5: `ZERO_VAULT_ID` sentinel round-trip — drain event encoded with
-  from_vault_id or to_vault_id = `[0u8; 32]` survives round-trip through
-  v014 schema
-- TV-VP6: 1000-concurrent-producer race — `drain_lock` enforces serialization
-  (no concurrent inserts; serialized queue drained cleanly)
-- TV-VP7: asset-rotation cache break — `registry_snapshot_epoch` advance
-  forces `EpochRebuild` (`source_kind = 2`)
-- TV-VP8: `lru::get` updates recency; `lru::peek` does NOT (substrate-fidelity)
-- TV-VP9: `ZERO_VAULT_ID` sentinel exclusion — projection correctly
-  excludes `ZERO_VAULT_ID` from `SUM(in)` and `SUM(out)` (canonical
-  RFC-0960 v3.7 §3.1 TV-VP9; the v014 `occurred_at_unix BIGINT` column
-  has no `last_chain_seq` to break determinism)
-- TV-VP10: TTL uses unix seconds only — `projected_at_unix_seconds: i64`
-  is the SINGLE cache-write timestamp (no `computed_at_*` column; RFC
-  §3.1 L761 ONE-clock rule); matches v014 `occurred_at_unix BIGINT`
-- TV-VP11: `ProjectionSource` SQL binding — variant value matches `source_kind INT` per `#[repr(u8)]`
+- TV-VP5: correction-fold ordering (RFC-0960 v3.7 §10 TV-VP5 — R8 #1
+  realignment) — corrections applied in BLAKE3-hash-ascending order
+  on `corrections` BLOB content
+- TV-VP6: 1000-concurrent-producer race (RFC-0960 v3.7 §10 TV-VP6) —
+  `drain_lock` enforces serialization (no concurrent inserts; serialized
+  queue drained cleanly)
+- TV-VP7: legacy `Balance` removal (RFC-0960 v3.7 §10 TV-VP7) —
+  **DEFERRED to Mission C scope** (RFC §5.1 Cycle 2 deletion; Mission A
+  does not own this vector)
+- TV-VP8: `octo_w_balances` feature flag (RFC-0960 v3.7 §10 TV-VP8) —
+  **DEFERRED to Mission C scope** (RFC §5.1 Cycle 2 gating; Mission A
+  does not own this vector)
+- TV-VP9: `ZERO_VAULT_ID` sentinel exclusion (RFC-0960 v3.7 §10 TV-VP9) —
+  projection correctly excludes `ZERO_VAULT_ID` from `SUM(in)` and
+  `SUM(out)`; the v014 `occurred_at_unix BIGINT` column has no
+  `last_chain_seq` to break determinism
+- TV-VP10: `VaultAssetResolver` integration (RFC-0960 v3.7 §10 TV-VP10 —
+  R8 #1 realignment) — `resolve_asset_for(unknown_vault)` returns
+  `Err(VaultAssetResolverError::UnknownVault)` and projection surfaces
+  `ProjectionError::VaultUnknown`
+- TV-VP11: `lru::get` updates recency; `lru::peek` does NOT (Mission A
+  substrate-fidelity vector — RFC §10 does not enumerate this; added
+  by Mission A scope as LRU-API conformance vector)
+- TV-VP12: `ProjectionSource` SQL binding — variant value matches
+  `source_kind INT` per `#[repr(u8)]` (NEW TV not in RFC §10 — added
+  by Mission A scope as SQL-binding conformance vector; matches the
+  substrate-canonical `#[repr(u8)]` pattern used elsewhere)
 
 ## Layer direction (per [[cipherocto-design-principles]])
 
@@ -166,7 +177,6 @@ cargo test --workspace  # migration-ordering test must pass
 - RFC-0960 §2.3 — bounded-LRU cache + asset-rotation mitigation
 - RFC-0960 §6 Mission A — canonical scope
 - RFC-0960 v3.7 (text)
-- [[rfc-0960-v37-promotion-status]] — promotion session memory
 - [[cipherocto-design-principles]] — Layer B additive-only rule
 - RFC-0105 v3.5 §3.13 L669 — **audit-batch replay enforcement** (NEW
   v3.5-r6): per-tuple fresh pairwise check; Mission A's substrate

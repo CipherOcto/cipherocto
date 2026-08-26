@@ -97,11 +97,86 @@ AssetError::BoundedCacheMiss)` on cache miss (Round 1 DoS mitigation;
    principle per RFC-0105 v3.5 §2.4 L84).
 
 9. **`NonceRegistry` trait + `NonceError` enum** — `crates/octo-vault/src/nonce_registry.rs`
-   (NEW). Per §3.11 L569-633. 2 methods (`observe` / `observe_readonly` —
-   latter renamed in v3.5-r5 per L585-587). `NonceError` has 3 variants:
-   `AlreadyObserved { pk, nonce, prior_height }` / `PersistenceFailure`
-   (NEW in v3.5-r5 for WAL failure surfacing; L603-613) / `WalRecovering`
-   (NEW in v3.5-r6 for outage recovery; L615).
+   (NEW). Per §3.11 L569-633. **3 methods + 1 enum discriminator**:
+
+   > **R7 CRITICAL NOTE (Mission D substrate-fidelity drift):** the
+   > `event_kind` discriminator parameter + `unobserve` method +
+   > `NonceError::NotObserved` variant + `observe_readonly` return-type
+   > change (`bool` → `Result`) are PROPOSED RFC-0105 v3.5-r8 AMENDMENT
+   > to §3.11 — they are NOT in the canonical RFC substrate (last
+   > touched v3.5-r4 per VH L735; v3.5-r7 was VH-trim/DRY only per
+   > L740). Mission D substrate implementation MUST NOT land before
+   > the v3.5-r8 §3.11 amendment is Accepted. If the amendment is
+   > rejected or deferred, Mission D MUST back out these additions
+   > and conform to the canonical 2-arg `observe(pk, nonce) → Result`
+   > + `observe_readonly(pk, nonce) → bool` form. The proposal is
+   > documented here in advance of amendment landing so consumer
+   > missions (E, F, G) can be designed against the proposed surface.
+
+   ```rust
+   #[repr(u8)]   // MANDATORY (R7 CRITICAL #1): explicit discriminants
+                 // prevent mid-list insertion from shifting existing
+                 // LRU bucket tags. 0 + 128+ reserved for forward compat.
+   #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+   pub enum NonceEventKind {
+       Burn        = 1,  // RFC-0960 v3.6 BurnEventRef
+       Settlement  = 2,  // RFC-0959 v2.8 SettlementEvent
+       Payment     = 3,  // RFC-0965 v2.1 PaymentCaveat
+       // Reserved: 0 (nil), 4-127 (future additive), 128-255 (vendor extension)
+   }
+
+   pub trait NonceRegistry: Send + Sync {
+       fn observe(
+           &mut self,
+           event_kind: NonceEventKind,
+           pk: &[u8; 32],
+           nonce: &[u8; 32],
+       ) -> Result<(), NonceError>;
+
+       fn observe_readonly(
+           &self,
+           event_kind: NonceEventKind,
+           pk: &[u8; 32],
+           nonce: &[u8; 32],
+       ) -> Result<(), NonceError>;
+
+       fn unobserve(
+           &mut self,
+           event_kind: NonceEventKind,
+           pk: &[u8; 32],
+           nonce: &[u8; 32],
+       ) -> Result<(), NonceError>;
+   }
+   ```
+
+   `event_kind` discriminator (NEW v3.5-r8 PROPOSAL — pending
+   amendment acceptance per the blockquote above) namespaces the
+   observe key per event type: Burn / Settlement / Payment each use
+   distinct `event_kind` prefix in the LRU bucket hash, preventing
+   cross-event nonce collision when the same `pk + nonce` pair
+   would otherwise race across event types (BurnEventRef vs
+   SettlementEvent on the same sovereign asset). The `#[repr(u8)]`
+   + explicit discriminants (Burn=1, Settlement=2, Payment=3)
+   guarantee that future additive variants cannot shift existing
+   tags — reserved 0 (nil) + 128-255 (vendor extension) bounds
+   the discriminant space. This is the substrate precondition
+   Mission F step 7 + Mission G validate() (h) require for
+   cross-event isolation.
+
+   `unobserve` (NEW v3.5-r8 PROPOSAL per the blockquote at §9) is the
+   atomicity rollback primitive Mission F consume() requires for
+   audit_sink.write-failure-after-observe recovery. Without
+   `unobserve`, a sink-failure would permanently burn the nonce
+   bucket (R2 carry atomicity gap).
+
+   `NonceError` has **4 variants**: `AlreadyObserved { event_kind,
+   pk, nonce }` (R7 #9 LOW: `prior_height` removed from public
+   variant — internal log only, info-disclosure mitigation) /
+   `NotObserved { event_kind, pk, nonce }` (NEW v3.5-r8 PROPOSAL —
+   returned by `unobserve` when target was never observed or
+   already rolled back) / `PersistenceFailure`
+   (NEW in v3.5-r5 for WAL failure surfacing; L603-613) /
+   `WalRecovering` (NEW in v3.5-r6 for outage recovery; L615).
 
 10. **`StoolapNonceRegistry` impl (WALPrimary)** — same file. Per §3.11
     L629-633. Persists via cipherocto-fork stoolap with WAL-primary write
@@ -110,11 +185,35 @@ AssetError::BoundedCacheMiss)` on cache miss (Round 1 DoS mitigation;
     Bounded LRU per `governance_pubkey` with capacity `~10^6 entries per
 pubkey` (L629). TTL tied to asset revocation grace period.
 
+    **v3.5-r8 PROPOSAL impl additions (gated on RFC §3.11 amendment
+    acceptance per the blockquote at §9):**
+    - `observe(event_kind, pk, nonce)` — hashes `(event_kind, pk)` to
+      derive the LRU bucket key (prefix with `b"octo:nonce:v1:" || event_kind_tag_u8`
+      before blake3; `event_kind_tag_u8` is the `#[repr(u8)]`
+      discriminant byte per R7 #1 CRITICAL — pins bucket tag
+      across additive variant insertions); writes `(event_kind, pk,
+      nonce) → observed_at_height` to WAL
+    - `observe_readonly(event_kind, pk, nonce)` — same hash but read-only
+      (no WAL write; for `validate()` path per RFC-0959 v2.8 §2.2 L334-342
+      + RFC-0965 v2.1 §2.3 L341-372 patterns)
+    - `unobserve(event_kind, pk, nonce)` — removes from LRU + writes
+      `unobserved_at_height` to WAL; returns `Err(NotObserved)` if target
+      was never observed or already rolled back. Failure during
+      unobserve (WAL outage) bubbles up to caller — Mission F
+      consume() maps to `BurnEventError::AuditSinkFailed { sink_error:
+      AuditError::UnobserveFailed(e) }` per R6 finding.
+
 11. **`InMemoryNonceRegistry` impl (test-only)** — same file. Per §3.11
     L631. Gated by `#[cfg(test)]`. Production binaries MUST NOT link.
     Persists zero observations across process restart — this is the
     documented restart-window replay vector (L633 acceptance-promotion
     checklist item).
+
+    **v3.5-r8 PROPOSAL impl additions (gated on RFC §3.11 amendment
+    acceptance per the blockquote at §9):** `observe` / `observe_readonly`
+    / `unobserve` all delegate to in-memory `HashMap<(NonceEventKind,
+    [u8;32], [u8;32]), ObservationRecord>`. Test-only — production
+    binaries MUST NOT link.
 
 12. **`newtypes` module** — `crates/octo-vault/src/newtypes.rs` (NEW).
     Per RFC-0965 v2.1 §0 + RFC-0960 v3.6 §2.1 L54 + RFC-0959 v2.8 §2.1 L50.
@@ -123,7 +222,7 @@ pubkey` (L629). TTL tied to asset revocation grace period.
     ```rust
     pub struct Nonce(pub [u8; 32]);
     pub struct Epoch(pub u64);
-    pub struct GovernanceSignature {  // RFC-0105 §3.6 L469-473
+    pub struct GovernanceSignature {  // RFC-0105 v3.5 §3.6 L469-473
         pub root_key_fingerprint: [u8; 32],
         pub epoch: u64,
         pub sig: [u8; 64],
@@ -133,12 +232,18 @@ pubkey` (L629). TTL tied to asset revocation grace period.
 13. **`verify_governance_signature` + `blake3_hash`** — amend
     `crates/octo-cap-macaroon/src/lib.rs` (canonical home per RFC-0105
     v3.5 §3.12 L641-660; no separate `crypto_primitives.rs` file).
-    Per RFC-0105 v3.5 §3.12 L641-660. Canonical home is **octo-cap-macaroon**
-    (Layer A substrate); `octo_vault` re-exports for consumer convenience
-    per §3.12 L647 + L656. `blake3_hash(data: &[u8]) -> [u8; 32]` uses
+    Per RFC-0105 v3.5 §3.12 L641-660. Canonical home is
+    **octo-cap-macaroon** (Layer B identity-substrate host) which
+    hosts the Layer A crypto-primitive functions
+    `verify_governance_signature` + `blake3_hash`; `octo_vault`
+    re-exports for consumer convenience per §3.12 L647 + L656.
+    `blake3_hash(data: &[u8]) -> [u8; 32]` uses
     `blake3::hash(data).into()` — NOT `blake3::hash(data).as_bytes()` at
     call sites (L658). Single-source-of-truth rule per L663 — consumers
-    MUST NOT re-declare.
+    MUST NOT re-declare. Layer classification: octo-cap-macaroon crate
+    = Layer B (identity-substrate host per per-type semver table); the
+    functions `verify_governance_signature` + `blake3_hash` themselves
+    = Layer A (RFC-0105 v3.5 §3.12 L663).
 
     **Semver impact:** `verify_governance_signature` + `blake3_hash` are
     **Layer A crypto primitives** hosted in `octo-cap-macaroon` (Layer B
@@ -228,13 +333,24 @@ Per RFC-0105 v3.5 §3.1+§3.4+§3.5+§3.6+§3.11+§3.12 spec blocks. Selectors:
   root key rotated at `epoch = 150` resolves `Ok(bridge_identity)` +
   `retroactive_review(bridge_id, suspected_epoch: 100)` flags
   `BridgeError::RegisteredUnderCompromisedKey`
-- TV-NR1: `NonceRegistry::observe(pk, nonce)` first call returns `Ok(())`
-- TV-NR2: `NonceRegistry::observe(pk, nonce)` second call with same
-  (pk, nonce) returns `Err(NonceError::AlreadyObserved)`
-- TV-NR3: `observe_readonly(pk, nonce)` does NOT mutate the registry
-  (verified by subsequent `observe` succeeding)
+- TV-NR1: `NonceRegistry::observe(NonceEventKind::Burn, pk, nonce)` first
+  call returns `Ok(())`
+- TV-NR2: `NonceRegistry::observe(NonceEventKind::Burn, pk, nonce)` second
+  call with same (event_kind, pk, nonce) returns `Err(NonceError::AlreadyObserved)`
+- TV-NR3: `observe_readonly(NonceEventKind::Burn, pk, nonce)` does NOT
+  mutate the registry (verified by subsequent `observe` succeeding)
 - TV-NR4: WAL failure during `observe` returns `NonceError::PersistenceFailure`
   (canonical StoolapNonceRegistry impl per §3.11 L607-613)
+- TV-NR7: `unobserve(NonceEventKind::Burn, pk, nonce)` after successful
+  `observe` returns `Ok(())` + re-observe of same triple succeeds
+  (rollback-verified; Mission F consume() atomicity substrate)
+- TV-NR8: `unobserve(NonceEventKind::Burn, pk, nonce)` without prior
+  `observe` returns `Err(NonceError::NotObserved)` — substrate guard
+  against double-rollback
+- TV-NR9: WAL failure during `unobserve` returns `NonceError::PersistenceFailure`
+  (canonical StoolapNonceRegistry impl; Mission F maps to
+  `BurnEventError::AuditSinkFailed { sink_error: AuditError::UnobserveFailed(inner) }`
+  with structured log + alert)
 - TV-NR5: Sovereign-asset namespace fallback —
   `sovereign_nonce_namespace(asset_id)` returns `blake3_hash(b"octo:sovereign-nonce-ns:v1" || asset_id.0)`,
   distinct from any ed25519 pubkey derivation
@@ -343,8 +459,8 @@ non-substrate: BLOCK landing, surface to user per `feedback_initiation_user_only
 
 `StoolapNonceRegistry` MUST land before v0 promotion to Accepted.
 Until landing, v0 drafts UNSAFE for production deployment — operators
-MUST attest (per `docs/audits/v0-nonce-registry-attest.md`) that the
-restart-window replay vector is acceptable. Acceptance-promotion
+MUST attest (per RFC-0105 v3.5 §3.11 L633 acceptance-promotion checklist)
+that the restart-window replay vector is acceptable. Acceptance-promotion
 checklist item.
 
 ## Claimant

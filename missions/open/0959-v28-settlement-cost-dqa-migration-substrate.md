@@ -6,7 +6,7 @@
 **Depends on:**
 
 - Mission D (`0105-v35-asset-registry-nonce-registry-substrate.md`) — provides `AssetRegistry`, `AssetError`, `AssetKind`, `AssetMetadata`, `MAX_SCALE`, `NonceRegistry`, `NonceError`, `newtypes::{Nonce, Epoch, GovernanceSignature}`, `sovereign_nonce_namespace`, `verify_governance_signature`, `blake3_hash` canonical substrate imports (per RFC-0959 v2.8 §2.1 L50-56)
-- Mission E (`0965-v21-payment-caveat-asset-binding-substrate.md`) — provides `PaymentCaveat` for `verify_settlement_against_payment_caveat` audit invariant (RFC-0105 §3.13 tri-invariant pair: `PaymentCaveat.asset_id == SettlementEvent.cost_asset_id`)
+- Mission E (`0965-v21-payment-caveat-asset-binding-substrate.md`) — provides `PaymentCaveat` for `verify_settlement_against_payment_caveat` audit invariant (RFC-0105 v3.5 §3.13 tri-invariant pair: `PaymentCaveat.asset_id == SettlementEvent.cost_asset_id`)
 - RFC-0959 v2.7 baseline (already landed: `SettlementError::AlreadyConsumed(String)` at `crates/quota-router-sm-engine/src/lib.rs:266`)
 
 ## Scope
@@ -18,7 +18,7 @@ Land RFC-0959 v2.8 `SettlementEvent` GREENFIELD substrate: introduce
 rejection + `new()` constructor with scale-resolution + governance
 signature + NonceRegistry observation + vault-contains-asset check +
 body_hash commitment + `verify_settlement_against_payment_caveat` audit
-invariant (RFC-0105 §3.13 tri-invariant pair) + sovereign-asset signature
+invariant (RFC-0105 v3.5 §3.13 tri-invariant pair) + sovereign-asset signature
 exemption + wire form.
 
 ### Mission G sub-steps
@@ -121,6 +121,21 @@ ledger_height (u64 .to_le_bytes) | evidence_ref | governance_pubkey
      `sovereign_nonce_namespace(&asset_id)` is used in Gate 7 ONLY as
      the **NonceRegistry observation key** (REPLAY-PROTECTION role). The
      two roles MUST NOT be conflated (R2 SUBSTRATE-FIDELITY CRITICAL fix).
+
+     > **R7 #12 HIGH (cross-mission divergence from Mission F):**
+     > Mission F BurnEventRef uses **single-role equivalence** — body_hash
+     > commitment AND NonceRegistry observation key both derive from
+     > `sovereign_nonce_namespace(&asset_id)`. Mission G SettlementEvent
+     > uses **two-role distinct** — body_hash uses `[0u8; 32]` sentinel,
+     > NonceRegistry uses `sovereign_nonce_namespace(&asset_id)`. Both
+     > conventions are documented but DIFFER. Mission G preserves the
+     > two-role distinct pattern per RFC-0959 v2.8 §3.3 L506-511 substrate
+     > — Mission F's single-role equivalence is Mission F-specific and
+     > does NOT propagate to Mission G. Substrate implementers MUST
+     > read each mission's §3.3 sovereign-exemption clause before
+     > porting conventions. A future RFC-level amendment unifying the
+     > two patterns is RECOMMENDED but NOT REQUIRED for v2.8 substrate
+     > compliance.
    * Gate 4: `compute_settlement_body_hash(...)` per L181-205
    * Gate 5: `verify_governance_signature(&governance_signature.sig,
 &body_hash, &governance_pubkey)` (else `InvalidSignature`; sovereign
@@ -128,36 +143,86 @@ ledger_height (u64 .to_le_bytes) | evidence_ref | governance_pubkey
    * Gate 6: `vault_registry.contains_asset(&cost_vault_id,
 &cost_asset_id)` returns `Ok(())` (else map `VaultAssetMismatch` /
      `VaultUnknown`) — placed AFTER signature per RFC §2.2 L269-273
-   * Gate 7: `nonce_registry.observe(&governance_pubkey, &nonce.0)`
-     returns `Ok(())` (else `Replay`)
+   * Gate 7: `let observe_key = meta.governance_pubkey.unwrap_or_else(||
+     sovereign_nonce_namespace(&cost_asset_id));
+     nonce_registry.observe(NonceEventKind::Settlement, &observe_key,
+     &nonce.0)` returns `Ok(())` (else `Replay`). Per-asset derived
+     namespace for sovereign assets via
+     `sovereign_nonce_namespace(&asset_id)` (REPLAY-PROTECTION key
+     per RFC §3.3 L509) prevents sovereign bucket collision on
+     `[0u8; 32]` zero-pubkey. Distinct from Gate 3 body_hash
+     commitment which uses `[0u8; 32]` sentinel (CONTENT slot per
+     §3.3 L506-511). Two roles MUST NOT be conflated. The
+     `event_kind = NonceEventKind::Settlement` discriminator (per
+     Mission D v3.5-r8 PROPOSAL surface change) namespaces the observe key
+     per event type — SettlementEvent nonces do NOT collide with
+     BurnEventRef nonces on the same sovereign asset (distinct LRU
+     buckets via `(event_kind, pk, nonce)` triple).
 
-   **Note:** stale-snapshot detection (RFC §2.3 L343-347) belongs to a
-   separate `validate()` function, NOT `new()`. This split matches
-   RFC-0960 v3.6 §2.1 (BurnEventRef) pattern: new() = construction-time
-   gates only; validate() = post-deser / audit-time re-checks.
+   **Note:** stale-snapshot detection (RFC-0959 v2.8 §2.2 L343-347)
+   belongs to a separate `validate()` function, NOT `new()`. This
+   split matches RFC-0960 v3.6 §2.2 (BurnEventRef) pattern:
+   new() = construction-time gates only; validate() = post-deser /
+   audit-time re-checks.
 
 9a. **`validate()` post-deser check (separate function)** — same file.
-Per §2.3 L298-345. **7 checks**:
+Per §2.2 L298 (`pub fn validate`) + §2.2 L334-342 (nonce observation
+mandate). **7 fail-fast checks** (R7 MED #3 fix — RFC body has 7
+distinct fail-fast paths, not 8; tombstone is part of (a) and
+body_hash compute is an intermediate step, not a fail-fast check):
+
+Signature:
+```rust
+pub fn validate(
+    &self,
+    registry: &dyn AssetRegistry,
+    vault_registry: &dyn VaultRegistry,
+    nonce_registry: &dyn NonceRegistry,   // R7 #5 HIGH: & not &mut
+    current_epoch: Epoch,
+) -> Result<(), SettlementEventError>;
+```
 
 - (a) re-run Gate 0: `registry.metadata(&cost_asset_id)` resolves +
-  not tombstoned (else `AssetUnknown`; DIRECT-DESERIALIZE BYPASS
-  MITIGATION per RFC-0959 v2.8 §2.3 L306-312)
+  not tombstoned (else `AssetUnknown`; tombstone check is part of
+  this gate, NOT a separate gate — R7 MED #3 dedup; DIRECT-DESERIALIZE
+  BYPASS MITIGATION per RFC-0959 v2.8 §2.2 L306-312)
 - (b) re-run Gate 1: `cost.wire_scale == meta.wire_scale` (else
   `ScaleMismatch`)
-- (c) tombstone check on the asset
-- (d) re-run Gate 6: `vault_registry.contains_asset(&cost_vault_id,
+- (c) re-run Gate 6: `vault_registry.contains_asset(&cost_vault_id,
 &cost_asset_id)` (else `VaultAssetMismatch` / `VaultUnknown`;
   mandatory re-run for direct Deserialize bypass mitigation)
-- (e) re-run `compute_settlement_body_hash` over stored fields
-- (f) re-run Gate 5: signature verify against recomputed body_hash
+- (d) intermediate: `compute_settlement_body_hash` over stored
+  fields (not a fail-fast check; prepares for (e))
+- (e) re-run Gate 5: signature verify against recomputed body_hash
   (sovereign EXEMPT)
-- (g) stale-snapshot detection — `current_epoch.0 <
+- (f) stale-snapshot detection — `current_epoch.0 <
 self.registry_snapshot_epoch.0` (else `StaleSnapshot { snapshot,
 live }`)
-
-Note: Gate 7 nonce observation is NOT re-run in `validate()` (the
-substrate nonce observation is bundled into `new()` per Mission G
-gate ordering — differs from BurnEventRef which uses `consume()`).
+- (g) **nonce observation (READ-ONLY)** — `let observe_key =
+  meta.governance_pubkey.unwrap_or_else(||
+  sovereign_nonce_namespace(&self.cost_asset_id));
+  if nonce_registry.observe_readonly(NonceEventKind::Settlement,
+  &observe_key, &self.nonce.0)? == true {
+      return Err(SettlementEventError::Replay);
+  }` —
+  R7 #5 HIGH fix: `observe_readonly` (not `observe`) because
+  validate() is a pure read-only check; the marking observe lives
+  in `new()` Gate 7 only. Mission F `BurnEventRef::validate()`
+  (RFC-0960 v3.6 §2.2 L279-332) is the substrate-fidelity
+  reference — it does NOT observe nonce (consume() does).
+  validate() here MUST use `observe_readonly` for parity with
+  BurnEventRef + parallel batch-replay safety (multiple validate()
+  calls concurrently don't fight over the same nonce bucket).
+  Direct-Deserialize bypass mitigation: a forged event that
+  bypassed `new()` is caught by the `observe_readonly == true`
+  check (the nonce bucket was populated by some prior observe,
+  even if not via this specific event's construction path).
+  Signature `&dyn NonceRegistry` (NOT `&mut`) — observe_readonly
+  is `&self`-only.
+  never marked. `event_kind = NonceEventKind::Settlement`
+  discriminator (per Mission D v3.5-r8 PROPOSAL surface change) namespaces
+  this observe key per event type — distinct from BurnEventRef's
+  `NonceEventKind::Burn` and PaymentCaveat's `NonceEventKind::Payment`.
 
 10. **`verify_settlement_against_payment_caveat` audit invariant** —
     same file. Per §2.3. Tri-invariant pairwise check per RFC-0105
@@ -201,15 +266,15 @@ Per RFC-0959 v2.8 §8 (Pending, concrete test vectors).
   returns `Err(ScaleMismatch)`
 - TV-SE3: gate 2 violation — `cost.wire_scale > MAX_SCALE = 18`
   returns `Err(ScaleOutOfRange)`
-- TV-SE4: gate 3 violation — vault-asset mismatch returns
+- TV-SE4: gate 6 violation — vault-asset mismatch returns
   `Err(VaultAssetMismatch)`
-- TV-SE5: gate 3 violation — vault unknown returns `Err(VaultUnknown)`
-- TV-SE6: gate 6 violation — forged governance signature returns
+- TV-SE5: gate 6 violation — vault unknown returns `Err(VaultUnknown)`
+- TV-SE6: gate 5 violation — forged governance signature returns
   `Err(InvalidSignature)`
-- TV-SE7: gate 6 sovereign exemption — sovereign role token settlement
+- TV-SE7: gate 5 sovereign exemption — sovereign role token settlement
   succeeds WITHOUT governance signature verification
-- TV-SE8: gate 7 violation — `nonce_registry.observe(pk, nonce) ==
-Err(AlreadyObserved)` returns `Err(Replay)`
+- TV-SE8: gate 7 violation — `nonce_registry.observe(NonceEventKind::Settlement,
+&pk, &nonce.0) == Err(AlreadyObserved)` returns `Err(Replay)`
 - TV-SE9: `encode_settlement_decision` produces canonical length-prefixed
   bytes per discriminant (`0x01` for Consumed, etc.)
 - TV-SE10: `compute_settlement_body_hash` is deterministic across
@@ -227,11 +292,11 @@ Err(AlreadyObserved)` returns `Err(Replay)`
 - TV-SE13: `verify_settlement_against_payment_caveat` matches when
   `settlement.cost_asset_id == caveat.asset_id`
 - TV-SE14: `verify_settlement_against_payment_caveat` rejects when
-  `settlement.cost_asset_id != caveat.asset_id` (RFC-0105 §3.13
+  `settlement.cost_asset_id != caveat.asset_id` (RFC-0105 v3.5 §3.13
   tri-invariant pair)
 - TV-SE15: wire form round-trip — `BorshSerialize → BorshDeserialize`
   preserves all 13 fields
-- TV-SE16: audit-batch replay path (RFC-0105 §3.13 L669) bypasses
+- TV-SE16: audit-batch replay path (RFC-0105 v3.5 §3.13 L669) bypasses
   per-event validate() cache and runs fresh
   `verify_settlement_against_payment_caveat` pairwise check on every
   `(caveat, burn, settlement)` tuple; cache HIT must NOT short-circuit
@@ -240,8 +305,17 @@ Err(AlreadyObserved)` returns `Err(Replay)`
   `meta.kind`, `registry_snapshot_epoch` set from `current_epoch` (no
   constructor args for either)
 - TV-SE18: `validate()` re-runs registry.metadata + scale + vault + sig
-  - stale_snapshot checks (7 checks per RFC-0959 v2.8 §2.3 L298-345);
-    direct Deserialize bypass mitigation requires (a) + (d) re-runs
+  + stale_snapshot + nonce observation (7 fail-fast checks per RFC-0959
+  v2.8 §2.2 L298 + §2.2 L334-342 — R7 MED #3 dedup tombstone + body_hash
+  intermediate); direct Deserialize bypass mitigation requires (a) + (c)
+  + (e) + (g) re-runs; check (g) uses `NonceEventKind::Settlement`
+  discriminator with `observe_readonly` (R7 #5 HIGH fix) per Mission D
+  v3.5-r8 PROPOSAL
+- TV-SE18a: replay attack via direct Deserialize bypass — forge
+  `SettlementEvent` bytes (skipping `new()`), call `validate()`; check
+  (h) observes nonce at `observe_key` (= sovereign_nonce_namespace for
+  sovereign assets or meta.governance_pubkey for managed assets);
+  second call returns `Err(SettlementEventError::Replay)`
 
 ## Layer direction (per [[cipherocto-design-principles]])
 
@@ -286,10 +360,10 @@ cargo test -p quota-router-sm-engine --lib settlement_event
 - RFC-0959 v2.8 §1 — motivation (cost_asset_id audit-invariant)
 - RFC-0959 v2.8 §2.1 — SettlementEvent substrate (L42-106)
 - RFC-0959 v2.8 §2.2 — scale-resolution invariant + new() (L108-391)
-- RFC-0959 v2.8 §2.3 — verify_settlement_against_payment_caveat (RFC-0105 §3.13)
+- RFC-0959 v2.8 §2.3 — verify_settlement_against_payment_caveat (RFC-0105 v3.5 §3.13)
 - RFC-0959 v2.8 §2.4 — error scenario matrix
 - RFC-0959 v2.8 §2.5 — cryptographic primitives (forward-pointer to
-  RFC-0105 §3.12)
+  RFC-0105 v3.5 §3.12)
 - RFC-0959 v2.8 §3 — wire form + sovereign-asset signature exemption
 - RFC-0105 v3.5 §3.13 — tri-invariant declaration (consumer anchor)
 - RFC-0105 v3.5 §3.13 L669 — **audit-batch replay enforcement** (NEW

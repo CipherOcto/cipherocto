@@ -1,0 +1,220 @@
+# 0960-v36-burn-event-dqa-migration-substrate — BurnEventRef DQA + asset-binding + NonceRegistry + legacy-form rejection
+
+**Status:** Open
+**Substrate:** RFC-0960 v3.6 §2 (BurnEventRef Specification) + §3 (Wire Form)
+**Parent:** RFC-0960 v3.6 + RFC-0105 v3.5 §3.13 (tri-invariant consumer)
+**Depends on:**
+
+- Mission D (`0105-v35-asset-registry-nonce-registry-substrate.md`) — provides `AssetRegistry`, `AssetError`, `AssetKind`, `MAX_SCALE`, `NonceRegistry`, `NonceError`, `newtypes::{Nonce, Epoch, GovernanceSignature}`, `sovereign_nonce_namespace`, `verify_governance_signature`, `blake3_hash` canonical substrate imports (per RFC-0960 v3.6 §2.1 L54-60)
+- Mission E (`0965-v21-payment-caveat-asset-binding-substrate.md`) — provides `PaymentCaveat` for `verify_burn_against_caveat` audit invariant (RFC-0105 §3.13 tri-invariant)
+- RFC-0960 v3.5 (already landed: `VaultId`, `AssetId`, `VaultRegistry`, `transfer_events` v014 schema)
+
+## Scope
+
+Land RFC-0960 v3.6 `BurnEventRef` GREENFIELD substrate: introduce
+`BurnEventRef` struct + `BurnEventError` enum + `SettlementId` typed
+wrapper + custom `Deserialize` for legacy-form rejection + `new()`
+constructor with scale-binding + governance signature + NonceRegistry
+observation + vault-contains-asset check + body_hash commitment +
+sovereign-asset exemption + `verify_burn_against_caveat` audit invariant
+(RFC-0105 §3.13 tri-invariant pair) + wire form.
+
+### Mission F sub-steps
+
+1. **`BurnEventRef` struct** — `crates/octo-policy/src/burn_event.rs`
+   (NEW). Per RFC-0960 v3.6 §2.1 L71-87. 11 fields:
+
+   ```rust
+   pub struct BurnEventRef {
+       pub chain_id: ChainId,
+       pub vault_id: VaultId,
+       pub asset_id: AssetId,
+       pub asset_kind: AssetKind,
+       pub amount: Dqa,
+       pub ledger_height: u64,
+       pub settlement_event_ref: SettlementId,
+       pub governance_signature: GovernanceSignature,
+       pub governance_pubkey: [u8; 32],       // Round 3 CRITICAL #1 — pinned at construction
+       pub registry_snapshot_epoch: Epoch,
+       pub nonce: Nonce,
+   }
+   ```
+
+2. **`BurnEventError` enum** — same file. Per §2.1 L89-126. 11 variants:
+   `AssetUnknown` / `ScaleMismatch { amount_wire_scale, asset_wire_scale }`
+   / `ScaleOutOfRange { scale }` / `InvalidSignature` /
+   `Replay { prior_height }` / `StaleSnapshot { snapshot, live }` /
+   `AssetKindMismatch { claimed, registered }` /
+   `VaultUnknown { vault_id }` /
+   `VaultAssetMismatch { vault_id, asset_id }` /
+   `AuditSinkFailed { sink_error: Box<AuditError> }` /
+   `LegacyFormOnNonOctoWContext { claimed_asset_id }`.
+
+3. **Custom `Deserialize` for legacy-form rejection** — same file. Per
+   §2.1 L141-170. Inspects raw envelope BEFORE derived `Deserialize` for
+   legacy `{ amount_micro_octo_w: i64 }` key. If present, parses
+   `cost_asset_id` field as hex; returns
+   `LegacyFormOnNonOctoWContext { claimed_asset_id }` error (sentinel
+   `AssetId([0u8; 32])` if `cost_asset_id` missing). Happy path:
+   re-serialize through JSON + delegate to derived impl (acceptable
+   performance cost; BurnEventRef deserialized at audit boundaries, not
+   hot path per L166).
+
+4. **`SettlementId` typed wrapper** — same file. Per §2.2 L181.
+   `pub struct SettlementId(pub [u8; 32]);`. `SettlementRef` deprecated
+   alias: `pub type SettlementRef = SettlementId;` (one substrate cycle
+   per L182).
+
+5. **`new()` constructor with 10 gates** — same file. Per §2.2 L196+.
+   Signature per L197-209: takes 10 args + `&dyn AssetRegistry` +
+   `&dyn VaultRegistry` + `current_epoch: Epoch`. Gates (in order):
+   - Gate 0: `registry.metadata(&asset_id)` resolves + not tombstoned
+     (else `AssetUnknown`)
+   - Gate 1: `amount.wire_scale == meta.wire_scale` (else `ScaleMismatch`)
+   - Gate 2: `amount.wire_scale <= MAX_SCALE` (else `ScaleOutOfRange`)
+   - Gate 3: `vault_registry.contains_asset(&vault_id, &asset_id)`
+     returns `Ok(())` (else map error variants: `UnknownVault` →
+     `VaultUnknown`, `VaultAssetMismatch` → `VaultAssetMismatch`)
+   - Gate 4: resolve `governance_pubkey` BEFORE body_hash (Round 3
+     IMPORTANT #3 + Round 4 CRITICAL #2; sovereign assets use sentinel
+     all-zeros for body_hash commitment)
+   - Gate 5: `compute_body_hash(...)` over length-prefixed field set
+     per §2.2 L371-393
+   - Gate 6: `verify_governance_signature(&governance_signature.sig,
+&body_hash, &governance_pubkey)` (else `InvalidSignature`; sovereign
+     assets EXEMPT per §3.3)
+   - Gate 7: `nonce_registry.observe(&governance_pubkey, &nonce.0)`
+     returns `Ok(())` (else `Replay`)
+   - Gate 8: stale-snapshot detection — `current_epoch.0 >=
+self.registry_snapshot_epoch.0` (else `StaleSnapshot`)
+   - Gate 9: assert `stored asset_kind == registered asset_kind` (Round 1
+     IMPORTANT #9; offline audit integrity check)
+
+6. **`consume()` audit sink write** — same file. Per §2.1 L114-120. After
+   `validate()` + nonce observation, writes to `AuditSink`. Failure
+   returns `AuditSinkFailed { sink_error }` (Round 3 MED #7 — distinct
+   from `InvalidSignature`; sink failure is infrastructure fault NOT
+   cryptographic rejection; callers MUST be able to retry). GREENFIELD
+   `AuditSink` trait + `AuditError` enum at `crates/octo-policy/src/audit_sink.rs`
+   (NEW, Mission F landing).
+
+7. **`verify_burn_against_caveat` audit invariant** — same file. Per §2.3.
+   Tri-invariant pairwise check per RFC-0105 v3.5 §3.13:
+   `BurnEventRef.asset_id == PaymentCaveat.asset_id`. Violation REJECTS
+   the audit chain. Function signature:
+
+   ```rust
+   pub fn verify_burn_against_caveat(
+       burn: &BurnEventRef,
+       caveat: &PaymentCaveat,
+   ) -> Result<(), AuditInvariantViolation>;
+   ```
+
+8. **Sovereign-asset exemption** — same file. Per §3.3. Sovereign role
+   tokens (`AssetKind::SovereignRoleToken`) burned by chain rule, NOT
+   by vault governance key. `new()` skips gate 6 (`InvalidSignature`)
+   when `meta.governance_pubkey.is_none()`. Body_hash commitment uses
+   all-zeros sentinel for `governance_pubkey`.
+
+9. **Wire form** — same file. Per §3 L470-512. Borsh field order per
+   §3.1: `chain_id | vault_id | asset_id | asset_kind | amount |
+ledger_height | settlement_event_ref | governance_signature |
+governance_pubkey | registry_snapshot_epoch | nonce`. JSON
+   equivalent. `LegacyFormOnNonOctoWContext` variant is the wire-form
+   migration rejection (per §3.2).
+
+## Test Vectors
+
+Per RFC-0960 v3.6 §9 (Pending, concrete test vectors).
+
+- TV-BE1: `BurnEventRef::new(...)` happy-path — all gates pass, returns
+  `Ok(BurnEventRef)` with all fields populated
+- TV-BE2: gate 1 violation — `amount.wire_scale != meta.wire_scale`
+  returns `Err(ScaleMismatch { amount_wire_scale, asset_wire_scale })`
+- TV-BE3: gate 2 violation — `amount.wire_scale > MAX_SCALE = 18`
+  returns `Err(ScaleOutOfRange { scale })`
+- TV-BE4: gate 3 violation — vault unknown returns `Err(VaultUnknown)`
+- TV-BE5: gate 3 violation — vault-asset mismatch returns
+  `Err(VaultAssetMismatch)`
+- TV-BE6: gate 6 violation — forged governance signature returns
+  `Err(InvalidSignature)`
+- TV-BE7: gate 6 sovereign exemption — sovereign role token burn
+  succeeds WITHOUT governance signature verification
+- TV-BE8: gate 7 violation — `nonce_registry.observe(pk, nonce) ==
+Err(AlreadyObserved)` returns `Err(Replay)`
+- TV-BE9: gate 9 violation — `stored asset_kind != registered
+asset_kind` returns `Err(AssetKindMismatch { claimed, registered })`
+- TV-BE10: custom `Deserialize` accepts modern envelope
+  `{asset_id, amount: DqaEncoding, ...}`
+- TV-BE11: custom `Deserialize` rejects legacy envelope
+  `{amount_micro_octo_w: i64, cost_asset_id: BRIDGED-hex}` with
+  `LegacyFormOnNonOctoWContext { claimed_asset_id }`
+- TV-BE12: `consume()` happy-path — audit sink writes succeed; event
+  recorded
+- TV-BE13: `consume()` AuditSink failure returns
+  `AuditSinkFailed { sink_error }`; caller can retry
+- TV-BE14: `verify_burn_against_caveat` matches when
+  `burn.asset_id == caveat.asset_id`
+- TV-BE15: `verify_burn_against_caveat` rejects when
+  `burn.asset_id != caveat.asset_id` (RFC-0105 §3.13 tri-invariant pair)
+- TV-BE16: wire form round-trip — `BorshSerialize → BorshDeserialize`
+  preserves all 11 fields
+
+## Layer direction (per [[cipherocto-design-principles]])
+
+- `octo-policy` (Layer C specialized node role) — `burn_event.rs` =
+  **Layer B additive type hosted in Layer C node crate**; substrate-
+  mandated invariant carrier across the audit chain
+- `AuditSink` trait at `octo-policy` (Layer C) — produced by
+  specialized node; consumers depend on the trait via DI
+- No cross-layer inversion; all new types additive (semver-minor)
+
+## Validation
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --features full -- -D warnings
+cargo test --workspace --lib
+cargo test -p octo-policy --lib burn_event
+```
+
+## Backward compat
+
+- All new types are additive (no existing crate modification)
+- `VaultId`, `AssetId`, `ChainId`, `Dqa`, `Epoch`, `Nonce`,
+  `GovernanceSignature`, `AssetRegistry`, `NonceRegistry`,
+  `VaultRegistry` are imported from their canonical homes (Mission D +
+  pre-existing Layer A frozen types) — NO parallel declarations
+- `SettlementRef` deprecated alias retained for one substrate cycle (6
+  weeks per RFC-0965 v2.1 §4.1)
+- `AuditSink` trait is NEW (additive); consumers without `consume()`
+  integration are unaffected
+
+## Cross-references
+
+- RFC-0960 v3.6 §0 — GREENFIELD marker (explicit)
+- RFC-0960 v3.6 §1 — motivation (asset-binding + audit-invariant)
+- RFC-0960 v3.6 §2.1 — BurnEventRef + BurnEventError substrate (L43-170)
+- RFC-0960 v3.6 §2.2 — construction + scale-binding invariant + new() (L173+)
+- RFC-0960 v3.6 §2.3 — audit-invariant: verify_burn_against_caveat (RFC-0105 §3.13)
+- RFC-0960 v3.6 §2.4 — AssetKind cryptographic commitment (kind_tag + blake3)
+- RFC-0960 v3.6 §2.5 — error scenario matrix
+- RFC-0960 v3.6 §3 — wire form + legacy-form migration
+- RFC-0960 v3.6 §3.3 — sovereign-asset signature exemption
+- RFC-0105 v3.5 §3.13 — tri-invariant declaration (consumer anchor)
+- RFC-0105 v3.5 §5 — cross-RFC error-enum ownership
+- Mission D — canonical substrate imports
+- Mission E — PaymentCaveat (audit-invariant pair)
+- Mission B (`0960-v37-b-event-log-producer-wiring.md`) — `BurnEventProducer`
+  consumes Mission F substrate
+- Mission A (`0960-v37-a-vault-balance-projection-substrate.md`) —
+  cache table consumer
+- [[cipherocto-design-principles]] — Layer B additive-only rule
+
+## Claimant
+
+@unassigned
+
+## Pull Request
+
+#

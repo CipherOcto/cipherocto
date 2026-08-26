@@ -188,7 +188,7 @@ cargo test --workspace  # migration-ordering test must pass
 
 ## Claimant
 
-@unassigned
+@mmacedoeu (claimed 2026-08-26 after R10 DRY closure; substrate implementation gated on RFC-0105 v3.5-r8 §3.11 amendment for Mission D; v015 per-crate vs RFC §3.1 centralized v017 numbering documented)
 
 ## Pull Request
 

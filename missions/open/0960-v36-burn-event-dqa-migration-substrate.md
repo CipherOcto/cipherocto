@@ -355,7 +355,7 @@ cargo test -p octo-policy --lib burn_event
 
 ## Claimant
 
-@unassigned
+@mmacedoeu (claimed 2026-08-26 after R10 DRY closure; 3-sink atomicity (nonce + audit + log.insert rollback) verified; TV-BE18-22 added; sovereign single-role equivalence documented)
 
 ## Pull Request
 

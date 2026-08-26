@@ -465,7 +465,7 @@ checklist item.
 
 ## Claimant
 
-@unassigned
+@mmacedoeu (claimed 2026-08-26 after R10 DRY closure; v3.5-r8 PROPOSAL blockquote gates substrate implementation on RFC §3.11 amendment acceptance; NonceEventKind #[repr(u8)] pinned)
 
 ## Pull Request
 

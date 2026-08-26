@@ -227,7 +227,7 @@ bash scripts/validate_cites.sh  # Mission B edits must not break §-cite validat
 
 ## Claimant
 
-@unassigned
+@mmacedoeu (claimed 2026-08-26 after R10 DRY closure; producer impls at Layer C sites verified: quota-router-sm-engine, octo-policy; bus.emit failure mode documented as MED deferred item)
 
 ## Pull Request
 

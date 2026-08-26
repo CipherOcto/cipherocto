@@ -384,7 +384,7 @@ cargo test -p quota-router-sm-engine --lib settlement_event
 
 ## Claimant
 
-@unassigned
+@mmacedoeu (claimed 2026-08-26 after R10 DRY closure; validate() uses observe_readonly + &dyn purity (vs Mission F substrate-fidelity reference); 7 fail-fast gates; sovereign two-role distinct documented)
 
 ## Pull Request
 

@@ -311,7 +311,7 @@ cargo test -p octo-paid-query --lib  # PaymentRejectionReason consumer tests
 
 ## Claimant
 
-@unassigned
+@mmacedoeu (claimed 2026-08-26 after R10 DRY closure; Caveat::AssetBinding co-bound rule verified; legacy-form rejection via custom Deserialize; 6-week HARD cutoff per §4.1)
 
 ## Pull Request
 

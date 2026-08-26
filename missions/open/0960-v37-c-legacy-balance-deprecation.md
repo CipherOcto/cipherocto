@@ -156,7 +156,7 @@ adoption detected, per §5.3 reserved right)
 
 ## Claimant
 
-@unassigned
+@mmacedoeu (claimed 2026-08-26 after R10 DRY closure; 3-cycle deprecation timeline per RFC §5.1; KeyStorage fabrication removed per R7 CRITICAL #1)
 
 ## Pull Request
 

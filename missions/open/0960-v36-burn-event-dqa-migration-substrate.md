@@ -71,23 +71,26 @@ sovereign-asset exemption + `verify_burn_against_caveat` audit invariant
    Signature per L197-209: takes **8 args** (chain_id, vault_id, asset_id,
    amount, ledger_height, settlement_event_ref, governance_signature,
    nonce) + `&dyn AssetRegistry` + `&dyn VaultRegistry` +
-   `current_epoch: Epoch`. Gates (in order):
+   `current_epoch: Epoch`. Gates (in order, per RFC-0960 v3.6 §2.2
+   L213-260 canonical order):
    - Gate 0: `registry.metadata(&asset_id)` resolves + not tombstoned
      (else `AssetUnknown`)
    - Gate 1: `amount.wire_scale == meta.wire_scale` (else `ScaleMismatch`)
    - Gate 2: `amount.wire_scale <= MAX_SCALE` (else `ScaleOutOfRange`)
-   - Gate 3: resolve `governance_pubkey` BEFORE body_hash (Round 3
-     IMPORTANT #3 + Round 4 CRITICAL #2; sovereign assets use
-     `sovereign_nonce_namespace(&asset_id)` for body_hash commitment,
-     NOT all-zeros — per RFC-0960 v3.6 §3.3 L504-511)
-   - Gate 4: `compute_body_hash(...)` over length-prefixed field set
+   - Gate 3: `vault_registry.contains_asset(&vault_id, &asset_id)`
+     returns `Ok(())` (else map error variants: `UnknownVault` →
+     `VaultUnknown`, `VaultAssetMismatch` → `VaultAssetMismatch`) —
+     fails fast on cheap lookup before expensive crypto (RFC-0960 v3.6
+     §2.2 L240-247)
+   - Gate 4: resolve `governance_pubkey` from `meta` — sovereign
+     fallback uses `sovereign_nonce_namespace(&asset_id)` for
+     body_hash commitment (Round 3 IMPORTANT #3 + Round 4 CRITICAL #2;
+     per RFC-0960 v3.6 §3.3 L504-511)
+   - Gate 5: `compute_body_hash(...)` over length-prefixed field set
      per §2.2 L371-393
-   - Gate 5: `verify_governance_signature(&governance_signature.sig,
+   - Gate 6: `verify_governance_signature(&governance_signature.sig,
 &body_hash, &governance_pubkey)` (else `InvalidSignature`; sovereign
      assets EXEMPT per §3.3)
-   - Gate 6: `vault_registry.contains_asset(&vault_id, &asset_id)`
-     returns `Ok(())` (else map error variants: `UnknownVault` →
-     `VaultUnknown`, `VaultAssetMismatch` → `VaultAssetMismatch`)
 
    **Note:** nonce observation (Gate 7), stale-snapshot detection
    (Gate 8), and asset_kind assert (Gate 9) are NOT in `new()`. Per
@@ -98,11 +101,29 @@ sovereign-asset exemption + `verify_burn_against_caveat` audit invariant
    alongside audit-sink commit to prevent observation-without-commit.
 
 6. **`validate()` post-deser check (separate function)** — same file. Per
-   §2.1 L279-332. 4 gates (asset_kind equality, stale_snapshot detection,
-   plus re-runs gates 0, 1, 5 from `new()`). Re-runs `compute_body_hash`
-   and re-verifies signature against stored fields. Returns
-   `BurnEventError::AssetKindMismatch { claimed, registered }` for
-   offline audit integrity check (Round 1 IMPORTANT #9).
+   §2.1 L279-332. **7 checks** (RFC-0960 v3.6 §2.2 validate() L269-323):
+   - (a) re-run Gate 0: `registry.metadata(&asset_id)` resolves +
+     not tombstoned (else `AssetUnknown`; DIRECT-DESERIALIZE BYPASS
+     MITIGATION per RFC §2.2 L283-289)
+   - (b) re-run Gate 1: `amount.wire_scale == meta.wire_scale` (else
+     `ScaleMismatch`)
+   - (c) re-run Gate 3: `vault_registry.contains_asset(&vault_id,
+&asset_id)` (else `VaultUnknown` / `VaultAssetMismatch`; mandatory
+     re-run for direct Deserialize bypass mitigation per RFC §2.2
+     L295-302)
+   - (d) asset_kind equality check — `self.asset_kind ==
+meta.kind` (else `AssetKindMismatch { claimed, registered }`)
+   - (e) stale_snapshot detection — `current_epoch.0 <
+self.registry_snapshot_epoch.0` (else `StaleSnapshot { snapshot,
+live }`)
+   - (f) re-run `compute_body_hash` over stored fields
+   - (g) re-run Gate 6: signature verify against recomputed body_hash
+
+   Returns `BurnEventError::{AssetUnknown, ScaleMismatch, VaultUnknown,
+VaultAssetMismatch, AssetKindMismatch, StaleSnapshot,
+InvalidSignature}` for offline audit integrity check (Round 1
+   IMPORTANT #9). Direct Deserialize bypass MUST be closed by (a)
+   - (c) re-runs (Round 3 SECURITY HIGH finding F1).
 
 7. **`consume()` nonce observe + audit sink write** — same file. Per
    §2.1 L337-368. Steps:
@@ -156,12 +177,12 @@ Per RFC-0960 v3.6 §9 (Pending, concrete test vectors).
   returns `Err(ScaleMismatch { amount_wire_scale, asset_wire_scale })`
 - TV-BE3: gate 2 violation — `amount.wire_scale > MAX_SCALE = 18`
   returns `Err(ScaleOutOfRange { scale })`
-- TV-BE4: gate 3 violation — vault unknown returns `Err(VaultUnknown)`
-- TV-BE5: gate 3 violation — vault-asset mismatch returns
+- TV-BE4: Gate 3 violation — vault unknown returns `Err(VaultUnknown)`
+- TV-BE5: Gate 3 violation — vault-asset mismatch returns
   `Err(VaultAssetMismatch)`
-- TV-BE6: gate 6 violation — forged governance signature returns
+- TV-BE6: Gate 6 violation — forged governance signature returns
   `Err(InvalidSignature)`
-- TV-BE7: gate 6 sovereign exemption — sovereign role token burn
+- TV-BE7: Gate 6 sovereign exemption — sovereign role token burn
   succeeds WITHOUT governance signature verification
 - TV-BE8: gate 7 violation — `nonce_registry.observe(pk, nonce) ==
 Err(AlreadyObserved)` returns `Err(Replay)`
@@ -221,7 +242,7 @@ cargo test -p octo-policy --lib burn_event
 
 - RFC-0960 v3.6 §0 — GREENFIELD marker (explicit)
 - RFC-0960 v3.6 §1 — motivation (asset-binding + audit-invariant)
-- RFC-0960 v3.6 §2.1 — BurnEventRef + BurnEventError substrate (L43-170)
+- RFC-0960 v3.6 §2.1 — BurnEventRef + BurnEventError substrate (L39-172)
 - RFC-0960 v3.6 §2.2 — construction + scale-binding invariant + new() (L173+)
 - RFC-0960 v3.6 §2.3 — audit-invariant: verify_burn_against_caveat (RFC-0105 §3.13)
 - RFC-0960 v3.6 §2.4 — AssetKind cryptographic commitment (kind_tag + blake3)

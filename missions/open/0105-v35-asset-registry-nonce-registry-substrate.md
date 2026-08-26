@@ -140,10 +140,12 @@ pubkey` (L629). TTL tied to asset revocation grace period.
     call sites (L658). Single-source-of-truth rule per L663 — consumers
     MUST NOT re-declare.
 
-    **Semver impact:** `octo-cap-macaroon` Layer A additions = semver-MAJOR
-    (per CLAUDE.md layer table: Layer A = "RFC-frozen, semver-major only
-    (years-stable)"). All downstream crates (`octo-vault`,
-    `octo-policy`, `octo-wallet-node`, etc.) MUST bump major in lockstep.
+    **Semver impact:** `verify_governance_signature` + `blake3_hash` are
+    **Layer A crypto primitives** hosted in `octo-cap-macaroon` (Layer B
+    identity substrate) per per-type table above. Per CLAUDE.md layer
+    table: Layer A = "RFC-frozen, semver-major only (years-stable)".
+    Function-level changes = semver-MAJOR; host crate
+    `octo-cap-macaroon` itself stays Layer B-additive.
     Alternative: place `verify_governance_signature` + `blake3_hash` at a
     NEW Layer A crate (e.g., `octo-canonical-primitives`) to isolate blast
     radius (Stable Abstractions Principle per [[cipherocto-design-principles]]).
@@ -173,6 +175,10 @@ pubkey` (L629). TTL tied to asset revocation grace period.
 - `serde = { version = "<version>", features = ["derive"] }`
 - `thiserror = "<version>"` (error enum derives for AssetError, BridgeError,
   NonceError, BridgeChainNamespace)
+- `bls12_381 = "<version>"` (BLS12-381 aggregated signatures for
+  bridge quorum verifier per §3.6 L362-364 + L488-496; verify exact
+  substrate-fork version pin at landing per
+  [[feedback_stoolap_persistence]])
 
 ### Cargo deps (add to `crates/octo-cap-macaroon/Cargo.toml`)
 
@@ -244,11 +250,12 @@ Per RFC-0105 v3.5 §3.1+§3.4+§3.5+§3.6+§3.11+§3.12 spec blocks. Selectors:
 - `octo-vault` (Layer B) — `asset_registry` + `bridge_identity_registry` +
   `nonce_registry` + `bridge_chain_namespace` + `newtypes` + sovereign
   role tokens = **all Layer B additive, semver-minor**
-- `octo-cap-macaroon` (Layer B frozen substrate) — `crypto_primitives` =
-  **Layer B-additive cryptographic primitive surface**; consumers MUST
-  import via `octo_cap_macaroon::{verify_governance_signature, blake3_hash}`
-  OR via `octo_vault` re-export (both paths resolve to the same canonical
-  octo_cap_macaroon definition per §3.12 L663)
+- `octo-cap-macaroon` (Layer B identity substrate HOST) hosts Layer A
+  crypto primitives (`verify_governance_signature` + `blake3_hash`).
+  The per-type table above classifies the FUNCTIONS as Layer A
+  (MAJOR); the host crate itself is Layer B-additive (consumers MUST
+  import via `octo_cap_macaroon::{verify_governance_signature,
+blake3_hash}` OR via `octo_vault` re-export per §3.12 L663)
 - BLS12-381 quorum verifier is substrate-mandated across all nodes
   (split-chain equivalence per §3.6 L502)
 - No cross-layer inversion
@@ -315,20 +322,22 @@ non-substrate: BLOCK landing, surface to user per `feedback_initiation_user_only
 
 ## Per-type semver classification
 
-| Type / Module                                                                                  | Layer | Semver impact                     | Anchor                                               |
-| ---------------------------------------------------------------------------------------------- | ----- | --------------------------------- | ---------------------------------------------------- |
-| `AssetMetadata` / `AssetKind` / `MAX_SCALE`                                                    | B     | minor                             | §3.1 L114-211                                        |
-| `AssetRegistry` / `AssetError`                                                                 | B     | minor                             | §3.1 L174-210                                        |
-| `CachedAssetRegistry`                                                                          | B     | minor                             | §3.5 L316-352                                        |
-| `BridgeIdentityRegistry` / `BridgeIdentity` / `BridgeError` / `BridgeCuratorSlashingCondition` | B     | minor                             | §3.6 L356-474                                        |
-| `BridgeChainNamespace` enum                                                                    | B     | minor                             | §2.4 L84-95 (closed enum; 5 variants bounded by RFC) |
-| `NonceRegistry` / `NonceError`                                                                 | B     | minor                             | §3.11 L569-633                                       |
-| `StoolapNonceRegistry` impl                                                                    | B     | minor                             | §3.11 L629-633                                       |
-| `InMemoryNonceRegistry` impl                                                                   | B     | minor (`#[cfg(test)]`)            | §3.11 L631                                           |
-| `newtypes::{Nonce, Epoch, GovernanceSignature}`                                                | B     | minor                             | §3.6 L469-473 + consumer imports                     |
-| `verify_governance_signature` + `blake3_hash`                                                  | **A** | **MAJOR**                         | §3.12 L641-660 (octo-cap-macaroon)                   |
-| `sovereign_nonce_namespace` helper                                                             | B     | minor                             | RFC-0965 v2.1 §2.4 L383-393                          |
-| Sovereign role token table (9 entries)                                                         | **A** | **MAJOR** (table expansion gated) | §3.7 L536-539                                        |
+| Type / Module                                               | Layer | Semver impact                     | Anchor                                                                               |
+| ----------------------------------------------------------- | ----- | --------------------------------- | ------------------------------------------------------------------------------------ |
+| `AssetMetadata` / `AssetKind` / `MAX_SCALE`                 | B     | minor                             | §3.1 L114-211                                                                        |
+| `AssetRegistry` / `AssetError`                              | B     | minor                             | §3.1 L174-210                                                                        |
+| `CachedAssetRegistry`                                       | B     | minor                             | §3.5 L316-352                                                                        |
+| `BridgeIdentityRegistry` / `BridgeIdentity` / `BridgeError` | B     | minor                             | §3.6 L356-503                                                                        |
+| `BridgeCuratorSlashingCondition` enum                       | B     | minor                             | §3.6.1 L504-521                                                                      |
+| `BridgeChainNamespace` enum                                 | B     | minor                             | §2.4 L84-95 (closed enum; 5 variants bounded by RFC)                                 |
+| `NonceRegistry` / `NonceError`                              | B     | minor                             | §3.11 L569-633                                                                       |
+| `StoolapNonceRegistry` impl                                 | B     | minor                             | §3.11 L629-633                                                                       |
+| `InMemoryNonceRegistry` impl                                | B     | minor (`#[cfg(test)]`)            | §3.11 L631                                                                           |
+| `GovernanceSignature` newtype                               | B     | minor                             | §3.6 L469-473                                                                        |
+| `Nonce` / `Epoch` newtypes                                  | B     | minor                             | §3.11 (NonceRegistry substrate GREENFIELD anchor)                                    |
+| `verify_governance_signature` + `blake3_hash`               | **A** | **MAJOR**                         | §3.12 L641-660 (octo-cap-macaroon host)                                              |
+| `sovereign_nonce_namespace` helper                          | B     | minor                             | RFC-0965 v2.1 §2.4 L383-393                                                          |
+| Sovereign role token table (9 entries)                      | **A** | **MAJOR** (table expansion gated) | §2.1 (sovereign namespace, hardcoded entries) + §3.7 L536-539 (population reference) |
 
 ## Ship milestone (RFC-0105 v3.5 §3.11 L633)
 

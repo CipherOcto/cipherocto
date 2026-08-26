@@ -103,7 +103,7 @@ cost_asset_id | kind_tag (1 byte) | cost (Dqa .to_le_bytes) |
 ledger_height (u64 .to_le_bytes) | evidence_ref | governance_pubkey
 | nonce`. Mirrors RFC-0960 v3.6 §2.2 L371-393 `compute_body_hash`.
 
-9. **`new()` constructor with 7 gates** — same file. Per §2.2 L207-295.
+9. **`new()` constructor with 8 gates** — same file. Per §2.2 L207-295.
    Signature per L207-223: takes **11 args** (settlement_id, ask_id,
    cost_vault_id, cost_asset_id, cost, evidence_ref, ledger_height,
    created_at_unix_ms, settlement_decision, governance_signature, nonce)
@@ -116,9 +116,11 @@ ledger_height (u64 .to_le_bytes) | evidence_ref | governance_pubkey
    * Gate 1: `cost.wire_scale == meta.wire_scale` (else `ScaleMismatch`)
    * Gate 2: `cost.wire_scale <= MAX_SCALE = 18` (else `ScaleOutOfRange`)
    * Gate 3: resolve `governance_pubkey` from `meta` — sovereign fallback
-     uses `sovereign_nonce_namespace(&asset_id)` per Round 5 fix HIGH-1
-     and RFC-0105 v3.5 §3.12 + §3.11 L633 (NOT all-zeros — see TV-SE10
-     coverage of the distinction)
+     uses `[0u8; 32]` sentinel for **body_hash commitment** (CONTENT slot
+     per RFC-0959 v2.8 §3.3 L506-511 Round 6 fix). The per-asset derived
+     `sovereign_nonce_namespace(&asset_id)` is used in Gate 7 ONLY as
+     the **NonceRegistry observation key** (REPLAY-PROTECTION role). The
+     two roles MUST NOT be conflated (R2 SUBSTRATE-FIDELITY CRITICAL fix).
    * Gate 4: `compute_settlement_body_hash(...)` per L181-205
    * Gate 5: `verify_governance_signature(&governance_signature.sig,
 &body_hash, &governance_pubkey)` (else `InvalidSignature`; sovereign
@@ -133,6 +135,29 @@ ledger_height (u64 .to_le_bytes) | evidence_ref | governance_pubkey
    separate `validate()` function, NOT `new()`. This split matches
    RFC-0960 v3.6 §2.1 (BurnEventRef) pattern: new() = construction-time
    gates only; validate() = post-deser / audit-time re-checks.
+
+9a. **`validate()` post-deser check (separate function)** — same file.
+Per §2.3 L298-345. **7 checks**:
+
+- (a) re-run Gate 0: `registry.metadata(&cost_asset_id)` resolves +
+  not tombstoned (else `AssetUnknown`; DIRECT-DESERIALIZE BYPASS
+  MITIGATION per RFC-0959 v2.8 §2.3 L306-312)
+- (b) re-run Gate 1: `cost.wire_scale == meta.wire_scale` (else
+  `ScaleMismatch`)
+- (c) tombstone check on the asset
+- (d) re-run Gate 6: `vault_registry.contains_asset(&cost_vault_id,
+&cost_asset_id)` (else `VaultAssetMismatch` / `VaultUnknown`;
+  mandatory re-run for direct Deserialize bypass mitigation)
+- (e) re-run `compute_settlement_body_hash` over stored fields
+- (f) re-run Gate 5: signature verify against recomputed body_hash
+  (sovereign EXEMPT)
+- (g) stale-snapshot detection — `current_epoch.0 <
+self.registry_snapshot_epoch.0` (else `StaleSnapshot { snapshot,
+live }`)
+
+Note: Gate 7 nonce observation is NOT re-run in `validate()` (the
+substrate nonce observation is bundled into `new()` per Mission G
+gate ordering — differs from BurnEventRef which uses `consume()`).
 
 10. **`verify_settlement_against_payment_caveat` audit invariant** —
     same file. Per §2.3. Tri-invariant pairwise check per RFC-0105
@@ -150,12 +175,13 @@ ledger_height (u64 .to_le_bytes) | evidence_ref | governance_pubkey
     Sovereign role tokens (`AssetKind::SovereignRoleToken`) settled by
     chain rule, NOT by vault governance key. `new()` skips gate 5
     (`InvalidSignature`) when `meta.governance_pubkey.is_none()`.
-    `compute_settlement_body_hash` uses
-    `sovereign_nonce_namespace(&asset_id)` resolved value
-    (= `blake3_hash(b"octo:sovereign-nonce-ns:v1" || asset_id.0)` per
-    RFC-0105 §3.12 + §3.11 L633) for `governance_pubkey` in the
-    body_hash commitment, NOT all-zeros. All-zeros is reserved for the
-    wire-form signature field ONLY (RFC-0959 v2.8 §3.3 L484).
+    `compute_settlement_body_hash` uses `[0u8; 32]` sentinel for
+    `governance_pubkey` in the body_hash commitment (CONTENT slot per
+    RFC-0959 v2.8 §3.3 L508). The per-asset derived
+    `sovereign_nonce_namespace(&asset_id)` is used in Gate 7 as the
+    NonceRegistry observation key (REPLAY-PROTECTION role per L509).
+    Two roles MUST NOT be conflated — see TV-SE10a for the
+    distinction.
 
 12. **Wire form** — same file. Per §3 L468-512. Borsh field order per
     §3.1: `settlement_id | ask_id | cost_vault_id | cost_asset_id |
@@ -189,6 +215,10 @@ Err(AlreadyObserved)` returns `Err(Replay)`
 - TV-SE10: `compute_settlement_body_hash` is deterministic across
   `new()` and `validate()` invocations (Round 6 fix verifies no
   field-set drift)
+- TV-SE10a: sovereign body_hash uses `[0u8; 32]` sentinel (CONTENT slot
+  per RFC-0959 v2.8 §3.3 L508); sovereign NonceRegistry namespace uses
+  `sovereign_nonce_namespace(&asset_id)` (REPLAY-PROTECTION key per
+  L509); two roles MUST NOT be conflated
 - TV-SE11: custom `Deserialize` accepts modern envelope
   `{cost_asset_id, cost: DqaEncoding, ...}`
 - TV-SE12: custom `Deserialize` rejects legacy envelope
@@ -209,6 +239,9 @@ Err(AlreadyObserved)` returns `Err(Replay)`
 - TV-SE17: `new()` arg count = 11 (not 13); `asset_kind` derived from
   `meta.kind`, `registry_snapshot_epoch` set from `current_epoch` (no
   constructor args for either)
+- TV-SE18: `validate()` re-runs registry.metadata + scale + vault + sig
+  - stale_snapshot checks (7 checks per RFC-0959 v2.8 §2.3 L298-345);
+    direct Deserialize bypass mitigation requires (a) + (d) re-runs
 
 ## Layer direction (per [[cipherocto-design-principles]])
 
@@ -252,7 +285,7 @@ cargo test -p quota-router-sm-engine --lib settlement_event
 - RFC-0959 v2.8 §0 — GREENFIELD marker (explicit per §0 L20-26)
 - RFC-0959 v2.8 §1 — motivation (cost_asset_id audit-invariant)
 - RFC-0959 v2.8 §2.1 — SettlementEvent substrate (L42-106)
-- RFC-0959 v2.8 §2.2 — scale-resolution invariant + new() (L108-389)
+- RFC-0959 v2.8 §2.2 — scale-resolution invariant + new() (L108-391)
 - RFC-0959 v2.8 §2.3 — verify_settlement_against_payment_caveat (RFC-0105 §3.13)
 - RFC-0959 v2.8 §2.4 — error scenario matrix
 - RFC-0959 v2.8 §2.5 — cryptographic primitives (forward-pointer to

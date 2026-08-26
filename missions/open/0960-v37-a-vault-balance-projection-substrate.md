@@ -98,6 +98,14 @@ crates/*/migrations/`): `octo-reputation` has v001-v012,
 - `chrono = { version = "<version>", default-features = false, features = ["clock"] }` (default clock provider per §2.3)
 - `hex = "<version>"` (channel-name encoding per §2.4)
 
+### Cargo deps (NEW `crates/octo-vault-stoolap/Cargo.toml`)
+
+- `octo-vault = { path = "../octo-vault" }` (port trait dependencies per Layer D direction)
+- `stoolap = { version = "<pin>", features = ["pubsub", "wal"] }` (Layer D substrate adapter; pin per [[feedback_stoolap_persistence]])
+- `tokio = { version = "<version>", features = ["sync", "rt"] }` (pub/sub subscriber runtime)
+- `serde = { version = "<version>", features = ["derive"] }`
+- `hex = "<version>"` (channel-name encoding per §2.4)
+
 ## Test Vectors
 
 - TV-VP1: empty log → `projected_balance = DQA::zero()` + `source_kind = FreshLogScan`
@@ -105,8 +113,9 @@ crates/*/migrations/`): `octo-reputation` has v001-v012,
   bust listener invalidates cache entry → next read = `FreshLogScan`
 - TV-VP3: asset-generality — independent projection per `(chain_id, vault_id, asset_id)` triple
 - TV-VP4: tri-invariant producer rejection — `validate_pre_insert` returns
-  `Err(VaultRegistryError::TriInvariantViolation)` BEFORE log insert; log
-  row count unchanged after rejection
+  `Err(ProducerError::TriInvariantViolation)` (Mission B canonical
+  error type name) BEFORE log insert; log row count unchanged after
+  rejection
 - TV-VP5: `ZERO_VAULT_ID` sentinel round-trip — drain event encoded with
   from_vault_id or to_vault_id = `[0u8; 32]` survives round-trip through
   v014 schema
@@ -115,15 +124,19 @@ crates/*/migrations/`): `octo-reputation` has v001-v012,
 - TV-VP7: asset-rotation cache break — `registry_snapshot_epoch` advance
   forces `EpochRebuild` (`source_kind = 2`)
 - TV-VP8: `lru::get` updates recency; `lru::peek` does NOT (substrate-fidelity)
-- TV-VP9: TTL uses unix seconds only — `projected_at_unix_seconds: i64`
+- TV-VP9: `ZERO_VAULT_ID` sentinel exclusion — projection correctly
+  excludes `ZERO_VAULT_ID` from `SUM(in)` and `SUM(out)` (canonical
+  RFC-0960 v3.7 §3.1 TV-VP9; the v014 `occurred_at_unix BIGINT` column
+  has no `last_chain_seq` to break determinism)
+- TV-VP10: TTL uses unix seconds only — `projected_at_unix_seconds: i64`
   is the SINGLE cache-write timestamp (no `computed_at_*` column; RFC
   §3.1 L761 ONE-clock rule); matches v014 `occurred_at_unix BIGINT`
-- TV-VP10: `ProjectionSource` SQL binding — variant value matches `source_kind INT` per `#[repr(u8)]`
+- TV-VP11: `ProjectionSource` SQL binding — variant value matches `source_kind INT` per `#[repr(u8)]`
 
 ## Layer direction (per [[cipherocto-design-principles]])
 
 - `octo-vault` (Layer B) — `VaultBalanceProjection` + cache + `TransferEventLog` port + `VaultAssetResolver` port (trait definitions only)
-- `octo-vault-stoolap` (Layer D transport adapter, NEW) — Stoolap-backed impl of `TransferEventLog` + `VaultAssetResolver` + `InvalidationBus`. Per [[cipherocto-design-principles]] Layer D depends on Layer B; adapters live in their own crate.
+- `octo-vault-stoolap` (Layer D transport adapter, NEW) — Stoolap-backed impl of `TransferEventLog` + `VaultAssetResolver` + `VaultProjectionInvalidationEmitter`. Per [[cipherocto-design-principles]] Layer D depends on Layer B; adapters live in their own crate. The `VaultProjectionInvalidationEmitter` is the RFC-0960 v3.7 §2.4 anchor; the substrate-convention `InvalidationBus` port trait referenced in Mission B derives from this emitter trait boundary.
 - New `VaultAssetResolver` trait = Layer B-additive (does NOT modify existing `VaultRegistry` contract)
 - No cross-layer inversion; vault substrate code stays in `crates/octo-vault/`
 - Semver impact: octo-vault = semver-minor (additive ports); octo-vault-stoolap = new crate (semver-minor initial release)
@@ -142,7 +155,8 @@ cargo test --workspace  # migration-ordering test must pass
 - No breaking changes to existing `octo-vault` public API (Mission A is additive)
 - Vault substrate existing types unchanged: `Vault`, `VaultId`, `VaultRegistry` contracts preserved
 - `Vault.balance_dqa_micros: i64` field kept (deprecation handled by Mission C)
-- `crate_storage` Cargo.toml deps added; no removals
+- `crates/octo-vault` Cargo.toml deps added; no removals
+- NEW `crates/octo-vault-stoolap` crate added (Layer D transport adapter)
 
 ## Cross-references
 
@@ -151,7 +165,7 @@ cargo test --workspace  # migration-ordering test must pass
 - RFC-0960 §2.2 — projection algorithm
 - RFC-0960 §2.3 — bounded-LRU cache + asset-rotation mitigation
 - RFC-0960 §6 Mission A — canonical scope
-- [[rfcs/accepted/economics/0960-v37-vault-balance-projection-substrate]] — RFC text
+- RFC-0960 v3.7 (text)
 - [[rfc-0960-v37-promotion-status]] — promotion session memory
 - [[cipherocto-design-principles]] — Layer B additive-only rule
 - RFC-0105 v3.5 §3.13 L669 — **audit-batch replay enforcement** (NEW

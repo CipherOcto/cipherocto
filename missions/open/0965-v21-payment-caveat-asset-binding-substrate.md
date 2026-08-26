@@ -6,7 +6,7 @@
 **Depends on:**
 
 - Mission D (`0105-v35-asset-registry-nonce-registry-substrate.md`) — provides `AssetRegistry`, `AssetError`, `AssetKind`, `MAX_SCALE`, `AssetMetadata`, `NonceRegistry`, `NonceError`, `newtypes::{Nonce, Epoch, GovernanceSignature}`, `sovereign_nonce_namespace`, `verify_governance_signature`, `blake3_hash` canonical substrate imports (per RFC-0965 v2.1 §2.1 L53-57)
-- RFC-0965 v2.0 baseline (already landed: `PaymentCaveat`, `PAID_QUERY_CAVEAT_NAME`, `AttenuationError` at `crates/octo-cap-macaroon/src/caveat/payment.rs:40,55,235`)
+- RFC-0965 v2.0 baseline (already landed: `PaymentCaveat`, `PAID_QUERY_CAVEAT_NAME` at `crates/octo-cap-macaroon/src/caveat/payment.rs:41`, `AttenuationError` at `:235`)
 
 ## Scope
 
@@ -43,8 +43,8 @@ context (§2.4 L397-415); add `Caveat::Vault(asset_id)` co-bound rule (§5).
    ```
 
    Discriminator unchanged (`PAID_QUERY_CAVEAT_NAME = "paid-query/v1"` per
-   L40 — substrate-canonical name; the discriminator rename in prior draft
-   broke 47 call-sites + JSON-RPC + CLI per §2.1 L64-67).
+   §2.1 L68 — substrate-canonical name; the discriminator rename in prior
+   draft broke 47 call-sites + JSON-RPC + CLI per §2.1 L64-67).
 
 2. **4-arg `attenuate`** — same file. Per §2.2 L113-150. Signature:
 
@@ -71,10 +71,20 @@ context (§2.4 L397-415); add `Caveat::Vault(asset_id)` co-bound rule (§5).
 RFC-0965 v2.1 §2.2")]`. Migration window per §4.1 L440-442: 6 weeks
    OR 1 major version bump, whichever longer. HARD cutoff, no extensions.
 
+3a. **`attenuate_legacy_3arg` helper** — same file. Per §2.2 L183-205.
+3-arg signature `(new_budget, new_expires_at_unix_ms, registry: &dyn
+AssetRegistry)` for migration callers that already have a registry handle
+but don't yet pass `new_asset_id`. Performs registry-resolved scale
+check + budget/expiry gates; asset-equality still falls back to
+`self.asset_id`. Marked `#[deprecated(note = "use 4-arg attenuate
+   with new_asset_id per RFC-0965 v2.1 §2.2")]`; same 6-week window.
+Bridges 2-arg callers → 4-arg callers during migration.
+
 4. **`AttenuationError` variants** — same file. Per §2.2 L98-111. Add 3
    variants to existing enum at L235:
 
    ```rust
+   #[non_exhaustive]   // MANDATORY: Layer B substrate enum (additive evolution)
    pub enum AttenuationError {
        BudgetWidened { current: Dqa, proposed: Dqa },  // existing
        ExpiryWidened { current: u64, proposed: u64 },   // existing
@@ -84,11 +94,22 @@ RFC-0965 v2.1 §2.2")]`. Migration window per §4.1 L440-442: 6 weeks
    }
    ```
 
+   `#[non_exhaustive]` is mandatory (not "if substrate applies") per
+   CLAUDE.md §Architectural Principles "Extension over enumeration":
+   Layer B frozen-substrate enums MUST be non-exhaustive so adding new
+   variants (RFC-driven additive evolution) does NOT force every
+   downstream consumer to a central edit.
+
 5. **`PaymentRejectionReason` enum additions** — `crates/octo-paid-query/src/lib.rs:164`
    (definition) AND `crates/octo-cap-macaroon/src/caveat/mod.rs:17`
-   (re-export). Per §2.3 L222-244. Add 5 variants:
+   (re-export). Per §2.3 L222-244. **Note on line 164 substrate anchor:**
+   on-disk state currently holds `pub enum PaidQueryRejectionReason`;
+   Mission E renames to `PaymentRejectionReason` (canonical per RFC
+   §2.3 L222) and adds 5 new variants. The substrate anchor line itself
+   shifts by N lines. Add 5 variants:
 
    ```rust
+   #[non_exhaustive]   // MANDATORY: Layer B substrate enum
    pub enum PaymentRejectionReason {
        BudgetExhausted,                                       // existing
        Expired,                                               // existing
@@ -104,7 +125,9 @@ RFC-0965 v2.1 §2.2")]`. Migration window per §4.1 L440-442: 6 weeks
 
    `PaidQueryRejectionReason` alias retained per §2.3 L249:
    `#[deprecated(note = "use PaymentRejectionReason")] pub type
-PaidQueryRejectionReason = PaymentRejectionReason;`
+PaidQueryRejectionReason = PaymentRejectionReason;` **Removal
+   timeline tied to RFC-0965 v2.x + N cycles** (not indefinitely
+   maintained). Document removal in substrate crate deprecation log.
 
 6. **`verify()` gates** — `crates/octo-cap-macaroon/src/caveat/payment.rs`
    (amend). Per §2.3 L278-338. 7 gates:
@@ -199,14 +222,22 @@ Err(AlreadyObserved)` returns `Reject { reason: Replay }`
 - TV-PC16: wire form round-trip — `BorshSerialize → BorshDeserialize`
   preserves all fields including `asset_id` / `registry_snapshot_epoch`
   / `nonce`
+- TV-PC17: audit-batch replay path (RFC-0105 §3.13 L669) bypasses
+  per-event validate() cache and runs fresh `verify()` pairwise check
+  on every `(caveat, burn, settlement)` tuple; cache HIT must NOT
+  short-circuit the batch-replay path
+- TV-PC18: `attenuate_legacy_3arg` (3-arg with registry handle, no
+  new_asset_id) carries `#[deprecated]` warning; bridge for 2-arg
+  callers during 6-week migration window
 
 ## Layer direction (per [[cipherocto-design-principles]])
 
 - `octo-cap-macaroon` (Layer B frozen substrate) — `PaymentCaveat` field
   additions = **additive, semver-minor** (existing struct extended; no
   field removal); new `PaymentRejectionReason` variants = additive
-- `octo-paid-query` (Layer B/C-adjacent) — `PaymentRejectionReason`
-  enum additions + `PaidQueryRejectionReason` deprecated alias
+- `octo-paid-query` (Layer B substrate, paid-query RFC-driven additive) —
+  `PaymentRejectionReason` enum additions + `PaidQueryRejectionReason`
+  deprecated alias
 - All changes are Layer B-additive; no breaking renames; discriminator
   string `"paid-query/v1"` UNCHANGED
 - All consumers of the 47 existing 2-arg call-sites MUST migrate OR
@@ -251,6 +282,12 @@ cargo test -p octo-paid-query --lib  # PaymentRejectionReason consumer tests
 - RFC-0965 v2.1 §4.1 — "one cycle" = 6 weeks (HARD cutoff)
 - RFC-0965 v2.1 §5 — PermissionKind Co-Bound Caveat (Caveat::Vault)
 - RFC-0105 v3.5 §3.13 — tri-invariant declaration (consumer anchor)
+- RFC-0105 v3.5 §3.13 L669 — **audit-batch replay enforcement** (NEW
+  v3.5-r6): per-tuple fresh pairwise check on every
+  `(PaymentCaveat, BurnEventRef, SettlementEvent)` in the audit-batch
+  replay path; per-event validate() cache MUST NOT be used. Mission E's
+  `verify()` (TV-PC17) MUST be invoked from the batch-replay path with
+  NO caching.
 - RFC-0105 v3.5 §5 — cross-RFC error-enum ownership
   (`LegacyFormOnNonOctoWContext` declared per-RFC)
 - Mission D (`0105-v35-asset-registry-nonce-registry-substrate.md`) —

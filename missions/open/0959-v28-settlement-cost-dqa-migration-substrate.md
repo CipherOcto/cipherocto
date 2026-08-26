@@ -5,7 +5,7 @@
 **Parent:** RFC-0959 v2.8 + RFC-0105 v3.5 §3.13 (tri-invariant consumer)
 **Depends on:**
 
-- Mission D (`0105-v35-asset-registry-nonce-registry-substrate.md`) — provides `AssetRegistry`, `AssetError`, `AssetKind`, `MAX_SCALE`, `NonceRegistry`, `NonceError`, `newtypes::{Nonce, Epoch, GovernanceSignature}`, `sovereign_nonce_namespace`, `verify_governance_signature`, `blake3_hash` canonical substrate imports (per RFC-0959 v2.8 §2.1 L50-56)
+- Mission D (`0105-v35-asset-registry-nonce-registry-substrate.md`) — provides `AssetRegistry`, `AssetError`, `AssetKind`, `AssetMetadata`, `MAX_SCALE`, `NonceRegistry`, `NonceError`, `newtypes::{Nonce, Epoch, GovernanceSignature}`, `sovereign_nonce_namespace`, `verify_governance_signature`, `blake3_hash` canonical substrate imports (per RFC-0959 v2.8 §2.1 L50-56)
 - Mission E (`0965-v21-payment-caveat-asset-binding-substrate.md`) — provides `PaymentCaveat` for `verify_settlement_against_payment_caveat` audit invariant (RFC-0105 §3.13 tri-invariant pair: `PaymentCaveat.asset_id == SettlementEvent.cost_asset_id`)
 - RFC-0959 v2.7 baseline (already landed: `SettlementError::AlreadyConsumed(String)` at `crates/quota-router-sm-engine/src/lib.rs:266`)
 
@@ -65,8 +65,9 @@ exemption + wire form.
    §2.1 L74 + §2.2 L141-143. Inspects raw envelope BEFORE derived
    `Deserialize` for legacy `{ cost: { amount_micro_octo_w } }` form. If
    present AND `cost_asset_id != OCTO_W_ASSET_ID`, returns
-   `LegacyFormOnNonOctoWContext { claimed_asset_id }` error. Serde
-   discriminator: `"legacy_form_on_non_octow_context"`. Happy path:
+   `LegacyFormOnNonOctoWContext { claimed_asset_id }` error. The string
+   `"legacy_form_on_non_octow_context"` is the error context string (per
+   RFC §2.2 L142), NOT a JSON discriminator field. Happy path:
    delegate to derived impl.
 
 5. **`VaultRegistryError` enum** — same file. Per §2.2 L111-116. 2
@@ -77,13 +78,15 @@ vault_id, asset_id }`. Reused by RFC-0960 v3.6 BurnEventRef gate 3
    OR the canonical home is chosen at Mission F+G landing time (decision
    surfaced to user per `feedback_initiation_user_only`).
 
-6. **`SettlementEventError` enum** — same file. Per §2.2 L118-144. 10
+6. **`SettlementEventError` enum** — same file. Per §2.2 L118-144. **9**
    variants: `AssetUnknown` / `ScaleMismatch { cost_scale, vault_scale }`
    / `ScaleOutOfRange { scale }` / `InvalidSignature` / `Replay` /
    `StaleSnapshot { snapshot, live }` /
    `VaultAssetMismatch { vault_id, asset_id }` /
    `VaultUnknown { vault_id }` /
    `LegacyFormOnNonOctoWContext { claimed_asset_id }`.
+   **Annotated `#[non_exhaustive]`** at the enum level (Layer B additive
+   substrate; downstream consumers MUST handle the wildcard arm).
 
 7. **`encode_settlement_decision` helper** — same file. Per §2.2
    L154-173. Length-prefixed discriminant + payload:
@@ -100,27 +103,36 @@ cost_asset_id | kind_tag (1 byte) | cost (Dqa .to_le_bytes) |
 ledger_height (u64 .to_le_bytes) | evidence_ref | governance_pubkey
 | nonce`. Mirrors RFC-0960 v3.6 §2.2 L371-393 `compute_body_hash`.
 
-9. **`new()` constructor with 9 gates** — same file. Per §2.2 L207+.
-   Signature per L207-223: takes 13 args + `&dyn AssetRegistry` +
-   `&dyn VaultRegistry` + `&mut dyn NonceRegistry` + `current_epoch:
-Epoch`. Gates (in order):
-   - Gate 0: `registry.metadata(&cost_asset_id)` resolves + not
+9. **`new()` constructor with 7 gates** — same file. Per §2.2 L207-295.
+   Signature per L207-223: takes **11 args** (settlement_id, ask_id,
+   cost_vault_id, cost_asset_id, cost, evidence_ref, ledger_height,
+   created_at_unix_ms, settlement_decision, governance_signature, nonce)
+   - `&dyn AssetRegistry` + `&dyn VaultRegistry` + `&mut dyn NonceRegistry`
+   - `current_epoch: Epoch`. `asset_kind` is derived from `meta.kind`
+     (NOT a constructor arg). `registry_snapshot_epoch` is set from
+     `current_epoch` (NOT a constructor arg). Gates (in order, per RFC):
+   * Gate 0: `registry.metadata(&cost_asset_id)` resolves + not
      tombstoned (else `AssetUnknown`)
-   - Gate 1: `cost.wire_scale == meta.wire_scale` (else `ScaleMismatch`)
-   - Gate 2: `cost.wire_scale <= MAX_SCALE = 18` (else `ScaleOutOfRange`)
-   - Gate 3: `vault_registry.contains_asset(&cost_vault_id,
-&cost_asset_id)` returns `Ok(())` (else map `VaultAssetMismatch` /
-     `VaultUnknown`)
-   - Gate 4: resolve `governance_pubkey` from `meta` (sovereign fallback
-     sentinel per Round 5 fix HIGH-1)
-   - Gate 5: `compute_settlement_body_hash(...)` per L181-205
-   - Gate 6: `verify_governance_signature(&governance_signature.sig,
+   * Gate 1: `cost.wire_scale == meta.wire_scale` (else `ScaleMismatch`)
+   * Gate 2: `cost.wire_scale <= MAX_SCALE = 18` (else `ScaleOutOfRange`)
+   * Gate 3: resolve `governance_pubkey` from `meta` — sovereign fallback
+     uses `sovereign_nonce_namespace(&asset_id)` per Round 5 fix HIGH-1
+     and RFC-0105 v3.5 §3.12 + §3.11 L633 (NOT all-zeros — see TV-SE10
+     coverage of the distinction)
+   * Gate 4: `compute_settlement_body_hash(...)` per L181-205
+   * Gate 5: `verify_governance_signature(&governance_signature.sig,
 &body_hash, &governance_pubkey)` (else `InvalidSignature`; sovereign
      EXEMPT per §3.3)
-   - Gate 7: `nonce_registry.observe(&governance_pubkey, &nonce.0)`
+   * Gate 6: `vault_registry.contains_asset(&cost_vault_id,
+&cost_asset_id)` returns `Ok(())` (else map `VaultAssetMismatch` /
+     `VaultUnknown`) — placed AFTER signature per RFC §2.2 L269-273
+   * Gate 7: `nonce_registry.observe(&governance_pubkey, &nonce.0)`
      returns `Ok(())` (else `Replay`)
-   - Gate 8: stale-snapshot detection — `current_epoch.0 >=
-self.registry_snapshot_epoch.0` (else `StaleSnapshot`)
+
+   **Note:** stale-snapshot detection (RFC §2.3 L343-347) belongs to a
+   separate `validate()` function, NOT `new()`. This split matches
+   RFC-0960 v3.6 §2.1 (BurnEventRef) pattern: new() = construction-time
+   gates only; validate() = post-deser / audit-time re-checks.
 
 10. **`verify_settlement_against_payment_caveat` audit invariant** —
     same file. Per §2.3. Tri-invariant pairwise check per RFC-0105
@@ -136,10 +148,14 @@ self.registry_snapshot_epoch.0` (else `StaleSnapshot`)
 
 11. **Sovereign-asset signature exemption** — same file. Per §3.3.
     Sovereign role tokens (`AssetKind::SovereignRoleToken`) settled by
-    chain rule, NOT by vault governance key. `new()` skips gate 6
+    chain rule, NOT by vault governance key. `new()` skips gate 5
     (`InvalidSignature`) when `meta.governance_pubkey.is_none()`.
-    `compute_settlement_body_hash` uses all-zeros sentinel for
-    `governance_pubkey` in sovereign case.
+    `compute_settlement_body_hash` uses
+    `sovereign_nonce_namespace(&asset_id)` resolved value
+    (= `blake3_hash(b"octo:sovereign-nonce-ns:v1" || asset_id.0)` per
+    RFC-0105 §3.12 + §3.11 L633) for `governance_pubkey` in the
+    body_hash commitment, NOT all-zeros. All-zeros is reserved for the
+    wire-form signature field ONLY (RFC-0959 v2.8 §3.3 L484).
 
 12. **Wire form** — same file. Per §3 L468-512. Borsh field order per
     §3.1: `settlement_id | ask_id | cost_vault_id | cost_asset_id |
@@ -185,6 +201,14 @@ Err(AlreadyObserved)` returns `Err(Replay)`
   tri-invariant pair)
 - TV-SE15: wire form round-trip — `BorshSerialize → BorshDeserialize`
   preserves all 13 fields
+- TV-SE16: audit-batch replay path (RFC-0105 §3.13 L669) bypasses
+  per-event validate() cache and runs fresh
+  `verify_settlement_against_payment_caveat` pairwise check on every
+  `(caveat, burn, settlement)` tuple; cache HIT must NOT short-circuit
+  the batch-replay path
+- TV-SE17: `new()` arg count = 11 (not 13); `asset_kind` derived from
+  `meta.kind`, `registry_snapshot_epoch` set from `current_epoch` (no
+  constructor args for either)
 
 ## Layer direction (per [[cipherocto-design-principles]])
 
@@ -235,6 +259,12 @@ cargo test -p quota-router-sm-engine --lib settlement_event
   RFC-0105 §3.12)
 - RFC-0959 v2.8 §3 — wire form + sovereign-asset signature exemption
 - RFC-0105 v3.5 §3.13 — tri-invariant declaration (consumer anchor)
+- RFC-0105 v3.5 §3.13 L669 — **audit-batch replay enforcement** (NEW
+  v3.5-r6): per-tuple fresh pairwise check
+  `(PaymentCaveat, BurnEventRef, SettlementEvent)` in the audit-batch
+  replay path; per-event validate() cache MUST NOT be used. Mission G's
+  `verify_settlement_against_payment_caveat` (TV-SE16) MUST be invoked
+  from the batch-replay path with NO caching.
 - RFC-0105 v3.5 §5 — cross-RFC error-enum ownership
 - Mission D — canonical substrate imports
 - Mission E — PaymentCaveat (audit-invariant pair)

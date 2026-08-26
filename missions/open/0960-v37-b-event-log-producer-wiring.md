@@ -26,16 +26,52 @@ Wire the producer side of RFC-0960 v3.7: introduce `EventLogProducer` trait
 
    ```rust
    pub trait EventLogProducer: Send + Sync {
-       fn validate_pre_insert(&self, event: &TransferEvent) -> Result<(), ProducerError>;
-       fn produce(&self, event: TransferEvent) -> Result<(), ProducerError> {
-           // Default body: validate_pre_insert → drain_lock acquire → log.insert
-           // Subclasses overriding produce MUST re-call validate_pre_insert.
+       type Input;
+
+       fn validate_pre_insert(
+           &self,
+           input: &Self::Input,
+           registry: &dyn AssetRegistry,
+           asset_resolver: &dyn VaultAssetResolver,
+       ) -> Result<(), ProducerError>;
+
+       fn drain_lock(&self) -> &Arc<Mutex<()>>;
+
+       fn to_transfer_event(
+           &self,
+           input: Self::Input,
+           registry: &dyn AssetRegistry,
+           asset_resolver: &dyn VaultAssetResolver,
+       ) -> Result<TransferEvent, ProducerError>;
+
+       fn produce(
+           &self,
+           input: Self::Input,
+           registry: &dyn AssetRegistry,
+           asset_resolver: &dyn VaultAssetResolver,
+           nonce_registry: &dyn NonceRegistry,
+           log: &dyn TransferEventLog,
+           bus: &dyn InvalidationBus,
+           current_unix_seconds: i64,
+       ) -> Result<(), ProducerError> {
+           // Default body (RFC-0960 v3.7 §2.5 L493-516):
+           //   1. self.validate_pre_insert(&input, &*registry, &*asset_resolver)
+           //   2. acquire self.drain_lock()
+           //   3. let event = self.to_transfer_event(input, registry, asset_resolver)?;
+           //   4. log.insert(event)
+           //   5. bus.emit(VaultProjectionInvalidationEnvelope { ... })
+           // Subclasses overriding produce MUST re-call validate_pre_insert
+           // before any state mutation (clippy lint enforces).
        }
    }
    ```
 
-   `drain_lock: Arc<Mutex<()>>` shared across all 3 impls enforces serial
-   access to `TransferEventLog::insert`. Atomicity guarantee per §2.4.
+   Per RFC-0960 v3.7 §2.5 L474-516: trait uses associated type `Input`,
+   `drain_lock()` accessor, `to_transfer_event()` method, and 6-param
+   `produce` default body that bundles validate + lock + transform + insert
+   - bus-emit. `drain_lock: Arc<Mutex<()>>` shared across all 3 impls
+     enforces serial access to `TransferEventLog::insert`. Atomicity
+     guarantee per §2.4.
 
 2. **`PaymentEventProducer` impl** — `crates/octo-wallet-node/src/handlers/mint.rs`.
    Wired into the `MintHandler` struct's payment-issuance code path. Reads
@@ -44,11 +80,12 @@ Wire the producer side of RFC-0960 v3.7: introduce `EventLogProducer` trait
 
 3. **`SettlementEventProducer` impl** — same file
    (`crates/octo-vault/src/event_log_producer.rs`). Wraps
-   `SettlementEventRepository::insert` (struct at
-   `crates/quota-router-storage/src/settlement_event_repo.rs`) ATOMICALLY:
-   the wrap site must be inside the existing settlement-event txn boundary
-   so `validate_pre_insert` + `log.insert` + commit-coupled NOTIFY all fire
-   within the same Stoolap transaction (RFC-0913 consumer pattern).
+   `SettlementEvent::consume` (struct per RFC-0959 v2.8 §2.1, lands at
+   `crates/quota-router-sm-engine/src/settlement_event.rs` via Mission G)
+   ATOMICALLY: the wrap site must be inside the existing settlement-event
+   txn boundary so `validate_pre_insert` + `log.insert` + commit-coupled
+   NOTIFY all fire within the same Stoolap transaction (RFC-0913 consumer
+   pattern).
 
 4. **`BurnEventProducer` impl** — same file. Wraps `BurnEventRef::consume`
    (struct per RFC-0960 §2 BurnEventRef Specification). Wire site is AFTER
@@ -64,10 +101,12 @@ Wire the producer side of RFC-0960 v3.7: introduce `EventLogProducer` trait
 
 6. **Per-process subscriber task** — `crates/octo-vault/src/cache_subscriber.rs`
    (NEW). Spawns at `octo-vault` process init. Subscribes to wildcard
-   `cache:projection:*` over Stoolap pub/sub (RFC-0913 consumer pattern).
-   On envelope receipt: deserialize → call `VaultBalanceCache::invalidate`.
-   The subscriber MUST start before any producer fan-in (verified by
-   Mission B TV covering process-startup ordering).
+   `cache:projection:*` over an `InvalidationBus` port trait (Layer B
+   boundary; concrete Stoolap pub/sub impl at `crates/octo-vault-stoolap/`
+   Layer D adapter crate). On envelope receipt: deserialize → call
+   `VaultBalanceCache::invalidate`. The subscriber MUST start before any
+   producer fan-in (verified by Mission B TV covering process-startup
+   ordering).
 
 7. **Drain lock wiring** — `drain_lock: Arc<Mutex<()>>` lives at
    `crates/octo-vault/src/lib.rs` (process-wide singleton). Each producer
@@ -140,7 +179,14 @@ bash scripts/validate_cites.sh  # Mission B edits must not break §-cite validat
 - RFC-0960 §6 Mission B — canonical scope
 - RFC-0913 — pub/sub wildcard + commit-coupled NOTIFY pattern
 - RFC-0965 §2.1 — `PaymentCaveat.asset_id` consumed by `PaymentEventProducer`
-- RFC-0960 §2 BurnEventRef — `BurnEventRef::consume` wrapped by `BurnEventProducer`
+- RFC-0960 v3.6 §2.1 — `BurnEventRef::consume` wrapped by `BurnEventProducer`
+- RFC-0959 v2.8 §2.1 — `SettlementEvent` consumed by `SettlementEventProducer`
+- RFC-0105 v3.5 §3.13 L669 — **audit-batch replay enforcement** (NEW
+  v3.5-r6): per-tuple fresh pairwise check on every
+  `(PaymentCaveat, BurnEventRef, SettlementEvent)` in the audit-batch
+  replay path; per-event validate() cache MUST NOT be used. Mission B's
+  producer emit path is per-event (validate_pre_insert) and does NOT
+  cover the batch-replay path.
 - Mission A (`0960-v37-a-vault-balance-projection-substrate.md`) — block: substrate ports must land first
 - Mission D (`0105-v35-asset-registry-nonce-registry-substrate.md`) — canonical substrate imports
 - Mission E (`0965-v21-payment-caveat-asset-binding-substrate.md`) — `PaymentCaveat` for `PaymentEventProducer`

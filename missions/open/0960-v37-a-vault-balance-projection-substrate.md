@@ -5,8 +5,9 @@
 **Parent:** RFC-0960 §6 Implementation Path Mission A
 **Depends on:**
 
-- RFC-0960 (Accepted 2026-08-26)
-- Mission D (`0105-v35-asset-registry-nonce-registry-substrate.md`) — provides `AssetRegistry`, `AssetError`, `MAX_SCALE`, `BridgeChainNamespace`, `sovereign_nonce_namespace`, `verify_governance_signature`, `blake3_hash`, `newtypes::{Nonce, Epoch}` canonical substrate imports used by VaultAssetResolver trait boundary.
+- RFC-0960
+- Mission D (`0105-v35-asset-registry-nonce-registry-substrate.md`) — provides `AssetRegistry`, `AssetError`, `AssetKind`, `AssetMetadata`, `MAX_SCALE`, `NonceRegistry`, `NonceError`, `newtypes::{Nonce, Epoch, GovernanceSignature}`, `BridgeChainNamespace`, `sovereign_nonce_namespace`, `verify_governance_signature`, `blake3_hash` canonical substrate imports used by VaultAssetResolver trait boundary.
+- Mission E (`0965-v21-payment-caveat-asset-binding-substrate.md`) — `PaymentCaveat.asset_id` consumed by `PaymentEventProducer` (Mission B) for tri-invariant check; Mission A substrate shape must NOT preclude the consumer contract.
 
 ## Scope
 
@@ -54,24 +55,39 @@ Duration)` (capacity + TTL); `get_or_compute(...)` checks live
 4. **`TransferEventLog` port trait** — `crates/octo-vault/src/event_log_producer.rs`
    (NEW shared with Mission B). Methods: `sum_to_vault`/`sum_from_vault`/
    `max_occurred_at_unix`/`insert`. Production impl lands at
-   `crates/octo-vault/src/transfer_event_log/stoolap.rs`.
+   `crates/octo-vault-stoolap/src/transfer_event_log.rs` (Layer D
+   transport adapter crate, NOT `crates/octo-vault` Layer B — port
+   trait in B, adapter in D per [[cipherocto-design-principles]]).
 
 5. **`VaultAssetResolver` port trait** — NEW per RFC-0960 §2.1. Distinct from
    `VaultRegistry::contains_asset` (returns `()`, cannot return asset_id).
-   Production impl lands at `crates/octo-vault/src/vault_asset_resolver/sqlite.rs`
-   using the existing `vaults` PK `(chain_id, owner_did, asset_id)` + UNIQUE INDEX
-   on `vault_id`.
+   Production impl lands at `crates/octo-vault-stoolap/src/vault_asset_resolver.rs`
+   (Layer D adapter crate) using the existing `vaults` PK
+   `(chain_id, owner_did, asset_id)` + UNIQUE INDEX on `vault_id`.
 
 6. **v015 SQL DDL migration** — `crates/octo-vault/migrations/v015__create_vault_balance_projection_cache.sql`
-   (NEW). Per-crate numbering (octo-vault counter starts at v013; v014 is transfer_events;
-   next is **v015**, NOT global v018+). PK `(chain_id, vault_id)`. Columns:
-   `projected_balance DQA(12)`, `projected_at_unix_seconds BIGINT NOT NULL`,
+   (NEW). **Per-crate numbering** (current substrate state: each crate
+   owns its own counter; `crates/octo-vault/migrations/` has v013+v014
+   → next free is v015). PK `(chain_id, vault_id)`. Columns:
+   `projected_balance DQA(12)`, `projected_at_unix_seconds BIGINT`,
    `source_kind INT NOT NULL`, `registry_snapshot_epoch BIGINT NOT NULL`.
+
+   **Note on RFC vs substrate:** RFC-0960 v3.7 §3.1 L748-752 claims
+   "centralized migration runner in `octo-storage-core` uses GLOBAL
+   numbering across crates" and recommends `v017`. On-disk substrate
+   state at landing time is per-crate (verified via `ls
+crates/*/migrations/`): `octo-reputation` has v001-v012,
+   `quota-router-sm-engine` has 000-006, `octo-vault` has v013-v014,
+   `quota-router-storage` has v001-v020. The RFC's centralization
+   proposal is a forward-pointer requiring a separate substrate
+   migration (not in scope for Mission A). Mission A lands at per-crate
+   v015; when the centralization lands, this migration MUST be renumbered
+   to the RFC-proposed global v017.
+
    **Mission A AC additions:**
-   - Verify `v015` is unclaimed in `crates/octo-vault/migrations/` via grep BEFORE committing.
-     If claimed, bump to next free per-crate number (vault counter is currently v013+v014 → next v015).
-   - Cross-crate check: ensure no other crate's migration collides on `(chain_id, vault_id)` PK
-     with `octo-vault`'s new cache table.
+   - Verify `v015` is unclaimed in `crates/octo-vault/migrations/` via
+     grep BEFORE committing. If claimed, bump to next free per-crate
+     number (next = v015 → v016 → v017...).
    - `cargo test --workspace` migration-ordering test passes.
 
 ### Cargo deps (add to `crates/octo-vault/Cargo.toml`)
@@ -99,15 +115,18 @@ Duration)` (capacity + TTL); `get_or_compute(...)` checks live
 - TV-VP7: asset-rotation cache break — `registry_snapshot_epoch` advance
   forces `EpochRebuild` (`source_kind = 2`)
 - TV-VP8: `lru::get` updates recency; `lru::peek` does NOT (substrate-fidelity)
-- TV-VP9: TTL uses unix seconds only — `computed_at_unix_ms` removed;
-  field type `i64` matches v014 `BIGINT`
+- TV-VP9: TTL uses unix seconds only — `projected_at_unix_seconds: i64`
+  is the SINGLE cache-write timestamp (no `computed_at_*` column; RFC
+  §3.1 L761 ONE-clock rule); matches v014 `occurred_at_unix BIGINT`
 - TV-VP10: `ProjectionSource` SQL binding — variant value matches `source_kind INT` per `#[repr(u8)]`
 
 ## Layer direction (per [[cipherocto-design-principles]])
 
-- `octo-vault` (Layer B) — `VaultBalanceProjection` + cache + `TransferEventLog` port + `VaultAssetResolver` port
+- `octo-vault` (Layer B) — `VaultBalanceProjection` + cache + `TransferEventLog` port + `VaultAssetResolver` port (trait definitions only)
+- `octo-vault-stoolap` (Layer D transport adapter, NEW) — Stoolap-backed impl of `TransferEventLog` + `VaultAssetResolver` + `InvalidationBus`. Per [[cipherocto-design-principles]] Layer D depends on Layer B; adapters live in their own crate.
 - New `VaultAssetResolver` trait = Layer B-additive (does NOT modify existing `VaultRegistry` contract)
 - No cross-layer inversion; vault substrate code stays in `crates/octo-vault/`
+- Semver impact: octo-vault = semver-minor (additive ports); octo-vault-stoolap = new crate (semver-minor initial release)
 
 ## Validation
 
@@ -135,6 +154,11 @@ cargo test --workspace  # migration-ordering test must pass
 - [[rfcs/accepted/economics/0960-v37-vault-balance-projection-substrate]] — RFC text
 - [[rfc-0960-v37-promotion-status]] — promotion session memory
 - [[cipherocto-design-principles]] — Layer B additive-only rule
+- RFC-0105 v3.5 §3.13 L669 — **audit-batch replay enforcement** (NEW
+  v3.5-r6): per-tuple fresh pairwise check; Mission A's substrate
+  shape (per-event `validate_pre_insert`) does NOT preclude the
+  downstream batch-replay fresh-check requirement; Mission A does NOT
+  cache pairwise results.
 - Mission B (`0960-v37-b-event-log-producer-wiring.md`) — depends on Mission A trait landing
 - Mission C (`0960-v37-c-legacy-balance-deprecation.md`) — depends on Mission A substrate landing
 

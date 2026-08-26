@@ -3,7 +3,7 @@
 **Status:** Open
 **Substrate:** RFC-0960 §5.1 (3-cycle deprecation timeline)
 **Parent:** RFC-0960 §6 Implementation Path Mission C
-**Depends on:** Mission B (`0960-v37-b-event-log-producer-wiring.md`) — producer wiring must land first to provide the replacement path for `KeyStorage` callers
+**Depends on:** Mission A (`0960-v37-a-vault-balance-projection-substrate.md`) — provides the replacement `VaultBalanceProjection` substrate this mission deprecates against; Mission B (`0960-v37-b-event-log-producer-wiring.md`) — producer wiring must land first to provide the replacement path for `KeyStorage` callers
 
 ## Scope
 
@@ -39,9 +39,10 @@ substrate; Mission B wires the producers; Mission C deletes the legacy.
 2. **`Vault.balance_dqa_micros: i64`** — REMOVED from `Vault` struct.
    Column kept on `vaults` table (Cycle 3 drops).
 
-3. **`octo_w_balances` init** — GATED behind `legacy_octo_w = "deprecated"`
-   Cargo feature flag (default OFF). When OFF: init code path skipped; reads
-   fail-fast with clear error message pointing at the migration target.
+3. **`octo_w_balances` init** — GATED behind `legacy_octo_w = "off"`
+   Cargo feature flag (default OFF). When OFF: init code path skipped;
+   reads fail-fast with clear error message pointing at the migration
+   target.
 
 **Cycle 3 — Column drop (reserved right to refuse):**
 
@@ -50,12 +51,13 @@ substrate; Mission B wires the producers; Mission C deletes the legacy.
 
 2. **`octo_w_balances` table** — Init REMOVED. Table dropped via migration.
 
-3. **RESERVED RIGHT TO REFUSE:** RFC-0904 is **Accepted** (NOT "Final").
-   The 3-cycle window for `octo_w_balances` is justified by external-adoption
-   risk — downstream consumers may have pinned the table. Mission C Cycle-3
-   table drop RESERVES the right to refuse if external adoption is detected
-   (verification via 3rd-party registry at landing time). Refusal documented
-   in mission file via `## Refusal log` blockquote + RFC-0960 §5.3 update.
+3. **RESERVED RIGHT TO REFUSE:** RFC-0904's lifecycle status (per its
+   current §0 Status header — see `rfcs/accepted/economics/0904-real-time-cost-tracking.md`)
+   determines external-adoption risk — downstream consumers may have
+   pinned the table. Mission C Cycle-3 table drop RESERVES the right to
+   refuse if external adoption is detected (verification via 3rd-party
+   registry at landing time). Refusal documented in mission file via
+   `## Refusal log` blockquote + RFC-0960 §5.3 update.
 
 ### Migration window per cycle
 
@@ -84,11 +86,19 @@ landing. RFC-0960 §5.1 table is canonical for what each cycle touches.
 ## Layer direction (per [[cipherocto-design-principles]])
 
 - `octo-vault` (Layer B) — `Vault.balance_dqa_micros` field removal
-- `quota-router-core` (Layer B-adjacent) — `Balance` struct removal,
+- `quota-router-core` (Layer B substrate) — `Balance` struct removal,
   `octo_w_balances` init/table removal
 - All removals = Layer B-breaking, JUSTIFIED by source-of-truth migration
   (event-sourced vault balance projection replaces stored balance)
 - No cross-layer inversion
+
+**Semver impact:**
+
+- `octo-vault` (Layer B) = **semver-MAJOR** for `balance_dqa_micros`
+  field removal at Cycle 3 (column drop).
+- `quota-router-core` (Layer B) = **semver-MAJOR** for `Balance` struct
+  removal at Cycle 2.
+- 3-cycle migration window per RFC-0960 §5.1 = 3 releases.
 
 ## Validation
 
@@ -104,6 +114,21 @@ cargo build --workspace --features full,legacy_octo_w
 # Cycle 3 (after external adoption check)
 cargo test --workspace --lib
 cargo test --workspace  # migration test passes
+```
+
+### Cycle 1 grep gate (AC)
+
+```bash
+# Verify stranded-field evidence before Cycle 1 deprecation:
+grep -rn 'balance_dqa_micros' crates/ --include='*.rs'  # expect 0 production write sites
+```
+
+### Cycle 3 fail-fast error message (AC, TV-LD6)
+
+When `--features legacy_octo_w` is enabled after Cycle 3 table drop:
+
+```
+error: octo_w_balances table dropped in Cycle 3; use VaultBalanceProjection per RFC-0960 §2.1
 ```
 
 ## Backward compat

@@ -44,6 +44,8 @@ This amendment adds:
 
 ### 2.1 New substrate definition
 
+> Forward-reference: see RFC-0960 §2 Specification for the vault-balance projection substrate; the `PaymentEventProducer` in §2.5 consumes this section's `PaymentCaveat.asset_id` for the tri-invariant check at the producer boundary.
+
 ```rust
 // crates/octo-cap-macaroon/src/caveat/payment.rs (amended, line 55)
 
@@ -417,15 +419,15 @@ impl<'de> Deserialize<'de> for PaymentCaveat {
 
 `PaymentCaveat` serializes to the following canonical wire form (BorshSerialize + JSON-compatible; substrate canonical encoding per RFC-0105 §3.9):
 
-| Field | Encoding | Notes |
-| --- | --- | --- |
-| `caveat_name` | UTF-8 string | Always `"paid-query/v1"` (canonical discriminator; §4.1). |
-| `asset_id` | 32-byte hex (typed `AssetId`) | NEW (RFC-0965 v2.1). |
-| `budget` | 16-byte hex of `DqaEncoding` (typed `Dqa`) | `to_le_bytes` per RFC-0105 §3.9; 8B value + 8B wire_scale. |
-| `model` | UTF-8 string | Wildcard = empty. |
-| `expires_at_unix_ms` | u64 big-endian | `u64::MAX` = never expires. |
-| `registry_snapshot_epoch` | u64 big-endian (typed `Epoch`) | NEW; captures `AssetRegistry::metadata(asset_id)?.version` at construction. |
-| `nonce` | 32-byte BE payload (typed `Nonce`) | NEW; anti-replay nonce. |
+| Field                     | Encoding                                   | Notes                                                                       |
+| ------------------------- | ------------------------------------------ | --------------------------------------------------------------------------- |
+| `caveat_name`             | UTF-8 string                               | Always `"paid-query/v1"` (canonical discriminator; §4.1).                   |
+| `asset_id`                | 32-byte hex (typed `AssetId`)              | NEW (RFC-0965 v2.1).                                                        |
+| `budget`                  | 16-byte hex of `DqaEncoding` (typed `Dqa`) | `to_le_bytes` per RFC-0105 §3.9; 8B value + 8B wire_scale.                  |
+| `model`                   | UTF-8 string                               | Wildcard = empty.                                                           |
+| `expires_at_unix_ms`      | u64 big-endian                             | `u64::MAX` = never expires.                                                 |
+| `registry_snapshot_epoch` | u64 big-endian (typed `Epoch`)             | NEW; captures `AssetRegistry::metadata(asset_id)?.version` at construction. |
+| `nonce`                   | 32-byte BE payload (typed `Nonce`)         | NEW; anti-replay nonce.                                                     |
 
 **Cross-RFC encoding note:** `PaymentCaveat.budget` uses the same `<16B-hex-of-DqaEncoding>` as `BurnEventRef.amount` (RFC-0960 §2.1) and `SettlementEvent.cost` (RFC-0959 §2.1). The three amount-bearing fields across the audit trio MUST share this encoding for the tri-invariant cross-check (RFC-0105 §3.13) to be wire-parseable.
 
@@ -533,35 +535,35 @@ pub enum CaveatError {
 
 > **Note (Round 4 LOW #6):** Rows 1–2 below document deliberate non-renames preserved as canonical substrate (Round 1 CRITICAL #2 mitigation — discriminator MUST remain `"paid-query/v1"` to avoid 47 call-site breakage across `octo-policy`, `octo-cap-macaroon`, `octo-paid-query`, JSON-RPC, and CLI).
 
-| Old | New | Substrate sites |
-| --- | --- | --- |
-| `"paid-query/v1"` discriminator (string VALUE, unchanged) | `"paid-query/v1"` (unchanged) | `crates/octo-cap-macaroon/src/caveat/payment.rs:41` `PAID_QUERY_CAVEAT_NAME` (constant name unchanged); string value unchanged |
-| `PAID_QUERY_CAVEAT_NAME` constant identifier (unchanged) | `PAID_QUERY_CAVEAT_NAME` (unchanged) | `crates/octo-cap-macaroon/src/caveat/payment.rs:41` (definition), `crates/octo-cap-macaroon/src/caveat/mod.rs:18` (re-export), `crates/octo-paid-query/src/lib.rs:92` (`pub use octo_cap_macaroon::PAID_QUERY_CAVEAT_NAME;` + doc references at lines 86, 91) |
-| `PaidQueryRejectionReason` enum | `PaymentRejectionReason` (canonical) | `crates/octo-paid-query/src/lib.rs:164` (definition), `crates/octo-cap-macaroon/src/caveat/mod.rs:17` (re-export). Deprecated alias `pub type PaidQueryRejectionReason = PaymentRejectionReason;` retained for one cycle. |
-| `attenuate(budget, expires)` 2-arg | `attenuate(budget, expires, asset_id, registry)` 4-arg + `attenuate_legacy_2arg` `#[deprecated]` shim | 47 sites in `octo-policy`, `octo-cap-macaroon`, `quota-router-storage` (per §7 call-site inventory) |
-| `Caveat::Vault(asset_id)` variant (misleading name; binds asset, not vault) | `Caveat::AssetBinding(asset_id)` | `crates/octo-cap-macaroon/src/caveat/mod.rs` (additive enum variant migration) |
-| `CaveatError::VaultAssetMismatch` (misleading name; binds asset, not vault) | `CaveatError::AssetBindingMismatch { expected_asset_id, actual_asset_id }` | `crates/octo-cap-macaroon/src/caveat/mod.rs` (additive enum variant migration; field shape carries `actual_asset_id: Option<AssetId>`) |
-| `PaymentCaveat::verify(...)` (3-arg) | `PaymentCaveat::verify(query_cost, model, now_unix_ms, registry, current_epoch: Epoch, nonce_registry: &mut dyn NonceRegistry)` (6-arg) + `validate(registry, current_epoch: Epoch, nonce_registry: &mut dyn NonceRegistry)` post-deserialization check | 47 sites (same as attenuate) |
-| `PaymentCaveat.budget.scale` (i64-style field) | `PaymentCaveat.budget.wire_scale: u8` | field rename on Dqa wrapper (per RFC-0105 §3.1 wire_scale split) |
+| Old                                                                         | New                                                                                                                                                                                                                                                     | Substrate sites                                                                                                                                                                                                                                               |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"paid-query/v1"` discriminator (string VALUE, unchanged)                   | `"paid-query/v1"` (unchanged)                                                                                                                                                                                                                           | `crates/octo-cap-macaroon/src/caveat/payment.rs:41` `PAID_QUERY_CAVEAT_NAME` (constant name unchanged); string value unchanged                                                                                                                                |
+| `PAID_QUERY_CAVEAT_NAME` constant identifier (unchanged)                    | `PAID_QUERY_CAVEAT_NAME` (unchanged)                                                                                                                                                                                                                    | `crates/octo-cap-macaroon/src/caveat/payment.rs:41` (definition), `crates/octo-cap-macaroon/src/caveat/mod.rs:18` (re-export), `crates/octo-paid-query/src/lib.rs:92` (`pub use octo_cap_macaroon::PAID_QUERY_CAVEAT_NAME;` + doc references at lines 86, 91) |
+| `PaidQueryRejectionReason` enum                                             | `PaymentRejectionReason` (canonical)                                                                                                                                                                                                                    | `crates/octo-paid-query/src/lib.rs:164` (definition), `crates/octo-cap-macaroon/src/caveat/mod.rs:17` (re-export). Deprecated alias `pub type PaidQueryRejectionReason = PaymentRejectionReason;` retained for one cycle.                                     |
+| `attenuate(budget, expires)` 2-arg                                          | `attenuate(budget, expires, asset_id, registry)` 4-arg + `attenuate_legacy_2arg` `#[deprecated]` shim                                                                                                                                                   | 47 sites in `octo-policy`, `octo-cap-macaroon`, `quota-router-storage` (per §7 call-site inventory)                                                                                                                                                           |
+| `Caveat::Vault(asset_id)` variant (misleading name; binds asset, not vault) | `Caveat::AssetBinding(asset_id)`                                                                                                                                                                                                                        | `crates/octo-cap-macaroon/src/caveat/mod.rs` (additive enum variant migration)                                                                                                                                                                                |
+| `CaveatError::VaultAssetMismatch` (misleading name; binds asset, not vault) | `CaveatError::AssetBindingMismatch { expected_asset_id, actual_asset_id }`                                                                                                                                                                              | `crates/octo-cap-macaroon/src/caveat/mod.rs` (additive enum variant migration; field shape carries `actual_asset_id: Option<AssetId>`)                                                                                                                        |
+| `PaymentCaveat::verify(...)` (3-arg)                                        | `PaymentCaveat::verify(query_cost, model, now_unix_ms, registry, current_epoch: Epoch, nonce_registry: &mut dyn NonceRegistry)` (6-arg) + `validate(registry, current_epoch: Epoch, nonce_registry: &mut dyn NonceRegistry)` post-deserialization check | 47 sites (same as attenuate)                                                                                                                                                                                                                                  |
+| `PaymentCaveat.budget.scale` (i64-style field)                              | `PaymentCaveat.budget.wire_scale: u8`                                                                                                                                                                                                                   | field rename on Dqa wrapper (per RFC-0105 §3.1 wire_scale split)                                                                                                                                                                                              |
 
 ## 9. Version History
 
-| Version | Date       | Author      | Note |
-| ------- | ---------- | ----------- | ---- |
-| 1.0     | 2026-07-23 | @cipherocto + @mmacedoeu | Initial draft. |
-| 1.1     | 2026-07-23 | @cipherocto + @mmacedoeu | Strategic reframe (R17+). |
-| 1.1-Accepted | 2026-07-23 | @cipherocto + @mmacedoeu | Promoted Draft → Accepted. |
-| 1.2-Resolved | 2026-07-23 | @cipherocto + @mmacedoeu | Risk-closure round. |
-| 1.3-Referenced | 2026-08-08 | @cipherocto + @mmacedoeu | Cross-reference to RFC-0871 (discriminator byte pattern). |
-| 1.4-CrateLayout | 2026-08-08 | @cipherocto + @mmacedoeu | Per-extension crate layout. |
-| 2.0-CanonicalAlias | 2026-08-17 | @cipherocto + @mmacedoeu | Canonical `MicroOctoW` alias cross-reference. |
-| 2.1-r1 | 2026-08-26 | @mmacedoeu | **Initial v2.1 draft.** 11 findings; addressed in r2. |
-| 2.1-r2 | 2026-08-26 | @mmacedoeu | Round 2: rename, shim, 6-week cycle, drift closed. |
-| 2.1-r3 | 2026-08-26 | @mmacedoeu | Round 3: typed wrappers, NonceRegistry, wire form, tri-invariant. |
-| 2.1-r4 | 2026-08-26 | @mmacedoeu | Round 4: NonceRegistry key, CostExceedsBudget, LegacyForm reject, TV. |
-| 2.1-r5 | 2026-08-26 | @mmacedoeu | Round 5: body-hash nonce + governance_pubkey; NonceRegistry §3.11. |
-| 2.1-r6 | 2026-08-26 | @mmacedoeu | Round 6: observe_readonly; blake3_hash; CaveatError; NoPaymentCaveat TV. |
-| 2.1-r7 | 2026-08-26 | @mmacedoeu | Round 7-9: VH drift + r5/r6 trim + DRY + Accepted promotion. |
+| Version            | Date       | Author                   | Note                                                                     |
+| ------------------ | ---------- | ------------------------ | ------------------------------------------------------------------------ |
+| 1.0                | 2026-07-23 | @cipherocto + @mmacedoeu | Initial draft.                                                           |
+| 1.1                | 2026-07-23 | @cipherocto + @mmacedoeu | Strategic reframe (R17+).                                                |
+| 1.1-Accepted       | 2026-07-23 | @cipherocto + @mmacedoeu | Promoted Draft → Accepted.                                               |
+| 1.2-Resolved       | 2026-07-23 | @cipherocto + @mmacedoeu | Risk-closure round.                                                      |
+| 1.3-Referenced     | 2026-08-08 | @cipherocto + @mmacedoeu | Cross-reference to RFC-0871 (discriminator byte pattern).                |
+| 1.4-CrateLayout    | 2026-08-08 | @cipherocto + @mmacedoeu | Per-extension crate layout.                                              |
+| 2.0-CanonicalAlias | 2026-08-17 | @cipherocto + @mmacedoeu | Canonical `MicroOctoW` alias cross-reference.                            |
+| 2.1-r1             | 2026-08-26 | @mmacedoeu               | **Initial v2.1 draft.** 11 findings; addressed in r2.                    |
+| 2.1-r2             | 2026-08-26 | @mmacedoeu               | Round 2: rename, shim, 6-week cycle, drift closed.                       |
+| 2.1-r3             | 2026-08-26 | @mmacedoeu               | Round 3: typed wrappers, NonceRegistry, wire form, tri-invariant.        |
+| 2.1-r4             | 2026-08-26 | @mmacedoeu               | Round 4: NonceRegistry key, CostExceedsBudget, LegacyForm reject, TV.    |
+| 2.1-r5             | 2026-08-26 | @mmacedoeu               | Round 5: body-hash nonce + governance_pubkey; NonceRegistry §3.11.       |
+| 2.1-r6             | 2026-08-26 | @mmacedoeu               | Round 6: observe_readonly; blake3_hash; CaveatError; NoPaymentCaveat TV. |
+| 2.1-r7             | 2026-08-26 | @mmacedoeu               | Round 7-9: VH drift + r5/r6 trim + DRY + Accepted promotion.             |
 
 ## 10. Pending (concrete test vectors)
 

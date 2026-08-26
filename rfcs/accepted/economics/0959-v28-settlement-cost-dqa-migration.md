@@ -41,6 +41,8 @@ The settlement pathway today records cost as `amount_micro_octo_w: Dqa` (already
 
 ### 2.1 Substrate definition (NEW, greenfield)
 
+> Forward-reference: see RFC-0960 §2 Specification for the vault-balance projection substrate; the `SettlementEventProducer` in §2.5 wraps `SettlementEventRepository::insert` and emits `VaultProjectionInvalidationEnvelope` to the RFC-0913 bus.
+
 ```rust
 // crates/quota-router-sm-engine/src/settlement_event.rs (NEW file)
 
@@ -443,16 +445,16 @@ pub fn verify_settlement_against_payment_caveat(
 
 ### 2.4 Error scenario matrix (NEW, Round 1 fix)
 
-| Variant               | Trigger                                                                                    |
-| --------------------- | ------------------------------------------------------------------------------------------ |
-| `AssetUnknown`        | `AssetRegistry::metadata(cost_asset_id)` returns `AssetError::Unknown` OR tombstoned.       |
-| `ScaleMismatch`       | `cost.wire_scale != metadata.wire_scale` at construction OR validate().                     |
-| `ScaleOutOfRange`     | `cost.wire_scale > MAX_SCALE` (defense-in-depth).                                          |
-| `InvalidSignature`    | `governance_signature` does not verify against cost_vault_id's governance_pubkey (non-sovereign assets only; sovereign assets exempt per RFC-0105 §3.1 sovereign exemption — see §3). |
-| `Replay`              | `nonce` was previously observed via `NonceRegistry::observe()` (injected in new() and validate()). |
-| `StaleSnapshot`       | `current_epoch.0 < self.registry_snapshot_epoch.0` (asset rotated out from under us).      |
-| `VaultAssetMismatch`  | `vault_registry.contains_asset(cost_vault_id, cost_asset_id)` returns `Err(VaultRegistryError::VaultAssetMismatch)`. |
-| `VaultUnknown`        | `vault_registry.contains_asset(cost_vault_id, cost_asset_id)` returns `Err(VaultRegistryError::UnknownVault)`. |
+| Variant                       | Trigger                                                                                                                                                                                  |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AssetUnknown`                | `AssetRegistry::metadata(cost_asset_id)` returns `AssetError::Unknown` OR tombstoned.                                                                                                    |
+| `ScaleMismatch`               | `cost.wire_scale != metadata.wire_scale` at construction OR validate().                                                                                                                  |
+| `ScaleOutOfRange`             | `cost.wire_scale > MAX_SCALE` (defense-in-depth).                                                                                                                                        |
+| `InvalidSignature`            | `governance_signature` does not verify against cost_vault_id's governance_pubkey (non-sovereign assets only; sovereign assets exempt per RFC-0105 §3.1 sovereign exemption — see §3).    |
+| `Replay`                      | `nonce` was previously observed via `NonceRegistry::observe()` (injected in new() and validate()).                                                                                       |
+| `StaleSnapshot`               | `current_epoch.0 < self.registry_snapshot_epoch.0` (asset rotated out from under us).                                                                                                    |
+| `VaultAssetMismatch`          | `vault_registry.contains_asset(cost_vault_id, cost_asset_id)` returns `Err(VaultRegistryError::VaultAssetMismatch)`.                                                                     |
+| `VaultUnknown`                | `vault_registry.contains_asset(cost_vault_id, cost_asset_id)` returns `Err(VaultRegistryError::UnknownVault)`.                                                                           |
 | `LegacyFormOnNonOctoWContext` | Legacy `cost: { amount_micro_octo_w }` form submitted with a non-OCTO-W `cost_asset_id` (see §3.2 wire-form migration close). Serde discriminator: `"legacy_form_on_non_octow_context"`. |
 
 **Note (Round 4 fix #9):** `SettlementAuditError` (AuditAssetMismatch / AuditScaleMismatch / AuditVaultAssetMismatch) is a **runtime audit result type** returned by `verify_settlement_against_payment_caveat()`, NOT a wire-form field. The §3.1 JSON above carries only `settlement_decision` (construction-time + decision outcome). Audit results travel via the audit pipeline (RFC-0965 §3 audit reporting) and do not appear on the SettlementEvent wire envelope.
@@ -472,13 +474,13 @@ pub fn verify_settlement_against_payment_caveat(
   "settlement_event": {
     "settlement_id": "<32B-hex>",
     "ask_id": "<32B-hex>",
-    "cost_vault_id": "<32B-hex>",                    // VaultId tuple (32-byte wrapper)
-    "cost_asset_id": "<32B-hex>",                    // NEW: explicit asset binding
+    "cost_vault_id": "<32B-hex>", // VaultId tuple (32-byte wrapper)
+    "cost_asset_id": "<32B-hex>", // NEW: explicit asset binding
     "asset_kind": "SovereignRoleToken | PrivateCorporateAsset | BridgedExternalAsset | WrappedCrossChainAsset",
-    "cost": "<16B-hex-of-DqaEncoding>",              // 16-byte BE per DqaEncoding (RFC-0862)
+    "cost": "<16B-hex-of-DqaEncoding>", // 16-byte BE per DqaEncoding (RFC-0862)
     "evidence_ref": "<32B-hex>",
-    "ledger_height": 12345,                          // NEW: deterministic ordering anchor (Round 3 fix #2)
-    "created_at_unix_ms": 1724700000000,             // informational only; NOT signed
+    "ledger_height": 12345, // NEW: deterministic ordering anchor (Round 3 fix #2)
+    "created_at_unix_ms": 1724700000000, // informational only; NOT signed
     "settlement_decision": "Consumed | AlreadyConsumed | InsufficientEvidence | BudgetExhausted",
     "governance_signature": "<64B-hex>",
     "registry_snapshot_epoch": 12345,
@@ -515,13 +517,14 @@ The NonceRegistry observation namespace for sovereign assets uses a **per-asset 
 - RFC-0960 (companion amendment): `BurnEventRef.asset_id` MUST equal `SettlementEvent.cost_asset_id` (settlement → burn trail invariant).
 
 ### Tri-invariant (RFC-0105 §3.13)
+
 // Tri-invariant (RFC-0105 §3.13)
 
 ## 5. Naming Cleanup
 
-| Old                        | New                       | Site |
-| -------------------------- | ------------------------- | ---- |
-| (implicit cost asset)      | `cost_asset_id: AssetId`  | NEW field |
+| Old                   | New                      | Site      |
+| --------------------- | ------------------------ | --------- |
+| (implicit cost asset) | `cost_asset_id: AssetId` | NEW field |
 
 `SettlementEvent.cost` is `Dqa` from inception; the retired `MicroOctoW` alias (retired 2026-08-17 per `crates/octo-cap-macaroon/src/caveat/payment.rs:23` + `crates/octo-paid-query/src/lib.rs:103`) is never reintroduced. `AlreadyConsumed` is canonical substrate (no rename history; `ReceiptReplay` was never a substrate variant — no rename row needed).
 
@@ -536,17 +539,17 @@ The NonceRegistry observation namespace for sovereign assets uses a **per-asset 
 
 ## 7. Version History
 
-| Version | Date       | Author      | Note |
-| ------- | ---------- | ----------- | ---- |
-| 2.0     | 2026-07-29 | @cipherocto + @mmacedoeu | Initial accepted (Ask Settlement Chain). |
-| 2.1-2.7 | 2026-07-29 → 2026-08-24 | @cipherocto + @mmacedoeu | R1-R12 fix-all rounds. |
-| 2.8-r1 | 2026-08-26 | @mmacedoeu | **Initial v2.8 draft (Round 1).** 8 findings; addressed in r2. |
-| 2.8-r2 | 2026-08-26 | @mmacedoeu | **Round 2.** VaultId+cost_asset_id; Dqa imports; §2.4 matrix; phantom cite dropped. |
-| 2.8-r3 | 2026-08-26 | @mmacedoeu | **Round 3.** governance_pubkey Option; ledger_height; NonceRegistry; audit rename; legacy close. |
-| 2.8-r4 | 2026-08-26 | @mmacedoeu | **Round 4.** Per-asset ns; commitment; Audit dedup; vault_registry; §3.13 anchor. |
-| 2.8-r5 | 2026-08-26 | @mmacedoeu | **Round 5.** Deserialize fix; §2.5 dedup; body_hash fields; validate re-verify. |
-| 2.8-r6 | 2026-08-26 | @mmacedoeu | **Round 6.** Drop anchor; body_hash helper; blake3; asymmetry note; replay-key. |
-| 2.8-r7 | 2026-08-26 | @mmacedoeu | Round 7-9: §3.x anchors + VH trim + DRY + Accepted promotion. |
+| Version | Date                    | Author                   | Note                                                                                             |
+| ------- | ----------------------- | ------------------------ | ------------------------------------------------------------------------------------------------ |
+| 2.0     | 2026-07-29              | @cipherocto + @mmacedoeu | Initial accepted (Ask Settlement Chain).                                                         |
+| 2.1-2.7 | 2026-07-29 → 2026-08-24 | @cipherocto + @mmacedoeu | R1-R12 fix-all rounds.                                                                           |
+| 2.8-r1  | 2026-08-26              | @mmacedoeu               | **Initial v2.8 draft (Round 1).** 8 findings; addressed in r2.                                   |
+| 2.8-r2  | 2026-08-26              | @mmacedoeu               | **Round 2.** VaultId+cost_asset_id; Dqa imports; §2.4 matrix; phantom cite dropped.              |
+| 2.8-r3  | 2026-08-26              | @mmacedoeu               | **Round 3.** governance_pubkey Option; ledger_height; NonceRegistry; audit rename; legacy close. |
+| 2.8-r4  | 2026-08-26              | @mmacedoeu               | **Round 4.** Per-asset ns; commitment; Audit dedup; vault_registry; §3.13 anchor.                |
+| 2.8-r5  | 2026-08-26              | @mmacedoeu               | **Round 5.** Deserialize fix; §2.5 dedup; body_hash fields; validate re-verify.                  |
+| 2.8-r6  | 2026-08-26              | @mmacedoeu               | **Round 6.** Drop anchor; body_hash helper; blake3; asymmetry note; replay-key.                  |
+| 2.8-r7  | 2026-08-26              | @mmacedoeu               | Round 7-9: §3.x anchors + VH trim + DRY + Accepted promotion.                                    |
 
 ## 8. Pending (concrete test vectors)
 

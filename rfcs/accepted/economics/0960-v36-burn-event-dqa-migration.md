@@ -38,6 +38,8 @@ None of these is `BurnEventRef`. The substrate has no canonical "burn event" typ
 
 ### 2.1 Substrate definition (NEW, greenfield)
 
+> Forward-reference: see RFC-0960 §2 Specification for the vault-balance projection substrate; the `BurnEventProducer` in §2.5 wraps `BurnEventRef::consume` and emits `VaultProjectionInvalidationEnvelope` after nonce observation.
+
 ```rust
 // crates/octo-policy/src/burn_event.rs (NEW file)
 
@@ -546,7 +548,7 @@ The `amount_dqa_micros` carrier at `crates/octo-policy/src/policy_kinds.rs:263` 
 | 3.6-r5  | 2026-08-26              | @mmacedoeu               | Result pattern; VaultUnknown; body_hash pk; signature re-verify.            |
 | 3.6-r6  | 2026-08-26              | @mmacedoeu               | nonce in body_hash; GREENFIELD imports; tri-invariant → §3.13.              |
 | 3.6-r7  | 2026-08-26              | @mmacedoeu               | Audit\* prefix; blake3_hash; concrete cites; body_hash rationale corrected. |
-| 3.6-r8  | 2026-08-26              | @mmacedoeu               | Round 7-9: r7 trim + DRY closure + Accepted promotion.                       |
+| 3.6-r8  | 2026-08-26              | @mmacedoeu               | Round 7-9: r7 trim + DRY closure + Accepted promotion.                      |
 
 ## 9. Pending (concrete test vectors)
 

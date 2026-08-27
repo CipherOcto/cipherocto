@@ -26,6 +26,11 @@ pub const BUILTIN_MIGRATIONS: &[(u32, &str, &str)] = &[
         "v014__create_transfer_events",
         include_str!("../migrations/v014__create_transfer_events.sql"),
     ),
+    (
+        15,
+        "v015__create_vault_balance_projection_cache",
+        include_str!("../migrations/v015__create_vault_balance_projection_cache.sql"),
+    ),
 ];
 
 /// Substrate-form migration catalog: `&[&'static dyn Migration]`.
@@ -39,6 +44,11 @@ pub static BUILTIN_MIGRATION_CATALOG: &[&'static dyn octo_storage_core::_legacy_
         14,
         "v014__create_transfer_events",
         include_str!("../migrations/v014__create_transfer_events.sql"),
+    ),
+    &octo_storage_core::_legacy_StaticMigration::new(
+        15,
+        "v015__create_vault_balance_projection_cache",
+        include_str!("../migrations/v015__create_vault_balance_projection_cache.sql"),
     ),
 ];
 

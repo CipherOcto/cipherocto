@@ -54,7 +54,16 @@ pub const MAX_OWNER_DID_LEN: usize = 256;
 
 pub(crate) mod migrations;
 
+// Mission A substrate (RFC-0960 v3.7): VaultBalanceProjection +
+// bounded-LRU cache + TransferEventLog port + VaultAssetResolver port.
+pub mod vault_balance_projection;
+
 pub use migrations::BUILTIN_MIGRATION_CATALOG;
+// Mission A substrate re-exports (RFC-0960 v3.7 §2).
+pub use vault_balance_projection::{
+    project, CacheKey, ProjectionError, ProjectionSource, TransferEventLog, VaultAssetResolver,
+    VaultAssetResolverError, VaultBalanceCache, VaultBalanceProjection, V015_DDL, ZERO_VAULT_ID,
+};
 
 // Mission D substrate re-exports: traits + newtypes live in
 // octo-cap-macaroon (Layer A frozen substrate per RFC-0105 v3.5

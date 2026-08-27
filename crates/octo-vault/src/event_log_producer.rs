@@ -79,12 +79,12 @@ pub trait EventLogProducer: Send + Sync {
         let ev = self.to_transfer_event(input, registry, asset_resolver, nonce_registry)?;
         log.insert(&ev).map_err(ProducerError::from)?;
         let _ = current_unix_seconds; // reserved for downstream envelope consumers
-        bus.emit(&VaultProjectionInvalidationEnvelope {
-            chain_id: ev.chain_id,
-            vault_id: ev.to_vault_id,
-            asset_id: ev.asset_id,
-            source_kind: crate::vault_balance_projection::ProjectionSource::FreshLogScan,
-        });
+        bus.emit(&VaultProjectionInvalidationEnvelope::v1_legacy(
+            ev.chain_id,
+            ev.to_vault_id,
+            ev.asset_id,
+            crate::vault_balance_projection::ProjectionSource::FreshLogScan,
+        ));
         Ok(ev)
     }
 }
@@ -112,16 +112,91 @@ pub enum ProducerError {
     VaultAsset(#[from] VaultAssetError),
 }
 
-/// `VaultProjectionInvalidationEnvelope` (RFC-0960 v3.7 §2.4).
+/// `VaultProjectionInvalidationEnvelope` (RFC-0960 v3.7 §2.4 +
+/// `cache-bus-auth` Mission).
 ///
 /// Wire form: serialized to `cache:projection:<hex(vault_id)>` Stoolap
-/// pub/sub channel.
+/// pub/sub channel. v2 (post-`cache-bus-auth`) wire form carries
+/// producer identity + signature + monotonic per-producer sequence.
+///
+/// Field layout (7 + 1 version tag):
+/// - `version`: wire-form version (1 = pre-auth legacy, 2 = signed v2)
+/// - `chain_id`, `vault_id`, `asset_id`, `source_kind`: payload
+/// - `producer_did`: `OverlayIdentity` (RFC-0853 §3 Sovereign Identity
+///   Model) identifying the producer node
+/// - `sequence`: monotonic per-producer sequence number (replay defense)
+/// - `producer_signature`: 64-byte ed25519 signature over the canonical
+///   serialization of the prior 6 fields + cross-protocol domain
+///   separator `b"cipherocto/cache-bus/invalidation/v2\0"`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VaultProjectionInvalidationEnvelope {
+    pub version: u8,
     pub chain_id: ChainId,
     pub vault_id: VaultId,
     pub asset_id: AssetId,
     pub source_kind: crate::vault_balance_projection::ProjectionSource,
+    pub producer_did: octo_cap_macaroon::OverlayIdentity,
+    pub sequence: u64,
+    pub producer_signature: [u8; 64],
+}
+
+/// Wire-form version: v1 (pre-auth legacy, signature = `[0u8; 64]`,
+/// sequence = 0, producer_did = empty string) — used by tests that
+/// pre-date the `cache-bus-auth` mission and by the 1-cycle warn-only
+/// window per Mission `cache-bus-auth` §Risk row 1.
+pub const ENVELOPE_VERSION_V1: u8 = 1;
+/// Wire-form version: v2 (signed). Mandatory for production emitters
+/// post-`cache-bus-auth`.
+pub const ENVELOPE_VERSION_V2: u8 = 2;
+
+/// Cross-protocol domain separator prepended to the signed preimage per
+/// `cache-bus-auth` §Sub-step 3. Prevents replay across structurally
+/// similar protocols that share field layout (e.g., the
+/// macaroon-issuance bus or any other `chain_id || vault_id || ...`
+/// concatenation).
+pub const CACHE_BUS_DOMAIN_SEPARATOR: &[u8] = b"cipherocto/cache-bus/invalidation/v2\0";
+
+impl VaultProjectionInvalidationEnvelope {
+    /// Construct a v1 (legacy, unauthenticated) envelope — used by
+    /// pre-`cache-bus-auth` test sites + the 1-cycle warn-only window.
+    /// Producer-side signing lives at `sign_v2` (post-auth).
+    #[must_use]
+    pub fn v1_legacy(
+        chain_id: ChainId,
+        vault_id: VaultId,
+        asset_id: AssetId,
+        source_kind: crate::vault_balance_projection::ProjectionSource,
+    ) -> Self {
+        Self {
+            version: ENVELOPE_VERSION_V1,
+            chain_id,
+            vault_id,
+            asset_id,
+            source_kind,
+            producer_did: String::new(),
+            sequence: 0,
+            producer_signature: [0u8; 64],
+        }
+    }
+
+    /// Canonical preimage: domain-separator || version || chain_id ||
+    /// vault_id || asset_id || source_kind || producer_did || sequence.
+    /// This is what `producer_signature` MUST cover (per `cache-bus-auth`
+    /// §Sub-step 3).
+    #[must_use]
+    pub fn preimage(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(CACHE_BUS_DOMAIN_SEPARATOR.len() + 200);
+        buf.extend_from_slice(CACHE_BUS_DOMAIN_SEPARATOR);
+        buf.push(self.version);
+        buf.extend_from_slice(self.chain_id.as_bytes());
+        buf.extend_from_slice(self.vault_id.as_bytes());
+        buf.extend_from_slice(self.asset_id.as_bytes());
+        // source_kind discriminant (u8) — stable across versions.
+        buf.push(self.source_kind as u8);
+        buf.extend_from_slice(self.producer_did.as_bytes());
+        buf.extend_from_slice(&self.sequence.to_be_bytes());
+        buf
+    }
 }
 
 /// Re-export of the `TransferEventLog::insert` method marker trait
@@ -174,13 +249,30 @@ mod tests {
 
     #[test]
     fn envelope_eq() {
-        let e1 = VaultProjectionInvalidationEnvelope {
-            chain_id: ChainId::from_bytes([1u8; 32]),
-            vault_id: VaultId::from_bytes([2u8; 32]),
-            asset_id: AssetId::from_bytes([3u8; 32]),
-            source_kind: crate::vault_balance_projection::ProjectionSource::FreshLogScan,
-        };
+        let e1 = VaultProjectionInvalidationEnvelope::v1_legacy(
+            ChainId::from_bytes([1u8; 32]),
+            VaultId::from_bytes([2u8; 32]),
+            AssetId::from_bytes([3u8; 32]),
+            crate::vault_balance_projection::ProjectionSource::FreshLogScan,
+        );
         let e2 = e1.clone();
         assert_eq!(e1, e2);
+        assert_eq!(e1.version, ENVELOPE_VERSION_V1);
+    }
+
+    #[test]
+    fn envelope_preimage_starts_with_domain_separator() {
+        let e = VaultProjectionInvalidationEnvelope::v1_legacy(
+            ChainId::from_bytes([1u8; 32]),
+            VaultId::from_bytes([2u8; 32]),
+            AssetId::from_bytes([3u8; 32]),
+            crate::vault_balance_projection::ProjectionSource::FreshLogScan,
+        );
+        let p = e.preimage();
+        assert!(
+            p.starts_with(CACHE_BUS_DOMAIN_SEPARATOR),
+            "preimage MUST start with cross-protocol domain separator"
+        );
+        assert!(p.len() > CACHE_BUS_DOMAIN_SEPARATOR.len());
     }
 }

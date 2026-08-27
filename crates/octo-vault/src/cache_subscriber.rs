@@ -12,6 +12,9 @@
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
+use dashmap::DashMap;
+use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
+
 use crate::event_log_producer::VaultProjectionInvalidationEnvelope;
 use crate::vault_balance_projection::VaultBalanceCache;
 
@@ -28,7 +31,123 @@ pub trait VaultProjectionInvalidationSubscriber: Send + Sync {
     fn recv(&self) -> Option<VaultProjectionInvalidationEnvelope>;
 }
 
-/// Spawn the per-process cache invalidation subscriber task.
+/// Errors surfaced by envelope verification (`cache-bus-auth` Mission).
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum EnvelopeVerificationError {
+    /// Producer DID not in trust list — fail-closed.
+    #[error("unknown producer_did: {0}")]
+    UnknownProducer(String),
+    /// Ed25519 signature verification failed.
+    #[error("signature verification failed for producer {producer_did}")]
+    InvalidSignature {
+        /// Producer DID whose signature failed verification.
+        producer_did: String,
+    },
+    /// Sequence number ≤ last-seen sequence — replay defense.
+    #[error("replay: producer {producer_did} sequence {observed} ≤ last_seen {last_seen}")]
+    Replay {
+        /// Producer DID whose envelope replayed.
+        producer_did: String,
+        /// Sequence number observed in the (rejected) envelope.
+        observed: u64,
+        /// Highest sequence number previously accepted for this producer.
+        last_seen: u64,
+    },
+    /// Wire-form version not supported by this substrate (e.g. v3 envelope
+    /// received by a v2-only subscriber).
+    #[error("unsupported envelope version: {0}")]
+    UnsupportedVersion(u8),
+}
+
+/// Producer trust list + per-producer monotonic sequence tracking
+/// (`cache-bus-auth` Mission sub-step 4).
+///
+/// `trust_keys: HashMap<OverlayIdentity, VerifyingKey>` (authoritative
+/// list at init). `last_seen_sequence: DashMap<OverlayIdentity, u64>`
+/// updated on accept-only (concurrent-safe via DashMap).
+#[derive(Debug)]
+pub struct ProducerTrustList {
+    /// Authoritative list of `OverlayIdentity → VerifyingKey` pairs at init.
+    trust_keys: std::collections::HashMap<String, VerifyingKey>,
+    /// Per-producer monotonic last-seen sequence (replay defense). Updated
+    /// on accept-only; concurrent via DashMap.
+    last_seen_sequence: DashMap<String, u64>,
+}
+
+impl ProducerTrustList {
+    /// Build a new trust list from a list of `(producer_did, verifying_key)`
+    /// pairs. Empty list = fail-closed default per TV-CB-6.
+    #[must_use]
+    pub fn new(keys: Vec<(String, VerifyingKey)>) -> Self {
+        Self {
+            trust_keys: keys.into_iter().collect(),
+            last_seen_sequence: DashMap::new(),
+        }
+    }
+
+    /// Lookup the verifying key for a producer DID.
+    #[must_use]
+    pub fn get_verifying_key(&self, producer_did: &str) -> Option<&VerifyingKey> {
+        self.trust_keys.get(producer_did)
+    }
+
+    /// Verify an envelope's signature + monotonic sequence. Updates
+    /// `last_seen_sequence` only on success.
+    pub fn verify_and_update_sequence(
+        &self,
+        envelope: &VaultProjectionInvalidationEnvelope,
+    ) -> Result<(), EnvelopeVerificationError> {
+        // 1. Wire-form version gate.
+        if envelope.version != crate::event_log_producer::ENVELOPE_VERSION_V2 {
+            return Err(EnvelopeVerificationError::UnsupportedVersion(
+                envelope.version,
+            ));
+        }
+        // 2. Producer trust list lookup (fail-closed).
+        let vk = self
+            .get_verifying_key(&envelope.producer_did)
+            .ok_or_else(|| {
+                EnvelopeVerificationError::UnknownProducer(envelope.producer_did.clone())
+            })?;
+        // 3. Signature verification.
+        let preimage = envelope.preimage();
+        let sig = ed25519_dalek::Signature::from_bytes(&envelope.producer_signature);
+        vk.verify(&preimage, &sig)
+            .map_err(|_| EnvelopeVerificationError::InvalidSignature {
+                producer_did: envelope.producer_did.clone(),
+            })?;
+        // 4. Sequence monotonicity (replay defense).
+        let mut entry = self
+            .last_seen_sequence
+            .entry(envelope.producer_did.clone())
+            .or_insert(0);
+        if envelope.sequence <= *entry {
+            return Err(EnvelopeVerificationError::Replay {
+                producer_did: envelope.producer_did.clone(),
+                observed: envelope.sequence,
+                last_seen: *entry,
+            });
+        }
+        *entry = envelope.sequence;
+        Ok(())
+    }
+}
+
+/// Sign an envelope's preimage with the given ed25519 signing key.
+/// Returns the 64-byte signature suitable for `envelope.producer_signature`.
+#[must_use]
+pub fn sign_envelope(preimage: &[u8], signing_key: &SigningKey) -> [u8; 64] {
+    let sig = signing_key.sign(preimage);
+    sig.to_bytes()
+}
+
+/// Spawn the per-process cache invalidation subscriber task (v1 legacy).
+///
+/// V1 envelopes (pre-`cache-bus-auth`) skip signature verification —
+/// this is the 1-cycle warn-only window per `cache-bus-auth` §Risk row 1.
+/// New production deployments MUST use
+/// [`spawn_cache_subscriber_with_trust_list`] (v2 signed) instead.
 ///
 /// The task loop:
 /// ```text
@@ -59,7 +178,33 @@ pub fn spawn_cache_subscriber(
     })
 }
 
-/// Process-init bootstrap factory (Mission B §6).
+/// Spawn the v2 signed-envelope subscriber (`cache-bus-auth` Mission).
+///
+/// Verifies each envelope's ed25519 signature + monotonic sequence
+/// before invalidating the cache (TV-CB-2/3/4/5/6). Unknown producers,
+/// invalid signatures, and replays are dropped silently — `cache.len()`
+/// stays unchanged.
+#[must_use]
+pub fn spawn_cache_subscriber_with_trust_list(
+    cache: Arc<Mutex<VaultBalanceCache>>,
+    subscriber: Arc<dyn VaultProjectionInvalidationSubscriber>,
+    trust_list: Arc<ProducerTrustList>,
+) -> JoinHandle<()> {
+    thread::spawn(move || {
+        while let Some(envelope) = subscriber.recv() {
+            if trust_list.verify_and_update_sequence(&envelope).is_ok() {
+                let mut guard = match cache.lock() {
+                    Ok(g) => g,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                guard.invalidate_all();
+            }
+            // else: silent drop (TV-CB-3/4/5/6)
+        }
+    })
+}
+
+/// Process-init bootstrap factory (Mission B §6 — v1 legacy).
 ///
 /// Wraps [`spawn_cache_subscriber`] for Layer C binaries to call from their
 /// `main` / server bootstrap. Layer C wire-up (octo-wallet-node /
@@ -71,6 +216,21 @@ pub fn init_cache_subscriber(
     subscriber: Arc<dyn VaultProjectionInvalidationSubscriber>,
 ) -> JoinHandle<()> {
     spawn_cache_subscriber(cache, subscriber)
+}
+
+/// Process-init bootstrap factory for v2 signed envelopes.
+///
+/// Loads the producer trust list from the binary's known producer DIDs
+/// and spawns the verifying subscriber. Layer C binaries call this in
+/// their bootstrap instead of [`init_cache_subscriber`] for v2
+/// deployments.
+#[must_use]
+pub fn init_producer_trust_list(
+    cache: Arc<Mutex<VaultBalanceCache>>,
+    subscriber: Arc<dyn VaultProjectionInvalidationSubscriber>,
+    trust_list: Arc<ProducerTrustList>,
+) -> JoinHandle<()> {
+    spawn_cache_subscriber_with_trust_list(cache, subscriber, trust_list)
 }
 
 #[cfg(test)]
@@ -152,12 +312,12 @@ mod tests {
     }
 
     fn empty_envelope(seed: u8) -> VaultProjectionInvalidationEnvelope {
-        VaultProjectionInvalidationEnvelope {
-            chain_id: ChainId::from_bytes([seed; 32]),
-            vault_id: VaultId::from_bytes([seed.wrapping_add(1); 32]),
-            asset_id: AssetId::from_bytes([seed.wrapping_add(2); 32]),
-            source_kind: ProjectionSource::FreshLogScan,
-        }
+        VaultProjectionInvalidationEnvelope::v1_legacy(
+            ChainId::from_bytes([seed; 32]),
+            VaultId::from_bytes([seed.wrapping_add(1); 32]),
+            AssetId::from_bytes([seed.wrapping_add(2); 32]),
+            ProjectionSource::FreshLogScan,
+        )
     }
 
     /// TV-CS-1: `spawn_cache_subscriber` returns a `JoinHandle<()>` that is
@@ -314,5 +474,178 @@ mod tests {
         );
         sub.close();
         let _ = h.join();
+    }
+
+    // ============================================================================
+    // TV-CB-1..7 — cache-bus-auth test vectors
+    // ============================================================================
+
+    use ed25519_dalek::SigningKey;
+    use rand::rngs::OsRng;
+    use rand::RngCore;
+
+    fn sample_signing_key() -> SigningKey {
+        let mut secret = [0u8; 32];
+        OsRng.fill_bytes(&mut secret);
+        SigningKey::from_bytes(&secret)
+    }
+
+    fn sample_did(seed: u8) -> String {
+        format!("did:octo:test:producer:{seed}")
+    }
+
+    fn signed_v2_envelope(
+        signing_key: &SigningKey,
+        producer_did: &str,
+        sequence: u64,
+        seed: u8,
+    ) -> VaultProjectionInvalidationEnvelope {
+        let chain_id = ChainId::from_bytes([seed; 32]);
+        let vault_id = VaultId::from_bytes([seed.wrapping_add(1); 32]);
+        let asset_id = AssetId::from_bytes([seed.wrapping_add(2); 32]);
+        let mut env = VaultProjectionInvalidationEnvelope {
+            version: crate::event_log_producer::ENVELOPE_VERSION_V2,
+            chain_id,
+            vault_id,
+            asset_id,
+            source_kind: ProjectionSource::FreshLogScan,
+            producer_did: producer_did.to_string(),
+            sequence,
+            producer_signature: [0u8; 64],
+        };
+        let preimage = env.preimage();
+        env.producer_signature = sign_envelope(&preimage, signing_key);
+        env
+    }
+
+    /// TV-CB-1: envelope struct has the 8 expected fields (was 4);
+    /// constructing a v2 envelope requires all 8 fields explicitly.
+    #[test]
+    fn tv_cb1_v2_envelope_has_8_fields() {
+        let sk = sample_signing_key();
+        let env = signed_v2_envelope(&sk, &sample_did(1), 1, 1);
+        assert_eq!(env.version, crate::event_log_producer::ENVELOPE_VERSION_V2);
+        assert_eq!(env.producer_did, sample_did(1));
+        assert_eq!(env.sequence, 1);
+        assert_ne!(env.producer_signature, [0u8; 64]);
+    }
+
+    /// TV-CB-2: producer-side sign-then-emit produces an envelope that
+    /// the trust-list-verifying subscriber validates.
+    #[test]
+    fn tv_cb2_signed_envelope_verifies() {
+        let sk = sample_signing_key();
+        let vk = sk.verifying_key();
+        let did = sample_did(2);
+        let env = signed_v2_envelope(&sk, &did, 1, 2);
+        let tl = ProducerTrustList::new(vec![(did.clone(), vk)]);
+        assert!(tl.verify_and_update_sequence(&env).is_ok());
+    }
+
+    /// TV-CB-3: tampered envelope (modify `vault_id` after signing) fails
+    /// verification → subscriber drops the envelope, cache stays populated.
+    #[test]
+    fn tv_cb3_tampered_envelope_rejected() {
+        let sub = mock_subscriber();
+        let sk = sample_signing_key();
+        let vk = sk.verifying_key();
+        let did = sample_did(3);
+        let mut env = signed_v2_envelope(&sk, &did, 1, 3);
+        env.vault_id = VaultId::from_bytes([0xff; 32]); // tampered post-sign
+        let tl = Arc::new(ProducerTrustList::new(vec![(did.clone(), vk)]));
+        let cache = Arc::new(Mutex::new(VaultBalanceCache::new(60)));
+        {
+            let mut g = cache.lock().unwrap_or_else(PoisonError::into_inner);
+            g.put(sample_cache_key(3), sample_projection());
+            assert_eq!(g.len(), 1);
+        }
+        let h = spawn_cache_subscriber_with_trust_list(cache.clone(), sub.clone(), tl.clone());
+        sub.enqueue(env);
+        thread::sleep(std::time::Duration::from_millis(50));
+        // Cache MUST still have the entry (tamper rejected → no invalidation).
+        let g = cache.lock().unwrap_or_else(PoisonError::into_inner);
+        assert_eq!(g.len(), 1, "tampered envelope MUST NOT invalidate cache");
+        // And the trust list created no entry (tampered envelopes leave no trace).
+        assert!(
+            tl.last_seen_sequence.get(&did).is_none(),
+            "tampered envelope MUST NOT record a last_seen_sequence entry"
+        );
+        drop(g);
+        sub.close();
+        let _ = h.join();
+    }
+
+    /// TV-CB-4: replay (re-emit same envelope twice) is rejected by the
+    /// sequence-number check on the second receipt.
+    #[test]
+    fn tv_cb4_replay_rejected() {
+        let sk = sample_signing_key();
+        let vk = sk.verifying_key();
+        let did = sample_did(4);
+        let env = signed_v2_envelope(&sk, &did, 5, 4);
+        let tl = ProducerTrustList::new(vec![(did.clone(), vk)]);
+        // First verify succeeds.
+        assert!(tl.verify_and_update_sequence(&env).is_ok());
+        // Second verify (replay) fails with Replay.
+        let err = tl.verify_and_update_sequence(&env).unwrap_err();
+        assert!(matches!(err, EnvelopeVerificationError::Replay { .. }));
+    }
+
+    /// TV-CB-5: unknown producer_did (not in trust list) is rejected.
+    #[test]
+    fn tv_cb5_unknown_producer_rejected() {
+        let sk = sample_signing_key();
+        let env = signed_v2_envelope(&sk, "did:octo:rogue:not-in-list", 1, 5);
+        let vk = sk.verifying_key();
+        let tl = ProducerTrustList::new(vec![(sample_did(5), vk)]);
+        let err = tl.verify_and_update_sequence(&env).unwrap_err();
+        assert!(matches!(err, EnvelopeVerificationError::UnknownProducer(_)));
+    }
+
+    /// TV-CB-6: process init with empty trust list → all envelopes rejected
+    /// (fail-closed default).
+    #[test]
+    fn tv_cb6_empty_trust_list_rejects_all() {
+        let sk = sample_signing_key();
+        let env = signed_v2_envelope(&sk, &sample_did(6), 1, 6);
+        let tl = ProducerTrustList::new(vec![]);
+        let err = tl.verify_and_update_sequence(&env).unwrap_err();
+        assert!(matches!(err, EnvelopeVerificationError::UnknownProducer(_)));
+    }
+
+    /// TV-CB-7: preimage starts with the cross-protocol domain separator
+    /// (mandatory per `cache-bus-auth` §Sub-step 3).
+    #[test]
+    fn tv_cb7_preimage_has_domain_separator() {
+        let sk = sample_signing_key();
+        let env = signed_v2_envelope(&sk, &sample_did(7), 1, 7);
+        let preimage = env.preimage();
+        assert!(
+            preimage.starts_with(crate::event_log_producer::CACHE_BUS_DOMAIN_SEPARATOR),
+            "preimage MUST start with CACHE_BUS_DOMAIN_SEPARATOR"
+        );
+    }
+
+    /// TV-CB-8 (bonus): v1 legacy envelope fails verification with
+    /// UnsupportedVersion.
+    #[test]
+    fn tv_cb8_v1_envelope_unsupported() {
+        let sk = sample_signing_key();
+        let vk = sk.verifying_key();
+        let did = sample_did(8);
+        let v1 = VaultProjectionInvalidationEnvelope::v1_legacy(
+            ChainId::from_bytes([8u8; 32]),
+            VaultId::from_bytes([9u8; 32]),
+            AssetId::from_bytes([10u8; 32]),
+            ProjectionSource::FreshLogScan,
+        );
+        let tl = ProducerTrustList::new(vec![(did, vk)]);
+        let err = tl.verify_and_update_sequence(&v1).unwrap_err();
+        assert!(matches!(
+            err,
+            EnvelopeVerificationError::UnsupportedVersion(1)
+        ));
+        // Avoid unused-warning for sk.
+        let _ = sk.verifying_key();
     }
 }

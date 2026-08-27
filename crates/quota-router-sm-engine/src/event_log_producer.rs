@@ -104,12 +104,12 @@ pub fn produce_settlement(
     producer.validate_pre_insert(&input, registry, asset_resolver)?;
     let ev = producer.to_transfer_event(input, registry, asset_resolver, nonce_registry)?;
     log.insert(&ev).map_err(ProducerError::from)?;
-    bus.emit(&VaultProjectionInvalidationEnvelope {
-        chain_id: ev.chain_id,
-        vault_id: ev.to_vault_id,
-        asset_id: ev.asset_id,
-        source_kind: octo_vault::ProjectionSource::FreshLogScan,
-    });
+    bus.emit(&VaultProjectionInvalidationEnvelope::v1_legacy(
+        ev.chain_id,
+        ev.to_vault_id,
+        ev.asset_id,
+        octo_vault::ProjectionSource::FreshLogScan,
+    ));
     let _ = cache_channel_name(&ev.to_vault_id);
     Ok(ev)
 }

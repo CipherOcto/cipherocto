@@ -76,10 +76,13 @@ pub use event_log_producer::{
     cache_channel_name, process_drain_lock, EventLogProducer, ProducerError,
     TransferEventLogInsert, TransferEventLogInsertError, TransferEventRef,
     VaultProjectionInvalidationEmitter, VaultProjectionInvalidationEnvelope,
+    CACHE_BUS_DOMAIN_SEPARATOR, ENVELOPE_VERSION_V1, ENVELOPE_VERSION_V2,
 };
 // Mission B §6 substrate re-exports.
 pub use cache_subscriber::{
-    init_cache_subscriber, spawn_cache_subscriber, VaultProjectionInvalidationSubscriber,
+    init_cache_subscriber, init_producer_trust_list, sign_envelope, spawn_cache_subscriber,
+    spawn_cache_subscriber_with_trust_list, EnvelopeVerificationError, ProducerTrustList,
+    VaultProjectionInvalidationSubscriber,
 };
 
 // Mission D substrate re-exports: traits + newtypes live in

@@ -79,6 +79,12 @@ pub enum ProjectionError {
 }
 
 /// `TransferEventLog::insert` errors (Mission B §2.5).
+///
+/// Reachability note: the variant is exercised by Layer D adapter
+/// integration tests (production `lru::LruCache`-backed impl + the
+/// Stoolap `INSERT` path); no substrate test in this crate reaches
+/// it because `consume()` no longer calls `TransferEventLog::insert`
+/// directly (see `l4-parallel-transfer-event-log-elimination`).
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TransferEventLogInsertError {

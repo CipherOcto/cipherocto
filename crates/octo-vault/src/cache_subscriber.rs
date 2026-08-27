@@ -781,9 +781,12 @@ mod tests {
         let result = h.join();
         assert!(result.is_ok(), "subscriber task MUST exit cleanly");
     }
-    /// MUST drain the cache. Without this control, a "silent drop"
-    /// regression in `spawn_cache_subscriber_with_trust_list` would let
-    /// tv_cb3 pass without ever exercising `verify_and_update_sequence`.
+
+    /// TV-CB-3b (R3 test-coverage): positive control — a fully-valid
+    /// envelope from a trusted producer MUST drain the cache. Without
+    /// this control, a "silent drop" regression in
+    /// `spawn_cache_subscriber_with_trust_list` would let tv_cb3 pass
+    /// without ever exercising `verify_and_update_sequence`.
     #[test]
     fn tv_cb3b_valid_envelope_drains_cache() {
         let sub = mock_subscriber();

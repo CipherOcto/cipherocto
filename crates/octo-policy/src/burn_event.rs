@@ -465,16 +465,6 @@ impl AuditSink for InMemoryAuditSink {
     }
 }
 
-/// In-memory `TransferEventLog` fixture placeholder (deleted under mission
-/// `l4-parallel-transfer-event-log-elimination` — the parallel trait was
-/// eliminated in favour of `octo_vault::TransferEventLog`; per-test fixtures
-/// live in `octo-vault/src/testing.rs` per follow-on cycle).
-#[derive(Debug, Default)]
-pub struct InMemoryTransferEventLog {
-    pub inserts: Vec<[u8; 32]>,
-    pub fail_insert: bool,
-}
-
 // Suppress unused BODY_HASH_DOMAIN (RFC-0960 §3 reserves domain
 // separator for future BLAKE3-prefixed variants; current body_hash
 // uses raw concatenation only).
@@ -1675,6 +1665,39 @@ mod tests {
         assert_eq!(
             sink.compensates[0], expected,
             "compensate() MUST record the BLAKE3 body hash"
+        );
+    }
+
+    /// TV-BE-3 (R8 test-coverage): Gate 0 `AssetUnknown` via `new()`
+    /// — the registry returns `Err` for `metadata(&asset_id)` because
+    /// the asset is not registered. Closes the gate-0 coverage gap
+    /// (gates 1, 2, 3, 4, 6 were covered by other tests).
+    #[test]
+    fn tv_be3_new_asset_unknown_rejected() {
+        // Empty registry — no asset registered.
+        let reg = InMemoryAssetRegistry::new();
+        let vr = InMemoryVaultRegistry::new();
+        let asset_id = AssetId::from_bytes([0xAA; 32]);
+        let vault_id = VaultId::from_bytes([0xBB; 32]);
+        let err = new(
+            ChainId::from_bytes([0x01; 32]),
+            vault_id,
+            asset_id,
+            AssetKind::ManagedAsset,
+            Dqa::new(1_000, 0).unwrap(),
+            100,
+            SettlementId([0x04; 32]),
+            GovernanceSignature::from_bytes([0u8; 64]),
+            Epoch::new(0),
+            Nonce::from_bytes([0x05; 32]),
+            &reg,
+            &vr,
+            Epoch::new(1),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, BurnEventError::AssetUnknown),
+            "new() with unregistered asset MUST return AssetUnknown (Gate 0); got {err:?}"
         );
     }
 

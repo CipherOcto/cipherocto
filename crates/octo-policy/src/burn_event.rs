@@ -103,7 +103,7 @@ pub enum BurnEventError {
         vault_id: VaultId,
         asset_id: AssetId,
     },
-    #[error("audit sink failed: {sink_error:?}")]
+    #[error("audit sink failed: {}", redact_audit_error(sink_error))]
     AuditSinkFailed { sink_error: AuditError },
     #[error("atomicity rollback failed (nonce unobserve): {nonce_error}")]
     AtomicityRollbackFailed { nonce_error: String },
@@ -825,6 +825,10 @@ mod tests {
 
     /// TV-BE14: verify_burn_against_caveat matches.
     #[test]
+    // reason: `legacy_3arg` is deprecated for general callers but the
+    // test fixture specifically exercises the legacy compat path (which
+    // must remain wired until the deprecation window closes per the RFC
+    // migration etiquette in BLUEPRINT.md §The RFC Process).
     #[allow(deprecated)]
     fn tv_be14_verify_burn_against_caveat_match() {
         let asset_id = octo_cap_macaroon::octo_w_asset_id();
@@ -847,6 +851,10 @@ mod tests {
 
     /// TV-BE15: verify_burn_against_caveat rejects mismatch.
     #[test]
+    // reason: `legacy_3arg` is deprecated for general callers but the
+    // test fixture specifically exercises the legacy compat path (which
+    // must remain wired until the deprecation window closes per the RFC
+    // migration etiquette in BLUEPRINT.md §The RFC Process).
     #[allow(deprecated)]
     fn tv_be15_verify_burn_against_caveat_mismatch() {
         let burn = BurnEventRef {
@@ -1602,6 +1610,46 @@ mod tests {
         assert_eq!(
             redact_audit_error(&AuditError::UnobserveFailed("should-not-leak".to_string())),
             "UnobserveFailed"
+        );
+    }
+
+    /// R12 test-coverage: `BurnEventError::AuditSinkFailed` Display MUST
+    /// route the inner `sink_error` through `redact_audit_error` — never
+    /// the raw Debug form (which would leak `sink: String` from
+    /// `LogInsertFailed` or the inner String from `UnobserveFailed`).
+    /// Locks the operator-facing contract that `BurnEventError` Display
+    /// never exposes audit-sink internal payload bytes.
+    #[test]
+    fn tv_redact_audit_sink_failed_display_no_inner_leak() {
+        // LogInsertFailed variant — the inner `sink` MUST be redacted.
+        let err_log = BurnEventError::AuditSinkFailed {
+            sink_error: AuditError::LogInsertFailed {
+                sink: "secret-db-handle-with-pwd".to_string(),
+                nonce_rolled_back: true,
+                audit_compensated: false,
+            },
+        };
+        let rendered = format!("{err_log}");
+        assert!(
+            !rendered.contains("secret-db-handle-with-pwd"),
+            "Display MUST NOT leak inner sink payload (got: {rendered:?})"
+        );
+        assert!(
+            rendered.contains("LogInsertFailed"),
+            "Display MUST surface the redacted variant label (got: {rendered:?})"
+        );
+        // UnobserveFailed variant — the inner String MUST be redacted.
+        let err_unobs = BurnEventError::AuditSinkFailed {
+            sink_error: AuditError::UnobserveFailed("leaked-secret-text".to_string()),
+        };
+        let rendered_unobs = format!("{err_unobs}");
+        assert!(
+            !rendered_unobs.contains("leaked-secret-text"),
+            "Display MUST NOT leak inner UnobserveFailed payload (got: {rendered_unobs:?})"
+        );
+        assert!(
+            rendered_unobs.contains("UnobserveFailed"),
+            "Display MUST surface the redacted variant label (got: {rendered_unobs:?})"
         );
     }
 

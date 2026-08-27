@@ -31,8 +31,10 @@ use crate::vault_balance_projection::VaultBalanceCache;
 /// traits. To prevent downstream from adding methods, the trait would
 /// need a sealed marker pattern (`mod sealed { pub trait Sealed {} }` +
 /// `impl sealed::Sealed for crate::...`). That is deferred — current
-/// RFC-0960 §2.4 enumerates the only intended method (`recv`), and any
+/// Mission B §6 (per module-level docstring) defines only `recv`; any
 /// future method addition is an additive semver-minor bump by convention.
+/// (RFC-0960 §2.4 specifies the EMITTER side — `emit` /
+/// `VaultProjectionInvalidationEmitter` — not the subscriber port trait.)
 pub trait VaultProjectionInvalidationSubscriber: Send + Sync {
     /// Blocking receive; returns `None` on channel close.
     fn recv(&self) -> Option<VaultProjectionInvalidationEnvelope>;
@@ -85,6 +87,14 @@ pub struct ProducerTrustList {
 impl ProducerTrustList {
     /// Build a new trust list from a list of `(producer_did, verifying_key)`
     /// pairs. Empty list = fail-closed default per TV-CB-6.
+    ///
+    /// **Deferral (R2 api-surface doc-drift):** the `producer_did` keys
+    /// are typed as `String` rather than a typed `OverlayIdentity`
+    /// newtype. The substrate (`octo_cap_macaroon::OverlayIdentity`)
+    /// currently exposes `OverlayIdentity` as a type alias for `String`,
+    /// not a struct. Typed-DID promotion to a Layer A struct is a
+    /// follow-on mission; once landed, this signature will tighten
+    /// without breaking callers (the newtype derefs to `&str`).
     #[must_use]
     pub fn new(keys: Vec<(String, VerifyingKey)>) -> Self {
         Self {
@@ -597,47 +607,67 @@ mod tests {
         let sk = sample_signing_key();
         let vk = sk.verifying_key();
         let did = sample_did(3);
-        // Positive control first — valid envelope MUST drain cache.
-        let valid_env = signed_v2_envelope(&sk, &did, 1, 3);
-        // Negative case — tampered envelope.
-        let mut tampered_env = signed_v2_envelope(&sk, &did, 2, 3);
+        // Negative case — tampered envelope (mutate vault_id post-sign).
+        let mut tampered_env = signed_v2_envelope(&sk, &did, 1, 3);
         tampered_env.vault_id = VaultId::from_bytes([0xff; 32]); // tampered post-sign
         let tl = Arc::new(ProducerTrustList::new(vec![(did.clone(), vk)]));
         let cache = Arc::new(Mutex::new(VaultBalanceCache::new(60)));
         {
             let mut g = cache.lock().unwrap_or_else(PoisonError::into_inner);
             g.put(sample_cache_key(3), sample_projection());
-            g.put(sample_cache_key(4), sample_projection());
-            assert_eq!(g.len(), 2);
+            assert_eq!(g.len(), 1);
         }
         let h = spawn_cache_subscriber_with_trust_list(cache.clone(), sub.clone(), tl.clone());
-        // Send valid then tampered.
-        sub.enqueue(valid_env);
+        // Send ONLY the tampered envelope — cache MUST stay populated
+        // (distinguishes "tampered correctly rejected" from "tampered was
+        // processed but cache was already empty").
         sub.enqueue(tampered_env);
         thread::sleep(std::time::Duration::from_millis(50));
-        // After valid-only drain (tampered rejected) cache MUST be empty:
-        // valid envelope drained all entries, tampered was a no-op.
-        // The stronger assertion: the subscriber DID process valid AND
-        // rejected tampered (cache.len() == 0 proves valid was processed;
-        // no entry in last_seen_sequence with sequence=2 proves tampered
-        // was rejected before sequence-update).
         let g = cache.lock().unwrap_or_else(PoisonError::into_inner);
         assert_eq!(
             g.len(),
-            0,
-            "valid envelope MUST drain cache; tampered envelope MUST be dropped"
+            1,
+            "tampered envelope MUST NOT invalidate cache (cache populated → still populated)"
         );
         drop(g);
-        // Tampered envelopes leave no trace — last_seen_sequence MUST be at sequence=1
-        // (valid accepted), NOT 2 (which would mean tampered bypassed verify).
-        let recorded = tl.last_seen_sequence.get(&did).map(|v| *v).unwrap_or(0);
-        assert_eq!(
-            recorded, 1,
-            "tampered envelope MUST NOT advance last_seen_sequence past valid (recorded={recorded})"
+        // Tampered envelopes leave no trace — no last_seen_sequence entry.
+        assert!(
+            tl.last_seen_sequence.get(&did).is_none(),
+            "tampered envelope MUST NOT create a last_seen_sequence entry"
         );
         sub.close();
         let result = h.join();
         assert!(result.is_ok(), "subscriber task MUST exit cleanly");
+    }
+
+    /// TV-CB-3b (R2 strengthening): positive control — a VALID envelope
+    /// MUST drain the cache. Without this control, a "silent drop"
+    /// regression in `spawn_cache_subscriber_with_trust_list` would let
+    /// tv_cb3 pass without ever exercising `verify_and_update_sequence`.
+    #[test]
+    fn tv_cb3b_valid_envelope_drains_cache() {
+        let sub = mock_subscriber();
+        let sk = sample_signing_key();
+        let vk = sk.verifying_key();
+        let did = sample_did(31);
+        let valid_env = signed_v2_envelope(&sk, &did, 1, 31);
+        let tl = Arc::new(ProducerTrustList::new(vec![(did.clone(), vk)]));
+        let cache = Arc::new(Mutex::new(VaultBalanceCache::new(60)));
+        {
+            let mut g = cache.lock().unwrap_or_else(PoisonError::into_inner);
+            g.put(sample_cache_key(31), sample_projection());
+            assert_eq!(g.len(), 1);
+        }
+        let h = spawn_cache_subscriber_with_trust_list(cache.clone(), sub.clone(), tl.clone());
+        sub.enqueue(valid_env);
+        thread::sleep(std::time::Duration::from_millis(50));
+        let g = cache.lock().unwrap_or_else(PoisonError::into_inner);
+        assert_eq!(g.len(), 0, "valid envelope MUST drain cache");
+        drop(g);
+        let recorded = tl.last_seen_sequence.get(&did).map(|v| *v).unwrap_or(0);
+        assert_eq!(recorded, 1, "valid envelope MUST advance sequence to 1");
+        sub.close();
+        let _ = h.join();
     }
 
     /// TV-CB-4: replay defense — multi-vector coverage:

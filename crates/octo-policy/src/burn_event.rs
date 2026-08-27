@@ -157,6 +157,25 @@ pub enum AuditInvariantViolation {
 /// Hash input is the concatenation of:
 /// `chain_id || vault_id || asset_id || asset_kind_tag ||
 /// amount.wire_scale (u8 BE) || amount.value (i64 BE) ||
+/// Redact the substrate-internal Debug bytes from a `NonceError` so the
+/// operator-facing `Display` (via `BurnEventError::AtomicityRollbackFailed`)
+/// does not leak the 32-byte governance_pubkey or 32-byte nonce that the
+/// `NonceError::{AlreadyObserved, NotObserved}` variants embed.
+///
+/// R2 SECURITY: the raw `{:?}` Debug output would surface
+/// authority-identifying + replay-nonce bytes through the public Display
+/// contract, violating the principle that Display is operator-facing
+/// while Debug is substrate-internal.
+fn redact_nonce_error(e: &NonceError) -> String {
+    // Discriminant only — the variant tag identifies the failure mode
+    // (observed/not-observed/already-observed) without embedding bytes.
+    format!("{e:?}")
+        .split('{')
+        .next()
+        .unwrap_or("NonceError")
+        .to_string()
+}
+
 /// ledger_height (u64 BE) || settlement_event_ref ||
 /// registry_snapshot_epoch.0 (u64 BE) || nonce`
 #[must_use]
@@ -378,8 +397,16 @@ pub fn consume(
             burn.nonce.as_bytes(),
         );
         if let Err(nonce_err) = rollback {
+            // R2 SECURITY: redact the 32-byte pubkey/nonce substrate-internal
+            // Debug output that NonceError variants embed. Per CLAUDE.md §"Layer
+            // B → substrate error type" (Display operator-facing, Debug
+            // substrate-internal), this string flows through the Display impl
+            // and MUST NOT contain authority-identifying or replay-nonce bytes.
             return Err(BurnEventError::AtomicityRollbackFailed {
-                nonce_error: format!("audit_err={audit_err:?}; unobserve_err={nonce_err:?}"),
+                nonce_error: format!(
+                    "audit_err={audit_err:?}; unobserve_err={}",
+                    redact_nonce_error(&nonce_err)
+                ),
             });
         }
         return Err(BurnEventError::AuditSinkFailed {
@@ -985,5 +1012,138 @@ mod tests {
                 live: 5
             }
         ));
+    }
+
+    /// Test-only `NonceRegistry` that wraps `InMemoryNonceRegistry` and
+    /// can be configured to fail `unobserve()` (R2 test-coverage: the
+    /// new `AtomicityRollbackFailed` variant needs an exercisable path).
+    struct FailingUnobserveNonceRegistry {
+        inner: InMemoryNonceRegistry,
+        fail_unobserve: bool,
+    }
+
+    impl FailingUnobserveNonceRegistry {
+        fn new(fail_unobserve: bool) -> Self {
+            Self {
+                inner: InMemoryNonceRegistry::new(),
+                fail_unobserve,
+            }
+        }
+    }
+
+    impl octo_cap_macaroon::NonceRegistry for FailingUnobserveNonceRegistry {
+        fn observe(
+            &mut self,
+            event_kind: octo_cap_macaroon::NonceEventKind,
+            pk: &[u8; 32],
+            nonce: &[u8; 32],
+        ) -> Result<(), octo_cap_macaroon::NonceError> {
+            self.inner.observe(event_kind, pk, nonce)
+        }
+        fn observe_readonly(
+            &self,
+            event_kind: octo_cap_macaroon::NonceEventKind,
+            pk: &[u8; 32],
+            nonce: &[u8; 32],
+        ) -> Result<(), octo_cap_macaroon::NonceError> {
+            self.inner.observe_readonly(event_kind, pk, nonce)
+        }
+        fn unobserve(
+            &mut self,
+            event_kind: octo_cap_macaroon::NonceEventKind,
+            pk: &[u8; 32],
+            nonce: &[u8; 32],
+        ) -> Result<(), octo_cap_macaroon::NonceError> {
+            if self.fail_unobserve {
+                return Err(octo_cap_macaroon::NonceError::NotObserved {
+                    event_kind,
+                    pk: *pk,
+                    nonce: *nonce,
+                });
+            }
+            self.inner.unobserve(event_kind, pk, nonce)
+        }
+    }
+
+    /// TV-BE21 (R2 test-coverage): unobserve-failure path triggers
+    /// `AtomicityRollbackFailed`. Compound failure: audit fails AND
+    /// nonce rollback fails — caller MUST receive a diagnostic
+    /// distinguishing this from plain audit failure.
+    #[test]
+    fn tv_be21_atomicity_rollback_failure() {
+        let asset_id = AssetId::from_bytes([1u8; 32]);
+        let vault_id = VaultId::from_bytes([2u8; 32]);
+        let (sk, pk) = sample_key();
+        let (reg, vr) = setup_managed(asset_id, pk, vault_id);
+        let mut burn = BurnEventRef {
+            chain_id: ChainId::from_bytes([3u8; 32]),
+            vault_id,
+            asset_id,
+            asset_kind: AssetKind::OctoW,
+            amount: Dqa::new(1_000, 0).unwrap(),
+            ledger_height: 100,
+            settlement_event_ref: SettlementId([4u8; 32]),
+            governance_signature: GovernanceSignature::from_bytes([0u8; 64]),
+            governance_pubkey: pk,
+            registry_snapshot_epoch: Epoch::new(0),
+            nonce: Nonce::from_bytes([5u8; 32]),
+        };
+        sign_burn(&sk, &mut burn);
+        let burn = new(
+            burn.chain_id,
+            burn.vault_id,
+            burn.asset_id,
+            burn.asset_kind,
+            burn.amount,
+            burn.ledger_height,
+            burn.settlement_event_ref,
+            burn.governance_signature,
+            burn.registry_snapshot_epoch,
+            burn.nonce,
+            &reg,
+            &vr,
+            Epoch::new(1),
+        )
+        .unwrap();
+        let mut nr = FailingUnobserveNonceRegistry::new(true); // fail_unobserve
+        let mut audit = InMemoryAuditSink {
+            fail_write: true, // AND audit fails
+            ..Default::default()
+        };
+        let err = consume(&burn, &mut nr, &mut audit).unwrap_err();
+        match err {
+            BurnEventError::AtomicityRollbackFailed { nonce_error } => {
+                assert!(
+                    nonce_error.contains("audit_err"),
+                    "format MUST include audit_err: {nonce_error}"
+                );
+                assert!(
+                    nonce_error.contains("unobserve_err"),
+                    "format MUST include unobserve_err: {nonce_error}"
+                );
+                // Redaction contract (R2 security): the formatted string
+                // MUST NOT contain the full 32-byte pubkey or nonce as
+                // hex (would leak substrate-internal Debug into Display).
+                let mut pk_hex = String::with_capacity(64);
+                for b in &burn.governance_pubkey {
+                    use std::fmt::Write as _;
+                    let _ = write!(pk_hex, "{b:02x}");
+                }
+                let mut nonce_hex = String::with_capacity(64);
+                for b in burn.nonce.as_bytes() {
+                    use std::fmt::Write as _;
+                    let _ = write!(nonce_hex, "{b:02x}");
+                }
+                assert!(
+                    !nonce_error.contains(&pk_hex),
+                    "format MUST NOT leak full pubkey hex: {nonce_error}"
+                );
+                assert!(
+                    !nonce_error.contains(&nonce_hex),
+                    "format MUST NOT leak full nonce hex: {nonce_error}"
+                );
+            }
+            _ => panic!("expected AtomicityRollbackFailed, got {err:?}"),
+        }
     }
 }

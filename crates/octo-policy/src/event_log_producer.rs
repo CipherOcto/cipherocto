@@ -88,6 +88,7 @@ pub fn produce_burn(
     asset_resolver: &dyn VaultAssetResolver,
     nonce_registry: &mut dyn NonceRegistry,
     audit_sink: &mut dyn crate::burn_event::AuditSink,
+    consume_log: &mut dyn crate::burn_event::TransferEventLog,
     log: &mut dyn TransferEventLog,
     bus: &dyn VaultProjectionInvalidationEmitter,
 ) -> Result<TransferEventRef, ProducerError> {
@@ -97,10 +98,15 @@ pub fn produce_burn(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     producer.validate_pre_insert(&burn, registry, asset_resolver)?;
-    // The 3-sink atomic write is performed by the upstream
-    // `BurnEventRef::consume` path; the producer's job is just to
-    // transform the event into `TransferEventRef` + emit the envelope.
-    let _ = audit_sink;
+    // CRITICAL FIX (review C1): 3-sink atomicity — Sink 1 (nonce) + Sink 2
+    // (audit) + Sink 3-audit-mirror (local log) run inside `consume` with
+    // full rollback. `log` (Layer B `TransferEventLog`) is the canonical
+    // projection source carrying the TransferEventRef envelope. Parallel
+    // TransferEventLog traits (octo-policy::burn_event::TransferEventLog
+    // vs octo-vault::TransferEventLog) are tracked for elimination under
+    // L4 CRITICAL #2.
+    crate::burn_event::consume(&burn, nonce_registry, audit_sink, consume_log)
+        .map_err(|e| ProducerError::TriInvariantViolation(format!("burn_consume: {e:?}")))?;
     let ev = producer.to_transfer_event(burn, registry, asset_resolver, nonce_registry)?;
     log.insert(&ev).map_err(ProducerError::from)?;
     bus.emit(&VaultProjectionInvalidationEnvelope {
@@ -109,7 +115,7 @@ pub fn produce_burn(
         asset_id: ev.asset_id,
         source_kind: octo_vault::ProjectionSource::FreshLogScan,
     });
-    let _ = cache_channel_name(&ev.to_vault_id); // exercised for channel-name TV
+    let _ = cache_channel_name(&ev.to_vault_id);
     Ok(ev)
 }
 

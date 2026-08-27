@@ -43,6 +43,7 @@ impl PaymentEventProducer {
 #[derive(Clone, Debug)]
 pub struct PaymentProducerInput {
     pub payment_id: [u8; 32],
+    pub chain_id: ChainId,
     pub from_vault_id: VaultId,
     pub to_vault_id: VaultId,
     pub caveat: PaymentCaveat,
@@ -83,7 +84,7 @@ impl EventLogProducer for PaymentEventProducer {
     ) -> Result<TransferEventRef, ProducerError> {
         Ok(TransferEventRef {
             event_id: input.payment_id,
-            chain_id: ChainId::from_bytes([0u8; 32]),
+            chain_id: input.chain_id,
             from_vault_id: input.from_vault_id,
             to_vault_id: input.to_vault_id,
             asset_id: input.caveat.asset_id,

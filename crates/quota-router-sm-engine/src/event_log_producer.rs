@@ -7,7 +7,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use octo_cap_macaroon::{AssetRegistry, NonceRegistry, VaultId};
+use octo_cap_macaroon::{AssetRegistry, ChainId, NonceRegistry, VaultId};
 use octo_vault::{
     cache_channel_name, process_drain_lock, EventLogProducer, ProducerError, TransferEventLog,
     TransferEventRef, VaultAssetResolver, VaultProjectionInvalidationEmitter,
@@ -43,6 +43,7 @@ impl SettlementEventProducer {
 #[derive(Clone, Debug)]
 pub struct SettlementProducerInput {
     pub settlement_id: [u8; 32],
+    pub chain_id: ChainId,
     pub cost_vault_id: VaultId,
     pub asset_id: octo_cap_macaroon::AssetId,
     pub amount: octo_cap_macaroon::Dqa,
@@ -76,7 +77,7 @@ impl EventLogProducer for SettlementEventProducer {
     ) -> Result<TransferEventRef, ProducerError> {
         Ok(TransferEventRef {
             event_id: input.settlement_id,
-            chain_id: octo_cap_macaroon::ChainId::from_bytes([0u8; 32]),
+            chain_id: input.chain_id,
             from_vault_id: VaultId::from_bytes([0u8; 32]),
             to_vault_id: input.cost_vault_id,
             asset_id: input.asset_id,

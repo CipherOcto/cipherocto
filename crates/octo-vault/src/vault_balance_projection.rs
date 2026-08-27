@@ -432,6 +432,193 @@ mod tests {
         assert!(V015_DDL.contains("source_kind"));
     }
 
+    /// TV-VP-12 (R10 test-coverage): `project()` propagates
+    /// `ProjectionError::LogReadFailed` from any underlying
+    /// `TransferEventLog` read. The variant is never returned by the
+    /// production LRU-backed log (which only fails on `insert`), so this
+    /// test uses a minimal inline fixture that fails every read with
+    /// `LogReadFailed`. Closes the coverage gap that a regression
+    /// causing `sum_to_vault` / `sum_from_vault` / `max_occurred_at_unix`
+    /// to leak IO failures would not be caught.
+    #[test]
+    fn tv_vp12_project_log_read_failed_propagates() {
+        struct FailingReadLog;
+        impl TransferEventLog for FailingReadLog {
+            fn sum_to_vault(
+                &self,
+                _: &ChainId,
+                _: &VaultId,
+                _: &AssetId,
+                _: i64,
+            ) -> Result<Dqa, ProjectionError> {
+                Err(ProjectionError::LogReadFailed("disk io".to_string()))
+            }
+            fn sum_from_vault(
+                &self,
+                _: &ChainId,
+                _: &VaultId,
+                _: &AssetId,
+                _: i64,
+            ) -> Result<Dqa, ProjectionError> {
+                Err(ProjectionError::LogReadFailed("disk io".to_string()))
+            }
+            fn max_occurred_at_unix(
+                &self,
+                _: &ChainId,
+                _: &VaultId,
+                _: &AssetId,
+            ) -> Result<Option<i64>, ProjectionError> {
+                Err(ProjectionError::LogReadFailed("disk io".to_string()))
+            }
+            fn insert(
+                &mut self,
+                _: &crate::event_log_producer::TransferEventRef,
+            ) -> Result<(), crate::vault_balance_projection::TransferEventLogInsertError>
+            {
+                unreachable!()
+            }
+        }
+        let log = FailingReadLog;
+        let err = project(
+            &ChainId::from_bytes([1u8; 32]),
+            &VaultId::from_bytes([2u8; 32]),
+            &AssetId::from_bytes([3u8; 32]),
+            &log,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ProjectionError::LogReadFailed(_)),
+            "project() MUST propagate LogReadFailed from sum_to_vault; got {err:?}"
+        );
+    }
+
+    /// TV-VP-11 (R10 test-coverage): `project()` defensive branch —
+    /// `in_sum.value < out_sum.value` (negative-balance scenario)
+    /// MUST fail-CLOSED with a zero projection (NOT panic, NOT
+    /// negative Dqa). The contract: substrate never produces a
+    /// negative balance; if the log ever does, the projection clamps
+    /// to zero + surfaces the underlying Dqa scales for diagnostics.
+    #[test]
+    fn tv_vp11_project_negative_balance_clamps_to_zero() {
+        struct NegativeBalanceLog;
+        impl TransferEventLog for NegativeBalanceLog {
+            fn sum_to_vault(
+                &self,
+                _: &ChainId,
+                _: &VaultId,
+                _: &AssetId,
+                _: i64,
+            ) -> Result<Dqa, ProjectionError> {
+                Ok(Dqa::new(0, 0).unwrap())
+            }
+            fn sum_from_vault(
+                &self,
+                _: &ChainId,
+                _: &VaultId,
+                _: &AssetId,
+                _: i64,
+            ) -> Result<Dqa, ProjectionError> {
+                // in (0) < out (1000) → would underflow.
+                Ok(Dqa::new(1_000, 0).unwrap())
+            }
+            fn max_occurred_at_unix(
+                &self,
+                _: &ChainId,
+                _: &VaultId,
+                _: &AssetId,
+            ) -> Result<Option<i64>, ProjectionError> {
+                Ok(Some(1_700_000_000))
+            }
+            fn insert(
+                &mut self,
+                _: &crate::event_log_producer::TransferEventRef,
+            ) -> Result<(), crate::vault_balance_projection::TransferEventLogInsertError>
+            {
+                unreachable!()
+            }
+        }
+        let proj = project(
+            &ChainId::from_bytes([1u8; 32]),
+            &VaultId::from_bytes([2u8; 32]),
+            &AssetId::from_bytes([3u8; 32]),
+            &NegativeBalanceLog,
+        )
+        .unwrap();
+        assert_eq!(
+            proj.projected_balance.value, 0,
+            "negative-balance MUST clamp to value=0; got {}",
+            proj.projected_balance.value
+        );
+        assert_eq!(
+            proj.projected_balance.scale, 0,
+            "negative-balance clamp MUST use scale=0; got {}",
+            proj.projected_balance.scale
+        );
+    }
+
+    /// TV-VP-10 (R10 test-coverage): `project()` defensive branch —
+    /// `in_sum.scale != out_sum.scale` MUST fail-CLOSED with a zero
+    /// projection (NOT panic, NOT mixed-scale Dqa). The contract:
+    /// canonical scale is 0; if the log ever returns mixed scales
+    /// (data corruption / legacy insert), projection clamps to zero.
+    #[test]
+    fn tv_vp10_project_scale_mismatch_clamps_to_zero() {
+        struct ScaleMismatchLog;
+        impl TransferEventLog for ScaleMismatchLog {
+            fn sum_to_vault(
+                &self,
+                _: &ChainId,
+                _: &VaultId,
+                _: &AssetId,
+                _: i64,
+            ) -> Result<Dqa, ProjectionError> {
+                Ok(Dqa::new(1_000, 0).unwrap())
+            }
+            fn sum_from_vault(
+                &self,
+                _: &ChainId,
+                _: &VaultId,
+                _: &AssetId,
+                _: i64,
+            ) -> Result<Dqa, ProjectionError> {
+                // Different scale from sum_to_vault.
+                Ok(Dqa::new(500, 6).unwrap())
+            }
+            fn max_occurred_at_unix(
+                &self,
+                _: &ChainId,
+                _: &VaultId,
+                _: &AssetId,
+            ) -> Result<Option<i64>, ProjectionError> {
+                Ok(Some(1_700_000_000))
+            }
+            fn insert(
+                &mut self,
+                _: &crate::event_log_producer::TransferEventRef,
+            ) -> Result<(), crate::vault_balance_projection::TransferEventLogInsertError>
+            {
+                unreachable!()
+            }
+        }
+        let proj = project(
+            &ChainId::from_bytes([1u8; 32]),
+            &VaultId::from_bytes([2u8; 32]),
+            &AssetId::from_bytes([3u8; 32]),
+            &ScaleMismatchLog,
+        )
+        .unwrap();
+        assert_eq!(
+            proj.projected_balance.value, 0,
+            "scale-mismatch MUST clamp to value=0; got {}",
+            proj.projected_balance.value
+        );
+        assert_eq!(
+            proj.projected_balance.scale, 0,
+            "scale-mismatch clamp MUST use scale=0; got {}",
+            proj.projected_balance.scale
+        );
+    }
+
     /// TV-VP-9 (R9 test-coverage): `TransferEventLogInsertError::InsertFailed`
     /// MUST be returned when the underlying log rejects the insert. This
     /// is the only crate-level test that exercises the `InsertFailed`

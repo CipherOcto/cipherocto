@@ -448,6 +448,9 @@ pub struct InMemoryAuditSink {
     pub writes: Vec<[u8; 32]>,
     pub compensates: Vec<[u8; 32]>,
     pub fail_write: bool,
+    /// When `true`, `compensate()` returns `Err(AuditError::CompensateFailed)`.
+    /// Default `false` (happy path). Exercised by `tv_be30`.
+    pub fail_compensate: bool,
 }
 
 impl AuditSink for InMemoryAuditSink {
@@ -460,6 +463,9 @@ impl AuditSink for InMemoryAuditSink {
         Ok(())
     }
     fn compensate(&mut self, event: &BurnEventRef) -> Result<(), AuditError> {
+        if self.fail_compensate {
+            return Err(AuditError::CompensateFailed);
+        }
         let h = compute_body_hash(event);
         self.compensates.push(h);
         Ok(())
@@ -1666,6 +1672,48 @@ mod tests {
         assert_eq!(
             sink.compensates[0], expected,
             "compensate() MUST record the BLAKE3 body hash"
+        );
+    }
+
+    /// TV-BE-30 (R10 test-coverage): `InMemoryAuditSink::compensate()`
+    /// with `fail_compensate = true` MUST return
+    /// `Err(AuditError::CompensateFailed)` (fail-CLOSED). Without this
+    /// path, the `AuditError::CompensateFailed` variant has no
+    /// reachable call site beyond the redactor unit test.
+    #[test]
+    fn tv_be30_audit_sink_compensate_fail_returns_compensate_failed() {
+        let asset_id = AssetId::from_bytes([1u8; 32]);
+        let vault_id = VaultId::from_bytes([2u8; 32]);
+        let (sk, pk) = sample_key();
+        let mut burn = BurnEventRef {
+            chain_id: ChainId::from_bytes([3u8; 32]),
+            vault_id,
+            asset_id,
+            asset_kind: AssetKind::OctoW,
+            amount: Dqa::new(1_000, 0).unwrap(),
+            ledger_height: 100,
+            settlement_event_ref: SettlementId([4u8; 32]),
+            governance_signature: GovernanceSignature::from_bytes([0u8; 64]),
+            governance_pubkey: pk,
+            registry_snapshot_epoch: Epoch::new(0),
+            nonce: Nonce::from_bytes([5u8; 32]),
+        };
+        sign_burn(&sk, &mut burn);
+        let mut sink = InMemoryAuditSink {
+            fail_compensate: true,
+            ..Default::default()
+        };
+        let err = sink.compensate(&burn).unwrap_err();
+        assert!(
+            matches!(err, AuditError::CompensateFailed),
+            "compensate() with fail_compensate=true MUST return AuditError::CompensateFailed; got {err:?}"
+        );
+        // On failure, NO hash MUST be recorded (failure path MUST NOT
+        // mutate state, else retry semantics break).
+        assert!(
+            sink.compensates.is_empty(),
+            "compensate() on failure MUST NOT push a hash; got {} entries",
+            sink.compensates.len()
         );
     }
 

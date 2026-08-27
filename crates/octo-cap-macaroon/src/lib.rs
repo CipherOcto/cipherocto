@@ -90,7 +90,7 @@ pub use bundle_v2::{
 };
 pub use catalog::{CompositeCapabilityCatalog, CompositeGossip};
 pub use caveat::{
-    set_subsumes, set_subsumes_with_registry, ActionTemplate, AskId, AssetBinding,
+    octo_w_asset_id, set_subsumes, set_subsumes_with_registry, ActionTemplate, AskId, AssetBinding,
     AttenuationError, Blake3, CachePolicy, Caveat, CaveatName, FactoryVet, ModelRef,
     OverlayIdentity, PaymentCaveat, PaymentDecision, PaymentRejectionReason, PerAxisMax,
     PermissionKind, ProviderId, RateLimit, RawCaveat, UnixTimeSecs, ISO3166,
@@ -118,9 +118,12 @@ pub use signer::{CapabilitySigner, CapabilitySignerError};
 pub use substrate::{
     nonce_bucket_key, sovereign_nonce_namespace, sovereign_observe_key, AssetError, AssetId,
     AssetKind, AssetMetadata, AssetRegistry, ChainId, Epoch, GovernanceSignature,
-    InMemoryAssetRegistry, InMemoryNonceRegistry, Nonce, NonceError, NonceEventKind, NonceRegistry,
-    VaultId, MAX_SCALE,
+    InMemoryAssetRegistry, InMemoryNonceRegistry, InMemoryVaultRegistry, Nonce, NonceError,
+    NonceEventKind, NonceRegistry, VaultAssetError, VaultId, VaultRegistry, MAX_SCALE,
 };
+// Re-export Dqa from `octo_determin` for downstream substrate consumers
+// (Mission F BurnEventRef amount field uses Dqa).
+pub use octo_determin::Dqa;
 pub use token::{CapabilityToken, DischargeMacaroon, MintError};
 pub use vault_lookup::{VaultLookup, VaultLookupExt, VaultRowSnapshot};
 pub use vault_verify_error::VaultVerifyError;

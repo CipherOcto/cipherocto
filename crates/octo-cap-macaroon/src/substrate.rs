@@ -145,11 +145,11 @@ impl Epoch {
 /// 64-byte Ed25519 governance signature, paired with `GovernancePubkey`
 /// (canonical home: `crate::governance_signature`).
 ///
-/// `serde` derives intentionally omitted — `[u8; 64]` does not impl
-/// `Serialize`/`Deserialize` from the rust derive. The substrate uses
-/// this type as an opaque byte payload; consumers that need serde
-/// wrap it in a hex-encoded adapter.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// `Borsh` derives added per Mission F (RFC-0960 v3.6) BurnEventRef
+/// wire form. `serde` uses a hex-string adapter (canonical wire form
+/// per RFC-0105 v3.5 §3.12 substrate convention) — `[u8; 64]` does
+/// not impl `serde::Serialize`/`Deserialize` from the rust derive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize)]
 pub struct GovernanceSignature {
     /// Raw Ed25519 signature bytes.
     pub sig: [u8; 64],
@@ -168,7 +168,20 @@ impl GovernanceSignature {
 }
 
 /// 32-byte chain identifier. `chain_id = BLAKE3("cipherocto/chain/v1/" + chain_string)`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    BorshSerialize,
+    BorshDeserialize,
+)]
 pub struct ChainId(pub [u8; 32]);
 
 impl ChainId {
@@ -202,7 +215,20 @@ impl ChainId {
 /// `BLAKE3("cipherocto/vault/v1/" + chain_id + owner_did + asset_id)`
 /// per RFC-0105 §8.10. The full derivation lives in `octo-vault`; this
 /// newtype is the substrate-import path.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    BorshSerialize,
+    BorshDeserialize,
+)]
 pub struct VaultId(pub [u8; 32]);
 
 impl VaultId {
@@ -247,7 +273,18 @@ pub const MAX_SCALE: u8 = 18;
 /// be non-exhaustive so future asset kinds (RFC-driven additive
 /// evolution) do NOT force every downstream consumer to a central
 /// edit.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    BorshSerialize,
+    BorshDeserialize,
+)]
 #[non_exhaustive]
 pub enum AssetKind {
     /// The native OCTO-W (formerly `MicroOctoW` pre-RFC-0105 v2.0) governance token.
@@ -315,6 +352,72 @@ pub struct AssetMetadata {
     pub tombstoned: bool,
 }
 
+impl Default for AssetMetadata {
+    /// Default metadata: zero-scale, untombstoned, kind `OctoW`. Tests
+    /// that need richer metadata MUST use struct update syntax or a
+    /// dedicated helper (the type is `#[non_exhaustive]`).
+    fn default() -> Self {
+        Self::new(0, 0, String::new(), String::new(), AssetKind::OctoW)
+    }
+}
+
+impl AssetMetadata {
+    /// Canonical constructor (RFC-0105 v3.5 §3.1). Required because
+    /// `AssetMetadata` is `#[non_exhaustive]` — external crates cannot
+    /// use struct expression syntax even with `..Default::default()`.
+    /// `governance_pubkey`, `chain_id`, and `tombstoned` default to
+    /// `None` / `false` and can be set via the dedicated setters below.
+    #[must_use]
+    pub fn new(
+        wire_scale: u8,
+        display_decimals: u8,
+        denomination: String,
+        symbol: String,
+        kind: AssetKind,
+    ) -> Self {
+        Self {
+            wire_scale,
+            display_decimals,
+            denomination,
+            symbol,
+            kind,
+            governance_pubkey: None,
+            chain_id: None,
+            asset_name: String::new(),
+            tombstoned: false,
+        }
+    }
+
+    /// Setter for `asset_name` (RFC-0105 v3.5 §3.1). Required because
+    /// `#[non_exhaustive]` blocks struct update from external crates.
+    #[must_use]
+    pub fn with_asset_name(mut self, asset_name: impl Into<String>) -> Self {
+        self.asset_name = asset_name.into();
+        self
+    }
+
+    /// Setter for `governance_pubkey` (RFC-0105 v3.5 §3.1).
+    #[must_use]
+    pub fn with_governance_pubkey(mut self, pk: [u8; 32]) -> Self {
+        self.governance_pubkey = Some(pk);
+        self
+    }
+
+    /// Setter for `chain_id` (RFC-0105 v3.5 §3.1).
+    #[must_use]
+    pub fn with_chain_id(mut self, chain_id: ChainId) -> Self {
+        self.chain_id = Some(chain_id);
+        self
+    }
+
+    /// Setter for `tombstoned` flag (RFC-0105 v3.5 §3.1).
+    #[must_use]
+    pub fn with_tombstoned(mut self, tombstoned: bool) -> Self {
+        self.tombstoned = tombstoned;
+        self
+    }
+}
+
 /// Asset registry errors (RFC-0105 v3.5 §3.1 + §3.5 L316-352).
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum AssetError {
@@ -334,6 +437,75 @@ pub trait AssetRegistry: Send + Sync {
     /// Resolve `asset_id` to its metadata. Returns `Err(AssetUnknown)` if
     /// the asset is not registered OR if it is tombstoned.
     fn metadata(&self, asset_id: &AssetId) -> Result<AssetMetadata, AssetError>;
+}
+
+/// Vault containment errors (RFC-0105 v3.5 §3.1 + Mission F v3.6 §2.2 Gate 3).
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum VaultAssetError {
+    /// `vault_id` not present in the registry.
+    #[error("vault_id not registered")]
+    VaultUnknown,
+    /// `(vault_id, asset_id)` not in vault's asset containment.
+    #[error("vault does not contain this asset")]
+    VaultAssetMismatch,
+}
+
+/// VaultRegistry trait — canonical home per RFC-0105 v3.5 §3.1 + Mission F
+/// v3.6 §2.2 Gate 3 (`contains_asset` check).
+pub trait VaultRegistry: Send + Sync {
+    /// Check whether `vault_id` is registered.
+    fn vault_exists(&self, vault_id: &VaultId) -> bool;
+    /// Check whether `vault_id` contains `asset_id` in its asset set.
+    fn contains_asset(&self, vault_id: &VaultId, asset_id: &AssetId)
+        -> Result<(), VaultAssetError>;
+}
+
+/// In-memory `VaultRegistry` impl for tests + substrate-local lookups.
+#[derive(Debug, Default)]
+pub struct InMemoryVaultRegistry {
+    vaults: HashSet<VaultId>,
+    vault_assets: HashMap<VaultId, HashSet<AssetId>>,
+}
+
+impl InMemoryVaultRegistry {
+    /// Create a new in-memory vault registry.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a vault (no asset containment yet).
+    pub fn register_vault(&mut self, vault_id: VaultId) -> bool {
+        self.vaults.insert(vault_id)
+    }
+
+    /// Add `asset_id` to `vault_id`'s asset set.
+    pub fn add_asset(&mut self, vault_id: &VaultId, asset_id: AssetId) {
+        self.vault_assets
+            .entry(*vault_id)
+            .or_default()
+            .insert(asset_id);
+    }
+}
+
+impl VaultRegistry for InMemoryVaultRegistry {
+    fn vault_exists(&self, vault_id: &VaultId) -> bool {
+        self.vaults.contains(vault_id)
+    }
+
+    fn contains_asset(
+        &self,
+        vault_id: &VaultId,
+        asset_id: &AssetId,
+    ) -> Result<(), VaultAssetError> {
+        if !self.vaults.contains(vault_id) {
+            return Err(VaultAssetError::VaultUnknown);
+        }
+        match self.vault_assets.get(vault_id) {
+            Some(set) if set.contains(asset_id) => Ok(()),
+            _ => Err(VaultAssetError::VaultAssetMismatch),
+        }
+    }
 }
 
 // =============================================================================

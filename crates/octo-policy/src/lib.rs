@@ -58,6 +58,14 @@ pub mod policy_kinds;
 pub mod policy_registry;
 pub mod workflow_kind;
 
+// Mission F (RFC-0960 v3.6): BurnEventRef substrate + 3-sink atomicity.
+pub mod burn_event;
+
+pub use burn_event::{
+    AuditError, AuditSink, BurnEventError, BurnEventRef, SettlementId, TransferEventLog,
+    TransferEventLogError, ZERO_VAULT_ID,
+};
+
 use std::collections::{HashMap, HashSet};
 
 use cipherocto_encoding::Constraint;

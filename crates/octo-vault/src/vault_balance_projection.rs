@@ -339,10 +339,13 @@ pub fn map_resolver_error(e: VaultAssetResolverError) -> ProjectionError {
 // v015 SQL DDL (RFC-0960 §3.1)
 // ============================================================================
 //
-// Per-crate numbering per substrate state — `octo-vault/migrations/` has
-// v013+v014 (verified via `ls`); next free is v015. When the centralized
-// migration runner (RFC §3.1) lands, this MUST be renumbered to
-// global v017 per the RFC proposal.
+// Per-crate numbering per substrate state — `octo-vault/migrations/`
+// currently holds `v013__create_vaults.sql` +
+// `v014__create_transfer_events.sql` +
+// `v015__create_vault_balance_projection_cache.sql`. Next free is
+// `v016`. When the centralized migration runner (RFC-0960 §3.1)
+// lands, these MUST be renumbered to a global sequence per the RFC
+// proposal.
 
 /// SQL DDL for the projection cache table. PK `(chain_id, vault_id)`.
 /// Columns per RFC-0960 §3.1.
@@ -429,6 +432,34 @@ mod tests {
         assert!(V015_DDL.contains("source_kind"));
     }
 
+    /// TV-VP-9 (R9 test-coverage): `TransferEventLogInsertError::InsertFailed`
+    /// MUST be returned when the underlying log rejects the insert. This
+    /// is the only crate-level test that exercises the `InsertFailed`
+    /// variant end-to-end (production Layer D adapter integration tests
+    /// cover the Stoolap `INSERT` path; this test locks the
+    /// `TransferEventLog` trait impl's fail-CLOSED contract).
+    #[cfg(feature = "testing")]
+    #[test]
+    fn tv_vp9_transfer_event_log_insert_failed() {
+        use crate::event_log_producer::TransferEventRef;
+        use crate::testing::StubTransferEventLog;
+        let mut log = StubTransferEventLog::failing_insert();
+        let event = TransferEventRef {
+            chain_id: ChainId::from_bytes([1u8; 32]),
+            from_vault_id: VaultId::from_bytes([2u8; 32]),
+            to_vault_id: VaultId::from_bytes([3u8; 32]),
+            asset_id: AssetId::from_bytes([4u8; 32]),
+            amount: Dqa::new(1_000, 0).unwrap(),
+            occurred_at_unix: 1_700_000_000,
+            event_id: [5u8; 32],
+        };
+        let err = log.insert(&event).unwrap_err();
+        assert!(
+            matches!(err, crate::vault_balance_projection::TransferEventLogInsertError::InsertFailed),
+            "StubTransferEventLog::failing_insert MUST return TransferEventLogInsertError::InsertFailed; got {err:?}"
+        );
+    }
+
     /// TV-VP-8 (R7 test-coverage): `map_resolver_error` is a public
     /// adapter between `VaultAssetResolverError` and `ProjectionError`.
     /// This test locks the lifting contract:
@@ -452,11 +483,11 @@ mod tests {
     }
 
     /// TV-VP-6 (R6 test-coverage): TTL boundary + 1-second-past
-    /// regression guard. The `now - cached_at <= ttl_seconds` check at
-    /// line 270 serves entries while `elapsed <= ttl` (inclusive) and
-    /// evicts when `elapsed > ttl`. This test locks both sides of the
-    /// boundary so a future regression to `<=` evicting at exact
-    /// boundary OR `<` evicting early both fail.
+    /// regression guard. The `now - cached_at <= ttl_seconds` check in
+    /// `VaultBalanceCache::get` serves entries while `elapsed <= ttl`
+    /// (inclusive) and evicts when `elapsed > ttl`. This test locks
+    /// both sides of the boundary so a future regression to `<=`
+    /// evicting at exact boundary OR `<` evicting early both fail.
     ///
     /// We construct a cache directly + mutate `cached_at_unix_seconds`
     /// to force each boundary state.
@@ -499,8 +530,8 @@ mod tests {
 
     /// TV-VP-7 (R6 test-coverage): TTL exact-boundary inclusive
     /// regression guard. At `now - cached_at == ttl_seconds` the entry
-    /// MUST still be served (inclusive `<=` check). A regression to
-    /// `<` would evict one second early.
+    /// MUST still be served by `VaultBalanceCache::get` (inclusive
+    /// `<=` check). A regression to `<` would evict one second early.
     #[test]
     fn tv_vp7_ttl_exact_boundary_served() {
         use std::time::{SystemTime, UNIX_EPOCH};

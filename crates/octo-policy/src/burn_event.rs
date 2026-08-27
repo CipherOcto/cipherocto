@@ -144,6 +144,7 @@ pub use octo_vault::TransferEventLog;
 
 /// Audit invariant violation (RFC-0105 §3.13 tri-invariant pair).
 #[derive(Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AuditInvariantViolation {
     #[error("asset_id mismatch: burn = {burn_asset_id:?}, caveat = {caveat_asset_id:?}")]
     AssetMismatch {

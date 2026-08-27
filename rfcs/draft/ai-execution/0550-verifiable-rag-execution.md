@@ -49,7 +49,7 @@ graph TB
         Q_TEXT[Query Text]
     end
 
-    subgraph "RFC-0150 Vector Query"
+    subgraph "RFC-0304 Vector Query"
         SEARCH[VECTOR_SEARCH]
     end
 
@@ -58,7 +58,7 @@ graph TB
         PROMPT[Prompt Construction]
     end
 
-    subgraph "RFC-0106 Numeric"
+    subgraph "RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) Numeric"
         MODEL[Model Inference]
     end
 
@@ -111,7 +111,7 @@ Execution is performed by the deterministic runtime.
 
 ### Retrieval Stage
 
-Retrieval uses the vector query engine from RFC-0150.
+Retrieval uses the vector query engine from RFC-0304.
 
 ```
 VECTOR_SEARCH(
@@ -171,7 +171,7 @@ Tie-breaking: lowest token_id wins
 
 ### Deterministic Numeric Execution
 
-All model operations use deterministic arithmetic from RFC-0106.
+All model operations use deterministic arithmetic from RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal).
 
 Allowed types:
 
@@ -329,13 +329,13 @@ VRE provides:
 
 ## Related RFCs
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower (DNT) — Numeric types
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower (DNT) — Numeric types
 - RFC-0108 (Retrieval): Verifiable AI Retrieval — Retrieval foundations
 - RFC-0148 (Numeric/Math): Deterministic Linear Algebra Engine — Distance primitives
 - RFC-0149 (Retrieval): Deterministic Vector Index (HNSW-D) — ANN index
-- RFC-0150 (Retrieval): Verifiable Vector Query Execution — Query engine
+- RFC-0304 (Retrieval): Verifiable Vector Query Execution — Query engine
 
-> **Note**: RFC-0151 completes the verifiable AI stack.
+> **Note**: RFC-0550 completes the verifiable AI stack. (canonical replacement per numeric-tier phantom sweep)
 
 ## Related Use Cases
 

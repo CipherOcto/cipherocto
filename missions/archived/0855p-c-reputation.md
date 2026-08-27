@@ -10,7 +10,7 @@ RFC-0855p-c (Networking): DomainCoordinator Role — §"Future Work"
 
 ## Summary
 
-Similar to RFC-0855p-b F(cross-mission recorder reputation), but per DomainCoordinator and across the domains it manages. A DC with a poor cross-domain reputation (many slashes across many domains) is deprioritized in future elections. The store is keyed by canonical DC recorder DID or stable lineage identifier — NOT by `dc_pubkey` (which RFC-0968-A1 amendment 29 replaced as authoritative identity).
+Similar to RFC-0855p-b F(cross-mission recorder reputation), but per DomainCoordinator and across the domains it manages. A DC with a poor cross-domain reputation (many slashes across many domains) is deprioritized in future elections. The store is keyed by canonical DC recorder DID or stable lineage identifier — NOT by `dc_pubkey` (which RFC-0968 §28.4 amendment 22 replaced as authoritative identity).
 
 ## Design
 
@@ -24,7 +24,7 @@ Similar to RFC-0855p-b F(cross-mission recorder reputation), but per DomainCoord
 ## Acceptance Criteria
 
 - [x] `DcRootedSlashReputationStoreCompat` keyed by canonical DC recorder DID (`crates/octo-network/src/reputation/dc_store.rs`, `fe3238d2`)
-- [x] Gossip topic `/dot/reputation/dc/{dc_did}` (NOT `dc_pubkey`) per RFC-0968-A1 amendment 29 (`fe3238d2`)
+- [x] Gossip topic `/dot/reputation/dc/{dc_did}` (NOT `dc_pubkey`) per RFC-0968 §28.4 amendment 22 (`fe3238d2`)
 - [x] No authoritative store key or gossip topic uses `dc_pubkey` (audit: see `crates/octo-network/src/reputation/dc_store.rs` — keyed by `RecorderDid` only)
 - [x] Cross-domain slash events converted into RFC-0968 canonical event/aggregate form BEFORE persistence (DC layer = `ReputationLayer::Coordinator` filter in `refresh_cross_domain_for`)
 - [x] Election integration: RFC-0968 §10 `election_priority` adapter with `layer = Coordinator` + caller-supplied trusted `now_unix`; legacy `priority_legacy` preserved for back-compat (`fe3238d2`)
@@ -49,7 +49,7 @@ Reference: `crates/octo-network/src/reputation/slash_store.rs` (existing, from 0
 
 Depends on:
 
-- **RFC-0968 (Accepted)** — authoritative reputation store, §10 election_priority adapter, §7.1 retirement gate per adapter, RFC-0968-A1 amendment 29 (canonical DC DID / recorder-authoritative signature model)
+- **RFC-0968 (Accepted)** — authoritative reputation store, §10 election_priority adapter, §7.1 retirement gate per adapter, RFC-0968 §28.4 amendment 22 (canonical DC DID / recorder-authoritative signature model)
 - **Mission 0968 (claimed)** — provides persisted `ReputationStore` and `DcRootedSlashReputationStoreCompat` adapter; this mission reads through the adapter, NOT directly from a legacy in-memory store
 - **Mission 0968-b (open, this RFC's marketplace carrier)** — owns marketplace read-side retirement gate
 - Mission 0855p-c-cross-domain-slash (which updates the reputation store; must use the same canonical DC DID / lineage model per the amendment)
@@ -88,7 +88,7 @@ Same as 0855p-b: 5 slashes is a strong signal of repeated misbehavior. The thres
 
 ### Why canonical DC DID / recorder-authoritative envelope?
 
-RFC-0968-A1 amendment 29 closed the pubkey-keyed / coordinator-authoritative model for DC slash gossip. DC rotation, key compromise, and Sybil-instability all break the pubkey model. The canonical DC recorder DID / stable lineage identifier is governance-attested (amendment 40 / 44) and survives DC rotation; the recorder-authoritative envelope prevents a misbehaving DC from forging or suppressing slash events against another DC.
+RFC-0968 §28.4 amendment 22 closed the pubkey-keyed / coordinator-authoritative model for DC slash gossip. DC rotation, key compromise, and Sybil-instability all break the pubkey model. The canonical DC recorder DID / stable lineage identifier is governance-attested (RFC-0968-A1 amendment 40 (deferred to RFC-0968-A2); RFC-0968-A1 amendment 44 (deferred to RFC-0968-A2)) and survives DC rotation; the recorder-authoritative envelope prevents a misbehaving DC from forging or suppressing slash events against another DC.
 
 ## Mitigates
 

@@ -1,5 +1,5 @@
 //! Mission 0959-c1 TV-0959-01..25 byte-exact settlement wire-format fixtures
-//! (RFC-0959 v2.0 §Wire Format + review §20.7).
+//! (RFC-0959 §Wire Format + review §20.7).
 //!
 //! 25 byte-exact TV split into 5 families per AC-3:
 //! - **TV-01..05 — Dqa 16-byte BE round-trip**: byte-exact `DqaEncoding`

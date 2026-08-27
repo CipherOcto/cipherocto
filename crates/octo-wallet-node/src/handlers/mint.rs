@@ -108,7 +108,7 @@ impl<'a> MintHandler<'a> {
     /// on macaroon mint failure or wire-form serialization failure.
     pub fn handle(&self, req: &MintRequest) -> Result<HandlerOutput, ProtocolError> {
         // Validate holder_did shape via canonical codec; reject bare
-        // legacy form (RFC-0010 v1.2 F4 + 0010-d mission).
+        // legacy form (RFC-0010 F4 + 0010-d mission).
         octo_ident::CanonicalCodec::parse(&req.holder_did, false).map_err(did_error_to_protocol)?;
 
         let token = match req.payment_caveat.as_ref() {
@@ -413,7 +413,7 @@ mod tests {
         let id = sample_identity();
         let handler = MintHandler::new(&id);
         // Bare form (no `did:octo:` prefix) must fail canonical-codec
-        // validation per RFC-0010 v1.2 F4.
+        // validation per RFC-0010 F4.
         let req = MintRequest {
             holder_did: "not-a-did-at-all".into(),
             capability: [0xab; 32],
@@ -457,7 +457,7 @@ mod tests {
 
     /// TV7 — `discharge_macaroon_bytes` is empty for a root mint (no
     /// upstream attenuator). V2 envelope carries a single discharge
-    /// (singular vs V1's Vec) per RFC-0009 v1.2 §Compatibility.
+    /// (singular vs V1's Vec) per RFC-0009 §Compatibility.
     #[test]
     fn handle_v2_envelope_discharge_macaroon_bytes_empty_for_root() {
         let id = sample_identity();

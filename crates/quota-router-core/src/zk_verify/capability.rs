@@ -7,7 +7,7 @@
 //! check, clock skew) and delegates the STWO proof verification itself
 //! to `zk_verifier::verify_capability_zk`.
 //!
-//! Per RFC-0958 v1.1 R1 H8 fix: clock skew bounds check added
+//! Per RFC-0958 R1 H8 fix: clock skew bounds check added
 //! (`MAX_SKEW_SECS = 300`); per R3 N5 fix: emits `ZkVerifyError::ClockSkewExceeded`.
 //!
 //! **v1.4 (2026-07-22):** `provider_slot_id` read directly from
@@ -161,7 +161,7 @@ pub fn verify_capability_zk(
     //    (extracted from stoolap fork 2026-07-22). Map domain-layer
     //    CipherOcto PublicInputs → zk-verifier PublicInputs.
     //
-    //    **RFC-0958 v1.4 (2026-07-22):** `provider_slot_id` is read
+    //    **RFC-0958 (2026-07-22):** `provider_slot_id` is read
     //    directly from `proof.public_inputs.provider_slot_id` (sourced
     //    from holder vault slot at mint time, per RFC-0009 §Vault). No
     //    sentinel placeholder. Cross-impl vectors carry concrete slot IDs.

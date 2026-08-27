@@ -1,4 +1,4 @@
-//! Mission B (RFC-0960 v3.7 §2.4 + RFC-0913) per-process cache-subscriber
+//! Mission B (RFC-0960 §2.4 + RFC-0913) per-process cache-subscriber
 //! factory.
 //!
 //! Layer B (octo-vault) substrate. The [`VaultProjectionInvalidationSubscriber`]
@@ -156,7 +156,7 @@ pub fn sign_envelope(preimage: &[u8], signing_key: &SigningKey) -> [u8; 64] {
 /// }
 /// ```
 ///
-/// Per RFC-0960 v3.7 §2.4 the current substrate performs whole-cache
+/// Per RFC-0960 §2.4 the current substrate performs whole-cache
 /// invalidation on every envelope (per-key invalidation reserved for
 /// Cycle 2). Lock ordering rule: subscriber holds `cache: Mutex` only,
 /// never `process_drain_lock`; producers hold `process_drain_lock` only,

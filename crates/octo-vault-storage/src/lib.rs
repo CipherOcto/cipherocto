@@ -1,4 +1,4 @@
-//! `octo-vault-storage` — RFC-0206 v2.1 §Adapter Crate List row 1.
+//! `octo-vault-storage` — RFC-0206 §Adapter Crate List row 1.
 //!
 //! Substrate adapter for the `octo-vault` owner crate. This crate:
 //!

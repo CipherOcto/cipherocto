@@ -215,7 +215,7 @@ Future enhancements (optional):
 - L1 cache table for higher cache hit rates
 - Rate limit state table for distributed rate limiting
 
-## Changelog
+## Version History
 
 | Version | Date       | Changes |
 |---------|------------|---------|

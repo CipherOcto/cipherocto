@@ -30,7 +30,7 @@ async-trait = "0.1"
 
 # Canonical coding (RFC-0126)
 borsh = "=1.5.0"
-# bs58 for deriving public-key DID wire form in tests (RFC-0010 v1.2 F4)
+# bs58 for deriving public-key DID wire form in tests (RFC-0010 F4)
 bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
 
 # Errors

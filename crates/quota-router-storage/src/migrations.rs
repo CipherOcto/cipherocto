@@ -148,7 +148,7 @@ pub(super) static BUILTIN_MIGRATION_CATALOG:
 
 /// Migration errors.
 #[allow(deprecated)]
-// _legacy_StorageError alias retained for ≥ 6-month transition window per RFC-0206 v2.1 §Migration Order.
+// _legacy_StorageError alias retained for ≥ 6-month transition window per RFC-0206 §Migration Order.
 #[derive(Debug, Error)]
 pub enum MigrationError {
     /// Substrate-level failure (DDL, tracker-table initialization,
@@ -163,7 +163,7 @@ pub enum MigrationError {
     UnknownMigration { version: u32, catalog_max: u32 },
 }
 
-#[allow(deprecated)] // _legacy_StorageError alias retained for ≥ 6-month transition window per RFC-0206 v2.1 §Migration Order.
+#[allow(deprecated)] // _legacy_StorageError alias retained for ≥ 6-month transition window per RFC-0206 §Migration Order.
 impl From<octo_storage_core::_legacy_StorageError> for MigrationError {
     fn from(e: octo_storage_core::_legacy_StorageError) -> Self {
         match e {

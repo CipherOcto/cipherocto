@@ -346,7 +346,7 @@ impl Default for SlashingRules {
 /// Per-provider state tracked by the slashing ledger.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProviderStake {
-    /// Mission 0900-d1: typed `ChainId` per RFC-0010 v1.4. Mirrors
+    /// Mission 0900-d1: typed `ChainId` per RFC-0010. Mirrors
     /// `SlashLedgerRow.chain_id` + the substrate PK shape
     /// `(chain_id, provider_id)`. Production paths use
     /// `DEFAULT_CHAIN_ID`; multi-chain slashing activates after this

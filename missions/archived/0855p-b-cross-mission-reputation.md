@@ -10,7 +10,7 @@ RFC-0855p-b (Networking): Coordinator Lifecycle — §"Future Work"
 
 ## Summary
 
-Each `SlashEvent` per §"Slash Reason Codes" carries a per-mission `slash_count`. For cross-mission reputation, augment the local count with a global view fetched from a `SlashReputationStoreCompat` (the RFC-0968-A1 compatibility adapter that reads from the persisted `ReputationStore`). The store is keyed by canonical recorder DID OR stable lineage identifier — NOT by `coordinator_pubkey` (which the RFC-0968-A1 amendments 28-29 replaced as authoritative identity). On election, candidates with a higher global slash count are deprioritized via the canonical RFC-0968 §10 `election_priority` adapter; coordinator signatures are source-mission authorization only, NOT authoritative for the reputation payload.
+Each `SlashEvent` per §"Slash Reason Codes" carries a per-mission `slash_count`. For cross-mission reputation, augment the local count with a global view fetched from a `SlashReputationStoreCompat` (the RFC-0968-A1 compatibility adapter that reads from the persisted `ReputationStore`). The store is keyed by canonical recorder DID OR stable lineage identifier — NOT by `coordinator_pubkey` (which the RFC-0968 §28.4 amendments 21 + 22 replaced as authoritative identity). On election, candidates with a higher global slash count are deprioritized via the canonical RFC-0968 §10 `election_priority` adapter; coordinator signatures are source-mission authorization only, NOT authoritative for the reputation payload.
 
 ## Design
 
@@ -27,7 +27,7 @@ Each `SlashEvent` per §"Slash Reason Codes" carries a per-mission `slash_count`
 - [x] Gossip topic `/dot/reputation/{recorder_did}` (NOT `coordinator_pubkey`) in `crates/octo-network/src/gossip/reputation.rs` (`388fd327`)
 - [x] No authoritative store key or gossip topic uses `coordinator_pubkey` (audit: no `coordinator_pubkey:` field in `SlashReputationStoreCompat`)
 - [x] Slash events carry the RFC-0968 recorder-authoritative envelope: `event_id`, `recorder_did`, `recorder_signature`, `source_mission`, `source_domain`, rotation lineage where applicable (`GossipEnvelope` in `crates/octo-reputation/src/gossip.rs`, `f0c8d6ad`)
-- [x] Coordinator signatures are present only as source-mission authorization; they do NOT replace recorder authorization on the slash event itself (RFC-0968-A1 amendment 28 + authority model in `dc_store.rs`)
+- [x] Coordinator signatures are present only as source-mission authorization; they do NOT replace recorder authorization on the slash event itself (RFC-0968 §28.4 amendment 21 + authority model in `dc_store.rs`)
 - [x] Election priority consumed via RFC-0968 `election_priority` (`388fd327` + amendment 27); legacy `priority_legacy` preserved for differential test
 - [x] Hard threshold: `global_slash_count >= 5` → excluded (pre-filter to `election_priority`) — `HARD_THRESHOLD = 5` constant in `slash_store.rs`
 - [x] Cross-mission conformance test: byte-identical ordering over 1000 candidates (`differential_1000_candidates_byte_identical_ordering`, `388fd327`)
@@ -51,7 +51,7 @@ Reference: `crates/octo-network/src/reputation/slash_store.rs` (new); `crates/oc
 
 Depends on:
 
-- **RFC-0968 (Accepted)** — authoritative reputation store, §10 election_priority adapter, §7.1 retirement gate per adapter, RFC-0968-A1 amendments 28-29 (canonical DID / recorder-authoritative signature model)
+- **RFC-0968 (Accepted)** — authoritative reputation store, §10 election_priority adapter, §7.1 retirement gate per adapter, RFC-0968 §28.4 amendments 21 + 22 (canonical DID / recorder-authoritative signature model)
 - **Mission 0968 (claimed)** — provides persisted `ReputationStore` and `SlashReputationStoreCompat` adapter; this mission reads through the adapter, NOT directly from the legacy in-memory store
 - **Mission 0968-b (open, this RFC's marketplace carrier)** — owns marketplace read-side retirement gate
 - RFC-0855p-b status: Accepted
@@ -91,7 +91,7 @@ A hard disqualification is a one-strike-and-out policy that is too aggressive. A
 
 ### Why canonical DID / recorder-authoritative envelope?
 
-RFC-0968-A1 amendments 28-29 closed the pubkey-keyed / coordinator-authoritative model. Slash gossip is part of the cross-mission reputation pipeline; coordinator rotation, key compromise, and Sybil-instability all break the pubkey model. The canonical recorder DID / stable lineage identifier is governance-attested (amendment 40 / 44) and survives coordinator rotation; the recorder-authoritative envelope prevents a misbehaving coordinator from forging or suppressing slash events against a recorder.
+RFC-0968 §28.4 amendments 21 + 22 closed the pubkey-keyed / coordinator-authoritative model. Slash gossip is part of the cross-mission reputation pipeline; coordinator rotation, key compromise, and Sybil-instability all break the pubkey model. The canonical recorder DID / stable lineage identifier is governance-attested (RFC-0968-A1 amendment 40 (deferred to RFC-0968-A2); RFC-0968-A1 amendment 44 (deferred to RFC-0968-A2)) and survives coordinator rotation; the recorder-authoritative envelope prevents a misbehaving coordinator from forging or suppressing slash events against a recorder.
 
 ## Mitigates
 

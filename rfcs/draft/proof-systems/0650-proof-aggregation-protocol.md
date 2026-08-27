@@ -69,7 +69,7 @@ RFC-0107 (Transformer Circuit)
        ↓
 RFC-0108 (Training Circuits)
        ↓
-RFC-0146 (Proof Aggregation) ← THIS RFC
+RFC-0650 (Proof Aggregation) ← THIS RFC (canonical replacement per numeric-tier phantom sweep)
        ↓
 RFC-0630 (Proof-of-Inference)
        ↓
@@ -1303,7 +1303,7 @@ const PENALTY_FRACTIONAL_OK: bool = false;  // whole token penalties only
 
 ### Shard-Aggregation Boundary
 
-**Scope:** This RFC specifies **intra-shard aggregation** only. Cross-shard aggregation is **out of scope** for RFC-0146.
+**Scope:** This RFC specifies **intra-shard aggregation** only. Cross-shard aggregation is **out of scope** for RFC-0650. (canonical replacement per numeric-tier phantom sweep)
 
 **Parent Shard Concept (Interface Definition):**
 

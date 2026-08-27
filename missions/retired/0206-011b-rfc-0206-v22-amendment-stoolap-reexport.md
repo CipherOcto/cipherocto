@@ -7,9 +7,15 @@ metadata:
   originSessionId: 9a316ae1-cb15-46f4-801f-99c2545bccf7
   created: 2026-08-20T00:00:00.000Z
   v: "1.0"
+  supersedes: null
   depends_on:
     - 0206-001-substrate-newtype
     - RFC-0206
+phase: 1.9 substrate re-export prerequisite
+layer: A
+rfc_authority: RFC-0206 v2.4
+tvs:
+  - TV-0206-A9
 ---
 
 # Mission `0206-011b-rfc-0206-v22-amendment-stoolap-reexport` v1.0 — OPEN 2026-08-20

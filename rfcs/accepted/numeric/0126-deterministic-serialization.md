@@ -913,6 +913,7 @@ The following issues are acknowledged limitations and do not block conformance:
 | 2.2 | 2026-03-20 | CipherOcto | CRIT-1/2/3/4: probe count 16, TRAP 24-byte, DQA i64, enum i128; HIGH-1/2/3/4/5: JSON whitespace, BIGINT TRAP 12-byte, Merkle domain sep, string 1MB, DFP exception; MED-1/5: known issues, Chinese char removed |
 | 2.3 | 2026-03-20 | CipherOcto | CRIT-1 NEW: RFC-0111 added as required dependency; CRIT-2 NEW: Numeric TRAP corrected to RFC-0111 24-byte format; HIGH-1 NEW: DVEC 1-byte length clarified as probe-specific; HIGH-3 NEW: RFC-0111 cited as TRAP authority; MED-1 NEW: BigInt limb byte order corrected to little-endian; DCS_OVERFLOW error description fixed |
 | 2.4 | 2026-03-20 | CipherOcto | CRIT-2/3: TRAP mantissa negative; CRIT-6: DFP exception clarified; NEW-CRIT-1: probe scope; MED-7/8/9: known issues; MED-11: scheduling; HIGH-5: Entry 15 RFC-0104 note |
+| 2.5.1 | 2026-03-20 | CipherOcto | Post-review prose fixes: TRAP box description corrected (upper vs lower 8 bytes); Struct deserialization schema-driven TRAP rules added; Entries 5/9 duplicate leaf hash noted in Known Issues |
 
 ## Compatibility
 

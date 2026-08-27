@@ -24,7 +24,7 @@
 //!    reject `req_builder.header("Authorization", ...)` patterns that bypass
 //!    the canonical helper.
 //!
-//! Spec authority: RFC-0957 §Adversary Analysis A5 + RFC-0959 v1.0
+//! Spec authority: RFC-0957 §Adversary Analysis A5 + RFC-0959
 //! §Provider boundary + mission `0957-b-provider-boundary-exercise-path.md`
 //! AC-1 + AC-8.
 

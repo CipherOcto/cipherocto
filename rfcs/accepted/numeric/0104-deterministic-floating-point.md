@@ -1922,3 +1922,9 @@ DFP integration MUST include:
 - M4: Fix DFP_MAX_MANTISSA comment - correct formula to (2^113-1) × 2^1023
 - M5: Add INT → DFP promotion rules with rationale
 - v1.13: SQRT algorithm, verification probe structure, round_to_113 zero guard
+
+## Version History
+
+| Version | Date       | Change                                                                                |
+|---------|------------|---------------------------------------------------------------------------------------|
+| 1.0     | 2026-08-22 | Retroactive VH table addition (per long-horizon plan v1.3 Phase 1 + Option C per M37). |

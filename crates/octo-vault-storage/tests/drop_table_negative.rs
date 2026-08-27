@@ -1,6 +1,6 @@
 //! TV-0206-A11 — `drop_table_negative.rs` for `octo-vault-storage`.
 //!
-//! Per RFC-0206 v2.1 §Test Vectors:
+//! Per RFC-0206 §Test Vectors:
 //! > `ls crates/octo-{vault,reputation,cap-macaroon-vault,matrix-session-store,policy}-storage/tests/ | grep -c drop_table_negative` equals 5
 //!
 //! `DdlRegistered(DropTable(...))` against a non-allowlisted DDL

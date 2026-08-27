@@ -58,7 +58,7 @@ pub mod policy_kinds;
 pub mod policy_registry;
 pub mod workflow_kind;
 
-// Mission F (RFC-0960 v3.6): BurnEventRef substrate + 3-sink atomicity.
+// Mission F (RFC-0960): BurnEventRef substrate + 3-sink atomicity.
 pub mod burn_event;
 pub mod event_log_producer;
 

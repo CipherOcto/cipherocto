@@ -20,7 +20,7 @@
 //!    rejected by `egress::key_swap::attach_bearer` with
 //!    `KeySwapError::CipheroctoInternalLeak`.
 //!
-//! Spec authority: RFC-0957 §Adversary A5 + RFC-0959 v1.0 §Provider
+//! Spec authority: RFC-0957 §Adversary A5 + RFC-0959 §Provider
 //! boundary + mission 0957-b AC-1.
 
 use quota_router_core::egress::key_swap::{

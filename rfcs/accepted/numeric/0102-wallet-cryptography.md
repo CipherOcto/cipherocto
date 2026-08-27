@@ -526,3 +526,9 @@ None - new functionality.
 
 **Submission Date:** 2026-03-03
 **Last Updated:** 2026-03-03
+
+## Version History
+
+| Version | Date       | Change                                                                                |
+|---------|------------|---------------------------------------------------------------------------------------|
+| 1.0     | 2026-08-22 | Retroactive VH table addition (per long-horizon plan v1.3 Phase 1 + Option C per M37). |

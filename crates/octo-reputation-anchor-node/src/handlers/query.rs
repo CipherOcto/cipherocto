@@ -84,7 +84,7 @@ impl QueryAnchorHandler {
     /// canonical DID shape.
     pub fn handle(&self, req: &QueryAnchorRequest) -> Result<HandlerOutput, ProtocolError> {
         // Validate canonical DID shape; reject legacy bare form.
-        // (RFC-0010 v1.2 F4 + mission 0010-d wallet-audience-validation.)
+        // (RFC-0010 F4 + mission 0010-d wallet-audience-validation.)
         let _parsed =
             octo_ident::CanonicalCodec::parse(&req.0, false).map_err(did_error_to_protocol)?;
 
@@ -134,7 +134,7 @@ mod tests {
     #[test]
     fn handle_rejects_legacy_bare_did() {
         // Mission 0871c AC: DID validation MUST reject legacy bare
-        // `did:octo:<base32>` form per RFC-0010 v1.2 F4 + 0010-d mission.
+        // `did:octo:<base32>` form per RFC-0010 F4 + 0010-d mission.
         let handler = QueryAnchorHandler::new();
         // 52-char base32 body, bare prefix — RFC-0010 legacy form.
         let bare = format!("did:octo:{}", "a".repeat(52));

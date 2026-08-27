@@ -75,7 +75,7 @@ OCTO-Network defines:
 Implementation integrates with existing stack:
 
 ```
-RFC-0106 (Numeric Tower)
+RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric Tower)
        ↓
 RFC-0120 (AI-VM)
        ↓
@@ -83,7 +83,7 @@ RFC-0107 (Transformer Circuit)
        ↓
 RFC-0630 (Proof-of-Inference)
        ↓
-RFC-0143 (OCTO-Network) ← NEW
+RFC-0843 (OCTO-Network) ← NEW (canonical replacement per numeric-tier phantom sweep)
 ```
 
 ## Specification
@@ -875,7 +875,7 @@ Backbone nodes provide:
 
 ## Related RFCs
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower
 - RFC-0120 (AI Execution): Deterministic AI Virtual Machine
 - RFC-0630 (Proof Systems): Proof-of-Inference Consensus
 - RFC-0107 (Numeric/Math): Deterministic Transformer Circuit
@@ -884,7 +884,7 @@ Backbone nodes provide:
 - RFC-0416 (Agents): Self-Verifying AI Agents
 - RFC-0140 (Consensus): Sharded Consensus Protocol
 - RFC-0141 (Consensus): Parallel Block DAG Specification
-- RFC-0142 (Consensus): Data Availability & Sampling Protocol
+- RFC-0742 (Consensus): Data Availability & Sampling Protocol
 
 ## Related Use Cases
 
@@ -917,7 +917,7 @@ Backbone nodes provide:
 └─────────────────────────┬───────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────┐
-│        Network Layer (RFC-0143)                        │
+│        Network Layer (RFC-0843)                        │
 │   OCTO-Network (libp2p)                               │
 │   Peer Discovery, Task Routing, Block Propagation     │
 └─────────────────────────────────────────────────────┘

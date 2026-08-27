@@ -26,7 +26,7 @@
 //! Arithmetic uses `dqa_cmp`/`dqa_sub` (the `Dqa` type does not
 //! implement `Ord`/`Sub` directly — see `determin/src/dqa.rs`).
 //!
-//! **Mission E (RFC-0965 v2.1):** asset-binding extension per §2.1 L70-90.
+//! **Mission E (RFC-0965):** asset-binding extension per §2.1.
 //! Adds `asset_id`, `registry_snapshot_epoch`, `nonce` fields;
 //! widens `attenuate` to 4-arg accepting `new_asset_id` +
 //! `&dyn AssetRegistry`; adds `verify()` (commits nonce) + `validate()`
@@ -50,15 +50,15 @@ use crate::{
 /// §Implementation Phases Phase 5.
 pub const PAID_QUERY_CAVEAT_NAME: &str = "paid-query/v1";
 
-/// Canonical OCTO-W asset_id (RFC-0105 v3.5 §3.1 L168).
+/// Canonical OCTO-W asset_id (RFC-0105 §3.1).
 ///
 /// `OCTO_W_ASSET_ID = AssetId::derive("OCTO-W")` — the native
 /// governance token. Used by Mission E legacy-form deserialization
-/// rejection (§2.4 L397-415) to distinguish legacy OCTO-W budget
+/// rejection (§2.4) to distinguish legacy OCTO-W budget
 /// caveats from new asset-generic PaymentCaveats.
 pub const OCTO_W_ASSET_ID_BYTES: [u8; 32] = [
     // BLAKE3("cipherocto/asset/v1/OCTO-W") — pin the canonical derivation
-    // at the substrate boundary. Per RFC-0105 v3.5 §3.1 L168 with the
+    // at the substrate boundary. Per RFC-0105 §3.1 with the
     // asset_id derivation rule `BLAKE3("cipherocto/asset/v1/" + role_token)`.
     0x7a, 0x9c, 0x12, 0x4f, 0xa3, 0x88, 0xd1, 0x5b, 0x67, 0xe2, 0x0c, 0x44, 0x91, 0xb7, 0x3a, 0xfe,
     0x55, 0x80, 0x21, 0xd9, 0x6c, 0x46, 0xae, 0xb3, 0x88, 0x4d, 0x97, 0x71, 0xe2, 0x33, 0x10, 0x5c,
@@ -84,7 +84,7 @@ pub fn octo_w_asset_id() -> AssetId {
 /// `#[serde(with = "dqa_serde::field")]` to encode the 16-byte BE
 /// `DqaEncoding` wire form (per RFC-0105 §Canonical Encoding).
 ///
-/// **Mission E field additions** (RFC-0965 v2.1 §2.1 L70-90):
+/// **Mission E field additions** (RFC-0965 §2.1):
 /// - `asset_id: AssetId` — binds caveat to a specific asset
 /// - `registry_snapshot_epoch: Epoch` — stale-snapshot detection
 /// - `nonce: Nonce` — anti-replay (NonceRegistry key)
@@ -103,7 +103,7 @@ pub struct PaymentCaveat {
     /// `"paid-query/v1"` for this variant; future variants carry
     /// distinct strings.
     pub caveat_name: String,
-    /// Asset bound to this caveat (RFC-0965 v2.1 §2.1 L75). `AssetId`
+    /// Asset bound to this caveat (RFC-0965 §2.1). `AssetId`
     /// prevents the holder from spending a USDC budget against an
     /// OCTO-W query (or vice versa).
     #[serde(with = "serde_asset_id")]
@@ -121,11 +121,11 @@ pub struct PaymentCaveat {
     /// expires".
     pub expires_at_unix_ms: u64,
     /// Snapshot of the registry epoch at mint/attenuation time
-    /// (RFC-0965 v2.1 §2.1 L87). `validate()` checks
+    /// (RFC-0965 §2.1). `validate()` checks
     /// `current_epoch >= registry_snapshot_epoch` (else stale).
     #[serde(with = "serde_epoch")]
     pub registry_snapshot_epoch: Epoch,
-    /// Anti-replay nonce (RFC-0965 v2.1 §2.1 L89). `verify()` calls
+    /// Anti-replay nonce (RFC-0965 §2.1). `verify()` calls
     /// `NonceRegistry::observe`; `validate()` calls
     /// `NonceRegistry::observe_readonly`.
     #[serde(with = "serde_nonce")]
@@ -211,7 +211,7 @@ impl PaymentCaveat {
     ///
     /// For legacy 3-arg construction (no asset_id, no epoch, no nonce),
     /// call [`PaymentCaveat::legacy_3arg`] — it carries a
-    /// `#[deprecated]` warning per RFC-0965 v2.1 §4.1 6-week window.
+    /// `#[deprecated]` warning per RFC-0965 §4.1 6-week window.
     #[must_use]
     pub fn new(
         asset_id: AssetId,
@@ -232,10 +232,10 @@ impl PaymentCaveat {
         }
     }
 
-    /// Legacy 3-arg constructor (RFC-0965 v2.1 §4.1 — 6-week
+    /// Legacy 3-arg constructor (RFC-0965 §4.1 — 6-week
     /// `#[deprecated]` window). Defaults: `asset_id = OCTO_W_ASSET_ID`,
     /// `registry_snapshot_epoch = Epoch(0)`, `nonce = Nonce([0u8; 32])`.
-    #[deprecated(note = "use 6-arg `new()` per RFC-0965 v2.1 §2.1; defaults asset_id to OCTO-W")]
+    #[deprecated(note = "use 6-arg `new()` per RFC-0965 §2.1; defaults asset_id to OCTO-W")]
     pub fn legacy_3arg(budget: Dqa, model: impl Into<String>, expires_at_unix_ms: u64) -> Self {
         Self {
             caveat_name: PAID_QUERY_CAVEAT_NAME.to_string(),
@@ -262,7 +262,7 @@ impl PaymentCaveat {
         self.model.is_empty() || self.model == query_model
     }
 
-    /// 4-arg attenuate per RFC-0965 v2.1 §2.2 L113-150.
+    /// 4-arg attenuate per RFC-0965 §2.2.
     ///
     /// Gates:
     /// 1. Registry resolves `self.asset_id` (else `AssetUnknown`)
@@ -330,10 +330,10 @@ impl PaymentCaveat {
         })
     }
 
-    /// Legacy 2-arg attenuate (RFC-0965 v2.1 §4.1 — 6-week
+    /// Legacy 2-arg attenuate (RFC-0965 §4.1 — 6-week
     /// `#[deprecated]` window). No asset_id, no registry handle.
     #[deprecated(
-        note = "use 4-arg `attenuate(new_budget, new_expires, new_asset_id, &registry)` per RFC-0965 v2.1 §2.2"
+        note = "use 4-arg `attenuate(new_budget, new_expires, new_asset_id, &registry)` per RFC-0965 §2.2"
     )]
     pub fn attenuate_legacy_2arg(
         &self,
@@ -368,7 +368,7 @@ impl PaymentCaveat {
     /// Verify a query proposal against this caveat (commits nonce).
     /// Returns the canonical `PaymentDecision`.
     ///
-    /// Gates (RFC-0965 v2.1 §2.3 L278-338, 8 gates):
+    /// Gates (RFC-0965 §2.3, 8 gates):
     /// 0. Registry resolves asset_id (else `AssetUnknown`)
     /// 1. Scale-binding (else `ScaleMismatch`)
     /// 2. Stale-snapshot — `current_epoch >= self.registry_snapshot_epoch` (else `StaleSnapshot`)
@@ -464,7 +464,7 @@ impl PaymentCaveat {
     ///
     /// Same gates 0-2 as `verify()` + gate 3 (anti-replay via
     /// `observe_readonly`). Used for audit-batch pre-flight per
-    /// RFC-0105 v3.5 §3.13 L669 + RFC-0965 v2.1 §2.3 L341-372.
+    /// RFC-0105 §3.13 + RFC-0965 §2.3.
     pub fn validate(
         &self,
         current_epoch: Epoch,
@@ -501,8 +501,8 @@ impl PaymentCaveat {
     }
 }
 
-/// Decision returned by `PaymentCaveat::verify` (RFC-0965 v2.1 rename
-/// from `PaidQueryDecision` per §2.3 L249). The legacy type alias
+/// Decision returned by `PaymentCaveat::verify` (RFC-0965 rename
+/// from `PaidQueryDecision` per §2.3). The legacy type alias
 /// `PaidQueryDecision = PaymentDecision` is preserved at the end of
 /// this module for backward compat.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -534,7 +534,7 @@ impl PaymentDecision {
     }
 }
 
-/// Reason a paid-query was rejected (RFC-0965 v2.1 §2.3 L222-244).
+/// Reason a paid-query was rejected (RFC-0965 §2.3).
 ///
 /// `#[non_exhaustive]` per CLAUDE.md §Architectural Principles
 /// "Extension over enumeration": Layer B substrate enums MUST be
@@ -552,8 +552,8 @@ pub enum PaymentRejectionReason {
     ModelMismatch,
     /// `query_cost > caveat.budget` (over-budget; `Partial` candidate).
     CostExceedsBudget,
-    /// `query_cost.wire_scale != self.budget.wire_scale` (RFC-0965 v2.1
-    /// §2.3 L231). Mission E substrate-fidelity reference: scale-binding
+    /// `query_cost.wire_scale != self.budget.wire_scale` (RFC-0965
+    /// §2.3). Mission E substrate-fidelity reference: scale-binding
     /// invariant at the substrate boundary.
     ScaleMismatch {
         /// The caveat's `budget.scale`.
@@ -630,12 +630,12 @@ pub enum AttenuationError {
     AssetUnknown(AssetId),
 }
 
-/// Legacy `PaidQueryDecision` alias (RFC-0965 v2.1 §2.3 L249).
-#[deprecated(note = "use PaymentDecision per RFC-0965 v2.1 §2.3")]
+/// Legacy `PaidQueryDecision` alias (RFC-0965 §2.3).
+#[deprecated(note = "use PaymentDecision per RFC-0965 §2.3")]
 pub type PaidQueryDecision = PaymentDecision;
 
-/// Legacy `PaidQueryRejectionReason` alias (RFC-0965 v2.1 §2.3 L249).
-#[deprecated(note = "use PaymentRejectionReason per RFC-0965 v2.1 §2.3")]
+/// Legacy `PaidQueryRejectionReason` alias (RFC-0965 §2.3).
+#[deprecated(note = "use PaymentRejectionReason per RFC-0965 §2.3")]
 pub type PaidQueryRejectionReason = PaymentRejectionReason;
 
 // Manual `Eq` for PaymentRejectionReason: `AssetId` is a `[u8; 32]`

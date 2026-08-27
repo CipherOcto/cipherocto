@@ -1,5 +1,5 @@
 //! Mission `0957-phase1-fixture-author` — Phase 1 Test Vector Fixture
-//! gate for RFC-0009 v1.2.
+//! gate for RFC-0009.
 //!
 //! 3 byte-exact test vectors (TV-1..TV-3) gating Phase 1 acceptance:
 //!
@@ -44,7 +44,7 @@
 //!
 //! - Phase 3 TV-4..TV-7 (capability token cross-version, MPC
 //!   threshold aggregation, ZK capability bundle) — separate
-//!   fixture + mission per RFC-0009 v1.2 §Test Vectors.
+//!   fixture + mission per RFC-0009 §Test Vectors.
 
 #![allow(clippy::vec_init_then_push)]
 
@@ -63,8 +63,8 @@ const FIXTURE_PATH: &str = "../../tests/fixtures/phase1_tv.json";
 /// TV-1: `MissionId` serde_json round-trip equivalence (v1.1 wire
 /// form unchanged in v1.2).
 ///
-/// The `MissionId` struct was introduced in RFC-0009 v1.1 with
-/// `serde::Serialize + Deserialize` derives. RFC-0009 v1.2 inherits
+/// The `MissionId` struct was introduced in RFC-0009 with
+/// `serde::Serialize + Deserialize` derives. RFC-0009 inherits
 /// the same wire form unchanged. This TV gates the invariant:
 /// `to_string(m) == to_string(from_str(to_string(m)))` byte-exact.
 ///
@@ -94,7 +94,7 @@ fn tv1_v11_round_trip_equivalence() -> Vec<u8> {
 /// Two `MissionKey` records derived via HKDF-BLAKE3 from a single
 /// `KeyHierarchy` seed + distinct `MissionId`s produce 64
 /// concatenation bytes that differ bytewise AND have no shared
-/// 16-byte prefix. Per RFC-0009 v1.2 §Hierarchical Attenuation:
+/// 16-byte prefix. Per RFC-0009 §Hierarchical Attenuation:
 /// child keys MUST be cryptographically independent (unlinkable
 /// across siblings).
 ///
@@ -148,7 +148,7 @@ fn tv2_child_unlinkability() -> Vec<u8> {
 /// The signature bytes MUST NOT contain the seed prefix (no
 /// exfiltration via the sig channel). The `Debug` impl MUST
 /// redact the seed field (no exfiltration via log/`dbg!` channel).
-/// Per RFC-0009 v1.2 §Security §Key Handling Rule 3 + mission
+/// Per RFC-0009 §Security §Key Handling Rule 3 + mission
 /// `0009-a` A9 mitigation.
 ///
 /// Inputs:
@@ -279,16 +279,16 @@ impl Phase1Fixture {
         let mut s = String::new();
         writeln!(s).unwrap();
         s.push_str(
-            "  \"_comment\": \"RFC-0009 v1.2 Phase 1 test vectors (TV-1..TV-3). \
+            "  \"_comment\": \"RFC-0009 Phase 1 test vectors (TV-1..TV-3). \
             Regenerate via `UPDATE_PHASE1_TV=1 cargo test -p octo-wallet --lib phase1_tv_json \
             phase1_tv_json_dump -- --nocapture`. Per RFC-0008 Class A determinism: every output \
             is byte-exact reproducible from the declared inputs.\",\n",
         );
-        s.push_str("  \"_rfc\": \"RFC-0009 v1.2\",\n");
+        s.push_str("  \"_rfc\": \"RFC-0009\",\n");
         s.push_str("  \"_phase\": \"Phase 1\",\n");
         s.push_str(
             "  \"_scope\": \"TV-1..TV-3 ONLY. Phase 3 TV-4..TV-7 land in a separate \
-            fixture + mission per RFC-0009 v1.2 §Test Vectors.\",\n",
+            fixture + mission per RFC-0009 §Test Vectors.\",\n",
         );
         s.push_str("  \"entries\": [\n");
         for (i, e) in self.entries.iter().enumerate() {
@@ -464,7 +464,7 @@ fn phase1_tv_json_dump() {
 }
 
 /// TV-1 gate: `MissionId` serde_json round-trip equivalence.
-/// Named per RFC-0009 v1.2 §Test Vectors + §Validation `phase1_tv_json_*` test list.
+/// Named per RFC-0009 §Test Vectors + §Validation `phase1_tv_json_*` test list.
 #[test]
 fn phase1_tv_json_v11_round_trip_equivalence() {
     let path = fixture_path();

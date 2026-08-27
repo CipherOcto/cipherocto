@@ -2,7 +2,7 @@
 
 ## Status
 
-**Version:** 1.0 (2026-08-19)
+**Version:** 1.1 (2026-08-19; Status header synced with §Version History v1.1 per M35 corpus-wide sync check)
 **Status:** Draft
 
 ## Authors

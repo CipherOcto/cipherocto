@@ -32,7 +32,7 @@ pub struct SettlementEventRepository {
 /// dashboard, audit) don't require a JOIN against `asks`. The `cost` field
 /// is 16-byte big-endian u128 since `u128` exceeds i64.
 ///
-/// v2.0 fields (RFC-0959 v2.0 §Wire Format + mission 0959-c1): the
+/// v2.0 fields (RFC-0959 §Wire Format + mission 0959-c1): the
 /// `cost_vault_id` + `chain_id` columns were added by migration v016
 /// for cross-chain settlement reject (per review §20.7). Both are
 /// `Option<[u8; 32]>` — pre-v2.0 settlements insert `None` (legacy
@@ -50,12 +50,12 @@ pub struct SettlementEventInsert<'e> {
     /// `consumed_receipt_index.nonce` row.
     pub nonce: [u8; 16],
     /// v2.0 wire form — vault row the settlement draws against
-    /// (RFC-0959 v2.0 §Wire Format + review §20.7). `None` for
+    /// (RFC-0959 §Wire Format + review §20.7). `None` for
     /// pre-v2.0 settlements (legacy rows; rejected by
     /// `verify_settlement_chain_match`).
     pub cost_vault_id: Option<[u8; 32]>,
     /// v2.0 wire form — chain scope of this settlement
-    /// (RFC-0959 v2.0 §Wire Format + RFC-0010 v1.6 §ChainId 32-byte
+    /// (RFC-0959 §Wire Format + RFC-0010 §ChainId 32-byte
     /// addendum). `None` for pre-v2.0 settlements.
     pub chain_id: Option<[u8; 32]>,
 }
@@ -149,7 +149,7 @@ impl SettlementEventRepository {
             }
         };
         // v2.0 follow-up UPDATE for `cost_vault_id` + `chain_id` columns
-        // (RFC-0959 v2.0 §Wire Format + review §20.7). Both columns
+        // (RFC-0959 §Wire Format + review §20.7). Both columns
         // are NULLABLE (added by v016 with no DEFAULT); pre-v2.0
         // settlements leave them NULL.
         //
@@ -330,11 +330,11 @@ pub struct PersistedSettlementEvent {
     /// Replay-defense nonce (16 bytes).
     pub nonce: Vec<u8>,
     /// v2.0 wire form — vault row the settlement draws against
-    /// (RFC-0959 v2.0 §Wire Format + review §20.7). `None` for
+    /// (RFC-0959 §Wire Format + review §20.7). `None` for
     /// pre-v2.0 settlements.
     pub cost_vault_id: Option<[u8; 32]>,
     /// v2.0 wire form — chain scope of this settlement
-    /// (RFC-0959 v2.0 §Wire Format + RFC-0010 v1.6). `None` for
+    /// (RFC-0959 §Wire Format + RFC-0010). `None` for
     /// pre-v2.0 settlements.
     pub chain_id: Option<[u8; 32]>,
 }
@@ -478,7 +478,7 @@ mod tests {
             nonce,
             // Legacy pre-v2.0 test cargo: cost_vault_id + chain_id
             // are None (verifier rejects with CostVaultIdMissing per
-            // RFC-0959 v2.0 §Cross-Chain Settlement Reject).
+            // RFC-0959 §Cross-Chain Settlement Reject).
             cost_vault_id: None,
             chain_id: None,
         }

@@ -70,10 +70,10 @@ The architecture spans **five core domains**:
 ┌────────────────────────────────────▼────────────────────────────────────┐
 │                         EXECUTION LAYER                                  │
 │  ┌──────────────────────────────────────────────────────────────┐      │
-│  │            Deterministic Numeric Tower (RFC-0106)            │      │
+│  │            Deterministic Numeric Tower (RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal))            │      │
 │  │  ┌────────────┐  ┌────────────┐  ┌────────────────────┐   │      │
 │  │  │ DFP        │  │ DQA        │  │ Numeric Types    │   │      │
-│  │  │(RFC-0104)  │  │(RFC-0105)  │  │(RFC-0106)       │   │      │
+│  │  │(RFC-0104)  │  │(RFC-0105)  │  │(RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal))       │   │      │
 │  │  └────────────┘  └────────────┘  └────────────────────┘   │      │
 │  └──────────────────────────────────────────────────────────────┘      │
 └─────────────────────────────────────────────────────────────────────┘
@@ -88,7 +88,7 @@ graph TD
     subgraph Execution
         RFC0104[RFC-0104: DFP]
         RFC0105[RFC-0105: DQA]
-        RFC0106[RFC-0106: Numeric Tower]
+        RFC0106[RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal): Numeric Tower]
     end
 
     subgraph AI
@@ -142,15 +142,15 @@ graph TD
 
 ## Core Components
 
-### 1. Deterministic Numeric Tower (RFC-0106)
+### 1. Deterministic Numeric Tower (RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal))
 
 The foundation layer ensuring bit-exact arithmetic across all nodes.
 
-| Component                     | Purpose                            |
-| ----------------------------- | ---------------------------------- |
+| Component      | Purpose                            |
+| -------------- | ---------------------------------- |
 | DFP (RFC-0104) | Deterministic floating-point       |
 | DQA (RFC-0105) | Deterministic quantized arithmetic |
-| Numeric Types                 | Q32.32, Q16.16 fixed-point         |
+| Numeric Types  | Q32.32, Q16.16 fixed-point         |
 
 **Key Property:** Any computation produces identical results on any hardware.
 
@@ -412,7 +412,7 @@ sequenceDiagram
 
 ### RFCs
 
-- RFC-0106
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal)
 - RFC-0520
 - RFC-0630
 - RFC-0107

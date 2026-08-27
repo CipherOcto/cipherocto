@@ -13,7 +13,7 @@ description = "Cipherocto-side persistence for the quota-router domain (Ask + As
 borsh = { version = "=1.5.0", features = ["derive"] }
 # Schema types + persistence — moved from octo-core 2026-07-21.
 # Cipherocto owns consumer schema; fork is a general-purpose DB.
-# Phase 2.6 (RFC-0206 v2.2 §Substrate Re-export Block, mission 0206-008b):
+# Phase 2.6 (RFC-0206 §Substrate Re-export Block, mission 0206-008b):
 # the substrate's `pub mod stoolap` re-export block now exposes
 # `ResultRow` / `ApiTransaction` / `Rows` / `Error` / `Value`, so
 # this crate no longer needs a direct `stoolap` Cargo.toml dep

@@ -2,7 +2,7 @@
 //! mission 0871e-paid-query-caveat).
 //!
 //! Layer E extension crate per [[cipherocto-design-principles]] —
-//! per-extension crate pattern (RFC-0957 v2.0 §Per-Extension Crate
+//! per-extension crate pattern (RFC-0957 §Per-Extension Crate
 //! Layout). This crate owns the **paid-query caveat bridge** between
 //! `octo-wallet` (capability substrate), `octo-cap-macaroon` (macaroon
 //! crypto foundation), and `quota-router-core` (forwarding target).
@@ -102,7 +102,7 @@ pub use octo_protocol::payload_kind::PAID_QUERY_VERIFY;
 
 /// (2026-08-17) `MicroOctoW` type alias was RETIRED project-wide. Cost
 /// arithmetic uses `octo_determin::Dqa` directly at `scale = 0`
-/// (integer-valued) per RFC-0862 v2.0.3 + RFC-0965 §3. Arithmetic
+/// (integer-valued) per RFC-0862 + RFC-0965 §3. Arithmetic
 /// uses `dqa_cmp`/`dqa_sub` (the `Dqa` type does not implement
 /// `Ord`/`Sub` directly — see `determin/src/dqa.rs`).
 ///
@@ -468,7 +468,7 @@ impl PaidQueryResponse {
 /// (no mutation occurred).
 ///
 /// `drained_amount` is a `Dqa` (the canonical amount-bearing
-/// cross-crate payload type per RFC-0862 v2.0.3 + RFC-0965 §3).
+/// cross-crate payload type per RFC-0862 + RFC-0965 §3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct PaymentReceipt {
     /// Amount deducted from the spend ledger on this call. Zero on
@@ -483,7 +483,7 @@ impl PaymentReceipt {
     /// Construct a no-drain receipt (decision was `Partial` or
     /// `Reject`; ledger unchanged).
     ///
-    /// `drained_amount` is the canonical zero (RFC-0862 v2.0.3 §3
+    /// `drained_amount` is the canonical zero (RFC-0862 §3
     /// — `CANONICAL_ZERO`). The field is set via the exposed
     /// public-field initialization since `Dqa::new` is not a
     /// `const fn` (returns `Result`).
@@ -518,7 +518,7 @@ mod tests {
     }
 
     fn fresh_caveat(budget: i64, model: &str, expires_at: u64) -> PaidQueryCaveat {
-        // Legacy 3-arg form for tests — RFC-0965 v2.1 §4.1 6-week
+        // Legacy 3-arg form for tests — RFC-0965 §4.1 6-week
         // `#[deprecated]` window. The substrate signature is 6-arg;
         // tests deliberately exercise the legacy shim.
         #[allow(deprecated)]

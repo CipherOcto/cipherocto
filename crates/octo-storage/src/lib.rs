@@ -1,6 +1,6 @@
 //! Layer B storage facade for the cipherocto workspace.
 //!
-//! Per RFC-0206 v2.1 §Cargo.toml Templates Layer B, this facade exposes
+//! Per RFC-0206 §Cargo.toml Templates Layer B, this facade exposes
 //! exactly **4-item re-export** (Database + TypedStatement +
 //! AdapterAllowlist + register helper). The legacy `apply_pending` /
 //! `Migration` surface lives under `_legacy_*` aliases in

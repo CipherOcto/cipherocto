@@ -1,5 +1,5 @@
 //! Mission 0010-c — TV for `ChainId::as_bytes()` 32-byte BLAKE3
-//! derivation (RFC-0010 v1.6 §32-byte addendum).
+//! derivation (RFC-0010 §32-byte addendum).
 //!
 //! Locks:
 //! - TV-1: `as_bytes()` is deterministic across N calls on the same

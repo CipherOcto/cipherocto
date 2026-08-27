@@ -1116,7 +1116,7 @@ cargo doc --workspace --no-deps
   R29 L4; ASPIRATIONAL per AC#9 + AC#10 until RFC-0871 amendment
   FILED)
 - **RFC-0870 §NodeEnvelope Adoption** (atomicity invariant per R10 H18)
-- **RFC-0008 §Execution Class Mapping** (per R12 H1 — RFC-0104 has no
+- **RFC-0008 §RFC-0008 Execution Class Mapping** (per R12 H1 — RFC-0104 has no
   Class A/B/C content; the taxonomy lives in RFC-0008)
 - Mission `0957-f-v2-bundle` (V2 spec; per R11 H1 — `chain_depth`
   on `CapabilityTokenV2` only; per R11 M2 — fixture file count

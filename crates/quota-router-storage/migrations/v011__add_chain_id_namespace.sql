@@ -1,5 +1,5 @@
 -- Mission 0010-f2-registry-namespacing: multi-chain registry
--- namespacing (RFC-0010 v1.4 §ChainId Namespace Extension).
+-- namespacing (RFC-0010 §ChainId Namespace Extension).
 --
 -- Adds a `chain_id` BLOB column carrying the 17-byte canonical
 -- encoding of the chain namespace (variant + 15-byte tag +

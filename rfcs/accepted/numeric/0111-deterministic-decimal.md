@@ -806,7 +806,7 @@ This is critical for RoundHalfEven correctness with negative values.
 
 ### Input Canonicalization Requirement (Normative)
 
-Per RFC-0105 §Lazy Canonicalization, DECIMAL uses boundary canonicalization:
+Per RFC-0105 §Lazy Canonicalization (Optimization), DECIMAL uses boundary canonicalization:
 
 **At VM boundaries (external inputs):**
 
@@ -839,7 +839,7 @@ After ANY operation, the result MUST be canonicalized using the CANONICALIZE alg
 
 **Outputs MUST be canonical. External inputs MUST be canonical (TRAP otherwise). Internal operation inputs are guaranteed canonical by the post-operation canonicalization invariant.**
 
-Per RFC-0105 §Lazy Canonicalization, DECIMAL implements lazy canonicalization at VM boundaries:
+Per RFC-0105 §Lazy Canonicalization (Optimization), DECIMAL implements lazy canonicalization at VM boundaries:
 
 **On external input (deserialization, conversion from DQA/BIGINT):**
 

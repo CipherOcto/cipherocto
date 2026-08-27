@@ -25,7 +25,7 @@
 //!
 //! `CAPABILITY_ISSUE`:
 //! 1. Validates `holder_did` via `octo_ident::CanonicalCodec::parse(s, false)`
-//!    (RFC-0010 v1.2 F4 — canonical form only; legacy bare form rejected).
+//!    (RFC-0010 F4 — canonical form only; legacy bare form rejected).
 //! 2. Returns a placeholder wire form `CIPHEROCTO_ISSUE_V1:<holder_did>:<token_id>`.
 //! 3. No macaroon minting, no holder signature, no `HolderRegistry`
 //!    registration — substrate lands in 0957 Phase 2.

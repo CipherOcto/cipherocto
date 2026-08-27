@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CipheroctoTable {
-    /// `asks` table — per-node Ask pricing (RFC-0959 v1.0).
+    /// `asks` table — per-node Ask pricing (RFC-0959).
     Asks,
 }
 

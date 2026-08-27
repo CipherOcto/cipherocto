@@ -9,7 +9,7 @@
 //! ## Phase 3 MVP
 //!
 //! The handler validates `holder_did` shape via
-//! `octo_ident::CanonicalCodec::parse(s, false)` (RFC-0010 v1.2 F4)
+//! `octo_ident::CanonicalCodec::parse(s, false)` (RFC-0010 F4)
 //! and derives a deterministic 16-byte `token_id` from the 32-byte
 //! capability root via `octo_cap_macaroon::macaroon_id`. The token_id
 //! is encoded as `CapabilityTokenV2.channel_id` in the V2 envelope;
@@ -92,7 +92,7 @@ impl IssueHandler {
     /// canonical DID shape.
     pub fn handle(&self, req: &IssueRequest) -> Result<HandlerOutput, ProtocolError> {
         // Validate canonical DID shape; reject legacy bare form.
-        // (RFC-0010 v1.2 F4 + mission 0010-d wallet-audience-validation.)
+        // (RFC-0010 F4 + mission 0010-d wallet-audience-validation.)
         octo_ident::CanonicalCodec::parse(&req.holder_did, false).map_err(did_error_to_protocol)?;
 
         // Phase 3 MVP: derive deterministic 16-byte token_id from the
@@ -199,7 +199,7 @@ mod tests {
     #[test]
     fn handle_rejects_legacy_bare_did() {
         // Mission 0871d AC: DID validation MUST reject legacy bare
-        // `did:octo:<base32>` form per RFC-0010 v1.2 F4 + 0010-d mission.
+        // `did:octo:<base32>` form per RFC-0010 F4 + 0010-d mission.
         let handler = IssueHandler::new();
         let bare = format!("did:octo:{}", "a".repeat(52));
         let req = IssueRequest {

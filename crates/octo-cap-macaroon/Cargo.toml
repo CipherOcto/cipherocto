@@ -33,7 +33,7 @@ thiserror = "1"
 cipherocto-encoding = { path = "../cipherocto-encoding" }
 # `octo-determin` (mission 0862-c9 RETIRED — local `MicroOctoW`
 # alias killed project-wide per user mandate 2026-08-17): provides
-# the canonical amount-bearing type `Dqa` (RFC-0862 v2.0.3 + RFC-0105
+# the canonical amount-bearing type `Dqa` (RFC-0862 + RFC-0105
 # §3) used directly across all amount-bearing caveat payload fields
 # (`PaymentCaveat.budget`, `RateLimit.max_per_1k`, `Caveat::AmountMax`,
 # `query_cost`, etc.). NO `MicroOctoW` re-exports exist in this
@@ -63,7 +63,7 @@ base64 = "0.22"
 borsh = { version = "=1.5.0", features = ["derive"] }
 # Mission D substrate primitives (`AssetRegistry`, `NonceRegistry`,
 # newtypes `Nonce`/`Epoch`/`GovernanceSignature`/`AssetId`/`ChainId`/`VaultId`/)
-# live in `crate::substrate` per RFC-0105 v3.5 §3.1/§3.11/§3.12
+# live in `crate::substrate` per RFC-0105 §3.1/§3.11/§3.12
 # canonical home rule. Living in octo-cap-macaroon (rather than
 # octo-vault) preserves the B→B substrate-handle dependency direction:
 # `octo-vault` (B) depends on `octo-cap-macaroon` (B) for substrate

@@ -215,3 +215,9 @@ metrics:
 8. Metrics survive restart (stoolap persistence optional)
 9. `/metrics` returns 200 without API key when `bypass_paths` includes `/metrics`
 10. `/v1/chat/completions` still requires auth when `bypass_paths` is configured
+
+## Version History
+
+| Version | Date       | Change                                                                                |
+|---------|------------|---------------------------------------------------------------------------------------|
+| 1.0     | 2026-08-22 | Retroactive VH table addition (per long-horizon plan v1.3 Phase 1 + Option C per M37). |

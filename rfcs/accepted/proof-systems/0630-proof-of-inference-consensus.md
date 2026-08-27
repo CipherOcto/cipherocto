@@ -607,16 +607,16 @@ graph TB
 
 ### Integration Points
 
-| RFC      | Integration                 |
-| -------- | --------------------------- |
-| RFC-0106 | Deterministic numeric types |
-| RFC-0108 | Dataset provenance          |
-| RFC-0109 | Retrieval integration       |
-| RFC-0120 | AI-VM execution             |
-| RFC-0121 | Model sharding              |
-| RFC-0122 | MoE routing                 |
-| RFC-0124 | Proof market                |
-| RFC-0125 | Asset layer                 |
+| RFC                                                                      | Integration                 |
+| ------------------------------------------------------------------------ | --------------------------- |
+| RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) | Deterministic numeric types |
+| RFC-0108                                                                 | Dataset provenance          |
+| RFC-0109                                                                 | Retrieval integration       |
+| RFC-0120                                                                 | AI-VM execution             |
+| RFC-0121                                                                 | Model sharding              |
+| RFC-0122                                                                 | MoE routing                 |
+| RFC-0124                                                                 | Proof market                |
+| RFC-0125                                                                 | Asset layer                 |
 
 ## Performance Targets
 
@@ -709,7 +709,7 @@ SNARKs require trusted setup ceremonies which create:
 
 ## Related RFCs
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower
 - RFC-0108 (Retrieval): Verifiable AI Retrieval
 - RFC-0109 (Retrieval): Retrieval Architecture
 - RFC-0120 (AI Execution): Deterministic AI Virtual Machine
@@ -723,8 +723,8 @@ SNARKs require trusted setup ceremonies which create:
 - RFC-0416 (Agents): Self-Verifying AI Agents
 - RFC-0140 (Consensus): Sharded Consensus Protocol
 - RFC-0141 (Consensus): Parallel Block DAG Specification
-- RFC-0142 (Consensus): Data Availability & Sampling Protocol
-- RFC-0143 (Networking): OCTO-Network Protocol
+- RFC-0742 (Consensus): Data Availability & Sampling Protocol
+- RFC-0843 (Networking): OCTO-Network Protocol
 - RFC-0918 (Economics): Inference Task Market
 
 ## Related Use Cases
@@ -775,3 +775,10 @@ Maximum difficulty: 1T FLOPs
 **Version:** 1.0
 **Submission Date:** 2026-03-07
 **Last Updated:** 2026-03-07
+
+## Version History
+
+| Version | Date       | Change                                                                                |
+|---------|------------|---------------------------------------------------------------------------------------|
+| 1.0     | 2026-03-07 | Status block: v1.0 (2026-03-07 Submission Date) — Proof-of-Inference consensus.        |
+| 1.0     | 2026-08-22 | Retroactive VH table addition (per long-horizon plan v1.3 Phase 1 + Option C per M37). |

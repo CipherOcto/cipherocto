@@ -54,11 +54,11 @@ pub const MAX_OWNER_DID_LEN: usize = 256;
 
 pub(crate) mod migrations;
 
-// Mission A substrate (RFC-0960 v3.7): VaultBalanceProjection +
+// Mission A substrate (RFC-0960): VaultBalanceProjection +
 // bounded-LRU cache + TransferEventLog port + VaultAssetResolver port.
 pub mod vault_balance_projection;
 
-// Mission B substrate (RFC-0960 v3.7): EventLogProducer trait +
+// Mission B substrate (RFC-0960): EventLogProducer trait +
 // VaultProjectionInvalidationEmitter + TransferEventRef envelope.
 pub mod event_log_producer;
 
@@ -69,12 +69,12 @@ pub mod cache_subscriber;
 pub mod testing;
 
 pub use migrations::BUILTIN_MIGRATION_CATALOG;
-// Mission A substrate re-exports (RFC-0960 v3.7 §2).
+// Mission A substrate re-exports (RFC-0960 §2).
 pub use vault_balance_projection::{
     project, CacheKey, ProjectionError, ProjectionSource, TransferEventLog, VaultAssetResolver,
     VaultAssetResolverError, VaultBalanceCache, VaultBalanceProjection, V015_DDL, ZERO_VAULT_ID,
 };
-// Mission B substrate re-exports (RFC-0960 v3.7 §2.4-§2.5).
+// Mission B substrate re-exports (RFC-0960 §2.4-§2.5).
 pub use event_log_producer::{
     cache_channel_name, process_drain_lock, EventLogProducer, ProducerError,
     TransferEventLogInsert, TransferEventLogInsertError, TransferEventRef,
@@ -91,7 +91,7 @@ pub use cache_subscriber::{
 pub use testing::{StubEmitter, StubTransferEventLog, StubVaultAssetResolver};
 
 // Mission D substrate re-exports: traits + newtypes live in
-// octo-cap-macaroon (Layer A frozen substrate per RFC-0105 v3.5
+// octo-cap-macaroon (Layer A frozen substrate per RFC-0105
 // §3.1/§3.11 canonical home). octo-vault re-exports for ergonomic
 // substrate-handle consumers (storage-coupled implementations + tests).
 pub use octo_cap_macaroon::{
@@ -124,7 +124,7 @@ pub enum VaultError {
 }
 
 // NOTE: `VaultId`, `ChainId`, `AssetId` are re-exported above from
-// `octo_cap_macaroon::substrate` (RFC-0105 v3.5 canonical home). The
+// `octo_cap_macaroon::substrate` (RFC-0105 canonical home). The
 // canonical BLAKE3 derivations (`AssetId::derive(role_token)`,
 // `ChainId::derive(chain_string)`) live in `octo-cap-macaroon/src/substrate.rs`
 // and are reachable through the re-exports. The composite `vault_id`
@@ -250,13 +250,13 @@ pub struct Vault {
     /// Balance (DQA scale 12). Persisted as Stoolap `DQA(12)` natively per
     /// §8.4.1 + §18 lock.
     ///
-    /// **DEPRECATED** (RFC-0960 v3.7 §5 Cycle 1). The source of truth is
+    /// **DEPRECATED** (RFC-0960 §5 Cycle 1). The source of truth is
     /// `transfer_events`; this column is a stranded projection. Delete in
     /// Cycle 3 after 1-release deprecation window. Use
     /// `VaultBalanceProjection::project()` to derive from the event log.
     #[deprecated(
         since = "0.2.0",
-        note = "stranded field; balance is now projected from transfer_events (RFC-0960 v3.7 §3.1). Delete in Cycle 3."
+        note = "stranded field; balance is now projected from transfer_events (RFC-0960 §3.1). Delete in Cycle 3."
     )]
     pub balance_dqa_micros: i64,
     /// Policy (canonical_ser blob).

@@ -1,4 +1,4 @@
-//! Typed chain-namespace substrate (RFC-0010 v1.4 §ChainId Namespace
+//! Typed chain-namespace substrate (RFC-0010 §ChainId Namespace
 //! Extension).
 //!
 //! `ChainId` is the literal-string handle (operational ergonomics);
@@ -7,7 +7,7 @@
 //! `ChainId::namespace()` which resolves any literal against the
 //! RFC-allocated namespace table.
 //!
-//! # RFC-0010 v1.4 (additive on v1.3)
+//! # RFC-0010 (additive on v1.3)
 //!
 //! v1.3 ships `pub struct ChainId(pub String)` as a stringly-typed
 //! newtype. v1.4 adds:
@@ -40,7 +40,7 @@ pub const MAX_NAMESPACE_LEN: usize = 64;
 
 /// BLAKE3-256 domain separator for chain-namespace tag derivation.
 ///
-/// Per RFC-0010 v1.4 §ChainId Namespace Extension: tag = first 15 bytes
+/// Per RFC-0010 §ChainId Namespace Extension: tag = first 15 bytes
 /// of `BLAKE3(BINDING_DOMAIN || literal)`. The domain separator pins the
 /// tag derivation to a specific protocol version so a future RFC can
 /// re-allocate the tag space without colliding with prior literals.
@@ -56,7 +56,7 @@ pub const CIPHEROCTO_MAINNET_TAG: [u8; 15] = [
     0xeb, 0x30, 0x71, 0xb5, 0xe1, 0x13, 0x33, 0x0c, 0x87, 0x63, 0x09, 0x54, 0xe3, 0xcc, 0x08,
 ];
 
-/// All RFC-allocated chain-namespace tags (RFC-0010 v1.4).
+/// All RFC-allocated chain-namespace tags (RFC-0010).
 ///
 /// Production CipherOcto deployments MUST use a tag from this table;
 /// user-extension chains fall in the `User` variant and require
@@ -66,7 +66,7 @@ pub const RFC_CHAIN_NAMESPACES: &[[u8; 15]] = &[CIPHEROCTO_MAINNET_TAG];
 /// Literal handle for the canonical mainnet namespace.
 pub const CIPHEROCTO_MAINNET: &str = "cipherocto-mainnet";
 
-/// Typed chain-namespace discriminator (RFC-0010 v1.4).
+/// Typed chain-namespace discriminator (RFC-0010).
 ///
 /// v1.3 ships `ChainId` as a stringly-typed `pub struct ChainId(pub String)`.
 /// v1.4 ADDS validation at construction time (`ChainId::new` now returns
@@ -82,7 +82,7 @@ pub struct ChainId(pub String);
 
 impl ChainId {
     /// Construct a `ChainId` from a literal string. Validates the
-    /// namespace shape per RFC-0010 v1.4 §Validation:
+    /// namespace shape per RFC-0010 §Validation:
     /// - non-empty
     /// - length ≤ [`MAX_NAMESPACE_LEN`] (64 chars)
     /// - no control characters
@@ -108,7 +108,7 @@ impl ChainId {
     /// Prefer `ChainId::new` for all external entry points.
     ///
     /// This is the v1.3 escape hatch preserved verbatim per
-    /// RFC-0010 v1.4 §Compatibility.
+    /// RFC-0010 §Compatibility.
     #[must_use]
     pub fn new_unchecked(s: impl Into<String>) -> Self {
         Self(s.into())
@@ -121,7 +121,7 @@ impl ChainId {
     }
 
     /// 32-byte canonical BLAKE3-256 derivation for storage PK use
-    /// (RFC-0010 v1.6 §32-byte addendum).
+    /// (RFC-0010 §32-byte addendum).
     ///
     /// `as_bytes = BLAKE3("cipherocto/chain/v1/" || chain_string)`
     ///
@@ -129,7 +129,7 @@ impl ChainId {
     /// (`"cipherocto/asset/v1/"`) and `vault_id`
     /// (`"cipherocto/vault/v1/"`) per Layer A frozen substrate
     /// pattern (§20.3.2). Storage column type `BLOB(32)` (per
-    /// RFC-0960 v3.0 + RFC-0900 v2.0) carries this 32-byte form.
+    /// RFC-0960 + RFC-0900) carries this 32-byte form.
     /// Coexists with `canonical_bytes()` 17-byte form (RFC-0010
     /// v1.4) — both serve distinct purposes (storage PK vs
     /// WAL/audit log wire form).
@@ -147,7 +147,7 @@ impl ChainId {
     /// consulted first; user-extension chains parse through the
     /// `User` variant. The length byte in the canonical encoding
     /// disambiguates same-tag-different-length collisions (per
-    /// RFC-0010 v1.4 TV-8).
+    /// RFC-0010 TV-8).
     ///
     /// # Errors
     /// Returns `ChainNamespaceError` variants if the underlying
@@ -186,7 +186,7 @@ impl std::fmt::Display for ChainId {
 }
 
 impl Default for ChainId {
-    /// Defaults to the canonical mainnet namespace (RFC-0010 v1.4 §Compatibility).
+    /// Defaults to the canonical mainnet namespace (RFC-0010 §Compatibility).
     fn default() -> Self {
         // SAFETY: `CIPHEROCTO_MAINNET` is a 17-char literal that passes
         // `ChainId::validate` (non-empty, ≤ 64 chars, no control chars).
@@ -302,7 +302,7 @@ impl ChainNamespace {
     }
 }
 
-/// Namespace variant (RFC-0010 v1.4 §Data Structures).
+/// Namespace variant (RFC-0010 §Data Structures).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum NamespaceVariant {
@@ -351,7 +351,7 @@ pub enum ChainNamespaceError {
 /// Compute the 15-byte BLAKE3 namespace tag for a literal.
 ///
 /// Tag = first 15 bytes of `BLAKE3(CHAIN_NAMESPACE_BINDING_DOMAIN || literal)`.
-/// Domain separator pins the tag space to RFC-0010 v1.4 so a future
+/// Domain separator pins the tag space to RFC-0010 so a future
 /// RFC can re-allocate without colliding with prior literals.
 fn compute_namespace_tag(literal: &str) -> [u8; 15] {
     let mut hasher = blake3::Hasher::new();

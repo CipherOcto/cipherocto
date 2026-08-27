@@ -2,14 +2,14 @@
 name = "octo-storage-core"
 version = "2.0.0"
 edition = "2021"
-description = "Layer A storage substrate — Database newtype + TypedStatement + AdapterAllowlist + pub mod stoolap re-export block (RFC-0206 v2.2 §Substrate Newtype Refactor + §Substrate Re-export Block)"
+description = "Layer A storage substrate — Database newtype + TypedStatement + AdapterAllowlist + pub mod stoolap re-export block (RFC-0206 §Substrate Newtype Refactor + §Substrate Re-export Block)"
 license = "Apache-2.0"
 
 [lib]
 crate-type = ["rlib"]
 
 [features]
-# Per RFC-0206 v2.1 §Implementation Phases 1.3: feature flags let adapter
+# Per RFC-0206 §Implementation Phases 1.3: feature flags let adapter
 # crates opt into the typed-query enforcement path explicitly. Default
 # = `allow-listed-ddl` keeps the substrate on the existing migration
 # runner path during the §Migration Order transition; `strict-typed-query`

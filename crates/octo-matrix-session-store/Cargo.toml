@@ -17,7 +17,7 @@ edition = "2021"
 # `octo_storage_core::Database` in field/return positions.
 octo-storage-core = { path = "../octo-storage-core" }
 
-# RFC-0206 v2.2 §Substrate Re-export Block: `Error`, `ResultRow`,
+# RFC-0206 §Substrate Re-export Block: `Error`, `ResultRow`,
 # `Value` (and `ApiTransaction`, `Rows`) are now reached via
 # `octo_storage_core::stoolap::*`. No direct fork dep needed.
 # Serialization for the row model.

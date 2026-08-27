@@ -1,4 +1,4 @@
-//! `pub mod stoolap` re-export block per RFC-0206 v2.2 §Substrate Re-export Block.
+//! `pub mod stoolap` re-export block per RFC-0206 §Substrate Re-export Block.
 //!
 //! 1:1 aliases for `stoolap` types consumers need to type row-decoding
 //! code returned by `Database::execute_checked`. Consumers use
@@ -13,7 +13,7 @@
 //! `octo_storage_core::Database` + the `From<Database>` escape hatch
 //! (substrate-internal usage) per §Substrate Newtype Refactor.
 //!
-//! **`DataType` IS re-exported** (added in RFC-0206 v2.3 §Substrate
+//! **`DataType` IS re-exported** (added in RFC-0206 §Substrate
 //! Re-export Block amendment) — it is the typed-Value discriminant
 //! enum used in `Value::Null(DataType::Null)` constructor calls.
 //! Without it, consumer code leaks `octo_storage_core::stoolap::DataType::*` raw upstream
@@ -44,7 +44,7 @@ pub use stoolap::ResultRow;
 pub use stoolap::Rows;
 pub use stoolap::Value;
 
-// === `pub mod pubsub` (RFC-0206 v2.4 §Substrate Re-export Block extension) ===
+// === `pub mod pubsub` (RFC-0206 §Substrate Re-export Block extension) ===
 //
 // 7 `stoolap::pubsub` types + nested `pub mod wal_pubsub` re-export so
 // consumer crates can `use octo_storage_core::stoolap::pubsub::{EventBus,
@@ -57,7 +57,7 @@ pub use stoolap::Value;
 // `pub mod wal_pubsub` so consumers keep `pubsub::wal_pubsub::parse_event`
 // traversal pattern.
 pub mod pubsub {
-    //! `stoolap::pubsub` re-exports — RFC-0206 v2.4 §Substrate Re-export Block
+    //! `stoolap::pubsub` re-exports — RFC-0206 §Substrate Re-export Block
     //! extension. Consumers `use octo_storage_core::stoolap::pubsub::{EventBus,
     //! WalPubSub, DatabaseEvent, InvalidationReason, SchemaChangeType,
     //! OperationType, generate_event_id}` instead of taking a direct `stoolap`

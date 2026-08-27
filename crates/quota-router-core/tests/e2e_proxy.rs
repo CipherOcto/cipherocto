@@ -1,4 +1,4 @@
-#![allow(deprecated)] // Cycle 1 of 3-cycle legacy deprecation (RFC-0960 v3.7 §5). Remove in Cycle 3.
+#![allow(deprecated)] // Cycle 1 of 3-cycle legacy deprecation (RFC-0960 §5). Remove in Cycle 3.
 //! End-to-end integration tests for quota-router in litellm-mode.
 //!
 //! These tests start a real proxy server and make real HTTP requests to the

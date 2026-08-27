@@ -1,6 +1,6 @@
-//! Mission B (RFC-0960 v3.7) EventLogProducer substrate.
+//! Mission B (RFC-0960) EventLogProducer substrate.
 //!
-//! Per RFC-0960 v3.7 §2.4 (invalidation bus) + §2.5 (EventLogProducer
+//! Per RFC-0960 §2.4 (invalidation bus) + §2.5 (EventLogProducer
 //! trait).
 //!
 //! ## Layer hosting
@@ -22,7 +22,7 @@ use octo_cap_macaroon::{
 use crate::vault_balance_projection::{TransferEventLog, VaultAssetResolver};
 
 /// `TransferEventRef` — canonical 7-field transfer event reference
-/// (RFC-0960 v3.7 §2.5). Substrate wire form per §3.1.
+/// (RFC-0960 §2.5). Substrate wire form per §3.1.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TransferEventRef {
     pub event_id: [u8; 32],
@@ -34,7 +34,7 @@ pub struct TransferEventRef {
     pub occurred_at_unix: i64,
 }
 
-/// `EventLogProducer` trait (RFC-0960 v3.7 §2.5 L474-516).
+/// `EventLogProducer` trait (RFC-0960 §2.5).
 ///
 /// Default `produce` body bundles: drain_lock → validate_pre_insert →
 /// to_transfer_event → log.insert → bus.emit. Subclasses MAY override
@@ -97,11 +97,11 @@ pub use crate::vault_balance_projection::TransferEventLogInsertError;
 // available for downstream consumers that want a bound name.
 impl<T: TransferEventLog + ?Sized> TransferEventLogInsert for T {}
 
-/// `ProducerError` (RFC-0960 v3.7 §2.5).
+/// `ProducerError` (RFC-0960 §2.5).
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ProducerError {
-    /// Tri-invariant (RFC-0105 v3.5 §3.13) producer-side rejection.
+    /// Tri-invariant (RFC-0105 §3.13) producer-side rejection.
     #[error("tri-invariant violation: {0}")]
     TriInvariantViolation(String),
     /// `TransferEventLog::insert` failure.
@@ -112,7 +112,7 @@ pub enum ProducerError {
     VaultAsset(#[from] VaultAssetError),
 }
 
-/// `VaultProjectionInvalidationEnvelope` (RFC-0960 v3.7 §2.4 +
+/// `VaultProjectionInvalidationEnvelope` (RFC-0960 §2.4 +
 /// `cache-bus-auth` Mission).
 ///
 /// Wire form: serialized to `cache:projection:<hex(vault_id)>` Stoolap
@@ -207,7 +207,7 @@ pub trait VaultProjectionInvalidationEmitter: Send + Sync {
     fn emit(&self, envelope: &VaultProjectionInvalidationEnvelope);
 }
 
-/// Cache channel naming convention (RFC-0960 v3.7 §2.4).
+/// Cache channel naming convention (RFC-0960 §2.4).
 /// `cache:projection:<hex(vault_id)>`
 #[must_use]
 pub fn cache_channel_name(vault_id: &VaultId) -> String {
@@ -220,7 +220,7 @@ pub fn cache_channel_name(vault_id: &VaultId) -> String {
 
 use std::sync::OnceLock;
 
-/// Process-wide drain_lock (RFC-0960 v3.7 §2.5). Shared across all 3
+/// Process-wide drain_lock (RFC-0960 §2.5). Shared across all 3
 /// producer impls to enforce serial access to `TransferEventLog::insert`.
 #[must_use]
 pub fn process_drain_lock() -> &'static Arc<Mutex<()>> {

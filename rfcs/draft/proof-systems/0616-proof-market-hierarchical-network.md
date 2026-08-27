@@ -856,16 +856,16 @@ graph TB
 
 ### Integration Points
 
-| RFC      | Integration                 |
-| -------- | --------------------------- |
-| RFC-0106 | Deterministic numeric types |
-| RFC-0108 | Retrieval proofs            |
-| RFC-0109 | Knowledge Market data       |
-| RFC-0115 | Verification markets        |
-| RFC-0120 | AI-VM execution             |
-| RFC-0121 | Model sharding              |
-| RFC-0122 | MoE routing                 |
-| RFC-0123 | Proof aggregation           |
+| RFC                                                                      | Integration                 |
+| ------------------------------------------------------------------------ | --------------------------- |
+| RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) | Deterministic numeric types |
+| RFC-0108                                                                 | Retrieval proofs            |
+| RFC-0109                                                                 | Knowledge Market data       |
+| RFC-0115                                                                 | Verification markets        |
+| RFC-0120                                                                 | AI-VM execution             |
+| RFC-0121                                                                 | Model sharding              |
+| RFC-0122                                                                 | MoE routing                 |
+| RFC-0123                                                                 | Proof aggregation           |
 
 ## Performance Targets
 
@@ -958,7 +958,7 @@ Market mechanism:
 
 ## Related RFCs
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower
 - RFC-0108 (Retrieval): Verifiable AI Retrieval
 - RFC-0109 (Retrieval): Retrieval Architecture
 - RFC-0115 (Economics): Probabilistic Verification Markets
@@ -967,7 +967,7 @@ Market mechanism:
 - RFC-0122 (AI Execution): Mixture-of-Experts
 - RFC-0123 (AI Execution): Scalable Verifiable AI Execution
 - RFC-0125 (Economics): Model Liquidity Layer
-- RFC-0154 (Economics): Proof Market & Hierarchical Verification Network (complementary: 0124 focuses on distributed inference, 0154 focuses on verification)
+- RFC-0651 (Economics): Proof Market & Hierarchical Verification Network (complementary: 0124 focuses on distributed inference, 0651 focuses on verification)
 
 ## Related Use Cases
 

@@ -1,11 +1,11 @@
-//! `IDENTITY_REGISTER` + `IDENTITY_REVOKE` handlers (RFC-0862 v1.3
+//! `IDENTITY_REGISTER` + `IDENTITY_REVOKE` handlers (RFC-0862
 //! §DidWriteCoordinator, mission 0871e-f7-impl-resolver-mediation).
 //!
 //! Receives:
 //! - `IDENTITY_REGISTER`: `(canonical_did: String, document: DidDocument)`
 //! - `IDENTITY_REVOKE`:   `(canonical_did: String)`
 //!
-//! Mediation flow (per RFC-0862 v1.3 R11 H2 + R13 M5 + mission
+//! Mediation flow (per RFC-0862 R11 H2 + R13 M5 + mission
 //! `0871e-f7-cross-instance-did-coordination`):
 //!
 //! 1. Validate `canonical_did` is a canonical wire form via
@@ -15,7 +15,7 @@
 //! 3. Consult the injected `Arc<dyn DidWriteCoordinator>`. If no
 //!    coordinator is configured, refuse with
 //!    `IdentityResolveError::CoordinatorUnavailable` (fail-closed per
-//!    RFC-0862 v1.3 R12 — the same fail-closed default that the trait's
+//!    RFC-0862 R12 — the same fail-closed default that the trait's
 //!    `submit_register_local_fallback` enforces).
 //! 4. Coordinator returns OK → delegate to local `DidRegistry::register`
 //!    (or `revoke`).
@@ -56,7 +56,7 @@ pub struct RegisterRequest {
     /// 32-byte Ed25519 public key to bind the DID to.
     pub public_key: [u8; 32],
     /// Revoked flag at registration time (typically `false`; reserved
-    /// for future `restore` flows per RFC-0010 v1.3 §Compatibility).
+    /// for future `restore` flows per RFC-0010 §Compatibility).
     pub revoked: bool,
 }
 
@@ -138,7 +138,7 @@ pub struct RevokeResponse {
 ///
 /// Mediates `register` through the injected `DidWriteCoordinator` before
 /// delegating to the local `DidRegistry::register`. The coordinator
-/// defaults to `None` (fail-closed per RFC-0862 v1.3 R12) — operators
+/// defaults to `None` (fail-closed per RFC-0862 R12) — operators
 /// must inject a concrete coordinator for writes to succeed.
 pub struct RegisterHandler {
     registry: Arc<dyn DidRegistry>,
@@ -151,7 +151,7 @@ impl RegisterHandler {
     ///
     /// When `coordinator` is `None`, all register attempts are refused
     /// with `IdentityResolveError::CoordinatorUnavailable` (fail-closed
-    /// per RFC-0862 v1.3 R12). Production deployments pass
+    /// per RFC-0862 R12). Production deployments pass
     /// `Some(Arc::new(<concrete-coordinator-impl>))`.
     #[must_use]
     pub fn new(

@@ -1,6 +1,6 @@
 //! Identity substrate.
 //!
-//! Per RFC-0009 §Identity Key Format + §Capability Keys + RFC-0009 v1.1
+//! Per RFC-0009 §Identity Key Format + §Capability Keys + RFC-0009
 //! §HsmAdapter Integration:
 //! - `IdentityKey` holds an `Arc<dyn HsmAdapter>` for signing operations
 //!   (host memory for `InMemorySigner`, secure element for `LedgerSigner`).
@@ -25,7 +25,7 @@ use octo_ident::DidCodec;
 /// Ed25519 identity keypair. Wraps an `Arc<dyn HsmAdapter>` + cached
 /// 32-byte public key + lifecycle state (RFC-0009 §Lifecycle Requirements).
 ///
-/// Per RFC-0009 v1.1 §HsmAdapter Integration:
+/// Per RFC-0009 §HsmAdapter Integration:
 /// - `sign()` delegates to `self.signer.sign(msg)`; never touches host memory
 ///   for production `LedgerSigner` (seed lives in secure element).
 /// - The raw seed is accessible only via the adapter — `InMemorySigner` exposes
@@ -542,7 +542,7 @@ impl CapabilityKey {
 
 /// Audience identifier (canonical DID form). Used as HKDF IKM.
 ///
-/// Per RFC-0010 v1.2 F4 (Wallet audience validation): `AudienceId::from_str`
+/// Per RFC-0010 F4 (Wallet audience validation): `AudienceId::from_str`
 /// MUST validate via `octo_ident::CanonicalCodec::parse(s, allow_legacy_bare: false)`.
 /// Legacy `did:octo:b<base32>` form is rejected post-deprecation window.
 /// Bare `did:octo:<suffix>` literals are rejected (`DidError::LegacyFormExpired`).
@@ -557,7 +557,7 @@ impl FromStr for AudienceId {
         if s.is_empty() {
             return Err(WalletError::InvalidAudienceId("empty".to_owned()));
         }
-        // RFC-0010 v1.2 F4: validate canonical DID shape via the codec.
+        // RFC-0010 F4: validate canonical DID shape via the codec.
         // Production paths MUST use `allow_legacy_bare: false`; legacy form
         // is rejected post-deprecation window. Test fixtures that need the
         // legacy form can call `CanonicalCodec::parse(s, true)` directly.
@@ -804,7 +804,7 @@ mod tests {
         )
         .unwrap();
         // Use a second canonical DID (different pubkey → different hash)
-        // rather than the legacy `did:octo:b` form, which RFC-0010 v1.2 F4
+        // rather than the legacy `did:octo:b` form, which RFC-0010 F4
         // rejects post-deprecation. The HKDF IKM is the wire string, so
         // distinct valid DIDs produce distinct capability keys.
         let cap_b = derive_capability_key(
@@ -823,7 +823,7 @@ mod tests {
 
     #[test]
     fn canonical_did_audience_accepted() {
-        // RFC-0010 v1.2 F4: canonical `did:octo:z<base58btc>` accepted.
+        // RFC-0010 F4: canonical `did:octo:z<base58btc>` accepted.
         let canonical = octo_ident::test_helpers::sample_did(7);
         let audience: AudienceId = canonical.parse().expect("canonical accepted");
         assert_eq!(audience.to_string(), canonical);
@@ -831,7 +831,7 @@ mod tests {
 
     #[test]
     fn legacy_did_b_form_rejected_post_deprecation() {
-        // RFC-0010 v1.2 F4: legacy `did:octo:b<base32>` rejected.
+        // RFC-0010 F4: legacy `did:octo:b<base32>` rejected.
         // 52-char base32 payload satisfies `parse` step 2 *only when*
         // `allow_legacy_bare: true`; the wallet surface uses `false`, so the
         // legacy form must be rejected. We construct a syntactically valid

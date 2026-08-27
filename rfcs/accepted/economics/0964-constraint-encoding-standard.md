@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted v1.1
+Accepted v1.2 — Status header synced with §Version History v1.2-Resolved row per M37 corpus-wide sync check (prior header read v1.1; VH row added 2026-07-23 with Risk-closure round resolving all 6 Open Questions).
 
 > **Note:** Companion RFC to RFC-0960 §5 (Constraints as policy modules). Defines canonical binary encoding for the 23-variant Constraint set identified by Phase 3 research (`docs/research/2026-07-22-external-capability-based-spend-systems.md` §7.7). Encoding is BLAKE3-based, length-prefixed, version-tagged, and ZK-circuit-friendly. Builds on RFC-0126 (deterministic serialization) and EIP-712 (typed-data cross-chain interop).
 
@@ -404,7 +404,7 @@ BranchID:
     branch_id:           [u8; 32]               // Git-style branch identifier (BLAKE3)
     // 32 bytes payload
     // Semantics: constraint is satisfied iff current WAL head is on branch_id or a descendant branch.
-    // Paired with RFC-0960 §17 Git-style branches.
+    // Paired with RFC-0960 §17 Git-Style Branches (v2.0 NEW).
 
 MVStateHash:
     mv_state_hash:       [u8; 32]               // expected Materialized View state hash

@@ -1,4 +1,4 @@
-//! `octo-cap-macaroon-vault-storage` — RFC-0206 v2.1 §Adapter Crate List row 3.
+//! `octo-cap-macaroon-vault-storage` — RFC-0206 §Adapter Crate List row 3.
 //!
 //! Substrate adapter for the `VaultLookup` trait declared in
 //! `octo-cap-macaroon::VaultLookup` (RFC-0957 verify-time bump per

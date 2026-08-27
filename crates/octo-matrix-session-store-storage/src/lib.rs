@@ -1,4 +1,4 @@
-//! `octo-matrix-session-store-storage` — RFC-0206 v2.1 §Adapter Crate List row 4.
+//! `octo-matrix-session-store-storage` — RFC-0206 §Adapter Crate List row 4.
 //!
 //! Substrate adapter for the `octo-matrix-session-store` owner crate.
 //! This adapter owns the canonical `AdapterAllowlist` for the

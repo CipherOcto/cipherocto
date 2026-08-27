@@ -24,7 +24,7 @@ If this works, the entire architecture becomes credible.
 
 - RFC-0104: Deterministic Floating-Point
 - RFC-0105: Deterministic Quant Arithmetic
-- RFC-0106: Deterministic Numeric Tower
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal): Deterministic Numeric Tower
 
 **Implementation:**
 
@@ -380,13 +380,13 @@ block accepted
 
 These RFCs are **not required for genesis**:
 
-| RFC                  | Reason                                             |
-| -------------------- | -------------------------------------------------- |
-| RFC-0414    | Autonomous Agent Organizations — application layer |
+| RFC      | Reason                                             |
+| -------- | -------------------------------------------------- |
+| RFC-0414 | Autonomous Agent Organizations — application layer |
 | RFC-0411 | Knowledge Markets — application layer              |
 | RFC-0900 | AI Quota Marketplace — application layer           |
 | RFC-0955 | Model Liquidity — application layer                |
-| RFC-0415    | Alignment Mechanisms — application layer           |
+| RFC-0415 | Alignment Mechanisms — application layer           |
 
 **Genesis focuses on the infrastructure layer.** Applications can grow on top.
 
@@ -437,7 +437,7 @@ These RFCs are **not required for genesis**:
 
 - RFC-0104: Deterministic Floating-Point
 - RFC-0105: Deterministic Quant Arithmetic
-- RFC-0106: Deterministic Numeric Tower
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal): Deterministic Numeric Tower
 - RFC-0520: Deterministic AI-VM
 - RFC-0630: Proof-of-Inference Consensus
 - RFC-0107: Deterministic Transformer Circuit

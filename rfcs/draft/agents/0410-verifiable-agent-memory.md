@@ -17,7 +17,7 @@ Agent memory becomes a **verifiable data structure** where:
 - Memory lineage is traceable
 - Agent decisions can be audited post-hoc
 
-This builds on RFC-0108 (Verifiable Retrieval), RFC-0106 (Deterministic Compute), and integrates with storage tiers (OCTO-S).
+This builds on RFC-0108 (Verifiable Retrieval), RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Deterministic Compute), and integrates with storage tiers (OCTO-S).
 
 ## Design Goals
 
@@ -168,7 +168,7 @@ distance(query_vec, memory_vec)
 **Proof ensures:**
 
 - Ranking correctness
-- Uses vector verification from RFC-0106
+- Uses vector verification from RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal)
 
 ### 4. Memory Update
 
@@ -331,7 +331,7 @@ Enables auditable autonomous systems.
 
 ## Integration Points
 
-### With RFC-0106 (Deterministic Compute)
+### With RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Deterministic Compute)
 
 | Component                | Use in VAM               |
 | ------------------------ | ------------------------ |
@@ -644,7 +644,7 @@ Verifiable Agent Memory
      │
 Retrieval Architecture (RFC-0109)
      │
-Deterministic Compute (RFC-0106)
+Deterministic Compute (RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal))
      │
 Proof Infrastructure (STWO/AIR)
 ```
@@ -656,7 +656,7 @@ Proof Infrastructure (STWO/AIR)
 
 **Prerequisites:**
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower
 - RFC-0108 (Retrieval): Verifiable AI Retrieval
 - RFC-0109 (Retrieval): Retrieval Architecture
 

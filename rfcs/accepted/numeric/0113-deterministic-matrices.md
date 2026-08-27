@@ -121,7 +121,7 @@
 > - MED-2: MAT_VEC_MUL Phase 6 includes sequential loop mandate (RFC-0112 alignment)
 > - MED-3: Probe Entry 46 comment clarifies 3×2 × 2×3 = 3×3 dimensions
 > - MED-4: Gas Model table includes Type column (DQA/Decimal)
-> - LOW-1: NUMERIC_SPEC_VERSION references RFC-0110 §Spec Version
+> - LOW-1: NUMERIC_SPEC_VERSION references RFC-0110 §Spec Version & Replay Pinning
 > - LOW-2: TRAP Sentinel reference matches RFC-0111 §Verification Probe naming
 
 > **Adversarial Review v1.3 Changes (Round 3 - HIGH/MEDIUM fixes):**
@@ -1074,3 +1074,10 @@ Encoding: 24-byte canonical format per RFC-0111 §Canonical Byte Format.
 Run with: `python3 scripts/compute_dmat_probe_root.py`
 
 > **Note:** The canonical reference is the script file. This RFC takes precedence over embedded descriptions.
+
+## Version History
+
+| Version | Date       | Change                                                                                |
+|---------|------------|---------------------------------------------------------------------------------------|
+| 1.21    | 2026-03-19 | Status block: v1.21 (2026-03-19) — DMAT operations normative specification.             |
+| 1.0     | 2026-08-22 | Retroactive VH table addition (per long-horizon plan v1.3 Phase 1 + Option C per M37). |

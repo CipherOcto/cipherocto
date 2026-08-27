@@ -22,7 +22,7 @@ Key elements:
 
 1. **Role Binding** — the destination node is the same node that:
    - Receives forwarded requests (RFC-0870 Router).
-   - Holds the provider key (RFC-0009 §Vault).
+   - Holds the provider key (RFC-0009 §Vault — Provider-Key Handling).
    - Mints capability tokens for holders (RFC-0957 Token Issuer).
    - Maintains the `HolderRegistry` (RFC-0957-A1).
    - Publishes Asks in the marketplace (RFC-0959 Asker).
@@ -162,9 +162,9 @@ graph TB
 This RFC does NOT introduce new data structures. It cross-references existing structures:
 
 - **Router role:** `RouterNode` (RFC-0870 §Data Structures).
-- **Token Issuer role:** `TokenIssuer` (RFC-0957 §Roles).
+- **Token Issuer role:** `TokenIssuer` (RFC-0957 §Roles and Authorities).
 - **Asker role:** `Asker` (RFC-0959 §Roles).
-- **ReputationAnchor role:** `ReputationAnchor` (RFC-0968 §Roles).
+- **ReputationAnchor role:** `ReputationAnchor` (RFC-0968 §Roles and Authorities).
 - **HolderRegistry:** `HolderRecord` (RFC-0957-A1 §Data Structures) with 4-kind enum.
 
 ### Algorithms

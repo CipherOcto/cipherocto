@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-06-25) — Implemented v1.3: all 4 missions complete (0863a-d), 3 adversarial review rounds converged, 313 tests passing, 13/15 goals met.
+Accepted (2026-06-25) — Implemented v1.8 per §Version History latest row (Status header synced with VH v1.8 per M35 corpus-wide sync check; prior header read v1.3): all 4 missions complete (0863a-d), 3 adversarial review rounds converged, 313 tests passing, 13/15 goals met.
 
 ## Authors
 

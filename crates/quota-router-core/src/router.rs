@@ -2737,7 +2737,7 @@ mod tests {
     fn test_rolling_avg_returns_none_when_minutes_filter_excludes_all_buckets() {
         // minutes=0 → cutoff = now → bucket timestamp (slightly older now) < cutoff
         // → filtered out → `recent` empty → None. Locks the `if recent.is_empty()`
-        // branch (L882-884 and L912-914) with an explicit assertion.
+        // branch ( and ) with an explicit assertion.
         let mut metrics = ProviderMetrics::with_ttl(3600);
         metrics.record("d1", 100);
         // Tiny sleep to guarantee Instant::now() has advanced past the record
@@ -2772,7 +2772,7 @@ mod tests {
     fn test_usage_based_v2_routing_no_history_defaults_success_rate_to_100() {
         // Both providers have total_count=0 → success_rate=100 → score=current_rpm*0/100=0
         // Ties broken by first encountered (min_by_key behavior). Locks the
-        // `else { 100 }` branch at L1198-1199.
+        // `else { 100 }` branch at .
         let providers = test_providers();
         let config = RouterConfig {
             routing_strategy: RoutingStrategy::UsageBasedV2,
@@ -2883,7 +2883,7 @@ mod tests {
     #[test]
     fn test_request_ended_trims_latencies_to_window_size() {
         // 5 records with window=3 → latencies must be trimmed to len=3,
-        // dropping the 2 oldest. Locks the drain branch at L192-194.
+        // dropping the 2 oldest. Locks the drain branch at .
         let mut p = ProviderWithState::new(test_providers()[0].clone());
         for i in 0..5u64 {
             p.request_ended(100_000 + i * 1_000, 10, 3);
@@ -2932,7 +2932,7 @@ mod tests {
     #[test]
     fn test_best_provider_with_ttft_buffer_negative_infinity_excludes_all() {
         // buffer = -INFINITY → valid threshold = lowest + (-inf) = -inf
-        // → no score satisfies score <= -inf → valid empty → None at L513-514.
+        // → no score satisfies score <= -inf → valid empty → None at .
         let mut tracker = LatencyTracker::default();
         tracker.record("p1", 100_000, None);
         assert!(
@@ -2945,7 +2945,7 @@ mod tests {
 
     #[test]
     fn test_routing_strategy_display_all_variants() {
-        // Locks every Display arm at L49-58.
+        // Locks every Display arm at .
         assert_eq!(RoutingStrategy::SimpleShuffle.to_string(), "simple-shuffle");
         assert_eq!(RoutingStrategy::RoundRobin.to_string(), "round-robin");
         assert_eq!(RoutingStrategy::LeastBusy.to_string(), "least-busy");
@@ -2969,7 +2969,7 @@ mod tests {
 
     #[test]
     fn test_provider_metrics_new_default_ttl_and_default_impl() {
-        // Locks L722-728 (new body) + L941-942 (default delegation).
+        // Locks  (new body) +  (default delegation).
         let m = ProviderMetrics::new();
         assert_eq!(
             m.ttl_seconds, 60,
@@ -2985,7 +2985,7 @@ mod tests {
 
     #[test]
     fn test_router_model_groups_and_provider_count() {
-        // Locks L996-1004 (model_groups + provider_count bodies).
+        // Locks  (model_groups + provider_count bodies).
         let providers = test_providers();
         let router = Router::new(RouterConfig::default(), providers);
         let mut groups = router.model_groups();

@@ -77,7 +77,7 @@ graph TB
 
 - RFC-0104
 - RFC-0105
-- RFC-0106
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal)
 - RFC-0116
 - RFC-0520
 - RFC-0521

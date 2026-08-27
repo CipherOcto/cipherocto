@@ -72,7 +72,7 @@ pub struct ExecutionEnvelope {
 
 /// ExecutionEnvelope session mode (RFC-0962 §4).
 ///
-/// Renamed from `CONSENSUS_SAFE` to `DETERMINISTIC` per RFC-0962 v2.0
+/// Renamed from `CONSENSUS_SAFE` to `DETERMINISTIC` per RFC-0962
 /// strategic reframe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

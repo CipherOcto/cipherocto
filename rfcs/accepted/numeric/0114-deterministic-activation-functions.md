@@ -654,3 +654,10 @@ Authoritative implementation for:
 | 2.10 | 2026-03-19 | Adversarial review fixes: NEW-1/2, CRIT-3, HIGH-3, MED-6, LOW-2/5 |
 | 2.11 | 2026-03-19 | Adversarial review fixes: CRIT-3 logic error, NEW-A/B/C/D, LOW-6 |
 | 2.12 | 2026-03-19 | Advisory review fixes: Issue 1-4 documentation clarity |
+
+## Version History
+
+| Version | Date       | Change                                                                                |
+|---------|------------|---------------------------------------------------------------------------------------|
+| 2.12    | 2026-03-19 | Status block: v2.12 (2026-03-19) — DQA decimal fixed-point LUT activation functions.   |
+| 1.0     | 2026-08-22 | Retroactive VH table addition (per long-horizon plan v1.3 Phase 1 + Option C per M37). |

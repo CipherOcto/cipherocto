@@ -136,7 +136,7 @@ struct ParameterShard {
     layer_start: u32,
     layer_end: u32,
 
-    /// Compressed weights (DQA per RFC-0106)
+    /// Compressed weights (DQA per RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal))
     weights: Vec<u8>,
 
     /// Merkle proof to model root
@@ -718,15 +718,15 @@ graph TB
 
 ### Integration Points
 
-| RFC      | Integration          |
-| -------- | -------------------- |
-| RFC-0106 | DQA numeric types    |
-| RFC-0108 | Retrieval proofs     |
-| RFC-0109 | Knowledge Market     |
-| RFC-0115 | Verification markets |
-| RFC-0120 | AI-VM operators      |
-| RFC-0121 | Model sharding       |
-| RFC-0122 | MoE routing          |
+| RFC                                                                      | Integration          |
+| ------------------------------------------------------------------------ | -------------------- |
+| RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) | DQA numeric types    |
+| RFC-0108                                                                 | Retrieval proofs     |
+| RFC-0109                                                                 | Knowledge Market     |
+| RFC-0115                                                                 | Verification markets |
+| RFC-0120                                                                 | AI-VM operators      |
+| RFC-0121                                                                 | Model sharding       |
+| RFC-0122                                                                 | MoE routing          |
 
 ## Performance Targets
 
@@ -808,7 +808,7 @@ Our approach uses:
 
 ## Related RFCs
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower
 - RFC-0108 (Retrieval): Verifiable AI Retrieval
 - RFC-0109 (Retrieval): Retrieval Architecture
 - RFC-0115 (Economics): Probabilistic Verification Markets

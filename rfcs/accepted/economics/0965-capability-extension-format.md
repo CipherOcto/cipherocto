@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted v1.1
+Accepted v2.0 — Status header synced with §Version History v2.0-CanonicalAlias row per M37 corpus-wide sync check (prior header read v1.1; VH row added 2026-08-17 with Canonical `MicroOctoW` alias cross-reference closure per mission 0862-c9 audit verdict Risk #1 CRITICAL).
 
 > **Note:** Companion RFC to RFC-0960 §2.2 (Capability). Defines the caveat types added by RFC-0960 to the RFC-0957 macaroon substrate. Each new caveat is a typed wrapper around a `Constraint` (RFC-0964) with macaroon attenuation semantics. Attenuation invariant (add-only, monotonic restriction) is preserved by RFC-0957. Builds on RFC-0957 (macaroon v1), RFC-0126 (canonical_ser), RFC-0964 (constraint encoding), and Phase 3 research (`docs/research/2026-07-22-external-capability-based-spend-systems.md`).
 

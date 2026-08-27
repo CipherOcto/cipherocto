@@ -317,7 +317,7 @@ RFC-0909 (Draft) — depends on BOTH B1 and C1
 
 The migration procedure for existing deployments is out of scope for this amendment and must be specified in a future RFC-0903-C2 amendment. The acceptance of RFC-0903-C1 does not imply that a migration path exists — deployments already running RFC-0903 Final must wait for RFC-0903-C2 or perform the migration independently.
 
-## Changelog
+## Version History
 
 | Version | Date       | Changes |
 |---------|------------|---------|

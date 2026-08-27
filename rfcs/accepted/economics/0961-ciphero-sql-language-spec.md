@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted v2.0
+Accepted v2.1 — Status header synced with §Version History v2.1-Resolved (Risk-closure round) per M37 corpus-wide sync check (prior header read v2.0; VH row added 2026-07-23 with Risk-closure round resolving all 4 §11 Open Questions).
 
 > **Note (v2.0 reframe):** Renamed from "Consensus-Safe SQL" to **Deterministic SQL** — the determinism is the property, the consensus is an implementation detail. CIPHERO_SQL is the dialect compiled by the Deterministic SQL Engine (RFC-0960 §1) into deterministic WAL entries. The dialect is the surface; the WAL is the protocol.
 

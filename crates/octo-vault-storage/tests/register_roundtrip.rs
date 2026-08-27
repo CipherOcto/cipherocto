@@ -1,6 +1,6 @@
 //! TV-0206-A10 — `register_roundtrip.rs` for `octo-vault-storage`.
 //!
-//! Per RFC-0206 v2.1 §Test Vectors:
+//! Per RFC-0206 §Test Vectors:
 //! > `ls crates/octo-{vault,reputation,cap-macaroon-vault,matrix-session-store,policy}-storage/tests/ | grep -c register_roundtrip` equals 5
 //!
 //! This file exercises the canonical `register → execute_checked →

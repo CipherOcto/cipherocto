@@ -1,4 +1,4 @@
--- Mission 0010-f8-rich-did-storage: persist RFC-0010 v1.5
+-- Mission 0010-f8-rich-did-storage: persist RFC-0010
 -- §ServiceEndpoint + §ControllerReference on the `did_registry` table
 -- (mission 0871b-storage-backend landed v008 schema).
 --

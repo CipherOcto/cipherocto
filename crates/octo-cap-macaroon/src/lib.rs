@@ -75,7 +75,7 @@ pub mod vault_verify_error;
 // the domain types (Clock, HolderKind, HolderRecord, BearerCapsule,
 // CapabilityTokenLike, CapabilityClass) all moved here from
 // `crates/quota-router-storage/`. Sole source of truth for the
-// capability-macaroon domain types per RFC-0206 v2.1 §Layer B.
+// capability-macaroon domain types per RFC-0206 §Layer B.
 pub mod bearer_capsule_stub;
 pub mod clock;
 pub mod holder_kind;

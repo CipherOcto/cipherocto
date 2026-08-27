@@ -1,6 +1,6 @@
 //! Substrate error type + legacy [`StorageError`] compatibility alias.
 //!
-//! Per RFC-0206 v2.1 §Substrate Newtype Refactor, the canonical error is
+//! Per RFC-0206 §Substrate Newtype Refactor, the canonical error is
 //! [`SubstrateError`]. [`StorageError`] is retained as a deprecated type
 //! alias for the ≥ 6-month transition window (§Migration Order).
 
@@ -90,13 +90,13 @@ pub type Result<T> = std::result::Result<T, SubstrateError>;
 
 /// Deprecated alias for the pre-v2.1 substrate error type.
 ///
-/// Per RFC-0206 v2.1 §Migration Order, this alias is retained for ≥ 6
+/// Per RFC-0206 §Migration Order, this alias is retained for ≥ 6
 /// months so owner crates migrating from `StorageError` to
 /// `SubstrateError` compile without edit. **New code MUST use
 /// [`SubstrateError`] directly.**
 #[deprecated(
     since = "1.0.0",
-    note = "renamed to `SubstrateError` per RFC-0206 v2.1 §Substrate Newtype Refactor; will be removed in v2.0"
+    note = "renamed to `SubstrateError` per RFC-0206 §Substrate Newtype Refactor; will be removed in v2.0"
 )]
 pub type StorageError = SubstrateError;
 

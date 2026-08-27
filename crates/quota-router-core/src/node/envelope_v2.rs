@@ -29,7 +29,7 @@
 //! ## Canonical DID derivation
 //!
 //! The router node's `from_did` is derived from its `identity_key` (32-byte
-//! Ed25519 seed) via `octo_ident::CanonicalCodec::mint` per RFC-0010 v1.2 F4.
+//! Ed25519 seed) via `octo_ident::CanonicalCodec::mint` per RFC-0010 F4.
 //! This converts the seed into the canonical `did:octo:z<base58btc>` form
 //! that RFC-0871 requires for `NodeEnvelope.from_did`.
 
@@ -57,13 +57,13 @@ use super::provider::{NetworkId, RouterNodeId};
 ///
 /// # Why NOT the RFC-0010 canonical form?
 ///
-/// RFC-0010 v1.2 F4 defines the canonical DID as `did:octo:z<base58btc(blake3(BINDING_DOMAIN || pk))>` —
+/// RFC-0010 F4 defines the canonical DID as `did:octo:z<base58btc(blake3(BINDING_DOMAIN || pk))>` —
 /// the wire form encodes the BLAKE3 hash, NOT the PK. This is the
 /// HUMAN-facing identifier for cross-mission reputation and CLI use. For
 /// MACHINE signature verification, the verifier needs the PK itself, so
 /// the signer_did for `Authorization::Signature` carries the raw PK form.
 /// Mission 0871a (wallet-node) bridges the canonical-form identity to the
-/// signature-form identity via the wallet's `IdentityKey` (RFC-0009 v1.1
+/// signature-form identity via the wallet's `IdentityKey` (RFC-0009
 /// HSM routing) — that mission's scope.
 #[must_use]
 pub fn node_canonical_did(identity_key: &[u8; 32]) -> WireDid {
@@ -78,7 +78,7 @@ pub fn node_canonical_did(identity_key: &[u8; 32]) -> WireDid {
 /// `payload_body` is the borsh-encoded inner payload (typically the existing
 /// `envelope()` helper output, just the bincode-serialized payload without
 /// the discriminator byte). The wrapper adds:
-/// - `from_did` = canonical DID of the sender (RFC-0010 v1.2 F4).
+/// - `from_did` = canonical DID of the sender (RFC-0010 F4).
 /// - `to_node_id` = broadcast (quota router gossip hit every peer).
 /// - `payload_kind` = the RFC-0870-namespaced UUID for the payload type
 ///   (see `octo_protocol::payload_kind::QUOTA_*`).
@@ -290,7 +290,7 @@ pub fn inner_payload_slice(envelope: &NodeEnvelope) -> &[u8] {
 ///
 /// Mission 0870-b mapping (RFC-0870 §NodeEnvelope Adoption table).
 /// Returns `None` for unmapped discriminator bytes (e.g. 0xC8/0xC9
-/// reserved codes for provider health probes, deferred per RFC-0870 v1.5).
+/// reserved codes for provider health probes, deferred per RFC-0870).
 #[must_use]
 pub fn legacy_disc_to_payload_kind(disc: u8) -> Option<PayloadKindId> {
     use octo_protocol::payload_kind::{

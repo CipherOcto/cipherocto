@@ -104,7 +104,7 @@ This amendment closes that gap by binding the delivery to the settlement chain i
 | **G2: Dual-mode coverage** | Every settled deal results in exactly one bearer + exactly one capability delivered | Grep audit: every `DealSettled` has non-empty `bearer_capsule_hash` AND non-empty `cap_root_hash` |
 | **G3: Forward-compat** | Legacy verifiers (pre-A1) skip `DealSettled` events without rejecting the chain | Backwards-compat test: pre-A1 verifier consumes post-A1 chain |
 | **G4: Sync convergence** | MarketDeliveryEnvelope reaches buyer's peer set in ≤ 30s | RFC-0862 gossip benchmark |
-| **G5: Settlement chain integrity** | Adding DealSettled does not break existing chain hash | Diff harness: replay RFC-0959 v1.0 chain, assert byte-identical hash for pre-A1 events |
+| **G5: Settlement chain integrity** | Adding DealSettled does not break existing chain hash | Diff harness: replay RFC-0959 v2.0 chain, assert byte-identical hash for pre-A1 events |
 | **G6: Atomicity rollback** | Failed bearer insert OR capability insert rolls back the DealSettled event | Test: forced failure at each insert point |
 | **G7: Chain-tip TOCTOU** | Two concurrent `deliver_at_settlement` on the same rail do not fork the chain | Integration test: 100 concurrent deliveries, all succeed or all retry |
 | **G8: Debug redaction** | Zero credential material in `Debug` output | Test: TV9 |
@@ -263,7 +263,7 @@ Algorithm:
 3. Verify `envelope.deal_settled.seller_signature` is a valid Ed25519 signature by `seller_pub` over `canonical_ser(DealSettled w/o seller_signature)`. If not → `Err(InvalidSignature)`.
 4. Verify `envelope.deal_settled.payload.role_tag == RoleTag::Asker`. If not → `Err(WrongRoleTag)`.
 5. Compute `envelope.deal_settled.event_hash` from the unified formula and compare to the stored value. If mismatch → `Err(ChainHashMismatch)`.
-6. Look up the capability in the local HolderRegistry (the registry is gossiped to buyer's peer set via RFC-0862). `lookup_active(cap_root_hash, clock)?`. If absent → `Err(UnknownHolder)`. The buyer's wallet MUST have the local catalog populated; this is documented in the wallet SDK (RFC-0009 §Identity).
+6. Look up the capability in the local HolderRegistry (the registry is gossiped to buyer's peer set via RFC-0862). `lookup_active(cap_root_hash, clock)?`. If absent → `Err(UnknownHolder)`. The buyer's wallet MUST have the local catalog populated; this is documented in the wallet SDK (RFC-0009 §Identity Struct).
 7. Decrypt `envelope.bearer.encrypted_capsule` with the buyer's X25519 privkey + AAD = `bearer_capsule_hash`. Plaintext reveals the virtual key. If decryption fails → `Err(DecryptionFailed)`.
 8. Verify the virtual key's deal binding: `virtual_key.ask_id == envelope.deal_settled.payload.ask_id`. If not → `Err(AskMismatch)`.
 9. Insert into `ConsumedReceiptIndex.deliveries[envelope.deal_settled.payload.buyer_did]` (Round 3 R2 M9 fix: the EnvelopeId newtype is the type).
@@ -883,7 +883,7 @@ impl std::fmt::Debug for DeliveryError {
 
 ### Threat Model Additions
 
-- **Delivery spoofing** — an attacker forges a `DealSettled` event. Mitigation: the Seller's signature (RFC-0009 §Identity); only the seller's node can sign.
+- **Delivery spoofing** — an attacker forges a `DealSettled` event. Mitigation: the Seller's signature (RFC-0009 §Identity Struct); only the seller's node can sign.
 - **Replay of `DealSettled`** — attacker captures and replays. Mitigation: `ConsumedReceiptIndex` (RFC-0959 §Replay Protection) extended to track `DealSettled` by `(envelope_id, buyer_did)`. `EnvelopeId` is a newtype with `Hash` impl.
 - **Bearer capsule leak** — `encrypted_capsule` is decrypted by the buyer only. If the buyer's encryption pubkey is compromised, the capsule is exposed. Mitigation: per RFC-0009 §Encryption Keys, the buyer's encryption pubkey is rotated.
 - **Capability token leak via gossip** — envelope contains the capability token in plaintext. Gossip channel encrypts in transit (RFC-0862).
@@ -895,7 +895,7 @@ impl std::fmt::Debug for DeliveryError {
 
 ### Key Handling Rules
 
-UNCHANGED from RFC-0959 §Key Handling Rules + RFC-0009 §Identity. The Seller's signing key is the node identity. The buyer's encryption pubkey is per RFC-0009.
+UNCHANGED from RFC-0959 §Key Handling Rules + RFC-0009 §Identity Struct. The Seller's signing key is the node identity. The buyer's encryption pubkey is per RFC-0009.
 
 ### Cryptographic Agility
 
@@ -977,7 +977,7 @@ Verdict: ACCEPTED RISK. Mitigation: chain-based access claim as fallback.
 |------------|-------------------|----------------------|---------------------|
 | **IA-1: Both bearer + capability records exist for the ask** | §Algorithms steps 5-7 | `deliver_at_settlement` returns `AskNotFound` or `AskAlreadyExists` | RFC-0957-A1 §HolderRegistry UNIQUE constraint + `insert_dual` atomicity |
 | **IA-2: Stoolap transaction is atomic** | §Algorithms steps 0-10 + 7b | Partial-state delivery | RFC-0862 §Transaction guarantees |
-| **IA-3: Buyer's encryption pubkey is reachable** | §Algorithms step 3 | Bearer capsule cannot be encrypted | RFC-0009 §Identity; wallet-side resolver |
+| **IA-3: Buyer's encryption pubkey is reachable** | §Algorithms step 3 | Bearer capsule cannot be encrypted | RFC-0009 §Identity Struct; wallet-side resolver |
 | **IA-4: Seller's identity is non-revoked** | §Algorithms step 10 | `DealSettled` signature invalid | RFC-0009 §Identity Lifecycle |
 | **IA-5: RFC-0862 gossip reaches buyer peer set within 30s** | §Algorithms step 11 | Envelope not received | RFC-0862 §Gossip Heartbeat + Retry |
 | **IA-6: Settlement chain tip is reachable inside the transaction** | §Algorithms step 2 | Cannot compute `prev_chain_hash` atomically | RFC-0862 §Transaction guarantees |
@@ -1053,9 +1053,9 @@ Post-state: envelope in buyer's peer set
 ### TV5: Backward Compat — Legacy Verifier
 
 ```
-Pre-state: settlement chain contains Ask, SettlementEvent, SettlementReceipt (RFC-0959 v1.0)
+Pre-state: settlement chain contains Ask, SettlementEvent, SettlementReceipt (RFC-0959 v2.0)
             + DealSettled (RFC-0959-A1) appended
-Action: legacy verifier (RFC-0959 v1.0 only) consumes the chain
+Action: legacy verifier (RFC-0959 v2.0 only) consumes the chain
 Expected output: legacy verifier parses Ask + SettlementEvent + SettlementReceipt, skips DealSettled
                   (does not error; chain hash continuity preserved; uses stored event_hash as new tip)
 ```
@@ -1080,7 +1080,7 @@ Post-state: node B has MarketDeliveryEnvelope for buyer_did
 ### TV8: Chain Hash Continuity
 
 ```
-Pre-state: chain_tip = H0 (from RFC-0959 v1.0 chain)
+Pre-state: chain_tip = H0 (from RFC-0959 v2.0 chain)
 Action: deliver_at_settlement appends DealSettled
 Expected output: chain_tip = H1 = BLAKE3(H0 || canonical_ser(DealSettledPayload w/o signature))
 Verify: H1 == compute_chain_hash_from_chain([Ask, SettlementEvent, SettlementReceipt, DealSettled])
@@ -1263,7 +1263,7 @@ The Seller role is a naming convenience. The seller's node IS the Asker + Router
 
 ### C. Forward-Compat Behavior for Legacy Verifiers
 
-A legacy verifier (RFC-0959 v1.0 only) consuming a post-A1 chain:
+A legacy verifier (RFC-0959 v2.0 only) consuming a post-A1 chain:
 
 ```rust
 match event {

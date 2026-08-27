@@ -9,7 +9,7 @@
 //! 4. `apply_pending` — partially-applied DB picks up remaining migrations
 //! 5. `open` / `open_in_memory` — round-trip persistence + ephemerality
 
-// Per RFC-0206 v2.1 §Migration Order, the legacy `Migration` trait +
+// Per RFC-0206 §Migration Order, the legacy `Migration` trait +
 // `apply_pending` runner are retained under `_legacy_*` aliases for the
 // ≥ 6-month transition window. New code should use the typed
 // `Database::execute_checked` path; this fixture exercises the legacy

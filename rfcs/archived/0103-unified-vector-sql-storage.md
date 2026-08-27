@@ -225,12 +225,13 @@ All blockchain features operate independently of storage backend selection.
 > ⚠️ **Implementation Warning**: HNSW GPU support is experimental. Graph traversal is memory-bound; GPU gains are smaller than expected.
 
 **Initial GPU Scope** (Phase 5):
-| Operation | GPU Benefit |
-|----------|-------------|
-| Vector distance computation | High |
-| Quantization training | High |
-| Batch re-ranking | Medium |
-| Full graph traversal | Low (memory-bound) |
+
+| Operation                   | GPU Benefit        |
+| --------------------------- | ------------------ |
+| Vector distance computation | High               |
+| Quantization training       | High               |
+| Batch re-ranking            | Medium             |
+| Full graph traversal        | Low (memory-bound) |
 
 ```rust
 #[cfg(feature = "gpu")]
@@ -477,11 +478,12 @@ fn verify_with_consensus(query: &[f32], k: usize) -> VerifiedResult {
 > ⚠️ **Implementation Warning**: Software float is orders of magnitude slower. Limit candidate set size.
 
 **Constraint**:
-| Parameter | Value | Rationale |
-|-----------|-------|-----------|
-| Candidate set | ≥4×K, ≤512 | Must cover enough candidates for top-K |
-| Min candidates | 40 | For K=10, need at least 40 |
-| Max candidates | 512 | Software float cost limit |
+
+| Parameter      | Value      | Rationale                              |
+| -------------- | ---------- | -------------------------------------- |
+| Candidate set  | ≥4×K, ≤512 | Must cover enough candidates for top-K |
+| Min candidates | 40         | For K=10, need at least 40             |
+| Max candidates | 512        | Software float cost limit              |
 
 **Performance Estimate**:
 
@@ -627,11 +629,12 @@ graph TB
 > ⚠️ **Implementation Warning**: Without merge policy, segment count explodes with writes.
 
 **Merge Triggers**:
-| Condition | Action |
-|-----------|--------|
-| segments > 8 | Trigger merge |
-| segments > 16 | Aggressive merge |
-| Total size > 1GB | Merge smallest |
+
+| Condition        | Action           |
+| ---------------- | ---------------- |
+| segments > 8     | Trigger merge    |
+| segments > 16    | Aggressive merge |
+| Total size > 1GB | Merge smallest   |
 
 **Merge Strategy**:
 
@@ -685,12 +688,13 @@ struct VersionedSegment {
 ```
 
 **Behavior**:
-| Operation | Segment Action |
-|-----------|----------------|
-| Insert | Add to live segment |
-| Commit | Freeze segment, increment version |
-| Merge | Create new version, mark old inactive |
-| Historical query | Use segment at specific version |
+
+| Operation        | Segment Action                        |
+| ---------------- | ------------------------------------- |
+| Insert           | Add to live segment                   |
+| Commit           | Freeze segment, increment version     |
+| Merge            | Create new version, mark old inactive |
+| Historical query | Use segment at specific version       |
 
 #### Segment Garbage Collection
 
@@ -1224,12 +1228,13 @@ When porting code from Qdrant (Apache 2.0 license):
 > ⚠️ **Important**: Vector indexes are NOT directly replicated.
 
 **Approach**:
-| Component | Replicated? | Strategy |
-|-----------|--------------|----------|
-| Vector data | Yes | Raft log replicates raw vectors |
-| HNSW index | No | Rebuilt locally from replicated vectors |
-| Segment metadata | Yes | Replicated via Raft |
-| Merkle root | Yes | Computed locally, proof shared |
+
+| Component        | Replicated? | Strategy                                |
+| ---------------- | ----------- | --------------------------------------- |
+| Vector data      | Yes         | Raft log replicates raw vectors         |
+| HNSW index       | No          | Rebuilt locally from replicated vectors |
+| Segment metadata | Yes         | Replicated via Raft                     |
+| Merkle root      | Yes         | Computed locally, proof shared          |
 
 **Why**:
 

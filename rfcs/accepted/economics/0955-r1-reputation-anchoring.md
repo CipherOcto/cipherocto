@@ -28,7 +28,7 @@ the tail of RFC-0955 (`0955-model-liquidity-layer.md` §"Reputation Anchoring
 Amendment", pre-promotion revision) into a sibling Draft RFC, per BLUEPRINT
 RFC-lifecycle stage `Draft` (not the ad-hoc "in-draft amendment" state). The
 binding carries a `ReputationAnchorBatch` to chain-side infrastructure, with
-the per-controller Merkle-root batching model from RFC-0968 amendment 48, the
+the per-controller Merkle-root batching model from RFC-0968-A1 amendment 48 (beyond A2 scope — future amendment round TBD), the
 governance-set hash binding from RFC-0968 amendment 24, and a 32-byte
 domain-separated BLAKE3 anchor digest over the canonical 24-byte Dfp BLOB
 (RFC-0104 / RFC-0968 §10).
@@ -323,11 +323,11 @@ for this RFC's promotion-to-Accepted review.
 A recorder emitting events across many distinct `(did, kind, layer)` triples
 forces one anchor submission per active tuple per interval, multiplying the
 per-recorder chain-fee footprint by the tuple cardinality. To bound this,
-RFC-0968 amendment 48 introduces **Merkle-root batching at the controller
+RFC-0968-A1 amendment 48 (beyond A2 scope — future amendment round TBD) introduces **Merkle-root batching at the controller
 level** (per-controller, NOT per-recorder):
 
 - `MAX_ANCHOR_ROOTS_PER_CONTROLLER_PER_INTERVAL = 1`. Each controller
-  (attestor-attested `controller_id` per RFC-0968 amendment 44) submits
+  (attestor-attested `controller_id` per RFC-0968 amendment 44 (deferred to RFC-0968-A2 — controller_id = blake3(governance_pubkey) derivation)) submits
   exactly one anchor root per `ANCHOR_INTERVAL_SECS` window.
 - `MAX_TUPLES_PER_ROOT = 100`. The leaf set of each root is the union of
   all recorder-tuple digests under that controller; the chain-side contract
@@ -422,7 +422,7 @@ attestor set MUST produce byte-identical `GovernanceProof` serialization.
 Legacy rejection: anchoring transactions that carry the pre-R1 wire format
 (`governance_set_hash` byte `0x00` or absent; `signatures: Vec<[u8; 64]>`
 without per-signer pubkey) MUST be rejected at the chain-side contract with
-`ReputationError::GossipEnvelopeInvalid (0x3A)` (RFC-0968 amendment 29). No
+`ReputationError::GossipEnvelopeInvalid (0x3A)` (RFC-0968 §28.4 amendment 22). No
 on-chain migration tooling is provided (RFC-0955-R1 was Draft at the time
 of the breaking change; no live pre-R1 anchor transactions exist).
 
@@ -479,8 +479,7 @@ last_event_unix, samples, severity_total)` tuple MUST produce the same
   enum ranges + `election_priority`), §13 (error table; canonical home of
   `AnchorTupleFanoutExceeded (0x2A, reserved band 0x2A..=0xFF per §13)`), §16 (class table for reputation
   reads), §21 (economic analysis + finality coupling), §28.1 amendment 24
-  (`governance_set_hash` + `GOVERNANCE_QUORUM = 3`), §28.1 amendment 40 /
-  44 (controller-level aggregation), §28.1 amendment 48 (per-controller
+  (`governance_set_hash` + `GOVERNANCE_QUORUM = 3`), §28.1 (RFC-0968-A1 amendments 40 + 44, deferred to RFC-0968-A2) (controller-level aggregation), §28.1 amendment 48 (per-controller
   Merkle-root batching), §28.1 amendment 51 (proportional fee per leaf).
 - RFC-0104 — Dfp bit-determinism; canonical 24-byte encoding.
 - `missions/claimed/0968a-reputation-anchoring.md` — the implementation

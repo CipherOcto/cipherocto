@@ -277,7 +277,7 @@ This prevents deadlocks in multi-router deployments.
 - RFC-0909: Deterministic Quota Accounting (Optional)
 - RFC-0913: Stoolap Pub/Sub for Cache Invalidation (depends on this)
 
-## Changelog
+## Version History
 
 - **v3 (2026-03-13):** Review clarifications (Grok review)
   - Added "Locking Contract" section documenting row lock held until transaction end (references TransactionRegistry/TxnState)

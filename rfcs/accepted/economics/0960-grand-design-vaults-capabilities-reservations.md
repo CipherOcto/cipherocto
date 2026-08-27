@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted v2.0
+Accepted v3.0
 
 > **Note:** This RFC synthesizes the grand-design research into a single canonical architecture. It supersedes the value-layer gap analysis from Phase 1 of `docs/research/2026-07-22-value-transfer-model-internal-landscape.md` and codifies the primitives, Constraint set, audit window, event-sourced ledger, Economic VM, and Consensus Sessions from the grand-design doc.
 

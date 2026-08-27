@@ -16,7 +16,7 @@ quota-router-core = { path = "../quota-router-core" }
 serde_json = "1"
 # Layer 1 stable substrate (RFC-0871 §Data Structures)
 octo-protocol = { path = "../octo-protocol" }
-# Layer B identity (canonical DID codec, RFC-0010 v1.2 F4)
+# Layer B identity (canonical DID codec, RFC-0010 F4)
 octo-ident = { path = "../octo-ident" }
 # Layer B identity (HSM-routed IdentityKey for RouterAnnouncePayload
 # binding; mission 0959-placeholder-identity-binding).
@@ -37,7 +37,7 @@ async-trait = "=0.1.92"
 
 # Canonical coding (RFC-0126)
 borsh = "=1.5.0"
-# bs58 for deriving public-key DID wire form (RFC-0010 v1.2 F4)
+# bs58 for deriving public-key DID wire form (RFC-0010 F4)
 bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
 
 # Errors

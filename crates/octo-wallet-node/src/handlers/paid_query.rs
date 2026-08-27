@@ -209,7 +209,7 @@ impl Default for PaidQueryVerifyHandler {
 /// `const fn` (returns `Result`), so the literal is the only
 /// way to write this inline without a runtime unwrap.
 ///
-/// Uses `Dqa { value: 0, scale: 0 }` per RFC-0862 v2.0.3 §3.
+/// Uses `Dqa { value: 0, scale: 0 }` per RFC-0862 §3.
 #[inline]
 fn dqa_zero() -> Dqa {
     Dqa { value: 0, scale: 0 }

@@ -776,7 +776,7 @@ async fn persist_update_state(
 pub enum MtprotoSessionError {
     #[error("stoolap error: {0}")]
     Stoolap(#[from] octo_storage_core::stoolap::Error),
-    // RFC-0206 v2.1 §Substrate Newtype Refactor: substrate returns
+    // RFC-0206 §Substrate Newtype Refactor: substrate returns
     // `SubstrateError` from `Database::open` / `open_in_memory`. We
     // forward via `From<SubstrateError>` so session open surfaces the
     // substrate error directly. The Stoolap variant above covers

@@ -1,9 +1,9 @@
-//! Settlement-time vault-row chain-match verifier (RFC-0959 v2.0
+//! Settlement-time vault-row chain-match verifier (RFC-0959
 //! §Settlement-Time Vault Row Lookup + §Cross-Chain Settlement
 //! Reject, per review §20.7).
 //!
 //! Mission `0959-c1-wire-format-amendment`. Operates on
-//! [`SettlementEnvelope`] (RFC-0959 v2.0 wire form) and reuses the
+//! [`SettlementEnvelope`] (RFC-0959 wire form) and reuses the
 //! [`octo_cap_macaroon::VaultLookup`] trait — the same trait that
 //! backs capability verify-time (RFC-0957 §Verify-Time Extension +
 //! S5 LANDED + S5.1 follow-on `OctoVaultLookup`).
@@ -30,7 +30,7 @@
 //! `OctoVaultLookup::new(substrate)` and passes it as
 //! `&dyn VaultLookup` to this verifier — Layer discipline preserved.
 //!
-//! ## 3-step algorithm (RFC-0959 v2.0 §Settlement-Time Vault Row Lookup)
+//! ## 3-step algorithm (RFC-0959 §Settlement-Time Vault Row Lookup)
 //!
 //! 1. `cost_vault_id` present? Else reject with
 //!    [`SettlementError::CostVaultIdMissing`].
@@ -53,7 +53,7 @@ use crate::ask::{SettlementEnvelope, SettlementError};
 
 /// Settlement-time vault-row chain-match verifier.
 ///
-/// Cross-chain settlement reject per RFC-0959 v2.0
+/// Cross-chain settlement reject per RFC-0959
 /// §Cross-Chain Settlement Reject + review §20.7.
 ///
 /// # Errors
@@ -88,7 +88,7 @@ pub fn verify_settlement_chain_match(
         .ok_or(SettlementError::CostVaultIdMissing)?;
 
     // Step 3: vault.chain_id MUST equal envelope.chain_id. Both are
-    // 32-byte BLAKE3-derived per RFC-0010 v1.6.
+    // 32-byte BLAKE3-derived per RFC-0010.
     let envelope_chain_id = envelope
         .chain_id
         .ok_or(SettlementError::CostVaultIdMissing)?;

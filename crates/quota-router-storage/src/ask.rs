@@ -1,4 +1,4 @@
-//! Ask + PricingAxis + AskId types (RFC-0959 v1.0 §Data Structures).
+//! Ask + PricingAxis + AskId types (RFC-0959 §Data Structures).
 //!
 //! Ask = a node's published pricing offer. `AskId = BLAKE3(canonical_ser(asker_did || model || axes_hash || nonce))`.
 //! PricingAxis registry holds per-axis rate tables keyed by model.
@@ -446,7 +446,7 @@ impl ModelRateTable {
     }
 }
 
-/// Published Ask (per-node pricing offer) per RFC-0959 v1.0.
+/// Published Ask (per-node pricing offer) per RFC-0959.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Ask {
     /// Asker (publisher) DID.
@@ -935,7 +935,7 @@ pub enum AxisRegistryError {
     Duplicate(String),
 }
 
-/// Cache classification by cache_key_hash (RFC-0959 v1.0 §Cache Classification).
+/// Cache classification by cache_key_hash (RFC-0959 §Cache Classification).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CacheClassification {
     /// BLAKE3 hash of the request body.
@@ -976,7 +976,7 @@ impl CachePolicy {
     }
 }
 
-/// Settlement envelope (RFC-0959 v2.0 canonical wire).
+/// Settlement envelope (RFC-0959 canonical wire).
 ///
 /// v2.0 adds `cost_vault_id: Option<[u8; 32]>` + `chain_id: Option<[u8; 32]>`
 /// fields per review §20.7 (cross-chain settlement reject). v1.0 used
@@ -1022,14 +1022,14 @@ pub struct SettlementEnvelope {
     /// Cost in micro-OCTO-W.
     #[serde(with = "crate::dqa_serde::field")]
     pub cost: Dqa,
-    /// Vault row the settlement draws against (RFC-0959 v2.0 §Wire
+    /// Vault row the settlement draws against (RFC-0959 §Wire
     /// Format + review §20.7). `None` for pre-v2.0 settlements (no
     /// cross-chain reject enforced). When `Some`, the settlement-time
     /// verifier MUST find a vault row at this id (via `VaultLookup`)
     /// and that row's `chain_id` MUST match `chain_id` below.
     pub cost_vault_id: Option<[u8; 32]>,
-    /// Chain scope of this settlement (RFC-0959 v2.0 §Wire Format +
-    /// RFC-0010 v1.6 §ChainId 32-byte addendum). `None` for pre-v2.0
+    /// Chain scope of this settlement (RFC-0959 §Wire Format +
+    /// RFC-0010 §ChainId 32-byte addendum). `None` for pre-v2.0
     /// settlements; `Some` carries
     /// `BLAKE3("cipherocto/chain/v1/" || chain_string)`.
     pub chain_id: Option<[u8; 32]>,
@@ -1157,14 +1157,12 @@ pub enum SettlementError {
     #[error("canonical_ser error: {0}")]
     CanonicalSer(#[from] serde_json::Error),
     /// v2.0 settlement envelope missing required `cost_vault_id` field
-    /// (RFC-0959 v2.0 §Wire Format + review §20.7). Cross-chain
+    /// (RFC-0959 §Wire Format + review §20.7). Cross-chain
     /// settlement reject cannot proceed without a vault row key.
-    #[error(
-        "settlement envelope missing required `cost_vault_id` field (RFC-0959 v2.0 §Wire Format)"
-    )]
+    #[error("settlement envelope missing required `cost_vault_id` field (RFC-0959 §Wire Format)")]
     CostVaultIdMissing,
     /// v2.0 settlement envelope's `chain_id` does not match the
-    /// `chain_id` of the vault row at `cost_vault_id` (RFC-0959 v2.0
+    /// `chain_id` of the vault row at `cost_vault_id` (RFC-0959
     /// §Cross-Chain Settlement Reject + review §20.7).
     #[error(
         "cross-chain settlement reject: vault {vault_id:?} belongs to chain {vault_chain_id:?}, \

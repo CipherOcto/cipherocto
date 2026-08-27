@@ -1,5 +1,5 @@
 ---
-name: 0206-004-adapter-crates
+name: 0206-004-adapter-crates-v21
 description: Open 2026-08-20 v2.1; RFC-0206 v2.0 §Adapter Crate List — 5 adapter crates (octo-vault-storage, octo-reputation-storage, octo-cap-macaroon-vault-storage, octo-matrix-session-store-storage, octo-policy-storage) + 5 trait declarations (4 NEW + 1 MOVE: VaultLookup) + per-adapter fixtures. `octo-ident-storage` is the 6th adapter crate but owned by `0206-005-octoident-storage-crate`. Facade (`crates/octo-storage/`) migration owned by `0206-001-substrate-newtype` (out of scope).
 metadata:
   node_type: mission
@@ -15,6 +15,18 @@ metadata:
     - 0206-006-cipherocto-policy-rename-alignment
     - RFC-0205
     - RFC-0206
+status: retired
+phase: retired
+layer: B
+rfc_authority: RFC-0206 v2.0
+tvs:
+  - TV-0206-A6
+  - TV-0206-A8
+  - TV-0206-A9
+  - TV-0206-A10
+  - TV-0206-A11
+  - TV-0206-A12
+  - TV-0206-A14
 ---
 
 # Mission `0206-004-adapter-crates` v2.1 — OPEN 2026-08-20

@@ -729,7 +729,7 @@ graph TB
         TR[Traces]
     end
 
-    subgraph "RFC-0106: Numeric Tower"
+    subgraph "RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal): Numeric Tower"
         NT[DQA/DVEC]
     end
 
@@ -743,12 +743,12 @@ graph TB
 
 ### Integration Points
 
-| RFC      | Integration                         |
-| -------- | ----------------------------------- |
-| RFC-0106 | DQA types for expert weights        |
-| RFC-0120 | Deterministic operators, VM, traces |
-| RFC-0121 | Pipeline integration, sharding      |
-| RFC-0115 | Verification market challenges      |
+| RFC                                                                      | Integration                         |
+| ------------------------------------------------------------------------ | ----------------------------------- |
+| RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) | DQA types for expert weights        |
+| RFC-0120                                                                 | Deterministic operators, VM, traces |
+| RFC-0121                                                                 | Pipeline integration, sharding      |
+| RFC-0115                                                                 | Verification market challenges      |
 
 ## Performance Targets
 
@@ -841,7 +841,7 @@ In decentralized verification:
 
 ## Related RFCs
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower
 - RFC-0115 (Economics): Probabilistic Verification Markets
 - RFC-0120 (AI Execution): Deterministic AI Virtual Machine
 - RFC-0121 (AI Execution): Verifiable Large Model Execution

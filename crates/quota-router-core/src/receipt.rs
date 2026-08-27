@@ -301,7 +301,7 @@ mod tests {
     #[test]
     fn wrap_envelope_uses_reserved_prefix() {
         // Guard: prefix must stay out of 0xA3 (sql_statements_hash) and
-        // 0xA4-0xA6 (RFC-0960 v1.1 allocations) and 0xA0-0xA2 (other
+        // 0xA4-0xA6 (RFC-0960 allocations) and 0xA0-0xA2 (other
         // reserved slots). 0xA7 is the first free byte in the
         // 0xA7-0xAF reserved range per RFC-0964 §0.1.
         assert_eq!(RECEIPT_ENVELOPE_HASH_PREFIX, 0xA7);

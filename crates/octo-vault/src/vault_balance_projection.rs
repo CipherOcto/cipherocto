@@ -1,6 +1,6 @@
-//! Mission A (RFC-0960 v3.7) VaultBalanceProjection substrate.
+//! Mission A (RFC-0960) VaultBalanceProjection substrate.
 //!
-//! Per RFC-0960 v3.7 §2.1 (VaultBalanceProjection) + §2.2 (Projection
+//! Per RFC-0960 §2.1 (VaultBalanceProjection) + §2.2 (Projection
 //! Algorithm) + §2.3 (Bounded-LRU Cache).
 //!
 //! ## Layer hosting
@@ -15,12 +15,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use octo_cap_macaroon::{AssetId, ChainId, Dqa, VaultId};
 
 /// Sentinel `VaultId` used for sovereign drain-direction events
-/// (Payment/Settlement/Burn) per RFC-0960 v3.7 §2.1. The
+/// (Payment/Settlement/Burn) per RFC-0960 §2.1. The
 /// `vault_id = ZERO_VAULT_ID` row in `transfer_events` represents
 /// chain-rule / role-token emissions (NOT a real vault).
 pub const ZERO_VAULT_ID: VaultId = VaultId::from_bytes([0u8; 32]);
 
-/// Projection source provenance (RFC-0960 v3.7 §2.1).
+/// Projection source provenance (RFC-0960 §2.1).
 ///
 /// `#[repr(u8)]` so the SQL `source_kind INT` column binding matches the
 /// substrate-canonical pattern (same as `AssetKind`).
@@ -37,7 +37,7 @@ pub enum ProjectionSource {
 }
 
 /// Cached projection for `(chain_id, vault_id, asset_id)` triple
-/// (RFC-0960 v3.7 §2.1).
+/// (RFC-0960 §2.1).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VaultBalanceProjection {
     pub chain_id: ChainId,
@@ -45,7 +45,7 @@ pub struct VaultBalanceProjection {
     pub asset_id: AssetId,
     /// Projected balance = `SUM(in.to_vault) - SUM(out.from_vault) -
     /// SUM(active escrow holds)`. DQA-form (NOT raw `i64`) to avoid the
-    /// second-numeric-tower violation per RFC-0105 v3.5.
+    /// second-numeric-tower violation per RFC-0105.
     pub projected_balance: Dqa,
     /// Wall-clock timestamp of the projection (unix seconds, ONE-clock
     /// rule per §2.3 — no ms/epoch mixing).
@@ -58,7 +58,7 @@ pub struct VaultBalanceProjection {
 }
 
 /// Errors surfaced by the projection substrate
-/// (RFC-0960 v3.7 §2.4 + R8 #1 realignment).
+/// (RFC-0960 §2.4 + R8 #1 realignment).
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ProjectionError {
@@ -78,7 +78,7 @@ pub enum TransferEventLogInsertError {
     InsertFailed,
 }
 
-/// `TransferEventLog` port trait (RFC-0960 v3.7 §2.2 + Mission B §2.5).
+/// `TransferEventLog` port trait (RFC-0960 §2.2 + Mission B §2.5).
 ///
 /// Layer B port — production impl lives at `octo-vault-stoolap`
 /// (Layer D transport adapter).
@@ -119,7 +119,7 @@ pub trait TransferEventLog: Send + Sync {
     ) -> Result<(), crate::event_log_producer::TransferEventLogInsertError>;
 }
 
-/// `VaultAssetResolver` port trait (RFC-0960 v3.7 §2.1).
+/// `VaultAssetResolver` port trait (RFC-0960 §2.1).
 ///
 /// Distinct from `VaultRegistry::contains_asset` (returns `()`, cannot
 /// return `asset_id`). Required by Mission A scope.
@@ -141,7 +141,7 @@ pub enum VaultAssetResolverError {
     UnknownVault { vault_id: VaultId },
 }
 
-/// Compute projection over the log (RFC-0960 v3.7 §2.2 algorithm).
+/// Compute projection over the log (RFC-0960 §2.2 algorithm).
 ///
 /// `projected_balance = sum_to_vault - sum_from_vault`. Drain-direction
 /// events (Payment/Settlement/Burn) use `ZERO_VAULT_ID` sentinel; the
@@ -182,7 +182,7 @@ pub fn project(
 }
 
 // ============================================================================
-// Bounded-LRU cache (RFC-0960 v3.7 §2.3)
+// Bounded-LRU cache (RFC-0960 §2.3)
 // ============================================================================
 //
 // Note: this is a HASH-MAP-backed cache with manual eviction (substrate-
@@ -195,7 +195,7 @@ pub fn project(
 
 use std::collections::HashMap;
 
-/// Cache key = `(chain_id, vault_id, asset_id)` triple per RFC-0960 v3.7
+/// Cache key = `(chain_id, vault_id, asset_id)` triple per RFC-0960
 /// §2.3 (asset-generality contract).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CacheKey {
@@ -307,16 +307,16 @@ pub fn map_resolver_error(e: VaultAssetResolverError) -> ProjectionError {
 }
 
 // ============================================================================
-// v015 SQL DDL (RFC-0960 v3.7 §3.1)
+// v015 SQL DDL (RFC-0960 §3.1)
 // ============================================================================
 //
 // Per-crate numbering per substrate state — `octo-vault/migrations/` has
 // v013+v014 (verified via `ls`); next free is v015. When the centralized
-// migration runner (RFC §3.1 L748-752) lands, this MUST be renumbered to
+// migration runner (RFC §3.1) lands, this MUST be renumbered to
 // global v017 per the RFC proposal.
 
 /// SQL DDL for the projection cache table. PK `(chain_id, vault_id)`.
-/// Columns per RFC-0960 v3.7 §3.1.
+/// Columns per RFC-0960 §3.1.
 pub const V015_DDL: &str = "\
 CREATE TABLE IF NOT EXISTS vault_balance_projection_cache (
     chain_id                  BLOB(32) NOT NULL,

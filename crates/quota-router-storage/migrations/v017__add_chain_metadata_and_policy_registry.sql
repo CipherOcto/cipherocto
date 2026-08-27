@@ -1,6 +1,6 @@
 -- Migration v017: chain_metadata + policy_registry + policy_kind_authority +
--- ledger_chain_registry (combined per RFC-0206 v3.0 §Substrate Migration
--- v015-v018; RFC-0010 v1.9.2 §ledger_chain_registry Table; research doc
+-- ledger_chain_registry (combined per RFC-0206 §Substrate Migration
+-- v015-v018; RFC-0010 §ledger_chain_registry Table; research doc
 -- §8.1 §chain_metadata + §8.2 §policy_registry + §policy_kind_authority).
 --
 -- Mission `0010-v17-chain-id-registration-authority` (Session 6 deferred
@@ -10,12 +10,12 @@
 -- waiting on this migration landing.
 --
 -- v017 is purely ADDITIVE — 4 new tables (no ALTER on existing tables):
---   1. ledger_chain_registry (RFC-0010 v1.9.2 §2)
+--   1. ledger_chain_registry (RFC-0010 §2)
 --   2. chain_metadata (research doc §8.1)
 --   3. policy_registry (research doc §8.2)
 --   4. policy_kind_authority (research doc §8.2)
 --
--- Why this migration combines 4 tables: per RFC-0206 v3.0 §Substrate
+-- Why this migration combines 4 tables: per RFC-0206 §Substrate
 -- Migration v015-v018, the v017 slot is reserved for the
 -- "chain_metadata + policy_registry + ledger_chain_registry +
 -- policy_kind_authority" bundle. Splitting these into 4 separate
@@ -25,10 +25,10 @@
 -- policy_registry rows).
 
 -- ─────────────────────────────────────────────────────────────────────
--- Table 1: ledger_chain_registry (RFC-0010 v1.9.2 §2)
+-- Table 1: ledger_chain_registry (RFC-0010 §2)
 -- ─────────────────────────────────────────────────────────────────────
 --
--- RFC-0010 v1.9.2 §2 specifies the ledger_chain_registry schema:
+-- RFC-0010 §2 specifies the ledger_chain_registry schema:
 -- chain_id BLOB(32) PK + chain_namespace BLOB(1) (0x01 Rfc / 0x02 User
 -- only — narrower CHECK mirrors substrate `ChainNamespace::from_canonical_bytes`
 -- which rejects 0x00 and 0x03-0xFF) + operator_did BLOB(32) +

@@ -77,7 +77,7 @@ impl HandlerOutput {
 
 /// Map a `octo_ident::DidError` to a `ProtocolError` for invalid DID inputs.
 ///
-/// Mirrors the wallet-node mapping pattern (RFC-0010 v1.2 F4).
+/// Mirrors the wallet-node mapping pattern (RFC-0010 F4).
 pub fn did_error_to_protocol(e: impl std::fmt::Display) -> ProtocolError {
     ProtocolError::InvalidDid(e.to_string())
 }

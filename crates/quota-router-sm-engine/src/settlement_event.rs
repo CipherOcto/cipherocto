@@ -1,6 +1,6 @@
-//! Mission G (RFC-0959 v2.8) SettlementEvent substrate.
+//! Mission G (RFC-0959) SettlementEvent substrate.
 //!
-//! Per RFC-0959 v2.8 §2 (SettlementEvent Specification) + §3 (Wire Form).
+//! Per RFC-0959 §2 (SettlementEvent Specification) + §3 (Wire Form).
 //!
 //! ## Layer hosting
 //!
@@ -8,7 +8,7 @@
 //! specialized node for settlement matching) but the TYPE itself is a
 //! Layer B additive substrate — multiple Layer C consumers (audit replay,
 //! settlement matching, vault projection wiring in Mission B) all observe
-//! it. Per RFC-0959 v2.8 §2.1 L42-44.
+//! it. Per RFC-0959 §2.1.
 
 #![allow(
     clippy::module_name_repetitions,
@@ -26,29 +26,29 @@ use octo_cap_macaroon::{
 };
 
 /// Typed 32-byte wrapper for a settlement event ID
-/// (RFC-0959 v2.8 §2.1 L67).
+/// (RFC-0959 §2.1).
 ///
 /// Re-exported from `octo_cap_macaroon::SettlementId` (Layer A substrate;
 /// canonical home per `cipherocto-design-principles` §Canonical home rule).
 pub use octo_cap_macaroon::SettlementId;
 
-/// Typed 32-byte wrapper for an ask ID (RFC-0959 v2.8 §2.1 L68).
+/// Typed 32-byte wrapper for an ask ID (RFC-0959 §2.1).
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, Hash, borsh::BorshSerialize, borsh::BorshDeserialize,
 )]
 pub struct AskId(pub [u8; 32]);
 
 /// Typed 32-byte wrapper for evidence blob reference
-/// (RFC-0959 v2.8 §2.1 L69).
+/// (RFC-0959 §2.1).
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, Hash, borsh::BorshSerialize, borsh::BorshDeserialize,
 )]
 pub struct EvidenceRef(pub [u8; 32]);
 
-/// Settlement outcome discriminant (RFC-0959 v2.8 §2.1 L91-105).
+/// Settlement outcome discriminant (RFC-0959 §2.1).
 ///
 /// `AlreadyConsumed` aligns with `SettlementError::AlreadyConsumed(String)`
-/// (canonical substrate variant per RFC-0959 v2.8 §0; no rename history).
+/// (canonical substrate variant per RFC-0959 §0; no rename history).
 /// `ReceiptReplay` was NEVER a substrate variant. Audit* variants live
 /// in `SettlementAuditError` (§2.3), NOT here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, borsh::BorshSerialize, borsh::BorshDeserialize)]
@@ -60,7 +60,7 @@ pub enum SettlementDecision {
     BudgetExhausted = 0x04,
 }
 
-/// Vault registry error mapping (RFC-0959 v2.8 §2.2 L111-116).
+/// Vault registry error mapping (RFC-0959 §2.2).
 ///
 /// Single-source-of-truth: `octo_cap_macaroon::VaultAssetError` is the
 /// canonical substrate enum (Mission F). This is a thin alias to avoid
@@ -69,7 +69,7 @@ pub enum SettlementDecision {
 /// consumer boundary.
 pub type VaultRegistryError = VaultAssetError;
 
-/// 13-field SettlementEvent struct (RFC-0959 v2.8 §2.1 L75-89).
+/// 13-field SettlementEvent struct (RFC-0959 §2.1).
 #[derive(Clone, Debug, PartialEq, Eq, borsh::BorshSerialize, borsh::BorshDeserialize)]
 pub struct SettlementEvent {
     /// Settlement event identifier (BLAKE3-derived per RFC-0959 §2.1).
@@ -100,7 +100,7 @@ pub struct SettlementEvent {
     pub nonce: Nonce,
 }
 
-/// Local Epoch newtype (RFC-0959 v2.8 §2.1 L86).
+/// Local Epoch newtype (RFC-0959 §2.1).
 ///
 /// `Epoch` lives in `octo_cap_macaroon` but the constructor signature
 /// differs slightly. We use a 1:1 newtype here to keep Mission G
@@ -119,7 +119,7 @@ impl EpochLocal {
     }
 }
 
-/// SettlementEvent errors (RFC-0959 v2.8 §2.2 L118-144). 9 variants,
+/// SettlementEvent errors (RFC-0959 §2.2). 9 variants,
 /// `#[non_exhaustive]` for additive Layer B substrate.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -147,7 +147,7 @@ pub enum SettlementEventError {
     LegacyFormOnNonOctoWContext { claimed_asset_id: AssetId },
 }
 
-/// Audit invariant violation (RFC-0105 v3.5 §3.13 tri-invariant pair).
+/// Audit invariant violation (RFC-0105 §3.13 tri-invariant pair).
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum AuditInvariantViolation {
     #[error(
@@ -160,21 +160,21 @@ pub enum AuditInvariantViolation {
 }
 
 /// Length-prefixed settlement-decision encoding
-/// (RFC-0959 v2.8 §2.2 L154-173).
+/// (RFC-0959 §2.2).
 #[must_use]
 pub fn encode_settlement_decision(d: SettlementDecision) -> Vec<u8> {
     let tag = d as u8;
-    let mut out = vec![0x01_u8]; // discriminator byte (RFC §2.2 L163)
+    let mut out = vec![0x01_u8]; // discriminator byte (RFC §2.2)
     out.push(tag);
     out
 }
 
-/// Body-hash commitment per RFC-0959 v2.8 §2.2 L181-205.
+/// Body-hash commitment per RFC-0959 §2.2.
 ///
 /// Field set: `settlement_id | ask_id | cost_vault_id | cost_asset_id |
 /// kind_tag (1 byte) | cost (Dqa .to_le_bytes) | ledger_height (u64
 /// .to_le_bytes) | evidence_ref | governance_pubkey | nonce`. Mirrors
-/// RFC-0960 v3.6 §2.2 `compute_body_hash`.
+/// RFC-0960 §2.2 `compute_body_hash`.
 #[must_use]
 pub fn compute_settlement_body_hash(settlement: &SettlementEvent) -> [u8; 32] {
     let mut buf: Vec<u8> = Vec::with_capacity(32 * 6 + 1 + 16 + 8 + 8 + 32 + 32);
@@ -193,7 +193,7 @@ pub fn compute_settlement_body_hash(settlement: &SettlementEvent) -> [u8; 32] {
     blake3_hash(&buf)
 }
 
-/// 8-gate constructor (RFC-0959 v2.8 §2.2 L207-295). 11 args.
+/// 8-gate constructor (RFC-0959 §2.2). 11 args.
 ///
 /// `asset_kind` derived from `meta.kind` (NOT a constructor arg).
 /// `registry_snapshot_epoch` set from `current_epoch` (NOT a constructor
@@ -233,7 +233,7 @@ pub fn new(
         });
     }
     // Gate 3 — governance_pubkey resolution: [0u8;32] sentinel for sovereign
-    // body_hash commitment (CONTENT slot per §3.3 L506-511).
+    // body_hash commitment (CONTENT slot per §3.3).
     let governance_pubkey_body_hash: [u8; 32] = meta.governance_pubkey.unwrap_or_default();
     // Gate 4 — build struct (asset_kind from meta, snapshot from current)
     let settlement = SettlementEvent {
@@ -297,7 +297,7 @@ pub fn new(
     Ok(settlement)
 }
 
-/// Post-deser check (RFC-0959 v2.8 §2.2 L298). 7 fail-fast checks.
+/// Post-deser check (RFC-0959 §2.2). 7 fail-fast checks.
 pub fn validate(
     settlement: &SettlementEvent,
     registry: &dyn AssetRegistry,
@@ -359,7 +359,7 @@ pub fn validate(
     Ok(())
 }
 
-/// Tri-invariant pairwise check per RFC-0105 v3.5 §3.13:
+/// Tri-invariant pairwise check per RFC-0105 §3.13:
 /// `SettlementEvent.cost_asset_id == PaymentCaveat.asset_id`.
 pub fn verify_settlement_against_payment_caveat(
     settlement: &SettlementEvent,

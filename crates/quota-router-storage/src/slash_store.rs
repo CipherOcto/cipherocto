@@ -8,7 +8,7 @@
 //! Mission `0900-d` (RFC-0900 amendment v2.0): substrate is
 //! chain-aware per §20.3 Model B. PK = `(chain_id, provider_id)` per
 //! the v015 migration. `SlashLedgerRow` carries a `chain_id: [u8; 32]`
-//! field matching the typed `ChainId` per RFC-0010 v1.4. The amount
+//! field matching the typed `ChainId` per RFC-0010. The amount
 //! columns remain BIGINT (i64) at scale=0 via the documented
 //! `dqa_to_i64` / `i64_to_dqa` bridge (stoolap fork does not expose a
 //! native Dqa driver; the bridge text form matches the canonical
@@ -19,7 +19,7 @@ use thiserror::Error;
 
 use crate::migrations;
 
-/// Default chain namespace (32 bytes of zero) per RFC-0010 v1.4
+/// Default chain namespace (32 bytes of zero) per RFC-0010
 /// `ChainId::default()`. Matches the v015 migration's `DEFAULT X'00...00'`
 /// for backfilled pre-v015 rows.
 pub const DEFAULT_CHAIN_ID: [u8; 32] = [0_u8; 32];
@@ -31,7 +31,7 @@ pub const DEFAULT_CHAIN_ID: [u8; 32] = [0_u8; 32];
 /// bleed into the public marketplace API.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SlashLedgerRow {
-    /// Mission 0900-d: typed `ChainId` per RFC-0010 v1.4. The same
+    /// Mission 0900-d: typed `ChainId` per RFC-0010. The same
     /// `provider_id` may carry one row per chain (cross-chain stake
     /// partitioning). Mirrors vault v013 PK pattern.
     pub chain_id: [u8; 32],

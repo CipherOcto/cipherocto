@@ -100,7 +100,7 @@ octo-storage-core   = { path = "../octo-storage-core" }
 # - tantivy: FTS sidecar index (BM25 with simple() tokenizer)
 # - candle-*: local embedding model (all-MiniLM-L6-v2 Q4, 384d)
 #
-# Per RFC-0206 v2.2 §Substrate Re-export Block, the substrate
+# Per RFC-0206 §Substrate Re-export Block, the substrate
 # `pub mod stoolap` re-export covers `Error`, `ResultRow`,
 # `ApiTransaction`, `Rows`, `Value`. Consumers (this crate
 # included) use `octo_storage_core::stoolap::*` instead of taking

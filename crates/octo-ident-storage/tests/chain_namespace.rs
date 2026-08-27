@@ -1,7 +1,7 @@
 //! Mission 0010-f2-registry-namespacing — multi-chain registry TV.
 //!
 //! Verifies that `register_in_chain` + `resolve_in_chain` (new
-//! additive `DidRegistry` methods from RFC-0010 v1.4) isolate DIDs
+//! additive `DidRegistry` methods from RFC-0010) isolate DIDs
 //! across chain namespaces. The same 32-byte `canonical_hash`
 //! registered on two different chains must resolve independently
 //! under their respective chain.

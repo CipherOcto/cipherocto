@@ -1,4 +1,4 @@
--- Mission 0010-f8-rich-did-storage: persist RFC-0010 v1.5
+-- Mission 0010-f8-rich-did-storage: persist RFC-0010
 -- §VerificationMethod + §CapabilityDelegation on the `did_registry`
 -- table.
 --

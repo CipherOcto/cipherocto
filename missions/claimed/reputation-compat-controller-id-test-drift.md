@@ -6,7 +6,7 @@ Closed 2026-08-13 (@claude). LANDED.
 
 ## RFC
 
-RFC-0968-A1 amendment 40 (controller_id reservation).
+RFC-0968-A1 amendment 40 (deferred to RFC-0968-A2 — ControllerIdMissing discriminant codepoint reservation) (controller_id reservation).
 
 ## Dependencies
 
@@ -64,11 +64,11 @@ single-line mission row preserves history clarity.
   `ControllerIdMissing` variant (0x34)
 - Mission `octo-reputation-controller-id-missing-variant` (#96)
 - Mission `0948-b1-admin-rate-limiting` (#102) — surfaced this drift
-- RFC-0968-A1 amendment 40 (all-zero controller_id reserved)
+- RFC-0968-A1 amendment 40 (deferred to RFC-0968-A2 — ControllerIdMissing discriminant codepoint reservation) (all-zero controller_id reserved)
 
 ## Version History
 
 | Version | Date       | Status | Change                                                                                                                                                                                                                |
 | ------- | ---------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | v0.1    | 2026-08-13 | open   | Mission filed. Pre-existing 1-line drift surfaced by #102 verify sweep. Commit `eb6aaf34` renamed variant; legacy test never updated.                                                                                |
-| v0.2    | 2026-08-13 | closed | LANDED. `record_with_now_rejects_zero_controller_id` now asserts `ReputationError::ControllerIdMissing` (RFC-0968-A1 amendment 40, 0x34). 1634/1634 lib tests pass; clippy clean.                                     |
+| v0.2    | 2026-08-13 | closed | LANDED. `record_with_now_rejects_zero_controller_id` now asserts `ReputationError::ControllerIdMissing` (RFC-0968-A1 amendment 40 (deferred to RFC-0968-A2 — ControllerIdMissing discriminant codepoint reservation), 0x34). 1634/1634 lib tests pass; clippy clean.                                     |

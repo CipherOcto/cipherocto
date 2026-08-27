@@ -1,6 +1,6 @@
 //! TV-0206-A12 — namespace_guard.rs for octo-policy-storage.
 //!
-//! Per RFC-0206 v2.1 §Test Vectors.
+//! Per RFC-0206 §Test Vectors.
 //!
 //! Workspace query targeting a table outside this adapter's
 //! namespace → SubstrateError::TableNotInNamespace.

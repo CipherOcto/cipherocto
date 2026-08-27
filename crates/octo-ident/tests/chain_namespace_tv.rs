@@ -1,7 +1,7 @@
-//! 10 canonical chain-namespace test vectors (RFC-0010 v1.4
+//! 10 canonical chain-namespace test vectors (RFC-0010
 //! §ChainId Namespace Extension §Test Vectors).
 //!
-//! Per RFC-0010 v1.4 §Compatibility: BLAKE3 derivation is RFC-0008
+//! Per RFC-0010 §Compatibility: BLAKE3 derivation is RFC-0008
 //! Class A deterministic. Validation rules are pure functions. The
 //! TV suite covers canonical encodings + error paths + cross-namespace
 //! distinctness.
@@ -97,7 +97,7 @@ fn tv7_distinct_literals_produce_distinct_tags() {
 /// TV-8 rfc_tag_length_disambiguates — same tag + different length
 /// encodes distinct canonical bytes (the tag-only check would
 /// otherwise be ambiguous; the length byte disambiguates per
-/// RFC-0010 v1.4 §Data Structures).
+/// RFC-0010 §Data Structures).
 #[test]
 fn tv8_rfc_tag_length_disambiguates() {
     let mainnet_ns = ChainId::new(CIPHEROCTO_MAINNET)

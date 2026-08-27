@@ -602,3 +602,10 @@ Run with: `python3 scripts/compute_dvec_probe_root.py`
 - RFC-0111: Deterministic DECIMAL
 - RFC-0113: Deterministic Matrices (Accepted v1.21)
 - RFC-0106: Deterministic Numeric Tower (archived)
+
+## Version History
+
+| Version | Date       | Change                                                                                |
+|---------|------------|---------------------------------------------------------------------------------------|
+| 1.14    | 2026-03-19 | Status block: v1.14 (2026-03-19) — CROSS-1/2 amendments.                               |
+| 1.0     | 2026-08-22 | Retroactive VH table addition (per long-horizon plan v1.3 Phase 1 + Option C per M37). |

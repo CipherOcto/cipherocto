@@ -1,4 +1,4 @@
-//! `GovernanceSignature` substrate — canonical home per RFC-0105 v3.5 §3.12.
+//! `GovernanceSignature` substrate — canonical home per RFC-0105 §3.12.
 //!
 //! Per §3.12 (NEW in v3.5-r5): `verify_governance_signature` and `blake3_hash`
 //! are defined ONCE in `octo-cap-macaroon` (Layer A substrate). Consumer
@@ -41,11 +41,11 @@ pub enum GovernanceSignatureError {
 /// single-source rule exists so the substrate's signature semantics
 /// can be evolved in one place (e.g., PQC migration per layer model).
 ///
-/// **Why `body_hash` parameter:** per RFC-0105 v3.5 §3.6 L469-473,
+/// **Why `body_hash` parameter:** per RFC-0105 §3.6,
 /// `GovernanceSignature` carries the raw Ed25519 signature over the
 /// canonical body_hash. The body_hash is computed by the caller per
-/// the event-type-specific RFC (e.g., RFC-0960 v3.6 §2.2 for
-/// BurnEventRef; RFC-0959 v2.8 §2.2 for SettlementEvent; RFC-0965
+/// the event-type-specific RFC (e.g., RFC-0960 §2.2 for
+/// BurnEventRef; RFC-0959 §2.2 for SettlementEvent; RFC-0965
 /// v2.1 §2.3 for PaymentCaveat). This function is the substrate-
 /// canonical verifier that all event types share.
 pub fn verify_governance_signature(

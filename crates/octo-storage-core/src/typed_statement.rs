@@ -1,6 +1,6 @@
 //! [`TypedStatement`] — typed SQL surface for `Database::execute_checked`.
 //!
-//! Per RFC-0206 v2.1 §Substrate Newtype Refactor, the substrate exposes
+//! Per RFC-0206 §Substrate Newtype Refactor, the substrate exposes
 //! a 6-variant `TypedStatement` enum. The 5 typed-query variants
 //! (`Select`/`Insert`/`Update`/`Delete`) carry a table-typed payload so
 //! the [`AdapterAllowlist`](crate::AdapterAllowlist) can enforce the

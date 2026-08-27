@@ -89,7 +89,7 @@ impl ResolveHandler {
     /// # Errors
     /// Returns `IdentityResolveError::InvalidDid` if `query` is not a
     /// canonical DID shape (legacy `did:octo:b<base32>` rejected per
-    /// RFC-0010 v1.2 F4). Returns `IdentityResolveError::Storage` if the
+    /// RFC-0010 F4). Returns `IdentityResolveError::Storage` if the
     /// underlying registry call fails.
     pub fn handle(&self, req: &ResolveRequest) -> Result<HandlerOutput, IdentityResolveError> {
         // 1. Validate canonical DID shape; reject legacy bare form.

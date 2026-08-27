@@ -6,7 +6,7 @@ Accepted
 
 > **Note (v2.0, 2026-08-19):** Wire-format amendment adds `cost_vault_id: Option<[u8; 32]>` + `chain_id: Option<[u8; 32]>` to the `SettlementEnvelope` (per review §20.7). Settlement-time vault-row lookup reuses the `VaultLookup` trait from RFC-0957 (capability verify-time); the cross-chain settlement reject enforces that `envelope.chain_id == vault_row.chain_id`. v2.0 hash preimage appends a 1-byte Option presence tag (0x00 = None, 0x01 = Some) per new field before the 32-byte value. v2.0 is forward-only — v1.0 hashes are NOT replayed as v2.0 (the preimage change forces re-derivation). See §Wire Format v2.0 below for the canonical preimage; mission 0959-c1 for the substrate implementation + 25 byte-exact TV surface.
 
-> **Note (v1.0, 2026-07-20):** Independent settlement chain for per-node Ask pricing. **NOT an amendment** of RFC-0909 (Deterministic Quota Accounting). Option A rewrite per S04 audit; R3 multi-round adversarial review surfaced false-amendment premise (RFC-0909 hashes `SpendEvent` over SHA-256, not BLAKE3 over `(api_key_id, axis_consumed, invocation_hash)`). RFC-0959 v1.0 establishes an independent chain that coexists with RFC-0909 rather than amending it. DAG drops RFC-0909; new DAG = `0959 ← {0126, 0853, 0009, 0957, 0862}`. All 8 R3 criticals addressed: (1) replay defense via `ConsumedReceiptIndex`, (2) `cost` bound into settlement hash + signed envelope, (3) single byte-exact envelope schema, (4) OCTO_WAmount/MicroOCTO_W conversion direction clarified, (5) BLAKE3 keyed-mode 32-byte key, (6) anti-fraud advisory-only preserved (no Class-A mutation), (7) test vectors reproducible (canonical_ser hex + algorithm reference), (8) forward-compat v69↔v70 contradictions dropped.
+> **Note (v1.0, 2026-07-20):** Independent settlement chain for per-node Ask pricing. **NOT an amendment** of RFC-0909 (Deterministic Quota Accounting). Option A rewrite per S04 audit; R3 multi-round adversarial review surfaced false-amendment premise (RFC-0909 hashes `SpendEvent` over SHA-256, not BLAKE3 over `(api_key_id, axis_consumed, invocation_hash)`). RFC-0959 v2.0 establishes an independent chain that coexists with RFC-0909 rather than amending it. DAG drops RFC-0909; new DAG = `0959 ← {0126, 0853, 0009, 0957, 0862}`. All 8 R3 criticals addressed: (1) replay defense via `ConsumedReceiptIndex`, (2) `cost` bound into settlement hash + signed envelope, (3) single byte-exact envelope schema, (4) OCTO_WAmount/MicroOCTO_W conversion direction clarified, (5) BLAKE3 keyed-mode 32-byte key, (6) anti-fraud advisory-only preserved (no Class-A mutation), (7) test vectors reproducible (canonical_ser hex + algorithm reference), (8) forward-compat v69↔v70 contradictions dropped.
 
 ## Authors
 
@@ -541,7 +541,7 @@ stateDiagram-v2
   [*] --> Active: router boot; sliding-window (last 1K calls) populated
   Active --> Tripped: cache_hit_rate > 0.90 AND unique_prompt_diversity (last 1K) < MIN_PROMPT_DIVERSITY (=50)  // R1 fix: invert inequality — high hit rate + LOW diversity = cache stuffing signal (attacker reuses few prompts to game CachedInputTokensPer1k axis). Variant-attack detection (high diversity + high hit rate) is F6 future work.
   Tripped --> Recovering: rolling rate falls below 0.85 over subsequent 100 calls
-  Recovering --> Active: rate stable < 0.85; window reset (R6 clarification: dual predicate per RFC-0959 v1.0 §Lifecycle Requirements — rolling 100-call window avg strictly below 0.85 AND no individual measurement crossing 0.90)
+  Recovering --> Active: rate stable < 0.85; window reset (R6 clarification: dual predicate per RFC-0959 v2.0 §Lifecycle Requirements — rolling 100-call window avg strictly below 0.85 AND no individual measurement crossing 0.90)
   Active --> Recovering: operator explicit acknowledgement
   Recovering --> Tripped: rate spike resumes
 ```
@@ -633,7 +633,7 @@ stateDiagram-v2
 - **Platform trust:** none — no external platform integration in this RFC
 - **Time source:** wall-clock used for Ask `ttl_unix`, `settled_at_unix`, nonce derivation; all wall-clock fields are Class B (bound into envelope, NOT into settlement_hash)
 - **Network partition:** RFC-0862 sync governs marketplace index rebuild on partition recovery
-- **Upgrade safety:** settlement hash includes version tag `b"cipherocto/settlement/v1\n"`; **R6 fix — forward-compat clarification:** v69 RFC-0909 verifiers REJECT v70 events as unrecognized (different hash function SHA-256 vs BLAKE3; different preimage SpendEvent vs SettlementEvent); version tag `b"cipherocto/settlement/v1\n"` is the discriminator — RFC-0909 verifiers see the tag and reject; RFC-0959 v1.0 verifiers accept v70 events. No "v69 baseline parsing" possible because the hash algorithms + preimages are fundamentally different. Independence per Option A = no upgrade migration path.
+- **Upgrade safety:** settlement hash includes version tag `b"cipherocto/settlement/v1\n"`; **R6 fix — forward-compat clarification:** v69 RFC-0909 verifiers REJECT v70 events as unrecognized (different hash function SHA-256 vs BLAKE3; different preimage SpendEvent vs SettlementEvent); version tag `b"cipherocto/settlement/v1\n"` is the discriminator — RFC-0909 verifiers see the tag and reject; RFC-0959 v2.0 verifiers accept v70 events. No "v69 baseline parsing" possible because the hash algorithms + preimages are fundamentally different. Independence per Option A = no upgrade migration path.
 - **Configuration:** `pricing-axes.toml` registry configures the axis set; loaded at router boot
 - **Identity stability:** Asker identity per RFC-0009; rotation requires Ask re-publish
 - **Resource availability:** u128 cap sufficient for ~3.4e38 micro-OCTO-W; u64 cap for OCTO_WAmount display; in-memory 100K Ask index bounded; ConsumedReceiptIndex bounded by router lifetime (rebuilt from ledger)
@@ -1024,7 +1024,7 @@ Option A (independent settlement chain) is adopted because:
 
 ### A. Numeric MicroOCTO_W vs OCTO_WAmount
 
-**Conversion (RFC-0959 v1.0):**
+**Conversion (RFC-0959 v2.0):**
 
 - `OCTO_WAmount(1).to_micro() == MicroOCTO_W(1_000_000)` (1 OCTO-W = 1e6 micro-OCTO-W)
 - `MicroOCTO_W(500_000).to_octow_amount() == OCTO_WAmount(0)` (truncates fractional OCTO-W)

@@ -162,7 +162,7 @@ nine canonical fields (`did`, `kind`, `layer`, `score_ewma`, `samples`,
 `severity_total`, `last_event_id`, `last_event_unix`, `updated_at_unix`).
 This mission extends `SignalEvent` with `anchor_tx_hash: Option<[u8; 32]>` and
 adds a background job that submits a Merkle-root batch transaction per
-`(controller_id, ANCHOR_INTERVAL_SECS)` window (RFC-0968 amendment 48).
+`(controller_id, ANCHOR_INTERVAL_SECS)` window (RFC-0968-A1 amendment 48 (beyond A2 scope — future amendment round TBD)).
 
 This mission is **extracted** from RFC-0968's Phase 5 per Round 1 finding H11
 (the original RFC conflated gossip federation + on-chain anchoring under one

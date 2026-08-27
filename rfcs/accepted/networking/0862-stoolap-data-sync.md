@@ -872,3 +872,10 @@ stateDiagram-v2
     Streaming --> Terminated: mission Terminated
     Terminated --> [*]
 ```
+
+## Version History
+
+| Version | Date       | Change                                                                                |
+|---------|------------|---------------------------------------------------------------------------------------|
+| 1.2.0   | 2026-06-25 | Status block: v1.2.0 (2026-06-25) — BootstrapOrchestrator integration via RFC-0863.    |
+| 1.0     | 2026-08-22 | Retroactive VH table addition (per long-horizon plan v1.3 Phase 1 + Option C per M37). |

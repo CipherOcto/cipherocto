@@ -3,7 +3,7 @@
 //! Discharge macaroons are issued by **third-party channels** to satisfy
 //! third-party caveats on the root capability. CipherOcto defines three
 //! standard channels:
-//! - **escrow** — settlement oracle (RFC-0959 v1.0)
+//! - **escrow** — settlement oracle (RFC-0959)
 //! - **revocation** — revocation oracle (per-RFC-0853)
 //! - **rate-limit** — rate-limit oracle (per-RFC-0959 §Anti-fraud)
 //!
@@ -264,7 +264,7 @@ pub fn verify_discharges(
     Ok(())
 }
 
-// --- Escrow provider (RFC-0957 §3.6 + RFC-0959 v1.0 settlement oracle) ---
+// --- Escrow provider (RFC-0957 §3.6 + RFC-0959 settlement oracle) ---
 //
 // The escrow channel checks that the holder has sufficient OCTO-W escrow
 // balance to cover the requested settlement amount. The amount is read

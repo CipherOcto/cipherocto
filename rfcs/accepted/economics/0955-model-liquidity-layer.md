@@ -906,29 +906,29 @@ graph TB
 
 ### Integration Points
 
-| RFC      | Integration                  |
-| -------- | ---------------------------- |
-| RFC-0106 | Deterministic numeric types  |
-| RFC-0108 | Dataset provenance proofs    |
-| RFC-0109 | Retrieval market integration |
-| RFC-0115 | Verification markets         |
-| RFC-0120 | AI-VM execution              |
-| RFC-0121 | Model sharding               |
-| RFC-0124 | Proof market                 |
+| RFC                                                                      | Integration                  |
+| ------------------------------------------------------------------------ | ---------------------------- |
+| RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) | Deterministic numeric types  |
+| RFC-0108                                                                 | Dataset provenance proofs    |
+| RFC-0109                                                                 | Retrieval market integration |
+| RFC-0115                                                                 | Verification markets         |
+| RFC-0120                                                                 | AI-VM execution              |
+| RFC-0121                                                                 | Model sharding               |
+| RFC-0124                                                                 | Proof market                 |
 
 ## Performance Targets
 
-| Metric               | Target  | Notes                |
-| -------------------- | ------- | -------------------- |
-| Market matching      | <60s    | Inference allocation |
-| Revenue distribution | <10s    | Automated            |
-| Asset transfer       | <5s     | On-chain             |
-| Pool TVL             | >$10M   | Target               |
-| Governance latency   | <7 days | Proposal execution   |
-| Anchor submission (single batch, per controller) | <2s p99 | Mempool admission + chain-side idempotency lookup (RFC-0955-R1) |
-| Anchor finality (depth confirmation) | <5min p99 | `MIN_FINALITY_BLOCKS = 12` at ~25s/block; cap at 5min (RFC-0955-R1) |
-| Anchor Merkle root computation | <50ms p99 | 100 leaves per root, in-memory BLAKE3 (RFC-0955-R1) |
-| Anchor storage (per anchor row in `reputation_anchors`) | <10ms p99 | Indexed PK lookup on `event_id` (RFC-0955-R1) |
+| Metric                                                  | Target    | Notes                                                               |
+| ------------------------------------------------------- | --------- | ------------------------------------------------------------------- |
+| Market matching                                         | <60s      | Inference allocation                                                |
+| Revenue distribution                                    | <10s      | Automated                                                           |
+| Asset transfer                                          | <5s       | On-chain                                                            |
+| Pool TVL                                                | >$10M     | Target                                                              |
+| Governance latency                                      | <7 days   | Proposal execution                                                  |
+| Anchor submission (single batch, per controller)        | <2s p99   | Mempool admission + chain-side idempotency lookup (RFC-0955-R1)     |
+| Anchor finality (depth confirmation)                    | <5min p99 | `MIN_FINALITY_BLOCKS = 12` at ~25s/block; cap at 5min (RFC-0955-R1) |
+| Anchor Merkle root computation                          | <50ms p99 | 100 leaves per root, in-memory BLAKE3 (RFC-0955-R1)                 |
+| Anchor storage (per anchor row in `reputation_anchors`) | <10ms p99 | Indexed PK lookup on `event_id` (RFC-0955-R1)                       |
 
 ## Adversarial Review
 
@@ -1067,7 +1067,7 @@ sibling RFC-0955-R1 §"Cross-References".
 - RFC-0955-R1
 - RFC-0968
 - RFC-0104
-- RFC-0106
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal)
 - RFC-0107
 - RFC-0108
 - RFC-0109
@@ -1136,10 +1136,10 @@ Split:
 
 ## Version History
 
-| Version | Date | Changes |
-| --- | --- | --- |
-| 1.0 | 2026-03-07 | Initial draft. |
-| 1.1 | 2026-07-27 | Promoted on-chain reputation anchoring binding to sibling Draft RFC `rfcs/draft/economics/0955-r1-reputation-anchoring.md` (RFC-0955-R1); new `ReputationDigest` type + `ReputationAnchorBatch` struct (with `governance_proof`, `governance_set_hash`, `chain_block_height` fields added); pre-promotion in-file amendment block at lines 912-1023 removed; new Phase 5 (anchoring) added to §Implementation Phases; new Performance Targets rows for anchoring workload; §Related RFCs list uses bare RFC numbers per CLAUDE.md reference-hygiene rule. |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0     | 2026-03-07 | Initial draft.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 1.1     | 2026-07-27 | Promoted on-chain reputation anchoring binding to sibling Draft RFC `rfcs/draft/economics/0955-r1-reputation-anchoring.md` (RFC-0955-R1); new `ReputationDigest` type + `ReputationAnchorBatch` struct (with `governance_proof`, `governance_set_hash`, `chain_block_height` fields added); pre-promotion in-file amendment block at lines 912-1023 removed; new Phase 5 (anchoring) added to §Implementation Phases; new Performance Targets rows for anchoring workload; §Related RFCs list uses bare RFC numbers per CLAUDE.md reference-hygiene rule. |
 
 **Version:** 1.1
 **Submission Date:** 2026-03-07

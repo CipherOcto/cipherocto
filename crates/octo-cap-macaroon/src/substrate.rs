@@ -1,5 +1,5 @@
 //! Substrate primitives layer — canonical home for trait declarations +
-//! newtypes per RFC-0105 v3.5 §3.1 / §3.11 / §3.12.
+//! newtypes per RFC-0105 §3.1 / §3.11 / §3.12.
 //!
 //! ## Layer model
 //!
@@ -9,12 +9,12 @@
 //!
 //! ## Mission D + Mission E substrate additions
 //!
-//! All traits, newtypes, and primitives land here per RFC-0105 v3.5
+//! All traits, newtypes, and primitives land here per RFC-0105
 //! canonical home rule (single-source-of-truth). Concrete impls (e.g.,
 //! `InMemoryAssetRegistry`, `CachedAssetRegistry`,
 //! `WALPrimaryNonceRegistry`) live in `octo-vault` (Layer B substrate
-//! handle + storage coupling). Both consumer crates (RFC-0960 v3.6,
-//! RFC-0965 v2.1, RFC-0959 v2.8) depend on `octo-cap-macaroon` for
+//! handle + storage coupling). Both consumer crates (RFC-0960,
+//! RFC-0965, RFC-0959) depend on `octo-cap-macaroon` for
 //! these primitives — NOT on `octo-vault` — to avoid circular deps
 //! (octo-vault depends on octo-cap-macaroon for the substrate handle;
 //! consumer crates depend on octo-cap-macaroon for the substrate
@@ -32,7 +32,7 @@ use thiserror::Error;
 // =============================================================================
 
 /// 32-byte canonical identifier for a cipherocto asset. Derived from
-/// a role-token string per RFC-0105 v3.5 §3.1 L168 with derivation
+/// a role-token string per RFC-0105 §3.1 with derivation
 /// rule `BLAKE3("cipherocto/asset/v1/" + role_token)`. The full
 /// `AssetId::derive` + `derive_v1` impls live in `octo-vault` (Layer B)
 /// which has access to the `chain_id` + `owner_did` context; this
@@ -64,7 +64,7 @@ impl AssetId {
         &self.0
     }
 
-    /// Derive canonical `asset_id` per RFC-0105 v3.5 §3.1 L168 + RFC-0960
+    /// Derive canonical `asset_id` per RFC-0105 §3.1 + RFC-0960
     /// §20.3.1: `BLAKE3("cipherocto/asset/v1/" || role_token)`.
     ///
     /// This derivation rule is substrate-frozen (Layer A years-stable).
@@ -83,7 +83,7 @@ impl AssetId {
 }
 
 /// 32-byte nonce. Anti-replay protection across event types
-/// (RFC-0105 v3.5 §3.11 NonceRegistry substrate).
+/// (RFC-0105 §3.11 NonceRegistry substrate).
 #[derive(
     Clone,
     Copy,
@@ -145,9 +145,9 @@ impl Epoch {
 /// 64-byte Ed25519 governance signature, paired with `GovernancePubkey`
 /// (canonical home: `crate::governance_signature`).
 ///
-/// `Borsh` derives added per Mission F (RFC-0960 v3.6) BurnEventRef
+/// `Borsh` derives added per Mission F (RFC-0960) BurnEventRef
 /// wire form. `serde` uses a hex-string adapter (canonical wire form
-/// per RFC-0105 v3.5 §3.12 substrate convention) — `[u8; 64]` does
+/// per RFC-0105 §3.12 substrate convention) — `[u8; 64]` does
 /// not impl `serde::Serialize`/`Deserialize` from the rust derive.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize)]
 pub struct GovernanceSignature {
@@ -272,7 +272,7 @@ impl SettlementId {
 }
 
 /// Derive the sovereign-asset nonce namespace key per asset_id
-/// (RFC-0105 v3.5 §3.11 L633).
+/// (RFC-0105 §3.11).
 ///
 /// `sovereign_nonce_namespace(asset_id) = blake3("octo:sovereign-nonce-ns:v1" || asset_id)`
 #[must_use]
@@ -287,14 +287,14 @@ pub fn sovereign_nonce_namespace(asset_id: &AssetId) -> [u8; 32] {
 }
 
 // =============================================================================
-// AssetKind + AssetMetadata (RFC-0105 v3.5 §3.1)
+// AssetKind + AssetMetadata (RFC-0105 §3.1)
 // =============================================================================
 
-/// Maximum wire-scale accepted by `AssetMetadata` (RFC-0105 v3.5 §3.1
-/// L114-211). Scales above 18 are rejected at registration time.
+/// Maximum wire-scale accepted by `AssetMetadata` (RFC-0105 §3.1
+/// ). Scales above 18 are rejected at registration time.
 pub const MAX_SCALE: u8 = 18;
 
-/// Asset classification (RFC-0105 v3.5 §3.1).
+/// Asset classification (RFC-0105 §3.1).
 ///
 /// `#[non_exhaustive]` per CLAUDE.md §Architectural Principles
 /// "Extension over enumeration": Layer A frozen substrate enums MUST
@@ -315,7 +315,7 @@ pub const MAX_SCALE: u8 = 18;
 )]
 #[non_exhaustive]
 pub enum AssetKind {
-    /// The native OCTO-W (formerly `MicroOctoW` pre-RFC-0105 v2.0) governance token.
+    /// The native OCTO-W (formerly `MicroOctoW` pre-RFC-0105) governance token.
     OctoW,
     /// Generic managed asset (vault-governed). `governance_pubkey` is required.
     ManagedAsset,
@@ -356,7 +356,7 @@ impl AssetKind {
     }
 }
 
-/// Per-asset metadata (RFC-0105 v3.5 §3.1).
+/// Per-asset metadata (RFC-0105 §3.1).
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct AssetMetadata {
@@ -390,7 +390,7 @@ impl Default for AssetMetadata {
 }
 
 impl AssetMetadata {
-    /// Canonical constructor (RFC-0105 v3.5 §3.1). Required because
+    /// Canonical constructor (RFC-0105 §3.1). Required because
     /// `AssetMetadata` is `#[non_exhaustive]` — external crates cannot
     /// use struct expression syntax even with `..Default::default()`.
     /// `governance_pubkey`, `chain_id`, and `tombstoned` default to
@@ -416,7 +416,7 @@ impl AssetMetadata {
         }
     }
 
-    /// Setter for `asset_name` (RFC-0105 v3.5 §3.1). Required because
+    /// Setter for `asset_name` (RFC-0105 §3.1). Required because
     /// `#[non_exhaustive]` blocks struct update from external crates.
     #[must_use]
     pub fn with_asset_name(mut self, asset_name: impl Into<String>) -> Self {
@@ -424,21 +424,21 @@ impl AssetMetadata {
         self
     }
 
-    /// Setter for `governance_pubkey` (RFC-0105 v3.5 §3.1).
+    /// Setter for `governance_pubkey` (RFC-0105 §3.1).
     #[must_use]
     pub fn with_governance_pubkey(mut self, pk: [u8; 32]) -> Self {
         self.governance_pubkey = Some(pk);
         self
     }
 
-    /// Setter for `chain_id` (RFC-0105 v3.5 §3.1).
+    /// Setter for `chain_id` (RFC-0105 §3.1).
     #[must_use]
     pub fn with_chain_id(mut self, chain_id: ChainId) -> Self {
         self.chain_id = Some(chain_id);
         self
     }
 
-    /// Setter for `tombstoned` flag (RFC-0105 v3.5 §3.1).
+    /// Setter for `tombstoned` flag (RFC-0105 §3.1).
     #[must_use]
     pub fn with_tombstoned(mut self, tombstoned: bool) -> Self {
         self.tombstoned = tombstoned;
@@ -446,7 +446,7 @@ impl AssetMetadata {
     }
 }
 
-/// Asset registry errors (RFC-0105 v3.5 §3.1 + §3.5 L316-352).
+/// Asset registry errors (RFC-0105 §3.1 + §3.5).
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum AssetError {
     /// Asset ID not registered.
@@ -460,14 +460,14 @@ pub enum AssetError {
     BoundedCacheMiss,
 }
 
-/// AssetRegistry trait — canonical home per RFC-0105 v3.5 §3.1 L174-210.
+/// AssetRegistry trait — canonical home per RFC-0105 §3.1.
 pub trait AssetRegistry: Send + Sync {
     /// Resolve `asset_id` to its metadata. Returns `Err(AssetUnknown)` if
     /// the asset is not registered OR if it is tombstoned.
     fn metadata(&self, asset_id: &AssetId) -> Result<AssetMetadata, AssetError>;
 }
 
-/// Vault containment errors (RFC-0105 v3.5 §3.1 + Mission F v3.6 §2.2 Gate 3).
+/// Vault containment errors (RFC-0105 §3.1 + Mission F v3.6 §2.2 Gate 3).
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum VaultAssetError {
     /// `vault_id` not present in the registry.
@@ -478,7 +478,7 @@ pub enum VaultAssetError {
     VaultAssetMismatch,
 }
 
-/// VaultRegistry trait — canonical home per RFC-0105 v3.5 §3.1 + Mission F
+/// VaultRegistry trait — canonical home per RFC-0105 §3.1 + Mission F
 /// v3.6 §2.2 Gate 3 (`contains_asset` check).
 pub trait VaultRegistry: Send + Sync {
     /// Check whether `vault_id` is registered.
@@ -537,7 +537,7 @@ impl VaultRegistry for InMemoryVaultRegistry {
 }
 
 // =============================================================================
-// NonceRegistry (RFC-0105 v3.5 §3.11 + v3.5-r8 PROPOSAL)
+// NonceRegistry (RFC-0105 §3.11 + v3.5-r8 PROPOSAL)
 // =============================================================================
 
 /// Discriminator for the nonce observation key (Mission D v3.5-r8
@@ -551,11 +551,11 @@ impl VaultRegistry for InMemoryVaultRegistry {
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum NonceEventKind {
-    /// `BurnEventRef` (RFC-0960 v3.6).
+    /// `BurnEventRef` (RFC-0960).
     Burn = 1,
-    /// `SettlementEvent` (RFC-0959 v2.8).
+    /// `SettlementEvent` (RFC-0959).
     Settlement = 2,
-    /// `PaymentCaveat` (RFC-0965 v2.1).
+    /// `PaymentCaveat` (RFC-0965).
     Payment = 3,
 }
 

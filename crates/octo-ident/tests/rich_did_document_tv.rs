@@ -1,4 +1,4 @@
-//! 5 canonical rich-DID-document test vectors (RFC-0010 v1.5
+//! 5 canonical rich-DID-document test vectors (RFC-0010
 //! §Rich DID Documents §Test Vectors).
 //!
 //! Covers the v1.5 additive surface: service endpoints, controllers,
@@ -120,7 +120,7 @@ fn tv2_controller_cycle_rejected() {
 
 /// TV-3 capability_delegation_hash_verifies — `CapabilityDelegation`
 /// is a 32-byte BLAKE3 hash, NOT the wire form of the capability token
-/// (per RFC-0957 §Capability Token + RFC-0010 v1.5 §CapabilityDelegation).
+/// (per RFC-0957 §Capability Token + RFC-0010 §CapabilityDelegation).
 /// Two delegations with distinct token_hashes encode to distinct bytes.
 #[test]
 fn tv3_capability_delegation_hash_verifies() {

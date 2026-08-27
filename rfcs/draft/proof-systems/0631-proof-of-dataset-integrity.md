@@ -977,7 +977,7 @@ Reputation aggregates:
 
 ## Related RFCs
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower
 - RFC-0108 (Retrieval): Verifiable AI Retrieval
 - RFC-0125 (Economics): Model Liquidity Layer
 - RFC-0630 (Proof Systems): Proof-of-Inference Consensus
@@ -1028,7 +1028,7 @@ Reputation aggregates:
 └─────────────────────────┬───────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────┐
-│        Deterministic Numeric Tower (RFC-0106)        │
+│        Deterministic Numeric Tower (RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal))        │
 └─────────────────────────────────────────────────────┘
 ```
 

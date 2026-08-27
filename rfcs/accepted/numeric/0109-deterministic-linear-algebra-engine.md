@@ -126,17 +126,18 @@ pub enum ExecutionError {
 
 **Canonical Encoding** (for serialization, hashing, cross-language reproducibility):
 
-| Variant            | Encoding |
-| ------------------ | -------- |
-| DimensionMismatch  | `0x01`   |
-| InvalidScale       | `0x02`   |
-| DivisionByZero     | `0x03`   |
-| Overflow           | `0x04`   |
-| TrapInput          | `0x05`   |
+| Variant           | Encoding |
+| ----------------- | -------- |
+| DimensionMismatch | `0x01`   |
+| InvalidScale      | `0x02`   |
+| DivisionByZero    | `0x03`   |
+| Overflow          | `0x04`   |
+| TrapInput         | `0x05`   |
 
 > **SERIALIZATION**: ExecutionError is serialized as a single byte (`0x01`–`0x05`). When embedded in a TRAP result, it is appended after the TRAP sentinel byte. Ordering is significant: lower encoding = earlier variant in enum definition.
 
 > **TRAP ENCODING (CORRECTED)**: A DLAE TRAP result is encoded as:
+>
 > ```
 > [24-byte Numeric TRAP] + [1-byte error_code]
 > Total: 25 bytes
@@ -144,15 +145,16 @@ pub enum ExecutionError {
 >
 > **NORMATIVE REFERENCE**: RFC-0111 §Canonical Byte Format and RFC-0126 §TRAP Sentinel Serialization are the authoritative definitions. The verbatim byte layout is:
 >
-> | Byte(s) | Field | Value | Notes |
-> |---------|-------|-------|-------|
-> | 0 | version | `0x01` | Current format version |
-> | 1-3 | reserved | `0x00` | Must be zero |
-> | 4 | scale | `0xFF` | TRAP indicator |
-> | 5-7 | reserved | `0x00` | Must be zero |
-> | 8-23 | mantissa | `0x8000000000000000...0000` | i64::MIN, sign-extended to 16 bytes |
+> | Byte(s) | Field    | Value                       | Notes                               |
+> | ------- | -------- | --------------------------- | ----------------------------------- |
+> | 0       | version  | `0x01`                      | Current format version              |
+> | 1-3     | reserved | `0x00`                      | Must be zero                        |
+> | 4       | scale    | `0xFF`                      | TRAP indicator                      |
+> | 5-7     | reserved | `0x00`                      | Must be zero                        |
+> | 8-23    | mantissa | `0x8000000000000000...0000` | i64::MIN, sign-extended to 16 bytes |
 >
 > **Byte layout (24 bytes hex):**
+>
 > ```
 > 0x01 0x00 0x00 0x00 0xFF 0x00 0x00 0x00 0xFF 0xFF 0xFF 0xFF 0xFF 0xFF 0xFF 0xFF 0x80 0x00 0x00 0x00 0x00 0x00 0x00 0x00
 > ^^^^  ^^^^^^^^^^^  ^^^  ^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -358,7 +360,7 @@ y = DVecAdd(y, b)
 
 #### Activation Functions
 
-> ⚠️ **ACTIVATION PHASE-BOUND**: Activation MUST execute after full linear computation completes. No interleaving or fusion allowed. Per RFC-0114 §Phase Ordering, activations include a final CANONICALIZE step per RFC-0105 lazy-canonicalization contract.
+> ⚠️ **ACTIVATION PHASE-BOUND**: Activation MUST execute after full linear computation completes. No interleaving or fusion allowed. Per RFC-0114 §Phase Ordering (MANDATORY), activations include a final CANONICALIZE step per RFC-0105 lazy-canonicalization contract.
 
 Supported:
 
@@ -405,6 +407,7 @@ for each element:
 > ⚠️ **DETERMINISTIC TIE-BREAK**: Comparator MUST be `(distance, vector_id)` lexicographic. Stable insertion is required.
 
 > ⚠️ **VECTOR_ID SOURCE (CRITICAL)**: `vector_id` MUST be a **canonical identifier**, NOT an implementation-specific handle. Permitted sources:
+>
 > - RFC-0103 Storage Key (preferred)
 > - Content hash of the vector data
 > - On-chain assigned ID
@@ -414,6 +417,7 @@ for each element:
 > **Top-K Comparator Requirement**: The Top-K comparator MUST be supplied externally with a canonical `vector_id` source. The DVec struct does not carry an internal `vector_id` field. Callers of Top-K MUST provide a deterministic mapping from vectors to canonical IDs.
 
 Canonical comparator (pseudocode):
+
 ```
 compare(a, b):
     if a.distance != b.distance:
@@ -437,7 +441,7 @@ Any heap or sorting implementation MUST preserve this total ordering. Non-stable
 
 ## Gas Cost Model
 
-> ⚠️ **GAS BINDING**: DLAE gas formulas are bound to DVEC/DMAT gas formulas per RFC-0106. This table is normative, not abstract.
+> ⚠️ **GAS BINDING**: DLAE gas formulas are bound to DVEC/DMAT gas formulas per RFC-0105 and RFC-0111. This table is normative, not abstract.
 
 Operations have deterministic gas costs:
 
@@ -458,6 +462,7 @@ Gas constants are defined in RFC-0105 §Gas Model and RFC-0111 §Gas Model. DLAE
 > ⚠️ **SIMD PROHIBITION (v2.3)**: SIMD is **FORBIDDEN** on all consensus paths.
 
 Modern compilers (LLVM, GCC) aggressively auto-vectorize loops. Verifying that a specific SIMD instruction set (AVX2 vs NEON vs AltiVec) produces bit-identical results for quantized integer arithmetic is non-trivial. Auto-vectorization can silently introduce non-deterministic behavior through:
+
 - Different compiler versions producing different SIMD instructions
 - Hardware-specific SIMD behavior (e.g., overflow detection varies across architectures)
 - Compiler reordering of independent operations within lanes
@@ -474,15 +479,16 @@ Modern compilers (LLVM, GCC) aggressively auto-vectorize loops. Verifying that a
 
 ### Scale Compatibility Matrix
 
-| Operation   | Scale Policy | Enforcement |
-| ----------- | ------------ | ----------- |
-| Dot Product | STRICT       | Scale factors MUST match exactly; mismatch → `ExecutionError::InvalidScale` |
-| MatMul      | DEFERRED     | Scale validation deferred until after computation; result inherits output scale. **Post-computation**: if result violates scalar constraints (RFC-0105), return `ExecutionError::InvalidScale` |
-| MatVec      | DEFERRED     | Scale validation deferred until after computation. **Post-computation**: if result violates scalar constraints (RFC-0105), return `ExecutionError::InvalidScale` |
-| Cosine      | STRICT       | Scale factors MUST match exactly; mismatch → `ExecutionError::InvalidScale` |
-| Distance (L2, L2Squared) | STRICT | Scale factors MUST match exactly; mismatch → `ExecutionError::InvalidScale` |
+| Operation                | Scale Policy | Enforcement                                                                                                                                                                                    |
+| ------------------------ | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Dot Product              | STRICT       | Scale factors MUST match exactly; mismatch → `ExecutionError::InvalidScale`                                                                                                                    |
+| MatMul                   | DEFERRED     | Scale validation deferred until after computation; result inherits output scale. **Post-computation**: if result violates scalar constraints (RFC-0105), return `ExecutionError::InvalidScale` |
+| MatVec                   | DEFERRED     | Scale validation deferred until after computation. **Post-computation**: if result violates scalar constraints (RFC-0105), return `ExecutionError::InvalidScale`                               |
+| Cosine                   | STRICT       | Scale factors MUST match exactly; mismatch → `ExecutionError::InvalidScale`                                                                                                                    |
+| Distance (L2, L2Squared) | STRICT       | Scale factors MUST match exactly; mismatch → `ExecutionError::InvalidScale`                                                                                                                    |
 
-> ⚠️ **DEFERRED SCALE RULE (CRITICAL)**: "Deferred" applies *only* to scale factor compatibility checks, NOT to arithmetic overflow. For MatMul and MatVec:
+> ⚠️ **DEFERRED SCALE RULE (CRITICAL)**: "Deferred" applies _only_ to scale factor compatibility checks, NOT to arithmetic overflow. For MatMul and MatVec:
+>
 > - **Scale validation**: Deferred until after computation completes
 > - **Arithmetic overflow**: **IMMEDIATE TRAP** per RFC-0105 — no wrap-around allowed
 >
@@ -525,25 +531,25 @@ Modern compilers (LLVM, GCC) aggressively auto-vectorize loops. Verifying that a
 
 All DLAE operations MUST adhere to this phase model:
 
-| Phase | Name | Description |
-|-------|------|-------------|
-| 0 | Input Validation | Dimension checks, scale compatibility, zero-vector pre-checks, TRAP sentinel detection |
-| 1 | Execution | Strict sequential computation, no early exit |
-| 2 | Post-Validation | DEFERRED scale validation (MatMul, MatVecMul), result constraint checking |
-| 3 | Canonicalization | All outputs canonicalized per RFC-0105 |
-| 4 | Serialization | TRAP encoding + result serialized per RFC-0126 |
+| Phase | Name             | Description                                                                            |
+| ----- | ---------------- | -------------------------------------------------------------------------------------- |
+| 0     | Input Validation | Dimension checks, scale compatibility, zero-vector pre-checks, TRAP sentinel detection |
+| 1     | Execution        | Strict sequential computation, no early exit                                           |
+| 2     | Post-Validation  | DEFERRED scale validation (MatMul, MatVecMul), result constraint checking              |
+| 3     | Canonicalization | All outputs canonicalized per RFC-0105                                                 |
+| 4     | Serialization    | TRAP encoding + result serialized per RFC-0126                                         |
 
 > **PHASE ORDERING**: No operation may violate phase ordering. No fusion between phases permitted. Each phase must complete fully before the next begins.
 
 ## Consensus Limits
 
-| Constant          | Value  | Purpose                                    |
-| ----------------- | ------ | ------------------------------------------ |
-| MAX_VECTOR_DIM    | 64     | Maximum vector length (inherits DVEC limit) |
-| MAX_MATRIX_DIM_M  | 8      | Maximum matrix rows (inherits DMAT limit)  |
-| MAX_MATRIX_DIM_N  | 8      | Maximum matrix columns (inherits DMAT limit)|
-| MAX_DOT_DIM       | 64     | Maximum dot product dimension               |
-| MAX_LAYER_DIM     | 64     | Maximum neural network layer size           |
+| Constant         | Value | Purpose                                      |
+| ---------------- | ----- | -------------------------------------------- |
+| MAX_VECTOR_DIM   | 64    | Maximum vector length (inherits DVEC limit)  |
+| MAX_MATRIX_DIM_M | 8     | Maximum matrix rows (inherits DMAT limit)    |
+| MAX_MATRIX_DIM_N | 8     | Maximum matrix columns (inherits DMAT limit) |
+| MAX_DOT_DIM      | 64    | Maximum dot product dimension                |
+| MAX_LAYER_DIM    | 64    | Maximum neural network layer size            |
 
 > **Note:** DLAE inherits dimension limits from DVEC (N≤64) and DMAT (M,N≤8) per MED-1 and MED-X1. These are tighter than the v1.0 abstract limits to ensure cross-RFC consistency.
 
@@ -607,6 +613,7 @@ Unlike RFC-0105 (DQA), RFC-0110 (BIGINT), RFC-0111 (DECIMAL), RFC-0112 (DVEC), a
 ### Probe Scope
 
 The DLAE probe verifies:
+
 1. **Composite TRAP propagation**: Operations correctly propagate TRAP from sub-operations
 2. **Scale-policy enforcement**: MatMul/MatVec correctly apply DEFERRED scale validation
 3. **Top-K tie-break determinism**: Same inputs produce identical Top-K results
@@ -614,7 +621,7 @@ The DLAE probe verifies:
 
 ### Probe Format
 
-Per RFC-0126 §Verification Probe format:
+Per RFC-0126 §Verification Probe:
 
 ```
 leaf = SHA256(0x00 || entry_data)        // Domain-separated leaf hash
@@ -623,50 +630,50 @@ internal = SHA256(0x01 || left || right) // Domain-separated internal node
 
 ### Entries (42 total)
 
-| Index | Operation | Input | Expected |
-|-------|-----------|-------|----------|
-| 0 | Dot | [1,2,3] · [4,5,6] | DQA(32, 0) |
-| 1 | Dot | Dimension mismatch | TRAP(DIMENSION_MISMATCH) |
-| 2 | Dot | Scale mismatch | TRAP(INVALID_SCALE) |
-| 3 | L2Squared | [0,0], [3,4] | DQA(25, 0) |
-| 4 | L2Squared | [0,0], [0,0] | DQA(0, 0) |
-| 5 | MatMul | 2×2 × 2×2 | [[19,22],[43,50]] |
-| 6 | MatMul | Dimension mismatch | TRAP(DIMENSION_MISMATCH) |
-| 7 | MatMul | Oversized 9×9 | TRAP(DIMENSION_MISMATCH) |
-| 8 | Cosine | [1,0], [0,1] | DQA(0, 0) |
-| 9 | Cosine | [1,0], [1,0] | DQA(1, 0) |
-| 10 | Cosine | Zero vector | TRAP(DIVISION_BY_ZERO) |
-| 11 | Top-K | 5 vectors, K=3 | [(5,0,100),(25,0,101),(61,0,102)] |
-| 12 | Top-K | Tie-break test | [(2,0,100),(2,0,150),(2,0,200)] |
-| 13 | DVecAdd | [1,2] + [3,4] | [4,6] |
-| 14 | DVecAdd | Dimension mismatch | TRAP(DIMENSION_MISMATCH) |
-| 15 | DVecAdd | Scale mismatch | TRAP(INVALID_SCALE) |
-| 16 | DVecAdd | [1,2] + [0,0] | [1,2] |
-| 17 | L2Squared | [1,2], [0,0] | DQA(5, 0) |
-| 18 | Cosine | Unit [1] · [1] | DQA(1, 0) |
-| 19 | Cosine | Unit [1] · [-1] | DQA(-1, 0) |
-| 20 | MatMul | 1×2 × 2×1 | DQA(11, 0) |
-| 21 | MatMul | 2×1 × 1×2 | [[3,4],[6,8]] |
-| 22 | Top-K | K=1 | [(5,0,100)] |
-| 23 | Top-K | K=5 (all) | [(5,0,100),(25,0,101),(61,0,102),(81,0,104),(113,0,103)] |
-| 24 | Dot | [5] · [3] | DQA(15, 0) |
-| 25 | L2Squared | [5], [3] | DQA(4, 0) |
-| 26 | MatMul | 1×1 × 1×1 | DQA(6, 0) |
-| 27 | MatMul | scale > MAX_SCALE | TRAP(INVALID_SCALE) |
-| 28 | DVecAdd | 8-element vectors | 8-element sum |
-| 29 | DVecAdd | 65 elements (>64) | TRAP(DIMENSION_MISMATCH) |
-| 30 | TRAP_INPUT | Sentinel | TRAP(TRAP_INPUT) |
-| 31 | OVERFLOW | Sentinel | TRAP(OVERFLOW) |
-| 32 | Dot | Non-zero scales | DQA(11, 2) |
-| 33 | L2Squared | Non-zero scales | DQA(13, 2) |
-| 34 | DVecAdd | Non-zero scales | [(4,1),(6,1)] |
-| 35 | Cosine | Unit [(10,1)] · [(10,1)] | DQA(1, 0) |
-| 36 | Cosine | Unit [(10,1)] · [(-10,1)] | DQA(-1, 0) |
-| 37 | MatMul | Mixed scales 1×2 × 2×1 | DQA(83, 3) |
-| 38 | MatMul | Positive-diff accumulation | DQA(101, 2) |
-| 39 | Dot | Scale mismatch non-zero | TRAP(INVALID_SCALE) |
-| 40 | L2Squared | Scale mismatch non-zero | TRAP(INVALID_SCALE) |
-| 41 | DVecAdd | Scale mismatch non-zero | TRAP(INVALID_SCALE) |
+| Index | Operation  | Input                      | Expected                                                 |
+| ----- | ---------- | -------------------------- | -------------------------------------------------------- |
+| 0     | Dot        | [1,2,3] · [4,5,6]          | DQA(32, 0)                                               |
+| 1     | Dot        | Dimension mismatch         | TRAP(DIMENSION_MISMATCH)                                 |
+| 2     | Dot        | Scale mismatch             | TRAP(INVALID_SCALE)                                      |
+| 3     | L2Squared  | [0,0], [3,4]               | DQA(25, 0)                                               |
+| 4     | L2Squared  | [0,0], [0,0]               | DQA(0, 0)                                                |
+| 5     | MatMul     | 2×2 × 2×2                  | [[19,22],[43,50]]                                        |
+| 6     | MatMul     | Dimension mismatch         | TRAP(DIMENSION_MISMATCH)                                 |
+| 7     | MatMul     | Oversized 9×9              | TRAP(DIMENSION_MISMATCH)                                 |
+| 8     | Cosine     | [1,0], [0,1]               | DQA(0, 0)                                                |
+| 9     | Cosine     | [1,0], [1,0]               | DQA(1, 0)                                                |
+| 10    | Cosine     | Zero vector                | TRAP(DIVISION_BY_ZERO)                                   |
+| 11    | Top-K      | 5 vectors, K=3             | [(5,0,100),(25,0,101),(61,0,102)]                        |
+| 12    | Top-K      | Tie-break test             | [(2,0,100),(2,0,150),(2,0,200)]                          |
+| 13    | DVecAdd    | [1,2] + [3,4]              | [4,6]                                                    |
+| 14    | DVecAdd    | Dimension mismatch         | TRAP(DIMENSION_MISMATCH)                                 |
+| 15    | DVecAdd    | Scale mismatch             | TRAP(INVALID_SCALE)                                      |
+| 16    | DVecAdd    | [1,2] + [0,0]              | [1,2]                                                    |
+| 17    | L2Squared  | [1,2], [0,0]               | DQA(5, 0)                                                |
+| 18    | Cosine     | Unit [1] · [1]             | DQA(1, 0)                                                |
+| 19    | Cosine     | Unit [1] · [-1]            | DQA(-1, 0)                                               |
+| 20    | MatMul     | 1×2 × 2×1                  | DQA(11, 0)                                               |
+| 21    | MatMul     | 2×1 × 1×2                  | [[3,4],[6,8]]                                            |
+| 22    | Top-K      | K=1                        | [(5,0,100)]                                              |
+| 23    | Top-K      | K=5 (all)                  | [(5,0,100),(25,0,101),(61,0,102),(81,0,104),(113,0,103)] |
+| 24    | Dot        | [5] · [3]                  | DQA(15, 0)                                               |
+| 25    | L2Squared  | [5], [3]                   | DQA(4, 0)                                                |
+| 26    | MatMul     | 1×1 × 1×1                  | DQA(6, 0)                                                |
+| 27    | MatMul     | scale > MAX_SCALE          | TRAP(INVALID_SCALE)                                      |
+| 28    | DVecAdd    | 8-element vectors          | 8-element sum                                            |
+| 29    | DVecAdd    | 65 elements (>64)          | TRAP(DIMENSION_MISMATCH)                                 |
+| 30    | TRAP_INPUT | Sentinel                   | TRAP(TRAP_INPUT)                                         |
+| 31    | OVERFLOW   | Sentinel                   | TRAP(OVERFLOW)                                           |
+| 32    | Dot        | Non-zero scales            | DQA(11, 2)                                               |
+| 33    | L2Squared  | Non-zero scales            | DQA(13, 2)                                               |
+| 34    | DVecAdd    | Non-zero scales            | [(4,1),(6,1)]                                            |
+| 35    | Cosine     | Unit [(10,1)] · [(10,1)]   | DQA(1, 0)                                                |
+| 36    | Cosine     | Unit [(10,1)] · [(-10,1)]  | DQA(-1, 0)                                               |
+| 37    | MatMul     | Mixed scales 1×2 × 2×1     | DQA(83, 3)                                               |
+| 38    | MatMul     | Positive-diff accumulation | DQA(101, 2)                                              |
+| 39    | Dot        | Scale mismatch non-zero    | TRAP(INVALID_SCALE)                                      |
+| 40    | L2Squared  | Scale mismatch non-zero    | TRAP(INVALID_SCALE)                                      |
+| 41    | DVecAdd    | Scale mismatch non-zero    | TRAP(INVALID_SCALE)                                      |
 
 ### Authoritative Merkle Root
 
@@ -679,6 +686,7 @@ Computed via `scripts/compute_dlae_probe_root.py`.
 ### Cross-RFC Coordination
 
 The DLAE probe will be committed alongside probes from:
+
 - RFC-0105 (DQA): 57 entries
 - RFC-0110 (BIGINT): 80 entries
 - RFC-0111 (DECIMAL): 57 entries
@@ -704,7 +712,7 @@ Combined probe root provides cross-implementation verification for the entire De
 
 ## Rationale
 
-The DLAE builds on RFC-0106's deterministic numeric types to provide linear algebra primitives that are:
+The DLAE builds on RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal)'s deterministic numeric types to provide linear algebra primitives that are:
 
 1. **Consensus-safe**: No floating-point, strict reduction order
 2. **ZK-compatible**: Integer arithmetic, no transcendental functions
@@ -713,7 +721,7 @@ The DLAE builds on RFC-0106's deterministic numeric types to provide linear alge
 
 ## Related RFCs
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower (DNT) — Core numeric types (DQA, DVEC, DMAT)
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Core numeric types (DQA, DVEC, DMAT)
 - RFC-0105 (Numeric/Math): Deterministic Quantized Arithmetic (DQA) — Scalar quantized operations, **canonicalization rules**
 - RFC-0111 (Numeric/Math): Decimal Arithmetic — **Required for sqrt operations in DLAE**
 - RFC-0113 (Numeric/Math): NumericScalar Trait — **Only permitted trait for DLAE operations**
@@ -815,3 +823,10 @@ pub enum ExecutionError {
 ```
 
 See Global Scale Policy Layer for scale validation rules.
+
+## Version History
+
+| Version | Date       | Change                                                                                |
+|---------|------------|---------------------------------------------------------------------------------------|
+| 2.5     | 2026-03-22 | Status block: v2.5 (2026-03-22 Last Updated) — 9th adversarial audit pass.             |
+| 1.0     | 2026-08-22 | Retroactive VH table addition (per long-horizon plan v1.3 Phase 1 + Option C per M37). |

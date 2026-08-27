@@ -44,7 +44,7 @@ serde_json = { version = "1", optional = true }
 # Layer A storage substrate (mission octo-storage-split S2). The migration
 # runner that the historical `substrate_runner` module bundled is now
 # delegated to the substrate's `apply_pending`. The substrate also re-exports
-# `stoolap::{Error, Value}` (RFC-0206 v2.2 §Substrate Re-export Block),
+# `stoolap::{Error, Value}` (RFC-0206 §Substrate Re-export Block),
 # so the store module no longer takes a direct `stoolap` Cargo.toml dep.
 octo-storage-core = { path = "../octo-storage-core", optional = true }
 

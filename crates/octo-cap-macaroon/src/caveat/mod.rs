@@ -40,7 +40,7 @@ pub type OverlayIdentity = String;
 /// ISO-3166 country code (2-letter).
 pub type ISO3166 = String;
 
-/// Ask identifier (RFC-0959 v1.0 `AskId` — content-addressable hash).
+/// Ask identifier (RFC-0959 `AskId` — content-addressable hash).
 pub type AskId = [u8; 32];
 
 /// BLAKE3 32-byte digest.
@@ -153,7 +153,7 @@ pub enum Caveat {
     #[serde(rename = "permission")]
     Permission(PermissionKind),
 
-    /// Valid time range. New in RFC-0957 v2.1; for the legacy
+    /// Valid time range. New in RFC-0957; for the legacy
     /// single-timestamp variant see RFC-0965 §3.3 `ValidAfter`.
     #[serde(rename = "valid_range")]
     ValidRange {
@@ -161,7 +161,7 @@ pub enum Caveat {
         valid_until_unix: u64,
     },
 
-    /// Per-transaction cap. New in RFC-0957 v2.1; distinct from
+    /// Per-transaction cap. New in RFC-0957; distinct from
     /// `AmountMax` which is total budget.
     #[serde(rename = "max_per_tx")]
     MaxPerTx(u128),
@@ -197,7 +197,7 @@ pub enum Caveat {
     },
 
     /// Valid-after time bound (RFC-0965 §3.3). Single timestamp; for
-    /// ranges use `ValidRange` above (new in RFC-0957 v2.1) or the
+    /// ranges use `ValidRange` above (new in RFC-0957) or the
     /// RFC-0964 `Constraint::ValidRange`.
     #[serde(rename = "valid_after")]
     ValidAfter { not_before_unix: u64 },
@@ -220,7 +220,7 @@ pub enum Caveat {
     #[serde(rename = "payment")]
     Payment(PaymentCaveat),
 
-    /// Asset-binding co-bound caveat (RFC-0965 v2.1 §5 L444-520).
+    /// Asset-binding co-bound caveat (RFC-0965 §5 ).
     /// When co-occurring with `Caveat::Payment` in the same chain,
     /// `set_subsumes` enforces `payment.asset_id == self.asset_id`
     /// (Round 1 CRITICAL #5 mitigation — prevents PermissionKind bypass
@@ -282,7 +282,7 @@ pub struct RawCaveat {
     pub value: Vec<u8>,
 }
 
-/// Asset-binding co-bound caveat payload (RFC-0965 v2.1 §5 L444-520).
+/// Asset-binding co-bound caveat payload (RFC-0965 §5 ).
 ///
 /// Pairs with a `Caveat::Payment(p)` to enforce that the payment
 /// caveat's `asset_id` matches this `asset_id`. Prevents
@@ -500,7 +500,7 @@ fn parent_caveat_implies(parent: &[Caveat], child: &Caveat) -> bool {
             .iter()
             .any(|p| matches!(p, Caveat::Vault(p) if p == c)),
         Caveat::AssetBinding(c) => parent.iter().any(|p| match p {
-            // Co-bound rule (RFC-0965 v2.1 §5 L444-520): when parent
+            // Co-bound rule (RFC-0965 §5 ): when parent
             // carries a Caveat::AssetBinding AND child carries a
             // Caveat::Payment with a different asset_id, the chain is
             // rejected (prevents PermissionKind bypass on cross-asset

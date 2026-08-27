@@ -1,6 +1,6 @@
 //! [`Database`] newtype + `execute_checked` allowlist enforcement.
 //!
-//! Per RFC-0206 v2.1 §Substrate Newtype Refactor, the canonical
+//! Per RFC-0206 §Substrate Newtype Refactor, the canonical
 //! substrate type is `Database(stoolap::Database)` — a newtype that
 //! carries the Stoolap engine behind a typed SQL surface. The
 //! Deref/`From` impls are intentionally **one-way only**: substrate

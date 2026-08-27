@@ -198,7 +198,7 @@ fn zero_vault_sentinel_is_literal_all_zeros() {
 }
 
 // ===========================================================================
-// TV-D9 — byte-exact asset_id derivation vectors (RFC-0105 v2.0, mission 0105-v)
+// TV-D9 — byte-exact asset_id derivation vectors (RFC-0105, mission 0105-v)
 // ===========================================================================
 //
 // 9 canonical role-token × asset_id mappings per review §20.3.1 +
@@ -1338,7 +1338,7 @@ fn tv_d10_results_are_canonicalized() {
 }
 
 // ===========================================================================
-// TV-V1-MATRIX — chain-aware vault_id matrix (mission 0960-v, RFC-0960 v3.0)
+// TV-V1-MATRIX — chain-aware vault_id matrix (mission 0960-v, RFC-0960)
 //
 // 108 byte-exact vault_id derivations per §24 central registry
 // (review line 2019: 9 role-token × 3 chain × 4 owner = 108).
@@ -1358,9 +1358,9 @@ fn tv_d10_results_are_canonicalized() {
 // constants.
 //
 // Cross-RFC anchoring:
-// - §20.3.1 role-token enumeration: RFC-0105 v2.0 §Asset ID Derivation
+// - §20.3.1 role-token enumeration: RFC-0105 §Asset ID Derivation
 //   (9 canonical role-tokens; Sovereign OCTO excluded per review §1336)
-// - §20.3.2 chain_id derivation: RFC-0010 v1.4 ChainNamespace
+// - §20.3.2 chain_id derivation: RFC-0010 ChainNamespace
 // - §8.10 vault_id derivation: `octo_vault::vault_id_unchecked`
 // - §24 fixture count: 9 × 3 × 4 = 108 per review line 2019
 //
@@ -1376,7 +1376,7 @@ fn tv_d10_results_are_canonicalized() {
 struct VaultIdFixture {
     /// Short label for diagnostics (e.g., `"TV-V1-MATRIX-001"`).
     name: &'static str,
-    /// Canonical role-token (e.g., `"OCTO-A"` per RFC-0105 v2.0).
+    /// Canonical role-token (e.g., `"OCTO-A"` per RFC-0105).
     role_token: &'static str,
     /// Human-readable chain identifier (e.g., `"cipherocto/mainnet/v1"`).
     chain_string: &'static str,
@@ -1387,7 +1387,7 @@ struct VaultIdFixture {
     vault_id: [u8; 32],
 }
 
-/// Canonical role-token enumeration per RFC-0105 v2.0 §Asset ID
+/// Canonical role-token enumeration per RFC-0105 §Asset ID
 /// Derivation (9 role-tokens; Sovereign OCTO excluded per review §1336).
 const MATRIX_ROLE_TOKENS: &[&str] = &[
     "OCTO-A", "OCTO-B", "OCTO-D", "OCTO-M", "OCTO-N", "OCTO-O", "OCTO-S", "OCTO-H", "OCTO-W",
@@ -1398,7 +1398,7 @@ const MATRIX_ROLE_TOKENS: &[&str] = &[
 /// transfer_events; the only "chain_id" value that is NOT a derivation
 /// output), `mainnet`, `testnet`. The canonical-default chain uses
 /// `ChainId::from_bytes([0u8; 32])`; mainnet + testnet are BLAKE3
-/// derivations per §20.3.2 + RFC-0010 v1.4 `ChainNamespace`.
+/// derivations per §20.3.2 + RFC-0010 `ChainNamespace`.
 fn matrix_chains() -> [(ChainId, &'static str); 3] {
     [
         (
@@ -1523,7 +1523,7 @@ fn tv_v1_vault_id_matrix_matches_self_derivation() {
 }
 
 /// AC-5: matrix covers the canonical 9 role-token enumeration
-/// (RFC-0105 v2.0 §Asset ID Derivation; Sovereign OCTO excluded per
+/// (RFC-0105 §Asset ID Derivation; Sovereign OCTO excluded per
 /// review §1336).
 #[test]
 fn tv_v1_vault_id_matrix_covers_canonical_role_tokens() {
@@ -1534,13 +1534,13 @@ fn tv_v1_vault_id_matrix_covers_canonical_role_tokens() {
     assert_eq!(
         covered.len(),
         9,
-        "matrix must cover 9 role-tokens per RFC-0105 v2.0 (Sovereign OCTO excluded per review §1336)"
+        "matrix must cover 9 role-tokens per RFC-0105 (Sovereign OCTO excluded per review §1336)"
     );
     let canonical: std::collections::HashSet<&str> = MATRIX_ROLE_TOKENS.iter().copied().collect();
     let actual: std::collections::HashSet<&str> = covered.iter().copied().collect();
     assert_eq!(
         actual, canonical,
-        "role-token set must equal RFC-0105 v2.0 enumeration"
+        "role-token set must equal RFC-0105 enumeration"
     );
 }
 

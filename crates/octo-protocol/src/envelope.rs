@@ -93,7 +93,7 @@ impl NodeEnvelope {
             return Err(ProtocolError::UnsupportedVersion(version_tag));
         }
         // Validate canonical DID shape at the envelope boundary per
-        // RFC-0871 §Adversary Analysis A7 + RFC-0010 v1.2 amendment.
+        // RFC-0871 §Adversary Analysis A7 + RFC-0010 amendment.
         crate::validate_canonical_did(from_did.as_str())?;
         let mut envelope = Self {
             envelope_id: [0u8; 32], // placeholder; computed below

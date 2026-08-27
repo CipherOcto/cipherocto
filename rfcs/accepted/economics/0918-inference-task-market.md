@@ -85,11 +85,11 @@ Integration with existing stack:
 ```
 RFC-0124 (Proof Market)
        ↓
-RFC-0144 (Inference Task Market) ← NEW
+RFC-0918 (Inference Task Market) ← NEW (canonical replacement per numeric-tier phantom sweep)
        ↓
 RFC-0630 (Proof-of-Inference)
        ↓
-RFC-0143 (OCTO-Network)
+RFC-0843 (OCTO-Network)
 ```
 
 ## Specification
@@ -739,7 +739,7 @@ Each task type needs different pricing:
 - RFC-0124 (Economics): Proof Market and Hierarchical Network
 - RFC-0630 (Proof Systems): Proof-of-Inference Consensus
 - RFC-0140 (Consensus): Sharded Consensus Protocol
-- RFC-0143 (Networking): OCTO-Network Protocol
+- RFC-0843 (Networking): OCTO-Network Protocol
 
 ## Related Use Cases
 

@@ -1,4 +1,4 @@
-#![allow(deprecated)] // Cycle 1 of 3-cycle legacy deprecation (RFC-0960 v3.7 §5). Remove in Cycle 3.
+#![allow(deprecated)] // Cycle 1 of 3-cycle legacy deprecation (RFC-0960 §5). Remove in Cycle 3.
 //! End-to-end fault-injection tests for the quota-router proxy.
 //!
 //! Drives the proxy against a `wiremock::MockServer` standing in for the

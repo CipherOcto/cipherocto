@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Policy Object Graph: separable, versioned, shareable authorization policy (RFC-0967). Renamed from cipherocto-policy per RFC-0206 v2.1 §Adapter Crate List row 5."
+description = "Policy Object Graph: separable, versioned, shareable authorization policy (RFC-0967). Renamed from cipherocto-policy per RFC-0206 §Adapter Crate List row 5."
 
 [lib]
 name = "octo_policy"
@@ -18,15 +18,15 @@ thiserror.workspace = true
 cipherocto-encoding = { path = "../cipherocto-encoding" }
 # Per-policy-kind UUIDv5 derivation (RFC-0967-A1 v1.9.2 §2.6)
 uuid = { version = "1", features = ["v5"] }
-# Mission F substrate (RFC-0960 v3.6 BurnEventRef): AssetRegistry,
+# Mission F substrate (RFC-0960 BurnEventRef): AssetRegistry,
 # VaultRegistry, NonceRegistry traits + newtypes live in the
-# octo-cap-macaroon substrate (canonical home per RFC-0105 v3.5).
+# octo-cap-macaroon substrate (canonical home per RFC-0105).
 octo-cap-macaroon = { path = "../octo-cap-macaroon" }
-# Mission F amount-bearing field (RFC-0960 v3.6 Dqa wire form).
+# Mission F amount-bearing field (RFC-0960 Dqa wire form).
 octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
-# Mission F wire form (RFC-0960 v3.6 §3 borsh encoding).
+# Mission F wire form (RFC-0960 §3 borsh encoding).
 borsh = { version = "=1.5.0", features = ["derive"] }
-# Mission B (RFC-0960 v3.7 §2.5): BurnEventProducer impl lives in
+# Mission B (RFC-0960 §2.5): BurnEventProducer impl lives in
 # Layer C (octo-policy). Dep on Layer B substrate crate (octo-vault).
 octo-vault = { path = "../octo-vault" }
 

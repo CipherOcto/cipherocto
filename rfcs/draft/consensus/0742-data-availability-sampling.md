@@ -8,7 +8,7 @@ Draft
 
 ## Summary
 
-This RFC defines the **Data Availability & Sampling (DAS) Protocol** — a mechanism for efficiently verifying that shard data (model weights, datasets, proofs) is available across the network without requiring every node to download all data. Using Reed-Solomon erasure coding and random sampling, nodes can verify data availability with 99%+ probability while maintaining O(1) bandwidth per sample. The protocol integrates with the sharded consensus (RFC-0140) and OCTO-Network (RFC-0143) to provide cryptographic guarantees of data persistence.
+This RFC defines the **Data Availability & Sampling (DAS) Protocol** — a mechanism for efficiently verifying that shard data (model weights, datasets, proofs) is available across the network without requiring every node to download all data. Using Reed-Solomon erasure coding and random sampling, nodes can verify data availability with 99%+ probability while maintaining O(1) bandwidth per sample. The protocol integrates with the sharded consensus (RFC-0140) and OCTO-Network (RFC-0843) to provide cryptographic guarantees of data persistence.
 
 ## Design Goals
 
@@ -76,11 +76,11 @@ DAS defines:
 Integration with existing stack:
 
 ```
-RFC-0142 (DAS) ← NEW
+RFC-0742 (DAS) ← NEW (canonical replacement per numeric-tier phantom sweep)
        ↓
 RFC-0140 (Sharded Consensus)
        ↓
-RFC-0143 (OCTO-Network)
+RFC-0843 (OCTO-Network)
 ```
 
 ## Specification
@@ -641,7 +641,7 @@ Staking provides:
 - RFC-0630 (Proof Systems): Proof-of-Inference Consensus
 - RFC-0140 (Consensus): Sharded Consensus Protocol
 - RFC-0141 (Consensus): Parallel Block DAG Specification
-- RFC-0143 (Networking): OCTO-Network Protocol
+- RFC-0843 (Networking): OCTO-Network Protocol
 
 ## Related Use Cases
 

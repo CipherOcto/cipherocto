@@ -1,4 +1,4 @@
-//! `octo-reputation-storage` — RFC-0206 v2.1 §Adapter Crate List row 2.
+//! `octo-reputation-storage` — RFC-0206 §Adapter Crate List row 2.
 //!
 //!
 //! Substrate adapter for the `octo-reputation` owner crate. This

@@ -1456,3 +1456,10 @@ DQA integration MUST include:
 **Revision:** v2.4 - Fixed comparison overflow guard, tightened lazy canonicalization rule, added explicit constants, fixed division precision claim
 **Revision:** v2.3 - Added derives to Dqa struct, fixed division overflow guard, fixed comparison overflow, corrected test vectors
 **Revision:** v2.2 - Added rounding trade-off note, guard-digit variant, additional test vectors, lazy canonicalization, fast-path implementation
+
+## Version History
+
+| Version | Date       | Change                                                                                |
+|---------|------------|---------------------------------------------------------------------------------------|
+| 2.3     | 2026-08-19 | Status block: v2.3 (2026-08-19) — DQA NumericScalar implementation per RFC-0113.        |
+| 1.0     | 2026-08-22 | Retroactive VH table addition (per long-horizon plan v1.3 Phase 1 + Option C per M37). |

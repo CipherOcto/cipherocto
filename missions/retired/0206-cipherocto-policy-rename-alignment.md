@@ -8,6 +8,8 @@ metadata:
   created: 2026-08-19T23:55:00.000Z
 ---
 
+> **SUPERSEDED by 0206-006-cipherocto-policy-rename-alignment**
+
 # Mission `0206-cipherocto-policy-rename-alignment` — OPEN 2026-08-19
 
 ## Scope
@@ -25,41 +27,37 @@ Align the on-disk policy owner-trait crate naming per RFC-0206
   `[package].name = "cipherocto-policy"` →
   `"octo-policy"`; all consumer `Cargo.toml`s
   `[dependencies] cipherocto-policy` → `octo-policy` updated.
-- **(c) Trait introduction + adapter impl** — `pub trait
-  PolicyStore` declared in `crates/octo-policy/src/lib.rs`
-  (currently zero traits per RFC-0206 §Roles); new per-owner
-  adapter crate `crates/octo-policy-storage/` declares
-  `impl PolicyStore for StoolapPolicyStore` + provides the
+- **(c) Trait introduction + adapter impl** — declare `PolicyStore`
+  in `crates/octo-policy/src/lib.rs`; create the per-owner adapter
+  crate `crates/octo-policy-storage/` with
+  `impl PolicyStore for StoolapPolicyStore` and a
   `register(Arc<Database>) -> Arc<dyn PolicyStore>` constructor.
 - **(d) RFC requirement** — this mission requires a separate
-  per-adapter RFC per RFC-0206 §Promotion Path Condition 4; the
-  rename itself (steps a, b) is a chore-level change, the trait
-  + adapter impl (step c) requires the RFC.
+  per-adapter RFC per RFC-0206 §Promotion Path Condition 4. The
+  rename itself (steps a, b) is a chore-level change; the trait
+  and adapter implementation (step c) require the RFC.
 
 ## Acceptance Criterion
 
 Mission complete when:
 
-1. `crates/cipherocto-policy/` directory does not exist
-2. `crates/octo-policy/` directory exists with identical
-   contents + `Cargo.toml [package].name = "octo-policy"`
-3. All consumer `Cargo.toml` deps updated;
-   `cargo build` workspace-wide green
-4. `pub trait PolicyStore { ... }` declared in
-   `crates/octo-policy/src/lib.rs`
-5. `crates/octo-policy-storage/` adapter crate exists +
-   implements `PolicyStore` for the Stoolap-backed struct
-6. The naming-convention lint
-   (mission `0206-octo-storage-naming-convention-lint`) no
-   longer flags `octo-policy/` for the divergence
+1. `crates/cipherocto-policy/` directory does not exist.
+2. `crates/octo-policy/` directory exists with identical contents
+   and `Cargo.toml [package].name = "octo-policy"`.
+3. All consumer `Cargo.toml` dependencies are updated and the
+   workspace build is green.
+4. `pub trait PolicyStore { ... }` is declared in
+   `crates/octo-policy/src/lib.rs`.
+5. `crates/octo-policy-storage/` exists and implements `PolicyStore`
+   for the Stoolap-backed struct.
+6. The naming-convention lint no longer flags `octo-policy/`.
 
 ## Cross-references
 
-- RFC-0206 §Future Work (this mission is the bullet's real pointer)
-- RFC-0206 §Roles + Authorities (PolicyStore NEW trait declaration)
-- RFC-0206 §Promotion Path Condition 4 (one RFC per adapter)
-- Mission `0206-octo-storage-naming-convention-lint` (the lint
-  that originally flagged the divergence)
+- RFC-0206 §Future Work
+- RFC-0206 §Roles + Authorities
+- RFC-0206 §Promotion Path Condition 4
+- Mission `0206-octo-storage-naming-convention-lint`
 
 ## Out of scope
 
@@ -68,3 +66,9 @@ Mission complete when:
 - Naming-convention lint implementation (owned by
   `0206-octo-storage-naming-convention-lint`)
 - Market adapter (owned by `0206-octo-market-storage-adapter`)
+
+## Version History
+
+| Version | Date       | Change                                                      |
+| ------- | ---------- | ----------------------------------------------------------- |
+| retired | 2026-08-22 | Superseded by `0206-006-cipherocto-policy-rename-alignment` |

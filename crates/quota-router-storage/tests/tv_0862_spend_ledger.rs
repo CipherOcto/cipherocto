@@ -208,7 +208,7 @@ fn tv_0862_04b_try_deduct_unknown_holder_errors() {
 
 /// TV-0862-05: `Dqa` is `Dqa` at `scale = 0` (integer
 /// micro-OCTO-W counts). `DqaEncoding` is the canonical 16-byte BE
-/// consensus wire form per RFC-0105 v1.9 §DqaEncoding struct.
+/// consensus wire form per RFC-0105 §DqaEncoding struct.
 /// Round-trip must be exact AND the substrate's `i64` column
 /// (stoolap `INTEGER` ↔ `i64`) must carry `Dqa::value` losslessly
 /// via the `seed → balance` cycle.

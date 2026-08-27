@@ -1,4 +1,4 @@
-//! `octo-policy-storage` — RFC-0206 v2.1 §Adapter Crate List row 5.
+//! `octo-policy-storage` — RFC-0206 §Adapter Crate List row 5.
 //!
 //! Substrate adapter for the `octo-policy` owner crate. The
 //! `PolicyStore` trait surface is declared in `octo-policy` (NEW per

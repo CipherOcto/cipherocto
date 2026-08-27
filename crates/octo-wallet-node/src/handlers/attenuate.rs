@@ -117,7 +117,7 @@ impl AttenuateHandler {
         // signature requires one for symmetry; the canonical DID
         // shape check is performed at mint time (not here — the
         // attenuation envelope arrives with a trusted wire form
-        // produced by the wallet's own mint path, per RFC-0010 v1.2
+        // produced by the wallet's own mint path, per RFC-0010
         // F4 + 0010-d mission).
         let token = deserialize_wire(&req.existing_token_wire, String::new(), req.holder_pub)
             .map_err(wire_error_to_protocol)?;

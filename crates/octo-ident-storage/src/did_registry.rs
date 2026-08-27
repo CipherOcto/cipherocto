@@ -15,7 +15,7 @@
 //! type). Same pattern as `StoolapSpendLedger`
 //! (`crates/quota-router-storage/src/stoolap_spend_ledger.rs`).
 //!
-//! ## Atomicity (RFC-0010 v1.3)
+//! ## Atomicity (RFC-0010)
 //!
 //! `register` runs inside a stoolap transaction:
 //! 1. SELECT existing row FOR UPDATE (lock + visibility check)
@@ -26,7 +26,7 @@
 //! Concurrent register on the same `canonical_hash` serializes via the
 //! FOR UPDATE lock — no torn writes possible.
 //!
-//! ## Multi-chain namespacing (RFC-0010 v1.4 + mission 0010-f2-registry-namespacing)
+//! ## Multi-chain namespacing (RFC-0010 + mission 0010-f2-registry-namespacing)
 //!
 //! Migration v011 adds a `chain_id` BLOB column carrying the
 //! 17-byte canonical encoding of the chain namespace (per
@@ -46,7 +46,7 @@
 //! ## Layer discipline
 //!
 //! This module lives in `octo-ident-storage` (Layer C adapter) per
-//! RFC-0206 v2.1 §Adapter Crate List row 3. The trait is declared in
+//! RFC-0206 §Adapter Crate List row 3. The trait is declared in
 //! `octo-ident` (Layer B) — this crate provides the sole
 //! Stoolap-backed production implementation. Moved from
 //! `crates/quota-router-storage/src/stoolap_did_registry.rs` in mission
@@ -68,7 +68,7 @@ use quota_router_storage::migrations;
 use octo_ident::DidRegistry;
 
 /// 17-byte canonical encoding of the `CIPHEROCTO_MAINNET` namespace
-/// (RFC-0010 v1.4 §`ChainId` Namespace Extension):
+/// (RFC-0010 §`ChainId` Namespace Extension):
 /// `[variant: 0x01 (Rfc) | tag: 15 bytes (CIPHEROCTO_MAINNET_TAG)
 /// | length: 0x12 (18 chars for "cipherocto-mainnet")]`.
 ///
@@ -274,7 +274,7 @@ impl DidRegistry for StoolapDidRegistry {
                 // Borsh-decode the 4 rich-document fields. Legacy NULL
                 // rows (pre-v009) + malformed bytes decode to empty
                 // Vec via `unwrap_or_default()` (fail-soft: rich
-                // fields are optional metadata per RFC-0010 v1.5
+                // fields are optional metadata per RFC-0010
                 // §Forward compatibility).
                 let service_endpoints: Vec<ServiceEndpoint> = row
                     .get::<Vec<u8>>(2)

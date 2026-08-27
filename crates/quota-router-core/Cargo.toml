@@ -53,7 +53,7 @@ thiserror.workspace = true
 # 6 types (DataType/Error/ApiTransaction/ResultRow/Rows/Value) and the
 # `pub mod pubsub` extension (EventBus/WalPubSub/DatabaseEvent/
 # InvalidationReason/SchemaChangeType/OperationType/generate_event_id +
-# nested `wal_pubsub::parse_event`) per RFC-0206 v2.4. quota-router-core
+# nested `wal_pubsub::parse_event`) per RFC-0206. quota-router-core
 # uses `octo_storage_core::stoolap::pubsub::*` for cache.rs EventBus/WalPubSub
 # paths (mission 0206-008c) — no direct `stoolap` Cargo.toml dep needed.
 octo-storage-core = { path = "../octo-storage-core" }

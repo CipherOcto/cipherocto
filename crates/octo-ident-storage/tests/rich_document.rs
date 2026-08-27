@@ -1,7 +1,7 @@
 //! Mission 0010-f8-rich-did-storage — `StoolapDidRegistry` rich-document
 //! persistence TV.
 //!
-//! Verifies that `StoolapDidRegistry` round-trips the 4 RFC-0010 v1.5
+//! Verifies that `StoolapDidRegistry` round-trips the 4 RFC-0010
 //! rich-document fields (`service_endpoints`, `controllers`,
 //! `verification_methods`, `capability_delegations`) via v009/v010
 //! schema migrations + borsh-encoded BLOBs.

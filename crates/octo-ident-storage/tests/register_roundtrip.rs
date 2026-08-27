@@ -20,7 +20,7 @@ fn open_in_memory_succeeds_and_records_v008_migration() {
 #[test]
 fn mainnet_chain_id_bytes_matches_rfc_0010_v1_4() {
     use octo_ident_storage::MAINNET_CHAIN_ID_BYTES;
-    // 17-byte canonical encoding per RFC-0010 v1.4.
+    // 17-byte canonical encoding per RFC-0010.
     assert_eq!(MAINNET_CHAIN_ID_BYTES.len(), 17);
     assert_eq!(MAINNET_CHAIN_ID_BYTES[0], 0x01); // Rfc variant tag
     assert_eq!(MAINNET_CHAIN_ID_BYTES[16], 0x12); // length byte

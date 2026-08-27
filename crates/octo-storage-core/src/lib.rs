@@ -1,4 +1,4 @@
-//! Layer A storage substrate — RFC-0206 v2.2 §Substrate Newtype Refactor + §Substrate Re-export Block.
+//! Layer A storage substrate — RFC-0206 §Substrate Newtype Refactor + §Substrate Re-export Block.
 //!
 //! Per the Layer A stability principle (CLAUDE.md), this crate is
 //! RFC-frozen: any change to the public surface requires a semver-major
@@ -6,7 +6,7 @@
 //!
 //! ## Surface (8 top-level pub-use + pub mod migrations)
 //!
-//! Per RFC-0206 v2.1 §Cargo.toml Templates Layer A, the substrate
+//! Per RFC-0206 §Cargo.toml Templates Layer A, the substrate
 //! exposes exactly **8 top-level `pub use` statements** plus a
 //! `pub mod migrations` module (3 nested pub-use for the migration
 //! runner helpers). The legacy `Migration` trait + `apply_pending`
@@ -99,7 +99,7 @@ pub mod stoolap;
 
 // === Legacy `_legacy_*` re-exports per §Migration Order ===
 //
-// Per RFC-0206 v2.1 §Migration Order, the pre-substrate surface
+// Per RFC-0206 §Migration Order, the pre-substrate surface
 // (free-function `open`/`open_in_memory` returning `stoolap::Database`
 // directly + the `Migration` trait + `apply_pending` runner) is
 // retained for ≥ 6 months under `_legacy_*` aliases. **New code MUST

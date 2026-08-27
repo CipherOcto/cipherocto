@@ -44,7 +44,7 @@ pub(crate) fn stoolap_err(e: octo_storage_core::stoolap::Error) -> SessionStoreE
     SessionStoreError::Stoolap(e.to_string())
 }
 
-// RFC-0206 v2.1 §Substrate Newtype Refactor: `Database::open` /
+// RFC-0206 §Substrate Newtype Refactor: `Database::open` /
 // `open_in_memory` return `Result<Database, SubstrateError>`. The
 // substrate error wraps the underlying stoolap error; we string-format
 // it so callers don't need to add `From<SubstrateError>` on

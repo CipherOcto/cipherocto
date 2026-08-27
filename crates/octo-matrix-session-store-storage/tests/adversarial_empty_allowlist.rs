@@ -1,4 +1,4 @@
-//! Adversarial fixture per RFC-0206 v2.1 §Format Bypass Defense:
+//! Adversarial fixture per RFC-0206 §Format Bypass Defense:
 //! an AdapterAllowlist constructed with no registered tables or DDL
 //! templates MUST reject every typed statement.
 

@@ -1,6 +1,6 @@
 //! [`AdapterAllowlist`] — runtime DDL + namespace enforcement.
 //!
-//! Per RFC-0206 v2.1 §Format Bypass Defense, the substrate refuses to
+//! Per RFC-0206 §Format Bypass Defense, the substrate refuses to
 //! dispatch typed queries or DDL unless they are pre-registered for the
 //! calling adapter. Each adapter crate owns an `AdapterAllowlist`
 //! instance built at startup; the substrate enforces the contract at

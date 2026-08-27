@@ -168,7 +168,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"
 async-trait = "0.1"
 
 # Mission 0010-d: AudienceId::from_str calls `CanonicalCodec::parse` to
-# validate canonical DID shape at the wallet boundary (RFC-0010 v1.2 F4).
+# validate canonical DID shape at the wallet boundary (RFC-0010 F4).
 octo-ident = { path = "../octo-ident" }
 
 # Mission 0957-ext-macaroon: Layer 4 extension crate owning the macaroon

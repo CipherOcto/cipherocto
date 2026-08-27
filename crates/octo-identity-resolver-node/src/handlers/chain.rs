@@ -1,5 +1,5 @@
 //! `IDENTITY_RESOLVE_CHAIN` handler (RFC-0871 §Future Work +
-//! RFC-0010 v1.3 §Storage Extension, missions
+//! RFC-0010 §Storage Extension, missions
 //! `0871b-cross-domain-resolution-impl` + `0871b-cross-node-forwarding`).
 //!
 //! Receives: `<target: String, hops: Vec<ResolverHop>, ttl_remaining_ms: u64>`
@@ -20,7 +20,7 @@
 //!    `hops.len() > MAX_CHAIN_HOPS` as `ChainTooLong` (silent u8-cap
 //!    smell — `hops_traversed: u8` cannot represent larger chains).
 //! 1. Target DID validation via `CanonicalCodec::parse(s, false)`
-//!    (rejects legacy bare form per RFC-0010 v1.2 F4).
+//!    (rejects legacy bare form per RFC-0010 F4).
 //! 2. `ResolverChainContext` initialization: `visited` set seeded with
 //!    the canonical (post-parse) target wire form; `ttl_remaining_ms`
 //!    from the request.

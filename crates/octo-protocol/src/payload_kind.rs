@@ -111,7 +111,7 @@ pub const IDENTITY_RESOLVE: PayloadKindId = PayloadKindId([
 /// Companion `def_line` for `IDENTITY_RESOLVE` (compiler-resolved via `line!()`).
 pub(crate) const __DEF_LINE_IDENTITY_RESOLVE: u32 = line!();
 
-// RFC-0871 identity-write payload kinds (RFC-0862 v1.3 §DidWriteCoordinator,
+// RFC-0871 identity-write payload kinds (RFC-0862 §DidWriteCoordinator,
 // mission 0871e-f7-impl-resolver-mediation). The resolver-node mediates
 // `register` / `revoke` calls through an injected
 // `Arc<dyn DidWriteCoordinator>` (Layer B substrate in `octo-ident`)
@@ -121,7 +121,7 @@ pub(crate) const __DEF_LINE_IDENTITY_RESOLVE: u32 = line!();
 // Sub-namespace continues the identity allocation pattern: `0x0001`.
 // New UUIDs `0002` (register) + `0003` (revoke).
 
-/// Identity-register payload kind (RFC-0862 v1.3 §DidWriteCoordinator).
+/// Identity-register payload kind (RFC-0862 §DidWriteCoordinator).
 ///
 /// UUID: `0x0009:0001:0000:0000:0000:0000:0000:0002`
 pub const IDENTITY_REGISTER: PayloadKindId = PayloadKindId([
@@ -130,7 +130,7 @@ pub const IDENTITY_REGISTER: PayloadKindId = PayloadKindId([
 /// Companion `def_line` for `IDENTITY_REGISTER` (compiler-resolved via `line!()`).
 pub(crate) const __DEF_LINE_IDENTITY_REGISTER: u32 = line!();
 
-/// Identity-revoke payload kind (RFC-0862 v1.3 §DidWriteCoordinator).
+/// Identity-revoke payload kind (RFC-0862 §DidWriteCoordinator).
 ///
 /// UUID: `0x0009:0001:0000:0000:0000:0000:0000:0003`
 pub const IDENTITY_REVOKE: PayloadKindId = PayloadKindId([
@@ -165,7 +165,7 @@ pub const IDENTITY_RESOLVE_CHAIN: PayloadKindId = PayloadKindId([
 /// Companion `def_line` for `IDENTITY_RESOLVE_CHAIN` (compiler-resolved via `line!()`).
 pub(crate) const __DEF_LINE_IDENTITY_RESOLVE_CHAIN: u32 = line!();
 
-/// Identity-resolve-with-chain payload kind (RFC-0010 v1.4 §ChainId
+/// Identity-resolve-with-chain payload kind (RFC-0010 §ChainId
 /// Namespace Extension, mission `0010-f2-multi-chain-routing`).
 ///
 /// Carries an explicit `ChainId` namespace in the request so the

@@ -1,6 +1,6 @@
 //! Stoolap-backed implementation of the settlement store.
 //!
-//! RFC-0206 v2.1 §Migration Order: `Migration`/`apply_pending` legacy
+//! RFC-0206 §Migration Order: `Migration`/`apply_pending` legacy
 //! aliases; deprecation noise silenced at module level.
 #![allow(deprecated)]
 //! Cipherocto wraps stoolap as an embedded SQL engine. Schema lives in

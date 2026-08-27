@@ -421,7 +421,7 @@ See RFC-0113 for full specification.
 
 ## Integration Points
 
-### With RFC-0106 (Numeric Tower)
+### With RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric Tower)
 
 | Numeric Tower | Retrieval Use                      |
 | ------------- | ---------------------------------- |
@@ -527,7 +527,7 @@ Retrieval integrates into the three-layer trust architecture:
                      │
 ┌────────────────────▼────────────────────┐
 │      Deterministic Execution             │
-│        (RFC-0106 - Numeric Tower)       │
+│        (RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) - Numeric Tower)       │
 └────────────────────┬────────────────────┘
                      │
 ┌────────────────────▼────────────────────┐
@@ -560,7 +560,7 @@ By separating **storage economics** from **retrieval economics**, the network en
 
 **Prerequisites**:
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower
 - RFC-0107 (Storage): Production Vector-SQL Storage v2
 - RFC-0108 (Retrieval): Verifiable AI Retrieval
 

@@ -1,4 +1,4 @@
-//! Adversarial fixture per RFC-0206 v2.1 §Format Bypass Defense:
+//! Adversarial fixture per RFC-0206 §Format Bypass Defense:
 //! format!() injection in a DdlRegistered template id MUST be rejected —
 //! the substrate's AdapterAllowlist uses exact string matching on the
 //! template id, so any rendered template id that does not match a

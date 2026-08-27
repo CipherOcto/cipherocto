@@ -1,6 +1,6 @@
-//! Mission F (RFC-0960 v3.6) BurnEventRef substrate + 3-sink atomicity.
+//! Mission F (RFC-0960) BurnEventRef substrate + 3-sink atomicity.
 //!
-//! Per RFC-0960 v3.6 §2 (BurnEventRef Specification) + §3 (Wire Form).
+//! Per RFC-0960 §2 (BurnEventRef Specification) + §3 (Wire Form).
 //!
 //! ## 3-sink atomicity (R7 CRITICAL #3)
 //!
@@ -25,22 +25,22 @@ use octo_cap_macaroon::{
 use thiserror::Error;
 
 /// Sentinel `VaultId` used for sovereign role-token burns (no vault
-/// containment — burned by chain rule per RFC-0960 v3.6 §3.3 L504-511).
+/// containment — burned by chain rule per RFC-0960 §3.3).
 pub const ZERO_VAULT_ID: VaultId = VaultId::from_bytes([0u8; 32]);
 
 /// 32-byte typed wrapper for a `SettlementEvent` reference
-/// (RFC-0960 v3.6 §2.2 L181). Deprecated alias `SettlementRef`
+/// (RFC-0960 §2.2). Deprecated alias `SettlementRef`
 /// preserved for one substrate cycle per L182.
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, Hash, borsh::BorshSerialize, borsh::BorshDeserialize,
 )]
 pub struct SettlementId(pub [u8; 32]);
 
-/// Deprecated alias (RFC-0960 v3.6 §2.2 L182 — 1 cycle).
-#[deprecated(note = "use SettlementId per RFC-0960 v3.6 §2.2")]
+/// Deprecated alias (RFC-0960 §2.2 — 1 cycle).
+#[deprecated(note = "use SettlementId per RFC-0960 §2.2")]
 pub type SettlementRef = SettlementId;
 
-/// 11-field BurnEventRef struct per RFC-0960 v3.6 §2.1 L71-87.
+/// 11-field BurnEventRef struct per RFC-0960 §2.1.
 ///
 /// Wire form per §3.1: Borsh field order. JSON/serde canonical-serial
 /// form is available via `octo_determin::Dqa` + substrate adapters
@@ -72,7 +72,7 @@ pub struct BurnEventRef {
     pub nonce: Nonce,
 }
 
-/// BurnEventRef errors (RFC-0960 v3.6 §2.1 L89-126). 11 variants.
+/// BurnEventRef errors (RFC-0960 §2.1). 11 variants.
 #[derive(Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum BurnEventError {
@@ -109,7 +109,7 @@ pub enum BurnEventError {
     LegacyFormOnNonOctoWContext { claimed_asset_id: AssetId },
 }
 
-/// AuditSink errors (RFC-0960 v3.6 §2.2 L408-411 + R7 CRITICAL #3
+/// AuditSink errors (RFC-0960 §2.2 + R7 CRITICAL #3
 /// `LogInsertFailed` extension).
 #[derive(Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -130,7 +130,7 @@ pub enum AuditError {
     UnobserveFailed(String),
 }
 
-/// AuditSink trait (RFC-0960 v3.6 §2.2 L408-411).
+/// AuditSink trait (RFC-0960 §2.2).
 pub trait AuditSink: Send + Sync {
     fn write(&mut self, event: &BurnEventRef) -> Result<(), AuditError>;
     fn compensate(&mut self, event: &BurnEventRef) -> Result<(), AuditError>;
@@ -140,7 +140,7 @@ pub trait AuditSink: Send + Sync {
 /// substrate per `cipherocto-design-principles` §No parallel abstractions).
 pub use octo_vault::TransferEventLog;
 
-/// Audit invariant violation (RFC-0105 v3.5 §3.13 tri-invariant pair).
+/// Audit invariant violation (RFC-0105 §3.13 tri-invariant pair).
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum AuditInvariantViolation {
     #[error("asset_id mismatch: burn = {burn_asset_id:?}, caveat = {caveat_asset_id:?}")]
@@ -150,7 +150,7 @@ pub enum AuditInvariantViolation {
     },
 }
 
-/// Compute the body_hash per RFC-0960 v3.6 §2.2 L371-393.
+/// Compute the body_hash per RFC-0960 §2.2.
 ///
 /// Hash input is the concatenation of:
 /// `chain_id || vault_id || asset_id || asset_kind_tag ||
@@ -177,7 +177,7 @@ pub fn compute_body_hash(burn: &BurnEventRef) -> [u8; 32] {
 /// Body hash domain separator prefix for cross-protocol isolation.
 const BODY_HASH_DOMAIN: &[u8] = b"cipherocto/burn/v1/";
 
-/// Build the canonical 7-gate constructor (RFC-0960 v3.6 §2.2 L196-275).
+/// Build the canonical 7-gate constructor (RFC-0960 §2.2).
 ///
 /// Gates (canonical order):
 /// - Gate 0: `registry.metadata(&asset_id)` resolves + not tombstoned
@@ -261,7 +261,7 @@ pub fn new(
         )
         .map_err(|_| BurnEventError::InvalidSignature)?;
     }
-    // Stale-snapshot detection (per §2.2 L309-313)
+    // Stale-snapshot detection (per §2.2)
     if registry_snapshot_epoch.get() > current_epoch.get() {
         return Err(BurnEventError::StaleSnapshot {
             snapshot: registry_snapshot_epoch.get(),
@@ -272,7 +272,7 @@ pub fn new(
 }
 
 /// Validate a `BurnEventRef` against current registry + vault state
-/// (RFC-0960 v3.6 §2.2 L279-332). 7 checks for offline audit integrity.
+/// (RFC-0960 §2.2). 7 checks for offline audit integrity.
 pub fn validate(
     burn: &BurnEventRef,
     registry: &dyn AssetRegistry,
@@ -325,7 +325,7 @@ pub fn validate(
     Ok(())
 }
 
-/// Tri-invariant pairwise check per RFC-0105 v3.5 §3.13:
+/// Tri-invariant pairwise check per RFC-0105 §3.13:
 /// `BurnEventRef.asset_id == PaymentCaveat.asset_id`.
 pub fn verify_burn_against_caveat(
     burn: &BurnEventRef,
@@ -340,7 +340,7 @@ pub fn verify_burn_against_caveat(
     Ok(())
 }
 
-/// Atomic 2-sink orchestration per RFC-0960 v3.6 §2.2 L337-368 +
+/// Atomic 2-sink orchestration per RFC-0960 §2.2 +
 /// R7 CRITICAL #3 cross-sink rollback. The third sink (transfer log
 /// insert) is owned by `produce_burn` (Layer B `TransferEventLog`); the
 /// parallel `octo-policy::TransferEventLog` trait was eliminated under
@@ -380,7 +380,7 @@ pub fn consume(
     Ok(())
 }
 
-/// In-memory `AuditSink` for tests (RFC-0960 v3.6 §2.2 L408-411).
+/// In-memory `AuditSink` for tests (RFC-0960 §2.2).
 #[derive(Debug, Default)]
 pub struct InMemoryAuditSink {
     pub writes: Vec<[u8; 32]>,
@@ -414,7 +414,7 @@ pub struct InMemoryTransferEventLog {
     pub fail_insert: bool,
 }
 
-// Suppress unused BODY_HASH_DOMAIN (RFC-0960 v3.6 §3 reserves domain
+// Suppress unused BODY_HASH_DOMAIN (RFC-0960 §3 reserves domain
 // separator for future BLAKE3-prefixed variants; current body_hash
 // uses raw concatenation only).
 #[allow(dead_code)]

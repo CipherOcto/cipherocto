@@ -56,7 +56,7 @@ pub use node::{
 use octo_protocol::PayloadKindId;
 
 /// All payload kinds served by `IdentityResolverNode` (RFC-0871 §Roles and
-/// Authorities, RFC-0862 v1.3 §DidWriteCoordinator).
+/// Authorities, RFC-0862 §DidWriteCoordinator).
 ///
 /// Public so callers can register handlers for these UUIDs on other
 /// dispatchers (e.g. quota-router's `EnvelopeDispatcher` for interop).
@@ -64,7 +64,7 @@ use octo_protocol::PayloadKindId;
 /// Mission 0871e-f7-impl-resolver-mediation: extends the read-only
 /// `IDENTITY_RESOLVE` with the cross-instance write paths
 /// `IDENTITY_REGISTER` + `IDENTITY_REVOKE` that consult an injected
-/// `DidWriteCoordinator` (RFC-0862 v1.3) before delegating to the local
+/// `DidWriteCoordinator` (RFC-0862) before delegating to the local
 /// `DidRegistry` backend.
 ///
 /// Mission 0871b-cross-domain-resolution-impl: adds

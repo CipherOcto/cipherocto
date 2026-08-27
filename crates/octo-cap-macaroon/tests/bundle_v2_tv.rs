@@ -95,7 +95,7 @@ fn tv3_envelope_prefix_is_canonical_16_bytes() {
     assert_eq!(&CIPHEROCTO_V2_BUNDLE_PREFIX[13..], &[0u8; 3]);
 }
 
-/// TV-4 `MAX_CHAIN_DEPTH` is 8 per RFC-0009 v1.2 §Hierarchical
+/// TV-4 `MAX_CHAIN_DEPTH` is 8 per RFC-0009 §Hierarchical
 /// Attenuation Chains.
 #[test]
 fn tv4_max_chain_depth_constant_is_8() {

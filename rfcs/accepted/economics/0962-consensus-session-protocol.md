@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted v2.0
+Accepted v2.1 — Status header synced with §Version History v2.1-R8-F5-Clarify row per M37 corpus-wide sync check (prior header read v2.0; VH row latest added 2026-07-24 with §7.1 MultiEnvelope recursive nesting depth clarification).
 
 > **Note:** Companion RFC to RFC-0960 §10 (Execution Envelopes) and §1 (Deterministic SQL Engine). Defines the wire-protocol shape, lifecycle states, signature aggregation, ZK commitment, and reconciliation semantics of an `ExecutionEnvelope`. Builds on RFC-0959 (SettlementReceipt envelope), RFC-0957 (Capability), RFC-0862 (sync as propagation), RFC-0961 (Deterministic SQL dialect), and RFC-0967 (Policy Object reference).
 

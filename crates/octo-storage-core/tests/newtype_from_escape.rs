@@ -1,6 +1,6 @@
 //! TV-0206-A13: newtype round-trip `From<Database> for stoolap::Database`.
 //!
-//! Per RFC-0206 v2.1 §Substrate Newtype Refactor + §Escape Hatch
+//! Per RFC-0206 §Substrate Newtype Refactor + §Escape Hatch
 //! Enumeration, the substrate's `Database` newtype exposes a one-way
 //! `From<Database> for stoolap::Database` conversion so legacy
 //! migration code paths can reach the underlying Stoolap engine. This

@@ -96,12 +96,12 @@ Objective: Build the mathematical foundation for all subsequent work.
 
 #### RFCs Required
 
-| RFC      | Title                           | Priority |
-| -------- | ------------------------------- | -------- |
-| RFC-0104 | Deterministic Floating-Point    | Required |
-| RFC-0105 | Deterministic Quant Arithmetic  | Required |
-| RFC-0106 | Deterministic Numeric Tower     | Required |
-| RFC-0116 | Unified Deterministic Execution | Required |
+| RFC                                                                      | Title                           | Priority |
+| ------------------------------------------------------------------------ | ------------------------------- | -------- |
+| RFC-0104                                                                 | Deterministic Floating-Point    | Required |
+| RFC-0105                                                                 | Deterministic Quant Arithmetic  | Required |
+| RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) | Deterministic Numeric Tower     | Required |
+| RFC-0116                                                                 | Unified Deterministic Execution | Required |
 
 #### Parallel Tracks
 
@@ -189,11 +189,11 @@ Objective: Build the P2P network and consensus mechanism.
 
 | RFC      | Title                 | Priority |
 | -------- | --------------------- | -------- |
-| RFC-0143 | OCTO-Network Protocol | Required |
+| RFC-0843 | OCTO-Network Protocol | Required |
 | RFC-0130 | Proof-of-Inference    | Required |
 | RFC-0140 | Sharded Consensus     | Required |
 | RFC-0141 | Parallel Block DAG    | Required |
-| RFC-0142 | Data Availability     | Required |
+| RFC-0742 | Data Availability     | Required |
 
 #### Parallel Tracks
 
@@ -280,7 +280,7 @@ Objective: Build retrieval, reasoning, and agent capabilities.
 | RFC-0113 | Query Routing                | Required |
 | RFC-0114 | Verifiable Reasoning Traces  | Required |
 | RFC-0134 | Self-Verifying AI Agents     | Required |
-| RFC-0145 | Hardware Capability Registry | Required |
+| RFC-0845 | Hardware Capability Registry | Required |
 
 #### Parallel Tracks
 
@@ -321,7 +321,7 @@ Objective: Build agent governance and organizations.
 | -------- | ------------------------------ | -------- |
 | RFC-0118 | Autonomous Agent Organizations | Required |
 | RFC-0119 | Alignment Control Mechanisms   | Required |
-| RFC-0146 | Proof Aggregation Protocol     | Required |
+| RFC-0650 | Proof Aggregation Protocol     | Required |
 | RFC-0125 | Model Liquidity Layer          | Required |
 
 #### Parallel Tracks
@@ -448,10 +448,10 @@ Phase 6:
 All RFCs are related to this roadmap. Key dependencies:
 
 - RFC-0104 (Numeric/Math): Deterministic Floating-Point
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower
 - RFC-0120 (AI Execution): Deterministic AI-VM
 - RFC-0630 (Proof Systems): Proof-of-Inference Consensus
-- RFC-0143 (Networking): OCTO-Network Protocol
+- RFC-0843 (Networking): OCTO-Network Protocol
 - RFC-0918 (Economics): Inference Task Market
 - RFC-0416 (Agents): Self-Verifying AI Agents
 

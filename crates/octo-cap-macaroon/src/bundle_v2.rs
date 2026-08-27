@@ -1,10 +1,10 @@
 //! `CapabilityBundleV2` — V2 wire form of portable archival + replay
-//! representation (RFC-0009 v1.2 §Compatibility > §Forward compatibility).
+//! representation (RFC-0009 §Compatibility > §Forward compatibility).
 //!
 //! Aggregates `CapabilityTokenV2` + serialized `HolderRecord` bytes +
 //! singular `DischargeMacaroon` for offline storage + cross-process
 //! replay. V2 adds `chain_depth` + `chain_parent` fields on the token
-//! for hierarchical attenuation chain verification (RFC-0009 v1.2
+//! for hierarchical attenuation chain verification (RFC-0009
 //! §Hierarchical attenuation chains).
 //!
 //! ## Layer discipline (per [[cipherocto-design-principles]])
@@ -32,7 +32,7 @@
 //! - `discharges: Vec<DischargeMacaroon>` (V1) →
 //!   `discharge_macaroon_bytes: Vec<u8>` (singular; borsh-encoded
 //!   `DischargeMacaroon` bytes). V2 wire form carries ONE discharge
-//!   (singular vs V1's `Vec`) per RFC-0009 v1.2 §Compatibility
+//!   (singular vs V1's `Vec`) per RFC-0009 §Compatibility
 //!   sketch. The borsh-bytes indirection follows V1's
 //!   `holder_record_bytes` pattern (layer discipline: cargo-graph
 //!   hygiene avoids the `Vec<Caveat>` → Borsh derive cascade; the
@@ -75,30 +75,30 @@ pub const BUNDLE_VERSION_V2: u8 = 2;
 /// changes for downstream verifiers.
 pub const BUNDLE_ID_DOMAIN_V2: &str = "cipherocto/bundle/v2/id";
 
-/// Maximum `chain_depth` (RFC-0009 v1.2 G1: depth ≤ 8 per W3C VC-DID
+/// Maximum `chain_depth` (RFC-0009 G1: depth ≤ 8 per W3C VC-DID
 /// best practice). `capability_id` derivation is pure on-chain
 /// (BLAKE3, Class A determinism); the depth cap is a soft migration
-/// bound (amendable per RFC-0009 v1.2 §Implicit Assumptions Audit Time
+/// bound (amendable per RFC-0009 §Implicit Assumptions Audit Time
 /// row: "Chain depth ≤ 8 — Migration if raised").
 pub const MAX_CHAIN_DEPTH: u8 = 8;
 
-/// V2 hierarchical attenuation chain token (RFC-0009 v1.2 §Specification
+/// V2 hierarchical attenuation chain token (RFC-0009 §Specification
 /// > Hierarchical attenuation chains).
 ///
 /// Carries `chain_depth` (the level in the chain; 0 = root, 1..=8 =
 /// descendant) + `chain_parent` (BLAKE3-256 binding of parent key +
-/// child key + child depth per RFC-0009 v1.2 `verify_chain_parent`
+/// child key + child depth per RFC-0009 `verify_chain_parent`
 /// + `compute_chain_parent`).
 #[derive(
     Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize, serde::Serialize, serde::Deserialize,
 )]
 pub struct CapabilityTokenV2 {
     /// Chain depth (0 = root; 1..=8 = descendant). Lives on the
-    /// token, NOT on `CapabilityKey` (per RFC-0009 v1.2 R11 H1).
+    /// token, NOT on `CapabilityKey` (per RFC-0009 R11 H1).
     pub chain_depth: u8,
 
     /// BLAKE3-256 binding of `parent_cap_key || child_cap_key ||
-    /// child_depth.to_be_bytes()` (per RFC-0009 v1.2 `compute_chain_parent`).
+    /// child_depth.to_be_bytes()` (per RFC-0009 `compute_chain_parent`).
     /// `[0u8; 32]` for root tokens (depth 0).
     pub chain_parent: [u8; 32],
 
@@ -106,7 +106,7 @@ pub struct CapabilityTokenV2 {
     pub audience_did: String,
 
     /// Channel identifier (16-byte scope tag; ChannelId size per
-    /// RFC-0009 v1.2 §Roles and Authorities).
+    /// RFC-0009 §Roles and Authorities).
     pub channel_id: [u8; 16],
 
     /// Expiry timestamp (Unix seconds).
@@ -147,7 +147,7 @@ impl fmt::Debug for CapabilityTokenV2 {
 /// Borsh derive cascade (the `Caveat` enum has 24 variants with
 /// their own types).
 ///
-/// **Deviation from RFC-0009 v1.2 §Compatibility sketch:** the
+/// **Deviation from RFC-0009 §Compatibility sketch:** the
 /// authoritative spec sketch shows `discharge_macaroon: DischargeMacaroon`
 /// (concrete type). This implementation uses
 /// `discharge_macaroon_bytes: Vec<u8>` to keep the layer discipline
@@ -165,7 +165,7 @@ pub struct CapabilityBundleV2 {
     /// `canonical_de` rejects mismatches.
     pub bundle_version: u8,
 
-    /// V2 holder-bound attenuation chain token (RFC-0009 v1.2).
+    /// V2 holder-bound attenuation chain token (RFC-0009).
     pub token_v2: CapabilityTokenV2,
 
     /// Serialized bytes of the `HolderRecord`. Deserialize via
@@ -308,7 +308,7 @@ impl CapabilityBundleV2 {
     }
 }
 
-/// Network wire prefix for V2 bundles (RFC-0009 v1.2 §Forward
+/// Network wire prefix for V2 bundles (RFC-0009 §Forward
 /// compatibility — receivers detect version from first 16 bytes
 /// without attempting full canonical_de).
 ///
@@ -318,7 +318,7 @@ impl CapabilityBundleV2 {
 /// future expansion (e.g. a 4-byte minor-version tag).
 pub const CIPHEROCTO_V2_BUNDLE_PREFIX: &[u8; 16] = b"cipherocto/v2\x00\x00\x00";
 
-/// V2 wire envelope (RFC-0009 v1.2 §Forward compatibility carrier).
+/// V2 wire envelope (RFC-0009 §Forward compatibility carrier).
 ///
 /// `CapabilityBundleV2` substrate is the inner bundle; the envelope
 /// prepends the 16-byte version prefix so receivers can dispatch V2
@@ -410,7 +410,7 @@ mod tests {
     }
 
     /// Build a V2 child bundle (chain_depth = 1) with a non-zero
-    /// `chain_parent` (computed per RFC-0009 v1.2 `compute_chain_parent`).
+    /// `chain_parent` (computed per RFC-0009 `compute_chain_parent`).
     fn v2_child_fixture() -> CapabilityBundleV2 {
         let mut parent = v2_root_fixture();
         parent.token_v2.chain_depth = 1;
@@ -524,7 +524,7 @@ mod tests {
 
     #[test]
     fn v2_max_chain_depth_constant() {
-        assert_eq!(MAX_CHAIN_DEPTH, 8, "chain depth cap per RFC-0009 v1.2 G1");
+        assert_eq!(MAX_CHAIN_DEPTH, 8, "chain depth cap per RFC-0009 G1");
     }
 
     #[test]
@@ -571,7 +571,7 @@ mod tests {
             "Debug must surface chain_depth, got {s}"
         );
         // chain_parent is hex-encoded for transparency (not a bearer secret —
-        // it's a BLAKE3 hash binding, public per RFC-0009 v1.2
+        // it's a BLAKE3 hash binding, public per RFC-0009
         // `verify_chain_parent` predicate).
         assert!(
             s.contains("chain_parent"),

@@ -2,7 +2,7 @@
 name = "octo-paid-query"
 version = "0.1.0"
 edition = "2021"
-description = "Paid-query caveat bridge (RFC-0871 §Implementation Phases Phase 5, mission 0871e). Layer E extension crate; per-extension crate pattern from RFC-0957 v2.0 §Per-Extension Crate Layout."
+description = "Paid-query caveat bridge (RFC-0871 §Implementation Phases Phase 5, mission 0871e). Layer E extension crate; per-extension crate pattern from RFC-0957 §Per-Extension Crate Layout."
 license = "MIT OR Apache-2.0"
 authors = ["CipherOcto"]
 
@@ -32,7 +32,7 @@ octo-wallet = { path = "../octo-wallet" }
 # crate consumes those primitives; it does NOT depend on the wallet's
 # monolithic `caveat.rs` (which is slated for follow-on extraction).
 octo-cap-macaroon = { path = "../octo-cap-macaroon" }
-# Layer A deterministic floating-point substrate (RFC-0862 v2.0.3 +
+# Layer A deterministic floating-point substrate (RFC-0862 +
 # RFC-0965 §3). Mission 0862-c9: `MicroOctoW` type alias RETIRED
 # project-wide — cost arithmetic uses `octo_determin::Dqa` directly
 # at `scale = 0` (integer-valued). Previously exported as a re-export

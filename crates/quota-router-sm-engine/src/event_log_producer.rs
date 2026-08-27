@@ -1,4 +1,4 @@
-//! Mission B (RFC-0960 v3.7 §2.5) `SettlementEventProducer` impl.
+//! Mission B (RFC-0960 §2.5) `SettlementEventProducer` impl.
 //!
 //! Layer C specialization of the Layer B `EventLogProducer` trait.
 //! Wraps `SettlementEvent::new` (Mission G substrate).

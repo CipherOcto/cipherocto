@@ -51,7 +51,7 @@ pub use state_machine::{
 };
 pub use store::{SettlementStore, StoolapStore, StorageError};
 
-/// Ask state (RFC-0959 v1.0 §State Machine).
+/// Ask state (RFC-0959 §State Machine).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AskState {
     /// Initial state after mint_with_zk() succeeds. ask_id, holder, axes recorded.
@@ -91,7 +91,7 @@ impl std::fmt::Display for AskState {
     }
 }
 
-/// Ask record (RFC-0959 v1.0 §Data Structures).
+/// Ask record (RFC-0959 §Data Structures).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Ask {
     pub ask_id: [u8; 32],
@@ -103,7 +103,7 @@ pub struct Ask {
     pub output_hash: Option<[u8; 32]>,
 }
 
-/// Receipt record (RFC-0959 v1.0 §Data Structures).
+/// Receipt record (RFC-0959 §Data Structures).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Receipt {
     pub receipt_id: [u8; 32],
@@ -117,7 +117,7 @@ pub struct Receipt {
 /// Reservation state (RFC-0960 §2.3).
 ///
 /// Distinct from `AskState` (RFC-0959 receipt lifecycle) and from
-/// `SettlementReceipt`'s state machine (RFC-0959 v1.0 Minted→Settled→
+/// `SettlementReceipt`'s state machine (RFC-0959 Minted→Settled→
 /// Consumed). A Reservation is the pre-auth escrow that binds a capability
 /// to an intended operation; it carries the audit-window state machine
 /// Reserved→Executing→Settled→Auditable→Released and the dispute branch

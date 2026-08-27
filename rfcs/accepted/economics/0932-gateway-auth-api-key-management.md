@@ -183,3 +183,9 @@ Use existing `KeyError` enum from `keys/mod.rs`:
 10. Route permission check works (allowed_routes field)
 11. Budget exceeded → 403 (KeyError::BudgetExceeded)
 12. Rate limit exceeded → 429 (KeyError::RateLimited { retry_after })
+
+## Version History
+
+| Version | Date       | Change                                                                                |
+|---------|------------|---------------------------------------------------------------------------------------|
+| 1.0     | 2026-08-22 | Retroactive VH table addition (per long-horizon plan v1.3 Phase 1 + Option C per M37). |

@@ -1,6 +1,6 @@
 //! TV-0206-A5: substrate-level DDL allowlist runtime enforcement.
 //!
-//! Per RFC-0206 v2.1 §Format Bypass Defense + §Substrate Newtype Refactor,
+//! Per RFC-0206 §Format Bypass Defense + §Substrate Newtype Refactor,
 //! the substrate refuses to dispatch arbitrary DDL through
 //! `Database::execute_checked`; the only legitimate DDL path is a
 //! pre-registered [`DdlTemplate`]. This test pins the runtime

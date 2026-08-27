@@ -12,12 +12,12 @@ This RFC provides the **architectural overview** of CipherOcto — a verifiable 
 
 ## Design Goals
 
-| Goal | Target | Metric |
-| ---- | ------ | ------ |
-| G1: Completeness | All subsystems documented | 100% coverage |
-| G2: Clarity | New contributors understand | Onboarding <1 hour |
-| G3: Navigation | Find related RFCs easily | Cross-references |
-| G4: Accuracy | Technical correctness | All specs verified |
+| Goal             | Target                      | Metric             |
+| ---------------- | --------------------------- | ------------------ |
+| G1: Completeness | All subsystems documented   | 100% coverage      |
+| G2: Clarity      | New contributors understand | Onboarding <1 hour |
+| G3: Navigation   | Find related RFCs easily    | Cross-references   |
+| G4: Accuracy     | Technical correctness       | All specs verified |
 
 ## Motivation
 
@@ -27,7 +27,7 @@ The fundamental question: **Can we build a complete decentralized AI operating s
 
 Research confirms feasibility through:
 
-- Deterministic computation (RFC-0106)
+- Deterministic computation (RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal))
 - STARK-based verification (RFC-0107)
 - Sharded consensus (RFC-0140)
 - Task markets (RFC-0918)
@@ -36,12 +36,12 @@ Research confirms feasibility through:
 
 Without architectural overview:
 
-| Problem | Consequence |
-|---------|-------------|
-| Navigation chaos | Can't find related RFCs |
-| Onboarding friction | New contributors lost |
+| Problem              | Consequence                  |
+| -------------------- | ---------------------------- |
+| Navigation chaos     | Can't find related RFCs      |
+| Onboarding friction  | New contributors lost        |
 | Dependency confusion | Unknown implementation order |
-| Gaps invisible | Missing protocols unnoticed |
+| Gaps invisible       | Missing protocols unnoticed  |
 
 The architecture provides:
 
@@ -100,7 +100,7 @@ CipherOcto consists of **seven architectural layers**:
 │  └─────────────────────────┘  └─────────────────────────────────────┘       │
 │  ┌─────────────────────────┐  ┌─────────────────────────────────────┐       │
 │  │ Proof Aggregation      │  │ Hardware Capability Registry         │       │
-│  │ (RFC-0146)            │  │ (RFC-0145)                         │       │
+│  │ (RFC-0650)            │  │ (RFC-0845)                         │       │
 │  └─────────────────────────┘  └─────────────────────────────────────┘       │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │
@@ -111,7 +111,7 @@ CipherOcto consists of **seven architectural layers**:
 │  │  ┌─────────────┐  ┌─────────────┐  ┌──────────────────┐  │          │
 │  │  │ Sharded     │  │ Parallel    │  │ Data            │  │          │
 │  │  │ Consensus   │  │ Block DAG   │  │ Availability    │  │          │
-│  │  │(RFC-0140)  │  │(RFC-0141)  │  │(RFC-0142)      │  │          │
+│  │  │(RFC-0140)  │  │(RFC-0141)  │  │(RFC-0742)      │  │          │
 │  │  └─────────────┘  └─────────────┘  └──────────────────┘  │          │
 │  └──────────────────────────────────────────────────────────────┘          │
 └────────────────────────────────────┬────────────────────────────────────┘
@@ -120,17 +120,17 @@ CipherOcto consists of **seven architectural layers**:
 │                         NETWORK LAYER                                     │
 │  ┌─────────────────────────────┐  ┌─────────────────────────────────┐       │
 │  │ OCTO-Network Protocol      │  │ Inference Task Market            │       │
-│  │ (RFC-0143)                │  │ (RFC-0918)                      │       │
+│  │ (RFC-0843)                │  │ (RFC-0918)                      │       │
 │  └─────────────────────────────┘  └─────────────────────────────────┘       │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │
 ┌────────────────────────────────────▼────────────────────────────────────┐
 │                         EXECUTION LAYER                                  │
 │  ┌──────────────────────────────────────────────────────────────┐          │
-│  │            Deterministic Numeric Tower (RFC-0106)            │          │
+│  │            Deterministic Numeric Tower (RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal))            │          │
 │  │  ┌────────────┐  ┌────────────┐  ┌────────────────────┐   │          │
 │  │  │ DFP        │  │ DQA        │  │ Numeric Types    │   │          │
-│  │  │(RFC-0104)  │  │(RFC-0105)  │  │(RFC-0106)       │   │          │
+│  │  │(RFC-0104)  │  │(RFC-0105)  │  │(RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal))       │   │          │
 │  │  └────────────┘  └────────────┘  └────────────────────┘   │          │
 │  └──────────────────────────────────────────────────────────────┘          │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -143,7 +143,7 @@ graph TD
     subgraph Execution
         RFC0104[RFC-0104: DFP]
         RFC0105[RFC-0105: DQA]
-        RFC0106[RFC-0106: Numeric Tower]
+        RFC0106[RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal): Numeric Tower]
     end
 
     subgraph AI
@@ -154,13 +154,13 @@ graph TD
 
     subgraph Data
         RFC0133[RFC-0133: Dataset Integrity]
-        RFC0142[RFC-0142: Data Availability]
+        RFC0742[RFC-0742: Data Availability]
     end
 
     subgraph Verification
         RFC0115[RFC-0115: Verification Markets]
-        RFC0145[RFC-0145: Hardware Registry]
-        RFC0146[RFC-0146: Proof Aggregation]
+        RFC0845[RFC-0845: Hardware Registry]
+        RFC0650[RFC-0650: Proof Aggregation]
     end
 
     subgraph Consensus
@@ -170,7 +170,7 @@ graph TD
     end
 
     subgraph Network
-        RFC0143[RFC-0143: OCTO-Network]
+        RFC0843[RFC-0843: OCTO-Network]
         RFC0144[RFC-0918: Task Market]
     end
 
@@ -205,79 +205,79 @@ graph TD
 
 #### Layer 1: Execution (Deterministic Math)
 
-| RFC | Purpose | Status |
-|-----|---------|--------|
-| RFC-0104 | Deterministic Floating-Point | Complete |
-| RFC-0105 | Deterministic Quant Arithmetic | Complete |
-| RFC-0106 | Deterministic Numeric Tower | Complete |
+| RFC                                                                      | Purpose                        | Status   |
+| ------------------------------------------------------------------------ | ------------------------------ | -------- |
+| RFC-0104                                                                 | Deterministic Floating-Point   | Complete |
+| RFC-0105                                                                 | Deterministic Quant Arithmetic | Complete |
+| RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) | Deterministic Numeric Tower    | Complete |
 
 **Key Property:** Any computation produces identical results on any hardware.
 
 #### Layer 2: AI Execution
 
-| RFC | Purpose | Status |
-|-----|---------|--------|
+| RFC      | Purpose                         | Status   |
+| -------- | ------------------------------- | -------- |
 | RFC-0116 | Unified Deterministic Execution | Complete |
-| RFC-0120 | Deterministic AI-VM | Complete |
-| RFC-0131 | Transformer Circuit | Complete |
-| RFC-0132 | Training Circuits | Complete |
+| RFC-0120 | Deterministic AI-VM             | Complete |
+| RFC-0131 | Transformer Circuit             | Complete |
+| RFC-0132 | Training Circuits               | Complete |
 
 #### Layer 3: Storage & Knowledge
 
-| RFC | Purpose | Status |
-|-----|---------|--------|
-| RFC-0103 | Vector-SQL Storage | Complete |
-| RFC-0107 | Production Storage v2 | Complete |
+| RFC      | Purpose                 | Status   |
+| -------- | ----------------------- | -------- |
+| RFC-0103 | Vector-SQL Storage      | Complete |
+| RFC-0107 | Production Storage v2   | Complete |
 | RFC-0110 | Verifiable Agent Memory | Complete |
-| RFC-0111 | Knowledge Market | Complete |
-| RFC-0133 | Dataset Integrity | Complete |
+| RFC-0111 | Knowledge Market        | Complete |
+| RFC-0133 | Dataset Integrity       | Complete |
 
 #### Layer 4: Retrieval & Reasoning
 
-| RFC | Purpose | Status |
-|-----|---------|--------|
-| RFC-0108 | Verifiable AI Retrieval | Complete |
-| RFC-0109 | Retrieval Architecture | Complete |
-| RFC-0113 | Query Routing | Complete |
+| RFC      | Purpose                     | Status   |
+| -------- | --------------------------- | -------- |
+| RFC-0108 | Verifiable AI Retrieval     | Complete |
+| RFC-0109 | Retrieval Architecture      | Complete |
+| RFC-0113 | Query Routing               | Complete |
 | RFC-0114 | Verifiable Reasoning Traces | Complete |
 
 #### Layer 5: AI Economy
 
-| RFC | Purpose | Status |
-|-----|---------|--------|
-| RFC-0100 | AI Quota Marketplace | Complete |
-| RFC-0101 | Quota Router | Complete |
-| RFC-0115 | Verification Markets | Complete |
-| RFC-0124 | Proof Market | Complete |
+| RFC      | Purpose               | Status   |
+| -------- | --------------------- | -------- |
+| RFC-0100 | AI Quota Marketplace  | Complete |
+| RFC-0101 | Quota Router          | Complete |
+| RFC-0115 | Verification Markets  | Complete |
+| RFC-0124 | Proof Market          | Complete |
 | RFC-0125 | Model Liquidity Layer | Complete |
 
 #### Layer 6: Autonomous AI
 
-| RFC | Purpose | Status |
-|-----|---------|--------|
-| RFC-0001 | Mission Lifecycle | Complete |
-| RFC-0002 | Agent Manifest | Complete |
-| RFC-0118 | Agent Organizations | Complete |
-| RFC-0119 | Alignment Controls | Complete |
+| RFC      | Purpose               | Status   |
+| -------- | --------------------- | -------- |
+| RFC-0001 | Mission Lifecycle     | Complete |
+| RFC-0002 | Agent Manifest        | Complete |
+| RFC-0118 | Agent Organizations   | Complete |
+| RFC-0119 | Alignment Controls    | Complete |
 | RFC-0134 | Self-Verifying Agents | Complete |
 
 #### Layer 7: Consensus & Network
 
-| RFC | Purpose | Status |
-|-----|---------|--------|
-| RFC-0130 | Proof-of-Inference | Complete |
-| RFC-0140 | Sharded Consensus | Complete |
-| RFC-0141 | Parallel Block DAG | Complete |
-| RFC-0142 | Data Availability | Complete |
-| RFC-0143 | OCTO-Network | Complete |
+| RFC      | Purpose               | Status   |
+| -------- | --------------------- | -------- |
+| RFC-0130 | Proof-of-Inference    | Complete |
+| RFC-0140 | Sharded Consensus     | Complete |
+| RFC-0141 | Parallel Block DAG    | Complete |
+| RFC-0742 | Data Availability     | Complete |
+| RFC-0843 | OCTO-Network          | Complete |
 | RFC-0918 | Inference Task Market | Complete |
 
 #### Layer 8: Infrastructure (New)
 
-| RFC | Purpose | Status |
-|-----|---------|--------|
-| RFC-0145 | Hardware Capability Registry | NEW |
-| RFC-0146 | Proof Aggregation Protocol | NEW |
+| RFC      | Purpose                      | Status |
+| -------- | ---------------------------- | ------ |
+| RFC-0845 | Hardware Capability Registry | NEW    |
+| RFC-0650 | Proof Aggregation Protocol   | NEW    |
 
 ### Data Flow: End-to-End Inference
 
@@ -311,7 +311,8 @@ sequenceDiagram
 Goal: Deterministic inference locally.
 
 Required RFCs:
-- RFC-0104, RFC-0105, RFC-0106 (Numeric Tower)
+
+- RFC-0104, RFC-0105, RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric Tower)
 - RFC-0116, RFC-0120 (Execution Model + AI-VM)
 - RFC-0107 (Transformer Circuit)
 
@@ -322,6 +323,7 @@ Required RFCs:
 Goal: Provable inference.
 
 Required RFCs:
+
 - RFC-0108 (Training Circuits)
 - RFC-0121, RFC-0123 (Large Model + Scalable Execution)
 
@@ -332,7 +334,8 @@ Required RFCs:
 Goal: Distributed nodes.
 
 Required RFCs:
-- RFC-0143 (OCTO-Network)
+
+- RFC-0843 (OCTO-Network)
 
 **Status:** ✓ Complete
 
@@ -341,8 +344,9 @@ Required RFCs:
 Goal: Secure the network.
 
 Required RFCs:
+
 - RFC-0630 (Proof-of-Inference)
-- RFC-0140, RFC-0141, RFC-0142 (Sharding, DAG, DA)
+- RFC-0140, RFC-0141, RFC-0742 (Sharding, DAG, DA)
 
 **Status:** ✓ Complete
 
@@ -351,6 +355,7 @@ Required RFCs:
 Goal: Verifiable datasets.
 
 Required RFCs:
+
 - RFC-0631 (Dataset Integrity)
 - RFC-0111 (Knowledge Market)
 
@@ -361,9 +366,10 @@ Required RFCs:
 Goal: Production-ready systems.
 
 Required RFCs:
+
 - RFC-0918 (Task Market)
-- RFC-0145 (Hardware Registry)
-- RFC-0146 (Proof Aggregation)
+- RFC-0845 (Hardware Registry)
+- RFC-0650 (Proof Aggregation)
 
 **Status:** In Progress
 
@@ -371,43 +377,43 @@ Required RFCs:
 
 ### Completed Components
 
-| Component | RFCs | Status |
-|-----------|------|--------|
-| Deterministic Math | 0104-0106 | ✓ |
-| AI Execution | 0116, 0120, 0131-0132 | ✓ |
-| Storage | 0103, 0107, 0110-0111 | ✓ |
-| Retrieval | 0108-0109, 0113-0114 | ✓ |
-| Economy | 0100-0101, 0115, 0124-0125 | ✓ |
-| Agents | 0001-0002, 0118-0119, 0134 | ✓ |
-| Consensus | 0130, 0140-0143 | ✓ |
+| Component          | RFCs                       | Status |
+| ------------------ | -------------------------- | ------ |
+| Deterministic Math | 0104-0106                  | ✓      |
+| AI Execution       | 0116, 0120, 0131-0132      | ✓      |
+| Storage            | 0103, 0107, 0110-0111      | ✓      |
+| Retrieval          | 0108-0109, 0113-0114       | ✓      |
+| Economy            | 0100-0101, 0115, 0124-0125 | ✓      |
+| Agents             | 0001-0002, 0118-0119, 0134 | ✓      |
+| Consensus          | 0130, 0140-0143            | ✓      |
 
 ### Remaining Opportunities
 
-| Component | Description | Priority |
-|-----------|-------------|----------|
-| Litepaper | Executive summary for investors | Medium |
-| Integration Tests | RFC cross-cutting validation | High |
-| Formal Specs | Mathematical proofs for security | Medium |
+| Component         | Description                      | Priority |
+| ----------------- | -------------------------------- | -------- |
+| Litepaper         | Executive summary for investors  | Medium   |
+| Integration Tests | RFC cross-cutting validation     | High     |
+| Formal Specs      | Mathematical proofs for security | Medium   |
 
 ## Token Economy
 
-| Token | Purpose |
-|-------|---------|
-| OCTO | Governance, staking |
-| OCTO-A | Compute providers |
-| OCTO-O | Orchestrators |
-| OCTO-W | Workers |
-| OCTO-D | Dataset providers |
+| Token  | Purpose             |
+| ------ | ------------------- |
+| OCTO   | Governance, staking |
+| OCTO-A | Compute providers   |
+| OCTO-O | Orchestrators       |
+| OCTO-W | Workers             |
+| OCTO-D | Dataset providers   |
 
 ## Performance Targets
 
-| Metric | Target |
-|--------|--------|
-| Inference latency | <1s |
-| Proof generation | <30s |
-| Block time | 10s |
-| Network nodes | 10,000+ |
-| TPS | 1000+ |
+| Metric            | Target  |
+| ----------------- | ------- |
+| Inference latency | <1s     |
+| Proof generation  | <30s    |
+| Block time        | 10s     |
+| Network nodes     | 10,000+ |
+| TPS               | 1000+   |
 
 ## Related RFCs
 

@@ -1,6 +1,6 @@
 # Reputation Federation Guide
 
-> Mission 0855p-b (cross-mission reputation) + RFC-0968-A1 amendments 22, 28, 29.
+> Mission 0855p-b (cross-mission reputation) + RFC-0968-A1 amendment 22, RFC-0968 §28.4 amendment 21 (Mission cluster inheritance — recorder event authority), RFC-0968 §28.4 amendment 22 (Pubkey-keyed gossip topics replaced).
 > Status: canonical (mission claimed 2026-06-16; 0968 Phase 4 storage substrate shipped 2026-07-27).
 
 This guide explains how reputation events flow across the CipherOcto
@@ -42,17 +42,17 @@ Where `recorder_did_hex` is the 52-byte `RecorderDid` rendered as
 104 lowercase hex characters. The canonical helper lives in
 `octo_reputation::gossip::topic_for_recorder(did)`.
 
-Legacy pubkey-keyed topics (RFC-0855p-b pre-amendment 29) are
+Legacy pubkey-keyed topics (RFC-0855p-b pre-RFC-0968 §28.4 amendment 22 — legacy pubkey-keyed topics pre-state) are
 removed. Any ingress bearing a stale pubkey mapping is rejected with
 `ReputationError::GossipEnvelopeInvalid` (discriminant `0x3A`).
 
 ## Authority model
 
-| Field | Authority |
-|---|---|
-| `recorder_signature` | **Authoritative** — single source of truth for the event |
-| `coordinator_signature` | Transport metadata only — non-authoritative |
-| `attestor_signature` | Transport metadata only — non-authoritative |
+| Field                   | Authority                                                |
+| ----------------------- | -------------------------------------------------------- |
+| `recorder_signature`    | **Authoritative** — single source of truth for the event |
+| `coordinator_signature` | Transport metadata only — non-authoritative              |
+| `attestor_signature`    | Transport metadata only — non-authoritative              |
 
 The recorder's signature is the only signal that the event actually
 happened. Attestors merely confirm "I observed this event too";
@@ -141,23 +141,23 @@ number of attestors the limiter has seen at least one event from.
 The federation substrate persists to two stoolap tables (mission
 0968 Phase 4):
 
-| Table | Created | Purpose |
-|---|---|---|
-| `reputation_attestors` | v004 | Attestor registry (DID + pubkey + peer_set_id) |
-| `reputation_attestations` | v004 | Per-event attestations (composite dedup) |
-| `reputation_gossip_seen` | v005 | Catch-up ledger for late-joining attestors |
+| Table                     | Created | Purpose                                        |
+| ------------------------- | ------- | ---------------------------------------------- |
+| `reputation_attestors`    | v004    | Attestor registry (DID + pubkey + peer_set_id) |
+| `reputation_attestations` | v004    | Per-event attestations (composite dedup)       |
+| `reputation_gossip_seen`  | v005    | Catch-up ledger for late-joining attestors     |
 
 See `crates/octo-reputation/migrations/v004__reputation_attestations.sql`
 and `v005__reputation_gossip_seen.sql` for the canonical schema.
 
 ## Test surface
 
-| Layer | Location | Purpose |
-|---|---|---|
-| Unit | `octo-reputation/src/{auth,gossip,store/{memory,stoolap}}.rs` | Type + schema + per-backend contract |
-| Lib | `octo-network/src/gossip/reputation.rs` | Substrate ingress + rate-limit + catch-up |
-| Integration | `octo-reputation/tests/{stoolap_integration,cross_backend_integration}.rs` | Schema + cross-backend determinism |
-| Integration | `octo-network/tests/cross_mission_federation.rs` | 2-node mesh + differential ordering |
+| Layer       | Location                                                                   | Purpose                                   |
+| ----------- | -------------------------------------------------------------------------- | ----------------------------------------- |
+| Unit        | `octo-reputation/src/{auth,gossip,store/{memory,stoolap}}.rs`              | Type + schema + per-backend contract      |
+| Lib         | `octo-network/src/gossip/reputation.rs`                                    | Substrate ingress + rate-limit + catch-up |
+| Integration | `octo-reputation/tests/{stoolap_integration,cross_backend_integration}.rs` | Schema + cross-backend determinism        |
+| Integration | `octo-network/tests/cross_mission_federation.rs`                           | 2-node mesh + differential ordering       |
 
 The 2-node live-mesh test (`two_node_mesh_substrate_receives_via_real_swarm`)
 is `#[ignore]`-d because the upstream
@@ -168,7 +168,7 @@ Run with `cargo test --ignored` once the publish path is wired.
 
 - RFC-0968-A1 §12 — federation machinery
 - RFC-0968-A1 amendment 22 — `MIN_ATTESTOR_QUORUM`
-- RFC-0968-A1 amendment 28 — authority model (recorder signature authoritative)
-- RFC-0968-A1 amendment 29 — DID-keyed topics (no pubkey mapping)
+- RFC-0968 §28.4 amendment 21 (Mission cluster inheritance — recorder event authority) — authority model (recorder signature authoritative)
+- RFC-0968 §28.4 amendment 22 (Pubkey-keyed gossip topics replaced) — DID-keyed topics (no pubkey mapping)
 - Mission 0855p-b — `missions/claimed/0855p-b-cross-mission-reputation.md`
 - Mission 0968-b — `missions/open/0968-b-marketplace-integration.md`

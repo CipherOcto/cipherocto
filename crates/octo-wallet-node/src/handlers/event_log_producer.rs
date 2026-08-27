@@ -1,8 +1,8 @@
-//! Mission B (RFC-0960 v3.7 §2.5) `PaymentEventProducer` impl.
+//! Mission B (RFC-0960 §2.5) `PaymentEventProducer` impl.
 //!
 //! Layer C specialization of the Layer B `EventLogProducer` trait.
 //! Reads `PaymentCaveat::asset_id` to derive the asset-generic
-//! `TransferEventRef` (RFC-0965 v2.1 §AssetBinding → RFC-0960 v3.7
+//! `TransferEventRef` (RFC-0965 §AssetBinding → RFC-0960
 //! §3.6).
 
 #![allow(clippy::missing_docs_in_private_items)]

@@ -11,7 +11,7 @@
 //! derivation inputs change (add a vector, get its hash; copy hex into
 //! the fixture).
 //!
-//! Role-token form is the **canonical hyphen form** per RFC-0105 v2.0
+//! Role-token form is the **canonical hyphen form** per RFC-0105
 //! (mission 0105-v2 canonicalization; TV-D9 + TV-V1-MATRIX use the same
 //! form; legacy underscore form was retired 2026-08-19).
 

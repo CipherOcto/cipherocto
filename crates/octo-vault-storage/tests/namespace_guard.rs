@@ -1,6 +1,6 @@
 //! TV-0206-A12 — `namespace_guard.rs` for `octo-vault-storage`.
 //!
-//! Per RFC-0206 v2.1 §Test Vectors:
+//! Per RFC-0206 §Test Vectors:
 //! > `ls crates/octo-{vault,reputation,cap-macaroon-vault,matrix-session-store,policy}-storage/tests/ | grep -c namespace_guard` equals 5
 //!
 //! Workspace query targeting a table outside this adapter's

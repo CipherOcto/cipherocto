@@ -1,7 +1,7 @@
 ---
 title: "RFC-0853: Overlay Cryptography (OCrypt)"
 status: Accepted
-version: 1.0.0
+version: 1.1.0
 created: 2026-05-25
 updated: 2026-05-25
 authors:

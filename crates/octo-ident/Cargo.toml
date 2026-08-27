@@ -18,10 +18,10 @@ hex = "0.4"
 # Bitcoin base58btc encoder/decoder — RFC-0010 §Specification §raw_to_wire / §wire_to_raw
 bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
 # async-trait for dyn-compatible async trait surface on `DidWriteCoordinator`
-# (RFC-0862 v1.3 §DidWriteCoordinator). Used by the Layer B identity substrate
+# (RFC-0862 §DidWriteCoordinator). Used by the Layer B identity substrate
 # to expose cross-instance write coordination as `Arc<dyn DidWriteCoordinator>`.
 # async-trait for dyn-compatible async trait surface on `DidWriteCoordinator`
-# (RFC-0862 v1.3 §DidWriteCoordinator) AND `ResolverBackend` (mission
+# (RFC-0862 §DidWriteCoordinator) AND `ResolverBackend` (mission
 # 0871b-cross-node-forwarding AC-1). Used by the Layer B identity substrate
 # to expose cross-instance write coordination + per-hop resolution as
 # `Arc<dyn Trait>`. Exact pin to 0.1.92 for matrix-sdk compatibility (the

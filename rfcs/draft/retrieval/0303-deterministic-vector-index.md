@@ -16,12 +16,12 @@ Standard HNSW implementations are nondeterministic due to random level assignmen
 
 ## Design Goals
 
-| Goal | Target           | Metric                                      |
-| ---- | ---------------- | ------------------------------------------- |
-| G1   | Determinism      | Identical graph structures across all nodes |
-| G2   | Consensus Safety | Deterministic graph edges from same dataset |
-| G3   | Efficient Search | O(log N) similar to standard HNSW           |
-| G4   | ZK Compatibility | Distance via RFC-0106 primitives            |
+| Goal | Target           | Metric                                                                                           |
+| ---- | ---------------- | ------------------------------------------------------------------------------------------------ |
+| G1   | Determinism      | Identical graph structures across all nodes                                                      |
+| G2   | Consensus Safety | Deterministic graph edges from same dataset                                                      |
+| G3   | Efficient Search | O(log N) similar to standard HNSW                                                                |
+| G4   | ZK Compatibility | Distance via RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) primitives |
 
 ## Motivation
 
@@ -40,7 +40,7 @@ Current blockchain vector indexes lack determinism. This RFC provides an ANN ind
 
 ```mermaid
 graph TB
-    subgraph "RFC-0106 Numeric Layer"
+    subgraph "RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) Numeric Layer"
         DQA[DQA]
     end
 
@@ -345,7 +345,7 @@ HNSW-D provides the deterministic ANN index needed for:
 
 ## Related RFCs
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower (DNT) — Core numeric types
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower (DNT) — Core numeric types
 - RFC-0105 (Numeric/Math): Deterministic Quantized Arithmetic (DQA) — Scalar operations
 - RFC-0148 (Numeric/Math): Deterministic Linear Algebra Engine (DLAE) — Distance primitives
 - RFC-0103 (Numeric/Math): Unified Vector SQL Storage — Vector storage layer
@@ -353,7 +353,7 @@ HNSW-D provides the deterministic ANN index needed for:
 - RFC-0120 (AI Execution): Deterministic AI VM — AI VM integration
 - RFC-0110 (Agents): Verifiable Agent Memory — Memory layer with vectors
 
-> **Note**: RFC-0149 completes the deterministic AI/vector stack together with RFC-0106 and RFC-0148.
+> **Note**: RFC-0149 completes the deterministic AI/vector stack together with RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) and RFC-0148.
 
 ## Related Use Cases
 

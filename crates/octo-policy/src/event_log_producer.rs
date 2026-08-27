@@ -1,4 +1,4 @@
-//! Mission B (RFC-0960 v3.7 §2.5) `BurnEventProducer` impl.
+//! Mission B (RFC-0960 §2.5) `BurnEventProducer` impl.
 //!
 //! Layer C specialization of the Layer B `EventLogProducer` trait.
 //! Wraps `BurnEventRef::consume` (Mission F substrate).

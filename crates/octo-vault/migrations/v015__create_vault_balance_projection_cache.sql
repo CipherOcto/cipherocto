@@ -1,11 +1,11 @@
--- v015__create_vault_balance_projection_cache.sql (Mission A; RFC-0960 v3.7 §3.1)
+-- v015__create_vault_balance_projection_cache.sql (Mission A; RFC-0960 §3.1)
 --
 -- Cached projection table for the VaultBalanceProjection substrate.
--- PK (chain_id, vault_id) per RFC §3.1.
+-- PK (chain_id, vault_id) per §3.1.
 --
 -- Per-crate numbering per substrate state — octo-vault/migrations/ has
 -- v013+v014; next free is v015. When the centralized migration runner
--- (RFC §3.1 L748-752) lands, this MUST be renumbered to global v017.
+-- (§3.1) lands, this MUST be renumbered to global v017.
 --
 -- Stoolap fork parser constraint: NO inline `--` comments mid-statement.
 

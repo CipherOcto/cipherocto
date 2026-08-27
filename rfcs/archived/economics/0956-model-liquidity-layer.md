@@ -13,10 +13,10 @@
 ## Depends on
 
 - RFC-0106 (Numeric/Math): Deterministic Numeric Tower
-- RFC-0151 (AI Execution): Verifiable RAG Execution
-- RFC-0152 (Agents): Verifiable Agent Runtime
-- RFC-0153 (Agents): Agent Mission Marketplace
-- RFC-0155 (AI Execution): Deterministic Model Execution Engine
+- RFC-0550 (AI Execution): Verifiable RAG Execution
+- RFC-0450 (Agents): Verifiable Agent Runtime
+- RFC-0950 (Agents): Agent Mission Marketplace
+- RFC-0555 (AI Execution): Deterministic Model Execution Engine
 
 ## Summary
 
@@ -105,7 +105,7 @@ struct ModelAsset {
 
 ### Model Artifact Registration
 
-Model artifacts must reference deterministic model files defined in RFC-0155:
+Model artifacts must reference deterministic model files defined in RFC-0555:
 
 1. Upload model artifact
 2. Compute artifact hash
@@ -226,7 +226,7 @@ Versions are immutable once published.
 
 Model upgrades must remain compatible with:
 
-- Deterministic execution (RFC-0155)
+- Deterministic execution (RFC-0555)
 - Fixed-point arithmetic (RFC-0106)
 - Canonical artifact format
 
@@ -363,12 +363,12 @@ MLL provides economic layer for AI models:
 ## Related RFCs
 
 - RFC-0106 (Numeric/Math): Deterministic Numeric Tower — Arithmetic
-- RFC-0151 (AI Execution): Verifiable RAG Execution — Inference
-- RFC-0152 (Agents): Verifiable Agent Runtime — Agent execution
-- RFC-0153 (Agents): Agent Mission Marketplace — Task market
-- RFC-0155 (AI Execution): Deterministic Model Execution Engine — Model execution
+- RFC-0550 (AI Execution): Verifiable RAG Execution — Inference
+- RFC-0450 (Agents): Verifiable Agent Runtime — Agent execution
+- RFC-0950 (Agents): Agent Mission Marketplace — Task market
+- RFC-0555 (AI Execution): Deterministic Model Execution Engine — Model execution
 
-> **Note**: RFC-0156 completes the economic layer for AI models.
+> **Note**: RFC-0956 completes the economic layer for AI models. (canonical replacement per numeric-tier phantom sweep)
 
 ## Related Use Cases
 

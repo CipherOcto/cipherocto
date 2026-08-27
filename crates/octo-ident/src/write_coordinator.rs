@@ -1,5 +1,5 @@
 //! `DidWriteCoordinator` trait — cross-instance DID write routing substrate
-//! (RFC-0862 v1.3 §DidWriteCoordinator).
+//! (RFC-0862 §DidWriteCoordinator).
 //!
 //! This trait defines the contract for coordinating DID writes
 //! (`register` / `revoke`) across instances of `StoolapDidRegistry`.
@@ -17,17 +17,17 @@
 //! - `quota-router-storage` (Layer B-adjacent) — `StoolapDidRegistry`
 //!   consumes the coordinator via `Arc<dyn DidWriteCoordinator>`
 //! - `octo-sync` (Layer B-substrate) — concrete coordinator impl
-//!   (deferred to RFC-0862 v1.4 amendment)
+//!   (deferred to RFC-0862 amendment)
 //!
 //! The trait surface is sealed: external crates cannot add methods;
 //! only the substrate crate can. Same pattern as `octo-protocol`'s
 //! `PayloadKindId` UUID allocation.
 //!
-//! ## Default impls (RFC-0862 v1.3 §DidWriteCoordinator)
+//! ## Default impls (RFC-0862 §DidWriteCoordinator)
 //!
 //! - `submit_register` — validates `canonical_hash(document) ==
 //!   canonical_did_hash` then calls `submit_register_validated`. Per
-//!   RFC-0862 v1.3 R11 H2 + R13 M5 the `canonical_hash` function
+//!   RFC-0862 R11 H2 + R13 M5 the `canonical_hash` function
 //!   currently lives inline in this crate; future `octo_sync::did`
 //!   module will re-export it for cross-crate reuse.
 //! - `submit_register_validated` — required; coordinator impl owns the
@@ -35,16 +35,16 @@
 //! - `submit_revoke` — required; same shape as
 //!   `submit_register_validated` minus the document payload.
 //! - `submit_register_local_fallback` — deprecated; returns
-//!   `WriterUnavailable` by default. Per RFC-0862 v1.3 R12 the local
+//!   `WriterUnavailable` by default. Per RFC-0862 R12 the local
 //!   LWW fallback is gated behind a future amendment (F12 / F13); the
 //!   extension hook is preserved via the trait method shape.
 //!
 //! ## Out of scope (deferred)
 //!
-//! - Concrete `WriterElection`-backed coordinator impl (RFC-0862 v1.4
+//! - Concrete `WriterElection`-backed coordinator impl (RFC-0862
 //!   amendment; mission `0871e-f7-cross-instance-did-coordination`).
-//! - LWW local fallback (RFC-0862 v1.3 F12 + F13).
-//! - `ChainId` typed-namespace + federation semantics (RFC-0010 v1.4
+//! - LWW local fallback (RFC-0862 F12 + F13).
+//! - `ChainId` typed-namespace + federation semantics (RFC-0010
 //!   amendment; mission `0010-f2-multi-chain-did-resolution`).
 
 #![forbid(unsafe_code)]
@@ -57,7 +57,7 @@ use crate::registry::DidDocument;
 
 /// Errors returned by `DidWriteCoordinator` operations.
 ///
-/// Per RFC-0862 v1.3 R12 M19 the error enum lives in `octo-ident`
+/// Per RFC-0862 R12 M19 the error enum lives in `octo-ident`
 /// (substrate-layer) so consumer crates can map to their own error
 /// domains without coupling to a coordinator-impl crate.
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
@@ -65,7 +65,7 @@ pub enum DidWriteCoordinatorError {
     /// The writer-election substrate has no currently-elected leader
     /// (e.g., during failover window, partition, or bootstrap).
     /// Default `submit_register_local_fallback` returns this to enforce
-    /// fail-closed semantics per RFC-0862 v1.3 R12.
+    /// fail-closed semantics per RFC-0862 R12.
     #[error("writer unavailable")]
     WriterUnavailable,
 
@@ -91,7 +91,7 @@ pub enum DidWriteCoordinatorError {
 /// Sealed trait pattern: only the substrate crate (`octo-sync`) can
 /// implement `DidWriteCoordinator`.
 ///
-/// Per RFC-0862 v1.3 R12 + RFC-0862 v1.4 §Concrete Impl Extension:
+/// Per RFC-0862 R12 + RFC-0862 §Concrete Impl Extension:
 /// the substrate crate `octo-sync` provides the concrete
 /// `RaftLikeDidWriteCoordinator` impl. The seal is `pub` (not `pub(crate)`
 /// or private) so the substrate crate can `impl DidWriteCoordinatorSealed`
@@ -109,7 +109,7 @@ pub mod sealed {
     pub trait DidWriteCoordinatorSealed {}
 }
 
-/// Cross-instance DID write coordination contract (RFC-0862 v1.3
+/// Cross-instance DID write coordination contract (RFC-0862
 /// §DidWriteCoordinator).
 ///
 /// All implementations are `Send + Sync` (the trait is dyn-compatible
@@ -180,7 +180,7 @@ pub trait DidWriteCoordinator: sealed::DidWriteCoordinatorSealed + Send + Sync {
 
     /// Deprecated LWW local-fallback extension hook.
     ///
-    /// Per RFC-0862 v1.3 R12 this method is preserved as a trait
+    /// Per RFC-0862 R12 this method is preserved as a trait
     /// extension point for the future F12 (HLC) + F13 (LWW counter)
     /// amendments. The default impl returns `WriterUnavailable` to
     /// enforce fail-closed semantics; a future LWW impl will
@@ -202,14 +202,14 @@ pub trait DidWriteCoordinator: sealed::DidWriteCoordinatorSealed + Send + Sync {
 
 /// Canonical-hash derivation for a `DidDocument`.
 ///
-/// Per RFC-0862 v1.3 R13 M5 the canonical hash binds the DID name to
+/// Per RFC-0862 R13 M5 the canonical hash binds the DID name to
 /// the document's `public_key` via the same binding-domain BLAKE3
 /// construction used by `CanonicalCodec::mint`. Currently this lives
 /// inline in `octo-ident`; future `octo_sync::did` module will
 /// re-export it for cross-crate reuse without a dependency cycle.
 ///
 /// **Why inline now:** the `octo-sync` crate does not yet exist as a
-/// workspace member (it lands with the RFC-0862 v1.4 amendment that
+/// workspace member (it lands with the RFC-0862 amendment that
 /// ships the concrete `WriterElection`-backed coordinator impl). To
 /// preserve Layer B additive-only per
 /// [[cipherocto-design-principles]], the canonical-hash function
@@ -423,7 +423,7 @@ mod tests {
     #[tokio::test]
     #[allow(deprecated)]
     async fn submit_register_local_fallback_returns_writer_unavailable_by_default() {
-        // Per RFC-0862 v1.3 R12 the default LWW fallback returns
+        // Per RFC-0862 R12 the default LWW fallback returns
         // WriterUnavailable. Fail-closed semantics; future LWW impls
         // override this method.
         let coord = MockCoordinator::new();

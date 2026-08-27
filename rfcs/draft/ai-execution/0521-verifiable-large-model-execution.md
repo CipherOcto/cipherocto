@@ -236,7 +236,7 @@ struct ActivationCommitment {
     /// Tensor shape
     shape: Vec<usize>,
 
-    /// Data type (from RFC-0106)
+    /// Data type (from RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal))
     dtype: DataType,
 
     /// Block commitments for partial verification
@@ -767,7 +767,7 @@ graph TB
         TR[Traces]
     end
 
-    subgraph "RFC-0106: Numeric Tower"
+    subgraph "RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal): Numeric Tower"
         NT[DQA/DVEC]
     end
 
@@ -782,13 +782,13 @@ graph TB
 
 ### Integration Points
 
-| RFC      | Integration                            |
-| -------- | -------------------------------------- |
-| RFC-0106 | Numeric types for weights/activations  |
-| RFC-0120 | Deterministic operators, VM, traces    |
-| RFC-0115 | Verification market challenges         |
-| RFC-0117 | State virtualization for shard storage |
-| RFC-0118 | Organization as execution collectives  |
+| RFC                                                                      | Integration                            |
+| ------------------------------------------------------------------------ | -------------------------------------- |
+| RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) | Numeric types for weights/activations  |
+| RFC-0120                                                                 | Deterministic operators, VM, traces    |
+| RFC-0115                                                                 | Verification market challenges         |
+| RFC-0117                                                                 | State virtualization for shard storage |
+| RFC-0118                                                                 | Organization as execution collectives  |
 
 ## Performance Targets
 
@@ -880,7 +880,7 @@ Pipeline allows each node to hold only its shards.
 
 ## Related RFCs
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower
 - RFC-0115 (Economics): Probabilistic Verification Markets
 - RFC-0117 (Agents): State Virtualization for Massive Agent Scaling
 - RFC-0118 (Agents): Autonomous Agent Organizations

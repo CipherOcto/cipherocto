@@ -1,6 +1,6 @@
 //! TV-0206-A10 — `register_roundtrip.rs` for `octo-policy-storage`.
 //!
-//! Per RFC-0206 v2.1 §Test Vectors, each of the 5 adapter crates
+//! Per RFC-0206 §Test Vectors, each of the 5 adapter crates
 //! exposes a `tests/register_roundtrip.rs` that exercises the
 //! canonical `register → execute_checked → typed INSERT → typed
 //! SELECT` round-trip.

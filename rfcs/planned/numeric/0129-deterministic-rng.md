@@ -28,7 +28,7 @@ Without deterministic RNG, proofs cannot be verified.
 
 ## Dependencies
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower
 
 ## Related RFCs
 

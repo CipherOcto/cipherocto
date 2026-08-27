@@ -61,7 +61,7 @@ fn tv_0900_d_03_unique_index_enforces_single_row_per_chain_per_provider() {
 
 /// TV-0900-D-06: `append_outcome` signature widening exercise.
 /// The trait method gains a leading `chain_id: [u8; 32]` parameter
-/// (mission 0900-d AC-9, RFC-0900 v2.0 audit-table chain
+/// (mission 0900-d AC-9, RFC-0900 audit-table chain
 /// attribution). The default impl is a no-op; this TV pins the
 /// signature at the call site so a future regression that drops
 /// `chain_id` breaks the compile.

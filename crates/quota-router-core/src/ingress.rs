@@ -1,6 +1,6 @@
 //! Provider ingress module — single ingress point for provider responses (S04 Step 2).
 //!
-//! Per RFC-0957 + RFC-0959 v1.0 §Algorithms: ingress module converts
+//! Per RFC-0957 + RFC-0959 §Algorithms: ingress module converts
 //! provider HTTP responses into the internal canonical representation.
 //! Provider bodies are opaque at this boundary; only structured metadata
 //! (status, model_id, usage, cache_hit) is extracted.

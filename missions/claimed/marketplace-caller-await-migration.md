@@ -82,7 +82,7 @@ one):**
 2. Add `Marketplace::record_outcome_async(...).await?` with the
    `controller_id` derived from the operator's governance pubkey via
    `reputation_compat::controller_id_from_governance_pubkey(...)`
-   (RFC-0968-A1 amendment 44).
+   (RFC-0968-A1 amendment 44 (deferred to RFC-0968-A2 — controller_id = blake3(governance_pubkey) derivation)).
 3. The caller becomes async — propagate `.await` up the stack.
 4. Add a test that pins the dual-read parity invariant under the
    new caller.
@@ -92,7 +92,7 @@ one):**
 - Mission `marketplace-facade-reputation-async-migration` v0.2
 - Mission `marketplace-cheapest-with-ranking-async` v0.2
 - RFC-0968 §retirement gate
-- RFC-0968-A1 amendment 44 (controller_id derivation)
+- RFC-0968-A1 amendment 44 (deferred to RFC-0968-A2 — controller_id = blake3(governance_pubkey) derivation) (controller_id derivation)
 
 ## Version History
 

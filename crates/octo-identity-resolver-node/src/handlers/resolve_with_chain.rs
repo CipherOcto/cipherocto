@@ -1,8 +1,8 @@
-//! `IDENTITY_RESOLVE_WITH_CHAIN` handler (RFC-0010 v1.4 §ChainId
+//! `IDENTITY_RESOLVE_WITH_CHAIN` handler (RFC-0010 §ChainId
 //! Namespace Extension, mission `0010-f2-multi-chain-routing`).
 //!
 //! Receives: `(query: String, chain_id: String)` — canonical DID wire
-//! form + RFC-0010 v1.4 `ChainId` literal.
+//! form + RFC-0010 `ChainId` literal.
 //! Returns: `<canonical_did: String, public_key: [u8; 32]>` — same
 //! shape as `IDENTITY_RESOLVE` (canonical DID + resolved public_key).
 //!
@@ -33,7 +33,7 @@ use super::{HandlerOutput, IdentityResolveError};
 pub struct ResolveWithChainRequest {
     /// Canonical DID wire form (`did:octo:z<base58btc>`).
     pub query: String,
-    /// RFC-0010 v1.4 `ChainId` literal (e.g. `"cipherocto-mainnet"`,
+    /// RFC-0010 `ChainId` literal (e.g. `"cipherocto-mainnet"`,
     /// `"partner-mainnet"`).
     pub chain_id: String,
 }
@@ -92,7 +92,7 @@ impl ResolveWithChainHandler {
     /// - `IdentityResolveError::InvalidDid` if `query` is not a
     ///   canonical DID shape.
     /// - `IdentityResolveError::InvalidChainId` if `chain_id` fails
-    ///   RFC-0010 v1.4 validation (empty, > 64 chars, control chars).
+    ///   RFC-0010 validation (empty, > 64 chars, control chars).
     /// - `IdentityResolveError::Storage` if the underlying registry
     ///   call fails.
     pub fn handle(

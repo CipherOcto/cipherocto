@@ -1,5 +1,5 @@
 -- Mission 0871b-storage-backend: persistent DidRegistry substrate
--- (RFC-0010 v1.3 §Storage Extension §StoolapDidRegistry).
+-- (RFC-0010 §Storage Extension §StoolapDidRegistry).
 --
 -- Schema: per-canonical-hash DID document keyed for upsert + revoke
 -- + list. The resolver-node wires `register`/`resolve`/`revoke`/`list`

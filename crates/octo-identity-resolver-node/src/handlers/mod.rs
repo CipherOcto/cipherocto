@@ -102,7 +102,7 @@ pub enum IdentityResolveError {
     Storage(String),
 
     /// No `DidWriteCoordinator` was configured for the resolver-node
-    /// (fail-closed per RFC-0862 v1.3 R12). Operator must inject a
+    /// (fail-closed per RFC-0862 R12). Operator must inject a
     /// concrete coordinator for writes to succeed.
     #[error("coordinator unavailable: {0}")]
     CoordinatorUnavailable(String),
@@ -128,7 +128,7 @@ pub enum IdentityResolveError {
     ChainTtlExpired,
 
     /// Mission 0010-f2-multi-chain-routing: the supplied `ChainId`
-    /// literal failed RFC-0010 v1.4 validation (empty, > 64 chars,
+    /// literal failed RFC-0010 validation (empty, > 64 chars,
     /// or contained a control char). The handler aborts BEFORE any
     /// registry call (fail-closed; no implicit default to mainnet).
     #[error("invalid chain id: {0}")]

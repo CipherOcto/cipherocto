@@ -9,7 +9,7 @@
 -- v015 promotes slash_ledger to chain-aware:
 --   1. ADD COLUMN chain_id BLOB (no DEFAULT — see note below)
 --   2. Backfill legacy v012 rows with the default zero namespace
---      (32 bytes of 0x00, RFC-0010 v1.4 ChainId::default)
+--      (32 bytes of 0x00, RFC-0010 ChainId::default)
 --   3. DROP provider_id UNIQUE constraint
 --   4. CREATE UNIQUE INDEX slash_ledger_chain_provider_idx
 --      ON slash_ledger (chain_id, provider_id)
@@ -25,7 +25,7 @@
 -- guard from mission 0871b-storage-idempotent-alter-hardening, the
 -- entire v015 migration is retry-safe across mid-apply crashes.
 --
--- NOTE on §20.3 + RFC-0960 v3.0 §Vault Substrate (CROSS-REF 0900-d):
+-- NOTE on §20.3 + RFC-0960 §Vault Substrate (CROSS-REF 0900-d):
 -- DQA(12) for amount-bearing columns. Stoolap fork does NOT expose a
 -- native Dqa driver (verified 2026-08-18: only `r.get::<i64>()` for
 -- amount columns). The substrate invariant per mission 0900-d AC-2

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted v1.0
+Accepted v1.1 — Status header synced with §Version History v1.1-Resolved row per M37 corpus-wide sync check (prior header read v1.0; VH row added 2026-07-23 with Risk-closure round resolving all 3 Open Questions).
 
 > **Note:** Companion RFC to RFC-0965 (Capability extension format) and RFC-0960 (Grand design). Introduces `PolicyObject` as a first-class, reusable, versionable, shareable authorization policy artifact. Capabilities carry a `policy_id` reference, not embedded policy clauses. This RFC replaces the "Capability as bag of caveats" model with a "Capability → PolicyID reference" model that more closely resembles how page tables and IAM policies work in mature systems.
 
@@ -164,7 +164,7 @@ A capability's attenuation chain (RFC-0957) is independent of the policy version
 - every attenuation that referenced this policy
 - every revocation
 
-The audit log is itself a projection of the WAL (RFC-0960 §16 Event Store). `audit_ref` is thus itself a WAL-derived hash, making the policy's history independently verifiable from the chain.
+The audit log is itself a projection of the WAL (RFC-0960 §16 Event Store / CQRS Projection (v2.0 NEW)). `audit_ref` is thus itself a WAL-derived hash, making the policy's history independently verifiable from the chain.
 
 ## 8. Capability ↔ PolicyObject linkage
 
@@ -316,7 +316,7 @@ RFC-0960 amended §2.1 root-vault example (removed; replaced with §20.3 lattice
 ## 15. Open questions
 
 - **Q1**: Should `PolicyObject` support delegation (one policy references another as a sub-policy)? Deferred to v2.
-- **Q2**: Should `PolicyNode.action = Audit` generate an automatic event in the WAL? Spec says yes (RFC-0960 §16 Event Store); implementation deferred.
+- **Q2**: Should `PolicyNode.action = Audit` generate an automatic event in the WAL? Spec says yes (RFC-0960 §16 Event Store / CQRS Projection (v2.0 NEW)); implementation deferred.
 - **Q3**: Cross-lineage attenuation — when a capability's chain crosses policy lineages, what does attenuation mean? Current rule: each lineage is attenuated independently; the capability's overall authority is the intersection. Reviewers may push back; deferred to v2 if contested.
 
 ## 15.1 Resolved Decisions (v1.1-Resolved)

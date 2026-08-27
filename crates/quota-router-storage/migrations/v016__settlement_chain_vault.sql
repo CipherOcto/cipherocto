@@ -1,5 +1,5 @@
 -- Migration v016: settlement_events chain + vault row binding
--- (RFC-0959 v2.0 §Wire Format + review §20.7).
+-- (RFC-0959 §Wire Format + review §20.7).
 --
 -- Mission 0959-c1-wire-format-amendment (S6e sub-session per
 -- `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md`
@@ -19,7 +19,7 @@
 -- `x'...'` hex literals in DEFAULT clauses (per recon documented
 -- in v011 + v015). Legacy v004 rows are NOT backfilled — the
 -- settlement-time verifier treats NULL cost_vault_id as
--- `SettlementError::CostVaultIdMissing` (per RFC-0959 v2.0
+-- `SettlementError::CostVaultIdMissing` (per RFC-0959
 -- §Cross-Chain Settlement Reject). This is the migration gate:
 -- pre-v2.0 settlement_events rows are gated out of the v2.0
 -- verify path until a follow-on migration populates them.

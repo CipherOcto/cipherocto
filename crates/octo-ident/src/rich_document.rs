@@ -1,4 +1,4 @@
-//! Rich `DidDocument` surface (RFC-0010 v1.5 §Rich DID Documents).
+//! Rich `DidDocument` surface (RFC-0010 §Rich DID Documents).
 //!
 //! v1.5 ADDS the W3C DID Core 1.0 surface beyond the MVP minimum:
 //!
@@ -32,7 +32,7 @@ use thiserror::Error;
 
 use crate::DidCodec;
 
-/// Maximum number of service endpoints per DID (RFC-0010 v1.5 §Bounds).
+/// Maximum number of service endpoints per DID (RFC-0010 §Bounds).
 ///
 /// Per W3C DID Core 1.0 best practice + the W3C VCWG bounds analysis, ≤ 10
 /// service endpoints covers all production use cases (resolver discovery +
@@ -40,26 +40,26 @@ use crate::DidCodec;
 /// malicious actor.
 pub const MAX_SERVICE_ENDPOINTS: usize = 10;
 
-/// Maximum number of controller references per DID (RFC-0010 v1.5 §Bounds).
+/// Maximum number of controller references per DID (RFC-0010 §Bounds).
 ///
 /// 3 parent DIDs is the documented upper bound for hierarchical delegation
 /// chains in W3C DID Core 1.0. Cycle detection scales O(N) per controller
 /// list — 3 is well within the bound for synchronous validation.
 pub const MAX_CONTROLLERS: usize = 3;
 
-/// Maximum number of verification methods per DID (RFC-0010 v1.5 §Bounds).
+/// Maximum number of verification methods per DID (RFC-0010 §Bounds).
 ///
 /// 2 methods covers the canonical Ed25519 + PQC future combination. Each
 /// verification method carries at most 1 public key.
 pub const MAX_VERIFICATION_METHODS: usize = 2;
 
-/// Maximum number of capability delegations per DID (RFC-0010 v1.5 §Bounds).
+/// Maximum number of capability delegations per DID (RFC-0010 §Bounds).
 ///
 /// 10 capability delegations covers resolver + transport + zk-cap use
 /// cases. The BLAKE3 hash is 32 bytes each.
 pub const MAX_CAPABILITY_DELEGATIONS: usize = 10;
 
-/// Service endpoint for resolver discovery (RFC-0010 v1.5 §ServiceEndpoint).
+/// Service endpoint for resolver discovery (RFC-0010 §ServiceEndpoint).
 ///
 /// The endpoint URI MUST be absolute (per W3C DID Core 1.0 §Service
 /// Endpoint Properties). The `kind` tag is a typed discriminator that
@@ -170,7 +170,7 @@ pub enum ServiceEndpointError {
     UriNotAbsolute,
 }
 
-/// Verification method (RFC-0010 v1.5 §VerificationMethod).
+/// Verification method (RFC-0010 §VerificationMethod).
 ///
 /// The `kind` field is a typed discriminator ([`VerificationMethodKind`]).
 /// The `public_key` field is the 32-byte Ed25519 public key (PQC keys land
@@ -203,7 +203,7 @@ impl VerificationMethod {
     }
 }
 
-/// Verification method kind (RFC-0010 v1.5 §VerificationMethodKind).
+/// Verification method kind (RFC-0010 §VerificationMethodKind).
 ///
 /// Compact typed discriminator. v1.5 ships `Ed25519` + a `Reserved` slot
 /// for future PQC keys (per RFC-0853 §F1 hooks). PQC kinds land in v2.0
@@ -217,7 +217,7 @@ impl VerificationMethod {
     borsh(use_discriminant = true)
 )]
 pub enum VerificationMethodKind {
-    /// Ed25519 (RFC-0010 v1.5 baseline).
+    /// Ed25519 (RFC-0010 baseline).
     Ed25519 = 0x01,
     /// Reserved for future amendments (PQC keys per RFC-0853 §F1).
     Reserved = 0x00,
@@ -242,7 +242,7 @@ impl VerificationMethodKind {
     }
 }
 
-/// Controller reference (RFC-0010 v1.5 §ControllerReference).
+/// Controller reference (RFC-0010 §ControllerReference).
 ///
 /// Points to a parent DID for hierarchical delegation. The reference is
 /// the canonical wire form (`did:octo:z<base58btc>`); consumers resolve
@@ -266,7 +266,7 @@ impl ControllerReference {
     }
 }
 
-/// Capability delegation reference (RFC-0010 v1.5 §CapabilityDelegation).
+/// Capability delegation reference (RFC-0010 §CapabilityDelegation).
 ///
 /// Stores a BLAKE3-256 hash of a `CapabilityToken` (RFC-0957). The DID
 /// Document attests that the DID holder MAY exercise the capability
@@ -289,7 +289,7 @@ impl CapabilityDelegation {
     }
 }
 
-/// Cycle detection for controller reference chains (RFC-0010 v1.5
+/// Cycle detection for controller reference chains (RFC-0010
 /// §ControllerReference).
 ///
 /// Walks the controllers of each `DidDocument` reachable via

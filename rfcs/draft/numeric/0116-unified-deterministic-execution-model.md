@@ -174,7 +174,7 @@ execution environment = deterministic VM
 
 Operations use:
 
-- Fixed-point arithmetic (from RFC-0106)
+- Fixed-point arithmetic (from RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal))
 - Deterministic GPU kernels
 - Reproducible compute traces
 
@@ -290,14 +290,14 @@ All can run simultaneously as long as they don't touch the same objects.
 
 ### Integration Points
 
-| RFC      | Integration                 |
-| -------- | --------------------------- |
-| RFC-0106 | Deterministic numeric tower |
-| RFC-0107 | Vector-SQL storage          |
-| RFC-0108 | Verifiable retrieval        |
-| RFC-0110 | Agent memory                |
-| RFC-0114 | Reasoning traces            |
-| RFC-0115 | Verification markets        |
+| RFC                                                                      | Integration                 |
+| ------------------------------------------------------------------------ | --------------------------- |
+| RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) | Deterministic numeric tower |
+| RFC-0107                                                                 | Vector-SQL storage          |
+| RFC-0108                                                                 | Verifiable retrieval        |
+| RFC-0110                                                                 | Agent memory                |
+| RFC-0114                                                                 | Reasoning traces            |
+| RFC-0115                                                                 | Verification markets        |
 
 ## Performance Targets
 
@@ -341,7 +341,7 @@ All can run simultaneously as long as they don't touch the same objects.
 
 ## Related RFCs
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower
 - RFC-0107 (Storage): Production Vector-SQL Storage
 - RFC-0108 (Retrieval): Verifiable AI Retrieval
 - RFC-0110 (Agents): Verifiable Agent Memory

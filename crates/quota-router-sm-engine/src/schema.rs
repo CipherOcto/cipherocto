@@ -1,6 +1,6 @@
 //! Schema migrations for the asks + consumed_receipt_index tables.
 //!
-//! RFC-0206 v2.1 §Migration Order: substrate exposes legacy
+//! RFC-0206 §Migration Order: substrate exposes legacy
 //! `_legacy_*` aliases for the previous `Migration`/`apply_pending`
 //! API during the v3.0 transition. This module uses them; the
 //! deprecation noise is silenced at module level.

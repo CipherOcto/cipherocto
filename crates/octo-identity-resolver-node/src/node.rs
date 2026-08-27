@@ -18,11 +18,11 @@
 //!
 //! `IdentityResolverNodeConfig.write_coordinator: Option<Arc<dyn
 //! DidWriteCoordinator>>` slot wires the cross-instance write
-//! coordination substrate (RFC-0862 v1.3 §DidWriteCoordinator) without
+//! coordination substrate (RFC-0862 §DidWriteCoordinator) without
 //! coupling this Layer C crate to the future `octo-sync` crate. When
 //! `None`, the resolver-node refuses `IDENTITY_REGISTER` +
 //! `IDENTITY_REVOKE` with `IdentityResolveError::CoordinatorUnavailable`
-//! (fail-closed per RFC-0862 v1.3 R12). Production HA / sharded
+//! (fail-closed per RFC-0862 R12). Production HA / sharded
 //! deployments inject a concrete coordinator; single-instance
 //! deployments may legitimately leave this slot `None` (writes are
 //! refused, which is the safe default for an unconfigured cluster).
@@ -67,9 +67,9 @@ use octo_ident::resolver_backend::ResolverBackend;
 
 /// Default `ChainId` used when no explicit chain is configured.
 ///
-/// Per RFC-0862 v1.3 R12 + RFC-0010 v1.3 §Future Work F2 the chain
+/// Per RFC-0862 R12 + RFC-0010 §Future Work F2 the chain
 /// identifier gains typed-namespace + federation semantics in a future
-/// RFC-0010 v1.4 amendment. Until then, `"cipherocto-mainnet"` is the
+/// RFC-0010 amendment. Until then, `"cipherocto-mainnet"` is the
 /// sole canonical chain and serves as the default for the
 /// `IDENTITY_REGISTER` + `IDENTITY_REVOKE` mediation path.
 pub const DEFAULT_CHAIN_ID: &str = "cipherocto-mainnet";
@@ -99,7 +99,7 @@ pub struct IdentityResolverNodeConfig {
     /// refuses all writes with `CoordinatorUnavailable` (fail-closed).
     /// Injected via `Arc<dyn DidWriteCoordinator>` — no `octo-sync` dep
     /// at this Layer C crate (coordinator is a trait-object boundary;
-    /// sealed trait per RFC-0862 v1.3 prevents downstream extension).
+    /// sealed trait per RFC-0862 prevents downstream extension).
     pub write_coordinator: Option<Arc<dyn DidWriteCoordinator>>,
     /// Mission 0871e-f7-impl-resolver-mediation: chain ID used for
     /// the `IDENTITY_REGISTER` + `IDENTITY_REVOKE` mediation path.
@@ -266,11 +266,11 @@ impl IdentityResolverNode {
     fn materialize_chain_id(config: &IdentityResolverNodeConfig) -> ChainId {
         config.chain_id.clone().unwrap_or_else(|| {
             // `DEFAULT_CHAIN_ID` is a 17-char static literal that
-            // passes RFC-0010 v1.4 validation (non-empty, ≤ 64 chars,
+            // passes RFC-0010 validation (non-empty, ≤ 64 chars,
             // no control chars). `.expect` documents the invariant
             // at this call site.
             ChainId::new(DEFAULT_CHAIN_ID)
-                .expect("DEFAULT_CHAIN_ID is a valid RFC-0010 v1.4 chain namespace")
+                .expect("DEFAULT_CHAIN_ID is a valid RFC-0010 chain namespace")
         })
     }
 
@@ -332,7 +332,7 @@ impl IdentityResolverNode {
     /// Mission 0871e-f7-impl-resolver-mediation: this method is `async`
     /// because the `IDENTITY_REGISTER` + `IDENTITY_REVOKE` paths consult
     /// an `Arc<dyn DidWriteCoordinator>` whose trait surface is
-    /// async (RFC-0862 v1.3). The `IDENTITY_RESOLVE` path remains
+    /// async (RFC-0862). The `IDENTITY_RESOLVE` path remains
     /// synchronous (registry lookup is sync).
     pub async fn handle_envelope(
         &self,

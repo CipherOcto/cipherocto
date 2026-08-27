@@ -329,20 +329,20 @@ graph TB
 
 #### A.2 Key Components
 
-| Component | File | Purpose | Non-Determinism |
-|-----------|------|---------|----------------|
-| **Operator Trait** | `operator.rs` | Volcano-style: `open()`, `next()`, `close()` | None |
-| **RowRef** | `operator.rs` | Zero-copy row: `Owned`, `Composite`, `DirectBuildComposite` | None |
-| **ExprCompiler** | `expression/compiler.rs` | AST → bytecode | None |
-| **ExprVM** | `expression/vm.rs` | Stack-based bytecode execution | None |
-| **HashJoinOperator** | `operators/hash_join.rs` | Streaming hash join | FxHashMap iteration |
-| **AggregationOperator** | `aggregation.rs` | GROUP BY, ROLLUP, CUBE | FxHashMap grouping |
-| **WindowOperator** | `window.rs` | ROW_NUMBER, RANK, LAG, LEAD | None |
-| **parallel_filter** | `parallel.rs` | Rayon parallel WHERE | 🔴 Chunk boundaries + Rayon scheduling |
-| **parallel_sort** | `parallel.rs` | Rayon `par_sort_unstable_by` | 🔴 Unstable sort on equal keys |
-| **parallel_distinct** | `parallel.rs` | Two-phase dedup | 🔴 Chunk + merge ordering |
-| **JoinHashTable** | `hash_table.rs` | O(N+M) hash join build/probe | 🔴 Hash collision chain order |
-| **SemanticCache** | `semantic_cache.rs` | Predicate subsumption caching | 🟡 Cache state accumulated per-node |
+| Component               | File                     | Purpose                                                     | Non-Determinism                        |
+| ----------------------- | ------------------------ | ----------------------------------------------------------- | -------------------------------------- |
+| **Operator Trait**      | `operator.rs`            | Volcano-style: `open()`, `next()`, `close()`                | None                                   |
+| **RowRef**              | `operator.rs`            | Zero-copy row: `Owned`, `Composite`, `DirectBuildComposite` | None                                   |
+| **ExprCompiler**        | `expression/compiler.rs` | AST → bytecode                                              | None                                   |
+| **ExprVM**              | `expression/vm.rs`       | Stack-based bytecode execution                              | None                                   |
+| **HashJoinOperator**    | `operators/hash_join.rs` | Streaming hash join                                         | FxHashMap iteration                    |
+| **AggregationOperator** | `aggregation.rs`         | GROUP BY, ROLLUP, CUBE                                      | FxHashMap grouping                     |
+| **WindowOperator**      | `window.rs`              | ROW_NUMBER, RANK, LAG, LEAD                                 | None                                   |
+| **parallel_filter**     | `parallel.rs`            | Rayon parallel WHERE                                        | 🔴 Chunk boundaries + Rayon scheduling |
+| **parallel_sort**       | `parallel.rs`            | Rayon `par_sort_unstable_by`                                | 🔴 Unstable sort on equal keys         |
+| **parallel_distinct**   | `parallel.rs`            | Two-phase dedup                                             | 🔴 Chunk + merge ordering              |
+| **JoinHashTable**       | `hash_table.rs`          | O(N+M) hash join build/probe                                | 🔴 Hash collision chain order          |
+| **SemanticCache**       | `semantic_cache.rs`      | Predicate subsumption caching                               | 🟡 Cache state accumulated per-node    |
 
 #### A.3 Query Execution Flow
 
@@ -621,25 +621,25 @@ sequenceDiagram
 
 #### B.5 Index Comparison
 
-| Index | File | Data Structure | Algorithm | Determinism |
-|-------|------|---------------|-----------|-------------|
-| **BTreeIndex** | `btree.rs` | `BTreeMap<CompactArc<Value>, RowIdSet>` | O(log n + k) range scan | ✅ Sorted (BTreeMap is deterministic) |
-| **HashIndex** | `hash.rs` | `FxHashMap<u64, CompactVec<i64>>` + `I64Map<u64>` | O(1) lookup, SipHash-2-4 | ⚠️ FxHashMap iteration order |
-| **BitmapIndex** | `bitmap.rs` | `RoaringTreemap` per distinct value | O(n/64) AND/OR | ✅ Deterministic (no randomness) |
-| **HnswIndex** | `hnsw.rs` | Multi-layer graph + packed vectors | O(log N) ANN search | 🔴 `rand::random()` for layer assignment |
+| Index           | File        | Data Structure                                    | Algorithm                | Determinism                              |
+| --------------- | ----------- | ------------------------------------------------- | ------------------------ | ---------------------------------------- |
+| **BTreeIndex**  | `btree.rs`  | `BTreeMap<CompactArc<Value>, RowIdSet>`           | O(log n + k) range scan  | ✅ Sorted (BTreeMap is deterministic)    |
+| **HashIndex**   | `hash.rs`   | `FxHashMap<u64, CompactVec<i64>>` + `I64Map<u64>` | O(1) lookup, SipHash-2-4 | ⚠️ FxHashMap iteration order             |
+| **BitmapIndex** | `bitmap.rs` | `RoaringTreemap` per distinct value               | O(n/64) AND/OR           | ✅ Deterministic (no randomness)         |
+| **HnswIndex**   | `hnsw.rs`   | Multi-layer graph + packed vectors                | O(log N) ANN search      | 🔴 `rand::random()` for layer assignment |
 
 #### B.6 Key Files
 
-| Path | Key Symbols | Non-Determinism |
-|------|-------------|-----------------|
-| `mvcc/registry.rs:312` | `begin_transaction()` | 🔴 `AtomicI64::fetch_add` for txn_id |
-| `mvcc/registry.rs:318` | `start_commit()` | 🔴 `AtomicI64::fetch_add` for commit_seq |
-| `mvcc/registry.rs:511` | `is_committed()` | Uses `next_txn_id` load — depends on prior fetch_add |
-| `mvcc/version_store.rs:1107` | `get_visible_version()` | None (deterministic visibility rules) |
-| `mvcc/wal_manager.rs:1304` | `write_entry()` | 🔴 LSN = `fetch_add(1)` order |
-| `index/hnsw.rs:2306` | `random_level()` | 🔴 `rand::random()` — **only randomness source in codebase** |
-| `index/hash.rs` | HashIndex | ⚠️ `FxHashMap` iteration |
-| `mvcc/engine.rs` | MVCCEngine | ⚠️ `FxHashMap` for schemas, version_stores |
+| Path                         | Key Symbols             | Non-Determinism                                              |
+| ---------------------------- | ----------------------- | ------------------------------------------------------------ |
+| `mvcc/registry.rs:312`       | `begin_transaction()`   | 🔴 `AtomicI64::fetch_add` for txn_id                         |
+| `mvcc/registry.rs:318`       | `start_commit()`        | 🔴 `AtomicI64::fetch_add` for commit_seq                     |
+| `mvcc/registry.rs:511`       | `is_committed()`        | Uses `next_txn_id` load — depends on prior fetch_add         |
+| `mvcc/version_store.rs:1107` | `get_visible_version()` | None (deterministic visibility rules)                        |
+| `mvcc/wal_manager.rs:1304`   | `write_entry()`         | 🔴 LSN = `fetch_add(1)` order                                |
+| `index/hnsw.rs:2306`         | `random_level()`        | 🔴 `rand::random()` — **only randomness source in codebase** |
+| `index/hash.rs`              | HashIndex               | ⚠️ `FxHashMap` iteration                                     |
+| `mvcc/engine.rs`             | MVCCEngine              | ⚠️ `FxHashMap` for schemas, version_stores                   |
 
 ---
 
@@ -862,17 +862,17 @@ graph LR
 
 #### C.7 Key Non-Determinism Sources
 
-| Location | Issue | Class | Impact |
-|----------|-------|-------|--------|
-| `cost.rs` — tie-breaking | When two access methods have equal cost, first wins | B | Different plans across nodes |
-| `join.rs:568` — DP | Equal-cost partitions: first partition wins | B | Different join orders |
-| `join.rs:891` — greedy | Equal-cost pairs: earlier pair wins | B | Different join tree shape |
-| `feedback.rs:149` — FeedbackCache | `FxHashMap` lookup/eviction order | B | Different correction factors |
-| `feedback.rs:182` — RwLock race | Concurrent EMA updates, last-writer-wins | B | Feedback oscillates |
-| `bloom.rs:222` — AHasher | Random seed per process | B | Different bit patterns |
-| `simplify.rs` — recursion | Simplification traversal order | B | Different intermediate forms |
-| `workload.rs:261` — FxHashMap | Pattern eviction order | B | Different workload hints |
-| `planner.rs:1060` — runtime swap | Build/probe swap based on runtime cardinality | B | Different execution path |
+| Location                          | Issue                                               | Class | Impact                       |
+| --------------------------------- | --------------------------------------------------- | ----- | ---------------------------- |
+| `cost.rs` — tie-breaking          | When two access methods have equal cost, first wins | B     | Different plans across nodes |
+| `join.rs:568` — DP                | Equal-cost partitions: first partition wins         | B     | Different join orders        |
+| `join.rs:891` — greedy            | Equal-cost pairs: earlier pair wins                 | B     | Different join tree shape    |
+| `feedback.rs:149` — FeedbackCache | `FxHashMap` lookup/eviction order                   | B     | Different correction factors |
+| `feedback.rs:182` — RwLock race   | Concurrent EMA updates, last-writer-wins            | B     | Feedback oscillates          |
+| `bloom.rs:222` — AHasher          | Random seed per process                             | B     | Different bit patterns       |
+| `simplify.rs` — recursion         | Simplification traversal order                      | B     | Different intermediate forms |
+| `workload.rs:261` — FxHashMap     | Pattern eviction order                              | B     | Different workload hints     |
+| `planner.rs:1060` — runtime swap  | Build/probe swap based on runtime cardinality       | B     | Different execution path     |
 
 ---
 
@@ -887,6 +887,7 @@ Stoolap already targets blockchain use cases — it has a `consensus/` module wi
 ## Research Scope
 
 ### Included
+
 - All Stoolap source modules
 - Transaction and MVCC engine
 - Storage engine (B-tree, Hash, HNSW indexes)
@@ -896,6 +897,7 @@ Stoolap already targets blockchain use cases — it has a `consensus/` module wi
 - Existing `determ/` module
 
 ### Excluded
+
 - Stoolap fork/modification (this is research only)
 - Performance benchmarking
 - Distributed networking layer (assumed honest peer model)
@@ -924,6 +926,7 @@ pub enum DetermValue {
 ```
 
 Key properties:
+
 - No `Arc`, no pointers — predictable memory layout
 - Float comparison via `a.to_bits() == b.to_bits()` (bit-exact)
 - `DetermRow`, `DetermMap`, `DetermSet` also defined
@@ -959,36 +962,36 @@ The main `Value` enum uses bit-level float comparison via `f64::to_bits()`, matc
 
 These are consensus-critical and **must** be fixed for full blockchain determinism.
 
-| Element | Location | Issue | Fix Required |
-|---------|----------|-------|--------------|
-| **HNSW Layer Generation (build/insert)** | `src/storage/index/hnsw.rs:2306` | `rand::random()` used for layer assignment during graph build — changes the index structure itself | Replace with seeded PRNG (ChaCha8). Store `layer_seed` in HNSW index metadata for reproducible reconstruction. **This is Class A** — the built graph must be identical across all nodes |
-| **HNSW Vector Search (runtime)** | `src/storage/index/hnsw.rs` | Approximate nearest neighbor — results vary across runs even with identical graphs due to tie-breaking in the max-heap | This is **Class C** — inherently probabilistic, acceptable for AI agent memory only |
-| **Transaction ID Generation** | `src/storage/mvcc/registry.rs:317` | `AtomicI64::fetch_add` — txn IDs depend on interleaving of concurrent transactions | Replace with **sequence number from blockchain block** as txn ID source. All nodes derive txn IDs deterministically from agreed-upon block state |
-| **Commit Sequence Generation** | `src/storage/mvcc/registry.rs:318` | `AtomicI64::fetch_add` for `next_sequence` — `commit_seq` affects MVCC visibility ordering | Same fix as txn_id: derive from block number + tx index. All visibility decisions must be reproducible across nodes |
-| **FxHashMap Iteration Order** | 64 files, 429 total pattern matches | HashMap iteration order is unspecified for equal keys; FxHash/AHash are randomized per process | Replace with `BTreeMap` (sorted by key) **or** a deterministic hasher based on SHA-256. BTreeMap is O(log N) vs O(1); if O(1) is needed, a cryptographic hasher preserves performance while guaranteeing determinism |
-| **Semantic Query Cache** | `src/executor/semantic_cache.rs` | Cache key is query string; accumulated state from prior executions differs across nodes | Require canonical cache key (e.g., SHA-256 hash of normalized SQL). Cache contents must be derived deterministically from the verified query log, not accumulated independently per node. In blockchain mode, cache should be disabled or treated as untrusted |
-| **Parallel Chunk Assignment + Merge** | `src/executor/parallel.rs` | Rayon work-stealing scheduler causes non-deterministic task ordering. Even with deterministic chunk boundaries, the **merge phase** results depend on thread completion order | Use deterministic chunking: `chunk_id = row_index / chunk_size`. Merge results in a **single-threaded, stable sort** after all chunks complete, using a deterministic total order on rows |
+| Element                                  | Location                            | Issue                                                                                                                                                                         | Fix Required                                                                                                                                                                                                                                                   |
+| ---------------------------------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **HNSW Layer Generation (build/insert)** | `src/storage/index/hnsw.rs:2306`    | `rand::random()` used for layer assignment during graph build — changes the index structure itself                                                                            | Replace with seeded PRNG (ChaCha8). Store `layer_seed` in HNSW index metadata for reproducible reconstruction. **This is Class A** — the built graph must be identical across all nodes                                                                        |
+| **HNSW Vector Search (runtime)**         | `src/storage/index/hnsw.rs`         | Approximate nearest neighbor — results vary across runs even with identical graphs due to tie-breaking in the max-heap                                                        | This is **Class C** — inherently probabilistic, acceptable for AI agent memory only                                                                                                                                                                            |
+| **Transaction ID Generation**            | `src/storage/mvcc/registry.rs:317`  | `AtomicI64::fetch_add` — txn IDs depend on interleaving of concurrent transactions                                                                                            | Replace with **sequence number from blockchain block** as txn ID source. All nodes derive txn IDs deterministically from agreed-upon block state                                                                                                               |
+| **Commit Sequence Generation**           | `src/storage/mvcc/registry.rs:318`  | `AtomicI64::fetch_add` for `next_sequence` — `commit_seq` affects MVCC visibility ordering                                                                                    | Same fix as txn_id: derive from block number + tx index. All visibility decisions must be reproducible across nodes                                                                                                                                            |
+| **FxHashMap Iteration Order**            | 64 files, 429 total pattern matches | HashMap iteration order is unspecified for equal keys; FxHash/AHash are randomized per process                                                                                | Replace with `BTreeMap` (sorted by key) **or** a deterministic hasher based on SHA-256. BTreeMap is O(log N) vs O(1); if O(1) is needed, a cryptographic hasher preserves performance while guaranteeing determinism                                           |
+| **Semantic Query Cache**                 | `src/executor/semantic_cache.rs`    | Cache key is query string; accumulated state from prior executions differs across nodes                                                                                       | Require canonical cache key (e.g., SHA-256 hash of normalized SQL). Cache contents must be derived deterministically from the verified query log, not accumulated independently per node. In blockchain mode, cache should be disabled or treated as untrusted |
+| **Parallel Chunk Assignment + Merge**    | `src/executor/parallel.rs`          | Rayon work-stealing scheduler causes non-deterministic task ordering. Even with deterministic chunk boundaries, the **merge phase** results depend on thread completion order | Use deterministic chunking: `chunk_id = row_index / chunk_size`. Merge results in a **single-threaded, stable sort** after all chunks complete, using a deterministic total order on rows                                                                      |
 
 #### Class B — Deterministic When Configured Correctly (Class B per CipherOcto taxonomy)
 
 These require explicit configuration or version pinning but can be made deterministic.
 
-| Element | Location | Issue | Fix Required |
-|---------|----------|-------|--------------|
-| **Adaptive Query Execution (AQE)** | `src/optimizer/feedback.rs` | Runtime plan switching based on observed cardinalities — non-reproducible across nodes | Disable AQE for blockchain mode (`aqe = false`). Alternatively: log all plan-switching decisions to the operation log so they are verifiable artifacts of execution |
-| **Cardinality Feedback** | `src/optimizer/feedback.rs:47` | Stores correction factors from past executions in `FxHashMap` | For blockchain: disable, or seed the `FxHashMap` with a canonical empty state, or replace with `BTreeMap` |
-| **Cost-Based Optimizer Plan Selection** | `src/optimizer/cost.rs` | Ties in cost estimation may be broken arbitrarily | Break ties deterministically (e.g., prefer alphabetically earlier plan name). Use fixed/canonical statistics for blockchain mode, not dynamically collected `ANALYZE` statistics |
-| **Parallel Aggregation** | `src/executor/aggregation.rs` | Hash aggregation uses `FxHashMap` internally — iteration order during hash probing is non-deterministic | Replace with `BTreeMap` or deterministic hasher (same as FxHashMap fix) |
-| **Parallel Hash Join Build** | `src/executor/hash_table.rs` | Hash table construction uses `FxHashMap` | Same as above |
+| Element                                 | Location                       | Issue                                                                                                   | Fix Required                                                                                                                                                                     |
+| --------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Adaptive Query Execution (AQE)**      | `src/optimizer/feedback.rs`    | Runtime plan switching based on observed cardinalities — non-reproducible across nodes                  | Disable AQE for blockchain mode (`aqe = false`). Alternatively: log all plan-switching decisions to the operation log so they are verifiable artifacts of execution              |
+| **Cardinality Feedback**                | `src/optimizer/feedback.rs:47` | Stores correction factors from past executions in `FxHashMap`                                           | For blockchain: disable, or seed the `FxHashMap` with a canonical empty state, or replace with `BTreeMap`                                                                        |
+| **Cost-Based Optimizer Plan Selection** | `src/optimizer/cost.rs`        | Ties in cost estimation may be broken arbitrarily                                                       | Break ties deterministically (e.g., prefer alphabetically earlier plan name). Use fixed/canonical statistics for blockchain mode, not dynamically collected `ANALYZE` statistics |
+| **Parallel Aggregation**                | `src/executor/aggregation.rs`  | Hash aggregation uses `FxHashMap` internally — iteration order during hash probing is non-deterministic | Replace with `BTreeMap` or deterministic hasher (same as FxHashMap fix)                                                                                                          |
+| **Parallel Hash Join Build**            | `src/executor/hash_table.rs`   | Hash table construction uses `FxHashMap`                                                                | Same as above                                                                                                                                                                    |
 
 #### Class C — Probabilistic (Non-Deterministic by Nature)
 
 These are explicitly excluded from consensus but may be used in agent behavior.
 
-| Element | Location | Class | Notes |
-|---------|----------|-------|-------|
-| **HNSW Vector Search (runtime)** | `src/storage/index/hnsw.rs` | C | Approximate nearest neighbor — inherently probabilistic, non-reproducible results across runs. **Must not affect consensus-critical state.** Appropriate for AI agent semantic memory only |
-| **Bloom Filters** | `src/optimizer/bloom.rs` | C | Probabilistic membership test. Appropriate for filtering but **must not** be the sole gate for state-modifying operations |
+| Element                          | Location                    | Class | Notes                                                                                                                                                                                      |
+| -------------------------------- | --------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **HNSW Vector Search (runtime)** | `src/storage/index/hnsw.rs` | C     | Approximate nearest neighbor — inherently probabilistic, non-reproducible results across runs. **Must not affect consensus-critical state.** Appropriate for AI agent semantic memory only |
+| **Bloom Filters**                | `src/optimizer/bloom.rs`    | C     | Probabilistic membership test. Appropriate for filtering but **must not** be the sole gate for state-modifying operations                                                                  |
 
 ---
 
@@ -997,6 +1000,7 @@ These are explicitly excluded from consensus but may be used in agent behavior.
 #### 1. Deterministic Types Already Exist but Are Not Used Universally
 
 The `determ/` module defines `DetermValue`, `DetermRow`, `DetermMap`, `DetermSet` with:
+
 - No `Arc` or heap pointers
 - Bit-exact float comparison
 - Deterministic ordering
@@ -1027,6 +1031,7 @@ Both `txn_id` and `commit_seq` are consensus-critical:
 #### 4. Consensus Module Is Well-Structured for Determinism
 
 The `consensus/block.rs` block header structure is clean:
+
 - All fields are fixed-size or length-prefixed
 - SHA-256 hashing is used canonically
 - Merkle root computation over operations is deterministic
@@ -1061,6 +1066,7 @@ The `BlockHeader` struct includes `timestamp: u64`. If this field is populated f
 Rather than a single "fully deterministic mode," adopt CipherOcto's execution class model:
 
 **For consensus-critical path (Class A):**
+
 1. Replace `rand::random()` in HNSW with seeded PRNG (ChaCha8, key stored in index metadata)
 2. Replace all `FxHashMap`/`FxHashSet`/`AHashMap` with `BTreeMap`/`BTreeSet` **or** a deterministic hasher in:
    - MVCC engine (`engine.rs`, `version_store.rs`, `table.rs`)
@@ -1073,18 +1079,19 @@ Rather than a single "fully deterministic mode," adopt CipherOcto's execution cl
 6. Use deterministic chunking + single-threaded stable-order merge in parallel execution
 
 **For AI agent / non-consensus path (Class C):**
+
 - HNSW vector search remains probabilistic — this is acceptable for semantic memory
 - AQE remains adaptive — this is appropriate for performance optimization
 
 ### Risks
 
-| Risk | Severity | Mitigation |
-|------|----------|------------|
-| Performance regression from BTreeMap replacing HashMap | Medium | BTreeMap is O(log N) vs O(1). For hot paths (hash joins, aggregations), consider a **deterministic hasher** (e.g., SHA-256 keyed by input bytes) — this preserves O(1) average while guaranteeing deterministic iteration order |
-| HNSW index rebuild required to switch to deterministic mode | Low | Store seed in index metadata; if absent, rebuild with seeded PRNG |
-| Breaking existing MVCC semantics | High | Transaction ID and commit_seq change requires auditing all consumers of `txn_id` and `commit_seq` across the codebase |
-| Parallel query performance with deterministic merge | Low | Single-threaded stable merge is fast; main parallel work is unaffected |
-| **HNSW index serialization for blockchain state** | **High** | If HNSW graphs are part of blockchain state, the serialized graph must be reproducible. Options: (a) store seed and rebuild on load, (b) include graph structure hash in state root, (c) exclude HNSW from consensus state entirely (treat as Class C) |
+| Risk                                                        | Severity | Mitigation                                                                                                                                                                                                                                             |
+| ----------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Performance regression from BTreeMap replacing HashMap      | Medium   | BTreeMap is O(log N) vs O(1). For hot paths (hash joins, aggregations), consider a **deterministic hasher** (e.g., SHA-256 keyed by input bytes) — this preserves O(1) average while guaranteeing deterministic iteration order                        |
+| HNSW index rebuild required to switch to deterministic mode | Low      | Store seed in index metadata; if absent, rebuild with seeded PRNG                                                                                                                                                                                      |
+| Breaking existing MVCC semantics                            | High     | Transaction ID and commit_seq change requires auditing all consumers of `txn_id` and `commit_seq` across the codebase                                                                                                                                  |
+| Parallel query performance with deterministic merge         | Low      | Single-threaded stable merge is fast; main parallel work is unaffected                                                                                                                                                                                 |
+| **HNSW index serialization for blockchain state**           | **High** | If HNSW graphs are part of blockchain state, the serialized graph must be reproducible. Options: (a) store seed and rebuild on load, (b) include graph structure hash in state root, (c) exclude HNSW from consensus state entirely (treat as Class C) |
 
 ### Open Questions
 
@@ -1099,29 +1106,29 @@ This research intersects with several existing CipherOcto RFCs and research docu
 
 ### RFC Cross-Reference
 
-| RFC | Title | Relevance to This Research |
-|-----|-------|---------------------------|
-| **RFC-0303** (Draft, Retrieval) | [Deterministic Vector Index (HNSW-D)](../../rfcs/draft/retrieval/0303-deterministic-vector-index.md) | **Direct companion.** Defines SHA-256-based deterministic level assignment, canonical neighbor selection, and deterministic search ordering for HNSW. Provides the exact algorithm for fixing the `rand::random()` issue in stoolap's `hnsw.rs:2306`. Also defines `HNSW-D` with fixed-point L2 distance via RFC-0148. |
-| **RFC-0003** (Draft, Process) | [Deterministic Execution Standard (DES)](../../rfcs/draft/process/0003-deterministic-execution-standard.md) | **Governing standard.** Defines global determinism rules for the CipherOcto protocol — numeric types (RFC-0106), vector indexing, retrieval pipelines. The DES is the parent standard this research extends into the stoolap context. |
-| **RFC-0129** (Planned, Numeric) | [Deterministic RNG](../../rfcs/planned/numeric/0129-deterministic-rng.md) | **Direct companion.** Planned RFC for ChaCha8 seeded from block hash — exactly the fix recommended for HNSW layer generation. RFC-0303's implementation will depend on this. |
-| **RFC-0304** (Draft, Retrieval) | [Verifiable Vector Query Execution (VVQE)](../../rfcs/draft/retrieval/0304-verifiable-vector-query-execution.md) | **Layer above HNSW-D.** Defines deterministic ANN query layer with SQL integration and proof generation. Builds on RFC-0303 and RFC-0107. |
-| **RFC-0520** (Draft, AI Execution) | [Deterministic AI VM](../../rfcs/draft/ai-execution/0520-deterministic-ai-vm.md) | **Broader scope.** Deterministic AI execution across heterogeneous hardware. Shares the same determinism taxonomy (Class A/B/C) and references RFC-0106. |
-| **RFC-0200** (Draft, Storage) | [Production Vector SQL Storage v2](../../rfcs/draft/storage/0200-production-vector-sql-storage-v2.md) | **Sibling spec.** Production vector SQL operations built on top of HNSW-D. Relevant if HNSW becomes consensus-state. |
-| **RFC-0916** (Planned, Retrieval) | [TurboHNSW Quantized Index](../../rfcs/planned/retrieval/0916-turbohnsw-quantized-index.md) | **Future optimization.** PQ-quantized HNSW for memory efficiency. Deterministic version would need to follow RFC-0303's determinism patterns. |
+| RFC                                | Title                                                                                                            | Relevance to This Research                                                                                                                                                                                                                                                                                             |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **RFC-0303** (Draft, Retrieval)    | [Deterministic Vector Index (HNSW-D)](../../rfcs/draft/retrieval/0303-deterministic-vector-index.md)             | **Direct companion.** Defines SHA-256-based deterministic level assignment, canonical neighbor selection, and deterministic search ordering for HNSW. Provides the exact algorithm for fixing the `rand::random()` issue in stoolap's `hnsw.rs:2306`. Also defines `HNSW-D` with fixed-point L2 distance via RFC-0148. |
+| **RFC-0003** (Draft, Process)      | [Deterministic Execution Standard (DES)](../../rfcs/draft/process/0003-deterministic-execution-standard.md)      | **Governing standard.** Defines global determinism rules for the CipherOcto protocol — numeric types (RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal)), vector indexing, retrieval pipelines. The DES is the parent standard this research extends into the stoolap context.                  |
+| **RFC-0129** (Planned, Numeric)    | [Deterministic RNG](../../rfcs/planned/numeric/0129-deterministic-rng.md)                                        | **Direct companion.** Planned RFC for ChaCha8 seeded from block hash — exactly the fix recommended for HNSW layer generation. RFC-0303's implementation will depend on this.                                                                                                                                           |
+| **RFC-0304** (Draft, Retrieval)    | [Verifiable Vector Query Execution (VVQE)](../../rfcs/draft/retrieval/0304-verifiable-vector-query-execution.md) | **Layer above HNSW-D.** Defines deterministic ANN query layer with SQL integration and proof generation. Builds on RFC-0303 and RFC-0107.                                                                                                                                                                              |
+| **RFC-0520** (Draft, AI Execution) | [Deterministic AI VM](../../rfcs/draft/ai-execution/0520-deterministic-ai-vm.md)                                 | **Broader scope.** Deterministic AI execution across heterogeneous hardware. Shares the same determinism taxonomy (Class A/B/C) and references RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal).                                                                                               |
+| **RFC-0200** (Draft, Storage)      | [Production Vector SQL Storage v2](../../rfcs/draft/storage/0200-production-vector-sql-storage-v2.md)            | **Sibling spec.** Production vector SQL operations built on top of HNSW-D. Relevant if HNSW becomes consensus-state.                                                                                                                                                                                                   |
+| **RFC-0916** (Planned, Retrieval)  | [TurboHNSW Quantized Index](../../rfcs/planned/retrieval/0916-turbohnsw-quantized-index.md)                      | **Future optimization.** PQ-quantized HNSW for memory efficiency. Deterministic version would need to follow RFC-0303's determinism patterns.                                                                                                                                                                          |
 
 ### Related Research Documents
 
-| Document | Title | Relevance |
-|----------|-------|-----------|
-| `docs/research/qdrant-research.md` | Qdrant Research Report | Reference architecture for production vector search. Qdrant's segment-based design with HNSW + payload indexes is a model for how HNSW-D could integrate with SQL storage. |
+| Document                                             | Title                               | Relevance                                                                                                                                                                       |
+| ---------------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docs/research/qdrant-research.md`                   | Qdrant Research Report              | Reference architecture for production vector search. Qdrant's segment-based design with HNSW + payload indexes is a model for how HNSW-D could integrate with SQL storage.      |
 | `docs/research/stoolap-agent-memory-gap-analysis.md` | Stoolap → Agent Memory Gap Analysis | Confirms that stoolap's foundational layer (MVCC, WAL, HNSW, Merkle, ZK) is complete. The remaining gap is the **agent memory abstraction layer**, not the vector index itself. |
-| `docs/use-cases/verifiable-agent-memory-layer.md` | Verifiable Agent Memory Layer | The use case for agent-owned cryptographic memory. HNSW vector search is a critical component of this — this research confirms the determinism requirements are achievable. |
+| `docs/use-cases/verifiable-agent-memory-layer.md`    | Verifiable Agent Memory Layer       | The use case for agent-owned cryptographic memory. HNSW vector search is a critical component of this — this research confirms the determinism requirements are achievable.     |
 
 ### RFC Dependency Chain
 
 ```mermaid
 graph LR
-    RFC0106["RFC-0106<br/>Numeric Tower"]
+    RFC0106["RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal)<br/>Numeric Tower"]
     RFC0129["RFC-0129<br/>Det RNG<br/>(planned)"]
     RFC0148["RFC-0148<br/>Linear Algebra"]
     RFC0303["RFC-0303<br/>HNSW-D<br/>(draft)"]
@@ -1145,6 +1152,7 @@ graph LR
 **Important distinction:** RFC-0303 is a **CipherOcto crate specification** (`crates/octo-vector/src/hnsw_d.rs`). Stoolap is an **external dependency** with its own HNSW implementation (`stoolap/src/storage/index/hnsw.rs`) using `rand::random()`. The fix for stoolap must be applied within stoolap itself — RFC-0303 provides the **algorithm specification** but cannot directly modify stoolap's code.
 
 For CipherOcto's purposes, there are two paths:
+
 1. **Fork stoolap** and apply the HNSW-D algorithm to create a deterministic variant
 2. **Build HNSW-D as a separate crate** within CipherOcto's `crates/` workspace, exposing deterministic vector indexes that integrate with the consensus layer while stoolap remains non-deterministic for its primary embedded-SQL use case
 
@@ -1166,21 +1174,21 @@ The choice depends on whether stoolap is intended as the sole storage engine or 
 
 **Note:** "429 total occurrences" refers to grep pattern matches across 64 files — not 429 distinct HashMap instances. Many matches are in the same file (e.g., multiple `FxHashMap::new()` calls). The module breakdown below shows pattern-match counts per module.
 
-| Module | Files | Pattern Matches | Impact |
-|--------|-------|-----------------|--------|
-| `src/executor/` | 17 files | ~180 | Hash joins, aggregations, query context, subqueries |
-| `src/storage/` | 14 files | ~100 | MVCC version store, table, indexes, expression |
-| `src/optimizer/` | 6 files | ~60 | Cost model, join planning, AQE feedback, bloom filters |
-| `src/parser/` | 2 files | ~8 | Token handling, AST |
-| `src/api/` | 3 files | ~12 | Database handles, parameters |
-| Other | 22 files | ~69 | Common utilities, functions |
+| Module           | Files    | Pattern Matches | Impact                                                 |
+| ---------------- | -------- | --------------- | ------------------------------------------------------ |
+| `src/executor/`  | 17 files | ~180            | Hash joins, aggregations, query context, subqueries    |
+| `src/storage/`   | 14 files | ~100            | MVCC version store, table, indexes, expression         |
+| `src/optimizer/` | 6 files  | ~60             | Cost model, join planning, AQE feedback, bloom filters |
+| `src/parser/`    | 2 files  | ~8              | Token handling, AST                                    |
+| `src/api/`       | 3 files  | ~12             | Database handles, parameters                           |
+| Other            | 22 files | ~69             | Common utilities, functions                            |
 
 The actual number of distinct HashMap construction sites requiring replacement is far smaller than 429. Each site must be evaluated individually to determine whether the map's iteration order affects consensus-critical paths.
 
 ### Files with `rand` Usage
 
-| File | Function | Purpose |
-|------|----------|---------|
+| File                        | Function         | Purpose                                            |
+| --------------------------- | ---------------- | -------------------------------------------------- |
 | `src/storage/index/hnsw.rs` | `random_level()` | HNSW layer assignment — **only randomness source** |
 
 ### Consensus-Critical Code Paths

@@ -309,7 +309,7 @@ impl PolicyRegistry for StoolapPolicyRegistry {
 
         // R4 fix D2: Class B registration gate. The body bytes MUST
         // carry the ZK envelope marker at `[16..20]` per
-        // RFC-0967-A1 §3 row 4 + RFC-0010 v1.9.2 §Class B consensus
+        // RFC-0967-A1 §3 row 4 + RFC-0010 §Class B consensus
         // path. Without the marker, the policy is rejected at the
         // registration gate (fail-closed) — substrate-truth: the
         // marker is part of the canonical body, not an out-of-band

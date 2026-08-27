@@ -70,7 +70,7 @@ pub use marketplace::{MarketplaceIndex, ACTIVE_ASK_CAP};
 // (moved here from quota-router-storage). Back-compat for downstream
 // crates that still import these via `quota_router_storage::...`.
 // Sole source of truth lives in `octo_cap_macaroon` per
-// RFC-0206 v2.1 §Layer B.
+// RFC-0206 §Layer B.
 pub use migrations::{apply_pending, list_migrations, MigrationError, BUILTIN_MIGRATIONS};
 pub use octo_cap_macaroon::{
     BearerCapsule, CapabilityClass, CapabilityTokenLike, Clock, FixedClock, HolderKind,

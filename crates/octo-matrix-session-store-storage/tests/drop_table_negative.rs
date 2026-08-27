@@ -1,6 +1,6 @@
 //! TV-0206-A11 — drop_table_negative.rs for octo-matrix-session-store-storage.
 //!
-//! Per RFC-0206 v2.1 §Test Vectors.
+//! Per RFC-0206 §Test Vectors.
 //!
 //! DdlRegistered(DropTable(...)) against a non-allowlisted DDL
 //! template id → SubstrateError::DdlNotInAllowlist.

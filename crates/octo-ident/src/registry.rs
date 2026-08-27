@@ -1,11 +1,11 @@
-//! `DidRegistry` trait — DID document storage substrate (RFC-0010 v1.3 + v1.5).
+//! `DidRegistry` trait — DID document storage substrate (RFC-0010 + v1.5).
 //!
 //! Maps a canonical 32-byte DID hash (`RawDid::hash`, NOT the `WireDid`
 //! typed wrapper — see [[cipherocto-design-principles]] §Stable
 //! Abstractions Principle) to a `DidDocument` (public_key + revoked flag
 //! + v1.5 rich surface).
 //!
-//! ## Multi-chain namespacing (RFC-0010 v1.4 + mission 0010-f2-registry-namespacing)
+//! ## Multi-chain namespacing (RFC-0010 + mission 0010-f2-registry-namespacing)
 //!
 //! The trait gains two ADDITIVE methods (`register_in_chain` +
 //! `resolve_in_chain`) with default impls that forward to the
@@ -36,7 +36,7 @@
 //! - `octo-identity-resolver-node` (Layer C) — consumer only; NO dep on
 //!   `quota-router-storage` (registry injected via `Arc<dyn DidRegistry>`)
 //!
-//! ## RFC-0010 v1.5 (additive on v1.3)
+//! ## RFC-0010 (additive on v1.3)
 //!
 //! v1.5 extends `DidDocument` with the W3C DID Core 1.0 surface:
 //! service endpoints, controller refs, verification methods, capability
@@ -66,7 +66,7 @@ use crate::rich_document::{
 
 /// DID document — the canonical storage record for a registered DID.
 ///
-/// Per RFC-0010 v1.5 §Data Structures, the document carries:
+/// Per RFC-0010 §Data Structures, the document carries:
 /// - the MVP `public_key` + `revoked` flag (v1.3)
 /// - `service_endpoints` (typed `Vec<ServiceEndpoint>`)
 /// - `controllers` (typed `Vec<ControllerReference>`)
@@ -93,7 +93,7 @@ pub struct DidDocument {
     /// 32-byte Ed25519 public key bound to the DID.
     pub public_key: [u8; 32],
     /// True when the DID has been revoked; resolve() returns `Ok(None)`
-    /// for revoked DIDs (fail-closed semantics per RFC-0010 v1.3 §Storage
+    /// for revoked DIDs (fail-closed semantics per RFC-0010 §Storage
     /// Extension §Compatibility).
     pub revoked: bool,
     /// v1.5: typed service endpoints for resolver discovery.
@@ -119,7 +119,7 @@ pub struct DidDocument {
 pub enum DidRegistryError {
     /// `register` called for a DID that was previously revoked.
     /// Registration after revocation is rejected (fail-closed per
-    /// RFC-0010 v1.3 §Compatibility).
+    /// RFC-0010 §Compatibility).
     #[error("cannot re-register revoked DID")]
     AlreadyRevoked,
 
@@ -178,7 +178,7 @@ pub trait DidRegistry: Send + Sync + 'static {
     /// List all active (non-revoked) DID documents.
     ///
     /// Returns documents sorted by `canonical_hash` ascending for
-    /// deterministic iteration (RFC-0010 v1.3 §Determinism Requirements).
+    /// deterministic iteration (RFC-0010 §Determinism Requirements).
     /// Revoked documents are filtered out — the trait surfaces only
     /// the active view.
     ///
@@ -186,7 +186,7 @@ pub trait DidRegistry: Send + Sync + 'static {
     /// - `DidRegistryError::Storage` on underlying storage failure.
     fn list(&self) -> Result<Vec<DidDocument>, DidRegistryError>;
 
-    /// Register a DID on an explicit chain namespace (RFC-0010 v1.4).
+    /// Register a DID on an explicit chain namespace (RFC-0010).
     ///
     /// Default impl forwards to `register` (single-chain mode) for
     /// back-compat with existing `DidRegistry` impls. Production
@@ -205,7 +205,7 @@ pub trait DidRegistry: Send + Sync + 'static {
         self.register(canonical_hash, doc)
     }
 
-    /// Resolve a DID on an explicit chain namespace (RFC-0010 v1.4).
+    /// Resolve a DID on an explicit chain namespace (RFC-0010).
     ///
     /// Default impl forwards to `resolve` (single-chain mode) for
     /// back-compat with existing `DidRegistry` impls. Production

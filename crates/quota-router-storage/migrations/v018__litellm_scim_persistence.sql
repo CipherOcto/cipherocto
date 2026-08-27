@@ -18,7 +18,7 @@
 --   3. Rejects partial UNIQUE INDEX with WHERE clause — drop WHERE
 --      clauses; enforce one-active via application-layer lookup.
 --   4. DQA(12) is the canonical amount-bearing column type per vault
---      v013/v014 + RFC-0959 v2.1. Stoolap fork accepts DQA(12) in DDL
+--      v013/v014 + RFC-0959. Stoolap fork accepts DQA(12) in DDL
 --      and round-trips correctly when inserted via text literal
 --      (e.g. `VALUES (..., '1.0', ...)`); Rust i64 parameter binding
 --      silently zeros values — handlers MUST bind DQA(12) as String or

@@ -39,7 +39,7 @@ RFC-0968 (Economics): Reputation Registry — retirement gate
 - [ ] Update `Marketplace::cheapest_with_ranking` to async + caller-supplied controller_id
 - [ ] Update all callers (`tests/eleven_step.rs`, `tests/marketplace_e2e.rs`, `tests/task_market.rs`, `quota-router-cli`, `octo-wallet`) to thread identity and `.await`
 - [ ] Drop `#[allow(deprecated)]` from `Marketplace` surface
-- [x] **NEW: `record_outcome_async(asker_did, success, latency_ms, controller_id, now_unix)`** — async write path through `reputation_compat`; rejects all-zero `controller_id` (RFC-0968-A1 amendment 40). Method on `Marketplace`.
+- [x] **NEW: `record_outcome_async(asker_did, success, latency_ms, controller_id, now_unix)`** — async write path through `reputation_compat`; rejects all-zero `controller_id` (RFC-0968-A1 amendment 40 (deferred to RFC-0968-A2 — ControllerIdMissing discriminant codepoint reservation)). Method on `Marketplace`.
 - [x] **NEW: `read_reputation_async(asker_did) -> Result<ProviderScore, ReputationError>`** — async read path through `reputation_compat`. Method on `Marketplace`.
 - [x] **NEW: `Marketplace.reputation_compat: ProviderReputationRegistryCompat<InMemoryReputationStore>`** — compat adapter field; initialized in all 3 constructors. Dual-read shadow with legacy `reputation`.
 - [x] **NEW: 4 dual-read parity tests in `tests/marketplace_reputation_async.rs`** — success path, failure path, unknown-DID, all-zero-controller-id-rejection. Δ ≤ 0.5 + monotonic agreement.

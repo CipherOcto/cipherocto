@@ -1,7 +1,7 @@
 //! TV-0206-A10 — `register_roundtrip.rs` for
 //! `octo-cap-macaroon-vault-storage`.
 //!
-//! Per RFC-0206 v2.1 §Test Vectors, each of the 5 adapter crates
+//! Per RFC-0206 §Test Vectors, each of the 5 adapter crates
 //! exposes a `tests/register_roundtrip.rs` that exercises the
 //! canonical `register → execute_checked → typed SELECT` round-trip.
 //! For the vault-lookup adapter the round-trip is a `VaultLookup`

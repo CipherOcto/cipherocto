@@ -267,6 +267,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn handler_proceeds_within_budget() {
         let mac = sample_macaroon_id();
         let ledger = Arc::new(octo_paid_query::InMemorySpendLedger::new());
@@ -274,7 +275,7 @@ mod tests {
         let handler = PaidQueryVerifyHandler::with_ledger(ledger);
         let req = PaidQueryRequest {
             macaroon_id: mac,
-            caveat: PaidQueryCaveat::new(dqa(1_000), "gpt-4", u64::MAX),
+            caveat: PaidQueryCaveat::legacy_3arg(dqa(1_000), "gpt-4", u64::MAX),
             query_cost: dqa(250),
             query_model: "gpt-4".to_string(),
             now_unix_ms: 0,
@@ -298,11 +299,12 @@ mod tests {
     /// response carries `PaymentReceipt { drained_amount: 250,
     /// remaining_budget: 750 }`.
     #[test]
+    #[allow(deprecated)]
     fn handler_proceed_decision_drains_ledger() {
         let (handler, mac) = handler_seeded(1_000);
         let req = PaidQueryRequest {
             macaroon_id: mac,
-            caveat: PaidQueryCaveat::new(dqa(1_000), "gpt-4", u64::MAX),
+            caveat: PaidQueryCaveat::legacy_3arg(dqa(1_000), "gpt-4", u64::MAX),
             query_cost: dqa(250),
             query_model: "gpt-4".to_string(),
             now_unix_ms: 0,
@@ -325,11 +327,12 @@ mod tests {
     /// response carries `PaymentReceipt { drained_amount: 0,
     /// remaining_budget: <prior> }`.
     #[test]
+    #[allow(deprecated)]
     fn handler_reject_decision_does_not_drain() {
         let (handler, mac) = handler_seeded(1_000);
         let req = PaidQueryRequest {
             macaroon_id: mac,
-            caveat: PaidQueryCaveat::new(dqa(1_000), "gpt-4", 100), // expires at 100
+            caveat: PaidQueryCaveat::legacy_3arg(dqa(1_000), "gpt-4", 100), // expires at 100
             query_cost: dqa(10),
             query_model: "gpt-4".to_string(),
             now_unix_ms: 500,
@@ -350,10 +353,11 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn handler_rejects_expired_caveat() {
         let req = PaidQueryRequest {
             macaroon_id: sample_macaroon_id(),
-            caveat: PaidQueryCaveat::new(dqa(1_000), "gpt-4", 100),
+            caveat: PaidQueryCaveat::legacy_3arg(dqa(1_000), "gpt-4", 100),
             query_cost: dqa(10),
             query_model: "gpt-4".to_string(),
             now_unix_ms: 500,
@@ -368,10 +372,11 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn handler_emits_paid_query_verify_payload_kind() {
         let req = PaidQueryRequest {
             macaroon_id: sample_macaroon_id(),
-            caveat: PaidQueryCaveat::new(dqa(1_000), "gpt-4", u64::MAX),
+            caveat: PaidQueryCaveat::legacy_3arg(dqa(1_000), "gpt-4", u64::MAX),
             query_cost: dqa(10),
             query_model: "gpt-4".to_string(),
             now_unix_ms: 0,

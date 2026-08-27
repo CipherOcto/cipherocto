@@ -61,6 +61,17 @@ base64 = "0.22"
 # + RFC-0957 §3.7). Borsh is required by the wallet-node + paid-query
 # envelope layer (Layer C / Layer E) which sit above the substrate.
 borsh = { version = "=1.5.0", features = ["derive"] }
+# Mission D substrate primitives (`AssetRegistry`, `NonceRegistry`,
+# newtypes `Nonce`/`Epoch`/`GovernanceSignature`/`AssetId`/`ChainId`/`VaultId`/)
+# live in `crate::substrate` per RFC-0105 v3.5 §3.1/§3.11/§3.12
+# canonical home rule. Living in octo-cap-macaroon (rather than
+# octo-vault) preserves the B→B substrate-handle dependency direction:
+# `octo-vault` (B) depends on `octo-cap-macaroon` (B) for substrate
+# primitives; consumer crates depend on `octo-cap-macaroon` for the
+# primitives (not on `octo-vault`, which carries the storage coupling).
+# This avoids the cycle that would arise if octo-cap-macaroon's
+# `caveat::PaymentCaveat::verify` gates imported registry/nonce
+# traits from octo-vault directly.
 
 [dev-dependencies]
 # Property-based tests in `macaroon.rs` (`proptest!` macros).

@@ -28,6 +28,13 @@ thiserror = "2.0"
 # module is visible WITHOUT a remote push (per
 # `feedback_initiation_user_only`).
 octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
+# Mission D substrate: `octo-cap-macaroon` owns the trait declarations
+# (`AssetRegistry`, `NonceRegistry`) + newtypes (`Nonce`, `Epoch`,
+# `AssetId`, `ChainId`, `VaultId`, `GovernanceSignature`) + primitives
+# (`blake3_hash`, `verify_governance_signature`) per RFC-0105 v3.5
+# §3.1/§3.11/§3.12 canonical home rule. octo-vault re-exports + adds
+# the live-registry impls + storage-coupled substrate handle.
+octo-cap-macaroon = { path = "../octo-cap-macaroon" }
 
 [dev-dependencies]
 # Hex encoding for byte-exact test vector fixtures (TV-V1) +

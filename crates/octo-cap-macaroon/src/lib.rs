@@ -58,8 +58,10 @@
 pub mod caveat;
 pub mod discharge;
 pub mod dqa_serde;
+pub mod governance_signature;
 pub mod macaroon;
 pub mod signer;
+pub mod substrate;
 pub mod token;
 pub mod wire;
 
@@ -88,10 +90,11 @@ pub use bundle_v2::{
 };
 pub use catalog::{CompositeCapabilityCatalog, CompositeGossip};
 pub use caveat::{
-    set_subsumes, set_subsumes_with_registry, ActionTemplate, AskId, AttenuationError, Blake3,
-    CachePolicy, Caveat, CaveatName, FactoryVet, ModelRef, OverlayIdentity, PaidQueryDecision,
-    PaidQueryRejectionReason, PaymentCaveat, PerAxisMax, PermissionKind, ProviderId, RateLimit,
-    RawCaveat, UnixTimeSecs, ISO3166, PAID_QUERY_CAVEAT_NAME,
+    set_subsumes, set_subsumes_with_registry, ActionTemplate, AskId, AssetBinding,
+    AttenuationError, Blake3, CachePolicy, Caveat, CaveatName, FactoryVet, ModelRef,
+    OverlayIdentity, PaymentCaveat, PaymentDecision, PaymentRejectionReason, PerAxisMax,
+    PermissionKind, ProviderId, RateLimit, RawCaveat, UnixTimeSecs, ISO3166,
+    PAID_QUERY_CAVEAT_NAME,
 };
 pub use clock::{Clock, FixedClock, SystemClock};
 pub use discharge::{
@@ -99,6 +102,10 @@ pub use discharge::{
     DischargeChannel, DischargeError, DischargeRequest, DischargeVerification, EscrowBalance,
     EscrowDischargeProvider, RateLimitContext, RateLimitDischargeProvider,
     RevocationDischargeProvider, REVOCATION_DISCHARGE_TTL_SECS,
+};
+pub use governance_signature::{
+    blake3_hash, verify_governance_signature, GovernancePubkey, GovernanceSignatureBytes,
+    GovernanceSignatureError,
 };
 pub use holder_kind::HolderKind;
 pub use holder_record::{CapabilityClass, CapabilityTokenLike, HolderRecord};
@@ -108,6 +115,12 @@ pub use macaroon::{
     CapabilityGossip, CatalogGossipError, Macaroon, MacaroonError, MAX_WRAPPED_DEPTH,
 };
 pub use signer::{CapabilitySigner, CapabilitySignerError};
+pub use substrate::{
+    nonce_bucket_key, sovereign_nonce_namespace, sovereign_observe_key, AssetError, AssetId,
+    AssetKind, AssetMetadata, AssetRegistry, ChainId, Epoch, GovernanceSignature,
+    InMemoryAssetRegistry, InMemoryNonceRegistry, Nonce, NonceError, NonceEventKind, NonceRegistry,
+    VaultId, MAX_SCALE,
+};
 pub use token::{CapabilityToken, DischargeMacaroon, MintError};
 pub use vault_lookup::{VaultLookup, VaultLookupExt, VaultRowSnapshot};
 pub use vault_verify_error::VaultVerifyError;

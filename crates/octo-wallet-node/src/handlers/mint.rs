@@ -266,13 +266,14 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn mint_request_wire_round_trip_with_payment_caveat() {
         // Mission 0957-phase2b: the optional PaymentCaveat field must
         // roundtrip cleanly through the borsh wire form (Layer A
         // `BorshSerialize`/`BorshDeserialize` impls on `Dqa` shipped
         // upstream — borsh re-introduction after mission 0862-c9
         // RETIRED).
-        let p = octo_cap_macaroon::PaymentCaveat::new(
+        let p = octo_cap_macaroon::PaymentCaveat::legacy_3arg(
             octo_determin::Dqa::new(1_000_000, 0).expect("scale=0 valid"),
             "gpt-4",
             u64::MAX,
@@ -480,6 +481,7 @@ mod tests {
     /// itself is unchanged in shape; the seeding is a side effect
     /// that downstream `octo-paid-query` drains against.
     #[test]
+    #[allow(deprecated)]
     fn handle_with_ledger_seeds_payment_caveat_budget() {
         use octo_ident::WireDid;
         let id = sample_identity();
@@ -487,7 +489,7 @@ mod tests {
         let holder_did = WireDid::new(holder_did_str.clone());
         let ledger = Arc::new(octo_paid_query::InMemorySpendLedger::new());
         let handler = MintHandler::with_ledger(&id, ledger.clone());
-        let payment = octo_cap_macaroon::PaymentCaveat::new(
+        let payment = octo_cap_macaroon::PaymentCaveat::legacy_3arg(
             octo_determin::Dqa::new(1_000_000, 0).expect("scale=0 valid"),
             "gpt-4",
             u64::MAX,

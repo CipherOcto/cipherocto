@@ -518,12 +518,17 @@ mod tests {
     }
 
     fn fresh_caveat(budget: i64, model: &str, expires_at: u64) -> PaidQueryCaveat {
-        PaidQueryCaveat::new(dqa(budget), model, expires_at)
+        // Legacy 3-arg form for tests — RFC-0965 v2.1 §4.1 6-week
+        // `#[deprecated]` window. The substrate signature is 6-arg;
+        // tests deliberately exercise the legacy shim.
+        #[allow(deprecated)]
+        PaidQueryCaveat::legacy_3arg(dqa(budget), model, expires_at)
     }
 
     #[test]
     fn caveat_constructor_sets_canonical_name() {
-        let c = PaidQueryCaveat::new(dqa(1_000_000), "gpt-4", u64::MAX);
+        #[allow(deprecated)]
+        let c = PaidQueryCaveat::legacy_3arg(dqa(1_000_000), "gpt-4", u64::MAX);
         assert_eq!(c.caveat_name, PAID_QUERY_CAVEAT_NAME);
         assert_eq!(c.caveat_name, "paid-query/v1");
         assert_eq!(c.budget.value, 1_000_000);

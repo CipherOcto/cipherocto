@@ -55,6 +55,19 @@ pub const MAX_OWNER_DID_LEN: usize = 256;
 pub(crate) mod migrations;
 
 pub use migrations::BUILTIN_MIGRATION_CATALOG;
+
+// Mission D substrate re-exports: traits + newtypes live in
+// octo-cap-macaroon (Layer A frozen substrate per RFC-0105 v3.5
+// §3.1/§3.11 canonical home). octo-vault re-exports for ergonomic
+// substrate-handle consumers (storage-coupled implementations + tests).
+pub use octo_cap_macaroon::{
+    blake3_hash as vault_blake3_hash, nonce_bucket_key as vault_nonce_bucket_key,
+    sovereign_nonce_namespace as vault_sovereign_nonce_namespace,
+    verify_governance_signature as vault_verify_governance_signature, AssetError, AssetId,
+    AssetKind, AssetMetadata, AssetRegistry, ChainId, Epoch, GovernancePubkey, GovernanceSignature,
+    GovernanceSignatureBytes, GovernanceSignatureError, InMemoryAssetRegistry,
+    InMemoryNonceRegistry, Nonce, NonceError, NonceEventKind, NonceRegistry, VaultId, MAX_SCALE,
+};
 // NOTE: `BUILTIN_MIGRATIONS` (the tuple slice form) is intentionally NOT
 // re-exported — it's an internal drift-detection form consumed only by
 // `migrations::tests`. External callers reach the catalog via
@@ -76,87 +89,14 @@ pub enum VaultError {
     Substrate,
 }
 
-/// 32-byte canonical identifier. `vault_id = BLAKE3("cipherocto/vault/v1/" + chain_id + owner_did + asset_id)`
-/// per review §8.10 TV-V1. Stored as `BLOB(32)` in `octo_vault.vaults.vault_id`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct VaultId(pub [u8; 32]);
-
-impl VaultId {
-    /// Build a `VaultId` from raw bytes (no derivation; bypasses the canonical
-    /// BLAKE3 path). Use only when the caller already holds the derived bytes
-    /// (e.g. reading from `octo_vault.vaults.vault_id`).
-    ///
-    /// **Trust posture:** `from_bytes` is NOT a trust anchor. Callers that
-    /// authorize an action based on a `vault_id` MUST recompute via
-    /// [`vault_id`] rather than trust a constructor argument. The
-    /// substrate's `vaults_vault_id_idx` UNIQUE index is the runtime
-    /// invariant; this constructor is for ergonomic binding.
-    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-
-    /// Borrow the underlying bytes (e.g. for Stoolap BLOB parameter binding).
-    pub const fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
-    }
-}
-
-/// 32-byte chain identifier. `chain_id = BLAKE3("cipherocto/chain/v1/" + chain_string)` per §20.3.2.
-/// Distinct chain_id space from any other `BLOB(32)` derivation in the substrate
-/// (different domain tag `cipherocto/chain/v1/` vs `cipherocto/vault/v1/`,
-/// `cipherocto/asset/v1/`, `cipherocto/did/v1/`, ...).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ChainId(pub [u8; 32]);
-
-impl ChainId {
-    /// Derive canonical chain_id from a human-readable chain_string per §20.3.2.
-    pub fn derive(chain_string: &str) -> Self {
-        let mut h = blake3::Hasher::new();
-        h.update(b"cipherocto/chain/v1/");
-        h.update(chain_string.as_bytes());
-        let bytes = h.finalize();
-        let mut out = [0u8; 32];
-        out.copy_from_slice(bytes.as_bytes());
-        Self(out)
-    }
-
-    /// Build from raw bytes (e.g. read from a row).
-    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-
-    /// Borrow the underlying bytes.
-    pub const fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
-    }
-}
-
-/// 32-byte asset identifier. `asset_id = BLAKE3("cipherocto/asset/v1/" + role_token)` per §20.3.1.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct AssetId(pub [u8; 32]);
-
-impl AssetId {
-    /// Derive canonical asset_id from a role-token string per §20.3.1.
-    pub fn derive(role_token: &str) -> Self {
-        let mut h = blake3::Hasher::new();
-        h.update(b"cipherocto/asset/v1/");
-        h.update(role_token.as_bytes());
-        let bytes = h.finalize();
-        let mut out = [0u8; 32];
-        out.copy_from_slice(bytes.as_bytes());
-        Self(out)
-    }
-
-    /// Build from raw bytes.
-    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-
-    /// Borrow the underlying bytes.
-    pub const fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
-    }
-}
+// NOTE: `VaultId`, `ChainId`, `AssetId` are re-exported above from
+// `octo_cap_macaroon::substrate` (RFC-0105 v3.5 canonical home). The
+// canonical BLAKE3 derivations (`AssetId::derive(role_token)`,
+// `ChainId::derive(chain_string)`) live in `octo-cap-macaroon/src/substrate.rs`
+// and are reachable through the re-exports. The composite `vault_id`
+// derivation that combines all three inputs lives in this crate because
+// `owner_did` is Layer B context that the substrate intentionally does
+// not model.
 
 /// Vault state. Per review §20.3 schema sketch the column is `TEXT NOT NULL`
 /// with values from this enum. RFC-0960 §2.1 listed `Retired`; review §20.10

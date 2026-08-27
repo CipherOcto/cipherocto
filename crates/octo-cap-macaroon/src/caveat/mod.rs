@@ -13,9 +13,10 @@ use serde::{Deserialize, Serialize};
 use crate::dqa_serde;
 
 pub mod payment;
+#[allow(deprecated)]
 pub use payment::{
-    AttenuationError, PaidQueryDecision, PaidQueryRejectionReason, PaymentCaveat,
-    PAID_QUERY_CAVEAT_NAME,
+    octo_w_asset_id, AttenuationError, PaidQueryDecision, PaidQueryRejectionReason, PaymentCaveat,
+    PaymentDecision, PaymentRejectionReason, OCTO_W_ASSET_ID_BYTES, PAID_QUERY_CAVEAT_NAME,
 };
 
 // (2026-08-17) `MicroOctoW` type alias was RETIRED project-wide. All
@@ -217,6 +218,14 @@ pub enum Caveat {
     /// parent model empty OR matches child model).
     #[serde(rename = "payment")]
     Payment(PaymentCaveat),
+
+    /// Asset-binding co-bound caveat (RFC-0965 v2.1 §5 L444-520).
+    /// When co-occurring with `Caveat::Payment` in the same chain,
+    /// `set_subsumes` enforces `payment.asset_id == self.asset_id`
+    /// (Round 1 CRITICAL #5 mitigation — prevents PermissionKind bypass
+    /// on USDC budgets being spent against OCTO-W queries).
+    #[serde(rename = "asset_binding")]
+    AssetBinding(AssetBinding),
 }
 
 /// Permission kind enum (RFC-0965 §3.2).
@@ -272,6 +281,20 @@ pub struct RawCaveat {
     pub value: Vec<u8>,
 }
 
+/// Asset-binding co-bound caveat payload (RFC-0965 v2.1 §5 L444-520).
+///
+/// Pairs with a `Caveat::Payment(p)` to enforce that the payment
+/// caveat's `asset_id` matches this `asset_id`. Prevents
+/// `PermissionKind::Erc20TokenTransfer`-style bypass where a USDC
+/// budget could authorize an OCTO-W payment.
+///
+/// Wire form: serde_json hex-encoded 32-byte asset_id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AssetBinding {
+    /// 32-byte asset_id (`BLAKE3("cipherocto/asset/v1/" + role_token)`).
+    pub asset_id: [u8; 32],
+}
+
 /// Caveat name string (used as `info` parameter to HMAC-BLAKE3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CaveatName {
@@ -301,6 +324,7 @@ pub enum CaveatName {
     RedemptionContext,
     Sharded,
     Payment,
+    AssetBinding,
 }
 
 impl CaveatName {
@@ -334,6 +358,7 @@ impl CaveatName {
             Self::RedemptionContext => "cipherocto/cap/v1/caveat/redemption_context",
             Self::Sharded => "cipherocto/cap/v1/caveat/sharded",
             Self::Payment => "cipherocto/cap/v1/caveat/payment",
+            Self::AssetBinding => "cipherocto/cap/v1/caveat/asset_binding",
         }
     }
 }
@@ -473,6 +498,16 @@ fn parent_caveat_implies(parent: &[Caveat], child: &Caveat) -> bool {
         Caveat::Vault(c) => parent
             .iter()
             .any(|p| matches!(p, Caveat::Vault(p) if p == c)),
+        Caveat::AssetBinding(c) => parent.iter().any(|p| match p {
+            // Co-bound rule (RFC-0965 v2.1 §5 L444-520): when parent
+            // carries a Caveat::AssetBinding AND child carries a
+            // Caveat::Payment with a different asset_id, the chain is
+            // rejected (prevents PermissionKind bypass on cross-asset
+            // payment caveats).
+            Caveat::AssetBinding(p_inner) => p_inner.asset_id == c.asset_id,
+            Caveat::Payment(p) => p.asset_id.0 == c.asset_id,
+            _ => false,
+        }),
         Caveat::Permission(c) => parent
             .iter()
             .any(|p| matches!(p, Caveat::Permission(p) if p == c)),
@@ -620,6 +655,7 @@ impl Caveat {
             Self::RedemptionContext { .. } => CaveatName::RedemptionContext,
             Self::Sharded { .. } => CaveatName::Sharded,
             Self::Payment(_) => CaveatName::Payment,
+            Self::AssetBinding(_) => CaveatName::AssetBinding,
         }
     }
 
@@ -741,6 +777,12 @@ impl Caveat {
                         "model": p.model,
                         "expires_at_unix_ms": p.expires_at_unix_ms,
                     }
+                })
+            }
+            Caveat::AssetBinding(b) => {
+                serde_json::json!({
+                    "type": "asset_binding",
+                    "value": hex::encode(b.asset_id)
                 })
             }
         };

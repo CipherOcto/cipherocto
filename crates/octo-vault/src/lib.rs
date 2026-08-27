@@ -234,6 +234,15 @@ pub struct Vault {
     pub asset_id: AssetId,
     /// Balance (DQA scale 12). Persisted as Stoolap `DQA(12)` natively per
     /// §8.4.1 + §18 lock.
+    ///
+    /// **DEPRECATED** (RFC-0960 v3.7 §5 Cycle 1). The source of truth is
+    /// `transfer_events`; this column is a stranded projection. Delete in
+    /// Cycle 3 after 1-release deprecation window. Use
+    /// `VaultBalanceProjection::project()` to derive from the event log.
+    #[deprecated(
+        since = "0.2.0",
+        note = "stranded field; balance is now projected from transfer_events (RFC-0960 v3.7 §3.1). Delete in Cycle 3."
+    )]
     pub balance_dqa_micros: i64,
     /// Policy (canonical_ser blob).
     pub policy: VaultPolicy,

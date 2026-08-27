@@ -6,11 +6,17 @@ pub enum BalanceError {
     Insufficient(u64, u64),
 }
 
+#[deprecated(
+    since = "0.2.0",
+    note = "legacy OCTO-W-only key-keyed balance; superseded by VaultBalanceProjection (RFC-0960 v3.7 §3.6). Cycle 1 of 3-cycle deprecation; deletion in Cycle 3 (1 release)."
+)]
 pub struct Balance {
     pub amount: u64,
 }
 
+#[allow(deprecated)]
 impl Balance {
+    #[allow(deprecated)]
     pub fn new(amount: u64) -> Self {
         Self { amount }
     }

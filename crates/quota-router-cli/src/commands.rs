@@ -1,3 +1,5 @@
+#![allow(deprecated)] // Cycle 1 of 3-cycle legacy deprecation (RFC-0960 v3.7 §5). Remove in Cycle 3.
+
 use crate::balance::Balance;
 use crate::config::Config;
 use crate::providers::{default_endpoint, Provider};

@@ -11,6 +11,7 @@
 use octo_protocol::ProtocolError;
 
 pub mod attenuate;
+pub mod event_log_producer;
 pub mod mint;
 pub mod paid_query;
 pub mod resolve;

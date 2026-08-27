@@ -18,6 +18,8 @@ octo-storage-core = { path = "../octo-storage-core" }
 blake3 = "1.5"
 # Layer B → substrate error type. Display operator-facing, Debug substrate-internal.
 thiserror = "2.0"
+# Mission B (RFC-0960 v3.7 §2.4): cache_channel_name uses hex encoding.
+hex = "0.4"
 # `octo-determin` (Layer A frozen substrate, RFC-frozen per
 # `cipherocto-design-principles.md`). `asset_id_for` is the canonical
 # §20.3.1 derivation rule (RFC-0105 v2.0, mission 0105-v); the TV
@@ -37,7 +39,7 @@ octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "ne
 octo-cap-macaroon = { path = "../octo-cap-macaroon" }
 
 [dev-dependencies]
+# Test fixtures only — production hex is in [dependencies] (Mission B).
 # Hex encoding for byte-exact test vector fixtures (TV-V1) +
 # capture_tv_v1.rs example. Dev-only — keeps the production dep tree
 # minimal.
-hex = "0.4"

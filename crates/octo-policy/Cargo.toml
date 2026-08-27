@@ -26,6 +26,9 @@ octo-cap-macaroon = { path = "../octo-cap-macaroon" }
 octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
 # Mission F wire form (RFC-0960 v3.6 §3 borsh encoding).
 borsh = { version = "=1.5.0", features = ["derive"] }
+# Mission B (RFC-0960 v3.7 §2.5): BurnEventProducer impl lives in
+# Layer C (octo-policy). Dep on Layer B substrate crate (octo-vault).
+octo-vault = { path = "../octo-vault" }
 
 [dev-dependencies]
 serde_json.workspace = true

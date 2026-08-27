@@ -25,6 +25,7 @@
 use serde::{Deserialize, Serialize};
 
 pub mod envelope;
+pub mod event_log_producer;
 pub mod schema;
 pub mod settlement_event;
 pub mod shard;

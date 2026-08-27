@@ -60,11 +60,13 @@ pub mod workflow_kind;
 
 // Mission F (RFC-0960 v3.6): BurnEventRef substrate + 3-sink atomicity.
 pub mod burn_event;
+pub mod event_log_producer;
 
 pub use burn_event::{
     AuditError, AuditSink, BurnEventError, BurnEventRef, SettlementId, TransferEventLog,
     TransferEventLogError, ZERO_VAULT_ID,
 };
+pub use event_log_producer::{produce_burn, BurnEventProducer};
 
 use std::collections::{HashMap, HashSet};
 

@@ -45,6 +45,9 @@ octo-cap-macaroon = { path = "../octo-cap-macaroon" }
 # (NOT the typed `Caveat` enum directly — the central enum derives
 # serde-only, not borsh; the handler converts at the wire edge).
 serde_json = "1"
+# Mission B (RFC-0960 v3.7 §2.5): PaymentEventProducer lives at Layer C
+# (octo-wallet-node) and depends on Layer B substrate crate (octo-vault).
+octo-vault = { path = "../octo-vault" }
 
 # Async runtime for NetworkReceiver impl + broadcast_announce
 tokio = { version = "1", features = ["rt", "sync", "macros", "time"] }

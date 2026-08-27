@@ -58,11 +58,21 @@ pub(crate) mod migrations;
 // bounded-LRU cache + TransferEventLog port + VaultAssetResolver port.
 pub mod vault_balance_projection;
 
+// Mission B substrate (RFC-0960 v3.7): EventLogProducer trait +
+// VaultProjectionInvalidationEmitter + TransferEventRef envelope.
+pub mod event_log_producer;
+
 pub use migrations::BUILTIN_MIGRATION_CATALOG;
 // Mission A substrate re-exports (RFC-0960 v3.7 §2).
 pub use vault_balance_projection::{
     project, CacheKey, ProjectionError, ProjectionSource, TransferEventLog, VaultAssetResolver,
     VaultAssetResolverError, VaultBalanceCache, VaultBalanceProjection, V015_DDL, ZERO_VAULT_ID,
+};
+// Mission B substrate re-exports (RFC-0960 v3.7 §2.4-§2.5).
+pub use event_log_producer::{
+    cache_channel_name, process_drain_lock, EventLogProducer, ProducerError,
+    TransferEventLogInsert, TransferEventLogInsertError, TransferEventRef,
+    VaultProjectionInvalidationEmitter, VaultProjectionInvalidationEnvelope,
 };
 
 // Mission D substrate re-exports: traits + newtypes live in

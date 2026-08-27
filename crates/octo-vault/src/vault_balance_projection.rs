@@ -70,7 +70,15 @@ pub enum ProjectionError {
     LogReadFailed(String),
 }
 
-/// `TransferEventLog` port trait (RFC-0960 v3.7 §2.2).
+/// `TransferEventLog::insert` errors (Mission B §2.5).
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TransferEventLogInsertError {
+    #[error("transfer event log insert failed")]
+    InsertFailed,
+}
+
+/// `TransferEventLog` port trait (RFC-0960 v3.7 §2.2 + Mission B §2.5).
 ///
 /// Layer B port — production impl lives at `octo-vault-stoolap`
 /// (Layer D transport adapter).
@@ -103,6 +111,12 @@ pub trait TransferEventLog: Send + Sync {
         vault_id: &VaultId,
         asset_id: &AssetId,
     ) -> Result<Option<i64>, ProjectionError>;
+
+    /// Insert a `TransferEventRef` into the log (Mission B §2.5 step 4).
+    fn insert(
+        &mut self,
+        event: &crate::event_log_producer::TransferEventRef,
+    ) -> Result<(), crate::event_log_producer::TransferEventLogInsertError>;
 }
 
 /// `VaultAssetResolver` port trait (RFC-0960 v3.7 §2.1).

@@ -27,6 +27,9 @@ octo-cap-macaroon = { path = "../octo-cap-macaroon" }
 # octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
 # Mission G wire form (RFC-0959 v2.8 §3 borsh encoding).
 borsh = { version = "=1.5.0", features = ["derive"] }
+# Mission B (RFC-0960 v3.7 §2.5): SettlementEventProducer lives at Layer C
+# (quota-router-sm-engine) and depends on Layer B (octo-vault).
+octo-vault = { path = "../octo-vault" }
 
 # Workspace deps
 blake3.workspace = true

@@ -1235,6 +1235,17 @@ mod tests {
                     !msg.contains("sink:"),
                     "redactor MUST NOT leak audit_err `sink:` payload: {msg}"
                 );
+                // R6 SECURITY: absence guard — even for unit variants
+                // (no struct fields), the format MUST NOT contain `pk:`
+                // or `nonce:` substrings.
+                assert!(
+                    !msg.contains("pk:"),
+                    "format MUST NOT contain `pk:` substring: {msg}"
+                );
+                assert!(
+                    !msg.contains("nonce:"),
+                    "format MUST NOT contain `nonce:` substring: {msg}"
+                );
             }
             other => panic!("expected AuditSinkFailed{{UnobserveFailed}}, got {other:?}"),
         }
@@ -1301,11 +1312,118 @@ mod tests {
                     msg.contains("WalRecovering"),
                     "redactor MUST surface WalRecovering tag: {msg}"
                 );
+                // R6 SECURITY: absence guard — even for unit variants
+                // (no struct fields), the format MUST NOT contain `pk:`
+                // or `nonce:` substrings.
+                assert!(
+                    !msg.contains("pk:"),
+                    "format MUST NOT contain `pk:` substring: {msg}"
+                );
+                assert!(
+                    !msg.contains("nonce:"),
+                    "format MUST NOT contain `nonce:` substring: {msg}"
+                );
             }
             other => panic!("expected AuditSinkFailed{{UnobserveFailed}}, got {other:?}"),
         }
         // R5 test-coverage: nonce MUST NOT be in registry post-failed
         // observe (no state mutation on observe error).
+        let readonly = nr.observe_readonly(
+            octo_cap_macaroon::NonceEventKind::Burn,
+            &burn.governance_pubkey,
+            burn.nonce.as_bytes(),
+        );
+        assert!(
+            readonly.is_ok(),
+            "post-failed-observe observe_readonly MUST return Ok (no state mutation); got {readonly:?}"
+        );
+    }
+
+    /// TV-BE26 (R6 security + test-coverage): Sink-1 observe-failure
+    /// path with `NonceError::NotObserved` (struct variant carrying
+    /// 32-byte pk + nonce). Exercises the redactor contract for the
+    /// struct-variant case through `consume()` directly. Closes the
+    /// struct-variant observe-fail coverage gap (AlreadyObserved is
+    /// structurally impossible in this path — it shortcuts to Replay).
+    #[test]
+    fn tv_be26_observe_failure_not_observed() {
+        let asset_id = AssetId::from_bytes([1u8; 32]);
+        let vault_id = VaultId::from_bytes([2u8; 32]);
+        let (sk, pk) = sample_key();
+        let (reg, vr) = setup_managed(asset_id, pk, vault_id);
+        let mut burn = BurnEventRef {
+            chain_id: ChainId::from_bytes([3u8; 32]),
+            vault_id,
+            asset_id,
+            asset_kind: AssetKind::OctoW,
+            amount: Dqa::new(1_000, 0).unwrap(),
+            ledger_height: 100,
+            settlement_event_ref: SettlementId([4u8; 32]),
+            governance_signature: GovernanceSignature::from_bytes([0u8; 64]),
+            governance_pubkey: pk,
+            registry_snapshot_epoch: Epoch::new(0),
+            nonce: Nonce::from_bytes([5u8; 32]),
+        };
+        sign_burn(&sk, &mut burn);
+        let burn = new(
+            burn.chain_id,
+            burn.vault_id,
+            burn.asset_id,
+            burn.asset_kind,
+            burn.amount,
+            burn.ledger_height,
+            burn.settlement_event_ref,
+            burn.governance_signature,
+            burn.registry_snapshot_epoch,
+            burn.nonce,
+            &reg,
+            &vr,
+            Epoch::new(1),
+        )
+        .unwrap();
+        let mut nr = FailingObserveNonceRegistry::new(ObserveFailKind::NotObserved);
+        let mut audit = InMemoryAuditSink::default();
+        let err = consume(&burn, &mut nr, &mut audit).unwrap_err();
+        match err {
+            BurnEventError::AuditSinkFailed {
+                sink_error: AuditError::UnobserveFailed(msg),
+            } => {
+                // R6 SECURITY: the redactor MUST surface the NotObserved
+                // tag AND MUST NOT leak the 32-byte pk/nonce bytes that
+                // the struct variant embeds.
+                assert!(
+                    msg.contains("NotObserved"),
+                    "redactor MUST surface NotObserved tag: {msg}"
+                );
+                let mut pk_hex = String::with_capacity(64);
+                for b in &burn.governance_pubkey {
+                    use std::fmt::Write as _;
+                    let _ = write!(pk_hex, "{b:02x}");
+                }
+                let mut nonce_hex = String::with_capacity(64);
+                for b in burn.nonce.as_bytes() {
+                    use std::fmt::Write as _;
+                    let _ = write!(nonce_hex, "{b:02x}");
+                }
+                assert!(
+                    !msg.contains(&pk_hex),
+                    "format MUST NOT leak full pubkey hex: {msg}"
+                );
+                assert!(
+                    !msg.contains(&nonce_hex),
+                    "format MUST NOT leak full nonce hex: {msg}"
+                );
+                assert!(
+                    !msg.contains("pk:"),
+                    "format MUST NOT contain `pk:` substring: {msg}"
+                );
+                assert!(
+                    !msg.contains("nonce:"),
+                    "format MUST NOT contain `nonce:` substring: {msg}"
+                );
+            }
+            other => panic!("expected AuditSinkFailed{{UnobserveFailed}}, got {other:?}"),
+        }
         let readonly = nr.observe_readonly(
             octo_cap_macaroon::NonceEventKind::Burn,
             &burn.governance_pubkey,

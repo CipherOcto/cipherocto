@@ -400,4 +400,90 @@ mod tests {
         assert!(V015_DDL.contains("DQA(12)"));
         assert!(V015_DDL.contains("source_kind"));
     }
+
+    /// TV-VP-6 (R6 test-coverage): TTL boundary + 1-second-past
+    /// regression guard. The `now - cached_at <= ttl_seconds` check at
+    /// line 270 serves entries while `elapsed <= ttl` (inclusive) and
+    /// evicts when `elapsed > ttl`. This test locks both sides of the
+    /// boundary so a future regression to `<=` evicting at exact
+    /// boundary OR `<` evicting early both fail.
+    ///
+    /// We construct a cache directly + mutate `cached_at_unix_seconds`
+    /// to force each boundary state.
+    #[test]
+    fn tv_vp6_ttl_boundary_one_past_evicts() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let k = CacheKey::new(
+            ChainId::from_bytes([1u8; 32]),
+            VaultId::from_bytes([2u8; 32]),
+            AssetId::from_bytes([3u8; 32]),
+        );
+        let ttl = 60i64;
+        let mut cache = VaultBalanceCache::new(ttl);
+        let proj = VaultBalanceProjection {
+            chain_id: k.chain_id,
+            vault_id: k.vault_id,
+            asset_id: k.asset_id,
+            projected_balance: Dqa::new(0, 0).unwrap(),
+            projected_at_unix_seconds: Some(1_700_000_000),
+            registry_snapshot_epoch: 0,
+            source_kind: ProjectionSource::Cache,
+        };
+        cache.put(k, proj);
+        let now_unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        // Force 1-second-past-boundary: now - cached_at == ttl + 1 →
+        // MUST evict.
+        if let Some(entry) = cache.entries.get_mut(&k) {
+            entry.cached_at_unix_seconds = now_unix - ttl - 1;
+        } else {
+            panic!("entry MUST be present immediately after put()");
+        }
+        assert!(
+            cache.get(&k).is_none(),
+            "entry at TTL + 1 second MUST be evicted (now - cached_at > ttl_seconds)"
+        );
+    }
+
+    /// TV-VP-7 (R6 test-coverage): TTL exact-boundary inclusive
+    /// regression guard. At `now - cached_at == ttl_seconds` the entry
+    /// MUST still be served (inclusive `<=` check). A regression to
+    /// `<` would evict one second early.
+    #[test]
+    fn tv_vp7_ttl_exact_boundary_served() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let k = CacheKey::new(
+            ChainId::from_bytes([1u8; 32]),
+            VaultId::from_bytes([2u8; 32]),
+            AssetId::from_bytes([3u8; 32]),
+        );
+        let ttl = 60i64;
+        let mut cache = VaultBalanceCache::new(ttl);
+        let proj = VaultBalanceProjection {
+            chain_id: k.chain_id,
+            vault_id: k.vault_id,
+            asset_id: k.asset_id,
+            projected_balance: Dqa::new(0, 0).unwrap(),
+            projected_at_unix_seconds: Some(1_700_000_000),
+            registry_snapshot_epoch: 0,
+            source_kind: ProjectionSource::Cache,
+        };
+        cache.put(k, proj);
+        let now_unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        // Force exact-boundary: now - cached_at == ttl.
+        if let Some(entry) = cache.entries.get_mut(&k) {
+            entry.cached_at_unix_seconds = now_unix - ttl;
+        } else {
+            panic!("entry MUST be present immediately after put()");
+        }
+        assert!(
+            cache.get(&k).is_some(),
+            "entry at exact TTL boundary MUST still be served (now - cached_at == ttl_seconds, inclusive)"
+        );
+    }
 }

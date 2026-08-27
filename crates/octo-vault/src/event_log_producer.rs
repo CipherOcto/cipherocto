@@ -72,9 +72,9 @@ pub trait EventLogProducer: Send + Sync {
         current_unix_seconds: i64,
     ) -> Result<TransferEventRef, ProducerError> {
         let _guard = self
-        .drain_lock()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .drain_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         self.validate_pre_insert(&input, registry, asset_resolver)?;
         let ev = self.to_transfer_event(input, registry, asset_resolver, nonce_registry)?;
         log.insert(&ev).map_err(ProducerError::from)?;

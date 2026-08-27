@@ -86,6 +86,7 @@ pub struct RateLimit {
 /// remove caveats. The verify routine enforces this.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value")]
+#[non_exhaustive]
 pub enum Caveat {
     /// Total budget cap (implied sum over all axes at settlement time).
     #[serde(

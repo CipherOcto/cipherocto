@@ -27,10 +27,10 @@ use octo_cap_macaroon::{
 
 /// Typed 32-byte wrapper for a settlement event ID
 /// (RFC-0959 v2.8 §2.1 L67).
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, Hash, borsh::BorshSerialize, borsh::BorshDeserialize,
-)]
-pub struct SettlementId(pub [u8; 32]);
+///
+/// Re-exported from `octo_cap_macaroon::SettlementId` (Layer A substrate;
+/// canonical home per `cipherocto-design-principles` §Canonical home rule).
+pub use octo_cap_macaroon::SettlementId;
 
 /// Typed 32-byte wrapper for an ask ID (RFC-0959 v2.8 §2.1 L68).
 #[derive(
@@ -178,6 +178,7 @@ pub fn encode_settlement_decision(d: SettlementDecision) -> Vec<u8> {
 #[must_use]
 pub fn compute_settlement_body_hash(settlement: &SettlementEvent) -> [u8; 32] {
     let mut buf: Vec<u8> = Vec::with_capacity(32 * 6 + 1 + 16 + 8 + 8 + 32 + 32);
+    buf.extend_from_slice(BODY_HASH_DOMAIN);
     buf.extend_from_slice(settlement.settlement_id.0.as_ref());
     buf.extend_from_slice(settlement.ask_id.0.as_ref());
     buf.extend_from_slice(settlement.cost_vault_id.as_bytes());

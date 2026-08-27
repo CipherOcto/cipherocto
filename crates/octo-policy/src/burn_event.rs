@@ -136,16 +136,9 @@ pub trait AuditSink: Send + Sync {
     fn compensate(&mut self, event: &BurnEventRef) -> Result<(), AuditError>;
 }
 
-/// TransferEventLog port (Mission F + Mission B BurnEventProducer).
-pub trait TransferEventLog: Send + Sync {
-    fn insert(&mut self, event: &BurnEventRef) -> Result<(), TransferEventLogError>;
-}
-
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum TransferEventLogError {
-    #[error("transfer event log insert failed")]
-    InsertFailed,
-}
+/// TransferEventLog port — re-exported from `octo_vault` (canonical Layer B
+/// substrate per `cipherocto-design-principles` §No parallel abstractions).
+pub use octo_vault::TransferEventLog;
 
 /// Audit invariant violation (RFC-0105 v3.5 §3.13 tri-invariant pair).
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -167,6 +160,7 @@ pub enum AuditInvariantViolation {
 #[must_use]
 pub fn compute_body_hash(burn: &BurnEventRef) -> [u8; 32] {
     let mut buf: Vec<u8> = Vec::with_capacity(32 * 6 + 1 + 8 + 8 + 8 + 32 + 8 + 32);
+    buf.extend_from_slice(BODY_HASH_DOMAIN);
     buf.extend_from_slice(burn.chain_id.as_bytes());
     buf.extend_from_slice(burn.vault_id.as_bytes());
     buf.extend_from_slice(burn.asset_id.as_bytes());
@@ -346,13 +340,15 @@ pub fn verify_burn_against_caveat(
     Ok(())
 }
 
-/// Atomic 3-sink orchestration per RFC-0960 v3.6 §2.2 L337-368 +
-/// R7 CRITICAL #3 cross-sink rollback.
+/// Atomic 2-sink orchestration per RFC-0960 v3.6 §2.2 L337-368 +
+/// R7 CRITICAL #3 cross-sink rollback. The third sink (transfer log
+/// insert) is owned by `produce_burn` (Layer B `TransferEventLog`); the
+/// parallel `octo-policy::TransferEventLog` trait was eliminated under
+/// mission `l4-parallel-transfer-event-log-elimination`.
 pub fn consume(
     burn: &BurnEventRef,
     nonce_registry: &mut dyn NonceRegistry,
     audit_sink: &mut dyn AuditSink,
-    transfer_log: &mut dyn TransferEventLog,
 ) -> Result<(), BurnEventError> {
     // Sink (1) — nonce observe
     if let Err(e) = nonce_registry.observe(
@@ -381,25 +377,6 @@ pub fn consume(
             sink_error: audit_err,
         });
     }
-    // Sink (3) — transfer log insert (the producer write)
-    if let Err(log_err) = transfer_log.insert(burn) {
-        // Rollback (2) + (1)
-        let compensate_result = audit_sink.compensate(burn);
-        let unobserve_result = nonce_registry.unobserve(
-            NonceEventKind::Burn,
-            &burn.governance_pubkey,
-            burn.nonce.as_bytes(),
-        );
-        let audit_compensated = compensate_result.is_ok();
-        let nonce_rolled_back = unobserve_result.is_ok();
-        return Err(BurnEventError::AuditSinkFailed {
-            sink_error: AuditError::LogInsertFailed {
-                sink: format!("{log_err:?}"),
-                nonce_rolled_back,
-                audit_compensated,
-            },
-        });
-    }
     Ok(())
 }
 
@@ -408,10 +385,14 @@ pub fn consume(
 pub struct InMemoryAuditSink {
     pub writes: Vec<[u8; 32]>,
     pub compensates: Vec<[u8; 32]>,
+    pub fail_write: bool,
 }
 
 impl AuditSink for InMemoryAuditSink {
     fn write(&mut self, event: &BurnEventRef) -> Result<(), AuditError> {
+        if self.fail_write {
+            return Err(AuditError::WriteFailed);
+        }
         let h = compute_body_hash(event);
         self.writes.push(h);
         Ok(())
@@ -423,22 +404,14 @@ impl AuditSink for InMemoryAuditSink {
     }
 }
 
-/// In-memory `TransferEventLog` for tests.
+/// In-memory `TransferEventLog` fixture placeholder (deleted under mission
+/// `l4-parallel-transfer-event-log-elimination` — the parallel trait was
+/// eliminated in favour of `octo_vault::TransferEventLog`; per-test fixtures
+/// live in `octo-vault/src/testing.rs` per follow-on cycle).
 #[derive(Debug, Default)]
 pub struct InMemoryTransferEventLog {
     pub inserts: Vec<[u8; 32]>,
     pub fail_insert: bool,
-}
-
-impl TransferEventLog for InMemoryTransferEventLog {
-    fn insert(&mut self, event: &BurnEventRef) -> Result<(), TransferEventLogError> {
-        if self.fail_insert {
-            return Err(TransferEventLogError::InsertFailed);
-        }
-        let h = compute_body_hash(event);
-        self.inserts.push(h);
-        Ok(())
-    }
 }
 
 // Suppress unused BODY_HASH_DOMAIN (RFC-0960 v3.6 §3 reserves domain
@@ -745,11 +718,10 @@ mod tests {
         .unwrap();
         let mut nr = InMemoryNonceRegistry::new();
         let mut audit = InMemoryAuditSink::default();
-        let mut log = InMemoryTransferEventLog::default();
         // First consume succeeds
-        consume(&burn, &mut nr, &mut audit, &mut log).unwrap();
+        consume(&burn, &mut nr, &mut audit).unwrap();
         // Second consume fails with Replay
-        let err = consume(&burn, &mut nr, &mut audit, &mut log).unwrap_err();
+        let err = consume(&burn, &mut nr, &mut audit).unwrap_err();
         assert!(matches!(err, BurnEventError::Replay { .. }));
     }
 
@@ -792,10 +764,8 @@ mod tests {
         .unwrap();
         let mut nr = InMemoryNonceRegistry::new();
         let mut audit = InMemoryAuditSink::default();
-        let mut log = InMemoryTransferEventLog::default();
-        consume(&burn, &mut nr, &mut audit, &mut log).unwrap();
+        consume(&burn, &mut nr, &mut audit).unwrap();
         assert_eq!(audit.writes.len(), 1);
-        assert_eq!(log.inserts.len(), 1);
     }
 
     /// TV-BE14: verify_burn_against_caveat matches.
@@ -864,9 +834,15 @@ mod tests {
         assert_eq!(burn, back);
     }
 
-    /// TV-BE18: 3-sink atomicity — log.insert failure rolls back audit + nonce.
+    /// TV-BE18: 2-sink atomicity — audit-sink write failure rolls back nonce.
+    ///
+    /// Under mission `l4-parallel-transfer-event-log-elimination` Sink 3
+    /// (transfer log) was removed from `consume`; the 3-sink rollback path
+    /// became a 2-sink rollback path. This test guards the surviving
+    /// cross-sink rollback invariant: Sink 2 (audit) failure MUST roll back
+    /// Sink 1 (nonce).
     #[test]
-    fn tv_be18_3sink_atomicity_rollback() {
+    fn tv_be18_2sink_atomicity_rollback() {
         let asset_id = AssetId::from_bytes([1u8; 32]);
         let vault_id = VaultId::from_bytes([2u8; 32]);
         let (sk, pk) = sample_key();
@@ -902,30 +878,21 @@ mod tests {
         )
         .unwrap();
         let mut nr = InMemoryNonceRegistry::new();
-        let mut audit = InMemoryAuditSink::default();
-        let mut log = InMemoryTransferEventLog {
-            fail_insert: true,
+        let mut audit = InMemoryAuditSink {
+            fail_write: true,
             ..Default::default()
         };
-        let err = consume(&burn, &mut nr, &mut audit, &mut log).unwrap_err();
+        let err = consume(&burn, &mut nr, &mut audit).unwrap_err();
         match err {
             BurnEventError::AuditSinkFailed {
-                sink_error:
-                    AuditError::LogInsertFailed {
-                        nonce_rolled_back,
-                        audit_compensated,
-                        ..
-                    },
-            } => {
-                assert!(nonce_rolled_back, "nonce MUST be rolled back");
-                assert!(audit_compensated, "audit MUST be compensated");
-            }
-            _ => panic!("expected LogInsertFailed, got {err:?}"),
+                sink_error: AuditError::WriteFailed,
+            } => {}
+            _ => panic!("expected AuditSinkFailed/WriteFailed, got {err:?}"),
         }
-        // Nonce was rolled back — second consume should succeed.
-        let mut log_ok = InMemoryTransferEventLog::default();
-        consume(&burn, &mut nr, &mut audit, &mut log_ok).unwrap();
-        assert_eq!(audit.compensates.len(), 1);
+        // Nonce was rolled back — second consume (with audit restored) succeeds.
+        audit.fail_write = false;
+        consume(&burn, &mut nr, &mut audit).unwrap();
+        assert_eq!(audit.writes.len(), 1);
     }
 
     /// TV-BE19: body_hash stability under perturbation.
@@ -975,10 +942,9 @@ mod tests {
         };
         let mut nr = InMemoryNonceRegistry::new();
         let mut audit = InMemoryAuditSink::default();
-        let mut log = InMemoryTransferEventLog::default();
-        consume(&burn1, &mut nr, &mut audit, &mut log).unwrap();
-        consume(&burn2, &mut nr, &mut audit, &mut log).unwrap();
-        assert_eq!(log.inserts.len(), 2);
+        consume(&burn1, &mut nr, &mut audit).unwrap();
+        consume(&burn2, &mut nr, &mut audit).unwrap();
+        assert_eq!(audit.writes.len(), 2);
     }
 
     /// TV-BE22: stale snapshot detection.

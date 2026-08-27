@@ -88,7 +88,6 @@ pub fn produce_burn(
     asset_resolver: &dyn VaultAssetResolver,
     nonce_registry: &mut dyn NonceRegistry,
     audit_sink: &mut dyn crate::burn_event::AuditSink,
-    consume_log: &mut dyn crate::burn_event::TransferEventLog,
     log: &mut dyn TransferEventLog,
     bus: &dyn VaultProjectionInvalidationEmitter,
 ) -> Result<TransferEventRef, ProducerError> {
@@ -105,7 +104,7 @@ pub fn produce_burn(
     // TransferEventLog traits (octo-policy::burn_event::TransferEventLog
     // vs octo-vault::TransferEventLog) are tracked for elimination under
     // L4 CRITICAL #2.
-    crate::burn_event::consume(&burn, nonce_registry, audit_sink, consume_log)
+    crate::burn_event::consume(&burn, nonce_registry, audit_sink)
         .map_err(|e| ProducerError::TriInvariantViolation(format!("burn_consume: {e:?}")))?;
     let ev = producer.to_transfer_event(burn, registry, asset_resolver, nonce_registry)?;
     log.insert(&ev).map_err(ProducerError::from)?;
@@ -118,9 +117,6 @@ pub fn produce_burn(
     let _ = cache_channel_name(&ev.to_vault_id);
     Ok(ev)
 }
-
-// Re-export so consumers don't need separate imports.
-pub use crate::burn_event::TransferEventLog as BurnTransferEventLog;
 
 // Helper to make `produce_burn` compile without unused-import errors when
 // downstream callers do not use Dqa / Nonce / ChainId directly.

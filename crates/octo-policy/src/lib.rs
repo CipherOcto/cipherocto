@@ -64,7 +64,7 @@ pub mod event_log_producer;
 
 pub use burn_event::{
     AuditError, AuditSink, BurnEventError, BurnEventRef, SettlementId, TransferEventLog,
-    TransferEventLogError, ZERO_VAULT_ID,
+    ZERO_VAULT_ID,
 };
 pub use event_log_producer::{produce_burn, BurnEventProducer};
 

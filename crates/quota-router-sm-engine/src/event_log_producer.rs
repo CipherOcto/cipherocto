@@ -42,7 +42,7 @@ impl SettlementEventProducer {
 /// `settlement_event::new`).
 #[derive(Clone, Debug)]
 pub struct SettlementProducerInput {
-    pub settlement_id: [u8; 32],
+    pub settlement_id: octo_cap_macaroon::SettlementId,
     pub chain_id: ChainId,
     pub cost_vault_id: VaultId,
     pub asset_id: octo_cap_macaroon::AssetId,
@@ -76,7 +76,7 @@ impl EventLogProducer for SettlementEventProducer {
         _nonce_registry: &dyn NonceRegistry,
     ) -> Result<TransferEventRef, ProducerError> {
         Ok(TransferEventRef {
-            event_id: input.settlement_id,
+            event_id: input.settlement_id.0,
             chain_id: input.chain_id,
             from_vault_id: VaultId::from_bytes([0u8; 32]),
             to_vault_id: input.cost_vault_id,

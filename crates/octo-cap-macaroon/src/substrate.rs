@@ -243,6 +243,34 @@ impl VaultId {
     }
 }
 
+/// Typed 32-byte wrapper for a `SettlementEvent` identity
+/// (RFC-0959 §2.1; canonical home per `cipherocto-design-principles` §Canonical home rule).
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    BorshSerialize,
+    BorshDeserialize,
+)]
+pub struct SettlementId(pub [u8; 32]);
+
+impl SettlementId {
+    /// Build from raw 32 bytes.
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    /// Borrow the inner bytes.
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
 /// Derive the sovereign-asset nonce namespace key per asset_id
 /// (RFC-0105 v3.5 §3.11 L633).
 ///

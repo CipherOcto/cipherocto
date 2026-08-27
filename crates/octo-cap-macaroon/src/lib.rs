@@ -119,7 +119,8 @@ pub use substrate::{
     nonce_bucket_key, sovereign_nonce_namespace, sovereign_observe_key, AssetError, AssetId,
     AssetKind, AssetMetadata, AssetRegistry, ChainId, Epoch, GovernanceSignature,
     InMemoryAssetRegistry, InMemoryNonceRegistry, InMemoryVaultRegistry, Nonce, NonceError,
-    NonceEventKind, NonceRegistry, VaultAssetError, VaultId, VaultRegistry, MAX_SCALE,
+    NonceEventKind, NonceRegistry, SettlementId, VaultAssetError, VaultId, VaultRegistry,
+    MAX_SCALE,
 };
 // Re-export Dqa from `octo_determin` for downstream substrate consumers
 // (Mission F BurnEventRef amount field uses Dqa).

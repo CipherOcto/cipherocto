@@ -126,3 +126,26 @@ pub use crate::burn_event::TransferEventLog as BurnTransferEventLog;
 // downstream callers do not use Dqa / Nonce / ChainId directly.
 #[allow(dead_code)]
 fn _anchor(_d: Dqa, _n: Nonce, _c: ChainId) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// TV-VP13-prep: BurnEventProducer drain_lock singleton + acquire/release.
+    /// The 3-sink atomicity contract is exercised end-to-end by Mission F's
+    /// 15 TV-BE tests in `burn_event.rs` (which cover `BurnEventRef::consume`
+    /// directly); this test guards the producer wrapper's lock plumbing.
+    #[test]
+    fn tv_vp13_producer_drain_lock_singleton() {
+        let producer = BurnEventProducer::new();
+        assert!(Arc::ptr_eq(
+            producer.drain_lock(),
+            BurnEventProducer::new().drain_lock(),
+        ));
+        let g = producer
+            .drain_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        drop(g);
+    }
+}

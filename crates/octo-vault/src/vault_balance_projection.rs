@@ -334,19 +334,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn zero_vault_id_is_all_zeros() {
+    fn tv_vp1_zero_vault_id_is_all_zeros() {
         assert_eq!(ZERO_VAULT_ID.as_bytes(), &[0u8; 32]);
     }
 
     #[test]
-    fn projection_source_repr_u8_values() {
+    fn tv_vp2_projection_source_repr_u8_values() {
         assert_eq!(ProjectionSource::Cache as u8, 0);
         assert_eq!(ProjectionSource::FreshLogScan as u8, 1);
         assert_eq!(ProjectionSource::EpochRebuild as u8, 2);
     }
 
     #[test]
-    fn cache_key_is_hashable() {
+    fn tv_vp3_cache_key_is_hashable() {
         let k = CacheKey::new(
             ChainId::from_bytes([1u8; 32]),
             VaultId::from_bytes([2u8; 32]),
@@ -370,7 +370,7 @@ mod tests {
     }
 
     #[test]
-    fn cache_ttl_eviction() {
+    fn tv_vp4_cache_ttl_eviction() {
         let k = CacheKey::new(
             ChainId::from_bytes([1u8; 32]),
             VaultId::from_bytes([2u8; 32]),
@@ -394,7 +394,7 @@ mod tests {
     }
 
     #[test]
-    fn v015_ddl_has_pk() {
+    fn tv_vp5_v015_ddl_has_pk() {
         assert!(V015_DDL.contains("PRIMARY KEY"));
         assert!(V015_DDL.contains("DQA(12)"));
         assert!(V015_DDL.contains("source_kind"));

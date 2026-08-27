@@ -170,6 +170,15 @@ impl ProducerTrustList {
 
 /// Sign an envelope's preimage with the given ed25519 signing key.
 /// Returns the 64-byte signature suitable for `envelope.producer_signature`.
+///
+/// **R4 SECURITY (HSM scope):** this is a software-only signing path —
+/// it is appropriate for substrate tests + Layer D transport fixtures,
+/// but production Layer C producer binaries MUST supply an HSM-backed
+/// `sign_envelope` impl (per `cipherocto-design-principles` memory:
+/// "HSM mandatory for signing operations"). The substrate deliberately
+/// does NOT enforce HSM at this layer; doing so would couple Layer B
+/// to a specific HSM vendor, violating separation of concerns. Layer C
+/// is the enforcement boundary.
 #[must_use]
 pub fn sign_envelope(preimage: &[u8], signing_key: &SigningKey) -> [u8; 64] {
     let sig = signing_key.sign(preimage);
@@ -657,7 +666,110 @@ mod tests {
         assert!(result.is_ok(), "subscriber task MUST exit cleanly");
     }
 
-    /// TV-CB-3b (R2 strengthening): positive control — a VALID envelope
+    /// TV-CB-3c (R4 test-coverage): tampered `asset_id` post-sign MUST
+    /// be rejected by signature verification (catches preimage
+    /// field-ordering regression on the asset_id slot).
+    #[test]
+    fn tv_cb3c_tampered_asset_id_rejected() {
+        let sub = mock_subscriber();
+        let sk = sample_signing_key();
+        let vk = sk.verifying_key();
+        let did = sample_did(32);
+        let mut tampered = signed_v2_envelope(&sk, &did, 1, 32);
+        tampered.asset_id = AssetId::from_bytes([0xee; 32]); // tampered post-sign
+        let tl = Arc::new(ProducerTrustList::new(vec![(did.clone(), vk)]));
+        let cache = Arc::new(Mutex::new(VaultBalanceCache::new(60)));
+        {
+            let mut g = cache.lock().unwrap_or_else(PoisonError::into_inner);
+            g.put(sample_cache_key(32), sample_projection());
+            assert_eq!(g.len(), 1);
+        }
+        let h = spawn_cache_subscriber_with_trust_list(cache.clone(), sub.clone(), tl.clone());
+        sub.enqueue(tampered);
+        thread::sleep(std::time::Duration::from_millis(50));
+        let g = cache.lock().unwrap_or_else(PoisonError::into_inner);
+        assert_eq!(g.len(), 1, "tampered asset_id MUST NOT invalidate cache");
+        drop(g);
+        assert!(
+            tl.last_seen_sequence.get(&did).is_none(),
+            "tampered asset_id MUST NOT create last_seen_sequence entry"
+        );
+        sub.close();
+        let result = h.join();
+        assert!(result.is_ok(), "subscriber task MUST exit cleanly");
+    }
+
+    /// TV-CB-3d (R4 test-coverage): tampered `producer_did` post-sign
+    /// MUST be rejected (catches preimage field-ordering regression on
+    /// the producer_did slot — also catches trust-list bypass via
+    /// producer_did substitution).
+    #[test]
+    fn tv_cb3d_tampered_producer_did_rejected() {
+        let sub = mock_subscriber();
+        let sk = sample_signing_key();
+        let vk = sk.verifying_key();
+        let did = sample_did(33);
+        let mut tampered = signed_v2_envelope(&sk, &did, 1, 33);
+        tampered.producer_did = "did:octo:test:attacker:33".to_string(); // tampered post-sign
+        let tl = Arc::new(ProducerTrustList::new(vec![(did.clone(), vk)]));
+        let cache = Arc::new(Mutex::new(VaultBalanceCache::new(60)));
+        {
+            let mut g = cache.lock().unwrap_or_else(PoisonError::into_inner);
+            g.put(sample_cache_key(33), sample_projection());
+            assert_eq!(g.len(), 1);
+        }
+        let h = spawn_cache_subscriber_with_trust_list(cache.clone(), sub.clone(), tl.clone());
+        sub.enqueue(tampered);
+        thread::sleep(std::time::Duration::from_millis(50));
+        let g = cache.lock().unwrap_or_else(PoisonError::into_inner);
+        assert_eq!(
+            g.len(),
+            1,
+            "tampered producer_did MUST NOT invalidate cache"
+        );
+        drop(g);
+        assert!(
+            tl.last_seen_sequence.get(&did).is_none(),
+            "tampered producer_did MUST NOT create last_seen_sequence entry"
+        );
+        sub.close();
+        let result = h.join();
+        assert!(result.is_ok(), "subscriber task MUST exit cleanly");
+    }
+
+    /// TV-CB-3e (R4 test-coverage): tampered `sequence` post-sign MUST
+    /// be rejected (catches preimage field-ordering regression on the
+    /// sequence slot — also catches replay-bypass via sequence
+    /// substitution).
+    #[test]
+    fn tv_cb3e_tampered_sequence_rejected() {
+        let sub = mock_subscriber();
+        let sk = sample_signing_key();
+        let vk = sk.verifying_key();
+        let did = sample_did(34);
+        let mut tampered = signed_v2_envelope(&sk, &did, 1, 34);
+        tampered.sequence = 99; // tampered post-sign
+        let tl = Arc::new(ProducerTrustList::new(vec![(did.clone(), vk)]));
+        let cache = Arc::new(Mutex::new(VaultBalanceCache::new(60)));
+        {
+            let mut g = cache.lock().unwrap_or_else(PoisonError::into_inner);
+            g.put(sample_cache_key(34), sample_projection());
+            assert_eq!(g.len(), 1);
+        }
+        let h = spawn_cache_subscriber_with_trust_list(cache.clone(), sub.clone(), tl.clone());
+        sub.enqueue(tampered);
+        thread::sleep(std::time::Duration::from_millis(50));
+        let g = cache.lock().unwrap_or_else(PoisonError::into_inner);
+        assert_eq!(g.len(), 1, "tampered sequence MUST NOT invalidate cache");
+        drop(g);
+        assert!(
+            tl.last_seen_sequence.get(&did).is_none(),
+            "tampered sequence MUST NOT create last_seen_sequence entry"
+        );
+        sub.close();
+        let result = h.join();
+        assert!(result.is_ok(), "subscriber task MUST exit cleanly");
+    }
     /// MUST drain the cache. Without this control, a "silent drop"
     /// regression in `spawn_cache_subscriber_with_trust_list` would let
     /// tv_cb3 pass without ever exercising `verify_and_update_sequence`.
@@ -726,6 +838,23 @@ mod tests {
             tl.verify_and_update_sequence(&env_d).is_ok(),
             "monotonic-positive sequence MUST verify"
         );
+    }
+
+    /// TV-CB-DUP (R4 test-coverage MAJOR + api-surface MAJOR):
+    /// `ProducerTrustList::new` MUST panic via `debug_assert_eq` when
+    /// duplicate `(producer_did, _)` entries are provided. Catches
+    /// misconfigured trust-list init at startup in debug builds +
+    /// `cargo test`. Release builds silently overwrite (documented +
+    /// intentional per substrate principle: fail-CLOSED in dev, trust
+    /// upstream in prod).
+    #[test]
+    #[should_panic(expected = "duplicate producer_did")]
+    fn tv_cb_dup_producer_did_panics() {
+        let sk = sample_signing_key();
+        let vk = sk.verifying_key();
+        let dup_did = sample_did(99);
+        // 2 entries, same DID — debug_assert fires.
+        let _ = ProducerTrustList::new(vec![(dup_did.clone(), vk), (dup_did, vk)]);
     }
 
     /// TV-CB-5: unknown producer_did (not in trust list) is rejected.

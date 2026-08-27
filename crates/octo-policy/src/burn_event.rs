@@ -1090,6 +1090,191 @@ mod tests {
         }
     }
 
+    /// Test-only `NonceRegistry` that wraps `InMemoryNonceRegistry` and
+    /// can be configured to fail `observe()` with a chosen
+    /// `NonceError` variant (R4 test-coverage: the Sink-1
+    /// observe-failure path through `AuditSinkFailed::UnobserveFailed`
+    /// needs an exercisable path for each redactor-covered variant).
+    struct FailingObserveNonceRegistry {
+        inner: InMemoryNonceRegistry,
+        fail_variant: Option<octo_cap_macaroon::NonceError>,
+    }
+
+    impl FailingObserveNonceRegistry {
+        fn new(fail_variant: octo_cap_macaroon::NonceError) -> Self {
+            Self {
+                inner: InMemoryNonceRegistry::new(),
+                fail_variant: Some(fail_variant),
+            }
+        }
+    }
+
+    impl octo_cap_macaroon::NonceRegistry for FailingObserveNonceRegistry {
+        fn observe(
+            &mut self,
+            event_kind: octo_cap_macaroon::NonceEventKind,
+            pk: &[u8; 32],
+            nonce: &[u8; 32],
+        ) -> Result<(), octo_cap_macaroon::NonceError> {
+            if let Some(v) = self.fail_variant.take() {
+                // Reconstruct the variant with the requested (event_kind,
+                // pk, nonce) for struct variants so the error surfaces
+                // substrate-consistent fields.
+                return Err(match v {
+                    octo_cap_macaroon::NonceError::AlreadyObserved { .. } => {
+                        octo_cap_macaroon::NonceError::AlreadyObserved {
+                            event_kind,
+                            pk: *pk,
+                            nonce: *nonce,
+                        }
+                    }
+                    octo_cap_macaroon::NonceError::NotObserved { .. } => {
+                        octo_cap_macaroon::NonceError::NotObserved {
+                            event_kind,
+                            pk: *pk,
+                            nonce: *nonce,
+                        }
+                    }
+                    other => other,
+                });
+            }
+            self.inner.observe(event_kind, pk, nonce)
+        }
+        fn observe_readonly(
+            &self,
+            event_kind: octo_cap_macaroon::NonceEventKind,
+            pk: &[u8; 32],
+            nonce: &[u8; 32],
+        ) -> Result<(), octo_cap_macaroon::NonceError> {
+            self.inner.observe_readonly(event_kind, pk, nonce)
+        }
+        fn unobserve(
+            &mut self,
+            event_kind: octo_cap_macaroon::NonceEventKind,
+            pk: &[u8; 32],
+            nonce: &[u8; 32],
+        ) -> Result<(), octo_cap_macaroon::NonceError> {
+            self.inner.unobserve(event_kind, pk, nonce)
+        }
+    }
+
+    /// TV-BE23 (R4 test-coverage): Sink-1 observe-failure path with
+    /// `NonceError::PersistenceFailure` — `consume()` MUST return
+    /// `AuditSinkFailed { UnobserveFailed("observe failed: PersistenceFailure") }`
+    /// (redactor contract). The nonce MUST NOT be in the registry
+    /// post-call (observe failed, so no state mutation).
+    #[test]
+    fn tv_be23_observe_failure_persistence_failure() {
+        let asset_id = AssetId::from_bytes([1u8; 32]);
+        let vault_id = VaultId::from_bytes([2u8; 32]);
+        let (sk, pk) = sample_key();
+        let (reg, vr) = setup_managed(asset_id, pk, vault_id);
+        let mut burn = BurnEventRef {
+            chain_id: ChainId::from_bytes([3u8; 32]),
+            vault_id,
+            asset_id,
+            asset_kind: AssetKind::OctoW,
+            amount: Dqa::new(1_000, 0).unwrap(),
+            ledger_height: 100,
+            settlement_event_ref: SettlementId([4u8; 32]),
+            governance_signature: GovernanceSignature::from_bytes([0u8; 64]),
+            governance_pubkey: pk,
+            registry_snapshot_epoch: Epoch::new(0),
+            nonce: Nonce::from_bytes([5u8; 32]),
+        };
+        sign_burn(&sk, &mut burn);
+        let burn = new(
+            burn.chain_id,
+            burn.vault_id,
+            burn.asset_id,
+            burn.asset_kind,
+            burn.amount,
+            burn.ledger_height,
+            burn.settlement_event_ref,
+            burn.governance_signature,
+            burn.registry_snapshot_epoch,
+            burn.nonce,
+            &reg,
+            &vr,
+            Epoch::new(1),
+        )
+        .unwrap();
+        let mut nr =
+            FailingObserveNonceRegistry::new(octo_cap_macaroon::NonceError::PersistenceFailure);
+        let mut audit = InMemoryAuditSink::default();
+        let err = consume(&burn, &mut nr, &mut audit).unwrap_err();
+        match err {
+            BurnEventError::AuditSinkFailed {
+                sink_error: AuditError::UnobserveFailed(msg),
+            } => {
+                assert!(
+                    msg.contains("PersistenceFailure"),
+                    "redactor MUST surface PersistenceFailure tag: {msg}"
+                );
+                assert!(
+                    !msg.contains("sink:"),
+                    "redactor MUST NOT leak audit_err `sink:` payload: {msg}"
+                );
+            }
+            other => panic!("expected AuditSinkFailed{{UnobserveFailed}}, got {other:?}"),
+        }
+    }
+
+    /// TV-BE24 (R4 test-coverage): Sink-1 observe-failure path with
+    /// `NonceError::WalRecovering` — exercises the same redactor
+    /// contract as tv_be23 for the second unit-variant of NonceError.
+    #[test]
+    fn tv_be24_observe_failure_wal_recovering() {
+        let asset_id = AssetId::from_bytes([1u8; 32]);
+        let vault_id = VaultId::from_bytes([2u8; 32]);
+        let (sk, pk) = sample_key();
+        let (reg, vr) = setup_managed(asset_id, pk, vault_id);
+        let mut burn = BurnEventRef {
+            chain_id: ChainId::from_bytes([3u8; 32]),
+            vault_id,
+            asset_id,
+            asset_kind: AssetKind::OctoW,
+            amount: Dqa::new(1_000, 0).unwrap(),
+            ledger_height: 100,
+            settlement_event_ref: SettlementId([4u8; 32]),
+            governance_signature: GovernanceSignature::from_bytes([0u8; 64]),
+            governance_pubkey: pk,
+            registry_snapshot_epoch: Epoch::new(0),
+            nonce: Nonce::from_bytes([5u8; 32]),
+        };
+        sign_burn(&sk, &mut burn);
+        let burn = new(
+            burn.chain_id,
+            burn.vault_id,
+            burn.asset_id,
+            burn.asset_kind,
+            burn.amount,
+            burn.ledger_height,
+            burn.settlement_event_ref,
+            burn.governance_signature,
+            burn.registry_snapshot_epoch,
+            burn.nonce,
+            &reg,
+            &vr,
+            Epoch::new(1),
+        )
+        .unwrap();
+        let mut nr = FailingObserveNonceRegistry::new(octo_cap_macaroon::NonceError::WalRecovering);
+        let mut audit = InMemoryAuditSink::default();
+        let err = consume(&burn, &mut nr, &mut audit).unwrap_err();
+        match err {
+            BurnEventError::AuditSinkFailed {
+                sink_error: AuditError::UnobserveFailed(msg),
+            } => {
+                assert!(
+                    msg.contains("WalRecovering"),
+                    "redactor MUST surface WalRecovering tag: {msg}"
+                );
+            }
+            other => panic!("expected AuditSinkFailed{{UnobserveFailed}}, got {other:?}"),
+        }
+    }
+
     /// TV-BE21 (R2 test-coverage): unobserve-failure path triggers
     /// `AtomicityRollbackFailed`. Compound failure: audit fails AND
     /// nonce rollback fails — caller MUST receive a diagnostic

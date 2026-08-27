@@ -8,6 +8,13 @@ license = "Apache-2.0"
 [lib]
 crate-type = ["rlib"]
 
+[features]
+# Test fixtures for downstream consumers — gates `pub mod testing` +
+# `pub use testing::{StubEmitter, StubTransferEventLog, StubVaultAssetResolver}`.
+# Default off; opt-in via `[dev-dependencies] octo-vault = { features = ["testing"] }`
+# (per R1 layer-direction/api-surface fix; per-binary wire-up deferred).
+testing = []
+
 [dependencies]
 # Layer B → Layer A storage substrate. Per S2, owner crates depend on the
 # substrate (not the Stoolap fork directly) so the migration runner stays

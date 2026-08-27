@@ -105,6 +105,8 @@ pub enum BurnEventError {
     },
     #[error("audit sink failed: {sink_error:?}")]
     AuditSinkFailed { sink_error: AuditError },
+    #[error("atomicity rollback failed (nonce unobserve): {nonce_error}")]
+    AtomicityRollbackFailed { nonce_error: String },
     #[error("legacy form on non-OCTO-W context: claimed_asset_id = {claimed_asset_id:?}")]
     LegacyFormOnNonOctoWContext { claimed_asset_id: AssetId },
 }
@@ -367,12 +369,19 @@ pub fn consume(
     }
     // Sink (2) — audit sink write
     if let Err(audit_err) = audit_sink.write(burn) {
-        // Rollback (1)
-        let _ = nonce_registry.unobserve(
+        // Rollback (1) — propagate unobserve failure (R1 SECURITY: do NOT
+        // silently swallow; caller must distinguish "audit failed + nonce
+        // rolled back" from "audit failed + nonce stuck").
+        let rollback = nonce_registry.unobserve(
             NonceEventKind::Burn,
             &burn.governance_pubkey,
             burn.nonce.as_bytes(),
         );
+        if let Err(nonce_err) = rollback {
+            return Err(BurnEventError::AtomicityRollbackFailed {
+                nonce_error: format!("audit_err={audit_err:?}; unobserve_err={nonce_err:?}"),
+            });
+        }
         return Err(BurnEventError::AuditSinkFailed {
             sink_error: audit_err,
         });

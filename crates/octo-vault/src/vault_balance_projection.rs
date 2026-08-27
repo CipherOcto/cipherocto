@@ -26,6 +26,7 @@ pub const ZERO_VAULT_ID: VaultId = VaultId::from_bytes([0u8; 32]);
 /// substrate-canonical pattern (same as `AssetKind`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum ProjectionSource {
     /// Served from the bounded-LRU cache.
     Cache = 0,

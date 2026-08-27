@@ -66,6 +66,10 @@ pub mod event_log_producer;
 pub mod cache_subscriber;
 // Mission `producer-wrapper-consumer-wiring` sub-step 6: Layer B test-only
 // reusable fixtures (StubTransferEventLog / StubEmitter / StubVaultAssetResolver).
+// Gated behind `testing` feature (R1 layer-direction/api-surface fix:
+// stubs MUST NOT compile into production binaries; downstream crates opt
+// in via `[dev-dependencies] octo-vault = { features = ["testing"] }`).
+#[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
 pub use migrations::BUILTIN_MIGRATION_CATALOG;
@@ -88,6 +92,9 @@ pub use cache_subscriber::{
     VaultProjectionInvalidationSubscriber,
 };
 // Mission `producer-wrapper-consumer-wiring` sub-step 6 re-exports.
+// Gated behind the `testing` feature — production builds never see the
+// stubs. R1 layer-direction/api-surface fix.
+#[cfg(any(test, feature = "testing"))]
 pub use testing::{StubEmitter, StubTransferEventLog, StubVaultAssetResolver};
 
 // Mission D substrate re-exports: traits + newtypes live in

@@ -26,6 +26,13 @@ use crate::vault_balance_projection::VaultBalanceCache;
 ///
 /// `recv` is blocking. Returns `None` on channel close so the spawned
 /// task loop terminates cleanly when the bus adapter disconnects.
+///
+/// **Extension note:** Rust does not permit `#[non_exhaustive]` on
+/// traits. To prevent downstream from adding methods, the trait would
+/// need a sealed marker pattern (`mod sealed { pub trait Sealed {} }` +
+/// `impl sealed::Sealed for crate::...`). That is deferred — current
+/// RFC-0960 §2.4 enumerates the only intended method (`recv`), and any
+/// future method addition is an additive semver-minor bump by convention.
 pub trait VaultProjectionInvalidationSubscriber: Send + Sync {
     /// Blocking receive; returns `None` on channel close.
     fn recv(&self) -> Option<VaultProjectionInvalidationEnvelope>;
@@ -361,22 +368,46 @@ mod tests {
     }
 
     /// TV-CS-3: `None` (channel close) → task exits cleanly.
+    ///
+    /// **R1 strengthening:** assert the `closed` flag on the subscriber
+    /// was actually set by `close()` — guards against a `MockSubscriber`
+    /// regression where `recv()` returns `None` early regardless of state.
     #[test]
     fn tv_cs3_channel_close_exits_cleanly() {
         let sub = mock_subscriber();
         let cache = Arc::new(Mutex::new(VaultBalanceCache::new(60)));
         let h = spawn_cache_subscriber(cache, sub.clone());
+        // Pre-condition: closed flag is false.
+        assert!(!sub.closed.load(Ordering::SeqCst));
         sub.close();
+        // Post-condition: closed flag flipped.
+        assert!(
+            sub.closed.load(Ordering::SeqCst),
+            "MockSubscriber.close() MUST set closed flag"
+        );
         let result = h.join();
         assert!(result.is_ok(), "subscriber task must exit cleanly");
     }
 
     /// TV-CS-4: lock-poisoning resilience — drop a guard mid-invalidate →
     /// next iteration recovers via `unwrap_or_else(PoisonError::into_inner)`.
+    ///
+    /// **R1 strengthening:** pre-populate the cache with 3 entries so the
+    /// `g.len() == 0` assertion is NOT trivially satisfied; assert
+    /// `h.join()` returned Ok (regression to `panic!` would surface here).
     #[test]
     fn tv_cs4_lock_poisoning_resilience() {
         let sub = mock_subscriber();
         let cache = Arc::new(Mutex::new(VaultBalanceCache::new(60)));
+        // Pre-populate the cache BEFORE poisoning so the g.len()==0
+        // assertion has substance (R1 fix).
+        {
+            let mut g = cache.lock().unwrap_or_else(PoisonError::into_inner);
+            g.put(sample_cache_key(1), sample_projection());
+            g.put(sample_cache_key(2), sample_projection());
+            g.put(sample_cache_key(3), sample_projection());
+            assert_eq!(g.len(), 3);
+        }
         // Pre-poison the mutex by panicking inside a guard (test-only).
         let cache_clone = cache.clone();
         let _ = std::thread::spawn(move || {
@@ -387,16 +418,26 @@ mod tests {
         // Cache is now poisoned.
         assert!(cache.lock().is_err());
         let h = spawn_cache_subscriber(cache.clone(), sub.clone());
-        // Send 2 envelopes — both must succeed via into_inner recovery.
-        sub.enqueue(empty_envelope(1));
-        sub.enqueue(empty_envelope(2));
+        // Send 3 envelopes — all must succeed via into_inner recovery
+        // AND drain the cache.
+        for i in 1..=3u8 {
+            sub.enqueue(empty_envelope(i));
+        }
         thread::sleep(std::time::Duration::from_millis(50));
-        // After recovery, cache is empty (was already empty + 2 invalidations).
+        // After recovery, cache MUST be empty (was 3 entries + 3 invalidations).
         let g = cache.lock().unwrap_or_else(PoisonError::into_inner);
-        assert_eq!(g.len(), 0);
+        assert_eq!(
+            g.len(),
+            0,
+            "recovery must invalidate the 3 pre-populated entries"
+        );
         drop(g);
         sub.close();
-        let _ = h.join();
+        let join_result = h.join();
+        assert!(
+            join_result.is_ok(),
+            "subscriber task MUST exit cleanly (panic in poisoned lock recovery would surface here)"
+        );
     }
 
     /// TV-CS-5: a single envelope for vault A invalidates ALL cached entries
@@ -544,51 +585,100 @@ mod tests {
 
     /// TV-CB-3: tampered envelope (modify `vault_id` after signing) fails
     /// verification → subscriber drops the envelope, cache stays populated.
+    ///
+    /// **R1 strengthening:** positive control — a VALID envelope (also
+    /// pre-populating the cache) MUST drain the cache. Without this, a
+    /// "silent drop" regression in `spawn_cache_subscriber_with_trust_list`
+    /// (e.g. unconditional drop instead of verify-then-drop) would let
+    /// the tampered test pass without exercising `verify_and_update_sequence`.
     #[test]
     fn tv_cb3_tampered_envelope_rejected() {
         let sub = mock_subscriber();
         let sk = sample_signing_key();
         let vk = sk.verifying_key();
         let did = sample_did(3);
-        let mut env = signed_v2_envelope(&sk, &did, 1, 3);
-        env.vault_id = VaultId::from_bytes([0xff; 32]); // tampered post-sign
+        // Positive control first — valid envelope MUST drain cache.
+        let valid_env = signed_v2_envelope(&sk, &did, 1, 3);
+        // Negative case — tampered envelope.
+        let mut tampered_env = signed_v2_envelope(&sk, &did, 2, 3);
+        tampered_env.vault_id = VaultId::from_bytes([0xff; 32]); // tampered post-sign
         let tl = Arc::new(ProducerTrustList::new(vec![(did.clone(), vk)]));
         let cache = Arc::new(Mutex::new(VaultBalanceCache::new(60)));
         {
             let mut g = cache.lock().unwrap_or_else(PoisonError::into_inner);
             g.put(sample_cache_key(3), sample_projection());
-            assert_eq!(g.len(), 1);
+            g.put(sample_cache_key(4), sample_projection());
+            assert_eq!(g.len(), 2);
         }
         let h = spawn_cache_subscriber_with_trust_list(cache.clone(), sub.clone(), tl.clone());
-        sub.enqueue(env);
+        // Send valid then tampered.
+        sub.enqueue(valid_env);
+        sub.enqueue(tampered_env);
         thread::sleep(std::time::Duration::from_millis(50));
-        // Cache MUST still have the entry (tamper rejected → no invalidation).
+        // After valid-only drain (tampered rejected) cache MUST be empty:
+        // valid envelope drained all entries, tampered was a no-op.
+        // The stronger assertion: the subscriber DID process valid AND
+        // rejected tampered (cache.len() == 0 proves valid was processed;
+        // no entry in last_seen_sequence with sequence=2 proves tampered
+        // was rejected before sequence-update).
         let g = cache.lock().unwrap_or_else(PoisonError::into_inner);
-        assert_eq!(g.len(), 1, "tampered envelope MUST NOT invalidate cache");
-        // And the trust list created no entry (tampered envelopes leave no trace).
-        assert!(
-            tl.last_seen_sequence.get(&did).is_none(),
-            "tampered envelope MUST NOT record a last_seen_sequence entry"
+        assert_eq!(
+            g.len(),
+            0,
+            "valid envelope MUST drain cache; tampered envelope MUST be dropped"
         );
         drop(g);
+        // Tampered envelopes leave no trace — last_seen_sequence MUST be at sequence=1
+        // (valid accepted), NOT 2 (which would mean tampered bypassed verify).
+        let recorded = tl.last_seen_sequence.get(&did).map(|v| *v).unwrap_or(0);
+        assert_eq!(
+            recorded, 1,
+            "tampered envelope MUST NOT advance last_seen_sequence past valid (recorded={recorded})"
+        );
         sub.close();
-        let _ = h.join();
+        let result = h.join();
+        assert!(result.is_ok(), "subscriber task MUST exit cleanly");
     }
 
-    /// TV-CB-4: replay (re-emit same envelope twice) is rejected by the
-    /// sequence-number check on the second receipt.
+    /// TV-CB-4: replay defense — multi-vector coverage:
+    /// (a) same-value replay (5 then 5) → Replay
+    /// (b) lower-after-higher (5 then 4) → Replay (catches `==` regression)
+    /// (c) wrap-around (u64::MAX then 0) → Replay (catches `<` regression on edge)
+    /// (d) monotonic positive (5 then 6) → Ok (control)
     #[test]
     fn tv_cb4_replay_rejected() {
         let sk = sample_signing_key();
         let vk = sk.verifying_key();
         let did = sample_did(4);
-        let env = signed_v2_envelope(&sk, &did, 5, 4);
         let tl = ProducerTrustList::new(vec![(did.clone(), vk)]);
-        // First verify succeeds.
-        assert!(tl.verify_and_update_sequence(&env).is_ok());
-        // Second verify (replay) fails with Replay.
-        let err = tl.verify_and_update_sequence(&env).unwrap_err();
-        assert!(matches!(err, EnvelopeVerificationError::Replay { .. }));
+        // (a) Same-value replay.
+        let env_a = signed_v2_envelope(&sk, &did, 5, 4);
+        assert!(tl.verify_and_update_sequence(&env_a).is_ok());
+        assert!(matches!(
+            tl.verify_and_update_sequence(&env_a).unwrap_err(),
+            EnvelopeVerificationError::Replay { .. }
+        ));
+        // (b) Lower-after-higher: a regression to `==` instead of `<=` would accept.
+        let env_b = signed_v2_envelope(&sk, &did, 4, 4);
+        assert!(matches!(
+            tl.verify_and_update_sequence(&env_b).unwrap_err(),
+            EnvelopeVerificationError::Replay { .. }
+        ));
+        // (c) Wrap-around: last_seen=u64::MAX (set manually), next=0.
+        tl.last_seen_sequence.insert(did.clone(), u64::MAX);
+        let env_c = signed_v2_envelope(&sk, &did, 0, 4);
+        assert!(matches!(
+            tl.verify_and_update_sequence(&env_c).unwrap_err(),
+            EnvelopeVerificationError::Replay { .. }
+        ));
+        // Cleanup: reset so (d) is a real monotonic-positive control.
+        tl.last_seen_sequence.insert(did.clone(), 5);
+        // (d) Monotonic positive (5 then 6) MUST succeed.
+        let env_d = signed_v2_envelope(&sk, &did, 6, 4);
+        assert!(
+            tl.verify_and_update_sequence(&env_d).is_ok(),
+            "monotonic-positive sequence MUST verify"
+        );
     }
 
     /// TV-CB-5: unknown producer_did (not in trust list) is rejected.

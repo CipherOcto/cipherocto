@@ -129,6 +129,7 @@ pub enum ProducerError {
 ///   serialization of the prior 6 fields + cross-protocol domain
 ///   separator `b"cipherocto/cache-bus/invalidation/v2\0"`.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct VaultProjectionInvalidationEnvelope {
     pub version: u8,
     pub chain_id: ChainId,

@@ -95,10 +95,27 @@ impl ProducerTrustList {
     /// not a struct. Typed-DID promotion to a Layer A struct is a
     /// follow-on mission; once landed, this signature will tighten
     /// without breaking callers (the newtype derefs to `&str`).
+    ///
+    /// **R3 api-surface:** duplicate `(producer_did, _)` entries panic
+    /// via `debug_assert_eq` (debug builds + `cargo test` always).
+    /// `HashMap::collect` silently overwrites dup keys, masking
+    /// misconfigured trust-list init; the assert surfaces this at
+    /// startup. Production release builds trust the upstream caller
+    /// (per substrate principle: fail-closed in dev, trust in prod
+    /// after dev tests pass).
     #[must_use]
     pub fn new(keys: Vec<(String, VerifyingKey)>) -> Self {
+        let trust_keys: std::collections::HashMap<String, VerifyingKey> =
+            keys.iter().cloned().collect();
+        debug_assert_eq!(
+            keys.len(),
+            trust_keys.len(),
+            "ProducerTrustList::new: duplicate producer_did entries ({} entries, {} unique)",
+            keys.len(),
+            trust_keys.len()
+        );
         Self {
-            trust_keys: keys.into_iter().collect(),
+            trust_keys,
             last_seen_sequence: DashMap::new(),
         }
     }
@@ -596,11 +613,11 @@ mod tests {
     /// TV-CB-3: tampered envelope (modify `vault_id` after signing) fails
     /// verification → subscriber drops the envelope, cache stays populated.
     ///
-    /// **R1 strengthening:** positive control — a VALID envelope (also
-    /// pre-populating the cache) MUST drain the cache. Without this, a
-    /// "silent drop" regression in `spawn_cache_subscriber_with_trust_list`
-    /// (e.g. unconditional drop instead of verify-then-drop) would let
-    /// the tampered test pass without exercising `verify_and_update_sequence`.
+    /// **R3 doc-drift:** the prior R1 strengthening comment referenced
+    /// "positive control" inside this test, but the positive control
+    /// was split out to `tv_cb3b_valid_envelope_drains_cache` in R2.
+    /// This test is NEGATIVE-ONLY (tampered envelope); the positive
+    /// drain contract is covered by `tv_cb3b`.
     #[test]
     fn tv_cb3_tampered_envelope_rejected() {
         let sub = mock_subscriber();

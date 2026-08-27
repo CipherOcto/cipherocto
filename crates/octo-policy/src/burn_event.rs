@@ -152,23 +152,44 @@ pub enum AuditInvariantViolation {
     },
 }
 
-/// Redact the substrate-internal Debug bytes from a `NonceError` so the
-/// operator-facing `Display` (via `BurnEventError::AtomicityRollbackFailed`)
-/// does not leak the 32-byte governance_pubkey or 32-byte nonce that the
-/// `NonceError::{AlreadyObserved, NotObserved}` variants embed.
+/// Redact a `NonceError` to its variant discriminant only — strips the
+/// 32-byte `pk` and 32-byte `nonce` that the `AlreadyObserved` /
+/// `NotObserved` struct variants embed.
 ///
-/// R2 SECURITY: the raw `{:?}` Debug output would surface
-/// authority-identifying + replay-nonce bytes through the public Display
-/// contract, violating the principle that Display is operator-facing
-/// while Debug is substrate-internal.
-fn redact_nonce_error(e: &NonceError) -> String {
-    // Discriminant only — the variant tag identifies the failure mode
-    // (observed/not-observed/already-observed) without embedding bytes.
-    format!("{e:?}")
-        .split('{')
-        .next()
-        .unwrap_or("NonceError")
-        .to_string()
+/// R3 SECURITY (replaces R2 string-parse approach): the prior
+/// `split('{').next()` strategy was fail-OPEN — a future tuple variant
+/// (e.g. `WalFailure(String)`) would have no `{` in its Debug output
+/// and would silently re-leak payload bytes. Using an exhaustive
+/// `match` makes any new variant a compile error, forcing the redactor
+/// to be updated alongside substrate changes (fail-CLOSED).
+///
+/// Per CLAUDE.md §"Display operator-facing, Debug substrate-internal":
+/// the variant tag identifies the failure mode without surfacing
+/// authority-identifying or replay-nonce bytes.
+fn redact_nonce_error(e: &NonceError) -> &'static str {
+    match e {
+        NonceError::AlreadyObserved { .. } => "AlreadyObserved",
+        NonceError::NotObserved { .. } => "NotObserved",
+        NonceError::PersistenceFailure => "PersistenceFailure",
+        NonceError::WalRecovering => "WalRecovering",
+    }
+}
+
+/// Redact an `AuditError` to its variant discriminant only. The
+/// `LogInsertFailed { sink: String, ... }` and `UnobserveFailed(String)`
+/// variants carry payload bytes that MUST NOT flow through Display
+/// (per CLAUDE.md §"Display operator-facing, Debug substrate-internal").
+///
+/// Fail-CLOSED via exhaustive match — a future `AuditError` variant
+/// becomes a compile error here, forcing the redactor to be updated
+/// alongside substrate changes.
+fn redact_audit_error(e: &AuditError) -> &'static str {
+    match e {
+        AuditError::WriteFailed => "WriteFailed",
+        AuditError::CompensateFailed => "CompensateFailed",
+        AuditError::LogInsertFailed { .. } => "LogInsertFailed",
+        AuditError::UnobserveFailed(_) => "UnobserveFailed",
+    }
 }
 
 /// ledger_height (u64 BE) || settlement_event_ref ||
@@ -377,8 +398,16 @@ pub fn consume(
                 prior_height: burn.ledger_height,
             });
         }
+        // R3 SECURITY: do NOT embed raw `{:?}` Debug here — it would leak
+        // the 32-byte `pk` and 32-byte `nonce` carried by the
+        // `NonceError` variants via the `AuditError::UnobserveFailed`
+        // string, which flows through `BurnEventError::AuditSinkFailed`
+        // Display. Use the same redactor as the rollback path.
         return Err(BurnEventError::AuditSinkFailed {
-            sink_error: AuditError::UnobserveFailed(format!("observe failed: {e:?}")),
+            sink_error: AuditError::UnobserveFailed(format!(
+                "observe failed: {}",
+                redact_nonce_error(&e)
+            )),
         });
     }
     // Sink (2) — audit sink write
@@ -399,7 +428,8 @@ pub fn consume(
             // and MUST NOT contain authority-identifying or replay-nonce bytes.
             return Err(BurnEventError::AtomicityRollbackFailed {
                 nonce_error: format!(
-                    "audit_err={audit_err:?}; unobserve_err={}",
+                    "audit_err={}; unobserve_err={}",
+                    redact_audit_error(&audit_err),
                     redact_nonce_error(&nonce_err)
                 ),
             });
@@ -1137,8 +1167,102 @@ mod tests {
                     !nonce_error.contains(&nonce_hex),
                     "format MUST NOT leak full nonce hex: {nonce_error}"
                 );
+                // R3 SECURITY: the redacted audit_err + unobserve_err
+                // tags MUST be present (positive contract — fail-CLOSED
+                // redaction surfaces the failure mode even when raw
+                // payload bytes are stripped).
+                assert!(
+                    nonce_error.contains("WriteFailed"),
+                    "format MUST include redacted audit_err tag 'WriteFailed': {nonce_error}"
+                );
+                assert!(
+                    nonce_error.contains("NotObserved"),
+                    "format MUST include redacted unobserve_err tag 'NotObserved': {nonce_error}"
+                );
+                // R3 SECURITY: redaction must not leak audit_err inner
+                // payload either — `InMemoryAuditSink` carries no payload
+                // string, but a future sink impl could. Guard against
+                // any `sink:` substring leaking through.
+                assert!(
+                    !nonce_error.contains("sink:"),
+                    "format MUST NOT leak audit_err `sink:` payload: {nonce_error}"
+                );
             }
             _ => panic!("expected AtomicityRollbackFailed, got {err:?}"),
         }
+        // R3 SECURITY: stuck-nonce invariant — when unobserve fails, the
+        // nonce MUST remain in the registry (caller can detect the
+        // stuck nonce via a subsequent observe returning
+        // `AlreadyObserved`). This is the operational consequence of
+        // fail-CLOSED rollback.
+        let re_observe = nr.observe(
+            octo_cap_macaroon::NonceEventKind::Burn,
+            &burn.governance_pubkey,
+            burn.nonce.as_bytes(),
+        );
+        assert!(
+            matches!(
+                re_observe,
+                Err(octo_cap_macaroon::NonceError::AlreadyObserved { .. })
+            ),
+            "post-rollback-failure re-observe MUST report AlreadyObserved (stuck nonce); got {re_observe:?}"
+        );
+    }
+
+    /// Unit tests covering all 4 `NonceError` variants through
+    /// `redact_nonce_error` (R3 test-coverage: the redactor MUST
+    /// remain exhaustive as substrate adds variants).
+    #[test]
+    fn tv_redact_nonce_error_all_variants() {
+        let pk = [0u8; 32];
+        let nonce = [0u8; 32];
+        assert_eq!(
+            redact_nonce_error(&octo_cap_macaroon::NonceError::AlreadyObserved {
+                event_kind: octo_cap_macaroon::NonceEventKind::Burn,
+                pk,
+                nonce,
+            }),
+            "AlreadyObserved"
+        );
+        assert_eq!(
+            redact_nonce_error(&octo_cap_macaroon::NonceError::NotObserved {
+                event_kind: octo_cap_macaroon::NonceEventKind::Burn,
+                pk,
+                nonce,
+            }),
+            "NotObserved"
+        );
+        assert_eq!(
+            redact_nonce_error(&octo_cap_macaroon::NonceError::PersistenceFailure),
+            "PersistenceFailure"
+        );
+        assert_eq!(
+            redact_nonce_error(&octo_cap_macaroon::NonceError::WalRecovering),
+            "WalRecovering"
+        );
+    }
+
+    /// Unit tests covering all 4 `AuditError` variants through
+    /// `redact_audit_error` (R3 test-coverage: the redactor MUST
+    /// remain exhaustive as substrate adds variants).
+    #[test]
+    fn tv_redact_audit_error_all_variants() {
+        assert_eq!(redact_audit_error(&AuditError::WriteFailed), "WriteFailed");
+        assert_eq!(
+            redact_audit_error(&AuditError::CompensateFailed),
+            "CompensateFailed"
+        );
+        assert_eq!(
+            redact_audit_error(&AuditError::LogInsertFailed {
+                sink: "should-not-leak".to_string(),
+                nonce_rolled_back: true,
+                audit_compensated: false,
+            }),
+            "LogInsertFailed"
+        );
+        assert_eq!(
+            redact_audit_error(&AuditError::UnobserveFailed("should-not-leak".to_string())),
+            "UnobserveFailed"
+        );
     }
 }

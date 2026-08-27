@@ -9,6 +9,17 @@
 
 #![forbid(unsafe_code)]
 
+//! ## HSM scope (R5 security)
+//!
+//! This substrate exposes a software-only signing path
+//! (`sign_envelope`, `ed25519_dalek::SigningKey::sign`). Production
+//! Layer C producer binaries MUST supply an HSM-backed impl per
+//! `cipherocto-design-principles` memory: "HSM mandatory for signing
+//! operations". The substrate deliberately does NOT enforce HSM at
+//! this layer (would couple Layer B to specific HSM vendor). Layer C
+//! is the enforcement boundary. See `sign_envelope` doc-comment for
+//! the contract.
+
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
@@ -797,6 +808,74 @@ mod tests {
         assert_eq!(recorded, 1, "valid envelope MUST advance sequence to 1");
         sub.close();
         let _ = h.join();
+    }
+
+    /// TV-CB-3f (R5 test-coverage + security): tampered `source_kind`
+    /// post-sign MUST be rejected (catches preimage field-ordering
+    /// regression on the source_kind slot — also catches a future
+    /// refactor that accidentally excludes source_kind from the
+    /// signed preimage).
+    #[test]
+    fn tv_cb3f_tampered_source_kind_rejected() {
+        let sub = mock_subscriber();
+        let sk = sample_signing_key();
+        let vk = sk.verifying_key();
+        let did = sample_did(35);
+        let mut tampered = signed_v2_envelope(&sk, &did, 1, 35);
+        tampered.source_kind = crate::vault_balance_projection::ProjectionSource::EpochRebuild; // tampered post-sign
+        let tl = Arc::new(ProducerTrustList::new(vec![(did.clone(), vk)]));
+        let cache = Arc::new(Mutex::new(VaultBalanceCache::new(60)));
+        {
+            let mut g = cache.lock().unwrap_or_else(PoisonError::into_inner);
+            g.put(sample_cache_key(35), sample_projection());
+            assert_eq!(g.len(), 1);
+        }
+        let h = spawn_cache_subscriber_with_trust_list(cache.clone(), sub.clone(), tl.clone());
+        sub.enqueue(tampered);
+        thread::sleep(std::time::Duration::from_millis(50));
+        let g = cache.lock().unwrap_or_else(PoisonError::into_inner);
+        assert_eq!(g.len(), 1, "tampered source_kind MUST NOT invalidate cache");
+        drop(g);
+        assert!(
+            tl.last_seen_sequence.get(&did).is_none(),
+            "tampered source_kind MUST NOT create last_seen_sequence entry"
+        );
+        sub.close();
+        let result = h.join();
+        assert!(result.is_ok(), "subscriber task MUST exit cleanly");
+    }
+
+    /// TV-CB-9 (R5 test-coverage): trust-list HIT + BAD signature
+    /// combination MUST be rejected with `InvalidSignature` (distinct
+    /// from the trust-list bypass path of `UnknownProducer`). Catches
+    /// regressions where trust-list lookup is bypassed OR signature
+    /// verification is skipped.
+    #[test]
+    fn tv_cb9_trust_list_hit_bad_signature_rejected() {
+        // Producer A signs with key_a; trust list contains (did, key_b).
+        // Trust list lookup succeeds (did matches) but signature
+        // verification fails (key_b ≠ key_a) → `InvalidSignature`.
+        let sk_a = sample_signing_key();
+        let sk_b = sample_signing_key();
+        let vk_b = sk_b.verifying_key();
+        let did = sample_did(36);
+        let env = signed_v2_envelope(&sk_a, &did, 1, 36); // signed with A
+        let tl = ProducerTrustList::new(vec![(did.clone(), vk_b)]); // trust list has B
+        let err = tl.verify_and_update_sequence(&env).unwrap_err();
+        match err {
+            EnvelopeVerificationError::InvalidSignature { producer_did } => {
+                assert_eq!(
+                    producer_did, did,
+                    "InvalidSignature MUST surface the producer_did"
+                );
+            }
+            other => panic!("expected InvalidSignature, got {other:?}"),
+        }
+        // Replay-defense invariant: bad sig MUST NOT update last_seen_sequence.
+        assert!(
+            tl.last_seen_sequence.get(&did).is_none(),
+            "bad-signature rejection MUST NOT advance sequence"
+        );
     }
 
     /// TV-CB-4: replay defense — multi-vector coverage:

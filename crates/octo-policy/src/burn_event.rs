@@ -1095,13 +1095,36 @@ mod tests {
     /// `NonceError` variant (R4 test-coverage: the Sink-1
     /// observe-failure path through `AuditSinkFailed::UnobserveFailed`
     /// needs an exercisable path for each redactor-covered variant).
+    ///
+    /// **Single-shot constraint (R5):** `fail_variant.take()` means
+    /// each instance fails `observe()` exactly ONCE. Subsequent calls
+    /// delegate to `inner.observe()`. Tests requiring multiple failures
+    /// MUST construct fresh instances per call.
+    ///
+    /// **R5 refactor:** the constructor takes a discriminator enum
+    /// (`ObserveFailKind`) rather than a `NonceError` value, because
+    /// struct variants (`AlreadyObserved` / `NotObserved`) cannot be
+    /// constructed without `(event_kind, pk, nonce)` fields — those
+    /// are reconstructed at observe-call time from the call site.
+    /// `NotObserved` is part of the API contract for symmetry with the
+    /// 4-variant `NonceError` (covered by `tv_redact_nonce_error_all_variants`)
+    /// but has no dedicated integration test.
+    #[derive(Clone, Copy)]
+    #[allow(dead_code)] // NotObserved is API-surface symmetry; covered by unit test
+    enum ObserveFailKind {
+        AlreadyObserved,
+        NotObserved,
+        PersistenceFailure,
+        WalRecovering,
+    }
+
     struct FailingObserveNonceRegistry {
         inner: InMemoryNonceRegistry,
-        fail_variant: Option<octo_cap_macaroon::NonceError>,
+        fail_variant: Option<ObserveFailKind>,
     }
 
     impl FailingObserveNonceRegistry {
-        fn new(fail_variant: octo_cap_macaroon::NonceError) -> Self {
+        fn new(fail_variant: ObserveFailKind) -> Self {
             Self {
                 inner: InMemoryNonceRegistry::new(),
                 fail_variant: Some(fail_variant),
@@ -1117,25 +1140,23 @@ mod tests {
             nonce: &[u8; 32],
         ) -> Result<(), octo_cap_macaroon::NonceError> {
             if let Some(v) = self.fail_variant.take() {
-                // Reconstruct the variant with the requested (event_kind,
-                // pk, nonce) for struct variants so the error surfaces
-                // substrate-consistent fields.
                 return Err(match v {
-                    octo_cap_macaroon::NonceError::AlreadyObserved { .. } => {
+                    ObserveFailKind::AlreadyObserved => {
                         octo_cap_macaroon::NonceError::AlreadyObserved {
                             event_kind,
                             pk: *pk,
                             nonce: *nonce,
                         }
                     }
-                    octo_cap_macaroon::NonceError::NotObserved { .. } => {
-                        octo_cap_macaroon::NonceError::NotObserved {
-                            event_kind,
-                            pk: *pk,
-                            nonce: *nonce,
-                        }
+                    ObserveFailKind::NotObserved => octo_cap_macaroon::NonceError::NotObserved {
+                        event_kind,
+                        pk: *pk,
+                        nonce: *nonce,
+                    },
+                    ObserveFailKind::PersistenceFailure => {
+                        octo_cap_macaroon::NonceError::PersistenceFailure
                     }
-                    other => other,
+                    ObserveFailKind::WalRecovering => octo_cap_macaroon::NonceError::WalRecovering,
                 });
             }
             self.inner.observe(event_kind, pk, nonce)
@@ -1199,8 +1220,7 @@ mod tests {
             Epoch::new(1),
         )
         .unwrap();
-        let mut nr =
-            FailingObserveNonceRegistry::new(octo_cap_macaroon::NonceError::PersistenceFailure);
+        let mut nr = FailingObserveNonceRegistry::new(ObserveFailKind::PersistenceFailure);
         let mut audit = InMemoryAuditSink::default();
         let err = consume(&burn, &mut nr, &mut audit).unwrap_err();
         match err {
@@ -1218,6 +1238,17 @@ mod tests {
             }
             other => panic!("expected AuditSinkFailed{{UnobserveFailed}}, got {other:?}"),
         }
+        // R5 test-coverage: nonce MUST NOT be in registry post-failed
+        // observe (no state mutation on observe error).
+        let readonly = nr.observe_readonly(
+            octo_cap_macaroon::NonceEventKind::Burn,
+            &burn.governance_pubkey,
+            burn.nonce.as_bytes(),
+        );
+        assert!(
+            readonly.is_ok(),
+            "post-failed-observe observe_readonly MUST return Ok (no state mutation); got {readonly:?}"
+        );
     }
 
     /// TV-BE24 (R4 test-coverage): Sink-1 observe-failure path with
@@ -1259,7 +1290,7 @@ mod tests {
             Epoch::new(1),
         )
         .unwrap();
-        let mut nr = FailingObserveNonceRegistry::new(octo_cap_macaroon::NonceError::WalRecovering);
+        let mut nr = FailingObserveNonceRegistry::new(ObserveFailKind::WalRecovering);
         let mut audit = InMemoryAuditSink::default();
         let err = consume(&burn, &mut nr, &mut audit).unwrap_err();
         match err {
@@ -1273,6 +1304,17 @@ mod tests {
             }
             other => panic!("expected AuditSinkFailed{{UnobserveFailed}}, got {other:?}"),
         }
+        // R5 test-coverage: nonce MUST NOT be in registry post-failed
+        // observe (no state mutation on observe error).
+        let readonly = nr.observe_readonly(
+            octo_cap_macaroon::NonceEventKind::Burn,
+            &burn.governance_pubkey,
+            burn.nonce.as_bytes(),
+        );
+        assert!(
+            readonly.is_ok(),
+            "post-failed-observe observe_readonly MUST return Ok (no state mutation); got {readonly:?}"
+        );
     }
 
     /// TV-BE21 (R2 test-coverage): unobserve-failure path triggers

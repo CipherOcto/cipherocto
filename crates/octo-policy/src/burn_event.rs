@@ -193,8 +193,16 @@ fn redact_audit_error(e: &AuditError) -> &'static str {
     }
 }
 
-/// ledger_height (u64 BE) || settlement_event_ref ||
-/// registry_snapshot_epoch.0 (u64 BE) || nonce`
+/// 11-element canonical preimage:
+/// `BODY_HASH_DOMAIN || chain_id || vault_id || asset_id || asset_kind ||
+/// amount.scale || amount.value (i64 BE) || ledger_height (u64 BE) ||
+/// settlement_event_ref || registry_snapshot_epoch.0 (u64 BE) || nonce`.
+///
+/// Every element MUST influence the hash; an accidental drop from the
+/// preimage would let a producer and verifier converge on the same
+/// (smaller) domain without raising — silently degrading burn
+/// non-repudiation. Per-field coverage is locked by
+/// `tv_be19_body_hash_per_field_matrix`.
 #[must_use]
 pub fn compute_body_hash(burn: &BurnEventRef) -> [u8; 32] {
     let mut buf: Vec<u8> = Vec::with_capacity(32 * 6 + 1 + 8 + 8 + 8 + 32 + 8 + 32);
@@ -981,6 +989,114 @@ mod tests {
         let mut c = a.clone();
         c.ledger_height = 101;
         assert_ne!(h_a, compute_body_hash(&c));
+    }
+
+    /// R14 test-coverage: `compute_body_hash` MUST cover ALL 11 elements
+    /// of its preimage (BODY_HASH_DOMAIN + 10 `BurnEventRef` fields).
+    /// An accidental drop from the preimage would let a producer and
+    /// verifier converge on the same (smaller) domain without raising —
+    /// silently degrading burn non-repudiation. This test perturbs each
+    /// element independently and asserts the hash changes.
+    #[test]
+    fn tv_be19_body_hash_per_field_matrix() {
+        let base = || BurnEventRef {
+            chain_id: ChainId::from_bytes([3u8; 32]),
+            vault_id: VaultId::from_bytes([2u8; 32]),
+            asset_id: AssetId::from_bytes([1u8; 32]),
+            asset_kind: AssetKind::OctoW,
+            amount: Dqa::new(1_000, 0).unwrap(),
+            ledger_height: 100,
+            settlement_event_ref: SettlementId([4u8; 32]),
+            governance_signature: GovernanceSignature::from_bytes([0u8; 64]),
+            governance_pubkey: [0u8; 32],
+            registry_snapshot_epoch: Epoch::new(0),
+            nonce: Nonce::from_bytes([5u8; 32]),
+        };
+        let h_base = compute_body_hash(&base());
+        // Perturb each of the 10 BurnEventRef-derived elements.
+        let mut p = base();
+        p.chain_id = ChainId::from_bytes([7u8; 32]);
+        assert_ne!(
+            h_base,
+            compute_body_hash(&p),
+            "chain_id MUST influence hash"
+        );
+        let mut p = base();
+        p.vault_id = VaultId::from_bytes([9u8; 32]);
+        assert_ne!(
+            h_base,
+            compute_body_hash(&p),
+            "vault_id MUST influence hash"
+        );
+        let mut p = base();
+        p.asset_id = AssetId::from_bytes([11u8; 32]);
+        assert_ne!(
+            h_base,
+            compute_body_hash(&p),
+            "asset_id MUST influence hash"
+        );
+        let mut p = base();
+        p.asset_kind = AssetKind::ManagedAsset;
+        assert_ne!(
+            h_base,
+            compute_body_hash(&p),
+            "asset_kind MUST influence hash"
+        );
+        let mut p = base();
+        p.amount = Dqa::new(1_001, 0).unwrap();
+        assert_ne!(
+            h_base,
+            compute_body_hash(&p),
+            "amount.value MUST influence hash"
+        );
+        let mut p = base();
+        p.amount = Dqa::new(1_000, 6).unwrap();
+        assert_ne!(
+            h_base,
+            compute_body_hash(&p),
+            "amount.scale MUST influence hash"
+        );
+        let mut p = base();
+        p.ledger_height = 101;
+        assert_ne!(
+            h_base,
+            compute_body_hash(&p),
+            "ledger_height MUST influence hash"
+        );
+        let mut p = base();
+        p.settlement_event_ref = SettlementId([13u8; 32]);
+        assert_ne!(
+            h_base,
+            compute_body_hash(&p),
+            "settlement_event_ref MUST influence hash"
+        );
+        let mut p = base();
+        p.registry_snapshot_epoch = Epoch::new(1);
+        assert_ne!(
+            h_base,
+            compute_body_hash(&p),
+            "registry_snapshot_epoch MUST influence hash"
+        );
+        let mut p = base();
+        p.nonce = Nonce::from_bytes([15u8; 32]);
+        assert_ne!(h_base, compute_body_hash(&p), "nonce MUST influence hash");
+        // governance_signature + governance_pubkey are NOT in the
+        // preimage by RFC-0009 §3.1 contract (signature is over the
+        // body hash, not part of it). Documented as non-finding:
+        let mut p = base();
+        p.governance_signature = GovernanceSignature::from_bytes([0x42u8; 64]);
+        assert_eq!(
+            h_base,
+            compute_body_hash(&p),
+            "governance_signature MUST NOT influence body_hash (signature covers the hash)"
+        );
+        let mut p = base();
+        p.governance_pubkey = [0x42u8; 32];
+        assert_eq!(
+            h_base,
+            compute_body_hash(&p),
+            "governance_pubkey MUST NOT influence body_hash (pubkey is verification material, not preimage)"
+        );
     }
 
     /// TV-BE20: distinct nonces produce distinct observation triples.

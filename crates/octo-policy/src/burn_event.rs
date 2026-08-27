@@ -1,21 +1,21 @@
-//! Mission F (RFC-0960) BurnEventRef substrate + 3-sink atomicity.
+//! Mission F (RFC-0960) BurnEventRef substrate + 2-sink atomicity.
 //!
 //! Per RFC-0960 §2 (BurnEventRef Specification) + §3 (Wire Form).
 //!
-//! ## 3-sink atomicity (R7 CRITICAL #3)
+//! ## 2-sink atomicity (R7 fix: doc reflects substrate after
+//! `l4-parallel-transfer-event-log-elimination` removed the inline
+//! `TransferEventLog::insert` call from `consume()`).
 //!
-//! `consume()` orchestrates THREE sinks in sequence:
+//! `consume()` orchestrates TWO sinks in sequence:
 //! 1. `nonce_registry.observe(NonceEventKind::Burn, &pk, &nonce)`
 //! 2. `audit_sink.write(...)`
-//! 3. `producer.log.insert(...)` (TransferEventLog write)
 //!
-//! If ANY sink fails AFTER a prior sink succeeded, ALL prior sinks
-//! MUST be rolled back atomically. Without rollback, a log-insert
-//! failure would burn the nonce bucket + write audit + skip the
-//! TransferEventLog — caller sees `Replay` on retry but
-//! `VaultBalanceProjection` is silently short by the burn amount.
-
-use std::collections::HashSet;
+//! If sink 2 fails AFTER sink 1 succeeded, sink 1 MUST be rolled back
+//! by calling `nonce_registry.unobserve(...)`. Without unobserve,
+//! the caller sees `Replay` on retry but the burn is silently lost.
+//!
+//! Note: audit-sink `compensate()` exists as a port method but is
+//! caller-responsibility (consume() does not call it directly).
 
 use octo_cap_macaroon::{
     blake3_hash, sovereign_nonce_namespace, verify_governance_signature, AssetId, AssetKind,
@@ -480,12 +480,6 @@ pub struct InMemoryTransferEventLog {
 // uses raw concatenation only).
 #[allow(dead_code)]
 const _: &[u8] = BODY_HASH_DOMAIN;
-
-// Mark HashSet as used for the InMemoryVaultRegistry import chain.
-#[allow(dead_code)]
-fn _hashset_anchor() -> HashSet<u8> {
-    HashSet::new()
-}
 
 #[cfg(test)]
 mod tests {
@@ -1608,6 +1602,118 @@ mod tests {
         assert_eq!(
             redact_audit_error(&AuditError::UnobserveFailed("should-not-leak".to_string())),
             "UnobserveFailed"
+        );
+    }
+
+    /// TV-BE-27 (R7 test-coverage): Gate 2 (`amount.scale > 18`
+    /// → `ScaleOutOfRange`) is structurally unreachable through
+    /// `new()` because `Dqa::new` itself rejects `scale > MAX_SCALE`
+    /// (= 18). This test documents the upstream-reachability contract:
+    /// `Dqa::new(0, 19)` MUST return `Err`, and `Dqa::new(0, 18)`
+    /// (boundary) MUST return `Ok`. The `BurnEventError::ScaleOutOfRange`
+    /// variant stays as belt-and-suspenders for any future caller that
+    /// bypasses `new()` (e.g. raw struct-field mutation on a
+    /// re-validated `BurnEventRef`).
+    #[test]
+    fn tv_be27_scale_out_of_range_upstream_guard() {
+        // scale = 19 (one above MAX_SCALE = 18) MUST be rejected by
+        // Dqa::new.
+        let over = octo_determin::Dqa::new(0, 19);
+        assert!(
+            over.is_err(),
+            "Dqa::new(0, 19) MUST return Err (scale > MAX_SCALE = 18); got {over:?}"
+        );
+        // scale = 18 (boundary, equals MAX_SCALE) MUST succeed.
+        let boundary = octo_determin::Dqa::new(0, 18);
+        assert!(
+            boundary.is_ok(),
+            "Dqa::new(0, 18) MUST return Ok (scale == MAX_SCALE = 18); got {boundary:?}"
+        );
+    }
+
+    /// TV-BE-28 (R7 test-coverage): `InMemoryAuditSink::compensate()`
+    /// MUST record the body's BLAKE3 hash into `compensates` so a
+    /// downstream auditor can confirm the sink was rolled back. This
+    /// test exercises the `compensate()` method directly so the
+    /// `AuditError::CompensateFailed` variant has at least one
+    /// call site reachable from the test suite (caller-responsibility
+    /// contract per `consume()` doc-comment).
+    #[test]
+    fn tv_be28_audit_sink_compensate_records_body_hash() {
+        let asset_id = AssetId::from_bytes([1u8; 32]);
+        let vault_id = VaultId::from_bytes([2u8; 32]);
+        let (sk, pk) = sample_key();
+        let mut burn = BurnEventRef {
+            chain_id: ChainId::from_bytes([3u8; 32]),
+            vault_id,
+            asset_id,
+            asset_kind: AssetKind::OctoW,
+            amount: Dqa::new(1_000, 0).unwrap(),
+            ledger_height: 100,
+            settlement_event_ref: SettlementId([4u8; 32]),
+            governance_signature: GovernanceSignature::from_bytes([0u8; 64]),
+            governance_pubkey: pk,
+            registry_snapshot_epoch: Epoch::new(0),
+            nonce: Nonce::from_bytes([5u8; 32]),
+        };
+        sign_burn(&sk, &mut burn);
+        let mut sink = InMemoryAuditSink::default();
+        assert!(
+            sink.compensates.is_empty(),
+            "compensates vec MUST start empty; got {} entries",
+            sink.compensates.len()
+        );
+        sink.compensate(&burn).expect("compensate() default Ok");
+        assert_eq!(
+            sink.compensates.len(),
+            1,
+            "compensates vec MUST contain exactly 1 hash after compensate(); got {}",
+            sink.compensates.len()
+        );
+        // The recorded hash MUST equal compute_body_hash(&burn).
+        let expected = compute_body_hash(&burn);
+        assert_eq!(
+            sink.compensates[0], expected,
+            "compensate() MUST record the BLAKE3 body hash"
+        );
+    }
+
+    /// TV-BE-29 (R7 test-coverage): `validate()` path for
+    /// `BurnEventError::AssetKindMismatch` — `burn.asset_kind != meta.kind`.
+    /// All other gate-1..gate-7 checks must pass so the AssetKindMismatch
+    /// branch is the failure cause.
+    #[test]
+    fn tv_be29_validate_asset_kind_mismatch() {
+        let asset_id = AssetId::from_bytes([1u8; 32]);
+        let vault_id = VaultId::from_bytes([2u8; 32]);
+        let (sk, pk) = sample_key();
+        let (reg, vr) = setup_managed(asset_id, pk, vault_id);
+        let mut burn = BurnEventRef {
+            chain_id: ChainId::from_bytes([3u8; 32]),
+            vault_id,
+            asset_id,
+            // Registered kind is OctoW per setup_managed; claim
+            // ManagedAsset to trigger AssetKindMismatch.
+            asset_kind: AssetKind::ManagedAsset,
+            amount: Dqa::new(1_000, 0).unwrap(),
+            ledger_height: 100,
+            settlement_event_ref: SettlementId([4u8; 32]),
+            governance_signature: GovernanceSignature::from_bytes([0u8; 64]),
+            governance_pubkey: pk,
+            registry_snapshot_epoch: Epoch::new(0),
+            nonce: Nonce::from_bytes([5u8; 32]),
+        };
+        sign_burn(&sk, &mut burn);
+        let err = validate(&burn, &reg, &vr, Epoch::new(1)).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                BurnEventError::AssetKindMismatch {
+                    claimed: AssetKind::ManagedAsset,
+                    registered: AssetKind::OctoW,
+                }
+            ),
+            "validate() MUST return AssetKindMismatch{{claimed: ManagedAsset, registered: OctoW}}; got {err:?}"
         );
     }
 }

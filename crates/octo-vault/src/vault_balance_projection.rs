@@ -8,7 +8,7 @@
 //! `octo-vault` is Layer B (RFC-driven, additive only, years-stable).
 //! All types in this module are additive (semver-minor).
 
-#![allow(missing_docs, clippy::double_must_use)]
+#![allow(clippy::double_must_use)]
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -41,8 +41,11 @@ pub enum ProjectionSource {
 /// (RFC-0960 §2.1).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VaultBalanceProjection {
+    /// Owning chain (RFC-0105 §3.11 chain-binding).
     pub chain_id: ChainId,
+    /// Vault whose balance is projected (RFC-0960 §2.1).
     pub vault_id: VaultId,
+    /// Asset contained by the vault (RFC-0960 §2.6 asset-generality).
     pub asset_id: AssetId,
     /// Projected balance = `SUM(in.to_vault) - SUM(out.from_vault) -
     /// SUM(active escrow holds)`. DQA-form (NOT raw `i64`) to avoid the
@@ -55,6 +58,7 @@ pub struct VaultBalanceProjection {
     /// when live epoch advances past this value (asset-rotation break
     /// mitigation per §2.3).
     pub registry_snapshot_epoch: u64,
+    /// Where this projection came from (cache, fresh log scan, epoch rebuild).
     pub source_kind: ProjectionSource,
 }
 
@@ -65,7 +69,10 @@ pub struct VaultBalanceProjection {
 pub enum ProjectionError {
     /// Vault not found by `VaultAssetResolver`.
     #[error("vault unknown: {vault_id:?}")]
-    VaultUnknown { vault_id: VaultId },
+    VaultUnknown {
+        /// Vault id that failed resolution.
+        vault_id: VaultId,
+    },
     /// Underlying `TransferEventLog` read failure (transport-layer).
     #[error("transfer event log read failed: {0}")]
     LogReadFailed(String),
@@ -75,6 +82,7 @@ pub enum ProjectionError {
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TransferEventLogInsertError {
+    /// Underlying insert failed (e.g. FK violation, IO error).
     #[error("transfer event log insert failed")]
     InsertFailed,
 }
@@ -138,8 +146,12 @@ pub trait VaultAssetResolver: Send + Sync {
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum VaultAssetResolverError {
+    /// `vault_id` not present in the asset resolver.
     #[error("vault unknown: {vault_id:?}")]
-    UnknownVault { vault_id: VaultId },
+    UnknownVault {
+        /// Vault id that failed resolution.
+        vault_id: VaultId,
+    },
 }
 
 /// Compute projection over the log (RFC-0960 §2.2 algorithm).
@@ -200,12 +212,17 @@ use std::collections::HashMap;
 /// §2.3 (asset-generality contract).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CacheKey {
+    /// Owning chain.
     pub chain_id: ChainId,
+    /// Vault whose projection is cached.
     pub vault_id: VaultId,
+    /// Asset contained by the vault.
     pub asset_id: AssetId,
 }
 
 impl CacheKey {
+    /// Construct a cache key from the canonical triple.
+    #[must_use]
     pub const fn new(chain_id: ChainId, vault_id: VaultId, asset_id: AssetId) -> Self {
         Self {
             chain_id,
@@ -299,6 +316,11 @@ impl VaultBalanceCache {
 }
 
 /// `VaultAssetResolver` error mapping helper.
+///
+/// Lifts `VaultAssetResolverError::UnknownVault` into
+/// `ProjectionError::VaultUnknown` so callers that hold a
+/// `Box<dyn VaultAssetResolver>` can compose the two ports without
+/// re-implementing the mapping at each call site.
 pub fn map_resolver_error(e: VaultAssetResolverError) -> ProjectionError {
     match e {
         VaultAssetResolverError::UnknownVault { vault_id } => {
@@ -399,6 +421,28 @@ mod tests {
         assert!(V015_DDL.contains("PRIMARY KEY"));
         assert!(V015_DDL.contains("DQA(12)"));
         assert!(V015_DDL.contains("source_kind"));
+    }
+
+    /// TV-VP-8 (R7 test-coverage): `map_resolver_error` is a public
+    /// adapter between `VaultAssetResolverError` and `ProjectionError`.
+    /// This test locks the lifting contract:
+    /// `UnknownVault { vault_id } → VaultUnknown { vault_id }` —
+    /// the `vault_id` MUST be preserved across the mapping (no
+    /// zero-init, no hash collapse).
+    #[test]
+    fn tv_vp8_map_resolver_error_preserves_vault_id() {
+        let vid = VaultId::from_bytes([0xAB; 32]);
+        let resolver_err = VaultAssetResolverError::UnknownVault { vault_id: vid };
+        let mapped = map_resolver_error(resolver_err);
+        match mapped {
+            ProjectionError::VaultUnknown { vault_id } => {
+                assert_eq!(
+                    vault_id, vid,
+                    "map_resolver_error MUST preserve vault_id byte-for-byte"
+                );
+            }
+            other => panic!("expected VaultUnknown{{..}}, got {other:?}"),
+        }
     }
 
     /// TV-VP-6 (R6 test-coverage): TTL boundary + 1-second-past

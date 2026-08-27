@@ -913,12 +913,13 @@ mod tests {
     }
 
     /// TV-CB-11 (R6 test-coverage): sequence=0 from a FRESH producer
-    /// (last_seen_sequence absent) MUST be accepted (boundary on the
-    /// `or_insert(0)` + `envelope.sequence <= *entry` path). A
-    /// regression to `<` would reject this envelope (sequence 0 is
-    /// valid for the first envelope from a producer).
+    /// (last_seen_sequence absent → `or_insert(0)` baseline) MUST be
+    /// rejected as replay (`0 <= 0` is true, hitting the `<=`
+    /// monotonic guard). First-envelope contract: producers MUST
+    /// start at `sequence >= 1`. A regression to `<` (strict) would
+    /// accept this envelope and silently allow replay.
     #[test]
-    fn tv_cb11_sequence_zero_fresh_producer_accepted() {
+    fn tv_cb11_sequence_zero_fresh_producer_rejected() {
         let sk = sample_signing_key();
         let vk = sk.verifying_key();
         let did = sample_did(38);
@@ -1088,5 +1089,34 @@ mod tests {
         ));
         // Avoid unused-warning for sk.
         let _ = sk.verifying_key();
+    }
+
+    /// TV-CB-14 (R7 test-coverage): UnsupportedVersion branch
+    /// coverage for version=0 (invalid pre-wire-form), version=3
+    /// (future-version), and version=255 (u8::MAX). Closes the
+    /// single-version gap left by tv_cb8 (only v1 was tested).
+    /// The variant carries the actual `u8` via `{0}`; this test
+    /// locks that the carried value is the input version, not a
+    /// sanitized/clamped value.
+    #[test]
+    fn tv_cb14_unsupported_version_value_carried() {
+        let sk = sample_signing_key();
+        let vk = sk.verifying_key();
+        let did = sample_did(14);
+        let tl = ProducerTrustList::new(vec![(did.clone(), vk)]);
+        for &bad_version in &[0u8, 3u8, 255u8] {
+            let mut env = VaultProjectionInvalidationEnvelope::v1_legacy(
+                ChainId::from_bytes([bad_version; 32]),
+                VaultId::from_bytes([bad_version.wrapping_add(1); 32]),
+                AssetId::from_bytes([bad_version.wrapping_add(2); 32]),
+                ProjectionSource::FreshLogScan,
+            );
+            env.version = bad_version;
+            let err = tl.verify_and_update_sequence(&env).unwrap_err();
+            assert!(
+                matches!(err, EnvelopeVerificationError::UnsupportedVersion(v) if v == bad_version),
+                "UnsupportedVersion MUST carry the actual version byte ({bad_version}); got {err:?}"
+            );
+        }
     }
 }

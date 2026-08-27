@@ -62,6 +62,9 @@ pub mod vault_balance_projection;
 // VaultProjectionInvalidationEmitter + TransferEventRef envelope.
 pub mod event_log_producer;
 
+// Mission B §6 substrate: per-process cache invalidation subscriber.
+pub mod cache_subscriber;
+
 pub use migrations::BUILTIN_MIGRATION_CATALOG;
 // Mission A substrate re-exports (RFC-0960 v3.7 §2).
 pub use vault_balance_projection::{
@@ -73,6 +76,10 @@ pub use event_log_producer::{
     cache_channel_name, process_drain_lock, EventLogProducer, ProducerError,
     TransferEventLogInsert, TransferEventLogInsertError, TransferEventRef,
     VaultProjectionInvalidationEmitter, VaultProjectionInvalidationEnvelope,
+};
+// Mission B §6 substrate re-exports.
+pub use cache_subscriber::{
+    init_cache_subscriber, spawn_cache_subscriber, VaultProjectionInvalidationSubscriber,
 };
 
 // Mission D substrate re-exports: traits + newtypes live in

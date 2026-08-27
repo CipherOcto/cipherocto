@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod envelope;
 pub mod schema;
+pub mod settlement_event;
 pub mod shard;
 pub mod state_machine;
 pub mod store;

@@ -19,6 +19,15 @@ path = "src/lib.rs"
 # Layer A substrate for the migration runner + DB constructors.
 octo-storage-core = { path = "../octo-storage-core" }
 
+# Mission G SettlementEvent substrate (RFC-0959 v2.8) — AssetRegistry,
+# VaultRegistry, NonceRegistry, PaymentCaveat, Dqa, AssetId, VaultId,
+# GovernanceSignature, verify_governance_signature, sovereign_nonce_namespace.
+octo-cap-macaroon = { path = "../octo-cap-macaroon" }
+# Dqa is re-exported by octo-cap-macaroon (Layer B additive substrate).
+# octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
+# Mission G wire form (RFC-0959 v2.8 §3 borsh encoding).
+borsh = { version = "=1.5.0", features = ["derive"] }
+
 # Workspace deps
 blake3.workspace = true
 hex.workspace = true

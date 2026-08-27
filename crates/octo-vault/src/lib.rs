@@ -64,6 +64,9 @@ pub mod event_log_producer;
 
 // Mission B §6 substrate: per-process cache invalidation subscriber.
 pub mod cache_subscriber;
+// Mission `producer-wrapper-consumer-wiring` sub-step 6: Layer B test-only
+// reusable fixtures (StubTransferEventLog / StubEmitter / StubVaultAssetResolver).
+pub mod testing;
 
 pub use migrations::BUILTIN_MIGRATION_CATALOG;
 // Mission A substrate re-exports (RFC-0960 v3.7 §2).
@@ -84,6 +87,8 @@ pub use cache_subscriber::{
     spawn_cache_subscriber_with_trust_list, EnvelopeVerificationError, ProducerTrustList,
     VaultProjectionInvalidationSubscriber,
 };
+// Mission `producer-wrapper-consumer-wiring` sub-step 6 re-exports.
+pub use testing::{StubEmitter, StubTransferEventLog, StubVaultAssetResolver};
 
 // Mission D substrate re-exports: traits + newtypes live in
 // octo-cap-macaroon (Layer A frozen substrate per RFC-0105 v3.5

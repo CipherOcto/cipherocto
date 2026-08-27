@@ -97,13 +97,14 @@ pub fn produce_burn(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     producer.validate_pre_insert(&burn, registry, asset_resolver)?;
-    // CRITICAL FIX (review C1): 3-sink atomicity — Sink 1 (nonce) + Sink 2
-    // (audit) + Sink 3-audit-mirror (local log) run inside `consume` with
-    // full rollback. `log` (Layer B `TransferEventLog`) is the canonical
-    // projection source carrying the TransferEventRef envelope. Parallel
-    // TransferEventLog traits (octo-policy::burn_event::TransferEventLog
-    // vs octo-vault::TransferEventLog) are tracked for elimination under
-    // L4 CRITICAL #2.
+    // Cross-sink atomicity (mission `l4-parallel-transfer-event-log-elimination`
+    // + Mission `producer-wrapper-consumer-wiring` §Sub-step 3):
+    // `consume()` runs Sink 1 (nonce observe) + Sink 2 (audit write) with
+    // full rollback on any failure. On `consume` failure the canonical
+    // sinks are NOT written, the producer returns `Err`, and the caller
+    // (MintHandler / SettlementEventRepository) fails-closed without
+    // partial state. After `consume` succeeds, `log.insert` and `bus.emit`
+    // are wrapped in `drain_lock` for producer-fan-in serial access.
     crate::burn_event::consume(&burn, nonce_registry, audit_sink)
         .map_err(|e| ProducerError::TriInvariantViolation(format!("burn_consume: {e:?}")))?;
     let ev = producer.to_transfer_event(burn, registry, asset_resolver, nonce_registry)?;

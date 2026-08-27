@@ -131,12 +131,14 @@ fn _anchor(_d: Dqa, _n: Nonce, _c: ChainId) {}
 mod tests {
     use super::*;
 
-    /// TV-VP13-prep: BurnEventProducer drain_lock singleton + acquire/release.
+    /// TV-VP6: BurnEventProducer drain_lock singleton + acquire/release.
     /// The 3-sink atomicity contract is exercised end-to-end by Mission F's
     /// 15 TV-BE tests in `burn_event.rs` (which cover `BurnEventRef::consume`
     /// directly); this test guards the producer wrapper's lock plumbing.
+    /// (Renumbered from tv_vp13 to tv_vp6 to close the VP5→VP13 numbering
+    /// gap flagged by R2 review.)
     #[test]
-    fn tv_vp13_producer_drain_lock_singleton() {
+    fn tv_vp6_producer_drain_lock_singleton() {
         let producer = BurnEventProducer::new();
         assert!(Arc::ptr_eq(
             producer.drain_lock(),

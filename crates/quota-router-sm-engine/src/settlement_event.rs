@@ -72,18 +72,31 @@ pub type VaultRegistryError = VaultAssetError;
 /// 13-field SettlementEvent struct (RFC-0959 v2.8 §2.1 L75-89).
 #[derive(Clone, Debug, PartialEq, Eq, borsh::BorshSerialize, borsh::BorshDeserialize)]
 pub struct SettlementEvent {
+    /// Settlement event identifier (BLAKE3-derived per RFC-0959 §2.1).
     pub settlement_id: SettlementId,
+    /// Originating ask id (RFC-0959 §1.3 mint → settle chain).
     pub ask_id: AskId,
+    /// Vault that pays the settlement cost (RFC-0959 §2.1).
     pub cost_vault_id: VaultId,
+    /// Asset that pays the settlement cost (RFC-0959 §2.1).
     pub cost_asset_id: AssetId,
+    /// AssetKind tag for tri-invariant enforcement (RFC-0105 §3.13).
     pub asset_kind: AssetKind,
+    /// Cost amount in DQA scale (RFC-0105 §3.6).
     pub cost: Dqa,
+    /// Audit evidence reference (RFC-0959 §2.1).
     pub evidence_ref: EvidenceRef,
+    /// Originating ledger height (RFC-0959 §2.1).
     pub ledger_height: u64,
+    /// Unix-time ms at construction (RFC-0959 §2.1).
     pub created_at_unix_ms: u64,
+    /// Settlement decision discriminator (Consumed/AlreadyConsumed/...; RFC-0959 §2.1).
     pub settlement_decision: SettlementDecision,
+    /// Governance signature over body_hash (RFC-0959 §2.1).
     pub governance_signature: GovernanceSignature,
+    /// Registry snapshot epoch at construction (RFC-0959 §2.1).
     pub registry_snapshot_epoch: EpochLocal,
+    /// Replay-protection nonce (RFC-0105 §3.11 + RFC-0959 §2.2).
     pub nonce: Nonce,
 }
 

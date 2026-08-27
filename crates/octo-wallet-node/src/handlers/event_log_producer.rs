@@ -113,11 +113,11 @@ pub fn produce_payment(
     log.insert(&ev).map_err(ProducerError::from)?;
     bus.emit(&VaultProjectionInvalidationEnvelope {
         chain_id: ev.chain_id,
-        vault_id: ev.from_vault_id,
+        vault_id: ev.to_vault_id,
         asset_id: ev.asset_id,
         source_kind: octo_vault::ProjectionSource::FreshLogScan,
     });
-    let _ = cache_channel_name(&ev.from_vault_id);
+    let _ = cache_channel_name(&ev.to_vault_id);
     Ok(ev)
 }
 

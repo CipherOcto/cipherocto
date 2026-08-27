@@ -152,11 +152,6 @@ pub enum AuditInvariantViolation {
     },
 }
 
-/// Compute the body_hash per RFC-0960 §2.2.
-///
-/// Hash input is the concatenation of:
-/// `chain_id || vault_id || asset_id || asset_kind_tag ||
-/// amount.wire_scale (u8 BE) || amount.value (i64 BE) ||
 /// Redact the substrate-internal Debug bytes from a `NonceError` so the
 /// operator-facing `Display` (via `BurnEventError::AtomicityRollbackFailed`)
 /// does not leak the 32-byte governance_pubkey or 32-byte nonce that the

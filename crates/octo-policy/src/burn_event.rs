@@ -450,6 +450,9 @@ pub struct InMemoryAuditSink {
     pub fail_write: bool,
     /// When `true`, `compensate()` returns `Err(AuditError::CompensateFailed)`.
     /// Default `false` (happy path). Exercised by `tv_be30`.
+    /// `#[allow(dead_code)]` mirrors `ObserveFailKind::NotObserved`:
+    /// API-surface preserved if `tv_be30` is temporarily commented out.
+    #[allow(dead_code)]
     pub fail_compensate: bool,
 }
 

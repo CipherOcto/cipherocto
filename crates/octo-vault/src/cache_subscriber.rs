@@ -56,8 +56,11 @@ pub trait VaultProjectionInvalidationSubscriber: Send + Sync {
 #[non_exhaustive]
 pub enum EnvelopeVerificationError {
     /// Producer DID not in trust list — fail-closed.
-    #[error("unknown producer_did: {0}")]
-    UnknownProducer(String),
+    #[error("unknown producer_did: {producer_did}")]
+    UnknownProducer {
+        /// Producer DID rejected by the trust list.
+        producer_did: String,
+    },
     /// Ed25519 signature verification failed.
     #[error("signature verification failed for producer {producer_did}")]
     InvalidSignature {
@@ -152,8 +155,8 @@ impl ProducerTrustList {
         // 2. Producer trust list lookup (fail-closed).
         let vk = self
             .get_verifying_key(&envelope.producer_did)
-            .ok_or_else(|| {
-                EnvelopeVerificationError::UnknownProducer(envelope.producer_did.clone())
+            .ok_or_else(|| EnvelopeVerificationError::UnknownProducer {
+                producer_did: envelope.producer_did.clone(),
             })?;
         // 3. Signature verification.
         let preimage = envelope.preimage();
@@ -1044,7 +1047,10 @@ mod tests {
         let vk = sk.verifying_key();
         let tl = ProducerTrustList::new(vec![(sample_did(5), vk)]);
         let err = tl.verify_and_update_sequence(&env).unwrap_err();
-        assert!(matches!(err, EnvelopeVerificationError::UnknownProducer(_)));
+        assert!(matches!(
+            err,
+            EnvelopeVerificationError::UnknownProducer { .. }
+        ));
     }
 
     /// TV-CB-6: process init with empty trust list → all envelopes rejected
@@ -1055,7 +1061,10 @@ mod tests {
         let env = signed_v2_envelope(&sk, &sample_did(6), 1, 6);
         let tl = ProducerTrustList::new(vec![]);
         let err = tl.verify_and_update_sequence(&env).unwrap_err();
-        assert!(matches!(err, EnvelopeVerificationError::UnknownProducer(_)));
+        assert!(matches!(
+            err,
+            EnvelopeVerificationError::UnknownProducer { .. }
+        ));
     }
 
     /// TV-CB-7: preimage starts with the cross-protocol domain separator

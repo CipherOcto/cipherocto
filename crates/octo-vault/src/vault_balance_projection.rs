@@ -177,13 +177,17 @@ pub fn project(
     let out_sum = log.sum_from_vault(chain_id, vault_id, asset_id, i64::MIN)?;
     let max_ts = log.max_occurred_at_unix(chain_id, vault_id, asset_id)?;
     let projected_balance = if in_sum.scale == out_sum.scale && in_sum.value >= out_sum.value {
+        // value >= out_value (>=0) so subtraction cannot underflow;
+        // `unwrap_or_else` is belt-and-suspenders for the scale invariant
+        // (substrate invariant: scale is always in-bounds here).
         Dqa::new(in_sum.value - out_sum.value, in_sum.scale)
-            .unwrap_or_else(|_| Dqa::new(0, 0).unwrap())
+            .unwrap_or_else(|_| Dqa::new(0, 0).expect("Dqa(0,0) is invariant-valid"))
     } else {
-        // Defensive: negative balances should not occur in canonical state,
-        // but substrate fails-closed with a zero projection rather than
-        // panicking.
-        Dqa::new(0, 0).unwrap()
+        // Defensive: negative balances / mixed scales should not occur in
+        // canonical state, but substrate fails-closed with a zero
+        // projection rather than panicking. `Dqa(0,0)` is the Dqa
+        // invariant base and MUST always succeed.
+        Dqa::new(0, 0).expect("Dqa(0,0) is invariant-valid")
     };
     let now_unix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -563,6 +567,10 @@ mod tests {
     /// (data corruption / legacy insert), projection clamps to zero.
     #[test]
     fn tv_vp10_project_scale_mismatch_clamps_to_zero() {
+        /// Inline test fixture: returns `in_sum` with `scale=0` and
+        /// `out_sum` with `scale=6` so the projection algorithm's
+        /// scale-mismatch defensive else-branch (line ~179) is taken.
+        /// `insert` is unreachable because `project()` never calls it.
         struct ScaleMismatchLog;
         impl TransferEventLog for ScaleMismatchLog {
             fn sum_to_vault(

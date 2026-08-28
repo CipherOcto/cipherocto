@@ -120,7 +120,9 @@ impl OctoCliError {
         let h = match self {
             Self::ClapParse(_) => "run `octo --help` for usage",
             Self::NoActiveIdentity => "create or select an identity before running this command",
-            Self::ConfirmationRequired { .. } => "re-run with `--confirm --confirm-acknowledge`",
+            Self::ConfirmationRequired { .. } => {
+                "re-run with `--confirm` to acknowledge the mutation"
+            }
             Self::AlreadyRotating => "complete or abort the in-flight rotation first",
             Self::IdentityNotFound(_) => "list identities with `octo identity show`",
             Self::HsmUnavailable(_) => "check that the HSM backend is reachable",

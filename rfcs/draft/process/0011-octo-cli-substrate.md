@@ -480,7 +480,7 @@ canonical forms (RFC-0964 envelope):
 | Model        | `{ "type": "model", "value": "<model_ref>" }`                      | non-empty `model_ref`; multiple `Caveat::Model` compose via logical-AND (no allowlist variant)                                                                  |
 | Provider     | `{ "type": "provider", "value": [<ProviderId>, ...] }`             | non-empty list (substrate `Caveat::Provider(Vec<ProviderId>)`; CLI sorts the list for determinism)                                                              |
 | Audience     | `{ "type": "audience", "value": "<OverlayIdentity>" }`             | non-empty overlay identity (substrate `Caveat::Audience(OverlayIdentity)` — tuple variant, use `value` not `overlay`)                                           |
-| Single use   | `{ "type": "max_uses", "value": { "count": 1 } }`                  | nested `count` form per substrate `Caveat::MaxUses { count: 1 }` (no dedicated `SingleUse` variant; per RFC-0965 caveat catalog MaxUses entry)                             |
+| Single use   | `{ "type": "max_uses", "value": { "count": 1 } }`                  | nested `count` form per substrate `Caveat::MaxUses { count: 1 }` (no dedicated `SingleUse` variant; per RFC-0965 §3.4 MaxUses entry)                                       |
 | Audit window | `{ "type": "audit_window", "value": { "duration_secs": <u64> } }`  | `1 <= duration_secs <= 86400` (substrate `Caveat::AuditWindow { duration_secs: u64 }` — u64, NOT u32)                                                           |
 
 > **Substrate envelope (RFC-0964 → `Caveat::canonical_ser`):** All variants
@@ -1268,8 +1268,8 @@ Per-subcommand JSON schemas are specified in the companion implementation guide
 See §Caveat Catalog in the main body. 9 caveat types supported (user-facing
 names): `budget`, `before` (expiry), `valid_after` (vesting), `max_uses`,
 `model`, `provider` (any-of provider list — not `destinations`), `audience`,
-`single_use` (canonical form `max_uses` with `count=1` per RFC-0965 caveat
-catalog MaxUses entry — not a separate wire tag), `audit_window`. Canonical
+`single_use` (canonical form `max_uses` with `count=1` per RFC-0965 §3.4
+MaxUses entry — not a separate wire tag), `audit_window`. Canonical
 forms in RFC-0964 envelope.
 
 ### D. Exit Code Table

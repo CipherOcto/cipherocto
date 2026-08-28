@@ -103,9 +103,6 @@ pub enum CapabilityAction {
         /// Root capability identifier.
         #[arg(long)]
         root: Option<String>,
-        /// Acknowledge that minting grants authority.
-        #[arg(long, requires = "confirm")]
-        confirm_acknowledge: bool,
     },
     /// Attenuate an existing capability.
     Attenuate {
@@ -114,9 +111,6 @@ pub enum CapabilityAction {
         /// Additional caveats to apply.
         #[arg(long)]
         caveats: String,
-        /// Acknowledge that attenuation issues a new capability.
-        #[arg(long, requires = "confirm")]
-        confirm_acknowledge: bool,
     },
 }
 
@@ -261,11 +255,14 @@ pub fn mint(
     caveats_json: &str,
     holder_did: &str,
     root: Option<&str>,
-    acknowledge: bool,
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
     super::identity::require_confirm(cli, "capability mint")?;
-    require_acknowledge(cli, acknowledge, "capability mint")?;
+    // R20 Lens-2 F7: `--confirm-acknowledge` is now a global flag on
+    // `OperatorModeFlags` (parity with identity rotate/revoke). The
+    // local per-command field was redundant with `require_confirm`'s
+    // second-step gate and was removed.
+    require_acknowledge(cli, cli.mode.confirm_acknowledge, "capability mint")?;
     let caveats = parse_caveats(caveats_json)?;
     validate_holder_did(holder_did)?;
     if let Some(root_id) = root {
@@ -369,14 +366,13 @@ pub fn mint(
 /// 5. parent lookup → exit 12
 /// 6. narrowing check → exit 10
 /// 7. substrate attenuate → exit 7 / 8 / 10 / 64
-pub fn attenuate(
-    cap_id: &str,
-    caveats_json: &str,
-    acknowledge: bool,
-    cli: &Octo,
-) -> Result<(), OctoCliError> {
+pub fn attenuate(cap_id: &str, caveats_json: &str, cli: &Octo) -> Result<(), OctoCliError> {
     super::identity::require_confirm(cli, "capability attenuate")?;
-    require_acknowledge(cli, acknowledge, "capability attenuate")?;
+    // R20 Lens-2 F7: `--confirm-acknowledge` is now a global flag on
+    // `OperatorModeFlags` (parity with identity rotate/revoke and
+    // capability mint). The local per-command field was redundant with
+    // `require_confirm`'s second-step gate and was removed.
+    require_acknowledge(cli, cli.mode.confirm_acknowledge, "capability attenuate")?;
     let caveats = parse_caveats(caveats_json)?;
     validate_cap_id(cap_id)?;
 
@@ -877,13 +873,8 @@ pub fn dispatch(action: &CapabilityAction, cli: &Octo) -> Result<(), OctoCliErro
             caveats,
             holder,
             root,
-            confirm_acknowledge,
-        } => mint(caveats, holder, root.as_deref(), *confirm_acknowledge, cli),
-        CapabilityAction::Attenuate {
-            cap_id,
-            caveats,
-            confirm_acknowledge,
-        } => attenuate(cap_id, caveats, *confirm_acknowledge, cli),
+        } => mint(caveats, holder, root.as_deref(), cli),
+        CapabilityAction::Attenuate { cap_id, caveats } => attenuate(cap_id, caveats, cli),
     }
 }
 

@@ -427,14 +427,24 @@ pub fn revoke(reason: &str, cli: &Octo) -> Result<(), OctoCliError> {
 /// commands. Returns `ConfirmationRequired` (exit 2) when the operator has
 /// not authorized the mutation; `Ok(())` when the combination is permitted.
 ///
-/// | Mode     | `--dry-run` | Required flag          |
-/// |----------|-------------|------------------------|
-/// | Human    | yes         | (none — preview)       |
-/// | Human    | no          | `--confirm`            |
-/// | Ci       | yes         | (none — preview)       |
-/// | Ci       | no          | `--allow-write`        |
-/// | Auditor  | yes         | (denied)               |
-/// | Auditor  | no          | (denied — read-only)   |
+/// | Mode     | `--dry-run` | Required flags                          |
+/// |----------|-------------|-----------------------------------------|
+/// | Human    | yes         | (none — preview)                        |
+/// | Human    | no          | `--confirm` + `--confirm-acknowledge`   |
+/// | Ci       | yes         | (none — preview)                        |
+/// | Ci       | no          | `--allow-write`                         |
+/// | Auditor  | yes         | (denied)                                |
+/// | Auditor  | no          | (denied — read-only)                    |
+///
+/// R20 Lens-2 F7: identity `rotate` / `revoke` and capability `mint` /
+/// `attenuate` previously asked for `--confirm` alone. The
+/// pastejacking-defense doc comment promised a two-step gate but the
+/// second step (`--confirm-acknowledge`) was never enforced. This
+/// implementation closes the asymmetry: Human mode now requires BOTH
+/// `--confirm` AND `--confirm-acknowledge`. CI mode keeps the single
+/// `--allow-write` flag because the pipeline gate contract already
+/// proves the operator reviewed the action (the script is the
+/// acknowledgement). Auditor is denied regardless (read-only).
 pub fn require_confirm(cli: &Octo, command: &str) -> Result<(), OctoCliError> {
     // RFC-0011 §Security Considerations 1a: Auditor is denied regardless of --dry-run.
     // The dry_run bypass MUST come AFTER the Auditor denial, otherwise a
@@ -450,14 +460,14 @@ pub fn require_confirm(cli: &Octo, command: &str) -> Result<(), OctoCliError> {
     }
     match cli.mode.mode {
         OperatorMode::Human => {
-            // Pastejacking defense is the two-step flag gate:
-            // `--confirm` (this check) plus `--confirm-acknowledge` (in
-            // `require_acknowledge`). Both are explicit non-interactive
-            // flags — the second flag proves the operator typed it after
-            // reviewing the canonical payload, not pasted a one-shot
-            // command. No interactive prompt is issued, so the TTY bit
-            // is dead weight and intentionally ignored (see R15 fix).
-            if !cli.mode.confirm {
+            // Pastejacking defense: two explicit non-interactive flags.
+            // `--confirm` says yes; `--confirm-acknowledge` (clap
+            // requires = "confirm") says yes again after the operator
+            // reviewed the canonical payload echoed to stderr. The
+            // duplicate-yes proves the command was typed, not pasted
+            // in a one-shot form-fill attack. No interactive prompt is
+            // issued (the TTY bit is dead weight; see R15 fix).
+            if !cli.mode.confirm || !cli.mode.confirm_acknowledge {
                 return Err(OctoCliError::ConfirmationRequired {
                     command: command.to_string(),
                 });
@@ -471,7 +481,7 @@ pub fn require_confirm(cli: &Octo, command: &str) -> Result<(), OctoCliError> {
             }
         }
         OperatorMode::Auditor => {
-            // Auditor short-circuits above (line 445-449), before the
+            // Auditor short-circuits above, before the
             // `cli.mode.dry_run` bypass. This arm is unreachable.
             unreachable!("Auditor short-circuited above (R16 Lens-1 F2)")
         }
@@ -518,6 +528,7 @@ mod tests {
         cli.mode = OperatorModeFlags {
             mode,
             confirm: false,
+            confirm_acknowledge: false,
             allow_write: false,
             dry_run: false,
             allow_stdin_secret: false,
@@ -539,9 +550,24 @@ mod tests {
 
     #[test]
     fn require_confirm_human_with_confirm_ok() {
+        // R20 Lens-2 F7: Human-mode writes now require both
+        // `--confirm` AND `--confirm-acknowledge` (pastejacking defense,
+        // two-step gate per RFC-0011 §Security Considerations 1a).
         let mut cli = cli_with_mode(OperatorMode::Human);
         cli.mode.confirm = true;
+        cli.mode.confirm_acknowledge = true;
         assert!(require_confirm(&cli, "identity rotate").is_ok());
+    }
+
+    #[test]
+    fn require_confirm_human_with_confirm_only_still_errors() {
+        // Companion to the test above — setting only `--confirm`
+        // without `--confirm-acknowledge` is the pastejacking surface;
+        // require_confirm must refuse it.
+        let mut cli = cli_with_mode(OperatorMode::Human);
+        cli.mode.confirm = true;
+        let r = require_confirm(&cli, "identity rotate");
+        assert!(matches!(r, Err(OctoCliError::ConfirmationRequired { .. })));
     }
 
     #[test]

@@ -37,6 +37,16 @@ pub struct OperatorModeFlags {
     /// Confirm a mutating operation (pairs with `--confirm-acknowledge`).
     #[arg(long, global = true)]
     pub confirm: bool,
+    /// Acknowledge authority delegation after reviewing the canonical
+    /// payload (pastejacking defense per RFC-0011 §Security
+    /// Considerations 1a). Must be passed alongside `--confirm` to
+    /// authorise a Human-mode write — two explicit non-interactive
+    /// flags prove the operator reviewed the echoed payload, not a
+    /// pasted one-shot command. `--allow-write` alone (CI mode) does
+    /// NOT require `--confirm-acknowledge` because CI scripts are
+    /// trusted to supply it via the pipeline gate contract.
+    #[arg(long, global = true, requires = "confirm")]
+    pub confirm_acknowledge: bool,
     /// Preview the effect of a mutating operation without applying it.
     #[arg(long, global = true)]
     pub dry_run: bool,

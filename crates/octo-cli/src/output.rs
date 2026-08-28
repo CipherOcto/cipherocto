@@ -1,11 +1,27 @@
 //! Machine-readable output envelope — RFC-0011 §Output Envelope.
 
 use chrono::{DateTime, Utc};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::io::{self, IsTerminal, Write};
 
+/// 32-byte hex value (RFC-0011 §Hex32 newtype).
+///
+/// Serialised as a 64-character lowercase hex string via the `hex` crate's
+/// serde adapter, and described in the JSON Schema as a `string` with a
+/// 64-char pattern.
+#[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Hex32(
+    #[serde(
+        serialize_with = "hex::serde::serialize",
+        deserialize_with = "hex::serde::deserialize"
+    )]
+    pub [u8; 32],
+);
+
 /// Versioned envelope wrapping every successful command payload.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, JsonSchema, Debug, Clone)]
+#[schemars(bound = "T: JsonSchema")]
 pub struct OutputEnvelope<T> {
     /// Envelope schema version.
     pub schema_version: u32,
@@ -146,7 +162,7 @@ mod tests {
     use super::*;
     use chrono::SecondsFormat;
 
-    #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+    #[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq)]
     struct Payload {
         name: String,
         count: u32,
@@ -193,5 +209,41 @@ mod tests {
         assert_eq!(back.data, env.data);
         assert_eq!(back.exit_code, env.exit_code);
         assert_eq!(back.preview_only, env.preview_only);
+    }
+
+    #[test]
+    fn tv_env5_envelope_has_json_schema() {
+        // Schemars must produce a schema for the envelope — this is the
+        // contract downstream tools rely on for auto-generated clients.
+        let schema = schemars::schema_for!(OutputEnvelope<Payload>);
+        let s = serde_json::to_string(&schema).unwrap();
+        assert!(s.contains("schema_version"), "{s}");
+        assert!(s.contains("preview_only"), "{s}");
+    }
+
+    #[test]
+    fn tv_hex32_serializes_as_64_lowercase_hex() {
+        let bytes = [0xab; 32];
+        let h = Hex32(bytes);
+        let json = serde_json::to_string(&h).unwrap();
+        assert_eq!(json.len(), 64 + 2); // 64 hex chars + quotes
+        assert!(json.contains(&"ab".repeat(32)), "{json}");
+    }
+
+    #[test]
+    fn tv_hex32_roundtrips_through_hex() {
+        let bytes: [u8; 32] = std::array::from_fn(|i| i as u8);
+        let h = Hex32(bytes);
+        let s = serde_json::to_string(&h).unwrap();
+        let back: Hex32 = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.0, bytes);
+    }
+
+    #[test]
+    fn tv_hex32_has_json_schema() {
+        let schema = schemars::schema_for!(Hex32);
+        let s = serde_json::to_string(&schema).unwrap();
+        assert!(s.contains("string"), "{s}");
+        assert!(s.contains("pattern"), "{s}");
     }
 }

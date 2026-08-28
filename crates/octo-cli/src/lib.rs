@@ -10,7 +10,7 @@ pub mod redact;
 
 pub use error::{sanitize_substrate_error, OctoCliError};
 pub use flags::{OperatorMode, OperatorModeFlags, OutputFlags};
-pub use output::OutputEnvelope;
+pub use output::{Hex32, OutputEnvelope};
 
 use clap::{Parser, Subcommand};
 use commands::{capability::CapabilityAction, identity::IdentityAction, policy::PolicyAction};

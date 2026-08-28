@@ -41,6 +41,19 @@ pub struct OperatorModeFlags {
     #[arg(long, global = true)]
     pub dry_run: bool,
     /// Permit reading a secret from stdin.
+    ///
+    /// Gate contract (RFC-0011 §Stdin Handling): every future stdin
+    /// reader must call
+    /// `octo_cli::error::ensure_stdin_secret_allowed(self.allow_stdin_secret)`
+    /// before consuming pipe data. Without the flag the helper returns
+    /// `OctoCliError::StdinSecretRefused` (exit 15), so the refusal +
+    /// exit-code contract is owned by one helper rather than scattered
+    /// across every call site.
+    ///
+    /// The flag is currently unused: no command reads stdin in this
+    /// RFC's command surface. The gate helper in `error.rs` is wired
+    /// so that the first stdin reader can drop in one line and inherit
+    /// the refusal semantics for free.
     #[arg(long, global = true)]
     pub allow_stdin_secret: bool,
 }

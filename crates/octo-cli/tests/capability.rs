@@ -20,8 +20,102 @@ use predicates::str::contains;
 fn octo() -> Command {
     let mut cmd = Command::cargo_bin("octo").expect("octo binary built");
     cmd.env("NO_COLOR", "1");
-    cmd.env("OCTC_CLI_FORCE_JSON", "1");
+    cmd.env("OCTO_FORCE_JSON", "1");
     cmd
+}
+
+/// TV-CAP2 — `capability list` returns the empty active set with a
+/// versioned envelope. Currently adapted: the upstream
+/// `WalletStore::try_active_identity` errors with `NotActive` for the
+/// v1.0 stub wallet, so the CLI surfaces exit 2 (NoActiveIdentity). When
+/// the wallet substrate amendment lands, this test must be unignored
+/// and the `tv_cap2_list_…_v0_exit_2` companion added to lock both
+/// vectors simultaneously.
+#[test]
+#[ignore = "adapted; stub wallet reports NotActive; revert when wallet substrate amendment lands"]
+fn tv_cap2_list_emits_empty_capabilities_envelope() {
+    octo()
+        .args(["capability", "list"])
+        .assert()
+        .code(0)
+        .stdout(contains("\"capabilities\":[]"))
+        .stdout(contains("\"preview_only\":false"));
+}
+
+/// Active companion to TV-CAP2: today (v1.0 stub wallet) the
+/// `WalletStore::try_active_identity` errors with `NotActive`. This
+/// pins that v1.0 substrate drift explicitly so the unignore moment is
+/// visible.
+#[test]
+fn tv_cap2_list_emits_empty_capabilities_envelope_v0_exit_2() {
+    octo()
+        .args(["capability", "list"])
+        .assert()
+        .code(2)
+        .stderr(contains("active identity"));
+}
+
+/// TV-CAP6 — `capability mint --holder did:octo:zTest` reaches the
+/// HSM/signing path. Currently adapted: the production mint path is
+/// hard-blocked by the SEC-03 root-secret guard with `Internal` (exit
+/// 64). When the substrate amendment lands, unignore and assert exit
+/// 11 (signing failed) via the HSM-error path.
+#[test]
+#[ignore = "adapted; stub cannot synthesize success/HSM-failure state; revert when substrate amendment lands"]
+fn tv_cap6_mint_signing_failed_exits_11() {
+    octo()
+        .args([
+            "capability",
+            "mint",
+            "--caveats",
+            "[]",
+            "--holder",
+            "did:octo:zTest",
+            "--confirm",
+            "--confirm-acknowledge",
+        ])
+        .assert()
+        .code(11);
+}
+
+/// SEC-03 — today the production mint path returns exit 64 (Internal:
+/// "root secret derivation not wired"). Pins the guard explicitly.
+#[test]
+fn tv_cap6_mint_root_secret_blocked_exits_64() {
+    octo()
+        .args([
+            "capability",
+            "mint",
+            "--caveats",
+            "[]",
+            "--holder",
+            "did:octo:zTest",
+            "--confirm",
+            "--confirm-acknowledge",
+        ])
+        .assert()
+        .code(64);
+}
+
+/// TV-CAP3 — `--caveats '{"type":"foo"}'` with an unknown caveat type
+/// exits 7 (`CaveatParse`) at the canonical serde gate. SPEC-16 closes
+/// the gap from the R1 review (TV-CAP3 was on the mission table but
+/// absent from the impl).
+#[test]
+fn tv_cap3_mint_bad_caveats_exits_7() {
+    octo()
+        .args([
+            "capability",
+            "mint",
+            "--caveats",
+            r#"{"type":"foo"}"#,
+            "--holder",
+            "did:octo:zTest",
+            "--confirm",
+            "--confirm-acknowledge",
+        ])
+        .assert()
+        .code(7);
 }
 
 /// TV-CAP16 — `capability list --filter <bad form>` exits 16 with the
@@ -51,6 +145,24 @@ fn tv_cap16c_filter_empty_value_exits_16() {
         .args(["capability", "list", "--filter", "cap_id="])
         .assert()
         .code(16);
+}
+
+/// CORR-09 — `--filter foo,bar` splits on comma and accepts two filter
+/// entries as one CLI token, rather than being treated as one malformed
+/// entry. Valid comma-separated filters must NOT exit 16.
+#[test]
+fn tv_cap16d_filter_comma_split() {
+    octo()
+        .args([
+            "capability",
+            "list",
+            "--filter",
+            "cap_id=abcd,caveat=before",
+        ])
+        .assert()
+        // Either exit 0 (empty set) or 2 (no active identity) — both
+        // are acceptable; what matters is that we do NOT exit 16.
+        .code(predicates::prelude::predicate::eq(0).or(predicates::prelude::predicate::eq(2)));
 }
 
 /// TV-CAP19 — `capability mint` without `--confirm` in human mode exits 2.
@@ -130,6 +242,52 @@ fn tv_cap17_mint_dry_run_preview() {
         .code(0)
         .stdout(contains("\"preview_only\":true"))
         .stdout(contains("\"cap_id\":\"(preview)\""));
+}
+
+/// CORR-12 — `capability mint --dry-run` echoes the canonical caveat
+/// set + holder DID to stderr (pastejacking defense). The canonical
+/// `would mint: holder=did:octo:zTest, caveats=[]` line must appear on
+/// stderr in addition to the dry-run envelope on stdout.
+#[test]
+fn tv_cap17b_mint_dry_run_stderr_echo() {
+    octo()
+        .args([
+            "capability",
+            "mint",
+            "--caveats",
+            "[]",
+            "--holder",
+            "did:octo:zTest",
+            "--confirm",
+            "--confirm-acknowledge",
+            "--dry-run",
+        ])
+        .assert()
+        .code(0)
+        .stderr(contains("would mint"))
+        .stderr(contains("did:octo:zTest"));
+}
+
+/// CORR-12 (variant) — `capability attenuate --dry-run` echoes the
+/// parent + canonical caveat set on stderr.
+#[test]
+fn tv_cap18b_attenuate_dry_run_stderr_echo() {
+    let parent = "a".repeat(64);
+    octo()
+        .args([
+            "capability",
+            "attenuate",
+            &parent,
+            "--caveats",
+            "[]",
+            "--confirm",
+            "--confirm-acknowledge",
+            "--dry-run",
+        ])
+        .assert()
+        .code(0)
+        .stderr(contains("would attenuate"))
+        .stderr(contains(&parent));
 }
 
 /// TV-CAP18 — `capability attenuate --dry-run` succeeds with
@@ -245,21 +403,4 @@ fn tv_cap8c_unknown_caveat_tag_exits_7() {
         ])
         .assert()
         .code(7);
-}
-
-/// The substrate mint stub rejects every call today, so the upstream
-/// `WalletStore::try_active_identity` succeeds but downstream substrate
-/// mint yields an `InvalidCaveat` — surfaced as exit 7. This pins
-/// substrate drift: when the stub is replaced, this test must be updated.
-#[test]
-fn tv_cap2_list_emits_empty_capabilities_envelope() {
-    // Substrate stub for `try_active_identity` errors with `NotActive`,
-    // so the CLI surfaces `NoActiveIdentity` (exit 2). The mission table
-    // prescribed exit 0; the lib unit tests pin the empty-set payload
-    // shape directly.
-    octo()
-        .args(["capability", "list"])
-        .assert()
-        .code(2)
-        .stderr(contains("active identity"));
 }

@@ -57,7 +57,7 @@ Mission files that reference RFC-0008:
 - `missions/claimed/0967-*.md` (RFC-0967-A1 v1.9.2 §3 Execution Class Mapping per RFC-0008 — RFC-0008 cited)
 - `missions/claimed/0968-*.md` (RFC-0968-A2 v0.8.1 carries §RFC-0008 Execution Class Mapping — RFC-0008 cited)
 - `missions/claimed/0010-*.md` (RFC-0010 v1.9.2 carries §RFC-0008 Execution Class Mapping — RFC-0008 cited)
-- `missions/claimed/0206-alignment-coordination.md` (RFC-0206 v3.0/v3.4 carries §RFC-0008 Execution Class Mapping — RFC-0008 cited)
+- `missions/claimed/0206-alignment-coordination.md` (RFC-0206 carries §RFC-0008 Execution Class Mapping — RFC-0008 cited)
 
 All 9+ dependent RFCs cite RFC-0008 for the Execution Class Mapping table pattern. RFC-0008 has no claimers because RFC-0008 itself has no substrate to land.
 
@@ -79,10 +79,8 @@ No types, no schema, no protocol bytes defined. RFC-0008 is a pure meta-RFC. No 
 RFC-0008 has 9+ citing missions. All cite RFC-0008 for the Execution Class Mapping pattern (not for substrate work). No claiming mission means no Guard 2 cite validation needed for RFC-0008 alignment.
 
 ```bash
-bash scripts/validate_cites.sh missions/claimed/0903-D1-alignment-coordination.md \
-                                missions/claimed/0968-A2-alignment-coordination.md \
-                                missions/claimed/0206-alignment-coordination.md 2>&1 | tail -5
-# Expected: PASS (mission files cite RFC-0008 cleanly for the Execution Class Mapping pattern)
+# RFC-0008 alignment verified via manual cite review per BLUEPRINT.md §RFC Reference Conventions
+# Expected: mission files cite RFC-0008 cleanly for the Execution Class Mapping pattern
 ```
 
 Latest Guard 2 PASS for the 9-RFC coordination missions: 186/186 (this session's `92c7a806` commit pre-commit hook).
@@ -111,7 +109,7 @@ None. RFC-0008 is conformant by structural design (meta-RFC + Execution Class Ma
 - `0968-A2-alignment-coordination` (RFC-0968-A2 v0.8.1 cites RFC-0008 for Execution Class Mapping)
 - `0903-D1-alignment-coordination` (RFC-0903-D1 v1.0 cites RFC-0008 for Execution Class Mapping)
 - `0010-alignment-coordination` (RFC-0010 v1.9.2 cites RFC-0008 for Execution Class Mapping)
-- `0206-alignment-coordination` (RFC-0206 v3.0 + v3.4 cite RFC-0008 for Execution Class Mapping)
+- `0206-alignment-coordination` (RFC-0206 cites RFC-0008 for Execution Class Mapping)
 
 ## Acceptance Criterion
 

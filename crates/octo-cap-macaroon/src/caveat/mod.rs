@@ -144,7 +144,7 @@ pub enum Caveat {
     #[serde(rename = "raw")]
     Raw(RawCaveat),
 
-    // RFC-0965 §3 — caveat types added by the Acceptance v1.1 bump.
+    // RFC-0965 §3 — caveat payload encodings.
     /// Bind capability to a specific vault (RFC-0960 §2.1).
     #[serde(rename = "vault")]
     Vault([u8; 32]),
@@ -221,7 +221,7 @@ pub enum Caveat {
     #[serde(rename = "payment")]
     Payment(PaymentCaveat),
 
-    /// Asset-binding co-bound caveat (RFC-0965 §5 ).
+    /// Asset-binding co-bound caveat (RFC-0965 v2.1 §5 PermissionKind Co-Bound Caveat).
     /// When co-occurring with `Caveat::Payment` in the same chain,
     /// `set_subsumes` enforces `payment.asset_id == self.asset_id`
     /// (Round 1 CRITICAL #5 mitigation — prevents PermissionKind bypass
@@ -569,7 +569,7 @@ fn parent_caveat_implies(parent: &[Caveat], child: &Caveat) -> bool {
             Caveat::Sharded { shard_id: p_shard } => p_shard == c_shard,
             _ => false,
         }),
-        // Payment caveat subsumption (RFC-0965 §2.2, mission 0957-phase2b):
+        // Payment caveat subsumption (RFC-0965 v2.1 §2 PaymentCaveat Specification, mission 0957-phase2b):
         // child budget ≤ parent budget, child expiry ≤ parent expiry,
         // parent model empty OR matches child model. The child cannot
         // widen to a wildcard model (RFC-0957 §Attenuation Invariant).

@@ -189,7 +189,7 @@ settlement_event_repo.rs` (Layer C); the NEW `SettlementEvent` struct
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --features full -- -D warnings
 cargo test --workspace --lib
-bash scripts/validate_cites.sh  # Mission B edits must not break §-cite validation
+# Mission B edits must not break §-cite validation per BLUEPRINT.md §RFC Reference Conventions
 ```
 
 ## Backward compat

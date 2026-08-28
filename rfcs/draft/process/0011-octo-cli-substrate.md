@@ -468,8 +468,10 @@ honors this).
 
 ### Caveat Catalog
 
-The 9 caveats from the user-facing scratchpad MUST be supported with the following
-canonical forms (RFC-0964 envelope):
+The 8 distinct CLI-consumed canonical forms (9 table rows; "Single use" and
+"Max uses" share the `max_uses` wire form, hence 8 distinct serde tags across
+9 user-facing names) MUST be supported with the following
+canonical forms (RFC-0965 §2 Caveat envelope encoding):
 
 | Caveat       | Canonical form                                                     | Constraint check                                                                                                                                                |
 | ------------ | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |

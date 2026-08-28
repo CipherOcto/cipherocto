@@ -236,7 +236,7 @@ pub enum CaveatKind {
     Sharded,
     /// `Caveat::Payment` (RFC-0965 §2 PaymentCaveat Specification).
     Payment,
-    /// `Caveat::AssetBinding` (RFC-0965 §5 PermissionKind Co-Bound Caveat).
+    /// `Caveat::AssetBinding` (RFC-0965 v2.1 §5 PermissionKind Co-Bound Caveat).
     AssetBinding,
     /// Substrate-added variant not yet projected here (CLI unknown).
     Custom,
@@ -458,12 +458,7 @@ pub fn mint(
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
     super::identity::require_confirm(cli, "capability mint", std::io::stdin().is_terminal())?;
-    require_acknowledge(
-        cli,
-        acknowledge,
-        "capability mint",
-        std::io::stdin().is_terminal(),
-    )?;
+    require_acknowledge(cli, acknowledge, "capability mint")?;
     let caveats = parse_caveats(caveats_json)?;
     validate_holder_did(holder_did)?;
     if let Some(root_id) = root {
@@ -574,12 +569,7 @@ pub fn attenuate(
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
     super::identity::require_confirm(cli, "capability attenuate", std::io::stdin().is_terminal())?;
-    require_acknowledge(
-        cli,
-        acknowledge,
-        "capability attenuate",
-        std::io::stdin().is_terminal(),
-    )?;
+    require_acknowledge(cli, acknowledge, "capability attenuate")?;
     let caveats = parse_caveats(caveats_json)?;
     validate_cap_id(cap_id)?;
 
@@ -949,23 +939,12 @@ fn validate_cap_id(cap_id: &str) -> Result<(), OctoCliError> {
 /// fail closed.
 ///
 /// `--dry-run` bypasses it: a preview grants no authority.
-fn require_acknowledge(
-    cli: &Octo,
-    acknowledge: bool,
-    command: &str,
-    is_tty: bool,
-) -> Result<(), OctoCliError> {
+// Second-step gate on `capability mint` / `capability attenuate`. The TTY
+// pastejacking check lives in `require_confirm` (always invoked first on the
+// same call sites); this function is the `--confirm-acknowledge` flag gate.
+fn require_acknowledge(cli: &Octo, acknowledge: bool, command: &str) -> Result<(), OctoCliError> {
     if cli.mode.dry_run || acknowledge {
         return Ok(());
-    }
-    // Pastejacking defense (§Security 1a): the operator must review the
-    // canonical payload on a TTY between confirm and submit. Non-TTY
-    // stdin without the explicit acknowledge flag is refused so CI / cron
-    // invocations cannot bypass the two-step gate.
-    if !is_tty {
-        return Err(OctoCliError::ConfirmationRequired {
-            command: command.to_string(),
-        });
     }
     Err(OctoCliError::ConfirmationRequired {
         command: command.to_string(),

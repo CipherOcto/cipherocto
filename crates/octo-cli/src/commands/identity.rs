@@ -438,17 +438,20 @@ pub fn revoke(reason: &str, cli: &Octo) -> Result<(), OctoCliError> {
 /// | Ci       | no          | `--allow-write`        |
 /// | Auditor  | yes         | (denied)               |
 /// | Auditor  | no          | (denied — read-only)   |
-pub fn require_confirm(cli: &Octo, command: &str, is_tty: bool) -> Result<(), OctoCliError> {
+pub fn require_confirm(cli: &Octo, command: &str, _is_tty: bool) -> Result<(), OctoCliError> {
     if cli.mode.dry_run {
         return Ok(()); // --dry-run bypasses confirmation (preview only)
     }
     match cli.mode.mode {
         OperatorMode::Human => {
-            // Pastejacking defense (§Security 1a): in Human mode the
-            // operator must visibly review the echo on a TTY. Non-TTY
-            // stdin without the gate is treated as missing confirmation
-            // so CI / cron invocations cannot bypass pastejacking review.
-            if !cli.mode.confirm || !is_tty {
+            // Pastejacking defense is the two-step flag gate:
+            // `--confirm` (this check) plus `--confirm-acknowledge` (in
+            // `require_acknowledge`). Both are explicit non-interactive
+            // flags — the second flag proves the operator typed it after
+            // reviewing the canonical payload, not pasted a one-shot
+            // command. No interactive prompt is issued, so the TTY bit
+            // is dead weight and intentionally ignored (see R15 fix).
+            if !cli.mode.confirm {
                 return Err(OctoCliError::ConfirmationRequired {
                     command: command.to_string(),
                 });

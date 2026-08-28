@@ -1,6 +1,6 @@
 //! Payment caveat — single-element budget composition for paid queries
-//! (RFC-0965 §4 reserved discriminator `0x1A`, RFC-0871 §Implementation
-//! Phases Phase 5).
+//! (RFC-0965 §1 Caveat type enumeration; 0x1A-0xCF reserved range at
+//! v2.1 §4 Discriminator; mission 0957-phase2b).
 //!
 //! Moved from `crates/octo-paid-query/src/lib.rs` as part of mission
 //! 0957-phase2b — the caveat data type is a macaroon substrate

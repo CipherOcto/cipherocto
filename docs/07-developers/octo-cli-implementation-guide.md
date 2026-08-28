@@ -52,14 +52,14 @@ graph TD
     commands --> policy["policy.rs<br/>(NEW)"]
     commands --> stub["stub.rs<br/>(NEW: deprecated wrappers)"]
 
-    tests --> t_id["identity.rs (17 TV)"]
+    tests --> t_id["identity.rs (17 TV + 5 clap smoke)"]
     tests --> t_cap["capability.rs (22 TV)"]
     tests --> t_pol["policy.rs (8 TV)"]
     tests --> t_dep["stub.rs (5 TV)"]
     %% inline #[cfg(test)] modules in src/:
     tests -.-> t_err["src/error.rs (7 TV inline)"]
     tests -.-> t_env["src/output.rs (9 TV inline)"]
-    tests -.-> t_red["src/redact.rs (2 TV inline)"]
+    tests -.-> t_red["src/redact.rs (20 TV inline)"]
 ```
 
 ## Crate Dependency Wiring
@@ -1226,9 +1226,12 @@ identically to Unix. CI asserts Windows + Linux + macOS all pass.
 test in `tests/identity.rs` / `tests/capability.rs` / `tests/policy.rs` /
 `tests/stub.rs` (substrate-stub + deprecation-stub warnings). Error + envelope
 + redact + env-errors tests live inline in their respective `src/` modules.
-The count is 17 + 22 + 8 + 5 = 52 tests minimum across the four integration
-files (the `fn tv_*` prefix per file in `crates/octo-cli/tests/`; lib unit
-tests cover error / envelope / redact / env-errors surfaces in `src/`).
+The count is 17 + 22 + 8 + 5 = 52 named `fn tv_*` integration tests across
+the four test files in `crates/octo-cli/tests/`; identity.rs additionally
+carries 5 non-`tv_*` clap-parse smoke tests (`clap_*_help_parses`), bringing
+the integration-test `#[test]` total to 57. Inline lib `#[cfg(test)]` modules
+in `src/error.rs` (7) + `src/output.rs` (9) + `src/redact.rs` (20) = 36 lib
+tests cover error / envelope / redact / env-errors surfaces.
 
 ## Test Vectors (YAML)
 

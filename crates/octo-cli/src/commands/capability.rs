@@ -47,8 +47,13 @@ const MAX_CAVEATS: usize = 16;
 /// Maximum serialized size of any single caveat in `--caveats`.
 const MAX_CAVEAT_PAYLOAD_BYTES: usize = 4 * 1024;
 
-/// Domain prefix of every [`CaveatName::as_str`] wire identifier. Stripped
-/// to recover the short serde tag when a caveat cannot be canonicalized.
+/// Domain prefix of every [`CaveatName::as_str`] wire identifier. The CLI
+/// no longer strips this manually — [`CaveatName::short_name`] and
+/// [`CaveatName::from_short_tag`] are the substrate-native accessors as of
+/// the R20 Lens-4 F1 amendment, and the prefix constant is kept here only
+/// as a doc anchor (referenced in error messages and operator-facing
+/// docs).
+#[allow(dead_code)]
 const CAVEAT_NAME_PREFIX: &str = "cipherocto/cap/v1/caveat/";
 
 /// Placeholder `cap_id` for `--dry-run` previews. The real identifier is
@@ -148,221 +153,24 @@ pub struct CapabilitySummaryView {
 
 /// CLI projection of the substrate `CaveatSummary`.
 ///
-/// `kind` is a typed discriminator (`CaveatKind`) not a free-form string;
-/// the substrate `CaveatName` enum is the source of truth (RFC-0964 +
-/// RFC-0965 variants), and the CLI projects each variant into a `&'static
-/// str` tag rather than reimplementing the table. Extension caveats
-/// (substrate `Raw`) land as `CaveatKind::Custom` — fail-closed in the
-/// UI layer if the operator wants strict tagging.
+/// `kind` is the substrate's typed [`CaveatName`] discriminator
+/// (RFC-0964 + RFC-0965); the CLI no longer mirrors the enum in a
+/// `CaveatKind` newtype — the substrate is the source of truth.
+/// Extension caveats (substrate `Caveat::Raw`) project as
+/// [`CaveatName::Raw`]; unknown wire tags (forward-compat substrate
+/// variants) map to [`CaveatName::Raw`] at parse time, preserving
+/// the fail-closed UI invariant.
 #[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
 pub struct CaveatSummaryView {
     /// Typed discriminator of the caveat (RFC-0964 short serde tag).
-    pub kind: CaveatKind,
+    /// `#[schemars(with = "String")]` so the substrate's typed
+    /// enum (which does not pull in `schemars`) still produces a
+    /// stable `string` schema for the CLI envelope.
+    #[schemars(with = "String")]
+    pub kind: CaveatName,
     /// Caveat payload in RFC-0964 canonical form, augmented with the
     /// scale annotation when a budget caveat is present.
     pub body: serde_json::Value,
-}
-
-/// Typed discriminator for CLI caveat summary view.
-///
-/// [ADD] amendment track — Layer C concession: this enum re-enumerates
-/// the substrate `CaveatName` variants one-for-one so the CLI can attach
-/// a stable `Display` tag and a `schemars::JsonSchema`. The follow-on
-/// substrate amendment `CaveatKind::from(CaveatName)` (Layer B additive,
-/// no breaking changes) lets the CLI consume the substrate's typed
-/// discriminator directly; when that amendment lands this enum collapses
-/// to a thin newtype. Until then, every substrate `Caveat` variant is
-/// mapped here in [`CaveatKind::from_caveat`] and unknown wire names
-/// fail-closed to [`CaveatKind::Custom`] (the substrate `Raw` arm),
-/// preserving the fail-closed UI invariant.
-///
-/// Each variant carries the canonical RFC-0964 short serde tag via
-/// [`Display`]; the CLI never re-encodes the tag table from free-form
-/// strings. Adding a new substrate caveat variant is a `match` arm here
-/// and a `Display` impl — no `body` parsing required.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum CaveatKind {
-    /// `Caveat::AmountMax` (budget cap, RFC-0964 §1. Constraint variant enumeration).
-    AmountMax,
-    /// `Caveat::PerAxisMax` (per-axis cap).
-    PerAxisMax,
-    /// `Caveat::Model` (allowed model).
-    Model,
-    /// `Caveat::Provider` (any-of provider list).
-    Provider,
-    /// `Caveat::Before` (Unix-time expiry).
-    Before,
-    /// `Caveat::Audience` (bound DID).
-    Audience,
-    /// `Caveat::RateLimit` (rate envelope).
-    RateLimit,
-    /// `Caveat::InvocationHashBind` (request body hash).
-    InvocationHashBind,
-    /// `Caveat::Jurisdiction` (whitelist).
-    Jurisdiction,
-    /// `Caveat::CacheStrategy` (cache policy).
-    CacheStrategy,
-    /// `Caveat::AskBinding` (specific ask id).
-    AskBinding,
-    /// `Caveat::ThirdParty` (discharge macaroon).
-    ThirdParty,
-    /// `Caveat::Raw` / unknown wire names (forward-compat).
-    Raw,
-    /// `Caveat::Vault` (RFC-0960 §2.2 Capability).
-    Vault,
-    /// `Caveat::Permission` (RFC-0965 §3.2 Permission (0x11)).
-    Permission,
-    /// `Caveat::ValidRange` (time range).
-    ValidRange,
-    /// `Caveat::MaxPerTx` (per-transaction cap).
-    MaxPerTx,
-    /// `Caveat::AuditWindow`.
-    AuditWindow,
-    /// `Caveat::MaxUses`.
-    MaxUses,
-    /// `Caveat::WrappedOnly`.
-    WrappedOnly,
-    /// `Caveat::Factory`.
-    Factory,
-    /// `Caveat::PolicyReference`.
-    PolicyReference,
-    /// `Caveat::ValidAfter`.
-    ValidAfter,
-    /// `Caveat::RedemptionContext`.
-    RedemptionContext,
-    /// `Caveat::Sharded`.
-    Sharded,
-    /// `Caveat::Payment` (RFC-0965 v2.1 §2 PaymentCaveat Specification).
-    Payment,
-    /// `Caveat::AssetBinding` (RFC-0965 v2.1 §5 PermissionKind Co-Bound Caveat).
-    AssetBinding,
-    /// Substrate-added variant not yet projected here (CLI unknown).
-    Custom,
-}
-
-impl CaveatKind {
-    /// Map a [`Caveat`] to its CLI [`CaveatKind`]. For `Caveat::Raw` the
-    /// tag is derived from the wire name and the result is `Custom` when
-    /// it does not match any known variant — the discriminator stays
-    /// typed either way.
-    pub fn from_caveat(c: &Caveat) -> Self {
-        match c {
-            Caveat::AmountMax(_) => Self::AmountMax,
-            Caveat::PerAxisMax(_) => Self::PerAxisMax,
-            Caveat::Model(_) => Self::Model,
-            Caveat::Provider(_) => Self::Provider,
-            Caveat::Before(_) => Self::Before,
-            Caveat::Audience(_) => Self::Audience,
-            Caveat::RateLimit(_) => Self::RateLimit,
-            Caveat::InvocationHashBind(_) => Self::InvocationHashBind,
-            Caveat::Jurisdiction(_) => Self::Jurisdiction,
-            Caveat::CacheStrategy(_) => Self::CacheStrategy,
-            Caveat::AskBinding(_) => Self::AskBinding,
-            Caveat::ThirdParty(_) => Self::ThirdParty,
-            Caveat::Raw(_) => Self::Raw,
-            Caveat::Vault(_) => Self::Vault,
-            Caveat::Permission(_) => Self::Permission,
-            Caveat::ValidRange { .. } => Self::ValidRange,
-            Caveat::MaxPerTx(_) => Self::MaxPerTx,
-            Caveat::AuditWindow { .. } => Self::AuditWindow,
-            Caveat::MaxUses { .. } => Self::MaxUses,
-            Caveat::WrappedOnly { .. } => Self::WrappedOnly,
-            Caveat::Factory(_) => Self::Factory,
-            Caveat::PolicyReference { .. } => Self::PolicyReference,
-            Caveat::ValidAfter { .. } => Self::ValidAfter,
-            Caveat::RedemptionContext { .. } => Self::RedemptionContext,
-            Caveat::Sharded { .. } => Self::Sharded,
-            Caveat::Payment(_) => Self::Payment,
-            Caveat::AssetBinding(_) => Self::AssetBinding,
-            _ => Self::Custom,
-        }
-    }
-}
-
-impl std::fmt::Display for CaveatKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.tag())
-    }
-}
-
-impl CaveatKind {
-    /// Stable RFC-0964 short serde tag for this caveat variant.
-    pub fn tag(self) -> &'static str {
-        match self {
-            Self::AmountMax => "amount_max",
-            Self::PerAxisMax => "per_axis_max",
-            Self::Model => "model",
-            Self::Provider => "provider",
-            Self::Before => "before",
-            Self::Audience => "audience",
-            Self::RateLimit => "rate_limit",
-            Self::InvocationHashBind => "invocation_hash_bind",
-            Self::Jurisdiction => "jurisdiction",
-            Self::CacheStrategy => "cache_strategy",
-            Self::AskBinding => "ask_binding",
-            Self::ThirdParty => "third_party",
-            Self::Raw => "raw",
-            Self::Vault => "vault",
-            Self::Permission => "permission",
-            Self::ValidRange => "valid_range",
-            Self::MaxPerTx => "max_per_tx",
-            Self::AuditWindow => "audit_window",
-            Self::MaxUses => "max_uses",
-            Self::WrappedOnly => "wrapped_only",
-            Self::Factory => "factory",
-            Self::PolicyReference => "policy_reference",
-            Self::ValidAfter => "valid_after",
-            Self::RedemptionContext => "redemption_context",
-            Self::Sharded => "sharded",
-            Self::Payment => "payment",
-            Self::AssetBinding => "asset_binding",
-            Self::Custom => "custom",
-        }
-    }
-
-    /// Parse a wire tag from the substrate `CapabilitySummary.kind`
-    /// string. Unknown tags fail-closed to [`CaveatKind::Custom`] —
-    /// the CLI never crashes on a forward-compat caveat the substrate
-    /// doesn't yet surface in its typed table.
-    pub fn from_tag(tag: &str) -> Self {
-        match tag {
-            "amount_max" => Self::AmountMax,
-            "per_axis_max" => Self::PerAxisMax,
-            "model" => Self::Model,
-            "provider" => Self::Provider,
-            "before" => Self::Before,
-            "audience" => Self::Audience,
-            "rate_limit" => Self::RateLimit,
-            "invocation_hash_bind" => Self::InvocationHashBind,
-            "jurisdiction" => Self::Jurisdiction,
-            "cache_strategy" => Self::CacheStrategy,
-            "ask_binding" => Self::AskBinding,
-            "third_party" => Self::ThirdParty,
-            "raw" => Self::Raw,
-            "vault" => Self::Vault,
-            "permission" => Self::Permission,
-            "valid_range" => Self::ValidRange,
-            "max_per_tx" => Self::MaxPerTx,
-            "audit_window" => Self::AuditWindow,
-            "max_uses" => Self::MaxUses,
-            "wrapped_only" => Self::WrappedOnly,
-            "factory" => Self::Factory,
-            "policy_reference" => Self::PolicyReference,
-            "valid_after" => Self::ValidAfter,
-            "redemption_context" => Self::RedemptionContext,
-            "sharded" => Self::Sharded,
-            "payment" => Self::Payment,
-            "asset_binding" => Self::AssetBinding,
-            _ => Self::Custom,
-        }
-    }
-}
-
-impl serde::Serialize for CaveatKind {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(self.tag())
-    }
 }
 
 /// `octo capability mint` payload.
@@ -424,7 +232,7 @@ pub fn list(filters: &[String], cli: &Octo) -> Result<(), OctoCliError> {
                 .caveats
                 .into_iter()
                 .map(|c| CaveatSummaryView {
-                    kind: CaveatKind::from_tag(&c.kind),
+                    kind: CaveatName::from_short_tag(&c.kind).unwrap_or(CaveatName::Raw),
                     body: c.body,
                 })
                 .collect(),
@@ -732,7 +540,7 @@ pub fn caveat_view(c: &Caveat) -> CaveatSummaryView {
         .unwrap_or(serde_json::Value::Null);
     let body = augment_budget_body(c, body_value);
     CaveatSummaryView {
-        kind: CaveatKind::from_caveat(c),
+        kind: c.name(),
         body,
     }
 }
@@ -766,9 +574,12 @@ fn caveat_views(caveats: &[Caveat]) -> Vec<CaveatSummaryView> {
 /// Short serde tag of a caveat name (`cipherocto/cap/v1/caveat/before` →
 /// `before`).
 fn short_caveat_tag(name: CaveatName) -> &'static str {
-    name.as_str()
-        .strip_prefix(CAVEAT_NAME_PREFIX)
-        .unwrap_or(name.as_str())
+    // R20 Lens-4 F1: substrate now exposes `short_name()` directly,
+    // so this helper is a thin alias rather than a manual
+    // `as_str().strip_prefix(...)` walk. Kept as a stable call site
+    // for downstream helpers that want the wire tag without
+    // importing the substrate method symbol.
+    name.short_name()
 }
 
 /// Public BLAKE3 digest over the canonical caveat body. Deterministic for a
@@ -1136,7 +947,7 @@ mod tests {
         let parsed = parse_caveats(&caveat_json(&c)).expect("budget caveat parses");
         assert!(matches!(parsed[0], Caveat::AmountMax(_)), "{parsed:?}");
         let view = caveat_view(&parsed[0]);
-        assert_eq!(view.kind, CaveatKind::AmountMax);
+        assert_eq!(view.kind, CaveatName::AmountMax);
         // Scale annotation must surface so a downstream consumer can't
         // misread `value` as a whole-unit amount.
         assert_eq!(view.body["amount_dqa"], serde_json::json!(1));
@@ -1149,7 +960,7 @@ mod tests {
         let c = Caveat::Before(1_700_000_000);
         let parsed = parse_caveats(&caveat_json(&c)).expect("before caveat parses");
         assert_eq!(parsed, vec![c]);
-        assert_eq!(caveat_view(&parsed[0]).kind, CaveatKind::Before);
+        assert_eq!(caveat_view(&parsed[0]).kind, CaveatName::Before);
     }
 
     /// TV-CAP11 — vesting caveat.
@@ -1160,7 +971,7 @@ mod tests {
         };
         let parsed = parse_caveats(&caveat_json(&c)).expect("valid_after caveat parses");
         assert_eq!(parsed, vec![c]);
-        assert_eq!(caveat_view(&parsed[0]).kind, CaveatKind::ValidAfter);
+        assert_eq!(caveat_view(&parsed[0]).kind, CaveatName::ValidAfter);
     }
 
     /// TV-CAP12 — max-uses caveat (single-use is `count = 1`).
@@ -1169,7 +980,7 @@ mod tests {
         let c = Caveat::MaxUses { count: 1 };
         let parsed = parse_caveats(&caveat_json(&c)).expect("max_uses caveat parses");
         assert_eq!(parsed, vec![c]);
-        assert_eq!(caveat_view(&parsed[0]).kind, CaveatKind::MaxUses);
+        assert_eq!(caveat_view(&parsed[0]).kind, CaveatName::MaxUses);
     }
 
     /// TV-CAP13 — model caveat.
@@ -1200,14 +1011,14 @@ mod tests {
         let c = Caveat::AuditWindow { duration_secs: 0 };
         let parsed = parse_caveats(&caveat_json(&c)).expect("audit_window caveat parses");
         assert_eq!(parsed, vec![c]);
-        assert_eq!(caveat_view(&parsed[0]).kind, CaveatKind::AuditWindow);
+        assert_eq!(caveat_view(&parsed[0]).kind, CaveatName::AuditWindow);
     }
 
     /// SPEC-15 — Audience caveat (binding DID).
     ///
     /// `Caveat::Audience("did:octo:abc...")` parses to the canonical
     /// envelope `{"type":"audience","value":"<id>"}` and surfaces
-    /// `CaveatKind::Audience` in the CLI summary view.
+    /// `CaveatName::Audience` in the CLI summary view.
     #[test]
     fn tv_cap_caveat_audience() {
         let c = Caveat::Audience("did:octo:zAudience".to_owned());
@@ -1227,7 +1038,7 @@ mod tests {
 
         // CLI summary view surfaces the typed discriminator + payload.
         let view = caveat_view(&direct[0]);
-        assert_eq!(view.kind, CaveatKind::Audience);
+        assert_eq!(view.kind, CaveatName::Audience);
         assert_eq!(view.kind.to_string(), "audience");
         assert_eq!(view.body, serde_json::json!("did:octo:zAudience"));
     }
@@ -1465,15 +1276,15 @@ mod tests {
         assert_eq!(back, h);
     }
 
-    /// `CaveatKind` enumerates every substrate variant with a stable
+    /// `CaveatName` enumerates every substrate variant with a stable
     /// `Display` tag matching the RFC-0964 serde rename.
     #[test]
     fn caveat_kind_display_tags() {
-        assert_eq!(CaveatKind::AmountMax.to_string(), "amount_max");
-        assert_eq!(CaveatKind::Before.to_string(), "before");
-        assert_eq!(CaveatKind::Audience.to_string(), "audience");
-        assert_eq!(CaveatKind::MaxUses.to_string(), "max_uses");
-        assert_eq!(CaveatKind::ValidAfter.to_string(), "valid_after");
+        assert_eq!(CaveatName::AmountMax.to_string(), "amount_max");
+        assert_eq!(CaveatName::Before.to_string(), "before");
+        assert_eq!(CaveatName::Audience.to_string(), "audience");
+        assert_eq!(CaveatName::MaxUses.to_string(), "max_uses");
+        assert_eq!(CaveatName::ValidAfter.to_string(), "valid_after");
     }
 
     #[test]

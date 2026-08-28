@@ -298,7 +298,18 @@ pub struct AssetBinding {
 }
 
 /// Caveat name string (used as `info` parameter to HMAC-BLAKE3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// The serde representation is the RFC-0964 short snake_case tag
+/// (`amount_max`, `per_axis_max`, `invocation_hash_bind`, ...); the
+/// [`Self::as_str`] form is the full HMAC info string and is NOT
+/// used on the wire. Consumers (CLI summary views, downstream
+/// substrate crates) can project the typed enum directly via
+/// [`CaveatName::short_name`] / [`CaveatName::from_short_tag`]
+/// without re-implementing the table — the previous CLI-side
+/// `CaveatKind` mirror enum collapsed into this one once the CLI
+/// gained the substrate traits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CaveatName {
     AmountMax,
     PerAxisMax,
@@ -362,6 +373,86 @@ impl CaveatName {
             Self::Payment => "cipherocto/cap/v1/caveat/payment",
             Self::AssetBinding => "cipherocto/cap/v1/caveat/asset_binding",
         }
+    }
+
+    /// Short RFC-0964 serde tag (snake_case). This is the wire form
+    /// for `CaveatSummary.kind` and the canonical string the CLI
+    /// renders. Distinct from [`Self::as_str`] (the full HMAC info
+    /// string used inside the macaroon).
+    #[must_use]
+    pub const fn short_name(&self) -> &'static str {
+        match self {
+            Self::AmountMax => "amount_max",
+            Self::PerAxisMax => "per_axis_max",
+            Self::Model => "model",
+            Self::Provider => "provider",
+            Self::Before => "before",
+            Self::Audience => "audience",
+            Self::RateLimit => "rate_limit",
+            Self::InvocationHashBind => "invocation_hash_bind",
+            Self::Jurisdiction => "jurisdiction",
+            Self::CacheStrategy => "cache_strategy",
+            Self::AskBinding => "ask_binding",
+            Self::ThirdParty => "third_party",
+            Self::Raw => "raw",
+            Self::Vault => "vault",
+            Self::Permission => "permission",
+            Self::ValidRange => "valid_range",
+            Self::MaxPerTx => "max_per_tx",
+            Self::AuditWindow => "audit_window",
+            Self::MaxUses => "max_uses",
+            Self::WrappedOnly => "wrapped_only",
+            Self::Factory => "factory",
+            Self::PolicyReference => "policy_reference",
+            Self::ValidAfter => "valid_after",
+            Self::RedemptionContext => "redemption_context",
+            Self::Sharded => "sharded",
+            Self::Payment => "payment",
+            Self::AssetBinding => "asset_binding",
+        }
+    }
+
+    /// Parse a short serde tag (snake_case). Returns `None` for
+    /// unknown tags — the caller decides the fail-closed policy
+    /// (typically `unwrap_or(CaveatName::Raw)` for forward-compat).
+    #[must_use]
+    pub fn from_short_tag(tag: &str) -> Option<Self> {
+        Some(match tag {
+            "amount_max" => Self::AmountMax,
+            "per_axis_max" => Self::PerAxisMax,
+            "model" => Self::Model,
+            "provider" => Self::Provider,
+            "before" => Self::Before,
+            "audience" => Self::Audience,
+            "rate_limit" => Self::RateLimit,
+            "invocation_hash_bind" => Self::InvocationHashBind,
+            "jurisdiction" => Self::Jurisdiction,
+            "cache_strategy" => Self::CacheStrategy,
+            "ask_binding" => Self::AskBinding,
+            "third_party" => Self::ThirdParty,
+            "raw" => Self::Raw,
+            "vault" => Self::Vault,
+            "permission" => Self::Permission,
+            "valid_range" => Self::ValidRange,
+            "max_per_tx" => Self::MaxPerTx,
+            "audit_window" => Self::AuditWindow,
+            "max_uses" => Self::MaxUses,
+            "wrapped_only" => Self::WrappedOnly,
+            "factory" => Self::Factory,
+            "policy_reference" => Self::PolicyReference,
+            "valid_after" => Self::ValidAfter,
+            "redemption_context" => Self::RedemptionContext,
+            "sharded" => Self::Sharded,
+            "payment" => Self::Payment,
+            "asset_binding" => Self::AssetBinding,
+            _ => return None,
+        })
+    }
+}
+
+impl std::fmt::Display for CaveatName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.short_name())
     }
 }
 
@@ -809,6 +900,90 @@ mod tests {
             CaveatName::AskBinding.as_str(),
             "cipherocto/cap/v1/caveat/ask_binding"
         );
+    }
+
+    /// R20 Lens-4 F1: `CaveatName::short_name()` is the wire tag
+    /// (snake_case), distinct from `as_str()` (the HMAC info
+    /// string). Pin both so the substrate does not silently drift
+    /// into reusing the HMAC string for the wire tag.
+    #[test]
+    fn caveat_name_short_name_is_snake_case() {
+        assert_eq!(CaveatName::AmountMax.short_name(), "amount_max");
+        assert_eq!(CaveatName::PerAxisMax.short_name(), "per_axis_max");
+        assert_eq!(
+            CaveatName::InvocationHashBind.short_name(),
+            "invocation_hash_bind"
+        );
+        assert_eq!(CaveatName::ValidAfter.short_name(), "valid_after");
+        assert_eq!(CaveatName::PolicyReference.short_name(), "policy_reference");
+        assert_eq!(
+            CaveatName::RedemptionContext.short_name(),
+            "redemption_context"
+        );
+        assert_eq!(CaveatName::AssetBinding.short_name(), "asset_binding");
+    }
+
+    /// R20 Lens-4 F1: `Display` delegates to `short_name()` and
+    /// `from_short_tag` round-trips. Unknown tags return `None` —
+    /// the CLI caller decides fail-closed (`unwrap_or(Raw)`).
+    #[test]
+    fn caveat_name_display_and_from_short_tag_roundtrip() {
+        for variant in [
+            CaveatName::AmountMax,
+            CaveatName::PerAxisMax,
+            CaveatName::Model,
+            CaveatName::Provider,
+            CaveatName::Before,
+            CaveatName::Audience,
+            CaveatName::RateLimit,
+            CaveatName::InvocationHashBind,
+            CaveatName::Jurisdiction,
+            CaveatName::CacheStrategy,
+            CaveatName::AskBinding,
+            CaveatName::ThirdParty,
+            CaveatName::Raw,
+            CaveatName::Vault,
+            CaveatName::Permission,
+            CaveatName::ValidRange,
+            CaveatName::MaxPerTx,
+            CaveatName::AuditWindow,
+            CaveatName::MaxUses,
+            CaveatName::WrappedOnly,
+            CaveatName::Factory,
+            CaveatName::PolicyReference,
+            CaveatName::ValidAfter,
+            CaveatName::RedemptionContext,
+            CaveatName::Sharded,
+            CaveatName::Payment,
+            CaveatName::AssetBinding,
+        ] {
+            let tag = variant.short_name();
+            assert_eq!(variant.to_string(), tag, "Display mismatch for {variant:?}");
+            assert_eq!(
+                CaveatName::from_short_tag(tag),
+                Some(variant),
+                "from_short_tag round-trip failed for {tag}"
+            );
+        }
+        // Unknown tag fails closed (None) — caller decides.
+        assert_eq!(
+            CaveatName::from_short_tag("cipherocto/cap/v1/caveat/foo"),
+            None
+        );
+        assert_eq!(CaveatName::from_short_tag(""), None);
+    }
+
+    /// R20 Lens-4 F1: serde representation is the short tag, not the
+    /// full HMAC info string. The CLI's `CaveatSummaryView.kind`
+    /// serializes via this; the on-wire tag must stay snake_case.
+    #[test]
+    fn caveat_name_serde_uses_short_tag() {
+        let json = serde_json::to_string(&CaveatName::AmountMax).unwrap();
+        assert_eq!(json, "\"amount_max\"");
+        let json = serde_json::to_string(&CaveatName::InvocationHashBind).unwrap();
+        assert_eq!(json, "\"invocation_hash_bind\"");
+        let restored: CaveatName = serde_json::from_str("\"amount_max\"").unwrap();
+        assert_eq!(restored, CaveatName::AmountMax);
     }
 
     #[test]

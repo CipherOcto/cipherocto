@@ -112,9 +112,35 @@ const FIELD_TABLE: &[(&str, &str)] = &[
 ];
 
 /// Returns true when the (lower-cased) field name is sensitive.
+///
+/// R20 Lens-2 F4: hyphen variants like `pass-word`, `priv-key`,
+/// `bearer-token`, `api-key` normalize to `password`, `privkey`,
+/// `bearer_token`, `api_key` before the table lookup. Without this,
+/// an attacker (or careless operator) writing `pass-word=foo` would
+/// bypass the redaction. The normalization is conservative: only
+/// ASCII hyphens are replaced, and only when the result matches a
+/// FIELD_TABLE entry exactly (no partial-match widening).
 pub fn field_is_sensitive(field_name: &str) -> bool {
     let lower = field_name.to_ascii_lowercase();
-    FIELD_TABLE.iter().any(|(name, _)| lower == *name)
+    if FIELD_TABLE.iter().any(|(name, _)| lower == *name) {
+        return true;
+    }
+    // Hyphen variants get TWO normalizations:
+    //   * `pass-word` → `password`  (hyphen stripped)
+    //   * `bearer-token` → `bearer_token`  (hyphen → underscore)
+    // Without the underscore bridge, `bearer-token` collapses to
+    // `bearertoken` which is NOT in FIELD_TABLE — the canonical
+    // name uses an underscore. Both bridges are tried; the first
+    // hit wins.
+    let stripped: String = lower.replace('-', "");
+    if stripped != lower && FIELD_TABLE.iter().any(|(name, _)| stripped == *name) {
+        return true;
+    }
+    let underscored: String = lower.replace('-', "_");
+    if underscored != lower && FIELD_TABLE.iter().any(|(name, _)| underscored == *name) {
+        return true;
+    }
+    false
 }
 
 /// Redact a value keyed by its field name. Returns the original when the
@@ -124,6 +150,31 @@ pub fn redact_by_field<'a>(field_name: &str, value: &'a str) -> &'a str {
     for (name, replacement) in FIELD_TABLE {
         if lower == *name {
             return replacement;
+        }
+    }
+    // R20 Lens-2 F4: hyphen variants (`pass-word`, `bearer-token`,
+    // `api-key`) bridge to their canonical FIELD_TABLE form via
+    // TWO normalizations (stripped + underscore-substituted),
+    // matching [`field_is_sensitive`]. Without this, the
+    // hyphen-bearing variant falls through to `value` — for the
+    // kv-fallback caller, an empty value argument combined with
+    // the empty replacement would loop forever (re-match the
+    // same kv pair). The bridges run only when the input
+    // actually contains a hyphen, so canonical names pay no cost.
+    let stripped: String = lower.replace('-', "");
+    if stripped != lower {
+        for (name, replacement) in FIELD_TABLE {
+            if stripped == *name {
+                return replacement;
+            }
+        }
+    }
+    let underscored: String = lower.replace('-', "_");
+    if underscored != lower {
+        for (name, replacement) in FIELD_TABLE {
+            if underscored == *name {
+                return replacement;
+            }
         }
     }
     value
@@ -252,8 +303,39 @@ pub fn find_bearer_ci_from(s: &str, from: usize) -> Option<(usize, usize)> {
         //   `1*( ALPHA / DIGIT / "-" / "." / "_" / "~" / "+" / "/" )`
         // Restricting the char class prevents JSON punctuation from
         // extending the redaction into subsequent fields.
-        while end < b.len() && is_b64token_byte(b[end]) {
-            end += 1;
+        //
+        // R20 Lens-2 F6: bearer tokens can span multiple lines
+        // (RFC 7230 §3.2.4 obs-fold: a CRLF + WSP continues the
+        // previous header value). Without this, `Bearer abc.def\n
+        // continuation` would redact only `abc.def` and leak
+        // `continuation`. On hitting a newline, consume it AND any
+        // leading WSP on the continuation line, then continue the
+        // b64token walk. A bare newline (no leading WSP on the
+        // next line) terminates — that's the obs-fold rule, not
+        // freeform concatenation.
+        loop {
+            while end < b.len() && is_b64token_byte(b[end]) {
+                end += 1;
+            }
+            if end < b.len() && (b[end] == b'\n' || b[end] == b'\r') {
+                let mut probe = end;
+                if b[probe] == b'\r' && probe + 1 < b.len() && b[probe + 1] == b'\n' {
+                    probe += 1;
+                }
+                probe += 1;
+                // Require at least one WSP on the continuation
+                // line (obs-fold contract). Bare newline = end
+                // of token.
+                if probe < b.len() && (b[probe] == b' ' || b[probe] == b'\t') {
+                    end = probe;
+                    while end < b.len() && (b[end] == b' ' || b[end] == b'\t') {
+                        end += 1;
+                    }
+                    continue;
+                }
+                break;
+            }
+            break;
         }
     }
     // R20 Lens-1 F3: if the token body itself is the keyword
@@ -916,6 +998,73 @@ mod tests {
         assert!(!out.contains("hunter2"), "{out}");
         assert!(out.contains("user: alice"), "{out}");
         assert!(out.contains("age: 30"), "{out}");
+    }
+
+    /// R20 Lens-2 F4: hyphen variants of sensitive field names
+    /// (`pass-word`, `priv-key`, `bearer-token`, `api-key`)
+    /// normalize via hyphen-strip before the FIELD_TABLE lookup.
+    /// Without this, `pass-word=foo` slips through every redaction
+    /// path.
+    #[test]
+    fn redacts_hyphen_variants_env_file() {
+        let cases = [
+            ("pass-word=hunter2", REDACTED_PW),
+            ("priv-key=00ab00ab", REDACTED_KEY),
+            ("bearer-token=abc123", REDACTED_BEARER),
+            ("api-key=sk-1234", REDACTED_API_KEY),
+            ("pair-code=foo-bar", REDACTED_PAIR),
+        ];
+        for (input, marker) in &cases {
+            let out = redact_string(input);
+            assert!(
+                out.contains(marker),
+                "hyphen variant {input} not redacted; out={out}"
+            );
+        }
+    }
+
+    #[test]
+    fn redacts_hyphen_variants_json() {
+        let input = r#"{"pass-word":"hunter2","priv-key":"abc","api-key":"sk-1"}"#;
+        let out = redact_string(input);
+        assert!(out.contains(REDACTED_PW), "{out}");
+        assert!(out.contains(REDACTED_KEY), "{out}");
+        assert!(out.contains(REDACTED_API_KEY), "{out}");
+        assert!(!out.contains("hunter2"), "{out}");
+        assert!(!out.contains("sk-1"), "{out}");
+    }
+
+    /// R20 Lens-2 F6: bearer tokens that span multiple lines via
+    /// RFC 7230 §3.2.4 obs-fold (`CRLF + WSP` continues the value)
+    /// are redacted in full. Without the obs-fold walk, only the
+    /// first line of the token would be redacted, leaking the
+    /// continuation.
+    #[test]
+    fn redacts_bearer_obs_fold_lf() {
+        let input = "Authorization: Bearer abc.def\n   continuationXYZ";
+        let out = redact_string(input);
+        assert!(out.contains(REDACTED_BEARER), "{out}");
+        assert!(!out.contains("continuationXYZ"), "{out}");
+    }
+
+    #[test]
+    fn redacts_bearer_obs_fold_crlf() {
+        let input = "Authorization: Bearer abc.def\r\n   continuationXYZ";
+        let out = redact_string(input);
+        assert!(out.contains(REDACTED_BEARER), "{out}");
+        assert!(!out.contains("continuationXYZ"), "{out}");
+    }
+
+    #[test]
+    fn bearer_obs_fold_no_leading_wsp_does_not_continue() {
+        // Bare newline (no leading WSP on next line) terminates the
+        // token per obs-fold contract; the second line is its own
+        // field, not part of the bearer.
+        let input = "Bearer abc.def\nNEXT_FIELD=foo";
+        let out = redact_string(input);
+        assert!(out.contains(REDACTED_BEARER), "{out}");
+        // NEXT_FIELD is not sensitive → preserved.
+        assert!(out.contains("NEXT_FIELD=foo"), "{out}");
     }
 
     #[test]

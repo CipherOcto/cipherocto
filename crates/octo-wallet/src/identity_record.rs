@@ -1,4 +1,4 @@
-//! Layer B [ADD] substrate for RFC-0011 §Subcommand Taxonomy.
+//! Layer B `[ADD]` substrate for RFC-0011 §Subcommand Taxonomy.
 //!
 //! New types consumed by the `octo-cli` (Layer C/D) `identity` subcommand
 //! tree. Pure additions to the existing identity substrate — does NOT modify
@@ -101,7 +101,7 @@ impl From<&str> for Did {
     }
 }
 
-/// Identity record (Layer B [ADD] — exposed by `identity_record`).
+/// Identity record (Layer B `[ADD]` — exposed by `identity_record`).
 ///
 /// Snapshot of an identity as stored in the on-disk wallet. Distinct from
 /// the live `IdentityKey` (which holds the HSM adapter + lifecycle fields);
@@ -126,7 +126,7 @@ pub struct IdentityRecord {
     pub rotation_history: Vec<IdentityRotationEvent>,
 }
 
-/// Identity rotation event (Layer B [ADD] — distinct from `RotationEvent`
+/// Identity rotation event (Layer B `[ADD]` — distinct from `RotationEvent`
 /// in `vault_rotation` which is a different domain).
 ///
 /// One rotation in an identity's history. Carries the 32-byte rotation id,
@@ -148,7 +148,7 @@ pub struct IdentityRotationEvent {
     pub signature_proof: [u8; 64],
 }
 
-/// Wallet store handle (Layer B [ADD] — explicit reference, NO ambient global).
+/// Wallet store handle (Layer B `[ADD]` — explicit reference, NO ambient global).
 ///
 /// `open()` returns the canonical store; CLI consumes `&WalletStore`
 /// everywhere. The handle is intentionally cheap to clone (currently a

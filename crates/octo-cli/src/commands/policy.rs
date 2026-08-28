@@ -308,7 +308,7 @@ pub fn list(filter_arg: Option<&str>, cli: &Octo) -> Result<(), OctoCliError> {
 /// substrate alignment review).
 ///
 /// **LAYER-06 Phase-1 concession:** `parse_filter` lives CLI-side per
-/// RFC-0011 §Subcommand Taxonomy. A future `[ADD] PolicyFilter::parse`
+/// RFC-0011 §Subcommand Taxonomy. A future `[ADD]` `PolicyFilter::parse`
 /// amendment will move this substrate-side (Layer B), keeping
 /// `PolicyFilter` a substrate-truth construct rather than a CLI-parsed
 /// view of operator input. The CLI form will then be a thin pass-through.

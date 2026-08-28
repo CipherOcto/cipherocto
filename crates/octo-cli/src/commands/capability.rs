@@ -480,7 +480,7 @@ pub fn attenuate(cap_id: &str, caveats_json: &str, cli: &Octo) -> Result<(), Oct
 /// ## Layer model — RFC-0011 §Subcommand Taxonomy entry #13
 ///
 /// This is **Phase-1 scaffolding**. The RFC-0011 amendment tracks a
-/// substrate `[ADD] caveat::validate_canonical_form` function (Layer B)
+/// substrate `[ADD]` `caveat::validate_canonical_form` function (Layer B)
 /// that owns parsing + canonical-form validation. When that amendment
 /// lands, this body delegates to it and the CLI keeps only the operator
 /// gate (byte/depth/count/serialized-size clamps + pastejacking echo).
@@ -831,7 +831,7 @@ fn map_capability_internal(e: impl std::fmt::Display) -> OctoCliError {
 /// maps to `HsmUnavailable` (exit 5) — distinct from `HolderSig` which
 /// maps to `SigningFailed` (exit 11) per CORR-05.
 ///
-/// [ADD] amendment track — `MintError::classify() -> MintErrorKind`
+/// `[ADD]` amendment track — `MintError::classify() -> MintErrorKind`
 /// substrate amendment (Layer B additive) lets the CLI dispatch on a
 /// typed discriminant rather than parsing the message prefix. Until
 /// that amendment lands, [`classify_message`] uses string-prefix

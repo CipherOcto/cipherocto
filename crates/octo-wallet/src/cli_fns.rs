@@ -1,4 +1,4 @@
-//! Layer B [ADD] free functions per RFC-0011 §Subcommand Taxonomy.
+//! Layer B `[ADD]` free functions per RFC-0011 §Subcommand Taxonomy.
 //!
 //! CLI consumes these via `octo_wallet::active_identity`, etc. These are
 //! thin wrapper functions over the `WalletStore` handle — they exist as

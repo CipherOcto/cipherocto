@@ -465,7 +465,7 @@ impl IdentityKey {
         self.public_key
     }
 
-    /// Return this identity's DID. Layer B [ADD] per RFC-0011 §Subcommand
+    /// Return this identity's DID. Layer B `[ADD]` per RFC-0011 §Subcommand
     /// Taxonomy (entry #2: `identity show <DID>`).
     ///
     /// Canonical form per RFC-0010: `did:octo:<encoded-pubkey>`. The current

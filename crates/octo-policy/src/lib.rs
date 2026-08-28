@@ -63,7 +63,7 @@ pub mod burn_event;
 pub mod event_log_producer;
 
 // Mission 0011-policy-commands (RFC-0011 §Subcommand Taxonomy entries #14-17):
-// CLI-facing Layer B [ADD] surface — `PolicyRecord` / `PolicyListEntry` /
+// CLI-facing Layer B `[ADD]` surface — `PolicyRecord` / `PolicyListEntry` /
 // `PolicyFilter` / `NameHashIndex` + free fns
 // `show` / `list` / `latest_version` / `name_hash_index`. Additive only.
 // (`PolicyRegistryError` re-exported from `policy_registry` — the substrate

@@ -1,4 +1,4 @@
-//! Layer B [ADD] free functions per RFC-0011 §Subcommand Taxonomy entries #14-17.
+//! Layer B `[ADD]` free functions per RFC-0011 §Subcommand Taxonomy entries #14-17.
 
 #![allow(clippy::module_name_repetitions)]
 

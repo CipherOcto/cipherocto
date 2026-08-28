@@ -1,4 +1,4 @@
-//! Layer B [ADD] CLI record types per RFC-0011 §Subcommand Taxonomy.
+//! Layer B `[ADD]` CLI record types per RFC-0011 §Subcommand Taxonomy.
 
 #![allow(clippy::module_name_repetitions)]
 

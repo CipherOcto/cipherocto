@@ -60,29 +60,3 @@ impl NameHashIndex {
         }
     }
 }
-
-/// Error type for the [ADD] CLI-facing fns. Distinct from `PolicyError`
-/// (which is the substrate's intersection/empty-error enum). The CLI
-/// gets its own error type because the CLI distinguishes
-/// `NameNotFound` from `VersionNotFound` while substrate `PolicyError`
-/// does not (per R1 substrate alignment review).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PolicyRegistryError {
-    NotFound(String),
-    VersionMismatch { policy: String, version: u32 },
-    Internal(String),
-}
-
-impl std::fmt::Display for PolicyRegistryError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NotFound(name) => write!(f, "policy not found: {name}"),
-            Self::VersionMismatch { policy, version } => {
-                write!(f, "policy version not found: {policy}@{version}")
-            }
-            Self::Internal(s) => write!(f, "policy registry error: {s}"),
-        }
-    }
-}
-
-impl std::error::Error for PolicyRegistryError {}

@@ -2,9 +2,8 @@
 
 #![allow(clippy::module_name_repetitions)]
 
-use crate::cli_record::{
-    NameHashIndex, PolicyFilter, PolicyListEntry, PolicyRecord, PolicyRegistryError,
-};
+use crate::cli_record::{NameHashIndex, PolicyFilter, PolicyListEntry, PolicyRecord};
+use crate::policy_registry::PolicyRegistryError;
 
 use std::sync::OnceLock;
 

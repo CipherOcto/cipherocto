@@ -99,7 +99,7 @@ const FIELD_TABLE: &[(&str, &str)] = &[
     ("pw", REDACTED_PW),
     ("password", REDACTED_PW),
     ("bearer", REDACTED_BEARER),
-    ("token", REDACTED_BEARER),
+    ("token", REDACTED_SECRET),
     ("mnemonic", REDACTED_MNEMONIC),
     ("passphrase", REDACTED_PASSPHRASE),
     ("pin", REDACTED_PIN),

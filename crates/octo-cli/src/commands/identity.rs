@@ -439,6 +439,15 @@ pub fn revoke(reason: &str, cli: &Octo) -> Result<(), OctoCliError> {
 /// | Auditor  | yes         | (denied)               |
 /// | Auditor  | no          | (denied — read-only)   |
 pub fn require_confirm(cli: &Octo, command: &str, _is_tty: bool) -> Result<(), OctoCliError> {
+    // RFC-0011 §Confirmation gate: Auditor is denied regardless of --dry-run.
+    // The dry_run bypass MUST come AFTER the Auditor denial, otherwise a
+    // stale Auditor session can preview mutations it cannot perform — R16
+    // Lens-1 F2.
+    if matches!(cli.mode.mode, OperatorMode::Auditor) {
+        return Err(OctoCliError::ConfirmationRequired {
+            command: command.to_string(),
+        });
+    }
     if cli.mode.dry_run {
         return Ok(()); // --dry-run bypasses confirmation (preview only)
     }

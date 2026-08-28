@@ -41,6 +41,13 @@ thiserror = "2.0"
 # === Hex32 newtype serialization ===
 hex = "0.4"
 
+# === Deterministic digest for parse_did_hexbytes ===
+# Pinned to substrate version for cross-crate digest consistency. Used to
+# deterministically collapse over-length DID strings into 32-byte HexBytes
+# (RFC-0011 §Policy Show output; R16 Lens-1 F1 zero-pad collision fix).
+# Layer B additive — same crate as octo-cap-macaroon (RFC-0957 §Algorithms).
+blake3 = "1.5"
+
 # === Schemars for OutputEnvelope<T> ===
 schemars = { version = "0.8", features = ["chrono"] }
 

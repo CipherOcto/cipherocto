@@ -1,4 +1,4 @@
-//! Caveat DSL for macaroon capability tokens (RFC-0957 §3.1 + §3.5).
+//! Caveat DSL for macaroon capability tokens (RFC-0957 §Caveat DSL Extension + §Attenuation Invariant).
 //!
 //! Strongly-typed enum for common caveats + `Raw` escape hatch for unknown axes.
 //! `canonical_ser` per RFC-0126 deterministic serialization so HMAC inputs are
@@ -379,7 +379,7 @@ impl PermissionKind {
     }
 }
 
-/// Monotonic subsumption (RFC-0957 §3.5).
+/// Monotonic subsumption (RFC-0957 §Attenuation Invariant).
 ///
 /// `parent ⊇ child` iff every caveat in `child` is implied by some caveat in
 /// `parent`. Used at attenuation verification: a child capability may only
@@ -909,7 +909,7 @@ mod tests {
         );
     }
 
-    // RFC-0957 §3.5 + 0957-a mission AC: set_subsumes enforces monotonic
+    // RFC-0957 §Attenuation Invariant + 0957-a mission AC: set_subsumes enforces monotonic
     // attenuation — child capability may only narrow, never widen.
 
     #[test]

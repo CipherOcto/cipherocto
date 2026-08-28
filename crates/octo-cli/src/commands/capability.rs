@@ -234,7 +234,7 @@ pub enum CaveatKind {
     RedemptionContext,
     /// `Caveat::Sharded`.
     Sharded,
-    /// `Caveat::Payment` (RFC-0965 §2 PaymentCaveat Specification).
+    /// `Caveat::Payment` (RFC-0965 v2.1 §2 PaymentCaveat Specification).
     Payment,
     /// `Caveat::AssetBinding` (RFC-0965 v2.1 §5 PermissionKind Co-Bound Caveat).
     AssetBinding,

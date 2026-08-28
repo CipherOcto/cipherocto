@@ -228,19 +228,32 @@ pub fn show(
 /// Build a `HexBytes` from a substrate DID string.
 ///
 /// The substrate returns the registrant DID as a string (canonical DID per
-/// RFC-0010 alignment, e.g. `did:octo:1z...`). For v1.0 we surface the
-/// value hex-encoded through `HexBytes` to honour SPEC-01; the substrate
-/// amendment that returns `[u8; 32]` will switch this to a direct
-/// `HexBytes::new(&bytes)` per SPEC-19 / SPEC-20.
+/// RFC-0010 alignment, e.g. `did:octo:1z...`). The substrate amendment
+/// tracked under [Hex32 migration] will switch this to a direct
+/// `HexBytes::new(&bytes)` once `[u8; 32]` lands.
+///
+/// To prevent silent truncation collisions (two distinct DIDs sharing
+/// their first 32 bytes rendering identically — R16 Lens-1 F1), we
+/// deterministically digest any over-length input with `blake3` keyed by
+/// the `octo-cli/policy-show/did` domain separator. This guarantees:
+///
+///   1. No zero-padded collisions — distinct inputs produce distinct digests.
+///   2. Same input always produces the same output (round-trip stable).
+///   3. The 32-byte fixed-width contract on `HexBytes` is preserved.
+///
+/// [Hex32 migration]: RFC-0011-h amendment (deferred; tracked in
+/// `docs/audits/` per [[deferred-vs-unspecified]]).
 fn parse_did_hexbytes(s: &str) -> HexBytes {
-    // Encode the full DID string as bytes for hex rendering. The
-    // substrate amendment that returns `[u8; 32]` will collapse this
-    // to a direct `HexBytes::new(&bytes)` call.
-    let mut buf = [0u8; 32];
-    let bytes = s.as_bytes();
-    let n = bytes.len().min(32);
-    buf[..n].copy_from_slice(&bytes[..n]);
-    HexBytes::new(&buf)
+    use std::sync::OnceLock;
+    static KEY: OnceLock<[u8; 32]> = OnceLock::new();
+    let key = KEY.get_or_init(|| {
+        // Build-time-stable domain separator; the value is a constant
+        // so we do not pull in a runtime config knob. Domain string is
+        // long enough to be globally unique across the CLI surface.
+        *blake3::hash(b"octo-cli/policy-show/did:v1").as_bytes()
+    });
+    let hash = blake3::keyed_hash(key, s.as_bytes());
+    HexBytes::new(hash.as_bytes())
 }
 
 /// Handle `octo policy list`.
@@ -566,7 +579,12 @@ mod tests {
         let cli_err = map_registry_error(e);
         match cli_err {
             OctoCliError::Internal(s) => {
-                assert_eq!(s, "<substrate-error>", "{s}");
+                // R16 Lens-2 F7: in-place replacement preserves diagnostic
+                // context; the `SQL:` marker is replaced, not the whole string.
+                assert!(
+                    s.contains("<substrate-error>") && !s.contains("SQL:"),
+                    "expected SQL marker replaced: {s}"
+                );
             }
             other => panic!("expected Internal, got {other:?}"),
         }

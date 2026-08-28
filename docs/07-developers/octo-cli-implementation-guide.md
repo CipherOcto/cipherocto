@@ -564,21 +564,41 @@ fn find_128_hex(s: &str) -> Option<(usize, usize)> {
 
 /// Case-insensitive scan for `bearer <token>` run.
 ///
-/// `find_bearer_ci` is a substring locator (R17 sync): the helper looks
-/// for the literal `"bearer "` (lowercased, with trailing space) inside
-/// the input, then walks `end` forward over non-whitespace bytes to cover
-/// the full token. Returns `(start, end)` covering `"bearer <token>"`,
-/// NOT just `"bearer "`. Callers substitute the full range with
+/// R19 sync: the keyword match is the bare substring `bearer` (no
+/// trailing space); the byte immediately after must be ASCII whitespace
+/// (handles `bearer `, `bearer\t`, `bearer\n`, `bearer\r` — RFC 7230
+/// §3.2.4 obs-fold). The token walk uses the RFC 6750 §2.1 `b64token`
+/// char class (alphanumeric + `-._~+/`) so JSON punctuation (`"`, `,`,
+/// `:`, `{`, `}`, `[`, `]`) does NOT extend the redaction range and
+/// silently eat subsequent fields. Returns `(start, end)` covering the
+/// full `bearer <token>` span; callers substitute the full range with
 /// `[REDACTED:bearer]`.
 fn find_bearer_ci(s: &str) -> Option<(usize, usize)> {
     let lower = s.to_ascii_lowercase();
-    let start = lower.find("bearer ")?;
-    let mut end = start + "bearer ".len();
+    let start = lower.find("bearer")?;
+    let mut end = start + "bearer".len();
     let b = s.as_bytes();
-    while end < b.len() && !b[end].is_ascii_whitespace() {
+    // Require ASCII whitespace separator after the keyword. Without
+    // this guard, `bearership` / `bearerish` would match.
+    if end >= b.len() || !b[end].is_ascii_whitespace() {
+        return None;
+    }
+    // Walk over the whitespace separator(s). RFC 7230 §3.2.4 allows
+    // obs-fold where a line break + whitespace continues a header value.
+    while end < b.len() && b[end].is_ascii_whitespace() {
+        end += 1;
+    }
+    // Walk the token body over RFC 6750 §2.1 `b64token` chars only.
+    while end < b.len() && is_b64token_byte(b[end]) {
         end += 1;
     }
     Some((start, end))
+}
+
+/// RFC 6750 §2.1 `b64token` char class. ASCII-only; non-ASCII bytes
+/// always return `false`.
+fn is_b64token_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~' | b'+' | b'/')
 }
 
 pub fn redact_string(s: &str) -> std::borrow::Cow<'_, str> {

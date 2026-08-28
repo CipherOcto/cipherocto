@@ -156,15 +156,46 @@ pub fn find_long_hex(s: &str) -> Option<(usize, usize, &'static str)> {
 }
 
 /// Locate a case-insensitive `bearer <token>` run.
+///
+/// R19 Lens-1 F1/F2: keyword match is the bare substring `bearer` (not
+/// `"bearer "`); the byte immediately after must be ASCII whitespace
+/// (handles `bearer `, `bearer\t`, `bearer\n`, `bearer\r` — RFC 7230
+/// §3.2.4 obs-fold). The token walk uses RFC 6750 `b64token` char
+/// class (`ALPHA / DIGIT / "-" / "." / "_" / "~" / "+" / "/"`) so JSON
+/// punctuation (`"`, `,`, `:`, `{`, `}`, `[`, `]`) does NOT extend the
+/// redaction range and silently eat subsequent fields. Returns
+/// `(start, end)` covering the full `bearer <token>` span; callers
+/// substitute the full range with `[REDACTED:bearer]`.
 pub fn find_bearer_ci(s: &str) -> Option<(usize, usize)> {
     let lower = s.to_ascii_lowercase();
-    let start = lower.find("bearer ")?;
-    let mut end = start + "bearer ".len();
+    let start = lower.find("bearer")?;
+    let mut end = start + "bearer".len();
     let b = s.as_bytes();
-    while end < b.len() && !b[end].is_ascii_whitespace() {
+    // Require ASCII whitespace separator after the keyword. Without
+    // this guard, `bearership` / `bearerish` would match.
+    if end >= b.len() || !b[end].is_ascii_whitespace() {
+        return None;
+    }
+    // Walk over the whitespace separator(s). RFC 7230 §3.2.4 allows
+    // obs-fold where a line break + whitespace continues a header
+    // value; consume leading WS so the walk lands on the token.
+    while end < b.len() && b[end].is_ascii_whitespace() {
+        end += 1;
+    }
+    // Walk the token body. RFC 6750 §2.1 `b64token`:
+    //   `1*( ALPHA / DIGIT / "-" / "." / "_" / "~" / "+" / "/" )`
+    // Restricting the char class prevents JSON punctuation from
+    // extending the redaction into subsequent fields.
+    while end < b.len() && is_b64token_byte(b[end]) {
         end += 1;
     }
     Some((start, end))
+}
+
+/// RFC 6750 §2.1 `b64token` char class. ASCII-only; non-ASCII bytes
+/// always return `false`.
+fn is_b64token_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~' | b'+' | b'/')
 }
 
 /// Locate the next `sensitive_field=value` span not already redacted.
@@ -697,5 +728,57 @@ mod tests {
         assert!(s.contains(REDACTED_PW), "missing redaction: {s}");
         assert!(!s.contains("hunter2"), "leaked secret: {s}");
         assert!(s.contains("user=alice"), "{s}");
+    }
+
+    /// R19 Lens-1 F1: bearer walk must NOT extend through JSON
+    /// punctuation (`"`, `,`, `:`, `{`, `}`, `[`, `]`). Token char class
+    /// is restricted to RFC 6750 §2.1 `b64token` (alphanumeric + `-._~+/`).
+    /// Regression for the bug where the redaction ate `"z":"more"}` after
+    /// the bearer token, silently dropping fields.
+    #[test]
+    fn find_bearer_ci_stops_at_json_quote() {
+        let input = r#"{"x":"Bearer abc123","z":"more"}"#;
+        let (start, end) = find_bearer_ci(input).expect("bearer must match");
+        let span = &input[start..end];
+        assert_eq!(span, "Bearer abc123", "scope leaked: {span:?}");
+        // Both neighbor fields remain in the rendered output after redaction.
+        let out = redact_string(input);
+        assert!(
+            out.contains(r#""z":"more""#),
+            "neighbor field dropped: {out}"
+        );
+    }
+
+    /// R19 Lens-1 F2: keyword `bearer` must require ASCII whitespace
+    /// immediately after (single space, tab, newline, CR). RFC 7230
+    /// §3.2.4 obs-fold allows line breaks inside header values.
+    /// Regression for the old `"bearer "` literal-only match.
+    #[test]
+    fn find_bearer_ci_matches_tab_separator() {
+        let input = "auth: Bearer\tabc123def";
+        let (start, end) = find_bearer_ci(input).expect("tab-separated bearer must match");
+        assert_eq!(&input[start..end], "Bearer\tabc123def");
+        let out = redact_string(input);
+        assert!(out.contains(REDACTED_BEARER), "{out}");
+        assert!(!out.contains("abc123def"), "{out}");
+    }
+
+    /// R19 Lens-1 F2 follow-up: `\n` and `\r` separators must also match.
+    #[test]
+    fn find_bearer_ci_matches_crlf_separator() {
+        for sep in ["\n", "\r\n", "\r"] {
+            let input = format!("Authorization: Bearer{sep}abc.def-ghi_jkl");
+            let (start, end) = find_bearer_ci(&input).unwrap_or_else(|| panic!("sep {sep:?}"));
+            assert_eq!(&input[start..end], &format!("Bearer{sep}abc.def-ghi_jkl"));
+        }
+    }
+
+    /// R19 Lens-1 F2 follow-up: `bearership` / `bearerish` must NOT
+    /// match — the ASCII whitespace separator guard catches these.
+    #[test]
+    fn find_bearer_ci_rejects_keyword_suffix() {
+        assert!(find_bearer_ci("bearership").is_none());
+        assert!(find_bearer_ci("bearerable").is_none());
+        assert!(find_bearer_ci("bearerable-token").is_none());
     }
 }

@@ -99,6 +99,10 @@ const FIELD_TABLE: &[(&str, &str)] = &[
     ("pw", REDACTED_PW),
     ("password", REDACTED_PW),
     ("bearer", REDACTED_BEARER),
+    ("bearer_token", REDACTED_BEARER),
+    ("access_token", REDACTED_BEARER),
+    ("refresh_token", REDACTED_BEARER),
+    ("id_token", REDACTED_BEARER),
     ("token", REDACTED_SECRET),
     ("mnemonic", REDACTED_MNEMONIC),
     ("passphrase", REDACTED_PASSPHRASE),
@@ -130,29 +134,54 @@ pub fn redact_by_field<'a>(field_name: &str, value: &'a str) -> &'a str {
 /// Returns `(start, end, kind)` where `kind` is `REDACTED_SIG` for runs
 /// of ≥128 hex chars, `REDACTED_KEY` for 32..127. Odd-length hex and
 /// truncated key dumps are now caught (was: even-length only at ≥64).
+///
+/// R20 Lens-2 F3: signer logs frequently break hex dumps across CRLF
+/// (line-wrapped macaroon IDs every 30 chars, etc.). The raw
+/// `is_ascii_hexdigit` walk stops at the first `\r` or `\n`, so a
+/// 64-char run split into 30+34 chunks evades the threshold. The
+/// fix: a `hex+` run admits CR, LF, and space as line-wrap
+/// separators. The returned `(start, end)` span covers the
+/// separators too so the substitution removes the line breaks
+/// along with the secret.
 pub fn find_long_hex(s: &str) -> Option<(usize, usize, &'static str)> {
     let b = s.as_bytes();
     let mut i = 0;
     while i < b.len() {
         if b[i].is_ascii_hexdigit() {
             let start = i;
-            while i < b.len() && b[i].is_ascii_hexdigit() {
+            let mut hex_count: usize = 0;
+            let mut last_hex_end: usize = i;
+            while i < b.len() && (b[i].is_ascii_hexdigit() || is_hex_separator(b[i])) {
+                if b[i].is_ascii_hexdigit() {
+                    hex_count += 1;
+                    last_hex_end = i + 1;
+                }
                 i += 1;
             }
-            let len = i - start;
-            if len >= 32 {
-                let kind = if len >= 128 {
+            if hex_count >= 32 {
+                let kind = if hex_count >= 128 {
                     REDACTED_SIG
                 } else {
                     REDACTED_KEY
                 };
-                return Some((start, i, kind));
+                // Span covers hex + the wrap separators, so the
+                // redaction removes the line breaks too (the secret
+                // can't be reconstructed from line-broken halves).
+                return Some((start, last_hex_end.max(i), kind));
             }
         } else {
             i += 1;
         }
     }
     None
+}
+
+/// Hex line-wrap separator: CR, LF, or space. The walk allows these
+/// between hex chars so split secrets are still redacted as one
+/// span. Non-hex non-separator bytes terminate the run (returns to
+/// the outer loop).
+fn is_hex_separator(b: u8) -> bool {
+    matches!(b, b'\r' | b'\n' | b' ')
 }
 
 /// Locate a case-insensitive `bearer <token>` run.
@@ -166,9 +195,26 @@ pub fn find_long_hex(s: &str) -> Option<(usize, usize, &'static str)> {
 /// redaction range and silently eat subsequent fields. Returns
 /// `(start, end)` covering the full `bearer <token>` span; callers
 /// substitute the full range with `[REDACTED:bearer]`.
+///
+/// R20 Lens-1 F1 anchor: accepts an optional `from` byte offset. The
+/// replacement marker `REDACTED_BEARER` contains the substring `bearer`,
+/// so a naive `find_bearer_ci(modified_string)` re-matches inside the
+/// replacement (sees `]` not WS, returns None) and the second+ real
+/// `bearer` token in the same input is silently missed. Loop callers
+/// MUST advance the search start to the byte AFTER each replaced range.
 pub fn find_bearer_ci(s: &str) -> Option<(usize, usize)> {
+    find_bearer_ci_from(s, 0)
+}
+
+/// Position-anchored variant of `find_bearer_ci`. `from` is a byte
+/// offset; returns `None` if `from >= s.len()`. See `find_bearer_ci`
+/// for the char-class + WS-separator contract.
+pub fn find_bearer_ci_from(s: &str, from: usize) -> Option<(usize, usize)> {
+    if from >= s.len() {
+        return None;
+    }
     let lower = s.to_ascii_lowercase();
-    let start = lower.find("bearer")?;
+    let start = lower[from..].find("bearer")? + from;
     let mut end = start + "bearer".len();
     let b = s.as_bytes();
     // Require ASCII whitespace separator after the keyword. Without
@@ -182,20 +228,128 @@ pub fn find_bearer_ci(s: &str) -> Option<(usize, usize)> {
     while end < b.len() && b[end].is_ascii_whitespace() {
         end += 1;
     }
-    // Walk the token body. RFC 6750 §2.1 `b64token`:
-    //   `1*( ALPHA / DIGIT / "-" / "." / "_" / "~" / "+" / "/" )`
-    // Restricting the char class prevents JSON punctuation from
-    // extending the redaction into subsequent fields.
-    while end < b.len() && is_b64token_byte(b[end]) {
-        end += 1;
+    // R20 Lens-2 F1: RFC 6750 §2.1 also permits the quoted-string
+    // form `Bearer "abc.def"`. The leading `"` is not b64token; the
+    // body walk would stop at the quote and the token body inside
+    // the quotes would leak. Detect the leading `"` BEFORE the
+    // b64token walk: if the byte right after the keyword + WS is
+    // `"`, enter the quoted-string path. This must precede the
+    // b64token walk so a JSON-form `{"x":"Bearer abc123"}` does not
+    // match (the byte after `Bearer abc123` is `,`, not `"`).
+    let after_ws = end; // end is positioned right after the WS separator(s)
+    if after_ws < b.len() && b[after_ws] == b'"' {
+        // Quoted-string form: consume opening `"`, walk the b64token
+        // body, then consume the closing `"` if present.
+        end = after_ws + 1;
+        while end < b.len() && is_b64token_byte(b[end]) {
+            end += 1;
+        }
+        if end < b.len() && b[end] == b'"' {
+            end += 1;
+        }
+    } else {
+        // Walk the token body. RFC 6750 §2.1 `b64token`:
+        //   `1*( ALPHA / DIGIT / "-" / "." / "_" / "~" / "+" / "/" )`
+        // Restricting the char class prevents JSON punctuation from
+        // extending the redaction into subsequent fields.
+        while end < b.len() && is_b64token_byte(b[end]) {
+            end += 1;
+        }
+    }
+    // R20 Lens-1 F3: if the token body itself is the keyword
+    // `bearer` (or starts with it), do NOT swallow it — let the next
+    // iteration treat it as a fresh bearer lead-in. Without this,
+    // `Bearer Bearer xyz` collapses to one redaction and `xyz`
+    // leaks. The body-start byte is computed as
+    // `keyword_end + leading_ws_count`; the inner body is then
+    // checked for the keyword.
+    let keyword_end = start + "bearer".len();
+    let body_byte = keyword_end + count_leading_ws(b, keyword_end, end);
+    if end > body_byte && end - body_byte >= "bearer".len() {
+        let body = &s[body_byte..body_byte + "bearer".len()];
+        if body.eq_ignore_ascii_case("bearer") {
+            // Inner body is the keyword. Shrink the match to the
+            // outer keyword + separator only, so the next loop
+            // iteration finds the inner bearer.
+            end = body_byte;
+        }
     }
     Some((start, end))
+}
+
+/// Count leading ASCII-whitespace bytes in `b[start..end]`. Returns 0
+/// if `start >= end`.
+fn count_leading_ws(b: &[u8], start: usize, end: usize) -> usize {
+    let mut n = 0;
+    let mut i = start;
+    while i < end && b[i].is_ascii_whitespace() {
+        n += 1;
+        i += 1;
+    }
+    n
 }
 
 /// RFC 6750 §2.1 `b64token` char class. ASCII-only; non-ASCII bytes
 /// always return `false`.
 fn is_b64token_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~' | b'+' | b'/')
+}
+
+/// Collect every non-overlapping bearer-token run in `s` and replace
+/// each with `REDACTED_BEARER`. R20 Lens-1 F1 anchor: collect-then-
+/// replace avoids the "replacement marker contains the keyword" trap
+/// (the marker is `[REDACTED:bearer]` which contains the substring
+/// `bearer` — naively re-scanning the modified string would re-match
+/// the marker and miss every subsequent real `bearer` token).
+fn scrub_bearer_runs(s: &str) -> String {
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    let mut from: usize = 0;
+    while let Some((start, end)) = find_bearer_ci_from(s, from) {
+        ranges.push((start, end));
+        from = end;
+        if from >= s.len() {
+            break;
+        }
+    }
+    if ranges.is_empty() {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut cursor: usize = 0;
+    for (start, end) in &ranges {
+        out.push_str(&s[cursor..*start]);
+        out.push_str(REDACTED_BEARER);
+        cursor = *end;
+    }
+    out.push_str(&s[cursor..]);
+    out
+}
+
+/// Collect every non-overlapping long-hex run in `s` and replace each
+/// with the appropriate `REDACTED_*` marker. See `scrub_bearer_runs`
+/// for the collect-then-replace rationale.
+fn scrub_long_hex_runs(s: &str) -> String {
+    let mut ranges: Vec<(usize, usize, &'static str)> = Vec::new();
+    let mut cursor: usize = 0;
+    while let Some((start, end, kind)) = find_long_hex(&s[cursor..]) {
+        ranges.push((start + cursor, end + cursor, kind));
+        cursor += end;
+        if cursor >= s.len() {
+            break;
+        }
+    }
+    if ranges.is_empty() {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    cursor = 0;
+    for (start, end, kind) in &ranges {
+        out.push_str(&s[cursor..*start]);
+        out.push_str(kind);
+        cursor = *end;
+    }
+    out.push_str(&s[cursor..]);
+    out
 }
 
 /// Locate the next `sensitive_field=value` span not already redacted.
@@ -258,26 +412,9 @@ pub fn redact_string(s: &str) -> Cow<'_, str> {
                 // After the JSON pass, run plain-text bearer + long-hex
                 // passes on the rendered output to catch those. The
                 // kv pass is skipped — it would corrupt JSON quoting.
-                let mut scrubbed: Option<String> = None;
-                loop {
-                    let current: &str = scrubbed.as_deref().unwrap_or(&rendered);
-                    let Some((start, end)) = find_bearer_ci(current) else {
-                        break;
-                    };
-                    let mut o = current.to_string();
-                    o.replace_range(start..end, REDACTED_BEARER);
-                    scrubbed = Some(o);
-                }
-                loop {
-                    let current: &str = scrubbed.as_deref().unwrap_or(&rendered);
-                    let Some((start, end, kind)) = find_long_hex(current) else {
-                        break;
-                    };
-                    let mut o = current.to_string();
-                    o.replace_range(start..end, kind);
-                    scrubbed = Some(o);
-                }
-                let final_rendered = scrubbed.unwrap_or(rendered);
+                let mut scrubbed: String = scrub_bearer_runs(&rendered);
+                scrubbed = scrub_long_hex_runs(&scrubbed);
+                let final_rendered = scrubbed;
                 let leading_ws = s.len() - s.trim_start().len();
                 let trailing_ws = s.len() - s.trim_end().len();
                 let mut out = String::with_capacity(
@@ -319,30 +456,15 @@ pub fn redact_string(s: &str) -> Cow<'_, str> {
     // R17 Lens-2 F1: wrap bearer + long-hex in loops so multiple matches
     // in the same string (e.g. two bearer tokens, or a bearer + a sig
     // hex run) all get redacted, matching the kv branch's behaviour.
-    let mut owned: Option<String> = None;
+    // R20 Lens-1 F1 anchor: `scrub_bearer_runs` / `scrub_long_hex_runs`
+    // collect all non-overlapping ranges FIRST then stitch the
+    // result, so the replacement marker (which contains the keyword
+    // substring) cannot re-match and block subsequent real matches.
+    let mut owned: String = scrub_bearer_runs(s);
+    owned = scrub_long_hex_runs(&owned);
 
     loop {
-        let current: &str = owned.as_deref().unwrap_or(s);
-        let Some((start, end)) = find_bearer_ci(current) else {
-            break;
-        };
-        let mut o = current.to_string();
-        o.replace_range(start..end, REDACTED_BEARER);
-        owned = Some(o);
-    }
-
-    loop {
-        let current: &str = owned.as_deref().unwrap_or(s);
-        let Some((start, end, kind)) = find_long_hex(current) else {
-            break;
-        };
-        let mut o = current.to_string();
-        o.replace_range(start..end, kind);
-        owned = Some(o);
-    }
-
-    loop {
-        let current: &str = owned.as_deref().unwrap_or(s);
+        let current: &str = if owned == *s { owned.as_str() } else { &owned };
         let Some((start, end)) = find_kv_secret(current) else {
             break;
         };
@@ -350,12 +472,13 @@ pub fn redact_string(s: &str) -> Cow<'_, str> {
         let replacement = redact_by_field(&current[start..start + name_len], "").to_string();
         let mut o = current.to_string();
         o.replace_range(start + name_len + 1..end, &replacement);
-        owned = Some(o);
+        owned = o;
     }
 
-    match owned {
-        Some(o) => Cow::Owned(o),
-        None => Cow::Borrowed(s),
+    if owned == *s {
+        Cow::Borrowed(s)
+    } else {
+        Cow::Owned(owned)
     }
 }
 
@@ -780,5 +903,77 @@ mod tests {
         assert!(find_bearer_ci("bearership").is_none());
         assert!(find_bearer_ci("bearerable").is_none());
         assert!(find_bearer_ci("bearerable-token").is_none());
+    }
+
+    /// R20 Lens-1 F1: bearer redaction loop must NOT stop at the first
+    /// match when the replacement marker contains the keyword substring.
+    /// Regression for the anchor bug where two real bearer tokens in
+    /// the same string produced only one redaction.
+    #[test]
+    fn redact_string_redacts_multiple_bearers() {
+        let out = redact_string("Bearer abc.def Bearer xyz.uvw");
+        // Two redacted markers, no raw token body left in either.
+        assert_eq!(out.matches(REDACTED_BEARER).count(), 2, "{out}");
+        assert!(!out.contains("abc.def"), "{out}");
+        assert!(!out.contains("xyz.uvw"), "{out}");
+    }
+
+    /// R20 Lens-1 F3: `Bearer Bearer <token>` — the inner `Bearer` is
+    /// consumed as the keyword, the outer is the lead-in. Two markers
+    /// are NOT required (only one b64token body exists); the inner
+    /// keyword is part of the same redaction range.
+    #[test]
+    fn redact_string_bearer_bearer_collapse() {
+        let out = redact_string("Bearer Bearer secret123");
+        assert!(out.contains(REDACTED_BEARER), "{out}");
+        assert!(!out.contains("secret123"), "{out}");
+    }
+
+    /// R20 Lens-1 F2: OAuth-style `*_token` field names in JSON must
+    /// trigger field-name redaction. Bearer / access / refresh / id.
+    #[test]
+    fn redact_string_json_oauth_token_fields() {
+        for field in ["bearer_token", "access_token", "refresh_token", "id_token"] {
+            let input = format!(r#"{{"{field}":"eyJabc.def-ghi"}}"#);
+            let out = redact_string(&input);
+            assert!(out.contains(REDACTED_BEARER), "{field} → {out}");
+            assert!(!out.contains("eyJabc.def-ghi"), "{field} leaked: {out}");
+        }
+    }
+
+    /// R20 Lens-2 F1: RFC 6750 §2.1 quoted-string form `Bearer "xyz"`
+    /// must be redacted. The leading `"` is not b64token; the body
+    /// walk would otherwise stop at the quote and the token body
+    /// would leak. Regression for the bug where the b64token walk
+    /// stopped at the opening quote.
+    #[test]
+    fn find_bearer_ci_quoted_string_form() {
+        let input = r#"auth: Bearer "abc.def-ghi""#;
+        let (start, end) = find_bearer_ci(input).expect("quoted-string bearer must match");
+        assert_eq!(&input[start..end], r#"Bearer "abc.def-ghi""#);
+        let out = redact_string(input);
+        assert!(out.contains(REDACTED_BEARER), "{out}");
+        assert!(!out.contains("abc.def-ghi"), "{out}");
+    }
+
+    /// R20 Lens-2 F3: secrets split across CRLF (e.g. macaroon ID
+    /// printed by signer every 30 chars) must NOT evade the
+    /// long-hex detector. The fix: strip CR/LF/space before the
+    /// hex walk so a 64-char run broken into 30+34 chunks still
+    /// matches. The redactor only collapses the hex; CR/LF/space
+    /// are preserved in the output via the offset arithmetic.
+    #[test]
+    fn find_long_hex_redacts_crlf_split_run() {
+        let hex = "a".repeat(64);
+        // 30 + CRLF + 34 = 64 hex chars split across a line break.
+        let split = format!("{}\r\n{}", &hex[..30], &hex[30..]);
+        let input = format!("sig={split}");
+        let out = redact_string(&input);
+        assert!(
+            out.contains(REDACTED_KEY) || out.contains(REDACTED_SIG),
+            "{out}"
+        );
+        assert!(!out.contains(&hex[..30]), "first half leaked: {out}");
+        assert!(!out.contains(&hex[30..]), "second half leaked: {out}");
     }
 }

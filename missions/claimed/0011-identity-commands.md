@@ -139,7 +139,7 @@ signature_proof: RedactedHex }`. Exit 0 / 3 / 4 / 5 / 11 / 64 (11 = `SigningFail
    MUST be rendered as `RedactedHex` per RFC-0011 §Redaction Layer (never raw). `--confirm`
    required in human mode; `--allow-write` required in ci mode.
    **Race note:** if `revoke` is invoked DURING the rotation grace window, BOTH
-   old and new keys are invalidated immediately per RFC-0009 §Identity Lifecycle;
+   old and new keys are invalidated immediately per RFC-0009 §Identity Lifecycle State Machine;
    the CLI does not need to special-case this — substrate enforces.
 
 4. **`octo identity revoke --reason <str>`** —
@@ -256,7 +256,7 @@ cargo test -p octo-cli --test identity --all-features
 ## Cross-references
 
 - RFC-0011 §Subcommand Taxonomy IdentityAction table
-- RFC-0009 §Identity Lifecycle — substrate state machine (Designated /
+- RFC-0009 §Identity Lifecycle State Machine — substrate state machine (Designated /
   Active / Rotating / Revoked)
 - (Future work, no RFC filed yet): WhatsApp/Telegram Auth Onboarding redaction
   pattern (applied to `signature_proof`) — see whatsapp/telegram CLI substrate

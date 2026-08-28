@@ -104,7 +104,7 @@ directly; the CLI is a thin operator UX layer over Layer-B substrate crates.
 
 | Role           | Identifier              | Authority Scope                                      | Lifecycle | Source/Ref                   |
 | -------------- | ----------------------- | ---------------------------------------------------- | --------- | ---------------------------- |
-| Human Operator | `OperatorKind::Human`   | read + write (with `--confirm` for mutating)         | stateless | RFC-0009 §Identity Lifecycle |
+| Human Operator | `OperatorKind::Human`   | read + write (with `--confirm` for mutating)         | stateless | RFC-0009 §Identity Lifecycle State Machine |
 | CI Bot         | `OperatorKind::CiBot`   | read-only by default; write requires `--allow-write` | stateless | This RFC §Roles and Authorities |
 | Auditor (RO)   | `OperatorKind::Auditor` | read-only + audit-trail access                       | stateless | This RFC §Roles and Authorities |
 
@@ -326,7 +326,7 @@ codes, and redaction requirements.
 | Substrate    | `[ADD] octo_wallet::revoke(&mut IdentityKey, now_unix_secs: u64) -> Result<(), WalletError>` (wraps `IdentityKey::revoke(&mut self, ...)` instance method) |
 | Exit codes   | 0, 4 (no active identity), 6 (already revoked — CLI-level pre-check, NOT substrate error), 64                                                              |
 | Redaction    | none                                                                                                                                                       |
-| Side effects | DID state → `Revoked` (RFC-0009 §Identity Lifecycle — terminal state; revoke during rotation invalidates both old and new keys immediately)                |
+| Side effects | DID state → `Revoked` (RFC-0009 §Identity Lifecycle State Machine — terminal state; revoke during rotation invalidates both old and new keys immediately)                |
 | Dry-run      | substrate call wrapped; no state change                                                                                                                    |
 
 #### `octo capability list`
@@ -624,7 +624,7 @@ recovery (RFC-0009). Time bounds: rotation grace 1-168 hours (default 24); revok
 is immediate.
 
 The CLI does NOT define a new state machine — it exposes RFC-0009's. The state
-diagram above mirrors RFC-0009 §Identity Lifecycle.
+diagram above mirrors RFC-0009 §Identity Lifecycle State Machine.
 
 ### Determinism Requirements
 

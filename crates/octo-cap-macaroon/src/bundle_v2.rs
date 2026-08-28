@@ -1,10 +1,10 @@
 //! `CapabilityBundleV2` — V2 wire form of portable archival + replay
-//! representation (RFC-0009 §Compatibility).
+//! representation (RFC-0009 v1.2 §Compatibility).
 //!
 //! Aggregates `CapabilityTokenV2` + serialized `HolderRecord` bytes +
 //! singular `DischargeMacaroon` for offline storage + cross-process
 //! replay. V2 adds `chain_depth` + `chain_parent` fields on the token
-//! for hierarchical attenuation chain verification (RFC-0009
+//! for hierarchical attenuation chain verification (RFC-0009 v1.2
 //! §Hierarchical attenuation chains).
 //!
 //! ## Layer discipline (per [[cipherocto-design-principles]])
@@ -15,7 +15,7 @@
 //!
 //! - `holder_record_bytes: Vec<u8>` (LAYER DISCIPLINE: bytes, not
 //!   concrete `HolderRecord`; V2 mirrors V1's deliberate
-//!   layer-clean design per `bundle.rs` module docs; the RFC-0009
+//!   layer-clean design per `bundle.rs` module docs; the RFC-0009 v1.2
 //!   §Compatibility showing concrete `HolderRecord` is
 //!   overridden by layer direction — L4 → B-substrate forbidden).
 //! - `discharge_macaroon: DischargeMacaroon` lives in the same crate
@@ -32,7 +32,7 @@
 //! - `discharges: Vec<DischargeMacaroon>` (V1) →
 //!   `discharge_macaroon_bytes: Vec<u8>` (singular; borsh-encoded
 //!   `DischargeMacaroon` bytes). V2 wire form carries ONE discharge
-//!   (singular vs V1's `Vec`) per RFC-0009 §Compatibility. The borsh-bytes indirection follows V1's
+//!   (singular vs V1's `Vec`) per RFC-0009 v1.2 §Compatibility. The borsh-bytes indirection follows V1's
 //!   `holder_record_bytes` pattern (layer discipline: cargo-graph
 //!   hygiene avoids the `Vec<Caveat>` → Borsh derive cascade; the
 //!   `Caveat` enum has 24 variants with their own types).
@@ -144,7 +144,7 @@ impl fmt::Debug for CapabilityTokenV2 {
 /// Borsh derive cascade (the `Caveat` enum has 24 variants with
 /// their own types).
 ///
-/// **Deviation from RFC-0009 §Compatibility:** the
+/// **Deviation from RFC-0009 v1.2 §Compatibility:** the
 /// authoritative spec sketch shows `discharge_macaroon: DischargeMacaroon`
 /// (concrete type). This implementation uses
 /// `discharge_macaroon_bytes: Vec<u8>` to keep the layer discipline
@@ -305,7 +305,7 @@ impl CapabilityBundleV2 {
     }
 }
 
-/// Network wire prefix for V2 bundles (RFC-0009 §Compatibility —
+/// Network wire prefix for V2 bundles (RFC-0009 v1.2 §Compatibility —
 /// receivers detect version from first 16 bytes
 /// without attempting full canonical_de).
 ///
@@ -315,7 +315,7 @@ impl CapabilityBundleV2 {
 /// future expansion (e.g. a 4-byte minor-version tag).
 pub const CIPHEROCTO_V2_BUNDLE_PREFIX: &[u8; 16] = b"cipherocto/v2\x00\x00\x00";
 
-/// V2 wire envelope (RFC-0009 §Compatibility carrier).
+/// V2 wire envelope (RFC-0009 v1.2 §Compatibility carrier).
 ///
 /// `CapabilityBundleV2` substrate is the inner bundle; the envelope
 /// prepends the 16-byte version prefix so receivers can dispatch V2

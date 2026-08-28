@@ -284,7 +284,7 @@ fn clap_help_parses() {
 fn tv_id9_rotate_emits_canonical_stderr_echo() {
     // With `--dry-run`, the rotate handler must echo the canonical
     // payload to stderr before substrate call (pastejacking defense per
-    // RFC §Security 1a). `--dry-run` bypasses the confirmation gate so
+    // RFC-0011 §Security Considerations 1a). `--dry-run` bypasses the confirmation gate so
     // the handler runs to the echo point.
     let output = octo()
         .args(["--json", "identity", "rotate", "--dry-run"])

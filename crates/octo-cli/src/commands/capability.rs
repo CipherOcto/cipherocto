@@ -136,7 +136,7 @@ pub struct CapabilitySummaryView {
     /// Caveat chain in attenuation order.
     pub caveats: Vec<CaveatSummaryView>,
     /// Remaining budget, when a budget caveat is present. v1.0 always
-    /// `None` (per RFC-0011 §`octo capability list` reduction note:
+    /// `None` (per RFC-0011 §Subcommand Taxonomy `octo capability list` reduction note:
     /// `remaining_budget_dqa` deferred to the audit-window
     /// sub-amendment; substrate dropped storage dependency in Phase
     /// 2c-2). Reserved for the audit-window sub-amendment that

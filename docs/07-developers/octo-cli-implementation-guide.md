@@ -433,7 +433,7 @@ impl OctoCliError {
         std::process::exit(exit_code);
     }
 
-    /// Per-variant remediation hint (matches RFC §Error Handling).
+    /// Per-variant remediation hint (matches RFC-0011 §Error Handling).
     /// Returns `None` if no hint applies for the variant.
     pub fn hint(&self) -> Option<String> {
         match self {
@@ -929,7 +929,7 @@ enum AgentActionStub {
 fn main() {
     if let Err(e) = run() {
         // Two JSON-forcing mechanisms are orthogonal:
-        //  1. `--json` flag forces JSON output regardless of TTY detection (per RFC §Output Envelope).
+        //  1. `--json` flag forces JSON output regardless of TTY detection (per RFC-0011 §Output Envelope).
         //  2. `OCTO_FORCE_JSON` environment variable forces JSON output for scripted environments
         //     that cannot pass `--json` (e.g., wrapper scripts, cron jobs).
         // `force_json` here ORs both sources.
@@ -1012,7 +1012,7 @@ pub fn whoami(cli: &Octo) -> Result<(), OctoCliError> {
         WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
         other => OctoCliError::Internal(other.to_string()),
     })?;
-    // SUBSTRATE-PENDING: `IdentityKey::did() -> Did` is [ADD] per §Subcommand Taxonomy
+    // SUBSTRATE-PENDING: `IdentityKey::did() -> Did` is [ADD] per RFC-0011 §Subcommand Taxonomy
     // entry #2. Substrate today has no `Did` type. CLI-side construction:
     // `Did(format!("did:octo:{}", base32::encode(...public_key_bytes()...)))`.
     let did = key.did().clone();
@@ -1112,7 +1112,7 @@ pub fn require_confirm(cli: &Octo, command: &str) -> Result<(), OctoCliError> {
 Per RFC-0011 §Subcommand Taxonomy, capability subcommands parse `--caveats <json>` against the
 RFC-0965 envelope catalog, then delegate to
 `[ADD] octo_cap_macaroon::mint(root_secret: &[u8;32], holder: &dyn CapabilitySigner, holder_did: &str, caveats: &[Caveat])`
-(RFC §Subcommand Taxonomy [ADD] entry #10 — thin wrapper around substrate `CapabilityToken::mint`
+(RFC-0011 §Subcommand Taxonomy [ADD] entry #10 — thin wrapper around substrate `CapabilityToken::mint`
 per substrate signature; `holder` is `&dyn CapabilitySigner` per substrate
 signature, NOT the phantom `HolderKey` type)
 and `attenuate(parent, caveats, holder, catalog)`. Caveat validation errors
@@ -1375,7 +1375,7 @@ tv_id8_rotate_dry_run:
 # env_errors.yaml — 3 TV (NOT on disk as a separate test file; covered inline by error.rs + integration tests)
 #   tv_env6_internal_error_path — substrate returns `Internal("SQL: SELECT ...")`.
 #     `sanitize_substrate_error` invoked via `user_message()`; stderr shows
-#     sanitized message `wallet store error` (per RFC §Error Handling)
+#     sanitized message `wallet store error` (per RFC-0011 §Error Handling)
 #     with SQL fragment stripped; exit 64. → covered by error.rs::tv_err2_internal_no_substrate_leak
 #   tv_env7_stdin_secret_refused — operator pipes private key to stdin without
 #     `--allow-stdin-secret`; stderr shows `secret material on pipe`; exit 15.

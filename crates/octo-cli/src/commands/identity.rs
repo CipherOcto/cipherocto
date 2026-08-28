@@ -312,8 +312,7 @@ pub fn rotate(cli: &Octo) -> Result<(), OctoCliError> {
         "would rotate: old_did={}, new_did_placeholder=pending, grace=24h",
         old_did.0
     );
-    let mut key =
-        octo_wallet::active_identity(&store).map_err(|_| OctoCliError::NoActiveIdentity)?;
+    let mut key = octo_wallet::active_identity(&store).map_err(map_not_active_error)?;
 
     // Successor stub (R1 review CORR-16 / SEC-04): substrate (Layer B)
     // is still a stub at this RFC stage. `IdentityKey::from_seed` is the
@@ -388,8 +387,7 @@ pub fn revoke(reason: &str, cli: &Octo) -> Result<(), OctoCliError> {
         did.0,
         redact_string(reason)
     );
-    let mut key =
-        octo_wallet::active_identity(&store).map_err(|_| OctoCliError::NoActiveIdentity)?;
+    let mut key = octo_wallet::active_identity(&store).map_err(map_not_active_error)?;
 
     let now = chrono::Utc::now().timestamp().max(0) as u64;
     if !cli.mode.dry_run {

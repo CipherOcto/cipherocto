@@ -820,14 +820,33 @@ mod tests {
     }
 
     /// CORR-16 / SEC-04: hardcoded successor seed must be guarded.
+    ///
+    /// Pins THREE invariants (R23 strengthened — the prior substring
+    /// matched only the test's own source line, not the production
+    /// guard, because `include_str!` reads the file including this
+    /// test, so the assertion was vacuous):
+    ///   1. Structural `#[cfg(not(test))]` gate present (so the test
+    ///      build compiles the `from_seed([1u8; 32])` branch but the
+    ///      release build does NOT).
+    ///   2. Release-build refusal message matches the live guard
+    ///      (currently `"successor derivation refused outside dev mode"`).
+    ///   3. Refusal message references BOTH escape hatches
+    ///      (`--dry-run` AND `--mode dev`) — a future refactor that
+    ///      silently drops one is caught here.
     #[test]
     fn rotate_successor_seed_guarded_outside_test() {
         let src = include_str!("identity.rs");
-        // The guard `#[cfg(not(test))] panic` or `if !cli.mode.dry_run
-        // return Err(...)` must surround the `from_seed([1u8; 32])` call.
         assert!(
-            src.contains("successor derivation not yet wired"),
-            "rotate handler missing hardcoded-seed guard: see CORR-16/SEC-04"
+            src.contains("#[cfg(not(test))]"),
+            "rotate handler missing #[cfg(not(test))] structural gate (CORR-16/SEC-04)"
+        );
+        assert!(
+            src.contains("successor derivation refused outside dev mode"),
+            "rotate handler dev-mode refusal message drifted (CORR-16/SEC-04)"
+        );
+        assert!(
+            src.contains("--dry-run") && src.contains("--mode dev"),
+            "rotate handler refusal must reference BOTH --dry-run and --mode dev escape hatches"
         );
     }
 

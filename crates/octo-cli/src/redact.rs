@@ -352,35 +352,112 @@ fn scrub_long_hex_runs(s: &str) -> String {
     out
 }
 
-/// Locate the next `sensitive_field=value` span not already redacted.
-fn find_kv_secret(s: &str) -> Option<(usize, usize)> {
+/// Locate the value span of the next `sensitive_field<sep>value`.
+/// Returns `(name_start, value_start, value_end)` where the field
+/// name runs from `name_start` up to the separator at
+/// `value_start - 1` (or `value_start - 2` if there was a `: ` WS).
+/// Handles three field-name shapes:
+/// 1. **env-file** `field=value` — name = ASCII alnum / `_` / `-` directly preceding `=`.
+/// 2. **plain JSON** `"field":"value"` — closing `"` immediately precedes `:`, opening `"` follows the field-name walk-back, optional `: ` WS, then quoted value.
+/// 3. **bare colon** `field: value` — name directly precedes `:`, no surrounding quotes (used when serde_json fails to parse the outer string, e.g. log-line wrap `audit: {...}`, BOM-prefixed JSON, trailing-comma JSON).
+///
+/// The value scan terminates at whitespace, `,`, `}`, `]`, or the
+/// matching closing quote of a JSON-style `"value"` form. R20
+/// Lens-2 F2: a JSON-object string that fails to parse used to
+/// evade the redactor because the old `find_kv_secret` only
+/// recognised `=`. With this rewrite the kv scan handles all three
+/// shapes so redaction still fires when the outer JSON parse
+/// fails, and the field name is preserved so JSON structure
+/// stays parseable after redaction.
+fn find_kv_secret(s: &str) -> Option<(usize, usize, usize)> {
     let b = s.as_bytes();
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'=' {
-            // Walk back over the field name.
-            let mut start = i;
-            while start > 0 {
-                let c = b[start - 1];
+        let sep = match b[i] {
+            b'=' => b'=', // env-file: field=value
+            b':' => b':', // JSON inner-key: "field":"value" / plain "field: value"
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        // Walk back over the field name. Three shapes:
+        //   A. JSON quoted: closing `"` immediately precedes the
+        //      separator, then ASCII alnum / `_` / `-` run, then
+        //      optional opening `"` (the JSON shape `"field":`).
+        //   B. Plain colon: ASCII alnum / `_` / `-` run directly
+        //      precedes the separator (env / bare colon shape).
+        //   C. Quoted-only name like `":"` with no run — name
+        //      starts and ends at the same position; skip.
+        let mut name_start = i;
+        if sep == b':' && name_start > 0 && b[name_start - 1] == b'"' {
+            name_start -= 1;
+            while name_start > 0 {
+                let c = b[name_start - 1];
                 if c.is_ascii_alphanumeric() || c == b'_' || c == b'-' {
-                    start -= 1;
+                    name_start -= 1;
                 } else {
                     break;
                 }
             }
-            let name = &s[start..i];
-            if !name.is_empty() && field_is_sensitive(name) {
-                let mut end = i + 1;
-                while end < b.len() && !b[end].is_ascii_whitespace() && b[end] != b',' {
-                    end += 1;
-                }
-                let value = &s[i + 1..end];
-                if !value.starts_with("[REDACTED:") {
-                    return Some((start, end));
+            if name_start > 0 && b[name_start - 1] == b'"' {
+                name_start -= 1;
+            }
+        } else {
+            while name_start > 0 {
+                let c = b[name_start - 1];
+                if c.is_ascii_alphanumeric() || c == b'_' || c == b'-' {
+                    name_start -= 1;
+                } else {
+                    break;
                 }
             }
         }
-        i += 1;
+        // Extract the field name (strip surrounding quotes for the
+        // sensitive-name check).
+        let raw_name = &s[name_start..i];
+        let name_trimmed = raw_name.trim_matches('"');
+        if name_trimmed.is_empty() || !field_is_sensitive(name_trimmed) {
+            i += 1;
+            continue;
+        }
+        // Value start = byte just past the separator; for `:`
+        // skip optional whitespace. Value end = matching closing
+        // `"` (quoted form) or first WS / `,` / `}` / `]` (bare
+        // form). Return ONLY the value range; the caller preserves
+        // the field name so the JSON structure stays parseable.
+        let mut value_start = i + 1;
+        if sep == b':' {
+            while value_start < b.len() && b[value_start] == b' ' {
+                value_start += 1;
+            }
+        }
+        let value_end = if value_start < b.len() && b[value_start] == b'"' {
+            let mut end = value_start + 1;
+            while end < b.len() && b[end] != b'"' {
+                end += 1;
+            }
+            if end < b.len() && b[end] == b'"' {
+                end += 1;
+            }
+            end
+        } else {
+            let mut end = value_start;
+            while end < b.len()
+                && !b[end].is_ascii_whitespace()
+                && b[end] != b','
+                && b[end] != b'}'
+                && b[end] != b']'
+            {
+                end += 1;
+            }
+            end
+        };
+        let value = &s[value_start..value_end];
+        if !value.starts_with("[REDACTED:") {
+            return Some((name_start, value_start, value_end));
+        }
+        i = value_end;
     }
     None
 }
@@ -465,13 +542,20 @@ pub fn redact_string(s: &str) -> Cow<'_, str> {
 
     loop {
         let current: &str = if owned == *s { owned.as_str() } else { &owned };
-        let Some((start, end)) = find_kv_secret(current) else {
+        let Some((name_start, value_start, value_end)) = find_kv_secret(current) else {
             break;
         };
-        let name_len = current[start..end].find('=').unwrap_or(0);
-        let replacement = redact_by_field(&current[start..start + name_len], "").to_string();
+        // `find_kv_secret` returns just the value range (R20
+        // Lens-2 F2). The field name is preserved so JSON
+        // structure remains parseable. The per-field marker is
+        // looked up from the field-name slice so the env-file
+        // tests (which assert e.g. `[REDACTED:pw]` for `password=`)
+        // keep working through the plain-text branch.
+        let field_name = current[name_start..value_start]
+            .trim_matches(|c: char| c == '"' || c == ':' || c == '=' || c == ' ');
+        let replacement = redact_by_field(field_name, "").to_string();
         let mut o = current.to_string();
-        o.replace_range(start + name_len + 1..end, &replacement);
+        o.replace_range(value_start..value_end, &replacement);
         owned = o;
     }
 
@@ -975,5 +1059,46 @@ mod tests {
         );
         assert!(!out.contains(&hex[..30]), "first half leaked: {out}");
         assert!(!out.contains(&hex[30..]), "second half leaked: {out}");
+    }
+
+    /// R20 Lens-2 F2: log-line wrap (`audit: {json}`) and BOM
+    /// corruption (`\u{feff}{json}`) evade the JSON parser because
+    /// the leading non-JSON prefix / BOM breaks `serde_json`. The
+    /// plain-text fallback must still catch the inner
+    /// `password="hunter2"` form via the now-colon-aware
+    /// `find_kv_secret`.
+    #[test]
+    fn redact_string_handles_log_wrapped_json() {
+        let input = r#"audit: {"password":"hunter2","user":"alice"}"#;
+        let out = redact_string(input);
+        assert!(out.contains("password"), "field name dropped: {out}");
+        assert!(out.contains(REDACTED_PW), "{out}");
+        assert!(!out.contains("hunter2"), "password leaked: {out}");
+        assert!(out.contains("user"), "non-sensitive field dropped: {out}");
+        assert!(out.contains("alice"), "non-sensitive value dropped: {out}");
+    }
+
+    /// R20 Lens-2 F2 (BOM form): leading BOM evades JSON parse, but
+    /// the plain-text fallback still redacts via `find_kv_secret`.
+    /// `api_key` is the canonical sensitive name in FIELD_TABLE.
+    #[test]
+    fn redact_string_handles_bom_prefixed_json() {
+        let input = "\u{feff}{\"api_key\":\"abcdef0123\"}";
+        let out = redact_string(input);
+        assert!(out.contains("api_key"), "field name dropped: {out}");
+        assert!(!out.contains("abcdef0123"), "api_key leaked: {out}");
+        assert!(out.contains(REDACTED_API_KEY), "{out}");
+    }
+
+    /// R20 Lens-2 F2 (trailing-comma form): trailing comma is
+    /// rejected by strict JSON parsers, but the plain-text fallback
+    /// still catches `api_key=xyz` via `find_kv_secret`.
+    #[test]
+    fn redact_string_handles_trailing_comma_json() {
+        let input = r#"{"api_key":"xyz","foo":"bar",}"#;
+        let out = redact_string(input);
+        assert!(out.contains("api_key"), "field name dropped: {out}");
+        assert!(!out.contains("xyz"), "api_key leaked: {out}");
+        assert!(out.contains(REDACTED_API_KEY), "{out}");
     }
 }

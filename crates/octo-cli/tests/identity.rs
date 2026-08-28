@@ -328,8 +328,19 @@ fn tv_id10_revoke_emits_canonical_stderr_echo() {
 fn tv_id11_revoke_empty_reason_rejected() {
     // Clap accepts `--reason ""` (empty string passes clap's String
     // validator). The handler's post-clap check must reject it.
+    //
+    // R25 fix: supply both `--confirm` AND `--confirm-acknowledge`
+    // (R20 Lens-2 F7 two-step pastejacking gate for human mode — only
+    // `--confirm` is no longer sufficient in human mode).
     let output = octo()
-        .args(["identity", "revoke", "--reason", "", "--confirm"])
+        .args([
+            "identity",
+            "revoke",
+            "--reason",
+            "",
+            "--confirm",
+            "--confirm-acknowledge",
+        ])
         .output()
         .expect("run");
     assert_eq!(

@@ -1087,7 +1087,7 @@ pub fn require_confirm(cli: &Octo, command: &str) -> Result<(), OctoCliError> {
 ## Capability Subcommands
 
 Per RFC-0011 §Subcommand Taxonomy, capability subcommands parse `--caveats <json>` against the
-RFC-0964 envelope catalog, then delegate to
+RFC-0965 envelope catalog, then delegate to
 `[ADD] octo_cap_macaroon::mint(root_secret: &[u8;32], holder: &dyn CapabilitySigner, holder_did: &str, caveats: &[Caveat])`
 (RFC §Subcommand Taxonomy [ADD] entry #10 — thin wrapper around substrate `CapabilityToken::mint`
 per substrate signature; `holder` is `&dyn CapabilitySigner` per substrate
@@ -1097,7 +1097,7 @@ return `OctoCliError::CaveatParse` (exit 7) or
 `OctoCliError::InvalidCaveatCombination` (exit 8). Attenuation violations
 return `OctoCliError::AttenuationViolation` (exit 10).
 
-The 8 supported caveat canonical forms (per RFC-0964) live in
+The 8 supported caveat canonical forms (per RFC-0965) live in
 `crates/octo-cap-macaroon/src/caveat/`. The CLI consumes them — does NOT define
 new variants.
 
@@ -1226,8 +1226,9 @@ identically to Unix. CI asserts Windows + Linux + macOS all pass.
 test in `tests/identity.rs` / `tests/capability.rs` / `tests/policy.rs` /
 `tests/stub.rs` (substrate-stub + deprecation-stub warnings). Error + envelope
 + redact + env-errors tests live inline in their respective `src/` modules.
-The count is 19 + 19 + 5 + 1 = 44 tests minimum across the four integration
-files (lib unit tests cover error / envelope / redact / env-errors surfaces).
+The count is 17 + 22 + 8 + 5 = 52 tests minimum across the four integration
+files (the `fn tv_*` prefix per file in `crates/octo-cli/tests/`; lib unit
+tests cover error / envelope / redact / env-errors surfaces in `src/`).
 
 ## Test Vectors (YAML)
 

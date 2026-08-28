@@ -24,7 +24,7 @@ spec_cycle_dry_closed: 2026-08-28
 # 0011-capability-commands — Capability subcommands (capability list/mint/attenuate)
 
 **Status:** Claimed 2026-08-28 (@mmacedoeu). RFC-0011 spec cycle DRY-closed 2026-08-28 (5-round loop-until-DRY closure). Implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]].
-**Substrate:** RFC-0011 §Subcommand Taxonomy (CapabilityAction), RFC-0957 Macaroon, RFC-0964 Caveat Envelope, RFC-0960 Caveat Catalog
+**Substrate:** RFC-0011 §Subcommand Taxonomy (CapabilityAction), RFC-0957 Macaroon, RFC-0965 Caveat Envelope, RFC-0960 Caveat Catalog
 **Parent:** RFC-0011
 **Depends on:**
 
@@ -155,7 +155,7 @@ caveats: Vec<CaveatSummary> }`. Exit 0 / 7 / 10 (widens parent — rejected OR
 -> Result<Vec<Caveat>, OctoCliError>`. Uses `serde_json::from_str` to
    deserialize to `Caveat`, then re-serializes each parsed caveat via
    `Caveat::canonical_ser` (per substrate signature)
-   to verify the round-trippable JSON shape per RFC-0964 envelope. Per R1
+   to verify the round-trippable JSON shape per RFC-0965 envelope. Per R1
    substrate alignment review: substrate does NOT expose `caveat::validate_canonical_form` and
    has no `CatalogError`; RFC-0011 §Subcommand Taxonomy entry #13 codifies
    the [ADD] form `validate_canonical_form(caveats: &[Caveat]) -> Result<(), CatalogError>`
@@ -192,7 +192,7 @@ caveats: Vec<CaveatSummary> }`. Exit 0 / 7 / 10 (widens parent — rejected OR
    either command without both `--confirm` and `--confirm-acknowledge` returns
    `ConfirmationRequired` immediately. Reused, not redefined.
 
-### Caveat catalog consumed (8 caveat variants per RFC-0964)
+### Caveat catalog consumed (8 caveat variants per RFC-0965)
 
 | Caveat       | Canonical form                                                     | CLI flag pattern                                      |
 | ------------ | ------------------------------------------------------------------ | ----------------------------------------------------- |
@@ -323,13 +323,13 @@ cargo test -p octo-cli --test capability --all-features
   new types; existing public API is unchanged.
 - CLI exit codes match RFC-0011 §Exit Code table
 - `Hex32` and `RedactedHex` wrappers internal to `octo-cli`
-- Caveat JSON form unchanged — same RFC-0964 envelope consumers already use
+- Caveat JSON form unchanged — same RFC-0965 envelope consumers already use
 
 ## Cross-references
 
 - RFC-0011 §Subcommand Taxonomy CapabilityAction table
 - RFC-0957 — Macaroon substrate
-- RFC-0964 — Caveat envelope canonical form
+- RFC-0965 — Caveat envelope canonical form
 - RFC-0960 — Caveat catalog root
 - (Future work, no RFC filed yet): WhatsApp/Telegram Auth Onboarding redaction
   pattern (applied to `holder_sig`) — see whatsapp/telegram CLI substrate RFC

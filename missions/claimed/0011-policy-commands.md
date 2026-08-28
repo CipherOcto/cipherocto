@@ -244,7 +244,7 @@ cargo test -p octo-cli --test policy --all-features
 
 - RFC-0011 §Subcommand Taxonomy PolicyAction table
 - RFC-0967 — Policy Object Graph substrate
-- RFC-0964 — Caveat envelope (policy body may embed caveats; redactor applies
+- RFC-0965 — Caveat envelope (policy body may embed caveats; redactor applies
   to nested fields)
 - (Future work, no RFC filed yet): WhatsApp/Telegram Auth Onboarding redaction
   pattern (applied to nested secret fields in `body_json`) — see

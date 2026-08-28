@@ -29,7 +29,7 @@ spec_cycle_dry_closed: 2026-08-28
 - RFC-0011: own substrate — this RFC's clap derive + output envelope + redaction layer
 - RFC-0009: Identity substrate — `WalletStore` / `IdentityKey` consumed by identity commands
 - RFC-0957: Macaroon substrate — `CapabilityToken` consumed by capability commands
-- RFC-0964: Caveat Envelope canonical caveat JSON shape
+- RFC-0965: Caveat Envelope canonical caveat JSON shape
 - RFC-0008: Execution Class operator class mapping for CLI commands
   **Blocks:** `0011-identity-commands`, `0011-capability-commands`, `0011-policy-commands`
 

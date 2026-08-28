@@ -243,7 +243,7 @@ fn tv_cap17_mint_dry_run_preview() {
         .assert()
         .code(0)
         .stdout(contains("\"preview_only\":true"))
-        .stdout(contains("\"cap_id\":\"(preview)\""));
+        .stdout(contains("\"capability_id\":\"(preview)\""));
 }
 
 /// CORR-12 — `capability mint --dry-run` echoes the canonical caveat

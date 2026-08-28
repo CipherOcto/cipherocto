@@ -182,6 +182,14 @@ fn map_not_active_error(e: octo_wallet::WalletError) -> OctoCliError {
             current_state: octo_wallet::LifecycleState::Rotating,
         } => OctoCliError::AlreadyRotating,
         octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
+        octo_wallet::WalletError::Hsm(_) => {
+            // R3 review HIGH: HSM transport failures during rotate / revoke
+            // MUST surface as `HsmUnavailable` (exit 5) per the RFC-0011
+            // exit-code table, not as `Internal` (exit 64). The substrate
+            // carries the original HsmError through `#[from] HsmError`; the
+            // sanitizer strips substrate paths before operator exposure.
+            OctoCliError::HsmUnavailable(sanitize_substrate_error(&e.to_string()))
+        }
         other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
     }
 }

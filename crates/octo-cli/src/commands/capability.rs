@@ -137,8 +137,8 @@ pub struct CapabilitySummaryView {
     pub caveats: Vec<CaveatSummaryView>,
     /// Remaining budget, when a budget caveat is present.
     pub remaining_budget: Option<u64>,
-    /// Expiry timestamp, when an expiry caveat is present.
-    pub expires_at_unix: Option<i64>,
+    /// Expiry timestamp (Unix epoch seconds), when an expiry caveat is present.
+    pub expires_at: Option<i64>,
 }
 
 /// CLI projection of the substrate `CaveatSummary`.
@@ -353,16 +353,19 @@ impl serde::Serialize for CaveatKind {
 #[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
 pub struct CapabilityMintOutput {
     /// Minted capability identifier (lowercase hex), or `(preview)` on a
-    /// `--dry-run` invocation.
-    pub cap_id: String,
+    /// `--dry-run` invocation. RFC-0011 §Subcommand Taxonomy row
+    /// `capability mint` names this `capability_id`.
+    pub capability_id: String,
     /// Lowercase-hex BLAKE3 digest over the canonical caveat body. Public —
     /// deliberately NOT wrapped in [`RedactedHex`].
     pub body_hash: Hex32,
     /// Caveats bound into the capability.
     pub caveats: Vec<CaveatSummaryView>,
-    /// Holder Ed25519 signature — always rendered as `[REDACTED:sig]`.
+    /// Holder Ed25519 signature — always rendered as `[REDACTED:sig]` via
+    /// the redaction layer (SEC-13). RFC-0011 §Subcommand Taxonomy row
+    /// `capability mint` names this `holder_sig`.
     #[schemars(with = "String")]
-    pub holder_sig_hex: RedactedHex,
+    pub holder_sig: RedactedHex,
 }
 
 /// `octo capability attenuate` payload.
@@ -410,7 +413,7 @@ pub fn list(filters: &[String], cli: &Octo) -> Result<(), OctoCliError> {
                 })
                 .collect(),
             remaining_budget: s.remaining_budget,
-            expires_at_unix: s.expires_at_unix,
+            expires_at: s.expires_at_unix,
         })
         .filter(|v| matches_filters(v, &filters))
         .collect();
@@ -470,10 +473,10 @@ pub fn mint(
     // no substrate mutation.
     if cli.mode.dry_run {
         let output = CapabilityMintOutput {
-            cap_id: PREVIEW_CAP_ID.to_string(),
+            capability_id: PREVIEW_CAP_ID.to_string(),
             body_hash,
             caveats: views,
-            holder_sig_hex: RedactedHex(Vec::new()),
+            holder_sig: RedactedHex(Vec::new()),
         };
         return OutputEnvelope::preview_only(output, 0)
             .render(cli.output.json, cli.output.no_color)
@@ -517,10 +520,10 @@ pub fn mint(
                     .map_err(map_mint_error)?;
 
             let output = CapabilityMintOutput {
-                cap_id: hex::encode(token.macaroon.id),
+                capability_id: hex::encode(token.macaroon.id),
                 body_hash,
                 caveats: views,
-                holder_sig_hex: RedactedHex(token.holder_sig.to_bytes().to_vec()),
+                holder_sig: RedactedHex(token.holder_sig.to_bytes().to_vec()),
             };
             return OutputEnvelope::new(output, 0)
                 .render(cli.output.json, cli.output.no_color)
@@ -583,7 +586,7 @@ pub fn attenuate(
         .map_err(|e| map_capability_internal(format!("wallet store open: {e}")))?;
     let key = octo_wallet::active_identity(&store).map_err(|e| match e {
         octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-        other => OctoCliError::Internal(other.to_string()),
+        other => map_capability_internal(other),
     })?;
     let catalog = resolve_catalog()?;
 
@@ -597,7 +600,7 @@ pub fn attenuate(
     };
     OutputEnvelope::new(output, 0)
         .render(cli.output.json, cli.output.no_color)
-        .map_err(|e| OctoCliError::Internal(format!("render envelope: {e}")))
+        .map_err(|e| map_capability_internal(format!("render envelope: {e}")))
 }
 
 // ---------------------------------------------------------------------------
@@ -936,17 +939,18 @@ fn map_capability_internal(e: impl std::fmt::Display) -> OctoCliError {
 /// maps to `SigningFailed` (exit 11) per CORR-05.
 fn classify_message(message: &str) -> OctoCliError {
     let redacted = redact_string(message).into_owned();
-    if let Some(rest) = redacted.strip_prefix(SUBSTRATE_PARSE_MARKER) {
+    let sanitized = sanitize_substrate_error(&redacted);
+    if let Some(rest) = sanitized.strip_prefix(SUBSTRATE_PARSE_MARKER) {
         return OctoCliError::CaveatParse {
             message: rest.trim().to_owned(),
         };
     }
-    if let Some(rest) = redacted.strip_prefix(SUBSTRATE_CATALOG_MARKER) {
+    if let Some(rest) = sanitized.strip_prefix(SUBSTRATE_CATALOG_MARKER) {
         return OctoCliError::InvalidCaveatCombination {
             detail: rest.trim().to_owned(),
         };
     }
-    OctoCliError::Internal(redacted)
+    OctoCliError::Internal(sanitized)
 }
 
 /// Map a substrate mint failure onto the RFC-0011 exit-code table.
@@ -1242,7 +1246,7 @@ mod tests {
             root_id: "ef01".to_owned(),
             caveats: vec![caveat_view(&Caveat::Before(1))],
             remaining_budget: None,
-            expires_at_unix: None,
+            expires_at: None,
         };
         let f = parse_filters(&["cap_id=abcd".to_owned(), "caveat=before".to_owned()]).unwrap();
         assert!(matches_filters(&view, &f));
@@ -1371,10 +1375,10 @@ mod tests {
     #[test]
     fn mint_output_redacts_holder_sig() {
         let output = CapabilityMintOutput {
-            cap_id: "ab".repeat(32),
+            capability_id: "ab".repeat(32),
             body_hash: Hex32(caveat_body_hash(&[Caveat::Before(1)])),
             caveats: caveat_views(&[Caveat::Before(1)]),
-            holder_sig_hex: RedactedHex(vec![0xde; 64]),
+            holder_sig: RedactedHex(vec![0xde; 64]),
         };
         let json = serde_json::to_string(&output).expect("serializes");
         assert!(json.contains("[REDACTED:sig]"), "{json}");

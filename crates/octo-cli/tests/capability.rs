@@ -24,16 +24,16 @@ fn octo() -> Command {
     cmd
 }
 
-/// TV-CAP2 — `capability list` returns the empty active set with a
+/// TV-CAP1 — `capability list` returns the empty active set with a
 /// versioned envelope. Currently adapted: the upstream
 /// `WalletStore::try_active_identity` errors with `NotActive` for the
 /// v1.0 stub wallet, so the CLI surfaces exit 2 (NoActiveIdentity). When
 /// the wallet substrate amendment lands, this test must be unignored
-/// and the `tv_cap2_list_…_v0_exit_2` companion added to lock both
+/// and the `tv_cap1_list_…_v0_exit_2` companion added to lock both
 /// vectors simultaneously.
 #[test]
 #[ignore = "adapted; stub wallet reports NotActive; revert when wallet substrate amendment lands"]
-fn tv_cap2_list_emits_empty_capabilities_envelope() {
+fn tv_cap1_list_emits_empty_capabilities_envelope() {
     octo()
         .args(["capability", "list"])
         .assert()
@@ -42,12 +42,12 @@ fn tv_cap2_list_emits_empty_capabilities_envelope() {
         .stdout(contains("\"preview_only\":false"));
 }
 
-/// Active companion to TV-CAP2: today (v1.0 stub wallet) the
+/// Active companion to TV-CAP1: today (v1.0 stub wallet) the
 /// `WalletStore::try_active_identity` errors with `NotActive`. This
 /// pins that v1.0 substrate drift explicitly so the unignore moment is
 /// visible.
 #[test]
-fn tv_cap2_list_emits_empty_capabilities_envelope_v0_exit_2() {
+fn tv_cap1_list_emits_empty_capabilities_envelope_v0_exit_2() {
     octo()
         .args(["capability", "list"])
         .assert()

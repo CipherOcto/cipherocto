@@ -103,14 +103,7 @@ fn tv_id4_identity_rotate_grace_hours_flag_absent() {
     // substrate will return NoActiveIdentity → exit 2 from the failure
     // path; the meaningful assertion is that clap rejects the unknown flag.
     let output = octo()
-        .args([
-            "identity",
-            "rotate",
-            "--confirm",
-            "--confirm-acknowledge",
-            "--grace-hours",
-            "12",
-        ])
+        .args(["identity", "rotate", "--confirm", "--grace-hours", "12"])
         .output()
         .expect("run");
     assert_eq!(
@@ -138,19 +131,12 @@ fn tv_id4_identity_rotate_grace_hours_flag_absent() {
 fn tv_id5_identity_revoke_no_active_identity() {
     // Substrate stub cannot synthesize the Revoked state needed for the
     // canonical `AlreadyRevoked` exit 6 path. Adapted assertion: the
-    // command passes the confirmation gate (because --confirm +
-    // --confirm-acknowledge are present), then substrate returns NotActive
+    // command passes the confirmation gate (because --confirm is
+    // present), then substrate returns NotActive
     // → CLI exit 2. The meaningful contract is that --reason is required
     // by clap (absence → clap usage error).
     let output = octo()
-        .args([
-            "identity",
-            "revoke",
-            "--confirm",
-            "--confirm-acknowledge",
-            "--reason",
-            "test",
-        ])
+        .args(["identity", "revoke", "--confirm", "--reason", "test"])
         .output()
         .expect("run");
     assert!(
@@ -170,7 +156,7 @@ fn tv_id5_identity_revoke_no_active_identity() {
 #[test]
 fn tv_id5b_identity_revoke_reason_required() {
     let output = octo()
-        .args(["identity", "revoke", "--confirm", "--confirm-acknowledge"])
+        .args(["identity", "revoke", "--confirm"])
         .output()
         .expect("run");
     assert_eq!(
@@ -195,12 +181,12 @@ fn tv_id5b_identity_revoke_reason_required() {
 
 #[test]
 fn tv_id6_identity_rotate_passes_confirmation_gate() {
-    // With --confirm + --confirm-acknowledge, require_confirm passes and
+    // With --confirm, require_confirm passes and
     // execution reaches the substrate call. The substrate stub returns
     // NotActive → NoActiveIdentity → exit 2. The meaningful contract here
     // is that the gate is past (i.e., we are NOT seeing ConfirmationRequired).
     let output = octo()
-        .args(["identity", "rotate", "--confirm", "--confirm-acknowledge"])
+        .args(["identity", "rotate", "--confirm"])
         .output()
         .expect("run");
     assert_eq!(
@@ -229,7 +215,7 @@ fn tv_id7_identity_rotate_no_active_identity() {
     // contract here is that the error surfaced is an `identity`-related
     // exit code, not the HSM class.
     let output = octo()
-        .args(["identity", "rotate", "--confirm", "--confirm-acknowledge"])
+        .args(["identity", "rotate", "--confirm"])
         .output()
         .expect("run");
     assert_eq!(
@@ -343,14 +329,7 @@ fn tv_id11_revoke_empty_reason_rejected() {
     // Clap accepts `--reason ""` (empty string passes clap's String
     // validator). The handler's post-clap check must reject it.
     let output = octo()
-        .args([
-            "identity",
-            "revoke",
-            "--reason",
-            "",
-            "--confirm",
-            "--confirm-acknowledge",
-        ])
+        .args(["identity", "revoke", "--reason", "", "--confirm"])
         .output()
         .expect("run");
     assert_eq!(
@@ -455,14 +434,7 @@ fn clap_identity_revoke_help_parses() {
 #[ignore = "adapted; stub cannot synthesize Revoked state; revert when wallet substrate amendment lands"]
 fn tv_id5_canonical_revoke_already_revoked_exits_6() {
     octo()
-        .args([
-            "identity",
-            "revoke",
-            "--confirm",
-            "--confirm-acknowledge",
-            "--reason",
-            "test",
-        ])
+        .args(["identity", "revoke", "--confirm", "--reason", "test"])
         .assert()
         .code(6);
 }
@@ -475,7 +447,7 @@ fn tv_id5_canonical_revoke_already_revoked_exits_6() {
 #[ignore = "adapted; stub cannot synthesize Rotating state; revert when wallet substrate amendment lands"]
 fn tv_id6_canonical_rotate_already_rotating_exits_3() {
     octo()
-        .args(["identity", "rotate", "--confirm", "--confirm-acknowledge"])
+        .args(["identity", "rotate", "--confirm"])
         .assert()
         .code(3);
 }
@@ -488,7 +460,7 @@ fn tv_id6_canonical_rotate_already_rotating_exits_3() {
 #[ignore = "adapted; stub cannot synthesize Hsm transport failure; revert when HSM substrate amendment lands"]
 fn tv_id7_canonical_rotate_hsm_unavailable_exits_5() {
     octo()
-        .args(["identity", "rotate", "--confirm", "--confirm-acknowledge"])
+        .args(["identity", "rotate", "--confirm"])
         .assert()
         .code(5);
 }

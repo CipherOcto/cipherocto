@@ -378,7 +378,7 @@ pub fn validate_kind_uuid(
 }
 
 /// Lowercase 16-byte hex gate for `--kind-uuid` (UUID form). The
-/// substrate `kind_uuid` field is `[u8;16]` (RFC-0967 §Policy Registry)
+/// substrate `kind_uuid` field is `[u8;16]` (RFC-0967-A1 §2.4 Policy registry table)
 /// so the operator-facing hex form is 32 lowercase hex chars. Mixed-case
 /// or non-hex operator input is rejected before the mismatch diagnostic
 /// so the operator's exact string is not echoed back through the error

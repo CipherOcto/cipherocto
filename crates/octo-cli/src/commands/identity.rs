@@ -35,19 +35,12 @@ pub enum IdentityAction {
         did: Option<String>,
     },
     /// Begin a key rotation.
-    Rotate {
-        /// Acknowledge the irreversible effect of rotation.
-        #[arg(long, requires = "confirm")]
-        confirm_acknowledge: bool,
-    },
+    Rotate {},
     /// Revoke the active identity.
     Revoke {
         /// Revocation reason recorded in the identity log.
         #[arg(long)]
         reason: String,
-        /// Acknowledge the irreversible effect of revocation.
-        #[arg(long, requires = "confirm")]
-        confirm_acknowledge: bool,
     },
 }
 

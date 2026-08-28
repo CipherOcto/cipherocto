@@ -819,36 +819,16 @@ mod tests {
         );
     }
 
-    /// CORR-16 / SEC-04: hardcoded successor seed must be guarded.
-    ///
-    /// Pins THREE invariants (R23 strengthened — the prior substring
-    /// matched only the test's own source line, not the production
-    /// guard, because `include_str!` reads the file including this
-    /// test, so the assertion was vacuous):
-    ///   1. Structural `#[cfg(not(test))]` gate present (so the test
-    ///      build compiles the `from_seed([1u8; 32])` branch but the
-    ///      release build does NOT).
-    ///   2. Release-build refusal message matches the live guard
-    ///      (currently `"successor derivation refused outside dev mode"`).
-    ///   3. Refusal message references BOTH escape hatches
-    ///      (`--dry-run` AND `--mode dev`) — a future refactor that
-    ///      silently drops one is caught here.
-    #[test]
-    fn rotate_successor_seed_guarded_outside_test() {
-        let src = include_str!("identity.rs");
-        assert!(
-            src.contains("#[cfg(not(test))]"),
-            "rotate handler missing #[cfg(not(test))] structural gate (CORR-16/SEC-04)"
-        );
-        assert!(
-            src.contains("successor derivation refused outside dev mode"),
-            "rotate handler dev-mode refusal message drifted (CORR-16/SEC-04)"
-        );
-        assert!(
-            src.contains("--dry-run") && src.contains("--mode dev"),
-            "rotate handler refusal must reference BOTH --dry-run and --mode dev escape hatches"
-        );
-    }
+    // R24: cfg-guard assertion moved to integration test
+    // `crates/octo-cli/tests/identity_cfg_guard.rs`. Unit tests inside
+    // `commands/identity.rs` cannot use `include_str!("identity.rs")`
+    // for substring assertions about their own file: the substring
+    // literal always appears in the test's own source. Integration
+    // tests live in a separate compilation unit (their source is not
+    // inside identity.rs), so `include_str!("identity.rs")` returns
+    // only the production source + the lib's other unit tests, none
+    // of which contain the asserted guard pattern unless the production
+    // code itself does.
 
     /// CORR-01 / CORR-02 / SEC-12 / LAYER-04: `NotActive` must NOT map to
     /// `HsmUnavailable`. State-aware mapping translates the lifecycle

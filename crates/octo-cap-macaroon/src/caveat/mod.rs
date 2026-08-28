@@ -212,7 +212,7 @@ pub enum Caveat {
     #[serde(rename = "sharded")]
     Sharded { shard_id: u32 },
 
-    /// Payment caveat (RFC-0965 §3 reserved discriminator `0x1A`,
+    /// Payment caveat (RFC-0965 §4 reserved discriminator `0x1A`,
     /// mission 0957-phase2b). Bounds holder spend against `budget`
     /// over queries against `model`. Subsumes monotonic narrowing
     /// (child budget ≤ parent budget, child expiry ≤ parent expiry,
@@ -568,7 +568,7 @@ fn parent_caveat_implies(parent: &[Caveat], child: &Caveat) -> bool {
             Caveat::Sharded { shard_id: p_shard } => p_shard == c_shard,
             _ => false,
         }),
-        // Payment caveat subsumption (RFC-0965 §3, mission 0957-phase2b):
+        // Payment caveat subsumption (RFC-0965 §2.2, mission 0957-phase2b):
         // child budget ≤ parent budget, child expiry ≤ parent expiry,
         // parent model empty OR matches child model. The child cannot
         // widen to a wildcard model (RFC-0957 §3.5 monotonicity).

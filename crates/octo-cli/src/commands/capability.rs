@@ -625,12 +625,12 @@ pub fn attenuate(
 }
 
 // ---------------------------------------------------------------------------
-// Caveat parsing — RFC-0964 envelope
+// Caveat parsing — RFC-0965 §2 Caveat envelope encoding
 // ---------------------------------------------------------------------------
 
 /// Parse `--caveats` into the substrate caveat catalog.
 ///
-/// Accepts either a single RFC-0964 caveat object
+/// Accepts either a single RFC-0965 §2 caveat object
 /// (`{"type": "before", "value": 1700000000}`) or an array of them. The
 /// serde shape is owned by `octo_cap_macaroon::caveat::Caveat`
 /// (`#[serde(tag = "type", content = "value")]`) — the CLI never mirrors
@@ -1121,8 +1121,8 @@ mod tests {
         assert!(parse_caveats("[]").expect("empty array parses").is_empty());
     }
 
-    /// TV-CAP9 — budget caveat (`Caveat::AmountMax(Dqa)`, RFC-0964 canonical
-    /// form). Scale is carried on the wire per mission §Scale-binding; the
+    /// TV-CAP9 — budget caveat (`Caveat::AmountMax(Dqa)`, RFC-0965 §2
+    /// canonical form). Scale is carried on the wire per mission §Scale-binding; the
     /// Dqa serde derives normalize to a single canonical (value, scale) per
     /// numeric value, so the constructor value pins the wire form.
     /// CORR-14: the CLI summary view augments the body with

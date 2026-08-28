@@ -1,5 +1,5 @@
 //! Payment caveat — single-element budget composition for paid queries
-//! (RFC-0965 §3 reserved discriminator `0x1A`, RFC-0871 §Implementation
+//! (RFC-0965 §4 reserved discriminator `0x1A`, RFC-0871 §Implementation
 //! Phases Phase 5).
 //!
 //! Moved from `crates/octo-paid-query/src/lib.rs` as part of mission

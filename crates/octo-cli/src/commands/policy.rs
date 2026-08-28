@@ -234,12 +234,17 @@ pub fn show(
 ///
 /// To prevent silent truncation collisions (two distinct DIDs sharing
 /// their first 32 bytes rendering identically — R16 Lens-1 F1), we
-/// deterministically digest any over-length input with `blake3` keyed by
-/// the `octo-cli/policy-show/did` domain separator. This guarantees:
+/// deterministically digest any over-length input via the substrate
+/// `octo_cap_macaroon::hmac_blake3` wrapper (R17 Lens-4 F1: avoid the
+/// parallel-abstraction of reaching into raw `blake3::keyed_hash`). The
+/// key is derived from a build-time-stable domain separator. This
+/// guarantees:
 ///
 ///   1. No zero-padded collisions — distinct inputs produce distinct digests.
 ///   2. Same input always produces the same output (round-trip stable).
-///   3. The 32-byte fixed-width contract on `HexBytes` is preserved.
+///   3. The 32-byte digest from `hmac_blake3` is preserved end-to-end
+///      (variable-length hex string in `HexBytes`, but the digest
+///      substrate never widens beyond 32 bytes).
 ///
 /// [Hex32 migration]: RFC-0011-h amendment (deferred; tracked in
 /// `docs/audits/` per [[deferred-vs-unspecified]]).
@@ -250,10 +255,16 @@ fn parse_did_hexbytes(s: &str) -> HexBytes {
         // Build-time-stable domain separator; the value is a constant
         // so we do not pull in a runtime config knob. Domain string is
         // long enough to be globally unique across the CLI surface.
-        *blake3::hash(b"octo-cli/policy-show/did:v1").as_bytes()
+        // Use the substrate `blake3_hash` wrapper for the seed digest
+        // so even the key-derivation stage goes through the abstraction.
+        octo_cap_macaroon::blake3_hash(b"octo-cli/policy-show/did:v1")
     });
-    let hash = blake3::keyed_hash(key, s.as_bytes());
-    HexBytes::new(hash.as_bytes())
+    // Substrate wrapper: `hmac_blake3(key, msg)` ≡
+    // `blake3::keyed_hash(key, msg).into()`. Keeps Layer B invariant:
+    // any future BLAKE3 variant migration (RFC-0104 §Determinism) lands
+    // in one crate.
+    let hash = octo_cap_macaroon::hmac_blake3(key, s.as_bytes());
+    HexBytes::new(&hash)
 }
 
 /// Handle `octo policy list`.
@@ -616,10 +627,13 @@ mod tests {
     }
 
     /// SEC-13 follow-on: when the operator supplies a non-empty
-    /// `--kind-uuid`, the CLI must compare it (case-insensitive) to
-    /// the substrate record's `kind_uuid` before rendering. The unit
-    /// test exercises the comparison helper directly: an empty input
-    /// is rejected, a wrong hex is rejected, a matching hex passes.
+    /// `--kind-uuid`, the CLI must compare it to the substrate
+    /// record's `kind_uuid` before rendering. The strict-lowercase
+    /// gate (`is_lower_hex_kind`) guarantees both sides are already
+    /// lowercase (substrate never emits uppercase), so direct equality
+    /// is equivalent to case-insensitive comparison. The unit test
+    /// exercises the comparison helper directly: an empty input is
+    /// rejected, a wrong hex is rejected, a matching hex passes.
     /// The substrate integration path is exercised by the CLI driver
     /// tests once a substrate stub for `show(name, version, kind_uuid)`
     /// lands.
@@ -662,5 +676,26 @@ mod tests {
         // Operator omitted — no validation, no error.
         let r = validate_kind_uuid(None, &record_kind_hex);
         assert!(r.is_ok());
+    }
+
+    // R17 Lens-1 F3: pin the parse_did_hexbytes contract — deterministic,
+    // distinct-input-distinct-output, 32-byte fixed width.
+    #[test]
+    fn tv_parse_did_hexbytes_contract() {
+        // 32-byte fixed-width contract: 64 lowercase hex chars.
+        let h1 = parse_did_hexbytes("did:octo:1z9y2k0");
+        let hex1 = h1.to_string();
+        assert_eq!(hex1.len(), 64, "32-byte digest must render as 64 hex chars");
+        assert!(
+            hex1.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            "expected lowercase hex: {hex1}"
+        );
+        // Deterministic: same input → same digest (round-trip stable).
+        let h2 = parse_did_hexbytes("did:octo:1z9y2k0");
+        assert_eq!(hex1, h2.to_string());
+        // Distinct inputs → distinct digests (no zero-pad collisions).
+        let h3 = parse_did_hexbytes("did:octo:different_value_here");
+        assert_ne!(hex1, h3.to_string());
     }
 }

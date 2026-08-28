@@ -1,5 +1,5 @@
 //! `CapabilityBundleV2` — V2 wire form of portable archival + replay
-//! representation (RFC-0009 §Compatibility > §Forward compatibility).
+//! representation (RFC-0009 §Compatibility).
 //!
 //! Aggregates `CapabilityTokenV2` + serialized `HolderRecord` bytes +
 //! singular `DischargeMacaroon` for offline storage + cross-process
@@ -32,8 +32,7 @@
 //! - `discharges: Vec<DischargeMacaroon>` (V1) →
 //!   `discharge_macaroon_bytes: Vec<u8>` (singular; borsh-encoded
 //!   `DischargeMacaroon` bytes). V2 wire form carries ONE discharge
-//!   (singular vs V1's `Vec`) per RFC-0009 §Compatibility
-//!   sketch. The borsh-bytes indirection follows V1's
+//!   (singular vs V1's `Vec`) per RFC-0009 §Compatibility. The borsh-bytes indirection follows V1's
 //!   `holder_record_bytes` pattern (layer discipline: cargo-graph
 //!   hygiene avoids the `Vec<Caveat>` → Borsh derive cascade; the
 //!   `Caveat` enum has 24 variants with their own types).
@@ -78,12 +77,10 @@ pub const BUNDLE_ID_DOMAIN_V2: &str = "cipherocto/bundle/v2/id";
 /// Maximum `chain_depth` (RFC-0009 G1: depth ≤ 8 per W3C VC-DID
 /// best practice). `capability_id` derivation is pure on-chain
 /// (BLAKE3, Class A determinism); the depth cap is a soft migration
-/// bound (amendable per RFC-0009 §Implicit Assumptions Audit Time
-/// row: "Chain depth ≤ 8 — Migration if raised").
+/// bound (amendable per RFC-0009 migration row: "Chain depth ≤ 8 — Migration if raised").
 pub const MAX_CHAIN_DEPTH: u8 = 8;
 
-/// V2 hierarchical attenuation chain token (RFC-0009 §Specification
-/// > Hierarchical attenuation chains).
+/// V2 hierarchical attenuation chain token (RFC-0009 §Capability Keys).
 ///
 /// Carries `chain_depth` (the level in the chain; 0 = root, 1..=8 =
 /// descendant) + `chain_parent` (BLAKE3-256 binding of parent key +
@@ -105,8 +102,8 @@ pub struct CapabilityTokenV2 {
     /// Audience DID (the holder redeeming the token).
     pub audience_did: String,
 
-    /// Channel identifier (16-byte scope tag; ChannelId size per
-    /// RFC-0009 §Roles and Authorities).
+    /// Channel identifier (16-byte scope tag; ChannelId size
+    /// contract per RFC-0009 §Capability Keys).
     pub channel_id: [u8; 16],
 
     /// Expiry timestamp (Unix seconds).
@@ -147,7 +144,7 @@ impl fmt::Debug for CapabilityTokenV2 {
 /// Borsh derive cascade (the `Caveat` enum has 24 variants with
 /// their own types).
 ///
-/// **Deviation from RFC-0009 §Compatibility sketch:** the
+/// **Deviation from RFC-0009 §Compatibility:** the
 /// authoritative spec sketch shows `discharge_macaroon: DischargeMacaroon`
 /// (concrete type). This implementation uses
 /// `discharge_macaroon_bytes: Vec<u8>` to keep the layer discipline
@@ -308,8 +305,8 @@ impl CapabilityBundleV2 {
     }
 }
 
-/// Network wire prefix for V2 bundles (RFC-0009 §Forward
-/// compatibility — receivers detect version from first 16 bytes
+/// Network wire prefix for V2 bundles (RFC-0009 §Compatibility —
+/// receivers detect version from first 16 bytes
 /// without attempting full canonical_de).
 ///
 /// Padded to 16 bytes with trailing `\x00` so `borsh::from_slice`
@@ -318,7 +315,7 @@ impl CapabilityBundleV2 {
 /// future expansion (e.g. a 4-byte minor-version tag).
 pub const CIPHEROCTO_V2_BUNDLE_PREFIX: &[u8; 16] = b"cipherocto/v2\x00\x00\x00";
 
-/// V2 wire envelope (RFC-0009 §Forward compatibility carrier).
+/// V2 wire envelope (RFC-0009 §Compatibility carrier).
 ///
 /// `CapabilityBundleV2` substrate is the inner bundle; the envelope
 /// prepends the 16-byte version prefix so receivers can dispatch V2

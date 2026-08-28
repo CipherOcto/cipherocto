@@ -23,7 +23,6 @@
 
 use clap::Subcommand;
 use serde::Serialize;
-use std::io::IsTerminal;
 
 use octo_cap_macaroon::{
     blake3_hash, set_subsumes, CapabilityToken, Caveat, CaveatName, CompositeCapabilityCatalog,
@@ -457,7 +456,7 @@ pub fn mint(
     acknowledge: bool,
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
-    super::identity::require_confirm(cli, "capability mint", std::io::stdin().is_terminal())?;
+    super::identity::require_confirm(cli, "capability mint")?;
     require_acknowledge(cli, acknowledge, "capability mint")?;
     let caveats = parse_caveats(caveats_json)?;
     validate_holder_did(holder_did)?;
@@ -568,7 +567,7 @@ pub fn attenuate(
     acknowledge: bool,
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
-    super::identity::require_confirm(cli, "capability attenuate", std::io::stdin().is_terminal())?;
+    super::identity::require_confirm(cli, "capability attenuate")?;
     require_acknowledge(cli, acknowledge, "capability attenuate")?;
     let caveats = parse_caveats(caveats_json)?;
     validate_cap_id(cap_id)?;
@@ -875,7 +874,7 @@ pub fn check_attenuation(parent: &CapabilityToken, child: &[Caveat]) -> Result<(
 /// v1.0: the CLI has no capability store. The substrate index behind
 /// `octo_cap_macaroon::list_active` is a Phase-1 stub that reports an empty
 /// active set, so no `cap_id` resolves and every lookup is
-/// `ParentCapNotFound` (exit 12) per RFC-0011 §Exit Code table. Replaced by
+/// `ParentCapNotFound` (exit 12) per RFC-0011 §Exit Codes. Replaced by
 /// a holder-registry read when the Phase-2 substrate amendment lands.
 fn resolve_parent(cap_id: &str) -> Result<CapabilityToken, OctoCliError> {
     Err(OctoCliError::ParentCapNotFound(cap_id.to_string()))
@@ -925,7 +924,7 @@ fn validate_cap_id(cap_id: &str) -> Result<(), OctoCliError> {
 /// Require `--confirm-acknowledge` alongside `--confirm` on mutating
 /// capability commands (the atomic pastejacking gate, mission sub-step 6).
 ///
-/// Per RFC-0011 §Security 1a + Appendix A: when `--confirm` and a
+/// Per RFC-0011 §Security Considerations 1a + Appendix A: when `--confirm` and a
 /// complex-payload flag (e.g. `--caveats <json>`) are passed on the
 /// SAME invocation, the CLI requires an additional `--confirm-acknowledge`
 /// flag before proceeding. This breaks the paste-then-spray class of

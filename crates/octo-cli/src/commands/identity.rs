@@ -15,7 +15,6 @@
 use chrono::{DateTime, Utc};
 use clap::Subcommand;
 use serde::Serialize;
-use std::io::IsTerminal;
 
 use crate::error::{sanitize_substrate_error, OctoCliError};
 use crate::flags::OperatorMode;
@@ -293,7 +292,7 @@ pub fn show(did_arg: Option<&str>, cli: &Octo) -> Result<(), OctoCliError> {
 /// Requires `--confirm` in human mode, `--allow-write` in CI mode (or
 /// `--dry-run` for preview).
 pub fn rotate(cli: &Octo) -> Result<(), OctoCliError> {
-    require_confirm(cli, "identity rotate", std::io::stdin().is_terminal())?;
+    require_confirm(cli, "identity rotate")?;
     let store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
 
     // Pastejacking defense (R1 review CORR-12): before any irreversible
@@ -372,7 +371,7 @@ pub fn revoke(reason: &str, cli: &Octo) -> Result<(), OctoCliError> {
             "revocation reason must be non-empty".to_string(),
         ));
     }
-    require_confirm(cli, "identity revoke", std::io::stdin().is_terminal())?;
+    require_confirm(cli, "identity revoke")?;
     let store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
     // Pastejacking defense (R1 review CORR-12): echo BEFORE resolving
     // active identity so the operator sees the canonical payload even
@@ -438,8 +437,8 @@ pub fn revoke(reason: &str, cli: &Octo) -> Result<(), OctoCliError> {
 /// | Ci       | no          | `--allow-write`        |
 /// | Auditor  | yes         | (denied)               |
 /// | Auditor  | no          | (denied — read-only)   |
-pub fn require_confirm(cli: &Octo, command: &str, _is_tty: bool) -> Result<(), OctoCliError> {
-    // RFC-0011 §Confirmation gate: Auditor is denied regardless of --dry-run.
+pub fn require_confirm(cli: &Octo, command: &str) -> Result<(), OctoCliError> {
+    // RFC-0011 §Security Considerations 1a: Auditor is denied regardless of --dry-run.
     // The dry_run bypass MUST come AFTER the Auditor denial, otherwise a
     // stale Auditor session can preview mutations it cannot perform — R16
     // Lens-1 F2.
@@ -491,11 +490,11 @@ pub fn dispatch(action: &IdentityAction, cli: &Octo) -> Result<(), OctoCliError>
     match action {
         IdentityAction::Show { did } => show(did.as_deref(), cli),
         IdentityAction::Rotate { .. } => {
-            require_confirm(cli, "identity rotate", std::io::stdin().is_terminal())?;
+            require_confirm(cli, "identity rotate")?;
             rotate(cli)
         }
         IdentityAction::Revoke { reason, .. } => {
-            require_confirm(cli, "identity revoke", std::io::stdin().is_terminal())?;
+            require_confirm(cli, "identity revoke")?;
             revoke(reason, cli)
         }
     }
@@ -531,7 +530,7 @@ mod tests {
     #[test]
     fn require_confirm_human_without_confirm_errors() {
         let cli = cli_with_mode(OperatorMode::Human);
-        let r = require_confirm(&cli, "identity rotate", true);
+        let r = require_confirm(&cli, "identity rotate");
         match r {
             Err(OctoCliError::ConfirmationRequired { command }) => {
                 assert_eq!(command, "identity rotate");
@@ -544,7 +543,7 @@ mod tests {
     fn require_confirm_human_with_confirm_ok() {
         let mut cli = cli_with_mode(OperatorMode::Human);
         cli.mode.confirm = true;
-        assert!(require_confirm(&cli, "identity rotate", true).is_ok());
+        assert!(require_confirm(&cli, "identity rotate").is_ok());
     }
 
     #[test]
@@ -552,13 +551,13 @@ mod tests {
         let cli = cli_with_mode(OperatorMode::Human);
         let mut cli = cli;
         cli.mode.dry_run = true;
-        assert!(require_confirm(&cli, "identity rotate", true).is_ok());
+        assert!(require_confirm(&cli, "identity rotate").is_ok());
     }
 
     #[test]
     fn require_confirm_ci_without_allow_write_errors() {
         let cli = cli_with_mode(OperatorMode::Ci);
-        let r = require_confirm(&cli, "identity rotate", true);
+        let r = require_confirm(&cli, "identity rotate");
         assert!(matches!(r, Err(OctoCliError::ConfirmationRequired { .. })));
     }
 
@@ -566,14 +565,29 @@ mod tests {
     fn require_confirm_ci_with_allow_write_ok() {
         let mut cli = cli_with_mode(OperatorMode::Ci);
         cli.mode.allow_write = true;
-        assert!(require_confirm(&cli, "identity rotate", true).is_ok());
+        assert!(require_confirm(&cli, "identity rotate").is_ok());
     }
 
     #[test]
     fn require_confirm_auditor_always_errors() {
         let cli = cli_with_mode(OperatorMode::Auditor);
-        let r = require_confirm(&cli, "identity rotate", true);
+        let r = require_confirm(&cli, "identity rotate");
         assert!(matches!(r, Err(OctoCliError::ConfirmationRequired { .. })));
+    }
+
+    // R17 Lens-1 F4: pin the R16 Lens-1 F2 ordering fix — Auditor is denied
+    // BEFORE the dry_run bypass, so `--mode=auditor --dry-run` still errors.
+    // Without this, an auditor could preview mutating commands that a
+    // read-only role should never see the side-effects preview of.
+    #[test]
+    fn require_confirm_auditor_with_dry_run_still_errors() {
+        let mut cli = cli_with_mode(OperatorMode::Auditor);
+        cli.mode.dry_run = true;
+        let r = require_confirm(&cli, "identity rotate");
+        assert!(
+            matches!(r, Err(OctoCliError::ConfirmationRequired { .. })),
+            "Auditor must be denied regardless of --dry-run, got {r:?}"
+        );
     }
 
     #[test]

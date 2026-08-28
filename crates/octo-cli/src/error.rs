@@ -220,10 +220,12 @@ pub fn sanitize_substrate_error(s: &str) -> String {
     // Anchor SQL/storage markers with word-boundary semantics: the marker
     // must appear at the start, after whitespace, or after a punctuation
     // token. Trailing punctuation (`.`, `,`, `\n`) is also a valid boundary.
+    // R17 Lens-2 F2: case-insensitive variants — `SQL:` and `Query:` are
+    // both legitimate noise markers a substrate may emit.
     const ERROR_MARKERS: [&str; 3] = ["SQL:", "query:", "sqlite3_open"];
     let mut out = s.to_string();
     for marker in ERROR_MARKERS {
-        while let Some(idx) = find_word_boundary(&out, marker) {
+        while let Some(idx) = find_word_boundary_ci(&out, marker) {
             out.replace_range(idx..idx + marker.len(), "<substrate-error>");
         }
     }
@@ -245,19 +247,28 @@ pub fn sanitize_substrate_error(s: &str) -> String {
     out
 }
 
-/// Find `marker` in `s` anchored at a word boundary on the left side.
-/// Returns the byte offset of the match start, or `None`.
-fn find_word_boundary(s: &str, marker: &str) -> Option<usize> {
+/// Case-insensitive variant of `find_word_boundary` (R17 Lens-2 F2).
+/// Matches ASCII case variants only (`a-z`/`A-Z`) — the markers we use
+/// (`SQL:`, `query:`, `sqlite3_open`) are all ASCII so this is sufficient.
+fn find_word_boundary_ci(s: &str, marker: &str) -> Option<usize> {
     let bytes = s.as_bytes();
     let marker_bytes = marker.as_bytes();
-    let mut start = 0;
-    while let Some(rel) = s[start..].find(marker) {
-        let abs = start + rel;
-        let left_ok = abs == 0 || !bytes[abs - 1].is_ascii_alphanumeric();
+    let marker_len = marker_bytes.len();
+    let mut i = 0;
+    while i + marker_len <= bytes.len() {
+        // Word-boundary check on left.
+        let left_ok = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
         if left_ok {
-            return Some(abs);
+            // Case-insensitive byte comparison.
+            let matches = bytes[i..i + marker_len]
+                .iter()
+                .zip(marker_bytes.iter())
+                .all(|(a, b)| a.eq_ignore_ascii_case(b));
+            if matches {
+                return Some(i);
+            }
         }
-        start = abs + marker_bytes.len();
+        i += 1;
     }
     None
 }

@@ -1,4 +1,4 @@
-//! Global CLI flags — RFC-0011 §Clap Root Struct.
+//! Global CLI flags — RFC-0011 §Binary Surface.
 
 use clap::{Args, ValueEnum};
 

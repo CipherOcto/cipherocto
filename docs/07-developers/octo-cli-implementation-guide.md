@@ -1051,9 +1051,17 @@ pub fn dispatch(action: &IdentityAction, cli: &Octo) -> Result<(), OctoCliError>
 /// - Human mode + no `--confirm` + no `--dry-run` → `ConfirmationRequired` (exit 2)
 /// - Human mode + `--confirm` OR `--dry-run` → OK
 /// - CI mode + no `--allow-write` + no `--dry-run` → `ConfirmationRequired` (exit 2)
-/// - Auditor mode → never permitted to mutate (caller must short-circuit)
+/// - Auditor mode → never permitted to mutate (denied BEFORE --dry-run bypass)
 pub fn require_confirm(cli: &Octo, command: &str) -> Result<(), OctoCliError> {
     use octo_cli::flags::OperatorMode;
+    // R16 Lens-1 F2: Auditor denial precedes the dry_run bypass so
+    // `--mode=auditor --dry-run` still errors (a read-only role must never
+    // get a side-effects preview). The bypass is Human/Ci only.
+    if matches!(cli.mode.mode, OperatorMode::Auditor) {
+        return Err(OctoCliError::ConfirmationRequired {
+            command: command.to_string(),
+        });
+    }
     if cli.mode.dry_run {
         return Ok(()); // --dry-run bypasses confirmation (preview only)
     }
@@ -1072,11 +1080,7 @@ pub fn require_confirm(cli: &Octo, command: &str) -> Result<(), OctoCliError> {
                 });
             }
         }
-        OperatorMode::Auditor => {
-            return Err(OctoCliError::ConfirmationRequired {
-                command: command.to_string(),
-            });
-        }
+        OperatorMode::Auditor => unreachable!("Auditor short-circuited above"),
     }
     Ok(())
 }

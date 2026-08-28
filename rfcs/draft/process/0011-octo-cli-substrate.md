@@ -746,34 +746,38 @@ lossy on purpose — the operator sees the category, not the substrate signature
 
 ```rust
 pub fn sanitize_substrate_error(s: &str) -> String {
+    // Anchor SQL/storage markers with a left-side word boundary (R16
+    // Lens-2 F7) so substrings inside URLs / natural prose are not
+    // falsely redacted. Case-insensitive (R17 Lens-2 F2) — `Sql:` and
+    // `QUERY:` are both legitimate substrate noise.
+    const ERROR_MARKERS: [&str; 3] = ["SQL:", "query:", "sqlite3_open"];
     let mut out = s.to_string();
-    // Strip absolute paths after common file:line prefixes
-    for prefix in ["src/", "crates/octo-"] {
-        // Replace `prefix...` runs with `<substrate-path>`
-        while let Some(idx) = out.find(prefix) {
-            let end = out[idx..].find(|c: char| c == ' ' || c == '\n' || c == ':' || c == ')')
-                .map(|e| idx + e)
-                .unwrap_or(out.len());
-            out.replace_range(idx..end, "<substrate-path>");
+    for marker in ERROR_MARKERS {
+        while let Some(idx) = find_word_boundary_ci(&out, marker) {
+            out.replace_range(idx..idx + marker.len(), "<substrate-error>");
         }
     }
-    // Strip SQL fragments after "SQL:" or "query:"
-    for marker in ["SQL:", "query:", "sqlite3_open"] {
-        while let Some(idx) = out.find(marker) {
-            // Replace from marker to next semicolon or newline
-            let end = out[idx..].find(|c: char| c == ';' || c == '\n')
-                .map(|e| idx + e + 1)
-                .unwrap_or(out.len());
-            out.replace_range(idx..end, "<substrate-error>");
-        }
-    }
-    // Collapse runs of "<substrate-error>" to a single occurrence
-    while out.contains("<substrate-error><substrate-error>") {
-        out = out.replace("<substrate-error><substrate-error>", "<substrate-error>");
+    // Anchor path markers to the canonical `crates/octo-<name>/` prefix
+    // (R16 Lens-2 F7). `src/` was dropped — substring containment matches
+    // URLs and any path containing the directory name.
+    const PATH_PREFIX: &str = "crates/octo-";
+    while let Some(idx) = out.find(PATH_PREFIX) {
+        let tail = &out[idx..];
+        let end = tail
+            .find(char::is_whitespace)
+            .or_else(|| tail.find([')', ']', ',']))
+            .unwrap_or(out.len() - idx);
+        out.replace_range(idx..idx + end, "<substrate-path>");
     }
     out
 }
 ```
+
+`find_word_boundary_ci` is the case-insensitive variant — it requires a
+non-alphanumeric byte (or start-of-string) immediately before the match,
+so substrings inside words are not matched. The substring replacement
+preserves surrounding context (e.g. `failed at SQL: select *` becomes
+`failed at <substrate-error> select *` instead of full-string wipe).
 
 This is a defense-in-depth pass: substrate crates SHOULD NOT emit
 internals-bearing errors at the boundary, but the sanitizer catches any that slip

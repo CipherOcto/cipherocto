@@ -220,14 +220,23 @@ pub fn redact_string(s: &str) -> Cow<'_, str> {
         if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(trimmed) {
             redact_json_value(&mut value);
             if let Ok(rendered) = serde_json::to_string(&value) {
-                let leading_ws = s.len() - s.trim_start().len();
-                let trailing_ws = s.len() - s.trim_end().len();
-                let mut out =
-                    String::with_capacity(s.len() + rendered.len().saturating_sub(trimmed.len()));
-                out.push_str(&s[..leading_ws]);
-                out.push_str(&rendered);
-                out.push_str(&s[s.len() - trailing_ws..]);
-                return Cow::Owned(out);
+                // R17 Lens-2 F3: only short-circuit if the JSON pass
+                // actually redacted something. If no sensitive fields were
+                // found (e.g. a Bearer token lives inside a non-sensitive
+                // string value), fall through to the plain-text passes
+                // for defense-in-depth bearer/hex/kv detection.
+                if rendered.contains("<REDACTED") || rendered.contains("[REDACTED:") {
+                    let leading_ws = s.len() - s.trim_start().len();
+                    let trailing_ws = s.len() - s.trim_end().len();
+                    let mut out = String::with_capacity(
+                        s.len() + rendered.len().saturating_sub(trimmed.len()),
+                    );
+                    out.push_str(&s[..leading_ws]);
+                    out.push_str(&rendered);
+                    out.push_str(&s[s.len() - trailing_ws..]);
+                    return Cow::Owned(out);
+                }
+                // No redactions — fall through to plain-text passes.
             }
         }
     }
@@ -257,21 +266,29 @@ pub fn redact_string(s: &str) -> Cow<'_, str> {
     }
 
     // Plain-text fallback: bearer + long-hex + `field=value` scan.
+    // R17 Lens-2 F1: wrap bearer + long-hex in loops so multiple matches
+    // in the same string (e.g. two bearer tokens, or a bearer + a sig
+    // hex run) all get redacted, matching the kv branch's behaviour.
     let mut owned: Option<String> = None;
 
-    if let Some((start, end)) = find_bearer_ci(s) {
-        let mut o = owned.take().unwrap_or_else(|| s.to_string());
+    loop {
+        let current: &str = owned.as_deref().unwrap_or(s);
+        let Some((start, end)) = find_bearer_ci(current) else {
+            break;
+        };
+        let mut o = current.to_string();
         o.replace_range(start..end, REDACTED_BEARER);
         owned = Some(o);
     }
 
-    {
+    loop {
         let current: &str = owned.as_deref().unwrap_or(s);
-        if let Some((start, end, kind)) = find_long_hex(current) {
-            let mut o = current.to_string();
-            o.replace_range(start..end, kind);
-            owned = Some(o);
-        }
+        let Some((start, end, kind)) = find_long_hex(current) else {
+            break;
+        };
+        let mut o = current.to_string();
+        o.replace_range(start..end, kind);
+        owned = Some(o);
     }
 
     loop {

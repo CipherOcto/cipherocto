@@ -59,6 +59,10 @@ pub struct OperatorModeFlags {
     /// pasted one-shot command. `--allow-write` alone (CI mode) does
     /// NOT require `--confirm-acknowledge` because CI scripts are
     /// trusted to supply it via the pipeline gate contract.
+    /// `--dry-run` bypasses this gate: a preview grants no authority,
+    /// so the second acknowledgement is irrelevant. Dev mode also
+    /// bypasses `--confirm-acknowledge` (the developer is the
+    /// acknowledgement) but still requires `--allow-write`.
     #[arg(long, global = true, requires = "confirm")]
     pub confirm_acknowledge: bool,
     /// Preview the effect of a mutating operation without applying it.

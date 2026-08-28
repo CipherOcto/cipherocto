@@ -392,6 +392,10 @@ impl OctoCliError {
             Self::StaleStub { .. } => 65,
             Self::Internal(_) => 64,
         }
+        // Exit 1 is reserved (POSIX generic-failure convention per
+        // RFC-0011 §Exit Codes) — no variant maps to it. Errors in
+        // [2, 16] are reserved for operator-visible failures;
+        // [64, 127] for internal substrate pathology.
     }
 
     /// Render the error in user-facing form, with EVERY string field passed through
@@ -782,6 +786,12 @@ pub enum OperatorMode {
     Human,
     Ci,
     Auditor,
+    /// R20 Lens-4 F2: dev/test surface. Permits `InMemorySigner` and
+    /// `IdentityKey::from_seed` paths that are normally refused in
+    /// production. Requires `--allow-write` to authorize mutations
+    /// but NOT `--confirm-acknowledge` (developer is the
+    /// acknowledgement). Mirror the substrate in `flags.rs`.
+    Dev,
 }
 ```
 

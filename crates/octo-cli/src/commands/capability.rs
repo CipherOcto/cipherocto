@@ -1330,6 +1330,12 @@ mod tests {
     fn fixture_token(caveats: &[Caveat]) -> CapabilityToken {
         use octo_cap_macaroon::CapabilitySigner;
 
+        // R21 Lens-3 LOW: FixtureSigner is `#[cfg(test)]` only — the
+        // CapabilitySigner trait impl lives in the CLI test module
+        // because Layer C (CLI) consumes but MUST NOT define new
+        // signing primitives. If this fixture ever needs to leave
+        // the test module, route through a substrate-provided
+        // TestSigner instead of defining the trait impl in the CLI.
         struct FixtureSigner([u8; 32]);
         impl CapabilitySigner for FixtureSigner {
             fn sign(

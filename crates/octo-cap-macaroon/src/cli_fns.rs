@@ -1,4 +1,4 @@
-//! Layer B [ADD] free functions per RFC-0011 §Subcommand Taxonomy entries #10–13.
+//! Layer B `[ADD]` free functions per RFC-0011 §Subcommand Taxonomy entries #10–13.
 //!
 //! Thin facades over [`crate::token::CapabilityToken`] so the CLI
 //! (`octo-cli`, Layer C/D) can consume a single, stable surface

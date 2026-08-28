@@ -263,7 +263,7 @@ impl Macaroon {
 
     /// Private chain-extension helper shared between `attenuate` (checked)
     /// and `attenuate_unchecked_for_test` (unchecked). Pushes the new
-    /// caveat, derives `chain[i+1]` = HMAC(chain[i], caveat_name ||
+    /// caveat, derives `chain\[i+1\]` = HMAC(chain\[i\], caveat_name ||
     /// canonical_ser(caveat) || capability_id_{i-1}), and recomputes id.
     ///
     /// **0957-e amendment (mission 0957-e):** changed visibility to

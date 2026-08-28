@@ -1,4 +1,4 @@
-//! Layer B [ADD] summary types per RFC-0011 §Subcommand Taxonomy.
+//! Layer B `[ADD]` summary types per RFC-0011 §Subcommand Taxonomy.
 //!
 //! CLI consumers (`octo capability list` etc.) consume these via
 //! `octo_cap_macaroon::CapabilitySummary`. The types intentionally

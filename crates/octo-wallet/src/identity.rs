@@ -465,6 +465,20 @@ impl IdentityKey {
         self.public_key
     }
 
+    /// Return this identity's DID. Layer B [ADD] per RFC-0011 §Subcommand
+    /// Taxonomy (entry #2: `identity show <DID>`).
+    ///
+    /// Canonical form per RFC-0010: `did:octo:<encoded-pubkey>`. The current
+    /// encoding is hex (RFC-0010 wire-format prep — the canonical
+    /// `did:octo:z<base58btc>` form is assembled by the CLI layer that
+    /// consumes the public key; the wallet substrate returns the hex form
+    /// because hex is a stable, lossless representation and avoids
+    /// re-implementing base58btc in the substrate).
+    #[must_use]
+    pub fn did(&self) -> crate::identity_record::Did {
+        crate::identity_record::Did(format!("did:octo:{}", hex::encode(self.public_key)))
+    }
+
     /// Ed25519 signature over `msg`. Delegates to the underlying
     /// `HsmAdapter::sign` — production `LedgerSigner` will prompt the user
     /// on-device; rejection propagates as `WalletError::Hsm(HsmError::UserRejected)`.

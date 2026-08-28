@@ -13,9 +13,11 @@
 #![allow(clippy::doc_markdown)]
 
 pub mod capability;
+pub mod cli_fns;
 pub mod error;
 pub mod hsm;
 pub mod identity;
+pub mod identity_record;
 pub mod key_hierarchy;
 pub mod keystore;
 pub mod lifecycle;
@@ -24,8 +26,10 @@ pub mod node;
 pub mod vault;
 pub mod vault_rotation;
 
+pub use cli_fns::{active_identity, begin_rotation, identity_record as identity_record_fn, revoke};
 pub use error::WalletError;
 pub use identity::{derive_capability_key, AudienceId, CapabilityKey, ChannelId, IdentityKey};
+pub use identity_record::{Did, IdentityRecord, IdentityRotationEvent, WalletStore};
 pub use key_hierarchy::{AxisSubkey, KeyHierarchy, MissionId, MissionKey};
 pub use node::{NodeType, NodeTypeParseError};
 

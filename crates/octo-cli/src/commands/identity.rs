@@ -281,20 +281,26 @@ pub fn show(did_arg: Option<&str>, cli: &Octo) -> Result<(), OctoCliError> {
 pub fn rotate(cli: &Octo) -> Result<(), OctoCliError> {
     require_confirm(cli, "identity rotate")?;
     let store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
-    let mut key =
-        octo_wallet::active_identity(&store).map_err(|_| OctoCliError::NoActiveIdentity)?;
-    let old_did = key.did();
 
     // Pastejacking defense (R1 review CORR-12): before any irreversible
     // substrate mutation, echo the canonical payload to stderr. The
     // operator (or automation) running this command can then visually
-    // confirm the DID + grace window matches what they intend. This
-    // fires before `--dry-run` short-circuits the substrate call so
-    // `dry-run` previews stay predictable.
+    // confirm the DID + grace window matches what they intend. Fires
+    // BEFORE `active_identity()` so the echo always emits, even when
+    // no identity is active (the placeholder makes the absence explicit).
+    let old_did = match octo_wallet::active_identity(&store) {
+        Ok(k) => k.did(),
+        Err(_) => {
+            eprintln!("would rotate: old_did=<none>, new_did_placeholder=pending, grace=24h",);
+            return Err(OctoCliError::NoActiveIdentity);
+        }
+    };
     eprintln!(
         "would rotate: old_did={}, new_did_placeholder=pending, grace=24h",
         old_did.0
     );
+    let mut key =
+        octo_wallet::active_identity(&store).map_err(|_| OctoCliError::NoActiveIdentity)?;
 
     // Successor stub (R1 review CORR-16 / SEC-04): substrate (Layer B)
     // is still a stub at this RFC stage. `IdentityKey::from_seed` is the
@@ -354,12 +360,19 @@ pub fn revoke(reason: &str, cli: &Octo) -> Result<(), OctoCliError> {
     }
     require_confirm(cli, "identity revoke")?;
     let store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
+    // Pastejacking defense (R1 review CORR-12): echo BEFORE resolving
+    // active identity so the operator sees the canonical payload even
+    // when no identity is active.
+    let did = match octo_wallet::active_identity(&store) {
+        Ok(k) => k.did(),
+        Err(_) => {
+            eprintln!("would revoke: did=<none>, reason={reason}");
+            return Err(OctoCliError::NoActiveIdentity);
+        }
+    };
+    eprintln!("would revoke: did={}, reason={reason}", did.0);
     let mut key =
         octo_wallet::active_identity(&store).map_err(|_| OctoCliError::NoActiveIdentity)?;
-    let did = key.did();
-
-    // Pastejacking defense (R1 review CORR-12).
-    eprintln!("would revoke: did={}, reason={reason}", did.0);
 
     let now = chrono::Utc::now().timestamp().max(0) as u64;
     if !cli.mode.dry_run {

@@ -176,7 +176,7 @@ caveats: Vec<CaveatSummary> }`. Exit 0 / 7 / 10 (widens parent — rejected OR
    Widens → `OctoCliError::AttenuationViolation(message)` (exit 10; tuple-style per RFC §Error Handling).
    Caveat removal is treated as widening: every parent caveat MUST be present
    in the child set OR the child carries a strictly narrower form of the same
-   caveat (per RFC-0957 §Attenuation Rules) — drops without replacement are
+   caveat (per RFC-0957 §Attenuation Invariant) — drops without replacement are
    rejected.
 
 5. **Dispatch** — `dispatch(action, &Octo) -> Result<(), OctoCliError>`. Matches

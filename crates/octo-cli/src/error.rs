@@ -161,7 +161,7 @@ impl OctoCliError {
             let mut sources: Vec<String> = Vec::new();
             let mut src: Option<&dyn std::error::Error> = std::error::Error::source(self);
             while let Some(s) = src {
-                sources.push(s.to_string());
+                sources.push(sanitize_substrate_error(&s.to_string()));
                 src = s.source();
             }
             let body = serde_json::json!({
@@ -176,7 +176,11 @@ impl OctoCliError {
             let _ = writeln!(w, "error: {msg}");
             let mut src: Option<&dyn std::error::Error> = std::error::Error::source(self);
             while let Some(s) = src {
-                let _ = writeln!(w, "  caused by: {s}");
+                let _ = writeln!(
+                    w,
+                    "  caused by: {}",
+                    sanitize_substrate_error(&s.to_string())
+                );
                 src = s.source();
             }
             if let Some(hint) = self.hint() {

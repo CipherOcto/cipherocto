@@ -15,6 +15,7 @@
 use chrono::{DateTime, Utc};
 use clap::Subcommand;
 use serde::Serialize;
+use std::io::IsTerminal;
 
 use crate::error::{sanitize_substrate_error, OctoCliError};
 use crate::flags::OperatorMode;
@@ -292,7 +293,7 @@ pub fn show(did_arg: Option<&str>, cli: &Octo) -> Result<(), OctoCliError> {
 /// Requires `--confirm` in human mode, `--allow-write` in CI mode (or
 /// `--dry-run` for preview).
 pub fn rotate(cli: &Octo) -> Result<(), OctoCliError> {
-    require_confirm(cli, "identity rotate")?;
+    require_confirm(cli, "identity rotate", std::io::stdin().is_terminal())?;
     let store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
 
     // Pastejacking defense (R1 review CORR-12): before any irreversible
@@ -371,7 +372,7 @@ pub fn revoke(reason: &str, cli: &Octo) -> Result<(), OctoCliError> {
             "revocation reason must be non-empty".to_string(),
         ));
     }
-    require_confirm(cli, "identity revoke")?;
+    require_confirm(cli, "identity revoke", std::io::stdin().is_terminal())?;
     let store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
     // Pastejacking defense (R1 review CORR-12): echo BEFORE resolving
     // active identity so the operator sees the canonical payload even
@@ -437,13 +438,17 @@ pub fn revoke(reason: &str, cli: &Octo) -> Result<(), OctoCliError> {
 /// | Ci       | no          | `--allow-write`        |
 /// | Auditor  | yes         | (denied)               |
 /// | Auditor  | no          | (denied — read-only)   |
-pub fn require_confirm(cli: &Octo, command: &str) -> Result<(), OctoCliError> {
+pub fn require_confirm(cli: &Octo, command: &str, is_tty: bool) -> Result<(), OctoCliError> {
     if cli.mode.dry_run {
         return Ok(()); // --dry-run bypasses confirmation (preview only)
     }
     match cli.mode.mode {
         OperatorMode::Human => {
-            if !cli.mode.confirm {
+            // Pastejacking defense (§Security 1a): in Human mode the
+            // operator must visibly review the echo on a TTY. Non-TTY
+            // stdin without the gate is treated as missing confirmation
+            // so CI / cron invocations cannot bypass pastejacking review.
+            if !cli.mode.confirm || !is_tty {
                 return Err(OctoCliError::ConfirmationRequired {
                     command: command.to_string(),
                 });
@@ -474,11 +479,11 @@ pub fn dispatch(action: &IdentityAction, cli: &Octo) -> Result<(), OctoCliError>
     match action {
         IdentityAction::Show { did } => show(did.as_deref(), cli),
         IdentityAction::Rotate { .. } => {
-            require_confirm(cli, "identity rotate")?;
+            require_confirm(cli, "identity rotate", std::io::stdin().is_terminal())?;
             rotate(cli)
         }
         IdentityAction::Revoke { reason, .. } => {
-            require_confirm(cli, "identity revoke")?;
+            require_confirm(cli, "identity revoke", std::io::stdin().is_terminal())?;
             revoke(reason, cli)
         }
     }
@@ -514,7 +519,7 @@ mod tests {
     #[test]
     fn require_confirm_human_without_confirm_errors() {
         let cli = cli_with_mode(OperatorMode::Human);
-        let r = require_confirm(&cli, "identity rotate");
+        let r = require_confirm(&cli, "identity rotate", true);
         match r {
             Err(OctoCliError::ConfirmationRequired { command }) => {
                 assert_eq!(command, "identity rotate");
@@ -527,7 +532,7 @@ mod tests {
     fn require_confirm_human_with_confirm_ok() {
         let mut cli = cli_with_mode(OperatorMode::Human);
         cli.mode.confirm = true;
-        assert!(require_confirm(&cli, "identity rotate").is_ok());
+        assert!(require_confirm(&cli, "identity rotate", true).is_ok());
     }
 
     #[test]
@@ -535,13 +540,13 @@ mod tests {
         let cli = cli_with_mode(OperatorMode::Human);
         let mut cli = cli;
         cli.mode.dry_run = true;
-        assert!(require_confirm(&cli, "identity rotate").is_ok());
+        assert!(require_confirm(&cli, "identity rotate", true).is_ok());
     }
 
     #[test]
     fn require_confirm_ci_without_allow_write_errors() {
         let cli = cli_with_mode(OperatorMode::Ci);
-        let r = require_confirm(&cli, "identity rotate");
+        let r = require_confirm(&cli, "identity rotate", true);
         assert!(matches!(r, Err(OctoCliError::ConfirmationRequired { .. })));
     }
 
@@ -549,13 +554,13 @@ mod tests {
     fn require_confirm_ci_with_allow_write_ok() {
         let mut cli = cli_with_mode(OperatorMode::Ci);
         cli.mode.allow_write = true;
-        assert!(require_confirm(&cli, "identity rotate").is_ok());
+        assert!(require_confirm(&cli, "identity rotate", true).is_ok());
     }
 
     #[test]
     fn require_confirm_auditor_always_errors() {
         let cli = cli_with_mode(OperatorMode::Auditor);
-        let r = require_confirm(&cli, "identity rotate");
+        let r = require_confirm(&cli, "identity rotate", true);
         assert!(matches!(r, Err(OctoCliError::ConfirmationRequired { .. })));
     }
 

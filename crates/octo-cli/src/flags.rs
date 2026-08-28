@@ -42,7 +42,7 @@ pub struct OperatorModeFlags {
     pub dry_run: bool,
     /// Permit reading a secret from stdin.
     ///
-    /// Gate contract (RFC-0011 §Stdin Handling): every future stdin
+    /// Gate contract (RFC-0011 §Adversary Analysis → Stdin secret exfiltration via '--holder'): every future stdin
     /// reader must call
     /// `octo_cli::error::ensure_stdin_secret_allowed(self.allow_stdin_secret)`
     /// before consuming pipe data. Without the flag the helper returns

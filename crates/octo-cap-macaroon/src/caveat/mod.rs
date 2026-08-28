@@ -212,8 +212,9 @@ pub enum Caveat {
     #[serde(rename = "sharded")]
     Sharded { shard_id: u32 },
 
-    /// Payment caveat (RFC-0965 §4 reserved discriminator `0x1A`,
-    /// mission 0957-phase2b). Bounds holder spend against `budget`
+    /// Payment caveat (RFC-0965 §1 Caveat type enumeration; 0x1A-0xCF
+    /// reserved range at v2.1 §4 Discriminator; mission 0957-phase2b).
+    /// Bounds holder spend against `budget`
     /// over queries against `model`. Subsumes monotonic narrowing
     /// (child budget ≤ parent budget, child expiry ≤ parent expiry,
     /// parent model empty OR matches child model).
@@ -282,7 +283,7 @@ pub struct RawCaveat {
     pub value: Vec<u8>,
 }
 
-/// Asset-binding co-bound caveat payload (RFC-0965 §5 ).
+/// Asset-binding co-bound caveat payload (RFC-0965 v2.1 §5 PermissionKind Co-Bound Caveat).
 ///
 /// Pairs with a `Caveat::Payment(p)` to enforce that the payment
 /// caveat's `asset_id` matches this `asset_id`. Prevents
@@ -500,7 +501,7 @@ fn parent_caveat_implies(parent: &[Caveat], child: &Caveat) -> bool {
             .iter()
             .any(|p| matches!(p, Caveat::Vault(p) if p == c)),
         Caveat::AssetBinding(c) => parent.iter().any(|p| match p {
-            // Co-bound rule (RFC-0965 §5 ): when parent
+            // Co-bound rule (RFC-0965 v2.1 §5 PermissionKind Co-Bound Caveat): when parent
             // carries a Caveat::AssetBinding AND child carries a
             // Caveat::Payment with a different asset_id, the chain is
             // rejected (prevents PermissionKind bypass on cross-asset
@@ -571,7 +572,7 @@ fn parent_caveat_implies(parent: &[Caveat], child: &Caveat) -> bool {
         // Payment caveat subsumption (RFC-0965 §2.2, mission 0957-phase2b):
         // child budget ≤ parent budget, child expiry ≤ parent expiry,
         // parent model empty OR matches child model. The child cannot
-        // widen to a wildcard model (RFC-0957 §3.5 monotonicity).
+        // widen to a wildcard model (RFC-0957 §Attenuation Invariant).
         Caveat::Payment(c) => parent.iter().any(|p| match p {
             Caveat::Payment(p_inner) => {
                 dqa_cmp(c.budget, p_inner.budget) <= 0

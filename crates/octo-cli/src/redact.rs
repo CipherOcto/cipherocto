@@ -125,10 +125,11 @@ pub fn redact_by_field<'a>(field_name: &str, value: &'a str) -> &'a str {
     value
 }
 
-/// Locate a run of hex characters at least 64 long (covers 32-byte keys and
-/// 64-byte Ed25519 signatures). Returns `(start, end, kind)` where `kind`
-/// is `REDACTED_SIG` for runs of ≥128 hex chars and `REDACTED_KEY` for
-/// 64..128.
+/// Locate a run of hex characters at least 32 long (covers 16-byte DIDs /
+/// 16-byte short keys, 32-byte keys, and 64-byte Ed25519 signatures).
+/// Returns `(start, end, kind)` where `kind` is `REDACTED_SIG` for runs
+/// of ≥128 hex chars, `REDACTED_KEY` for 32..127. Odd-length hex and
+/// truncated key dumps are now caught (was: even-length only at ≥64).
 pub fn find_long_hex(s: &str) -> Option<(usize, usize, &'static str)> {
     let b = s.as_bytes();
     let mut i = 0;
@@ -139,7 +140,7 @@ pub fn find_long_hex(s: &str) -> Option<(usize, usize, &'static str)> {
                 i += 1;
             }
             let len = i - start;
-            if len >= 64 && len % 2 == 0 {
+            if len >= 32 {
                 let kind = if len >= 128 {
                     REDACTED_SIG
                 } else {

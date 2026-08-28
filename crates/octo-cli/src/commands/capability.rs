@@ -23,6 +23,7 @@
 
 use clap::Subcommand;
 use serde::Serialize;
+use std::io::IsTerminal;
 
 use octo_cap_macaroon::{
     blake3_hash, set_subsumes, CapabilityToken, Caveat, CaveatName, CompositeCapabilityCatalog,
@@ -456,8 +457,13 @@ pub fn mint(
     acknowledge: bool,
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
-    super::identity::require_confirm(cli, "capability mint")?;
-    require_acknowledge(cli, acknowledge, "capability mint")?;
+    super::identity::require_confirm(cli, "capability mint", std::io::stdin().is_terminal())?;
+    require_acknowledge(
+        cli,
+        acknowledge,
+        "capability mint",
+        std::io::stdin().is_terminal(),
+    )?;
     let caveats = parse_caveats(caveats_json)?;
     validate_holder_did(holder_did)?;
     if let Some(root_id) = root {
@@ -567,8 +573,13 @@ pub fn attenuate(
     acknowledge: bool,
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
-    super::identity::require_confirm(cli, "capability attenuate")?;
-    require_acknowledge(cli, acknowledge, "capability attenuate")?;
+    super::identity::require_confirm(cli, "capability attenuate", std::io::stdin().is_terminal())?;
+    require_acknowledge(
+        cli,
+        acknowledge,
+        "capability attenuate",
+        std::io::stdin().is_terminal(),
+    )?;
     let caveats = parse_caveats(caveats_json)?;
     validate_cap_id(cap_id)?;
 
@@ -938,9 +949,23 @@ fn validate_cap_id(cap_id: &str) -> Result<(), OctoCliError> {
 /// fail closed.
 ///
 /// `--dry-run` bypasses it: a preview grants no authority.
-fn require_acknowledge(cli: &Octo, acknowledge: bool, command: &str) -> Result<(), OctoCliError> {
+fn require_acknowledge(
+    cli: &Octo,
+    acknowledge: bool,
+    command: &str,
+    is_tty: bool,
+) -> Result<(), OctoCliError> {
     if cli.mode.dry_run || acknowledge {
         return Ok(());
+    }
+    // Pastejacking defense (§Security 1a): the operator must review the
+    // canonical payload on a TTY between confirm and submit. Non-TTY
+    // stdin without the explicit acknowledge flag is refused so CI / cron
+    // invocations cannot bypass the two-step gate.
+    if !is_tty {
+        return Err(OctoCliError::ConfirmationRequired {
+            command: command.to_string(),
+        });
     }
     Err(OctoCliError::ConfirmationRequired {
         command: command.to_string(),

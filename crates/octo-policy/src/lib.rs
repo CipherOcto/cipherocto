@@ -62,11 +62,23 @@ pub mod workflow_kind;
 pub mod burn_event;
 pub mod event_log_producer;
 
+// Mission 0011-policy-commands (RFC-0011 §Subcommand Taxonomy entries #14-17):
+// CLI-facing Layer B [ADD] surface — `PolicyRecord` / `PolicyListEntry` /
+// `PolicyFilter` / `NameHashIndex` / `PolicyRegistryError` + free fns
+// `show` / `list` / `latest_version` / `name_hash_index`. Additive only.
+pub mod cli_fns;
+pub mod cli_record;
+
 pub use burn_event::{
     AuditError, AuditSink, BurnEventError, BurnEventRef, SettlementId, TransferEventLog,
     ZERO_VAULT_ID,
 };
 pub use event_log_producer::{produce_burn, BurnEventProducer};
+
+pub use cli_fns::{latest_version, list, name_hash_index, show};
+pub use cli_record::{
+    NameHashIndex, PolicyFilter, PolicyListEntry, PolicyRecord, PolicyRegistryError,
+};
 
 use std::collections::{HashMap, HashSet};
 

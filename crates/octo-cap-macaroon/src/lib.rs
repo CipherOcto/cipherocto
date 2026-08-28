@@ -82,8 +82,19 @@ pub mod holder_kind;
 pub mod holder_record;
 pub mod holder_registry;
 
+// Mission `0011-capability-commands` Phase 1 (RFC-0011 §Subcommand
+// Taxonomy). Layer B additive surface for the CLI substrate. The CLI
+// (`octo-cli`, Layer C/D) consumes `CapabilitySummary` + the
+// `list_active` / `mint` / `attenuate` free fns; the substrate itself
+// stays free of any upward dependency.
+pub mod cli_fns;
+pub mod cli_summary;
+
 // Re-exports for ergonomic single-import paths.
 pub use bearer_capsule_stub::BearerCapsule;
+// Re-export CLI substrate facade (mission 0011-capability-commands
+// Phase 1; RFC-0011 §Subcommand Taxonomy). Single-import path so the
+// CLI does not need to reach into the module hierarchy.
 pub use bundle_v2::{
     BundleV2Error, CapabilityBundleV2, CapabilityBundleV2Envelope, CapabilityTokenV2,
     BUNDLE_ID_DOMAIN_V2, BUNDLE_VERSION_V2, CIPHEROCTO_V2_BUNDLE_PREFIX, MAX_CHAIN_DEPTH,
@@ -96,6 +107,8 @@ pub use caveat::{
     PermissionKind, ProviderId, RateLimit, RawCaveat, UnixTimeSecs, ISO3166,
     PAID_QUERY_CAVEAT_NAME,
 };
+pub use cli_fns::{attenuate, list_active, mint};
+pub use cli_summary::{CapabilitySummary, CaveatSummary};
 pub use clock::{Clock, FixedClock, SystemClock};
 pub use discharge::{
     verify_discharges, ChannelProvider, ChannelProviderRegistry, ChannelProviderResolver,

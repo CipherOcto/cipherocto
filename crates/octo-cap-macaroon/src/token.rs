@@ -292,6 +292,18 @@ pub enum MintError {
     /// the operation (HSM transport failure, user denied on-device, etc.).
     #[error("signer error: {0}")]
     Signer(#[from] crate::signer::CapabilitySignerError),
+
+    /// Caveat rejection from the CLI substrate surface
+    /// (`octo_cap_macaroon::cli_fns::mint` / `attenuate`). Also surfaced
+    /// by stub implementations that have not yet been wired to the
+    /// substrate's full mint/attenuate matrix.
+    ///
+    /// Added by mission `0011-capability-commands` Phase 1 (RFC-0011
+    /// §Subcommand Taxonomy entries #10–13). Additive per
+    /// [[cipherocto-design-principles]] — existing callers that match on
+    /// `Macaroon` / `HolderSig` / `Signer` are unaffected.
+    #[error("invalid caveat: {0}")]
+    InvalidCaveat(String),
 }
 
 #[cfg(test)]

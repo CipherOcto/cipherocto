@@ -333,8 +333,19 @@ pub fn dispatch(action: &PolicyAction, cli: &Octo) -> Result<(), OctoCliError> {
 /// spinning up the substrate stub.
 ///
 /// SEC-13 follow-on contract:
-/// - Empty operator input → `Internal` (non-empty enforced at CLI).
-/// - Case-insensitive match → `Ok`.
+/// - `None` operator input → `Ok` (the flag is optional; the record's
+///   own kind_uuid is the source of truth).
+/// - Empty operator input → `Internal` (exit 64): the operator passed
+///   `--kind-uuid ""` which is almost certainly a shell-quoting mistake
+///   rather than a deliberate "match nothing" choice. Surfacing as
+///   `Internal` (not `InvalidFilter`) keeps the exit-code table stable
+///   for `--filter` consumers that grep for `InvalidFilter` (exit 16).
+/// - Operator input that is not lowercase 32-byte hex → `Internal`
+///   (exit 64): the kind_uuid format is substrate-fixed; an arbitrary
+///   string cannot reach a matching record even if it were equal by
+///   accident, so we reject early before the mismatch diagnostic
+///   reveals the operator's exact string back to them.
+/// - Case-insensitive hex match against `record_kind_hex` → `Ok`.
 /// - Any other input → `Internal` with sanitized mismatch diagnostic.
 pub fn validate_kind_uuid(
     operator: Option<&str>,
@@ -348,6 +359,11 @@ pub fn validate_kind_uuid(
             "--kind-uuid must be non-empty when provided",
         )));
     }
+    if !is_lower_hex_kind(op) {
+        return Err(OctoCliError::Internal(sanitize_substrate_error(
+            "--kind-uuid must be 32 lowercase hex chars (16 bytes)",
+        )));
+    }
     if op.eq_ignore_ascii_case(record_kind_hex) {
         Ok(())
     } else {
@@ -356,6 +372,18 @@ pub fn validate_kind_uuid(
             op, record_kind_hex
         ))))
     }
+}
+
+/// Lowercase 16-byte hex gate for `--kind-uuid` (UUID form). The
+/// substrate `kind_uuid` field is `[u8;16]` (RFC-0964 §Policy Reference)
+/// so the operator-facing hex form is 32 lowercase hex chars. Mixed-case
+/// or non-hex operator input is rejected before the mismatch diagnostic
+/// so the operator's exact string is not echoed back through the error
+/// path.
+fn is_lower_hex_kind(s: &str) -> bool {
+    s.len() == 32
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 #[cfg(test)]
@@ -583,12 +611,19 @@ mod tests {
         let r = validate_kind_uuid(Some("00"), &record_kind_hex);
         assert!(matches!(r, Err(OctoCliError::Internal(_))));
 
+        // Non-hex operator input — rejected at the format gate.
+        let r = validate_kind_uuid(Some(&"z".repeat(64)), &record_kind_hex);
+        assert!(matches!(r, Err(OctoCliError::Internal(_))));
+
+        // Uppercase hex operator input — rejected at the format gate
+        // (the substrate never emits uppercase; the strict lowercase
+        // contract prevents a class of pastejacking where a malicious
+        // shell snippet rewrites the kind to uppercase).
+        let r = validate_kind_uuid(Some(&record_kind_hex.to_uppercase()), &record_kind_hex);
+        assert!(matches!(r, Err(OctoCliError::Internal(_))));
+
         // Matching operator input — passes.
         let r = validate_kind_uuid(Some(&record_kind_hex), &record_kind_hex);
-        assert!(r.is_ok());
-
-        // Mixed-case matching — passes (hex is case-insensitive).
-        let r = validate_kind_uuid(Some(&record_kind_hex.to_uppercase()), &record_kind_hex);
         assert!(r.is_ok());
 
         // Operator omitted — no validation, no error.

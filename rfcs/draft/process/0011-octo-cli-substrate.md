@@ -1247,9 +1247,11 @@ Per-subcommand JSON schemas are specified in the companion implementation guide
 
 ### C. Caveat Catalog
 
-See §Caveat Catalog in the main body. 8 caveat types supported: `budget`,
-`before`, `valid_after`, `max_uses`, `model`, `destinations`, `single_use`,
-`audit_window`. Canonical forms in RFC-0964 envelope.
+See §Caveat Catalog in the main body. 9 caveat types supported (user-facing
+names): `budget`, `before` (expiry), `valid_after` (vesting), `max_uses`,
+`model`, `provider` (any-of provider list — not `destinations`), `audience`,
+`single_use` (canonical form `max_uses` with `count=1` — not a separate
+wire tag), `audit_window`. Canonical forms in RFC-0964 envelope.
 
 ### D. Exit Code Table
 

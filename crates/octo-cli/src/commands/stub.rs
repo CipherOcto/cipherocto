@@ -12,10 +12,20 @@ use crate::{AgentActionStub, RoleActionStub};
 pub const STALE_STUB_WINDOW: bool = false;
 
 /// Environment override enabling the v1.1 hard-error behaviour.
+///
+/// Per RFC-0011 §Compatibility: the v1.1 release turns the banner into a
+/// hard error (exit 65). Operators opt in early by setting
+/// `OCTO_STALE_STUB_WINDOW=1` — *not* by mere presence of the variable —
+/// so a stray shell-export of the empty string cannot accidentally trip
+/// the hard-error path on a v1.0 release that has the env var in its
+/// environment for unrelated reasons.
 const STALE_STUB_ENV: &str = "OCTO_STALE_STUB_WINDOW";
 
 fn stale_window_active() -> bool {
-    STALE_STUB_WINDOW || std::env::var_os(STALE_STUB_ENV).is_some()
+    STALE_STUB_WINDOW
+        || std::env::var(STALE_STUB_ENV)
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
 }
 
 /// Print the deprecation banner for `name`, or hard-error in the stale window.

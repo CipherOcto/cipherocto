@@ -160,6 +160,17 @@ pub struct CaveatSummaryView {
 
 /// Typed discriminator for CLI caveat summary view.
 ///
+/// [ADD] amendment track — Layer C concession: this enum re-enumerates
+/// the substrate `CaveatName` variants one-for-one so the CLI can attach
+/// a stable `Display` tag and a `schemars::JsonSchema`. The follow-on
+/// substrate amendment `CaveatKind::from(CaveatName)` (Layer B additive,
+/// no breaking changes) lets the CLI consume the substrate's typed
+/// discriminator directly; when that amendment lands this enum collapses
+/// to a thin newtype. Until then, every substrate `Caveat` variant is
+/// mapped here in [`CaveatKind::from_caveat`] and unknown wire names
+/// fail-closed to [`CaveatKind::Custom`] (the substrate `Raw` arm),
+/// preserving the fail-closed UI invariant.
+///
 /// Each variant carries the canonical RFC-0964 short serde tag via
 /// [`Display`]; the CLI never re-encodes the tag table from free-form
 /// strings. Adding a new substrate caveat variant is a `match` arm here
@@ -767,6 +778,14 @@ fn caveat_body_hash(caveats: &[Caveat]) -> [u8; 32] {
 
 /// Parse `--filter field=value` pairs.
 ///
+/// LAYER-06 Phase-1 concession: the CLI parses `--filter` strings here
+/// rather than delegating to a substrate `CapabilityFilter::parse`
+/// helper. The substrate amendment that surfaces a typed
+/// `CapabilityFilter` parser (Layer B additive) lands in the follow-on
+/// substrate move; until then, this routine is the canonical filter
+/// parser and [`matches_filters`] is the canonical matcher. Both are
+/// pure functions so the substrate-side move is a copy-without-change.
+///
 /// Rejects anything without a single `=`, an empty side, or a field outside
 /// [`FILTER_FIELDS`] with `InvalidFilter` (exit 16). Clap's
 /// `value_delimiter = ','` already splits `--filter foo,bar` into two
@@ -891,6 +910,17 @@ fn validate_cap_id(cap_id: &str) -> Result<(), OctoCliError> {
 /// Require `--confirm-acknowledge` alongside `--confirm` on mutating
 /// capability commands (the atomic pastejacking gate, mission sub-step 6).
 ///
+/// RFC-0011 §Subcommand Taxonomy lists `--confirm` as the gate for
+/// destructive commands; the CLI additionally requires
+/// `--confirm-acknowledge` per the SEC-13 pastejacking defense (a
+/// malicious shell snippet that pastes both `--confirm` and a destructive
+/// payload is foiled by requiring a second explicit acknowledgement
+/// that an operator typing cannot supply in one paste). The RFC §6.3
+/// amendment to add `--confirm-acknowledge` to the public surface is
+/// queued behind this defense's rollout; until then the flag is
+/// accepted but undocumented in `--help` (it is declared on each
+/// subcommand struct).
+///
 /// `--dry-run` bypasses it: a preview grants no authority.
 fn require_acknowledge(cli: &Octo, acknowledge: bool, command: &str) -> Result<(), OctoCliError> {
     if cli.mode.dry_run || acknowledge {
@@ -937,6 +967,17 @@ fn map_capability_internal(e: impl std::fmt::Display) -> OctoCliError {
 /// When `MintError::Signer` is surfaced (HSM transport failure), it
 /// maps to `HsmUnavailable` (exit 5) — distinct from `HolderSig` which
 /// maps to `SigningFailed` (exit 11) per CORR-05.
+///
+/// [ADD] amendment track — `MintError::classify() -> MintErrorKind`
+/// substrate amendment (Layer B additive) lets the CLI dispatch on a
+/// typed discriminant rather than parsing the message prefix. Until
+/// that amendment lands, [`classify_message`] uses string-prefix
+/// classification against `SUBSTRATE_PARSE_MARKER` / `SUBSTRATE_CATALOG_MARKER`
+/// which is a Phase-1 concession: the markers are part of the
+/// substrate's display contract, not its type contract, so a future
+/// substrate reformat of the message string would silently re-route the
+/// error class. The amendment pins the classification to the typed
+/// discriminant and removes the prefix match.
 fn classify_message(message: &str) -> OctoCliError {
     let redacted = redact_string(message).into_owned();
     let sanitized = sanitize_substrate_error(&redacted);

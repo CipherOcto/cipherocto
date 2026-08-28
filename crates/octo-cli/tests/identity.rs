@@ -434,3 +434,61 @@ fn clap_identity_revoke_help_parses() {
         .assert()
         .success();
 }
+
+// ---------------------------------------------------------------------------
+// Canonical-but-blocked fixtures (TV-ID5/6/7 happy + HSM paths).
+//
+// The adapted tests above (TV-ID5, TV-ID6, TV-ID7) assert the CLI-shape
+// contract against the substrate stub. The canonical substrate-state
+// contracts depend on lifecycle-state + HSM-failure synthesis that the
+// stub wallet cannot yet produce; these fixtures pin what the canonical
+// assertions WILL assert when the substrate amendment lands so the
+// unignore moment is visible. Each fixture is `#[ignore]`d and labeled
+// `adapted` so `cargo test -- --ignored` surfaces the unignore work.
+// ---------------------------------------------------------------------------
+
+/// Canonical TV-ID5: `octo identity revoke` against a `Revoked` identity
+/// → `AlreadyRevoked` (exit 6) per RFC-0011 §Exit Code table. The
+/// stub cannot synthesize `Revoked` so the adapted TV-ID5 above asserts
+/// the CLI-shape contract (NoActiveIdentity) instead.
+#[test]
+#[ignore = "adapted; stub cannot synthesize Revoked state; revert when wallet substrate amendment lands"]
+fn tv_id5_canonical_revoke_already_revoked_exits_6() {
+    octo()
+        .args([
+            "identity",
+            "revoke",
+            "--confirm",
+            "--confirm-acknowledge",
+            "--reason",
+            "test",
+        ])
+        .assert()
+        .code(6);
+}
+
+/// Canonical TV-ID6: `octo identity rotate` against a `Rotating`
+/// identity → `AlreadyRotating` (exit 3). The stub cannot synthesize
+/// `Rotating` so the adapted TV-ID6 above asserts the
+/// confirmation-gate-passes contract instead.
+#[test]
+#[ignore = "adapted; stub cannot synthesize Rotating state; revert when wallet substrate amendment lands"]
+fn tv_id6_canonical_rotate_already_rotating_exits_3() {
+    octo()
+        .args(["identity", "rotate", "--confirm", "--confirm-acknowledge"])
+        .assert()
+        .code(3);
+}
+
+/// Canonical TV-ID7: `octo identity rotate` against an HSM transport
+/// failure → `HsmUnavailable` (exit 5). The stub cannot synthesize an
+/// HSM transport failure so the adapted TV-ID7 above asserts the
+/// substrate-NotActive contract instead.
+#[test]
+#[ignore = "adapted; stub cannot synthesize Hsm transport failure; revert when HSM substrate amendment lands"]
+fn tv_id7_canonical_rotate_hsm_unavailable_exits_5() {
+    octo()
+        .args(["identity", "rotate", "--confirm", "--confirm-acknowledge"])
+        .assert()
+        .code(5);
+}

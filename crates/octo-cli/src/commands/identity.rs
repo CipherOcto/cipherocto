@@ -473,9 +473,9 @@ pub fn require_confirm(cli: &Octo, command: &str) -> Result<(), OctoCliError> {
             }
         }
         OperatorMode::Auditor => {
-            return Err(OctoCliError::ConfirmationRequired {
-                command: command.to_string(),
-            });
+            // Auditor short-circuits above (line 445-449), before the
+            // `cli.mode.dry_run` bypass. This arm is unreachable.
+            unreachable!("Auditor short-circuited above (R16 Lens-1 F2)")
         }
     }
     Ok(())

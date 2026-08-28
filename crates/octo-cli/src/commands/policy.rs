@@ -261,7 +261,7 @@ fn parse_did_hexbytes(s: &str) -> HexBytes {
     });
     // Substrate wrapper: `hmac_blake3(key, msg)` ≡
     // `blake3::keyed_hash(key, msg).into()`. Keeps Layer B invariant:
-    // any future BLAKE3 variant migration (RFC-0104 §Determinism) lands
+    // any future BLAKE3 variant migration (RFC-0104 §Deterministic Context Rules) lands
     // in one crate.
     let hash = octo_cap_macaroon::hmac_blake3(key, s.as_bytes());
     HexBytes::new(&hash)

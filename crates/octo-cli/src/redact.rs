@@ -220,23 +220,42 @@ pub fn redact_string(s: &str) -> Cow<'_, str> {
         if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(trimmed) {
             redact_json_value(&mut value);
             if let Ok(rendered) = serde_json::to_string(&value) {
-                // R17 Lens-2 F3: only short-circuit if the JSON pass
-                // actually redacted something. If no sensitive fields were
-                // found (e.g. a Bearer token lives inside a non-sensitive
-                // string value), fall through to the plain-text passes
-                // for defense-in-depth bearer/hex/kv detection.
-                if rendered.contains("<REDACTED") || rendered.contains("[REDACTED:") {
-                    let leading_ws = s.len() - s.trim_start().len();
-                    let trailing_ws = s.len() - s.trim_end().len();
-                    let mut out = String::with_capacity(
-                        s.len() + rendered.len().saturating_sub(trimmed.len()),
-                    );
-                    out.push_str(&s[..leading_ws]);
-                    out.push_str(&rendered);
-                    out.push_str(&s[s.len() - trailing_ws..]);
-                    return Cow::Owned(out);
+                // R17 Lens-2 F3 + R18 Lens-1 F1 + R18 Lens-2 F1:
+                // field-name-based JSON redaction can leave behind
+                // bearer tokens / long-hex / kv secrets inside
+                // non-sensitive string values (e.g. `{"msg":"Bearer xyz"}`).
+                // After the JSON pass, run plain-text bearer + long-hex
+                // passes on the rendered output to catch those. The
+                // kv pass is skipped — it would corrupt JSON quoting.
+                let mut scrubbed: Option<String> = None;
+                loop {
+                    let current: &str = scrubbed.as_deref().unwrap_or(&rendered);
+                    let Some((start, end)) = find_bearer_ci(current) else {
+                        break;
+                    };
+                    let mut o = current.to_string();
+                    o.replace_range(start..end, REDACTED_BEARER);
+                    scrubbed = Some(o);
                 }
-                // No redactions — fall through to plain-text passes.
+                loop {
+                    let current: &str = scrubbed.as_deref().unwrap_or(&rendered);
+                    let Some((start, end, kind)) = find_long_hex(current) else {
+                        break;
+                    };
+                    let mut o = current.to_string();
+                    o.replace_range(start..end, kind);
+                    scrubbed = Some(o);
+                }
+                let final_rendered = scrubbed.unwrap_or(rendered);
+                let leading_ws = s.len() - s.trim_start().len();
+                let trailing_ws = s.len() - s.trim_end().len();
+                let mut out = String::with_capacity(
+                    s.len() + final_rendered.len().saturating_sub(trimmed.len()),
+                );
+                out.push_str(&s[..leading_ws]);
+                out.push_str(&final_rendered);
+                out.push_str(&s[s.len() - trailing_ws..]);
+                return Cow::Owned(out);
             }
         }
     }

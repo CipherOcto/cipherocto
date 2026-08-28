@@ -16,7 +16,7 @@
 //! - `holder_record_bytes: Vec<u8>` (LAYER DISCIPLINE: bytes, not
 //!   concrete `HolderRecord`; V2 mirrors V1's deliberate
 //!   layer-clean design per `bundle.rs` module docs; the RFC-0009
-//!   v1.2 §Compatibility sketch showing concrete `HolderRecord` is
+//!   §Compatibility showing concrete `HolderRecord` is
 //!   overridden by layer direction — L4 → B-substrate forbidden).
 //! - `discharge_macaroon: DischargeMacaroon` lives in the same crate
 //!   (Layer 4 self-reference; OK).

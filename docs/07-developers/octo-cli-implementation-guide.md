@@ -562,24 +562,23 @@ fn find_128_hex(s: &str) -> Option<(usize, usize)> {
     None
 }
 
-/// Case-insensitive scan for `bearer` followed by ASCII-whitespace + token.
-/// Handles `Bearer `, `bearer\t`, `Bearer\n`, `bearer\r` — any ASCII-whitespace
-/// separator between the keyword and the token (not just a literal space).
+/// Case-insensitive scan for `bearer <token>` run.
+///
+/// `find_bearer_ci` is a substring locator (R17 sync): the helper looks
+/// for the literal `"bearer "` (lowercased, with trailing space) inside
+/// the input, then walks `end` forward over non-whitespace bytes to cover
+/// the full token. Returns `(start, end)` covering `"bearer <token>"`,
+/// NOT just `"bearer "`. Callers substitute the full range with
+/// `[REDACTED:bearer]`.
 fn find_bearer_ci(s: &str) -> Option<(usize, usize)> {
     let lower = s.to_ascii_lowercase();
-    let needle = "bearer";
-    let needle_len = needle.len();
-    let bytes = s.as_bytes();
-    lower.find(needle).and_then(|idx| {
-        let after = idx + needle_len;
-        // Require ASCII-whitespace separator after the keyword; otherwise we
-        // risk matching substrings like `bearership` or `bearerish`.
-        if after < bytes.len() && bytes[after].is_ascii_whitespace() {
-            Some((idx, after + 1)) // include the whitespace in the redaction range
-        } else {
-            None
-        }
-    })
+    let start = lower.find("bearer ")?;
+    let mut end = start + "bearer ".len();
+    let b = s.as_bytes();
+    while end < b.len() && !b[end].is_ascii_whitespace() {
+        end += 1;
+    }
+    Some((start, end))
 }
 
 pub fn redact_string(s: &str) -> std::borrow::Cow<'_, str> {

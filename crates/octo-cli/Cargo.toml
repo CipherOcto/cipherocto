@@ -41,7 +41,7 @@ thiserror = "2.0"
 # === Hex32 newtype serialization ===
 hex = "0.4"
 
-# === Deterministic digest for parse_did_hexbytes ===
+# Deterministic digest for parse_did_hexbytes (no direct blake3 dep)
 # Layer B additive — same crate as octo-cap-macaroon (RFC-0957 §Algorithms).
 # Routed through `octo_cap_macaroon::blake3_hash` + `hmac_blake3` wrappers
 # (R17 Lens-4 F1 — parallel-abstraction ban). No direct `blake3` crate dep.

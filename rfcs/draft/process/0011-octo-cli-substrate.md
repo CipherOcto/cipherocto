@@ -308,7 +308,7 @@ codes, and redaction requirements.
 | Aspect       | Value                                                                                                                                                                                                                                                      |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Args         | none                                                                                                                                                                                                                                                       |
-| Flags        | `--confirm`, `--dry-run` (no `--grace-hours` flag — substrate hard-codes 24h grace internally; not operator-configurable; see note)                                                                                                                        |
+| Flags        | `--confirm` (REQUIRED in human mode), `--confirm-acknowledge` (REQUIRED for complex-payload mutating commands per §Security 1a), `--dry-run` (no `--grace-hours` flag — substrate hard-codes 24h grace internally; not operator-configurable; see note) |
 | Output       | `IdentityRotateOutput { new_did, old_did, grace_expires_at, signature_proof: RedactedHex }`                                                                                                                                                                |
 | Substrate    | `[ADD] octo_wallet::begin_rotation(&mut IdentityKey, successor: IdentityKey, now_unix_secs: u64) -> Result<[u8;64], WalletError>` (wraps `IdentityKey::begin_rotation(&mut self, ...)`; substrate hard-codes 24h grace — no `--grace-hours` flag accepted) |
 | Exit codes   | 0, 3 (already rotating), 4 (no active identity), 5 (HSM missing), 11 (signing failed), 64                                                                                                                                                                  |
@@ -336,7 +336,7 @@ codes, and redaction requirements.
 | Args         | none                                                                                                                                                   |
 | Flags        | `--json`, `--filter <field=value>` (repeatable)                                                                                                        |
 | Output       | `CapabilityListOutput { capabilities: Vec<CapabilitySummary> }` where `CapabilitySummary { cap_id, root_id, caveats: Vec<CaveatSummary>, expires_at }` |
-| Substrate    | `[ADD] octo_cap_macaroon::list_active(filter) -> Result<Vec<CapabilitySummary>, MacaroonError>`                                                        |
+| Substrate    | `[ADD] octo_cap_macaroon::list_active(filter) -> Result<Vec<CapabilitySummary>, MacaroonError>` (v1.0 Phase-1 concession: CLI parses `--filter <field=value>` strings via `parse_filters` + `matches_filters`; follow-on `[ADD] CapabilityFilter::parse` substrate-side move collapses the CLI-side parser to a thin newtype) |
 | Exit codes   | 0, 64                                                                                                                                                  |
 | Redaction    | none (caveat names + IDs only; no holder_sig)                                                                                                          |
 | Side effects | none                                                                                                                                                   |
@@ -349,7 +349,7 @@ codes, and redaction requirements.
 | Aspect       | Value                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Args         | none                                                                                                                                                                                                                                                                                                                                                                                                  |
-| Flags        | `--caveats <json>` (REQUIRED), `--holder <did>` (REQUIRED), `--root <cap_id>` (optional; defaults to wallet root), `--dry-run`                                                                                                                                                                                                                                                                        |
+| Flags        | `--caveats <json>` (REQUIRED), `--holder <did>` (REQUIRED), `--root <cap_id>` (optional; defaults to wallet root), `--confirm` (REQUIRED in human mode), `--confirm-acknowledge` (REQUIRED for complex-payload mutating commands per §Security 1a), `--dry-run`                                                                                                                                                                                                          |
 | Output       | `CapabilityMintOutput { capability_id: Hex32, body_hash: Hex32, caveats: Vec<CaveatSummary>, holder_sig: RedactedHex }`                                                                                                                                                                                                                                                                               |
 | Substrate    | `[ADD] octo_cap_macaroon::mint(root_secret: &[u8;32], holder: &dyn CapabilitySigner, holder_did: &str, caveats: &[Caveat]) -> Result<CapabilityToken, MintError>` (thin wrapper around substrate `CapabilityToken::mint` per substrate signature; `holder` is `&dyn CapabilitySigner`, NOT the phantom `HolderKey`; `root_secret` is the 32-byte root signing secret, NOT the 16-byte root public id) |
 | Exit codes   | 0, 7 (`--caveats` parse error), 8 (invalid caveat combination per RFC-0960 catalog), 9 (`--holder` not found), 10 (attenuation violation), 5 (HSM missing), 11 (signing failed), 64                                                                                                                                                                                                                   |
@@ -375,7 +375,7 @@ codes, and redaction requirements.
 | Aspect       | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Args         | `<name>` (REQUIRED)                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| Flags        | `--version <n:u32>` (default latest), `--kind-uuid <uuid>` (filter), `--json`                                                                                                                                                                                                                                                                                                                                                                                               |
+| Flags        | `--version <n:u32>` (default latest), `--kind-uuid <32-lowercase-hex>` (filter — 32 lowercase hex chars = 16-byte UUID form; dashed UUID form NOT accepted; format violation → exit 64), `--json`                                                                                                                                                                                                                                                                       |
 | Output       | `PolicyShowOutput { name, kind_uuid, body, execution_class, registered_by_did: Hex32, registered_at_unix, revoked_at_unix?, revoked_by_did?, revocation_reason?, superseding_policy_hash? }`                                                                                                                                                                                                                                                                                |
 | Substrate    | `[ADD] octo_policy::show(name, version) -> Result<PolicyRecord, PolicyRegistryError>` (CLI-friendly wrapper returning the new `PolicyRecord` struct; `PolicyRecord` is declared as [ADD] in §Subcommand Taxonomy — substrate today exposes `PolicyRegistry::lookup_policy(policy_hash)` keyed on content hash, the `(name, version)` form is the new addition; error type is substrate's `PolicyRegistryError` per §Subcommand Taxonomy entry #14, NOT a new `PolicyError`) |
 | Exit codes   | 0, 13 (not found), 14 (no such version), 64                                                                                                                                                                                                                                                                                                                                                                                                                                 |
@@ -468,7 +468,7 @@ honors this).
 
 ### Caveat Catalog
 
-The 8 caveats from the user-facing scratchpad MUST be supported with the following
+The 9 caveats from the user-facing scratchpad MUST be supported with the following
 canonical forms (RFC-0964 envelope):
 
 | Caveat       | Canonical form                                                     | Constraint check                                                                                                                                                |
@@ -991,6 +991,23 @@ Removal timeline:
 Per RFC migration etiquette: 1 release cycle deprecation window + 1 release cycle
 hard-error window before removal.
 
+#### Stale-stub window env-var override (v1.1 hard-error opt-in)
+
+The v1.1 release turns the v1.0 deprecation banners into hard errors
+(exit code 65 `StaleStub`). Operators MAY opt into the v1.1 hard-error
+behaviour on a v1.0 binary by setting the environment variable
+`OCTO_STALE_STUB_WINDOW=1` (or `=true`, case-insensitive). The v1.1
+release compile flag (set at build time) takes precedence; the env-var
+override is the v1.0 operator escape hatch. Other values (absent,
+empty, or any other string) leave the v1.0 banner-only behaviour
+unchanged.
+
+The canonical banner prefix is `DEPRECATED:` (uppercase, with trailing
+colon). All stub command output is emitted on **stderr** (not stdout)
+so JSON consumers piping `octo ... --json` through `jq` see a clean
+parseable stdout stream. The banner MUST NOT leak to stdout under any
+configuration.
+
 ### Backward compatibility for output schemas
 
 Adding a field to `OutputEnvelope<T>` or to a subcommand's data type is a non-breaking
@@ -1012,6 +1029,7 @@ At least 30 test vectors are required (current count exceeds the floor by ~70% �
 | Error envelope      | 5     | Internal error message format, exit code mapping, clap parse error propagation, source chain rendering, no-substrate-internals leak                      |
 | Output envelope     | 5     | schema_version present, generated_at format RFC 3339 UTC, json-vs-pretty toggle, TTY detected vs not, --no-color honored                                 |
 | Redaction layer     | 5     | holder_sig stripped from log, pair_code stripped from stderr, bearer token stripped, password field stripped, seed_bytes stripped                        |
+| Stub command banner | 5     | init-banner-on-stderr, join-banner-on-stderr, role-builder-banner-on-stderr, agent-list-banner-on-stderr, status-banner-on-stderr (each asserts `DEPRECATED:` prefix on stderr + stdout cleanliness; see §Compatibility stub-banner contract) |
 
 Test vectors are specified in YAML form in the companion implementation guide
 (`docs/07-developers/octo-cli-implementation-guide.md`). The CLI integration tests
@@ -1250,8 +1268,9 @@ Per-subcommand JSON schemas are specified in the companion implementation guide
 See §Caveat Catalog in the main body. 9 caveat types supported (user-facing
 names): `budget`, `before` (expiry), `valid_after` (vesting), `max_uses`,
 `model`, `provider` (any-of provider list — not `destinations`), `audience`,
-`single_use` (canonical form `max_uses` with `count=1` — not a separate
-wire tag), `audit_window`. Canonical forms in RFC-0964 envelope.
+`single_use` (canonical form `max_uses` with `count=1` per RFC-0965 caveat
+catalog MaxUses entry — not a separate wire tag), `audit_window`. Canonical
+forms in RFC-0964 envelope.
 
 ### D. Exit Code Table
 

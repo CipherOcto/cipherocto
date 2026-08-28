@@ -135,7 +135,12 @@ pub struct CapabilitySummaryView {
     pub root_id: String,
     /// Caveat chain in attenuation order.
     pub caveats: Vec<CaveatSummaryView>,
-    /// Remaining budget, when a budget caveat is present.
+    /// Remaining budget, when a budget caveat is present. v1.0 always
+    /// `None` (per RFC-0011 §`octo capability list` reduction note:
+    /// `remaining_budget_dqa` deferred to the audit-window
+    /// sub-amendment; substrate dropped storage dependency in Phase
+    /// 2c-2). Reserved for the audit-window sub-amendment that
+    /// surfaces the substrate's per-cap budget remaining.
     pub remaining_budget: Option<u64>,
     /// Expiry timestamp (Unix epoch seconds), when an expiry caveat is present.
     pub expires_at: Option<i64>,
@@ -910,16 +915,18 @@ fn validate_cap_id(cap_id: &str) -> Result<(), OctoCliError> {
 /// Require `--confirm-acknowledge` alongside `--confirm` on mutating
 /// capability commands (the atomic pastejacking gate, mission sub-step 6).
 ///
-/// RFC-0011 §Subcommand Taxonomy lists `--confirm` as the gate for
-/// destructive commands; the CLI additionally requires
-/// `--confirm-acknowledge` per the SEC-13 pastejacking defense (a
-/// malicious shell snippet that pastes both `--confirm` and a destructive
-/// payload is foiled by requiring a second explicit acknowledgement
-/// that an operator typing cannot supply in one paste). The RFC §6.3
-/// amendment to add `--confirm-acknowledge` to the public surface is
-/// queued behind this defense's rollout; until then the flag is
-/// accepted but undocumented in `--help` (it is declared on each
-/// subcommand struct).
+/// Per RFC-0011 §Security 1a + Appendix A: when `--confirm` and a
+/// complex-payload flag (e.g. `--caveats <json>`) are passed on the
+/// SAME invocation, the CLI requires an additional `--confirm-acknowledge`
+/// flag before proceeding. This breaks the paste-then-spray class of
+/// attacks where a clipboard hijacker swaps the payload after the
+/// operator has confirmed. The clap schema enforces the dependency via
+/// `#[arg(requires = "confirm")]` on `--confirm-acknowledge`: clap
+/// rejects any invocation where `--confirm-acknowledge` is set without
+/// `--confirm` (exit 2). This dispatch-time check in `require_acknowledge`
+/// is the second layer (clap-level dependency + semantic check) so
+/// non-clap entry points (library callers, future RPC adapters) still
+/// fail closed.
 ///
 /// `--dry-run` bypasses it: a preview grants no authority.
 fn require_acknowledge(cli: &Octo, acknowledge: bool, command: &str) -> Result<(), OctoCliError> {

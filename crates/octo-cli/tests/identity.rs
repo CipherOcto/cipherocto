@@ -448,7 +448,7 @@ fn clap_identity_revoke_help_parses() {
 // ---------------------------------------------------------------------------
 
 /// Canonical TV-ID5: `octo identity revoke` against a `Revoked` identity
-/// → `AlreadyRevoked` (exit 6) per RFC-0011 §Exit Code table. The
+/// → `AlreadyRevoked` (exit 6) per RFC-0011 §Exit Codes. The
 /// stub cannot synthesize `Revoked` so the adapted TV-ID5 above asserts
 /// the CLI-shape contract (NoActiveIdentity) instead.
 #[test]

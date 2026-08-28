@@ -408,26 +408,26 @@ fn tv_cap8c_unknown_caveat_tag_exits_7() {
 }
 
 // ---------------------------------------------------------------------------
-// Canonical-but-blocked fixture (TV-CAP1 happy path).
+// Canonical-but-blocked fixture (TV-CAP2 happy path).
 //
 // The adapted tests above (TV-CAP6 mint signing-failed, TV-CAP6 mint
 // root-secret-blocked) assert the CLI-shape contract against the
 // substrate stub. The canonical happy-path mint (exit 0 with
-// `MintOutput` envelope) depends on HSM signing + a wired root secret
-// that the stub cannot synthesize; this fixture pins what the canonical
-// assertions WILL assert when the substrate amendment lands so the
-// unignore moment is visible.
+// `CapabilityMintOutput` envelope) depends on HSM signing + a wired
+// root secret that the stub cannot synthesize; this fixture pins what
+// the canonical assertions WILL assert when the substrate amendment
+// lands so the unignore moment is visible.
 // ---------------------------------------------------------------------------
 
-/// Canonical TV-CAP1: `octo capability mint` against a wired HSM + root
-/// secret → exit 0 with a `MintOutput` envelope
+/// Canonical TV-CAP2: `octo capability mint` against a wired HSM + root
+/// secret → exit 0 with a `CapabilityMintOutput` envelope
 /// (`{capability_id, body_hash, caveats[], holder_sig}`) per RFC-0011
 /// §Subcommand Taxonomy. The stub wallet + InMemorySigner cannot
 /// synthesize this path so the adapted TV-CAP6 above asserts the
 /// substrate-stub contract instead.
 #[test]
 #[ignore = "adapted; stub cannot synthesize HSM signing + root secret; revert when wallet + HSM substrate amendments land"]
-fn tv_cap1_canonical_mint_success_exits_0() {
+fn tv_cap2_canonical_mint_success_exits_0() {
     octo()
         .args([
             "--json",

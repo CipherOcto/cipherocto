@@ -340,12 +340,15 @@ pub fn dispatch(action: &PolicyAction, cli: &Octo) -> Result<(), OctoCliError> {
 ///   rather than a deliberate "match nothing" choice. Surfacing as
 ///   `Internal` (not `InvalidFilter`) keeps the exit-code table stable
 ///   for `--filter` consumers that grep for `InvalidFilter` (exit 16).
-/// - Operator input that is not lowercase 32-byte hex → `Internal`
-///   (exit 64): the kind_uuid format is substrate-fixed; an arbitrary
-///   string cannot reach a matching record even if it were equal by
-///   accident, so we reject early before the mismatch diagnostic
-///   reveals the operator's exact string back to them.
-/// - Case-insensitive hex match against `record_kind_hex` → `Ok`.
+/// - Operator input that is not 32-char lowercase hex (16-byte UUID
+///   form) → `Internal` (exit 64): the kind_uuid format is
+///   substrate-fixed; an arbitrary string cannot reach a matching
+///   record even if it were equal by accident, so we reject early at
+///   the strict-lowercase hex gate. Strict-lowercase (no uppercase) is
+///   a pastejacking-defense choice — a malicious shell snippet that
+///   rewrites the kind to uppercase cannot match a substrate record
+///   whose kind is lowercase.
+/// - Lowercase 32-char hex match against `record_kind_hex` → `Ok`.
 /// - Any other input → `Internal` with sanitized mismatch diagnostic.
 pub fn validate_kind_uuid(
     operator: Option<&str>,
@@ -364,7 +367,7 @@ pub fn validate_kind_uuid(
             "--kind-uuid must be 32 lowercase hex chars (16 bytes)",
         )));
     }
-    if op.eq_ignore_ascii_case(record_kind_hex) {
+    if op == record_kind_hex {
         Ok(())
     } else {
         Err(OctoCliError::Internal(sanitize_substrate_error(&format!(
@@ -375,7 +378,7 @@ pub fn validate_kind_uuid(
 }
 
 /// Lowercase 16-byte hex gate for `--kind-uuid` (UUID form). The
-/// substrate `kind_uuid` field is `[u8;16]` (RFC-0964 §Policy Reference)
+/// substrate `kind_uuid` field is `[u8;16]` (RFC-0967 §Policy Registry)
 /// so the operator-facing hex form is 32 lowercase hex chars. Mixed-case
 /// or non-hex operator input is rejected before the mismatch diagnostic
 /// so the operator's exact string is not echoed back through the error
@@ -607,12 +610,20 @@ mod tests {
         let r = validate_kind_uuid(Some(""), &record_kind_hex);
         assert!(matches!(r, Err(OctoCliError::Internal(_))));
 
-        // Wrong operator input — rejected.
+        // Short operator input — rejected at the format gate.
         let r = validate_kind_uuid(Some("00"), &record_kind_hex);
         assert!(matches!(r, Err(OctoCliError::Internal(_))));
 
         // Non-hex operator input — rejected at the format gate.
         let r = validate_kind_uuid(Some(&"z".repeat(64)), &record_kind_hex);
+        assert!(matches!(r, Err(OctoCliError::Internal(_))));
+
+        // Well-formed but non-matching operator input — exercises the
+        // load-bearing mismatch diagnostic path (the only test that
+        // reaches it). 32 lowercase hex chars but not equal to
+        // `record_kind_hex` so the format gate passes and the
+        // mismatch-diagnostic arm fires.
+        let r = validate_kind_uuid(Some(&"0".repeat(32)), &record_kind_hex);
         assert!(matches!(r, Err(OctoCliError::Internal(_))));
 
         // Uppercase hex operator input — rejected at the format gate

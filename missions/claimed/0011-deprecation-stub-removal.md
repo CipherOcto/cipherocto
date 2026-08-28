@@ -14,17 +14,14 @@ metadata:
     - mission 0011-capability-commands
     - mission 0011-policy-commands
   release_gate:
-    require: '1 release cycle elapsed after v1.1 hard-error (StaleStub, exit 65)'
+    require: "1 release cycle elapsed after v1.1 hard-error (StaleStub, exit 65)"
     released_version: TBD
-status: Claimed
-claimed_by: mmacedoeu
-claimed_at: 2026-08-28
-spec_cycle_dry_closed: 2026-08-28
+status: Open
 ---
 
 # 0011-deprecation-stub-removal — Drop stub commands (init, join, role, agent, status)
 
-**Status:** Claimed 2026-08-28 (@mmacedoeu). RFC-0011 spec cycle DRY-closed 2026-08-28 (5-round loop-until-DRY closure). Implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]].
+**Status:** Open — release-gated on the v1.1 hard-error (`StaleStub`, exit 65) cycle elapsed before v2.0 stub removal. Per SPEC-10, this mission's status was reverted from an earlier Claimed marker because the substrate amendment that lands the hard-error behaviour has not shipped yet. Implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]] once the gate clears per RFC-0011 §Compatibility.
 **Substrate:** RFC-0011 §Compatibility (stub deprecation timeline)
 **Parent:** RFC-0011
 **Depends on:**
@@ -37,15 +34,15 @@ spec_cycle_dry_closed: 2026-08-28
   window + 1 release hard-error window before removal — applies to the
   initial deprecation cycle of this RFC, with forward amendments each
   following the same etiquette per Status header amendment chain)
-**Blocks:** none
+  **Blocks:** none
 
 ## Status
 
-Open (RFC-0011 acceptance pending)
+Open — release-gated on the v1.1 hard-error (`StaleStub`, exit 65) cycle elapsed before v2.0 stub removal. SPEC-10 reverts this mission's status from the earlier Claimed marker because the substrate amendment that lands the hard-error behaviour has not shipped yet; no implementation work is permitted until the gate clears per RFC-0011 §Compatibility.
 
 ## RFC
 
-RFC-0011 (canonical Draft — see rfcs/draft/process/0011-octo-cli-substrate.md §Compatibility)
+RFC-0011 (see rfcs/draft/process/0011-octo-cli-substrate.md §Compatibility)
 
 ## Dependencies
 
@@ -67,10 +64,10 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: mission 1 → 2 
 
 ### Type Coverage
 
-| RFC-0011 type | Sub-step | Notes |
-|---|---|---|
-| 5 stub commands (`init`, `join`, `role`, `agent`, `status`) | Sub-step 2 (code removal) | Layer C/D; pure deletion from clap derive struct |
-| `StaleStub` exit 65 path | Sub-step 1 (pre-removal gate) | Layer C/D; verifies v1.1 hard-error cycle elapsed before v2.0 removal |
+| RFC-0011 type                                               | Sub-step                      | Notes                                                                 |
+| ----------------------------------------------------------- | ----------------------------- | --------------------------------------------------------------------- |
+| 5 stub commands (`init`, `join`, `role`, `agent`, `status`) | Sub-step 2 (code removal)     | Layer C/D; pure deletion from clap derive struct                      |
+| `StaleStub` exit 65 path                                    | Sub-step 1 (pre-removal gate) | Layer C/D; verifies v1.1 hard-error cycle elapsed before v2.0 removal |
 
 ### Implementation Guide
 
@@ -82,7 +79,7 @@ See `docs/07-developers/octo-cli-implementation-guide.md` §Stub Deprecation for
 
 ## Risk
 
-- Removing stubs before forward amendment lands breaks operator workflow (`octo init`, `octo role`, `octo agent`, `octo join`, `octo status`). Mitigation: gate on RFC-0011 acceptance + 1 release cycle hard-error cycle (per RFC migration etiquette §Stub Deprecation Timeline v1.0/v1.1/v2.0).
+- Removing stubs before forward amendment lands breaks operator workflow (`octo init`, `octo role`, `octo agent`, `octo join`, `octo status`). Mitigation: gate on RFC-0011 acceptance + 1 release cycle hard-error cycle (per RFC-0011 §Compatibility — Stub command compatibility).
 - Forward amendments (audit/reputation/agent-lifecycle/role-provisioning/vault-operations/mesh-operations/governance) may not land in the same release cycle as stub removal. Mitigation: each stub's replacement surface is independent; operators can keep using deprecated stubs until replacement amendment ships.
 
 ## Notes
@@ -201,8 +198,7 @@ Per CLAUDE.md + RFC migration etiquette:
 3. v2.0 ships → removal
 
 Per RFC migration etiquette, v1.0 → v1.1 → v2.0 is a hard sequencing; no
-skip is permitted. The v1.1 hard-error cycle MUST elapse (`StaleStub`, exit
-65) before this mission lands. RFC §Compatibility is the authoritative
+skip is permitted. The v1.1 hard-error cycle MUST elapse (`StaleStub`, exit 65) before this mission lands. RFC §Compatibility is the authoritative
 timeline; this mission implements §Compatibility's v1.1 → v2.0 progression.
 
 ## Claimant

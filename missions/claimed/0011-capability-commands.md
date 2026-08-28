@@ -30,15 +30,15 @@ spec_cycle_dry_closed: 2026-08-28
 
 - Mission `0011-core-output-envelope-redaction` — substrate (`OutputEnvelope<T>` + `OctoCliError` + clap root)
 - Mission `0011-identity-commands` — `active_signer()` is exposed by `WalletStore` extensions from identity mission; `holder` parameter on `mint`/`attenuate` depends on identity substrate amendments
-**Blocks:** `0011-deprecation-stub-removal` (final integration)
+  **Blocks:** `0011-deprecation-stub-removal` (final integration)
 
 ## Status
 
-Open (RFC-0011 acceptance pending)
+Claimed 2026-08-28 (mmacedoeu) — spec cycle DRY-closed 2026-08-28
 
 ## RFC
 
-RFC-0011 (canonical Draft — see rfcs/draft/process/0011-octo-cli-substrate.md §Subcommand Taxonomy)
+RFC-0011 (see rfcs/draft/process/0011-octo-cli-substrate.md §Subcommand Taxonomy)
 
 ## Dependencies
 
@@ -62,12 +62,12 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: mission 1 → 2 
 
 ### Type Coverage
 
-| RFC-0011 type | Sub-step | Notes |
-|---|---|---|
-| `CapabilitySummary` | Sub-step 1 (output types) | Layer B; substrate `[ADD]` struct in octo-cap-macaroon per RFC-0011 §Subcommand Taxonomy entry #8 (`cap_id`, `root_id`, `caveats`, `expires_at`) |
-| `CapabilityMintOutput` | Sub-step 1 (output types) | Layer C/D; `holder_sig` rendered via `RedactedHex` |
-| `CapabilityAttenuateOutput` | Sub-step 1 (output types) | Layer C/D; `narrowed_from` records parent cap_id |
-| `CaveatSummary` | Sub-step 1 (output types) | Layer B; new `[ADD]` struct in octo-cap-macaroon per RFC-0011 §Subcommand Taxonomy entry #9 (`caveat_type: String`, `constraint_json: serde_json::Value`) |
+| RFC-0011 type               | Sub-step                  | Notes                                                                                                                                                     |
+| --------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CapabilitySummary`         | Sub-step 1 (output types) | Layer B; substrate `[ADD]` struct in octo-cap-macaroon per RFC-0011 §Subcommand Taxonomy entry #8 (`cap_id`, `root_id`, `caveats`, `expires_at`)          |
+| `CapabilityMintOutput`      | Sub-step 1 (output types) | Layer C/D; `holder_sig` rendered via `RedactedHex`                                                                                                        |
+| `CapabilityAttenuateOutput` | Sub-step 1 (output types) | Layer C/D; `narrowed_from` records parent cap_id                                                                                                          |
+| `CaveatSummary`             | Sub-step 1 (output types) | Layer B; new `[ADD]` struct in octo-cap-macaroon per RFC-0011 §Subcommand Taxonomy entry #9 (`caveat_type: String`, `constraint_json: serde_json::Value`) |
 
 ### Implementation Guide
 
@@ -190,23 +190,21 @@ caveats: Vec<CaveatSummary> }`. Exit 0 / 7 / 10 (widens parent — rejected OR
    `0011-core-output-envelope-redaction` sub-step 1 as a new
    `thiserror` variant). In human mode (`OCTO_HUMAN_MODE=true`), invoking
    either command without both `--confirm` and `--confirm-acknowledge` returns
-   `ConfirmationRequired` immediately. Reused, not redefined. Shared TV
-   `tv_cap19_confirm_required` shares the gate pattern as IDEN's
-   `tv_id3_confirm_required`.
+   `ConfirmationRequired` immediately. Reused, not redefined.
 
 ### Caveat catalog consumed (8 caveat variants per RFC-0964)
 
-| Caveat       | Canonical form                                                                       | CLI flag pattern                          |
-| ------------ | ------------------------------------------------------------------------------------ | ----------------------------------------- |
-| Budget       | `{ "type": "amount_max", "value": "<16-byte-DqaEncoding-hex>" }`                    | `--caveats '{"type":"amount_max","value":"<hex>"}'` |
-| Expiry       | `{ "type": "before", "value": <u64> }`                                               | `--caveats '{"type":"before","value":<u64>}'`        |
-| Vesting      | `{ "type": "valid_after", "value": { "not_before_unix": <u64> } }`                   | `--caveats '{"type":"valid_after","value":{...}}'`   |
-| Max uses     | `{ "type": "max_uses", "value": { "count": <u32> } }`                                | `--caveats '{"type":"max_uses","value":{...}}'`      |
-| Model        | `{ "type": "model", "value": "<model_ref>" }`                                        | `--caveats '{"type":"model","value":"..."}'`         |
-| Provider     | `{ "type": "provider", "value": [<ProviderId>, ...] }`                              | `--caveats '{"type":"provider","value":[...]}'`      |
-| Audience     | `{ "type": "audience", "value": "<OverlayIdentity>" }`                               | `--caveats '{"type":"audience","value":"..."}'`      |
-| Single use   | `{ "type": "max_uses", "value": { "count": 1 } }`                                    | `--caveats '{"type":"max_uses","value":{"count":1}}'` |
-| Audit window | `{ "type": "audit_window", "value": { "duration_secs": <u64> } }`                    | `--caveats '{"type":"audit_window","value":{...}}'`  |
+| Caveat       | Canonical form                                                     | CLI flag pattern                                      |
+| ------------ | ------------------------------------------------------------------ | ----------------------------------------------------- |
+| Budget       | `{ "type": "amount_max", "value": "<16-byte-DqaEncoding-hex>" }`   | `--caveats '{"type":"amount_max","value":"<hex>"}'`   |
+| Expiry       | `{ "type": "before", "value": <u64> }`                             | `--caveats '{"type":"before","value":<u64>}'`         |
+| Vesting      | `{ "type": "valid_after", "value": { "not_before_unix": <u64> } }` | `--caveats '{"type":"valid_after","value":{...}}'`    |
+| Max uses     | `{ "type": "max_uses", "value": { "count": <u32> } }`              | `--caveats '{"type":"max_uses","value":{...}}'`       |
+| Model        | `{ "type": "model", "value": "<model_ref>" }`                      | `--caveats '{"type":"model","value":"..."}'`          |
+| Provider     | `{ "type": "provider", "value": [<ProviderId>, ...] }`             | `--caveats '{"type":"provider","value":[...]}'`       |
+| Audience     | `{ "type": "audience", "value": "<OverlayIdentity>" }`             | `--caveats '{"type":"audience","value":"..."}'`       |
+| Single use   | `{ "type": "max_uses", "value": { "count": 1 } }`                  | `--caveats '{"type":"max_uses","value":{"count":1}}'` |
+| Audit window | `{ "type": "audit_window", "value": { "duration_secs": <u64> } }`  | `--caveats '{"type":"audit_window","value":{...}}'`   |
 
 > **Substrate variant alignment (per R1 amendment notes):** the CLI caveat types map to substrate
 > `Caveat` enum variants as follows, with serde tags per
@@ -253,7 +251,7 @@ caveats: Vec<CaveatSummary> }`. Exit 0 / 7 / 10 (widens parent — rejected OR
 
 ## Test Vectors (per RFC-0011 §Test Vectors — capability group)
 
-19 new TV (TV-CAP1..TV-CAP19; tv_cap19_confirm_required is TV-CAP19, mirrors identity's tv_id3_confirm_required):
+19 new TV (TV-CAP1..TV-CAP19; tv_cap19_confirm_required is TV-CAP19):
 
 - `tv_cap1_list_empty` — wallet has 0 active capabilities; `octo capability
 list` → exit 0; stdout `"capabilities":[]`
@@ -289,8 +287,7 @@ cap_id:01ab.. --caveats '{...}' --confirm --confirm-acknowledge` → exit 12;
 "amount_dqa":1000,"scale":6,"currency":"octo-w"}' --holder did:octo:test` (no
   `--confirm --confirm-acknowledge`, `OCTO_HUMAN_MODE=true`) → exit 2
   (POSIX usage-error); stderr `ConfirmationRequired: --confirm required for
-mutating command capability mint in human mode`. Shared with IDEN
-  `tv_id3_confirm_required`.
+mutating command capability mint in human mode`.
 
 ### Cargo deps added
 
@@ -306,8 +303,8 @@ None new. All deps added by mission `0011-core-output-envelope-redaction`.
   RFC-0011 §Subcommand Taxonomy entries #7, #10, #11, #12); also adds
   `CapabilitySummary` + `CaveatSummary` + `CapabilityFilter` types as
   `[ADD]` declarations (entries #8, #9). The `caveat::validate_canonical_form`
-  + `CatalogError` form (entry #13) is a future amendment; CLI uses
-  `Caveat::canonical_ser` until that lands.
+  - `CatalogError` form (entry #13) is a future amendment; CLI uses
+    `Caveat::canonical_ser` until that lands.
 
 ## Validation
 

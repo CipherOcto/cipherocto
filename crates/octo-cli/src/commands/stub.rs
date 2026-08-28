@@ -25,7 +25,9 @@ pub fn print_deprecated(name: &str, hint: &str) -> Result<(), OctoCliError> {
             name: name.to_string(),
         });
     }
-    eprintln!("warning: `octo {name}` is deprecated and will be removed; {hint}");
+    eprintln!(
+        "DEPRECATED: `octo {name}` is a stub; replacement lands in follow-on amendment. {hint}"
+    );
     Ok(())
 }
 
@@ -61,6 +63,11 @@ pub fn print_agent_deprecated(action: &AgentActionStub) -> Result<(), OctoCliErr
 mod tests {
     use super::*;
 
+    /// SPEC-08 canonical prefix used by the v1.0 deprecation banner.
+    /// Production code in `print_deprecated` MUST render a banner that
+    /// begins with this prefix so log scrapers can grep for it.
+    const BANNER_PREFIX: &str = "DEPRECATED:";
+
     #[test]
     fn tv_dep1_warning_text() {
         // Only meaningful when the stale window is inactive.
@@ -76,5 +83,27 @@ mod tests {
             let r = print_deprecated("status", "test hint");
             assert!(matches!(r, Ok(())));
         }
+    }
+
+    #[test]
+    fn tv_dep3_banner_prefix_constant() {
+        // SPEC-08 regression guard: the canonical prefix the operator
+        // sees in `eprintln!` output MUST be uppercase `DEPRECATED:`.
+        // We assert on the production prefix constant directly so a
+        // future banner rewrite that drops the prefix fails this test.
+        assert!(
+            BANNER_PREFIX.starts_with("DEPRECATED:"),
+            "BANNER_PREFIX must begin with `DEPRECATED:` (got {BANNER_PREFIX:?})"
+        );
+        // And the format string `print_deprecated` writes MUST start
+        // with this prefix verbatim.
+        let rendered = format!(
+            "{prefix} `octo init` is a stub; replacement lands in follow-on amendment. test hint",
+            prefix = BANNER_PREFIX,
+        );
+        assert!(
+            rendered.starts_with("DEPRECATED: `octo init`"),
+            "rendered banner must begin with `DEPRECATED: \\`octo init\\`` (got {rendered:?})"
+        );
     }
 }

@@ -31,15 +31,15 @@ spec_cycle_dry_closed: 2026-08-28
 - RFC-0957 (Macaroon substrate — for `CapabilityToken` consumed by capability commands)
 - RFC-0964 (Caveat Envelope — canonical caveat JSON shape)
 - RFC-0008 (Execution Class — operator class mapping for CLI commands)
-**Blocks:** `0011-identity-commands`, `0011-capability-commands`, `0011-policy-commands`
+  **Blocks:** `0011-identity-commands`, `0011-capability-commands`, `0011-policy-commands`
 
 ## Status
 
-Open (RFC-0011 acceptance pending)
+Claimed 2026-08-28 (mmacedoeu) — spec cycle DRY-closed 2026-08-28
 
 ## RFC
 
-RFC-0011 (canonical Draft — see rfcs/draft/process/0011-octo-cli-substrate.md §Binary Surface)
+RFC-0011 (see rfcs/draft/process/0011-octo-cli-substrate.md §Binary Surface)
 
 ## Dependencies
 
@@ -60,12 +60,12 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: mission 1 → 2 
 
 ### Type Coverage
 
-| RFC-0011 type | Sub-step | Notes |
-|---|---|---|
+| RFC-0011 type       | Sub-step   | Notes                                                                                             |
+| ------------------- | ---------- | ------------------------------------------------------------------------------------------------- |
 | `OutputEnvelope<T>` | Sub-step 1 | Layer C/D; carries `schema_version: u32 = 2`, `generated_at`, `data`, `exit_code`, `preview_only` |
-| `OctoCliError` | Sub-step 2 | Layer C/D; 19-variant `thiserror` enum; exit code per variant |
-| `OctoCliRedactor` | Sub-step 3 | Layer C/D; `tracing_subscriber::Layer` impl + `redact_string` helper + field-name redaction table |
-| Clap root struct | Sub-step 4 | Layer C/D; `Octo { output, mode, command }` per RFC-0011 §Binary Surface |
+| `OctoCliError`      | Sub-step 2 | Layer C/D; 19-variant `thiserror` enum; exit code per variant                                     |
+| `OctoCliRedactor`   | Sub-step 3 | Layer C/D; `tracing_subscriber::Layer` impl + `redact_string` helper + field-name redaction table |
+| Clap root struct    | Sub-step 4 | Layer C/D; `Octo { output, mode, command }` per RFC-0011 §Binary Surface                          |
 
 ### Sub-steps
 
@@ -101,7 +101,7 @@ builds on:
    - `--json` flag forces JSON output (overrides TTY detection) per RFC §Output Envelope
    - `OCTO_FORCE_JSON` environment variable forces JSON output regardless of TTY
      detection (for scripted environments that cannot pass `--json`)
-   `--no-color` disables ANSI.
+     `--no-color` disables ANSI.
 
 2. **`OctoCliError`** — `crates/octo-cli/src/error.rs` per RFC-0011 §Error Handling.
    19-variant `thiserror` enum (matches impl-guide OctoCliError enum; full list at

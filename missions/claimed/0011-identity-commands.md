@@ -25,15 +25,15 @@ spec_cycle_dry_closed: 2026-08-28
 **Depends on:**
 
 - Mission `0011-core-output-envelope-redaction` — provides `OutputEnvelope<T>` + `OctoCliError` + clap root
-**Blocks:** `0011-deprecation-stub-removal` (final integration)
+  **Blocks:** `0011-deprecation-stub-removal` (final integration)
 
 ## Status
 
-Open (RFC-0011 acceptance pending)
+Claimed 2026-08-28 (mmacedoeu) — spec cycle DRY-closed 2026-08-28
 
 ## RFC
 
-RFC-0011 (canonical Draft — see rfcs/draft/process/0011-octo-cli-substrate.md §Subcommand Taxonomy)
+RFC-0011 (see rfcs/draft/process/0011-octo-cli-substrate.md §Subcommand Taxonomy)
 
 ## Dependencies
 
@@ -55,13 +55,13 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: mission 1 → 2 
 
 ### Type Coverage
 
-| RFC-0011 type | Sub-step | Notes |
-|---|---|---|
-| `WhoamiOutput` | Sub-step 1 (output types) | Layer C/D; wraps `IdentityKey` + `IdentityRecord` |
-| `IdentityShowOutput` | Sub-step 1 (output types) | Layer C/D; includes `IdentityRotationEvent` history |
-| `IdentityRotateOutput` | Sub-step 1 (output types) | Layer C/D; `signature_proof` field uses `RedactedHex` |
-| `IdentityRevokeOutput` | Sub-step 1 (output types) | Layer C/D; `terminal: true` flag |
-| `Did` newtype | Sub-step 2 (identity show) | Layer B; canonical DID type per RFC-0010 alignment |
+| RFC-0011 type          | Sub-step                   | Notes                                                 |
+| ---------------------- | -------------------------- | ----------------------------------------------------- |
+| `WhoamiOutput`         | Sub-step 1 (output types)  | Layer C/D; wraps `IdentityKey` + `IdentityRecord`     |
+| `IdentityShowOutput`   | Sub-step 1 (output types)  | Layer C/D; includes `IdentityRotationEvent` history   |
+| `IdentityRotateOutput` | Sub-step 1 (output types)  | Layer C/D; `signature_proof` field uses `RedactedHex` |
+| `IdentityRevokeOutput` | Sub-step 1 (output types)  | Layer C/D; `terminal: true` flag                      |
+| `Did` newtype          | Sub-step 2 (identity show) | Layer B; canonical DID type per RFC-0010 alignment    |
 
 ### Implementation Guide
 
@@ -122,8 +122,8 @@ rotation_history: Vec<IdentityRotationEvent>, hsm_slot }` —
    header amendment chain — governance). The `Did` type itself is
    also a `[ADD]` declaration (canonical DID type per RFC-0010 alignment;
    see RFC-0011 §Subcommand Taxonomy entry #2: `pub struct Did(pub String)`
-   + `IdentityKey::did(&self) -> Did`).
-   Exit 0 on success; exit 4 on `IdentityNotFound`. No side effects.
+   - `IdentityKey::did(&self) -> Did`).
+     Exit 0 on success; exit 4 on `IdentityNotFound`. No side effects.
 
 3. **`octo identity rotate`** — `commands/identity.rs::rotate`. Flags:
    `--confirm`, `--confirm-acknowledge` (atomic pastejacking gate per RFC-0011
@@ -233,7 +233,7 @@ identity revoke --confirm --confirm-acknowledge --reason test` → exit 6;
   per RFC-0011 §Subcommand Taxonomy. The previously-claimed
   `LifecycleState::stable_label()` + `impl Display for LifecycleState` are
   NOT substrate additions — substrate already has `impl fmt::Debug for
-  LifecycleState` returning the stable strings (in `octo-wallet::lifecycle`,
+LifecycleState` returning the stable strings (in `octo-wallet::lifecycle`,
   and the CLI uses that as substrate-truth.
 
 ## Validation

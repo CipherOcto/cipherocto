@@ -26,15 +26,15 @@ spec_cycle_dry_closed: 2026-08-28
 **Depends on:**
 
 - Mission `0011-core-output-envelope-redaction` — substrate
-**Blocks:** `0011-deprecation-stub-removal` (final integration)
+  **Blocks:** `0011-deprecation-stub-removal` (final integration)
 
 ## Status
 
-Open (RFC-0011 acceptance pending)
+Claimed 2026-08-28 (mmacedoeu) — spec cycle DRY-closed 2026-08-28
 
 ## RFC
 
-RFC-0011 (canonical Draft — see rfcs/draft/process/0011-octo-cli-substrate.md §Subcommand Taxonomy)
+RFC-0011 (see rfcs/draft/process/0011-octo-cli-substrate.md §Subcommand Taxonomy)
 
 ## Dependencies
 
@@ -55,14 +55,14 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: mission 1 → 2 
 
 ### Type Coverage
 
-| RFC-0011 type | Sub-step | Notes |
-|---|---|---|
-| `PolicyRecord` | Sub-step 1 (output types) | Layer B; `[ADD]` struct in octo-policy substrate, field-aligned to `RegisteredPolicy` per R1 substrate alignment review |
-| `PolicyListEntry` | Sub-step 1 (output types) | Layer B; substrate return type for `list()` |
-| `PolicyFilter` | Sub-step 4 (filter parsing) | Layer B; `[ADD]` struct parsed CLI-side |
-| `NameHashIndex` | Sub-step 3 (version resolution) | Layer B; `[ADD]` extension to octo-policy substrate |
-| `PolicyShowOutput` | Sub-step 1 (output types) | Layer C/D; CLI-output wrapper around `PolicyRecord` |
-| `PolicyListOutput` | Sub-step 1 (output types) | Layer C/D; CLI-output wrapper around `Vec<PolicySummary>` |
+| RFC-0011 type      | Sub-step                        | Notes                                                                                                                   |
+| ------------------ | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `PolicyRecord`     | Sub-step 1 (output types)       | Layer B; `[ADD]` struct in octo-policy substrate, field-aligned to `RegisteredPolicy` per R1 substrate alignment review |
+| `PolicyListEntry`  | Sub-step 1 (output types)       | Layer B; substrate return type for `list()`                                                                             |
+| `PolicyFilter`     | Sub-step 4 (filter parsing)     | Layer B; `[ADD]` struct parsed CLI-side                                                                                 |
+| `NameHashIndex`    | Sub-step 3 (version resolution) | Layer B; `[ADD]` extension to octo-policy substrate                                                                     |
+| `PolicyShowOutput` | Sub-step 1 (output types)       | Layer C/D; CLI-output wrapper around `PolicyRecord`                                                                     |
+| `PolicyListOutput` | Sub-step 1 (output types)       | Layer C/D; CLI-output wrapper around `Vec<PolicySummary>`                                                               |
 
 ### Implementation Guide
 
@@ -89,8 +89,8 @@ Land 2 policy subcommands per RFC-0011 §Subcommand Taxonomy:
    is a new `[ADD]` struct in octo-policy Layer B field-aligned to substrate
    `RegisteredPolicy` per R1 substrate alignment review). Output:
    `PolicyShowOutput { name, kind_uuid, body, execution_class,
-   registered_by_did: Hex32, registered_at_unix, revoked_at_unix?,
-   revoked_by_did?, revocation_reason?, superseding_policy_hash? }`. Exit 0
+registered_by_did: Hex32, registered_at_unix, revoked_at_unix?,
+revoked_by_did?, revocation_reason?, superseding_policy_hash? }`. Exit 0
    / 13 (not found) / 14 (no such version) / 64. Read-only. (`signer_set: Vec<Did>`
    from R0 was reduced to a single `registered_by_did: Hex32` for v1.0;
    multi-signer governance sets defer to the governance amendment per Status
@@ -169,17 +169,17 @@ mission text was substrate-truth drift — substrate uses
 `AuthorityDelegationDenied` for empty-intersection-class failures). CLI maps
 the substrate variants directly:
 
-| Substrate `PolicyRegistryError`        | CLI `OctoCliError`                          | Exit | Sanitization          |
-| -------------------------------------- | ------------------------------------------- | ---- | --------------------- |
-| `NotFound(name)` (no policy by name)   | `PolicyNotFound(name)`                      | 13   | none (name is opaque) |
-| `NotFound(name)` (version mismatch)    | `PolicyVersionNotFound { policy: name, version }` | 14 | none                  |
-| `HashMismatch { .. }`                  | `Internal(sanitize_substrate_error(...))`   | 64   | sanitizer applied     |
-| `InvalidClassBProof`                   | `Internal(sanitize_substrate_error(...))`   | 64   | sanitizer applied     |
-| `AlreadyRegistered(..)`                | `Internal(sanitize_substrate_error(...))`   | 64   | sanitizer applied     |
-| `NotRegistrant(..)`                    | `Internal(sanitize_substrate_error(...))`   | 64   | sanitizer applied     |
-| `AlreadyRevoked { .. }`                | `Internal(sanitize_substrate_error(...))`   | 64   | sanitizer applied     |
-| `AuthorityDelegationDenied(..)`        | `Internal(sanitize_substrate_error(...))`   | 64   | sanitizer applied     |
-| (CLI-side filter parse failure)        | `InvalidFilter(s)` (CLI-side, exit 16)      | 16   | none (operator-owned) |
+| Substrate `PolicyRegistryError`      | CLI `OctoCliError`                                | Exit | Sanitization          |
+| ------------------------------------ | ------------------------------------------------- | ---- | --------------------- |
+| `NotFound(name)` (no policy by name) | `PolicyNotFound(name)`                            | 13   | none (name is opaque) |
+| `NotFound(name)` (version mismatch)  | `PolicyVersionNotFound { policy: name, version }` | 14   | none                  |
+| `HashMismatch { .. }`                | `Internal(sanitize_substrate_error(...))`         | 64   | sanitizer applied     |
+| `InvalidClassBProof`                 | `Internal(sanitize_substrate_error(...))`         | 64   | sanitizer applied     |
+| `AlreadyRegistered(..)`              | `Internal(sanitize_substrate_error(...))`         | 64   | sanitizer applied     |
+| `NotRegistrant(..)`                  | `Internal(sanitize_substrate_error(...))`         | 64   | sanitizer applied     |
+| `AlreadyRevoked { .. }`              | `Internal(sanitize_substrate_error(...))`         | 64   | sanitizer applied     |
+| `AuthorityDelegationDenied(..)`      | `Internal(sanitize_substrate_error(...))`         | 64   | sanitizer applied     |
+| (CLI-side filter parse failure)      | `InvalidFilter(s)` (CLI-side, exit 16)            | 16   | none (operator-owned) |
 
 ## Test Vectors (per RFC-0011 §Test Vectors — policy group)
 

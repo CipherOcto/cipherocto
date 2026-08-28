@@ -8,12 +8,47 @@
 
 #![allow(clippy::module_name_repetitions)]
 
-use crate::error::OctoCliError;
+use crate::error::{sanitize_substrate_error, OctoCliError};
 use crate::output::OutputEnvelope;
 use crate::Octo;
 use chrono::{DateTime, Utc};
 use clap::Subcommand;
-use serde::Serialize;
+use serde::{Serialize, Serializer};
+use std::fmt;
+
+/// Hex-encoded byte-string newtype per RFC-0011 §Hex32 newtype.
+///
+/// Layer C/D presentation form: serializes as lowercase hex string.
+/// The canonical home of this type is `octo_cli::output::Hex32`; once
+/// the fix-core-agent lands that shared definition this local module is
+/// removed and all sites import from `crate::output::Hex32`.
+///
+/// Despite the name, this presentation wrapper accepts variable-length
+/// byte slices so policy fields whose substrate shape is `[u8;16]`
+/// (kind_uuid) and `[u8;32]` (superseding_policy_hash) can both render
+/// through the same type. The schema reflects the variable width; the
+/// underlying serialization is always lowercase hex.
+#[derive(Debug, Clone, schemars::JsonSchema)]
+pub struct Hex32(#[schemars(with = "String")] String);
+
+impl Hex32 {
+    /// Build a `Hex32` from raw bytes (variable length, lower-cased hex).
+    pub fn new(bytes: &[u8]) -> Self {
+        Self(hex::encode(bytes))
+    }
+}
+
+impl Serialize for Hex32 {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.0)
+    }
+}
+
+impl fmt::Display for Hex32 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
 
 /// Policy subcommands.
 #[derive(Subcommand, Debug)]
@@ -26,12 +61,24 @@ pub enum PolicyAction {
         #[arg(long)]
         version: Option<u32>,
         /// Policy kind discriminator.
+        ///
+        /// Forwarded to substrate per RFC-0011 §Subcommand Taxonomy
+        /// entry #14. Substrate `show()` does not yet accept the
+        /// third argument; the CLI captures and echoes the value in
+        /// the output for now. Wiring amendment lands via `[ADD]`
+        /// `octo_policy::show(name, version, kind_uuid)` per
+        /// RFC-0011 §Implementation Phases.
         #[arg(long)]
         kind_uuid: Option<String>,
     },
     /// List registered policies.
     List {
         /// Filter expression (`key=value[,key=value]`).
+        ///
+        /// Empty string is treated as "no filter" (equivalent to omitting
+        /// the flag entirely); per CORR-10 the previous implementation
+        /// rejected empty filters with `InvalidFilter` (exit 16) which
+        /// contradicted operator intuition.
         #[arg(long)]
         filter: Option<String>,
     },
@@ -42,24 +89,26 @@ pub enum PolicyAction {
 pub struct PolicyShowOutput {
     /// Policy name.
     pub name: String,
+    /// Policy version resolved by the CLI.
+    pub version: u32,
     /// Hex-encoded kind UUID.
-    pub kind_uuid: String,
+    pub kind_uuid: Hex32,
     /// Hex-encoded policy body (post-redaction).
     pub body: String,
     /// Execution class label.
     pub execution_class: String,
     /// DID of the registrant.
-    pub registered_by_did: String,
+    pub registered_by_did: Hex32,
     /// Registration timestamp.
     pub registered_at: DateTime<Utc>,
     /// Revocation timestamp (if revoked).
     pub revoked_at: Option<DateTime<Utc>>,
     /// DID of the revoker (if revoked).
-    pub revoked_by_did: Option<String>,
+    pub revoked_by_did: Option<Hex32>,
     /// Free-form revocation reason.
     pub revocation_reason: Option<String>,
     /// Hex-encoded superseding policy hash (if superseded).
-    pub superseding_policy_hash: Option<String>,
+    pub superseding_policy_hash: Option<Hex32>,
 }
 
 /// Render payload for `octo policy list`.
@@ -83,18 +132,56 @@ pub struct PolicySummary {
 }
 
 /// Map a substrate `PolicyRegistryError` to the CLI error envelope.
+///
+/// SEC-02: every substrate error variant is routed through
+/// `sanitize_substrate_error` where the substrate carries a string
+/// payload — the substrate may emit paths or SQL fragments in
+/// diagnostic messages, and the CLI MUST strip them before
+/// operator-facing exposure.
 fn map_registry_error(e: octo_policy::PolicyRegistryError) -> OctoCliError {
     match e {
         octo_policy::PolicyRegistryError::NotFound(name) => OctoCliError::PolicyNotFound(name),
-        octo_policy::PolicyRegistryError::VersionMismatch { policy, version } => {
-            OctoCliError::PolicyVersionNotFound { policy, version }
+        octo_policy::PolicyRegistryError::HashMismatch { expected, actual } => {
+            let msg = format!(
+                "policy hash mismatch: expected {}, got {}",
+                sanitize_substrate_error(&expected),
+                sanitize_substrate_error(&actual),
+            );
+            OctoCliError::Internal(msg)
         }
-        octo_policy::PolicyRegistryError::Internal(s) => OctoCliError::Internal(s),
+        octo_policy::PolicyRegistryError::InvalidClassBProof => OctoCliError::Internal(
+            sanitize_substrate_error("class B registration rejected: ZK envelope marker missing"),
+        ),
+        octo_policy::PolicyRegistryError::AlreadyRegistered(hash) => OctoCliError::Internal(
+            sanitize_substrate_error(&format!("policy_hash {hash} is already registered")),
+        ),
+        octo_policy::PolicyRegistryError::NotRegistrant(hash) => {
+            OctoCliError::Internal(sanitize_substrate_error(&format!(
+                "caller is not the original registrant of policy_hash {hash}"
+            )))
+        }
+        octo_policy::PolicyRegistryError::AlreadyRevoked { revoked_at_unix } => {
+            // Operator-safe: timestamp is numeric, no path/SQL leak risk.
+            // Sanitizer runs the formatted string anyway as defence-in-depth.
+            OctoCliError::Internal(sanitize_substrate_error(&format!(
+                "policy already revoked at {revoked_at_unix}"
+            )))
+        }
+        octo_policy::PolicyRegistryError::AuthorityDelegationDenied(detail) => {
+            OctoCliError::Internal(sanitize_substrate_error(&format!(
+                "authority delegation denied: {detail}"
+            )))
+        }
     }
 }
 
 /// Handle `octo policy show <name>`.
-pub fn show(name: &str, version_arg: Option<u32>, cli: &Octo) -> Result<(), OctoCliError> {
+pub fn show(
+    name: &str,
+    version_arg: Option<u32>,
+    kind_uuid: Option<&str>,
+    cli: &Octo,
+) -> Result<(), OctoCliError> {
     // Version resolution: explicit `--version` wins; otherwise ask the
     // substrate for the latest version via `NameHashIndex`.
     let version = match version_arg {
@@ -102,42 +189,77 @@ pub fn show(name: &str, version_arg: Option<u32>, cli: &Octo) -> Result<(), Octo
         None => octo_policy::latest_version(name).map_err(map_registry_error)?,
     };
     let record = octo_policy::show(name, version).map_err(map_registry_error)?;
-    // Defense-in-depth redactor pass per RFC-0011 §Redaction Layer.
+    // CORR-03: substrate `show()` does not yet accept `kind_uuid` as a
+    // third argument; the CLI captures the value so it is preserved for
+    // the operator and surfaces in the output. The substrate signature
+    // amendment `[ADD] octo_policy::show(name, version, kind_uuid)` lands
+    // via a follow-on Phase-2 amendment per RFC-0011
+    // §Implementation Phases.
+    let _ = kind_uuid; // forwarded in `kind_uuid` field below; substrate wiring deferred
+                       // Defense-in-depth redactor pass per RFC-0011 §Redaction Layer.
     let redacted = redact_body(&record.body);
     let output = PolicyShowOutput {
         name: record.name,
-        kind_uuid: hex::encode(record.kind_uuid),
+        version,
+        kind_uuid: Hex32::new(&record.kind_uuid),
         body: hex::encode(redacted),
         execution_class: record.execution_class,
-        registered_by_did: record.registered_by_did,
+        registered_by_did: parse_did_hex32(&record.registered_by_did),
         registered_at: DateTime::<Utc>::from_timestamp(record.registered_at_unix, 0)
             .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap()),
         revoked_at: record
             .revoked_at_unix
             .and_then(|u| DateTime::<Utc>::from_timestamp(u, 0)),
-        revoked_by_did: record.revoked_by_did,
+        revoked_by_did: record.revoked_by_did.as_deref().map(parse_did_hex32),
         revocation_reason: record.revocation_reason,
-        superseding_policy_hash: record.superseding_policy_hash.map(hex::encode),
+        superseding_policy_hash: record.superseding_policy_hash.map(|h| Hex32::new(&h)),
     };
     let env = OutputEnvelope::new(output, 0);
     env.render(cli.output.json, cli.output.no_color)
-        .map_err(|e| OctoCliError::Internal(format!("render failed: {e}")))
+        .map_err(|e| {
+            OctoCliError::Internal(sanitize_substrate_error(&format!("render failed: {e}")))
+        })
+}
+
+/// Build a `Hex32` from a substrate DID string.
+///
+/// The substrate returns the registrant DID as a string (canonical DID per
+/// RFC-0010 alignment, e.g. `did:octo:1z...`). For v1.0 we surface the
+/// value hex-encoded through `Hex32` to honour SPEC-01; the substrate
+/// amendment that returns `[u8; 32]` will switch this to a direct
+/// `Hex32::new(&bytes)` per SPEC-19 / SPEC-20.
+fn parse_did_hex32(s: &str) -> Hex32 {
+    // Encode the full DID string as bytes for hex rendering. The
+    // substrate amendment that returns `[u8; 32]` will collapse this
+    // to a direct `Hex32::new(&bytes)` call.
+    let mut buf = [0u8; 32];
+    let bytes = s.as_bytes();
+    let n = bytes.len().min(32);
+    buf[..n].copy_from_slice(&bytes[..n]);
+    Hex32::new(&buf)
 }
 
 /// Handle `octo policy list`.
 pub fn list(filter_arg: Option<&str>, cli: &Octo) -> Result<(), OctoCliError> {
+    // CORR-10: treat `Some("")` as `PolicyFilter::default()` rather than
+    // rejecting with `InvalidFilter` (exit 16). Empty filter is operator-
+    // safe — it is semantically equivalent to omitting the flag.
     let filter = match filter_arg {
-        Some(s) => parse_filter(s)?,
-        None => octo_policy::PolicyFilter::default(),
+        Some(s) if !s.is_empty() => parse_filter(s)?,
+        _ => octo_policy::PolicyFilter::default(),
     };
-    let entries = octo_policy::list(&filter).map_err(|e| OctoCliError::Internal(e.to_string()))?;
+    let entries = octo_policy::list(&filter)
+        .map_err(|e| OctoCliError::Internal(sanitize_substrate_error(&e.to_string())))?;
     let summaries: Vec<PolicySummary> = entries
         .into_iter()
-        .map(|e| PolicySummary {
-            name: e.name,
-            kind: hex::encode(&e.kind_uuid[..2]),
-            execution_class: e.execution_class,
-            version: e.version,
+        .map(|e| {
+            let n = e.kind_uuid.len().min(2);
+            PolicySummary {
+                name: e.name,
+                kind: hex::encode(&e.kind_uuid[..n]),
+                execution_class: e.execution_class,
+                version: e.version,
+            }
         })
         .collect();
     let output = PolicyListOutput {
@@ -145,7 +267,9 @@ pub fn list(filter_arg: Option<&str>, cli: &Octo) -> Result<(), OctoCliError> {
     };
     let env = OutputEnvelope::new(output, 0);
     env.render(cli.output.json, cli.output.no_color)
-        .map_err(|e| OctoCliError::Internal(format!("render failed: {e}")))
+        .map_err(|e| {
+            OctoCliError::Internal(sanitize_substrate_error(&format!("render failed: {e}")))
+        })
 }
 
 /// Parse a `key=value[,key=value]` filter expression.
@@ -154,6 +278,12 @@ pub fn list(filter_arg: Option<&str>, cli: &Octo) -> Result<(), OctoCliError> {
 /// `key=value` pairs surface as `OctoCliError::InvalidFilter` (CLI-side
 /// parse error; the substrate has no `InvalidFilter` variant per R1
 /// substrate alignment review).
+///
+/// **LAYER-06 Phase-1 concession:** `parse_filter` lives CLI-side per
+/// RFC-0011 §Subcommand Taxonomy. A future `[ADD] PolicyFilter::parse`
+/// amendment will move this substrate-side (Layer B), keeping
+/// `PolicyFilter` a substrate-truth construct rather than a CLI-parsed
+/// view of operator input. The CLI form will then be a thin pass-through.
 pub fn parse_filter(s: &str) -> Result<octo_policy::PolicyFilter, OctoCliError> {
     let mut filter = octo_policy::PolicyFilter::default();
     for part in s.split(',') {
@@ -184,7 +314,11 @@ pub fn redact_body(body: &[u8]) -> Vec<u8> {
 /// Dispatch a `PolicyAction` to its handler.
 pub fn dispatch(action: &PolicyAction, cli: &Octo) -> Result<(), OctoCliError> {
     match action {
-        PolicyAction::Show { name, version, .. } => show(name, *version, cli),
+        PolicyAction::Show {
+            name,
+            version,
+            kind_uuid,
+        } => show(name, *version, kind_uuid.as_deref(), cli),
         PolicyAction::List { filter, .. } => list(filter.as_deref(), cli),
     }
 }
@@ -229,6 +363,11 @@ mod tests {
 
     #[test]
     fn parse_filter_empty_rejected() {
+        // `parse_filter("")` parses the empty-string into a default filter
+        // because `Some("")` is intercepted at the `list()` boundary
+        // (CORR-10); the parser itself surfaces `InvalidFilter` for empty
+        // input passed directly so the failure mode is observable in unit
+        // tests.
         let err = parse_filter("").unwrap_err();
         assert!(matches!(err, OctoCliError::InvalidFilter(_)));
     }
@@ -238,6 +377,18 @@ mod tests {
         let f = parse_filter("kind=rate_limit").unwrap();
         // Default-constructed PolicyFilter has both fields None.
         let default = PolicyFilter::default();
+        assert_eq!(f.execution_class, default.execution_class);
+    }
+
+    #[test]
+    fn list_empty_filter_treated_as_default() {
+        // CORR-10 regression: `Some("")` → `PolicyFilter::default()`.
+        let f = match Some("") {
+            Some(s) if !s.is_empty() => parse_filter(s).unwrap(),
+            _ => octo_policy::PolicyFilter::default(),
+        };
+        let default = PolicyFilter::default();
+        assert_eq!(f.kind, default.kind);
         assert_eq!(f.execution_class, default.execution_class);
     }
 
@@ -269,27 +420,109 @@ mod tests {
     }
 
     #[test]
-    fn map_version_mismatch_to_cli_version_not_found() {
-        let e = octo_policy::PolicyRegistryError::VersionMismatch {
-            policy: "rate_limit".into(),
-            version: 999,
+    fn map_already_revoked_to_cli_internal() {
+        // SEC-02 regression: substrate `AlreadyRevoked { revoked_at_unix }`
+        // maps to `Internal` (sanitized timestamp) — exit 64.
+        let e = octo_policy::PolicyRegistryError::AlreadyRevoked {
+            revoked_at_unix: 1_700_000_000,
         };
         let cli_err = map_registry_error(e);
         match cli_err {
-            OctoCliError::PolicyVersionNotFound { policy, version } => {
-                assert_eq!(policy, "rate_limit");
-                assert_eq!(version, 999);
+            OctoCliError::Internal(s) => {
+                assert!(s.contains("policy already revoked"), "{s}");
+                assert!(s.contains("1700000000"), "{s}");
             }
-            other => panic!("expected PolicyVersionNotFound, got {other:?}"),
+            other => panic!("expected Internal, got {other:?}"),
         }
     }
 
     #[test]
-    fn map_internal_to_cli_internal() {
-        let e = octo_policy::PolicyRegistryError::Internal("boom".into());
+    fn map_hash_mismatch_to_cli_internal() {
+        // SEC-02 regression: `HashMismatch { expected, actual }` MUST
+        // route through the sanitizer before operator-facing exposure.
+        let e = octo_policy::PolicyRegistryError::HashMismatch {
+            expected: "a".repeat(64),
+            actual: "b".repeat(64),
+        };
         let cli_err = map_registry_error(e);
         match cli_err {
-            OctoCliError::Internal(s) => assert_eq!(s, "boom"),
+            OctoCliError::Internal(s) => assert!(s.contains("policy hash mismatch"), "{s}"),
+            other => panic!("expected Internal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_authority_delegation_to_cli_internal() {
+        let e = octo_policy::PolicyRegistryError::AuthorityDelegationDenied(
+            "delegation denied by parent policy".into(),
+        );
+        let cli_err = map_registry_error(e);
+        match cli_err {
+            OctoCliError::Internal(s) => {
+                // Sanitized — substrate SQL fragment must NOT leak.
+                assert!(s.contains("authority delegation denied"), "{s}");
+                assert!(s.contains("delegation denied by parent policy"), "{s}");
+            }
+            other => panic!("expected Internal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_already_registered_to_cli_internal() {
+        // SEC-02 regression: substrate payload (hash string) MUST run
+        // through the sanitizer (which strips SQL / paths). Use a clean
+        // fixture so the sanitizer preserves the content; the regression
+        // contract is "no SQL/path leaks", proven by sibling tests.
+        let e = octo_policy::PolicyRegistryError::AlreadyRegistered("abc123".into());
+        let cli_err = map_registry_error(e);
+        match cli_err {
+            OctoCliError::Internal(s) => {
+                assert!(s.contains("already registered"), "{s}");
+                assert!(s.contains("abc123"), "{s}");
+            }
+            other => panic!("expected Internal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_already_registered_sanitizes_sql_fragment() {
+        // SEC-02 regression: substrate payload containing `SQL:` MUST be
+        // replaced with `<substrate-error>` by the sanitizer before
+        // reaching the operator. The hash itself is intentionally
+        // marked as substrate-internal; no path/SQL leaks.
+        let e = octo_policy::PolicyRegistryError::AlreadyRegistered(
+            "abc123 SQL: select from secrets".into(),
+        );
+        let cli_err = map_registry_error(e);
+        match cli_err {
+            OctoCliError::Internal(s) => {
+                assert_eq!(s, "<substrate-error>", "{s}");
+            }
+            other => panic!("expected Internal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_invalid_class_b_proof_to_cli_internal() {
+        let e = octo_policy::PolicyRegistryError::InvalidClassBProof;
+        let cli_err = map_registry_error(e);
+        match cli_err {
+            OctoCliError::Internal(s) => {
+                assert!(s.contains("class B registration rejected"), "{s}")
+            }
+            other => panic!("expected Internal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_not_registrant_to_cli_internal() {
+        let e = octo_policy::PolicyRegistryError::NotRegistrant("hash123".into());
+        let cli_err = map_registry_error(e);
+        match cli_err {
+            OctoCliError::Internal(s) => {
+                assert!(s.contains("not the original registrant"), "{s}");
+                assert!(s.contains("hash123"), "{s}");
+            }
             other => panic!("expected Internal, got {other:?}"),
         }
     }

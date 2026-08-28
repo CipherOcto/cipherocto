@@ -1,4 +1,4 @@
-# RFC-0011 (Process): `octo` CLI Substrate
+# RFC-0011: `octo` CLI Substrate
 
 ## Status
 
@@ -33,17 +33,17 @@ the exit-code table that all subcommands MUST honor.
 
 **Requires:**
 
-- RFC-0009 (Process): Identity Management — lifecycle state machine + rotation grace
-- RFC-0957 (Process): Macaroon Substrate — capability token structure + holder signature
-- RFC-0964 (Process): Constraint Encoding — caveat envelope canonical form
-- RFC-0960 (Economics): Vaults, Capabilities, Reservations — caveat catalog root
-- RFC-0967 (Process): Policy Object Graph — policy show/list substrate
-- RFC-0958 (Process): ZK Capability Subclass — `HolderKind::ZKBearing` flag handling
-- RFC-0008 (Process): Deterministic AI Execution Boundary — execution class mapping
+- RFC-0009: Identity Management — lifecycle state machine + rotation grace
+- RFC-0957: Macaroon Substrate — capability token structure + holder signature
+- RFC-0964: Constraint Encoding — caveat envelope canonical form
+- RFC-0960: Vaults, Capabilities, Reservations — caveat catalog root
+- RFC-0967: Policy Object Graph — policy show/list substrate
+- RFC-0958: ZK Capability Subclass — `HolderKind::ZKBearing` flag handling
+- RFC-0008: Deterministic AI Execution Boundary — execution class mapping
 
 **Optional:**
 
-- RFC-0003 (Process): Deterministic Execution Standard — for `--deterministic-time` flag
+- RFC-0003: Deterministic Execution Standard — for `--deterministic-time` flag
 - (Future work, no RFC filed yet): WhatsApp/Telegram Auth Onboarding clap surface pattern + redaction layer — adapter CLI substrate RFC to be filed when those adapters land
 
 > **Dependency Validation Rules:**
@@ -525,12 +525,12 @@ that error output never carries offending secrets verbatim.
 
 ### Hex32 newtype
 
-`Hex32` is a `crates/octo-cli/src/output/types.rs` newtype used to render
+`Hex32` is a `crates/octo-cli/src/output.rs` newtype used to render
 32-byte digests (capability IDs, body hashes, payload blake3 hashes) in JSON
 output as lowercase hex:
 
 ```rust
-//! crates/octo-cli/src/output/types.rs
+//! crates/octo-cli/src/output.rs
 
 #[derive(Serialize, Debug, Clone)]
 pub struct Hex32(#[serde(with = "hex::serde")] pub [u8; 32]);

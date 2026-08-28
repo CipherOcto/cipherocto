@@ -183,7 +183,7 @@ pub struct CaveatSummaryView {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CaveatKind {
-    /// `Caveat::AmountMax` (budget cap, RFC-0964 §budget).
+    /// `Caveat::AmountMax` (budget cap, RFC-0964 §1. Constraint variant enumeration).
     AmountMax,
     /// `Caveat::PerAxisMax` (per-axis cap).
     PerAxisMax,
@@ -209,9 +209,9 @@ pub enum CaveatKind {
     ThirdParty,
     /// `Caveat::Raw` / unknown wire names (forward-compat).
     Raw,
-    /// `Caveat::Vault` (RFC-0960 §2.1 binding).
+    /// `Caveat::Vault` (RFC-0960 §R1-F2 — RFC-0957 caveats are the substrate).
     Vault,
-    /// `Caveat::Permission` (RFC-0965 §3.2).
+    /// `Caveat::Permission` (RFC-0965 §3.2 Permission).
     Permission,
     /// `Caveat::ValidRange` (time range).
     ValidRange,
@@ -233,9 +233,9 @@ pub enum CaveatKind {
     RedemptionContext,
     /// `Caveat::Sharded`.
     Sharded,
-    /// `Caveat::Payment` (RFC-0965 §3).
+    /// `Caveat::Payment` (RFC-0965 §3. New caveat payload encodings).
     Payment,
-    /// `Caveat::AssetBinding` (RFC-0965 §5).
+    /// `Caveat::AssetBinding` (RFC-0965 §5 PermissionKind Co-Bound Caveat).
     AssetBinding,
     /// Substrate-added variant not yet projected here (CLI unknown).
     Custom,
@@ -479,11 +479,12 @@ pub fn mint(
     // the runtime test `tv_cap17b_mint_dry_run_stderr_echo` pins the
     // current, pre-gate behaviour.)
     eprintln!(
-        "would mint: holder={}, caveats={}",
+        "would mint: holder={}, caveats={}, root={}",
         holder_did,
         redact_string(
             &serde_json::to_string(&views).unwrap_or_else(|_| "<unprintable>".to_owned())
-        )
+        ),
+        root.unwrap_or("<wallet-root>")
     );
 
     // `--dry-run` must not reach the signing key: previews are rendered
@@ -806,10 +807,14 @@ pub fn parse_filters(raw: &[String]) -> Result<Vec<(String, String)>, OctoCliErr
     for entry in raw {
         for part in split_filter_entry(entry) {
             let Some((field, value)) = part.split_once('=') else {
-                return Err(OctoCliError::InvalidFilter(entry.clone()));
+                return Err(OctoCliError::InvalidFilter(
+                    crate::redact::redact_string(entry).into_owned(),
+                ));
             };
             if field.is_empty() || value.is_empty() || !FILTER_FIELDS.contains(&field) {
-                return Err(OctoCliError::InvalidFilter(entry.clone()));
+                return Err(OctoCliError::InvalidFilter(
+                    crate::redact::redact_string(entry).into_owned(),
+                ));
             }
             out.push((field.to_owned(), value.to_owned()));
         }
@@ -848,7 +853,7 @@ fn matches_filters(view: &CapabilitySummaryView, filters: &[(String, String)]) -
 /// is append-only, so the effective child set is `parent ∪ child` and a
 /// caveat can never be dropped by this path. What remains to check is that
 /// no appended caveat grants more than the parent already allows, which is
-/// exactly [`set_subsumes`] (RFC-0957 §Attenuation Rules).
+/// exactly [`set_subsumes`] (RFC-0957 §Caveat DSL Extension).
 pub fn check_attenuation(parent: &CapabilityToken, child: &[Caveat]) -> Result<(), OctoCliError> {
     if set_subsumes(&parent.macaroon.caveats, child) {
         return Ok(());

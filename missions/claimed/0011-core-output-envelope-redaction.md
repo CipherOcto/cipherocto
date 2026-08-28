@@ -198,7 +198,7 @@ schemars = { version = "0.8", features = ["chrono"] }
 
 - `tv_env6_internal_error_path` — substrate returns `Internal("SQL: SELECT ...")`;
   `sanitize_substrate_error` invoked via `user_message()`; stderr shows
-  sanitized message `wallet store error` (per RFC §Substrate Error Sanitization)
+  sanitized message `wallet store error` (per RFC §Error Handling)
   with SQL fragment stripped; exit 64.
 - `tv_env7_stdin_secret_refused` — operator pipes private key to stdin without
   `--allow-stdin-secret`; stderr shows `secret material on pipe`; exit 15.

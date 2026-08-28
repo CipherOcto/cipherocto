@@ -142,7 +142,7 @@ pub struct IdentityRevokeOutput {
     pub did: String,
     /// RFC 3339 UTC timestamp of the revocation event.
     pub revoked_at: DateTime<Utc>,
-    /// Always `true` — `Revoked` is terminal per RFC-0009 §Lifecycle row 4.
+    /// Always `true` — `Revoked` is terminal per RFC-0009 §Identity Struct.
     pub terminal: bool,
 }
 

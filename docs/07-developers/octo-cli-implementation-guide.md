@@ -438,7 +438,7 @@ impl OctoCliError {
                 Some("create an identity with `octo-wallet init` (wallet substrate)".to_string())
             }
             OctoCliError::ConfirmationRequired { .. } => {
-                Some("re-run with --confirm (and --confirm-acknowledge for complex-payload commands)".to_string())
+                Some("re-run with --confirm to acknowledge the mutation".to_string())
             }
             OctoCliError::IdentityNotFound(_) => Some("verify the DID; list identities with `octo whoami`".to_string()),
             OctoCliError::CaveatParse { .. } => Some("pass --caveats as a JSON object".to_string()),
@@ -819,35 +819,53 @@ enum Commands {
 
 #[derive(Subcommand, Debug)]
 enum IdentityAction {
-    Show { did: Option<String> },
+    /// Show the identity record for a given DID.
+    Show {
+        /// Target DID.
+        did: Option<String>,
+    },
     /// Begin a key rotation.
     Rotate {},
     /// Revoke the active identity.
     Revoke {
+        /// Revocation reason recorded in the identity log.
         #[arg(long)] reason: String,
     },
 }
 
 #[derive(Subcommand, Debug)]
 enum CapabilityAction {
-    List,
+    /// List capabilities.
+    List {
+        /// Filter as `field=value` (repeatable, comma-separated). Accepted
+        /// fields: `cap_id`, `root_id`, `caveat`.
+        #[arg(long, value_delimiter = ',')]
+        filter: Vec<String>,
+    },
+    /// Mint a new capability.
     Mint {
+        /// Caveat expression.
         #[arg(long, value_parser = clap::value_parser!(String))]
         caveats: String,
+        /// Holder DID.
         #[arg(long)]
         holder: String,
+        /// Root capability identifier.
         #[arg(long)]
         root: Option<String>,
-        /// Two-step confirmation; required when `--confirm` AND `--caveats` are both set.
+        /// Acknowledge that minting grants authority.
         /// clap-validator enforces: requires `--confirm` whenever this flag is present.
         #[arg(long, requires = "confirm")]
         confirm_acknowledge: bool,
     },
+    /// Attenuate an existing capability.
     Attenuate {
+        /// Parent capability identifier.
         cap_id: String,
+        /// Additional caveats to apply.
         #[arg(long)]
         caveats: String,
-        /// Two-step confirmation; required when `--confirm` AND `--caveats` are both set.
+        /// Acknowledge that attenuation narrows authority.
         /// clap-validator enforces: requires `--confirm` whenever this flag is present.
         #[arg(long, requires = "confirm")]
         confirm_acknowledge: bool,
@@ -1251,7 +1269,6 @@ tv_id4_identity_rotate_grace_hours_flag_absent:
       "identity",
       "rotate",
       "--confirm",
-      "--confirm-acknowledge",
     ]
   exit_code: 0 # substrate hard-codes 24h grace internally; --grace-hours not exposed
   stderr_contains: []
@@ -1262,7 +1279,6 @@ tv_id5_identity_revoke_already_revoked:
       "identity",
       "revoke",
       "--confirm",
-      "--confirm-acknowledge",
       "--reason",
       "test",
     ]
@@ -1272,21 +1288,21 @@ tv_id5_identity_revoke_already_revoked:
     - "already revoked"
 
 tv_id6_already_rotating:
-  cmd: ["identity", "rotate", "--confirm", "--confirm-acknowledge"]
+  cmd: ["identity", "rotate", "--confirm"]
   # Wallet in Rotating state; substrate returns AlreadyRotating → CLI exit 3
   exit_code: 3
   stderr_contains:
     - "already rotating"
 
 tv_id7_hsm_missing:
-  cmd: ["identity", "rotate", "--confirm", "--confirm-acknowledge"]
+  cmd: ["identity", "rotate", "--confirm"]
   # HSM slot unreachable; CLI exit 5
   exit_code: 5
   stderr_contains:
     - "hsm"
 
 tv_id8_rotate_dry_run:
-  cmd: ["identity", "rotate", "--confirm", "--confirm-acknowledge", "--dry-run"]
+  cmd: ["identity", "rotate", "--confirm", "--dry-run"]
   exit_code: 0
   stdout_contains:
     - '"preview_only":true'

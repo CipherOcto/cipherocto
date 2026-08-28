@@ -1,4 +1,4 @@
-//! `octo policy` — RFC-0011 §Policy Commands.
+//! `octo policy` — RFC-0011 §Subcommand Taxonomy.
 //!
 //! Layer C/D orchestrator over the Layer-B `octo-policy` substrate
 //! (`show`, `list`, `latest_version`, `name_hash_index`). The handlers
@@ -291,13 +291,17 @@ pub fn list(filter_arg: Option<&str>, cli: &Octo) -> Result<(), OctoCliError> {
 pub fn parse_filter(s: &str) -> Result<octo_policy::PolicyFilter, OctoCliError> {
     let mut filter = octo_policy::PolicyFilter::default();
     for part in s.split(',') {
-        let (k, v) = part
-            .split_once('=')
-            .ok_or_else(|| OctoCliError::InvalidFilter(s.to_string()))?;
+        let (k, v) = part.split_once('=').ok_or_else(|| {
+            OctoCliError::InvalidFilter(crate::redact::redact_string(s).into_owned())
+        })?;
         match k {
             "kind" => filter.kind = Some(v.to_string()),
             "class" => filter.execution_class = Some(v.to_string()),
-            _ => return Err(OctoCliError::InvalidFilter(s.to_string())),
+            _ => {
+                return Err(OctoCliError::InvalidFilter(
+                    crate::redact::redact_string(s).into_owned(),
+                ))
+            }
         }
     }
     Ok(filter)
@@ -378,7 +382,7 @@ pub fn validate_kind_uuid(
 }
 
 /// Lowercase 16-byte hex gate for `--kind-uuid` (UUID form). The
-/// substrate `kind_uuid` field is `[u8;16]` (RFC-0967-A1 §2.4 Policy registry table)
+/// substrate `kind_uuid` field is `[u8;16]` (RFC-0967 §Policy Registry table)
 /// so the operator-facing hex form is 32 lowercase hex chars. Mixed-case
 /// or non-hex operator input is rejected before the mismatch diagnostic
 /// so the operator's exact string is not echoed back through the error

@@ -21,7 +21,7 @@ status: Open
 
 # 0011-deprecation-stub-removal — Drop stub commands (init, join, role, agent, status)
 
-**Status:** Open — release-gated on the v1.1 hard-error (`StaleStub`, exit 65) cycle elapsed before v2.0 stub removal. Per SPEC-10, this mission's status was reverted from an earlier Claimed marker because the substrate amendment that lands the hard-error behaviour has not shipped yet. Implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]] once the gate clears per RFC-0011 §Compatibility.
+**Status:** Open — release-gated on the v1.1 hard-error (`StaleStub`, exit 65) cycle elapsed before v2.0 stub removal. Per SPEC-10, this mission's status was reverted from an earlier Claimed marker because the substrate amendment that lands the hard-error behaviour has not shipped yet. Implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]] once the gate clears per RFC-0011 §Compatibility
 **Substrate:** RFC-0011 §Compatibility (stub deprecation timeline)
 **Parent:** RFC-0011
 **Depends on:**
@@ -38,7 +38,7 @@ status: Open
 
 ## Status
 
-Open — release-gated on the v1.1 hard-error (`StaleStub`, exit 65) cycle elapsed before v2.0 stub removal. SPEC-10 reverts this mission's status from the earlier Claimed marker because the substrate amendment that lands the hard-error behaviour has not shipped yet; no implementation work is permitted until the gate clears per RFC-0011 §Compatibility.
+Open — release-gated on the v1.1 hard-error (`StaleStub`, exit 65) cycle elapsed before v2.0 stub removal. SPEC-10 reverts this mission's status from the earlier Claimed marker because the substrate amendment that lands the hard-error behaviour has not shipped yet; no implementation work is permitted until the gate clears per RFC-0011 §Compatibility
 
 ## RFC
 

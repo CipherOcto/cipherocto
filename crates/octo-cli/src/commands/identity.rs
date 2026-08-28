@@ -19,7 +19,7 @@ use serde::Serialize;
 use crate::error::{sanitize_substrate_error, OctoCliError};
 use crate::flags::OperatorMode;
 use crate::output::OutputEnvelope;
-use crate::redact::RedactedHex;
+use crate::redact::{redact_string, RedactedHex};
 use crate::Octo;
 
 // ---------------------------------------------------------------------------
@@ -82,7 +82,7 @@ pub struct IdentityShowOutput {
     /// Governance snapshot reference (R1 review SPEC-02). Pinned to `None`
     /// for v1.0 — the substrate `IdentityRecord` does not yet expose
     /// `governance_snapshot_ref`; the CLI surface stays ahead of substrate
-    /// per the §Stability Tier rule (new fields land additive). Lands when
+    /// per RFC-0011 §Compatibility (new fields land additive). Lands when
     /// substrate amends `IdentityRecord` to carry the field (deferred per
     /// RFC-0011 Status header).
     pub governance_snapshot_ref: Option<String>,
@@ -379,11 +379,15 @@ pub fn revoke(reason: &str, cli: &Octo) -> Result<(), OctoCliError> {
     let did = match octo_wallet::active_identity(&store) {
         Ok(k) => k.did(),
         Err(_) => {
-            eprintln!("would revoke: did=<none>, reason={reason}");
+            eprintln!("would revoke: did=<none>, reason={}", redact_string(reason));
             return Err(OctoCliError::NoActiveIdentity);
         }
     };
-    eprintln!("would revoke: did={}, reason={reason}", did.0);
+    eprintln!(
+        "would revoke: did={}, reason={}",
+        did.0,
+        redact_string(reason)
+    );
     let mut key =
         octo_wallet::active_identity(&store).map_err(|_| OctoCliError::NoActiveIdentity)?;
 

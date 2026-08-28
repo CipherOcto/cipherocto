@@ -26,7 +26,8 @@ fn main() {
         Err(e) => e.exit(),
     };
 
-    // RFC-0011 §NO_COLOR: disable ANSI colouring whenever the operator
+    // Disable ANSI colouring whenever the operator sets --no-color OR
+    // the environment variable OCTO_FORCE_JSON is set (TTY-aware output).
     // sets the well-known `NO_COLOR` environment variable, regardless of
     // any `--no-color` flag they may have passed.
     if std::env::var_os("NO_COLOR").is_some() {

@@ -481,7 +481,9 @@ pub fn mint(
     eprintln!(
         "would mint: holder={}, caveats={}",
         holder_did,
-        serde_json::to_string(&views).unwrap_or_else(|_| "<unprintable>".to_owned())
+        redact_string(
+            &serde_json::to_string(&views).unwrap_or_else(|_| "<unprintable>".to_owned())
+        )
     );
 
     // `--dry-run` must not reach the signing key: previews are rendered
@@ -581,7 +583,9 @@ pub fn attenuate(
     eprintln!(
         "would attenuate: narrowed_from={}, caveats={}",
         cap_id,
-        serde_json::to_string(&views).unwrap_or_else(|_| "<unprintable>".to_owned())
+        redact_string(
+            &serde_json::to_string(&views).unwrap_or_else(|_| "<unprintable>".to_owned())
+        )
     );
 
     if cli.mode.dry_run {

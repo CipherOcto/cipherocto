@@ -105,8 +105,8 @@ directly; the CLI is a thin operator UX layer over Layer-B substrate crates.
 | Role           | Identifier              | Authority Scope                                      | Lifecycle | Source/Ref                   |
 | -------------- | ----------------------- | ---------------------------------------------------- | --------- | ---------------------------- |
 | Human Operator | `OperatorKind::Human`   | read + write (with `--confirm` for mutating)         | stateless | RFC-0009 §Identity Lifecycle |
-| CI Bot         | `OperatorKind::CiBot`   | read-only by default; write requires `--allow-write` | stateless | This RFC §Operator Modes     |
-| Auditor (RO)   | `OperatorKind::Auditor` | read-only + audit-trail access                       | stateless | This RFC §Operator Modes     |
+| CI Bot         | `OperatorKind::CiBot`   | read-only by default; write requires `--allow-write` | stateless | This RFC §Roles and Authorities |
+| Auditor (RO)   | `OperatorKind::Auditor` | read-only + audit-trail access                       | stateless | This RFC §Roles and Authorities |
 
 ### Role Transitions
 
@@ -349,7 +349,7 @@ codes, and redaction requirements.
 | Aspect       | Value                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Args         | none                                                                                                                                                                                                                                                                                                                                                                                                  |
-| Flags        | `--caveats <json>` (REQUIRED), `--holder <did>` (REQUIRED), `--root <cap_id>` (optional; defaults to wallet root), `--confirm` (REQUIRED in human mode), `--confirm-acknowledge` (REQUIRED for complex-payload mutating commands per §Security 1a), `--dry-run`                                                                                                                                                                                                          |
+| Flags        | `--caveats <json>` (REQUIRED), `--holder <did>` (REQUIRED), `--root <cap_id>` (optional; defaults to wallet root), `--confirm` (REQUIRED in human mode), `--confirm-acknowledge` (REQUIRED for complex-payload mutating commands per §Security Considerations), `--dry-run`                                                                                                                                                                                                          |
 | Output       | `CapabilityMintOutput { capability_id: Hex32, body_hash: Hex32, caveats: Vec<CaveatSummary>, holder_sig: RedactedHex }`                                                                                                                                                                                                                                                                               |
 | Substrate    | `[ADD] octo_cap_macaroon::mint(root_secret: &[u8;32], holder: &dyn CapabilitySigner, holder_did: &str, caveats: &[Caveat]) -> Result<CapabilityToken, MintError>` (thin wrapper around substrate `CapabilityToken::mint` per substrate signature; `holder` is `&dyn CapabilitySigner`, NOT the phantom `HolderKey`; `root_secret` is the 32-byte root signing secret, NOT the 16-byte root public id) |
 | Exit codes   | 0, 7 (`--caveats` parse error), 8 (invalid caveat combination per RFC-0960 catalog), 9 (`--holder` not found), 10 (attenuation violation), 5 (HSM missing), 11 (signing failed), 64                                                                                                                                                                                                                   |
@@ -362,7 +362,7 @@ codes, and redaction requirements.
 | Aspect       | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Args         | `<cap_id>` (REQUIRED)                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| Flags        | `--caveats <json>` (REQUIRED), `--confirm` (REQUIRED in human mode), `--confirm-acknowledge` (REQUIRED for complex-payload mutating commands per §Security 1a), `--dry-run`                                                                                                                                                                                                                                                                                                                                       |
+| Flags        | `--caveats <json>` (REQUIRED), `--confirm` (REQUIRED in human mode), `--confirm-acknowledge` (REQUIRED for complex-payload mutating commands per §Security Considerations), `--dry-run`                                                                                                                                                                                                                                                                                                                                       |
 | Output       | `CapabilityAttenuateOutput { child_cap_id, narrowed_from: cap_id, caveats: Vec<CaveatSummary> }`                                                                                                                                                                                                                                                                                                                                                                                   |
 | Substrate    | `[ADD] octo_cap_macaroon::attenuate(parent: &CapabilityToken, caveats: &[Caveat], holder: &dyn CapabilitySigner, catalog: &dyn CapabilityCatalog) -> Result<CapabilityToken, MintError>` (substrate `CapabilityToken::attenuate` takes a SINGLE caveat and does NOT re-sign; `attenuate_with_signer` is the re-signing variant; the CLI form loops over `caveats.iter()` calling `parent.attenuate_with_signer(caveat, holder, catalog)` per caveat, threading the result forward) |
 | Exit codes   | 0, 7 (`--caveats` parse error), 10 (attenuation violation — widens or caveat removal without narrowing replacement), 12 (parent not found), 64                                                                                                                                                                                                                                                                                                                                     |
@@ -459,7 +459,7 @@ TTY-aware rendering:
 
 | Condition           | Output format                                                                                                                                                                                                                                        |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| TTY + no `--json`   | Pretty-printed YAML-like (line per field, colorized via ANSI escape codes when stdout is a TTY AND `--no-color` / `OCTO_FORCE_JSON` is not set; ANSI codes gated by `std::io::IsTerminal` per RFC-0011 §Output Flags). Bumped `schema_version` to 2. |
+| TTY + no `--json`   | Pretty-printed YAML-like (line per field, colorized via ANSI escape codes when stdout is a TTY AND `--no-color` / `OCTO_FORCE_JSON` is not set; ANSI codes gated by `std::io::IsTerminal` per RFC-0011 §Output Envelope). Bumped `schema_version` to 2. |
 | Non-TTY OR `--json` | JSON (`serde_json::to_string_pretty`)                                                                                                                                                                                                                |
 
 The `--json` flag forces JSON output regardless of TTY. The `--no-color` flag
@@ -580,7 +580,7 @@ canonical implementation lives in `octo-redact` and is reused.
 
 The redactor is registered on every `tracing::subscriber` initialization in
 `octo-cli`. CLI tests assert that no redacted pattern appears in captured stdout or
-stderr (sanitized per §Substrate Error Sanitization).
+stderr (sanitized per §Error Handling).
 
 Stdin secret exposure: when a flag accepting secret material is fed via pipe (non-TTY
 stdin), the CLI MUST:
@@ -664,16 +664,18 @@ Codes) and a user-facing message format.
 ```rust
 #[derive(thiserror::Error, Debug)]
 pub enum OctoCliError {
-    #[error("clap parse error: {0}")]
+    #[error("{0}")]
     ClapParse(#[from] clap::Error),                         // exit 2 (POSIX usage-error convention)
 
     #[error("no active identity")]
     NoActiveIdentity,                                       // exit 2
 
-    #[error("--confirm required for mutating command {command} in human mode")]
+    #[error(
+        "ConfirmationRequired: --confirm required for mutating command {command} in human mode"
+    )]
     ConfirmationRequired { command: String },               // exit 2 (POSIX usage-error)
 
-    #[error("already rotating")]
+    #[error("identity rotation already in progress")]
     AlreadyRotating,                                        // exit 3
 
     #[error("identity not found: {0}")]
@@ -706,7 +708,7 @@ pub enum OctoCliError {
     #[error("policy not found: {0}")]
     PolicyNotFound(String),                                 // exit 13
 
-    #[error("policy version not found: {policy}@{version}")]
+    #[error("policy `{policy}` has no version {version}")]
     PolicyVersionNotFound { policy: String, version: u32 }, // exit 14
 
     #[error("secret material on pipe; pass --allow-stdin-secret to override")]
@@ -715,7 +717,7 @@ pub enum OctoCliError {
     #[error("invalid filter: {0}")]
     InvalidFilter(String),                                  // exit 16 (reserved per Status header amendment chain)
 
-    #[error("stub command {name} is stale; use the replacement documented in RFC-0011 §Compatibility")]
+    #[error("`{name}` was removed")]
     StaleStub { name: String },                             // exit 65
 
     #[error("internal error: {0}")]
@@ -839,7 +841,7 @@ payload after the operator has confirmed. The clap schema enforces this via
 a `#[arg(requires = "confirm")]` attribute on `--confirm-acknowledge`: clap
 rejects any invocation where `--confirm-acknowledge` is set without
 `--confirm` (exit 2). Additionally, dispatch-time checks in `require_confirm`
-enforce mutating-action semantics (see §Security 1a). Test vectors assert the
+enforce mutating-action semantics (see §Security Considerations). Test vectors assert the
 two-step confirmation for `capability mint` and `capability attenuate`.
 
 2. **Command injection via caveat names** — `--caveats <json>` is parsed by
@@ -876,7 +878,7 @@ two-step confirmation for `capability mint` and `capability attenuate`.
 | Log scraping via `tracing-subscriber` file layer                          | High — full holder_sig could leak                                | `OctoCliRedactor` strips patterns before file write; test asserts no secret in log fixtures                                                                                      |
 | Operator runs CLI on shared host with file permissions 0755 on config dir | High — other local users can read wallet                         | `[ADD] octo-wallet::WalletStore` enforces 0700 on store creation (per §Subcommand Taxonomy entry #1); CLI fails fast on permission mismatch                                      |
 | Attacker injects `Bearer` header via crafted error message                | Medium — token leaks to logs                                     | Redactor strips `Bearer <token>` pattern from all output                                                                                                                         |
-| Operator pastes private key into `--holder-key` flag value by accident    | Medium — key in shell history                                    | `--dev` mode requires explicit flag; `InMemorySigner` refuses `--holder-key` from non-TTY stdin without `--allow-stdin-secret`                                                   |
+| Operator pastes private key into `--holder` flag value by accident         | Medium — key in shell history                                    | `--dev` mode requires explicit flag; `InMemorySigner` refuses secret material on non-TTY stdin without `--allow-stdin-secret`                                                  |
 | Attacker exploits TTY detection to downgrade `--json` output              | Low — operator receives pretty JSON instead of machine-readable  | `--json` flag overrides TTY detection; CI tests both paths                                                                                                                       |
 | Concurrent CLI invocation races on nonce generation                       | Medium — capability mint collides                                | Substrate uses single-writer lock per identity; CLI exit code 101 if another instance detected                                                                                   |
 | Caveat removal widens capability surface (attenuation widens via subset)  | High — child capability with FEWER caveats grants more authority | Attenuation check MUST verify every parent caveat is present in the child set OR the child carries a strictly narrower form of the same caveat (per RFC-0957 §Attenuation Rules) |
@@ -903,13 +905,13 @@ two-step confirmation for `capability mint` and `capability attenuate`.
    explicit operator approval. Cost: extra interaction per command (operator UX
    friction).
 5. **Residual risk?** — Operator may skip `--dry-run` or auto-confirm. ACCEPTED
-   RISK: documented in §Out-of-scope roles (operator trust model).
+   RISK: documented in §Out-of-scope Roles (operator trust model).
 
-### Stdin secret exfiltration via `--holder-key`
+### Stdin secret exfiltration via `--holder`
 
 1. **Who benefits?** — Local-process attacker (e.g., malware on dev box) that can
    read stdin or hijack pipe.
-2. **What does it cost them?** — Knowing the CLI accepts `--holder-key` via stdin.
+2. **What does it cost them?** — Knowing the CLI accepts secret material via stdin-piped flag values.
    Trivial — observable from `octo capability mint --help`.
 3. **What do they gain if successful?** — Holder private key for offline signing.
 4. **What's our defense?** — `--dev` mode required for `InMemorySigner`; default
@@ -917,7 +919,7 @@ two-step confirmation for `capability mint` and `capability attenuate`.
    explicit override + audit log entry. Cost: requires operator education (documented
    in release notes).
 5. **Residual risk?** — Operator enables `--allow-stdin-secret` reflexively. ACCEPTED
-   RISK: documented in §Things you must NOT do.
+   RISK: documented in §Security Considerations.
 
 ### Concurrent CLI invocation on capability mint
 
@@ -951,7 +953,7 @@ two-step confirmation for `capability mint` and `capability attenuate`.
    dev environments (1-line `.env` setup).
 5. **Residual risk?** — Operator explicitly sets `OCTO_ENV=development` in
    their interactive shell and forgets. ACCEPTED RISK: documented in
-   §Things you must NOT do; mitigated by shell rcfile review process.
+   §Security Considerations; mitigated by shell rcfile review process.
 
 ## Economic Analysis
 
@@ -1029,7 +1031,7 @@ At least 30 test vectors are required (current count exceeds the floor by ~70% �
 | Error envelope      | 5     | Internal error message format, exit code mapping, clap parse error propagation, source chain rendering, no-substrate-internals leak                      |
 | Output envelope     | 5     | schema_version present, generated_at format RFC 3339 UTC, json-vs-pretty toggle, TTY detected vs not, --no-color honored                                 |
 | Redaction layer     | 5     | holder_sig stripped from log, pair_code stripped from stderr, bearer token stripped, password field stripped, seed_bytes stripped                        |
-| Stub command banner | 5     | init-banner-on-stderr, join-banner-on-stderr, role-builder-banner-on-stderr, agent-list-banner-on-stderr, status-banner-on-stderr (each asserts `DEPRECATED:` prefix on stderr + stdout cleanliness; see §Compatibility stub-banner contract) |
+| Stub command banner | 5     | init-banner-on-stderr, join-banner-on-stderr, role-builder-banner-on-stderr, agent-list-banner-on-stderr, status-banner-on-stderr (each asserts `DEPRECATED:` prefix on stderr + stdout cleanliness; see §Stub command compatibility) |
 
 Test vectors are specified in YAML form in the companion implementation guide
 (`docs/07-developers/octo-cli-implementation-guide.md`). The CLI integration tests
@@ -1100,11 +1102,11 @@ This RFC covers Phase 1 only. Follow-on amendments cover Phases 2-8.
 
 - `rfcs/draft/process/0011-octo-cli-substrate.md` — this file
 - `docs/07-developers/octo-cli-implementation-guide.md` — companion guide
-- `missions/open/0011-core-output-envelope-redaction.md` — mission 1
-- `missions/open/0011-identity-commands.md` — mission 2
-- `missions/open/0011-capability-commands.md` — mission 3
-- `missions/open/0011-policy-commands.md` — mission 4
-- `missions/open/0011-deprecation-stub-removal.md` — mission 5
+- `missions/claimed/0011-core-output-envelope-redaction.md` — mission 1
+- `missions/claimed/0011-identity-commands.md` — mission 2
+- `missions/claimed/0011-capability-commands.md` — mission 3
+- `missions/claimed/0011-policy-commands.md` — mission 4
+- `missions/claimed/0011-deprecation-stub-removal.md` — mission 5
 
 ### SUBSTRATE (follow-on missions, NOT this RFC cycle)
 

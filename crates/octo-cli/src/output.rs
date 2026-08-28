@@ -74,14 +74,18 @@ impl<T: Serialize> OutputEnvelope<T> {
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             writeln!(w, "{json}")
         } else {
-            self.render_pretty(&mut w, no_color)
+            self.render_pretty(&mut w, no_color, tty)
         }
     }
 
-    fn render_pretty<W: Write>(&self, w: &mut W, no_color: bool) -> io::Result<()> {
+    fn render_pretty<W: Write>(&self, w: &mut W, no_color: bool, tty: bool) -> io::Result<()> {
         let value = serde_json::to_value(self)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        let colored = !no_color && io::stdout().is_terminal();
+        // Use the cached `tty` value passed by `render` — do not re-detect
+        // via `io::stdout().is_terminal()` here. Two detection calls in the
+        // same render path can disagree if a wrapper manipulates fd flags
+        // between them.
+        let colored = !no_color && tty;
         write_value(w, &value, 0, colored)?;
         writeln!(w)
     }
@@ -245,5 +249,38 @@ mod tests {
         let s = serde_json::to_string(&schema).unwrap();
         assert!(s.contains("string"), "{s}");
         assert!(s.contains("pattern"), "{s}");
+    }
+
+    #[test]
+    fn tv_env6_render_pretty_uses_cached_tty() {
+        let env = OutputEnvelope::new(payload(), 0);
+
+        // `tty=true` must emit ANSI colour codes (CYAN for keys).
+        let mut colored_buf: Vec<u8> = Vec::new();
+        env.render_pretty(&mut colored_buf, false, true).unwrap();
+        let colored_out = String::from_utf8(colored_buf).unwrap();
+        assert!(
+            colored_out.contains("\x1b["),
+            "expected ANSI escape codes when tty=true, got: {colored_out:?}"
+        );
+
+        // `tty=false` must NOT emit any ANSI codes, even if `no_color=false`.
+        let mut plain_buf: Vec<u8> = Vec::new();
+        env.render_pretty(&mut plain_buf, false, false).unwrap();
+        let plain_out = String::from_utf8(plain_buf).unwrap();
+        assert!(
+            !plain_out.contains("\x1b["),
+            "expected no ANSI escape codes when tty=false, got: {plain_out:?}"
+        );
+
+        // Sanity: `no_color=true` with `tty=true` also yields plain output —
+        // the cached tty alone must not re-introduce colour.
+        let mut noc_buf: Vec<u8> = Vec::new();
+        env.render_pretty(&mut noc_buf, true, true).unwrap();
+        let noc_out = String::from_utf8(noc_buf).unwrap();
+        assert!(
+            !noc_out.contains("\x1b["),
+            "expected no ANSI escape codes when no_color=true, got: {noc_out:?}"
+        );
     }
 }

@@ -29,7 +29,7 @@ use octo_cap_macaroon::{
     MintError,
 };
 
-use crate::error::OctoCliError;
+use crate::error::{sanitize_substrate_error, OctoCliError};
 use crate::output::{Hex32, OutputEnvelope};
 use crate::redact::{redact_string, RedactedHex};
 use crate::Octo;
@@ -389,10 +389,10 @@ pub struct CapabilityAttenuateOutput {
 pub fn list(filters: &[String], cli: &Octo) -> Result<(), OctoCliError> {
     let filters = parse_filters(filters)?;
     let store = octo_wallet::WalletStore::open()
-        .map_err(|e| OctoCliError::Internal(format!("wallet store open: {e}")))?;
+        .map_err(|e| map_capability_internal(format!("wallet store open: {e}")))?;
     let key = octo_wallet::active_identity(&store).map_err(|e| match e {
         octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-        other => OctoCliError::Internal(other.to_string()),
+        other => map_capability_internal(other),
     })?;
     let summaries = octo_cap_macaroon::list_active(&key)
         .map_err(|e| OctoCliError::Internal(sanitize_mint_error(&e)))?;
@@ -416,7 +416,7 @@ pub fn list(filters: &[String], cli: &Octo) -> Result<(), OctoCliError> {
         .collect();
     let env = OutputEnvelope::new(CapabilityListOutput { capabilities }, 0);
     env.render(cli.output.json, cli.output.no_color)
-        .map_err(|e| OctoCliError::Internal(format!("render envelope: {e}")))
+        .map_err(|e| map_capability_internal(format!("render envelope: {e}")))
 }
 
 /// `octo capability mint` — issue a new capability to `holder_did`.
@@ -452,9 +452,13 @@ pub fn mint(
     // Pastejacking defense (RFC-0011 §Subcommand Taxonomy entry #13):
     // echo the canonical caveat set + holder DID to stderr before any
     // signing operation. The operator (or paste-jacking detector) has a
-    // last-mile chance to see what is about to be authorized. This is
-    // done AFTER `--dry-run` short-circuit so a preview never touches
-    // the redactor stream.
+    // last-mile chance to see what is about to be authorized. The echo
+    // fires BEFORE the `--dry-run` short-circuit so previews still see
+    // the canonical payload — the redactor stream is the contract, not
+    // a preview-only side channel. (R1 review CORR-12 / Wave 5A finding:
+    // an earlier draft claimed the echo lived after the dry-run gate;
+    // the runtime test `tv_cap17b_mint_dry_run_stderr_echo` pins the
+    // current, pre-gate behaviour.)
     eprintln!(
         "would mint: holder={}, caveats={}",
         holder_did,
@@ -473,7 +477,7 @@ pub fn mint(
         };
         return OutputEnvelope::preview_only(output, 0)
             .render(cli.output.json, cli.output.no_color)
-            .map_err(|e| OctoCliError::Internal(format!("render envelope: {e}")));
+            .map_err(|e| map_capability_internal(format!("render envelope: {e}")));
     }
 
     // SEC-03: refuse to mint until the wallet-side root-secret
@@ -497,10 +501,10 @@ pub fn mint(
         #[allow(clippy::needless_return)]
         {
             let store = octo_wallet::WalletStore::open()
-                .map_err(|e| OctoCliError::Internal(format!("wallet store open: {e}")))?;
+                .map_err(|e| map_capability_internal(format!("wallet store open: {e}")))?;
             let key = octo_wallet::active_identity(&store).map_err(|e| match e {
                 octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-                other => OctoCliError::Internal(other.to_string()),
+                other => map_capability_internal(other),
             })?;
             // Test surface only: synthetic root_secret kept so the
             // `fixture_token` helper can mint a synthetic parent for
@@ -520,7 +524,7 @@ pub fn mint(
             };
             return OutputEnvelope::new(output, 0)
                 .render(cli.output.json, cli.output.no_color)
-                .map_err(|e| OctoCliError::Internal(format!("render envelope: {e}")));
+                .map_err(|e| map_capability_internal(format!("render envelope: {e}")));
         }
     }
 }
@@ -550,7 +554,11 @@ pub fn attenuate(
 
     // Pastejacking defense (RFC-0011 §Subcommand Taxonomy entry #13):
     // echo the parent + canonical caveat set to stderr before any
-    // signing operation.
+    // signing operation. Like the mint handler, this echo fires BEFORE
+    // the `--dry-run` short-circuit so previews still see the canonical
+    // payload — see the long-form note on the mint handler for the
+    // Wave 5A comment-drift correction. (The two handlers are kept
+    // symmetric on purpose.)
     eprintln!(
         "would attenuate: narrowed_from={}, caveats={}",
         cap_id,
@@ -565,14 +573,14 @@ pub fn attenuate(
         };
         return OutputEnvelope::preview_only(output, 0)
             .render(cli.output.json, cli.output.no_color)
-            .map_err(|e| OctoCliError::Internal(format!("render envelope: {e}")));
+            .map_err(|e| map_capability_internal(format!("render envelope: {e}")));
     }
 
     let parent = resolve_parent(cap_id)?;
     check_attenuation(&parent, &caveats)?;
 
     let store = octo_wallet::WalletStore::open()
-        .map_err(|e| OctoCliError::Internal(format!("wallet store open: {e}")))?;
+        .map_err(|e| map_capability_internal(format!("wallet store open: {e}")))?;
     let key = octo_wallet::active_identity(&store).map_err(|e| match e {
         octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
         other => OctoCliError::Internal(other.to_string()),
@@ -894,6 +902,20 @@ fn require_acknowledge(cli: &Octo, acknowledge: bool, command: &str) -> Result<(
 /// operator-visible message.
 fn sanitize_mint_error(e: &MintError) -> String {
     crate::error::sanitize_substrate_error(&e.to_string())
+}
+
+/// Build an `OctoCliError::Internal` whose text is sanitized for operator
+/// consumption.
+///
+/// Mirrors `map_wallet_open_error` in `commands/identity.rs` (R1 review
+/// SEC-11): every substrate error that reaches an `Internal(...)` site
+/// here MUST go through `sanitize_substrate_error` so SQL markers,
+/// `crates/octo-*` paths, and `src/` references never reach the operator
+/// envelope. Use this helper at every `OctoCliError::Internal(format!(...))`
+/// site in this module — Wave 5A + Wave 5B found ≥9 raw sites that leaked
+/// substrate paths.
+fn map_capability_internal(e: impl std::fmt::Display) -> OctoCliError {
+    OctoCliError::Internal(sanitize_substrate_error(&e.to_string()))
 }
 
 /// Classify a substrate `MintError::HolderSig` message into the

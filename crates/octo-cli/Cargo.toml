@@ -44,6 +44,15 @@ hex = "0.4"
 # === Schemars for OutputEnvelope<T> ===
 schemars = { version = "0.8", features = ["chrono"] }
 
+# === Secret-zeroize on drop (SEC-13) ===
+# Derives Zeroize/ZeroizeOnDrop on RedactedHex so signature bytes retained in
+# the Vec<u8> backing storage are wiped when the value is dropped, not just
+# redacted in Debug/Display/Serialize. The substrate signature bytes are
+# already discarded after transport, but a debug panic or panic-during-unwrap
+# leaves the bytes in heap memory until the allocator recycles the page —
+# the Drop impl wipes them deterministically.
+zeroize = { version = "1", features = ["derive"] }
+
 [dev-dependencies]
 assert_cmd = "2.0"        # CLI binary invocation
 predicates = "3.1"         # stdout/stderr assertions

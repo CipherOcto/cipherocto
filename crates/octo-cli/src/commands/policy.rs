@@ -3,8 +3,9 @@
 //! Layer C/D orchestrator over the Layer-B `octo-policy` substrate
 //! (`show`, `list`, `latest_version`, `name_hash_index`). The handlers
 //! resolve `(name, version)` via `latest_version` (or honour an explicit
-//! `--version`), apply the `Redaction Layer` pass to `body`, and render
-//! the result through `OutputEnvelope<T>`.
+//! `--version`), validate the operator-supplied `--kind-uuid` against the
+//! record before rendering, apply the `Redaction Layer` pass to `body`,
+//! and render the result through `OutputEnvelope<T>`.
 
 #![allow(clippy::module_name_repetitions)]
 
@@ -16,35 +17,35 @@ use clap::Subcommand;
 use serde::{Serialize, Serializer};
 use std::fmt;
 
-/// Hex-encoded byte-string newtype per RFC-0011 §Hex32 newtype.
+/// Hex-encoded byte-string newtype with variable-length backing —
 ///
-/// Layer C/D presentation form: serializes as lowercase hex string.
-/// The canonical home of this type is `octo_cli::output::Hex32`; once
-/// the fix-core-agent lands that shared definition this local module is
-/// removed and all sites import from `crate::output::Hex32`.
+/// Policy fields whose substrate shape is `[u8;16]` (kind_uuid) and
+/// `[u8;32]` (superseding_policy_hash) both render through the same type.
+/// The schema reflects the variable width; the underlying serialization
+/// is always lowercase hex.
 ///
-/// Despite the name, this presentation wrapper accepts variable-length
-/// byte slices so policy fields whose substrate shape is `[u8;16]`
-/// (kind_uuid) and `[u8;32]` (superseding_policy_hash) can both render
-/// through the same type. The schema reflects the variable width; the
-/// underlying serialization is always lowercase hex.
+/// Named `HexBytes` to avoid collision with the canonical 32-byte-fixed
+/// `crate::output::Hex32` defined in `output.rs`. The two types are
+/// distinct on purpose: substrate byte widths are heterogeneous and the
+/// `[u8;32]`-pinned `output::Hex32` would refuse to encode the 16-byte
+/// `kind_uuid` field.
 #[derive(Debug, Clone, schemars::JsonSchema)]
-pub struct Hex32(#[schemars(with = "String")] String);
+pub struct HexBytes(#[schemars(with = "String")] String);
 
-impl Hex32 {
-    /// Build a `Hex32` from raw bytes (variable length, lower-cased hex).
+impl HexBytes {
+    /// Build a `HexBytes` from raw bytes (variable length, lower-cased hex).
     pub fn new(bytes: &[u8]) -> Self {
         Self(hex::encode(bytes))
     }
 }
 
-impl Serialize for Hex32 {
+impl Serialize for HexBytes {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(&self.0)
     }
 }
 
-impl fmt::Display for Hex32 {
+impl fmt::Display for HexBytes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
@@ -60,14 +61,14 @@ pub enum PolicyAction {
         /// Specific version (defaults to latest).
         #[arg(long)]
         version: Option<u32>,
-        /// Policy kind discriminator.
+        /// Policy kind discriminator (hex-encoded).
         ///
         /// Forwarded to substrate per RFC-0011 §Subcommand Taxonomy
-        /// entry #14. Substrate `show()` does not yet accept the
-        /// third argument; the CLI captures and echoes the value in
-        /// the output for now. Wiring amendment lands via `[ADD]`
-        /// `octo_policy::show(name, version, kind_uuid)` per
-        /// RFC-0011 §Implementation Phases.
+        /// entry #14. The CLI validates the operator-supplied value
+        /// against the record's `kind_uuid` before rendering; a mismatch
+        /// is rejected with `Internal` (exit 64) so the operator does
+        /// not silently receive a record whose `kind_uuid` does not
+        /// match the one they queried for.
         #[arg(long)]
         kind_uuid: Option<String>,
     },
@@ -92,23 +93,23 @@ pub struct PolicyShowOutput {
     /// Policy version resolved by the CLI.
     pub version: u32,
     /// Hex-encoded kind UUID.
-    pub kind_uuid: Hex32,
+    pub kind_uuid: HexBytes,
     /// Hex-encoded policy body (post-redaction).
     pub body: String,
     /// Execution class label.
     pub execution_class: String,
     /// DID of the registrant.
-    pub registered_by_did: Hex32,
+    pub registered_by_did: HexBytes,
     /// Registration timestamp.
     pub registered_at: DateTime<Utc>,
     /// Revocation timestamp (if revoked).
     pub revoked_at: Option<DateTime<Utc>>,
     /// DID of the revoker (if revoked).
-    pub revoked_by_did: Option<Hex32>,
+    pub revoked_by_did: Option<HexBytes>,
     /// Free-form revocation reason.
     pub revocation_reason: Option<String>,
     /// Hex-encoded superseding policy hash (if superseded).
-    pub superseding_policy_hash: Option<Hex32>,
+    pub superseding_policy_hash: Option<HexBytes>,
 }
 
 /// Render payload for `octo policy list`.
@@ -189,30 +190,33 @@ pub fn show(
         None => octo_policy::latest_version(name).map_err(map_registry_error)?,
     };
     let record = octo_policy::show(name, version).map_err(map_registry_error)?;
-    // CORR-03: substrate `show()` does not yet accept `kind_uuid` as a
-    // third argument; the CLI captures the value so it is preserved for
-    // the operator and surfaces in the output. The substrate signature
-    // amendment `[ADD] octo_policy::show(name, version, kind_uuid)` lands
-    // via a follow-on Phase-2 amendment per RFC-0011
-    // §Implementation Phases.
-    let _ = kind_uuid; // forwarded in `kind_uuid` field below; substrate wiring deferred
-                       // Defense-in-depth redactor pass per RFC-0011 §Redaction Layer.
+
+    // --kind-uuid wiring (SEC-13 follow-on): when the operator supplies
+    // a kind UUID, the CLI MUST validate it before rendering so a
+    // mismatch never reaches the operator as a silent success. The
+    // substrate's `show()` signature does not yet accept `kind_uuid` as
+    // a third argument; the CLI performs the comparison itself so the
+    // operator-facing contract is locked at this layer.
+    let record_kind_hex = hex::encode(record.kind_uuid);
+    validate_kind_uuid(kind_uuid, &record_kind_hex)?;
+
+    // Defense-in-depth redactor pass per RFC-0011 §Redaction Layer.
     let redacted = redact_body(&record.body);
     let output = PolicyShowOutput {
         name: record.name,
         version,
-        kind_uuid: Hex32::new(&record.kind_uuid),
+        kind_uuid: HexBytes::new(&record.kind_uuid),
         body: hex::encode(redacted),
         execution_class: record.execution_class,
-        registered_by_did: parse_did_hex32(&record.registered_by_did),
+        registered_by_did: parse_did_hexbytes(&record.registered_by_did),
         registered_at: DateTime::<Utc>::from_timestamp(record.registered_at_unix, 0)
             .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap()),
         revoked_at: record
             .revoked_at_unix
             .and_then(|u| DateTime::<Utc>::from_timestamp(u, 0)),
-        revoked_by_did: record.revoked_by_did.as_deref().map(parse_did_hex32),
+        revoked_by_did: record.revoked_by_did.as_deref().map(parse_did_hexbytes),
         revocation_reason: record.revocation_reason,
-        superseding_policy_hash: record.superseding_policy_hash.map(|h| Hex32::new(&h)),
+        superseding_policy_hash: record.superseding_policy_hash.map(|h| HexBytes::new(&h)),
     };
     let env = OutputEnvelope::new(output, 0);
     env.render(cli.output.json, cli.output.no_color)
@@ -221,22 +225,22 @@ pub fn show(
         })
 }
 
-/// Build a `Hex32` from a substrate DID string.
+/// Build a `HexBytes` from a substrate DID string.
 ///
 /// The substrate returns the registrant DID as a string (canonical DID per
 /// RFC-0010 alignment, e.g. `did:octo:1z...`). For v1.0 we surface the
-/// value hex-encoded through `Hex32` to honour SPEC-01; the substrate
+/// value hex-encoded through `HexBytes` to honour SPEC-01; the substrate
 /// amendment that returns `[u8; 32]` will switch this to a direct
-/// `Hex32::new(&bytes)` per SPEC-19 / SPEC-20.
-fn parse_did_hex32(s: &str) -> Hex32 {
+/// `HexBytes::new(&bytes)` per SPEC-19 / SPEC-20.
+fn parse_did_hexbytes(s: &str) -> HexBytes {
     // Encode the full DID string as bytes for hex rendering. The
     // substrate amendment that returns `[u8; 32]` will collapse this
-    // to a direct `Hex32::new(&bytes)` call.
+    // to a direct `HexBytes::new(&bytes)` call.
     let mut buf = [0u8; 32];
     let bytes = s.as_bytes();
     let n = bytes.len().min(32);
     buf[..n].copy_from_slice(&bytes[..n]);
-    Hex32::new(&buf)
+    HexBytes::new(&buf)
 }
 
 /// Handle `octo policy list`.
@@ -320,6 +324,37 @@ pub fn dispatch(action: &PolicyAction, cli: &Octo) -> Result<(), OctoCliError> {
             kind_uuid,
         } => show(name, *version, kind_uuid.as_deref(), cli),
         PolicyAction::List { filter, .. } => list(filter.as_deref(), cli),
+    }
+}
+
+/// Validate the operator-supplied `--kind-uuid` against the record's
+/// stored `kind_uuid` (both hex-encoded). Exposed at module scope so
+/// the kind-uuid wiring unit tests can exercise the comparison without
+/// spinning up the substrate stub.
+///
+/// SEC-13 follow-on contract:
+/// - Empty operator input → `Internal` (non-empty enforced at CLI).
+/// - Case-insensitive match → `Ok`.
+/// - Any other input → `Internal` with sanitized mismatch diagnostic.
+pub fn validate_kind_uuid(
+    operator: Option<&str>,
+    record_kind_hex: &str,
+) -> Result<(), OctoCliError> {
+    let Some(op) = operator else {
+        return Ok(());
+    };
+    if op.is_empty() {
+        return Err(OctoCliError::Internal(sanitize_substrate_error(
+            "--kind-uuid must be non-empty when provided",
+        )));
+    }
+    if op.eq_ignore_ascii_case(record_kind_hex) {
+        Ok(())
+    } else {
+        Err(OctoCliError::Internal(sanitize_substrate_error(&format!(
+            "--kind-uuid mismatch: operator supplied {} but record has {}",
+            op, record_kind_hex
+        ))))
     }
 }
 
@@ -525,5 +560,39 @@ mod tests {
             }
             other => panic!("expected Internal, got {other:?}"),
         }
+    }
+
+    /// SEC-13 follow-on: when the operator supplies a non-empty
+    /// `--kind-uuid`, the CLI must compare it (case-insensitive) to
+    /// the substrate record's `kind_uuid` before rendering. The unit
+    /// test exercises the comparison helper directly: an empty input
+    /// is rejected, a wrong hex is rejected, a matching hex passes.
+    /// The substrate integration path is exercised by the CLI driver
+    /// tests once a substrate stub for `show(name, version, kind_uuid)`
+    /// lands.
+    #[test]
+    fn kind_uuid_match_logic() {
+        let record_kind_bytes = [0xab; 16];
+        let record_kind_hex = hex::encode(record_kind_bytes);
+
+        // Empty operator input — rejected.
+        let r = validate_kind_uuid(Some(""), &record_kind_hex);
+        assert!(matches!(r, Err(OctoCliError::Internal(_))));
+
+        // Wrong operator input — rejected.
+        let r = validate_kind_uuid(Some("00"), &record_kind_hex);
+        assert!(matches!(r, Err(OctoCliError::Internal(_))));
+
+        // Matching operator input — passes.
+        let r = validate_kind_uuid(Some(&record_kind_hex), &record_kind_hex);
+        assert!(r.is_ok());
+
+        // Mixed-case matching — passes (hex is case-insensitive).
+        let r = validate_kind_uuid(Some(&record_kind_hex.to_uppercase()), &record_kind_hex);
+        assert!(r.is_ok());
+
+        // Operator omitted — no validation, no error.
+        let r = validate_kind_uuid(None, &record_kind_hex);
+        assert!(r.is_ok());
     }
 }

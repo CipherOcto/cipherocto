@@ -20,7 +20,18 @@ fn stale_window_active() -> bool {
 
 /// Print the deprecation banner for `name`, or hard-error in the stale window.
 pub fn print_deprecated(name: &str, hint: &str) -> Result<(), OctoCliError> {
-    if stale_window_active() {
+    print_deprecated_with(name, hint, stale_window_active())
+}
+
+/// Test seam: print the deprecation banner with an explicit stale-window
+/// flag so the unit test for the v1.1 hard-error path does not race on
+/// `OCTO_STALE_STUB_WINDOW` against parallel tests.
+pub fn print_deprecated_with(
+    name: &str,
+    hint: &str,
+    stale_window: bool,
+) -> Result<(), OctoCliError> {
+    if stale_window {
         return Err(OctoCliError::StaleStub {
             name: name.to_string(),
         });
@@ -83,6 +94,33 @@ mod tests {
             let r = print_deprecated("status", "test hint");
             assert!(matches!(r, Ok(())));
         }
+    }
+
+    /// RFC-0011 §Compatibility: when the stale-stub window is active,
+    /// the deprecated stub MUST surface `OctoCliError::StaleStub` (exit
+    /// 65). The window is compile-time `false` in v1.0 and toggled by
+    /// `OCTO_STALE_STUB_WINDOW=1` (or by the v1.1 release compile flag).
+    /// We exercise the v1.1 hard-error path via the test seam so the
+    /// assertion does not race on the env var against parallel tests.
+    #[test]
+    fn tv_dep2_stale_stub_exit_65() {
+        let r = print_deprecated_with("init", "test hint", true);
+        match r {
+            Err(OctoCliError::StaleStub { name }) => {
+                assert_eq!(name, "init", "stale-stub name must echo the command");
+                assert_eq!(
+                    OctoCliError::StaleStub { name }.exit_code(),
+                    65,
+                    "StaleStub MUST exit 65 per RFC-0011 exit-code table",
+                );
+            }
+            other => panic!("expected Err(StaleStub), got {other:?}"),
+        }
+
+        // Sanity: the non-stale path still returns Ok(()) so the v1.0
+        // banner-only contract is preserved.
+        let r_ok = print_deprecated_with("init", "test hint", false);
+        assert!(matches!(r_ok, Ok(())));
     }
 
     #[test]

@@ -56,7 +56,7 @@ pub enum IdentityAction {
 // ---------------------------------------------------------------------------
 
 /// `octo whoami` payload (Layer C/D; composes `IdentityRecord`).
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
 pub struct WhoamiOutput {
     /// Canonical DID (RFC-0010 form).
     pub did: String,
@@ -73,7 +73,7 @@ pub struct WhoamiOutput {
 
 /// `octo identity show [DID]` payload — wraps `IdentityRecord` +
 /// `rotation_history`.
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
 pub struct IdentityShowOutput {
     /// Canonical DID (RFC-0010 form).
     pub did: String,
@@ -98,8 +98,11 @@ pub struct IdentityShowOutput {
 /// One rotation event in `IdentityShowOutput::rotation_history`.
 ///
 /// `signature_proof` is rendered through [`RedactedHex`] — never raw bytes
-/// (defense-in-depth on top of substrate `sign` paths).
-#[derive(Serialize, Debug, Clone)]
+/// (defense-in-depth on top of substrate `sign` paths). The field carries
+/// `#[schemars(with = "String")]` so the generated JSON Schema describes
+/// it as a plain string (preserving the runtime `[REDACTED:sig]`
+/// contract) without requiring `RedactedHex` itself to impl `JsonSchema`.
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
 pub struct IdentityRotationEventOutput {
     /// Hex-encoded 32-byte rotation id.
     pub rotation_id: String,
@@ -111,11 +114,19 @@ pub struct IdentityRotationEventOutput {
     /// DID of the successor identity (RFC-0010 form).
     pub successor_did: String,
     /// Ed25519 proof signature — always rendered as `[REDACTED:sig]`.
+    /// Schemars tag emits a `string` so the secret-free runtime contract
+    /// matches the schema description.
+    #[schemars(with = "String")]
     pub signature_proof: RedactedHex,
 }
 
 /// `octo identity rotate` payload.
-#[derive(Serialize, Debug, Clone)]
+///
+/// `signature_proof` carries `#[schemars(with = "String")]` so the
+/// generated JSON Schema describes it as a plain string (preserving the
+/// runtime `[REDACTED:sig]` contract) — see the matching note on
+/// [`IdentityRotationEventOutput::signature_proof`].
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
 pub struct IdentityRotateOutput {
     /// DID of the new (successor) identity. The current substrate stub does
     /// not yet expose the successor DID; the CLI surfaces a `pending`
@@ -127,11 +138,12 @@ pub struct IdentityRotateOutput {
     pub grace_expires_at: DateTime<Utc>,
     /// 64-byte Ed25519 proof signature — always rendered as
     /// `[REDACTED:sig]` regardless of inner contents.
+    #[schemars(with = "String")]
     pub signature_proof: RedactedHex,
 }
 
 /// `octo identity revoke` payload.
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
 pub struct IdentityRevokeOutput {
     /// DID of the revoked identity.
     pub did: String,
@@ -170,7 +182,7 @@ fn map_not_active_error(e: octo_wallet::WalletError) -> OctoCliError {
             current_state: octo_wallet::LifecycleState::Rotating,
         } => OctoCliError::AlreadyRotating,
         octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-        other => OctoCliError::SigningFailed(sanitize_substrate_error(&other.to_string())),
+        other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
     }
 }
 
@@ -724,5 +736,87 @@ mod tests {
     fn block_auditor_allows_ci_mode() {
         let cli = cli_with_mode(OperatorMode::Ci);
         assert!(block_auditor(&cli, "identity whoami").is_ok());
+    }
+
+    /// SPEC-17: every identity output struct must derive `JsonSchema` so
+    /// `OutputEnvelope<T>::data` can be schema-described. The envelope's
+    /// `#[schemars(bound = "T: JsonSchema")]` only emits a `data`
+    /// subschema when `T: JsonSchema`; absent the derive, the field would
+    /// be omitted from the schema and downstream auto-clients would lose
+    /// the typed payload. Pinned against `OutputEnvelope<WhoamiOutput>`
+    /// and `OutputEnvelope<IdentityShowOutput>` (Wave 5E SPEC-17 partial).
+    #[test]
+    fn tv_identity_envelope_schema_present() {
+        // Each output envelope must serialize a non-empty schema that
+        // mentions the envelope surface AND the typed payload's
+        // identifying field. For `WhoamiOutput` the identifying field is
+        // `pubkey_hex`; for `IdentityShowOutput` it is `governance_snapshot_ref`
+        // (which is the SPEC-02 contract — the field must survive the
+        // schema emission so the v1.0 null-binding is documented).
+        let whoami_schema = schemars::schema_for!(OutputEnvelope<WhoamiOutput>);
+        let whoami_str = serde_json::to_string(&whoami_schema).expect("schema serializes");
+        assert!(
+            !whoami_str.is_empty(),
+            "OutputEnvelope<WhoamiOutput> schema must be non-empty: {whoami_str}"
+        );
+        assert!(
+            whoami_str.contains("schema_version"),
+            "schema must include the envelope fields, got: {whoami_str}"
+        );
+        assert!(
+            whoami_str.contains("preview_only"),
+            "schema must include the envelope fields, got: {whoami_str}"
+        );
+        assert!(
+            whoami_str.contains("pubkey_hex"),
+            "WhoamiOutput payload must contribute to the schema (specific field pin): got {whoami_str}"
+        );
+
+        let show_schema = schemars::schema_for!(OutputEnvelope<IdentityShowOutput>);
+        let show_str = serde_json::to_string(&show_schema).expect("schema serializes");
+        assert!(
+            !show_str.is_empty(),
+            "OutputEnvelope<IdentityShowOutput> schema must be non-empty: {show_str}"
+        );
+        assert!(
+            show_str.contains("governance_snapshot_ref"),
+            "IdentityShowOutput payload must contribute to the schema (SPEC-02 pin): got {show_str}"
+        );
+
+        // And the remaining three standalone outputs (the rotation
+        // history rows expose at least `rotation_id`; the rotate output
+        // exposes `new_did`; the revoke output exposes `terminal`).
+        let rotate_schema = schemars::schema_for!(OutputEnvelope<IdentityRotateOutput>);
+        let rotate_str = serde_json::to_string(&rotate_schema).expect("schema serializes");
+        assert!(
+            rotate_str.contains("new_did"),
+            "IdentityRotateOutput payload must contribute to the schema: got {rotate_str}"
+        );
+
+        let revoke_schema = schemars::schema_for!(OutputEnvelope<IdentityRevokeOutput>);
+        let revoke_str = serde_json::to_string(&revoke_schema).expect("schema serializes");
+        assert!(
+            revoke_str.contains("terminal"),
+            "IdentityRevokeOutput payload must contribute to the schema: got {revoke_str}"
+        );
+
+        // `IdentityRotationEventOutput` is nested inside `IdentityShowOutput`
+        // (not a stand-alone envelope payload), but its schema must still
+        // be derivable so it can be embedded in any future standalone
+        // command surface without a structural change.
+        let rotation_event_schema = schemars::schema_for!(IdentityRotationEventOutput);
+        let rotation_event_str =
+            serde_json::to_string(&rotation_event_schema).expect("schema serializes");
+        assert!(
+            rotation_event_str.contains("rotation_id"),
+            "IdentityRotationEventOutput must emit a schema that includes rotation_id: {rotation_event_str}"
+        );
+        // `signature_proof` is coerced to a string via
+        // `#[schemars(with = "String")]`, so the schema describes it
+        // as a string — not the raw `RedactedHex` wrapper.
+        assert!(
+            rotation_event_str.contains("signature_proof"),
+            "signature_proof must appear as a string in the schema: {rotation_event_str}"
+        );
     }
 }

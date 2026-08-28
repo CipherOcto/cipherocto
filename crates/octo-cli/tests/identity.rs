@@ -290,6 +290,122 @@ fn clap_help_parses() {
     octo().arg("--help").assert().success();
 }
 
+// ---------------------------------------------------------------------------
+// TV-ID9: pastejacking-defense stderr echo (R1 review CORR-12)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tv_id9_rotate_emits_canonical_stderr_echo() {
+    // With `--dry-run`, the rotate handler must echo the canonical
+    // payload to stderr before substrate call (pastejacking defense per
+    // RFC §Security 1a). `--dry-run` bypasses the confirmation gate so
+    // the handler runs to the echo point.
+    let output = octo()
+        .args(["--json", "identity", "rotate", "--dry-run"])
+        .output()
+        .expect("run");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("would rotate: old_did="),
+        "stderr must contain canonical payload echo for rotate, got: {stderr}",
+    );
+}
+
+#[test]
+fn tv_id10_revoke_emits_canonical_stderr_echo() {
+    // Same pastejacking-defense contract for revoke. `--dry-run` skips
+    // the confirmation gate AND the empty-reason check (the empty-reason
+    // check fires BEFORE the dry-run gate per the handler order).
+    let output = octo()
+        .args([
+            "--json",
+            "identity",
+            "revoke",
+            "--reason",
+            "test",
+            "--dry-run",
+        ])
+        .output()
+        .expect("run");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("would revoke: did=") && stderr.contains("reason=test"),
+        "stderr must contain canonical payload echo for revoke, got: {stderr}",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// TV-ID11: empty --reason rejected (R1 review CORR-19)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tv_id11_revoke_empty_reason_rejected() {
+    // Clap accepts `--reason ""` (empty string passes clap's String
+    // validator). The handler's post-clap check must reject it.
+    let output = octo()
+        .args([
+            "identity",
+            "revoke",
+            "--reason",
+            "",
+            "--confirm",
+            "--confirm-acknowledge",
+        ])
+        .output()
+        .expect("run");
+    assert_eq!(
+        output.status.code(),
+        Some(64),
+        "expected exit 64 (Internal: reason must be non-empty), got {:?}\nstderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.to_lowercase().contains("reason"),
+        "stderr must mention reason, got: {stderr}",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// TV-ID12: auditor mode blocked for read-only identity commands (CORR-08)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tv_id12_auditor_mode_blocks_whoami() {
+    let output = octo()
+        .args(["--mode", "auditor", "--json", "whoami"])
+        .output()
+        .expect("run");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "auditor must be blocked from whoami, got {:?}\nstderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("ConfirmationRequired"),
+        "stderr must mention ConfirmationRequired for auditor block, got: {stderr}",
+    );
+}
+
+#[test]
+fn tv_id13_auditor_mode_blocks_identity_show() {
+    let output = octo()
+        .args(["--mode", "auditor", "--json", "identity", "show"])
+        .output()
+        .expect("run");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "auditor must be blocked from identity show, got {:?}\nstderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
 #[test]
 fn clap_identity_help_parses() {
     octo().args(["identity", "--help"]).assert().success();

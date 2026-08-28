@@ -31,6 +31,7 @@ pub use error::WalletError;
 pub use identity::{derive_capability_key, AudienceId, CapabilityKey, ChannelId, IdentityKey};
 pub use identity_record::{Did, IdentityRecord, IdentityRotationEvent, WalletStore};
 pub use key_hierarchy::{AxisSubkey, KeyHierarchy, MissionId, MissionKey};
+pub use lifecycle::LifecycleState;
 pub use node::{NodeType, NodeTypeParseError};
 
 #[cfg(test)]

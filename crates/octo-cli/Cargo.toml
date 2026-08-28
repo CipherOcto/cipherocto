@@ -3,6 +3,10 @@ name = "octo-cli"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "octo_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "octo"
 path = "src/main.rs"
@@ -16,7 +20,34 @@ anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-octo-core = { path = "../octo-core" }
-octo-network = { path = "../octo-network" }
-octo-registry = { path = "../octo-registry" }
-octo-runtime = { path = "../octo-runtime" }
+# === Substrate (Layer B) — RFC-0011 §Dependencies ===
+# Pins match the actual substrate workspace version (0.1.0). The impl-guide L73-75
+# aspirational values (0.5/0.4/0.6) do not match the current substrate versions and
+# would fail cargo resolution — tracked as a separate impl-guide substrate-pin drift.
+octo-wallet = { path = "../octo-wallet", version = "0.1.0" }                  # Layer B identity substrate — RFC-0009
+octo-cap-macaroon = { path = "../octo-cap-macaroon", version = "0.1.0" }      # Layer B capability substrate — RFC-0957
+octo-policy = { path = "../octo-policy", version = "0.1.0" }                  # Layer B policy substrate — RFC-0967
+
+# === Stub substrate (Layer C/D) ===
+# The 213-line stub main.rs that called octo-registry::init() and
+# octo-runtime::execute_agent() was replaced by the RFC-0011 command surface
+# (mission 0011-core-output-envelope-redaction). Those deps are no longer
+# referenced; removed to keep `-D warnings` clean.
+
+# === Output + TTY ===
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+
+# === Error envelope ===
+thiserror = "2.0"
+
+# === Hex32 newtype serialization ===
+hex = "0.4"
+
+# === Schemars for OutputEnvelope<T> ===
+schemars = { version = "0.8", features = ["chrono"] }
+
+[dev-dependencies]
+assert_cmd = "2.0"        # CLI binary invocation
+predicates = "3.1"         # stdout/stderr assertions
+assert_json = "0.1.0"        # JSON output validation
+tracing-test = "0.2"       # Captures log output for redaction tests

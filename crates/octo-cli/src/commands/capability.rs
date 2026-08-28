@@ -30,51 +30,9 @@ use octo_cap_macaroon::{
 };
 
 use crate::error::OctoCliError;
-use crate::output::OutputEnvelope;
+use crate::output::{Hex32, OutputEnvelope};
 use crate::redact::{redact_string, RedactedHex};
 use crate::Octo;
-
-// ---------------------------------------------------------------------------
-// Hex32 newtype — Strictly local. Mirrors the `output::Hex32` shape that
-// the core agent may migrate here on merge; the per-field Serialize impl
-// renders lowercase hex without `0x` prefix, matching the substrate's
-// `body_hash` wire form.
-// ---------------------------------------------------------------------------
-
-/// 32-byte digest, serialized as a lowercase-hex string with no `0x`
-/// prefix (64 ASCII characters, RFC-0011 §Output Envelope).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, schemars::JsonSchema)]
-pub struct Hex32(#[schemars(with = "String")] pub [u8; 32]);
-
-impl Hex32 {
-    /// Wrap a 32-byte array.
-    pub const fn new(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-    /// Lowercase hex form (`"aabb…"`, 64 chars).
-    pub fn to_hex(&self) -> String {
-        hex::encode(self.0)
-    }
-}
-
-impl serde::Serialize for Hex32 {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&self.to_hex())
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for Hex32 {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let s = String::deserialize(d)?;
-        let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
-        if bytes.len() != 32 {
-            return Err(serde::de::Error::custom("Hex32 must decode to 32 bytes"));
-        }
-        let mut out = [0u8; 32];
-        out.copy_from_slice(&bytes);
-        Ok(Self(out))
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Parser clamps — RFC-0011 §Caveat Catalog
@@ -489,7 +447,7 @@ pub fn mint(
 
     let views = caveat_views(&caveats);
     let body_hash_bytes = caveat_body_hash(&caveats);
-    let body_hash = Hex32::new(body_hash_bytes);
+    let body_hash = Hex32(body_hash_bytes);
 
     // Pastejacking defense (RFC-0011 §Subcommand Taxonomy entry #13):
     // echo the canonical caveat set + holder DID to stderr before any
@@ -1392,7 +1350,7 @@ mod tests {
     fn mint_output_redacts_holder_sig() {
         let output = CapabilityMintOutput {
             cap_id: "ab".repeat(32),
-            body_hash: Hex32::new(caveat_body_hash(&[Caveat::Before(1)])),
+            body_hash: Hex32(caveat_body_hash(&[Caveat::Before(1)])),
             caveats: caveat_views(&[Caveat::Before(1)]),
             holder_sig_hex: RedactedHex(vec![0xde; 64]),
         };
@@ -1414,7 +1372,7 @@ mod tests {
     /// `Hex32` round-trips through Serialize → Deserialize as lowercase hex.
     #[test]
     fn hex32_serde_roundtrip() {
-        let h = Hex32::new([0xab; 32]);
+        let h = Hex32([0xab; 32]);
         let s = serde_json::to_string(&h).expect("serialize");
         assert_eq!(s, format!("\"{}\"", "ab".repeat(32)), "{s}");
         let back: Hex32 = serde_json::from_str(&s).expect("deserialize");

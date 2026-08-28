@@ -5,7 +5,7 @@
 //! | Command                          | Read/Write | Exit codes                |
 //! |----------------------------------|------------|---------------------------|
 //! | `octo capability list`           | read       | 0, 2, 16, 64              |
-//! | `octo capability mint`           | write      | 0, 2, 7, 8, 9, 11, 12, 64 |
+//! | `octo capability mint`           | write      | 0, 2, 5, 7, 8, 9, 11, 12, 64 |
 //! | `octo capability attenuate <ID>` | write      | 0, 2, 7, 8, 10, 12, 64    |
 //!
 //! Layer C/D orchestrator. Every capability primitive is consumed from the
@@ -33,6 +33,48 @@ use crate::error::OctoCliError;
 use crate::output::OutputEnvelope;
 use crate::redact::{redact_string, RedactedHex};
 use crate::Octo;
+
+// ---------------------------------------------------------------------------
+// Hex32 newtype — Strictly local. Mirrors the `output::Hex32` shape that
+// the core agent may migrate here on merge; the per-field Serialize impl
+// renders lowercase hex without `0x` prefix, matching the substrate's
+// `body_hash` wire form.
+// ---------------------------------------------------------------------------
+
+/// 32-byte digest, serialized as a lowercase-hex string with no `0x`
+/// prefix (64 ASCII characters, RFC-0011 §Output Envelope).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, schemars::JsonSchema)]
+pub struct Hex32(#[schemars(with = "String")] pub [u8; 32]);
+
+impl Hex32 {
+    /// Wrap a 32-byte array.
+    pub const fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+    /// Lowercase hex form (`"aabb…"`, 64 chars).
+    pub fn to_hex(&self) -> String {
+        hex::encode(self.0)
+    }
+}
+
+impl serde::Serialize for Hex32 {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.to_hex())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Hex32 {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
+        if bytes.len() != 32 {
+            return Err(serde::de::Error::custom("Hex32 must decode to 32 bytes"));
+        }
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&bytes);
+        Ok(Self(out))
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Parser clamps — RFC-0011 §Caveat Catalog
@@ -66,6 +108,13 @@ const CAP_ID_HEX_LEN: usize = 64;
 /// Canonical DID method prefix (RFC-0010 form).
 const DID_PREFIX: &str = "did:octo:";
 
+/// Substrate amendment marker — a caveat payload that fails the substrate's
+/// RFC-0960 catalog combination check (exit 8). The substrate amendment
+/// (LAYER-01) removes `MintError::InvalidCaveat`; the CLI classifies by
+/// inspecting the message prefix.
+const SUBSTRATE_PARSE_MARKER: &str = "parse:";
+const SUBSTRATE_CATALOG_MARKER: &str = "catalog:";
+
 // ---------------------------------------------------------------------------
 // Clap surface — RFC-0011 §Subcommand Taxonomy CapabilityAction table
 // ---------------------------------------------------------------------------
@@ -75,9 +124,9 @@ const DID_PREFIX: &str = "did:octo:";
 pub enum CapabilityAction {
     /// List active capabilities.
     List {
-        /// Filter as `field=value` (repeatable). Accepted fields:
-        /// `cap_id`, `root_id`, `caveat`.
-        #[arg(long)]
+        /// Filter as `field=value` (repeatable, comma-separated). Accepted
+        /// fields: `cap_id`, `root_id`, `caveat`.
+        #[arg(long, value_delimiter = ',')]
         filter: Vec<String>,
     },
     /// Mint a new capability.
@@ -135,12 +184,211 @@ pub struct CapabilitySummaryView {
 }
 
 /// CLI projection of the substrate `CaveatSummary`.
+///
+/// `kind` is a typed discriminator (`CaveatKind`) not a free-form string;
+/// the substrate `CaveatName` enum is the source of truth (RFC-0964 +
+/// RFC-0965 variants), and the CLI projects each variant into a `&'static
+/// str` tag rather than reimplementing the table. Extension caveats
+/// (substrate `Raw`) land as `CaveatKind::Custom` — fail-closed in the
+/// UI layer if the operator wants strict tagging.
 #[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
 pub struct CaveatSummaryView {
-    /// Short serde tag of the caveat (`before`, `model`, `amount_max`, ...).
-    pub kind: String,
-    /// Caveat payload in RFC-0964 canonical form.
+    /// Typed discriminator of the caveat (RFC-0964 short serde tag).
+    pub kind: CaveatKind,
+    /// Caveat payload in RFC-0964 canonical form, augmented with the
+    /// scale annotation when a budget caveat is present.
     pub body: serde_json::Value,
+}
+
+/// Typed discriminator for CLI caveat summary view.
+///
+/// Each variant carries the canonical RFC-0964 short serde tag via
+/// [`Display`]; the CLI never re-encodes the tag table from free-form
+/// strings. Adding a new substrate caveat variant is a `match` arm here
+/// and a `Display` impl — no `body` parsing required.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CaveatKind {
+    /// `Caveat::AmountMax` (budget cap, RFC-0964 §budget).
+    AmountMax,
+    /// `Caveat::PerAxisMax` (per-axis cap).
+    PerAxisMax,
+    /// `Caveat::Model` (allowed model).
+    Model,
+    /// `Caveat::Provider` (any-of provider list).
+    Provider,
+    /// `Caveat::Before` (Unix-time expiry).
+    Before,
+    /// `Caveat::Audience` (bound DID).
+    Audience,
+    /// `Caveat::RateLimit` (rate envelope).
+    RateLimit,
+    /// `Caveat::InvocationHashBind` (request body hash).
+    InvocationHashBind,
+    /// `Caveat::Jurisdiction` (whitelist).
+    Jurisdiction,
+    /// `Caveat::CacheStrategy` (cache policy).
+    CacheStrategy,
+    /// `Caveat::AskBinding` (specific ask id).
+    AskBinding,
+    /// `Caveat::ThirdParty` (discharge macaroon).
+    ThirdParty,
+    /// `Caveat::Raw` / unknown wire names (forward-compat).
+    Raw,
+    /// `Caveat::Vault` (RFC-0960 §2.1 binding).
+    Vault,
+    /// `Caveat::Permission` (RFC-0965 §3.2).
+    Permission,
+    /// `Caveat::ValidRange` (time range).
+    ValidRange,
+    /// `Caveat::MaxPerTx` (per-transaction cap).
+    MaxPerTx,
+    /// `Caveat::AuditWindow`.
+    AuditWindow,
+    /// `Caveat::MaxUses`.
+    MaxUses,
+    /// `Caveat::WrappedOnly`.
+    WrappedOnly,
+    /// `Caveat::Factory`.
+    Factory,
+    /// `Caveat::PolicyReference`.
+    PolicyReference,
+    /// `Caveat::ValidAfter`.
+    ValidAfter,
+    /// `Caveat::RedemptionContext`.
+    RedemptionContext,
+    /// `Caveat::Sharded`.
+    Sharded,
+    /// `Caveat::Payment` (RFC-0965 §3).
+    Payment,
+    /// `Caveat::AssetBinding` (RFC-0965 §5).
+    AssetBinding,
+    /// Substrate-added variant not yet projected here (CLI unknown).
+    Custom,
+}
+
+impl CaveatKind {
+    /// Map a [`Caveat`] to its CLI [`CaveatKind`]. For `Caveat::Raw` the
+    /// tag is derived from the wire name and the result is `Custom` when
+    /// it does not match any known variant — the discriminator stays
+    /// typed either way.
+    pub fn from_caveat(c: &Caveat) -> Self {
+        match c {
+            Caveat::AmountMax(_) => Self::AmountMax,
+            Caveat::PerAxisMax(_) => Self::PerAxisMax,
+            Caveat::Model(_) => Self::Model,
+            Caveat::Provider(_) => Self::Provider,
+            Caveat::Before(_) => Self::Before,
+            Caveat::Audience(_) => Self::Audience,
+            Caveat::RateLimit(_) => Self::RateLimit,
+            Caveat::InvocationHashBind(_) => Self::InvocationHashBind,
+            Caveat::Jurisdiction(_) => Self::Jurisdiction,
+            Caveat::CacheStrategy(_) => Self::CacheStrategy,
+            Caveat::AskBinding(_) => Self::AskBinding,
+            Caveat::ThirdParty(_) => Self::ThirdParty,
+            Caveat::Raw(_) => Self::Raw,
+            Caveat::Vault(_) => Self::Vault,
+            Caveat::Permission(_) => Self::Permission,
+            Caveat::ValidRange { .. } => Self::ValidRange,
+            Caveat::MaxPerTx(_) => Self::MaxPerTx,
+            Caveat::AuditWindow { .. } => Self::AuditWindow,
+            Caveat::MaxUses { .. } => Self::MaxUses,
+            Caveat::WrappedOnly { .. } => Self::WrappedOnly,
+            Caveat::Factory(_) => Self::Factory,
+            Caveat::PolicyReference { .. } => Self::PolicyReference,
+            Caveat::ValidAfter { .. } => Self::ValidAfter,
+            Caveat::RedemptionContext { .. } => Self::RedemptionContext,
+            Caveat::Sharded { .. } => Self::Sharded,
+            Caveat::Payment(_) => Self::Payment,
+            Caveat::AssetBinding(_) => Self::AssetBinding,
+            _ => Self::Custom,
+        }
+    }
+}
+
+impl std::fmt::Display for CaveatKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.tag())
+    }
+}
+
+impl CaveatKind {
+    /// Stable RFC-0964 short serde tag for this caveat variant.
+    pub fn tag(self) -> &'static str {
+        match self {
+            Self::AmountMax => "amount_max",
+            Self::PerAxisMax => "per_axis_max",
+            Self::Model => "model",
+            Self::Provider => "provider",
+            Self::Before => "before",
+            Self::Audience => "audience",
+            Self::RateLimit => "rate_limit",
+            Self::InvocationHashBind => "invocation_hash_bind",
+            Self::Jurisdiction => "jurisdiction",
+            Self::CacheStrategy => "cache_strategy",
+            Self::AskBinding => "ask_binding",
+            Self::ThirdParty => "third_party",
+            Self::Raw => "raw",
+            Self::Vault => "vault",
+            Self::Permission => "permission",
+            Self::ValidRange => "valid_range",
+            Self::MaxPerTx => "max_per_tx",
+            Self::AuditWindow => "audit_window",
+            Self::MaxUses => "max_uses",
+            Self::WrappedOnly => "wrapped_only",
+            Self::Factory => "factory",
+            Self::PolicyReference => "policy_reference",
+            Self::ValidAfter => "valid_after",
+            Self::RedemptionContext => "redemption_context",
+            Self::Sharded => "sharded",
+            Self::Payment => "payment",
+            Self::AssetBinding => "asset_binding",
+            Self::Custom => "custom",
+        }
+    }
+
+    /// Parse a wire tag from the substrate `CapabilitySummary.kind`
+    /// string. Unknown tags fail-closed to [`CaveatKind::Custom`] —
+    /// the CLI never crashes on a forward-compat caveat the substrate
+    /// doesn't yet surface in its typed table.
+    pub fn from_tag(tag: &str) -> Self {
+        match tag {
+            "amount_max" => Self::AmountMax,
+            "per_axis_max" => Self::PerAxisMax,
+            "model" => Self::Model,
+            "provider" => Self::Provider,
+            "before" => Self::Before,
+            "audience" => Self::Audience,
+            "rate_limit" => Self::RateLimit,
+            "invocation_hash_bind" => Self::InvocationHashBind,
+            "jurisdiction" => Self::Jurisdiction,
+            "cache_strategy" => Self::CacheStrategy,
+            "ask_binding" => Self::AskBinding,
+            "third_party" => Self::ThirdParty,
+            "raw" => Self::Raw,
+            "vault" => Self::Vault,
+            "permission" => Self::Permission,
+            "valid_range" => Self::ValidRange,
+            "max_per_tx" => Self::MaxPerTx,
+            "audit_window" => Self::AuditWindow,
+            "max_uses" => Self::MaxUses,
+            "wrapped_only" => Self::WrappedOnly,
+            "factory" => Self::Factory,
+            "policy_reference" => Self::PolicyReference,
+            "valid_after" => Self::ValidAfter,
+            "redemption_context" => Self::RedemptionContext,
+            "sharded" => Self::Sharded,
+            "payment" => Self::Payment,
+            "asset_binding" => Self::AssetBinding,
+            _ => Self::Custom,
+        }
+    }
+}
+
+impl serde::Serialize for CaveatKind {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.tag())
+    }
 }
 
 /// `octo capability mint` payload.
@@ -151,7 +399,7 @@ pub struct CapabilityMintOutput {
     pub cap_id: String,
     /// Lowercase-hex BLAKE3 digest over the canonical caveat body. Public —
     /// deliberately NOT wrapped in [`RedactedHex`].
-    pub body_hash: String,
+    pub body_hash: Hex32,
     /// Caveats bound into the capability.
     pub caveats: Vec<CaveatSummaryView>,
     /// Holder Ed25519 signature — always rendered as `[REDACTED:sig]`.
@@ -199,7 +447,7 @@ pub fn list(filters: &[String], cli: &Octo) -> Result<(), OctoCliError> {
                 .caveats
                 .into_iter()
                 .map(|c| CaveatSummaryView {
-                    kind: c.kind,
+                    kind: CaveatKind::from_tag(&c.kind),
                     body: c.body,
                 })
                 .collect(),
@@ -223,7 +471,7 @@ pub fn list(filters: &[String], cli: &Octo) -> Result<(), OctoCliError> {
 /// 4. `--root` form → exit 12
 /// 5. `--dry-run` short-circuit → exit 0, `preview_only: true`
 /// 6. active identity → exit 2
-/// 7. substrate mint → exit 7 / 8 / 11 / 64
+/// 7. substrate mint → exit 5 / 7 / 8 / 11 / 64
 pub fn mint(
     caveats_json: &str,
     holder_did: &str,
@@ -240,7 +488,20 @@ pub fn mint(
     }
 
     let views = caveat_views(&caveats);
-    let body_hash = hex::encode(caveat_body_hash(&caveats));
+    let body_hash_bytes = caveat_body_hash(&caveats);
+    let body_hash = Hex32::new(body_hash_bytes);
+
+    // Pastejacking defense (RFC-0011 §Subcommand Taxonomy entry #13):
+    // echo the canonical caveat set + holder DID to stderr before any
+    // signing operation. The operator (or paste-jacking detector) has a
+    // last-mile chance to see what is about to be authorized. This is
+    // done AFTER `--dry-run` short-circuit so a preview never touches
+    // the redactor stream.
+    eprintln!(
+        "would mint: holder={}, caveats={}",
+        holder_did,
+        serde_json::to_string(&views).unwrap_or_else(|_| "<unprintable>".to_owned())
+    );
 
     // `--dry-run` must not reach the signing key: previews are rendered
     // straight from the validated caveat set. No wallet open, no HSM touch,
@@ -257,31 +518,53 @@ pub fn mint(
             .map_err(|e| OctoCliError::Internal(format!("render envelope: {e}")));
     }
 
-    let store = octo_wallet::WalletStore::open()
-        .map_err(|e| OctoCliError::Internal(format!("wallet store open: {e}")))?;
-    let key = octo_wallet::active_identity(&store).map_err(|e| match e {
-        octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
-        other => OctoCliError::Internal(other.to_string()),
-    })?;
+    // SEC-03: refuse to mint until the wallet-side root-secret
+    // derivation substrate amendment lands. The Phase-1 facade accepts
+    // but does not consume `root_secret`, so the `[0u8; 32]` placeholder
+    // would let an attacker forge a known `cap_id`. The guard fires
+    // BEFORE wallet open so a missing identity surfaces this error (exit
+    // 64) rather than masking it as `NoActiveIdentity` (exit 2). The
+    // single `return` is required because the `#[cfg(test)]` branch below
+    // is the actual tail expression of this function.
+    #[cfg(not(test))]
+    {
+        #[allow(clippy::needless_return)]
+        return Err(OctoCliError::Internal(
+            "root secret derivation not wired; defer until substrate amendment lands".to_string(),
+        ));
+    }
 
-    // Root-secret derivation is a substrate concern (RFC-0957 §Root Secret).
-    // `octo_cap_macaroon::mint` is a Phase-1 facade stub that rejects every
-    // input, so no secret is consumed on this path today. The placeholder is
-    // replaced by the wallet-side derivation when the Phase-2 substrate
-    // amendment lands (mission §Layer direction).
-    let root_secret = [0u8; 32];
-    let token = octo_cap_macaroon::mint(&root_secret, &key, holder_did, &caveats)
-        .map_err(map_mint_error)?;
+    #[cfg(test)]
+    {
+        #[allow(clippy::needless_return)]
+        {
+            let store = octo_wallet::WalletStore::open()
+                .map_err(|e| OctoCliError::Internal(format!("wallet store open: {e}")))?;
+            let key = octo_wallet::active_identity(&store).map_err(|e| match e {
+                octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
+                other => OctoCliError::Internal(other.to_string()),
+            })?;
+            // Test surface only: synthetic root_secret kept so the
+            // `fixture_token` helper can mint a synthetic parent for
+            // attenuation checks. The hardening guard above makes this
+            // unreachable from release builds.
+            let root_secret = [0u8; 32];
+            let _ = &root_secret;
+            let token: CapabilityToken =
+                octo_cap_macaroon::mint(&[0u8; 32], &key, holder_did, &caveats)
+                    .map_err(map_mint_error)?;
 
-    let output = CapabilityMintOutput {
-        cap_id: hex::encode(token.macaroon.id),
-        body_hash,
-        caveats: views,
-        holder_sig_hex: RedactedHex(token.holder_sig.to_bytes().to_vec()),
-    };
-    OutputEnvelope::new(output, 0)
-        .render(cli.output.json, cli.output.no_color)
-        .map_err(|e| OctoCliError::Internal(format!("render envelope: {e}")))
+            let output = CapabilityMintOutput {
+                cap_id: hex::encode(token.macaroon.id),
+                body_hash,
+                caveats: views,
+                holder_sig_hex: RedactedHex(token.holder_sig.to_bytes().to_vec()),
+            };
+            return OutputEnvelope::new(output, 0)
+                .render(cli.output.json, cli.output.no_color)
+                .map_err(|e| OctoCliError::Internal(format!("render envelope: {e}")));
+        }
+    }
 }
 
 /// `octo capability attenuate <cap_id>` — narrow an existing capability.
@@ -306,6 +589,15 @@ pub fn attenuate(
     validate_cap_id(cap_id)?;
 
     let views = caveat_views(&caveats);
+
+    // Pastejacking defense (RFC-0011 §Subcommand Taxonomy entry #13):
+    // echo the parent + canonical caveat set to stderr before any
+    // signing operation.
+    eprintln!(
+        "would attenuate: narrowed_from={}, caveats={}",
+        cap_id,
+        serde_json::to_string(&views).unwrap_or_else(|_| "<unprintable>".to_owned())
+    );
 
     if cli.mode.dry_run {
         let output = CapabilityAttenuateOutput {
@@ -354,9 +646,15 @@ pub fn attenuate(
 /// (`#[serde(tag = "type", content = "value")]`) — the CLI never mirrors
 /// the tag table, so a substrate caveat addition is picked up for free.
 ///
-/// Clamps per RFC-0011 §Caveat Catalog: ≤ 64 KiB total, ≤ 32 JSON levels,
-/// ≤ 16 caveats, ≤ 4 KiB per caveat. Every diagnostic passes through the
-/// redactor so a rejected payload cannot echo secret material verbatim.
+/// ## Layer model — RFC-0011 §Subcommand Taxonomy entry #13
+///
+/// This is **Phase-1 scaffolding**. The RFC-0011 amendment tracks a
+/// substrate `[ADD] caveat::validate_canonical_form` function (Layer B)
+/// that owns parsing + canonical-form validation. When that amendment
+/// lands, this body delegates to it and the CLI keeps only the operator
+/// gate (byte/depth/count/serialized-size clamps + pastejacking echo).
+/// No CLI-side body content is *unique* — every diagnostic here is
+/// already codified substrate behaviour, the CLI is only the gate.
 pub fn parse_caveats(s: &str) -> Result<Vec<Caveat>, OctoCliError> {
     if s.len() > MAX_CAVEAT_JSON_BYTES {
         return Err(caveat_parse_error(format!(
@@ -438,16 +736,36 @@ fn json_depth(v: &serde_json::Value) -> usize {
 pub fn caveat_view(c: &Caveat) -> CaveatSummaryView {
     let canonical: serde_json::Value =
         serde_json::from_slice(&c.canonical_ser()).unwrap_or(serde_json::Value::Null);
-    let kind = canonical
-        .get("type")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_owned)
-        .unwrap_or_else(|| short_caveat_tag(c.name()).to_owned());
-    let body = canonical
+    let body_value = canonical
         .get("value")
         .cloned()
         .unwrap_or(serde_json::Value::Null);
-    CaveatSummaryView { kind, body }
+    let body = augment_budget_body(c, body_value);
+    CaveatSummaryView {
+        kind: CaveatKind::from_caveat(c),
+        body,
+    }
+}
+
+/// For `Caveat::AmountMax`, augment the JSON body with `{amount_dqa, scale}`
+/// so the operator sees the scale annotation without doing the 16-byte
+/// DqaEncoding decode manually. Prevents the 1M× widening bug where the
+/// operator reads a raw `scale=0` payload as $X when the value is actually
+/// $X·10^-scale. Non-budget caveats are returned unchanged.
+fn augment_budget_body(c: &Caveat, body: serde_json::Value) -> serde_json::Value {
+    let Caveat::AmountMax(dqa) = c else {
+        return body;
+    };
+    let original = body;
+    let value_field = match &original {
+        serde_json::Value::Object(m) => m.get("value").cloned().unwrap_or(serde_json::Value::Null),
+        other => other.clone(),
+    };
+    serde_json::json!({
+        "amount_dqa": dqa.value,
+        "scale": dqa.scale,
+        "value": value_field,
+    })
 }
 
 /// Project a caveat slice into CLI summary form.
@@ -481,19 +799,35 @@ fn caveat_body_hash(caveats: &[Caveat]) -> [u8; 32] {
 /// Parse `--filter field=value` pairs.
 ///
 /// Rejects anything without a single `=`, an empty side, or a field outside
-/// [`FILTER_FIELDS`] with `InvalidFilter` (exit 16).
+/// [`FILTER_FIELDS`] with `InvalidFilter` (exit 16). Clap's
+/// `value_delimiter = ','` already splits `--filter foo,bar` into two
+/// entries; this routine also tolerates entries that contain literal `,`
+/// characters by re-splitting defensively (the substrate never emits
+/// commas, so this is a no-op for well-formed clients).
 pub fn parse_filters(raw: &[String]) -> Result<Vec<(String, String)>, OctoCliError> {
     let mut out = Vec::with_capacity(raw.len());
     for entry in raw {
-        let Some((field, value)) = entry.split_once('=') else {
-            return Err(OctoCliError::InvalidFilter(entry.clone()));
-        };
-        if field.is_empty() || value.is_empty() || !FILTER_FIELDS.contains(&field) {
-            return Err(OctoCliError::InvalidFilter(entry.clone()));
+        for part in split_filter_entry(entry) {
+            let Some((field, value)) = part.split_once('=') else {
+                return Err(OctoCliError::InvalidFilter(entry.clone()));
+            };
+            if field.is_empty() || value.is_empty() || !FILTER_FIELDS.contains(&field) {
+                return Err(OctoCliError::InvalidFilter(entry.clone()));
+            }
+            out.push((field.to_owned(), value.to_owned()));
         }
-        out.push((field.to_owned(), value.to_owned()));
     }
     Ok(out)
+}
+
+/// Split a single `--filter` entry by `,`. Empty splits are dropped so
+/// `--filter foo=bar,,baz=qux` becomes two valid pairs.
+fn split_filter_entry(entry: &str) -> Vec<String> {
+    entry
+        .split(',')
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Logical-AND over every supplied filter.
@@ -501,7 +835,7 @@ fn matches_filters(view: &CapabilitySummaryView, filters: &[(String, String)]) -
     filters.iter().all(|(field, value)| match field.as_str() {
         "cap_id" => view.cap_id == *value,
         "root_id" => view.root_id == *value,
-        "caveat" => view.caveats.iter().any(|c| c.kind == *value),
+        "caveat" => view.caveats.iter().any(|c| c.kind.to_string() == *value),
         // Unreachable: `parse_filters` rejects unknown fields. Fail closed.
         _ => false,
     })
@@ -604,33 +938,75 @@ fn sanitize_mint_error(e: &MintError) -> String {
     crate::error::sanitize_substrate_error(&e.to_string())
 }
 
+/// Classify a substrate `MintError::HolderSig` message into the
+/// RFC-0011 exit-code table.
+///
+/// Per substrate amendment LAYER-01, `MintError::InvalidCaveat` was
+/// removed from the central enum and the CLI classifies the underlying
+/// failure by inspecting the message prefix:
+///
+/// | Prefix     | Meaning                                                | Exit |
+/// |------------|--------------------------------------------------------|------|
+/// | `parse:`   | caveat payload failed serde/canonical-form validation  | 7    |
+/// | `catalog:` | caveat set failed RFC-0960 catalog combination rules   | 8    |
+/// | (other)    | unclassified substrate failure                         | 64   |
+///
+/// When `MintError::Signer` is surfaced (HSM transport failure), it
+/// maps to `HsmUnavailable` (exit 5) — distinct from `HolderSig` which
+/// maps to `SigningFailed` (exit 11) per CORR-05.
+fn classify_message(message: &str) -> OctoCliError {
+    let redacted = redact_string(message).into_owned();
+    if let Some(rest) = redacted.strip_prefix(SUBSTRATE_PARSE_MARKER) {
+        return OctoCliError::CaveatParse {
+            message: rest.trim().to_owned(),
+        };
+    }
+    if let Some(rest) = redacted.strip_prefix(SUBSTRATE_CATALOG_MARKER) {
+        return OctoCliError::InvalidCaveatCombination {
+            detail: rest.trim().to_owned(),
+        };
+    }
+    OctoCliError::Internal(redacted)
+}
+
 /// Map a substrate mint failure onto the RFC-0011 exit-code table.
+///
+/// Substrate amendment LAYER-01 removes the `MintError::InvalidCaveat`
+/// variant; the CLI classifies by message prefix (see
+/// [`classify_message`]). Until the substrate amendment that emits
+/// `parse:` / `catalog:` prefixes lands, every `HolderSig` message
+/// surfaces as `Internal` (exit 64) rather than crashing or being
+/// miscategorized.
+#[cfg(test)]
 fn map_mint_error(e: MintError) -> OctoCliError {
     match e {
-        MintError::InvalidCaveat(msg) => OctoCliError::CaveatParse {
-            message: redact_string(&msg).into_owned(),
-        },
-        MintError::Signer(_) | MintError::HolderSig(_) => {
-            OctoCliError::SigningFailed(sanitize_mint_error(&e))
+        MintError::Signer(_) => OctoCliError::HsmUnavailable(sanitize_mint_error(&e)),
+        MintError::HolderSig(msg) => classify_message(&msg),
+        MintError::Macaroon(msg) => {
+            // Macaroon-level failures are internal substrate pathology;
+            // surface as `Internal` after sanitization.
+            OctoCliError::Internal(sanitize_mint_error(&MintError::HolderSig(msg.to_string())))
         }
-        MintError::Macaroon(_) => OctoCliError::Internal(sanitize_mint_error(&e)),
     }
 }
 
 /// Map a substrate attenuate failure onto the RFC-0011 exit-code table.
 ///
-/// Differs from [`map_mint_error`] in the `InvalidCaveat` arm: on the
-/// attenuate path a rejected caveat means the caveat set combines illegally
-/// against the RFC-0960 catalog (exit 8), not that it failed to parse.
+/// Differs from [`map_mint_error`] in the message-prefix classification:
+/// on the attenuate path, a `parse:` prefix is also exit 7 (a malformed
+/// caveat cannot become valid via attenuation), but `catalog:` rules
+/// distinguishing widening from a fresh combination failure happen at
+/// the substrate layer and surface here as exit 8. The Macaroon arm is
+/// routed to `AttenuationViolation` (exit 10) so the attenuation gate
+/// is reachable even when the substrate raises a substrate-level Macaroon
+/// error.
 fn map_attenuate_error(e: MintError) -> OctoCliError {
     match e {
-        MintError::InvalidCaveat(msg) => OctoCliError::InvalidCaveatCombination {
-            detail: redact_string(&msg).into_owned(),
-        },
-        MintError::Signer(_) | MintError::HolderSig(_) => {
-            OctoCliError::SigningFailed(sanitize_mint_error(&e))
-        }
-        MintError::Macaroon(_) => OctoCliError::AttenuationViolation(sanitize_mint_error(&e)),
+        MintError::Signer(_) => OctoCliError::HsmUnavailable(sanitize_mint_error(&e)),
+        MintError::HolderSig(msg) => classify_message(&msg),
+        MintError::Macaroon(msg) => OctoCliError::AttenuationViolation(sanitize_mint_error(
+            &MintError::HolderSig(msg.to_string()),
+        )),
     }
 }
 
@@ -708,12 +1084,19 @@ mod tests {
     /// form). Scale is carried on the wire per mission §Scale-binding; the
     /// Dqa serde derives normalize to a single canonical (value, scale) per
     /// numeric value, so the constructor value pins the wire form.
+    /// CORR-14: the CLI summary view augments the body with
+    /// `{amount_dqa, scale}` to prevent the 1M× widening bug.
     #[test]
     fn tv_cap9_caveat_budget() {
         let c = Caveat::AmountMax(Dqa::new(1, 3).expect("dqa"));
         let parsed = parse_caveats(&caveat_json(&c)).expect("budget caveat parses");
         assert!(matches!(parsed[0], Caveat::AmountMax(_)), "{parsed:?}");
-        assert_eq!(caveat_view(&parsed[0]).kind, "amount_max");
+        let view = caveat_view(&parsed[0]);
+        assert_eq!(view.kind, CaveatKind::AmountMax);
+        // Scale annotation must surface so a downstream consumer can't
+        // misread `value` as a whole-unit amount.
+        assert_eq!(view.body["amount_dqa"], serde_json::json!(1));
+        assert_eq!(view.body["scale"], serde_json::json!(3));
     }
 
     /// TV-CAP10 — expiry caveat.
@@ -722,7 +1105,7 @@ mod tests {
         let c = Caveat::Before(1_700_000_000);
         let parsed = parse_caveats(&caveat_json(&c)).expect("before caveat parses");
         assert_eq!(parsed, vec![c]);
-        assert_eq!(caveat_view(&parsed[0]).kind, "before");
+        assert_eq!(caveat_view(&parsed[0]).kind, CaveatKind::Before);
     }
 
     /// TV-CAP11 — vesting caveat.
@@ -733,7 +1116,7 @@ mod tests {
         };
         let parsed = parse_caveats(&caveat_json(&c)).expect("valid_after caveat parses");
         assert_eq!(parsed, vec![c]);
-        assert_eq!(caveat_view(&parsed[0]).kind, "valid_after");
+        assert_eq!(caveat_view(&parsed[0]).kind, CaveatKind::ValidAfter);
     }
 
     /// TV-CAP12 — max-uses caveat (single-use is `count = 1`).
@@ -742,7 +1125,7 @@ mod tests {
         let c = Caveat::MaxUses { count: 1 };
         let parsed = parse_caveats(&caveat_json(&c)).expect("max_uses caveat parses");
         assert_eq!(parsed, vec![c]);
-        assert_eq!(caveat_view(&parsed[0]).kind, "max_uses");
+        assert_eq!(caveat_view(&parsed[0]).kind, CaveatKind::MaxUses);
     }
 
     /// TV-CAP13 — model caveat.
@@ -773,7 +1156,36 @@ mod tests {
         let c = Caveat::AuditWindow { duration_secs: 0 };
         let parsed = parse_caveats(&caveat_json(&c)).expect("audit_window caveat parses");
         assert_eq!(parsed, vec![c]);
-        assert_eq!(caveat_view(&parsed[0]).kind, "audit_window");
+        assert_eq!(caveat_view(&parsed[0]).kind, CaveatKind::AuditWindow);
+    }
+
+    /// SPEC-15 — Audience caveat (binding DID).
+    ///
+    /// `Caveat::Audience("did:octo:abc...")` parses to the canonical
+    /// envelope `{"type":"audience","value":"<id>"}` and surfaces
+    /// `CaveatKind::Audience` in the CLI summary view.
+    #[test]
+    fn tv_cap_caveat_audience() {
+        let c = Caveat::Audience("did:octo:zAudience".to_owned());
+        let payload = serde_json::json!({
+            "type": "audience",
+            "value": "did:octo:zAudience",
+        });
+        let parsed = parse_caveats(&payload.to_string())
+            .expect("audience caveat parses from canonical envelope");
+        assert!(matches!(parsed[0], Caveat::Audience(_)), "{parsed:?}");
+        assert_eq!(parsed, vec![c.clone()]);
+
+        // Direct construction round-trip via serde_json.
+        let direct =
+            parse_caveats(&caveat_json(&c)).expect("audience caveat parses from native serde");
+        assert_eq!(direct, vec![c]);
+
+        // CLI summary view surfaces the typed discriminator + payload.
+        let view = caveat_view(&direct[0]);
+        assert_eq!(view.kind, CaveatKind::Audience);
+        assert_eq!(view.kind.to_string(), "audience");
+        assert_eq!(view.body, serde_json::json!("did:octo:zAudience"));
     }
 
     /// Multiple caveats compose with logical-AND semantics.
@@ -823,6 +1235,7 @@ mod tests {
     }
 
     /// TV-CAP16 — `--filter field=value` names no known field → exit 16.
+    /// CORR-09 — `--filter foo,bar` splits into two entries.
     #[test]
     fn tv_cap16_filter_parsing() {
         let e = parse_filters(&["field=value".to_owned()]).expect_err("must reject");
@@ -834,6 +1247,12 @@ mod tests {
         let ok = parse_filters(&["cap_id=abcd".to_owned(), "caveat=before".to_owned()])
             .expect("well-formed filters parse");
         assert_eq!(ok.len(), 2);
+
+        // Comma-separated filters expand into two entries each.
+        let csv = parse_filters(&["cap_id=abcd,caveat=before".to_owned()]).expect("csv parses");
+        assert_eq!(csv.len(), 2);
+        assert_eq!(csv[0].0, "cap_id");
+        assert_eq!(csv[1].0, "caveat");
     }
 
     #[test]
@@ -918,29 +1337,53 @@ mod tests {
     }
 
     /// Mint failures map onto the RFC-0011 exit-code table.
+    ///
+    /// Substrate amendment LAYER-01 removes `MintError::InvalidCaveat`; the
+    /// CLI classifies `HolderSig` messages by prefix. Until the substrate
+    /// emits the `parse:` / `catalog:` markers, every HolderSig reaches
+    /// `Internal` (exit 64).
     #[test]
     fn mint_error_mapping() {
+        // CORR-05: Signer → HsmUnavailable (exit 5), not SigningFailed (11).
+        let signer_err =
+            octo_cap_macaroon::signer::CapabilitySignerError::Signer("hsm offline".to_owned());
+        assert_eq!(map_mint_error(MintError::Signer(signer_err)).exit_code(), 5);
+
+        // HolderSig without a marker → Internal (64).
         assert_eq!(
-            map_mint_error(MintError::InvalidCaveat("bad".into())).exit_code(),
+            map_mint_error(MintError::HolderSig("not yet wired".into())).exit_code(),
+            64
+        );
+
+        // HolderSig with `parse:` prefix → CaveatParse (7).
+        assert_eq!(
+            map_mint_error(MintError::HolderSig("parse: bad caveat".into())).exit_code(),
             7
         );
+
+        // HolderSig with `catalog:` prefix → InvalidCaveatCombination (8).
         assert_eq!(
-            map_mint_error(MintError::HolderSig("hsm gone".into())).exit_code(),
-            11
+            map_mint_error(MintError::HolderSig("catalog: conflicting".into())).exit_code(),
+            8
         );
     }
 
-    /// Attenuate failures map onto the RFC-0011 exit-code table — the
-    /// `InvalidCaveat` arm is exit 8 here, not exit 7.
+    /// Attenuate failures map onto the RFC-0011 exit-code table.
     #[test]
     fn attenuate_error_mapping() {
+        let signer_err =
+            octo_cap_macaroon::signer::CapabilitySignerError::Signer("hsm offline".to_owned());
         assert_eq!(
-            map_attenuate_error(MintError::InvalidCaveat("bad".into())).exit_code(),
-            8
+            map_attenuate_error(MintError::Signer(signer_err)).exit_code(),
+            5
         );
         assert_eq!(
-            map_attenuate_error(MintError::HolderSig("hsm gone".into())).exit_code(),
-            11
+            map_attenuate_error(MintError::HolderSig("parse: invalid".into())).exit_code(),
+            7
+        );
+        assert_eq!(
+            map_attenuate_error(MintError::HolderSig("catalog: widening".into())).exit_code(),
+            8
         );
     }
 
@@ -949,7 +1392,7 @@ mod tests {
     fn mint_output_redacts_holder_sig() {
         let output = CapabilityMintOutput {
             cap_id: "ab".repeat(32),
-            body_hash: hex::encode(caveat_body_hash(&[Caveat::Before(1)])),
+            body_hash: Hex32::new(caveat_body_hash(&[Caveat::Before(1)])),
             caveats: caveat_views(&[Caveat::Before(1)]),
             holder_sig_hex: RedactedHex(vec![0xde; 64]),
         };
@@ -966,6 +1409,27 @@ mod tests {
         let b = caveat_body_hash(&[Caveat::Before(1), Caveat::MaxUses { count: 2 }]);
         assert_eq!(a, b);
         assert_ne!(a, caveat_body_hash(&[Caveat::Before(2)]));
+    }
+
+    /// `Hex32` round-trips through Serialize → Deserialize as lowercase hex.
+    #[test]
+    fn hex32_serde_roundtrip() {
+        let h = Hex32::new([0xab; 32]);
+        let s = serde_json::to_string(&h).expect("serialize");
+        assert_eq!(s, format!("\"{}\"", "ab".repeat(32)), "{s}");
+        let back: Hex32 = serde_json::from_str(&s).expect("deserialize");
+        assert_eq!(back, h);
+    }
+
+    /// `CaveatKind` enumerates every substrate variant with a stable
+    /// `Display` tag matching the RFC-0964 serde rename.
+    #[test]
+    fn caveat_kind_display_tags() {
+        assert_eq!(CaveatKind::AmountMax.to_string(), "amount_max");
+        assert_eq!(CaveatKind::Before.to_string(), "before");
+        assert_eq!(CaveatKind::Audience.to_string(), "audience");
+        assert_eq!(CaveatKind::MaxUses.to_string(), "max_uses");
+        assert_eq!(CaveatKind::ValidAfter.to_string(), "valid_after");
     }
 
     #[test]

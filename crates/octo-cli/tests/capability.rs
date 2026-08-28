@@ -180,7 +180,9 @@ fn tv_cap19_confirm_required() {
         ])
         .assert()
         .code(2)
-        .stderr(contains("confirmation required"));
+        // JSON error envelope from the v1.0 error renderer carries the
+        // variant name (`ConfirmationRequired`) verbatim.
+        .stderr(contains("ConfirmationRequired"));
 }
 
 /// TV-CAP19 (variant) — `capability attenuate` without `--confirm` exits 2.
@@ -197,7 +199,7 @@ fn tv_cap19b_attenuate_requires_confirm() {
         ])
         .assert()
         .code(2)
-        .stderr(contains("confirmation required"));
+        .stderr(contains("ConfirmationRequired"));
 }
 
 /// TV-CAP19 (variant) --missing `--confirm-acknowledge` on mint/attenuate

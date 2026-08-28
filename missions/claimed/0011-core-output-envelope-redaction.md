@@ -26,11 +26,11 @@ spec_cycle_dry_closed: 2026-08-28
 **Parent:** RFC-0011
 **Depends on:**
 
-- RFC-0011 (own substrate — this RFC's clap derive + output envelope + redaction layer)
-- RFC-0009 (Identity substrate — for `WalletStore` / `IdentityKey` consumed by identity commands)
-- RFC-0957 (Macaroon substrate — for `CapabilityToken` consumed by capability commands)
-- RFC-0964 (Caveat Envelope — canonical caveat JSON shape)
-- RFC-0008 (Execution Class — operator class mapping for CLI commands)
+- RFC-0011: own substrate — this RFC's clap derive + output envelope + redaction layer
+- RFC-0009: Identity substrate — `WalletStore` / `IdentityKey` consumed by identity commands
+- RFC-0957: Macaroon substrate — `CapabilityToken` consumed by capability commands
+- RFC-0964: Caveat Envelope canonical caveat JSON shape
+- RFC-0008: Execution Class operator class mapping for CLI commands
   **Blocks:** `0011-identity-commands`, `0011-capability-commands`, `0011-policy-commands`
 
 ## Status
@@ -39,7 +39,7 @@ Claimed 2026-08-28 (mmacedoeu) — spec cycle DRY-closed 2026-08-28
 
 ## RFC
 
-RFC-0011 (see rfcs/draft/process/0011-octo-cli-substrate.md §Binary Surface)
+RFC-0011 §Binary Surface (rfcs/draft/process/0011-octo-cli-substrate.md)
 
 ## Dependencies
 

@@ -209,9 +209,9 @@ pub enum CaveatKind {
     ThirdParty,
     /// `Caveat::Raw` / unknown wire names (forward-compat).
     Raw,
-    /// `Caveat::Vault` (RFC-0960 §R1-F2 — RFC-0957 caveats are the substrate).
+    /// `Caveat::Vault` (RFC-0960 §2.2 Capability).
     Vault,
-    /// `Caveat::Permission` (RFC-0965 §3.2 Permission).
+    /// `Caveat::Permission` (RFC-0965 §5 PermissionKind Co-Bound Caveat).
     Permission,
     /// `Caveat::ValidRange` (time range).
     ValidRange,
@@ -233,7 +233,7 @@ pub enum CaveatKind {
     RedemptionContext,
     /// `Caveat::Sharded`.
     Sharded,
-    /// `Caveat::Payment` (RFC-0965 §3. New caveat payload encodings).
+    /// `Caveat::Payment` (RFC-0964 §3. Variant payload encodings).
     Payment,
     /// `Caveat::AssetBinding` (RFC-0965 §5 PermissionKind Co-Bound Caveat).
     AssetBinding,
@@ -853,7 +853,7 @@ fn matches_filters(view: &CapabilitySummaryView, filters: &[(String, String)]) -
 /// is append-only, so the effective child set is `parent ∪ child` and a
 /// caveat can never be dropped by this path. What remains to check is that
 /// no appended caveat grants more than the parent already allows, which is
-/// exactly [`set_subsumes`] (RFC-0957 §Caveat DSL Extension).
+/// exactly [`set_subsumes`] (RFC-0957 §Algorithms — Step 4 attenuation subsumption).
 pub fn check_attenuation(parent: &CapabilityToken, child: &[Caveat]) -> Result<(), OctoCliError> {
     if set_subsumes(&parent.macaroon.caveats, child) {
         return Ok(());

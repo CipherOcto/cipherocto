@@ -1084,7 +1084,7 @@ This RFC covers Phase 1 only. Follow-on amendments cover Phases 2-8.
 ### Phase 6 (vault operations, future amendment per Status header amendment chain)
 
 - Vault operations subcommands: `vault {list,balance,transfer}`
-- Depends on RFC-0960 (vault balance projection)
+- Depends on RFC-0960 vault balance projection
 
 ### Phase 7 (mesh operations, future amendment per Status header amendment chain)
 

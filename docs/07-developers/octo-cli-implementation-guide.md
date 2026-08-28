@@ -40,9 +40,8 @@ graph TD
 
     src --> main["main.rs<br/>(REPLACED)"]
     src --> lib["lib.rs<br/>(NEW)"]
-    src --> output["output.rs<br/>(NEW)"]
-    src --> output_types["output/types.rs<br/>(NEW: Hex32, RedactedHex)"]
-    src --> redact["redact.rs<br/>(NEW)"]
+    src --> output["output.rs<br/>(NEW: OutputEnvelope, Hex32)"]
+    src --> redact["redact.rs<br/>(NEW: OctoCliRedactor, RedactedHex)"]
     src --> error["error.rs<br/>(NEW)"]
     src --> flags["flags.rs<br/>(NEW)"]
     src --> commands[commands/]
@@ -53,14 +52,14 @@ graph TD
     commands --> policy["policy.rs<br/>(NEW)"]
     commands --> stub["stub.rs<br/>(NEW: deprecated wrappers)"]
 
-    tests --> t_id["identity.rs (8 TV)"]
-    tests --> t_cap["capability.rs (19 TV)"]
-    tests --> t_pol["policy.rs (5 TV)"]
-    tests --> t_err["error.rs (5 TV)"]
-    tests --> t_env["envelope.rs (5 TV)"]
-    tests --> t_red["redact.rs (8 TV)"]
-    tests --> t_dep["deprecation.rs (2 TV)"]
-    tests --> t_env2["env_errors.rs (3 TV)"]
+    tests --> t_id["identity.rs (17 TV)"]
+    tests --> t_cap["capability.rs (22 TV)"]
+    tests --> t_pol["policy.rs (8 TV)"]
+    tests --> t_dep["stub.rs (5 TV)"]
+    %% inline #[cfg(test)] modules in src/:
+    tests -.-> t_err["src/error.rs (7 TV inline)"]
+    tests -.-> t_env["src/output.rs (9 TV inline)"]
+    tests -.-> t_red["src/redact.rs (2 TV inline)"]
 ```
 
 ## Crate Dependency Wiring
@@ -84,6 +83,13 @@ thiserror = "2.0"          # OctoCliError derives #[derive(Error)]
 
 # === Hex32 newtype serialization ===
 hex = "0.4"                # Hex32 #[serde(with = "hex::serde")]
+
+# === Secret-zeroize on drop (SEC-13) ===
+# Derives Zeroize/ZeroizeOnDrop on RedactedHex so the Vec<u8> backing storage
+# is wiped on drop, not just redacted in Debug/Display/Serialize. The substrate
+# signature bytes are otherwise left in heap memory until the allocator
+# recycles the page — the Drop impl wipes them deterministically.
+zeroize = { version = "1", features = ["derive"] }
 
 # === Redaction ===
 tracing = "0.1"
@@ -953,7 +959,7 @@ use octo_wallet::{IdentityKey, WalletError};
 use octo_wallet::lifecycle::LifecycleState;
 use serde::Serialize;
 
-/// Lifecycle state is a stable string literal (RFC-0009 §Identity Struct) NOT a
+/// Lifecycle state is a stable string literal (RFC-0009 §Identity Lifecycle State Machine) NOT a
 /// substrate `Debug`-formatted string. Insulation rationale: substrate enum
 /// derives may change field names across releases; the CLI contract pins the
 /// string set here and `Display` impl lives in `octo-wallet`.
@@ -1171,17 +1177,10 @@ fn tv_id1_whoami_success() {
         .get_output()
         .stdout
         .clone();
-    // Strict JSON-shape assertion (NOT substring) — pin field names + types.
-    // `schema_version: 2` reflects the additive `preview_only` field
-    // introduced in this RFC amendment (per §Compatibility); see
-    // `OutputEnvelope::SCHEMA_VERSION` in impl-guide §OutputEnvelope.
-    // `preview_only: false` because `octo whoami` has no `--dry-run`
-    // semantics; a successful read-only command always surfaces
-    // `preview_only: false`.
-    // Strict JSON-shape assertion via `predicate::str::contains` on each
-    // pinned field — avoids the `assert_json_diff` dep while still locking
-    // field names + values. Use `assert_json_diff = "1"` if exact structural
-    // match is required for downstream callers.
+    // Loose JSON-shape check via `predicate::str::contains` on each
+    // pinned field name; lock-in is field-presence only, not types
+    // (a quoted `"schema_version":"2"` would also match — for
+    // structural diff with type pinning, use `assert_json_diff = "1"`).
     let stdout = std::str::from_utf8(&output).unwrap();
     assert!(stdout.contains(r#""schema_version":2"#));
     assert!(stdout.contains(r#""preview_only":false"#));
@@ -1190,9 +1189,7 @@ fn tv_id1_whoami_success() {
     assert!(stdout.contains(r#""pubkey_hex":"#));
     assert!(stdout.contains(r#""lifecycle_state":"#));
     assert!(stdout.contains(r#""hsm_slot":"#));
-            "registered_at": _,
-        }
-    });
+    assert!(stdout.contains(r#""registered_at":"#));
 }
 
 #[test]

@@ -42,7 +42,7 @@ Open — release-gated on the v1.1 hard-error (`StaleStub`, exit 65) cycle elaps
 
 ## RFC
 
-RFC-0011 (see rfcs/draft/process/0011-octo-cli-substrate.md §Compatibility)
+RFC-0011 §Compatibility (rfcs/draft/process/0011-octo-cli-substrate.md)
 
 ## Dependencies
 

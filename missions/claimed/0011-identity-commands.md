@@ -20,7 +20,7 @@ spec_cycle_dry_closed: 2026-08-28
 # 0011-identity-commands — Identity subcommands (whoami, identity show/rotate/revoke)
 
 **Status:** Claimed 2026-08-28 (@mmacedoeu). RFC-0011 spec cycle DRY-closed 2026-08-28 (5-round loop-until-DRY closure). Implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]].
-**Substrate:** RFC-0011 §Subcommand Taxonomy (IdentityAction), RFC-0009 (Identity substrate)
+**Substrate:** RFC-0011 §Subcommand Taxonomy (IdentityAction), RFC-0009 Identity substrate
 **Parent:** RFC-0011
 **Depends on:**
 
@@ -33,7 +33,7 @@ Claimed 2026-08-28 (mmacedoeu) — spec cycle DRY-closed 2026-08-28
 
 ## RFC
 
-RFC-0011 (see rfcs/draft/process/0011-octo-cli-substrate.md §Subcommand Taxonomy)
+RFC-0011 §Subcommand Taxonomy (rfcs/draft/process/0011-octo-cli-substrate.md)
 
 ## Dependencies
 

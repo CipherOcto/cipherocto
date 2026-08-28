@@ -23,6 +23,13 @@ pub enum OperatorMode {
     Ci,
     /// Read-only auditor.
     Auditor,
+    /// Developer / test surface. Permits `InMemorySigner` and
+    /// `IdentityKey::from_seed` paths that are normally refused in
+    /// production. Required by RFC-0011 §Adversary Analysis (InMemorySigner
+    /// downgrade): a developer running locally without an HSM needs a
+    /// way to opt into the dev path WITHOUT making it the default.
+    /// Setting `--dev` (or `--mode dev`) is the explicit signal.
+    Dev,
 }
 
 /// Operator-mode + write-gating flags (global).
@@ -31,6 +38,13 @@ pub struct OperatorModeFlags {
     /// Operator mode.
     #[arg(long, global = true, value_enum, default_value_t = OperatorMode::Human)]
     pub mode: OperatorMode,
+    /// Shortcut for `--mode dev`. Enables the `InMemorySigner` /
+    /// `IdentityKey::from_seed` dev paths refused by default. The
+    /// `dev` flag is independent of `mode`; passing both is allowed
+    /// (the result is dev semantics). Use `cli.mode()` (in
+    /// `commands/mod.rs`) to read the resolved mode.
+    #[arg(long, global = true)]
+    pub dev: bool,
     /// Permit mutating operations.
     #[arg(long, global = true)]
     pub allow_write: bool,

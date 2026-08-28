@@ -312,15 +312,27 @@ pub fn mint(
     // but does not consume `root_secret`, so the `[0u8; 32]` placeholder
     // would let an attacker forge a known `cap_id`. The guard fires
     // BEFORE wallet open so a missing identity surfaces this error (exit
-    // 64) rather than masking it as `NoActiveIdentity` (exit 2). The
-    // single `return` is required because the `#[cfg(test)]` branch below
-    // is the actual tail expression of this function.
+    // 64) rather than masking it as `NoActiveIdentity` (exit 2).
+    //
+    // R20 Lens-4 F2: the guard admits ONLY dev mode (--mode dev /
+    // --dev) or test builds. Production builds cannot reach the
+    // placeholder signing path. The dev branch below reuses the same
+    // placeholder root_secret as the test branch — both are dev/test
+    // surfaces, both forge signatures on the well-known `[0u8; 32]`
+    // seed. The dev semantics live in one helper
+    // ([`super::identity::is_dev_mode`]) so a future amendment that
+    // adds an HSM dev fallback can route through the same gate.
     #[cfg(not(test))]
     {
         #[allow(clippy::needless_return)]
-        return Err(OctoCliError::Internal(
-            "root secret derivation not wired; defer until substrate amendment lands".to_string(),
-        ));
+        if !super::identity::is_dev_mode(cli) {
+            return Err(OctoCliError::Internal(
+                "root secret derivation not wired; defer until substrate amendment lands"
+                    .to_string(),
+            ));
+        }
+        // Dev-mode non-test path falls through to the substrate mint
+        // below.
     }
 
     #[cfg(test)]
@@ -353,6 +365,31 @@ pub fn mint(
                 .render(cli.output.json, cli.output.no_color)
                 .map_err(|e| map_capability_internal(format!("render envelope: {e}")));
         }
+    }
+    #[cfg(not(test))]
+    {
+        // Dev-mode non-test path. The `[0u8; 32]` placeholder signs a
+        // known cap_id — explicitly acknowledged by `--mode dev` /
+        // `--dev`. R20 Lens-4 F2.
+        let store = octo_wallet::WalletStore::open()
+            .map_err(|e| map_capability_internal(format!("wallet store open: {e}")))?;
+        let key = octo_wallet::active_identity(&store).map_err(|e| match e {
+            octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
+            other => map_capability_internal(other),
+        })?;
+        let token: CapabilityToken =
+            octo_cap_macaroon::mint(&[0u8; 32], &key, holder_did, &caveats)
+                .map_err(map_mint_error)?;
+
+        let output = CapabilityMintOutput {
+            capability_id: hex::encode(token.macaroon.id),
+            body_hash,
+            caveats: views,
+            holder_sig: RedactedHex(token.holder_sig.to_bytes().to_vec()),
+        };
+        OutputEnvelope::new(output, 0)
+            .render(cli.output.json, cli.output.no_color)
+            .map_err(|e| map_capability_internal(format!("render envelope: {e}")))
     }
 }
 
@@ -828,7 +865,11 @@ fn classify_message(message: &str) -> OctoCliError {
 /// `parse:` / `catalog:` prefixes lands, every `HolderSig` message
 /// surfaces as `Internal` (exit 64) rather than crashing or being
 /// miscategorized.
-#[cfg(test)]
+///
+/// R20 Lens-4 F2: the helper is no longer `#[cfg(test)]` — the
+/// dev-mode release branch (R20 Lens-4 F2) needs the same error
+/// mapping. Lifting the cfg keeps the mapper single-sourced for tests
+/// and dev-mode release mints.
 fn map_mint_error(e: MintError) -> OctoCliError {
     match e {
         MintError::Signer(_) => OctoCliError::HsmUnavailable(sanitize_mint_error(&e)),

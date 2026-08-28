@@ -318,13 +318,19 @@ pub fn rotate(cli: &Octo) -> Result<(), OctoCliError> {
     // is still a stub at this RFC stage. `IdentityKey::from_seed` is the
     // canonical substrate constructor for test-only successor keys. The
     // seed `[1u8; 32]` would be a publicly-known, signature-forgeable
-    // test seed if it ever ran in production. Block it outside tests
-    // (`--dry-run` provides the preview path operators actually need).
+    // test seed if it ever ran in production.
+    //
+    // R20 Lens-4 F2: the gate now distinguishes three legitimate
+    // callers — (a) `--dry-run` preview, (b) `--mode dev` /
+    // `--dev` (the developer opt-in), (c) `#[cfg(test)]`. Anything
+    // else returns Internal. The dev gate is the single read site
+    // (`is_dev_mode`) so the OR semantics cannot drift.
     #[cfg(not(test))]
     {
-        if !cli.mode.dry_run {
+        if !cli.mode.dry_run && !is_dev_mode(cli) {
             return Err(OctoCliError::Internal(
-                "successor derivation not yet wired; use --dry-run for previews".to_string(),
+                "successor derivation refused outside dev mode; use --dry-run for previews or --mode dev for test signing"
+                    .to_string(),
             ));
         }
     }
@@ -421,6 +427,25 @@ pub fn revoke(reason: &str, cli: &Octo) -> Result<(), OctoCliError> {
 
 // ---------------------------------------------------------------------------
 // Confirmation / dry-run gates
+
+/// Resolve whether the CLI is running in dev mode.
+///
+/// Dev mode is enabled by EITHER `--mode dev` OR `--dev`. Either
+/// signal alone is sufficient; the helper is the single read-site so
+/// the OR semantics cannot drift between call sites. Returns `false`
+/// in any non-Dev mode regardless of the `dev` flag (defensive — the
+/// clap parser sets both, but a future refactor that surfaces
+/// `--dev` without `--mode dev` MUST NOT silently widen the surface).
+///
+/// R20 Lens-4 F2: this helper is the per-operation dev gate used by
+/// [`rotate`] and the capability mint path. Without it, an
+/// `IdentityKey::from_seed([1u8; 32])` call (a publicly-known
+/// signature-forgeable test seed) would be reachable from any mode
+/// that lacks an HSM, which is exactly the downgrade vector the
+/// finding called out.
+pub fn is_dev_mode(cli: &Octo) -> bool {
+    cli.mode.mode == OperatorMode::Dev || cli.mode.dev
+}
 // ---------------------------------------------------------------------------
 
 /// Confirmation gate — enforce mode + flag combinations for mutating
@@ -445,6 +470,15 @@ pub fn revoke(reason: &str, cli: &Octo) -> Result<(), OctoCliError> {
 /// `--allow-write` flag because the pipeline gate contract already
 /// proves the operator reviewed the action (the script is the
 /// acknowledgement). Auditor is denied regardless (read-only).
+///
+/// R20 Lens-4 F2: Dev mode added. Dev mode is the ONLY mode where
+/// `IdentityKey::from_seed` (identity rotate) and the
+/// `[0u8; 32]` root-secret placeholder (capability mint) are
+/// permitted — both are dev-only paths that would otherwise be
+/// signature-forgeable. Dev mode requires `--allow-write` (same gate
+/// as CI) but NOT `--confirm-acknowledge` (the developer is the
+/// acknowledgement). The per-operation dev gate at the handler sites
+/// uses [`is_dev_mode`].
 pub fn require_confirm(cli: &Octo, command: &str) -> Result<(), OctoCliError> {
     // RFC-0011 §Security Considerations 1a: Auditor is denied regardless of --dry-run.
     // The dry_run bypass MUST come AFTER the Auditor denial, otherwise a
@@ -484,6 +518,21 @@ pub fn require_confirm(cli: &Octo, command: &str) -> Result<(), OctoCliError> {
             // Auditor short-circuits above, before the
             // `cli.mode.dry_run` bypass. This arm is unreachable.
             unreachable!("Auditor short-circuited above (R16 Lens-1 F2)")
+        }
+        OperatorMode::Dev => {
+            // Dev mode is non-interactive: require `--allow-write`
+            // (the CI-bot gate) but NOT `--confirm-acknowledge` —
+            // the developer is expected to know what they are doing.
+            // The dev-mode paths (`IdentityKey::from_seed`,
+            // `InMemorySigner`) live behind explicit `is_dev_mode(cli)`
+            // checks at the handler sites, NOT here — this gate only
+            // admits the request; per-operation dev checks authorize
+            // the dangerous substrate calls.
+            if !cli.mode.allow_write {
+                return Err(OctoCliError::ConfirmationRequired {
+                    command: command.to_string(),
+                });
+            }
         }
     }
     Ok(())
@@ -527,6 +576,7 @@ mod tests {
         let mut cli = Octo::try_parse_from(argv).expect("clap parse");
         cli.mode = OperatorModeFlags {
             mode,
+            dev: false,
             confirm: false,
             confirm_acknowledge: false,
             allow_write: false,
@@ -568,6 +618,59 @@ mod tests {
         cli.mode.confirm = true;
         let r = require_confirm(&cli, "identity rotate");
         assert!(matches!(r, Err(OctoCliError::ConfirmationRequired { .. })));
+    }
+
+    /// R20 Lens-4 F2: Dev mode requires `--allow-write` (CI-style gate)
+    /// but NOT `--confirm-acknowledge` (developer is the acknowledgement).
+    #[test]
+    fn require_confirm_dev_without_allow_write_errors() {
+        let cli = cli_with_mode(OperatorMode::Dev);
+        let r = require_confirm(&cli, "identity rotate");
+        assert!(matches!(r, Err(OctoCliError::ConfirmationRequired { .. })));
+    }
+
+    #[test]
+    fn require_confirm_dev_with_allow_write_ok() {
+        let mut cli = cli_with_mode(OperatorMode::Dev);
+        cli.mode.allow_write = true;
+        assert!(require_confirm(&cli, "identity rotate").is_ok());
+    }
+
+    /// R20 Lens-4 F2: `is_dev_mode` is the single read-site for dev
+    /// semantics. `--mode dev` alone is sufficient; `--dev` alone is
+    /// also sufficient (the flag is a shortcut). Both is allowed
+    /// (idempotent OR).
+    #[test]
+    fn is_dev_mode_resolution() {
+        let mut cli = cli_with_mode(OperatorMode::Human);
+        cli.mode.dev = false;
+        assert!(!is_dev_mode(&cli));
+
+        // --dev alone (mode stays Human) → still dev-mode.
+        cli.mode.dev = true;
+        assert!(is_dev_mode(&cli));
+
+        // --mode dev alone (flag stays false) → still dev-mode.
+        let mut cli = cli_with_mode(OperatorMode::Dev);
+        cli.mode.dev = false;
+        assert!(is_dev_mode(&cli));
+
+        // Both → dev-mode (idempotent).
+        cli.mode.dev = true;
+        assert!(is_dev_mode(&cli));
+
+        // Non-dev mode + dev flag unset → not dev-mode.
+        let cli = cli_with_mode(OperatorMode::Ci);
+        assert!(!is_dev_mode(&cli));
+    }
+
+    /// R20 Lens-4 F2: dry-run bypasses confirm for ALL modes (Auditor
+    /// remains the sole exception per the require_confirm doc table).
+    #[test]
+    fn require_confirm_dev_with_dry_run_bypasses() {
+        let mut cli = cli_with_mode(OperatorMode::Dev);
+        cli.mode.dry_run = true;
+        assert!(require_confirm(&cli, "identity rotate").is_ok());
     }
 
     #[test]

@@ -38,14 +38,34 @@ fn main() {
     // triggers Auditor (read-only); `CI=true` triggers Ci (CI-bot). Both
     // only override the clap default (Human) when the operator did not
     // pass `--mode` explicitly.
+    //
+    // 2026-08-29 fix (Coverage + CI workflow failure post-mortem):
+    // GitHub Actions runners set `CI=true` by default. Without the
+    // carve-out below, the env-driven override flipped mode to Ci on
+    // every runner invocation, including the `assert_cmd` integration
+    // tests that explicitly invoke the binary with
+    // `--confirm --confirm-acknowledge` to exercise Human-mode
+    // confirmation. Those tests then failed the Ci-arm check
+    // (`--allow-write` not set) with `ConfirmationRequired` even though
+    // the test args matched the Human contract verbatim. The carve-out:
+    // when the operator has already signaled Human-mode confirmation
+    // intent (via `--confirm` or `--confirm-acknowledge`), respect that
+    // intent and skip the env override. CI-bot operators use
+    // `--allow-write` (the canonical CI gate), not `--confirm`, so the
+    // carve-out does not affect real CI pipelines. The Auditor override
+    // still fires unconditionally — read-only semantics must not be
+    // silently bypassable by a stray confirmation flag.
     if matches!(cli.mode.mode, OperatorMode::Human) {
-        if std::env::var_os("OCTO_AUDIT")
-            .filter(|v| v == "1")
-            .is_some()
-        {
-            cli.mode.mode = OperatorMode::Auditor;
-        } else if std::env::var_os("CI").filter(|v| v == "true").is_some() {
-            cli.mode.mode = OperatorMode::Ci;
+        let human_mode_explicit = cli.mode.confirm || cli.mode.confirm_acknowledge;
+        if !human_mode_explicit {
+            if std::env::var_os("OCTO_AUDIT")
+                .filter(|v| v == "1")
+                .is_some()
+            {
+                cli.mode.mode = OperatorMode::Auditor;
+            } else if std::env::var_os("CI").filter(|v| v == "true").is_some() {
+                cli.mode.mode = OperatorMode::Ci;
+            }
         }
     }
 

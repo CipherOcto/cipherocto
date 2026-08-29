@@ -88,8 +88,26 @@ jobs:
           if [ -f Cargo.toml ]; then cargo check --verbose; fi
 
       - name: Run Rust tests (default features)
+        # Exclude the Phase 7.J investigation binary
+        # (whatsapp_chrome_reconnect_observer) and the two pure-binary
+        # Chrome automation helpers (whatsapp_chrome_driver,
+        # whatsapp_chrome_session_extract) from `cargo test`. None of
+        # the three has a `tests/` integration directory — they are
+        # `[[bin]]`-only crates whose link step pulls in
+        # reqwest + hyper + rustls + aws-lc-rs and exhausts the
+        # 7 GB hosted-runner RAM budget (collect2 SIGBUS at link time).
+        # `cargo check` already validates they build (build step above).
+        # The adapter crates that DO have integration tests
+        # (octo-whatsapp, octo-adapter-telegram-mtproto, etc.) are
+        # kept in the test surface and their `[[bin]]` test-mode link
+        # is small enough to fit.
         run: |
-          if [ -f Cargo.toml ]; then cargo test --verbose; fi
+          if [ -f Cargo.toml ]; then
+            cargo test --verbose --workspace \
+              --exclude whatsapp_chrome_reconnect_observer \
+              --exclude whatsapp_chrome_driver \
+              --exclude whatsapp_chrome_session_extract
+          fi
 
       # NOTE: Tests behind --features query (Phase 8 query-layer +
       # Phase 7.K view_once/ephemeral) are skipped under default

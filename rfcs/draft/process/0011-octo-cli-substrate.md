@@ -673,7 +673,7 @@ pub enum OctoCliError {
     NoActiveIdentity,                                       // exit 2
 
     #[error(
-        "ConfirmationRequired: --confirm required for mutating command {command} in human mode"
+        "ConfirmationRequired: --confirm required for mutating command {command}"
     )]
     ConfirmationRequired { command: String },               // exit 2 (POSIX usage-error)
 
@@ -1286,7 +1286,7 @@ forms in RFC-0964 envelope.
 | ------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 0       | (success)                                                 | Command succeeded                                                                                                                                                           |
 | 1       | (reserved)                                                | Reserved (POSIX convention reserves 1 for generic-failure; canonical `SigningFailed` is code 11)                                                                            |
-| 2       | `ClapParse` / `NoActiveIdentity` / `ConfirmationRequired` | Clap usage-error OR no active identity in the wallet store OR mutating command invoked without `--confirm` in human mode (POSIX convention: clap parse → 2)                 |
+| 2       | `ClapParse` / `NoActiveIdentity` / `ConfirmationRequired` | Clap usage-error OR no active identity in the wallet store OR mutating command invoked without the mode-appropriate confirmation flag (`--confirm` + `--confirm-acknowledge` in Human mode for capability mint/attenuate; `--allow-write` in CI / Dev mode; denied in Auditor mode). POSIX convention: clap parse → 2 |
 | 3       | `AlreadyRotating`                                         | Identity is already in `Rotating` state                                                                                                                                     |
 | 4       | `IdentityNotFound`                                        | Identity with given DID not found                                                                                                                                           |
 | 5       | `HsmUnavailable`                                          | HSM slot not reachable                                                                                                                                                      |

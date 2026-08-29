@@ -283,7 +283,7 @@ pub enum OctoCliError {
     #[error("no active identity")]
     NoActiveIdentity,                                       // exit 2
 
-    #[error("--confirm required for mutating command {command} in human mode")]
+    #[error("--confirm required for mutating command {command}")]
     ConfirmationRequired { command: String },               // exit 2 (POSIX usage-error)
 
     #[error("already rotating")]
@@ -760,15 +760,16 @@ pub struct OutputFlags {
 #[derive(Args, Debug, Clone)]
 #[group(multiple = false)]
 pub struct OperatorModeFlags {
-    /// Operator mode: human | ci | auditor
+    /// Operator mode: human | ci | auditor | dev
     #[arg(long, global = true, value_enum, default_value_t = OperatorMode::Human)]
     pub mode: OperatorMode,
 
-    /// Required for mutating commands in ci mode
+    /// Required for mutating commands in ci mode and dev mode
     #[arg(long, global = true)]
     pub allow_write: bool,
 
-    /// Required for mutating commands in human mode
+    /// Required for mutating commands in human mode (pairs with `--confirm-acknowledge`
+    /// for capability mint/attenuate per RFC-0011 §Security Considerations 1a).
     #[arg(long, global = true)]
     pub confirm: bool,
 
@@ -886,10 +887,9 @@ enum CapabilityAction {
         /// Root capability identifier.
         #[arg(long)]
         root: Option<String>,
-        /// Acknowledge that minting grants authority.
-        /// clap-validator enforces: requires `--confirm` whenever this flag is present.
-        #[arg(long, requires = "confirm")]
-        confirm_acknowledge: bool,
+        // Note: `--confirm-acknowledge` is a GLOBAL flag on `OperatorModeFlags`
+        // (R20 Lens-2 F7 moved it from per-command to global). Capability mint +
+        // attenuate read `cli.mode.confirm_acknowledge` in the handler.
     },
     /// Attenuate an existing capability.
     Attenuate {
@@ -898,10 +898,7 @@ enum CapabilityAction {
         /// Additional caveats to apply.
         #[arg(long)]
         caveats: String,
-        /// Acknowledge that attenuation narrows authority.
-        /// clap-validator enforces: requires `--confirm` whenever this flag is present.
-        #[arg(long, requires = "confirm")]
-        confirm_acknowledge: bool,
+        // Note: same as Mint — `--confirm-acknowledge` is on OperatorModeFlags.
     },
 }
 
@@ -1076,16 +1073,24 @@ pub fn dispatch(action: &IdentityAction, cli: &Octo) -> Result<(), OctoCliError>
     }
 }
 
-/// Enforce `--confirm` for mutating commands in human mode.
-/// - Human mode + no `--confirm` + no `--dry-run` → `ConfirmationRequired` (exit 2)
-/// - Human mode + `--confirm` OR `--dry-run` → OK
-/// - CI mode + no `--allow-write` + no `--dry-run` → `ConfirmationRequired` (exit 2)
-/// - Auditor mode → never permitted to mutate (denied BEFORE --dry-run bypass)
+/// Enforce the operator-mode-appropriate confirmation gate.
+/// - Auditor mode → denied BEFORE `--dry-run` bypass (R16 Lens-1 F2: read-only role
+///   must never get a side-effects preview).
+/// - `--dry-run` → bypass (preview grants no authority).
+/// - Human mode + no `--confirm` → `ConfirmationRequired` (exit 2).
+/// - Human mode + `--confirm` → OK for identity commands; capability mint/attenuate
+///   ALSO require `--confirm-acknowledge` (two-step pastejacking defense per
+///   RFC-0011 §Security Considerations 1a — enforced in the capability handler
+///   via `require_acknowledge(cli, command)`, NOT here).
+/// - CI mode + no `--allow-write` → `ConfirmationRequired` (exit 2).
+/// - Dev mode + no `--allow-write` → `ConfirmationRequired` (exit 2). Dev path
+///   still requires explicit write admission so the developer doesn't accidentally
+///   write through `--dev`.
 pub fn require_confirm(cli: &Octo, command: &str) -> Result<(), OctoCliError> {
     use octo_cli::flags::OperatorMode;
     // R16 Lens-1 F2: Auditor denial precedes the dry_run bypass so
     // `--mode=auditor --dry-run` still errors (a read-only role must never
-    // get a side-effects preview). The bypass is Human/Ci only.
+    // get a side-effects preview). The bypass is Human/Ci/Dev only.
     if matches!(cli.mode.mode, OperatorMode::Auditor) {
         return Err(OctoCliError::ConfirmationRequired {
             command: command.to_string(),
@@ -1102,7 +1107,7 @@ pub fn require_confirm(cli: &Octo, command: &str) -> Result<(), OctoCliError> {
                 });
             }
         }
-        OperatorMode::Ci => {
+        OperatorMode::Ci | OperatorMode::Dev => {
             if !cli.mode.allow_write {
                 return Err(OctoCliError::ConfirmationRequired {
                     command: command.to_string(),

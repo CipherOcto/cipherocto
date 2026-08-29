@@ -39,8 +39,7 @@ use std::path::PathBuf;
 /// Find a file at `<crate root>/<relative>` via `CARGO_MANIFEST_DIR`.
 fn read_crate_source(relative: &str) -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(relative);
-    fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
 /// Pin the structural relationship: a `#[cfg(not(test))]` attribute
@@ -74,11 +73,7 @@ fn assert_cfg_gate_before_seed(source: &str, seed_call: &str, file_label: &str) 
 #[test]
 fn identity_rotate_cfg_gate_precedes_hardcoded_successor_seed() {
     let src = read_crate_source("src/commands/identity.rs");
-    assert_cfg_gate_before_seed(
-        &src,
-        "from_seed([1u8; 32])",
-        "commands/identity.rs",
-    );
+    assert_cfg_gate_before_seed(&src, "from_seed([1u8; 32])", "commands/identity.rs");
 }
 
 #[test]

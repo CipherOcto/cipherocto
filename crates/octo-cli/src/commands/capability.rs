@@ -350,9 +350,8 @@ pub fn mint(
             // attenuation checks. The hardening guard above makes this
             // unreachable from release builds.
             let root_secret = [0u8; 32];
-            let _ = &root_secret;
             let token: CapabilityToken =
-                octo_cap_macaroon::mint(&[0u8; 32], &key, holder_did, &caveats)
+                octo_cap_macaroon::mint(&root_secret, &key, holder_did, &caveats)
                     .map_err(map_mint_error)?;
 
             let output = CapabilityMintOutput {

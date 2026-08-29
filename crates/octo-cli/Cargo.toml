@@ -19,9 +19,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # === Substrate (Layer B) — RFC-0011 §Dependencies ===
-# Pins match the actual substrate workspace version (0.1.0). The impl-guide L73-75
-# aspirational values (0.5/0.4/0.6) do not match the current substrate versions and
-# would fail cargo resolution — tracked as a separate impl-guide substrate-pin drift.
+# Pins match the actual substrate workspace version (0.1.0); impl-guide
+# L72-74 pins substrate versions at 0.1.0, matching the workspace.
 octo-wallet = { path = "../octo-wallet", version = "0.1.0" }                  # Layer B identity substrate — RFC-0009
 octo-cap-macaroon = { path = "../octo-cap-macaroon", version = "0.1.0" }      # Layer B capability substrate — RFC-0957
 octo-policy = { path = "../octo-policy", version = "0.1.0" }                  # Layer B policy substrate — RFC-0967

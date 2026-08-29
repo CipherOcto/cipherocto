@@ -13,9 +13,12 @@ pub enum OctoCliError {
     #[error("no active identity")]
     NoActiveIdentity,
     /// A mutating command was invoked without confirmation flags.
-    #[error(
-        "ConfirmationRequired: --confirm required for mutating command {command} in human mode"
-    )]
+    ///
+    /// Fires for any operator mode (Human / Ci / Dev) when the
+    /// confirmation gate is unmet. Exact escape hatches depend on mode
+    /// and command; the operator sees the per-mode help text from
+    /// `OctoCliError::render` rather than a mode-specific label here.
+    #[error("ConfirmationRequired: --confirm required for mutating command {command}")]
     ConfirmationRequired {
         /// Command that required confirmation.
         command: String,

@@ -33,7 +33,7 @@ aes = "0.8"
 ctr = "0.9"
 hmac = "0.12"
 subtle = "2"
-hkdf = "0.12"
+hkdf = "0.13"
 sha2 = "0.10"
 rand = "0.8"
 

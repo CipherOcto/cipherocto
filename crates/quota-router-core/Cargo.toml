@@ -145,7 +145,7 @@ percent-encoding = "2.1"
 urlencoding = "2.1"
 
 # For token estimation (pre-call checks, RFC-0936)
-tiktoken-rs = "0.6"
+tiktoken-rs = "0.12"
 
 # For async streaming (futures::StreamExt)
 futures-core = "0.3"

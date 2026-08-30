@@ -125,7 +125,7 @@ futures-executor    = { version = "0.3", optional = true }
 opentelemetry         = { version = "0.27", optional = true }
 opentelemetry-otlp    = { version = "0.27", optional = true, features = ["grpc-tonic"] }
 opentelemetry_sdk     = { version = "0.27", optional = true, features = ["rt-tokio"] }
-tracing-opentelemetry = { version = "0.28", optional = true }
+tracing-opentelemetry = { version = "0.33", optional = true }
 
 [features]
 default       = []

@@ -16,6 +16,9 @@ use chrono::{DateTime, Utc};
 use clap::Subcommand;
 use serde::Serialize;
 
+use octo_cap_macaroon::signer::{CapabilitySigner, CapabilitySignerError};
+
+use crate::commands::role::SignerHandle;
 use crate::error::{sanitize_substrate_error, OctoCliError};
 use crate::flags::OperatorMode;
 use crate::output::OutputEnvelope;
@@ -554,6 +557,44 @@ pub fn dispatch(action: &IdentityAction, cli: &Octo) -> Result<(), OctoCliError>
             require_confirm(cli, "identity revoke")?;
             revoke(reason, cli)
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Signer handle for `octo role select` (RFC-0011-d §7.4)
+// ---------------------------------------------------------------------------
+
+use std::sync::Arc;
+
+/// Phase 1 stub: derive a deterministic dev signer for `octo role select`.
+///
+/// Production wires `LedgerSigner` here per RFC-0009 §HsmAdapter. The
+/// dev path returns a deterministic pubkey + stub signing path so
+/// `octo_role::select` can exercise the envelope-build tx in tests +
+/// dev workflows. Real key material NEVER leaves the HSM in production.
+pub(crate) fn active_signer_for_did() -> Result<SignerHandle, OctoCliError> {
+    let pk = [0xA1u8; 32];
+    let signer = DevSigner { pk };
+    let did = format!("did:octo:0x{}", hex::encode(pk));
+    Ok(SignerHandle {
+        inner: Arc::new(signer) as Arc<dyn CapabilitySigner>,
+        did,
+    })
+}
+
+struct DevSigner {
+    pk: [u8; 32],
+}
+
+impl CapabilitySigner for DevSigner {
+    fn sign(&self, _msg: &[u8]) -> Result<[u8; 64], CapabilitySignerError> {
+        // Phase 1 deterministic stub. Production wires HSM-backed signing
+        // here; the dev path is intentionally non-cryptographic so it
+        // cannot be mistaken for production output.
+        Ok([0u8; 64])
+    }
+    fn public_key_bytes(&self) -> [u8; 32] {
+        self.pk
     }
 }
 

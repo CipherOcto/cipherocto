@@ -3,7 +3,10 @@
 pub mod capability;
 pub mod identity;
 pub mod policy;
+pub mod role;
 pub mod stub;
+
+pub use role::RoleAction;
 
 use crate::error::OctoCliError;
 use crate::{Commands, Octo};
@@ -26,7 +29,7 @@ pub fn dispatch(cli: &Octo) -> Result<(), OctoCliError> {
             "status",
             "use octo network status (per Status header amendment chain)",
         ),
-        Commands::Role { action } => stub::print_role_deprecated(action),
+        Commands::Role { action } => role::dispatch(action, cli),
         Commands::Agent { action } => stub::print_agent_deprecated(action),
     }
 }

@@ -6,7 +6,7 @@
 //! v2.0 removes the stubs entirely.
 
 use crate::error::OctoCliError;
-use crate::{AgentActionStub, RoleActionStub};
+use crate::AgentActionStub;
 
 /// Compile-time v1.0 default: banner only, no hard error.
 pub const STALE_STUB_WINDOW: bool = false;
@@ -50,21 +50,6 @@ pub fn print_deprecated_with(
         "DEPRECATED: `octo {name}` is a stub; replacement lands in follow-on amendment. {hint}"
     );
     Ok(())
-}
-
-/// Deprecation banner for the `role` command family.
-pub fn print_role_deprecated(action: &RoleActionStub) -> Result<(), OctoCliError> {
-    let sub = match action {
-        RoleActionStub::Builder => "builder",
-        RoleActionStub::Provider => "provider",
-        RoleActionStub::Storage => "storage",
-        RoleActionStub::Bandwidth => "bandwidth",
-        RoleActionStub::Orchestrator => "orchestrator",
-    };
-    print_deprecated(
-        "role",
-        &format!("`role {sub}` moved to role-token tooling (out of scope for this RFC)"),
-    )
 }
 
 /// Deprecation banner for the `agent` command family.

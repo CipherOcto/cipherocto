@@ -70,6 +70,33 @@ pub enum OctoCliError {
         /// Requested version.
         version: u32,
     },
+    /// Requested role is unknown (RFC-0011-d §Error Handling).
+    #[error("role not found: {0}")]
+    RoleNotFound(String),
+    /// Operator OCTO stake is below the role's minimum (RFC-0011-d).
+    #[error("stake insufficient: required {required} micro-OCTO, available {available}")]
+    StakeInsufficient {
+        /// Required stake (micro-OCTO).
+        required: u64,
+        /// Available stake (micro-OCTO).
+        available: u64,
+    },
+    /// Role exists but cannot be selected (RFC-0011-d).
+    #[error("role `{role_id}` not selectable: {reason}")]
+    RoleNotSelectable {
+        /// Role slug.
+        role_id: String,
+        /// Why the role cannot be selected.
+        reason: String,
+    },
+    /// Active signer DID does not match the operator DID (F-16).
+    #[error("signer mismatch: signer did `{signer_did}` != operator did `{operator_did}`")]
+    SignerMismatch {
+        /// Signer DID derived from the active public key.
+        signer_did: String,
+        /// Operator DID supplied on the command line.
+        operator_did: String,
+    },
     /// Secret was offered on stdin without `--allow-stdin-secret`.
     #[error("secret material on pipe; pass --allow-stdin-secret to override")]
     StdinSecretRefused,
@@ -108,6 +135,12 @@ impl OctoCliError {
             Self::PolicyVersionNotFound { .. } => 14,
             Self::StdinSecretRefused => 15,
             Self::InvalidFilter(_) => 16,
+            Self::RoleNotFound(_) => 31,
+            Self::StakeInsufficient { .. } => 32,
+            Self::RoleNotSelectable { .. } => 33,
+            // 34 reserved per F-16 (was RoleBindingConflict; intentionally
+            // skipped — last-writer-wins per RFC-0011-d §Security 2).
+            Self::SignerMismatch { .. } => 35,
             Self::Internal(_) => 64,
             Self::StaleStub { .. } => 65,
         }
@@ -140,6 +173,14 @@ impl OctoCliError {
             Self::PolicyVersionNotFound { .. } => "omit `--version` to use the latest version",
             Self::StdinSecretRefused => "re-run with `--allow-stdin-secret` if intended",
             Self::InvalidFilter(_) => "filter syntax is `key=value`",
+            Self::RoleNotFound(_) => "list roles with `octo role list`",
+            Self::StakeInsufficient { .. } => "top up the operator's OCTO stake and retry",
+            Self::RoleNotSelectable { .. } => {
+                "verify the role slug + operator permissions"
+            }
+            Self::SignerMismatch { .. } => {
+                "the active signer does not match the supplied operator DID"
+            }
             Self::StaleStub { .. } => "this command was removed; see the migration notes",
             Self::Internal(_) => "re-run with `RUST_LOG=debug` and report the diagnostic",
         };

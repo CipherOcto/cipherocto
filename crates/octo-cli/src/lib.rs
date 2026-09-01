@@ -13,7 +13,9 @@ pub use flags::{OperatorMode, OperatorModeFlags, OutputFlags};
 pub use output::{Hex32, OutputEnvelope};
 
 use clap::{Parser, Subcommand};
-use commands::{capability::CapabilityAction, identity::IdentityAction, policy::PolicyAction};
+use commands::{
+    capability::CapabilityAction, identity::IdentityAction, policy::PolicyAction, RoleAction,
+};
 
 /// The `octo` operator CLI root.
 #[derive(Parser, Debug)]
@@ -62,12 +64,11 @@ pub enum Commands {
     /// Deprecated — see RFC-0011 §Compatibility.
     #[command(hide = true)]
     Status,
-    /// Deprecated — see RFC-0011 §Compatibility.
-    #[command(hide = true)]
+    /// Role provisioning subcommands (RFC-0011-d §7.4).
     Role {
-        /// Deprecated role subcommand.
+        /// Role subcommand.
         #[command(subcommand)]
-        action: RoleActionStub,
+        action: RoleAction,
     },
     /// Deprecated — see RFC-0011 §Compatibility.
     #[command(hide = true)]
@@ -76,21 +77,6 @@ pub enum Commands {
         #[command(subcommand)]
         action: AgentActionStub,
     },
-}
-
-/// Deprecated `role` subcommands.
-#[derive(Subcommand, Debug)]
-pub enum RoleActionStub {
-    /// Deprecated.
-    Builder,
-    /// Deprecated.
-    Provider,
-    /// Deprecated.
-    Storage,
-    /// Deprecated.
-    Bandwidth,
-    /// Deprecated.
-    Orchestrator,
 }
 
 /// Deprecated `agent` subcommands.

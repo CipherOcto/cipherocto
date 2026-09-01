@@ -24,6 +24,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 octo-wallet = { path = "../octo-wallet", version = "0.1.0" }                  # Layer B identity substrate — RFC-0009
 octo-cap-macaroon = { path = "../octo-cap-macaroon", version = "0.1.0" }      # Layer B capability substrate — RFC-0957
 octo-policy = { path = "../octo-policy", version = "0.1.0" }                  # Layer B policy substrate — RFC-0967
+octo-role = { path = "../octo-role", version = "0.1.0" }                      # Layer B role provisioning — RFC-0011-d
 
 # === Stub substrate (Layer C/D) ===
 # The 213-line stub main.rs that called octo-registry::init() and

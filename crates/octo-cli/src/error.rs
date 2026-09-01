@@ -23,6 +23,18 @@ pub enum OctoCliError {
         /// Command that required confirmation.
         command: String,
     },
+    /// A mutating command was invoked under `--mode auditor`.
+    ///
+    /// Auditor is a read-only role and is denied **before** the
+    /// confirmation gate fires. Wave 3 LOW: a separate variant lets
+    /// the operator see "auditor mode is read-only" rather than the
+    /// generic "--confirm required" (which would be misleading —
+    /// adding `--confirm` does not unblock an Auditor session).
+    #[error("auditor mode is read-only; refusing mutating command {command}")]
+    AuditorDenied {
+        /// Command the auditor attempted to invoke.
+        command: String,
+    },
     /// A rotation is already in flight.
     #[error("identity rotation already in progress")]
     AlreadyRotating,
@@ -121,6 +133,7 @@ impl OctoCliError {
             Self::ClapParse(_) => 2,
             Self::NoActiveIdentity => 2,
             Self::ConfirmationRequired { .. } => 2,
+            Self::AuditorDenied { .. } => 2,
             Self::AlreadyRotating => 3,
             Self::IdentityNotFound(_) => 4,
             Self::HsmUnavailable(_) => 5,
@@ -159,6 +172,9 @@ impl OctoCliError {
             Self::ConfirmationRequired { .. } => {
                 "re-run with `--confirm` to acknowledge the mutation"
             }
+            Self::AuditorDenied { .. } => {
+                "auditor mode is read-only; switch to --mode human or --mode ci to perform mutations"
+            }
             Self::AlreadyRotating => "complete or abort the in-flight rotation first",
             Self::IdentityNotFound(_) => "list identities with `octo identity show`",
             Self::HsmUnavailable(_) => "check that the HSM backend is reachable",
@@ -175,9 +191,7 @@ impl OctoCliError {
             Self::InvalidFilter(_) => "filter syntax is `key=value`",
             Self::RoleNotFound(_) => "list roles with `octo role list`",
             Self::StakeInsufficient { .. } => "top up the operator's OCTO stake and retry",
-            Self::RoleNotSelectable { .. } => {
-                "verify the role slug + operator permissions"
-            }
+            Self::RoleNotSelectable { .. } => "verify the role slug + operator permissions",
             Self::SignerMismatch { .. } => {
                 "the active signer does not match the supplied operator DID"
             }
@@ -443,6 +457,34 @@ mod tests {
             ),
             (OctoCliError::StdinSecretRefused, 15),
             (OctoCliError::InvalidFilter("f".into()), 16),
+            (OctoCliError::RoleNotFound("x".into()), 31),
+            (
+                OctoCliError::StakeInsufficient {
+                    required: 0,
+                    available: 0,
+                },
+                32,
+            ),
+            (
+                OctoCliError::RoleNotSelectable {
+                    role_id: "x".into(),
+                    reason: "y".into(),
+                },
+                33,
+            ),
+            (
+                OctoCliError::SignerMismatch {
+                    signer_did: "a".into(),
+                    operator_did: "b".into(),
+                },
+                35,
+            ),
+            (
+                OctoCliError::AuditorDenied {
+                    command: "x".into(),
+                },
+                2,
+            ),
             (OctoCliError::Internal("i".into()), 64),
             (
                 OctoCliError::StaleStub {
@@ -454,7 +496,7 @@ mod tests {
         for (e, code) in cases {
             assert_eq!(e.exit_code(), code, "{e:?}");
         }
-        // ClapParse is constructed separately (19th variant).
+        // ClapParse is constructed separately (24th variant).
         let clap_err = clap::Error::new(clap::error::ErrorKind::InvalidValue);
         assert_eq!(OctoCliError::ClapParse(clap_err).exit_code(), 2);
     }

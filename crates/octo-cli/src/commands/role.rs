@@ -14,14 +14,15 @@ use octo_role::{
     RoleSummary,
 };
 
-use crate::commands::identity::active_signer_for_did;
+use crate::commands::identity::{active_signer_for_did, require_confirm};
 use crate::error::{sanitize_substrate_error, OctoCliError};
 use crate::output::OutputEnvelope;
 use crate::Octo;
 
-/// CLI-facing role subcommand enum (Layer C; delegates to `octo_role::RoleAction`
-/// for substrate decisions).
-#[derive(Subcommand, Debug)]
+/// CLI-facing role subcommand enum (Layer C; delegates to `octo_role`
+/// substrate for decisions). `#[non_exhaustive]` per F-14.
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RoleAction {
     /// List registered roles.
     List {
@@ -91,19 +92,83 @@ fn show_role(role_id: &str, cli: &Octo) -> Result<(), OctoCliError> {
 }
 
 /// `octo role select <role_id> --confirm`
+///
+/// `signature_proof` and `role_binding_hash` are substrate truth — the
+/// CLI renders them through `RedactedHex` at the envelope boundary so
+/// neither byte nor hex escape into operator-visible output. The
+/// substrate types are wrapped in a CLI-local projection (`RoleSelectOutput`)
+/// before the envelope is rendered; the substrate `RoleBinding`
+/// (with raw `Vec<u8>` signature) never reaches the renderer.
 fn select_role(role_id: &str, cli: &Octo) -> Result<(), OctoCliError> {
-    if !cli.mode.confirm {
-        return Err(OctoCliError::ConfirmationRequired {
-            command: format!("role select {role_id}"),
-        });
-    }
-    // Resolve operator DID + signer from active identity.
-    let signer_arc = active_signer_for_did()?;
+    // Wave 2 HIGH-1 / HIGH-2: route through the canonical confirmation
+    // gate (`require_confirm`) instead of the inline `--confirm` only
+    // check. `require_confirm` enforces:
+    //   * Auditor is denied regardless of `--confirm` / `--dry-run`
+    //   * Human mode requires BOTH `--confirm` AND `--confirm-acknowledge`
+    //     (pastejacking defense, two-step gate per RFC-0011 §Security 1a)
+    //   * Ci / Dev modes require `--allow-write`
+    // Without this routing, `octo role select --confirm` (no
+    // `--confirm-acknowledge`) bypassed the pastejacking defense, and
+    // Auditor mode could fire the slash-ledger write.
+    require_confirm(cli, "role select")?;
+    // Resolve operator DID + signer from active identity (dev-mode gated
+    // by `active_signer_for_did`).
+    let signer_arc = active_signer_for_did(cli)?;
     let operator_did = signer_arc.did();
     let signer: &dyn CapabilitySigner = signer_arc.as_ref();
-    let binding: RoleBinding =
-        substrate_select(role_id, &operator_did, signer, binding_store()).map_err(map_role_error)?;
-    render_envelope("octo.role.select.v1", binding, cli)
+    let binding: RoleBinding = substrate_select(role_id, &operator_did, signer, binding_store())
+        .map_err(map_role_error)?;
+    // Wrap the substrate binding in the CLI-local projection before the
+    // envelope render — keeps the redaction boundary at the CLI layer
+    // (the substrate stays substrate-truth; the CLI owns operator output).
+    let projected = RoleSelectOutput::from_binding(binding);
+    render_envelope("octo.role.select.v1", projected, cli)
+}
+
+/// CLI-local projection of [`RoleBinding`].
+///
+/// R12 CRITICAL-2: the substrate `RoleBinding.signature_proof` is a raw
+/// `Vec<u8>` (64-byte Ed25519 signature) — surfacing it through the
+/// envelope as raw bytes leaks the substrate secret. The CLI owns the
+/// redaction boundary; this projection wraps the bytes in `RedactedHex`
+/// so the rendered JSON / pretty output is `[REDACTED:sig]` regardless
+/// of inner contents. `role_binding_hash` is hashed material (NOT a
+/// secret) but is also wrapped in `RedactedHex` for symmetry with the
+/// substrate RFC-0011-d §Key Files redaction contract.
+#[derive(serde::Serialize, Debug, schemars::JsonSchema)]
+pub(crate) struct RoleSelectOutput {
+    pub role_id: String,
+    pub operator_did: String,
+    #[schemars(with = "String")]
+    pub chain_id: crate::redact::RedactedHex,
+    #[schemars(with = "String")]
+    pub role_kind_uuid: crate::redact::RedactedHex,
+    pub stake_octo: u64,
+    pub stake_role_token: Option<u64>,
+    #[schemars(with = "String")]
+    pub body_hash: crate::redact::RedactedHex,
+    #[schemars(with = "String")]
+    pub signature_proof: crate::redact::RedactedHex,
+    #[schemars(with = "String")]
+    pub role_binding_hash: crate::redact::RedactedHex,
+    pub nonce: u64,
+}
+
+impl RoleSelectOutput {
+    fn from_binding(b: RoleBinding) -> Self {
+        Self {
+            role_id: b.role_id,
+            operator_did: b.operator_did,
+            chain_id: crate::redact::RedactedHex(b.chain_id.to_vec()),
+            role_kind_uuid: crate::redact::RedactedHex(b.role_kind_uuid.to_vec()),
+            stake_octo: b.stake_octo,
+            stake_role_token: b.stake_role_token,
+            body_hash: crate::redact::RedactedHex(b.body_hash.to_vec()),
+            signature_proof: crate::redact::RedactedHex(b.signature_proof),
+            role_binding_hash: crate::redact::RedactedHex(b.role_binding_hash.to_vec()),
+            nonce: b.nonce,
+        }
+    }
 }
 
 /// Render an output envelope for the given payload (serializable).
@@ -125,7 +190,10 @@ fn render_envelope<T: serde::Serialize>(
 fn map_role_error(e: RoleError) -> OctoCliError {
     match e {
         RoleError::RoleNotFound { role_id } => OctoCliError::RoleNotFound(role_id),
-        RoleError::StakeInsufficient { required, available } => OctoCliError::StakeInsufficient {
+        RoleError::StakeInsufficient {
+            required,
+            available,
+        } => OctoCliError::StakeInsufficient {
             required,
             available,
         },
@@ -139,6 +207,13 @@ fn map_role_error(e: RoleError) -> OctoCliError {
             signer_did,
             operator_did,
         },
+        RoleError::SigningFailed { reason } => {
+            // Map substrate-level signing failure to the existing CLI
+            // exit-11 variant (`SigningFailed`). The reason string is
+            // sanitized via the redaction layer at the envelope render
+            // boundary; do not echo the raw substrate error here.
+            OctoCliError::SigningFailed(reason)
+        }
     }
 }
 
@@ -181,6 +256,9 @@ mod tests {
         let _ = map_role_error(RoleError::SignerMismatch {
             signer_did: "a".into(),
             operator_did: "b".into(),
+        });
+        let _ = map_role_error(RoleError::SigningFailed {
+            reason: "hsm timeout".into(),
         });
     }
 }

@@ -198,7 +198,7 @@ fn map_not_active_error(e: octo_wallet::WalletError) -> OctoCliError {
 /// audit endpoint, not `octo identity`. R1 review CORR-08.
 fn block_auditor(cli: &Octo, command: &str) -> Result<(), OctoCliError> {
     if matches!(cli.mode.mode, OperatorMode::Auditor) {
-        return Err(OctoCliError::ConfirmationRequired {
+        return Err(OctoCliError::AuditorDenied {
             command: command.to_string(),
         });
     }
@@ -488,7 +488,7 @@ pub fn require_confirm(cli: &Octo, command: &str) -> Result<(), OctoCliError> {
     // stale Auditor session can preview mutations it cannot perform — R16
     // Lens-1 F2.
     if matches!(cli.mode.mode, OperatorMode::Auditor) {
-        return Err(OctoCliError::ConfirmationRequired {
+        return Err(OctoCliError::AuditorDenied {
             command: command.to_string(),
         });
     }
@@ -572,7 +572,20 @@ use std::sync::Arc;
 /// dev path returns a deterministic pubkey + stub signing path so
 /// `octo_role::select` can exercise the envelope-build tx in tests +
 /// dev workflows. Real key material NEVER leaves the HSM in production.
-pub(crate) fn active_signer_for_did() -> Result<SignerHandle, OctoCliError> {
+///
+/// R12 HIGH-9: the dev-only signer path is gated behind
+/// `is_dev_mode(cli)`. Production deployments that reach this code
+/// path without dev mode enabled return `Internal` (exit 64); the
+/// operator must restart the CLI with `--mode dev` (or `--dev`) for
+/// the in-memory stub. This blocks the silent-downgrade vector where
+/// a missing HSM silently falls back to a forgeable test key.
+pub(crate) fn active_signer_for_did(cli: &crate::Octo) -> Result<SignerHandle, OctoCliError> {
+    if !is_dev_mode(cli) {
+        return Err(OctoCliError::Internal(
+            "role-binding signer unavailable outside dev mode; use --mode dev or --dev for the in-memory stub, or provision an HSM-backed signer"
+                .to_string(),
+        ));
+    }
     let pk = [0xA1u8; 32];
     let signer = DevSigner { pk };
     let did = format!("did:octo:0x{}", hex::encode(pk));
@@ -740,7 +753,7 @@ mod tests {
     fn require_confirm_auditor_always_errors() {
         let cli = cli_with_mode(OperatorMode::Auditor);
         let r = require_confirm(&cli, "identity rotate");
-        assert!(matches!(r, Err(OctoCliError::ConfirmationRequired { .. })));
+        assert!(matches!(r, Err(OctoCliError::AuditorDenied { .. })));
     }
 
     // R17 Lens-1 F4: pin the R16 Lens-1 F2 ordering fix — Auditor is denied
@@ -753,7 +766,7 @@ mod tests {
         cli.mode.dry_run = true;
         let r = require_confirm(&cli, "identity rotate");
         assert!(
-            matches!(r, Err(OctoCliError::ConfirmationRequired { .. })),
+            matches!(r, Err(OctoCliError::AuditorDenied { .. })),
             "Auditor must be denied regardless of --dry-run, got {r:?}"
         );
     }
@@ -926,7 +939,7 @@ mod tests {
     fn block_auditor_rejects_auditor_mode() {
         let cli = cli_with_mode(OperatorMode::Auditor);
         let r = block_auditor(&cli, "identity whoami");
-        assert!(matches!(r, Err(OctoCliError::ConfirmationRequired { .. })));
+        assert!(matches!(r, Err(OctoCliError::AuditorDenied { .. })));
     }
 
     #[test]

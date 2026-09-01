@@ -8,6 +8,10 @@
 //!
 //! Each test runs as a child binary via `assert_cmd`, captures
 //! stdout/stderr, and inspects JSON or exit code per vector.
+//!
+//! `role select` tests pass `--dev` so the in-memory signer stub is
+//! admitted (R12 HIGH-9: HSM downgrade vector is blocked; the dev
+//! stub requires explicit dev-mode opt-in).
 
 use assert_cmd::Command;
 use predicates::prelude::PredicateBooleanExt;
@@ -17,6 +21,26 @@ fn octo() -> Command {
     let mut cmd = Command::cargo_bin("octo").expect("octo binary built");
     cmd.env("NO_COLOR", "1");
     cmd.env("OCTO_FORCE_JSON", "1");
+    cmd
+}
+
+/// `octo ... --dev` — selects admit the in-memory signer stub.
+fn octo_dev() -> Command {
+    let mut cmd = Command::cargo_bin("octo").expect("octo binary built");
+    cmd.env("NO_COLOR", "1");
+    cmd.env("OCTO_FORCE_JSON", "1");
+    cmd.arg("--dev");
+    cmd
+}
+
+/// `octo ... --dev --confirm --confirm-acknowledge` — selects pass the
+/// pastejacking-defense two-step gate (Wave 2 HIGH-1: `role::select_role`
+/// routes through `require_confirm`, which requires BOTH flags for
+/// Human mode).
+fn octo_dev_select() -> Command {
+    let mut cmd = octo_dev();
+    cmd.arg("--confirm");
+    cmd.arg("--confirm-acknowledge");
     cmd
 }
 
@@ -107,22 +131,24 @@ fn tv_rx_1_select_unknown_role_no_confirm_exit_2() {
         .stderr(contains("--confirm"));
 }
 
-/// TV-RX-2: `octo role select <unknown> --confirm` returns exit 31 (RoleNotFound).
+/// TV-RX-2: `octo role select <unknown> --confirm --confirm-acknowledge`
+/// returns exit 31 (RoleNotFound). Wave 2 HIGH-1: Human mode now
+/// requires both confirm flags (pastejacking defense).
 #[test]
 fn tv_rx_2_select_unknown_role_with_confirm_exit_31() {
-    octo()
-        .args(["role", "select", "nonexistent-role", "--confirm"])
+    octo_dev_select()
+        .args(["role", "select", "nonexistent-role"])
         .assert()
         .code(31)
         .stderr(contains("role not found"));
 }
 
-/// TV-RX-3: `octo role select <existing> --confirm` succeeds with
-/// envelope (last-writer-wins on re-select).
+/// TV-RX-3: `octo role select <existing>` (with pastejacking-defense
+/// gate) succeeds with envelope (last-writer-wins on re-select).
 #[test]
 fn tv_rx_3_select_existing_role_emits_envelope() {
-    octo()
-        .args(["role", "select", "builder", "--confirm"])
+    octo_dev_select()
+        .args(["role", "select", "builder"])
         .assert()
         .code(0)
         .stdout(contains("\"role_id\":\"builder\""))
@@ -136,14 +162,79 @@ fn tv_rx_3_select_existing_role_emits_envelope() {
 #[test]
 fn tv_rx_4_reselect_last_writer_wins_no_conflict() {
     // Two consecutive selects; second must succeed (last-writer-wins).
-    octo()
-        .args(["role", "select", "builder", "--confirm"])
+    octo_dev_select()
+        .args(["role", "select", "builder"])
         .assert()
         .code(0);
-    octo()
-        .args(["role", "select", "builder", "--confirm"])
+    octo_dev_select()
+        .args(["role", "select", "builder"])
         .assert()
         .code(0);
+}
+
+/// TV-RX-5: `octo role select --mode auditor` is denied (Wave 2 HIGH-2
+/// regression vector). Auditor is a read-only role; the select
+/// write-path must surface `AuditorDenied` (exit 2) — NOT the generic
+/// `--confirm required` message (Wave 3 LOW functional: adding
+/// `--confirm` does not unblock an Auditor session).
+#[test]
+fn tv_rx_5_select_auditor_mode_denied() {
+    octo_dev()
+        .args([
+            "--mode",
+            "auditor",
+            "--confirm",
+            "--confirm-acknowledge",
+            "role",
+            "select",
+            "builder",
+        ])
+        .assert()
+        .code(2)
+        .stderr(contains("auditor mode is read-only"))
+        .stderr(contains("role select"));
+}
+
+/// TV-RX-6: `octo role select --mode auditor --dry-run` is STILL
+/// denied (Wave 3 LOW coverage). The Auditor short-circuit fires
+/// before the `--dry-run` bypass; auditors must not preview mutations.
+#[test]
+fn tv_rx_6_select_auditor_with_dry_run_still_denied() {
+    octo_dev()
+        .args([
+            "--mode",
+            "auditor",
+            "--dry-run",
+            "role",
+            "select",
+            "builder",
+        ])
+        .assert()
+        .code(2)
+        .stderr(contains("auditor mode is read-only"));
+}
+
+/// TV-RX-7: `octo role select --mode ci --allow-write --dev ...`
+/// succeeds (Wave 3 LOW coverage). CI mode admits via `--allow-write`
+/// instead of `--confirm`/`--confirm-acknowledge`. The `--dev` flag
+/// is also required for the Phase 1 in-memory signer stub.
+#[test]
+fn tv_rx_7_select_ci_mode_with_allow_write_succeeds() {
+    let mut cmd = Command::cargo_bin("octo").expect("octo binary built");
+    cmd.env("NO_COLOR", "1");
+    cmd.env("OCTO_FORCE_JSON", "1");
+    cmd.args([
+        "--mode",
+        "ci",
+        "--allow-write",
+        "--dev",
+        "role",
+        "select",
+        "wallet",
+    ]);
+    cmd.assert()
+        .code(0)
+        .stdout(contains("\"role_id\":\"wallet\""));
 }
 
 // ---------------------------------------------------------------------------
@@ -151,15 +242,40 @@ fn tv_rx_4_reselect_last_writer_wins_no_conflict() {
 // ---------------------------------------------------------------------------
 
 /// TV-RP-1: select envelope contains `nonce` (per RFC-0011-d §7.4
-/// envelope-build nonce field; M5 substrate contract).
+/// envelope-build nonce field; M5 substrate contract) AND the
+/// `signature_proof` field renders as `[REDACTED:sig]` (per the CLI
+/// redaction boundary — substrate bytes never escape to operator
+/// output). Wave 2 LOW finding: the previous assertion only checked
+/// field NAMES; the redaction boundary could be silently broken and
+/// TV-RP-1 would still pass.
 #[test]
 fn tv_rp_1_select_envelope_has_nonce_field() {
-    octo()
-        .args(["role", "select", "provider", "--confirm"])
+    let output = octo_dev_select()
+        .args(["role", "select", "provider"])
         .assert()
         .code(0)
         .stdout(contains("\"nonce\""))
         .stdout(contains("\"role_binding_hash\""))
         .stdout(contains("\"body_hash\""))
-        .stdout(contains("\"chain_id\""));
+        .stdout(contains("\"chain_id\""))
+        .stdout(contains("\"signature_proof\":\"[REDACTED:sig]\""))
+        .stdout(contains("\"role_binding_hash\":\"[REDACTED:sig]\""))
+        .stdout(contains("\"body_hash\":\"[REDACTED:sig]\""))
+        .stdout(contains("\"chain_id\":\"[REDACTED:sig]\""))
+        .stdout(contains("\"role_kind_uuid\":\"[REDACTED:sig]\""))
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8_lossy(&output);
+    assert!(
+        stdout.contains("\"nonce\":"),
+        "nonce field must serialize as a number-prefixed key: {stdout}"
+    );
+    // Defense-in-depth — the raw 64-byte signature must NEVER escape
+    // the redaction boundary. Assert no `0x`-prefixed hex fragments
+    // and no plaintext 4-byte marker that would betray a leaked byte.
+    assert!(
+        !stdout.contains("0xdeadbeef") && !stdout.contains("\"signature_proof\":\"0x"),
+        "no raw hex material must leak into select envelope: {stdout}"
+    );
 }

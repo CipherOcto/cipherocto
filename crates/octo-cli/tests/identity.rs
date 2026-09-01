@@ -376,8 +376,8 @@ fn tv_id12_auditor_mode_blocks_whoami() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("ConfirmationRequired"),
-        "stderr must mention ConfirmationRequired for auditor block, got: {stderr}",
+        stderr.contains("auditor mode is read-only"),
+        "stderr must mention auditor denial for whoami block, got: {stderr}",
     );
 }
 

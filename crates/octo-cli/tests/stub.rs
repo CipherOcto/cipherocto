@@ -26,29 +26,29 @@ fn octo() -> Command {
 /// begins with this prefix.
 const BANNER_PREFIX: &str = "DEPRECATED:";
 
-/// SPEC-08: every deprecated stub command emits the canonical banner on
-/// stderr. We exercise each deprecated subcommand family and assert the
-/// banner prefix surfaces on stderr (not stdout) so JSON consumers can
-/// rely on stdout being parseable.
+/// SPEC-08 role-family stub superseded by RFC-0011-d Phase 1 structured
+/// subcommands (`octo role {list,show,select}`). `octo role builder` now
+/// hits clap as unrecognized subcommand → exit 2.
+///
+/// Phase 1 contract: structured role subcommands replace the SPEC-08
+/// banner contract. This test pins the new contract so a future
+/// refactor cannot accidentally route `role builder` back through the
+/// deprecated stub path without a deliberate migration plan.
 #[test]
 fn tv_dep_banner_emitted_on_stderr_for_role_family() {
     let output = octo().args(["role", "builder"]).output().expect("run");
     assert_eq!(
         output.status.code(),
-        Some(0),
-        "v1.0 deprecated stub MUST exit 0, got {:?}\nstderr: {}",
+        Some(2),
+        "Phase 1 structured subcommands MUST exit 2 for unknown subcommand, \
+         got {:?}\nstderr: {}",
         output.status.code(),
         String::from_utf8_lossy(&output.stderr),
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.starts_with(BANNER_PREFIX),
-        "stderr MUST begin with {BANNER_PREFIX:?}, got: {stderr}",
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        !stdout.contains(BANNER_PREFIX),
-        "banner MUST NOT leak to stdout (JSON contamination), got: {stdout}",
+        stderr.contains("unrecognized") && stderr.contains("builder"),
+        "stderr MUST contain 'unrecognized' AND 'builder', got: {stderr}",
     );
 }
 

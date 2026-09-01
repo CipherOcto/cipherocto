@@ -9,6 +9,9 @@
 //! - [`constants`] — canonical stake / quorum / TTL / domain-separator constants.
 //! - [`digest`] — `ReputationDigest` 32-byte envelope digest over domain-separated BLAKE3.
 //! - [`error`] — `ReputationError` enum, `#[repr(u8)]` 0x01..=0x32 per RFC-0968 §13.
+//! - [`projection`] — `Role`, `ReputationRecord`, `ReputationComponents`, `AnchorRef`,
+//!   `AttestationSummary`; `project()` + `attestations()` entry points for RFC-0011-b
+//!   `octo reputation show` (Layer B `[ADD]` per RFC-0011-b §7.4).
 //! - [`types`] — `SignalEvent`, `SignalKind`, `ReputationLayer`, `ReputationAggregate`,
 //!   `RecorderId`, `RecorderDid`, `ControllerId`, `EventId`, `RotationProvenance`,
 //!   `ParityEvidence`, `RetirementEligibility`.
@@ -35,6 +38,7 @@ pub mod migrations;
 pub mod parity;
 pub mod parity_daemon;
 pub mod presentation;
+pub mod projection;
 pub mod prometheus;
 pub mod reconciler;
 pub mod recorder;
@@ -90,6 +94,11 @@ pub use parity_daemon::{
     REQUIRED_CONSECUTIVE_BUCKETS,
 };
 pub use presentation::reputation_score_0_100;
+pub use projection::{
+    attestations as projection_attestations, project as projection_project, AnchorRef,
+    AttestationSummary, ReputationComponents, ReputationRecord, Role, RoleParseError,
+    ATTESTATION_LIMIT_CAP,
+};
 pub use prometheus::{render_prometheus, write_prometheus_file, MetricsSnapshot};
 pub use reconciler::{
     build_replay_event, dfp_from_legacy_f64, dfp_to_canonical_blob, event_id_from_envelope,

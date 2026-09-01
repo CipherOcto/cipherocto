@@ -40,7 +40,15 @@ pub mod trust_level_uuids {
 /// into an operator-friendly discriminator string. The substrate
 /// exports this newtype so the CLI can pass UUIDs through without
 /// inventing parallel enums.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+///
+/// **Wave 4.5 finding 9 (Lens-4):** `Hash` was dropped from the
+/// derive list — the derive is redundant noise for a `String`
+/// newtype. The struct already has `PartialEq`/`Eq` via the
+/// `String` field, and equality on `String` already implies equality
+/// on the wrapper; callers that genuinely need a `HashSet<TrustLevel>`
+/// can hash via `.as_uuid_str()` (or re-derive explicitly with a
+/// documented intent).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct TrustLevel(pub String);
 

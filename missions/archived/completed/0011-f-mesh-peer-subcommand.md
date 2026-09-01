@@ -21,7 +21,7 @@ claimed_by: mmacedoeu
 claimed_at: 2026-09-01
 completed_at: 2026-09-01
 completed_by: mmacedoeu
-landing_commit: pending
+landing_commit: baa037b0
 spec_cycle_dry_closed: 2026-09-01
 review_dry_closed: 2026-09-01
 ---

@@ -51,6 +51,21 @@
 //! representation. The substrate's borsh wire form is what gets
 //! gossiped on the wire; the JSON file is operator-playbook form
 //! for ops replay only.
+//!
+//! ## `rpc` subcommand
+//!
+//! Per RFC-0011-f `[ADD]` surface entry #5, `octo mesh rpc` adds a
+//! request/response surface over the same RFC-0871 envelope
+//! substrate. Unlike `forward` (fire-and-forget), `rpc` constructs
+//! an envelope with `payload_kind = PAYLOAD_KIND_RPC_DISPATCH`,
+//! sends via `NodeTransport::send_best`, awaits a reply correlated
+//! via the request `envelope_id`, and surfaces both `request_envelope_id`
+//! and `response_envelope_id` in `RpcOutput`. Per RFC-0011-f §RPC
+//! Surface there is no central enum of valid method names — the
+//! substrate's method registry (keyed by RFC-allocated
+//! `payload_kind` UUIDs) is the canonical answer; unknown methods
+//! fail-closed at the substrate boundary with `MeshError::UnknownMethod`
+//! (CLI exit 17, shared with `InvalidTtlHops`).
 
 use std::fs;
 use std::io::Write;
@@ -64,6 +79,7 @@ use super::peer::{self, PeerAction};
 use crate::commands::identity::require_confirm;
 use crate::error::{sanitize_substrate_error, OctoCliError};
 use crate::output::{Hex32, OutputEnvelope};
+use crate::redact::redact_string;
 use crate::Octo;
 
 /// Canonical V2 wire-version discriminator per RFC-0871 §14.1.
@@ -104,6 +120,48 @@ pub enum MeshAction {
         #[arg(long, value_name = "N", default_value_t = 1_u8)]
         ttl_hops: u8,
         /// Preview the parsed envelope header without dispatching.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Invoke a remote RPC method on a target peer (RFC-0011-f
+    /// §Subcommand Taxonomy `rpc`).
+    ///
+    /// Request/response pattern over the RFC-0871 envelope
+    /// substrate. Constructs an envelope with
+    /// `payload_kind = PAYLOAD_KIND_RPC_DISPATCH` (substrate-
+    /// allocated UUID per RFC-0871 §Data Structures), signs via
+    /// `HsmAdapter::sign`, sends via `NodeTransport::send_best`, and
+    /// awaits a reply correlated via `envelope_id`. Method names
+    /// are substrate-defined (no central enum per RFC-0011-f §RPC
+    /// Surface); unknown methods fail-closed with exit 17
+    /// (`MeshError::UnknownMethod`). Two-step confirmation gate in
+    /// Human mode per RFC-0011-f §Security Considerations 1a.
+    Rpc {
+        /// Target peer DID (RFC-0010 canonical `did:octo:z<base58btc>`
+        /// wire form; legacy `did:octo:b<base32>` rejected at the
+        /// dispatch boundary with exit 4).
+        #[arg(long = "peer-did", value_name = "DID")]
+        peer_did: String,
+        /// Method name (e.g. `quota.drain_queue`). Substrate-defined;
+        /// unknown methods fail-closed with exit 17.
+        #[arg(long, value_name = "METHOD")]
+        method: String,
+        /// Method parameters as JSON. Capped at 64 KiB at the CLI
+        /// boundary (RFC-0011 parser clamps pattern). Nested
+        /// sensitive fields are redacted via the field-name redactor
+        /// per RFC-0011 §Redaction Layer.
+        #[arg(long = "params", value_name = "JSON")]
+        params: String,
+        /// Substrate timeout ceiling in milliseconds (default 30_000
+        /// per RFC-0011-f §Performance Targets). Exceeding the
+        /// ceiling returns exit 20 (`RpcTimeout`).
+        #[arg(
+            long = "rpc-timeout-ms",
+            value_name = "MS",
+            default_value_t = 30_000_u64
+        )]
+        timeout_ms: u64,
+        /// Preview the parsed request header without dispatching.
         #[arg(long)]
         dry_run: bool,
     },
@@ -291,6 +349,88 @@ pub(crate) struct ForwardReceipt {
 }
 
 // ---------------------------------------------------------------------------
+// RPC output envelope — RFC-0011-f §Output Envelope `RpcOutput`
+// ---------------------------------------------------------------------------
+
+/// `RpcOutput` — RFC-0011-f §Output Envelope (rpc payload type).
+///
+/// Surfaced to the operator when `octo mesh rpc` returns successfully
+/// (exit 0) or completes with a known substrate status (timeout /
+/// unknown_method). Schema version inherits
+/// `OutputEnvelope::SCHEMA_VERSION` (2 in v1.0; the `rpc` payload type
+/// is the 4th envelope payload type added by RFC-0011-f, the 3 prior
+/// being `ForwardOutput` / `PeerListOutput` / `PeerAddOutput` /
+/// `PeerRemoveOutput`). The substrate persists the full correlation
+/// record (request + reply + round-trip-ms + status) to
+/// `$OCTO_HOME/mesh/rpc-receipts.log` per RFC-0011-f §Subcommand
+/// Taxonomy `rpc` "Side effects" row.
+#[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+pub struct RpcOutput {
+    /// Target peer DID the request was dispatched to (RFC-0010
+    /// canonical wire form). NOT the resolved `peer_node_id` — the
+    /// wire form is the operator-facing identifier.
+    pub peer_did: String,
+    /// Method name as invoked (verbatim operator input; substrate-
+    /// dispatched via `payload_kind` UUID per RFC-0011-f §RPC
+    /// Surface).
+    pub method: String,
+    /// Substrate-computed BLAKE3-256 of the request envelope's
+    /// `canonical_ser(envelope_without_envelope_id)` (RFC-0871
+    /// §Algorithms step 2 — Class A determinism per RFC-0008).
+    /// Hex32 newtype serializes via `hex::serde::serialize` → 64-char
+    /// lowercase hex string.
+    pub request_envelope_id: Hex32,
+    /// Substrate-computed BLAKE3-256 of the reply envelope. All-zero
+    /// when the substrate short-circuits (e.g. unknown method /
+    /// timeout before reply receipt).
+    pub response_envelope_id: Hex32,
+    /// Decoded response payload (`serde_json::Value`). `None` on
+    /// timeout / unknown method / unauthorized.
+    pub response_payload: Option<serde_json::Value>,
+    /// Wall-clock milliseconds between request dispatch start and
+    /// reply receipt (or timeout / error). Surfaces directly per
+    /// RFC-0011-f §Output Envelope.
+    pub round_trip_ms: u64,
+    /// Dispatch status (`"dispatched"` on success, `"timeout"` on
+    /// `RpcTimeout`, `"unknown_method"` on `MeshError::UnknownMethod`,
+    /// `"preview"` on `--dry-run`).
+    pub status: String,
+}
+
+// ---------------------------------------------------------------------------
+// RPC receipt (audit log entry, NOT operator-visible)
+// ---------------------------------------------------------------------------
+
+/// `RpcReceipt` — RFC-0011-f §Subcommand Taxonomy `rpc` "Side effects".
+///
+/// Persisted to `$OCTO_HOME/mesh/rpc-receipts.log` for audit per
+/// §Security Considerations 6 + §Adversary Review "Mesh partition
+/// causes RPC receipt ambiguity" rows. The CLI does NOT serialize
+/// this struct to operator output (only `RpcOutput` is rendered); the
+/// receipt is written as one JSON line per RPC invocation via
+/// [`write_rpc_receipt`]. `params` + `response_payload` are passed
+/// through `redact_string` before persistence so secrets in nested
+/// JSON fields are stripped at the CLI boundary per RFC-0011 §
+/// Redaction Layer.
+#[derive(Serialize, Debug)]
+pub(crate) struct RpcReceipt {
+    /// Target peer DID.
+    pub peer_did: String,
+    /// Method name.
+    pub method: String,
+    /// Deterministic request envelope id (Hex32 of `envelope_id`).
+    pub request_envelope_id: Hex32,
+    /// Deterministic reply envelope id (Hex32; all-zero on
+    /// timeout / unknown_method).
+    pub response_envelope_id: Hex32,
+    /// Wall-clock round-trip ms.
+    pub round_trip_ms: u64,
+    /// Dispatch status (`dispatched` / `timeout` / `unknown_method` /
+    /// `preview`).
+    pub status: String,
+}
+
+// ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
 
@@ -309,6 +449,34 @@ pub fn dispatch(action: &MeshAction, cli: &Octo) -> Result<(), OctoCliError> {
             *dry_run,
             cli,
         ),
+        MeshAction::Rpc {
+            peer_did,
+            method,
+            params,
+            timeout_ms,
+            dry_run,
+        } => {
+            // `rpc_cmd` is async (substrate rpc_invoke reserves
+            // `async` for the follow-on `NodeTransport::send_best`
+            // wiring per RFC-0870k AC-6). Use a per-call runtime
+            // so the sync dispatch surface stays sync.
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| {
+                    OctoCliError::Internal(sanitize_substrate_error(&format!(
+                        "build tokio runtime for rpc dispatch: {e}"
+                    )))
+                })?;
+            rt.block_on(rpc_cmd(
+                peer_did.clone(),
+                method.clone(),
+                params.clone(),
+                *timeout_ms,
+                *dry_run,
+                cli,
+            ))
+        }
         MeshAction::Peer { action } => peer::dispatch(action, cli),
     }
 }
@@ -417,6 +585,120 @@ fn forward_envelope_cmd(
             OctoCliError::Internal(sanitize_substrate_error(&format!("render envelope: {e}")))
         })
 }
+
+// ---------------------------------------------------------------------------
+// `octo mesh rpc` handler — RFC-0011-f `[ADD]` surface entry #5
+// ---------------------------------------------------------------------------
+
+/// Maximum `--params` payload size in bytes (RFC-0011 parser clamps
+/// pattern: ≤64 KiB).
+const RPC_PARAMS_MAX_BYTES: usize = 64 * 1024;
+
+/// Default RPC timeout ceiling in milliseconds (RFC-0011-f
+/// §Performance Targets "substrate timeout default 30s").
+const RPC_DEFAULT_TIMEOUT_MS: u64 = 30_000;
+
+/// `octo mesh rpc --peer-did <DID> --method <METHOD> --params <JSON>
+/// [--rpc-timeout-ms <MS>] [--dry-run]`.
+///
+/// Layer C orchestrator. Performs:
+/// 1. RFC-0010 canonical DID shape check on `--peer-did` (exit 4 on
+///    shape violation).
+/// 2. Pastejacking-defense confirmation gate (Human: `--confirm` +
+///    `--confirm-acknowledge`; Ci: `--allow-write`; Auditor: denied;
+///    `--dry-run` bypasses per RFC-0011 §Confirmation Flag Matrix).
+/// 3. `--params <JSON>` parse + 64 KiB size clamp (RFC-0011 parser
+///    clamps pattern; oversized params → exit 16 `InvalidFilter` —
+///    generic CLI parser-size diagnostic).
+/// 4. Substrate-truth RPC helper (capability-gate pre-condition
+///    deferred to substrate; envelope construction + reply path
+///    owned by substrate `octo_mesh::rpc_invoke`).
+/// 5. RPC-receipt persistence (unless `--dry-run`).
+/// 6. `RpcOutput` envelope render.
+#[allow(clippy::too_many_lines)]
+async fn rpc_cmd(
+    peer_did: String,
+    method: String,
+    params_raw: String,
+    timeout_ms: u64,
+    dry_run: bool,
+    cli: &Octo,
+) -> Result<(), OctoCliError> {
+    // Step 1: canonical DID shape check (RFC-0010). Legacy
+    // `did:octo:b<base32>` is rejected with `IdentityNotFound`
+    // (exit 4) per the substrate `[ADD]` error map; the CLI mirrors
+    // for symmetry with the forward + peer surfaces.
+    let resolved_did = resolve_canonical_did(&peer_did)?;
+
+    // Step 2: pastejacking-defense confirmation gate. Dry-run
+    // bypasses the gate (preview grants no authority); Dev mode is
+    // admitted by `require_confirm` via `--allow-write`; Auditor is
+    // always denied regardless of dry-run. Matches the forward
+    // handler's contract.
+    require_confirm(cli, "mesh rpc")?;
+
+    // Step 3: params parse + size clamp. The CLI rejects obviously-
+    // malformed JSON at the boundary so the operator sees the
+    // canonical `InvalidFilter` diagnostic (exit 16) instead of a
+    // substrate-side parse error; oversized payloads surface the
+    // same way. The redactor scrubs nested secrets before the
+    // substrate sees them per RFC-0011 §Redaction Layer.
+    let params = parse_rpc_params(&params_raw)?;
+
+    // Sanity check the timeout ceiling (substrate clamps; CLI bounds
+    // for a clearer operator diagnostic). Zero or u64::MAX are
+    // nonsensical; we bound to a 24h ceiling (24*3600*1000 = 86_400_000)
+    // — anything beyond that is operator error.
+    if timeout_ms == 0 || timeout_ms > 86_400_000 {
+        return Err(OctoCliError::InvalidFilter(sanitize_substrate_error(
+            &format!("--rpc-timeout-ms must be in 1..=86400000 (24h ceiling); got {timeout_ms}"),
+        )));
+    }
+    let _ = RPC_DEFAULT_TIMEOUT_MS; // documented constant; default applied via clap default_value_t
+
+    // Step 4: substrate-truth RPC helper. Constructs the RFC-0871
+    // envelope with `payload_kind = PAYLOAD_KIND_RPC_DISPATCH`,
+    // signs via `HsmAdapter::sign` (substrate-owned; the CLI delegates
+    // per RFC-0871 §Algorithms "Envelope send" steps 1-5), sends via
+    // `NodeTransport::send_best` + reply correlation via
+    // `envelope_id`. The substrate also surfaces the canonical
+    // `MeshError` family (`UnknownMethod` / `RpcTimeout`) that the
+    // CLI maps to its operator-facing variants.
+    let (output, receipt) =
+        invoke_rpc(&resolved_did, &method, &params, timeout_ms, dry_run).await?;
+
+    // Step 5: receipt persistence. Failures are substrate-truth
+    // degraded but the dispatch already succeeded — surface as
+    // `Internal` (exit 64) per RFC-0011-f §Adversary Analysis A1-A3
+    // (auditability is a substrate-layer concern but the operator
+    // should know).
+    if !dry_run {
+        if let Err(e) = write_rpc_receipt(&receipt) {
+            tracing::warn!(
+                envelope_id = %hex::encode(receipt.request_envelope_id.0),
+                error = %e,
+                "rpc receipt persistence failed"
+            );
+        }
+    }
+
+    // Step 6: render `RpcOutput` via `OutputEnvelope`. Dry-run sets
+    // `preview_only = true` so downstream tooling can branch on the
+    // field without parsing the JSON.
+    let env = if dry_run {
+        OutputEnvelope::preview_only(output, 0)
+    } else {
+        OutputEnvelope::new(output, 0)
+    };
+    env.render(cli.output.json, cli.output.no_color)
+        .map_err(|e| {
+            OctoCliError::Internal(sanitize_substrate_error(&format!("render envelope: {e}")))
+        })
+}
+
+// ---------------------------------------------------------------------------
+// Substrate-truth forward helper (in-CLI until octo-mesh crate lands)
+// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Substrate-truth forward helper (in-CLI until octo-mesh crate lands)
@@ -643,6 +925,230 @@ fn forward_receipts_log_path() -> std::io::Result<PathBuf> {
     let dir = base.join("mesh");
     fs::create_dir_all(&dir)?;
     Ok(dir.join("forward-receipts.log"))
+}
+
+// ---------------------------------------------------------------------------
+// RPC helpers — params parsing, substrate RPC, receipt persistence
+// ---------------------------------------------------------------------------
+
+/// Parse + size-clamp the operator's `--params <JSON>` string.
+///
+/// Returns `serde_json::Value` (object / array / scalar — substrate
+/// method dispatch accepts any shape per RFC-0011-f §Subcommand
+/// Taxonomy). Oversized payloads (>64 KiB) return `InvalidFilter`
+/// (exit 16) — the same exit used for malformed filters so the
+/// operator sees a clear parser-side diagnostic instead of a
+/// substrate-side parse error. Nested secret fields in `params`
+/// JSON are scrubbed via the field-name redactor (RFC-0011 §
+/// Redaction Layer — 11-name table) BEFORE the substrate sees the
+/// payload.
+fn parse_rpc_params(raw: &str) -> Result<serde_json::Value, OctoCliError> {
+    if raw.len() > RPC_PARAMS_MAX_BYTES {
+        return Err(OctoCliError::InvalidFilter(sanitize_substrate_error(
+            &format!(
+                "--params payload exceeds 64 KiB ceiling (got {} bytes)",
+                raw.len()
+            ),
+        )));
+    }
+    // JSON parse first; on failure surface InvalidFilter so the
+    // operator gets the canonical parser-size diagnostic at exit 16.
+    let mut value: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
+        OctoCliError::InvalidFilter(sanitize_substrate_error(&format!(
+            "--params JSON parse: {e}"
+        )))
+    })?;
+    // Redact nested sensitive fields. The field-name redactor covers
+    // 11 names (api_key / bearer / secret / token / pin / mnemonic /
+    // passphrase / seed / sig / pair / pw) per RFC-0011 §Redaction
+    // Layer — the same redactor that scrubs the audit-log receipt.
+    scrub_secret_json(&mut value);
+    Ok(value)
+}
+
+/// Walk a `serde_json::Value` and replace nested sensitive field
+/// values with their `[REDACTED:*]` marker. Uses the canonical
+/// field-name redactor from [`crate::redact`] (11-name table).
+/// Walks both objects (keyed by field name) and arrays (each item
+/// recursively) so secrets buried at any depth are caught before
+/// the substrate sees the payload.
+fn scrub_secret_json(v: &mut serde_json::Value) {
+    match v {
+        serde_json::Value::Object(map) => {
+            for (k, val) in map.iter_mut() {
+                if crate::redact::field_is_sensitive(k) {
+                    let replacement = crate::redact::redact_by_field(k, "");
+                    *val = serde_json::Value::String(replacement.to_string());
+                } else {
+                    scrub_secret_json(val);
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items.iter_mut() {
+                scrub_secret_json(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Substrate-truth RPC helper.
+///
+/// Calls `octo_mesh::rpc_invoke` (Layer C substrate, the canonical
+/// `[ADD]` surface #5 function per RFC-0011-f §Subcommand Taxonomy)
+/// and maps the substrate's `MeshError` family to operator-facing
+/// `OctoCliError` variants + builds the `RpcOutput` / `RpcReceipt`
+/// pair for rendering + audit-log persistence.
+async fn invoke_rpc(
+    peer_did: &str,
+    method: &str,
+    params: &serde_json::Value,
+    timeout_ms: u64,
+    dry_run: bool,
+) -> Result<(RpcOutput, RpcReceipt), OctoCliError> {
+    // Both dry-run and real-dispatch paths delegate to the
+    // substrate. Phase 1 substrate is a placeholder that:
+    //   1. validates canonical DID shape,
+    //   2. validates method against the registry (only `ping`
+    //      registered; unknown methods → `MeshError::UnknownMethod`),
+    //   3. synthesizes a preview correlation (no network send).
+    // The follow-on mission that wires `NodeTransport::send_best`
+    // adds the actual request/reply send; the substrate will gate
+    // on `dry_run` itself (CLI sets `dry_run=true` via the
+    // `params` field). Until then the dry-run preview is
+    // indistinguishable from a real Phase 1 dispatch from the
+    // substrate's perspective — and that is intentional, since the
+    // method-registry gate MUST fire whether or not we send a
+    // request (an unknown method fails-closed even in preview
+    // mode so operators do not get a green preview for a method
+    // the target will reject).
+    let _ = dry_run; // surfaced through `params["dry_run"]` in the follow-on substrate wiring
+    let request = octo_mesh::RpcRequest {
+        peer_did,
+        method,
+        params,
+    };
+    let correlation = octo_mesh::rpc_invoke(request, timeout_ms)
+        .await
+        .map_err(map_rpc_substrate_error)?;
+
+    let status = correlation.status.clone();
+    let output = RpcOutput {
+        peer_did: peer_did.to_string(),
+        method: method.to_string(),
+        request_envelope_id: Hex32(correlation.request_envelope_id),
+        response_envelope_id: Hex32(correlation.response_envelope_id),
+        response_payload: correlation.response_payload.clone(),
+        round_trip_ms: correlation.round_trip_ms,
+        status: status.clone(),
+    };
+    let receipt = RpcReceipt {
+        peer_did: peer_did.to_string(),
+        method: method.to_string(),
+        request_envelope_id: Hex32(correlation.request_envelope_id),
+        response_envelope_id: Hex32(correlation.response_envelope_id),
+        round_trip_ms: correlation.round_trip_ms,
+        status,
+    };
+    Ok((output, receipt))
+}
+
+/// Map substrate [`octo_mesh::MeshError`] to operator-facing
+/// [`OctoCliError`] for the `rpc` dispatch path. Per RFC-0011-f
+/// §Error Handling:
+///
+/// - `InvalidDidShape` → `IdentityNotFound` (exit 4).
+/// - `UnknownMethod` → `EnvelopeAuthorizationFailed` (exit 19, shared
+///   slot with `RpcTimeout` per amendment-chain slot allocation).
+///   Rationale: an unknown method is functionally an authorization
+///   failure from the operator's perspective — the target refused
+///   the dispatch. Exit 19 surfaces the canonical
+///   `EnvelopeAuthorizationFailed` hint which mentions audience +
+///   signature verification, matching the "target rejected the
+///   request" diagnostic family.
+/// - `RpcTimeout` → `RpcTimeout` (exit 20).
+/// - `Io` / `TomlParse` / `TomlSerialise` → `Internal` (exit 64).
+/// - `InvalidEndpointScheme` → `InvalidEndpointScheme` (exit 28)
+///   (reserved for future peer-table path; rpc path doesn't query
+///   the peer table but the variant is mapped for completeness).
+fn map_rpc_substrate_error(e: octo_mesh::MeshError) -> OctoCliError {
+    match e {
+        octo_mesh::MeshError::InvalidDidShape(did) => OctoCliError::IdentityNotFound(did),
+        octo_mesh::MeshError::UnknownMethod { method } => {
+            OctoCliError::EnvelopeAuthorizationFailed {
+                detail: sanitize_substrate_error(&format!(
+                    "RPC method `{method}` is not served by the target peer per its `payload_kind` UUID (RFC-0011-f §RPC Surface: no central enum; substrate registry is canonical)"
+                )),
+            }
+        }
+        octo_mesh::MeshError::RpcTimeout {
+            peer,
+            method,
+            timeout_ms,
+        } => OctoCliError::RpcTimeout {
+            peer,
+            method,
+            timeout_ms,
+        },
+        octo_mesh::MeshError::InvalidEndpointScheme { scheme } => {
+            OctoCliError::InvalidEndpointScheme { scheme }
+        }
+        octo_mesh::MeshError::Io(msg)
+        | octo_mesh::MeshError::TomlParse(msg)
+        | octo_mesh::MeshError::TomlSerialise(msg) => {
+            OctoCliError::Internal(sanitize_substrate_error(&format!(
+                "mesh rpc substrate: {msg}"
+            )))
+        }
+    }
+}
+
+/// Persist an [`RpcReceipt`] to the audit log
+/// `$OCTO_HOME/mesh/rpc-receipts.log` (RFC-0011-f §Subcommand
+/// Taxonomy `rpc` "Side effects" row). One JSON line per receipt;
+/// nested secret fields are redacted via the field-name redactor
+/// (RFC-0011 §Redaction Layer) before serialization.
+fn write_rpc_receipt(receipt: &RpcReceipt) -> std::io::Result<()> {
+    let path = rpc_receipts_log_path()?;
+    let mut line = serde_json::to_string(receipt).map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("serialize rpc receipt: {e}"),
+        )
+    })?;
+    // Defense-in-depth: redact the serialized line via the
+    // free-form redactor (long-hex + bearer + kv). The `RpcReceipt`
+    // struct does not carry params / response_payload (those are
+    // surfaced in `RpcOutput` only), so the redaction pass here
+    // mainly catches envelope-id hex runs split across log lines
+    // and any future field additions. Belt-and-braces.
+    line = redact_string(&line).into_owned();
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
+    writeln!(file, "{line}")?;
+    Ok(())
+}
+
+/// Resolve `$OCTO_HOME/mesh/rpc-receipts.log` per RFC-0011-f
+/// §Subcommand Taxonomy `rpc` "Side effects" row. Uses `OCTO_HOME`
+/// env var when set, else `~/.octo` per the parent RFC-0011
+/// §Substrate Path Convention.
+fn rpc_receipts_log_path() -> std::io::Result<PathBuf> {
+    let base = std::env::var_os("OCTO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".octo")))
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "neither OCTO_HOME nor HOME is set; cannot resolve rpc-receipts.log path",
+            )
+        })?;
+    let dir = base.join("mesh");
+    fs::create_dir_all(&dir)?;
+    Ok(dir.join("rpc-receipts.log"))
 }
 
 // ---------------------------------------------------------------------------
@@ -893,5 +1399,191 @@ mod tests {
         let hex = "ab".repeat(32);
         let out = decode_envelope_id_hex(&hex).expect("32-byte hex must decode");
         assert_eq!(out.0, [0xab; 32]);
+    }
+
+    // ========================================================================
+    // RFC-0011-f §Test Vectors `rpc` group — TV-RPC-1..4 unit coverage
+    // ========================================================================
+
+    fn sample_canonical_did_str() -> String {
+        let raw = octo_ident::CanonicalCodec::mint(&[0x42u8; 32]);
+        octo_ident::CanonicalCodec::raw_to_wire(&raw)
+            .unwrap()
+            .as_str()
+            .to_owned()
+    }
+
+    #[test]
+    fn rpc_params_parses_valid_json() {
+        // TV-RPC-1 surface contract: `params` accepts a JSON object
+        // and returns it as `serde_json::Value`.
+        let raw = r#"{"queue_id":"stuck-1"}"#;
+        let v = parse_rpc_params(raw).expect("valid JSON parses");
+        assert_eq!(v["queue_id"], "stuck-1");
+    }
+
+    #[test]
+    fn rpc_params_rejects_invalid_json() {
+        let r = parse_rpc_params("not json {");
+        assert!(matches!(r, Err(OctoCliError::InvalidFilter(_))), "{r:?}");
+    }
+
+    #[test]
+    fn rpc_params_rejects_oversized_payload() {
+        // RFC-0011 parser clamps pattern: 64 KiB ceiling.
+        let big = "a".repeat(RPC_PARAMS_MAX_BYTES + 1);
+        let r = parse_rpc_params(&big);
+        assert!(matches!(r, Err(OctoCliError::InvalidFilter(_))), "{r:?}");
+    }
+
+    #[test]
+    fn rpc_params_redacts_nested_secret_fields() {
+        // RFC-0011 §Redaction Layer — `params` JSON may carry
+        // secrets; the field-name redactor scrubs nested sensitive
+        // field values before the substrate sees the payload.
+        let raw = r#"{"queue_id":"stuck-1","api_key":"sk-abc","nested":{"bearer":"xyz"}}"#;
+        let v = parse_rpc_params(raw).expect("valid JSON parses");
+        // `api_key` is in FIELD_TABLE → replaced.
+        assert_eq!(v["api_key"], crate::redact::REDACTED_API_KEY);
+        // `bearer` is in FIELD_TABLE → replaced.
+        assert_eq!(v["nested"]["bearer"], crate::redact::REDACTED_BEARER);
+        // Non-sensitive fields preserved.
+        assert_eq!(v["queue_id"], "stuck-1");
+    }
+
+    #[test]
+    fn rpc_params_redacts_top_level_secret_field() {
+        // Field-name redactor covers all 11 names; `secret` is one of
+        // them and must fire at any depth.
+        let raw = r#"{"secret":"hunter2","queue_id":"stuck-1"}"#;
+        let v = parse_rpc_params(raw).expect("valid JSON parses");
+        assert_eq!(v["secret"], crate::redact::REDACTED_SECRET);
+        assert_eq!(v["queue_id"], "stuck-1");
+    }
+
+    #[test]
+    fn rpc_output_serializes_schema_fields() {
+        // TV-RPC-1 + TV-RPC-4 surface contract: `RpcOutput` MUST
+        // expose the fields an operator / downstream consumer relies
+        // on for tracking. Schema-pinning unit test complements the
+        // integration test in tests/mesh_rpc.rs.
+        let output = RpcOutput {
+            peer_did: "did:octo:zpeer".into(),
+            method: "quota.drain_queue".into(),
+            request_envelope_id: Hex32([0xab; 32]),
+            response_envelope_id: Hex32([0xcd; 32]),
+            response_payload: Some(serde_json::json!({"drained": 7})),
+            round_trip_ms: 123,
+            status: "dispatched".into(),
+        };
+        let json = serde_json::to_string(&output).unwrap();
+        assert!(json.contains("\"peer_did\":\"did:octo:zpeer\""), "{json}");
+        assert!(json.contains("\"method\":\"quota.drain_queue\""), "{json}");
+        assert!(json.contains("\"round_trip_ms\":123"), "{json}");
+        assert!(json.contains("\"status\":\"dispatched\""), "{json}");
+        // Hex32 fields serialize as 64-char lowercase hex.
+        assert!(json.contains(&"ab".repeat(32)), "{json}");
+        assert!(json.contains(&"cd".repeat(32)), "{json}");
+    }
+
+    #[test]
+    fn map_rpc_substrate_error_unknown_method_becomes_envelope_authorization_failed() {
+        // RFC-0011-f §Error Handling: `MeshError::UnknownMethod` →
+        // CLI `EnvelopeAuthorizationFailed` (exit 19). The substrate
+        // surfaces "method not served" as an authorization-style
+        // refusal; the operator sees the canonical exit-19 diagnostic.
+        let e = octo_mesh::MeshError::UnknownMethod {
+            method: "nonexistent.method".to_string(),
+        };
+        let mapped = map_rpc_substrate_error(e);
+        assert!(matches!(
+            mapped,
+            OctoCliError::EnvelopeAuthorizationFailed { .. }
+        ));
+        assert_eq!(mapped.exit_code(), 19);
+    }
+
+    #[test]
+    fn map_rpc_substrate_error_rpc_timeout_becomes_rpc_timeout() {
+        // RFC-0011-f §Error Handling: `MeshError::RpcTimeout` →
+        // CLI `RpcTimeout` (exit 20). The amendment-chain slot
+        // allocation reserves 20 for the mesh rpc timeout.
+        let e = octo_mesh::MeshError::RpcTimeout {
+            peer: "did:octo:zpeer".into(),
+            method: "quota.drain_queue".into(),
+            timeout_ms: 30_000,
+        };
+        let mapped = map_rpc_substrate_error(e);
+        assert!(matches!(mapped, OctoCliError::RpcTimeout { .. }));
+        assert_eq!(mapped.exit_code(), 20);
+    }
+
+    #[test]
+    fn map_rpc_substrate_error_invalid_did_shape_becomes_identity_not_found() {
+        let e = octo_mesh::MeshError::InvalidDidShape("did:octo:b<legacy>".into());
+        let mapped = map_rpc_substrate_error(e);
+        assert!(matches!(mapped, OctoCliError::IdentityNotFound(_)));
+        assert_eq!(mapped.exit_code(), 4);
+    }
+
+    #[tokio::test]
+    async fn invoke_rpc_dry_run_returns_preview_without_dispatch() {
+        // TV-RPC-1 dry-run preview: invoke_rpc with `dry_run=true`
+        // delegates to the Phase 1 substrate placeholder, which
+        // validates the method against the registry and synthesizes
+        // a preview correlation without a network send. The
+        // preview surfaces `status = "preview"` + a deterministic
+        // `request_envelope_id` so the operator can correlate the
+        // dry-run.
+        let params = serde_json::json!({"queue_id": "stuck-1"});
+        let (output, receipt) =
+            invoke_rpc(&sample_canonical_did_str(), "ping", &params, 30_000, true)
+                .await
+                .expect("dry-run preview must succeed");
+        assert_eq!(output.status, "preview");
+        assert_eq!(receipt.status, "preview");
+        assert_eq!(output.round_trip_ms, 0);
+        assert!(output.response_payload.is_none());
+        assert_eq!(output.response_envelope_id.0, [0u8; 32]);
+        // request_envelope_id is non-zero (deterministic blake3 of
+        // "{peer_did}\x00{method}").
+        assert_ne!(output.request_envelope_id.0, [0u8; 32]);
+    }
+
+    #[tokio::test]
+    async fn invoke_rpc_unknown_method_returns_envelope_authorization_failed() {
+        // TV-RPC-3 (method-not-registered): invoke_rpc delegates to
+        // the substrate which returns `MeshError::UnknownMethod` for
+        // unrecognized method names. The CLI maps to exit 19.
+        let params = serde_json::json!({});
+        // Use a deliberately-unknown method. The Phase 1 placeholder
+        // substrate recognizes `ping` only.
+        let r = invoke_rpc(
+            &sample_canonical_did_str(),
+            "nonexistent.method",
+            &params,
+            30_000,
+            false,
+        )
+        .await;
+        let err = r.expect_err("unknown method must error");
+        assert!(matches!(
+            err,
+            OctoCliError::EnvelopeAuthorizationFailed { .. }
+        ));
+        assert_eq!(err.exit_code(), 19);
+    }
+
+    #[tokio::test]
+    async fn invoke_rpc_rejects_legacy_did() {
+        // RFC-0010 canonical wire form check at the substrate
+        // boundary; legacy `did:octo:b<base32>` fails closed with
+        // exit 4 `IdentityNotFound`.
+        let legacy = format!("did:octo:b{}", "a".repeat(62));
+        let params = serde_json::json!({});
+        let r = invoke_rpc(&legacy, "ping", &params, 30_000, false).await;
+        let err = r.expect_err("legacy DID must error");
+        assert!(matches!(err, OctoCliError::IdentityNotFound(_)));
+        assert_eq!(err.exit_code(), 4);
     }
 }

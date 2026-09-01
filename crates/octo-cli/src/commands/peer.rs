@@ -291,6 +291,13 @@ fn parse_trust_level_filter(s: &str) -> Result<TrustLevel, OctoCliError> {
 ///   §Error Handling + mission YAML §Acceptance Criteria.
 /// - `InvalidEndpointScheme` → `InvalidEndpointScheme` (exit 28)
 ///   per RFC-0011-f §Exit Codes (shared slot with `InvalidTtlHops`).
+/// - `UnknownMethod` / `RpcTimeout` → `Internal` (exit 64). The
+///   peer-table path cannot surface these (it never invokes the
+///   RPC substrate); they are mapped for completeness so a future
+///   code path that reuses this mapper doesn't introduce a
+///   non-exhaustive match warning. The `mesh rpc` dispatch uses
+///   [`super::mesh::map_rpc_substrate_error`] for the operator-
+///   facing mapping (exit 19 / 20).
 /// - `Io` / `TomlParse` / `TomlSerialise` → `Internal` (exit 64).
 fn map_mesh_error(e: MeshError) -> OctoCliError {
     match e {
@@ -298,6 +305,16 @@ fn map_mesh_error(e: MeshError) -> OctoCliError {
         MeshError::InvalidEndpointScheme { scheme } => {
             OctoCliError::InvalidEndpointScheme { scheme }
         }
+        MeshError::UnknownMethod { method } => OctoCliError::Internal(sanitize_substrate_error(
+            &format!("mesh peer path encountered unexpected UnknownMethod `{method}`; peer table never invokes the RPC substrate — report this as a bug"),
+        )),
+        MeshError::RpcTimeout {
+            peer,
+            method,
+            timeout_ms,
+        } => OctoCliError::Internal(sanitize_substrate_error(&format!(
+            "mesh peer path encountered unexpected RpcTimeout peer={peer} method={method} timeout_ms={timeout_ms}; peer table never invokes the RPC substrate — report this as a bug"
+        ))),
         MeshError::Io(msg) | MeshError::TomlParse(msg) | MeshError::TomlSerialise(msg) => {
             OctoCliError::Internal(sanitize_substrate_error(&format!(
                 "mesh peer table I/O: {msg}"

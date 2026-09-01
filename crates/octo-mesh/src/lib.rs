@@ -17,12 +17,14 @@
 
 pub mod error;
 pub mod peer;
+pub mod rpc;
 
 pub use error::MeshError;
 pub use peer::{
     peer_table_path, trust_level_uuids, EndpointUri, PeerFilter, PeerRecord, PeerSummary,
     TrustLevel, ALLOWED_ENDPOINT_SCHEMES,
 };
+pub use rpc::{rpc_invoke, RpcCorrelation, RpcRequest};
 
 // RFC section names + project identifiers appear verbatim in doc
 // comments (e.g., `RFC-0011-f §Output Envelope`, `octo-wallet`).

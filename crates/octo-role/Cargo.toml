@@ -23,6 +23,14 @@ octo-wallet = { path = "../octo-wallet", version = "0.1.0" }
 # Per [[feedback_stoolap_persistence]] — CipherOcto fork, never raw SQLite.
 stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
 
+# Serialization + JSON Schema export (RFC-0011-d §Key Files row "JSON Schema export")
+serde = { version = "1.0", features = ["derive"] }
+schemars = "0.8"
+# Substrate error type (RFC-0011-d §Error Handling)
+thiserror = "1.0"
+# Clap derive for CLI dispatch enum (M6 wires Octo::Role)
+clap = { version = "4.0", features = ["derive"] }
+
 [dev-dependencies]
 # Phase 1 acceptance requires no external dev deps; serde_json only
 serde_json = "1.0"

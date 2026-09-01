@@ -5,20 +5,26 @@
 //!
 //! ## Mission sequence
 //!
-//! - **M1** (this crate): scaffold only
-//! - **M2**: substrate types + `RoleError` + `RoleAction`
+//! - **M1** (landed): crate scaffold
+//! - **M2** (landed): substrate types + `RoleError` + `RoleAction`
 //! - **M3**: `octo_role::list` + `octo_role::show` (read paths)
 //! - **M4**: `octo_role::select` (write path; SYNC + Stoolap `BEGIN IMMEDIATE`)
 //! - **M5**: `OctoRoleBinding` cached projection + `next_nonce_counter`
 //!   (lives in `octo-wallet`)
-//!
-//! Public API surface lands incrementally per the atomic missions above;
-//! this crate starts as a stub so dependents can `cargo add` without
-//! build break.
 
 #![deny(missing_docs)]
 #![deny(rust_2018_idioms)]
 #![warn(clippy::all)]
 
+pub mod action;
+pub mod error;
+pub mod types;
+
 /// Crate version (matches workspace).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub use action::RoleAction;
+pub use error::RoleError;
+pub use types::{
+    ChainId, Hash32, RoleBinding, RoleFilter, RoleKindUuid, RoleRecord, RoleSummary, SlashingRule,
+};

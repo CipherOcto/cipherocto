@@ -8,11 +8,13 @@ pub mod policy;
 pub mod reputation;
 pub mod role;
 pub mod stub;
+pub mod vault;
 
 pub use mesh::MeshAction;
 pub use peer::PeerAction;
 pub use reputation::ReputationAction;
 pub use role::RoleAction;
+pub use vault::VaultAction;
 
 use crate::error::OctoCliError;
 use crate::{Commands, Octo};
@@ -38,6 +40,7 @@ pub fn dispatch(cli: &Octo) -> Result<(), OctoCliError> {
         Commands::Role { action } => role::dispatch(action, cli),
         Commands::Reputation { action } => reputation::dispatch(action, cli),
         Commands::Mesh { action } => mesh::dispatch(action, cli),
+        Commands::Vault { action } => vault::dispatch(action, cli),
         Commands::Agent { action } => stub::print_agent_deprecated(action),
     }
 }

@@ -212,6 +212,35 @@ pub enum OctoCliError {
         /// The rejected scheme (lowercase, no `://`).
         scheme: String,
     },
+    /// RPC reply did not arrive within the substrate timeout ceiling
+    /// (default 30s per RFC-0011-f §Performance Targets). Surfaced
+    /// from `octo_mesh::MeshError::RpcTimeout` at the `mesh rpc`
+    /// dispatch boundary. The substrate ceiling is
+    /// `octo_mesh::rpc_invoke`'s `timeout_ms` parameter (CLI default
+    /// 30_000). Exit 20 per RFC-0011-f §Error Handling +
+    /// §Subcommand Taxonomy `rpc` "Exit codes" row; this slot is
+    /// claimed by the mesh amendment chain (codes 17-30 reserved
+    /// for mesh errors) and supersedes RFC-0011-b's prior use for
+    /// `ReputationNotFound` — both failure modes are operator-
+    /// unambiguous within their respective command surfaces.
+    #[error("RPC timeout after {timeout_ms}ms: peer `{peer}` method `{method}`")]
+    RpcTimeout {
+        /// Target peer DID (RFC-0010 canonical wire form).
+        peer: String,
+        /// Method name (verbatim operator input).
+        method: String,
+        /// Timeout ceiling in milliseconds (substrate-defined;
+        /// CLI default 30_000).
+        timeout_ms: u64,
+    },
+    /// Vault not owned by the active DID (RFC-0011-e §Error Handling).
+    /// Mapped from `octo_vault::ProjectionError::VaultUnknown` at the
+    /// `vault balance` dispatch boundary. Exit 23 per RFC-0011-e
+    /// §Error Handling (reserved 17-63 range; 23 slot claimed by
+    /// the vault amendment chain for read-surface failures).
+    #[error("vault not owned: {0}")]
+    VaultNotOwned(String),
+
     /// Unexpected internal failure.
     #[error("internal error: {0}")]
     Internal(String),
@@ -256,6 +285,8 @@ impl OctoCliError {
             Self::InvalidTtlHops { .. } => 17,
             Self::MeshCapabilityInsufficient { .. } => 18,
             Self::EnvelopeAuthorizationFailed { .. } => 19,
+            Self::RpcTimeout { .. } => 20,
+            Self::VaultNotOwned(_) => 23,
             Self::Internal(_) => 64,
             Self::StaleStub { .. } => 65,
         }
@@ -268,66 +299,74 @@ impl OctoCliError {
 
     /// Per-variant remediation hint.
     pub fn hint(&self) -> Option<String> {
-        let h = match self {
-            Self::ClapParse(_) => "run `octo --help` for usage",
-            Self::NoActiveIdentity => "create or select an identity before running this command",
+        let h: String = match self {
+            Self::ClapParse(_) => "run `octo --help` for usage".to_string(),
+            Self::NoActiveIdentity => "create or select an identity before running this command".to_string(),
             Self::ConfirmationRequired { .. } => {
-                "re-run with `--confirm` to acknowledge the mutation"
+                "re-run with `--confirm` to acknowledge the mutation".to_string()
             }
             Self::AuditorDenied { .. } => {
-                "auditor mode is read-only; switch to --mode human or --mode ci to perform mutations"
+                "auditor mode is read-only; switch to --mode human or --mode ci to perform mutations".to_string()
             }
-            Self::AlreadyRotating => "complete or abort the in-flight rotation first",
-            Self::IdentityNotFound(_) => "list identities with `octo identity show`",
-            Self::HsmUnavailable(_) => "check that the HSM backend is reachable",
-            Self::AlreadyRevoked => "this identity is already revoked; no action needed",
-            Self::CaveatParse { .. } => "check the caveat expression syntax",
-            Self::InvalidCaveatCombination { .. } => "remove conflicting caveats",
-            Self::HolderNotFound(_) => "verify the holder DID",
-            Self::AttenuationViolation(_) => "attenuation may only narrow authority",
-            Self::SigningFailed(_) => "verify the signing key is available",
-            Self::ParentCapNotFound(_) => "list capabilities with `octo capability list`",
-            Self::PolicyNotFound(_) => "list policies with `octo policy list`",
-            Self::PolicyVersionNotFound { .. } => "omit `--version` to use the latest version",
-            Self::StdinSecretRefused => "re-run with `--allow-stdin-secret` if intended",
-            Self::InvalidFilter(_) => "filter syntax is `key=value`",
-            Self::RoleNotFound(_) => "list roles with `octo role list`",
-            Self::StakeInsufficient { .. } => "top up the operator's OCTO stake and retry",
-            Self::RoleNotSelectable { .. } => "verify the role slug + operator permissions",
+            Self::AlreadyRotating => "complete or abort the in-flight rotation first".to_string(),
+            Self::IdentityNotFound(_) => "list identities with `octo identity show`".to_string(),
+            Self::HsmUnavailable(_) => "check that the HSM backend is reachable".to_string(),
+            Self::AlreadyRevoked => "this identity is already revoked; no action needed".to_string(),
+            Self::CaveatParse { .. } => "check the caveat expression syntax".to_string(),
+            Self::InvalidCaveatCombination { .. } => "remove conflicting caveats".to_string(),
+            Self::HolderNotFound(_) => "verify the holder DID".to_string(),
+            Self::AttenuationViolation(_) => "attenuation may only narrow authority".to_string(),
+            Self::SigningFailed(_) => "verify the signing key is available".to_string(),
+            Self::ParentCapNotFound(_) => "list capabilities with `octo capability list`".to_string(),
+            Self::PolicyNotFound(_) => "list policies with `octo policy list`".to_string(),
+            Self::PolicyVersionNotFound { .. } => "omit `--version` to use the latest version".to_string(),
+            Self::StdinSecretRefused => "re-run with `--allow-stdin-secret` if intended".to_string(),
+            Self::InvalidFilter(_) => "filter syntax is `key=value`".to_string(),
+            Self::RoleNotFound(_) => "list roles with `octo role list`".to_string(),
+            Self::StakeInsufficient { .. } => "top up the operator's OCTO stake and retry".to_string(),
+            Self::RoleNotSelectable { .. } => "verify the role slug + operator permissions".to_string(),
             Self::SignerMismatch { .. } => {
-                "the active signer does not match the supplied operator DID"
+                "the active signer does not match the supplied operator DID".to_string()
             }
             Self::ReputationNotFound { .. } => {
-                "the subject has no aggregate for this role yet; attestations land first"
+                "the subject has no aggregate for this role yet; attestations land first".to_string()
             }
             Self::ReputationRevoked { .. } => {
-                "revoked DIDs are read-only across all operator modes (RFC-0011-b §Security 3)"
+                "revoked DIDs are read-only across all operator modes (RFC-0011-b §Security 3)".to_string()
             }
             Self::AnchorChainBroken { .. } => {
-                "the last anchor chain digest does not match the substrate; verify the chain"
+                "the last anchor chain digest does not match the substrate; verify the chain".to_string()
             }
             Self::NoAnchorVerifyInMode { .. } => {
-                "drop --no-anchor-verify or re-run with --mode dev"
+                "drop --no-anchor-verify or re-run with --mode dev".to_string()
             }
             Self::InvalidRoleSlug { .. } => {
-                "role slugs must be non-empty and contain no whitespace"
+                "role slugs must be non-empty and contain no whitespace".to_string()
             }
             Self::InvalidTtlHops { .. } => {
-                "--ttl-hops must be in the inclusive range 1..=8 (RFC-0871 ceiling); substrate further clamps to per-node-type ceiling from RouterAnnouncePayload"
+                "--ttl-hops must be in the inclusive range 1..=8 (RFC-0871 ceiling); substrate further clamps to per-node-type ceiling from RouterAnnouncePayload".to_string()
             }
             Self::MeshCapabilityInsufficient { .. } => {
-                "the envelope must carry an Authorization::Capability with Audience caveat bound to the target peer DID (RFC-0957 §Attenuation Invariant)"
+                "the envelope must carry an Authorization::Capability with Audience caveat bound to the target peer DID (RFC-0957 §Attenuation Invariant)".to_string()
             }
             Self::EnvelopeAuthorizationFailed { .. } => {
-                "verify the envelope signature against the current verifying key, the audience caveat matches the target peer DID, and the envelope has not expired"
+                "verify the envelope signature against the current verifying key, the audience caveat matches the target peer DID, and the envelope has not expired".to_string()
+            }
+            Self::RpcTimeout { peer, method, timeout_ms } => {
+                format!(
+                    "the peer `{peer}` did not reply within {timeout_ms}ms for method `{method}`; verify peer reachability + RFC-0871 envelope transport + consider raising the timeout via --rpc-timeout-ms"
+                )
             }
             Self::InvalidEndpointScheme { .. } => {
-                "endpoint URI scheme must be one of tcp://, quic://, bluetooth://"
+                "endpoint URI scheme must be one of tcp://, quic://, bluetooth://".to_string()
             }
-            Self::StaleStub { .. } => "this command was removed; see the migration notes",
-            Self::Internal(_) => "re-run with `RUST_LOG=debug` and report the diagnostic",
+            Self::VaultNotOwned(_) => {
+                "the requested vault is not owned by the active DID; verify the vault_id".to_string()
+            }
+            Self::StaleStub { .. } => "this command was removed; see the migration notes".to_string(),
+            Self::Internal(_) => "re-run with `RUST_LOG=debug` and report the diagnostic".to_string(),
         };
-        Some(h.to_string())
+        Some(h)
     }
 
     /// Write this error to stderr and terminate the process.
@@ -628,6 +667,14 @@ mod tests {
                 19,
             ),
             (
+                OctoCliError::RpcTimeout {
+                    peer: "did:octo:zPeer".into(),
+                    method: "quota.drain_queue".into(),
+                    timeout_ms: 30_000,
+                },
+                20,
+            ),
+            (
                 OctoCliError::InvalidEndpointScheme {
                     scheme: "file".into(),
                 },
@@ -701,6 +748,18 @@ mod tests {
         assert!(
             hint.contains("audience") || hint.contains("signature"),
             "auth hint must mention audience or signature, got: {hint}"
+        );
+
+        let timeout = OctoCliError::RpcTimeout {
+            peer: "did:octo:zPeer".into(),
+            method: "quota.drain_queue".into(),
+            timeout_ms: 30_000,
+        };
+        assert_eq!(timeout.exit_code(), 20);
+        let timeout_hint = timeout.hint().expect("hint required");
+        assert!(
+            timeout_hint.contains("30000") || timeout_hint.contains("timeout"),
+            "RpcTimeout hint must mention timeout / ceiling, got: {timeout_hint}"
         );
     }
 }

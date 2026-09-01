@@ -17,6 +17,14 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Async runtime for `octo_mesh::rpc_invoke` (RFC-0011-f `[ADD]` #5).
+# The substrate function is `async` for forward-compat with the
+# follow-on `NodeTransport::send_best` request/reply wiring; the
+# Phase 1 placeholder returns immediately. The CLI `mesh rpc`
+# dispatch drives the future via a per-call
+# `tokio::runtime::Builder::new_current_thread()` so the sync
+# `dispatch()` surface stays sync (no `async fn` propagation).
+tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
 
 # === Substrate (Layer B) — RFC-0011 §Dependencies ===
 # Pins match the actual substrate workspace version (0.1.0); impl-guide
@@ -34,6 +42,13 @@ octo-ident = { path = "../octo-ident", version = "0.1.0" }                   # L
 # table (`$OCTO_HOME/mesh/peers.toml`, 0700 perms, atomic write + fsync
 # + rename) and the typed-discriminator TrustLevel / EndpointUri types.
 octo-mesh = { path = "../octo-mesh", version = "0.1.0" }                     # Layer C mesh peer-table substrate — RFC-0011-f
+# Layer B vault substrate — RFC-0011-e. `vault list` consumes
+# `list_owned`; `vault balance` consumes `project_vault_balance`. The
+# substrate port traits `VaultOwnerIndex` / `VaultAssetResolver` /
+# `TransferEventLog` / `AssetRegistry` are the wire-typed boundary the
+# CLI plugs an in-process Phase 1 adapter into until `octo-vault-stoolap`
+# (Layer D production adapter) lands.
+octo-vault = { path = "../octo-vault", version = "0.1.0" }                   # Layer B vault substrate — RFC-0011-e
 
 # === Mesh forward substrate (Layer 1 + Layer C) — RFC-0011-f §Subcommand Taxonomy ===
 # Layer 1 stable: NodeEnvelope + RecipientRef + Authorization + PayloadKindId
@@ -82,3 +97,14 @@ zeroize = { version = "1", features = ["derive"] }
 [dev-dependencies]
 assert_cmd = "2.0"        # CLI binary invocation
 predicates = "3.1"         # stdout/stderr assertions
+# Layer B vault substrate `testing` feature — needed by the
+# `octo vault list` / `octo vault balance` integration tests that
+# exercise the substrate port traits via the in-memory stubs
+# (`StubVaultAssetResolver`, `StubTransferEventLog`).
+octo-vault = { path = "../octo-vault", version = "0.1.0", features = ["testing"] }
+# Async runtime for the `octo_mesh::rpc_invoke` unit tests
+# (`#[tokio::test]` in `commands/mesh.rs`). Runtime dep was moved to
+# `[dependencies]` so `mesh rpc` dispatch can drive the substrate
+# future via `tokio::runtime::Builder::new_current_thread()`; the
+# `rt-multi-thread` feature is only needed for tests.
+

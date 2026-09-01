@@ -16,7 +16,7 @@ pub use output::{Hex32, OutputEnvelope};
 use clap::{Parser, Subcommand};
 use commands::{
     capability::CapabilityAction, identity::IdentityAction, mesh::MeshAction, policy::PolicyAction,
-    ReputationAction, RoleAction,
+    ReputationAction, RoleAction, VaultAction,
 };
 
 /// The `octo` operator CLI root.
@@ -88,6 +88,16 @@ pub enum Commands {
         /// Mesh subcommand.
         #[command(subcommand)]
         action: MeshAction,
+    },
+    /// Vault read surface (RFC-0011-e §Subcommand Taxonomy).
+    ///
+    /// Phase 1 lands the two read-only subcommands (`vault list`,
+    /// `vault balance`); the transfer surface lands in the
+    /// follow-on `0011-e-vault-subcommands-transfer` mission.
+    Vault {
+        /// Vault subcommand.
+        #[command(subcommand)]
+        action: VaultAction,
     },
     /// Deprecated — see RFC-0011 §Compatibility.
     #[command(hide = true)]

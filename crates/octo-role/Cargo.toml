@@ -1,0 +1,28 @@
+[package]
+name = "octo-role"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "CipherOcto role provisioning substrate — Layer B per RFC-0011-d §7.4"
+
+[lib]
+name = "octo_role"
+path = "src/lib.rs"
+
+[dependencies]
+# Layer A/B crypto substrate
+cipherocto-encoding = { path = "../cipherocto-encoding" }
+# Layer B identity substrate (Did type)
+octo-ident = { path = "../octo-ident", version = "0.1.0" }
+# Layer B capability substrate (CapabilitySigner trait per RFC-0957)
+octo-cap-macaroon = { path = "../octo-cap-macaroon", version = "0.1.0" }
+# Layer B wallet substrate (next_nonce_counter per RFC-0009)
+octo-wallet = { path = "../octo-wallet", version = "0.1.0" }
+# Layer D adapter — Stoolap BEGIN IMMEDIATE tx primitive (RFC-0010)
+# Per [[feedback_stoolap_persistence]] — CipherOcto fork, never raw SQLite.
+stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
+
+[dev-dependencies]
+# Phase 1 acceptance requires no external dev deps; serde_json only
+serde_json = "1.0"

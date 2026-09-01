@@ -28,10 +28,10 @@ serde = { version = "1.0", features = ["derive"] }
 schemars = "0.8"
 # Substrate error type (RFC-0011-d §Error Handling)
 thiserror = "1.0"
-# Clap derive for CLI dispatch enum (M6 wires Octo::Role)
-clap = { version = "4.0", features = ["derive"] }
 # Hashing for canonical binding envelope (RFC-0104 DFP)
 blake3 = "1.5"
+# UUIDv5 derivation per RFC-4122 §4.3 (RFC-0855 namespaced UUID anchor)
+uuid = { version = "1.10", features = ["v5"] }
 
 [dev-dependencies]
 # Phase 1 acceptance requires no external dev deps; serde_json only

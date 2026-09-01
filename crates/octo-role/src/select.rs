@@ -51,7 +51,12 @@ impl BindingStore {
     }
 
     /// Read-only lookup; returns `None` if no binding exists.
-    pub fn get(&self, operator_did: &str, role_id: &str, chain_id: &ChainId) -> Option<RoleBinding> {
+    pub fn get(
+        &self,
+        operator_did: &str,
+        role_id: &str,
+        chain_id: &ChainId,
+    ) -> Option<RoleBinding> {
         let guard = self.inner.lock().expect("BindingStore mutex poisoned");
         guard
             .get(&(operator_did.to_string(), role_id.to_string(), *chain_id))
@@ -59,7 +64,12 @@ impl BindingStore {
     }
 }
 
-/// Default Phase 1 binding store (per-process).
+/// Default Phase 1 binding store (per-process). Not currently invoked
+/// from `octo-role` — left as the substrate seam where Phase 2 wiring
+/// (slash-ledger-backed `BindingStore`) will land per RFC-0900. Kept
+/// `pub` so the future substrate integration has a single switch
+/// point rather than scattering `OnceLock` initialization across
+/// call sites.
 pub fn default_store() -> &'static BindingStore {
     use std::sync::OnceLock;
     static STORE: OnceLock<BindingStore> = OnceLock::new();
@@ -74,6 +84,17 @@ pub fn default_store() -> &'static BindingStore {
 /// SYNC write-path. In Phase 1, uses an in-memory store. Production
 /// replaces with Stoolap `BEGIN IMMEDIATE` envelope-build (see
 /// RFC-0011-d §7.6 sequence diagram).
+///
+/// ## Phase 1 atomicity limitation
+///
+/// The nonce is consumed from `octo_wallet::next_nonce_counter` (a
+/// process-local counter) before the binding is upserted into
+/// [`BindingStore`]. A process crash between these two steps leaves
+/// the counter advanced with no binding written. RFC-0011-d §7.6
+/// mandates "either fully committed or fully absent"; Phase 1 does
+/// not satisfy this. The slash-ledger-backed implementation that
+/// ships when Stoolap `BEGIN IMMEDIATE` lands closes the gap by
+/// persisting both in a single write-lock transaction.
 pub fn select(
     role_id: &str,
     operator_did: &str,
@@ -97,9 +118,10 @@ pub fn select_with_chain_id(
     // 1. Validate role exists (TV-RX-2: missing role).
     let record = show(role_id)?;
 
-    // 2. Derive signer DID from public key bytes; ensure it matches
-    //    operator_did (slash-ledger PK invariant; F-16 substrate-truth).
-    let signer_did = did_from_pubkey(&signer.public_key_bytes());
+    // 2. Compare signer's substrate-truth DID to operator_did
+    //    (F-16 substrate-truth invariant; the DID returned by
+    //    `signer.did()` is canonical, NOT derived CLI-side).
+    let signer_did = signer.did();
     if signer_did != operator_did {
         return Err(RoleError::SignerMismatch {
             signer_did,
@@ -112,7 +134,12 @@ pub fn select_with_chain_id(
     //    For Phase 1 we use a placeholder; Phase 2 will gate coordinator +
     //    domain-coordinator which require real stake oracle wiring.
     let available_stake = match role_id {
-        "wallet" | "recorder" => u64::MAX, // OCTO-only roles; oracle not required for Phase 1
+        // OCTO-only roles: oracle not required for Phase 1; use 1 micro-OCTO
+        // as the placeholder (mirrors non-wallet stub below; never `u64::MAX`
+        // because that would persist into the binding as substrate truth and
+        // confuse downstream readers when the real stake oracle lands in
+        // Phase 2).
+        "wallet" | "recorder" => 1,
         _ => record.summary.requires_octo_min.unwrap_or(0) + 1,
     };
     if let Some(required) = record.summary.requires_octo_min {
@@ -126,24 +153,29 @@ pub fn select_with_chain_id(
 
     // 4. Consume role-binding nonce from octo-wallet substrate counter
     //    (RFC-0011-d §7.4). Inside the envelope-build tx this guarantees
-    //    every role-binding gets a unique monotonic nonce.
-    let nonce = octo_wallet::next_nonce_counter(&Did(operator_did.to_string()));
+    //    every role-binding gets a unique monotonic nonce. Surfaces
+    //    `WalletError::NonceUnderflow` if the counter saturates.
+    let nonce = octo_wallet::next_nonce_counter(&Did(operator_did.to_string())).map_err(|e| {
+        RoleError::SigningFailed {
+            reason: format!("nonce counter: {e}"),
+        }
+    })?;
 
     // 5. Canonical body bytes (deterministic per RFC-0104 DFP).
     let body_bytes = canonical_body_bytes(role_id, operator_did, chain_id, available_stake, nonce);
     let body_hash = blake3_256(&body_bytes);
 
     // 6. Sign canonical bytes.
-    let signature_proof = signer.sign(&body_bytes).map_err(|_| RoleError::RoleNotSelectable {
-        role_id: role_id.to_string(),
-        reason: "signer rejected envelope".to_string(),
-    })?;
+    let signature_proof = signer
+        .sign(&body_bytes)
+        .map_err(|e| RoleError::SigningFailed {
+            reason: format!("signer rejected envelope: {e}"),
+        })?;
 
-    // 7. role_binding_hash = BLAKE3-256(body_bytes || signature_proof).
-    let mut envelope_bytes = Vec::with_capacity(body_bytes.len() + signature_proof.len());
-    envelope_bytes.extend_from_slice(&body_bytes);
-    envelope_bytes.extend_from_slice(&signature_proof);
-    let role_binding_hash = blake3_256(&envelope_bytes);
+    // 7. role_binding_hash = BLAKE3-256(body_bytes) per RFC-0011-d §7.4.
+    //    Hash covers body alone (NOT body+signature) so the hash does
+    //    not depend on a value not yet known at canonicalization time.
+    let role_binding_hash = blake3_256(&body_bytes);
 
     let stake_octo = record.summary.requires_octo_min.unwrap_or(available_stake);
     let binding = RoleBinding {
@@ -171,20 +203,6 @@ pub fn default_chain_id() -> ChainId {
     id[..8].copy_from_slice(&0xDEAD_BEEFu64.to_le_bytes());
     id[8..16].copy_from_slice(&0xCAFE_F00Du64.to_le_bytes());
     id
-}
-
-/// Derive a canonical DID form from a 32-byte Ed25519 public key.
-///
-/// Phase 1: simple canonical `did:octo:0x<hex>` form. Production
-/// switches to RFC-0010 §Canonical OctoID Codec once `octo-ident` lands
-/// the typed form.
-pub fn did_from_pubkey(pk: &[u8; 32]) -> String {
-    let mut s = String::with_capacity(11 + 64);
-    s.push_str("did:octo:0x");
-    for byte in pk {
-        s.push_str(&format!("{byte:02x}"));
-    }
-    s
 }
 
 fn canonical_body_bytes(
@@ -218,7 +236,7 @@ fn blake3_256(bytes: &[u8]) -> Hash32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use octo_cap_macaroon::signer::CapabilitySignerError;
+    use octo_cap_macaroon::signer::{did_from_pubkey, CapabilitySignerError};
 
     /// Test signer with deterministic pubkey + signature.
     struct TestSigner {
@@ -278,7 +296,9 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, RoleError::SignerMismatch { .. }));
         // TX rolled back: no binding stored
-        assert!(store.get(wrong_did, "builder", &default_chain_id()).is_none());
+        assert!(store
+            .get(wrong_did, "builder", &default_chain_id())
+            .is_none());
     }
 
     #[test]
@@ -310,6 +330,12 @@ mod tests {
         assert_ne!(did_from_pubkey(&pk), did_from_pubkey(&[0u8; 32]));
     }
 
+    #[allow(dead_code)]
+    fn _placeholder() {
+        // Kept for symmetry with the dev-signer trait; no-op.
+        let _ = std::marker::PhantomData::<TestSigner>;
+    }
+
     #[test]
     fn body_hash_differs_across_nonces() {
         // Each select consumes a nonce from octo-wallet, so two consecutive
@@ -323,28 +349,29 @@ mod tests {
         let did = did_from_pubkey(&pk);
         let store = BindingStore::new();
 
-        let a = select_with_chain_id("builder", &did, &signer, &default_chain_id(), &store).unwrap();
-        let b = select_with_chain_id("builder", &did, &signer, &default_chain_id(), &store).unwrap();
+        let a =
+            select_with_chain_id("builder", &did, &signer, &default_chain_id(), &store).unwrap();
+        let b =
+            select_with_chain_id("builder", &did, &signer, &default_chain_id(), &store).unwrap();
         assert_ne!(a.nonce, b.nonce, "nonces increment per call");
-        assert_ne!(a.body_hash, b.body_hash, "distinct nonces yield distinct body_hash");
+        assert_ne!(
+            a.body_hash, b.body_hash,
+            "distinct nonces yield distinct body_hash"
+        );
     }
 
     #[test]
-    fn select_returns_stake_insufficient_rolls_back_tx() {
-        // Mock signer DID mismatch — for Phase 1 the stake oracle is a stub,
-        // so this test asserts that the substrate reaches the signer-mismatch
-        // check (F-16 priority over stake). Future substrate iterations with
-        // a real stake oracle will exercise this path.
+    fn select_builder_happy_path_emits_envelope() {
+        // Phase 1 happy path: signer DID matches operator DID, stake oracle
+        // stub passes (required + 1), binding is upserted with monotonic nonce.
+        // StakeInsufficient cannot fire in Phase 1 (requires_octo_min > u64::MAX
+        // is impossible); the variant + error mapping is exercised via
+        // error::tests::role_error_4_variants_only.
         let pk = [1u8; 32];
         let signer = TestSigner { pk };
         let did = did_from_pubkey(&pk);
         let store = BindingStore::new();
 
-        // All Phase 1 non-OCTO-only roles pass the stake check (stub
-        // returns required + 1). To exercise StakeInsufficient we'd need
-        // to set requires_octo_min > u64::MAX, which is impossible. The
-        // variant is documented + the error variant is tested via
-        // error::tests::role_error_4_variants_only.
         let _ = select_with_chain_id("builder", &did, &signer, &default_chain_id(), &store)
             .expect("Phase 1 stub oracle always passes non-wallet roles");
     }
@@ -358,21 +385,26 @@ mod tests {
         let did = did_from_pubkey(&pk);
         let store = BindingStore::new();
 
-        let n_pre = octo_wallet::next_nonce_counter(&Did(did.clone()));
-        let b1 = select_with_chain_id("provider", &did, &signer, &default_chain_id(), &store).unwrap();
-        let n_mid = octo_wallet::next_nonce_counter(&Did(did.clone()));
-        let b2 = select_with_chain_id("storage", &did, &signer, &default_chain_id(), &store).unwrap();
-        let n_after = octo_wallet::next_nonce_counter(&Did(did.clone()));
+        let n_pre = octo_wallet::next_nonce_counter(&Did(did.clone())).unwrap();
+        let b1 =
+            select_with_chain_id("provider", &did, &signer, &default_chain_id(), &store).unwrap();
+        let n_mid = octo_wallet::next_nonce_counter(&Did(did.clone())).unwrap();
+        let b2 =
+            select_with_chain_id("storage", &did, &signer, &default_chain_id(), &store).unwrap();
+        let n_after = octo_wallet::next_nonce_counter(&Did(did.clone())).unwrap();
 
         // The nonce embedded in each binding must be strictly less
         // than the next counter value fetched post-call. Sequence:
-        //   n_pre (counter=1)  → b1 selects (nonce=1, counter=2)
-        //   n_mid (counter=3)  → b2 selects (nonce=3, counter=4)
-        //   n_after (counter=5)
+        //   n_pre = N              → b1 selects (nonce=N, counter=N+1)
+        //   n_mid = N+1            → b2 selects (nonce=N+1, counter=N+2)
+        //   n_after = N+2
         // So: b1.nonce < n_mid < b2.nonce < n_after.
         assert!(b1.nonce < n_mid, "binding nonce falls before mid counter");
         assert!(b2.nonce > n_mid, "second binding nonce exceeds mid counter");
-        assert!(b2.nonce < n_after, "second binding nonce falls before end counter");
+        assert!(
+            b2.nonce < n_after,
+            "second binding nonce falls before end counter"
+        );
         assert!(n_after > n_mid, "counter advances monotonically");
         assert!(n_mid > n_pre, "counter advances between pre and mid");
     }

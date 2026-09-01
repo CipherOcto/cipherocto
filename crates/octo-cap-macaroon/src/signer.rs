@@ -57,9 +57,40 @@ pub trait CapabilitySigner {
     /// serializer bugs.
     fn sign(&self, msg: &[u8]) -> Result<[u8; 64], CapabilitySignerError>;
 
+    /// Return the canonical DID form for this signer.
+    ///
+    /// Substrate-truth invariant (RFC-0011-d §7.4): the DID returned by
+    /// this method is the canonical, substrate-derived DID — it is the
+    /// same DID the slash ledger binds to, NOT a CLI-side derivation.
+    /// Consumers MUST compare `signer.did()` (not a derived form) to
+    /// the operator DID for F-16 substrate-truth checks.
+    ///
+    /// Default impl derives the DID from the public key bytes via the
+    /// canonical `did:octo:0x<hex>` form (Phase 1; production swaps in
+    /// the RFC-0010 §Canonical OctoID Codec). Signer backends that
+    /// carry a substrate-authored DID (e.g., HSM-backed) should
+    /// override this method to return the authoritative DID rather
+    /// than the derived form.
+    fn did(&self) -> String {
+        did_from_pubkey(&self.public_key_bytes())
+    }
+
     /// Return the 32-byte Ed25519 public key.
     #[must_use]
     fn public_key_bytes(&self) -> [u8; 32];
+}
+
+/// Canonical Phase 1 DID form: `did:octo:0x<hex(public_key)>`.
+///
+/// Production swaps in the RFC-0010 §Canonical OctoID Codec once
+/// `octo-ident` lands the typed form.
+pub fn did_from_pubkey(pk: &[u8; 32]) -> String {
+    let mut s = String::with_capacity(11 + 64);
+    s.push_str("did:octo:0x");
+    for byte in pk {
+        s.push_str(&format!("{byte:02x}"));
+    }
+    s
 }
 
 /// Blanket impl for `Box<dyn CapabilitySigner>` — enables `Arc<dyn CapabilitySigner>`
@@ -67,6 +98,9 @@ pub trait CapabilitySigner {
 impl CapabilitySigner for Box<dyn CapabilitySigner + '_> {
     fn sign(&self, msg: &[u8]) -> Result<[u8; 64], CapabilitySignerError> {
         (**self).sign(msg)
+    }
+    fn did(&self) -> String {
+        (**self).did()
     }
     fn public_key_bytes(&self) -> [u8; 32] {
         (**self).public_key_bytes()
@@ -77,6 +111,9 @@ impl CapabilitySigner for Box<dyn CapabilitySigner + '_> {
 impl CapabilitySigner for std::sync::Arc<dyn CapabilitySigner> {
     fn sign(&self, msg: &[u8]) -> Result<[u8; 64], CapabilitySignerError> {
         (**self).sign(msg)
+    }
+    fn did(&self) -> String {
+        (**self).did()
     }
     fn public_key_bytes(&self) -> [u8; 32] {
         (**self).public_key_bytes()
@@ -98,6 +135,10 @@ mod tests {
         fn sign(&self, msg: &[u8]) -> Result<[u8; 64], CapabilitySignerError> {
             let sig = self.0.sign(msg);
             Ok(sig.to_bytes())
+        }
+
+        fn did(&self) -> String {
+            did_from_pubkey(&self.public_key_bytes())
         }
 
         fn public_key_bytes(&self) -> [u8; 32] {

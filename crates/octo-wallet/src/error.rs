@@ -98,4 +98,12 @@ pub enum WalletError {
     /// is malformed, or the signature does not verify against `b"revoke"`.
     #[error("invalid revocation proof (signature verification failed)")]
     InvalidRevocationProof,
+
+    // ----- Nonce counter errors (RFC-0011-d §7.4) -----
+    /// `next_nonce_counter` exhausted `u64::MAX` for the given operator
+    /// DID. Substrate path: `octo_role::select_with_chain_id` wraps this as
+    /// `RoleError::SigningFailed { reason: format!("nonce counter: {e}") }`.
+    /// Exit code = 11 per `OctoCliError::SigningFailed` mapping.
+    #[error("role-binding nonce counter exhausted (u64 saturated) for did")]
+    NonceUnderflow,
 }

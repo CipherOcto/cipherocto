@@ -47,6 +47,16 @@ pub enum RoleError {
         /// Slash-ledger PK DID expected by the binding.
         operator_did: String,
     },
+
+    /// `select` envelope-build: `signer.sign()` returned
+    /// `CapabilitySignerError` (HSM transport, user denial, malformed
+    /// signature). The underlying signer error string is preserved for
+    /// substrate diagnostics; CLI surfaces via the redaction layer.
+    #[error("signing failed: {reason}")]
+    SigningFailed {
+        /// Why the signer rejected the envelope.
+        reason: String,
+    },
 }
 
 impl RoleError {
@@ -62,6 +72,7 @@ impl RoleError {
             Self::StakeInsufficient { .. } => true,
             Self::RoleNotSelectable { .. } => true,
             Self::SignerMismatch { .. } => false,
+            Self::SigningFailed { .. } => false,
         }
     }
 }
@@ -71,9 +82,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn role_error_4_variants_only() {
-        // Per RFC-0011-d §Mission Decomposition M7 row: 4 CLI variants.
-        // Substrate mirrors this exactly; no RoleBindingConflict.
+    fn role_error_5_variants_only() {
+        // Per RFC-0011-d §Mission Decomposition M7 row: 4 CLI variants
+        // + R12 `SigningFailed` (covers CapabilitySignerError propagation
+        // from `octo_cap_macaroon`).
         let all: Vec<RoleError> = vec![
             RoleError::RoleNotFound {
                 role_id: "x".into(),
@@ -90,8 +102,11 @@ mod tests {
                 signer_did: "did:octo:a".into(),
                 operator_did: "did:octo:b".into(),
             },
+            RoleError::SigningFailed {
+                reason: "hsm timeout".into(),
+            },
         ];
-        assert_eq!(all.len(), 4);
+        assert_eq!(all.len(), 5);
     }
 
     #[test]

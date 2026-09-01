@@ -9,21 +9,20 @@ use crate::types::{RoleKindUuid, RoleRecord, RoleSummary, SlashingRule};
 
 /// UUIDv5 of `urn:octo:role:0855:<slug>` (RFC-0855 namespace pattern).
 ///
-/// Deterministic derivation: simple domain-separated std hash over
-/// the slug. Production deployments should switch to the RFC-0855
-/// §UUIDv5 derivation when the namespace anchor crate lands.
+/// Uses the RFC-4122 §4.3 SHA-1-based UUIDv5 derivation. The
+/// namespace anchor is fixed (RFC-0855 §Namespace) so two independent
+/// processes compute the same 16-byte UUID for the same slug.
 fn role_uuid(slug: &str) -> RoleKindUuid {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut h = DefaultHasher::new();
-    format!("octo.role:0855:v1:{slug}").hash(&mut h);
-    let a = h.finish().to_le_bytes();
-    let mut b = h.clone();
-    slug.hash(&mut b);
-    let c = b.finish().to_le_bytes();
+    // RFC-4122 §4.3 UUIDv5 namespace (RFC-0855 anchor).
+    let namespace: [u8; 16] = [
+        0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30,
+        0xc8,
+    ];
+    let name = format!("urn:octo:role:0855:{slug}");
+    let hasher = uuid::Uuid::new_v5(&uuid::Uuid::from_bytes(namespace), name.as_bytes());
+    let bytes = hasher.as_bytes().to_vec();
     let mut out = [0u8; 16];
-    out[..8].copy_from_slice(&a);
-    out[8..].copy_from_slice(&c);
+    out.copy_from_slice(&bytes[..16]);
     out
 }
 
@@ -106,7 +105,7 @@ fn default_slashing_rules(slug: &str) -> Vec<SlashingRule> {
             SlashingRule {
                 reason_code: "liveness_fault".into(),
                 description: "Failed to produce expected output within SLA window.".into(),
-                penalty_pct_micro: 50_000,            // 5%
+                penalty_pct_micro: 50_000,              // 5%
                 escalation_multiplier_micro: 1_500_000, // 1.5x per offense
             },
             SlashingRule {
@@ -182,6 +181,10 @@ mod tests {
         let mut uuids: Vec<_> = roles.iter().map(|r| r.summary.role_kind_uuid).collect();
         uuids.sort();
         uuids.dedup();
-        assert_eq!(uuids.len(), 7, "all 7 role slugs must produce distinct UUIDs");
+        assert_eq!(
+            uuids.len(),
+            7,
+            "all 7 role slugs must produce distinct UUIDs"
+        );
     }
 }

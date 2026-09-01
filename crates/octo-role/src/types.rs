@@ -150,19 +150,20 @@ pub struct RoleBinding {
     pub stake_role_token: Option<u64>,
     /// BLAKE3-256 over canonical binding serialization.
     pub body_hash: Hash32,
-    /// Ed25519 signature over `body_bytes || body_hash`. CLI redaction
-    /// boundary: substrate owns the bytes; CLI renders as `RedactedHex`.
+    /// Ed25519 signature over `body_bytes` (always 64 bytes; substrate
+    /// invariant follows from `CapabilitySigner::sign` returning
+    /// `[u8; 64]` — see `octo_cap_macaroon::signer::CapabilitySigner`).
+    /// CLI redaction boundary: substrate owns the bytes; CLI renders as
+    /// `RedactedHex`.
     pub signature_proof: Vec<u8>,
-    /// BLAKE3-256 over `body_bytes || signature_proof` — public material.
+    /// BLAKE3-256 over `body_bytes` — public material (RFC-0011-d §7.4).
+    /// Hash covers body alone (not body+signature) to avoid a circular
+    /// dependency where the hash depends on a value not yet known at
+    /// canonicalization time.
     pub role_binding_hash: Hash32,
     /// Role-binding nonce consumed from `octo_wallet::next_nonce_counter`
     /// inside the envelope-build tx (RFC-0011-d §7.4).
     pub nonce: u64,
-}
-
-mod serde_bytes_vec {
-    // Reserved for future serde-with helper if redaction boundary needs
-    // a custom serialization. Currently `Vec<u8>` serializes natively.
 }
 
 #[cfg(test)]
@@ -214,15 +215,15 @@ mod tests {
     }
 
     #[test]
-    fn role_action_select_roundtrip() {
-        // Sanity: enum variants are stable across the M2 -> M6 boundary.
-        let all = [
-            "list",
-            "show { role_id: \"builder\" }",
-            "select { role_id: \"builder\" }",
-        ];
-        for v in &all {
-            assert!(!v.is_empty());
-        }
+    fn role_kind_uuid_is_sixteen_bytes() {
+        // Type-invariants for the RFC-0855 typed discriminator.
+        let s = RoleSummary {
+            role_kind_uuid: [0u8; 16],
+            name: "builder".into(),
+            role_token_ticker: Some("OCTO-A".into()),
+            requires_octo_min: Some(1000),
+            class: "infrastructure".into(),
+        };
+        assert_eq!(s.role_kind_uuid.len(), 16);
     }
 }

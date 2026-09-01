@@ -16,7 +16,6 @@
 #![deny(rust_2018_idioms)]
 #![warn(clippy::all)]
 
-pub mod action;
 pub mod error;
 pub mod list_show;
 pub mod registry;
@@ -26,10 +25,9 @@ pub mod types;
 /// Crate version (matches workspace).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub use action::RoleAction;
 pub use error::RoleError;
 pub use list_show::{list, show};
-pub use select::{select, select_with_chain_id, BindingStore};
+pub use select::{default_store, select, select_with_chain_id, BindingStore};
 pub use types::{
-    ChainId, Hash32, RoleBinding, RoleFilter, RoleKindUuid, RoleRecord, RoleSummary, SlashingRule,
+    ChainId, RoleBinding, RoleFilter, RoleKindUuid, RoleRecord, RoleSummary, SlashingRule,
 };

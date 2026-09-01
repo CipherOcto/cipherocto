@@ -67,10 +67,7 @@ mod tests {
     fn tv_rs_1_show_existing() {
         let record = show("builder").expect("builder exists");
         assert_eq!(record.summary.name, "builder");
-        assert_eq!(
-            record.summary.role_token_ticker.as_deref(),
-            Some("OCTO-A")
-        );
+        assert_eq!(record.summary.role_token_ticker.as_deref(), Some("OCTO-A"));
         assert!(!record.slashing_rules.is_empty());
         assert!(!record.allowed_actions.is_empty());
     }

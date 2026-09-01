@@ -286,7 +286,14 @@ fn parse_trust_level_filter(s: &str) -> Result<TrustLevel, OctoCliError> {
 ///   non-exhaustive match warning. The `mesh rpc` dispatch uses
 ///   [`super::mesh::map_rpc_substrate_error`] for the operator-
 ///   facing mapping (exit 19 / 20).
+/// - `NoOctoHome` → `NoOctoHome` (exit 27). Wave 5.5 F1: the peer
+///   table is created lazily under `$OCTO_HOME/mesh/peers.toml` so
+///   the substrate's env-var resolution can surface `NoOctoHome`
+///   when the operator's environment is bare.
 /// - `Io` / `TomlParse` / `TomlSerialise` → `Internal` (exit 64).
+///
+/// Wildcard arm: `MeshError` is `#[non_exhaustive]` (Wave 5.5 F1);
+/// future substrate variants fail closed to `Internal`.
 fn map_mesh_error(e: MeshError) -> OctoCliError {
     match e {
         MeshError::InvalidDidShape(did) => OctoCliError::IdentityNotFound(did),
@@ -303,11 +310,15 @@ fn map_mesh_error(e: MeshError) -> OctoCliError {
         } => OctoCliError::Internal(sanitize_substrate_error(&format!(
             "mesh peer path encountered unexpected RpcTimeout peer={peer} method={method} timeout_ms={timeout_ms}; peer table never invokes the RPC substrate — report this as a bug"
         ))),
+        MeshError::NoOctoHome => OctoCliError::NoOctoHome,
         MeshError::Io(msg) | MeshError::TomlParse(msg) | MeshError::TomlSerialise(msg) => {
             OctoCliError::Internal(sanitize_substrate_error(&format!(
                 "mesh peer table I/O: {msg}"
             )))
         }
+        other => OctoCliError::Internal(sanitize_substrate_error(&format!(
+            "mesh peer table substrate (unmapped variant): {other:?}"
+        ))),
     }
 }
 

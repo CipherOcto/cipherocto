@@ -27,6 +27,19 @@ octo-policy = { path = "../octo-policy", version = "0.1.0" }                  # 
 octo-role = { path = "../octo-role", version = "0.1.0" }                      # Layer B role provisioning — RFC-0011-d
 octo-reputation = { path = "../octo-reputation", version = "0.7.0" }            # Layer B reputation registry — RFC-0968; `reputation show` consumes RFC-0011-b §7.4 `[ADD]` substrate (projection module + Role / ReputationRecord / AnchorRef / AttestationSummary re-exports). Crate version is 0.7.0 (local pin; substrate hasn't migrated to workspace version yet)
 octo-determin = { path = "../../determin", version = "0.1.0" }                 # Layer B deterministic floating-point — RFC-0104; ReputationShowOutput.score is the canonical Dfp wire form per RFC-0011-b §7.3
+# Layer A canonical DID codec (RFC-0010). `mesh peer` validates peer DID
+# wire form (`did:octo:z<base58btc>`) at the dispatch boundary.
+octo-ident = { path = "../octo-ident", version = "0.1.0" }                   # Layer A canonical DID codec — RFC-0010
+# Layer C mesh peer-table substrate — RFC-0011-f. Owns the local peer
+# table (`$OCTO_HOME/mesh/peers.toml`, 0700 perms, atomic write + fsync
+# + rename) and the typed-discriminator TrustLevel / EndpointUri types.
+octo-mesh = { path = "../octo-mesh", version = "0.1.0" }                     # Layer C mesh peer-table substrate — RFC-0011-f
+
+# === Mesh forward substrate (Layer 1 + Layer C) — RFC-0011-f §Subcommand Taxonomy ===
+# Layer 1 stable: NodeEnvelope + RecipientRef + Authorization + PayloadKindId
+# consumed at the CLI boundary to deserialize the --envelope <PATH> JSON
+# input and validate shape before dispatch (RFC-0871 §Data Structures).
+octo-protocol = { path = "../octo-protocol", version = "0.1.0" }
 
 # === Stub substrate (Layer C/D) ===
 # The 213-line stub main.rs that called octo-registry::init() and
@@ -36,6 +49,12 @@ octo-determin = { path = "../../determin", version = "0.1.0" }                 #
 
 # === Output + TTY ===
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+
+# === $OCTO_HOME resolution ===
+# RFC-0011-f §Substrate `peer add` / `remove` writes to
+# `$OCTO_HOME/mesh/peers.toml`; the CLI resolves the home dir the same
+# way as the wallet substrate (env override → `~/.octo` fallback).
+dirs = "5"
 
 # === Error envelope ===
 thiserror = "2.0"

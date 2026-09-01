@@ -16,9 +16,14 @@ metadata:
   release_gate:
     require: "RFC-0011-d Phase 1 reached Accepted"
     released_version: TBD
-status: Claimed
+status: Completed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-01
+completed_at: 2026-09-01
+completed_by: mmacedoeu
+landing_commit: pending
+spec_cycle_dry_closed: 2026-09-01
+review_dry_closed: 2026-09-01
 ---
 
 # 0011-f-mesh-peer-subcommand — `octo mesh peer` subcommands (list/add/remove)

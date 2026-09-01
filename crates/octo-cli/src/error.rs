@@ -166,6 +166,52 @@ pub enum OctoCliError {
         /// Why the slug was rejected.
         reason: String,
     },
+    /// TTL hop count is out of the `1..=8` range allowed by RFC-0871.
+    /// Surfaces from `octo mesh forward --ttl-hops`. Substrate clamps to
+    /// the per-node-type TTL ceiling from `RouterAnnouncePayload`; the
+    /// CLI enforces the wider 1..=8 operator-facing bound at dispatch
+    /// (RFC-0011-f §Error Handling). Exit 17 per the amendment-chain
+    /// slot allocation reserved by RFC-0011-f §Exit Codes.
+    #[error("invalid TTL hops: {hops} (must be in 1..=8 per RFC-0871 ceiling)")]
+    InvalidTtlHops {
+        /// The offending hop count.
+        hops: u8,
+    },
+    /// Mesh capability is missing or insufficient for the requested
+    /// dispatch. `forward` and `rpc` require an RFC-0957 capability
+    /// caveat per RFC-0011-f §G7; substrate-truth verification at the
+    /// dispatch boundary surfaces this when the envelope carries only a
+    /// signature authorization (no capability bound) or the bound
+    /// capability's `Audience` caveat does not match the resolved peer
+    /// DID (RFC-0957 §Attenuation Invariant). Exit 18.
+    #[error("mesh capability missing or insufficient: {detail}")]
+    MeshCapabilityInsufficient {
+        /// Operator-safe diagnostic.
+        detail: String,
+    },
+    /// Envelope authorization verification failed at the dispatch
+    /// boundary per RFC-0871 §Algorithms "Envelope receive (node-side)"
+    /// step 6 (signature verify against the current `verifying_key`) or
+    /// the substrate's request/reply correlation path. CLI maps the
+    /// substrate `ProtocolError` family (e.g. `SignerKeyRevoked`,
+    /// `InvalidSignature`, `AudienceMismatch`) to this single
+    /// operator-facing variant; the substrate owns the canonical
+    /// distinction. Exit 19.
+    #[error("envelope authorization failed: {detail}")]
+    EnvelopeAuthorizationFailed {
+        /// Operator-safe diagnostic.
+        detail: String,
+    },
+    /// Endpoint URI scheme is not in the mesh allowlist
+    /// (`tcp://`, `quic://`, `bluetooth://` per RFC-0011-f §Peer
+    /// Summary Shape). Mapped from `octo_mesh::MeshError::InvalidEndpointScheme`
+    /// at the `peer add` dispatch boundary. Exit 28 (shared slot
+    /// with `forward`'s `InvalidTtlHops` per RFC-0011-f §Exit Codes).
+    #[error("invalid endpoint URI scheme: `{scheme}` (allowlist: tcp://, quic://, bluetooth://)")]
+    InvalidEndpointScheme {
+        /// The rejected scheme (lowercase, no `://`).
+        scheme: String,
+    },
     /// Unexpected internal failure.
     #[error("internal error: {0}")]
     Internal(String),
@@ -199,11 +245,17 @@ impl OctoCliError {
             // 34 reserved per F-16 (was RoleBindingConflict; intentionally
             // skipped — last-writer-wins per RFC-0011-d §Security 2).
             Self::SignerMismatch { .. } => 35,
+            // 28 shared with `InvalidTtlHops` (RFC-0011-f §Exit Codes;
+            // follow-on `forward` mission claims the same slot).
+            Self::InvalidEndpointScheme { .. } => 28,
             Self::ReputationNotFound { .. } => 20,
             Self::ReputationRevoked { .. } => 21,
             Self::AnchorChainBroken { .. } => 22,
             Self::NoAnchorVerifyInMode { .. } => 2,
             Self::InvalidRoleSlug { .. } => 2,
+            Self::InvalidTtlHops { .. } => 17,
+            Self::MeshCapabilityInsufficient { .. } => 18,
+            Self::EnvelopeAuthorizationFailed { .. } => 19,
             Self::Internal(_) => 64,
             Self::StaleStub { .. } => 65,
         }
@@ -259,6 +311,18 @@ impl OctoCliError {
             }
             Self::InvalidRoleSlug { .. } => {
                 "role slugs must be non-empty and contain no whitespace"
+            }
+            Self::InvalidTtlHops { .. } => {
+                "--ttl-hops must be in the inclusive range 1..=8 (RFC-0871 ceiling); substrate further clamps to per-node-type ceiling from RouterAnnouncePayload"
+            }
+            Self::MeshCapabilityInsufficient { .. } => {
+                "the envelope must carry an Authorization::Capability with Audience caveat bound to the target peer DID (RFC-0957 §Attenuation Invariant)"
+            }
+            Self::EnvelopeAuthorizationFailed { .. } => {
+                "verify the envelope signature against the current verifying key, the audience caveat matches the target peer DID, and the envelope has not expired"
+            }
+            Self::InvalidEndpointScheme { .. } => {
+                "endpoint URI scheme must be one of tcp://, quic://, bluetooth://"
             }
             Self::StaleStub { .. } => "this command was removed; see the migration notes",
             Self::Internal(_) => "re-run with `RUST_LOG=debug` and report the diagnostic",
@@ -550,6 +614,25 @@ mod tests {
                 },
                 2,
             ),
+            (OctoCliError::InvalidTtlHops { hops: 9 }, 17),
+            (
+                OctoCliError::MeshCapabilityInsufficient {
+                    detail: "no capability bound to forward envelope".into(),
+                },
+                18,
+            ),
+            (
+                OctoCliError::EnvelopeAuthorizationFailed {
+                    detail: "audience mismatch".into(),
+                },
+                19,
+            ),
+            (
+                OctoCliError::InvalidEndpointScheme {
+                    scheme: "file".into(),
+                },
+                28,
+            ),
             (OctoCliError::Internal("i".into()), 64),
             (
                 OctoCliError::StaleStub {
@@ -584,5 +667,40 @@ mod tests {
             assert!(!msg.contains("SQL:"), "{msg}");
             assert!(!msg.contains("query:"), "{msg}");
         }
+    }
+
+    /// RFC-0011-f §Error Handling: mesh forward error variants must
+    /// carry their assigned exit codes (17/18/19) and render a
+    /// remediation hint. Pins the exit-code table reserved by the
+    /// amendment-chain slot allocation.
+    #[test]
+    fn tv_mesh_forward_exit_codes_and_hints() {
+        let ttl = OctoCliError::InvalidTtlHops { hops: 9 };
+        assert_eq!(ttl.exit_code(), 17);
+        let hint = ttl.hint().expect("hint required");
+        assert!(
+            hint.contains("1..=8"),
+            "TTL hint must cite the inclusive range, got: {hint}"
+        );
+
+        let cap = OctoCliError::MeshCapabilityInsufficient {
+            detail: "envelope has Authorization::Signature only".into(),
+        };
+        assert_eq!(cap.exit_code(), 18);
+        let hint = cap.hint().expect("hint required");
+        assert!(
+            hint.contains("Audience"),
+            "capability hint must mention Audience caveat, got: {hint}"
+        );
+
+        let auth = OctoCliError::EnvelopeAuthorizationFailed {
+            detail: "audience mismatch: expected peer_a, got peer_b".into(),
+        };
+        assert_eq!(auth.exit_code(), 19);
+        let hint = auth.hint().expect("hint required");
+        assert!(
+            hint.contains("audience") || hint.contains("signature"),
+            "auth hint must mention audience or signature, got: {hint}"
+        );
     }
 }

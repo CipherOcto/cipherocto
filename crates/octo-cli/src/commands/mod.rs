@@ -2,11 +2,15 @@
 
 pub mod capability;
 pub mod identity;
+pub mod mesh;
+pub mod peer;
 pub mod policy;
 pub mod reputation;
 pub mod role;
 pub mod stub;
 
+pub use mesh::MeshAction;
+pub use peer::PeerAction;
 pub use reputation::ReputationAction;
 pub use role::RoleAction;
 
@@ -33,6 +37,7 @@ pub fn dispatch(cli: &Octo) -> Result<(), OctoCliError> {
         ),
         Commands::Role { action } => role::dispatch(action, cli),
         Commands::Reputation { action } => reputation::dispatch(action, cli),
+        Commands::Mesh { action } => mesh::dispatch(action, cli),
         Commands::Agent { action } => stub::print_agent_deprecated(action),
     }
 }

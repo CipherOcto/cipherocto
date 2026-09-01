@@ -1,0 +1,36 @@
+[package]
+name = "octo-mesh"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "CipherOcto mesh peer-table substrate — Layer C per RFC-0011-f. Owns the local peer table (peer list / add / remove) and the typed-discriminator TrustLevel / EndpointUri envelopes the CLI projects onto RFC-0871 envelope history + RFC-0855p-c DomainCoordinatorRecord."
+
+[lib]
+name = "octo_mesh"
+path = "src/lib.rs"
+
+[dependencies]
+# Layer A canonical DID codec (RFC-0010). Re-used to validate peer DID
+# wire form (`did:octo:z<base58btc>`) at dispatch boundary.
+octo-ident = { path = "../octo-ident", version = "0.1.0" }
+# Serialization (RFC-0011-f §Key Files row "JSON Schema export").
+serde = { version = "1.0", features = ["derive"] }
+# JSON Schema export — substrate types derive JsonSchema so the CLI
+# can embed them in `OutputEnvelope<T>` without per-field `#[schemars
+# (with = "String")]` translation.
+schemars = "0.8"
+# Peer-table persistence (`$OCTO_HOME/mesh/peers.toml`).
+toml = "0.8"
+# Unix epoch timestamps.
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+# Substrate error type (RFC-0011-f §Error Handling).
+thiserror = "1.0"
+# $OCTO_HOME resolution — env-override or platform-default home.
+dirs = "5"
+# Debug / hex formatting for the substrate types.
+hex = "0.4"
+
+[dev-dependencies]
+serde_json = "1.0"
+tempfile = "3"

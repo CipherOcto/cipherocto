@@ -8,14 +8,15 @@ pub mod flags;
 pub mod output;
 pub mod redact;
 
+pub use commands::peer::PeerAction;
 pub use error::{sanitize_substrate_error, OctoCliError};
 pub use flags::{OperatorMode, OperatorModeFlags, OutputFlags};
 pub use output::{Hex32, OutputEnvelope};
 
 use clap::{Parser, Subcommand};
 use commands::{
-    capability::CapabilityAction, identity::IdentityAction, policy::PolicyAction, ReputationAction,
-    RoleAction,
+    capability::CapabilityAction, identity::IdentityAction, mesh::MeshAction, policy::PolicyAction,
+    ReputationAction, RoleAction,
 };
 
 /// The `octo` operator CLI root.
@@ -81,6 +82,12 @@ pub enum Commands {
         /// Reputation subcommand.
         #[command(subcommand)]
         action: ReputationAction,
+    },
+    /// Mesh operations subcommands (RFC-0011-f §Subcommand Taxonomy).
+    Mesh {
+        /// Mesh subcommand.
+        #[command(subcommand)]
+        action: MeshAction,
     },
     /// Deprecated — see RFC-0011 §Compatibility.
     #[command(hide = true)]

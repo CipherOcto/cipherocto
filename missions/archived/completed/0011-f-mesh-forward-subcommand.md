@@ -20,9 +20,10 @@ metadata:
     - mission 0011-capability-commands
     - mission 0011-policy-commands
     - mission 0011-f-mesh-peer-subcommands
-status: Claimed
+status: Completed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-01
+completed_at: 2026-09-01
 ---
 
 # 0011-f-mesh-forward-subcommand — `octo mesh forward` subcommand (ops envelope replay)

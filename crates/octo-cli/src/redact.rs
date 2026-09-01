@@ -109,6 +109,30 @@ const FIELD_TABLE: &[(&str, &str)] = &[
     ("pin", REDACTED_PIN),
     ("api_key", REDACTED_API_KEY),
     ("secret", REDACTED_SECRET),
+    // RFC-0011-f §Redaction Pattern Catalog row `payload` — the
+    // borsh-encoded envelope payload body is opaque from the
+    // redactor's perspective. Operators must NEVER see raw
+    // payload bytes in any log / receipt / debug surface; the
+    // payload MAY carry identity material, capability secrets,
+    // or substrate-internal protocol bytes that downstream
+    // pipelines should not see. Redact unconditionally.
+    ("payload", REDACTED_SECRET),
+    ("envelope_payload", REDACTED_SECRET),
+    ("forward_payload", REDACTED_SECRET),
+    // RFC-0011-f §Security Considerations 6 + RFC-0871
+    // §Algorithms step 4: the per-sender nonce (32 bytes hex =
+    // 64 chars) is caught by `find_long_hex` at the run level,
+    // but explicit field-name redaction handles the case where
+    // the nonce is split across lines or appears in a JSON
+    // object with a short hex form. Defense-in-depth.
+    ("nonce", REDACTED_SIG),
+    // RFC-0011-f §Implicit Assumptions row 1: the canonical
+    // `envelope_id` (BLAKE3-256 = 32 bytes hex = 64 chars) is
+    // also caught by `find_long_hex`, but the explicit field
+    // entry ensures the ID never leaks through any surface that
+    // bypasses the long-hex walk (e.g. JSON-pretty mode where
+    // line breaks split the hex run).
+    ("envelope_id", REDACTED_SIG),
 ];
 
 /// Returns true when the (lower-cased) field name is sensitive.

@@ -54,23 +54,23 @@ See YAML frontmatter `depends_on` block above. RFC-0855p-b / RFC-0855p-c are Acc
 
 ## Acceptance Criteria
 
-- [ ] `octo mesh forward` implemented + unit-tested (TV-FWD-1..6 pass)
-- [ ] `octo_mesh::forward` substrate function implemented + unit-tested (`[ADD]` #4 per RFC-0011-f §Subcommand Taxonomy)
-- [ ] RFC-0871 `NodeEnvelope` shape validation at CLI dispatch (envelope JSON parsed via substrate `NodeEnvelope` definition; exit 7 on shape violation)
-- [ ] RFC-0010 canonical DID validation on `--target-did` (exit 4 on shape violation)
-- [ ] `--ttl-hops` bounded 1..=8 per RFC-0871 ceiling (substrate clamps to per-node-type TTL from `RouterAnnouncePayload`; CLI exit 17 on out-of-range input)
-- [ ] RFC-0957 capability caveat verification at dispatch (CLI exit 18 on capability missing/insufficient; audience mismatch → exit 19)
-- [ ] Two-step `--confirm` + `--confirm-acknowledge` gate wired per RFC-0011-f §Security Considerations + RFC-0011 §Security Considerations 1a (pastejacking defense)
-- [ ] `--dry-run` envelope header preview (correlation_id, origin_did, target_did, ttl_hops, payload_hash, capability_ref) WITHOUT payload body bytes per RFC-0011-f §Subcommand Taxonomy "Dry-run" row
-- [ ] Forward receipt persistence to `$OCTO_HOME/mesh/forward-receipts.log` for audit per RFC-0011-f §Subcommand Taxonomy "Side effects" row
-- [ ] `OctoCliError` variants: `InvalidTtlHops`, `MeshCapabilityInsufficient`, `EnvelopeAuthorizationFailed` implemented + unit-tested per RFC-0011-f §Error Handling
-- [ ] Redaction: envelope `payload` bytes NEVER echoed in logs (BLAKE3-256 digest only); test vector `forward-payload-redacted` asserts no payload bytes in stdout/stderr/logs
-- [ ] Output envelope `schema_version: 3` per RFC-0011-f §Output Envelope
-- [ ] Cross-mission AC: forward command integrates with peer mission's local peer table for `peer_node_id` resolution per RFC-0011-f §Forward Envelope Shape "target_did" mapping
-- [ ] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
-- [ ] Cargo clippy --workspace --all-targets --features full -- -D warnings clean
-- [ ] Cargo test -p octo-cli --lib --tests green
-- [ ] No new INVALID cites introduced (Guard 2 cite validator green)
+- [x] `octo mesh forward` implemented + unit-tested (TV-FWD-1..6 pass)
+- [x] `octo_mesh::forward` substrate function implemented + unit-tested (`[ADD]` #4 per RFC-0011-f §Subcommand Taxonomy)
+- [x] RFC-0871 `NodeEnvelope` shape validation at CLI dispatch (envelope JSON parsed via substrate `NodeEnvelope` definition; exit 7 on shape violation)
+- [x] RFC-0010 canonical DID validation on `--target-did` (exit 4 on shape violation)
+- [x] `--ttl-hops` bounded 1..=8 per RFC-0871 ceiling (substrate clamps to per-node-type TTL from `RouterAnnouncePayload`; CLI exit 17 on out-of-range input)
+- [x] RFC-0957 capability caveat verification at dispatch (CLI exit 18 on capability missing/insufficient; audience mismatch → exit 19)
+- [x] Two-step `--confirm` + `--confirm-acknowledge` gate wired per RFC-0011-f §Security Considerations + RFC-0011 §Security Considerations 1a (pastejacking defense)
+- [x] `--dry-run` envelope header preview (correlation_id, origin_did, target_did, ttl_hops, payload_hash, capability_ref) WITHOUT payload body bytes per RFC-0011-f §Subcommand Taxonomy "Dry-run" row
+- [x] Forward receipt persistence to `$OCTO_HOME/mesh/forward-receipts.log` for audit per RFC-0011-f §Subcommand Taxonomy "Side effects" row
+- [x] `OctoCliError` variants: `InvalidTtlHops`, `MeshCapabilityInsufficient`, `EnvelopeAuthorizationFailed` implemented + unit-tested per RFC-0011-f §Error Handling
+- [x] Redaction: envelope `payload` bytes NEVER echoed in logs (BLAKE3-256 digest only); test vector `forward-payload-redacted` asserts no payload bytes in stdout/stderr/logs
+- [x] Output envelope `schema_version: 3` per RFC-0011-f §Output Envelope
+- [x] Cross-mission AC: forward command integrates with peer mission's local peer table for `peer_node_id` resolution per RFC-0011-f §Forward Envelope Shape "target_did" mapping
+- [x] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
+- [x] Cargo clippy --workspace --all-targets --features full -- -D warnings clean
+- [x] Cargo test -p octo-cli --lib --tests green
+- [x] No new INVALID cites introduced (Guard 2 cite validator green)
 
 ### Type Coverage
 

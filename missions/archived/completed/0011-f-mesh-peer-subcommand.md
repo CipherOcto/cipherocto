@@ -53,24 +53,24 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: core substrate �
 
 ## Acceptance Criteria
 
-- [ ] `octo mesh peer list` implemented + unit-tested (TV-PEER-LIST-1..4 pass)
-- [ ] `octo mesh peer add` implemented + unit-tested (TV-PEER-ADD-1..4 pass)
-- [ ] `octo mesh peer remove` implemented + unit-tested (TV-PEER-REMOVE-1..4 pass)
-- [ ] `PeerSummary` + `TrustLevel` + `EndpointUri` + `PeerFilter` types implemented in `octo-mesh` substrate (`[ADD]` per RFC-0011-f §Key Files to Modify)
-- [ ] `octo_mesh::list_peers` / `add_peer` / `remove_peer` substrate functions implemented + unit-tested (3 of 5 `[ADD]` functions; the remaining 2 land in the forward / rpc missions)
-- [ ] Atomic peer-table persistence (`$OCTO_HOME/mesh/peers.toml` with 0700 permissions; write to `.tmp` + fsync + rename) implemented + unit-tested
-- [ ] RFC-0010 canonical DID validation at CLI dispatch (`octo_ident::CanonicalCodec::parse(s, allow_legacy=false)`); legacy form rejected with exit 4
-- [ ] Endpoint URI scheme allowlist (`tcp://`, `quic://`, `bluetooth://`) enforced substrate-side; CLI exit 17 on disallowed scheme
-- [ ] `--confirm` + `--dry-run` flags wired per RFC-0011 §Confirmation Flag Matrix
-- [ ] `OctoCliError::InvalidEndpointScheme` variant implemented + unit-tested
-- [ ] `OctoCliError::IdentityNotFound` mapping for invalid DID shape verified (exit 4)
-- [ ] Output envelope `schema_version: 3` per RFC-0011-f §Output Envelope
-- [ ] Redaction: no envelope bytes (peer list/add/remove are non-secret; endpoint URIs are public per RFC-0011-f §Subcommand Taxonomy)
-- [ ] Cross-mission AC: peer commands integrate with core mission's `OutputEnvelope<T>` + `OctoCliError` + clap root
-- [ ] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
-- [ ] Cargo clippy --workspace --all-targets --features full -- -D warnings clean
-- [ ] Cargo test -p octo-cli --lib --tests green
-- [ ] No new INVALID cites introduced (Guard 2 cite validator green)
+- [x] `octo mesh peer list` implemented + unit-tested (TV-PEER-LIST-1..4 pass)
+- [x] `octo mesh peer add` implemented + unit-tested (TV-PEER-ADD-1..4 pass)
+- [x] `octo mesh peer remove` implemented + unit-tested (TV-PEER-REMOVE-1..4 pass)
+- [x] `PeerSummary` + `TrustLevel` + `EndpointUri` + `PeerFilter` types implemented in `octo-mesh` substrate (`[ADD]` per RFC-0011-f §Key Files to Modify)
+- [x] `octo_mesh::list_peers` / `add_peer` / `remove_peer` substrate functions implemented + unit-tested (3 of 5 `[ADD]` functions; the remaining 2 land in the forward / rpc missions)
+- [x] Atomic peer-table persistence (`$OCTO_HOME/mesh/peers.toml` with 0700 permissions; write to `.tmp` + fsync + rename) implemented + unit-tested
+- [x] RFC-0010 canonical DID validation at CLI dispatch (`octo_ident::CanonicalCodec::parse(s, allow_legacy=false)`); legacy form rejected with exit 4
+- [x] Endpoint URI scheme allowlist (`tcp://`, `quic://`, `bluetooth://`) enforced substrate-side; CLI exit 17 on disallowed scheme
+- [x] `--confirm` + `--dry-run` flags wired per RFC-0011 §Confirmation Flag Matrix
+- [x] `OctoCliError::InvalidEndpointScheme` variant implemented + unit-tested
+- [x] `OctoCliError::IdentityNotFound` mapping for invalid DID shape verified (exit 4)
+- [x] Output envelope `schema_version: 3` per RFC-0011-f §Output Envelope
+- [x] Redaction: no envelope bytes (peer list/add/remove are non-secret; endpoint URIs are public per RFC-0011-f §Subcommand Taxonomy)
+- [x] Cross-mission AC: peer commands integrate with core mission's `OutputEnvelope<T>` + `OctoCliError` + clap root
+- [x] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
+- [x] Cargo clippy --workspace --all-targets --features full -- -D warnings clean
+- [x] Cargo test -p octo-cli --lib --tests green
+- [x] No new INVALID cites introduced (Guard 2 cite validator green)
 
 ### Type Coverage
 

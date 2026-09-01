@@ -21,9 +21,10 @@ metadata:
     - mission 0011-policy-commands
     - mission 0011-f-mesh-peer-subcommands
     - mission 0011-f-mesh-forward-subcommand
-status: Claimed
+status: Completed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-01
+completed_at: 2026-09-01
 ---
 
 # 0011-f-mesh-rpc-subcommand — `octo mesh rpc` subcommand (remote RPC invocation)
@@ -55,26 +56,26 @@ See YAML frontmatter `depends_on` block above. RFC-0855p-b / RFC-0855p-c are Acc
 
 ## Acceptance Criteria
 
-- [ ] `octo mesh rpc` implemented + unit-tested (TV-RPC-1..4 pass)
-- [ ] `octo_mesh::rpc` substrate function implemented + unit-tested (`[ADD]` #5 per RFC-0011-f §Subcommand Taxonomy)
-- [ ] RFC-0871 `NodeEnvelope` constructed with `payload_kind = PAYLOAD_KIND_RPC_DISPATCH` (RFC-allocated UUID per RFC-0871 §Data Structures `PayloadKindId` namespace) + `payload = borsh::serialize(&(method, params))`
-- [ ] Envelope signed via `HsmAdapter::sign` (same path as RFC-0871 §Algorithms "Envelope send" steps 1-5)
-- [ ] Request sent via `NodeTransport::send_best` + reply awaited via substrate request/reply pattern (correlation via `envelope_id`)
-- [ ] RFC-0010 canonical DID validation on `<PEER_DID>` arg (exit 4 on shape violation)
-- [ ] Method name substrate-dispatched via target's `SpecializedNode::handle_payload` (RFC-0871 §Specialized Node Lifecycle); no central enum per §Architectural Principles; unknown method → substrate `MeshError::UnknownMethod` → exit 17
-- [ ] `--params <JSON>` parsed as `serde_json::Value`; size clamp ≤64 KiB (RFC-0011 parser clamps pattern)
-- [ ] Two-step `--confirm` + `--confirm-acknowledge` gate wired per RFC-0011-f §Security Considerations + RFC-0011 §Security Considerations 1a (pastejacking defense)
-- [ ] `--dry-run` envelope header preview (correlation_id, target_did, method, params_hash) BEFORE signs and sends per RFC-0011-f §Subcommand Taxonomy "Dry-run" row
-- [ ] Request + response receipts persisted to `$OCTO_HOME/mesh/rpc-receipts.log` with redacted `params` / `response_payload` per RFC-0011-f §Subcommand Taxonomy "Side effects" row
-- [ ] Substrate timeout ceiling default 30s; CLI exit 20 on `RpcTimeout` per RFC-0011-f §Subcommand Taxonomy "Exit codes" row
-- [ ] `OctoCliError::RpcTimeout` variant implemented + unit-tested per RFC-0011-f §Error Handling
-- [ ] Redaction: `params` JSON MAY contain secret material depending on RPC method; redactor applies to nested secret fields per RFC-0011 §Redaction Layer
-- [ ] Output envelope `schema_version: 3` per RFC-0011-f §Output Envelope
-- [ ] Cross-mission AC: rpc command integrates with peer mission's local peer table for `peer_node_id` resolution AND forward mission's `NodeEnvelope` construction pattern
-- [ ] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
-- [ ] Cargo clippy --workspace --all-targets --features full -- -D warnings clean
-- [ ] Cargo test -p octo-cli --lib --tests green
-- [ ] No new INVALID cites introduced (Guard 2 cite validator green)
+- [x] `octo mesh rpc` implemented + unit-tested (TV-RPC-1..4 pass)
+- [x] `octo_mesh::rpc` substrate function implemented + unit-tested (`[ADD]` #5 per RFC-0011-f §Subcommand Taxonomy)
+- [x] RFC-0871 `NodeEnvelope` constructed with `payload_kind = PAYLOAD_KIND_RPC_DISPATCH` (RFC-allocated UUID per RFC-0871 §Data Structures `PayloadKindId` namespace) + `payload = borsh::serialize(&(method, params))`
+- [x] Envelope signed via `HsmAdapter::sign` (same path as RFC-0871 §Algorithms "Envelope send" steps 1-5)
+- [x] Request sent via `NodeTransport::send_best` + reply awaited via substrate request/reply pattern (correlation via `envelope_id`)
+- [x] RFC-0010 canonical DID validation on `<PEER_DID>` arg (exit 4 on shape violation)
+- [x] Method name substrate-dispatched via target's `SpecializedNode::handle_payload` (RFC-0871 §Specialized Node Lifecycle); no central enum per §Architectural Principles; unknown method → substrate `MeshError::UnknownMethod` → exit 17
+- [x] `--params <JSON>` parsed as `serde_json::Value`; size clamp ≤64 KiB (RFC-0011 parser clamps pattern)
+- [x] Two-step `--confirm` + `--confirm-acknowledge` gate wired per RFC-0011-f §Security Considerations + RFC-0011 §Security Considerations 1a (pastejacking defense)
+- [x] `--dry-run` envelope header preview (correlation_id, target_did, method, params_hash) BEFORE signs and sends per RFC-0011-f §Subcommand Taxonomy "Dry-run" row
+- [x] Request + response receipts persisted to `$OCTO_HOME/mesh/rpc-receipts.log` with redacted `params` / `response_payload` per RFC-0011-f §Subcommand Taxonomy "Side effects" row
+- [x] Substrate timeout ceiling default 30s; CLI exit 20 on `RpcTimeout` per RFC-0011-f §Subcommand Taxonomy "Exit codes" row
+- [x] `OctoCliError::RpcTimeout` variant implemented + unit-tested per RFC-0011-f §Error Handling
+- [x] Redaction: `params` JSON MAY contain secret material depending on RPC method; redactor applies to nested secret fields per RFC-0011 §Redaction Layer
+- [x] Output envelope `schema_version: 3` per RFC-0011-f §Output Envelope
+- [x] Cross-mission AC: rpc command integrates with peer mission's local peer table for `peer_node_id` resolution AND forward mission's `NodeEnvelope` construction pattern
+- [x] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
+- [x] Cargo clippy --workspace --all-targets --features full -- -D warnings clean
+- [x] Cargo test -p octo-cli --lib --tests green
+- [x] No new INVALID cites introduced (Guard 2 cite validator green)
 
 ### Type Coverage
 

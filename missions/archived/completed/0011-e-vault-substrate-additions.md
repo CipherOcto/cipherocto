@@ -82,24 +82,24 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-e-vault-su
 
 ## Acceptance Criteria
 
-- [ ] `list_owned(owner_did: &Did) -> Result<Vec<VaultSummary>, VaultError>` declared + unit-tested (per RFC-0011-e §Substrate Additions)
-- [ ] `project_vault_balance(chain_id: &ChainId, vault_id: &VaultId, registry: &dyn AssetRegistry, asset_resolver: &dyn VaultAssetResolver, log: &impl TransferEventLog, current_registry_epoch: u64, current_unix_seconds: i64) -> Result<VaultBalanceProjection, ProjectionError>` declared + unit-tested (per RFC-0011-e §Substrate Additions)
-- [ ] `initiate_transfer(vault_id: &VaultId, dest: &VaultId, amount_dqa_micros: i64, asset: &AssetId) -> Result<TransferHandle, VaultError>` declared + unit-tested (per RFC-0011-e §Substrate Additions)
-- [ ] `VaultSummary` struct aligned to RFC-0960-v37 §2.1 (`vault_id`, `chain_id`, `owner_did`, `asset_symbol`, `balance_projected`, `last_updated_unix: Option<i64>`)
-- [ ] `VaultBalanceProjection` struct aligned to RFC-0960-v37 §2.1 (`chain_id`, `vault_id`, `asset_id`, `projected_balance: Dqa`, `projected_at_unix_seconds: Option<i64>`, `projection_source`)
-- [ ] `ProjectionSource` enum per RFC-0960-v37 §2.1 (`Cache` \| `FreshLogScan` \| `EpochRebuild`)
-- [ ] `TransferHandle` struct + `TransferStatus` enum per RFC-0960 substrate (transfer envelope substrate)
-- [ ] `VaultBalanceCache` (LRU + TTL) wired and exercised (per RFC-0960-v37 §2.3)
-- [ ] `VaultAssetResolver::resolve_asset_for(vault_id) -> AssetId` wired (per RFC-0960-v37 §2.1)
-- [ ] `ZERO_VAULT_ID` sentinel exclusion applied to SUM projection (per RFC-0960-v37 §2.2)
-- [ ] `max_occurred_at_unix(chain_id, vault_id)` monotonic per `(chain_id, vault_id)` (per RFC-0960-v37 §2.2)
-- [ ] Nonce derivation per `(vault_id, max_occurred_at_unix)` for transfer replay protection (per RFC-0011-e §Security: Transfer Replay)
-- [ ] HSM signing via `octo-wallet::sign_envelope` (no parallel signing abstraction; per [[cipherocto-design-principles]] no-parallel-abstractions principle)
-- [ ] Substrate compatibility: all `[ADD]` entries are additive — no existing function signature changes (per RFC-0011-e §Substrate Compatibility)
-- [ ] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
-- [ ] Cargo clippy -p octo-vault --all-targets --features full -- -D warnings clean
-- [ ] Cargo test -p octo-vault --lib green
-- [ ] No new INVALID cites introduced (Guard 2 cite validator green)
+- [x] `list_owned(owner_did: &Did) -> Result<Vec<VaultSummary>, VaultError>` declared + unit-tested (per RFC-0011-e §Substrate Additions)
+- [x] `project_vault_balance(chain_id: &ChainId, vault_id: &VaultId, registry: &dyn AssetRegistry, asset_resolver: &dyn VaultAssetResolver, log: &impl TransferEventLog, current_registry_epoch: u64, current_unix_seconds: i64) -> Result<VaultBalanceProjection, ProjectionError>` declared + unit-tested (per RFC-0011-e §Substrate Additions)
+- [x] `initiate_transfer(vault_id: &VaultId, dest: &VaultId, amount_dqa_micros: i64, asset: &AssetId) -> Result<TransferHandle, VaultError>` declared + unit-tested (per RFC-0011-e §Substrate Additions)
+- [x] `VaultSummary` struct aligned to RFC-0960-v37 §2.1 (`vault_id`, `chain_id`, `owner_did`, `asset_symbol`, `balance_projected`, `last_updated_unix: Option<i64>`)
+- [x] `VaultBalanceProjection` struct aligned to RFC-0960-v37 §2.1 (`chain_id`, `vault_id`, `asset_id`, `projected_balance: Dqa`, `projected_at_unix_seconds: Option<i64>`, `projection_source`)
+- [x] `ProjectionSource` enum per RFC-0960-v37 §2.1 (`Cache` \| `FreshLogScan` \| `EpochRebuild`)
+- [x] `TransferHandle` struct + `TransferStatus` enum per RFC-0960 substrate (transfer envelope substrate)
+- [x] `VaultBalanceCache` (LRU + TTL) wired and exercised (per RFC-0960-v37 §2.3)
+- [x] `VaultAssetResolver::resolve_asset_for(vault_id) -> AssetId` wired (per RFC-0960-v37 §2.1)
+- [x] `ZERO_VAULT_ID` sentinel exclusion applied to SUM projection (per RFC-0960-v37 §2.2)
+- [x] `max_occurred_at_unix(chain_id, vault_id)` monotonic per `(chain_id, vault_id)` (per RFC-0960-v37 §2.2)
+- [x] Nonce derivation per `(vault_id, max_occurred_at_unix)` for transfer replay protection (per RFC-0011-e §Security: Transfer Replay)
+- [x] HSM signing via `octo-wallet::sign_envelope` (no parallel signing abstraction; per [[cipherocto-design-principles]] no-parallel-abstractions principle)
+- [x] Substrate compatibility: all `[ADD]` entries are additive — no existing function signature changes (per RFC-0011-e §Substrate Compatibility)
+- [x] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
+- [x] Cargo clippy -p octo-vault --all-targets --features full -- -D warnings clean
+- [x] Cargo test -p octo-vault --lib green
+- [x] No new INVALID cites introduced (Guard 2 cite validator green)
 
 ### Type Coverage
 

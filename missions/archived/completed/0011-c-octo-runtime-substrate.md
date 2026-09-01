@@ -69,16 +69,16 @@ preserved (Layer C/D depends on Layer B; never the reverse).
 
 ## Acceptance Criteria
 
-- [ ] `crates/octo-runtime/` workspace crate created with `Cargo.toml` + `src/lib.rs`
-- [ ] `spawn_agent(agent_id, attach_handle) -> Result<RuntimeHandle, RuntimeError>` implemented + unit-tested
-- [ ] `attach(handle, since) -> Result<EventStream, RuntimeError>` implemented + unit-tested
-- [ ] State-machine integration with `octo-wallet` via substrate trait `AgentStateDispatcher`
-- [ ] `RuntimeHandle`, `EventStream`, `AttachHandle`, `RuntimeError` types defined (Layer B; years-stable)
-- [ ] No new Layer A types introduced
-- [ ] Clippy `-p octo-runtime --all-targets -- -D warnings` clean
-- [ ] `cargo test -p octo-runtime --lib` green
-- [ ] Documentation: rustdoc on all public APIs
-- [ ] Release gate cleared: crate published in workspace `Cargo.toml`
+- [x] `crates/octo-runtime/` workspace crate created with `Cargo.toml` + `src/lib.rs`
+- [x] `spawn_agent(agent_id, attach_handle) -> Result<RuntimeHandle, RuntimeError>` implemented + unit-tested
+- [x] `attach(handle, since) -> Result<EventStream, RuntimeError>` implemented + unit-tested
+- [x] State-machine integration with `octo-wallet` via substrate trait `AgentStateDispatcher`
+- [x] `RuntimeHandle`, `EventStream`, `AttachHandle`, `RuntimeError` types defined (Layer B; years-stable)
+- [x] No new Layer A types introduced
+- [x] Clippy `-p octo-runtime --all-targets -- -D warnings` clean
+- [x] `cargo test -p octo-runtime --lib` green
+- [x] Documentation: rustdoc on all public APIs
+- [x] Release gate cleared: crate published in workspace `Cargo.toml`
 
 ## Implementation Guide
 

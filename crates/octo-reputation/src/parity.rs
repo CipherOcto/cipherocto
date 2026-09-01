@@ -217,30 +217,45 @@ pub fn classify(canonical_score: Option<f64>) -> TripleClass {
 }
 
 /// Unix seconds at which the parity-gate deadline expires — 90 days from
-/// the moment this function is called. Per mission 0968-b Phase D.
+/// the supplied `now_unix_seconds` epoch. Per mission 0968-b Phase D.
 ///
 /// **Pre-epoch fail-safe (Round 2 review C10):** a system clock at or
 /// before `UNIX_EPOCH` (NTP misconfig, broken RTC, manual date) would
 /// otherwise yield `now=0` and a deadline of `1970-04-01`, opening the
-/// dual-read auto-retirement immediately (silent data corruption). We
-/// detect the case via `duration_since(...).is_err()`, log to stderr,
-/// and return `u64::MAX` as a "no deadline" sentinel — the deadline
-/// path stays closed until the operator fixes the clock.
-pub fn parity_gate_deadline_unix() -> u64 {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH);
-    match now {
-        Ok(d) => d
-            .as_secs()
-            .saturating_add(PARITY_GATE_DEADLINE_DAYS * 86_400),
-        Err(_) => {
-            eprintln!(
-                "octo_reputation::parity: SYSTEM CLOCK at or before UNIX_EPOCH; \
-                 parity-gate deadline UNSET (u64::MAX sentinel). \
-                 Auto-retirement will NOT fire. Fix NTP/RTC before re-checking."
-            );
-            u64::MAX
-        }
+/// dual-read auto-retirement immediately (silent data corruption). The
+/// caller passes `now_unix_seconds`; if it is `<= 0`, this function
+/// logs to stderr and returns `u64::MAX` as a "no deadline" sentinel —
+/// the deadline path stays closed until the operator fixes the clock.
+///
+/// **Wave 4.5 finding 2 (Lens-1):** the previous shape read
+/// `SystemTime::now()` directly in Layer B production code (daemon
+/// startup gate, non-deterministic). The function now takes the
+/// current epoch as a parameter so callers (the runtime, the
+/// `bin/reputation-parity` CLI, lib tests) own the wall-clock read.
+#[must_use]
+pub fn parity_gate_deadline_unix(now_unix_seconds: i64) -> u64 {
+    if now_unix_seconds <= 0 {
+        eprintln!(
+            "octo_reputation::parity: caller-supplied now_unix_seconds <= 0; \
+             parity-gate deadline UNSET (u64::MAX sentinel). \
+             Auto-retirement will NOT fire. Fix NTP/RTC before re-checking."
+        );
+        return u64::MAX;
     }
+    let now = u64::try_from(now_unix_seconds).unwrap_or(u64::MAX);
+    now.saturating_add(PARITY_GATE_DEADLINE_DAYS * 86_400)
+}
+
+/// Wall-clock unix seconds. Convenience wrapper for callers that
+/// haven't already computed `now_unix_seconds`. Lives at the parity
+/// module boundary so production callers (daemons, the
+/// `bin/reputation-parity` CLI) share a single read at startup.
+#[must_use]
+pub fn now_unix_seconds() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -309,12 +324,21 @@ mod tests {
 
     #[test]
     fn parity_gate_deadline_is_90_days_from_now() {
-        let d = parity_gate_deadline_unix();
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs();
-        assert!(d > now);
-        assert!(d - now >= PARITY_GATE_DEADLINE_DAYS * 86_400 - 5);
+            .as_secs() as i64;
+        let d = parity_gate_deadline_unix(now);
+        let now_u64 = u64::try_from(now).unwrap();
+        assert!(d > now_u64);
+        assert!(d - now_u64 >= PARITY_GATE_DEADLINE_DAYS * 86_400 - 5);
+    }
+
+    /// Wave 4.5 finding 2: caller-supplied `now_unix_seconds <= 0`
+    /// triggers the pre-epoch fail-safe (returns `u64::MAX` sentinel).
+    #[test]
+    fn parity_gate_deadline_unset_when_now_non_positive() {
+        assert_eq!(parity_gate_deadline_unix(0), u64::MAX);
+        assert_eq!(parity_gate_deadline_unix(-1), u64::MAX);
     }
 }

@@ -86,18 +86,21 @@ fn tv_vlt5_balance_missing_vault_id_exit_2() {
     octo().args(["vault", "balance"]).assert().code(2);
 }
 
-/// `octo vault balance <non-hex>` — hex decode fails inside
-/// `parse_vault_id_hex`, surfacing exit 64 (`Internal` per the
-/// sanitize path; the substrate error never escapes). Exit 64 is
-/// the canonical substrate-error envelope code per `error::exit_code`
-/// (`Self::Internal(_) => 64`).
+/// `octo vault balance <non-hex>` — the auth-first exit-code
+/// precedence (RFC-0011 §Exit Code precedence, fix Wave 2.5 F1)
+/// surfaces `NoActiveIdentity` (exit 2) BEFORE the hex decode path,
+/// so a sessionless invocation with a bad hex still exits 2 (NOT
+/// 64). The parse-after-auth path is exercised by the lib test
+/// `vault_balance_cmd_bad_hex_after_active_owner` in
+/// `crates/octo-cli/src/commands/vault.rs` via `set_ports_for_test`.
+/// This integration test pins the sessionless precedence.
 #[test]
-fn tv_vlt4_balance_bad_hex_internal_exit_64() {
+fn tv_vlt4_balance_bad_hex_no_identity_exit_2() {
     octo()
         .args(["vault", "balance", "not-hex-zzz"])
         .assert()
-        .stderr(contains("vault_id hex decode"))
-        .code(64);
+        .code(2)
+        .stderr(contains("no active identity"));
 }
 
 /// `octo vault list` and `octo vault balance` without an active
@@ -317,18 +320,21 @@ fn tv_xfer_dest_chain_id_not_canonical_exit_26() {
         .stderr(contains("chain"));
 }
 
-/// TV-12d: `octo vault list --chain-id <bad-hex>` surfaces
-/// `InvalidChainId` (exit 26). The `parse_chain_id_hex` migration
-/// from `Internal` (64) to `InvalidChainId` (26) covers the list
-/// subcommand too — both `--chain-id` (list) and `--dest-chain-id`
-/// (transfer) feed the same parser.
+/// TV-12d (precedence update, Wave 1.5 fix 6): per RFC-0011 §Exit
+/// Code precedence, the auth prerequisite (`NoActiveIdentity`, exit 2)
+/// fires BEFORE argument validation. The child-process harness has
+/// no populated identity, so `octo vault list --chain-id <bad-hex>`
+/// now exits 2 (auth gate) rather than 26 (chain-id parse). When the
+/// operator runs the same command with an active identity, the parse
+/// failure DOES surface as exit 26 — covered by the lib-test
+/// `parse_chain_id_hex` round-trip at `commands::vault::tests`.
 #[test]
-fn tv_vlt12d_list_chain_id_not_canonical_exit_26() {
+fn tv_vlt12d_list_chain_id_session_precedence_exit_2() {
     octo()
         .args(["vault", "list", "--chain-id", "not-hex-zzz"])
         .assert()
-        .code(26)
-        .stderr(contains("chain"));
+        .code(2)
+        .stderr(contains("no active identity"));
 }
 
 /// Once the confirm gate admits the request, `active_owner_did()`

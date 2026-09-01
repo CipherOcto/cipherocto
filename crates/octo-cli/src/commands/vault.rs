@@ -1104,6 +1104,13 @@ fn vault_balance_cmd(
     _history: Option<u32>,
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
+    // Session-first exit-code precedence (RFC-0011 §Exit Code
+    // precedence): `NoActiveIdentity` (exit 2) is an auth prerequisite
+    // and MUST fire BEFORE argument validation. A malformed `vault_id`
+    // hex surfaces as `InvalidVaultId` (exit 64) only AFTER the
+    // session gate resolves. Mirrors `list_vaults_cmd` ordering
+    // (auth → parse → port).
+    let owner = active_owner_did()?;
     let vault_id = parse_vault_id_hex(&vault_id_hex)?;
     let ports = ports()?;
 
@@ -1112,7 +1119,6 @@ fn vault_balance_cmd(
     // by checking the owner index; a future substrate amendment
     // lifts this into the substrate port itself per RFC-0011-e
     // §Future Work.
-    let owner = active_owner_did()?;
     let index = ports.owner_index()?;
     let owned = substrate_list_owned(index.as_ref(), &owner)
         .map_err(map_vault_error)?

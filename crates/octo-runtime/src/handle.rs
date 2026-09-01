@@ -199,26 +199,34 @@ impl AttachHandle {
 ///
 /// The `keepalive_rx` field holds an internal broadcast receiver
 /// for the handle's lifetime. Per the tokio `broadcast::Sender`
-/// contract, `Sender::send` returns `Err` only when there are no
-/// active receivers — by holding one receiver internally, the
-/// publish path ALWAYS succeeds even when no external subscriber
-/// has attached yet. This enforces the RFC-0011-c §9.7 invariant:
-/// the initial `Spawned` event MUST reach at least one consumer
-/// (or be retained for the next `attach`) before `RuntimeHandle`
-/// returns from `spawn_agent`.
+/// contract, `Sender::send` returns `Err(SendError(_))` only when
+/// no active receivers exist — by holding one receiver internally,
+/// the publish path ALWAYS succeeds even when no external
+/// subscriber has attached yet.
+///
+/// The ONLY invariant this guarantees is `Sender::send` cannot
+/// return `Err(SendError(_))` for the lifetime of any handle clone
+/// (because the keep-alive receiver holds an active subscription on
+/// the broadcast channel). It does NOT guarantee that any event
+/// reaches any external consumer: the `keepalive_rx` is never
+/// `recv()`d, so new external `subscribe()` calls still join at
+/// the current tail position and miss events that were sent before
+/// they subscribed (standard tokio `broadcast` semantics). The
+/// initial `Spawned` event from `spawn_agent` is therefore NOT
+/// guaranteed to reach the next `attach` — an `attach` issued
+/// after `spawn_agent` returns will start from the channel tail.
 struct HandleInner {
     /// Pub-sub broadcast sender (Layer D transport substrate).
     event_tx: broadcast::Sender<RuntimeEvent>,
     /// Keep-alive receiver held for the handle's lifetime.
-    /// Ensures `Sender::send` cannot return `Err(SendError)`
+    /// Guarantees `Sender::send` cannot return `Err(SendError)`
     /// during the handle's lifetime even when no external
-    /// subscriber has attached. RFC-0011-c §9.7 race-mitigation.
-    ///
-    /// The receiver is intentionally never `recv()`d from — its
-    /// sole purpose is to register as a live receiver with the
-    /// broadcast channel. The `#[allow(dead_code)]` suppresses
-    /// the false-positive dead-code warning (the field's value
-    /// matters as a side effect of being held, not via any access).
+    /// subscriber has attached yet. The receiver is intentionally
+    /// never `recv()`d from — its sole purpose is to register as a
+    /// live receiver with the broadcast channel. The
+    /// `#[allow(dead_code)]` suppresses the false-positive
+    /// dead-code warning (the field's value matters as a side
+    /// effect of being held, not via any access).
     #[allow(dead_code)]
     keepalive_rx: broadcast::Receiver<RuntimeEvent>,
 }
@@ -282,11 +290,13 @@ impl RuntimeHandle {
     /// ([`HandleInner::keepalive_rx`]) so `Sender::send` cannot
     /// return `Err(SendError)` for the lifetime of any handle
     /// clone — the channel always has at least one receiver.
-    /// Per RFC-0011-c §9.7, the initial `Spawned` event MUST reach
-    /// at least one consumer (or be retained for the next
-    /// `attach`) before `RuntimeHandle` returns from `spawn_agent`;
-    /// the keep-alive receiver guarantees the substrate never
-    /// silently drops that first event.
+    ///
+    /// Note: the keep-alive receiver is never `recv()`d. It only
+    /// guarantees that `send` does not return `Err(SendError(_))`;
+    /// it does NOT cause events to be retained for any future
+    /// external subscriber. New `subscribe()` calls join at the
+    /// current tail position per tokio `broadcast` semantics, so
+    /// events sent before subscription are not replayed.
     ///
     /// In v0.1.0 the broadcast channel closes only when **all**
     /// `RuntimeHandle` clones are dropped (natural tokio

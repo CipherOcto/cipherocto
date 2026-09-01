@@ -1,0 +1,19 @@
+# TV-RL-1: octo role list returns 7 canonical base roles.
+# RFC-0011-d §11 Test Vectors; substrate behavior pinned in
+# `crates/octo-role/src/registry.rs` `all_roles()`.
+vector: TV-RL-1
+description: octo role list returns 7 canonical base roles
+invocation:
+  args: [role, list]
+expect:
+  exit_code: 0
+  stdout_contains_all:
+    - builder
+    - provider
+    - storage
+    - bandwidth
+    - orchestrator
+    - recorder
+    - wallet
+  stdout_contains_none: []
+schema_version: octo.role.list.v1

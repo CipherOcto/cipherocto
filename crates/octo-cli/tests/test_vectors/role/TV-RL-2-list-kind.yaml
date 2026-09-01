@@ -1,0 +1,10 @@
+# TV-RL-2 — RFC-0011-d §11 Test Vectors.
+vector: TV-RL-2
+description: octo role list --kind provider returns only provider
+schema_version: octo.role.test.v1
+invocation:
+  args: [role, list, --kind, provider]
+expect:
+  exit_code: 0
+  stdout_contains: provider
+  stdout_excludes: builder

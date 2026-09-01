@@ -1,0 +1,9 @@
+# TV-RS-2 — RFC-0011-d §11 Test Vectors.
+vector: TV-RS-2
+description: octo role show nonexistent-role returns exit 31
+schema_version: octo.role.test.v1
+invocation:
+  args: [role, show, nonexistent-role]
+expect:
+  exit_code: 31
+  stderr_contains: "role not found"

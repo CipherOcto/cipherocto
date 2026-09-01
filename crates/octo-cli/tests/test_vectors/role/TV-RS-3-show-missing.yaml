@@ -1,0 +1,9 @@
+# TV-RS-3 — RFC-0011-d §11 Test Vectors.
+vector: TV-RS-3
+description: octo role show without role_id exits 2
+schema_version: octo.role.test.v1
+invocation:
+  args: [role, show]
+expect:
+  exit_code: 2
+  stderr_contains: "required"

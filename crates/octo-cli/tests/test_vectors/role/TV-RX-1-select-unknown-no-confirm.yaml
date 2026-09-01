@@ -1,0 +1,9 @@
+# TV-RX-1 — RFC-0011-d §11 Test Vectors.
+vector: TV-RX-1
+description: octo role select nonexistent without --confirm exits 2
+schema_version: octo.role.test.v1
+invocation:
+  args: [role, select, nonexistent-role]
+expect:
+  exit_code: 2
+  stderr_contains: --confirm

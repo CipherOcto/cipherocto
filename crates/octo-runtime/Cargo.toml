@@ -3,14 +3,28 @@ name = "octo-runtime"
 version = "0.1.0"
 edition = "2021"
 
+# Mission `0011-c-octo-runtime-substrate` (RFC-0011-c §9.10 Substrate
+# `[ADD]` Signatures; Layer B substrate-authoritative). Per
+# [[cipherocto-design-principles]] §Layer direction, this crate is Layer
+# B; consumed by Layer C/D `octo-cli` (one-way; no reverse dep).
+
 [dependencies]
+# Async runtime (Layer D transport substrate).
 tokio = { version = "1.35", features = ["full"] }
+# Async trait dispatch — Layer D transport substrate (RFC-0011 §Dependencies).
+async-trait = "0.1"
+# Envelope codec (Layer B; RFC-0011 §Output Envelope).
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-async-trait = "0.1"
-tracing = "0.1"
-anyhow = "1.0"
+# Error enum derivation (Layer C/D operator envelope; substrate surfaces).
 thiserror = "2.0"
+# Typed UUID discriminator (RFC-0855 §Typed UUID discriminators).
+uuid = { version = "1", features = ["v4", "serde"] }
+# Timestamps (RFC-0011 §Output Envelope; substrate signatures).
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+# Tracing (Layer D transport substrate).
+tracing = "0.1"
 
+# Layer B sibling crates.
 octo-core = { path = "../octo-core" }
 octo-registry = { path = "../octo-registry" }

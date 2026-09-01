@@ -12,9 +12,11 @@ metadata:
     - RFC-0011-c
     - RFC-0002
 release_gate: octo-runtime crate landing
-status: Claimed
+status: Completed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-01
+completed_by: mmacedoeu
+completed_at: 2026-09-01
 ---
 
 # 0011-c-octo-runtime-substrate — `octo-runtime` substrate crate

@@ -4,7 +4,13 @@ use std::io::Write;
 use thiserror::Error;
 
 /// Every operator-visible failure mode of the `octo` CLI.
+///
+/// `#[non_exhaustive]` per F-14 + Wave 4.5 finding 10 — additive growth
+/// must remain non-semver-breaking. Downstream `match` sites use
+/// wildcard patterns (verified via the `render`/`hint`/`exit_code`
+/// methods, which cover every current variant).
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum OctoCliError {
     /// Argument parsing failed.
     #[error("{0}")]
@@ -294,6 +300,15 @@ pub enum OctoCliError {
         received: String,
     },
 
+    /// Neither `OCTO_HOME` nor `$HOME` is set in the operator's
+    /// environment. The CLI fails closed (exit 27) rather than
+    /// defaulting to `/tmp/.octo` — a world-readable/writable
+    /// directory on shared hosts, where any local user could race
+    /// the operator's writes or inject peer-table entries
+    /// (Wave 4.5 Lens-2 finding 3).
+    #[error("no OCTO_HOME or HOME available; set $OCTO_HOME or $HOME before running this command")]
+    NoOctoHome,
+
     /// Unexpected internal failure.
     #[error("internal error: {0}")]
     Internal(String),
@@ -347,6 +362,10 @@ impl OctoCliError {
             // §Error Handling — both are chain-ID input validation
             // failures.
             Self::InvalidChainId { .. } => 26,
+            // Wave 4.5 Lens-2: fail-closed on missing $OCTO_HOME / $HOME
+            // (no `/tmp/.octo` fallback — world-readable). Exit 27
+            // (free slot in the 17-30 mesh reserved range).
+            Self::NoOctoHome => 27,
             Self::Internal(_) => 64,
             Self::StaleStub { .. } => 65,
         }
@@ -437,6 +456,9 @@ impl OctoCliError {
             }
             Self::InvalidChainId { .. } => {
                 "chain IDs use the RFC-0010 canonical form (64-char lowercase hex)".to_string()
+            }
+            Self::NoOctoHome => {
+                "set $OCTO_HOME (preferred) or $HOME before invoking this command; the CLI does not fall back to /tmp/.octo on shared hosts".to_string()
             }
             Self::StaleStub { .. } => "this command was removed; see the migration notes".to_string(),
             Self::Internal(_) => "re-run with `RUST_LOG=debug` and report the diagnostic".to_string(),
@@ -762,6 +784,7 @@ mod tests {
                 },
                 65,
             ),
+            (OctoCliError::NoOctoHome, 27),
         ];
         for (e, code) in cases {
             assert_eq!(e.exit_code(), code, "{e:?}");

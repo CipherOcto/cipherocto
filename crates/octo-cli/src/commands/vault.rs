@@ -74,6 +74,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::commands::identity::require_confirm;
 use crate::error::{sanitize_substrate_error, OctoCliError};
+use crate::home;
 use crate::output::{OutputEnvelope, RedactedString};
 use crate::Octo;
 
@@ -801,8 +802,8 @@ fn init_ports(home: &Path) -> Result<(), OctoCliError> {
 
 /// Borrow the Phase 1 ports (initialises on first call).
 fn ports() -> Result<std::sync::MutexGuard<'static, VaultPorts>, OctoCliError> {
-    let home = resolve_octo_home();
-    init_ports(&home)?;
+    let home_path = home::resolve()?;
+    init_ports(&home_path)?;
     let m = PORTS
         .get()
         .ok_or_else(|| OctoCliError::Internal("vault ports not initialised".into()))?;
@@ -850,18 +851,10 @@ pub fn asset_symbol_to_id(symbol: &str) -> AssetId {
 }
 
 // ---------------------------------------------------------------------------
-// Path helpers — RFC-0011-f §Substrate `$OCTO_HOME` resolution (mirrored)
+// Path helpers — `$OCTO_HOME` resolution lives in `crate::home` (Wave 4.5
+// fail-closed dedupe). Functions here take an explicit `&Path` so the
+// substrate port stays free of env-var reads.
 // ---------------------------------------------------------------------------
-
-fn resolve_octo_home() -> PathBuf {
-    if let Ok(p) = std::env::var("OCTO_HOME") {
-        return PathBuf::from(p);
-    }
-    if let Some(home) = dirs::home_dir() {
-        return home.join(".octo");
-    }
-    PathBuf::from("/tmp/.octo")
-}
 
 fn vaults_path(home: &Path) -> PathBuf {
     home.join("vaults").join("vaults.jsonl")

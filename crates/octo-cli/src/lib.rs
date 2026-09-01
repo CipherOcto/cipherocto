@@ -5,6 +5,7 @@
 pub mod commands;
 pub mod error;
 pub mod flags;
+pub mod home;
 pub mod output;
 pub mod redact;
 

@@ -31,6 +31,7 @@ use octo_mesh::{
 
 use crate::commands::identity::require_confirm;
 use crate::error::{sanitize_substrate_error, OctoCliError};
+use crate::home;
 use crate::output::OutputEnvelope;
 use crate::Octo;
 
@@ -146,19 +147,6 @@ pub fn dispatch(action: &PeerAction, cli: &Octo) -> Result<(), OctoCliError> {
 // Handlers
 // ---------------------------------------------------------------------------
 
-/// Resolve the operator's `$OCTO_HOME` override (`OCTO_HOME` env var,
-/// otherwise the platform-default home). Mirrors the wallet
-/// substrate's resolution.
-fn resolve_octo_home() -> std::path::PathBuf {
-    if let Ok(p) = std::env::var("OCTO_HOME") {
-        return std::path::PathBuf::from(p);
-    }
-    if let Some(home) = dirs::home_dir() {
-        return home.join(".octo");
-    }
-    std::path::PathBuf::from("/tmp/.octo")
-}
-
 /// Current unix seconds. Wall clock; substrate records are timestamped
 /// at the dispatch boundary so operator-visible `added_at_unix` /
 /// `removed_at_unix` matches the substrate record.
@@ -183,7 +171,7 @@ fn list_peers_cmd(filter_trust: Vec<String>, cli: &Octo) -> Result<(), OctoCliEr
         .collect::<Result<Vec<_>, _>>()?;
 
     let filter = PeerFilter { trust_levels };
-    let octo_home = resolve_octo_home();
+    let octo_home = home::resolve()?;
     let summaries = substrate_list_peers(&filter, &octo_home).map_err(map_mesh_error)?;
 
     // `total_count` is the size of the underlying table (filter NOT
@@ -208,7 +196,7 @@ fn list_peers_cmd(filter_trust: Vec<String>, cli: &Octo) -> Result<(), OctoCliEr
 /// Handling + §Security 2. Both gates run via `octo_mesh::add_peer`.
 fn add_peer_cmd(peer_did: String, endpoint: String, cli: &Octo) -> Result<(), OctoCliError> {
     let uri = EndpointUri::parse(&endpoint).map_err(map_mesh_error)?;
-    let octo_home = resolve_octo_home();
+    let octo_home = home::resolve()?;
     let now = now_unix();
     substrate_add_peer(&peer_did, &uri, &octo_home, now).map_err(map_mesh_error)?;
 
@@ -227,7 +215,7 @@ fn add_peer_cmd(peer_did: String, endpoint: String, cli: &Octo) -> Result<(), Oc
 /// confirmation required for absent-peer case (substrate gate fires
 /// only on write).
 fn remove_peer_cmd(peer_did: String, cli: &Octo) -> Result<(), OctoCliError> {
-    let octo_home = resolve_octo_home();
+    let octo_home = home::resolve()?;
     let now = now_unix();
     // Capture "was-present" by listing before the remove call.
     let filter = PeerFilter::default();

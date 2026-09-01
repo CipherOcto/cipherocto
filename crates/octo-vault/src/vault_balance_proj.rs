@@ -7,6 +7,12 @@
 //! lib-test reset helper can reference the SAME `OnceLock` instance
 //! that production code initializes.
 
+// `MutexGuard` is only used behind `#[cfg(any(test, feature = "testing"))]`
+// (see `SubstrateCacheBypassGuard`). `#[allow(unused_imports)]` keeps the
+// production lib-build clean (no `unused_imports` warning under
+// `cargo clippy --all-targets -- -D warnings`) while still resolving
+// the type in test-only builds.
+#[allow(unused_imports)]
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use octo_cap_macaroon::{AssetRegistry, ChainId, VaultId};

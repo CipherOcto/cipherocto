@@ -64,6 +64,12 @@ pub mod event_log_producer;
 
 // Mission B §6 substrate: per-process cache invalidation subscriber.
 pub mod cache_subscriber;
+// Mission 0011-e-vault-substrate-additions substrate (RFC-0011-e
+// §Substrate Additions): `VaultSummary`, `TransferHandle`,
+// `TransferStatus`, `VaultOwnerIndex`, `list_owned`,
+// `project_vault_balance` (canonical 7-param SUM projection),
+// `initiate_transfer`.
+pub mod vault_operations;
 // Mission `producer-wrapper-consumer-wiring` sub-step 6: Layer B test-only
 // reusable fixtures (StubTransferEventLog / StubEmitter / StubVaultAssetResolver).
 // Gated behind `testing` feature (R1 layer-direction/api-surface fix:
@@ -90,6 +96,12 @@ pub use cache_subscriber::{
     init_cache_subscriber, init_producer_trust_list, sign_envelope, spawn_cache_subscriber,
     spawn_cache_subscriber_with_trust_list, EnvelopeVerificationError, ProducerTrustList,
     VaultProjectionInvalidationSubscriber,
+};
+// Mission 0011-e-vault-substrate-additions substrate re-exports
+// (RFC-0011-e §Substrate Additions).
+pub use vault_operations::{
+    initiate_transfer, list_owned, project_vault_balance, TransferHandle, TransferStatus,
+    VaultError as VaultOperationsError, VaultOwnerIndex, VaultSummary,
 };
 // Mission `producer-wrapper-consumer-wiring` sub-step 6 re-exports.
 // Gated behind the `testing` feature — production builds never see the

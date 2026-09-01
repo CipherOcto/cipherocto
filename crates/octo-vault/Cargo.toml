@@ -16,6 +16,10 @@ crate-type = ["rlib"]
 testing = []
 
 [dependencies]
+# Serde derives for substrate types (mission 0011-e-vault-substrate-additions
+# `VaultSummary` + `TransferHandle` are `#[derive(Serialize, Deserialize)]`
+# per RFC-0011-e §Substrate Additions).
+serde.workspace = true
 # Layer B → Layer A storage substrate. Per S2, owner crates depend on the
 # substrate (not the Stoolap fork directly) so the migration runner stays
 # centralized and bounded by the substrate's audit trail (per

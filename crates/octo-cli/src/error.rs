@@ -121,6 +121,51 @@ pub enum OctoCliError {
         /// Stub command name.
         name: String,
     },
+    /// Reputation aggregate for the given `(did, role)` was not found
+    /// (RFC-0011-b §Substrate `[ADD]` map: `ReputationError::AggregateEmpty`).
+    #[error("reputation not found for did `{did}` role `{role}`")]
+    ReputationNotFound {
+        /// Subject DID.
+        did: String,
+        /// Role slug.
+        role: String,
+    },
+    /// Reputation subject DID is in the `Revoked` lifecycle state
+    /// (RFC-0968 §Roles and Authorities). Auditor mode fails closed
+    /// regardless of caller mode (RFC-0011-b §Security Considerations 3).
+    #[error("reputation revoked for did `{did}`")]
+    ReputationRevoked {
+        /// Subject DID.
+        did: String,
+    },
+    /// Anchor chain digest mismatch (RFC-0011-b §Substrate `[ADD]`
+    /// map: `ReputationError::AnchorDigestMismatch`). Surfaces the
+    /// last anchored unix timestamp for diagnostic context.
+    #[error("anchor chain broken for did `{did}` (last anchor at unix {last_anchor_unix})")]
+    AnchorChainBroken {
+        /// Subject DID.
+        did: String,
+        /// Unix seconds of the last accepted anchor.
+        last_anchor_unix: i64,
+    },
+    /// `--no-anchor-verify` was passed outside Dev mode
+    /// (RFC-0011-b §Security Considerations 1a; DEV-ONLY escape hatch).
+    #[error(
+        "--no-anchor-verify is DEV-only (got mode `{mode}`); switch to --mode dev or drop the flag"
+    )]
+    NoAnchorVerifyInMode {
+        /// Resolved operator mode label (lowercase).
+        mode: &'static str,
+    },
+    /// Role slug failed the substrate `Role::parse` guard
+    /// (RFC-0011-b §7.4 `Role::parse` rejects empty / whitespace).
+    #[error("invalid role slug `{slug}`: {reason}")]
+    InvalidRoleSlug {
+        /// The supplied role slug (sanitized).
+        slug: String,
+        /// Why the slug was rejected.
+        reason: String,
+    },
     /// Unexpected internal failure.
     #[error("internal error: {0}")]
     Internal(String),
@@ -154,6 +199,11 @@ impl OctoCliError {
             // 34 reserved per F-16 (was RoleBindingConflict; intentionally
             // skipped — last-writer-wins per RFC-0011-d §Security 2).
             Self::SignerMismatch { .. } => 35,
+            Self::ReputationNotFound { .. } => 20,
+            Self::ReputationRevoked { .. } => 21,
+            Self::AnchorChainBroken { .. } => 22,
+            Self::NoAnchorVerifyInMode { .. } => 2,
+            Self::InvalidRoleSlug { .. } => 2,
             Self::Internal(_) => 64,
             Self::StaleStub { .. } => 65,
         }
@@ -194,6 +244,21 @@ impl OctoCliError {
             Self::RoleNotSelectable { .. } => "verify the role slug + operator permissions",
             Self::SignerMismatch { .. } => {
                 "the active signer does not match the supplied operator DID"
+            }
+            Self::ReputationNotFound { .. } => {
+                "the subject has no aggregate for this role yet; attestations land first"
+            }
+            Self::ReputationRevoked { .. } => {
+                "revoked DIDs are read-only across all operator modes (RFC-0011-b §Security 3)"
+            }
+            Self::AnchorChainBroken { .. } => {
+                "the last anchor chain digest does not match the substrate; verify the chain"
+            }
+            Self::NoAnchorVerifyInMode { .. } => {
+                "drop --no-anchor-verify or re-run with --mode dev"
+            }
+            Self::InvalidRoleSlug { .. } => {
+                "role slugs must be non-empty and contain no whitespace"
             }
             Self::StaleStub { .. } => "this command was removed; see the migration notes",
             Self::Internal(_) => "re-run with `RUST_LOG=debug` and report the diagnostic",

@@ -14,7 +14,8 @@ pub use output::{Hex32, OutputEnvelope};
 
 use clap::{Parser, Subcommand};
 use commands::{
-    capability::CapabilityAction, identity::IdentityAction, policy::PolicyAction, RoleAction,
+    capability::CapabilityAction, identity::IdentityAction, policy::PolicyAction, ReputationAction,
+    RoleAction,
 };
 
 /// The `octo` operator CLI root.
@@ -33,7 +34,12 @@ pub struct Octo {
 }
 
 /// Top-level subcommands.
+///
+/// `#[non_exhaustive]` per F-14: future amendments add subcommand
+/// variants (e.g., `octo reputation list` per RFC-0011-b §Future
+/// Work) without requiring central-enum edits across the workspace.
 #[derive(Subcommand, Debug)]
+#[non_exhaustive]
 pub enum Commands {
     /// Show the active identity.
     Whoami,
@@ -69,6 +75,12 @@ pub enum Commands {
         /// Role subcommand.
         #[command(subcommand)]
         action: RoleAction,
+    },
+    /// Reputation read surface (RFC-0011-b §Specification).
+    Reputation {
+        /// Reputation subcommand.
+        #[command(subcommand)]
+        action: ReputationAction,
     },
     /// Deprecated — see RFC-0011 §Compatibility.
     #[command(hide = true)]

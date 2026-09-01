@@ -25,6 +25,8 @@ octo-wallet = { path = "../octo-wallet", version = "0.1.0" }                  # 
 octo-cap-macaroon = { path = "../octo-cap-macaroon", version = "0.1.0" }      # Layer B capability substrate — RFC-0957
 octo-policy = { path = "../octo-policy", version = "0.1.0" }                  # Layer B policy substrate — RFC-0967
 octo-role = { path = "../octo-role", version = "0.1.0" }                      # Layer B role provisioning — RFC-0011-d
+octo-reputation = { path = "../octo-reputation", version = "0.7.0" }            # Layer B reputation registry — RFC-0968; `reputation show` consumes RFC-0011-b §7.4 `[ADD]` substrate (projection module + Role / ReputationRecord / AnchorRef / AttestationSummary re-exports). Crate version is 0.7.0 (local pin; substrate hasn't migrated to workspace version yet)
+octo-determin = { path = "../../determin", version = "0.1.0" }                 # Layer B deterministic floating-point — RFC-0104; ReputationShowOutput.score is the canonical Dfp wire form per RFC-0011-b §7.3
 
 # === Stub substrate (Layer C/D) ===
 # The 213-line stub main.rs that called octo-registry::init() and

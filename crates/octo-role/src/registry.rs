@@ -49,13 +49,13 @@ fn base_records() -> Vec<RoleRecord> {
             "builder",
             "infrastructure",
             Some("OCTO-A"),
-            Some(1000_000_000), // 1000 OCTO
+            Some(1_000_000_000), // 1000 OCTO
         ),
         role_summary(
             "provider",
             "infrastructure",
             Some("OCTO-A"),
-            Some(1000_000_000),
+            Some(1_000_000_000),
         ),
         role_summary(
             "storage",
@@ -73,7 +73,7 @@ fn base_records() -> Vec<RoleRecord> {
             "orchestrator",
             "economic",
             Some("OCTO-O"),
-            Some(5000_000_000),
+            Some(5_000_000_000),
         ),
         role_summary(
             "recorder",

@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn list_filter_by_min_stake() {
         let filter = RoleFilter {
-            requires_octo_min: Some(1000_000_000),
+            requires_octo_min: Some(1_000_000_000),
             ..Default::default()
         };
         let summaries = list(&filter);

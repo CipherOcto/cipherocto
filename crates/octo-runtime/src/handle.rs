@@ -196,9 +196,31 @@ impl AttachHandle {
 /// channel closes (no more senders). `is_revoked()` observes the
 /// remaining `Arc::strong_count` directly — when it reaches 1
 /// (only the current handle), the channel is about to close.
+///
+/// The `keepalive_rx` field holds an internal broadcast receiver
+/// for the handle's lifetime. Per the tokio `broadcast::Sender`
+/// contract, `Sender::send` returns `Err` only when there are no
+/// active receivers — by holding one receiver internally, the
+/// publish path ALWAYS succeeds even when no external subscriber
+/// has attached yet. This enforces the RFC-0011-c §9.7 invariant:
+/// the initial `Spawned` event MUST reach at least one consumer
+/// (or be retained for the next `attach`) before `RuntimeHandle`
+/// returns from `spawn_agent`.
 struct HandleInner {
     /// Pub-sub broadcast sender (Layer D transport substrate).
     event_tx: broadcast::Sender<RuntimeEvent>,
+    /// Keep-alive receiver held for the handle's lifetime.
+    /// Ensures `Sender::send` cannot return `Err(SendError)`
+    /// during the handle's lifetime even when no external
+    /// subscriber has attached. RFC-0011-c §9.7 race-mitigation.
+    ///
+    /// The receiver is intentionally never `recv()`d from — its
+    /// sole purpose is to register as a live receiver with the
+    /// broadcast channel. The `#[allow(dead_code)]` suppresses
+    /// the false-positive dead-code warning (the field's value
+    /// matters as a side effect of being held, not via any access).
+    #[allow(dead_code)]
+    keepalive_rx: broadcast::Receiver<RuntimeEvent>,
 }
 
 /// Live runtime handle for a spawned agent (RFC-0011-c §9.3.2 +
@@ -230,8 +252,12 @@ impl RuntimeHandle {
         agent_id: Uuid,
         spawned_at: DateTime<Utc>,
         event_tx: broadcast::Sender<RuntimeEvent>,
+        keepalive_rx: broadcast::Receiver<RuntimeEvent>,
     ) -> Self {
-        let inner = Arc::new(HandleInner { event_tx });
+        let inner = Arc::new(HandleInner {
+            event_tx,
+            keepalive_rx,
+        });
         Self {
             handle_id: RuntimeHandleId::new(),
             agent_id,
@@ -252,6 +278,16 @@ impl RuntimeHandle {
     /// that wishes to feed the pub-sub bus (per Layer D transport
     /// contract).
     ///
+    /// The handle retains an internal keep-alive receiver
+    /// ([`HandleInner::keepalive_rx`]) so `Sender::send` cannot
+    /// return `Err(SendError)` for the lifetime of any handle
+    /// clone — the channel always has at least one receiver.
+    /// Per RFC-0011-c §9.7, the initial `Spawned` event MUST reach
+    /// at least one consumer (or be retained for the next
+    /// `attach`) before `RuntimeHandle` returns from `spawn_agent`;
+    /// the keep-alive receiver guarantees the substrate never
+    /// silently drops that first event.
+    ///
     /// In v0.1.0 the broadcast channel closes only when **all**
     /// `RuntimeHandle` clones are dropped (natural tokio
     /// `broadcast` behavior — no explicit revocation). Live
@@ -260,9 +296,12 @@ impl RuntimeHandle {
     /// `revoke()` entry point; the `HandleRevoked` error variant
     /// is reserved for that path.
     pub fn publish(&self, event: RuntimeEvent) -> Result<(), RuntimeError> {
-        // broadcast::Sender::send returns Err only when there are no
-        // receivers; the channel itself remains open until all senders
-        // drop. We treat no-receivers as success (no consumer to drop).
+        // `Sender::send` returns `Err(SendError(value))` only when no
+        // receivers are alive. The keep-alive receiver inside
+        // `HandleInner` is held by every clone of the handle, so the
+        // channel always has ≥1 receiver while the handle is live —
+        // `send` cannot fail here. The `let _ = ...` is defensive
+        // (silently ignoring the Ok(usize) receiver count).
         let _ = self.inner.event_tx.send(event);
         Ok(())
     }
@@ -545,8 +584,8 @@ mod tests {
         // subscription owned by the original. Verifies that clone()
         // shares the broadcast sender (RFC-0011-c §9.3.2 run --detach
         // + attach pattern).
-        let (tx, _) = broadcast::channel::<RuntimeEvent>(EVENT_CHANNEL_CAPACITY);
-        let h = RuntimeHandle::new(Uuid::new_v4(), Utc::now(), tx);
+        let (tx, rx) = broadcast::channel::<RuntimeEvent>(EVENT_CHANNEL_CAPACITY);
+        let h = RuntimeHandle::new(Uuid::new_v4(), Utc::now(), tx, rx);
         let cloned = h.clone();
         let mut rx = h.subscribe();
         cloned
@@ -565,8 +604,8 @@ mod tests {
         // The handle is "last clone" when only one Arc<HandleInner>
         // remains. Dropping this handle will close the broadcast
         // channel.
-        let (tx, _) = broadcast::channel::<RuntimeEvent>(EVENT_CHANNEL_CAPACITY);
-        let h = RuntimeHandle::new(Uuid::new_v4(), Utc::now(), tx);
+        let (tx, rx) = broadcast::channel::<RuntimeEvent>(EVENT_CHANNEL_CAPACITY);
+        let h = RuntimeHandle::new(Uuid::new_v4(), Utc::now(), tx, rx);
         assert!(h.is_last_clone());
         let cloned = h.clone();
         assert!(!h.is_last_clone());
@@ -582,8 +621,8 @@ mod tests {
         // can always publish. Future missions may add an explicit
         // `revoke()` API that returns `HandleRevoked` from publish;
         // until then this test pins the v0.1.0 contract.
-        let (tx, _) = broadcast::channel::<RuntimeEvent>(EVENT_CHANNEL_CAPACITY);
-        let h = RuntimeHandle::new(Uuid::new_v4(), Utc::now(), tx);
+        let (tx, rx) = broadcast::channel::<RuntimeEvent>(EVENT_CHANNEL_CAPACITY);
+        let h = RuntimeHandle::new(Uuid::new_v4(), Utc::now(), tx, rx);
         let res = h.publish(RuntimeEvent::Spawned {
             agent_id: h.agent_id,
             at: Utc::now(),

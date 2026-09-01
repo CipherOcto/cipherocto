@@ -79,9 +79,14 @@ pub fn spawn_agent(
         }
     }
 
-    let (event_tx, _rx) = broadcast::channel::<RuntimeEvent>(EVENT_CHANNEL_CAPACITY);
+    let (event_tx, keepalive_rx) = broadcast::channel::<RuntimeEvent>(EVENT_CHANNEL_CAPACITY);
     let spawned_at = Utc::now();
-    let handle = RuntimeHandle::new(agent_id, spawned_at, event_tx);
+    // The `keepalive_rx` receiver is stored inside `HandleInner` so
+    // the broadcast channel always has ≥1 receiver for the handle's
+    // lifetime. Per RFC-0011-c §9.7, this prevents the initial
+    // `Spawned` event from being silently dropped when no external
+    // subscriber has attached yet.
+    let handle = RuntimeHandle::new(agent_id, spawned_at, event_tx, keepalive_rx);
 
     // Publish the initial Spawned event so any subscriber attached
     // before this point (via the `attach_handle`) sees it.

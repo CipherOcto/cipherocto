@@ -131,9 +131,9 @@ mod tests {
         // `RuntimeHandle` clones drop. A single remaining clone is
         // still a valid handle for `attach` (the broadcast sender
         // inside is alive; the channel is open).
-        let (tx, _) =
+        let (tx, rx) =
             tokio::sync::broadcast::channel::<RuntimeEvent>(crate::handle::EVENT_CHANNEL_CAPACITY);
-        let h = crate::handle::RuntimeHandle::new(Uuid::new_v4(), Utc::now(), tx);
+        let h = crate::handle::RuntimeHandle::new(Uuid::new_v4(), Utc::now(), tx, rx);
         let agent = h.agent_id;
         let cloned = h.clone();
         drop(h);

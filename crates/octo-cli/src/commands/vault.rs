@@ -1384,9 +1384,14 @@ fn vault_transfer_cmd(args: TransferArgs, cli: &Octo) -> Result<(), OctoCliError
     // (9) Substrate call. The substrate builds the transfer envelope
     //     and returns a `TransferHandle` with `status: Pending`.
     let asset_id = asset_symbol_to_id(&args.asset);
-    let mut handle =
-        substrate_initiate_transfer(&from_vault_id, &to_vault_id, amount_micros, &asset_id)
-            .map_err(map_vault_error)?;
+    let mut handle = substrate_initiate_transfer(
+        &from_vault_id,
+        &to_vault_id,
+        amount_micros,
+        &asset_id,
+        unix_now_secs() as i64,
+    )
+    .map_err(map_vault_error)?;
 
     // (10) Dry-run rewrite — CLI-side status flip.
     if args.dry_run {
@@ -2033,8 +2038,14 @@ mod tests {
     #[test]
     fn tv_xfer_pr18_vault_transfer_output_envelope_fields() {
         let dest = VaultId::from_bytes([0x99u8; 32]);
-        let h = substrate_initiate_transfer(&sample_vault(), &dest, 1_000, &sample_asset())
-            .expect("initiate");
+        let h = substrate_initiate_transfer(
+            &sample_vault(),
+            &dest,
+            1_000,
+            &sample_asset(),
+            1_700_000_000,
+        )
+        .expect("initiate");
         let out = VaultTransferOutput {
             handle: h.clone(),
             broadcast_at_unix: Some(1_700_000_000),

@@ -455,28 +455,14 @@ pub fn dispatch(action: &MeshAction, cli: &Octo) -> Result<(), OctoCliError> {
             params,
             timeout_ms,
             dry_run,
-        } => {
-            // `rpc_cmd` is async (substrate rpc_invoke reserves
-            // `async` for the follow-on `NodeTransport::send_best`
-            // wiring per RFC-0870k AC-6). Use a per-call runtime
-            // so the sync dispatch surface stays sync.
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|e| {
-                    OctoCliError::Internal(sanitize_substrate_error(&format!(
-                        "build tokio runtime for rpc dispatch: {e}"
-                    )))
-                })?;
-            rt.block_on(rpc_cmd(
-                peer_did.clone(),
-                method.clone(),
-                params.clone(),
-                *timeout_ms,
-                *dry_run,
-                cli,
-            ))
-        }
+        } => rpc_cmd(
+            peer_did.clone(),
+            method.clone(),
+            params.clone(),
+            *timeout_ms,
+            *dry_run,
+            cli,
+        ),
         MeshAction::Peer { action } => peer::dispatch(action, cli),
     }
 }
@@ -616,7 +602,7 @@ const RPC_DEFAULT_TIMEOUT_MS: u64 = 30_000;
 /// 5. RPC-receipt persistence (unless `--dry-run`).
 /// 6. `RpcOutput` envelope render.
 #[allow(clippy::too_many_lines)]
-async fn rpc_cmd(
+fn rpc_cmd(
     peer_did: String,
     method: String,
     params_raw: String,
@@ -664,8 +650,11 @@ async fn rpc_cmd(
     // `envelope_id`. The substrate also surfaces the canonical
     // `MeshError` family (`UnknownMethod` / `RpcTimeout`) that the
     // CLI maps to its operator-facing variants.
-    let (output, receipt) =
-        invoke_rpc(&resolved_did, &method, &params, timeout_ms, dry_run).await?;
+    //
+    // Phase 1 substrate stub is sync (Wave 1.5 fix 8); the real
+    // `NodeTransport::send_best` is `async` at the Layer D
+    // transport-adapter impl site, NOT here.
+    let (output, receipt) = invoke_rpc(&resolved_did, &method, &params, timeout_ms, dry_run)?;
 
     // Step 5: receipt persistence. Failures are substrate-truth
     // degraded but the dispatch already succeeded — surface as
@@ -1000,7 +989,12 @@ fn scrub_secret_json(v: &mut serde_json::Value) {
 /// and maps the substrate's `MeshError` family to operator-facing
 /// `OctoCliError` variants + builds the `RpcOutput` / `RpcReceipt`
 /// pair for rendering + audit-log persistence.
-async fn invoke_rpc(
+///
+/// Sync (Wave 1.5 fix 8): the Phase 1 substrate stub
+/// `octo_mesh::rpc_invoke` is sync and the dispatch wrapper here
+/// matches. Real `NodeTransport::send_best` is async at the Layer D
+/// transport-adapter impl site, NOT here.
+fn invoke_rpc(
     peer_did: &str,
     method: &str,
     params: &serde_json::Value,
@@ -1029,9 +1023,8 @@ async fn invoke_rpc(
         method,
         params,
     };
-    let correlation = octo_mesh::rpc_invoke(request, timeout_ms)
-        .await
-        .map_err(map_rpc_substrate_error)?;
+    let correlation =
+        octo_mesh::rpc_invoke(request, timeout_ms).map_err(map_rpc_substrate_error)?;
 
     let status = correlation.status.clone();
     let output = RpcOutput {
@@ -1538,7 +1531,6 @@ mod tests {
         let params = serde_json::json!({"queue_id": "stuck-1"});
         let (output, receipt) =
             invoke_rpc(&sample_canonical_did_str(), "ping", &params, 30_000, true)
-                .await
                 .expect("dry-run preview must succeed");
         assert_eq!(output.status, "preview");
         assert_eq!(receipt.status, "preview");
@@ -1564,8 +1556,7 @@ mod tests {
             &params,
             30_000,
             false,
-        )
-        .await;
+        );
         let err = r.expect_err("unknown method must error");
         assert!(matches!(
             err,
@@ -1581,7 +1572,7 @@ mod tests {
         // exit 4 `IdentityNotFound`.
         let legacy = format!("did:octo:b{}", "a".repeat(62));
         let params = serde_json::json!({});
-        let r = invoke_rpc(&legacy, "ping", &params, 30_000, false).await;
+        let r = invoke_rpc(&legacy, "ping", &params, 30_000, false);
         let err = r.expect_err("legacy DID must error");
         assert!(matches!(err, OctoCliError::IdentityNotFound(_)));
         assert_eq!(err.exit_code(), 4);

@@ -1046,19 +1046,23 @@ fn list_vaults_cmd(
     _cursor: Option<String>,
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
+    // Session-first exit-code precedence (RFC-0011 §Exit Code
+    // precedence): `NoActiveIdentity` (exit 2) is an auth prerequisite
+    // and MUST fire BEFORE argument validation. A malformed `--chain-id`
+    // surfaces as `InvalidChainId` (exit 26) only AFTER the session
+    // gate resolves. CLI-side arg-sanity gates (e.g. `--limit 0`) ALSO
+    // gate behind auth so a sessionless invocation of `octo vault list
+    // --limit=0` surfaces as `NoActiveIdentity` (exit 2), not
+    // `InvalidFilter` (exit 64). Mirrors `vault_balance_cmd` ordering
+    // (auth → parse → port).
+    let owner = active_owner_did()?;
     if limit == 0 {
         return Err(OctoCliError::InvalidFilter(sanitize_substrate_error(
             "--limit must be >= 1 (RFC-0011-e §Test Vectors TV-VLT3)",
         )));
     }
-
-    // Parse `--chain-id` BEFORE `active_owner_did()` so a malformed
-    // argument surfaces as `InvalidChainId` (exit 26, TV-12d) rather
-    // than the upstream `NoActiveIdentity` (exit 2). Mirrors the
-    // transfer handler's parse-first ordering.
     let chain_filter = chain_id.as_deref().map(parse_chain_id_hex).transpose()?;
 
-    let owner = active_owner_did()?;
     let ports = ports()?;
     let index = ports.owner_index()?;
 

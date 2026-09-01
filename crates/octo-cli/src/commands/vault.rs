@@ -989,6 +989,7 @@ pub fn dispatch(action: &VaultAction, cli: &Octo) -> Result<(), OctoCliError> {
             asset_symbol.clone(),
             *limit,
             cursor.clone(),
+            unix_now_secs() as i64,
             cli,
         ),
         VaultAction::Balance {
@@ -1032,11 +1033,17 @@ pub fn dispatch(action: &VaultAction, cli: &Octo) -> Result<(), OctoCliError> {
 /// Read-only — no confirmation gate. `--chain-id` and `--asset-symbol`
 /// are applied as client-side filters on the substrate result.
 /// `--limit 0` is rejected with `OctoCliError::InvalidFilter` (TV-VLT3).
+///
+/// `now_unix_seconds` is supplied by the dispatch entrypoint (one
+/// `unix_now_secs()` call per invocation) so the function stays free
+/// of `SystemTime::now()` reads — mirrors the `vault_balance_cmd` /
+/// `vault_transfer_cmd` threading pattern (Wave 4.5 finding 1).
 fn list_vaults_cmd(
     chain_id: Option<String>,
     asset_symbol: Option<String>,
     limit: u32,
     _cursor: Option<String>,
+    now_unix_seconds: i64,
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
     // Session-first exit-code precedence (RFC-0011 §Exit Code
@@ -1073,15 +1080,10 @@ fn list_vaults_cmd(
     // Defensive cap (substrate may return more).
     rows.truncate(limit as usize);
 
-    let resolved_at_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-
     let output = VaultListOutput {
         vaults: rows,
         next_cursor: None,
-        resolved_at_unix,
+        resolved_at_unix: now_unix_seconds,
     };
 
     render_envelope("octo.vault.list.v1", output, cli)

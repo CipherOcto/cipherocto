@@ -18,6 +18,8 @@
 
 pub mod action;
 pub mod error;
+pub mod list_show;
+pub mod registry;
 pub mod types;
 
 /// Crate version (matches workspace).
@@ -25,6 +27,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub use action::RoleAction;
 pub use error::RoleError;
+pub use list_show::{list, show};
 pub use types::{
     ChainId, Hash32, RoleBinding, RoleFilter, RoleKindUuid, RoleRecord, RoleSummary, SlashingRule,
 };

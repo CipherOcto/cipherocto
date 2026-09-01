@@ -10,8 +10,6 @@
 
 #![allow(clippy::double_must_use)]
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use octo_cap_macaroon::{AssetId, ChainId, Dqa, VaultId};
 
 /// Sentinel `VaultId` used for sovereign drain-direction events
@@ -166,12 +164,18 @@ pub enum VaultAssetResolverError {
 /// events (Payment/Settlement/Burn) use `ZERO_VAULT_ID` sentinel; the
 /// `to_vault_id` column resolves to the actual recipient vault, so the
 /// algorithm does NOT need to special-case drain direction.
+///
+/// `now_unix_seconds` is substrate-injected (NOT read from
+/// `SystemTime::now()`) so the projection is fully deterministic at
+/// the call site — RFC-0008 Class A determinism (substrate NEVER
+/// touches wall-clock state).
 #[must_use]
 pub fn project(
     chain_id: &ChainId,
     vault_id: &VaultId,
     asset_id: &AssetId,
     log: &dyn TransferEventLog,
+    now_unix_seconds: i64,
 ) -> Result<VaultBalanceProjection, ProjectionError> {
     let in_sum = log.sum_to_vault(chain_id, vault_id, asset_id, i64::MIN)?;
     let out_sum = log.sum_from_vault(chain_id, vault_id, asset_id, i64::MIN)?;
@@ -189,16 +193,12 @@ pub fn project(
         // invariant base and MUST always succeed.
         Dqa::new(0, 0).expect("Dqa(0,0) is invariant-valid")
     };
-    let now_unix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
     Ok(VaultBalanceProjection {
         chain_id: *chain_id,
         vault_id: *vault_id,
         asset_id: *asset_id,
         projected_balance,
-        projected_at_unix_seconds: max_ts.or(Some(now_unix)),
+        projected_at_unix_seconds: max_ts.or(Some(now_unix_seconds)),
         registry_snapshot_epoch: 0,
         source_kind: ProjectionSource::FreshLogScan,
     })
@@ -272,29 +272,40 @@ impl VaultBalanceCache {
     /// Insert or replace a cache entry. Caller is responsible for setting
     /// `source_kind = ProjectionSource::Cache` if the caller wants to
     /// preserve provenance.
-    pub fn put(&mut self, key: CacheKey, projection: VaultBalanceProjection) {
-        let now_unix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+    ///
+    /// `now_unix_seconds` is substrate-injected (RFC-0008 Class A
+    /// determinism — substrate NEVER calls `SystemTime::now()`).
+    pub fn put(
+        &mut self,
+        key: CacheKey,
+        projection: VaultBalanceProjection,
+        now_unix_seconds: i64,
+    ) {
         self.entries.insert(
             key,
             CacheEntry {
                 projection,
-                cached_at_unix_seconds: now_unix,
+                cached_at_unix_seconds: now_unix_seconds,
             },
         );
     }
 
     /// Read a cache entry; returns `None` if absent OR if TTL has expired
     /// (in which case the entry is also evicted to free memory).
-    pub fn get(&mut self, key: &CacheKey) -> Option<VaultBalanceProjection> {
-        let now_unix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+    ///
+    /// `now_unix_seconds` is substrate-injected (RFC-0008 Class A
+    /// determinism — substrate NEVER calls `SystemTime::now()`). The
+    /// TTL check uses `cached_at_unix_seconds` (NOT
+    /// `projected_at_unix_seconds`); the latter is the timestamp of the
+    /// last transfer event and would corrupt the TTL semantics.
+    pub fn get(&mut self, key: &CacheKey, now_unix_seconds: i64) -> Option<VaultBalanceProjection> {
         if let Some(entry) = self.entries.get(key) {
-            if now_unix - entry.cached_at_unix_seconds <= self.ttl_seconds {
+            // `checked_sub` so a clock skew (now < cached_at) is treated
+            // as a fresh entry, NOT silently swallowed as `unwrap_or(0)`.
+            let elapsed = now_unix_seconds
+                .checked_sub(entry.cached_at_unix_seconds)
+                .unwrap_or(0);
+            if elapsed <= self.ttl_seconds {
                 return Some(entry.projection.clone());
             }
         }
@@ -398,11 +409,11 @@ mod tests {
             registry_snapshot_epoch: 0,
             source_kind: ProjectionSource::Cache,
         };
-        cache.put(k, proj.clone());
-        assert!(cache.get(&k).is_some());
-        assert!(cache.get(&k).is_some());
+        cache.put(k, proj.clone(), 1_700_000_000);
+        assert!(cache.get(&k, 1_700_000_000).is_some());
+        assert!(cache.get(&k, 1_700_000_001).is_some());
         cache.invalidate(&k);
-        assert!(cache.get(&k).is_none());
+        assert!(cache.get(&k, 1_700_000_001).is_none());
     }
 
     #[test]
@@ -422,11 +433,11 @@ mod tests {
             registry_snapshot_epoch: 0,
             source_kind: ProjectionSource::Cache,
         };
-        cache.put(k, proj.clone());
+        cache.put(k, proj.clone(), 1_700_000_000);
         // TTL 1s — entry should be retrievable immediately
         let mut cache2 = VaultBalanceCache::new(0); // clamped to 1
-        cache2.put(k, proj);
-        assert!(cache2.get(&k).is_some());
+        cache2.put(k, proj, 1_700_000_000);
+        assert!(cache2.get(&k, 1_700_000_000).is_some());
     }
 
     #[test]
@@ -488,6 +499,7 @@ mod tests {
             &VaultId::from_bytes([2u8; 32]),
             &AssetId::from_bytes([3u8; 32]),
             &log,
+            1_700_000_000,
         )
         .unwrap_err();
         assert!(
@@ -546,6 +558,7 @@ mod tests {
             &VaultId::from_bytes([2u8; 32]),
             &AssetId::from_bytes([3u8; 32]),
             &NegativeBalanceLog,
+            1_700_000_000,
         )
         .unwrap();
         assert_eq!(
@@ -613,6 +626,7 @@ mod tests {
             &VaultId::from_bytes([2u8; 32]),
             &AssetId::from_bytes([3u8; 32]),
             &ScaleMismatchLog,
+            1_700_000_000,
         )
         .unwrap();
         assert_eq!(
@@ -688,7 +702,6 @@ mod tests {
     /// to force each boundary state.
     #[test]
     fn tv_vp6_ttl_boundary_one_past_evicts() {
-        use std::time::{SystemTime, UNIX_EPOCH};
         let k = CacheKey::new(
             ChainId::from_bytes([1u8; 32]),
             VaultId::from_bytes([2u8; 32]),
@@ -705,11 +718,9 @@ mod tests {
             registry_snapshot_epoch: 0,
             source_kind: ProjectionSource::Cache,
         };
-        cache.put(k, proj);
-        let now_unix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        // Anchor "now" at 2_000_000_000 so the boundary is deterministic.
+        let now_unix: i64 = 2_000_000_000;
+        cache.put(k, proj, now_unix);
         // Force 1-second-past-boundary: now - cached_at == ttl + 1 →
         // MUST evict.
         if let Some(entry) = cache.entries.get_mut(&k) {
@@ -718,7 +729,7 @@ mod tests {
             panic!("entry MUST be present immediately after put()");
         }
         assert!(
-            cache.get(&k).is_none(),
+            cache.get(&k, now_unix).is_none(),
             "entry at TTL + 1 second MUST be evicted (now - cached_at > ttl_seconds)"
         );
     }
@@ -729,7 +740,6 @@ mod tests {
     /// `<=` check). A regression to `<` would evict one second early.
     #[test]
     fn tv_vp7_ttl_exact_boundary_served() {
-        use std::time::{SystemTime, UNIX_EPOCH};
         let k = CacheKey::new(
             ChainId::from_bytes([1u8; 32]),
             VaultId::from_bytes([2u8; 32]),
@@ -746,11 +756,9 @@ mod tests {
             registry_snapshot_epoch: 0,
             source_kind: ProjectionSource::Cache,
         };
-        cache.put(k, proj);
-        let now_unix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        // Anchor "now" at 2_000_000_000 so the boundary is deterministic.
+        let now_unix: i64 = 2_000_000_000;
+        cache.put(k, proj, now_unix);
         // Force exact-boundary: now - cached_at == ttl.
         if let Some(entry) = cache.entries.get_mut(&k) {
             entry.cached_at_unix_seconds = now_unix - ttl;
@@ -758,7 +766,7 @@ mod tests {
             panic!("entry MUST be present immediately after put()");
         }
         assert!(
-            cache.get(&k).is_some(),
+            cache.get(&k, now_unix).is_some(),
             "entry at exact TTL boundary MUST still be served (now - cached_at == ttl_seconds, inclusive)"
         );
     }

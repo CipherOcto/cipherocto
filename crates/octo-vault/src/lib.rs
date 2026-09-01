@@ -65,11 +65,18 @@ pub mod event_log_producer;
 // Mission B §6 substrate: per-process cache invalidation subscriber.
 pub mod cache_subscriber;
 // Mission 0011-e-vault-substrate-additions substrate (RFC-0011-e
-// §Substrate Additions): `VaultSummary`, `TransferHandle`,
-// `TransferStatus`, `VaultOwnerIndex`, `list_owned`,
-// `project_vault_balance` (canonical 7-param SUM projection),
-// `initiate_transfer`.
+// §Substrate Additions): types + port + substrate fns split into focused
+// sibling modules per Wave 1.5 hygiene callout (767-line
+// `vault_operations.rs` crossed the per-module size threshold). Public
+// surface is preserved via re-exports below — existing
+// `octo_vault::TransferHandle` etc. import paths keep working.
+pub mod nonce;
+pub mod transfer_handle;
+pub mod vault_balance_proj;
+pub mod vault_initiate;
 pub mod vault_operations;
+pub mod vault_owner;
+pub mod vault_summary;
 // Mission `producer-wrapper-consumer-wiring` sub-step 6: Layer B test-only
 // reusable fixtures (StubTransferEventLog / StubEmitter / StubVaultAssetResolver).
 // Gated behind `testing` feature (R1 layer-direction/api-surface fix:
@@ -98,16 +105,43 @@ pub use cache_subscriber::{
     VaultProjectionInvalidationSubscriber,
 };
 // Mission 0011-e-vault-substrate-additions substrate re-exports
-// (RFC-0011-e §Substrate Additions).
-pub use vault_operations::{
-    initiate_transfer, list_owned, project_vault_balance, TransferHandle, TransferStatus,
-    VaultError as VaultOperationsError, VaultOwnerIndex, VaultSummary,
-};
+// (RFC-0011-e §Substrate Additions). Re-exported from the focused
+// sibling modules — public surface is unchanged.
+pub use transfer_handle::{TransferHandle, TransferStatus};
+pub use vault_balance_proj::project_vault_balance;
+pub use vault_initiate::initiate_transfer;
+pub use vault_owner::{list_owned, VaultError as VaultOperationsError, VaultOwnerIndex};
+pub use vault_summary::VaultSummary;
+// `vault_operations` remains `pub mod` (above) so its `tests` submodule
+// still compiles; the module body itself is a thin re-export surface —
+// see `vault_operations.rs` for the canonical types.
 // Mission `producer-wrapper-consumer-wiring` sub-step 6 re-exports.
 // Gated behind the `testing` feature — production builds never see the
 // stubs. R1 layer-direction/api-surface fix.
 #[cfg(any(test, feature = "testing"))]
 pub use testing::{StubEmitter, StubTransferEventLog, StubVaultAssetResolver};
+
+/// Test-only helper: reset the process-global substrate-local
+/// `VaultBalanceCache` to an empty state.
+///
+/// Exposed via the `testing` feature flag (production builds never
+/// see this entry point). The substrate cache is a module-level
+/// `OnceLock<Mutex<...>>` per RFC-0960-v37 §2.3 — shared
+/// process-wide across all callers — so lib tests that assert
+/// cache-state MUST call this helper first to avoid cross-test
+/// contamination (per Wave 1.5 fix 1: `tv_vlt5_cache_hit_returns_cache_source_kind`
+/// was leaking state from prior tests via the shared static).
+///
+/// # Safety
+///
+/// Calling this in production code is a footgun — a stale cache hit
+/// survives any concurrent caller that already observed a populated
+/// entry. The `#[cfg(feature = "testing")]` gate keeps the symbol
+/// out of release builds entirely.
+#[cfg(any(test, feature = "testing"))]
+pub fn reset_substrate_cache_for_test() {
+    crate::vault_balance_proj::reset_substrate_cache_for_test()
+}
 
 // Mission D substrate re-exports: traits + newtypes live in
 // octo-cap-macaroon (Layer A frozen substrate per RFC-0105

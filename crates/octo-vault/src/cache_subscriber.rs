@@ -400,9 +400,9 @@ mod tests {
         // Pre-fill with 3 entries.
         {
             let mut g = cache.lock().unwrap_or_else(PoisonError::into_inner);
-            g.put(sample_cache_key(1), sample_projection());
-            g.put(sample_cache_key(2), sample_projection());
-            g.put(sample_cache_key(3), sample_projection());
+            g.put(sample_cache_key(1), sample_projection(), 1_700_000_000);
+            g.put(sample_cache_key(2), sample_projection(), 1_700_000_000);
+            g.put(sample_cache_key(3), sample_projection(), 1_700_000_000);
             assert_eq!(g.len(), 3);
         }
         let h = spawn_cache_subscriber(cache.clone(), sub.clone());
@@ -453,9 +453,9 @@ mod tests {
         // assertion has substance (R1 fix).
         {
             let mut g = cache.lock().unwrap_or_else(PoisonError::into_inner);
-            g.put(sample_cache_key(1), sample_projection());
-            g.put(sample_cache_key(2), sample_projection());
-            g.put(sample_cache_key(3), sample_projection());
+            g.put(sample_cache_key(1), sample_projection(), 1_700_000_000);
+            g.put(sample_cache_key(2), sample_projection(), 1_700_000_000);
+            g.put(sample_cache_key(3), sample_projection(), 1_700_000_000);
             assert_eq!(g.len(), 3);
         }
         // Pre-poison the mutex by panicking inside a guard (test-only).
@@ -499,9 +499,9 @@ mod tests {
         let cache = Arc::new(Mutex::new(VaultBalanceCache::new(60)));
         {
             let mut g = cache.lock().unwrap_or_else(PoisonError::into_inner);
-            g.put(sample_cache_key(10), sample_projection());
-            g.put(sample_cache_key(20), sample_projection());
-            g.put(sample_cache_key(30), sample_projection());
+            g.put(sample_cache_key(10), sample_projection(), 1_700_000_000);
+            g.put(sample_cache_key(20), sample_projection(), 1_700_000_000);
+            g.put(sample_cache_key(30), sample_projection(), 1_700_000_000);
             assert_eq!(g.len(), 3);
         }
         let h = spawn_cache_subscriber(cache.clone(), sub.clone());
@@ -654,7 +654,7 @@ mod tests {
         let cache = Arc::new(Mutex::new(VaultBalanceCache::new(60)));
         {
             let mut g = cache.lock().unwrap_or_else(PoisonError::into_inner);
-            g.put(sample_cache_key(3), sample_projection());
+            g.put(sample_cache_key(3), sample_projection(), 1_700_000_000);
             assert_eq!(g.len(), 1);
         }
         let h = spawn_cache_subscriber_with_trust_list(cache.clone(), sub.clone(), tl.clone());
@@ -695,7 +695,7 @@ mod tests {
         let cache = Arc::new(Mutex::new(VaultBalanceCache::new(60)));
         {
             let mut g = cache.lock().unwrap_or_else(PoisonError::into_inner);
-            g.put(sample_cache_key(32), sample_projection());
+            g.put(sample_cache_key(32), sample_projection(), 1_700_000_000);
             assert_eq!(g.len(), 1);
         }
         let h = spawn_cache_subscriber_with_trust_list(cache.clone(), sub.clone(), tl.clone());
@@ -729,7 +729,7 @@ mod tests {
         let cache = Arc::new(Mutex::new(VaultBalanceCache::new(60)));
         {
             let mut g = cache.lock().unwrap_or_else(PoisonError::into_inner);
-            g.put(sample_cache_key(33), sample_projection());
+            g.put(sample_cache_key(33), sample_projection(), 1_700_000_000);
             assert_eq!(g.len(), 1);
         }
         let h = spawn_cache_subscriber_with_trust_list(cache.clone(), sub.clone(), tl.clone());
@@ -767,7 +767,7 @@ mod tests {
         let cache = Arc::new(Mutex::new(VaultBalanceCache::new(60)));
         {
             let mut g = cache.lock().unwrap_or_else(PoisonError::into_inner);
-            g.put(sample_cache_key(34), sample_projection());
+            g.put(sample_cache_key(34), sample_projection(), 1_700_000_000);
             assert_eq!(g.len(), 1);
         }
         let h = spawn_cache_subscriber_with_trust_list(cache.clone(), sub.clone(), tl.clone());
@@ -801,7 +801,7 @@ mod tests {
         let cache = Arc::new(Mutex::new(VaultBalanceCache::new(60)));
         {
             let mut g = cache.lock().unwrap_or_else(PoisonError::into_inner);
-            g.put(sample_cache_key(31), sample_projection());
+            g.put(sample_cache_key(31), sample_projection(), 1_700_000_000);
             assert_eq!(g.len(), 1);
         }
         let h = spawn_cache_subscriber_with_trust_list(cache.clone(), sub.clone(), tl.clone());
@@ -833,7 +833,7 @@ mod tests {
         let cache = Arc::new(Mutex::new(VaultBalanceCache::new(60)));
         {
             let mut g = cache.lock().unwrap_or_else(PoisonError::into_inner);
-            g.put(sample_cache_key(35), sample_projection());
+            g.put(sample_cache_key(35), sample_projection(), 1_700_000_000);
             assert_eq!(g.len(), 1);
         }
         let h = spawn_cache_subscriber_with_trust_list(cache.clone(), sub.clone(), tl.clone());
@@ -900,7 +900,7 @@ mod tests {
         let cache = Arc::new(Mutex::new(VaultBalanceCache::new(60)));
         {
             let mut g = cache.lock().unwrap_or_else(PoisonError::into_inner);
-            g.put(sample_cache_key(37), sample_projection());
+            g.put(sample_cache_key(37), sample_projection(), 1_700_000_000);
             assert_eq!(g.len(), 1);
         }
         let h = spawn_cache_subscriber_with_trust_list(cache.clone(), sub.clone(), tl.clone());

@@ -39,7 +39,8 @@
 //! trust a `from_bytes` round-trip, before authorizing an action.
 
 #![forbid(unsafe_code)]
-#![warn(missing_docs)]
+#![deny(missing_docs)]
+#![deny(rust_2018_idioms)]
 
 use std::sync::Arc;
 

@@ -26,14 +26,6 @@ serde = { version = "1.0", features = ["derive"] }
 # (with = "String")]` translation.
 schemars = "0.8"
 # Peer-table persistence (`$OCTO_HOME/mesh/peers.toml`).
-# Layer-model note (Wave 1.5 fix 7): peer-table persistence is
-# currently inlined in the Layer C substrate. The long-term move
-# is to lift persistence behind a `MeshPeerTableStore` port trait
-# implemented by an `octo-storage-core` Layer D adapter (mirrors
-# the Layer A→B→C→D discipline per
-# `[[cipherocto-design-principles]]` "no premature coupling"). For
-# Phase 1 the `toml` + `dirs` deps stay here; the dep split is
-# deferred to a follow-on storage-core mission.
 toml = "0.8"
 # Unix epoch timestamps.
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }

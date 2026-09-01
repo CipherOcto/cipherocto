@@ -30,6 +30,8 @@ schemars = "0.8"
 thiserror = "1.0"
 # Clap derive for CLI dispatch enum (M6 wires Octo::Role)
 clap = { version = "4.0", features = ["derive"] }
+# Hashing for canonical binding envelope (RFC-0104 DFP)
+blake3 = "1.5"
 
 [dev-dependencies]
 # Phase 1 acceptance requires no external dev deps; serde_json only

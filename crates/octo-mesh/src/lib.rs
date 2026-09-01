@@ -15,9 +15,13 @@
 
 #![deny(missing_docs)]
 
+pub mod endpoint;
 pub mod error;
 pub mod peer;
+pub mod peer_record;
+pub mod peer_table;
 pub mod rpc;
+pub mod trust_level;
 
 pub use error::MeshError;
 pub use peer::{

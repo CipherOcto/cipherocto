@@ -128,11 +128,16 @@ pub struct RpcRequest<'a> {
 ///   `method`. CLI maps to exit 17 (shared with `InvalidTtlHops`).
 /// - `MeshError::RpcTimeout` when the reply does not arrive within
 ///   `timeout_ms`. CLI maps to exit 20.
-#[allow(clippy::unused_async)] // async signature reserved for follow-on NodeTransport wiring
-pub async fn rpc_invoke(
-    request: RpcRequest<'_>,
-    timeout_ms: u64,
-) -> Result<RpcCorrelation, MeshError> {
+///
+/// ## Layer discipline (Wave 1.5 fix 8)
+///
+/// Phase 1 stub is sync (`pub fn`, NOT `pub async fn`) per
+/// `[[cipherocto-design-principles]]` Layer C: the substrate MUST NOT
+/// own the async runtime. The follow-on `NodeTransport::send_best`
+/// (RFC-0870k AC-6) is `async` at the **trait impl** site (Layer D
+/// transport adapter); the substrate-call site here stays sync and
+/// returns the correlation record for the adapter to dispatch.
+pub fn rpc_invoke(request: RpcRequest<'_>, timeout_ms: u64) -> Result<RpcCorrelation, MeshError> {
     // Step 1: canonical DID shape check (RFC-0010). The CLI also
     // gates this at the dispatch boundary; the substrate re-validates
     // for defense-in-depth (the CLI is not the only caller — a future
@@ -201,17 +206,15 @@ mod tests {
             .to_owned()
     }
 
-    #[tokio::test]
-    async fn rpc_invoke_accepts_canonical_did() {
+    #[test]
+    fn rpc_invoke_accepts_canonical_did() {
         let peer = canonical_did_str();
         let req = RpcRequest {
             peer_did: &peer,
             method: "ping",
             params: &json!({}),
         };
-        let out = rpc_invoke(req, 30_000)
-            .await
-            .expect("canonical DID accepted");
+        let out = rpc_invoke(req, 30_000).expect("canonical DID accepted");
         // Phase 1 placeholder: status=preview + response_payload=None.
         assert_eq!(out.status, "preview");
         assert!(out.response_payload.is_none());
@@ -219,36 +222,32 @@ mod tests {
         assert_ne!(out.request_envelope_id, [0u8; 32]);
     }
 
-    #[tokio::test]
-    async fn rpc_invoke_rejects_legacy_did() {
+    #[test]
+    fn rpc_invoke_rejects_legacy_did() {
         let legacy = format!("did:octo:b{}", "a".repeat(62));
         let req = RpcRequest {
             peer_did: &legacy,
             method: "ping",
             params: &json!({}),
         };
-        let err = rpc_invoke(req, 30_000)
-            .await
-            .expect_err("legacy DID must fail");
+        let err = rpc_invoke(req, 30_000).expect_err("legacy DID must fail");
         assert!(matches!(err, MeshError::InvalidDidShape(_)), "{err:?}");
     }
 
-    #[tokio::test]
-    async fn rpc_invoke_rejects_empty_method() {
+    #[test]
+    fn rpc_invoke_rejects_empty_method() {
         let peer = canonical_did_str();
         let req = RpcRequest {
             peer_did: &peer,
             method: "",
             params: &json!({}),
         };
-        let err = rpc_invoke(req, 30_000)
-            .await
-            .expect_err("empty method must fail");
+        let err = rpc_invoke(req, 30_000).expect_err("empty method must fail");
         assert!(matches!(err, MeshError::UnknownMethod { .. }), "{err:?}");
     }
 
-    #[tokio::test]
-    async fn rpc_invoke_request_envelope_id_is_deterministic() {
+    #[test]
+    fn rpc_invoke_request_envelope_id_is_deterministic() {
         let peer = canonical_did_str();
         let req1 = RpcRequest {
             peer_did: &peer,
@@ -260,8 +259,8 @@ mod tests {
             method: "ping",
             params: &json!({}),
         };
-        let a = rpc_invoke(req1, 30_000).await.unwrap();
-        let b = rpc_invoke(req2, 30_000).await.unwrap();
+        let a = rpc_invoke(req1, 30_000).unwrap();
+        let b = rpc_invoke(req2, 30_000).unwrap();
         // Class A determinism (RFC-0008): same input triple
         // (peer_did, method, params) → same envelope_id across runs.
         assert_eq!(a.request_envelope_id, b.request_envelope_id);

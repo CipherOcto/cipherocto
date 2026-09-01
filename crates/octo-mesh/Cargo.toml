@@ -26,6 +26,14 @@ serde = { version = "1.0", features = ["derive"] }
 # (with = "String")]` translation.
 schemars = "0.8"
 # Peer-table persistence (`$OCTO_HOME/mesh/peers.toml`).
+# Layer-model note (Wave 1.5 fix 7): peer-table persistence is
+# currently inlined in the Layer C substrate. The long-term move
+# is to lift persistence behind a `MeshPeerTableStore` port trait
+# implemented by an `octo-storage-core` Layer D adapter (mirrors
+# the Layer A→B→C→D discipline per
+# `[[cipherocto-design-principles]]` "no premature coupling"). For
+# Phase 1 the `toml` + `dirs` deps stay here; the dep split is
+# deferred to a follow-on storage-core mission.
 toml = "0.8"
 # Unix epoch timestamps.
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
@@ -38,10 +46,6 @@ hex = "0.4"
 # JSON value type carried by the `RpcRequest` / `RpcCorrelation`
 # surface (RFC-0011-f `[ADD]` #5).
 serde_json = "1.0"
-# Async runtime for the rpc substrate placeholder; reserved for the
-# follow-on `NodeTransport::send_best` request/reply wiring
-# (RFC-0870k AC-6). Phase 1 rpc_invoke is `async` but does not block.
-tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 
 [dev-dependencies]
 tempfile = "3"

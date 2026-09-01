@@ -5,9 +5,16 @@
 //! functions live here so the deterministic BLAKE3 derivations stay
 //! co-located and the substrate envelope builder (`initiate_transfer`)
 //! consumes them via plain fn calls.
+//!
+//! ## Layer model
+//!
+//! Routes through `octo_cap_macaroon::blake3_hash` (Layer A frozen
+//! substrate per `cipherocto-design-principles`) — no direct `blake3`
+//! crate dep in this crate's production source. The input bytes are
+//! concatenated in the canonical order (domain-separator-prefixed
+//! raw concatenation, no length prefixes) and hashed in one shot.
 
-use blake3::Hasher;
-use octo_cap_macaroon::{AssetId, VaultId};
+use octo_cap_macaroon::{blake3_hash, AssetId, VaultId};
 
 /// Derive the substrate-handle identifier (deterministic per inputs).
 ///
@@ -23,17 +30,17 @@ pub fn handle_id(
     asset_id: &AssetId,
     nonce: &[u8; 32],
 ) -> [u8; 32] {
-    let mut h = Hasher::new();
-    h.update(b"octo:transfer-handle:v1:");
-    h.update(vault_id.as_bytes());
-    h.update(dest_vault_id.as_bytes());
-    h.update(&amount_dqa_micros.to_be_bytes());
-    h.update(asset_id.as_bytes());
-    h.update(nonce);
-    let bytes = h.finalize();
-    let mut out = [0u8; 32];
-    out.copy_from_slice(bytes.as_bytes());
-    out
+    // Concatenate inputs in canonical order — same byte order the
+    // streaming Hasher would feed to `update()`.
+    let mut input: Vec<u8> =
+        Vec::with_capacity(b"octo:transfer-handle:v1:".len() + 32 + 32 + 8 + 32 + 32);
+    input.extend_from_slice(b"octo:transfer-handle:v1:");
+    input.extend_from_slice(vault_id.as_bytes());
+    input.extend_from_slice(dest_vault_id.as_bytes());
+    input.extend_from_slice(&amount_dqa_micros.to_be_bytes());
+    input.extend_from_slice(asset_id.as_bytes());
+    input.extend_from_slice(nonce);
+    blake3_hash(&input)
 }
 
 /// Derive the substrate-handle nonce (BLAKE3 of substrate inputs).
@@ -52,15 +59,13 @@ pub fn handle_nonce(
     asset_id: &AssetId,
     current_unix_seconds: i64,
 ) -> [u8; 32] {
-    let mut h = Hasher::new();
-    h.update(b"octo:transfer-nonce:v1:");
-    h.update(vault_id.as_bytes());
-    h.update(dest_vault_id.as_bytes());
-    h.update(&amount_dqa_micros.to_be_bytes());
-    h.update(asset_id.as_bytes());
-    h.update(&current_unix_seconds.to_be_bytes());
-    let bytes = h.finalize();
-    let mut out = [0u8; 32];
-    out.copy_from_slice(bytes.as_bytes());
-    out
+    let mut input: Vec<u8> =
+        Vec::with_capacity(b"octo:transfer-nonce:v1:".len() + 32 + 32 + 8 + 32 + 8);
+    input.extend_from_slice(b"octo:transfer-nonce:v1:");
+    input.extend_from_slice(vault_id.as_bytes());
+    input.extend_from_slice(dest_vault_id.as_bytes());
+    input.extend_from_slice(&amount_dqa_micros.to_be_bytes());
+    input.extend_from_slice(asset_id.as_bytes());
+    input.extend_from_slice(&current_unix_seconds.to_be_bytes());
+    blake3_hash(&input)
 }

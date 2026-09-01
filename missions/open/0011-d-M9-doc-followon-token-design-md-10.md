@@ -11,12 +11,12 @@ metadata:
     require: "first dual-stake role addition post-Phase 1"
     released_version: TBD
   depends_on: []
-status: Open
+status: Claimed
 ---
 
 # 0011-d-M9-doc-followon-token-design-md-10 — `token-design.md` §10 cross-reference per RFC-0011-d §Mission Decomposition M9
 
-**Status:** Open (2026-08-31) — release-gated on first dual-stake role addition post-Phase 1.
+**Status:** Claimed 2026-09-01 by @mmacedoeu — release-gated on first dual-stake role addition post-Phase 1.
 **Substrate:** `docs/04-tokenomics/token-design.md` (already exists per project docs structure)
 **Parent:** RFC-0011-d
 **Depends on:** (none — pure docs per RFC §Mission Decomposition M9 row)
@@ -24,7 +24,7 @@ status: Open
 
 ## Status
 
-Open (2026-08-31). Ninth of 9 Phase 1 atomic missions. Pure-doc follow-on — no code changes. Per RFC §Mission Decomposition M9 row, M9 is gated on the FIRST dual-stake role addition post-Phase 1 (not on any other mission).
+Claimed (2026-09-01) by @mmacedoeu. Ninth of 9 Phase 1 atomic missions. Pure-doc follow-on — no code changes. Per RFC §Mission Decomposition M9 row, M9 is gated on the FIRST dual-stake role addition post-Phase 1 (not on any other mission).
 
 ## Substrate (RFC-0011-d)
 
@@ -112,4 +112,4 @@ Doc-only — no API impact. NO migration concerns.
 
 ## Claimant
 
-@unassigned (mission lifecycle: Open — release-gated on first dual-stake role addition post-Phase 1)
+@mmacedoeu (mission lifecycle: Claimed 2026-09-01)

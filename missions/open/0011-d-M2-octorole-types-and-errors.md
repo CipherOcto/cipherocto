@@ -10,19 +10,19 @@ metadata:
   depends_on:
     - RFC-0011-d
     - mission 0011-d-M1-octorole-crate-skeleton
-status: Open
+status: Claimed
 ---
 
 # 0011-d-M2-octorole-types-and-errors — Substrate types + errors per RFC-0011-d §7.4
 
-**Status:** Open (2026-08-31) — unblocked.
+**Status:** Claimed 2026-09-01 by @mmacedoeu — unblocked.
 **Substrate:** RFC-0011-d §7.4 substrate types
 **Parent:** RFC-0011-d
 **Depends on:** `0011-d-M1-octorole-crate-skeleton`
 
 ## Status
 
-Open (2026-08-31). Second of 9 Phase 1 atomic missions. Lands the substrate type scaffolding that M3 (`list/show`) and M4 (`select`) consume.
+Claimed (2026-09-01) by @mmacedoeu. Second of 9 Phase 1 atomic missions. Lands the substrate type scaffolding that M3 (`list/show`) and M4 (`select`) consume.
 
 ## Substrate (RFC-0011-d)
 
@@ -100,4 +100,4 @@ Additive: new types. No existing crates modified. No `schema_version` bumps. No 
 
 ## Claimant
 
-@unassigned (mission lifecycle: Open)
+@mmacedoeu (mission lifecycle: Claimed 2026-09-01)

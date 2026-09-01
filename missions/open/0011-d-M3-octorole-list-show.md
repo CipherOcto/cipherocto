@@ -10,19 +10,19 @@ metadata:
   depends_on:
     - RFC-0011-d
     - mission 0011-d-M2-octorole-types-and-errors
-status: Open
+status: Claimed
 ---
 
 # 0011-d-M3-octorole-list-show — Read-side substrate entrypoints per RFC-0011-d §Mission Decomposition M3
 
-**Status:** Open (2026-08-31) — unblocked.
+**Status:** Claimed 2026-09-01 by @mmacedoeu — unblocked.
 **Substrate:** RFC-0011-d §Mission Decomposition M3 row; §7.4 Substrate `[ADD]` signatures — `octo_role::list` + `octo_role::show`
 **Parent:** RFC-0011-d
 **Depends on:** `0011-d-M2-octorole-types-and-errors`
 
 ## Status
 
-Open (2026-08-31). Third of 9 Phase 1 atomic missions. Lands the read-side substrate entrypoints that CLI `list` + `show` subcommands will call in M6. 7 Phase 1 role slugs registered: `builder`, `provider`, `storage`, `bandwidth`, `orchestrator`, `recorder`, `wallet`.
+Claimed (2026-09-01) by @mmacedoeu. Third of 9 Phase 1 atomic missions. Lands the read-side substrate entrypoints that CLI `list` + `show` subcommands will call in M6. 7 Phase 1 role slugs registered: `builder`, `provider`, `storage`, `bandwidth`, `orchestrator`, `recorder`, `wallet`.
 
 ## Substrate (RFC-0011-d)
 
@@ -133,4 +133,4 @@ Additive: new public functions. No existing substrate crates modified. No `schem
 
 ## Claimant
 
-@unassigned (mission lifecycle: Open)
+@mmacedoeu (mission lifecycle: Claimed 2026-09-01)

@@ -11,19 +11,19 @@ metadata:
     - RFC-0011-d
     - mission 0011-d-M4-octorole-select-with-stoolap-tx
     - mission 0011-d-M5-octowallet-nonce-counter
-status: Open
+status: Claimed
 ---
 
 # 0011-d-M6-octocli-role-commands — `octo role {list,show,select}` clap subcommands per RFC-0011-d §7.4
 
-**Status:** Open (2026-08-31) — unblocked.
+**Status:** Claimed 2026-09-01 by @mmacedoeu — unblocked.
 **Substrate:** RFC-0011-d §7.4 CLI surface (operator UX)
 **Parent:** RFC-0011-d
 **Depends on:** `0011-d-M4-octorole-select-with-stoolap-tx` + `0011-d-M5-octowallet-nonce-counter`
 
 ## Status
 
-Open (2026-08-31). Sixth of 9 Phase 1 atomic missions. Wires the CLI surface for the 3 role subcommands.
+Claimed (2026-09-01) by @mmacedoeu. Sixth of 9 Phase 1 atomic missions. Wires the CLI surface for the 3 role subcommands.
 
 ## Substrate (RFC-0011-d)
 
@@ -109,4 +109,4 @@ Additive: new subcommand. NO existing CLI commands modified. NO `schema_version`
 
 ## Claimant
 
-@unassigned (mission lifecycle: Open)
+@mmacedoeu (mission lifecycle: Claimed 2026-09-01)

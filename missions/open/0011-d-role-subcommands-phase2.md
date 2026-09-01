@@ -17,12 +17,12 @@ metadata:
     - RFC-0855p-e (must be Accepted)
     - mission 0011-d-M10-phase2-coordinator-domain-coordinator
     - mission 0011-d-M11-phase2-domain-coordinator-platform-binding
-status: Open
+status: Claimed
 ---
 
 # 0011-d-role-subcommands-phase2 — Role subcommands Phase 2 (select coordinator + domain-coordinator)
 
-**Status:** Open — release-gated on RFC-0855p-d AND RFC-0855p-e Accepted (2026-08-31)
+**Status:** Claimed 2026-09-01 by @mmacedoeu — release-gated on RFC-0855p-d AND RFC-0855p-e Accepted (2026-08-31)
 **Substrate:** RFC-0011-d §Specification §7.2 `octo role select <role>` (Phase 2 row); §Implementation Phases Phase 2; §Compatibility partial-prereq caveat
 **Parent:** RFC-0011-d
 **Depends on:**
@@ -33,7 +33,7 @@ status: Open
 
 ## Status
 
-Open (2026-08-31) — release-gated on RFC-0855p-d AND RFC-0855p-e Accepted. Until both prereq RFCs reach Accepted, `role select coordinator` and `role select domain-coordinator` return exit 33 (`RoleNotSelectable` + prereq RFC names in error message) per RFC-0011-d §Implementation Phases Phase 2 + §Compatibility partial-prereq caveat + Appendix E Partial-prereq flow.
+Claimed (2026-09-01) by @mmacedoeu — release-gated on RFC-0855p-d AND RFC-0855p-e Accepted. Until both prereq RFCs reach Accepted, `role select coordinator` and `role select domain-coordinator` return exit 33 (`RoleNotSelectable` + prereq RFC names in error message) per RFC-0011-d §Implementation Phases Phase 2 + §Compatibility partial-prereq caveat + Appendix E Partial-prereq flow.
 
 ## Atomic Decomposition (claim units)
 
@@ -231,4 +231,4 @@ Per the `release_gate` block in YAML frontmatter, this mission is release-gated 
 
 ## Claimant
 
-@unassigned (mission lifecycle: Open — release-gated on RFC-0855p-d AND RFC-0855p-e Accepted)
+@mmacedoeu (mission lifecycle: Claimed 2026-09-01)

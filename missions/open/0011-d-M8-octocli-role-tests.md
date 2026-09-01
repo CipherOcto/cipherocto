@@ -11,19 +11,19 @@ metadata:
     - RFC-0011-d
     - mission 0011-d-M6-octocli-role-commands
     - mission 0011-d-M7-octocli-role-error-variants
-status: Open
+status: Claimed
 ---
 
 # 0011-d-M8-octocli-role-tests — Test vectors per RFC-0011-d §11 canonical distribution
 
-**Status:** Open (2026-08-31) — unblocked.
+**Status:** Claimed 2026-09-01 by @mmacedoeu — unblocked.
 **Substrate:** RFC-0011-d §11 Test Vectors + RFC-0011 §Output Envelope + RFC-0011-d §Mission Decomposition M8 row
 **Parent:** RFC-0011-d
 **Depends on:** `0011-d-M6-octocli-role-commands` + `0011-d-M7-octocli-role-error-variants`
 
 ## Status
 
-Open (2026-08-31). Eighth of 9 Phase 1 atomic missions. Lands the 11 canonical test vectors per RFC §11 + `assert_cmd` integration tests.
+Claimed (2026-09-01) by @mmacedoeu. Eighth of 9 Phase 1 atomic missions. Lands the 11 canonical test vectors per RFC §11 + `assert_cmd` integration tests.
 
 ## Substrate (RFC-0011-d)
 
@@ -195,4 +195,4 @@ Additive: 11 new test vectors + 1 new integration test file. NO existing tests m
 
 ## Claimant
 
-@unassigned (mission lifecycle: Open)
+@mmacedoeu (mission lifecycle: Claimed 2026-09-01)

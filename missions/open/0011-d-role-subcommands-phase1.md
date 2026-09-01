@@ -22,12 +22,12 @@ metadata:
     - mission 0011-d-M7-octocli-role-error-variants
     - mission 0011-d-M8-octocli-role-tests
     - mission 0011-d-M9-doc-followon-token-design-md-10
-status: Open
+status: Claimed
 ---
 
 # 0011-d-role-subcommands-phase1 — Role subcommands Phase 1 (list/show/select, 7 base roles)
 
-**Status:** Open — unblocked (2026-08-31)
+**Status:** Claimed 2026-09-01 by @mmacedoeu — unblocked (2026-08-31)
 **Substrate:** RFC-0011-d §Specification §7.1–§7.7 (role subcommand group)
 **Parent:** RFC-0011-d
 **Depends on:**
@@ -39,7 +39,7 @@ status: Open
 
 ## Status
 
-Open (2026-08-31) — unblocked. Phase 1 of the RFC-0011-d amendment; covers 7 base roles (builder, provider, storage, bandwidth, orchestrator, recorder, wallet). Coordinator + domain-coordinator subcommands are Phase 2 (separate mission `0011-d-role-subcommands-phase2`, gated on RFC-0855p-d AND RFC-0855p-e Accepted).
+Claimed (2026-09-01) by @mmacedoeu — unblocked. Phase 1 of the RFC-0011-d amendment; covers 7 base roles (builder, provider, storage, bandwidth, orchestrator, recorder, wallet). Coordinator + domain-coordinator subcommands are Phase 2 (separate mission `0011-d-role-subcommands-phase2`, gated on RFC-0855p-d AND RFC-0855p-e Accepted).
 
 ## Atomic Decomposition (claim units)
 
@@ -246,4 +246,4 @@ N/A — Phase 1 is unblocked per RFC-0011-d §Implementation Phases Phase 1. Coo
 
 ## Claimant
 
-@unassigned (mission lifecycle: Open)
+@mmacedoeu (mission lifecycle: Claimed 2026-09-01)

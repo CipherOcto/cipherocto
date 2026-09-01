@@ -11,19 +11,19 @@ metadata:
     - RFC-0011-d
     - RFC-0900 substrate
     - mission 0011-d-M4-octorole-select-with-stoolap-tx
-status: Open
+status: Claimed
 ---
 
 # 0011-d-M5-octowallet-nonce-counter — Wallet cached projection + `next_nonce_counter` per RFC-0011-d §7.4
 
-**Status:** Open (2026-08-31) — unblocked.
+**Status:** Claimed 2026-09-01 by @mmacedoeu — unblocked.
 **Substrate:** RFC-0011-d §7.4 + F-NEW-3 substrate-truth split
 **Parent:** RFC-0011-d
 **Depends on:** `0011-d-M4-octorole-select-with-stoolap-tx`
 
 ## Status
 
-Open (2026-08-31). Fifth of 9 Phase 1 atomic missions. Per F-NEW-3 substrate-truth split: M4 substrate writes the slash-ledger row (authoritative); M5 adds the WALLET'S CACHED PROJECTION of that record (NOT a new authoritative table).
+Claimed (2026-09-01) by @mmacedoeu. Fifth of 9 Phase 1 atomic missions. Per F-NEW-3 substrate-truth split: M4 substrate writes the slash-ledger row (authoritative); M5 adds the WALLET'S CACHED PROJECTION of that record (NOT a new authoritative table).
 
 ## Substrate (RFC-0011-d)
 
@@ -128,4 +128,4 @@ Additive: new cached projection + new migration + 3 new public functions. NO exi
 
 ## Claimant
 
-@unassigned (mission lifecycle: Open)
+@mmacedoeu (mission lifecycle: Claimed 2026-09-01)

@@ -10,19 +10,19 @@ metadata:
   depends_on:
     - RFC-0011-d
     - mission 0011-d-M6-octocli-role-commands
-status: Open
+status: Claimed
 ---
 
 # 0011-d-M7-octocli-role-error-variants — `OctoCliError` variants for `octo role` per RFC-0011-d §Mission Decomposition M7
 
-**Status:** Open (2026-08-31) — unblocked.
+**Status:** Claimed 2026-09-01 by @mmacedoeu — unblocked.
 **Substrate:** RFC-0011-d §Mission Decomposition M7 row; RFC-0011 §Redaction Layer
 **Parent:** RFC-0011-d
 **Depends on:** `0011-d-M6-octocli-role-commands`
 
 ## Status
 
-Open (2026-08-31). Seventh of 9 Phase 1 atomic missions. Adds the 4 CLI error variants + exit codes for `octo role` subcommands (per RFC §Mission Decomposition M7 row + F-16 reserved exit codes).
+Claimed (2026-09-01) by @mmacedoeu. Seventh of 9 Phase 1 atomic missions. Adds the 4 CLI error variants + exit codes for `octo role` subcommands (per RFC §Mission Decomposition M7 row + F-16 reserved exit codes).
 
 ## Substrate (RFC-0011-d)
 
@@ -126,4 +126,4 @@ Exit codes 31, 32, 33, 35 are NEW codes; exit 34 reserved per F-16 (parent RFC-0
 
 ## Claimant
 
-@unassigned (mission lifecycle: Open)
+@mmacedoeu (mission lifecycle: Claimed 2026-09-01)

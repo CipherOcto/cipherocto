@@ -11,19 +11,19 @@ metadata:
     - RFC-0011-d
     - RFC-0855p-c (must be Accepted)
     - mission 0011-d-M4-octorole-select-with-stoolap-tx
-status: Open
+status: Claimed
 ---
 
 # 0011-d-M11-phase2-domain-coordinator-platform-binding — Phase 2 substrate `bind_domain_coordinator` per RFC-0011-d §Mission Decomposition M11
 
-**Status:** Open (2026-08-31) — GATED.
+**Status:** Claimed 2026-09-01 by @mmacedoeu — GATED.
 **Substrate:** RFC-0011-d §Mission Decomposition M11 row; §7.4 Substrate `[ADD]`; RFC-0855p-c wiring target
 **Parent:** RFC-0011-d
 **Depends on:** RFC-0855p-c Accepted (gate); `0011-d-M4-octorole-select-with-stoolap-tx` (substrate precedent: BEGIN IMMEDIATE + signed envelope + Stoolap)
 
 ## Status
 
-Open (2026-08-31) — **GATED**. Eleventh of 11 atomic missions (9 Phase 1 + 2 Phase 2). M11 substrate-first ordering: M11 must land BEFORE M10 per substrate-first workflow.
+Claimed (2026-09-01) by @mmacedoeu — **GATED**. Eleventh of 11 atomic missions (9 Phase 1 + 2 Phase 2). M11 substrate-first ordering: M11 must land BEFORE M10 per substrate-first workflow.
 
 ## Substrate (RFC-0011-d)
 
@@ -120,4 +120,4 @@ Additive: 1 new public fn on existing `octo-coordinator` crate. NO existing crat
 
 ## Claimant
 
-@unassigned (mission lifecycle: Open — GATED on RFC-0855p-c Accepted)
+@mmacedoeu (mission lifecycle: Claimed 2026-09-01)

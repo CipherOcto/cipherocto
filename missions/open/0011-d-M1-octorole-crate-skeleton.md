@@ -11,19 +11,19 @@ metadata:
     - RFC-0011-d
     - RFC-0900
     - RFC-0855
-status: Open
+status: Claimed
 ---
 
 # 0011-d-M1-octorole-crate-skeleton — Scaffold `crates/octo-role/` crate per RFC-0011-d §7.4
 
-**Status:** Open (2026-08-31) — unblocked.
+**Status:** Claimed 2026-09-01 by @mmacedoeu — unblocked.
 **Substrate:** RFC-0011-d §7.4 Substrate `[ADD]` signatures
 **Parent:** RFC-0011-d (mission `0011-d-role-subcommands-phase1` aggregate; this M1 is the first atomic of 9)
 **Depends on:** none (foundation mission)
 
 ## Status
 
-Open (2026-08-31). Foundation mission for the 9 Phase 1 atomic missions decomposing `0011-d-role-subcommands-phase1`. Lands the empty crate skeleton; M2-M9 add types, entrypoints, CLI binding, errors, tests, doc follow-on.
+Claimed (2026-09-01) by @mmacedoeu. Foundation mission for the 9 Phase 1 atomic missions decomposing `0011-d-role-subcommands-phase1`. Lands the empty crate skeleton; M2-M9 add types, entrypoints, CLI binding, errors, tests, doc follow-on.
 
 ## Substrate (RFC-0011-d)
 
@@ -97,4 +97,4 @@ Additive: new crate, no existing crates modified. No RFC migration etiquette tri
 
 ## Claimant
 
-@unassigned (mission lifecycle: Open)
+@mmacedoeu (mission lifecycle: Claimed 2026-09-01)

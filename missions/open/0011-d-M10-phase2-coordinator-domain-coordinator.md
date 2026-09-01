@@ -13,19 +13,19 @@ metadata:
     - RFC-0855p-e (must be Accepted)
     - mission 0011-d-M6-octocli-role-commands
     - mission 0011-d-M11-phase2-domain-coordinator-platform-binding
-status: Open
+status: Claimed
 ---
 
 # 0011-d-M10-phase2-coordinator-domain-coordinator — Phase 2 `octo role select coordinator` + `domain-coordinator` per RFC-0011-d §Mission Decomposition M10
 
-**Status:** Open (2026-08-31) — GATED.
+**Status:** Claimed 2026-09-01 by @mmacedoeu — GATED.
 **Substrate:** RFC-0011-d §Mission Decomposition M10 row; §Phase 2; §Compatibility partial-prereq caveat
 **Parent:** RFC-0011-d
 **Depends on:** RFC-0855p-d Accepted + RFC-0855p-e Accepted (gate); `0011-d-M6-octocli-role-commands` (Phase 1 surface); `0011-d-M11-phase2-domain-coordinator-platform-binding` (M11 must land FIRST per substrate-first pattern)
 
 ## Status
 
-Open (2026-08-31) — **GATED**. Does NOT claim until RFC-0855p-d + RFC-0855p-e reach Accepted status. Tenth of 11 atomic missions (9 Phase 1 + 2 Phase 2).
+Claimed (2026-09-01) by @mmacedoeu — **GATED**. Does NOT claim until RFC-0855p-d + RFC-0855p-e reach Accepted status. Tenth of 11 atomic missions (9 Phase 1 + 2 Phase 2).
 
 ## Substrate (RFC-0011-d)
 
@@ -130,4 +130,4 @@ Additive: 2 new role_id args + 2 new substrate entrypoints. NO existing CLI comm
 
 ## Claimant
 
-@unassigned (mission lifecycle: Open — GATED on RFC-0855p-d + RFC-0855p-e Accepted)
+@mmacedoeu (mission lifecycle: Claimed 2026-09-01)

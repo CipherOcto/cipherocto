@@ -12,19 +12,19 @@ metadata:
     - RFC-0900 substrate
     - mission 0011-d-M2-octorole-types-and-errors
     - mission 0011-d-M3-octorole-list-show
-status: Open
+status: Claimed
 ---
 
 # 0011-d-M4-octorole-select-with-stoolap-tx — Write-side substrate entrypoint per RFC-0011-d §7.4
 
-**Status:** Open (2026-08-31) — unblocked.
+**Status:** Claimed 2026-09-01 by @mmacedoeu — unblocked.
 **Substrate:** RFC-0011-d §7.4 Substrate `[ADD]` signature — `octo_role::select`
 **Parent:** RFC-0011-d
 **Depends on:** `0011-d-M2-octorole-types-and-errors` + `0011-d-M3-octorole-list-show` + RFC-0900 substrate
 
 ## Status
 
-Open (2026-08-31). Fourth of 9 Phase 1 atomic missions. Lands the write-side substrate entrypoint that CLI `select` subcommand will call in M6. Substrate writes the role-binding record to the substrate's OWN store (slash ledger per RFC-0900); M5 adds the wallet's cached projection.
+Claimed (2026-09-01) by @mmacedoeu. Fourth of 9 Phase 1 atomic missions. Lands the write-side substrate entrypoint that CLI `select` subcommand will call in M6. Substrate writes the role-binding record to the substrate's OWN store (slash ledger per RFC-0900); M5 adds the wallet's cached projection.
 
 ## Substrate (RFC-0011-d)
 
@@ -150,4 +150,4 @@ Additive: new public sync fn. No existing substrate crates modified. No `schema_
 
 ## Claimant
 
-@unassigned (mission lifecycle: Open)
+@mmacedoeu (mission lifecycle: Claimed 2026-09-01)

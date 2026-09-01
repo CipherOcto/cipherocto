@@ -7,7 +7,7 @@
 //! lib-test reset helper can reference the SAME `OnceLock` instance
 //! that production code initializes.
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use octo_cap_macaroon::{AssetRegistry, ChainId, VaultId};
 
@@ -37,21 +37,63 @@ fn substrate_local_cache() -> &'static Mutex<VaultBalanceCache> {
     SUBSTRATE_CACHE.get_or_init(|| Mutex::new(VaultBalanceCache::new(60)))
 }
 
-/// Test-only helper: reset the process-global substrate cache to a
-/// fresh empty state. Caller MUST call before exercising a cache-state
-/// assertion in a lib test (per Wave 1.5 fix 1 — the `substrate_local_cache()`
-/// `OnceLock<Mutex<...>>` is shared process-wide and any prior test
-/// that populated it leaks state into the next test if they share a
-/// `(chain, vault, asset)` key). No-op when the cache hasn't been
-/// initialized yet (safe to call unconditionally). Production code
-/// MUST NOT call this; the helper is gated behind the `testing`
-/// feature flag to keep it out of release builds.
+/// Process-global test-serialization mutex. Held by
+/// [`SubstrateCacheBypassGuard`] for the duration of any test that
+/// exercises the substrate cache. Two reasons this exists (per
+/// Wave 2.5 fix 4):
+///
+/// - The previous `reset_substrate_cache_for_test()` design cleared
+///   the cache then RETURNED — leaving a window where a parallel
+///   cargo-test thread could repopulate the cache between the clear
+///   and the test's first `project_vault_balance` call. That race
+///   surfaced as `tv_vlt5_cache_hit_returns_cache_source_kind` flaking
+///   intermittently (~2 of 5 runs in CI) when `tv_vlt6_*` ran first
+///   in the parallel-test schedule.
+/// - The `last_seen_sequence: DashMap<OverlayIdentity, u64>` inside
+///   `ProducerTrustList` (see `cache_subscriber.rs`) is per-trust-list
+///   and so can't leak between tests that construct their own TL, but
+///   the substrate cache IS global and CAN leak. The guard pattern
+///   here serializes only tests that touch the cache — non-cache
+///   tests still run in parallel.
+static TEST_SERIAL: Mutex<()> = Mutex::new(());
+
+/// Drop guard returned by [`reset_substrate_cache_for_test`]. Holds
+/// the [`TEST_SERIAL`] mutex for the test's lifetime so a parallel
+/// test cannot repopulate the cache mid-assertion. Drop happens
+/// automatically when the guard goes out of scope at the end of the
+/// test body, releasing the mutex for the next test.
+///
+/// Tests MUST bind the return value to a named binding (e.g.
+/// `let _guard = octo_vault::reset_substrate_cache_for_test();`) —
+/// a bare `octo_vault::reset_substrate_cache_for_test();` discards
+/// the guard immediately and offers no isolation. The caller is
+/// responsible for that binding discipline.
 #[cfg(any(test, feature = "testing"))]
-pub fn reset_substrate_cache_for_test() {
+pub struct SubstrateCacheBypassGuard {
+    _guard: MutexGuard<'static, ()>,
+}
+
+/// Test-only helper: reset the process-global substrate cache to a
+/// fresh empty state AND acquire the [`TEST_SERIAL`] mutex for the
+/// caller's lifetime. Returns a [`SubstrateCacheBypassGuard`] the
+/// caller MUST bind to a local so the lock is held for the test's
+/// duration. No-op when the cache hasn't been initialized yet
+/// (safe to call unconditionally). Production code MUST NOT call
+/// this; the helper is gated behind the `testing` feature flag to
+/// keep it out of release builds.
+///
+/// Wave 2.5 fix 4 added the Drop-guard pattern after the bare-return
+/// variant was found to race against parallel cargo-test threads
+/// that repopulate the cache between `invalidate_all()` and the
+/// test's first `project_vault_balance` call.
+#[cfg(any(test, feature = "testing"))]
+pub fn reset_substrate_cache_for_test() -> SubstrateCacheBypassGuard {
+    let guard = TEST_SERIAL.lock().unwrap_or_else(|p| p.into_inner());
     if let Some(cache) = SUBSTRATE_CACHE.get() {
         let mut g = cache.lock().unwrap_or_else(|p| p.into_inner());
         g.invalidate_all();
     }
+    SubstrateCacheBypassGuard { _guard: guard }
 }
 
 /// Canonical SUM projection per RFC-0960-v37 §2.2 (RFC-0011-e

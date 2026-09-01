@@ -1565,8 +1565,23 @@ mod tests {
     /// the substrate `Cache` source-kind only fires when a prior
     /// call populated the cache for the same `(chain, vault, asset)`
     /// triple within the TTL window.
+    ///
+    /// Per Wave 1.5 fix 1: the substrate cache is a process-wide
+    /// `OnceLock<Mutex<...>>`; any prior lib test that populated it
+    /// with the same `(chain, vault, asset)` triple would leak state
+    /// into this test. Wave 2.5 fix 4 upgraded the reset helper to
+    /// return a Drop guard that holds a process-global serialization
+    /// mutex for the test's lifetime — a parallel cargo-test thread
+    /// cannot repopulate the cache between the `invalidate_all()`
+    /// and this test's first `project_vault_balance` call. The
+    /// `_guard` binding MUST be kept (not discarded) for the
+    /// isolation to hold.
     #[test]
     fn tv_vlt5_cache_hit_returns_cache_source_kind() {
+        // Reset the substrate-local cache and hold the test-serialization
+        // guard for the test's lifetime (per Wave 1.5 fix 1 + Wave 2.5 fix 4).
+        let _guard = octo_vault::reset_substrate_cache_for_test();
+
         // Use the substrate `StubTransferEventLog` from the testing
         // module — `StubVaultAssetResolver` for the asset resolver.
         // Run the canonical 7-param projection twice within the
@@ -1612,8 +1627,18 @@ mod tests {
     /// bump; here we exercise the substrate path that lands on
     /// `FreshLogScan` via epoch regression (epoch advance past the
     /// cached snapshot).
+    ///
+    /// Per Wave 2.5 fix 4: this test MUST hold the test-serialization
+    /// guard for its lifetime. The first call here primes the cache
+    /// at `epoch=0` — if `tv_vlt5_cache_hit_returns_cache_source_kind`
+    /// runs concurrently and repopulates with `epoch=1`, this test's
+    /// second call (also at `epoch=1`) hits cache and the `FreshLogScan`
+    /// assertion fails.
     #[test]
     fn tv_vlt6_no_cache_forces_fresh_log_scan() {
+        // Hold the test-serialization guard for the test's lifetime
+        // (Wave 2.5 fix 4) — see TV-VLT5 for the rationale.
+        let _guard = octo_vault::reset_substrate_cache_for_test();
         let log = octo_vault::StubTransferEventLog::default();
         let resolver = octo_vault::StubVaultAssetResolver::with_mapping(vec![(
             sample_chain(),
@@ -1651,8 +1676,14 @@ mod tests {
     }
 
     /// TV-VLT7: vault with no events returns `projected_balance == 0`.
+    ///
+    /// Per Wave 2.5 fix 4: hold the test-serialization guard so a
+    /// parallel test cannot leave a stale cache entry under the same
+    /// `(chain, vault, asset)` triple that would flip this assertion's
+    /// cache miss into a hit.
     #[test]
     fn tv_vlt7_vault_with_no_events_zero_balance() {
+        let _guard = octo_vault::reset_substrate_cache_for_test();
         let log = octo_vault::StubTransferEventLog::default();
         let resolver = octo_vault::StubVaultAssetResolver::with_mapping(vec![(
             sample_chain(),
@@ -1678,8 +1709,13 @@ mod tests {
     /// TV-VLT8: unknown vault resolves to `VaultAssetResolverError::UnknownVault`
     /// → substrate lifts to `ProjectionError::VaultUnknown` → CLI maps
     /// to `OctoCliError::VaultNotOwned` (exit 23).
+    ///
+    /// Per Wave 2.5 fix 4: hold the test-serialization guard for
+    /// hermeticity, even though this test never reaches the cache path
+    /// (it fails-fast on the resolver lookup).
     #[test]
     fn tv_vlt8_unknown_vault_projection_error_vault_unknown() {
+        let _guard = octo_vault::reset_substrate_cache_for_test();
         let log = octo_vault::StubTransferEventLog::default();
         let resolver = octo_vault::StubVaultAssetResolver::default(); // empty
         let registry = sample_registry();
@@ -1910,8 +1946,14 @@ mod tests {
     #[test]
     fn tv_xfer_pr12_substrate_status_defaults_to_pending() {
         let dest = VaultId::from_bytes([0x99u8; 32]);
-        let h = substrate_initiate_transfer(&sample_vault(), &dest, 1_000, &sample_asset())
-            .expect("initiate");
+        let h = substrate_initiate_transfer(
+            &sample_vault(),
+            &dest,
+            1_000,
+            &sample_asset(),
+            1_700_000_000,
+        )
+        .expect("initiate");
         assert_eq!(h.status, TransferStatus::Pending);
         assert_ne!(h.status, TransferStatus::DryRun);
         // Non-exhaustive guard — adding a new substrate status must

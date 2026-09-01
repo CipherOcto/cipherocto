@@ -139,7 +139,7 @@ pub use testing::{StubEmitter, StubTransferEventLog, StubVaultAssetResolver};
 /// entry. The `#[cfg(feature = "testing")]` gate keeps the symbol
 /// out of release builds entirely.
 #[cfg(any(test, feature = "testing"))]
-pub fn reset_substrate_cache_for_test() {
+pub fn reset_substrate_cache_for_test() -> crate::vault_balance_proj::SubstrateCacheBypassGuard {
     crate::vault_balance_proj::reset_substrate_cache_for_test()
 }
 

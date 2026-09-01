@@ -227,8 +227,10 @@ mod tests {
     #[test]
     fn tv_vo5_project_vault_balance_cache_miss_fresh_log_scan() {
         // Reset the process-global substrate cache so prior test state
-        // doesn't poison this assertion (Wave 1.5 fix 1).
-        reset_substrate_cache_for_test();
+        // doesn't poison this assertion (Wave 1.5 fix 1; Wave 2.5 fix 4
+        // upgraded the reset helper to return a Drop guard that holds
+        // a process-global serialization mutex for the test's lifetime).
+        let _guard = reset_substrate_cache_for_test();
         let log = crate::testing::StubTransferEventLog::default();
         let proj = project_vault_balance(
             &sample_chain(),
@@ -251,7 +253,7 @@ mod tests {
     /// into `ProjectionError::VaultUnknown` for unknown vaults.
     #[test]
     fn tv_vo6_project_vault_balance_unknown_vault_lifts_error() {
-        reset_substrate_cache_for_test();
+        let _guard = reset_substrate_cache_for_test();
         let log = crate::testing::StubTransferEventLog::default();
         let empty_resolver = StubVaultAssetResolver::default();
         let err = project_vault_balance(

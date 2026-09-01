@@ -8,7 +8,15 @@
 use thiserror::Error;
 
 /// Errors the `octo-mesh` substrate can surface.
+///
+/// `#[non_exhaustive]` per Wave 5.5 F1: additive growth must remain
+/// non-semver-breaking. New variants (e.g. `NoOctoHome`) land without
+/// central enum edits; downstream `match` sites use wildcard patterns
+/// at the CLI dispatch boundary so the exit-code contract survives
+/// future amendments (verified via `OctoCliError::exit_code` for every
+/// current variant).
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MeshError {
     /// The supplied peer DID is not in canonical RFC-0010 wire form.
     ///
@@ -71,4 +79,18 @@ pub enum MeshError {
     /// TOML serialisation error during peer-table write.
     #[error("peer table TOML serialise error: {0}")]
     TomlSerialise(String),
+
+    /// Neither `OCTO_HOME` nor `$HOME` is set when the substrate tried
+    /// to resolve the operator's `$OCTO_HOME` (or `OCTO_HOME` is set to
+    /// the empty string). Surfaced as `OctoCliError::NoOctoHome`
+    /// (exit 27) at the CLI dispatch boundary per Wave 5.5 F1 —
+    /// mirrors the CLI-side fail-closed helper
+    /// (`crate::commands::home::resolve`) so the substrate layer
+    /// cannot regress to a `/tmp/.octo` fallback (world-readable on
+    /// shared hosts). The substrate never reads the operator's env
+    /// vars from a default-only helper; this variant only fires when
+    /// the caller explicitly opts into env-var resolution via
+    /// [`crate::peer_table_path_default`].
+    #[error("no OCTO_HOME or HOME available; set $OCTO_HOME or $HOME before running this command")]
+    NoOctoHome,
 }

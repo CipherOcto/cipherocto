@@ -43,16 +43,32 @@ use std::path::{Path, PathBuf};
 ///
 /// Resolution order:
 /// 1. `$OCTO_HOME` env var (canonical — wallet substrate + CLI both honour this).
-/// 2. `$HOME/.octo` (POSIX convention; `dirs::home_dir()` returns `None`
-///    in unusual environments where we fall back to `/tmp/.octo`).
-fn resolve_octo_home() -> PathBuf {
-    if let Ok(p) = std::env::var("OCTO_HOME") {
-        return PathBuf::from(p);
+///    An empty value fails closed (Wave 5.5 F1: empty string is treated
+///    the same as unset — never produces `Some(PathBuf::from(""))`).
+/// 2. `$HOME/.octo` (POSIX convention via `dirs::home_dir()`).
+///
+/// Fails closed with [`MeshError::NoOctoHome`] when neither env var is
+/// set OR `OCTO_HOME` is empty. Per Wave 5.5 F1, the substrate no
+/// longer falls back to `/tmp/.octo` — a world-readable/writable
+/// directory on shared hosts where any local user could race the
+/// operator's writes or inject peer-table entries. The CLI maps this
+/// variant to `OctoCliError::NoOctoHome` (exit 27) per RFC-0011 §Error
+/// Handling slot allocation.
+///
+/// `# Errors`
+///
+/// Returns [`MeshError::NoOctoHome`] when both `OCTO_HOME` and `HOME`
+/// are unset/empty.
+fn resolve_octo_home() -> Result<PathBuf, MeshError> {
+    match std::env::var("OCTO_HOME") {
+        Ok(p) if !p.is_empty() => return Ok(PathBuf::from(p)),
+        // Empty value falls through to HOME — same as unset per Wave 5.5 F1.
+        _ => {}
     }
-    if let Some(home) = dirs::home_dir() {
-        return home.join(".octo");
+    match dirs::home_dir() {
+        Some(h) => Ok(h.join(".octo")),
+        None => Err(MeshError::NoOctoHome),
     }
-    PathBuf::from("/tmp/.octo")
 }
 
 /// Canonical mesh peer-table location: `$OCTO_HOME/mesh/peers.toml`.
@@ -60,9 +76,15 @@ fn resolve_octo_home() -> PathBuf {
 /// The `mesh/` directory is created lazily by [`peer::add_peer`] /
 /// [`peer::list_peers`] at first access; the path resolver itself does
 /// not touch the filesystem.
-#[must_use]
-pub fn peer_table_path_default() -> PathBuf {
-    peer_table_path(&resolve_octo_home())
+///
+/// `# Errors`
+///
+/// Propagates [`MeshError::NoOctoHome`] when neither `OCTO_HOME` nor
+/// `HOME` is set (or `OCTO_HOME` is the empty string) — Wave 5.5 F1
+/// fail-closed contract.
+pub fn peer_table_path_default() -> Result<PathBuf, MeshError> {
+    let home = resolve_octo_home()?;
+    Ok(peer_table_path(&home))
 }
 
 /// Canonical mesh peer-table location for an explicit `$OCTO_HOME`

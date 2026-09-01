@@ -69,7 +69,7 @@
 
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::Subcommand;
 use octo_ident::{CanonicalCodec, DidCodec};
@@ -881,39 +881,59 @@ fn validate_dto_did_shape(s: &str) -> Result<(), OctoCliError> {
 /// Taxonomy `forward` "Side effects" row). One JSON line per
 /// receipt; the redactor scrubs any payload bytes that may slip
 /// into log fields at the substrate boundary.
-fn write_forward_receipt(receipt: &ForwardReceipt) -> std::io::Result<()> {
+///
+/// Errors carry [`OctoCliError`] (Wave 5.5 F2) — the path resolver
+/// fails closed with `NoOctoHome` when neither `OCTO_HOME` nor `HOME`
+/// is set, which is the operator-facing canonical diagnostic
+/// (exit 27) rather than an opaque `io::Error(NotFound)`.
+fn write_forward_receipt(receipt: &ForwardReceipt) -> Result<(), OctoCliError> {
     let path = forward_receipts_log_path()?;
     let line = serde_json::to_string(receipt).map_err(|e| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("serialize receipt: {e}"),
-        )
+        OctoCliError::Internal(sanitize_substrate_error(&format!("serialize receipt: {e}")))
     })?;
     let mut file = fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&path)?;
-    writeln!(file, "{line}")?;
+        .open(&path)
+        .map_err(|e| {
+            OctoCliError::Internal(sanitize_substrate_error(&format!(
+                "open forward-receipts log: {e}"
+            )))
+        })?;
+    writeln!(file, "{line}").map_err(|e| {
+        OctoCliError::Internal(sanitize_substrate_error(&format!(
+            "write forward-receipts log: {e}"
+        )))
+    })?;
     Ok(())
 }
 
 /// Resolve `$OCTO_HOME/mesh/forward-receipts.log` per RFC-0011-f
-/// §Subcommand Taxonomy `forward` "Side effects" row. Uses
-/// `OCTO_HOME` env var when set, else `~/.octo` per the parent
-/// RFC-0011 §Substrate Path Convention.
-fn forward_receipts_log_path() -> std::io::Result<PathBuf> {
-    let base = std::env::var_os("OCTO_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".octo")))
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "neither OCTO_HOME nor HOME is set; cannot resolve forward-receipts.log path",
-            )
-        })?;
+/// §Subcommand Taxonomy `forward` "Side effects" row. Routes through
+/// the canonical [`crate::home::resolve`] helper (Wave 5.5 F2) so the
+/// empty `OCTO_HOME` case fails closed with `OctoCliError::NoOctoHome`
+/// (exit 27) instead of producing `Some(PathBuf::from(""))` (a
+/// `/`-rooted path that silently passes every subsequent
+/// `create_dir_all` call). The helper also collapses the
+/// env-var-resolution duplication that previously lived in two
+/// inline copies (this fn + [`rpc_receipts_log_path`]).
+fn forward_receipts_log_path() -> Result<PathBuf, OctoCliError> {
+    let base = crate::home::resolve()?;
+    receipt_log_path(&base, "forward-receipts.log")
+}
+
+/// Internal entry point that takes a pre-resolved `$OCTO_HOME`
+/// directory. The public [`forward_receipts_log_path`] /
+/// [`rpc_receipts_log_path`] route through [`crate::home::resolve`]
+/// first; this helper exists so unit tests can exercise the
+/// path-construction half directly with a tmp dir (parallel-safe,
+/// no env-var mutation).
+fn receipt_log_path(base: &Path, file: &str) -> Result<PathBuf, OctoCliError> {
     let dir = base.join("mesh");
-    fs::create_dir_all(&dir)?;
-    Ok(dir.join("forward-receipts.log"))
+    fs::create_dir_all(&dir).map_err(|e| {
+        OctoCliError::Internal(sanitize_substrate_error(&format!("create {file} dir: {e}")))
+    })?;
+    Ok(dir.join(file))
 }
 
 // ---------------------------------------------------------------------------
@@ -1061,10 +1081,17 @@ fn invoke_rpc(
 ///   signature verification, matching the "target rejected the
 ///   request" diagnostic family.
 /// - `RpcTimeout` → `RpcTimeout` (exit 20).
+/// - `NoOctoHome` → `NoOctoHome` (exit 27). Wave 5.5 F1 mapping:
+///   substrate env-var resolution fail-closed surfaces the canonical
+///   operator-facing variant at the same exit-code slot reserved by
+///   the CLI-side helper.
 /// - `Io` / `TomlParse` / `TomlSerialise` → `Internal` (exit 64).
 /// - `InvalidEndpointScheme` → `InvalidEndpointScheme` (exit 28)
 ///   (reserved for future peer-table path; rpc path doesn't query
 ///   the peer table but the variant is mapped for completeness).
+///
+/// Wildcard arm: `MeshError` is `#[non_exhaustive]` (Wave 5.5 F1);
+/// future substrate variants fail closed to `Internal`.
 fn map_rpc_substrate_error(e: octo_mesh::MeshError) -> OctoCliError {
     match e {
         octo_mesh::MeshError::InvalidDidShape(did) => OctoCliError::IdentityNotFound(did),
@@ -1087,6 +1114,7 @@ fn map_rpc_substrate_error(e: octo_mesh::MeshError) -> OctoCliError {
         octo_mesh::MeshError::InvalidEndpointScheme { scheme } => {
             OctoCliError::InvalidEndpointScheme { scheme }
         }
+        octo_mesh::MeshError::NoOctoHome => OctoCliError::NoOctoHome,
         octo_mesh::MeshError::Io(msg)
         | octo_mesh::MeshError::TomlParse(msg)
         | octo_mesh::MeshError::TomlSerialise(msg) => {
@@ -1094,6 +1122,9 @@ fn map_rpc_substrate_error(e: octo_mesh::MeshError) -> OctoCliError {
                 "mesh rpc substrate: {msg}"
             )))
         }
+        other => OctoCliError::Internal(sanitize_substrate_error(&format!(
+            "mesh rpc substrate (unmapped variant): {other:?}"
+        ))),
     }
 }
 
@@ -1102,13 +1133,12 @@ fn map_rpc_substrate_error(e: octo_mesh::MeshError) -> OctoCliError {
 /// Taxonomy `rpc` "Side effects" row). One JSON line per receipt;
 /// nested secret fields are redacted via the field-name redactor
 /// (RFC-0011 §Redaction Layer) before serialization.
-fn write_rpc_receipt(receipt: &RpcReceipt) -> std::io::Result<()> {
+fn write_rpc_receipt(receipt: &RpcReceipt) -> Result<(), OctoCliError> {
     let path = rpc_receipts_log_path()?;
     let mut line = serde_json::to_string(receipt).map_err(|e| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("serialize rpc receipt: {e}"),
-        )
+        OctoCliError::Internal(sanitize_substrate_error(&format!(
+            "serialize rpc receipt: {e}"
+        )))
     })?;
     // Defense-in-depth: redact the serialized line via the
     // free-form redactor (long-hex + bearer + kv). The `RpcReceipt`
@@ -1120,28 +1150,31 @@ fn write_rpc_receipt(receipt: &RpcReceipt) -> std::io::Result<()> {
     let mut file = fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&path)?;
-    writeln!(file, "{line}")?;
+        .open(&path)
+        .map_err(|e| {
+            OctoCliError::Internal(sanitize_substrate_error(&format!(
+                "open rpc-receipts log: {e}"
+            )))
+        })?;
+    writeln!(file, "{line}").map_err(|e| {
+        OctoCliError::Internal(sanitize_substrate_error(&format!(
+            "write rpc-receipts log: {e}"
+        )))
+    })?;
     Ok(())
 }
 
 /// Resolve `$OCTO_HOME/mesh/rpc-receipts.log` per RFC-0011-f
-/// §Subcommand Taxonomy `rpc` "Side effects" row. Uses `OCTO_HOME`
-/// env var when set, else `~/.octo` per the parent RFC-0011
-/// §Substrate Path Convention.
-fn rpc_receipts_log_path() -> std::io::Result<PathBuf> {
-    let base = std::env::var_os("OCTO_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".octo")))
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "neither OCTO_HOME nor HOME is set; cannot resolve rpc-receipts.log path",
-            )
-        })?;
-    let dir = base.join("mesh");
-    fs::create_dir_all(&dir)?;
-    Ok(dir.join("rpc-receipts.log"))
+/// §Subcommand Taxonomy `rpc` "Side effects" row. Routes through
+/// the canonical [`crate::home::resolve`] helper (Wave 5.5 F3) so the
+/// empty `OCTO_HOME` case fails closed with `OctoCliError::NoOctoHome`
+/// (exit 27) instead of producing `Some(PathBuf::from(""))`. Mirrors
+/// [`forward_receipts_log_path`] — both paths funnel through the same
+/// home-resolution helper so the env-var precedence table has one
+/// canonical site.
+fn rpc_receipts_log_path() -> Result<PathBuf, OctoCliError> {
+    let base = crate::home::resolve()?;
+    receipt_log_path(&base, "rpc-receipts.log")
 }
 
 // ---------------------------------------------------------------------------
@@ -1576,5 +1609,89 @@ mod tests {
         let err = r.expect_err("legacy DID must error");
         assert!(matches!(err, OctoCliError::IdentityNotFound(_)));
         assert_eq!(err.exit_code(), 4);
+    }
+
+    // ========================================================================
+    // Wave 5.5 F2/F3 — empty-OCTO_HOME rejection at receipt-path boundary
+    // ========================================================================
+
+    /// Serial mutex for env-var mutation tests (F2/F3). Cargo runs
+    /// tests in parallel; mutating process env vars from two threads
+    /// at once races. The mutex is acquired at the top of each env-var
+    /// test below and held for the test's lifetime. Same pattern as
+    /// `octo-vault::TEST_SERIAL` (the substrate serializes vault
+    /// balance tests that share global state).
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Wave 5.5 F2: `forward_receipts_log_path()` must fail closed
+    /// when `OCTO_HOME` is set to the empty string. Pre-fix, the
+    /// inline resolution produced `Some(PathBuf::from(""))` — a
+    /// `/`-rooted path that silently passed `create_dir_all` and
+    /// wrote the audit log to the filesystem root. Post-fix, the
+    /// helper routes through [`crate::home::resolve`] which rejects
+    /// empty `OCTO_HOME` with `NoOctoHome` (exit 27).
+    #[test]
+    fn forward_receipts_log_path_rejects_empty_octo_home() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
+        // Snapshot existing values so we can restore them after the
+        // test runs — env mutation is process-global.
+        let prev_home = std::env::var_os("HOME");
+        let prev_octo = std::env::var_os("OCTO_HOME");
+        // SAFETY: held under ENV_MUTEX so no parallel test observes
+        // the mutated state.
+        std::env::set_var("OCTO_HOME", "");
+        std::env::remove_var("HOME");
+        let r = forward_receipts_log_path();
+        // Restore.
+        if let Some(v) = prev_home {
+            std::env::set_var("HOME", v);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        if let Some(v) = prev_octo {
+            std::env::set_var("OCTO_HOME", v);
+        } else {
+            std::env::remove_var("OCTO_HOME");
+        }
+        assert!(
+            matches!(r, Err(OctoCliError::NoOctoHome)),
+            "empty OCTO_HOME must produce NoOctoHome (exit 27), got: {r:?}"
+        );
+    }
+
+    /// Wave 5.5 F3: `rpc_receipts_log_path()` mirrors F2 — empty
+    /// `OCTO_HOME` must fail closed with `NoOctoHome`. Pins the
+    /// symmetry between the two receipt-path helpers so a future
+    /// refactor cannot regress one without the other.
+    #[test]
+    fn rpc_receipts_log_path_rejects_empty_octo_home() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
+        let prev_home = std::env::var_os("HOME");
+        let prev_octo = std::env::var_os("OCTO_HOME");
+        std::env::set_var("OCTO_HOME", "");
+        std::env::remove_var("HOME");
+        let r = rpc_receipts_log_path();
+        if let Some(v) = prev_home {
+            std::env::set_var("HOME", v);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        if let Some(v) = prev_octo {
+            std::env::set_var("OCTO_HOME", v);
+        } else {
+            std::env::remove_var("OCTO_HOME");
+        }
+        assert!(
+            matches!(r, Err(OctoCliError::NoOctoHome)),
+            "empty OCTO_HOME must produce NoOctoHome (exit 27), got: {r:?}"
+        );
+    }
+
+    /// Pin the exit-code contract for `NoOctoHome` at the mesh
+    /// surface (exit 27 per RFC-0011-f §Exit Codes amendment-chain
+    /// slot allocation).
+    #[test]
+    fn no_octo_home_exit_code_pinned() {
+        assert_eq!(OctoCliError::NoOctoHome.exit_code(), 27);
     }
 }

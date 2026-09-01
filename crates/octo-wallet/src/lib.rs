@@ -23,11 +23,13 @@ pub mod keystore;
 pub mod lifecycle;
 pub mod mpc;
 pub mod node;
+pub mod role_nonce;
 pub mod vault;
 pub mod vault_rotation;
 
 pub use cli_fns::{active_identity, begin_rotation, identity_record as identity_record_fn, revoke};
 pub use error::WalletError;
+pub use role_nonce::next_nonce_counter;
 pub use identity::{derive_capability_key, AudienceId, CapabilityKey, ChannelId, IdentityKey};
 pub use identity_record::{Did, IdentityRecord, IdentityRotationEvent, WalletStore};
 pub use key_hierarchy::{AxisSubkey, KeyHierarchy, MissionId, MissionKey};

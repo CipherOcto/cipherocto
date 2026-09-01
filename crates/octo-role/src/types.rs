@@ -155,6 +155,9 @@ pub struct RoleBinding {
     pub signature_proof: Vec<u8>,
     /// BLAKE3-256 over `body_bytes || signature_proof` — public material.
     pub role_binding_hash: Hash32,
+    /// Role-binding nonce consumed from `octo_wallet::next_nonce_counter`
+    /// inside the envelope-build tx (RFC-0011-d §7.4).
+    pub nonce: u64,
 }
 
 mod serde_bytes_vec {

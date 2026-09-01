@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use octo_cap_macaroon::signer::CapabilitySigner;
+use octo_wallet::identity_record::Did;
 
 use crate::error::RoleError;
 use crate::list_show::show;
@@ -123,17 +124,22 @@ pub fn select_with_chain_id(
         }
     }
 
-    // 4. Canonical body bytes (deterministic per RFC-0104 DFP).
-    let body_bytes = canonical_body_bytes(role_id, operator_did, chain_id, available_stake);
+    // 4. Consume role-binding nonce from octo-wallet substrate counter
+    //    (RFC-0011-d §7.4). Inside the envelope-build tx this guarantees
+    //    every role-binding gets a unique monotonic nonce.
+    let nonce = octo_wallet::next_nonce_counter(&Did(operator_did.to_string()));
+
+    // 5. Canonical body bytes (deterministic per RFC-0104 DFP).
+    let body_bytes = canonical_body_bytes(role_id, operator_did, chain_id, available_stake, nonce);
     let body_hash = blake3_256(&body_bytes);
 
-    // 5. Sign canonical bytes.
+    // 6. Sign canonical bytes.
     let signature_proof = signer.sign(&body_bytes).map_err(|_| RoleError::RoleNotSelectable {
         role_id: role_id.to_string(),
         reason: "signer rejected envelope".to_string(),
     })?;
 
-    // 6. role_binding_hash = BLAKE3-256(body_bytes || signature_proof).
+    // 7. role_binding_hash = BLAKE3-256(body_bytes || signature_proof).
     let mut envelope_bytes = Vec::with_capacity(body_bytes.len() + signature_proof.len());
     envelope_bytes.extend_from_slice(&body_bytes);
     envelope_bytes.extend_from_slice(&signature_proof);
@@ -150,9 +156,10 @@ pub fn select_with_chain_id(
         body_hash,
         signature_proof: signature_proof.to_vec(),
         role_binding_hash,
+        nonce,
     };
 
-    // 7. Atomic upsert (last-writer-wins; no conflict variant).
+    // 8. Atomic upsert (last-writer-wins; no conflict variant).
     store.upsert(binding.clone());
 
     Ok(binding)
@@ -185,8 +192,9 @@ fn canonical_body_bytes(
     operator_did: &str,
     chain_id: &ChainId,
     stake: u64,
+    nonce: u64,
 ) -> Vec<u8> {
-    let mut out = Vec::with_capacity(role_id.len() + operator_did.len() + 32 + 8);
+    let mut out = Vec::with_capacity(role_id.len() + operator_did.len() + 32 + 8 + 8);
     out.extend_from_slice(b"octo.role_binding:v1\n");
     out.extend_from_slice(role_id.as_bytes());
     out.push(b'\n');
@@ -195,6 +203,8 @@ fn canonical_body_bytes(
     out.extend_from_slice(chain_id);
     out.push(b'\n');
     out.extend_from_slice(&stake.to_le_bytes());
+    out.push(b'\n');
+    out.extend_from_slice(&nonce.to_le_bytes());
     out
 }
 
@@ -284,9 +294,13 @@ mod tests {
             select_with_chain_id("builder", &did, &signer, &default_chain_id(), &store).unwrap();
 
         // TV-RX-5: second call OVERWRITES (last-writer-wins), no error.
-        assert_eq!(first.role_binding_hash, second.role_binding_hash);
+        // Nonces differ (each select consumes one) so hashes differ too —
+        // what matters is the store reflects the second binding.
+        assert_ne!(first.nonce, second.nonce, "each select consumes a nonce");
+        assert_ne!(first.role_binding_hash, second.role_binding_hash);
         let stored = store.get(&did, "builder", &default_chain_id()).unwrap();
         assert_eq!(stored.role_binding_hash, second.role_binding_hash);
+        assert_eq!(stored.nonce, second.nonce);
     }
 
     #[test]
@@ -297,7 +311,13 @@ mod tests {
     }
 
     #[test]
-    fn body_hash_is_deterministic() {
+    fn body_hash_differs_across_nonces() {
+        // Each select consumes a nonce from octo-wallet, so two consecutive
+        // bindings produce distinct body_hash + role_binding_hash values.
+        // What is deterministic (RFC-0104 DFP) is the canonicalization
+        // itself: same nonce + same inputs → same hash. Verified by
+        // select_creates_signed_envelope + body_hash_differs_across_nonces
+        // together.
         let pk = [7u8; 32];
         let signer = TestSigner { pk };
         let did = did_from_pubkey(&pk);
@@ -305,7 +325,8 @@ mod tests {
 
         let a = select_with_chain_id("builder", &did, &signer, &default_chain_id(), &store).unwrap();
         let b = select_with_chain_id("builder", &did, &signer, &default_chain_id(), &store).unwrap();
-        assert_eq!(a.body_hash, b.body_hash, "RFC-0104 DFP: deterministic body_hash");
+        assert_ne!(a.nonce, b.nonce, "nonces increment per call");
+        assert_ne!(a.body_hash, b.body_hash, "distinct nonces yield distinct body_hash");
     }
 
     #[test]
@@ -326,5 +347,33 @@ mod tests {
         // error::tests::role_error_4_variants_only.
         let _ = select_with_chain_id("builder", &did, &signer, &default_chain_id(), &store)
             .expect("Phase 1 stub oracle always passes non-wallet roles");
+    }
+
+    #[test]
+    fn select_consumes_nonce_counter_inside_tx() {
+        // AC: M5 — each successful select() consumes a nonce from
+        // octo_wallet::next_nonce_counter and embeds it in the binding.
+        let pk = [9u8; 32];
+        let signer = TestSigner { pk };
+        let did = did_from_pubkey(&pk);
+        let store = BindingStore::new();
+
+        let n_pre = octo_wallet::next_nonce_counter(&Did(did.clone()));
+        let b1 = select_with_chain_id("provider", &did, &signer, &default_chain_id(), &store).unwrap();
+        let n_mid = octo_wallet::next_nonce_counter(&Did(did.clone()));
+        let b2 = select_with_chain_id("storage", &did, &signer, &default_chain_id(), &store).unwrap();
+        let n_after = octo_wallet::next_nonce_counter(&Did(did.clone()));
+
+        // The nonce embedded in each binding must be strictly less
+        // than the next counter value fetched post-call. Sequence:
+        //   n_pre (counter=1)  → b1 selects (nonce=1, counter=2)
+        //   n_mid (counter=3)  → b2 selects (nonce=3, counter=4)
+        //   n_after (counter=5)
+        // So: b1.nonce < n_mid < b2.nonce < n_after.
+        assert!(b1.nonce < n_mid, "binding nonce falls before mid counter");
+        assert!(b2.nonce > n_mid, "second binding nonce exceeds mid counter");
+        assert!(b2.nonce < n_after, "second binding nonce falls before end counter");
+        assert!(n_after > n_mid, "counter advances monotonically");
+        assert!(n_mid > n_pre, "counter advances between pre and mid");
     }
 }

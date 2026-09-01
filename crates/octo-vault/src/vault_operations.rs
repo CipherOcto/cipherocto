@@ -151,7 +151,10 @@ pub struct TransferHandle {
 }
 
 /// Transfer lifecycle status (RFC-0011-e §Substrate Additions +
-/// mission YAML §Type Coverage row 4 — `Pending | Confirmed | Failed`).
+/// §Output Envelope — `DryRun | Pending | Confirmed | Failed`).
+///
+/// `Broadcast` is an internal substrate phase, NOT a `TransferStatus`
+/// variant (per RFC-0011-e Appendix D state machine).
 ///
 /// `#[non_exhaustive]` so future substrate phases (e.g. `Reorged`,
 /// `RolledBack`) can land without a semver-major break; downstream
@@ -166,6 +169,20 @@ pub enum TransferStatus {
     Confirmed = 1,
     /// Broadcast failed (chain rejection, IO, or substrate validation).
     Failed = 2,
+    /// Envelope built and substrate-validated, but `--dry-run`
+    /// suppressed both HSM signing and broadcast (terminal state per
+    /// RFC-0011-e Appendix D).
+    ///
+    /// **Set by Layer C, never produced by the substrate.**
+    /// [`initiate_transfer`] always returns [`TransferStatus::Pending`];
+    /// the CLI (Layer C) rewrites the handle status to `DryRun` at
+    /// envelope-build time when the operator passes `--dry-run`. The
+    /// variant lives here — not in a parallel CLI-side enum — because
+    /// RFC-0011-e §Output Envelope pins `TransferStatus` as the single
+    /// carrier of dry-run state (`preview_only` was dropped from the
+    /// envelope), and a duplicate Layer C enum would be a parallel
+    /// abstraction per `[[cipherocto-design-principles]]`.
+    DryRun = 3,
 }
 
 // ============================================================================
@@ -555,13 +572,14 @@ mod tests {
     // ----- TV-VO-2: TransferStatus unit variants -----
 
     /// TV-VO-2 (R10 test-coverage): `TransferStatus` carries the canonical
-    /// unit variants (`Pending | Confirmed | Failed`) per mission YAML
-    /// §Type Coverage row 4.
+    /// unit variants (`DryRun | Pending | Confirmed | Failed`) per
+    /// RFC-0011-e §Output Envelope.
     #[test]
     fn tv_vo2_transfer_status_unit_variants() {
         assert_eq!(TransferStatus::Pending as u8, 0);
         assert_eq!(TransferStatus::Confirmed as u8, 1);
         assert_eq!(TransferStatus::Failed as u8, 2);
+        assert_eq!(TransferStatus::DryRun as u8, 3);
         // `#[non_exhaustive]` — wildcard arm is mandatory in downstream
         // consumers; pin the discipline here so a future variant addition
         // surfaces a compile-error at every consumer site.
@@ -570,11 +588,25 @@ mod tests {
                 TransferStatus::Pending => 0,
                 TransferStatus::Confirmed => 1,
                 TransferStatus::Failed => 2,
+                TransferStatus::DryRun => 3,
                 #[allow(unreachable_patterns)]
                 _ => u8::MAX, // substrate fails-closed on unknown variant
             }
         }
         assert_eq!(_pin_wildcard_arm(TransferStatus::Pending), 0);
+        assert_eq!(_pin_wildcard_arm(TransferStatus::DryRun), 3);
+    }
+
+    /// `DryRun` is a Layer C envelope-build state: the substrate itself
+    /// MUST always return `Pending` from [`initiate_transfer`] (per
+    /// RFC-0011-e Appendix D — the substrate never suppresses its own
+    /// broadcast).
+    #[test]
+    fn tv_vo2b_substrate_never_produces_dry_run() {
+        let h = initiate_transfer(&sample_vault(), &sample_dest(), 1_000, &sample_asset())
+            .expect("transfer handle");
+        assert_eq!(h.status, TransferStatus::Pending);
+        assert_ne!(h.status, TransferStatus::DryRun);
     }
 
     // ----- TV-VO-3: list_owned substrate port binding -----

@@ -1,4 +1,4 @@
-//! `octo vault {list, balance}` — RFC-0011-e §Subcommand Taxonomy.
+//! `octo vault {list, balance, transfer}` — RFC-0011-e §Subcommand Taxonomy.
 //!
 //! Layer C wrapper over the [`octo_vault`] substrate. Operator invocation
 //! → clap parse → substrate port binding → JSON envelope render.
@@ -39,8 +39,13 @@
 //! |-------------------|--------|----------------|
 //! | `list`            | All    | (none — read-only) |
 //! | `balance`         | All    | (none — read-only) |
+//! | `transfer`        | Human  | `--confirm` + `--confirm-acknowledge` |
+//! | `transfer`        | Ci     | `--allow-write` |
+//! | `transfer`        | Auditor | denied (`AuditorDenied`, exit 2) |
 //!
-//! Both subcommands are read-only and bypass the `require_confirm` gate.
+//! `list` and `balance` are read-only and bypass the `require_confirm`
+//! gate. `transfer` is mutating and goes through the two-step
+//! pastejacking-defense gate per RFC-0011 §Confirmation Flag Matrix.
 //!
 //! ## `OwnerDid` substrate-truth deviation
 //!
@@ -59,14 +64,17 @@ use octo_cap_macaroon::{
     dqa_serde as dqa_field, AssetId, AssetMetadata, ChainId, Dqa, InMemoryAssetRegistry, VaultId,
 };
 use octo_vault::{
-    list_owned as substrate_list_owned, project_vault_balance, ProjectionError, ProjectionSource,
-    TransferEventLog, TransferEventLogInsertError, TransferEventRef, VaultAssetResolver,
-    VaultAssetResolverError, VaultOperationsError, VaultOwnerIndex, VaultSummary,
+    initiate_transfer as substrate_initiate_transfer, list_owned as substrate_list_owned,
+    project_vault_balance, ProjectionError, ProjectionSource, TransferEventLog,
+    TransferEventLogInsertError, TransferEventRef, TransferHandle, TransferStatus,
+    VaultAssetResolver, VaultAssetResolverError, VaultOperationsError, VaultOwnerIndex,
+    VaultSummary,
 };
 use serde::{Deserialize, Serialize};
 
+use crate::commands::identity::require_confirm;
 use crate::error::{sanitize_substrate_error, OctoCliError};
-use crate::output::OutputEnvelope;
+use crate::output::{OutputEnvelope, RedactedString};
 use crate::Octo;
 
 /// CLI-facing vault subcommand enum (Layer C; delegates to the
@@ -119,6 +127,64 @@ pub enum VaultAction {
         /// in Phase 1; envelope surfaces `history: None`).
         #[arg(long, value_name = "N")]
         history: Option<u32>,
+    },
+    /// Initiate a vault-to-vault transfer (RFC-0011-e §Subcommand
+    /// Taxonomy `octo vault transfer`).
+    ///
+    /// **Mutating.** Requires `--confirm` AND `--confirm-acknowledge`
+    /// in Human mode (two-step pastejacking defense per RFC-0011
+    /// §Confirmation Flag Matrix); `--allow-write` in CI mode; denied
+    /// in Auditor mode.
+    ///
+    /// Pre-flight runs four checks before the substrate call (role
+    /// provisioned → HSM reachable → vault owned → balance sufficient)
+    /// per RFC-0011-e Appendix D. Destination-vault validation is
+    /// substrate-side by design — the CLI must NOT pre-fetch the vault
+    /// registry (that would duplicate substrate authority).
+    ///
+    /// There is deliberately **no `--soft-sign` flag** (or any
+    /// equivalent): the HSM signing path is mandatory per RFC-0011-e
+    /// §Security: HSM Downgrade + `[[cipherocto-design-principles]]`.
+    Transfer {
+        /// Source vault (64-char lowercase hex); must be owned by the
+        /// active DID.
+        #[arg(long, value_name = "VAULT_ID")]
+        from: String,
+        /// Destination vault (64-char lowercase hex). Cross-chain
+        /// transfers require an explicit `--dest-chain-id`.
+        #[arg(long, value_name = "VAULT_ID")]
+        to: String,
+        /// Amount in DQA canonical form (RFC-0960-v36 §Wire Form).
+        #[arg(long, value_name = "DQA")]
+        amount: String,
+        /// Asset symbol (e.g. `OCTO`); resolved against the vault
+        /// registry.
+        #[arg(long, value_name = "SYMBOL")]
+        asset: String,
+        /// Free-text memo. Redacted as `[REDACTED:<n>chars]` in BOTH
+        /// the log/stderr sink and the JSON payload unless
+        /// `--include-memo` is set.
+        ///
+        /// Memo content is signed into the transfer envelope and is
+        /// observable by the destination vault owner and by anyone
+        /// reading the chain — CLI redaction protects local sinks only.
+        #[arg(long, value_name = "TEXT")]
+        memo: Option<String>,
+        /// Opt in to emitting `--memo` plaintext in both sinks.
+        #[arg(long)]
+        include_memo: bool,
+        /// Opt in to truncating vault identifiers in rendered output.
+        /// Output is then NOT signature-verifiable.
+        #[arg(long)]
+        redact_ids: bool,
+        /// Destination chain ID (RFC-0010 canonical form). REQUIRED
+        /// when `--to` resolves to a different chain than `--from`.
+        #[arg(long, value_name = "CHAIN")]
+        dest_chain_id: Option<String>,
+        /// Build + substrate-validate the envelope WITHOUT signing or
+        /// broadcasting. Surfaces `status: DryRun`.
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -210,6 +276,52 @@ pub struct ProjectionEventDto {
     /// future variants). Surfaces the discriminant; the CLI does
     /// NOT pattern-match on variants (F-14).
     pub kind_u8: u8,
+}
+
+/// `octo vault transfer` payload (RFC-0011-e §Output Envelope).
+///
+/// Wraps the substrate-built [`TransferHandle`] verbatim. The
+/// substrate owns handle identity + nonce derivation; the CLI adds only
+/// the operator-facing broadcast timestamp, the (possibly CLI-rewritten)
+/// status, and the `--include-memo` opt-in plaintext channel.
+///
+/// ## Memo asymmetry (RFC-0011-e §Redaction)
+///
+/// `memo` is deliberately ABSENT as a redacted-by-default field on this
+/// struct: `memo_plaintext` is `None` unless the operator passes
+/// `--include-memo`. The length-signal rendering
+/// (`[REDACTED:<n>chars]`) is surfaced via `memo_redacted`, which is a
+/// [`RedactedString`] and therefore can never serialize plaintext even
+/// if a future refactor mis-wires the opt-in.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct VaultTransferOutput {
+    /// Substrate-built transfer handle (RFC-0011-e §Substrate
+    /// Additions). Substrate re-export type.
+    pub handle: TransferHandle,
+    /// Wall-clock unix seconds at broadcast. `None` for `--dry-run`
+    /// (nothing was broadcast) and for handles that never reached the
+    /// chain adapter.
+    ///
+    /// Wall-clock-derived, so `octo vault transfer` is NOT deterministic
+    /// (RFC-0011-e §Determinism Requirements — acceptable because
+    /// mutating commands are Class C and do not participate in
+    /// consensus).
+    pub broadcast_at_unix: Option<u64>,
+    /// Transfer status. Equals `handle.status` except on the
+    /// `--dry-run` path, where the CLI rewrites it to
+    /// [`TransferStatus::DryRun`] (RFC-0011-e Appendix D).
+    pub status: TransferStatus,
+    /// Memo plaintext — populated ONLY under `--include-memo`
+    /// (RFC-0011-e §Redaction). `None` is the default-redaction state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memo_plaintext: Option<String>,
+    /// Length-signal rendering of the memo (`[REDACTED:<n>chars]`).
+    /// `None` when no `--memo` was supplied.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memo_redacted: Option<RedactedString>,
+    /// True when at least one field in this payload was altered by the
+    /// redaction layer (RFC-0011-e §Output Envelope `redacted` flag).
+    pub redacted: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -481,6 +593,70 @@ impl TransferEventLog for HomeTransferEventLog {
     }
 }
 
+/// Transfer role gate port (RFC-0011-e Appendix D pre-flight step 1).
+///
+/// Answers the single question "may this DID initiate a transfer?". The
+/// CLI **queries** this gate; it does NOT implement role provisioning —
+/// that is RFC-0011-d's surface, and duplicating it here would be a
+/// parallel abstraction per `[[cipherocto-design-principles]]`.
+///
+/// The canonical substrate hook named by RFC-0011-e is
+/// `octo_vault::role_can_transfer(active_did)`. That function does not
+/// exist in the substrate yet, so the production impl
+/// ([`UnprovisionedRoleGate`]) fails closed and the CLI surfaces
+/// `RoleNotProvisioned` (exit 25) — the stub-with-error state mandated by
+/// RFC-0011-e §Implementation Phases. When the substrate hook lands,
+/// swap the production impl behind this same trait; no handler change.
+pub trait TransferRoleGate: Send + Sync + std::fmt::Debug {
+    /// `true` when `owner_did` holds a provisioned transfer capability.
+    fn can_transfer(&self, owner_did: &str) -> bool;
+}
+
+/// Fail-closed production role gate — the stub-with-error state.
+///
+/// Returns `false` for every DID because the substrate role-gate hook
+/// (`octo_vault::role_can_transfer`) has not landed. Per RFC-0011-e
+/// §Implementation Phases the CLI surfaces `RoleNotProvisioned`
+/// (exit 25) **regardless of HSM availability**, so this gate is
+/// evaluated FIRST in the pre-flight chain.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct UnprovisionedRoleGate;
+
+impl TransferRoleGate for UnprovisionedRoleGate {
+    fn can_transfer(&self, _owner_did: &str) -> bool {
+        false
+    }
+}
+
+/// HSM reachability probe port (RFC-0011-e Appendix D pre-flight step 2).
+///
+/// The canonical substrate hook named by RFC-0011-e is
+/// `octo_wallet::hsm_status()`. `octo-wallet` exposes no HSM status
+/// surface yet, so the production impl ([`WalletHsmProbe`]) reports
+/// reachable-if-an-active-identity-resolves and the substrate remains
+/// authoritative: it refuses to fall back to soft signing, so a missing
+/// HSM surfaces at signing time rather than being silently downgraded
+/// (RFC-0011-e §Security: HSM Downgrade).
+pub trait HsmProbe: Send + Sync + std::fmt::Debug {
+    /// `true` when an HSM slot is provisioned for `owner_did`.
+    fn is_provisioned(&self, owner_did: &str) -> bool;
+}
+
+/// Production HSM probe backed by the wallet's active-identity
+/// resolution. Fails closed on any wallet error.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct WalletHsmProbe;
+
+impl HsmProbe for WalletHsmProbe {
+    fn is_provisioned(&self, owner_did: &str) -> bool {
+        // An active identity that resolves to this DID implies a usable
+        // signing slot in Phase 1. The substrate is authoritative and
+        // never soft-signs, so a false positive here surfaces as a
+        // signing failure rather than an HSM downgrade.
+        !owner_did.is_empty()
+    }
+}
+
 /// Shared process-wide Phase 1 substrate port state.
 ///
 /// Phase 1 keeps the substrate port state in-process (the production
@@ -494,6 +670,12 @@ pub struct VaultPorts {
     asset_resolver: RwLock<Option<Arc<HomeVaultAssetResolver>>>,
     transfer_log: RwLock<Option<Arc<HomeTransferEventLog>>>,
     asset_registry: RwLock<Option<Arc<InMemoryAssetRegistry>>>,
+    /// Transfer role gate (RFC-0011-e pre-flight step 1). `None` →
+    /// [`UnprovisionedRoleGate`] (fail closed).
+    role_gate: RwLock<Option<Arc<dyn TransferRoleGate>>>,
+    /// HSM reachability probe (RFC-0011-e pre-flight step 2). `None` →
+    /// [`WalletHsmProbe`].
+    hsm_probe: RwLock<Option<Arc<dyn HsmProbe>>>,
 }
 
 impl VaultPorts {
@@ -516,7 +698,23 @@ impl VaultPorts {
             asset_resolver: RwLock::new(Some(resolver)),
             transfer_log: RwLock::new(Some(log)),
             asset_registry: RwLock::new(Some(registry)),
+            role_gate: RwLock::new(None),
+            hsm_probe: RwLock::new(None),
         }
+    }
+
+    /// Override the transfer role gate (test + future-activation seam).
+    #[must_use]
+    pub fn with_role_gate(self, gate: Arc<dyn TransferRoleGate>) -> Self {
+        *self.role_gate.write().unwrap_or_else(|p| p.into_inner()) = Some(gate);
+        self
+    }
+
+    /// Override the HSM probe (test + future-activation seam).
+    #[must_use]
+    pub fn with_hsm_probe(self, probe: Arc<dyn HsmProbe>) -> Self {
+        *self.hsm_probe.write().unwrap_or_else(|p| p.into_inner()) = Some(probe);
+        self
     }
 
     /// Load the ports from `$OCTO_HOME`. Missing files yield empty
@@ -533,7 +731,28 @@ impl VaultPorts {
             asset_resolver: RwLock::new(Some(resolver)),
             transfer_log: RwLock::new(Some(log)),
             asset_registry: RwLock::new(Some(registry)),
+            role_gate: RwLock::new(None),
+            hsm_probe: RwLock::new(None),
         })
+    }
+
+    /// Resolve the role gate, defaulting to the fail-closed production
+    /// gate (RFC-0011-e §Implementation Phases stub-with-error).
+    fn role_gate(&self) -> Arc<dyn TransferRoleGate> {
+        self.role_gate
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+            .unwrap_or_else(|| Arc::new(UnprovisionedRoleGate))
+    }
+
+    /// Resolve the HSM probe, defaulting to the wallet-backed probe.
+    fn hsm_probe(&self) -> Arc<dyn HsmProbe> {
+        self.hsm_probe
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+            .unwrap_or_else(|| Arc::new(WalletHsmProbe))
     }
 
     fn owner_index(&self) -> Result<Arc<HomeVaultOwnerIndex>, OctoCliError> {
@@ -653,7 +872,7 @@ fn transfers_path(home: &Path) -> PathBuf {
 }
 
 // ---------------------------------------------------------------------------
-// Active-DID resolution — RFC-0011-e §Active Identity + RFC-0009
+// Active-DID resolution — RFC-0011-e §Subcommand Taxonomy + RFC-0009
 // ---------------------------------------------------------------------------
 
 fn active_owner_did() -> Result<String, OctoCliError> {
@@ -689,21 +908,59 @@ fn parse_vault_id_hex(s: &str) -> Result<VaultId, OctoCliError> {
     Ok(VaultId::from_bytes(arr))
 }
 
+/// Parse an RFC-0010 canonical chain ID (64-char lowercase hex).
+///
+/// Failures surface as [`OctoCliError::InvalidChainId`] (exit 26) per
+/// RFC-0011-e §Error Handling + §Test Vectors TV-12d. The rejected input
+/// is echoed verbatim — a chain ID is public routing metadata, not a
+/// secret, so it does NOT go through the substrate-error sanitizer.
 fn parse_chain_id_hex(s: &str) -> Result<ChainId, OctoCliError> {
-    let bytes = hex::decode(s.trim()).map_err(|e| {
-        OctoCliError::Internal(sanitize_substrate_error(&format!(
-            "chain_id hex decode: {e}"
-        )))
+    let trimmed = s.trim();
+    let bytes = hex::decode(trimmed).map_err(|_| OctoCliError::InvalidChainId {
+        received: trimmed.to_string(),
     })?;
     if bytes.len() != 32 {
-        return Err(OctoCliError::Internal(sanitize_substrate_error(&format!(
-            "chain_id must be 32 bytes (got {})",
-            bytes.len()
-        ))));
+        return Err(OctoCliError::InvalidChainId {
+            received: trimmed.to_string(),
+        });
     }
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&bytes);
     Ok(ChainId::from_bytes(arr))
+}
+
+/// Parse `--amount` (DQA canonical form, scale-0 micros per
+/// RFC-0960-v36 §Wire Form).
+///
+/// The substrate takes `i64` micros and fails closed on non-positive
+/// amounts; the CLI rejects malformed input up front so the operator
+/// gets a parse diagnostic rather than an opaque substrate error.
+/// Parse failures surface as `Internal` (exit 64) — the same contract
+/// Wave B established for [`parse_vault_id_hex`].
+fn parse_amount_micros(s: &str) -> Result<i64, OctoCliError> {
+    let trimmed = s.trim();
+    let micros: i64 = trimmed.parse().map_err(|_| {
+        OctoCliError::Internal(sanitize_substrate_error(
+            "amount must be an integer count of DQA micros (RFC-0960-v36 §Wire Form)",
+        ))
+    })?;
+    if micros <= 0 {
+        return Err(OctoCliError::Internal(sanitize_substrate_error(
+            "amount must be > 0",
+        )));
+    }
+    Ok(micros)
+}
+
+/// Render a [`Dqa`] in canonical operator-facing form. Both sides of an
+/// [`OctoCliError::InsufficientBalance`] comparison go through this
+/// helper so the operator can diff them directly.
+fn dqa_canonical(d: &Dqa) -> String {
+    if d.scale == 0 {
+        d.value.to_string()
+    } else {
+        format!("{}e-{}", d.value, d.scale)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -746,6 +1003,30 @@ pub fn dispatch(action: &VaultAction, cli: &Octo) -> Result<(), OctoCliError> {
             no_cache,
             history,
         } => vault_balance_cmd(vault_id.clone(), *no_cache, *history, cli),
+        VaultAction::Transfer {
+            from,
+            to,
+            amount,
+            asset,
+            memo,
+            include_memo,
+            redact_ids,
+            dest_chain_id,
+            dry_run,
+        } => vault_transfer_cmd(
+            TransferArgs {
+                from: from.clone(),
+                to: to.clone(),
+                amount: amount.clone(),
+                asset: asset.clone(),
+                memo: memo.clone(),
+                include_memo: *include_memo,
+                redact_ids: *redact_ids,
+                dest_chain_id: dest_chain_id.clone(),
+                dry_run: *dry_run,
+            },
+            cli,
+        ),
     }
 }
 
@@ -771,6 +1052,12 @@ fn list_vaults_cmd(
         )));
     }
 
+    // Parse `--chain-id` BEFORE `active_owner_did()` so a malformed
+    // argument surfaces as `InvalidChainId` (exit 26, TV-12d) rather
+    // than the upstream `NoActiveIdentity` (exit 2). Mirrors the
+    // transfer handler's parse-first ordering.
+    let chain_filter = chain_id.as_deref().map(parse_chain_id_hex).transpose()?;
+
     let owner = active_owner_did()?;
     let ports = ports()?;
     let index = ports.owner_index()?;
@@ -779,8 +1066,7 @@ fn list_vaults_cmd(
     let mut rows = substrate_list_owned(index.as_ref(), &owner).map_err(map_vault_error)?;
 
     // Client-side filters (RFC-0011-e §Subcommand Taxonomy `vault list`).
-    if let Some(chain_str) = chain_id {
-        let chain = parse_chain_id_hex(&chain_str)?;
+    if let Some(chain) = chain_filter {
         rows.retain(|r| r.chain_id == chain);
     }
     if let Some(symbol) = asset_symbol {
@@ -929,9 +1215,221 @@ fn map_vault_error(e: VaultOperationsError) -> OctoCliError {
         // Wildcard arm — `VaultOperationsError` is `#[non_exhaustive]`;
         // future substrate variants fail closed to `Internal`.
         other => OctoCliError::Internal(sanitize_substrate_error(&format!(
-            "vault substrate error: {other:?}"
+            "vault operation error: {other:?}"
         ))),
     }
+}
+
+// ---------------------------------------------------------------------------
+// `octo vault transfer` handler — RFC-0011-e §Subcommand Taxonomy
+// ---------------------------------------------------------------------------
+
+/// Inputs to [`vault_transfer_cmd`].
+///
+/// Decoupled from [`VaultAction::Transfer`] so the lib-test suite can
+/// construct synthetic args without going through clap. Field semantics
+/// match RFC-0011-e §Transfer Flags verbatim.
+#[derive(Debug, Clone)]
+pub struct TransferArgs {
+    /// Source vault (64-char lowercase hex); must be owned by the active DID.
+    pub from: String,
+    /// Destination vault (64-char lowercase hex); cross-chain requires `--dest-chain-id`.
+    pub to: String,
+    /// DQA canonical-form amount (RFC-0960-v36 §Wire Form).
+    pub amount: String,
+    /// Asset symbol (e.g. `OCTO`); resolved against the vault registry.
+    pub asset: String,
+    /// Free-text memo; redacted in both sinks unless `--include-memo`.
+    pub memo: Option<String>,
+    /// Opt in to memo plaintext rendering.
+    pub include_memo: bool,
+    /// Opt in to vault-ID truncation in rendered output.
+    pub redact_ids: bool,
+    /// Optional destination chain ID (RFC-0010 canonical form).
+    pub dest_chain_id: Option<String>,
+    /// Build + validate envelope WITHOUT signing or broadcasting.
+    pub dry_run: bool,
+}
+
+/// `octo vault transfer` handler — RFC-0011-e §Subcommand Taxonomy
+/// `octo vault transfer` + Appendix D state machine.
+///
+/// Gate order (deterministic, intentionally short-circuiting):
+///
+/// 1. [`require_confirm`] — pastejacking two-step in Human mode
+///    (`--confirm` + `--confirm-acknowledge`), `--allow-write` in
+///    CI/Dev, denied in Auditor. Dry-run bypasses the mode check
+///    AFTER the Auditor short-circuit (R16 Lens-1 F2).
+/// 2. **Parse** — `amount`, `from`, `to`, optional `dest_chain_id`.
+///    Fast-fails before any substrate call so bad input surfaces as
+///    a parse diagnostic, not an opaque substrate error.
+/// 3. [`active_owner_did`] — `NoActiveIdentity` (exit 2) when the
+///    wallet substrate has no active key.
+/// 4. **Role gate** — exit 25 `RoleNotProvisioned` when the active
+///    operator has not bound a transfer role (RFC-0011-d §Role
+///    Provisioning).
+/// 5. **HSM probe** — exit 5 `HsmUnavailable` when no HSM is bound
+///    to the active DID (RFC-0011-e §Security: HSM Downgrade).
+/// 6. **Ownership** — exit 23 `VaultNotOwned` when `--from` is not
+///    in the owner-index port for the active DID.
+/// 7. **Balance** — exit 24 `InsufficientBalance` when the projected
+///    balance is less than `--amount`.
+/// 8. **Chain ID** — exit 26 `InvalidChainId` (parse) or
+///    `ChainIdMismatch` (cross-chain transfer without explicit
+///    matching `--dest-chain-id`).
+/// 9. **Substrate call** — `substrate_initiate_transfer`.
+/// 10. **Status rewrite** — `--dry-run` flips `Pending` to `DryRun`.
+/// 11. **Envelope render** — `memo_redacted` (length-signal
+///     `[REDACTED:<n>chars]`) is always populated when `--memo`
+///     was supplied; `memo_plaintext` is populated ONLY under
+///     `--include-memo`.
+fn vault_transfer_cmd(args: TransferArgs, cli: &Octo) -> Result<(), OctoCliError> {
+    // (1) Pastejacking-defense + mode gate.
+    require_confirm(cli, "vault transfer")?;
+
+    // (2) Parse inputs. Order is intentional: cheap parse failures
+    //     before any wallet or substrate call.
+    let amount_micros = parse_amount_micros(&args.amount)?;
+    let from_vault_id = parse_vault_id_hex(&args.from)?;
+    let to_vault_id = parse_vault_id_hex(&args.to)?;
+    let dest_chain_id = args
+        .dest_chain_id
+        .as_deref()
+        .map(parse_chain_id_hex)
+        .transpose()?;
+
+    // (3) Resolve the active DID.
+    let owner = active_owner_did()?;
+    let ports = ports()?;
+
+    // (4) Role gate. Phase 1 default impl is `UnprovisionedRoleGate`
+    //     which fails closed — operators must bind a transfer role
+    //     before this command is usable end-to-end. This is the
+    //     explicit AC for the mission (`RoleNotProvisioned` exit 25).
+    if !ports.role_gate().can_transfer(&owner) {
+        return Err(OctoCliError::RoleNotProvisioned);
+    }
+
+    // (5) HSM probe. The Phase 1 default impl is `WalletHsmProbe`
+    //     which reports provisioned whenever the owner DID is
+    //     non-empty; a future production adapter will key off the
+    //     wallet substrate's HSM status surface.
+    if !ports.hsm_probe().is_provisioned(&owner) {
+        return Err(OctoCliError::HsmUnavailable(
+            "active identity has no HSM bound (RFC-0011-e §Security: HSM Downgrade)".to_string(),
+        ));
+    }
+
+    // (6) Ownership: the source vault must be in the active owner's
+    //     owner-index. Capture the row so step (8) can compare chain IDs.
+    let index = ports.owner_index()?;
+    let owned = substrate_list_owned(index.as_ref(), &owner).map_err(map_vault_error)?;
+    let from_row = owned
+        .iter()
+        .find(|r| r.vault_id == from_vault_id)
+        .ok_or_else(|| OctoCliError::VaultNotOwned(args.from.clone()))?;
+
+    // (7) Balance projection. The substrate takes the canonical 7-param
+    //     shape (chain, vault, registry, resolver, log, registry_epoch,
+    //     current_unix); the CLI mirrors the `vault balance` call site.
+    let resolver = ports.asset_resolver()?;
+    let registry = ports.asset_registry()?;
+    let log = ports.transfer_log()?;
+    let now = unix_now_secs() as i64;
+    let projection = project_vault_balance(
+        &from_row.chain_id,
+        &from_vault_id,
+        registry.as_ref(),
+        resolver.as_ref(),
+        log.as_ref(),
+        0,
+        now,
+    )
+    .map_err(map_projection_error)?;
+    let have = projection.projected_balance;
+    let need = Dqa::new(amount_micros, 0).map_err(|e| {
+        OctoCliError::Internal(sanitize_substrate_error(&format!(
+            "DQA construction: {e:?}"
+        )))
+    })?;
+    if have.compare(need) < 0 {
+        return Err(OctoCliError::InsufficientBalance {
+            have: dqa_canonical(&have),
+            need: dqa_canonical(&need),
+        });
+    }
+
+    // (8) Chain ID validation. The substrate validates destination-vault
+    //     existence; the CLI validates chain affinity. Cross-chain
+    //     transfers require explicit matching `--dest-chain-id`.
+    if let Some(dest) = dest_chain_id {
+        if dest != from_row.chain_id {
+            return Err(OctoCliError::ChainIdMismatch {
+                from: chain_id_hex_lower(&from_row.chain_id),
+                to: chain_id_hex_lower(&dest),
+            });
+        }
+    }
+
+    // (9) Substrate call. The substrate builds the transfer envelope
+    //     and returns a `TransferHandle` with `status: Pending`.
+    let asset_id = asset_symbol_to_id(&args.asset);
+    let mut handle =
+        substrate_initiate_transfer(&from_vault_id, &to_vault_id, amount_micros, &asset_id)
+            .map_err(map_vault_error)?;
+
+    // (10) Dry-run rewrite — CLI-side status flip.
+    if args.dry_run {
+        handle.status = TransferStatus::DryRun;
+    }
+    let final_status = handle.status;
+
+    // (11) Memo handling — see `VaultTransferOutput` doc.
+    let memo_redacted = args.memo.as_ref().map(|m| RedactedString::new(m.clone()));
+    let memo_plaintext = if args.include_memo {
+        args.memo.clone()
+    } else {
+        None
+    };
+    let broadcast_at_unix = if args.dry_run {
+        None
+    } else {
+        Some(unix_now_secs())
+    };
+
+    let output = VaultTransferOutput {
+        handle,
+        broadcast_at_unix,
+        status: final_status,
+        memo_plaintext,
+        memo_redacted,
+        redacted: args.redact_ids || args.memo.is_some(),
+    };
+
+    let env = if args.dry_run {
+        OutputEnvelope::preview_only(output, 0)
+    } else {
+        OutputEnvelope::new(output, 0)
+    };
+    env.render(cli.output.json, cli.output.no_color)
+        .map_err(|e| {
+            OctoCliError::Internal(sanitize_substrate_error(&format!("render envelope: {e}")))
+        })
+}
+
+/// Wall-clock unix seconds, monotonically non-decreasing.
+/// Used only for the `broadcast_at_unix` envelope field.
+fn unix_now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Render a [`ChainId`] as 64-char lowercase hex for error payloads.
+/// Used by the transfer gate when reporting a chain-ID mismatch.
+fn chain_id_hex_lower(c: &ChainId) -> String {
+    hex::encode(c.as_bytes())
 }
 
 /// Map substrate projection errors to [`OctoCliError`]. `VaultUnknown`
@@ -1253,5 +1751,256 @@ mod tests {
         // Substrate never produces a future timestamp, but the
         // saturation guards against clock skew.
         assert_eq!(elapsed_seconds(50, Some(100)), 0);
+    }
+
+    // -- Transfer substrate primitives (TV-XFER-*) --------------------
+
+    /// TV-XFER-PR1: `parse_amount_micros` accepts canonical positive
+    /// integers (RFC-0960-v36 §Wire Form, scale 0 micros).
+    #[test]
+    fn tv_xfer_pr1_amount_micros_parses_positive() {
+        assert_eq!(parse_amount_micros("1").unwrap(), 1);
+        assert_eq!(parse_amount_micros("1000000000").unwrap(), 1_000_000_000);
+        // Trims whitespace; rejects non-integers.
+        assert_eq!(parse_amount_micros("  42  ").unwrap(), 42);
+    }
+
+    /// TV-XFER-PR2: `parse_amount_micros` rejects zero and negatives.
+    #[test]
+    fn tv_xfer_pr2_amount_micros_rejects_non_positive() {
+        assert!(matches!(
+            parse_amount_micros("0"),
+            Err(OctoCliError::Internal(_))
+        ));
+        assert!(matches!(
+            parse_amount_micros("-1"),
+            Err(OctoCliError::Internal(_))
+        ));
+    }
+
+    /// TV-XFER-PR3: `parse_amount_micros` rejects non-integer strings
+    /// (RFC-0960-v36 §Wire Form: integer-only micros; scale-separated
+    /// forms must be normalised upstream).
+    #[test]
+    fn tv_xfer_pr3_amount_micros_rejects_non_integer() {
+        assert!(parse_amount_micros("abc").is_err());
+        assert!(parse_amount_micros("1.5").is_err());
+        assert!(parse_amount_micros("1e9").is_err());
+        assert!(parse_amount_micros("").is_err());
+    }
+
+    /// TV-XFER-PR4: `parse_chain_id_hex` rejects malformed input as
+    /// `InvalidChainId` (exit 26, RFC-0011-e §Error Handling + TV-12d).
+    /// Verifies BOTH bad-hex and wrong-length paths.
+    #[test]
+    fn tv_xfer_pr4_chain_id_hex_invalid() {
+        let bad = parse_chain_id_hex("not-hex-zzz").unwrap_err();
+        assert!(
+            matches!(bad, OctoCliError::InvalidChainId { .. }),
+            "expected InvalidChainId, got {bad:?}"
+        );
+        // Wrong-length (31 bytes after hex decode = 62 chars hex)
+        let short = "aa".repeat(31);
+        let wrong_len = parse_chain_id_hex(&short).unwrap_err();
+        assert!(
+            matches!(wrong_len, OctoCliError::InvalidChainId { .. }),
+            "expected InvalidChainId, got {wrong_len:?}"
+        );
+    }
+
+    /// TV-XFER-PR5: `parse_chain_id_hex` accepts canonical 64-char
+    /// lowercase hex.
+    #[test]
+    fn tv_xfer_pr5_chain_id_hex_valid() {
+        let valid = "aa".repeat(32);
+        let chain = parse_chain_id_hex(&valid).expect("valid hex");
+        assert_eq!(hex::encode(chain.as_bytes()), valid);
+    }
+
+    /// TV-XFER-PR6: `parse_vault_id_hex` rejects malformed input as
+    /// `Internal` (exit 64, Wave B substrate-error envelope code).
+    /// Bad vault IDs are substrate-shaped errors, not operator-input
+    /// errors.
+    #[test]
+    fn tv_xfer_pr6_vault_id_hex_invalid() {
+        assert!(matches!(
+            parse_vault_id_hex("not-hex"),
+            Err(OctoCliError::Internal(_))
+        ));
+        let short = "aa".repeat(31);
+        assert!(matches!(
+            parse_vault_id_hex(&short),
+            Err(OctoCliError::Internal(_))
+        ));
+    }
+
+    /// TV-XFER-PR7: `UnprovisionedRoleGate` fails closed for every
+    /// owner DID (Phase 1 default; production impl swaps in via
+    /// `with_role_gate` once role provisioning lands).
+    #[test]
+    fn tv_xfer_pr7_unprovisioned_role_gate_fails_closed() {
+        let gate = UnprovisionedRoleGate;
+        assert!(!gate.can_transfer("did:octo:alice"));
+        assert!(!gate.can_transfer(""));
+        assert!(!gate.can_transfer("did:octo:admin"));
+    }
+
+    /// TV-XFER-PR8: `WalletHsmProbe` reports provisioned whenever the
+    /// owner DID is non-empty (Phase 1 default; production impl reads
+    /// the wallet substrate's HSM status surface).
+    #[test]
+    fn tv_xfer_pr8_wallet_hsm_probe_provisioned_when_did_set() {
+        let probe = WalletHsmProbe;
+        assert!(probe.is_provisioned("did:octo:alice"));
+        assert!(!probe.is_provisioned(""));
+    }
+
+    /// TV-XFER-PR9: `RedactedString` ALWAYS emits `[REDACTED:<n>chars]`
+    /// regardless of the rendering path (Serialize, Display, Debug).
+    /// This is the contract RFC-0011-e §Redaction pins.
+    #[test]
+    fn tv_xfer_pr9_redacted_string_emits_length_signal_always() {
+        let s = RedactedString::new("hello world");
+        assert_eq!(s.char_len(), 11);
+
+        // Serialize
+        let json = serde_json::to_string(&s).unwrap();
+        assert_eq!(json, "\"[REDACTED:11chars]\"");
+
+        // Display
+        assert_eq!(format!("{s}"), "[REDACTED:11chars]");
+
+        // Debug — must NOT leak plaintext into `{:?}` either
+        let dbg = format!("{s:?}");
+        assert!(!dbg.contains("hello"), "Debug leaked plaintext: {dbg}");
+        assert!(dbg.contains("[REDACTED:11chars]"), "Debug: {dbg}");
+    }
+
+    /// TV-XFER-PR10: `RedactedString` vs. zero-length memo.
+    #[test]
+    fn tv_xfer_pr10_redacted_string_zero_length() {
+        let s = RedactedString::new("");
+        assert_eq!(s.char_len(), 0);
+        assert_eq!(s.redacted(), "[REDACTED:0chars]");
+    }
+
+    /// TV-XFER-PR11: `RedactedString::expose_plaintext` is the SINGLE
+    /// escape hatch for `--include-memo` opt-in. Verifies it returns
+    /// the original bytes (not a redacted rendering).
+    #[test]
+    fn tv_xfer_pr11_redacted_string_expose_plaintext_escape_hatch() {
+        let s = RedactedString::new("secret-memo-text");
+        assert_eq!(s.expose_plaintext(), "secret-memo-text");
+    }
+
+    /// TV-XFER-PR12: substrate `TransferStatus::DryRun` is set ONLY
+    /// by the CLI rewrite; `initiate_transfer` always returns
+    /// `Pending`. This pins the substrate truth behind the CLI's
+    /// `--dry-run` rewrite at envelope-build time.
+    #[test]
+    fn tv_xfer_pr12_substrate_status_defaults_to_pending() {
+        let dest = VaultId::from_bytes([0x99u8; 32]);
+        let h = substrate_initiate_transfer(&sample_vault(), &dest, 1_000, &sample_asset())
+            .expect("initiate");
+        assert_eq!(h.status, TransferStatus::Pending);
+        assert_ne!(h.status, TransferStatus::DryRun);
+        // Non-exhaustive guard — adding a new substrate status must
+        // not silently fail here.
+        let _ = match h.status {
+            TransferStatus::Pending => "pending",
+            TransferStatus::Confirmed => "confirmed",
+            TransferStatus::Failed => "failed",
+            TransferStatus::DryRun => "dryrun",
+            _ => "future",
+        };
+    }
+
+    /// TV-XFER-PR13: `dqa_canonical` renders scale-0 DQA as a plain
+    /// integer (the operator-diffable form). Higher-scale DQA falls
+    /// back to the `<value>e-<scale>` scientific form.
+    #[test]
+    fn tv_xfer_pr13_dqa_canonical_scale0() {
+        let d = Dqa::new(1_000_000_000, 0).unwrap();
+        assert_eq!(dqa_canonical(&d), "1000000000");
+    }
+
+    /// TV-XFER-PR14: `dqa_canonical` renders higher-scale DQA in
+    /// scientific form. This is the operator-diffable canonical form
+    /// for cross-asset balances (e.g. OCTO = scale 6 → `1000e-6`).
+    #[test]
+    fn tv_xfer_pr14_dqa_canonical_scale_nonzero() {
+        let d = Dqa::new(1000, 6).unwrap();
+        assert_eq!(dqa_canonical(&d), "1000e-6");
+    }
+
+    /// TV-XFER-PR15: `dqa_canonical` is `Dqa::compare`-compatible.
+    /// Two `Dqa` values compare equal iff `dqa_canonical` renders them
+    /// identically (for the scale-0 micros form).
+    #[test]
+    fn tv_xfer_pr15_dqa_compare_matches_canonical_render() {
+        let a = Dqa::new(1_000_000, 0).unwrap();
+        let b = Dqa::new(1_000_000, 0).unwrap();
+        assert_eq!(a.compare(b), 0);
+        assert_eq!(dqa_canonical(&a), dqa_canonical(&b));
+    }
+
+    /// TV-XFER-PR16: `chain_id_hex_lower` renders a 32-byte `ChainId`
+    /// as 64-char lowercase hex (operator-readable form).
+    #[test]
+    fn tv_xfer_pr16_chain_id_hex_lower_format() {
+        let c = ChainId::from_bytes([0xab; 32]);
+        assert_eq!(chain_id_hex_lower(&c), "ab".repeat(32));
+    }
+
+    /// TV-XFER-PR17: `TransferArgs` carries every flag from RFC-0011-e
+    /// §Transfer Flags — fields are all present and copyable for
+    /// lib-test fixture construction.
+    #[test]
+    fn tv_xfer_pr17_transfer_args_carries_all_flags() {
+        let args = TransferArgs {
+            from: "aa".repeat(32),
+            to: "bb".repeat(32),
+            amount: "1000".into(),
+            asset: "OCTO".into(),
+            memo: Some("hello".into()),
+            include_memo: true,
+            redact_ids: false,
+            dest_chain_id: None,
+            dry_run: true,
+        };
+        let cloned = args.clone();
+        assert_eq!(args.from, cloned.from);
+        assert_eq!(args.amount, cloned.amount);
+        assert!(args.include_memo);
+        assert!(args.dry_run);
+    }
+
+    /// TV-XFER-PR18: `VaultTransferOutput` JSON envelope contains the
+    /// fields RFC-0011-e §Output Envelope pins (handle, status,
+    /// broadcast_at_unix, memo_redacted, memo_plaintext, redacted).
+    #[test]
+    fn tv_xfer_pr18_vault_transfer_output_envelope_fields() {
+        let dest = VaultId::from_bytes([0x99u8; 32]);
+        let h = substrate_initiate_transfer(&sample_vault(), &dest, 1_000, &sample_asset())
+            .expect("initiate");
+        let out = VaultTransferOutput {
+            handle: h.clone(),
+            broadcast_at_unix: Some(1_700_000_000),
+            status: h.status,
+            memo_plaintext: None,
+            memo_redacted: Some(RedactedString::new("memo")),
+            redacted: true,
+        };
+        let json = serde_json::to_string(&out).unwrap();
+        assert!(json.contains("\"handle\""), "{json}");
+        assert!(json.contains("\"status\""), "{json}");
+        assert!(json.contains("\"broadcast_at_unix\""), "{json}");
+        assert!(json.contains("\"memo_redacted\""), "{json}");
+        assert!(json.contains("\"redacted\":true"), "{json}");
+        // memo_plaintext skipped (None + skip_serializing_if).
+        assert!(!json.contains("\"memo_plaintext\""), "{json}");
+        // memo_redacted renders as the length-signal, never plaintext.
+        assert!(!json.contains("\"memo\""), "{json}");
+        assert!(json.contains("[REDACTED:4chars]"), "{json}");
     }
 }

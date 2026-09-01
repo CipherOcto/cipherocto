@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::io::{self, IsTerminal, Write};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// 32-byte hex value (RFC-0011 §Hex32 newtype).
 ///
@@ -18,6 +19,100 @@ pub struct Hex32(
     )]
     pub [u8; 32],
 );
+
+/// Free-text operator input (e.g. `--memo`) — RFC-0011-e
+/// §`RedactedString` newtype.
+///
+/// `Serialize`, `Display`, and `Debug` ALWAYS emit
+/// `[REDACTED:<n>chars]`. This type carries the LENGTH SIGNAL for log
+/// lines and rendering, NEVER the plaintext. Plaintext is exposed via a
+/// sibling `Option<String>` field on the owning output struct (e.g.
+/// `VaultTransferOutput::memo_plaintext`) and is populated ONLY when the
+/// operator opts in via `--include-memo` at envelope-build time
+/// (Layer C). The CLI build path makes that decision; this type does not
+/// know about flags and cannot be configured to emit plaintext.
+///
+/// `RedactedString` differs from [`Hex32`] in exactly the way the
+/// material differs: a 32-byte digest is PUBLIC and must round-trip to
+/// verifiers, whereas a free-text memo is operator-supplied and may
+/// carry secrets. Both sinks (stderr/log and JSON) receive the same
+/// rendering, so redaction cannot be bypassed by switching output
+/// format.
+///
+/// **Zeroize scope:** the inner `String` is zeroized on drop, but only
+/// for plaintext held in CLI PROCESS MEMORY. It does NOT reach into
+/// substrate envelopes — the substrate does not carry plaintext at rest,
+/// and the CLI never round-trips a `RedactedString` back into the
+/// transfer envelope.
+#[derive(Deserialize, Clone, Zeroize, ZeroizeOnDrop)]
+#[serde(from = "String")]
+pub struct RedactedString(String);
+
+impl RedactedString {
+    /// Wrap operator-supplied free text.
+    #[must_use]
+    pub fn new(plaintext: impl Into<String>) -> Self {
+        Self(plaintext.into())
+    }
+
+    /// Character count of the wrapped plaintext (the length signal).
+    #[must_use]
+    pub fn char_len(&self) -> usize {
+        self.0.chars().count()
+    }
+
+    /// The canonical redacted rendering: `[REDACTED:<n>chars]`.
+    #[must_use]
+    pub fn redacted(&self) -> String {
+        format!("[REDACTED:{}chars]", self.char_len())
+    }
+
+    /// Escape hatch for the `--include-memo` opt-in path ONLY.
+    ///
+    /// The caller (Layer C envelope build) must have verified the
+    /// operator's explicit opt-in before calling this. Every other
+    /// rendering path MUST go through [`RedactedString::redacted`].
+    #[must_use]
+    pub fn expose_plaintext(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for RedactedString {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+/// ALWAYS emits `[REDACTED:<n>chars]` — never the plaintext.
+impl Serialize for RedactedString {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.redacted())
+    }
+}
+
+/// ALWAYS renders `[REDACTED:<n>chars]` — never the plaintext.
+impl std::fmt::Display for RedactedString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.redacted())
+    }
+}
+
+/// ALWAYS renders `[REDACTED:<n>chars]` — never the plaintext. A derived
+/// `Debug` would leak the memo into `{:?}` log lines and panic messages.
+impl std::fmt::Debug for RedactedString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RedactedString({})", self.redacted())
+    }
+}
+
+impl PartialEq for RedactedString {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for RedactedString {}
 
 /// Versioned envelope wrapping every successful command payload.
 #[derive(Serialize, Deserialize, JsonSchema, Debug, Clone)]

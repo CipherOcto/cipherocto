@@ -179,7 +179,7 @@ pub enum OctoCliError {
     },
     /// Mesh capability is missing or insufficient for the requested
     /// dispatch. `forward` and `rpc` require an RFC-0957 capability
-    /// caveat per RFC-0011-f §G7; substrate-truth verification at the
+    /// caveat per RFC-0011-f §Design Goals; substrate-truth verification at the
     /// dispatch boundary surfaces this when the envelope carries only a
     /// signature authorization (no capability bound) or the bound
     /// capability's `Audience` caveat does not match the resolved peer
@@ -240,6 +240,59 @@ pub enum OctoCliError {
     /// the vault amendment chain for read-surface failures).
     #[error("vault not owned: {0}")]
     VaultNotOwned(String),
+    /// Projected vault balance is below the requested transfer amount
+    /// (RFC-0011-e §Error Handling). Raised at `vault transfer`
+    /// pre-flight step 4 (`project_vault_balance` < `--amount`). Both
+    /// operands are rendered in DQA canonical form (RFC-0960-v36
+    /// §Wire Form) so the operator can diff them directly. Exit 24.
+    ///
+    /// Transfer amounts are NOT redacted — they are chain-public
+    /// information per RFC-0011-e §Redaction
+    #[error("insufficient balance: have {have}, need {need}")]
+    InsufficientBalance {
+        /// Projected balance, DQA canonical form.
+        have: String,
+        /// Requested transfer amount, DQA canonical form.
+        need: String,
+    },
+    /// `vault transfer` invoked without an RFC-0011-d transfer-capability
+    /// provisioning for the active DID (RFC-0011-e §Error Handling).
+    /// Exit 25.
+    ///
+    /// This is also the **stub-with-error** state: until the substrate
+    /// role-gate hook lands, `vault transfer` surfaces this variant
+    /// regardless of HSM availability (RFC-0011-e §Implementation
+    /// Phases). The CLI does NOT implement role provisioning — that is
+    /// RFC-0011-d's surface (per `[[cipherocto-design-principles]]`
+    /// no-parallel-abstractions).
+    #[error(
+        "role not provisioned: transfer requires a provisioned transfer capability; see RFC-0011-d"
+    )]
+    RoleNotProvisioned,
+    /// Cross-chain transfer attempted without `--dest-chain-id`
+    /// (RFC-0011-e §Security: Cross-Chain Confusion). Exit 26.
+    ///
+    /// The CLI surfaces BOTH the source chain (parsed from `--from`)
+    /// and the substrate-resolved destination chain so the operator can
+    /// see what the substrate detected. There is no `ChainIdResolver`
+    /// trait in the projection substrate, so the destination chain
+    /// arrives via an opaque substrate error.
+    #[error("chain id mismatch: source chain `{from}` != destination chain `{to}`; pass --dest-chain-id to confirm a cross-chain transfer")]
+    ChainIdMismatch {
+        /// Source chain ID (canonical form, from `--from`).
+        from: String,
+        /// Substrate-resolved destination chain ID (canonical form).
+        to: String,
+    },
+    /// `--chain-id` or `--dest-chain-id` failed RFC-0010 canonical-form
+    /// parse (RFC-0011-e §Error Handling). Exit 26 — shared with
+    /// [`OctoCliError::ChainIdMismatch`] because both are operator-input
+    /// validation failures on chain IDs.
+    #[error("invalid chain id: {received}")]
+    InvalidChainId {
+        /// The rejected operator input, verbatim.
+        received: String,
+    },
 
     /// Unexpected internal failure.
     #[error("internal error: {0}")]
@@ -287,6 +340,13 @@ impl OctoCliError {
             Self::EnvelopeAuthorizationFailed { .. } => 19,
             Self::RpcTimeout { .. } => 20,
             Self::VaultNotOwned(_) => 23,
+            Self::InsufficientBalance { .. } => 24,
+            Self::RoleNotProvisioned => 25,
+            Self::ChainIdMismatch { .. } => 26,
+            // Shared exit 26 with `ChainIdMismatch` per RFC-0011-e
+            // §Error Handling — both are chain-ID input validation
+            // failures.
+            Self::InvalidChainId { .. } => 26,
             Self::Internal(_) => 64,
             Self::StaleStub { .. } => 65,
         }
@@ -362,6 +422,21 @@ impl OctoCliError {
             }
             Self::VaultNotOwned(_) => {
                 "the requested vault is not owned by the active DID; verify the vault_id".to_string()
+            }
+            Self::InsufficientBalance { .. } => {
+                "top up the source vault or lower --amount; re-check with `octo vault balance <id>`"
+                    .to_string()
+            }
+            Self::RoleNotProvisioned => {
+                "provision a transfer capability for the active DID (`octo role select`); see RFC-0011-d"
+                    .to_string()
+            }
+            Self::ChainIdMismatch { .. } => {
+                "pass --dest-chain-id to confirm a cross-chain transfer, or target a vault on the source chain"
+                    .to_string()
+            }
+            Self::InvalidChainId { .. } => {
+                "chain IDs use the RFC-0010 canonical form (64-char lowercase hex)".to_string()
             }
             Self::StaleStub { .. } => "this command was removed; see the migration notes".to_string(),
             Self::Internal(_) => "re-run with `RUST_LOG=debug` and report the diagnostic".to_string(),

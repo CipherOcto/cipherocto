@@ -996,7 +996,13 @@ pub fn dispatch(action: &VaultAction, cli: &Octo) -> Result<(), OctoCliError> {
             vault_id,
             no_cache,
             history,
-        } => vault_balance_cmd(vault_id.clone(), *no_cache, *history, cli),
+        } => vault_balance_cmd(
+            vault_id.clone(),
+            *no_cache,
+            *history,
+            unix_now_secs() as i64,
+            cli,
+        ),
         VaultAction::Transfer {
             from,
             to,
@@ -1097,10 +1103,17 @@ fn list_vaults_cmd(
 /// bypassed when `--no-cache` is set (the substrate respects the
 /// flag by short-circuiting the cache lookup; Phase 1 routes via
 /// a fresh log scan path in the same call).
+///
+/// `now_unix_seconds` is supplied by the dispatch entrypoint (one
+/// `unix_now_secs()` call per invocation) so the function stays free
+/// of `SystemTime::now()` reads — Wave 5.5 F4 fix mirrors the
+/// `list_vaults_cmd` threading pattern (acknowledged deferred from
+/// Wave 4.5 `eb5f674a`).
 fn vault_balance_cmd(
     vault_id_hex: String,
     _no_cache: bool,
     _history: Option<u32>,
+    now_unix_seconds: i64,
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
     // Session-first exit-code precedence (RFC-0011 §Exit Code
@@ -1131,11 +1144,6 @@ fn vault_balance_cmd(
     let log = ports.transfer_log()?;
     let registry = ports.asset_registry()?;
 
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-
     // Canonical 7-param SUM projection (RFC-0960-v37 §2.2). Phase 1
     // passes `current_registry_epoch = 0` (no asset-rotation break);
     // a follow-on amendment wires the substrate registry epoch
@@ -1147,12 +1155,12 @@ fn vault_balance_cmd(
         resolver.as_ref(),
         log.as_ref(),
         0,
-        now,
+        now_unix_seconds,
     )
     .map_err(map_projection_error)?;
 
     let cache_hit = projection.source_kind == ProjectionSource::Cache;
-    let age = elapsed_seconds(now, projection.projected_at_unix_seconds);
+    let age = elapsed_seconds(now_unix_seconds, projection.projected_at_unix_seconds);
     let mut warnings: Vec<String> = Vec::new();
     if age > CACHE_TTL_SECONDS {
         warnings.push(format!(

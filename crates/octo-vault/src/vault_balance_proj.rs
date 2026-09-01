@@ -55,6 +55,7 @@ fn substrate_local_cache() -> &'static Mutex<VaultBalanceCache> {
 ///   the substrate cache IS global and CAN leak. The guard pattern
 ///   here serializes only tests that touch the cache — non-cache
 ///   tests still run in parallel.
+#[allow(dead_code)]
 static TEST_SERIAL: Mutex<()> = Mutex::new(());
 
 /// Drop guard returned by [`reset_substrate_cache_for_test`]. Holds

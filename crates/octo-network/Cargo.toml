@@ -37,6 +37,11 @@ futures = "0.3"
 # Mission 0855p-d1: UTF-8 NFC normalization for SubGroupLabel (optional feature
 # `unicode-nfc`; ASCII fast-path is identity when feature disabled)
 unicode-normalization = { version = "0.1", optional = true }
+# Mission 0855p-e-coordinator-types-shared-crate: shared Layer-B
+# coordinator types (SlashTallyUpdate + SlashReasonCode +
+# HandoverReasonTypeId canonical home). octo-network re-imports;
+# no upward dependency; no duplicate definitions.
+octo-coordinator-types = { path = "../octo-coordinator-types" }
 
 [dev-dependencies]
 serde_json = "1.0"

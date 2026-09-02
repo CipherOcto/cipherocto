@@ -129,80 +129,22 @@ pub struct InvalidOrdinalError {
 }
 
 // -----------------------------------------------------------------------------
-// SlashTallyUpdate (Layer C — scheduled to lift to octo-coordinator-types crate)
+// Layer-B re-exports from octo-coordinator-types shared crate
+// (per mission 0855p-e-coordinator-types-shared-crate)
 // -----------------------------------------------------------------------------
 
-/// Slash tally update event — local Layer-C type per RFC-0855p-e §Layer-C
-/// Substrate Types follow-on note. Scheduled to lift to shared
-/// `octo-coordinator-types` crate per mission 0855p-e-coordinator-types-shared-crate.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SlashTallyUpdate {
-    /// Slash reason code (RFC-0008 §B code space 0x0001-0xFFFF).
-    pub slash_reason_code: u16,
-    /// Public key of the slashed peer.
-    pub slashed_peer_id: [u8; 32],
-    /// Number of witness signatures collected.
-    pub witness_count: u16,
-    /// Epoch when the slash was applied.
-    pub epoch: u64,
-}
+/// Slash tally update event — shared Layer-B type per RFC-0855p-e
+/// §Layer-C Substrate Types follow-on note. Canonical home:
+/// `octo_coordinator_types::SlashTallyUpdate`. Re-exported here so
+/// downstream consumers can continue importing from `octo_network::dot::handover`.
+pub use octo_coordinator_types::SlashTallyUpdate;
 
-// -----------------------------------------------------------------------------
-// SlashReasonCode (Layer C — typed discriminator for slash tally updates)
-// -----------------------------------------------------------------------------
-
-/// `SlashReasonCode` typed discriminator. Extension safety via `reason_id()` +
-/// `Extension(u16)` variant (catches user-extension registry 0x0100-0xFFFF) +
-/// `#[non_exhaustive]` mismatch pattern guard at call sites.
-///
-/// **Why not `#[non_exhaustive]` here:** Rust 1.66+ forbids explicit discriminants
-/// on `#[non_exhaustive]` enums (E0732). We need explicit discriminants for the
-/// wire byte mapping (`reason_id() → u16`). Extension safety comes from the
-/// `Extension(u16)` variant + `reason_id()` returning raw u16 + match-site
-/// documentation requiring a wildcard arm.
-///
-/// Entries 0x0013-0x0016 (`FalseAttestation` / `QuorumTimeout` / `TallyTamper` /
-/// `LateDelivery`) are scheduled to land via `octo-coordinator-types` per
-/// RFC-0855p-e §Future Work F-7.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[repr(u16)]
-pub enum SlashReasonCode {
-    /// Generic slash.
-    Generic = 0x0001,
-    /// Attested to invalid predecessor state.
-    FalseAttestation = 0x0013,
-    /// Failed to ack HORQ within witness window.
-    QuorumTimeout = 0x0014,
-    /// Tampered with slash tally evidence.
-    TallyTamper = 0x0015,
-    /// Delivered slash tally update after grace window.
-    LateDelivery = 0x0016,
-    /// User-extension variant (RFC-allocated namespace 0x0100-0xFFFF).
-    Extension(u16),
-}
-
-impl SlashReasonCode {
-    pub fn reason_id(&self) -> u16 {
-        match self {
-            Self::Generic => 0x0001,
-            Self::FalseAttestation => 0x0013,
-            Self::QuorumTimeout => 0x0014,
-            Self::TallyTamper => 0x0015,
-            Self::LateDelivery => 0x0016,
-            Self::Extension(id) => *id,
-        }
-    }
-}
-
-// -----------------------------------------------------------------------------
-// HandoverReasonTypeId (Layer B — typed discriminator for handover reason)
-// -----------------------------------------------------------------------------
-
-/// Typed handover reason discriminator (Layer B; UUID-tag-style 128-bit value).
-/// Used by slash tally to map `SubDCVoluntaryResignation` etc. to handover
-/// trigger codes. Scheduled to lift to shared `octo-coordinator-types` crate.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct HandoverReasonTypeId(pub [u8; 16]);
+/// `SlashReasonCode` typed discriminator — shared Layer-B type. Canonical
+/// home: `octo_coordinator_types::SlashReasonCode`. Re-exported here for
+/// backward compat. The shared crate variant is `#[non_exhaustive]`-free
+/// with `Extension(u16)` catching user-extension registry 0x0100-0xFFFF;
+/// `reason_id()` returns raw u16 for wire mapping.
+pub use octo_coordinator_types::{HandoverReasonTypeId, SlashReasonCode};
 
 // -----------------------------------------------------------------------------
 // MeshAggregatedSignature (Layer C — bitmap + aggregated BLS signature)

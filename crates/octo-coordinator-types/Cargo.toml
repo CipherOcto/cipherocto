@@ -1,0 +1,29 @@
+[package]
+name = "octo-coordinator-types"
+version = "0.1.0"
+edition = "2021"
+description = "Shared coordinator substrate types (Layer B per CLAUDE.md §Architectural Principles). Canonical home for SlashTallyUpdate + SlashReasonCode + HandoverReasonTypeId lifted from octo-network local Layer-C surface per RFC-0855p-e §Layer-C Substrate Types follow-on note + RFC-0855p-b §Slash tally references. Both RFCs re-import from this crate (no upward dependency; no duplicate definitions)."
+license = "MIT OR Apache-2.0"
+authors = ["CipherOcto"]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# Ed25519 public key 32-byte wrapper (RFC-0009 identity substrate Layer A).
+ed25519-dalek = { version = "2.1", features = ["serde"] }
+# Typed-discriminator serialization helpers (Borsh canonical BE bytes per
+# RFC-0126). Used by HandoverReasonTypeId canonical_ser.
+borsh = { version = "=1.5.0", features = ["derive"] }
+# thiserror for SlashReasonCode parse + SlashReasonCodeError derives.
+thiserror = "2.0"
+# Serde derives for slash tally + reason code types (debug + cross-crate
+# message passing via serde_json in future coordinators).
+serde = { version = "1", features = ["derive"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+empty_line_after_doc_comments = "allow"
+doc_lazy_continuation = "allow"

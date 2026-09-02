@@ -741,6 +741,14 @@ Backward compat with non-handover-aware clients: After HODN, OLD clients continu
 - Recipients reject because consensus-aggregated view shows sender state ≠ Active.
 - No state transition; no slash (recipient-local check).
 
+### TV-HO-9: HOAK second-witness quorum gate
+
+- HORQ with `sender_state_snapshot_ordinal != SenderStateSnapshotOrdinal::Active` (e.g. `Suspect = 5`).
+- `witness_set_size = 3`; `horq_quorum(3) = ceil(3 × 2/3) = 2`.
+- 1 second-witness HOAK with `attests_to_predecessor_state = true` arrives; `count(attests_to_predecessor_state=true) = 1 < horq_quorum(3) = 2`.
+- Recipient rejects under the HOAK second-witness quorum gate (added v1.2 per W12 L3 M1 finding — closes control gap from §Race-resolution determinism).
+- 2 distinct second-witness HOAKs (distinct `witness_id`, same `attested_epoch`) → `count = 2 >= horq_quorum(3) = 2`; gate passes; HORQ proceeds through normal acceptance (BLAKE3 verify + signature checks + nonce-unconsumed).
+
 ## Alternatives Considered
 
 - **Rotate-by-epoch** — rejected: no operator agency, removes mission-specific expertise.

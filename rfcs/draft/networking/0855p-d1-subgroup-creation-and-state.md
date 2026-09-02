@@ -30,17 +30,19 @@ Part 1 of 3 (0855p-d1 / d2 / d3). Defines `DOT/1/CGROUP_SUB` (`b"CGSB"`) for aut
 
 ## Layer placement
 
-| Concern                                                                                | Layer       | Justification                                                                                                  |
-| -------------------------------------------------------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------- |
-| `SubGroupEnvelope` outer wire (10-byte canonical header per RFC-0850p-c §A)            | **Layer B** | Transport envelope; no Layer-C role knowledge embedded in outer wire                                           |
-| `SubGroupPayload` inner DCS (CGSB semantic body)                                       | **Layer B** | Wire-format semantics; canonical form per RFC-0126                                                             |
-| `SubGroupLabel::new` constructor (UTS-39 confusable + bidi/zero-width/BOM reject)      | **Layer B** | Type-boundary invariant; auditable at decode time                                                              |
-| `target_routing_endpoint_id: [u8; 32]` typed key in wire                               | **Layer B** | Layer-B/D split per §Layer-C Substrate Surface; no `Platform` enum embedding                                   |
-| `SubGroupState` enum + transition engine                                               | **Layer C** | Coordinator-side governance policy                                                                             |
-| `SubGroupRecord` storage + cross-node reconciliation                                   | **Layer C** | Storage-backed substrate; typed query boundary per [[cipherocto-design-principles]] §Storage is not a protocol |
-| `SubGroupQuery` / `SubGroupResponse` / `SubGroupAuthorityCheck` typed boundary structs | **Layer C** | Protocol boundary per §Open/Closed principle                                                                   |
-| Re-export (`pub use rfc_0853::Ed25519PublicKey`)                                       | **Layer A** | Crypto primitive; re-export only (no `pub type` alias per W6 L2 L1 finding — actual code uses `pub use`)       |
-| Re-export (`pub use rfc_0009::Did`)                                                    | **Layer B** | Identity substrate; re-export only                                                                             |
+| Concern                                                                                | Layer       | Justification                                                                                                              |
+| -------------------------------------------------------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `SubGroupEnvelope` outer wire (10-byte canonical header per RFC-0850p-c §A)            | **Layer B** | Transport envelope; no Layer-C role knowledge embedded in outer wire                                                       |
+| `SubGroupPayload` inner DCS (CGSB semantic body)                                       | **Layer B** | Wire-format semantics; canonical form per RFC-0126                                                                         |
+| `SubGroupLabel::new` constructor (UTS-39 confusable + bidi/zero-width/BOM reject)      | **Layer B** | Type-boundary invariant; auditable at decode time                                                                          |
+| `target_routing_endpoint_id: [u8; 32]` typed key in wire                               | **Layer B** | Layer-B/D split per §Layer-C Substrate Surface; no `Platform` enum embedding                                               |
+| `SubGroupState` enum + transition engine                                               | **Layer C** | Coordinator-side governance policy                                                                                         |
+| `SubGroupRecord` storage + cross-node reconciliation                                   | **Layer C** | Storage-backed substrate; typed query boundary per [[cipherocto-design-principles]] §Storage is not a protocol             |
+| `SubGroupQuery` / `SubGroupResponse` / `SubGroupAuthorityCheck` typed boundary structs | **Layer C** | Protocol boundary per §Open/Closed principle                                                                               |
+| `MAX_BIND_AWAIT_EPOCHS = 32` + `MAX_BIND_RETRY_COUNT = 3` + `RACE_EPOCHS = 32` consts  | **Layer B** | Wire-protocol replay bound + BIND ceremony deadlines; canonical home (re-exported by RFC-0855p-d3 per its §Data Structure) |
+| `MAX_FSKEW_EPOCHS = 4` const                                                           | **Layer B** | Forward-skew clock-drift tolerance; cross-RFC invariant with RFC-0855p-e; canonical home (re-exported by RFC-0855p-d3)     |
+| Re-export (`pub use rfc_0853::Ed25519PublicKey`)                                       | **Layer A** | Crypto primitive; re-export only (no `pub type` alias per W6 L2 L1 finding — actual code uses `pub use`)                   |
+| Re-export (`pub use rfc_0009::Did`)                                                    | **Layer B** | Identity substrate; re-export only                                                                                         |
 
 Direction A→B→C/D/E verified: this RFC depends on RFC-0853 (Layer A crypto), RFC-0009 (Layer B identity), RFC-0850p-c (Layer B transport), RFC-0126 (Layer A canonical encoding), RFC-0855p-c (Layer C DC authority), RFC-0855p-d2 (Layer C delegation), RFC-0855p-d3 (Layer C routing/teardown). No upward dependency.
 

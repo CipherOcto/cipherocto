@@ -1,8 +1,16 @@
-# RFC-0855p-d (Networking): Sub-Domain / Sub-Group Nesting
+# RFC-0855p-d (Networking): Sub-Group Nesting (INDEX)
 
 ## Status
 
-Draft (2026-06-17) — early stage; main scenarios to be elaborated in next iteration
+Draft (2026-09-02) — INDEX RFC. Superseded by per-concern split:
+
+- RFC-0855p-d1 — Sub-Group Creation & State
+- RFC-0855p-d2 — Sub-DC Delegation Lifecycle
+- RFC-0855p-d3 — Routing + Aggregation + Teardown
+
+The monolithic RFC-0855p-d v1.2 (~1200 lines, single spec for CGSB + SDCD/SDRV/SDRT + P2SR/S2PA/SGTP + state machine + Layer-C substrate + test vectors) restructured into 3 sibling RFCs on 2026-09-02 per the plateau declaration (`docs/audits/2026-09-02-rfc-0855p-de-review-plateau.md`). 11-wave 5-lens adversarial review loop (W1-W10 + W10.5) confirmed non-convergence; per [[cipherocto-design-principles]] §Discipline at first call site + §No parallel abstractions, restructure chosen over continued wave cycle.
+
+This INDEX retains cross-cutting concerns (dependencies, motivation, high-level overview) and indexes per-concern content to the sibling RFCs. Per-concern §Specification / §Data Structure / §Security / §Test Vectors live in d1/d2/d3. VH rows below preserve the v0.2 → v1.2 monolithic lineage; subsequent v1.3 entries point to the restructure event.
 
 ## Authors
 
@@ -14,133 +22,334 @@ Draft (2026-06-17) — early stage; main scenarios to be elaborated in next iter
 
 ## Summary
 
-Specifies how a DomainCoordinator (DC) can create **sub-groups** for sub-domains within a parent domain. Sub-groups are bound to sub-`domain_id`s (e.g., `BLAKE3(parent_domain_id || sub_label)`) and inherit the parent's mission and DC, but have their own membership and binding. Closes scenario family **S-G4** (sub-group nesting) from `docs/research/networking-rfc-cross-reference-analysis.md`. Complements RFC-0850p-d (DC-initiated group creation): sub-groups use the same CGROUP ceremony but with a derived `sub_domain_id` and a `parent_domain_id` linkage field.
+Slim INDEX for the 0855p-d sub-group nesting RFC chain. Per-concern specification lives in d1 (creation + state), d2 (sub-DC delegation lifecycle), and d3 (routing + aggregation + teardown). This INDEX provides the chain-wide motivation, dependency graph, and version lineage.
 
-## Dependencies
+## Dependencies (chain-wide)
 
-- RFC-0850p-c (Networking): Transport Group Binding Ceremony
-- RFC-0850p-d (Networking): DC-Initiated Transport Group Creation & Invite — reuses CGROUP
-- RFC-0855p-c (Networking): DomainCoordinator Role — DC authority
-- RFC-0126 (Numeric): DCS
+Shared dependencies across d1/d2/d3:
 
-## Design Goals (preliminary)
+- RFC-0850 — Deterministic Overlay Transport
+- RFC-0850p-c — Transport Group Binding Ceremony
+- RFC-0850p-d — DC-initiated group creation, CGROUP envelope, transport invite ceremony
+- RFC-0855p-b — Mission Coordinator Lifecycle and slash policy
+- RFC-0855p-c — DomainCoordinator authority and lifecycle
+- RFC-0126 — DCS deterministic canonical serialization
+- RFC-0853 — Overlay Cryptography (OCrypt); §Cryptographic Primitives mandates BLAKE3-256
+- RFC-0009 — Identity substrate (canonical `Did` re-exported per RFC-0855p-d1 §Layer placement)
 
-1. **Inherited authority.** The parent DC is the implicit DC for all sub-domains unless explicitly delegated.
-2. **Independent binding.** A sub-group's BIND is independent of the parent's BIND; either can be UNBIND'd without affecting the other.
-3. **Cross-sub-group messaging.** A node that is a member of a sub-group is NOT automatically a member of the parent group (and vice versa). Cross-sub-group messaging is via the overlay, not the physical group.
-4. **Hierarchical naming.** `sub_domain_id = BLAKE3(parent_domain_id || sub_label)` where `sub_label` is a UTF-8 string (max 256 bytes).
-5. **Delegation policy.** The parent DC MAY delegate sub-DC authority to another node for a specific sub-domain.
+Per-RFC dependencies (intra-chain):
 
-## Motivation
+- RFC-0855p-d1 — no intra-chain deps
+- RFC-0855p-d2 — depends on RFC-0855p-d1 (subgroup must exist + be `Bound` before delegation has any effect)
+- RFC-0855p-d3 — depends on RFC-0855p-d1 (subgroup state machine) + RFC-0855p-d2 (non-parent sub-DC requires valid delegation)
 
-Use cases like "mission alpha has multiple working groups (sub-committees)" require hierarchical grouping. The current RFC-0850p-c and RFC-0850p-d treat `domain_id` as flat; there is no notion of parent / child.
+Sibling RFCs (parallel review chain):
 
-Example: `mission_alpha` has domains `domain-vote-recount` (parent) and sub-domains `domain-vote-recount.legal-review` and `domain-vote-recount.comms-review`. Each sub-domain has its own physical group (e.g., WhatsApp / Matrix / Telegram) with its own membership.
+- RFC-0855p-e — Mission Coordinator Handover Envelope (sibling RFC; uses `mission_id` 16B field; shares cross-RFC invariant `MAX_FSKEW_EPOCHS = 4`)
 
-## Status (Detailed)
+## Layer placement (chain-wide)
 
-This RFC is in early-stage draft. The sub-group CGROUP ceremony can reuse the basic CGROUP flow from RFC-0850p-d §A with the following additions:
-- `parent_domain_id: [u8; 32]` field in CGROUP envelope
-- `sub_label: String` field in CGROUP envelope
-- `sub_domain_id = BLAKE3(parent_domain_id || sub_label)` derived field
-- `sub_dc_id: Option<[u8; 32]>` field for delegated sub-DC
+Direction A→B→C/D/E verified at chain level:
 
-A future iteration will elaborate:
-- Detailed state machine for sub-group binding
-- Cross-sub-group membership rules
-- Sub-DC delegation protocol
-- Parent → sub-group message routing
-- Sub-group → parent aggregation
+- **Layer A** (RFC-frozen): BLAKE3-256 primitive (RFC-0853), Ed25519 public key (RFC-0853), canonical `Did` (RFC-0009), BLS12-381 G1 48-byte compressed aggregate (RFC-0855p-b §Witness Set Aggregation). Re-exported via `pub use` per RFC-0855p-d1 §Layer placement; no `pub type` alias (per W6 L2 L1 finding).
+- **Layer B** (years-stable): all envelope wire types (CGSB, SDCD, SDRV, SDRT, P2SR, S2PA, SGTP outer 10-byte canonical header per RFC-0850p-c §A; inner DCS canonical form per RFC-0126). Unknown subtypes fail closed.
+- **Layer C** (per-RFC): state machine (SubGroupState), delegation policy (SubDCDelegationPolicy), aggregation policy (hodn_quorum), teardown grace bound (TEARDOWN_GRACE_EPOCHS), cross-node reconciliation.
+- **Layer D** (per-adapter): transport binding (RFC-0850p-c) — none of d1/d2/d3 define transport adapters.
+- **Layer E** (per-extension): typed-discriminator registry for `SubGroupAction` (RFC-0855p-d1 owns the struct + namespace; d1 reserves 0x0001 INVITE + d3 reserves 0x0004 ROUTE + 0x0005 AGGREGATE; d2 reserves 0x0002 REVOKE + 0x0003 DISSOLVE; user-extension range 0x0100-0xFFFF).
 
-## Use Case Link
+No central enum for extension-bearing types (SubGroupState / SubGroupAction / RevocationReasonCode / TeardownReasonCode all use `#[non_exhaustive]` + typed discriminator). New variants land without central edits to the core module.
 
-- `docs/use-cases/mission-coordinator-lifecycle.md` — "DC Delegation" section
-- `docs/use-cases/social-platform-transport-layer.md` — "Hierarchical Grouping" section
-- `docs/research/networking-rfc-cross-reference-analysis.md` — Scenario family S-G4
+## Motivation (chain-wide)
 
-## Specification (preliminary)
+Mission teams need nested working groups, committees, channels, and bounded administrative scopes beneath one domain. Flat domain IDs lose parentage, policy lineage, broadcast boundaries, and deterministic naming. They also provide no safe mechanism for delegating authority to one child domain.
 
-### Envelope Type Extension
+Three concerns split per restructure (option B):
 
-The base `DOT/1/CGROUP` envelope (defined in RFC-0850p-d §Specification) is the parent envelope for sub-group creation. To keep the base CGROUP envelope clean, this RFC defines a new envelope variant `DOT/1/CGROUP_SUB` for sub-group creation. The new variant carries a `SubGroupExtension` field; the base `CGROUP` envelope is unchanged.
+1. **Creation + state** (RFC-0855p-d1): envelope type, label canonicalization, domain derivation, parent-binding invariant, state machine, depth cap enforcement. Defines CGSB + SubGroupState + SubGroupRecord + SubGroupLabel + SubGroupQuery/Response/AuthorityCheck typed query boundary.
+2. **Delegation lifecycle** (RFC-0855p-d2): envelope family for sub-DC authority. Defines SDCD/SDRV/SDRT + SubDCDelegationProof + SubDCDelegationPolicy + chain-depth counter + root-delegation table.
+3. **Routing + aggregation + teardown** (RFC-0855p-d3): cross-sub-group messaging envelopes. Defines P2SR/S2PA/SGTP + MemberAttestation + SignersBitmap + hodn_quorum + TEARDOWN_GRACE_EPOCHS.
+
+Cross-cutting invariants:
+
+- `MAX_FSKEW_EPOCHS = 4` (forward-skew tolerance; cross-RFC with RFC-0855p-e)
+- `RACE_EPOCHS = 32` (backward-replay bound)
+- `MAX_SUBGROUP_DEPTH = 8` (creation cap; RFC-0855p-d1)
+- `MAX_ROOT_DELEGATION = 1` (delegation breadth cap; RFC-0855p-d2)
+- `MAX_DELEGATION_CHAIN_PER_TERM = 256` (delegation chain depth; RFC-0855p-d2)
+- `TEARDOWN_GRACE_EPOCHS = 50` (dissolution bound; RFC-0855p-d3)
+- `MAX_AGGREGATE_ATTESTATIONS = 1024` (witness collection cap; RFC-0855p-d3)
+- `MAX_BIND_AWAIT_EPOCHS = 32` (BIND deadline; RFC-0855p-d1)
+- `MAX_BIND_RETRY_COUNT = 3` (BIND retry cap; RFC-0855p-d1)
+
+## Roles and Authorities (chain-wide)
+
+Authority comes from active parent `GroupBinding`, parent DC coordinator term, mission policy, and optional child-scoped delegation proof (RFC-0855p-d2). Role labels never grant authority by themselves.
+
+| Role            | Create (d1)                                                             | Delegate (d2)                          | Route/Aggregate/Teardown (d3)                    |
+| --------------- | ----------------------------------------------------------------------- | -------------------------------------- | ------------------------------------------------ |
+| Origin          | Propose label, parent, mission context; cannot create without authority | No                                     | No                                               |
+| Coordinator     | Create child under active parent; supply parent signature               | Sign SDCD for child; chain depth ≤ 256 | Sign P2SR/SGTP for child                         |
+| Member          | No                                                                      | No                                     | May attest via S2PA; cannot issue P2SR/S2PA/SGTP |
+| Sub-coordinator | Create descendants only with explicit descendant scope (RFC-0855p-d2)   | Sign SDCD for descendant child         | Sign P2SR/S2PA/SGTP for own sub-domain           |
+| Parent mesh     | Validate envelopes, CGROUP BIND, transport binding                      | Validate envelopes + chain depth       | Validate aggregate + teardown                    |
+
+Per-concern role expansions: RFC-0855p-d1 §Roles and Authorities, RFC-0855p-d2 §Roles and Authorities, RFC-0855p-d3 §Roles and Authorities.
+
+## Adversary Analysis (chain-wide)
+
+Five-Question Test (per RFC): WHO / CAPABILITY / TARGET / CONTROLS / RESIDUAL. Per-concern threat matrices: RFC-0855p-d1 §Adversary Analysis, RFC-0855p-d2 §Adversary Analysis, RFC-0855p-d3 §Adversary Analysis.
+
+Chain-wide residual risks:
+
+- Parent DC key compromise enables parent-term actions (CGSB, SDCD, SDRV, SDRT, P2SR, S2PA, SGTP with parent signature) until coordinator rotation or parent revocation.
+- Mesh-aggregator compromise could forge mesh_aggregated_signature; mitigated by BLS12-381 PoP at witness registration (RFC-0855p-b) + cross-aggregator verification.
+- Transport-platform outage breaks BIND / UNBIND lifecycle independent of governance lifecycle.
+
+## Implicit Assumptions Audit (chain-wide)
+
+Per-concern audits: RFC-0855p-d1 §Implicit Assumptions Audit, RFC-0855p-d2 §Implicit Assumptions Audit, RFC-0855p-d3 §Implicit Assumptions Audit.
+
+Chain-wide assumptions (all verified at acceptance time, not at envelope signature time):
+
+- Subgroup exists and is in expected state (d1)
+- Sub-DC delegated (d2, when applicable)
+- Replay-key index current (chain-wide)
+- Layer-A hash stable (RFC-0853 §Cryptographic Primitives)
+- Coordinator term current (RFC-0855p-c)
+- Mission policy immutable from child (parent-child invariant)
+
+Missing data fails closed.
+
+## Security Considerations (chain-wide)
+
+Per-concern security: RFC-0855p-d1 §Security Considerations, RFC-0855p-d2 §Security Considerations, RFC-0855p-d3 §Security Considerations.
+
+Chain-wide threats:
+
+- **Replay and freshness**: covered by `MAX_FSKEW_EPOCHS = 4` + `RACE_EPOCHS = 32` bounds, replay-key tuple encoding (envelope-type-specific), nonce index.
+- **Privilege escalation**: covered by `MAX_DELEGATION_CHAIN_PER_TERM = 256` (d2), `MAX_ROOT_DELEGATION = 1` (d2), depth cap (d1).
+- **Quorum forgery**: covered by mesh_aggregated_signature covering signers_bitmap + distinct-signer enforcement + hodn_quorum coverage check ordering (d3).
+- **Teardown fabrication**: covered by grace-elapsed check + state transition bound (d3).
+
+## Specification (chain-wide)
+
+### Envelope Type Catalog
+
+Subtype tags registered under `DOT/1/CGROUP_SUB`:
+
+| Subtype | Owner        | Purpose                                  |
+| ------- | ------------ | ---------------------------------------- |
+| CGSB    | RFC-0855p-d1 | Create sub-group under active parent     |
+| SDCD    | RFC-0855p-d2 | Issue or refresh sub-DC delegation proof |
+| SDRV    | RFC-0855p-d2 | Revoke sub-DC delegation                 |
+| SDRT    | RFC-0855p-d2 | Rotate sub-DC key                        |
+| P2SR    | RFC-0855p-d3 | Parent-to-sub-group route envelope       |
+| S2PA    | RFC-0855p-d3 | Sub-to-parent aggregate envelope         |
+| SGTP    | RFC-0855p-d3 | Sub-group teardown proof                 |
+
+Future envelopes MUST NOT collide with these tags. Reserved future range: 0x08-0xFF (RFC-allocated). User-extension envelope tags: 0x0100-0xFFFF (registry).
+
+### State Machine
+
+`SubGroupState` (RFC-0855p-d1):
 
 ```rust
-/// New envelope for sub-group creation (DOT/1/CGROUP_SUB).
-/// (R16 R1-H2 fix: previous wording said "the DOT/1/CGROUP envelope (defined in
-///  RFC-0850p-d §Specification) is extended with: SubGroupExtension", but the
-///  base CGROUP envelope in 0850p-d does NOT have a `sub_group_extension` field.
-///  This was a missing cross-reference. The fix: define a new envelope variant
-///  CGROUP_SUB (with subtype tag `b"CGSB"`) that carries the SubGroupExtension;
-///  the base CGROUP envelope is unchanged.)
-#[derive(Dcs, Clone, Debug, PartialEq, Eq)]
-pub struct CreateSubGroupEnvelope {
-    pub envelope_type: [u8; 4],         // b"DOT1"
-    pub envelope_subtype: [u8; 4],      // b"CGSB" (CREATE_SUBGROUP)
-    pub version: u16,                   // 0x0001
-    pub domain_id: [u8; 32],            // sub_domain_id (derived)
-    pub mission_id: [u8; 32],
-    pub platform: Platform,
-    pub proposed_group_metadata: ProposedGroupMetadata,   // reuses 0850p-d's type
-    pub initial_invite_count: u16,
-    pub dc_id: [u8; 32],                // sub-DC's peer_id (or parent DC if None)
-    pub sub_group_extension: SubGroupExtension,           // see below
-    pub nonce: [u8; 16],
-    pub current_epoch: u64,
-    pub coordinator_term_id: [u8; 32],
-    pub signature: [u8; 64],
-}
-
-/// Optional fields added to CreateSubGroupEnvelope for sub-groups.
-#[derive(Dcs, Clone, Debug, PartialEq, Eq)]
-pub struct SubGroupExtension {
-    pub parent_domain_id: [u8; 32],
-    pub sub_label: String,             // max 256 bytes UTF-8, MUST NOT contain `/`
-    pub sub_dc_id: Option<[u8; 32]>,   // None = parent DC is implicit DC
-    pub delegation_proof: Option<Vec<u8>>,   // signed delegation from parent DC
+#[derive(Dcs, Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SubGroupState {
+    PendingBind,
+    Bound,
+    Dissolving,
+    Dissolved,
 }
 ```
 
-`sub_domain_id` is derived: `sub_domain_id = BLAKE3(parent_domain_id || sub_label)`. The `sub_dc_id` field overrides the default "parent DC is the implicit sub-DC" behavior. The `delegation_proof` (when present) is a signed envelope from the parent DC granting sub-DC authority to the `sub_dc_id` (the format of the delegation proof will be specified in F-1 "Sub-DC delegation protocol").
+Transitions: `Absent → PendingBind` (CGSB accept per RFC-0855p-d1 §Recipient Verification); `PendingBind → Bound` (BIND success); `PendingBind → Dissolving` (BIND failure, deadline, parent flip); `Bound → Dissolving` (explicit UNBIND, parent UNBIND cascade, sub-DC revocation per RFC-0855p-d2); `Dissolving → Dissolved` (SGTP accept per RFC-0855p-d3 after `TEARDOWN_GRACE_EPOCHS` elapsed).
 
-### State Machine (preliminary)
+Future extensions (Suspended / Archived / Frozen) land without central edits to the core enum via `#[non_exhaustive]`.
 
-A sub-group has its own `GroupBinding` and `GroupState` independent of the parent. The parent's state is unaffected by sub-group transitions.
+### Layer-C Substrate Surface
 
-## Future Work (specific)
+RFC-0855p-d1 §Layer-C Substrate Surface defines the typed query/response boundary:
 
-- **F-1: Sub-DC delegation protocol.** Specify how a parent DC delegates sub-DC authority (signed delegation envelope, rotation, revocation).
-- **F-2: Cross-sub-group messaging.** Define the protocol for a sub-group to send a message to the parent (e.g., aggregated roll-call).
-- **F-3: Sub-group → parent aggregation.** Define how a sub-group's votes are aggregated to the parent (e.g., a sub-group coordinator signs a "roll-up" envelope).
-- **F-4: Sub-group decommission.** If a sub-group is UNBIND'd, the parent remains. Specify the policy.
-- **F-5: Cross-platform sub-groups.** A sub-group can be on a different platform than the parent (e.g., parent on WhatsApp, sub-group on Matrix). Specify the cross-platform routing.
-- **F-6: Sub-group label collision.** Two sub-groups with the same `sub_label` under different parents are different `sub_domain_id`s (by BLAKE3 derivation). No collision.
-- **F-7: Sub-group label format.** `sub_label` MUST be a UTF-8 string with no `/` characters (to enable URL-style addressing). (R16 R1-L2 fix: was SHOULD — URL-style parsing requires the constraint, not just a recommendation.)
+- `SubGroupQuery` / `SubGroupResponse` / `SubGroupAuthorityCheck` / `SubGroupAction`
+- Response kind registry: 0x0001-0x00FF RFC-allocated, 0x0100-0xFFFF user-extension
+- Action type registry: 0x0001-0x00FF RFC-allocated, 0x0100-0xFFFF user-extension
 
-## Rationale (preliminary)
+RFC-0855p-d2 + RFC-0855p-d3 register their action entries against the shared `SubGroupAction` namespace without modifying the registry module.
 
-This RFC is in early-stage draft. The basic sub-group CGROUP ceremony reuses the existing CGROUP flow with a `SubGroupExtension`. A future iteration will elaborate the sub-DC delegation protocol, cross-sub-group messaging, and aggregation rules.
+### Recipient Verification (chain-wide)
+
+Common path:
+
+1. DCS decode succeeds; `version` is supported.
+2. Forward-skew bound: `current_epoch <= local_epoch + MAX_FSKEW_EPOCHS`.
+3. Subgroup state matches envelope purpose.
+4. Issuer authority verified (parent DC OR valid delegated sub-DC per RFC-0855p-d2).
+5. Signature verifies over envelope-specific context.
+6. Replay-key index query.
+7. (Post-validation) Record replay-key entry only after steps 1–6 pass.
+
+Per-envelope additions:
+
+- S2PA (RFC-0855p-d3): aggregate witness coverage (quorum + distinct-signer + mesh signature).
+- SGTP (RFC-0855p-d3): grace-elapsed check + state transition `Dissolving → Dissolved`.
+
+## RFC-0008 Execution Class Mapping (chain-wide)
+
+| Operation                                                  | Class | Owner        |
+| ---------------------------------------------------------- | ----- | ------------ |
+| CGSB envelope derive + recipient accept                    | A     | RFC-0855p-d1 |
+| `SubGroupLabel::new` (UTS-39 confusable + NFC)             | A     | RFC-0855p-d1 |
+| `SubGroupState` transition engine                          | C     | RFC-0855p-d1 |
+| `SubGroupRecord` cross-node reconciliation                 | C     | RFC-0855p-d1 |
+| SDCD/SDRV/SDRT envelope accept                             | C     | RFC-0855p-d2 |
+| `SubDCDelegationProof::validate_for` (pure-function scope) | A     | RFC-0855p-d2 |
+| `RevocationReasonCode` enum construction                   | A     | RFC-0855p-d2 |
+| P2SR envelope accept + route                               | C     | RFC-0855p-d3 |
+| S2PA envelope accept + aggregate                           | C     | RFC-0855p-d3 |
+| SGTP envelope accept + state transition                    | C     | RFC-0855p-d3 |
+| `MemberAttestation` / `SignersBitmap` / `aggregate_id`     | A     | RFC-0855p-d3 |
+| `mesh_aggregated_signature` verification                   | A     | RFC-0855p-d3 |
+| `hodn_quorum` policy lookup                                | C     | RFC-0855p-d3 |
+
+## Determinism Requirements (chain-wide)
+
+Per-concern determinism: RFC-0855p-d1 §Determinism Requirements, RFC-0855p-d2 §Determinism Requirements, RFC-0855p-d3 §Determinism Requirements.
+
+Chain-wide invariants:
+
+- Canonical encoding (RFC-0126 array-of-u8 form for all typed discriminator fields).
+- Replay-key tuple encoding uses canonical BE bytes.
+- BLAKE3-256 keyed_hash derivation form is the canonical recipe across the chain (RFC-0855p-d1 §Sub-Domain Derivation Invariant).
+- BLS12-381 G1 48-byte compressed aggregate canonical form (RFC-0855p-b §Witness Set Aggregation).
+- Cross-replica determinism: identical observed envelope sequences → identical state.
+
+## Lifecycle Requirements (chain-wide)
+
+| Constant                        | Value | Owner                                               |
+| ------------------------------- | ----- | --------------------------------------------------- |
+| `MAX_SUBGROUP_DEPTH`            | 8     | RFC-0855p-d1                                        |
+| `MAX_ROOT_DEPTH`                | 1     | RFC-0855p-d1                                        |
+| `MAX_ROOT_DELEGATION`           | 1     | RFC-0855p-d2                                        |
+| `MAX_DELEGATION_CHAIN_PER_TERM` | 256   | RFC-0855p-d2                                        |
+| `MAX_BIND_AWAIT_EPOCHS`         | 32    | RFC-0855p-d1                                        |
+| `MAX_BIND_RETRY_COUNT`          | 3     | RFC-0855p-d1                                        |
+| `MAX_FSKEW_EPOCHS`              | 4     | RFC-0855p-d1 + cross-RFC invariant with RFC-0855p-e |
+| `RACE_EPOCHS`                   | 32    | RFC-0855p-d1                                        |
+| `TEARDOWN_GRACE_EPOCHS`         | 50    | RFC-0855p-d3                                        |
+| `MAX_AGGREGATE_ATTESTATIONS`    | 1024  | RFC-0855p-d3                                        |
+
+## Performance Targets (chain-wide)
+
+- Canonical validation target: under 1 ms p95 excluding durable state writes.
+- Label resolution target: under 10 ms p95 from cache miss.
+- Cross-sub-group route: under 1 ms p95.
+- Aggregate verification: under 5 ms p95 for `MAX_AGGREGATE_ATTESTATIONS = 1024`.
+- State writes: one transaction per child reservation / per delegation chain update.
+
+Targets are local p95 on agreed reference hardware.
+
+## Compatibility (chain-wide)
+
+RFC-0850p-d CGROUP consumers filter on supported subtype. They see unknown CGSB/SDCD/SDRV/SDRT/P2SR/S2PA/SGTP safely, log unsupported subtype, and do not decode or act. No CGROUP field changes. Old clients cannot create sub-groups or cross-sub-group envelopes because per-subtype parsing and CLI routes are unavailable. Wire addition is backward compatible. Version negotiation uses outer `version`; unsupported version is rejected without fallback.
+
+## Test Vectors (chain-wide)
+
+Per-concern test vectors: RFC-0855p-d1 §Test Vectors (TV-SG-1..5), RFC-0855p-d2 §Test Vectors (TV-SG-6, TV-SG-7), RFC-0855p-d3 §Test Vectors (TV-SG-8, TV-SG-9, TV-SG-9b, TV-SG-9c).
+
+## Alternatives Considered (chain-wide)
+
+Per-concern alternatives: RFC-0855p-d1 §Alternatives Considered, RFC-0855p-d2 §Alternatives Considered, RFC-0855p-d3 §Alternatives Considered.
+
+Chain-wide rejected alternatives:
+
+- **Flat hierarchy only**: working groups need parentage, policy lineage, scoped delegation, and deterministic descendant routing.
+- **Tags without nesting**: tag taxonomy cannot prove one active parent, bound child depth, child-scoped authority, or parent-dissolve cascade.
+- **Extend CGROUP with optional extension**: optional fields weaken old-client compatibility and make per-concern semantics non-obvious.
+- **Monolithic RFC**: confirmed non-convergent after 11-wave review; per-concern split chosen per [[cipherocto-design-principles]] §Discipline at first call site.
+
+## Implementation Phases (chain-wide)
+
+Per-concern phases: RFC-0855p-d1 §Implementation Phases, RFC-0855p-d2 §Implementation Phases, RFC-0855p-d3 §Implementation Phases.
+
+Chain-wide sequencing:
+
+1. **Phase 1** (d1 wire): CGSB envelope + canonical derivation + label validation.
+2. **Phase 2** (d1 state + d2 wire): state machine + delegation envelope family.
+3. **Phase 3** (d2 policy + d3 wire): delegation policy + cross-sub-group envelope family.
+4. **Phase 4** (d3 routing/aggregation/teardown): aggregate verification + teardown grace enforcement.
+5. **Phase 5** (cross-RFC surface): client API + dashboards.
+
+Each phase requires prior-phase tests green + prettier clean + clippy clean.
+
+## Key Files to Modify (chain-wide)
+
+Per-concern files:
+
+- `crates/octo-network/src/dot/subgroup_state.rs` (RFC-0855p-d1)
+- `crates/octo-network/src/dot/subgroup_delegation.rs` (RFC-0855p-d2)
+- `crates/octo-network/src/dot/subgroup_routing.rs` (RFC-0855p-d3)
+- `crates/octo-network/src/dot/subgroup_teardown.rs` (RFC-0855p-d3)
+
+Cross-cutting:
+
+- `crates/octo-network/src/dot/mod.rs` — module organization + envelope dispatch.
+- `docs/audits/2026-09-02-rfc-0855p-de-review-plateau.md` — closure doc for the 11-wave review.
+
+## Economic Analysis
+
+DEFER to RFC-0917 and RFC-0960. The 0855p-d chain defines identity, authority, lifecycle, and validation only. Sub-group creation, delegation, routing, aggregation, and teardown have no direct token transfer, fee, reward, stake, settlement, or accounting surface here.
+
+## Future Work
+
+Per-concern future work: RFC-0855p-d1 §Future Work, RFC-0855p-d2 §Future Work, RFC-0855p-d3 §Future Work.
+
+Chain-wide deferred:
+
+- F-10 (cross-mission children): future work; current invariant requires inherited `mission_id` from one parent.
+- F-12 (substrate migration): migrate legacy `blake3::hash(parent_domain_id || sub_label)` to canonical keyed_hash form per RFC-0855p-d1 §Sub-Domain Derivation Invariant.
+
+## Rationale (chain-wide)
+
+The monolithic RFC-0855p-d v1.2 (~1200 lines) combined creation + state + delegation + routing + aggregation + teardown + Layer-C substrate + test vectors + alternative considerations + implementation phases in one document. 11-wave 5-lens adversarial review loop (W1-W10 + W10.5) confirmed non-convergence: each fix batch surfaces fresh C-level audit surface from the new fixes themselves. Per [[cipherocto-design-principles]] §Discipline at first call site + §No parallel abstractions, the disciplined answer is to split per concern rather than continue generating fresh audit surface.
+
+Per-concern split (option B):
+
+- **d1 (creation + state)**: ~400 lines focused on CGSB + state machine + canonical derivation.
+- **d2 (delegation lifecycle)**: ~450 lines focused on SDCD/SDRV/SDRT + delegation policy.
+- **d3 (routing + aggregation + teardown)**: ~500 lines focused on P2SR/S2PA/SGTP + distinct-signer enforcement + quorum coverage + teardown grace.
+- **d INDEX**: ~250 lines cross-cutting concerns + chain-wide overview.
+
+Total: ~1600 lines vs 1200 lines monolithic. Increase justified by reduced per-RFC audit surface + clearer per-concern validation paths + typed-discriminator extensions landing without central edits.
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 0.1 | 2026-06-17 | Initial stub; main spec to be elaborated |
-| 0.2 | 2026-06-17 | R16 R1 fix: (H2) replaced "extend CreateGroupEnvelope with SubGroupExtension" wording with a new envelope variant `CreateSubGroupEnvelope` (subtype tag `b"CGSB"`), since the base CGROUP envelope in RFC-0850p-d has no `sub_group_extension` field; (L2) F-7: `sub_label` constraint changed SHOULD → MUST (no `/` characters; required for URL-style addressing). |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                    |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.1     | 2026-08-15 | Initial draft (sibling RFC-0855p-b / RFC-0855p-c review chain).                                                                                                                                                                                                                            |
+| 0.2     | 2026-08-19 | Added §Security Considerations + §Implicit Assumptions Audit + §Test Vectors per BLUEPRINT template.                                                                                                                                                                                       |
+| 1.0     | 2026-08-29 | Spec-elaboration complete (post-W7.5 fix batch); cite sweep PASS.                                                                                                                                                                                                                          |
+| 1.1     | 2026-09-01 | BLS12-381 PoP at witness registration + UTS-39 confusable codepoint enumeration + HORQ snapshot canonical path + HORC payload_hash domain prefix + MAX_PENDING_ENVELOPES_PER_HODN bound. See fix-log §v1.1.                                                                                |
+| 1.2     | 2026-09-02 | W10 fix batch: HandoverAckPayload attests_to_predecessor_state + aggregate_id derivation + bitmap-vs-quorum coverage + SenderStateSnapshotOrdinal `#[non_exhaustive]` + HANDOVER_RACE_WINDOW const + layer placement rows + 3 BLUEPRINT template sub-sections per file. See fix-log §v1.2. |
+| 1.3     | 2026-09-02 | **Restructured** into 3-RFC chain (d1/d2/d3). Monolithic 1200-line v1.2 split per concern. This INDEX RFC preserves cross-cutting concerns + chain-wide overview + version lineage. Per-concern §Specification / §Security / §Test Vectors live in d1/d2/d3. See fix-log §v1.3.            |
 
 ## Related RFCs
 
-- RFC-0850p-c (Networking): Transport Group Binding Ceremony
-- RFC-0850p-d (Networking): DC-Initiated Transport Group Creation & Invite
-- RFC-0855p-c (Networking): DomainCoordinator Role
+- RFC-0850 — Deterministic Overlay Transport
+- RFC-0850p-c — Transport Group Binding Ceremony
+- RFC-0850p-d — DC-Initiated Transport Group Creation & Invite
+- RFC-0853 — Overlay Cryptography (OCrypt)
+- RFC-0126 — DCS deterministic canonical serialization
+- RFC-0009 — Identity substrate
+- RFC-0855p-b — Mission Coordinator Lifecycle and slash policy
+- RFC-0855p-c — DomainCoordinator Role and parent DC authority scope
+- RFC-0855p-d1 — Sub-Group Creation & State (sibling RFC in this chain)
+- RFC-0855p-d2 — Sub-DC Delegation Lifecycle (sibling RFC in this chain)
+- RFC-0855p-d3 — Routing + Aggregation + Teardown (sibling RFC in this chain)
+- RFC-0855p-e — Mission Coordinator Handover Envelope (sibling RFC; cross-RFC invariant on `MAX_FSKEW_EPOCHS = 4`)
 
 ## Related Use Cases
 
-- `docs/use-cases/mission-coordinator-lifecycle.md` — "DC Delegation"
-- `docs/use-cases/social-platform-transport-layer.md` — "Hierarchical Grouping"
-- `docs/research/networking-rfc-cross-reference-analysis.md` — Scenario family S-G4
-
----
-
-**Version:** 0.1
-**Submission Date:** 2026-06-17
-**Last Updated:** 2026-06-17
+- `docs/use-cases/mission-coordinator-lifecycle.md` — DC Delegation
+- `docs/use-cases/social-platform-transport-layer.md` — Hierarchical Grouping

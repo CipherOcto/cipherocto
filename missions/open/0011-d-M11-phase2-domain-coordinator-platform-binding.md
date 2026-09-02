@@ -11,15 +11,15 @@ metadata:
     - RFC-0011-d
     - RFC-0855p-c (must be Accepted)
     - mission 0011-d-M4-octorole-select-with-stoolap-tx
-status: Claimed
+status: Open
 ---
 
 # 0011-d-M11-phase2-domain-coordinator-platform-binding — Phase 2 substrate `bind_domain_coordinator` per RFC-0011-d §Mission Decomposition M11
 
-**Status:** Claimed 2026-09-01 by @mmacedoeu — GATED.
+**Status:** Open — Phase 2 substrate for `bind_domain_coordinator` per RFC-0011-d §Mission Decomposition M11. Substrate prereqs cleared (RFC-0855p-c Accepted 2026-08-31 per `rfcs/accepted/networking/0855p-c-domain-coordinator-role.md`). No release-cycle gate. Implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]] + [[implementation-workflow-hook]]. Per audit 2026-09-01: 2026-09-01 blanket re-claim reverted — gate-cleared status is honest claim for next claim cycle.
 **Substrate:** RFC-0011-d §Mission Decomposition M11 row; §7.4 Substrate `[ADD]`; RFC-0855p-c wiring target
 **Parent:** RFC-0011-d
-**Depends on:** RFC-0855p-c Accepted (gate); `0011-d-M4-octorole-select-with-stoolap-tx` (substrate precedent: BEGIN IMMEDIATE + signed envelope + Stoolap)
+**Depends on:** RFC-0855p-c Accepted (gate CLEARED 2026-08-31); `0011-d-M4-octorole-select-with-stoolap-tx` (substrate precedent: BEGIN IMMEDIATE + signed envelope + Stoolap)
 
 ## Status
 
@@ -48,7 +48,7 @@ RFC-0011-d §Mission Decomposition M11 row; §7.4 Substrate `[ADD]` signatures; 
 
 ## Acceptance Criteria
 
-- [ ] Extend existing `crates/octo-coordinator/` crate (NEW per RFC-0855p-d substrate pattern; already created by RFC-0855p-d Accept)
+- [ ] Extend existing `crates/octo-coordinator/` crate (NEW per RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) substrate pattern; already created by RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) Accept)
 - Add `pub fn bind_domain_coordinator(role_binding: &RoleBinding, platform_admin_id: &PlatformAdminId) -> Result<(), CoordinatorError>` per RFC §Mission Decomp M11 row
 - Atomic: updates RFC-0855p-c `DomainCoordinatorRecord.platform_admin_id` in same Stoolap `BEGIN IMMEDIATE` tx
 - Returns `CoordinatorError::AdminMismatch { expected, actual }` on `platform_admin_id` mismatch with existing record
@@ -88,7 +88,7 @@ Single substrate entrypoint per RFC §Mission Decomp M11 row. NO new substrate e
 
 ## Layer direction (per [[cipherocto-design-principles]])
 
-- `octo-coordinator` (Layer B; per RFC-0855p-d substrate) — Phase 2 platform-binding substrate
+- `octo-coordinator` (Layer B; per RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) substrate) — Phase 2 platform-binding substrate
 - `octo-wallet` (Layer B; per RFC-0009) — role_binding substrate (input)
 - Stoolap (Layer D adapter; per RFC-0010) — `BEGIN IMMEDIATE` tx
 
@@ -114,7 +114,7 @@ Additive: 1 new public fn on existing `octo-coordinator` crate. NO existing crat
 - RFC-0011-d §Mission Decomposition M11 row (canonical single-entrypoint scope)
 - RFC-0011-d §7.4 (Substrate `[ADD]` signatures)
 - RFC-0855p-c (DomainCoordinatorRecord.platform_admin_id wiring target; gate)
-- RFC-0855p-d (octo-coordinator crate owner)
+- RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) (octo-coordinator crate owner)
 - M10 (substrate-first ordering: M10 calls M11)
 - [[deferred-vs-unspecified]] — gated release
 

@@ -24,6 +24,7 @@ pub mod route;
 pub mod sequence;
 pub mod slash;
 pub mod sub_group;
+pub mod subgroup_state;
 pub mod transport;
 pub mod witness;
 
@@ -66,7 +67,21 @@ pub use replay::ReplayCache;
 pub use sequence::OverlaySequence;
 pub use slash::{cross_platform_code, is_cross_platform, reserved as slash_reserved, SlashCode};
 pub use sub_group::{
-    CreateSubGroupEnvelope, SubGroupError, SubGroupExtension, MAX_SUB_LABEL_LEN, SUBGROUP_TAG,
+    CreateSubGroupEnvelope as LegacyCreateSubGroupEnvelope,
+    MAX_SUB_LABEL_LEN as LEGACY_MAX_SUB_LABEL_LEN, SUBGROUP_TAG,
+};
+pub use subgroup_state::{
+    derive_sub_domain_id, reconcile_pending_bind, transition, ActionEncodeError,
+    CreateSubGroupEnvelope, CreateSubGroupError, DelegationId, GroupBindingState,
+    ParentBindingInvariant, SubDCDelegationProof, SubDomainDerivationInvariant, SubGroupAction,
+    SubGroupAuthorityCheck, SubGroupExtension, SubGroupHeaderError, SubGroupLabel,
+    SubGroupLabelError, SubGroupQuery, SubGroupRecord, SubGroupResponse, SubGroupState,
+    TeardownProof, TransitionError, TransitionResult, TransitionTrigger, CREATE_SUBGROUP,
+    MAX_BIND_AWAIT_EPOCHS, MAX_BIND_RETRY_COUNT, MAX_FSKEW_EPOCHS, MAX_ROOT_DEPTH,
+    MAX_SUBGROUP_DEPTH, MAX_SUB_LABEL_BYTES, RACE_EPOCHS, SUBGROUP_ACTION_AGGREGATE,
+    SUBGROUP_ACTION_INVITE, SUBGROUP_ACTION_PAYLOAD_MAX, SUBGROUP_ACTION_ROUTE,
+    SUBGROUP_DOMAIN_CONTEXT, SUBGROUP_RESPONSE_BOUND, SUBGROUP_RESPONSE_DISSOLVED,
+    SUBGROUP_RESPONSE_DISSOLVING, SUBGROUP_RESPONSE_NOT_FOUND, SUBGROUP_RESPONSE_PENDING_BIND,
 };
 pub use witness::{BINDHook, NonceReplayTable, ValidationOutcome, WitnessContext};
 

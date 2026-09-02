@@ -390,8 +390,11 @@ impl SubGroupExtension {
 /// this is the ONLY permitted form. Non-compliant forms (plain `blake3::hash`,
 /// context-concatenation, parent-omitted) are forbidden.
 pub fn derive_sub_domain_id(parent_domain_id: &[u8; 32], sub_label_bytes: &[u8]) -> [u8; 32] {
-    let key = [0u8; 32];
-    blake3::derive_key(SUBGROUP_DOMAIN_CONTEXT, &key);
+    // blake3 1.5 derive_key: `fn derive_key(context: &str, key_material: &[u8]) -> [u8; 32]`
+    // Takes an opaque key_material input and returns the derived 32-byte key.
+    // We pass an empty key_material so the returned key is purely a function
+    // of the context string (per RFC-0855p-d1 §Sub-Domain Derivation Invariant).
+    let key = blake3::derive_key(SUBGROUP_DOMAIN_CONTEXT, b"");
     let mut input = Vec::with_capacity(32 + sub_label_bytes.len());
     input.extend_from_slice(parent_domain_id);
     input.extend_from_slice(sub_label_bytes);
@@ -1120,8 +1123,7 @@ mod tests {
         let label_bytes = b"legal-review";
         let derived = derive_sub_domain_id(&parent, label_bytes);
         // Manual recompute via derive_key + keyed_hash.
-        let key = [0u8; 32];
-        blake3::derive_key(SUBGROUP_DOMAIN_CONTEXT, &key);
+        let key = blake3::derive_key(SUBGROUP_DOMAIN_CONTEXT, b"");
         let mut input = Vec::with_capacity(32 + label_bytes.len());
         input.extend_from_slice(&parent);
         input.extend_from_slice(label_bytes);
@@ -1195,6 +1197,7 @@ mod tests {
             SubGroupState::Bound => 2,
             SubGroupState::Dissolving => 3,
             SubGroupState::Dissolved => 4,
+            #[allow(unreachable_patterns)]
             _ => 99, // required wildcard per #[non_exhaustive]
         };
         assert_eq!(kind_known, 2);

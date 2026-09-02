@@ -197,11 +197,7 @@ pub struct SdcdReplayKey {
 impl SdcdReplayKey {
     /// Compute canonical 32-byte replay-key digest per RFC-0126.
     pub fn digest(&self) -> [u8; 32] {
-        let key = {
-            let k = [0u8; 32];
-            blake3::derive_key(SDCD_CONTEXT, &k);
-            k
-        };
+        let key = blake3::derive_key(SDCD_CONTEXT, b"");
         let mut input = Vec::with_capacity(4 + 32 + 32 + 32 + 32 + 8 + 16);
         input.extend_from_slice(&SUBDC_DELEGATION_TAG);
         input.extend_from_slice(&self.parent_dc_id);
@@ -226,11 +222,7 @@ pub struct SdrvReplayKey {
 
 impl SdrvReplayKey {
     pub fn digest(&self) -> [u8; 32] {
-        let key = {
-            let k = [0u8; 32];
-            blake3::derive_key(SDRV_CONTEXT, &k);
-            k
-        };
+        let key = blake3::derive_key(SDRV_CONTEXT, b"");
         let mut input = Vec::with_capacity(4 + 32 + 32 + 32 + 32 + 2);
         input.extend_from_slice(&SUBDC_REVOCATION_TAG);
         input.extend_from_slice(&self.parent_dc_id);
@@ -256,11 +248,7 @@ pub struct SdrtReplayKey {
 
 impl SdrtReplayKey {
     pub fn digest(&self) -> [u8; 32] {
-        let key = {
-            let k = [0u8; 32];
-            blake3::derive_key(SDRT_CONTEXT, &k);
-            k
-        };
+        let key = blake3::derive_key(SDRT_CONTEXT, b"");
         let mut input = Vec::with_capacity(4 + 32 + 32 + 32 + 32 + 32 + 8 + 16);
         input.extend_from_slice(&SUBDC_ROTATION_TAG);
         input.extend_from_slice(&self.parent_dc_id);

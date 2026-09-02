@@ -168,9 +168,7 @@ pub fn check_teardown_grace(local_epoch: u64, dissolving_epoch: u64) -> Teardown
 /// Derive the BLAKE3 keyed-hash key for `SUBGROUP_TEARDOWN_CONTEXT`. Used by
 /// SGTP issuers when signing the canonical DCS encoding.
 pub fn teardown_signature_key() -> [u8; 32] {
-    let key = [0u8; 32];
-    blake3::derive_key(SUBGROUP_TEARDOWN_CONTEXT, &key);
-    key
+    blake3::derive_key(SUBGROUP_TEARDOWN_CONTEXT, b"")
 }
 
 // -----------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-//! Coordinator Term Handover — RFC-0855p-e (v1.3 reconciled)
+//! Coordinator Term Handover — RFC-0855p-e
 //!
 //! Implements the `HandoverRequestEnvelope` (subtype `b"HORQ"`),
 //! `HandoverAckEnvelope` (subtype `b"HOAK"`),
@@ -8,7 +8,7 @@
 //! `SenderStateSnapshotOrdinal`, `MeshAggregatedSignature`,
 //! `horq_quorum(witness_set_size)`, and HOAK second-witness quorum gate.
 //!
-//! See RFC-0855p-e §"Data Structure (preliminary)" and
+//! See RFC-0855p-e §Data Structure and
 //! `missions/claimed/0855p-e-handover-envelope-substrate.md` Phase 1+2.
 //!
 //! ## Canonical 10-byte header
@@ -29,13 +29,12 @@ use super::binding::GroupState;
 use super::error::DotError;
 
 // -----------------------------------------------------------------------------
-// v1.3 cross-RFC canonical home re-export
+// Cross-RFC canonical home re-export
 // -----------------------------------------------------------------------------
 
 /// Forward-skew tolerance (envelope epoch ahead of recipient head). Canonical
-/// home: RFC-0855p-d1 (per plateau closure `docs/audits/2026-09-02-rfc-0855p-de-review-plateau.md`).
-/// Re-exported here so handover acceptance can use `±MAX_FSKEW_EPOCHS = 4`
-/// without importing from d1.
+/// home: RFC-0855p-d1. Re-exported here so handover acceptance can use
+/// `±MAX_FSKEW_EPOCHS = 4` without importing from d1.
 pub use super::subgroup_state::MAX_FSKEW_EPOCHS;
 
 // -----------------------------------------------------------------------------
@@ -184,9 +183,9 @@ impl MeshAggregatedSignature {
 
 /// HORQ-side quorum policy: minimum distinct witnesses for HORQ acceptance.
 ///
-/// Distinct from `hodn_quorum` (d3 canonical home per plateau closure); both
+/// Distinct from `hodn_quorum` (d3 canonical home); both
 /// functions take `witness_set_size`, but the policy domain differs (HORQ-side
-/// vs HODN-side). Kept separate on purpose per `docs/audits/2026-09-02-rfc-0855p-de-review-plateau.md`.
+/// vs HODN-side). Kept separate on purpose per RFC-0855p-d3 §HODN quorum.
 ///
 /// Formula: `max(witness_set_size * 2 / 3, 2)` (floor 2; 0 only when set is empty).
 /// Examples: 0→0, 1→2, 2→2, 3→2, 6→4, 9→6.
@@ -197,9 +196,8 @@ pub fn horq_quorum(witness_set_size: usize) -> usize {
     (witness_set_size * 2 / 3).max(2)
 }
 
-/// Forward-reference re-export of `hodn_quorum` (canonical home lives in d3
-/// per `docs/audits/2026-09-02-rfc-0855p-de-review-plateau.md`). Formula
-/// `(wss * 2).div_ceil(3)` per RFC-0855p-d3 §Data Structure.
+/// Forward-reference re-export of `hodn_quorum` (canonical home lives in d3).
+/// Formula `(wss * 2).div_ceil(3)` per RFC-0855p-d3 §Data Structure.
 pub use super::subgroup_routing::hodn_quorum;
 
 // -----------------------------------------------------------------------------
@@ -208,7 +206,7 @@ pub use super::subgroup_routing::hodn_quorum;
 
 /// Reason a coordinator is initiating a handover.
 ///
-/// See RFC-0855p-e §"Data Structure (preliminary)".
+/// See RFC-0855p-e §Data Structure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum HandoverReason {
@@ -250,8 +248,8 @@ impl HandoverReason {
 
 /// Type of coordinator initiating the handover.
 ///
-/// (R16 R1-L3 fix: this enum was referenced by RFC-0855p-e §"Data Structure"
-/// but was not defined in v0.1 of the RFC. Inlined here.)
+/// (Inlined here per RFC-0855p-e §Data Structure — the RFC references this
+/// enum but does not define it inline.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum CoordinatorRole {
@@ -286,8 +284,8 @@ impl CoordinatorRole {
 
 /// A single slash event.
 ///
-/// See RFC-0855p-e §"SlashTally struct" (R16 R1-H5 fix: inlined here; the
-/// previous version referenced non-existent RFC-0855p-b.1).
+/// See RFC-0855p-e §Data Structure. (Inlined here; the canonical form was
+/// not previously defined.)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlashEvent {
     /// Slash reason code (per RFC-0855p-b §B code space 0x0001-0xFFFF).
@@ -422,7 +420,7 @@ impl SlashTally {
 
 /// Coordinator handover request (DOT/1/HANDOVER_REQUEST).
 ///
-/// See RFC-0855p-e §"Data Structure (preliminary)". R16 R1-C1 fix: the
+/// See RFC-0855p-e §Data Structure. R16 R1-C1 fix: the
 /// 1-byte subtype + 1-byte version stub from v0.1 has been replaced with the
 /// canonical 10-byte header per RFC-0850p-c §A.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -560,9 +558,8 @@ impl HandoverRequestEnvelope {
 
 /// Witness ACK of a HANDOVER_REQUEST (DOT/1/HANDOVER_ACK).
 ///
-/// See RFC-0855p-e §"Data Structure" — R16 R2 fix: the v0.2 RFC listed
-/// this envelope in the Envelope Type Added table (subtype `b"HOAK"`) but
-/// did not define the struct. Added here.
+/// See RFC-0855p-e §Data Structure — added here per the Envelope Type Added
+/// table (subtype `b"HOAK"`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HandoverAckEnvelope {
     /// `b"DOT1"`.
@@ -658,8 +655,8 @@ impl HandoverAckEnvelope {
 
 /// New coordinator's confirmation (DOT/1/HANDOVER_DONE).
 ///
-/// See RFC-0855p-e §"Data Structure" — R16 R2 fix: same as
-/// `HandoverAckEnvelope`; the struct was missing from the v0.2 RFC.
+/// See RFC-0855p-e §Data Structure — same as `HandoverAckEnvelope`;
+/// added per the Envelope Type Added table (subtype `b"HODN"`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HandoverDoneEnvelope {
     /// `b"DOT1"`.

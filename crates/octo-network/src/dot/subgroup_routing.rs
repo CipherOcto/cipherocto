@@ -86,7 +86,7 @@ pub const SUBGROUP_TEARDOWN: [u8; 4] = *b"SGTP";
 ///
 /// Canonical home: `octo_network::dot::subgroup_routing::hodn_quorum`. Re-exported
 /// by `octo_network::dot::handover` for HORQ/HODN acceptance site use per
-/// `docs/audits/2026-09-02-rfc-0855p-de-review-plateau.md`.
+/// RFC-0855p-d3 §HODN quorum.
 pub fn hodn_quorum(witness_set_size: usize) -> usize {
     if witness_set_size == 0 {
         return 0;
@@ -317,8 +317,7 @@ pub fn derive_aggregate_id(
     current_epoch: u64,
     nonce: &[u8; 16],
 ) -> [u8; 32] {
-    let key = [0u8; 32];
-    blake3::derive_key(SUBGROUP_AGGREGATE_CONTEXT, &key);
+    let key = blake3::derive_key(SUBGROUP_AGGREGATE_CONTEXT, b"");
     let mut input = Vec::with_capacity(
         32 + 32 + 8 + 16 + attestations.len() * 256 + signers_bitmap.bytes().len(),
     );

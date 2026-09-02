@@ -6,7 +6,14 @@ metadata:
   type: substrate-completion
   originSessionId: RFC-0855p-e author session
   created: 2026-09-02
-  v: "1.0"
+  v: "1.2"
+  landing_commit: "b0f14119"
+  review_commit: "851ef015"
+  hash_domain_fix: "7c0f764f"
+  dry_closure: "7c0f764f"
+  closed: 2026-09-02
+  open_deviations:
+    - "ack_hash field set: substrate hashes nonce (R17 R1-CRITICAL-1 fix); RFC v1.1 §BLAKE3 Construction Conventions requires attests_to_predecessor_state + attested_epoch (W9 add). Domain prefix added in R2.5; field set reconcile tracked in code comment."
   depends_on:
     - RFC-0855p-e
     - RFC-0855p-b
@@ -15,19 +22,22 @@ metadata:
     - RFC-0009
     - RFC-0008
     - RFC-0850p-c
-status: Claimed
+status: Closed
 ---
 
 # 0855p-e-handover-envelope-substrate — Handover Envelope Substrate Completion per RFC-0855p-e
 
-**Status:** Open
+**Status:** Closed (2026-09-02) WITH OPEN DEVIATION. LANDED commit `b0f14119` (feat: RFC-0855p-e handover substrate v1.3 reconciliation) + R1.5 review-loop fix `851ef015` + R2.5 hash domain-separation fix `7c0f764f`. DRY closure at `7c0f764f`.
+
 **Substrate:** RFC-0855p-e (HandoverRequest Envelope & Mission Coordinator Term Handover)
 **Parent:** RFC-0855p-e (Accepted 2026-09-02 at commit `0e915618`)
 **Depends on:** RFC-0855p-e Accepted; RFC-0855p-b (Mission Coordinator Lifecycle; slash tally observability + Slash Offense Codes §B + CoordinatorLifecycle 8-state machine); RFC-0855p-c §4 (DomainCoordinator platform-mediated handover; EXCLUDED scope per RFC-0855p-e Summary)
 
 ## Status
 
-Open (2026-09-02) per RFC-0855p-e promotion to Accepted at commit `0e915618`. Substrate PRE-EXISTS at `crates/octo-network/src/dot/handover.rs` (1045 lines; pre-v1.3 baseline). This mission is COMPLETION + RECONCILIATION to v1.3 spec, not from-scratch creation. Implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]] + [[implementation-workflow-hook]].
+Closed (2026-09-02) per RFC-0855p-e promotion to Accepted at commit `0e915618` + substrate LANDED at `b0f14119` (v1.3 reconciliation of pre-existing 1045-line handover.rs) + R1.5 + R2.5 review-loop fixes. DRY closure at `7c0f764f` per `docs/audits/2026-09-02-rfc-0855p-de-substrate-review-dry.md`. 1407/1407 octo-network tests pass; clippy zero.
+
+**Open deviation (NOT blocking DRY):** `compute_ack_hash` field set per RFC v1.1 §BLAKE3 Construction Conventions is `handover_request_hash || witness_id_be || witness_epoch_be || (attests_to_predecessor_state as u8_be) || attested_epoch_be`; substrate hashes nonce (R17 R1-CRITICAL-1 fix). Domain prefix added in R2.5 (`HASH_DOMAIN_ACK` = `"DOT/1/HANDOVER/ack"`); field-set reconcile requires separate mission. User owns push + PR + reconcile mission kickoff per [[feedback_initiation_user_only]] + [[git-workflow]].
 
 ## Substrate (RFC-0855p-e)
 

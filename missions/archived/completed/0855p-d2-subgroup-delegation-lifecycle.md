@@ -6,7 +6,11 @@ metadata:
   type: substrate-creation
   originSessionId: RFC-0855p-d2 author session
   created: 2026-09-02
-  v: "1.0"
+  v: "1.1"
+  landing_commit: "ffc61377"
+  review_commit: "851ef015"
+  dry_closure: "7c0f764f"
+  closed: 2026-09-02
   depends_on:
     - RFC-0855p-d2
     - RFC-0855p-d
@@ -18,19 +22,20 @@ metadata:
     - RFC-0126
     - RFC-0855p-b
     - RFC-0855p-c
-status: Claimed
+status: Closed
 ---
 
 # 0855p-d2-subgroup-delegation-lifecycle — Sub-DC Delegation Lifecycle Substrate per RFC-0855p-d2
 
-**Status:** Open
+**Status:** Closed (2026-09-02). LANDED commit `ffc61377` (feat: RFC-0855p-d2 sub-DC delegation lifecycle substrate) + R1.5 review-loop fix `851ef015` (Sdcd/Sdrv/SdrtReplayKey::digest BLAKE3 derive_key defect). DRY closure at `7c0f764f`.
+
 **Substrate:** RFC-0855p-d2 (per-concern RFC, sibling of RFC-0855p-d INDEX)
 **Parent:** RFC-0855p-d (slim INDEX; cross-cutting chain)
 **Depends on:** RFC-0855p-d2 Accepted (2026-09-02 at commit `0e915618`); RFC-0855p-d1 Accepted; mission `0855p-d1-subgroup-creation-state` (subgroup must exist + parent must be `Bound` before delegation has any effect)
 
 ## Status
 
-Open (2026-09-02) per RFC-0855p-d2 promotion to Accepted at commit `0e915618`. Hard sequencing: this mission lands AFTER `0855p-d1-subgroup-creation-state` (subgroup + label + record + DelegationId must exist). Implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]] + [[implementation-workflow-hook]].
+Closed (2026-09-02) per RFC-0855p-d2 promotion to Accepted at commit `0e915618` + substrate LANDED at `ffc61377` + R1.5 fix `851ef015`. DRY closure at `7c0f764f` per `docs/audits/2026-09-02-rfc-0855p-de-substrate-review-dry.md`. 1407/1407 octo-network tests pass; clippy zero. User owns push + PR per [[feedback_initiation_user_only]] + [[git-workflow]].
 
 ## Substrate (RFC-0855p-d2)
 

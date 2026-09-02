@@ -6,7 +6,11 @@ metadata:
   type: substrate-creation
   originSessionId: RFC-0855p-d3 author session
   created: 2026-09-02
-  v: "1.0"
+  v: "1.1"
+  landing_commit: "59e37d9d"
+  review_commit: "851ef015"
+  dry_closure: "7c0f764f"
+  closed: 2026-09-02
   depends_on:
     - RFC-0855p-d3
     - RFC-0855p-d
@@ -20,19 +24,20 @@ metadata:
     - RFC-0126
     - RFC-0855p-b
     - RFC-0855p-c
-status: Claimed
+status: Closed
 ---
 
 # 0855p-d3-subgroup-routing-aggregation-teardown — Routing + Aggregation + Teardown Substrate per RFC-0855p-d3
 
-**Status:** Open
+**Status:** Closed (2026-09-02). LANDED commit `59e37d9d` (feat: RFC-0855p-d3 routing + aggregation + teardown substrate) + R1.5 review-loop fix `851ef015` (derive_aggregate_id + teardown_signature_key BLAKE3 derive_key defect). DRY closure at `7c0f764f`.
+
 **Substrate:** RFC-0855p-d3 (per-concern RFC, sibling of RFC-0855p-d INDEX)
 **Parent:** RFC-0855p-d (slim INDEX; cross-cutting chain)
 **Depends on:** RFC-0855p-d3 Accepted (2026-09-02 at commit `0e915618`); RFC-0855p-d1 + d2 Accepted; missions `0855p-d1-subgroup-creation-state` + `0855p-d2-subgroup-delegation-lifecycle` (subgroup + state + `SubDCDelegationPolicy` re-exports)
 
 ## Status
 
-Open (2026-09-02) per RFC-0855p-d3 promotion to Accepted at commit `0e915618`. Hard sequencing: this mission lands LAST in the d chain (after d1 + d2). Implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]] + [[implementation-workflow-hook]].
+Closed (2026-09-02) per RFC-0855p-d3 promotion to Accepted at commit `0e915618` + substrate LANDED at `59e37d9d` + R1.5 fix `851ef015`. DRY closure at `7c0f764f` per `docs/audits/2026-09-02-rfc-0855p-de-substrate-review-dry.md`. 1407/1407 octo-network tests pass; clippy zero. User owns push + PR per [[feedback_initiation_user_only]] + [[git-workflow]].
 
 ## Substrate (RFC-0855p-d3)
 

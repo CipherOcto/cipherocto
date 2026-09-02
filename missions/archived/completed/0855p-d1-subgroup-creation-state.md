@@ -6,7 +6,11 @@ metadata:
   type: substrate-creation
   originSessionId: RFC-0855p-d1 author session
   created: 2026-09-02
-  v: "1.0"
+  v: "1.1"
+  landing_commit: "74c9ea9f"
+  review_commit: "851ef015"
+  dry_closure: "7c0f764f"
+  closed: 2026-09-02
   depends_on:
     - RFC-0855p-d1
     - RFC-0855p-d
@@ -16,19 +20,19 @@ metadata:
     - RFC-0850p-d
     - RFC-0126
     - RFC-0855p-c
-status: Claimed
+status: Closed
 ---
 
 # 0855p-d1-subgroup-creation-state — Sub-Group Creation & State Substrate per RFC-0855p-d1
 
-**Status:** Open
+**Status:** Closed (2026-09-02). LANDED commit `74c9ea9f` (feat: RFC-0855p-d1 subgroup creation + state substrate) + review-loop fix `851ef015` (R1.5: BLAKE3 derive_key zero-key defect + cite hygiene). DRY closure at `7c0f764f` per `docs/audits/2026-09-02-rfc-0855p-de-substrate-review-dry.md`.
 **Substrate:** RFC-0855p-d1 (per-concern RFC, sibling of RFC-0855p-d INDEX)
 **Parent:** RFC-0855p-d (slim INDEX; cross-cutting chain)
 **Depends on:** RFC-0855p-d1 Accepted (2026-09-02 at commit `0e915618`); RFC-0855p-d INDEX; RFC-0853 (Overlay Cryptography; BLAKE3-256 mandated); RFC-0009 (Identity substrate; canonical `Did` type); RFC-0850p-c (Transport Group Binding Ceremony); RFC-0850p-d (DC-Initiated Transport Group Creation & Invite); RFC-0126 (DCS deterministic canonical serialization); RFC-0855p-c (DomainCoordinator Role)
 
 ## Status
 
-Open (2026-09-02) per RFC-0855p-d1 promotion to Accepted at commit `0e915618`. Implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]] + [[implementation-workflow-hook]].
+Closed (2026-09-02) per RFC-0855p-d1 promotion to Accepted at commit `0e915618` + substrate LANDED at `74c9ea9f` + R1.5 review-loop fix `851ef015` (BLAKE3 derive_key defect + cite hygiene). DRY closure at `7c0f764f` per `docs/audits/2026-09-02-rfc-0855p-de-substrate-review-dry.md` (5-lens loop: R1 → R1.5 → R2 → R2.5 → R3 → R4 → 2 consecutive zero-finding rounds). 1407/1407 octo-network tests pass; clippy zero; fmt clean. User owns push + PR per [[feedback_initiation_user_only]] + [[git-workflow]].
 
 ## Substrate (RFC-0855p-d1)
 

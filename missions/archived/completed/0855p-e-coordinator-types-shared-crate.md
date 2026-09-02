@@ -6,24 +6,28 @@ metadata:
   type: substrate-extraction
   originSessionId: RFC-0855p-e follow-on extraction session
   created: 2026-09-02
-  v: "1.0"
+  v: "1.1"
+  landing_commit: "93f1758c"
+  dry_closure: "7c0f764f"
+  closed: 2026-09-02
   depends_on:
     - RFC-0855p-e
     - RFC-0855p-b
     - mission 0855p-e-handover-envelope-substrate
-status: Claimed
+status: Closed
 ---
 
 # 0855p-e-coordinator-types-shared-crate — Extract `octo-coordinator-types` shared crate per RFC-0855p-e §Layer-C Substrate Types
 
-**Status:** Open (follow-on post-acceptance mission)
+**Status:** Closed (2026-09-02). LANDED commit `93f1758c` (feat: octo-coordinator-types extract shared Layer-B coordinator types). DRY closure at `7c0f764f`.
+
 **Substrate:** New crate `octo-coordinator-types` (Layer B; shared between `octo-network` and `octo-coordinator` future consumers)
 **Parent:** RFC-0855p-e (Accepted 2026-09-02 at commit `0e915618`; §Layer-C Substrate Types follow-on note)
 **Depends on:** RFC-0855p-e Accepted; mission `0855p-e-handover-envelope-substrate` (substrate-truth baseline required before extraction)
 
 ## Status
 
-Open (2026-09-02) per RFC-0855p-e §Layer-C Substrate Types follow-on note: "until the shared `octo-coordinator-types` crate lands (post-acceptance mission). When that crate extracts, both `SlashTallyUpdate` and `SlashReasonCode` move to the shared crate and `0855p-e` re-imports them as Layer-B types, mirroring the [RFC-0855p-b] behavior." Implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]] + [[implementation-workflow-hook]].
+Closed (2026-09-02) per RFC-0855p-e §Layer-C Substrate Types follow-on note + substrate LANDED at `93f1758c`. DRY closure at `7c0f764f` per `docs/audits/2026-09-02-rfc-0855p-de-substrate-review-dry.md` (4 TV-CT test vectors pass; clippy zero). User owns push + PR per [[feedback_initiation_user_only]] + [[git-workflow]].
 
 ## Substrate (new crate `octo-coordinator-types`)
 

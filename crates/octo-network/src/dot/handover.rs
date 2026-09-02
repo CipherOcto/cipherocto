@@ -197,16 +197,10 @@ pub fn horq_quorum(witness_set_size: usize) -> usize {
     (witness_set_size * 2 / 3).max(2)
 }
 
-/// Forward-reference re-export of `hodn_quorum` (canonical home lives in d3).
-/// When d3 lands, this will be `pub use crate::dot::subgroup_routing::hodn_quorum;`.
-/// Until then, we provide a local stub that mirrors the HORQ formula so callers
-/// can compile against the same name without forcing d3 landing first.
-pub fn hodn_quorum(witness_set_size: usize) -> usize {
-    if witness_set_size == 0 {
-        return 0;
-    }
-    (witness_set_size * 2 / 3).max(2)
-}
+/// Forward-reference re-export of `hodn_quorum` (canonical home lives in d3
+/// per `docs/audits/2026-09-02-rfc-0855p-de-review-plateau.md`). Formula
+/// `(wss * 2).div_ceil(3)` per RFC-0855p-d3 §Data Structure.
+pub use super::subgroup_routing::hodn_quorum;
 
 // -----------------------------------------------------------------------------
 // HandoverReason

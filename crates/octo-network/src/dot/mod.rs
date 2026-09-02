@@ -25,7 +25,9 @@ pub mod sequence;
 pub mod slash;
 pub mod sub_group;
 pub mod subgroup_delegation;
+pub mod subgroup_routing;
 pub mod subgroup_state;
+pub mod subgroup_teardown;
 pub mod transport;
 pub mod witness;
 

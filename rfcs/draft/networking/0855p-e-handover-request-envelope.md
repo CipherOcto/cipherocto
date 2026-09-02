@@ -576,20 +576,10 @@ HORQ quorum: `HORQ_QUORUM = ceil(witness_set_size × HANDOVER_QUORUM_NUMERATOR /
 pub const HANDOVER_QUORUM_NUMERATOR: u64 = 2;
 /// Witness quorum threshold denominator (e.g., 3 for 2/3 BFT).
 pub const HANDOVER_QUORUM_DENOMINATOR: u64 = 3;
-
-/// Derivation helper: returns `ceil(successor_member_set_size × HANDOVER_QUORUM_NUMERATOR / HANDOVER_QUORUM_DENOMINATOR)`.
-/// Per-mission size; HANDOVER_QUORUM_NUMERATOR/DENOMINATOR are constants.
-pub const fn hodn_quorum(successor_member_set_size: usize) -> usize {
-    // Defense-in-depth (added v0.7 per L3 M6 finding; comment corrected
-    // v0.8 per L1 H3 finding): Rust `const fn` supports `panic!`/`assert!`
-    // since 1.57.0 (March 2021) — the L452 assert! fires in BOTH const
-    // and runtime contexts. A member set size < 3 would underflow to a
-    // meaningless quorum and silently allow single-witness acceptance.
-    // Cross-RFC cite: RFC-0855p-b §"Witness quorum" sets the same
-    // minimum-3 invariant.
-    assert!(successor_member_set_size >= 3, "hodn_quorum requires successor_member_set_size >= 3");
-    (successor_member_set_size * HANDOVER_QUORUM_NUMERATOR as usize + HANDOVER_QUORUM_DENOMINATOR as usize - 1) / HANDOVER_QUORUM_DENOMINATOR as usize
-}
+// Re-export from RFC-0855p-d3 (canonical home for Layer-C quorum polling; v1.4 per W12 L2 M4 finding).
+// Implementations may use `rfc_0855p_d3::hodn_quorum(witness_set_size)`; e-specific
+// constant-numerator/denominator folding retained for HORQ-side mirror below.
+pub use crate::rfc_0855p_d3::hodn_quorum;
 
 /// Derivation helper: HORQ receipt-side mirror of `hodn_quorum` (added v0.8 per L3 M4 finding).
 /// Returns `ceil(witness_set_size × HANDOVER_QUORUM_NUMERATOR / HANDOVER_QUORUM_DENOMINATOR)`.
@@ -620,6 +610,7 @@ Every HORQ/HOAK/HODN includes `nonce: [u8; 16]` + `current_epoch: u64`. Each rec
 - `current_epoch` within ±`MAX_FSKEW_EPOCHS = 4` of local epoch (consistent with §Layer placement constants block; replaces v0.x ±1 wording that conflicted with the family-wide `MAX_FSKEW_EPOCHS = 4` bound).
 - `payload_hash == BLAKE3-256("DOT/1/HANDOVER/payload" || canonical_dcs(payload_bytes))` (wire-payload binding, domain-separated).
 - HOAK: when `attests_to_predecessor_state=true`, `attested_epoch == HORQ.current_epoch - 1` (added v1.2 per W11 L3 M-fbat finding — closing the documented invariant at the acceptance site).
+- HOAK second-witness quorum gate (added v1.2 per W12 L3 M1 finding — closes control gap): when accepting a HORQ whose `sender_state_snapshot_ordinal != SenderStateSnapshotOrdinal::Active`, recipients MUST count distinct `attests_to_predecessor_state=true` HOAK signatures per `(coordinator_id, coordinator_term_id, current_epoch)` and reject unless the count reaches `horq_quorum(witness_set_size)` (the HORQ-side mirror constant per §Layer placement). Without this gate, a single forged predecessor-state HOAK would bootstrap the non-canonical path with no consensus. Distinct-signer enforcement reuses `signers_bitmap.count_ones() == attestations.len()` invariant per RFC-0855p-d3 §Aggregate Acceptance Step 9.
 
 ### Slash Tally Carry-Over
 
@@ -805,20 +796,20 @@ Backward compat with non-handover-aware clients: After HODN, OLD clients continu
 
 ## Version History
 
-| Version | Date       | Changes                                                                                                           |
-| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------- |
-| 0.1     | 2026-06-17 | Initial stub. See `docs/research/2026-09-02-0855p-e-vh-fix-log.md` §v0.1.                                         |
-| 0.2     | 2026-06-17 | 10-byte header + inline SlashTally/CoordinatorRole + phantom removal. See fix-log §v0.2.                          |
-| 0.3     | 2026-09-01 | Strip preliminary + DCS wire/payload split + quorum≥2/3. See fix-log §v0.3.                                       |
-| 0.4     | 2026-09-01 | Slash codes + role ns 0x0100 + HORQ pre-broadcast + typed-discriminator. See fix-log §v0.4.                       |
-| 0.5     | 2026-09-01 | Domain-separated hashes + newtypes + 0x0016 LateDelivery + BLAKE3 conventions. See fix-log §v0.5.                 |
-| 0.6     | 2026-09-02 | Header consts + F-7 sequencing + lockout rule + Merkle pending. See fix-log §v0.6.                                |
-| 0.7     | 2026-09-02 | F-7 BLOCKING + mission_id BLAKE3 + snapshot_proof + pending fanout. See fix-log §v0.7.                            |
-| 0.8     | 2026-09-02 | mission_id 32→16B + HORC envelope + sender_state_snapshot newtype. See fix-log §v0.8.                             |
-| 0.9     | 2026-09-02 | HORC bounded payload + replay tuple + lockout carve-out enumerates. See fix-log §v0.9.                            |
-| 1.0     | 2026-09-02 | MAX_FSKEW_EPOCHS pub const + pub use + HORC payload_hash + OR→AND. See fix-log §v1.0.                             |
-| 1.1     | 2026-09-02 | HORQ snapshot canonical path + HORC payload domain prefix + MAX_PENDING_ENVELOPES_PER_HODN. See fix-log §v1.1.    |
-| 1.2     | 2026-09-02 | attests_to_predecessor_state + HANDOVER_RACE_WINDOW const + 3 BLUEPRINT template sub-sections. See fix-log §v1.2. |
+| Version | Date       | Changes                                                                                         |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------- |
+| 0.1     | 2026-06-17 | Initial stub. See `docs/research/2026-09-02-0855p-e-vh-fix-log.md` §v0.1.                       |
+| 0.2     | 2026-06-17 | 10-byte header + inline SlashTally/CoordinatorRole + phantom removal..                          |
+| 0.3     | 2026-09-01 | Strip preliminary + DCS wire/payload split + quorum≥2/3..                                       |
+| 0.4     | 2026-09-01 | Slash codes + role ns 0x0100 + HORQ pre-broadcast + typed-discriminator..                       |
+| 0.5     | 2026-09-01 | Domain-separated hashes + newtypes + 0x0016 LateDelivery + BLAKE3 conventions..                 |
+| 0.6     | 2026-09-02 | Header consts + F-7 sequencing + lockout rule + Merkle pending..                                |
+| 0.7     | 2026-09-02 | F-7 BLOCKING + mission_id BLAKE3 + snapshot_proof + pending fanout..                            |
+| 0.8     | 2026-09-02 | mission_id 32→16B + HORC envelope + sender_state_snapshot newtype..                             |
+| 0.9     | 2026-09-02 | HORC bounded payload + replay tuple + lockout carve-out enumerates..                            |
+| 1.0     | 2026-09-02 | MAX_FSKEW_EPOCHS pub const + pub use + HORC payload_hash + OR→AND..                             |
+| 1.1     | 2026-09-02 | HORQ snapshot canonical path + HORC payload domain prefix + MAX_PENDING_ENVELOPES_PER_HODN..    |
+| 1.2     | 2026-09-02 | attests_to_predecessor_state + HANDOVER_RACE_WINDOW const + 3 BLUEPRINT template sub-sections.. |
 
 ## Appendices
 

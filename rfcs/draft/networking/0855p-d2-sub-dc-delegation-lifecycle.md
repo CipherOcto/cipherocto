@@ -541,9 +541,9 @@ SDRT requiring BOTH signatures prevents unilateral rotation: a parent alone cann
 
 ## Version History
 
-| Version | Date       | Changes                                                                                       |
-| ------- | ---------- | --------------------------------------------------------------------------------------------- |
-| 1.3     | 2026-09-02 | Split from v1.2. See fix-log §v1.3. d2 owns SDCD/SDRV/SDRT + delegation policy + chain-depth. |
+| Version | Date       | Changes                                                                     |
+| ------- | ---------- | --------------------------------------------------------------------------- |
+| 1.3     | 2026-09-02 | Split from v1.2.. d2 owns SDCD/SDRV/SDRT + delegation policy + chain-depth. |
 
 ## Related RFCs
 

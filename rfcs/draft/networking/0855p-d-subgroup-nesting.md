@@ -64,6 +64,19 @@ No central enum for extension-bearing types (SubGroupState / SubGroupAction / Re
 
 Mission teams need nested working groups, committees, channels, and bounded administrative scopes beneath one domain. Flat domain IDs lose parentage, policy lineage, broadcast boundaries, and deterministic naming. They also provide no safe mechanism for delegating authority to one child domain.
 
+## Design Goals (chain-wide)
+
+(Added v1.3 per W12 L5 H1 finding — mandatory BLUEPRINT §RFC Process template sub-section. Per-concern design goals live in d1/d2/d3 §Design Goals.)
+
+1. **Per-concern RFC split** — three sibling RFCs (d1 creation+state / d2 delegation / d3 routing+aggregation+teardown). Each owns its data structures, policies, and verification paths independently.
+2. **Cross-RFC invariant surface** — `MAX_FSKEW_EPOCHS = 4`, `RACE_EPOCHS = 32`, `MAX_SUBGROUP_DEPTH = 8`, `MAX_ROOT_DELEGATION = 1`, `MAX_DELEGATION_CHAIN_PER_TERM = 256`, `TEARDOWN_GRACE_EPOCHS = 50`, `MAX_AGGREGATE_ATTESTATIONS = 1024`, `MAX_BIND_AWAIT_EPOCHS = 32`, `MAX_BIND_RETRY_COUNT = 3` canonicalized in the lowest layer that owns each (d1 owns creation-side constants; d2 owns delegation-side; d3 owns routing/teardown-side; e owns handover-side).
+3. **Typed-discriminator over central enum** — `SubGroupState`, `SubGroupAction`, `RevocationReasonCode`, `TeardownReasonCode` all `#[non_exhaustive]` with RFC-allocated namespace 0x0001–0x00FF + user-extension range 0x0100–0xFFFF.
+4. **Per-extension registry** — `SubGroupAction::invite/route/aggregate/...` register at startup; core dispatch unchanged.
+5. **Layer A → B → C/D/E only** — no upward dependency. Crypto primitives re-exported via `pub use`, never owned.
+6. **Fail-closed on unknown envelopes** — old clients reject unknown subtypes; novel discriminators queue at registry, no panic.
+
+## Concern split (chain-wide)
+
 Three concerns split per restructure (option B):
 
 1. **Creation + state** (RFC-0855p-d1): envelope type, label canonicalization, domain derivation, parent-binding invariant, state machine, depth cap enforcement. Defines CGSB + SubGroupState + SubGroupRecord + SubGroupLabel + SubGroupQuery/Response/AuthorityCheck typed query boundary.
@@ -326,14 +339,14 @@ Total: ~1600 lines vs 1200 lines monolithic. Increase justified by reduced per-R
 
 ## Version History
 
-| Version | Date       | Changes                                                                                                                                                                                                                                                                                    |
-| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 0.1     | 2026-08-15 | Initial draft (sibling RFC-0855p-b / RFC-0855p-c review chain).                                                                                                                                                                                                                            |
-| 0.2     | 2026-08-19 | Added §Security Considerations + §Implicit Assumptions Audit + §Test Vectors per BLUEPRINT template.                                                                                                                                                                                       |
-| 1.0     | 2026-08-29 | Spec-elaboration complete (post-W7.5 fix batch); cite sweep PASS.                                                                                                                                                                                                                          |
-| 1.1     | 2026-09-01 | BLS12-381 PoP at witness registration + UTS-39 confusable codepoint enumeration + HORQ snapshot canonical path + HORC payload_hash domain prefix + MAX_PENDING_ENVELOPES_PER_HODN bound. See fix-log §v1.1.                                                                                |
-| 1.2     | 2026-09-02 | W10 fix batch: HandoverAckPayload attests_to_predecessor_state + aggregate_id derivation + bitmap-vs-quorum coverage + SenderStateSnapshotOrdinal `#[non_exhaustive]` + HANDOVER_RACE_WINDOW const + layer placement rows + 3 BLUEPRINT template sub-sections per file. See fix-log §v1.2. |
-| 1.3     | 2026-09-02 | **Restructured** into 3-RFC chain (d1/d2/d3). v1.2 1200L → d INDEX 280L + d1 440L + d2 470L + d3 520L = 1710L. See fix-log §v1.3.                                                                                                                                                          |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                  |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.1     | 2026-08-15 | Initial draft (sibling RFC-0855p-b / RFC-0855p-c review chain).                                                                                                                                                                                                          |
+| 0.2     | 2026-08-19 | Added §Security Considerations + §Implicit Assumptions Audit + §Test Vectors per BLUEPRINT template.                                                                                                                                                                     |
+| 1.0     | 2026-08-29 | Spec-elaboration complete (post-W7.5 fix batch); cite sweep PASS.                                                                                                                                                                                                        |
+| 1.1     | 2026-09-01 | BLS12-381 PoP at witness registration + UTS-39 confusable codepoint enumeration + HORQ snapshot canonical path + HORC payload_hash domain prefix + MAX_PENDING_ENVELOPES_PER_HODN bound..                                                                                |
+| 1.2     | 2026-09-02 | W10 fix batch: HandoverAckPayload attests_to_predecessor_state + aggregate_id derivation + bitmap-vs-quorum coverage + SenderStateSnapshotOrdinal `#[non_exhaustive]` + HANDOVER_RACE_WINDOW const + layer placement rows + 3 BLUEPRINT template sub-sections per file.. |
+| 1.3     | 2026-09-02 | **Restructured** into 3-RFC chain (d1/d2/d3). v1.2 1200L → d INDEX 280L + d1 440L + d2 470L + d3 520L = 1710L..                                                                                                                                                          |
 
 ## Appendices
 

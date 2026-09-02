@@ -145,6 +145,10 @@ pub const MAX_ROOT_DEPTH: u8 = 1;
 pub const MAX_SUB_LABEL_BYTES: usize = 256;
 pub const MAX_BIND_AWAIT_EPOCHS: u64 = 32;
 pub const MAX_BIND_RETRY_COUNT: u8 = 3;
+/// Backward-replay bound (canonical home; re-exported by RFC-0855p-d3 per its
+/// §Data Structure). Distinct from `MAX_FSKEW_EPOCHS` so stale-replay
+/// amplification is auditable independent of clock-drift tolerance.
+pub const RACE_EPOCHS: u64 = 32;
 /// Forward-skew tolerance (envelope epoch ahead of recipient head); separate
 /// from `RACE_EPOCHS` (backward-replay bound) so clock-drift tolerance is
 /// auditable independent of stale-replay amplification bound.
@@ -721,9 +725,9 @@ Parent-binding invariant prevents orphan domains and authority drift. Child-scop
 
 ## Version History
 
-| Version | Date       | Changes                                                                                               |
-| ------- | ---------- | ----------------------------------------------------------------------------------------------------- |
-| 1.3     | 2026-09-02 | Split from v1.2. See fix-log §v1.3. d1 owns CGSB + state + label + record + Layer-C query (creation). |
+| Version | Date       | Changes                                                                             |
+| ------- | ---------- | ----------------------------------------------------------------------------------- |
+| 1.3     | 2026-09-02 | Split from v1.2.. d1 owns CGSB + state + label + record + Layer-C query (creation). |
 
 ## Appendices
 

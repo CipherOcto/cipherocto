@@ -146,14 +146,12 @@ Subtype dispatch uses explicit typed parsing. Unsupported subtype remains unknow
 
 ```rust
 pub const MAX_AGGREGATE_ATTESTATIONS: usize = 1024;
-pub const MAX_BIND_AWAIT_EPOCHS: u64 = 32;        // re-export from RFC-0855p-d1
-pub const MAX_BIND_RETRY_COUNT: u8 = 3;           // re-export from RFC-0855p-d1
 pub const TEARDOWN_GRACE_EPOCHS: u64 = 50;
-pub const MAX_FSKEW_EPOCHS: u64 = 4;              // re-export from RFC-0855p-d1
-pub const RACE_EPOCHS: u64 = 32;                  // re-export from RFC-0855p-d1 (backward-replay bound)
 pub const SUBGROUP_ROUTE_CONTEXT: &str = "DOT/1/CGROUP_SUB/route";
 pub const SUBGROUP_AGGREGATE_CONTEXT: &str = "DOT/1/CGROUP_SUB/aggregate";
 pub const SUBGROUP_TEARDOWN_CONTEXT: &str = "DOT/1/CGROUP_SUB/teardown";
+// Re-exports from RFC-0855p-d1 (canonical home for cross-RFC constants; v1.4 per W12 L2 M2 finding):
+pub use crate::rfc_0855p_d1::{MAX_BIND_AWAIT_EPOCHS, MAX_BIND_RETRY_COUNT, MAX_FSKEW_EPOCHS, RACE_EPOCHS};
 pub const SUBGROUP_ROUTE: [u8; 4] = *b"P2SR";
 pub const SUBGROUP_AGGREGATE: [u8; 4] = *b"S2PA";
 pub const SUBGROUP_TEARDOWN: [u8; 4] = *b"SGTP";
@@ -595,9 +593,9 @@ mesh_aggregated_signature covering signers_bitmap prevents quorum forgery: witho
 
 ## Version History
 
-| Version | Date       | Changes                                                                                  |
-| ------- | ---------- | ---------------------------------------------------------------------------------------- |
-| 1.3     | 2026-09-02 | Split from v1.2. See fix-log §v1.3. d3 owns P2SR/S2PA/SGTP + bitmap + quorum + teardown. |
+| Version | Date       | Changes                                                                |
+| ------- | ---------- | ---------------------------------------------------------------------- |
+| 1.3     | 2026-09-02 | Split from v1.2.. d3 owns P2SR/S2PA/SGTP + bitmap + quorum + teardown. |
 
 ## Related RFCs
 

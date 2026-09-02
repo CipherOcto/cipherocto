@@ -18,14 +18,14 @@ status: Open
 
 # 0011-d-M10-phase2-coordinator-domain-coordinator — Phase 2 `octo role select coordinator` + `domain-coordinator` per RFC-0011-d §Mission Decomposition M10
 
-**Status:** Open — blocked on RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) + RFC-0855p-e Accepted. Both still Draft per `rfcs/draft/networking/0855p-d-subgroup-nesting.md` + `rfcs/draft/networking/0855p-e-handover-request-envelope.md`. Implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]] once gates clear. Per audit 2026-09-01: 2026-09-01 blanket re-claim reverted — booking claimed-but-blocked state is misleading.
+**Status:** Open — **GATE CLEARED (2026-09-02)**. Both RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) + RFC-0855p-e reached Accepted at commit `0e915618` on `next`. Files at `rfcs/accepted/networking/0855p-d{,-*}-subgroup-*.md` + `rfcs/accepted/networking/0855p-d{1,2,3}-*.md` + `rfcs/accepted/networking/0855p-e-*.md`. Per [[cipherocto-design-principles]] §Discipline at first call site + [[no-line-refs-anywhere]], the gate-clearance was reached via per-concern RFC split (d INDEX + d1 + d2 + d3) + 5-lens adversarial review loop + DRY closure (W12+W12.6 = 2 consecutive zero-finding rounds) per `docs/audits/2026-09-02-rfc-0855p-de-review-dry.md`. Implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]]. M11 must land FIRST per substrate-first pattern (Sub-step 2 of mission sub-steps).
 **Substrate:** RFC-0011-d §Mission Decomposition M10 row; §Phase 2; §Compatibility partial-prereq caveat
 **Parent:** RFC-0011-d
 **Depends on:** RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) Accepted + RFC-0855p-e Accepted (gate); `0011-d-M6-octocli-role-commands` (Phase 1 surface); `0011-d-M11-phase2-domain-coordinator-platform-binding` (M11 must land FIRST per substrate-first pattern)
 
 ## Status
 
-Claimed (2026-09-01) by @mmacedoeu — **GATED**. Does NOT claim until RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) + RFC-0855p-e reach Accepted status. Tenth of 11 atomic missions (9 Phase 1 + 2 Phase 2).
+Claimed (2026-09-01) by @mmacedoeu — **GATE CLEARED (2026-09-02) at commit `0e915618`**. RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) + RFC-0855p-e reached Accepted on `next`. Tenth of 11 atomic missions (9 Phase 1 + 2 Phase 2). Implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]]; M11 (`0011-d-M11-phase2-domain-coordinator-platform-binding`) must land FIRST per substrate-first pattern (Sub-step 2).
 
 ## Substrate (RFC-0011-d)
 

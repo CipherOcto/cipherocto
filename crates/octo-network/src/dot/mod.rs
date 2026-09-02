@@ -24,6 +24,7 @@ pub mod route;
 pub mod sequence;
 pub mod slash;
 pub mod sub_group;
+pub mod subgroup_delegation;
 pub mod subgroup_state;
 pub mod transport;
 pub mod witness;
@@ -69,6 +70,16 @@ pub use slash::{cross_platform_code, is_cross_platform, reserved as slash_reserv
 pub use sub_group::{
     CreateSubGroupEnvelope as LegacyCreateSubGroupEnvelope,
     MAX_SUB_LABEL_LEN as LEGACY_MAX_SUB_LABEL_LEN, SUBGROUP_TAG,
+};
+pub use subgroup_delegation::{
+    check_delegation_policy, CoordinatorTermId, DelegationCheckInputs, DelegationPolicyError,
+    Ed25519Signature, RevocationReasonCode, RevocationReasonError, SdcdReplayKey, SdrtReplayKey,
+    SdrvReplayKey, SubDCDelegationEnvelope, SubDCRevocationEnvelope, SubDCRotationEnvelope,
+    MAX_DELEGATION_CHAIN_PER_TERM, MAX_ROOT_DELEGATION, REVOCATION_REASON_COORDINATOR_ROTATION,
+    REVOCATION_REASON_GROUP_DECOMMISSION, REVOCATION_REASON_SUBDC_KEY_COMPROMISE,
+    REVOCATION_REASON_SUBDC_MISCONDUCT, REVOCATION_REASON_SUBDC_VOLUNTARY_RESIGNATION,
+    REVOCATION_REASON_TERM_EXPIRED, SDCD_CONTEXT, SDRT_CONTEXT, SDRV_CONTEXT, SUBDC_DELEGATION_TAG,
+    SUBDC_REVOCATION_TAG, SUBDC_ROTATION_TAG,
 };
 pub use subgroup_state::{
     derive_sub_domain_id, reconcile_pending_bind, transition, ActionEncodeError,

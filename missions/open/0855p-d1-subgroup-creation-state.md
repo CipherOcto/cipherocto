@@ -1,0 +1,136 @@
+---
+name: 0855p-d1-subgroup-creation-state
+description: Create sub-group creation + state substrate per RFC-0855p-d1 (CGSB + SubGroupState + SubGroupLabel + canonical BLAKE3 derivation + state machine + Layer-C query surface) in `crates/octo-network/src/dot/subgroup_state.rs`.
+metadata:
+  node_type: substrate-network
+  type: substrate-creation
+  originSessionId: RFC-0855p-d1 author session
+  created: 2026-09-02
+  v: "1.0"
+  depends_on:
+    - RFC-0855p-d1
+    - RFC-0855p-d
+    - RFC-0853
+    - RFC-0009
+    - RFC-0850p-c
+    - RFC-0850p-d
+    - RFC-0126
+    - RFC-0855p-c
+status: Open
+---
+
+# 0855p-d1-subgroup-creation-state — Sub-Group Creation & State Substrate per RFC-0855p-d1
+
+**Status:** Open
+**Substrate:** RFC-0855p-d1 (per-concern RFC, sibling of RFC-0855p-d INDEX)
+**Parent:** RFC-0855p-d (slim INDEX; cross-cutting chain)
+**Depends on:** RFC-0855p-d1 Accepted (2026-09-02 at commit `0e915618`); RFC-0855p-d INDEX; RFC-0853 (Overlay Cryptography; BLAKE3-256 mandated); RFC-0009 (Identity substrate; canonical `Did` type); RFC-0850p-c (Transport Group Binding Ceremony); RFC-0850p-d (DC-Initiated Transport Group Creation & Invite); RFC-0126 (DCS deterministic canonical serialization); RFC-0855p-c (DomainCoordinator Role)
+
+## Status
+
+Open (2026-09-02) per RFC-0855p-d1 promotion to Accepted at commit `0e915618`. Implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]] + [[implementation-workflow-hook]].
+
+## Substrate (RFC-0855p-d1)
+
+Per RFC-0855p-d1 §Data Structure + §State Machine + §Layer-C Substrate Surface (creation/query):
+
+- `CreateSubGroupEnvelope` (`CGSB` subtype) — auth + BIND-nonce + parent reference + sub-label
+- `SubGroupExtension` — BIND attestation response (BIND nonce + sub-coord signature)
+- `SubGroupLabel` — typed constructor; UTS-39 confusable + bidi/zero-width/BOM reject set
+- `SubGroupRecord` — wire-stable record (sub_domain_id + parent_domain_id + state + bind_epoch + members)
+- `SubGroupState` — `#[non_exhaustive]` enum (PendingBind / Bound / Dissolving / Dissolved)
+- `SubGroupQuery` / `SubGroupResponse` / `SubGroupAuthorityCheck` — typed Layer-C query boundary
+- `sub_domain_id` canonical derivation: `BLAKE3_keyed("DOT/1/CGROUP_SUB/domain", parent_domain_id || sub_label)`
+- Nonce + duplicate + parent-binding + depth-cap indexes
+- `MAX_BIND_AWAIT_EPOCHS = 32` + `MAX_BIND_RETRY_COUNT = 3` + `MAX_SUBGROUP_DEPTH = 8` + `MAX_FSKEW_EPOCHS = 4` + `MAX_ROOT_DEPTH = 1` enforcement
+- Cross-node `PendingBind → Dissolving` reconciliation
+
+## Parent
+
+RFC-0855p-d (slim INDEX; cross-cutting chain INDEX only — owns no substrate of its own). Per RFC-0855p-d §Layer placement table, RFC-0855p-d1 owns the CGSB + state + label + record + query (creation subset) substrate surface.
+
+## Depends on
+
+See YAML frontmatter `depends_on` block. Hard sequencing: this mission lands first; missions `0855p-d2-subgroup-delegation-lifecycle` and `0855p-d3-subgroup-routing-aggregation-teardown` depend on this mission (re-export `SubGroupLabel`, `DelegationId`, `MAX_ROOT_DEPTH`, `SubGroupRecord`, `SubGroupState`).
+
+## Acceptance Criteria
+
+- [ ] `crates/octo-network/src/dot/subgroup_state.rs` created
+- [ ] `CreateSubGroupEnvelope` + `SubGroupExtension` + `SubGroupLabel` + `SubGroupRecord` + `SubGroupState` types defined
+- [ ] `SubGroupQuery` / `SubGroupResponse` / `SubGroupAuthorityCheck` typed query boundary implemented
+- [ ] Canonical `sub_domain_id` derivation via BLAKE3 keyed_hash (NOT plain `blake3::hash`); test asserts derivation matches RFC-0855p-d1 §Sub-Domain Derivation Invariant
+- [ ] `SubGroupLabel::new()` rejects UTS-39 confusables (bidi-control U+202A–U+202E, bidi-isolate U+2066–U+2069, zero-width U+200B–U+200D, narrow-no-break U+202F, BOM U+FEFF) per RFC-0855p-d1 Appendix A
+- [ ] `MAX_BIND_AWAIT_EPOCHS = 32` + `MAX_BIND_RETRY_COUNT = 3` + `MAX_SUBGROUP_DEPTH = 8` + `MAX_FSKEW_EPOCHS = 4` + `MAX_ROOT_DEPTH = 1` enforcement at state transitions
+- [ ] `SubGroupState` is `#[non_exhaustive]` per §Extension over enumeration
+- [ ] Test vectors TV-SG-1, TV-SG-2, TV-SG-3, TV-SG-4, TV-SG-5 pass per RFC-0855p-d1 §Test Vectors
+- [ ] State machine transition test: `PendingBind → Bound → Dissolving → Dissolved`
+- [ ] Cross-node reconciliation: divergent `PendingBind` epochs collapse to `Dissolving` after `MAX_BIND_AWAIT_EPOCHS` elapses
+- [ ] `pub use` re-exports for cross-RFC constants: `MAX_BIND_AWAIT_EPOCHS`, `MAX_BIND_RETRY_COUNT`, `RACE_EPOCHS`, `MAX_FSKEW_EPOCHS` per RFC-0855p-d1 §Layer placement
+- [ ] Layer direction verified (Layer A→B→C/D; no upward dependency per [[cipherocto-design-principles]])
+- [ ] `cargo test -p octo-network subgroup_state` zero failures
+- [ ] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
+- [ ] `cargo fmt --all -- --check` clean
+
+## Sub-steps
+
+1. **VERIFY GATE** — RFC-0855p-d1 + RFC-0855p-d Accepted (commit `0e915618` on `next`)
+2. Create `crates/octo-network/src/dot/subgroup_state.rs` skeleton
+3. Define core types (`SubGroupLabel`, `SubGroupState`, `SubGroupRecord`, `CreateSubGroupEnvelope`, `SubGroupExtension`)
+4. Implement canonical `sub_domain_id` derivation per §Sub-Domain Derivation Invariant
+5. Implement state transition engine
+6. Implement typed Layer-C query surface (`SubGroupQuery` / `SubGroupResponse` / `SubGroupAuthorityCheck`)
+7. Add test vectors TV-SG-1..5
+8. Add cross-node reconciliation test
+9. Verify cargo test + clippy + fmt
+
+## Test Vectors (per RFC-0855p-d1 §Test Vectors)
+
+- TV-SG-1: valid CGSB acceptance; happy path
+- TV-SG-2: invalid sub-label (UTS-39 confusable) → reject
+- TV-SG-3: BIND timeout → state `PendingBind → Dissolving`
+- TV-SG-4: depth-cap exceeded → reject
+- TV-SG-5: parent-binding verification failure → reject
+
+## Layer direction (per [[cipherocto-design-principles]])
+
+- `subgroup_state.rs` (Layer C) — state machine + query + creation logic
+- `CreateSubGroupEnvelope` / `SubGroupExtension` (Layer B) — wire format + canonical encoding
+- `SubGroupState` / `SubGroupLabel` (Layer B) — types
+- `sub_domain_id` derivation (Layer A pure crypto) — BLAKE3 keyed_hash per RFC-0853
+
+No upward dependency. No Layer C module parses raw Layer B envelopes. Unknown envelope subtypes fail closed.
+
+## Backward compat
+
+Substrate-creation; no existing code. New file in `crates/octo-network/src/dot/`. Additive to module tree.
+
+## Risk
+
+- **Canonical derivation drift**: implementing plain `blake3::hash(parent_domain_id || sub_label)` instead of the canonical `BLAKE3 keyed_hash` form silently breaks cross-node reconciliation. Mitigation: explicit test vector asserting derivation matches RFC-0855p-d1 §Sub-Domain Derivation Invariant (F-12 substrate migration noted in RFC-0855p-d1 §Implementation Notes).
+- **State enum exhaustiveness**: closing the `SubGroupState` enum (no `#[non_exhaustive]`) forces cross-crate edit when adding `Archived` / `Frozen`. Mitigation: enforce `#[non_exhaustive]` per §Extension over enumeration.
+
+## Notes
+
+- Per `[[cipherocto-design-principles]]` §Extension over enumeration, `SubGroupState` carries `#[non_exhaustive]`; substrate implementations MUST NOT use exhaustive match.
+- Per RFC-0855p-d1 §Implementation Notes F-12, substrate migration from legacy plain-`blake3::hash` to canonical `BLAKE3 keyed_hash` is a follow-on implementation mission; this mission is the canonical-home creation.
+- RFC-0855p-d (slim INDEX) owns no substrate; this mission is the substrate anchor for the d1 RFC.
+
+## Cross-references
+
+- RFC-0855p-d (slim INDEX; cross-cutting chain; substrate ownership table)
+- RFC-0855p-d1 (this mission's canonical spec; §Data Structure, §State Machine, §Layer-C Substrate Surface, §Test Vectors, §Appendix A, §Appendix B)
+- RFC-0855p-d2 (downstream consumer; re-exports `SubGroupLabel`, `DelegationId`, `MAX_ROOT_DEPTH` from this mission)
+- RFC-0855p-d3 (downstream consumer; re-exports `SubGroupRecord`, `SubGroupState`, plus constants from this mission)
+- RFC-0855p-e (sibling RFC; uses `MAX_FSKEW_EPOCHS = 4` from this mission's canonical home)
+- RFC-0853 (BLAKE3-256 mandated)
+- RFC-0009 (Identity substrate; canonical `Did` type)
+- RFC-0850p-c (Transport Group Binding Ceremony)
+- RFC-0850p-d (DC-Initiated Transport Group Creation & Invite)
+- RFC-0126 (DCS deterministic canonical serialization)
+- RFC-0855p-c (DomainCoordinator Role)
+- Mission `0855p-d2-subgroup-delegation-lifecycle` (downstream; depends on this mission)
+- Mission `0855p-d3-subgroup-routing-aggregation-teardown` (downstream; depends on this mission + d2)
+
+## Claimant
+
+(none — Open mission)

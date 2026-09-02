@@ -20,7 +20,7 @@ metadata:
     - RFC-0126
     - RFC-0855p-b
     - RFC-0855p-c
-status: Open
+status: Claimed
 ---
 
 # 0855p-d3-subgroup-routing-aggregation-teardown — Routing + Aggregation + Teardown Substrate per RFC-0855p-d3
@@ -163,4 +163,4 @@ Substrate-creation; no existing code. Additive to module tree. Re-exports d1 con
 
 ## Claimant
 
-(none — Open mission)
+@mmacedoeu (mission lifecycle: Claimed 2026-09-02 after W4.5 DRY closure at commit `647b2cf4`; lands THIRD per substrate-first pattern d1→d2→d3; consumes `SubDCDelegationPolicy` re-export from d2)

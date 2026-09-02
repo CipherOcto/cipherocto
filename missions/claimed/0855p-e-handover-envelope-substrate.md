@@ -15,7 +15,7 @@ metadata:
     - RFC-0009
     - RFC-0008
     - RFC-0850p-c
-status: Open
+status: Claimed
 ---
 
 # 0855p-e-handover-envelope-substrate — Handover Envelope Substrate Completion per RFC-0855p-e
@@ -165,4 +165,4 @@ Reconciliation; existing 1045L substrate preserved. Surgical edits per W11 + W12
 
 ## Claimant
 
-(none — Open mission)
+@mmacedoeu (mission lifecycle: Claimed 2026-09-02 after W4.5 DRY closure at commit `647b2cf4`; reconciles 1045L pre-existing handover.rs to RFC-0855p-e v1.3 spec; parallel to d-chain; precedes ct extraction)

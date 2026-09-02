@@ -16,7 +16,7 @@ metadata:
     - RFC-0850p-d
     - RFC-0126
     - RFC-0855p-c
-status: Open
+status: Claimed
 ---
 
 # 0855p-d1-subgroup-creation-state — Sub-Group Creation & State Substrate per RFC-0855p-d1
@@ -138,4 +138,4 @@ Pre-existing `sub_group.rs` (CGSB substrate; `CreateSubGroupEnvelope` + `SubGrou
 
 ## Claimant
 
-(none — Open mission)
+@mmacedoeu (mission lifecycle: Claimed 2026-09-02 after W4.5 DRY closure at commit `647b2cf4`; lands FIRST per RFC-0855p-d §Layer placement table substrate-ownership chain d1→d2→d3)

@@ -11,7 +11,7 @@ metadata:
     - RFC-0855p-e
     - RFC-0855p-b
     - mission 0855p-e-handover-envelope-substrate
-status: Open
+status: Claimed
 ---
 
 # 0855p-e-coordinator-types-shared-crate — Extract `octo-coordinator-types` shared crate per RFC-0855p-e §Layer-C Substrate Types
@@ -121,4 +121,4 @@ Net-additive: new crate + new dep. `octo-network` re-imports the 3 types (no API
 
 ## Claimant
 
-(none — Open mission)
+@mmacedoeu (mission lifecycle: Claimed 2026-09-02 after W4.5 DRY closure at commit `647b2cf4`; lands AFTER e-handover per §Future Work F-7 deferred path; creates NEW `crates/octo-coordinator-types/` shared Layer-B crate; option (b) deferred path)

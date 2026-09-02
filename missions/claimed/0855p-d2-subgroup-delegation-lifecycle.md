@@ -18,7 +18,7 @@ metadata:
     - RFC-0126
     - RFC-0855p-b
     - RFC-0855p-c
-status: Open
+status: Claimed
 ---
 
 # 0855p-d2-subgroup-delegation-lifecycle — Sub-DC Delegation Lifecycle Substrate per RFC-0855p-d2
@@ -137,4 +137,4 @@ Substrate-creation; no existing code. Additive to module tree. Re-exports `SubGr
 
 ## Claimant
 
-(none — Open mission)
+@mmacedoeu (mission lifecycle: Claimed 2026-09-02 after W4.5 DRY closure at commit `647b2cf4`; lands SECOND per substrate-first pattern d1→d2→d3)

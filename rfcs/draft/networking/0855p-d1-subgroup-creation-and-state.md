@@ -228,7 +228,7 @@ pub struct SubGroupExtension {
     pub parent_domain_id: [u8; 32],
     pub sub_label: SubGroupLabel,
     pub sub_dc_id: [u8; 32],
-    pub delegation_proof: Option<SubDCDelegationProof>, // RFC-0855p-d2 §Sub-DCDelegationProof
+    pub delegation_proof: Option<SubDCDelegationProof>, // RFC-0855p-d2 §Data Structure
     pub delegation_id: Option<DelegationId>,
 }
 
@@ -500,8 +500,8 @@ Each CGSB recipient executes these checks in order before accepting or rebroadca
 4. No active or pending child occupies `(parent_domain_id, domain_id)`.
 5. Parent `GroupBinding` resolves to one active record; parent chain terminates at active root and depth satisfies `MAX_ROOT_DEPTH <= parent_depth < MAX_SUBGROUP_DEPTH`.
 6. `mission_id`, inherited-policy hash, coordinator term, epoch, and parent DC match canonical parent state.
-7. If `sub_dc_id == parent_dc_id`, `delegation_proof` is `None`. Otherwise proof is present, current, non-replayed, parent-signed, and scoped to exact child domain and DC (delegation proof verification per RFC-0855p-d2 §Sub-DC Delegation Protocol). Descendant delegation is asserted through `SubDCDelegationPolicy::check(proposed_generation, delegation_chain_depth, proof)` (RFC-0855p-d2) and `MAX_DELEGATION_CHAIN_PER_TERM`.
-8. CGROUP signature verifies under current parent DC and covers domain, extension, nonce, epoch, and coordinator term.
+7. If `sub_dc_id == parent_dc_id`, `delegation_proof` is `None`. Otherwise proof is present, current, non-replayed, parent-signed, and scoped to exact child domain and DC (delegation proof verification per RFC-0855p-d2 §Sub-DC Delegation Protocol). Descendant delegation is asserted through `SubDCDelegationPolicy::check(proof, subgroup_state_bound=true)` (RFC-0855p-d2) and `MAX_DELEGATION_CHAIN_PER_TERM`.
+8. CGROUP signature verifies under current parent DC and covers domain, extension, nonce, epoch, coordinator term, and `delegation_proof` (when present) per signature-coverage invariant (added v1.3 per W11 L1 M4 finding).
 9. (Post-validation) Nonce remains unconsumed under replay key `(CGSB, creator_dc_id, parent_domain_id, sub_domain_id, current_epoch, nonce)`. Only after steps 1–8 succeed does the recipient record the replay-key entry. Cross-node `PendingBind` reconciliation: the BIND-commit path re-runs the parent-state check (steps 5–6) at BIND-commit time, not at create-receipt, so a parent flip between create-receipt and BIND-commit causes `PendingBind → Dissolving` (state-machine row above) rather than silent orphan bind.
 10. Parent broadcasts create only to current parent members or validators. Child BIND broadcasts only after child state becomes `Bound`.
 11. Recipient lacking current parent state, proof index, or nonce index quarantines envelope; it does not guess success.
@@ -721,9 +721,33 @@ Parent-binding invariant prevents orphan domains and authority drift. Child-scop
 
 ## Version History
 
-| Version | Date       | Changes                                                                                                                                                                                                |
-| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1.3     | 2026-09-02 | Restructured from monolithic RFC-0855p-d v1.2 into 3-RFC chain (d1/d2/d3). See fix-log §v1.3. d1 owns CGSB + state machine + SubGroupLabel + SubGroupRecord + Layer-C query surface (creation subset). |
+| Version | Date       | Changes                                                                                               |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------------- |
+| 1.3     | 2026-09-02 | Split from v1.2. See fix-log §v1.3. d1 owns CGSB + state + label + record + Layer-C query (creation). |
+
+## Appendices
+
+(Added v1.3 per W11 L5 H4 finding — mandatory BLUEPRINT §RFC Process template sub-section.)
+
+### A. SubGroupLabel UTS-39 confusable reject set (constructor-level)
+
+Per-character reject codepoints (v1.1 per W9 L3 C2 finding; v0.8 wording corrected per L3 H1 finding):
+
+- Bidi-control: U+202A–U+202E
+- Bidi-isolate: U+2066–U+2069
+- Zero-width: U+200B–U+200D
+- Narrow-no-break space: U+202F
+- Byte order mark: U+FEFF
+
+Full UTS-39 confusable-skeleton comparison against parent's existing labels remains recipient-side at validation step 4 (v0.8 correction per L3 H1 finding).
+
+### B. Canonical derivation recipe
+
+`sub_domain_id = BLAKE3_keyed("DOT/1/CGROUP_SUB/domain", parent_domain_id || sub_label)`
+
+- `derive_key("DOT/1/CGROUP_SUB/domain")` expands ASCII context to 32-byte key (RFC-0853 §Cryptographic Primitives)
+- `keyed_hash(&key, parent_domain_id || sub_label)` produces 32-byte digest
+- Pre-normalization input may grow during NFC composition; length cap enforced POST-normalization
 
 ## Related RFCs
 

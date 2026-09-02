@@ -149,6 +149,13 @@ pub const SUBGROUP_ROTATION_CONTEXT: &str = "DOT/1/CGROUP_SUB/rotation";
 pub const SUBGROUP_DELEGATION: [u8; 4] = *b"SDCD";
 pub const SUBGROUP_REVOCATION: [u8; 4] = *b"SDRV";
 pub const SUBGROUP_ROTATION: [u8; 4] = *b"SDRT";
+// SubGroupAction registry entries owned by this RFC (RFC-0855p-d1 §Layer-C
+// Substrate Surface owns the struct + namespace; d2 reserves 0x0002/0x0003
+// per INDEX L58; consts defined v1.2 per W11 L2 H2 finding — were
+// hand-synced, not enforced by re-export).
+pub const SUBGROUP_ACTION_DELEGATE: u32 = 0x0002;
+pub const SUBGROUP_ACTION_REVOKE: u32 = 0x0003;
+pub const SUBGROUP_ACTION_ROTATE: u32 = 0x0006; // d2-owned future action; placeholder
 
 // Re-export per RFC-0855p-d1 Layer placement table — these types are NOT
 // redefined here per Stable Abstractions Principle + A→B→C dep direction
@@ -254,6 +261,14 @@ impl SubDCDelegationPolicy {
         }
         if !subgroup_state_bound {
             return Err(DelegationPolicyError::SubGroupNotBound);
+        }
+        // Chain-depth monotonicity (added v1.2 per W11 L1 H3 finding): the
+        // counter is the bound, not the envelope field. A misbehaving parent
+        // submitting SDCDs with `chain_depth=1` forever within the 256-cap
+        // would break the per-term audit trail; substrate increments
+        // `current_chain_depth` only on successful accept.
+        if proof.chain_depth != self.current_chain_depth + 1 {
+            return Err(DelegationPolicyError::ChainDepthDrift);
         }
         if proof.chain_depth > MAX_DELEGATION_CHAIN_PER_TERM {
             return Err(DelegationPolicyError::ChainLimitExceeded);
@@ -526,9 +541,9 @@ SDRT requiring BOTH signatures prevents unilateral rotation: a parent alone cann
 
 ## Version History
 
-| Version | Date       | Changes                                                                                                                                                                                     |
-| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1.3     | 2026-09-02 | Restructured from monolithic RFC-0855p-d v1.2 into 3-RFC chain (d1/d2/d3). See fix-log §v1.3. d2 owns SDCD/SDRV/SDRT + SubDCDelegationPolicy + chain-depth counter + root-delegation table. |
+| Version | Date       | Changes                                                                                       |
+| ------- | ---------- | --------------------------------------------------------------------------------------------- |
+| 1.3     | 2026-09-02 | Split from v1.2. See fix-log §v1.3. d2 owns SDCD/SDRV/SDRT + delegation policy + chain-depth. |
 
 ## Related RFCs
 
@@ -544,6 +559,29 @@ SDRT requiring BOTH signatures prevents unilateral rotation: a parent alone cann
 - RFC-0855p-d1 — Sub-Group Creation & State (prerequisite: subgroup must exist and be `Bound`)
 - RFC-0855p-d3 — Routing + Aggregation + Teardown (downstream consumer: revocation triggers cascade teardown)
 - RFC-0855p-e — Mission Coordinator Handover Envelope (sibling RFC)
+
+## Appendices
+
+(Added v1.3 per W11 L5 H4 finding — mandatory BLUEPRINT §RFC Process template sub-section.)
+
+### A. Replay-key tuple canonical forms
+
+Per-envelope-type-specific tuples (canonical BE bytes per RFC-0126 array-of-u8 form):
+
+- SDCD: `(SDCD, parent_dc_id, sub_domain_id, sub_dc_id, term_id, current_epoch, nonce)`
+- SDRV: `(SDRV, parent_dc_id, sub_domain_id, sub_dc_id, term_id, current_epoch, nonce)`
+- SDRT: `(SDRT, parent_dc_id, sub_domain_id, retiring_sub_dc_id, term_id, current_epoch, nonce)`
+
+### B. RevocationReasonCode enum values
+
+`#[non_exhaustive]` per §Extension over enumeration:
+
+- `TermExpired` — coordinator term ended without renewal
+- `CoordinatorRotation` — explicit coordinator rotation
+- `SubDCMisconduct` — sub-DC misbehavior (slash tally per RFC-0855p-b)
+- `SubDCKeyCompromise` — sub-DC key compromise detected
+- `SubDCVoluntaryResignation` — sub-DC voluntary step-down
+- `GroupDecommission` — parent group decommissioned
 
 ## Related Use Cases
 

@@ -51,7 +51,8 @@ Sibling RFCs (parallel review chain):
 
 Direction A→B→C/D/E verified at chain level:
 
-- **Layer A** (RFC-frozen): BLAKE3-256 primitive (RFC-0853), Ed25519 public key (RFC-0853), canonical `Did` (RFC-0009), BLS12-381 G1 48-byte compressed aggregate (RFC-0855p-b §Witness Set Aggregation). Re-exported via `pub use` per RFC-0855p-d1 §Layer placement; no `pub type` alias (per W6 L2 L1 finding).
+- **Layer A** (RFC-frozen): BLAKE3-256 primitive (RFC-0853), Ed25519 public key (RFC-0853), BLS12-381 G1 48-byte compressed aggregate (RFC-0855p-b §Witness Set Aggregation). Re-exported via `pub use` per RFC-0855p-d1 §Layer placement; no `pub type` alias (per W6 L2 L1 finding).
+- **Layer B** (RFC-driven, additive; canonical `Did` per RFC-0009 owned at identity substrate; re-exported via `pub use` per RFC-0855p-d1 §Layer placement).
 - **Layer B** (years-stable): all envelope wire types (CGSB, SDCD, SDRV, SDRT, P2SR, S2PA, SGTP outer 10-byte canonical header per RFC-0850p-c §A; inner DCS canonical form per RFC-0126). Unknown subtypes fail closed.
 - **Layer C** (per-RFC): state machine (SubGroupState), delegation policy (SubDCDelegationPolicy), aggregation policy (hodn_quorum), teardown grace bound (TEARDOWN_GRACE_EPOCHS), cross-node reconciliation.
 - **Layer D** (per-adapter): transport binding (RFC-0850p-c) — none of d1/d2/d3 define transport adapters.
@@ -164,7 +165,7 @@ pub enum SubGroupState {
 }
 ```
 
-Transitions: `Absent → PendingBind` (CGSB accept per RFC-0855p-d1 §Recipient Verification); `PendingBind → Bound` (BIND success); `PendingBind → Dissolving` (BIND failure, deadline, parent flip); `Bound → Dissolving` (explicit UNBIND, parent UNBIND cascade, sub-DC revocation per RFC-0855p-d2); `Dissolving → Dissolved` (SGTP accept per RFC-0855p-d3 after `TEARDOWN_GRACE_EPOCHS` elapsed).
+Transitions: `Absent → PendingBind` (CGSB accept per RFC-0855p-d1 §Recipient Verification); `PendingBind → Bound` (BIND success); `PendingBind → Dissolved` (BIND failure or deadline expires); `PendingBind → Dissolving` (parent UNBIND between create-receipt and BIND-commit); `Bound → Dissolving` (explicit UNBIND, parent UNBIND cascade, sub-DC revocation per RFC-0855p-d2); `Dissolving → Dissolved` (SGTP accept per RFC-0855p-d3 §SGTP acceptance step 4 after `TEARDOWN_GRACE_EPOCHS` elapsed).
 
 Future extensions (Suspended / Archived / Frozen) land without central edits to the core enum via `#[non_exhaustive]`.
 
@@ -332,7 +333,30 @@ Total: ~1600 lines vs 1200 lines monolithic. Increase justified by reduced per-R
 | 1.0     | 2026-08-29 | Spec-elaboration complete (post-W7.5 fix batch); cite sweep PASS.                                                                                                                                                                                                                          |
 | 1.1     | 2026-09-01 | BLS12-381 PoP at witness registration + UTS-39 confusable codepoint enumeration + HORQ snapshot canonical path + HORC payload_hash domain prefix + MAX_PENDING_ENVELOPES_PER_HODN bound. See fix-log §v1.1.                                                                                |
 | 1.2     | 2026-09-02 | W10 fix batch: HandoverAckPayload attests_to_predecessor_state + aggregate_id derivation + bitmap-vs-quorum coverage + SenderStateSnapshotOrdinal `#[non_exhaustive]` + HANDOVER_RACE_WINDOW const + layer placement rows + 3 BLUEPRINT template sub-sections per file. See fix-log §v1.2. |
-| 1.3     | 2026-09-02 | **Restructured** into 3-RFC chain (d1/d2/d3). Monolithic 1200-line v1.2 split per concern. This INDEX RFC preserves cross-cutting concerns + chain-wide overview + version lineage. Per-concern §Specification / §Security / §Test Vectors live in d1/d2/d3. See fix-log §v1.3.            |
+| 1.3     | 2026-09-02 | **Restructured** into 3-RFC chain (d1/d2/d3). v1.2 1200L → d INDEX 280L + d1 440L + d2 470L + d3 520L = 1710L. See fix-log §v1.3.                                                                                                                                                          |
+
+## Appendices
+
+(Added v1.3 per W11 L5 H4 finding — mandatory BLUEPRINT §RFC Process template sub-section.)
+
+### A. Subgroup envelope type catalog cross-reference
+
+| Subtype | Owner        | Purpose                                  |
+| ------- | ------------ | ---------------------------------------- |
+| CGSB    | RFC-0855p-d1 | Create sub-group under active parent     |
+| SDCD    | RFC-0855p-d2 | Issue or refresh sub-DC delegation proof |
+| SDRV    | RFC-0855p-d2 | Revoke sub-DC delegation                 |
+| SDRT    | RFC-0855p-d2 | Rotate sub-DC key                        |
+| P2SR    | RFC-0855p-d3 | Parent-to-sub-group route envelope       |
+| S2PA    | RFC-0855p-d3 | Sub-to-parent aggregate envelope         |
+| SGTP    | RFC-0855p-d3 | Sub-group teardown proof                 |
+
+### B. Glossary
+
+- **Sub-DC**: A non-parent DC delegated authority for one child sub-domain (RFC-0855p-d2).
+- **Witness set**: Active child membership eligible to attest in `SubToParentAggregateEnvelope` (RFC-0855p-d3).
+- **BIND**: Transport-layer group binding ceremony per RFC-0850p-c.
+- **DCS**: Deterministic Canonical Serialization per RFC-0126.
 
 ## Related RFCs
 

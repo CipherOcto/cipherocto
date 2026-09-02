@@ -39,7 +39,7 @@ Part 3 of 3 (0855p-d1 / d2 / d3). Defines cross-sub-group envelope family (`DOT/
 | `TEARDOWN_GRACE_EPOCHS = 50` + `MAX_AGGREGATE_ATTESTATIONS = 1024` consts                                                                                                            | **Layer C** | Coordinator-side governance policy (lifecycle bound)                                                                                        |
 | `SubGroupAction::route` / `SubGroupAction::aggregate` typed-discriminator entries (RFC-0855p-d1 owns the struct + namespace; this RFC owns the `0x0004` / `0x0005` registry entries) | **Layer C** | Layer-C action dispatch                                                                                                                     |
 | Re-export (`pub use rfc_0853::Ed25519PublicKey`)                                                                                                                                     | **Layer A** | Crypto primitive; re-export only                                                                                                            |
-| BLS12-381 G1 48-byte compressed aggregate (RFC-0855p-b §Witness Set Aggregation)                                                                                                     | **Layer A** | Crypto primitive; re-export only                                                                                                            |
+| BLS12-381 G1 48-byte compressed aggregate (RFC-0855p-b; canonical form per RFC-0853 §Cryptographic Primitives)                                                                       | **Layer A** | Crypto primitive; re-export only                                                                                                            |
 
 Direction A→B→C/D/E verified: this RFC depends on RFC-0853 (Layer A crypto), RFC-0009 (Layer B identity), RFC-0850p-c (Layer B transport), RFC-0126 (Layer A canonical encoding), RFC-0855p-c (RFC-0855p-c Layer C DC authority), RFC-0855p-d1 (Layer C subgroup creation/state), RFC-0855p-d2 (Layer C delegation). No upward dependency.
 
@@ -87,7 +87,7 @@ Sub-DC cannot route across non-delegated sub-domains, issue aggregates beyond `M
 | ------------------------ | ----------------------------------------------------------------------------------------------------- | ----------------------------- |
 | Cross-sub-group replay   | Nonce in replay tuple `(P2SR, dc_id, parent_domain_id, sub_domain_id, term_id, current_epoch, nonce)` | Reject                        |
 | Aggregate quorum forgery | mesh_aggregated_signature covers signers_bitmap; bitmap.count_ones() >= hodn_quorum(witness_set_size) | Reject `QuorumForgery`        |
-| Distinct-signer bypass   | Reject bitmaps with repeated indices; distinct index count == bitmap.popcount                         | Reject `DuplicateSignerIndex` |
+| Distinct-signer bypass   | Reject bitmaps with repeated indices; distinct index count == bitmap.count_ones()                     | Reject `DuplicateSignerIndex` |
 | Teardown fabrication     | SGTP signed by parent DC OR valid delegated sub-DC (RFC-0855p-d2); signature over teardown_proof      | Reject                        |
 | Teardown grace bypass    | SGTP only valid after `TEARDOWN_GRACE_EPOCHS = 50` elapsed since `Bound → Dissolving`                 | Reject `TeardownTooEarly`     |
 | Broadcast amplification  | P2SR covers exactly one child sub-domain; child sub-group membership bounded by child creation        | Reject cross-child P2SR       |
@@ -228,6 +228,10 @@ impl SignersBitmap {
     pub fn count_ones(&self) -> usize {
         self.bits.iter().map(|b| b.count_ones() as usize).sum()
     }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bits
+    }
 }
 
 #[derive(Dcs, Clone, Debug, PartialEq, Eq)]
@@ -335,7 +339,7 @@ P2SR recipient:
 
 1. DCS decode succeeds; `envelope_subtype == b"P2SR"`; `version` is supported.
 2. Forward-skew bound: reject envelope where `current_epoch > local_epoch + MAX_FSKEW_EPOCHS`.
-3. Subgroup is `Bound` (RFC-0855p-d1 §SubGroupState).
+3. Subgroup is `Bound` (RFC-0855p-d1 §SubGroupState); envelope's `parent_domain_id` MUST equal the queried subgroup's `parent_domain_id` (parent-binding check; added v1.3 per W11 L1 M-fbat finding — prevents cross-parent enumeration).
 4. Issuer is parent DC OR valid delegated sub-DC (RFC-0855p-d2).
 5. Signature verifies over `SUBGROUP_ROUTE_CONTEXT`.
 6. Nonce unconsumed under replay key `(P2SR, dc_id, parent_domain_id, sub_domain_id, term_id, current_epoch, nonce)`.
@@ -344,17 +348,18 @@ S2PA recipient:
 
 1. DCS decode succeeds; `envelope_subtype == b"S2PA"`; `version` is supported.
 2. Forward-skew bound: reject envelope where `current_epoch > local_epoch + MAX_FSKEW_EPOCHS`.
-3. Subgroup is `Bound`.
+3. Subgroup is `Bound`; envelope's `parent_domain_id` MUST equal the queried subgroup's `parent_domain_id` (parent-binding check; same W11 L1 M-fbat finding).
 4. Issuer is sub-DC (not parent — parent aggregates go via different path).
 5. Witness-set size queried: `witness_set_size = SubGroupQuery(parent, sub).witness_set_size`.
 6. `attestations.len() <= MAX_AGGREGATE_ATTESTATIONS = 1024`.
-7. `signers_bitmap.count_ones() == attestations.len()` (distinct-signer invariant).
-8. `signers_bitmap.count_ones() >= hodn_quorum(witness_set_size)` (quorum coverage).
-9. mesh_aggregated_signature verifies over (attestations + signers_bitmap).
-10. `aggregate_id` recomputed from canonical input matches claimed value.
-11. Nonce unconsumed under replay key `(S2PA, dc_id, parent_domain_id, sub_domain_id, term_id, current_epoch, nonce)`.
+7. mesh_aggregated_signature verifies over (attestations + signers_bitmap). // BLS FIRST (per W11 L3 H1 finding — re-ordered; previously step 9)
+8. Distinct-signer pre-check: `signers_bitmap` has no repeated indices (defensive re-verification per W11 L3 M-fbat finding; reject `BitmapError::DuplicateSignerIndex` before count).
+9. `signers_bitmap.count_ones() == attestations.len()` (distinct-signer invariant; reject `BitmapError::AttestationCountMismatch`).
+10. `signers_bitmap.count_ones() >= hodn_quorum(witness_set_size)` (quorum coverage).
+11. `aggregate_id` recomputed from canonical input matches claimed value.
+12. Nonce unconsumed under replay key `(S2PA, dc_id, parent_domain_id, sub_domain_id, term_id, current_epoch, nonce)`.
 
-Order of checks 8 → 9 → 10 is mandatory (per W10.5 L3 C1/C2 findings). Skip any check → reject.
+Order of checks 8 → 9 → 10 → 11 is mandatory (per W10.5 L3 C1/C2 findings). Skip any check → reject.
 
 ### Sub-Group Decommission (SGTP)
 
@@ -372,8 +377,8 @@ Sub-group transitions `Bound → Dissolving` either voluntarily (sub-DC or paren
 1. DCS decode succeeds; `envelope_subtype == b"SGTP"`; `version` is supported.
 2. Forward-skew bound: reject envelope where `current_epoch > local_epoch + MAX_FSKEW_EPOCHS`.
 3. Subgroup exists and state ∈ `{Dissolving}`.
-4. Grace elapsed: `current_epoch - dissolving_epoch >= TEARDOWN_GRACE_EPOCHS`.
-5. Issuer is parent DC OR valid delegated sub-DC.
+4. Grace elapsed: `local_epoch - dissolving_epoch >= TEARDOWN_GRACE_EPOCHS` (recipient's local clock; envelope `teardown_epoch` field is informational/audit-only).
+5. Issuer is parent DC OR valid delegated sub-DC; delegation record active at envelope acceptance time per RFC-0855p-d2 §SubDCDelegationPolicy (no matching SDRV in `(parent, sub, sub_dc, term)`).
 6. Signature verifies over `SUBGROUP_TEARDOWN_CONTEXT`.
 7. Nonce unconsumed under replay key `(SGTP, dc_id, parent_domain_id, sub_domain_id, term_id, current_epoch, nonce)`.
 8. Transition state `Dissolving → Dissolved`; purge live transport handles; stop delivery (RFC-0855p-d1 §State Machine).
@@ -590,9 +595,9 @@ mesh_aggregated_signature covering signers_bitmap prevents quorum forgery: witho
 
 ## Version History
 
-| Version | Date       | Changes                                                                                                                                                                                         |
-| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1.3     | 2026-09-02 | Restructured from monolithic RFC-0855p-d v1.2 into 3-RFC chain (d1/d2/d3). See fix-log §v1.3. d3 owns P2SR/S2PA/SGTP + MemberAttestation + SignersBitmap + hodn_quorum + TEARDOWN_GRACE_EPOCHS. |
+| Version | Date       | Changes                                                                                  |
+| ------- | ---------- | ---------------------------------------------------------------------------------------- |
+| 1.3     | 2026-09-02 | Split from v1.2. See fix-log §v1.3. d3 owns P2SR/S2PA/SGTP + bitmap + quorum + teardown. |
 
 ## Related RFCs
 
@@ -608,6 +613,36 @@ mesh_aggregated_signature covering signers_bitmap prevents quorum forgery: witho
 - RFC-0855p-d1 — Sub-Group Creation & State (prerequisite: subgroup must exist + state machine)
 - RFC-0855p-d2 — Sub-DC Delegation Lifecycle (prerequisite: non-parent sub-DC requires valid delegation)
 - RFC-0855p-e — Mission Coordinator Handover Envelope (sibling RFC)
+
+## Appendices
+
+(Added v1.3 per W11 L5 H4 finding — mandatory BLUEPRINT §RFC Process template sub-section.)
+
+### A. Teardown grace arithmetic
+
+Recipient-local-clock comparison per W11 L1 C2 finding:
+
+```
+teardown_epoch - dissolving_epoch >= TEARDOWN_GRACE_EPOCHS  // envelope-supplied
+```
+
+replaced at acceptance time by:
+
+```
+local_epoch - dissolving_epoch >= TEARDOWN_GRACE_EPOCHS     // recipient-local
+```
+
+Envelope `teardown_epoch` field becomes informational/audit-only.
+
+### B. Bitmap-vs-quorum ordering
+
+Per W10.5 L3 C2 finding; re-confirmed W11 L3 H1:
+
+```
+1. mesh_aggregated_signature verifies   // BLS first
+2. signers_bitmap.count_ones() == attestations.len()  // distinct-signer
+3. signers_bitmap.count_ones() >= hodn_quorum(witness_set_size)  // quorum coverage
+```
 
 ## Related Use Cases
 

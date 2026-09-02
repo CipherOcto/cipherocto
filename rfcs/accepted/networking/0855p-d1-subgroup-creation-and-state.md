@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (2026-09-02) — spec elaboration closed (v1.3); part of 0855p-d restructure chain (d1/d2/d3). Supersedes monolithic RFC-0855p-d v1.2 §Specification Envelope Type Added CGSB + §Data Structure (CGSB types) + §State Machine + §Layer-C Substrate Surface (creation/query) + relevant §Security Considerations + relevant §Test Vectors.
+Accepted (2026-09-02) — spec elaboration closed (v1.3); part of 0855p-d restructure chain (d1/d2/d3). Supersedes monolithic RFC-0855p-d v1.2 §Specification Envelope Type Added CGSB + §Data Structure (CGSB types) + §State Machine + §Layer-C Substrate Surface (creation/query) + relevant §Security Considerations + relevant §Test Vectors.
 
 ## Authors
 
@@ -727,9 +727,10 @@ Parent-binding invariant prevents orphan domains and authority drift. Child-scop
 
 ## Version History
 
-| Version | Date       | Changes                                                                             |
-| ------- | ---------- | ----------------------------------------------------------------------------------- |
-| 1.3     | 2026-09-02 | Split from v1.2.. d1 owns CGSB + state + label + record + Layer-C query (creation). |
+| Version | Date       | Status   | Changes                                                                             |
+| ------- | ---------- | -------- | ----------------------------------------------------------------------------------- |
+| 1.3     | 2026-09-02 | Draft    | Split from v1.2.. d1 owns CGSB + state + label + record + Layer-C query (creation). |
+| 1.4     | 2026-09-02 | Accepted | Promoted after restructure + 5-lens DRY closure (W12+W12.6).                        |
 
 ## Appendices
 

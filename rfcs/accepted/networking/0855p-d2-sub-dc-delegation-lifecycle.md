@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (2026-09-02) — spec elaboration closed (v1.3); part of 0855p-d restructure chain (d1/d2/d3). Supersedes monolithic RFC-0855p-d v1.2 §Sub-DC Delegation Protocol + relevant §Data Structure (SubDCDelegationProof + SubDCDelegationPolicy + SDCD/SDRV/SDRT envelopes) + relevant §Security Considerations + relevant §Test Vectors.
+Accepted (2026-09-02) — spec elaboration closed (v1.3); part of 0855p-d restructure chain (d1/d2/d3). Supersedes monolithic RFC-0855p-d v1.2 §Sub-DC Delegation Protocol + relevant §Data Structure (SubDCDelegationProof + SubDCDelegationPolicy + SDCD/SDRV/SDRT envelopes) + relevant §Security Considerations + relevant §Test Vectors.
 
 ## Authors
 
@@ -541,9 +541,10 @@ SDRT requiring BOTH signatures prevents unilateral rotation: a parent alone cann
 
 ## Version History
 
-| Version | Date       | Changes                                                                     |
-| ------- | ---------- | --------------------------------------------------------------------------- |
-| 1.3     | 2026-09-02 | Split from v1.2.. d2 owns SDCD/SDRV/SDRT + delegation policy + chain-depth. |
+| Version | Date       | Status   | Changes                                                                     |
+| ------- | ---------- | -------- | --------------------------------------------------------------------------- |
+| 1.3     | 2026-09-02 | Draft    | Split from v1.2.. d2 owns SDCD/SDRV/SDRT + delegation policy + chain-depth. |
+| 1.4     | 2026-09-02 | Accepted | Promoted after restructure + 5-lens DRY closure (W12+W12.6).                |
 
 ## Related RFCs
 

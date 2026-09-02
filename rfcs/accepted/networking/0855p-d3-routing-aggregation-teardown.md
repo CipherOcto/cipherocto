@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (2026-09-02) — spec elaboration closed (v1.3); part of 0855p-d restructure chain (d1/d2/d3). Supersedes monolithic RFC-0855p-d v1.2 §Cross-Sub-Group Messaging + §Sub-Group Decommission + relevant §Data Structure (P2SR/S2PA/SGTP envelopes + MemberAttestation + TeardownProof) + relevant §Security Considerations + relevant §Test Vectors.
+Accepted (2026-09-02) — spec elaboration closed (v1.3); part of 0855p-d restructure chain (d1/d2/d3). Supersedes monolithic RFC-0855p-d v1.2 §Cross-Sub-Group Messaging + §Sub-Group Decommission + relevant §Data Structure (P2SR/S2PA/SGTP envelopes + MemberAttestation + TeardownProof) + relevant §Security Considerations + relevant §Test Vectors.
 
 ## Authors
 
@@ -593,9 +593,10 @@ mesh_aggregated_signature covering signers_bitmap prevents quorum forgery: witho
 
 ## Version History
 
-| Version | Date       | Changes                                                                |
-| ------- | ---------- | ---------------------------------------------------------------------- |
-| 1.3     | 2026-09-02 | Split from v1.2.. d3 owns P2SR/S2PA/SGTP + bitmap + quorum + teardown. |
+| Version | Date       | Status   | Changes                                                                |
+| ------- | ---------- | -------- | ---------------------------------------------------------------------- |
+| 1.3     | 2026-09-02 | Draft    | Split from v1.2.. d3 owns P2SR/S2PA/SGTP + bitmap + quorum + teardown. |
+| 1.4     | 2026-09-02 | Accepted | Promoted after restructure + 5-lens DRY closure (W12+W12.6).           |
 
 ## Related RFCs
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (2026-09-02) — spec elaboration closed (v1.2); supersedes v1.1 baseline. Mission Coordinator only; DomainCoordinator uses platform-mediated handover per RFC-0855p-c §4.
+Accepted (2026-09-02) — spec elaboration closed (v1.2); supersedes v1.1 baseline. Mission Coordinator only; DomainCoordinator uses platform-mediated handover per RFC-0855p-c §4.
 
 ## Authors
 
@@ -804,20 +804,21 @@ Backward compat with non-handover-aware clients: After HODN, OLD clients continu
 
 ## Version History
 
-| Version | Date       | Changes                                                                                         |
-| ------- | ---------- | ----------------------------------------------------------------------------------------------- |
-| 0.1     | 2026-06-17 | Initial stub. See `docs/research/2026-09-02-0855p-e-vh-fix-log.md` §v0.1.                       |
-| 0.2     | 2026-06-17 | 10-byte header + inline SlashTally/CoordinatorRole + phantom removal..                          |
-| 0.3     | 2026-09-01 | Strip preliminary + DCS wire/payload split + quorum≥2/3..                                       |
-| 0.4     | 2026-09-01 | Slash codes + role ns 0x0100 + HORQ pre-broadcast + typed-discriminator..                       |
-| 0.5     | 2026-09-01 | Domain-separated hashes + newtypes + 0x0016 LateDelivery + BLAKE3 conventions..                 |
-| 0.6     | 2026-09-02 | Header consts + F-7 sequencing + lockout rule + Merkle pending..                                |
-| 0.7     | 2026-09-02 | F-7 BLOCKING + mission_id BLAKE3 + snapshot_proof + pending fanout..                            |
-| 0.8     | 2026-09-02 | mission_id 32→16B + HORC envelope + sender_state_snapshot newtype..                             |
-| 0.9     | 2026-09-02 | HORC bounded payload + replay tuple + lockout carve-out enumerates..                            |
-| 1.0     | 2026-09-02 | MAX_FSKEW_EPOCHS pub const + pub use + HORC payload_hash + OR→AND..                             |
-| 1.1     | 2026-09-02 | HORQ snapshot canonical path + HORC payload domain prefix + MAX_PENDING_ENVELOPES_PER_HODN..    |
-| 1.2     | 2026-09-02 | attests_to_predecessor_state + HANDOVER_RACE_WINDOW const + 3 BLUEPRINT template sub-sections.. |
+| Version | Date       | Status   | Changes                                                                                         |
+| ------- | ---------- | -------- | ----------------------------------------------------------------------------------------------- |
+| 0.1     | 2026-06-17 | Draft    | Initial stub. See `docs/research/2026-09-02-0855p-e-vh-fix-log.md` §v0.1.                       |
+| 0.2     | 2026-06-17 | Draft    | 10-byte header + inline SlashTally/CoordinatorRole + phantom removal..                          |
+| 0.3     | 2026-09-01 | Draft    | Strip preliminary + DCS wire/payload split + quorum≥2/3..                                       |
+| 0.4     | 2026-09-01 | Draft    | Slash codes + role ns 0x0100 + HORQ pre-broadcast + typed-discriminator..                       |
+| 0.5     | 2026-09-01 | Draft    | Domain-separated hashes + newtypes + 0x0016 LateDelivery + BLAKE3 conventions..                 |
+| 0.6     | 2026-09-02 | Draft    | Header consts + F-7 sequencing + lockout rule + Merkle pending..                                |
+| 0.7     | 2026-09-02 | Draft    | F-7 BLOCKING + mission_id BLAKE3 + snapshot_proof + pending fanout..                            |
+| 0.8     | 2026-09-02 | Draft    | mission_id 32→16B + HORC envelope + sender_state_snapshot newtype..                             |
+| 0.9     | 2026-09-02 | Draft    | HORC bounded payload + replay tuple + lockout carve-out enumerates..                            |
+| 1.0     | 2026-09-02 | Draft    | MAX_FSKEW_EPOCHS pub const + pub use + HORC payload_hash + OR→AND..                             |
+| 1.1     | 2026-09-02 | Draft    | HORQ snapshot canonical path + HORC payload domain prefix + MAX_PENDING_ENVELOPES_PER_HODN..    |
+| 1.2     | 2026-09-02 | Draft    | attests_to_predecessor_state + HANDOVER_RACE_WINDOW const + 3 BLUEPRINT template sub-sections.. |
+| 1.3     | 2026-09-02 | Accepted | Promoted after 5-lens DRY closure (W12.5+W12.6).                                                |
 
 ## Appendices
 

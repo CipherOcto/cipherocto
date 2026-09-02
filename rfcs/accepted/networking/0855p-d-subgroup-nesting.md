@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft (2026-09-02) — INDEX RFC. Superseded by per-concern split:
+Accepted (2026-09-02) — INDEX RFC. Superseded by per-concern split:
 
 - RFC-0855p-d1 — Sub-Group Creation & State
 - RFC-0855p-d2 — Sub-DC Delegation Lifecycle
@@ -339,14 +339,15 @@ Total: ~1600 lines vs 1200 lines monolithic. Increase justified by reduced per-R
 
 ## Version History
 
-| Version | Date       | Changes                                                                                                                                                                                                                                                                  |
-| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 0.1     | 2026-08-15 | Initial draft (sibling RFC-0855p-b / RFC-0855p-c review chain).                                                                                                                                                                                                          |
-| 0.2     | 2026-08-19 | Added §Security Considerations + §Implicit Assumptions Audit + §Test Vectors per BLUEPRINT template.                                                                                                                                                                     |
-| 1.0     | 2026-08-29 | Spec-elaboration complete (post-W7.5 fix batch); cite sweep PASS.                                                                                                                                                                                                        |
-| 1.1     | 2026-09-01 | BLS12-381 PoP at witness registration + UTS-39 confusable codepoint enumeration + HORQ snapshot canonical path + HORC payload_hash domain prefix + MAX_PENDING_ENVELOPES_PER_HODN bound..                                                                                |
-| 1.2     | 2026-09-02 | W10 fix batch: HandoverAckPayload attests_to_predecessor_state + aggregate_id derivation + bitmap-vs-quorum coverage + SenderStateSnapshotOrdinal `#[non_exhaustive]` + HANDOVER_RACE_WINDOW const + layer placement rows + 3 BLUEPRINT template sub-sections per file.. |
-| 1.3     | 2026-09-02 | **Restructured** into 3-RFC chain (d1/d2/d3). v1.2 1200L → d INDEX 280L + d1 440L + d2 470L + d3 520L = 1710L..                                                                                                                                                          |
+| Version | Date       | Status   | Changes                                                                                                                                                                                                                                                                  |
+| ------- | ---------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.1     | 2026-08-15 | Draft    | Initial draft (sibling RFC-0855p-b / RFC-0855p-c review chain).                                                                                                                                                                                                          |
+| 0.2     | 2026-08-19 | Draft    | Added §Security Considerations + §Implicit Assumptions Audit + §Test Vectors per BLUEPRINT template.                                                                                                                                                                     |
+| 1.0     | 2026-08-29 | Draft    | Spec-elaboration complete (post-W7.5 fix batch); cite sweep PASS.                                                                                                                                                                                                        |
+| 1.1     | 2026-09-01 | Draft    | BLS12-381 PoP at witness registration + UTS-39 confusable codepoint enumeration + HORQ snapshot canonical path + HORC payload_hash domain prefix + MAX_PENDING_ENVELOPES_PER_HODN bound..                                                                                |
+| 1.2     | 2026-09-02 | Draft    | W10 fix batch: HandoverAckPayload attests_to_predecessor_state + aggregate_id derivation + bitmap-vs-quorum coverage + SenderStateSnapshotOrdinal `#[non_exhaustive]` + HANDOVER_RACE_WINDOW const + layer placement rows + 3 BLUEPRINT template sub-sections per file.. |
+| 1.3     | 2026-09-02 | Draft    | **Restructured** into 3-RFC chain (d1/d2/d3). v1.2 1200L → d INDEX 280L + d1 440L + d2 470L + d3 520L = 1710L..                                                                                                                                                          |
+| 1.4     | 2026-09-02 | Accepted | Promoted after restructure + 5-lens DRY closure (W12+W12.6).                                                                                                                                                                                                             |
 
 ## Appendices
 

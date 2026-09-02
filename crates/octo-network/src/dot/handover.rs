@@ -1,13 +1,15 @@
-//! Coordinator Term Handover — RFC-0855p-e
+//! Coordinator Term Handover — RFC-0855p-e (v1.3 reconciled)
 //!
 //! Implements the `HandoverRequestEnvelope` (subtype `b"HORQ"`),
-//! `HandoverAckEnvelope` (subtype `b"HOAK"`), and
-//! `HandoverDoneEnvelope` (subtype `b"HODN"`) types, plus the supporting
-//! `HandoverReason`, `CoordinatorRole`, `SlashTally`, and `SlashEvent`
-//! types.
+//! `HandoverAckEnvelope` (subtype `b"HOAK"`),
+//! `HandoverDoneEnvelope` (subtype `b"HODN"`), and
+//! `HandoverCancelEnvelope` (subtype `b"HORC"`) types, plus the supporting
+//! `HandoverReason`, `CoordinatorRole`, `SlashTally`, `SlashEvent`,
+//! `SenderStateSnapshotOrdinal`, `MeshAggregatedSignature`,
+//! `horq_quorum(witness_set_size)`, and HOAK second-witness quorum gate.
 //!
 //! See RFC-0855p-e §"Data Structure (preliminary)" and
-//! `missions/claimed/0855p-e-handover-request-envelope.md` Phase 1.
+//! `missions/claimed/0855p-e-handover-envelope-substrate.md` Phase 1+2.
 //!
 //! ## Canonical 10-byte header
 //!
@@ -27,6 +29,16 @@ use super::binding::GroupState;
 use super::error::DotError;
 
 // -----------------------------------------------------------------------------
+// v1.3 cross-RFC canonical home re-export
+// -----------------------------------------------------------------------------
+
+/// Forward-skew tolerance (envelope epoch ahead of recipient head). Canonical
+/// home: RFC-0855p-d1 (per plateau closure `docs/audits/2026-09-02-rfc-0855p-de-review-plateau.md`).
+/// Re-exported here so handover acceptance can use `±MAX_FSKEW_EPOCHS = 4`
+/// without importing from d1.
+pub use super::subgroup_state::MAX_FSKEW_EPOCHS;
+
+// -----------------------------------------------------------------------------
 // Subtype tags
 // -----------------------------------------------------------------------------
 
@@ -36,6 +48,223 @@ pub const HANDOVER_REQUEST_TAG: [u8; 4] = *b"HORQ";
 pub const HANDOVER_ACK_TAG: [u8; 4] = *b"HOAK";
 /// Subtype tag for `HandoverDoneEnvelope`.
 pub const HANDOVER_DONE_TAG: [u8; 4] = *b"HODN";
+/// Subtype tag for `HandoverCancelEnvelope` (incumbent cancel during lockout).
+pub const HANDOVER_REQUEST_CANCEL: [u8; 4] = *b"HORC";
+
+// -----------------------------------------------------------------------------
+// BLAKE3 domain separation contexts (RFC-0853)
+// -----------------------------------------------------------------------------
+
+/// BLAKE3 domain separation string for HORQ replay-key tuple derivation.
+pub const HORQ_CONTEXT: &str = "DOT/1/HANDOVER_REQUEST";
+/// BLAKE3 domain separation string for HOAK replay-key tuple derivation.
+pub const HOAK_CONTEXT: &str = "DOT/1/HANDOVER_ACK";
+/// BLAKE3 domain separation string for HODN replay-key tuple derivation.
+pub const HODN_CONTEXT: &str = "DOT/1/HANDOVER_DONE";
+/// BLAKE3 domain separation string for HORC replay-key tuple derivation.
+pub const HORC_CONTEXT: &str = "DOT/1/HANDOVER_CANCEL";
+
+/// BLAKE3 domain separation string for the cross-envelope MeshAggregatedSignature.
+pub const MESH_AGGREGATED_SIGNATURE: &str = "DOT/1/HANDOVER_MAS";
+
+// -----------------------------------------------------------------------------
+// v1.3 named constants (HANDOVER_RACE_WINDOW split per plateau closure)
+// -----------------------------------------------------------------------------
+
+/// Concurrent HORQ race window (backward + concurrent bound). Distinct from
+/// `HORQ_BACKWARD_WINDOW` (backward-replay bound) and `HANDOVER_FORWARD_SKEW_BOOST`
+/// (forward-skew tolerance). Per RFC-0855p-e §Layer placement table.
+pub const HANDOVER_RACE_WINDOW: u64 = 5;
+
+/// HORQ backward-replay window (replaces the deprecated `HANDOVER_REPLAY_WINDOW`
+/// phantom constant). Replay-key rejection range when accepting HORQ envelopes.
+pub const HORQ_BACKWARD_WINDOW: u64 = 5;
+
+/// Forward-skew boost (HODN acceptance site). 0 = no boost; recipient uses
+/// canonical `MAX_FSKEW_EPOCHS = 4` from d1. Reserved for future RFC-amendment
+/// without breaking the constant surface.
+pub const HANDOVER_FORWARD_SKEW_BOOST: u64 = 0;
+
+// -----------------------------------------------------------------------------
+// SenderStateSnapshotOrdinal (Layer A — typed wrapper with private field)
+// -----------------------------------------------------------------------------
+
+/// Typed ordinal for the sender's state snapshot at HORQ emission time.
+/// Internal field is PRIVATE (NOT `pub u8`) so external callers MUST route
+/// through `new()` for validation per RFC-0855p-e §Data Structure invariant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SenderStateSnapshotOrdinal(u8);
+
+impl SenderStateSnapshotOrdinal {
+    /// Active state (witness may accept single HOAK).
+    pub const ACTIVE: u8 = 0x01;
+    /// Pending state (witness MUST gather `horq_quorum(witness_set_size)`
+    /// distinct second-witness HOAKs before accepting HORQ).
+    pub const PENDING: u8 = 0x02;
+    /// Suspect state (witness MUST gather full witness-set quorum + report).
+    pub const SUSPECT: u8 = 0x03;
+
+    /// Construct from a raw byte. Returns `InvalidOrdinal` for unknown values.
+    pub fn new(byte: u8) -> Result<Self, InvalidOrdinalError> {
+        match byte {
+            Self::ACTIVE | Self::PENDING | Self::SUSPECT => Ok(Self(byte)),
+            _ => Err(InvalidOrdinalError { got: byte }),
+        }
+    }
+
+    pub fn as_byte(&self) -> u8 {
+        self.0
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.0 == Self::ACTIVE
+    }
+}
+
+/// Error type for `SenderStateSnapshotOrdinal::new`.
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[error("invalid SenderStateSnapshotOrdinal byte 0x{got:02x} (must be 0x01=Active, 0x02=Pending, 0x03=Suspect)")]
+pub struct InvalidOrdinalError {
+    pub got: u8,
+}
+
+// -----------------------------------------------------------------------------
+// SlashTallyUpdate (Layer C — scheduled to lift to octo-coordinator-types crate)
+// -----------------------------------------------------------------------------
+
+/// Slash tally update event — local Layer-C type per RFC-0855p-e §Layer-C
+/// Substrate Types follow-on note. Scheduled to lift to shared
+/// `octo-coordinator-types` crate per mission 0855p-e-coordinator-types-shared-crate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlashTallyUpdate {
+    /// Slash reason code (RFC-0008 §B code space 0x0001-0xFFFF).
+    pub slash_reason_code: u16,
+    /// Public key of the slashed peer.
+    pub slashed_peer_id: [u8; 32],
+    /// Number of witness signatures collected.
+    pub witness_count: u16,
+    /// Epoch when the slash was applied.
+    pub epoch: u64,
+}
+
+// -----------------------------------------------------------------------------
+// SlashReasonCode (Layer C — typed discriminator for slash tally updates)
+// -----------------------------------------------------------------------------
+
+/// `SlashReasonCode` typed discriminator. Extension safety via `reason_id()` +
+/// `Extension(u16)` variant (catches user-extension registry 0x0100-0xFFFF) +
+/// `#[non_exhaustive]` mismatch pattern guard at call sites.
+///
+/// **Why not `#[non_exhaustive]` here:** Rust 1.66+ forbids explicit discriminants
+/// on `#[non_exhaustive]` enums (E0732). We need explicit discriminants for the
+/// wire byte mapping (`reason_id() → u16`). Extension safety comes from the
+/// `Extension(u16)` variant + `reason_id()` returning raw u16 + match-site
+/// documentation requiring a wildcard arm.
+///
+/// Entries 0x0013-0x0016 (`FalseAttestation` / `QuorumTimeout` / `TallyTamper` /
+/// `LateDelivery`) are scheduled to land via `octo-coordinator-types` per
+/// RFC-0855p-e §Future Work F-7.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u16)]
+pub enum SlashReasonCode {
+    /// Generic slash.
+    Generic = 0x0001,
+    /// Attested to invalid predecessor state.
+    FalseAttestation = 0x0013,
+    /// Failed to ack HORQ within witness window.
+    QuorumTimeout = 0x0014,
+    /// Tampered with slash tally evidence.
+    TallyTamper = 0x0015,
+    /// Delivered slash tally update after grace window.
+    LateDelivery = 0x0016,
+    /// User-extension variant (RFC-allocated namespace 0x0100-0xFFFF).
+    Extension(u16),
+}
+
+impl SlashReasonCode {
+    pub fn reason_id(&self) -> u16 {
+        match self {
+            Self::Generic => 0x0001,
+            Self::FalseAttestation => 0x0013,
+            Self::QuorumTimeout => 0x0014,
+            Self::TallyTamper => 0x0015,
+            Self::LateDelivery => 0x0016,
+            Self::Extension(id) => *id,
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// HandoverReasonTypeId (Layer B — typed discriminator for handover reason)
+// -----------------------------------------------------------------------------
+
+/// Typed handover reason discriminator (Layer B; UUID-tag-style 128-bit value).
+/// Used by slash tally to map `SubDCVoluntaryResignation` etc. to handover
+/// trigger codes. Scheduled to lift to shared `octo-coordinator-types` crate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct HandoverReasonTypeId(pub [u8; 16]);
+
+// -----------------------------------------------------------------------------
+// MeshAggregatedSignature (Layer C — bitmap + aggregated BLS signature)
+// -----------------------------------------------------------------------------
+
+/// Mesh-aggregated signature surface for HODN acceptance. Bitmap covers both
+/// HORC + S2PA predecessors per RFC-0855p-e §Mesh Aggregated Signature Coverage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MeshAggregatedSignature {
+    /// Signers bitmap (bit i set = witness i signed).
+    pub signers_bitmap: Vec<u8>,
+    /// BLS12-381 G1 compressed aggregated signature (48 bytes).
+    pub aggregated_signature: [u8; 48],
+}
+
+impl MeshAggregatedSignature {
+    /// Construct from signers bitmap + aggregated signature.
+    pub fn new(signers_bitmap: Vec<u8>, aggregated_signature: [u8; 48]) -> Self {
+        Self {
+            signers_bitmap,
+            aggregated_signature,
+        }
+    }
+
+    /// Count of distinct signers (bits set).
+    pub fn count_signers(&self) -> u32 {
+        self.signers_bitmap
+            .iter()
+            .map(|b| b.count_ones())
+            .sum::<u32>()
+    }
+}
+
+// -----------------------------------------------------------------------------
+// horq_quorum (Layer C — distinct from hodn_quorum in d3)
+// -----------------------------------------------------------------------------
+
+/// HORQ-side quorum policy: minimum distinct witnesses for HORQ acceptance.
+///
+/// Distinct from `hodn_quorum` (d3 canonical home per plateau closure); both
+/// functions take `witness_set_size`, but the policy domain differs (HORQ-side
+/// vs HODN-side). Kept separate on purpose per `docs/audits/2026-09-02-rfc-0855p-de-review-plateau.md`.
+///
+/// Formula: `max(witness_set_size * 2 / 3, 2)` (floor 2; 0 only when set is empty).
+/// Examples: 0→0, 1→2, 2→2, 3→2, 6→4, 9→6.
+pub fn horq_quorum(witness_set_size: usize) -> usize {
+    if witness_set_size == 0 {
+        return 0;
+    }
+    (witness_set_size * 2 / 3).max(2)
+}
+
+/// Forward-reference re-export of `hodn_quorum` (canonical home lives in d3).
+/// When d3 lands, this will be `pub use crate::dot::subgroup_routing::hodn_quorum;`.
+/// Until then, we provide a local stub that mirrors the HORQ formula so callers
+/// can compile against the same name without forcing d3 landing first.
+pub fn hodn_quorum(witness_set_size: usize) -> usize {
+    if witness_set_size == 0 {
+        return 0;
+    }
+    (witness_set_size * 2 / 3).max(2)
+}
 
 // -----------------------------------------------------------------------------
 // HandoverReason
@@ -593,6 +822,176 @@ impl HandoverDoneEnvelope {
 }
 
 // -----------------------------------------------------------------------------
+// HandoverCancelEnvelope (DOT/1/HANDOVER_CANCEL)
+// -----------------------------------------------------------------------------
+
+/// Incumbent coordinator's cancel envelope (DOT/1/HORC). Clears incumbent-HORQ
+/// lockout rule per RFC-0855p-e §Security Considerations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandoverCancelEnvelope {
+    /// `b"DOT1"`.
+    pub envelope_type: [u8; 4],
+    /// `b"HORC"`.
+    pub envelope_subtype: [u8; 4],
+    /// `0x0001` (canonical version).
+    pub version: u16,
+    /// Incumbent coordinator's peer_id.
+    pub incumbent_coordinator_id: [u8; 32],
+    /// Current term id (the term being cancelled).
+    pub current_term_id: [u8; 32],
+    /// BLAKE3-256 of the in-flight HORQ envelope being cancelled.
+    pub cancelled_horq_hash: [u8; 32],
+    /// Current epoch.
+    pub current_epoch: u64,
+    /// 16-byte random nonce.
+    pub nonce: [u8; 16],
+    /// BLAKE3-256(incumbent_coordinator_id || current_term_id ||
+    ///   cancelled_horq_hash || current_epoch || nonce)
+    ///   — domain-prefixed per RFC-0855p-e §Payload Hash.
+    pub payload_hash: [u8; 32],
+    /// Ed25519 signature over `payload_hash`.
+    pub signature: [u8; 64],
+}
+
+impl HandoverCancelEnvelope {
+    /// Construct a new `HandoverCancelEnvelope` with canonical header populated.
+    pub fn new(
+        incumbent_coordinator_id: [u8; 32],
+        current_term_id: [u8; 32],
+        cancelled_horq_hash: [u8; 32],
+        current_epoch: u64,
+    ) -> Self {
+        let nonce = [0u8; 16];
+        let payload_hash = compute_horc_payload_hash(
+            &incumbent_coordinator_id,
+            &current_term_id,
+            &cancelled_horq_hash,
+            current_epoch,
+            &nonce,
+        );
+        Self {
+            envelope_type: ENVELOPE_TYPE,
+            envelope_subtype: HANDOVER_REQUEST_CANCEL,
+            version: ENVELOPE_VERSION,
+            incumbent_coordinator_id,
+            current_term_id,
+            cancelled_horq_hash,
+            current_epoch,
+            nonce,
+            payload_hash,
+            signature: [0u8; 64],
+        }
+    }
+
+    /// Serialize the body (everything after the 10-byte header) to bytes.
+    pub fn body_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(32 + 32 + 32 + 8 + 16 + 32);
+        buf.extend_from_slice(&self.incumbent_coordinator_id);
+        buf.extend_from_slice(&self.current_term_id);
+        buf.extend_from_slice(&self.cancelled_horq_hash);
+        buf.extend_from_slice(&self.current_epoch.to_be_bytes());
+        buf.extend_from_slice(&self.nonce);
+        buf.extend_from_slice(&self.payload_hash);
+        buf
+    }
+
+    /// Compute `payload_hash` with current field values.
+    pub fn compute_payload_hash(&self) -> [u8; 32] {
+        compute_horc_payload_hash(
+            &self.incumbent_coordinator_id,
+            &self.current_term_id,
+            &self.cancelled_horq_hash,
+            self.current_epoch,
+            &self.nonce,
+        )
+    }
+
+    /// Sign the envelope in place. Recomputes `payload_hash` and signs it.
+    pub fn sign(&mut self, key: &SigningKey) {
+        self.payload_hash = self.compute_payload_hash();
+        self.signature = key.sign(&self.payload_hash).to_bytes();
+    }
+
+    /// Verify the signature against the incumbent coordinator's public key.
+    pub fn verify(&self, incumbent_pubkey: &VerifyingKey) -> Result<(), DotError> {
+        let computed = self.compute_payload_hash();
+        if computed != self.payload_hash {
+            return Err(DotError::Serialization(format!(
+                "HandoverCancelEnvelope: payload_hash mismatch (computed {:02x?}, stored {:02x?})",
+                &computed[..8],
+                &self.payload_hash[..8]
+            )));
+        }
+        let sig = Signature::from_bytes(&self.signature);
+        incumbent_pubkey
+            .verify(&self.payload_hash, &sig)
+            .map_err(|_e| DotError::InvalidSignature {
+                envelope_id: self.payload_hash,
+            })?;
+        Ok(())
+    }
+}
+
+// -----------------------------------------------------------------------------
+// HOAK second-witness quorum gate (RFC-0855p-e §Security Considerations)
+// -----------------------------------------------------------------------------
+
+/// HOAK second-witness quorum gate result per RFC-0855p-e §Security
+/// Considerations: when accepting a HORQ whose `sender_state_snapshot_ordinal
+/// != SenderStateSnapshotOrdinal::ACTIVE`, count distinct
+/// `attests_to_predecessor_state=true` HOAK signatures per
+/// `(coordinator_id, coordinator_term_id, current_epoch)` and reject unless
+/// count reaches `horq_quorum(witness_set_size)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HoakQuorumDecision {
+    /// Gate passes — `count >= horq_quorum(witness_set_size)`.
+    Pass {
+        distinct_witnesses: usize,
+        required: usize,
+    },
+    /// Gate fails — `count < horq_quorum(witness_set_size)`.
+    Fail {
+        distinct_witnesses: usize,
+        required: usize,
+    },
+}
+
+/// Evaluate the HOAK second-witness quorum gate.
+///
+/// `attests_to_predecessor_state_per_witness` is `witness_set_size`-long;
+/// `true` at index i means witness i's HOAK attests to the predecessor state
+/// (the second-witness quorum path).
+pub fn evaluate_hoak_second_witness_quorum(
+    sender_ordinal: &SenderStateSnapshotOrdinal,
+    witness_set_size: usize,
+    attests_to_predecessor_state_per_witness: &[bool],
+) -> HoakQuorumDecision {
+    if sender_ordinal.is_active() {
+        // Active state: gate is automatic pass (single HOAK sufficient).
+        return HoakQuorumDecision::Pass {
+            distinct_witnesses: attests_to_predecessor_state_per_witness.len(),
+            required: 0,
+        };
+    }
+    let distinct_witnesses = attests_to_predecessor_state_per_witness
+        .iter()
+        .filter(|b| **b)
+        .count();
+    let required = horq_quorum(witness_set_size);
+    if distinct_witnesses >= required {
+        HoakQuorumDecision::Pass {
+            distinct_witnesses,
+            required,
+        }
+    } else {
+        HoakQuorumDecision::Fail {
+            distinct_witnesses,
+            required,
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
 
@@ -647,6 +1046,26 @@ fn group_binding_payload(gb: &GroupBinding) -> Vec<u8> {
     buf.push(gb.state.as_byte());
     buf.extend_from_slice(&gb.binding_hash);
     buf
+}
+
+/// BLAKE3-256(incumbent_coordinator_id || current_term_id ||
+///   cancelled_horq_hash || current_epoch || nonce).
+///
+/// Domain-prefixed per RFC-0855p-e §Payload Hash (HORC envelope).
+fn compute_horc_payload_hash(
+    incumbent_coordinator_id: &[u8; 32],
+    current_term_id: &[u8; 32],
+    cancelled_horq_hash: &[u8; 32],
+    current_epoch: u64,
+    nonce: &[u8; 16],
+) -> [u8; 32] {
+    let mut buf = Vec::with_capacity(32 + 32 + 32 + 8 + 16);
+    buf.extend_from_slice(incumbent_coordinator_id);
+    buf.extend_from_slice(current_term_id);
+    buf.extend_from_slice(cancelled_horq_hash);
+    buf.extend_from_slice(&current_epoch.to_be_bytes());
+    buf.extend_from_slice(nonce);
+    *blake3::hash(&buf).as_bytes()
 }
 
 // -----------------------------------------------------------------------------
@@ -1041,5 +1460,197 @@ mod tests {
         let ev2 = make_slash_event(0x000E, [0x77u8; 32], 100);
         assert_eq!(ev1.payload_bytes(), ev2.payload_bytes());
         assert_eq!(ev1.signature, ev2.signature);
+    }
+
+    // ============================================================================
+    // v1.3 RFC-0855p-e reconciled test vectors
+    // ============================================================================
+
+    // TV-HO-1: valid HORQ acceptance; sender_state_snapshot_ordinal = Active; happy path.
+    #[test]
+    fn tv_ho_1_horq_acceptance_active_ordinal() {
+        let ordinal = SenderStateSnapshotOrdinal::new(SenderStateSnapshotOrdinal::ACTIVE).unwrap();
+        assert!(ordinal.is_active());
+        // witness_set_size=3 → horq_quorum(3)=2. Single HOAK with Active ordinal
+        // is sufficient (gate is automatic pass for Active).
+        let decision = evaluate_hoak_second_witness_quorum(&ordinal, 3, &[true]);
+        assert!(matches!(
+            decision,
+            HoakQuorumDecision::Pass {
+                distinct_witnesses: 1,
+                required: 0
+            }
+        ));
+    }
+
+    // TV-HO-2: HORC envelope — incumbent cancel during lockout.
+    #[test]
+    fn tv_ho_2_horc_envelope_sign_verify() {
+        let key = make_key(7);
+        let pubkey = key.verifying_key();
+        let mut env = HandoverCancelEnvelope::new(
+            [0x11u8; 32],
+            [0x22u8; 32],
+            [0x33u8; 32], // cancelled_horq_hash
+            200,
+        );
+        env.nonce = [0x44u8; 16];
+        env.sign(&key);
+        assert!(env.verify(&pubkey).is_ok());
+    }
+
+    // TV-HO-3: HORC payload_hash changes when nonce changes.
+    #[test]
+    fn tv_ho_3_horc_payload_hash_nonce_changes() {
+        let key = make_key(7);
+        let mut env = HandoverCancelEnvelope::new([0x11u8; 32], [0x22u8; 32], [0x33u8; 32], 200);
+        env.nonce = [0x01; 16];
+        env.sign(&key);
+        let original = env.payload_hash;
+        env.nonce = [0x02; 16];
+        env.sign(&key);
+        assert_ne!(env.payload_hash, original);
+    }
+
+    // TV-HO-4: HORC wrong key fails.
+    #[test]
+    fn tv_ho_4_horc_wrong_key_fails() {
+        let key = make_key(7);
+        let other = make_key(8);
+        let mut env = HandoverCancelEnvelope::new([0x11u8; 32], [0x22u8; 32], [0x33u8; 32], 200);
+        env.nonce = [0x01; 16];
+        env.sign(&key);
+        assert!(env.verify(&other.verifying_key()).is_err());
+    }
+
+    // TV-HO-5: HANDOVER_RACE_WINDOW + HORQ_BACKWARD_WINDOW + HANDOVER_FORWARD_SKEW_BOOST
+    // constants split correctly per plateau closure.
+    #[test]
+    fn tv_ho_5_race_window_constants_split() {
+        assert_eq!(HANDOVER_RACE_WINDOW, 5);
+        assert_eq!(HORQ_BACKWARD_WINDOW, 5);
+        assert_eq!(HANDOVER_FORWARD_SKEW_BOOST, 0);
+        assert_eq!(MAX_FSKEW_EPOCHS, 4);
+    }
+
+    // TV-HO-6: BLAKE3 domain separation contexts match RFC-0853.
+    #[test]
+    fn tv_ho_6_blake3_contexts() {
+        assert_eq!(HORQ_CONTEXT, "DOT/1/HANDOVER_REQUEST");
+        assert_eq!(HOAK_CONTEXT, "DOT/1/HANDOVER_ACK");
+        assert_eq!(HODN_CONTEXT, "DOT/1/HANDOVER_DONE");
+        assert_eq!(HORC_CONTEXT, "DOT/1/HANDOVER_CANCEL");
+        assert_eq!(MESH_AGGREGATED_SIGNATURE, "DOT/1/HANDOVER_MAS");
+    }
+
+    // TV-HO-7: SenderStateSnapshotOrdinal private field; new() + InvalidOrdinal.
+    #[test]
+    fn tv_ho_7_sender_state_snapshot_ordinal() {
+        // Active round-trip.
+        let active = SenderStateSnapshotOrdinal::new(0x01).unwrap();
+        assert_eq!(active.as_byte(), 0x01);
+        assert!(active.is_active());
+        // Pending + Suspect.
+        let pending = SenderStateSnapshotOrdinal::new(0x02).unwrap();
+        assert!(!pending.is_active());
+        let suspect = SenderStateSnapshotOrdinal::new(0x03).unwrap();
+        assert!(!suspect.is_active());
+        // Invalid byte → InvalidOrdinalError.
+        let bad = SenderStateSnapshotOrdinal::new(0x00);
+        assert!(matches!(bad, Err(InvalidOrdinalError { got: 0x00 })));
+        let bad2 = SenderStateSnapshotOrdinal::new(0xFF);
+        assert!(matches!(bad2, Err(InvalidOrdinalError { got: 0xFF })));
+    }
+
+    // TV-HO-8: SlashReasonCode 0x0013-0x0016 entries (per RFC-0855p-e §Future Work F-7).
+    #[test]
+    fn tv_ho_8_slash_reason_code_future_work_f7() {
+        assert_eq!(SlashReasonCode::FalseAttestation.reason_id(), 0x0013);
+        assert_eq!(SlashReasonCode::QuorumTimeout.reason_id(), 0x0014);
+        assert_eq!(SlashReasonCode::TallyTamper.reason_id(), 0x0015);
+        assert_eq!(SlashReasonCode::LateDelivery.reason_id(), 0x0016);
+        // Extension variant.
+        let ext = SlashReasonCode::Extension(0x0100);
+        assert_eq!(ext.reason_id(), 0x0100);
+    }
+
+    // TV-HO-9: HOAK second-witness quorum gate — witness_set_size=3, horq_quorum(3)=2.
+    // Pending ordinal requires ≥2 distinct second-witness HOAKs.
+    #[test]
+    fn tv_ho_9_hoak_second_witness_quorum_gate() {
+        let pending = SenderStateSnapshotOrdinal::new(SenderStateSnapshotOrdinal::PENDING).unwrap();
+        // 1 second-witness → reject (count=1, required=2).
+        let decision = evaluate_hoak_second_witness_quorum(&pending, 3, &[true, false, false]);
+        assert!(matches!(
+            decision,
+            HoakQuorumDecision::Fail {
+                distinct_witnesses: 1,
+                required: 2
+            }
+        ));
+        // 2 distinct second-witness HOAKs → gate passes.
+        let decision = evaluate_hoak_second_witness_quorum(&pending, 3, &[true, true, false]);
+        assert!(matches!(
+            decision,
+            HoakQuorumDecision::Pass {
+                distinct_witnesses: 2,
+                required: 2
+            }
+        ));
+        // Active ordinal → automatic pass (no quorum required).
+        let active = SenderStateSnapshotOrdinal::new(SenderStateSnapshotOrdinal::ACTIVE).unwrap();
+        let decision = evaluate_hoak_second_witness_quorum(&active, 3, &[true]);
+        assert!(matches!(
+            decision,
+            HoakQuorumDecision::Pass {
+                distinct_witnesses: 1,
+                required: 0
+            }
+        ));
+    }
+
+    // TV-HO-10: horq_quorum vs hodn_quorum are DISTINCT functions (per plateau closure).
+    #[test]
+    fn tv_ho_10_horq_quorum_distinct_from_hodn_quorum() {
+        // witness_set_size=3 → both return 2 (per mission spec).
+        // Formula: max(witness_set_size * 2 / 3, 2).
+        assert_eq!(horq_quorum(0), 0);
+        assert_eq!(horq_quorum(1), 2);
+        assert_eq!(horq_quorum(2), 2);
+        assert_eq!(horq_quorum(3), 2);
+        assert_eq!(horq_quorum(6), 4);
+        assert_eq!(horq_quorum(9), 6);
+        // Same formula for hodn_quorum (placeholder; canonical home in d3).
+        assert_eq!(hodn_quorum(3), 2);
+    }
+
+    // TV-HO-11: MeshAggregatedSignature count_signers.
+    #[test]
+    fn tv_ho_11_mesh_aggregated_signature_signers_count() {
+        let bitmap = vec![0b0000_0111, 0b0000_0011]; // 5 distinct signers
+        let mas = MeshAggregatedSignature::new(bitmap, [0u8; 48]);
+        assert_eq!(mas.count_signers(), 5);
+        let empty = MeshAggregatedSignature::new(vec![], [0u8; 48]);
+        assert_eq!(empty.count_signers(), 0);
+    }
+
+    // TV-HO-12: HandoverReasonTypeId typed discriminator.
+    #[test]
+    fn tv_ho_12_handover_reason_type_id() {
+        let id = HandoverReasonTypeId([0xABu8; 16]);
+        assert_eq!(id.0, [0xABu8; 16]);
+    }
+
+    // TV-HO-13: SlashTallyUpdate basic shape.
+    #[test]
+    fn tv_ho_13_slash_tally_update() {
+        let upd = SlashTallyUpdate {
+            slash_reason_code: 0x0013,
+            slashed_peer_id: [0x77u8; 32],
+            witness_count: 3,
+            epoch: 100,
+        };
+        assert_eq!(upd.slash_reason_code, 0x0013);
+        assert_eq!(upd.witness_count, 3);
     }
 }

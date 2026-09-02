@@ -1,6 +1,6 @@
 ---
 name: 0855p-e-coordinator-types-shared-crate
-description: Extract shared coordinator types into new `octo-coordinator-types` crate per RFC-0855p-e L464-466 follow-on note (SlashTallyUpdate + SlashReasonCode + HandoverReasonTypeId lift from octo-network local Layer-C types to shared Layer-B types usable by both RFC-0855p-b + RFC-0855p-e).
+description: Extract shared coordinator types into new `octo-coordinator-types` crate per RFC-0855p-e §Layer-C Substrate Types follow-on note (SlashTallyUpdate + SlashReasonCode + HandoverReasonTypeId lift from octo-network local Layer-C types to shared Layer-B types usable by both RFC-0855p-b + RFC-0855p-e).
 metadata:
   node_type: substrate-shared-crate
   type: substrate-extraction
@@ -14,36 +14,36 @@ metadata:
 status: Open
 ---
 
-# 0855p-e-coordinator-types-shared-crate — Extract `octo-coordinator-types` shared crate per RFC-0855p-e L464-466
+# 0855p-e-coordinator-types-shared-crate — Extract `octo-coordinator-types` shared crate per RFC-0855p-e §Layer-C Substrate Types
 
 **Status:** Open (follow-on post-acceptance mission)
 **Substrate:** New crate `octo-coordinator-types` (Layer B; shared between `octo-network` and `octo-coordinator` future consumers)
-**Parent:** RFC-0855p-e (Accepted 2026-09-02 at commit `0e915618`; L464-466 follow-on note)
+**Parent:** RFC-0855p-e (Accepted 2026-09-02 at commit `0e915618`; §Layer-C Substrate Types follow-on note)
 **Depends on:** RFC-0855p-e Accepted; mission `0855p-e-handover-envelope-substrate` (substrate-truth baseline required before extraction)
 
 ## Status
 
-Open (2026-09-02) per RFC-0855p-e L464-466 follow-on note: "until the shared `octo-coordinator-types` crate lands (post-acceptance mission). When that crate extracts, both `SlashTallyUpdate` and `SlashReasonCode` move to the shared crate and `0855p-e` re-imports them as Layer-B types, mirroring the [RFC-0855p-b] behavior." Implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]] + [[implementation-workflow-hook]].
+Open (2026-09-02) per RFC-0855p-e §Layer-C Substrate Types follow-on note: "until the shared `octo-coordinator-types` crate lands (post-acceptance mission). When that crate extracts, both `SlashTallyUpdate` and `SlashReasonCode` move to the shared crate and `0855p-e` re-imports them as Layer-B types, mirroring the [RFC-0855p-b] behavior." Implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]] + [[implementation-workflow-hook]].
 
 ## Substrate (new crate `octo-coordinator-types`)
 
-Per RFC-0855p-e L464-466 + L478-479 follow-on:
+Per RFC-0855p-e §Layer-C Substrate Types (defined locally in 0855p-e) follow-on note:
 
 **Types to extract from `octo-network/src/dot/handover.rs` local Layer-C surface:**
 
 - `SlashTallyUpdate` — slash tally update event (currently local in handover.rs; lift to shared)
-- `SlashReasonCode` — `#[non_exhaustive]` enum (currently local; lift to shared; carry 0x0013-0x0016 entries per RFC-0855p-e L789)
+- `SlashReasonCode` — `#[non_exhaustive]` enum (currently local; lift to shared; carry 0x0013-0x0016 entries per RFC-0855p-e §Future Work F-7)
 - `HandoverReasonTypeId` — typed-discriminator (currently local; lift to shared)
 
 **Re-import pattern (post-extraction):**
 
 - `octo-network` (handover.rs) → `use octo_coordinator_types::{SlashTallyUpdate, SlashReasonCode, HandoverReasonTypeId}` (Layer-B consumer)
-- `octo-network` (slash tally substrate per RFC-0855p-b) → re-exports from `octo-coordinator-types`
+- `octo-network` (slash tally substrate per RFC-0855p-b at `crates/octo-network/src/dot/slash.rs`) → re-exports `SlashReasonCode` from `octo-coordinator-types` (RFC-0855p-b slash tally references `HandoverReasonTypeId` for `SubDCVoluntaryResignation` slash reason mapping per RFC-0855p-e §Layer-C Substrate Types follow-on; substrate-truth: confirm import site via `grep -n "HandoverReasonTypeId" crates/octo-network/src/dot/slash.rs`)
 - Future `octo-coordinator` crate (if/when it lands) → re-exports from `octo-coordinator-types`
 
 ## Parent
 
-RFC-0855p-e (Accepted 2026-09-02 at commit `0e915618`); L464-466 + L478-479 + L789 explicit follow-on note.
+RFC-0855p-e (Accepted 2026-09-02 at commit `0e915618`); §Layer-C Substrate Types + §Future Work F-7 explicit follow-on note.
 
 ## Depends on
 
@@ -58,10 +58,11 @@ See YAML frontmatter `depends_on` block. Hard sequencing:
 - [ ] `Cargo.toml` registered in workspace
 - [ ] `crates/octo-coordinator-types/src/lib.rs` exports `SlashTallyUpdate` + `SlashReasonCode` + `HandoverReasonTypeId` as Layer-B types
 - [ ] `SlashReasonCode` is `#[non_exhaustive]` per §Extension over enumeration
-- [ ] `SlashReasonCode` carries 0x0013-0x0016 entries per RFC-0855p-e L789 (`FalseAttestation` / `QuorumTimeout` / `TallyTamper` / `LateDelivery`)
+- [ ] `SlashReasonCode` carries 0x0013-0x0016 entries per RFC-0855p-e §Future Work F-7 (`FalseAttestation` / `QuorumTimeout` / `TallyTamper` / `LateDelivery`)
+- [ ] `HandoverReasonTypeId` follows typed-discriminator pattern (UUID or 128-bit tag with RFC-allocated namespace) per §Extension over enumeration (typed-discriminator over central enum)
 - [ ] `crates/octo-network/src/dot/handover.rs` re-imports the 3 types from `octo_coordinator_types` (no local definitions remain)
 - [ ] `crates/octo-network/Cargo.toml` declares `octo-coordinator-types` dependency (Layer B)
-- [ ] RFC-0855p-b substrate (`crates/octo-network/src/slash/`) re-exports from `octo-coordinator-types` (NOT duplicates)
+- [ ] RFC-0855p-b substrate (`crates/octo-network/src/dot/slash.rs`) re-exports from `octo-coordinator-types` (NOT duplicates)
 - [ ] Layer direction verified (Layer B shared crate; Layer C consumers re-import; no upward dependency)
 - [ ] `cargo test -p octo-coordinator-types` zero failures
 - [ ] `cargo test -p octo-network handover slash` zero failures (after re-import)
@@ -108,12 +109,12 @@ Net-additive: new crate + new dep. `octo-network` re-imports the 3 types (no API
 
 ## Notes
 
-- Per RFC-0855p-e L789 BLOCKING ACCEPTANCE GATE: "this RFC MUST NOT be promoted to Accepted until EITHER (a) RFC-0855p-b §B amendment merges with the four `SlashReasonCode` entries above, OR (b) `SlashReasonCode` + `HandoverReasonTypeId` lift into a shared `octo-coordinator-types` crate shipping in the same release." Since RFC-0855p-e is Accepted (commit `0e915618`), option (a) was chosen (0855p-b §B amendment merged). This mission is option (b) — the cleaner long-term home — as a follow-on refactor.
+- Per RFC-0855p-e §Future Work F-7 BLOCKING ACCEPTANCE GATE: "this RFC MUST NOT be promoted to Accepted until EITHER (a) RFC-0855p-b §B amendment merges with the four `SlashReasonCode` entries above, OR (b) `SlashReasonCode` + `HandoverReasonTypeId` lift into a shared `octo-coordinator-types` crate shipping in the same release." Substrate-truth check: `crates/octo-network/src/dot/slash.rs:86` reserves `0x0013..0xFFFF` (entries NOT allocated); 4 entries have NOT landed in 0855p-b substrate as of commit `0e915618`. RFC-0855p-e promotion proceeded via option (b) deferred path — the §Future Work F-7 gate was scheduled to land via THIS mission. This mission implements option (b): extracts the 3 types AND allocates 0x0013-0x0016 in `SlashReasonCode` per RFC-0855p-e §Layer placement constants block (FalseAttestation / QuorumTimeout / TallyTamper / LateDelivery; 4 entries specified in 0855p-e §Layer placement, NOT yet materialized in 0855p-b substrate slash enum).
 - Per `[[cipherocto-design-principles]]` §Stable Abstractions Principle + §No parallel abstractions, the shared crate is the canonical home; both 0855p-b and 0855p-e re-import from it.
 
 ## Cross-references
 
-- RFC-0855p-e (L464-466 + L478-479 + L789; this mission's canonical spec)
+- RFC-0855p-e (§Layer-C Substrate Types + §Future Work F-7; this mission's canonical spec)
 - RFC-0855p-b (slash tally substrate; re-exports from shared crate)
 - Mission `0855p-e-handover-envelope-substrate` (prerequisite; substrate-truth baseline)
 - `docs/audits/2026-09-02-rfc-0855p-de-review-dry.md` (DRY closure audit; cross-RFC invariant consolidation)

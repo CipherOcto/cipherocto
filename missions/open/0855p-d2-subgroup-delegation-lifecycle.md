@@ -67,7 +67,8 @@ See YAML frontmatter `depends_on` block. Hard sequencing:
 - [ ] `MAX_DELEGATION_CHAIN_PER_TERM = 256` + `MAX_ROOT_DELEGATION = 1` enforcement
 - [ ] Replay-key tuple forms per RFC-0855p-d2 Appendix A: `(SDCD, parent_dc_id, sub_domain_id, sub_dc_id, term_id, current_epoch, nonce)` etc.
 - [ ] Joint signature requirement on SDRT: BOTH parent-DC AND retiring-sub-DC must sign (anti-collusion + anti-forgery)
-- [ ] `pub use` re-export of `CoordinatorTermId` + `SubDCDelegationPolicy` for RFC-0855p-d3 consumption
+- [ ] `pub use` re-export of `CoordinatorTermId` (defined in this mission) at `subgroup_delegation::CoordinatorTermId` for downstream crate consumers (d3 imports via this path; non-self-reexport)
+- [ ] `pub use` re-export of `SubDCDelegationPolicy` (defined in this mission) at `subgroup_delegation::SubDCDelegationPolicy` for downstream crate consumers (d3 imports via this path; non-self-reexport)
 - [ ] Test vectors TV-SG-6, TV-SG-7 pass per RFC-0855p-d2 §Test Vectors
 - [ ] Subgroup-not-`Bound` → delegation rejected (subgroup_state_bound invariant)
 - [ ] Revocation cascade test: SDRV triggers downstream teardown (verified via d3 substrate state transition)
@@ -97,8 +98,10 @@ See YAML frontmatter `depends_on` block. Hard sequencing:
 
 - `subgroup_delegation.rs` (Layer C) — delegation lifecycle logic
 - `SDCD/SDRV/SDRT` envelopes (Layer B) — wire format + canonical encoding
-- `SubDCDelegationPolicy::check` (Layer A) — pure function (deterministic; no I/O)
+- `SubDCDelegationPolicy::check` (Layer C) — pure function (deterministic; no I/O; domain-rule logic, NOT crypto primitive)
 - `RevocationReasonCode` (Layer B) — `#[non_exhaustive]` enum
+- `CoordinatorTermId` (Layer B) — typed term identifier (defined here; consumed by d3 substrate via `pub use` re-export)
+- `MAX_DELEGATION_CHAIN_PER_TERM = 256` + `MAX_ROOT_DELEGATION = 1` (Layer C) — delegation-specific limits; canonical home in `subgroup_delegation.rs`; NOT shared with other RFCs
 
 No upward dependency. Substrate recipients reading unknown revocation reason codes fail closed.
 

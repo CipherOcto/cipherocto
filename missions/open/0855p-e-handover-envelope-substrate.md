@@ -36,14 +36,14 @@ Per RFC-0855p-e §Data Structure + §Specification + §Security + §Layer-C Subs
 **`crates/octo-network/src/dot/handover.rs` (exists; reconcile to v1.3):**
 
 - `HandoverEnvelope` + `HandoverPayload` + `HandoverRequestEnvelope` (HORQ subtype) + `HandoverAckEnvelope` (HOAK subtype) + `HandoverDoneEnvelope` (HODN subtype) + `HandoverCancelEnvelope` (HORC subtype)
-- `HandoverReason` + `CoordinatorRole` + `SenderStateSnapshotOrdinal` (private + new() ctor + InvalidOrdinal type; NOT `pub u8` per W11 L1 H2 fix)
-- `SlashTally` + `SlashEvent` + `SlashTallyUpdate` + `SlashReasonCode` (local Layer-C types; scheduled to lift into shared `octo-coordinator-types` crate per RFC-0855p-e L464-466 follow-on)
-- `HORC` (HandoverCancel) envelope — incumbent lockout rule
+- `HandoverReason` + `CoordinatorRole` + `SenderStateSnapshotOrdinal` (private + new() ctor + InvalidOrdinal type; NOT `pub u8` per plateau closure `docs/audits/2026-09-02-rfc-0855p-de-review-plateau.md`)
+- `SlashTally` + `SlashEvent` + `SlashTallyUpdate` + `SlashReasonCode` (local Layer-C types; scheduled to lift into shared `octo-coordinator-types` crate per RFC-0855p-e §Layer-C Substrate Types follow-on)
+- `HORC` (HandoverCancel) envelope (`pub const HANDOVER_REQUEST_CANCEL: [u8; 4] = *b"HORC"` per RFC-0855p-e line 424; `pub struct HandoverCancelEnvelope` per RFC-0855p-e line 434) — incumbent lockout rule
 - `HandoverReasonTypeId` typed-discriminator
 - BLAKE3-keyed lex tiebreak for race resolution
 - State machine integration (`Handover` state added; `HandoverComplete` removed)
 - Quorum + race resolution + `sender_state_snapshot` verification
-- Incumbent-HORQ-in-flight lockout (per §Security Considerations v0.6)
+- Incumbent-HORQ-in-flight lockout (per §Security Considerations)
 - `slash_tally_hash` reference at `current_epoch` (no lookback) + witness quorum validator (Phase 3)
 
 **Module-level split (follow-on refactor; not this mission):**
@@ -54,10 +54,11 @@ Per RFC-0855p-e §Data Structure + §Specification + §Security + §Layer-C Subs
 
 **Constants (RFC-0855p-e §Layer placement):**
 
-- `HANDOVER_RACE_WINDOW` (split into `HANDOVER_RACE_WINDOW` + `HORQ_BACKWARD_WINDOW = 5` + `HANDOVER_FORWARD_SKEW_BOOST`)
-- `MAX_PENDING_ENVELOPES_PER_HODN`
+- `HANDOVER_RACE_WINDOW = 5` + `HORQ_BACKWARD_WINDOW = 5` + `HANDOVER_FORWARD_SKEW_BOOST = 0` (currently UNUSED; reserved per RFC-0855p-e §Layer placement constants block; values from RFC-0855p-e §Layer placement table)
+- `MAX_PENDING_ENVELOPES_PER_HODN = 1024` (per RFC-0855p-e line 296, 659; bound on pending envelope count per HODN)
 - `MAX_FSKEW_EPOCHS = 4` (`pub use` from RFC-0855p-d1)
-- `HORQ_CONTEXT`, `HOAK_CONTEXT`, `HODN_CONTEXT`, `HORC_CONTEXT` (BLAKE3 domain strings)
+- `HANDOVER_REQUEST_TAG = b"HORQ"` + `HANDOVER_ACK_TAG = b"HOAK"` + `HANDOVER_DONE_TAG = b"HODN"` + `HANDOVER_REQUEST_CANCEL = b"HORC"` (RFC-0855p-e line 424)
+- `HORQ_CONTEXT = "DOT/1/HANDOVER_REQUEST"`, `HOAK_CONTEXT = "DOT/1/HANDOVER_ACK"`, `HODN_CONTEXT = "DOT/1/HANDOVER_DONE"`, `HORC_CONTEXT = "DOT/1/HANDOVER_CANCEL"` (BLAKE3 domain strings per RFC-0853)
 - `MESH_AGGREGATED_SIGNATURE` context
 
 ## Parent
@@ -76,12 +77,13 @@ See YAML frontmatter `depends_on` block. Hard dependencies:
 ## Acceptance Criteria
 
 - [ ] `crates/octo-network/src/dot/handover.rs` reconciled to RFC-0855p-e v1.3 spec
-- [ ] `SenderStateSnapshotOrdinal` field is private (NOT `pub u8`); has `new()` ctor + `InvalidOrdinal` type (W11 L1 H2 fix)
-- [ ] `HANDOVER_RACE_WINDOW` split into 3 named constants: `HANDOVER_RACE_WINDOW` + `HORQ_BACKWARD_WINDOW = 5` + `HANDOVER_FORWARD_SKEW_BOOST` (no triple-overload per W10.5 L1 C3 fix)
+- [ ] `SenderStateSnapshotOrdinal` field is private (NOT `pub u8`); has `new()` ctor + `InvalidOrdinal` type (per plateau closure `docs/audits/2026-09-02-rfc-0855p-de-review-plateau.md`)
+- [ ] `HANDOVER_RACE_WINDOW` split into 3 named constants: `HANDOVER_RACE_WINDOW` + `HORQ_BACKWARD_WINDOW = 5` + `HANDOVER_FORWARD_SKEW_BOOST` (no triple-overload per RFC-0855p-e §Layer placement constants block)
 - [ ] `HANDOVER_REPLAY_WINDOW` phantom removed (replaced by `HORQ_BACKWARD_WINDOW = 5`)
 - [ ] `MAX_FSKEW_EPOCHS = 4` cross-referenced from RFC-0855p-d1 (canonical home via `pub use`); ±1 of local epoch → `±MAX_FSKEW_EPOCHS = 4`
-- [ ] HOAK second-witness quorum gate enforced at acceptance site: when accepting a HORQ whose `sender_state_snapshot_ordinal != SenderStateSnapshotOrdinal::Active`, count distinct `attests_to_predecessor_state=true` HOAK signatures per `(coordinator_id, coordinator_term_id, current_epoch)` and reject unless count reaches `horq_quorum(witness_set_size)` (L3 M1 fix per plateau closure)
+- [ ] HOAK second-witness quorum gate enforced at acceptance site: when accepting a HORQ whose `sender_state_snapshot_ordinal != SenderStateSnapshotOrdinal::Active`, count distinct `attests_to_predecessor_state=true` HOAK signatures per `(coordinator_id, coordinator_term_id, current_epoch)` and reject unless count reaches `horq_quorum(witness_set_size)` (per plateau closure `docs/audits/2026-09-02-rfc-0855p-de-review-plateau.md`)
 - [ ] HORC (HandoverCancel) envelope implemented with incumbent lockout rule
+- [ ] `HandoverCancelEnvelope` struct defined per RFC-0855p-e §Handover Envelope Subtypes (envelope_subtype: b"HORC", payload_hash, term_id; payload_hash domain-prefixed per RFC-0855p-e §Payload Hash)
 - [ ] `MeshAggregatedSignature` coverage includes bitmap for HORC + S2PA predecessors
 - [ ] BLAKE3 domain separation: `HORQ_CONTEXT = "DOT/1/HANDOVER_REQUEST"`, `HOAK_CONTEXT = "DOT/1/HANDOVER_ACK"`, `HODN_CONTEXT = "DOT/1/HANDOVER_DONE"`, `HORC_CONTEXT = "DOT/1/HANDOVER_CANCEL"`
 - [ ] `horq_quorum(witness_set_size: usize)` function distinct from `hodn_quorum` (d3) — DIFFERENT function, kept separate on purpose (HORQ-side mirror)
@@ -113,7 +115,7 @@ See YAML frontmatter `depends_on` block. Hard dependencies:
 - TV-HO-4: race window enforcement — multiple HORQs for same `(coordinator_id, coordinator_term_id)`; lex tiebreak selects one
 - TV-HO-5: HANDOVER_RACE_WINDOW bounds — outside window → reject
 - TV-HO-6: incumbent-HORQ-in-flight lockout; new HORQ rejected
-- TV-HO-7: HORC acceptance during lockout — incumbent cancel; new HORQ accepted
+- TV-HO-7: HORC acceptance during lockout — incumbent cancel envelope (`HandoverCancelEnvelope` per RFC-0855p-e line 434); payload_hash domain check passes; lockout cleared; new HORQ accepted
 - TV-HO-8: slash tally carry-over — `slash_tally_hash` reference at `current_epoch`
 - TV-HO-9: second-witness quorum gate — sender_state_snapshot_ordinal != Active; witness_set_size=3; horq_quorum(3)=2; 1 second-witness HOAK → reject; 2 distinct second-witness HOAKs → gate passes
 
@@ -123,7 +125,7 @@ See YAML frontmatter `depends_on` block. Hard dependencies:
 - `HandoverEnvelope` / `HandoverPayload` (Layer B) — wire format + canonical encoding
 - `SenderStateSnapshotOrdinal::new()` (Layer A) — pure function (validates wire-stable ordinal)
 - `horq_quorum` policy (Layer C) — looks up witness-set-size threshold (HORQ-side mirror; distinct from `hodn_quorum`)
-- `SlashTallyUpdate` + `SlashReasonCode` + `HandoverReasonTypeId` (Layer C) — local types (per RFC-0855p-e §Layer-C Substrate Types)
+- `SlashTallyUpdate` + `SlashReasonCode` + `HandoverReasonTypeId` (Layer C) — local types per RFC-0855p-e §Layer-C Substrate Types (LOCAL NOW; scheduled to lift to Layer B shared in follow-on `0855p-e-coordinator-types-shared-crate` per RFC-0855p-e §Layer-C Substrate Types + §Future Work F-7 follow-on note)
 
 No upward dependency. Substrate recipients reading unknown ordinal variants fail closed (private field + `new()` ctor).
 
@@ -137,12 +139,12 @@ Reconciliation; existing 1045L substrate preserved. Surgical edits per W11 + W12
 - **Second-witness quorum gate bypass**: omitting the gate at HORQ acceptance site allows single-HOAK predecessor-state attestation to bypass 2/3 quorum invariant. Mitigation: explicit test vector TV-HO-9; explicit acceptance-site enforcement.
 - **`SenderStateSnapshotOrdinal::pub u8` regress**: re-exposing the field defeats `#[non_exhaustive]`. Mitigation: `git blame` + code review before each reconciliation step.
 - **HANDOVER_RACE_WINDOW triple-overload**: reusing the same name for backward/concurrent/forward skew creates semantic ambiguity. Mitigation: split into 3 named constants; explicit deprecation note in code.
-- **RFC-0855p-b §B amendment gate**: per RFC-0855p-e L789, promotion was gated on EITHER 0855p-b §B amendment OR `octo-coordinator-types` crate. Since promotion landed, gate was met (likely via 0855p-b §B amendment per audit). Mitigation: verify SlashReasonCode 0x0013-0x0016 are in 0855p-b substrate before substrate-truth check.
+- **RFC-0855p-b §B amendment gate**: per RFC-0855p-e §Future Work F-7, promotion was gated on EITHER 0855p-b §B amendment OR `octo-coordinator-types` crate. Substrate-truth: `crates/octo-network/src/dot/slash.rs:86` reserves `0x0013..0xFFFF` (entries NOT yet allocated in 0855p-b slash enum); promotion proceeded via option (b) deferred path. Mitigation: verify SlashReasonCode 0x0013-0x0016 are in `octo-coordinator-types` per this mission before substrate-truth check.
 
 ## Notes
 
-- Per RFC-0855p-e L464-466, `SlashTallyUpdate` + `SlashReasonCode` lift into shared `octo-coordinator-types` crate is a post-acceptance follow-on mission (see `0855p-e-coordinator-types-shared-crate`).
-- Per RFC-0855p-e L771, module-level split into `handover_state.rs` / `coordinator_handover.rs` / `slash_tally_carryover.rs` is a follow-on refactor when substrate complexity justifies it; not this mission.
+- Per RFC-0855p-e §Layer-C Substrate Types, `SlashTallyUpdate` + `SlashReasonCode` lift into shared `octo-coordinator-types` crate is a post-acceptance follow-on mission (see `0855p-e-coordinator-types-shared-crate`).
+- Per RFC-0855p-e §Substrate, module-level split into `handover_state.rs` / `coordinator_handover.rs` / `slash_tally_carryover.rs` is a follow-on refactor when substrate complexity justifies it; not this mission.
 - Per plateau closure: `horq_quorum` is HORQ-side mirror, `hodn_quorum` is HODN-side; DIFFERENT functions in DIFFERENT RFCs, kept separate on purpose (different param naming: `witness_set_size` for both, but different policy domain).
 - Substrate anchor for RFC-0855p-e lives at `crates/octo-network/src/dot/handover.rs` per plateau doc Per-RFC Substrate Ownership table.
 
@@ -152,7 +154,7 @@ Reconciliation; existing 1045L substrate preserved. Surgical edits per W11 + W12
 - RFC-0855p-b (slash tally observability §"Slash tally observability", Slash Offense Codes §B, CoordinatorLifecycle §"Data Structures")
 - RFC-0855p-c §4 (EXCLUDED scope; DomainCoordinator platform-mediated handover)
 - RFC-0850p-c (Transport Group Binding Ceremony)
-- RFC-0008 (Slash Offense Code registry; slash_reason_code space 0x0001-0xFFFF)
+- RFC-0008 (Slash Offense Code registry; slash_reason_code space 0x0001-0xFFFF; `crates/octo-network/src/dot/slash.rs:86` reserves `0x0013..0xFFFF`)
 - RFC-0009 (Identity substrate; `mission_id` truncation to 16-byte BLAKE3-256(mission_did) per §Identity)
 - RFC-0853 (BLAKE3-256)
 - RFC-0855p-d1 (canonical home for `MAX_FSKEW_EPOCHS = 4`; `pub use` re-export)

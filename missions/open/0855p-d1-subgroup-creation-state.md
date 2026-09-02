@@ -40,7 +40,7 @@ Per RFC-0855p-d1 §Data Structure + §State Machine + §Layer-C Substrate Surfac
 - `SubGroupRecord` — wire-stable record (sub_domain_id + parent_domain_id + state + bind_epoch + members)
 - `SubGroupState` — `#[non_exhaustive]` enum (PendingBind / Bound / Dissolving / Dissolved)
 - `SubGroupQuery` / `SubGroupResponse` / `SubGroupAuthorityCheck` — typed Layer-C query boundary
-- `sub_domain_id` canonical derivation: `BLAKE3_keyed("DOT/1/CGROUP_SUB/domain", parent_domain_id || sub_label)`
+- `sub_domain_id` canonical derivation: `BLAKE3_keyed(SUBGROUP_DOMAIN_CONTEXT, parent_domain_id || sub_label)` (where `SUBGROUP_DOMAIN_CONTEXT = "DOT/1/CGROUP_SUB/domain"` per RFC-0855p-d1 line 158; expanded to 32-byte key via `blake3::derive_key`)
 - Nonce + duplicate + parent-binding + depth-cap indexes
 - `MAX_BIND_AWAIT_EPOCHS = 32` + `MAX_BIND_RETRY_COUNT = 3` + `MAX_SUBGROUP_DEPTH = 8` + `MAX_FSKEW_EPOCHS = 4` + `MAX_ROOT_DEPTH = 1` enforcement
 - Cross-node `PendingBind → Dissolving` reconciliation
@@ -67,6 +67,9 @@ See YAML frontmatter `depends_on` block. Hard sequencing: this mission lands fir
 - [ ] Cross-node reconciliation: divergent `PendingBind` epochs collapse to `Dissolving` after `MAX_BIND_AWAIT_EPOCHS` elapses
 - [ ] `pub use` re-exports for cross-RFC constants: `MAX_BIND_AWAIT_EPOCHS`, `MAX_BIND_RETRY_COUNT`, `RACE_EPOCHS`, `MAX_FSKEW_EPOCHS` per RFC-0855p-d1 §Layer placement
 - [ ] Layer direction verified (Layer A→B→C/D; no upward dependency per [[cipherocto-design-principles]])
+- [ ] Pre-existing `sub_group.rs` substrate (`CreateSubGroupEnvelope` + `SubGroupExtension` + `SubGroupError` + `SUBGROUP_TAG` + `MAX_SUB_LABEL_LEN`) reconciled to canonical home in `subgroup_state.rs` (per RFC-0855p-d1 §Implementation Notes F-12)
+- [ ] `sub_group.rs` deprecated via `#[deprecated]` + `pub use` re-export pointer to `subgroup_state.rs` (no break for downstream consumers)
+- [ ] `MAX_ROOT_DEPTH = 1` test vector present (TV-SG-5a; rejection on depth-cap at root depth > 1)
 - [ ] `cargo test -p octo-network subgroup_state` zero failures
 - [ ] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
 - [ ] `cargo fmt --all -- --check` clean
@@ -74,22 +77,24 @@ See YAML frontmatter `depends_on` block. Hard sequencing: this mission lands fir
 ## Sub-steps
 
 1. **VERIFY GATE** — RFC-0855p-d1 + RFC-0855p-d Accepted (commit `0e915618` on `next`)
-2. Create `crates/octo-network/src/dot/subgroup_state.rs` skeleton
-3. Define core types (`SubGroupLabel`, `SubGroupState`, `SubGroupRecord`, `CreateSubGroupEnvelope`, `SubGroupExtension`)
-4. Implement canonical `sub_domain_id` derivation per §Sub-Domain Derivation Invariant
-5. Implement state transition engine
-6. Implement typed Layer-C query surface (`SubGroupQuery` / `SubGroupResponse` / `SubGroupAuthorityCheck`)
-7. Add test vectors TV-SG-1..5
-8. Add cross-node reconciliation test
-9. Verify cargo test + clippy + fmt
+2. **MIGRATE EXISTING SUBSTRATE** — move `CreateSubGroupEnvelope` + `SubGroupExtension` + `SubGroupError` + `SUBGROUP_TAG` + `MAX_SUB_LABEL_LEN` from `sub_group.rs` to canonical home in `subgroup_state.rs` (per RFC-0855p-d1 §Implementation Notes F-12)
+3. Mark `sub_group.rs` deprecated via `#[deprecated]` + `pub use` re-export pointer to `subgroup_state.rs`
+4. Define core types (`SubGroupLabel`, `SubGroupState`, `SubGroupRecord`, `CreateSubGroupEnvelope`, `SubGroupExtension`)
+5. Implement canonical `sub_domain_id` derivation per §Sub-Domain Derivation Invariant
+6. Implement state transition engine
+7. Implement typed Layer-C query surface (`SubGroupQuery` / `SubGroupResponse` / `SubGroupAuthorityCheck`)
+8. Add test vectors TV-SG-1..5a
+9. Add cross-node reconciliation test
+10. Verify cargo test + clippy + fmt
 
 ## Test Vectors (per RFC-0855p-d1 §Test Vectors)
 
 - TV-SG-1: valid CGSB acceptance; happy path
 - TV-SG-2: invalid sub-label (UTS-39 confusable) → reject
 - TV-SG-3: BIND timeout → state `PendingBind → Dissolving`
-- TV-SG-4: depth-cap exceeded → reject
+- TV-SG-4: depth-cap exceeded (`MAX_SUBGROUP_DEPTH = 8`) → reject
 - TV-SG-5: parent-binding verification failure → reject
+- TV-SG-5a: root-depth exceeded (`MAX_ROOT_DEPTH = 1`) → reject (depth 0 only; no grandparent sub-group)
 
 ## Layer direction (per [[cipherocto-design-principles]])
 
@@ -102,7 +107,7 @@ No upward dependency. No Layer C module parses raw Layer B envelopes. Unknown en
 
 ## Backward compat
 
-Substrate-creation; no existing code. New file in `crates/octo-network/src/dot/`. Additive to module tree.
+Pre-existing `sub_group.rs` (CGSB substrate; `CreateSubGroupEnvelope` + `SubGroupExtension` + `SubGroupError` + `SUBGROUP_TAG` + `MAX_SUB_LABEL_LEN`) is reconciled to canonical home in new `subgroup_state.rs`. Migration: `sub_group.rs` keeps `#[deprecated]` + `pub use` re-export pointer to `subgroup_state.rs` for one release cycle (per RFC migration etiquette); removed in v1.2. Additive to module tree.
 
 ## Risk
 

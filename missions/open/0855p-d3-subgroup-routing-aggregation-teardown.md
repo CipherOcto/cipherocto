@@ -84,7 +84,7 @@ See YAML frontmatter `depends_on` block. Hard sequencing:
 - [ ] `ParentToSubRouteEnvelope` (P2SR) + `SubToParentAggregateEnvelope` (S2PA) + `MemberAttestation` + `SignersBitmap` types defined
 - [ ] `TeardownProofEnvelope` (SGTP) type defined
 - [ ] `SignersBitmap::from_indices` rejects duplicate indices BEFORE bitmap construction
-- [ ] `hodn_quorum(witness_set_size: usize)` implemented (takes `successor_member_set_size` per RFC-0855p-b witness-set semantic)
+- [ ] `hodn_quorum(witness_set_size: usize) -> usize` implemented (returns threshold count for S2PA quorum per RFC-0855p-d3 §Specification)
 - [ ] `mesh_aggregated_signature` verification (BLS12-381 G1 48-byte compressed per RFC-0855p-b §Witness Set Aggregation)
 - [ ] Bitmap-vs-quorum coverage check ordering enforced per RFC-0855p-d3 Appendix B: BLS first, then `signers_bitmap.count_ones() == attestations.len()` (distinct-signer), then `signers_bitmap.count_ones() >= hodn_quorum(witness_set_size)` (quorum)
 - [ ] `MAX_AGGREGATE_ATTESTATIONS = 1024` + `TEARDOWN_GRACE_EPOCHS = 50` enforcement
@@ -101,7 +101,7 @@ See YAML frontmatter `depends_on` block. Hard sequencing:
 1. **VERIFY GATE** — RFC-0855p-d3 + d1 + d2 Accepted; missions `0855p-d1-subgroup-creation-state` + `0855p-d2-subgroup-delegation-lifecycle` substrate landed
 2. Create `crates/octo-network/src/dot/subgroup_routing.rs` skeleton
 3. Define core types (`P2SR`, `S2PA`, `MemberAttestation`, `SignersBitmap`, `aggregate_id`)
-4. Implement `hodn_quorum` policy lookup (re-exports from d3; takes `witness_set_size` per RFC-0855p-b semantic)
+4. Implement `hodn_quorum(witness_set_size: usize) -> usize` policy lookup per RFC-0855p-d3 §Layer placement L38 (canonical name per plateau closure `docs/audits/2026-09-02-rfc-0855p-de-review-plateau.md`)
 5. Implement `mesh_aggregated_signature` BLS verification
 6. Implement bitmap-vs-quorum coverage check ordering (Appendix B)
 7. Create `crates/octo-network/src/dot/subgroup_teardown.rs` skeleton
@@ -123,8 +123,10 @@ See YAML frontmatter `depends_on` block. Hard sequencing:
 - `subgroup_routing.rs` (Layer C) — routing + aggregation logic
 - `subgroup_teardown.rs` (Layer C) — teardown + state transition logic
 - `P2SR/S2PA/SGTP` envelopes (Layer B) — wire format + canonical encoding
-- `MemberAttestation` / `SignersBitmap` / `aggregate_id` (Layer A) — pure types
-- `hodn_quorum` policy (Layer C) — looks up witness-set-size threshold
+- `MemberAttestation` (Layer C) — per-member attestation record (not embedded in Layer-B wire; consumed by substrate per RFC-0855p-d3 §Layer placement L37)
+- `SignersBitmap` (Layer B) — embedded in `S2PA` envelope wire format (RFC-0855p-d3 line 247 field `signers_bitmap: SignersBitmap`; canonical encoding per RFC-0126)
+- `aggregate_id` (Layer B) — wire field of `S2PA` envelope (RFC-0855p-d3 line 248 field `aggregate_id: [u8; 32]`); the `derive_aggregate_id` function (line 281) is Layer A (pure BLAKE3 derivation)
+- `hodn_quorum` policy (Layer C) — looks up witness-set-size threshold per RFC-0855p-d3 §Layer placement L38
 
 No upward dependency. Substrate recipients reading unknown envelope subtypes fail closed.
 
@@ -135,7 +137,7 @@ Substrate-creation; no existing code. Additive to module tree. Re-exports d1 con
 ## Risk
 
 - **Bitmap-vs-quorum check ordering**: implementing `count_ones` check before BLS verify wastes cycles on forged bitmaps; implementing it after allows forged-bitmap DoS. Mitigation: enforce strict ordering per RFC-0855p-d3 Appendix B; explicit TV-SG-9c test.
-- **Quorum forgery via plain bitmap**: without `mesh_aggregated_signature` covering `signers_bitmap`, attacker can submit any bitmap with valid aggregate. Mitigation: explicit bitmap coverage test (L3 C1 finding resolved per plateau closure).
+- **Quorum forgery via plain bitmap**: without `mesh_aggregated_signature` covering `signers_bitmap`, attacker can submit any bitmap with valid aggregate. Mitigation: explicit bitmap coverage test (per plateau closure `docs/audits/2026-09-02-rfc-0855p-de-review-plateau.md`).
 - **Distinct-signer bypass via repeated indices**: `SignersBitmap::from_indices` accepting duplicate indices allows quorum forgery. Mitigation: reject duplicates BEFORE bitmap construction (per RFC-0855p-d3 §Data Structure).
 - **Teardown grace recipient-local vs envelope-supplied**: using `teardown_epoch` (envelope-supplied) instead of `local_epoch` (recipient-local) allows late delivery. Mitigation: enforce recipient-local check per RFC-0855p-d3 Appendix A.
 
@@ -143,7 +145,7 @@ Substrate-creation; no existing code. Additive to module tree. Re-exports d1 con
 
 - Per RFC-0855p-d3 §Implementation Notes, this mission is the substrate anchor for the d3 RFC.
 - Re-exports d1 constants for cross-RFC canonical home pattern (per `docs/audits/2026-09-02-rfc-0855p-de-review-dry.md`).
-- `hodn_quorum` parameter naming: `witness_set_size` (NOT `successor_member_set_size`); canonical name per plateau closure W10.5 L1 C4 fix.
+- `hodn_quorum` parameter naming: `witness_set_size` (NOT `successor_member_set_size`); canonical name per plateau closure `docs/audits/2026-09-02-rfc-0855p-de-review-plateau.md`.
 
 ## Cross-references
 

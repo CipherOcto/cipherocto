@@ -66,6 +66,13 @@ pub const HORC_CONTEXT: &str = "DOT/1/HANDOVER_CANCEL";
 /// BLAKE3 domain separation string for the cross-envelope MeshAggregatedSignature.
 pub const MESH_AGGREGATED_SIGNATURE: &str = "DOT/1/HANDOVER_MAS";
 
+/// RFC-0855p-e §BLAKE3 Construction Conventions: domain prefix for `ack_hash`.
+pub const HASH_DOMAIN_ACK: &str = "DOT/1/HANDOVER/ack";
+/// RFC-0855p-e §BLAKE3 Construction Conventions: domain prefix for `done_hash`.
+pub const HASH_DOMAIN_DONE: &str = "DOT/1/HANDOVER/done";
+/// RFC-0855p-e §BLAKE3 Construction Conventions: domain prefix for `cancel_payload_hash`.
+pub const HASH_DOMAIN_CANCEL_PAYLOAD: &str = "DOT/1/HANDOVER/cancel_payload";
+
 // -----------------------------------------------------------------------------
 // v1.3 named constants (HANDOVER_RACE_WINDOW split per plateau closure)
 // -----------------------------------------------------------------------------
@@ -928,17 +935,25 @@ pub fn evaluate_hoak_second_witness_quorum(
 // Helpers
 // -----------------------------------------------------------------------------
 
-/// BLAKE3-256(handover_request_hash || witness_id || witness_epoch || nonce).
+/// BLAKE3-256(HASH_DOMAIN_ACK || handover_request_hash || witness_id || witness_epoch || nonce).
 ///
 /// R17 R1-CRITICAL-1 fix: nonce is now INCLUDED so swapping or stripping
 /// the nonce changes the hash and breaks the signature.
+/// R2.5 fix: domain prefix per RFC-0855p-e §BLAKE3 Construction Conventions
+/// (cross-namespace collision prevention vs payload_hash/done_hash/etc).
+///
+/// Open deviation: RFC v1.1 field set is `handover_request_hash || witness_id_be
+/// || witness_epoch_be || (attests_to_predecessor_state as u8_be) ||
+/// attested_epoch_be`; substrate uses nonce. Field-set reconcile tracked
+/// separately.
 fn compute_ack_hash(
     handover_request_hash: &[u8; 32],
     witness_id: &[u8; 32],
     witness_epoch: u64,
     nonce: &[u8; 32],
 ) -> [u8; 32] {
-    let mut buf = Vec::with_capacity(32 + 32 + 8 + 32);
+    let mut buf = Vec::with_capacity(HASH_DOMAIN_ACK.len() + 32 + 32 + 8 + 32);
+    buf.extend_from_slice(HASH_DOMAIN_ACK.as_bytes());
     buf.extend_from_slice(handover_request_hash);
     buf.extend_from_slice(witness_id);
     buf.extend_from_slice(&witness_epoch.to_be_bytes());
@@ -946,17 +961,19 @@ fn compute_ack_hash(
     *blake3::hash(&buf).as_bytes()
 }
 
-/// BLAKE3-256(handover_request_hash || new_coordinator_id || accepted_epoch || nonce).
+/// BLAKE3-256(HASH_DOMAIN_DONE || handover_request_hash || new_coordinator_id || accepted_epoch || nonce).
 ///
 /// R17 R1-CRITICAL-1 fix: nonce is now INCLUDED so swapping or stripping
 /// the nonce changes the hash and breaks the signature.
+/// R2.5 fix: domain prefix per RFC-0855p-e §BLAKE3 Construction Conventions.
 fn compute_done_hash(
     handover_request_hash: &[u8; 32],
     new_coordinator_id: &[u8; 32],
     accepted_epoch: u64,
     nonce: &[u8; 32],
 ) -> [u8; 32] {
-    let mut buf = Vec::with_capacity(32 + 32 + 8 + 32);
+    let mut buf = Vec::with_capacity(HASH_DOMAIN_DONE.len() + 32 + 32 + 8 + 32);
+    buf.extend_from_slice(HASH_DOMAIN_DONE.as_bytes());
     buf.extend_from_slice(handover_request_hash);
     buf.extend_from_slice(new_coordinator_id);
     buf.extend_from_slice(&accepted_epoch.to_be_bytes());
@@ -981,10 +998,13 @@ fn group_binding_payload(gb: &GroupBinding) -> Vec<u8> {
     buf
 }
 
-/// BLAKE3-256(incumbent_coordinator_id || current_term_id ||
-///   cancelled_horq_hash || current_epoch || nonce).
+/// BLAKE3-256(HASH_DOMAIN_CANCEL_PAYLOAD || incumbent_coordinator_id ||
+///   current_term_id || cancelled_horq_hash || current_epoch || nonce).
 ///
 /// Domain-prefixed per RFC-0855p-e §Payload Hash (HORC envelope).
+/// R2.5 fix: domain prefix was claimed but not actually applied; now
+/// prepended to the buf before hashing (matches RFC §BLAKE3 Construction
+/// Conventions canonical form).
 fn compute_horc_payload_hash(
     incumbent_coordinator_id: &[u8; 32],
     current_term_id: &[u8; 32],
@@ -992,7 +1012,8 @@ fn compute_horc_payload_hash(
     current_epoch: u64,
     nonce: &[u8; 16],
 ) -> [u8; 32] {
-    let mut buf = Vec::with_capacity(32 + 32 + 32 + 8 + 16);
+    let mut buf = Vec::with_capacity(HASH_DOMAIN_CANCEL_PAYLOAD.len() + 32 + 32 + 32 + 8 + 16);
+    buf.extend_from_slice(HASH_DOMAIN_CANCEL_PAYLOAD.as_bytes());
     buf.extend_from_slice(incumbent_coordinator_id);
     buf.extend_from_slice(current_term_id);
     buf.extend_from_slice(cancelled_horq_hash);
@@ -1256,7 +1277,9 @@ mod tests {
         env.nonce = [0xC1u8; 32];
         env.sign(&key);
         // Recompute manually — R17 R1-CRITICAL-1 fix: nonce included.
+        // R2.5 fix: domain prefix per RFC-0855p-e §BLAKE3 Construction Conventions.
         let mut buf = Vec::new();
+        buf.extend_from_slice(HASH_DOMAIN_ACK.as_bytes());
         buf.extend_from_slice(&[0xA1u8; 32]);
         buf.extend_from_slice(pubkey.as_bytes());
         buf.extend_from_slice(&250u64.to_be_bytes());
@@ -1310,7 +1333,9 @@ mod tests {
         env.nonce = [0xE1u8; 32];
         env.sign(&key);
         // Recompute manually — R17 R1-CRITICAL-1 fix: nonce included.
+        // R2.5 fix: domain prefix per RFC-0855p-e §BLAKE3 Construction Conventions.
         let mut buf = Vec::new();
+        buf.extend_from_slice(HASH_DOMAIN_DONE.as_bytes());
         buf.extend_from_slice(&[0xD1u8; 32]);
         buf.extend_from_slice(pubkey.as_bytes());
         buf.extend_from_slice(&500u64.to_be_bytes());

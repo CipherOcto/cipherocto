@@ -28,6 +28,7 @@
 use octo_reputation::anchor::{AnchorLeaf, AnchorWindow, ReputationAnchorBatch};
 use octo_reputation::auth::{AnchorGovernanceProof, AnchorGovernanceSnapshot};
 use octo_reputation::constants::BLAKE3_REPUTATION_ANCHOR_DOMAIN;
+use octo_reputation::gossip::GossipEnvelope;
 use octo_reputation::types::{RecorderDid, ReputationLayer, SignalKind};
 
 /// Pinned canonical blob for vector #1: empty leaves, controller
@@ -190,4 +191,82 @@ fn canonical_blob_two_independent_computations_are_byte_identical() {
     let d1 = batch.digest();
     let d2 = batch.digest();
     assert_eq!(d1.0, d2.0, "BLAKE3 digest must be deterministic");
+}
+
+// ---------------------------------------------------------------------------
+// Envelope freshness fixtures (mission 0855p-b-gossip-successor v1.2).
+// These four vectors extend the original three (TV-1..TV-3 = anchor
+// batches) with TV-4..TV-7 = gossip ingress anchor-freshness gate.
+//
+// Canonical home for the gate is `octo-reputation/src/anchor_freshness.rs`.
+// The envelope carrier (`GossipEnvelope`) carries
+// `event.anchor_tx_hash: Option<[u8; 32]>` — a presence flag, not a
+// chain-side block height. Reorg depth lives on `ReputationAnchorBatch`
+// (RFC-0955-R1 §Finality, `MIN_FINALITY_BLOCKS = 12`). This module
+// pins behavior, not bytes, for the envelope-freshness decisions.
+// ---------------------------------------------------------------------------
+
+fn build_freshness_envelope(seed: u64, anchor: Option<[u8; 32]>) -> GossipEnvelope {
+    GossipEnvelope {
+        event: octo_reputation::types::SignalEvent {
+            event_id: octo_reputation::types::EventId::from_u64(seed),
+            recorder_did: RecorderDid::from_array([seed as u8; 52]),
+            controller_id: octo_reputation::types::ControllerId::from_array([0u8; 32]),
+            signal_kind: SignalKind::Outcome,
+            layer: ReputationLayer::Market,
+            score_delta: octo_determin::Dfp::from_f64(0.5),
+            recorded_at_unix: 1_700_000_000,
+            rotation_provenance: None,
+            audit_ref: None,
+            anchor_tx_hash: anchor,
+        },
+        recorder_signature: vec![0xAA; 64],
+        source_mission: "mon:test:phase-1".into(),
+        source_domain: "domain:test".into(),
+        rotation_provenance: None,
+        attestations: vec![],
+    }
+}
+
+/// TV-4 — anchored envelope, structurally non-zero anchor → Fresh.
+#[test]
+fn envelope_freshness_canonical_anchored_is_fresh() {
+    let env = build_freshness_envelope(1, Some([0x42; 32]));
+    assert_eq!(
+        octo_reputation::evaluate_gossip_envelope_freshness(&env, 1_000),
+        octo_reputation::AnchorFreshness::Fresh
+    );
+}
+
+/// TV-5 — anchor present but equal to the zero sentinel → StaleMalformedAnchor.
+#[test]
+fn envelope_freshness_canonical_zero_anchor_is_malformed() {
+    let env = build_freshness_envelope(2, Some([0u8; 32]));
+    assert_eq!(
+        octo_reputation::evaluate_gossip_envelope_freshness(&env, 1_000),
+        octo_reputation::AnchorFreshness::StaleMalformedAnchor
+    );
+}
+
+/// TV-6 — no anchor recorded → IndeterminateNonAnchored.
+#[test]
+fn envelope_freshness_canonical_non_anchored_is_indeterminate() {
+    let env = build_freshness_envelope(3, None);
+    assert_eq!(
+        octo_reputation::evaluate_gossip_envelope_freshness(&env, 1_000),
+        octo_reputation::AnchorFreshness::IndeterminateNonAnchored
+    );
+}
+
+/// TV-7 — anchor present + recorded chain block height older than
+/// `MAX_ANCHOR_STALENESS_BLOCKS` (256) before the observed tip →
+/// StaleReorgDepth.
+#[test]
+fn envelope_freshness_canonical_reorg_depth_is_stale() {
+    let env = build_freshness_envelope(4, Some([0x42; 32]));
+    // recorded = 700, observed = 1_000, gap = 300 > 256
+    assert_eq!(
+        octo_reputation::evaluate_with_recorded_block_height(&env, Some(700), 1_000),
+        octo_reputation::AnchorFreshness::StaleReorgDepth
+    );
 }

@@ -24,6 +24,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod anchor;
+pub mod anchor_freshness;
 pub mod anchor_job;
 pub mod audit;
 pub mod auth;
@@ -52,6 +53,12 @@ pub mod types;
 pub use anchor::{
     exceeds_daily_fanout, is_finality_reached, window_collision, AnchorLeaf, AnchorWindow,
     ReputationAnchorBatch,
+};
+pub use anchor_freshness::{
+    evaluate_gossip_envelope_freshness, evaluate_with_recorded_block_height,
+    filter_stale_anchor_events, partition_by_anchor_freshness, AnchorFreshness,
+    AnchorFreshnessPartition, StaleEnvelopeReason, ANCHOR_TX_HASH_ZERO_SENTINEL,
+    MAX_ANCHOR_STALENESS_BLOCKS, MIN_FINALITY_BLOCKS_RFC0955,
 };
 pub use anchor_job::{
     plan_batches, run_once, run_once_strict, total_fee, AnchorJobConfig, AnchorJobError,

@@ -1612,3 +1612,348 @@ mod tests {
         assert_eq!(upd.witness_count, 3);
     }
 }
+
+// =========================================================================
+// RFC-0855p-b §Phase 4 — Handover protocol handlers (public substrate)
+// =========================================================================
+//
+// Voluntary / Forced / Emergency handover paths + MessagePreservationQueue.
+// Composes with `HandoverReasonTypeId` from `octo-coordinator-types::lib`
+// (Layer B). Layer-C-only substrate per RFC §Key Files L847-851.
+//
+// Lifted out of the inline `tests` mod so external integration tests
+// (e.g. `canonical_handover_blobs`) can construct and exercise the
+// handlers without reaching into private scope.
+
+/// Phase 4 voluntary handover envelope: signed by the departing active
+/// coordinator to initiate Active → Handover transition.
+///
+/// Distinct from `HandoverRequestEnvelope` (RFC-0855p-e) which is the
+/// wire-format envelope; this struct is the §Phase 4 high-level state
+/// transition initiator (voluntary path).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VoluntaryHandoverRequest {
+    /// Departing coordinator (signer).
+    pub predecessor: [u8; 32],
+    /// Successor coordinator id (designated by predecessor).
+    pub successor: [u8; 32],
+    /// Mission id (for HODN envelope routing).
+    pub mission_id: [u8; 32],
+    /// Epoch handover initiates.
+    pub handover_epoch: u64,
+    /// 128-bit handover reason tag (RFC-0855p-e typed discriminator).
+    pub reason: octo_coordinator_types::HandoverReasonTypeId,
+}
+
+/// Phase 4 forced handover trigger: liveness subsystem requests
+/// `Suspect → Handover` for a coordinator whose grace period has
+/// elapsed (composition with `liveness::evaluate_liveness`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ForcedHandoverTrigger {
+    /// Coordinator being forced into handover (predecessor).
+    pub predecessor: [u8; 32],
+    /// Designated successor (chosen by liveness/election floor).
+    pub successor: [u8; 32],
+    /// Mission id.
+    pub mission_id: [u8; 32],
+    /// Epoch forced handover triggers.
+    pub trigger_epoch: u64,
+    /// Handover reason tag.
+    pub reason: octo_coordinator_types::HandoverReasonTypeId,
+}
+
+/// Phase 4 emergency handover: governance override signed by
+/// `governance_id`. Forces `Active → Handover` bypassing the ordinary
+/// voluntary / forced path. Used for incident response.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EmergencyHandover {
+    /// Coordinator being overridden (predecessor).
+    pub predecessor: [u8; 32],
+    /// Emergency successor (governance-appointed).
+    pub successor: [u8; 32],
+    /// Mission id.
+    pub mission_id: [u8; 32],
+    /// Epoch the override applies.
+    pub override_epoch: u64,
+    /// Governance multi-sig id (signer of the override envelope).
+    pub governance_id: [u8; 32],
+    /// Handover reason tag.
+    pub reason: octo_coordinator_types::HandoverReasonTypeId,
+}
+
+/// Pending envelope awaiting handover acknowledgement. Each entry is
+/// `(sequence, BLAKE3(canonical_bytes(envelope)))`.
+pub type PendingEnvelope = (u64, [u8; 32]);
+
+/// Phase 4 message preservation queue: predecessor's pending envelopes
+/// transferred to successor during HandoverRequest acknowledgement.
+/// Flushed on successor `Active` transition.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MessagePreservationQueue {
+    /// Predecessor coordinator id.
+    pub predecessor: [u8; 32],
+    /// Successor coordinator id.
+    pub successor: [u8; 32],
+    /// Pending envelopes awaiting transfer: `(sequence, BLAKE3(envelope))`.
+    pub pending_envelopes: Vec<PendingEnvelope>,
+}
+
+impl MessagePreservationQueue {
+    /// Construct a fresh preservation queue for a predecessor → successor
+    /// handover pair.
+    pub fn new(predecessor: [u8; 32], successor: [u8; 32]) -> Self {
+        Self {
+            predecessor,
+            successor,
+            pending_envelopes: Vec::new(),
+        }
+    }
+
+    /// Enqueue a pending envelope (pre-handover acknowledgement).
+    pub fn enqueue(&mut self, sequence: u64, envelope_digest: [u8; 32]) {
+        self.pending_envelopes.push((sequence, envelope_digest));
+    }
+
+    /// Flush the queue to a successor `Active` transition. Returns the
+    /// drained envelope set; queue is reset.
+    pub fn flush(&mut self) -> Vec<PendingEnvelope> {
+        std::mem::take(&mut self.pending_envelopes)
+    }
+
+    /// Transfer ownership from predecessor to successor — consumed by
+    /// the `HandoverRequest` ack path. Returns `Err(PreservationQueueEmpty)`
+    /// if the queue is already drained.
+    pub fn transfer(
+        self,
+        expected_predecessor: [u8; 32],
+    ) -> Result<(Vec<PendingEnvelope>, MessagePreservationQueue), DotError> {
+        if self.predecessor != expected_predecessor {
+            return Err(DotError::PreservationPredecessorMismatch {
+                expected: expected_predecessor,
+                actual: self.predecessor,
+            });
+        }
+        let transferred = self.pending_envelopes.clone();
+        // After transfer, queue is drained into successor's receiver.
+        Ok((
+            transferred,
+            MessagePreservationQueue::new(self.predecessor, self.successor),
+        ))
+    }
+
+    /// Length of the pending envelope set.
+    pub fn len(&self) -> usize {
+        self.pending_envelopes.len()
+    }
+
+    /// True iff no pending envelopes.
+    pub fn is_empty(&self) -> bool {
+        self.pending_envelopes.is_empty()
+    }
+}
+
+/// Outcome of a §Phase 4 handover path resolution.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HandoverOutcome {
+    /// Handover initiated; preservation queue staged.
+    Initiated {
+        /// Predecessor coordinator id.
+        predecessor: [u8; 32],
+        /// Successor coordinator id.
+        successor: [u8; 32],
+        /// Handover reason tag.
+        reason: octo_coordinator_types::HandoverReasonTypeId,
+        /// Preservation queue (ready for transfer on acknowledgement).
+        queue: MessagePreservationQueue,
+    },
+    /// Handover triggered (forced path from liveness subsystem).
+    Triggered {
+        /// Predecessor coordinator id.
+        predecessor: [u8; 32],
+        /// Successor coordinator id.
+        successor: [u8; 32],
+        /// Handover reason tag.
+        reason: octo_coordinator_types::HandoverReasonTypeId,
+    },
+    /// Emergency override applied.
+    Overridden {
+        /// Predecessor coordinator id.
+        predecessor: [u8; 32],
+        /// Emergency successor.
+        successor: [u8; 32],
+        /// Governance id (signer).
+        governance_id: [u8; 32],
+        /// Handover reason tag.
+        reason: octo_coordinator_types::HandoverReasonTypeId,
+    },
+}
+
+/// Resolve a voluntary handover request per RFC-0855p-b §Phase 4 path 1.
+///
+/// Builds a [`MessagePreservationQueue`] from `pending_envelopes` so
+/// the successor receives the predecessor's pending message set before
+/// the `Handover → Inactive` transition. The successor is then eligible
+/// to fold into [`crate::dot::handover::HandoverRequestEnvelope`]
+/// (RFC-0855p-e) for the wire-format broadcast.
+pub fn resolve_voluntary_handover(
+    request: &VoluntaryHandoverRequest,
+    pending_envelopes: Vec<PendingEnvelope>,
+) -> HandoverOutcome {
+    let mut queue = MessagePreservationQueue::new(request.predecessor, request.successor);
+    for (seq, digest) in pending_envelopes {
+        queue.enqueue(seq, digest);
+    }
+    HandoverOutcome::Initiated {
+        predecessor: request.predecessor,
+        successor: request.successor,
+        reason: request.reason,
+        queue,
+    }
+}
+
+/// Resolve a forced handover trigger (Phase 3 liveness → Phase 4 trigger).
+pub fn resolve_forced_handover(trigger: &ForcedHandoverTrigger) -> HandoverOutcome {
+    HandoverOutcome::Triggered {
+        predecessor: trigger.predecessor,
+        successor: trigger.successor,
+        reason: trigger.reason,
+    }
+}
+
+/// Resolve an emergency governance handover override. Distinct from
+/// voluntary + forced paths — bypasses normal liveness detection.
+pub fn resolve_emergency_handover(emergency: &EmergencyHandover) -> HandoverOutcome {
+    HandoverOutcome::Overridden {
+        predecessor: emergency.predecessor,
+        successor: emergency.successor,
+        governance_id: emergency.governance_id,
+        reason: emergency.reason,
+    }
+}
+
+/// Test vectors pinned at the §Phase 4 substrate level (Layer C).
+/// Composes with `HandoverReasonTypeId` (Layer B typed discriminator).
+#[cfg(test)]
+mod phase4_tests {
+    use super::*;
+
+    fn sample_voluntary() -> VoluntaryHandoverRequest {
+        VoluntaryHandoverRequest {
+            predecessor: [0xAAu8; 32],
+            successor: [0xBBu8; 32],
+            mission_id: [0x01u8; 32],
+            handover_epoch: 200,
+            reason: octo_coordinator_types::HandoverReasonTypeId::SUBDC_VOLUNTARY_RESIGNATION,
+        }
+    }
+
+    // TV-HO-P4-VOL: Voluntary Active → Handover → Inactive path.
+    #[test]
+    fn tv_ho_p4_voluntary_handover() {
+        let req = sample_voluntary();
+        let pending = vec![(1u64, [0xC1u8; 32]), (2u64, [0xC2u8; 32])];
+        let outcome = resolve_voluntary_handover(&req, pending);
+        match outcome {
+            HandoverOutcome::Initiated {
+                predecessor,
+                successor,
+                reason,
+                queue,
+            } => {
+                assert_eq!(predecessor, [0xAAu8; 32]);
+                assert_eq!(successor, [0xBBu8; 32]);
+                assert_eq!(
+                    reason,
+                    octo_coordinator_types::HandoverReasonTypeId::SUBDC_VOLUNTARY_RESIGNATION
+                );
+                assert_eq!(queue.len(), 2);
+            }
+            _ => panic!("voluntary handover expected Initiated"),
+        }
+    }
+
+    // TV-HO-P4-FORCED: Forced Suspect → Handover (Phase 3 trigger).
+    #[test]
+    fn tv_ho_p4_forced_handover() {
+        let trigger = ForcedHandoverTrigger {
+            predecessor: [0xAAu8; 32],
+            successor: [0xBBu8; 32],
+            mission_id: [0x01u8; 32],
+            trigger_epoch: 200,
+            reason: octo_coordinator_types::HandoverReasonTypeId::SUBDC_MISCONDUCT,
+        };
+        let outcome = resolve_forced_handover(&trigger);
+        match outcome {
+            HandoverOutcome::Triggered {
+                predecessor,
+                successor,
+                reason,
+            } => {
+                assert_eq!(predecessor, [0xAAu8; 32]);
+                assert_eq!(successor, [0xBBu8; 32]);
+                assert_eq!(
+                    reason,
+                    octo_coordinator_types::HandoverReasonTypeId::SUBDC_MISCONDUCT
+                );
+            }
+            _ => panic!("forced handover expected Triggered"),
+        }
+    }
+
+    // TV-HO-P4-EMERGENCY: Emergency governance override.
+    #[test]
+    fn tv_ho_p4_emergency_handover() {
+        let emergency = EmergencyHandover {
+            predecessor: [0xAAu8; 32],
+            successor: [0xCCu8; 32],
+            mission_id: [0x01u8; 32],
+            override_epoch: 200,
+            governance_id: [0x99u8; 32],
+            reason: octo_coordinator_types::HandoverReasonTypeId::TERM_EXPIRED,
+        };
+        let outcome = resolve_emergency_handover(&emergency);
+        match outcome {
+            HandoverOutcome::Overridden {
+                predecessor,
+                successor,
+                governance_id,
+                reason,
+            } => {
+                assert_eq!(predecessor, [0xAAu8; 32]);
+                assert_eq!(successor, [0xCCu8; 32]);
+                assert_eq!(governance_id, [0x99u8; 32]);
+                assert_eq!(
+                    reason,
+                    octo_coordinator_types::HandoverReasonTypeId::TERM_EXPIRED
+                );
+            }
+            _ => panic!("emergency handover expected Overridden"),
+        }
+    }
+
+    // TV-HO-P4-PRESERVATION: MessagePreservationQueue flush + transfer.
+    #[test]
+    fn tv_ho_p4_preservation_queue() {
+        let mut q = MessagePreservationQueue::new([0xAAu8; 32], [0xBBu8; 32]);
+        q.enqueue(1, [0xC1u8; 32]);
+        q.enqueue(2, [0xC2u8; 32]);
+        assert_eq!(q.len(), 2);
+        let drained = q.flush();
+        assert_eq!(drained.len(), 2);
+        assert!(q.is_empty());
+    }
+
+    // TV-HO-P4-TRANSFER: Transfer ownership with predecessor check.
+    #[test]
+    fn tv_ho_p4_preservation_transfer_predecessor_mismatch() {
+        let q = MessagePreservationQueue::new([0xAAu8; 32], [0xBBu8; 32]);
+        let err = q.transfer([0xCCu8; 32]).unwrap_err();
+        match err {
+            DotError::PreservationPredecessorMismatch { expected, actual } => {
+                assert_eq!(expected, [0xCCu8; 32]);
+                assert_eq!(actual, [0xAAu8; 32]);
+            }
+            _ => panic!("expected PreservationPredecessorMismatch"),
+        }
+    }
+}

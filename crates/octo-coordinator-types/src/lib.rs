@@ -26,12 +26,42 @@
 //! surface use **typed-discriminator + Raw escape hatch**, not central enums.
 //! `SlashReasonCode` uses an `Extension(u16)` variant that catches the
 //! user-extension registry 0x0100-0xFFFF; `HandoverReasonTypeId` is a 128-bit
-//! typed wrapper (UUID-tag-style). Old code fails-closed on unknown values.
+//! typed wrapper (UUID-tag-style). RFC-0855p-b §Appendix B canonical
+//! entries `0x0001..=0x0012` (except reserved `0x000C..=0x000D` per
+//! RFC-0855p-d) + `0x0013..=0x0016` (RFC-0855p-e extension) are named
+//! enum variants; anything outside stays in the extension namespace. Old
+//! code fails-closed on unknown reserved values via `try_from_reason_id`.
 
 #![allow(missing_docs)]
 #![allow(clippy::missing_docs_in_private_items)]
 
 use thiserror::Error;
+
+// -----------------------------------------------------------------------------
+// Module surface — RFC-0855p-b §Phase 1 state-machine substrate.
+// -----------------------------------------------------------------------------
+
+/// Mission Coordinator state-machine substrate (RFC-0855p-b §Implementation
+/// Phase 1): 8 base types + v1.1 `GenesisState` + 12-transition
+/// validity table.
+pub mod state;
+
+/// Mission Coordinator election algorithm (RFC-0855p-b §Implementation
+/// Phase 2): 5 governance-model branches + eligibility filter + lex
+/// tie-break + `ELECTION_TIMEOUT` closed-epoch rule.
+pub mod election;
+
+/// Mission Coordinator liveness substrate (RFC-0855p-b §Implementation
+/// Phase 3): `CoordinatorHeartbeat` envelope + `LivenessTracker` +
+/// `evaluate_liveness` (Active → Suspect / Suspect → Active /
+/// Suspect → Handover).
+pub mod liveness;
+
+/// Mission Coordinator slashing substrate (RFC-0855p-b §Implementation
+/// Phase 5): `verify_slash_proof` + `apply_slash` + `CoolDownTracker`.
+/// Composes with `SlashReasonCode` + `SlashTallyUpdate` from this crate
+/// and `SlashProof` + `validate_transition` from the `state` module.
+pub mod slashing;
 
 // -----------------------------------------------------------------------------
 // SlashTallyUpdate (Layer B shared — slash tally update event)
@@ -76,28 +106,99 @@ impl SlashTallyUpdate {
 
 /// `SlashReasonCode` typed discriminator for slash tally updates.
 ///
-/// RFC-0855p-e §Layer placement constants block specifies 5 entries (one
-/// generic + four handover-flavoured); entries 0x0013-0x0016 (`FalseAttestation`
-/// / `QuorumTimeout` / `TallyTamper` / `LateDelivery`) per RFC-0855p-e §Future
-/// Work F-7.
+/// Per RFC-0855p-b §Appendix B L945+ (extending RFC-0855 §17 "Token
+/// Economics Integration"), the canonical slash offense code set covers
+/// `0x0001..=0x0012` (skipping reserved `0x000C..=0x000D` per RFC-0855p-d
+/// §Sub-DC delegation protocol) + `0x0013..=0x0016` (RFC-0855p-e Future
+/// Work F-7 extension: `FalseAttestation` / `QuorumTimeout` /
+/// `TallyTamper` / `LateDelivery`). Outside that range (user-extension
+/// registry `0x0100..=0xFFFF`), the [`SlashReasonCode::Extension`] catch-all
+/// variant absorbs unknown codes; values in `0x0017..=0x00FF` are reserved
+/// and `try_from_reason_id` rejects them.
+///
+/// ## Discriminant mapping
+///
+/// | u16 | Variant | Source |
+/// |-----|---------|--------|
+/// | `0x0001` | `DoubleSign` | RFC-0855p-b §Appendix B |
+/// | `0x0002` | `LivenessFailure` | RFC-0855p-b §Appendix B |
+/// | `0x0003` | `FounderSquat` | RFC-0855p-b §Appendix B |
+/// | `0x0004` | `Censorship` | RFC-0855p-b §Appendix B |
+/// | `0x0005` | `CoordinatorMisbehavior` | RFC-0855p-b §Appendix B |
+/// | `0x0006` | `KeyCompromise` | RFC-0855p-b §Appendix B |
+/// | `0x0007` | `BanningLegitimateMember` | RFC-0855p-b §Appendix B |
+/// | `0x0008` | `VoteBuying` | RFC-0855p-b §Appendix B |
+/// | `0x0009` | `GenesisCompromise` | RFC-0855p-b §Appendix B (v1.1 R1-CL-1) |
+/// | `0x000A` | `PlatformMigration` | RFC-0850p-c §6a |
+/// | `0x000B` | `IsReconnectLie` | RFC-0850p-c §8 |
+/// | `0x000C..=0x000D` | RESERVED (per RFC-0855p-d) |
+/// | `0x000E` | `CreateGroupFailed` | RFC-0855p-b §Appendix B |
+/// | `0x000F` | `CgGroupSpam` | RFC-0855p-b §Appendix B |
+/// | `0x0010` | `FalseWitness` | RFC-0855p-b §Appendix B |
+/// | `0x0011` | `SelfKicked` | RFC-0855p-b §Appendix B |
+/// | `0x0012` | `CrossPlatformWitnessCollusion` | RFC-0855p-c §9b |
+/// | `0x0013` | `FalseAttestation` | RFC-0855p-e Future Work F-7 |
+/// | `0x0014` | `QuorumTimeout` | RFC-0855p-e Future Work F-7 |
+/// | `0x0015` | `TallyTamper` | RFC-0855p-e Future Work F-7 |
+/// | `0x0016` | `LateDelivery` | RFC-0855p-e Future Work F-7 |
+/// | `0x0100..=0xFFFF` | `Extension(id)` | user-extension registry |
 ///
 /// ## Extension safety
 ///
 /// The `Extension(u16)` variant catches the user-extension registry
-/// 0x0100-0xFFFF. Match sites MUST include a wildcard arm or explicit
+/// `0x0100..=0xFFFF`. Match sites MUST include a wildcard arm or explicit
 /// `Self::Extension(_) =>` handling. The `reason_id()` getter returns the
 /// raw u16 for wire-format mapping.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SlashReasonCode {
-    /// Generic slash (baseline).
-    Generic,
-    /// Attested to invalid predecessor state.
+    /// RFC-0855p-b §Appendix B 0x0001 — same-block double-sign.
+    DoubleSign,
+    /// RFC-0855p-b §Appendix B 0x0002 — coordinator liveness failure.
+    LivenessFailure,
+    /// RFC-0855p-b §Appendix B 0x0003 — founder squat on mission slot.
+    FounderSquat,
+    /// RFC-0855p-b §Appendix B 0x0004 — selective censorship of
+    /// admissible operations.
+    Censorship,
+    /// RFC-0855p-b §Appendix B 0x0005 — generic coordinator misbehavior
+    /// (catch-all for RFC-discrete-defined coordinator wrongdoing).
+    CoordinatorMisbehavior,
+    /// RFC-0855p-b §Appendix B 0x0006 — coordinator key compromise.
+    KeyCompromise,
+    /// RFC-0855p-b §Appendix B 0x0007 — banning a legitimate mission
+    /// member.
+    BanningLegitimateMember,
+    /// RFC-0855p-b §Appendix B 0x0008 — vote-buying proof.
+    VoteBuying,
+    /// RFC-0855p-b §Appendix B 0x0009 — creator-key compromise at
+    /// mission genesis (v1.1 R1-CL-1).
+    GenesisCompromise,
+    /// RFC-0850p-c §6a — falsified platform-migration envelope.
+    PlatformMigration,
+    /// RFC-0850p-c §8 — reconnect-lie assertion.
+    IsReconnectLie,
+    /// RFC-0855p-b §Appendix B 0x000E — `CreateGroup` envelope failed
+    /// protocol rules.
+    CreateGroupFailed,
+    /// RFC-0855p-b §Appendix B 0x000F — `CG` group spam.
+    CgGroupSpam,
+    /// RFC-0855p-b §Appendix B 0x0010 — false witness attestation.
+    FalseWitness,
+    /// RFC-0855p-b §Appendix B 0x0011 — coordinator self-kick.
+    SelfKicked,
+    /// RFC-0855p-c §9b — cross-platform witness collusion.
+    CrossPlatformWitnessCollusion,
+    /// RFC-0855p-e Future Work F-7 0x0013 — attested to invalid
+    /// predecessor state.
     FalseAttestation,
-    /// Failed to ack HORQ within witness window.
+    /// RFC-0855p-e Future Work F-7 0x0014 — failed to ack `HORQ` within
+    /// witness window.
     QuorumTimeout,
-    /// Tampered with slash tally evidence.
+    /// RFC-0855p-e Future Work F-7 0x0015 — tampered with slash tally
+    /// evidence.
     TallyTamper,
-    /// Delivered slash tally update after grace window.
+    /// RFC-0855p-e Future Work F-7 0x0016 — delivered slash tally update
+    /// after grace window.
     LateDelivery,
     /// User-extension variant (RFC-allocated namespace 0x0100-0xFFFF).
     Extension(u16),
@@ -107,7 +208,22 @@ impl SlashReasonCode {
     /// Wire-format reason code (u16 per RFC-0008 §B).
     pub fn reason_id(&self) -> u16 {
         match self {
-            Self::Generic => 0x0001,
+            Self::DoubleSign => 0x0001,
+            Self::LivenessFailure => 0x0002,
+            Self::FounderSquat => 0x0003,
+            Self::Censorship => 0x0004,
+            Self::CoordinatorMisbehavior => 0x0005,
+            Self::KeyCompromise => 0x0006,
+            Self::BanningLegitimateMember => 0x0007,
+            Self::VoteBuying => 0x0008,
+            Self::GenesisCompromise => 0x0009,
+            Self::PlatformMigration => 0x000A,
+            Self::IsReconnectLie => 0x000B,
+            Self::CreateGroupFailed => 0x000E,
+            Self::CgGroupSpam => 0x000F,
+            Self::FalseWitness => 0x0010,
+            Self::SelfKicked => 0x0011,
+            Self::CrossPlatformWitnessCollusion => 0x0012,
             Self::FalseAttestation => 0x0013,
             Self::QuorumTimeout => 0x0014,
             Self::TallyTamper => 0x0015,
@@ -116,12 +232,31 @@ impl SlashReasonCode {
         }
     }
 
-    /// Parse from wire-format u16. RFC-allocated entries 0x0001 + 0x0013-0x0016
-    /// return their typed variants; everything else (including the
-    /// 0x0100-0xFFFF user-extension range) returns `Self::Extension(id)`.
+    /// Parse from wire-format u16. Per RFC-0855p-b §Appendix B, the
+    /// canonical set `0x0001..=0x0012` (skipping reserved `0x000C..=0x000D`)
+    /// + `0x0013..=0x0016` round-trip as typed variants; everything else
+    /// (including the `0x0100..=0xFFFF` user-extension range) returns
+    /// `Self::Extension(id)`. Note: passing a reserved `0x000C` or `0x000D`
+    /// value silently promotes to `Extension(0x000C)` — use
+    /// [`try_from_reason_id`] when fail-closed is required.
     pub fn from_reason_id(id: u16) -> Self {
         match id {
-            0x0001 => Self::Generic,
+            0x0001 => Self::DoubleSign,
+            0x0002 => Self::LivenessFailure,
+            0x0003 => Self::FounderSquat,
+            0x0004 => Self::Censorship,
+            0x0005 => Self::CoordinatorMisbehavior,
+            0x0006 => Self::KeyCompromise,
+            0x0007 => Self::BanningLegitimateMember,
+            0x0008 => Self::VoteBuying,
+            0x0009 => Self::GenesisCompromise,
+            0x000A => Self::PlatformMigration,
+            0x000B => Self::IsReconnectLie,
+            0x000E => Self::CreateGroupFailed,
+            0x000F => Self::CgGroupSpam,
+            0x0010 => Self::FalseWitness,
+            0x0011 => Self::SelfKicked,
+            0x0012 => Self::CrossPlatformWitnessCollusion,
             0x0013 => Self::FalseAttestation,
             0x0014 => Self::QuorumTimeout,
             0x0015 => Self::TallyTamper,
@@ -133,12 +268,14 @@ impl SlashReasonCode {
 
 /// Error type for `SlashReasonCode` reserved-range violations.
 ///
-/// Reserved range 0x0002-0x0012 + 0x0017-0x00FF is NOT valid as either
-/// a typed variant or a user-extension. Callers using those values must
-/// upgrade.
+/// Reserved range `0x000C..=0x000D` (per RFC-0855p-d §Sub-DC delegation
+/// protocol — NOT slash reasons) + `0x0017..=0x00FF` is NOT valid as
+/// either a typed variant or a user-extension. Callers using those values
+/// must upgrade.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
-#[error("invalid SlashReasonCode 0x{got:04x}: reserved range 0x0002-0x0012 / 0x0017-0x00FF")]
+#[error("invalid SlashReasonCode 0x{got:04x}: reserved range 0x000C-0x000D / 0x0017-0x00FF")]
 pub struct SlashReasonCodeError {
+    /// Rejected reserved-range u16 value.
     pub got: u16,
 }
 
@@ -149,9 +286,14 @@ impl SlashReasonCode {
     /// reserved values (which become `Extension` variants without error).
     /// Use `try_from_reason_id` when you want to fail-closed on reserved
     /// values rather than silently promote them to the extension namespace.
+    ///
+    /// Reserved range: `0x000C..=0x000D` + `0x0017..=0x00FF`. After
+    /// RFC-0855p-b §Appendix B canonical-set extension, the previous
+    /// `0x0002..=0x0012` "reserved" carve-out is gone (those codes are now
+    /// named variants in `SlashReasonCode`).
     pub fn try_from_reason_id(id: u16) -> Result<Self, SlashReasonCodeError> {
         match id {
-            0x0002..=0x0012 | 0x0017..=0x00FF => Err(SlashReasonCodeError { got: id }),
+            0x000C..=0x000D | 0x0017..=0x00FF => Err(SlashReasonCodeError { got: id }),
             other => Ok(Self::from_reason_id(other)),
         }
     }
@@ -222,12 +364,22 @@ mod tests {
         assert_eq!(update, copy);
     }
 
-    // TV-CT-2: SlashReasonCode 0x0013-0x0016 entries; reserved-range rejection.
+    // TV-CT-2: SlashReasonCode canonical-set entries; reserved-range rejection.
     #[test]
     fn tv_ct_2_slash_reason_code_entries_and_reserved_range() {
-        // Allocated entries map round-trip.
+        // Allocated entries map round-trip (RFC-0855p-b §Appendix B
+        // canonical + RFC-0855p-e 0x0013-0x0016 extension).
         for (id, expected) in [
-            (0x0001u16, SlashReasonCode::Generic),
+            (0x0001u16, SlashReasonCode::DoubleSign),
+            (0x0002, SlashReasonCode::LivenessFailure),
+            (0x0003, SlashReasonCode::FounderSquat),
+            (0x0009, SlashReasonCode::GenesisCompromise),
+            (0x000A, SlashReasonCode::PlatformMigration),
+            (0x000B, SlashReasonCode::IsReconnectLie),
+            (0x000E, SlashReasonCode::CreateGroupFailed),
+            (0x0010, SlashReasonCode::FalseWitness),
+            (0x0011, SlashReasonCode::SelfKicked),
+            (0x0012, SlashReasonCode::CrossPlatformWitnessCollusion),
             (0x0013, SlashReasonCode::FalseAttestation),
             (0x0014, SlashReasonCode::QuorumTimeout),
             (0x0015, SlashReasonCode::TallyTamper),
@@ -245,11 +397,15 @@ mod tests {
             );
         }
 
-        // Strict constructor accepts allocated + extension; rejects reserved.
+        // Strict constructor accepts canonical + extension; rejects reserved.
         assert!(SlashReasonCode::try_from_reason_id(0x0001).is_ok());
+        assert!(SlashReasonCode::try_from_reason_id(0x0009).is_ok());
+        assert!(SlashReasonCode::try_from_reason_id(0x0012).is_ok());
         assert!(SlashReasonCode::try_from_reason_id(0x0013).is_ok());
         assert!(SlashReasonCode::try_from_reason_id(0x0100).is_ok());
-        for reserved in [0x0002u16, 0x0007, 0x0012, 0x0017, 0x00FF] {
+
+        // Reserved: 0x000C..=0x000D (RFC-0855p-d) + 0x0017..=0x00FF.
+        for reserved in [0x000Cu16, 0x000D, 0x0017, 0x00FF, 0x0080] {
             assert_eq!(
                 SlashReasonCode::try_from_reason_id(reserved),
                 Err(SlashReasonCodeError { got: reserved })

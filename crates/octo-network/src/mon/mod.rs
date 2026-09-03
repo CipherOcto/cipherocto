@@ -5,8 +5,10 @@
 
 pub mod bind_envelope;
 pub mod bootstrap;
+pub mod coordinator;
 pub mod discovery;
 pub mod economics;
+pub mod election;
 pub mod error;
 pub mod execution;
 pub mod gossip;
@@ -14,6 +16,7 @@ pub mod governance;
 pub mod governance_rotation;
 pub mod keys;
 pub mod lifecycle;
+pub mod liveness;
 pub mod membership;
 pub mod nostr_bootstrap;
 pub mod quadratic;
@@ -21,6 +24,7 @@ pub mod rebind;
 pub mod reconciliation;
 pub mod slash;
 pub mod slash_aggregation;
+pub mod slashing;
 pub mod topology;
 pub mod trust_graph;
 pub mod vdf;

@@ -20,6 +20,9 @@ thiserror = "2.0"
 # Serde derives for slash tally + reason code types (debug + cross-crate
 # message passing via serde_json in future coordinators).
 serde = { version = "1", features = ["derive"] }
+# BLAKE3 keyed hash for canonical-bytes derivation on CoordinatorRecord
+# per RFC-0008 §Class A + RFC-0126 §3.2 (Layer A primitive, years-stable).
+blake3 = { version = "1.5" }
 
 [lints.rust]
 unsafe_code = "forbid"

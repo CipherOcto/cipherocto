@@ -50,6 +50,21 @@ pub enum DotError {
 
     #[error("Ed25519 error: {0}")]
     Ed25519(String),
+
+    /// Phase-4 handover: preservation queue empty when successor attempt
+    /// expects flushed envelopes (RFC-0855p-b §Phase 4).
+    #[error("preservation queue empty for coordinator {coordinator:?}")]
+    PreservationQueueEmpty { coordinator: [u8; 32] },
+
+    /// Phase-4 handover: missing or invalid preservation predecessor /
+    /// successor pair.
+    #[error("preservation predecessor mismatch: expected {expected:?}, got {actual:?}")]
+    PreservationPredecessorMismatch {
+        /// Expected predecessor coordinator id.
+        expected: [u8; 32],
+        /// Actual predecessor coordinator id.
+        actual: [u8; 32],
+    },
 }
 
 /// Errors from platform-specific adapters

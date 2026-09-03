@@ -6,7 +6,7 @@
 //!   with freshness check + `ATTEST_CHALLENGE` flow.
 //! - **0855p-c-auto-rejoin**: `REJOIN_REQUEST` + `RejoinTicket`
 //!   with rate limiting.
-//! - **0855p-c-cross-domain-slash**: 0x000F slash reason code
+//! - **0855p-c-cross-domain-slash**: 0x0100 slash reason code
 //!   for DC misbehavior with sub-codes + cross-domain reputation
 //!   update.
 //! - **0855p-c-cross-platform-consensus**: 2PC for

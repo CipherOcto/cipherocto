@@ -519,12 +519,28 @@ The audit log is replicated via the same mechanism as the slash tally itself (pe
 Each platform's DomainCoordinator is slashed **independently**. If a WhatsApp DomainCoordinator and a Matrix DomainCoordinator both serve the same `domain_id`, and the WhatsApp one is slashed, the Matrix one is NOT slashed by the same evidence. The slash reason code includes a platform tag:
 
 - Bit 0x8000 (high bit) is set: this is a platform-tagged slash
-- Bits 0-14: the slash reason (0x0001-0x0009 from RFC-0855p-b, 0x000A-0x000B transport-level per RFC-0850p-c §6 "Unbind Reasons", 0x000C-0x000D reserved [NOT slash reasons; sub-DC delegation/governance], 0x000E-0x0011 from the 0850p-family sister RFCs [CreateGroupFailed, CgGroupSpam, FalseWitness, SelfKicked], 0x0012 = `CrossPlatformWitnessCollusion` [this RFC §9b], 0x0013-0x7FFF reserved for future slash reasons; 0x8000+ is the platform-tagged slash indicator)
+- Bits 0-14: the slash reason (0x0001-0x0009 from RFC-0855p-b, 0x000A-0x000B transport-level per RFC-0850p-c §6 "Unbind Reasons", 0x000C-0x000D reserved [NOT slash reasons; sub-DC delegation/governance], 0x000E-0x0011 from the 0850p-family sister RFCs [CreateGroupFailed, CgGroupSpam, FalseWitness, SelfKicked], 0x0012 = `CrossPlatformWitnessCollusion` [this RFC §9b], 0x0013-0x0016 = `FalseAttestation` / `QuorumTimeout` / `TallyTamper` / `LateDelivery` (RFC-0855p-e Future Work F-7), 0x0017-0x00FF reserved for future slash reasons [rejected by `SlashReasonCode::try_from_reason_id`], **0x0100 = `DomainCoordinatorMisbehavior` [this RFC §9c Cross-Domain Slash; first user-extension registry slot]**, 0x0101-0x7FFF reserved for future slash reasons; 0x8000+ is the platform-tagged slash indicator)
 - Bit 15 is the platform tag indicator
 
-Example: a WhatsApp coordinator slashed for kick evasion is `0x8005` (platform-tagged reason 0x0005). A mission-level coordinator slashed for the same offense is `0x0005` (no platform tag, mission-level). A WhatsApp coordinator slashed for cross-platform witness collusion is `0x8012` (platform-tagged reason 0x0012).
+Example: a WhatsApp coordinator slashed for kick evasion is `0x8005` (platform-tagged reason 0x0005). A mission-level coordinator slashed for the same offense is `0x0005` (no platform tag, mission-level). A WhatsApp coordinator slashed for cross-platform witness collusion is `0x8012` (platform-tagged reason 0x0012). A WhatsApp coordinator slashed for cross-domain DC misbehavior is `0x8100` (platform-tagged reason 0x0100).
 
 Cross-platform slash evidence: a slash that is based on behavior visible across multiple platforms (e.g., a coordinator that censors on both WhatsApp and Matrix) is allowed but is split into 2 platform-tagged slashes, each requiring 2/3 of the mission's voters on that platform. This prevents a low-reputation platform from being used to slash a DomainCoordinator on a different platform.
+
+### 9c. Cross-Domain Slash (mission 0855p-c-cross-domain-slash substrate)
+
+When the mission-level coordinator (RFC-0855p-b) slashes a DomainCoordinator that spans multiple `domain_id`s, the slash is recorded in the DC's cross-domain reputation store (RFC-0968-A1 amendment 29) and broadcast on `/dot/slash/dc/{dc_pubkey}` for witnesses on every affected domain. The canonical reason code is:
+
+- **`0x0100 = DomainCoordinatorMisbehavior`** — first user-extension registry slot, per CLAUDE.md §Extension over enumeration. Wired through `octo_coordinator_types::SlashReasonCode::Extension(0x0100)` (the canonical enum exposes this slot via the `Extension(u16)` catch-all rather than a typed variant, preserving the fail-closed extension-over-enumeration design; typed semantics live in `octo_network::dc::slash::DcMisbehavior` for the 4 sub-codes below).
+- **4 sub-codes** stored in `slash_reason_data` low 16 bits (high 16 bits = `0x0100`):
+  - `0x0100.01 = InvalidBindEnvelope` — signed a BIND that violated the binding rules
+  - `0x0100.02 = FailedAttest` — didn't respond to `ATTEST_CHALLENGE` within `CHALLENGE_RESPONSE_EPOCHS`
+  - `0x0100.03 = CensoredLegitMember` — refused to sign a legitimate admission
+  - `0x0100.04 = SignedMaliciousEnvelope` — signed an envelope that violated the mission's policy
+- **Cool-down:** `2^slash_count` epochs (per RFC-0855p-b §B formula). At `slash_count >= 5` → `PermanentBan`; lower counts → `Cooldown` then re-stand eligible.
+- **Recovery:** A slashed DC can appeal via a governance vote (RFC-0855 §11). Successful appeal restores the DC's reputation; failed appeal extends the cool-down by 2×.
+- **Allocation rationale:** Per the R5-OOS-4 reviewer note in `docs/reviews/r16/r16-r5-adversarial-review.md`, the original mission rationale claimed `0x000F` for cross-domain slash; that slot was canonically allocated to `CgGroupSpam` per RFC-0850p-d §"Slash Reason Codes Added" (accepted 2026-06-17 R16 R1-C2). F-7 slots `0x0013-0x0016` were inspected and rejected — already allocated to `FalseAttestation` / `QuorumTimeout` / `TallyTamper` / `LateDelivery` per RFC-0855p-e handover-substrate. The `0x0100` slot is the first free user-extension-registry slot surviving `SlashReasonCode::try_from_reason_id` (returns `Self::Extension(0x0100)`) and is therefore the canonical assignment for this RFC.
+
+Substrate reference: `crates/octo-network/src/dc/slash.rs` (13 unit tests covering each sub-code roundtrip, 2/3 witness aggregation, cool-down calculation, and `PermanentBan` at `slash_count >= 5`). Mission YAML: `missions/archived/completed/0855p-c-cross-domain-slash.md` (CLOSED 2026-09-03 alongside auto-rejoin + slash-small-groups + sub-admins).
 
 ### 9c. State Transition Observability (E2E IS-6.5 fix)
 
@@ -946,7 +962,7 @@ The multi-platform rule (one DomainCoordinator per platform per domain_id) is a 
 | Threat | Impact | Mitigation |
 |--------|--------|-----------|
 | Platform admin key compromise | CRITICAL | Cross-platform admin attestation (F2) detects within `MAX_ATTEST_AGE_EPOCHS`; slash via 0x0012 (cross-platform witness collusion; R16 R1 fix — was 0x000F, which conflicted with RFC-0850p-d's `CgGroupSpam` allocation; see `docs/reviews/r16/r16-r1-adversarial-review.md` §2) |
-| Malicious DC signs invalid BIND/REBIND | CRITICAL | Cross-domain slash (F3); cross-domain reputation (F6) |
+| Malicious DC signs invalid BIND/REBIND | CRITICAL | Cross-domain slash (F3, §9c `0x0100` `DomainCoordinatorMisbehavior`); cross-domain reputation (F6) |
 | Cross-platform mission fragmentation | HIGH (mission failure) | 2-phase commit (F1) with 2/3 majority; tie-break by lex `domain_id` |
 | Cross-platform witness collusion | MEDIUM | Slash via 0x0012 (R16 R1 fix — was 0x000F, which conflicted with RFC-0850p-d's `CgGroupSpam` allocation; see `docs/reviews/r16/r16-r1-adversarial-review.md` §2); cross-domain reputation (F6) |
 | Primary DC offline (single point of failure) | MEDIUM | Sub-admin (F5) activates after `SUB_ADMIN_ACTIVATION_EPOCHS` |
@@ -986,6 +1002,7 @@ Missions: 0855p-c-{cross-platform-consensus, admin-attestation, cross-domain-sla
 | 0.1.0 | 2026-06-16 | Initial draft — fills RFC-0855p-b F1; specializes `CoordinatorLifecycle` for DomainCoordinator |
 | 0.1.1 | 2026-06-16 | Deferred vs Unspecified Rule compliance (R10-batch): §Future Work table rebuilt with spec column — all 7 items (F1-F7) now have inline spec + mission paths in `missions/open/0855p-c-f{1,2,3,4,5,6,7}-*.md`. |
 | 0.1.2 | 2026-06-17 | R16 R1 fix: (C2) updated "Adversary Analysis" table to use 0x0012 instead of 0x000F (0x000F conflicted with RFC-0850p-d's `CgGroupSpam` allocation); §9b "Cross-Platform Slash" updated with full slash reason code space allocation 0x0001-0x0012. |
+| 0.1.3 | 2026-09-03 | v0.1.3 inline amendment: (a) §9b allocation block updated — added F-7 reservation `0x0013-0x0016`, reserved range `0x0017-0x00FF`, **`0x0100 = DomainCoordinatorMisbehavior` (this RFC §9c; first user-extension-registry slot)**; (b) NEW §9c "Cross-Domain Slash" documents the `0x0100` cross-domain slash allocation with 4 sub-codes (`.01 invalid_bind_envelope`, `.02 failed_attest`, `.03 censored_legit_member`, `.04 signed_malicious_envelope`) + cool-down formula + permanent-ban threshold + appeal recovery + allocation rationale (R5-OOS-4 reassignment from `0x000F` to `0x0100` per `docs/reviews/r16/r16-r5-adversarial-review.md`, since `0x000F` collided with `CgGroupSpam` per RFC-0850p-d and F-7 slots were already taken); (c) §Adversary Analysis "Malicious DC signs invalid BIND/REBIND" row enriched with `§9c` cross-ref for `0x0100`; (d) §9b cross-platform-tagged example extended with `0x8100` for platform-tagged DC misbehavior. Companion substrate change at `crates/octo-network/src/dc/slash.rs` (constant `0x000F → 0x0100`; module doc; 13 unit tests; error variant doc string); companion canonical doc updates at `crates/octo-coordinator-types/src/lib.rs` (doc table + Extension safety note); companion mission YAML rewrite at `missions/archived/completed/0855p-c-cross-domain-slash.md`. Closes R5-OOS-4 finding (originally HIGH, surfaced in `docs/reviews/r16/r16-r5-adversarial-review.md` L23). |
 
 ## Related RFCs
 

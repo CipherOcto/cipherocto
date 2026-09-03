@@ -14,11 +14,19 @@ When a DomainCoordinator misbehaves, the mission-level coordinator (per RFC-0855
 
 ## Design
 
-1. **Slash reason code:** extend the slash code range (defined in RFC-0855p-b §B "Slash Offense Codes") with `0x000F` = `domain_coordinator_misbehavior`. Sub-codes in `slash_reason_data`:
-   - `0x000F.01` = `invalid_bind_envelope` (signed a BIND that violated the binding rules)
-   - `0x000F.02` = `failed_attest` (didn't respond to ATTEST_CHALLENGE within `CHALLENGE_RESPONSE_EPOCHS`)
-   - `0x000F.03` = `censored_legit_member` (refused to sign a legitimate admission)
-   - `0x000F.04` = `signed_malicious_envelope` (signed an envelope that violated the mission's policy)
+1. **Slash reason code:** allocate a slot in the user-extension registry
+   (per `octo_coordinator_types::SlashReasonCode::Extension`) at `0x0100`
+   = `domain_coordinator_misbehavior`. Per CLAUDE.md §Extension over
+   enumeration, the extension namespace is the canonical home for new
+   slash reasons that lack a typed variant; this slot is the first user
+   allocation after the canonical set `0x0001-0x0012` + F-7 reservation
+   `0x0013-0x0016` (RFC-0855p-e) + reserved/rejected `0x0017-0x00FF`.
+   Sub-codes in `slash_reason_data` (high 16 bits = `0x0100`; low 16 bits
+   = sub-code):
+   - `0x0100.01` = `invalid_bind_envelope` (signed a BIND that violated the binding rules)
+   - `0x0100.02` = `failed_attest` (didn't respond to ATTEST_CHALLENGE within `CHALLENGE_RESPONSE_EPOCHS`)
+   - `0x0100.03` = `censored_legit_member` (refused to sign a legitimate admission)
+   - `0x0100.04` = `signed_malicious_envelope` (signed an envelope that violated the mission's policy)
 2. **Slash flow:**
    - The mission-level coordinator (RFC-0855p-b) gathers slash evidence (envelopes, attestations, challenges).
    - 2/3 of mission-level witnesses vote to slash the DC.
@@ -29,7 +37,8 @@ When a DomainCoordinator misbehaves, the mission-level coordinator (per RFC-0855
 
 ## Acceptance Criteria
 
-- [ ] `0x000F` slash reason code in RFC-0855p-b §B
+- [ ] `0x0100` slash reason code (`Extension(0x0100)` per
+  `SlashReasonCode::from_reason_id`) in RFC-0855p-c §9c
 - [ ] `slash_reason_data: u32` field for sub-codes
 - [ ] `crates/octo-network/src/dc/slash.rs` — DC slash handler
 - [ ] Cross-domain reputation update on slash
@@ -49,7 +58,7 @@ Reference: RFC-0855p-b §B (slash reason codes); `crates/octo-network/src/dc/sla
 
 | RFC-0855p-c Type | Implemented By |
 |-----------------|----------------|
-| `0x000F` slash reason code | This mission |
+| `0x0100` slash reason code (`Extension(0x0100)`) | This mission |
 | `slash_reason_data: u32` sub-codes | This mission |
 | `crates/octo-network/src/dc/slash.rs` | This mission |
 
@@ -82,9 +91,24 @@ Medium (~400 lines; slash flow integration, cross-domain gossip, appeal flow).
 
 ## Notes
 
-### Why `0x000F`?
+### Why `0x0100`?
 
-`0x000F` is the next free code in the reserved range. Sub-codes (`.01` invalid bind, `.02` failed attest, etc.) provide granularity.
+`0x0100` is the first free slot in the user-extension registry
+`0x0100-0xFFFF` (RFC-0855p-c §9c allocation). The original mission
+rationale claimed `0x000F`; that allocation conflicted with `CgGroupSpam`
+canonically allocated by RFC-0850p-d §"Slash Reason Codes Added" and
+mirrored in `octo-coordinator-types` §Appendix B. Per the R5-OOS-4
+reviewer note in `docs/reviews/r16/r16-r5-adversarial-review.md`, the
+slot was reassigned in this mission's substrate to `0x0100`, the first
+extension-registry slot that survives
+`SlashReasonCode::try_from_reason_id` (returns
+`Self::Extension(0x0100)`). F-7 slots `0x0013-0x0016` were inspected and
+rejected — already allocated to `FalseAttestation` /
+`QuorumTimeout` / `TallyTamper` / `LateDelivery` per
+RFC-0855p-e handover-substrate. The `0x0100` slot lives in the extension
+namespace by design (per CLAUDE.md §Extension over enumeration), so
+typed match sites route via `Self::Extension(0x0100) => ...` and delegate
+to `octo_network::dc::slash::DcMisbehavior` for the 4 sub-codes.
 
 ### Why a separate slash code from mission-level slashing?
 

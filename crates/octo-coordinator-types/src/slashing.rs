@@ -230,16 +230,17 @@ pub fn apply_slash(
     // Demoting → Inactive. Register exponential-backoff cool-down
     // (RFC-0855p-b L401 + L608): `2^slash_count` epochs from `current_epoch`.
     validate_transition(record, CoordinatorLifecycle::Inactive)?;
-    let cool_down_shift = 1u64
-        .checked_shl(record.slash_count)
-        .ok_or(CoordinatorError::SlashCountOverflow {
-            current: record.slash_count,
-        })?;
-    let cool_down_end = current_epoch
-        .checked_add(cool_down_shift)
-        .ok_or(CoordinatorError::SlashCountOverflow {
-            current: record.slash_count,
-        })?;
+    let cool_down_shift =
+        1u64.checked_shl(record.slash_count)
+            .ok_or(CoordinatorError::SlashCountOverflow {
+                current: record.slash_count,
+            })?;
+    let cool_down_end =
+        current_epoch
+            .checked_add(cool_down_shift)
+            .ok_or(CoordinatorError::SlashCountOverflow {
+                current: record.slash_count,
+            })?;
     cool_down_tracker.register(record.coordinator_peer_id, cool_down_end);
     record.state = CoordinatorLifecycle::Inactive;
 

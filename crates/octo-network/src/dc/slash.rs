@@ -6,12 +6,15 @@
 //!
 //! ## Slash reason code
 //!
-//! - `0x000F` = `domain_coordinator_misbehavior`
+//! - `0x0100` = `domain_coordinator_misbehavior` (user-extension registry
+//!   per RFC-0855p-c §9c; first free slot after canonical set
+//!   `0x0001-0x0012` + F-7 reservation `0x0013-0x0016` + reserved
+//!   `0x0017-0x00FF`).
 //! - Sub-codes:
-//!   - `0x000F.01` = `invalid_bind_envelope`
-//!   - `0x000F.02` = `failed_attest`
-//!   - `0x000F.03` = `censored_legit_member`
-//!   - `0x000F.04` = `signed_malicious_envelope`
+//!   - `0x0100.01` = `invalid_bind_envelope`
+//!   - `0x0100.02` = `failed_attest`
+//!   - `0x0100.03` = `censored_legit_member`
+//!   - `0x0100.04` = `signed_malicious_envelope`
 //!
 //! ## Cool-down
 //!
@@ -19,8 +22,14 @@
 
 use serde::{Deserialize, Serialize};
 
-/// 0x000F slash reason code (mission 0855p-c-cross-domain-slash).
-pub const DC_SLASH_REASON_DOMAIN_COORDINATOR_MISBEHAVIOR: u16 = 0x000F;
+/// `0x0100` slash reason code (mission 0855p-c-cross-domain-slash) —
+/// user-extension registry per `SlashReasonCode::Extension(0x0100)` in
+/// `octo-coordinator-types::SlashReasonCode`. Allocated by RFC-0855p-c
+/// §9c "Cross-Domain Slash"; per the canonical allocation block in
+/// `octo-coordinator-types/src/lib.rs` §Extension safety this is the first
+/// free slot after canonical `0x0001-0x0012` + F-7 `0x0013-0x0016` +
+/// reserved `0x0017-0x00FF`.
+pub const DC_SLASH_REASON_DOMAIN_COORDINATOR_MISBEHAVIOR: u16 = 0x0100;
 
 /// DC misbehavior sub-codes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,7 +122,7 @@ pub enum DcSlashError {
     InsufficientWitnesses { provided: usize, required: usize },
     /// The DC pubkey is empty.
     EmptyDcPubkey,
-    /// The slash reason is not 0x000F.
+    /// The slash reason is not 0x0100.
     InvalidSlashReason(u16),
     /// The slash_reason_data has an unrecognized sub-code.
     InvalidSlashReasonData(u32),
@@ -214,7 +223,7 @@ mod tests {
             vec![vec![0x01], vec![0x02]],
             1000,
         );
-        assert_eq!(env.slash_reason, 0x000F);
+        assert_eq!(env.slash_reason, 0x0100);
         assert_eq!(env.misbehavior(), Some(DcMisbehavior::FailedAttest));
     }
 
@@ -222,7 +231,7 @@ mod tests {
     fn unknown_sub_code_returns_none() {
         let env = DcSlashEnvelope {
             dc_pubkey: vec![0xAA],
-            slash_reason: 0x000F,
+            slash_reason: 0x0100,
             slash_reason_data: 0x0099, // unknown
             domains: vec![],
             witness_signatures: vec![],
@@ -307,12 +316,12 @@ mod tests {
 
     #[test]
     fn invalid_slash_reason_data_rejected() {
-        // slash_reason is correct (0x000F) but slash_reason_data
+        // slash_reason is correct (0x0100) but slash_reason_data
         // has an unrecognized sub-code. Must be rejected, not
         // silently processed.
         let env = DcSlashEnvelope {
             dc_pubkey: vec![0xAA],
-            slash_reason: 0x000F,
+            slash_reason: 0x0100,
             slash_reason_data: 0x0099, // unknown sub-code
             domains: vec!["d1".into()],
             witness_signatures: vec![vec![1], vec![2]], // 2 of 3 witnesses

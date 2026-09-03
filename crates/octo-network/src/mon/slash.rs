@@ -8,7 +8,11 @@
 //! - `0x0003` = `transport-lying` (mission 0855p-b)
 //! - `0x000A` = `transport-binding-lie` (mission 0850p-c §6)
 //! - `0x000B` = `transport-route-misroute` (mission 0850p-c §6)
-//! - `0x000C, 0x000E-0xFFFF` = reserved (0x000D, 0x000F in use)
+//! - `0x000C, 0x000E-0x00FF` = reserved (0x000D in use)
+//! - `0x0100` = `domain_coordinator_misbehavior` (RFC-0855p-c §9c; first
+//!   user-extension registry slot)
+//! - `0x0101-0xFFFF` = user-extension registry (catch-all
+//!   `SlashReasonCode::Extension(id)`)
 //! - `0x000D` = `bootstrap_node_misbehavior` (mission 0851p-a)
 //!
 //! ## Mission 0851p-a-bootstrap-slashing

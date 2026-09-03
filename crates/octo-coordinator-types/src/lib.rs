@@ -142,6 +142,7 @@ impl SlashTallyUpdate {
 /// | `0x0015` | `TallyTamper` | RFC-0855p-e Future Work F-7 |
 /// | `0x0016` | `LateDelivery` | RFC-0855p-e Future Work F-7 |
 /// | `0x0100..=0xFFFF` | `Extension(id)` | user-extension registry |
+/// | `0x0100` | `DomainCoordinatorMisbehavior` (sub-codes .01-.04) | RFC-0855p-c §9c (user-extension namespace; first allocated slot) |
 ///
 /// ## Extension safety
 ///
@@ -149,6 +150,18 @@ impl SlashTallyUpdate {
 /// `0x0100..=0xFFFF`. Match sites MUST include a wildcard arm or explicit
 /// `Self::Extension(_) =>` handling. The `reason_id()` getter returns the
 /// raw u16 for wire-format mapping.
+///
+/// First allocated user-extension slot: `0x0100 = DomainCoordinatorMisbehavior`
+/// (RFC-0855p-c §9c "Cross-Domain Slash") with 4 sub-codes stored in
+/// `slash_reason_data` low 16 bits (`.01 invalid_bind_envelope`,
+/// `.02 failed_attest`, `.03 censored_legit_member`,
+/// `.04 signed_malicious_envelope`). Wired into
+/// `octo-network::dc::slash::{DcMisbehavior, DcSlashEnvelope}` (mission
+/// `0855p-c-cross-domain-slash`); the canonical enum exposes this slot
+/// through `Extension(0x0100)` rather than a typed variant, preserving
+/// `Extension`-over-`enum` design per CLAUDE.md §Extension over
+/// enumeration. Callers that need typed semantics for `0x0100` should
+/// match `Self::Extension(0x0100)` and route to `dc::slash::DcMisbehavior`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SlashReasonCode {
     /// RFC-0855p-b §Appendix B 0x0001 — same-block double-sign.

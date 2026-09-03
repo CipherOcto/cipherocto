@@ -29,7 +29,7 @@ Accepted (2026-06-16)
 
 ## Summary
 
-Specializes the `CoordinatorLifecycle` from RFC-0855p-b for the `DomainCoordinator` role — the operator of a physical broadcast domain (e.g., a WhatsApp group, Matrix room, Telegram supergroup) bound to a `domain_id` per RFC-0850p-c. Defines the `DomainCoordinatorRecord` (extends `CoordinatorRecord` with platform-specific fields), the platform-admin authority check (the group admin of the physical group is the DomainCoordinator), the platform-mediated handover protocol (admin transfer on the platform cascades to DOT), the platform-loss detection (kicked from group → `Suspect → Inactive`), and the slash integration. Fills Future Work F1 from RFC-0855p-b.
+Specializes the `CoordinatorLifecycle` from RFC-0855p-b for the `DomainCoordinator` role — the operator of a physical broadcast domain (e.g., a WhatsApp group, Matrix room, Telegram supergroup) bound to a `domain_id` per RFC-0850p-c. Coordinates the platform-admin authority check (the group admin of the physical group is the DomainCoordinator), the platform-mediated handover protocol (admin transfer on the platform cascades to DOT), the platform-loss detection (kicked from group → `Suspect → Inactive`), and the slash integration. The DomainCoordinator's per-binding record is split across three layers per CLAUDE.md §Architectural Principles: Layer B (`CoordinatorRecord` at `octo_coordinator_types::state::CoordinatorRecord`) for canonical coordinator state; Layer C (`GroupBinding` at `octo_network::dot::group_registry::GroupBinding`) for the (mission, domain, group, platform) tuple; Layer D (per-adapter crates) for adapter-local platform state (`platform_admin_id`, `last_platform_check_epoch`, `adapter_connected`), surfaced as `PlatformEvent` envelopes. Fills Future Work F1 from RFC-0855p-b.
 
 ## Dependencies
 
@@ -48,20 +48,21 @@ Specializes the `CoordinatorLifecycle` from RFC-0855p-b for the `DomainCoordinat
 - RFC-0860 (Networking): Proof of Relay — for trust score feeding into platform-admin authority check (mitigates platform-admin key compromise)
 
 > **Dependency Validation Rules:**
+>
 > 1. Dependencies MUST form a DAG — this RFC depends on 0855p-b, 0850p-c, 0850p-a, 0855; none depend on this RFC.
 > 2. All "Requires" RFCs MUST be listed as mission prerequisites.
 > 3. This RFC is downstream of 0855p-b and 0850p-c — it is the specialization layer that ties them together.
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| G1 | Platform-admin authority check <100ms | Wall-clock from group admin change event to `DomainCoordinatorRecord.state` update |
-| G2 | Handover via group admin transfer is atomic | Old admin `Suspect → Handover → Inactive`; new admin `Designated → Elected → Active` — same `coordinator_term_id` chain |
-| G3 | Platform-loss detection <2 × heartbeat_interval | Wall-clock from kicked-from-group event to `Suspect` state |
-| G4 | Slash integration reuses RFC-0855p-b | Same `SlashProof`, same `Demoting` state, same `2^slash_count` cool-down |
-| G5 | All state transitions are RFC-0008 Class A | No non-determinism in DomainCoordinator state |
-| G6 | Platform-admin transfer is the canonical handover path | Group admin → DomainCoordinator transition is automatic (no separate DOT vote) |
+| Goal | Target                                                 | Metric                                                                                                                  |
+| ---- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| G1   | Platform-admin authority check <100ms                  | Wall-clock from group admin change event to `CoordinatorRecord` / `GroupBinding::state` update                          |
+| G2   | Handover via group admin transfer is atomic            | Old admin `Suspect → Handover → Inactive`; new admin `Designated → Elected → Active` — same `coordinator_term_id` chain |
+| G3   | Platform-loss detection <2 × heartbeat_interval        | Wall-clock from kicked-from-group event to `Suspect` state                                                              |
+| G4   | Slash integration reuses RFC-0855p-b                   | Same `SlashProof`, same `Demoting` state, same `2^slash_count` cool-down                                                |
+| G5   | All state transitions are RFC-0008 Class A             | No non-determinism in DomainCoordinator state                                                                           |
+| G6   | Platform-admin transfer is the canonical handover path | Group admin → DomainCoordinator transition is automatic (no separate DOT vote)                                          |
 
 ## Motivation
 
@@ -86,13 +87,13 @@ A WhatsApp group admin is the **de facto** authority over who can speak in the g
 
 This differs from RFC-0855p-b's general election algorithms:
 
-| RFC-0855p-b Election | RFC-0855p-c Election |
-|----------------------|---------------------|
-| Stake-weighted vote (DAO) | Platform-admin transfer |
-| BFT consensus (Federated) | n/a (single group admin) |
-| AI proposal + human ratification (AI-Assisted) | n/a |
-| Deterministic rotation (Autonomous) | n/a |
-| Creator designation (Centralized) | Creator designation (Centralized, same path) |
+| RFC-0855p-b Election                           | RFC-0855p-c Election                         |
+| ---------------------------------------------- | -------------------------------------------- |
+| Stake-weighted vote (DAO)                      | Platform-admin transfer                      |
+| BFT consensus (Federated)                      | n/a (single group admin)                     |
+| AI proposal + human ratification (AI-Assisted) | n/a                                          |
+| Deterministic rotation (Autonomous)            | n/a                                          |
+| Creator designation (Centralized)              | Creator designation (Centralized, same path) |
 
 The `Centralized` governance model path is the same; the others are platform-mediated and out of scope for stake-based voting.
 
@@ -107,7 +108,7 @@ The `Centralized` governance model path is the same; the others are platform-med
 - **Authority scope**: `bind_domain` + `coordinate_domain` (extends RFC-0850p-c with mission-level coordination; signs both binding envelopes and mission-level envelopes)
 - **Who can assume**: platform-admin of the bound group (default), OR explicit founder BIND (per RFC-0850p-c §4 "Binding Ceremony — Explicit Founder"), OR election winner (Centralized governance model only)
 - **Who can revoke**: self (resignation), governance (2/3 vote slash, per RFC-0855p-b), or platform-admin loss (kicked from group → automatic `Inactive`)
-- **Lifecycle**: `DomainCoordinatorLifecycle` (reuses RFC-0855p-b `CoordinatorLifecycle`; the 8 states are identical, but transitions are platform-mediated)
+- **Lifecycle**: `CoordinatorLifecycle` (reuses RFC-0855p-b; the 8 states are identical, but transitions are platform-mediated)
 - **Term**: tied to platform-admin status (`bound_at_epoch` to `unbound_at_epoch`)
 
 ### 2. Platform Group Admin (delegated authority)
@@ -136,18 +137,18 @@ The `Centralized` governance model path is the same; the others are platform-med
 
 ### Role/Authority Coverage Table
 
-| Role | Authority | Lifecycle | Revocable by | Cross-RFC |
-|------|-----------|-----------|--------------|-----------|
-| DomainCoordinator | `bind_domain` + `coordinate_domain` | Yes (reuses 0855p-b) | Self / Governance / Platform loss | 0850p-c + 0855p-b |
-| Platform Group Admin | `platform_admin` (delegated) | Platform-specific | Platform | Out of DOT |
-| GroupMember | `bind_witness` | Ephemeral (per group membership) | Group admin | 0850p-c |
-| Witness (slash-vote) | `slash_vote` | Per-mission | Self | 0855p-b |
+| Role                 | Authority                           | Lifecycle                        | Revocable by                      | Cross-RFC         |
+| -------------------- | ----------------------------------- | -------------------------------- | --------------------------------- | ----------------- |
+| DomainCoordinator    | `bind_domain` + `coordinate_domain` | Yes (reuses 0855p-b)             | Self / Governance / Platform loss | 0850p-c + 0855p-b |
+| Platform Group Admin | `platform_admin` (delegated)        | Platform-specific                | Platform                          | Out of DOT        |
+| GroupMember          | `bind_witness`                      | Ephemeral (per group membership) | Group admin                       | 0850p-c           |
+| Witness (slash-vote) | `slash_vote`                        | Per-mission                      | Self                              | 0855p-b           |
 
 ## Specification
 
-### 1. DomainCoordinatorLifecycle
+### 1. CoordinatorLifecycle (RFC-0855p-b reuse, platform-event-driven)
 
-Reuses RFC-0855p-b's `CoordinatorLifecycle` 8-state machine:
+Reuses RFC-0855p-b's `CoordinatorLifecycle` 8-state machine (canonical at `octo_coordinator_types::state::CoordinatorLifecycle`; this RFC adds no new lifecycle variants):
 
 ```rust
 // Same enum as RFC-0855p-b §"Data Structures" (R6-2 fix — was §"Lifecycle Requirements",
@@ -167,13 +168,13 @@ enum CoordinatorLifecycle {
 
 **DomainCoordinator-specific transition differences:**
 
-| Transition | RFC-0855p-b trigger | RFC-0855p-c trigger |
-|------------|---------------------|---------------------|
-| `Designated → Elected` | Election win | Platform-admin detected, OR explicit founder BIND |
-| `Active → Suspect` | Missed heartbeat | Missed heartbeat OR platform event "kicked from group" |
-| `Active → Handover` | Voluntary, forced, or emergency | Group admin transfer (automatic) |
-| `Active → Inactive` | Slash complete + cool-down | Group admin loss + cool-down, OR slash complete |
-| `Active → Demoting` | Slash proof | Slash proof (same as 0855p-b) |
+| Transition             | RFC-0855p-b trigger             | RFC-0855p-c trigger                                    |
+| ---------------------- | ------------------------------- | ------------------------------------------------------ |
+| `Designated → Elected` | Election win                    | Platform-admin detected, OR explicit founder BIND      |
+| `Active → Suspect`     | Missed heartbeat                | Missed heartbeat OR platform event "kicked from group" |
+| `Active → Handover`    | Voluntary, forced, or emergency | Group admin transfer (automatic)                       |
+| `Active → Inactive`    | Slash complete + cool-down      | Group admin loss + cool-down, OR slash complete        |
+| `Active → Demoting`    | Slash proof                     | Slash proof (same as 0855p-b)                          |
 
 The key difference: **platform events trigger state transitions**. The adapter emits a "platform event" envelope (e.g., `PlatformEvent::AdminTransfer`, `PlatformEvent::KickedFromGroup`) which the DomainCoordinator subscribes to and translates into `CoordinatorLifecycle` transitions.
 
@@ -181,42 +182,55 @@ The key difference: **platform events trigger state transitions**. The adapter e
 
 **Suspect → Inactive slash threshold (E2E IS-6.2 fix):** the DomainCoordinator remains in `Suspect` for `SUSPECT_WINDOW = 3 × HEARTBEAT_INTERVAL` (90 epochs). If the platform loss is confirmed (i.e., the platform event is delivered or `adapter_connected = false` for the full 90 epochs), the DomainCoordinator transitions to `Inactive` AND is slashed with reason 0x0005. If platform events resume before the 90 epochs expire, the DomainCoordinator transitions back to `Active` and no slash occurs. This gives the platform 90 epochs to recover from a transient outage without false-positive slashing.
 
-### 2. DomainCoordinatorRecord
+### 2. DomainCoordinator State and Binding (Layered Split)
+
+Per the Layer A/B/C/D separation in CLAUDE.md §Architectural Principles, the DomainCoordinator's per-binding record is **not** centralized in a single struct. The fields split across three substrates:
+
+**Layer B — canonical coordinator state** (reused from RFC-0855p-b, at `octo_coordinator_types::state::CoordinatorRecord`):
 
 ```rust
-/// DomainCoordinator's per-binding record; extends CoordinatorRecord from 0855p-b
-#[derive(Clone, Debug)]
-#[repr(C)]
-struct DomainCoordinatorRecord {
-    /// Inherited from CoordinatorRecord (RFC-0855p-b)
-    base: CoordinatorRecord,
+/// Canonical coordinator record (RFC-0855p-b; this RFC reuses without extension)
+struct CoordinatorRecord {
+    coordinator_id: [u8; 32],
+    coordinator_term_id: u64,
+    slash_count: u32,
+    octo_o_stake_locked: u128,
+    last_heartbeat_epoch: u64,
+    heartbeat_interval: u64,
+    record_hash: [u8; 32],
+}
+```
 
-    /// The (mission_id, domain_id) this DomainCoordinator governs
+**Reuses unchanged:** `coordinator_term_id`, `slash_count`, `octo_o_stake_locked`, `last_heartbeat_epoch`, `heartbeat_interval`.
+
+**Layer C — platform-binding tuple** (at `octo_network::dot::group_registry::GroupBinding`, `crates/octo-network/src/dot/group_registry.rs`):
+
+```rust
+/// Per-(mission, domain, platform) binding to a physical group (RFC-0850p-c substrate)
+struct GroupBinding {
     mission_id: [u8; 32],
     domain_id: [u8; 32],
-
-    /// The physical group this DomainCoordinator controls
     group_jid: String,
     platform: String,  // "whatsapp" | "matrix" | "telegram" | ...
-
-    /// Platform's group-admin identifier (e.g., WhatsApp participant_id)
-    /// Refreshed on every platform event; null if not admin
-    platform_admin_id: Option<String>,
-
-    /// Epoch when the platform-admin status was last verified
-    last_platform_check_epoch: u64,
-
-    /// Adapter-side health: are we still connected to the platform?
-    adapter_connected: bool,
-
+    state: GroupState,  // Bound | Unbound | UnboundQuarantined | ...
+    bound_peer_id: [u8; 32],
+    bound_at_epoch: u64,
     /// BLAKE3 binding all fields
     record_hash: [u8; 32],
 }
 ```
 
-**Reuses:** `coordinator_term_id`, `slash_count`, `octo_o_stake_locked`, `last_heartbeat_epoch`, `heartbeat_interval` from `CoordinatorRecord` (RFC-0855p-b).
+**Adds at Layer C:** `mission_id`, `domain_id`, `group_jid`, `platform`, `bound_peer_id`, `bound_at_epoch` — i.e., the (mission, domain, group, platform) tuple that fixes which peer holds DomainCoordinator authority.
 
-**Adds:** `mission_id`, `domain_id`, `group_jid`, `platform`, `platform_admin_id`, `last_platform_check_epoch`, `adapter_connected`.
+**Layer D — adapter-local platform state** (per `crates/octo-adapter-{whatsapp,matrix,telegram}/`):
+
+| Field                       | Owner                                     | Surface to mission                             |
+| --------------------------- | ----------------------------------------- | ---------------------------------------------- |
+| `platform_admin_id`         | adapter (e.g., WhatsApp `participant_id`) | `PlatformEvent::AdminTransfer` envelope (§5a)  |
+| `last_platform_check_epoch` | adapter cache                             | implicit; refreshed on each platform event     |
+| `adapter_connected`         | adapter transport                         | `PlatformEvent::AdapterDown/Up` envelope (§5a) |
+
+These three fields are **adapter-local state**, not mission-visible record fields. They surface to the mission as `PlatformEvent` envelopes (§5a "PlatformLoss Envelope (R1-DC-3 fix)") which the DomainCoordinator translates into `CoordinatorLifecycle` transitions per §1 above. This split keeps platform-specific schemas out of the canonical Layer B coordinator record and lets each adapter evolve its local cache without RFC amendment.
 
 ### 3. Platform-Admin Authority Check
 
@@ -285,10 +299,11 @@ enum MembershipAction {
 **Wire format for cross-language compatibility:**
 
 For over-the-wire serialization (between adapters and the DOT core), each `PlatformEvent` is serialized as:
+
 - 1 byte: discriminant (`u8`)
 - Variable bytes: payload, canonically serialized per RFC-0850p-c §Appendix A
   (e.g., for `AdminTransfer`: 32 bytes old_admin || 32 bytes new_admin ||
-   length-prefixed group_jid || 8 bytes transfer_epoch)
+  length-prefixed group_jid || 8 bytes transfer_epoch)
 
 The discriminant byte is the same in both Rust (in-memory) and on-the-wire representations. Implementations in other languages (e.g., Go, Python) parse the discriminant byte and dispatch to the variant-specific deserializer.
 
@@ -368,13 +383,14 @@ sequenceDiagram
 
 The DomainCoordinator monitors three platform events:
 
-| Event | Detection | Response |
-|-------|-----------|----------|
-| Kicked from group | `PlatformEvent::KickedFromGroup` | `Active → Suspect → Inactive` |
-| Banned from platform | `PlatformEvent::PlatformBan` | `Active → Suspect → Inactive` |
+| Event                | Detection                                      | Response                                          |
+| -------------------- | ---------------------------------------------- | ------------------------------------------------- |
+| Kicked from group    | `PlatformEvent::KickedFromGroup`               | `Active → Suspect → Inactive`                     |
+| Banned from platform | `PlatformEvent::PlatformBan`                   | `Active → Suspect → Inactive`                     |
 | Adapter disconnected | `adapter_connected = false` for >2 × heartbeat | `Active → Suspect → Handover → Inactive` (forced) |
 
 **Kicked/banned path:**
+
 1. Adapter receives `KickedFromGroup` event
 2. DomainCoordinator signs `PlatformLossEnvelope { coordinator_id, group_jid, loss_epoch, reason }` (see §"PlatformLoss Envelope" below)
 3. State transitions `Active → Suspect → Inactive` (no grace period; kicked is permanent loss)
@@ -382,6 +398,7 @@ The DomainCoordinator monitors three platform events:
 5. Mission participants run election for new DomainCoordinator (per RFC-0855p-b §"Election Algorithm (per governance model)") OR explicit founder issues `DOT/1/BIND` for a new platform
 
 **Adapter-disconnected path (R1-DC-4 fix — deadlock resolution):**
+
 1. Adapter connection lost for >2 × heartbeat
 2. DomainCoordinator enters `Suspect` state (does NOT immediately transition to `Inactive`)
 3. If connection restored within 3 × heartbeat: `Suspect → Active` (recovery)
@@ -393,6 +410,7 @@ The DomainCoordinator monitors three platform events:
 **Note on reconnection after forced Inactive:** if the original node reconnects, it MUST re-claim the DomainCoordinator role via a new BIND (RFC-0850p-c §3 "Binding Ceremony — Implicit Designator") — it cannot resume from `Inactive`. This is the same pattern as RFC-0855p-b §"Recovery from Network Partition" (no implicit resumption).
 
 **Split-brain prevention on reconnection (R2-DC-3 fix, R3-1 / R3-6 follow-up):** if the original node reconnects after a forced `Handover → Inactive` and a new DomainCoordinator has been elected in the interim, the reconnected node MUST observe the network state BEFORE issuing any BIND. Specifically:
+
 1. Reconnected node queries the local `GroupRegistry` for the current binding state.
 2. If a different `coordinator_id` is currently `Active` for the same `(mission_id, domain_id, platform)`, the reconnected node MUST NOT issue a BIND.
 3. The reconnected node MAY challenge the current DomainCoordinator via a slash vote (reason 0x0005: Coordinator misbehavior; per RFC-0855p-b §B "Slash Offense Codes") if it has evidence of misbehavior; otherwise, it accepts the new DomainCoordinator and transitions to `MissionParticipant`. **R5-4 fix:** the previous wording referenced "CoordinatorChallenge" (per RFC-0855p-b §"Coordinator Challenge") but no such section exists in RFC-0855p-b (verified by grep; the term "challenge" does not appear in 0855p-b). The challenge mechanism is now specified as a slash vote, which is the canonical challenge path in 0855p-b.
@@ -450,6 +468,7 @@ Slash uses RFC-0855p-b §"Slashing Integration" verbatim. The DomainCoordinator'
 Slash proof structure is identical to RFC-0855p-b; the only addition is the `domain_id` field in the slash envelope (so the slash is scoped to the bound domain, not the mission).
 
 **Slash reasons:** the DomainCoordinator role uses the slash reason codes from RFC-0855p-b §B verbatim (0x0001-0x0009 are slash-only; 0x000A-0x000B are transport-level per 0850p-c). **R9-5 fix — duplicate table removed:** the previous version of this RFC had a stale "slash reasons (extends RFC-0855p-b)" table that used 0x0006, 0x0007, 0x0008 for DIFFERENT reasons than 0855p-b §B (which has those codes as `key-compromise`, `banning-legitimate-member`, `vote-buying` respectively). The stale table has been removed; refer to RFC-0855p-b §B for the canonical mapping. The DomainCoordinator-specific behavioral notes are:
+
 - 0x0005 (coordinator misbehavior) is the most common DomainCoordinator slash reason (covers censorship, kick evasion, BIND equivocation).
 - 0x0007 (banning legitimate member) is DomainCoordinator-specific but the reason code is global.
 - 0x000A (platform migration) and 0x000B (is_reconnect_lie) are transport-level (per 0850p-c §6 "Unbind Reasons" and 0855p-b §B slash reason codes 0x000A-0x000B).
@@ -482,13 +501,13 @@ DomainCoordinator
 
 ### 9. RFC-0008 Execution Class Mapping
 
-| Operation | Class | Rationale |
-|-----------|-------|-----------|
-| Platform-admin check | A | Deterministic from platform response |
-| State transition (event-driven) | A | Deterministic from event + state |
-| Slash proof verification | A | Cryptographic |
-| Platform event timestamp | B | Wall-clock acceptable |
-| Adapter connection check | B | Same |
+| Operation                       | Class | Rationale                            |
+| ------------------------------- | ----- | ------------------------------------ |
+| Platform-admin check            | A     | Deterministic from platform response |
+| State transition (event-driven) | A     | Deterministic from event + state     |
+| Slash proof verification        | A     | Cryptographic                        |
+| Platform event timestamp        | B     | Wall-clock acceptable                |
+| Adapter connection check        | B     | Same                                 |
 
 ### 9a. Slash Vote Audit (E2E IS-5.3 fix)
 
@@ -570,67 +589,65 @@ The `StateTransitionEvent` is gossiped to all mission participants. The `trigger
 
 Verification: mission participants verify the signature against the DomainCoordinator's term public key (looked up via the mission's pubkey registry). Invalid signatures are dropped silently (per the "routine filtering silent" rule, §RFC-0855p-b).
 
-
 ### 10. Error Handling
 
 This section defines typed error and recovery paths for `0855p-c` (DomainCoordinator role) operations. All errors are surfaced to the mission via slash-tally or state-transition events; silent drops are reserved for routine signature/format rejection only.
 
-| Error case | Trigger | Recovery | Reference |
-|-----------|---------|----------|-----------|
-| `DomainCoordinatorError::PlatformAdminLost` | The DomainCoordinator is no longer a platform-level admin (e.g., demoted by another platform admin, group ownership transferred) | Emit `PlatformLoss` envelope; transition `Active → Inactive`; slash reason 0x0005 with reduced penalty (50% OCTO-O, since loss may be platform-driven not coordinator-driven) | §5a "PlatformLoss Envelope (R1-DC-3 fix)" |
-| `DomainCoordinatorError::PlatformKicked` | The DomainCoordinator is explicitly removed by the platform (e.g., ban) | Transition `Active → Inactive`; slash reason 0x0005 with full penalty (100% OCTO-O); operator notified | §5 "Platform-Mediated Handover" |
-| `DomainCoordinatorError::GroupDeleted` | The bound physical group is deleted on the platform | Transition `Active → Inactive`; no slash; the group no longer exists | §5 |
-| `DomainCoordinatorError::StateTransitionSigInvalid` | `StateTransitionEvent` envelope signature does not verify against the DomainCoordinator's term pubkey | Silent drop (routine filtering); emit metric `dc_state_transition_sig_fail_total` | §9c (E2E IS-6.5 fix) |
-| `DomainCoordinatorError::HandoverTimeout` | Successor DomainCoordinator does not become `Active` within `HANDOVER_TIMEOUT = 100` epochs after the previous coordinator entered `Handover` | The handover is aborted; old coordinator re-enters `Active` if still eligible; else triggers fresh election | §4 "Platform-Mediated Handover" |
-| `DomainCoordinatorError::CrossPlatformSlashInsufficient` | Cross-platform slash tally is < 2/3 of mission's voters on the affected platform | Slash tally fails silently (no slash applied); emit `CROSS_PLATFORM_SLASH_FAIL` metric; the slash attempt is logged for audit | §9b "Cross-Platform Slash (E2E IS-5.8 fix)" |
-| `DomainCoordinatorError::SlashVoteAuditFail` | A slash vote envelope's signature does not verify OR the vote is from a non-mission-participant | Reject the vote; emit metric `dc_slash_vote_audit_fail_total`; continue tally with valid votes | §9a "Slash Vote Audit (E2E IS-5.3 fix)" |
-| `DomainCoordinatorError::SubAdminAuthMissing` | A sub-admin action is attempted but the mission is configured `sub_admins = false` OR the actor lacks the required `SubAdminCapability` | Reject the action; emit `SUB_ADMIN_ACTION_REJECTED` event; no slash (this is a permission error, not a slashable offense) | Future work F5 mission `0855p-c-sub-admins.md` |
-| `DomainCoordinatorError::BINDDesync` | The DomainCoordinator's local view of the `GroupRegistry` differs from the consensus `GroupRegistry` (e.g., after a missed heartbeat and replay) | Re-fetch the canonical `GroupRegistry` from mission state; reconcile local view; emit `BIND_DESYNC_RECONCILED` event | §7 "Cross-RFC Integration" |
+| Error case (substrate path)                                                                                        | Trigger                                                                                                                                          | Recovery                                                                                                                                                                      | Reference                                      |
+| ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| `octo_network::dot::error::PlatformAdapterError::AdminStatusLost`                                                  | The DomainCoordinator is no longer a platform-level admin (e.g., demoted by another platform admin, group ownership transferred)                 | Emit `PlatformLoss` envelope; transition `Active → Inactive`; slash reason 0x0005 with reduced penalty (50% OCTO-O, since loss may be platform-driven not coordinator-driven) | §5a "PlatformLoss Envelope (R1-DC-3 fix)"      |
+| `octo_network::dot::error::PlatformAdapterError::KickedFromGroup`                                                  | The DomainCoordinator is explicitly removed by the platform (e.g., ban)                                                                          | Transition `Active → Inactive`; slash reason 0x0005 with full penalty (100% OCTO-O); operator notified                                                                        | §5 "Platform-Mediated Handover"                |
+| `octo_network::dot::binding::BindingError::GroupDeleted`                                                           | The bound physical group is deleted on the platform                                                                                              | Transition `Active → Inactive`; no slash; the group no longer exists                                                                                                          | §5                                             |
+| `octo_network::dot::error::DotError::SignatureInvalid` (on `StateTransitionEvent`)                                 | `StateTransitionEvent` envelope signature does not verify against the DomainCoordinator's term pubkey                                            | Silent drop (routine filtering); emit metric `dc_state_transition_sig_fail_total`                                                                                             | §9c (E2E IS-6.5 fix)                           |
+| `octo_network::dot::handover::HandoverError::TimeoutExpired`                                                       | Successor DomainCoordinator does not become `Active` within `HANDOVER_TIMEOUT = 100` epochs after the previous coordinator entered `Handover`    | The handover is aborted; old coordinator re-enters `Active` if still eligible; else triggers fresh election                                                                   | §4 "Platform-Mediated Handover"                |
+| `octo_network::dc::slash::DcSlashError::InsufficientQuorum`                                                        | Cross-platform slash tally is < 2/3 of mission's voters on the affected platform                                                                 | Slash tally fails silently (no slash applied); emit `CROSS_PLATFORM_SLASH_FAIL` metric; the slash attempt is logged for audit                                                 | §9b "Cross-Platform Slash (E2E IS-5.8 fix)"    |
+| `octo_network::dc::slash::DcSlashError::VoteAuditFailed`                                                           | A slash vote envelope's signature does not verify OR the vote is from a non-mission-participant                                                  | Reject the vote; emit metric `dc_slash_vote_audit_fail_total`; continue tally with valid votes                                                                                | §9a "Slash Vote Audit (E2E IS-5.3 fix)"        |
+| `octo_network::dc::admin_attest::PlatformAdminAttestError::SubAdminCapabilityMissing`                              | A sub-admin action is attempted but the mission is configured `sub_admins = false` OR the actor lacks the required `SubAdminCapability`          | Reject the action; emit `SUB_ADMIN_ACTION_REJECTED` event; no slash (this is a permission error, not a slashable offense)                                                     | Future work F5 mission `0855p-c-sub-admins.md` |
+| `octo_network::dot::group_registry::GroupBinding::state` mismatch (`octo-network/src/dc/rejoin.rs` reconcile path) | The DomainCoordinator's local view of the `GroupRegistry` differs from the consensus `GroupRegistry` (e.g., after a missed heartbeat and replay) | Re-fetch the canonical `GroupRegistry` from mission state; reconcile local view; emit `BIND_DESYNC_RECONCILED` event                                                          | §7 "Cross-RFC Integration"                     |
 
 **Notes:**
 
-- All error variants are typed (`thiserror`-derived `DomainCoordinatorError` enum); no stringly-typed errors.
+- Per the layer model in CLAUDE.md §Architectural Principles, error types are **split across `octo-network` and per-adapter crates** rather than centralized in a single `DomainCoordinatorError` enum. The table above gives the canonical substrate path per scenario; each crate owns its `thiserror`-derived typed errors (e.g., `DcSlashError`, `PlatformAdapterError`, `HandoverError`, `BindingError`, `PlatformAdminAttestError`). No stringly-typed errors anywhere in the path.
 - Cross-platform slash reason codes use the platform-tagged format: 0x8000 | base_reason (per §9b).
 - "Silent" in this RFC means "no peer-visible protocol response" — all errors emit at least one metric or audit-log event for operator inspection.
-- Slash reason codes 0x0001-0x0009 are inherited from RFC-0855p-b §B; this RFC does not define new slash reasons.
-
+- Slash reason codes 0x0001-0x0009 are inherited from RFC-0855p-b §B; this RFC's own cross-domain slash reason is at `0x0100` per §9c (extension registry).
 
 ## Performance Targets
 
-| Metric | Target |
-|--------|--------|
-| Platform-admin check | <100ms |
-| Platform event → state transition | <500ms |
-| Platform-loss detection | <2 × heartbeat (default 30s) |
-| Handover via admin transfer | <5s |
-| Slash proof propagation | <2s |
+| Metric                            | Target                       |
+| --------------------------------- | ---------------------------- |
+| Platform-admin check              | <100ms                       |
+| Platform event → state transition | <500ms                       |
+| Platform-loss detection           | <2 × heartbeat (default 30s) |
+| Handover via admin transfer       | <5s                          |
+| Slash proof propagation           | <2s                          |
 
 ## Implicit Assumptions Audit
 
 > **The "Nothing should be implied" rule (validation layer):** Every assumption MUST be named, classified, and either validated at runtime, mitigated in code, or accepted with deadline + Future Work.
 
-| # | Assumption | Type | Status | Mitigation / Deadline |
-|---|-----------|------|--------|----------------------|
-| IA-DC-1 | Platform group admin list is authoritative | TRUST | **ACCEPTED RISK** | Platform is the trust root for admin status. Long-term: cross-platform admin attestation (F2, R9-15 renumbering). |
-| IA-DC-2 | Platform does not lie about admin status | TRUST | **ACCEPTED RISK** | If platform is compromised, false admin list can elect wrong DomainCoordinator. Same as IA-DC-1. |
-| IA-DC-3 | Group admin transfer is atomic at the platform | PLATFORM | MITIGATED | WhatsApp/Matrix guarantee atomic admin transfer; verified at adapter layer. |
-| IA-DC-3a (NEW from R3-11) | Platform events are delivered in emission order | PLATFORM | MITIGATED | DOT trusts the platform's event delivery ordering (FIFO per subscription). WhatsApp/Matrix both guarantee ordered delivery. If a platform were to reorder events, the state machine could transition incorrectly — this is a platform-trust assumption. **R4-6 fix — idempotency:** the DomainCoordinator SHOULD treat duplicate events as no-ops (e.g., an `AdminTransfer { old → new }` followed by the same `AdminTransfer { old → new }` is processed once, the second is dropped). This protects against platform-side re-delivery or at-least-once delivery semantics. |
-| IA-DC-4 | Kicked-from-group event is delivered | PLATFORM | MITIGATED | Adapter subscribes; fallback to `adapter_connected = false` detection. |
-| IA-DC-5 | Slash vote (2/3) is meaningful for a small group (≤3 members) | GOVERNANCE | **ACCEPTED RISK** | With 2 members, 2/3 is unreachable. Slash disabled for groups < 4 members; UNBIND is the alternative. |
-| IA-DC-6 | DomainCoordinator's mission-level role is independent of platform-admin role | AUTHORITY | MITIGATED | A DomainCoordinator can be a `MissionParticipant` (voter) in the mission's general elections; the DomainCoordinator role is scoped to the bound domain. |
-| IA-DC-7 | Platform admin ID can be mapped to PeerId | CRYPTO | MITIGATED | Each adapter implements the mapping: (1) **platform-native** format (e.g., WhatsApp: phone number like `+15551234567`) is translated to **canonical 32-byte `participant_id`** by the adapter (per RFC-0850p-c §Appendix A platform-binding registry); (2) `peer_id = BLAKE3(participant_id || mission_id)`. R2-DC-5 fix: previous wording conflated the two-step mapping; this is now explicit. |
-| IA-DC-8 | Mission-level coordinator and DomainCoordinator are separate roles | PROTOCOL | MITIGATED | Yes — Mission Coordinator is per RFC-0855p-b; DomainCoordinator is per this RFC. A node can be both (e.g., a group admin who is also the mission coordinator). |
-| IA-DC-9 | `coordinator_term_id` chain is preserved across handover | PROTOCOL | MITIGATED | Defined in §4 "Platform-Mediated Handover". |
-| IA-DC-10 | Slash reason 0x0007 (banning legitimate member) is detectable | GOVERNANCE | **ACCEPTED RISK** | Requires affected member to initiate slash vote. If the banned member cannot reach the group to vote, the slash is delayed. **F3: cross-domain slash (mission-level coordinator can slash on behalf of a banned member; R9-15 renumbering).** |
-| IA-DC-11 | Platform-loss cooldown (UnboundQuarantined) prevents rapid rebinding | TIME | MITIGATED | Reuses RFC-0850p-c §1 "GroupState State Machine". |
-| IA-DC-12 | Multiple DomainCoordinators on different platforms for the same domain_id is allowed | PROTOCOL | MITIGATED | Per RFC-0850p-c §5 "Multi-Platform Binding Rule", multi-platform rule allows 1 group per platform per domain_id. Each platform has its own DomainCoordinator. |
-| IA-DC-13 (E2E IS-6.3) | Suspect → Active return is bounded to prevent ping-pong | LIFECYCLE | MITIGATED | Specified in §1 "DomainCoordinatorLifecycle" (IS-6.3 fix — Suspect→Active return bounded; 90-epoch Suspect window is the IS-6.2 fix). |
-| IA-DC-14 (E2E IS-6.4) | DomainCoordinator cannot be slashed during the first 30 epochs of Elected | LIFECYCLE | MITIGATED | Specified in §1 "DomainCoordinatorLifecycle" (IS-6.4 fix — Elected → Active latch) |
-| IA-DC-15 (E2E IS-6.2) | Suspect → Inactive slash reason is well-defined | GOVERNANCE | MITIGATED | Slash reason 0x0005 (coordinator misbehavior) for confirmed platform loss (per IS-6.2 fix — 90-epoch Suspect window). |
-| IA-DC-16 (E2E IS-8.4) | Coordinator term is monotonic and never decreases across re-Active | PROTOCOL | MITIGATED | `coordinator_term_id` increments on every Elected; never decrements. Specified in §1 "DomainCoordinatorLifecycle". |
-| IA-DC-17 (E2E IS-5.3) | Slash votes are public and auditable post-resolution | GOVERNANCE | MITIGATED | All slash votes (vote, reason, epoch, voter) MUST be written to the audit log before tally. Specified in §9a "Slash Vote Audit" (E2E IS-5.3 fix) above. |
-| IA-DC-18 (E2E IS-5.8) | Multi-platform cross-slash is well-defined | GOVERNANCE | MITIGATED | Each platform's DomainCoordinator is slashed independently; the slash reasons are platform-tagged. Specified in §9b "Cross-Platform Slash" (E2E IS-5.8 fix) above. |
-| IA-DC-19 (E2E IS-6.5) | DomainCoordinator's state transitions are observable to the mission | PROTOCOL | MITIGATED | Every transition emits a `StateTransitionEvent` envelope (signed by the DomainCoordinator's term key). Specified in §9c "State Transition Observability" (E2E IS-6.5 fix) above. |
+| #                         | Assumption                                                                           | Type       | Status            | Mitigation / Deadline                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------- | ------------------------------------------------------------------------------------ | ---------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| IA-DC-1                   | Platform group admin list is authoritative                                           | TRUST      | **ACCEPTED RISK** | Platform is the trust root for admin status. Long-term: cross-platform admin attestation (F2, R9-15 renumbering).                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| IA-DC-2                   | Platform does not lie about admin status                                             | TRUST      | **ACCEPTED RISK** | If platform is compromised, false admin list can elect wrong DomainCoordinator. Same as IA-DC-1.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| IA-DC-3                   | Group admin transfer is atomic at the platform                                       | PLATFORM   | MITIGATED         | WhatsApp/Matrix guarantee atomic admin transfer; verified at adapter layer.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| IA-DC-3a (NEW from R3-11) | Platform events are delivered in emission order                                      | PLATFORM   | MITIGATED         | DOT trusts the platform's event delivery ordering (FIFO per subscription). WhatsApp/Matrix both guarantee ordered delivery. If a platform were to reorder events, the state machine could transition incorrectly — this is a platform-trust assumption. **R4-6 fix — idempotency:** the DomainCoordinator SHOULD treat duplicate events as no-ops (e.g., an `AdminTransfer { old → new }` followed by the same `AdminTransfer { old → new }` is processed once, the second is dropped). This protects against platform-side re-delivery or at-least-once delivery semantics. |
+| IA-DC-4                   | Kicked-from-group event is delivered                                                 | PLATFORM   | MITIGATED         | Adapter subscribes; fallback to `adapter_connected = false` detection.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| IA-DC-5                   | Slash vote (2/3) is meaningful for a small group (≤3 members)                        | GOVERNANCE | **ACCEPTED RISK** | With 2 members, 2/3 is unreachable. Slash disabled for groups < 4 members; UNBIND is the alternative.                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| IA-DC-6                   | DomainCoordinator's mission-level role is independent of platform-admin role         | AUTHORITY  | MITIGATED         | A DomainCoordinator can be a `MissionParticipant` (voter) in the mission's general elections; the DomainCoordinator role is scoped to the bound domain.                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| IA-DC-7                   | Platform admin ID can be mapped to PeerId                                            | CRYPTO     | MITIGATED         | Each adapter implements the mapping: (1) **platform-native** format (e.g., WhatsApp: phone number like `+15551234567`) is translated to **canonical 32-byte `participant_id`** by the adapter (per RFC-0850p-c §Appendix A platform-binding registry); (2) `peer_id = BLAKE3(participant_id                                                                                                                                                                                                                                                                                  |     | mission_id)`. R2-DC-5 fix: previous wording conflated the two-step mapping; this is now explicit. |
+| IA-DC-8                   | Mission-level coordinator and DomainCoordinator are separate roles                   | PROTOCOL   | MITIGATED         | Yes — Mission Coordinator is per RFC-0855p-b; DomainCoordinator is per this RFC. A node can be both (e.g., a group admin who is also the mission coordinator).                                                                                                                                                                                                                                                                                                                                                                                                               |
+| IA-DC-9                   | `coordinator_term_id` chain is preserved across handover                             | PROTOCOL   | MITIGATED         | Defined in §4 "Platform-Mediated Handover".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| IA-DC-10                  | Slash reason 0x0007 (banning legitimate member) is detectable                        | GOVERNANCE | **ACCEPTED RISK** | Requires affected member to initiate slash vote. If the banned member cannot reach the group to vote, the slash is delayed. **F3: cross-domain slash (mission-level coordinator can slash on behalf of a banned member; R9-15 renumbering).**                                                                                                                                                                                                                                                                                                                                |
+| IA-DC-11                  | Platform-loss cooldown (UnboundQuarantined) prevents rapid rebinding                 | TIME       | MITIGATED         | Reuses RFC-0850p-c §1 "GroupState State Machine".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| IA-DC-12                  | Multiple DomainCoordinators on different platforms for the same domain_id is allowed | PROTOCOL   | MITIGATED         | Per RFC-0850p-c §5 "Multi-Platform Binding Rule", multi-platform rule allows 1 group per platform per domain_id. Each platform has its own DomainCoordinator.                                                                                                                                                                                                                                                                                                                                                                                                                |
+| IA-DC-13 (E2E IS-6.3)     | Suspect → Active return is bounded to prevent ping-pong                              | LIFECYCLE  | MITIGATED         | Specified in §1 "CoordinatorLifecycle" (IS-6.3 fix — Suspect→Active return bounded; 90-epoch Suspect window is the IS-6.2 fix).                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| IA-DC-14 (E2E IS-6.4)     | DomainCoordinator cannot be slashed during the first 30 epochs of Elected            | LIFECYCLE  | MITIGATED         | Specified in §1 "CoordinatorLifecycle" (IS-6.4 fix — Elected → Active latch)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| IA-DC-15 (E2E IS-6.2)     | Suspect → Inactive slash reason is well-defined                                      | GOVERNANCE | MITIGATED         | Slash reason 0x0005 (coordinator misbehavior) for confirmed platform loss (per IS-6.2 fix — 90-epoch Suspect window).                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| IA-DC-16 (E2E IS-8.4)     | Coordinator term is monotonic and never decreases across re-Active                   | PROTOCOL   | MITIGATED         | `coordinator_term_id` increments on every Elected; never decrements. Specified in §1 "CoordinatorLifecycle".                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| IA-DC-17 (E2E IS-5.3)     | Slash votes are public and auditable post-resolution                                 | GOVERNANCE | MITIGATED         | All slash votes (vote, reason, epoch, voter) MUST be written to the audit log before tally. Specified in §9a "Slash Vote Audit" (E2E IS-5.3 fix) above.                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| IA-DC-18 (E2E IS-5.8)     | Multi-platform cross-slash is well-defined                                           | GOVERNANCE | MITIGATED         | Each platform's DomainCoordinator is slashed independently; the slash reasons are platform-tagged. Specified in §9b "Cross-Platform Slash" (E2E IS-5.8 fix) above.                                                                                                                                                                                                                                                                                                                                                                                                           |
+| IA-DC-19 (E2E IS-6.5)     | DomainCoordinator's state transitions are observable to the mission                  | PROTOCOL   | MITIGATED         | Every transition emits a `StateTransitionEvent` envelope (signed by the DomainCoordinator's term key). Specified in §9c "State Transition Observability" (E2E IS-6.5 fix) above.                                                                                                                                                                                                                                                                                                                                                                                             |
 
 **Open assumptions:** None unaddressed. All 19 (R5-1 fix — was 12; IA-DC-3a added in R3; 6 added in E2E round — IA-DC-13 through IA-DC-19) are MITIGATED or ACCEPTED with named Future Work (F1: cross-platform consensus; F2: cross-platform admin attestation [R9-15 renumbering]; F3: cross-domain slash [R9-15 renumbering]).
 
@@ -638,16 +655,16 @@ This section defines typed error and recovery paths for `0855p-c` (DomainCoordin
 
 ## Security Considerations
 
-| Threat | Impact | Mitigation |
-|--------|--------|------------|
-| Platform-admin key compromise | Critical | Slash (reason 0x0006) + REBIND to new platform |
-| Platform lies about admin status | Critical | Trust root; long-term: cross-platform attestation (F2, R9-15 renumbering) |
-| Slash vote failure for small groups | High | Disable slash for < 4 members; UNBIND alternative |
-| Banned member cannot slash | High | Cross-domain slash via mission-level coordinator (F3, R9-15 renumbering) |
-| Platform-loss not detected | High | Adapter connection check + Suspect state |
-| Group admin transfer equivocation | Medium | `coordinator_term_id` chain enforces monotonicity |
-| DomainCoordinator impersonation | Medium | Platform-admin check; BIND signature verify |
-| Multi-platform violation | Medium | RFC-0850p-c §5 "Multi-Platform Binding Rule" |
+| Threat                              | Impact   | Mitigation                                                                |
+| ----------------------------------- | -------- | ------------------------------------------------------------------------- |
+| Platform-admin key compromise       | Critical | Slash (reason 0x0006) + REBIND to new platform                            |
+| Platform lies about admin status    | Critical | Trust root; long-term: cross-platform attestation (F2, R9-15 renumbering) |
+| Slash vote failure for small groups | High     | Disable slash for < 4 members; UNBIND alternative                         |
+| Banned member cannot slash          | High     | Cross-domain slash via mission-level coordinator (F3, R9-15 renumbering)  |
+| Platform-loss not detected          | High     | Adapter connection check + Suspect state                                  |
+| Group admin transfer equivocation   | Medium   | `coordinator_term_id` chain enforces monotonicity                         |
+| DomainCoordinator impersonation     | Medium   | Platform-admin check; BIND signature verify                               |
+| Multi-platform violation            | Medium   | RFC-0850p-c §5 "Multi-Platform Binding Rule"                              |
 
 ## Adversary Analysis
 
@@ -655,18 +672,18 @@ This section defines typed error and recovery paths for `0855p-c` (DomainCoordin
 
 ### Decision Table
 
-| ID | Decision | Adversary | Control | When | Blast | Defense | Severity | Status |
-|----|----------|-----------|---------|------|-------|---------|----------|--------|
-| D-DC-1 | Platform-admin is DomainCoordinator | Platform compromise | Platform server | Any time | All groups on platform | Cross-platform attestation (F2, R9-15 renumbering) | CRITICAL | **ACCEPTED RISK** — F2 |
-| D-DC-2 | Handover via admin transfer | Compromised old admin | Old admin key | At admin transfer | One domain_id | New admin must publish `coordinator_term_id` chain | MEDIUM | MITIGATED |
-| D-DC-3 | Platform-loss detection | Network censor | Network | At disconnect | One DomainCoordinator | Adapter connection check + Suspect | HIGH | MITIGATED |
-| D-DC-4 | Slash vote (2/3) | DomainCoordinator abuse | Coordinator key | Any time | One domain_id | 2/3 quorum; UNBIND for < 4 members | HIGH | MITIGATED |
-| D-DC-5 | Slash reason 0x0006 (key compromise) | Platform-reported attack | Platform key | Rare | One domain_id | REBIND to new coordinator | CRITICAL | MITIGATED |
-| D-DC-6 | Slash reason 0x0007 (banning member) | DomainCoordinator overreach | Coordinator key | Any time | One domain_id | Slash vote; cross-domain slash (F3, R9-15 renumbering) | HIGH | **ACCEPTED RISK** — F3 |
-| D-DC-7 | Slash reason 0x0001 (double-sign, per RFC-0855p-b §B) | Byzantine DomainCoordinator | Coordinator key | Any time | One domain_id | Conflicting envelopes detected; slash | HIGH | MITIGATED |
-| D-DC-8 | Implicit designator (0850p-c §3 "Binding Ceremony — Implicit Designator") races | Founder squatter | Own key | First DOT in group | One domain_id | RFC-0850p-c D-TGB-1 + UNBIND 0x0003 (founder squat) | HIGH | MITIGATED |
-| D-DC-9 | Mission-level coordinator conflict | Two coordinators | Own keys | Mission creation | One mission | Mission governance decides; DomainCoordinator is sub-role | LOW | MITIGATED |
-| D-DC-10 | `coordinator_term_id` chain break | Coordinated handover attack | Two keys | At handover | One domain_id | BLAKE3 chain enforced; chain break = slash | MEDIUM | MITIGATED |
+| ID      | Decision                                                                        | Adversary                   | Control         | When               | Blast                  | Defense                                                   | Severity | Status                 |
+| ------- | ------------------------------------------------------------------------------- | --------------------------- | --------------- | ------------------ | ---------------------- | --------------------------------------------------------- | -------- | ---------------------- |
+| D-DC-1  | Platform-admin is DomainCoordinator                                             | Platform compromise         | Platform server | Any time           | All groups on platform | Cross-platform attestation (F2, R9-15 renumbering)        | CRITICAL | **ACCEPTED RISK** — F2 |
+| D-DC-2  | Handover via admin transfer                                                     | Compromised old admin       | Old admin key   | At admin transfer  | One domain_id          | New admin must publish `coordinator_term_id` chain        | MEDIUM   | MITIGATED              |
+| D-DC-3  | Platform-loss detection                                                         | Network censor              | Network         | At disconnect      | One DomainCoordinator  | Adapter connection check + Suspect                        | HIGH     | MITIGATED              |
+| D-DC-4  | Slash vote (2/3)                                                                | DomainCoordinator abuse     | Coordinator key | Any time           | One domain_id          | 2/3 quorum; UNBIND for < 4 members                        | HIGH     | MITIGATED              |
+| D-DC-5  | Slash reason 0x0006 (key compromise)                                            | Platform-reported attack    | Platform key    | Rare               | One domain_id          | REBIND to new coordinator                                 | CRITICAL | MITIGATED              |
+| D-DC-6  | Slash reason 0x0007 (banning member)                                            | DomainCoordinator overreach | Coordinator key | Any time           | One domain_id          | Slash vote; cross-domain slash (F3, R9-15 renumbering)    | HIGH     | **ACCEPTED RISK** — F3 |
+| D-DC-7  | Slash reason 0x0001 (double-sign, per RFC-0855p-b §B)                           | Byzantine DomainCoordinator | Coordinator key | Any time           | One domain_id          | Conflicting envelopes detected; slash                     | HIGH     | MITIGATED              |
+| D-DC-8  | Implicit designator (0850p-c §3 "Binding Ceremony — Implicit Designator") races | Founder squatter            | Own key         | First DOT in group | One domain_id          | RFC-0850p-c D-TGB-1 + UNBIND 0x0003 (founder squat)       | HIGH     | MITIGATED              |
+| D-DC-9  | Mission-level coordinator conflict                                              | Two coordinators            | Own keys        | Mission creation   | One mission            | Mission governance decides; DomainCoordinator is sub-role | LOW      | MITIGATED              |
+| D-DC-10 | `coordinator_term_id` chain break                                               | Coordinated handover attack | Two keys        | At handover        | One domain_id          | BLAKE3 chain enforced; chain break = slash                | MEDIUM   | MITIGATED              |
 
 ### Multi-Round Review
 
@@ -678,14 +695,12 @@ This section defines typed error and recovery paths for `0855p-c` (DomainCoordin
 
 ### Token Economics Reference
 
-| Activity | Token | Rationale |
-|----------|-------|-----------|
-| BIND issuance | OCTO-O (orchestration) | Per RFC-0850p-c |
-| Slash penalty | OCTO-O (slash stake) | Per RFC-0855p-b |
-| Handover via admin transfer | None (platform-level) | Platform handles admin transfer |
-| Platform-loss detection | None (adapter-level) | Same |
-
-
+| Activity                    | Token                  | Rationale                       |
+| --------------------------- | ---------------------- | ------------------------------- |
+| BIND issuance               | OCTO-O (orchestration) | Per RFC-0850p-c                 |
+| Slash penalty               | OCTO-O (slash stake)   | Per RFC-0855p-b                 |
+| Handover via admin transfer | None (platform-level)  | Platform handles admin transfer |
+| Platform-loss detection     | None (adapter-level)   | Same                            |
 
 Participants MUST satisfy dual-stake requirements: 1,000 OCTO global stake + role-specific stake per `docs/04-tokenomics/token-design.md`. For DomainCoordinator, the role-specific stake is `100 OCTO-O` per term.
 
@@ -711,8 +726,8 @@ Participants MUST satisfy dual-stake requirements: 1,000 OCTO global stake + rol
 
 ### RFC-0855p-b Integration
 
-- `DomainCoordinatorRecord.base = CoordinatorRecord` — full reuse
-- `DomainCoordinatorLifecycle = CoordinatorLifecycle` — same 8 states
+- `CoordinatorRecord` is reused unchanged from RFC-0855p-b (no `DomainCoordinatorRecord` wrapper per layer model — see §2)
+- `CoordinatorLifecycle` is reused unchanged from RFC-0855p-b — same 8 states, platform-mediated transitions only
 - Slash reasons use the canonical mapping from RFC-0855p-b §B (0x0001-0x0009 slash-only; 0x000A-0x000B transport-level per 0850p-c)
 - Election: only `Centralized` governance model uses platform-admin authority; others (DAO, Federated, AI-Assisted, Autonomous) use RFC-0855p-b's election algorithms
 
@@ -733,8 +748,8 @@ Action: Implicit binding ceremony
 Expected: A becomes DomainCoordinator (passes platform-admin check)
 Verify:
   - GroupRegistry state = Bound
-  - DomainCoordinatorRecord.platform_admin_id = A's WhatsApp participant_id
-  - DomainCoordinatorRecord.base.coordinator_id = A's peer_id
+  - WhatsApp adapter-local `platform_admin_id` = A's WhatsApp participant_id
+  - `CoordinatorRecord.coordinator_id` = A's peer_id
 ```
 
 ### TV-2: First-DOT-Sender is NOT Group Admin
@@ -748,7 +763,7 @@ Expected: A self-designates, but adapter detects B is admin
           A's state = Designated → Resigned → Inactive
           B becomes DomainCoordinator
 Verify:
-  - DomainCoordinatorRecord.platform_admin_id = B's WhatsApp participant_id
+  - WhatsApp adapter-local `platform_admin_id` = B's WhatsApp participant_id
   - A is no longer DomainCoordinator
 ```
 
@@ -791,7 +806,7 @@ Expected: A: Active → Demoting → Inactive
 Verify:
   - SlashProof with 4 SlashVote signatures
   - A's stake -= 100 OCTO-O
-  - DomainCoordinatorRecord.platform_admin_id = None (admin status revoked)
+  - WhatsApp adapter-local `platform_admin_id` = None (admin status revoked)
 ```
 
 ### TV-6: Slash Disabled for Small Group (3 members)
@@ -822,20 +837,20 @@ Verify:
 
 ## Alternatives Considered
 
-| Alternative | Pros | Cons | Decision |
-|-------------|------|------|----------|
-| Stake-based election for DomainCoordinator (0855p-b) | Reuses existing machinery | DomainCoordinator should be platform-admin, not highest-stake holder | REJECTED — platform-admin is the natural authority |
-| AI-proposed DomainCoordinator | Flexible | AI doesn't know WhatsApp group admin status | REJECTED — platform is the source of truth |
-| No DomainCoordinator (just any group member can sign) | Simple | No accountability; no slash | REJECTED — accountability is needed |
-| Multi-Platform Coordinator (one person controls all platforms) | Simplifies | Defeats multi-carrier purpose | REJECTED — one DomainCoordinator per platform |
-| DomainCoordinator = Mission Coordinator | Single role | DomainCoordinator is per-domain, Mission Coordinator is per-mission | REJECTED — distinct roles |
+| Alternative                                                    | Pros                      | Cons                                                                 | Decision                                           |
+| -------------------------------------------------------------- | ------------------------- | -------------------------------------------------------------------- | -------------------------------------------------- |
+| Stake-based election for DomainCoordinator (0855p-b)           | Reuses existing machinery | DomainCoordinator should be platform-admin, not highest-stake holder | REJECTED — platform-admin is the natural authority |
+| AI-proposed DomainCoordinator                                  | Flexible                  | AI doesn't know WhatsApp group admin status                          | REJECTED — platform is the source of truth         |
+| No DomainCoordinator (just any group member can sign)          | Simple                    | No accountability; no slash                                          | REJECTED — accountability is needed                |
+| Multi-Platform Coordinator (one person controls all platforms) | Simplifies                | Defeats multi-carrier purpose                                        | REJECTED — one DomainCoordinator per platform      |
+| DomainCoordinator = Mission Coordinator                        | Single role               | DomainCoordinator is per-domain, Mission Coordinator is per-mission  | REJECTED — distinct roles                          |
 
 ## Implementation Phases
 
 ### Phase 1: Type Definitions (Months 1-2)
 
-- `DomainCoordinatorRecord` extending `CoordinatorRecord`
-- `DomainCoordinatorLifecycle` reuses `CoordinatorLifecycle`
+- `CoordinatorRecord` reuse (RFC-0855p-b, no Domain-prefixed wrapper per layer model — see §2)
+- `CoordinatorLifecycle` reuse (RFC-0855p-b, platform-mediated transitions only — see §1)
 - Slash reason codes per RFC-0855p-b §B "Slash Offense Codes" (0x0001-0x0009) and RFC-0850p-c §6 "Unbind Reasons" (0x000A-0x000B)
 - Unit tests for type compatibility
 
@@ -868,14 +883,15 @@ Verify:
 
 ## Key Files to Modify
 
-| File | Action |
-|------|--------|
-| `crates/octo-network/src/mon/domain_coordinator.rs` | New module: `DomainCoordinatorRecord`, `DomainCoordinatorLifecycle` |
-| `crates/octo-adapter-whatsapp/src/adapter.rs` | Add platform-admin query; admin transfer event; KickedFromGroup event |
-| `crates/octo-adapter-matrix/src/lib.rs` | Same pattern (Matrix power levels) |
-| `crates/octo-adapter-telegram/src/lib.rs` | Same pattern (Telegram admin) |
-| `crates/octo-network/src/dot/binding.rs` | Integrate DomainCoordinator authority with BIND envelope |
-| `rfcs/accepted/networking/0855-mission-overlay-networks.md` | Add cross-ref to this RFC for §4.2 "Membership Roles" DomainCoordinator |
+| File                                                        | Action                                                                                                                                                                                                                                           |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `crates/octo-network/src/dot/group_registry.rs`             | Existing `GroupBinding` carries Layer C platform-binding tuple (`mission_id`, `domain_id`, `group_jid`, `platform`, `bound_peer_id`, `bound_at_epoch`) — no DC-specific struct per layer model                                                   |
+| `crates/octo-network/src/dc/`                               | DC operations modules (`slash`, `rejoin`, `discipline`, `sub_admin`, `admin_attest`) — substrate split across this RFC's mission families; canonical coordinator state lives at `octo_coordinator_types::state::CoordinatorRecord` (RFC-0855p-b) |
+| `crates/octo-adapter-whatsapp/src/adapter.rs`               | Add platform-admin query; admin transfer event; KickedFromGroup event                                                                                                                                                                            |
+| `crates/octo-adapter-matrix/src/lib.rs`                     | Same pattern (Matrix power levels)                                                                                                                                                                                                               |
+| `crates/octo-adapter-telegram/src/lib.rs`                   | Same pattern (Telegram admin)                                                                                                                                                                                                                    |
+| `crates/octo-network/src/dot/binding.rs`                    | Integrate DomainCoordinator authority with BIND envelope                                                                                                                                                                                         |
+| `rfcs/accepted/networking/0855-mission-overlay-networks.md` | Add cross-ref to this RFC for §4.2 "Membership Roles" DomainCoordinator                                                                                                                                                                          |
 
 ## Integration Order (NEW from 2026-06-16 batch review)
 
@@ -894,13 +910,13 @@ graph LR
 
 ### Step-by-Step Detail
 
-| Step | RFC | What happens | Output state |
-|------|-----|--------------|--------------|
-| 1 | 0851p-a | New node acquires first peers via Mode A (bootstrap nodes), Mode B (DHT), or Mode C (invite) | `BootstrapClientLifecycle::Done` → `DiscoveryLifecycle::Bootstrap` (RFC-0851 §M-GDP-3) |
-| 2 | 0850p-a | Node joins a physical group (e.g., WhatsApp group) via the adapter | `BotLifecycle::Connected` (RFC-0850p-a §"BotLifecycle") |
-| 3 | 0850p-c | Binding ceremony: first-DOT-sender self-designates as DomainCoordinator, broadcasts BIND, witnesses ack | `GroupState::Bound` (RFC-0850p-c §"GroupState") |
-| 4 | 0855p-b v1.1 | Mission-level coordinator election: founder designates (genesis) or 2/3 vote (replacement) | `CoordinatorLifecycle::Active` (RFC-0855p-b §"CoordinatorLifecycle") |
-| 5 | 0855p-c | DomainCoordinator specialization: platform-admin check, lifecycle integrates with platform events | `DomainCoordinatorRecord` populated; mission can transition to `Active` |
+| Step | RFC          | What happens                                                                                            | Output state                                                                                                               |
+| ---- | ------------ | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| 1    | 0851p-a      | New node acquires first peers via Mode A (bootstrap nodes), Mode B (DHT), or Mode C (invite)            | `BootstrapClientLifecycle::Done` → `DiscoveryLifecycle::Bootstrap` (RFC-0851 §M-GDP-3)                                     |
+| 2    | 0850p-a      | Node joins a physical group (e.g., WhatsApp group) via the adapter                                      | `BotLifecycle::Connected` (RFC-0850p-a §"BotLifecycle")                                                                    |
+| 3    | 0850p-c      | Binding ceremony: first-DOT-sender self-designates as DomainCoordinator, broadcasts BIND, witnesses ack | `GroupState::Bound` (RFC-0850p-c §"GroupState")                                                                            |
+| 4    | 0855p-b v1.1 | Mission-level coordinator election: founder designates (genesis) or 2/3 vote (replacement)              | `CoordinatorLifecycle::Active` (RFC-0855p-b §"CoordinatorLifecycle")                                                       |
+| 5    | 0855p-c      | DomainCoordinator specialization: platform-admin check, lifecycle integrates with platform events       | `GroupBinding::state = Bound` (Layer C) + `CoordinatorRecord.state = Active` (Layer B); mission can transition to `Active` |
 
 ### Ordering Invariants
 
@@ -912,13 +928,13 @@ graph LR
 
 ### Failure Mode Coverage
 
-| Failure point | RFC | Recovery |
-|---------------|-----|----------|
-| Step 1 fails (no peers) | 0851p-a | Fall back A → B → C |
-| Step 2 fails (can't join group) | 0850p-a | Retry; check `BotLifecycle` state |
-| Step 3 fails (binding rejected) | 0850p-c | Check `BIND_ACK`; UNBIND and retry with founder BIND |
-| Step 4 fails (election fails) | 0855p-b v1.1 | Quorum not met; retry next epoch; UNBIND and restart |
-| Step 5 fails (platform-admin check) | 0855p-c | First-DOT-sender was not admin; auto-replace with platform admin |
+| Failure point                       | RFC          | Recovery                                                         |
+| ----------------------------------- | ------------ | ---------------------------------------------------------------- |
+| Step 1 fails (no peers)             | 0851p-a      | Fall back A → B → C                                              |
+| Step 2 fails (can't join group)     | 0850p-a      | Retry; check `BotLifecycle` state                                |
+| Step 3 fails (binding rejected)     | 0850p-c      | Check `BIND_ACK`; UNBIND and retry with founder BIND             |
+| Step 4 fails (election fails)       | 0855p-b v1.1 | Quorum not met; retry next epoch; UNBIND and restart             |
+| Step 5 fails (platform-admin check) | 0855p-c      | First-DOT-sender was not admin; auto-replace with platform admin |
 
 ### Why This Section Exists
 
@@ -933,15 +949,15 @@ Reading any single RFC in isolation, the ordering is implicit. A new implementer
 
 ## Future Work
 
-| ID | Title | Spec | Mission |
-|----|-------|------|---------|
+| ID                                                                   | Title                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Spec                                                | Mission |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- | ------- |
 | **F1 (NEW from 2026-06-16 batch review, BUMPED TO HIGH in R1-DC-5)** | **Cross-platform DomainCoordinator consensus** — when the same `domain_id` is bound to N platforms (per RFC-0850p-c §5 "Multi-Platform Binding Rule"), DomainCoordinators on different platforms must agree on REBIND/UNBIND decisions. Use 2/3 majority of N DomainCoordinators (N=1 = single platform, no consensus needed; N=2 = both must agree; N≥3 = 2/3 majority). Currently the multi-platform case is undefined (each DomainCoordinator acts independently), which can cause **mission fragmentation** (envelopes flow on one platform but not others — partial mission failure). Spec: 2-phase commit per `missions/open/0855p-c-cross-platform-consensus.md` (REBIND_PREPARE/REBIND_COMMIT/REBIND_ABORT). **Severity HIGH; deadline Pre-public-launch.** | `missions/open/0855p-c-cross-platform-consensus.md` |
-| F2 (was F1 original, R9-15 fix — ID collision with new F1) | Cross-platform admin attestation (mitigates D-DC-1). Spec: each DomainCoordinator periodically publishes a `PLATFORM_ADMIN_ATTEST` envelope on the libp2p mesh under `/dot/admin/{domain_id}/{platform}` containing a fresh proof of admin status (e.g., a signed platform-API response). Other DomainCoordinators verify and challenge invalid attestations. **Severity CRITICAL; deadline Pre-public-launch.** | `missions/open/0855p-c-admin-attestation.md` |
-| F3 (was F2) | Cross-domain slash via mission-level coordinator (mitigates D-DC-6). Spec: when a DomainCoordinator misbehaves, the mission-level coordinator (per RFC-0855p-b) can slash the DomainCoordinator; the slash is recorded in the DomainCoordinator's cross-domain reputation. **Severity HIGH; deadline Post-launch.** | `missions/open/0855p-c-cross-domain-slash.md` |
-| F4 (was F3) | Slash for < 4 member groups (alternative to UNBIND). Spec: for groups with < 4 members, slash (demote+cooldown) the misbehaving member instead of UNBIND (which would lose the entire group). Group size determined at BIND time. **Severity MEDIUM; deadline Post-launch.** | `missions/open/0855p-c-slash-small-groups.md` |
-| F5 (was F4) | Multi-admin groups (sub-admins with limited DomainCoordinator authority). Spec: DomainCoordinators can designate sub-admins (e.g., a deputy admin in case the primary is unreachable); sub-admins can sign envelopes but only within a `SUB_ADMIN_AUTHORITY` policy (e.g., cannot REBIND, can sign BIND for new members). **Severity LOW; deadline Future.** | `missions/open/0855p-c-sub-admins.md` |
-| F6 (was F5) | DomainCoordinator reputation (slash history aggregated across domains). Spec: similar to RFC-0855p-b F2 (cross-mission reputation), but per DomainCoordinator and across the domains it manages. **Severity LOW; deadline Future.** | `missions/open/0855p-c-reputation.md` |
-| F7 (was F6) | Platform-loss auto-rejoin (kicked member requests rejoin). Spec: a kicked member (e.g., removed by platform admin) can request rejoin via a `REJOIN_REQUEST` envelope; the DomainCoordinator signs a rejoin ticket if the kick was unauthorized. **Severity LOW; deadline Future.** | `missions/open/0855p-c-auto-rejoin.md` |
+| F2 (was F1 original, R9-15 fix — ID collision with new F1)           | Cross-platform admin attestation (mitigates D-DC-1). Spec: each DomainCoordinator periodically publishes a `PLATFORM_ADMIN_ATTEST` envelope on the libp2p mesh under `/dot/admin/{domain_id}/{platform}` containing a fresh proof of admin status (e.g., a signed platform-API response). Other DomainCoordinators verify and challenge invalid attestations. **Severity CRITICAL; deadline Pre-public-launch.**                                                                                                                                                                                                                                                                                                                                                    | `missions/open/0855p-c-admin-attestation.md`        |
+| F3 (was F2)                                                          | Cross-domain slash via mission-level coordinator (mitigates D-DC-6). Spec: when a DomainCoordinator misbehaves, the mission-level coordinator (per RFC-0855p-b) can slash the DomainCoordinator; the slash is recorded in the DomainCoordinator's cross-domain reputation. **Severity HIGH; deadline Post-launch.**                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `missions/open/0855p-c-cross-domain-slash.md`       |
+| F4 (was F3)                                                          | Slash for < 4 member groups (alternative to UNBIND). Spec: for groups with < 4 members, slash (demote+cooldown) the misbehaving member instead of UNBIND (which would lose the entire group). Group size determined at BIND time. **Severity MEDIUM; deadline Post-launch.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | `missions/open/0855p-c-slash-small-groups.md`       |
+| F5 (was F4)                                                          | Multi-admin groups (sub-admins with limited DomainCoordinator authority). Spec: DomainCoordinators can designate sub-admins (e.g., a deputy admin in case the primary is unreachable); sub-admins can sign envelopes but only within a `SUB_ADMIN_AUTHORITY` policy (e.g., cannot REBIND, can sign BIND for new members). **Severity LOW; deadline Future.**                                                                                                                                                                                                                                                                                                                                                                                                        | `missions/open/0855p-c-sub-admins.md`               |
+| F6 (was F5)                                                          | DomainCoordinator reputation (slash history aggregated across domains). Spec: similar to RFC-0855p-b F2 (cross-mission reputation), but per DomainCoordinator and across the domains it manages. **Severity LOW; deadline Future.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `missions/open/0855p-c-reputation.md`               |
+| F7 (was F6)                                                          | Platform-loss auto-rejoin (kicked member requests rejoin). Spec: a kicked member (e.g., removed by platform admin) can request rejoin via a `REJOIN_REQUEST` envelope; the DomainCoordinator signs a rejoin ticket if the kick was unauthorized. **Severity LOW; deadline Future.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `missions/open/0855p-c-auto-rejoin.md`              |
 
 **Note:** The new F1 (cross-platform consensus) and F2 (formerly F1 original, cross-platform admin attestation) are **separate concerns** — one is about consensus among DomainCoordinators, the other is about platform admin verification. Both are pre-public-launch. ID renumbering done in R9-15 to remove the F1 ID collision; cross-references elsewhere in this RFC have been updated to use the new F-IDs.
 
@@ -959,18 +975,19 @@ The multi-platform rule (one DomainCoordinator per platform per domain_id) is a 
 
 ## Adversarial Review
 
-| Threat | Impact | Mitigation |
-|--------|--------|-----------|
-| Platform admin key compromise | CRITICAL | Cross-platform admin attestation (F2) detects within `MAX_ATTEST_AGE_EPOCHS`; slash via 0x0012 (cross-platform witness collusion; R16 R1 fix — was 0x000F, which conflicted with RFC-0850p-d's `CgGroupSpam` allocation; see `docs/reviews/r16/r16-r1-adversarial-review.md` §2) |
-| Malicious DC signs invalid BIND/REBIND | CRITICAL | Cross-domain slash (F3, §9c `0x0100` `DomainCoordinatorMisbehavior`); cross-domain reputation (F6) |
-| Cross-platform mission fragmentation | HIGH (mission failure) | 2-phase commit (F1) with 2/3 majority; tie-break by lex `domain_id` |
-| Cross-platform witness collusion | MEDIUM | Slash via 0x0012 (R16 R1 fix — was 0x000F, which conflicted with RFC-0850p-d's `CgGroupSpam` allocation; see `docs/reviews/r16/r16-r1-adversarial-review.md` §2); cross-domain reputation (F6) |
-| Primary DC offline (single point of failure) | MEDIUM | Sub-admin (F5) activates after `SUB_ADMIN_ACTIVATION_EPOCHS` |
-| Platform-loss (kicked member) | LOW (operational) | Auto-rejoin (F7) with rate limit |
-| Repeat-offender DC | MEDIUM | Cross-domain reputation (F6) deprioritizes in election |
-| Small-group fragility | MEDIUM | Slash for small groups (F4) preserves the group |
-| DC slash censorship | MEDIUM | Mission-level coordinator (0855p-b) can slash a DC; appeal via governance (0855 §11) |
-| Silent admin revocation | MEDIUM | `ATTEST_CHALLENGE` flow (F2) detects within `CHALLENGE_RESPONSE_EPOCHS` |
+| Threat                                       | Impact                 | Mitigation                                                                                                                                                                                                                                                                       |
+| -------------------------------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Platform admin key compromise                | CRITICAL               | Cross-platform admin attestation (F2) detects within `MAX_ATTEST_AGE_EPOCHS`; slash via 0x0012 (cross-platform witness collusion; R16 R1 fix — was 0x000F, which conflicted with RFC-0850p-d's `CgGroupSpam` allocation; see `docs/reviews/r16/r16-r1-adversarial-review.md` §2) |
+| Malicious DC signs invalid BIND/REBIND       | CRITICAL               | Cross-domain slash (F3, §9c `0x0100` `DomainCoordinatorMisbehavior`); cross-domain reputation (F6)                                                                                                                                                                               |
+| Cross-platform mission fragmentation         | HIGH (mission failure) | 2-phase commit (F1) with 2/3 majority; tie-break by lex `domain_id`                                                                                                                                                                                                              |
+| Cross-platform witness collusion             | MEDIUM                 | Slash via 0x0012 (R16 R1 fix — was 0x000F, which conflicted with RFC-0850p-d's `CgGroupSpam` allocation; see `docs/reviews/r16/r16-r1-adversarial-review.md` §2); cross-domain reputation (F6)                                                                                   |
+| Primary DC offline (single point of failure) | MEDIUM                 | Sub-admin (F5) activates after `SUB_ADMIN_ACTIVATION_EPOCHS`                                                                                                                                                                                                                     |
+| Platform-loss (kicked member)                | LOW (operational)      | Auto-rejoin (F7) with rate limit                                                                                                                                                                                                                                                 |
+| Repeat-offender DC                           | MEDIUM                 | Cross-domain reputation (F6) deprioritizes in election                                                                                                                                                                                                                           |
+| Small-group fragility                        | MEDIUM                 | Slash for small groups (F4) preserves the group                                                                                                                                                                                                                                  |
+| DC slash censorship                          | MEDIUM                 | Mission-level coordinator (0855p-b) can slash a DC; appeal via governance (0855 §11)                                                                                                                                                                                             |
+| Silent admin revocation                      | MEDIUM                 | `ATTEST_CHALLENGE` flow (F2) detects within `CHALLENGE_RESPONSE_EPOCHS`                                                                                                                                                                                                          |
+
 ## Related Use Cases
 
 - **[Social Platform Transport Layer](../../docs/use-cases/social-platform-transport-layer.md)** — The DomainCoordinator is the bridge between DOT (logical overlay) and the physical platform group. The DC's authority comes from being the platform's group admin (per RFC-0850p-c §5 "Multi-Platform Binding Rule").
@@ -995,14 +1012,16 @@ RFC-0855p-c (this RFC): DomainCoordinator Role (specializes for physical platfor
    ▼
 Missions: 0855p-c-{cross-platform-consensus, admin-attestation, cross-domain-slash, ...}
 ```
+
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 0.1.0 | 2026-06-16 | Initial draft — fills RFC-0855p-b F1; specializes `CoordinatorLifecycle` for DomainCoordinator |
-| 0.1.1 | 2026-06-16 | Deferred vs Unspecified Rule compliance (R10-batch): §Future Work table rebuilt with spec column — all 7 items (F1-F7) now have inline spec + mission paths in `missions/open/0855p-c-f{1,2,3,4,5,6,7}-*.md`. |
-| 0.1.2 | 2026-06-17 | R16 R1 fix: (C2) updated "Adversary Analysis" table to use 0x0012 instead of 0x000F (0x000F conflicted with RFC-0850p-d's `CgGroupSpam` allocation); §9b "Cross-Platform Slash" updated with full slash reason code space allocation 0x0001-0x0012. |
-| 0.1.3 | 2026-09-03 | v0.1.3 inline amendment: (a) §9b allocation block updated — added F-7 reservation `0x0013-0x0016`, reserved range `0x0017-0x00FF`, **`0x0100 = DomainCoordinatorMisbehavior` (this RFC §9c; first user-extension-registry slot)**; (b) NEW §9c "Cross-Domain Slash" documents the `0x0100` cross-domain slash allocation with 4 sub-codes (`.01 invalid_bind_envelope`, `.02 failed_attest`, `.03 censored_legit_member`, `.04 signed_malicious_envelope`) + cool-down formula + permanent-ban threshold + appeal recovery + allocation rationale (R5-OOS-4 reassignment from `0x000F` to `0x0100` per `docs/reviews/r16/r16-r5-adversarial-review.md`, since `0x000F` collided with `CgGroupSpam` per RFC-0850p-d and F-7 slots were already taken); (c) §Adversary Analysis "Malicious DC signs invalid BIND/REBIND" row enriched with `§9c` cross-ref for `0x0100`; (d) §9b cross-platform-tagged example extended with `0x8100` for platform-tagged DC misbehavior. Companion substrate change at `crates/octo-network/src/dc/slash.rs` (constant `0x000F → 0x0100`; module doc; 13 unit tests; error variant doc string); companion canonical doc updates at `crates/octo-coordinator-types/src/lib.rs` (doc table + Extension safety note); companion mission YAML rewrite at `missions/archived/completed/0855p-c-cross-domain-slash.md`. Closes R5-OOS-4 finding (originally HIGH, surfaced in `docs/reviews/r16/r16-r5-adversarial-review.md` L23). |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.1.0   | 2026-06-16 | Initial draft — fills RFC-0855p-b F1; specializes `CoordinatorLifecycle` for DomainCoordinator                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 0.1.1   | 2026-06-16 | Deferred vs Unspecified Rule compliance (R10-batch): §Future Work table rebuilt with spec column — all 7 items (F1-F7) now have inline spec + mission paths in `missions/open/0855p-c-f{1,2,3,4,5,6,7}-*.md`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 0.1.2   | 2026-06-17 | R16 R1 fix: (C2) updated "Adversary Analysis" table to use 0x0012 instead of 0x000F (0x000F conflicted with RFC-0850p-d's `CgGroupSpam` allocation); §9b "Cross-Platform Slash" updated with full slash reason code space allocation 0x0001-0x0012.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 0.1.3   | 2026-09-03 | v0.1.3 inline amendment: (a) §9b allocation block updated — added F-7 reservation `0x0013-0x0016`, reserved range `0x0017-0x00FF`, **`0x0100 = DomainCoordinatorMisbehavior` (this RFC §9c; first user-extension-registry slot)**; (b) NEW §9c "Cross-Domain Slash" documents the `0x0100` cross-domain slash allocation with 4 sub-codes (`.01 invalid_bind_envelope`, `.02 failed_attest`, `.03 censored_legit_member`, `.04 signed_malicious_envelope`) + cool-down formula + permanent-ban threshold + appeal recovery + allocation rationale (R5-OOS-4 reassignment from `0x000F` to `0x0100` per `docs/reviews/r16/r16-r5-adversarial-review.md`, since `0x000F` collided with `CgGroupSpam` per RFC-0850p-d and F-7 slots were already taken); (c) §Adversary Analysis "Malicious DC signs invalid BIND/REBIND" row enriched with `§9c` cross-ref for `0x0100`; (d) §9b cross-platform-tagged example extended with `0x8100` for platform-tagged DC misbehavior. Companion substrate change at `crates/octo-network/src/dc/slash.rs` (constant `0x000F → 0x0100`; module doc; 13 unit tests; error variant doc string); companion canonical doc updates at `crates/octo-coordinator-types/src/lib.rs` (doc table + Extension safety note); companion mission YAML rewrite at `missions/archived/completed/0855p-c-cross-domain-slash.md`. Closes R5-OOS-4 finding (originally HIGH, surfaced in `docs/reviews/r16/r16-r5-adversarial-review.md` L23).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 0.1.4   | 2026-09-03 | v0.1.4 inline drift-fix (Doc-vs-Substrate Reconciliation, "do it inplace"): (a) §1 heading renamed `DomainCoordinatorLifecycle` → `CoordinatorLifecycle (RFC-0855p-b reuse, platform-event-driven)` with explicit canonical path `octo_coordinator_types::state::CoordinatorLifecycle`; (b) §2 rewrite — replaces hypothetical `DomainCoordinatorRecord` code block with 3-layer split (Layer B `CoordinatorRecord` reused unchanged from RFC-0855p-b; Layer C `GroupBinding` at `octo_network::dot::group_registry::GroupBinding` carries the (mission_id, domain_id, group_jid, platform) tuple; Layer D per-adapter crates own `platform_admin_id`/`last_platform_check_epoch`/`adapter_connected` as adapter-local state, surfaced as `PlatformEvent` envelopes per §5a); (c) §10 error table re-keyed from fictional `DomainCoordinatorError::*` to actual substrate paths (`octo_network::dot::error::PlatformAdapterError::AdminStatusLost`, `octo_network::dc::slash::DcSlashError::InsufficientQuorum`, `octo_network::dc::slash::DcSlashError::VoteAuditFailed`, `octo_network::dc::admin_attest::PlatformAdminAttestError::SubAdminCapabilityMissing`, `octo_network::dot::handover::HandoverError::TimeoutExpired`, `octo_network::dot::binding::BindingError::GroupDeleted`, `octo_network::dot::error::DotError::SignatureInvalid`, `octo_network::dot::group_registry::GroupBinding::state` mismatch), with layer-model note replacing the `DomainCoordinatorError` enum claim; (d) §Adversary Analysis / IA-DC-13/14/16 / Roles-and-Authorities line 110 / Phase 1 / Integration Order step 5 / TV-1 / TV-2 / TV-5 / "RFC-0855p-b Integration" prose all updated to drop `DomainCoordinatorRecord`/`DomainCoordinatorLifecycle` identifiers and reference substrate paths; (e) Key Files to Modify table row rewritten — `crates/octo-network/src/mon/domain_coordinator.rs` does NOT exist in substrate; replaced with `octo-network/src/dot/group_registry.rs` (existing `GroupBinding`) + `crates/octo-network/src/dc/` split; (f) companion substrate doc-comment fixes at `crates/octo-mesh/src/lib.rs:7` + `crates/octo-mesh/src/trust_level.rs:21/25/38/45` + `crates/octo-mesh/Cargo.toml:7` (all `DomainCoordinatorRecord` references replaced with `GroupBinding` + `CoordinatorRecord` substrate signals). Honors CLAUDE.md §Architectural Principles §"Extension over enumeration" + §"Layer model" + the user's standing directive "doc updates, RFCs and missions, should be in place, not separated amendments". |
 
 ## Related RFCs
 
@@ -1017,12 +1036,12 @@ Missions: 0855p-c-{cross-platform-consensus, admin-attestation, cross-domain-sla
 
 ### A. Platform-Admin Mapping Examples
 
-| Platform | Admin identifier | Mapping to PeerId |
-|----------|------------------|-------------------|
+| Platform | Admin identifier                           | Mapping to PeerId                                  |
+| -------- | ------------------------------------------ | -------------------------------------------------- |
 | WhatsApp | `participant_id` (e.g., `5512345678@c.us`) | `peer_id = BLAKE3(participant_id \|\| mission_id)` |
-| Matrix | `user_id` (e.g., `@alice:matrix.org`) | `peer_id = BLAKE3(user_id \|\| mission_id)` |
-| Telegram | `user_id` (e.g., `123456789`) | `peer_id = BLAKE3(user_id \|\| mission_id)` |
-| Discord | `user_id` (e.g., `123456789012345678`) | `peer_id = BLAKE3(user_id \|\| mission_id)` |
+| Matrix   | `user_id` (e.g., `@alice:matrix.org`)      | `peer_id = BLAKE3(user_id \|\| mission_id)`        |
+| Telegram | `user_id` (e.g., `123456789`)              | `peer_id = BLAKE3(user_id \|\| mission_id)`        |
+| Discord  | `user_id` (e.g., `123456789012345678`)     | `peer_id = BLAKE3(user_id \|\| mission_id)`        |
 
 The mapping is **deterministic** but **mission-scoped**: the same WhatsApp participant has a different `peer_id` in different missions. This prevents cross-mission correlation.
 

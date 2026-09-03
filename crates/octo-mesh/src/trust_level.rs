@@ -18,11 +18,13 @@ use serde::{Deserialize, Serialize};
 /// substrate or CLI enum edits (RFC-0011-f §Rationale "Why TrustLevel
 /// is a typed-discriminator newtype (not a central enum)").
 pub mod trust_level_uuids {
-    /// Peer is trusted (RFC-0855p-c `DomainCoordinatorRecord` present +
-    /// RFC-0871 envelope handshake history successful).
+    /// Peer is trusted (RFC-0855p-c DomainCoordinator active for the
+    /// peer — `GroupBinding::state = Bound` + `CoordinatorRecord.state =
+    /// Active` — plus RFC-0871 envelope handshake history successful).
+    /// No `DomainCoordinatorRecord` wrapper in substrate per RFC-0855p-c §2.
     pub const TRUSTED: &str = "urn:octo:trust-level:00000000-0000-0000-0000-000000000001";
     /// Peer is verified (RFC-0871 envelope handshake history successful
-    /// without RFC-0855p-c DomainCoordinatorRecord).
+    /// without RFC-0855p-c DomainCoordinator presence).
     pub const VERIFIED: &str = "urn:octo:trust-level:00000000-0000-0000-0000-000000000002";
     /// Peer is untrusted (initial state on add — promotion to
     /// `VERIFIED` / `TRUSTED` happens via subsequent substrate signals,
@@ -35,11 +37,12 @@ pub mod trust_level_uuids {
 ///
 /// Per RFC-0011-f §Rationale "Why TrustLevel enum is in the CLI (not
 /// substrate)", the substrate carries the underlying signals (RFC-0855p-c
-/// `DomainCoordinatorRecord` + RFC-0871 envelope handshake history)
-/// separately and the CLI is the canonical place to aggregate them
-/// into an operator-friendly discriminator string. The substrate
-/// exports this newtype so the CLI can pass UUIDs through without
-/// inventing parallel enums.
+/// `GroupBinding` + `CoordinatorRecord` state + RFC-0871 envelope
+/// handshake history) separately and the CLI is the canonical place to
+/// aggregate them into an operator-friendly discriminator string. The
+/// substrate exports this newtype so the CLI can pass UUIDs through
+/// without inventing parallel enums. (RFC-0855p-c §2: no
+/// `DomainCoordinatorRecord` wrapper in substrate.)
 ///
 /// **Wave 4.5 finding 9 (Lens-4):** `Hash` was dropped from the
 /// derive list — the derive is redundant noise for a `String`

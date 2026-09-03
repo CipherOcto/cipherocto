@@ -4,7 +4,10 @@
 //! peer table (`$OCTO_HOME/mesh/peers.toml`, 0700 perms, atomic write +
 //! fsync + rename) and the typed-discriminator `TrustLevel` / `EndpointUri`
 //! types the CLI projects onto RFC-0871 envelope history + RFC-0855p-c
-//! `DomainCoordinatorRecord` signals.
+//! DomainCoordinator signals (`GroupBinding::state = Bound` +
+//! `CoordinatorRecord.state = Active` — no `DomainCoordinatorRecord`
+//! wrapper exists in substrate per RFC-0855p-c §2 "DomainCoordinator
+//! State and Binding (Layered Split)").
 //!
 //! `TrustLevel` is a typed-discriminator `String` newtype per
 //! [[cipherocto-design-principles]] "Extension over enumeration (no

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "CipherOcto mesh peer-table substrate — Layer C per RFC-0011-f. Owns the local peer table (peer list / add / remove) and the typed-discriminator TrustLevel / EndpointUri envelopes the CLI projects onto RFC-0871 envelope history + RFC-0855p-c DomainCoordinatorRecord."
+description = "CipherOcto mesh peer-table substrate — Layer C per RFC-0011-f. Owns the local peer table (peer list / add / remove) and the typed-discriminator TrustLevel / EndpointUri envelopes the CLI projects onto RFC-0871 envelope history + RFC-0855p-c DomainCoordinator signals (GroupBinding + CoordinatorRecord; no DomainCoordinatorRecord wrapper in substrate per RFC-0855p-c §2)."
 
 [lib]
 name = "octo_mesh"

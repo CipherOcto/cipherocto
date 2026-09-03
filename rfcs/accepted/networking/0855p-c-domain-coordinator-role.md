@@ -224,11 +224,11 @@ struct GroupBinding {
 
 **Layer D — adapter-local platform state** (per `crates/octo-adapter-{whatsapp,matrix,telegram}/`):
 
-| Field                       | Owner                                     | Surface to mission                             |
-| --------------------------- | ----------------------------------------- | ---------------------------------------------- |
-| `platform_admin_id`         | adapter (e.g., WhatsApp `participant_id`) | `PlatformEvent::AdminTransfer` envelope (§5a)  |
-| `last_platform_check_epoch` | adapter cache                             | implicit; refreshed on each platform event     |
-| `adapter_connected`         | adapter transport                         | `PlatformEvent::AdapterDown/Up` envelope (§5a) |
+| Field                       | Owner                                                                                                                      | Surface to mission                             |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| `platform_admin_id`         | adapter (canonical 32-byte `participant_id` per RFC-0850p-c §Appendix A; adapter-native format mapped at adapter boundary) | `PlatformEvent::AdminTransfer` envelope (§5a)  |
+| `last_platform_check_epoch` | adapter cache                                                                                                              | implicit; refreshed on each platform event     |
+| `adapter_connected`         | adapter transport                                                                                                          | `PlatformEvent::AdapterDown/Up` envelope (§5a) |
 
 These three fields are **adapter-local state**, not mission-visible record fields. They surface to the mission as `PlatformEvent` envelopes (§5a "PlatformLoss Envelope (R1-DC-3 fix)") which the DomainCoordinator translates into `CoordinatorLifecycle` transitions per §1 above. This split keeps platform-specific schemas out of the canonical Layer B coordinator record and lets each adapter evolve its local cache without RFC amendment.
 
@@ -748,7 +748,7 @@ Action: Implicit binding ceremony
 Expected: A becomes DomainCoordinator (passes platform-admin check)
 Verify:
   - GroupRegistry state = Bound
-  - WhatsApp adapter-local `platform_admin_id` = A's WhatsApp participant_id
+  - adapter-local `platform_admin_id` (canonical `participant_id` per RFC-0850p-c §Appendix A) = A's WhatsApp `participant_id`
   - `CoordinatorRecord.coordinator_id` = A's peer_id
 ```
 
@@ -763,7 +763,7 @@ Expected: A self-designates, but adapter detects B is admin
           A's state = Designated → Resigned → Inactive
           B becomes DomainCoordinator
 Verify:
-  - WhatsApp adapter-local `platform_admin_id` = B's WhatsApp participant_id
+  - adapter-local `platform_admin_id` = B's WhatsApp `participant_id`
   - A is no longer DomainCoordinator
 ```
 
@@ -806,7 +806,7 @@ Expected: A: Active → Demoting → Inactive
 Verify:
   - SlashProof with 4 SlashVote signatures
   - A's stake -= 100 OCTO-O
-  - WhatsApp adapter-local `platform_admin_id` = None (admin status revoked)
+  - adapter-local `platform_admin_id` = None (admin status revoked)
 ```
 
 ### TV-6: Slash Disabled for Small Group (3 members)

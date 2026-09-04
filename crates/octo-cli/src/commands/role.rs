@@ -260,6 +260,11 @@ fn select_role(
 
 /// Parse 64-char lowercase hex string into a 32-byte array. Used by
 /// `--mission-id` per M10 (RFC-0011-d §7.4 + RFC-0855p-e).
+///
+/// Canonical lowercase alphabet per RFC-0010 §OctoID Codec; matches
+/// `octo_cap_macaroon::signer::did_from_pubkey` output. Uppercase hex
+/// is rejected (fails closed) — see `hex_nibble` below for the
+/// shared rationale.
 fn parse_hash32_hex(s: &str) -> Result<[u8; 32], String> {
     if s.len() != 64 {
         return Err(format!(
@@ -288,6 +293,9 @@ fn parse_hash32_hex(s: &str) -> Result<[u8; 32], String> {
     Ok(out)
 }
 
+/// Lowercase hex nibble. Alphabet matches
+/// `octo_cap_macaroon::signer::hex_nibble` (lowercase-only canonical
+/// form per RFC-0010 §OctoID Codec). Uppercase rejected to fail closed.
 fn hex_nibble(b: u8) -> Option<u8> {
     match b {
         b'0'..=b'9' => Some(b - b'0'),

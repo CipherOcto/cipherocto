@@ -120,11 +120,16 @@ pub fn pubkey_from_did(did: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
+/// Parse one lowercase hex digit. Canonical alphabet matches
+/// `did_from_pubkey` output (lowercase per RFC-0010 §OctoID Codec).
+///
+/// Uppercase hex is intentionally rejected (fails closed) to prevent
+/// ambiguous canonical forms from leaking into substrate — the same
+/// rationale as `crates/octo-cli/src/commands/role.rs::parse_hash32_hex`.
 fn hex_nibble(b: u8) -> Option<u8> {
     match b {
         b'0'..=b'9' => Some(b - b'0'),
         b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
         _ => None,
     }
 }
@@ -371,5 +376,45 @@ mod tests {
     fn signer_error_display_malformed_variant() {
         let err = CapabilitySignerError::Malformed("invalid curve point".into());
         assert_eq!(err.to_string(), "malformed signature: invalid curve point");
+    }
+
+    // --- pubkey_from_did tests (Phase 1 helper per RFC-0011-d M10) ---
+    //
+    // `pubkey_from_did` is the inverse of `did_from_pubkey` and the
+    // canonical Phase 1 derivation path for operator DIDs back to
+    // 32-byte Ed25519 public keys. Production swaps in the RFC-0010
+    // §Canonical OctoID Codec once `octo-ident` lands; until then,
+    // these tests pin the lowercase-only canonical form (uppercase
+    // hex is rejected to fail closed per RFC-0010 §OctoID Codec).
+
+    #[test]
+    fn pubkey_from_did_round_trip_matches_did_from_pubkey() {
+        let pk = [0x42u8; 32];
+        let did = did_from_pubkey(&pk);
+        let back = pubkey_from_did(&did).expect("canonical form parses");
+        assert_eq!(back, pk);
+    }
+
+    #[test]
+    fn pubkey_from_did_rejects_uppercase_hex() {
+        let pk = [0xABu8; 32];
+        let did = did_from_pubkey(&pk);
+        // did_from_pubkey emits lowercase, but a hand-crafted uppercase
+        // DID must fail closed.
+        let upper: String = did.replace('b', "B");
+        assert!(pubkey_from_did(&upper).is_none());
+    }
+
+    #[test]
+    fn pubkey_from_did_rejects_wrong_prefix() {
+        assert!(pubkey_from_did("did:other:0xab").is_none());
+        assert!(pubkey_from_did("not-a-did").is_none());
+    }
+
+    #[test]
+    fn pubkey_from_did_rejects_wrong_length() {
+        let short = format!("did:octo:0x{}", "ab".repeat(31));
+        assert_eq!(short.len(), "did:octo:0x".len() + 62);
+        assert!(pubkey_from_did(&short).is_none());
     }
 }

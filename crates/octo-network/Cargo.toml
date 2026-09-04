@@ -42,6 +42,13 @@ unicode-normalization = { version = "0.1", optional = true }
 # HandoverReasonTypeId canonical home). octo-network re-imports;
 # no upward dependency; no duplicate definitions.
 octo-coordinator-types = { path = "../octo-coordinator-types" }
+# Mission 0011-d M11 (RFC-0855p-c + RFC-0011-d v1.7.1 §7.4):
+# `pubkey_from_did` for canonical did:octo:0x<hex> → 32-byte Ed25519
+# pubkey derivation. Used by `bind_domain_coordinator` to extract the
+# operator's pubkey from `operator_did` without round-tripping through
+# the full octo-ident codec (Phase 1 form; production swaps in
+# octo-ident::WireDid round-trip).
+octo-cap-macaroon = { path = "../octo-cap-macaroon" }
 
 [dev-dependencies]
 serde_json = "1.0"

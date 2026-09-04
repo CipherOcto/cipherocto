@@ -27,7 +27,10 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub use error::RoleError;
 pub use list_show::{list, show};
-pub use select::{default_store, select, select_with_chain_id, BindingStore};
+pub use select::{
+    build_handover_request, default_chain_id, default_store, select, select_coordinator,
+    select_domain_coordinator, select_with_chain_id, BindingStore,
+};
 pub use types::{
     ChainId, RoleBinding, RoleFilter, RoleKindUuid, RoleRecord, RoleSummary, SlashingRule,
 };

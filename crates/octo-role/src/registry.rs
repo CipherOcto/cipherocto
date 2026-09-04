@@ -86,6 +86,28 @@ fn base_records() -> Vec<RoleRecord> {
             None, // OCTO-only role
             None, // No minimum OCTO stake
         ),
+        // M10 (RFC-0011-d §7.4 + RFC-0855p-b/c/e) coordinator roles.
+        // Governance-class, OCTO-only (no role token); operator MUST stake
+        // OCTO alone. Mapped to canonical `CoordinatorRole` variants in
+        // `octo_role::select::coordinator_role_for_role_id`.
+        role_summary(
+            "domain-coordinator",
+            "governance",
+            None,
+            Some(1_000_000_000), // 1000 OCTO
+        ),
+        role_summary(
+            "mission-coordinator",
+            "governance",
+            None,
+            Some(2_000_000_000), // 2000 OCTO
+        ),
+        role_summary(
+            "witness-coordinator",
+            "governance",
+            None,
+            Some(500_000_000), // 500 OCTO
+        ),
     ];
 
     base.into_iter()
@@ -121,6 +143,23 @@ fn default_slashing_rules(slug: &str) -> Vec<SlashingRule> {
             penalty_pct_micro: 100_000, // 10%
             escalation_multiplier_micro: 2_000_000,
         }],
+        // M10 coordinator roles (RFC-0855p-b/c/e): handover_timeout +
+        // double_sign (coordinators MUST NOT sign conflicting HORQ envelopes).
+        "domain-coordinator" | "mission-coordinator" | "witness-coordinator" => vec![
+            SlashingRule {
+                reason_code: "handover_timeout".into(),
+                description: "Failed to complete coordinator handover within RFC-0855p-e SLA."
+                    .into(),
+                penalty_pct_micro: 100_000,
+                escalation_multiplier_micro: 2_000_000,
+            },
+            SlashingRule {
+                reason_code: "double_sign".into(),
+                description: "Signed two conflicting HORQ envelopes.".into(),
+                penalty_pct_micro: 1_000_000,
+                escalation_multiplier_micro: 1_000_000,
+            },
+        ],
         "recorder" | "wallet" => vec![SlashingRule {
             reason_code: "tamper_evidence".into(),
             description: "Produced audit/wallet state inconsistent with substrate truth.".into(),
@@ -140,6 +179,12 @@ fn default_allowed_actions(slug: &str) -> Vec<String> {
         "orchestrator" => vec!["coordinate_mission".into(), "hand_over".into()],
         "recorder" => vec!["emit_audit".into(), "witness_event".into()],
         "wallet" => vec!["manage_identity".into(), "sign_envelope".into()],
+        // M10 coordinator roles (RFC-0011-d §7.4 + RFC-0855p-b/c/e):
+        // emit_horq is the load-bearing action (HandoverRequestEnvelope
+        // emission per RFC-0855p-e); per-role variant reflects role scope.
+        "domain-coordinator" => vec!["emit_horq".into(), "admin_attest".into()],
+        "mission-coordinator" => vec!["emit_horq".into(), "finalize_term".into()],
+        "witness-coordinator" => vec!["emit_horq".into(), "verify_horq".into()],
         _ => Vec::new(),
     }
 }
@@ -154,13 +199,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn base_registry_has_7_roles() {
+    fn base_registry_has_10_roles() {
+        // RFC-0011-d §7.5: 7 base roles + M10 (RFC-0011-d §7.4 +
+        // RFC-0855p-b/c/e) coordinator roles = 10 total.
         let roles = all_roles();
-        assert_eq!(roles.len(), 7);
+        assert_eq!(roles.len(), 10);
         let names: Vec<_> = roles.iter().map(|r| r.summary.name.as_str()).collect();
         assert!(names.contains(&"builder"));
         assert!(names.contains(&"wallet"));
         assert!(names.contains(&"recorder"));
+        assert!(names.contains(&"domain-coordinator"));
+        assert!(names.contains(&"mission-coordinator"));
+        assert!(names.contains(&"witness-coordinator"));
     }
 
     #[test]
@@ -183,8 +233,8 @@ mod tests {
         uuids.dedup();
         assert_eq!(
             uuids.len(),
-            7,
-            "all 7 role slugs must produce distinct UUIDs"
+            10,
+            "all 10 role slugs must produce distinct UUIDs"
         );
     }
 }

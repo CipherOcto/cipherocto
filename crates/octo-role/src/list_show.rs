@@ -39,7 +39,9 @@ mod tests {
     #[test]
     fn tv_rl_1_list_all() {
         let summaries = list(&RoleFilter::default());
-        assert_eq!(summaries.len(), 7);
+        // 7 base roles (RFC-0011-d §7.5) + 3 coordinator roles (M10
+        // RFC-0011-d §7.4 + RFC-0855p-b/c/e) = 10 total.
+        assert_eq!(summaries.len(), 10);
     }
 
     #[test]

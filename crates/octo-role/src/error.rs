@@ -57,6 +57,16 @@ pub enum RoleError {
         /// Why the signer rejected the envelope.
         reason: String,
     },
+
+    /// `select_domain_coordinator` rejected by the RFC-0855p-c §5a group
+    /// binding ceremony (stale platform admin proof, invalid state
+    /// transition, signature mismatch). The underlying
+    /// `BindingError` reason is preserved verbatim for CLI diagnostics.
+    #[error("group binding rejected: {reason}")]
+    GroupBindingRejected {
+        /// Why `bind_domain_coordinator` rejected the binding.
+        reason: String,
+    },
 }
 
 impl RoleError {
@@ -73,6 +83,13 @@ impl RoleError {
             Self::RoleNotSelectable { .. } => true,
             Self::SignerMismatch { .. } => false,
             Self::SigningFailed { .. } => false,
+            // Group binding rejection is recoverable — operator can
+            // re-attempt with a fresh `PlatformAdminProof`. The role
+            // binding persists in Phase 1 (last-writer-wins); production
+            // wraps the ceremony in a single Stoolap `BEGIN IMMEDIATE`
+            // per RFC-0011-d §7.6 so the role binding only commits on
+            // success.
+            Self::GroupBindingRejected { .. } => true,
         }
     }
 }
@@ -82,10 +99,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn role_error_5_variants_only() {
+    fn role_error_6_variants_only() {
         // Per RFC-0011-d §Mission Decomposition M7 row: 4 CLI variants
         // + R12 `SigningFailed` (covers CapabilitySignerError propagation
-        // from `octo_cap_macaroon`).
+        // from `octo_cap_macaroon`) + M10 `GroupBindingRejected`
+        // (covers RFC-0855p-c §5a `bind_domain_coordinator` rejection).
         let all: Vec<RoleError> = vec![
             RoleError::RoleNotFound {
                 role_id: "x".into(),
@@ -105,8 +123,11 @@ mod tests {
             RoleError::SigningFailed {
                 reason: "hsm timeout".into(),
             },
+            RoleError::GroupBindingRejected {
+                reason: "PlatformAdminProof stale".into(),
+            },
         ];
-        assert_eq!(all.len(), 5);
+        assert_eq!(all.len(), 6);
     }
 
     #[test]

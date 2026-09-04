@@ -33,8 +33,9 @@ pub mod slash_bridge;
 pub mod sub_admin;
 
 pub use admin_attest::{
-    attest_topic, AttestChallenge, PlatformAdminAttest, PlatformAdminAttestError,
-    ATTEST_PERIOD_EPOCHS, CHALLENGE_RESPONSE_EPOCHS, MAX_ATTEST_AGE_EPOCHS,
+    attest_topic, bind_domain_coordinator, verify_platform_admin_proof, AttestChallenge,
+    PlatformAdminAttest, PlatformAdminAttestError, PlatformAdminProof, ATTEST_PERIOD_EPOCHS,
+    CHALLENGE_RESPONSE_EPOCHS, MAX_ATTEST_AGE_EPOCHS,
 };
 pub use consensus::{
     consensus_topic, ConsensusEnvelope, ConsensusOutcome, ConsensusState, ConsensusVote,

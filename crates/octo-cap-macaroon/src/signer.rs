@@ -93,6 +93,42 @@ pub fn did_from_pubkey(pk: &[u8; 32]) -> String {
     s
 }
 
+/// Inverse of [`did_from_pubkey`]: parse a canonical
+/// `did:octo:0x<64-hex>` DID string back to its 32-byte Ed25519 public key.
+///
+/// **Phase 1 form only:** matches `did_from_pubkey`. Production swaps
+/// in the RFC-0010 §Canonical OctoID Codec once `octo-ident` lands
+/// the typed form.
+///
+/// **Returns `None`** if the input is not a canonical Phase 1 form
+/// (wrong prefix, wrong hex length, non-hex characters). This fail-closed
+/// behavior prevents ambiguous DIDs from being accepted as operator
+/// identities.
+#[must_use]
+pub fn pubkey_from_did(did: &str) -> Option<[u8; 32]> {
+    const PREFIX: &str = "did:octo:0x";
+    let rest = did.strip_prefix(PREFIX)?;
+    if rest.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, chunk) in rest.as_bytes().chunks(2).enumerate() {
+        let hi = hex_nibble(chunk[0])?;
+        let lo = hex_nibble(chunk[1])?;
+        out[i] = (hi << 4) | lo;
+    }
+    Some(out)
+}
+
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
 /// Blanket impl for `Box<dyn CapabilitySigner>` — enables `Arc<dyn CapabilitySigner>`
 /// to be passed through generic helpers without re-wrapping.
 impl CapabilitySigner for Box<dyn CapabilitySigner + '_> {

@@ -2,6 +2,11 @@
 
 Landed-mission status cards trimmed from index 2026-08-16 (historical records; git commit history preserves them). Active cards below.
 
+## Session resume cards (read FIRST on /clear)
+
+- [RFC-0011-d M10 + M11 substrate impl CLOSED 2026-09-03](rfc-0011-d-m10-m11-substrate-impl-2026-09-03.md) — `next` HEAD. Drift-fix v1.7.1 (fictional `mon::domain_coordinator` removed; typed `PlatformAdminProof` envelope; canonical substrate home `crates/octo-network/src/dc/admin_attest.rs`) + M11 `bind_domain_coordinator` + M10 `select_coordinator` + `select_domain_coordinator` + `build_handover_request` + `pubkey_from_did` helper + 3 coordinator roles (`domain-coordinator`/`mission-coordinator`/`witness-coordinator`) + 6th `RoleError::GroupBindingRejected` variant + CLI flags `--coordinator`/`--domain-coordinator`/`--mission-id`/`--current-epoch`/`--group-jid`/`--platform`/`--platform-admin-proof` + `OctoCliError::GroupBindingRejected` (exit 36). 33+7+17 = 57 lib tests pass. Workspace clippy clean. Audit `docs/audits/2026-09-03-rfc-0011-d-m10-m11-substrate-truth-reconciliation.md` CLOSED. User owns push+PR+`git mv` M10/M11 YAMLs to `archived/completed/`. NO PUSH.
+- [RFC-0855p-c drift-fix CLOSED 2026-09-03](rfc-0855p-c-drift-fix-2026-09-03.md) — `next` `205f1434`. 4 files / +244 / -219. Drift A/B/C closed INLINE: §1 heading rename `DomainCoordinatorLifecycle` → `CoordinatorLifecycle (RFC-0855p-b reuse, platform-event-driven)`; §2 rewrite to 3-layer split (Layer B `CoordinatorRecord` reused + Layer C `GroupBinding` at `octo_network::dot::group_registry` + Layer D per-adapter local state via `PlatformEvent` envelopes); §10 error table re-keyed from fictional `DomainCoordinatorError::*` to actual substrate paths (`DcSlashError`, `PlatformAdapterError`, `HandoverError`, `BindingError`, `PlatformAdminAttestError`, `DotError::SignatureInvalid`); substrate doc-comments at `octo-mesh/src/{lib,trust_level}.rs` + `Cargo.toml` cleared. RFC VH v0.1.4 + audit scratchpad `docs/audits/2026-09-03-0855p-c-4drift-mission-hard-audit.md`. Gates: fmt+clippy+prettier+cite-guard clean; octo-mesh 11/11. Same style as 0x0100 fix `8e788920`. User owns push+PR. NO PUSH.
+
 ## Mission status
 
 - [0870k transport request/response](mission-0870k-transport-request-response-status.md) — Layer D request/response substrate CLAIMED 2026-08-12. Unblocks 6 DEFERRED 0871b ACs.

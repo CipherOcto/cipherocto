@@ -115,6 +115,16 @@ pub enum OctoCliError {
         /// Operator DID supplied on the command line.
         operator_did: String,
     },
+    /// RFC-0855p-c §5a group binding ceremony rejected the
+    /// domain-coordinator binding (stale `PlatformAdminProof`, invalid
+    /// state transition, signature mismatch). Maps from
+    /// `octo_role::RoleError::GroupBindingRejected`. Recoverable —
+    /// re-fetch the proof and retry.
+    #[error("group binding rejected: {reason}")]
+    GroupBindingRejected {
+        /// Substrate reason string (RFC-0855p-c `BindingError`).
+        reason: String,
+    },
     /// Secret was offered on stdin without `--allow-stdin-secret`.
     #[error("secret material on pipe; pass --allow-stdin-secret to override")]
     StdinSecretRefused,
@@ -342,6 +352,7 @@ impl OctoCliError {
             // 34 reserved per F-16 (was RoleBindingConflict; intentionally
             // skipped — last-writer-wins per RFC-0011-d §Security 2).
             Self::SignerMismatch { .. } => 35,
+            Self::GroupBindingRejected { .. } => 36,
             // 28 shared with `InvalidTtlHops` (RFC-0011-f §Exit Codes;
             // follow-on `forward` mission claims the same slot).
             Self::InvalidEndpointScheme { .. } => 28,
@@ -406,6 +417,9 @@ impl OctoCliError {
             Self::RoleNotSelectable { .. } => "verify the role slug + operator permissions".to_string(),
             Self::SignerMismatch { .. } => {
                 "the active signer does not match the supplied operator DID".to_string()
+            }
+            Self::GroupBindingRejected { .. } => {
+                "re-fetch the platform admin proof and retry the role binding".to_string()
             }
             Self::ReputationNotFound { .. } => {
                 "the subject has no aggregate for this role yet; attestations land first".to_string()

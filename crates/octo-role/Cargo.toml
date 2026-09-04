@@ -19,6 +19,14 @@ octo-ident = { path = "../octo-ident", version = "0.1.0" }
 octo-cap-macaroon = { path = "../octo-cap-macaroon", version = "0.1.0" }
 # Layer B wallet substrate (next_nonce_counter per RFC-0009)
 octo-wallet = { path = "../octo-wallet", version = "0.1.0" }
+# Layer B coordinator handover substrate (RFC-0855p-e):
+# `HandoverRequestEnvelope` is emitted by M10 `select_coordinator` /
+# `select_domain_coordinator` as the canonical post-binding envelope per
+# RFC-0011-d §7.4. Also re-exports `bind_domain_coordinator` from
+# `octo_network::dc::admin_attest` (M11, RFC-0855p-c §5a + RFC-0011-d v1.7.1
+# §7.4 Substrate `[ADD]`). Layer direction: octo-role (B) → octo-network (B
+# coordinator substrate); no upward dependency.
+octo-network = { path = "../octo-network", version = "0.2.0" }
 # Layer D adapter — Stoolap BEGIN IMMEDIATE tx primitive (RFC-0010)
 # Per [[feedback_stoolap_persistence]] — CipherOcto fork, never raw SQLite.
 stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }

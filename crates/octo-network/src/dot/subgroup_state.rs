@@ -1212,7 +1212,6 @@ mod tests {
             _ => {
                 // Future unknown variant — substrate recipient fails closed
                 // (caller checks before pattern match in production code).
-                assert!(true);
                 SubGroupState::Dissolved
             }
         };

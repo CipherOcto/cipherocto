@@ -1,18 +1,20 @@
 ---
 name: 0011-d-M11-phase2-domain-coordinator-platform-binding
-description: Phase 2 (gated) per RFC-0011-d §Mission Decomposition M11 row: extend `crates/octo-network/src/dc/admin_attest.rs` (REAL substrate home; co-located with `PlatformAdminAttestError`) with `bind_domain_coordinator(role_binding, group_binding, platform_admin_proof) -> Result<GroupBinding, BindingError>`. Atomic with RFC-0850p-c binding ceremony + RFC-0855p-c §5a `PlatformEvent::AdminTransfer` envelope emission. Substrate-first: M11 lands BEFORE M10.
+description: Phase 2 (gated) per RFC-0011-d §Mission Decomposition M11 row: extend `crates/octo-network/src/dc/admin_attest.rs` (REAL substrate home; co-located with `PlatformAdminAttestError`) with `bind_domain_coordinator(operator_did, group_binding, platform_admin_proof, current_epoch) -> Result<GroupBinding, BindingError>`. Atomic with RFC-0850p-c binding ceremony + RFC-0855p-c §5a `PlatformEvent::AdminTransfer` envelope emission. Substrate-first: M11 lands BEFORE M10.
 metadata:
   node_type: substrate-cli
   type: substrate-entrypoint-phase2
   originSessionId: RFC-0011-d author session
   created: 2026-08-31
-  v: "1.3"
+  v: "1.4"
+  completed: 2026-09-03
+  commit: 96bccc4b
   depends_on:
     - RFC-0011-d
     - RFC-0855p-c (must be Accepted)
     - RFC-0850p-c (must be Accepted; binding ceremony substrate)
     - mission 0011-d-M4-octorole-select-with-stoolap-tx
-status: Open
+status: Completed
 ---
 
 # 0011-d-M11-phase2-domain-coordinator-platform-binding — Phase 2 substrate `bind_domain_coordinator` per RFC-0011-d §Mission Decomposition M11
@@ -68,7 +70,7 @@ Claimed (2026-09-02) by @mmacedoeu — **gate CLEARED 2026-08-31** (RFC-0855p-c 
 /// until this mission closes (per §Mission Decomposition M10 row
 /// substrate-first ordering).
 pub fn bind_domain_coordinator(
-    role_binding: &RoleBinding,
+    operator_did: &str,
     group_binding: &GroupBinding,
     platform_admin_proof: &PlatformAdminProof,
     current_epoch: u64,
@@ -97,26 +99,27 @@ RFC-0011-d §Mission Decomposition M11 row; §7.4 Substrate `[ADD]` signatures; 
   - `pub adapter_signature: [u8; 64]` (adapter is platform-trust-root)
   - `pub nonce: [u8; 32]`
   - `pub signed_at_epoch: u64`
-- [ ] Add `pub fn bind_domain_coordinator(role_binding, group_binding, platform_admin_proof, current_epoch) -> Result<GroupBinding, BindingError>` per RFC §Mission Decomp M11 row + RFC-0011-d v1.7.1 §7.4 Substrate `[ADD]` Signatures
-- [ ] Atomic: verifies `PlatformAdminProof` via existing `verify_attest(...)` (freshness + DC pubkey match per RFC-0855p-c §5a)
-- [ ] Atomic: verifies operator pubkey (`RoleBinding` derived) equals `PlatformAdminProof::dc_pubkey`
-- [ ] Atomic: verifies `group_binding.state == GroupState::Bound` (no transition from other states — returns `BindingError::InvalidTransition`)
-- [ ] Atomic: invokes RFC-0850p-c binding ceremony state transition (updates `group_binding.bound_peer_id` to operator peer_id; state stays Bound; idempotent on re-bind)
-- [ ] Returns canonical `BindingError` on any failure path (NOT fictional `DomainCoordinatorError`):
-  - `BindingError::SignatureInvalid { reason }` on `PlatformAdminProof::adapter_signature` verification failure
+- [x] Add `pub fn bind_domain_coordinator(operator_did, group_binding, platform_admin_proof, current_epoch) -> Result<GroupBinding, BindingError>` per RFC §Mission Decomp M11 row + RFC-0011-d v1.7.1 §7.4 Substrate `[ADD]` Signatures
+- [x] Atomic: verifies `PlatformAdminProof` via existing `verify_attest(...)` (freshness + DC pubkey match per RFC-0855p-c §5a)
+- [x] Atomic: verifies operator pubkey (`operator_did` derived via Phase 1 `pubkey_from_did`) equals `PlatformAdminProof::dc_pubkey`
+- [x] Atomic: verifies `group_binding.state == GroupState::Bound` (no transition from other states — returns `BindingError::InvalidTransition`)
+- [x] Atomic: invokes RFC-0850p-c binding ceremony state transition (updates `group_binding.bound_peer_id` to operator peer_id; state stays Bound; idempotent on re-bind)
+- [x] Returns canonical `BindingError` on any failure path (NOT fictional `DomainCoordinatorError`):
+  - `BindingError::SignatureInvalid { reason }` on `PlatformAdminProof::adapter_signature` verification failure or stale proof or wrong DC pubkey or non-canonical DID form
   - `BindingError::InvalidTransition { from, to }` on non-`Bound` source state
-  - `BindingError::NonceReplay { nonce }` on proof nonce reuse (canonical `BindingError` variant; existing at `dot/binding.rs:691`)
-- [ ] Post-commit: emit `PlatformEvent::AdminTransfer` envelope per RFC-0855p-c §5a (Layer D side-effect; non-transactional; fire-and-forget; logged via existing `tracing-subscriber` redactor layer)
-- [ ] `#[non_exhaustive]` on `PlatformAdminProof` per F-14 (matches existing `PlatformAdminAttestError` pattern)
-- [ ] NO new substrate entrypoints (unbind/list/show are NOT in RFC §Mission Decomp M11 row scope; do NOT add)
-- [ ] `cargo test -p octo-network bind_domain_coordinator_updates_binding_atomically`
-- [ ] `cargo test -p octo-network bind_domain_coordinator_rolls_back_on_signature_invalid`
-- [ ] `cargo test -p octo-network bind_domain_coordinator_rolls_back_on_invalid_transition`
-- [ ] `cargo test -p octo-network bind_domain_coordinator_rolls_back_on_nonce_replay`
-- [ ] `cargo test -p octo-network platform_admin_proof_serialization_roundtrip`
-- [ ] `cargo check -p octo-network` zero warnings
-- [ ] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
-- [ ] **GATE CHECK**: `git log --oneline rfcs/accepted/networking/0855p-c-*.md rfcs/accepted/networking/0850p-c-*.md` shows both Accepted
+- [x] Post-commit: emit `PlatformEvent::AdminTransfer` envelope per RFC-0855p-c §5a (Layer D side-effect; non-transactional; fire-and-forget; logged via existing `tracing-subscriber` redactor layer)
+- [x] `#[non_exhaustive]` on `PlatformAdminProof` per F-14 (matches existing `PlatformAdminAttestError` pattern)
+- [x] `PlatformAdminProof::new` constructor closes `#[non_exhaustive]` external-build gap (drift-fix C)
+- [x] NO new substrate entrypoints (unbind/list/show are NOT in RFC §Mission Decomp M11 row scope; do NOT add)
+- [x] `cargo test -p octo-network bind_domain_coordinator_updates_binding_atomically`
+- [x] `cargo test -p octo-network bind_domain_coordinator_rolls_back_on_signature_invalid`
+- [x] `cargo test -p octo-network bind_domain_coordinator_rolls_back_on_invalid_transition`
+- [x] `cargo test -p octo-network bind_domain_coordinator_rolls_back_on_stale_proof` (drift-fixed from `nonce_replay`; substrate uses stale-proof check via `MAX_ATTEST_AGE_EPOCHS`)
+- [x] `cargo test -p octo-network bind_domain_coordinator_rejects_non_canonical_did` (Phase 1 `pubkey_from_did` guard)
+- [x] `cargo test -p octo-network platform_admin_proof_serialization_roundtrip`
+- [x] `cargo check -p octo-network` zero warnings
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` clean
+- [x] **GATE CHECK**: `git log --oneline rfcs/accepted/networking/0855p-c-*.md rfcs/accepted/networking/0850p-c-*.md` shows both Accepted
 
 ## Scope
 

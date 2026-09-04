@@ -6,7 +6,8 @@ metadata:
   type: cli-substrate-extension
   originSessionId: RFC-0011-d author session
   created: 2026-08-31
-  v: "1.1"
+  v: "1.2"
+  completed: 2026-09-01
   depends_on:
     - RFC-0011-d
     - mission 0011-core-output-envelope-redaction
@@ -22,12 +23,12 @@ metadata:
     - mission 0011-d-M7-octocli-role-error-variants
     - mission 0011-d-M8-octocli-role-tests
     - mission 0011-d-M9-doc-followon-token-design-md-10
-status: Claimed
+status: Closed
 ---
 
 # 0011-d-role-subcommands-phase1 — Role subcommands Phase 1 (list/show/select, 7 base roles)
 
-**Status:** Claimed 2026-09-01 by @mmacedoeu — unblocked (2026-08-31)
+**Status:** Closed 2026-09-01 (aggregate) — All 9 Phase 1 atomic missions (M1-M9) closed at `missions/archived/completed/0011-d-M{1..9}-*.md` per audit `docs/audits/2026-09-01-rfc-0011-d-mission-dry-closure.md`. Landing commits `003a7b0f` / `043f8543` / `91c42ab2` / `3842e8c6` / `e07e85b0` / `63ffdf94` / `90ce73bd` (M1-M8 substrate) + audit Rec 4 batch (M9 doc edit uncommitted at close-out). M9 closed via policy override per `[[deferred-vs-unspecified]]` "deferred not unspecified" — release gate (first dual-stake role addition) is bookkeeping artifact; substantive work (§10 footnote in `token-design.md`) delivered at audit Rec 4. Gate event re-fires when M10/M11 land (CLOSED 2026-09-03 at commit `c6f9ab6c`). Phase 1 fully closed.
 **Substrate:** RFC-0011-d §Specification §7.1–§7.7 (role subcommand group)
 **Parent:** RFC-0011-d
 **Depends on:**

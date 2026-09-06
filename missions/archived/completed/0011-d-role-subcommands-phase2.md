@@ -6,7 +6,8 @@ metadata:
   type: cli-substrate-extension
   originSessionId: RFC-0011-d author session
   created: 2026-08-31
-  v: "1.1"
+  v: "1.3"
+  completed: 2026-09-03
   release_gate:
     require: "RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) AND RFC-0855p-e reach Accepted"
     released_version: TBD
@@ -17,12 +18,12 @@ metadata:
     - RFC-0855p-e (must be Accepted)
     - mission 0011-d-M10-phase2-coordinator-domain-coordinator
     - mission 0011-d-M11-phase2-domain-coordinator-platform-binding
-status: Open
+status: Closed
 ---
 
 # 0011-d-role-subcommands-phase2 — Role subcommands Phase 2 (select coordinator + domain-coordinator)
 
-**Status:** Open — blocked on RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) AND RFC-0855p-e Accepted (both still Draft per `rfcs/draft/networking/0855p-d-subgroup-nesting.md` + `rfcs/draft/networking/0855p-e-handover-request-envelope.md`). Phase 2 aggregate for M10 + M11; aggregates substrate + CLI work for `coordinator` + `domain-coordinator` role subcommands. Implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]] once gates clear. Per audit 2026-09-01: blanket re-claim reverted.
+**Status:** Closed 2026-09-03 (aggregate) — Both Phase 2 atomic missions (M10 coordinator + domain-coordinator substrate + CLI, M11 domain-coordinator platform binding) closed at `missions/archived/completed/0011-d-M10-*.md` + `missions/archived/completed/0011-d-M11-*.md` per audit `docs/audits/2026-09-03-0011-d-M10-M11-mission-closeout.md`. Landing commit `96bccc4b` + drift-fix commit `c6f9ab6c` (10 drift findings closed INLINE per user direction `in place, not separated amendments`). R1 hygiene fix `c0e86dc8` (`parse_hash32_hex` canonical lowercase alphabet + 4 regression tests + cross-reference doc comments). Prereq RFCs (RFC-0855p-d + RFC-0855p-e) reached Accepted 2026-09-02 (gate CLEARED). Phase 2 fully closed.
 **Substrate:** RFC-0011-d §Specification §7.2 `octo role select <role>` (Phase 2 row); §Implementation Phases Phase 2; §Compatibility partial-prereq caveat
 **Parent:** RFC-0011-d
 **Depends on:**

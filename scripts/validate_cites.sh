@@ -151,6 +151,9 @@ normalize_section() {
 }
 
 # Scan changed files (or all files if no args)
+# When no args, pre-filter to files that contain at least one RFC- cite pattern.
+# Skips files with zero cites (e.g., most of docs/) entirely; avoids per-file
+# bash + grep fork for empty input.
 files_to_check=("$@")
 if [ ${#files_to_check[@]} -eq 0 ]; then
     while IFS= read -r -d '' f; do
@@ -160,7 +163,8 @@ if [ ${#files_to_check[@]} -eq 0 ]; then
             echo "WARN: hit CITE_MAXFILES=$CITE_MAXFILES; truncating file list" >&2
             break
         fi
-    done < <(timeout "$CITE_TIMEOUT" find "$RFC_ROOT" docs -maxdepth "$CITE_MAXDEPTH" -type f -name '*.md' -print0 2>/dev/null || true)
+    done < <(timeout "$CITE_TIMEOUT" find "$RFC_ROOT" docs -maxdepth "$CITE_MAXDEPTH" -type f -name '*.md' -print0 2>/dev/null \
+        | timeout "$CITE_TIMEOUT" xargs -0 -r grep -lEZ 'RFC-[0-9]+' 2>/dev/null || true)
 fi
 
 for file in "${files_to_check[@]}"; do

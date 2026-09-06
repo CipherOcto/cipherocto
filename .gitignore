@@ -101,6 +101,11 @@ uv.lock
 # cargo-llvm-cov Cobertura-format output (CI artifact only)
 /cobertura.xml
 
+# cargo + llvm source-based coverage profiling data (CI artifact only)
+/default_*.profraw
+/coverage-*.profraw
+*.profraw
+
 # Local debug screenshots (WA Web reconnect drills)
 /wa-*.png
 

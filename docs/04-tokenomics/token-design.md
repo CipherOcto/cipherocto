@@ -245,6 +245,8 @@ Every participant must stake **both**:
 | Developer        | OCTO + OCTO-D  |
 | Validator        | OCTO + OCTO-N  |
 
+> **Note (added 2026-09-01 per RFC-0011-d §Mission Decomposition M9):** OCTO-only roles `recorder` and `wallet` (added per RFC-0011-d §7.5 Role Summary) are intentionally absent from this §10 Dual-Stake table because they require no role-token stake — the dual-stake model is empty for OCTO-only roles; only `requires_octo_min` is enforced. See RFC-0011-d §7.5 + §Mission Decomposition M9.
+
 ### Why This Matters
 
 Dual staking solves three classic crypto failures simultaneously:

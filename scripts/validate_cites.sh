@@ -235,9 +235,11 @@ for file in "${files_to_check[@]}"; do
         # If version pin present, verify against on-disk VH latest
         if [ -n "$version" ]; then
             # First version pin in any "| N.N |" cell = latest VH row.
-            vh_latest=$(timeout "$CITE_TIMEOUT" grep -oE '\| [0-9]+(\.[0-9]+)+ \|' "$rfc_path" 2>/dev/null | head -1 | grep -oE '[0-9]+(\.[0-9]+)+' || true)
+            # Use `[ \t]+` (not single space) because GFM auto-wraps long rows with
+            # multi-space cell padding; 82/212 RFCs use multi-space cells.
+            vh_latest=$(timeout "$CITE_TIMEOUT" grep -oE '\|[ \t]+[0-9]+(\.[0-9]+)+[ \t]+\|' "$rfc_path" 2>/dev/null | head -1 | grep -oE '[0-9]+(\.[0-9]+)+' || true)
             if [ -n "$vh_latest" ] && [ "$version" != "$vh_latest" ]; then
-                if ! grep -qE "^\| $version \|" "$rfc_path" 2>/dev/null; then
+                if ! grep -qE "^\|[ \t]+$version[ \t]+\|" "$rfc_path" 2>/dev/null; then
                     echo "STALE [version pin mismatch]: $file:$line_num: $cite (cited v$version, latest v$vh_latest in $rfc_path)"
                     STALE=$((STALE + 1))
                     EXIT_CODE=1

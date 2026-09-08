@@ -54,8 +54,9 @@ pub const ATTESTATION_LIMIT_CAP: usize = 1000;
 ///
 /// `Role::parse(s)` rejects empty / whitespace-only input. The catalog
 /// enumeration (which role slugs are valid) lands via RFC-0011-d role
-/// provisioning; v1.0 accepts any non-empty lowercase slug so the
-/// projection entry point is nameable before the catalog ships.
+/// provisioning; v1.0 accepts any non-empty ASCII string without
+/// whitespace so the projection entry point is nameable before the
+/// catalog ships. Case is preserved verbatim (no lowercase folding).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct Role(String);

@@ -26,7 +26,7 @@
 use clap::Subcommand;
 use octo_reputation::{
     projection_attestations, projection_project, AnchorRef, AttestationSummary,
-    ReputationComponents, ReputationRecord, Role,
+    ReputationComponents, Role,
 };
 
 use crate::error::{sanitize_substrate_error, OctoCliError};
@@ -73,18 +73,15 @@ pub enum ReputationAction {
 
 /// CLI-side output struct — RFC-0011-b §7.3 Output Envelope.
 ///
-/// `ReputationShowOutput` composes the substrate `ReputationRecord`
-/// (via `.into()` at the dispatch boundary) with the
-/// `attestations()` window. Per RFC-0011-b §7.3 this is a **wrapper**
-/// payload, NOT a 1:1 mirror of `ReputationRecord` — the substrate
-/// owns the canonical aggregate and the CLI composes the
-/// attestation window at the envelope boundary.
-///
-/// Re-export audit comment: `AttestationSummary` and `AnchorRef` are
-/// re-exported from `octo_reputation` (no CLI-side redeclaration per
-/// RFC-0011-b §7.4). When substrate `ReputationRecord` gains a field,
-/// this conversion must be re-audited (RFC-0011-b §7.3 re-export audit
-/// block).
+/// Built at the dispatch boundary by composing the substrate
+/// `ReputationRecord` with the substrate `attestations()` window. Per
+/// RFC-0011-b §7.3 this is a **wrapper** payload, NOT a 1:1 mirror
+/// of `ReputationRecord` — the substrate owns the canonical aggregate
+/// and the CLI composes the attestation window at the envelope
+/// boundary. There is no `From<ReputationRecord>` impl; dispatch
+/// constructs the value in one place so when substrate fields change
+/// the conversion is re-audited at a single call site
+/// (RFC-0011-b §7.3 re-export audit block).
 #[derive(serde::Serialize, Debug, schemars::JsonSchema)]
 pub struct ReputationShowOutput {
     /// Subject DID (canonical `did:octo:` wire form per the substrate
@@ -113,48 +110,6 @@ pub struct ReputationShowOutput {
     /// Contract). `None` if the subject has never been anchored.
     #[schemars(with = "Option<String>")]
     pub anchor_ref: Option<AnchorRef>,
-}
-
-impl From<ReputationRecord> for ReputationShowOutput {
-    fn from(r: ReputationRecord) -> Self {
-        // Subject DID is rendered via the substrate canonical wire
-        // form (`octo_reputation::RecorderDid::to_wire()`). The
-        // substrate owns the wire encoding (RFC-0010 §Specification
-        // + RFC-0968 §2 pending reconcile per the §C3 review note);
-        // the CLI never re-encodes the DID — it surfaces the
-        // substrate's canonical form unchanged. When the DID cannot
-        // be encoded (malformed discriminator), the CLI falls back
-        // to the lower-case hex form of the raw 52-byte payload —
-        // diagnostic-safe and still round-trippable.
-        let did = r
-            .did
-            .to_wire()
-            .unwrap_or_else(|_| hex::encode(r.did.as_bytes()));
-        Self {
-            did,
-            role: r.role.to_string(),
-            score: r.score,
-            components: r.components,
-            attestations: Vec::new(), // Window merged in dispatch via `merge_attestations`.
-            last_updated_unix: r.last_updated_unix,
-            anchor_ref: r.anchor_ref,
-        }
-    }
-}
-
-impl ReputationShowOutput {
-    /// Merge the attestation window into the projection-shaped
-    /// `ReputationRecord → ReputationShowOutput` conversion.
-    ///
-    /// RFC-0011-b §7.3 wrapper intent: the substrate `project()` does
-    /// not populate `attestations`; the CLI composes both at the
-    /// dispatch boundary. This helper exists so the `From` impl above
-    /// stays a pure substrate-shape mirror (no substrate re-entry) and
-    /// the wrapper is constructed in one place.
-    fn merge_attestations(mut self, attestations: Vec<AttestationSummary>) -> Self {
-        self.attestations = attestations;
-        self
-    }
 }
 
 /// Dispatch a parsed `octo reputation ...` invocation to its handler.
@@ -250,7 +205,29 @@ fn show_reputation(
     // boundary as any other timestamp.
     let record = projection_project(&subject, &role, i64::MIN);
     let window = projection_attestations(&subject, &role, since, limit as usize);
-    let output = ReputationShowOutput::from(record).merge_attestations(window);
+
+    // Subject DID is rendered via the substrate canonical wire
+    // form (`octo_reputation::RecorderDid::to_wire()`). The
+    // substrate owns the wire encoding (RFC-0010 §Specification
+    // + RFC-0968 §2 pending reconcile per the §C3 review note);
+    // the CLI never re-encodes the DID — it surfaces the
+    // substrate's canonical form unchanged. When the DID cannot
+    // be encoded (malformed discriminator), the CLI falls back
+    // to the lower-case hex form of the raw 52-byte payload —
+    // diagnostic-safe and still round-trippable.
+    let did_wire = record
+        .did
+        .to_wire()
+        .unwrap_or_else(|_| hex::encode(record.did.as_bytes()));
+    let output = ReputationShowOutput {
+        did: did_wire,
+        role: record.role.to_string(),
+        score: record.score,
+        components: record.components,
+        attestations: window,
+        last_updated_unix: record.last_updated_unix,
+        anchor_ref: record.anchor_ref,
+    };
 
     render_envelope("octo.reputation.show.v1", output, cli)
 }
@@ -258,20 +235,20 @@ fn show_reputation(
 /// Parse a canonical `did:octo:` DID string into the substrate
 /// `RecorderDid` 52-byte array.
 ///
-/// v1.0 accepts the raw 104-char lowercase hex form of the 52-byte
-/// payload (RFC-0968 §2 — the substrate canonical raw key). The
-/// substrate's wire form (`did:octo:z<base58btc>` per `to_wire()`)
-/// is **not** round-trippable through this CLI input parser in
-/// Phase 1 — the substrate does not expose a `from_wire()` inverse
-/// (gap to close in Phase 2 per the RFC-0968 §2 vs RFC-0010 §C3
-/// reconcile). For v1.0 the canonical CLI input shape is the raw
-/// hex form; the output shape (`ReputationShowOutput.did`) is the
-/// substrate's wire form.
+/// v1.0 accepts the raw 104-char hex form of the 52-byte payload
+/// (RFC-0968 §2 — the substrate canonical raw key). The substrate's
+/// wire form (`did:octo:z<base58btc>` per `to_wire()`) is **not**
+/// round-trippable through this CLI input parser in Phase 1 — the
+/// substrate does not expose a `from_wire()` inverse (gap to close
+/// in Phase 2 per the RFC-0968 §2 vs RFC-0010 §C3 reconcile). For
+/// v1.0 the canonical CLI input shape is the raw hex form; the
+/// output shape (`ReputationShowOutput.did`) is the substrate's
+/// wire form.
 ///
-/// Anything other than the 104-char hex form returns `IdentityNotFound`
-/// (exit 4) per the substrate `[ADD]` error map in RFC-0011-b
-/// §Substrate `[ADD]` Signatures — the operator-friendly fallback
-/// when the DID cannot be resolved.
+/// Anything other than the 104-char hex form returns
+/// `IdentityNotFound` (exit 4) per the substrate `[ADD]` error map
+/// in RFC-0011-b §Substrate `[ADD]` Signatures — the
+/// operator-friendly fallback when the DID cannot be resolved.
 fn parse_did_bytes(s: &str) -> Result<octo_reputation::RecorderDid, OctoCliError> {
     const PREFIX: &str = "did:octo:";
     let payload = s
@@ -285,21 +262,12 @@ fn parse_did_bytes(s: &str) -> Result<octo_reputation::RecorderDid, OctoCliError
         // substrate gap (documented in the mission YAML §Notes).
         return Err(OctoCliError::IdentityNotFound(sanitize_substrate_error(s)));
     }
-    decode_hex_did(s, payload)
-}
-
-/// Decode a 104-char hex string into a 52-byte `RecorderDid` payload.
-fn decode_hex_did(
-    original: &str,
-    hex_payload: &str,
-) -> Result<octo_reputation::RecorderDid, OctoCliError> {
     let mut bytes = [0u8; 52];
-    for (i, chunk) in hex_payload.as_bytes().chunks(2).enumerate() {
-        let hex_str = std::str::from_utf8(chunk)
-            .map_err(|_| OctoCliError::IdentityNotFound(sanitize_substrate_error(original)))?;
-        bytes[i] = u8::from_str_radix(hex_str, 16)
-            .map_err(|_| OctoCliError::IdentityNotFound(sanitize_substrate_error(original)))?;
-    }
+    // `decode_to_slice` rejects any non-hex byte (including odd
+    // length) and panics only if the output buffer is too small
+    // — guarded above by the 104-char length check.
+    hex::decode_to_slice(payload, &mut bytes)
+        .map_err(|_| OctoCliError::IdentityNotFound(sanitize_substrate_error(s)))?;
     Ok(octo_reputation::RecorderDid::from_array(bytes))
 }
 

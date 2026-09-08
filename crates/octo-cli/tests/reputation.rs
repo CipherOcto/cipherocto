@@ -1,10 +1,12 @@
 //! Integration tests for `octo reputation show` — RFC-0011-b §Test Vectors.
 //!
-//! Four vectors from the mission YAML §Test Vectors:
+//! Six vectors from the mission YAML §Test Vectors:
 //! - TV-REP-1: `octo reputation show --did <hex> --role builder` → exit 0 + envelope JSON
 //! - TV-REP-2: `octo reputation show --role builder` (no `--did`) → exit 2 (`NoActiveIdentity`)
 //! - TV-REP-3: `octo reputation show --did <hex> --role builder --limit 1001` → exit 2 (hard cap)
 //! - TV-REP-4: Auditor mode `octo reputation show --did <hex> --role builder` → exit 0 (read-only OK)
+//! - TV-REP-5: `--no-anchor-verify` rejected in Human mode (DEV-ONLY escape hatch)
+//! - TV-REP-6: missing `--role` rejected at clap parse time
 //!
 //! Each test runs as a child binary via `assert_cmd`, captures
 //! stdout/stderr, and inspects JSON or exit code per vector.

@@ -319,6 +319,30 @@ pub enum OctoCliError {
     #[error("no OCTO_HOME or HOME available; set $OCTO_HOME or $HOME before running this command")]
     NoOctoHome,
 
+    /// Agent manifest JSON parse failure (RFC-0011-c §9.8). `path` is
+    /// the operator-supplied `--manifest-path` so the operator can
+    /// correct the file reference; `reason` is the underlying
+    /// `serde_json` diagnostic. Maps from substrate
+    /// `WalletError::ManifestParse { path, reason }`. Exit 39.
+    #[error("agent manifest parse error at `{path}`: {reason}")]
+    ManifestParseError {
+        /// Operator-supplied `--manifest-path` value.
+        path: String,
+        /// Substrate diagnostic (sanitized).
+        reason: String,
+    },
+    /// 6-step capability validation pipeline failed at the given
+    /// 1-based step (RFC-0002 §Capability Validation; RFC-0011-c
+    /// §9.6). Substrate signals each step's specific failure mode;
+    /// CLI surfaces the step number to the operator. Exit 40.
+    #[error("capability validation failed at step {0} (RFC-0002 §Capability Validation)")]
+    CapabilityValidationFailed(usize),
+    /// `register_agent` was called with `(manifest, active_did)`
+    /// whose derived `agent_id` is already present in the wallet
+    /// substrate registry (RFC-0011-c §9.10). Exit 41.
+    #[error("agent already registered: {0}")]
+    AgentAlreadyExists(uuid::Uuid),
+
     /// Unexpected internal failure.
     #[error("internal error: {0}")]
     Internal(String),
@@ -377,6 +401,10 @@ impl OctoCliError {
             // (no `/tmp/.octo` fallback — world-readable). Exit 27
             // (free slot in the 17-30 mesh reserved range).
             Self::NoOctoHome => 27,
+            // RFC-0011-c §9.8: agent amendment chain slots 39-52.
+            Self::ManifestParseError { .. } => 39,
+            Self::CapabilityValidationFailed(_) => 40,
+            Self::AgentAlreadyExists(_) => 41,
             Self::Internal(_) => 64,
             Self::StaleStub { .. } => 65,
         }
@@ -473,6 +501,15 @@ impl OctoCliError {
             }
             Self::NoOctoHome => {
                 "set $OCTO_HOME (preferred) or $HOME before invoking this command; the CLI does not fall back to /tmp/.octo on shared hosts".to_string()
+            }
+            Self::ManifestParseError { .. } => {
+                "verify the manifest file is valid JSON conforming to the AgentManifest wire form (RFC-0002 §Agent Manifest)".to_string()
+            }
+            Self::CapabilityValidationFailed(_) => {
+                "the manifest failed one of the 6 capability-validation steps (RFC-0002 §Capability Validation); review the substrate diagnostic for the failing step".to_string()
+            }
+            Self::AgentAlreadyExists(_) => {
+                "the derived agent_id (RFC-0011-c §9.10) is already registered; check with `octo agent list` (once that subcommand ships) before re-submitting".to_string()
             }
             Self::StaleStub { .. } => "this command was removed; see the migration notes".to_string(),
             Self::Internal(_) => "re-run with `RUST_LOG=debug` and report the diagnostic".to_string(),
@@ -799,6 +836,15 @@ mod tests {
                 65,
             ),
             (OctoCliError::NoOctoHome, 27),
+            (
+                OctoCliError::ManifestParseError {
+                    path: "p".into(),
+                    reason: "r".into(),
+                },
+                39,
+            ),
+            (OctoCliError::CapabilityValidationFailed(2), 40),
+            (OctoCliError::AgentAlreadyExists(uuid::Uuid::nil()), 41),
         ];
         for (e, code) in cases {
             assert_eq!(e.exit_code(), code, "{e:?}");

@@ -1,6 +1,7 @@
 //! Wallet error type.
 
 use thiserror::Error;
+use uuid::Uuid;
 
 use crate::hsm::HsmError;
 use crate::lifecycle::LifecycleState;
@@ -106,4 +107,32 @@ pub enum WalletError {
     /// Exit code = 11 per `OctoCliError::SigningFailed` mapping.
     #[error("role-binding nonce counter exhausted (u64 saturated) for did")]
     NonceUnderflow,
+
+    // ----- Agent manifest + capability-validation errors (RFC-0011-c §9.10) -----
+    /// `AgentManifest::from_json` failed to deserialize the operator-supplied
+    /// manifest file. `path` is the label the caller passed (CLI passes the
+    /// `--manifest-path` value so operator errors surface the file they
+    /// specified); `reason` is the underlying `serde_json` error.
+    /// Exit code = 39 per RFC-0011-c §9.8.
+    #[error("agent manifest parse error at `{path}`: {reason}")]
+    ManifestParse { path: String, reason: String },
+
+    /// The 6-step capability validation pipeline (RFC-0002 §Capability
+    /// Validation) failed at the given 1-based step. The substrate signals
+    /// each step's specific failure mode; the CLI surfaces the step number
+    /// to the operator. Phase 1 only emits this variant when the macaroon
+    /// substrate rejects a manifest — the wiring lands with the
+    /// `octo-cap-macaroon` 6-step integration (out of scope for
+    /// `0011-c-agent-create-subcommand`). Exit code = 40 per
+    /// RFC-0011-c §9.8.
+    #[error("capability validation failed at step {0} (RFC-0002 §Capability Validation)")]
+    CapabilityValidationFailed(usize),
+
+    /// `register_agent` was called with `(manifest, active_did)` whose
+    /// derived `agent_id` is already present in the registry (RFC-0011-c
+    /// §9.10 — `agent_id` is a deterministic function of the manifest
+    /// digest + holder DID; duplicates emit `AgentAlreadyExists`). Exit
+    /// code = 41 per RFC-0011-c §9.8.
+    #[error("agent already registered: {0}")]
+    AgentAlreadyExists(Uuid),
 }

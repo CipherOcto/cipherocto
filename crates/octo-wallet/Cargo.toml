@@ -41,6 +41,9 @@ thiserror.workspace = true
 directories.workspace = true
 rand.workspace = true
 serde_bytes = "0.11"
+# Mission 0011-c-agent-create-subcommand: deterministic agent_id derivation
+# (UUIDv5) for `register_agent` substrate signature (RFC-0011-c §9.10).
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
 
 # ZK circuit (CASM compile, RFC-0958 Phase B.2; crypto home per [[stoolap-general-purpose-db]])
 # Mission 0957-ext-zk-crate: moved to octo-cap-zk.

@@ -17,6 +17,10 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Mission 0011-c-agent-create-subcommand: AgentAlreadyExists error
+# variant surfaces the deterministic `agent_id` (RFC-0011-c §9.10
+# UUIDv5 substrate signature).
+uuid = { version = "1", features = ["serde"] }
 # Async runtime for `octo_mesh::rpc_invoke` (RFC-0011-f `[ADD]` #5).
 # The substrate function is `async` for forward-compat with the
 # follow-on `NodeTransport::send_best` request/reply wiring; the
@@ -98,6 +102,11 @@ zeroize = { version = "1", features = ["derive"] }
 [dev-dependencies]
 assert_cmd = "2.0"        # CLI binary invocation
 predicates = "3.1"         # stdout/stderr assertions
+# Mission 0011-c-agent-create-subcommand: integration tests write
+# synthetic manifest JSON to a temp file and pass `--manifest-path`
+# to `octo agent create` so the substrate's read + parse path is
+# exercised end-to-end.
+tempfile = "3"
 # Layer B vault substrate `testing` feature — needed by the
 # `octo vault list` / `octo vault balance` integration tests that
 # exercise the substrate port traits via the in-memory stubs

@@ -1,12 +1,17 @@
-//! Deprecated command stubs — RFC-0011 §Compatibility.
+//! Deprecated command stubs — RFC-0011 §Compatibility
 //!
 //! v1.0 emits a banner and exits 0. v1.1 (the "stale stub window") turns the
 //! banner into a hard error with exit code 65; it is gated on the
 //! `OCTO_STALE_STUB_WINDOW` environment variable until the release lands.
 //! v2.0 removes the stubs entirely.
+//!
+//! Mission `0011-c-agent-create-subcommand` (2026-09-08): the
+//! `agent` stub surface moved to `commands::agent` as a real,
+//! clap-derived subcommand. `print_agent_deprecated` is removed
+//! — `octo agent create` is now wired through
+//! `commands::agent::dispatch`.
 
 use crate::error::OctoCliError;
-use crate::AgentActionStub;
 
 /// Compile-time v1.0 default: banner only, no hard error.
 pub const STALE_STUB_WINDOW: bool = false;
@@ -53,18 +58,13 @@ pub fn print_deprecated_with(
 }
 
 /// Deprecation banner for the `agent` command family.
-pub fn print_agent_deprecated(action: &AgentActionStub) -> Result<(), OctoCliError> {
-    let sub = match action {
-        AgentActionStub::Create { .. } => "create",
-        AgentActionStub::Run { .. } => "run",
-        AgentActionStub::List => "list",
-    };
-    print_deprecated(
-        "agent",
-        &format!("`agent {sub}` moved to the agent runtime CLI (out of scope for this RFC)"),
-    )
-}
-
+///
+/// REMOVED 2026-09-08 (mission `0011-c-agent-create-subcommand`):
+/// `octo agent` is now a first-class subcommand wired through
+/// `commands::agent::dispatch` (RFC-0011-c §Subcommand Taxonomy).
+/// This stub remained after the agent migration but is no longer
+/// reachable — the dispatch table in `commands/mod.rs` routes
+/// `Commands::Agent` directly to the new handler.
 #[cfg(test)]
 mod tests {
     use super::*;

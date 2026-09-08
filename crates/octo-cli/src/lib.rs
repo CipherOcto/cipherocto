@@ -9,6 +9,7 @@ pub mod home;
 pub mod output;
 pub mod redact;
 
+pub use commands::agent::AgentAction;
 pub use commands::peer::PeerAction;
 pub use error::{sanitize_substrate_error, OctoCliError};
 pub use flags::{OperatorMode, OperatorModeFlags, OutputFlags};
@@ -63,13 +64,13 @@ pub enum Commands {
         #[command(subcommand)]
         action: PolicyAction,
     },
-    /// Deprecated — see RFC-0011 §Compatibility.
+    /// Deprecated — see RFC-0011 §Compatibility
     #[command(hide = true)]
     Init,
-    /// Deprecated — see RFC-0011 §Compatibility.
+    /// Deprecated — see RFC-0011 §Compatibility
     #[command(hide = true)]
     Join,
-    /// Deprecated — see RFC-0011 §Compatibility.
+    /// Deprecated — see RFC-0011 §Compatibility
     #[command(hide = true)]
     Status,
     /// Role provisioning subcommands (RFC-0011-d §7.4).
@@ -100,30 +101,16 @@ pub enum Commands {
         #[command(subcommand)]
         action: VaultAction,
     },
-    /// Deprecated — see RFC-0011 §Compatibility.
-    #[command(hide = true)]
+    /// Agent lifecycle subcommands (RFC-0011-c §Subcommand Taxonomy).
+    ///
+    /// Phase 1 lands `octo agent create` (mission
+    /// `0011-c-agent-create-subcommand`); sibling subcommands (`run`,
+    /// `list`, `destroy`, `attach`) land in follow-on missions.
     Agent {
-        /// Deprecated agent subcommand.
+        /// Agent subcommand.
         #[command(subcommand)]
-        action: AgentActionStub,
+        action: AgentAction,
     },
-}
-
-/// Deprecated `agent` subcommands.
-#[derive(Subcommand, Debug)]
-pub enum AgentActionStub {
-    /// Deprecated.
-    Create {
-        /// Agent name.
-        name: String,
-    },
-    /// Deprecated.
-    Run {
-        /// Agent name.
-        name: String,
-    },
-    /// Deprecated.
-    List,
 }
 
 #[cfg(test)]

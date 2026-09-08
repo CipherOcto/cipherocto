@@ -12,6 +12,7 @@
 #![warn(missing_debug_implementations)]
 #![allow(clippy::doc_markdown)]
 
+pub mod agent;
 pub mod capability;
 pub mod cli_fns;
 pub mod error;
@@ -27,7 +28,10 @@ pub mod role_nonce;
 pub mod vault;
 pub mod vault_rotation;
 
-pub use cli_fns::{active_identity, begin_rotation, identity_record as identity_record_fn, revoke};
+pub use agent::{AgentFilter, AgentManifest, AgentState, AgentSummary, CapabilityId};
+pub use cli_fns::{
+    active_identity, begin_rotation, identity_record as identity_record_fn, register_agent, revoke,
+};
 pub use error::WalletError;
 pub use identity::{derive_capability_key, AudienceId, CapabilityKey, ChannelId, IdentityKey};
 pub use identity_record::{Did, IdentityRecord, IdentityRotationEvent, WalletStore};

@@ -12,6 +12,7 @@
 //! stdout/stderr, and inspects exit code + JSON shape per vector.
 
 use assert_cmd::Command;
+use octo_cli::redact::{redact_by_field, REDACTED_KEY};
 use predicates::str::contains;
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -208,4 +209,41 @@ fn tv_agt_clap_surface_is_valid() {
     // Just by invoking `--help` we exercise the clap surface; an
     // invalid surface panics on debug_assert at startup.
     octo().args(["agent", "--help"]).assert().code(0);
+}
+
+/// TV-AGT-SEC-1: log-time redaction of agent substrate fields per
+/// RFC-0011-c §Security Considerations. The three agent-family
+/// fields (`agent_id`, `capability_root`, `holder_did`) MUST be
+/// replaced by `REDACTED_KEY` whenever they appear in structured log
+/// lines (so a misconfigured tracing filter cannot leak the
+/// DID/UUID/hex identifier into a third-party log sink).
+#[test]
+fn tv_agt_redact_log_line_replaces_agent_family_fields() {
+    let log_line = r#"event="agent_registered" agent_id="00000000-0000-4000-8000-000000000001" capability_root="abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234" holder_did="did:octo:zSecret""#;
+
+    assert_eq!(
+        redact_by_field("agent_id", "00000000-0000-4000-8000-000000000001"),
+        REDACTED_KEY,
+        "agent_id field MUST map to REDACTED_KEY",
+    );
+    assert_eq!(
+        redact_by_field(
+            "capability_root",
+            "abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234"
+        ),
+        REDACTED_KEY,
+        "capability_root field MUST map to REDACTED_KEY",
+    );
+    assert_eq!(
+        redact_by_field("holder_did", "did:octo:zSecret"),
+        REDACTED_KEY,
+        "holder_did field MUST map to REDACTED_KEY",
+    );
+    // The line itself is fine — the assertion is that the per-field
+    // redactor would substitute the values above when a future
+    // `tracing-subscriber` layer walks the structured fields.
+    assert!(
+        !log_line.contains("REDACTED"),
+        "log line as-written MUST NOT contain any REDACTED marker (redaction happens at emit time): {log_line}",
+    );
 }

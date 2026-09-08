@@ -98,10 +98,16 @@ pub enum AgentAction {
 ///
 /// `#[non_exhaustive]` on `AgentAction` ensures this `match` will
 /// fail to compile when a new variant is added without a corresponding
-/// arm — the compiler-enforced amendment contract.
+/// arm — the compiler-enforced amendment contract. The `create` arm
+/// destructures the struct variant at the call site so the typed
+/// handler signature enforces the contract at compile time (no
+/// `unreachable!` panics, no runtime re-dispatch).
 pub fn dispatch(action: &AgentAction, cli: &Octo) -> Result<(), OctoCliError> {
     match action {
-        AgentAction::Create { .. } => create::handle(action, cli),
+        AgentAction::Create {
+            manifest_path,
+            capability_root,
+        } => create::handle(manifest_path, capability_root.as_deref(), cli),
         AgentAction::Run { .. }
         | AgentAction::List { .. }
         | AgentAction::Destroy { .. }
@@ -134,6 +140,11 @@ mod create {
     /// Handle `octo agent create --manifest-path <path>
     /// [--capability-root <hex64>]`.
     ///
+    /// The handler takes the destructured fields directly (the typed
+    /// signature from `dispatch` makes the contract compiler-enforced)
+    /// rather than re-matching on the enum, eliminating the
+    /// `unreachable!` runtime guard.
+    ///
     /// Exit codes:
     /// - 0: success (agent registered)
     /// - 2: Auditor mode refused the write (RFC-0011-c §Roles and Authorities)
@@ -142,15 +153,11 @@ mod create {
     /// - 40: capability validation pipeline failed (Phase 2; not raised in Phase 1)
     /// - 41: an agent with the derived `agent_id` already exists
     /// - 64: unexpected substrate error
-    pub fn handle(action: &AgentAction, cli: &Octo) -> Result<(), OctoCliError> {
-        let (manifest_path, capability_root_hex) = match action {
-            AgentAction::Create {
-                manifest_path,
-                capability_root,
-            } => (manifest_path, capability_root),
-            _ => unreachable!("create::handle only dispatches on Create"),
-        };
-
+    pub fn handle(
+        manifest_path: &std::path::Path,
+        capability_root_hex: Option<&str>,
+        cli: &Octo,
+    ) -> Result<(), OctoCliError> {
         // Auditor is read-only (RFC-0011 §Compatibility + RFC-0011-c
         // §Roles and Authorities).
         if matches!(cli.mode.mode, OperatorMode::Auditor) {
@@ -174,7 +181,7 @@ mod create {
             })?;
 
         // Capability root — Phase 1 records but does not verify.
-        let capability_root = match capability_root_hex.as_deref() {
+        let capability_root = match capability_root_hex {
             Some(hex) => Some(parse_capability_root(hex)?),
             None => None,
         };
@@ -333,6 +340,21 @@ mod tests {
         assert_eq!(cid.0, [0xab; 32]);
     }
 
+    /// CLI-arg round-trip: a hex string the operator passes via
+    /// `--capability-root` must survive parse → re-encode with byte
+    /// equivalence. The substrate (`CapabilityId::from_hex`) treats
+    /// the field as case-insensitive lowercase hex; this test pins
+    /// the byte-for-byte invariant so a future substrate amendment
+    /// cannot silently flip the case sensitivity (which would break
+    /// every operator script that stores the value canonically).
+    #[test]
+    fn capability_root_round_trips_byte_for_byte() {
+        let original = "ab".repeat(32);
+        let cid = CapabilityId::from_hex(&original).expect("64-char hex must parse");
+        let reencoded = hex::encode(cid.0);
+        assert_eq!(reencoded, original, "round-trip must be byte-for-byte");
+    }
+
     #[test]
     fn capability_id_rejects_short_hex() {
         let err = CapabilityId::from_hex("abcd").unwrap_err();
@@ -371,5 +393,27 @@ mod tests {
         let s = "register_agent failed at crates/octo-wallet/src/agent.rs:42";
         let clean = sanitize_substrate_error(s);
         assert!(!clean.contains("crates/octo-"), "{clean}");
+    }
+
+    /// Pin the schemars contract for `AgentCreateOutput`: the JSON
+    /// Schema emitted for the envelope payload declares
+    /// `agent_id` as a plain string (per the `#[schemars(with =
+    /// "String")]` annotation), not as a UUID-typed object. Downstream
+    /// consumers (e.g., `octo-cli agent list --json | jq`) build their
+    /// paths off this contract; a schemars regression would silently
+    /// shift the schema and break tooling.
+    #[test]
+    fn agent_create_output_schema_declares_agent_id_as_string() {
+        use schemars::schema_for;
+        let schema = schema_for!(AgentCreateOutput);
+        let json = serde_json::to_value(&schema).expect("schema is JSON");
+        let agent_id = json
+            .pointer("/properties/agent_id/type")
+            .and_then(|v| v.as_str())
+            .expect("agent_id schema must declare a type");
+        assert_eq!(
+            agent_id, "string",
+            "agent_id must round-trip as JSON Schema `string`, got {agent_id:?}",
+        );
     }
 }

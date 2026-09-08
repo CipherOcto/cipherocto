@@ -274,10 +274,69 @@ mod tests {
     }
 
     #[test]
-    fn register_agent_is_deterministic() {
-        // Phase-1 lock-free test: serialize via a per-test manifest_id
-        // unique enough to dodge the registry. The BTreeMap registry
-        // is process-global; the test must not depend on isolation.
-        let _ = registry(); // touch
+    fn register_agent_is_deterministic_for_same_inputs() {
+        // Determinism contract (RFC-0011-c §9.10, RFC-0008 Class B):
+        // `register_agent` is a pure function of `(manifest,
+        // capability_root, active_did)`. Calling it twice with the
+        // same inputs MUST return the same `agent_id` — first
+        // successfully, then `AgentAlreadyExists(agent_id)` with the
+        // same UUID. The BTreeMap registry is process-global, so the
+        // second call exercises the duplicate-detection path that
+        // proves the derivation is reproducible.
+        let manifest = AgentManifest {
+            manifest_id: Uuid::new_v4(),
+            holder_did: format!("did:octo:determinism-{}", Uuid::new_v4()),
+            label: Some("determinism".to_string()),
+            created_at_unix: 1_700_000_000,
+            signature_hex: "00".repeat(64),
+        };
+        let cap_root = CapabilityId([0x42; 32]);
+        let did = Did::from(manifest.holder_did.as_str());
+
+        let first = crate::cli_fns::register_agent(&manifest, &cap_root, &did)
+            .expect("first call must succeed");
+
+        let second = crate::cli_fns::register_agent(&manifest, &cap_root, &did);
+        match second {
+            Err(WalletError::AgentAlreadyExists(uuid)) => {
+                assert_eq!(
+                    uuid, first,
+                    "second registration MUST surface the same agent_id (deterministic derivation)",
+                );
+            }
+            other => panic!(
+                "second registration must return AgentAlreadyExists with the same UUID, got: {other:?}",
+            ),
+        }
+    }
+
+    #[test]
+    fn register_agent_distinct_inputs_yield_distinct_ids() {
+        // The dual of the determinism contract: distinct
+        // `(manifest, did)` pairs MUST yield distinct `agent_id`s
+        // (the UUIDv5 derivation is collision-resistant modulo
+        // RFC 4122 §4.3). Together with `…_for_same_inputs` this
+        // pins the substrate's derivation invariants end-to-end.
+        let m_one = AgentManifest {
+            manifest_id: Uuid::new_v4(),
+            holder_did: format!("did:octo:collision-a-{}", Uuid::new_v4()),
+            label: Some("a".to_string()),
+            created_at_unix: 1_700_000_001,
+            signature_hex: "00".repeat(64),
+        };
+        let m_two = AgentManifest {
+            manifest_id: Uuid::new_v4(),
+            holder_did: format!("did:octo:collision-b-{}", Uuid::new_v4()),
+            label: Some("b".to_string()),
+            created_at_unix: 1_700_000_002,
+            signature_hex: "00".repeat(64),
+        };
+        let cap = CapabilityId([0x07; 32]);
+        let did_a = Did::from(m_one.holder_did.as_str());
+        let did_b = Did::from(m_two.holder_did.as_str());
+
+        let a = crate::cli_fns::register_agent(&m_one, &cap, &did_a).expect("register a");
+        let b = crate::cli_fns::register_agent(&m_two, &cap, &did_b).expect("register b");
+        assert_ne!(a, b, "distinct inputs MUST yield distinct agent_ids");
     }
 }

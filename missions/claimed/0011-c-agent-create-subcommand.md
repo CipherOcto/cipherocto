@@ -46,7 +46,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-core-outpu
 
 - [ ] `octo agent create <manifest-path>` implemented + unit-tested (TV-AGT1, TV-AGT2, TV-AGT3 pass per RFC-0011-c §Test Vectors)
 - [ ] `AgentCreateOutput` payload type implemented + unit-tested (`agent_id`, `state`, `registered_at_unix`, `manifest_digest`)
-- [ ] `OctoCliRedactor` agent-specific patterns applied (`agent_id` truncation, `holder_did` redaction unless `holder_did == active_did`, `capability_root` always truncated per RFC-0011-c §Security)
+- [ ] `OctoCliRedactor` agent-specific patterns applied per RFC-0011-c §Security Considerations — Phase 1 (this mission): log-time wholesale `REDACTED_KEY` substitution for `agent_id`, `capability_root`, `holder_did` via `FIELD_TABLE` entries, exercised by TV `tv_agt_redact_log_line_replaces_agent_family_fields`. Phase 2 (follow-on mission `0011-c-agent-redaction-envelope`): envelope payload redaction via `RedactedString` newtypes + conditional `holder_did == active_did` policy + `agent_id` truncation (first 8 hex chars + `...`). The two phases are explicitly split so the Phase 2 deferred scope does not regress sign-off on Phase 1.
 - [ ] `Commands::Agent` clap variant wired (the 4 sibling subcommand missions attach here)
 - [ ] `ManifestParseError` (exit 39), `CapabilityValidationFailed(usize)` (exit 40), `AgentAlreadyExists(Uuid)` (exit 41) wired (per RFC-0011-c §9.8 slot allocation 39-52)
 - [ ] TTY-aware renderer parity: pretty table on TTY, JSON when stdout is not a TTY OR `--json` set
@@ -120,7 +120,7 @@ No new external crates required; all substrate types (`AgentManifest`, `AgentSta
 | TV-AGT1 | `agent create` | Valid manifest, valid capability, valid HSM | `AgentCreateOutput { state: REGISTERED, ... }` (exit 0)      | Happy path; substrate returns success                                |
 | TV-AGT2 | `agent create` | Invalid manifest signature         | `CapabilityValidationFailed(1)` (exit 40)                    | Fails step 1 of 6-step pipeline                                      |
 | TV-AGT3 | `agent create` | Duplicate `agent_id`               | `AgentAlreadyExists(uuid)` (exit 41)                         | Substrate rejects duplicate manifest digest                          |
-| TV-AGT13| `agent create` | yesterday's manifest digest        | `ReplayDetected { digest }` (exit 50)                        | RFC-0011-c §9.7 Replay Protection; per RFC-0002 §Replay Protection  |
+| TV-AGT13| `agent create` | yesterday's manifest digest        | `ReplayDetected { digest }` (exit 50)                        | RFC-0011-c §9.7 Replay Protection; per RFC-0002 §Security Considerations  |
 
 ## Layer direction (RFC-0011-c §9.1 Architecture + per [[cipherocto-design-principles]])
 
@@ -158,7 +158,7 @@ cargo test -p octo-cli --lib --tests  # green
 - RFC-0011 §Output Envelope, §Redaction Layer, §Error Handling — substrate sections
 - RFC-0002 §Capability Validation (6-step pipeline substrate)
 - RFC-0002 §Agent Manifest (manifest wire form substrate)
-- RFC-0002 §Replay Protection (replay substrate)
+- RFC-0002 §Security Considerations (replay substrate)
 - [[cipherocto-design-principles]] — Layer B stability contract + no-parallel-abstractions principle
 - [[rfc-0011-loop-dry-gate-closure]] — review loop closure pattern from parent chain
 

@@ -342,11 +342,12 @@ mod tests {
 
     /// CLI-arg round-trip: a hex string the operator passes via
     /// `--capability-root` must survive parse → re-encode with byte
-    /// equivalence. The substrate (`CapabilityId::from_hex`) treats
-    /// the field as case-insensitive lowercase hex; this test pins
-    /// the byte-for-byte invariant so a future substrate amendment
-    /// cannot silently flip the case sensitivity (which would break
-    /// every operator script that stores the value canonically).
+    /// equivalence. The substrate (`CapabilityId::from_hex` →
+    /// `hex::decode_to_slice`) is case-insensitive but emits lowercase
+    /// canonical form; this test pins the canonical-lowercase 64-char
+    /// hex round-trip on the CLI-arg → substrate path so a future
+    /// amendment that flips canonicalization would surface as a
+    /// broken invariant (operators canonicalize before storing).
     #[test]
     fn capability_root_round_trips_byte_for_byte() {
         let original = "ab".repeat(32);

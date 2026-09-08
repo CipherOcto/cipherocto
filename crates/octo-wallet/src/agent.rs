@@ -276,13 +276,16 @@ mod tests {
     #[test]
     fn register_agent_is_deterministic_for_same_inputs() {
         // Determinism contract (RFC-0011-c §9.10, RFC-0008 Class B):
-        // `register_agent` is a pure function of `(manifest,
-        // capability_root, active_did)`. Calling it twice with the
-        // same inputs MUST return the same `agent_id` — first
-        // successfully, then `AgentAlreadyExists(agent_id)` with the
-        // same UUID. The BTreeMap registry is process-global, so the
-        // second call exercises the duplicate-detection path that
-        // proves the derivation is reproducible.
+        // for Phase 1, `register_agent` derives `agent_id` from
+        // `(manifest, active_did)` only — the `capability_root`
+        // argument is accepted in the signature and recorded for the
+        // macaroon substrate to consume, but the Phase 1 derivation
+        // path (`cli_fns::register_agent`) ignores it (see
+        // `#[allow(unused_variables)]` on the parameter). Phase 2
+        // will fold `capability_root` into the derivation. This test
+        // pins the Phase 1 invariant: calling twice with the same
+        // `(manifest, active_did)` MUST surface `AgentAlreadyExists`
+        // with the same UUID — proof of reproducibility.
         let manifest = AgentManifest {
             manifest_id: Uuid::new_v4(),
             holder_did: format!("did:octo:determinism-{}", Uuid::new_v4()),

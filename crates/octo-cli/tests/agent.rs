@@ -215,12 +215,12 @@ fn tv_agt_clap_surface_is_valid() {
 /// RFC-0011-c §Security Considerations. The three agent-family
 /// fields (`agent_id`, `capability_root`, `holder_did`) MUST be
 /// replaced by `REDACTED_KEY` whenever they appear in structured log
-/// lines. The `OctoCliRedactor` tracing layer (wired via
-/// `OctoCliRedactor::on_event` in `crates/octo-cli/src/redact.rs`)
-/// delegates to `redact_by_field` for every structured field — this
-/// test pins that delegation contract so a future amendment to
-/// `OctoCliRedactor` cannot drop the agent-family fields without
-/// breaking the test.
+/// lines. The `redact_by_field` helper that
+/// `OctoCliRedactor::on_event` (`crates/octo-cli/src/redact.rs`)
+/// delegates to MUST return `REDACTED_KEY` for these field names —
+/// this test pins that contract so a future amendment to either
+/// the helper or the tracing Layer cannot drop the agent-family
+/// fields without breaking the test.
 #[test]
 fn tv_agt_redact_log_line_replaces_agent_family_fields() {
     let log_line = r#"event="agent_registered" agent_id="00000000-0000-4000-8000-000000000001" capability_root="abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234" holder_did="did:octo:zSecret""#;
@@ -243,9 +243,10 @@ fn tv_agt_redact_log_line_replaces_agent_family_fields() {
         REDACTED_KEY,
         "holder_did field MUST map to REDACTED_KEY",
     );
-    // The line itself is fine — the assertion is that the per-field
-    // redactor would substitute the values above when the live
-    // `OctoCliRedactor` tracing layer walks the structured fields.
+    // The line itself is fine — the assertion is that the
+    // `redact_by_field` helper that `OctoCliRedactor::on_event`
+    // delegates to would substitute the values above when the live
+    // tracing layer walks the structured fields.
     assert!(
         !log_line.contains("REDACTED"),
         "log line as-written MUST NOT contain any REDACTED marker (redaction happens at emit time): {log_line}",

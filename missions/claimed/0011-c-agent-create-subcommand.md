@@ -46,7 +46,9 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-core-outpu
 
 - [ ] `octo agent create <manifest-path>` implemented + unit-tested (TV-AGT1, TV-AGT2, TV-AGT3 pass per RFC-0011-c §Test Vectors)
 - [ ] `AgentCreateOutput` payload type implemented + unit-tested (`agent_id`, `state`, `registered_at_unix`, `manifest_digest`)
-- [ ] `OctoCliRedactor` agent-specific patterns applied per RFC-0011-c §Security Considerations — Phase 1 (this mission): log-time wholesale `REDACTED_KEY` substitution for `agent_id`, `capability_root`, `holder_did` via `FIELD_TABLE` entries, exercised by TV `tv_agt_redact_log_line_replaces_agent_family_fields`. Phase 2 (follow-on mission `0011-c-agent-redaction-envelope`): envelope payload redaction via `RedactedString` newtypes + conditional `holder_did == active_did` policy + `agent_id` truncation (first 8 hex chars + `...`). The two phases are explicitly split so the Phase 2 deferred scope does not regress sign-off on Phase 1.
+- [ ] `OctoCliRedactor` agent-specific patterns applied per RFC-0011-c §Security Considerations — log-time wholesale `REDACTED_KEY` substitution for `agent_id`, `capability_root`, `holder_did` via `FIELD_TABLE` entries, exercised by TV `tv_agt_redact_log_line_replaces_agent_family_fields`.
+
+> Note: envelope-payload redaction (`RedactedString` newtype + conditional `holder_did == active_did` policy + `agent_id` truncation) is deferred to mission `0011-c-agent-redaction-envelope`. That mission's stub YAML lives at `missions/open/0011-c-agent-redaction-envelope.md` and gates the Phase 2 work on the Phase 1 substrate that this mission locks.
 - [ ] `Commands::Agent` clap variant wired (the 4 sibling subcommand missions attach here)
 - [ ] `ManifestParseError` (exit 39), `CapabilityValidationFailed(usize)` (exit 40), `AgentAlreadyExists(Uuid)` (exit 41) wired (per RFC-0011-c §9.8 slot allocation 39-52)
 - [ ] TTY-aware renderer parity: pretty table on TTY, JSON when stdout is not a TTY OR `--json` set

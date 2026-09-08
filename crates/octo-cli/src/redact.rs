@@ -133,6 +133,25 @@ const FIELD_TABLE: &[(&str, &str)] = &[
     // bypasses the long-hex walk (e.g. JSON-pretty mode where
     // line breaks split the hex run).
     ("envelope_id", REDACTED_SIG),
+    // RFC-0011-c §Security — agent-specific redaction patterns.
+    // Phase 1 scope: log-time field-name matching for the three
+    // agent-lifecycle fields. JSON-envelope payload redaction for
+    // `agent_id` and `capability_root` lands in the follow-on
+    // `0011-c-agent-redaction-envelope` mission via
+    // `RedactedString`-style newtypes on `AgentCreateOutput`
+    // (the Phase 2 hardening that catches an operator who
+    // explicitly pipes `--json` through `tee` to disk).
+    ("agent_id", REDACTED_KEY),
+    // RFC-0011-c §Security: capability roots are 32-byte secret
+    // identifiers that pin the root secret for a capability tree.
+    // They MUST never reach a log line; unconditional redaction.
+    ("capability_root", REDACTED_KEY),
+    // RFC-0011-c §Security: `holder_did` redaction is conditional
+    // on `holder_did != active_did` (Phase 1 logs always redact —
+    // we conservatively redact on field-name match; the conditional
+    // "equal to active_did" policy is enforced at the envelope
+    // boundary in Phase 2).
+    ("holder_did", REDACTED_KEY),
 ];
 
 /// Returns true when the (lower-cased) field name is sensitive.

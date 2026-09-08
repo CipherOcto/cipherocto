@@ -325,14 +325,14 @@ fn map_mesh_error(e: MeshError) -> OctoCliError {
 /// Render an output envelope for the given payload (serializable).
 ///
 /// Mirrors the `role::render_envelope` / `reputation::render_envelope`
-/// helper — schema string is captured in test-vector documentation
-/// only; `OutputEnvelope` carries the schema via `SCHEMA_VERSION`.
+/// helper — schema string is the `OutputEnvelope::command` field
+/// per RFC-0011-c §9.4.
 fn render_envelope<T: serde::Serialize>(
-    _schema: &str,
+    schema: &'static str,
     data: T,
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
-    let env = OutputEnvelope::new(data, 0);
+    let env = OutputEnvelope::new(schema, data);
     env.render(cli.output.json, cli.output.no_color)
         .map_err(|e| {
             OctoCliError::Internal(sanitize_substrate_error(&format!("render envelope: {e}")))

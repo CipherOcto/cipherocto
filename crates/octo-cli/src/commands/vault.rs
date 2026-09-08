@@ -1425,9 +1425,9 @@ fn vault_transfer_cmd(args: TransferArgs, cli: &Octo) -> Result<(), OctoCliError
     };
 
     let env = if args.dry_run {
-        OutputEnvelope::preview_only(output, 0)
+        OutputEnvelope::redacted("octo.vault.transfer.v1", output)
     } else {
-        OutputEnvelope::new(output, 0)
+        OutputEnvelope::new("octo.vault.transfer.v1", output)
     };
     env.render(cli.output.json, cli.output.no_color)
         .map_err(|e| {
@@ -1473,8 +1473,12 @@ fn map_projection_error(e: ProjectionError) -> OctoCliError {
 // Envelope render helper
 // ---------------------------------------------------------------------------
 
-fn render_envelope<T: Serialize>(_schema: &str, data: T, cli: &Octo) -> Result<(), OctoCliError> {
-    let env = OutputEnvelope::new(data, 0);
+fn render_envelope<T: Serialize>(
+    schema: &'static str,
+    data: T,
+    cli: &Octo,
+) -> Result<(), OctoCliError> {
+    let env = OutputEnvelope::new(schema, data);
     env.render(cli.output.json, cli.output.no_color)
         .map_err(|e| {
             OctoCliError::Internal(sanitize_substrate_error(&format!("render envelope: {e}")))
@@ -1756,13 +1760,13 @@ mod tests {
             registry_snapshot_epoch: 0,
             source_kind_u8: 0,
         };
-        let env = OutputEnvelope::new(record.clone(), 0);
+        let env = OutputEnvelope::new("octo.test.vault_balance.v1", record.clone());
         let json = serde_json::to_string(&env).unwrap();
         // DqaEncoding serialises as 16 raw bytes (may render as a
         // JSON array or escaped string; just check that the bytes
         // round-trip).
         let back: OutputEnvelope<VaultBalanceRecord> = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.data, record);
+        assert_eq!(back.payload, record);
     }
 
     /// VaultListOutput envelope round-trips with the substrate's
@@ -1774,10 +1778,10 @@ mod tests {
             next_cursor: None,
             resolved_at_unix: 1_700_000_000,
         };
-        let env = OutputEnvelope::new(output.clone(), 0);
+        let env = OutputEnvelope::new("octo.test.vault_list.v1", output.clone());
         let json = serde_json::to_string(&env).unwrap();
         let back: OutputEnvelope<VaultListOutput> = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.data, output);
+        assert_eq!(back.payload, output);
     }
 
     /// `parse_vault_id_hex` accepts 64-char hex and rejects other

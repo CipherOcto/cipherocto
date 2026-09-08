@@ -104,7 +104,8 @@ pub struct ReputationShowOutput {
     pub attestations: Vec<AttestationSummary>,
     /// RFC 3339 UTC mirror of the substrate aggregate read timestamp
     /// (RFC-0011-b §7.3 — `last_updated_unix` is the substrate field;
-    /// `generated_at` is the envelope-level timestamp).
+    /// `executed_at_unix` is the envelope-level timestamp at the
+    /// envelope layer, RFC-0011-c §9.4).
     pub last_updated_unix: i64,
     /// Reference to the last anchor on chain (RFC-0955-r1 §Wire
     /// Contract). `None` if the subject has never been anchored.
@@ -273,14 +274,13 @@ fn parse_did_bytes(s: &str) -> Result<octo_reputation::RecorderDid, OctoCliError
 /// Render an output envelope for the given payload (serializable).
 ///
 /// Mirrors the `role::render_envelope` helper — schema string is
-/// captured in test-vector documentation only; `OutputEnvelope`
-/// carries the schema via `SCHEMA_VERSION`.
+/// the `OutputEnvelope::command` field per RFC-0011-c §9.4.
 fn render_envelope<T: serde::Serialize>(
-    _schema: &str,
+    schema: &'static str,
     data: T,
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
-    let env = OutputEnvelope::new(data, 0);
+    let env = OutputEnvelope::new(schema, data);
     env.render(cli.output.json, cli.output.no_color)
         .map_err(|e| {
             OctoCliError::Internal(sanitize_substrate_error(&format!("render envelope: {e}")))

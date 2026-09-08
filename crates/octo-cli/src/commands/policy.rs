@@ -218,7 +218,7 @@ pub fn show(
         revocation_reason: record.revocation_reason,
         superseding_policy_hash: record.superseding_policy_hash.map(|h| HexBytes::new(&h)),
     };
-    let env = OutputEnvelope::new(output, 0);
+    let env = OutputEnvelope::new("octo.policy.show.v1", output);
     env.render(cli.output.json, cli.output.no_color)
         .map_err(|e| {
             OctoCliError::Internal(sanitize_substrate_error(&format!("render failed: {e}")))
@@ -293,7 +293,7 @@ pub fn list(filter_arg: Option<&str>, cli: &Octo) -> Result<(), OctoCliError> {
     let output = PolicyListOutput {
         policies: summaries,
     };
-    let env = OutputEnvelope::new(output, 0);
+    let env = OutputEnvelope::new("octo.policy.list.v1", output);
     env.render(cli.output.json, cli.output.no_color)
         .map_err(|e| {
             OctoCliError::Internal(sanitize_substrate_error(&format!("render failed: {e}")))

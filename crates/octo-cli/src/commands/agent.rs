@@ -291,11 +291,11 @@ pub struct AgentCreateOutput {
 ///
 /// Mirrors the `commands::reputation::render_envelope` helper.
 fn render_envelope<T: serde::Serialize>(
-    _schema: &str,
+    schema: &'static str,
     data: T,
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
-    let env = OutputEnvelope::new(data, 0);
+    let env = OutputEnvelope::new(schema, data);
     env.render(cli.output.json, cli.output.no_color)
         .map_err(|e| {
             OctoCliError::Internal(sanitize_substrate_error(&format!("render envelope: {e}")))

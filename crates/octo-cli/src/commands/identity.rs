@@ -242,7 +242,7 @@ pub fn whoami(cli: &Octo) -> Result<(), OctoCliError> {
         registered_at: DateTime::<Utc>::from_timestamp(record.registered_at_unix, 0)
             .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap()),
     };
-    let env = OutputEnvelope::new(output, 0);
+    let env = OutputEnvelope::new("octo.whoami.v1", output);
     env.render(cli.output.json, cli.output.no_color)
         .map_err(|e| {
             OctoCliError::Internal(sanitize_substrate_error(&format!("render envelope: {e}")))
@@ -283,7 +283,7 @@ pub fn show(did_arg: Option<&str>, cli: &Octo) -> Result<(), OctoCliError> {
         hsm_slot: record.hsm_slot,
         governance_snapshot_ref: None,
     };
-    let env = OutputEnvelope::new(output, 0);
+    let env = OutputEnvelope::new("octo.identity.show.v1", output);
     env.render(cli.output.json, cli.output.no_color)
         .map_err(|e| {
             OctoCliError::Internal(sanitize_substrate_error(&format!("render envelope: {e}")))
@@ -358,9 +358,9 @@ pub fn rotate(cli: &Octo) -> Result<(), OctoCliError> {
         signature_proof: RedactedHex(proof.to_vec()),
     };
     let env = if cli.mode.dry_run {
-        OutputEnvelope::preview_only(output, 0)
+        OutputEnvelope::redacted("octo.identity.rotate.v1", output)
     } else {
-        OutputEnvelope::new(output, 0)
+        OutputEnvelope::new("octo.identity.rotate.v1", output)
     };
     env.render(cli.output.json, cli.output.no_color)
         .map_err(|e| {
@@ -418,9 +418,9 @@ pub fn revoke(reason: &str, cli: &Octo) -> Result<(), OctoCliError> {
         terminal: true,
     };
     let env = if cli.mode.dry_run {
-        OutputEnvelope::preview_only(output, 0)
+        OutputEnvelope::redacted("octo.identity.revoke.v1", output)
     } else {
-        OutputEnvelope::new(output, 0)
+        OutputEnvelope::new("octo.identity.revoke.v1", output)
     };
     env.render(cli.output.json, cli.output.no_color)
         .map_err(|e| {
@@ -980,7 +980,7 @@ mod tests {
             "schema must include the envelope fields, got: {whoami_str}"
         );
         assert!(
-            whoami_str.contains("preview_only"),
+            whoami_str.contains("redacted"),
             "schema must include the envelope fields, got: {whoami_str}"
         );
         assert!(

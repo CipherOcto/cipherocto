@@ -3,7 +3,7 @@
 //! Covers the substrate-agnostic exit-code paths that are reachable
 //! without a working wallet/HSM/macaroon: filter validation, capability id
 //! form, holder DID form, confirmation/acknowledge gate, dry-run previews,
-//! and the envelope `preview_only` flag.
+//! and the envelope `redacted` flag.
 //!
 //! Where the mission's table would require end-to-end mint/attenuate
 //! success (CAP2, CAP6, CAP9-15), the upstream `WalletStore` stub always
@@ -39,7 +39,7 @@ fn tv_cap1_list_emits_empty_capabilities_envelope() {
         .assert()
         .code(0)
         .stdout(contains("\"capabilities\":[]"))
-        .stdout(contains("\"preview_only\":false"));
+        .stdout(contains("\"redacted\":false"));
 }
 
 /// Active companion to TV-CAP1: today (v1.0 stub wallet) the
@@ -242,7 +242,7 @@ fn tv_cap17_mint_dry_run_preview() {
         ])
         .assert()
         .code(0)
-        .stdout(contains("\"preview_only\":true"))
+        .stdout(contains("\"redacted\":true"))
         .stdout(contains("\"capability_id\":\"(preview)\""));
 }
 
@@ -310,7 +310,7 @@ fn tv_cap18_attenuate_dry_run_preview() {
         ])
         .assert()
         .code(0)
-        .stdout(contains("\"preview_only\":true"))
+        .stdout(contains("\"redacted\":true"))
         .stdout(contains("\"narrowed_from\":\"").and(contains(&parent)));
 }
 

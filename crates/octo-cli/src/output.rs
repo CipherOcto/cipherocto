@@ -1,6 +1,29 @@
-//! Machine-readable output envelope — RFC-0011 §Output Envelope.
+//! Machine-readable output envelope — RFC-0011 §Output Envelope +
+//! RFC-0011-c §9.4 Divergence.
+//!
+//! **Schema version history:**
+//! - v1 (RFC-0011) — `data` / `generated_at` / `preview_only` / `exit_code`
+//! - v2 (RFC-0011 amended by reputation) — same shape, bumped version
+//! - v3 (RFC-0011-e) — renames + adds `command` + `redacted`
+//! - v4 (RFC-0011-c) — **current**: inherits v3 renames; consumes the same
+//!   envelope wire format as RFC-0011-e (`payload` / `executed_at_unix` /
+//!   `redacted` / `command`). `exit_code` is dropped (the CLI process
+//!   emits the exit code via the OS, not in the envelope payload).
+//!
+//! Per RFC-0011-c §9.4.1 Divergence from RFC-0011 §Output Envelope:
+//!
+//! | RFC-0011 v1 field | RFC-0011-c v4 field | Note |
+//! |-------------------|---------------------|------|
+//! | `data: T`         | `payload: T`        | Renamed. |
+//! | `generated_at: DateTime<Utc>` | `executed_at_unix: u64` | Renamed + retyped. RFC 3339 string → `u64` unix seconds for single-clock determinism. |
+//! | `preview_only: bool` | `redacted: bool` | Renamed — surfaces the `OctoCliRedactor` alteration status. |
+//! | (none)            | `command: &'static str` | ADDED. Operator-visible command label (e.g., `"octo.agent.create.v1"`). |
+//! | `exit_code: i32`  | (dropped)           | Process exit is OS-emitted, not envelope-carried. |
+//!
+//! Consumers MUST read `schema_version` before reading any payload field —
+//! `schema_version = 4` guarantees the v4 shape; anything else is a
+//! pre-amendment surface and SHOULD be rejected by the consumer.
 
-use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::io::{self, IsTerminal, Write};
@@ -115,46 +138,75 @@ impl PartialEq for RedactedString {
 impl Eq for RedactedString {}
 
 /// Versioned envelope wrapping every successful command payload.
+///
+/// `schema_version = 4` per RFC-0011-c §9.4 (current shape:
+/// `payload` / `executed_at_unix` / `redacted` / `command`).
+/// `exit_code` was dropped (the CLI process emits the exit code via
+/// the OS, not in the envelope payload).
 #[derive(Serialize, Deserialize, JsonSchema, Debug, Clone)]
 #[schemars(bound = "T: JsonSchema")]
 pub struct OutputEnvelope<T> {
-    /// Envelope schema version.
+    /// Envelope schema version. **Always 4** for the v4 envelope shape.
     pub schema_version: u32,
-    /// Generation timestamp (RFC 3339, UTC, `Z` suffix).
-    pub generated_at: DateTime<Utc>,
-    /// Command payload.
-    pub data: T,
-    /// Process exit code the caller will use.
-    pub exit_code: i32,
-    /// True when the command ran in `--dry-run` preview mode.
-    pub preview_only: bool,
+    /// Stable operator-visible command label
+    /// (RFC-0011-c §9.4 added field; e.g., `"octo.agent.create.v1"`).
+    ///
+    /// Owned `String` (not `&'static str`) so JSON envelopes can be
+    /// round-tripped through external deserializers without forcing
+    /// the source buffer to live for `'static`. Construction is still
+    /// zero-allocation from the call site via [`OutputEnvelope::new`].
+    pub command: String,
+    /// Unix seconds at which the command was executed
+    /// (RFC-0011-c §9.4 renamed from v1 `generated_at`).
+    pub executed_at_unix: u64,
+    /// True when the `OctoCliRedactor` altered the payload
+    /// (RFC-0011-c §9.4 renamed from v1 `preview_only`).
+    pub redacted: bool,
+    /// Command payload (RFC-0011-c §9.4 renamed from v1 `data`).
+    pub payload: T,
 }
 
 impl<T> OutputEnvelope<T> {
     /// Current envelope schema version.
-    pub const SCHEMA_VERSION: u32 = 2;
+    ///
+    /// `4` per RFC-0011-c §9.4 / §9.4.1 Divergence slot table.
+    /// Consumers MUST read this field first and reject any other value.
+    pub const SCHEMA_VERSION: u32 = 4;
 
-    /// Build an applied-result envelope.
-    pub fn new(data: T, exit_code: i32) -> Self {
+    /// Build an applied-result envelope with no redaction applied.
+    pub fn new(command: &'static str, payload: T) -> Self {
         Self {
             schema_version: Self::SCHEMA_VERSION,
-            generated_at: Utc::now(),
-            data,
-            exit_code,
-            preview_only: false,
+            command: command.to_string(),
+            executed_at_unix: now_unix_secs(),
+            redacted: false,
+            payload,
         }
     }
 
-    /// Build a preview-only (`--dry-run`) envelope.
-    pub fn preview_only(data: T, exit_code: i32) -> Self {
+    /// Build an envelope marking the payload as redacted by the
+    /// `OctoCliRedactor` (RFC-0011-c §9.4 `redacted: true`).
+    pub fn redacted(command: &'static str, payload: T) -> Self {
         Self {
             schema_version: Self::SCHEMA_VERSION,
-            generated_at: Utc::now(),
-            data,
-            exit_code,
-            preview_only: true,
+            command: command.to_string(),
+            executed_at_unix: now_unix_secs(),
+            redacted: true,
+            payload,
         }
     }
+}
+
+/// Best-effort wall-clock for `executed_at_unix` (RFC-0011-c §9.4
+/// renamed from v1 `generated_at`). Phase 1 mirrors the substrate
+/// `register_agent` helper pattern; Phase 2 routes through the
+/// substrate monotonic clock for cross-replica determinism
+/// (RFC-0008 Class B).
+fn now_unix_secs() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }
 
 impl<T: Serialize> OutputEnvelope<T> {
@@ -259,7 +311,6 @@ fn write_scalar<W: Write>(w: &mut W, v: &serde_json::Value, colored: bool) -> io
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::SecondsFormat;
 
     #[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq)]
     struct Payload {
@@ -276,38 +327,46 @@ mod tests {
 
     #[test]
     fn tv_env1_schema_version_present() {
-        let env = OutputEnvelope::new(payload(), 0);
+        let env = OutputEnvelope::new("octo.test.v1", payload());
         let json = serde_json::to_string(&env).unwrap();
-        assert!(json.contains("\"schema_version\":2"), "{json}");
-        assert!(json.contains("\"preview_only\":false"), "{json}");
+        assert!(json.contains("\"schema_version\":4"), "{json}");
+        assert!(json.contains("\"redacted\":false"), "{json}");
+        assert!(json.contains("\"command\":\"octo.test.v1\""), "{json}");
+        assert!(json.contains("\"payload\""), "{json}");
+        assert!(json.contains("\"executed_at_unix\""), "{json}");
     }
 
     #[test]
-    fn tv_env2_generated_at_rfc3339_utc() {
-        let env = OutputEnvelope::new(payload(), 0);
-        let s = env.generated_at.to_rfc3339_opts(SecondsFormat::Secs, true);
-        assert!(s.ends_with('Z'), "{s}");
+    fn tv_env2_executed_at_unix_is_u64() {
+        let env = OutputEnvelope::new("octo.test.v1", payload());
+        // RFC-0011-c §9.4: executed_at_unix is a u64 unix-seconds
+        // (renamed + retyped from v1 `generated_at: DateTime<Utc>`).
+        // We don't pin the exact value (wall-clock drift) — only the
+        // type contract.
+        let json = serde_json::to_string(&env).unwrap();
+        assert!(json.contains("\"executed_at_unix\":"), "{json}");
     }
 
     #[test]
-    fn tv_env3_preview_only_true() {
-        let env = OutputEnvelope::preview_only(payload(), 0);
+    fn tv_env3_redacted_true() {
+        let env = OutputEnvelope::redacted("octo.test.v1", payload());
         let json = serde_json::to_string(&env).unwrap();
-        assert!(json.contains("\"preview_only\":true"), "{json}");
+        assert!(json.contains("\"redacted\":true"), "{json}");
     }
 
     #[test]
     fn tv_env4_json_roundtrip() {
-        let env = OutputEnvelope::new(payload(), 0);
+        let env = OutputEnvelope::new("octo.test.v1", payload());
         let json = serde_json::to_string(&env).unwrap();
         let back: OutputEnvelope<Payload> = serde_json::from_str(&json).unwrap();
         assert_eq!(
             back.schema_version,
             OutputEnvelope::<Payload>::SCHEMA_VERSION
         );
-        assert_eq!(back.data, env.data);
-        assert_eq!(back.exit_code, env.exit_code);
-        assert_eq!(back.preview_only, env.preview_only);
+        assert_eq!(back.payload, env.payload);
+        assert_eq!(back.command, env.command);
+        assert_eq!(back.redacted, env.redacted);
+        assert_eq!(back.executed_at_unix, env.executed_at_unix);
     }
 
     #[test]
@@ -317,7 +376,10 @@ mod tests {
         let schema = schemars::schema_for!(OutputEnvelope<Payload>);
         let s = serde_json::to_string(&schema).unwrap();
         assert!(s.contains("schema_version"), "{s}");
-        assert!(s.contains("preview_only"), "{s}");
+        assert!(s.contains("payload"), "{s}");
+        assert!(s.contains("command"), "{s}");
+        assert!(s.contains("redacted"), "{s}");
+        assert!(s.contains("executed_at_unix"), "{s}");
     }
 
     #[test]
@@ -348,7 +410,7 @@ mod tests {
 
     #[test]
     fn tv_env6_render_pretty_uses_cached_tty() {
-        let env = OutputEnvelope::new(payload(), 0);
+        let env = OutputEnvelope::new("octo.test.v1", payload());
 
         // `tty=true` must emit ANSI colour codes (CYAN for keys).
         let mut colored_buf: Vec<u8> = Vec::new();

@@ -352,13 +352,13 @@ impl RoleSelectOutput {
 
 /// Render an output envelope for the given payload (serializable).
 fn render_envelope<T: serde::Serialize>(
-    _schema: &str,
+    schema: &'static str,
     data: T,
     cli: &Octo,
 ) -> Result<(), OctoCliError> {
-    // Schema string is currently captured in test-vector documentation
-    // only; OutputEnvelope carries the schema via `SCHEMA_VERSION`.
-    let env = OutputEnvelope::new(data, 0);
+    // Schema string is the `OutputEnvelope::command` field per
+    // RFC-0011-c §9.4.
+    let env = OutputEnvelope::new(schema, data);
     env.render(cli.output.json, cli.output.no_color)
         .map_err(|e| {
             OctoCliError::Internal(sanitize_substrate_error(&format!("render envelope: {e}")))

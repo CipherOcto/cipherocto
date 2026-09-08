@@ -60,8 +60,10 @@ fn tv_rep_1_show_returns_envelope() {
         .stdout(contains("\"last_updated_unix\""))
         .stdout(contains("\"anchor_ref\""))
         .stdout(contains("\"schema_version\""))
-        .stdout(contains("\"exit_code\""))
-        .stdout(contains("\"generated_at\""));
+        .stdout(contains("\"redacted\""))
+        .stdout(contains("\"executed_at_unix\""))
+        .stdout(contains("\"command\""))
+        .stdout(contains("\"payload\""));
 }
 
 /// TV-REP-2: `octo reputation show --role builder` without `--did` returns

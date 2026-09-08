@@ -235,7 +235,10 @@ pub fn list(filters: &[String], cli: &Octo) -> Result<(), OctoCliError> {
         })
         .filter(|v| matches_filters(v, &filters))
         .collect();
-    let env = OutputEnvelope::new(CapabilityListOutput { capabilities }, 0);
+    let env = OutputEnvelope::new(
+        "octo.capability.list.v1",
+        CapabilityListOutput { capabilities },
+    );
     env.render(cli.output.json, cli.output.no_color)
         .map_err(|e| map_capability_internal(format!("render envelope: {e}")))
 }
@@ -248,7 +251,7 @@ pub fn list(filters: &[String], cli: &Octo) -> Result<(), OctoCliError> {
 /// 2. caveat parse + catalog clamps → exit 7
 /// 3. holder DID form → exit 9
 /// 4. `--root` form → exit 12
-/// 5. `--dry-run` short-circuit → exit 0, `preview_only: true`
+/// 5. `--dry-run` short-circuit → exit 0, `redacted: true`
 /// 6. active identity → exit 2
 /// 7. substrate mint → exit 5 / 7 / 8 / 11 / 64
 pub fn mint(
@@ -302,7 +305,7 @@ pub fn mint(
             caveats: views,
             holder_sig: RedactedHex(Vec::new()),
         };
-        return OutputEnvelope::preview_only(output, 0)
+        return OutputEnvelope::redacted("octo.capability.mint.v1", output)
             .render(cli.output.json, cli.output.no_color)
             .map_err(|e| map_capability_internal(format!("render envelope: {e}")));
     }
@@ -360,7 +363,7 @@ pub fn mint(
                 caveats: views,
                 holder_sig: RedactedHex(token.holder_sig.to_bytes().to_vec()),
             };
-            return OutputEnvelope::new(output, 0)
+            return OutputEnvelope::new("octo.capability.mint.v1", output)
                 .render(cli.output.json, cli.output.no_color)
                 .map_err(|e| map_capability_internal(format!("render envelope: {e}")));
         }
@@ -386,7 +389,7 @@ pub fn mint(
             caveats: views,
             holder_sig: RedactedHex(token.holder_sig.to_bytes().to_vec()),
         };
-        OutputEnvelope::new(output, 0)
+        OutputEnvelope::new("octo.capability.mint.v1", output)
             .render(cli.output.json, cli.output.no_color)
             .map_err(|e| map_capability_internal(format!("render envelope: {e}")))
     }
@@ -398,7 +401,7 @@ pub fn mint(
 /// 1. confirmation + acknowledgement gates → exit 2
 /// 2. caveat parse + catalog clamps → exit 7
 /// 3. `cap_id` form → exit 12
-/// 4. `--dry-run` short-circuit → exit 0, `preview_only: true`
+/// 4. `--dry-run` short-circuit → exit 0, `redacted: true`
 /// 5. parent lookup → exit 12
 /// 6. narrowing check → exit 10
 /// 7. substrate attenuate → exit 7 / 8 / 10 / 64
@@ -435,7 +438,7 @@ pub fn attenuate(cap_id: &str, caveats_json: &str, cli: &Octo) -> Result<(), Oct
             narrowed_from: cap_id.to_string(),
             caveats: views,
         };
-        return OutputEnvelope::preview_only(output, 0)
+        return OutputEnvelope::redacted("octo.capability.attenuate.v1", output)
             .render(cli.output.json, cli.output.no_color)
             .map_err(|e| map_capability_internal(format!("render envelope: {e}")));
     }
@@ -459,7 +462,7 @@ pub fn attenuate(cap_id: &str, caveats_json: &str, cli: &Octo) -> Result<(), Oct
         narrowed_from: cap_id.to_string(),
         caveats: views,
     };
-    OutputEnvelope::new(output, 0)
+    OutputEnvelope::new("octo.capability.attenuate.v1", output)
         .render(cli.output.json, cli.output.no_color)
         .map_err(|e| map_capability_internal(format!("render envelope: {e}")))
 }
@@ -932,14 +935,14 @@ mod tests {
     #[test]
     fn tv_cap1_list_empty_payload() {
         let env = OutputEnvelope::new(
+            "octo.test.v1",
             CapabilityListOutput {
                 capabilities: Vec::new(),
             },
-            0,
         );
         let json = serde_json::to_string(&env).expect("envelope serializes");
         assert!(json.contains("\"capabilities\":[]"), "{json}");
-        assert!(json.contains("\"schema_version\":2"), "{json}");
+        assert!(json.contains("\"schema_version\":4"), "{json}");
     }
 
     /// TV-CAP8 — malformed JSON is a parse error (exit 7), never a panic.

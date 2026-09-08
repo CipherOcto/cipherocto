@@ -562,9 +562,9 @@ fn forward_envelope_cmd(
     }
 
     let env = if dry_run {
-        OutputEnvelope::preview_only(output, 0)
+        OutputEnvelope::redacted("octo.mesh.dry_run.v1", output)
     } else {
-        OutputEnvelope::new(output, 0)
+        OutputEnvelope::new("octo.mesh.dry_run.v1", output)
     };
     env.render(cli.output.json, cli.output.no_color)
         .map_err(|e| {
@@ -675,9 +675,9 @@ fn rpc_cmd(
     // `preview_only = true` so downstream tooling can branch on the
     // field without parsing the JSON.
     let env = if dry_run {
-        OutputEnvelope::preview_only(output, 0)
+        OutputEnvelope::redacted("octo.mesh.dry_run.v1", output)
     } else {
-        OutputEnvelope::new(output, 0)
+        OutputEnvelope::new("octo.mesh.dry_run.v1", output)
     };
     env.render(cli.output.json, cli.output.no_color)
         .map_err(|e| {

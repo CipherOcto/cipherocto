@@ -1,4 +1,4 @@
-//! `octo reputation show` — RFC-0011-b §Specification.
+//! `octo reputation show` — RFC-0011-b §Specification
 //!
 //! Thin Layer C wrapper over the `octo-reputation` substrate crate's
 //! `projection` module (Layer B `[ADD]` per RFC-0011-b §7.4).
@@ -208,13 +208,12 @@ fn show_reputation(
 
     // Subject DID is rendered via the substrate canonical wire
     // form (`octo_reputation::RecorderDid::to_wire()`). The
-    // substrate owns the wire encoding (RFC-0010 §Specification
-    // + RFC-0968 §2 pending reconcile per the §C3 review note);
-    // the CLI never re-encodes the DID — it surfaces the
-    // substrate's canonical form unchanged. When the DID cannot
-    // be encoded (malformed discriminator), the CLI falls back
-    // to the lower-case hex form of the raw 52-byte payload —
-    // diagnostic-safe and still round-trippable.
+    // substrate owns the wire encoding (RFC-0010 +
+    // RFC-0968 §2 — the CLI never re-encodes the DID, it
+    // surfaces the substrate's canonical form unchanged). When
+    // the DID cannot be encoded (malformed discriminator), the
+    // CLI falls back to the lower-case hex form of the raw
+    // 52-byte payload — diagnostic-safe and still round-trippable.
     let did_wire = record
         .did
         .to_wire()
@@ -240,8 +239,8 @@ fn show_reputation(
 /// wire form (`did:octo:z<base58btc>` per `to_wire()`) is **not**
 /// round-trippable through this CLI input parser in Phase 1 — the
 /// substrate does not expose a `from_wire()` inverse (gap to close
-/// in Phase 2 per the RFC-0968 §2 vs RFC-0010 §C3 reconcile). For
-/// v1.0 the canonical CLI input shape is the raw hex form; the
+/// in Phase 2). For v1.0 the canonical CLI input shape is the raw
+/// hex form; the
 /// output shape (`ReputationShowOutput.did`) is the substrate's
 /// wire form.
 ///

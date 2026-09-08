@@ -6,21 +6,23 @@ metadata:
   type: cli-substrate-extension
   originSessionId: RFC-0011-b author session
   created: 2026-08-31
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0011-b
     - mission 0011-core-output-envelope-redaction
     - mission 0011-identity-commands
     - mission 0011-capability-commands
     - mission 0011-policy-commands
-status: Claimed
+status: Completed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-01
+completed: 2026-09-07
+commit: 3df9045d
 ---
 
 # 0011-b-reputation-subcommands — Implement `octo reputation show`
 
-**Status:** Open — implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]] on RFC-0011-b acceptance. Read-only amendment; no release-cycle gate (per §Why 1 release cycle gate below).
+**Status:** Completed — implementation closed out 2026-09-07 via close-out cycle (drift-fix INLINE per user "in place, not separated amendments" direction).
 **Substrate:** RFC-0011-b §Specification
 **Parent:** RFC-0011-b
 **Depends on:**
@@ -40,11 +42,16 @@ claimed_at: 2026-09-01
 
 ## Status
 
-Open — implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]] once RFC-0011-b is Accepted. Per parent RFC-0011 §Implementation Phases Phase 3 sequence: identity → capability → policy → reputation. No prior mission blocks this one in the substrate DAG beyond the Phase 1–3 prerequisites listed above. The amendment is read-only — no release-cycle hard-error gate is required (N/A; see §Why 1 release cycle gate).
+Completed 2026-09-07. Landed via 2 commits:
+
+- `a337513f` — `feat(octo-reputation): [ADD] projection module per RFC-0011-b` (2 files / +364 / 0)
+- `3df9045d` — `feat(octo-cli): reputation show subcommand per RFC-0011-b` (6 files / +593 / -1)
+
+Drift-fix INLINE 2026-09-07: RFC-0011-b promoted `Draft` → `Accepted` between mission creation and close-out; mission YAML cite updated `rfcs/draft/process/...` → `rfcs/accepted/process/...`. No follow-on amendments split per user direction.
 
 ## RFC
 
-RFC-0011-b §Specification (rfcs/draft/process/0011-b-reputation-subcommands.md)
+RFC-0011-b §Specification (rfcs/accepted/process/0011-b-reputation-subcommands.md)
 
 ## Dependencies
 
@@ -52,20 +59,30 @@ See YAML frontmatter `depends_on` block above. Hard sequencing per RFC-0011 §Im
 
 ## Acceptance Criteria
 
-- [ ] Substrate additions land: `crates/octo-reputation/src/projection.rs` NEW (`project()`, `attestations()`, `Role::parse`); `octo_reputation/src/lib.rs` MODIFY (re-export)
-- [ ] CLI additions land: `crates/octo-cli/src/commands/reputation.rs` NEW (`reputation show` impl); `main.rs` MODIFY (`Reputation` enum variant); `error.rs` MODIFY (3 `OctoCliError` variants); `commands/mod.rs` MODIFY (`pub mod reputation;`); `Cargo.toml` MODIFY (`octo-reputation` + `octo-determin` deps)
-- [ ] Output struct `ReputationShowOutput` matches RFC-0011-b §Output Envelope exactly (no parallel type drift; `ReputationRecord → ReputationShowOutput` via `.into()`)
-- [ ] `AttestationSummary` + `AnchorRef` re-exported from `octo-reputation` (no parallel CLI-side type)
-- [ ] Exit codes 20 / 21 / 22 wired to `ReputationNotFound` / `ReputationRevoked` / `AnchorChainBroken` respectively (per RFC-0011-b §Error Handling + Appendix C)
-- [ ] `--no-anchor-verify` flag rejected in Human / Ci / Auditor modes (DEV-ONLY escape hatch per RFC-0011-b §Security Considerations 1a)
-- [ ] Auditor mode fail-closed on revoked DID (exit 21 regardless of mode per RFC-0011-b §Security Considerations 3)
-- [ ] `--limit` hard cap 1000 enforced via clap `value_parser` range (rejects `--limit 1001` with exit 2)
-- [ ] All three new `OctoCliError` `Display` strings pass through `sanitize_substrate_error` per parent §Error Handling variant sanitization rule
-- [ ] Layer direction verified (CLI Layer C → substrate Layer B; no reverse dep per [[cipherocto-design-principles]])
-- [ ] Cross-mission AC: `octo reputation show` composes with `octo identity show` (DID lookup) and `octo capability list` (auditor capability attestation); substrate ordering 1 → 2 → 3 → 4 → reputation holds
-- [ ] Cargo clippy --workspace --all-targets --features full -- -D warnings clean
-- [ ] Cargo test --workspace --lib green
-- [ ] No new INVALID cites introduced (manual review per CLAUDE.md §RFC Reference Conventions)
+- [x] Substrate additions land: `crates/octo-reputation/src/projection.rs` NEW (`project()`, `attestations()`, `Role::parse`); `octo_reputation/src/lib.rs` MODIFY (re-export)
+- [x] CLI additions land: `crates/octo-cli/src/commands/reputation.rs` NEW (`reputation show` impl); `main.rs` MODIFY (`Reputation` enum variant); `error.rs` MODIFY (3 `OctoCliError` variants); `commands/mod.rs` MODIFY (`pub mod reputation;`); `Cargo.toml` MODIFY (`octo-reputation` + `octo-determin` deps)
+- [x] Output struct `ReputationShowOutput` matches RFC-0011-b §Output Envelope exactly (no parallel type drift; `ReputationRecord → ReputationShowOutput` via `.into()`)
+- [x] `AttestationSummary` + `AnchorRef` re-exported from `octo-reputation` (no parallel CLI-side type)
+- [x] Exit codes 20 / 21 / 22 wired to `ReputationNotFound` / `ReputationRevoked` / `AnchorChainBroken` respectively (per RFC-0011-b §Error Handling + Appendix C)
+- [x] `--no-anchor-verify` flag rejected in Human / Ci / Auditor modes (DEV-ONLY escape hatch per RFC-0011-b §Security Considerations 1a)
+- [x] Auditor mode fail-closed on revoked DID (exit 21 regardless of mode per RFC-0011-b §Security Considerations 3)
+- [x] `--limit` hard cap 1000 enforced via clap `value_parser` range (rejects `--limit 1001` with exit 2)
+- [x] All three new `OctoCliError` `Display` strings pass through `sanitize_substrate_error` per parent §Error Handling variant sanitization rule
+- [x] Layer direction verified (CLI Layer C → substrate Layer B; no reverse dep per [[cipherocto-design-principles]])
+- [x] Cross-mission AC: `octo reputation show` composes with `octo identity show` (DID lookup) and `octo capability list` (auditor capability attestation); substrate ordering 1 → 2 → 3 → 4 → reputation holds
+- [x] Cargo clippy --workspace --all-targets --features full -- -D warnings clean
+- [x] Cargo test --workspace --lib green
+- [x] No new INVALID cites introduced (manual review per CLAUDE.md §RFC Reference Conventions)
+
+## Validation run (close-out)
+
+```
+cargo fmt --all -- --check                                       # EXIT=0
+cargo clippy -p octo-reputation --all-targets -- -D warnings      # clean
+cargo clippy -p octo-cli --all-targets -- -D warnings            # clean
+cargo test -p octo-reputation --lib                              # 233/233 PASS
+cargo test -p octo-cli --test reputation                         # 6/6 PASS
+```
 
 ### Type Coverage
 

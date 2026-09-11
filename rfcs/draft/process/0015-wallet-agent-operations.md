@@ -152,8 +152,7 @@ pub fn list_owned_agents(
 ```rust
 /// Transition an existing agent to a new state.
 ///
-/// [DEFERRED — see §6.8 DEFERRED SURFACE. Requires RFC-0012-v2 amendment
-///  adding `AuditEventKind::AgentTransition` to `octo-audit-core`.]
+/// [DEFERRED — see §6.8 DEFERRED SURFACE. Requires RFC-0012-v2 amendment adding `AuditEventKind::AgentTransition` to `octo-audit-core`.]
 ///
 /// State-machine authority (substrate-faithful, canonical form per
 /// RFC-0002 §Agent State Machine substrate diagram):
@@ -421,7 +420,7 @@ No changes to Layer A crates (`octo-audit-core`, etc.); no CLI binary changes; n
 
 ## Version History
 
-- v1.0 (2026-09-11) Initial draft. Substrate-faithful `octo-wallet` read surface per RFC-0002, RFC-0011-c.
+- v1.0 (2026-09-11) Initial draft. Substrate-faithful `octo-wallet` read surface (RFC-0002 / RFC-0011-c).
 
 ## Related RFCs
 

@@ -551,7 +551,7 @@ No changes to Layer A crates (`octo-audit-core`, `octo-settlement-core`); no CLI
 
 ## Version History
 
-- v1.0 (2026-09-11) Initial draft. Read-only `octo-audit` façade per RFC-0011-a §7.4.
+- v1.0 (2026-09-11) Initial draft. Read-only `octo-audit` façade (RFC-0011-a §7.4).
 
 ## Related RFCs
 

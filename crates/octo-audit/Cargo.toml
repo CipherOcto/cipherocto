@@ -14,6 +14,13 @@ crate-type = ["rlib"]
 # substrate; the facade just exposes it at a friendly name for owner crates
 # (e.g. `octo-wallet`, `octo-cli`) that prefer a non-`-core` import.
 octo-audit-core = { path = "../octo-audit-core" }
+# Mission 0012-audit-stoolap-sink: concrete storage adapter for
+# `AppendOnlyAuditSink`. octo-storage-core is the Layer A storage
+# facade (RFC-0206 §Substrate Newtype Refactor); the audit facade
+# (Layer B) depends on it to wire the trait → concrete DB engine.
+octo-storage-core = { path = "../octo-storage-core" }
+serde = { workspace = true }
+thiserror = { workspace = true }
 
 [lints.rust]
 unsafe_code = "forbid"

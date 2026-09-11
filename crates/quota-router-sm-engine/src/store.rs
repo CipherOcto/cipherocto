@@ -152,6 +152,25 @@ impl SettlementStore for StoolapStore {
     fn consume(&self, receipt_id: &[u8; 32]) -> Result<(), SettlementError> {
         let db = self.db.lock().expect("stoolap mutex poisoned");
 
+        // Atomicity model (R3 security review note):
+        //
+        // The early SELECT below is an OPTIMISTIC pre-check only;
+        // it is NOT the atomicity gate. The actual atomicity gate is
+        // the `consumed_receipt_index` PK INSERT (the receipt_id PK
+        // constraint enforces single-writer semantics). A concurrent
+        // caller racing through the SELECT-then-INSERT window will
+        // collide on the PK INSERT and receive `AlreadyConsumed`,
+        // never the inconsistent intermediate state the reviewer
+        // described.
+        //
+        // Within a single Stoolap-backed process, the `self.db.lock()`
+        // mutex above serializes the whole consume() flow, so the
+        // SELECT-then-INSERT window cannot be observed by a second
+        // caller at all. Cross-process Stoolap usage would need a
+        // different atomicity story (DB-level transaction or row
+        // lock); the current architecture is in-process Arc<Mutex<...>>
+        // and that is load-bearing for this guarantee.
+
         // First: is this receipt already consumed? (PK lookup)
         let dup_rows = db
             .query(

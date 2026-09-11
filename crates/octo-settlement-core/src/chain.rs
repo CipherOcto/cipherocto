@@ -28,6 +28,22 @@ pub const CHAIN_DOMAIN_SEPARATOR: &[u8] = b"cipherocto/reservation/v1/";
 /// `settlement_hash` is the OUTPUT of this function; it is NOT
 /// included in the input (including it would make the hash depend on
 /// itself, breaking determinism).
+///
+/// # Keyed-hash key
+///
+/// The BLAKE3 key is the zero-filled 32-byte constant `[0; 32]`. This
+/// is INTENTIONAL — the substrate is Layer A frozen (RFC-0014
+/// §Module Layout) and cross-replica consensus requires the receipt
+/// hash to be deterministic for any replica that holds the same
+/// `Receipt` inputs (no per-deployment key material). The
+/// `verify_receipt_chain_vectors::vector_12_domain_separator_byte_pin`
+/// test (RFC-0014 §Test Vectors) byte-pins this behavior.
+///
+/// Production deployments that need keyed-hash defense-in-depth
+/// SHOULD wrap this function (e.g., via a `KeyedHasher` trait on
+/// Layer C) and inject real key material from an HSM / Vault /
+/// secrets manager at startup. The frozen zero key is a load-bearing
+/// consensus invariant, not a permanent security posture.
 pub fn receipt_id_for(receipt: &Receipt) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new_keyed(&[0; 32]);
     hasher.update(CHAIN_DOMAIN_SEPARATOR);

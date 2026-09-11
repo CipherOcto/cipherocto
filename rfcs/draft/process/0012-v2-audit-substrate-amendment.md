@@ -24,6 +24,14 @@ RFC-0012-v2 is a **Layer A substrate amendment** to `octo-audit-core` that:
 
 Per CLAUDE.md §Architectural Principles + §Extension over enumeration, RFC-0012-v2 enables future audit event semantics (agent transitions, redactions, capability mints) without modifying `octo_audit_core::AuditEventKind` (which is `#[non_exhaustive]` and substrate-frozen).
 
+## Authors
+
+- CipherOcto Architecture Working Group
+
+## Maintainers
+
+- CipherOcto Architecture Working Group
+
 ## Dependencies
 
 - **RFC-0012** (parent, accepted) — defines `AuditEvent`, `AuditEventKind`, `AppendOnlyAuditSink`, `AuditError`.
@@ -60,7 +68,7 @@ RFC-0012-v2 codifies the typed-discriminator pattern so write-path amendments ca
 
 ### §S1 — Typed-discriminator extension pattern (canonical)
 
-RFC-0012-v2 §S1 pins the extension pattern as the canonical mechanism for new audit event semantics.
+§S1 pins the extension pattern as the canonical mechanism for new audit event semantics.
 
 **Pattern:** A new event kind `K` is encoded as:
 
@@ -85,7 +93,7 @@ The `cap_root_hash` field acts as a typed-discriminator: the 32-byte digest iden
 
 ### §S2 — `AppendOnlyAuditSink::append` invariants (canonical)
 
-RFC-0012-v2 §S2 pins the following substrate-level invariants that all `AppendOnlyAuditSink` implementations MUST enforce:
+§S2 pins the following substrate-level invariants that all `AppendOnlyAuditSink` implementations MUST enforce:
 
 1. **`&mut self` requirement** — already substrate. The trait takes `&mut self` to enforce type-level append-only.
 
@@ -102,7 +110,7 @@ RFC-0012-v2 §S2 pins the following substrate-level invariants that all `AppendO
 **Substrate contract surface (v2.0.0):**
 
 ```rust
-// crates/octo-audit-core/src/sink.rs (RFC-0012-v2 §S2 pinned)
+// crates/octo-audit-core/src/sink.rs (§S2 pinned)
 pub trait AppendOnlyAuditSink {
     fn append(&mut self, event: &AuditEvent) -> Result<(), AuditError>;
     fn last_event_id(&self) -> Result<Option<u64>, AuditError>;
@@ -111,10 +119,10 @@ pub trait AppendOnlyAuditSink {
 
 ### §S3 — `AuditError` canonical 3-variant form
 
-RFC-0012-v2 §S3 pins the existing 3-variant form as the substrate canonical contract:
+§S3 pins the existing 3-variant form as the substrate canonical contract:
 
 ```rust
-// crates/octo-audit-core/src/error.rs (RFC-0012-v2 §S3 pinned)
+// crates/octo-audit-core/src/error.rs (§S3 pinned)
 #[derive(Debug, Error)]
 pub enum AuditError {
     #[error("sequence gap: event_id {event_id} after {prev}")]
@@ -136,10 +144,10 @@ Adapter-specific error chains MUST be scrubbed at the adapter boundary per RFC-0
 
 ### §S4 — `AuditFilter` façade projection contract (canonical)
 
-RFC-0012-v2 §S4 pins the façade-level `AuditFilter` projection contract. **`AuditFilter` is a Layer B façade projection, NOT a Layer A substrate type** (per Appendix B). It lives at `crates/octo-audit/src/lib.rs` (Layer B façade re-export surface) and is constructed by the façade for CLI consumers (RFC-0016-a).
+§S4 pins the façade-level `AuditFilter` projection contract. **`AuditFilter` is a Layer B façade projection, NOT a Layer A substrate type** (per Appendix B). It lives at `crates/octo-audit/src/lib.rs` (Layer B façade re-export surface) and is constructed by the façade for CLI consumers (RFC-0016-a).
 
 ```rust
-// crates/octo-audit/src/lib.rs (RFC-0012-v2 §S4 pinned — Layer B façade projection;
+// crates/octo-audit/src/lib.rs (§S4 pinned — Layer B façade projection;
 // RFC-0016-a §AuditFilter declaration references this canonical form)
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuditFilter {
@@ -151,7 +159,7 @@ pub struct AuditFilter {
 }
 ```
 
-**Note:** As of RFC-0012-v2 draft acceptance, `AuditFilter` does NOT yet exist in `crates/octo-audit/src/lib.rs`. Per RFC-0012-v2 §Implementation Phases Phase 2, this struct lands in `octo-audit` v2.0.0 at acceptance time. The §S4 declaration pins the canonical surface that RFC-0016-a §AuditFilter definition must match.
+**Note:** As of RFC-0012-v2 draft acceptance, `AuditFilter` does NOT yet exist in `crates/octo-audit/src/lib.rs`. Per §Implementation Phases Phase 2, this struct lands in `octo-audit` v2.0.0 at acceptance time. The §S4 declaration pins the canonical surface that RFC-0016-a §AuditFilter definition must match.
 
 **Façade constraints:**
 
@@ -162,10 +170,10 @@ pub struct AuditFilter {
 
 ### §S5 — `AuditEvent` struct (unchanged)
 
-RFC-0012-v2 §S5 pins the existing 7-field `AuditEvent` struct:
+§S5 pins the existing 7-field `AuditEvent` struct:
 
 ```rust
-// crates/octo-audit-core/src/event.rs (RFC-0012-v2 §S5 pinned — no change from RFC-0012)
+// crates/octo-audit-core/src/event.rs (§S5 pinned — no change from RFC-0012)
 pub struct AuditEvent {
     pub event_id: u64,
     pub node_did: String,
@@ -181,7 +189,7 @@ pub struct AuditEvent {
 
 ### §S6 — Canonical-bytes form (unchanged)
 
-RFC-0012-v2 §S6 pins the existing canonical-bytes form:
+§S6 pins the existing canonical-bytes form:
 
 ```
 [event_id (BE u64) | node_did (UTF-8) | event_kind (tag byte) |
@@ -191,6 +199,36 @@ RFC-0012-v2 §S6 pins the existing canonical-bytes form:
 `chain_hash` is excluded (it IS the hash of the other fields + the `prev_chain_hash`).
 
 **Extensions do NOT add new bytes** to the canonical form. The `cap_root_hash` already encodes the typed-discriminator; the extension payload (e.g. agent transition fields) is encoded in the canonical hash via extension-specific helpers in the calling domain crate (e.g. `octo-wallet::audit::canonical_bytes_agent_transition(...)`).
+
+## Implicit Assumptions
+
+- **A1. BLAKE3-256 collision resistance.** Extension kinds are encoded as `BLAKE3-256(namespace_string)`. Finding a collision requires ~2^128 hash evaluations (birthday bound on 256-bit output). Blast radius if broken: cross-extension-kind spoofing (one kind can be reinterpreted as another). Mitigation: substrate accepts only the canonical extension kinds per §S1; extension helper functions at the façade validate kind at construction time.
+- **A2. Sink atomicity precondition.** Adapter implementations MUST satisfy §S2.5 atomic persistence. Failure to satisfy means two appenders could observe different total orderings of `event_id`. Blast radius: torn writes, lost audit events. Mitigation: §FW4 crash-injection test infrastructure (future mission); adapter conformance gate at Phase 2 acceptance.
+- **A3. BLAKE3 domain-separator commitment.** `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/<K>/v1/")` namespace strings are committed at RFC-0012-v2 acceptance time. Future extensions add new namespace strings; existing ones are immutable. Blast radius: namespace collision would let one extension kind impersonate another. Mitigation: 32-byte digest output + namespace version pinning (`v1/` suffix).
+- **A4. `node_did` pre-validation.** The substrate assumes `node_did` field on `AuditEvent` has been pre-validated by the domain caller (DID-format check + signature verification at the wire boundary). Substrate does NOT re-validate. Blast radius: malformed DIDs persist into the audit chain. Mitigation: domain-crate validation at the call boundary + RFC-0009 §Identity substrate verification.
+- **A5. Single-writer assumption.** `event_id == last_event_id() + 1` monotonicity check assumes a single logical appender. Concurrent appenders with distinct node_did values are out of v2.0.0 scope; cross-replica append coordination is RFC-0855 territory. Blast radius: sequence gap detection may trigger spuriously under concurrent append. Mitigation: AC-10 + external serialization layer at adapter boundary.
+
+## Determinism Requirements
+
+Per RFC-0008 Execution Class Mapping, all substrate operations in this RFC are **Class A** (deterministic, byte-identical across replicas):
+
+- **`canonical_bytes`** — pure function of input fields; no system calls, no allocation outside the returned Vec.
+- **`compute_chain_hash`** — unkeyed BLAKE3-256 over `canonical_bytes`; deterministic across replicas.
+- **`verify_chain`** — deterministic replay of `compute_chain_hash` over each persisted event; byte-identical verification result.
+- **`last_event_id`** — adapter-side, but substrate-level invariant (returns `Some(0)` for empty table); deterministic.
+- **Typed-discriminator construction** — `BLAKE3-256("cipherocto/audit/extension/<K>/v1/")` is a pure function of `<K>`; deterministic.
+- **`prev_chain_hash` linkage** — cryptographic chain binding; byte-identical across replicas.
+
+Cross-replica consensus invariant: any two replicas observing the same event sequence MUST produce identical `chain_hash` values. Failure indicates either (a) a serialization drift (adapter-side bug) or (b) a field-level non-determinism (e.g. timestamp drift between insert + compute).
+
+## Performance Targets
+
+- **Append latency ceiling:** 1 ms p99 on commodity SSD (single-event append with monotonicity check + chain_hash compute + persistence).
+- **Chain verification O(n):** `verify_chain(n)` MUST complete in O(n) time over `n` persisted events; no quadratic scans.
+- **Adapter throughput floor:** 1,000 appends/second sustained single-writer; 100 appends/second under 4-way concurrent append with monotonicity serialization.
+- **Canonical-bytes cost:** `canonical_bytes` MUST NOT allocate more than 256 bytes per event (input fields fit in fixed-width encoding).
+- **`compute_chain_hash` cost:** unkeyed BLAKE3-256 over ~96-byte input; expected <10 µs per call on commodity CPU.
+- **Storage adapter memory ceiling:** sink implementations MUST NOT hold more than 64 KiB per append in transient buffers.
 
 ## Acceptance Criteria
 
@@ -218,7 +256,7 @@ Per BLUEPRINT.md §RFC Process item 5 + §2-Cycle Atomic Promotion gate:
 
 ## Security Considerations
 
-**SC1. Typed-discriminator collision resistance.** Extension kinds are encoded as `BLAKE3-256(namespace_string)`. BLAKE3-256 collision resistance is 2^128 operations (birthday bound on 256-bit output), NOT 2^256 (preimage resistance). Cross-extension-kind collisions are cross-prefix second-preimage attacks (~2^256 with one fixed prefix; ~2^128 birthday for attacker-chosen both prefixes).
+**SC1. Typed-discriminator collision resistance.** Extension kinds are encoded as `BLAKE3-256(namespace_string)`. BLAKE3-256 collision resistance is 2^128 operations (birthday bound on 256-bit output). Preimage resistance is 2^256. Cross-extension-kind collisions are cross-prefix second-preimage attacks (~2^256 with one fixed prefix; ~2^128 birthday for attacker-chosen both prefixes).
 
 **SC2. `SinkSpecific` payload scrubbing.** Adapter-specific error messages MUST be scrubbed at the adapter boundary before wrapping into `AuditError::SinkSpecific`. No raw error chains, no adapter-type names, no leaked path fragments. Canonical scrubber is declared at `octo-settlement::scrub::scrub_adapter_error` (Layer B façade per RFC-0014-v2 §S5.1 — 6-pattern list — applied to both `octo-audit::AuditError::SinkSpecific` and `octo-settlement::SettlementError::SinkSpecific`).
 
@@ -282,7 +320,9 @@ expect: append returns Ok(())
 
 ```
 input: event with event.chain_hash = [0x00; 32] (not equal to compute_chain_hash)
-expect: append returns Err(AuditError::SinkSpecific(AuditChainError::HashMismatch))
+expect: append returns Err(AuditError::SinkSpecific(_))
+        payload String contains "chain_hash mismatch"
+        (AuditChainError::HashMismatch wrapped at adapter boundary)
 ```
 
 ### TV-AUD-v2-4: Sink append rejects sequence gap
@@ -304,10 +344,12 @@ expect: first append returns Ok(())
 ### TV-AUD-v2-6: AuditFilter substrate contract
 
 ```
-input: AuditFilter { subject_did: Some("did:example:123"), status: Some(ReceiptStatus::Ok), .. }
-expect: Compile error: no field `subject_did` on type `AuditFilter`
-        Compile error: no field `status` on type `AuditFilter`
+input: AuditFilter { whatever: Some("did:example:123"), nonsense: Some(ReceiptStatus::Ok), .. }
+expect: Compile error: no field `whatever` on type `AuditFilter`
+        Compile error: no field `nonsense` on type `AuditFilter`
 ```
+
+(Per §S4, the canonical AuditFilter has 5 fields: `since_unix`, `until_unix`, `capability_root`, `model`, `limit`. Any struct literal referencing a non-canonical field fails at compile time.)
 
 ### TV-AUD-v2-7: Typed-discriminator construction (redaction)
 
@@ -324,6 +366,188 @@ input: event with event.chain_hash = compute_chain_hash(&event)
        simulated crash injected mid-transaction (Stoolap Transaction wrapper abandoned)
 expect: post-recovery last_event_id() returns None OR Some(prev_event_id)
         (NOT Some(event.event_id) — partial persistence must not be observable)
+```
+
+### TV-AUD-v2-9: Typed-discriminator namespace collision (capability-insert)
+
+```
+input: extension_kind = "capability-insert"
+expect: cap_root_hash = BLAKE3-256("cipherocto/audit/extension/capability-insert/v1/") = 0x...
+        (collision with cap_root_hash for any other extension kind is cryptographically infeasible at 2^128 birthday bound)
+```
+
+### TV-AUD-v2-10: AuditEvent round-trip canonical_bytes
+
+```
+input: AuditEvent { event_id: 1, node_did: "did:example:node", event_kind: Insert, cap_root_hash: [0; 32], at_millis_unix: 1700000000000, prev_chain_hash: [0; 32] }
+expect: compute_chain_hash(&event) == BLAKE3-256(canonical_bytes(&event))
+        canonical_bytes(&event) contains exactly 8 + 32-byte-UTF8 + 1 + 32 + 8 + 32 = event_id_be + node_did_bytes + kind_tag + cap_root + timestamp_be + prev_chain
+```
+
+### TV-AUD-v2-11: verify_chain accepts canonical chain
+
+```
+input: persist event with chain_hash = compute_chain_hash(&event)
+expect: verify_chain([event]) returns Ok(())
+        verify_chain reads back the same chain_hash value
+```
+
+### TV-AUD-v2-12: verify_chain rejects tampered event_kind tag byte
+
+```
+input: persist event with chain_hash = compute_chain_hash(&event)
+       flip event_kind tag byte after persistence
+expect: verify_chain returns Err(AuditChainError::HashMismatch)
+        (chain_hash no longer matches recomputed)
+```
+
+### TV-AUD-v2-13: SequenceGap at event_id boundary (1, 3 skip 2)
+
+```
+input: append event_id=1, then event_id=3
+expect: first Ok(())
+        second returns Err(AuditError::SequenceGap { event_id: 3, prev: 1 })
+```
+
+### TV-AUD-v2-14: Replay (idempotency) at event_id 1
+
+```
+input: append event_id=1, then append event_id=1 again
+expect: first Ok(())
+        second returns Err(AuditError::AlreadyExists(1))
+```
+
+### TV-AUD-v2-15: AuditFilter compile-fail on extra fields
+
+```
+input: AuditFilter { since_unix: Some(0), whatever_field: Some(0), .. }
+expect: Compile error: no field `whatever_field` on type `AuditFilter`
+```
+
+### TV-AUD-v2-16: AuditFilter full-field round-trip
+
+```
+input: AuditFilter { since_unix: Some(0), until_unix: Some(100), capability_root: Some([1; 32]), model: Some("gpt-4".to_string()), limit: Some(50) }
+expect: filter.since_unix == Some(0)
+        filter.until_unix == Some(100)
+        filter.capability_root == Some([1; 32])
+        filter.model == Some("gpt-4")
+        filter.limit == Some(50)
+```
+
+### TV-AUD-v2-17: StoolapAuditSink concurrent appender detection
+
+```
+input: two appenders simultaneously call append(event_id=1) on empty table
+expect: at most one returns Ok(())
+        the other returns Err(AuditError::SequenceGap) or Err(AuditError::AlreadyExists)
+        (adapter-side serialization via Stoolap Transaction wrapper + monotonicity pre-check)
+```
+
+### TV-AUD-v2-18: scrub_adapter_error pattern 1 (hex digest ≥32 chars)
+
+```
+input: scrub_adapter_error("Stoolap error: transaction 0xabcdef0123456789abcdef0123456789abcd failed")
+expect: output contains "<redacted-hex-0>"
+        output does NOT contain the original hex digest
+```
+
+### TV-AUD-v2-19: scrub_adapter_error pattern 2 (absolute file path)
+
+```
+input: scrub_adapter_error("IO error reading /var/lib/octonet/audit/sink.db")
+expect: output contains "<redacted-path>"
+        output does NOT contain /var/lib/octonet/audit/sink.db
+```
+
+### TV-AUD-v2-20: scrub_adapter_error pattern 3 (table-name reference)
+
+```
+input: scrub_adapter_error("relation \"audit_events\" does not exist")
+expect: output contains "<redacted-table>"
+        output does NOT contain "audit_events"
+```
+
+### TV-AUD-v2-21: scrub_adapter_error pattern 4 (SQLSTATE prefix)
+
+```
+input: scrub_adapter_error("SQLSTATE_42P01 undefined_table")
+expect: output contains "<redacted-sql-state>"
+        output does NOT contain "SQLSTATE_42P01"
+```
+
+### TV-AUD-v2-22: scrub_adapter_error pattern 5 (io error chain fragment)
+
+```
+input: scrub_adapter_error("os error 2: no such file or directory")
+expect: output contains "<redacted-io>"
+        output does NOT contain "os error 2"
+```
+
+### TV-AUD-v2-23: scrub_adapter_error pattern 6 (adapter-type name)
+
+```
+input: scrub_adapter_error("StoolapTransactionError: write conflict")
+expect: output contains "<redacted-adapter>"
+        output does NOT contain "StoolapTransactionError"
+```
+
+### TV-AUD-v2-24: Cross-RFC pairing with RFC-0014-v2 agent-transition-receipt
+
+```
+input: audit event with cap_root_hash = BLAKE3-256("cipherocto/audit/extension/agent-transition/v1/")
+       paired with receipt having ask_id = BLAKE3-256("cipherocto/settlement/extension/agent-transition-receipt/v1/" || canonical_ask_id)
+expect: audit_event_for_agent_transition_receipt(receipt) returns AuditEvent with cap_root_hash matching above
+        prev_chain_hash = receipt_id_for(receipt) (cross-RFC binding via §S7 pairing)
+```
+
+### TV-AUD-v2-25: cap_root_hash input boundary (variable-length)
+
+```
+input: cap_root_hash = BLAKE3-256("cipherocto/audit/extension/custom-kind/v1/")
+expect: 32-byte digest output, namespace prefix recovered by enumeration
+        (no fixed 32-byte boundary; variable-length input)
+```
+
+### TV-AUD-v2-26: AuditError::SinkSpecific payload byte cap
+
+```
+input: SinkSpecific("a".repeat(10000)) (10 KiB adapter error)
+expect: payload retained verbatim (substrate does NOT truncate)
+        adapter-side scrub_adapter_error MUST be called before wrapping to enforce payload size limits
+```
+
+### TV-AUD-v2-27: AuditEventKind #[non_exhaustive] compile-fail downstream match
+
+```
+input: match audit_event.event_kind { Insert => ..., Revoke => ..., Sync => ... }
+       (3-variant exhaustive match)
+expect: Compile error (non-exhaustive match requires _ arm despite #[non_exhaustive] attribute on substrate enum)
+        downstream must add _ arm to be forward-compatible
+```
+
+### TV-AUD-v2-28: ChainHash canonical-bytes ordering preservation
+
+```
+input: two AuditEvents with field values permuted between them
+expect: distinct chain_hash values (canonical_bytes is field-order-sensitive)
+```
+
+### TV-AUD-v2-29: cap_root_hash zero digest rejection
+
+```
+input: cap_root_hash = [0; 32] (uninitialized / null)
+expect: typed-discriminator construction still valid (zero digest is BLAKE3-256 output)
+        domain caller SHOULD reject at façade layer; substrate accepts as opaque digest
+```
+
+### TV-AUD-v2-30: chain_hash second-preimage resistance
+
+```
+input: persisted event with chain_hash = X
+       adversary constructs event' with chain_hash == X but different field values
+expect: chain_hash collision requires 2^128 operations (BLAKE3-256 birthday bound)
+        practical forgery infeasible
 ```
 
 ## Alternatives Considered
@@ -416,7 +640,7 @@ The cost is a doc-comment-driven extension pattern that domain crates must follo
 
 - **UC-AUD-001 — Agent lifecycle audit trail.** When an agent transitions state (RFC-0015-a `transition_agent`), an audit event with `event_kind = AuditEventKind::Insert` and `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/agent-transition/v1/")` is appended to the sink. The audit event's `prev_chain_hash` binds it to the corresponding `AgentTransitionReceipt`'s `settlement_hash` (per RFC-0014-v2 §S7 pairing invariant).
 - **UC-AUD-002 — Capability redaction.** When a capability is redacted (e.g. compromise recovery), an audit event with `event_kind = AuditEventKind::Revoke` and `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/redaction/v1/")` is appended. The `reason` payload is scrubbed per the canonical scrubber (`octo-settlement::scrub::scrub_adapter_error`, RFC-0014-v2 §S5.1) before being persisted.
-- **UC-AUD-003 — CLI receipt listing with `AuditFilter`.** When a CLI consumer runs `octo audit list --since <unix> --until <unix> --capability-root <hex> --model <model> --limit <n>` (RFC-0016-a), the façade constructs an `AuditFilter` per RFC-0012-v2 §S4 and applies it to the audit store. Subject-DID ACL and receipt-status filtering are out of v2.0.0 scope.
+- **UC-AUD-003 — CLI receipt listing with `AuditFilter`.** When a CLI consumer runs `octo audit list --since <unix> --until <unix> --capability-root <hex> --model <model> --limit <n>` (RFC-0016-a), the façade constructs an `AuditFilter` per §S4 and applies it to the audit store. Subject-DID ACL and receipt-status filtering are out of v2.0.0 scope.
 - **UC-AUD-004 — Cross-replica sync.** When a downstream replica syncs the audit chain, sync events use `event_kind = AuditEventKind::Sync` + `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/sync/v1/")`. The `prev_chain_hash` field carries the last persisted chain hash from the source replica, enabling chain-integrity verification on receipt.
 
 ## Appendices

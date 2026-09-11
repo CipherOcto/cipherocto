@@ -134,12 +134,13 @@ pub enum AuditError {
 
 Adapter-specific error chains MUST be scrubbed at the adapter boundary per RFC-0012 §Trait G3 mitigation.
 
-### §S4 — `AuditFilter` substrate contract (canonical)
+### §S4 — `AuditFilter` façade projection contract (canonical)
 
-RFC-0012-v2 §S4 pins the substrate-level `AuditFilter` projection contract:
+RFC-0012-v2 §S4 pins the façade-level `AuditFilter` projection contract. **`AuditFilter` is a Layer B façade projection, NOT a Layer A substrate type** (per Appendix B). It lives at `crates/octo-audit/src/lib.rs` (Layer B façade re-export surface) and is constructed by the façade for CLI consumers (RFC-0016-a).
 
 ```rust
-// crates/octo-audit/src/lib.rs (RFC-0012-v2 §S4 pinned — façade projection)
+// crates/octo-audit/src/lib.rs (RFC-0012-v2 §S4 pinned — Layer B façade projection;
+// RFC-0016-a §AuditFilter declaration references this canonical form)
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuditFilter {
     pub since_unix: Option<u64>,
@@ -150,12 +151,14 @@ pub struct AuditFilter {
 }
 ```
 
-**Substrate constraints:**
+**Note:** As of RFC-0012-v2 draft acceptance, `AuditFilter` does NOT yet exist in `crates/octo-audit/src/lib.rs`. Per RFC-0012-v2 §Implementation Phases Phase 2, this struct lands in `octo-audit` v2.0.0 at acceptance time. The §S4 declaration pins the canonical surface that RFC-0016-a §AuditFilter definition must match.
 
-- **NO `subject_did` field** — `subject_did` ACL filtering is RFC-0016-a concern (façade projection), not substrate. The substrate reads/writes audit events without subject-level ACL (per-event ACL is enforced at the façade boundary).
-- **NO `status` field** — `status` filtering requires RFC-0014-v2 `ReceiptStatus` extension; cross-RFC consistency on audit/receipt status is not in v2.0.0 substrate scope.
+**Façade constraints:**
+
+- **NO `subject_did` field** — `subject_did` ACL filtering is RFC-0016-a concern (façade projection). The façade reads audit events without subject-level ACL (per-event ACL is enforced at the domain call boundary).
+- **NO `status` field** — `status` filtering requires RFC-0014-v2 `ReceiptStatus` extension (which is itself a façade projection, NOT a substrate field); cross-RFC consistency on audit/receipt status is not in v2.0.0 scope.
 - **`capability_root` is `Option<[u8; 32]>`** — typed extension discriminator hash; matches §S1 extension kind table.
-- **`limit` is `Option<usize>`** — substrate applies a hard ceiling of 1024 (per RFC-0012 §Data Structures).
+- **`limit` is `Option<usize>`** — façade applies a hard ceiling of 1024 (per RFC-0012 §Data Structures).
 
 ### §S5 — `AuditEvent` struct (unchanged)
 
@@ -191,9 +194,9 @@ RFC-0012-v2 §S6 pins the existing canonical-bytes form:
 
 ## Security Considerations
 
-**SC1. Typed-discriminator collision resistance.** Extension kinds are encoded as `BLAKE3-256(namespace_string)`. Collision resistance equals BLAKE3-256 collision resistance (128-bit security). Cross-extension-kind collisions are equivalent to BLAKE3 preimage attacks.
+**SC1. Typed-discriminator collision resistance.** Extension kinds are encoded as `BLAKE3-256(namespace_string)`. BLAKE3-256 collision resistance is 2^64 operations (birthday bound on 256-bit output), NOT 2^128 (preimage resistance). Cross-extension-kind collisions are cross-prefix second-preimage attacks (~2^256 with one fixed prefix; ~2^128 birthday for attacker-chosen both prefixes).
 
-**SC2. `SinkSpecific` payload scrubbing.** Adapter-specific error messages MUST be scrubbed at the adapter boundary before wrapping into `AuditError::SinkSpecific`. No raw error chains, no adapter-type names, no leaked path fragments. See RFC-0011-a §7.7 Redaction for canonical 13-pattern list.
+**SC2. `SinkSpecific` payload scrubbing.** Adapter-specific error messages MUST be scrubbed at the adapter boundary before wrapping into `AuditError::SinkSpecific`. No raw error chains, no adapter-type names, no leaked path fragments. Canonical scrubber is declared in RFC-0014-v2 §S5.1 (6-pattern list — applied to both `octo-audit-core::AuditError::SinkSpecific` and `octo-settlement-core::SettlementError::SinkSpecific`).
 
 **SC3. Chain hash integrity.** `chain_hash` field MUST match `compute_chain_hash(event)`. §S2.4 enforces this on every append; §S6 canonical-bytes form is the substrate-level guarantee.
 
@@ -282,6 +285,23 @@ expect: Compile error: no field `subject_did` on type `AuditFilter`
         Compile error: no field `status` on type `AuditFilter`
 ```
 
+### TV-AUD-v2-7: Typed-discriminator construction (redaction)
+
+```
+input: extension_kind = "redaction"
+expect: cap_root_hash = BLAKE3-256("cipherocto/audit/extension/redaction/v1/")
+        event_kind = AuditEventKind::Revoke
+```
+
+### TV-AUD-v2-8: Sink append atomic persistence
+
+```
+input: event with event.chain_hash = compute_chain_hash(&event)
+       simulated crash injected mid-transaction (Stoolap Transaction wrapper abandoned)
+expect: post-recovery last_event_id() returns None OR Some(prev_event_id)
+        (NOT Some(event.event_id) — partial persistence must not be observable)
+```
+
 ## Alternatives Considered
 
 **Alt-A: Add `AuditEventKind::AgentTransition` as 4th variant.** Rejected per CLAUDE.md §Extension over enumeration — central enum edits are upgrade-hostile; future extensions (Redaction, CapabilityMint, etc.) would each require substrate enum edits + canonical_bytes encoding changes. Typed-discriminator §S1 achieves the same without substrate churn.
@@ -335,11 +355,13 @@ expect: Compile error: no field `subject_did` on type `AuditFilter`
 
 ## Future Work
 
-**FW1. RFC-0012-v3.** Subsequent typed-discriminator extensions (e.g. `Redaction`, `CapabilityMint`, `CapabilityAttenuate`) follow the §S1 pattern. Each extension kind is added to the table via a new RFC; no substrate enum edits.
+**FW1. RFC-0012-v3.** Subsequent typed-discriminator extensions (e.g. `CapabilityMint`, `CapabilityAttenuate`) follow the §S1 pattern. Note: `Redaction` is already in RFC-0012-v2 (not future work). Each extension kind is added to the table via a new RFC; no substrate enum edits.
 
 **FW2. Cross-crate extension helpers.** Domain crates (e.g. `octo-wallet`, `octo-vault`) provide typed-discriminator construction helpers (`audit_event_for_agent_transition`, `audit_event_for_redaction`). Façade `octo-audit` re-exports for cross-crate use.
 
-**FW3. Receipt-extension cross-RFC invariants.** RFC-0014-v2 pins the `ReceiptStatus` extension pattern. Cross-RFC consistency: `AuditEventKind::Insert` + `cap_root_hash = agent-transition-typed-discriminator` corresponds to a settlement `Receipt { status: ReceiptStatus::Ok }` (or `Partial` for redactions).
+**FW3. Receipt-extension cross-RFC invariants.** RFC-0014-v2 pins the typed-discriminator pattern via `ask_id` namespaces. Cross-RFC consistency: `AuditEventKind::Insert` + `cap_root_hash = agent-transition-typed-discriminator` corresponds to a settlement `Receipt { ask_id = agent-transition-receipt-typed-discriminator }`. Status is recovered at façade projection (RFC-0016-a `ReceiptSummary`), NOT stored as a substrate field.
+
+**FW4. Atomic persistence test infrastructure.** §S2.5 mandates transaction-scoped atomic persistence. RFC-0012-v2 TV-AUD-v2-8 pins the substrate test vector; a corresponding adapter-side crash-injection test infrastructure is needed for `StoolapAuditSink` conformance verification. Future mission: add crash-injection harness to the `octo-audit` test suite.
 
 ## Rationale
 
@@ -347,7 +369,7 @@ RFC-0012-v2 codifies the typed-discriminator extension pattern as the canonical 
 
 1. **Layer A frozen preservation** — `AuditEventKind` stays 3-variant; `AuditEvent` stays 7-field; `AuditError` stays 3-variant. No substrate churn from extension additions.
 2. **Forward compatibility** — `#[non_exhaustive]` discipline means downstream `match` expressions on `AuditEventKind` continue to compile (substrate-stored events remain forward-compatible).
-3. **Type safety** — typed-discriminator namespaces are BLAKE3-256 digests (128-bit collision resistance); cross-extension-kind spoofing requires BLAKE3 preimage attack.
+3. **Type safety** — typed-discriminator namespaces are BLAKE3-256 digests (2^64 collision operations birthday bound; cross-prefix second-preimage attacks at ~2^256 with one fixed prefix, ~2^128 birthday for attacker-chosen both prefixes); cross-extension-kind spoofing requires BLAKE3 cross-prefix collision attack.
 
 The cost is a doc-comment-driven extension pattern that domain crates must follow. This is acceptable per CLAUDE.md §Extension over enumeration — the substrate stays minimal; extension mechanics live at the façade/domain boundary.
 
@@ -365,6 +387,13 @@ The cost is a doc-comment-driven extension pattern that domain crates must follo
 - RFC-0016-a (draft) — audit receipt write-path amendment; requires RFC-0012-v2 for `ChainHash` newtype + canonical-bytes-on-write invariant.
 - RFC-0011-a (accepted) — wallet subcommands; cross-RFC reference for scrubber location (Layer B façade, not Layer A substrate).
 - RFC-0010 (accepted) — DID canonical form; substrate stores `node_did: String` (raw canonical wire form per RFC-0010).
+
+## Related Use Cases
+
+- **UC-AUD-001 — Agent lifecycle audit trail.** When an agent transitions state (RFC-0015-a `transition_agent`), an audit event with `event_kind = AuditEventKind::Insert` and `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/agent-transition/v1/")` is appended to the sink. The audit event's `prev_chain_hash` binds it to the corresponding `AgentTransitionReceipt`'s `settlement_hash` (per RFC-0014-v2 §S7 pairing invariant).
+- **UC-AUD-002 — Capability redaction.** When a capability is redacted (e.g. compromise recovery), an audit event with `event_kind = AuditEventKind::Revoke` and `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/redaction/v1/")` is appended. The `reason` payload is scrubbed per the canonical scrubber (RFC-0014-v2 §S5.1) before being persisted.
+- **UC-AUD-003 — CLI receipt listing with `AuditFilter`.** When a CLI consumer runs `octo audit list --since <unix> --until <unix> --capability-root <hex> --model <model> --limit <n>` (RFC-0016-a), the façade constructs an `AuditFilter` per RFC-0012-v2 §S4 and applies it to the audit store. Subject-DID ACL and receipt-status filtering are out of v2.0.0 scope.
+- **UC-AUD-004 — Cross-replica sync.** When a downstream replica syncs the audit chain, sync events use `event_kind = AuditEventKind::Sync` + `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/sync/v1/")`. The `prev_chain_hash` field carries the last persisted chain hash from the source replica, enabling chain-integrity verification on receipt.
 
 ## Appendices
 

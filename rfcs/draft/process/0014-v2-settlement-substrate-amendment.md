@@ -73,7 +73,9 @@ RFC-0014-v2 §S1 pins the extension pattern as the canonical mechanism for new r
 
 The `ask_id` field is a 32-byte BLAKE3-256 digest. By extending the input with a namespace string prefix, the digest acts as a typed-discriminator: the first 32 bytes of input are the extension namespace identifier, the remainder is the canonical ask identifier.
 
-**Why this works:** The `ask_id` field is already present on `Receipt` (RFC-0014 §Data Structures). Domain crates construct `ask_id` by hashing namespace + canonical ask bytes. Substrate accepts `ask_id` as opaque 32-byte digest (no domain logic). The substrate `verify_receipt_chain` function does NOT interpret `ask_id` semantics — it only validates `receipt_id` monotonicity + `settlement_hash` integrity + `timestamp_unix` monotonicity.
+**Why this works:** The `ask_id` field is already present on `Receipt` (RFC-0014 §Data Structures). Domain crates construct `ask_id` by hashing namespace + canonical ask_id bytes. Substrate accepts `ask_id` as opaque 32-byte digest (no domain logic). The substrate `verify_receipt_chain` function does NOT interpret `ask_id` semantics — it only validates `receipt_id` monotonicity + `settlement_hash` integrity + `timestamp_unix` monotonicity.
+
+**Note on input boundary:** the BLAKE3-256 input is variable-length (`namespace_string || canonical_ask_id_bytes`); there is no fixed 32-byte boundary between the namespace and the ask_id bytes. Readers recover extension kind K by enumerating candidate namespace strings (or by convention lookup at the façade).
 
 **Extension kind table (canonical):**
 
@@ -151,7 +153,7 @@ RFC-0014-v2 §S4 pins the following substrate-level invariants that all `AppendO
 
 3. **Idempotent re-append** — `receipt.receipt_id == last_receipt_id()` MUST return `SettlementError::AlreadyExists(receipt_id)`. NOT a success.
 
-4. **Canonical `settlement_hash` verification** — implementations MUST recompute `settlement_hash` from canonical ask + extension payload (per §S1) and verify `receipt.settlement_hash == computed`. On mismatch, return `SettlementError::SinkSpecific("settlement_hash mismatch on append")`.
+4. **Canonical `settlement_hash` verification** — implementations MUST recompute `settlement_hash` via `octo_settlement_core::receipt_id_for(&receipt)` and verify `receipt.settlement_hash == computed`. On mismatch, return `SettlementError::ChainIntegrity { receipt_id: receipt.receipt_id }` (NOT `SinkSpecific`; the substrate-canonical error for chain-integrity failures is `ChainIntegrity` per RFC-0014 §Error Type).
 
 5. **Atomic persistence** — implementations MUST persist the receipt in a transaction-scoped atomic write. Adapter impls (e.g. `StoolapReceiptSink`) MUST wrap persistence in a Stoolap `Transaction`.
 
@@ -169,14 +171,26 @@ pub trait AppendOnlyReceiptSink {
 
 ### §S5 — `SettlementError` canonical form
 
-RFC-0014-v2 §S5 pins the existing `SettlementError` canonical form:
+RFC-0014-v2 §S5 pins the **existing** `SettlementError` cross-trait envelope form:
 
 ```rust
-// crates/octo-settlement-core/src/error.rs (RFC-0014-v2 §S5 pinned — no change from RFC-0014)
+// crates/octo-settlement-core/src/error.rs (RFC-0014-v2 §S5 pinned — substrate-faithful)
 #[derive(Debug, Error)]
 pub enum SettlementError {
-    #[error("sequence gap: receipt_id {receipt_id} after {prev}")]
+    #[error("ask not found: {0:?}")]
+    AskNotFound([u8; 32]),
+
+    #[error("ask {0:?} already consumed")]
+    AlreadyConsumed([u8; 32]),
+
+    #[error("invalid state transition from {from:?} to {to:?}")]
+    InvalidTransition { from: String, to: String },
+
+    #[error("receipt_id sequence gap: {receipt_id} after {prev}")]
     SequenceGap { receipt_id: u64, prev: u64 },
+
+    #[error("chain integrity violation at receipt_id {receipt_id}")]
+    ChainIntegrity { receipt_id: u64 },
 
     #[error("receipt_id {0} already persisted")]
     AlreadyExists(u64),
@@ -192,36 +206,89 @@ pub enum SettlementError {
 - `From<AdapterError> for SettlementError` that leaks adapter-specific structure.
 - `SettlementError` payload fields that reference adapter types.
 
-Adapter-specific error chains MUST be scrubbed at the adapter boundary per RFC-0011-a §7.7 Redaction.
+Adapter-specific error chains MUST be scrubbed at the adapter boundary per §SC2 + the canonical scrubber declared in §S5.1.
 
-### §S6 — Canonical-bytes form (unchanged)
+#### §S5.1 — Canonical adapter-error scrubber (RFC-0014-v2 addition)
 
-RFC-0014-v2 §S6 pins the existing canonical-bytes form for receipts:
+RFC-0014-v2 §S5.1 adds a canonical scrubber function to `octo-settlement-core::error`:
+
+```rust
+// crates/octo-settlement-core/src/error.rs (RFC-0014-v2 §S5.1 — new addition)
+/// Canonical adapter-error scrubber. Maps adapter-specific error chains
+/// (Stoolap transaction IDs, IO path fragments, table-name leaks) to
+/// a substrate-canonical scrubbed String. Adapter implementations MUST
+/// call this function before wrapping any adapter error into
+/// `SettlementError::SinkSpecific(String)` or any other variant.
+///
+/// Pattern list (substrate-canonical, 6 patterns):
+/// 1. Hex digest ≥32 chars (transaction IDs, hashes) → `<redacted-hex-N>`
+/// 2. Absolute file paths (`/.../...`) → `<redacted-path>`
+/// 3. Table-name references (`table 'X'`, `relation "X"`) → `<redacted-table>`
+/// 4. Stoolap/SQL error code prefixes (`SQLSTATE_XXXXX`) → `<redacted-sql-state>`
+/// 5. `std::io::Error` chain fragments (`os error N`) → `<redacted-io>`
+/// 6. Adapter-type names (e.g. `StoolapTransactionError`) → `<redacted-adapter>`
+pub fn scrub_adapter_error(s: &str) -> String {
+    // (implementation lands at acceptance time per RFC-0014-v2 §Implementation Phases Phase 1)
+    todo!("canonical scrubber — see RFC-0014-v2 §S5.1 6-pattern list")
+}
+```
+
+The 6-pattern list is canonical for v2.0.0. Future RFCs MAY extend the list; downstream adapters MUST call this function rather than implementing their own scrubber.
+
+### §S6 — Canonical-hash construction (keyed BLAKE3)
+
+RFC-0014-v2 §S6 pins the existing canonical-hash construction for receipts:
 
 ```
-[receipt_id (BE u64) | ask_id (32 bytes) | settlement_hash (32 bytes) |
-  router_id (UTF-8) | router_sig_len (BE u32) | router_sig (variable bytes) |
-  timestamp_unix (BE u64)]
+settlement_hash = BLAKE3-256-keyed(
+    key = [0; 32],
+    input = CHAIN_DOMAIN_SEPARATOR || receipt_id_be_u64 || ask_id || router_id_utf8 || router_sig || timestamp_unix_be_u64
+)
 ```
 
-**Extensions do NOT add new bytes** to the canonical form. Extension payload (e.g. AskPartial settlement supplemental amount, AskRejected reason) is encoded in domain-crate-side canonical hash inputs and surfaced via façade projection (RFC-0016-a).
+Where `CHAIN_DOMAIN_SEPARATOR = b"cipherocto/reservation/v1/"` (byte-pinned constant exported from `octo-settlement-core::chain`).
 
-### §S7 — Cross-RFC consistency with RFC-0012-v2
+**Critical invariants:**
 
-RFC-0014-v2 §S7 establishes cross-RFC invariants with RFC-0012-v2 (audit substrate amendment v2):
+- `settlement_hash` is the OUTPUT of the BLAKE3 hash; it is NOT part of the input (including it would create a circular self-dependency).
+- BLAKE3 streaming obviates an explicit `router_sig_len` prefix — the streaming hash absorbs variable-length bytes directly.
+- The BLAKE3 key is `[0; 32]` (zero-filled 32-byte constant). This is INTENTIONAL — the substrate is Layer A frozen (RFC-0014 §Data Structures) and cross-replica consensus requires the receipt hash to be deterministic for any replica that holds the same `Receipt` inputs (no per-deployment key material). Production deployments needing keyed-hash defense-in-depth SHOULD wrap this function (via `KeyedHasher` trait on Layer C) and inject real key material from an HSM / Vault / secrets manager at startup.
+- Extensions do NOT add new bytes to the canonical hash input. Extension payload (e.g. AskPartial supplemental amount, AskRejected reason) is encoded in domain-crate-side canonical hash inputs and surfaced via façade projection (RFC-0016-a).
 
-| RFC-0012-v2 audit event                                                                                    | RFC-0014-v2 receipt extension kind                                                          | Pairing invariant |
-| ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ----------------- |
-| `AuditEventKind::Insert` + `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/agent-transition/v1/")` | `Receipt.ask_id = BLAKE3-256("cipherocto/settlement/extension/agent-transition-receipt/v1/" |                   | canonical_ask_id)` | Audit event + receipt share the canonical agent transition hash input. Façade-side pairing helper: `audit_event_for_agent_transition_receipt(receipt) -> AuditEvent` |
-| `AuditEventKind::Revoke` + `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/redaction/v1/")`        | `Receipt.ask_id = BLAKE3-256("cipherocto/settlement/extension/ask-rejected/v1/"             |                   | canonical_ask_id)` | Audit redaction event + rejected receipt share the canonical rejection hash input                                                                                    |
+**Substrate code surface (substrate-faithful):**
 
-**Cross-RFC consistency rule:** For each (audit extension kind, receipt extension kind) pair, the namespace strings are coordinated via RFC-0012-v2 + RFC-0014-v2 paired acceptance. Future extensions follow the same pattern.
+```rust
+// crates/octo-settlement-core/src/chain.rs (RFC-0014-v2 §S6 — substrate-faithful)
+pub const CHAIN_DOMAIN_SEPARATOR: &[u8] = b"cipherocto/reservation/v1/";
+
+pub fn receipt_id_for(receipt: &Receipt) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_keyed(&[0; 32]);
+    hasher.update(CHAIN_DOMAIN_SEPARATOR);
+    hasher.update(&receipt.receipt_id.to_be_bytes());
+    hasher.update(&receipt.ask_id);
+    hasher.update(receipt.router_id.as_bytes());
+    hasher.update(&receipt.router_sig);
+    hasher.update(&receipt.timestamp_unix.to_be_bytes());
+    *hasher.finalize().as_bytes()
+}
+```
+
+### §S7 — Cross-RFC consistency with RFC-0012-v2 (façade-level pairing, NOT substrate shared hash input)
+
+RFC-0014-v2 §S7 establishes cross-RFC invariants with RFC-0012-v2. **Important:** the audit `cap_root_hash` and the receipt `ask_id` use **different BLAKE3 inputs** (audit is namespace-only; receipt is namespace || canonical_ask_id). The pairing is a **façade convention**, not a cryptographic binding at the substrate hash layer.
+
+| RFC-0012-v2 audit event                                                                                                     | RFC-0014-v2 receipt extension kind                                                                                                       | Pairing invariant (façade-side)                                                                                                                                                                                                                                                                                                                                         |
+| --------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AuditEventKind::Insert` + `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/agent-transition/v1/")` (namespace only) | `Receipt.ask_id = BLAKE3-256("cipherocto/settlement/extension/agent-transition-receipt/v1/" \|\| canonical_ask_id)` (namespace + ask_id) | Façade helper `audit_event_for_agent_transition_receipt(receipt: &Receipt) -> AuditEvent` reconstructs the audit event with `prev_chain_hash = receipt_id_for(receipt)` so the audit event's `prev_chain_hash` binds it to the specific receipt's hash. Substrate-level pairing is via the `prev_chain_hash` field on the audit event, not via shared namespace prefix. |
+| `AuditEventKind::Revoke` + `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/redaction/v1/")` (namespace only)        | `Receipt.ask_id = BLAKE3-256("cipherocto/settlement/extension/ask-rejected/v1/" \|\| canonical_ask_id)` (namespace + ask_id)             | Façade helper `audit_event_for_ask_rejected(receipt: &Receipt) -> AuditEvent` similarly binds via `prev_chain_hash = receipt_id_for(receipt)`.                                                                                                                                                                                                                          |
+
+**Cross-RFC consistency rule:** For each (audit extension kind, receipt extension kind) pair, the namespace strings are coordinated via RFC-0012-v2 + RFC-0014-v2 paired acceptance. The substrate-level binding is via `prev_chain_hash = settlement_hash` on the audit event; the façade helper sets this field at construction time. Future extensions follow the same pattern.
 
 ## Security Considerations
 
-**SC1. Typed-discriminator collision resistance.** Extension kinds are encoded as `BLAKE3-256(namespace_string || canonical_ask_id)`. Collision resistance equals BLAKE3-256 collision resistance (128-bit security). Cross-extension-kind collisions are equivalent to BLAKE3 preimage attacks.
+**SC1. Typed-discriminator collision resistance.** Extension kinds are encoded as `BLAKE3-256(namespace_string || canonical_ask_id)`. BLAKE3-256 collision resistance is 2^64 operations (birthday bound on 256-bit output), NOT 2^128 (preimage resistance). Cross-extension-kind collisions are cross-prefix second-preimage attacks (~2^256 with one fixed prefix; ~2^128 birthday for attacker-chosen both prefixes).
 
-**SC2. `SinkSpecific` payload scrubbing.** Adapter-specific error messages MUST be scrubbed at the adapter boundary before wrapping into `SettlementError::SinkSpecific`. No raw error chains, no adapter-type names, no leaked path fragments. See RFC-0011-a §7.7 Redaction for canonical 13-pattern list.
+**SC2. `SinkSpecific` payload scrubbing.** Adapter-specific error messages MUST be scrubbed at the adapter boundary before wrapping into `SettlementError::SinkSpecific`. No raw error chains, no adapter-type names, no leaked path fragments. Canonical scrubber is declared in §S5.1 (6-pattern list).
 
 **SC3. Settlement hash integrity.** `settlement_hash` field MUST match the canonical computation (substrate-side `verify_receipt_chain` enforces). §S4.4 enforces this on every append; §S6 canonical-bytes form is the substrate-level guarantee.
 
@@ -326,6 +393,29 @@ expect: audit_event_for_agent_transition_receipt(receipt).cap_root_hash ==
         audit_event_for_agent_transition_receipt(receipt).event_kind == AuditEventKind::Insert
 ```
 
+### TV-SET-v2-8: Typed-discriminator construction (ask-rejected)
+
+```
+input: extension_kind = "ask-rejected", canonical_ask_id_bytes = "did:example:ask/456"
+expect: Receipt { ask_id: BLAKE3-256("cipherocto/settlement/extension/ask-rejected/v1/" || canonical_ask_id_bytes), ... }
+```
+
+### TV-SET-v2-9: Typed-discriminator construction (agent-transition-receipt)
+
+```
+input: extension_kind = "agent-transition-receipt", canonical_ask_id_bytes = "did:example:agent/789"
+expect: Receipt { ask_id: BLAKE3-256("cipherocto/settlement/extension/agent-transition-receipt/v1/" || canonical_ask_id_bytes), ... }
+```
+
+### TV-SET-v2-10: Sink append atomic persistence
+
+```
+input: receipt with receipt.settlement_hash = receipt_id_for(&receipt)
+       simulated crash injected mid-transaction (Stoolap Transaction wrapper abandoned)
+expect: post-recovery last_receipt_id() returns None OR Some(prev_receipt_id)
+        (NOT Some(receipt.receipt_id) — partial persistence must not be observable)
+```
+
 ## Alternatives Considered
 
 **Alt-A: Add `ReceiptStatus` as substrate field.** Rejected per CLAUDE.md §Extension over enumeration + §Substrate-faithful — substrate-frozen struct cannot grow fields. §S1 typed-discriminator via `ask_id` namespace achieves extension semantics without field additions.
@@ -397,7 +487,7 @@ RFC-0014-v2 codifies the typed-discriminator extension pattern as the canonical 
 
 1. **Layer A frozen preservation** — `Receipt` stays 6-field; `SettlementError` stays 3-variant. No substrate churn from extension additions.
 2. **Forward compatibility** — `#[non_exhaustive]` discipline means downstream consumers continue to compile (substrate-stored receipts remain forward-compatible).
-3. **Type safety** — typed-discriminator namespaces are BLAKE3-256 digests (128-bit collision resistance); cross-extension-kind spoofing requires BLAKE3 preimage attack.
+3. **Type safety** — typed-discriminator namespaces are BLAKE3-256 digests (2^64 collision operations birthday bound; cross-prefix second-preimage attacks at ~2^256 with one fixed prefix, ~2^128 birthday for attacker-chosen both prefixes); cross-extension-kind spoofing requires BLAKE3 cross-prefix collision attack.
 
 The `ReceiptId` newtype adds façade-level type safety without changing canonical substrate form. `ReceiptStatus` + `ReceiptSummary` move to façade (Layer B) where projection logic naturally lives.
 
@@ -417,6 +507,13 @@ The cost is a doc-comment-driven extension pattern that domain crates must follo
 - RFC-0016-a (draft) — audit receipt write-path amendment; requires RFC-0014-v2 for `ReceiptId` newtype + `ReceiptSummary` projection.
 - RFC-0011-a (accepted) — wallet subcommands; cross-RFC reference for scrubber location (Layer B façade, not Layer A substrate).
 - RFC-0959 (accepted) — settlement data structures + state machines (parent design).
+
+## Related Use Cases
+
+- **UC-SET-001 — Agent lifecycle settlement.** When an agent transitions state (RFC-0015-a `transition_agent`), a corresponding `AgentTransitionReceipt` is settled with `ask_id` typed-discriminator namespace `cipherocto/settlement/extension/agent-transition-receipt/v1/`. The audit event for the transition (RFC-0012-v2 `AuditEventKind::Insert` + cap_root_hash namespace) is paired with the receipt via `prev_chain_hash = receipt_id_for(receipt)`.
+- **UC-SET-002 — Ask rejection.** When a downstream router rejects an ask (e.g. insufficient capacity), a corresponding `AskRejected` receipt is settled with `ask_id` namespace `cipherocto/settlement/extension/ask-rejected/v1/`. The audit event for the rejection (RFC-0012-v2 `AuditEventKind::Revoke` + Redaction namespace) is paired similarly.
+- **UC-SET-003 — Partial settlement supplement.** When a settlement is partially filled and supplemented (e.g. multi-hop routing), a corresponding `AskPartial` receipt is settled with `ask_id` namespace `cipherocto/settlement/extension/ask-partial/v1/`. The partial supplemental amount is encoded in domain-crate-side canonical hash inputs; the substrate does NOT inspect the extension payload.
+- **UC-SET-004 — Receipt projection at façade.** When a CLI consumer requests `octo audit list` or `octo audit show <receipt_id>` (RFC-0016-a), the façade projects the canonical `Receipt` into `ReceiptSummary` via typed-discriminator lookup on `ask_id`. The projection is read-only; substrate persistence is unchanged.
 
 ## Appendices
 

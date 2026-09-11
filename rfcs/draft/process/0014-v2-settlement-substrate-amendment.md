@@ -45,7 +45,7 @@ Per CLAUDE.md §Architectural Principles + §Extension over enumeration, RFC-001
 **G2.** Preserve byte-identical canonical-bytes serialization form for existing receipts.
 **G3.** Maintain `#[non_exhaustive]` discipline on `Receipt` so substrate-stored receipts remain forward-compatible with future extensions.
 **G4.** Provide type-safe `ReceiptId` newtype for façade-level use without changing canonical substrate `Receipt.receipt_id: u64`.
-**G5.** Lock the substrate contract surface so adapter implementations (`StoolapReceiptSink` in `octo-settlement/src/storage/stoolap.rs`) have no ambiguity on what they must enforce.
+**G5.** Lock the substrate contract surface so Layer D adapter implementations (e.g. `quota-router-sm-engine::{store,sink}` per substrate `lib.rs:23-24`) have no ambiguity on what they must enforce.
 
 ## Motivation
 
@@ -58,11 +58,11 @@ RFC-0014-v2 codifies the typed-discriminator pattern via `ask_id` extension name
 
 ## Roles and Authorities
 
-| Role                                        | Authority                                                                                                                                                                                  |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `octo-settlement-core` (substrate, Layer A) | Owns `Receipt`, `Ask`, `AskState`, `Reservation`, `ReservationState`, `SettlementStore`, `AppendOnlyReceiptSink`, `SettlementError`, `ReceiptId`, `verify_receipt_chain`, `receipt_id_for` |
-| `octo-settlement` (façade, Layer B)         | Re-exports substrate canonical types + implements `StoolapReceiptSink` (Layer D adapter) + provides `ReceiptSummary` projection + `ReceiptStatus` enum                                     |
-| Domain callers (Layer B / C / D)            | Construct `Receipt` instances via typed-discriminator helpers (e.g. `receipt_for_ask_settled(...)` in `octo-settlement/src/receipt.rs`)                                                    |
+| Role                                        | Authority                                                                                                                                                                                         |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `octo-settlement-core` (substrate, Layer A) | Owns `Receipt`, `Ask`, `AskState`, `Reservation`, `ReservationState`, `SettlementStore`, `AppendOnlyReceiptSink`, `SettlementError`, `ReceiptId`, `verify_receipt_chain`, `receipt_id_for`        |
+| `octo-settlement` (façade, Layer B)         | Re-exports substrate canonical types + provides `ReceiptSummary` projection + `ReceiptStatus` enum (Layer D adapters live at `quota-router-sm-engine::{store,sink}` per substrate `lib.rs:23-24`) |
+| Domain callers (Layer B / C / D)            | Construct `Receipt` instances via typed-discriminator helpers (e.g. `receipt_for_ask_settled(...)` in `octo-settlement/src/receipt.rs`)                                                           |
 
 **Façade projection concerns (NOT substrate):**
 
@@ -87,12 +87,12 @@ The `ask_id` field is a 32-byte BLAKE3-256 digest. By extending the BLAKE3 _inpu
 
 **Extension kind table (canonical):**
 
-| Extension kind             | `ask_id` prefix (BLAKE3-256 input)                                                                                                            | Substrate version                           |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| AskSettled                 | `cipherocto/settlement/extension/ask-settled/v1/` (RFC-0014 existing; ask_id = BLAKE3-256 of namespace \|\| canonical_ask_id per §S1 pattern) | RFC-0014                                    |
-| **AskPartial**             | `cipherocto/settlement/extension/ask-partial/v1/`                                                                                             | **RFC-0014-v2**                             |
-| **AskRejected**            | `cipherocto/settlement/extension/ask-rejected/v1/`                                                                                            | **RFC-0014-v2**                             |
-| **AgentTransitionReceipt** | `cipherocto/settlement/extension/agent-transition-receipt/v1/`                                                                                | **RFC-0014-v2** (cross-RFC with RFC-0015-a) |
+| Extension kind             | `ask_id` prefix (BLAKE3-256 input)                                                                                         | Substrate version                           |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| AskSettled                 | `cipherocto/settlement/extension/ask-settled/v1/` (ask_id = BLAKE3-256 of namespace \|\| canonical_ask_id per §S1 pattern) | RFC-0014                                    |
+| **AskPartial**             | `cipherocto/settlement/extension/ask-partial/v1/`                                                                          | **RFC-0014-v2**                             |
+| **AskRejected**            | `cipherocto/settlement/extension/ask-rejected/v1/`                                                                         | **RFC-0014-v2**                             |
+| **AgentTransitionReceipt** | `cipherocto/settlement/extension/agent-transition-receipt/v1/`                                                             | **RFC-0014-v2** (cross-RFC with RFC-0015-a) |
 
 **Extension kind enumeration is exhaustive for v2.0.0.** Future extensions (v2.1+) are added to this table via subsequent RFCs and do NOT require substrate field additions.
 
@@ -235,7 +235,7 @@ Adapter-specific error chains MUST be scrubbed at the adapter boundary per §SC2
 /// (Stoolap transaction IDs, IO path fragments, table-name leaks) to
 /// a substrate-canonical scrubbed String.
 ///
-/// Pattern list (substrate-canonical for v2.0.0, 6 patterns):
+/// Pattern list (substrate-canonical for v2.0.0, 5 patterns):
 /// 1. Hex digest ≥32 chars (transaction IDs, hashes) → `<redacted-hex-N>`
 /// 2. Absolute file paths (`/.../...`) → `<redacted-path>`
 /// 3. Table-name references (`table 'X'`, `relation "X"`) → `<redacted-table>`
@@ -291,7 +291,9 @@ pub fn scrub_adapter_error(s: &str) -> String {
 
 /// Scrubber variant that accepts an adapter-type registry (per-façade, not hardcoded).
 /// Each Layer B façade owns its own ADAPTER_TYPES list and calls this function
-/// rather than the hardcoded 6-pattern list. Per CLAUDE.md §Extension over enumeration,
+/// rather than the canonical 5-pattern list (the 6th pattern is the
+/// adapter-type registry passed in by the caller). Per CLAUDE.md §Extension
+/// over enumeration,
 /// adapter-type names are an extension surface, NOT a closed set.
 pub fn scrub_adapter_error_with(s: &str, adapter_types: &[&str]) -> String {
     let mut out = scrub_adapter_error(s);
@@ -302,7 +304,7 @@ pub fn scrub_adapter_error_with(s: &str, adapter_types: &[&str]) -> String {
 }
 ```
 
-The 6-pattern list is canonical for v2.0.0. Future RFCs MAY extend the list; downstream adapters MUST call this function rather than implementing their own scrubber (per RFC-0011-a §7.7 redaction discipline).
+The 5-pattern canonical form covers the closed set: hex digests, absolute paths, table-name refs, SQLSTATE prefixes, io error chains. A 6th pattern (adapter-type names) is extension surface applied via `scrub_adapter_error_with(s, ADAPTER_TYPES)` (line 296) — adapter types are NOT a closed set per CLAUDE.md §Extension over enumeration. Future RFCs MAY extend the optional 6th-pattern registry; downstream adapters MUST call `scrub_adapter_error` (or the `_with` form) rather than implementing their own scrubber (per RFC-0011-a §7.7 redaction discipline).
 
 **Cargo.toml dependency at Layer B façade** (`crates/octo-settlement/Cargo.toml`):
 
@@ -311,6 +313,8 @@ The 6-pattern list is canonical for v2.0.0. Future RFCs MAY extend the list; dow
 regex = { version = "1.10" }
 once_cell = { version = "1.19" }
 ```
+
+**DEFERRED:** `octo-settlement::scrub::scrub_adapter_error` and the `regex` + `once_cell` deps land at acceptance per Phase 1 substrate-code amendment mission. The dependency pair is the substrate-faithful form (canonical Cargo.toml shape per substrate Layer B façade pattern); acceptance mission MAY replace `regex` with a hand-rolled scanner if Cargo dependency surface is constrained.
 
 ### §S6 — Canonical-hash construction (keyed BLAKE3 with zero key)
 
@@ -375,7 +379,7 @@ Per RFC-0008 Execution Class Mapping, all substrate operations in this RFC are *
 
 - **`receipt_id_for`** — keyed BLAKE3-256 over canonical input; pure function of `Receipt` fields; deterministic across replicas.
 - **`verify_receipt_chain`** — deterministic replay of `receipt_id_for` over each persisted receipt; byte-identical verification result.
-- **`receipt_id_for`** — keyed BLAKE3-256 domain-separator over `request_canonical_bytes`; deterministic across replicas.
+- **`receipt_id_for`** — keyed BLAKE3-256 domain-separator over canonical `Receipt` field bytes; deterministic across replicas.
 - **Typed-discriminator construction** — `BLAKE3-256("cipherocto/settlement/extension/<K>/v1/" || canonical_ask_id_bytes)` is a pure function of `<K>` + canonical ask_id bytes; deterministic.
 - **`receipt_id` monotonicity ordering** — strict total order; deterministic across replicas.
 - **`timestamp_unix` wall-clock vs logical ordering** — wall-clock values; ordering is adapter responsibility, not substrate enforcement. Cross-replica monotonicity assumes external synchronized time source (NTP) at adapter boundary.
@@ -404,7 +408,7 @@ The RFC is Accepted when ALL of the following are true:
 - **AC-7.** Adapter implementations call the canonical scrubber before wrapping into `SinkSpecific`; each Layer B façade owns its own scrubber instance (e.g. `octo_audit::scrub::scrub_adapter_error`, `octo_settlement::scrub::scrub_adapter_error` — pattern duplicated per-façade to avoid sibling Layer B coupling). Raw error chains never reach substrate.
 - **AC-8.** Paired acceptance with RFC-0012-v2 per BLUEPRINT.md §2-Cycle Atomic Promotion gate.
 - **AC-9.** All Test Vectors in §Test Vectors produce expected outputs (verified by `cargo test -p octo-settlement`).
-- **AC-10.** Layer D adapter implementations (e.g. `StoolapReceiptSink`) provide monotonicity + transaction-scoped atomic persistence; atomic-or-rollback contract honored (no partial persistence observable on adapter failure).
+- **AC-10.** Layer D adapter implementations (per substrate `octo-settlement/src/lib.rs:23-24`, concrete sink impls live at `quota-router-sm-engine::{store,sink}`) provide monotonicity + transaction-scoped atomic persistence; atomic-or-rollback contract honored (no partial persistence observable on adapter failure).
 
 ## 2-Cycle Atomic Promotion Tag
 
@@ -419,7 +423,7 @@ Per BLUEPRINT.md §RFC Process item 5 + §2-Cycle Atomic Promotion gate:
 
 **SC1. Typed-discriminator collision resistance.** Extension kinds are encoded as `BLAKE3-256(namespace_string || canonical_ask_id)`. BLAKE3-256 collision resistance is 2^128 operations (birthday bound on 256-bit output). Preimage resistance is 2^256. Cross-extension-kind collisions are cross-prefix second-preimage attacks (~2^256 with one fixed prefix; ~2^128 birthday for attacker-chosen both prefixes).
 
-**SC2. `SinkSpecific` payload scrubbing.** Adapter-specific error messages MUST be scrubbed at the adapter boundary before wrapping into `SettlementError::SinkSpecific`. No raw error chains, no adapter-type names, no leaked path fragments. Canonical scrubber pattern is declared at each Layer B façade (`octo_audit::scrub::scrub_adapter_error` + `octo_settlement::scrub::scrub_adapter_error` — duplicated per-façade to avoid sibling Layer B coupling) with the 6-pattern list (per §S5.1).
+**SC2. `SinkSpecific` payload scrubbing.** Adapter-specific error messages MUST be scrubbed at the adapter boundary before wrapping into `SettlementError::SinkSpecific`. No raw error chains, no adapter-type names, no leaked path fragments. Canonical scrubber pattern is declared at each Layer B façade (`octo_audit::scrub::scrub_adapter_error` + `octo_settlement::scrub::scrub_adapter_error` — duplicated per-façade to avoid sibling Layer B coupling) with the 5-pattern canonical list (hex / path / table / SQLSTATE / io) plus a 6th-pattern registry form (adapter-type names) per §S5.1.
 
 **SC3. Settlement hash integrity.** `settlement_hash` field MUST match the canonical computation (substrate-side `verify_receipt_chain` enforces). §S4.4 enforces this on every append; §S6 canonical-bytes form is the substrate-level guarantee.
 
@@ -449,7 +453,7 @@ Per BLUEPRINT.md §RFC Process item 5 + §2-Cycle Atomic Promotion gate:
 
 **E1. Substrate storage cost.** Typed-discriminator pattern reuses existing `ask_id` field. No substrate storage cost increase. Extension payload is encoded in domain-crate-side canonical hash inputs and surfaced via façade projection.
 
-**E2. Adapter implementation cost.** Existing `StoolapReceiptSink` requires no changes for v2.0.0 conformance. §S4 invariants are already substrate-level.
+**E2. Adapter implementation cost.** Existing Layer D adapter impls at `quota-router-sm-engine::{store,sink}` (per substrate `lib.rs:23-24`) require no changes for v2.0.0 conformance. §S4 invariants are already substrate-level.
 
 **E3. Domain crate migration cost.** Existing callers that construct `Receipt` directly (e.g. `octo-settlement-core::ask`) must migrate to typed-discriminator helpers for new extension kinds. RFC-0016-a + RFC-0015-a pin the helper signatures.
 
@@ -461,7 +465,7 @@ Per BLUEPRINT.md §RFC Process item 5 + §2-Cycle Atomic Promotion gate:
 
 **C2. Source compatibility.** `Receipt` retains its 6-field public surface. `SettlementError` retains its 7-variant form. New `ReceiptId` newtype is additive.
 
-**C3. Adapter compatibility.** Existing `StoolapReceiptSink` impl remains RFC-0014-v2 conformant. No adapter rewrite required.
+**C3. Adapter compatibility.** Existing Layer D adapter impls at `quota-router-sm-engine::{store,sink}` (per substrate `lib.rs:23-24`) remain RFC-0014-v2 conformant. No adapter rewrite required.
 
 **C4. Crate version.** `octo-settlement-core` advances from v1.x to v2.0.0 (semver-major). Per CLAUDE.md §Layer A stability rules, this is a one-time major bump for the typed-discriminator + sink invariant codification.
 
@@ -493,12 +497,16 @@ expect: append returns Ok(())
         last_receipt_id() returns Some(receipt.receipt_id)
 ```
 
+**DEFERRED:** Layer D adapter append behavior verified at acceptance per Phase 1 substrate-code amendment mission (`quota-router-sm-engine::{store,sink}` relocation per substrate `lib.rs:23-24`).
+
 ### TV-SET-v2-4: Sink append rejects tampered settlement_hash
 
 ```
 input: receipt with receipt.settlement_hash = [0x00; 32] (not equal to receipt_id_for)
 expect: append returns Err(SettlementError::ChainIntegrity { receipt_id: receipt.receipt_id })
 ```
+
+**DEFERRED:** Same as TV-SET-v2-3.
 
 ### TV-SET-v2-5: Sink append rejects sequence gap
 
@@ -508,6 +516,8 @@ expect: first append returns Ok(())
         second append returns Err(SettlementError::SequenceGap { receipt_id: 3, prev: 1 })
 ```
 
+**DEFERRED:** Same as TV-SET-v2-3.
+
 ### TV-SET-v2-6: Sink append rejects re-append (idempotency)
 
 ```
@@ -515,6 +525,8 @@ input: append receipt_id=1, then append receipt_id=1 again
 expect: first append returns Ok(())
         second append returns Err(SettlementError::AlreadyExists(1))
 ```
+
+**DEFERRED:** Same as TV-SET-v2-3.
 
 ### TV-SET-v2-7: Cross-RFC pairing (agent transition receipt ↔ audit event)
 
@@ -546,10 +558,12 @@ expect: Receipt { ask_id: BLAKE3-256("cipherocto/settlement/extension/agent-tran
 
 ```
 input: receipt with receipt.settlement_hash = receipt_id_for(&receipt)
-       simulated crash injected mid-transaction (Stoolap Transaction wrapper abandoned)
+       simulated crash injected mid-transaction (Layer D adapter's transaction mechanism abandoned)
 expect: post-recovery last_receipt_id() returns None OR Some(prev_receipt_id)
         (NOT Some(receipt.receipt_id) — partial persistence must not be observable)
 ```
+
+**DEFERRED:** Layer D adapter atomic-persistence behavior verified at acceptance per Phase 1 substrate-code amendment mission (adapter-side crash-injection test infrastructure).
 
 ### TV-SET-v2-11: ask_id namespace || ask_id_bytes boundary
 
@@ -621,7 +635,7 @@ expect: audit_event_for_ask_rejected(receipt) returns AuditEvent with cap_root_h
 
 **DEFERRED:** `audit_event_for_ask_rejected` is façade helper per §S7; lands at acceptance per Phase 1 substrate-code amendment mission.
 
-### TV-SET-v2-19: scrub_adapter_error all 6 patterns (already covered in RFC-0012-v2 TV-AUD-v2-18 through v2-23)
+### TV-SET-v2-19: scrub_adapter_error canonical 5 patterns + registry 6th (RFC-0012-v2 TV-AUD-v2-18..v2-23)
 
 ```
 input: same scrubber tests as RFC-0012-v2 — canonical Layer B scrubber applies to both AuditError::SinkSpecific and SettlementError::SinkSpecific
@@ -630,13 +644,15 @@ expect: identical pattern coverage
 
 **DEFERRED:** `scrub_adapter_error` declared at Layer B façade per §S5.1; lands at acceptance per Phase 1 substrate-code amendment mission. Coverage delegated to RFC-0012-v2 TV-AUD-v2-18..v2-23.
 
-### TV-SET-v2-20: StoolapReceiptSink concurrent receipt_id collision detection
+### TV-SET-v2-20: Layer D adapter concurrent receipt_id collision detection
 
 ```
 input: two appenders simultaneously call append(receipt_id=1) on empty table
 expect: at most one returns Ok(())
         the other returns Err(SettlementError::SequenceGap) or Err(SettlementError::AlreadyExists)
 ```
+
+**DEFERRED:** Layer D adapter concurrent-appender behavior verified at acceptance per Phase 1 substrate-code amendment mission.
 
 ### TV-SET-v2-21: Router signature forge attempt (SC6 domain-only verification)
 
@@ -654,6 +670,8 @@ input: SinkSpecific("a".repeat(10000)) (10 KiB adapter error)
 expect: payload retained verbatim (substrate does NOT truncate)
         adapter-side scrub_adapter_error MUST be called before wrapping (scrubber lands at acceptance per Phase 1 substrate-code amendment mission)
 ```
+
+**DEFERRED:** Scrubber lands at acceptance per Phase 1 substrate-code amendment mission; verified by acceptance mission.
 
 ### TV-SET-v2-23: Receipt 6-field surface preservation
 
@@ -678,6 +696,8 @@ input: receipt_id_for(&receipt) called on two replicas with identical receipt by
 expect: identical 32-byte digest output
         (zero key [0; 32] intentional per A1; no key management required for cross-replica consensus)
 ```
+
+**DEFERRED:** Substrate-code amendment mission: verify `receipt_id_for` exists in substrate with current signature (`chain.rs:47-50`).
 
 ### TV-SET-v2-26: cross-prefix second-preimage resistance
 
@@ -719,11 +739,13 @@ expect: identical machine code generated by `cargo build --release`
 ### TV-SET-v2-30: Adapter atomic persistence precondition
 
 ```
-input: StoolapReceiptSink append in Stoolap Transaction wrapper
+input: Layer D adapter append in transaction wrapper
        fsync fails at adapter boundary
-expect: adapter rolls back Transaction (atomic-or-rollback contract per AC-10)
+expect: adapter rolls back transaction (atomic-or-rollback contract per AC-10)
         no partial persistence observable to subsequent last_receipt_id() calls
 ```
+
+**DEFERRED:** Layer D adapter atomic-or-rollback behavior verified at acceptance per Phase 1 substrate-code amendment mission.
 
 ## Alternatives Considered
 
@@ -759,7 +781,7 @@ expect: adapter rolls back Transaction (atomic-or-rollback contract per AC-10)
 - Add façade-side `ReceiptStatus` enum (recovered from `ask_id` typed-discriminator)
 - Add façade-side `ReceiptSummary` projection struct
 
-### Phase 3: Adapter `StoolapReceiptSink` conformance verification
+### Phase 3: Adapter conformance verification (Layer D sinks at `quota-router-sm-engine`)
 
 - Verify existing adapter impl satisfies §S4.5 atomic persistence
 - Verify existing adapter impl scrubs errors per §SC2
@@ -833,27 +855,27 @@ The cost is a doc-comment-driven extension pattern that domain crates must follo
 
 ### Appendix A: Extension kind namespace registry
 
-| Extension kind         | Namespace string                                                                                                                              | `ask_id` prefix bytes (BLAKE3-256 input prefix) |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| AskSettled             | `cipherocto/settlement/extension/ask-settled/v1/` (RFC-0014 existing; ask_id = BLAKE3-256 of namespace \|\| canonical_ask_id per §S1 pattern) | (RFC-0014 existing)                             |
-| AskPartial             | `cipherocto/settlement/extension/ask-partial/v1/`                                                                                             | RFC-0014-v2 new                                 |
-| AskRejected            | `cipherocto/settlement/extension/ask-rejected/v1/`                                                                                            | RFC-0014-v2 new                                 |
-| AgentTransitionReceipt | `cipherocto/settlement/extension/agent-transition-receipt/v1/`                                                                                | RFC-0014-v2 new (cross-RFC with RFC-0015-a)     |
+| Extension kind         | Namespace string                                                                                                           | `ask_id` prefix bytes (BLAKE3-256 input prefix) |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| AskSettled             | `cipherocto/settlement/extension/ask-settled/v1/` (ask_id = BLAKE3-256 of namespace \|\| canonical_ask_id per §S1 pattern) | RFC-0014                                        |
+| AskPartial             | `cipherocto/settlement/extension/ask-partial/v1/`                                                                          | RFC-0014-v2 new                                 |
+| AskRejected            | `cipherocto/settlement/extension/ask-rejected/v1/`                                                                         | RFC-0014-v2 new                                 |
+| AgentTransitionReceipt | `cipherocto/settlement/extension/agent-transition-receipt/v1/`                                                             | RFC-0014-v2 new (cross-RFC with RFC-0015-a)     |
 
 ### Appendix B: Substrate-vs-façade boundary
 
-| Concern                                | Substrate (Layer A)           | Façade (Layer B)                               |
-| -------------------------------------- | ----------------------------- | ---------------------------------------------- |
-| `Receipt` struct                       | owned                         | re-export                                      |
-| `ReceiptId` newtype                    | owned                         | re-export                                      |
-| `SettlementError` enum                 | owned                         | re-export                                      |
-| `AppendOnlyReceiptSink` trait          | owned                         | re-export + concrete `StoolapReceiptSink` impl |
-| `verify_receipt_chain`                 | owned                         | re-export                                      |
-| `receipt_id_for`                       | owned                         | re-export                                      |
-| `ReceiptStatus` enum                   | NOT owned (façade projection) | owned (Layer B projection)                     |
-| `ReceiptSummary` projection            | NOT owned (façade projection) | owned (Layer B projection)                     |
-| Typed-discriminator helpers            | doc-comment only              | owned (`receipt_for_*` functions)              |
-| Storage adapter (`StoolapReceiptSink`) | NOT owned                     | owned (Layer B → Layer D adapter)              |
+| Concern                        | Substrate (Layer A)           | Façade (Layer B)                                                                              |
+| ------------------------------ | ----------------------------- | --------------------------------------------------------------------------------------------- |
+| `Receipt` struct               | owned                         | re-export                                                                                     |
+| `ReceiptId` newtype            | owned                         | re-export                                                                                     |
+| `SettlementError` enum         | owned                         | re-export                                                                                     |
+| `AppendOnlyReceiptSink` trait  | owned                         | re-export (concrete sink impls live at `quota-router-sm-engine` per substrate `lib.rs:23-24`) |
+| `verify_receipt_chain`         | owned                         | re-export                                                                                     |
+| `receipt_id_for`               | owned                         | re-export                                                                                     |
+| `ReceiptStatus` enum           | NOT owned (façade projection) | owned (Layer B projection)                                                                    |
+| `ReceiptSummary` projection    | NOT owned (façade projection) | owned (Layer B projection)                                                                    |
+| Typed-discriminator helpers    | doc-comment only              | owned (`receipt_for_*` functions)                                                             |
+| Storage adapter (Layer D sink) | NOT owned                     | NOT owned (concrete impls live at `quota-router-sm-engine` per substrate `lib.rs:23-24`)      |
 
 RFC-0014-v2 explicitly pins this boundary. Substrate stays free of projection logic, status interpretation, and storage adapter logic — all three are Layer B (or Layer D) concerns per CLAUDE.md §Layer direction rule.
 

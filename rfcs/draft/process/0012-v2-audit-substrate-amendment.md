@@ -258,7 +258,7 @@ Per BLUEPRINT.md §RFC Process item 5 + §2-Cycle Atomic Promotion gate:
 
 **SC1. Typed-discriminator collision resistance.** Extension kinds are encoded as `BLAKE3-256(namespace_string)`. BLAKE3-256 collision resistance is 2^128 operations (birthday bound on 256-bit output). Preimage resistance is 2^256. Cross-extension-kind collisions are cross-prefix second-preimage attacks (~2^256 with one fixed prefix; ~2^128 birthday for attacker-chosen both prefixes).
 
-**SC2. `SinkSpecific` payload scrubbing.** Adapter-specific error messages MUST be scrubbed at the adapter boundary before wrapping into `AuditError::SinkSpecific`. No raw error chains, no adapter-type names, no leaked path fragments. Canonical scrubber pattern is declared at each Layer B façade (`octo_audit::scrub::scrub_adapter_error` + `octo_settlement::scrub::scrub_adapter_error` — duplicated per-façade to avoid sibling Layer B coupling) with the 6-pattern list (per RFC-0014-v2 §S5.1) applied to both `AuditError::SinkSpecific` and `SettlementError::SinkSpecific`.
+**SC2. `SinkSpecific` payload scrubbing.** Adapter-specific error messages MUST be scrubbed at the adapter boundary before wrapping into `AuditError::SinkSpecific`. No raw error chains, no adapter-type names, no leaked path fragments. Canonical scrubber pattern is declared at each Layer B façade (`octo_audit::scrub::scrub_adapter_error` + `octo_settlement::scrub::scrub_adapter_error` — duplicated per-façade to avoid sibling Layer B coupling) with the 5-pattern canonical list (hex / path / table / SQLSTATE / io) plus a 6th-pattern registry form (adapter-type names) per RFC-0014-v2 §S5.1, applied to both `AuditError::SinkSpecific` and `SettlementError::SinkSpecific`.
 
 **SC3. Chain hash integrity.** `chain_hash` field MUST match `compute_chain_hash(event)`. §S2.4 enforces this on every append; §S6 canonical-bytes form is the substrate-level guarantee.
 
@@ -363,10 +363,12 @@ expect: cap_root_hash = BLAKE3-256("cipherocto/audit/extension/redaction/v1/")
 
 ```
 input: event with event.chain_hash = compute_chain_hash(&event)
-       simulated crash injected mid-transaction (Stoolap Transaction wrapper abandoned)
+       simulated crash injected mid-transaction (Layer D adapter's transaction mechanism abandoned)
 expect: post-recovery last_event_id() returns None OR Some(prev_event_id)
         (NOT Some(event.event_id) — partial persistence must not be observable)
 ```
+
+**DEFERRED:** Layer D adapter atomic-persistence behavior verified at acceptance per Phase 1 substrate-code amendment mission (adapter-side crash-injection test infrastructure).
 
 ### TV-AUD-v2-9: Typed-discriminator namespace collision (capability-insert)
 
@@ -439,14 +441,16 @@ expect: filter.since_unix == Some(0)
 
 **DEFERRED:** Same as TV-AUD-v2-15; `AuditFilter` lands at acceptance per Phase 2.
 
-### TV-AUD-v2-17: StoolapAuditSink concurrent appender detection
+### TV-AUD-v2-17: Layer D adapter concurrent appender detection
 
 ```
 input: two appenders simultaneously call append(event_id=1) on empty table
 expect: at most one returns Ok(())
         the other returns Err(AuditError::SequenceGap) or Err(AuditError::AlreadyExists)
-        (adapter-side serialization via Stoolap Transaction wrapper + monotonicity pre-check)
+        (substrate monotonicity pre-check + adapter-side serialization)
 ```
+
+**DEFERRED:** Layer D adapter concurrent-appender behavior verified at acceptance per Phase 1 substrate-code amendment mission.
 
 ### TV-AUD-v2-18: scrub_adapter_error pattern 1 (hex digest ≥32 chars)
 
@@ -662,7 +666,7 @@ The cost is a doc-comment-driven extension pattern that domain crates must follo
 ## Related Use Cases
 
 - **UC-AUD-001 — Agent lifecycle audit trail.** When an agent transitions state (RFC-0015-a `transition_agent`), an audit event with `event_kind = AuditEventKind::Insert` and `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/agent-transition/v1/")` is appended to the sink. The audit event's `prev_chain_hash` binds it to the corresponding `AgentTransitionReceipt`'s `settlement_hash` (per RFC-0014-v2 §S7 pairing invariant).
-- **UC-AUD-002 — Capability redaction.** When a capability is redacted (e.g. compromise recovery), an audit event with `event_kind = AuditEventKind::Revoke` and `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/redaction/v1/")` is appended. The `reason` payload is scrubbed per the canonical scrubber (`octo-settlement::scrub::scrub_adapter_error`, RFC-0014-v2 §S5.1) before being persisted.
+- **UC-AUD-002 — Capability redaction.** When a capability is redacted (e.g. compromise recovery), an audit event with `event_kind = AuditEventKind::Revoke` and `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/redaction/v1/")` is appended. The `reason` payload is scrubbed per the canonical scrubber (`octo_audit::scrub::scrub_adapter_error`, RFC-0014-v2 §S5.1) before being persisted.
 - **UC-AUD-003 — CLI receipt listing with `AuditFilter`.** When a CLI consumer runs `octo audit list --since <unix> --until <unix> --capability-root <hex> --model <model> --limit <n>` (RFC-0016-a), the façade constructs an `AuditFilter` per §S4 and applies it to the audit store. Subject-DID ACL and receipt-status filtering are out of v2.0.0 scope.
 - **UC-AUD-004 — Cross-replica sync.** When a downstream replica syncs the audit chain, sync events use `event_kind = AuditEventKind::Sync` + `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/sync/v1/")`. The `prev_chain_hash` field carries the last persisted chain hash from the source replica, enabling chain-integrity verification on receipt.
 

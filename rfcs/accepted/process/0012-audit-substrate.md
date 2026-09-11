@@ -278,20 +278,14 @@ use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum AuditChainError {
-    #[error("hash mismatch at event_id={event_id}: expected {expected:?}, got {actual:?}")]
-    HashMismatch { event_id: u64, expected: [u8; 32], actual: [u8; 32] },
+    #[error("hash mismatch at event_id={event_id}")]
+    HashMismatch { event_id: u64 },
 
-    #[error("sequence gap at event_id={event_id}: previous={prev}, next={next}")]
-    SequenceGap { event_id: u64, prev: u64, next: u64 },
+    #[error("sequence gap at event_id={event_id}: previous={prev}")]
+    SequenceGap { event_id: u64, prev: u64 },
 
     #[error("timestamp regression at event_id={event_id}: prev={prev}ms, current={current}ms")]
     TimestampRegression { event_id: u64, prev: u64, current: u64 },
-
-    #[error("invalid signature on event_id={event_id}")]
-    InvalidSignature { event_id: u64 },
-
-    #[error("storage backend error: {0}")]
-    Storage(String),
 }
 ```
 

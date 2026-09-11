@@ -320,23 +320,14 @@ use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum GovernanceError {
-    #[error("invalid governance policy: {reason}")]
-    InvalidPolicy { reason: String },
-
-    #[error("invalid proposal: {reason}")]
-    InvalidProposal { reason: String },
-
-    #[error("proposal not found: {0}")]
-    ProposalNotFound([u8; 32]),
-
-    #[error("proposal state transition invalid: {from:?} -> {to:?}")]
+    #[error("invalid proposal state transition: {from:?} -> {to:?}")]
     InvalidTransition { from: ProposalState, to: ProposalState },
 
-    #[error("voting period expired (epoch {current} > deadline {deadline})")]
-    VotingExpired { current: u64, deadline: u64 },
+    #[error("quorum not reached: approval={approval_bps}bps, rejection={rejection_bps}bps, required={quorum_bps}bps")]
+    QuorumNotReached { approval_bps: u32, rejection_bps: u32, quorum_bps: u32 },
 
-    #[error("storage backend error: {0}")]
-    Storage(String),
+    #[error("invalid voter weight: {weight}bps for voter {voter}")]
+    InvalidWeight { voter: String, weight: u32 },
 }
 ```
 

@@ -24,6 +24,10 @@ RFC-0014-v2 is a **Layer A substrate amendment** to `octo-settlement-core` that:
 
 Per CLAUDE.md §Architectural Principles + §Extension over enumeration, RFC-0014-v2 enables future receipt extension kinds (AskSettled, AskPartial, AskRejected, AskRefunded, etc) without modifying `octo_settlement_core::Receipt` (which is substrate-frozen).
 
+## Status
+
+**Draft** — under 5-lens reviewer review (R30 → R37). Paired with RFC-0012-v2 per §2-Cycle Atomic Promotion Tag. Substrate amendment missions defined in §Mission Decomposition.
+
 ## Authors
 
 - CipherOcto Architecture Working Group
@@ -32,12 +36,26 @@ Per CLAUDE.md §Architectural Principles + §Extension over enumeration, RFC-001
 
 - CipherOcto Architecture Working Group
 
+## Mission Decomposition
+
+Per BLUEPRINT.md §Multi-Mission Decomposition, RFC-0014-v2 substrate amendments decompose into the following substrate-code amendment missions:
+
+| Mission ID                           | Phase | Target crate / module            | Outcome                                                                                                      |
+| ------------------------------------ | ----- | -------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `0014-v2-m1-octosettlementcore-v200` | 1     | `octo-settlement-core` v2.0.0    | Bump crate to v2.0.0; add §S1 / §S2 / §S4 / §S5 / §S6 / §S7 doc-comments; add `ReceiptId` newtype per §S3.   |
+| `0014-v2-m2-octosettlement-v200`     | 2     | `octo-settlement` v2.0.0         | Bump façade to v2.0.0; re-export `ReceiptId`; add typed-discriminator helper functions + façade projections. |
+| `0014-v2-m3-scrubber-facade`         | 2     | `octo-settlement/src/scrub.rs`   | Land canonical scrubber per §S5.1 (Layer B placement); add `regex` + `once_cell` façade deps.                |
+| `0014-v2-m4-keyed-hsm-fw5`           | FW5   | `octo-settlement-core/src/chain` | Substrate-level `receipt_id_for_keyed` extension; HSM/Vault key injection path (per §Future Work FW5).       |
+| `0014-v2-m5-adapter-conformance`     | 3     | Layer D adapter impls            | Verify existing adapter satisfies §S4.5 atomic persistence + §SC2 scrubber discipline per AC-10.             |
+
+Mission `0014-v2-m3-scrubber-facade` covers the phantom `crates/octo-settlement/src/scrub.rs` and `crates/octo-settlement/src/receipt.rs` paths referenced in this RFC. Both files do not exist in v1.x substrate; they land at acceptance per the Phase 1 + Phase 2 substrate-code amendment missions.
+
 ## Dependencies
 
-- **RFC-0014** (parent, accepted) — defines `Receipt`, `Ask`, `AskState`, `Reservation`, `ReservationState`, `SettlementStore`, `AppendOnlyReceiptSink`, `SettlementError`, `verify_receipt_chain`, `receipt_id_for`.
-- **RFC-0012-v2** (sibling, draft) — pins audit substrate extension pattern; cross-RFC consistency on canonical extension kind table.
-- **RFC-0016-a** (write-path amendment, draft) — requires RFC-0014-v2 for `ReceiptId` newtype + `ask_id` typed-discriminator pattern.
-- **RFC-0015-a** (write-path amendment, draft) — cross-RFC: agent transition receipt uses `ask_id = BLAKE3-256("cipherocto/settlement/extension/agent-transition-receipt/v1/")` typed-discriminator.
+- **RFC-0014** — defines `Receipt`, `Ask`, `AskState`, `Reservation`, `ReservationState`, `SettlementStore`, `AppendOnlyReceiptSink`, `SettlementError`, `verify_receipt_chain`, `receipt_id_for`.
+- **RFC-0012-v2** — pins audit substrate extension pattern; cross-RFC consistency on canonical extension kind table.
+- **RFC-0016-a** — requires RFC-0014-v2 for `ReceiptId` newtype + `ask_id` typed-discriminator pattern.
+- **RFC-0015-a** — cross-RFC: agent transition receipt uses `ask_id = BLAKE3-256("cipherocto/settlement/extension/agent-transition-receipt/v1/")` typed-discriminator.
 
 ## Design Goals
 
@@ -58,11 +76,11 @@ RFC-0014-v2 codifies the typed-discriminator pattern via `ask_id` extension name
 
 ## Roles and Authorities
 
-| Role                                        | Authority                                                                                                                                                                                         |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `octo-settlement-core` (substrate, Layer A) | Owns `Receipt`, `Ask`, `AskState`, `Reservation`, `ReservationState`, `SettlementStore`, `AppendOnlyReceiptSink`, `SettlementError`, `ReceiptId`, `verify_receipt_chain`, `receipt_id_for`        |
-| `octo-settlement` (façade, Layer B)         | Re-exports substrate canonical types + provides `ReceiptSummary` projection + `ReceiptStatus` enum |
-| Domain callers (Layer B / C / D)            | Construct `Receipt` instances via typed-discriminator helpers (e.g. `receipt_for_ask_settled(...)` in `octo-settlement/src/receipt.rs`)                                                           |
+| Role                                        | Authority                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `octo-settlement-core` (substrate, Layer A) | Owns `Receipt`, `Ask`, `AskState`, `Reservation`, `ReservationState`, `SettlementStore`, `AppendOnlyReceiptSink`, `SettlementError`, `verify_receipt_chain`, `receipt_id_for`. `ReceiptId` newtype lands at acceptance per mission `0014-v2-m1-octosettlementcore-v200`.                                                                                                                                |
+| `octo-settlement` (façade, Layer B)         | Re-exports substrate canonical types + provides `ReceiptSummary` projection + `ReceiptStatus` enum + typed-discriminator helper functions (e.g. `receipt_for_ask_settled(...)` — landed at acceptance per mission `0014-v2-m2-octosettlement-v200`; helper functions live at façade root, NOT at a `receipt.rs` submodule — the path `octo-settlement/src/receipt.rs` does not exist in v1.x substrate) |
+| Domain callers (Layer B / C / D)            | Construct `Receipt` instances via typed-discriminator helpers re-exported from `octo-settlement` façade root (landed at acceptance per mission `0014-v2-m2-octosettlement-v200`)                                                                                                                                                                                                                        |
 
 **Façade projection concerns (NOT substrate):**
 
@@ -70,6 +88,21 @@ RFC-0014-v2 codifies the typed-discriminator pattern via `ask_id` extension name
 - `ReceiptSummary` projection struct — façade-side (Layer B); reads canonical `Receipt` + extension payload.
 
 ## Specification
+
+### Error Handling
+
+All adapter-specific failures MUST be wrapped in `SettlementError::SinkSpecific(String)` at the adapter boundary per §SC2 + §S5.1 canonical scrubber. The 7-variant `SettlementError` form (RFC-0014 + §S5 of this RFC) is the substrate-canonical error envelope; adapter impls MUST NOT introduce new variants in concrete impls or leak adapter-type names past the substrate boundary. Specific error paths:
+
+- **Sequence gap (recoverable):** `SettlementError::SequenceGap { receipt_id, prev }` — caller MUST catch + abort the current append batch; resync from `last_receipt_id()` before retry.
+- **Chain integrity (non-recoverable):** `SettlementError::ChainIntegrity { receipt_id }` — caller MUST treat the persisted chain as corrupted; halt all subsequent appends; trigger forensic read-path verification.
+- **Already exists (idempotency confirmation):** `SettlementError::AlreadyExists(receipt_id)` — caller MAY treat as success (idempotent re-append) OR as a hard error depending on the calling protocol's idempotency contract.
+- **Sink-specific (scoped):** `SettlementError::SinkSpecific(scrubbed_string)` — caller MUST treat the payload as opaque; the canonical scrubber (§S5.1) has stripped adapter-internal structure.
+
+### RFC-0008 Execution Class Mapping
+
+Per RFC-0008 Execution Class Mapping, all substrate operations in this RFC are **Class A** (deterministic, byte-identical across replicas). The `receipt_id_for` function, `verify_receipt_chain` replay, typed-discriminator construction (`BLAKE3-256(namespace || canonical_ask_id_bytes)`), and `receipt_id` monotonicity ordering are all Class A — pure functions of canonical inputs with no IO, no wall-clock dependence, no per-replica state.
+
+The **single Class B (adapter-side)** operation in this RFC is `timestamp_unix` capture: the timestamp is wall-clock at adapter boundary per A5, not substrate-enforced. Adapter-side timestamp monotonicity check (per A5 mitigation) is a Class B operation under RFC-0008; substrate does not enforce.
 
 ### §S1 — Typed-discriminator extension pattern (canonical)
 
@@ -87,14 +120,16 @@ The `ask_id` field is a 32-byte BLAKE3-256 digest. By extending the BLAKE3 _inpu
 
 **Extension kind table (canonical):**
 
-| Extension kind             | `ask_id` prefix (BLAKE3-256 input)                                                                                         | Substrate version                           |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| AskSettled                 | `cipherocto/settlement/extension/ask-settled/v1/` (ask_id = BLAKE3-256 of namespace \|\| canonical_ask_id per §S1 pattern) | RFC-0014                                    |
-| **AskPartial**             | `cipherocto/settlement/extension/ask-partial/v1/`                                                                          | **RFC-0014-v2**                             |
-| **AskRejected**            | `cipherocto/settlement/extension/ask-rejected/v1/`                                                                         | **RFC-0014-v2**                             |
-| **AgentTransitionReceipt** | `cipherocto/settlement/extension/agent-transition-receipt/v1/`                                                             | **RFC-0014-v2** (cross-RFC with RFC-0015-a) |
+| Extension kind             | `ask_id` prefix (BLAKE3-256 input)                                                                                                                                                                                                                                     | Substrate version |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| AskSettled                 | `cipherocto/settlement/extension/ask-settled/v1/` (ask_id = BLAKE3-256 of namespace \|\| canonical_ask_id_bytes per §S1 pattern; canonical_ask_id_bytes are the raw UTF-8 bytes of the canonical ask ID form, e.g. `b"did:oct:ask/abc123"`, BLAKE3-256 input namespace |                   | canonical_ask_id_bytes is variable-length) | RFC-0014 |
+| **AskPartial**             | `cipherocto/settlement/extension/ask-partial/v1/`                                                                                                                                                                                                                      | **RFC-0014-v2**   |
+| **AskRejected**            | `cipherocto/settlement/extension/ask-rejected/v1/`                                                                                                                                                                                                                     | **RFC-0014-v2**   |
+| **AgentTransitionReceipt** | `cipherocto/settlement/extension/agent-transition-receipt/v1/`                                                                                                                                                                                                         | **RFC-0014-v2**   |
 
 **Extension kind enumeration is exhaustive for v2.0.0.** Future extensions (v2.1+) are added to this table via subsequent RFCs and do NOT require substrate field additions.
+
+**Bytes-decoding convention (canonical `ask_id` input form):** the `canonical_ask_id_bytes` referenced in every BLAKE3-256 input above is the raw UTF-8 byte sequence of the canonical ask ID string (e.g. `b"did:oct:ask/abc123"`). No hex-string intermediate is permitted; the substrate-faithful form is direct UTF-8 bytes into BLAKE3-256. Test vectors in §Test Vectors pin this convention explicitly (TV-SET-v2-1 uses byte form, not hex).
 
 ### §S2 — `Receipt` 6-field canonical form
 
@@ -117,15 +152,18 @@ pub struct Receipt {
 - Adding `model: Option<String>` would require migration of every existing persisted receipt (semver-major + data migration).
 - Adding `status: ReceiptStatus` would couple substrate to façade projection enum.
 - Adding `capability_root: Option<[u8; 32]>` would change canonical hash computation (`verify_receipt_chain` inputs change → existing chains fail verification).
+- Adding `subject_did: Option<String>` would create an ACL coupling between substrate settlement and substrate audit. **ACL via separate index, NOT via `Receipt` field.** RFC-0016-a §6.6 + §6.8 forward-point `AuditFilter.subject_did` ACL at the audit substrate's separate `subject_did` index; that index is independent of the settlement substrate. RFC-0014-v2 explicitly rejects adding `subject_did` to `Receipt` to avoid cross-RFC substrate-field coupling. The 2-Cycle Atomic Promotion gate for RFC-0014-v2 + RFC-0012-v2 requires RFC-0016-a + RFC-0015-a to undergo paired amendment before the ACL forward-pointer resolves.
 
 §S1 typed-discriminator pattern achieves extension semantics without substrate field additions.
 
 ### §S3 — `ReceiptId(pub u64)` newtype
 
+> **DEFERRED — lands at acceptance per Phase 1 substrate-code amendment mission `0014-v2-m1-octosettlementcore-v200`.** The `ReceiptId` newtype does not exist in `octo-settlement-core` v1.x substrate. This RFC pins the newtype form as the substrate contract; the substrate code lands at acceptance.
+
 §S3 introduces `ReceiptId` as a type-safe wrapper around `u64`:
 
 ```rust
-// crates/octo-settlement-core/src/receipt.rs (§S3 — new newtype)
+// crates/octo-settlement-core/src/receipt.rs (§S3 — DEFERRED; newtype lands at acceptance per mission 0014-v2-m1-octosettlementcore-v200)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ReceiptId(pub u64);
 
@@ -214,14 +252,18 @@ pub enum SettlementError {
 - `From<AdapterError> for SettlementError` that leaks adapter-specific structure.
 - `SettlementError` payload fields that reference adapter types.
 
+**Payload byte cap (TV-SET-v2-22 substrate contract):** `SettlementError::SinkSpecific(String)` does NOT truncate payload at substrate level — the substrate-faithful form is verbatim payload retention. Adapter-side `scrub_adapter_error` (§S5.1) enforces a 4 KiB output cap BEFORE the adapter wraps the scrubbed string into `SinkSpecific`. The substrate contract is: `SinkSpecific` payload byte length is adapter-controlled (post-scrub); the substrate does NOT enforce a length cap. TV-SET-v2-22 is a façade-only contract — the TV is verified by the acceptance mission `0014-v2-m3-scrubber-facade` against the canonical scrubber output cap, NOT against substrate-side truncation behavior.
+
 Adapter-specific error chains MUST be scrubbed at the adapter boundary per §SC2 + the canonical scrubber declared in §S5.1.
 
 #### §S5.1 — Canonical adapter-error scrubber (Layer B placement per RFC-0011-a)
 
+> **DEFERRED — lands at acceptance per Phase 1 substrate-code amendment mission `0014-v2-m3-scrubber-facade`.** The `crates/octo-settlement/src/scrub.rs` file does not exist in v1.x substrate. This RFC pins the scrubber API + regex pattern list + Cargo.toml dep shape as the substrate contract; the substrate code + deps land at acceptance.
+
 §S5.1 RESCINDED the Layer A scrubber declaration per R31 layer-model finding (scrubber is a Layer B concern per RFC-0011-a). The canonical scrubber now lives at `octo-settlement::scrub::scrub_adapter_error` (Layer B façade):
 
 ```rust
-// crates/octo-settlement/src/scrub.rs (§S5.1 — Layer B façade placement)
+// crates/octo-settlement/src/scrub.rs (§S5.1 — Layer B façade placement; DEFERRED per §S5.1 hoist marker; MUST clauses gate on acceptance post-Phase-1 substrate-code amendment mission 0014-v2-m3-scrubber-facade)
 //
 // LAYER NOTE: scrubber is Layer B per RFC-0011-a §7.7 Redaction model.
 // Substrate (Layer A) MUST NOT host scrubbing logic because adapter-error
@@ -238,19 +280,34 @@ Adapter-specific error chains MUST be scrubbed at the adapter boundary per §SC2
 /// Pattern list (substrate-canonical for v2.0.0, 5 patterns):
 /// 1. Hex digest ≥32 chars (transaction IDs, hashes) → `<redacted-hex-N>`
 /// 2. Absolute file paths (`/.../...`) → `<redacted-path>`
-/// 3. Table-name references (`table 'X'`, `relation "X"`) → `<redacted-table>`
-/// 4. Stoolap/SQL error code prefixes (`SQLSTATE_XXXXX`) → `<redacted-sql-state>`
+/// 3. Table-name references (`table 'X'`, `relation "X"`, `no such table/column: X`) → `<redacted-table>`
+/// 4. Stoolap/SQL error code prefixes (`SQLSTATE_XXXXX`, `errno X`, `error code X`) → `<redacted-sql-state>`
 /// 5. `std::io::Error` chain fragments (`os error N`) → `<redacted-io>`
-/// 6. Adapter-type names (parameterized; caller passes its own registry) → `<redacted-adapter>`
+/// 5b. URL-embedded credentials (`scheme://user:pass@host`) → `<redacted-creds>`
+/// 5c. ANSI-CSI escape sequences (`\x1b[...m` / `\x1b[...H`) → `<redacted-ansi>`
+/// 6. Adapter-type names (parameterized; caller passes its own registry; registry MUST be non-empty) → `<redacted-adapter>`
+///
+/// Output size cap: 4 KiB. If the scrubbed output exceeds 4 KiB,
+/// the function emits `<redacted-too-long>` (single token, no
+/// payload retained). The cap is enforced BEFORE regex evaluation
+/// to bound CPU + memory on adversarial adapter-error inputs.
 pub fn scrub_adapter_error(s: &str) -> String {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
+    // Output size cap: enforce BEFORE regex evaluation.
+    if s.len() > 4096 {
+        return "<redacted-too-long>".to_string();
+    }
+
     let mut out = s.to_string();
 
-    // Pattern 1: hex digests ≥32 chars (case-insensitive)
+    // Pattern 1: hex digests ≥32 chars (case-insensitive), with lookaround
+    // anchors to avoid leaking hex in snake_case identifiers (e.g.
+    // `a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4_field_name` must NOT match the
+    // hex run even though `field_name` contains hex characters).
     let hex_re = once_cell::sync::Lazy::<regex::Regex>::new(|| {
-        regex::Regex::new(r"\b[0-9a-fA-F]{32,}\b").unwrap()
+        regex::Regex::new(r"(?<![0-9a-fA-F_])([0-9a-fA-F]{32,})(?![0-9a-fA-F_])").unwrap()
     });
     out = hex_re.replace_all(&out, |_caps: &regex::Captures| {
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -263,15 +320,20 @@ pub fn scrub_adapter_error(s: &str) -> String {
     });
     out = path_re.replace_all(&out, "<redacted-path>").into_owned();
 
-    // Pattern 3: table-name references
+    // Pattern 3: table-name references. PostgreSQL form (`table 'X'`,
+    // `relation "X"`) AND Stoolap/SQLite form (`no such table: X`,
+    // `no such column: X`).
     let table_re = once_cell::sync::Lazy::<regex::Regex>::new(|| {
-        regex::Regex::new(r#"(?:table|relation)\s+['"]([A-Za-z0-9_]+)['"]"#).unwrap()
+        regex::Regex::new(
+            r#"(?i)(?:(?:table|relation)\s+['"]([A-Za-z0-9_]+)['"]|no such (?:table|column)\s*:\s*([A-Za-z0-9_.]+))"#,
+        ).unwrap()
     });
     out = table_re.replace_all(&out, "<redacted-table>").into_owned();
 
-    // Pattern 4: SQLSTATE prefixes
+    // Pattern 4: SQL error code prefixes. PostgreSQL `SQLSTATE_XXXXX`
+    // AND Stoolap/SQLite/errno variants (`errno NNN`, `error code NNN`).
     let sqlstate_re = once_cell::sync::Lazy::<regex::Regex>::new(|| {
-        regex::Regex::new(r"SQLSTATE_[A-Z0-9]+").unwrap()
+        regex::Regex::new(r"(?i)(?:sqlstate|errno|error code)[ _:][A-Z0-9]+").unwrap()
     });
     out = sqlstate_re.replace_all(&out, "<redacted-sql-state>").into_owned();
 
@@ -280,6 +342,20 @@ pub fn scrub_adapter_error(s: &str) -> String {
         regex::Regex::new(r"os error \d+").unwrap()
     });
     out = io_re.replace_all(&out, "<redacted-io>").into_owned();
+
+    // Pattern 5b: URL-embedded credentials (`scheme://user:pass@host`).
+    // Word-boundary regex (NOT substring) to avoid replacing legitimate
+    // text containing `://`.
+    let creds_re = once_cell::sync::Lazy::<regex::Regex>::new(|| {
+        regex::Regex::new(r"\b(?P<creds>[a-zA-Z][a-zA-Z0-9+.\-]*://[^:]+:[^@]+@)").unwrap()
+    });
+    out = creds_re.replace_all(&out, "<redacted-creds>").into_owned();
+
+    // Pattern 5c: ANSI-CSI escape sequences (`\x1b[...m`, `\x1b[...H`).
+    let ansi_re = once_cell::sync::Lazy::<regex::Regex>::new(|| {
+        regex::Regex::new(r"\x1b\[[0-9;?]*[A-Za-z]").unwrap()
+    });
+    out = ansi_re.replace_all(&out, "<redacted-ansi>").into_owned();
 
     // Pattern 6: adapter-type names (NOT applied by the no-registry form;
     // adapters MUST call scrub_adapter_error_with(s, ADAPTER_TYPES) for pattern 6)
@@ -295,32 +371,47 @@ pub fn scrub_adapter_error(s: &str) -> String {
 /// adapter-type registry passed in by the caller). Per CLAUDE.md §Extension
 /// over enumeration,
 /// adapter-type names are an extension surface, NOT a closed set.
+///
+/// Empty-registry precondition: `adapter_types` MUST be non-empty. If the
+/// caller passes an empty registry, the function panics with a clear
+/// "empty ADAPTER_TYPES registry — use scrub_adapter_error instead" message.
+/// Substring replacement on empty registry is a no-op AND a footgun (silently
+/// skips pattern 6); the panic forces callers to opt into pattern 6 explicitly.
 pub fn scrub_adapter_error_with(s: &str, adapter_types: &[&str]) -> String {
+    assert!(
+        !adapter_types.is_empty(),
+        "empty ADAPTER_TYPES registry — use scrub_adapter_error instead"
+    );
     let mut out = scrub_adapter_error(s);
     for ty in adapter_types {
-        out = out.replace(ty, "<redacted-adapter>");
+        // Word-boundary regex to avoid substring replacement of legitimate text.
+        let re = regex::Regex::new(&format!(r"\b{}\b", regex::escape(ty))).unwrap();
+        out = re.replace_all(&out, "<redacted-adapter>").into_owned();
     }
     out
 }
 ```
 
-The 5-pattern canonical form covers the closed set: hex digests, absolute paths, table-name refs, SQLSTATE prefixes, io error chains. A 6th pattern (adapter-type names) is extension surface applied via `scrub_adapter_error_with(s, ADAPTER_TYPES)` (line 296) — adapter types are NOT a closed set per CLAUDE.md §Extension over enumeration. Future RFCs MAY extend the optional 6th-pattern registry; downstream adapters MUST call `scrub_adapter_error` (or the `_with` form) rather than implementing their own scrubber (per RFC-0011-a §7.7 redaction discipline).
+The 5-pattern canonical form covers the closed set: hex digests, absolute paths, table-name refs, SQLSTATE prefixes, io error chains. Pattern 5b (URL credentials) + Pattern 5c (ANSI escapes) are likewise closed sets. A 6th pattern (adapter-type names) is extension surface applied via `scrub_adapter_error_with(s, ADAPTER_TYPES)` (per §S5.1) — adapter types are NOT a closed set per CLAUDE.md §Extension over enumeration. Future RFCs MAY extend the optional 6th-pattern registry; downstream adapters MUST call `scrub_adapter_error` (or the `_with` form) rather than implementing their own scrubber (per RFC-0011-a §7.7 redaction discipline).
+
+**Per-façade duplication rationale (R34.5 trade-off):** §S5.1 pins the canonical scrubber at `octo-settlement::scrub` (this RFC). RFC-0012-v2 §Security Considerations mirrors the same shape at `octo_audit::scrub`. The duplication is INTENTIONAL — sibling Layer B façades do NOT depend on each other (per CLAUDE.md §Layer direction). Cost: a CVE fix to the canonical scrubber pattern MUST propagate to every per-façade instance manually. Future Work FW5 (cross-RFC shared-utility extraction) MAY collapse the duplication into a `octo-foundation::scrub` crate (Layer A frozen shared utility) at v2.1+; RFC-0014-v2 explicitly accepts the duplication cost at v2.0.0.
 
 **Cargo.toml dependency at Layer B façade** (`crates/octo-settlement/Cargo.toml`):
 
 ```toml
 [dependencies]
-regex = { version = "1.10" }
+# Pin regex ≥1.10.6 for CVE-fixed linear guarantees + input size cap (Pattern 1..6 backtracking bound).
+regex = { version = "1.10.6" }
 once_cell = { version = "1.19" }
 ```
 
-**DEFERRED:** `octo-settlement::scrub::scrub_adapter_error` and the `regex` + `once_cell` deps land at acceptance per Phase 1 substrate-code amendment mission. The dependency pair is the substrate-faithful form (canonical Cargo.toml shape per substrate Layer B façade pattern); acceptance mission MAY replace `regex` with a hand-rolled scanner if Cargo dependency surface is constrained.
+**DEFERRED:** `octo-settlement::scrub::scrub_adapter_error` and the `regex` + `once_cell` deps land at acceptance per Phase 1 substrate-code amendment mission `0014-v2-m3-scrubber-facade`. The dependency pair is the substrate-faithful form (canonical Cargo.toml shape per substrate Layer B façade pattern); acceptance mission MAY replace `regex` with a hand-rolled scanner if Cargo dependency surface is constrained.
 
 ### §S6 — Canonical-hash construction (keyed BLAKE3 with zero key)
 
 §S6 pins the existing canonical-hash construction for receipts. The BLAKE3 key is the zero-filled 32-byte constant `[0; 32]` (intentional per substrate consensus posture — see A1 + substrate `octo-settlement-core::chain` doc-comment; production deployments needing keyed-hash defense-in-depth MUST wrap via a `KeyedHasher` trait on Layer C, see §S6.1 below).
 
-```
+```text
 settlement_hash = BLAKE3-256-keyed(
     key = [0; 32],
     input = CHAIN_DOMAIN_SEPARATOR || receipt_id_be_u64 || ask_id || router_id_utf8 || router_sig || timestamp_unix_be_u64
@@ -335,6 +426,7 @@ Where `CHAIN_DOMAIN_SEPARATOR = b"cipherocto/reservation/v1/"` (byte-pinned cons
 - BLAKE3 streaming obviates an explicit `router_sig_len` prefix — the streaming hash absorbs variable-length bytes directly.
 - The BLAKE3 key is `[0; 32]` (zero-filled 32-byte constant). This is INTENTIONAL — the substrate is Layer A frozen (RFC-0014 §Data Structures) and cross-replica consensus requires the receipt hash to be deterministic for any replica that holds the same `Receipt` inputs (no per-deployment key material). Production deployments needing keyed-hash defense-in-depth SHOULD wrap this function (via `KeyedHasher` trait on Layer C) and inject real key material from an HSM / Vault / secrets manager at startup.
 - Extensions do NOT add new bytes to the canonical hash input. Extension payload (e.g. AskPartial supplemental amount, AskRejected reason) is encoded in domain-crate-side canonical hash inputs and surfaced via façade projection (RFC-0016-a).
+- **Forward-pointer to §S6.1:** production-defense-in-depth requires substrate-level `pub fn receipt_id_for_keyed(receipt: &Receipt, key: &[u8; 32]) -> [u8; 32]` extension (FW5). The substrate's zero-key `receipt_id_for` is consensus-load-bearing and MUST NOT be modified at Layer C. The keyed variant is additive; canonical-form invariance preserved.
 
 **Substrate code surface (substrate-faithful):**
 
@@ -356,10 +448,10 @@ pub fn receipt_id_for(receipt: &Receipt) -> [u8; 32] {
 
 #### §S6.1 — KeyedHasher wrapping guidance (Layer C defense-in-depth)
 
-§S6.1 declares the production-defense-in-depth path for callers who need keyed-hash protection beyond the substrate zero-key consensus posture. The substrate `receipt_id_for` function on Layer A uses key `[0; 32]` per §S6 (intentional for cross-replica consensus without key-management). Layer C callers MAY wrap `receipt_id_for` via the `KeyedHasher` trait to inject real key material from an HSM / vault / secrets manager at startup.
+§S6.1 declares the production-defense-in-depth path for callers who need keyed-hash protection beyond the substrate zero-key consensus posture. The substrate `receipt_id_for` function on Layer A uses key `[0; 32]` per §S6 (intentional for cross-replica consensus without key-management). Layer C callers MUST route through the substrate-level `receipt_id_for_keyed(receipt, key)` extension (per §Future Work FW5) to inject real key material from an HSM / vault / secrets manager at startup. **Do NOT bypass the substrate by re-implementing `receipt_id_for` at Layer C/D — the zero-key fallback is substrate consensus-load-bearing and silent re-implementation causes cross-replica divergence.**
 
 ```rust
-// Layer C wrapper pattern (substrate-faithful; trait itself lands at acceptance)
+// Layer C wrapper pattern (substrate-faithful; trait + substrate extension land at acceptance per FW5)
 pub trait KeyedHasher {
     fn receipt_id_with_key(receipt: &Receipt, key: &[u8; 32]) -> [u8; 32];
 }
@@ -367,41 +459,57 @@ pub trait KeyedHasher {
 pub struct HsmKeyedHasher { /* hsm_handle, pubkey_pinner */ }
 impl KeyedHasher for HsmKeyedHasher {
     fn receipt_id_with_key(receipt: &Receipt, key: &[u8; 32]) -> [u8; 32] {
-        // Layer D adapter wraps substrate receipt_id_for via domain-specific key
-        // inject; verified at acceptance via Phase 1 substrate-code amendment mission.
-        *octo_settlement_core::chain::receipt_id_for(receipt) // placeholder
+        // Forward-pointer to substrate-level keyed extension (FW5). The body
+        // MUST inject `key` via the substrate extension; the zero-key
+        // fallback below is an EXPLICIT ANTI-PATTERN marker.
+        //
+        // ANTI-PATTERN: substrate zero-key fallback is FORBIDDEN in HSM-gated
+        // implementations. A silent zero-key fallback would produce
+        // cross-replica-identical hashes for receipts computed on a
+        // production HSM-gated node vs a substrate-only node — exactly
+        // the divergence the keyed extension is designed to prevent.
+        //
+        // The implementation below is a NON-PRODUCTION PLACEHOLDER that
+        // MUST be replaced by the substrate-level keyed extension at FW5
+        // acceptance. The `unimplemented!` panic surfaces the missing
+        // substrate code path at first call rather than silently returning
+        // a substrate-faithful hash that bypasses the HSM key.
+        unimplemented!(
+            "must inject real key via HSM/Vault; substrate zero-key fallback forbidden in HSM-gated impl"
+        )
     }
 }
 ```
 
-**Posture:** Layer C wrapping is OPT-IN. Substrate-faithful deployments without HSM/Vault key material retain the §S6 zero-key consensus posture (no per-deployment key binding; cross-replica consensus only). Acceptance mission: ship default `ZeroKeyHasher` impl + HSM-gated `HsmKeyedHasher` impl + adapter-side signing-key publication.
+**Posture:** Layer C wrapping is OPT-IN. Substrate-faithful deployments without HSM/Vault key material retain the §S6 zero-key consensus posture (no per-deployment key binding; cross-replica consensus only). Acceptance mission: ship default `ZeroKeyHasher` impl + HSM-gated `HsmKeyedHasher` impl (via FW5 substrate-level `receipt_id_for_keyed` extension) + adapter-side signing-key publication.
 
 ### §S7 — Cross-RFC consistency with RFC-0012-v2
 
 §S7 establishes cross-RFC invariants with RFC-0012-v2. **Important:** the audit `cap_root_hash` and the receipt `ask_id` use **different BLAKE3 inputs** (audit is namespace-only; receipt is namespace || canonical_ask_id). The pairing is a **façade convention**, not a cryptographic binding at the substrate hash layer.
 
-| RFC-0012-v2 audit event                                                                                                     | RFC-0014-v2 receipt extension kind                                                                                                       | Pairing invariant (façade-side)                                                                                                                                                                                                                                                                                                                                         |
-| --------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AuditEventKind::Insert` + `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/agent-transition/v1/")` (namespace only) | `Receipt.ask_id = BLAKE3-256("cipherocto/settlement/extension/agent-transition-receipt/v1/" \|\| canonical_ask_id)` (namespace + ask_id) | Façade helper `audit_event_for_agent_transition_receipt(receipt: &Receipt) -> AuditEvent` reconstructs the audit event with `prev_chain_hash = receipt_id_for(receipt)` so the audit event's `prev_chain_hash` binds it to the specific receipt's hash. Substrate-level pairing is via the `prev_chain_hash` field on the audit event, not via shared namespace prefix. |
-| `AuditEventKind::Revoke` + `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/redaction/v1/")` (namespace only)        | `Receipt.ask_id = BLAKE3-256("cipherocto/settlement/extension/ask-rejected/v1/" \|\| canonical_ask_id)` (namespace + ask_id)             | Façade helper `audit_event_for_ask_rejected(receipt: &Receipt) -> AuditEvent` similarly binds via `prev_chain_hash = receipt_id_for(receipt)`.                                                                                                                                                                                                                          |
+| RFC-0012-v2 audit event                                                                                                     | RFC-0014-v2 receipt extension kind                                                                                                       | Pairing invariant (façade-side)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| --------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AuditEventKind::Insert` + `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/agent-transition/v1/")` (namespace only) | `Receipt.ask_id = BLAKE3-256("cipherocto/settlement/extension/agent-transition-receipt/v1/" \|\| canonical_ask_id)` (namespace + ask_id) | Façade helper `audit_event_for_agent_transition_receipt(receipt: &Receipt) -> AuditEvent` at `octo_audit::audit_event` per RFC-0012-v2 §Future Work (octo_audit gains `octo-settlement-core` dep at acceptance for `Receipt` access — Layer A→Layer A permitted) reconstructs the audit event with `prev_chain_hash = receipt_id_for(receipt)` so the audit event's `prev_chain_hash` binds it to the specific receipt's hash. Substrate-level pairing is via the `prev_chain_hash` field on the audit event, not via shared namespace prefix. |
+| `AuditEventKind::Revoke` + `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/redaction/v1/")` (namespace only)        | `Receipt.ask_id = BLAKE3-256("cipherocto/settlement/extension/ask-rejected/v1/" \|\| canonical_ask_id)` (namespace + ask_id)             | Façade helper `audit_event_for_ask_rejected(receipt: &Receipt) -> AuditEvent` at `octo_audit::audit_event` per RFC-0012-v2 §Future Work similarly binds via `prev_chain_hash = receipt_id_for(receipt)`.                                                                                                                                                                                                                                                                                                                                       |
 
 **Cross-RFC consistency rule:** For each (audit extension kind, receipt extension kind) pair, the namespace strings are coordinated via RFC-0012-v2 + RFC-0014-v2 paired acceptance. The substrate-level binding is via `prev_chain_hash = receipt_id_for(receipt)` on the audit event; the façade helper sets this field at construction time. Future extensions follow the same pattern.
 
-## Implicit Assumptions
+**§S7 audit-to-receipt binding posture:** the §S7 pairing is one-directional — the audit event references the receipt's `receipt_id_for(receipt)` via `prev_chain_hash`, but the `Receipt` does NOT carry an `audit_event_id` back-reference. Downstream consumers (read-path verification) MUST verify both ends of the binding (audit event's `prev_chain_hash` matches the corresponding receipt's `receipt_id_for`, AND the receipt's `ask_id` typed-discriminator matches the audit event's expected extension kind). RFC-0014-v3 will add a back-binding field on `Receipt` if end-to-end cross-substrate verification becomes a substrate-level requirement; at v2.0.0, the binding is façade-side.
+
+## Implicit Assumptions Audit
 
 - **A1. Keyed BLAKE3 with zero key intentional.** `settlement_hash = BLAKE3-256-keyed([0; 32], ...)` uses a zero key intentionally to enable cross-replica determinism without key-management infrastructure. Blast radius if misused: keyed mode is reserved for future HSM/Vault key injection per RFC-0009 §Identity substrate. Mitigation: zero-key usage documented at §S6 + substrate comment; future key-injection migrations noted in §Future Work.
-- **A2. Settlement-hash non-circularity.** `settlement_hash` is computed from `Receipt` fields but is NOT a field on `Receipt` itself — it is a separate 32-byte output. Blast radius if violated: circular hashing would make `verify_receipt_chain` unsound. Mitigation: substrate `receipt_id_for` excludes `settlement_hash` from its input by construction; TV-SET-v2-2 verifies round-trip.
+- **A2. Settlement-hash non-circularity.** `settlement_hash` is computed from `Receipt` fields but is NOT a field on `Receipt` itself — it is a separate 32-byte output. Blast radius if violated: circular hashing would make `verify_receipt_chain` unsound. Mitigation: substrate `receipt_id_for` excludes `settlement_hash` from its input by construction; TV-SET-v2-2 verifies round-trip. **Substrate doc-comment alignment:** the `chain.rs` doc-comment at substrate `octo-settlement-core::chain::receipt_id_for` MUST be aligned to the RFC §S6 field-list form (CHAIN_DOMAIN_SEPARATOR || receipt_id_be_u64 || ask_id || router_id_utf8 || router_sig || timestamp_unix_be_u64); acceptance mission `0014-v2-m1-octosettlementcore-v200` enforces this alignment.
 - **A3. ask_id namespace prefix recovery.** The BLAKE3-256 input is variable-length (`namespace_string || canonical_ask_id_bytes`); readers recover extension kind K by enumerating candidate namespace strings. Blast radius if enumeration fails: extension kind unrecoverable, projection fails closed. Mitigation: canonical extension kind table at §S1; façade-side lookup helper for known kinds.
 - **A4. `router_sig` non-verification at substrate.** Substrate does NOT verify `router_sig`; verification is layer B / domain concern per RFC-0014 §Security Considerations. Blast radius: forged receipts persist into chain. Mitigation: domain-crate `verify_router_sig(receipt, router_pubkey)` call at the domain boundary; substrate accepts only the bytes.
 - **A5. `timestamp_unix` non-monotonicity precondition.** Substrate does NOT enforce `timestamp_unix` monotonicity on append — `verify_receipt_chain` only validates `receipt_id` monotonicity + `settlement_hash` integrity. `timestamp_unix` is part of the canonical hash input but ordering is the adapter's responsibility. Blast radius: clock drift between replicas or a non-monotonic adapter-side timestamp source would silently accept out-of-order receipts. Mitigation: external time-source synchronization (NTP) at adapter boundary + adapter-side timestamp monotonicity check.
 
 ## Determinism Requirements
 
-Per RFC-0008 Execution Class Mapping, all substrate operations in this RFC are **Class A** (deterministic, byte-identical across replicas):
+Per §RFC-0008 Execution Class Mapping (canonical subsection within Specification), all substrate operations in this RFC are **Class A** (deterministic, byte-identical across replicas):
 
-- **`receipt_id_for`** — keyed BLAKE3-256 over canonical input; pure function of `Receipt` fields; deterministic across replicas.
+- **`receipt_id_for`** — keyed BLAKE3-256 over canonical `Receipt` field bytes (CHAIN_DOMAIN_SEPARATOR || receipt_id_be_u64 || ask_id || router_id_utf8 || router_sig || timestamp_unix_be_u64); pure function of `Receipt` fields; deterministic across replicas.
 - **`verify_receipt_chain`** — deterministic replay of `receipt_id_for` over each persisted receipt; byte-identical verification result.
-- **`receipt_id_for`** — keyed BLAKE3-256 domain-separator over canonical `Receipt` field bytes; deterministic across replicas.
 - **Typed-discriminator construction** — `BLAKE3-256("cipherocto/settlement/extension/<K>/v1/" || canonical_ask_id_bytes)` is a pure function of `<K>` + canonical ask_id bytes; deterministic.
 - **`receipt_id` monotonicity ordering** — strict total order; deterministic across replicas.
 - **`timestamp_unix` wall-clock vs logical ordering** — wall-clock values; ordering is adapter responsibility, not substrate enforcement. Cross-replica monotonicity assumes external synchronized time source (NTP) at adapter boundary.
@@ -429,7 +537,7 @@ The RFC is Accepted when ALL of the following are true:
 - **AC-6.** `ReceiptId(pub u64)` newtype re-exported at `octo_settlement::ReceiptId`; canonical hash unchanged.
 - **AC-7.** Adapter implementations call the canonical scrubber before wrapping into `SinkSpecific`; each Layer B façade owns its own scrubber instance (e.g. `octo_audit::scrub::scrub_adapter_error`, `octo_settlement::scrub::scrub_adapter_error` — pattern duplicated per-façade to avoid sibling Layer B coupling). Raw error chains never reach substrate.
 - **AC-8.** Paired acceptance with RFC-0012-v2 per BLUEPRINT.md §2-Cycle Atomic Promotion gate.
-- **AC-9.** All Test Vectors in §Test Vectors produce expected outputs (verified by `cargo test -p octo-settlement`).
+- **AC-9.** All 30 Test Vectors (TV-SET-v2-1 through TV-SET-v2-30) in §Test Vectors produce expected outputs (verified by `cargo test -p octo-settlement`; pass criterion: 30/30 TVs pass).
 - **AC-10.** Layer D adapter implementations provide monotonicity + transaction-scoped atomic persistence; atomic-or-rollback contract honored (no partial persistence observable on adapter failure). See Appendix §Layer Direction Note for canonical adapter-location reference.
 
 ## 2-Cycle Atomic Promotion Tag
@@ -451,7 +559,7 @@ This RFC has been reviewed across 5 reviewer lenses over multiple iterations (R3
 - **R33.5:** A5 timestamp monotonicity rewrite, `compute_settlement_hash` → `receipt_id_for` rename, Rationale 7-variant fix.
 - **R34.5:** hygiene parens strip, phantom-substrate TV DEFERRED markers, per-façade scrubber decoupling, adapter-type registry pattern.
 - **R35.5:** additional DEFERRED TV markers (TV-SET-v2-3..30), 5 StoolapReceiptSink phantom refs removed, `request_canonical_bytes` removed.
-- **R36.5 (this commit):** 8 `lib.rs:23-24` line refs removed (CLAUDE.md §No line refs); §S6.1 KeyedHasher added; Appendix §Layer Direction Note added; VH rows compressed to ≤10w; UC-SET-004 CLI namespace corrected.
+- **R37 (this commit):** `## Status` + `## Mission Decomposition` H2 sections added; `ReceiptId` newtype (§S3) + §S5.1 scrubber (`crates/octo-settlement/src/scrub.rs` + `crates/octo-settlement/src/receipt.rs`) prefixed DEFERRED per substrate-truth audit; §S6.1 `HsmKeyedHasher` body replaced with `unimplemented!` anti-pattern warning + FW5 substrate `receipt_id_for_keyed` extension forward-pointer; §S5.1 scrubber enhanced (Pattern 1 lookaround, Pattern 3 Stoolap form, Pattern 4 errno form, Pattern 5b URL-credentials, Pattern 5c ANSI-CSI, 4 KiB output cap, empty-registry assert, word-boundary registry replacement); §S2 ACL cross-RFC note (RFC-0016-a §6.6 / §6.8 forward-pointer); `### Error Handling` + `### RFC-0008 Execution Class Mapping` subsections added; 30 TV code fences tagged `text`; status-qualifier parens stripped from Dependencies + Appendix A + VH + §S1; phantom line refs removed.
 
 Reviewer board membership per CLAUDE.md §Review Process: correctness, security, layer-model, hygiene, spec-completeness. Critical-lens reviewers may surface CRITICAL/HIGH findings post-DRY-CLOSED if substrate code or external threat-model changes.
 
@@ -509,14 +617,14 @@ Reviewer board membership per CLAUDE.md §Review Process: correctness, security,
 
 ### TV-SET-v2-1: Typed-discriminator construction
 
-```
+```text
 input: extension_kind = "ask-partial", canonical_ask_id = "0x..."
 expect: Receipt { ask_id: BLAKE3-256("cipherocto/settlement/extension/ask-partial/v1/" || canonical_ask_id), ... }
 ```
 
 ### TV-SET-v2-2: ReceiptId newtype round-trip
 
-```
+```text
 input: receipt.receipt_id = 42
 expect: ReceiptId::new(42).get() == 42
         ReceiptId::new(42) == ReceiptId::new(42)
@@ -527,7 +635,7 @@ expect: ReceiptId::new(42).get() == 42
 
 ### TV-SET-v2-3: Sink append accepts canonical settlement_hash
 
-```
+```text
 input: receipt with receipt.settlement_hash = receipt_id_for(&receipt)
 expect: append returns Ok(())
         last_receipt_id() returns Some(receipt.receipt_id)
@@ -537,7 +645,7 @@ expect: append returns Ok(())
 
 ### TV-SET-v2-4: Sink append rejects tampered settlement_hash
 
-```
+```text
 input: receipt with receipt.settlement_hash = [0x00; 32] (not equal to receipt_id_for)
 expect: append returns Err(SettlementError::ChainIntegrity { receipt_id: receipt.receipt_id })
 ```
@@ -546,7 +654,7 @@ expect: append returns Err(SettlementError::ChainIntegrity { receipt_id: receipt
 
 ### TV-SET-v2-5: Sink append rejects sequence gap
 
-```
+```text
 input: append receipt_id=1, then receipt_id=3 (skipping 2)
 expect: first append returns Ok(())
         second append returns Err(SettlementError::SequenceGap { receipt_id: 3, prev: 1 })
@@ -556,7 +664,7 @@ expect: first append returns Ok(())
 
 ### TV-SET-v2-6: Sink append rejects re-append (idempotency)
 
-```
+```text
 input: append receipt_id=1, then append receipt_id=1 again
 expect: first append returns Ok(())
         second append returns Err(SettlementError::AlreadyExists(1))
@@ -566,7 +674,7 @@ expect: first append returns Ok(())
 
 ### TV-SET-v2-7: Cross-RFC pairing (agent transition receipt ↔ audit event)
 
-```
+```text
 input: canonical_ask_id_bytes = "did:example:agent/123" (UTF-8 bytes)
        receipt.ask_id = BLAKE3-256("cipherocto/settlement/extension/agent-transition-receipt/v1/" || canonical_ask_id_bytes)
 expect: audit_event_for_agent_transition_receipt(receipt).cap_root_hash ==
@@ -578,21 +686,21 @@ expect: audit_event_for_agent_transition_receipt(receipt).cap_root_hash ==
 
 ### TV-SET-v2-8: Typed-discriminator construction (ask-rejected)
 
-```
+```text
 input: extension_kind = "ask-rejected", canonical_ask_id_bytes = "did:example:ask/456"
 expect: Receipt { ask_id: BLAKE3-256("cipherocto/settlement/extension/ask-rejected/v1/" || canonical_ask_id_bytes), ... }
 ```
 
 ### TV-SET-v2-9: Typed-discriminator construction (agent-transition-receipt)
 
-```
+```text
 input: extension_kind = "agent-transition-receipt", canonical_ask_id_bytes = "did:example:agent/789"
 expect: Receipt { ask_id: BLAKE3-256("cipherocto/settlement/extension/agent-transition-receipt/v1/" || canonical_ask_id_bytes), ... }
 ```
 
 ### TV-SET-v2-10: Sink append atomic persistence
 
-```
+```text
 input: receipt with receipt.settlement_hash = receipt_id_for(&receipt)
        simulated crash injected mid-transaction (Layer D adapter's transaction mechanism abandoned)
 expect: post-recovery last_receipt_id() returns None OR Some(prev_receipt_id)
@@ -603,7 +711,7 @@ expect: post-recovery last_receipt_id() returns None OR Some(prev_receipt_id)
 
 ### TV-SET-v2-11: ask_id namespace || ask_id_bytes boundary
 
-```
+```text
 input: ask_id = BLAKE3-256("cipherocto/settlement/extension/ask-partial/v1/" || canonical_ask_id_bytes)
 expect: 32-byte digest; namespace prefix recovered by enumeration
         (variable-length input; no fixed 32-byte boundary between namespace and ask_id bytes)
@@ -611,7 +719,7 @@ expect: 32-byte digest; namespace prefix recovered by enumeration
 
 ### TV-SET-v2-12: ReceiptId const fn round-trip
 
-```
+```text
 input: ReceiptId::new(42)
 expect: ReceiptId::new(42).get() == 42
         ReceiptId::new(42) == ReceiptId::new(42)
@@ -622,7 +730,7 @@ expect: ReceiptId::new(42).get() == 42
 
 ### TV-SET-v2-13: Receipt canonical_bytes round-trip
 
-```
+```text
 input: Receipt { receipt_id: 1, ask_id: [0; 32], settlement_hash: [0; 32], router_id: "r1", router_sig: "sig", timestamp_unix: 1700000000 }
 expect: canonical_bytes(&receipt) yields deterministic byte sequence
         receipt_id_for(&receipt) is stable across calls
@@ -630,7 +738,7 @@ expect: canonical_bytes(&receipt) yields deterministic byte sequence
 
 ### TV-SET-v2-14: verify_receipt_chain accepts canonical chain
 
-```
+```text
 input: persist receipts 1, 2, 3 with settlement_hash = receipt_id_for(&receipt) for each
 expect: verify_receipt_chain returns Ok(())
         all chain links validated
@@ -638,7 +746,7 @@ expect: verify_receipt_chain returns Ok(())
 
 ### TV-SET-v2-15: verify_receipt_chain rejects tampered settlement_hash
 
-```
+```text
 input: persist receipt with settlement_hash = receipt_id_for(&receipt)
        flip one byte in settlement_hash field after persistence
 expect: verify_receipt_chain returns Err(ChainIntegrity { receipt_id })
@@ -646,7 +754,7 @@ expect: verify_receipt_chain returns Err(ChainIntegrity { receipt_id })
 
 ### TV-SET-v2-16: SequenceGap at receipt_id boundary (1, 3 skip 2)
 
-```
+```text
 input: append receipt_id=1, then receipt_id=3
 expect: first Ok(())
         second returns Err(SettlementError::SequenceGap { receipt_id: 3, prev: 1 })
@@ -654,7 +762,7 @@ expect: first Ok(())
 
 ### TV-SET-v2-17: Replay (idempotency) at receipt_id 1
 
-```
+```text
 input: append receipt_id=1, then append receipt_id=1 again
 expect: first Ok(())
         second returns Err(SettlementError::AlreadyExists(1))
@@ -662,7 +770,7 @@ expect: first Ok(())
 
 ### TV-SET-v2-18: Cross-RFC pairing AskRejected + Redaction (§S7 §Table C)
 
-```
+```text
 input: audit event with cap_root_hash = BLAKE3-256("cipherocto/audit/extension/redaction/v1/")
        paired with receipt having ask_id = BLAKE3-256("cipherocto/settlement/extension/ask-rejected/v1/" || canonical_ask_id)
 expect: audit_event_for_ask_rejected(receipt) returns AuditEvent with cap_root_hash matching above
@@ -673,7 +781,7 @@ expect: audit_event_for_ask_rejected(receipt) returns AuditEvent with cap_root_h
 
 ### TV-SET-v2-19: scrub_adapter_error canonical 5 patterns + registry 6th (RFC-0012-v2 TV-AUD-v2-18..v2-23)
 
-```
+```text
 input: same scrubber tests as RFC-0012-v2 — canonical Layer B scrubber applies to both AuditError::SinkSpecific and SettlementError::SinkSpecific
 expect: identical pattern coverage
 ```
@@ -682,7 +790,7 @@ expect: identical pattern coverage
 
 ### TV-SET-v2-20: Layer D adapter concurrent receipt_id collision detection
 
-```
+```text
 input: two appenders simultaneously call append(receipt_id=1) on empty table
 expect: at most one returns Ok(())
         the other returns Err(SettlementError::SequenceGap) or Err(SettlementError::AlreadyExists)
@@ -692,7 +800,7 @@ expect: at most one returns Ok(())
 
 ### TV-SET-v2-21: Router signature forge attempt (SC6 domain-only verification)
 
-```
+```text
 input: receipt with valid receipt_id, valid settlement_hash, but forged router_sig
 expect: substrate append returns Ok(())
         (substrate does NOT verify router_sig per SC6)
@@ -701,7 +809,7 @@ expect: substrate append returns Ok(())
 
 ### TV-SET-v2-22: SettlementError::SinkSpecific payload byte cap
 
-```
+```text
 input: SinkSpecific("a".repeat(10000)) (10 KiB adapter error)
 expect: payload retained verbatim (substrate does NOT truncate)
         adapter-side scrub_adapter_error MUST be called before wrapping (scrubber lands at acceptance per Phase 1 substrate-code amendment mission)
@@ -711,7 +819,7 @@ expect: payload retained verbatim (substrate does NOT truncate)
 
 ### TV-SET-v2-23: Receipt 6-field surface preservation
 
-```
+```text
 input: Receipt { receipt_id, ask_id, settlement_hash, router_id, router_sig, timestamp_unix }
 expect: 6 fields total; no field additions allowed at v2.0.0
         semver-major bump required for any field addition
@@ -719,7 +827,7 @@ expect: 6 fields total; no field additions allowed at v2.0.0
 
 ### TV-SET-v2-24: SettlementError 7-variant surface preservation
 
-```
+```text
 input: SettlementError { AskNotFound, AlreadyConsumed, InvalidTransition, SequenceGap, ChainIntegrity, AlreadyExists, SinkSpecific }
 expect: 7 variants total; no new variants allowed at v2.0.0
         existing SinkSpecific carries adapter-scrubbed strings only
@@ -727,7 +835,7 @@ expect: 7 variants total; no new variants allowed at v2.0.0
 
 ### TV-SET-v2-25: keyed BLAKE3 zero key determinism
 
-```
+```text
 input: receipt_id_for(&receipt) called on two replicas with identical receipt bytes
 expect: identical 32-byte digest output
         (zero key [0; 32] intentional per A1; no key management required for cross-replica consensus)
@@ -737,7 +845,7 @@ expect: identical 32-byte digest output
 
 ### TV-SET-v2-26: cross-prefix second-preimage resistance
 
-```
+```text
 input: known ask_id = BLAKE3-256("cipherocto/settlement/extension/ask-partial/v1/" || ask)
        adversary attempts to find ask_id' with different extension kind namespace that produces same digest
 expect: ~2^256 operations required (one fixed prefix)
@@ -746,7 +854,7 @@ expect: ~2^256 operations required (one fixed prefix)
 
 ### TV-SET-v2-27: timestamp_unix non-monotonicity precondition (DEFERRED to adapter)
 
-```
+```text
 input: append receipt with timestamp_unix = 1700000000
        then append receipt with timestamp_unix = 1699999999 (1 second earlier)
 expect: substrate accepts both appends (timestamp_unix NOT enforced at substrate per A5)
@@ -756,7 +864,7 @@ expect: substrate accepts both appends (timestamp_unix NOT enforced at substrate
 
 ### TV-SET-v2-28: Receipt chain O(n) verification
 
-```
+```text
 input: persist N receipts with valid settlement_hash each
 expect: verify_receipt_chain completes in O(N) time
         no quadratic scans (per Performance Targets)
@@ -764,7 +872,7 @@ expect: verify_receipt_chain completes in O(N) time
 
 ### TV-SET-v2-29: ReceiptId newtype zero runtime overhead
 
-```
+```text
 input: ReceiptId::new(42) vs raw u64 = 42
 expect: identical machine code generated by `cargo build --release`
         newtype is zero-cost abstraction
@@ -774,7 +882,7 @@ expect: identical machine code generated by `cargo build --release`
 
 ### TV-SET-v2-30: Adapter atomic persistence precondition
 
-```
+```text
 input: Layer D adapter append in transaction wrapper
        fsync fails at adapter boundary
 expect: adapter rolls back transaction (atomic-or-rollback contract per AC-10)
@@ -843,6 +951,8 @@ expect: adapter rolls back transaction (atomic-or-rollback contract per AC-10)
 
 **FW4. Audit-receipt pairing helpers.** Cross-crate helper `audit_event_for_agent_transition_receipt(receipt) -> AuditEvent` pins the §S7 pairing invariant at the implementation level.
 
+**FW5. HSM/Vault key injection substrate extension.** Add substrate-level `pub fn receipt_id_for_keyed(receipt: &Receipt, key: &[u8; 32]) -> [u8; 32]` extension to `octo-settlement-core::chain`. The keyed variant is additive to the existing zero-key `receipt_id_for`; canonical-form invariance preserved (the keyed variant produces the same hash as the zero-key variant when `key == [0; 32]`, by construction). HSM/Vault key material flows in via the `key` parameter from Layer C `HsmKeyedHasher` impl per §S6.1. Cross-RFC: RFC-0009 §Identity substrate owns the canonical HSM key derivation; the keyed extension consumes a pre-derived 32-byte key and is agnostic to key source. Acceptance path: mission `0014-v2-m4-keyed-hsm-fw5` (Phase 2 of RFC-0014-v2 implementation, after the v2.0.0 substrate release).
+
 ## Rationale
 
 RFC-0014-v2 codifies the typed-discriminator extension pattern as the canonical substrate-faithful mechanism for new receipt semantics. This achieves three goals:
@@ -857,16 +967,17 @@ The cost is a doc-comment-driven extension pattern that domain crates must follo
 
 ## Version History
 
-| Version      | Date       | Author                                | Notes                                                                              |
-| ------------ | ---------- | ------------------------------------- | ---------------------------------------------------------------------------------- |
-| v2.0.0-draft | 2026-09-11 | CipherOcto Architecture Working Group | Initial draft                                                                       |
-| v2.0.0-r30.5 | 2026-09-11 | CipherOcto Architecture Working Group | Prose alignment, DEFERRED scrubber + ReceiptId                                    |
-| v2.0.0-r31.5 | 2026-09-11 | CipherOcto Architecture Working Group | Scrubber Layer A → Layer B, BLAKE3 math fix                                        |
-| v2.0.0-r32.5 | 2026-09-11 | CipherOcto Architecture Working Group | TV count to 30, Authors/Maintainers H2, cite sweep                                |
-| v2.0.0-r33.5 | 2026-09-11 | CipherOcto Architecture Working Group | Timestamp monotonicity, receipt_id_for rename                                      |
-| v2.0.0-r34.5 | 2026-09-11 | CipherOcto Architecture Working Group | Per-façade scrubber, adapter-type registry, Layer D AC-10                          |
-| v2.0.0-r35.5 | 2026-09-11 | CipherOcto Architecture Working Group | DEFERRED markers on 9 TVs, 5 StoolapReceiptSink phantom refs removed               |
-| v2.0.0-r36.5 | 2026-09-11 | CipherOcto Architecture Working Group | 8 lib.rs line refs removed (CLAUDE.md §No line refs), §S6.1 KeyedHasher added     |
+| Version      | Date       | Author                                | Notes                                                                        |
+| ------------ | ---------- | ------------------------------------- | ---------------------------------------------------------------------------- |
+| v2.0.0-draft | 2026-09-11 | CipherOcto Architecture Working Group | Initial draft                                                                |
+| v2.0.0-r30.5 | 2026-09-11 | CipherOcto Architecture Working Group | Prose alignment, DEFERRED scrubber + ReceiptId                               |
+| v2.0.0-r31.5 | 2026-09-11 | CipherOcto Architecture Working Group | Scrubber Layer A → Layer B, BLAKE3 math fix                                  |
+| v2.0.0-r32.5 | 2026-09-11 | CipherOcto Architecture Working Group | TV count to 30, Authors/Maintainers H2, cite sweep                           |
+| v2.0.0-r33.5 | 2026-09-11 | CipherOcto Architecture Working Group | Timestamp monotonicity, receipt_id_for rename                                |
+| v2.0.0-r34.5 | 2026-09-11 | CipherOcto Architecture Working Group | Per-façade scrubber, adapter-type registry, Layer D AC-10                    |
+| v2.0.0-r35.5 | 2026-09-11 | CipherOcto Architecture Working Group | DEFERRED markers on 9 TVs, 5 StoolapReceiptSink phantom refs removed         |
+| v2.0.0-r36.5 | 2026-09-11 | CipherOcto Architecture Working Group | File:line refs removed, §S6.1 KeyedHasher added                              |
+| v2.0.0-r37   | 2026-09-11 | CipherOcto Architecture Working Group | Status + Mission Decomposition H2; phantom DEFERRED; scrubber hardening; FW5 |
 
 ## Related RFCs
 
@@ -882,7 +993,7 @@ The cost is a doc-comment-driven extension pattern that domain crates must follo
 - **UC-SET-001 — Agent lifecycle settlement.** When an agent transitions state (RFC-0015-a `transition_agent`), a corresponding `AgentTransitionReceipt` is settled with `ask_id` typed-discriminator namespace `cipherocto/settlement/extension/agent-transition-receipt/v1/`. The audit event for the transition (RFC-0012-v2 `AuditEventKind::Insert` + cap_root_hash namespace) is paired with the receipt via `prev_chain_hash = receipt_id_for(receipt)`.
 - **UC-SET-002 — Ask rejection.** When a downstream router rejects an ask (e.g. insufficient capacity), a corresponding `AskRejected` receipt is settled with `ask_id` namespace `cipherocto/settlement/extension/ask-rejected/v1/`. The audit event for the rejection (RFC-0012-v2 `AuditEventKind::Revoke` + Redaction namespace) is paired similarly.
 - **UC-SET-003 — Partial settlement supplement.** When a settlement is partially filled and supplemented (e.g. multi-hop routing), a corresponding `AskPartial` receipt is settled with `ask_id` namespace `cipherocto/settlement/extension/ask-partial/v1/`. The partial supplemental amount is encoded in domain-crate-side canonical hash inputs; the substrate does NOT inspect the extension payload.
-- **UC-SET-004 — Receipt projection at façade.** When a CLI consumer requests `octo settlement list` or `octo settlement show <receipt_id>` (RFC-0016-a), the façade projects the canonical `Receipt` into `ReceiptSummary` via typed-discriminator lookup on `ask_id`. The projection is read-only; substrate persistence is unchanged.
+- **UC-SET-004 — Receipt projection at façade.** When a CLI consumer requests `octo settlement list` or `octo settlement show <receipt_id>` (RFC-0016-a), the façade projects the canonical `Receipt` into `ReceiptSummary` via typed-discriminator lookup on `ask_id`. The projection is read-only; substrate persistence is unchanged. **CLI namespace pre-condition:** the `octo settlement list/show` subcommand namespace is PROVISIONAL pending RFC-0016-a §6.7 (CLI-shape error variants + paired subcommand taxonomy) ratification. UC-SET-004 assumes the namespace will land at acceptance per the paired RFC-0016-a amendment; if RFC-0016-a taxonomy diverges, UC-SET-004 requires re-mapping to the ratified namespace.
 
 ## Appendices
 
@@ -891,24 +1002,24 @@ The cost is a doc-comment-driven extension pattern that domain crates must follo
 | Extension kind         | Namespace string                                                                                                           | `ask_id` prefix bytes (BLAKE3-256 input prefix) |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
 | AskSettled             | `cipherocto/settlement/extension/ask-settled/v1/` (ask_id = BLAKE3-256 of namespace \|\| canonical_ask_id per §S1 pattern) | RFC-0014                                        |
-| AskPartial             | `cipherocto/settlement/extension/ask-partial/v1/`                                                                          | RFC-0014-v2 (cross-RFC with RFC-0015-a)          |
-| AskRejected            | `cipherocto/settlement/extension/ask-rejected/v1/`                                                                         | RFC-0014-v2 (cross-RFC with RFC-0016-a)          |
-| AgentTransitionReceipt | `cipherocto/settlement/extension/agent-transition-receipt/v1/`                                                             | RFC-0014-v2 (cross-RFC with RFC-0015-a)          |
+| AskPartial             | `cipherocto/settlement/extension/ask-partial/v1/`                                                                          | RFC-0014-v2                                     |
+| AskRejected            | `cipherocto/settlement/extension/ask-rejected/v1/`                                                                         | RFC-0014-v2                                     |
+| AgentTransitionReceipt | `cipherocto/settlement/extension/agent-transition-receipt/v1/`                                                             | RFC-0014-v2                                     |
 
 ### Appendix B: Substrate-vs-façade boundary
 
-| Concern                        | Substrate (Layer A)           | Façade (Layer B)                                                                              |
-| ------------------------------ | ----------------------------- | --------------------------------------------------------------------------------------------- |
-| `Receipt` struct               | owned                         | re-export                                                                                     |
-| `ReceiptId` newtype            | owned                         | re-export                                                                                     |
-| `SettlementError` enum         | owned                         | re-export                                                                                     |
+| Concern                        | Substrate (Layer A)           | Façade (Layer B)                                                                |
+| ------------------------------ | ----------------------------- | ------------------------------------------------------------------------------- |
+| `Receipt` struct               | owned                         | re-export                                                                       |
+| `ReceiptId` newtype            | owned                         | re-export                                                                       |
+| `SettlementError` enum         | owned                         | re-export                                                                       |
 | `AppendOnlyReceiptSink` trait  | owned                         | re-export (concrete sink impls are Layer D; see Appendix §Layer Direction Note) |
-| `verify_receipt_chain`         | owned                         | re-export                                                                                     |
-| `receipt_id_for`               | owned                         | re-export                                                                                     |
-| `ReceiptStatus` enum           | NOT owned (façade projection) | owned (Layer B projection)                                                                    |
-| `ReceiptSummary` projection    | NOT owned (façade projection) | owned (Layer B projection)                                                                    |
-| Typed-discriminator helpers    | doc-comment only              | owned (`receipt_for_*` functions)                                                             |
-| Storage adapter (Layer D sink) | NOT owned                     | NOT owned (Layer D; see Appendix §Layer Direction Note)      |
+| `verify_receipt_chain`         | owned                         | re-export                                                                       |
+| `receipt_id_for`               | owned                         | re-export                                                                       |
+| `ReceiptStatus` enum           | NOT owned (façade projection) | owned (Layer B projection)                                                      |
+| `ReceiptSummary` projection    | NOT owned (façade projection) | owned (Layer B projection)                                                      |
+| Typed-discriminator helpers    | doc-comment only              | owned (`receipt_for_*` functions)                                               |
+| Storage adapter (Layer D sink) | NOT owned                     | NOT owned (Layer D; see Appendix §Layer Direction Note)                         |
 
 RFC-0014-v2 explicitly pins this boundary. Substrate stays free of projection logic, status interpretation, and storage adapter logic — all three are Layer B (or Layer D) concerns per CLAUDE.md §Layer direction rule.
 
@@ -916,10 +1027,10 @@ RFC-0014-v2 explicitly pins this boundary. Substrate stays free of projection lo
 
 This note is the canonical reference for Layer D sink impls. Substrate §S, §G, §AC, §E, §C text references this appendix rather than re-stating adapter paths (per CLAUDE.md §Layer direction rule + §No line refs anywhere).
 
-| Substrate (Layer A)                    | Layer D adapter impl owner              | Location of concrete impl                   |
-| -------------------------------------- | --------------------------------------- | ------------------------------------------- |
-| `octo-settlement-core` (substrate)     | quota-router-sm-engine specialized node  | `quota-router-sm-engine::{store, sink}` modules (per substrate `octo-settlement` façade module preamble) |
-| `octo-audit-core` (substrate)          | own Layer D adapter at same-crate path   | `crates/octo-audit/src/storage/stoolap.rs` (per substrate `octo-audit` façade module preamble) |
+| Substrate (Layer A)                | Layer D adapter impl owner              | Location of concrete impl                                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `octo-settlement-core` (substrate) | quota-router-sm-engine specialized node | `quota-router-sm-engine::{store, sink}` modules (per substrate `octo-settlement` façade module preamble). **Existence pre-condition:** the `quota-router-sm-engine` crate and its `{store, sink}` modules MUST exist at acceptance; if the crate is renamed or modules relocated, this appendix requires re-mapping. Acceptance verification: `cargo metadata --format-version 1 | jq '.packages[] | select(.name == "quota-router-sm-engine")'` resolves the crate in the workspace at v2.0.0 acceptance. |
+| `octo-audit-core` (substrate)      | own Layer D adapter at same-crate path  | `crates/octo-audit/src/storage/stoolap.rs` (per substrate `octo-audit` façade module preamble)                                                                                                                                                                                                                                                                                   |
 
 **Why split here:** RFC-0012-v2 audit substrate has its own façade-owned Layer D adapter (`StoolapAuditSink`); RFC-0014-v2 settlement substrate's Layer D adapter lives at a different crate (`quota-router-sm-engine`) entirely. Both are Layer D, owned separately, conforming to the §S4.5 / §S2.5 atomic-persistence contract.
 

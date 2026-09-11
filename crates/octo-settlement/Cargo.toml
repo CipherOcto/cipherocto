@@ -1,0 +1,21 @@
+[package]
+name = "octo-settlement"
+version = "0.1.0"
+edition = "2021"
+description = "Layer B settlement facade — re-exports octo-settlement-core (RFC-0014 §Module Layout)"
+license = "Apache-2.0"
+authors = ["CipherOcto"]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# Layer B facade → Layer A substrate (RFC-0014 §Module Layout).
+octo-settlement-core = { path = "../octo-settlement-core" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+empty_line_after_doc_comments = "allow"
+doc_lazy_continuation = "allow"

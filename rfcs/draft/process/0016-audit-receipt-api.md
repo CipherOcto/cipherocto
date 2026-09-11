@@ -32,10 +32,10 @@ CLI consumers are RFC-0011-a (`octo audit list` + `octo audit show`). The `octo-
 
 **Scope-cut summary (R2 review outcome):** RFC-0016 R1 surface proposed 4 functions + 4 types (including the `append_audit_event` write function and the local `ReceiptStatus` / `ReceiptSummary` types). The R2 scope-cut KEEPS the substrate-faithful read surface and DEFERs cross-substrate features. Concretely:
 
-- **KEEP** — `list_receipts(filter)` (RFC-0016 §6.2.1).
-- **KEEP** — `get_receipt(id)` (RFC-0016 §6.2.2).
-- **KEEP** — `audit_home()` (RFC-0016 §6.2.4).
-- **KEEP** — `AuditFilter`, `ReceiptId`, `StatusRef` (RFC-0016 §6.2.5, §6.2.6, §6.2.7).
+- **KEEP** — `list_receipts(filter)` (RFC-0016 §6.2.1; **GATED-FEATURE-FLAG per §6.2**).
+- **KEEP** — `get_receipt(id)` (RFC-0016 §6.2.2; un-gated — point lookup against canonical substrate `Receipt` per RFC-0014 §Data Structures).
+- **KEEP** — `audit_home()` (RFC-0016 §6.2.4; un-gated — substrate-internal diagnostic).
+- **KEEP** — `AuditFilter` (**GATED-FEATURE-FLAG per §6.2**), `ReceiptId` (un-gated), `StatusRef` (**GATED-FEATURE-FLAG per §6.2**) (RFC-0016 §6.2.5, §6.2.6, §6.2.7).
 - **KEEP** — `AuditError { ReceiptNotFound(String), InvalidFilter(String), Internal(String) }` reduced variant set (RFC-0016 §6.3).
 - **DEFER** — `append_audit_event` write function (RFC-0016 §6.2.3 DEFERRED — depends on RFC-0012-v2 `AuditEventKind` extensions; no consumer until RFC-0015 `transition_agent` write surface lands).
 - **DEFER** — `ReceiptStatus { Ok, Partial, Reject }` local definition (RFC-0016 §6.2.7 DEFERRED — no canonical substrate home; would require RFC-0014-v2 to add to `octo_settlement_core`).
@@ -68,11 +68,11 @@ CLI consumers are RFC-0011-a (`octo audit list` + `octo audit show`). The `octo-
 
 ## Design Goals
 
-1. **Read-only by default** — `list_receipts` + `get_receipt` + `audit_home` are pure reads; no state mutation. `append_audit_event` is the single write primitive; it is type-level `&mut self` per `AppendOnlyAuditSink` from RFC-0012.
+1. **Read-only by default** — `list_receipts` + `get_receipt` + `audit_home` are pure reads; no state mutation. `append_audit_event` is the single write primitive; it is type-level `&mut self` per `AppendOnlyAuditSink` from RFC-0012 — **DEFERRED** per §6.9.
 2. **Substrate-faithful** — every signature, field name, and return type matches RFC-0011-a §7.4 Substrate `[ADD]` declarations byte-for-byte; no parallel abstractions.
-3. **Layer A frozen untouched** — `octo-audit-core` (Layer A frozen per RFC-0012) does not receive new types; RFC-0016 lives entirely on the Layer B façade `octo-audit`. New types (`AuditFilter`, `ReceiptId`, `ReceiptStatus`, `ReceiptSummary`) are defined in `octo-audit` and re-exported from `octo-audit-core` ONLY IF a future RFC requires substrate-side reach (none today).
+3. **Layer A frozen untouched** — `octo-audit-core` (Layer A frozen per RFC-0012) does not receive new types; RFC-0016 lives entirely on the Layer B façade `octo-audit`. New types (`AuditFilter`, `ReceiptId`, `ReceiptStatus`, `ReceiptSummary`) are defined in `octo-audit` and re-exported from `octo-audit-core` ONLY IF a future RFC requires substrate-side reach (none today); `ReceiptStatus` + `ReceiptSummary` are **DEFERRED** per §6.9 (canonical Layer A enum `ReceiptStatus` lands in `octo_settlement_core` with RFC-0014-v2 acceptance; `ReceiptSummary` projection requires RFC-0014-v2 `Receipt` field extensions).
 4. **CLI parity** — every `[ADD]` item in RFC-0011-a §7.4 lands in this RFC; CLI has no substrate-side gripes post-acceptance.
-5. **Determinism** — `list_receipts` returns sorted results (`executed_at_unix DESC`); `get_receipt` is point-deterministic; `append_audit_event` returns the BLAKE3 chain-hash of the row, deterministic across runs (RFC-0012 §AppendOnlyAuditSink Trait).
+5. **Determinism** — `list_receipts` returns sorted results (`executed_at_unix DESC`); `get_receipt` is point-deterministic; `append_audit_event` returns the BLAKE3 chain-hash of the row, deterministic across runs (RFC-0012 §AppendOnlyAuditSink Trait); `append_audit_event` determinism is **DEFERRED** per §6.9.
 6. **Read return shape** — `list_receipts` returns `Vec<ReceiptSummary>` (subset of `SettlementReceipt`); `get_receipt` returns the full `SettlementReceipt`. RFC-0011-a §`AuditListOutput` + §`AuditShowOutput` envelopes carry these.
 7. **Substrate-truth disclaimer** — substrate today does not have these functions/types. RFC-0016 ACCEPTANCE is required before RFC-0011-a acceptance per RFC-0011-a §Substrate-truth disclaimer.
 
@@ -129,7 +129,7 @@ Layer direction: CLI (Layer C/D) + `octo-wallet` (Layer B) → `octo-audit` (Lay
 
 ### §6.2 Public surface additions (`crates/octo-audit/src/lib.rs`)
 
-Six additive items layered atop the existing `octo-audit-core` re-exports (R4.5 KEEPs 6 items per §6.2 (R2 scope-cut from 8 → 6 KEEP) + 3 AuditError variants per §6.3 = 9 KEEP items; 8 cross-substrate features DEFERRED per §6.9):
+Six additive items layered atop the existing `octo-audit-core` re-exports (9 KEEP items = 6 §6.2 + 3 §6.3; 8 cross-substrate features DEFERRED per §6.9):
 
 1. **`list_receipts`** — read by filter (GATED-FEATURE-FLAG KEEP — only active when `deferred-rfc-0014-v2` feature flag is set; without the flag, the function is inert and reads route through canonical substrate `Receipt` via `get_receipt`)
 2. **`get_receipt`** — point lookup
@@ -151,6 +151,7 @@ Six additive items layered atop the existing `octo-audit-core` re-exports (R4.5 
 /// Return type `Vec<ReceiptSummary>` references the DEFERRED projection
 /// struct per §6.9 DEFERRED SURFACE; the function signature itself is
 /// KEEP at R2 (the projection shape is documented in RFC-0011-a §7.6).
+#[cfg(feature = "deferred-rfc-0014-v2")]
 pub fn list_receipts(filter: &AuditFilter) -> Result<Vec<ReceiptSummary>, AuditError>;
 ```
 
@@ -261,9 +262,7 @@ Substrate-faithful to RFC-0011-a §7.4 `[ADD]` #5. CLI surfaces lowercase hex fo
 /// `AuditFilter` (the type alias) but defers the substrate enum
 /// definition to RFC-0014-v2 acceptance.
 #[cfg(feature = "deferred-rfc-0014-v2")]
-pub type StatusRef = ReceiptStatus;  // type alias placeholder (DEFERRED)
-                                      // Active only when `deferred-rfc-0014-v2` feature flag is set
-                                      // per RFC-0015 Appendix A pattern; phantom-free at R4.5 KEEP.
+pub type StatusRef = ReceiptStatus;  // deferred type alias behind feature flag — compile requires RFC-0014-v2 acceptance to resolve the underlying `ReceiptStatus` enum (Layer A frozen canonical form lands in `octo_settlement_core` with RFC-0014-v2 acceptance per §6.9 DEFERRED SURFACE; today the alias resolves to a phantom symbol if the flag is set without RFC-0014-v2 acceptance — pattern follows RFC-0015 Appendix A cfg-gated-deferred convention)
 ```
 
 > **R2 scope-cut note:** `StatusRef` is defined here as a type alias placeholder; the underlying `ReceiptStatus` enum lives in `octo_settlement_core` and is **DEFERRED** per RFC-0014-v2 substrate amendment per §6.9 DEFERRED SURFACE. Until RFC-0014-v2 acceptance, `AuditFilter::status` is unused at the façade boundary (CLI does not surface `--status` filtering at R2).
@@ -348,11 +347,13 @@ pub fn get_receipt(id: &ReceiptId) -> Result<Receipt, AuditError> { ... }
 pub fn audit_home() -> Result<PathBuf, AuditError> { ... }
 
 // NEW types from §6.2.5..6.2.7 (defined in this file):
+#[cfg(feature = "deferred-rfc-0014-v2")]
 pub struct AuditFilter { ... }
 pub struct ReceiptId(pub [u8; 32]);
 // StatusRef alias gated behind feature flag per §6.2.7 / §6.4 no-phantom-symbol rule:
 // #[cfg(feature = "deferred-rfc-0014-v2")]
 // pub type StatusRef = ReceiptStatus;  // alias placeholder — DEFERRED substrate enum per §6.2.7 / §6.9
+// #[cfg(feature = "deferred-rfc-0014-v2")]  // cfg-gate mirrors §6.2.8; substrate enum `ReceiptStatus` required
 // pub struct ReceiptSummary { ... }  // DEFERRED per §6.2.8 / §6.9 (requires RFC-0014-v2 amendment)
 ```
 
@@ -382,7 +383,7 @@ CLI consumers of this substrate surface at RFC-0016 R2 acceptance (substrate-rea
 
 ### §6.7 Determinism requirements
 
-- **Read determinism** — `list_receipts` returns the same results for the same filter across runs (substrate sorts by `executed_at_unix DESC` deterministically).
+- **Read determinism** — `list_receipts` returns the same results for the same filter across runs (substrate sorts by `executed_at_unix DESC` deterministically, with secondary sort by `ReceiptId` (canonical 32-byte hex) ASC as deterministic tiebreaker per §6.2.1).
 - **Append determinism** — `append_audit_event` returns the same BLAKE3 chain-hash for the same event row across runs (RFC-0012 §AppendOnlyAuditSink Trait + BLAKE3 deterministic).
 - **Chain integrity** — chain hashes verified end-to-end via `verify_chain` from RFC-0012; any tampering breaks the chain.
 - **Read return shape** — `Vec<ReceiptSummary>` ORDER is stable across calls; the substrate does not reorder between calls.
@@ -520,7 +521,7 @@ CLI-level test vectors live in RFC-0011-a §Test Vectors (UNCHANGED — RFC-0016
 
 - **Phase 1 (this RFC, R4.5 KEEP)** — substrate additions on `octo-audit` Layer B façade; 6 KEEP items per §6.2 + 3 KEEP `AuditError` variants per §6.3 = 9 KEEP items; 8 cross-substrate features DEFERRED per §6.9.
 - **Phase 2 (RFC-0011-a acceptance + RFC-0016 acceptance)** — gates RFC-0011-a §Substrate-truth disclaimer resolution; CLI substrate amendments become implementable for the read surface.
-- **Phase 2.5 (RFC-0012-v2 acceptance + RFC-0014-v2 acceptance)** — restores §6.9 DEFERRED SURFACE: `append_audit_event` + canonical `ReceiptStatus` enum + `ReceiptSummary` projection + `AuditAppendFailed` variant + `AuditFilter.subject_did` ACL + `AuditEventKind::Redaction` variant land at this phase (paired with RFC-0015 re-implementation for the `transition_agent` write surface).
+- **Phase 2.5 (RFC-0012-v2 acceptance + RFC-0014-v2 acceptance)** — restores §6.9 DEFERRED SURFACE: 8 DEFER items total — `append_audit_event` + canonical `ReceiptStatus` enum + `ReceiptSummary` projection + `AuditAppendFailed` variant + `AuditFilter.subject_did` ACL + `AuditEventKind::Redaction` variant + `AuditFilter.status` multi-valued (single → `Vec<StatusRef>` UNION) + `WalletError::AuditUnavailable` (RFC-0015 ↔ RFC-0016 paired) land at this phase (paired with RFC-0015 re-implementation for the `transition_agent` write surface).
 - **Phase 3 (RFC-0015 acceptance re-implementation)** — `octo_wallet::transition_agent` calls `append_audit_event` per RFC-0015 §6.2.2 step 7.
 - **Phase 4 (RFC-0011-c `0011-c-agent-destroy-subcommand` closure)** — destroys surface `audit_log_entry` digest (BLAKE3 chain hash from `append_audit_event` return).
 
@@ -543,7 +544,7 @@ No changes to Layer A crates (`octo-audit-core`, `octo-settlement-core`); no CLI
 
 - **Substrate-faithful** — Layer A frozen untouched; this RFC adds Layer B façade surface per RFC-0012 acceptance pattern.
 - **Additive only** — CLAUDE.md §Layer A stability: Layer B additive changes do not break consumers; the 9 KEEP items (= 6 §6.2 + 3 §6.3) are additive.
-- **No parallel abstractions** — `append_audit_event` reuses `AppendOnlyAuditSink` from RFC-0012; `ReceiptStatus` re-exports from `octo-settlement-core` per [[cipherocto-design-principles]] §No parallel abstractions.
+- **No parallel abstractions** — `append_audit_event` reuses `AppendOnlyAuditSink` from RFC-0012 (when that façade write path is defined); `ReceiptStatus` re-export from `octo-settlement-core` DEFERRED to RFC-0014-v2 per §6.9; `append_audit_event` DEFERRED per §6.2.3 per [[cipherocto-design-principles]] §No parallel abstractions.
 - **CLI parity** — every `[ADD]` item in RFC-0011-a §7.4 lands in this RFC; gaps are filled by the additions.
 
 ## Version History
@@ -575,6 +576,7 @@ No changes to Layer A crates (`octo-audit-core`, `octo-settlement-core`); no CLI
 // crates/octo-audit/src/lib.rs (append to existing module)
 
 // KEEP at RFC-0016 R2 acceptance:
+#[cfg(feature = "deferred-rfc-0014-v2")]
 pub fn list_receipts(filter: &AuditFilter) -> Result<Vec<ReceiptSummary>, AuditError> {
     // 1. Validate filter: limit == 0 rejected (§6.2.5); since_unix <= until_unix if both Some.
     // 2. Walk the canonical receipt store (RFC-0014 substrate; `octo_settlement_core::Receipt`).

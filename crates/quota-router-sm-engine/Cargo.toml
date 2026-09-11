@@ -23,6 +23,15 @@ octo-storage-core = { path = "../octo-storage-core" }
 # VaultRegistry, NonceRegistry, PaymentCaveat, Dqa, AssetId, VaultId,
 # GovernanceSignature, verify_governance_signature, sovereign_nonce_namespace.
 octo-cap-macaroon = { path = "../octo-cap-macaroon" }
+# Mission 0014-settlement-sm-engine-migration: settlement substrate
+# (Layer A frozen per RFC-0014 §Module Layout). Re-exports canonical
+# Receipt + Reservation + Ask + AskState + ReservationState +
+# SettlementError + SettlementStore + AppendOnlyReceiptSink +
+# verify_receipt_chain + receipt_id_for. Local Ask + Receipt +
+# Reservation structs in this crate are domain extensions that carry
+# fields (axes_consumed, audit_window_secs, settlement_ref) the
+# substrate intentionally does NOT model.
+octo-settlement-core = { path = "../octo-settlement-core" }
 # Dqa is re-exported by octo-cap-macaroon (Layer B additive substrate).
 # octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
 # Mission G wire form (RFC-0959 §3 borsh encoding).

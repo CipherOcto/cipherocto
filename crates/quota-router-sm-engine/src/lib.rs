@@ -51,6 +51,34 @@ pub use state_machine::{
 };
 pub use store::{SettlementStore, StoolapStore, StorageError};
 
+// Substrate re-exports (mission 0014-settlement-sm-engine-migration).
+//
+// Per RFC-0014 §Module Layout, the canonical `Receipt` + `Reservation`
+// + `Ask` + `AskState` + `ReservationState` + `SettlementError` +
+// `SettlementStore` + `AppendOnlyReceiptSink` + chain-integrity
+// helpers live in `octo-settlement-core` (Layer A frozen). The local
+// Ask / Receipt / Reservation structs below are DOMAIN EXTENSIONS
+// carrying fields (axes_consumed, cap_root_hash, invocation_hash,
+// current_unix_time, output_hash, audit_window_secs, settlement_ref)
+// the substrate intentionally does NOT model — those fields are
+// quota-router-specific business data, not canonical settlement
+// primitives.
+//
+// Re-export with the `Canonical` prefix so downstream code that wants
+// the substrate types can opt in without colliding with the local
+// names.
+pub use octo_settlement_core::AppendOnlyReceiptSink;
+pub use octo_settlement_core::Ask as CanonicalAsk;
+pub use octo_settlement_core::AskState as CanonicalAskState;
+pub use octo_settlement_core::Receipt as CanonicalReceipt;
+pub use octo_settlement_core::Reservation as CanonicalReservation;
+pub use octo_settlement_core::ReservationState as CanonicalReservationState;
+pub use octo_settlement_core::SettlementError as CanonicalSettlementError;
+pub use octo_settlement_core::SettlementStore as CanonicalSettlementStore;
+pub use octo_settlement_core::{
+    receipt_id_for, verify_receipt_chain, CHAIN_DOMAIN_SEPARATOR,
+};
+
 /// Ask state (RFC-0959 §State Machine).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AskState {

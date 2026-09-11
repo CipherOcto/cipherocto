@@ -7,16 +7,19 @@ metadata:
   originSessionId: RFC-0013 author session
   created: 2026-09-10
   v: "1.0"
+  completed: 2026-09-10
+  commit: 3aff437d
+  fix_commit: a2932181
   depends_on:
     - RFC-0013
-status: Claimed
+status: Completed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-10
 ---
 
 # 0013-governance-substrate-extraction — `octo-governance-core` + `octo-governance` per RFC-0013
 
-**Status:** Open — substrate extraction (Layer A frozen core + Layer B façade)
+**Status:** Completed — substrate extraction landed at commit `3aff437d` on `next`. R2 DRY review fix at `a2932181` (drop dead `GovernanceError::Caller` variant + semantic `QuorumNotReached` fix for total-vote-exceeds-100k). Two new crates (`octo-governance-core` Layer A frozen IO-free + `octo-governance` Layer B façade) + 8 lib unit tests pass + clippy clean. `repr(u16)` discriminants byte-identical to RFC-0855 §11.1-11.3. `BTreeMap`-keyed `tally_quorum` for cross-replica determinism per RFC-0013 §Cross-Replica Tally Equivalence. DRY review R1=2 LOW → R2 fixes → R3=0 → DRY CLOSED per `docs/audits/2026-09-10-0012-0013-0014-substrate-extraction-r3-dry-closure.md`. Push + PR + RFC VH row append user-owned per [[feedback_initiation_user_only]] + [[git-workflow]].
 **Substrate:** RFC-0013 §Specification (`octo-governance-core` + `octo-governance` modules)
 **Parent:** RFC-0013
 

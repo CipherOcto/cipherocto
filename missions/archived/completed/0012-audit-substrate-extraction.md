@@ -7,16 +7,18 @@ metadata:
   originSessionId: RFC-0012 author session
   created: 2026-09-10
   v: "1.0"
+  completed: 2026-09-10
+  commit: 426dff81
   depends_on:
     - RFC-0012
-status: Claimed
+status: Completed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-10
 ---
 
 # 0012-audit-substrate-extraction — `octo-audit-core` + `octo-audit` per RFC-0012
 
-**Status:** Open — substrate extraction (Layer A frozen core + Layer B façade)
+**Status:** Completed — substrate extraction landed at commit `426dff81` on `next`. Two new crates (`octo-audit-core` Layer A frozen + `octo-audit` Layer B façade) + 6 lib unit tests pass + clippy clean. Follow-on storage adapter (`StoolapAuditSink`) lands in `0012-audit-stoolap-sink` mission at DOMAIN layer per RFC-0012 §Trait G3 mitigation. Cite-hygiene + §section refs clean. DRY review R1=2 LOW (other crates) → R2 fixes → R3=0 → DRY CLOSED per `docs/audits/2026-09-10-0012-0013-0014-substrate-extraction-r3-dry-closure.md`. Push + PR + RFC VH row append user-owned per [[feedback_initiation_user_only]] + [[git-workflow]].
 **Substrate:** RFC-0012 §Specification (`octo-audit-core` + `octo-audit` modules)
 **Parent:** RFC-0012
 

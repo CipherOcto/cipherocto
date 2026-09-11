@@ -7,16 +7,18 @@ metadata:
   originSessionId: RFC-0014 author session
   created: 2026-09-10
   v: "1.0"
+  completed: 2026-09-10
+  commit: b8e0e454
   depends_on:
     - RFC-0014
-status: Claimed
+status: Completed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-10
 ---
 
 # 0014-settlement-substrate-extraction — `octo-settlement-core` + `octo-settlement` per RFC-0014
 
-**Status:** Open — substrate extraction (Layer A frozen core + Layer B façade)
+**Status:** Completed — substrate extraction landed at commit `b8e0e454` on `next`. Two new crates (`octo-settlement-core` Layer A frozen + `octo-settlement` Layer B façade) + 6 lib unit tests pass + clippy clean. Domain separator `cipherocto/reservation/v1/` byte-pinned via `domain_separator_pinned` unit test. **Inline bug fix:** `receipt_id_for` initially included `settlement_hash` in the BLAKE3 input (which IS the output) — made hash depend on itself. Removed field from input; comment warns future contributors. `repr(u8)` discriminants byte-identical to RFC-0959 §State Machine (AskState) + RFC-0960 §2.3 (ReservationState). DRY review R1=2 LOW (other crates) → R2 fixes → R3=0 → DRY CLOSED per `docs/audits/2026-09-10-0012-0013-0014-substrate-extraction-r3-dry-closure.md`. Push + PR + RFC VH row append user-owned per [[feedback_initiation_user_only]] + [[git-workflow]].
 **Substrate:** RFC-0014 §Specification (`octo-settlement-core` + `octo-settlement` modules)
 **Parent:** RFC-0014
 

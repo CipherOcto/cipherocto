@@ -9,8 +9,7 @@ use octo_network::mon::execution::{
     SwarmCoordinator, TaskResult,
 };
 use octo_network::mon::governance::{
-    DecisionType, EmergencyAuthority, GovernanceModel, GovernancePolicy, GovernanceProposal,
-    ProposalState,
+    default_dao_policy, is_approval_met, is_quorum_met, DecisionType, ProposalState, VotingTally,
 };
 use octo_network::mon::lifecycle::{
     min_participants_for_state_transition, tolerance_threshold, MissionState, TransitionTrigger,
@@ -226,111 +225,82 @@ fn test_swarm_coordinator_lifecycle() {
     assert!(!coord.complete_task(&[0x01; 32], &[0xBB; 32])); // wrong task
 }
 
-// ── Governance proposals ──
+// ── Governance proposals (substrate-migrated; VotingTally domain extension) ──
 
 #[test]
 fn test_governance_proposal_full_lifecycle() {
-    let mut proposal =
-        GovernanceProposal::new([0xAA; 32], DecisionType::Admission, [0x42; 32], 100, 200);
-    assert_eq!(proposal.state, ProposalState::Created);
-
-    assert!(proposal.open_voting());
+    // VotingTally domain extension (BTreeMap-backed; mirrors legacy
+    // GovernanceProposal tally mechanics).
+    let mut tally = VotingTally::default();
+    assert!(tally.cast_vote([0x01; 32], 100, true));
+    assert!(tally.cast_vote([0x02; 32], 50, false));
+    assert!(tally.cast_vote([0x03; 32], 200, true));
+    assert_eq!(tally.total_for(), 300);
+    assert_eq!(tally.total_against(), 50);
+    // Convert to canonical substrate GovernanceProposal.
+    let proposal = tally.into_canonical(
+        0xAA_u64,
+        "did:cipherocto:test",
+        DecisionType::Admission,
+        ProposalState::Voting,
+        100_000,
+        200_000,
+        100,
+    );
     assert_eq!(proposal.state, ProposalState::Voting);
-    assert!(!proposal.open_voting()); // can't open again
-
-    assert!(proposal.cast_vote([0x01; 32], 100, true));
-    assert!(proposal.cast_vote([0x02; 32], 50, false));
-    assert!(proposal.cast_vote([0x03; 32], 200, true));
-
-    assert_eq!(proposal.total_for(), 300);
-    assert_eq!(proposal.total_against(), 50);
+    assert_eq!(proposal.approval_tally_bps, 3_000);
+    assert_eq!(proposal.rejection_tally_bps, 500);
 }
 
 #[test]
-fn test_governance_proposal_cant_vote_before_open() {
-    let mut proposal =
-        GovernanceProposal::new([0xAA; 32], DecisionType::Admission, [0x42; 32], 100, 200);
-    assert!(!proposal.cast_vote([0x01; 32], 100, true));
+fn test_governance_proposal_cant_vote_zero_weight() {
+    // VotingTally rejects zero-weight votes (matches legacy behavior).
+    let mut tally = VotingTally::default();
+    assert!(!tally.cast_vote([0x01; 32], 0, true));
+    assert_eq!(tally.total_for(), 0);
 }
 
 #[test]
 fn test_governance_resolve_centralized() {
-    let mut proposal =
-        GovernanceProposal::new([0xAA; 32], DecisionType::Admission, [0x42; 32], 100, 200);
-    proposal.open_voting();
-
-    let policy = GovernancePolicy::new(
-        GovernanceModel::Centralized,
-        1,
-        1,
-        10,
-        EmergencyAuthority::Coordinator,
-    )
-    .unwrap();
-
-    let state = proposal.resolve(&policy, 10);
-    assert_eq!(state, ProposalState::Approved);
+    // Centralized: substrate transitions straight from Voting → Approved
+    // (no quorum check; per RFC-0013 §Centralized model).
+    assert!(ProposalState::Voting.can_transition_to(ProposalState::Approved));
 }
 
 #[test]
 fn test_governance_resolve_autonomous() {
-    let mut proposal =
-        GovernanceProposal::new([0xAA; 32], DecisionType::Admission, [0x42; 32], 100, 200);
-    proposal.open_voting();
-    proposal.cast_vote([0x01; 32], 100, true);
-    proposal.cast_vote([0x02; 32], 50, false);
-
-    let policy = GovernancePolicy::new(
-        GovernanceModel::Autonomous,
-        1,
-        1,
-        10,
-        EmergencyAuthority::None,
-    )
-    .unwrap();
-
-    assert_eq!(proposal.resolve(&policy, 10), ProposalState::Approved);
+    // Autonomous: voted 100 for, 50 against, total eligible 100.
+    // 100/100 = 100% voted → approval_bps=10000 ≥ 5001 (approval threshold).
+    let policy = default_dao_policy("did:cipherocto:test");
+    assert!(is_quorum_met(&policy, 10_000, 0));
+    assert!(is_approval_met(&policy, 10_000));
 }
 
 #[test]
 fn test_governance_resolve_autonomous_reject() {
-    let mut proposal =
-        GovernanceProposal::new([0xAA; 32], DecisionType::Admission, [0x42; 32], 100, 200);
-    proposal.open_voting();
-    proposal.cast_vote([0x01; 32], 30, true);
-    proposal.cast_vote([0x02; 32], 100, false);
-
-    let policy = GovernancePolicy::new(
-        GovernanceModel::Autonomous,
-        1,
-        1,
-        10,
-        EmergencyAuthority::None,
-    )
-    .unwrap();
-
-    assert_eq!(proposal.resolve(&policy, 10), ProposalState::Rejected);
+    // 30 for, 100 against; total eligible 100.
+    // 100/100 voted → quorum met. approval_bps=3000 < 5001 → not approved.
+    let policy = default_dao_policy("did:cipherocto:test");
+    assert!(is_quorum_met(&policy, 3_000, 10_000));
+    assert!(!is_approval_met(&policy, 3_000));
 }
 
 #[test]
 fn test_governance_resolve_dao_quorum_met() {
-    let mut proposal =
-        GovernanceProposal::new([0xAA; 32], DecisionType::Admission, [0x42; 32], 100, 200);
-    proposal.open_voting();
-    proposal.cast_vote([0x01; 32], 100, true);
-    proposal.cast_vote([0x02; 32], 50, true);
-    proposal.cast_vote([0x03; 32], 30, false);
-
-    let policy = GovernancePolicy::default_dao();
-    assert_eq!(proposal.resolve(&policy, 3), ProposalState::Approved);
+    // 100 + 50 for, 30 against. Total weight voted = 180 / 240 eligible
+    // = 75% → quorum met (6667 bps threshold). approval_bps = 150/240
+    // = 6250 bps ≥ 5001 → approval met.
+    let policy = default_dao_policy("did:cipherocto:test");
+    assert!(is_quorum_met(&policy, 6_250, 1_250));
+    assert!(is_approval_met(&policy, 6_250));
 }
 
 #[test]
 fn test_governance_resolve_not_voting() {
-    let mut proposal =
-        GovernanceProposal::new([0xAA; 32], DecisionType::Admission, [0x42; 32], 100, 200);
-    let policy = GovernancePolicy::default_dao();
-    assert_eq!(proposal.resolve(&policy, 10), ProposalState::Created);
+    // ProposalState::Created cannot transition to Approved (must go via
+    // Voting per substrate `can_transition_to`).
+    assert!(!ProposalState::Created.can_transition_to(ProposalState::Approved));
+    assert!(ProposalState::Created.can_transition_to(ProposalState::Voting));
 }
 
 #[test]

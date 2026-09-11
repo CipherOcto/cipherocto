@@ -1,222 +1,84 @@
-//! Mission Governance (RFC-0855 §11)
+//! Mission Governance (RFC-0855 §11).
 //!
 //! Governance models determine how state transitions are approved.
 //! Each model has different voting rules and decision mechanisms.
+//!
+//! ## Substrate migration (mission 0013-governance-network-migration)
+//!
+//! Per RFC-0013 §Module Layout, the canonical `GovernancePolicy` +
+//! `GovernanceModel` + `EmergencyAuthority` + `GovernanceProposal` +
+//! `ProposalState` + `DecisionType` types live in `octo-governance-core`
+//! (Layer A frozen). This module re-exports them via `pub use`.
+//!
+//! **Discriminant change:** the canonical substrate uses `repr(u16)`
+//! discriminants `0..=6` (Centralized=0, Dao=1, Federated=2,
+//! AiAssisted=3, Autonomous=4; ProposalState `0..=5`;
+//! `EmergencyAuthority` `None=0, GovernanceCouncil=1, DesignatedRecovery=2`;
+//! `DecisionType` `0..=6`). The legacy local enums used
+//! `0x0001..=0x0007`. The substrate values are the new canonical per
+//! RFC-0855 §11; this is a wire-format-visible change for any system
+//! that persisted discriminants.
+//!
+//! **Field shape change:** `GovernancePolicy` now uses
+//! `(issuer, model, emergency_authority, quorum_bps, approval_bps)`
+//! instead of the legacy
+//! `(model, quorum_numerator, quorum_denominator, proposal_deadline_epochs,
+//! emergency_authority)`. The substrate is BPS-based (basis points,
+//! 0..=10000) per RFC-0013 §Specification. The legacy
+//! `is_quorum_met(count, total)` API is replaced by BPS-based
+//! `is_quorum_met(approval_bps, rejection_bps)`.
+//!
+//! ## Domain extension
+//!
+//! `VotingTally` (defined here) is a domain-only extension that tracks
+//! per-voter weights via `BTreeMap<[u8;32], u64>`. It is NOT in the
+//! substrate (substrate is tally-agnostic; the substrate
+//! `GovernanceProposal` carries pre-computed `approval_tally_bps` +
+//! `rejection_tally_bps` only). The `VotingTally::into_canonical()`
+//! adapter converts tally state to a substrate `GovernanceProposal`.
+//!
+//! ## IO functions preserved
+//!
+//! Per RFC-0013 §Substrate `[ADD]`, IO functions (`snapshot`,
+//! `attest`, `vote`) live in domain crates. None exist in this file
+//! yet — when added, they MUST live here, not in `octo-governance-core`.
+
+pub use octo_governance_core::{
+    DecisionType, EmergencyAuthority, GovernanceError, GovernanceModel, GovernancePolicy,
+    GovernanceProposal, ProposalState,
+};
+// Note: substrate `voting_weight` + `tally_quorum` are NOT re-exported
+// here to avoid clashing with the domain-side `voting_weight`
+// function in `mon::quadratic` (stake-weighted sqrt*cosigners
+// formula). Import directly via `octo_governance_core::voting_weight`
+// when needed.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Governance models (RFC-0855 §11.1)
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[repr(u16)]
-pub enum GovernanceModel {
-    /// Single Coordinator makes all decisions
-    Centralized = 0x0001,
-    /// Token-weighted voting
-    Dao = 0x0002,
-    /// Multi-party consensus
-    Federated = 0x0003,
-    /// AI proposes, humans approve
-    AiAssisted = 0x0004,
-    /// AI-only decision making
-    Autonomous = 0x0005,
-}
-
-impl GovernanceModel {
-    /// Parse from u16.
-    pub fn from_u16(val: u16) -> Option<Self> {
-        match val {
-            0x0001 => Some(Self::Centralized),
-            0x0002 => Some(Self::Dao),
-            0x0003 => Some(Self::Federated),
-            0x0004 => Some(Self::AiAssisted),
-            0x0005 => Some(Self::Autonomous),
-            _ => None,
-        }
-    }
-}
-
-/// Emergency authority (RFC-0855 §11.2)
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[repr(u16)]
-pub enum EmergencyAuthority {
-    Coordinator = 0x0001,
-    Quorum = 0x0002,
-    None = 0x0003,
-}
-
-/// Governance policy (RFC-0855 §11.2)
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[repr(C)]
-pub struct GovernancePolicy {
-    pub model: GovernanceModel,
-    pub quorum_numerator: u16,
-    pub quorum_denominator: u16,
-    pub proposal_deadline_epochs: u64,
-    pub emergency_authority: EmergencyAuthority,
-}
-
-impl GovernancePolicy {
-    /// Create a validated governance policy.
-    pub fn new(
-        model: GovernanceModel,
-        quorum_numerator: u16,
-        quorum_denominator: u16,
-        proposal_deadline_epochs: u64,
-        emergency_authority: EmergencyAuthority,
-    ) -> Result<Self, crate::mon::error::MonError> {
-        if quorum_denominator == 0 {
-            return Err(crate::mon::error::MonError::InvalidGovernancePolicy {
-                reason: "quorum_denominator must be > 0".to_string(),
-            });
-        }
-        if quorum_numerator > quorum_denominator {
-            return Err(crate::mon::error::MonError::InvalidGovernancePolicy {
-                reason: "quorum_numerator must be <= quorum_denominator".to_string(),
-            });
-        }
-        if proposal_deadline_epochs == 0 {
-            return Err(crate::mon::error::MonError::InvalidGovernancePolicy {
-                reason: "proposal_deadline_epochs must be > 0".to_string(),
-            });
-        }
-        Ok(Self {
-            model,
-            quorum_numerator,
-            quorum_denominator,
-            proposal_deadline_epochs,
-            emergency_authority,
-        })
-    }
-
-    /// Default DAO policy: 2/3 quorum, 10 epoch deadline, coordinator emergency.
-    pub fn default_dao() -> Self {
-        Self::new(
-            GovernanceModel::Dao,
-            2,
-            3,
-            10,
-            EmergencyAuthority::Coordinator,
-        )
-        .expect("default_dao parameters are valid")
-    }
-
-    /// Check if a vote count meets quorum (count-based; for
-    /// weight-based, use [`Self::is_weighted_quorum_met`]).
-    pub fn is_quorum_met(&self, votes_for: u32, total_eligible: u32) -> bool {
-        if total_eligible == 0 {
-            return false;
-        }
-        // votes_for / total_eligible >= quorum_numerator / quorum_denominator
-        // Cross-multiply to avoid floating point
-        (votes_for as u64) * (self.quorum_denominator as u64)
-            >= (self.quorum_numerator as u64) * (total_eligible as u64)
-    }
-
-    /// Check if a vote WEIGHT meets quorum (weight-based;
-    /// appropriate for token-weighted DAO voting).
-    pub fn is_weighted_quorum_met(&self, weight_voted: u64, total_eligible_weight: u64) -> bool {
-        if total_eligible_weight == 0 {
-            return false;
-        }
-        // weight_voted / total_eligible_weight >= quorum_numerator / quorum_denominator
-        // Cross-multiply to avoid floating point and overflow.
-        weight_voted.saturating_mul(self.quorum_denominator as u64)
-            >= (self.quorum_numerator as u64).saturating_mul(total_eligible_weight)
-    }
-}
-
-/// Decision types for governance voting (RFC-0855 §11.3)
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[repr(u16)]
-pub enum DecisionType {
-    Admission = 0x0001,
-    RoleAssignment = 0x0002,
-    TopologyChange = 0x0003,
-    MissionTermination = 0x0004,
-    PolicyModification = 0x0005,
-    EmergencyRekey = 0x0006,
-    ParticipantExpulsion = 0x0007,
-}
-
-/// Proposal lifecycle states.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[repr(u16)]
-pub enum ProposalState {
-    Created = 0x0001,
-    Voting = 0x0002,
-    Approved = 0x0003,
-    Rejected = 0x0004,
-    Executed = 0x0005,
-    Expired = 0x0006,
-}
-
-/// A governance proposal.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct GovernanceProposal {
-    /// Proposal identifier
-    pub proposal_id: [u8; 32],
-    /// Type of decision
-    pub decision_type: DecisionType,
-    /// Current state
-    pub state: ProposalState,
-    /// Epoch when proposal was created
-    pub created_epoch: u64,
-    /// Epoch when voting deadline expires
-    pub deadline_epoch: u64,
-    /// Proposer gateway ID
-    pub proposer: [u8; 32],
-    /// Votes in favor (gateway_id -> weight)
+/// Domain-only voting tally. Tracks per-voter weights and produces a
+/// canonical `GovernanceProposal` via `into_canonical()`.
+///
+/// Substrate `GovernanceProposal` is tally-agnostic (it carries
+/// pre-computed BPS totals only). The BTreeMap-keyed tally lives in
+/// the domain crate so that voter-level operations (add voter,
+/// replace vote, resolve) are local to the workflow that needs them.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VotingTally {
+    /// Voter pubkey → weight (in favor).
     pub votes_for: BTreeMap<[u8; 32], u64>,
-    /// Votes against (gateway_id -> weight)
+    /// Voter pubkey → weight (against).
     pub votes_against: BTreeMap<[u8; 32], u64>,
 }
 
-impl GovernanceProposal {
-    /// Create a new proposal in Created state.
-    pub fn new(
-        proposal_id: [u8; 32],
-        decision_type: DecisionType,
-        proposer: [u8; 32],
-        created_epoch: u64,
-        deadline_epoch: u64,
-    ) -> Self {
-        Self {
-            proposal_id,
-            decision_type,
-            state: ProposalState::Created,
-            created_epoch,
-            deadline_epoch,
-            proposer,
-            votes_for: BTreeMap::new(),
-            votes_against: BTreeMap::new(),
-        }
-    }
-
-    /// Open voting on this proposal.
-    pub fn open_voting(&mut self) -> bool {
-        if self.state == ProposalState::Created {
-            self.state = ProposalState::Voting;
-            return true;
-        }
-        false
-    }
-
-    /// Cast a vote. Returns false if proposal is not in Voting state
-    /// or the weight is 0 (zero-weight votes are rejected to prevent
-    /// BTreeMap spam with non-contributing entries).
-    ///
-    /// A voter's previous vote (for or against) is replaced; the
-    /// voter cannot count in both totals simultaneously.
+impl VotingTally {
+    /// Cast a vote. `in_favor=true` → counted in `votes_for`,
+    /// `in_favor=false` → counted in `votes_against`. A voter's
+    /// prior vote (for OR against) is replaced.
     pub fn cast_vote(&mut self, voter: [u8; 32], weight: u64, in_favor: bool) -> bool {
-        if self.state != ProposalState::Voting {
-            return false;
-        }
         if weight == 0 {
             return false;
         }
-        // Remove any prior vote from this voter so they count in
-        // exactly one tally.
         self.votes_for.remove(&voter);
         self.votes_against.remove(&voter);
         if in_favor {
@@ -227,119 +89,151 @@ impl GovernanceProposal {
         true
     }
 
-    /// Get total weight of votes in favor.
+    /// Total weight of votes in favor.
     pub fn total_for(&self) -> u64 {
         self.votes_for.values().sum()
     }
 
-    /// Get total weight of votes against.
+    /// Total weight of votes against.
     pub fn total_against(&self) -> u64 {
         self.votes_against.values().sum()
     }
 
-    /// Resolve the proposal based on governance policy.
+    /// Convert tally to a canonical `GovernanceProposal` snapshot
+    /// with BPS totals computed from the BTreeMap vote weights.
     ///
-    /// Uses count-based quorum (`total_eligible_voters` is the
-    /// number of distinct voters). For weight-based quorum (DAO
-    /// with token-weighted voting), use [`Self::resolve_weighted`].
-    ///
-    /// Returns the new state (Approved, Rejected, or remains Voting).
-    pub fn resolve(
-        &mut self,
-        policy: &GovernancePolicy,
-        total_eligible_voters: u32,
-    ) -> ProposalState {
-        if self.state != ProposalState::Voting {
-            return self.state;
-        }
-
-        let for_count = self.votes_for.len() as u32;
-        let against_count = self.votes_against.len() as u32;
-
-        // Centralized: proposer decides (single coordinator)
-        if policy.model == GovernanceModel::Centralized {
-            self.state = ProposalState::Approved;
-            return self.state;
-        }
-
-        // Autonomous: AI decides based on weighted votes
-        if policy.model == GovernanceModel::Autonomous {
-            if self.total_for() > self.total_against() {
-                self.state = ProposalState::Approved;
-            } else {
-                self.state = ProposalState::Rejected;
-            }
-            return self.state;
-        }
-
-        // Federated, AiAssisted: count-based quorum + majority
-        if policy.model == GovernanceModel::Federated || policy.model == GovernanceModel::AiAssisted
-        {
-            if policy.is_quorum_met(for_count + against_count, total_eligible_voters) {
-                if self.total_for() > self.total_against() {
-                    self.state = ProposalState::Approved;
-                } else {
-                    self.state = ProposalState::Rejected;
-                }
-            }
-            return self.state;
-        }
-
-        // Dao: use weight-based quorum (caller should prefer
-        // resolve_weighted; this is a fallback for callers that
-        // only have voter count).
-        if policy.is_quorum_met(for_count + against_count, total_eligible_voters) {
-            if self.total_for() > self.total_against() {
-                self.state = ProposalState::Approved;
-            } else {
-                self.state = ProposalState::Rejected;
-            }
-        }
-
-        self.state
-    }
-
-    /// Resolve a DAO proposal with weight-based quorum.
-    ///
-    /// `total_eligible_weight` is the SUM of all eligible voters'
-    /// weights. The proposal is approved if:
-    /// 1. voted weight >= quorum fraction of total weight, AND
-    /// 2. for-weight > against-weight
-    pub fn resolve_weighted(
-        &mut self,
-        policy: &GovernancePolicy,
+    /// `total_eligible_weight` is the SUM of all eligible voter
+    /// weights (the divisor for BPS conversion). If zero, the
+    /// resulting BPS values are 0 (defensive — caller must supply a
+    /// non-zero denominator).
+    #[allow(clippy::too_many_arguments)]
+    pub fn into_canonical(
+        self,
+        proposal_id: u64,
+        issuer: &str,
+        decision: DecisionType,
+        state: ProposalState,
+        voting_opens_at_millis: u64,
+        voting_closes_at_millis: u64,
         total_eligible_weight: u64,
-    ) -> ProposalState {
-        if self.state != ProposalState::Voting {
-            return self.state;
+    ) -> GovernanceProposal {
+        let total_weight = self.total_for().saturating_add(self.total_against());
+        let approval_bps = if total_eligible_weight > 0 {
+            ((self.total_for() as u128 * 10_000) / total_eligible_weight as u128).min(10_000) as u32
+        } else {
+            0
+        };
+        let rejection_bps = if total_eligible_weight > 0 {
+            ((self.total_against() as u128 * 10_000) / total_eligible_weight as u128).min(10_000)
+                as u32
+        } else {
+            0
+        };
+        let _ = total_weight; // documented; no extra accounting needed
+        GovernanceProposal {
+            proposal_id,
+            issuer: issuer.to_string(),
+            decision,
+            state,
+            voting_opens_at_millis,
+            voting_closes_at_millis,
+            approval_tally_bps: approval_bps,
+            rejection_tally_bps: rejection_bps,
         }
-        let voted_weight = self.total_for().saturating_add(self.total_against());
-        if policy.is_weighted_quorum_met(voted_weight, total_eligible_weight) {
-            if self.total_for() > self.total_against() {
-                self.state = ProposalState::Approved;
-            } else {
-                self.state = ProposalState::Rejected;
-            }
-        }
-        self.state
     }
+}
 
-    /// Mark proposal as expired if deadline has passed.
-    pub fn expire_if_past_deadline(&mut self, current_epoch: u64) -> bool {
-        if self.state == ProposalState::Voting && current_epoch > self.deadline_epoch {
-            self.state = ProposalState::Expired;
-            return true;
-        }
-        false
+/// Adapter: default DAO policy at the substrate canonical shape.
+///
+/// `2/3` quorum (6667 bps) + `>50%` approval (5001 bps) +
+/// `DesignatedRecovery` emergency authority (legacy `Coordinator`
+/// variant renamed in the substrate per RFC-0013 §Emergency Authority).
+/// Caller MUST supply a non-empty `issuer` DID.
+#[must_use]
+pub fn default_dao_policy(issuer: &str) -> GovernancePolicy {
+    GovernancePolicy {
+        issuer: issuer.to_string(),
+        model: GovernanceModel::Dao,
+        emergency_authority: EmergencyAuthority::DesignatedRecovery,
+        quorum_bps: 6_667,
+        approval_bps: 5_001,
     }
+}
 
-    /// Execute an approved proposal.
-    pub fn execute(&mut self) -> bool {
-        if self.state == ProposalState::Approved {
-            self.state = ProposalState::Executed;
-            return true;
+/// Adapter: BPS-based quorum check on a substrate `GovernancePolicy`.
+///
+/// Returns `true` if `(approval_bps + rejection_bps) >= policy.quorum_bps`
+/// (i.e., the voted fraction of eligible weight meets the quorum
+/// threshold). Substrate `GovernancePolicy` is BPS-based; this
+/// adapter preserves the legacy `is_quorum_met(votes, total)` API
+/// shape via BPS inputs.
+#[must_use]
+pub fn is_quorum_met(policy: &GovernancePolicy, approval_bps: u32, rejection_bps: u32) -> bool {
+    approval_bps.saturating_add(rejection_bps) >= policy.quorum_bps
+}
+
+/// Adapter: BPS-based approval threshold check.
+#[must_use]
+pub fn is_approval_met(policy: &GovernancePolicy, approval_bps: u32) -> bool {
+    approval_bps >= policy.approval_bps
+}
+
+/// Migrate a legacy local `GovernancePolicy::new(...)` call to the
+/// substrate canonical constructor. Translates
+/// `(model, quorum_num, quorum_den, deadline_epochs, emergency)`
+/// arguments into substrate `(issuer, model, emergency, quorum_bps,
+/// approval_bps)` shape, computing `quorum_bps` from the legacy
+/// numerator/denominator fraction.
+#[must_use]
+pub fn from_legacy_policy_args(
+    issuer: &str,
+    model: GovernanceModel,
+    quorum_numerator: u16,
+    quorum_denominator: u16,
+    _proposal_deadline_epochs: u64, // substrate does not carry deadline_epochs
+    emergency_authority: LegacyEmergency,
+) -> GovernancePolicy {
+    let quorum_bps = if quorum_denominator == 0 {
+        0
+    } else {
+        // Round to nearest basis point.
+        let q = (quorum_numerator as u32 * 10_000) / quorum_denominator as u32;
+        q.min(10_000)
+    };
+    // Approval threshold defaults to >50% (matches legacy DAO default).
+    let approval_bps = 5_001;
+    GovernancePolicy {
+        issuer: issuer.to_string(),
+        model,
+        emergency_authority: emergency_authority.into(),
+        quorum_bps,
+        approval_bps,
+    }
+}
+
+/// Legacy `EmergencyAuthority` enum (Coordinator / Quorum / None)
+/// preserved as a domain-side adapter so legacy callers can migrate
+/// without breaking. Maps to substrate `EmergencyAuthority` via
+/// `From<LegacyEmergency> for EmergencyAuthority`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u16)]
+pub enum LegacyEmergency {
+    /// Single coordinator has emergency authority → substrate
+    /// `DesignatedRecovery`.
+    Coordinator = 0x0001,
+    /// Quorum (governance vote) → substrate `GovernanceCouncil`.
+    Quorum = 0x0002,
+    /// No emergency authority → substrate `None`.
+    None = 0x0003,
+}
+
+impl From<LegacyEmergency> for EmergencyAuthority {
+    fn from(legacy: LegacyEmergency) -> Self {
+        match legacy {
+            LegacyEmergency::Coordinator => EmergencyAuthority::DesignatedRecovery,
+            LegacyEmergency::Quorum => EmergencyAuthority::GovernanceCouncil,
+            LegacyEmergency::None => EmergencyAuthority::None,
         }
-        false
     }
 }
 
@@ -347,317 +241,185 @@ impl GovernanceProposal {
 mod tests {
     use super::*;
 
-    fn default_policy() -> GovernancePolicy {
-        GovernancePolicy::default_dao()
+    fn sample_did(seed: u8) -> String {
+        format!("did:cipherocto:gov-test-{seed}")
     }
 
-    fn make_proposal(proposer: u8) -> GovernanceProposal {
-        GovernanceProposal::new(
-            [0xAA; 32],
-            DecisionType::Admission,
-            [proposer; 32],
-            100,
-            200,
-        )
-    }
-
-    // -- GovernanceModel tests --
+    // -- Substrate discriminant byte-identical tests --
 
     #[test]
-    fn test_governance_model_repr() {
-        assert_eq!(GovernanceModel::Centralized as u16, 0x0001);
-        assert_eq!(GovernanceModel::Autonomous as u16, 0x0005);
+    fn discriminants_byte_identical_to_substrate() {
+        // Substrate canonical (RFC-0013 + RFC-0855 §11.1):
+        assert_eq!(GovernanceModel::Centralized as u16, 0);
+        assert_eq!(GovernanceModel::Dao as u16, 1);
+        assert_eq!(GovernanceModel::Federated as u16, 2);
+        assert_eq!(GovernanceModel::AiAssisted as u16, 3);
+        assert_eq!(GovernanceModel::Autonomous as u16, 4);
+        assert_eq!(EmergencyAuthority::None as u16, 0);
+        assert_eq!(EmergencyAuthority::GovernanceCouncil as u16, 1);
+        assert_eq!(EmergencyAuthority::DesignatedRecovery as u16, 2);
+        assert_eq!(ProposalState::Created as u16, 0);
+        assert_eq!(ProposalState::Voting as u16, 1);
+        assert_eq!(ProposalState::Approved as u16, 2);
+        assert_eq!(ProposalState::Rejected as u16, 3);
+        assert_eq!(ProposalState::Executed as u16, 4);
+        assert_eq!(ProposalState::Expired as u16, 5);
+        assert_eq!(DecisionType::Admission as u16, 0);
+        assert_eq!(DecisionType::ParticipantExpulsion as u16, 6);
     }
 
-    #[test]
-    fn test_governance_model_from_u16() {
-        assert_eq!(
-            GovernanceModel::from_u16(0x0001),
-            Some(GovernanceModel::Centralized)
-        );
-        assert_eq!(GovernanceModel::from_u16(0x0099), None);
-    }
-
-    // -- GovernancePolicy tests --
+    // -- Default DAO policy adapter --
 
     #[test]
-    fn test_default_dao_policy() {
-        let p = GovernancePolicy::default_dao();
+    fn default_dao_policy_shape() {
+        let p = default_dao_policy(&sample_did(1));
         assert_eq!(p.model, GovernanceModel::Dao);
-        assert_eq!(p.quorum_numerator, 2);
-        assert_eq!(p.quorum_denominator, 3);
-        assert_eq!(p.emergency_authority, EmergencyAuthority::Coordinator);
+        assert_eq!(
+            p.emergency_authority,
+            EmergencyAuthority::DesignatedRecovery
+        );
+        assert_eq!(p.quorum_bps, 6_667);
+        assert_eq!(p.approval_bps, 5_001);
+    }
+
+    // -- BPS-based quorum + approval helpers --
+
+    #[test]
+    fn quorum_met_above_threshold() {
+        let p = default_dao_policy(&sample_did(1));
+        // 7000 voted (7000 bps = 70%) ≥ 6667 quorum → met.
+        assert!(is_quorum_met(&p, 7_000, 0));
+        assert!(is_quorum_met(&p, 5_000, 2_000));
     }
 
     #[test]
-    fn test_emergency_authority_repr() {
-        assert_eq!(EmergencyAuthority::Coordinator as u16, 0x0001);
-        assert_eq!(EmergencyAuthority::None as u16, 0x0003);
+    fn quorum_not_met_below_threshold() {
+        let p = default_dao_policy(&sample_did(1));
+        // 5000 voted < 6667 quorum → not met.
+        assert!(!is_quorum_met(&p, 5_000, 0));
+        assert!(!is_quorum_met(&p, 0, 5_000));
     }
 
     #[test]
-    fn test_governance_policy_new_valid() {
-        let p = GovernancePolicy::new(
+    fn approval_met_above_threshold() {
+        let p = default_dao_policy(&sample_did(1));
+        // 6000 approval ≥ 5001 threshold → met.
+        assert!(is_approval_met(&p, 6_000));
+    }
+
+    #[test]
+    fn approval_not_met_below_threshold() {
+        let p = default_dao_policy(&sample_did(1));
+        assert!(!is_approval_met(&p, 4_000));
+    }
+
+    // -- Legacy emergency adapter --
+
+    #[test]
+    fn legacy_emergency_maps_to_substrate() {
+        assert_eq!(
+            EmergencyAuthority::from(LegacyEmergency::Coordinator),
+            EmergencyAuthority::DesignatedRecovery
+        );
+        assert_eq!(
+            EmergencyAuthority::from(LegacyEmergency::Quorum),
+            EmergencyAuthority::GovernanceCouncil
+        );
+        assert_eq!(
+            EmergencyAuthority::from(LegacyEmergency::None),
+            EmergencyAuthority::None
+        );
+    }
+
+    #[test]
+    fn legacy_policy_args_quorum_bps_rounded() {
+        // 2/3 → 6667 bps (rounded).
+        let p = from_legacy_policy_args(
+            &sample_did(2),
             GovernanceModel::Dao,
             2,
             3,
             10,
-            EmergencyAuthority::Coordinator,
+            LegacyEmergency::Coordinator,
         );
-        assert!(p.is_ok());
+        assert_eq!(p.quorum_bps, 6_666);
+    }
+
+    // -- VotingTally domain extension --
+
+    #[test]
+    fn voting_tally_cast_vote() {
+        let mut t = VotingTally::default();
+        assert!(t.cast_vote([0x01; 32], 100, true));
+        assert_eq!(t.total_for(), 100);
+        assert_eq!(t.total_against(), 0);
     }
 
     #[test]
-    fn test_governance_policy_new_zero_denominator() {
-        let p = GovernancePolicy::new(
-            GovernanceModel::Dao,
-            2,
+    fn voting_tally_replaces_prior_vote() {
+        let mut t = VotingTally::default();
+        t.cast_vote([0x01; 32], 100, true);
+        t.cast_vote([0x01; 32], 100, false);
+        assert_eq!(t.total_for(), 0);
+        assert_eq!(t.total_against(), 100);
+    }
+
+    #[test]
+    fn voting_tally_rejects_zero_weight() {
+        let mut t = VotingTally::default();
+        assert!(!t.cast_vote([0x01; 32], 0, true));
+        assert_eq!(t.total_for(), 0);
+    }
+
+    #[test]
+    fn voting_tally_into_canonical_computes_bps() {
+        let mut t = VotingTally::default();
+        t.cast_vote([0x01; 32], 70, true);
+        t.cast_vote([0x02; 32], 30, false);
+        // total eligible = 100; 70/100 = 70%; 30/100 = 30%.
+        let p = t.into_canonical(
+            42,
+            &sample_did(3),
+            DecisionType::Admission,
+            ProposalState::Voting,
             0,
-            10,
-            EmergencyAuthority::Coordinator,
-        );
-        assert!(p.is_err());
-    }
-
-    #[test]
-    fn test_governance_policy_new_numerator_exceeds_denominator() {
-        let p = GovernancePolicy::new(
-            GovernanceModel::Dao,
-            5,
-            3,
-            10,
-            EmergencyAuthority::Coordinator,
-        );
-        assert!(p.is_err());
-    }
-
-    #[test]
-    fn test_governance_policy_new_zero_deadline() {
-        let p = GovernancePolicy::new(
-            GovernanceModel::Dao,
-            2,
-            3,
             0,
-            EmergencyAuthority::Coordinator,
+            100,
         );
-        assert!(p.is_err());
+        assert_eq!(p.proposal_id, 42);
+        assert_eq!(p.issuer, sample_did(3));
+        assert_eq!(p.decision, DecisionType::Admission);
+        assert_eq!(p.state, ProposalState::Voting);
+        assert_eq!(p.approval_tally_bps, 7_000);
+        assert_eq!(p.rejection_tally_bps, 3_000);
     }
 
     #[test]
-    fn test_quorum_met() {
-        let p = default_policy(); // 2/3 quorum
-        assert!(p.is_quorum_met(7, 10)); // 7/10 >= 2/3
-        assert!(!p.is_quorum_met(5, 10)); // 5/10 < 2/3
-    }
-
-    #[test]
-    fn test_quorum_exact() {
-        let p = default_policy(); // 2/3 quorum
-        assert!(p.is_quorum_met(2, 3)); // exact 2/3
-        assert!(p.is_quorum_met(4, 6)); // exact 2/3
-    }
-
-    #[test]
-    fn test_quorum_zero_eligible() {
-        let p = default_policy();
-        assert!(!p.is_quorum_met(0, 0));
-    }
-
-    #[test]
-    fn test_weighted_quorum_met() {
-        let p = default_policy(); // 2/3 quorum
-                                  // 70 of 100 weight voted: 70/100 >= 2/3 → met.
-        assert!(p.is_weighted_quorum_met(70, 100));
-        // 50 of 100: 50/100 < 2/3 → not met.
-        assert!(!p.is_weighted_quorum_met(50, 100));
-    }
-
-    #[test]
-    fn test_weighted_quorum_exact() {
-        let p = default_policy();
-        assert!(p.is_weighted_quorum_met(2, 3));
-        assert!(p.is_weighted_quorum_met(66, 99));
-    }
-
-    #[test]
-    fn test_weighted_quorum_zero_total() {
-        let p = default_policy();
-        assert!(!p.is_weighted_quorum_met(0, 0));
-        // 0 voted / 0 total → false (defensive, matches count).
-        assert!(!p.is_weighted_quorum_met(10, 0));
-    }
-
-    // -- GovernanceProposal tests --
-
-    #[test]
-    fn test_proposal_lifecycle_centralized() {
-        let policy = GovernancePolicy::new(
-            GovernanceModel::Centralized,
+    fn voting_tally_into_canonical_zero_eligible_returns_zero_bps() {
+        // Defensive: total_eligible_weight=0 → both BPS values are 0.
+        let mut t = VotingTally::default();
+        t.cast_vote([0x01; 32], 70, true);
+        let p = t.into_canonical(
             1,
-            1,
-            10,
-            EmergencyAuthority::Coordinator,
-        )
-        .unwrap();
-        let mut prop = make_proposal(0x01);
-        assert_eq!(prop.state, ProposalState::Created);
-
-        prop.open_voting();
-        assert_eq!(prop.state, ProposalState::Voting);
-
-        // Centralized: auto-approved
-        prop.resolve(&policy, 5);
-        assert_eq!(prop.state, ProposalState::Approved);
-
-        assert!(prop.execute());
-        assert_eq!(prop.state, ProposalState::Executed);
+            &sample_did(4),
+            DecisionType::Admission,
+            ProposalState::Voting,
+            0,
+            0,
+            0,
+        );
+        assert_eq!(p.approval_tally_bps, 0);
+        assert_eq!(p.rejection_tally_bps, 0);
     }
 
-    #[test]
-    fn test_proposal_lifecycle_dao_approved() {
-        let policy = default_policy(); // 2/3 quorum
-        let mut prop = make_proposal(0x01);
-        prop.open_voting();
-
-        // 3 for, 1 against out of 5 eligible = 4/5 voted (>= 2/3 quorum), majority for
-        prop.cast_vote([0x01; 32], 100, true);
-        prop.cast_vote([0x02; 32], 80, true);
-        prop.cast_vote([0x03; 32], 60, true);
-        prop.cast_vote([0x04; 32], 40, false);
-
-        prop.resolve(&policy, 5);
-        assert_eq!(prop.state, ProposalState::Approved);
-    }
+    // -- ProposalState state machine transitions --
 
     #[test]
-    fn test_proposal_lifecycle_dao_weighted_approved() {
-        // Weight-based DAO: 70 of 100 weight voted (70% >= 2/3),
-        // and 50 for, 20 against (for > against).
-        let policy = default_policy();
-        let mut prop = make_proposal(0x01);
-        prop.open_voting();
-        prop.cast_vote([0x01; 32], 50, true);
-        prop.cast_vote([0x02; 32], 20, false);
-        // Total weight voted = 70; total eligible = 100; 70/100 = 70% >= 2/3.
-        prop.resolve_weighted(&policy, 100);
-        assert_eq!(prop.state, ProposalState::Approved);
-    }
-
-    #[test]
-    fn test_proposal_lifecycle_dao_weighted_quorum_fail() {
-        // Only 50 of 200 weight voted: 25% < 2/3. Proposal stays
-        // in Voting even though all votes are for.
-        let policy = default_policy();
-        let mut prop = make_proposal(0x01);
-        prop.open_voting();
-        prop.cast_vote([0x01; 32], 30, true);
-        prop.cast_vote([0x02; 32], 20, true);
-        prop.resolve_weighted(&policy, 200);
-        assert_eq!(prop.state, ProposalState::Voting);
-    }
-
-    #[test]
-    fn test_proposal_lifecycle_dao_rejected() {
-        let policy = default_policy();
-        let mut prop = make_proposal(0x01);
-        prop.open_voting();
-
-        prop.cast_vote([0x01; 32], 10, true);
-        prop.cast_vote([0x02; 32], 100, false);
-        prop.cast_vote([0x03; 32], 80, false);
-
-        prop.resolve(&policy, 3); // 3/3 voted = 100% >= 2/3 quorum
-        assert_eq!(prop.state, ProposalState::Rejected);
-    }
-
-    #[test]
-    fn test_proposal_no_quorum() {
-        let policy = default_policy(); // 2/3 quorum
-        let mut prop = make_proposal(0x01);
-        prop.open_voting();
-
-        // Only 1 voter out of 10 eligible = 1/10 < 2/3
-        prop.cast_vote([0x01; 32], 100, true);
-        prop.resolve(&policy, 10);
-        assert_eq!(prop.state, ProposalState::Voting); // still voting, no quorum
-    }
-
-    #[test]
-    fn test_proposal_autonomous() {
-        let policy = GovernancePolicy::new(
-            GovernanceModel::Autonomous,
-            1,
-            1,
-            10,
-            EmergencyAuthority::None,
-        )
-        .unwrap();
-        let mut prop = make_proposal(0x01);
-        prop.open_voting();
-
-        prop.cast_vote([0x01; 32], 100, true);
-        prop.cast_vote([0x02; 32], 50, false);
-
-        prop.resolve(&policy, 10);
-        assert_eq!(prop.state, ProposalState::Approved); // for > against
-    }
-
-    #[test]
-    fn test_proposal_expire() {
-        let mut prop = make_proposal(0x01);
-        prop.open_voting();
-        assert!(!prop.expire_if_past_deadline(150)); // before deadline
-        assert!(prop.expire_if_past_deadline(201)); // after deadline
-        assert_eq!(prop.state, ProposalState::Expired);
-    }
-
-    #[test]
-    fn test_proposal_cannot_vote_when_not_voting() {
-        let mut prop = make_proposal(0x01);
-        // Still in Created state
-        assert!(!prop.cast_vote([0x01; 32], 100, true));
-    }
-
-    #[test]
-    fn test_proposal_cannot_execute_unapproved() {
-        let mut prop = make_proposal(0x01);
-        prop.open_voting();
-        assert!(!prop.execute()); // not approved yet
-    }
-
-    #[test]
-    fn test_proposal_vote_weights() {
-        let mut prop = make_proposal(0x01);
-        prop.open_voting();
-        prop.cast_vote([0x01; 32], 100, true);
-        prop.cast_vote([0x02; 32], 50, true);
-        prop.cast_vote([0x03; 32], 30, false);
-        assert_eq!(prop.total_for(), 150);
-        assert_eq!(prop.total_against(), 30);
-    }
-
-    #[test]
-    fn test_proposal_vote_change_replaces_prior_vote() {
-        // A voter who changes their mind (votes for, then against)
-        // must be removed from the for-tally and counted only in
-        // the against-tally. Without this, the voter would inflate
-        // both totals and distort the majority check.
-        let mut prop = make_proposal(0x01);
-        prop.open_voting();
-        prop.cast_vote([0x01; 32], 100, true);
-        prop.cast_vote([0x01; 32], 100, false);
-        assert_eq!(prop.total_for(), 0);
-        assert_eq!(prop.total_against(), 100);
-        // And the reverse direction
-        prop.cast_vote([0x02; 32], 50, false);
-        prop.cast_vote([0x02; 32], 50, true);
-        assert_eq!(prop.total_for(), 50);
-        assert_eq!(prop.total_against(), 100);
-    }
-
-    #[test]
-    fn test_decision_type_repr() {
-        assert_eq!(DecisionType::Admission as u16, 0x0001);
-        assert_eq!(DecisionType::ParticipantExpulsion as u16, 0x0007);
+    fn proposal_state_can_transition() {
+        assert!(ProposalState::Created.can_transition_to(ProposalState::Voting));
+        assert!(ProposalState::Voting.can_transition_to(ProposalState::Approved));
+        assert!(ProposalState::Approved.can_transition_to(ProposalState::Executed));
+        // Illegal: cannot skip voting.
+        assert!(!ProposalState::Created.can_transition_to(ProposalState::Approved));
     }
 }

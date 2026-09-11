@@ -227,7 +227,7 @@ fn nfc_normalize(s: &str) -> String {
     #[cfg(feature = "unicode-nfc")]
     {
         use unicode_normalization::UnicodeNormalization;
-        return s.nfc().collect();
+        s.nfc().collect()
     }
     #[cfg(not(feature = "unicode-nfc"))]
     {

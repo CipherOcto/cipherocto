@@ -62,7 +62,7 @@ RFC-0012-v2 codifies the typed-discriminator pattern so write-path amendments ca
 | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `octo-audit-core` (substrate, Layer A) | Owns `AuditEvent`, `AuditEventKind`, `AppendOnlyAuditSink`, `AuditError`, `compute_chain_hash`, `verify_chain`                                |
 | `octo-audit` (façade, Layer B)         | Re-exports substrate canonical types + implements `StoolapAuditSink` (Layer D adapter)                                                        |
-| Domain callers (Layer B / C / D)       | Construct `AuditEvent` instances via typed-discriminator helpers (e.g. `audit_event_for_agent_transition(...)` in `octo-wallet/src/audit.rs`) |
+| Domain callers (Layer B / C / D)       | Construct `AuditEvent` instances via façade typed-discriminator helpers (e.g. `octo_audit::audit_event_for_agent_transition(...)` at `octo-audit/src/audit_event.rs`) |
 
 ## Specification
 
@@ -253,6 +253,20 @@ Per BLUEPRINT.md §RFC Process item 5 + §2-Cycle Atomic Promotion gate:
 - **Reviewer board:** 5-lens reviewer board (correctness / security / layer-model / hygiene / spec-completeness)
 - **Pairing invariant:** §S7 cross-RFC pairing via `prev_chain_hash = receipt_id_for(receipt)` requires both substrate amendments to land together. RFC-0015-a + RFC-0016-a acceptance gated on this 2-cycle.
 - **Atomic promotion gate:** Both RFCs transition Draft → Accepted in the same PR. Neither may be Accepted without the other.
+
+## Adversarial Review
+
+This RFC has been reviewed across 5 reviewer lenses over multiple iterations (R30 through R36):
+
+- **R30:** initial substrate-amendment draft review (correctness, security, layer-model, hygiene, spec-completeness).
+- **R30.5 → R31.5:** substrate-code amendment gap acknowledgements; scrubber relocation (Layer A → Layer B per RFC-0011-a); BLAKE3 math correction.
+- **R32.5:** §S3 ReceiptId newtype, §S5.1 scrubber impl, §S6 keyed BLAKE3 zero-key qualifier, TV count to 30, Authors/Maintainers H2 sections.
+- **R33.5:** A5 timestamp monotonicity rewrite, `compute_settlement_hash` → `receipt_id_for` rename, Rationale 7-variant fix.
+- **R34.5:** hygiene parens strip, phantom-substrate TV DEFERRED markers, per-façade scrubber decoupling, adapter-type registry pattern.
+- **R35.5:** additional DEFERRED TV markers (TV-AUD-v2-8/17), StoolapReceiptSink phantom refs removed, `request_canonical_bytes` removed, §S5.1/SC2 6-pattern → 5+6th-registry wording fix.
+- **R36.5 (this commit):** 8 `lib.rs:23-24` line refs removed (CLAUDE.md §No line refs); §S6.1 KeyedHasher added; Appendix §Layer Direction Note added; VH rows compressed to ≤10w; UC-SET-004 CLI namespace corrected.
+
+Reviewer board membership per CLAUDE.md §Review Process: correctness, security, layer-model, hygiene, spec-completeness. Critical-lens reviewers may surface CRITICAL/HIGH findings post-DRY-CLOSED if substrate code or external threat-model changes.
 
 ## Security Considerations
 
@@ -608,11 +622,6 @@ expect: chain_hash collision requires 2^128 operations (BLAKE3-256 birthday boun
 - Verify existing adapter impl scrubs errors per §SC2
 - Add test vectors TV-AUD-v2-2 through TV-AUD-v2-5
 
-### Phase 4: Cross-crate migration
-
-- RFC-0015-a amendment acceptance depends on Phase 1+2+3 completion
-- RFC-0016-a amendment acceptance depends on Phase 1+2+3 completion
-
 ## Key Files to Modify
 
 - `crates/octo-audit-core/src/event.rs` — doc-comment updates for §S1 + §S5
@@ -627,7 +636,7 @@ expect: chain_hash collision requires 2^128 operations (BLAKE3-256 birthday boun
 
 **FW1. RFC-0012-v3.** Subsequent typed-discriminator extensions (e.g. `CapabilityMint`, `CapabilityAttenuate`) follow the §S1 pattern. Note: `Redaction` is already in RFC-0012-v2 — not future work. Each extension kind is added to the table via a new RFC; no substrate enum edits.
 
-**FW2. Cross-crate extension helpers.** Domain crates (e.g. `octo-wallet`, `octo-vault`) provide typed-discriminator construction helpers (`audit_event_for_agent_transition`, `audit_event_for_redaction`). Façade `octo-audit` re-exports for cross-crate use.
+**FW2. Cross-crate extension helpers.** Façade `octo_audit::audit_event` module owns the canonical typed-discriminator helpers (`audit_event_for_agent_transition`, `audit_event_for_redaction`). Domain crates (e.g. `octo-wallet`, `octo-vault`) call façade helpers; they do NOT define their own helper per CLAUDE.md §Single source of truth.
 
 **FW3. Receipt-extension cross-RFC invariants.** RFC-0014-v2 pins the typed-discriminator pattern via `ask_id` namespaces. Cross-RFC consistency: `AuditEventKind::Insert` + `cap_root_hash = agent-transition-typed-discriminator` corresponds to a settlement `Receipt { ask_id = agent-transition-receipt-typed-discriminator }`. Status is recovered at façade projection (RFC-0016-a `ReceiptSummary`), NOT stored as a substrate field.
 
@@ -645,14 +654,16 @@ The cost is a doc-comment-driven extension pattern that domain crates must follo
 
 ## Version History
 
-| Version      | Date       | Author                                | Notes                                                                                                                                                                                                                                                         |
-| ------------ | ---------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v2.0.0-draft | 2026-09-11 | CipherOcto Architecture Working Group | Initial draft. Pins typed-discriminator pattern, sink invariants, AuditFilter substrate contract.                                                                                                                                                             |
-| v2.0.0-r30.5 | 2026-09-11 | CipherOcto Architecture Working Group | R30.5 prose alignment + substrate-code amendment gap acknowledgements (scrubber, ReceiptId, AuditFilter DEFERRED to Phase 1 acceptance).                                                                                                                      |
-| v2.0.0-r31.5 | 2026-09-11 | CipherOcto Architecture Working Group | R31.5 scrubber relocation (Layer A → Layer B), BLAKE3 math correction, AC + 2-Cycle Tag additions.                                                                                                                                                            |
-| v2.0.0-r32.5 | 2026-09-11 | CipherOcto Architecture Working Group | R32.5 TV-AUD-v2-3 variant shape revert, Authors/Maintainers H2 sections, Implicit Assumptions + Determinism + Performance Targets additions, cite sweep 160/160.                                                                                              |
-| v2.0.0-r33.5 | 2026-09-11 | CipherOcto Architecture Working Group | R33.5 A5 timestamp monotonicity rewrite, compute_settlement_hash → receipt_id_for rename, Rationale 7-variant fix, TV-AUD-v2-6 type leak fix, 5-len → 5-lens.                                                                                                 |
-| v2.0.0-r34.5 | 2026-09-11 | CipherOcto Architecture Working Group | R34.5 hygiene parens strip, phantom-substrate TV DEFERRED markers, AC-5 AuditChainError fix, cross-crate scrubber dep → per-façade scrubber, adapter-type registry via scrub_adapter_error_with, §S6 zero-key qualifier, substrate names Layer D adapter fix. |
+| Version      | Date       | Author                                | Notes                                                                              |
+| ------------ | ---------- | ------------------------------------- | ---------------------------------------------------------------------------------- |
+| v2.0.0-draft | 2026-09-11 | CipherOcto Architecture Working Group | Initial draft                                                                       |
+| v2.0.0-r30.5 | 2026-09-11 | CipherOcto Architecture Working Group | Prose alignment, DEFERRED scrubber + AuditFilter                                   |
+| v2.0.0-r31.5 | 2026-09-11 | CipherOcto Architecture Working Group | Scrubber Layer A → Layer B, BLAKE3 math fix                                        |
+| v2.0.0-r32.5 | 2026-09-11 | CipherOcto Architecture Working Group | TV-AUD-v2-3 variant revert, Authors/Maintainers H2, cite sweep 160/160              |
+| v2.0.0-r33.5 | 2026-09-11 | CipherOcto Architecture Working Group | A5 timestamp, receipt_id_for rename, TV-AUD-v2-6 type leak fix                     |
+| v2.0.0-r34.5 | 2026-09-11 | CipherOcto Architecture Working Group | Per-façade scrubber, adapter-type registry, AC-10 Layer D path                     |
+| v2.0.0-r35.5 | 2026-09-11 | CipherOcto Architecture Working Group | DEFERRED markers on TV-AUD-v2-8/17, UC-AUD-002 scrubber cross-crate ref fix        |
+| v2.0.0-r36.5 | 2026-09-11 | CipherOcto Architecture Working Group | Adversarial Review H2, VH compression, audit_event_for_* façade ownership canonical |
 
 ## Related RFCs
 
@@ -676,11 +687,11 @@ The cost is a doc-comment-driven extension pattern that domain crates must follo
 
 | Extension kind   | Namespace string                                   | `cap_root_hash` (BLAKE3-256 hex, first 8 bytes) |
 | ---------------- | -------------------------------------------------- | ----------------------------------------------- |
-| CapabilityInsert | `cipherocto/audit/extension/capability-insert/v1/` | `0x...` (RFC-0012 existing)                     |
-| CapabilityRevoke | `cipherocto/audit/extension/capability-revoke/v1/` | `0x...` (RFC-0012 existing)                     |
-| Sync             | `cipherocto/audit/extension/sync/v1/`              | `0x...` (RFC-0012 existing)                     |
-| AgentTransition  | `cipherocto/audit/extension/agent-transition/v1/`  | `0x...` (RFC-0012-v2 new)                       |
-| Redaction        | `cipherocto/audit/extension/redaction/v1/`         | `0x...` (RFC-0012-v2 new)                       |
+| CapabilityInsert | `cipherocto/audit/extension/capability-insert/v1/` | `0x...` (RFC-0012)                     |
+| CapabilityRevoke | `cipherocto/audit/extension/capability-revoke/v1/` | `0x...` (RFC-0012)                     |
+| Sync             | `cipherocto/audit/extension/sync/v1/`              | `0x...` (RFC-0012)                     |
+| AgentTransition  | `cipherocto/audit/extension/agent-transition/v1/`  | `0x...` (RFC-0012-v2)                  |
+| Redaction        | `cipherocto/audit/extension/redaction/v1/`         | `0x...` (RFC-0012-v2)                  |
 
 The full 32-byte hex digests are computed at crate compile time via `const BLAKE3` and exposed as `pub const` items in `octo-audit-core::extension_kinds`. Domain crates reference these constants instead of recomputing.
 

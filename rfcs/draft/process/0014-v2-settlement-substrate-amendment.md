@@ -45,7 +45,7 @@ Per CLAUDE.md §Architectural Principles + §Extension over enumeration, RFC-001
 **G2.** Preserve byte-identical canonical-bytes serialization form for existing receipts.
 **G3.** Maintain `#[non_exhaustive]` discipline on `Receipt` so substrate-stored receipts remain forward-compatible with future extensions.
 **G4.** Provide type-safe `ReceiptId` newtype for façade-level use without changing canonical substrate `Receipt.receipt_id: u64`.
-**G5.** Lock the substrate contract surface so Layer D adapter implementations (e.g. `quota-router-sm-engine::{store,sink}` per substrate `lib.rs:23-24`) have no ambiguity on what they must enforce.
+**G5.** Lock the substrate contract surface so Layer D adapter implementations have no ambiguity on what they must enforce.
 
 ## Motivation
 
@@ -61,7 +61,7 @@ RFC-0014-v2 codifies the typed-discriminator pattern via `ask_id` extension name
 | Role                                        | Authority                                                                                                                                                                                         |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `octo-settlement-core` (substrate, Layer A) | Owns `Receipt`, `Ask`, `AskState`, `Reservation`, `ReservationState`, `SettlementStore`, `AppendOnlyReceiptSink`, `SettlementError`, `ReceiptId`, `verify_receipt_chain`, `receipt_id_for`        |
-| `octo-settlement` (façade, Layer B)         | Re-exports substrate canonical types + provides `ReceiptSummary` projection + `ReceiptStatus` enum (Layer D adapters live at `quota-router-sm-engine::{store,sink}` per substrate `lib.rs:23-24`) |
+| `octo-settlement` (façade, Layer B)         | Re-exports substrate canonical types + provides `ReceiptSummary` projection + `ReceiptStatus` enum |
 | Domain callers (Layer B / C / D)            | Construct `Receipt` instances via typed-discriminator helpers (e.g. `receipt_for_ask_settled(...)` in `octo-settlement/src/receipt.rs`)                                                           |
 
 **Façade projection concerns (NOT substrate):**
@@ -318,7 +318,7 @@ once_cell = { version = "1.19" }
 
 ### §S6 — Canonical-hash construction (keyed BLAKE3 with zero key)
 
-§S6 pins the existing canonical-hash construction for receipts. The BLAKE3 key is the zero-filled 32-byte constant `[0; 32]` (intentional per substrate consensus posture — see A1 + substrate `chain.rs` doc-comment; production deployments needing keyed-hash defense-in-depth MUST wrap via a `KeyedHasher` trait on Layer C, see §S6.1).
+§S6 pins the existing canonical-hash construction for receipts. The BLAKE3 key is the zero-filled 32-byte constant `[0; 32]` (intentional per substrate consensus posture — see A1 + substrate `octo-settlement-core::chain` doc-comment; production deployments needing keyed-hash defense-in-depth MUST wrap via a `KeyedHasher` trait on Layer C, see §S6.1 below).
 
 ```
 settlement_hash = BLAKE3-256-keyed(
@@ -353,6 +353,28 @@ pub fn receipt_id_for(receipt: &Receipt) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 ```
+
+#### §S6.1 — KeyedHasher wrapping guidance (Layer C defense-in-depth)
+
+§S6.1 declares the production-defense-in-depth path for callers who need keyed-hash protection beyond the substrate zero-key consensus posture. The substrate `receipt_id_for` function on Layer A uses key `[0; 32]` per §S6 (intentional for cross-replica consensus without key-management). Layer C callers MAY wrap `receipt_id_for` via the `KeyedHasher` trait to inject real key material from an HSM / vault / secrets manager at startup.
+
+```rust
+// Layer C wrapper pattern (substrate-faithful; trait itself lands at acceptance)
+pub trait KeyedHasher {
+    fn receipt_id_with_key(receipt: &Receipt, key: &[u8; 32]) -> [u8; 32];
+}
+
+pub struct HsmKeyedHasher { /* hsm_handle, pubkey_pinner */ }
+impl KeyedHasher for HsmKeyedHasher {
+    fn receipt_id_with_key(receipt: &Receipt, key: &[u8; 32]) -> [u8; 32] {
+        // Layer D adapter wraps substrate receipt_id_for via domain-specific key
+        // inject; verified at acceptance via Phase 1 substrate-code amendment mission.
+        *octo_settlement_core::chain::receipt_id_for(receipt) // placeholder
+    }
+}
+```
+
+**Posture:** Layer C wrapping is OPT-IN. Substrate-faithful deployments without HSM/Vault key material retain the §S6 zero-key consensus posture (no per-deployment key binding; cross-replica consensus only). Acceptance mission: ship default `ZeroKeyHasher` impl + HSM-gated `HsmKeyedHasher` impl + adapter-side signing-key publication.
 
 ### §S7 — Cross-RFC consistency with RFC-0012-v2
 
@@ -408,7 +430,7 @@ The RFC is Accepted when ALL of the following are true:
 - **AC-7.** Adapter implementations call the canonical scrubber before wrapping into `SinkSpecific`; each Layer B façade owns its own scrubber instance (e.g. `octo_audit::scrub::scrub_adapter_error`, `octo_settlement::scrub::scrub_adapter_error` — pattern duplicated per-façade to avoid sibling Layer B coupling). Raw error chains never reach substrate.
 - **AC-8.** Paired acceptance with RFC-0012-v2 per BLUEPRINT.md §2-Cycle Atomic Promotion gate.
 - **AC-9.** All Test Vectors in §Test Vectors produce expected outputs (verified by `cargo test -p octo-settlement`).
-- **AC-10.** Layer D adapter implementations (per substrate `octo-settlement/src/lib.rs:23-24`, concrete sink impls live at `quota-router-sm-engine::{store,sink}`) provide monotonicity + transaction-scoped atomic persistence; atomic-or-rollback contract honored (no partial persistence observable on adapter failure).
+- **AC-10.** Layer D adapter implementations provide monotonicity + transaction-scoped atomic persistence; atomic-or-rollback contract honored (no partial persistence observable on adapter failure). See Appendix §Layer Direction Note for canonical adapter-location reference.
 
 ## 2-Cycle Atomic Promotion Tag
 
@@ -418,6 +440,20 @@ Per BLUEPRINT.md §RFC Process item 5 + §2-Cycle Atomic Promotion gate:
 - **Reviewer board:** 5-lens reviewer board (correctness / security / layer-model / hygiene / spec-completeness)
 - **Pairing invariant:** §S7 cross-RFC pairing via `prev_chain_hash = receipt_id_for(receipt)` requires both substrate amendments to land together. RFC-0015-a + RFC-0016-a acceptance gated on this 2-cycle.
 - **Atomic promotion gate:** Both RFCs transition Draft → Accepted in the same PR. Neither may be Accepted without the other.
+
+## Adversarial Review
+
+This RFC has been reviewed across 5 reviewer lenses over multiple iterations (R30 through R36):
+
+- **R30:** initial substrate-amendment draft review (correctness, security, layer-model, hygiene, spec-completeness).
+- **R30.5 → R31.5:** substrate-code amendment gap acknowledgements; scrubber relocation (Layer A → Layer B per RFC-0011-a); BLAKE3 math correction.
+- **R32.5:** §S3 ReceiptId newtype, §S5.1 scrubber impl, §S6 keyed BLAKE3 zero-key qualifier, TV count to 30, Authors/Maintainers H2 sections.
+- **R33.5:** A5 timestamp monotonicity rewrite, `compute_settlement_hash` → `receipt_id_for` rename, Rationale 7-variant fix.
+- **R34.5:** hygiene parens strip, phantom-substrate TV DEFERRED markers, per-façade scrubber decoupling, adapter-type registry pattern.
+- **R35.5:** additional DEFERRED TV markers (TV-SET-v2-3..30), 5 StoolapReceiptSink phantom refs removed, `request_canonical_bytes` removed.
+- **R36.5 (this commit):** 8 `lib.rs:23-24` line refs removed (CLAUDE.md §No line refs); §S6.1 KeyedHasher added; Appendix §Layer Direction Note added; VH rows compressed to ≤10w; UC-SET-004 CLI namespace corrected.
+
+Reviewer board membership per CLAUDE.md §Review Process: correctness, security, layer-model, hygiene, spec-completeness. Critical-lens reviewers may surface CRITICAL/HIGH findings post-DRY-CLOSED if substrate code or external threat-model changes.
 
 ## Security Considerations
 
@@ -453,7 +489,7 @@ Per BLUEPRINT.md §RFC Process item 5 + §2-Cycle Atomic Promotion gate:
 
 **E1. Substrate storage cost.** Typed-discriminator pattern reuses existing `ask_id` field. No substrate storage cost increase. Extension payload is encoded in domain-crate-side canonical hash inputs and surfaced via façade projection.
 
-**E2. Adapter implementation cost.** Existing Layer D adapter impls at `quota-router-sm-engine::{store,sink}` (per substrate `lib.rs:23-24`) require no changes for v2.0.0 conformance. §S4 invariants are already substrate-level.
+**E2. Adapter implementation cost.** Existing Layer D adapter impls require no changes for v2.0.0 conformance. §S4 invariants are already substrate-level. See Appendix §Layer Direction Note for adapter-location reference.
 
 **E3. Domain crate migration cost.** Existing callers that construct `Receipt` directly (e.g. `octo-settlement-core::ask`) must migrate to typed-discriminator helpers for new extension kinds. RFC-0016-a + RFC-0015-a pin the helper signatures.
 
@@ -465,7 +501,7 @@ Per BLUEPRINT.md §RFC Process item 5 + §2-Cycle Atomic Promotion gate:
 
 **C2. Source compatibility.** `Receipt` retains its 6-field public surface. `SettlementError` retains its 7-variant form. New `ReceiptId` newtype is additive.
 
-**C3. Adapter compatibility.** Existing Layer D adapter impls at `quota-router-sm-engine::{store,sink}` (per substrate `lib.rs:23-24`) remain RFC-0014-v2 conformant. No adapter rewrite required.
+**C3. Adapter compatibility.** Existing Layer D adapter impls remain RFC-0014-v2 conformant. No adapter rewrite required. See Appendix §Layer Direction Note.
 
 **C4. Crate version.** `octo-settlement-core` advances from v1.x to v2.0.0 (semver-major). Per CLAUDE.md §Layer A stability rules, this is a one-time major bump for the typed-discriminator + sink invariant codification.
 
@@ -497,7 +533,7 @@ expect: append returns Ok(())
         last_receipt_id() returns Some(receipt.receipt_id)
 ```
 
-**DEFERRED:** Layer D adapter append behavior verified at acceptance per Phase 1 substrate-code amendment mission (`quota-router-sm-engine::{store,sink}` relocation per substrate `lib.rs:23-24`).
+**DEFERRED:** Layer D adapter append behavior verified at acceptance per Phase 1 substrate-code amendment mission. See Appendix §Layer Direction Note.
 
 ### TV-SET-v2-4: Sink append rejects tampered settlement_hash
 
@@ -697,7 +733,7 @@ expect: identical 32-byte digest output
         (zero key [0; 32] intentional per A1; no key management required for cross-replica consensus)
 ```
 
-**DEFERRED:** Substrate-code amendment mission: verify `receipt_id_for` exists in substrate with current signature (`chain.rs:47-50`).
+**DEFERRED:** Substrate-code amendment mission: verify `receipt_id_for` exists in substrate with current signature (`octo-settlement-core::chain::receipt_id_for`).
 
 ### TV-SET-v2-26: cross-prefix second-preimage resistance
 
@@ -781,16 +817,11 @@ expect: adapter rolls back transaction (atomic-or-rollback contract per AC-10)
 - Add façade-side `ReceiptStatus` enum (recovered from `ask_id` typed-discriminator)
 - Add façade-side `ReceiptSummary` projection struct
 
-### Phase 3: Adapter conformance verification (Layer D sinks at `quota-router-sm-engine`)
+### Phase 3: Adapter conformance verification (Layer D)
 
 - Verify existing adapter impl satisfies §S4.5 atomic persistence
 - Verify existing adapter impl scrubs errors per §SC2
 - Add test vectors TV-SET-v2-3 through TV-SET-v2-6
-
-### Phase 4: Cross-crate migration
-
-- RFC-0016-a amendment acceptance depends on Phase 1+2+3 completion
-- RFC-0015-a amendment acceptance depends on Phase 1+2+3 completion
 
 ## Key Files to Modify
 
@@ -826,14 +857,16 @@ The cost is a doc-comment-driven extension pattern that domain crates must follo
 
 ## Version History
 
-| Version      | Date       | Author                                | Notes                                                                                                                                                                                                                                                                                          |
-| ------------ | ---------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v2.0.0-draft | 2026-09-11 | CipherOcto Architecture Working Group | Initial draft. Pins typed-discriminator pattern via `ask_id` namespaces, `ReceiptId` newtype, sink invariants, cross-RFC consistency with RFC-0012-v2.                                                                                                                                         |
-| v2.0.0-r30.5 | 2026-09-11 | CipherOcto Architecture Working Group | R30.5 prose alignment + substrate-code amendment gap acknowledgements (scrubber, ReceiptId DEFERRED to Phase 1 acceptance).                                                                                                                                                                    |
-| v2.0.0-r31.5 | 2026-09-11 | CipherOcto Architecture Working Group | R31.5 scrubber relocation (Layer A → Layer B), BLAKE3 math correction, AC + 2-Cycle Tag additions.                                                                                                                                                                                             |
-| v2.0.0-r32.5 | 2026-09-11 | CipherOcto Architecture Working Group | R32.5 §S3 ReceiptId newtype, §S5.1 scrubber impl, §S6 keyed BLAKE3 zero-key qualifier, TV count to 30, Authors/Maintainers H2 sections, cite sweep 160/160.                                                                                                                                    |
-| v2.0.0-r33.5 | 2026-09-11 | CipherOcto Architecture Working Group | R33.5 A5 timestamp monotonicity rewrite, compute_settlement_hash → receipt_id_for rename, Rationale 7-variant fix, AskSettled row consistency, 2-Cycle Tag prev_chain_hash invariant.                                                                                                          |
-| v2.0.0-r34.5 | 2026-09-11 | CipherOcto Architecture Working Group | R34.5 hygiene parens strip, phantom-substrate TV DEFERRED markers, AC-7 cross-crate scrubber dep → per-façade scrubber, scrub_adapter_error_with adapter-type registry, AC-10 StoolapReceiptSink → Layer D, §S6 zero-key qualifier header, §S5.1 hardcoded adapter types → registry parameter. |
+| Version      | Date       | Author                                | Notes                                                                              |
+| ------------ | ---------- | ------------------------------------- | ---------------------------------------------------------------------------------- |
+| v2.0.0-draft | 2026-09-11 | CipherOcto Architecture Working Group | Initial draft                                                                       |
+| v2.0.0-r30.5 | 2026-09-11 | CipherOcto Architecture Working Group | Prose alignment, DEFERRED scrubber + ReceiptId                                    |
+| v2.0.0-r31.5 | 2026-09-11 | CipherOcto Architecture Working Group | Scrubber Layer A → Layer B, BLAKE3 math fix                                        |
+| v2.0.0-r32.5 | 2026-09-11 | CipherOcto Architecture Working Group | TV count to 30, Authors/Maintainers H2, cite sweep                                |
+| v2.0.0-r33.5 | 2026-09-11 | CipherOcto Architecture Working Group | Timestamp monotonicity, receipt_id_for rename                                      |
+| v2.0.0-r34.5 | 2026-09-11 | CipherOcto Architecture Working Group | Per-façade scrubber, adapter-type registry, Layer D AC-10                          |
+| v2.0.0-r35.5 | 2026-09-11 | CipherOcto Architecture Working Group | DEFERRED markers on 9 TVs, 5 StoolapReceiptSink phantom refs removed               |
+| v2.0.0-r36.5 | 2026-09-11 | CipherOcto Architecture Working Group | 8 lib.rs line refs removed (CLAUDE.md §No line refs), §S6.1 KeyedHasher added     |
 
 ## Related RFCs
 
@@ -849,7 +882,7 @@ The cost is a doc-comment-driven extension pattern that domain crates must follo
 - **UC-SET-001 — Agent lifecycle settlement.** When an agent transitions state (RFC-0015-a `transition_agent`), a corresponding `AgentTransitionReceipt` is settled with `ask_id` typed-discriminator namespace `cipherocto/settlement/extension/agent-transition-receipt/v1/`. The audit event for the transition (RFC-0012-v2 `AuditEventKind::Insert` + cap_root_hash namespace) is paired with the receipt via `prev_chain_hash = receipt_id_for(receipt)`.
 - **UC-SET-002 — Ask rejection.** When a downstream router rejects an ask (e.g. insufficient capacity), a corresponding `AskRejected` receipt is settled with `ask_id` namespace `cipherocto/settlement/extension/ask-rejected/v1/`. The audit event for the rejection (RFC-0012-v2 `AuditEventKind::Revoke` + Redaction namespace) is paired similarly.
 - **UC-SET-003 — Partial settlement supplement.** When a settlement is partially filled and supplemented (e.g. multi-hop routing), a corresponding `AskPartial` receipt is settled with `ask_id` namespace `cipherocto/settlement/extension/ask-partial/v1/`. The partial supplemental amount is encoded in domain-crate-side canonical hash inputs; the substrate does NOT inspect the extension payload.
-- **UC-SET-004 — Receipt projection at façade.** When a CLI consumer requests `octo audit list` or `octo audit show <receipt_id>` (RFC-0016-a), the façade projects the canonical `Receipt` into `ReceiptSummary` via typed-discriminator lookup on `ask_id`. The projection is read-only; substrate persistence is unchanged.
+- **UC-SET-004 — Receipt projection at façade.** When a CLI consumer requests `octo settlement list` or `octo settlement show <receipt_id>` (RFC-0016-a), the façade projects the canonical `Receipt` into `ReceiptSummary` via typed-discriminator lookup on `ask_id`. The projection is read-only; substrate persistence is unchanged.
 
 ## Appendices
 
@@ -858,9 +891,9 @@ The cost is a doc-comment-driven extension pattern that domain crates must follo
 | Extension kind         | Namespace string                                                                                                           | `ask_id` prefix bytes (BLAKE3-256 input prefix) |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
 | AskSettled             | `cipherocto/settlement/extension/ask-settled/v1/` (ask_id = BLAKE3-256 of namespace \|\| canonical_ask_id per §S1 pattern) | RFC-0014                                        |
-| AskPartial             | `cipherocto/settlement/extension/ask-partial/v1/`                                                                          | RFC-0014-v2 new                                 |
-| AskRejected            | `cipherocto/settlement/extension/ask-rejected/v1/`                                                                         | RFC-0014-v2 new                                 |
-| AgentTransitionReceipt | `cipherocto/settlement/extension/agent-transition-receipt/v1/`                                                             | RFC-0014-v2 new (cross-RFC with RFC-0015-a)     |
+| AskPartial             | `cipherocto/settlement/extension/ask-partial/v1/`                                                                          | RFC-0014-v2 (cross-RFC with RFC-0015-a)          |
+| AskRejected            | `cipherocto/settlement/extension/ask-rejected/v1/`                                                                         | RFC-0014-v2 (cross-RFC with RFC-0016-a)          |
+| AgentTransitionReceipt | `cipherocto/settlement/extension/agent-transition-receipt/v1/`                                                             | RFC-0014-v2 (cross-RFC with RFC-0015-a)          |
 
 ### Appendix B: Substrate-vs-façade boundary
 
@@ -869,15 +902,26 @@ The cost is a doc-comment-driven extension pattern that domain crates must follo
 | `Receipt` struct               | owned                         | re-export                                                                                     |
 | `ReceiptId` newtype            | owned                         | re-export                                                                                     |
 | `SettlementError` enum         | owned                         | re-export                                                                                     |
-| `AppendOnlyReceiptSink` trait  | owned                         | re-export (concrete sink impls live at `quota-router-sm-engine` per substrate `lib.rs:23-24`) |
+| `AppendOnlyReceiptSink` trait  | owned                         | re-export (concrete sink impls are Layer D; see Appendix §Layer Direction Note) |
 | `verify_receipt_chain`         | owned                         | re-export                                                                                     |
 | `receipt_id_for`               | owned                         | re-export                                                                                     |
 | `ReceiptStatus` enum           | NOT owned (façade projection) | owned (Layer B projection)                                                                    |
 | `ReceiptSummary` projection    | NOT owned (façade projection) | owned (Layer B projection)                                                                    |
 | Typed-discriminator helpers    | doc-comment only              | owned (`receipt_for_*` functions)                                                             |
-| Storage adapter (Layer D sink) | NOT owned                     | NOT owned (concrete impls live at `quota-router-sm-engine` per substrate `lib.rs:23-24`)      |
+| Storage adapter (Layer D sink) | NOT owned                     | NOT owned (Layer D; see Appendix §Layer Direction Note)      |
 
 RFC-0014-v2 explicitly pins this boundary. Substrate stays free of projection logic, status interpretation, and storage adapter logic — all three are Layer B (or Layer D) concerns per CLAUDE.md §Layer direction rule.
+
+### Appendix §Layer Direction Note: Layer D adapter-location reference
+
+This note is the canonical reference for Layer D sink impls. Substrate §S, §G, §AC, §E, §C text references this appendix rather than re-stating adapter paths (per CLAUDE.md §Layer direction rule + §No line refs anywhere).
+
+| Substrate (Layer A)                    | Layer D adapter impl owner              | Location of concrete impl                   |
+| -------------------------------------- | --------------------------------------- | ------------------------------------------- |
+| `octo-settlement-core` (substrate)     | quota-router-sm-engine specialized node  | `quota-router-sm-engine::{store, sink}` modules (per substrate `octo-settlement` façade module preamble) |
+| `octo-audit-core` (substrate)          | own Layer D adapter at same-crate path   | `crates/octo-audit/src/storage/stoolap.rs` (per substrate `octo-audit` façade module preamble) |
+
+**Why split here:** RFC-0012-v2 audit substrate has its own façade-owned Layer D adapter (`StoolapAuditSink`); RFC-0014-v2 settlement substrate's Layer D adapter lives at a different crate (`quota-router-sm-engine`) entirely. Both are Layer D, owned separately, conforming to the §S4.5 / §S2.5 atomic-persistence contract.
 
 ### Appendix C: Cross-RFC consistency table
 

@@ -36,34 +36,36 @@ This RFC closes the phantom-crate half identified in `docs/audits/2026-09-10-rfc
 - RFC-0205 + RFC-0206 — `octo-storage-core` precedent (Layer A frozen substrate pattern; cited analog)
 
 > **Dependency Validation Rules:**
+>
 > 1. DAG (no cycles); Requires listed as mission prereqs
 > 2. RFC-0855 §11 is the source-of-truth for canonical variant discriminants; RFC-0013 ADDS `#[non_exhaustive]` on `ProposalState` + `DecisionType` + `GovernanceModel`, adds tally helpers, adds Layer B façade; does NOT alter RFC-0855 §11 semantics
 > 3. SQL schema migration is a separate concern — see §Migration Plan Phase 2 SQL migration note
 
 ## Design Goals
 
-| Goal | Target | Metric |
-| ---- | ------ | ------ |
-| G1 | Layer A frozen | `octo-governance-core` depends only on `octo-ident` (informational), `serde`, `thiserror`; no storage, no IO, no network; semver-major only |
-| G2 | Pure tally helpers | `voting_weight` + `tally_quorum` + `is_quorum_met` are pure functions; no side effects, no IO, deterministic |
-| G3 | Cross-domain canonical types | `ProposalState` + `DecisionType` + `GovernanceModel` + `GovernancePolicy` + `GovernanceProposal` defined exactly once in substrate; all consumers `pub use` from core |
-| G4 | Extension surface | All enums are `#[non_exhaustive]`; new decision types + governance models + proposal states land via substrate amendments |
-| G5 | RFC-0855 §11 variant parity | All 6 `ProposalState` variants (`Created`, `Voting`, `Approved`, `Rejected`, `Executed`, `Expired`) preserved byte-identically; `repr(u16)` discriminants unchanged |
-| G6 | RFC-0011-g name parity | `octo-governance` (Layer B façade) exposes canonical names CLI consumes; substrate names map to RFC-0011-g §Substrate `[ADD]` per §Key Files to Modify §CLI mapping table |
+| Goal | Target                       | Metric                                                                                                                                                                    |
+| ---- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| G1   | Layer A frozen               | `octo-governance-core` depends only on `octo-ident` (informational), `serde`, `thiserror`; no storage, no IO, no network; semver-major only                               |
+| G2   | Pure tally helpers           | `voting_weight` + `tally_quorum` + `is_quorum_met` are pure functions; no side effects, no IO, deterministic                                                              |
+| G3   | Cross-domain canonical types | `ProposalState` + `DecisionType` + `GovernanceModel` + `GovernancePolicy` + `GovernanceProposal` defined exactly once in substrate; all consumers `pub use` from core     |
+| G4   | Extension surface            | All enums are `#[non_exhaustive]`; new decision types + governance models + proposal states land via substrate amendments                                                 |
+| G5   | RFC-0855 §11 variant parity  | All 6 `ProposalState` variants (`Created`, `Voting`, `Approved`, `Rejected`, `Executed`, `Expired`) preserved byte-identically; `repr(u16)` discriminants unchanged       |
+| G6   | RFC-0011-g name parity       | `octo-governance` (Layer B façade) exposes canonical names CLI consumes; substrate names map to RFC-0011-g §Substrate `[ADD]` per §Key Files to Modify §CLI mapping table |
 
 ## Motivation
 
 RFC-0011-g §Substrate `[ADD]` Signatures declares `crates/octo-governance/src/lib.rs` with three IO functions: `snapshot`, `attest`, `vote`. The crate does not exist (`ls crates/` returns no `octo-governance`). Governance substrate landed in-place across 2 domain crates:
 
-| Domain crate | Module | Substrate role |
-|---|---|---|
-| `octo-network` | `mon/governance.rs` (663 LoC) | Primary home: state machine + IO + tally logic |
-| `octo-reputation` | `migrations/v012__reputation_anchors_governance.sql` | Storage: governance anchor persistence |
-| `octo-coordinator-types` | `state.rs` | Type re-export from `octo-network/mon` |
+| Domain crate             | Module                                               | Substrate role                                 |
+| ------------------------ | ---------------------------------------------------- | ---------------------------------------------- |
+| `octo-network`           | `mon/governance.rs` (663 LoC)                        | Primary home: state machine + IO + tally logic |
+| `octo-reputation`        | `migrations/v012__reputation_anchors_governance.sql` | Storage: governance anchor persistence         |
+| `octo-coordinator-types` | `state.rs`                                           | Type re-export from `octo-network/mon`         |
 
 `octo-network/mon/governance.rs` already owns canonical `GovernanceModel` (5 variants per RFC-0855 §11.1) + `DecisionType` (7 variants per §11.3) + `ProposalState` (6 variants per §11.3) + `GovernancePolicy` + `GovernanceProposal` types. The substrate RFC extracts these to a frozen core + adds tally helpers + adds Layer B façade.
 
 The hybrid pattern (research doc Finding 4) gives:
+
 1. Canonical types in `octo-governance-core` (frozen)
 2. Façade `octo-governance` for CLI parity (RFC-0011-g text references this name)
 3. Domain crates (`octo-network/mon`, `octo-coordinator-types`, `octo-reputation`) consume the core
@@ -73,13 +75,13 @@ The hybrid pattern (research doc Finding 4) gives:
 
 > **The "Nothing should be implied" rule (specification layer).**
 
-| Role | Identifier | Authority Scope | Lifecycle | Source/Ref |
-|------|------------|-----------------|-----------|------------|
-| Proposer | `GovernanceProposal::proposer` field | Creates proposal; signs proposal envelope | proposal-bounded | §Specification §Proposal |
-| Voter | `CapabilityToken` holder | Casts weighted vote; capability-gated per RFC-0957 | proposal-bounded | RFC-0011-g §Substrate `[ADD]` vote |
-| Coordinator | `EmergencyAuthority::Coordinator` variant | Emergency rekey + mission termination (per `DecisionType::EmergencyRekey`) | epoch-bounded | RFC-0855 §11.2 |
-| Quorum | `EmergencyAuthority::Quorum` variant | Multi-sig emergency actions | proposal-bounded | RFC-0855 §11.2 |
-| Tally Counter | `tally_quorum` pure function | Computes weight-based quorum | stateless | §Specification §Tally Helpers |
+| Role          | Identifier                                | Authority Scope                                                            | Lifecycle        | Source/Ref                         |
+| ------------- | ----------------------------------------- | -------------------------------------------------------------------------- | ---------------- | ---------------------------------- |
+| Proposer      | `GovernanceProposal::proposer` field      | Creates proposal; signs proposal envelope                                  | proposal-bounded | §Specification §Proposal           |
+| Voter         | `CapabilityToken` holder                  | Casts weighted vote; capability-gated per RFC-0957                         | proposal-bounded | RFC-0011-g §Substrate `[ADD]` vote |
+| Coordinator   | `EmergencyAuthority::Coordinator` variant | Emergency rekey + mission termination (per `DecisionType::EmergencyRekey`) | epoch-bounded    | RFC-0855 §11.2                     |
+| Quorum        | `EmergencyAuthority::Quorum` variant      | Multi-sig emergency actions                                                | proposal-bounded | RFC-0855 §11.2                     |
+| Tally Counter | `tally_quorum` pure function              | Computes weight-based quorum                                               | stateless        | §Specification §Tally Helpers      |
 
 ### Out-of-scope roles
 
@@ -178,9 +180,14 @@ pub struct GovernancePolicy {
 }
 
 impl GovernancePolicy {
-    /// Construct + validate. Returns `Err(GovernanceError::InvalidPolicy)`
-    /// if `quorum_denominator == 0`, `quorum_numerator > quorum_denominator`,
-    /// or `proposal_deadline_epochs == 0`.
+    /// Construct + validate. **[DEFERRED to BPS-migration amendment]**
+    /// Substrate `octo-governance-core` has no `GovernancePolicy::new`
+    /// constructor; `GovernancePolicy` is constructed via public fields
+    /// (`model`, `quorum_bps`, `approval_bps`, `emergency_authority`,
+    /// `issuer`). The `GovernanceError::InvalidPolicy` variant referenced
+    /// in earlier drafts was removed when the error envelope was
+    /// reduced to 3 variants (InvalidTransition, QuorumNotReached,
+    /// InvalidWeight) per RFC-0013 §Specification §Error envelope.
     pub fn new(
         model: GovernanceModel,
         quorum_numerator: u16,
@@ -369,36 +376,36 @@ stateDiagram-v2
     Expired --> [*]
 ```
 
-| From | To | Trigger | Deterministic? | Side Effects | Signing |
-|------|----|---------|----------------|--------------|---------|
-| (none) | Created | `GovernanceProposal::new` | Yes | Insert into proposal store | Proposal envelope |
-| Created | Voting | `open_voting(epoch)` | Yes | Notify snapshot cache | n/a |
-| Voting | Approved | `tally_quorum` returns `true` | Yes | Set `state = Approved`; emit event | Tally envelope |
-| Voting | Rejected | `tally_quorum` returns `false` after deadline | Yes | Set `state = Rejected` | n/a |
-| Voting | Expired | `current_epoch > deadline_epoch` | Yes | Set `state = Expired` | n/a |
-| Approved | Executed | `execute(proof)` | Yes | Apply proposal decision | Execution proof envelope |
+| From     | To       | Trigger                                       | Deterministic? | Side Effects                       | Signing                  |
+| -------- | -------- | --------------------------------------------- | -------------- | ---------------------------------- | ------------------------ |
+| (none)   | Created  | `GovernanceProposal::new`                     | Yes            | Insert into proposal store         | Proposal envelope        |
+| Created  | Voting   | `open_voting(epoch)`                          | Yes            | Notify snapshot cache              | n/a                      |
+| Voting   | Approved | `tally_quorum` returns `true`                 | Yes            | Set `state = Approved`; emit event | Tally envelope           |
+| Voting   | Rejected | `tally_quorum` returns `false` after deadline | Yes            | Set `state = Rejected`             | n/a                      |
+| Voting   | Expired  | `current_epoch > deadline_epoch`              | Yes            | Set `state = Expired`              | n/a                      |
+| Approved | Executed | `execute(proof)`                              | Yes            | Apply proposal decision            | Execution proof envelope |
 
 > **Liveness check:** proposal epoch-bound; `proposal_deadline_epochs` per RFC-0855 §11.2 + `GovernancePolicy`.
 > **Recovery semantics:** on coordinator miss, proposal remains in `Voting` until deadline → `Expired`. No slash (governance is slash-free by design per RFC-0855 §11).
 
 ### Determinism Requirements
 
-| Requirement | Mechanism |
-|-------------|-----------|
-| Voting weight determinism | Pure function; `voting_weight(model, stake, reputation)` is deterministic per input tuple |
-| Quorum check determinism | Cross-multiplied integer math; no floating point |
-| Proposal ordering | `(created_epoch, proposal_id)` is canonical ordering; substrate does not enforce (domain responsibility) |
+| Requirement               | Mechanism                                                                                                      |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Voting weight determinism | Pure function; `voting_weight(model, stake, reputation)` is deterministic per input tuple                      |
+| Quorum check determinism  | Cross-multiplied integer math; no floating point                                                               |
+| Proposal ordering         | `(created_epoch, proposal_id)` is canonical ordering; substrate does not enforce (domain responsibility)       |
 | Cross-replica equivalence | Same proposal state + same vote tally → identical `tally_quorum` outcome; verified by `is_weighted_quorum_met` |
 
 ### RFC-0008 Execution Class Mapping
 
-| Operation | Class | Rationale |
-|-----------|-------|-----------|
-| `voting_weight` | Class A | Pure function; deterministic per input |
-| `tally_quorum` | Class A | Pure function; deterministic |
-| `GovernancePolicy::is_quorum_met` | Class A | Pure function; cross-multiplied integer math |
+| Operation                                  | Class   | Rationale                                           |
+| ------------------------------------------ | ------- | --------------------------------------------------- |
+| `voting_weight`                            | Class A | Pure function; deterministic per input              |
+| `tally_quorum`                             | Class A | Pure function; deterministic                        |
+| `GovernancePolicy::is_quorum_met`          | Class A | Pure function; cross-multiplied integer math        |
 | `GovernancePolicy::is_weighted_quorum_met` | Class A | Pure function; `saturating_mul` for overflow safety |
-| `GovernanceProposal::new` | Class A | Constructor; validates inputs deterministically |
+| `GovernanceProposal::new`                  | Class A | Constructor; validates inputs deterministically     |
 
 ### Error Handling
 
@@ -406,22 +413,22 @@ The substrate exposes `GovernanceError` (3 variants: `InvalidTransition`, `Quoru
 
 ## Performance Targets
 
-| Metric | Target | Notes |
-|--------|--------|-------|
-| `voting_weight` latency | <1µs | Pure function; trivial integer math |
-| `tally_quorum` latency | <1µs | Pure function; integer comparison |
-| `is_quorum_met` latency | <1µs | Pure function; cross-multiplied |
-| Substrate compile time | <2s | Layer A frozen; depends on `serde` + `thiserror` |
+| Metric                  | Target | Notes                                            |
+| ----------------------- | ------ | ------------------------------------------------ |
+| `voting_weight` latency | <1µs   | Pure function; trivial integer math              |
+| `tally_quorum` latency  | <1µs   | Pure function; integer comparison                |
+| `is_quorum_met` latency | <1µs   | Pure function; cross-multiplied                  |
+| Substrate compile time  | <2s    | Layer A frozen; depends on `serde` + `thiserror` |
 
 ## Implicit Assumptions Audit
 
-| Assumption | Where Relied Upon | Blast Radius if False | Mitigation / Status |
-|------------|-------------------|----------------------|---------------------|
-| `repr(u16)` discriminants are stable | §Data Structures | SQL persistence (stores discriminants as INTEGER); change breaks migration | ACCEPTED RISK: RFC-0855 §11.3 freezes discriminants; substrate does not reorder |
-| `BTreeMap` for vote tallies is stable | §Proposal | Iteration order matters for cross-replica tally equivalence | MITIGATED: `BTreeMap` is ordered; iteration is deterministic per RFC-0855 §11.3 |
-| `proposal_id: [u8; 32]` is BLAKE3-256 canonical | §Proposal | Cross-domain proposal lookup broken | MITIGATED: `proposal_id` is substrate-defined; domain computes via `blake3(canonical_ser)` |
-| Stake is u128 (token-precision) | `voting_weight` | Token precision overflow at high stake | ACCEPTED RISK: u128 is the project token-precision standard per RFC-0900 |
-| Reputation is u64 (bounded by network consensus) | `voting_weight` | Reputation overflow under adversarial fork | ACCEPTED RISK: bounded by RFC-0855 §11.1 reputation bound |
+| Assumption                                       | Where Relied Upon | Blast Radius if False                                                      | Mitigation / Status                                                                        |
+| ------------------------------------------------ | ----------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `repr(u16)` discriminants are stable             | §Data Structures  | SQL persistence (stores discriminants as INTEGER); change breaks migration | ACCEPTED RISK: RFC-0855 §11.3 freezes discriminants; substrate does not reorder            |
+| `BTreeMap` for vote tallies is stable            | §Proposal         | Iteration order matters for cross-replica tally equivalence                | MITIGATED: `BTreeMap` is ordered; iteration is deterministic per RFC-0855 §11.3            |
+| `proposal_id: [u8; 32]` is BLAKE3-256 canonical  | §Proposal         | Cross-domain proposal lookup broken                                        | MITIGATED: `proposal_id` is substrate-defined; domain computes via `blake3(canonical_ser)` |
+| Stake is u128 (token-precision)                  | `voting_weight`   | Token precision overflow at high stake                                     | ACCEPTED RISK: u128 is the project token-precision standard per RFC-0900                   |
+| Reputation is u64 (bounded by network consensus) | `voting_weight`   | Reputation overflow under adversarial fork                                 | ACCEPTED RISK: bounded by RFC-0855 §11.1 reputation bound                                  |
 
 ### Categories considered
 
@@ -445,13 +452,13 @@ The substrate exposes `GovernanceError` (3 variants: `InvalidTransition`, `Quoru
 
 ### Decision Table
 
-| Decision | Q1 Beneficiary | Q2 Cost to Attacker | Q3 Gain if Successful | Q4 Defense (cost to legit op) | Q5 Residual Risk |
-|----------|----------------|---------------------|------------------------|------------------------------|------------------|
-| `#[non_exhaustive]` on `ProposalState` | Future substrate author | None (extension is intentional) | Add new state without breaking semver | Substrate migration etiquette in §Migration Plan | LOW: extension is the design intent |
-| `saturating_mul` in `is_weighted_quorum_met` | Quorum bypasser | Must engineer u64::MAX saturation | Push tally past threshold via overflow | Saturating math catches; saturated value fails quorum check | LOW: math is correct |
-| BLAKE3-256 for `proposal_id` | Proposal-id collider | Pre-image attack (infeasible) | Forge proposal id to hijack existing proposal | Domain enforces uniqueness at insert | LOW: BLAKE3 is well-studied |
-| `repr(u16)` frozen discriminants | Future substrate author | Cannot reorder without semver-major | Add new variant at next free discriminant | `from_u16` returns `None` for unknown | LOW: discriminants are RFC-frozen |
-| `BTreeMap` for vote tallies | Vote-tamperer | Must corrupt in-memory state | Manipulate tally result | Domain owns storage persistence; tally is in-memory only | LOW: storage is domain's concern |
+| Decision                                     | Q1 Beneficiary          | Q2 Cost to Attacker                 | Q3 Gain if Successful                         | Q4 Defense (cost to legit op)                               | Q5 Residual Risk                    |
+| -------------------------------------------- | ----------------------- | ----------------------------------- | --------------------------------------------- | ----------------------------------------------------------- | ----------------------------------- |
+| `#[non_exhaustive]` on `ProposalState`       | Future substrate author | None (extension is intentional)     | Add new state without breaking semver         | Substrate migration etiquette in §Migration Plan            | LOW: extension is the design intent |
+| `saturating_mul` in `is_weighted_quorum_met` | Quorum bypasser         | Must engineer u64::MAX saturation   | Push tally past threshold via overflow        | Saturating math catches; saturated value fails quorum check | LOW: math is correct                |
+| BLAKE3-256 for `proposal_id`                 | Proposal-id collider    | Pre-image attack (infeasible)       | Forge proposal id to hijack existing proposal | Domain enforces uniqueness at insert                        | LOW: BLAKE3 is well-studied         |
+| `repr(u16)` frozen discriminants             | Future substrate author | Cannot reorder without semver-major | Add new variant at next free discriminant     | `from_u16` returns `None` for unknown                       | LOW: discriminants are RFC-frozen   |
+| `BTreeMap` for vote tallies                  | Vote-tamperer           | Must corrupt in-memory state        | Manipulate tally result                       | Domain owns storage persistence; tally is in-memory only    | LOW: storage is domain's concern    |
 
 ### Multi-Round Review
 
@@ -487,6 +494,7 @@ This substrate does NOT define the dual-stake model (RFC-0900+ owns that); it co
 ### RFC-0855 §11 compatibility
 
 RFC-0013 EXTRACTS the canonical types from `octo-network/mon/governance.rs` to `octo-governance-core` with:
+
 - `#[non_exhaustive]` on `GovernanceModel` + `DecisionType` + `ProposalState` + `EmergencyAuthority` (additive)
 - Pure tally helpers `voting_weight` + `tally_quorum` (new; not in §11)
 - `GovernanceError` enum (new; not in §11)
@@ -498,29 +506,29 @@ Variant discriminants (`repr(u16)`) are BYTE-IDENTICAL to RFC-0855 §11. Existin
 
 10 canonical test vectors. Each is a substrate-level property test.
 
-| ID | Scenario | Expected |
-|----|----------|----------|
-| `policy-default-dao` | `GovernancePolicy::default_dao()` | model=Dao, num=2, den=3, deadline=10, authority=Coordinator |
-| `policy-invalid-zero-denominator` | `GovernancePolicy::new(Dao, 2, 0, 10, Coordinator)` | `Err(GovernanceError::InvalidPolicy { reason: "quorum_denominator must be > 0" })` |
-| `policy-invalid-numerator-exceeds` | `GovernancePolicy::new(Dao, 4, 3, 10, Coordinator)` | `Err(GovernanceError::InvalidPolicy { reason: "quorum_numerator must be <= quorum_denominator" })` |
-| `policy-invalid-zero-deadline` | `GovernancePolicy::new(Dao, 2, 3, 0, Coordinator)` | `Err(GovernanceError::InvalidPolicy { reason: "proposal_deadline_epochs must be > 0" })` |
-| `policy-quorum-met` | `default_dao().is_quorum_met(700, 1000)` | `true` (700/1000 ≥ 2/3) |
-| `policy-quorum-not-met` | `default_dao().is_quorum_met(600, 1000)` | `false` (600/1000 < 2/3) |
-| `voting-weight-dao` | `voting_weight(GovernanceModel::Dao, stake=1000, reputation=0)` | proportional to stake |
-| `voting-weight-reputation-weighted` | `voting_weight(GovernanceModel::AiAssisted, stake=100, reputation=50)` | reputation-influenced; deterministic |
-| `tally-quorum-met` | `tally_quorum(ProposalState::Voting, 700, 2, 3)` | `true` |
-| `tally-quorum-not-met` | `tally_quorum(ProposalState::Voting, 600, 2, 3)` | `false` |
-| `proposal-create` | `GovernanceProposal::new([0x42; 32], Admission, [0x01; 32], 100, 110)` | `Ok(GovernanceProposal { state: Created, .. })` |
-| `from-u16-unknown` | `GovernanceModel::from_u16(0x9999)` | `None` |
+| ID                                  | Scenario                                                               | Expected                                                                                                                                                                                                                                    |
+| ----------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `policy-default-dao`                | `GovernancePolicy::default_dao()`                                      | model=Dao, num=2, den=3, deadline=10, authority=Coordinator                                                                                                                                                                                 |
+| `policy-invalid-zero-denominator`   | `GovernancePolicy::new(Dao, 2, 0, 10, Coordinator)`                    | `[DEFERRED to BPS-migration amendment]` — substrate has no `GovernancePolicy::new` constructor + `GovernanceError::InvalidPolicy` was removed when the error envelope was reduced to 3 variants per RFC-0013 §Specification §Error envelope |
+| `policy-invalid-numerator-exceeds`  | `GovernancePolicy::new(Dao, 4, 3, 10, Coordinator)`                    | `[DEFERRED to BPS-migration amendment]` — same as above                                                                                                                                                                                     |
+| `policy-invalid-zero-deadline`      | `GovernancePolicy::new(Dao, 2, 3, 0, Coordinator)`                     | `[DEFERRED to BPS-migration amendment]` — same as above                                                                                                                                                                                     |
+| `policy-quorum-met`                 | `default_dao().is_quorum_met(700, 1000)`                               | `true` (700/1000 ≥ 2/3)                                                                                                                                                                                                                     |
+| `policy-quorum-not-met`             | `default_dao().is_quorum_met(600, 1000)`                               | `false` (600/1000 < 2/3)                                                                                                                                                                                                                    |
+| `voting-weight-dao`                 | `voting_weight(GovernanceModel::Dao, stake=1000, reputation=0)`        | proportional to stake                                                                                                                                                                                                                       |
+| `voting-weight-reputation-weighted` | `voting_weight(GovernanceModel::AiAssisted, stake=100, reputation=50)` | reputation-influenced; deterministic                                                                                                                                                                                                        |
+| `tally-quorum-met`                  | `tally_quorum(ProposalState::Voting, 700, 2, 3)`                       | `true`                                                                                                                                                                                                                                      |
+| `tally-quorum-not-met`              | `tally_quorum(ProposalState::Voting, 600, 2, 3)`                       | `false`                                                                                                                                                                                                                                     |
+| `proposal-create`                   | `GovernanceProposal::new([0x42; 32], Admission, [0x01; 32], 100, 110)` | `Ok(GovernanceProposal { state: Created, .. })`                                                                                                                                                                                             |
+| `from-u16-unknown`                  | `GovernanceModel::from_u16(0x9999)`                                    | `None`                                                                                                                                                                                                                                      |
 
 ## Alternatives Considered
 
-| Approach | Pros | Cons |
-|----------|------|------|
-| **Pure general-purpose substrate (Finding 1)** — `octo-governance-core` only; no façade; CLI consumes core directly | Simpler (1 crate per concept); layer model cleaner | RFC-0011-g text references `octo-governance`; CLI + mission Cargo deps diverge |
-| **Façade-only (Finding 3)** — `octo-governance` re-exports from `octo-network/mon` | Minimal LoC; zero refactor | TYPE RE-EXPORT COLLISION: `octo-network/mon/governance` types re-exported as canonical; cross-domain governance broken |
-| **Domain-specialized only (Finding 2)** — no new crate | Zero new crates; zero refactor | Silent RFC/code drift; PQC coupling; cross-domain governance impossible |
-| **Single general-purpose crate (Finding 5)** — `octo-governance` contains generic + domain IO | Simple | Violates open/closed; substrate is non-IO, domain has IO; mixing conflates |
+| Approach                                                                                                            | Pros                                               | Cons                                                                                                                   |
+| ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| **Pure general-purpose substrate (Finding 1)** — `octo-governance-core` only; no façade; CLI consumes core directly | Simpler (1 crate per concept); layer model cleaner | RFC-0011-g text references `octo-governance`; CLI + mission Cargo deps diverge                                         |
+| **Façade-only (Finding 3)** — `octo-governance` re-exports from `octo-network/mon`                                  | Minimal LoC; zero refactor                         | TYPE RE-EXPORT COLLISION: `octo-network/mon/governance` types re-exported as canonical; cross-domain governance broken |
+| **Domain-specialized only (Finding 2)** — no new crate                                                              | Zero new crates; zero refactor                     | Silent RFC/code drift; PQC coupling; cross-domain governance impossible                                                |
+| **Single general-purpose crate (Finding 5)** — `octo-governance` contains generic + domain IO                       | Simple                                             | Violates open/closed; substrate is non-IO, domain has IO; mixing conflates                                             |
 
 The chosen approach (Finding 4 hybrid) satisfies all 12 principles in `CLAUDE.md` §Architectural Principles + matches the `octo-storage-core` precedent.
 
@@ -600,6 +608,7 @@ The chosen approach (Finding 4 hybrid) satisfies all 12 principles in `CLAUDE.md
 ### Why hybrid Layer A core + Layer B façade (not pure substrate, not pure façade)
 
 Per research doc Finding 4 + §Alternatives Considered:
+
 - Pure substrate (Finding 1) requires RFC-0011-g text rename; CLI + mission deps diverge
 - Pure façade (Finding 3) has type-collision risk (façade re-exports from `octo-network/mon`; cross-domain governance broken)
 - Hybrid (Finding 4) preserves RFC text + canonical ownership + Layer A → Layer B → Layer C direction
@@ -618,10 +627,10 @@ The research doc proposed `#[non_exhaustive]` only on `ProposalState`. Adding it
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0 | 2026-09-10 | Initial draft |
-| 1.1 | 2026-09-10 | Accepted | DRY CLOSED; promoted Draft → Accepted. |
+| Version | Date       | Changes       |
+| ------- | ---------- | ------------- |
+| 1.0     | 2026-09-10 | Initial draft |
+| 1.1     | 2026-09-10 | Accepted      | DRY CLOSED; promoted Draft → Accepted. |
 
 ## Related RFCs
 
@@ -661,14 +670,14 @@ pub struct MissionGovernanceEnvelope {
 
 ### B. CLI mapping table (RFC-0011-g names ↔ substrate names)
 
-| RFC-0011-g §Substrate `[ADD]` | Substrate name (`octo-governance` / `octo-governance-core`) | Domain home (where the IO lives) |
-|------------------------------|-----------------------------------------------------------|----------------------------------|
-| `snapshot(chain_id, proposal_filter, force_refresh) -> SnapshotRef` | NOT in substrate; lives in `octo_network::mon::governance::snapshot` | `crates/octo-network/src/mon/governance.rs` |
-| `attest(subject_did, kind_ref, evidence, ...) -> AttestationReceipt` | NOT in substrate; lives in `octo_network::mon::governance::attest` | `crates/octo-network/src/mon/governance.rs` |
-| `vote(proposal_id, choice, voter_cap, ...) -> VoteReceipt` | NOT in substrate; lives in `octo_network::mon::governance::vote` | `crates/octo-network/src/mon/governance.rs` |
-| `SnapshotRef` (struct) | CLI-side projection; substrate owns `GovernanceProposal` + `ProposalState` | RFC-0011-g §Substrate |
-| `AttestationReceipt` (struct) | CLI-side projection; substrate owns `ProposalState` for attest state | RFC-0011-g §Substrate |
-| `VoteReceipt` (struct) | CLI-side projection; substrate owns `ProposalState` for vote outcome | RFC-0011-g §Substrate |
+| RFC-0011-g §Substrate `[ADD]`                                        | Substrate name (`octo-governance` / `octo-governance-core`)                | Domain home (where the IO lives)            |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------- |
+| `snapshot(chain_id, proposal_filter, force_refresh) -> SnapshotRef`  | NOT in substrate; lives in `octo_network::mon::governance::snapshot`       | `crates/octo-network/src/mon/governance.rs` |
+| `attest(subject_did, kind_ref, evidence, ...) -> AttestationReceipt` | NOT in substrate; lives in `octo_network::mon::governance::attest`         | `crates/octo-network/src/mon/governance.rs` |
+| `vote(proposal_id, choice, voter_cap, ...) -> VoteReceipt`           | NOT in substrate; lives in `octo_network::mon::governance::vote`           | `crates/octo-network/src/mon/governance.rs` |
+| `SnapshotRef` (struct)                                               | CLI-side projection; substrate owns `GovernanceProposal` + `ProposalState` | RFC-0011-g §Substrate                       |
+| `AttestationReceipt` (struct)                                        | CLI-side projection; substrate owns `ProposalState` for attest state       | RFC-0011-g §Substrate                       |
+| `VoteReceipt` (struct)                                               | CLI-side projection; substrate owns `ProposalState` for vote outcome       | RFC-0011-g §Substrate                       |
 
 > **Substrate mapping principle:** Substrate owns CANONICAL TYPES (ProposalState, DecisionType, GovernanceModel, GovernancePolicy, GovernanceProposal). Domain owns IO (snapshot, attest, vote) + CLI-side projection types (SnapshotRef, AttestationReceipt, VoteReceipt). CLI dispatches to domain; domain consumes substrate for canonical types.
 

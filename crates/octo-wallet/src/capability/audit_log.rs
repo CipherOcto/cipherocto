@@ -57,7 +57,6 @@ pub fn audit_event_kind_as_str(kind: &AuditEventKind) -> &'static str {
 /// Returns the new `AuditEvent` with all fields populated (including
 /// `chain_hash`). Caller persists the event. Uses substrate
 /// `compute_chain_hash` for chain hashing.
-#[allow(clippy::too_many_arguments)]
 pub fn append_event(
     node_did: &str,
     event_kind: AuditEventKind,
@@ -83,17 +82,16 @@ pub fn append_event(
 mod tests {
     use super::*;
     use octo_ident::test_helpers::sample_did;
-    use std::mem::size_of;
 
     /// AC-5: struct-layout invariant vs RFC-0012 substrate spec.
     ///
-    /// The 7-field canonical layout must be constructible + reachable
-    /// through the substrate re-export with byte sizes summing to the
-    /// expected minimum (3 × u64 = 24 + 3 × [u8;32] = 96 + String = 24
-    /// + enum tag = 1B → 145 raw + alignment). The substrate owns the
-    /// canonical byte shape; this test confirms the wallet-side view
-    /// sees at least that surface AND that all 7 named fields exist
-    /// with the canonical names.
+    /// The 7-field canonical layout must be constructible and reachable
+    ///   through the substrate re-export with byte sizes summing to the
+    ///   expected minimum (3 × u64 = 24 plus 3 × [u8;32] = 96 plus
+    ///   String = 24 plus enum tag = 1B → 145 raw plus alignment).
+    ///   The substrate owns the canonical byte shape; this test
+    ///   confirms the wallet-side view sees at least that surface AND
+    ///   that all 7 named fields exist with the canonical names.
     #[test]
     fn audit_event_struct_exposes_canonical_fields() {
         // Construct via canonical field order (matches RFC-0012 §event).
@@ -121,8 +119,6 @@ mod tests {
         let json = serde_json::to_string(&kind).unwrap();
         let kind_back: AuditEventKind = serde_json::from_str(&json).unwrap();
         assert_eq!(kind, kind_back);
-        // Drop unused-import noise if serde_json ever leaves.
-        let _ = size_of::<AuditEvent>();
     }
 
     fn append_n(node_did: &str, n: u64) -> Vec<AuditEvent> {

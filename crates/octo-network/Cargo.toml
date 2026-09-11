@@ -49,6 +49,12 @@ octo-coordinator-types = { path = "../octo-coordinator-types" }
 # the full octo-ident codec (Phase 1 form; production swaps in
 # octo-ident::WireDid round-trip).
 octo-cap-macaroon = { path = "../octo-cap-macaroon" }
+# Mission 0013-governance-network-migration: governance substrate
+# (Layer A frozen per RFC-0013 §Module Layout). mon/governance.rs
+# re-exports canonical GovernancePolicy + GovernanceModel +
+# EmergencyAuthority + GovernanceProposal + ProposalState +
+# DecisionType + voting_weight + tally_quorum.
+octo-governance-core = { path = "../octo-governance-core" }
 
 [dev-dependencies]
 serde_json = "1.0"

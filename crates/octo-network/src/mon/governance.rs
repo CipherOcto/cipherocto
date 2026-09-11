@@ -117,7 +117,7 @@ impl VotingTally {
         voting_closes_at_millis: u64,
         total_eligible_weight: u64,
     ) -> GovernanceProposal {
-        let total_weight = self.total_for().saturating_add(self.total_against());
+        let total_voted = self.total_for().saturating_add(self.total_against());
         let approval_bps = if total_eligible_weight > 0 {
             ((self.total_for() as u128 * 10_000) / total_eligible_weight as u128).min(10_000) as u32
         } else {
@@ -129,7 +129,7 @@ impl VotingTally {
         } else {
             0
         };
-        let _ = total_weight; // documented; no extra accounting needed
+        let _ = total_voted; // sum of for+against weights (no further use)
         GovernanceProposal {
             proposal_id,
             issuer: issuer.to_string(),

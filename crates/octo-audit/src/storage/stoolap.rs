@@ -97,21 +97,34 @@ impl AppendOnlyAuditSink for StoolapAuditSink {
 
         // Monotonicity check: last persisted event_id.
         let last = db
-            .query("SELECT COALESCE(MAX(event_id), -1) FROM audit_events", ())
+            .query("SELECT MAX(event_id) FROM audit_events", ())
             .map_err(|e| AuditError::SinkSpecific(format!("{e}")))?;
-        let last_id: i64 = last
+        // Empty table → MAX returns NULL, surfaced here as `None`.
+        // No predecessor exists, so accept the first append regardless of
+        // its `event_id` (the "first id" invariant lives at the sink
+        // caller per RFC-0012; verify_chain does not enforce it on the
+        // first event).
+        let last_id: Option<i64> = last
             .into_iter()
             .next()
             .ok_or_else(|| AuditError::SinkSpecific("no MAX row".into()))?
             .map_err(|e| AuditError::SinkSpecific(format!("{e}")))?
             .get(0)
             .map_err(|e| AuditError::SinkSpecific(format!("{e}")))?;
-        let expected = last_id + 1;
-        if event.event_id != expected as u64 {
-            return Err(AuditError::SequenceGap {
-                event_id: event.event_id,
-                prev: last_id.max(0) as u64,
-            });
+        // Empty table (last_id == None): no predecessor, accept any
+        // first event_id. Non-empty: enforce strict successor + flag
+        // duplicates distinctly from gaps (RFC-0012 §Trait G3).
+        if let Some(prev) = last_id {
+            let prev_u64 = prev.max(0) as u64;
+            if event.event_id == prev_u64 {
+                return Err(AuditError::AlreadyExists(event.event_id));
+            }
+            if event.event_id != prev_u64 + 1 {
+                return Err(AuditError::SequenceGap {
+                    event_id: event.event_id,
+                    prev: prev_u64,
+                });
+            }
         }
 
         // Compute canonical chain_hash; reject mismatches.
@@ -153,20 +166,16 @@ impl AppendOnlyAuditSink for StoolapAuditSink {
     fn last_event_id(&self) -> Result<Option<u64>, AuditError> {
         let db = self.db.lock().expect("stoolap mutex poisoned");
         let rows = db
-            .query("SELECT COALESCE(MAX(event_id), -1) FROM audit_events", ())
+            .query("SELECT MAX(event_id) FROM audit_events", ())
             .map_err(|e| AuditError::SinkSpecific(format!("{e}")))?;
         let Some(row_result) = rows.into_iter().next() else {
             return Ok(None);
         };
         let row = row_result.map_err(|e| AuditError::SinkSpecific(format!("{e}")))?;
-        let last_id: i64 = row
+        let last_id: Option<i64> = row
             .get(0)
             .map_err(|e| AuditError::SinkSpecific(format!("{e}")))?;
-        if last_id < 0 {
-            Ok(None)
-        } else {
-            Ok(Some(last_id as u64))
-        }
+        Ok(last_id.map(|n| n as u64))
     }
 }
 
@@ -218,14 +227,13 @@ mod tests {
 
     #[test]
     fn append_rejects_duplicate() {
-        // Duplicate event_id is rejected via the MAX-based monotonicity
-        // check (SequenceGap variant, since the duplicate id != expected
-        // successor). PK-based AlreadyExists is reserved for adapters
-        // without the MAX pre-check.
+        // Per trait contract (RFC-0012 §Trait G3 mitigation), a
+        // duplicate event_id is rejected with `AlreadyExists`
+        // (distinct from `SequenceGap` which covers genuine gaps).
         let mut sink = StoolapAuditSink::open_in_memory().unwrap();
         let e0 = make_event(0, 1000, [0; 32]);
         sink.append(&e0).unwrap();
         let err = sink.append(&e0).unwrap_err();
-        assert!(matches!(err, AuditError::SequenceGap { .. }));
+        assert!(matches!(err, AuditError::AlreadyExists(0)));
     }
 }

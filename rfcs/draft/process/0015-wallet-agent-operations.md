@@ -201,6 +201,19 @@ AgentNotFound(Uuid),
 - CLI maps to `OctoCliError::AgentNotFound(Uuid)` (exit 42 per RFC-0011-c §9.8 slot allocation).
 - Substrate-faithful mapping: substrate carries the UUID; CLI surfaces the canonical hyphenated form to scripting consumers.
 
+#### §6.2.4 `WalletError::ForbiddenHolderMismatch`
+
+```rust
+/// Caller-attested DID does not match filter's `holder_did` field.
+/// SECURITY (HIGH — multi-DID enumeration prevention per §6.2.1).
+#[error("forbidden: holder DID mismatch")]
+ForbiddenHolderMismatch,
+```
+
+- **Where raised:** `list_owned_agents(caller_did, filter)` when `filter.holder_did.is_some()` and `filter.holder_did != caller_did` (per §6.2.1 caller-attestation enforcement).
+- **CLI mapping:** Exit code 13 → `OctoCliError::PermissionDenied` (per RFC-0011 §Exit Codes).
+- **Substrate-faithful note:** Additive variant mirroring `AgentNotFound(Uuid)` shape; no canonical substrate variant exists at R2 acceptance.
+
 ### §6.3 Error envelope
 
 `WalletError` variants (additive; `#[non_exhaustive]` is already in scope). The write-path variants are DEFERRED pending RFC-0012-v2 acceptance — see §6.8 DEFERRED SURFACE.
@@ -420,7 +433,7 @@ No changes to Layer A crates (`octo-audit-core`, etc.); no CLI binary changes; n
 
 ## Version History
 
-- v1.0 (2026-09-11) Initial draft. Substrate-faithful `octo-wallet` read surface (RFC-0002 / RFC-0011-c).
+- v1.0 (2026-09-11) Initial draft. Substrate-faithful `octo-wallet` read surface (RFC-0002 + RFC-0011-c).
 
 ## Related RFCs
 

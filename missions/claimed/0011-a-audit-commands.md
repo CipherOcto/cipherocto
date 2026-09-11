@@ -6,16 +6,22 @@ metadata:
   type: cli-substrate-extension
   originSessionId: RFC-0011-a author session
   created: 2026-08-31
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0011-a
+    - RFC-0012
+    - RFC-0014
     - mission 0011-core-output-envelope-redaction
     - mission 0011-identity-commands
     - mission 0011-capability-commands
     - mission 0011-policy-commands
+    - mission 0012-audit-substrate-extraction
+    - mission 0014-settlement-substrate-extraction
 status: Claimed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-01
+amended_at: 2026-09-10
+amendment: "RFC-0011-a v1.5 layer-model note: canonical `AuditEvent` lives in `octo-audit-core` (Layer A frozen per RFC-0012); canonical `Receipt` + `AskState` + `ReservationState` live in `octo-settlement-core` (Layer A frozen per RFC-0014). CLI consumes via Layer B façades `octo-audit` + `octo-settlement`."
 ---
 
 # 0011-a-audit-commands — Implement `octo audit {list,show}` per RFC-0011-a
@@ -110,6 +116,23 @@ See `docs/07-developers/octo-cli-implementation-guide.md` §Audit Subcommand Fix
 ## Pull Request
 
 # (PR opened after mission claim transitions to Claimed per BLUEPRINT.md §Mission Lifecycle)
+
+## Layer-model amendment (RFC-0011-a v1.5)
+
+Per RFC-0011-a v1.5 VH row (2026-09-10) + RFC-0012 §Substrate layer-model note + RFC-0014 §Substrate layer-model note, the canonical substrate types referenced by this mission are now Layer A frozen:
+
+| Canonical type                                                                            | Layer A frozen home               | Layer B façade    |
+| ----------------------------------------------------------------------------------------- | --------------------------------- | ----------------- |
+| `AuditEvent` + `AuditEventKind` + `AppendOnlyAuditSink` + `verify_chain`                  | `octo-audit-core` (RFC-0012)      | `octo-audit`      |
+| `Receipt` + `AskState` + `ReservationState` + `SettlementStore` + `AppendOnlyReceiptSink` | `octo-settlement-core` (RFC-0014) | `octo-settlement` |
+
+CLI consumers (this mission + future RFC-0011-a amendments) MUST consume via the Layer B façades (`pub use octo_audit::*` + `pub use octo_settlement::*`). Direct Layer A import is permitted only when extending the substrate via a future RFC; mission close-out MUST verify all imports flow through the façade chain.
+
+The layer-model split:
+
+- **PQC migration blast radius** — confined to Layer A frozen cores (`octo-audit-core` + `octo-settlement-core`). A future PQC migration touches these crates only; CLI + domain consumers are unaffected.
+- **Type-level append-only enforcement** — `AppendOnlyAuditSink` (RFC-0012) + `AppendOnlyReceiptSink` (RFC-0014) enforce type-level append-only via `&mut self` requirement. The canonical CRUD `SettlementStore` trait uses `&self` (interior mutability via `Arc<Mutex<Database>>`) for ergonomic call-site semantics; the two-trait split is documented in RFC-0014 §Rationale.
+- **No central enum drift** — `AuditEventKind` (RFC-0012) + `AskState` + `ReservationState` (RFC-0014) are all `#[non_exhaustive]` per CLAUDE.md §Extension over enumeration. Extension variants land via typed-discriminator namespaces, not central enum edits.
 
 ## Risk
 
@@ -283,6 +306,55 @@ This mission lands ADDITIVELY across every contract boundary per RFC-0011-a §Co
 ## Why 1 release cycle gate
 
 N/A — this mission is a READ-ONLY amendment per RFC-0011-a §Compatibility No deprecation timeline applies (no commands are removed; no exit codes are reclaimed; no `schema_version` is bumped). The mission lands atomically in a single RFC cycle per RFC-0011-a §Implementation Phases (no Phase 2 for this amendment). Follow-on amendments (RFC-0011-b/c/d/e/f/g) follow their own amendment chains and reservation rules.
+
+## Substrate Gap (hard-checked 2026-09-11)
+
+Substrate verification confirms the layer-A frozen substrate
+(`octo-audit-core`) and the Layer B façade (`octo-audit`) are
+landed per RFC-0012. The available substrate surface is:
+
+| Type / Function                       | Crate                       | Status |
+| ------------------------------------- | --------------------------- | ------ |
+| `AuditEvent` + `AuditEventKind`       | `octo-audit-core` (Layer A) | EXISTS |
+| `AppendOnlyAuditSink` trait           | `octo-audit-core` (Layer A) | EXISTS |
+| `AuditError` + `AuditChainError`      | `octo-audit-core` (Layer A) | EXISTS |
+| `verify_chain` + `compute_chain_hash` | `octo-audit-core` (Layer A) | EXISTS |
+| `AppendOnlyAuditSink` re-export       | `octo-audit` (Layer B)      | EXISTS |
+| `StoolapAuditSink`                    | `octo-audit/storage`        | EXISTS |
+
+**Substrate GAP — every `[ADD]` signature referenced by this
+mission is absent:**
+
+| Signature                                                                       | Location                                         | Status      |
+| ------------------------------------------------------------------------------- | ------------------------------------------------ | ----------- |
+| `pub fn list_receipts(filter: AuditFilter) -> Result<Vec<Receipt>, AuditError>` | `octo-audit`                                     | **MISSING** |
+| `pub fn get_receipt(id: &ReceiptId) -> Result<Receipt, AuditError>`             | `octo-audit`                                     | **MISSING** |
+| `pub fn audit_home() -> Result<PathBuf, AuditError>`                            | `octo-audit`                                     | **MISSING** |
+| `pub struct AuditFilter`                                                        | `octo-audit`                                     | **MISSING** |
+| `pub struct ReceiptId(pub [u8;32])`                                             | `octo-audit`                                     | **MISSING** |
+| `pub enum ReceiptStatus { Ok, Partial, Reject }`                                | `octo-audit`                                     | **MISSING** |
+| `pub struct ReceiptRecord`                                                      | `octo-audit` (or `octo-settlement` per RFC-0959) | **MISSING** |
+
+Verified via `grep -rE "pub " crates/octo-audit/src/ crates/octo-audit-core/src/`.
+
+**Unblock path:** file a new substrate RFC
+(`RFC-0011-a-substrate` or extension to RFC-0012) that adds the
+missing `[ADD]` surface to `octo-audit` (Layer B façade). The new
+RFC cycle does the substrate work; this CLI mission is the
+downstream consumer. Mission YAML frontmatter `v: "1.1"` should
+bump to `v: "1.2"` to add the substrate-RFC dependency.
+
+The mission YAML already cites the dependency at v1.5 layer-model
+amendment `RFC-0014-settlement-substrate`. The settlement-side
+`ReceiptRecord` projection is also MISSING per the gap table —
+requires landing RFC-0014 substrate additive OR re-deriving from
+RFC-0959 canonical `ReceiptRecord` directly into `octo-audit`.
+
+**Implementation cannot proceed** until the substrate `[ADD]`
+surface lands. Mission remains `status: Claimed` per
+[[memory-is-never-status-ground-truth]]. Mission completion
+requires RFC-0011-a Accepted + substrate `[ADD]` landed per YAML
+frontmatter `release_gate`.
 
 ## Claimant
 

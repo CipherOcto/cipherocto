@@ -64,12 +64,12 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-c-agent-cr
 
 ### Type Coverage
 
-| RFC-0011-c type                       | Sub-step                | Notes                                                                                                                                                  |
-| ------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `AgentAttachArgs`                     | Sub-step 1 (clap)       | Layer C/D; clap derive struct (`agent_id: Uuid`, `--since <u64>`, `--json`)                                                                            |
-| `AgentAttachOutput`                   | Sub-step 2 (output)     | Layer C/D; CLI-output wrapper (`agent_id: Uuid`, `runtime_handle: String`, `attached_at_unix: u64`, `event_cursor: Option<String>`)                    |
-| `AgentNotRunning(Uuid)`               | Sub-step 3 (errors)     | Layer C/D; new `OctoCliError` variant; exit 48 per RFC-0011-c §9.8 (reserved 17–63 range)                                                              |
-| `RuntimeAttachFailed { reason }`      | Sub-step 3 (errors)     | Layer C/D; new `OctoCliError` variant; exit 49                                                                                                         |
+| RFC-0011-c type                  | Sub-step            | Notes                                                                                                                               |
+| -------------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `AgentAttachArgs`                | Sub-step 1 (clap)   | Layer C/D; clap derive struct (`agent_id: Uuid`, `--since <u64>`, `--json`)                                                         |
+| `AgentAttachOutput`              | Sub-step 2 (output) | Layer C/D; CLI-output wrapper (`agent_id: Uuid`, `runtime_handle: String`, `attached_at_unix: u64`, `event_cursor: Option<String>`) |
+| `AgentNotRunning(Uuid)`          | Sub-step 3 (errors) | Layer C/D; new `OctoCliError` variant; exit 48 per RFC-0011-c §9.8 (reserved 17–63 range)                                           |
+| `RuntimeAttachFailed { reason }` | Sub-step 3 (errors) | Layer C/D; new `OctoCliError` variant; exit 49                                                                                      |
 
 ## Implementation Guide
 
@@ -118,10 +118,10 @@ No new external crates required; all substrate types are defined in `octo-wallet
 
 2 TV (TV-AGT11..TV-AGT12) covering `agent attach`:
 
-| #       | Subcommand       | Input                       | Expected Output                                                  | Notes                              |
-| ------- | ---------------- | --------------------------- | ---------------------------------------------------------------- | ---------------------------------- |
-| TV-AGT11| `agent attach`   | Running agent               | `AgentAttachOutput { runtime_handle: ..., ... }` (exit 0)        | Read-only attach                   |
-| TV-AGT12| `agent attach`   | Terminated agent            | `AgentNotRunning(uuid)` (exit 48)                                | Attach to non-running agent rejected |
+| #        | Subcommand     | Input            | Expected Output                                           | Notes                                |
+| -------- | -------------- | ---------------- | --------------------------------------------------------- | ------------------------------------ |
+| TV-AGT11 | `agent attach` | Running agent    | `AgentAttachOutput { runtime_handle: ..., ... }` (exit 0) | Read-only attach                     |
+| TV-AGT12 | `agent attach` | Terminated agent | `AgentNotRunning(uuid)` (exit 48)                         | Attach to non-running agent rejected |
 
 ## Layer direction (RFC-0011-c §9.1 Architecture + per [[cipherocto-design-principles]])
 
@@ -147,7 +147,7 @@ cargo test -p octo-cli --lib --tests  # green
   - `generated_at: DateTime` → `executed_at_unix: u64`
   - `preview_only: bool` → `redacted: bool`
   - `command: String` (ADDED)
-  Old CLI ignores unknown fields.
+    Old CLI ignores unknown fields.
 - If `octo-runtime` substrate is not yet landed, this mission ships as a stub emitting `RuntimeSubstrateNotReady` (exit 51); no operator-facing state change.
 
 ## Cross-references
@@ -164,6 +164,29 @@ cargo test -p octo-cli --lib --tests  # green
 ## Why gate
 
 Release-gated on companion substrate mission `0011-c-octo-runtime-substrate` landing (per RFC-0011-c §Implementation Phases Phase 1). Until `0011-c-octo-runtime-substrate` lands, the subcommand ships as a stub emitting `RuntimeSubstrateNotReady` (exit 51). The gate is enforced in CI via the `release_gate:` frontmatter annotation; the mission cannot be marked Completed without the substrate mission in the dependency graph being Closed first.
+
+## Substrate Gap (hard-checked 2026-09-11)
+
+Same blocking substrate gap as mission 0011-c-agent-run:
+
+- `octo_runtime::attach` module EXISTS at `crates/octo-runtime/src/attach.rs`
+- `octo_runtime::spawn_agent` EXISTS at `crates/octo-runtime/src/spawn.rs`
+
+Substrate gap blocking implementation:
+
+- `octo_wallet::transition_agent` (state machine substrate) DOES NOT
+  exist in `crates/octo-wallet/src/` (verified via
+  `grep -rE "pub (fn|async fn) " crates/octo-wallet/src/`). Without
+  it the CLI cannot verify state-machine readiness for attach.
+
+**Unblock path:** same additive substrate addition as
+0011-c-agent-run; one shared landing surfaces both missions.
+Release-gate on `0011-c-octo-runtime-substrate` satisfied at the crate
+level (the crate exists); the wallet transition surface is the residual
+blocker per RFC-0002 §Agent State Machine substrate.
+
+**Implementation cannot proceed** until the substrate addition lands.
+Mission remains `Claimed` per [[memory-is-never-status-ground-truth]].
 
 ## Claimant
 

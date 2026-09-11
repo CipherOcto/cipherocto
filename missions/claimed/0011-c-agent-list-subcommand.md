@@ -60,13 +60,13 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-c-agent-cr
 
 ### Type Coverage
 
-| RFC-0011-c type        | Sub-step                | Notes                                                                                                                                                  |
-| ---------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `AgentListArgs`        | Sub-step 1 (clap)       | Layer C/D; clap derive struct (`--state <AgentState>`, `--chain-id <cid>`, `--limit <u32>`, `--cursor <string>`, `--json`)                            |
-| `AgentSummary`         | Sub-step 2 (output)     | Layer C/D; CLI-output wrapper (`agent_id: Uuid`, `state: AgentState`, `holder_did: Did`, `capability_root: MacaroonId`, `registered_at_unix: u64`, `reputation_score: Option<u32>`) |
-| `AgentListOutput`      | Sub-step 3 (output)     | Layer C/D; CLI-output wrapper (`agents: Vec<AgentSummary>`, `next_cursor: Option<String>`, `resolved_at_unix: u64`)                                   |
-| `InvalidLimit`         | Sub-step 4 (errors)     | Layer C/D; new `OctoCliError` variant; exit 45 per RFC-0011-c §9.8 (reserved 17–63 range)                                                              |
-| `InvalidCursor`        | Sub-step 4 (errors)     | Layer C/D; new `OctoCliError` variant; exit 46                                                                                                         |
+| RFC-0011-c type   | Sub-step            | Notes                                                                                                                                                                               |
+| ----------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AgentListArgs`   | Sub-step 1 (clap)   | Layer C/D; clap derive struct (`--state <AgentState>`, `--chain-id <cid>`, `--limit <u32>`, `--cursor <string>`, `--json`)                                                          |
+| `AgentSummary`    | Sub-step 2 (output) | Layer C/D; CLI-output wrapper (`agent_id: Uuid`, `state: AgentState`, `holder_did: Did`, `capability_root: MacaroonId`, `registered_at_unix: u64`, `reputation_score: Option<u32>`) |
+| `AgentListOutput` | Sub-step 3 (output) | Layer C/D; CLI-output wrapper (`agents: Vec<AgentSummary>`, `next_cursor: Option<String>`, `resolved_at_unix: u64`)                                                                 |
+| `InvalidLimit`    | Sub-step 4 (errors) | Layer C/D; new `OctoCliError` variant; exit 45 per RFC-0011-c §9.8 (reserved 17–63 range)                                                                                           |
+| `InvalidCursor`   | Sub-step 4 (errors) | Layer C/D; new `OctoCliError` variant; exit 46                                                                                                                                      |
 
 ## Implementation Guide
 
@@ -116,11 +116,11 @@ No new external crates required; all substrate types (`AgentSummary`, `AgentStat
 
 3 TV (TV-AGT6..TV-AGT8) covering `agent list`:
 
-| #      | Subcommand     | Input                                       | Expected Output                                                                | Notes                                                       |
-| ------ | -------------- | ------------------------------------------ | ---------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| TV-AGT6| `agent list`   | 50 owned agents, no filter                 | `AgentListOutput { agents: [...50], next_cursor: None }`                     | All 50 in single page                                       |
-| TV-AGT7| `agent list`   | `--state ACTIVE --chain-id chain-a`        | Filtered list of ACTIVE agents on chain-a                                    | Client-side filter                                          |
-| TV-AGT8| `agent list`   | `--limit 0`                                | `InvalidLimit` (exit 45)                                                     | Defensive validation; substrate validates `limit >= 1`     |
+| #       | Subcommand   | Input                               | Expected Output                                          | Notes                                                  |
+| ------- | ------------ | ----------------------------------- | -------------------------------------------------------- | ------------------------------------------------------ |
+| TV-AGT6 | `agent list` | 50 owned agents, no filter          | `AgentListOutput { agents: [...50], next_cursor: None }` | All 50 in single page                                  |
+| TV-AGT7 | `agent list` | `--state ACTIVE --chain-id chain-a` | Filtered list of ACTIVE agents on chain-a                | Client-side filter                                     |
+| TV-AGT8 | `agent list` | `--limit 0`                         | `InvalidLimit` (exit 45)                                 | Defensive validation; substrate validates `limit >= 1` |
 
 ## Layer direction (RFC-0011-c §9.1 Architecture + per [[cipherocto-design-principles]])
 
@@ -145,7 +145,7 @@ cargo test -p octo-cli --lib --tests  # green
   - `generated_at: DateTime` → `executed_at_unix: u64`
   - `preview_only: bool` → `redacted: bool`
   - `command: String` (ADDED)
-  Old CLI ignores unknown fields.
+    Old CLI ignores unknown fields.
 - `AgentSummary` may grow new optional fields (e.g., `last_active_at_unix`); CLI surfaces without pattern-matching on field presence.
 
 ## Cross-references
@@ -163,6 +163,26 @@ cargo test -p octo-cli --lib --tests  # green
 ## Why gate
 
 No release gate. The `agent list` subcommand is substrate-only and depends only on `0011-c-agent-create-subcommand` for the clap root wiring.
+
+## Substrate Gap (hard-checked 2026-09-11)
+
+Substrate verification (`octo_wallet::agent` module map) confirms the
+type surface (`AgentManifest`, `AgentState`, `AgentSummary`,
+`AgentFilter`, `CapabilityId`) exists at `crates/octo-wallet/src/agent.rs`.
+The function surface required by this mission is **absent**:
+
+- `octo_wallet::list_owned_agents(filter)` referenced by Sub-step 3
+  (CLI handler) does not exist in `crates/octo-wallet/src/` (verified
+  via `grep -rE "pub (fn|async fn) " crates/octo-wallet/src/`).
+
+**Unblock path:** add `pub fn list_owned_agents(filter: AgentFilter) -> Result<Vec<AgentSummary>, WalletError>`
+to `crates/octo-wallet/src/agent.rs` (small additive; ~20 LoC + tests)
+before this mission's Sub-step 3 lands. The new function lives in
+`octo-wallet` (Layer B) and is reusable by `octo_runtime::spawn_agent`
+guard logic + future RFC-0011-f mesh RPC surface.
+
+**Implementation cannot proceed** until the substrate addition lands.
+Mission remains `Claimed` per [[memory-is-never-status-ground-truth]].
 
 ## Claimant
 

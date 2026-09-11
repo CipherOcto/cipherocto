@@ -61,13 +61,13 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-c-agent-cr
 
 ### Type Coverage
 
-| RFC-0011-c type                  | Sub-step                | Notes                                                                                                                                                  |
-| -------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `AgentRunArgs`                   | Sub-step 1 (clap)       | Layer C/D; clap derive struct (`agent_id: Uuid`, `--detach`, `--json`)                                                                                  |
-| `AgentRunOutput`                 | Sub-step 2 (output)     | Layer C/D; CLI-output wrapper (`agent_id: Uuid`, `state: AgentState`, `runtime_handle: String`, `spawned_at_unix: u64`)                               |
-| `AgentNotFound(Uuid)`            | Sub-step 3 (errors)     | Layer C/D; new `OctoCliError` variant; exit 42 per RFC-0011-c §9.8 (reserved 17–63 range)                                                              |
-| `InvalidStateTransition { from, to }` | Sub-step 3 (errors) | Layer C/D; new `OctoCliError` variant; exit 43                                                                                                         |
-| `RuntimeSpawnFailed { reason }`  | Sub-step 3 (errors)     | Layer C/D; new `OctoCliError` variant; exit 44                                                                                                         |
+| RFC-0011-c type                       | Sub-step            | Notes                                                                                                                   |
+| ------------------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `AgentRunArgs`                        | Sub-step 1 (clap)   | Layer C/D; clap derive struct (`agent_id: Uuid`, `--detach`, `--json`)                                                  |
+| `AgentRunOutput`                      | Sub-step 2 (output) | Layer C/D; CLI-output wrapper (`agent_id: Uuid`, `state: AgentState`, `runtime_handle: String`, `spawned_at_unix: u64`) |
+| `AgentNotFound(Uuid)`                 | Sub-step 3 (errors) | Layer C/D; new `OctoCliError` variant; exit 42 per RFC-0011-c §9.8 (reserved 17–63 range)                               |
+| `InvalidStateTransition { from, to }` | Sub-step 3 (errors) | Layer C/D; new `OctoCliError` variant; exit 43                                                                          |
+| `RuntimeSpawnFailed { reason }`       | Sub-step 3 (errors) | Layer C/D; new `OctoCliError` variant; exit 44                                                                          |
 
 ## Implementation Guide
 
@@ -117,10 +117,10 @@ No new external crates required; all substrate types are defined in `octo-wallet
 
 2 TV (TV-AGT4..TV-AGT5) covering `agent run`:
 
-| #      | Subcommand   | Input                                  | Expected Output                                                       | Notes                                                              |
-| ------ | ------------ | -------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| TV-AGT4| `agent run`  | Registered agent, no runtime           | `AgentRunOutput { state: BUSY, ... }` (exit 0)                        | Spawns runtime container; warm path                                |
-| TV-AGT5| `agent run`  | Terminated agent                       | `InvalidStateTransition { from: TERMINATED, to: ACTIVE }` (exit 43)   | State machine rejects                                              |
+| #       | Subcommand  | Input                        | Expected Output                                                     | Notes                               |
+| ------- | ----------- | ---------------------------- | ------------------------------------------------------------------- | ----------------------------------- |
+| TV-AGT4 | `agent run` | Registered agent, no runtime | `AgentRunOutput { state: BUSY, ... }` (exit 0)                      | Spawns runtime container; warm path |
+| TV-AGT5 | `agent run` | Terminated agent             | `InvalidStateTransition { from: TERMINATED, to: ACTIVE }` (exit 43) | State machine rejects               |
 
 ## Layer direction (RFC-0011-c §9.1 Architecture + per [[cipherocto-design-principles]])
 
@@ -146,7 +146,7 @@ cargo test -p octo-cli --lib --tests  # green
   - `generated_at: DateTime` → `executed_at_unix: u64`
   - `preview_only: bool` → `redacted: bool`
   - `command: String` (ADDED)
-  Old CLI ignores unknown fields.
+    Old CLI ignores unknown fields.
 - If `octo-runtime` substrate is not yet landed, this mission ships as a stub emitting `RuntimeSubstrateNotReady` (exit 51); no operator-facing state change.
 
 ## Cross-references
@@ -164,6 +164,33 @@ cargo test -p octo-cli --lib --tests  # green
 ## Why gate
 
 Release-gated on companion substrate mission `0011-c-octo-runtime-substrate` landing (per RFC-0011-c §Implementation Phases Phase 1). Until `0011-c-octo-runtime-substrate` lands, the subcommand ships as a stub emitting `RuntimeSubstrateNotReady` (exit 51). The gate is enforced in CI via the `release_gate:` frontmatter annotation; the mission cannot be marked Completed without the substrate mission in the dependency graph being Closed first.
+
+## Substrate Gap (hard-checked 2026-09-11)
+
+Substrate verification confirms:
+
+- `octo_runtime::spawn_agent` EXISTS at `crates/octo-runtime/src/spawn.rs`
+- `octo_runtime::error::RuntimeError::RuntimeSpawnFailed` EXISTS at
+  `crates/octo-runtime/src/error.rs` with exit 44 wired
+- `octo_runtime::handle::RuntimeHandle` EXISTS
+
+Substrate gap blocking implementation:
+
+- `octo_wallet::transition_agent` referenced by Sub-step 3 (CLI handler
+  calls `octo_wallet::transition_agent(agent_id, Active)`) DOES NOT
+  exist in `crates/octo-wallet/src/` (verified via
+  `grep -rE "pub (fn|async fn) " crates/octo-wallet/src/`).
+
+**Unblock path:** add `pub fn transition_agent(uuid: Uuid, target: AgentState, reason: Option<&str>) -> Result<AgentSummary, WalletError>`
+to `crates/octo-wallet/src/agent.rs` (small additive; ~30 LoC + state
+machine guard tests). Until that lands, this mission ships as a stub
+emitting `RuntimeSubstrateNotReady` (exit 51) per §Backward compat.
+The release_gate on `0011-c-octo-runtime-substrate` is partially
+satisfied (`octo-runtime` crate exists); the wallet transition surface
+is the residual blocker per RFC-0002 §Agent State Machine substrate.
+
+**Implementation cannot proceed** until the substrate addition lands.
+Mission remains `Claimed` per [[memory-is-never-status-ground-truth]].
 
 ## Claimant
 

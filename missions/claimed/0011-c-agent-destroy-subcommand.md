@@ -62,11 +62,11 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-c-agent-cr
 
 ### Type Coverage
 
-| RFC-0011-c type                       | Sub-step                | Notes                                                                                                                                                  |
-| ------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `AgentDestroyArgs`                    | Sub-step 1 (clap)       | Layer C/D; clap derive struct (`agent_id: Uuid`, `--confirm` (required), `--reason <string>`, `--json`)                                                |
-| `AgentDestroyOutput`                  | Sub-step 2 (output)     | Layer C/D; CLI-output wrapper (`agent_id: Uuid`, `state: AgentState`, `terminated_at_unix: u64`, `audit_log_entry: Hex32`)                            |
-| `ConfirmationRequired`                | Sub-step 3 (errors)     | Layer C/D; new `OctoCliError` variant; exit 47 per RFC-0011-c §9.8 (reserved 17–63 range; substrate exit; CLI re-checks with parent exit 2)                                                              |
+| RFC-0011-c type        | Sub-step            | Notes                                                                                                                                       |
+| ---------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AgentDestroyArgs`     | Sub-step 1 (clap)   | Layer C/D; clap derive struct (`agent_id: Uuid`, `--confirm` (required), `--reason <string>`, `--json`)                                     |
+| `AgentDestroyOutput`   | Sub-step 2 (output) | Layer C/D; CLI-output wrapper (`agent_id: Uuid`, `state: AgentState`, `terminated_at_unix: u64`, `audit_log_entry: Hex32`)                  |
+| `ConfirmationRequired` | Sub-step 3 (errors) | Layer C/D; new `OctoCliError` variant; exit 47 per RFC-0011-c §9.8 (reserved 17–63 range; substrate exit; CLI re-checks with parent exit 2) |
 
 ## Implementation Guide
 
@@ -116,10 +116,10 @@ No new external crates required; all substrate types are defined in `octo-wallet
 
 2 TV (TV-AGT9..TV-AGT10) covering `agent destroy`:
 
-| #       | Subcommand       | Input                              | Expected Output                                                                  | Notes                                                                       |
-| ------- | ---------------- | ---------------------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| TV-AGT9 | `agent destroy`  | Active agent, `--confirm`          | `AgentDestroyOutput { state: TERMINATED, audit_log_entry: ..., ... }` (exit 0)   | Audit log appended                                                          |
-| TV-AGT10| `agent destroy`  | Active agent, no `--confirm`       | `ConfirmationRequired` (exit 47 substrate / exit 2 CLI)                          | Confirmation gate enforced                                                  |
+| #        | Subcommand      | Input                        | Expected Output                                                                | Notes                      |
+| -------- | --------------- | ---------------------------- | ------------------------------------------------------------------------------ | -------------------------- |
+| TV-AGT9  | `agent destroy` | Active agent, `--confirm`    | `AgentDestroyOutput { state: TERMINATED, audit_log_entry: ..., ... }` (exit 0) | Audit log appended         |
+| TV-AGT10 | `agent destroy` | Active agent, no `--confirm` | `ConfirmationRequired` (exit 47 substrate / exit 2 CLI)                        | Confirmation gate enforced |
 
 ## Layer direction (RFC-0011-c §9.1 Architecture + per [[cipherocto-design-principles]])
 
@@ -145,7 +145,7 @@ cargo test -p octo-cli --lib --tests  # green
   - `generated_at: DateTime` → `executed_at_unix: u64`
   - `preview_only: bool` → `redacted: bool`
   - `command: String` (ADDED)
-  Old CLI ignores unknown fields.
+    Old CLI ignores unknown fields.
 - The `--confirm` flag is a clap-level requirement; no CLI flag short-form (`-c`, `--yes`, `--force`) is provided to bypass.
 
 ## Cross-references
@@ -163,6 +163,41 @@ cargo test -p octo-cli --lib --tests  # green
 ## Why gate
 
 No release gate at mission landing. The `agent destroy` subcommand is substrate-only and depends on `0011-c-agent-create-subcommand` for the clap root wiring. The audit log append depends on RFC-0011-a substrate; if RFC-0011-a is not yet Accepted, the subcommand ships as a stub emitting `AuditSubstrateNotReady` (exit 52). **Mission completion requires RFC-0011-a Accepted.**
+
+## Substrate Gap (hard-checked 2026-09-11)
+
+Two-blocker substrate verification:
+
+1. **State machine blocker** — `octo_wallet::transition_agent` with
+   `Terminated` target DOES NOT EXIST in `crates/octo-wallet/src/`
+   (verified via `grep -rE "pub (fn|async fn) " crates/octo-wallet/src/`).
+   Sub-step 3 cannot dispatch the destroy transition.
+
+2. **Audit append blocker** — `octo-audit` and `octo-audit-core`
+   expose `AppendOnlyAuditSink` trait + `AuditEvent`/`AuditEventKind`
+   enums (Layer A frozen per RFC-0012) but DO NOT expose a public
+   `append_event` / `append_audit` function callable from CLI. The
+   `OctoCliAuditAppend` facade layer required by RFC-0011-a §7.4
+   Substrate [ADD] signatures is unbuilt.
+
+**Unblock path:**
+
+- Substrate #1: add `pub fn transition_agent` (small additive, ~30 LoC)
+  to `crates/octo-wallet/src/agent.rs` (shared landing with 0011-c
+  run + attach missions).
+- Substrate #2: file RFC-0011-a-substrate (settlement receipt append
+  surface) — separate substrate RFC cycle, NOT a closure exercise.
+  Mission YAML frontmatter `v: "1.0"` should bump to `v: "1.1"`
+  once substrate RFC is authored.
+
+**Mission completion requires RFC-0011-a Accepted** per YAML frontmatter
+`release_gate`. RFC-0011-a status MUST be `Accepted` not `Draft` for
+this mission to land. The mission ships as a stub emitting
+`AuditSubstrateNotReady` (exit 52) per §Backward compat until both
+substrate blockers resolve.
+
+**Implementation cannot proceed** until both substrate blockers land.
+Mission remains `Claimed` per [[memory-is-never-status-ground-truth]].
 
 ## Claimant
 

@@ -1,0 +1,23 @@
+[package]
+name = "octo-audit"
+version = "0.1.0"
+edition = "2021"
+description = "Layer B audit facade — re-exports octo-audit-core (RFC-0012 §Module Layout)"
+license = "Apache-2.0"
+authors = ["CipherOcto"]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# Layer B facade → Layer A substrate (RFC-0012 §Module Layout). Years-stable
+# substrate; the facade just exposes it at a friendly name for owner crates
+# (e.g. `octo-wallet`, `octo-cli`) that prefer a non-`-core` import.
+octo-audit-core = { path = "../octo-audit-core" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+empty_line_after_doc_comments = "allow"
+doc_lazy_continuation = "allow"

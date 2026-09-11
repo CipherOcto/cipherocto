@@ -1,0 +1,25 @@
+[package]
+name = "octo-audit-core"
+version = "0.1.0"
+edition = "2021"
+description = "Layer A frozen audit substrate — AuditEvent + AppendOnlyAuditSink trait + verify_chain per RFC-0012 §Specification"
+license = "Apache-2.0"
+authors = ["CipherOcto"]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# Layer A primitive: BLAKE3-256 chain hashing per RFC-0012 §Design Goals G5.
+blake3 = "1.5"
+# Layer A primitive: canonical serde for AuditEvent + AuditEventKind.
+serde = { version = "1", features = ["derive"] }
+# Layer A error type per cipherocto-design-principles Layer A row.
+thiserror = "2.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+empty_line_after_doc_comments = "allow"
+doc_lazy_continuation = "allow"

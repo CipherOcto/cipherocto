@@ -177,7 +177,7 @@ pub fn list_receipts(filter: &AuditFilter) -> Result<Vec<ReceiptSummary>, AuditE
 pub fn get_receipt(id: &ReceiptId) -> Result<Receipt, AuditError>;
 ```
 
-- **Lookup semantics** — exact primary-key match; the canonical `u64` value passed to the substrate via `ReceiptId::0` (or `id.0`); CLI surfaces the value as a decimal integer via `Display` impl; no partial / fuzzy match.
+- **Lookup semantics** — exact primary-key match; the canonical `u64` value passed to the substrate via `id.0` (field access on the tuple struct); CLI surfaces the value as a decimal integer via `Display` impl; no partial / fuzzy match.
 - **Return semantics** — full canonical `Receipt` struct per RFC-0014 §Data Structures; CLI surfaces `OctoCliError::AuditShowOutput { receipt: ... }` per RFC-0011-a §`AuditShowOutput`.
 - **Error semantics** — `AuditError::ReceiptNotFound(String)` (CLI exit 17) on miss, carrying the canonical decimal `u64` form per §6.2.6. The `String` payload is the redacted canonical decimal (no secret material); see §6.5 + Appendix B for the redactor contract.
 
@@ -298,7 +298,7 @@ pub struct ReceiptSummary {
     pub subject_did: Did,        // requires RFC-0014-v2
     pub capability_root: [u8; 32], // requires RFC-0014-v2
     pub model: String,             // requires RFC-0014-v2
-    pub executed_at_unix: u64,     // requires RFC-0014-v2
+    pub executed_at_unix: u64,     // CLI projection from envelope.settled_at_unix per RFC-0959; sourced from MarketDeliveryReceipt (CLI wrapper per RFC-0014 line 828); NOT a substrate Receipt field
     pub status: StatusRef,         // requires RFC-0014-v2 (canonical enum)
     pub cost_dqa: String,          // requires RFC-0014-v2 (RFC-0959 cost-dqa-migration wire form)
 }
@@ -355,15 +355,15 @@ pub fn get_receipt(id: &ReceiptId) -> Result<Receipt, AuditError> { ... }
 // append_audit_event DEFERRED per §6.2.3 / §6.9 (requires RFC-0012-v2 amendment)
 pub fn audit_home() -> Result<PathBuf, AuditError> { ... }
 
-// NEW types from §6.2.5..6.2.7 (defined in this file):
+// NEW types from §6.2.5..6.2.8 (defined in this file):
 #[cfg(feature = "deferred-rfc-0014-v2")]
 pub struct AuditFilter { ... }
 pub struct ReceiptId(pub u64);
 // StatusRef alias gated behind feature flag per §6.2.7 / §6.4 no-phantom-symbol rule:
-// #[cfg(feature = "deferred-rfc-0014-v2")]
-// pub type StatusRef = ReceiptStatus;  // alias placeholder — DEFERRED substrate enum per §6.2.7 / §6.9
-// #[cfg(feature = "deferred-rfc-0014-v2")]  // cfg-gate mirrors §6.2.8; substrate enum `ReceiptStatus` required
-// pub struct ReceiptSummary { ... }  // DEFERRED per §6.2.8 / §6.9 (requires RFC-0014-v2 amendment)
+#[cfg(feature = "deferred-rfc-0014-v2")]
+pub type StatusRef = crate::octo_settlement_core::ReceiptStatus;  // alias — substrate enum lands in octo_settlement_core with RFC-0014-v2 acceptance per §6.9 DEFERRED SURFACE
+#[cfg(feature = "deferred-rfc-0014-v2")]
+pub struct ReceiptSummary { ... }  // DEFERRED per §6.2.8 / §6.9 (requires RFC-0014-v2 amendment)
 ```
 
 Per [[cipherocto-design-principles]] §No parallel abstractions: `AuditError as CoreAuditError` is the canonical name-disambiguation pattern (façade's `AuditError` is a different type from `octo_audit_core::AuditError`); no separate canonical name in each crate. R1 v1.0 had `ReceiptStatus as SettlementReceiptStatus` as a "future re-export"; R2 DROPS this alias because the underlying `ReceiptStatus` enum does not exist in the substrate today — adding the alias pre-amendment would create a phantom symbol (forbidden per `no-phantom-mission-pointers` rule applied to type space).
@@ -450,7 +450,7 @@ The R2 scope-cut DEFERs the following cross-substrate features. Each entry lists
 3. **`AuditError::ReceiptNotFound` carries canonical decimal `u64` form of the substrate `Receipt::receipt_id`** (per §6.2.2 + §6.2.6); redactor-clean (no secret material).
 4. **Read is no-mutation** — G1 invariant per RFC-0011-a; `list_receipts` + `get_receipt` are pure reads.
 5. **Append cannot rollback** — DEFERRED per §6.9 (no write path at R2). When write path unblocks post-RFC-0012-v2: once an `AuditEvent` row is appended to `AppendOnlyAuditSink`, it cannot be removed (type-level `&mut self` constraint). Future redaction requires a new `AuditEventKind::Redaction { prev_hash, reason }` row appended AFTER the target row (DEFERRED to RFC-0012-v2 amendment).
-6. **`WalletError::AuditUnavailable` integration** — DEFERRED per §6.9. When RFC-0015 + RFC-0016 write paths unblock together: RFC-0015 `transition_agent` calls `append_audit_event`; on `AuditError::SinkSpecific(_)` return, RFC-0015 rolls back the state-machine transition (substrate-faithful rollback contract per RFC-0015 §6.2.2 (Audit append + rollback contract); `SinkSpecific` is the canonical variant per RFC-0016 §6.3 + `crates/octo-audit-core/src/error.rs`).
+6. **`WalletError::AuditUnavailable` integration** — DEFERRED per §6.9. When RFC-0015 + RFC-0016 write paths unblock together: RFC-0015 `transition_agent` calls `append_audit_event`; on `AuditError::SinkSpecific(_)` return, RFC-0015 rolls back the state-machine transition (substrate-faithful rollback contract per RFC-0015 §6.2.2 (Audit append + rollback contract); `SinkSpecific(String)` lives in `octo_audit_core::AuditError` per `crates/octo-audit-core/src/error.rs` (Layer A frozen); re-exported via RFC-0016 §6.4 as `octo_audit::CoreAuditError`).
 7. **Read access control (DEFERRED `subject_did` ACL)** — 5-Question Test row: Q1 (Who) = compromised CLI / co-tenant on a multi-process host; Q2 (What) = read another tenant's receipts by omitting `subject_did` filter; Q3 (Why) = reconnaissance / receipt-store enumeration across operators; Q4 (How mitigated) = `AuditFilter.subject_did: Option<Did>` ACL field DEFERRED per §6.9 (requires RFC-0014-v2 substrate field + RFC-0016-v2 façade ACL enforcement); Q5 (Residual) = per-process trust boundary assumed at R4.5 KEEP — multi-tenant deployments with shared receipt stores MUST NOT enable RFC-0016 reads until the ACL lands. The trust-boundary assumption is documented in §Implicit Assumptions Audit and is the single biggest security pre-condition for the R4.5 read surface; the R4.5 ACL gap is the substrate-faithful cost of accepting before the field exists.
 
 ## Adversarial Review
@@ -596,8 +596,7 @@ pub fn list_receipts(filter: &AuditFilter) -> Result<Vec<ReceiptSummary>, AuditE
     // 1. Validate filter: limit == 0 rejected (§6.2.5); since_unix <= until_unix if both Some.
     // 2. Walk the canonical receipt store (RFC-0014 substrate; `octo_settlement_core::Receipt`).
     // 3. Apply server-side filter.
-    // 4. Sort by `executed_at_unix DESC` (note: `executed_at_unix` is a `ReceiptSummary` projection
-    //    field DEFERRED to RFC-0014-v2; substrate sort key is `Receipt::timestamp_unix` today).
+    // 4. Sort by the canonical `Receipt::timestamp_unix DESC` (substrate-faithful per RFC-0014 §Data Structures).
     // 5. Map to `ReceiptSummary` subset (DEFERRED to RFC-0014-v2 acceptance per §6.9).
     // 6. Return.
 }

@@ -111,9 +111,9 @@ Layer direction: CLI (Layer C/D) → `octo-wallet` (Layer B) → `octo-audit-cor
 
 Three additive items = 1 function + 2 error variants, layered atop the existing `AgentManifest` / `AgentState` / `AgentSummary` / `AgentFilter` / `CapabilityId` types already present in the same file:
 
-1. **`list_owned_agents`** — read function (KEEP per R4.5)
-2. **`WalletError::AgentNotFound(Uuid)`** — error variant (KEEP per R4.5)
-3. **`WalletError::ForbiddenHolderMismatch`** — error variant (KEEP per R4.5; NEW per R2)
+1. **`list_owned_agents`** — read function (KEEP per R5.5)
+2. **`WalletError::AgentNotFound(Uuid)`** — error variant (KEEP per R5.5)
+3. **`WalletError::ForbiddenHolderMismatch`** — error variant (KEEP per R5.5; NEW per R2)
 
 The write function `transition_agent` is DEFERRED per §6.8 DEFERRED SURFACE (RFC-0012-v2 acceptance required) and is documented in its own §6.2.2 DEFERRED section below — it is **NOT** counted among the three additive items above.
 
@@ -176,6 +176,7 @@ pub fn list_owned_agents(
 /// Single-callsite per agent: concurrent `transition_agent` against the
 /// same `agent_id` returns `WalletError::AlreadyInTransition` (transient,
 /// retry-safe; CLI surfaces as substrate reason).
+#[cfg(feature = "deferred-rfc-0012-v2")]
 pub fn transition_agent(
     uuid: Uuid,
     target: AgentState,
@@ -205,16 +206,16 @@ AgentNotFound(Uuid),
 
 `WalletError` variants (additive; `#[non_exhaustive]` is already in scope). The write-path variants are DEFERRED pending RFC-0012-v2 acceptance — see §6.8 DEFERRED SURFACE.
 
-| Variant                                                   | Source                                                                          | CLI exit                      | RFC-0011-c reference        |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------- | --------------------------- |
-| `AgentNotFound(Uuid)` (NEW, KEEP)                         | `list_owned_agents` + DEFERRED `transition_agent`                               | `AgentNotFound` (42)          | §9.8 slot 42                |
-| `ForbiddenHolderMismatch` (NEW, KEEP)                     | `list_owned_agents` (caller/filter DID mismatch per §6.2.1 HIGH sec fix)        | `PermissionDenied` (13)       | parent RFC-0011 §Exit Codes |
-| `AlreadyInTransition(Uuid)` (NEW, **DEFERRED**)           | `transition_agent` (write-only; concurrent call)                                | `InvalidStateTransition` (43) | §9.8 slot 43                |
-| `InvalidStateTransition { from, to }` (NEW, **DEFERRED**) | `transition_agent` (write-only; illegal transition)                             | `InvalidStateTransition` (43) | §9.8 slot 43                |
-| `ReasonTooLong(usize)` (NEW, **DEFERRED**)                | `transition_agent` (write-only; reason > 256 chars)                             | `InvalidFilter` (16)          | parent reserved             |
-| `ReasonContainsControlChars` (NEW, **DEFERRED**)          | `transition_agent` (write-only; control-char filter per §6.2.2 step 1)          | `InvalidFilter` (16)          | parent reserved             |
-| `AuditUnavailable` (NEW, **DEFERRED**)                    | `transition_agent` (write-only; `AppendOnlyAuditSink` unreachable per RFC-0012) | `AuditSubstrateNotReady` (52) | RFC-0011-c §9.8 slot 52     |
-| `AgentAlreadyExists(Uuid)` (EXISTING)                     | `register_agent`                                                                | `AgentAlreadyExists` (41)     | §9.8 slot 41                |
+| Variant                                                   | Source                                                                                                                     | CLI exit                      | RFC-0011-c reference        |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | --------------------------- |
+| `AgentNotFound(Uuid)` (NEW, KEEP)                         | DEFERRED `transition_agent` (no KEEP source — variant mirrors `AgentAlreadyExists` shape per substrate-faithful principle) | `AgentNotFound` (42)          | §9.8 slot 42                |
+| `ForbiddenHolderMismatch` (NEW, KEEP)                     | `list_owned_agents` (caller/filter DID mismatch per §6.2.1 HIGH sec fix)                                                   | `PermissionDenied` (13)       | parent RFC-0011 §Exit Codes |
+| `AlreadyInTransition(Uuid)` (NEW, **DEFERRED**)           | `transition_agent` (write-only; concurrent call)                                                                           | `InvalidStateTransition` (43) | §9.8 slot 43                |
+| `InvalidStateTransition { from, to }` (NEW, **DEFERRED**) | `transition_agent` (write-only; illegal transition)                                                                        | `InvalidStateTransition` (43) | §9.8 slot 43                |
+| `ReasonTooLong(usize)` (NEW, **DEFERRED**)                | `transition_agent` (write-only; reason > 256 chars)                                                                        | `InvalidFilter` (16)          | parent reserved             |
+| `ReasonContainsControlChars` (NEW, **DEFERRED**)          | `transition_agent` (write-only; control-char filter per §6.2.2 step 1)                                                     | `InvalidFilter` (16)          | parent reserved             |
+| `AuditUnavailable` (NEW, **DEFERRED**)                    | `transition_agent` (write-only; `AppendOnlyAuditSink` unreachable per RFC-0012)                                            | `AuditSubstrateNotReady` (52) | RFC-0011-c §9.8 slot 52     |
+| `AgentAlreadyExists(Uuid)` (EXISTING)                     | `register_agent`                                                                                                           | `AgentAlreadyExists` (41)     | §9.8 slot 41                |
 
 **R2 reconciliation note — `AlreadyInTransition` source:** R1 v1.0 had `AlreadyInTransition` reachable from `list_owned_agents` reads during registry writes. R2 commits to **write-only** per §6.2.2 (the registry read is single-writer internally; reads during writes are serialized via the substrate-internal lock and never surface this variant). The variant is reachable exclusively from concurrent `transition_agent` calls against the same `(holder_did, agent_id)`.
 
@@ -511,4 +512,4 @@ sequenceDiagram
     CLI-->>Op: OutputEnvelope<AgentListOutput> exit 0
 ```
 
-> **R4.5 scope-cut note:** the previous v1.0 sequence diagram illustrated the `transition_agent` write path through `octo-audit-core`. R4.5 replaces it with the read-only `list_owned_agents` flow matching the RFC-0016 §Appendix C R4 stance. The write-path sequence (`octo agent destroy --reason`) is **DEFERRED** per §6.8 — it lands with RFC-0012-v2 + RFC-0015 re-implementation.
+> **R4.5 scope-cut note:** the previous v1.0 sequence diagram illustrated the `transition_agent` write path through `octo-audit-core`. R4.5 replaces it with the read-only `list_owned_agents` flow matching the RFC-0016 §Appendix C R2 read-only stance. The write-path sequence (`octo agent destroy --reason`) is **DEFERRED** per §6.8 — it lands with RFC-0012-v2 + RFC-0015 re-implementation.

@@ -116,7 +116,8 @@ graph LR
   AuditCore[octo-audit-core Layer A]
   Settle[octo-settlement-core Layer A]
 
-  AuditCLI -- "list_receipts/get_receipt" --> Audit
+  AuditCLI -- "get_receipt (KEEP)" --> Audit
+  AuditCLI -. "list_receipts (cfg-gated, deferred-rfc-0014-v2)" .-> Audit
   Wallet -. "append_audit_event (DEFERRED)" .-> Audit
   Audit -. "append event (DEFERRED)" .-> AuditCore
   Audit -- "read receipts" --> Settle
@@ -192,6 +193,7 @@ pub fn get_receipt(id: &ReceiptId) -> Result<Receipt, AuditError>;
 /// Returns the BLAKE3-256 chain-hash of the appended event row, computed
 /// per RFC-0012 §AppendOnlyAuditSink Trait; the hash is the `prev_hash` for the
 /// next appended row (chain integrity).
+#[cfg(feature = "deferred-rfc-0012-v2")]
 pub fn append_audit_event(event: AuditEvent) -> Result<Hex32, AuditError>;
 ```
 
@@ -484,7 +486,7 @@ DEFER — audit receipt substrate has no direct token cost; cite RFC-0900+ (Role
 
 ## Compatibility
 
-1. **No breaking changes.** Nine KEEP items (6 §6.2 + 3 §6.3) on `octo-audit` (Layer B façade) per RFC-0012 (R4.5 scope-cut from 8 KEEP items per §6.2 → 6 KEEP + 3 AuditError variants per §6.3 = 9 KEEP; the 2 dropped §6.2 items are now in §6.9 DEFERRED SURFACE); no existing public API modified.
+1. **No breaking changes.** Nine KEEP items (6 §6.2 + 3 AuditError variants per §6.3) on `octo-audit` (Layer B façade) per RFC-0012; no existing public API modified.
 2. **No new exit codes break parent semantics.** RFC-0011-a-reserved 17 (`ReceiptNotFound`) + 16 (`InvalidFilter`) + 64 (`Internal`) are pre-allocated per RFC-0011 §Exit Codes; this RFC consumes those three. The previously-proposed slot 52 (`AuditSubstrateNotReady` / `AuditAppendFailed`) is DEFERRED per §6.9 — when RFC-0012-v2 + RFC-0014-v2 acceptance lands, slot 52 will be claimed.
 3. **No new clap variants break parent dispatch.** This RFC is substrate-only; CLI missions consume the new surface via existing CLI variant sets.
 4. **No new redaction patterns required.** Per RFC-0011-a §Redaction, canonical receipt shape is redactor-clean by construction; `ReceiptSummary` (DEFERRED per §6.9) + `ReceiptId` + `AuditError` substrings are redactor-clean. The `Internal(String)` redaction contract per §6.3 requires substrate-side scrubbing before propagation.
@@ -544,7 +546,7 @@ No changes to Layer A crates (`octo-audit-core`, `octo-settlement-core`); no CLI
 
 - **Substrate-faithful** — Layer A frozen untouched; this RFC adds Layer B façade surface per RFC-0012 acceptance pattern.
 - **Additive only** — CLAUDE.md §Layer A stability: Layer B additive changes do not break consumers; the 9 KEEP items (= 6 §6.2 + 3 §6.3) are additive.
-- **No parallel abstractions** — `append_audit_event` reuses `AppendOnlyAuditSink` from RFC-0012 (when that façade write path is defined); `ReceiptStatus` re-export from `octo-settlement-core` DEFERRED to RFC-0014-v2 per §6.9; `append_audit_event` DEFERRED per §6.2.3 per [[cipherocto-design-principles]] §No parallel abstractions.
+- **No parallel abstractions** — Façade type alias `StatusRef = ReceiptStatus` (canonical Layer A enum lands in `octo_settlement_core`) — DEFERRED to RFC-0014-v2 per §6.9; `append_audit_event` DEFERRED per §6.2.3 per [[cipherocto-design-principles]] §No parallel abstractions.
 - **CLI parity** — every `[ADD]` item in RFC-0011-a §7.4 lands in this RFC; gaps are filled by the additions.
 
 ## Version History
@@ -634,6 +636,7 @@ sequenceDiagram
 
     Op->>CLI: octo audit list --since 7d --limit 10
     CLI->>Aud: list_receipts(&AuditFilter { since_unix: Some(7d_unix), limit: 10 })
+    Note over CLI,Aud: list_receipts is cfg-gated (deferred-rfc-0014-v2); without flag, only get_receipt is exposed
     Aud->>Settle: canonical receipt store read (RFC-0014 §Data Structures)
     Settle-->>Aud: Ok(Vec<Receipt>)
     Aud-->>CLI: Ok(Vec<ReceiptSummary>) (projection DEFERRED to RFC-0014-v2 per §6.9)

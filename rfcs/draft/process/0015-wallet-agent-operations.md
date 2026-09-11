@@ -145,49 +145,27 @@ pub fn list_owned_agents(
 - **Return semantics** — empty `Vec` when zero matches (NOT an error per RFC-0011-c §9.3.3 TV-AGT6); summaries sorted by `registered_at_unix DESC`, with secondary sort by `agent_id` (canonical UUID v7) ASC as deterministic tiebreaker for entries sharing the same `registered_at_unix` (substrate-faithful ordering per §6.6 determinism requirement).
 - **Error semantics** — `WalletError::Config` on registry corruption (unrecoverable); `WalletError::Io` on disk read failure; `WalletError::ForbiddenHolderMismatch` (NEW) on caller/filter DID mismatch.
 
-#### §6.2.2 `transition_agent` — DEFERRED to RFC-0012-v2 acceptance
+#### §6.2.2 `transition_agent` — DEFERRED DESIGN
 
-> **Status: DEFERRED.** This function is **DEFERRED**. It depends on `AuditEventKind::AgentTransition { agent_id, from, to, reason, at_unix }` being added to `octo-audit-core` (Layer A frozen) — this variant does **not** exist in the substrate today (`AuditEventKind` has 3 variants only: `Insert`, `Revoke`, `Sync`). The function surface + associated error variants + audit-append contract are documented here as the substrate target for the post-amendment RFC-0015 implementation. Acceptance of this RFC at R4.5 does **not** authorize `transition_agent` implementation; that authorization lands with RFC-0012-v2 acceptance. See §6.8 DEFERRED SURFACE for the full deferral list.
+**Status: DEFERRED** pending RFC-0012-v2 substrate amendment (adds `AuditEventKind::AgentTransition` to `octo-audit-core` Layer A frozen). Signature below is **forward-looking only**; NOT implementable at R2 acceptance. The TOCTOU mitigation and caller-attestation parameters documented in §6.8 row 1 represent the substrate-amendment-conditional contract.
 
 ```rust
-/// Transition an existing agent to a new state.
-///
-/// [DEFERRED — see §6.8 DEFERRED SURFACE. Requires RFC-0012-v2 amendment adding `AuditEventKind::AgentTransition` to `octo-audit-core`.]
-///
-/// State-machine authority (substrate-faithful, canonical form per
-/// RFC-0002 §Agent State Machine substrate diagram):
-///
-///   Registered --(transition_agent(_, Running, _))--> Running
-///   Running    --(transition_agent(_, Terminated, _))--> Terminated
-///   Running    --(transition_agent(_, Registered, _))--> Registered
-///   Terminated --> [no transitions; terminal]
-///
-/// Idempotent: `transition_agent(uuid, current_state, _)` is a no-op and
-/// returns the unchanged `AgentSummary` (NOT an error).
-///
-/// Reason: optional short string (≤256 chars; ASCII printable + non-control
-/// Unicode (U+0020+) is allowed; control chars U+0000-U+001F and U+007F are
-/// REJECTED) surfaced in the audit metadata
-/// per RFC-0011-a audit substrate append. CLI surfaces via
-/// `octo agent destroy --reason` + `octo agent run` (default: empty
-/// string for non-destructive transitions).
-///
-/// Single-callsite per agent: concurrent `transition_agent` against the
-/// same `agent_id` returns `WalletError::AlreadyInTransition` (transient,
-/// retry-safe; CLI surfaces as substrate reason).
-#[cfg(feature = "deferred-rfc-0012-v2")]
+// FORWARD-LOOKING ONLY — see §6.8 DEFERRED SURFACE row 1
 pub fn transition_agent(
+    caller_did: &Did,
     uuid: Uuid,
     target: AgentState,
     reason: Option<&str>,
 ) -> Result<AgentSummary, WalletError>;
 ```
 
-- **State-machine validation** — substrate rejects invalid transitions with `WalletError::InvalidStateTransition { from: AgentState, to: AgentState }`. The `#[non_exhaustive]` enum attribute permits future expansion (e.g., `Paused`, `Draining` per RFC-0002-v2 amendment).
-- **Idempotency carve-out** — `transition_agent(uuid, current_state, _)` on a **terminal** state (`Terminated`) is **NOT** idempotent (would mask replay attacks); it returns `WalletError::InvalidStateTransition { from: Terminated, to: Terminated }` per TV-WLT-AGT-5. Same-state transitions on non-terminal states (`Registered → Registered`, `Running → Running`) remain idempotent no-ops.
-- **TOCTOU mitigation** — substrate acquires a per-`(holder_did, agent_id)` lock BEFORE state lookup; `current_state` is re-read INSIDE the lock to defeat time-of-check-to-time-of-use races (HIGH sec fix). The lock is released after the audit append completes (or rolls back).
-- **Audit append + rollback contract** — every successful transition appends an `AuditEventKind::AgentTransition { agent_id, from, to, reason, at_unix }` row to the canonical `AppendOnlyAuditSink` per RFC-0012 (post-RFC-0012-v2). If the audit append fails (`AuditError::AuditAppendFailed`), the in-memory state mutation is **rolled back** (compensation) and the error propagates to the caller; the CLI never sees a partial state. The audit append is the source of truth for the transition log; in-memory state is the source of truth for current `AgentState`.
-- **Reason length + control-char filter** — empty string allowed; ≤256 chars enforced (longer → `WalletError::ReasonTooLong(usize)`); **control characters (`U+0000`-`U+001F`, `U+007F`) are REJECTED upfront** before any state-machine work (MEDIUM sec fix) — the audit log treats the reason as a UTF-8 string and downstream redaction / display tooling can mishandle embedded control bytes. ASCII printable + non-control Unicode (U+0020+) is allowed; control chars U+0000-U+001F and U+007F are rejected per §6.2.2 step 1. Non-UTF-8 input rejected at CLI (substrate trust).
+- **TOCTOU mitigation** (forward-looking) — substrate acquires a per-`(holder_did, agent_id)` lock AFTER looking up holder_did by `uuid`; `current_state` is re-read INSIDE the lock. The lookup-by-uuid reveals `holder_did`; the lock is then keyed on `(holder_did, agent_id)`. The lock is released after the audit append completes (or rolls back). The order matters: substrate first resolves the agent to learn its holder_did, THEN takes the per-`(holder_did, agent_id)` lock; this avoids a parallel lookup-then-relookup pattern that would race on agent reassignment.
+- **Caller-attestation** (forward-looking) — `caller_did` parameter is REQUIRED; substrate rejects when `caller_did != agent.holder_did` (returns `WalletError::ForbiddenHolderMismatch` per §6.2.4). Closes the same multi-DID enumeration attack surface that `list_owned_agents` defends against per §6.2.1; the substrate treats read + write paths with the same caller-attestation discipline.
+- **State-machine authority** (forward-looking) — substrate rejects invalid transitions with `WalletError::InvalidStateTransition { from: AgentState, to: AgentState }`. The `#[non_exhaustive]` enum attribute permits future expansion (e.g., `Paused`, `Draining` per RFC-0002-v2 amendment). Canonical transitions per RFC-0002 §Agent State Machine substrate diagram: `Registered → Running`, `Running → Terminated`, `Running → Registered`; `Terminated` is terminal.
+- **Idempotency carve-out** (forward-looking) — `transition_agent(caller_did, uuid, current_state, _)` on a **terminal** state (`Terminated`) is **NOT** idempotent (would mask replay attacks); it returns `WalletError::InvalidStateTransition { from: Terminated, to: Terminated }` per TV-WLT-AGT-5. Same-state transitions on non-terminal states (`Registered → Registered`, `Running → Running`) remain idempotent no-ops.
+- **Audit append + rollback contract** (forward-looking) — every successful transition appends an `AuditEventKind::AgentTransition { agent_id, from, to, reason, at_unix }` row to the canonical `AppendOnlyAuditSink` per RFC-0012 (post-RFC-0012-v2). The substrate-faithful rollback contract triggers on `AuditError::SinkSpecific(_)` from the audit append path — see RFC-0016 §6.3 for canonical variant set; on that error, the in-memory state mutation is **rolled back** (compensation) and the error propagates to the caller; the CLI never sees a partial state. The audit append is the source of truth for the transition log; in-memory state is the source of truth for current `AgentState`. Note that `AuditError::AuditAppendFailed` does **not** exist as a substrate variant — the canonical trigger is `AuditError::SinkSpecific(String)` (per `crates/octo-audit-core/src/error.rs` §`AuditError` enum, hard-checked 2026-09-11).
+- **Reason length + control-char filter** (forward-looking) — empty string allowed; ≤256 chars enforced (longer → `WalletError::ReasonTooLong(usize)`); **control characters (`U+0000`-`U+001F`, `U+007F`) are REJECTED upfront** before any state-machine work (MEDIUM sec fix) — the audit log treats the reason as a UTF-8 string and downstream redaction / display tooling can mishandle embedded control bytes. ASCII printable + non-control Unicode (U+0020+) is allowed; control chars U+0000-U+001F and U+007F are rejected per §6.2.2 step 1. Non-UTF-8 input rejected at CLI (substrate trust).
+- **Single-callsite per agent** (forward-looking) — concurrent `transition_agent` against the same `(holder_did, agent_id)` returns `WalletError::AlreadyInTransition` (transient, retry-safe; CLI surfaces as substrate reason).
 
 #### §6.2.3 `WalletError::AgentNotFound(Uuid)`
 
@@ -251,13 +229,13 @@ The table below documents the substrate-canonical state machine surface (see §A
 
 CLI missions consuming this substrate:
 
-| Mission                              | Substrate call                                                                                     | Sub-step                   |
-| ------------------------------------ | -------------------------------------------------------------------------------------------------- | -------------------------- |
-| `0011-c-agent-create-subcommand.md`  | `octo_wallet::cli_fns::register_agent` (EXISTING)                                                  | Sub-step 3 (existing)      |
-| `0011-c-agent-list-subcommand.md`    | `octo_wallet::list_owned_agents(caller_did, &filter)` (NEW per §6.2.1)                             | Sub-step 3 (NEW, **KEEP**) |
-| `0011-c-agent-run-subcommand.md`     | `transition_agent(uuid, Running, None)` then `octo_runtime::spawn_agent` — **DEFERRED** per §6.8   | Sub-step 3 (**DEFERRED**)  |
-| `0011-c-agent-destroy-subcommand.md` | `transition_agent(uuid, Terminated, reason)` then audit append — **DEFERRED** per §6.8             | Sub-step 3 (**DEFERRED**)  |
-| `0011-c-agent-attach-subcommand.md`  | (read-only; `transition_agent` is N/A; uses `octo_runtime::attach`) — substrate is read-only at R2 | N/A                        |
+| Mission                              | Substrate call                                                                                               | Sub-step                   |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------ | -------------------------- |
+| `0011-c-agent-create-subcommand.md`  | `octo_wallet::cli_fns::register_agent` (EXISTING)                                                            | Sub-step 3 (existing)      |
+| `0011-c-agent-list-subcommand.md`    | `octo_wallet::list_owned_agents(caller_did, &filter)` (NEW per §6.2.1)                                       | Sub-step 3 (NEW, **KEEP**) |
+| `0011-c-agent-run-subcommand.md`     | `transition_agent(caller_did, uuid, Running, None)` then `octo_runtime::spawn_agent` — **DEFERRED** per §6.8 | Sub-step 3 (**DEFERRED**)  |
+| `0011-c-agent-destroy-subcommand.md` | `transition_agent(caller_did, uuid, Terminated, reason)` then audit append — **DEFERRED** per §6.8           | Sub-step 3 (**DEFERRED**)  |
+| `0011-c-agent-attach-subcommand.md`  | (read-only; `transition_agent` is N/A; uses `octo_runtime::attach`) — substrate is read-only at R2           | N/A                        |
 
 Each mission's accepted-state precondition is checked locally against the `AgentState` returned by `octo_wallet::register_agent` + `list_owned_agents` calls; the substrate is source of truth, not the CLI. RFC-0015 R2 acceptance unblocks the **read-only** missions (`create`, `list`, `attach`); write-path missions (`run`, `destroy`) remain gated on RFC-0012-v2 acceptance per §6.8 DEFERRED SURFACE.
 
@@ -283,15 +261,15 @@ CLI surfaces `Class A` operations unconditionally (no `--allow-write` gate per p
 
 The R2 scope-cut DEFERs the following cross-substrate features. Each entry lists the substrate amendment required, the current substrate reality (hard-checked 2026-09-11), and the unblock condition. Acceptance of RFC-0015 at R2 does **not** authorize these features; they require a future amendment cycle.
 
-| Deferred feature                                   | Substrate amendment required                                                                                | Current substrate reality (hard-checked)                                                                                                                       | Unblock condition                                                   |
-| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `transition_agent(uuid, target, reason)` write     | RFC-0012-v2: `AuditEventKind::AgentTransition { agent_id, from, to, reason, at_unix }` in `octo-audit-core` | `AuditEventKind` has 3 variants only (`Insert`, `Revoke`, `Sync`); NO `AgentTransition` variant. `crates/octo-audit-core/src/event.rs` §`AuditEventKind` enum. | RFC-0012-v2 ACCEPTED + `transition_agent` re-implemented per §6.2.2 |
-| `WalletError::AlreadyInTransition(Uuid)`           | Paired with `transition_agent` (write-only per §6.3 R2 reconciliation)                                      | Not in `WalletError` enum. See `crates/octo-wallet/src/error.rs` §`WalletError` enum.                                                                          | Same as `transition_agent` (unblocked together)                     |
-| `WalletError::InvalidStateTransition { from, to }` | Paired with `transition_agent`                                                                              | Not in `WalletError` enum                                                                                                                                      | Same as `transition_agent`                                          |
-| `WalletError::ReasonTooLong(usize)`                | Paired with `transition_agent` (reason length per §6.2.2 step 1)                                            | Not in `WalletError` enum                                                                                                                                      | Same as `transition_agent`                                          |
-| `WalletError::ReasonContainsControlChars`          | Paired with `transition_agent` (control-char filter per §6.2.2 step 1)                                      | Not in `WalletError` enum                                                                                                                                      | Same as `transition_agent`                                          |
-| `WalletError::AuditUnavailable`                    | Paired with `transition_agent` (audit substrate unavailable per §6.2.2 rollback contract)                   | Not in `WalletError` enum                                                                                                                                      | Same as `transition_agent`                                          |
-| Audit append of `AgentTransition` row              | RFC-0012-v2 (same as above) + RFC-0016-v2 (audit receipt API `append_audit_event` write path)               | `AppendOnlyAuditSink::append` exists in `octo-audit-core` but no `AuditEventKind::AgentTransition` to append.                                                  | RFC-0012-v2 + RFC-0016-v2 ACCEPTED                                  |
+| Deferred feature                                           | Substrate amendment required                                                                                | Current substrate reality (hard-checked)                                                                                                                       | Unblock condition                                                                                                                                                                     |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `transition_agent(caller_did, uuid, target, reason)` write | RFC-0012-v2: `AuditEventKind::AgentTransition { agent_id, from, to, reason, at_unix }` in `octo-audit-core` | `AuditEventKind` has 3 variants only (`Insert`, `Revoke`, `Sync`); NO `AgentTransition` variant. `crates/octo-audit-core/src/event.rs` §`AuditEventKind` enum. | RFC-0012-v2 ACCEPTED + `transition_agent` re-implemented per §6.2.2 (with `caller_did` parameter; holder_did resolved by uuid-lookup; `AuditError::SinkSpecific` rollback per §6.2.2) |
+| `WalletError::AlreadyInTransition(Uuid)`                   | Paired with `transition_agent` (write-only per §6.3 R2 reconciliation)                                      | Not in `WalletError` enum. See `crates/octo-wallet/src/error.rs` §`WalletError` enum.                                                                          | Same as `transition_agent` (unblocked together)                                                                                                                                       |
+| `WalletError::InvalidStateTransition { from, to }`         | Paired with `transition_agent`                                                                              | Not in `WalletError` enum                                                                                                                                      | Same as `transition_agent`                                                                                                                                                            |
+| `WalletError::ReasonTooLong(usize)`                        | Paired with `transition_agent` (reason length per §6.2.2 step 1)                                            | Not in `WalletError` enum                                                                                                                                      | Same as `transition_agent`                                                                                                                                                            |
+| `WalletError::ReasonContainsControlChars`                  | Paired with `transition_agent` (control-char filter per §6.2.2 step 1)                                      | Not in `WalletError` enum                                                                                                                                      | Same as `transition_agent`                                                                                                                                                            |
+| `WalletError::AuditUnavailable`                            | Paired with `transition_agent` (audit substrate unavailable per §6.2.2 rollback contract)                   | Not in `WalletError` enum                                                                                                                                      | Same as `transition_agent`                                                                                                                                                            |
+| Audit append of `AgentTransition` row                      | RFC-0012-v2 (same as above) + RFC-0016-v2 (audit receipt API `append_audit_event` write path)               | `AppendOnlyAuditSink::append` exists in `octo-audit-core` but no `AuditEventKind::AgentTransition` to append.                                                  | RFC-0012-v2 + RFC-0016-v2 ACCEPTED                                                                                                                                                    |
 
 **Reconciliation note (R1 → R2):** R1 v1.0 proposed the full write surface; R2 commits to read-only surface + documents the write surface as DEFERRED with explicit unblock conditions. This avoids substrate amendments at the RFC-0015 acceptance boundary (Layer A frozen per CLAUDE.md §Rust crate-level stability).
 
@@ -373,26 +351,26 @@ DEFER — agent operations have no direct token cost; cite RFC-0900+ (Role Econo
 
 Substrate-level test vectors (`crates/octo-wallet/src/agent.rs` test module). Write-path vectors (TV-WLT-AGT-3 through TV-WLT-AGT-11) are **DEFERRED** per §6.8 — they exercise `transition_agent` which requires RFC-0012-v2 acceptance. TV-WLT-AGT-1, 2, 12, 13, 13b, 13c, 13d, 13e, 13f KEEP at R5.5; 3-11 DEFERRED per §6.8; the `validate_reason` primitive tests (TV-WLT-AGT-13 series) exercise a substrate function (`transition_agent`) that is itself DEFERRED but the primitive has standalone test coverage that lands with the post-RFC-0012-v2 substrate.
 
-| #              | Substrate call                                                           | Input                                                 | Expected Output                                                                                                     | Notes                                                            |
-| -------------- | ------------------------------------------------------------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| TV-WLT-AGT-1   | `list_owned_agents(caller_did, &AgentFilter::default())`                 | Empty registry                                        | `Ok(vec![])`                                                                                                        | TV-AGT6 substrate echo                                           |
-| TV-WLT-AGT-2   | `list_owned_agents(caller_did, &filter { limit: Some(100) })`            | 1000-agent registry                                   | `Ok(vec_of_100_summaries)` truncated                                                                                | Limit clamp                                                      |
-| TV-WLT-AGT-3   | `transition_agent(uuid, Running, None)`                                  | Registered agent                                      | `Ok(<summary with state=Running>)` + audit append                                                                   | **DEFERRED** per §6.8 — Happy path register→running              |
-| TV-WLT-AGT-4   | `transition_agent(uuid, Running, _)`                                     | Running agent                                         | `Ok(<unchanged summary>)` + NO audit append (idempotent)                                                            | **DEFERRED** per §6.8 — Idempotent same-state                    |
-| TV-WLT-AGT-5   | `transition_agent(uuid, Terminated, _)`                                  | Terminated agent                                      | `Err(WalletError::InvalidStateTransition { from: Terminated, to: Terminated })`                                     | **DEFERRED** per §6.8 — Terminal state guard (NOT idempotent)    |
-| TV-WLT-AGT-6   | `transition_agent(missing_uuid, _, _)`                                   | Unknown UUID                                          | `Err(WalletError::AgentNotFound(uuid))`                                                                             | **DEFERRED** per §6.8 — Existence check                          |
-| TV-WLT-AGT-7   | `transition_agent(uuid, _, Some(long_str))`                              | Reason > 256 chars OR contains control char           | `Err(WalletError::ReasonTooLong(257))`                                                                              | **DEFERRED** per §6.8 — Length cap + control-char filter         |
-| TV-WLT-AGT-8   | `transition_agent(uuid, Terminated, _)`                                  | Running agent                                         | `Ok(<summary with state=Terminated>)` + audit append                                                                | **DEFERRED** per §6.8 — Destroy path                             |
-| TV-WLT-AGT-9   | `transition_agent(uuid, Registered, _)`                                  | Running agent                                         | `Ok(<summary with state=Registered>)` + audit append                                                                | **DEFERRED** per §6.8 — Restart-from-running                     |
-| TV-WLT-AGT-10  | `transition_agent(uuid, _, _)`                                           | Concurrent call against same `(holder_did, agent_id)` | `Err(WalletError::AlreadyInTransition(uuid))`                                                                       | **DEFERRED** per §6.8 — Concurrent-call guard                    |
-| TV-WLT-AGT-11  | `transition_agent` with audit sink unavailable                           | `AppendOnlyAuditSink` returns error                   | `Err(WalletError::AuditUnavailable)` + in-memory state rolled back                                                  | **DEFERRED** per §6.8 — Rollback contract (audit-append failure) |
-| TV-WLT-AGT-12  | `list_owned_agents(caller_did, &filter { holder_did: Some(other_did) })` | Caller DID ≠ filter `holder_did`                      | `Err(WalletError::ForbiddenHolderMismatch)`                                                                         | HIGH sec fix (caller-attestation per §6.2.1)                     |
-| TV-WLT-AGT-13  | `validate_reason("ok")` (unit test on control-char filter primitive)     | ASCII printable reason                                | `Ok(())`                                                                                                            | Verifies filter accepts ASCII printable                          |
-| TV-WLT-AGT-13b | `validate_reason("\x1b[31mred")` (unit test)                             | ANSI escape sequence reason                           | `Err(WalletError::ReasonContainsControlChars)` (DEFERRED variant, exposed for filter-primitive unit testing only)   | Verifies filter rejects `U+001B` ESC                             |
-| TV-WLT-AGT-13c | `validate_reason("emoji-ok-🎉")` (unit test)                             | Non-control Unicode reason                            | `Ok(())`                                                                                                            | Verifies filter does NOT reject legitimate Unicode               |
-| TV-WLT-AGT-13d | `validate_reason("\x00null")` (unit test)                                | NUL byte reason                                       | `Err(WalletError::ReasonContainsControlChars)` (DEFERRED variant)                                                   | Verifies filter rejects `U+0000` NUL                             |
-| TV-WLT-AGT-13e | `validate_reason("\r\n[ADMIN] approved")` (unit test)                    | CRLF-injection reason                                 | `Err(WalletError::ReasonContainsControlChars)` (DEFERRED variant)                                                   | Verifies filter rejects `U+000A` LF / `U+000D` CR                |
-| TV-WLT-AGT-13f | `validate_reason("\x85")` (unit test)                                    | C1 control (U+0085 NEL)                               | `Ok(())` (filter is U+007F scope per §6.2.2 step 1; C1 range gap documented — future RFC-0015-v2 may extend filter) | Verifies filter does NOT reject C1 range; documented gap         |
+| #              | Substrate call                                                           | Input                                                       | Expected Output                                                                                                     | Notes                                                            |
+| -------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| TV-WLT-AGT-1   | `list_owned_agents(caller_did, &AgentFilter::default())`                 | Empty registry                                              | `Ok(vec![])`                                                                                                        | TV-AGT6 substrate echo                                           |
+| TV-WLT-AGT-2   | `list_owned_agents(caller_did, &filter { limit: Some(100) })`            | 1000-agent registry                                         | `Ok(vec_of_100_summaries)` truncated                                                                                | Limit clamp                                                      |
+| TV-WLT-AGT-3   | `transition_agent(caller_did, uuid, Running, None)`                      | Registered agent                                            | `Ok(<summary with state=Running>)` + audit append                                                                   | **DEFERRED** per §6.8 — Happy path register→running              |
+| TV-WLT-AGT-4   | `transition_agent(caller_did, uuid, Running, _)`                         | Running agent                                               | `Ok(<unchanged summary>)` + NO audit append (idempotent)                                                            | **DEFERRED** per §6.8 — Idempotent same-state                    |
+| TV-WLT-AGT-5   | `transition_agent(caller_did, uuid, Terminated, _)`                      | Terminated agent                                            | `Err(WalletError::InvalidStateTransition { from: Terminated, to: Terminated })`                                     | **DEFERRED** per §6.8 — Terminal state guard (NOT idempotent)    |
+| TV-WLT-AGT-6   | `transition_agent(caller_did, missing_uuid, _, _)`                       | Unknown UUID                                                | `Err(WalletError::AgentNotFound(uuid))`                                                                             | **DEFERRED** per §6.8 — Existence check                          |
+| TV-WLT-AGT-7   | `transition_agent(caller_did, uuid, _, Some(long_str))`                  | Reason > 256 chars OR contains control char                 | `Err(WalletError::ReasonTooLong(257))`                                                                              | **DEFERRED** per §6.8 — Length cap + control-char filter         |
+| TV-WLT-AGT-8   | `transition_agent(caller_did, uuid, Terminated, _)`                      | Running agent                                               | `Ok(<summary with state=Terminated>)` + audit append                                                                | **DEFERRED** per §6.8 — Destroy path                             |
+| TV-WLT-AGT-9   | `transition_agent(caller_did, uuid, Registered, _)`                      | Running agent                                               | `Ok(<summary with state=Registered>)` + audit append                                                                | **DEFERRED** per §6.8 — Restart-from-running                     |
+| TV-WLT-AGT-10  | `transition_agent(caller_did, uuid, _, _)`                               | Concurrent call against same `(holder_did, agent_id)`       | `Err(WalletError::AlreadyInTransition(uuid))`                                                                       | **DEFERRED** per §6.8 — Concurrent-call guard                    |
+| TV-WLT-AGT-11  | `transition_agent(caller_did, uuid, _, _)` with audit sink unavailable   | `AppendOnlyAuditSink` returns `AuditError::SinkSpecific(_)` | `Err(WalletError::AuditUnavailable)` + in-memory state rolled back                                                  | **DEFERRED** per §6.8 — Rollback contract (SinkSpecific trigger) |
+| TV-WLT-AGT-12  | `list_owned_agents(caller_did, &filter { holder_did: Some(other_did) })` | Caller DID ≠ filter `holder_did`                            | `Err(WalletError::ForbiddenHolderMismatch)`                                                                         | HIGH sec fix (caller-attestation per §6.2.1)                     |
+| TV-WLT-AGT-13  | `validate_reason("ok")` (unit test on control-char filter primitive)     | ASCII printable reason                                      | `Ok(())`                                                                                                            | Verifies filter accepts ASCII printable                          |
+| TV-WLT-AGT-13b | `validate_reason("\x1b[31mred")` (unit test)                             | ANSI escape sequence reason                                 | `Err(WalletError::ReasonContainsControlChars)` (DEFERRED variant, exposed for filter-primitive unit testing only)   | Verifies filter rejects `U+001B` ESC                             |
+| TV-WLT-AGT-13c | `validate_reason("emoji-ok-🎉")` (unit test)                             | Non-control Unicode reason                                  | `Ok(())`                                                                                                            | Verifies filter does NOT reject legitimate Unicode               |
+| TV-WLT-AGT-13d | `validate_reason("\x00null")` (unit test)                                | NUL byte reason                                             | `Err(WalletError::ReasonContainsControlChars)` (DEFERRED variant)                                                   | Verifies filter rejects `U+0000` NUL                             |
+| TV-WLT-AGT-13e | `validate_reason("\r\n[ADMIN] approved")` (unit test)                    | CRLF-injection reason                                       | `Err(WalletError::ReasonContainsControlChars)` (DEFERRED variant)                                                   | Verifies filter rejects `U+000A` LF / `U+000D` CR                |
+| TV-WLT-AGT-13f | `validate_reason("\x85")` (unit test)                                    | C1 control (U+0085 NEL)                                     | `Ok(())` (filter is U+007F scope per §6.2.2 step 1; C1 range gap documented — future RFC-0015-v2 may extend filter) | Verifies filter does NOT reject C1 range; documented gap         |
 
 CLI-level test vectors live in RFC-0011-c §Test Vectors TV-AGT1..AGT-12 (UNCHANGED — RFC-0015 substrate alignment does not modify CLI TV).
 
@@ -473,24 +451,33 @@ pub fn list_owned_agents(
     // 4. Return.
 }
 
-// DEFERRED per §6.8 (requires RFC-0012-v2 acceptance):
+// DEFERRED per §6.8 / §6.2.2 DEFERRED DESIGN (FORWARD-LOOKING ONLY;
+// not implementable at R2 acceptance; requires RFC-0012-v2 acceptance):
 #[cfg(feature = "deferred-rfc-0012-v2")]
 pub fn transition_agent(
+    caller_did: &Did,
     uuid: Uuid,
     target: AgentState,
     reason: Option<&str>,
 ) -> Result<AgentSummary, WalletError> {
     // 1. Validate reason (≤256 chars; UTF-8; reject control chars U+0000-U+001F, U+007F).
-    // 2. Acquire per-(holder_did, agent_id) lock (TOCTOU mitigation per §6.2.2).
-    // 3. RE-READ `current_state` INSIDE the lock; reject invalid transitions.
-    // 4. Idempotent on same-state (non-terminal) — early return unchanged summary;
+    // 2. Look up agent by `uuid` to resolve `holder_did`.
+    // 3. Caller-attestation: enforce `caller_did == agent.holder_did`
+    //    (else WalletError::ForbiddenHolderMismatch per §6.2.4).
+    // 4. Acquire per-(holder_did, agent_id) lock AFTER holder_did resolved
+    //    (TOCTOU mitigation per §6.2.2).
+    // 5. RE-READ `current_state` INSIDE the lock; reject invalid transitions.
+    // 6. Idempotent on same-state (non-terminal) — early return unchanged summary;
     //    NO audit row.
-    // 5. Terminal-state same-state call → InvalidStateTransition (NOT idempotent).
-    // 6. Mutate in-memory state map; persist to disk atomically.
-    // 7. Append `AuditEventKind::AgentTransition { agent_id, from, to, reason, at_unix }`
+    // 7. Terminal-state same-state call → InvalidStateTransition (NOT idempotent).
+    // 8. Mutate in-memory state map; persist to disk atomically.
+    // 9. Append `AuditEventKind::AgentTransition { agent_id, from, to, reason, at_unix }`
     //    via RFC-0012-v2 + RFC-0016-v2 audit substrate.
-    // 8. If append fails: rollback in-memory state + persist; return AuditUnavailable.
-    // 9. Release lock; return updated summary.
+    // 10. If append returns AuditError::SinkSpecific(_) — rollback in-memory state
+    //     + persist; return WalletError::AuditUnavailable. (Note: AuditError has
+    //     SequenceGap / AlreadyExists / SinkSpecific per §6.2.2 rollback contract;
+    //     AuditAppendFailed does not exist in substrate.)
+    // 11. Release lock; return updated summary.
 }
 ```
 

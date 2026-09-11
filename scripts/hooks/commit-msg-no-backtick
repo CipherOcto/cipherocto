@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# commit-msg hook — Layer 2 of [[no-backtick-in-commit-messages]].
+# Refuses commit messages containing dangerous tokens that could trigger
+# command substitution if a downstream `git commit -m "..."` invocation
+# re-quotes them.
+#
+# Proven incident (RFC-0011-c close-out 2026-09-08, commit 25aae541):
+# shell heredoc contained literal backticks around command names;
+# bash performed POSIX §2.6.3 command substitution BEFORE passing the
+# string to git; the embedded `git push` ran; 4 fix commits landed
+# on origin/next inadvertently.
+#
+# This hook catches the class at the repo layer (Claude Code session,
+# user hand-typing, CI scripted commit — whichever invokes `git commit`).
+#
+# Token list: see scripts/wrappers/dangerous-tokens.sh (single source
+# of truth shared with Layers 3/5/6/7).
+
+set -euo pipefail
+
+MSG_FILE="${1:-}"
+if [[ -z "$MSG_FILE" || ! -f "$MSG_FILE" ]]; then
+  echo "commit-msg hook: missing message file argument" >&2
+  exit 2
+fi
+
+HOOK_DIR="$(dirname "$(readlink -f "$0")")"
+# shellcheck source=scripts/wrappers/dangerous-tokens.sh
+# shellcheck disable=SC1091
+source "$HOOK_DIR/../wrappers/dangerous-tokens.sh"
+
+TEXT="$(cat "$MSG_FILE")"
+OFFENDERS=$(dangerous_present "$TEXT" || true)
+
+if [[ -n "$OFFENDERS" ]]; then
+  cat >&2 <<EOF
+================================================================================
+REFUSED — commit message contains dangerous tokens (Layer 2)
+================================================================================
+Offenders:    $OFFENDERS
+Bash evaluates shell metacharacters inside double-quoted -m args BEFORE
+git sees the string. See [[no-backtick-in-commit-messages]] for the
+proven incident and scripts/wrappers/dangerous-tokens.sh for the full
+token list.
+
+Fix:
+  - Paraphrase. Instead of "\`git push origin next\`", write
+    "the push step per [[feedback_initiation_user_only]]".
+  - Use single quotes around code-style: 'foo bar'.
+  - Or \`git commit -F <file>\` with the body in a tempfile.
+================================================================================
+EOF
+  exit 1
+fi
+
+exit 0

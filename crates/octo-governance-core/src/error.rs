@@ -26,7 +26,10 @@ pub enum GovernanceError {
         quorum_bps: u32,
     },
 
-    /// A voter weight exceeds 10_000 bps (100%).
+    /// A voter weight exceeds 10_000 bps (100%). Cold-path error:
+    /// `voter` is cloned because this error is expected to be returned
+    /// at most once per malformed tally and is logged / displayed
+    /// rather than chained through a hot loop.
     #[error("invalid weight {weight} bps for voter {voter}")]
     InvalidWeight {
         /// Voter DID.
@@ -34,8 +37,4 @@ pub enum GovernanceError {
         /// Reported weight in basis points.
         weight: u32,
     },
-
-    /// Caller error (e.g. invalid input shape).
-    #[error("governance error: {0}")]
-    Caller(String),
 }

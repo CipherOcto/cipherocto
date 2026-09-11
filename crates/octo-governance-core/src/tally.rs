@@ -52,9 +52,10 @@ pub fn tally_quorum(
         // Total votes cannot exceed 100% (caller should clamp before
         // passing; we just guard against absurd inputs here).
         if approval.saturating_add(rejection) > 100_000 {
-            return Err(crate::error::GovernanceError::InvalidWeight {
-                voter: did.clone(),
-                weight: approval.saturating_add(rejection),
+            return Err(crate::error::GovernanceError::QuorumNotReached {
+                approval_bps: approval,
+                rejection_bps: rejection,
+                quorum_bps: 100_000,
             });
         }
     }

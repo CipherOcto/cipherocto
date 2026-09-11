@@ -208,19 +208,26 @@ pub enum SettlementError {
 
 Adapter-specific error chains MUST be scrubbed at the adapter boundary per §SC2 + the canonical scrubber declared in §S5.1.
 
-#### §S5.1 — Canonical adapter-error scrubber (RFC-0014-v2 addition)
+#### §S5.1 — Canonical adapter-error scrubber (Layer B placement per RFC-0011-a)
 
-RFC-0014-v2 §S5.1 adds a canonical scrubber function to `octo-settlement-core::error`:
+RFC-0014-v2 §S5.1 RESCINDED the Layer A scrubber declaration per R31 layer-model finding (scrubber is a Layer B concern per RFC-0011-a). The canonical scrubber now lives at `octo-settlement::scrub::scrub_adapter_error` (Layer B façade):
 
 ```rust
-// crates/octo-settlement-core/src/error.rs (RFC-0014-v2 §S5.1 — new addition)
+// crates/octo-settlement/src/scrub.rs (RFC-0014-v2 §S5.1 — Layer B façade placement)
+//
+// LAYER NOTE: scrubber is Layer B per RFC-0011-a §7.7 Redaction model.
+// Substrate (Layer A) MUST NOT host scrubbing logic because adapter-error
+// patterns are adapter-side concern, not substrate contract.
+//
+// Adapter implementations MUST call this function before wrapping any
+// adapter error into SettlementError::SinkSpecific(String) or any other
+// variant that carries adapter-derived content.
+
 /// Canonical adapter-error scrubber. Maps adapter-specific error chains
 /// (Stoolap transaction IDs, IO path fragments, table-name leaks) to
-/// a substrate-canonical scrubbed String. Adapter implementations MUST
-/// call this function before wrapping any adapter error into
-/// `SettlementError::SinkSpecific(String)` or any other variant.
+/// a substrate-canonical scrubbed String.
 ///
-/// Pattern list (substrate-canonical, 6 patterns):
+/// Pattern list (substrate-canonical for v2.0.0, 6 patterns):
 /// 1. Hex digest ≥32 chars (transaction IDs, hashes) → `<redacted-hex-N>`
 /// 2. Absolute file paths (`/.../...`) → `<redacted-path>`
 /// 3. Table-name references (`table 'X'`, `relation "X"`) → `<redacted-table>`
@@ -228,12 +235,67 @@ RFC-0014-v2 §S5.1 adds a canonical scrubber function to `octo-settlement-core::
 /// 5. `std::io::Error` chain fragments (`os error N`) → `<redacted-io>`
 /// 6. Adapter-type names (e.g. `StoolapTransactionError`) → `<redacted-adapter>`
 pub fn scrub_adapter_error(s: &str) -> String {
-    // (implementation lands at acceptance time per RFC-0014-v2 §Implementation Phases Phase 1)
-    todo!("canonical scrubber — see RFC-0014-v2 §S5.1 6-pattern list")
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    let mut out = s.to_string();
+
+    // Pattern 1: hex digests ≥32 chars (case-insensitive)
+    let hex_re = once_cell::sync::Lazy::<regex::Regex>::new(|| {
+        regex::Regex::new(r"\b[0-9a-fA-F]{32,}\b").unwrap()
+    });
+    out = hex_re.replace_all(&out, |_caps: &regex::Captures| {
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        format!("<redacted-hex-{}>", n)
+    }).into_owned();
+
+    // Pattern 2: absolute file paths
+    let path_re = once_cell::sync::Lazy::<regex::Regex>::new(|| {
+        regex::Regex::new(r"(?:/[A-Za-z0-9_.-]+){2,}").unwrap()
+    });
+    out = path_re.replace_all(&out, "<redacted-path>").into_owned();
+
+    // Pattern 3: table-name references
+    let table_re = once_cell::sync::Lazy::<regex::Regex>::new(|| {
+        regex::Regex::new(r#"(?:table|relation)\s+['"]([A-Za-z0-9_]+)['"]"#).unwrap()
+    });
+    out = table_re.replace_all(&out, "<redacted-table>").into_owned();
+
+    // Pattern 4: SQLSTATE prefixes
+    let sqlstate_re = once_cell::sync::Lazy::<regex::Regex>::new(|| {
+        regex::Regex::new(r"SQLSTATE_[A-Z0-9]+").unwrap()
+    });
+    out = sqlstate_re.replace_all(&out, "<redacted-sql-state>").into_owned();
+
+    // Pattern 5: io error chain fragments
+    let io_re = once_cell::sync::Lazy::<regex::Regex>::new(|| {
+        regex::Regex::new(r"os error \d+").unwrap()
+    });
+    out = io_re.replace_all(&out, "<redacted-io>").into_owned();
+
+    // Pattern 6: adapter-type names (extensible set)
+    const ADAPTER_TYPES: &[&str] = &[
+        "StoolapTransactionError",
+        "StoolapConnectionError",
+        "StoolapDatabaseError",
+    ];
+    for ty in ADAPTER_TYPES {
+        out = out.replace(ty, "<redacted-adapter>");
+    }
+
+    out
 }
 ```
 
-The 6-pattern list is canonical for v2.0.0. Future RFCs MAY extend the list; downstream adapters MUST call this function rather than implementing their own scrubber.
+The 6-pattern list is canonical for v2.0.0. Future RFCs MAY extend the list; downstream adapters MUST call this function rather than implementing their own scrubber (per RFC-0011-a §7.7 redaction discipline).
+
+**Cargo.toml dependency at Layer B façade** (`crates/octo-settlement/Cargo.toml`):
+
+```toml
+[dependencies]
+regex = { version = "1.10" }
+once_cell = { version = "1.19" }
+```
 
 ### §S6 — Canonical-hash construction (keyed BLAKE3)
 
@@ -284,11 +346,35 @@ RFC-0014-v2 §S7 establishes cross-RFC invariants with RFC-0012-v2. **Important:
 
 **Cross-RFC consistency rule:** For each (audit extension kind, receipt extension kind) pair, the namespace strings are coordinated via RFC-0012-v2 + RFC-0014-v2 paired acceptance. The substrate-level binding is via `prev_chain_hash = settlement_hash` on the audit event; the façade helper sets this field at construction time. Future extensions follow the same pattern.
 
+## Acceptance Criteria
+
+The RFC is Accepted when ALL of the following are true:
+
+- **AC-1.** `octo_settlement_core::Receipt` retains its 6-field public surface (no field additions; semver-major bump from v1.x to v2.0.0).
+- **AC-2.** `octo_settlement_core::SettlementError` retains its 7-variant form (no new variants; existing `SinkSpecific` carries adapter-scrubbed strings only).
+- **AC-3.** `compute_settlement_hash(&Receipt) == BLAKE3-256-keyed([0;32], CHAIN_DOMAIN_SEPARATOR || receipt_id_be_u64 || ask_id || router_id_utf8 || router_sig || timestamp_unix_be_u64)` — verified by `verify_receipt_chain` round-trip.
+- **AC-4.** Strict `receipt_id == last_receipt_id() + 1` enforced; re-append returns `AlreadyExists`; gap returns `SequenceGap`.
+- **AC-5.** Tampered `settlement_hash` returns `ChainIntegrity { receipt_id }` (NOT `SinkSpecific`); substrate canonical invariant.
+- **AC-6.** `ReceiptId(pub u64)` newtype re-exported at `octo_settlement::ReceiptId`; canonical hash unchanged.
+- **AC-7.** Adapter implementations call `octo_settlement::scrub::scrub_adapter_error` before wrapping into `SinkSpecific`; raw error chains never reach substrate.
+- **AC-8.** Paired acceptance with RFC-0012-v2 (2-cycle atomic promotion gate).
+- **AC-9.** All Test Vectors in §Test Vectors produce expected outputs (verified by `cargo test -p octo-settlement`).
+- **AC-10.** `StoolapReceiptSink` (or equivalent concrete impl) implements `AppendOnlyReceiptSink` with monotonicity + atomic persistence; no adapter panic on fsync failure (atomic-or-rollback contract).
+
+## 2-Cycle Atomic Promotion Tag
+
+Per BLUEPRINT.md §RFC Process item 5 + §2-Cycle Atomic Promotion gate:
+
+- **Sibling:** RFC-0012-v2 (audit substrate amendment, draft)
+- **Reviewer board:** 5-len (correctness / security / layer-model / hygiene / spec-completeness)
+- **Pairing invariant:** §S7 cross-RFC pairing via `prev_chain_hash = receipt_id_for(receipt)` requires both substrate amendments to land together. RFC-0015-a + RFC-0016-a acceptance gated on this 2-cycle.
+- **Atomic promotion gate:** Both RFCs transition Draft → Accepted in the same PR. Neither may be Accepted without the other.
+
 ## Security Considerations
 
-**SC1. Typed-discriminator collision resistance.** Extension kinds are encoded as `BLAKE3-256(namespace_string || canonical_ask_id)`. BLAKE3-256 collision resistance is 2^64 operations (birthday bound on 256-bit output), NOT 2^128 (preimage resistance). Cross-extension-kind collisions are cross-prefix second-preimage attacks (~2^256 with one fixed prefix; ~2^128 birthday for attacker-chosen both prefixes).
+**SC1. Typed-discriminator collision resistance.** Extension kinds are encoded as `BLAKE3-256(namespace_string || canonical_ask_id)`. BLAKE3-256 collision resistance is 2^128 operations (birthday bound on 256-bit output), NOT 2^256 (preimage resistance). Cross-extension-kind collisions are cross-prefix second-preimage attacks (~2^256 with one fixed prefix; ~2^128 birthday for attacker-chosen both prefixes).
 
-**SC2. `SinkSpecific` payload scrubbing.** Adapter-specific error messages MUST be scrubbed at the adapter boundary before wrapping into `SettlementError::SinkSpecific`. No raw error chains, no adapter-type names, no leaked path fragments. Canonical scrubber is declared in §S5.1 (6-pattern list).
+**SC2. `SinkSpecific` payload scrubbing.** Adapter-specific error messages MUST be scrubbed at the adapter boundary before wrapping into `SettlementError::SinkSpecific`. No raw error chains, no adapter-type names, no leaked path fragments. Canonical scrubber is declared at `octo-settlement::scrub::scrub_adapter_error` (Layer B façade per §S5.1 — 6-pattern list).
 
 **SC3. Settlement hash integrity.** `settlement_hash` field MUST match the canonical computation (substrate-side `verify_receipt_chain` enforces). §S4.4 enforces this on every append; §S6 canonical-bytes form is the substrate-level guarantee.
 
@@ -328,7 +414,7 @@ RFC-0014-v2 §S7 establishes cross-RFC invariants with RFC-0012-v2. **Important:
 
 **C1. Wire format.** `canonical_bytes` unchanged. Existing persisted receipt chains remain verifiable via `verify_receipt_chain`.
 
-**C2. Source compatibility.** `Receipt` retains its 6-field public surface. `SettlementError` retains its 3-variant form. New `ReceiptId` newtype is additive.
+**C2. Source compatibility.** `Receipt` retains its 6-field public surface. `SettlementError` retains its 7-variant form. New `ReceiptId` newtype is additive.
 
 **C3. Adapter compatibility.** Existing `StoolapReceiptSink` impl remains RFC-0014-v2 conformant. No adapter rewrite required.
 
@@ -364,7 +450,7 @@ expect: append returns Ok(())
 
 ```
 input: receipt with receipt.settlement_hash = [0x00; 32] (not equal to compute_settlement_hash)
-expect: append returns Err(SettlementError::SinkSpecific("settlement_hash mismatch on append"))
+expect: append returns Err(SettlementError::ChainIntegrity { receipt_id: receipt.receipt_id })
 ```
 
 ### TV-SET-v2-5: Sink append rejects sequence gap
@@ -487,7 +573,7 @@ RFC-0014-v2 codifies the typed-discriminator extension pattern as the canonical 
 
 1. **Layer A frozen preservation** — `Receipt` stays 6-field; `SettlementError` stays 3-variant. No substrate churn from extension additions.
 2. **Forward compatibility** — `#[non_exhaustive]` discipline means downstream consumers continue to compile (substrate-stored receipts remain forward-compatible).
-3. **Type safety** — typed-discriminator namespaces are BLAKE3-256 digests (2^64 collision operations birthday bound; cross-prefix second-preimage attacks at ~2^256 with one fixed prefix, ~2^128 birthday for attacker-chosen both prefixes); cross-extension-kind spoofing requires BLAKE3 cross-prefix collision attack.
+3. **Type safety** — typed-discriminator namespaces are BLAKE3-256 digests (2^128 collision operations birthday bound; cross-prefix second-preimage attacks at ~2^256 with one fixed prefix, ~2^128 birthday for attacker-chosen both prefixes); cross-extension-kind spoofing requires BLAKE3 cross-prefix collision attack.
 
 The `ReceiptId` newtype adds façade-level type safety without changing canonical substrate form. `ReceiptStatus` + `ReceiptSummary` move to façade (Layer B) where projection logic naturally lives.
 

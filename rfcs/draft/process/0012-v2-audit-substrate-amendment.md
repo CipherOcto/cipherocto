@@ -192,11 +192,35 @@ RFC-0012-v2 §S6 pins the existing canonical-bytes form:
 
 **Extensions do NOT add new bytes** to the canonical form. The `cap_root_hash` already encodes the typed-discriminator; the extension payload (e.g. agent transition fields) is encoded in the canonical hash via extension-specific helpers in the calling domain crate (e.g. `octo-wallet::audit::canonical_bytes_agent_transition(...)`).
 
+## Acceptance Criteria
+
+The RFC is Accepted when ALL of the following are true:
+
+- **AC-1.** `octo_audit_core::AuditEvent` retains its 7-field public surface (no field additions; semver-major bump from v1.x to v2.0.0).
+- **AC-2.** `octo_audit_core::AuditError` retains its 3-variant form (`SequenceGap`, `AlreadyExists`, `SinkSpecific`); no new variants.
+- **AC-3.** `compute_chain_hash(&AuditEvent) == BLAKE3-256(canonical_bytes(event))` — verified by `verify_chain` round-trip.
+- **AC-4.** Strict `event_id == last_event_id() + 1` enforced; re-append returns `AlreadyExists`; gap returns `SequenceGap`.
+- **AC-5.** Tampered `chain_hash` returns `AuditChainError::HashMismatch` wrapped in `AuditError::SinkSpecific` (NOT raw substrate enum leaked); adapter contract preserved.
+- **AC-6.** `AuditFilter` is Layer B façade projection (does NOT exist in substrate; lands at acceptance per Phase 2); 5-field form `{ since_unix, until_unix, capability_root, model, limit }` UNCONDITIONAL, no `subject_did`, no `status`.
+- **AC-7.** Adapter implementations call `octo_settlement::scrub::scrub_adapter_error` before wrapping into `SinkSpecific`; raw error chains never reach substrate.
+- **AC-8.** Paired acceptance with RFC-0014-v2 (2-cycle atomic promotion gate).
+- **AC-9.** All Test Vectors in §Test Vectors produce expected outputs (verified by `cargo test -p octo-audit`).
+- **AC-10.** `StoolapAuditSink` implements `AppendOnlyAuditSink` with transaction-scoped atomic write + fsync; concurrent appenders detected by monotonicity pre-check.
+
+## 2-Cycle Atomic Promotion Tag
+
+Per BLUEPRINT.md §RFC Process item 5 + §2-Cycle Atomic Promotion gate:
+
+- **Sibling:** RFC-0014-v2 (settlement substrate amendment, draft)
+- **Reviewer board:** 5-len (correctness / security / layer-model / hygiene / spec-completeness)
+- **Pairing invariant:** §S7 cross-RFC pairing via `prev_chain_hash = settlement_hash` requires both substrate amendments to land together. RFC-0015-a + RFC-0016-a acceptance gated on this 2-cycle.
+- **Atomic promotion gate:** Both RFCs transition Draft → Accepted in the same PR. Neither may be Accepted without the other.
+
 ## Security Considerations
 
-**SC1. Typed-discriminator collision resistance.** Extension kinds are encoded as `BLAKE3-256(namespace_string)`. BLAKE3-256 collision resistance is 2^64 operations (birthday bound on 256-bit output), NOT 2^128 (preimage resistance). Cross-extension-kind collisions are cross-prefix second-preimage attacks (~2^256 with one fixed prefix; ~2^128 birthday for attacker-chosen both prefixes).
+**SC1. Typed-discriminator collision resistance.** Extension kinds are encoded as `BLAKE3-256(namespace_string)`. BLAKE3-256 collision resistance is 2^128 operations (birthday bound on 256-bit output), NOT 2^256 (preimage resistance). Cross-extension-kind collisions are cross-prefix second-preimage attacks (~2^256 with one fixed prefix; ~2^128 birthday for attacker-chosen both prefixes).
 
-**SC2. `SinkSpecific` payload scrubbing.** Adapter-specific error messages MUST be scrubbed at the adapter boundary before wrapping into `AuditError::SinkSpecific`. No raw error chains, no adapter-type names, no leaked path fragments. Canonical scrubber is declared in RFC-0014-v2 §S5.1 (6-pattern list — applied to both `octo-audit-core::AuditError::SinkSpecific` and `octo-settlement-core::SettlementError::SinkSpecific`).
+**SC2. `SinkSpecific` payload scrubbing.** Adapter-specific error messages MUST be scrubbed at the adapter boundary before wrapping into `AuditError::SinkSpecific`. No raw error chains, no adapter-type names, no leaked path fragments. Canonical scrubber is declared at `octo-settlement::scrub::scrub_adapter_error` (Layer B façade per RFC-0014-v2 §S5.1 — 6-pattern list — applied to both `octo-audit::AuditError::SinkSpecific` and `octo-settlement::SettlementError::SinkSpecific`).
 
 **SC3. Chain hash integrity.** `chain_hash` field MUST match `compute_chain_hash(event)`. §S2.4 enforces this on every append; §S6 canonical-bytes form is the substrate-level guarantee.
 
@@ -258,7 +282,7 @@ expect: append returns Ok(())
 
 ```
 input: event with event.chain_hash = [0x00; 32] (not equal to compute_chain_hash)
-expect: append returns Err(AuditError::SinkSpecific("chain_hash mismatch on append"))
+expect: append returns Err(AuditError::SinkSpecific(AuditChainError::HashMismatch))
 ```
 
 ### TV-AUD-v2-4: Sink append rejects sequence gap
@@ -369,7 +393,7 @@ RFC-0012-v2 codifies the typed-discriminator extension pattern as the canonical 
 
 1. **Layer A frozen preservation** — `AuditEventKind` stays 3-variant; `AuditEvent` stays 7-field; `AuditError` stays 3-variant. No substrate churn from extension additions.
 2. **Forward compatibility** — `#[non_exhaustive]` discipline means downstream `match` expressions on `AuditEventKind` continue to compile (substrate-stored events remain forward-compatible).
-3. **Type safety** — typed-discriminator namespaces are BLAKE3-256 digests (2^64 collision operations birthday bound; cross-prefix second-preimage attacks at ~2^256 with one fixed prefix, ~2^128 birthday for attacker-chosen both prefixes); cross-extension-kind spoofing requires BLAKE3 cross-prefix collision attack.
+3. **Type safety** — typed-discriminator namespaces are BLAKE3-256 digests (2^128 collision operations birthday bound; cross-prefix second-preimage attacks at ~2^256 with one fixed prefix, ~2^128 birthday for attacker-chosen both prefixes); cross-extension-kind spoofing requires BLAKE3 cross-prefix collision attack.
 
 The cost is a doc-comment-driven extension pattern that domain crates must follow. This is acceptable per CLAUDE.md §Extension over enumeration — the substrate stays minimal; extension mechanics live at the façade/domain boundary.
 
@@ -391,7 +415,7 @@ The cost is a doc-comment-driven extension pattern that domain crates must follo
 ## Related Use Cases
 
 - **UC-AUD-001 — Agent lifecycle audit trail.** When an agent transitions state (RFC-0015-a `transition_agent`), an audit event with `event_kind = AuditEventKind::Insert` and `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/agent-transition/v1/")` is appended to the sink. The audit event's `prev_chain_hash` binds it to the corresponding `AgentTransitionReceipt`'s `settlement_hash` (per RFC-0014-v2 §S7 pairing invariant).
-- **UC-AUD-002 — Capability redaction.** When a capability is redacted (e.g. compromise recovery), an audit event with `event_kind = AuditEventKind::Revoke` and `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/redaction/v1/")` is appended. The `reason` payload is scrubbed per the canonical scrubber (RFC-0014-v2 §S5.1) before being persisted.
+- **UC-AUD-002 — Capability redaction.** When a capability is redacted (e.g. compromise recovery), an audit event with `event_kind = AuditEventKind::Revoke` and `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/redaction/v1/")` is appended. The `reason` payload is scrubbed per the canonical scrubber (`octo-settlement::scrub::scrub_adapter_error`, RFC-0014-v2 §S5.1) before being persisted.
 - **UC-AUD-003 — CLI receipt listing with `AuditFilter`.** When a CLI consumer runs `octo audit list --since <unix> --until <unix> --capability-root <hex> --model <model> --limit <n>` (RFC-0016-a), the façade constructs an `AuditFilter` per RFC-0012-v2 §S4 and applies it to the audit store. Subject-DID ACL and receipt-status filtering are out of v2.0.0 scope.
 - **UC-AUD-004 — Cross-replica sync.** When a downstream replica syncs the audit chain, sync events use `event_kind = AuditEventKind::Sync` + `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/sync/v1/")`. The `prev_chain_hash` field carries the last persisted chain hash from the source replica, enabling chain-integrity verification on receipt.
 

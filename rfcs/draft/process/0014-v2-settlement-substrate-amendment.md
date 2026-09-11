@@ -79,20 +79,20 @@ RFC-0014-v2 codifies the typed-discriminator pattern via `ask_id` extension name
 
 - `Receipt.ask_id = BLAKE3-256("cipherocto/settlement/extension/<K>/v1/" || canonical_ask_id_bytes)`
 
-The `ask_id` field is a 32-byte BLAKE3-256 digest. By extending the input with a namespace string prefix, the digest acts as a typed-discriminator: the first 32 bytes of input are the extension namespace identifier, the remainder is the canonical ask identifier.
+The `ask_id` field is a 32-byte BLAKE3-256 digest. By extending the BLAKE3 _input_ with a namespace string prefix, the digest acts as a typed-discriminator: given the 32-byte output digest, extension kind K is recovered by enumerating candidate namespace strings (or by convention lookup at the façade). The output digest is uniformly distributed over the 256-bit space; it does not encode the namespace prefix in any recognizable way.
 
-**Why this works:** The `ask_id` field is already present on `Receipt` (RFC-0014 §Data Structures). Domain crates construct `ask_id` by hashing namespace + canonical ask_id bytes. Substrate accepts `ask_id` as opaque 32-byte digest (no domain logic). The substrate `verify_receipt_chain` function does NOT interpret `ask_id` semantics — it only validates `receipt_id` monotonicity + `settlement_hash` integrity + `timestamp_unix` monotonicity.
+**Why this works:** The `ask_id` field is already present on `Receipt` (RFC-0014 §Data Structures). Domain crates construct `ask_id` by hashing namespace + canonical ask_id bytes. Substrate accepts `ask_id` as opaque 32-byte digest (no domain logic). The substrate `verify_receipt_chain` function does NOT interpret `ask_id` semantics — it only validates `receipt_id` monotonicity + `settlement_hash` integrity.
 
 **Note on input boundary:** the BLAKE3-256 input is variable-length (`namespace_string || canonical_ask_id_bytes`); there is no fixed 32-byte boundary between the namespace and the ask_id bytes. Readers recover extension kind K by enumerating candidate namespace strings (or by convention lookup at the façade).
 
 **Extension kind table (canonical):**
 
-| Extension kind             | `ask_id` prefix (BLAKE3-256 input)                                                                             | Substrate version                           |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| AskSettled                 | `cipherocto/settlement/extension/ask-settled/v1/` (RFC-0014 existing; `ask_id` = digest of canonical ask only) | RFC-0014                                    |
-| **AskPartial**             | `cipherocto/settlement/extension/ask-partial/v1/`                                                              | **RFC-0014-v2**                             |
-| **AskRejected**            | `cipherocto/settlement/extension/ask-rejected/v1/`                                                             | **RFC-0014-v2**                             |
-| **AgentTransitionReceipt** | `cipherocto/settlement/extension/agent-transition-receipt/v1/`                                                 | **RFC-0014-v2** (cross-RFC with RFC-0015-a) |
+| Extension kind             | `ask_id` prefix (BLAKE3-256 input)                                                                                                            | Substrate version                           |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| AskSettled                 | `cipherocto/settlement/extension/ask-settled/v1/` (RFC-0014 existing; ask_id = BLAKE3-256 of namespace \|\| canonical_ask_id per §S1 pattern) | RFC-0014                                    |
+| **AskPartial**             | `cipherocto/settlement/extension/ask-partial/v1/`                                                                                             | **RFC-0014-v2**                             |
+| **AskRejected**            | `cipherocto/settlement/extension/ask-rejected/v1/`                                                                                            | **RFC-0014-v2**                             |
+| **AgentTransitionReceipt** | `cipherocto/settlement/extension/agent-transition-receipt/v1/`                                                                                | **RFC-0014-v2** (cross-RFC with RFC-0015-a) |
 
 **Extension kind enumeration is exhaustive for v2.0.0.** Future extensions (v2.1+) are added to this table via subsequent RFCs and do NOT require substrate field additions.
 
@@ -352,35 +352,35 @@ pub fn receipt_id_for(receipt: &Receipt) -> [u8; 32] {
 | `AuditEventKind::Insert` + `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/agent-transition/v1/")` (namespace only) | `Receipt.ask_id = BLAKE3-256("cipherocto/settlement/extension/agent-transition-receipt/v1/" \|\| canonical_ask_id)` (namespace + ask_id) | Façade helper `audit_event_for_agent_transition_receipt(receipt: &Receipt) -> AuditEvent` reconstructs the audit event with `prev_chain_hash = receipt_id_for(receipt)` so the audit event's `prev_chain_hash` binds it to the specific receipt's hash. Substrate-level pairing is via the `prev_chain_hash` field on the audit event, not via shared namespace prefix. |
 | `AuditEventKind::Revoke` + `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/redaction/v1/")` (namespace only)        | `Receipt.ask_id = BLAKE3-256("cipherocto/settlement/extension/ask-rejected/v1/" \|\| canonical_ask_id)` (namespace + ask_id)             | Façade helper `audit_event_for_ask_rejected(receipt: &Receipt) -> AuditEvent` similarly binds via `prev_chain_hash = receipt_id_for(receipt)`.                                                                                                                                                                                                                          |
 
-**Cross-RFC consistency rule:** For each (audit extension kind, receipt extension kind) pair, the namespace strings are coordinated via RFC-0012-v2 + RFC-0014-v2 paired acceptance. The substrate-level binding is via `prev_chain_hash = settlement_hash` on the audit event; the façade helper sets this field at construction time. Future extensions follow the same pattern.
+**Cross-RFC consistency rule:** For each (audit extension kind, receipt extension kind) pair, the namespace strings are coordinated via RFC-0012-v2 + RFC-0014-v2 paired acceptance. The substrate-level binding is via `prev_chain_hash = receipt_id_for(receipt)` on the audit event; the façade helper sets this field at construction time. Future extensions follow the same pattern.
 
 ## Implicit Assumptions
 
 - **A1. Keyed BLAKE3 with zero key intentional.** `settlement_hash = BLAKE3-256-keyed([0; 32], ...)` uses a zero key intentionally to enable cross-replica determinism without key-management infrastructure. Blast radius if misused: keyed mode is reserved for future HSM/Vault key injection per RFC-0009 §Identity substrate. Mitigation: zero-key usage documented at §S6 + substrate comment; future key-injection migrations noted in §Future Work.
-- **A2. Settlement-hash non-circularity.** `settlement_hash` is computed from `Receipt` fields but is NOT a field on `Receipt` itself — it is a separate 32-byte output. Blast radius if violated: circular hashing would make `verify_receipt_chain` unsound. Mitigation: substrate `compute_settlement_hash` excludes `settlement_hash` from its input by construction; TV-SET-v2-2 verifies round-trip.
+- **A2. Settlement-hash non-circularity.** `settlement_hash` is computed from `Receipt` fields but is NOT a field on `Receipt` itself — it is a separate 32-byte output. Blast radius if violated: circular hashing would make `verify_receipt_chain` unsound. Mitigation: substrate `receipt_id_for` excludes `settlement_hash` from its input by construction; TV-SET-v2-2 verifies round-trip.
 - **A3. ask_id namespace prefix recovery.** The BLAKE3-256 input is variable-length (`namespace_string || canonical_ask_id_bytes`); readers recover extension kind K by enumerating candidate namespace strings. Blast radius if enumeration fails: extension kind unrecoverable, projection fails closed. Mitigation: canonical extension kind table at §S1; façade-side lookup helper for known kinds.
 - **A4. `router_sig` non-verification at substrate.** Substrate does NOT verify `router_sig`; verification is layer B / domain concern per RFC-0014 §Security Considerations. Blast radius: forged receipts persist into chain. Mitigation: domain-crate `verify_router_sig(receipt, router_pubkey)` call at the domain boundary; substrate accepts only the bytes.
-- **A5. `timestamp_unix` monotonicity.** Substrate enforces strict `timestamp_unix` monotonicity on append (parallel to `event_id`). Blast radius: clock drift between replicas triggers spurious SequenceGap. Mitigation: external time-source synchronization (NTP) + adapter-side timestamp monotonicity check.
+- **A5. `timestamp_unix` non-monotonicity precondition.** Substrate does NOT enforce `timestamp_unix` monotonicity on append — `verify_receipt_chain` only validates `receipt_id` monotonicity + `settlement_hash` integrity. `timestamp_unix` is part of the canonical hash input but ordering is the adapter's responsibility. Blast radius: clock drift between replicas or a non-monotonic adapter-side timestamp source would silently accept out-of-order receipts. Mitigation: external time-source synchronization (NTP) at adapter boundary + adapter-side timestamp monotonicity check.
 
 ## Determinism Requirements
 
 Per RFC-0008 Execution Class Mapping, all substrate operations in this RFC are **Class A** (deterministic, byte-identical across replicas):
 
-- **`compute_settlement_hash`** — keyed BLAKE3-256 over canonical input; pure function of `Receipt` fields; deterministic across replicas.
-- **`verify_receipt_chain`** — deterministic replay of `compute_settlement_hash` over each persisted receipt; byte-identical verification result.
+- **`receipt_id_for`** — keyed BLAKE3-256 over canonical input; pure function of `Receipt` fields; deterministic across replicas.
+- **`verify_receipt_chain`** — deterministic replay of `receipt_id_for` over each persisted receipt; byte-identical verification result.
 - **`receipt_id_for`** — keyed BLAKE3-256 domain-separator over `request_canonical_bytes`; deterministic across replicas.
 - **Typed-discriminator construction** — `BLAKE3-256("cipherocto/settlement/extension/<K>/v1/" || canonical_ask_id_bytes)` is a pure function of `<K>` + canonical ask_id bytes; deterministic.
 - **`receipt_id` monotonicity ordering** — strict total order; deterministic across replicas.
-- **`timestamp_unix` wall-clock vs logical ordering** — wall-clock values; monotonicity precondition assumes synchronized time source (NTP).
+- **`timestamp_unix` wall-clock vs logical ordering** — wall-clock values; ordering is adapter responsibility, not substrate enforcement. Cross-replica monotonicity assumes external synchronized time source (NTP) at adapter boundary.
 
 Cross-replica consensus invariant: any two replicas observing the same receipt sequence MUST produce identical `settlement_hash` values. Failure indicates either (a) a serialization drift (adapter-side bug) or (b) a field-level non-determinism (e.g. timestamp drift between insert + compute).
 
 ## Performance Targets
 
-- **Append latency ceiling:** 1 ms p99 on commodity SSD (single-receipt append with monotonicity check + settlement_hash recompute + persistence).
+- **Append latency ceiling:** 1 ms p99 on commodity SSD (single-receipt append with monotonicity check + settlement_hash recompute + persistence). **Measurement methodology:** reproducible benchmark harness required; baseline SSD spec (sequential write ≥500 MB/s, fsync ≤1 ms); warm cache; single-threaded. Benchmark suite lands as part of acceptance adapter mission.
 - **Chain verification O(n):** `verify_receipt_chain(n)` MUST complete in O(n) time over `n` persisted receipts; no quadratic scans.
 - **Adapter throughput floor:** 1,000 appends/second sustained single-writer; 100 appends/second under 4-way concurrent append with monotonicity serialization.
-- **`compute_settlement_hash` cost:** keyed BLAKE3-256 over ~120-byte input; expected <10 µs per call on commodity CPU.
+- **`receipt_id_for` cost:** keyed BLAKE3-256 over ~120-byte input; expected <10 µs per call on commodity CPU.
 - **`ReceiptId` newtype zero-overhead:** newtype wraps `u64`; no runtime cost beyond the wrapper (verified by `cargo build --release` symbol inspection).
 - **Storage adapter memory ceiling:** sink implementations MUST NOT hold more than 64 KiB per append in transient buffers.
 
@@ -390,9 +390,9 @@ The RFC is Accepted when ALL of the following are true:
 
 - **AC-1.** `octo_settlement_core::Receipt` retains its 6-field public surface (no field additions; semver-major bump from v1.x to v2.0.0).
 - **AC-2.** `octo_settlement_core::SettlementError` retains its 7-variant form (no new variants; existing `SinkSpecific` carries adapter-scrubbed strings only).
-- **AC-3.** `compute_settlement_hash(&Receipt) == BLAKE3-256-keyed([0;32], CHAIN_DOMAIN_SEPARATOR || receipt_id_be_u64 || ask_id || router_id_utf8 || router_sig || timestamp_unix_be_u64)` — verified by `verify_receipt_chain` round-trip.
+- **AC-3.** `receipt_id_for(&Receipt) == BLAKE3-256-keyed([0;32], CHAIN_DOMAIN_SEPARATOR || receipt_id_be_u64 || ask_id || router_id_utf8 || router_sig || timestamp_unix_be_u64)` — verified by `verify_receipt_chain` round-trip.
 - **AC-4.** Strict `receipt_id == last_receipt_id() + 1` enforced; re-append returns `AlreadyExists`; gap returns `SequenceGap`.
-- **AC-5.** Tampered `settlement_hash` returns `ChainIntegrity { receipt_id }` (NOT `SinkSpecific`); substrate canonical invariant.
+- **AC-5.** Tampered `settlement_hash` is detected at adapter-side append check + read-path `verify_receipt_chain`. Adapter returns `ChainIntegrity { receipt_id }` (NOT `SinkSpecific`) at append; substrate `verify_receipt_chain` returns same at read.
 - **AC-6.** `ReceiptId(pub u64)` newtype re-exported at `octo_settlement::ReceiptId`; canonical hash unchanged.
 - **AC-7.** Adapter implementations call `octo_settlement::scrub::scrub_adapter_error` before wrapping into `SinkSpecific`; raw error chains never reach substrate.
 - **AC-8.** Paired acceptance with RFC-0012-v2 (2-cycle atomic promotion gate).
@@ -404,7 +404,7 @@ The RFC is Accepted when ALL of the following are true:
 Per BLUEPRINT.md §RFC Process item 5 + §2-Cycle Atomic Promotion gate:
 
 - **Sibling:** RFC-0012-v2 (audit substrate amendment, draft)
-- **Reviewer board:** 5-len (correctness / security / layer-model / hygiene / spec-completeness)
+- **Reviewer board:** 5-lens reviewer board (correctness / security / layer-model / hygiene / spec-completeness)
 - **Pairing invariant:** §S7 cross-RFC pairing via `prev_chain_hash = receipt_id_for(receipt)` requires both substrate amendments to land together. RFC-0015-a + RFC-0016-a acceptance gated on this 2-cycle.
 - **Atomic promotion gate:** Both RFCs transition Draft → Accepted in the same PR. Neither may be Accepted without the other.
 
@@ -479,7 +479,7 @@ expect: ReceiptId::new(42).get() == 42
 ### TV-SET-v2-3: Sink append accepts canonical settlement_hash
 
 ```
-input: receipt with receipt.settlement_hash = compute_settlement_hash(&receipt)
+input: receipt with receipt.settlement_hash = receipt_id_for(&receipt)
 expect: append returns Ok(())
         last_receipt_id() returns Some(receipt.receipt_id)
 ```
@@ -487,7 +487,7 @@ expect: append returns Ok(())
 ### TV-SET-v2-4: Sink append rejects tampered settlement_hash
 
 ```
-input: receipt with receipt.settlement_hash = [0x00; 32] (not equal to compute_settlement_hash)
+input: receipt with receipt.settlement_hash = [0x00; 32] (not equal to receipt_id_for)
 expect: append returns Err(SettlementError::ChainIntegrity { receipt_id: receipt.receipt_id })
 ```
 
@@ -562,13 +562,13 @@ expect: ReceiptId::new(42).get() == 42
 ```
 input: Receipt { receipt_id: 1, ask_id: [0; 32], settlement_hash: [0; 32], router_id: "r1", router_sig: "sig", timestamp_unix: 1700000000 }
 expect: canonical_bytes(&receipt) yields deterministic byte sequence
-        compute_settlement_hash(&receipt) is stable across calls
+        receipt_id_for(&receipt) is stable across calls
 ```
 
 ### TV-SET-v2-14: verify_receipt_chain accepts canonical chain
 
 ```
-input: persist receipts 1, 2, 3 with settlement_hash = compute_settlement_hash(&receipt) for each
+input: persist receipts 1, 2, 3 with settlement_hash = receipt_id_for(&receipt) for each
 expect: verify_receipt_chain returns Ok(())
         all chain links validated
 ```
@@ -576,7 +576,7 @@ expect: verify_receipt_chain returns Ok(())
 ### TV-SET-v2-15: verify_receipt_chain rejects tampered settlement_hash
 
 ```
-input: persist receipt with settlement_hash = compute_settlement_hash(&receipt)
+input: persist receipt with settlement_hash = receipt_id_for(&receipt)
        flip one byte in settlement_hash field after persistence
 expect: verify_receipt_chain returns Err(ChainIntegrity { receipt_id })
 ```
@@ -657,7 +657,7 @@ expect: 7 variants total; no new variants allowed at v2.0.0
 ### TV-SET-v2-25: keyed BLAKE3 zero key determinism
 
 ```
-input: compute_settlement_hash(&receipt) called on two replicas with identical receipt bytes
+input: receipt_id_for(&receipt) called on two replicas with identical receipt bytes
 expect: identical 32-byte digest output
         (zero key [0; 32] intentional per A1; no key management required for cross-replica consensus)
 ```
@@ -671,13 +671,14 @@ expect: ~2^256 operations required (one fixed prefix)
         ~2^128 birthday for attacker-chosen both prefixes
 ```
 
-### TV-SET-v2-27: timestamp_unix wall-clock monotonicity precondition
+### TV-SET-v2-27: timestamp_unix non-monotonicity precondition (DEFERRED to adapter)
 
 ```
 input: append receipt with timestamp_unix = 1700000000
        then append receipt with timestamp_unix = 1699999999 (1 second earlier)
-expect: substrate enforces strict timestamp monotonicity
-        (per A5; second append returns Err(SettlementError::SequenceGap) or similar)
+expect: substrate accepts both appends (timestamp_unix NOT enforced at substrate per A5)
+        adapter-side timestamp monotonicity check MAY reject; out of substrate contract scope
+        (DEFERRED to adapter acceptance mission)
 ```
 
 ### TV-SET-v2-28: Receipt chain O(n) verification
@@ -774,7 +775,7 @@ expect: adapter rolls back Transaction (atomic-or-rollback contract per AC-10)
 
 RFC-0014-v2 codifies the typed-discriminator extension pattern as the canonical substrate-faithful mechanism for new receipt semantics. This achieves three goals:
 
-1. **Layer A frozen preservation** — `Receipt` stays 6-field; `SettlementError` stays 3-variant. No substrate churn from extension additions.
+1. **Layer A frozen preservation** — `Receipt` stays 6-field; `SettlementError` stays 7-variant. No substrate churn from extension additions.
 2. **Forward compatibility** — `#[non_exhaustive]` discipline means downstream consumers continue to compile (substrate-stored receipts remain forward-compatible).
 3. **Type safety** — typed-discriminator namespaces are BLAKE3-256 digests (2^128 collision operations birthday bound; cross-prefix second-preimage attacks at ~2^256 with one fixed prefix, ~2^128 birthday for attacker-chosen both prefixes); cross-extension-kind spoofing requires BLAKE3 cross-prefix collision attack.
 
@@ -808,12 +809,12 @@ The cost is a doc-comment-driven extension pattern that domain crates must follo
 
 ### Appendix A: Extension kind namespace registry
 
-| Extension kind         | Namespace string                                                                                                                       | `ask_id` prefix bytes (BLAKE3-256 input prefix) |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| AskSettled             | `cipherocto/settlement/extension/ask-settled/v1/` (RFC-0014 existing; `ask_id` = digest of canonical ask only — namespace is implicit) | (RFC-0014 existing)                             |
-| AskPartial             | `cipherocto/settlement/extension/ask-partial/v1/`                                                                                      | RFC-0014-v2 new                                 |
-| AskRejected            | `cipherocto/settlement/extension/ask-rejected/v1/`                                                                                     | RFC-0014-v2 new                                 |
-| AgentTransitionReceipt | `cipherocto/settlement/extension/agent-transition-receipt/v1/`                                                                         | RFC-0014-v2 new (cross-RFC with RFC-0015-a)     |
+| Extension kind         | Namespace string                                                                                                                              | `ask_id` prefix bytes (BLAKE3-256 input prefix) |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| AskSettled             | `cipherocto/settlement/extension/ask-settled/v1/` (RFC-0014 existing; ask_id = BLAKE3-256 of namespace \|\| canonical_ask_id per §S1 pattern) | (RFC-0014 existing)                             |
+| AskPartial             | `cipherocto/settlement/extension/ask-partial/v1/`                                                                                             | RFC-0014-v2 new                                 |
+| AskRejected            | `cipherocto/settlement/extension/ask-rejected/v1/`                                                                                            | RFC-0014-v2 new                                 |
+| AgentTransitionReceipt | `cipherocto/settlement/extension/agent-transition-receipt/v1/`                                                                                | RFC-0014-v2 new (cross-RFC with RFC-0015-a)     |
 
 ### Appendix B: Substrate-vs-façade boundary
 

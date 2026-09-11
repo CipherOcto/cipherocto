@@ -223,7 +223,7 @@ Cross-replica consensus invariant: any two replicas observing the same event seq
 
 ## Performance Targets
 
-- **Append latency ceiling:** 1 ms p99 on commodity SSD (single-event append with monotonicity check + chain_hash compute + persistence).
+- **Append latency ceiling:** 1 ms p99 on commodity SSD (single-event append with monotonicity check + chain_hash compute + persistence). **Measurement methodology:** reproducible benchmark harness required; baseline SSD spec (sequential write ≥500 MB/s, fsync ≤1 ms); warm cache; single-threaded. Benchmark suite lands as part of acceptance adapter mission.
 - **Chain verification O(n):** `verify_chain(n)` MUST complete in O(n) time over `n` persisted events; no quadratic scans.
 - **Adapter throughput floor:** 1,000 appends/second sustained single-writer; 100 appends/second under 4-way concurrent append with monotonicity serialization.
 - **Canonical-bytes cost:** `canonical_bytes` MUST NOT allocate more than 256 bytes per event (input fields fit in fixed-width encoding).
@@ -250,8 +250,8 @@ The RFC is Accepted when ALL of the following are true:
 Per BLUEPRINT.md §RFC Process item 5 + §2-Cycle Atomic Promotion gate:
 
 - **Sibling:** RFC-0014-v2 (settlement substrate amendment, draft)
-- **Reviewer board:** 5-len (correctness / security / layer-model / hygiene / spec-completeness)
-- **Pairing invariant:** §S7 cross-RFC pairing via `prev_chain_hash = settlement_hash` requires both substrate amendments to land together. RFC-0015-a + RFC-0016-a acceptance gated on this 2-cycle.
+- **Reviewer board:** 5-lens reviewer board (correctness / security / layer-model / hygiene / spec-completeness)
+- **Pairing invariant:** §S7 cross-RFC pairing via `prev_chain_hash = receipt_id_for(receipt)` requires both substrate amendments to land together. RFC-0015-a + RFC-0016-a acceptance gated on this 2-cycle.
 - **Atomic promotion gate:** Both RFCs transition Draft → Accepted in the same PR. Neither may be Accepted without the other.
 
 ## Security Considerations
@@ -344,9 +344,9 @@ expect: first append returns Ok(())
 ### TV-AUD-v2-6: AuditFilter substrate contract
 
 ```
-input: AuditFilter { whatever: Some("did:example:123"), nonsense: Some(ReceiptStatus::Ok), .. }
-expect: Compile error: no field `whatever` on type `AuditFilter`
-        Compile error: no field `nonsense` on type `AuditFilter`
+input: AuditFilter { subject_did_acl: Some("did:example:123"), status_filter: Some("ok"), .. }
+expect: Compile error: no field `subject_did_acl` on type `AuditFilter`
+        Compile error: no field `status_filter` on type `AuditFilter`
 ```
 
 (Per §S4, the canonical AuditFilter has 5 fields: `since_unix`, `until_unix`, `capability_root`, `model`, `limit`. Any struct literal referencing a non-canonical field fails at compile time.)

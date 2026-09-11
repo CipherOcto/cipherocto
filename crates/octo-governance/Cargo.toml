@@ -1,0 +1,21 @@
+[package]
+name = "octo-governance"
+version = "0.1.0"
+edition = "2021"
+description = "Layer B governance facade — re-exports octo-governance-core (RFC-0013 §Module Layout)"
+license = "Apache-2.0"
+authors = ["CipherOcto"]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# Layer B facade → Layer A substrate (RFC-0013 §Module Layout).
+octo-governance-core = { path = "../octo-governance-core" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+empty_line_after_doc_comments = "allow"
+doc_lazy_continuation = "allow"

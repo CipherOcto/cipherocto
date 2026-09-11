@@ -1,0 +1,24 @@
+[package]
+name = "octo-governance-core"
+version = "0.1.0"
+edition = "2021"
+description = "Layer A frozen governance substrate — ProposalState + DecisionType + GovernanceModel + tally helpers per RFC-0013 §Specification"
+license = "Apache-2.0"
+authors = ["CipherOcto"]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# Layer A primitive: canonical serde for GovernancePolicy + ProposalState +
+# DecisionType + GovernanceModel + EmergencyAuthority.
+serde = { version = "1", features = ["derive"] }
+# Layer A error type per cipherocto-design-principles Layer A row.
+thiserror = "2.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+empty_line_after_doc_comments = "allow"
+doc_lazy_continuation = "allow"

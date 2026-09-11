@@ -1,16 +1,16 @@
 # RFC-0014-v2 — Settlement Substrate Amendment v2
 
-| Field        | Value                                                                                       |
-| ------------ | ------------------------------------------------------------------------------------------- |
-| Status       | Draft                                                                                       |
-| Version      | v2.0.0-draft                                                                                |
-| Layer        | A (substrate-frozen)                                                                        |
-| Authors      | CipherOcto core team                                                                        |
-| Maintainers  | octo-settlement-core maintainers                                                            |
-| Parent RFC   | RFC-0014 (accepted)                                                                         |
-| Supersedes   | RFC-0014 §Data Structures (none yet; v2 codifies the extension surface)                     |
-| Companion    | RFC-0012-v2 (audit substrate amendment v2), RFC-0015-a + RFC-0016-a (write-path amendments) |
-| Target crate | `octo-settlement-core` v2.0.0 (semver-major)                                                |
+| Field        | Value                                                                   |
+| ------------ | ----------------------------------------------------------------------- |
+| Status       | Draft                                                                   |
+| Version      | v2.0.0-draft                                                            |
+| Layer        | A (substrate-frozen)                                                    |
+| Authors      | CipherOcto Architecture Working Group                                   |
+| Maintainers  | CipherOcto Architecture Working Group                                   |
+| Parent RFC   | RFC-0014                                                                |
+| Supersedes   | RFC-0014 §Data Structures (none yet; v2 codifies the extension surface) |
+| Companion    | RFC-0012-v2, RFC-0015-a + RFC-0016-a                                    |
+| Target crate | `octo-settlement-core` v2.0.0 (semver-major)                            |
 
 ## Summary
 
@@ -49,7 +49,7 @@ Per CLAUDE.md §Architectural Principles + §Extension over enumeration, RFC-001
 
 ## Motivation
 
-RFC-0014 (accepted) defines a 6-field `Receipt` struct (`receipt_id`, `ask_id`, `settlement_hash`, `router_id`, `router_sig`, `timestamp_unix`). The substrate-frozen nature means:
+RFC-0014 defines a 6-field `Receipt` struct (`receipt_id`, `ask_id`, `settlement_hash`, `router_id`, `router_sig`, `timestamp_unix`). The substrate-frozen nature means:
 
 - Adding fields (e.g. `model`, `cost_dqa`, `capability_root`, `subject_did`, `status`) requires semver-major bump + migration of every existing consumer.
 - Future receipt semantics (AskPartial settlements, AskRejected settlements, refund receipts) need a substrate-faithful encoding.
@@ -163,7 +163,7 @@ impl ReceiptId {
 
 4. **Canonical `settlement_hash` verification** — implementations MUST recompute `settlement_hash` via `octo_settlement_core::receipt_id_for(&receipt)` and verify `receipt.settlement_hash == computed`. On mismatch, return `SettlementError::ChainIntegrity { receipt_id: receipt.receipt_id }` (NOT `SinkSpecific`; the substrate-canonical error for chain-integrity failures is `ChainIntegrity` per RFC-0014 §Error Type).
 
-5. **Atomic persistence** — implementations MUST persist the receipt in a transaction-scoped atomic write. Adapter impls (e.g. `StoolapReceiptSink`) MUST wrap persistence in a Stoolap `Transaction`.
+5. **Atomic persistence** — implementations MUST persist the receipt in a transaction-scoped atomic write. The persistence operation MUST be either fully committed (visible to subsequent `last_receipt_id()` calls) or fully rolled back (no partial persistence observable). Adapter-specific transaction mechanisms (e.g. database `Transaction` wrappers) are adapter-layer concerns (Layer D), not substrate contract.
 
 6. **`SinkSpecific` boundary** — adapter-specific failures MUST map to `SettlementError::SinkSpecific(String)`. No raw error chains, no adapter-type names leaking past the substrate boundary.
 
@@ -241,7 +241,7 @@ Adapter-specific error chains MUST be scrubbed at the adapter boundary per §SC2
 /// 3. Table-name references (`table 'X'`, `relation "X"`) → `<redacted-table>`
 /// 4. Stoolap/SQL error code prefixes (`SQLSTATE_XXXXX`) → `<redacted-sql-state>`
 /// 5. `std::io::Error` chain fragments (`os error N`) → `<redacted-io>`
-/// 6. Adapter-type names (e.g. `StoolapTransactionError`) → `<redacted-adapter>`
+/// 6. Adapter-type names (parameterized; caller passes its own registry) → `<redacted-adapter>`
 pub fn scrub_adapter_error(s: &str) -> String {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -281,16 +281,23 @@ pub fn scrub_adapter_error(s: &str) -> String {
     });
     out = io_re.replace_all(&out, "<redacted-io>").into_owned();
 
-    // Pattern 6: adapter-type names (extensible set)
-    const ADAPTER_TYPES: &[&str] = &[
-        "StoolapTransactionError",
-        "StoolapConnectionError",
-        "StoolapDatabaseError",
-    ];
-    for ty in ADAPTER_TYPES {
+    // Pattern 6: adapter-type names (NOT applied by the no-registry form;
+    // adapters MUST call scrub_adapter_error_with(s, ADAPTER_TYPES) for pattern 6)
+    // See §S5.1 — adapter-type names are an extension surface per CLAUDE.md §Extension
+    // over enumeration; no closed set in the canonical scrubber.
+
+    out
+}
+
+/// Scrubber variant that accepts an adapter-type registry (per-façade, not hardcoded).
+/// Each Layer B façade owns its own ADAPTER_TYPES list and calls this function
+/// rather than the hardcoded 6-pattern list. Per CLAUDE.md §Extension over enumeration,
+/// adapter-type names are an extension surface, NOT a closed set.
+pub fn scrub_adapter_error_with(s: &str, adapter_types: &[&str]) -> String {
+    let mut out = scrub_adapter_error(s);
+    for ty in adapter_types {
         out = out.replace(ty, "<redacted-adapter>");
     }
-
     out
 }
 ```
@@ -305,9 +312,9 @@ regex = { version = "1.10" }
 once_cell = { version = "1.19" }
 ```
 
-### §S6 — Canonical-hash construction (keyed BLAKE3)
+### §S6 — Canonical-hash construction (keyed BLAKE3 with zero key)
 
-§S6 pins the existing canonical-hash construction for receipts:
+§S6 pins the existing canonical-hash construction for receipts. The BLAKE3 key is the zero-filled 32-byte constant `[0; 32]` (intentional per substrate consensus posture — see A1 + substrate `chain.rs` doc-comment; production deployments needing keyed-hash defense-in-depth MUST wrap via a `KeyedHasher` trait on Layer C, see §S6.1).
 
 ```
 settlement_hash = BLAKE3-256-keyed(
@@ -343,7 +350,7 @@ pub fn receipt_id_for(receipt: &Receipt) -> [u8; 32] {
 }
 ```
 
-### §S7 — Cross-RFC consistency with RFC-0012-v2 (façade-level pairing, NOT substrate shared hash input)
+### §S7 — Cross-RFC consistency with RFC-0012-v2
 
 §S7 establishes cross-RFC invariants with RFC-0012-v2. **Important:** the audit `cap_root_hash` and the receipt `ask_id` use **different BLAKE3 inputs** (audit is namespace-only; receipt is namespace || canonical_ask_id). The pairing is a **façade convention**, not a cryptographic binding at the substrate hash layer.
 
@@ -394,16 +401,16 @@ The RFC is Accepted when ALL of the following are true:
 - **AC-4.** Strict `receipt_id == last_receipt_id() + 1` enforced; re-append returns `AlreadyExists`; gap returns `SequenceGap`.
 - **AC-5.** Tampered `settlement_hash` is detected at adapter-side append check + read-path `verify_receipt_chain`. Adapter returns `ChainIntegrity { receipt_id }` (NOT `SinkSpecific`) at append; substrate `verify_receipt_chain` returns same at read.
 - **AC-6.** `ReceiptId(pub u64)` newtype re-exported at `octo_settlement::ReceiptId`; canonical hash unchanged.
-- **AC-7.** Adapter implementations call `octo_settlement::scrub::scrub_adapter_error` before wrapping into `SinkSpecific`; raw error chains never reach substrate.
-- **AC-8.** Paired acceptance with RFC-0012-v2 (2-cycle atomic promotion gate).
+- **AC-7.** Adapter implementations call the canonical scrubber before wrapping into `SinkSpecific`; each Layer B façade owns its own scrubber instance (e.g. `octo_audit::scrub::scrub_adapter_error`, `octo_settlement::scrub::scrub_adapter_error` — pattern duplicated per-façade to avoid sibling Layer B coupling). Raw error chains never reach substrate.
+- **AC-8.** Paired acceptance with RFC-0012-v2 per BLUEPRINT.md §2-Cycle Atomic Promotion gate.
 - **AC-9.** All Test Vectors in §Test Vectors produce expected outputs (verified by `cargo test -p octo-settlement`).
-- **AC-10.** `StoolapReceiptSink` (or equivalent concrete impl) implements `AppendOnlyReceiptSink` with monotonicity + atomic persistence; no adapter panic on fsync failure (atomic-or-rollback contract).
+- **AC-10.** Layer D adapter implementations (e.g. `StoolapReceiptSink`) provide monotonicity + transaction-scoped atomic persistence; atomic-or-rollback contract honored (no partial persistence observable on adapter failure).
 
 ## 2-Cycle Atomic Promotion Tag
 
 Per BLUEPRINT.md §RFC Process item 5 + §2-Cycle Atomic Promotion gate:
 
-- **Sibling:** RFC-0012-v2 (audit substrate amendment, draft)
+- **Sibling:** RFC-0012-v2
 - **Reviewer board:** 5-lens reviewer board (correctness / security / layer-model / hygiene / spec-completeness)
 - **Pairing invariant:** §S7 cross-RFC pairing via `prev_chain_hash = receipt_id_for(receipt)` requires both substrate amendments to land together. RFC-0015-a + RFC-0016-a acceptance gated on this 2-cycle.
 - **Atomic promotion gate:** Both RFCs transition Draft → Accepted in the same PR. Neither may be Accepted without the other.
@@ -412,7 +419,7 @@ Per BLUEPRINT.md §RFC Process item 5 + §2-Cycle Atomic Promotion gate:
 
 **SC1. Typed-discriminator collision resistance.** Extension kinds are encoded as `BLAKE3-256(namespace_string || canonical_ask_id)`. BLAKE3-256 collision resistance is 2^128 operations (birthday bound on 256-bit output). Preimage resistance is 2^256. Cross-extension-kind collisions are cross-prefix second-preimage attacks (~2^256 with one fixed prefix; ~2^128 birthday for attacker-chosen both prefixes).
 
-**SC2. `SinkSpecific` payload scrubbing.** Adapter-specific error messages MUST be scrubbed at the adapter boundary before wrapping into `SettlementError::SinkSpecific`. No raw error chains, no adapter-type names, no leaked path fragments. Canonical scrubber is declared at `octo-settlement::scrub::scrub_adapter_error` (Layer B façade per §S5.1 — 6-pattern list).
+**SC2. `SinkSpecific` payload scrubbing.** Adapter-specific error messages MUST be scrubbed at the adapter boundary before wrapping into `SettlementError::SinkSpecific`. No raw error chains, no adapter-type names, no leaked path fragments. Canonical scrubber pattern is declared at each Layer B façade (`octo_audit::scrub::scrub_adapter_error` + `octo_settlement::scrub::scrub_adapter_error` — duplicated per-façade to avoid sibling Layer B coupling) with the 6-pattern list (per §S5.1).
 
 **SC3. Settlement hash integrity.** `settlement_hash` field MUST match the canonical computation (substrate-side `verify_receipt_chain` enforces). §S4.4 enforces this on every append; §S6 canonical-bytes form is the substrate-level guarantee.
 
@@ -476,6 +483,8 @@ expect: ReceiptId::new(42).get() == 42
         ReceiptId::new(42) != ReceiptId::new(43)
 ```
 
+**DEFERRED:** `ReceiptId` newtype lands at acceptance per Phase 1 substrate-code amendment mission; substrate v1.x has no such newtype. Canonical hash unchanged per §S3 (newtype wraps u64 with #[repr(transparent)]).
+
 ### TV-SET-v2-3: Sink append accepts canonical settlement_hash
 
 ```
@@ -517,6 +526,8 @@ expect: audit_event_for_agent_transition_receipt(receipt).cap_root_hash ==
         audit_event_for_agent_transition_receipt(receipt).event_kind == AuditEventKind::Insert
 ```
 
+**DEFERRED:** `audit_event_for_agent_transition_receipt` is façade helper per §S7; lands at acceptance per Phase 1 substrate-code amendment mission.
+
 ### TV-SET-v2-8: Typed-discriminator construction (ask-rejected)
 
 ```
@@ -556,6 +567,8 @@ expect: ReceiptId::new(42).get() == 42
         ReceiptId::new(42) == ReceiptId::new(42)
         ReceiptId::new(42) != ReceiptId::new(43)
 ```
+
+**DEFERRED:** Same as TV-SET-v2-2; `ReceiptId` newtype lands at acceptance per Phase 1.
 
 ### TV-SET-v2-13: Receipt canonical_bytes round-trip
 
@@ -606,12 +619,16 @@ expect: audit_event_for_ask_rejected(receipt) returns AuditEvent with cap_root_h
         prev_chain_hash = receipt_id_for(receipt) (cross-RFC binding via §S7 pairing)
 ```
 
+**DEFERRED:** `audit_event_for_ask_rejected` is façade helper per §S7; lands at acceptance per Phase 1 substrate-code amendment mission.
+
 ### TV-SET-v2-19: scrub_adapter_error all 6 patterns (already covered in RFC-0012-v2 TV-AUD-v2-18 through v2-23)
 
 ```
-input: same scrubber tests as RFC-0012-v2 (canonical Layer B scrubber applies to both AuditError::SinkSpecific and SettlementError::SinkSpecific)
+input: same scrubber tests as RFC-0012-v2 — canonical Layer B scrubber applies to both AuditError::SinkSpecific and SettlementError::SinkSpecific
 expect: identical pattern coverage
 ```
+
+**DEFERRED:** `scrub_adapter_error` declared at Layer B façade per §S5.1; lands at acceptance per Phase 1 substrate-code amendment mission. Coverage delegated to RFC-0012-v2 TV-AUD-v2-18..v2-23.
 
 ### TV-SET-v2-20: StoolapReceiptSink concurrent receipt_id collision detection
 
@@ -635,7 +652,7 @@ expect: substrate append returns Ok(())
 ```
 input: SinkSpecific("a".repeat(10000)) (10 KiB adapter error)
 expect: payload retained verbatim (substrate does NOT truncate)
-        adapter-side scrub_adapter_error MUST be called before wrapping
+        adapter-side scrub_adapter_error MUST be called before wrapping (scrubber lands at acceptance per Phase 1 substrate-code amendment mission)
 ```
 
 ### TV-SET-v2-23: Receipt 6-field surface preservation
@@ -696,6 +713,8 @@ input: ReceiptId::new(42) vs raw u64 = 42
 expect: identical machine code generated by `cargo build --release`
         newtype is zero-cost abstraction
 ```
+
+**DEFERRED:** Same as TV-SET-v2-2 / v2-12; verified at acceptance per Phase 1.
 
 ### TV-SET-v2-30: Adapter atomic persistence precondition
 
@@ -785,18 +804,23 @@ The cost is a doc-comment-driven extension pattern that domain crates must follo
 
 ## Version History
 
-| Version      | Date       | Author               | Notes                                                                                                                                                  |
-| ------------ | ---------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| v2.0.0-draft | 2026-09-11 | CipherOcto core team | Initial draft. Pins typed-discriminator pattern via `ask_id` namespaces, `ReceiptId` newtype, sink invariants, cross-RFC consistency with RFC-0012-v2. |
+| Version      | Date       | Author                                | Notes                                                                                                                                                                                                                                                                                          |
+| ------------ | ---------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v2.0.0-draft | 2026-09-11 | CipherOcto Architecture Working Group | Initial draft. Pins typed-discriminator pattern via `ask_id` namespaces, `ReceiptId` newtype, sink invariants, cross-RFC consistency with RFC-0012-v2.                                                                                                                                         |
+| v2.0.0-r30.5 | 2026-09-11 | CipherOcto Architecture Working Group | R30.5 prose alignment + substrate-code amendment gap acknowledgements (scrubber, ReceiptId DEFERRED to Phase 1 acceptance).                                                                                                                                                                    |
+| v2.0.0-r31.5 | 2026-09-11 | CipherOcto Architecture Working Group | R31.5 scrubber relocation (Layer A → Layer B), BLAKE3 math correction, AC + 2-Cycle Tag additions.                                                                                                                                                                                             |
+| v2.0.0-r32.5 | 2026-09-11 | CipherOcto Architecture Working Group | R32.5 §S3 ReceiptId newtype, §S5.1 scrubber impl, §S6 keyed BLAKE3 zero-key qualifier, TV count to 30, Authors/Maintainers H2 sections, cite sweep 160/160.                                                                                                                                    |
+| v2.0.0-r33.5 | 2026-09-11 | CipherOcto Architecture Working Group | R33.5 A5 timestamp monotonicity rewrite, compute_settlement_hash → receipt_id_for rename, Rationale 7-variant fix, AskSettled row consistency, 2-Cycle Tag prev_chain_hash invariant.                                                                                                          |
+| v2.0.0-r34.5 | 2026-09-11 | CipherOcto Architecture Working Group | R34.5 hygiene parens strip, phantom-substrate TV DEFERRED markers, AC-7 cross-crate scrubber dep → per-façade scrubber, scrub_adapter_error_with adapter-type registry, AC-10 StoolapReceiptSink → Layer D, §S6 zero-key qualifier header, §S5.1 hardcoded adapter types → registry parameter. |
 
 ## Related RFCs
 
-- RFC-0014 (accepted) — parent RFC; defines substrate `Receipt`, `Ask`, `Reservation`, `SettlementStore`, `AppendOnlyReceiptSink`, `SettlementError`.
-- RFC-0012-v2 (draft) — sibling substrate amendment for audit extension pattern.
-- RFC-0015-a (draft) — wallet agent write-path amendment; requires RFC-0014-v2 for `ReceiptId` + `ask_id` typed-discriminator.
-- RFC-0016-a (draft) — audit receipt write-path amendment; requires RFC-0014-v2 for `ReceiptId` newtype + `ReceiptSummary` projection.
-- RFC-0011-a (accepted) — wallet subcommands; cross-RFC reference for scrubber location (Layer B façade, not Layer A substrate).
-- RFC-0959 (accepted) — settlement data structures + state machines (parent design).
+- RFC-0014 — parent RFC; defines substrate `Receipt`, `Ask`, `Reservation`, `SettlementStore`, `AppendOnlyReceiptSink`, `SettlementError`.
+- RFC-0012-v2 — sibling substrate amendment for audit extension pattern.
+- RFC-0015-a — wallet agent write-path amendment; requires RFC-0014-v2 for `ReceiptId` + `ask_id` typed-discriminator.
+- RFC-0016-a — audit receipt write-path amendment; requires RFC-0014-v2 for `ReceiptId` newtype + `ReceiptSummary` projection.
+- RFC-0011-a — wallet subcommands; cross-RFC reference for scrubber location (Layer B façade, not Layer A substrate).
+- RFC-0959 — settlement data structures + state machines (parent design).
 
 ## Related Use Cases
 

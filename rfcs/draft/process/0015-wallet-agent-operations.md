@@ -229,9 +229,9 @@ The table below documents the substrate-canonical state machine surface (see §A
 
 | Substrate variant        | Spec diagram equivalent                     | CLI rendering          | Allowed transitions FROM (substrate) |
 | ------------------------ | ------------------------------------------- | ---------------------- | ------------------------------------ |
-| `AgentState::Registered` | `REGISTERED`                                | `state = "Registered"` | `Running`                            |
-| `AgentState::Running`    | `ACTIVE` or `BUSY` (per substrate collapse) | `state = "Running"`    | `Terminated`, `Registered`           |
-| `AgentState::Terminated` | `TERMINATED` (terminal)                     | `state = "Terminated"` | NONE (terminal)                      |
+| `AgentState::Registered` | `REGISTERED`                                | `state = "registered"` | `Running`                            |
+| `AgentState::Running`    | `ACTIVE` or `BUSY` (per substrate collapse) | `state = "running"`    | `Terminated`, `Registered`           |
+| `AgentState::Terminated` | `TERMINATED` (terminal)                     | `state = "terminated"` | NONE (terminal)                      |
 
 > **Substrate-faithful drift (replaces RFC-0002 §Agent State Machine spec diagram until RFC-0002-v2 lands):** the working substate pair `ACTIVE ↔ BUSY` is collapsed into the single observable `Running` variant. Operators querying agent state see `Running` for both currently-idle (was ACTIVE) and currently-executing (was BUSY) agents. The `AuditEventKind::AgentTransition` log row carries the prior `BUSY/ACTIVE` distinction internally (substrate collapses for the registry, preserves for audit) so audit log analysis retains the working/non-working split.
 

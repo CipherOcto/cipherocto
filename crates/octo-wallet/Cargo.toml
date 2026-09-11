@@ -179,6 +179,10 @@ octo-ident = { path = "../octo-ident" }
 # registers CapabilitySpec impls per RFC-0965; the Macaroon struct + Caveat
 # types remain in octo-wallet for now (Phase 2 follow-on migration).
 octo-cap-macaroon = { path = "../octo-cap-macaroon" }
+# Audit substrate (RFC-0012 §Module Layout). Layer B facade re-exports
+# canonical AuditEvent + AuditEventKind + AppendOnlyAuditSink + verify_chain
+# per mission 0012-audit-wallet-migration.
+octo-audit = { path = "../octo-audit" }
 
 [dev-dependencies]
 assert_cmd = "2"

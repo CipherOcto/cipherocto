@@ -11,12 +11,12 @@ metadata:
   verified_by: "@mmacedoeu"
   closed: 2026-09-01
   depends_on: []
-status: Closed
+status: Completed
 ---
 
 # 0011-d-M9-doc-followon-token-design-md-10 — `token-design.md` §10 cross-reference per RFC-0011-d §Mission Decomposition M9
 
-**Status:** Closed (2026-09-01) by @mmacedoeu — policy override per audit Rec 4. Work landed (§10 footnote in `docs/04-tokenomics/token-design.md`). Release-gate event (first dual-stake role addition post-Phase 1) has not fired; gate overridden as policy artifact rather than technical block per [[deferred-vs-unspecified]].
+**Status:** Completed (2026-09-01) by @mmacedoeu — policy override per audit Rec 4. Work landed (§10 footnote in `docs/04-tokenomics/token-design.md`). Release-gate event (first dual-stake role addition post-Phase 1) has not fired; gate overridden as policy artifact rather than technical block per [[deferred-vs-unspecified]].
 
 > **Retro-supersession (2026-09-01):** Audit-driven close-out. RFC-0011-d §Mission Decomposition M9 row specified `release_gate: first dual-stake role addition post-Phase 1`; this event will trigger when M10/M11 land (RFC-0855p-d + RFC-0855p-e Accept → `coordinator` + `domain-coordinator` become first dual-stake additions). M9 work (§10 footnote) is complete and pure-doc; gate is policy not technical per [[deferred-vs-unspecified]] "deferred ≠ unspecified" — substantive work delivered, gate is bookkeeping. Override decision: close at audit Rec 4 completion; gate unblock verification (via M10/M11) is a future checkpoint, not a M9 prerequisite. Doc edit (uncommitted at close-out) bundles into audit Rec 4 commit batch.
 

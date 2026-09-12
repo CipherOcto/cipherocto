@@ -15,12 +15,12 @@ metadata:
     - RFC-0011-d
     - mission 0011-d-M6-octocli-role-commands
     - mission 0011-d-M7-octocli-role-error-variants
-status: Closed
+status: Completed
 ---
 
 # 0011-d-M8-octocli-role-tests — Test vectors per RFC-0011-d §11 canonical distribution
 
-**Status:** Closed (2026-09-01). LANDED commit `90ce73bd` (test: M8 — 11 RFC-0011-d §11 vectors + assert_cmd integration).
+**Status:** Completed (2026-09-01). LANDED commit `90ce73bd` (test: M8 — 11 RFC-0011-d §11 vectors + assert_cmd integration).
 
 > **Retro-supersession (2026-09-01):** M8 landed in subsequent cycle after M6+M7. Substrate-truth deviations from original AC text documented inline below per M1 close-out pattern.
 

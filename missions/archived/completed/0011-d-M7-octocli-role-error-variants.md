@@ -14,12 +14,12 @@ metadata:
   depends_on:
     - RFC-0011-d
     - mission 0011-d-M6-octocli-role-commands
-status: Closed
+status: Completed
 ---
 
 # 0011-d-M7-octocli-role-error-variants — `OctoCliError` variants for `octo role` per RFC-0011-d §Mission Decomposition M7
 
-**Status:** Closed (2026-09-01). LANDED commit `63ffdf94` (combined M6+M7 landing per substrate cycle).
+**Status:** Completed (2026-09-01). LANDED commit `63ffdf94` (combined M6+M7 landing per substrate cycle).
 
 > **Retro-supersession (2026-09-01):** M7 landed in same substrate cycle as M6 (combined landing commit `63ffdf94`). Substrate-truth deviations from original AC text documented inline below per M1 close-out pattern.
 

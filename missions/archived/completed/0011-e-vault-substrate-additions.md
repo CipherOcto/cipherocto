@@ -24,18 +24,29 @@ completed_at: 2026-09-01
 
 # 0011-e-vault-substrate-additions — Layer B `[ADD]` substrate API for RFC-0011-e (list_owned, project_vault_balance, initiate_transfer)
 
-**Status:** Open
+**Status:** Completed
 **Substrate:** RFC-0011-e §Substrate Additions, RFC-0960-v37 §Balance Projection Substrate, RFC-0960-v35 §2 Path Taxonomy, RFC-0960-v36 §Burn-Event DQA Migration
-**Parent:** RFC-0011-e (vault operations amendment of RFC-0011)
-**Depends on:**
 
-- RFC-0960 §Specification, Capabilities, Reservations (vault substrate root)
-- RFC-0960-v35 §2 Path Taxonomy (canonical vault identifier shape)
-- RFC-0960-v36 §Burn-Event DQA Migration (asset quantity wire form)
-- RFC-0960-v37 §Balance Projection Substrate (SUM projection, `ZERO_VAULT_ID`, `max_occurred_at_unix`, `VaultAssetResolver`)
-- RFC-0010 §2 ledger_chain_registry Table DID Codec (chain identifier namespace)
-- Mission `0011-core-output-envelope-redaction` — `OutputEnvelope<T>` substrate consumed by CLI missions
-  **Blocks:** `0011-e-vault-subcommands-readonly`, `0011-e-vault-subcommands-transfer` (CLI subcommand missions consume this substrate)
+> **Drift amendment (RFC-0011-e v1.8 audit 2026-09-08, this file):**
+>
+> - **Nonce policy corrected**: the v1.0 mission text encoded a
+>   `max_occurred_at_unix`-derived nonce. RFC-0011-e v1.1+ §Transfer
+>   Replay pins the nonce to a **strictly-incrementing per-vault
+>   counter** (`last_nonce(vault_id) + 1` under the transfer-event write
+>   lock). Two transfers in the same event-tick would derive the same
+>   timestamp-based nonce and collide; counter allocation is invariant.
+>   Regression vectors TV-14 + TV-15 guard the timestamp-derived-nonce
+>   defect. **4 sites corrected** (AC L96, Risk L135, sub-step 6 L155,
+>   Layer direction L180).
+> - **`OutputEnvelope<T>::schema_version`**: stays at v2 for Wave B
+>   substrate additions; v3 schema (renames `data`→`payload`,
+>   `generated_at`→`executed_at_unix`, drop `exit_code`/`preview_only`,
+>   add `command`/`redacted`) deferred per the RFC-0011-c envelope
+>   migration. The companion CLI mission `0011-e-vault-subcommands-transfer`
+>   Deviations § explicitly notes "stayed consistent with Wave B".
+> - **`projected_balance` type**: substrate carries `Dqa` (RFC-0960-v36
+>   canonical form), not `String`. The CLI's `VaultSummary.balance_projected`
+>   stringifies at the Layer C/D boundary (Display impl).
 
 ## Status
 
@@ -80,6 +91,8 @@ RFC-0011-e (vault operations amendment; Phase 6 of the RFC-0011 amendment chain)
 
 See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-e-vault-substrate-additions` (this mission) → `0011-e-vault-subcommands-readonly` + `0011-e-vault-subcommands-transfer`.
 
+**Blocks:** `0011-e-vault-subcommands-readonly`, `0011-e-vault-subcommands-transfer` (CLI subcommand missions consume this substrate)
+
 ## Acceptance Criteria
 
 - [x] `list_owned(owner_did: &Did) -> Result<Vec<VaultSummary>, VaultError>` declared + unit-tested (per RFC-0011-e §Substrate Additions)
@@ -93,7 +106,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-e-vault-su
 - [x] `VaultAssetResolver::resolve_asset_for(vault_id) -> AssetId` wired (per RFC-0960-v37 §2.1)
 - [x] `ZERO_VAULT_ID` sentinel exclusion applied to SUM projection (per RFC-0960-v37 §2.2)
 - [x] `max_occurred_at_unix(chain_id, vault_id)` monotonic per `(chain_id, vault_id)` (per RFC-0960-v37 §2.2)
-- [x] Nonce derivation per `(vault_id, max_occurred_at_unix)` for transfer replay protection (per RFC-0011-e §Security: Transfer Replay)
+- [x] Nonce allocation per `last_nonce(vault_id) + 1` under the transfer-event write lock (strictly-incrementing per-vault counter, NOT `max_occurred_at_unix`-derived) for transfer replay protection (per RFC-0011-e §Security: Transfer Replay; regression vectors TV-14 + TV-15)
 - [x] HSM signing via `octo-wallet::sign_envelope` (no parallel signing abstraction; per [[cipherocto-design-principles]] no-parallel-abstractions principle)
 - [x] Substrate compatibility: all `[ADD]` entries are additive — no existing function signature changes (per RFC-0011-e §Substrate Compatibility)
 - [x] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
@@ -105,7 +118,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-e-vault-su
 
 | RFC-0011-e type          | Sub-step                | Notes                                                                                                                                                                                                                                   |
 | ------------------------ | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `VaultSummary`           | Sub-step 1 (read)       | Layer B; new struct in `octo-vault/src/lib.rs` per RFC-0960-v37 §2.1 (`vault_id: Hex32`, `chain_id: ChainId`, `owner_did: Did`, `asset_symbol: String`, `balance_projected: String`, `last_updated_unix: Option<i64>`)                  |
+| `VaultSummary`           | Sub-step 1 (read)       | Layer B; new struct in `octo-vault/src/lib.rs` per RFC-0960-v37 §2.1 (`vault_id: Hex32`, `chain_id: ChainId`, `owner_did: Did`, `asset_symbol: String`, `balance_projected: Dqa`, `last_updated_unix: Option<i64>`)                     |
 | `VaultBalanceProjection` | Sub-step 2 (read)       | Layer B; new struct in `octo-vault/src/lib.rs` per RFC-0960-v37 §2.1 (`chain_id`, `vault_id`, `asset_id`, `projected_balance: Dqa`, `projected_at_unix_seconds: Option<i64>`)                                                           |
 | `ProjectionSource`       | Sub-step 2 (read)       | Layer B; enum per RFC-0960-v37 §2.1; `#[non_exhaustive]` (Layer B additive; downstream consumers MUST handle the wildcard arm)                                                                                                          |
 | `TransferHandle`         | Sub-step 3 (write)      | Layer B; new struct in `octo-vault/src/lib.rs` per RFC-0960 substrate (`handle_id`, `vault_id`, `dest_vault_id`, `amount_dqa_micros`, `asset_id`, `nonce`, `status`)                                                                    |
@@ -132,7 +145,7 @@ Per RFC-0011-e §Substrate Compatibility: all `[ADD]` entries are backward-compa
 
 ## Risk
 
-- **HIGH** — transfer replay (re-submitting a broadcast envelope). Mitigation: substrate-derived nonce per `(vault_id, max_occurred_at_unix)`.
+- **HIGH** — transfer replay (re-submitting a broadcast envelope). Mitigation: substrate-allocated strictly-incrementing per-vault nonce counter (`last_nonce + 1` under the transfer-event write lock); CLI does not generate nonces; `--confirm-acknowledge` two-step gate. **NOT** `max_occurred_at_unix`-derived (that defect is what regression vectors TV-14 + TV-15 guard against).
 - **MEDIUM** — operator chains asset by mistake. Mitigation: substrate validates `asset` against `vault_registry.asset_for(vault_id)` (no `AssetMismatch` exposed to CLI; CLI surfaces substrate rejection as `VaultNotOwned` exit 23).
 - **ACCEPTED RISK** — operator coercion (HSM does not authenticate operator intent). Documented per RFC-0011-e §Adversary Analysis.
 
@@ -142,17 +155,17 @@ Land the three `[ADD]` substrate API declarations per RFC-0011-e §Substrate Add
 
 ## Sub-steps
 
-1. **`VaultSummary` struct** — `crates/octo-vault/src/lib.rs` (Layer B; per RFC-0960-v37 §2.1). `#[derive(Serialize, Deserialize, Debug, Clone)]`. Fields: `vault_id: Hex32`, `chain_id: ChainId`, `owner_did: Did`, `asset_symbol: String`, `balance_projected: String` (DQA canonical form per RFC-0960-v36), `last_updated_unix: Option<i64>` (= projection.projected_at_unix_seconds).
+1. **`VaultSummary` struct** — `crates/octo-vault/src/lib.rs` (Layer B; per RFC-0960-v37 §2.1). `#[derive(Serialize, Deserialize, Debug, Clone)]`. Fields: `vault_id: Hex32`, `chain_id: ChainId`, `owner_did: Did`, `asset_symbol: String`, `balance_projected: Dqa` (substrate-typed; CLI stringifies via `Display` at the Layer C/D boundary per RFC-0960-v36 §Burn-Event DQA Migration), `last_updated_unix: Option<i64>` (= projection.projected_at_unix_seconds).
 
 2. **`VaultBalanceProjection` struct + `ProjectionSource` enum** — same file (Layer B; per RFC-0960-v37 §2.1). `VaultBalanceProjection` fields: `chain_id`, `vault_id`, `asset_id` (resolved via `VaultAssetResolver`), `projected_balance: Dqa`, `projected_at_unix_seconds: Option<i64>`, `projection_source`. `ProjectionSource` enum: `Cache` \| `FreshLogScan` \| `EpochRebuild` — annotated `#[non_exhaustive]`.
 
-3. **`TransferHandle` struct + `TransferStatus` enum** — same file (Layer B; per RFC-0960 substrate). `TransferHandle` fields: `handle_id`, `vault_id`, `dest_vault_id`, `amount_dqa_micros`, `asset_id`, `nonce` (substrate-derived), `status`. `TransferStatus` enum: `Pending` \| `Confirmed` \| `Failed`.
+3. **`TransferHandle` struct + `TransferStatus` enum** — same file (Layer B; per RFC-0960 substrate). `TransferHandle` fields: `handle_id`, `vault_id`, `dest_vault_id`, `amount_dqa_micros`, `asset_id`, `nonce` (substrate-allocated `last_nonce + 1` per-vault counter), `status`. `TransferStatus` enum: `DryRun` \| `Pending` \| `Confirmed` \| `Failed` (`Broadcast` is an internal substrate phase, not a `TransferStatus` variant per RFC-0011-e Appendix D; `DryRun` is CLI-set at envelope-build time and never substrate-produced — pinned by `tv_vo2b_substrate_never_produces_dry_run`).
 
 4. **`list_owned` fn** — same file (Layer B; per RFC-0011-e §Substrate Additions). Reads `vault_registry` (PK `(chain_id, owner_did, asset_id)` + UNIQUE INDEX on `vault_id`). Resolves each entry to a `VaultSummary`. Returns `Result<Vec<VaultSummary>, VaultError>`.
 
 5. **`project_vault_balance` fn** — same file (Layer B; per RFC-0011-e §Substrate Additions + RFC-0960-v37 §2.2). Canonical 7-param substrate signature: `(chain_id: &ChainId, vault_id: &VaultId, registry: &dyn AssetRegistry, asset_resolver: &dyn VaultAssetResolver, log: &impl TransferEventLog, current_registry_epoch: u64, current_unix_seconds: i64) -> Result<VaultBalanceProjection, ProjectionError>`. Canonical SUM projection: `SUM(in) - SUM(out)` filtered by `ZERO_VAULT_ID` sentinel exclusion. Routes through `VaultBalanceCache` (LRU + TTL); falls back to `transfer_events` (RFC-0960 v014 schema) on cache miss. `asset_id` derived from `vault_id` via `VaultAssetResolver::resolve_asset_for`. Enforces `max_occurred_at_unix` monotonicity per `(chain_id, vault_id)` (substrate returns `Option<i64>` per RFC-0960-v37 L121).
 
-6. **`initiate_transfer` fn** — same file (Layer B; per RFC-0011-e §Substrate Additions). Builds the transfer envelope; derives nonce per `(vault_id, max_occurred_at_unix)` (replay protection per RFC-0011-e §Security: Transfer Replay); calls `octo-wallet::sign_envelope` (HSM-bound; no parallel signing abstraction per [[cipherocto-design-principles]]); broadcasts to chain adapter. Returns `Result<TransferHandle, VaultError>`.
+6. **`initiate_transfer` fn** — same file (Layer B; per RFC-0011-e §Substrate Additions). Builds the transfer envelope; allocates nonce as `last_nonce(vault_id) + 1` under the SAME write lock that appends the transfer event (strictly-incrementing per-vault counter, replay protection per RFC-0011-e §Security: Transfer Replay — NOT `max_occurred_at_unix`-derived); calls `octo-wallet::sign_envelope` (HSM-bound; no parallel signing abstraction per [[cipherocto-design-principles]]); broadcasts to chain adapter. Returns `Result<TransferHandle, VaultError>`.
 
 7. **`VaultBalanceCache` wiring verification** — `crates/octo-vault/src/cache.rs` (Layer B; per RFC-0960-v37 §2.3). Verify `VaultBalanceCache` is wired and exercised by `project_vault_balance`. Bounded LRU + unix-seconds TTL. TTL bounded per RFC-0960-v37 §2.3.
 
@@ -171,15 +184,15 @@ No new external crates required; substrate types (`Hex32`, `ChainId`, `Did`, `As
 
 1 TV (TV-VLT9) — envelope schema parity test verifying the substrate shape matches RFC-0011-e §Appendices B JSON Output Schemas:
 
-| #    | Substrate surface | Input                                        | Expected Output                                                                                                                                                                   | Notes                                                            |
-| ---- | ----------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| VLT9 | All 3 `[ADD]` fns | Any substrate call + downstream CLI `--json` | `OutputEnvelope<T>` with `schema_version: 3` for `VaultListOutput` / `VaultBalanceOutput` / `VaultTransferOutput` (CLI envelope; substrate `T` payload versioning is independent) | Substrate shape parity test (per RFC-0011-e §Test Vectors TV-13) |
+| #    | Substrate surface | Input                                        | Expected Output                                                                                                                                                                                                                         | Notes                                                            |
+| ---- | ----------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| VLT9 | All 3 `[ADD]` fns | Any substrate call + downstream CLI `--json` | `OutputEnvelope<T>` with `schema_version: 2` for `VaultListOutput` / `VaultBalanceOutput` / `VaultTransferOutput` (CLI envelope; substrate `T` payload versioning is independent; v3 schema deferred per RFC-0011-c envelope migration) | Substrate shape parity test (per RFC-0011-e §Test Vectors TV-13) |
 
 The remaining 12 test vectors (TV-VLT1..TV-VLT8 + TV-XFER1..TV-XFER4) live in the companion CLI missions (`0011-e-vault-subcommands-readonly`, `0011-e-vault-subcommands-transfer`) where the substrate calls are exercised end-to-end through the CLI surface.
 
 ## Layer direction (RFC-0011-e §Roles and Authorities + per [[cipherocto-design-principles]])
 
-- `octo-vault` (Layer B) — three `[ADD]` fn signatures (`list_owned`, `project_vault_balance`, `initiate_transfer`) + four new types (`VaultSummary`, `VaultBalanceProjection`, `ProjectionSource`, `TransferHandle`, `TransferStatus`). `VaultBalanceCache` wired and verified.
+- `octo-vault` (Layer B) — three `[ADD]` fn signatures (`list_owned`, `project_vault_balance`, `initiate_transfer`) + four new types (`VaultSummary`, `VaultBalanceProjection`, `ProjectionSource`, `TransferHandle`, `TransferStatus`). `VaultBalanceCache` wired and verified. **Nonce allocation is substrate-authoritative** (`last_nonce + 1` under the event write lock per RFC-0011-e §Transfer Replay); CLI does not generate, rotate, or validate nonces (defense in depth).
 - `octo-wallet` (Layer B) — `sign_envelope` invoked by `initiate_transfer`; HSM-bound signing path.
 - NO new Layer A types introduced.
 - This is a Layer B mission; companion CLI missions are Layer C/D.
@@ -198,7 +211,7 @@ cargo test -p octo-vault --lib  # green
 - `VaultSummary`, `VaultBalanceProjection`, `TransferHandle` are NEW types or align with existing RFC-0960-v37 substrate types.
 - `ProjectionSource` enum is `#[non_exhaustive]`; downstream consumers MUST handle the wildcard arm (per RFC migration etiquette).
 - `TransferStatus` enum may grow new variants (e.g., `Reorged`); substrate consumers MUST handle the wildcard arm.
-- Per RFC-0011-e §Forward Compatibility: `OutputEnvelope<T>::schema_version = 3` is pinned (CLI envelope; substrate `T` payload versioning is independent); future amendments bump to 4.
+- Per RFC-0011-e §Forward Compatibility: `OutputEnvelope<T>::schema_version = 2` is pinned (CLI envelope; substrate `T` payload versioning is independent). v3 schema (renames `data`→`payload`, `generated_at`→`executed_at_unix`, drop `exit_code`/`preview_only`, add `command`/`redacted`) deferred per the RFC-0011-c envelope migration; this mission ships consistent with Wave B v2. Future amendments bump to v3 once the cross-amendment migration lands.
 
 ## Cross-references
 

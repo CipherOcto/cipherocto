@@ -15,12 +15,12 @@ metadata:
     - RFC-0011-d
     - RFC-0900 substrate
     - mission 0011-d-M4-octorole-select-with-stoolap-tx
-status: Closed
+status: Completed
 ---
 
 # 0011-d-M5-octowallet-nonce-counter — Wallet cached projection + `next_nonce_counter` per RFC-0011-d §7.4
 
-**Status:** Closed (2026-09-01). LANDED commit `e07e85b0` (feat: M5 nonce counter + binding nonce field) + review-loop substrate fixes `f08d0ca9`.
+**Status:** Completed (2026-09-01). LANDED commit `e07e85b0` (feat: M5 nonce counter + binding nonce field) + review-loop substrate fixes `f08d0ca9`.
 
 > **Retro-supersession (2026-09-01):** Mission landed in same substrate cycle as M4. Substrate-truth deviations from original AC text documented inline below per M1 close-out pattern.
 

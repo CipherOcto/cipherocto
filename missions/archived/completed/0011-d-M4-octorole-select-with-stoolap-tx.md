@@ -16,12 +16,12 @@ metadata:
     - RFC-0900 substrate
     - mission 0011-d-M2-octorole-types-and-errors
     - mission 0011-d-M3-octorole-list-show
-status: Closed
+status: Completed
 ---
 
 # 0011-d-M4-octorole-select-with-stoolap-tx — Write-side substrate entrypoint per RFC-0011-d §7.4
 
-**Status:** Closed (2026-09-01). LANDED commit `3842e8c6` (feat: M4 select write-path + last-writer-wins) + review-loop substrate fixes `f08d0ca9`.
+**Status:** Completed (2026-09-01). LANDED commit `3842e8c6` (feat: M4 select write-path + last-writer-wins) + review-loop substrate fixes `f08d0ca9`.
 
 > **Retro-supersession (2026-09-01):** Mission landed in same substrate cycle as M1-M3 + M5. Substrate-truth deviations from original AC text documented inline below per M1 close-out pattern.
 

@@ -29,7 +29,7 @@ completed_at: 2026-09-01
 
 # 0011-f-mesh-rpc-subcommand — `octo mesh rpc` subcommand (remote RPC invocation)
 
-**Status:** Open — substrate prereqs landed (RFC-0855 + RFC-0855p-b + RFC-0855p-c + RFC-0871 + RFC-0957 Accepted). No formal release gate; implementation may proceed when cross-mission ordering permits per [[feedback_initiation_user_only]] + [[git-workflow]]. The mission depends on `0011-f-mesh-peer-subcommands` (peer table for `peer_did` resolution) and `0011-f-mesh-forward-subcommand` (substrate `NodeEnvelope` construction pattern).
+**Status:** Completed — substrate prereqs landed (RFC-0855 + RFC-0855p-b + RFC-0855p-c + RFC-0871 + RFC-0957 Accepted). No formal release gate; implementation may proceed when cross-mission ordering permits per [[feedback_initiation_user_only]] + [[git-workflow]]. The mission depends on `0011-f-mesh-peer-subcommands` (peer table for `peer_did` resolution) and `0011-f-mesh-forward-subcommand` (substrate `NodeEnvelope` construction pattern).
 **Substrate:** RFC-0011-f §Subcommand Taxonomy (rpc entry), RFC-0871 envelope shape, RFC-0855 + RFC-0855p-b + RFC-0855p-c peer lifecycle hooks
 **Parent:** RFC-0011-f
 **Depends on:**

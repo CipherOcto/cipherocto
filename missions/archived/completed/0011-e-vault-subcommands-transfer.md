@@ -30,8 +30,47 @@ completed_at: 2026-09-01
 
 **Status:** Completed (2026-09-01)
 **Substrate:** RFC-0011-e §Subcommand Taxonomy (`vault transfer`), RFC-0011-d §Role Provisioning (gate), RFC-0960 §Vault Substrate (transfer envelope), RFC-0957 §Macaroon Substrate (capability witness)
-**Parent:** RFC-0011-e (vault operations amendment of RFC-0011)
-**Depends on:**
+
+> **Drift amendment (RFC-0011-e v1.8 audit 2026-09-08, this file):**
+>
+> - **`ConfirmationRequired` exit code**: **2** (not 22 as AC L87,
+>   sub-step 5 L149, and TV-XFER3 L175 stated). The parent `error.rs`
+>   already maps it to exit 2 (clap parse code). Reused the existing
+>   variant. **3 sites corrected.**
+> - **Memo redaction in BOTH sinks** (RFC v1.2 change (a) §Redaction):
+>   `--memo <text>` is redacted in stderr/log AND in the JSON envelope
+>   by default; plaintext is exposed ONLY via `--include-memo` via the
+>   `memo_plaintext: Option<String>` field of `VaultTransferOutput`. The
+>   v1.0 sub-step 7 ("full memo in JSON payload") and the L94 Risk text
+>   ("operator's downstream tooling can use it") both reflect the
+>   original draft, superseded by RFC v1.2.
+> - **`TransferStatus` variants**: `DryRun | Pending | Confirmed | Failed`
+>   (NOT `Pending | Broadcast | Confirmed | Failed`). `Broadcast` is an
+>   internal substrate phase, not a `TransferStatus` variant (RFC-0011-e
+>   Appendix D). `DryRun` is set by the CLI rewrite at envelope-build
+>   time; the substrate never produces it — pinned by
+>   `tv_vo2b_substrate_never_produces_dry_run`.
+> - **`InvalidLimit` (exit 19)** added in RFC v1.8 Appendix C for
+>   defensive limit validation across the surface; not transfer-specific
+>   but listed in the same error table the AC references.
+> - **Nonce policy**: substrate allocates `last_nonce(vault_id) + 1` under
+>   the transfer-event write lock (strictly-incrementing per-vault
+>   counter, NOT `max_occurred_at_unix`-derived). The Risk L129 text and
+>   L180 Layer direction both encoded the v1.0 timestamp-derived defect.
+> - **New regression + edge-case test vectors** added in RFC v1.8
+>   §Test Vectors: TV-14/15 (nonce collision regression — timestamp
+>   defect guard), TV-16..TV-32 (Edge Cases & Rejection Paths including
+>   TV-21 pastejacking on `--memo`). Mission AC now references all of them.
+> - **§Lifecycle Requirements** (RFC v1.8 §6.7): added cross-reference for
+>   the role-gate state machine the stub-with-error pre-release relies on.
+> - **NEXIT ≥128** (RFC v1.8 Appendix C): signal-delivery exit codes
+>   documented for completeness.
+> - **`memo` plaintext limitation** (RFC v1.8 §Memo Leakage EXPLICIT
+>   LIMITATION): redaction applies to the envelope sink but a downstream
+>   logging plugin outside `OctoCliRedactor`'s scope could still see
+>   plaintext.
+>   **Parent:** RFC-0011-e (vault operations amendment of RFC-0011)
+>   **Depends on:**
 
 - Mission `0011-core-output-envelope-redaction` — `OutputEnvelope<T>` + `OctoCliError` + clap root
 - Mission `0011-identity-commands` — `active_did()` resolution via `octo-wallet` extensions
@@ -81,16 +120,16 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-e-vault-su
 
 ## Acceptance Criteria
 
-- [x] `octo vault transfer` implemented + unit-tested (TV-XFER1, TV-XFER2, TV-XFER3, TV-XFER4 pass per RFC-0011-e §Test Vectors)
+- [x] `octo vault transfer` implemented + unit-tested (TV-XFER1, TV-XFER2, TV-XFER3, TV-XFER4 pass per RFC-0011-e §Test Vectors; TV-14 + TV-15 nonce-collision regression vectors + TV-21 pastejacking-on-`--memo` + TV-16..TV-32 Edge Cases & Rejection Paths group also covered)
 - [x] `VaultTransferOutput` payload type implemented + unit-tested (per RFC-0011-e §Output Envelope)
 - [x] Pre-flight checks wired: role provisioned, HSM reachable, vault owned, balance sufficient (per RFC-0011-e §Substrate Additions Pre-flight)
-- [x] `VaultNotOwned` (exit 23), `InsufficientBalance` (exit 24), `RoleNotProvisioned` (exit 25), `ChainIdMismatch` (exit 26) error variants added (per RFC-0011-e §Error Handling)
+- [x] `VaultNotOwned` (exit 23), `InsufficientBalance` (exit 24), `RoleNotProvisioned` (exit 25), `ChainIdMismatch` (exit 26), `InvalidLimit` (exit 19) error variants added (per RFC-0011-e §Error Handling + Appendix C; `ConfirmationRequired` reused from parent `error.rs` at exit 2; `InvalidChainId` shares exit 26 with `ChainIdMismatch`)
 - [x] `--confirm-acknowledge` two-step gate enforced (per RFC-0011 §Confirmation Flag Matrix)
 - [x] `--dest-chain-id` required when `--to` is cross-chain (per RFC-0011-e §Security: Cross-Chain Confusion)
 - [x] `--dry-run` builds envelope WITHOUT broadcasting (per RFC-0011-e §Subcommand Taxonomy `vault transfer` flags)
 - [x] HSM signing path in-process via `octo-wallet`; CLI never holds private-key material (per [[cipherocto-design-principles]] HSM mandatory rule + RFC-0011-e §Security: HSM Downgrade)
 - [x] No `--soft-sign` flag accepted (per RFC-0011-e §Security: HSM Downgrade)
-- [x] `memo` redaction in BOTH sinks (stderr/log AND JSON payload); plaintext ONLY via `--include-memo` (per RFC-0011-e v1.2 change (a) §Redaction)
+- [x] `memo` redaction in BOTH sinks (stderr/log AND JSON payload); plaintext ONLY via `--include-memo` → `VaultTransferOutput.memo_plaintext` (per RFC-0011-e v1.2 change (a) §Redaction); TV-21 pastejacking-on-`--memo` guards operator clipboard compromise
 - [x] Transfer amounts NOT redacted (chain-public info per RFC-0011-e §Redaction)
 - [x] Stub-with-error mode: until release gate clears, `vault transfer` returns `OctoCliError::RoleNotProvisioned` (exit 25) regardless of HSM availability (per RFC-0011-e §Subcommand Taxonomy + §Implementation Phases)
 - [x] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
@@ -100,15 +139,15 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-e-vault-su
 
 ### Type Coverage
 
-| RFC-0011-e type       | Sub-step                | Notes                                                                                                                                                                   |
-| --------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `TransferHandle`      | Sub-step 1 (output)     | Layer B; substrate `[ADD]` struct per RFC-0960 (`handle_id`, `vault_id`, `dest_vault_id`, `amount_dqa_micros`, `asset_id`, `nonce`, `status`)                           |
-| `TransferStatus`      | Sub-step 1 (output)     | Layer B; enum per RFC-0960 substrate (`Pending` \| `Broadcast` \| `Confirmed` \| `Failed`)                                                                              |
-| `VaultTransferOutput` | Sub-step 2 (CLI output) | Layer C/D; CLI-output wrapper (`handle: TransferHandle`, `broadcast_at_unix: Option<u64>`, `status: TransferStatus`)                                                    |
-| `VaultNotOwned(u32)`  | Sub-step 3 (errors)     | Layer C/D; new `OctoCliError` variant; exit 23 per RFC-0011-e §Error Handling (also raised at pre-flight if `--from` not owned)                                         |
-| `InsufficientBalance` | Sub-step 3 (errors)     | Layer C/D; new `OctoCliError` variant; exit 24 per RFC-0011-e §Error Handling (`{ have: String, need: String }` in DQA canonical form)                                  |
-| `RoleNotProvisioned`  | Sub-step 3 (errors)     | Layer C/D; new `OctoCliError` variant; exit 25 per RFC-0011-e §Error Handling (also raised as the stub-with-error until RFC-0011-d reaches Accepted)                    |
-| `ChainIdMismatch`     | Sub-step 3 (errors)     | Layer C/D; new `OctoCliError` variant; exit 26 per RFC-0011-e §Error Handling (`{ from: ChainId, to: ChainId }` when `--dest-chain-id` omitted on cross-chain transfer) |
+| RFC-0011-e type       | Sub-step                | Notes                                                                                                                                                                                                                                          |
+| --------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TransferHandle`      | Sub-step 1 (output)     | Layer B; substrate `[ADD]` struct per RFC-0960 (`handle_id`, `vault_id`, `dest_vault_id`, `amount_dqa_micros`, `asset_id`, `nonce`, `status`)                                                                                                  |
+| `TransferStatus`      | Sub-step 1 (output)     | Layer B; enum per RFC-0960 substrate (`DryRun` \| `Pending` \| `Confirmed` \| `Failed`); `Broadcast` is internal substrate phase, not a variant (RFC-0011-e Appendix D); `DryRun` set by CLI at envelope-build time only (`#[non_exhaustive]`) |
+| `VaultTransferOutput` | Sub-step 2 (CLI output) | Layer C/D; CLI-output wrapper (`handle: TransferHandle`, `broadcast_at_unix: Option<u64>`, `status: TransferStatus`)                                                                                                                           |
+| `VaultNotOwned(u32)`  | Sub-step 3 (errors)     | Layer C/D; new `OctoCliError` variant; exit 23 per RFC-0011-e §Error Handling (also raised at pre-flight if `--from` not owned)                                                                                                                |
+| `InsufficientBalance` | Sub-step 3 (errors)     | Layer C/D; new `OctoCliError` variant; exit 24 per RFC-0011-e §Error Handling (`{ have: String, need: String }` in DQA canonical form)                                                                                                         |
+| `RoleNotProvisioned`  | Sub-step 3 (errors)     | Layer C/D; new `OctoCliError` variant; exit 25 per RFC-0011-e §Error Handling (also raised as the stub-with-error until RFC-0011-d reaches Accepted)                                                                                           |
+| `ChainIdMismatch`     | Sub-step 3 (errors)     | Layer C/D; new `OctoCliError` variant; exit 26 per RFC-0011-e §Error Handling (`{ from: ChainId, to: ChainId }` when `--dest-chain-id` omitted on cross-chain transfer)                                                                        |
 
 ## Implementation Guide
 
@@ -126,7 +165,7 @@ This is the **first CLI subcommand with direct economic surface** in the RFC-001
 
 ## Risk
 
-- **HIGH** — transfer replay (re-submitting a broadcast envelope). Mitigation: substrate-derived nonce per `(vault_id, max_occurred_at_unix)`; CLI does not generate nonces; `--confirm-acknowledge` two-step gate prevents operator mistake.
+- **HIGH** — transfer replay (re-submitting a broadcast envelope). Mitigation: substrate-allocated strictly-incrementing per-vault nonce counter (`last_nonce + 1` under the transfer-event write lock; NOT `max_occurred_at_unix`-derived); CLI does not generate nonces; `--confirm-acknowledge` two-step gate prevents operator mistake. Regression vectors TV-14 + TV-15 guard the timestamp-derived-nonce defect.
 - **HIGH** — cross-chain confusion (operator sends OCTO on chain A to a vault on chain B without realizing). Mitigation: `ChainIdMismatch` (exit 26) when `--dest-chain-id` omitted; CLI surfaces chain ID in `--dry-run` output before sign.
 - **MEDIUM** — HSM downgrade (operator attempts `--soft-sign` to skip HSM). CLI does not accept any flag that bypasses HSM; substrate refuses to fall back; `HsmUnavailable` (exit 100) if HSM is down.
 - **MEDIUM** — operator chains asset by mistake (`--asset OCTO` on USD-denominated vault). Substrate validates `--asset` against `vault_registry.asset_for(vault_id)`; CLI surfaces mismatch as `AssetMismatch` (exit 23, same as `VaultNotOwned`).
@@ -146,11 +185,11 @@ Land the mutating transfer subcommand per RFC-0011-e §Phase 1 (`octo vault tran
 
 4. **Three new `OctoCliError` variants + exit codes** — `crates/octo-cli/src/error.rs` (Layer C/D; per RFC-0011-e §Error Handling). `InsufficientBalance { have: String, need: String }` (exit 24); `RoleNotProvisioned` (exit 25); `ChainIdMismatch { from: ChainId, to: ChainId }` (exit 26). All sit in the reserved 17–63 range. `VaultNotOwned` landed in companion mission `0011-e-vault-subcommands-readonly`.
 
-5. **Confirm gate + cross-chain validation** — `crates/octo-cli/src/commands/vault.rs` (Layer C/D). `--confirm-acknowledge` two-step gate per RFC-0011 §Confirmation Flag Matrix (rejection raises existing `ConfirmationRequired` exit 22). `--dest-chain-id` required when `--from` chain_id ≠ `--to` chain_id (per RFC-0011-e §Security: Cross-Chain Confusion); omission raises `ChainIdMismatch` exit 26.
+5. **Confirm gate + cross-chain validation** — `crates/octo-cli/src/commands/vault.rs` (Layer C/D). `--confirm-acknowledge` two-step gate per RFC-0011 §Confirmation Flag Matrix (rejection raises existing `ConfirmationRequired` exit **2** — clap parse code; parent `error.rs` already maps it). `--dest-chain-id` required when `--from` chain_id ≠ `--to` chain_id (per RFC-0011-e §Security: Cross-Chain Confusion); omission raises `ChainIdMismatch` exit 26. `ConfirmationRequired` lives in the RFC-0011 §Exit Code Table at exit 2 (not 22).
 
 6. **HSM signing delegation** — `crates/octo-cli/src/commands/vault.rs` (Layer C/D). Substrate call: `octo_vault::initiate_transfer(vault_id, dest, amount_dqa_micros, asset)` (per RFC-0011-e §Substrate Additions). Substrate coordinates HSM signing via `octo-wallet::sign_envelope`; CLI never holds private-key material. The CLI does NOT accept any flag that bypasses HSM (per RFC-0011-e §Security: HSM Downgrade + [[cipherocto-design-principles]] HSM mandatory rule).
 
-7. **Memo redaction** — `crates/octo-cli/src/redact.rs` (Layer C/D; per RFC-0011-e §Redaction). `--memo <text>` is redacted in stderr/log via `OctoCliRedactor`; full memo included in JSON payload so operator's downstream tooling can use it. Help text advises operator that memo content is observable by destination vault owner.
+7. **Memo redaction (BOTH sinks)** — `crates/octo-cli/src/redact.rs` (Layer C/D; per RFC-0011-e v1.2 change (a) §Redaction). `--memo <text>` is redacted in stderr/log AND in the JSON envelope by default via `OctoCliRedactor`; plaintext is exposed ONLY under `--include-memo` via the `memo_plaintext: Option<String>` field of `VaultTransferOutput`. Help text advises operator that memo content is observable by destination vault owner when `--include-memo` is set. **EXPLICIT LIMITATION (RFC v1.8 §Memo Leakage):** redaction applies within the `OctoCliRedactor` envelope path; a downstream logging plugin outside that scope (e.g., a custom `tracing-subscriber` Layer added by an extension crate) could still observe plaintext. Memo must not carry credentials, payment instructions, or any value-bearing information — chain-public memos are observable by validators regardless.
 
 8. **Stub-with-error pre-release** — `crates/octo-cli/src/commands/vault.rs` (Layer C/D; per RFC-0011-e §Implementation Phases). Until `release_gate` clears (RFC-0011-d Phase 1 reaches Accepted), `vault transfer` returns `OctoCliError::RoleNotProvisioned` (exit 25) regardless of HSM availability. CLI surfaces clear message: "transfer requires a provisioned transfer capability; see RFC-0011-d". Same pattern RFC-0011 uses for stub commands.
 
@@ -168,16 +207,16 @@ No new external crates required; `TransferHandle`, `TransferStatus`, and `sign_e
 
 4 TV (TV-XFER1..TV-XFER4):
 
-| #     | Subcommand       | Input                                                                               | Expected Output                                         | Notes                                       |
-| ----- | ---------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------- |
-| XFER1 | `vault transfer` | `--from <a> --to <b> --amount 1000000000 --asset OCTO --confirm-acknowledge`        | `TransferHandle::Pending`, `status: Pending`            | Happy path; HSM signs; substrate broadcasts |
-| XFER2 | `vault transfer` | `--from <a> --to <b> --amount 99999999999999 --asset OCTO --confirm-acknowledge`    | `InsufficientBalance` (exit 24)                         | Pre-flight balance check fails              |
-| XFER3 | `vault transfer` | `--from <a> --to <b> --amount 1000000000 --asset OCTO` (no `--confirm-acknowledge`) | `ConfirmationRequired` (exit 22, reserved per RFC-0011) | Two-step gate enforced                      |
-| XFER4 | `vault transfer` | `--from <x> --to <b>` where `<x>` is not owned by active DID                        | `VaultNotOwned` (exit 23)                               | Pre-flight ownership check fails            |
+| #     | Subcommand       | Input                                                                               | Expected Output                                                                | Notes                                       |
+| ----- | ---------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------- |
+| XFER1 | `vault transfer` | `--from <a> --to <b> --amount 1000000000 --asset OCTO --confirm-acknowledge`        | `TransferHandle::Pending`, `status: Pending`                                   | Happy path; HSM signs; substrate broadcasts |
+| XFER2 | `vault transfer` | `--from <a> --to <b> --amount 99999999999999 --asset OCTO --confirm-acknowledge`    | `InsufficientBalance` (exit 24)                                                | Pre-flight balance check fails              |
+| XFER3 | `vault transfer` | `--from <a> --to <b> --amount 1000000000 --asset OCTO` (no `--confirm-acknowledge`) | `ConfirmationRequired` (exit 2, clap parse code per RFC-0011 §Exit Code Table) | Two-step gate enforced                      |
+| XFER4 | `vault transfer` | `--from <x> --to <b>` where `<x>` is not owned by active DID                        | `VaultNotOwned` (exit 23)                                                      | Pre-flight ownership check fails            |
 
 ## Layer direction (RFC-0011-e §Roles and Authorities + per [[cipherocto-design-principles]])
 
-- `octo-cli` (Layer C/D) — `vault transfer` clap dispatch + pre-flight orchestration + `VaultTransferOutput` payload + 3 new `OctoCliError` variants (`InsufficientBalance`, `RoleNotProvisioned`, `ChainIdMismatch`) + memo redaction + stub-with-error gate.
+- `octo-cli` (Layer C/D) — `vault transfer` clap dispatch + pre-flight orchestration + `VaultTransferOutput` payload + 3 new `OctoCliError` variants (`InsufficientBalance`, `RoleNotProvisioned`, `ChainIdMismatch`) + memo redaction in BOTH sinks (per RFC v1.2 change (a)) + stub-with-error gate. **Nonce allocation is substrate-authoritative** (`last_nonce + 1` per-vault counter; CLI does not generate nonces).
 - `octo-vault` (Layer B) — substrate `[ADD]` `initiate_transfer` + `role_can_transfer` check + `VaultAssetResolver::resolve_asset_for` validation (landed via companion mission `0011-e-vault-substrate-additions`).
 - `octo-wallet` (Layer B) — HSM signing via `sign_envelope`; CLI never holds private-key material.
 - NO new Layer A types introduced.
@@ -198,12 +237,12 @@ cargo test -p octo-cli --lib --tests  # green
 
 ## Cross-references
 
-- RFC-0011-e §Subcommand Taxonomy (`vault transfer` entry), §7.4 Substrate `[ADD]` `initiate_transfer`, §7.7 Pre-flight, §Security (HSM Downgrade, Cross-Chain Confusion), §Implementation Phases
+- RFC-0011-e §Subcommand Taxonomy (`vault transfer` entry), §7.4 Substrate `[ADD]` `initiate_transfer`, §7.7 Pre-flight, §Lifecycle Requirements (role-gate state machine), §Security (HSM Downgrade, Cross-Chain Confusion, Memo Leakage, Transfer Replay), §Implementation Phases, §Test Vectors (TV-9..TV-12d happy path + TV-14 + TV-15 regression + TV-16..TV-32 edge cases), Appendix C (Error → Exit Code Table including NEXIT ≥128 signal-delivery codes)
 - RFC-0011 §Confirmation Flag Matrix (`--confirm-acknowledge` two-step gate), §Output Envelope, §Redaction Layer
 - RFC-0011-d §Role Provisioning — **release gate dependency** (see §Why 1 release cycle gate below)
 - RFC-0957 §Macaroon Substrate (capability witness format for role provisioning)
 - RFC-0960 §Specification, Capabilities, Reservations (grand-design; transfer envelope substrate)
-- RFC-0960-v35 §2 Path Taxonomy-Path Taxonomy (canonical vault identifier shape)
+- RFC-0960-v35 §2 Path Taxonomy (canonical vault identifier shape)
 - RFC-0960-v36 §Burn-Event DQA Migration (asset quantity wire form)
 - RFC-0960-v37 §Balance Projection Substrate (SUM projection, `VaultAssetResolver` trait)
 - RFC-0010 §2 ledger_chain_registry Table DID Codec (chain ID canonical form)

@@ -28,7 +28,7 @@ completed_at: 2026-09-01
 
 # 0011-f-mesh-forward-subcommand — `octo mesh forward` subcommand (ops envelope replay)
 
-**Status:** Open — substrate prereqs landed (RFC-0855 + RFC-0855p-b + RFC-0855p-c + RFC-0871 + RFC-0957 Accepted). No formal release gate; implementation may proceed when cross-mission ordering permits per [[feedback_initiation_user_only]] + [[git-workflow]]. The mission depends on `0011-f-mesh-peer-subcommands` for `peer_did` resolution via the local peer table.
+**Status:** Completed — substrate prereqs landed (RFC-0855 + RFC-0855p-b + RFC-0855p-c + RFC-0871 + RFC-0957 Accepted). No formal release gate; implementation may proceed when cross-mission ordering permits per [[feedback_initiation_user_only]] + [[git-workflow]]. The mission depends on `0011-f-mesh-peer-subcommands` for `peer_did` resolution via the local peer table.
 **Substrate:** RFC-0011-f §Subcommand Taxonomy (forward entry), RFC-0871 envelope shape, RFC-0855 + RFC-0855p-b + RFC-0855p-c peer lifecycle hooks
 **Parent:** RFC-0011-f
 **Depends on:**

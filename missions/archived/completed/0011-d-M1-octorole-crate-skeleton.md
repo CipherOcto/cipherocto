@@ -15,12 +15,12 @@ metadata:
     - RFC-0011-d
     - RFC-0900
     - RFC-0855
-status: Closed
+status: Completed
 ---
 
 # 0011-d-M1-octorole-crate-skeleton — Scaffold `crates/octo-role/` crate per RFC-0011-d §7.4
 
-**Status:** Closed (2026-09-01). LANDED commit `003a7b0f` (feat: M1 crate scaffold per RFC-0011-d §7.4) + review-loop substrate fixes `f08d0ca9`.
+**Status:** Completed (2026-09-01). LANDED commit `003a7b0f` (feat: M1 crate scaffold per RFC-0011-d §7.4) + review-loop substrate fixes `f08d0ca9`.
 
 > **Retro-supersession (2026-09-01):** Mission landed in the same substrate cycle as M2-M5 (per RFC-0011-d Phase 1 atomic chain); M6-M8 landed in subsequent cycles. `crates/octo-role/Cargo.toml` registered via workspace `crates/*` glob (per `Cargo.toml:5` `members = ["crates/*"]`) so the mission AC's "explicit `[members]` entry" is satisfied implicitly. Substrate-truth deviations from original AC text documented inline below per the M2 close-out pattern.
 

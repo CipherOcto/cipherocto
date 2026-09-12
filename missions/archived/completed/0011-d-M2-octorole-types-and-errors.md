@@ -14,12 +14,12 @@ metadata:
   depends_on:
     - RFC-0011-d
     - mission 0011-d-M1-octorole-crate-skeleton
-status: Closed
+status: Completed
 ---
 
 # 0011-d-M2-octorole-types-and-errors — Substrate types + errors per RFC-0011-d §7.4
 
-**Status:** Closed (2026-09-01). LANDED commit `043f8543` (feat: M2 substrate types + RoleError + RoleAction) + review-loop substrate fixes `f08d0ca9`.
+**Status:** Completed (2026-09-01). LANDED commit `043f8543` (feat: M2 substrate types + RoleError + RoleAction) + review-loop substrate fixes `f08d0ca9`.
 
 > **Retro-supersession (2026-09-01):** Mission landed in same substrate cycle as M1 (`003a7b0f`) per RFC-0011-d Phase 1 atomic chain. Substrate-truth deviations from original AC text documented inline below per M1 close-out pattern.
 

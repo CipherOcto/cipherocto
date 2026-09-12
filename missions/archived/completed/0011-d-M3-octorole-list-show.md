@@ -14,12 +14,12 @@ metadata:
   depends_on:
     - RFC-0011-d
     - mission 0011-d-M2-octorole-types-and-errors
-status: Closed
+status: Completed
 ---
 
 # 0011-d-M3-octorole-list-show — Read-side substrate entrypoints per RFC-0011-d §Mission Decomposition M3
 
-**Status:** Closed (2026-09-01). LANDED commit `91c42ab2` (feat: M3 list + show read paths) + review-loop substrate fixes `f08d0ca9`.
+**Status:** Completed (2026-09-01). LANDED commit `91c42ab2` (feat: M3 list + show read paths) + review-loop substrate fixes `f08d0ca9`.
 
 > **Retro-supersession (2026-09-01):** Mission landed in same substrate cycle as M1+M4. **SIGNIFICANT substrate-truth deviation**: mission text specified "Reads via Stoolap" (`stoolap = { path = "../stoolap" }` workspace dep) but actual landed substrate reads from an in-memory `registry::all_roles()` function — Stoolap dep NOT in `crates/octo-role/Cargo.toml` for this read path. Rationale: Phase 1 surfaces a static canonical 7-role registry for CLI UX; substrate persistence layer stays in slash-ledger (M4). This deviation documented inline below per M1 close-out pattern.
 

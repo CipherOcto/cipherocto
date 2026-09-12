@@ -6,16 +6,20 @@ metadata:
   type: cli-substrate-extension
   originSessionId: RFC-0011-g author session
   created: 2026-08-31
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0011-g
+    - RFC-0013
     - mission 0011-core-output-envelope-redaction
     - mission 0011-identity-commands
     - mission 0011-capability-commands
     - mission 0011-policy-commands
+    - mission 0013-governance-substrate-extraction
 status: Claimed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-01
+amended_at: 2026-09-10
+amendment: "RFC-0011-g v1.4 layer-model note: canonical `ProposalState` + `GovernancePolicy` types consumed by `octo governance snapshot` now live in `octo-governance-core` (Layer A frozen per RFC-0013). CLI consumes via Layer B façade `octo-governance`. `SnapshotOutput.remaining_seconds` is a substrate-facing field with potential future TTL semantics evolution (per RFC-0011-g v1.2 audit-table annotation)."
 ---
 
 # 0011-g-governance-snapshot — `octo governance snapshot`
@@ -105,6 +109,18 @@ patterns.
 ## Pull Request
 
 # (PR opened after mission claim transitions to Claimed per BLUEPRINT.md §Mission Lifecycle)
+
+## Layer-model amendment (RFC-0011-g v1.4)
+
+Per RFC-0011-g v1.4 VH row (2026-09-10) + RFC-0013 §Substrate layer-model note, the canonical substrate types referenced by this mission are now Layer A frozen:
+
+| Canonical type | Layer A frozen home | Layer B façade |
+|----------------|---------------------|----------------|
+| `ProposalState` + `GovernancePolicy` | `octo-governance-core` (RFC-0013) | `octo-governance` |
+| `GovernanceModel` (5 variants incl. Dao) + `EmergencyAuthority` | `octo-governance-core` (RFC-0013) | `octo-governance` |
+| Pure tally helpers: `voting_weight` + `tally_quorum` | `octo-governance-core` (RFC-0013) | `octo-governance` |
+
+The `octo governance snapshot` subcommand consumes canonical types via the Layer B façade (`pub use octo_governance::*`). `SnapshotOutput.remaining_seconds` is a substrate-facing field with potential future TTL semantics evolution (per RFC-0011-g v1.2 audit-table annotation); substrate-canonical type owners (`octo-governance-core`) preserve the field shape across amendments.
 
 ## Risk
 

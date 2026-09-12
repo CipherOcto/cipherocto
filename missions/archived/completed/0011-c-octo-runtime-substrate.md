@@ -21,7 +21,7 @@ completed_at: 2026-09-01
 
 # 0011-c-octo-runtime-substrate — `octo-runtime` substrate crate
 
-**Status:** Open
+**Status:** Completed
 **Substrate:** RFC-0011-c §9.1 Architecture + §9.10 Substrate `[ADD]` Signatures
 **Parent:** RFC-0011-c (agent lifecycle amendment of RFC-0011)
 **Depends on:**

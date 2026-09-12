@@ -15,12 +15,12 @@ metadata:
     - RFC-0011-d
     - mission 0011-d-M4-octorole-select-with-stoolap-tx
     - mission 0011-d-M5-octowallet-nonce-counter
-status: Closed
+status: Completed
 ---
 
 # 0011-d-M6-octocli-role-commands — `octo role {list,show,select}` clap subcommands per RFC-0011-d §7.4
 
-**Status:** Closed (2026-09-01). LANDED commit `63ffdf94` (feat: M6 + M7 role subcommand surface + 4 OctoCliError variants) — single combined landing commit per substrate cycle.
+**Status:** Completed (2026-09-01). LANDED commit `63ffdf94` (feat: M6 + M7 role subcommand surface + 4 OctoCliError variants) — single combined landing commit per substrate cycle.
 
 > **Retro-supersession (2026-09-01):** M6 + M7 landed together in single commit `63ffdf94` per substrate cycle; M8 landed in subsequent cycle `90ce73bd`. Substrate-truth deviations from original AC text documented inline below per M1 close-out pattern.
 

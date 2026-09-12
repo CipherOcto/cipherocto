@@ -6,19 +6,24 @@ metadata:
   type: cli-substrate-extension
   originSessionId: RFC-0011-g author session
   created: 2026-08-31
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0011-g
+    - RFC-0013
     - mission 0011-g-governance-snapshot
     - RFC-0855p-d
     - RFC-0855p-e
     - mission 0011-d-role-subcommands-phase1
+    - mission 0013-governance-substrate-extraction
+    - mission 0013-governance-network-migration
   release_gate:
     require: "RFC-0855p-d AND RFC-0855p-e AND RFC-0011-d Phase 1 reach Accepted"
     released_version: TBD
 status: Claimed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-01
+amended_at: 2026-09-10
+amendment: "RFC-0011-g v1.4 layer-model note: canonical `DecisionType` (7 variants incl. Admission / RoleAssignment / TopologyChange / MissionTermination / PolicyModification / EmergencyRekey / ParticipantExpulsion) + `voting_weight` / `tally_quorum` pure helpers consumed by `octo governance {attest,vote}` now live in `octo-governance-core` (Layer A frozen per RFC-0013). CLI consumes via Layer B façade `octo-governance`. `attest` + `vote` IO functions stay in domain crate `octo-network/mon/governance.rs` per RFC-0013 §Substrate `[ADD]`. `AttestationReceipt.overrode_staleness_at_unix` field preserved per RFC-0011-g v1.2 TV-21."
 ---
 
 # 0011-g-governance-attest-vote — `octo governance attest` + `octo governance vote`
@@ -134,6 +139,20 @@ patterns.
 ## Pull Request
 
 # (PR opened after mission claim transitions to Claimed per BLUEPRINT.md §Mission Lifecycle)
+
+## Layer-model amendment (RFC-0011-g v1.4)
+
+Per RFC-0011-g v1.4 VH row (2026-09-10) + RFC-0013 §Substrate layer-model note, the canonical substrate types referenced by this mission are now Layer A frozen:
+
+| Canonical type | Layer A frozen home | Layer B façade |
+|----------------|---------------------|----------------|
+| `DecisionType` (7 variants incl. Admission / RoleAssignment / TopologyChange / MissionTermination / PolicyModification / EmergencyRekey / ParticipantExpulsion) | `octo-governance-core` (RFC-0013) | `octo-governance` |
+| `ProposalState` (6 variants) | `octo-governance-core` (RFC-0013) | `octo-governance` |
+| `GovernancePolicy` + `GovernanceProposal` + `EmergencyAuthority` | `octo-governance-core` (RFC-0013) | `octo-governance` |
+| Pure tally helpers: `voting_weight` + `tally_quorum` (BTreeMap-ordered) | `octo-governance-core` (RFC-0013) | `octo-governance` |
+| IO functions: `attest` + `vote` (signature `attest(subject_did, kind, snapshot_id)`, `vote(proposal_id, voter_did, choice, weight)`) | `octo-network/mon/governance.rs` (DOMAIN) | n/a (domain-owned) |
+
+The `octo governance {attest,vote}` subcommands consume canonical types via the Layer B façade (`pub use octo_governance::*`). IO functions stay in the domain crate per RFC-0013 §Substrate `[ADD]`. `AttestationReceipt.overrode_staleness_at_unix` field preserved per RFC-0011-g v1.2 TV-21 stale-override parity.
 
 ## Risk
 

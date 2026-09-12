@@ -28,7 +28,7 @@ review_dry_closed: 2026-09-01
 
 # 0011-f-mesh-peer-subcommand — `octo mesh peer` subcommands (list/add/remove)
 
-**Status:** Open — release-gated on RFC-0011-d Phase 1 reaching Accepted (the role-provisioning substrate that gates `peer add` / `remove` fleet-wide per RFC-0011-f §Roles and Authorities "Role-provisioning rationale"). Implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]] once the gate clears.
+**Status:** Completed — release-gated on RFC-0011-d Phase 1 reaching Accepted (the role-provisioning substrate that gates `peer add` / `remove` fleet-wide per RFC-0011-f §Roles and Authorities "Role-provisioning rationale"). Implementation kickoff user-gated per [[feedback_initiation_user_only]] + [[git-workflow]] once the gate clears.
 **Substrate:** RFC-0011-f §Subcommand Taxonomy (peer list/add/remove), RFC-0855 peer model, RFC-0010 canonical DID codec
 **Parent:** RFC-0011-f
 **Depends on:**

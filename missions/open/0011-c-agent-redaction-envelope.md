@@ -1,6 +1,22 @@
+---
+name: 0011-c-agent-redaction-envelope
+description: Envelope-payload redaction for `octo agent` (Phase 2 follow-on to 0011-c-agent-create-subcommand)
+metadata:
+  node_type: substrate-cli
+  type: cli-substrate-extension
+  originSessionId: RFC-0011-c author session
+  created: 2026-08-31
+  v: "1.0"
+  depends_on:
+    - RFC-0011
+    - RFC-0011-c
+    - mission 0011-c-agent-create-subcommand
+status: Open
+---
+
 # 0011-c-agent-redaction-envelope — Envelope-payload redaction for `octo agent`
 
-**Status:** unassigned (Phase 2 follow-on to `0011-c-agent-create-subcommand`)
+**Status:** Open (Phase 2 follow-on to `0011-c-agent-create-subcommand`)
 **Substrate:** RFC-0011-c §Security Considerations + RFC-0011 §Redaction Layer
 **Parent:** mission `missions/claimed/0011-c-agent-create-subcommand.md` (AC #49 Phase 2)
 

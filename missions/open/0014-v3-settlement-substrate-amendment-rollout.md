@@ -1,0 +1,100 @@
+---
+name: 0014-v3-settlement-substrate-amendment-rollout
+description: Workspace-wide rollout acceptance for RFC-0014-v3 — verify every consumer of SettlementError / SettlementHashOpaque inherits Display redaction + SinkSpecific payload monitoring + DOMAIN adapter conformance
+metadata:
+  node_type: substrate-faithful-consumer
+  type: post-acceptance-rollout
+  originSessionId: RFC-0014-v3 promotion session (2026-09-12)
+  created: 2026-09-12
+  v: "1.0"
+  pair: 2-Cycle Atomic Promotion
+  depends_on:
+    - RFC-0014-v3
+    - RFC-0012-v3
+status: Open
+---
+
+# 0014-v3-settlement-substrate-amendment-rollout — workspace-wide adoption for RFC-0014-v3
+
+**Status:** Open — post-acceptance rollout acceptance suite
+**Substrate:** RFC-0014-v3 §S5.1 (scrubber) + §S5.2 (`SettlementHashOpaque`) + §S5.3 (SinkSpecific payload cap posture) + §S5.1.1 (DOMAIN adapter contract)
+**Parent:** RFC-0014 + RFC-0014-v2 (substrate extensions)
+**Companion:** RFC-0012-v3 (paired-acceptance — see §2-Cycle Atomic Promotion Tag)
+
+## 2-Cycle Atomic Promotion gate
+
+This mission is one of TWO paired-acceptance missions for the v3 amendment round; see §2-Cycle Atomic Promotion Tag at `rfcs/accepted/process/0014-v3-settlement-substrate-amendment.md` §Pairing invariant + `rfcs/accepted/process/0012-v3-audit-substrate-amendment.md` §Pairing invariant. **Both RFCs must remain Accepted for this mission to remain claimable.** If either drops back to Draft, this mission MUST defer (user-initiated only per BLUEPRINT.md §Mission Lifecycle Deferral procedure).
+
+**Sister mission:** `0012-v3-audit-substrate-amendment-rollout`.
+
+## Scope
+
+Per RFC-0014-v3 §Implementation Phases Phases 1 + 2 + 3 are **✅ COMPLETE** at substrate-code level (commits `f33410ce` + `934242ce` + RFC promotion `2cd12a9e`). 132 tests pass across the 5 affected crates (13 octo-settlement + 6 octo-settlement-core + 89 quota-router-sm-engine). This mission covers **Phase 4 (Acceptance Rollout)** — workspace-wide verification that the substrate amendment posture (Display redaction + hash accessor surface + substrate-faithful SinkSpecific cap) survives every consumer path.
+
+### Deliverables
+
+1. **Workspace-wide Display redaction regression suite** — `crates/octo-settlement/tests/workspace_redaction_regression.rs` exercises every public Display-emitting path reachable from `octo-settlement` types (`SettlementError` 8-variant shadow at quota-router-sm-engine + canonical substrate `SettlementError`). Asserts no Display output contains raw 32-byte hashes or hex bytes that the substrate's redaction policy would have redacted. Coverage: octo-settlement (13 tests), octo-settlement-core (6 tests), quota-router-sm-engine shadow enum (8 Display variants × Display-derived tests).
+2. **`SettlementHashOpaque` accessor round-trip suite** — verify every consumer site that constructs `SettlementHashOpaque::new([u8; 32])` is paired with an `as_bytes()` consumer (or `Clone`/`PartialEq`). Audit grep `quota-router-sm-engine/src/store.rs` + `settlement_event.rs`; assert no raw `.0` field access bypasses accessor.
+3. **SinkSpecific payload monitoring infra** — substrate-faithful = no cap at substrate (per §S5.3 + AC-11); cap lives at scrubber. Add workspace-level log-capture test that exercises `SettlementError::SinkSpecific("x".repeat(10_000))` through DOMAIN adapter wrapper and asserts scrubber-side cap fires (sentinel `<redacted-too-long>` present). Production-side: NO runtime enforcement added (would violate substrate-faithful); only verification of cap-at-scrubber posture.
+4. **DOMAIN adapter contract conformance (settlement-side)** — every `crates/quota-router-sm-engine/**/*.rs::format!("{e}")` and `.to_string()` chain in workspace flagged + scrubbed via `scrub_adapter_error_with(s, ADAPTER_TYPES)`. Verify all 24 sites from R48-s defect 1b closure remain scrubbed; add 4 bare `scrub_adapter_error(` callsites to a registry assertion test (no-registry entry points for adapter types outside DOMAIN registry).
+5. **Parent RFC `RFC-0014` cross-reference update** — append §Cross-References note linking to RFC-0014-v2 + RFC-0014-v3 + RFC-0012-v3 (paired). Adds §Substrate-Faithful Amendment Trail table to parent RFC.
+6. **§FW2 clippy lint prelude (settlement-side)** — extend the workspace clippy rule from sister mission to also flag raw `.to_string()` chains on `SettlementError` in DOMAIN-boundary modules (gated off-by-default per RFC-0012-v3 §FW2).
+
+### Out of scope (per RFC §Future Work)
+
+- **§FW1 cross-RFC scrubber shared utility** (extract to `octo-foundation::scrub`) — DEFERRED to v2.1+; out of scope.
+- **Substrate-level payload cap on `SinkSpecific(String)`** — DEFERRED — lands at acceptance per §S5.3 + AC-11. Mission captures acceptance behavior; runtime cap enforcement is a separate mission (when/if 4 KiB scrubber cap proves insufficient).
+- Any new substrate amendments (v3.x+) — out of scope.
+
+### Acceptance criteria
+
+- [ ] AC-1: `cargo build -p octo-settlement-core -p octo-settlement -p quota-router-sm-engine` succeeds with zero warnings
+- [ ] AC-2: `cargo build --workspace` succeeds (no regression)
+- [ ] AC-3: `cargo test -p octo-settlement --lib` passes (existing 13 tests stay green)
+- [ ] AC-4: `cargo test -p octo-settlement-core --lib` passes (existing 6 tests stay green)
+- [ ] AC-5: `cargo test -p quota-router-sm-engine --lib` passes (existing 89 tests stay green)
+- [ ] AC-6: `cargo test -p octo-audit --lib` passes (paired — sister mission)
+- [ ] AC-7: NEW `crates/octo-settlement/tests/workspace_redaction_regression.rs` PASSES (≥20 tests covering 8-variant settlement shadow enum + canonical substrate variants)
+- [ ] AC-8: NEW `crates/octo-settlement/tests/hash_opaque_accessor_round_trip.rs` PASSES (asserts every consumer of `SettlementHashOpaque` uses accessor pattern; 0 `.0` field accesses)
+- [ ] AC-9: NEW `crates/octo-settlement/tests/sink_specific_payload_cap_at_scrubber.rs` PASSES (asserts scrubber-side cap fires on 10K-char `SinkSpecific` payload; substrate Display remains verbatim)
+- [ ] AC-10: NEW `crates/octo-settlement/tests/domain_adapter_contract_registry.rs` PASSES (asserts every flagged `.to_string()` site in workspace `quota-router-sm-engine/**` + `octo-settlement/**` modules gets scrubbed)
+- [ ] AC-11: RFC-0014 §Cross-References table appended with v2 + v3 sibling refs
+- [ ] AC-12: Cite sweep clean for any RFC parent updates
+- [ ] AC-13: Prettier-clean on all new + edited files
+- [ ] AC-14: §2-Cycle gate sanity: sister mission `0012-v3-audit-substrate-amendment-rollout` still `Open` in `missions/open/`; if it deferred, this mission defers too (user-initiated only)
+
+### Dependencies
+
+- **RFC-0014-v3** — Accepted (status header verified at `rfcs/accepted/process/0014-v3-settlement-substrate-amendment.md` Status line 5: `Accepted`). Mission is claimable iff this RFC remains Accepted.
+- **RFC-0012-v3** — Accepted (paired). Required for the §2-Cycle gate. Sister mission `0012-v3-audit-substrate-amendment-rollout` covers substrate roll-out on the audit side.
+- **RFC-0014-v2** — Supersedes parent RFC §FW6 scrubber pattern list. Source-of-truth for canonical scrubber patterns.
+- **RFC-0012-v2 §FW6** — Canonical scrubber pattern list (single source of truth for §S5.1).
+- **parent RFC-0014** — needs §Cross-References update (AC-11).
+
+### Risk
+
+- **LOW** — Substrate code is shipped + tests pass (132 PASS); this is a rollout verification + monitoring + cross-RFC refactor. No new schema, no new variant.
+- **LOW** — §FW2 clippy lint is gated off by default per sister mission pattern; settlement-side extension reuses same lint module.
+- **LOW** — RFC-0014 cross-reference append is doc-only edit.
+- **LOW** — SinkSpecific payload-cap-at-scrubber is already enforced per R48-s defect 3 closure; this mission VERIFIES the posture (not enforcement).
+
+### Cross-RFC invariants preserved
+
+- `SettlementHashOpaque` Display emits `<redacted-hash>` (symmetric with Debug per RFC-0014-v3 §Security Considerations).
+- `as_bytes()` retains raw `[u8; 32]` for programmatic chain-integrity verification.
+- `SinkSpecific(String)` substrate-faithful posture preserved — no `debug_assert!` discipline at substrate. Cap at scrubber (4 KiB input + 4 KiB output).
+- Scrubber Pattern 1-5 + 5b-5e + 6 registry unchanged from RFC-0014-v3 §S5.1.
+- DOMAIN adapter contract: every raw `.to_string()` chain in `quota-router-sm-engine/**/*.rs` MUST go through `scrub_adapter_error_with(s, ADAPTER_TYPES)` (Pattern 6 registry).
+- 132 test surface stays PASS (no regression).
+
+### Test vectors (mission-level)
+
+| ID                                           | Scenario                                                                                                                                                                                                                                     | Expected                                                                                                                          |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `settle-display-redaction-each-variant`      | `format!("{}", err)` for every `SettlementError` variant (8 variants: AskNotFound, AlreadyConsumed, InvalidTransition, ReservationNotFound, ReservationExpired, InvalidReservationTransition, SettlementHashMismatch, SinkSpecific, Storage) | no raw `[u8; 32]` / hex bytes leaked; sentinel `<redacted-hash>` present where applicable; Storage wrapped via scrubber sentinels |
+| `settle-debug-symmetric-redaction`           | `format!("{:?}", SettlementHashOpaque::new([0xab; 32]))`                                                                                                                                                                                     | `SettlementHashOpaque(<redacted-hash>)` (symmetric with Display per RFC-0014-v3 §Security Considerations)                         |
+| `settle-accessor-round-trip`                 | `SettlementHashOpaque::new(h).as_bytes() == &h` for h = [0;32], [0xff;32], mixed                                                                                                                                                             | returns raw `[u8; 32]` slice verbatim                                                                                             |
+| `settle-no-raw-zero-field-access`            | grep `SettlementHashOpaque\.0\b` in `crates/quota-router-sm-engine/**/*.rs`                                                                                                                                                                  | 0 matches (only `as_bytes()` + `new()` accessors)                                                                                 |
+| `settle-domain-adapter-registry-conformance` | Every `.to_string()` site in quota-router-sm-engine `format!` chains                                                                                                                                                                         | every flagged site paired with `scrub_adapter_error_with` or `scrub_adapter_error`                                                |
+| `settle-sinkspecific-cap-at-scrubber`        | `SettlementError::SinkSpecific("x".repeat(10_000))::to_string()` (substrate-faithful = no cap)                                                                                                                                               | full 10K chars emitted at substrate; wrapped via scrubber → `<redacted-too-long>` sentinel                                        |
+| `settle-scrubber-pattern-coverage`           | Patterns 1, 2, 3, 4, 5, 5b, 5c, 5d, 5e, 6                                                                                                                                                                                                    | every pattern produces expected sentinel; existing 13 octo-settlement scrubber tests stay PASS                                    |

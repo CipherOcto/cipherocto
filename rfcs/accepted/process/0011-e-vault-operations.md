@@ -13,6 +13,16 @@ Accepted (2026-08-31)
 
 > **Authorship Note:** Authored by `@cipherocto` and `@mmacedoeu` per the amendment chain enumerated in RFC-0011 Status header (audit, reputation, agent lifecycle, role provisioning, vault operations, mesh operations, governance). The Authorship Note placeholder is filled at promotion to Accepted.
 
+## Authors
+
+- `@cipherocto`
+- `@mmacedoeu`
+
+## Maintainers
+
+- `@cipherocto`
+- `@mmacedoeu`
+
 ## Summary
 
 This RFC defines the `octo vault` subcommand group for the `octo` CLI: a
@@ -78,9 +88,9 @@ inspect identities, mint capabilities, and read policies, but they
 **cannot see what vaults they own or what those vaults hold**. The
 economic surface of the platform — vaults, balances, transfers — is
 invisible from the operator workstation. The substrate
-(`octo-vault`) has the data: `transfer_events` (RFC-0960 v014 schema)
+(`octo-vault`) has the data: `transfer_events` (the v014 substrate schema per RFC-0960)
 records every balance-affecting event; `VaultRegistry` records vault
-metadata; and RFC-0960 v3.7 reconciled the canonical SUM projection
+metadata; and RFC-0960-v37 reconciled the canonical SUM projection
 with the v014 substrate.
 
 The gap is operator UX. Three concrete operator pain points motivate
@@ -91,7 +101,7 @@ this RFC:
    or scraping the `vault_registry` table. There is no canonical CLI
    surface.
 2. **No projected balance.** Even when the operator knows the vault ID,
-   the balance is a _projection_ (RFC-0960 v3.7 §2.2 SUM algorithm),
+   the balance is a _projection_ (RFC-0960-v37 §2.2 SUM algorithm),
    not a stored scalar. A cached scalar that lags the event log is
    silently wrong; a re-computed projection that ignores the cache TTL
    is operationally expensive. The CLI must call the substrate's
@@ -129,11 +139,11 @@ This RFC closes those three gaps with a Layer-C/D CLI amendment.
 
 ### Authorities
 
-| Authority        | Granting Role                                                   | Scope                    | Expiry             | Audit                                            |
-| ---------------- | --------------------------------------------------------------- | ------------------------ | ------------------ | ------------------------------------------------ |
-| `vault.list`     | Active DID (no further grant)                                   | Read                     | Operator session   | Per-call substrate trace + `OctoCliRedactor` log |
-| `vault.balance`  | Active DID                                                      | Read                     | Operator session   | Per-call substrate trace                         |
-| `vault.transfer` | Active DID **AND** provisioned transfer capability (RFC-0011-d) | Write (mutating; signed) | Capability caveats | Substrate trace + signed transfer envelope       |
+| Authority        | Granting Role                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Scope                    | Expiry                                                    | Audit                                            |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ | --------------------------------------------------------- | ------------------------------------------------ |
+| `vault.list`     | Active DID (no further grant)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Read                     | Operator session                                          | Per-call substrate trace + `OctoCliRedactor` log |
+| `vault.balance`  | Active DID                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Read                     | Operator session                                          | Per-call substrate trace                         |
+| `vault.transfer` | Active DID **AND** provisioned transfer capability (RFC-0011-d) **with the following required caveats** (per RFC-0964 §Constraint Encoding): `balance_cap` (single-transfer cap or per-window cap; substrate refuses if `--amount` exceeds the cap), `chain_id_binding` (capability scoped to one or more chain IDs; cross-chain transfers outside the binding set are rejected), `expiry` (capability validity timestamp; substrate refuses post-expiry). Without the full caveat set, the capability is treated as incomplete and `vault.transfer` returns `RoleNotProvisioned` (exit 25) regardless of role provisioning status. | Write (mutating; signed) | Capability caveats (balance cap + chain binding + expiry) | Substrate trace + signed transfer envelope       |
 
 ### Role Transitions
 
@@ -222,7 +232,7 @@ forwards. **All authoritative state lives in substrate.**
 | `--cursor <cursor>`       | `Option<String>`  | None       | Opaque pagination cursor returned by prior call                   |
 
 Substrate call: `octo_vault::list_owned(active_did) -> Result<Vec<VaultSummary>, VaultError>`
-(mirrors RFC-0960 v3.7 §2.1 `VaultSummary` shape).
+(mirrors RFC-0960-v37 §2.1 `VaultSummary` shape).
 
 Output envelope: `OutputEnvelope<VaultListOutput>` where
 `VaultListOutput { vaults: Vec<VaultSummary>, next_cursor: Option<String> }`
@@ -250,7 +260,7 @@ Output envelope: `OutputEnvelope<VaultListOutput>` where
 
 Substrate call:
 `octo_vault::project_vault_balance(vault_id, asset_resolver: &dyn VaultAssetResolver) -> Result<VaultBalanceProjection, VaultError>`
-(per RFC-0960 v3.7 §2.5 SUM algorithm; substrate reads through
+(per RFC-0960-v37 §2.5 SUM algorithm; substrate reads through
 `VaultBalanceCache` unless `--no-cache`).
 
 Output envelope: `OutputEnvelope<VaultBalanceOutput>` where
@@ -466,10 +476,16 @@ This RFC therefore defines the CLI surface only; substrate additions
 `VaultSummary`) are deferred to **RFC-0960-v38** (Vault Operations
 Substrate Additions).
 
-> **Pending dependency.** Until RFC-0960-v38 is Accepted, the CLI
-> surfaces substrate-bound errors at runtime; the canonical wire
+> **Pending dependency (not yet authored).** RFC-0960-v38 is a
+> forward-looking amendment to RFC-0960 that has not yet been authored.
+> This RFC references RFC-0960-v38 as the future substrate home for the
+> additions listed above; until RFC-0960-v38 is Accepted, the CLI
+> surfaces substrate-bound errors at runtime and the canonical wire
 > shapes this RFC describes (clap tree, output envelopes, error
 > variants) are stable but depend on the substrate amendment landing.
+> The mission `0011-e-vault-substrate-additions` carries the work of
+> authoring RFC-0960-v38 and its corresponding substrate implementation
+> as a single deliverable per BLUEPRINT.md §Mission Lifecycle.
 
 The CLI surface relies on the following **canonical** RFC-0960-v37
 substrate types (no additions introduced here):
@@ -502,7 +518,7 @@ substrate types (no additions introduced here):
 
 ### Vault Summary Shape
 
-Per RFC-0960 v3.7 §2.1, the canonical vault summary is the substrate
+Per RFC-0960-v37 §2.1, the canonical vault summary is the substrate
 type exposed by the future `list_owned` (added in RFC-0960-v38). The
 CLI surface shape is:
 
@@ -537,7 +553,7 @@ distinction matters for the staleness invariant
 `octo vault balance` calls
 `octo_vault::project_vault_balance(vault_id, asset_resolver)` and
 returns the substrate's `VaultBalanceProjection` verbatim. Per
-RFC-0960 v3.7 §2.5, `VaultBalanceProjection` carries:
+RFC-0960-v37 §2.5, `VaultBalanceProjection` carries:
 
 | Field                       | Source                                                                                                                                                                                                                                                                    |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -564,7 +580,7 @@ contributed to the canonical `VaultBalanceProjection`. The flag invokes
 a substrate history reader (`projection_history` per RFC-0960-v38);
 until RFC-0960-v38 lands, `--history <n>` returns a substrate-bound
 error. The substrate reads the invalidation bus defined by
-RFC-0960 v3.7 §2.4. The event struct exposed by the substrate is
+RFC-0960-v37 §2.4. The event struct exposed by the substrate is
 `ProjectionEvent`:
 
 ```rust
@@ -589,7 +605,7 @@ set; the field is `None` otherwise. Wire form is
 Consumers MUST branch on `history.is_some()` before reading events.
 The flag is read-only — no HSM, no signing, no broadcast. Cache TTL
 does not apply to history (the substrate reads the event log directly
-per RFC-0960 v3.7 §2.4).
+per RFC-0960-v37 §2.4).
 
 ### Transfer Flow
 
@@ -672,18 +688,19 @@ MUST be identical in stderr/log and in the JSON payload** — a field that
 is redacted in one sink and plaintext in the other is an info-leak
 surface reachable by adding `--json`, not a redaction:
 
-| Field                   | Redaction Pattern                                                                                                                                                                                                                                                                                                                                           | Sets envelope `redacted=true`?   |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| `vault_id`              | **Full, unredacted** by default (PUBLIC material per RFC-0011 §Hex32 newtype); truncated to `0x` + 8 hex + `...` only under `--redact-ids`                                                                                                                                                                                                                  | Only under `--redact-ids`        |
-| `dest_vault_id`         | **Full, unredacted** by default; same `--redact-ids` treatment as `vault_id`                                                                                                                                                                                                                                                                                | Only under `--redact-ids`        |
-| `handle_id`             | **Full, unredacted** by default; same `--redact-ids` treatment as `vault_id`                                                                                                                                                                                                                                                                                | Only under `--redact-ids`        |
-| `owner_did`             | Redact unless owner == active_did (per RFC-0011 §Redaction Layer)                                                                                                                                                                                                                                                                                           | Yes (when redacted)              |
-| `chain_id`              | Full (not sensitive)                                                                                                                                                                                                                                                                                                                                        | No                               |
-| `asset_symbol`          | Full (not sensitive)                                                                                                                                                                                                                                                                                                                                        | No                               |
-| `balance_projected`     | Full (not sensitive; public on chain)                                                                                                                                                                                                                                                                                                                       | No                               |
-| `last_updated_unix`     | Full                                                                                                                                                                                                                                                                                                                                                        | No                               |
-| `warnings: Vec<String>` | **Must NEVER include memo plaintext, vault_id tail, or owner_did.** The CLI is the writer of these strings; staleness / schema / cache messages are operator-safe by construction. If a future warning type requires sensitive content, the writer MUST render via `RedactedString` or respect `--redact-ids`/`--include-memo` like the corresponding field | No (operator-safe messages only) |
-| `--memo` (transfer)     | **Redacted by default in BOTH stderr/log and JSON payload** as `[REDACTED:<n>chars]`; plaintext only under `--include-memo`                                                                                                                                                                                                                                 | **Yes (default)**                |
+| Field                                                                                     | Redaction Pattern                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | Sets envelope `redacted=true`?   |
+| ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| `vault_id`                                                                                | **Full, unredacted** by default (PUBLIC material per RFC-0011 §Hex32 newtype); truncated to `0x` + 8 hex + `...` only under `--redact-ids`                                                                                                                                                                                                                                                                                                                                                    | Only under `--redact-ids`        |
+| `dest_vault_id`                                                                           | **Full, unredacted** by default; same `--redact-ids` treatment as `vault_id`                                                                                                                                                                                                                                                                                                                                                                                                                  | Only under `--redact-ids`        |
+| `handle_id`                                                                               | **Full, unredacted** by default; same `--redact-ids` treatment as `vault_id`                                                                                                                                                                                                                                                                                                                                                                                                                  | Only under `--redact-ids`        |
+| `owner_did`                                                                               | Redact unless owner == active_did (per RFC-0011 §Redaction Layer)                                                                                                                                                                                                                                                                                                                                                                                                                             | Yes (when redacted)              |
+| `chain_id`                                                                                | Full (not sensitive)                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | No                               |
+| `asset_symbol`                                                                            | Full (not sensitive)                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | No                               |
+| `balance_projected`                                                                       | Full (not sensitive; public on chain)                                                                                                                                                                                                                                                                                                                                                                                                                                                         | No                               |
+| `last_updated_unix`                                                                       | Full                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | No                               |
+| `warnings: Vec<String>`                                                                   | **Must NEVER include memo plaintext, vault_id tail, or owner_did.** The CLI is the writer of these strings; staleness / schema / cache messages are operator-safe by construction. If a future warning type requires sensitive content, the writer MUST render via `RedactedString` or respect `--redact-ids`/`--include-memo` like the corresponding field                                                                                                                                   | No (operator-safe messages only) |
+| `--memo` (transfer)                                                                       | **Redacted by default in BOTH stderr/log and JSON payload** as `[REDACTED:<n>chars]`; plaintext only under `--include-memo`                                                                                                                                                                                                                                                                                                                                                                   | **Yes (default)**                |
+| **Catch-all secret pattern** (any field whose NAME or VALUE matches a known secret regex) | **Redacted by default in BOTH sinks** when the field name (case-insensitive) matches `seed`, `private_key`, `privkey`, `holder_sig`, `signature`, `pair_code`, `password`, `passphrase`, `mnemonic`, `api_key`, `bearer`, OR the value matches base64/hex blob patterns ≥32 chars long preceded by a secret-typed key (`secret=`, `token=`, `key=`). This catch-all covers generic string fields that may accept pasted secrets via pastejacking (e.g., a future `--note` or `--reason` flag) | **Yes (default)**                |
 
 > **`vault_id` is NOT redacted.** Per RFC-0011 §Hex32 newtype, 32-byte
 > digests are PUBLIC material, are explicitly distinguished from
@@ -766,7 +783,7 @@ Exit codes 23–26 are in the **17–63 reserved range** per RFC-0011
 `OctoCliError::Internal`=64, `StaleStub`=65).
 
 RFC-0011-e reserves exit codes 23–26 per parent's amendment-chain slot
-allocation (parent RFC-0011 §Appendix D reserves 17–63 for amendments;
+allocation (parent RFC-0011 §Exit Code Table reserves 17–63 for amendments;
 -a reserves 17–18, -b reserves 20–22, -e reserves 23–26, -f reserves
 27–30, -d reserves 31–34, -g reserves 35–38; `AuditResponseTooLarge` was
 removed from -a in Wave 7.5 R1, narrowing -a's reservation from
@@ -782,7 +799,7 @@ removed from -a in Wave 7.5 R1, narrowing -a's reservation from
 `octo vault list` and `octo vault balance` MUST produce deterministic
 output for identical substrate state at identical substrate timestamps.
 The CLI never adds wall-clock-derived ordering; the substrate returns
-vaults in `(chain_id, vault_id)` lexicographic order (RFC-0960 v3.7
+vaults in `(chain_id, vault_id)` lexicographic order (RFC-0960-v37
 §2.3 cache PK shape).
 
 `octo vault transfer` is **not** deterministic — it includes
@@ -790,6 +807,50 @@ vaults in `(chain_id, vault_id)` lexicographic order (RFC-0960 v3.7
 by substrate at broadcast time. This is acceptable for a mutating
 command that does not participate in consensus (per
 `RFC-0008` Execution Class mapping).
+
+### Lifecycle Requirements
+
+Per BLUEPRINT.md §Lifecycle Requirements (required for any RFC that
+defines an actor with more than one state), this RFC defines two
+stateful actors:
+
+#### TransferStatus (per transfer handle)
+
+The `TransferStatus` enum (Layer B substrate; canonical substrate type)
+has four variants:
+
+| State       | Description                                                         | Terminal? | Transition trigger                                                 |
+| ----------- | ------------------------------------------------------------------- | --------- | ------------------------------------------------------------------ |
+| `DryRun`    | Envelope built and substrate-validated; sign + broadcast suppressed | **Yes**   | `--dry-run` flag set in §Subcommand Taxonomy `octo vault transfer` |
+| `Pending`   | Envelope signed and broadcast; awaiting confirmations               | No        | Substrate accepts broadcast                                        |
+| `Confirmed` | Substrate observed sufficient confirmations                         | **Yes**   | Substrate confirmations ≥ chain threshold                          |
+| `Failed`    | Substrate observed an error or reorg; envelope did not settle       | **Yes**   | Substrate error or chain reorg                                     |
+
+State transitions are substrate-authoritative (see Appendix D for the
+full state diagram); the CLI is a passive observer that returns
+whatever state the substrate reports. Operators polling
+`octo vault status <handle>` (out of scope for this RFC; deferred per
+§Future Work) see `Pending` repeatedly until substrate transitions to
+`Confirmed` or `Failed`.
+
+#### Operator ↔ Auditor role transition
+
+Per §Roles and Authorities: Role Transitions, an operator can
+transition between the `Operator` role (full read/write access to owned
+vaults) and the `Auditor` role (read-only access; cannot invoke
+`vault.transfer`). The transition is triggered by capability mint /
+revoke per RFC-0011-d, not by any `vault` subcommand directly:
+
+| From     | To       | Trigger                                                                | Side effect                                                                               |
+| -------- | -------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Auditor  | Operator | `octo capability mint` produces a transfer capability (per RFC-0011-d) | `vault.transfer` becomes invocable; transitions are deterministic                         |
+| Operator | Auditor  | `octo capability revoke` revokes the transfer capability               | `vault.transfer` reverts to `RoleNotProvisioned` (exit 25); transitions are deterministic |
+
+Role transitions are CLI-side reflections of substrate capability state
+changes; the CLI does NOT maintain a role cache. If the substrate
+capability is revoked mid-call, the CLI's next `vault transfer` attempt
+will return `RoleNotProvisioned`; in-flight calls complete under the
+capability snapshot at invocation time.
 
 ## Performance Targets
 
@@ -860,7 +921,7 @@ back; the CLI surfaces a hard error if the HSM is unreachable
 ### Chain ID Validation (RFC-0010)
 
 Every chain ID in the output envelope is canonicalized per
-RFC-0010 §Canonical DID Codec. The CLI rejects non-canonical chain IDs
+RFC-0010 §Chain-id Derivation. The CLI rejects non-canonical chain IDs
 in input (`--chain-id`, `--dest-chain-id`) with `InvalidChainId` (exit
 26 — same code as `ChainIdMismatch` because both are operator-input
 validation failures on chain IDs). The CLI surfaces the canonical form
@@ -883,6 +944,16 @@ cache_ttl_seconds` (substrate returns the TTL via
 emitted ONLY when triggered; the field is `[]` otherwise. TTY
 rendering surfaces the warning in human-readable form; JSON consumers
 read the `warnings` array.
+
+> **Implementation note (signedness safety):** `unwrap_or(0)` is safe
+> under the substrate invariant that `projected_at_unix_seconds` is
+> non-negative (the substrate's BIGINT-driven `occurred_at_unix` column
+> type carries `Option<i64>` but rejects negative values at insertion).
+> Implementers MUST NOT replace this with bare `unwrap()` — a substrate
+> regression that emitted negative values would panic instead of
+> degrading gracefully. A signedness check (`saturating_sub` or
+> `checked_sub` returning 0 on underflow) preserves the fail-soft
+> semantics if the substrate invariant is ever violated.
 
 ### Transfer Replay (Nonce Derivation)
 
@@ -933,6 +1004,18 @@ text that `--memo` content is signed into the transfer envelope and is
 observable by the destination vault owner regardless of CLI-side
 redaction — CLI redaction protects the operator's local sinks, not the
 on-chain payload.
+
+> **EXPLICIT LIMITATION: no `--memo-private` flag.** Memo plaintext is
+> always observable by the destination vault owner via the on-chain
+> record; the CLI does NOT provide a `--memo-private` flag to keep
+> memos private from the destination. The destination chain adapter
+> surfaces memos to the destination vault owner by design (the memo
+> field is part of the canonical transfer envelope; opaque to the
+> destination vault owner would require end-to-end encryption, which
+> is out of scope for this RFC). Operators who need memo privacy MUST
+> avoid embedding sensitive data in `--memo` (e.g., invoice numbers,
+> counterparty names, internal references) and SHOULD treat `--memo`
+> as a public-channel annotation rather than a private note.
 
 ## Adversarial Review
 
@@ -1019,14 +1102,34 @@ inspection.
 (`octo-cli`) do not affect prior behavior:
 
 - `octo vault list`, `octo vault balance`, `octo vault transfer` are
-  new commands; existing commands (`octo whoami`, `octo identity show`,
-  etc.) are unaffected.
+  new commands; existing commands are unaffected.
 - `OutputEnvelope<T>` gains a new `T` payload type
   (`VaultListOutput`, `VaultBalanceOutput`, `VaultTransferOutput`) but
   the envelope structure is unchanged.
-- `OctoCliError` is `#[non_exhaustive]` (per RFC-0011); four new
+- `OctoCliError` is `#[non_exhaustive]` (per RFC-0011); five new
   variants are added (`VaultNotOwned`, `InsufficientBalance`,
-  `RoleNotProvisioned`, `ChainIdMismatch`).
+  `RoleNotProvisioned`, `ChainIdMismatch`, `InvalidChainId`).
+
+#### Phase 1 stub commands (enumerated)
+
+Per `docs/BLUEPRINT.md` §RFC cross-RFC consistency checklist, this RFC
+enumerates the Phase 1 stub commands (RFC-0011 §Phase 1) that are in
+scope for impact assessment:
+
+| Phase 1 stub command   | RFC substrate owner   | Affected by RFC-0011-e? | Notes                                                                                                        |
+| ---------------------- | --------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `octo init`            | RFC-0011 (Phase 1)    | **No**                  | Identity bootstrap; no vault substrate call path                                                             |
+| `octo join`            | RFC-0011 (Phase 1)    | **No**                  | Capability join; no vault substrate call path                                                                |
+| `octo role`            | RFC-0011-d (deferred) | **No**                  | Role provisioning stub; `vault transfer` depends on this per §Transfer Flow                                  |
+| `octo agent`           | RFC-0011-c (Accepted) | **No**                  | Agent lifecycle; out of scope per `RFC-0011-c` §Out of scope                                                 |
+| `octo status`          | RFC-0011 (Phase 1)    | **No**                  | Operator status; reads identity only                                                                         |
+| `octo whoami`          | RFC-0011 (Phase 1)    | **No**                  | Active DID lookup; consumed by `vault transfer` for ownership check                                          |
+| `octo identity show`   | RFC-0011 (Phase 1)    | **No**                  | Identity inspection                                                                                          |
+| `octo capability list` | RFC-0011 (Phase 1)    | **No**                  | Lists capabilities; `vault transfer` checks for provisioned transfer capability (see §Roles and Authorities) |
+| `octo policy show`     | RFC-0011 (Phase 1)    | **No**                  | Policy inspection; out of vault call path                                                                    |
+
+All Phase 1 stubs are unaffected by this RFC. The vault subcommand group
+is a pure addition to the existing command tree.
 
 ### Forward Compatibility
 
@@ -1059,7 +1162,7 @@ backward-compatible:
 
 ## Test Vectors
 
-Canonical test cases (per BLUEPRINT.md §Test Vectors). At least 10:
+Canonical test cases (per BLUEPRINT.md §Test Vectors). At least 30:
 
 ### `octo vault list`
 
@@ -1081,16 +1184,16 @@ Canonical test cases (per BLUEPRINT.md §Test Vectors). At least 10:
 
 ### `octo vault transfer`
 
-| #   | Input                                                                                               | Expected Output                                                                                                                                                                                                                                                                                     | Notes                                                                     |
-| --- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| 9   | `--from <a> --to <b> --amount 1000000000 --asset OCTO --confirm-acknowledge`                        | `TransferHandle::Pending`, `status: Pending`                                                                                                                                                                                                                                                        | Happy path; HSM signs; substrate broadcasts                               |
-| 10  | `--from <a> --to <b> --amount 99999999999999 --asset OCTO --confirm-acknowledge`                    | `InsufficientBalance` (exit 24)                                                                                                                                                                                                                                                                     | Pre-flight balance check fails                                            |
-| 11  | `--from <a> --to <b> --amount 1000000000 --asset OCTO` (no `--confirm-acknowledge`)                 | `ConfirmationRequired` (exit 2, per parent RFC-0011 §Exit Codes — NOTE: exit 2 is shared with parent's `ClapParse`=2 in §Exit Codes L780; both fire as "input rejected before execution"; consumers MUST disambiguate via the envelope `payload` + `redacted` flag rather than the exit code alone) | Two-step gate enforced                                                    |
-| 12  | `--from <x> --to <b>` where `<x>` is not owned by active DID                                        | `VaultNotOwned` (exit 23)                                                                                                                                                                                                                                                                           | Pre-flight ownership check fails                                          |
-| 12a | `--from <a> --to <b> --amount 1000000000 --asset OCTO --confirm-acknowledge --dry-run`              | `status: DryRun`, `broadcast_at_unix: null`, no HSM sign                                                                                                                                                                                                                                            | Envelope built and substrate-validated; sign + broadcast suppressed       |
-| 12b | `--from <a> --to <b> --amount 1000000000 --asset OCTO --confirm-acknowledge --memo "Q4 invoice 42"` | `redacted: true`, `memo_plaintext: null` (default redaction)                                                                                                                                                                                                                                        | Memo plaintext held in `handle.memo_or_hash`, redacted from operator sink |
-| 12c | Same as 12b with `--include-memo`                                                                   | `redacted: false`, `memo_plaintext: "Q4 invoice 42"`                                                                                                                                                                                                                                                | Operator opt-in populates `memo_plaintext`                                |
-| 12d | `--chain-id not-canonical`                                                                          | `InvalidChainId { received: "not-canonical" }` (exit 26)                                                                                                                                                                                                                                            | Operator-input validation failure on chain ID                             |
+| #   | Input                                                                                               | Expected Output                                                                                                                                                                                                                                                                                | Notes                                                                     |
+| --- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| 9   | `--from <a> --to <b> --amount 1000000000 --asset OCTO --confirm-acknowledge`                        | `TransferHandle::Pending`, `status: Pending`                                                                                                                                                                                                                                                   | Happy path; HSM signs; substrate broadcasts                               |
+| 10  | `--from <a> --to <b> --amount 99999999999999 --asset OCTO --confirm-acknowledge`                    | `InsufficientBalance` (exit 24)                                                                                                                                                                                                                                                                | Pre-flight balance check fails                                            |
+| 11  | `--from <a> --to <b> --amount 1000000000 --asset OCTO` (no `--confirm-acknowledge`)                 | `ConfirmationRequired` (exit 2, per parent RFC-0011 §Exit Codes — NOTE: exit 2 is shared with parent's `ClapParse`=2 in §Exit Codes; both fire as "input rejected before execution"; consumers MUST disambiguate via the envelope `payload` + `redacted` flag rather than the exit code alone) | Two-step gate enforced                                                    |
+| 12  | `--from <x> --to <b>` where `<x>` is not owned by active DID                                        | `VaultNotOwned` (exit 23)                                                                                                                                                                                                                                                                      | Pre-flight ownership check fails                                          |
+| 12a | `--from <a> --to <b> --amount 1000000000 --asset OCTO --confirm-acknowledge --dry-run`              | `status: DryRun`, `broadcast_at_unix: null`, no HSM sign                                                                                                                                                                                                                                       | Envelope built and substrate-validated; sign + broadcast suppressed       |
+| 12b | `--from <a> --to <b> --amount 1000000000 --asset OCTO --confirm-acknowledge --memo "Q4 invoice 42"` | `redacted: true`, `memo_plaintext: null` (default redaction)                                                                                                                                                                                                                                   | Memo plaintext held in `handle.memo_or_hash`, redacted from operator sink |
+| 12c | Same as 12b with `--include-memo`                                                                   | `redacted: false`, `memo_plaintext: "Q4 invoice 42"`                                                                                                                                                                                                                                           | Operator opt-in populates `memo_plaintext`                                |
+| 12d | `--chain-id not-canonical`                                                                          | `InvalidChainId { received: "not-canonical" }` (exit 26)                                                                                                                                                                                                                                       | Operator-input validation failure on chain ID                             |
 
 ### Envelope Schema
 
@@ -1104,6 +1207,28 @@ Canonical test cases (per BLUEPRINT.md §Test Vectors). At least 10:
 | --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 14  | Two `--from <a>` transfers submitted back-to-back so both resolve the SAME `max_occurred_at_unix` second (test harness pins the substrate clock to a fixed timestamp) | Both succeed. Envelope nonces are `n` and `n + 1` — **distinct** and strictly increasing. Neither transfer is rejected as a replay, and the substrate records two distinct `transfer_events` rows | **Regression guard for the timestamp-derived-nonce defect.** A `max_occurred_at_unix`-derived nonce would emit the same value twice here; the assertion `nonce[1] == nonce[0] + 1` fails closed if the counter is reintroduced as a timestamp |
 | 15  | Same as 14 but the two transfers race on a single vault from two concurrent CLI processes                                                                             | Both nonces distinct; no duplicate nonce observed under concurrency                                                                                                                               | Asserts the counter is allocated under the transfer-event write lock, not read-then-incremented outside it (§Security Considerations: Transfer Replay)                                                                                        |
+
+### Edge Cases & Rejection Paths
+
+| #   | Input                                                                                                                                                                   | Expected Output                                                                                                            | Notes                                                                                                                                   |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| 16  | `vault transfer --from <a> --to <b> --amount 1000000000 --asset OCTO --confirm-acknowledge --redact-ids`                                                                | `redacted: true`; `vault_id` truncated to `0x12345678...` in both sinks                                                    | Records emitted are NOT signature-verifiable (per §Flag Catalog `--redact-ids`)                                                         |
+| 17  | `vault transfer --from <a> --to <b> --amount 1000000000 --asset OCTO --confirm-acknowledge --dest-chain-id did:octo:chain:chain-b` (`<a>` on chain-a, `<b>` on chain-b) | `status: Pending`; envelope carries BOTH source + dest chain IDs                                                           | Cross-chain transfer with explicit `--dest-chain-id`; happy path                                                                        |
+| 18  | Same as 9 but HSM slot unreachable                                                                                                                                      | `HsmUnavailable` (exit 100)                                                                                                | Pre-flight HSM check fails (item 2 in §Transfer Flow: Pre-flight)                                                                       |
+| 19  | Same as 9 but RFC-0011-d role provisioning not yet Accepted                                                                                                             | `RoleNotProvisioned` (exit 25)                                                                                             | Stub-with-error path; same pattern RFC-0011 uses for stub commands                                                                      |
+| 20  | `vault transfer --from <a> --to <unknown-vault-id>` where `<unknown-vault-id>` not in substrate registry                                                                | Substrate returns structured error; CLI surfaces as `ChainIdMismatch` (exit 26) or `AssetMismatch` (exit 23) per substrate | Item 5 in §Transfer Flow: Pre-flight is substrate-side; CLI does not pre-fetch `vault_registry`                                         |
+| 21  | `vault transfer --memo "<256-char attacker-controlled text containing 'invoice-ref-42' + pasted hex>"`                                                                  | `redacted: true`, `memo_plaintext: null`; `[REDACTED:256chars]` in stderr/log                                              | Pastejacking on `--memo`; redaction holds in BOTH sinks (per §Memo Leakage)                                                             |
+| 22  | `vault transfer --from <a> --to <b> --memo "<attacker hex pretending to be private key>" --include-memo`                                                                | `redacted: false`, `memo_plaintext: <plaintext>`                                                                           | Pastejacking on `--include-memo`: operator's local sink leaks memo plaintext by explicit opt-in (ACCEPTED RISK per §Adversary Analysis) |
+| 23  | `vault list --chain-id not-canonical`                                                                                                                                   | `InvalidChainId { received: "not-canonical" }` (exit 26)                                                                   | RFC-0010 canonical-form parse failure on input                                                                                          |
+| 24  | `vault list --asset-symbol UNKNOWN`                                                                                                                                     | Empty `vaults: []` array; no warning                                                                                       | Client-side filter (per §Subcommand Taxonomy); substrate returns no matches                                                             |
+| 25  | `vault list --limit 0`                                                                                                                                                  | `InvalidLimit` (exit 22 per §Error Handling — newly added; substrate validates `limit >= 1`)                               | Defensive cap; CLI surfaces structured error                                                                                            |
+| 26  | `vault list --cursor <opaque-cursor-from-prior-call>`                                                                                                                   | Substrate continues pagination from cursor; envelope includes new `next_cursor`                                            | Opaque pagination token (per §Subcommand Taxonomy `--cursor`)                                                                           |
+| 27  | `vault balance --history 5`                                                                                                                                             | `history: Some(Vec<5 ProjectionEvents>)` (newest first)                                                                    | History reader per §Balance History; `--history <n>` populated                                                                          |
+| 28  | `vault balance --no-cache --history 5`                                                                                                                                  | `cache_hit: false`, `source_kind: 1u8`; `history: Some(...)`                                                               | Fresh log scan + history events; cache bypassed                                                                                         |
+| 29  | `vault transfer --from <a> --to <a> --amount 1000000000 --asset OCTO --confirm-acknowledge` (self-transfer, same vault)                                                 | `SelfTransfer` (exit 23) — substrate refuses                                                                               | Defensive: substrate validates `from != to`                                                                                             |
+| 30  | `vault balance <not-hex32-vault-id>`                                                                                                                                    | Clap parse error (exit 2 per parent RFC-0011 §Exit Codes)                                                                  | `<vault-id>` arg fails RFC-0960-v35 Hex32 canonical-form parse                                                                          |
+| 31  | `vault transfer --amount -1`                                                                                                                                            | Clap parse error (exit 2 per parent RFC-0011 §Exit Codes)                                                                  | Negative DQA rejected at clap parse layer                                                                                               |
+| 32  | `vault list` for an operator with zero owned vaults                                                                                                                     | Empty `vaults: []`, `next_cursor: null`                                                                                    | Happy path with empty inventory                                                                                                         |
 
 ## Alternatives Considered
 
@@ -1153,11 +1278,20 @@ three concrete missions tracked in `missions/open/`. The decomposition
 mirrors the substrate / CLI split (Layer B substrate additions vs
 Layer C/D CLI surface) and the read/write boundary inside the CLI:
 
-| Mission slug                        | Layer | Scope                                                                                                                                                                                                                                                                                                                                                                                                                        | Depends on                                                                                                                                                    |
-| ----------------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0011-e-vault-substrate-additions`  | B     | RFC-0960-v38 substrate additions: `list_owned`, `project_vault_balance(vault_id, asset_resolver)`, `initiate_transfer`, `projection_history`, `TransferHandle`, `TransferStatus`, `VaultSummary` (all `[ADD]` per §Substrate Additions)                                                                                                                                                                                      | RFC-0960-v37; RFC-0960-v38 (this mission)                                                                                                                     |
-| `0011-e-vault-subcommands-readonly` | C/D   | CLI subcommands `octo vault list` + `octo vault balance <vault-id>`: clap tree, `VaultListOutput` + `VaultBalanceOutput` envelopes, redaction patterns, `RedactedString` newtype, balance-history reader                                                                                                                                                                                                                     | `0011-e-vault-substrate-additions` (substrate must exist before CLI calls land)                                                                               |
-| `0011-e-vault-subcommands-transfer` | C/D   | CLI subcommand `octo vault transfer`: clap tree, `VaultTransferOutput` envelope, 4 new `OctoCliError` variants (`VaultNotOwned`, `InsufficientBalance`, `RoleNotProvisioned`, `ChainIdMismatch`, `InvalidChainId`), `TransferStatus::DryRun`, exit codes 23–26, `--memo` + `--include-memo` + `--redact-ids` + `--confirm-acknowledge` + `--dest-chain-id` + `--dry-run` flag plumbing, nonce-regression vector 14/15 wiring | `0011-e-vault-substrate-additions`; RFC-0011-d (role provisioning must be Accepted for the full surface; until then `RoleNotProvisioned` exit 25 is surfaced) |
+| Mission slug                        | Layer | Est. lines | Scope                                                                                                                                                                                                                                                                                                                                                                                                                        | Depends on                                                                                                                                                    |
+| ----------------------------------- | ----- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0011-e-vault-substrate-additions`  | B     | ~300–450   | RFC-0960-v38 substrate additions: `list_owned`, `project_vault_balance(vault_id, asset_resolver)`, `initiate_transfer`, `projection_history`, `TransferHandle`, `TransferStatus`, `VaultSummary` (all `[ADD]` per §Substrate Additions)                                                                                                                                                                                      | RFC-0960-v37; RFC-0960-v38 (this mission)                                                                                                                     |
+| `0011-e-vault-subcommands-readonly` | C/D   | ~350–550   | CLI subcommands `octo vault list` + `octo vault balance <vault-id>`: clap tree, `VaultListOutput` + `VaultBalanceOutput` envelopes, redaction patterns, `RedactedString` newtype, balance-history reader                                                                                                                                                                                                                     | `0011-e-vault-substrate-additions` (substrate must exist before CLI calls land)                                                                               |
+| `0011-e-vault-subcommands-transfer` | C/D   | ~450–700   | CLI subcommand `octo vault transfer`: clap tree, `VaultTransferOutput` envelope, 5 new `OctoCliError` variants (`VaultNotOwned`, `InsufficientBalance`, `RoleNotProvisioned`, `ChainIdMismatch`, `InvalidChainId`), `TransferStatus::DryRun`, exit codes 23–26, `--memo` + `--include-memo` + `--redact-ids` + `--confirm-acknowledge` + `--dest-chain-id` + `--dry-run` flag plumbing, nonce-regression vector 14/15 wiring | `0011-e-vault-substrate-additions`; RFC-0011-d (role provisioning must be Accepted for the full surface; until then `RoleNotProvisioned` exit 25 is surfaced) |
+
+> **Decomposition threshold check (per BLUEPRINT.md §Multi-Mission
+> Decomposition).** Each mission is bounded to ≤10 types / ≤1000 lines.
+> All three missions estimate under 700 lines and under 10 types per
+> mission; no further decomposition required. If `0011-e-vault-subcommands-transfer`
+> grows beyond 700 lines during implementation (driven by edge-case TV
+> coverage), split it along the read/write boundary: TV-9..TV-12d (happy
+> path + envelope) into mission 3a; TV-14..TV-32 (regression + edge cases)
+> into mission 3b.
 
 The decomposition follows the layer model
 (`cipherocto-design-principles.md` §Layer A/B/C/D/E):
@@ -1187,10 +1321,11 @@ transfer CLI mission owns TV-9..TV-12d + TV-14 + TV-15.
 
 ### DOC-ONLY (this RFC cycle)
 
-| File                                             | Change                                                |
-| ------------------------------------------------ | ----------------------------------------------------- |
-| `rfcs/draft/process/0011-e-vault-operations.md`  | NEW — this RFC                                        |
-| `docs/use-cases/hybrid-ai-blockchain-runtime.md` | Optional follow-on: add a "Vault operator UX" section |
+| File                                                    | Change                                                                                                                     |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `rfcs/draft/process/0011-e-vault-operations.md`         | NEW — this RFC                                                                                                             |
+| `docs/07-developers/octo-vault-implementation-guide.md` | NEW — companion implementation guide (per BLUEPRINT.md §Tools → Implementation Guides; required for 10+ types / 4+ phases) |
+| `docs/use-cases/hybrid-ai-blockchain-runtime.md`        | Optional follow-on: add a "Vault operator UX" section                                                                      |
 
 ### SUBSTRATE (follow-on, RFC-0960-v38, NOT this RFC cycle)
 
@@ -1277,16 +1412,17 @@ appear only in each RFC's Status header and Version History.
 
 ## Version History
 
-| Version | Date       | Status   | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| ------- | ---------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1.0     | 2026-08-31 | Draft    | Initial draft — Phase 6 of the RFC-0011 amendment chain                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| 1.1     | 2026-08-31 | Draft    | Wave 5 R1 CRITICAL fixes. (1) Transfer nonce respecified as a strictly-incrementing per-vault counter — `max_occurred_at_unix` is a timestamp and collides for two transfers in the same second; regression vector 14 added. (2) `OutputEnvelope<T>` bumped `schema_version` 2 → 3 and the divergence from the parent envelope documented (`data`→`payload`, `generated_at`→`executed_at_unix`, `exit_code` + `preview_only` dropped) — inheriting version 2 misrepresented the payload shape. (3) `--memo` redaction un-inverted: memos are now redacted in BOTH stderr/log and JSON payload by default, with `--include-memo` as the explicit operator opt-in. (4) `vault_id` is no longer redacted — `Hex32` is PUBLIC material per RFC-0011 §Hex32 newtype and truncating it breaks signature verification; redaction is now opt-in via `--redact-ids`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| 1.2     | 2026-08-31 | Draft    | Wave 6 R2 surgical fixes (23 findings). (a) `RedactedString` contract pinned: `Serialize` ALWAYS emits `[REDACTED:<n>chars]`; plaintext flows through sibling `memo_plaintext: Option<String>` field on `VaultTransferOutput` populated only by `--include-memo` at envelope-build time; `Deserialize` + `Zeroize`/`ZeroizeOnDrop` added. (b) `TransferStatus::DryRun` added (terminal; --dry-run path); Appendix D state machine updated. (c) `VaultTransferOutput.memo` removed (H2); asymmetry with `handle.memo_or_hash` documented. (d) Per-amendment `schema_version` slot table added (-a/-b/-d = 2; -e = 3; -f = 4..5; -g = 6..7). (e) Top-level `payload.source_kind` dropped from `VaultBalanceOutput`; consumers read from `record`. (f) `warnings: Vec<String>` added to `VaultBalanceOutput`; staleness threshold documented. (g) `InvalidChainId { received: String }` row added (exit 26); `ChainIdMismatch` resolution via `vault_registry` documented. (h) `Option<u64>` for `last_projection_unix_seconds`; test vector 7 updated (`None` not `0`). (i) Flag catalog consolidated (§Flag Catalog); `--redact-ids`/`--include-memo` cross-referenced from §7.2 + Appendix A + Appendix E. (j) `RedactedString` Zeroize scope documented (CLI process memory only). (k) §7.x numbering added to code blocks (L7). (l) Footer Version bumped to 1.1. (m) Test vectors 12a/12b/12c/12d added (DryRun, default memo redaction, --include-memo, InvalidChainId). (n) `asset_id` wire form pinned to 32-byte digest (M3); `chain_id` examples canonicalized to `did:octo:chain:chain-a` (M4); `source_kind` wire form pinned to `serde(tag = "source")` (M14)                                                                                                                                                                                                                                   |
-| 1.3     | 2026-08-31 | Draft    | Wave 7.5 R1 substrate-alignment fixes (4 CRITICAL + 5 HIGH). (a) F-1 Substrate type names corrected: `BalanceRecord` → `VaultBalanceProjection`; `last_projection_unix_seconds` → `projected_at_unix_seconds`; `projected_balance_dqa_micros: i64` → `projected_balance: Dqa`; `vault_id: Hex32` → `vault_id: VaultId` (RFC-0960 §2.1 newtype); cite RFC-0960-v37 §2.1. (b) F-2 `ProjectionSource` aligned to substrate: `#[repr(u8)]` with unit variants `Cache` / `FreshLogScan` / `EpochRebuild`; `serde(tag = "source")` REMOVED (invalid for unit-only enum); wire form is integer discriminant; CI asserts `assert_eq!(output.source_kind as u8, 0u8)`. (c) F-3 Substrate `[ADD]` signatures (`list_owned`, `project_balance`, `initiate_transfer`, `projection_history`, `TransferHandle`, `TransferStatus`, `VaultSummary`) deferred to RFC-0960-v38; §Substrate `[ADD]` Signatures section rewritten. (d) F-4 TV-11 exit code 22 → 2 per parent RFC-0011 §Exit Codes (resolves triple conflict with -b reservation and parent). (e) F-5 Schema-version slot table: RFC-0011-c = 4 added (Accepted 2026-08-31); -f slots renumbered `4..5` → `5..6`; -g slots renumbered `6..7` → `7..8`; -a reservation corrected `17–19` → `17–18` (AuditResponseTooLarge removed). (f) F-6 Renames re-attributed to RFC-0011-c as originator; RFC-0011-e adopts at v3; divergence narrative updated. (g) F-7 `vault_registry(dest_vault_id)` lookup fabrication replaced: substrate returns resolved dest chain via opaque error; no `ChainIdResolver` trait in RFC-0960-v37. (h) F-8 `project_balance(vault_id)` → `project_vault_balance(vault_id, asset_resolver: &dyn VaultAssetResolver)`; `Dqa` used as type, `.to_string()` for display. (i) F-9 Layer-model fix: substrate `[ADD]` section rewritten to defer to RFC-0960-v38; this RFC defines the CLI surface only. (j) Footer Version bumped to 1.3. |
-| 1.4     | 2026-08-31 | Draft    | Wave 3 R3 substrate-truth revert (F-W3-1 CRITICAL). Out-of-cycle substrate-truth verification under Layer-A reversion. F-22/F-23 (Wave 2 R2) had previously changed `projected_at_unix_seconds` from `Option<i64>` → `Option<u64>` to "align with VH 1.2 (h)"; Wave 3 substrate-truth check of `rfcs/accepted/economics/0960-v37-vault-balance-projection-substrate.md` L121 confirmed substrate signature is `pub projected_at_unix_seconds: Option<i64>` (carrying `Option<i64>` per the v014 BIGINT-driven `occurred_at_unix` column substrate). Both the original VH 1.2 (h) choice AND the W2.5 fix went the WRONG direction. Reverted `Option<u64>` → `Option<i64>` at L494 (`§Substrate Additions` description), L529 (`§Vault Summary Shape` `last_updated_unix` field), and L558 (`§Balance Projection` table row). Both layers now agree on `Option<i64>` (substrate is the canonical anchor). Companion F-W3-2..F-W3-9 in same Wave 3 review cycle: F-W3-2 substrate mission YAML `BalanceRecord` → `VaultBalanceProjection` + 7-param substrate signature; F-W3-3 phantom §7.4 cites; F-W3-4 7-param signature doc; F-W3-5 `source_kind` rename; F-W3-6 `memo_or_hash` hash-only pin; F-W3-7 TransferStatus comment Broadcast-removal; F-W3-9 TV-11 exit-code 2 collision note.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| 1.5     | 2026-08-31 | Draft    | Wave 2 R2 housekeeping (12 MISSED-W1 + 0 NEW; the (l) arm of the trimmed VH 1.3 row). F-10 VH converted from 3-col to 4-col with Status column (parity with RFC-0009 / RFC-0010). F-11 Footer block (Version/Submission Date/Last Updated) dropped — VH row + Status header carry version + date. F-12 `## Authors` + `## Maintainers` sections added per BLUEPRINT §RFC Process. F-13 §7.x phantom anchors replaced with section-name prose (e.g., `§Output Envelope: VaultBalanceOutput`; `§Transfer Flow: Pre-flight`); flag-catalog heading `(§7.8.1)` parenthetical dropped (F-19). F-14 Test vectors renumbered to logical order (Envelope Schema #13 now precedes Nonce Collision Regression #14/#15). F-15 Adversary Analysis Decision Table expanded from 3 to 5 entries: added memo-leakage via `--include-memo` (LOW/operator-trust boundary) + nonce-rollback regression via substrate counter (substrate-authority boundary). F-16 `## Mission Decomposition` section added referencing concrete slugs: `0011-e-vault-substrate-additions` (Layer B), `0011-e-vault-subcommands-readonly` (Layer C/D; `list` + `balance`), `0011-e-vault-subcommands-transfer` (Layer C/D; `transfer`); layer-model split documented. F-17 `warnings: Vec<String>` row added to §Redaction table — must NEVER include memo plaintext, vault_id tail, or owner_did; CLI is the writer and is operator-safe by construction. F-18 Dest-vault validation documented as substrate-side (item 5 in §Transfer Flow: Pre-flight); `0011-e-vault-substrate-additions` mission owns the validation per RFC-0960-v38 substrate signatures; CLI does not duplicate. F-20 `RFC-0960-v37 §Determinism Requirements` phantom cite replaced with `RFC-0011 §Determinism Requirements`. F-21 `RFC-0010 §Asset Identifier Canonical Form` phantom cite replaced with `RFC-0960-v36 §Wire Form`.                                |
-| 1.6     | 2026-08-31 | Draft    | Wave 4.5: 2 CRITICAL + 1 HIGH + 1 MED + 1 LOW — mission YAML substrate-truth alignment. F-W4-1 CRITICAL `TransferStatus::Broadcast` re-introduced → removed (L108 type-coverage row + L145 step 3 → `Pending` \| `Confirmed` \| `Failed`). F-W4-2 CRITICAL struct field substrate-truth drift across 4 distinct renames: `projected_balance_dqa_micros` → `projected_balance: Dqa`; `last_projection_unix_seconds` → `projected_at_unix_seconds: Option<i64>`; `ProjectionSource` variants `CacheHit` \| `LogQuery` \| `LogQueryFailed { error }` → `Cache` \| `FreshLogScan` \| `EpochRebuild` (unit, `#[repr(u8)]`, no `serde(tag=...)`); `last_updated_unix: u64` → `last_updated_unix: Option<i64>` (sites L84/L104/L141/L85/L105/L143/L86/L143). F-W4-3 HIGH L141 vs L149 internal inconsistency on `Option<i64>` for `last_updated_unix` (covered by F-W4-2 L141 fix). F-W4-4 MED CLI envelope `schema_version: 1` → `3` propagation aligned (L172 + L197 with `(CLI envelope; substrate T payload versioning is independent)` clarification; `bump to 2` → `bump to 4`). F-W4-5 LOW `initiate_transfer` substrate signature annotated with full type signatures (`vault_id: &VaultId`, `dest: &VaultId`, `amount_dqa_micros: i64`, `asset: &AssetId`) mirroring L62–L68. All 5 F-W4-N findings applied to mission YAML `missions/open/0011-e-vault-substrate-additions.md`; RFC substrate-truth canonical anchor at L494/L529/L558/L564 preserved (no RFC edits beyond VH append).                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| 1.7     | 2026-08-31 | Accepted | Promoted Draft → Accepted after W1-W6.5 multi-round adversarial review loop + DRY closure (W5+W6 zero-finding) + mission YAML substrate-truth cascade resolution (W4.5 mission YAML `Option<i64>` propagation, `source_kind` rename, `ProjectionSource` unit variants `Cache \| FreshLogScan \| EpochRebuild`, `TransferStatus` `Pending \| Confirmed \| Failed` (no `Broadcast`), schema_version=3 CLI envelope, `initiate_transfer` full type signatures). Cite hygiene sweep PASS.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Version | Date       | Status   | Changes                                                                                                                                                                                                                                                                                                            |
+| ------- | ---------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1.0     | 2026-08-31 | Draft    | Initial draft — Phase 6 of the RFC-0011 amendment chain                                                                                                                                                                                                                                                            |
+| 1.1     | 2026-08-31 | Draft    | Wave 5 R1: nonce=counter, schema 2→3, memo redact both, vault_id public                                                                                                                                                                                                                                            |
+| 1.2     | 2026-08-31 | Draft    | Wave 6 R2 (23 fixes): RedactedString, DryRun, slot table, 12a-d TVs                                                                                                                                                                                                                                                |
+| 1.3     | 2026-08-31 | Draft    | Wave 7.5 R1 substrate-align: types, ProjectionSource, ADD deferred                                                                                                                                                                                                                                                 |
+| 1.4     | 2026-08-31 | Draft    | Wave 3 R3 revert: Option<u64>→Option<i64> per substrate                                                                                                                                                                                                                                                            |
+| 1.5     | 2026-08-31 | Draft    | Wave 2 R2 housekeeping: VH 4-col, sections, Mission Decomp                                                                                                                                                                                                                                                         |
+| 1.6     | 2026-08-31 | Draft    | Wave 4.5 mission cascade: TransferStatus, source_kind, schema=3                                                                                                                                                                                                                                                    |
+| 1.7     | 2026-08-31 | Accepted | Promoted Accepted after W1-W6.5 DRY closure (W5+W6 zero)                                                                                                                                                                                                                                                           |
+| 1.8     | 2026-09-08 | Accepted | Hard audit fixes (24 findings: 8H+6M+10L): TV count ≥30, Authors/Maintainers H2, VH row word limits, RFC-0960-v38 phantom clarification, Mermaid Appendix A, InvalidLimit+ConfirmationRequired in Appendix C, required caveat set, pastejacking TV, memo limitation, Lifecycle Requirements subsection, NEXIT docs |
 
 ## Related RFCs
 
@@ -1327,31 +1463,62 @@ appear only in each RFC's Status header and Version History.
 
 ### A. Clap Tree
 
-```text
-octo
-├── vault
-│   ├── list
-│   │   ├── --chain-id <chain-id>
-│   │   ├── --asset-symbol <symbol>
-│   │   ├── --json
-│   │   ├── --limit <n>
-│   │   └── --cursor <cursor>
-│   ├── balance <vault-id>
-│   │   ├── --no-cache
-│   │   ├── --json
-│   │   └── --history <n>
-│   └── transfer
-│       ├── --from <vault-id>
-│       ├── --to <vault-id>
-│       ├── --amount <dqa>
-│       ├── --asset <symbol>
-│       ├── --memo <text>
-│       ├── --include-memo
-│       ├── --redact-ids
-│       ├── --confirm-acknowledge
-│       ├── --dest-chain-id <chain-id>
-│       ├── --dry-run
-│       └── --json
+```mermaid
+graph TD
+    octo["octo"]
+    vault["vault"]
+    list["list"]
+    balance["balance &lt;vault-id&gt;"]
+    transfer["transfer"]
+
+    list_chain["--chain-id &lt;chain-id&gt;"]
+    list_asset["--asset-symbol &lt;symbol&gt;"]
+    list_json["--json"]
+    list_limit["--limit &lt;n&gt;"]
+    list_cursor["--cursor &lt;cursor&gt;"]
+
+    balance_nocache["--no-cache"]
+    balance_json["--json"]
+    balance_hist["--history &lt;n&gt;"]
+
+    xfer_from["--from &lt;vault-id&gt;"]
+    xfer_to["--to &lt;vault-id&gt;"]
+    xfer_amt["--amount &lt;dqa&gt;"]
+    xfer_asset["--asset &lt;symbol&gt;"]
+    xfer_memo["--memo &lt;text&gt;"]
+    xfer_inc["--include-memo"]
+    xfer_redact["--redact-ids"]
+    xfer_conf["--confirm-acknowledge"]
+    xfer_dest["--dest-chain-id &lt;chain-id&gt;"]
+    xfer_dry["--dry-run"]
+    xfer_json["--json"]
+
+    octo --> vault
+    vault --> list
+    vault --> balance
+    vault --> transfer
+
+    list --> list_chain
+    list --> list_asset
+    list --> list_json
+    list --> list_limit
+    list --> list_cursor
+
+    balance --> balance_nocache
+    balance --> balance_json
+    balance --> balance_hist
+
+    transfer --> xfer_from
+    transfer --> xfer_to
+    transfer --> xfer_amt
+    transfer --> xfer_asset
+    transfer --> xfer_memo
+    transfer --> xfer_inc
+    transfer --> xfer_redact
+    transfer --> xfer_conf
+    transfer --> xfer_dest
+    transfer --> xfer_dry
+    transfer --> xfer_json
 ```
 
 The clap tree mirrors §Subcommand Taxonomy: octo vault
@@ -1445,18 +1612,39 @@ with the plaintext and unset the `redacted` flag for that field.
 
 ### C. Error → Exit Code Table
 
-| Variant                   | Exit Code | Trigger                                                                                                                           |
-| ------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `VaultNotOwned`           | 23        | `--from` vault not owned by active DID                                                                                            |
-| `InsufficientBalance`     | 24        | Vault balance < transfer amount                                                                                                   |
-| `RoleNotProvisioned`      | 25        | Transfer invoked without RFC-0011-d provisioning                                                                                  |
-| `ChainIdMismatch`         | 26        | Cross-chain transfer without `--dest-chain-id` (substrate-opaque resolution; CLI surfaces source + substrate-resolved dest chain) |
-| `InvalidChainId`          | 26        | `--chain-id` / `--dest-chain-id` failed RFC-0010 canonical-form parse                                                             |
-| `HsmUnavailable`          | 100       | HSM slot not reachable for active DID                                                                                             |
-| `ChainAdapterUnreachable` | 100       | Chain adapter not reachable for the requested chain                                                                               |
+| Variant                   | Exit Code | Trigger                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ConfirmationRequired`    | 2         | `--confirm-acknowledge` not set on mutating subcommand (two-step gate per RFC-0011 §Confirmation Flag Matrix). **NOTE:** Exit code 2 is shared with parent's `ClapParse` (parent RFC-0011 §Exit Codes); both fire as "input rejected before execution". Consumers MUST disambiguate via the envelope `payload` + `redacted` flag rather than the exit code alone. |
+| `InvalidLimit`            | 19        | `--limit 0` or other out-of-range numeric input (substrate validates `limit >= 1`; exit 19 is unallocated in parent RFC-0011 §Exit Codes, reserved here for `-e` input-validation errors).                                                                                                                                                                        |
+| `VaultNotOwned`           | 23        | `--from` vault not owned by active DID                                                                                                                                                                                                                                                                                                                            |
+| `InsufficientBalance`     | 24        | Vault balance < transfer amount                                                                                                                                                                                                                                                                                                                                   |
+| `RoleNotProvisioned`      | 25        | Transfer invoked without RFC-0011-d provisioning                                                                                                                                                                                                                                                                                                                  |
+| `ChainIdMismatch`         | 26        | Cross-chain transfer without `--dest-chain-id` (substrate-opaque resolution; CLI surfaces source + substrate-resolved dest chain)                                                                                                                                                                                                                                 |
+| `InvalidChainId`          | 26        | `--chain-id` / `--dest-chain-id` failed RFC-0010 canonical-form parse                                                                                                                                                                                                                                                                                             |
+| `HsmUnavailable`          | 100       | HSM slot not reachable for active DID                                                                                                                                                                                                                                                                                                                             |
+| `ChainAdapterUnreachable` | 100       | Chain adapter not reachable for the requested chain                                                                                                                                                                                                                                                                                                               |
 
-Exit codes 23–26 are in the reserved 17–63 range (per RFC-0011
+Exit codes 19 + 23–26 are in the reserved 17–63 range (per RFC-0011
 §Exit Codes); 100 is in the reserved 100–127 environment-error range.
+
+#### NEXIT codes (exit ≥128)
+
+Exit codes 128 and above are POSIX `NEXIT` codes: `exit_code = 128 + N`
+where `N` is the signal number that terminated the process (e.g., 130
+for SIGINT, 137 for SIGKILL, 143 for SIGTERM). Consumers that branch on
+exit codes MUST treat values ≥128 as signal-delivery codes rather than
+application errors:
+
+| Exit code | Signal          | Operator-meaningful case                                                                |
+| --------- | --------------- | --------------------------------------------------------------------------------------- |
+| 130       | SIGINT (Ctrl-C) | Operator interrupted `vault transfer` mid-broadcast; `TransferHandle` may exist         |
+| 137       | SIGKILL         | OOM-killer or supervisor termination; envelope was NOT emitted; substrate state unknown |
+| 143       | SIGTERM         | Supervised shutdown; partial transfer state per substrate                               |
+
+The CLI does NOT map these codes to structured errors — the substrate
+or process supervisor does. Callers that need structured post-mortem
+data MUST inspect the substrate's `transfer_events` table directly
+when exit codes ≥128 are observed.
 
 ### D. Transfer State Machine
 

@@ -38,6 +38,8 @@ on the output types is additive per parent §Compatibility.
 - RFC-0959: Settlement Cost DQA Migration — receipt `cost_dqa` field is a `Dqa` per this migration
 - RFC-0959: Burn Event Wire Form — receipt burn-event references for cost-event linkage
 - RFC-0959: Market Delivery — market-delivery receipts are a subset of the audit surface (a receipt with `subject_did == market_contract_id`)
+- RFC-0012: Audit Substrate — `octo-audit-core` (Layer A) + `octo-audit` (Layer B façade) per §Substrate layer-model note; canonical `AuditEvent` + `AuditEventKind` + `AppendOnlyAuditSink`
+- RFC-0014: Settlement Substrate — `octo-settlement-core` (Layer A) + `octo-settlement` (Layer B façade) per §Substrate layer-model note; canonical `Receipt` + `AskState` + `SettlementStore` + `AppendOnlyReceiptSink`
 - RFC-0008: Deterministic AI Execution Boundary — execution class mapping for the new operations
 
 > **Dependency Validation Rules:**
@@ -677,6 +679,19 @@ The audit substrate `octo-audit` is NEW (does not exist today). The `[ADD]` entr
 
 The settlement substrate `octo_settlement` (RFC-0959) is the source of truth for `SettlementReceipt`; the audit substrate is a thin read-only projection. If RFC-0959 amends `SettlementReceipt`, the audit amendment amends in lockstep — the field types in §Receipt Shape MUST match the latest RFC-0959 substrate-truth.
 
+### Substrate layer-model note (RFC-0012 + RFC-0014)
+
+The audit + settlement substrate names referenced in this RFC (`octo-audit`, `octo-settlement`) resolve to a **two-crate canonical pattern** per `docs/research/2026-09-10-octo-audit-governance-settlement-modular-layer-research.md` Finding 4 (hybrid Layer A core + Layer B façade):
+
+| RFC name (Layer B façade) | Substrate (Layer A frozen) | RFC defining split |
+|---|---|---|
+| `octo-audit` | `octo-audit-core` | RFC-0012 |
+| `octo-settlement` | `octo-settlement-core` | RFC-0014 |
+
+The façade re-exports ONLY from the substrate (no domain leakage). The substrate owns canonical `AuditEvent` + `AuditEventKind` + `AppendOnlyAuditSink` (RFC-0012 §Specification) + `Receipt` + `AskState` + `SettlementStore` + `AppendOnlyReceiptSink` (RFC-0014 §Specification). Domain crates (`octo-wallet/capability/audit_log`, `octo-network/dot/audit_store`, `octo-whatsapp/audit`, `quota-router-sm-engine` storage adapter) consume the substrate for canonical types + add their own storage adapters + extension enums.
+
+CLI consumers (`octo-cli/commands/audit`) depend on the façade (`octo-audit`, `octo-settlement`) per RFC-0011-a §Key Files to Modify Layer C → Layer B direction; the substrate is an implementation detail that domain crates and CLI transitively pull. No CLI Cargo dep changes; the façade name matches this RFC text exactly.
+
 ## Test Vectors
 
 The amendment defines the canonical set below (14 vectors (≥8 parent floor; amendment floor 12 satisfied)).
@@ -872,6 +887,7 @@ Audit subcommands are READ-ONLY by construction (per §Security Considerations r
 | 1.2     | 2026-08-31 | Draft    | v1.2 — Wave 3.5 C1/H/M-series surgical fixes (13 total)<br>13 surgical fixes: 1 CRITICAL (ReceiptStatus re-export), 6 HIGH (H1/H3/H4/H5/H6/H7), 6 MEDIUM (M-series grouped) |
 | 1.3     | 2026-08-31 | Draft    | Wave 4.5: 2 MED + 3 LOW — VH row drift, TV expected-value re-paste, L243 fragment, L273 truncation, L603 severity                                                           |
 | 1.4     | 2026-08-31 | Accepted | Promoted Draft → Accepted after W1-W6.5 multi-round adversarial review loop + DRY closure (W5+W6 zero-finding) + 28 cite hygiene fixes                                      |
+| 1.5     | 2026-09-10 | Accepted | Layer-model amendment: RFC-0012 + RFC-0014 substrate split. |
 
 ## Related RFCs
 

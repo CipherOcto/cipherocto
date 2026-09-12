@@ -21,11 +21,11 @@ status: Open
 **Status:** Open — post-acceptance rollout acceptance suite
 **Substrate:** RFC-0014-v3 §S5.1 (scrubber) + §S5.2 (`SettlementHashOpaque`) + §S5.3 (SinkSpecific payload cap posture) + §S5.1.1 (DOMAIN adapter contract)
 **Parent:** RFC-0014 + RFC-0014-v2 (substrate extensions)
-**Companion:** RFC-0012-v3 (paired-acceptance — see §2-Cycle Atomic Promotion Tag)
+**Companion:** RFC-0012-v3 (paired-acceptance — see RFC-0014-v3 §2-Cycle Atomic Promotion Tag)
 
 ## 2-Cycle Atomic Promotion gate
 
-This mission is one of TWO paired-acceptance missions for the v3 amendment round; see §2-Cycle Atomic Promotion Tag at `rfcs/accepted/process/0014-v3-settlement-substrate-amendment.md` + `rfcs/accepted/process/0012-v3-audit-substrate-amendment.md`. **Both RFCs must remain Accepted for this mission to remain claimable.** If either drops back to Draft, this mission MUST defer (user-initiated only per BLUEPRINT.md §Mission Lifecycle Deferral procedure).
+This mission is one of TWO paired-acceptance missions for the v3 amendment round; see RFC-0014-v3 §2-Cycle Atomic Promotion Tag at `rfcs/accepted/process/0014-v3-settlement-substrate-amendment.md` + `rfcs/accepted/process/0012-v3-audit-substrate-amendment.md`. **Both RFCs must remain Accepted for this mission to remain claimable.** If either drops back to Draft, this mission MUST defer (user-initiated only per BLUEPRINT.md §Mission Lifecycle Deferral procedure).
 
 **§2-Cycle gate deviation note (user-acknowledged rationale):** BLUEPRINT.md §Mission Lifecycle §2-Cycle Atomic Promotion gate item #2 mandates "A single mission YAML MUST own both promotions" of a 2-cycle pair. This mission + sister mission `0012-v3-audit-substrate-amendment-rollout` is a deliberate sister-mission split per `RFC-0012-v3 + RFC-0014-v3 multi-round DRY CLOSED 2026-09-12` precedent (RFC-0012/0013/0014 missions DRY CLOSED 2026-09-10: 9 NEW missions, 1 per RFC, with §2-Cycle gate metadata). Rationale: each rollout touches a distinct Layer B façade (`octo-audit` vs `octo-settlement`); consolidating into one mission would force cross-façade coupling for a rollout that is fundamentally audit-side vs settlement-side. The `pair: 2-Cycle Atomic Promotion` metadata block + cross-sibling `depends_on:` entries satisfy the gate's pairing invariant per item #5 (cite validation surfaces both RFC numbers).
 
@@ -39,15 +39,15 @@ Per RFC-0014-v3 §Implementation Phases Phases 1 + 2 + 3 are **DONE** at substra
 
 1. **Workspace-wide Display redaction regression suite** — `crates/octo-settlement/tests/workspace_redaction_regression.rs` exercises every public Display-emitting path reachable from `octo-settlement` types (`SettlementError` 8-variant shadow at quota-router-sm-engine + canonical substrate `SettlementError`). Asserts no Display output contains raw 32-byte hashes or hex bytes that the substrate's redaction policy would have redacted. Coverage: octo-settlement (13 tests), octo-settlement-core (6 tests), quota-router-sm-engine shadow enum (8 Display variants × Display-derived tests).
 2. **`SettlementHashOpaque` accessor round-trip suite** — verify every consumer site that constructs `SettlementHashOpaque::new([u8; 32])` is paired with an `as_bytes()` consumer (or `Clone`/`PartialEq`). Audit grep `quota-router-sm-engine/src/store.rs` + `settlement_event.rs`; assert no raw `.0` field access bypasses accessor.
-3. **SinkSpecific payload monitoring infra** — substrate-faithful = no cap at substrate (per §S5.3 + AC-11); cap lives at scrubber. Add workspace-level log-capture test that exercises `SettlementError::SinkSpecific("x".repeat(10_000))` through DOMAIN adapter wrapper and asserts scrubber-side cap fires (sentinel `<redacted-too-long>` present). Production-side: NO runtime enforcement added (would violate substrate-faithful); only verification of cap-at-scrubber posture.
+3. **SinkSpecific payload monitoring infra** — substrate-faithful = no cap at substrate (per RFC-0014-v3 §S5.3 + AC-11); cap lives at scrubber. Add workspace-level log-capture test that exercises `SettlementError::SinkSpecific("x".repeat(10_000))` through DOMAIN adapter wrapper and asserts scrubber-side cap fires (sentinel `<redacted-too-long>` present). Production-side: NO runtime enforcement added (would violate substrate-faithful); only verification of cap-at-scrubber posture.
 4. **DOMAIN adapter contract conformance (settlement-side)** — every `crates/quota-router-sm-engine/**/*.rs::format!("{e}")` and `.to_string()` chain in workspace flagged + scrubbed via `scrub_adapter_error_with(s, ADAPTER_TYPES)`. Verify all 24 sites from R48-s defect 1b closure remain scrubbed; add 4 bare `scrub_adapter_error(` callsites to a registry assertion test (no-registry entry points for adapter types outside DOMAIN registry).
-5. **Parent RFC `RFC-0014` cross-reference update** — append §Cross-References note linking to RFC-0014-v2 + RFC-0014-v3 + RFC-0012-v3 (paired). Adds §Substrate-Faithful Amendment Trail table to parent RFC.
-6. **§FW4 clippy lint prelude (settlement-side)** — extend the workspace clippy rule from sister mission to also flag raw `.to_string()` chains on `SettlementError` in DOMAIN-boundary modules (gated off-by-default per RFC-0014-v3 §FW4). Sister-mission audit-side lint lives at `RFC-0012-v3 §FW2`. The audit-side and settlement-side lints detect SEMANTICALLY DIFFERENT patterns (`format!("{e}")` vs `e.to_string()`) and require two distinct lint registrations in the shared registry — the layer model is Layer E per-extension crate (`octo-clippy-extensions`) hosting both registrations, per CLAUDE.md §User extensibility Registry pattern.
+5. **Parent RFC `RFC-0014` cross-reference update** — append RFC-0014-v3 §Related RFCs note linking to RFC-0014-v2 + RFC-0014-v3 + RFC-0012-v3 (paired). Adds RFC-0014-v3 §Substrate-Faithful Amendment Trail table to parent RFC.
+6. **RFC-0014-v3 §FW4 clippy lint prelude (settlement-side)** — extend the workspace clippy rule from sister mission to also flag raw `.to_string()` chains on `SettlementError` in DOMAIN-boundary modules (gated off-by-default per RFC-0014-v3 §FW4). Sister-mission audit-side lint lives at `RFC-0012-v3 §FW2`. The audit-side and settlement-side lints detect SEMANTICALLY DIFFERENT patterns (`format!("{e}")` vs `e.to_string()`) and require two distinct lint registrations in the shared registry — the layer model is Layer E per-extension crate (`octo-clippy-extensions`) hosting both registrations, per CLAUDE.md §User extensibility Registry pattern.
 
 ### Out of scope (per RFC §Future Work)
 
 - **§FW1 cross-RFC scrubber shared utility** (extract to `octo-foundation::scrub`) — DEFERRED to v2.1+; out of scope.
-- Substrate-level payload cap on `SinkSpecific(String)` — **DEFERRED — lands at acceptance** per §S5.3 + AC-11. Mission captures acceptance behavior; runtime cap enforcement is a separate mission (when/if 4 KiB scrubber cap proves insufficient).
+- Substrate-level payload cap on `SinkSpecific(String)` — **DEFERRED — lands at acceptance** per RFC-0014-v3 §S5.3 + AC-11. Mission captures acceptance behavior; runtime cap enforcement is a separate mission (when/if 4 KiB scrubber cap proves insufficient).
 - Any new substrate amendments (v3.x+) — out of scope.
 
 ### Acceptance criteria
@@ -62,8 +62,8 @@ Per RFC-0014-v3 §Implementation Phases Phases 1 + 2 + 3 are **DONE** at substra
 - [ ] AC-8: NEW `crates/octo-settlement/tests/hash_opaque_accessor_round_trip.rs` PASSES (asserts every consumer of `SettlementHashOpaque` uses accessor pattern; 0 `.0` field accesses)
 - [ ] AC-9: NEW `crates/octo-settlement/tests/sink_specific_payload_cap_at_scrubber.rs` PASSES (asserts scrubber-side cap fires on 10K-char `SinkSpecific` payload; substrate Display remains verbatim)
 - [ ] AC-10: NEW `crates/octo-settlement/tests/domain_adapter_contract_registry.rs` PASSES (asserts every flagged `.to_string()` site in workspace `quota-router-sm-engine/**` + `octo-settlement/**` modules gets scrubbed)
-- [ ] AC-11: RFC-0014 §Cross-References table appended with v2 + v3 sibling refs
-- [ ] AC-12: RFC-0014 §Substrate-Faithful Amendment Trail table added (per Deliverable 5; enumerates v2 + v3 amendment round + substrate commit refs)
+- [ ] AC-11: RFC-0014-v3 §Related RFCs table appended with v2 + v3 sibling refs
+- [ ] AC-12: RFC-0014-v3 §Substrate-Faithful Amendment Trail table added (per Deliverable 5; enumerates v2 + v3 amendment round + substrate commit refs)
 - [ ] AC-13: Cite sweep clean for any RFC parent updates
 - [ ] AC-14: Prettier-clean on all new + edited files
 - [ ] AC-15: §2-Cycle gate sanity: sister mission `0012-v3-audit-substrate-amendment-rollout` still `Open` in `missions/open/`; if it deferred, this mission defers too (user-initiated only)

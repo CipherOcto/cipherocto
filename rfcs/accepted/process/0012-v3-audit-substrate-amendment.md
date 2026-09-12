@@ -4,7 +4,7 @@
 | ------------ | ------------------------------------------------------------------------------- |
 | Status       | Accepted                                                                        |
 | Version      | v3.0.0                                                                          |
-| Layer        | A (substrate-frozen)                                                            |
+| Layer        | A + B (substrate-frozen + façade)                                               |
 | Authors      | CipherOcto Architecture Working Group                                           |
 | Maintainers  | CipherOcto Architecture Working Group                                           |
 | Parent RFC   | RFC-0012                                                                        |
@@ -409,11 +409,11 @@ expect: format!("{}", err) == "chain_hash mismatch at event_id 42"
 
 ### §FW1 — Cross-RFC scrubber shared utility
 
-At v2.1+, extract `octo_audit::scrub` + `octo_settlement::scrub` into `octo-foundation::scrub` (Layer A frozen shared utility). Per-façade duplication accepted at v2.0.0 per R34.5 trade-off; consolidation deferred.
+**DEFERRED — lands at acceptance** At v2.1+, extract `octo_audit::scrub` + `octo_settlement::scrub` into `octo-foundation::scrub` (Layer A frozen shared utility). Per-façade duplication accepted at v2.0.0 per R34.5 trade-off; consolidation deferred.
 
 ### §FW2 — Clippy lint for raw `format!("{e}")` in DOMAIN adapters
 
-Add clippy lint that flags raw `format!("{e}")` chains in `crates/*/src/storage/` modules, requiring `scrub_adapter_error_with` wrapping. Deferred to v3.x.
+**DEFERRED — lands at acceptance** Add clippy lint that flags raw `format!("{e}")` chains in `crates/*/src/storage/` modules, requiring `scrub_adapter_error_with` wrapping. Deferred to v3.x.
 
 ## Rationale
 

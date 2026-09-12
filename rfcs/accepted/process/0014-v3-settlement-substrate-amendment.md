@@ -68,7 +68,9 @@ R48-s review of RFC-0012-v2 + RFC-0014-v2 surfaced **4 paired-acceptance DEFERRE
 | `quota-router-sm-engine` (Layer C)          | Owns shadow 8-variant `SettlementError`; references substrate newtype via `pub use octo_settlement_core::SettlementHashOpaque` (Layer A single source of truth)       |
 | DOMAIN adapters (Layer B-faithful)          | MUST call `octo_settlement::scrub_adapter_error_with(s, ADAPTER_TYPES)` on every raw `.to_string()` site; raw `e.to_string()` chains are FORBIDDEN at DOMAIN boundary |
 
-## Specification
+## §S5 — Specification (substrate-faithful field extensions)
+
+Wrapper heading aggregating §S5.1 (per-façade scrubber) + §S5.2 (`SettlementHashOpaque` newtype) + §S5.2.1 (Layer-model rationale) + §S5.3 (`SinkSpecific` payload cap posture) + §S5.1.1 (DOMAIN adapter migration contract). Substrate-faithful additions per CLAUDE.md §Architectural Principles: no field removals, no variant additions.
 
 ### §S5.1 — Per-façade scrubber at `octo-settlement`
 
@@ -213,7 +215,7 @@ Per BLUEPRINT.md §Adversary Analysis, the following adversary profiles are eval
 
 **4. What is the adversary's cost model?** Zero marginal cost per observed mismatch. Cost bounded by log retention.
 
-**5. What is the adversary's probability of success?** Pre-fix: HIGH — `#[error("settlement hash mismatch: expected {expected}, got {got}")]` emits hex-encoded 32-byte hash strings directly. Post-fix: NEGLIGIBLE — `SettlementHashOpaque::Display` emits `<redacted-hash>`; `Debug` ALSO redacts (symmetric). `as_bytes()` requires code execution. Residual risk: substrate-level `octo-settlement-core::SettlementError` variants (`AskNotFound`, `AlreadyConsumed`) still use raw `[u8; 32]` for `Debug` — see §FW2 substrate-level `[u8; 32]` Debug redaction (DEFERRED — lands at acceptance).
+**5. What is the adversary's probability of success?** Pre-fix: HIGH — `#[error("settlement hash mismatch: expected {expected}, got {got}")]` emits hex-encoded 32-byte hash strings directly. Post-fix: NEGLIGIBLE — `SettlementHashOpaque::Display` emits `<redacted-hash>`; `Debug` ALSO redacts (symmetric). `as_bytes()` requires code execution. Residual risk: substrate-level `octo-settlement-core::SettlementError` variants (`AskNotFound`, `AlreadyConsumed`) still use raw `[u8; 32]` for `Debug` — see §FW2 substrate-level `[u8; 32]` Debug redaction (**DEFERRED — lands at acceptance**).
 
 ## Economic Analysis
 
@@ -487,19 +489,19 @@ expect: format!("{}", err) contains scrubber sentinel(s) where applicable
 
 ### §FW1 — Cross-RFC scrubber shared utility
 
-At v2.1+, extract `octo_audit::scrub` + `octo_settlement::scrub` into `octo-foundation::scrub` (Layer A frozen shared utility). Per-façade duplication accepted at v2.0.0 per R34.5 trade-off; consolidation deferred.
+**DEFERRED — lands at acceptance** At v2.1+, extract `octo_audit::scrub` + `octo_settlement::scrub` into `octo-foundation::scrub` (Layer A frozen shared utility). Per-façade duplication accepted at v2.0.0 per R34.5 trade-off; consolidation deferred.
 
 ### §FW2 — Substrate-level `[u8; 32]` Debug redaction
 
-At acceptance, add `impl Debug for [u8; 32]` (or a wrapper newtype) at `octo-settlement-core` to redact raw 32-byte hashes from substrate-level `Debug` formatting. Currently deferred; shadow variants at Layer C use `SettlementHashOpaque` to bypass the gap.
+**DEFERRED — lands at acceptance** At acceptance, add `impl Debug for [u8; 32]` (or a wrapper newtype) at `octo-settlement-core` to redact raw 32-byte hashes from substrate-level `Debug` formatting. Currently deferred; shadow variants at Layer C use `SettlementHashOpaque` to bypass the gap.
 
 ### §FW3 — Substrate-level SinkSpecific cap
 
-At acceptance, MAY amend §S5 to declare a substrate-side byte cap (e.g. `MAX_SINK_PAYLOAD_BYTES = 4 * 1024`) if 4 KiB scrubber is found insufficient in production. Substrate-faithful = no `debug_assert!`; cap would be a runtime `if s.len() > MAX { s.truncate(MAX); s.push_str(REDACTED_TOO_LONG); }` at the variant's `Display` boundary only.
+**DEFERRED — lands at acceptance** At acceptance, MAY amend §S5 to declare a substrate-side byte cap (e.g. `MAX_SINK_PAYLOAD_BYTES = 4 * 1024`) if 4 KiB scrubber is found insufficient in production. Substrate-faithful = no `debug_assert!`; cap would be a runtime `if s.len() > MAX { s.truncate(MAX); s.push_str(REDACTED_TOO_LONG); }` at the variant's `Display` boundary only.
 
 ### §FW4 — Clippy lint for raw `.to_string()` in DOMAIN adapters
 
-Add clippy lint that flags raw `.to_string()` chains in `crates/*/src/storage/` modules, requiring `scrub_adapter_error_with` wrapping. Deferred to v3.x.
+**DEFERRED — lands at acceptance** Add clippy lint that flags raw `.to_string()` chains in `crates/*/src/storage/` modules, requiring `scrub_adapter_error_with` wrapping. Deferred to v3.x.
 
 ## Rationale
 

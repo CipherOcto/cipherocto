@@ -10,6 +10,14 @@
 //! See `octo_audit::scrub` module docs for full pattern spec; this file
 //! is byte-identical except for the module header (per-façade
 //! duplication is the load-bearing substrate change).
+//!
+//! ## Compilation posture
+//!
+//! Patterns 1, 2, 3, 4, 5, 5b, 5c, 5d, 5e pre-compiled via
+//! `once_cell::sync::Lazy<regex::Regex>`. Pattern 6 is substring-replace
+//! (no regex compilation needed); registry entries are adapter-type
+//! names like `StoolapStore`. Per-call cost is `Regex::replace_all`
+//! + `String::replace` (no recompile).
 
 use once_cell::sync::Lazy;
 use regex::Regex;

@@ -12,8 +12,9 @@ crate-type = ["rlib"]
 [dependencies]
 # Layer B facade → Layer A substrate (RFC-0014 §Module Layout).
 octo-settlement-core = { path = "../octo-settlement-core" }
-# RFC-0014-v3 substrate amendment: scrubber pattern redaction (defect 1)
+# Per-façade scrubber compilation posture (RFC-0014-v3 §S5.1 / RFC-0012-v3 §S5.1; Layer B façade)
 regex = { workspace = true }
+# Lazy static regex compilation (RFC-0014-v3 §S5.1 / RFC-0012-v3 §S5.1; Layer B façade)
 once_cell = { workspace = true }
 
 [lints.rust]

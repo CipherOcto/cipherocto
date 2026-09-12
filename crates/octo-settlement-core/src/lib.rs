@@ -49,7 +49,7 @@ pub mod store;
 pub use ask::Ask;
 pub use ask::AskState;
 pub use chain::{receipt_id_for, verify_receipt_chain, CHAIN_DOMAIN_SEPARATOR};
-pub use error::SettlementError;
+pub use error::{SettlementError, SettlementHashOpaque};
 pub use receipt::Receipt;
 pub use reservation::{Reservation, ReservationState};
 pub use sink::AppendOnlyReceiptSink;

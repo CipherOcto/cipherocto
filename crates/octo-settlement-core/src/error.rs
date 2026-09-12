@@ -50,3 +50,44 @@ pub enum SettlementError {
     #[error("sink-specific error: {0}")]
     SinkSpecific(String),
 }
+
+/// Opaque 32-byte settlement-hash newtype whose `Display` impl emits
+/// `<redacted-hash>` (RFC-0014-v3 §S5.2 — paired substrate amendment;
+/// defect 2 oracle; Layer A frozen substrate primitive).
+///
+/// The raw bytes are preserved at `Debug` + `source()` so programmatic
+/// callers (chain-integrity verification, log post-processing) can
+/// inspect them; human-facing `Display` + `to_string()` never leak.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SettlementHashOpaque([u8; 32]);
+
+impl SettlementHashOpaque {
+    /// Wrap a 32-byte hash for redacted Display.
+    #[must_use]
+    pub const fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    /// Access the raw bytes (programmatic callers only; never log).
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for SettlementHashOpaque {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Debug intentionally also redacts — symmetric with Display so
+        // `dbg!()` / `unwrap_or_else(|e| panic!("{:?}", e))` paths
+        // cannot leak via accidental Debug formatting either.
+        f.write_str("SettlementHashOpaque(<redacted-hash>)")
+    }
+}
+
+impl std::fmt::Display for SettlementHashOpaque {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<redacted-hash>")
+    }
+}
+
+impl std::error::Error for SettlementHashOpaque {}

@@ -26,9 +26,10 @@
 //! ## Compilation posture
 //!
 //! Patterns 1, 2, 3, 4, 5, 5b, 5c, 5d, 5e pre-compiled via
-//! `once_cell::sync::Lazy<regex::Regex>`. Pattern 6 pre-compiled via
-//! `once_cell::sync::Lazy<regex::RegexSet>`. Per-call cost is
-//! `RegexSet.is_match` + `Regex::replace_all` (no recompile).
+//! `once_cell::sync::Lazy<regex::Regex>`. Pattern 6 is substring-replace
+//! (no regex compilation needed); registry entries are adapter-type
+//! names like `StoolapAuditSink`. Per-call cost is `Regex::replace_all`
+//! + `String::replace` (no recompile).
 
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -96,10 +97,6 @@ static RE_UUID: Lazy<Regex> = Lazy::new(|| {
         .expect("Pattern 5e UUID regex compiles")
 });
 
-/// Per-call monotonic counter for `<redacted-hex-N>` placeholders.
-use std::sync::atomic::{AtomicUsize, Ordering};
-static HEX_REDACTION_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
 /// Redact a single adapter-error string using the canonical 10-pattern
 /// scrubber. Input/output caps enforced (see module docs).
 ///
@@ -128,12 +125,6 @@ pub fn scrub_adapter_error_with(s: &str, adapter_types: &[&str]) -> String {
     if s.len() > MAX_INPUT_BYTES {
         return REDACTED_TOO_LONG.to_owned();
     }
-    // Snapshot the hex counter at the START so each scrubber call has
-    // deterministic placeholder assignment (counter is monotonic
-    // process-global; deterministic placeholder N for a given input is
-    // NOT stable across processes, which is acceptable — placeholders
-    // are diagnostic, not cryptographic).
-    HEX_REDACTION_COUNTER.store(0, Ordering::SeqCst);
     let mut out = s.to_owned();
     // Pattern 6 first: replace adapter-type names so subsequent
     // patterns do not match against the (now-redacted) type-name
@@ -143,17 +134,16 @@ pub fn scrub_adapter_error_with(s: &str, adapter_types: &[&str]) -> String {
             if at.is_empty() {
                 continue;
             }
-            // Use a fresh `Regex` per adapter-type (compile cost paid
-            // once per type per process via per-type Lazy would be a
-            // future optimization; current impl compiles per call to
-            // keep the surface small — acceptable for adapter-type
-            // counts ≤ ~10).
-            //
-            // Pattern 6: literal substring replace — the registry
+            // Pattern 6 is a literal substring replace via
+            // `String::replace` — no regex compilation. The registry
             // entries are adapter-type names (PascalCase identifiers
             // like `StoolapAuditSink`); substring replacement is
-            // sufficient. Word boundaries NOT used (adapter type
-            // names are not natural-language words).
+            // sufficient because adapter-type names are not
+            // natural-language words and word boundaries are not
+            // needed. This avoids the per-call regex compile cost a
+            // per-type `Regex` would impose; the substring scan is
+            // O(n) per registry entry, which is acceptable for
+            // adapter-type counts ≤ ~10.
             out = out.replace(at, "<redacted-adapter>");
         }
     }

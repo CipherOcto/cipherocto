@@ -150,7 +150,7 @@ impl SettlementStore for StoolapStore {
             ),
         )
         .map(|_| ())
-        .map_err(|e| SettlementError::Storage(StorageError::Stoolap(e.to_string())))?;
+        .map_err(|e| SettlementError::Storage(StorageError::Stoolap(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))))?;
 
         Ok(settlement_hash)
     }

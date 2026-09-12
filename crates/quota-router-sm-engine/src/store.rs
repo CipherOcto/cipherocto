@@ -10,7 +10,12 @@
 use std::sync::{Arc, Mutex};
 
 use crate::schema::apply_migrations;
-use crate::{Ask, AskState, Receipt, SettlementError};
+use crate::{Ask, AskState, Receipt, SettlementError, SettlementHashOpaque};
+use octo_settlement::{scrub_adapter_error, scrub_adapter_error_with};
+
+/// Adapter-type registry for Pattern 6 redaction (RFC-0014-v3 §S5.1
+/// per-façade scrubber).
+const ADAPTER_TYPES: &[&str] = &["StoolapStore", "StoolapReceiptSink"];
 
 /// Errors from the storage layer (distinct from settlement logic errors).
 #[derive(Debug, thiserror::Error)]
@@ -53,8 +58,8 @@ impl std::fmt::Debug for StoolapStore {
 impl StoolapStore {
     /// Open an in-memory stoolap database + apply migrations.
     pub fn open_in_memory() -> Result<Self, StorageError> {
-        let db =
-            StoolapDatabase::open_in_memory().map_err(|e| StorageError::Stoolap(e.to_string()))?;
+        let db = StoolapDatabase::open_in_memory()
+            .map_err(|e| StorageError::Stoolap(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))?;
         apply_migrations(&db)?;
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
@@ -63,7 +68,8 @@ impl StoolapStore {
 
     /// Open a persistent stoolap database at the given path + apply migrations.
     pub fn open(path: &str) -> Result<Self, StorageError> {
-        let db = StoolapDatabase::open(path).map_err(|e| StorageError::Stoolap(e.to_string()))?;
+        let db = StoolapDatabase::open(path)
+            .map_err(|e| StorageError::Stoolap(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))?;
         apply_migrations(&db)?;
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
@@ -75,7 +81,7 @@ impl SettlementStore for StoolapStore {
     fn mint(&self, ask: &Ask) -> Result<(), SettlementError> {
         let db = self.db.lock().expect("stoolap mutex poisoned");
         let axes_bytes = serde_json::to_vec(&ask.axes_consumed)
-            .map_err(|e| StorageError::Decode(e.to_string()))?;
+            .map_err(|e| StorageError::Decode(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))?;
         let output_hash_param: Option<Vec<u8>> = ask.output_hash.map(|h| h.to_vec());
         let sql = "INSERT INTO asks (
                 ask_id, holder_did, axes_consumed, cap_root_hash, invocation_hash,
@@ -100,7 +106,7 @@ impl SettlementStore for StoolapStore {
             ),
         )
         .map(|_| ())
-        .map_err(|e| SettlementError::Storage(StorageError::Stoolap(e.to_string())))?;
+        .map_err(|e| SettlementError::Storage(StorageError::Stoolap(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))))?;
         Ok(())
     }
 
@@ -110,18 +116,18 @@ impl SettlementStore for StoolapStore {
         let mut canonical = Vec::new();
         canonical.extend_from_slice(
             &serde_json::to_vec(&stored.0)
-                .map_err(|e| SettlementError::Storage(StorageError::Decode(e.to_string())))?,
+                .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))))?,
         );
         canonical.extend_from_slice(
             &serde_json::to_vec(receipt)
-                .map_err(|e| SettlementError::Storage(StorageError::Decode(e.to_string())))?,
+                .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))))?,
         );
         let settlement_hash: [u8; 32] = *blake3::hash(&canonical).as_bytes();
 
         if receipt.ask_id != *ask_id {
             return Err(SettlementError::SettlementHashMismatch {
-                expected: hex::encode(ask_id),
-                got: hex::encode(receipt.ask_id),
+                expected: SettlementHashOpaque::new(*ask_id),
+                got: SettlementHashOpaque::new(receipt.ask_id),
             });
         }
         if stored.1 != AskState::Minted {
@@ -177,9 +183,9 @@ impl SettlementStore for StoolapStore {
                 "SELECT ask_id FROM consumed_receipt_index WHERE receipt_id = ?",
                 (receipt_id.to_vec(),),
             )
-            .map_err(|e| SettlementError::Storage(StorageError::Stoolap(e.to_string())))?;
+            .map_err(|e| SettlementError::Storage(StorageError::Stoolap(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))))?;
         if dup_rows.count() > 0 {
-            return Err(SettlementError::AlreadyConsumed(hex::encode(receipt_id)));
+            return Err(SettlementError::AlreadyConsumed(SettlementHashOpaque::new(*receipt_id)));
         }
 
         // Find ask_id by settlement_hash (= receipt_id for our schema; in a
@@ -189,20 +195,20 @@ impl SettlementStore for StoolapStore {
                 "SELECT ask_id FROM asks WHERE settlement_hash = ?",
                 (receipt_id.to_vec(),),
             )
-            .map_err(|e| SettlementError::Storage(StorageError::Stoolap(e.to_string())))?;
+            .map_err(|e| SettlementError::Storage(StorageError::Stoolap(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))))?;
         let Some(row_result) = ask_rows.into_iter().next() else {
-            return Err(SettlementError::AskNotFound(hex::encode(receipt_id)));
+            return Err(SettlementError::AskNotFound(SettlementHashOpaque::new(*receipt_id)));
         };
         let row = row_result
-            .map_err(|e| SettlementError::Storage(StorageError::Stoolap(e.to_string())))?;
+            .map_err(|e| SettlementError::Storage(StorageError::Stoolap(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))))?;
         let ask_id_bytes: Vec<u8> = row
             .get(0)
-            .map_err(|e| SettlementError::Storage(StorageError::Decode(e.to_string())))?;
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))))?;
         if ask_id_bytes.len() != 32 {
-            return Err(SettlementError::Storage(StorageError::Decode(format!(
+            return Err(SettlementError::Storage(StorageError::Decode(scrub_adapter_error(&format!(
                 "ask_id wrong length: {}",
                 ask_id_bytes.len()
-            ))));
+            )))));
         }
         let mut ask_id = [0u8; 32];
         ask_id.copy_from_slice(&ask_id_bytes);
@@ -221,16 +227,16 @@ impl SettlementStore for StoolapStore {
         ) {
             Ok(_) => {}
             Err(e) => {
-                let msg = e.to_string().to_lowercase();
+                let msg = scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES).to_lowercase();
                 if msg.contains("unique")
                     || msg.contains("constraint")
                     || msg.contains("duplicate")
                     || msg.contains("primary")
                 {
-                    return Err(SettlementError::AlreadyConsumed(hex::encode(receipt_id)));
+                    return Err(SettlementError::AlreadyConsumed(SettlementHashOpaque::new(*receipt_id)));
                 }
                 return Err(SettlementError::Storage(StorageError::Stoolap(
-                    e.to_string(),
+                    scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES),
                 )));
             }
         }
@@ -241,7 +247,7 @@ impl SettlementStore for StoolapStore {
              WHERE ask_id = ? AND state = 'Settled'";
         db.execute(update_sql, (now as i64, ask_id.to_vec()))
             .map(|_| ())
-            .map_err(|e| SettlementError::Storage(StorageError::Stoolap(e.to_string())))?;
+            .map_err(|e| SettlementError::Storage(StorageError::Stoolap(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))))?;
 
         Ok(())
     }
@@ -253,44 +259,44 @@ impl SettlementStore for StoolapStore {
              FROM asks WHERE ask_id = ?";
         let rows = db
             .query(sql, (ask_id.to_vec(),))
-            .map_err(|e| SettlementError::Storage(StorageError::Stoolap(e.to_string())))?;
+            .map_err(|e| SettlementError::Storage(StorageError::Stoolap(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))))?;
 
         let Some(row_result) = rows.into_iter().next() else {
-            return Err(SettlementError::AskNotFound(hex::encode(ask_id)));
+            return Err(SettlementError::AskNotFound(SettlementHashOpaque::new(*ask_id)));
         };
         let row = row_result
-            .map_err(|e| SettlementError::Storage(StorageError::Stoolap(e.to_string())))?;
+            .map_err(|e| SettlementError::Storage(StorageError::Stoolap(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))))?;
 
         let holder_did: String = row
             .get(0)
-            .map_err(|e| SettlementError::Storage(StorageError::Decode(e.to_string())))?;
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))))?;
         let axes_bytes: Vec<u8> = row
             .get(1)
-            .map_err(|e| SettlementError::Storage(StorageError::Decode(e.to_string())))?;
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))))?;
         let axes_consumed: Vec<(String, u64)> = serde_json::from_slice(&axes_bytes)
-            .map_err(|e| SettlementError::Storage(StorageError::Decode(e.to_string())))?;
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))))?;
         let cap_root_hash_vec: Vec<u8> = row
             .get(2)
-            .map_err(|e| SettlementError::Storage(StorageError::Decode(e.to_string())))?;
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))))?;
         let invocation_hash_vec: Vec<u8> = row
             .get(3)
-            .map_err(|e| SettlementError::Storage(StorageError::Decode(e.to_string())))?;
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))))?;
         let current_unix_time: i64 = row
             .get(4)
-            .map_err(|e| SettlementError::Storage(StorageError::Decode(e.to_string())))?;
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))))?;
         let output_hash: Option<Vec<u8>> = row
             .get(5)
-            .map_err(|e| SettlementError::Storage(StorageError::Decode(e.to_string())))?;
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))))?;
         let state_sql: String = row
             .get(6)
-            .map_err(|e| SettlementError::Storage(StorageError::Decode(e.to_string())))?;
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))))?;
 
         if cap_root_hash_vec.len() != 32 || invocation_hash_vec.len() != 32 {
-            return Err(SettlementError::Storage(StorageError::Decode(format!(
+            return Err(SettlementError::Storage(StorageError::Decode(scrub_adapter_error(&format!(
                 "hash field wrong length: cap={}, inv={}",
                 cap_root_hash_vec.len(),
                 invocation_hash_vec.len()
-            ))));
+            )))));
         }
         let mut cap_root_hash = [0u8; 32];
         cap_root_hash.copy_from_slice(&cap_root_hash_vec);
@@ -304,15 +310,15 @@ impl SettlementStore for StoolapStore {
             }
             Some(_) => {
                 return Err(SettlementError::Storage(StorageError::Decode(
-                    "output_hash wrong length".to_owned(),
+                    scrub_adapter_error("output_hash wrong length"),
                 )))
             }
             None => None,
         };
         let state = AskState::from_sql(&state_sql).ok_or_else(|| {
-            SettlementError::Storage(StorageError::Decode(format!(
+            SettlementError::Storage(StorageError::Decode(scrub_adapter_error(&format!(
                 "unknown ask state: {state_sql}"
-            )))
+            ))))
         })?;
 
         Ok((

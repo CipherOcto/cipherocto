@@ -9,6 +9,7 @@
 //! event given its `prev_chain_hash`.
 
 pub use crate::error::AuditChainError;
+use crate::error::TimestampOpaque;
 use crate::event::AuditEvent;
 
 /// Canonical serialization form (RFC-0012 §Canonical Serialization):
@@ -84,8 +85,8 @@ pub fn verify_chain(events: &[AuditEvent]) -> Result<(), AuditChainError> {
             if event.at_millis_unix <= prev {
                 return Err(AuditChainError::TimestampRegression {
                     event_id: event.event_id,
-                    prev,
-                    current: event.at_millis_unix,
+                    prev: TimestampOpaque::new(prev),
+                    current: TimestampOpaque::new(event.at_millis_unix),
                 });
             }
         }

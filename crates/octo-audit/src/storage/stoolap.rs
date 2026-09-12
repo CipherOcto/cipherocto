@@ -13,10 +13,15 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::scrub::{scrub_adapter_error, scrub_adapter_error_with};
 use octo_audit_core::{
     compute_chain_hash, AppendOnlyAuditSink, AuditError, AuditEvent, AuditEventKind,
 };
 use octo_storage_core::Database;
+
+/// Adapter-type registry for Pattern 6 redaction (RFC-0012-v3 §S5.1
+/// per-façade scrubber).
+const ADAPTER_TYPES: &[&str] = &["StoolapAuditSink"];
 
 /// DDL for the audit_events table. Run once on `open_in_memory` /
 /// `open`.
@@ -72,9 +77,9 @@ impl StoolapAuditSink {
     /// Open an in-memory database + create the schema.
     pub fn open_in_memory() -> Result<Self, StorageError> {
         let db = Database::open_in_memory()
-            .map_err(|e| StorageError::Stoolap(format!("{e}")))?;
+            .map_err(|e| StorageError::Stoolap(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))?;
         db.execute(AUDIT_EVENTS_DDL, ())
-            .map_err(|e| StorageError::Stoolap(format!("{e}")))?;
+            .map_err(|e| StorageError::Stoolap(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))?;
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
         })
@@ -82,9 +87,10 @@ impl StoolapAuditSink {
 
     /// Open a persistent database at the given path + create the schema.
     pub fn open(path: &str) -> Result<Self, StorageError> {
-        let db = Database::open(path).map_err(|e| StorageError::Stoolap(format!("{e}")))?;
+        let db = Database::open(path)
+            .map_err(|e| StorageError::Stoolap(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))?;
         db.execute(AUDIT_EVENTS_DDL, ())
-            .map_err(|e| StorageError::Stoolap(format!("{e}")))?;
+            .map_err(|e| StorageError::Stoolap(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))?;
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
         })
@@ -98,7 +104,7 @@ impl AppendOnlyAuditSink for StoolapAuditSink {
         // Monotonicity check: last persisted event_id.
         let last = db
             .query("SELECT MAX(event_id) FROM audit_events", ())
-            .map_err(|e| AuditError::SinkSpecific(format!("{e}")))?;
+            .map_err(|e| AuditError::SinkSpecific(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))?;
         // Empty table → MAX returns NULL, surfaced here as `None`.
         // No predecessor exists, so accept the first append regardless of
         // its `event_id` (the "first id" invariant lives at the sink
@@ -108,9 +114,9 @@ impl AppendOnlyAuditSink for StoolapAuditSink {
             .into_iter()
             .next()
             .ok_or_else(|| AuditError::SinkSpecific("no MAX row".into()))?
-            .map_err(|e| AuditError::SinkSpecific(format!("{e}")))?
+            .map_err(|e| AuditError::SinkSpecific(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))?
             .get(0)
-            .map_err(|e| AuditError::SinkSpecific(format!("{e}")))?;
+            .map_err(|e| AuditError::SinkSpecific(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))?;
         // Empty table (last_id == None): no predecessor, accept any
         // first event_id. Non-empty: enforce strict successor + flag
         // duplicates distinctly from gaps (RFC-0012 §Trait G3).
@@ -130,10 +136,10 @@ impl AppendOnlyAuditSink for StoolapAuditSink {
         // Compute canonical chain_hash; reject mismatches.
         let expected_hash = compute_chain_hash(event);
         if event.chain_hash != expected_hash {
-            return Err(AuditError::SinkSpecific(format!(
+            return Err(AuditError::SinkSpecific(scrub_adapter_error(&format!(
                 "chain_hash mismatch at event_id {}",
                 event.event_id
-            )));
+            ))));
         }
 
         let insert_sql = "INSERT INTO audit_events
@@ -153,11 +159,11 @@ impl AppendOnlyAuditSink for StoolapAuditSink {
         ) {
             Ok(_) => Ok(()),
             Err(e) => {
-                let msg = format!("{e}").to_lowercase();
+                let msg = scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES).to_lowercase();
                 if msg.contains("unique") || msg.contains("duplicate") || msg.contains("primary") {
                     Err(AuditError::AlreadyExists(event.event_id))
                 } else {
-                    Err(AuditError::SinkSpecific(format!("{e}")))
+                    Err(AuditError::SinkSpecific(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))
                 }
             }
         }
@@ -167,14 +173,14 @@ impl AppendOnlyAuditSink for StoolapAuditSink {
         let db = self.db.lock().expect("stoolap mutex poisoned");
         let rows = db
             .query("SELECT MAX(event_id) FROM audit_events", ())
-            .map_err(|e| AuditError::SinkSpecific(format!("{e}")))?;
+            .map_err(|e| AuditError::SinkSpecific(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))?;
         let Some(row_result) = rows.into_iter().next() else {
             return Ok(None);
         };
-        let row = row_result.map_err(|e| AuditError::SinkSpecific(format!("{e}")))?;
+        let row = row_result.map_err(|e| AuditError::SinkSpecific(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))?;
         let last_id: Option<i64> = row
             .get(0)
-            .map_err(|e| AuditError::SinkSpecific(format!("{e}")))?;
+            .map_err(|e| AuditError::SinkSpecific(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))?;
         Ok(last_id.map(|n| n as u64))
     }
 }

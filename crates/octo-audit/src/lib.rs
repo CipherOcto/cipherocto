@@ -34,3 +34,12 @@ pub use octo_audit_core::AuditEventKind;
 // land in follow-on substrate-extraction missions (e.g.
 // `0012-audit-stoolap-sink`).
 pub mod storage;
+
+// RFC-0012-v3 substrate amendment: per-façade 10-pattern scrubber
+// (defect 1a — DOMAIN adapter error-chain redaction). Re-exports the
+// `scrub_adapter_error` + `scrub_adapter_error_with` entry points so
+// DOMAIN adapters can call them without depending on a generic
+// shared-utility crate (which the R34.5 trade-off explicitly
+// deferred to v2.1+).
+pub mod scrub;
+pub use scrub::{scrub_adapter_error, scrub_adapter_error_with, scrub_registry_validate};

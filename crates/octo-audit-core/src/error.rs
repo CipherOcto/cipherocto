@@ -46,13 +46,62 @@ pub enum AuditChainError {
     },
 
     /// `at_millis_unix` decreased between consecutive events.
-    #[error("timestamp regression at event_id {event_id} (was {prev}, now {current})")]
+    ///
+    /// RFC-0012-v3 §S6.2 (paired substrate amendment — defect 4 oracle):
+    /// `prev` + `current` numeric timestamps are RETAINED at the source
+    /// (programmatic chain-integrity verification needs them) but the
+    /// `Display` impl emits `<redacted-timestamp>` only — `event_id`
+    /// remains in Display because it is NOT a chronological side-channel
+    /// (event_id is monotonic and recoverable from chain-hash lookup).
+    #[error("timestamp regression at event_id {event_id} (<redacted-timestamp>)")]
     TimestampRegression {
         /// The event_id whose timestamp regressed.
         event_id: u64,
-        /// The previous (larger) timestamp.
-        prev: u64,
-        /// The regressed (smaller) timestamp.
-        current: u64,
+        /// The previous (larger) timestamp. Retained for programmatic
+        /// inspection; Display redacts as `<redacted-timestamp>`.
+        prev: TimestampOpaque,
+        /// The regressed (smaller) timestamp. Same source-retain /
+        /// Display-redact contract as `prev`.
+        current: TimestampOpaque,
     },
 }
+
+/// Opaque unix-millis timestamp newtype whose `Display` impl emits
+/// `<redacted-timestamp>` (RFC-0012-v3 §S6.2 — paired substrate
+/// amendment; defect 4 oracle).
+///
+/// The raw u64 is preserved at `Debug` + `source()` so programmatic
+/// callers (chain-integrity verification, replay protection) can
+/// inspect it; human-facing `Display` + `to_string()` never leak the
+/// chronological value (which would be a side-channel: callers could
+/// reconstruct timing of an event from the regression error).
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TimestampOpaque(u64);
+
+impl TimestampOpaque {
+    /// Wrap a unix-millis timestamp for redacted Display.
+    #[must_use]
+    pub const fn new(millis_unix: u64) -> Self {
+        Self(millis_unix)
+    }
+
+    /// Access the raw millis-unix (programmatic callers only; never log).
+    #[must_use]
+    pub const fn as_millis_unix(&self) -> u64 {
+        self.0
+    }
+}
+
+impl std::fmt::Debug for TimestampOpaque {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TimestampOpaque(<redacted-timestamp>)")
+    }
+}
+
+impl std::fmt::Display for TimestampOpaque {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<redacted-timestamp>")
+    }
+}
+
+impl std::error::Error for TimestampOpaque {}

@@ -21,6 +21,9 @@ octo-audit-core = { path = "../octo-audit-core" }
 octo-storage-core = { path = "../octo-storage-core" }
 serde = { workspace = true }
 thiserror = { workspace = true }
+# RFC-0012-v3 substrate amendment: scrubber pattern redaction (defect 1)
+regex = { workspace = true }
+once_cell = { workspace = true }
 
 [lints.rust]
 unsafe_code = "forbid"

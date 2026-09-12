@@ -32,6 +32,10 @@ octo-cap-macaroon = { path = "../octo-cap-macaroon" }
 # fields (axes_consumed, audit_window_secs, settlement_ref) the
 # substrate intentionally does NOT model.
 octo-settlement-core = { path = "../octo-settlement-core" }
+# RFC-0014-v3 substrate amendment: DOMAIN adapter error-chain redaction
+# (defect 1b). Per-façade scrubber consumed by `quota-router-sm-engine`
+# DOMAIN adapters to wrap raw `.to_string()` chains.
+octo-settlement = { path = "../octo-settlement" }
 # Dqa is re-exported by octo-cap-macaroon (Layer B additive substrate).
 # octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
 # Mission G wire form (RFC-0959 §3 borsh encoding).

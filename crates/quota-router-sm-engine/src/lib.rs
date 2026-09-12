@@ -290,10 +290,10 @@ impl Reservation {
 /// Settlement engine error (RPC-level; covers all settlement operations).
 #[derive(Debug, thiserror::Error)]
 pub enum SettlementError {
-    #[error("ask not found: {0}")]
-    AskNotFound(String),
-    #[error("receipt already consumed: {0}")]
-    AlreadyConsumed(String),
+    #[error("ask not found: <redacted-hash>")]
+    AskNotFound(#[source] SettlementHashOpaque),
+    #[error("receipt already consumed: <redacted-hash>")]
+    AlreadyConsumed(#[source] SettlementHashOpaque),
     #[error("invalid state transition: {from} → {to}")]
     InvalidTransition { from: AskState, to: AskState },
     #[error("reservation not found: {0}")]
@@ -305,11 +305,67 @@ pub enum SettlementError {
         from: ReservationState,
         to: ReservationState,
     },
-    #[error("settlement hash mismatch: expected {expected}, got {got}")]
-    SettlementHashMismatch { expected: String, got: String },
+    /// Receipt's ask_id does not match the ask being settled (RFC-0014-v3
+    /// §S5.2 — paired substrate amendment; defect 2 oracle).
+    ///
+    /// Hash fields use the `SettlementHashOpaque` newtype so `Display`
+    /// emits `<redacted-hash>`; raw 32-byte bytes are kept at the
+    /// `source()` chain for programmatic callers (e.g. log
+    /// post-processing) but NEVER leak through `to_string()` / log
+    /// formatting / anyhow chains.
+    #[error("settlement hash mismatch: <redacted-hash>")]
+    SettlementHashMismatch {
+        /// Expected settlement_hash (the one stored on the ask). Bytes
+        /// retained at source for programmatic inspection; Display redacted.
+        expected: SettlementHashOpaque,
+        /// Got settlement_hash (the one on the receipt). Same
+        /// source-retain / Display-redact contract.
+        got: SettlementHashOpaque,
+    },
     #[error("storage error: {0}")]
     Storage(#[from] StorageError),
 }
+
+/// Opaque 32-byte settlement-hash newtype whose `Display` impl emits
+/// `<redacted-hash>` (RFC-0014-v3 §S5.2 — paired substrate amendment;
+/// defect 2 oracle).
+///
+/// The raw bytes are preserved at `Debug` + `source()` so programmatic
+/// callers (chain-integrity verification, log post-processing) can
+/// inspect them; human-facing `Display` + `to_string()` never leak.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SettlementHashOpaque([u8; 32]);
+
+impl SettlementHashOpaque {
+    /// Wrap a 32-byte hash for redacted Display.
+    #[must_use]
+    pub const fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    /// Access the raw bytes (programmatic callers only; never log).
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for SettlementHashOpaque {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Debug intentionally also redacts — symmetric with Display so
+        // `dbg!()` / `unwrap_or_else(|e| panic!("{:?}", e))` paths
+        // cannot leak via accidental Debug formatting either.
+        f.write_str("SettlementHashOpaque(<redacted-hash>)")
+    }
+}
+
+impl std::fmt::Display for SettlementHashOpaque {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<redacted-hash>")
+    }
+}
+
+impl std::error::Error for SettlementHashOpaque {}
 
 #[cfg(test)]
 mod tests {

@@ -41,6 +41,6 @@ pub mod event;
 pub mod sink;
 
 pub use chain::{compute_chain_hash, verify_chain};
-pub use error::{AuditChainError, AuditError};
+pub use error::{AuditChainError, AuditError, TimestampOpaque};
 pub use event::{AuditEvent, AuditEventKind};
 pub use sink::AppendOnlyAuditSink;

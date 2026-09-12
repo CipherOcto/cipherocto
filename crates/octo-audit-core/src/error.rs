@@ -94,6 +94,11 @@ impl TimestampOpaque {
 
 impl std::fmt::Debug for TimestampOpaque {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Debug intentionally also redacts — symmetric with Display so
+        // `dbg!()` / `unwrap_or_else(|e| panic!("{:?}", e))` paths
+        // cannot leak via accidental Debug formatting either. Mirror of
+        // `SettlementHashOpaque` symmetry-rationale comment in
+        // RFC-0014-v3 §S5.2.
         f.write_str("TimestampOpaque(<redacted-timestamp>)")
     }
 }

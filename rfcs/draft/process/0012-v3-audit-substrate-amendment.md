@@ -136,6 +136,8 @@ TimestampRegression {
 
 **Why raw u64 retained at `Debug` + `source()`:** programmatic chain-integrity verification (e.g. `octo-audit::verify_chain`) needs the actual values. Source-retain + Display-redact is the canonical split per R48-s.
 
+**Why single `<redacted-timestamp>` sentinel for both `prev` + `current`:** Distinguishing which field is `prev` vs `current` at the Display level would itself leak ordering information — an attacker observing `AuditChainError::TimestampRegression` could infer which event regressed (the smaller of the two timestamps) by comparing the two emitted values. A single sentinel for both fields eliminates this ordering side-channel. Programmatic callers needing the prev/current distinction use `as_millis_unix()` on each field.
+
 ### §S5.1.1 — DOMAIN adapter migration contract
 
 DOMAIN (Layer B-faithful) storage adapters MUST migrate every raw `format!("{e}")` site to `scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)`. Migration is enforced via clippy lint (deferred to v3.x) and reviewed at acceptance.
@@ -145,6 +147,18 @@ Adapter-type registry (`const ADAPTER_TYPES: &[&str]`) MUST be declared at adapt
 ```rust
 const ADAPTER_TYPES: &[&str] = &["StoolapAuditSink"];
 ```
+
+## 2-Cycle Atomic Promotion Tag
+
+**Paired with:** RFC-0014-v3 (settlement side — paired acceptance).
+
+**Reviewer board:** CipherOcto Architecture Working Group (CAWG).
+
+**Atomic promotion gate:** Neither amendment may be Accepted without the other; both must reach `Accept` state in the same review cycle. This is a 2-cycle atomic promotion gate per BLUEPRINT.md §2-Cycle Atomic Promotion Tag.
+
+**Acceptance review coordination:** Cross-reviewers (one reviewer holding pen on each side) must clear BOTH amendments before either is promoted. Single-reviewer sign-off on one amendment is INSUFFICIENT for that amendment's promotion — the paired amendment must have the matching sign-off first. If either amendment is rejected at any review round, the other amendment is automatically held at the same state until the rejection is resolved.
+
+**Why paired acceptance:** The 4 substrate defects (1a, 1b, 2, 3, 4) split across the audit + settlement sides form a single design intent — DOMAIN-adapter redaction + Layer A substrate oracle elimination. Promoting one without the other leaves the substrate-faithful posture asymmetric (one side has `TimestampOpaque`/`SettlementHashOpaque` newtypes at Layer A; the other does not) and forces a follow-on amendment to land the missing side.
 
 ## Security Considerations
 
@@ -256,6 +270,99 @@ input: StoolapAuditSink::open_in_memory() against a malformed path
 expect: StorageError::Stoolap variant
         message contains scrubber sentinel(s) where applicable
         raw stoolap error string NOT present (or scrubbed)
+```
+
+### TV-AUD-v3-8: scrubber Pattern 2 (absolute paths)
+
+```text
+input: scrub_adapter_error_with("open /var/lib/db/stoolap/audit failed", &["StoolapAuditSink"])
+expect: output contains "<redacted-path>"
+        no "/var/lib" substring retained
+```
+
+### TV-AUD-v3-9: scrubber Pattern 3 (table-name refs)
+
+```text
+input: scrub_adapter_error_with("no such table: audit_events", &["StoolapAuditSink"])
+expect: output contains "<redacted-table>"
+        "audit_events" not present in output
+```
+
+### TV-AUD-v3-10: scrubber Pattern 4 (SQLSTATE prefixes)
+
+```text
+input: scrub_adapter_error_with("SQLSTATE_23000 unique violation", &["StoolapAuditSink"])
+expect: output contains "<redacted-sql-state>"
+```
+
+### TV-AUD-v3-11: scrubber Pattern 5 (io error chains)
+
+```text
+input: scrub_adapter_error_with("os error 2 (no such file or directory)", &["StoolapAuditSink"])
+expect: output contains "<redacted-io>"
+```
+
+### TV-AUD-v3-12: scrubber Pattern 5b (URL credentials)
+
+```text
+input: scrub_adapter_error_with("connect postgres://user:secret@db.example.com/audit failed", &["StoolapAuditSink"])
+expect: output contains "<redacted-creds>"
+        "secret" not present in output
+```
+
+### TV-AUD-v3-13: scrubber Pattern 5c (ANSI-CSI escape sequences)
+
+```text
+input: scrub_adapter_error_with("color \x1b[31mred\x1b[0m end", &["StoolapAuditSink"])
+expect: output contains "<redacted-ansi>"
+```
+
+### TV-AUD-v3-14: scrubber Pattern 5e (UUIDs)
+
+```text
+input: scrub_adapter_error_with("tx 550e8400-e29b-41d4-a716-446655440000 aborted", &["StoolapAuditSink"])
+expect: output contains "<redacted-uuid>"
+        "550e8400-e29b-41d4-a716-446655440000" not present in output
+```
+
+### TV-AUD-v3-15: scrubber output cap (under-cap input)
+
+```text
+input: 4 KiB - 1 byte string (just under MAX_OUTPUT_BYTES input cap; output remains under cap after scrubbing)
+expect: scrub_adapter_error_with returns the input (no "<redacted-too-long>" marker)
+        payload retained in full
+```
+
+### TV-AUD-v3-16: scrubber output cap (over-cap input)
+
+```text
+input: 4 KiB - 1 byte string of an unmatched non-pattern payload (output expands via Pattern 1 hex match on a 64-char hex substring that pushes output over MAX_OUTPUT_BYTES)
+expect: scrub_adapter_error_with truncates output at MAX_OUTPUT_BYTES
+        "<redacted-too-long>" marker appended at truncation boundary
+```
+
+### TV-AUD-v3-17: empty-registry precondition panic
+
+```text
+input: scrub_adapter_error_with("some error message", &[])
+expect: PANIC with message containing "empty ADAPTER_TYPES registry"
+        (vs scrub_adapter_error_with("", &[]) which returns "" without panic)
+```
+
+### TV-AUD-v3-18: `AuditChainError::SequenceGap` Display format
+
+```text
+input: SequenceGap { event_id: 42, prev: 41 }
+expect: format!("{}", err) == "sequence gap at event_id 42 (previous was 41)"
+        (no redaction needed; event_id + prev are chain-hash recoverable, NOT a chronological side-channel)
+```
+
+### TV-AUD-v3-19: `AuditChainError::HashMismatch` Display format
+
+```text
+input: HashMismatch { event_id: 42 }
+expect: format!("{}", err) == "chain_hash mismatch at event_id 42"
+        (no raw chain_hash bytes leaked at Display; mismatch is detectable without oracle)
 ```
 
 ## Alternatives Considered

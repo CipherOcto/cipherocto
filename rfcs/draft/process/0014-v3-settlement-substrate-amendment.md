@@ -157,6 +157,18 @@ Adapter-type registry (`const ADAPTER_TYPES: &[&str]`) MUST be declared at adapt
 const ADAPTER_TYPES: &[&str] = &["StoolapStore", "StoolapReceiptSink"];
 ```
 
+## 2-Cycle Atomic Promotion Tag
+
+**Paired with:** RFC-0012-v3 (audit side — paired acceptance).
+
+**Reviewer board:** CipherOcto Architecture Working Group (CAWG).
+
+**Atomic promotion gate:** Neither amendment may be Accepted without the other; both must reach `Accept` state in the same review cycle. This is a 2-cycle atomic promotion gate per BLUEPRINT.md §2-Cycle Atomic Promotion Tag.
+
+**Acceptance review coordination:** Cross-reviewers (one reviewer holding pen on each side) must clear BOTH amendments before either is promoted. Single-reviewer sign-off on one amendment is INSUFFICIENT for that amendment's promotion — the paired amendment must have the matching sign-off first. If either amendment is rejected at any review round, the other amendment is automatically held at the same state until the rejection is resolved.
+
+**Why paired acceptance:** The 4 substrate defects (1a, 1b, 2, 3, 4) split across the audit + settlement sides form a single design intent — DOMAIN-adapter redaction + Layer A substrate oracle elimination. Promoting one without the other leaves the substrate-faithful posture asymmetric (one side has `TimestampOpaque`/`SettlementHashOpaque` newtypes at Layer A; the other does not) and forces a follow-on amendment to land the missing side.
+
 ## Security Considerations
 
 **SC-1.** `SettlementHashOpaque` Display redaction eliminates the 32-byte hash oracle. An attacker observing `SettlementError::SettlementHashMismatch { expected: ..., got: ... }` cannot recover the raw 32-byte hashes from `to_string()`, `format!("{}", err)`, or `anyhow!("{}", err)` chains.
@@ -282,6 +294,150 @@ expect: Display emits "sink-specific error: <10K x chars>"
         scrubber-side cap would emit "<redacted-too-long>" if adapter wraps
 ```
 
+### TV-SET-v3-9: scrubber Pattern 2 (absolute paths)
+
+```text
+input: scrub_adapter_error_with("open /var/lib/db/stoolap/asks failed", &["StoolapStore"])
+expect: output contains "<redacted-path>"
+        no "/var/lib" substring retained
+```
+
+### TV-SET-v3-10: scrubber Pattern 3 (table-name refs)
+
+```text
+input: scrub_adapter_error_with("no such table: asks", &["StoolapStore"])
+expect: output contains "<redacted-table>"
+        "asks" not present in output
+```
+
+### TV-SET-v3-11: scrubber Pattern 4 (SQLSTATE prefixes)
+
+```text
+input: scrub_adapter_error_with("SQLSTATE_23000 unique violation", &["StoolapStore"])
+expect: output contains "<redacted-sql-state>"
+```
+
+### TV-SET-v3-12: scrubber Pattern 5 (io error chains)
+
+```text
+input: scrub_adapter_error_with("os error 2 (no such file or directory)", &["StoolapStore"])
+expect: output contains "<redacted-io>"
+```
+
+### TV-SET-v3-13: scrubber Pattern 5b (URL credentials)
+
+```text
+input: scrub_adapter_error_with("connect postgres://user:secret@db.example.com/asks failed", &["StoolapStore"])
+expect: output contains "<redacted-creds>"
+        "secret" not present in output
+```
+
+### TV-SET-v3-14: scrubber Pattern 5c (ANSI-CSI escape sequences)
+
+```text
+input: scrub_adapter_error_with("color \x1b[31mred\x1b[0m end", &["StoolapStore"])
+expect: output contains "<redacted-ansi>"
+```
+
+### TV-SET-v3-15: scrubber Pattern 5e (UUIDs)
+
+```text
+input: scrub_adapter_error_with("tx 550e8400-e29b-41d4-a716-446655440000 aborted", &["StoolapStore"])
+expect: output contains "<redacted-uuid>"
+        "550e8400-e29b-41d4-a716-446655440000" not present in output
+```
+
+### TV-SET-v3-16: scrubber output cap (under-cap input)
+
+```text
+input: 4 KiB - 1 byte string of unmatched non-pattern payload (just under MAX_OUTPUT_BYTES output cap; output stays under cap after scrubbing)
+expect: scrub_adapter_error_with returns the input (no "<redacted-too-long>" marker)
+        payload retained in full
+```
+
+### TV-SET-v3-17: scrubber output cap (over-cap input)
+
+```text
+input: 4 KiB - 1 byte string containing a 64-char hex substring (Pattern 1 expansion pushes output over MAX_OUTPUT_BYTES)
+expect: scrub_adapter_error_with truncates output at MAX_OUTPUT_BYTES
+        "<redacted-too-long>" marker appended at truncation boundary
+```
+
+### TV-SET-v3-18: empty-registry precondition panic
+
+```text
+input: scrub_adapter_error_with("some error message", &[])
+expect: PANIC with message containing "empty ADAPTER_TYPES registry"
+        (vs scrub_adapter_error_with("", &[]) which returns "" without panic)
+```
+
+### TV-SET-v3-19: `SettlementError::SinkSpecific` substrate-faithful vs scrubber wrap (FIX 3 assertive paired)
+
+```text
+input (substrate): SettlementError::SinkSpecific("x".repeat(10_000))
+expect (substrate): Display emits full 10K chars (substrate-faithful = no cap) ✓
+
+input (DOMAIN wrap): scrub_adapter_error_with(&err.to_string(), &["StoolapStore"])
+expect (DOMAIN wrap): emits "<redacted-too-long>" marker ✓
+        (input 4 KiB cap triggered; payload not retained)
+```
+
+### TV-SET-v3-20: `SettlementError::AskNotFound` Display format
+
+```text
+input: AskNotFound(SettlementHashOpaque::new([0xab; 32]))
+expect: format!("{}", err) == "ask not found: <redacted-hash>"
+        no raw hex bytes leaked at Display
+```
+
+### TV-SET-v3-21: `SettlementError::AlreadyConsumed` Display format
+
+```text
+input: AlreadyConsumed(SettlementHashOpaque::new([0xcd; 32]))
+expect: format!("{}", err) == "receipt already consumed: <redacted-hash>"
+        no raw hex bytes leaked at Display
+```
+
+### TV-SET-v3-22: `SettlementError::InvalidTransition` Display format
+
+```text
+input: InvalidTransition { from: AskState::Consumed, to: AskState::Minted }
+expect: format!("{}", err) contains "invalid transition" + state names
+        (no redaction needed; state names are not an oracle — chain-state transitions are public by design)
+```
+
+### TV-SET-v3-23: `SettlementError::ReservationNotFound` Display format
+
+```text
+input: ReservationNotFound(#[source] SettlementHashOpaque::new([0xef; 32]))
+expect: format!("{}", err) == "reservation not found: <redacted-hash>"
+        no raw hex bytes leaked at Display
+```
+
+### TV-SET-v3-24: `SettlementError::ReservationExpired` Display format
+
+```text
+input: ReservationExpired { reservation_id: SettlementHashOpaque::new([0x12; 32]), expired_at_millis_unix: 1_700_000_000_000 }
+expect: format!("{}", err) contains "reservation expired" + "<redacted-hash>"
+        expired_at_millis_unix redacted as "<redacted-timestamp>" (chronological side-channel — same RFC-0012-v3 §S6.2 rationale)
+```
+
+### TV-SET-v3-25: `SettlementError::InvalidReservationTransition` Display format
+
+```text
+input: InvalidReservationTransition { from: ReservationState::Active, to: ReservationState::Settled }
+expect: format!("{}", err) contains "invalid reservation transition" + state names
+        (no redaction needed; state names are not an oracle)
+```
+
+### TV-SET-v3-26: `SettlementError::Storage` Display format
+
+```text
+input: Storage { source: Box<dyn std::error::Error + Send + Sync> } wrapping a Stoolap error
+expect: format!("{}", err) contains scrubber sentinel(s) where applicable
+        raw stoolap error string NOT present (or scrubbed at DOMAIN adapter boundary)
+```
+
 ## Alternatives Considered
 
 **Alt-A: Substrate-level scrubber (Layer A frozen).** Rejected — Layer A stays free of adapter concerns. Scrubber lives at façade per RFC-0014-v2 §FW6 — Canonical Scrubber Patterns.
@@ -308,7 +464,7 @@ expect: Display emits "sink-specific error: <10K x chars>"
 - ✅ Add `octo-settlement::scrub` module with 10-pattern canonical scrubber
 - ✅ Re-export `scrub_adapter_error`, `scrub_adapter_error_with`, `scrub_registry_validate`
 - ✅ Migrate `StoolapStore` 24 raw `.to_string()` sites to `scrub_adapter_error_with` (Pattern 6 registry); 4 additional sites to bare `scrub_adapter_error` delegate (no-registry)
-- ✅ Add `scrub` module unit tests (12 tests covering all 10 patterns + caps + empty-registry precondition)
+- ✅ Add `scrub` module unit tests (13 tests covering all 10 patterns + caps + empty-registry precondition)
 
 ### Phase 3: Acceptance
 

@@ -64,11 +64,11 @@ RFC-0012-v2 codifies the typed-discriminator pattern so write-path amendments ca
 
 ## Roles and Authorities
 
-| Role                                   | Authority                                                                                                                                                                                  |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `octo-audit-core` (substrate, Layer A) | Owns `AuditEvent`, `AuditEventKind`, `AppendOnlyAuditSink`, `AuditError`, `compute_chain_hash`, `verify_chain`, `extension_kinds` (`pub const` typed-discriminator digests per Appendix A) |
-| `octo-audit` (façade, Layer B)         | Re-exports substrate canonical types + implements `StoolapAuditSink` (Layer D adapter)                                                                                                     |
-| Domain callers (Layer B / C / D)       | Construct `AuditEvent` instances via façade typed-discriminator helpers — **DEFERRED — lands at acceptance** per §Implementation Phases Phase 2                                            |
+| Role                                   | Authority                                                                                                                                                                                                                     |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `octo-audit-core` (substrate, Layer A) | Owns `AuditEvent`, `AuditEventKind`, `AppendOnlyAuditSink`, `AuditError`, `compute_chain_hash`, `verify_chain` (no `extension_kinds` module; typed-discriminator digests are constructed inline at the façade per Appendix B) |
+| `octo-audit` (façade, Layer B)         | Re-exports substrate canonical types + implements `StoolapAuditSink` (Layer D adapter)                                                                                                                                        |
+| Domain callers (Layer B / C / D)       | Construct `AuditEvent` instances via façade typed-discriminator helpers — **DEFERRED — lands at acceptance** per §Implementation Phases Phase 2                                                                               |
 
 ## Specification
 
@@ -171,7 +171,7 @@ pub struct AuditFilter {
 
 **Façade constraints:**
 
-- **NO `subject_did` field** — `subject_did` ACL filtering is RFC-0016-a concern (façade projection). The façade reads audit events without subject-level ACL (per-event ACL is enforced at the domain call boundary).
+- **NO `subject_did` field** — `subject_did` ACL filtering is RFC-0016-a concern (façade projection). The façade reads audit events without subject-level ACL (per-event ACL is enforced at the domain call boundary). `subject_did` ACL field on `AuditFilter` is **DEFERRED — lands at paired acceptance with RFC-0014-v2**.
 - **NO `status` field** — `status` filtering requires RFC-0014-v2 `ReceiptStatus` extension (which is itself a façade projection, NOT a substrate field); cross-RFC consistency on audit/receipt status is not in v2.0.0 scope.
 - **`capability_root` is `Option<[u8; 32]>`** — typed extension discriminator hash; matches §S1 extension kind table.
 - **`limit` is `Option<usize>`** — façade applies a hard ceiling of 1024 (per RFC-0012 §Data Structures).
@@ -263,7 +263,7 @@ The RFC is Accepted when ALL of the following are true:
 - **AC-4.** Strict `event_id == last_event_id() + 1` enforced; re-append returns `AlreadyExists`; gap returns `SequenceGap`.
 - **AC-5.** Tampered `chain_hash` returns `AuditError::SinkSpecific` with payload matching the canonical format-string `"chain_hash mismatch at event_id <id>"` (where `<id>` is `event.event_id`) per §S2.4 (NOT raw substrate `AuditChainError::HashMismatch` leaked; `verify_chain` returns `AuditChainError`, `append` returns `AuditError` — distinct error envelopes, no cross-leakage).
 - **AC-6.** `AuditFilter` is Layer B façade projection (does NOT exist in substrate; lands at acceptance per Phase 2); 5-field form `{ since_unix, until_unix, capability_root, model, limit }` UNCONDITIONAL, no `subject_did`, no `status`.
-- **AC-7.** Adapter implementations call the canonical scrubber before wrapping into `SinkSpecific`; each Layer B façade owns its own scrubber instance (canonical `scrub_adapter_error` per façade — **DEFERRED — lands at acceptance** per §Implementation Phases; pattern duplicated per-façade to avoid sibling Layer B coupling). Adapter conformance to AC-7 is **DEFERRED — lands at acceptance**: pre-acceptance adapter-side redactor is out of scope for RFC-0012-v2.
+- **AC-7.** Adapter-side scrubber call before wrapping into `SinkSpecific` — **DEFERRED — lands at acceptance**. The canonical `scrub_adapter_error` per façade is declared at each Layer B façade (pattern duplicated per-façade to avoid sibling Layer B coupling); adapter conformance gate runs at acceptance per §Implementation Phases. Pre-acceptance adapter-side redactor is out of scope for RFC-0012-v2.
 - **AC-8.** Paired acceptance with RFC-0014-v2 per BLUEPRINT.md §2-Cycle Atomic Promotion gate.
 - **AC-9.** All 30/30 Test Vectors (TV-AUD-v2-1 through TV-AUD-v2-30) in §Test Vectors produce expected outputs (verified by `cargo test -p octo-audit`; pass criterion: 30/30 TVs pass).
 - **AC-10.** Layer D adapter implementations (e.g. `StoolapAuditSink`) provide transaction-scoped atomic write with persistence durability; concurrent appenders detected by the substrate monotonicity pre-check (adapter-side serialization is the adapter's responsibility).
@@ -295,7 +295,7 @@ Reviewer board membership per CLAUDE.md §Review Process: correctness, security,
 
 **SC1. Typed-discriminator collision resistance.** Extension kinds are encoded as `BLAKE3-256(namespace_string)`. BLAKE3-256 collision resistance is 2^128 operations (birthday bound on 256-bit output). Preimage resistance is 2^256. Cross-extension-kind collisions are cross-prefix second-preimage attacks (~2^256 with one fixed prefix; ~2^128 birthday for attacker-chosen both prefixes).
 
-**SC2. `SinkSpecific` payload scrubbing.** Adapter-specific error messages MUST be scrubbed at the adapter boundary before wrapping into `AuditError::SinkSpecific`. No raw error chains, no adapter-type names, no leaked path fragments. Canonical scrubber pattern is declared at each Layer B façade (canonical `scrub_adapter_error` per façade — **DEFERRED — lands at acceptance**; duplicated per-façade to avoid sibling Layer B coupling) with the canonical 8-pattern list (5 base patterns: hex / path / table / SQLSTATE / io + 2 hardened variants + 6th-pattern registry form for adapter-type names) per RFC-0014-v2 §S5.1, applied to both `AuditError::SinkSpecific` and `SettlementError::SinkSpecific`.
+**SC2. `SinkSpecific` payload scrubbing.** Adapter-specific error messages MUST be scrubbed at the adapter boundary before wrapping into `AuditError::SinkSpecific`. No raw error chains, no adapter-type names, no leaked path fragments. Canonical scrubber pattern is declared at each Layer B façade (canonical `scrub_adapter_error` per façade — **DEFERRED — lands at acceptance**; duplicated per-façade to avoid sibling Layer B coupling) with the canonical 8-pattern list (5 base patterns: hex / path / table / SQLSTATE / io + 2 hardened variants + 1 adapter-type-name registry pattern = 5 + 2 + 1 = 8) per RFC-0014-v2 §S5.1, applied to both `AuditError::SinkSpecific` and `SettlementError::SinkSpecific`.
 
 **SC3. Chain hash integrity.** `chain_hash` field MUST match `compute_chain_hash(event)`. §S2.4 enforces this on every append; §S6 canonical-bytes form is the substrate-level guarantee.
 
@@ -311,7 +311,7 @@ Reviewer board membership per CLAUDE.md §Review Process: correctness, security,
 
 **A3. Sequence gap injection.** Adversary skips `event_id` (e.g. submits 5 after 3, skipping 4). §S2.2 returns `SequenceGap { event_id: 5, prev: 3 }`. Caller cannot inject gaps.
 
-**A4. Typed-discriminator spoofing.** Adversary constructs event with `event_kind = Insert` + `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/agent-transition/v1/")` but with non-canonical agent-transition payload. Detection: domain crate canonicalizes the agent-transition payload and includes it in extension-specific hash (e.g. `prev_chain_hash` field carries the payload hash). Cross-RFC: RFC-0015-a §Audit row contract pins the canonical payload encoding.
+**A4. Typed-discriminator spoofing.** Adversary constructs event with `event_kind = Insert` + `cap_root_hash = BLAKE3-256("cipherocto/audit/extension/agent-transition/v1/")` but with non-canonical agent-transition payload. Detection: domain crate canonicalizes the agent-transition payload and includes it in the extension-specific canonical-hash input at the façade (the `cap_root_hash` typed-discriminator combined with the domain-crate canonical bytes is the binding; `prev_chain_hash` remains substrate-load-bearing for chain linkage ONLY — NOT receipt linkage). Cross-RFC: RFC-0015-a §Audit row contract pins the canonical payload encoding.
 
 **A5. Adapter error chain leakage.** Adversary inspects `AuditError::SinkSpecific(String)` payload to extract adapter-internal structure (Stoolap transaction IDs, IO paths). Mitigated by §SC2 scrubbing at adapter boundary.
 
@@ -688,6 +688,10 @@ The cost is a doc-comment-driven extension pattern that domain crates must follo
 | v2.0.0-r34.5 | 2026-09-11 | CipherOcto Architecture Working Group | Per-façade scrubber, adapter-type registry, AC-10 Layer D path                      |
 | v2.0.0-r35.5 | 2026-09-11 | CipherOcto Architecture Working Group | DEFERRED markers on TV-AUD-v2-8/17, UC-AUD-002 scrubber cross-crate ref fix         |
 | v2.0.0-r36.5 | 2026-09-11 | CipherOcto Architecture Working Group | Adversarial Review H2, VH compression, audit_event_for_* façade ownership canonical |
+| v2.0.0-r37   | 2026-09-11 | CipherOcto Architecture Working Group | A4 prev_chain_hash payload-hash wording, AC-7 rephrase                              |
+| v2.0.0-r38   | 2026-09-11 | CipherOcto Architecture Working Group | Cross-RFC wording drift, hygiene em-dash sweep                                      |
+| v2.0.0-r38.5 | 2026-09-11 | CipherOcto Architecture Working Group | Scrubber code-fence audit, §S5.1/§S6.1 collapse check                               |
+| v2.0.0-r39.5 | 2026-09-11 | CipherOcto Architecture Working Group | extension_kinds drop, subject_did DEFERRED, A4 chain-linkage-only reassert          |
 
 ## Related RFCs
 
@@ -717,7 +721,7 @@ The cost is a doc-comment-driven extension pattern that domain crates must follo
 | AgentTransition  | `cipherocto/audit/extension/agent-transition/v1/`  | `0x...` (**TBD at compile-time const**; RFC-0012-v2) |
 | Redaction        | `cipherocto/audit/extension/redaction/v1/`         | `0x...` (**TBD at compile-time const**; RFC-0012-v2) |
 
-The full 32-byte hex digests are computed at crate compile time via `const BLAKE3` and exposed as `pub const` items in `octo-audit-core::extension_kinds`. Domain crates reference these constants instead of recomputing. The `0x...` placeholders in this table are markers for the canonical hex values that the compile-time `pub const` items resolve to; they are not hand-computed values.
+The full 32-byte hex digests are documented here as canonical namespace strings; per Appendix B the substrate does NOT own an `extension_kinds` module. The `0x...` placeholders in this table are markers for the canonical hex values that compile-time `const BLAKE3` expressions at the façade (`octo-audit::audit_event` per Appendix B) resolve to; they are not hand-computed values, and they do NOT require a substrate module.
 
 ### Appendix B: Substrate-vs-façade boundary
 
@@ -740,10 +744,10 @@ RFC-0012-v2 explicitly pins this boundary. Substrate stays free of projection lo
 
 Per CLAUDE.md §Architectural Principles + `cipherocto-design-principles.md` Layer model, RFC-0012-v2 pins the canonical layer direction for audit substrate code:
 
-| Layer                    | Concrete location                          | Owns                                                                                                                                                                   |
-| ------------------------ | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **A** (substrate-frozen) | `crates/octo-audit-core/`                  | `AuditEvent`, `AuditEventKind`, `AuditError`, `AppendOnlyAuditSink`, `compute_chain_hash`, `verify_chain`, `extension_kinds` (`pub const` typed-discriminator digests) |
-| **D** (storage adapter)  | `crates/octo-audit/src/storage/stoolap.rs` | `StoolapAuditSink` concrete impl + adapter-specific error mapping into `AuditError::SinkSpecific` with canonical format-string                                         |
+| Layer                    | Concrete location                          | Owns                                                                                                                                                                                               |
+| ------------------------ | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **A** (substrate-frozen) | `crates/octo-audit-core/`                  | `AuditEvent`, `AuditEventKind`, `AuditError`, `AppendOnlyAuditSink`, `compute_chain_hash`, `verify_chain` (no `extension_kinds` module; typed-discriminator digests live at façade per Appendix B) |
+| **D** (storage adapter)  | `crates/octo-audit/src/storage/stoolap.rs` | `StoolapAuditSink` concrete impl + adapter-specific error mapping into `AuditError::SinkSpecific` with canonical format-string                                                                     |
 
 Layer B (façade) details — including substrate re-exports, `AuditFilter` projection, `scrub_adapter_error` / `scrub_adapter_error_with`, and typed-discriminator helper module `octo_audit::audit_event` (**DEFERRED — lands at acceptance**) — live at `Appendix B: Substrate-vs-façade boundary` per the canonical substrate-vs-façade boundary table.
 

@@ -271,8 +271,8 @@ The RFC is Accepted when ALL of the following are true:
 - **AC-8.** Paired acceptance with RFC-0014-v2 per BLUEPRINT.md §2-Cycle Atomic Promotion gate.
 - **AC-9.** All 30/30 Test Vectors (TV-AUD-v2-1 through TV-AUD-v2-30) in §Test Vectors produce expected outputs (verified by `cargo test -p octo-audit`; pass criterion: 30/30 TVs pass).
 - **AC-10.** Layer D adapter implementations (e.g. `StoolapAuditSink`) provide transaction-scoped atomic write with persistence durability; concurrent appenders detected by the substrate monotonicity pre-check (adapter-side serialization is the adapter's responsibility).
-- **AC-11.** Substrate-faithful `prev_chain_hash` linkage — the façade helper `octo_audit::audit_event` MUST include runtime `debug_assert!(prev_chain_hash == compute_chain_hash(last_audit_event))` to enforce the pairing invariant at acceptance. Substrate-side `verify_chain` remains the source of truth; the debug_assert is a façade-side early-fail check documented in §A4.
-- **AC-12.** Compile-time constant registry — `octo_audit::extension_kinds` (façade-side) const table MUST be validated against the substrate at compile time via `const _: () = assert!(...)` style assertions; runtime drift between façade table and substrate canonical form is a build-time failure.
+- **AC-11.** Substrate-faithful `prev_chain_hash` linkage — the façade helper `octo_audit::audit_event` MUST include a mandatory runtime check (NOT `debug_assert`; verifies in release builds via `Result` return or similar) to enforce the pairing invariant at acceptance. Substrate-side `verify_chain` remains the source of truth; the runtime check is a façade-side early-fail check documented in §A4.
+- **AC-12.** Compile-time constant registry — `octo_audit::extension_kinds` (façade-side) const table MUST be validated against the substrate at compile time via `const _: () = assert!(...)` style assertions; this is façade-internal validation, and cross-crate consistency risk is accepted as a substrate-code amendment at acceptance (substrate lacks an `extension_kinds` module; the canonical namespace strings are documented at Appendix A and §S1 only).
 - **AC-13.** Cross-RFC pairing invariants — `audit_event_for_agent_transition_receipt` (per §FW2 + RFC-0014-v2 §FW2) lands at acceptance as a paired DEFERRED invariant per §AC-8 2-cycle atomic promotion gate. Cross-RFC pairing is **DEFERRED — lands at paired acceptance**; the substrate amendment itself ships independently of the façade helper.
 
 ## 2-Cycle Atomic Promotion Tag
@@ -294,7 +294,7 @@ This RFC has been reviewed across 5 reviewer lenses over multiple iterations (R3
 - **R33.5:** A5 timestamp monotonicity rewrite, `compute_settlement_hash` → `receipt_id_for` rename, Rationale 7-variant fix.
 - **R34.5:** hygiene parens strip, phantom-substrate TV DEFERRED markers, per-façade scrubber decoupling, adapter-type registry pattern.
 - **R35.5:** additional DEFERRED TV markers (TV-AUD-v2-8/17), StoolapReceiptSink phantom refs removed, `request_canonical_bytes` removed, RFC-0014-v2 §S5.1/SC2 6-pattern → 5+6th-registry wording fix.
-- **R36.5 (this commit):** 8 file:line refs removed (CLAUDE.md §No line refs); RFC-0014-v2 §S6.1 KeyedHasher added; Appendix §Layer Direction Note added; VH rows compressed to ≤10w; UC-SET-004 CLI namespace corrected.
+- **R36.5 (this commit):** 8 file:line refs removed (CLAUDE.md §No line refs); RFC-0014-v2 §S6 KeyedHasher subsection; Appendix §Layer Direction Note added; VH rows compressed to ≤10w; UC-SET-004 CLI namespace corrected.
 
 Reviewer board membership per CLAUDE.md §Review Process: correctness, security, layer-model, hygiene, spec-completeness. Critical-lens reviewers may surface CRITICAL/HIGH findings post-DRY-CLOSED if substrate code or external threat-model changes.
 
@@ -695,6 +695,10 @@ RFC-0014-v2 pins the typed-discriminator pattern via `ask_id` namespaces. Cross-
 
 The canonical cross-RFC pointer for the settlement-side audit-event receiver (`audit_event_for_agent_transition_receipt`) lives at RFC-0014-v2 §FW2; this RFC's §FW2 above is the canonical audit-side ownership declaration. Pairing invariants are enforced at acceptance per §AC-8.
 
+### §FW6 — Cross-RFC consensus-invariance scrubber patterns
+
+Canonical cross-RFC scrubber-pattern sharing lives at RFC-0014-v2 §FW6 (consensus-invariance scrubber patterns + per-façade duplication rationale + cross-RFC consistency invariants). This RFC defers to RFC-0014-v2 §FW6 as the single source of truth; audit-side scrubber (`octo_audit::scrub`) and settlement-side scrubber (`octo_settlement::scrub`) duplicate the canonical 8-pattern list per RFC-0014-v2 §FW6 rationale (no sibling Layer B coupling). Adapter-side conformance gate runs at acceptance per §Implementation Phases.
+
 ## Rationale
 
 RFC-0012-v2 codifies the typed-discriminator extension pattern as the canonical substrate-faithful mechanism for new audit event semantics. This achieves three goals:
@@ -721,6 +725,8 @@ The cost is a doc-comment-driven extension pattern that domain crates must follo
 | v2.0.0-r38   | 2026-09-11 | CipherOcto Architecture Working Group | Cross-RFC wording drift, hygiene em-dash sweep                                      |
 | v2.0.0-r38.5 | 2026-09-11 | CipherOcto Architecture Working Group | Scrubber code-fence audit, §S5.1/§S6.1 collapse check                               |
 | v2.0.0-r39.5 | 2026-09-11 | CipherOcto Architecture Working Group | extension_kinds drop, subject_did DEFERRED, A4 chain-linkage-only reassert          |
+| v2.0.0-r40   | 2026-09-11 | CipherOcto Architecture Working Group | R41 findings: VH+§FW6+AC-11+AC-12+R41-sp                                            |
+| v2.0.0-r40.5 | 2026-09-11 | CipherOcto Architecture Working Group | R41 fix: VH r40/r40.5, §FW6, AC-11 runtime, AC-12 soften                            |
 
 ## Related RFCs
 

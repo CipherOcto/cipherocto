@@ -341,10 +341,16 @@ The RFC is Accepted when ALL of the following are true:
 - **AC-4.** Strict `receipt_id == last_receipt_id() + 1` enforced; re-append returns `AlreadyExists`; gap returns `SequenceGap`.
 - **AC-5.** Tampered `settlement_hash` is detected at adapter-side append check + read-path `verify_receipt_chain`. Adapter returns `ChainIntegrity { receipt_id }` (NOT `SinkSpecific`) at append; substrate `verify_receipt_chain` returns same at read.
 - **AC-6.** `ReceiptId(pub u64)` newtype re-exported at `octo_settlement::ReceiptId`; canonical hash unchanged.
-- **AC-7. DEFERRED — lands at paired acceptance of the receipt-sink adapter crate (e.g. `quota-router-sm-engine`); no substrate code exists at the claimed path today.** Adapter conformance to AC-7 (canonical scrubber invocation per §S5.1 + §FW6) lands at paired acceptance per §Implementation Phases Phase 2 — pre-acceptance adapter-side redactor is out of scope for this RFC. The Layer D receipt-sink adapter at `crates/quota-router-sm-engine/src/store.rs` MUST invoke `scrub_adapter_error` on raw Stoolap error chains before wrapping into `SettlementError::SinkSpecific` (R39 internal-contradiction finding; pre-acceptance substrate code may wrap raw errors and is out of conformance scope). Each Layer B façade owns its own scrubber instance (e.g. `octo_audit::scrub::scrub_adapter_error`, `octo_settlement::scrub::scrub_adapter_error` — pattern duplicated per-façade to avoid sibling Layer B coupling). Raw error chains MUST NOT reach substrate at paired acceptance.
+- **AC-7. DEFERRED — lands at paired acceptance of the receipt-sink adapter crate (e.g. `quota-router-sm-engine`); no substrate code exists at the claimed path today.** Adapter conformance to AC-7 (canonical scrubber invocation per §S5.1 + §FW6) lands at paired acceptance per §Implementation Phases Phase 2 — pre-acceptance adapter-side redactor is out of scope for this RFC. Both adapter crates MUST invoke `scrub_adapter_error` on raw error chains before wrapping into the substrate `SinkSpecific` envelope:
+  - `crates/octo-audit/src/storage/stoolap.rs` (audit-side Layer D adapter) — wraps into `AuditError::SinkSpecific` after scrubber pass.
+  - `crates/quota-router-sm-engine/src/store.rs` (settlement-side Layer D adapter) — wraps into `SettlementError::SinkSpecific` after scrubber pass.
+  - Each Layer B façade owns its own scrubber instance (e.g. `octo_audit::scrub::scrub_adapter_error`, `octo_settlement::scrub::scrub_adapter_error` — pattern duplicated per-façade to avoid sibling Layer B coupling). Raw error chains MUST NOT reach substrate at paired acceptance.
 - **AC-8.** Paired acceptance with RFC-0012-v2 per BLUEPRINT.md §2-Cycle Atomic Promotion gate.
 - **AC-9.** All 30 Test Vectors (TV-SET-v2-1 through TV-SET-v2-30) in §Test Vectors produce expected outputs (verified by `cargo test -p octo-settlement`; pass criterion: 30/30 TVs pass).
 - **AC-10.** Layer D adapter implementations provide monotonicity + transaction-scoped atomic persistence; atomic-or-rollback contract honored (no partial persistence observable on adapter failure). See Appendix §Layer Direction Note for canonical adapter-location reference.
+- **AC-11.** Compile-time const registry assertion at façade layer for `extension_kinds` (matching RFC-0012-v2 AC-11): mandatory runtime check enforces the canonical extension kind set declared at §S1 + Appendix A is the only extension kind registry consulted by `verify_receipt_chain` and `receipt_id_for` (no shadow registry, no per-call lookup table that diverges from the canonical form). Failures must abort before any receipt is appended.
+- **AC-12.** §S7 cross-RFC pairing invariant: `prev_chain_hash = compute_chain_hash(last_audit_event)` (audit-chain linkage), NOT `receipt_id_for(receipt)`. Audit chain verification depends on `prev_chain_hash` chaining the previous audit event's `chain_hash`; overloading with receipt-binding semantics would break audit-chain verification.
+- **AC-13.** Paired-acceptance scrubber DEFERRED at `quota-router-sm-engine` adapter crate (settlement-side Layer D adapter per Appendix §Layer Direction Note): canonical 8-pattern scrubber impl per §S5.1 + §FW6 lands at paired acceptance of the receipt-sink adapter crate; pre-acceptance adapter-side redactor is out of scope for this RFC (mirrors RFC-0012-v2 AC-13 pattern).
 
 ## 2-Cycle Atomic Promotion Tag
 
@@ -429,7 +435,7 @@ Substrate does NOT verify `router_sig` (signature verification is layer B / doma
 ### TV-SET-v2-1: Typed-discriminator construction
 
 ```text
-input: extension_kind = "ask-partial", canonical_ask_id = "0x..."
+input: extension_kind = "ask-partial", canonical_ask_id_bytes = b"did:oct:ask/partial-abc123" (raw UTF-8 bytes form)
 expect: Receipt { ask_id: BLAKE3-256("cipherocto/settlement/extension/ask-partial/v1/" || canonical_ask_id), ... }
 ```
 
@@ -591,7 +597,7 @@ expect: audit_event_for_ask_rejected(receipt) returns AuditEvent with cap_root_h
         settlement-side index lookup by ask_id typed-discriminator recovers the corresponding receipt
 ```
 
-**DEFERRED:** `audit_event_for_ask_rejected` is façade helper per §S7; lands at acceptance per §Implementation Phases Phase 2.
+**DEFERRED — lands at acceptance.** `audit_event_for_ask_rejected` is façade helper per §S7 (per Implementation Phases Phase 2).
 
 ### TV-SET-v2-19: scrub_adapter_error canonical 5 patterns + registry 6th (RFC-0012-v2 TV-AUD-v2-18..v2-23)
 
@@ -822,6 +828,9 @@ The cost is a doc-comment-driven extension pattern that domain crates must follo
 | v2.0.0-r38   | 2026-09-11 | CipherOcto Architecture Working Group | phantom slugs deleted, §S7 dropped, FW6 created                      |
 | v2.0.0-r38.5 | 2026-09-11 | CipherOcto Architecture Working Group | §S5.1/S6.1 collapse regression detected                              |
 | v2.0.0-r39   | 2026-09-11 | CipherOcto Architecture Working Group | §S5.1/S6.1 collapsed, §FW6 added, math fix                           |
+| v2.0.0-r39.5 | 2026-09-11 | CipherOcto Architecture Working Group | Fix 46 findings from R39 review pass                                 |
+| v2.0.0-r40   | 2026-09-11 | CipherOcto Architecture Working Group | 5-len round 21 findings from R40 review                              |
+| v2.0.0-r40.5 | 2026-09-11 | CipherOcto Architecture Working Group | Fix 21 findings from R40 review pass                                 |
 
 ## Related RFCs
 

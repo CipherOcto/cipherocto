@@ -4,7 +4,7 @@
 | ------------ | ------------------------------------------------------------------------------- |
 | Status       | Accepted                                                                        |
 | Version      | v3.0.0                                                                          |
-| Layer        | A (substrate-frozen)                                                            |
+| Layer        | A + B + C (substrate-frozen + façade + specialized-node)                        |
 | Authors      | CipherOcto Architecture Working Group                                           |
 | Maintainers  | CipherOcto Architecture Working Group                                           |
 | Parent RFC   | RFC-0014                                                                        |
@@ -57,7 +57,7 @@ R48-s review of RFC-0012-v2 + RFC-0014-v2 surfaced **4 paired-acceptance DEFERRE
 
 **Defect 2 (32-byte hash oracle):** The shadow 8-variant `SettlementError` at `quota-router-sm-engine` (Layer C specialized node) leaks 32-byte hashes via `#[error("settlement hash mismatch: expected {expected}, got {got}")]` where `{expected}` and `{got}` are `String` (hex-encoded 32-byte hash). `Display` chain → log → observable side-channel.
 
-**Defect 3 (SinkSpecific payload cap missing):** Per RFC-0014-v2 §FW6, `SinkSpecific(String)` at substrate boundary is UNBOUNDED. The cap lives at the scrubber (4 KiB input cap, 4 KiB output cap). Substrate-faithful posture = verbatim payload retention; runtime enforcement of a substrate-level length cap is **DEFERRED — lands at acceptance** per §FW6.
+**Defect 3 (SinkSpecific payload cap missing):** Per RFC-0014-v2 §FW6, `SinkSpecific(String)` at substrate boundary is UNBOUNDED. The cap lives at the scrubber (4 KiB input cap, 4 KiB output cap). Substrate-faithful posture = verbatim payload retention; runtime enforcement of a substrate-level length cap is **DEFERRED — lands at acceptance** per §FW3.
 
 ## Roles and Authorities
 
@@ -128,7 +128,7 @@ AlreadyConsumed(#[source] SettlementHashOpaque),
 
 The shadow `SettlementError` references the substrate newtype via `pub use octo_settlement_core::SettlementHashOpaque;` at `quota-router-sm-engine` — a single canonical Layer A primitive consumed across layers, not a Layer C extension.
 
-**Cross-RFC consistency note:** `octo-settlement-core::SettlementError` (Layer A substrate) uses `[u8; 32]` directly for `AskNotFound` + `AlreadyConsumed` variants. The `Debug` impl on `[u8; 32]` leaks the raw bytes — this is a SUBSTRATE-LEVEL gap that the §S5.2 newtype addresses for the SHADOW variants at `quota-router-sm-engine` (Layer C). Substrate-level `[u8; 32]` Debug redaction is **DEFERRED — lands at acceptance** per §FW4.
+**Cross-RFC consistency note:** `octo-settlement-core::SettlementError` (Layer A substrate) uses `[u8; 32]` directly for `AskNotFound` + `AlreadyConsumed` variants. The `Debug` impl on `[u8; 32]` leaks the raw bytes — this is a SUBSTRATE-LEVEL gap that the §S5.2 newtype addresses for the SHADOW variants at `quota-router-sm-engine` (Layer C). Substrate-level `[u8; 32]` Debug redaction is **DEFERRED — lands at acceptance** per §FW2.
 
 #### §S5.2.1 — Layer-model rationale
 
@@ -183,7 +183,7 @@ const ADAPTER_TYPES: &[&str] = &["StoolapStore", "StoolapReceiptSink"];
 
 **A-1.** Side-channel via `as_bytes()`: an attacker with code execution can call `as_bytes()`. Mitigation: the function name signals "programmatic only; never log"; doc-comment explicitly forbids logging.
 
-**A-2.** Side-channel via substrate `Debug` on `[u8; 32]`: substrate-level `[u8; 32]` Debug leaks raw bytes. Mitigation: DEFERRED to §FW4 acceptance; shadow variants at Layer C use `SettlementHashOpaque` to bypass this gap.
+**A-2.** Side-channel via substrate `Debug` on `[u8; 32]`: substrate-level `[u8; 32]` Debug leaks raw bytes. Mitigation: DEFERRED to §FW2 acceptance; shadow variants at Layer C use `SettlementHashOpaque` to bypass this gap.
 
 **A-3.** Side-channel via `chain_hash` lookup: an attacker who can compute `compute_receipt_hash(&receipt)` can recover `settlement_hash` (since `chain_hash` derives from `settlement_hash`). This is OUT OF SCOPE — redaction prevents accidental leakage via Display, not malicious access to cryptographic substrate.
 
@@ -532,7 +532,7 @@ All three fixes are ADDITIVE (semver-minor), preserve programmatic access via ex
 - **UC-1 — DOMAIN adapter error-chain redaction at audit log emission.** `StoolapStore` + `StoolapReceiptSink` migrate every raw `.to_string()` chain to `scrub_adapter_error_with` (Pattern 6 registry) — eliminates hex/path/SQLSTATE/io-error chain leakage at the DOMAIN adapter boundary (defect 1b).
 - **UC-2 — Chain-integrity verification with redacted Display.** `octo-settlement-core::SettlementError::SinkSpecific` retains unbounded payload at substrate (Layer A frozen) per AC-11 + §S5 explicit substrate-faithful posture; DOMAIN adapters MUST call `scrub_adapter_error_with` for 4 KiB input/output cap enforcement (defect 3).
 - **UC-3 — SettlementHashMismatch error redacted at Display, raw bytes at source.** Shadow 8-variant `SettlementError::SettlementHashMismatch` + `AskNotFound` + `AlreadyConsumed` migrate `[u8; 32]` → `SettlementHashOpaque` (Layer A frozen substrate newtype); Display emits `<redacted-hash>`, `as_bytes()` retains raw bytes for programmatic chain-integrity verification (defect 2).
-- **UC-4 — Substrate-level substrate-faithful posture for unbounded payload.** `SinkSpecific(String)` at substrate remains UNBOUNDED pre-acceptance; cap lives at scrubber (per §FW6 + §S5.3 DEFERRED marker); acceptance mission MAY amend §S5 to declare substrate-side byte cap if 4 KiB scrubber insufficient.
+- **UC-4 — Substrate-level substrate-faithful posture for unbounded payload.** `SinkSpecific(String)` at substrate remains UNBOUNDED pre-acceptance; cap lives at scrubber (per §FW3 + §S5.3 DEFERRED marker); acceptance mission MAY amend §S5 to declare substrate-side byte cap if 4 KiB scrubber insufficient.
 
 ## Appendices
 

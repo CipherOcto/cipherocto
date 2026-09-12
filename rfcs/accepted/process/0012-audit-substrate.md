@@ -35,35 +35,37 @@ This RFC closes the phantom-crate gap identified in `docs/audits/2026-09-10-rfc-
 - RFC-0205 — Stoolap Fork Stability + RFC-0206 — `octo-storage-core` Split (`Database` trait precedent for substrate-frozen core pattern; cited analog)
 
 > **Dependency Validation Rules:**
+>
 > 1. DAG (no cycles); Requires listed as mission prereqs
 > 2. RFC-0957-A1 §Future Work F3 is the source-of-truth for canonical `AuditEvent` field shape (event_id, node_did, event_kind, cap_root_hash, at_millis_unix, prev_chain_hash, chain_hash); RFC-0012 ADDS the `AppendOnlyAuditSink` trait + `audit_chain` module + `#[non_exhaustive]` extension on `AuditEventKind`; does NOT change canonical field semantics
 > 3. No 2-cycle sibling required
 
 ## Design Goals
 
-| Goal | Target | Metric |
-| ---- | ------ | ------ |
-| G1 | Layer A frozen | `octo-audit-core` depends only on `octo-ident` + `blake3` + `serde` (no storage, no IO); semver-major only |
-| G2 | Type-level append-only | `AppendOnlyAuditSink::append` requires `&mut self`; no `delete` / `update` / `clear` method exists on the trait |
-| G3 | Cross-domain canonical type | `AuditEvent` defined exactly once in `octo-audit-core`; all domain crates consume via `pub use octo_audit_core::AuditEvent` |
-| G4 | Extension surface | `AuditEventKind` is `#[non_exhaustive]`; domain crates add extension enums (`CapabilityAuditEventKind`, `NetworkAuditEventKind`, `AdapterAuditEventKind`) NOT variants |
-| G5 | Chain integrity | `verify_chain` rejects any sequence gap, hash mismatch, or timestamp regression; BLAKE3-256 over canonical serialization per RFC-0957-A1 §F3 |
-| G6 | RFC-0011-a name parity | `octo-audit` (Layer B façade) exposes the canonical names RFC-0011-a §Substrate `[ADD]` references; CLI consumes `octo-audit`, not `octo-audit-core` directly |
+| Goal | Target                      | Metric                                                                                                                                                                 |
+| ---- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| G1   | Layer A frozen              | `octo-audit-core` depends only on `octo-ident` + `blake3` + `serde` (no storage, no IO); semver-major only                                                             |
+| G2   | Type-level append-only      | `AppendOnlyAuditSink::append` requires `&mut self`; no `delete` / `update` / `clear` method exists on the trait                                                        |
+| G3   | Cross-domain canonical type | `AuditEvent` defined exactly once in `octo-audit-core`; all domain crates consume via `pub use octo_audit_core::AuditEvent`                                            |
+| G4   | Extension surface           | `AuditEventKind` is `#[non_exhaustive]`; domain crates add extension enums (`CapabilityAuditEventKind`, `NetworkAuditEventKind`, `AdapterAuditEventKind`) NOT variants |
+| G5   | Chain integrity             | `verify_chain` rejects any sequence gap, hash mismatch, or timestamp regression; BLAKE3-256 over canonical serialization per RFC-0957-A1 §F3                           |
+| G6   | RFC-0011-a name parity      | `octo-audit` (Layer B façade) exposes the canonical names RFC-0011-a §Substrate `[ADD]` references; CLI consumes `octo-audit`, not `octo-audit-core` directly          |
 
 ## Motivation
 
 RFC-0011-a §Key Files to Modify declares `crates/octo-audit/` as a "NEW Layer C substrate crate" exposing `list_receipts`, `get_receipt`, `AuditFilter`, `AuditError`, `ReceiptId`, `audit_home`. The crate does not exist (`ls crates/` returns no `octo-audit`). The audit substrate landed in-place across 4 domain crates:
 
-| Domain crate | Module |
-|---|---|
-| `octo-wallet` | `capability/audit_log.rs` (HolderRegistry audit per RFC-0957-A1 §F3) |
-| `octo-network` | `dot/audit_store.rs` (network-layer audit per RFC-0855p-*) |
+| Domain crate    | Module                                                               |
+| --------------- | -------------------------------------------------------------------- |
+| `octo-wallet`   | `capability/audit_log.rs` (HolderRegistry audit per RFC-0957-A1 §F3) |
+| `octo-network`  | `dot/audit_store.rs` (network-layer audit per RFC-0855p-*)           |
 | `octo-whatsapp` | `audit.rs` + `ipc/handlers/audit.rs` (adapter audit per RFC-0850p-a) |
-| `octo-role` | `node/role_binding_audit.rs` (role-binding audit per RFC-0011-d) |
+| `octo-role`     | `node/role_binding_audit.rs` (role-binding audit per RFC-0011-d)     |
 
 Each domain holds its own `AuditEvent` struct + storage adapter + extension enum. Cross-domain queries (e.g., "all events for DID X across wallet + network + adapter") require type-bridging because the structs differ. RFC-0011-a's RFC text references a canonical name (`octo-audit`) that doesn't match the implementation reality.
 
 The hybrid Layer A core + Layer B façade pattern (research doc Finding 4) resolves this by:
+
 1. Defining canonical `AuditEvent` + `AuditEventKind` + `AppendOnlyAuditSink` in a frozen Layer A crate (`octo-audit-core`)
 2. Defining `octo-audit` as a thin Layer B façade that re-exports ONLY from the core (no domain leakage — Finding 3's re-export collision is structurally prevented)
 3. Domain crates consume the core for primitives + add their own storage adapters + extension enums
@@ -73,11 +75,11 @@ The hybrid Layer A core + Layer B façade pattern (research doc Finding 4) resol
 
 > **The "Nothing should be implied" rule (specification layer).**
 
-| Role | Identifier | Authority Scope | Lifecycle | Source/Ref |
-|------|------------|-----------------|-----------|------------|
-| Audit Appender | `AppendOnlyAuditSink` impl | append-only write to domain storage | stateless | §Specification §Trait |
-| Audit Verifier | `octo_audit_core::verify_chain` | read-only chain integrity check | stateless | §Specification §Chain Integrity |
-| Domain Consumer | `pub use octo_audit_core::AuditEvent` | derive canonical types in domain crate | stateless | §Migration Plan |
+| Role            | Identifier                            | Authority Scope                        | Lifecycle | Source/Ref                      |
+| --------------- | ------------------------------------- | -------------------------------------- | --------- | ------------------------------- |
+| Audit Appender  | `AppendOnlyAuditSink` impl            | append-only write to domain storage    | stateless | §Specification §Trait           |
+| Audit Verifier  | `octo_audit_core::verify_chain`       | read-only chain integrity check        | stateless | §Specification §Chain Integrity |
+| Domain Consumer | `pub use octo_audit_core::AuditEvent` | derive canonical types in domain crate | stateless | §Migration Plan                 |
 
 The substrate is intentionally ROLE-MINIMAL: it does NOT introduce authority-granting roles. Authority comes from the domain crate that owns the `AppendOnlyAuditSink` impl (e.g., `octo-wallet/capability/audit_log` owns capability-domain append authority).
 
@@ -315,21 +317,21 @@ The audit substrate is **stateless** — events are immutable once appended; no 
 
 ### Determinism Requirements
 
-| Requirement | Mechanism |
-|-------------|-----------|
-| Chain hash determinism | BLAKE3-256 over canonical length-prefixed serialization per RFC-0957-A1 §F3 |
-| Event ordering | `event_id` MUST be strictly monotonic per `node_did`; substrate enforces via `SequenceGap` error |
-| Timestamp ordering | `at_millis_unix` MUST be non-decreasing per `node_did`; substrate enforces via `TimestampRegression` error |
-| Cross-replica equivalence | Same event sequence + same BLAKE3 state → identical `chain_hash`; verified by `verify_chain` |
+| Requirement               | Mechanism                                                                                                  |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Chain hash determinism    | BLAKE3-256 over canonical length-prefixed serialization per RFC-0957-A1 §F3                                |
+| Event ordering            | `event_id` MUST be strictly monotonic per `node_did`; substrate enforces via `SequenceGap` error           |
+| Timestamp ordering        | `at_millis_unix` MUST be non-decreasing per `node_did`; substrate enforces via `TimestampRegression` error |
+| Cross-replica equivalence | Same event sequence + same BLAKE3 state → identical `chain_hash`; verified by `verify_chain`               |
 
 ### RFC-0008 Execution Class Mapping
 
-| Operation | Class | Rationale |
-|-----------|-------|-----------|
-| `AppendOnlyAuditSink::append` | Class A | Consensus-affecting (chain integrity); deterministic |
-| `verify_chain` | Class A | Deterministic chain check; no IO side effects beyond read |
-| `AuditEvent::compute_chain_hash` | Class A | Pure function; BLAKE3 over canonical bytes |
-| `AuditEvent::canonical_bytes` | Class A | Pure serialization; length-prefixed deterministic output |
+| Operation                        | Class   | Rationale                                                 |
+| -------------------------------- | ------- | --------------------------------------------------------- |
+| `AppendOnlyAuditSink::append`    | Class A | Consensus-affecting (chain integrity); deterministic      |
+| `verify_chain`                   | Class A | Deterministic chain check; no IO side effects beyond read |
+| `AuditEvent::compute_chain_hash` | Class A | Pure function; BLAKE3 over canonical bytes                |
+| `AuditEvent::canonical_bytes`    | Class A | Pure serialization; length-prefixed deterministic output  |
 
 ### Error Handling
 
@@ -337,21 +339,21 @@ The substrate exposes `AuditChainError` (3 variants: `SequenceGap`, `HashMismatc
 
 ## Performance Targets
 
-| Metric | Target | Notes |
-|--------|--------|-------|
-| `compute_chain_hash` latency | <10µs | BLAKE3 over ~100 bytes |
-| `verify_chain` latency | <100ms | 10,000-event sequence on commodity hardware |
-| `append` latency | domain-defined | substrate owns the primitive; domain owns IO |
-| Substrate compile time | <2s | Layer A frozen; depends on `blake3` + `serde` + `thiserror` |
+| Metric                       | Target         | Notes                                                       |
+| ---------------------------- | -------------- | ----------------------------------------------------------- |
+| `compute_chain_hash` latency | <10µs          | BLAKE3 over ~100 bytes                                      |
+| `verify_chain` latency       | <100ms         | 10,000-event sequence on commodity hardware                 |
+| `append` latency             | domain-defined | substrate owns the primitive; domain owns IO                |
+| Substrate compile time       | <2s            | Layer A frozen; depends on `blake3` + `serde` + `thiserror` |
 
 ## Implicit Assumptions Audit
 
-| Assumption | Where Relied Upon | Blast Radius if False | Mitigation / Status |
-|------------|-------------------|----------------------|---------------------|
-| BLAKE3-256 collision resistance | §Chain Integrity | Catastrophic (chain forgery); affects every audit consumer | ACCEPTED RISK: BLAKE3 is the project hash standard; PQC migration is years out per Layer A stability |
-| `node_did` is canonical RFC-0010 DID | §Data Structures | Cross-domain DID bridging breaks; CLI cannot render DID | MITIGATED: `node_did: String` parsed at domain boundary; substrate trusts the domain to pass canonical form |
-| Domain extension enums wrap substrate variants | §Extension Surface | Domain variants leak into substrate; semver breaks | MITIGATED: substrate docs explicitly direct extension via wrapper enum, not variant addition |
-| Storage backend serializes per-thread | `&mut self` on `append` | Concurrent appends corrupt chain | ACCEPTED RISK: domain crate owns concurrency contract; substrate does not enforce `Mutex` |
+| Assumption                                     | Where Relied Upon       | Blast Radius if False                                      | Mitigation / Status                                                                                         |
+| ---------------------------------------------- | ----------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| BLAKE3-256 collision resistance                | §Chain Integrity        | Catastrophic (chain forgery); affects every audit consumer | ACCEPTED RISK: BLAKE3 is the project hash standard; PQC migration is years out per Layer A stability        |
+| `node_did` is canonical RFC-0010 DID           | §Data Structures        | Cross-domain DID bridging breaks; CLI cannot render DID    | MITIGATED: `node_did: String` parsed at domain boundary; substrate trusts the domain to pass canonical form |
+| Domain extension enums wrap substrate variants | §Extension Surface      | Domain variants leak into substrate; semver breaks         | MITIGATED: substrate docs explicitly direct extension via wrapper enum, not variant addition                |
+| Storage backend serializes per-thread          | `&mut self` on `append` | Concurrent appends corrupt chain                           | ACCEPTED RISK: domain crate owns concurrency contract; substrate does not enforce `Mutex`                   |
 
 ### Categories considered
 
@@ -376,13 +378,13 @@ The substrate exposes `AuditChainError` (3 variants: `SequenceGap`, `HashMismatc
 
 ### Decision Table
 
-| Decision | Q1 Beneficiary | Q2 Cost to Attacker | Q3 Gain if Successful | Q4 Defense (cost to legit op) | Q5 Residual Risk |
-|----------|----------------|---------------------|------------------------|------------------------------|------------------|
-| `&mut self` on `append` | Compromised domain crate author | Must implement parallel trait + alternate API surface | Bypass append-only by re-writing history | Compiler rejects impl with `&self` on `append`; type-level enforcement | LOW: type system catches; review catches parallel trait |
-| BLAKE3 chain | Chain forger | Pre-image attack on BLAKE3-256 (infeasible) | Insert forged audit events | `verify_chain` rejects; forensic surface detects | LOW: BLAKE3 is well-studied |
-| `#[non_exhaustive]` on `AuditEventKind` | Future substrate author | None (extension is intentional) | Add new event kind without breaking semver | Substrate migration etiquette in §Migration Plan | LOW: extension is the design intent |
-| Manual `Debug` redaction | Insider with log access | Cannot extract cap_root_hash from logs | Reputation laundering via leaked capability roots | Redaction is manual `Debug` impl; `Display` redacts too | LOW: redaction is mechanical |
-| Domain extension enums (vs substrate variants) | Domain author adding event kind | None (extension is intentional) | Add domain-specific event semantics without breaking other domains | Substrate docs direct extension; code review enforces | LOW: extension is the design intent |
+| Decision                                       | Q1 Beneficiary                  | Q2 Cost to Attacker                                   | Q3 Gain if Successful                                              | Q4 Defense (cost to legit op)                                          | Q5 Residual Risk                                        |
+| ---------------------------------------------- | ------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------- | ------------------------------------------------------- |
+| `&mut self` on `append`                        | Compromised domain crate author | Must implement parallel trait + alternate API surface | Bypass append-only by re-writing history                           | Compiler rejects impl with `&self` on `append`; type-level enforcement | LOW: type system catches; review catches parallel trait |
+| BLAKE3 chain                                   | Chain forger                    | Pre-image attack on BLAKE3-256 (infeasible)           | Insert forged audit events                                         | `verify_chain` rejects; forensic surface detects                       | LOW: BLAKE3 is well-studied                             |
+| `#[non_exhaustive]` on `AuditEventKind`        | Future substrate author         | None (extension is intentional)                       | Add new event kind without breaking semver                         | Substrate migration etiquette in §Migration Plan                       | LOW: extension is the design intent                     |
+| Manual `Debug` redaction                       | Insider with log access         | Cannot extract cap_root_hash from logs                | Reputation laundering via leaked capability roots                  | Redaction is manual `Debug` impl; `Display` redacts too                | LOW: redaction is mechanical                            |
+| Domain extension enums (vs substrate variants) | Domain author adding event kind | None (extension is intentional)                       | Add domain-specific event semantics without breaking other domains | Substrate docs direct extension; code review enforces                  | LOW: extension is the design intent                     |
 
 ### Multi-Round Review
 
@@ -414,6 +416,7 @@ No economic implications. Substrate is a chain-integrity primitive; no token, no
 ### RFC-0957-A1 §F3 compatibility
 
 RFC-0012 EXTENDS the canonical `AuditEvent` field shape with:
+
 - The `AppendOnlyAuditSink` trait (new; not in §F3)
 - `verify_chain` helper (new; not in §F3)
 - `AuditChainError` enum (new; not in §F3)
@@ -425,27 +428,27 @@ Field shape (`event_id`, `node_did`, `event_kind`, `cap_root_hash`, `at_millis_u
 
 10 canonical test vectors. Each vector is a substrate-level property test; CLI-level test vectors live in RFC-0011-a §Test Vectors.
 
-| ID | Scenario | Expected |
-|----|----------|----------|
-| `chain-empty` | Empty event sequence | `verify_chain(&[]) == Ok(())` |
-| `chain-single` | Single event with `prev_chain_hash = [0;32]` | `verify_chain` accepts; `chain_hash` matches `BLAKE3(canonical_bytes)` |
-| `chain-monotonic` | 10 events with strict `event_id` monotonicity + correct `prev_chain_hash` chaining | `verify_chain` accepts |
-| `chain-gap` | 10 events with `event_id` skip from 5 to 7 | `verify_chain` returns `AuditChainError::SequenceGap { event_id: 7, prev: 5 }` |
-| `chain-hash-mismatch` | Event with `chain_hash` field flipped by 1 byte | `verify_chain` returns `AuditChainError::HashMismatch` |
-| `chain-timestamp-regression` | Two events with `at_millis_unix` decreasing | `verify_chain` returns `AuditChainError::TimestampRegression` |
-| `append-success` | `StoolapAuditSink::append` with valid event | Returns `Ok(())`; `chain_hash` field set to `compute_chain_hash()` |
-| `append-idempotent` | Same event appended twice | First `Ok(())`; second returns `AuditChainError::SequenceGap` (event_id already used) |
-| `extension-enum` | `CapabilityAuditEventKind = CapabilityMint \| CapabilityAttenuate` wraps `AuditEventKind` | Conversion to `AuditEventKind` succeeds for both variants |
-| `debug-redaction` | `format!("{:?}", event)` with non-zero `cap_root_hash` | Output contains `<redacted 32 bytes>`; does NOT contain the actual hash bytes |
+| ID                           | Scenario                                                                                  | Expected                                                                              |
+| ---------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `chain-empty`                | Empty event sequence                                                                      | `verify_chain(&[]) == Ok(())`                                                         |
+| `chain-single`               | Single event with `prev_chain_hash = [0;32]`                                              | `verify_chain` accepts; `chain_hash` matches `BLAKE3(canonical_bytes)`                |
+| `chain-monotonic`            | 10 events with strict `event_id` monotonicity + correct `prev_chain_hash` chaining        | `verify_chain` accepts                                                                |
+| `chain-gap`                  | 10 events with `event_id` skip from 5 to 7                                                | `verify_chain` returns `AuditChainError::SequenceGap { event_id: 7, prev: 5 }`        |
+| `chain-hash-mismatch`        | Event with `chain_hash` field flipped by 1 byte                                           | `verify_chain` returns `AuditChainError::HashMismatch`                                |
+| `chain-timestamp-regression` | Two events with `at_millis_unix` decreasing                                               | `verify_chain` returns `AuditChainError::TimestampRegression`                         |
+| `append-success`             | `StoolapAuditSink::append` with valid event                                               | Returns `Ok(())`; `chain_hash` field set to `compute_chain_hash()`                    |
+| `append-idempotent`          | Same event appended twice                                                                 | First `Ok(())`; second returns `AuditChainError::SequenceGap` (event_id already used) |
+| `extension-enum`             | `CapabilityAuditEventKind = CapabilityMint \| CapabilityAttenuate` wraps `AuditEventKind` | Conversion to `AuditEventKind` succeeds for both variants                             |
+| `debug-redaction`            | `format!("{:?}", event)` with non-zero `cap_root_hash`                                    | Output contains `<redacted 32 bytes>`; does NOT contain the actual hash bytes         |
 
 ## Alternatives Considered
 
-| Approach | Pros | Cons |
-|----------|------|------|
-| **Pure general-purpose substrate (Finding 1)** — `octo-audit-core` only; no façade; CLI consumes core directly | Simpler (1 crate per concept); layer model cleaner | RFC-0011-a text references `octo-audit`; CLI would need a rename across substrate + missions |
-| **Façade-only (Finding 3)** — `octo-audit` re-exports from domain crates | Minimal LoC (~50); zero refactor of in-place substrate | TYPE RE-EXPORT COLLISION: wallet-domain `AuditEvent` re-exported as canonical; cross-domain queries broken |
-| **Domain-specialized only (Finding 2)** — no new crate | Zero new crates; zero refactor | Silent RFC/code drift; PQC coupling; cross-domain audit impossible |
-| **Single general-purpose crate (Finding 5)** — `octo-audit` contains generic + domain | Simple | Violates open/closed; domain concerns leak; different storage backends require conditional compilation |
+| Approach                                                                                                       | Pros                                                   | Cons                                                                                                       |
+| -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| **Pure general-purpose substrate (Finding 1)** — `octo-audit-core` only; no façade; CLI consumes core directly | Simpler (1 crate per concept); layer model cleaner     | RFC-0011-a text references `octo-audit`; CLI would need a rename across substrate + missions               |
+| **Façade-only (Finding 3)** — `octo-audit` re-exports from domain crates                                       | Minimal LoC (~50); zero refactor of in-place substrate | TYPE RE-EXPORT COLLISION: wallet-domain `AuditEvent` re-exported as canonical; cross-domain queries broken |
+| **Domain-specialized only (Finding 2)** — no new crate                                                         | Zero new crates; zero refactor                         | Silent RFC/code drift; PQC coupling; cross-domain audit impossible                                         |
+| **Single general-purpose crate (Finding 5)** — `octo-audit` contains generic + domain                          | Simple                                                 | Violates open/closed; domain concerns leak; different storage backends require conditional compilation     |
 
 The chosen approach (Finding 4 hybrid) satisfies all 12 principles in `CLAUDE.md` §Architectural Principles + matches the proven `octo-storage-core` → domain-storage pattern (RFC-0205 / RFC-0206).
 
@@ -526,6 +529,7 @@ The chosen approach (Finding 4 hybrid) satisfies all 12 principles in `CLAUDE.md
 ### Why hybrid Layer A core + Layer B façade (not pure substrate, not pure façade)
 
 Per research doc Finding 4 + §Alternatives Considered:
+
 - Pure substrate (Finding 1) requires RFC-0011-a text rename (`octo-audit` → `octo-audit-core`); CLI must consume a different crate name; mission Cargo deps diverge from RFC text
 - Pure façade (Finding 3) has type-collision risk (façade re-exports domain types; cross-domain queries broken)
 - Hybrid (Finding 4) preserves RFC text (`octo-audit` exists) + Layer A canonical ownership (no type collision; single source of truth per type) + Layer B façade (Layer A → Layer B → Layer C direction)
@@ -544,10 +548,10 @@ The chain integrity check is substrate-internal logic — it does NOT depend on 
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0 | 2026-09-10 | Initial draft |
-| 1.1 | 2026-09-10 | Accepted | DRY CLOSED; promoted Draft → Accepted. |
+| Version | Date       | Changes       |
+| ------- | ---------- | ------------- |
+| 1.0     | 2026-09-10 | Initial draft |
+| 1.1     | 2026-09-10 | Accepted      | DRY CLOSED; promoted Draft → Accepted. |
 
 ## Related RFCs
 
@@ -560,6 +564,8 @@ The chain integrity check is substrate-internal logic — it does NOT depend on 
 - RFC-0008 — Deterministic AI Execution Boundary (execution class mapping)
 - RFC-0205 — Stoolap Fork Stability (Layer A frozen substrate precedent)
 - RFC-0206 — `octo-storage-core` Split (Layer A → Layer B → Layer C consumer pattern; cited analog)
+- **RFC-0012-v2** — pins substrate-frozen audit extension pattern; canonical scrubber pattern list anchor.
+- **RFC-0012-v3** — paired-acceptance amendment (audit-side scrubber + `TimestampOpaque` Layer A newtype); acceptance rollout mission `0012-v3-audit-substrate-amendment-rollout`.
 
 ## Related Use Cases
 
@@ -576,8 +582,8 @@ use octo_audit_core::{AuditEvent, AuditEventKind};
 
 /// Wallet-domain audit event kind (extension of canonical substrate).
 ///
-/// Per CLAUDE.md §Extension over enumeration + RFC-0012 §Extension
-/// Surface, domains add WRAPPER enums, not substrate variants.
+/// Per CLAUDE.md §Extension over enumeration + RFC-0012-v3 §Related RFCs,
+/// domains add WRAPPER enums, not substrate variants.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CapabilityAuditEventKind {
@@ -599,13 +605,13 @@ impl From<CapabilityAuditEventKind> for AuditEventKind {
 
 ### B. CLI mapping table (RFC-0011-a names ↔ substrate names)
 
-| RFC-0011-a §Substrate name | Substrate name (`octo-audit` / `octo-audit-core`) |
-|----------------------------|--------------------------------------------------|
-| `list_receipts` | CLI-side projection; maps to `AppendOnlyAuditSink::iter_for_node` + filter narrowing |
-| `get_receipt` | CLI-side projection; maps to `iter_for_node` + `event_id` match |
-| `AuditFilter` | CLI-side type (RFC-0011-a §Substrate); substrate exposes `AuditEvent` for iteration |
-| `AuditError` | CLI-side type (RFC-0011-a §Substrate); substrate exposes `AuditChainError`; CLI wraps |
-| `ReceiptId` | CLI-side newtype (RFC-0011-a §Substrate); substrate `event_id: u64` is the canonical PK |
+| RFC-0011-a §Substrate name | Substrate name (`octo-audit` / `octo-audit-core`)                                       |
+| -------------------------- | --------------------------------------------------------------------------------------- |
+| `list_receipts`            | CLI-side projection; maps to `AppendOnlyAuditSink::iter_for_node` + filter narrowing    |
+| `get_receipt`              | CLI-side projection; maps to `iter_for_node` + `event_id` match                         |
+| `AuditFilter`              | CLI-side type (RFC-0011-a §Substrate); substrate exposes `AuditEvent` for iteration     |
+| `AuditError`               | CLI-side type (RFC-0011-a §Substrate); substrate exposes `AuditChainError`; CLI wraps   |
+| `ReceiptId`                | CLI-side newtype (RFC-0011-a §Substrate); substrate `event_id: u64` is the canonical PK |
 
 ### C. Chain integrity check example
 
@@ -627,6 +633,9 @@ match verify_chain(&events) {
 - `docs/research/2026-09-10-octo-audit-governance-settlement-modular-layer-research.md` — Finding 4 (this RFC operationalizes the hybrid recommendation)
 - `docs/audits/2026-09-10-rfc-0011-a-g-phantom-substrate-investigation.md` — phantom-crate gap (this RFC closes the audit half)
 - `rfcs/accepted/process/0011-a-audit-subcommands.md` — CLI consumer (companion amendment in §Implementation Phases Phase 3)
+- `rfcs/accepted/process/0012-v2-audit-substrate-amendment.md` — v2 amendment (per-façade scrubber substrate extension)
+- `rfcs/accepted/process/0012-v3-audit-substrate-amendment.md` — v3 amendment (paired-acceptance DEFERRED defects 1a + 4)
+- `rfcs/accepted/process/0014-v3-settlement-substrate-amendment.md` — paired v3 amendment (defects 1b + 2 + 3)
 
 ---
 

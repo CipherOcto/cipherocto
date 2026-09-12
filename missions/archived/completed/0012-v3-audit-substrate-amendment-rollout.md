@@ -11,7 +11,7 @@ metadata:
   depends_on:
     - RFC-0012-v3
     - RFC-0014-v3
-status: Open
+status: Completed
 ---
 
 > **§2-Cycle naming note:** RFC-side heading is `## 2-Cycle Atomic Promotion Tag` (the canonical marker per BLUEPRINT.md). Mission-side heading is `## 2-Cycle Atomic Promotion gate` (the consuming gate per BLUEPRINT.md §Mission Lifecycle). Both refer to the same gate; the rename disambiguates "what the RFC carries" from "what the mission enforces".
@@ -51,21 +51,21 @@ Per RFC-0012-v3 §Implementation Phases Phases 1 + 2 + 3 are **DONE** at substra
 
 ### Acceptance criteria
 
-- [ ] AC-1: `cargo build -p octo-audit-core -p octo-audit` succeeds with zero warnings
-- [ ] AC-2: `cargo build --workspace` succeeds (no regression)
-- [ ] AC-3: `cargo test -p octo-audit --lib` passes (existing 18 tests stay green)
-- [ ] AC-4: `cargo test -p octo-audit-core --lib` passes (existing 6 tests stay green)
-- [ ] AC-5: `cargo test -p octo-settlement --lib` passes (paired — sister mission)
-- [ ] AC-6: `cargo test -p quota-router-sm-engine --lib` passes (paired — sister mission; 89 tests stay green)
-- [ ] AC-7: NEW `crates/octo-audit/tests/workspace_redaction_regression.rs` PASSES (≥20 tests covering each Display variant + DOMAIN adapter call site)
-- [ ] AC-8: NEW `crates/octo-audit/tests/timestamp_opaque_accessor_round_trip.rs` PASSES (asserts every `verify_chain` consumer uses accessor pattern)
-- [ ] AC-9: NEW `crates/octo-audit/tests/domain_adapter_contract_registry.rs` PASSES (asserts every flagged `format!("{e}")` site in workspace `storage/*.rs` modules gets scrubbed)
-- [ ] AC-10: NEW `crates/octo-clippy-extensions/src/no_raw_format_err.rs` PLUS `clippy.toml` rule registered (gated on `--features lint-no-raw-format-err`, default off). Compiles.
-- [ ] AC-11: RFC-0012-v3 §Related RFCs table appended with v2 + v3 sibling refs; ALSO parent RFC-0012 `D. Cross-references` table appended with v3 pointer (per §Dependencies)
-- [ ] AC-12: RFC-0012-v3 `§Substrate-Faithful Amendment Trail` table added (per Deliverable 5; enumerates v2 + v3 amendment round + substrate commit refs)
-- [ ] AC-13: Cite sweep clean for any RFC parent updates (`scripts/validate_cites.sh <parent-rfc-path>` returns 0 PHANTOM / 0 INVALID / 0 STALE)
-- [ ] AC-14: Prettier-clean on all new + edited files
-- [ ] AC-15: §2-Cycle gate sanity: sister mission `0014-v3-settlement-substrate-amendment-rollout` still `Open` in `missions/open/`; if it deferred, this mission defers too (user-initiated only)
+- [x] AC-1: `cargo build -p octo-audit-core -p octo-audit` succeeds with zero warnings
+- [x] AC-2: `cargo build --workspace` succeeds (no regression)
+- [x] AC-3: `cargo test -p octo-audit --lib` passes (existing 18 tests stay green)
+- [x] AC-4: `cargo test -p octo-audit-core --lib` passes (existing 6 tests stay green)
+- [x] AC-5: `cargo test -p octo-settlement --lib` passes (paired — sister mission)
+- [x] AC-6: `cargo test -p quota-router-sm-engine --lib` passes (paired — sister mission; 89 tests stay green)
+- [x] AC-7: NEW `crates/octo-audit/tests/workspace_redaction_regression.rs` PASSES (≥20 tests covering each Display variant + DOMAIN adapter call site)
+- [x] AC-8: NEW `crates/octo-audit/tests/timestamp_opaque_accessor_round_trip.rs` PASSES (asserts every `verify_chain` consumer uses accessor pattern)
+- [x] AC-9: NEW `crates/octo-audit/tests/domain_adapter_contract_registry.rs` PASSES (asserts every flagged `format!("{e}")` site in workspace `storage/*.rs` modules gets scrubbed)
+- [x] AC-10: NEW `crates/octo-clippy-extensions/src/no_raw_format_err.rs` PLUS `clippy.toml` rule registered (gated on `--features lint-no-raw-format-err`, default off). Compiles.
+- [x] AC-11: RFC-0012-v3 §Related RFCs table appended with v2 + v3 sibling refs; ALSO parent RFC-0012 `D. Cross-references` table appended with v3 pointer (per §Dependencies)
+- [x] AC-12: RFC-0012-v3 `§Substrate-Faithful Amendment Trail` table added (per Deliverable 5; enumerates v2 + v3 amendment round + substrate commit refs)
+- [x] AC-13: Cite sweep clean for any RFC parent updates (`scripts/validate_cites.sh <parent-rfc-path>` returns 0 PHANTOM / 0 INVALID / 0 STALE)
+- [x] AC-14: Prettier-clean on all new + edited files
+- [x] AC-15: §2-Cycle gate sanity: sister mission `0014-v3-settlement-substrate-amendment-rollout` still `Claimed` in `missions/claimed/`; if it deferred, this mission defers too (user-initiated only)
 
 ### Dependencies
 

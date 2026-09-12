@@ -39,34 +39,35 @@ This RFC closes the phantom-crate half identified in `docs/audits/2026-09-10-rfc
 - RFC-0205 + RFC-0206 — `octo-storage-core` precedent (Layer A frozen substrate pattern; cited analog)
 
 > **Dependency Validation Rules:**
+>
 > 1. DAG (no cycles); Requires listed as mission prereqs
 > 2. RFC-0959 §Data Structures + §State Machine is the source-of-truth for canonical `Receipt` + `AskState` field shape and variant semantics; RFC-0014 EXTRACTS them to `octo-settlement-core` (frozen), ADDS `#[non_exhaustive]` on enums, ADDS `AppendOnlyReceiptSink` trait, ADDS chain-integrity helpers; does NOT alter RFC-0959 semantics
 > 3. SQL schema migration is a separate concern — see §Migration Plan Phase 2 SQL migration note
 
 ## Design Goals
 
-| Goal | Target | Metric |
-| ---- | ------ | ------ |
-| G1 | Layer A frozen | `octo-settlement-core` depends only on `serde` + `thiserror` + `blake3`; no storage backend, no stoolap, no filesystem; semver-major only |
-| G2 | Trait-based canonical storage interface | `SettlementStore` is the canonical interface; multiple impls permitted (`StoolapSettlementStore`, `InMemorySettlementStore`, future `PostgresSettlementStore`) |
-| G3 | Type-level append-only | `AppendOnlyReceiptSink::append` requires `&mut self`; no `delete` / `update` / `clear` method exists on the trait |
-| G4 | Cross-domain canonical types | `Receipt` + `AskState` + `SettlementStore` defined exactly once in substrate; all consumers `pub use` from core |
-| G5 | Extension surface | `AskState` + `ReservationState` are `#[non_exhaustive]`; new states land via substrate amendments |
-| G6 | RFC-0959 variant parity | All 3 `AskState` variants (`Minted`, `Settled`, `Consumed`) preserved byte-identically with SQL strings (`as_sql`); all 8 `ReservationState` variants preserved byte-identically |
-| G7 | RFC-0011-a name parity | `octo-settlement` (Layer B façade) exposes the canonical name RFC-0011-a §Substrate references; substrate names map to CLI projection per §Key Files to Modify §CLI mapping table |
+| Goal | Target                                  | Metric                                                                                                                                                                            |
+| ---- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| G1   | Layer A frozen                          | `octo-settlement-core` depends only on `serde` + `thiserror` + `blake3`; no storage backend, no stoolap, no filesystem; semver-major only                                         |
+| G2   | Trait-based canonical storage interface | `SettlementStore` is the canonical interface; multiple impls permitted (`StoolapSettlementStore`, `InMemorySettlementStore`, future `PostgresSettlementStore`)                    |
+| G3   | Type-level append-only                  | `AppendOnlyReceiptSink::append` requires `&mut self`; no `delete` / `update` / `clear` method exists on the trait                                                                 |
+| G4   | Cross-domain canonical types            | `Receipt` + `AskState` + `SettlementStore` defined exactly once in substrate; all consumers `pub use` from core                                                                   |
+| G5   | Extension surface                       | `AskState` + `ReservationState` are `#[non_exhaustive]`; new states land via substrate amendments                                                                                 |
+| G6   | RFC-0959 variant parity                 | All 3 `AskState` variants (`Minted`, `Settled`, `Consumed`) preserved byte-identically with SQL strings (`as_sql`); all 8 `ReservationState` variants preserved byte-identically  |
+| G7   | RFC-0011-a name parity                  | `octo-settlement` (Layer B façade) exposes the canonical name RFC-0011-a §Substrate references; substrate names map to CLI projection per §Key Files to Modify §CLI mapping table |
 
 ## Motivation
 
 RFC-0011-a §Substrate Compatibility declares `octo-audit` as NEW and `octo-settlement` (Layer B per RFC-0959) as the source of truth for `SettlementReceipt`. RFC-0011-a §Key Files to Modify says "`octo-settlement` (Layer B per RFC-0959) for the `ReceiptRecord` projection". The crate does not exist (`ls crates/` returns no `octo-settlement`). Settlement substrate landed in-place inside the `quota-router-sm-engine` crate:
 
-| File | What |
-|---|---|
-| `crates/quota-router-core/src/settle.rs` | Settlement engine (orchestration) |
-| `crates/quota-router-storage/src/ask.rs` | Ask/settlement persistence |
-| `crates/quota-router-sm-engine/src/state_machine.rs` | `Receipt`, `AskState`, state transition logic |
-| `crates/quota-router-sm-engine/src/store.rs` | `SettlementStore` trait + `StoolapStore` impl |
-| `crates/quota-router-sm-engine/src/lib.rs` | Crate root re-exports |
-| `crates/octo-wallet/src/capability/market_delivery.rs` | Wallet-side settlement consumer |
+| File                                                   | What                                          |
+| ------------------------------------------------------ | --------------------------------------------- |
+| `crates/quota-router-core/src/settle.rs`               | Settlement engine (orchestration)             |
+| `crates/quota-router-storage/src/ask.rs`               | Ask/settlement persistence                    |
+| `crates/quota-router-sm-engine/src/state_machine.rs`   | `Receipt`, `AskState`, state transition logic |
+| `crates/quota-router-sm-engine/src/store.rs`           | `SettlementStore` trait + `StoolapStore` impl |
+| `crates/quota-router-sm-engine/src/lib.rs`             | Crate root re-exports                         |
+| `crates/octo-wallet/src/capability/market_delivery.rs` | Wallet-side settlement consumer               |
 
 The substrate RFC extracts the canonical types to a frozen Layer A core and adds the Layer B façade for RFC-0011-a name parity. The hybrid pattern gives:
 
@@ -79,14 +80,14 @@ The substrate RFC extracts the canonical types to a frozen Layer A core and adds
 
 > **The "Nothing should be implied" rule (specification layer).**
 
-| Role | Identifier | Authority Scope | Lifecycle | Source/Ref |
-|------|------------|-----------------|-----------|------------|
-| Asker | `Ask.holder_did` field | Creates ask; binds capability | ask-bounded | RFC-0959 §Data Structures |
-| Router | `Receipt.router_id` field | Settles ask; signs receipt | receipt-bounded | RFC-0959 §Data Structures |
-| Consumer | `AppendOnlyReceiptSink::consume` | Marks receipt as consumed (terminal) | receipt-bounded | §Specification §Trait |
-| Storage Adapter | `SettlementStore` impl | Domain-owned (stoolap, in-memory, future postgres) | long-lived | §Specification §Trait |
-| Reserver | `Reservation::mint` | Pre-auth escrow against ask | reservation-bounded | RFC-0960 §2.3 |
-| Auditor | reads receipt via `SettlementStore::get` | Forensic read access | stateless | RFC-0011-a §Compatibility |
+| Role            | Identifier                               | Authority Scope                                    | Lifecycle           | Source/Ref                |
+| --------------- | ---------------------------------------- | -------------------------------------------------- | ------------------- | ------------------------- |
+| Asker           | `Ask.holder_did` field                   | Creates ask; binds capability                      | ask-bounded         | RFC-0959 §Data Structures |
+| Router          | `Receipt.router_id` field                | Settles ask; signs receipt                         | receipt-bounded     | RFC-0959 §Data Structures |
+| Consumer        | `AppendOnlyReceiptSink::consume`         | Marks receipt as consumed (terminal)               | receipt-bounded     | §Specification §Trait     |
+| Storage Adapter | `SettlementStore` impl                   | Domain-owned (stoolap, in-memory, future postgres) | long-lived          | §Specification §Trait     |
+| Reserver        | `Reservation::mint`                      | Pre-auth escrow against ask                        | reservation-bounded | RFC-0960 §2.3             |
+| Auditor         | reads receipt via `SettlementStore::get` | Forensic read access                               | stateless           | RFC-0011-a §Compatibility |
 
 ### Out-of-scope roles
 
@@ -475,11 +476,11 @@ stateDiagram-v2
     Consumed --> [*]
 ```
 
-| From | To | Trigger | Deterministic? | Side Effects | Signing |
-|------|----|---------|----------------|--------------|---------|
-| (none) | Minted | `SettlementStore::mint(ask)` | Yes | INSERT ask row | n/a |
-| Minted | Settled | `SettlementStore::settle(ask_id, receipt)` | Yes | UPDATE ask state; INSERT receipt row | Receipt envelope |
-| Settled | Consumed | `SettlementStore::consume(receipt_id)` | Yes | UPDATE ask state | n/a |
+| From    | To       | Trigger                                    | Deterministic? | Side Effects                         | Signing          |
+| ------- | -------- | ------------------------------------------ | -------------- | ------------------------------------ | ---------------- |
+| (none)  | Minted   | `SettlementStore::mint(ask)`               | Yes            | INSERT ask row                       | n/a              |
+| Minted  | Settled  | `SettlementStore::settle(ask_id, receipt)` | Yes            | UPDATE ask state; INSERT receipt row | Receipt envelope |
+| Settled | Consumed | `SettlementStore::consume(receipt_id)`     | Yes            | UPDATE ask state                     | n/a              |
 
 `ReservationState` state machine (RFC-0960 §2.3 canonical, 8-state diagram):
 
@@ -500,41 +501,41 @@ stateDiagram-v2
     Cancelled --> [*]
 ```
 
-| From | To | Trigger | Deterministic? | Side Effects | Signing |
-|------|----|---------|----------------|--------------|---------|
-| (none) | Reserved | `Reservation::mint` | Yes | INSERT reservation row | Capability envelope |
-| Reserved | Executing | Provider begins operation | Yes | UPDATE reservation state | Provider envelope |
-| Executing | Settled | Proof attached | Yes | UPDATE reservation state | Proof envelope |
-| Settled | Auditable | Audit window opens | Yes | UPDATE reservation state | n/a |
-| Auditable | Released | Audit window expires cleanly | Yes | UPDATE reservation state; apply transfers | n/a |
-| Auditable | Frozen | Dispute filed | Yes | UPDATE reservation state | Dispute envelope |
-| Reserved | Expired | Deadline before execution | Yes | UPDATE reservation state | n/a |
-| Reserved | Cancelled | Explicit cancel by holder | Yes | UPDATE reservation state | Holder envelope |
+| From      | To        | Trigger                      | Deterministic? | Side Effects                              | Signing             |
+| --------- | --------- | ---------------------------- | -------------- | ----------------------------------------- | ------------------- |
+| (none)    | Reserved  | `Reservation::mint`          | Yes            | INSERT reservation row                    | Capability envelope |
+| Reserved  | Executing | Provider begins operation    | Yes            | UPDATE reservation state                  | Provider envelope   |
+| Executing | Settled   | Proof attached               | Yes            | UPDATE reservation state                  | Proof envelope      |
+| Settled   | Auditable | Audit window opens           | Yes            | UPDATE reservation state                  | n/a                 |
+| Auditable | Released  | Audit window expires cleanly | Yes            | UPDATE reservation state; apply transfers | n/a                 |
+| Auditable | Frozen    | Dispute filed                | Yes            | UPDATE reservation state                  | Dispute envelope    |
+| Reserved  | Expired   | Deadline before execution    | Yes            | UPDATE reservation state                  | n/a                 |
+| Reserved  | Cancelled | Explicit cancel by holder    | Yes            | UPDATE reservation state                  | Holder envelope     |
 
 ### Determinism Requirements
 
-| Requirement | Mechanism |
-|-------------|-----------|
-| `receipt_id` determinism | BLAKE3-256 over canonical length-prefixed serialization; pure function |
-| `reservation_id` determinism | BLAKE3-256 with `cipherocto/reservation/v1/` domain separator; deterministic per input tuple |
-| Settlement hash determinism | BLAKE3-256 of `blake3(canonical_ser(ask || receipt))`; locked at settle |
-| Chain ordering | `receipt_id` is canonical ordering; substrate enforces monotonicity via `SequenceGap` error and hash integrity via `ChainIntegrity` error (no `timestamp_unix` monotonicity check in the settlement chain) |
-| Cross-replica equivalence | Same ask + same receipt unsigned → identical `receipt_id`; same reservation inputs → identical `reservation_id` |
+| Requirement                  | Mechanism                                                                                                                                                                                                  |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `receipt_id` determinism     | BLAKE3-256 over canonical length-prefixed serialization; pure function                                                                                                                                     |
+| `reservation_id` determinism | BLAKE3-256 with `cipherocto/reservation/v1/` domain separator; deterministic per input tuple                                                                                                               |
+| Settlement hash determinism  | BLAKE3-256 of `blake3(canonical_ser(ask                                                                                                                                                                    |     | receipt))`; locked at settle |
+| Chain ordering               | `receipt_id` is canonical ordering; substrate enforces monotonicity via `SequenceGap` error and hash integrity via `ChainIntegrity` error (no `timestamp_unix` monotonicity check in the settlement chain) |
+| Cross-replica equivalence    | Same ask + same receipt unsigned → identical `receipt_id`; same reservation inputs → identical `reservation_id`                                                                                            |
 
 ### RFC-0008 Execution Class Mapping
 
-| Operation | Class | Rationale |
-|-----------|-------|-----------|
-| `Receipt::compute_receipt_id` | Class A | Pure function; BLAKE3 over canonical bytes |
-| `Receipt::canonical_bytes` | Class A | Pure serialization; length-prefixed deterministic |
-| `Reservation::mint` | Class A | Pure constructor; BLAKE3 over canonical inputs |
-| `verify_receipt_chain` | Class A | Deterministic chain check; no IO side effects beyond read |
-| `receipt_id_for` | Class A | Pure function; deterministic per (ask, receipt_unsigned) tuple |
-| `SettlementStore::mint` | Class B | Storage-affecting; transitions state machine |
-| `SettlementStore::settle` | Class B | Storage-affecting; locks settlement_hash |
-| `SettlementStore::consume` | Class B | Storage-affecting; terminal state transition |
-| `SettlementStore::get` | Class A | Read-only; deterministic |
-| `AppendOnlyReceiptSink::append` | Class B | Storage-affecting; appends to ledger |
+| Operation                       | Class   | Rationale                                                      |
+| ------------------------------- | ------- | -------------------------------------------------------------- |
+| `Receipt::compute_receipt_id`   | Class A | Pure function; BLAKE3 over canonical bytes                     |
+| `Receipt::canonical_bytes`      | Class A | Pure serialization; length-prefixed deterministic              |
+| `Reservation::mint`             | Class A | Pure constructor; BLAKE3 over canonical inputs                 |
+| `verify_receipt_chain`          | Class A | Deterministic chain check; no IO side effects beyond read      |
+| `receipt_id_for`                | Class A | Pure function; deterministic per (ask, receipt_unsigned) tuple |
+| `SettlementStore::mint`         | Class B | Storage-affecting; transitions state machine                   |
+| `SettlementStore::settle`       | Class B | Storage-affecting; locks settlement_hash                       |
+| `SettlementStore::consume`      | Class B | Storage-affecting; terminal state transition                   |
+| `SettlementStore::get`          | Class A | Read-only; deterministic                                       |
+| `AppendOnlyReceiptSink::append` | Class B | Storage-affecting; appends to ledger                           |
 
 ### Error Handling
 
@@ -542,23 +543,23 @@ The substrate exposes `SettlementError` (9 variants). Domain crates (`quota-rout
 
 ## Performance Targets
 
-| Metric | Target | Notes |
-|--------|--------|-------|
-| `receipt_id_for` latency | <10µs | BLAKE3 over ~100 bytes |
-| `Reservation::mint` latency | <10µs | BLAKE3 over ~120 bytes |
-| `verify_receipt_chain` latency | <100ms | 10,000-receipt sequence on commodity hardware |
-| Substrate compile time | <2s | Layer A frozen; depends on `serde` + `thiserror` + `blake3` |
+| Metric                         | Target | Notes                                                       |
+| ------------------------------ | ------ | ----------------------------------------------------------- |
+| `receipt_id_for` latency       | <10µs  | BLAKE3 over ~100 bytes                                      |
+| `Reservation::mint` latency    | <10µs  | BLAKE3 over ~120 bytes                                      |
+| `verify_receipt_chain` latency | <100ms | 10,000-receipt sequence on commodity hardware               |
+| Substrate compile time         | <2s    | Layer A frozen; depends on `serde` + `thiserror` + `blake3` |
 
 ## Implicit Assumptions Audit
 
-| Assumption | Where Relied Upon | Blast Radius if False | Mitigation / Status |
-|------------|-------------------|----------------------|---------------------|
-| BLAKE3-256 collision resistance | §Chain Integrity | Catastrophic (receipt forgery); affects every settlement consumer | ACCEPTED RISK: BLAKE3 is the project hash standard; PQC migration is years out |
-| `reservation_id` domain separator stable | `Reservation::mint` | Cross-replica reservation lookup broken | MITIGATED: `cipherocto/reservation/v1/` separator is RFC-0960-frozen; documented in §Specification §Reservation |
-| `AskState::as_sql` strings stable | §Data Structures | SQL `CHECK` constraint mismatch; migration required | ACCEPTED RISK: RFC-0959 §State Machine freezes SQL strings; substrate does not rename |
-| `timestamp_unix` is monotonic | §Determinism | `ChainIntegrity` error on out-of-order receipts | MITIGATED: substrate returns error; domain enforces at insert |
-| Storage backend serializes per-thread | `&mut self` on `append` | Concurrent appends corrupt ledger | ACCEPTED RISK: domain crate owns concurrency contract |
-| Stoolap migration runner is `octo_storage_core::apply_pending` | RFC-0206 §Migration Order | Substrate migration coupling | MITIGATED: substrate does NOT expose migration API; storage adapter owns migration via substrate-canonical runner |
+| Assumption                                                     | Where Relied Upon         | Blast Radius if False                                             | Mitigation / Status                                                                                               |
+| -------------------------------------------------------------- | ------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| BLAKE3-256 collision resistance                                | §Chain Integrity          | Catastrophic (receipt forgery); affects every settlement consumer | ACCEPTED RISK: BLAKE3 is the project hash standard; PQC migration is years out                                    |
+| `reservation_id` domain separator stable                       | `Reservation::mint`       | Cross-replica reservation lookup broken                           | MITIGATED: `cipherocto/reservation/v1/` separator is RFC-0960-frozen; documented in §Specification §Reservation   |
+| `AskState::as_sql` strings stable                              | §Data Structures          | SQL `CHECK` constraint mismatch; migration required               | ACCEPTED RISK: RFC-0959 §State Machine freezes SQL strings; substrate does not rename                             |
+| `timestamp_unix` is monotonic                                  | §Determinism              | `ChainIntegrity` error on out-of-order receipts                   | MITIGATED: substrate returns error; domain enforces at insert                                                     |
+| Storage backend serializes per-thread                          | `&mut self` on `append`   | Concurrent appends corrupt ledger                                 | ACCEPTED RISK: domain crate owns concurrency contract                                                             |
+| Stoolap migration runner is `octo_storage_core::apply_pending` | RFC-0206 §Migration Order | Substrate migration coupling                                      | MITIGATED: substrate does NOT expose migration API; storage adapter owns migration via substrate-canonical runner |
 
 ### Categories considered
 
@@ -584,14 +585,14 @@ The substrate exposes `SettlementError` (9 variants). Domain crates (`quota-rout
 
 ### Decision Table
 
-| Decision | Q1 Beneficiary | Q2 Cost to Attacker | Q3 Gain if Successful | Q4 Defense (cost to legit op) | Q5 Residual Risk |
-|----------|----------------|---------------------|------------------------|------------------------------|------------------|
-| `&mut self` on `AppendOnlyReceiptSink::append` | Compromised domain crate author | Must implement parallel trait + alternate API surface | Bypass append-only by re-writing history | Compiler rejects impl with `&self` on `append` | LOW: type system catches |
-| BLAKE3 chain for receipts | Receipt forger | Pre-image attack (infeasible) | Forge receipt to hijack settlement | `verify_receipt_chain` rejects; forensic detects | LOW: BLAKE3 well-studied |
-| `#[non_exhaustive]` on `AskState` + `ReservationState` | Future substrate author | None (extension is intentional) | Add new state without breaking semver | Substrate migration etiquette in §Migration Plan | LOW: extension is design intent |
-| `as_sql` frozen strings | SQL migration author | Cannot rename without migration | Add new variant with old SQL string | `from_sql` returns `None` for unknown; SQL `CHECK` constraint catches | LOW: strings RFC-frozen |
-| Domain separator `cipherocto/reservation/v1/` | Hash collision attacker | Craft colliding inputs | Hijack reservation_id | Namespacing prevents cross-prefix collision | LOW: separator is canonical |
-| `Receipt::router_sig` NOT verified by substrate | Domain author | Inherits verification responsibility | Could skip verification if domain forgets | Substrate documents requirement; domain review catches | LOW: substrate does NOT enable bypass |
+| Decision                                               | Q1 Beneficiary                  | Q2 Cost to Attacker                                   | Q3 Gain if Successful                     | Q4 Defense (cost to legit op)                                         | Q5 Residual Risk                      |
+| ------------------------------------------------------ | ------------------------------- | ----------------------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------- | ------------------------------------- |
+| `&mut self` on `AppendOnlyReceiptSink::append`         | Compromised domain crate author | Must implement parallel trait + alternate API surface | Bypass append-only by re-writing history  | Compiler rejects impl with `&self` on `append`                        | LOW: type system catches              |
+| BLAKE3 chain for receipts                              | Receipt forger                  | Pre-image attack (infeasible)                         | Forge receipt to hijack settlement        | `verify_receipt_chain` rejects; forensic detects                      | LOW: BLAKE3 well-studied              |
+| `#[non_exhaustive]` on `AskState` + `ReservationState` | Future substrate author         | None (extension is intentional)                       | Add new state without breaking semver     | Substrate migration etiquette in §Migration Plan                      | LOW: extension is design intent       |
+| `as_sql` frozen strings                                | SQL migration author            | Cannot rename without migration                       | Add new variant with old SQL string       | `from_sql` returns `None` for unknown; SQL `CHECK` constraint catches | LOW: strings RFC-frozen               |
+| Domain separator `cipherocto/reservation/v1/`          | Hash collision attacker         | Craft colliding inputs                                | Hijack reservation_id                     | Namespacing prevents cross-prefix collision                           | LOW: separator is canonical           |
+| `Receipt::router_sig` NOT verified by substrate        | Domain author                   | Inherits verification responsibility                  | Could skip verification if domain forgets | Substrate documents requirement; domain review catches                | LOW: substrate does NOT enable bypass |
 
 ### Multi-Round Review
 
@@ -628,6 +629,7 @@ This substrate does NOT define the dual-stake model (RFC-0900+ owns that); it co
 ### RFC-0959 §Data Structures + §State Machine compatibility
 
 RFC-0014 EXTRACTS the canonical types from `crates/quota-router-sm-engine/src/lib.rs` to `octo-settlement-core` with:
+
 - `#[non_exhaustive]` on `AskState` + `ReservationState` (additive)
 - `SettlementStore` trait moved from `store.rs` to substrate (was crate-internal; now public canonical interface)
 - `AppendOnlyReceiptSink` trait (NEW; not in RFC-0959)
@@ -645,31 +647,31 @@ Field shapes (`Receipt`, `Ask`, `Reservation`) are BYTE-IDENTICAL to `quota-rout
 
 12 canonical test vectors. Each is a substrate-level property test.
 
-| ID | Scenario | Expected |
-|----|----------|----------|
-| `ask-state-sql-roundtrip` | `AskState::from_sql(state.as_sql())` for all 3 variants | `Some(state)` for each |
-| `ask-state-unknown-sql` | `AskState::from_sql("Unknown")` | `None` |
-| `reservation-state-sql-roundtrip` | `ReservationState::from_sql(state.as_sql())` for all 8 variants | `Some(state)` for each (when implemented) |
-| `receipt-canonical-bytes-stable` | `Receipt::canonical_bytes` for canonical fixture | byte-identical output across runs |
-| `receipt-compute-receipt-id-stable` | `Receipt::compute_receipt_id()` for canonical fixture | byte-identical 32-byte output |
-| `receipt-id-for-ask` | `receipt_id_for(ask, receipt_unsigned)` for canonical (ask, receipt_unsigned) tuple | byte-identical to `Receipt::compute_receipt_id()` for the same tuple |
-| `reservation-mint-deterministic` | `Reservation::mint(...)` for canonical inputs (TV-0862-19) | byte-identical `reservation_id` across runs |
-| `reservation-mint-domain-separator` | Two reservations with identical inputs but different separators | `reservation_id` differs (namespacing verified) |
-| `chain-empty` | `verify_receipt_chain(&[])` | `Ok(())` |
-| `chain-monotonic` | 10 receipts with strict `timestamp_unix` monotonicity + correct `settlement_hash` | `Ok(())` |
-| `chain-settlement-hash-mismatch` | Receipt with `settlement_hash` flipped by 1 byte | `Err(SettlementError::ChainIntegrity { .. })` |
-| `chain-timestamp-regression` | Two receipts with `timestamp_unix` decreasing | substrate does NOT enforce `timestamp_unix` monotonicity in the settlement chain; deferred to a future amendment per substrate-faithful policy |
-| `append-only-success` | `StoolapAppendOnlyReceiptSink::append` with valid receipt | `Ok(())`; `settlement_hash` persisted atomically |
-| `append-only-idempotent` | Same receipt appended twice | First `Ok(())`; second returns `Err(AlreadyConsumed)` |
+| ID                                  | Scenario                                                                            | Expected                                                                                                                                       |
+| ----------------------------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ask-state-sql-roundtrip`           | `AskState::from_sql(state.as_sql())` for all 3 variants                             | `Some(state)` for each                                                                                                                         |
+| `ask-state-unknown-sql`             | `AskState::from_sql("Unknown")`                                                     | `None`                                                                                                                                         |
+| `reservation-state-sql-roundtrip`   | `ReservationState::from_sql(state.as_sql())` for all 8 variants                     | `Some(state)` for each (when implemented)                                                                                                      |
+| `receipt-canonical-bytes-stable`    | `Receipt::canonical_bytes` for canonical fixture                                    | byte-identical output across runs                                                                                                              |
+| `receipt-compute-receipt-id-stable` | `Receipt::compute_receipt_id()` for canonical fixture                               | byte-identical 32-byte output                                                                                                                  |
+| `receipt-id-for-ask`                | `receipt_id_for(ask, receipt_unsigned)` for canonical (ask, receipt_unsigned) tuple | byte-identical to `Receipt::compute_receipt_id()` for the same tuple                                                                           |
+| `reservation-mint-deterministic`    | `Reservation::mint(...)` for canonical inputs (TV-0862-19)                          | byte-identical `reservation_id` across runs                                                                                                    |
+| `reservation-mint-domain-separator` | Two reservations with identical inputs but different separators                     | `reservation_id` differs (namespacing verified)                                                                                                |
+| `chain-empty`                       | `verify_receipt_chain(&[])`                                                         | `Ok(())`                                                                                                                                       |
+| `chain-monotonic`                   | 10 receipts with strict `timestamp_unix` monotonicity + correct `settlement_hash`   | `Ok(())`                                                                                                                                       |
+| `chain-settlement-hash-mismatch`    | Receipt with `settlement_hash` flipped by 1 byte                                    | `Err(SettlementError::ChainIntegrity { .. })`                                                                                                  |
+| `chain-timestamp-regression`        | Two receipts with `timestamp_unix` decreasing                                       | substrate does NOT enforce `timestamp_unix` monotonicity in the settlement chain; deferred to a future amendment per substrate-faithful policy |
+| `append-only-success`               | `StoolapAppendOnlyReceiptSink::append` with valid receipt                           | `Ok(())`; `settlement_hash` persisted atomically                                                                                               |
+| `append-only-idempotent`            | Same receipt appended twice                                                         | First `Ok(())`; second returns `Err(AlreadyConsumed)`                                                                                          |
 
 ## Alternatives Considered
 
-| Approach | Pros | Cons |
-|----------|------|------|
-| **Pure general-purpose substrate (Finding 1)** — `octo-settlement-core` only; no façade; CLI consumes core directly | Simpler (1 crate per concept); layer model cleaner | RFC-0011-a text references `octo-settlement`; CLI + mission deps diverge |
-| **Façade-only (Finding 3)** — `octo-settlement` re-exports from `quota-router-sm-engine` | Minimal LoC; zero refactor | TYPE RE-EXPORT COLLISION: market-domain types re-exported as canonical; non-market settlement broken |
-| **Domain-specialized only (Finding 2)** — no new crate | Zero new crates; zero refactor | Silent RFC/code drift; PQC coupling; cross-domain settlement impossible |
-| **Single general-purpose crate (Finding 5)** — `octo-settlement` contains generic + domain IO + storage adapter | Simple | Violates open/closed; substrate is non-IO, domain has IO; mixing conflates |
+| Approach                                                                                                            | Pros                                               | Cons                                                                                                 |
+| ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| **Pure general-purpose substrate (Finding 1)** — `octo-settlement-core` only; no façade; CLI consumes core directly | Simpler (1 crate per concept); layer model cleaner | RFC-0011-a text references `octo-settlement`; CLI + mission deps diverge                             |
+| **Façade-only (Finding 3)** — `octo-settlement` re-exports from `quota-router-sm-engine`                            | Minimal LoC; zero refactor                         | TYPE RE-EXPORT COLLISION: market-domain types re-exported as canonical; non-market settlement broken |
+| **Domain-specialized only (Finding 2)** — no new crate                                                              | Zero new crates; zero refactor                     | Silent RFC/code drift; PQC coupling; cross-domain settlement impossible                              |
+| **Single general-purpose crate (Finding 5)** — `octo-settlement` contains generic + domain IO + storage adapter     | Simple                                             | Violates open/closed; substrate is non-IO, domain has IO; mixing conflates                           |
 
 The chosen approach (Finding 4 hybrid) satisfies all 12 principles in `CLAUDE.md` §Architectural Principles + matches the `octo-storage-core` precedent.
 
@@ -757,6 +759,7 @@ The chosen approach (Finding 4 hybrid) satisfies all 12 principles in `CLAUDE.md
 ### Why hybrid Layer A core + Layer B façade (not pure substrate, not pure façade)
 
 Per research doc Finding 4 + §Alternatives Considered:
+
 - Pure substrate (Finding 1) requires RFC-0011-a text rename; CLI + mission deps diverge
 - Pure façade (Finding 3) has type-collision risk (façade re-exports from `quota-router-sm-engine`; non-market settlement broken)
 - Hybrid (Finding 4) preserves RFC text + canonical ownership + Layer A → Layer B → Layer C direction
@@ -768,6 +771,7 @@ Multiple storage backends are plausible (stoolap production, in-memory tests, fu
 ### Why `AppendOnlyReceiptSink` is a separate trait (not part of `SettlementStore`)
 
 `SettlementStore` is the canonical CRUD-like interface (`mint`/`settle`/`consume`/`get`); `AppendOnlyReceiptSink` is the canonical write-only path with type-level append-only enforcement. Separation lets:
+
 - Read-only consumers (CLI, RFC-0011-a) depend on `SettlementStore` only
 - Write-only domains (storage adapters) implement `AppendOnlyReceiptSink` for type-level enforcement
 - Storage adapters impl BOTH traits (read + write paths)
@@ -786,10 +790,10 @@ RFC-0959 §State Machine + the existing migrations define `CHECK (state IN ('Min
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0 | 2026-09-10 | Initial draft |
-| 1.1 | 2026-09-10 | Accepted | DRY CLOSED; promoted Draft → Accepted. |
+| Version | Date       | Changes       |
+| ------- | ---------- | ------------- |
+| 1.0     | 2026-09-10 | Initial draft |
+| 1.1     | 2026-09-10 | Accepted      | DRY CLOSED; promoted Draft → Accepted. |
 
 ## Related RFCs
 
@@ -800,6 +804,8 @@ RFC-0959 §State Machine + the existing migrations define `CHECK (state IN ('Min
 - RFC-0008 — Deterministic AI Execution Boundary
 - RFC-0917 — HTTP Proxy + Python SDK (programmatic receipt access via substrate trait)
 - RFC-0205 + RFC-0206 — `octo-storage-core` precedent
+- **RFC-0014-v2** — pins substrate-frozen settlement extension pattern; canonical 10-pattern scrubber pattern list (single source of truth for §S5.1).
+- **RFC-0014-v3** — paired-acceptance amendment (settlement-side scrubber + `SettlementHashOpaque` Layer A newtype + `SinkSpecific` payload cap posture); acceptance rollout mission `0014-v3-settlement-substrate-amendment-rollout`.
 
 ## Related Use Cases
 
@@ -839,12 +845,12 @@ impl MarketDeliveryReceipt {
 
 ### B. CLI mapping table (RFC-0011-a names ↔ substrate names)
 
-| RFC-0011-a §Substrate name | Substrate name (`octo-settlement` / `octo-settlement-core`) |
-|----------------------------|--------------------------------------------------------------|
+| RFC-0011-a §Substrate name           | Substrate name (`octo-settlement` / `octo-settlement-core`)                                                                                                           |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SettlementReceipt` (CLI projection) | CLI-side type with `subject_did`, `capability_root`, `model`, `executed_by`, `executed_at_unix`, `cost_dqa`, `reject_reason` fields; substrate owns generic `Receipt` |
-| `ReceiptStore` (CLI-side trait name) | Maps to `SettlementStore` (substrate canonical trait); CLI imports `octo_settlement::SettlementStore` |
-| `ReceiptId` (CLI newtype) | Maps to `Receipt::receipt_id: [u8; 32]`; CLI wraps in `Hex32` newtype per parent RFC |
-| `ReceiptStatus` (CLI enum) | NOT in substrate; maps to `AskState` (`Minted` = pending, `Settled` = confirmed, `Consumed` = consumed). CLI projects; substrate owns canonical state machine |
+| `ReceiptStore` (CLI-side trait name) | Maps to `SettlementStore` (substrate canonical trait); CLI imports `octo_settlement::SettlementStore`                                                                 |
+| `ReceiptId` (CLI newtype)            | Maps to `Receipt::receipt_id: [u8; 32]`; CLI wraps in `Hex32` newtype per parent RFC                                                                                  |
+| `ReceiptStatus` (CLI enum)           | NOT in substrate; maps to `AskState` (`Minted` = pending, `Settled` = confirmed, `Consumed` = consumed). CLI projects; substrate owns canonical state machine         |
 
 > **Substrate mapping principle:** Substrate owns CANONICAL TYPES (Receipt, Ask, AskState, Reservation, ReservationState, SettlementStore, SettlementError). Domain owns IO + storage adapters (StoolapSettlementStore, in-memory mock). CLI projects substrate types into RFC-0011-a §Receipt Shape (adds `subject_did`, `capability_root`, `model`, etc.).
 
@@ -885,6 +891,9 @@ verify_receipt_chain(&receipts.collect::<Result<Vec<_>, _>>()?)?;
 - `docs/audits/2026-09-10-rfc-0011-a-g-phantom-substrate-investigation.md` — phantom-crate gap (this RFC closes the settlement half)
 - `rfcs/accepted/process/0011-a-audit-subcommands.md` — CLI consumer (companion amendment in §Implementation Phases Phase 3)
 - `crates/quota-router-sm-engine/src/lib.rs` — canonical types source (byte-identical extraction)
+- `rfcs/accepted/process/0014-v2-settlement-substrate-amendment.md` — v2 amendment (per-façade scrubber + DOMAIN wraps)
+- `rfcs/accepted/process/0014-v3-settlement-substrate-amendment.md` — v3 amendment (paired-acceptance DEFERRED defects 1b + 2 + 3)
+- `rfcs/accepted/process/0012-v3-audit-substrate-amendment.md` — paired v3 amendment (defects 1a + 4)
 
 ---
 

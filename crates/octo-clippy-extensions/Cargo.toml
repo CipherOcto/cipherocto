@@ -1,0 +1,26 @@
+[package]
+name = "octo-clippy-extensions"
+version = "0.1.0"
+edition = "2021"
+description = "Layer E per-extension clippy lint module registry (CLAUDE.md §User extensibility) — registers audit-side `no-raw-format-err` (RFC-0012-v3 §FW2) + settlement-side `no-raw-to-string` (RFC-0014-v3 §FW4) lint modules under one shared crate root"
+license = "Apache-2.0"
+authors = ["CipherOcto"]
+
+[lib]
+crate-type = ["rlib"]
+
+[features]
+# Per RFC-0012-v3 §FW2 — gated off-by-default; v3.x activation deferred.
+default = []
+lint-no-raw-format-err = []
+# Per RFC-0014-v3 §FW4 — gated off-by-default; v3.x activation deferred.
+lint-no-raw-to-string = []
+# Convenience aggregate feature used by acceptance-gate missions.
+full = ["lint-no-raw-format-err", "lint-no-raw-to-string"]
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+empty_line_after_doc_comments = "allow"
+doc_lazy_continuation = "allow"

@@ -411,6 +411,16 @@ expect: format!("{}", err) == "chain_hash mismatch at event_id 42"
 - `crates/octo-audit/src/storage/stoolap.rs` — 13 `format!("{e}")` → `scrub_adapter_error_with` migrations
 - `crates/octo-audit/Cargo.toml` — `regex` + `once_cell` workspace deps (see Cargo.toml dep rationale comments)
 
+## Substrate-Faithful Amendment Trail
+
+This section enumerates the substrate amendments + acceptance rollouts that built up the audit substrate posture documented by RFC-0012-v3. Each row carries the amendment round, the substrate commit(s) that landed the change, and the acceptance rollout mission that verified the substrate-faithful posture survived downstream consumers.
+
+| Round         | Substrate commits                                                                                          | Scope                                                                                                                                                                                                          | Acceptance mission                          |
+| ------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| RFC-0012-v2   | (initial substrate extension pattern; canonical `AuditEvent` field shape per RFC-0957-A1 §Data Structures) | Substrate-frozen audit extension pattern; canonical scrubber pattern list anchor                                                                                                                               | —                                           |
+| RFC-0012-v3   | `f33410ce` + `934242ce` (per-façade scrubber + DOMAIN adapter migrations + `TimestampOpaque` newtype)      | Per-façade 10-pattern scrubber at `octo-audit` (defect 1a closure); DOMAIN adapter migration contract (Pattern 6 registry); `AuditChainError::TimestampRegression` `u64` → `TimestampOpaque` (defect 4 oracle) | `0012-v3-audit-substrate-amendment-rollout` |
+| RFC-0012-v3.1 | **DEFERRED — lands at acceptance** (paired with `0014-v3.1`)                                               | §FW2 clippy lint activation; §FW1 cross-RFC scrubber shared utility extraction                                                                                                                                 | —                                           |
+
 ## Future Work
 
 ### §FW1 — Cross-RFC scrubber shared utility

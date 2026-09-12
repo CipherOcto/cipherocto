@@ -7,7 +7,9 @@
 //! Run with:
 //!   cargo test -p octo-audit --test verify_chain_vectors
 
-use octo_audit_core::{compute_chain_hash, verify_chain, AuditChainError, AuditEvent, AuditEventKind};
+use octo_audit_core::{
+    compute_chain_hash, verify_chain, AuditChainError, AuditEvent, AuditEventKind,
+};
 
 /// Helper: build an event with canonical chain_hash filled in.
 fn make_event(
@@ -46,7 +48,13 @@ fn vector_03_monotonic_5_accepts() {
     let mut prev = [0; 32];
     let mut events = Vec::new();
     for i in 0..5 {
-        let e = make_event(i, 1000 + i * 100, prev, AuditEventKind::Insert, "did:oct:v03");
+        let e = make_event(
+            i,
+            1000 + i * 100,
+            prev,
+            AuditEventKind::Insert,
+            "did:oct:v03",
+        );
         prev = e.chain_hash;
         events.push(e);
     }
@@ -58,7 +66,13 @@ fn vector_04_mixed_kinds_accept() {
     // Insert, Revoke, Sync in one chain — all valid; kind tag changes
     // but does not break monotonicity.
     let e0 = make_event(0, 1000, [0; 32], AuditEventKind::Insert, "did:oct:v04");
-    let e1 = make_event(1, 1100, e0.chain_hash, AuditEventKind::Revoke, "did:oct:v04");
+    let e1 = make_event(
+        1,
+        1100,
+        e0.chain_hash,
+        AuditEventKind::Revoke,
+        "did:oct:v04",
+    );
     let e2 = make_event(2, 1200, e1.chain_hash, AuditEventKind::Sync, "did:oct:v04");
     assert!(verify_chain(&[e0, e1, e2]).is_ok());
 }
@@ -67,7 +81,13 @@ fn vector_04_mixed_kinds_accept() {
 fn vector_05_gap_at_index_2_rejects() {
     // event_id 0 → 2 (skip 1) → SequenceGap.
     let e0 = make_event(0, 1000, [0; 32], AuditEventKind::Insert, "did:oct:v05");
-    let e2 = make_event(2, 1200, e0.chain_hash, AuditEventKind::Insert, "did:oct:v05");
+    let e2 = make_event(
+        2,
+        1200,
+        e0.chain_hash,
+        AuditEventKind::Insert,
+        "did:oct:v05",
+    );
     assert!(matches!(
         verify_chain(&[e0, e2]),
         Err(AuditChainError::SequenceGap { .. })
@@ -78,7 +98,13 @@ fn vector_05_gap_at_index_2_rejects() {
 fn vector_06_hash_mismatch_rejects() {
     // Flip a byte in chain_hash → HashMismatch.
     let e0 = make_event(0, 1000, [0; 32], AuditEventKind::Insert, "did:oct:v06");
-    let mut e1 = make_event(1, 1100, e0.chain_hash, AuditEventKind::Insert, "did:oct:v06");
+    let mut e1 = make_event(
+        1,
+        1100,
+        e0.chain_hash,
+        AuditEventKind::Insert,
+        "did:oct:v06",
+    );
     e1.chain_hash[0] ^= 0x01;
     assert!(matches!(
         verify_chain(&[e0, e1]),
@@ -90,7 +116,13 @@ fn vector_06_hash_mismatch_rejects() {
 fn vector_07_timestamp_regression_rejects() {
     // at_millis_unix decreases (2000 → 1000) → TimestampRegression.
     let e0 = make_event(0, 2000, [0; 32], AuditEventKind::Insert, "did:oct:v07");
-    let e1 = make_event(1, 1000, e0.chain_hash, AuditEventKind::Insert, "did:oct:v07");
+    let e1 = make_event(
+        1,
+        1000,
+        e0.chain_hash,
+        AuditEventKind::Insert,
+        "did:oct:v07",
+    );
     assert!(matches!(
         verify_chain(&[e0, e1]),
         Err(AuditChainError::TimestampRegression { .. })
@@ -102,7 +134,13 @@ fn vector_08_timestamp_equal_rejects() {
     // at_millis_unix stays equal (1000 → 1000) → regression (strict
     // monotonicity per RFC-0012 §Design Goals G5).
     let e0 = make_event(0, 1000, [0; 32], AuditEventKind::Insert, "did:oct:v08");
-    let e1 = make_event(1, 1000, e0.chain_hash, AuditEventKind::Insert, "did:oct:v08");
+    let e1 = make_event(
+        1,
+        1000,
+        e0.chain_hash,
+        AuditEventKind::Insert,
+        "did:oct:v08",
+    );
     assert!(matches!(
         verify_chain(&[e0, e1]),
         Err(AuditChainError::TimestampRegression { .. })
@@ -125,7 +163,13 @@ fn vector_10_long_chain_50_accepts() {
     let mut prev = [0; 32];
     let mut events = Vec::with_capacity(50);
     for i in 0..50 {
-        let e = make_event(i, 1000 + i * 100, prev, AuditEventKind::Insert, "did:oct:v10");
+        let e = make_event(
+            i,
+            1000 + i * 100,
+            prev,
+            AuditEventKind::Insert,
+            "did:oct:v10",
+        );
         prev = e.chain_hash;
         events.push(e);
     }

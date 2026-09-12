@@ -76,9 +76,7 @@ pub use octo_settlement_core::ReservationState as CanonicalReservationState;
 pub use octo_settlement_core::SettlementError as CanonicalSettlementError;
 pub use octo_settlement_core::SettlementHashOpaque;
 pub use octo_settlement_core::SettlementStore as CanonicalSettlementStore;
-pub use octo_settlement_core::{
-    receipt_id_for, verify_receipt_chain, CHAIN_DOMAIN_SEPARATOR,
-};
+pub use octo_settlement_core::{receipt_id_for, verify_receipt_chain, CHAIN_DOMAIN_SEPARATOR};
 
 /// Ask state (RFC-0959 §State Machine).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

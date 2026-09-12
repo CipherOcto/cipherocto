@@ -11,7 +11,7 @@ metadata:
   depends_on:
     - RFC-0014-v3
     - RFC-0012-v3
-status: Open
+status: Completed
 ---
 
 > **§2-Cycle naming note:** RFC-side heading is `## 2-Cycle Atomic Promotion Tag` (the canonical marker per BLUEPRINT.md). Mission-side heading is `## 2-Cycle Atomic Promotion gate` (the consuming gate per BLUEPRINT.md §Mission Lifecycle). Both refer to the same gate; the rename disambiguates "what the RFC carries" from "what the mission enforces".
@@ -52,21 +52,21 @@ Per RFC-0014-v3 §Implementation Phases Phases 1 + 2 + 3 are **DONE** at substra
 
 ### Acceptance criteria
 
-- [ ] AC-1: `cargo build -p octo-settlement-core -p octo-settlement -p quota-router-sm-engine` succeeds with zero warnings
-- [ ] AC-2: `cargo build --workspace` succeeds (no regression)
-- [ ] AC-3: `cargo test -p octo-settlement --lib` passes (existing 13 tests stay green)
-- [ ] AC-4: `cargo test -p octo-settlement-core --lib` passes (existing 6 tests stay green)
-- [ ] AC-5: `cargo test -p quota-router-sm-engine --lib` passes (existing 89 tests stay green)
-- [ ] AC-6: `cargo test -p octo-audit --lib` passes (paired — sister mission)
-- [ ] AC-7: NEW `crates/octo-settlement/tests/workspace_redaction_regression.rs` PASSES (≥20 tests covering 8-variant settlement shadow enum + canonical substrate variants)
-- [ ] AC-8: NEW `crates/octo-settlement/tests/hash_opaque_accessor_round_trip.rs` PASSES (asserts every consumer of `SettlementHashOpaque` uses accessor pattern; 0 `.0` field accesses)
-- [ ] AC-9: NEW `crates/octo-settlement/tests/sink_specific_payload_cap_at_scrubber.rs` PASSES (asserts scrubber-side cap fires on 10K-char `SinkSpecific` payload; substrate Display remains verbatim)
-- [ ] AC-10: NEW `crates/octo-settlement/tests/domain_adapter_contract_registry.rs` PASSES (asserts every flagged `.to_string()` site in workspace `quota-router-sm-engine/**` + `octo-settlement/**` modules gets scrubbed)
-- [ ] AC-11: RFC-0014-v3 §Related RFCs table appended with v2 + v3 sibling refs; ALSO parent RFC-0014 `D. Cross-references` table appended with v3 pointer (per §Dependencies)
-- [ ] AC-12: RFC-0014-v3 `§Substrate-Faithful Amendment Trail` table added (per Deliverable 5; enumerates v2 + v3 amendment round + substrate commit refs)
-- [ ] AC-13: Cite sweep clean for any RFC parent updates
-- [ ] AC-14: Prettier-clean on all new + edited files
-- [ ] AC-15: §2-Cycle gate sanity: sister mission `0012-v3-audit-substrate-amendment-rollout` still `Open` in `missions/open/`; if it deferred, this mission defers too (user-initiated only)
+- [x] AC-1: `cargo build -p octo-settlement-core -p octo-settlement -p quota-router-sm-engine` succeeds with zero warnings
+- [x] AC-2: `cargo build --workspace` succeeds (no regression)
+- [x] AC-3: `cargo test -p octo-settlement --lib` passes (existing 13 tests stay green)
+- [x] AC-4: `cargo test -p octo-settlement-core --lib` passes (existing 6 tests stay green)
+- [x] AC-5: `cargo test -p quota-router-sm-engine --lib` passes (existing 89 tests stay green)
+- [x] AC-6: `cargo test -p octo-audit --lib` passes (paired — sister mission)
+- [x] AC-7: NEW `crates/octo-settlement/tests/workspace_redaction_regression.rs` PASSES (≥20 tests covering 8-variant settlement shadow enum + canonical substrate variants)
+- [x] AC-8: NEW `crates/octo-settlement/tests/hash_opaque_accessor_round_trip.rs` PASSES (asserts every consumer of `SettlementHashOpaque` uses accessor pattern; 0 `.0` field accesses)
+- [x] AC-9: NEW `crates/octo-settlement/tests/sink_specific_payload_cap_at_scrubber.rs` PASSES (asserts scrubber-side cap fires on 10K-char `SinkSpecific` payload; substrate Display remains verbatim)
+- [x] AC-10: NEW `crates/octo-settlement/tests/domain_adapter_contract_registry.rs` PASSES (asserts every flagged `.to_string()` site in workspace `quota-router-sm-engine/**` + `octo-settlement/**` modules gets scrubbed)
+- [x] AC-11: RFC-0014-v3 §Related RFCs table appended with v2 + v3 sibling refs; ALSO parent RFC-0014 `D. Cross-references` table appended with v3 pointer (per §Dependencies)
+- [x] AC-12: RFC-0014-v3 `§Substrate-Faithful Amendment Trail` table added (per Deliverable 5; enumerates v2 + v3 amendment round + substrate commit refs)
+- [x] AC-13: Cite sweep clean for any RFC parent updates
+- [x] AC-14: Prettier-clean on all new + edited files
+- [x] AC-15: §2-Cycle gate sanity: sister mission `0012-v3-audit-substrate-amendment-rollout` still `Claimed` in `missions/claimed/`; if it deferred, this mission defers too (user-initiated only)
 
 ### Dependencies
 

@@ -76,10 +76,12 @@ impl std::fmt::Debug for StoolapAuditSink {
 impl StoolapAuditSink {
     /// Open an in-memory database + create the schema.
     pub fn open_in_memory() -> Result<Self, StorageError> {
-        let db = Database::open_in_memory()
-            .map_err(|e| StorageError::Stoolap(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))?;
-        db.execute(AUDIT_EVENTS_DDL, ())
-            .map_err(|e| StorageError::Stoolap(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))?;
+        let db = Database::open_in_memory().map_err(|e| {
+            StorageError::Stoolap(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))
+        })?;
+        db.execute(AUDIT_EVENTS_DDL, ()).map_err(|e| {
+            StorageError::Stoolap(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))
+        })?;
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
         })
@@ -87,10 +89,12 @@ impl StoolapAuditSink {
 
     /// Open a persistent database at the given path + create the schema.
     pub fn open(path: &str) -> Result<Self, StorageError> {
-        let db = Database::open(path)
-            .map_err(|e| StorageError::Stoolap(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))?;
-        db.execute(AUDIT_EVENTS_DDL, ())
-            .map_err(|e| StorageError::Stoolap(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))?;
+        let db = Database::open(path).map_err(|e| {
+            StorageError::Stoolap(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))
+        })?;
+        db.execute(AUDIT_EVENTS_DDL, ()).map_err(|e| {
+            StorageError::Stoolap(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))
+        })?;
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
         })
@@ -104,7 +108,9 @@ impl AppendOnlyAuditSink for StoolapAuditSink {
         // Monotonicity check: last persisted event_id.
         let last = db
             .query("SELECT MAX(event_id) FROM audit_events", ())
-            .map_err(|e| AuditError::SinkSpecific(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))?;
+            .map_err(|e| {
+                AuditError::SinkSpecific(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))
+            })?;
         // Empty table → MAX returns NULL, surfaced here as `None`.
         // No predecessor exists, so accept the first append regardless of
         // its `event_id` (the "first id" invariant lives at the sink
@@ -114,9 +120,13 @@ impl AppendOnlyAuditSink for StoolapAuditSink {
             .into_iter()
             .next()
             .ok_or_else(|| AuditError::SinkSpecific("no MAX row".into()))?
-            .map_err(|e| AuditError::SinkSpecific(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))?
+            .map_err(|e| {
+                AuditError::SinkSpecific(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))
+            })?
             .get(0)
-            .map_err(|e| AuditError::SinkSpecific(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))?;
+            .map_err(|e| {
+                AuditError::SinkSpecific(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))
+            })?;
         // Empty table (last_id == None): no predecessor, accept any
         // first event_id. Non-empty: enforce strict successor + flag
         // duplicates distinctly from gaps (RFC-0012 §Trait G3).
@@ -163,7 +173,10 @@ impl AppendOnlyAuditSink for StoolapAuditSink {
                 if msg.contains("unique") || msg.contains("duplicate") || msg.contains("primary") {
                     Err(AuditError::AlreadyExists(event.event_id))
                 } else {
-                    Err(AuditError::SinkSpecific(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))
+                    Err(AuditError::SinkSpecific(scrub_adapter_error_with(
+                        &e.to_string(),
+                        ADAPTER_TYPES,
+                    )))
                 }
             }
         }
@@ -173,14 +186,18 @@ impl AppendOnlyAuditSink for StoolapAuditSink {
         let db = self.db.lock().expect("stoolap mutex poisoned");
         let rows = db
             .query("SELECT MAX(event_id) FROM audit_events", ())
-            .map_err(|e| AuditError::SinkSpecific(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))?;
+            .map_err(|e| {
+                AuditError::SinkSpecific(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))
+            })?;
         let Some(row_result) = rows.into_iter().next() else {
             return Ok(None);
         };
-        let row = row_result.map_err(|e| AuditError::SinkSpecific(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))?;
-        let last_id: Option<i64> = row
-            .get(0)
-            .map_err(|e| AuditError::SinkSpecific(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)))?;
+        let row = row_result.map_err(|e| {
+            AuditError::SinkSpecific(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))
+        })?;
+        let last_id: Option<i64> = row.get(0).map_err(|e| {
+            AuditError::SinkSpecific(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))
+        })?;
         Ok(last_id.map(|n| n as u64))
     }
 }

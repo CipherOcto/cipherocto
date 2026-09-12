@@ -176,6 +176,16 @@ pub enum EnvelopeError {
 }
 
 impl From<StorageError> for EnvelopeError {
+    // Substrate-faithful posture (RFC-0014-v3 §S5.1.1 cross-ref): the
+    // Layer C From<StorageError> conversion preserves the inner
+    // error string verbatim. This is INTENDED at Layer C — the
+    // DOMAIN adapter boundary scrubbing happens at the
+    // quota-router-sm-engine/store.rs call sites (Pattern 6 registry:
+    // every Display-rendering chain there is wrapped in
+    // scrub_adapter_error_with), not here. Layer C substrate
+    // preserves the raw error string for diagnostic fidelity; the
+    // redacted Display surface is enforced at Layer B when the
+    // settlement façade re-exports this error to consumers.
     fn from(e: StorageError) -> Self {
         Self::Storage(e.to_string())
     }

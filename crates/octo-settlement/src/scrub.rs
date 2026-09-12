@@ -31,9 +31,8 @@ const MAX_OUTPUT_BYTES: usize = 4 * 1024;
 const REDACTED_TOO_LONG: &str = "<redacted-too-long>";
 
 /// Pattern 1 — hex digests (≥32 chars, lookaround-anchored).
-static RE_HEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\b[A-Fa-f0-9]{32,}\b").expect("Pattern 1 hex regex compiles")
-});
+static RE_HEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\b[A-Fa-f0-9]{32,}\b").expect("Pattern 1 hex regex compiles"));
 
 /// Pattern 2 — absolute paths (POSIX + Windows).
 static RE_PATH: Lazy<Regex> = Lazy::new(|| {
@@ -45,10 +44,8 @@ static RE_PATH: Lazy<Regex> = Lazy::new(|| {
 
 /// Pattern 3 — table-name refs (PostgreSQL + Stoolap/SQLite forms).
 static RE_TABLE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
-        r#"(?i)(?:table '[^']+'|relation "[^"]+"|no such (?:table|column): [^\s;]+)"#,
-    )
-    .expect("Pattern 3 table regex compiles")
+    Regex::new(r#"(?i)(?:table '[^']+'|relation "[^"]+"|no such (?:table|column): [^\s;]+)"#)
+        .expect("Pattern 3 table regex compiles")
 });
 
 /// Pattern 4 — SQLSTATE prefixes.
@@ -58,9 +55,8 @@ static RE_SQLSTATE: Lazy<Regex> = Lazy::new(|| {
 });
 
 /// Pattern 5 — io error chains (`os error N`).
-static RE_IO: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)os error \d+").expect("Pattern 5 io regex compiles")
-});
+static RE_IO: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)os error \d+").expect("Pattern 5 io regex compiles"));
 
 /// Pattern 5b — URL credentials (IPv6-literal-aware balanced-bracket).
 static RE_URL_CREDS: Lazy<Regex> = Lazy::new(|| {
@@ -69,9 +65,8 @@ static RE_URL_CREDS: Lazy<Regex> = Lazy::new(|| {
 });
 
 /// Pattern 5c — ANSI-CSI escape sequences.
-static RE_ANSI: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\x1b\[[0-9;?]*[a-zA-Z]").expect("Pattern 5c ANSI regex compiles")
-});
+static RE_ANSI: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\x1b\[[0-9;?]*[a-zA-Z]").expect("Pattern 5c ANSI regex compiles"));
 
 /// Pattern 5d — IPv4 literals (dotted-quad + optional port).
 static RE_IPV4: Lazy<Regex> = Lazy::new(|| {
@@ -114,9 +109,7 @@ pub fn scrub_adapter_error_with(s: &str, adapter_types: &[&str]) -> String {
     }
     out = RE_HEX.replace_all(&out, "<redacted-hex>").into_owned();
     out = RE_PATH.replace_all(&out, "<redacted-path>").into_owned();
-    out = RE_TABLE
-        .replace_all(&out, "<redacted-table>")
-        .into_owned();
+    out = RE_TABLE.replace_all(&out, "<redacted-table>").into_owned();
     out = RE_SQLSTATE
         .replace_all(&out, "<redacted-sql-state>")
         .into_owned();
@@ -125,9 +118,7 @@ pub fn scrub_adapter_error_with(s: &str, adapter_types: &[&str]) -> String {
         .replace_all(&out, "<redacted-creds>")
         .into_owned();
     out = RE_ANSI.replace_all(&out, "<redacted-ansi>").into_owned();
-    out = RE_IPV4
-        .replace_all(&out, "<redacted-ipv4>")
-        .into_owned();
+    out = RE_IPV4.replace_all(&out, "<redacted-ipv4>").into_owned();
     out = RE_UUID.replace_all(&out, "<redacted-uuid>").into_owned();
     if out.len() > MAX_OUTPUT_BYTES {
         let mut end = MAX_OUTPUT_BYTES;
@@ -164,30 +155,22 @@ mod tests {
 
     #[test]
     fn scrub_path() {
-        let out = scrub_adapter_error_with(
-            "open /var/lib/db/stoolap/asks failed",
-            &["StoolapStore"],
-        );
+        let out =
+            scrub_adapter_error_with("open /var/lib/db/stoolap/asks failed", &["StoolapStore"]);
         assert!(out.contains("<redacted-path>"));
         assert!(!out.contains("/var/lib/db"));
     }
 
     #[test]
     fn scrub_table_name() {
-        let out = scrub_adapter_error_with(
-            "no such table: asks",
-            &["StoolapStore"],
-        );
+        let out = scrub_adapter_error_with("no such table: asks", &["StoolapStore"]);
         assert!(out.contains("<redacted-table>"));
         assert!(!out.contains("asks"));
     }
 
     #[test]
     fn scrub_sqlstate() {
-        let out = scrub_adapter_error_with(
-            "SQLSTATE_23000 unique violation",
-            &["StoolapStore"],
-        );
+        let out = scrub_adapter_error_with("SQLSTATE_23000 unique violation", &["StoolapStore"]);
         assert!(out.contains("<redacted-sql-state>"));
     }
 
@@ -209,19 +192,13 @@ mod tests {
 
     #[test]
     fn scrub_ansi() {
-        let out = scrub_adapter_error_with(
-            "color \x1b[31mred\x1b[0m end",
-            &["StoolapStore"],
-        );
+        let out = scrub_adapter_error_with("color \x1b[31mred\x1b[0m end", &["StoolapStore"]);
         assert!(out.contains("<redacted-ansi>"));
     }
 
     #[test]
     fn scrub_ipv4() {
-        let out = scrub_adapter_error_with(
-            "connect 192.168.1.42:5432 failed",
-            &["StoolapStore"],
-        );
+        let out = scrub_adapter_error_with("connect 192.168.1.42:5432 failed", &["StoolapStore"]);
         assert!(out.contains("<redacted-ipv4>"));
     }
 
@@ -236,10 +213,7 @@ mod tests {
 
     #[test]
     fn scrub_adapter_type_name() {
-        let out = scrub_adapter_error_with(
-            "StoolapStore open_in_memory failed",
-            &["StoolapStore"],
-        );
+        let out = scrub_adapter_error_with("StoolapStore open_in_memory failed", &["StoolapStore"]);
         assert!(out.contains("<redacted-adapter>"));
         assert!(!out.contains("StoolapStore"));
     }

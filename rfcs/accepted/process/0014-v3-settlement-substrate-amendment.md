@@ -525,7 +525,7 @@ All three fixes are ADDITIVE (semver-minor), preserve programmatic access via ex
 - **RFC-0012-v3** — paired acceptance (audit-side scrubber + `TimestampOpaque` Layer A newtype).
 - **RFC-0014** — defines parent settlement substrate; `octo-settlement-core` owns `SettlementError`, `Receipt`, `Reservation`, `Ask`.
 - **RFC-0014-v2** — pins substrate-frozen settlement extension pattern; RFC-0014-v2 §FW6 canonical scrubber pattern list (single source of truth for §S5.1).
-- **RFC-0855p** — settlement chain-integrity substrate; `compute_receipt_hash` + receipt chain verification referenced in §A-3.
+- **RFC-0855p** — settlement chain-integrity substrate; `compute_receipt_hash` + receipt chain verification referenced in RFC-0855p chain-integrity Appendix.
 
 ## Related Use Cases
 

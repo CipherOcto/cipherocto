@@ -438,7 +438,7 @@ Both fixes are ADDITIVE (semver-minor), preserve programmatic access via explici
 - **RFC-0014** — defines parent settlement substrate; sibling RFC under paired acceptance.
 - **RFC-0014-v2** — pins substrate-frozen settlement extension pattern; RFC-0014-v2 §FW6 canonical scrubber pattern list (single source of truth for §S5.1).
 - **RFC-0014-v3** — paired acceptance (settlement-side scrubber + `SettlementHashOpaque` Layer A newtype).
-- **RFC-0960** — vault substrate; `chain_hash` derivation referenced in §A-2 (OUT OF SCOPE redaction posture).
+- **RFC-0960** — vault substrate; `chain_hash` derivation referenced in RFC-0960 vault-substrate Appendix (OUT OF SCOPE redaction posture per cross-RFC separation of concerns).
 
 ## Related Use Cases
 

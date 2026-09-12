@@ -78,7 +78,7 @@ Per RFC-0012-v3 §Implementation Phases Phases 1 + 2 + 3 are **DONE** at substra
 ### Risk
 
 - **LOW** — Substrate code is shipped + tests pass (132 PASS); this is a rollout verification + lint-prelude + cross-RFC refactor. No new schema, no new variant.
-- **LOW** — §FW2 clippy lint is gated off by default; adds compile-time only, no runtime regression.
+- **LOW** — RFC-0012-v3 §FW2 clippy lint is gated off by default; adds compile-time only, no runtime regression.
 - **LOW** — RFC-0012 cross-reference append is doc-only edit.
 
 ### Cross-RFC invariants preserved

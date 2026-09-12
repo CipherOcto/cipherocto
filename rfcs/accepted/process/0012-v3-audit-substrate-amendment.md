@@ -200,7 +200,7 @@ Per BLUEPRINT.md §Adversary Analysis, the following adversary profiles are eval
 
 **4. What is the adversary's cost model?** Zero marginal cost per observed regression event. Cost bounded by log retention + frequency of regression events (rare in production).
 
-**5. What is the adversary's probability of success?** Pre-fix: HIGH — `#[error("timestamp regression at event_id {event_id} (prev: {prev}, current: {current})")]` emits raw u64 unix-ms values directly. Post-fix: NEGLIGIBLE — `TimestampOpaque::Display` emits `<redacted-timestamp>`; `Debug` ALSO redacts (symmetric, per §SC-3). `as_millis_unix()` requires code execution. Residual risk: any caller that uses `unwrap_or_else(|e| format!("{:#?}", e))` and bypasses the symmetric Debug redaction via custom Debug impl — currently NONE in substrate; covered by §SC-3 design decision.
+**5. What is the adversary's probability of success?** Pre-fix: HIGH — `#[error("timestamp regression at event_id {event_id} (prev: {prev}, current: {current})")]` emits raw u64 unix-ms values directly. Post-fix: NEGLIGIBLE — `TimestampOpaque::Display` emits `<redacted-timestamp>`; `Debug` ALSO redacts (symmetric, per §Security Considerations). `as_millis_unix()` requires code execution. Residual risk: any caller that uses `unwrap_or_else(|e| format!("{:#?}", e))` and bypasses the symmetric Debug redaction via custom Debug impl — currently NONE in substrate; covered by §Security Considerations design decision.
 
 ## Economic Analysis
 
@@ -444,7 +444,7 @@ Both fixes are ADDITIVE (semver-minor), preserve programmatic access via explici
 
 - **UC-1 — DOMAIN adapter error-chain redaction at audit log emission.** `StoolapAuditSink` migrates every raw `format!("{e}")` chain to `scrub_adapter_error_with` (Pattern 6 registry) — eliminates hex/path/SQLSTATE/io-error chain leakage at the DOMAIN adapter boundary (defect 1a).
 - **UC-2 — Audit chain-integrity verification with redacted timestamp oracle.** `AuditChainError::TimestampRegression` field types migrate `u64` → `TimestampOpaque` (Layer A frozen substrate newtype); Display emits `<redacted-timestamp>`, `as_millis_unix()` retains raw u64 for programmatic chain-integrity verification (defect 4).
-- **UC-3 — Symmetric Debug + Display redaction for chain hashes.** `TimestampOpaque::Debug` ALSO emits `<redacted-timestamp>` (symmetric with `Display` per §SC-3) so `dbg!()` / `panic!("{:?}", err)` paths cannot leak via accidental Debug formatting.
+- **UC-3 — Symmetric Debug + Display redaction for chain hashes.** `TimestampOpaque::Debug` ALSO emits `<redacted-timestamp>` (symmetric with `Display` per §Security Considerations) so `dbg!()` / `panic!("{:?}", err)` paths cannot leak via accidental Debug formatting.
 
 ## Appendices
 

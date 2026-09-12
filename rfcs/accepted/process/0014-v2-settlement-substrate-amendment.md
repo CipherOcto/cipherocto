@@ -26,7 +26,7 @@ Per CLAUDE.md §Architectural Principles + §Extension over enumeration, RFC-001
 
 ## Status
 
-**Draft** — under 5-lens reviewer review (R30 → R45.5). Paired with RFC-0012-v2 per §2-Cycle Atomic Promotion Tag. Phase 1 substrate-code amendment work is captured inline via DEFERRED markers throughout this RFC; no standalone mission file is required for the v2.0.0 amendment acceptance cycle.
+**Accepted (2026-09-12)** — DRY CLOSED at R48 + R49 consecutive zero-finding rounds across all 5 lenses (correctness, security, layer-model, hygiene, spec-completeness). Paired atomic promotion with RFC-0012-v2 per §2-Cycle Atomic Promotion Tag. Phase 1 substrate-code amendment work is captured inline via DEFERRED markers throughout this RFC; no standalone mission file is required for the v2.0.0 amendment acceptance cycle.
 
 ## Authors
 
@@ -891,6 +891,9 @@ The cost is a doc-comment-driven extension pattern that domain crates must follo
 | v2.0.0-r44.5 | 2026-09-11 | CipherOcto Architecture Working Group | 42 findings fixed; cross-RFC DOMAIN cascade                          |
 | v2.0.0-r45   | 2026-09-11 | CipherOcto Architecture Working Group | 5-lens review returned 34 findings; -48% recovery                    |
 | v2.0.0-r45.5 | 2026-09-11 | CipherOcto Architecture Working Group | 14 findings fixed; substrate-code DEFERRED docs                      |
+| v2.0.0-r48.5 | 2026-09-12 | CipherOcto Architecture Working Group | 3 trailing-period DEFERRED markers stripped (R48.5 fix)              |
+| v2.0.0-r49   | 2026-09-12 | CipherOcto Architecture Working Group | DRY CLOSED at R48 + R49 across all 5 lenses                         |
+| v2.0.0       | 2026-09-12 | CipherOcto Architecture Working Group | Accepted (paired atomic promotion with RFC-0012-v2)                 |
 
 ## Related RFCs
 

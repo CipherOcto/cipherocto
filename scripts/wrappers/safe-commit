@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# safe-commit — Layer 3 of [[no-backtick-in-commit-messages]]
+# A `git commit` wrapper that hard-rejects dangerous tokens in the
+# message. Use INSTEAD OF `git commit` whenever the message body could
+# contain shell-interpretable text.
+#
+# Token list: scripts/wrappers/dangerous-tokens.sh (single source of
+# truth shared with Layers 2/5/6/7). If the library gets a new token
+# entry, every layer picks it up automatically.
+#
+# Behavior:
+#   - `-m <msg>` and `-F <file>` are scanned via `dangerous_present`.
+#   - If found, refuse with non-zero exit BEFORE invoking git.
+#   - Otherwise pass through to `git commit "$@"`.
+#   - `-F -` (heredoc to stdin) is permitted but the caller MUST use
+#     a single-quoted heredoc (cannot enforce from inside this script).
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/wrappers/dangerous-tokens.sh
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/dangerous-tokens.sh"
+
+# Reparse args into our own structure so we can scan only message flags.
+# We operate on a COPY of $@ so the original arg list is preserved for
+# `exec git commit "$@"` below (avoids the "shift eats the value" trap).
+ORIG_ARGS=("$@")
+IDX=0
+declare -a SCAN_TARGETS=()
+declare -a M_ARGS=()
+while (( IDX < ${#ORIG_ARGS[@]} )); do
+  arg="${ORIG_ARGS[$IDX]}"
+  case "$arg" in
+    -m|--message)
+      SCAN_TARGETS+=("ARG")
+      ((IDX+1 < ${#ORIG_ARGS[@]})) && M_ARGS+=("${ORIG_ARGS[$((IDX+1))]}")
+      ;;
+    -m=*|--message=*)
+      SCAN_TARGETS+=("ARG")
+      M_ARGS+=("${arg#*=}")
+      ;;
+    -F|--file)
+      ((IDX+1 < ${#ORIG_ARGS[@]})) && {
+        target="${ORIG_ARGS[$((IDX+1))]}"
+        if [[ "$target" != "-" && -f "$target" ]]; then
+          SCAN_TARGETS+=("FILE:$target")
+        else
+          SCAN_TARGETS+=("STDIN")
+        fi
+      }
+      ;;
+    -F=*|--file=*)
+      target="${arg#*=}"
+      if [[ "$target" != "-" && -f "$target" ]]; then
+        SCAN_TARGETS+=("FILE:$target")
+      else
+        SCAN_TARGETS+=("STDIN")
+      fi
+      ;;
+  esac
+  ((IDX++)) || true
+done
+
+scan_text() {
+  local label="$1" text="$2"
+  local offenders
+  if offenders=$(dangerous_present "$text"); then
+    cat >&2 <<EOF
+================================================================================
+REFUSED by safe-commit — $label contains dangerous tokens (Layer 3)
+================================================================================
+Offenders:    $offenders
+Bash evaluates shell metacharacters inside double-quoted "-m" args BEFORE
+git sees the string. See [[no-backtick-in-commit-messages]] for the
+proven incident and scripts/wrappers/dangerous-tokens.sh for the full
+token list.
+================================================================================
+EOF
+    exit 1
+  fi
+}
+
+i=0
+for tgt in "${SCAN_TARGETS[@]}"; do
+  case "$tgt" in
+    ARG)
+      scan_text "argument #${i}" "${M_ARGS[$i]}"
+      ;;
+    FILE:*)
+      scan_text "file ${tgt#FILE:}" "$(cat "${tgt#FILE:}")"
+      ;;
+    STDIN)
+      : # we cannot scan stdin pre-read without blocking; trust -F - caller
+      ;;
+  esac
+  ((i++)) || true
+done
+
+# Pass through to git commit with the ORIGINAL args.
+exec git commit "$@"

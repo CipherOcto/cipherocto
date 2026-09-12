@@ -1,0 +1,112 @@
+name: commit-message-lint
+# Layer 6 of [[no-backtick-in-commit-messages]].
+#
+# Scans every commit on a PR for dangerous tokens in the message
+# body. Fails the PR if found. GitHub doesn't support server-side
+# pre-receive hooks, so this CI job is the closest equivalent.
+#
+# Token list: scripts/wrappers/dangerous-tokens.sh (single source of
+# truth shared with Layers 2/3/5/7).
+#
+# Triggers:
+#   - pull_request to main / next
+#   - push to main / next (for direct commits that somehow bypassed
+#     local hooks)
+
+on:
+  pull_request:
+    branches: [main, next]
+  push:
+    branches: [main, next]
+
+permissions:
+  contents: read
+
+jobs:
+  lint-commits:
+    name: Scan commit messages for dangerous tokens
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref || github.ref }}
+
+      - name: Compute base SHA
+        id: base
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "base=${{ github.event_pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "base=${{ github.before }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Scan commit messages
+        id: scan
+        env:
+          DANGEROUS_TOKENS: ${{ github.workspace }}/scripts/wrappers/dangerous-tokens.sh
+        run: |
+          set -euo pipefail
+          BASE="${{ steps.base.outputs.base }}"
+          HEAD="${{ github.sha }}"
+          echo "Scanning commits between $BASE and $HEAD..."
+
+          if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            RANGE="$HEAD"
+          else
+            RANGE="$BASE..$HEAD"
+          fi
+
+          # shellcheck disable=SC1090
+          source "$DANGEROUS_TOKENS"
+
+          BAD=""
+          for rev in $(git rev-list "$RANGE"); do
+            msg=$(git log -1 --format='%B' "$rev")
+            if offenders=$(dangerous_present "$msg"); then
+              short=$(git log -1 --format='%h' "$rev")
+              subject=$(git log -1 --format='%s' "$rev")
+              echo "::error file=commit-msg,line=1::Commit $short contains dangerous tokens: $offenders"
+              echo "::error file=commit-msg,line=1::Subject: $subject"
+              BAD+="$short "
+            fi
+          done
+
+          if [[ -n "$BAD" ]]; then
+            cat <<EOF
+
+================================================================================
+COMMIT MESSAGE LINT FAILED (Layer 6)
+================================================================================
+The following commits contain dangerous tokens in their message bodies:
+
+$BAD
+
+RFC-0011-c 2026-09-08 lesson: bash POSIX §2.6.3 expands backticks / \$(...)
+inside double-quoted \`git commit -m "..."\` BEFORE git sees the message.
+4 fix commits were pushed inadvertently that day. See
+[[no-backtick-in-commit-messages]] for the full incident write-up.
+
+Token list: scripts/wrappers/dangerous-tokens.sh
+
+Fix per offending commit:
+  git commit --amend -F /tmp/clean-msg.txt
+
+Where /tmp/clean-msg.txt is written via:
+
+  cat > /tmp/clean-msg.txt <<'EOF'
+  <subject>
+
+  <body — single-quoted heredoc, no shell expansion>
+  EOF
+
+Or, use the local safe-commit wrapper:
+  safe-commit --amend -F /tmp/clean-msg.txt
+================================================================================
+EOF
+            exit 1
+          fi
+
+          echo "All commit messages are shell-safe."

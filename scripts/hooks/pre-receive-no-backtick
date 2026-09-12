@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# pre-receive hook — Layer 5 of [[no-backtick-in-commit-messages]].
+# Refuses incoming commits whose message contains dangerous tokens.
+#
+# Install (self-hosted Git server: Gitea, Forgejo, Gitolite, cgit):
+#   cp scripts/hooks/pre-receive-no-backtick /path/to/repo.git/hooks/pre-receive
+#   chmod +x /path/to/repo.git/hooks/pre-receive
+#
+# GitHub: GitHub does NOT support server-side pre-receive hooks.
+# For GitHub, use Layer 6 (CI gate in .github/workflows/) which
+# runs the same scan on every PR.
+#
+# Token list: scripts/wrappers/dangerous-tokens.sh (single source of
+# truth shared with Layers 2/3/6/7).
+
+set -euo pipefail
+
+ZERO="0000000000000000000000000000000000000000"
+
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/wrappers/dangerous-tokens.sh
+# shellcheck disable=SC1091
+source "$HOOK_DIR/../wrappers/dangerous-tokens.sh"
+
+while read -r oldrev newrev refname; do
+  # Branch/tag deletion or creation of an unborn branch — ignore.
+  if [[ "$newrev" == "$ZERO" ]]; then
+    continue
+  fi
+
+  # List of new commits being introduced by this push.
+  if [[ "$oldrev" == "$ZERO" ]]; then
+    revs=$(git rev-list "$newrev" --not --all 2>/dev/null || git rev-list "$newrev")
+  else
+    revs=$(git rev-list "$oldrev..$newrev")
+  fi
+
+  for rev in $revs; do
+    msg=$(git log -1 --format='%B' "$rev")
+    offenders=$(dangerous_present "$msg" || true)
+    if [[ -n "$offenders" ]]; then
+      short=$(git log -1 --format='%h' "$rev")
+      subject=$(git log -1 --format='%s' "$rev")
+      cat >&2 <<EOF
+
+================================================================================
+PUSH REFUSED by pre-receive hook (Layer 5)
+================================================================================
+Ref:          $refname
+Commit:       $short
+Subject:      $subject
+Offenders:    $offenders
+
+RFC-0011-c 2026-09-08 lesson: bash POSIX §2.6.3 expands backticks / \$()
+inside double-quoted \`git commit -m \"...\"\` BEFORE git sees the message.
+4 fix commits were pushed inadvertently that day. This hook prevents the
+class of bug at the server boundary — even if every local hook is bypassed.
+
+Token list: scripts/wrappers/dangerous-tokens.sh
+
+Fix:
+  1. Drop the offending characters from the commit message.
+  2. Or amend the commit: \`git commit --amend -F /tmp/clean-msg.txt\`
+     (use single-quoted heredoc, see scripts/wrappers/safe-commit).
+
+[[no-backtick-in-commit-messages]]
+================================================================================
+
+EOF
+      exit 1
+    fi
+  done
+done
+
+exit 0

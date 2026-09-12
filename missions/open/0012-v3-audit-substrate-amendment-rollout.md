@@ -42,7 +42,7 @@ Per RFC-0012-v3 §Implementation Phases Phases 1 + 2 + 3 are **DONE** at substra
 3. **DOMAIN adapter contract conformance** — every `crates/*/src/storage/*.rs::format!` chain in workspace flagged via grep + added to a registry assertion test (the test asserts every flagged site is paired with `scrub_adapter_error_with`). New sites from outside `octo-audit` must opt in to the registry.
 4. **§FW2 clippy lint prelude** — adds a workspace-level `clippy.toml` rule + a custom lint module `crates/octo-clippy-extensions/src/no_raw_format_err.rs` (NEW Layer E per-extension crate per CLAUDE.md §User extensibility — LintModuleRegistry pattern, NOT inside `octo-audit` which is Layer B façade). Gates on workspace feature flag `lint-no-raw-format-err` (default off per RFC-0012-v3 §FW2, v3.x activation deferred). The crate follows the per-extension registry pattern so future sibling lints (settlement-side `no_raw_to_string` per sister-mission Deliverable 6) register without forcing cross-façade coupling.
 5. **Parent RFC `RFC-0012` cross-reference update** — append §Cross-References note linking to RFC-0012-v2 + RFC-0012-v3 + RFC-0014-v3 (paired). Adds §Substrate-Faithful Amendment Trail table parent RFC.
-6. **Test surface delta** — additions land in `octo-audit/tests/`, `octo-audit-core/tests/`, `octo-audit/src/lints/` (NEW). New tests must be additive — NO regressions in the 132 tests already PASS.
+6. **Test surface delta** — additions land in `octo-audit/tests/`, `octo-audit-core/tests/`, `octo-clippy-extensions/tests/` (NEW Layer E per-extension crate). New tests must be additive — NO regressions in the 132 tests already PASS.
 
 ### Out of scope (per RFC §Future Work)
 
@@ -60,7 +60,7 @@ Per RFC-0012-v3 §Implementation Phases Phases 1 + 2 + 3 are **DONE** at substra
 - [ ] AC-7: NEW `crates/octo-audit/tests/workspace_redaction_regression.rs` PASSES (≥20 tests covering each Display variant + DOMAIN adapter call site)
 - [ ] AC-8: NEW `crates/octo-audit/tests/timestamp_opaque_accessor_round_trip.rs` PASSES (asserts every `verify_chain` consumer uses accessor pattern)
 - [ ] AC-9: NEW `crates/octo-audit/tests/domain_adapter_contract_registry.rs` PASSES (asserts every flagged `format!("{e}")` site in workspace `storage/*.rs` modules gets scrubbed)
-- [ ] AC-10: NEW `crates/octo-audit/src/lints/no_raw_format_err.rs` PLUS `clippy.toml` rule registered (gated on `--features lint-no-raw-format-err`, default off). Compiles.
+- [ ] AC-10: NEW `crates/octo-clippy-extensions/src/no_raw_format_err.rs` PLUS `clippy.toml` rule registered (gated on `--features lint-no-raw-format-err`, default off). Compiles.
 - [ ] AC-11: RFC-0012 §Cross-References table appended with v2 + v3 sibling refs
 - [ ] AC-12: Cite sweep clean for any RFC parent updates (`scripts/validate_cites.sh <parent-rfc-path>` returns 0 PHANTOM / 0 INVALID / 0 STALE)
 - [ ] AC-13: Prettier-clean on all new + edited files
@@ -70,8 +70,8 @@ Per RFC-0012-v3 §Implementation Phases Phases 1 + 2 + 3 are **DONE** at substra
 
 - **RFC-0012-v3** — Accepted (status header verified at `rfcs/accepted/process/0012-v3-audit-substrate-amendment.md` Status line 5: `Accepted`). Mission is claimable iff this RFC remains Accepted.
 - **RFC-0014-v3** — Accepted (paired). Required for the §2-Cycle gate. Sister mission `0014-v3-settlement-substrate-amendment-rollout` covers substrate roll-out on the settlement side.
-- **RFC-0012-v2 §FW6** — Cross-RFC consensus-invariance scrubber patterns (substrate-side companion; RFC-0012-v2:720). NOT the canonical pattern list — settlement-side owns the canonical list (audit-side depends on settlement-side canonical per RFC-0014-v2 §FW6 single-source-of-truth contract).
-- **RFC-0014-v2 §FW6** — Canonical scrubber pattern list (single source of truth for §S5.1 per RFC-0014-v2:835 `### §FW6 — Canonical Scrubber Patterns`).
+- **RFC-0012-v2 §FW6** — Cross-RFC consensus-invariance scrubber patterns (substrate-side companion at `### §FW6 — Cross-RFC consensus-invariance scrubber patterns`). NOT the canonical pattern list — settlement-side owns the canonical list (audit-side depends on settlement-side canonical per RFC-0014-v2 §FW6 single-source-of-truth contract).
+- **RFC-0014-v2 §FW6** — Canonical scrubber pattern list (single source of truth for §S5.1 per the heading `### §FW6 — Canonical Scrubber Patterns`).
 - **parent RFC-0012** (`rfcs/accepted/process/0012-audit-substrate.md`) — needs `D. Cross-references` table appended (AC-11).
 
 ### Risk

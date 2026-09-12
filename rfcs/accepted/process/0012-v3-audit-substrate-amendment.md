@@ -53,7 +53,7 @@ R48-s review of RFC-0012-v2 + RFC-0014-v2 surfaced **4 paired-acceptance DEFERRE
 
 1. **Scrubber-bypass** — DOMAIN adapters wrap raw `format!("{e}")` chains (13 sites in `StoolapAuditSink`, 20 sites in `StoolapStore`). Bypasses the §S5.1 scrubber contract.
 2. **`SettlementHashMismatch` oracle** — shadow 8-variant `SettlementError` at `quota-router-sm-engine` (Layer C specialized node) leaks 32-byte hashes via Display.
-3. **`SinkSpecific` payload cap** — unbounded `String` in error variant (per §FW6 substrate-faithful posture: cap lives at scrubber, NOT substrate; defect is the absence of scrubber-side cap).
+3. **`SinkSpecific` payload cap** — unbounded `String` in error variant (per RFC-0014-v2 §FW6 substrate-faithful posture: cap lives at scrubber, NOT substrate; defect is the absence of scrubber-side cap).
 4. **`TimestampRegression` unix-ms leak** — Display exposes chronological side-channel (`prev` + `current` u64).
 
 RFC-0012-v3 fixes **defects 1a + 4** (audit side); RFC-0014-v3 fixes **defects 1b + 2 + 3** (settlement side). Paired acceptance required — both amendments must promote simultaneously per §2-Cycle Atomic Promotion Tag.
@@ -434,9 +434,9 @@ Both fixes are ADDITIVE (semver-minor), preserve programmatic access via explici
 ## Related RFCs
 
 - **RFC-0012** — defines parent audit substrate; `octo-audit-core` owns `AuditError`, `AuditChainError`, `AuditEvent`, `AppendOnlyAuditSink`.
-- **RFC-0012-v2** — pins substrate-frozen audit extension pattern; §FW6 canonical scrubber pattern list referenced by this amendment.
+- **RFC-0012-v2** — pins substrate-frozen audit extension pattern; RFC-0014-v2 §FW6 canonical scrubber pattern list referenced by this amendment.
 - **RFC-0014** — defines parent settlement substrate; sibling RFC under paired acceptance.
-- **RFC-0014-v2** — pins substrate-frozen settlement extension pattern; §FW6 canonical scrubber pattern list (single source of truth for §S5.1).
+- **RFC-0014-v2** — pins substrate-frozen settlement extension pattern; RFC-0014-v2 §FW6 canonical scrubber pattern list (single source of truth for §S5.1).
 - **RFC-0014-v3** — paired acceptance (settlement-side scrubber + `SettlementHashOpaque` Layer A newtype).
 - **RFC-0960** — vault substrate; `chain_hash` derivation referenced in §A-2 (OUT OF SCOPE redaction posture).
 

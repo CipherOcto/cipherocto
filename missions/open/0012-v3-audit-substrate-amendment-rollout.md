@@ -62,13 +62,14 @@ Per RFC-0012-v3 §Implementation Phases Phases 1 + 2 + 3 are **DONE** at substra
 - [ ] AC-9: NEW `crates/octo-audit/tests/domain_adapter_contract_registry.rs` PASSES (asserts every flagged `format!("{e}")` site in workspace `storage/*.rs` modules gets scrubbed)
 - [ ] AC-10: NEW `crates/octo-clippy-extensions/src/no_raw_format_err.rs` PLUS `clippy.toml` rule registered (gated on `--features lint-no-raw-format-err`, default off). Compiles.
 - [ ] AC-11: RFC-0012 §Cross-References table appended with v2 + v3 sibling refs
-- [ ] AC-12: Cite sweep clean for any RFC parent updates (`scripts/validate_cites.sh <parent-rfc-path>` returns 0 PHANTOM / 0 INVALID / 0 STALE)
-- [ ] AC-13: Prettier-clean on all new + edited files
-- [ ] AC-14: §2-Cycle gate sanity: sister mission `0014-v3-settlement-substrate-amendment-rollout` still `Open` in `missions/open/`; if it deferred, this mission defers too (user-initiated only)
+- [ ] AC-12: RFC-0012 §Substrate-Faithful Amendment Trail table added (per Deliverable 5; enumerates v2 + v3 amendment round + substrate commit refs)
+- [ ] AC-13: Cite sweep clean for any RFC parent updates (`scripts/validate_cites.sh <parent-rfc-path>` returns 0 PHANTOM / 0 INVALID / 0 STALE)
+- [ ] AC-14: Prettier-clean on all new + edited files
+- [ ] AC-15: §2-Cycle gate sanity: sister mission `0014-v3-settlement-substrate-amendment-rollout` still `Open` in `missions/open/`; if it deferred, this mission defers too (user-initiated only)
 
 ### Dependencies
 
-- **RFC-0012-v3** — Accepted (status header verified at `rfcs/accepted/process/0012-v3-audit-substrate-amendment.md` Status line 5: `Accepted`). Mission is claimable iff this RFC remains Accepted.
+- **RFC-0012-v3** — Accepted (canonical `## Status` header at `rfcs/accepted/process/0012-v3-audit-substrate-amendment.md` line 24 + front-matter `Status` row at line 5 both declare Accepted). Mission is claimable iff this RFC remains Accepted.
 - **RFC-0014-v3** — Accepted (paired). Required for the §2-Cycle gate. Sister mission `0014-v3-settlement-substrate-amendment-rollout` covers substrate roll-out on the settlement side.
 - **RFC-0012-v2 §FW6** — Cross-RFC consensus-invariance scrubber patterns (substrate-side companion at `### §FW6 — Cross-RFC consensus-invariance scrubber patterns`). NOT the canonical pattern list — settlement-side owns the canonical list (audit-side depends on settlement-side canonical per RFC-0014-v2 §FW6 single-source-of-truth contract).
 - **RFC-0014-v2 §FW6** — Canonical scrubber pattern list (single source of truth for §S5.1 per the heading `### §FW6 — Canonical Scrubber Patterns`).

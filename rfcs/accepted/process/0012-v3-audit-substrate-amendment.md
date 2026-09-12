@@ -2,8 +2,8 @@
 
 | Field        | Value                                                                           |
 | ------------ | ------------------------------------------------------------------------------- |
-| Status       | Draft                                                                           |
-| Version      | v3.0.0-draft                                                                    |
+| Status       | Accepted                                                                        |
+| Version      | v3.0.0                                                                          |
 | Layer        | A (substrate-frozen)                                                            |
 | Authors      | CipherOcto Architecture Working Group                                           |
 | Maintainers  | CipherOcto Architecture Working Group                                           |
@@ -23,7 +23,7 @@ Per CLAUDE.md §Architectural Principles + §Extension over enumeration + §Subs
 
 ## Status
 
-**Draft (2026-09-12)** — substrate-code amendment paired-acceptance DEFERRED per R48-s review of RFC-0012-v2 + RFC-0014-v2 (DRY CLOSED at R48 + R49). Substrate code changes have LANDED in working tree; this RFC codifies them at spec level.
+**Accepted (2026-09-12)** — codifies the 4 substrate defects surfaced by R48-s review of RFC-0012-v2 + RFC-0014-v2 (defects 1a scrubber, 2 redacted hash, 3 cap-at-scrubber, 4 TimestampRegression redaction) at spec level. Substrate code changes have LANDED in working tree via commits `f33410ce` + `934242ce`. Paired atomic promotion with RFC-0014-v3 per §2-Cycle Atomic Promotion Tag.
 
 ## Authors
 
@@ -428,6 +428,7 @@ Both fixes are ADDITIVE (semver-minor), preserve programmatic access via explici
 
 | Version      | Date       | Author                                | Notes                                                     |
 | ------------ | ---------- | ------------------------------------- | --------------------------------------------------------- |
+| v3.0.0       | 2026-09-12 | CipherOcto Architecture Working Group | Promoted Draft → Accepted; paired with RFC-0014-v3        |
 | v3.0.0-draft | 2026-09-12 | CipherOcto Architecture Working Group | Initial draft — paired-acceptance DEFERRED defects 1a + 4 |
 
 ## Related RFCs

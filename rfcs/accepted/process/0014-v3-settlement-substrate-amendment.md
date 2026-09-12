@@ -136,7 +136,7 @@ The shadow `SettlementError` references the substrate newtype via `pub use octo_
 
 - `SettlementHashOpaque` is a newtype for redaction (mirror of `TimestampOpaque` in RFC-0012-v3 §S6.2).
 - Newtype primitives with Display/Debug redaction are Layer A substrate concerns (substrate-faithful, no façade extension required).
-- Layer B (shadow 8-variant `SettlementError`) and Layer C (façade) reference the substrate newtype via `pub use` re-export — the substrate newtype is the single canonical redaction primitive.
+- Layer C (shadow 8-variant `SettlementError`) and Layer B (façade) reference the substrate newtype via `pub use` re-export — the substrate newtype is the single canonical redaction primitive.
 - This is a forward-pointer to the RFC-0012-v3 §S6.2 mirror pattern (paired acceptance: `TimestampOpaque` + `SettlementHashOpaque` both at Layer A).
 
 ### §S5.3 — `SinkSpecific` payload cap posture (defect 3)

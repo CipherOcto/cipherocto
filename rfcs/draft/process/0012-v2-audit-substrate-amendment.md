@@ -109,7 +109,7 @@ The `cap_root_hash` field acts as a typed-discriminator: the 32-byte digest iden
 
 4. **Canonical `chain_hash` computation** — implementations MUST call `octo_audit_core::compute_chain_hash(&event)` to compute the canonical chain hash, then verify `event.chain_hash == computed` (rejects tampered `chain_hash` field). On mismatch, return `AuditError::SinkSpecific(format!("chain_hash mismatch at event_id {}", event.event_id))` (canonical format string, substrate-faithful to the Stoolap adapter implementation).
 
-5. **Atomic persistence** — implementations MUST persist the event in a transaction-scoped atomic write. The persistence operation MUST be either fully committed (visible to subsequent `last_event_id()` calls) or fully rolled back (no partial persistence observable). Adapter-specific transaction mechanisms (e.g. database `Transaction` wrappers) are adapter-layer concerns (Layer D), not substrate contract.
+5. **Atomic persistence** — implementations MUST persist the event in a transaction-scoped atomic write. The persistence operation MUST be either fully committed (visible to subsequent `last_event_id()` calls) or fully rolled back (no partial persistence observable). Adapter-specific transaction mechanisms (e.g. database `Transaction` wrappers) are adapter-layer concerns (DOMAIN (Layer B)), not substrate contract.
 
 6. **`SinkSpecific` boundary** — adapter-specific failures (e.g. Stoolap transaction aborted, IO error) MUST map to `AuditError::SinkSpecific(String)`. The `String` payload is the substrate-canonical scrubbed message (no raw error chains, no adapter-type names leaking past the substrate boundary).
 
@@ -231,7 +231,7 @@ CLI maps substrate errors to exit codes per RFC-0011-a §Error Handling.
 
 **Documented adapter-layer concerns (out of v2.0.0 substrate contract scope):**
 
-- **Adapter-side insertion-error detection heuristic.** Adapter impls MAY use string-matching against the canonical 8-pattern list (§SC2) to detect adapter-specific insertion errors before wrapping into `AuditError::SinkSpecific`. This heuristic is documented as adapter-layer best-effort; substrate does NOT enforce the heuristic at the trait boundary (Layer D concern per Appendix C).
+- **Adapter-side insertion-error detection heuristic.** Adapter impls MAY use string-matching against the canonical 8-pattern list (§SC2) to detect adapter-specific insertion errors before wrapping into `AuditError::SinkSpecific`. This heuristic is documented as adapter-layer best-effort; substrate does NOT enforce the heuristic at the trait boundary (DOMAIN (Layer B) concern per Appendix C).
 
 ## Determinism Requirements
 
@@ -270,10 +270,10 @@ The RFC is Accepted when ALL of the following are true:
 - **AC-7.** Adapter-side scrubber call before wrapping into `SinkSpecific` — **DEFERRED — lands at acceptance**. The canonical `scrub_adapter_error` per façade is declared at each Layer B façade (pattern duplicated per-façade to avoid sibling Layer B coupling); adapter conformance gate runs at acceptance per §Implementation Phases. Pre-acceptance adapter-side redactor is out of scope for RFC-0012-v2.
 - **AC-8.** Paired acceptance with RFC-0014-v2 per BLUEPRINT.md §2-Cycle Atomic Promotion gate.
 - **AC-9.** All 30/30 Test Vectors (TV-AUD-v2-1 through TV-AUD-v2-30) in §Test Vectors produce expected outputs (verified by `cargo test -p octo-audit`; pass criterion: 30/30 TVs pass).
-- **AC-10.** Layer D adapter implementations (e.g. `StoolapAuditSink`) provide transaction-scoped atomic write with persistence durability; concurrent appenders detected by the substrate monotonicity pre-check (adapter-side serialization is the adapter's responsibility).
+- **AC-10.** DOMAIN (Layer B) adapter implementations (e.g. `StoolapAuditSink`) provide transaction-scoped atomic write with persistence durability; concurrent appenders detected by the substrate monotonicity pre-check (adapter-side serialization is the adapter's responsibility).
 - **AC-11.** Runtime check at façade layer — the façade helper `octo_audit::audit_event` MUST include a mandatory runtime check returning `Result<(), AuditError>` (NEVER `debug_assert!` which is stripped at `-O`; release builds MUST enforce the check via `Result`-returning validation; `assert!` may be used only for invariant-impossible conditions per Rust convention). Substrate-side `verify_chain` remains the source of truth for `prev_chain_hash` chain linkage; the runtime check is a façade-side early-fail check documented in §A4.
 - **AC-12.** Façade-internal const registry self-validation — `octo_audit::extension_kinds` (façade-side) const table MUST be validated against the substrate at compile time via `const _: () = assert!(...)` style assertions; this is façade-internal self-validation, and cross-crate consistency risk is accepted as a substrate-code amendment at acceptance (substrate lacks an `extension_kinds` module; the canonical namespace strings are documented at Appendix A and §S1 only).
-- **AC-13.** Cross-RFC pairing invariants — `audit_event_for_agent_transition_receipt` (per §FW2 + RFC-0014-v2 §FW2) lands at acceptance as a paired DEFERRED invariant per §AC-8 2-cycle atomic promotion gate. The audit-side paired-acceptance adapter is `crates/octo-audit/src/storage/stoolap.rs` (DOMAIN storage adapter; see Appendix §Layer Direction Note); the settlement-side paired-acceptance adapter is `crates/octo-settlement/src/storage/stoolap.rs` per RFC-0014-v2 AC-7. Cross-RFC pairing is **DEFERRED — lands at paired acceptance**; the substrate amendment itself ships independently of the façade helper.
+- **AC-13.** Cross-RFC pairing invariants — `audit_event_for_agent_transition_receipt` (per §FW2 + RFC-0014-v2 §FW2) lands at acceptance as a paired DEFERRED invariant per §AC-8 2-cycle atomic promotion gate. The audit-side paired-acceptance adapter is `crates/octo-audit/src/storage/stoolap.rs` (audit-side DOMAIN (Layer B) adapter; see Appendix §Layer Direction Note); the settlement-side paired-acceptance adapter is `crates/octo-settlement/src/storage/stoolap.rs` per RFC-0014-v2 AC-7. Cross-RFC pairing is **DEFERRED — lands at paired acceptance**; the substrate amendment itself ships independently of the façade helper.
 
 ## 2-Cycle Atomic Promotion Tag
 
@@ -405,7 +405,7 @@ expect: Compile error: no field `subject_did_acl` on type `AuditFilter`
 
 (Per §S4, the canonical AuditFilter has 5 fields: `since_unix`, `until_unix`, `capability_root`, `model`, `limit`. Any struct literal referencing a non-canonical field fails at compile time.)
 
-**DEFERRED — lands at acceptance**: `AuditFilter` is Layer B façade projection (per §S4); does NOT exist in `octo-audit` v1.x substrate. Lands at acceptance per §Implementation Phases Phase 2. Compile-fail behavior verified at acceptance per §Implementation Phases.
+**DEFERRED — lands at acceptance** `AuditFilter` is Layer B façade projection (per §S4); does NOT exist in `octo-audit` v1.x substrate. Lands at acceptance per §Implementation Phases Phase 2. Compile-fail behavior verified at acceptance per §Implementation Phases.
 
 ### TV-AUD-v2-7: Typed-discriminator construction (redaction)
 
@@ -419,12 +419,12 @@ expect: cap_root_hash = BLAKE3-256("cipherocto/audit/extension/redaction/v1/")
 
 ```text
 input: event with event.chain_hash = compute_chain_hash(&event)
-       simulated crash injected mid-transaction (Layer D adapter's transaction mechanism abandoned)
+       simulated crash injected mid-transaction (DOMAIN (Layer B) adapter's transaction mechanism abandoned)
 expect: post-recovery last_event_id() returns None OR Some(prev_event_id)
         (NOT Some(event.event_id) — partial persistence must not be observable)
 ```
 
-**DEFERRED — lands at acceptance**: Layer D adapter atomic-persistence behavior verified at acceptance per §Implementation Phases (adapter-side crash-injection test infrastructure).
+**DEFERRED — lands at acceptance** DOMAIN (Layer B) adapter atomic-persistence behavior verified at acceptance per §Implementation Phases (adapter-side crash-injection test infrastructure).
 
 ### TV-AUD-v2-9: Typed-discriminator namespace collision (capability-insert)
 
@@ -482,7 +482,7 @@ input: AuditFilter { since_unix: Some(0), whatever_field: Some(0), .. }
 expect: Compile error: no field `whatever_field` on type `AuditFilter`
 ```
 
-**DEFERRED — lands at acceptance**: `AuditFilter` is Layer B façade projection (per §S4); does NOT exist in `octo-audit` v1.x substrate. Lands at acceptance per §Implementation Phases Phase 2. Compile-fail behavior verified at acceptance per §Implementation Phases.
+**DEFERRED — lands at acceptance** `AuditFilter` is Layer B façade projection (per §S4); does NOT exist in `octo-audit` v1.x substrate. Lands at acceptance per §Implementation Phases Phase 2. Compile-fail behavior verified at acceptance per §Implementation Phases.
 
 ### TV-AUD-v2-16: AuditFilter full-field round-trip
 
@@ -495,9 +495,9 @@ expect: filter.since_unix == Some(0)
         filter.limit == Some(50)
 ```
 
-**DEFERRED — lands at acceptance**: Same as TV-AUD-v2-15; `AuditFilter` lands at acceptance per §Implementation Phases Phase 2.
+**DEFERRED — lands at acceptance** Same as TV-AUD-v2-15; `AuditFilter` lands at acceptance per §Implementation Phases Phase 2.
 
-### TV-AUD-v2-17: Layer D adapter concurrent appender detection
+### TV-AUD-v2-17: DOMAIN (Layer B) adapter concurrent appender detection
 
 ```text
 input: two appenders simultaneously call append(event_id=1) on empty table
@@ -506,7 +506,7 @@ expect: at most one returns Ok(())
         (substrate monotonicity pre-check + adapter-side serialization)
 ```
 
-**DEFERRED — lands at acceptance**: Layer D adapter concurrent-appender behavior verified at acceptance per §Implementation Phases.
+**DEFERRED — lands at acceptance** DOMAIN (Layer B) adapter concurrent-appender behavior verified at acceptance per §Implementation Phases.
 
 ### TV-AUD-v2-18: scrub_adapter_error pattern 1 (hex digest ≥32 chars)
 
@@ -774,21 +774,21 @@ The full 32-byte hex digests are documented here as canonical namespace strings;
 | `AuditFilter` projection             | NOT owned (façade concern)               | owned (Layer B projection)                                                                                                                                                                 |
 | Scrubber                             | NOT owned (Layer A stays pure substrate) | owned (Layer B per RFC-0011-a §7.7 — `scrub_adapter_error` + `scrub_adapter_error_with` live at `octo_audit::scrub`; **lands at acceptance** per Phase 1 substrate-code amendment mission) |
 | Typed-discriminator helpers          | doc-comment only                         | owned (`audit_event_for_*` functions)                                                                                                                                                      |
-| Storage adapter (`StoolapAuditSink`) | NOT owned                                | owned (Layer B → Layer D adapter)                                                                                                                                                          |
+| Storage adapter (`StoolapAuditSink`) | NOT owned                                | owned (DOMAIN (Layer B) storage adapter)                                                                                                                                                   |
 
-RFC-0012-v2 explicitly pins this boundary. Substrate stays free of projection logic, scrubber logic, and storage adapter logic — all three are Layer B (or Layer D) concerns per CLAUDE.md §Layer direction rule.
+RFC-0012-v2 explicitly pins this boundary. Substrate stays free of projection logic, scrubber logic, and storage adapter logic — all three are Layer B concerns per CLAUDE.md §Layer direction rule.
 
 ### Appendix C: Layer Direction Note
 
 Per CLAUDE.md §Architectural Principles + `cipherocto-design-principles.md` Layer model, RFC-0012-v2 pins the canonical layer direction for audit substrate code:
 
-| Layer                    | Concrete location                          | Owns                                                                                                                                                                                               |
-| ------------------------ | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **A** (substrate-frozen) | `crates/octo-audit-core/`                  | `AuditEvent`, `AuditEventKind`, `AuditError`, `AppendOnlyAuditSink`, `compute_chain_hash`, `verify_chain` (no `extension_kinds` module; typed-discriminator digests live at façade per Appendix B) |
-| **D** (storage adapter)  | `crates/octo-audit/src/storage/stoolap.rs` | `StoolapAuditSink` concrete impl + adapter-specific error mapping into `AuditError::SinkSpecific` with canonical format-string                                                                     |
+| Layer                          | Concrete location                          | Owns                                                                                                                                                                                               |
+| ------------------------------ | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **A** (substrate-frozen)       | `crates/octo-audit-core/`                  | `AuditEvent`, `AuditEventKind`, `AuditError`, `AppendOnlyAuditSink`, `compute_chain_hash`, `verify_chain` (no `extension_kinds` module; typed-discriminator digests live at façade per Appendix B) |
+| **B** (DOMAIN storage adapter) | `crates/octo-audit/src/storage/stoolap.rs` | `StoolapAuditSink` concrete impl + adapter-specific error mapping into `AuditError::SinkSpecific` with canonical format-string                                                                     |
 
 Layer B (façade) details — including substrate re-exports, `AuditFilter` projection, `scrub_adapter_error` / `scrub_adapter_error_with`, and typed-discriminator helper module `octo_audit::audit_event` (**DEFERRED — lands at acceptance**) — live at `Appendix B: Substrate-vs-façade boundary` per the canonical substrate-vs-façade boundary table.
 
-**Direction rule:** A → B → D. Never the reverse. The substrate (Layer A) does NOT depend on `octo-storage-core`, `octo-audit`, or any adapter crate. The façade (Layer B) depends on the substrate only. Adapters (Layer D) depend on the substrate (via façade re-exports). Per CLAUDE.md §Stable Abstractions Principle, this direction survives 10-year cryptographic migrations: PQC migration touches Layer A only; business-logic churn (capability variants, write-path amendments, adapter additions) touches Layer B + D without disturbing the substrate.
+**Direction rule:** A → B. Never the reverse. The substrate (Layer A) does NOT depend on `octo-storage-core`, `octo-audit`, or any storage adapter crate. The DOMAIN façade + storage adapter (Layer B) depend on the substrate (Layer A) only. Layer D (transport adapters — BLE/USB/TCP/QUIC/HID per CLAUDE.md §Crate stability table) is not applicable to the audit substrate; audit's DOMAIN storage adapter lives at Layer B per `crates/octo-audit/src/lib.rs` L6-7 ("kept at the DOMAIN layer"). Per CLAUDE.md §Stable Abstractions Principle, this direction survives 10-year cryptographic migrations: PQC migration touches Layer A only; business-logic churn (capability variants, write-path amendments, storage adapter additions) touches Layer B without disturbing the substrate.
 
 **Adapter-location reference:** When RFC-0012-v2 prose needs to cite the canonical `StoolapAuditSink` location (e.g. for §G4 adapter enforcement reference), this Appendix §Layer Direction Note is the single source of truth. Inline file:line refs in prose violate CLAUDE.md §No line refs; the canonical citation is `Appendix §Layer Direction Note`.

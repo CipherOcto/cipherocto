@@ -67,7 +67,7 @@ RFC-0012-v2 codifies the typed-discriminator pattern so write-path amendments ca
 | Role                                   | Authority                                                                                                                                                                                                                     |
 | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `octo-audit-core` (substrate, Layer A) | Owns `AuditEvent`, `AuditEventKind`, `AppendOnlyAuditSink`, `AuditError`, `compute_chain_hash`, `verify_chain` (no `extension_kinds` module; typed-discriminator digests are constructed inline at the façade per Appendix B) |
-| `octo-audit` (façade, Layer B)         | Re-exports substrate canonical types + implements `StoolapAuditSink` (Layer D adapter)                                                                                                                                        |
+| `octo-audit` (façade, Layer B)         | Re-exports substrate canonical types + implements `StoolapAuditSink` (DOMAIN storage adapter, not Layer D transport adapter; see Appendix §Layer Direction Note)                                                              |
 | Domain callers (Layer B / C / D)       | Construct `AuditEvent` instances via façade typed-discriminator helpers — **DEFERRED — lands at acceptance** per §Implementation Phases Phase 2                                                                               |
 
 ## Specification
@@ -271,9 +271,9 @@ The RFC is Accepted when ALL of the following are true:
 - **AC-8.** Paired acceptance with RFC-0014-v2 per BLUEPRINT.md §2-Cycle Atomic Promotion gate.
 - **AC-9.** All 30/30 Test Vectors (TV-AUD-v2-1 through TV-AUD-v2-30) in §Test Vectors produce expected outputs (verified by `cargo test -p octo-audit`; pass criterion: 30/30 TVs pass).
 - **AC-10.** Layer D adapter implementations (e.g. `StoolapAuditSink`) provide transaction-scoped atomic write with persistence durability; concurrent appenders detected by the substrate monotonicity pre-check (adapter-side serialization is the adapter's responsibility).
-- **AC-11.** Substrate-faithful `prev_chain_hash` linkage — the façade helper `octo_audit::audit_event` MUST include a mandatory runtime check (NOT `debug_assert`; verifies in release builds via `Result` return or similar) to enforce the pairing invariant at acceptance. Substrate-side `verify_chain` remains the source of truth; the runtime check is a façade-side early-fail check documented in §A4.
-- **AC-12.** Compile-time constant registry — `octo_audit::extension_kinds` (façade-side) const table MUST be validated against the substrate at compile time via `const _: () = assert!(...)` style assertions; this is façade-internal validation, and cross-crate consistency risk is accepted as a substrate-code amendment at acceptance (substrate lacks an `extension_kinds` module; the canonical namespace strings are documented at Appendix A and §S1 only).
-- **AC-13.** Cross-RFC pairing invariants — `audit_event_for_agent_transition_receipt` (per §FW2 + RFC-0014-v2 §FW2) lands at acceptance as a paired DEFERRED invariant per §AC-8 2-cycle atomic promotion gate. Cross-RFC pairing is **DEFERRED — lands at paired acceptance**; the substrate amendment itself ships independently of the façade helper.
+- **AC-11.** Runtime check at façade layer — the façade helper `octo_audit::audit_event` MUST include a mandatory runtime check returning `Result<(), AuditError>` (NEVER `debug_assert!` which is stripped at `-O`; release builds MUST enforce the check via `Result`-returning validation; `assert!` may be used only for invariant-impossible conditions per Rust convention). Substrate-side `verify_chain` remains the source of truth for `prev_chain_hash` chain linkage; the runtime check is a façade-side early-fail check documented in §A4.
+- **AC-12.** Façade-internal const registry self-validation — `octo_audit::extension_kinds` (façade-side) const table MUST be validated against the substrate at compile time via `const _: () = assert!(...)` style assertions; this is façade-internal self-validation, and cross-crate consistency risk is accepted as a substrate-code amendment at acceptance (substrate lacks an `extension_kinds` module; the canonical namespace strings are documented at Appendix A and §S1 only).
+- **AC-13.** Cross-RFC pairing invariants — `audit_event_for_agent_transition_receipt` (per §FW2 + RFC-0014-v2 §FW2) lands at acceptance as a paired DEFERRED invariant per §AC-8 2-cycle atomic promotion gate. The audit-side paired-acceptance adapter is `crates/octo-audit/src/storage/stoolap.rs` (DOMAIN storage adapter; see Appendix §Layer Direction Note); the settlement-side paired-acceptance adapter is `crates/octo-settlement/src/storage/stoolap.rs` per RFC-0014-v2 AC-7. Cross-RFC pairing is **DEFERRED — lands at paired acceptance**; the substrate amendment itself ships independently of the façade helper.
 
 ## 2-Cycle Atomic Promotion Tag
 
@@ -404,6 +404,8 @@ expect: Compile error: no field `subject_did_acl` on type `AuditFilter`
 ```
 
 (Per §S4, the canonical AuditFilter has 5 fields: `since_unix`, `until_unix`, `capability_root`, `model`, `limit`. Any struct literal referencing a non-canonical field fails at compile time.)
+
+**DEFERRED — lands at acceptance**: `AuditFilter` is Layer B façade projection (per §S4); does NOT exist in `octo-audit` v1.x substrate. Lands at acceptance per §Implementation Phases Phase 2. Compile-fail behavior verified at acceptance per §Implementation Phases.
 
 ### TV-AUD-v2-7: Typed-discriminator construction (redaction)
 
@@ -724,6 +726,7 @@ The cost is a doc-comment-driven extension pattern that domain crates must follo
 | v2.0.0-r37   | 2026-09-11 | CipherOcto Architecture Working Group | A4 prev_chain_hash payload-hash wording, AC-7 rephrase                              |
 | v2.0.0-r38   | 2026-09-11 | CipherOcto Architecture Working Group | Cross-RFC wording drift, hygiene em-dash sweep                                      |
 | v2.0.0-r38.5 | 2026-09-11 | CipherOcto Architecture Working Group | Scrubber code-fence audit, §S5.1/§S6.1 collapse check                               |
+| v2.0.0-r39   | 2026-09-11 | CipherOcto Architecture Working Group | VH numbering fill, AuditFilter DEFERRED marker alignment                            |
 | v2.0.0-r39.5 | 2026-09-11 | CipherOcto Architecture Working Group | extension_kinds drop, subject_did DEFERRED, A4 chain-linkage-only reassert          |
 | v2.0.0-r40   | 2026-09-11 | CipherOcto Architecture Working Group | R41 findings: VH+§FW6+AC-11+AC-12+R41-sp                                            |
 | v2.0.0-r40.5 | 2026-09-11 | CipherOcto Architecture Working Group | R41 fix: VH r40/r40.5, §FW6, AC-11 runtime, AC-12 soften                            |

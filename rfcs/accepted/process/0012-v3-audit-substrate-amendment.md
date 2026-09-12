@@ -91,6 +91,16 @@ The canonical scrubber pattern list (Patterns 1, 2, 3, 4, 5, 5b, 5c, 5d, 5e, 6) 
 
 **Empty-registry precondition:** `scrub_adapter_error_with(s, [])` panics on non-empty `s`. Use `scrub_adapter_error(s)` for no-registry entry point.
 
+### §S5.1.1 — DOMAIN adapter migration contract
+
+DOMAIN (Layer B-faithful) storage adapters MUST migrate every raw `format!("{e}")` site to `scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)`. Migration is enforced via clippy lint (deferred to v3.x) and reviewed at acceptance.
+
+Adapter-type registry (`const ADAPTER_TYPES: &[&str]`) MUST be declared at adapter module scope:
+
+```rust
+const ADAPTER_TYPES: &[&str] = &["StoolapAuditSink"];
+```
+
 ## §S6 — TimestampOpaque newtype
 
 Wrapper heading for audit-side substrate-faithful newtype spec (parallel to RFC-0014-v3 §S5.2 `SettlementHashOpaque` newtype). Lives in §S6 chapter for historical numbering inheritance from RFC-0012-v2.
@@ -143,16 +153,6 @@ TimestampRegression {
 **Why raw u64 retained at `Debug` + `source()`:** programmatic chain-integrity verification (e.g. `octo-audit::verify_chain`) needs the actual values. Source-retain + Display-redact is the canonical split per R48-s.
 
 **Why single `<redacted-timestamp>` sentinel for both `prev` + `current`:** Distinguishing which field is `prev` vs `current` at the Display level would itself leak ordering information — an attacker observing `AuditChainError::TimestampRegression` could infer which event regressed (the smaller of the two timestamps) by comparing the two emitted values. A single sentinel for both fields eliminates this ordering side-channel. Programmatic callers needing the prev/current distinction use `as_millis_unix()` on each field.
-
-### §S5.1.1 — DOMAIN adapter migration contract
-
-DOMAIN (Layer B-faithful) storage adapters MUST migrate every raw `format!("{e}")` site to `scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)`. Migration is enforced via clippy lint (deferred to v3.x) and reviewed at acceptance.
-
-Adapter-type registry (`const ADAPTER_TYPES: &[&str]`) MUST be declared at adapter module scope:
-
-```rust
-const ADAPTER_TYPES: &[&str] = &["StoolapAuditSink"];
-```
 
 ## 2-Cycle Atomic Promotion Tag
 

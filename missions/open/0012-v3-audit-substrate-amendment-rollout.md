@@ -41,7 +41,7 @@ Per RFC-0012-v3 §Implementation Phases Phases 1 + 2 + 3 are **DONE** at substra
 2. **`TimestampOpaque` accessor round-trip suite** — verify every consumer site that constructs `TimestampOpaque::new(u64)` is paired with an `as_millis_unix()` consumer for programmatic access. Audit grep `verify_chain` + any test pattern; assert NO consumer uses raw `.0` field access (would bypass accessor).
 3. **DOMAIN adapter contract conformance** — every `crates/*/src/storage/*.rs::format!` chain in workspace flagged via grep + added to a registry assertion test (the test asserts every flagged site is paired with `scrub_adapter_error_with`). New sites from outside `octo-audit` must opt in to the registry.
 4. **§FW2 clippy lint prelude** — adds a workspace-level `clippy.toml` rule + a custom lint module `crates/octo-clippy-extensions/src/no_raw_format_err.rs` (NEW Layer E per-extension crate per CLAUDE.md §User extensibility — LintModuleRegistry pattern, NOT inside `octo-audit` which is Layer B façade). Gates on workspace feature flag `lint-no-raw-format-err` (default off per RFC-0012-v3 §FW2, v3.x activation deferred). The crate follows the per-extension registry pattern so future sibling lints (settlement-side `no_raw_to_string` per sister-mission Deliverable 6) register without forcing cross-façade coupling.
-5. **Parent RFC `RFC-0012` cross-reference update** — append §Cross-References note linking to RFC-0012-v2 + RFC-0012-v3 + RFC-0014-v3 (paired). Adds §Substrate-Faithful Amendment Trail table parent RFC.
+5. **Parent RFC `RFC-0012` cross-reference update** — append §Cross-References note linking to RFC-0012-v2 + RFC-0012-v3 + RFC-0014-v3 (paired). Adds §Substrate-Faithful Amendment Trail table to parent RFC.
 6. **Test surface delta** — additions land in `octo-audit/tests/`, `octo-audit-core/tests/`, `octo-clippy-extensions/tests/` (NEW Layer E per-extension crate). New tests must be additive — NO regressions in the 132 tests already PASS.
 
 ### Out of scope (per RFC §Future Work)
@@ -69,7 +69,7 @@ Per RFC-0012-v3 §Implementation Phases Phases 1 + 2 + 3 are **DONE** at substra
 
 ### Dependencies
 
-- **RFC-0012-v3** — Accepted (canonical `## Status` header at `rfcs/accepted/process/0012-v3-audit-substrate-amendment.md` line 24 + front-matter `Status` row at line 5 both declare Accepted). Mission is claimable iff this RFC remains Accepted.
+- **RFC-0012-v3** — Accepted (canonical `## Status` body header + front-matter `Status` row both declare Accepted). Mission is claimable iff this RFC remains Accepted.
 - **RFC-0014-v3** — Accepted (paired). Required for the §2-Cycle gate. Sister mission `0014-v3-settlement-substrate-amendment-rollout` covers substrate roll-out on the settlement side.
 - **RFC-0012-v2 §FW6** — Cross-RFC consensus-invariance scrubber patterns (substrate-side companion at `### §FW6 — Cross-RFC consensus-invariance scrubber patterns`). NOT the canonical pattern list — settlement-side owns the canonical list (audit-side depends on settlement-side canonical per RFC-0014-v2 §FW6 single-source-of-truth contract).
 - **RFC-0014-v2 §FW6** — Canonical scrubber pattern list (single source of truth for §S5.1 per the heading `### §FW6 — Canonical Scrubber Patterns`).

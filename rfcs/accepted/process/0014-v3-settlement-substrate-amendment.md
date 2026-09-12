@@ -14,13 +14,13 @@
 
 ## Summary
 
-RFC-0014-v3 is a **Layer A + B substrate amendment** to `octo-settlement-core` + `octo-settlement` (façade) + `quota-router-sm-engine` (Layer C specialized node) that lands the **paired-acceptance DEFERRED** settlement-side substrate defects identified in R48-s review:
+RFC-0014-v3 is a **Layer A + B + C substrate amendment** to `octo-settlement-core` (Layer A frozen substrate) + `octo-settlement` (Layer B façade) + `quota-router-sm-engine` (Layer C specialized node) that lands the **paired-acceptance DEFERRED** settlement-side substrate defects identified in R48-s review:
 
 1. **§S5.1 — Per-façade scrubber at `octo-settlement` (defect 1b).** Canonical 10-pattern scrubber (Patterns 1-5 + 5b/5c/5d/5e + 6 registry) re-implemented at the `octo-settlement` façade per RFC-0014-v2 §FW6 (canonical scrubber patterns). DOMAIN adapters (e.g. `StoolapStore`, `StoolapReceiptSink`) wrap every raw `.to_string()` chain with `octo_settlement::scrub_adapter_error_with(s, ADAPTER_TYPES)`.
 2. **§S5.2 — `SettlementHashOpaque` newtype for `SettlementError::SettlementHashMismatch` + `AskNotFound` + `AlreadyConsumed` (defect 2).** 32-byte hash fields wrapped in `SettlementHashOpaque` newtype whose `Display` impl emits `<redacted-hash>`. Raw bytes retained at `Debug` + `source()` for programmatic chain-integrity verification.
 3. **§S5.3 — `SinkSpecific` payload cap posture (defect 3).** Per RFC-0014-v2 §FW6 substrate-faithful posture: substrate DOES NOT enforce a length cap (Layer A frozen, no `debug_assert!` discipline per AC-11). Cap lives at the scrubber (4 KiB input cap, 4 KiB output cap with marker) — DOMAIN adapters MUST call `scrub_adapter_error_with` which enforces both caps. **DEFERRED — lands at acceptance** runtime enforcement of a substrate-level length cap on `SinkSpecific` payload (acceptance mission MAY amend §S5 if 4 KiB scrubber is found insufficient in production).
 
-Per CLAUDE.md §Architectural Principles + §Extension over enumeration + §Substrate-faithful, RFC-0014-v3 ships ADDITIVE-only substrate changes; no field removals, no variant additions, no breaking Display semantics (substrate-faithful callers continue to compile).
+Per CLAUDE.md §Architectural Principles + §Extension over enumeration, RFC-0014-v3 ships ADDITIVE-only substrate changes; no field removals, no variant additions, no breaking Display semantics (substrate-faithful callers continue to compile).
 
 ## Status
 
@@ -509,7 +509,7 @@ RFC-0014-v3 codifies the paired-acceptance DEFERRED substrate defects from R48-s
 2. **Defect 2 (32-byte hash oracle):** `SettlementError::SettlementHashMismatch` Display leaks 32-byte hashes via hex-encoded `{expected}` + `{got}` strings. Fix: `SettlementHashOpaque` newtype with Display-redact.
 3. **Defect 3 (SinkSpecific payload cap):** substrate-faithful posture is verbatim payload retention; cap lives at scrubber. DOMAIN adapters MUST call `scrub_adapter_error_with` which enforces 4 KiB input/output caps.
 
-All three fixes are ADDITIVE (semver-minor), preserve programmatic access via explicit accessor methods, and stay at the right layer (scrubber at Layer B façade, newtype at Layer A frozen substrate for substrate-faithful redaction primitive). Per CLAUDE.md §Substrate-faithful, no breaking changes.
+All three fixes are ADDITIVE (semver-minor), preserve programmatic access via explicit accessor methods, and stay at the right layer (scrubber at Layer B façade, newtype at Layer A frozen substrate for substrate-faithful redaction primitive). Per CLAUDE.md §Architectural Principles, no breaking changes.
 
 ## Version History
 

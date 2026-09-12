@@ -19,7 +19,7 @@ RFC-0012-v3 is a **Layer A substrate amendment** to `octo-audit-core` + `octo-au
 1. **§S5.1 — Per-façade scrubber at `octo-audit` (defect 1a).** Canonical 10-pattern scrubber (Patterns 1, 2, 3, 4, 5, 5b, 5c, 5d, 5e, 6) re-implemented at the `octo-audit` façade per RFC-0014-v2 §FW6 (single source of truth). DOMAIN adapters (e.g. `StoolapAuditSink`) wrap every raw `format!("{e}")` chain with `octo_audit::scrub_adapter_error_with(s, ADAPTER_TYPES)`. Per-façade duplication with `octo_settlement::scrub` accepted at v2.0.0 per the R34.5 trade-off (cross-RFC shared-utility extraction deferred to v2.1+).
 2. **§S6.2 — `TimestampOpaque` newtype for `AuditChainError::TimestampRegression` (defect 4).** `prev: u64` + `current: u64` fields wrapped in `TimestampOpaque` newtype whose `Display` impl emits `<redacted-timestamp>`. `event_id` retained at Display (NOT a chronological side-channel). Raw u64 values retained at `Debug` + `source()` for programmatic chain-integrity verification.
 
-Per CLAUDE.md §Architectural Principles + §Extension over enumeration + §Substrate-faithful, RFC-0012-v3 ships ADDITIVE-only substrate changes; no field removals, no variant additions.
+Per CLAUDE.md §Architectural Principles + §Extension over enumeration, RFC-0012-v3 ships ADDITIVE-only substrate changes; no field removals, no variant additions.
 
 ## Status
 
@@ -422,7 +422,7 @@ RFC-0012-v3 codifies the paired-acceptance DEFERRED substrate defects from R48-s
 1. **Defect 1a (DOMAIN adapter scrubber-bypass):** raw `format!("{e}")` chains leak hex digests, paths, SQLSTATE codes, io error numbers, IPv4 literals, UUIDs. Fix: per-façade scrubber + DOMAIN adapter migration contract.
 2. **Defect 4 (chronological side-channel):** `TimestampRegression` Display leaks `prev` + `current` u64 values, enabling timing reconstruction. Fix: `TimestampOpaque` newtype with Display-redact.
 
-Both fixes are ADDITIVE (semver-minor), preserve programmatic access via explicit accessor methods, and stay at the right layer (scrubber at Layer B façade, newtype at Layer A substrate). Per CLAUDE.md §Substrate-faithful, no breaking changes.
+Both fixes are ADDITIVE (semver-minor), preserve programmatic access via explicit accessor methods, and stay at the right layer (scrubber at Layer B façade, newtype at Layer A substrate). Per CLAUDE.md §Architectural Principles, no breaking changes.
 
 ## Version History
 

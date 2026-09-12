@@ -42,12 +42,12 @@ Per RFC-0014-v3 §Implementation Phases Phases 1 + 2 + 3 are **DONE** at substra
 3. **SinkSpecific payload monitoring infra** — substrate-faithful = no cap at substrate (per §S5.3 + AC-11); cap lives at scrubber. Add workspace-level log-capture test that exercises `SettlementError::SinkSpecific("x".repeat(10_000))` through DOMAIN adapter wrapper and asserts scrubber-side cap fires (sentinel `<redacted-too-long>` present). Production-side: NO runtime enforcement added (would violate substrate-faithful); only verification of cap-at-scrubber posture.
 4. **DOMAIN adapter contract conformance (settlement-side)** — every `crates/quota-router-sm-engine/**/*.rs::format!("{e}")` and `.to_string()` chain in workspace flagged + scrubbed via `scrub_adapter_error_with(s, ADAPTER_TYPES)`. Verify all 24 sites from R48-s defect 1b closure remain scrubbed; add 4 bare `scrub_adapter_error(` callsites to a registry assertion test (no-registry entry points for adapter types outside DOMAIN registry).
 5. **Parent RFC `RFC-0014` cross-reference update** — append §Cross-References note linking to RFC-0014-v2 + RFC-0014-v3 + RFC-0012-v3 (paired). Adds §Substrate-Faithful Amendment Trail table to parent RFC.
-6. **§FW4 clippy lint prelude (settlement-side)** — extend the workspace clippy rule from sister mission to also flag raw `.to_string()` chains on `SettlementError` in DOMAIN-boundary modules (gated off-by-default per RFC-0014-v3 §FW4). Sister-mission audit-side lint lives at `RFC-0012-v3 §FW2`. The audit-side and settlement-side lints detect SEMANTICALLY DIFFERENT patterns (`format!("{e}")` vs `e.to_string()`) and require two distinct lint registrations in the shared registry — see Layer-model note below.
+6. **§FW4 clippy lint prelude (settlement-side)** — extend the workspace clippy rule from sister mission to also flag raw `.to_string()` chains on `SettlementError` in DOMAIN-boundary modules (gated off-by-default per RFC-0014-v3 §FW4). Sister-mission audit-side lint lives at `RFC-0012-v3 §FW2`. The audit-side and settlement-side lints detect SEMANTICALLY DIFFERENT patterns (`format!("{e}")` vs `e.to_string()`) and require two distinct lint registrations in the shared registry — the layer model is Layer E per-extension crate (`octo-clippy-extensions`) hosting both registrations, per CLAUDE.md §User extensibility Registry pattern.
 
 ### Out of scope (per RFC §Future Work)
 
 - **§FW1 cross-RFC scrubber shared utility** (extract to `octo-foundation::scrub`) — DEFERRED to v2.1+; out of scope.
-- **Substrate-level payload cap on `SinkSpecific(String)`** — DEFERRED — lands at acceptance per §S5.3 + AC-11. Mission captures acceptance behavior; runtime cap enforcement is a separate mission (when/if 4 KiB scrubber cap proves insufficient).
+- Substrate-level payload cap on `SinkSpecific(String)` — **DEFERRED — lands at acceptance** per §S5.3 + AC-11. Mission captures acceptance behavior; runtime cap enforcement is a separate mission (when/if 4 KiB scrubber cap proves insufficient).
 - Any new substrate amendments (v3.x+) — out of scope.
 
 ### Acceptance criteria
@@ -70,7 +70,7 @@ Per RFC-0014-v3 §Implementation Phases Phases 1 + 2 + 3 are **DONE** at substra
 
 ### Dependencies
 
-- **RFC-0014-v3** — Accepted (canonical `## Status` header at `rfcs/accepted/process/0014-v3-settlement-substrate-amendment.md` line 25 + front-matter `Status` row at line 5 both declare Accepted). Mission is claimable iff this RFC remains Accepted.
+- **RFC-0014-v3** — Accepted (canonical `## Status` body header + front-matter `Status` row both declare Accepted). Mission is claimable iff this RFC remains Accepted.
 - **RFC-0012-v3** — Accepted (paired). Required for the §2-Cycle gate. Sister mission `0012-v3-audit-substrate-amendment-rollout` covers substrate roll-out on the audit side.
 - **RFC-0014-v2 §FW6** — Canonical scrubber pattern list (single source of truth for §S5.1 per the heading `### §FW6 — Canonical Scrubber Patterns`).
 - **RFC-0012-v2 §FW6** — Cross-RFC consensus-invariance scrubber patterns (substrate-side companion at `### §FW6 — Cross-RFC consensus-invariance scrubber patterns`). NOT the canonical pattern list (audit-side depends on settlement-side canonical, NOT vice versa).
@@ -79,7 +79,7 @@ Per RFC-0014-v3 §Implementation Phases Phases 1 + 2 + 3 are **DONE** at substra
 ### Risk
 
 - **LOW** — Substrate code is shipped + tests pass (132 PASS); this is a rollout verification + monitoring + cross-RFC refactor. No new schema, no new variant.
-- **LOW** — §FW2 clippy lint is gated off by default per sister mission pattern; settlement-side extension reuses same lint module.
+- **LOW** — Sister-mission §FW2 (audit-side) clippy lint is gated off by default; settlement-side §FW4 extension reuses same lint module.
 - **LOW** — RFC-0014 cross-reference append is doc-only edit.
 - **LOW** — SinkSpecific payload-cap-at-scrubber is already enforced per R48-s defect 3 closure; this mission VERIFIES the posture (not enforcement).
 

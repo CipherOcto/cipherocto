@@ -398,11 +398,11 @@ expect: format!("{}", err) == "ask not found: <redacted-hash>"
 
 ```text
 input: quota_router_sm_engine::SettlementError::AlreadyConsumed(SettlementHashOpaque::new([0xcd; 32]))
-expect: format!("{}", err) == "ask already consumed: <redacted-hash>"
+expect: format!("{}", err) == "receipt already consumed: <redacted-hash>"
         no raw hex bytes leaked at Display
 ```
 
-> **Note:** TV exercises the shadow enum at `quota-router-sm-engine` (Layer C specialized node, 8-variant `SettlementError` with `SettlementHashOpaque`-wrapped fields). The canonical substrate `octo_settlement_core::SettlementError` still uses raw `[u8; 32]` + `{0:?}` Display format-string vector per paired-acceptance DEFERRED `RFC-0014-v3 §FW2a`. Substrate canonical format string `L15` is `#[error("ask {0:?} already consumed")]` — post-amendment will emit `"ask already consumed: <redacted-hash>"` (note: substrate uses "ask" not "receipt" per §S5.2 migration scope).
+> **Note:** TV exercises the shadow enum at `quota-router-sm-engine` (Layer C specialized node, 8-variant `SettlementError` with `SettlementHashOpaque`-wrapped fields). The shadow enum format string at `quota-router-sm-engine/src/lib.rs` L296 is `#[error("receipt already consumed: <redacted-hash>")]` — uses Display via `SettlementHashOpaque` redaction. The canonical substrate `octo_settlement_core::SettlementError` still uses raw `[u8; 32]` + `{0:?}` Display format-string vector per paired-acceptance DEFERRED `RFC-0014-v3 §FW2a` (canonical format string `#[error("ask {0:?} already consumed")]` which leaks raw bytes via Display). Post-amendment (future RFC-0014-v3.1) will migrate canonical substrate to mirror shadow enum form (`receipt already consumed: <redacted-hash>`).
 
 ### TV-SET-v3-22: `SettlementError::InvalidTransition` Display format
 
@@ -508,7 +508,7 @@ expect: format!("{}", err) contains scrubber sentinel(s) where applicable
 
 ### §FW2a — Substrate `SettlementError::{AskNotFound, AlreadyConsumed}` Display format-string vector (R8-S-1 + R8-S-2 paired-acceptance DEFERRED)
 
-**DEFERRED — lands at acceptance** Substrate format strings `#[error("ask not found: {0:?}")]` (L10) and `#[error("ask {0:?} already consumed")]` (L15) invoke Debug on `[u8; 32]`, so `format!("{}", err)` leaks raw bytes via the Display trait path even though Debug redaction is DEFERRED. Mitigation requires paired-acceptance substrate amendment: migrate `AskNotFound([u8; 32])` + `AlreadyConsumed([u8; 32])` → `SettlementHashOpaque`-wrapped fields + change format strings to `{0}` (uses redacting Display). Will be codified in a future RFC-0014-v3.1 paired-acceptance amendment.
+**DEFERRED — lands at acceptance** Substrate format strings `#[error("ask not found: {0:?}")]` (canonical substrate `AskNotFound` variant at `octo_settlement_core::error`) and `#[error("ask {0:?} already consumed")]` (canonical substrate `AlreadyConsumed` variant) invoke Debug on `[u8; 32]`, so `format!("{}", err)` leaks raw bytes via the Display trait path even though Debug redaction is DEFERRED. Mitigation requires paired-acceptance substrate amendment: migrate `AskNotFound([u8; 32])` + `AlreadyConsumed([u8; 32])` → `SettlementHashOpaque`-wrapped fields + change format strings to `{0}` (uses redacting Display). Will be codified in a future RFC-0014-v3.1 paired-acceptance amendment.
 
 ### §FW3 — Substrate-level SinkSpecific cap
 

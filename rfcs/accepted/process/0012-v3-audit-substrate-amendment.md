@@ -66,9 +66,9 @@ RFC-0012-v3 fixes **defects 1a + 4** (audit side); RFC-0014-v3 fixes **defects 1
 | `octo-audit` (façade, Layer B)         | Owns `scrub` module (Pattern 1-5 + 5b-5e + 6 registry); re-exports `scrub_adapter_error`, `scrub_adapter_error_with`, `scrub_registry_validate`                    |
 | DOMAIN adapters (Layer B-faithful)     | MUST call `octo_audit::scrub_adapter_error_with(s, ADAPTER_TYPES)` on every raw `format!("{e}")` site; raw `e.to_string()` chains are FORBIDDEN at DOMAIN boundary |
 
-## Specification
-
 ## §S5 — Specification (substrate-faithful field extensions)
+
+Wrapper heading aggregating §S5.1 (per-façade scrubber at `octo-audit`) + §S5.1.1 (DOMAIN adapter migration contract). Substrate-faithful additions per CLAUDE.md §Architectural Principles: no field removals, no variant additions.
 
 ### §S5.1 — Per-façade scrubber at `octo-audit`
 
@@ -91,9 +91,11 @@ The canonical scrubber pattern list (Patterns 1, 2, 3, 4, 5, 5b, 5c, 5d, 5e, 6) 
 
 **Empty-registry precondition:** `scrub_adapter_error_with(s, [])` panics on non-empty `s`. Use `scrub_adapter_error(s)` for no-registry entry point.
 
-### §S6.2 — `TimestampOpaque` newtype (defect 4 oracle)
+## §S6 — TimestampOpaque newtype
 
-> **Note:** §S6.2 is the audit-side substrate-faithful newtype spec (parallel to RFC-0014-v3 §S5.2 `SettlementHashOpaque` newtype). Lives in §S6 chapter for historical numbering inheritance from RFC-0012-v2; the §S5 wrapper above covers §S5.1 (scrubber) + §S5.1.1 (DOMAIN adapter migration contract).
+Wrapper heading for audit-side substrate-faithful newtype spec (parallel to RFC-0014-v3 §S5.2 `SettlementHashOpaque` newtype). Lives in §S6 chapter for historical numbering inheritance from RFC-0012-v2.
+
+### §S6.2 — `TimestampOpaque` newtype (defect 4 oracle)
 
 ```rust
 /// Opaque unix-millis timestamp newtype whose `Display` impl emits

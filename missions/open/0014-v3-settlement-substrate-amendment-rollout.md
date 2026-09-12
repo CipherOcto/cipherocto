@@ -1,6 +1,6 @@
 ---
 name: 0014-v3-settlement-substrate-amendment-rollout
-description: RFC-0014-v3 Phase 4 acceptance rollout — workspace Display redaction regression + SinkSpecific cap monitoring + DOMAIN adapter conformance
+description: RFC-0014-v3 acceptance rollout — workspace Display redaction regression + SinkSpecific cap monitoring + DOMAIN adapter conformance
 metadata:
   node_type: substrate-faithful-consumer
   type: post-acceptance-rollout
@@ -19,7 +19,7 @@ status: Open
 # 0014-v3-settlement-substrate-amendment-rollout — workspace-wide adoption for RFC-0014-v3
 
 **Status:** Open — post-acceptance rollout acceptance suite
-**Substrate:** RFC-0014-v3 §S5.1 (scrubber) + §S5.2 (`SettlementHashOpaque`) + §S5.3 (SinkSpecific payload cap posture) + §S5.1.1 (DOMAIN adapter contract)
+**Substrate:** RFC-0014-v3 §S5.1 (scrubber) + RFC-0014-v3 §S5.2 (`SettlementHashOpaque`) + RFC-0014-v3 §S5.3 (SinkSpecific payload cap posture) + RFC-0014-v3 §S5.1.1 (DOMAIN adapter contract)
 **Parent:** RFC-0014 + RFC-0014-v2 (substrate extensions)
 **Companion:** RFC-0012-v3 (paired-acceptance — see RFC-0014-v3 §2-Cycle Atomic Promotion Tag)
 
@@ -44,7 +44,7 @@ Per RFC-0014-v3 §Implementation Phases Phases 1 + 2 + 3 are **DONE** at substra
 5. **Parent RFC `RFC-0014` cross-reference update** — append RFC-0014-v3 §Related RFCs note linking to RFC-0014-v2 + RFC-0014-v3 + RFC-0012-v3 (paired). Adds RFC-0014-v3 §Substrate-Faithful Amendment Trail table to parent RFC.
 6. **RFC-0014-v3 §FW4 clippy lint prelude (settlement-side)** — extend the workspace clippy rule from sister mission to also flag raw `.to_string()` chains on `SettlementError` in DOMAIN-boundary modules (gated off-by-default per RFC-0014-v3 §FW4). Sister-mission audit-side lint lives at `RFC-0012-v3 §FW2`. The audit-side and settlement-side lints detect SEMANTICALLY DIFFERENT patterns (`format!("{e}")` vs `e.to_string()`) and require two distinct lint registrations in the shared registry — the layer model is Layer E per-extension crate (`octo-clippy-extensions`) hosting both registrations, per CLAUDE.md §User extensibility Registry pattern.
 
-### Out of scope (per RFC §Future Work)
+### Out of scope (per RFC-0014-v3 §Future Work)
 
 - **§FW1 cross-RFC scrubber shared utility** (extract to `octo-foundation::scrub`) — DEFERRED to v2.1+; out of scope.
 - Substrate-level payload cap on `SinkSpecific(String)` — **DEFERRED — lands at acceptance** per RFC-0014-v3 §S5.3 + AC-11. Mission captures acceptance behavior; runtime cap enforcement is a separate mission (when/if 4 KiB scrubber cap proves insufficient).
@@ -72,16 +72,17 @@ Per RFC-0014-v3 §Implementation Phases Phases 1 + 2 + 3 are **DONE** at substra
 
 - **RFC-0014-v3** — Accepted (canonical `## Status` body header + front-matter `Status` row both declare Accepted). Mission is claimable iff this RFC remains Accepted.
 - **RFC-0012-v3** — Accepted (paired). Required for the §2-Cycle gate. Sister mission `0012-v3-audit-substrate-amendment-rollout` covers substrate roll-out on the audit side.
-- **RFC-0014-v2 §FW6** — Canonical scrubber pattern list (single source of truth for §S5.1 per the heading `### §FW6 — Canonical Scrubber Patterns`).
+- **RFC-0014-v2 §FW6** — Canonical scrubber pattern list (single source of truth for RFC-0014-v2 §S5.1 per the heading `### §FW6 — Canonical Scrubber Patterns`).
 - **RFC-0012-v2 §FW6** — Cross-RFC consensus-invariance scrubber patterns (substrate-side companion at `### §FW6 — Cross-RFC consensus-invariance scrubber patterns`). NOT the canonical pattern list (audit-side depends on settlement-side canonical, NOT vice versa).
 - **parent RFC-0014** (`rfcs/accepted/process/0014-settlement-substrate.md`) — needs `D. Cross-references` table appended (AC-11).
 
 ### Risk
 
 - **LOW** — Substrate code is shipped + tests pass (132 PASS); this is a rollout verification + monitoring + cross-RFC refactor. No new schema, no new variant.
-- **LOW** — Sister-mission §FW2 (audit-side) clippy lint is gated off by default; settlement-side §FW4 extension reuses same lint module.
+- **LOW** — Sister-mission RFC-0012-v3 §FW2 (audit-side) clippy lint is gated off by default; settlement-side RFC-0014-v3 §FW4 extension reuses same lint module.
 - **LOW** — RFC-0014 cross-reference append is doc-only edit.
 - **LOW** — SinkSpecific payload-cap-at-scrubber is already enforced per R48-s defect 3 closure; this mission VERIFIES the posture (not enforcement).
+- **MED** — Substrate `SettlementError::{AskNotFound, AlreadyConsumed}` Display format-string vector (R8-S-1 + R8-S-2 paired-acceptance DEFERRED). Substrate format string `#[error("ask not found: {0:?}")]` routes through Debug on `[u8; 32]`, so `format!("{}", err)` leaks raw bytes via the Display trait path even though `SettlementHashOpaque` Debug redaction is in place. Mitigation requires paired-acceptance substrate amendment (migrate to `SettlementHashOpaque`-wrapped fields + change `{0:?}` → `{0}`). Documented in RFC-0014-v3 §FW2a as paired-acceptance DEFERRED for a future RFC-0014-v3.1 amendment round. Out of scope for this rollout mission.
 
 ### Cross-RFC invariants preserved
 

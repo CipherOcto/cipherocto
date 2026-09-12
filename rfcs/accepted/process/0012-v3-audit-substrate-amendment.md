@@ -14,7 +14,7 @@
 
 ## Summary
 
-RFC-0012-v3 is a **Layer A substrate amendment** to `octo-audit-core` + `octo-audit` (façade) that lands the **paired-acceptance DEFERRED** substrate defects identified in R48-s review of RFC-0012-v2 + RFC-0014-v2 (DRY CLOSED 2026-09-12):
+RFC-0012-v3 is a **Layer A + B substrate amendment** to `octo-audit-core` + `octo-audit` (façade) that lands the **paired-acceptance DEFERRED** substrate defects identified in R48-s review of RFC-0012-v2 + RFC-0014-v2 (DRY CLOSED 2026-09-12):
 
 1. **§S5.1 — Per-façade scrubber at `octo-audit` (defect 1a).** Canonical 10-pattern scrubber (Patterns 1, 2, 3, 4, 5, 5b, 5c, 5d, 5e, 6) re-implemented at the `octo-audit` façade per RFC-0014-v2 §FW6 (single source of truth). DOMAIN adapters (e.g. `StoolapAuditSink`) wrap every raw `format!("{e}")` chain with `octo_audit::scrub_adapter_error_with(s, ADAPTER_TYPES)`. Per-façade duplication with `octo_settlement::scrub` accepted at v2.0.0 per the R34.5 trade-off (cross-RFC shared-utility extraction deferred to v2.1+).
 2. **§S6.2 — `TimestampOpaque` newtype for `AuditChainError::TimestampRegression` (defect 4).** `prev: u64` + `current: u64` fields wrapped in `TimestampOpaque` newtype whose `Display` impl emits `<redacted-timestamp>`. `event_id` retained at Display (NOT a chronological side-channel). Raw u64 values retained at `Debug` + `source()` for programmatic chain-integrity verification.

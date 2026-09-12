@@ -1,6 +1,6 @@
 ---
 name: 0012-v3-audit-substrate-amendment-rollout
-description: RFC-0012-v3 Phase 4 acceptance rollout — workspace Display redaction regression + DOMAIN adapter conformance + RFC-0012-v3 §FW2 clippy lint prelude
+description: RFC-0012-v3 acceptance rollout — workspace Display redaction regression + DOMAIN adapter conformance + RFC-0012-v3 §FW2 clippy lint prelude
 metadata:
   node_type: substrate-faithful-consumer
   type: post-acceptance-rollout
@@ -19,7 +19,7 @@ status: Open
 # 0012-v3-audit-substrate-amendment-rollout — workspace-wide adoption for RFC-0012-v3
 
 **Status:** Open — post-acceptance rollout acceptance suite
-**Substrate:** RFC-0012-v3 §S5.1 (scrubber) + §S6.2 (`TimestampOpaque`) + §S5.1.1 (DOMAIN adapter migration contract)
+**Substrate:** RFC-0012-v3 §S5.1 (scrubber) + RFC-0012-v3 §S6.2 (`TimestampOpaque`) + RFC-0012-v3 §S5.1.1 (DOMAIN adapter migration contract)
 **Parent:** RFC-0012 + RFC-0012-v2 (substrate extensions)
 **Companion:** RFC-0014-v3 (paired-acceptance — see RFC-0012-v3 §2-Cycle Atomic Promotion Tag)
 
@@ -44,7 +44,7 @@ Per RFC-0012-v3 §Implementation Phases Phases 1 + 2 + 3 are **DONE** at substra
 5. **Parent RFC `RFC-0012` cross-reference update** — append RFC-0012-v3 §Related RFCs note linking to RFC-0012-v2 + RFC-0012-v3 + RFC-0014-v3 (paired). Adds RFC-0012-v3 §Substrate-Faithful Amendment Trail table to parent RFC.
 6. **Test surface delta** — additions land in `octo-audit/tests/`, `octo-audit-core/tests/`, `octo-clippy-extensions/tests/` (NEW Layer E per-extension crate). New tests must be additive — NO regressions in the 132 tests already PASS.
 
-### Out of scope (per RFC §Future Work)
+### Out of scope (per RFC-0012-v3 §Future Work)
 
 - **§FW1 cross-RFC scrubber shared utility** (extract to `octo-foundation::scrub`) — DEFERRED to v2.1+; out of scope for this mission. Flag for next-round.
 - Any new substrate amendments (v3.x+) — out of scope.
@@ -72,7 +72,7 @@ Per RFC-0012-v3 §Implementation Phases Phases 1 + 2 + 3 are **DONE** at substra
 - **RFC-0012-v3** — Accepted (canonical `## Status` body header + front-matter `Status` row both declare Accepted). Mission is claimable iff this RFC remains Accepted.
 - **RFC-0014-v3** — Accepted (paired). Required for the §2-Cycle gate. Sister mission `0014-v3-settlement-substrate-amendment-rollout` covers substrate roll-out on the settlement side.
 - **RFC-0012-v2 §FW6** — Cross-RFC consensus-invariance scrubber patterns (substrate-side companion at `### §FW6 — Cross-RFC consensus-invariance scrubber patterns`). NOT the canonical pattern list — settlement-side owns the canonical list (audit-side depends on settlement-side canonical per RFC-0014-v2 §FW6 single-source-of-truth contract).
-- **RFC-0014-v2 §FW6** — Canonical scrubber pattern list (single source of truth for §S5.1 per the heading `### §FW6 — Canonical Scrubber Patterns`).
+- **RFC-0014-v2 §FW6** — Canonical scrubber pattern list (single source of truth for RFC-0014-v2 §S5.1 per the heading `### §FW6 — Canonical Scrubber Patterns`).
 - **parent RFC-0012** (`rfcs/accepted/process/0012-audit-substrate.md`) — needs `D. Cross-references` table appended (AC-11).
 
 ### Risk

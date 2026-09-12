@@ -132,7 +132,7 @@ The shadow `SettlementError` references the substrate newtype via `pub use octo_
 
 **Cross-RFC consistency note:** `octo-settlement-core::SettlementError` (Layer A substrate) uses `[u8; 32]` directly for `AskNotFound` + `AlreadyConsumed` variants. The `Debug` impl on `[u8; 32]` leaks the raw bytes — this is a SUBSTRATE-LEVEL gap that the §S5.2 newtype addresses for the SHADOW variants at `quota-router-sm-engine` (Layer C). Substrate-level `[u8; 32]` Debug redaction is **DEFERRED — lands at acceptance** per §FW2.
 
-#### §S5.2.1 — Layer-model rationale
+### §S5.2.1 — Layer-model rationale
 
 - `SettlementHashOpaque` is a newtype for redaction (mirror of `TimestampOpaque` in RFC-0012-v3 §S6.2).
 - Newtype primitives with Display/Debug redaction are Layer A substrate concerns (substrate-faithful, no façade extension required).
@@ -411,17 +411,24 @@ expect: format!("{}", err) contains "invalid transition" + state names
 ### TV-SET-v3-23: `SettlementError::ReservationNotFound` Display format
 
 ```text
-input: ReservationNotFound(#[source] SettlementHashOpaque::new([0xef; 32]))
-expect: format!("{}", err) == "reservation not found: <redacted-hash>"
-        no raw hex bytes leaked at Display
+input: ReservationNotFound(String::from("res-9f3a"))
+expect: format!("{}", err) == "reservation not found: res-9f3a"
+        (reservation-id is non-PII opaque token; substrate-faithful String field stays raw;
+         scrubber Pattern 1-5 + 5b-5e + 6 redacts at DOMAIN adapter boundary if any PII
+         resonance surfaces; §S5.2 migration scope explicitly excludes ReservationNotFound
+         — settlement-engine shadow retains String per RFC-0014-v3 §S5.2 + R8-S-3 reviewer note)
 ```
 
 ### TV-SET-v3-24: `SettlementError::ReservationExpired` Display format
 
 ```text
-input: ReservationExpired { reservation_id: SettlementHashOpaque::new([0x12; 32]), expired_at_millis_unix: 1_700_000_000_000 }
-expect: format!("{}", err) contains "reservation expired" + "<redacted-hash>"
-        expired_at_millis_unix redacted as "<redacted-timestamp>" (chronological side-channel — same RFC-0012-v3 §S6.2 rationale)
+input: ReservationExpired(String::from("res-9f3a"))
+expect: format!("{}", err) contains "reservation expired" + "res-9f3a"
+        (substrate-faithful String field stays raw; expired_at is a separate
+         non-PII string per R8-S-4 reviewer note; §S5.2 migration scope explicitly
+         excludes ReservationExpired — settlement-engine shadow retains String
+         + raw expired_at_millis_unix; RFC-0012-v3 §S6.2 TimestampOpaque applies
+         to AuditChainError::TimestampRegression only)
 ```
 
 ### TV-SET-v3-25: `SettlementError::InvalidReservationTransition` Display format
@@ -494,6 +501,10 @@ expect: format!("{}", err) contains scrubber sentinel(s) where applicable
 ### §FW2 — Substrate-level `[u8; 32]` Debug redaction
 
 **DEFERRED — lands at acceptance** At acceptance, add `impl Debug for [u8; 32]` (or a wrapper newtype) at `octo-settlement-core` to redact raw 32-byte hashes from substrate-level `Debug` formatting. Currently deferred; shadow variants at Layer C use `SettlementHashOpaque` to bypass the gap.
+
+### §FW2a — Substrate `SettlementError::{AskNotFound, AlreadyConsumed}` Display format-string vector (R8-S-1 + R8-S-2 paired-acceptance DEFERRED)
+
+**DEFERRED — lands at acceptance** Substrate format strings `#[error("ask not found: {0:?}")]` (L10) and `#[error("ask {0:?} already consumed")]` (L15) invoke Debug on `[u8; 32]`, so `format!("{}", err)` leaks raw bytes via the Display trait path even though Debug redaction is DEFERRED. Mitigation requires paired-acceptance substrate amendment: migrate `AskNotFound([u8; 32])` + `AlreadyConsumed([u8; 32])` → `SettlementHashOpaque`-wrapped fields + change format strings to `{0}` (uses redacting Display). Will be codified in a future RFC-0014-v3.1 paired-acceptance amendment.
 
 ### §FW3 — Substrate-level SinkSpecific cap
 

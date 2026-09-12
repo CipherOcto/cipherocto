@@ -33,7 +33,7 @@ This mission is one of TWO paired-acceptance missions for the v3 amendment round
 
 ## Scope
 
-Per RFC-0014-v3 §Implementation Phases Phases 1 + 2 + 3 are **DONE** at substrate-code level (commits `f33410ce` + `934242ce` + RFC promotion `2cd12a9e`). 132 tests PASS across the 5 affected crates (octo-audit 18, octo-audit-core 6, octo-settlement 13, octo-settlement-core 6, quota-router-sm-engine 89 — see sister-mission `0012-v3-audit-substrate-amendment-rollout` §Scope for the audit-side enumeration). This mission covers **Acceptance Rollout (post-RFC-promotion; no Phase 4 stub in parent RFC §Implementation Phases)** — workspace-wide verification that the substrate amendment posture (Display redaction + hash accessor surface + substrate-faithful SinkSpecific cap) survives every consumer path.
+Per RFC-0014-v3 §Implementation Phases Phases 1 + 2 + 3 are **DONE** at substrate-code level (commits `f33410ce` + `934242ce` + RFC promotion `2cd12a9e`). 132 tests PASS across the 5 affected crates (octo-audit 18, octo-audit-core 6, octo-settlement 13, octo-settlement-core 6, quota-router-sm-engine 89 — see sister-mission `0012-v3-audit-substrate-amendment-rollout` §Scope for the audit-side enumeration). This mission covers **Acceptance Rollout (post-RFC-promotion; no Phase 4 stub in parent RFC-0014-v3 §Implementation Phases)** — workspace-wide verification that the substrate amendment posture (Display redaction + hash accessor surface + substrate-faithful SinkSpecific cap) survives every consumer path.
 
 ### Deliverables
 
@@ -62,7 +62,7 @@ Per RFC-0014-v3 §Implementation Phases Phases 1 + 2 + 3 are **DONE** at substra
 - [ ] AC-8: NEW `crates/octo-settlement/tests/hash_opaque_accessor_round_trip.rs` PASSES (asserts every consumer of `SettlementHashOpaque` uses accessor pattern; 0 `.0` field accesses)
 - [ ] AC-9: NEW `crates/octo-settlement/tests/sink_specific_payload_cap_at_scrubber.rs` PASSES (asserts scrubber-side cap fires on 10K-char `SinkSpecific` payload; substrate Display remains verbatim)
 - [ ] AC-10: NEW `crates/octo-settlement/tests/domain_adapter_contract_registry.rs` PASSES (asserts every flagged `.to_string()` site in workspace `quota-router-sm-engine/**` + `octo-settlement/**` modules gets scrubbed)
-- [ ] AC-11: RFC-0014-v3 §Related RFCs table appended with v2 + v3 sibling refs
+- [ ] AC-11: RFC-0014-v3 §Related RFCs table appended with v2 + v3 sibling refs; ALSO parent RFC-0014 `D. Cross-references` table appended with v3 pointer (per Dependencies note L77)
 - [ ] AC-12: RFC-0014-v3 §Substrate-Faithful Amendment Trail table added (per Deliverable 5; enumerates v2 + v3 amendment round + substrate commit refs)
 - [ ] AC-13: Cite sweep clean for any RFC parent updates
 - [ ] AC-14: Prettier-clean on all new + edited files

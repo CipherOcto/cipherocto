@@ -23,7 +23,7 @@ Per CLAUDE.md §Architectural Principles + §Extension over enumeration, RFC-001
 
 ## Status
 
-**Accepted (2026-09-12)** — codifies the 4 substrate defects surfaced by R48-s review of RFC-0012-v2 + RFC-0014-v2 (defects 1a scrubber, 2 redacted hash, 3 cap-at-scrubber, 4 TimestampRegression redaction) at spec level. Substrate code changes have LANDED in working tree via commits `f33410ce` + `934242ce`. Paired atomic promotion with RFC-0014-v3 per §2-Cycle Atomic Promotion Tag.
+**Accepted (2026-09-12)** — codifies the **audit-side substrate defects (1a + 4) of the 4 surfaced by joint R48-s review** of RFC-0012-v2 + RFC-0014-v2 (defect 1a scrubber, 4 TimestampRegression redaction; defects 2 redacted hash + 3 cap-at-scrubber are settlement-side RFC-0014-v3 scope, NOT this RFC). Substrate code changes have LANDED in working tree via commits `f33410ce` + `934242ce`. Paired atomic promotion with RFC-0014-v3 per §2-Cycle Atomic Promotion Tag.
 
 ## Authors
 
@@ -68,6 +68,8 @@ RFC-0012-v3 fixes **defects 1a + 4** (audit side); RFC-0014-v3 fixes **defects 1
 
 ## Specification
 
+## §S5 — Specification (substrate-faithful field extensions)
+
 ### §S5.1 — Per-façade scrubber at `octo-audit`
 
 The canonical scrubber pattern list (Patterns 1, 2, 3, 4, 5, 5b, 5c, 5d, 5e, 6) lives at `octo-audit::scrub` per RFC-0014-v2 §FW6 (single source of truth). Pattern specs verbatim:
@@ -90,6 +92,8 @@ The canonical scrubber pattern list (Patterns 1, 2, 3, 4, 5, 5b, 5c, 5d, 5e, 6) 
 **Empty-registry precondition:** `scrub_adapter_error_with(s, [])` panics on non-empty `s`. Use `scrub_adapter_error(s)` for no-registry entry point.
 
 ### §S6.2 — `TimestampOpaque` newtype (defect 4 oracle)
+
+> **Note:** §S6.2 is the audit-side substrate-faithful newtype spec (parallel to RFC-0014-v3 §S5.2 `SettlementHashOpaque` newtype). Lives in §S6 chapter for historical numbering inheritance from RFC-0012-v2; the §S5 wrapper above covers §S5.1 (scrubber) + §S5.1.1 (DOMAIN adapter migration contract).
 
 ```rust
 /// Opaque unix-millis timestamp newtype whose `Display` impl emits

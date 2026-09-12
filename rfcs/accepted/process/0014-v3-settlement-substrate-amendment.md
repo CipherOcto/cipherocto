@@ -24,7 +24,7 @@ Per CLAUDE.md §Architectural Principles + §Extension over enumeration, RFC-001
 
 ## Status
 
-**Accepted (2026-09-12)** — codifies the 4 substrate defects surfaced by R48-s review of RFC-0012-v2 + RFC-0014-v2 (defects 1b scrubber, 2 SettlementHashMismatch redacted, 3 SinkSpecific cap-at-scrubber, 4 TimestampRegression redacted cross-RFC) at spec level. Substrate code changes have LANDED in working tree via commits `f33410ce` + `934242ce`. Paired atomic promotion with RFC-0012-v3 per §2-Cycle Atomic Promotion Tag.
+**Accepted (2026-09-12)** — codifies the **settlement-side substrate defects (1b + 2 + 3) of the 4 surfaced by joint R48-s review** of RFC-0012-v2 + RFC-0014-v2 (defect 1b scrubber, 2 SettlementHashMismatch redacted, 3 SinkSpecific cap-at-scrubber; defect 4 TimestampRegression redacted is audit-side RFC-0012-v3 scope, NOT this RFC). Substrate code changes have LANDED in working tree via commits `f33410ce` + `934242ce`. Paired atomic promotion with RFC-0012-v3 per §2-Cycle Atomic Promotion Tag.
 
 ## Authors
 
@@ -384,21 +384,25 @@ expect (DOMAIN wrap): emits "<redacted-too-long>" marker ✓
         (input 4 KiB cap triggered; payload not retained)
 ```
 
-### TV-SET-v3-20: `SettlementError::AskNotFound` Display format
+### TV-SET-v3-20: `quota_router_sm_engine::SettlementError::AskNotFound` Display format
 
 ```text
-input: AskNotFound(SettlementHashOpaque::new([0xab; 32]))
+input: quota_router_sm_engine::SettlementError::AskNotFound(SettlementHashOpaque::new([0xab; 32]))
 expect: format!("{}", err) == "ask not found: <redacted-hash>"
         no raw hex bytes leaked at Display
 ```
 
-### TV-SET-v3-21: `SettlementError::AlreadyConsumed` Display format
+> **Note:** TV exercises the shadow enum at `quota-router-sm-engine` (Layer C specialized node, 8-variant `SettlementError` with `SettlementHashOpaque`-wrapped fields). The canonical substrate `octo_settlement_core::SettlementError` still uses raw `[u8; 32]` + `{0:?}` Display format-string vector per paired-acceptance DEFERRED `RFC-0014-v3 §FW2a`. Once `RFC-0014-v3.1` paired-acceptance amendment lands, the canonical substrate variant will produce the same `<redacted-hash>` output as this shadow TV.
+
+### TV-SET-v3-21: `quota_router_sm_engine::SettlementError::AlreadyConsumed` Display format
 
 ```text
-input: AlreadyConsumed(SettlementHashOpaque::new([0xcd; 32]))
-expect: format!("{}", err) == "receipt already consumed: <redacted-hash>"
+input: quota_router_sm_engine::SettlementError::AlreadyConsumed(SettlementHashOpaque::new([0xcd; 32]))
+expect: format!("{}", err) == "ask already consumed: <redacted-hash>"
         no raw hex bytes leaked at Display
 ```
+
+> **Note:** TV exercises the shadow enum at `quota-router-sm-engine` (Layer C specialized node, 8-variant `SettlementError` with `SettlementHashOpaque`-wrapped fields). The canonical substrate `octo_settlement_core::SettlementError` still uses raw `[u8; 32]` + `{0:?}` Display format-string vector per paired-acceptance DEFERRED `RFC-0014-v3 §FW2a`. Substrate canonical format string `L15` is `#[error("ask {0:?} already consumed")]` — post-amendment will emit `"ask already consumed: <redacted-hash>"` (note: substrate uses "ask" not "receipt" per §S5.2 migration scope).
 
 ### TV-SET-v3-22: `SettlementError::InvalidTransition` Display format
 

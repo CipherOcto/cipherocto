@@ -36,8 +36,9 @@ pub const CHAIN_DOMAIN_SEPARATOR: &[u8] = b"cipherocto/reservation/v1/";
 /// §Module Layout) and cross-replica consensus requires the receipt
 /// hash to be deterministic for any replica that holds the same
 /// `Receipt` inputs (no per-deployment key material). The
-/// `verify_receipt_chain_vectors::vector_12_domain_separator_byte_pin`
-/// test (RFC-0014 §Test Vectors) byte-pins this behavior.
+/// `domain_separator::mission_01_domain_separator_byte_pin`
+/// test (RFC-0014 §Test Vectors, single canonical surface) byte-pins
+/// this behavior.
 ///
 /// Production deployments that need keyed-hash defense-in-depth
 /// SHOULD wrap this function (e.g., via a `KeyedHasher` trait on

@@ -24,19 +24,19 @@ completed_at: 2026-09-13
 
 ## Scope
 
-Per RFC-0012 §Key Files to Modify SUBSTRATE row 2, the canonical `AuditEvent` field shape lives in `octo-audit-core` (Layer A frozen). The wallet-domain `audit_log.rs` re-exports the canonical type via `pub use octo_audit_core::AuditEvent` and implements the domain-specific `AuditEventKind` extensions (CapabilityMint / CapabilityAttenuate) per CLAUDE.md §Extension over enumeration.
+Per RFC-0012 §Key Files to Modify SUBSTRATE row 2, the canonical `AuditEvent` field shape lives in `octo-audit-core` (Layer A frozen). The wallet-domain `audit_log.rs` re-exports the canonical types via the Layer B façade `pub use octo_audit::{verify_chain, AuditChainError, AuditEvent, AuditEventKind}` (correct layer direction: wallet Layer B → octo-audit Layer B façade → octo-audit-core Layer A frozen — the wallet module consumes the façade, not the frozen core directly, to preserve façade-only stable consumer surface) and implements the domain-specific `AuditEventKind` label helper per CLAUDE.md §Extension over enumeration.
 
 ### Deliverables
 
-1. **`crates/octo-wallet/src/capability/audit_log.rs`** — replace local `AuditEvent` struct + `AuditEventKind` enum with `pub use octo_audit_core::{AuditEvent, AuditEventKind, AppendOnlyAuditSink, verify_chain}`. Local `CapabilityAuditEventKind` enum (wrapping `AuditEventKind` per substrate extension) becomes a `pub use` of the substrate-canonical extension shape.
+1. **`crates/octo-wallet/src/capability/audit_log.rs`** — replace local `AuditEvent` struct + `AuditEventKind` enum with `pub use octo_audit::{verify_chain, AuditChainError, AuditEvent, AuditEventKind}` (Layer B façade re-export). Local `CapabilityAuditEventKind` enum (wrapping `AuditEventKind` per substrate extension) becomes a free function helper `audit_event_kind_as_str` with `_ => "unknown"` sentinel (typed-discriminator pattern, NOT central enum).
 2. **Manual `Debug` impl** — preserved verbatim (per RFC-0957-A1 §F3 + RFC-0012 §Module Layout §event). Wallet-domain does NOT redefine manual `Debug`; substrate canonical owns it.
-3. **Field shape invariant test** — `cargo test -p octo-wallet capability::audit_log::tests::audit_event_field_shape_byte_identical_to_rfc_0957_a1_f3` asserts the migrated shape matches the canonical substrate spec.
-4. **CapabilityMint / CapabilityAttenuate enum variants** — preserved as substrate-extension variants (per CLAUDE.md §Extension over enumeration: typed-discriminator pattern, NOT central enum).
+3. **Field shape invariant test** — `cargo test -p octo-wallet capability::audit_log::tests::audit_event_struct_exposes_canonical_fields` asserts the migrated shape matches the canonical substrate spec (7 named fields reachable + Serialize/Deserialize round-trip).
+4. **CapabilityMint / CapabilityAttenuate enum variants** — preserved as substrate-extension variants (per CLAUDE.md §Extension over enumeration: typed-discriminator pattern with `_ => "unknown"` sentinel, NOT central enum).
 
 ### Acceptance criteria
 
 - [x] AC-1: `cargo build -p octo-wallet` succeeds with zero warnings (clippy `--all-features -- -D warnings`) — verified `cargo clippy -p octo-wallet --all-targets --all-features -- -D warnings` clean
-- [x] AC-2: `crates/octo-wallet/src/capability/audit_log.rs` no longer defines local `AuditEvent` struct; uses `pub use octo_audit_core::AuditEvent` — line 33: `pub use octo_audit::{verify_chain, AuditChainError, AuditEvent, AuditEventKind}`
+- [x] AC-2: `crates/octo-wallet/src/capability/audit_log.rs` no longer defines local `AuditEvent` struct; uses Layer B façade re-export `pub use octo_audit::{verify_chain, AuditChainError, AuditEvent, AuditEventKind}` (correct B→B direction: wallet Layer B → octo-audit Layer B façade → octo-audit-core Layer A frozen; wallet consumes the façade, NOT the frozen core, per layer model) — line 33
 - [x] AC-3: Local `CapabilityAuditEventKind` enum extension preserved via substrate-canonical extension pattern (typed-discriminator, NOT central enum) — substrate `AuditEventKind` is `#[non_exhaustive]` per RFC-0012 §Extension over enumeration; wallet `audit_event_kind_as_str` free function uses `_ => "unknown"` sentinel pattern (the typed-discriminator extension pattern, NOT central enum)
 - [x] AC-4: Manual `Debug` impl absent in wallet-domain; substrate canonical owns it — module-level comment at lines 20-21 confirms; no manual `impl Debug` in wallet file
 - [x] AC-5: Field-shape invariant test added and PASSES — `audit_event_struct_exposes_canonical_fields` at line 96-122 (constructs via canonical field order, reads all 7 fields, asserts `Serialize`/`Deserialize` round-trip)

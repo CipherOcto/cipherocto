@@ -1,9 +1,17 @@
-//! Domain-separator byte-pin tests (RFC-0014 §Test Vectors
-//! `domain-separator-byte-pin` + mission 0014-settlement-verify-chain-tests).
+//! Domain-separator byte-pin tests (RFC-0014 §Test Vectors).
 //!
-//! 2 vectors proving the canonical `CHAIN_DOMAIN_SEPARATOR` is
-//! byte-pinned AND is consumed by `receipt_id_for` as the leading
-//! input to the BLAKE3 keyed hash.
+//! Split per substrate-faithful test policy:
+//!
+//! - **RFC canonical** — `domain-separator-byte-pin` is not a
+//!   canonical RFC-0014 §Test Vectors ID; the canonical substrate
+//!   byte-pin lives at `reservation-mint-domain-separator` (canonical
+//!   receipt-side byte-pin is implicit in `receipt-id-for-ask`). We
+//!   keep this file as the single substrate surface for the byte-pin
+//!   invariant with `mission-defined:` prefix on the alias comment.
+//!
+//! - **Mission-defined supplementary** — `receipt-id-for-consumes-
+//!   domain-separator` proves the separator is part of the hash input
+//!   by external recomputation.
 //!
 //! Run with:
 //!   cargo test -p octo-settlement-core --test domain_separator
@@ -11,25 +19,32 @@
 
 use octo_settlement_core::{receipt_id_for, Receipt, CHAIN_DOMAIN_SEPARATOR};
 
-// RFC-0014 §Test Vectors `domain-separator-byte-pin`: the canonical
-// domain separator MUST be byte-identical. Any drift breaks
-// cross-replica consensus — this vector is the load-bearing assertion
-// for the whole chain.
+// === Mission-defined supplementary vectors ===
+// (RFC-0014 §Test Vectors has no explicit settlement-side byte-pin
+// vector; the canonical substrate byte-pin ID is
+// `reservation-mint-domain-separator` and is implicit in
+// `receipt-id-for-ask`. This file is the single substrate surface
+// for the byte-pin invariant.)
+
+// mission-defined: settlement-side domain-separator byte-pin (the
+// canonical byte-pinned value lives in
+// `crates/octo-settlement-core/src/chain.rs:23`; this is the single
+// test surface per substrate-faithful no-duplication policy).
 #[test]
-fn vector_01_chain_domain_separator_byte_pin() {
+fn mission_01_domain_separator_byte_pin() {
     assert_eq!(CHAIN_DOMAIN_SEPARATOR, b"cipherocto/reservation/v1/");
     // Length sanity: 26 bytes.
     assert_eq!(CHAIN_DOMAIN_SEPARATOR.len(), 26);
 }
 
-// RFC-0014 §Test Vectors `receipt-id-for-consumes-domain-separator`:
-// `receipt_id_for` produces a hash that is identical to one we compute
-// externally with `blake3::Hasher::new_keyed(&[0;32])` over
-// `CHAIN_DOMAIN_SEPARATOR || canonical_receipt_bytes`. This proves the
-// domain separator is part of the hash input (not silently dropped or
-// substituted).
+// mission-defined: `receipt_id_for` produces a hash that is
+// identical to one we compute externally with
+// `blake3::Hasher::new_keyed(&[0;32])` over
+// `CHAIN_DOMAIN_SEPARATOR || canonical_receipt_bytes`. This proves
+// the domain separator is part of the hash input (not silently
+// dropped or substituted).
 #[test]
-fn vector_02_receipt_id_for_uses_domain_separator() {
+fn mission_02_receipt_id_for_consumes_domain_separator() {
     let r = Receipt {
         receipt_id: 5,
         ask_id: [0x07; 32],
@@ -38,8 +53,6 @@ fn vector_02_receipt_id_for_uses_domain_separator() {
         router_sig: vec![0xde, 0xad],
         timestamp_unix: 1700,
     };
-    // Manually compute the expected hash with the documented key
-    // ([0;32]) and explicit domain-separator prefix.
     let mut expected = blake3::Hasher::new_keyed(&[0; 32]);
     expected.update(CHAIN_DOMAIN_SEPARATOR);
     expected.update(&r.receipt_id.to_be_bytes());

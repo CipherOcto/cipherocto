@@ -33,12 +33,12 @@ Per RFC-0012 §Test Vectors (10 canonical vectors) + §Key Files to Modify test 
    - Wraps `Arc<Mutex<Database>>` (interior mutability; matches existing `StoolapStore` pattern in `quota-router-sm-engine`)
    - `append(&mut self, event: &AuditEvent) -> Result<(), AuditError>` — validates `event_id` monotonicity against last-persisted event, computes `chain_hash` via `BLAKE3(canonical_bytes)`, persists atomically
    - `last_event_id(&self) -> Result<Option<u64>, AuditError>` — read accessor (does NOT violate append-only invariant; reads do not mutate)
-2. **`crates/octo-audit/tests/chain_verify.rs` (NEW)** — 10 chain-integrity test vectors per RFC-0012 §Test Vectors (run against substrate `verify_chain` directly, NOT via storage adapter)
-3. **`crates/octo-audit/tests/sink_stoolap.rs` (NEW)** — StoolapAdapter smoke tests (round-trip append + last_event_id + idempotent-append rejection; integration with substrate `AppendOnlyAuditSink` trait)
+   - Inline `#[cfg(test)] mod tests` block (NOT a separate integration test file): smoke tests cover round-trip append + last_event_id + idempotent-append rejection
+2. **`crates/octo-audit/tests/verify_chain_vectors.rs` (NEW)** — 14 chain-integrity test vectors (10 canonical RFC-0012 §Test Vectors + 4 boundary/extension variants) run against substrate `verify_chain` directly, NOT via storage adapter
 
 ### Acceptance criteria
 
-- [x] AC-1: 14 verify_chain_vectors tests pass (`chain-empty`, `chain-single`, `chain-monotonic`, `chain-gap`, `chain-hash-mismatch`, `chain-timestamp-regression`, `append-success`, `append-idempotent`, `extension-enum`, `debug-redaction` + 4 boundary variants: mixed-kinds/timestamp-equal/first-event-nonzero-id/long-chain-50). 14/14 PASS.
+- [x] AC-1: 14 `verify_chain_vectors` tests PASS (`chain-empty`, `chain-single`, `chain-monotonic`, `chain-gap`, `chain-hash-mismatch`, `chain-timestamp-regression`, `append-success`, `append-idempotent`, `extension-enum`, `debug-redaction` + 4 boundary variants: `mixed-kinds` / `timestamp-equal` / `first-event-nonzero-id` / `long-chain-50`) — `cargo test -p octo-audit --test verify_chain_vectors` 14/14 PASS
 - [x] AC-2: `StoolapAuditSink::append` enforces `event_id` monotonicity — verified at `crates/octo-audit/src/storage/stoolap.rs:138-143` (`if event.event_id != prev_u64 + 1 { return Err(AuditError::SequenceGap { .. }) }`)
 - [x] AC-3: `StoolapAuditSink::append` idempotent re-append returns `AuditError::AlreadyExists` (distinct from `SequenceGap` per RFC-0012 §Trait G3) — verified at `crates/octo-audit/src/storage/stoolap.rs:135-137`
 - [x] AC-4: `StoolapAuditSink::append` computes `chain_hash` via `BLAKE3(canonical_bytes)` via substrate `compute_chain_hash` — verified at `crates/octo-audit/src/storage/stoolap.rs:147`

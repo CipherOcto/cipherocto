@@ -4,11 +4,11 @@
 //! `_legacy_*` aliases for the previous `Migration`/`apply_pending`
 //! API during the v3.0 transition. This module uses them; the
 //! deprecation noise is silenced at module level.
-#![allow(deprecated)]
 //!
 //! Migrations are compile-time baked via `include_str!`. Single source of
 //! truth; reproducible across builds. Cipherocto-owned schema per
 //! [[stoolap-general-purpose-db]] Path B.
+#![allow(deprecated)]
 //!
 //! Layer B (mission `octo-storage-split` S2): the underlying migration
 //! runner is the Layer A substrate `octo_storage_core::_legacy_apply_pending`.

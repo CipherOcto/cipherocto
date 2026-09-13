@@ -2,10 +2,11 @@
 //!
 //! RFC-0206 §Migration Order: `Migration`/`apply_pending` legacy
 //! aliases; deprecation noise silenced at module level.
-#![allow(deprecated)]
+//!
 //! Cipherocto wraps stoolap as an embedded SQL engine. Schema lives in
 //! cipherocto (`schema.rs` + migrations); stoolap is the storage layer
 //! per [[stoolap-general-purpose-db]] Path B.
+#![allow(deprecated)]
 
 use std::sync::{Arc, Mutex};
 
@@ -19,6 +20,13 @@ use octo_settlement_core::{
 /// Adapter-type registry for Pattern 6 redaction (RFC-0014-v3 §S5.1
 /// per-façade scrubber).
 const ADAPTER_TYPES: &[&str] = &["StoolapStore", "StoolapReceiptSink"];
+
+/// Pattern 6 redaction closure: collapse every error string into the
+/// adapter-type-scrubbed form so internal type names never leak
+/// through `Display`. Per RFC-0014-v3 §S5.1.
+fn scrub(e: &dyn std::fmt::Display) -> String {
+    scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)
+}
 
 /// Errors from the storage layer (distinct from settlement logic errors).
 #[derive(Debug, thiserror::Error)]
@@ -61,9 +69,7 @@ impl std::fmt::Debug for StoolapStore {
 impl StoolapStore {
     /// Open an in-memory stoolap database + apply migrations.
     pub fn open_in_memory() -> Result<Self, StorageError> {
-        let db = StoolapDatabase::open_in_memory().map_err(|e| {
-            StorageError::Stoolap(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))
-        })?;
+        let db = StoolapDatabase::open_in_memory().map_err(|e| StorageError::Stoolap(scrub(&e)))?;
         apply_migrations(&db)?;
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
@@ -72,9 +78,7 @@ impl StoolapStore {
 
     /// Open a persistent stoolap database at the given path + apply migrations.
     pub fn open(path: &str) -> Result<Self, StorageError> {
-        let db = StoolapDatabase::open(path).map_err(|e| {
-            StorageError::Stoolap(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))
-        })?;
+        let db = StoolapDatabase::open(path).map_err(|e| StorageError::Stoolap(scrub(&e)))?;
         apply_migrations(&db)?;
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
@@ -85,9 +89,8 @@ impl StoolapStore {
 impl SettlementStore for StoolapStore {
     fn mint(&self, ask: &Ask) -> Result<(), SettlementError> {
         let db = self.db.lock().expect("stoolap mutex poisoned");
-        let axes_bytes = serde_json::to_vec(&ask.axes_consumed).map_err(|e| {
-            StorageError::Decode(scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES))
-        })?;
+        let axes_bytes =
+            serde_json::to_vec(&ask.axes_consumed).map_err(|e| StorageError::Decode(scrub(&e)))?;
         let output_hash_param: Option<Vec<u8>> = ask.output_hash.map(|h| h.to_vec());
         let sql = "INSERT INTO asks (
                 ask_id, holder_did, axes_consumed, cap_root_hash, invocation_hash,
@@ -112,12 +115,7 @@ impl SettlementStore for StoolapStore {
             ),
         )
         .map(|_| ())
-        .map_err(|e| {
-            SettlementError::Storage(StorageError::Stoolap(scrub_adapter_error_with(
-                &e.to_string(),
-                ADAPTER_TYPES,
-            )))
-        })?;
+        .map_err(|e| SettlementError::Storage(StorageError::Stoolap(scrub(&e))))?;
         Ok(())
     }
 
@@ -125,18 +123,14 @@ impl SettlementStore for StoolapStore {
         // Compute settlement_hash = blake3(canonical_ser(ask || receipt)).
         let stored = self.get(ask_id)?;
         let mut canonical = Vec::new();
-        canonical.extend_from_slice(&serde_json::to_vec(&stored.0).map_err(|e| {
-            SettlementError::Storage(StorageError::Decode(scrub_adapter_error_with(
-                &e.to_string(),
-                ADAPTER_TYPES,
-            )))
-        })?);
-        canonical.extend_from_slice(&serde_json::to_vec(receipt).map_err(|e| {
-            SettlementError::Storage(StorageError::Decode(scrub_adapter_error_with(
-                &e.to_string(),
-                ADAPTER_TYPES,
-            )))
-        })?);
+        canonical.extend_from_slice(
+            &serde_json::to_vec(&stored.0)
+                .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub(&e))))?,
+        );
+        canonical.extend_from_slice(
+            &serde_json::to_vec(receipt)
+                .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub(&e))))?,
+        );
         let settlement_hash: [u8; 32] = *blake3::hash(&canonical).as_bytes();
 
         if receipt.ask_id != *ask_id {
@@ -165,12 +159,7 @@ impl SettlementStore for StoolapStore {
             ),
         )
         .map(|_| ())
-        .map_err(|e| {
-            SettlementError::Storage(StorageError::Stoolap(scrub_adapter_error_with(
-                &e.to_string(),
-                ADAPTER_TYPES,
-            )))
-        })?;
+        .map_err(|e| SettlementError::Storage(StorageError::Stoolap(scrub(&e))))?;
 
         Ok(settlement_hash)
     }
@@ -203,12 +192,7 @@ impl SettlementStore for StoolapStore {
                 "SELECT ask_id FROM consumed_receipt_index WHERE receipt_id = ?",
                 (receipt_id.to_vec(),),
             )
-            .map_err(|e| {
-                SettlementError::Storage(StorageError::Stoolap(scrub_adapter_error_with(
-                    &e.to_string(),
-                    ADAPTER_TYPES,
-                )))
-            })?;
+            .map_err(|e| SettlementError::Storage(StorageError::Stoolap(scrub(&e))))?;
         if dup_rows.count() > 0 {
             return Err(SettlementError::AlreadyConsumed(SettlementHashOpaque::new(
                 *receipt_id,
@@ -222,29 +206,17 @@ impl SettlementStore for StoolapStore {
                 "SELECT ask_id FROM asks WHERE settlement_hash = ?",
                 (receipt_id.to_vec(),),
             )
-            .map_err(|e| {
-                SettlementError::Storage(StorageError::Stoolap(scrub_adapter_error_with(
-                    &e.to_string(),
-                    ADAPTER_TYPES,
-                )))
-            })?;
+            .map_err(|e| SettlementError::Storage(StorageError::Stoolap(scrub(&e))))?;
         let Some(row_result) = ask_rows.into_iter().next() else {
             return Err(SettlementError::AskNotFound(SettlementHashOpaque::new(
                 *receipt_id,
             )));
         };
-        let row = row_result.map_err(|e| {
-            SettlementError::Storage(StorageError::Stoolap(scrub_adapter_error_with(
-                &e.to_string(),
-                ADAPTER_TYPES,
-            )))
-        })?;
-        let ask_id_bytes: Vec<u8> = row.get(0).map_err(|e| {
-            SettlementError::Storage(StorageError::Decode(scrub_adapter_error_with(
-                &e.to_string(),
-                ADAPTER_TYPES,
-            )))
-        })?;
+        let row =
+            row_result.map_err(|e| SettlementError::Storage(StorageError::Stoolap(scrub(&e))))?;
+        let ask_id_bytes: Vec<u8> = row
+            .get(0)
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub(&e))))?;
         if ask_id_bytes.len() != 32 {
             return Err(SettlementError::Storage(StorageError::Decode(
                 scrub_adapter_error(&format!("ask_id wrong length: {}", ask_id_bytes.len())),
@@ -267,7 +239,7 @@ impl SettlementStore for StoolapStore {
         ) {
             Ok(_) => {}
             Err(e) => {
-                let msg = scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES).to_lowercase();
+                let msg = scrub(&e).to_lowercase();
                 if msg.contains("unique")
                     || msg.contains("constraint")
                     || msg.contains("duplicate")
@@ -277,9 +249,7 @@ impl SettlementStore for StoolapStore {
                         *receipt_id,
                     )));
                 }
-                return Err(SettlementError::Storage(StorageError::Stoolap(
-                    scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES),
-                )));
+                return Err(SettlementError::Storage(StorageError::Stoolap(scrub(&e))));
             }
         }
 
@@ -289,12 +259,7 @@ impl SettlementStore for StoolapStore {
              WHERE ask_id = ? AND state = 'Settled'";
         db.execute(update_sql, (now as i64, ask_id.to_vec()))
             .map(|_| ())
-            .map_err(|e| {
-                SettlementError::Storage(StorageError::Stoolap(scrub_adapter_error_with(
-                    &e.to_string(),
-                    ADAPTER_TYPES,
-                )))
-            })?;
+            .map_err(|e| SettlementError::Storage(StorageError::Stoolap(scrub(&e))))?;
 
         Ok(())
     }
@@ -305,74 +270,41 @@ impl SettlementStore for StoolapStore {
         let sql = "SELECT holder_did, axes_consumed, cap_root_hash, invocation_hash,
                     current_unix_time, output_hash, state
              FROM asks WHERE ask_id = ?";
-        let rows = db.query(sql, (ask_id.to_vec(),)).map_err(|e| {
-            SettlementError::Storage(StorageError::Stoolap(scrub_adapter_error_with(
-                &e.to_string(),
-                ADAPTER_TYPES,
-            )))
-        })?;
+        let rows = db
+            .query(sql, (ask_id.to_vec(),))
+            .map_err(|e| SettlementError::Storage(StorageError::Stoolap(scrub(&e))))?;
 
         let Some(row_result) = rows.into_iter().next() else {
             return Err(SettlementError::AskNotFound(SettlementHashOpaque::new(
                 *ask_id,
             )));
         };
-        let row = row_result.map_err(|e| {
-            SettlementError::Storage(StorageError::Stoolap(scrub_adapter_error_with(
-                &e.to_string(),
-                ADAPTER_TYPES,
-            )))
-        })?;
+        let row =
+            row_result.map_err(|e| SettlementError::Storage(StorageError::Stoolap(scrub(&e))))?;
 
-        let holder_did: String = row.get(0).map_err(|e| {
-            SettlementError::Storage(StorageError::Decode(scrub_adapter_error_with(
-                &e.to_string(),
-                ADAPTER_TYPES,
-            )))
-        })?;
-        let axes_bytes: Vec<u8> = row.get(1).map_err(|e| {
-            SettlementError::Storage(StorageError::Decode(scrub_adapter_error_with(
-                &e.to_string(),
-                ADAPTER_TYPES,
-            )))
-        })?;
-        let axes_consumed: Vec<(String, u64)> =
-            serde_json::from_slice(&axes_bytes).map_err(|e| {
-                SettlementError::Storage(StorageError::Decode(scrub_adapter_error_with(
-                    &e.to_string(),
-                    ADAPTER_TYPES,
-                )))
-            })?;
-        let cap_root_hash_vec: Vec<u8> = row.get(2).map_err(|e| {
-            SettlementError::Storage(StorageError::Decode(scrub_adapter_error_with(
-                &e.to_string(),
-                ADAPTER_TYPES,
-            )))
-        })?;
-        let invocation_hash_vec: Vec<u8> = row.get(3).map_err(|e| {
-            SettlementError::Storage(StorageError::Decode(scrub_adapter_error_with(
-                &e.to_string(),
-                ADAPTER_TYPES,
-            )))
-        })?;
-        let current_unix_time: i64 = row.get(4).map_err(|e| {
-            SettlementError::Storage(StorageError::Decode(scrub_adapter_error_with(
-                &e.to_string(),
-                ADAPTER_TYPES,
-            )))
-        })?;
-        let output_hash: Option<Vec<u8>> = row.get(5).map_err(|e| {
-            SettlementError::Storage(StorageError::Decode(scrub_adapter_error_with(
-                &e.to_string(),
-                ADAPTER_TYPES,
-            )))
-        })?;
-        let state_sql: String = row.get(6).map_err(|e| {
-            SettlementError::Storage(StorageError::Decode(scrub_adapter_error_with(
-                &e.to_string(),
-                ADAPTER_TYPES,
-            )))
-        })?;
+        let holder_did: String = row
+            .get(0)
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub(&e))))?;
+        let axes_bytes: Vec<u8> = row
+            .get(1)
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub(&e))))?;
+        let axes_consumed: Vec<(String, u64)> = serde_json::from_slice(&axes_bytes)
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub(&e))))?;
+        let cap_root_hash_vec: Vec<u8> = row
+            .get(2)
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub(&e))))?;
+        let invocation_hash_vec: Vec<u8> = row
+            .get(3)
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub(&e))))?;
+        let current_unix_time: i64 = row
+            .get(4)
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub(&e))))?;
+        let output_hash: Option<Vec<u8>> = row
+            .get(5)
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub(&e))))?;
+        let state_sql: String = row
+            .get(6)
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub(&e))))?;
 
         if cap_root_hash_vec.len() != 32 || invocation_hash_vec.len() != 32 {
             return Err(SettlementError::Storage(StorageError::Decode(
@@ -446,25 +378,15 @@ impl AppendOnlyReceiptSink for StoolapStore {
         // Monotonicity check: last persisted receipt_id.
         let last_rows = db
             .query("SELECT MAX(receipt_id) FROM canonical_receipts", ())
-            .map_err(|e| {
-                CanonicalSettlementError::SinkSpecific(scrub_adapter_error_with(
-                    &e.to_string(),
-                    ADAPTER_TYPES,
-                ))
-            })?;
+            .map_err(|e| CanonicalSettlementError::SinkSpecific(scrub(&e)))?;
         let last_id: Option<i64> = match last_rows.into_iter().next() {
             None => None,
             Some(Err(e)) => {
-                return Err(CanonicalSettlementError::SinkSpecific(
-                    scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES),
-                ));
+                return Err(CanonicalSettlementError::SinkSpecific(scrub(&e)));
             }
-            Some(Ok(row)) => row.get(0).map_err(|e| {
-                CanonicalSettlementError::SinkSpecific(scrub_adapter_error_with(
-                    &e.to_string(),
-                    ADAPTER_TYPES,
-                ))
-            })?,
+            Some(Ok(row)) => row
+                .get(0)
+                .map_err(|e| CanonicalSettlementError::SinkSpecific(scrub(&e)))?,
         };
         // Empty table (last_id == None): no predecessor, accept any
         // first receipt_id. Non-empty: enforce strict successor +
@@ -509,13 +431,11 @@ impl AppendOnlyReceiptSink for StoolapStore {
         ) {
             Ok(_) => Ok(()),
             Err(e) => {
-                let msg = scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES).to_lowercase();
+                let msg = scrub(&e).to_lowercase();
                 if msg.contains("unique") || msg.contains("duplicate") || msg.contains("primary") {
                     Err(CanonicalSettlementError::AlreadyExists(receipt.receipt_id))
                 } else {
-                    Err(CanonicalSettlementError::SinkSpecific(
-                        scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES),
-                    ))
+                    Err(CanonicalSettlementError::SinkSpecific(scrub(&e)))
                 }
             }
         }
@@ -525,27 +445,14 @@ impl AppendOnlyReceiptSink for StoolapStore {
         let db = self.db.lock().expect("stoolap mutex poisoned");
         let rows = db
             .query("SELECT MAX(receipt_id) FROM canonical_receipts", ())
-            .map_err(|e| {
-                CanonicalSettlementError::SinkSpecific(scrub_adapter_error_with(
-                    &e.to_string(),
-                    ADAPTER_TYPES,
-                ))
-            })?;
+            .map_err(|e| CanonicalSettlementError::SinkSpecific(scrub(&e)))?;
         let Some(row_result) = rows.into_iter().next() else {
             return Ok(None);
         };
-        let row = row_result.map_err(|e| {
-            CanonicalSettlementError::SinkSpecific(scrub_adapter_error_with(
-                &e.to_string(),
-                ADAPTER_TYPES,
-            ))
-        })?;
-        let last_id: Option<i64> = row.get(0).map_err(|e| {
-            CanonicalSettlementError::SinkSpecific(scrub_adapter_error_with(
-                &e.to_string(),
-                ADAPTER_TYPES,
-            ))
-        })?;
+        let row = row_result.map_err(|e| CanonicalSettlementError::SinkSpecific(scrub(&e)))?;
+        let last_id: Option<i64> = row
+            .get(0)
+            .map_err(|e| CanonicalSettlementError::SinkSpecific(scrub(&e)))?;
         Ok(last_id.map(|n| n as u64))
     }
 }

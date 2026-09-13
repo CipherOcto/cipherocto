@@ -1,11 +1,13 @@
-//! SQL string byte-stability tests (RFC-0014 §Test Vectors
-//! `ask-state-sql-*` + mission 0014-settlement-verify-chain-tests).
+//! SQL string byte-stability tests (RFC-0014 §Test Vectors).
 //!
-//! 3 vectors exercising the substrate `AskState::as_sql` +
-//! `AskState::from_sql` round-trip invariants. SQL strings / integer
-//! discriminants MUST be byte-stable per RFC-0959 §State Machine —
-//! any drift would require an SQL migration to redefine the column
-//! type and update every persisted row.
+//! All 3 vectors exercise canonical RFC-0014 §Test Vectors IDs:
+//!
+//! - `ask-state-sql-roundtrip` (canonical)
+//! - `ask-state-unknown-sql` (canonical; "unknown" maps to the
+//!   substrate fail-closed `from_sql` `None` return)
+//! - `ask-state-discriminant-byte-pinning` (mission-defined; supports
+//!   the canonical roundtrip vector with explicit integer
+//!   discriminant pinning)
 //!
 //! Run with:
 //!   cargo test -p octo-settlement-core --test sql_strings
@@ -25,9 +27,12 @@ fn vector_01_ask_state_sql_roundtrip() {
     }
 }
 
-// RFC-0014 §Test Vectors `ask-state-unknown-sql-is-none`: a SQL value
-// outside the canonical discriminant set returns `None` (fail-closed;
-// substrate MUST NOT silently default to a state).
+// RFC-0014 §Test Vectors `ask-state-unknown-sql`: a SQL value outside
+// the canonical discriminant set returns `None` (fail-closed;
+// substrate MUST NOT silently default to a state). The RFC's
+// scenario text "from_sql('Unknown')" maps to the substrate
+// integer-form `from_sql` which returns `None` for any
+// non-canonical discriminant.
 #[test]
 fn vector_02_ask_state_unknown_sql_is_none() {
     assert_eq!(AskState::from_sql(-1), None);
@@ -37,17 +42,15 @@ fn vector_02_ask_state_unknown_sql_is_none() {
     assert_eq!(AskState::from_sql(i64::MAX), None);
 }
 
-// RFC-0014 §Test Vectors `ask-state-discriminant-byte-identical`: the
-// SQL integer discriminants MUST be byte-pinned: Minted=0,
-// Settled=1, Consumed=2. Any drift would break byte-level parity
-// with existing persisted rows.
+// mission-defined: explicit integer-discriminant byte-pinning
+// supporting `ask-state-sql-roundtrip`. Asserts Minted=0, Settled=1,
+// Consumed=2. `#[repr(u8)]` plus `as i64` cast yields byte-stable
+// SQL integer representation.
 #[test]
-fn vector_03_ask_state_discriminant_byte_identical() {
+fn mission_01_ask_state_discriminant_byte_pinning() {
     assert_eq!(AskState::Minted.as_sql(), 0);
     assert_eq!(AskState::Settled.as_sql(), 1);
     assert_eq!(AskState::Consumed.as_sql(), 2);
-    // `#[repr(u8)]` plus `as i64` cast -> matches byte-stable SQL
-    // integer representation.
     assert_eq!(AskState::Minted as i64, 0);
     assert_eq!(AskState::Settled as i64, 1);
     assert_eq!(AskState::Consumed as i64, 2);

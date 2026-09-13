@@ -18,7 +18,7 @@ completed_at: 2026-09-13
 
 # 0014-settlement-sm-engine-migration — `quota-router-sm-engine` substrate migration
 
-**Status:** Claimed — domain migration to substrate (storage adapter implementation)
+**Status:** Completed — domain migration to substrate + `AppendOnlyReceiptSink` storage adapter LANDED 2026-09-13
 **Substrate:** RFC-0014 §Key Files to Modify Phase 2 (`quota-router-sm-engine/src/lib.rs` + `store.rs`)
 **Parent:** RFC-0014
 
@@ -32,7 +32,7 @@ Per RFC-0014 §Key Files to Modify SUBSTRATE row 2, the canonical `Receipt` + `A
 2. **`crates/quota-router-sm-engine/src/store.rs`** — `StoolapStore` impl `SettlementStore` (now substrate trait, was crate-internal). Implement `AppendOnlyReceiptSink` for `StoolapStore` (NEW per RFC-0014 §Trait).
 3. **`StoolapStore` struct location** — `StoolapStore` lives in `crates/quota-router-sm-engine/src/store.rs` (domain-owned storage adapter per RFC-0014 §Rationale). Its `SettlementStore` impl + new `AppendOnlyReceiptSink` impl land there.
 4. **Domain separator invariant** — `cipherocto/reservation/v1/` preserved in `AppendOnlyReceiptSink::append` per RFC-0014 §Domain Separator.
-5. **Append-only enforcement** — `AppendOnlyReceiptSink::append(&mut self, receipt: &Receipt) -> Result<(), SettlementError>` validates idempotency + atomic write; returns `SettlementError::AlreadyConsumed` on duplicate.
+5. **Append-only enforcement** — `AppendOnlyReceiptSink::append(&mut self, receipt: &CanonicalReceipt) -> Result<(), CanonicalSettlementError>` validates `receipt_id` strict monotonicity + idempotency + atomic write; returns `CanonicalSettlementError::AlreadyExists` on duplicate (distinct from `SequenceGap` per RFC-0014 §Trait G3). Domain `SettlementError::AlreadyConsumed` is reserved for the `consume()` path (settlement-flow replay), NOT the canonical sink path (which uses `AlreadyExists`).
 
 ### Acceptance criteria
 
@@ -69,13 +69,13 @@ Per RFC-0014 §Key Files to Modify SUBSTRATE row 2, the canonical `Receipt` + `A
 
 ### Test vectors (domain-level)
 
-| ID                                    | Scenario                                              | Expected                                                               |
-| ------------------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------- |
-| `sm-engine-field-shape-invariant`     | Migrated `Receipt` field shape vs canonical substrate | byte-identical (rustc struct layout assertion)                         |
-| `sm-engine-settlement-store-mint`     | `StoolapStore::mint(&self, &Ask)`                     | succeeds; `Receipt` row persisted atomically                           |
-| `sm-engine-settlement-store-settle`   | `StoolapStore::settle(&self, ask_id, &Receipt)`       | succeeds; receipt state transitions Minted → Settled                   |
-| `sm-engine-settlement-store-consume`  | `StoolapStore::consume(&self, ask_id)`                | succeeds; receipt state transitions Settled → Consumed                 |
-| `sm-engine-settlement-store-get`      | `StoolapStore::get(&self, ask_id)`                    | returns canonical `Receipt` (or `Err(AskNotFound)`)                    |
-| `sm-engine-sink-append-success`       | `StoolapStore::append(&mut self, &Receipt)`           | succeeds; `settlement_hash` persisted atomically                       |
-| `sm-engine-sink-append-idempotent`    | Same receipt appended twice                           | First `Ok(())`; second returns `Err(SettlementError::AlreadyConsumed)` |
-| `sm-engine-domain-separator-byte-pin` | Domain separator string in `append`                   | `b"cipherocto/reservation/v1/"` byte-identical to canonical            |
+| ID                                    | Scenario                                              | Expected                                                                                                                                                                                       |
+| ------------------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sm-engine-field-shape-invariant`     | Migrated `Receipt` field shape vs canonical substrate | byte-identical (rustc struct layout assertion)                                                                                                                                                 |
+| `sm-engine-settlement-store-mint`     | `StoolapStore::mint(&self, &Ask)`                     | succeeds; `Receipt` row persisted atomically                                                                                                                                                   |
+| `sm-engine-settlement-store-settle`   | `StoolapStore::settle(&self, ask_id, &Receipt)`       | succeeds; receipt state transitions Minted → Settled                                                                                                                                           |
+| `sm-engine-settlement-store-consume`  | `StoolapStore::consume(&self, ask_id)`                | succeeds; receipt state transitions Settled → Consumed                                                                                                                                         |
+| `sm-engine-settlement-store-get`      | `StoolapStore::get(&self, ask_id)`                    | returns canonical `Receipt` (or `Err(AskNotFound)`)                                                                                                                                            |
+| `sm-engine-sink-append-success`       | `StoolapStore::append(&mut self, &Receipt)`           | succeeds; `settlement_hash` persisted atomically                                                                                                                                               |
+| `sm-engine-sink-append-idempotent`    | Same receipt appended twice                           | First `Ok(())`; second returns `Err(CanonicalSettlementError::AlreadyExists)` (canonical sink path; distinct from domain `SettlementError::AlreadyConsumed` reserved for the `consume()` path) |
+| `sm-engine-domain-separator-byte-pin` | Domain separator string in `append`                   | `b"cipherocto/reservation/v1/"` byte-identical to canonical                                                                                                                                    |

@@ -548,10 +548,11 @@ The chain integrity check is substrate-internal logic — it does NOT depend on 
 
 ## Version History
 
-| Version | Date       | Changes       |
-| ------- | ---------- | ------------- |
-| 1.0     | 2026-09-10 | Initial draft |
-| 1.1     | 2026-09-10 | Accepted      | DRY CLOSED; promoted Draft → Accepted. |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                       |
+| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0     | 2026-09-10 | Initial draft                                                                                                                                                                                                                                                                                                                                 |
+| 1.1     | 2026-09-10 | Accepted                                                                                                                                                                                                                                                                                                                                      | DRY CLOSED; promoted Draft → Accepted. |
+| 1.2     | 2026-09-13 | Mission 0012-audit-wallet-migration LANDED — `octo-wallet/src/capability/audit_log.rs` migrated to substrate-canonical `pub use octo_audit::{AuditEvent, AuditEventKind, verify_chain, AuditChainError}`; manual `Debug` removed (substrate canonical owns it); field-shape invariant test + 8 chain tests green; clippy `-D warnings` clean. |
 
 ## Related RFCs
 

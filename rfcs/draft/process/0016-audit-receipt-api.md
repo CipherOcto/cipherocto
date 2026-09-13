@@ -73,7 +73,7 @@ Acceptance of this RFC at R2 does not authorize those features; they require pai
 
 ### §6.2 Function contracts
 
-#### §6.2.1 `list_receipts`
+#### §6.2.1 `list_receipts` (KEEP)
 
 ```rust
 pub fn list_receipts(filter: &AuditFilter) -> Result<Vec<octo_settlement::Receipt>, octo_audit_core::AuditError> {
@@ -88,17 +88,17 @@ pub fn list_receipts(filter: &AuditFilter) -> Result<Vec<octo_settlement::Receip
 
 - Returns canonical `octo_settlement::Receipt` rows (Layer B façade re-export of `octo_settlement_core::Receipt`)
 - Sort: `Receipt::timestamp_unix DESC`, then `Receipt::receipt_id ASC` as deterministic tiebreaker
-- On miss/error: returns `AuditError::SinkSpecific(...)` per §6.2.5 canonical 3-variant form (no `ReceiptNotFound` variant at KEEP)
+- On miss/error: returns `AuditError` (per §6.2.5 canonical 3-variant form) — no `ReceiptNotFound` variant at KEEP
 - On filter violation: filter validated per §6.2.4
 - KEEP does NOT verify per-row receipt chain integrity at the read boundary by default; per-row receipt chain verification is OPT-IN per §6.1 chain-hash canonical. Reads return canonical `Receipt` rows on miss/hit; opt-in per-row verification is one-line trivial façade hop via `octo-settlement` Layer B façade re-export, NO new substrate amendment needed (per-row invocation recommended with optional skip-on-large-resultset flag).
 
-#### §6.2.2 `get_receipt`
+#### §6.2.2 `get_receipt` (KEEP)
 
 ```rust
 pub fn get_receipt(id: &u64) -> Result<octo_settlement::Receipt, octo_audit_core::AuditError> {
     // 1. Point lookup in canonical receipt store via octo-settlement Layer B façade
     // 2. On hit: return canonical Receipt
-    // 3. On miss: SinkSpecific("receipt not found: <decimal-u64>".into())
+    // 3. On miss: AuditError per §6.2.5 canonical 3-variant form
 }
 ```
 
@@ -106,7 +106,7 @@ pub fn get_receipt(id: &u64) -> Result<octo_settlement::Receipt, octo_audit_core
 - Returns canonical `octo_settlement::Receipt` struct
 - No per-row chain integrity check at v2 KEEP (see §6.6)
 
-#### §6.2.3 `audit_home`
+#### §6.2.3 `audit_home` (KEEP)
 
 ```rust
 #[cfg(feature = "octo-audit-internal")]
@@ -118,9 +118,9 @@ pub(crate) fn audit_home() -> Result<PathBuf, octo_audit_core::AuditError> {
 ```
 
 - `pub(crate)` + `#[cfg(feature = "octo-audit-internal")]` — feature flag PROPOSED as ADDITIVE per `Cargo.toml` edit in §Key Files to Modify (does NOT exist in non-internal builds)
-- CLI does not call directly per info-leak prevention (per §Adversary Analysis row "audit_home() canonical-path info leak")
+- CLI does not call directly per info-leak prevention (per §Adversary Analysis row "canonical-path info leak")
 
-#### §6.2.4 `AuditFilter`
+#### §6.2.4 `AuditFilter` (KEEP)
 
 ```rust
 pub struct AuditFilter {
@@ -131,9 +131,9 @@ pub struct AuditFilter {
 ```
 
 - No `subject_did`/`status`/`capability_root`/`model` fields at KEEP (DEFERRED to RFC-0016-a per §6.8).
-- Validation: `limit == 0` / `since_unix > until_unix` / `limit > 10000` rejected at substrate boundary → `SinkSpecific` per §6.2.5
+- Validation: `limit == 0` / `since_unix > until_unix` / `limit > 10000` rejected at substrate boundary (per §6.2.5 canonical 3-variant form)
 
-#### §6.2.5 `AuditError` (root re-export)
+#### §6.2.5 `AuditError` (root re-export) (KEEP)
 
 ```rust
 // crates/octo-audit/src/lib.rs (root)
@@ -149,7 +149,6 @@ pub use octo_audit_core::AuditError;
 
 ```toml
 [dependencies]
-# Layer B settlement façade (Layer B → Layer B hop; pre-existing `octo-audit-core` Layer A frozen dep provides the substrate-canonical `AuditError` re-export at `crates/octo-audit/src/lib.rs` — a canonical façade-to-substrate hop per CLAUDE.md §Architectural Principles)
 octo-settlement = { path = "../octo-settlement" }
 
 [features]
@@ -217,7 +216,7 @@ See `rfcs/draft/process/0016-a-audit-receipt-write-path.md` for full DEFERRED su
 
 1. **Append-only chain integrity** — `AppendOnlyAuditSink` is type-level append-only per RFC-0012; tampering breaks BLAKE3 chain. R2 surface is read-only.
 2. **`audit_home()` operator-config leak surface** — per §6.2.3 (info-leak prevention)
-3. **`SinkSpecific` R2 KEEP carry** — per §6.2.2 canonical miss form
+3. **`AuditError` R2 KEEP carry** — per §6.2.5 canonical 3-variant form (§6.2.2 miss form is a §6.2.5 instance)
 4. **Read is no-mutation** — G1 invariant per RFC-0011-a; `list_receipts` + `get_receipt` are pure reads
 5. **Read access control (DEFERRED `subject_did` ACL)** — per §Implicit Assumptions Audit row 4 (multi-tenant restriction)
 
@@ -250,7 +249,7 @@ See `rfcs/draft/process/0016-a-audit-receipt-write-path.md` for full DEFERRED su
 | Read-during-write race                           | Concurrent reads                                  | Read inconsistency                                              | Data inconsistency                         | No write path at R2 KEEP (DEFERRED to RFC-0016-a per §6.8); reads today operate against canonical store with no writer present                                                                                                                          | R2 surface is read-only; risk lands with RFC-0016-a acceptance                                                                                                      |
 | Read access control (DEFERRED `subject_did` ACL) | Compromised CLI / co-tenant on multi-process host | Read another tenant's receipts by omitting `subject_did` filter | Reconnaissance / receipt-store enumeration | Per §Implicit Assumptions Audit row 4 (multi-tenant restriction)                                                                                                                                                                                        | Per-process trust boundary assumed at R2 KEEP; multi-tenant deployments sharing `$OCTO_HOME` across tenants MUST NOT enable RFC-0016 reads on shared receipt stores |
 | `get_receipt` timing oracle on existence         | Compromised CLI                                   | Measure point-lookup latency                                    | Infer whether a specific receipt ID exists | NONE — constant-time lookup is NOT substrate-enforced                                                                                                                                                                                                   | Substrate-internal trust; cross-process exploitation blocked by per-process trust boundary per §Implicit Assumptions Audit row 4                                    |
-| `audit_home()` canonical-path info leak          | Compromised CLI                                   | Surface canonical receipt-store path                            | Leak `$OCTO_HOME` or filesystem layout     | Canonical-path info leak per §6.2.3                                                                                                                                                                                                                     | Substrate-internal trust; CLI bypass would expose canonical path                                                                                                    |
+| canonical-path info leak                         | Compromised CLI                                   | Surface canonical receipt-store path                            | Leak `$OCTO_HOME` or filesystem layout     | Canonical-path info leak per §6.2.3                                                                                                                                                                                                                     | Substrate-internal trust; CLI bypass would expose canonical path                                                                                                    |
 
 ## Economic Analysis
 
@@ -388,5 +387,3 @@ sequenceDiagram
     Aud-->>CLI: Ok(Receipt)
     CLI-->>Op: OutputEnvelope<AuditShowOutput> exit 0
 ```
-
-> **R2 scope-cut note:** (see §6.8)

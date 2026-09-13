@@ -14,7 +14,9 @@
 //!   is the substrate-side helper per RFC-0960 §2.3; AskState has no
 //!   substrate helper so we document the documented transition
 //!   contract via `SettlementError::InvalidTransition` variant
-//!   construction + discriminant pinning.
+//!   construction (the AskState discriminant byte-pin lives at
+//!   `sql_strings::mission_01_ask_state_discriminant_byte_pinning` —
+//!   single canonical substrate surface for SQL byte-stability).
 //!
 //! Run with:
 //!   cargo test -p octo-settlement-core --test ask_state_machine

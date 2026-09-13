@@ -11,7 +11,9 @@ metadata:
     - RFC-0011
     - RFC-0011-c
     - mission 0011-c-agent-create-subcommand
-status: Open
+status: Claimed
+claimed_by: mmacedoeu
+claimed_at: 2026-09-13
 ---
 
 # 0011-c-agent-redaction-envelope — Envelope-payload redaction for `octo agent`

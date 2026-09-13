@@ -131,9 +131,7 @@ pub struct AuditFilter {
 ```
 
 - No `subject_did`/`status`/`capability_root`/`model` fields at KEEP (DEFERRED to RFC-0016-a per §6.8).
-- Validation: `limit == 0` rejected at substrate boundary → `SinkSpecific`
-- Validation: `since_unix > until_unix` rejected at substrate boundary → `SinkSpecific`
-- Validation: `limit > 10000` rejected at substrate boundary → `SinkSpecific`
+- Validation: `limit == 0` / `since_unix > until_unix` / `limit > 10000` rejected at substrate boundary → `SinkSpecific` per §6.2.5
 
 #### §6.2.5 `AuditError` (root re-export)
 
@@ -219,7 +217,7 @@ See `rfcs/draft/process/0016-a-audit-receipt-write-path.md` for full DEFERRED su
 
 1. **Append-only chain integrity** — `AppendOnlyAuditSink` is type-level append-only per RFC-0012; tampering breaks BLAKE3 chain. R2 surface is read-only.
 2. **`audit_home()` operator-config leak surface** — per §6.2.3 (info-leak prevention)
-3. **`SinkSpecific` carry at R2 KEEP** — per §6.2.2 canonical miss form
+3. **`SinkSpecific` R2 KEEP carry** — per §6.2.2 canonical miss form
 4. **Read is no-mutation** — G1 invariant per RFC-0011-a; `list_receipts` + `get_receipt` are pure reads
 5. **Read access control (DEFERRED `subject_did` ACL)** — per §Implicit Assumptions Audit row 4 (multi-tenant restriction)
 
@@ -303,15 +301,15 @@ CLI-level test vectors live in RFC-0011-a §Test Vectors (UNCHANGED).
 
 **Layer placement table:**
 
-| Crate                  | Layer                     | Substrate anchor                                                                                                 | Role at RFC-0016 R2 KEEP                                          |
-| ---------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `octo-audit-core`      | Layer A frozen (RFC-0012) | `AuditError` enum (`SequenceGap`/`AlreadyExists`/`SinkSpecific`)                                                 | Canonical substrate error envelope; root re-export per §6.2.5     |
-| `octo-audit`           | Layer B façade (RFC-0012) | `crates/octo-audit/src/lib.rs` §re-export block                                                                  | Façade; re-exports `octo-audit-core::AuditError` per §6.2.5       |
-| `octo-settlement-core` | Layer A frozen (RFC-0014) | `Receipt` struct per `crates/octo-settlement-core/src/receipt.rs` §`Receipt`                                     | Canonical `Receipt` primary-key substrate for `get_receipt` reads |
-| `octo-settlement`      | Layer B façade (RFC-0014) | `crates/octo-settlement/src/lib.rs` §re-export block                                                             | Re-exports `octo-settlement-core` Layer A frozen                  |
-| `octo-storage-core`    | Layer A frozen (RFC-0206) | DOMAIN storage adapter substrate (carries `StoolapAuditSink` DOMAIN adapter at `crates/octo-audit/src/storage/`) | DOMAIN storage adapter substrate (pre-existing B→A direct edge)   |
+| Crate                  | Layer                             | Substrate anchor                                                             | Role at RFC-0016 R2 KEEP                                          |
+| ---------------------- | --------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `octo-audit-core`      | Layer A frozen (RFC-0012)         | `AuditError` enum (`SequenceGap`/`AlreadyExists`/`SinkSpecific`)             | Canonical substrate error envelope; root re-export per §6.2.5     |
+| `octo-audit`           | Layer B façade (RFC-0012)         | `crates/octo-audit/src/lib.rs` §re-export block                              | Façade; re-exports `octo-audit-core::AuditError` per §6.2.5       |
+| `octo-settlement-core` | Layer A frozen (RFC-0014)         | `Receipt` struct per `crates/octo-settlement-core/src/receipt.rs` §`Receipt` | Canonical `Receipt` primary-key substrate for `get_receipt` reads |
+| `octo-settlement`      | Layer B façade (RFC-0014)         | `crates/octo-settlement/src/lib.rs` §`Receipt` re-export                     | Re-exports `octo-settlement-core` Layer A frozen                  |
+| `octo-storage-core`    | Layer B DOMAIN adapter (RFC-0206) | `StoolapAuditSink` DOMAIN adapter at `crates/octo-audit/src/storage/`        | DOMAIN storage adapter surface (pre-existing direct edge)         |
 
-Layer direction: `octo-audit` (Layer B) → `octo-settlement` (Layer B) → `octo-settlement-core` (Layer A frozen). Pre-existing direct B→A edges from `octo-audit` (Layer B): → `octo-audit-core` (Layer A frozen) for the canonical façade-to-substrate hop carrying `AuditError` root re-export + function error types per §6.1 + §6.2.x signatures; → `octo-settlement-core` (Layer A frozen) for the `octo_settlement::Receipt` re-export per §6.1; → `octo-storage-core` (Layer A frozen) for the DOMAIN `StoolapAuditSink` adapter per RFC-0206. The §6.3 Cargo.toml proposal adds `octo-settlement` (Layer B) hop but does NOT remove the pre-existing direct `octo-settlement-core` B→A edge. All B→A edges are canonical façade-to-substrate hops per CLAUDE.md §Architectural Principles (Layer B → Layer A is the canonical substrate-dep pattern for additive-only surface; no NEW non-canonical B→A edges are introduced by RFC-0016 v2 KEEP). No reverse deps.
+Layer direction: `octo-audit` (Layer B) → `octo-settlement` (Layer B) → `octo-settlement-core` (Layer A frozen) for ALL receipt-canonical-bytes paths. Pre-existing direct B→A edges from `octo-audit` (Layer B): → `octo-audit-core` (Layer A frozen) for the canonical façade-to-substrate hop carrying `AuditError` root re-export + function error types per §6.1 + §6.2.x signatures; → `octo-storage-core` (Layer A frozen) for the DOMAIN `StoolapAuditSink` adapter per RFC-0206. The §6.3 Cargo.toml proposal adds `octo-settlement` (Layer B) B→B hop on the receipt path; `octo-settlement` (Layer B) → `octo-settlement-core` (Layer A frozen) hop then carries the canonical `Receipt` re-export per §6.1. All B→A edges are canonical façade-to-substrate hops per CLAUDE.md §Architectural Principles (Layer B → Layer A is the canonical substrate-dep pattern for additive-only surface; no NEW non-canonical B→A edges are introduced by RFC-0016 v2 KEEP). No reverse deps.
 
 No changes to Layer A crates (`octo-audit-core`, `octo-settlement-core`); no CLI binary changes; no envelope / redactor / exit-code table changes.
 

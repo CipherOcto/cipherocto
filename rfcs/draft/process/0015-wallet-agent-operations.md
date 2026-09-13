@@ -175,7 +175,7 @@ ForbiddenHolderMismatch,
 - **Where raised:** `list_owned_agents(caller_did, filter)` when `filter.holder_did.is_some()` and `filter.holder_did != caller_did` (per §6.2.1 caller-attestation enforcement); also raised by `lookup_agent(caller_did, uuid)` per §6.2.6 (lookup_agent) on caller/holder mismatch.
 - **CLI mapping:** Exit code 37 → `OctoCliError::ForbiddenHolderMismatch` (NEW ADDITIVE CLI variant proposed per §6.2.7 — substrate addition to `crates/octo-cli/src/error.rs` §`OctoCliError`; mirrors the §6.2.7 `WalletError` ADDITIVE pattern). Maps to exit code 37 per RFC-0011 §Exit Codes slot allocation (NOT slot 13; slot 13 is `PolicyNotFound`).
 
-#### §6.2.5 `validate_reason` — primitive string-level filter
+#### §6.2.5 `validate_reason` (KEEP)
 
 **Status:** KEEP at RFC-0015 v2 acceptance — substrate-faithful primitive; pure string-level filter with no substrate amendment required beyond the paired NEW ADDITIVE error variants below.
 
@@ -198,7 +198,7 @@ pub fn validate_reason(reason: &str) -> Result<(), WalletError>;
 
 - **C1 range gap (canonical):** the primitive rejects only `U+0000`-`U+001F` and `U+007F`; the C1 range (`U+0080`-`U+009F`, including `U+0085` NEL, `U+009B` 8-bit CSI, `U+009D` 8-bit OSC) passes the filter. Modern UTF-8 terminals render the C1 range safely; some legacy / non-UTF-8 terminals may interpret them as control sequences. A future RFC-0015-v2 amendment may widen the filter to include the C1 range.
 
-#### §6.2.6 lookup_agent — KEEP
+#### §6.2.6 `lookup_agent` (KEEP)
 
 **Status:** KEEP at RFC-0015 v2 acceptance — substrate-faithful point lookup; companion to §6.2.3 `WalletError::AgentNotFound(Uuid)`.
 
@@ -209,11 +209,7 @@ pub fn validate_reason(reason: &str) -> Result<(), WalletError>;
 /// struct. Returns the canonical `AgentManifest` on hit,
 /// `WalletError::AgentNotFound(uuid)` on miss (per §6.2.3 NEW ADDITIVE variant).
 ///
-/// SECURITY (HIGH — caller-attestation pattern per §6.2.1):
-/// the caller MUST pass the active DID as `caller_did` (NOT derived from
-/// process state). The substrate re-validates that `agent.holder_did ==
-/// caller_did` and returns `WalletError::ForbiddenHolderMismatch` on
-/// mismatch (multi-DID enumeration prevention per §6.2.1).
+/// SECURITY: caller-attestation pattern per §6.2.1 — caller MUST pass active DID as caller_did.
 pub fn lookup_agent(
     caller_did: &Did,
     uuid: Uuid,
@@ -254,15 +250,15 @@ Writes DEFERRED to RFC-0015-a per §6.7.
 
 ### §6.6 RFC-0008 Execution Class Mapping
 
-| Operation                                 | Execution class | Rationale                                                      |
-| ----------------------------------------- | --------------- | -------------------------------------------------------------- |
-| `list_owned_agents`                       | Class A (read)  | No state mutation; observable in any environment               |
-| `lookup_agent`                            | Class A (read)  | No state mutation; point lookup by canonical UUID              |
-| `validate_reason`                         | Class A (read)  | Pure string-level filter; no IO, no state mutation             |
-| `WalletError::AgentNotFound`              | Class A         | Pure error mapping                                             |
-| `WalletError::ForbiddenHolderMismatch`    | Class A         | Pure error mapping; no state mutation; HIGH sec fix per §6.2.1 |
-| `WalletError::ReasonContainsControlChars` | Class A         | Pure error mapping                                             |
-| `WalletError::ReasonTooLong`              | Class A         | Pure error mapping                                             |
+| Operation                                 | Execution class | Rationale                                          |
+| ----------------------------------------- | --------------- | -------------------------------------------------- |
+| `list_owned_agents`                       | Class A (read)  | No state mutation; observable in any environment   |
+| `lookup_agent`                            | Class A (read)  | No state mutation; point lookup by canonical UUID  |
+| `validate_reason`                         | Class A (read)  | Pure string-level filter; no IO, no state mutation |
+| `WalletError::AgentNotFound`              | Class A         | Pure error mapping                                 |
+| `WalletError::ForbiddenHolderMismatch`    | Class A         | Pure error mapping; no state mutation              |
+| `WalletError::ReasonContainsControlChars` | Class A         | Pure error mapping                                 |
+| `WalletError::ReasonTooLong`              | Class A         | Pure error mapping                                 |
 
 CLI surfaces `Class A` operations unconditionally (no `--allow-write` gate per parent §Confirmation Flag Matrix).
 
@@ -272,7 +268,7 @@ The write-path surface (`transition_agent` + paired `WalletError::{AlreadyInTran
 
 **`rfcs/draft/process/0015-a-wallet-agent-write-path.md`**
 
-Acceptance of RFC-0015 v2 does NOT authorize these features. Unblock requires RFC-0015-a acceptance paired with a future Layer A substrate amendment (per §6.7).
+Acceptance of RFC-0015 v2 does NOT authorize these features. Unblock requires RFC-0015-a acceptance paired with a future Layer A substrate amendment (per §Dependencies).
 
 ## Performance Targets
 
@@ -315,7 +311,7 @@ Acceptance of RFC-0015 v2 does NOT authorize these features. Unblock requires RF
 | ------------------------------ | --------------- | ----------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Reason-field XSS               | Compromised CLI | Inject ANSI/OSC escape                    | Manipulate downstream renderer                  | `validate_reason` control-char filter `U+0000`-`U+001F`, `U+007F` rejected (MEDIUM sec fix per §6.2.5 (validate_reason))                                         | LOW (C1 gap per §6.2.5).                                                                                                                               |
 | Multi-DID enumeration (list)   | Compromised CLI | Cross-DID `filter.holder_did`             | Enumerate agents across DIDs                    | `caller_did` + `filter.holder_did` mismatch → `ForbiddenHolderMismatch` (HIGH sec fix per §6.2.1)                                                                | Caller-did provenance gap per §Implicit Assumptions Audit row 5                                                                                        |
-| Multi-DID enumeration (lookup) | Compromised CLI | Cross-DID `caller_did`                    | Enumerate agents across DIDs                    | `caller_did` + `agent.holder_did` mismatch → `ForbiddenHolderMismatch` (Caller-attestation HIGH sec fix per §6.2.1)                                              | Caller-did provenance gap per §Implicit Assumptions Audit row 5                                                                                        |
+| Multi-DID enumeration (lookup) | Compromised CLI | Cross-DID `caller_did`                    | Enumerate agents across DIDs                    | `caller_did` + `agent.holder_did` mismatch → `ForbiddenHolderMismatch` (Caller-attestation HIGH sec fix)                                                         | Caller-did provenance gap per §Implicit Assumptions Audit row 5                                                                                        |
 | UUID echo in `AgentNotFound`   | Compromised CLI | Echo unknown UUID in error payload        | Confirm UUID existence in target DID's registry | NONE — substrate registry lookups use non-constant-time comparison; UUID-echo leakage is timing-side-channel tolerable at KEEP per RFC-0008 §Adversary Analysis. | Accepted low-severity leak (UUID is operator-supplied; echo confirms DID/UUID pairing exists, not existence; mitigation is per-process trust boundary) |
 | Caller-DID provenance gap      | Compromised CLI | Fabricate `caller_did` from process state | Enumerate agents owned by other DIDs            | HIGH sec fix `caller_did` parameter per §6.2.1; substrate enforces `filter.holder_did == caller_did`                                                             | Trust placed in CLI session-state derivation (per-process trust boundary; see §Implicit Assumptions Audit row 5)                                       |
 

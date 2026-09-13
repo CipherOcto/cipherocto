@@ -19,6 +19,12 @@ octo-audit-core = { path = "../octo-audit-core" }
 # facade (RFC-0206 §Substrate Newtype Refactor); the audit facade
 # (Layer B) depends on it to wire the trait → concrete DB engine.
 octo-storage-core = { path = "../octo-storage-core" }
+# RFC-0016 §6.2 receipt read-path substrate: octo-audit Layer B facade
+# re-exports canonical Receipt + helpers from octo-settlement Layer B
+# facade. octo-settlement itself re-exports octo-settlement-core
+# Layer A frozen substrate (RFC-0014 §Module Layout); the B→B→A canonical
+# path is preserved per RFC-0016 §6.1 chain-hash note.
+octo-settlement = { path = "../octo-settlement" }
 serde = { workspace = true }
 thiserror = { workspace = true }
 # Per-façade scrubber compilation posture (RFC-0012-v3 §S5.1 / RFC-0014-v3 §S5.1; Layer B façade)

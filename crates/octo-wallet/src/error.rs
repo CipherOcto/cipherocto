@@ -7,7 +7,13 @@ use crate::hsm::HsmError;
 use crate::lifecycle::LifecycleState;
 
 /// Top-level error for `octo-wallet`.
+///
+/// `#[non_exhaustive]` per [[cipherocto-design-principles]]
+/// §Extension over enumeration: future variants land additively
+/// without breaking downstream matchers (RFC-0015 §6.2.7 substrate
+/// additions row 1).
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum WalletError {
     #[error("OS RNG failure: {0}")]
     OsRng(String),
@@ -135,4 +141,40 @@ pub enum WalletError {
     /// code = 41 per RFC-0011-c §9.8.
     #[error("agent already registered: {0}")]
     AgentAlreadyExists(Uuid),
+
+    // ----- Agent read-path errors (RFC-0015 §6.2.3 / §6.2.4 / §6.2.5) -----
+    /// `lookup_agent` miss — agent UUID not found in the caller-attested
+    /// DID's registry. CLI exit code = 42 per RFC-0011-c §9.8 (mirrors
+    /// `OctoCliError::AgentAlreadyExists` exit-41 pattern but for the
+    /// not-found side). Payload `Uuid` is the operator-supplied UUID
+    /// for log redaction (CLI surfaces the typed variant; the byte
+    /// payload is sanitized via `RedactedIdentifier` per
+    /// `0011-c-agent-redaction-envelope`).
+    #[error("agent not found: {0}")]
+    AgentNotFound(Uuid),
+
+    /// Caller-attested DID does not match the filter's `holder_did`
+    /// field. SECURITY HIGH (multi-DID enumeration prevention per
+    /// RFC-0015 §6.2.1). CLI exit code = 17 per RFC-0011 §Exit Codes
+    /// 17-63 reserved range (RFC-0015 §6.2.4). Unit variant; the
+    /// substrate-faithful byte-for-byte mirror in
+    /// `OctoCliError::ForbiddenHolderMismatch` carries no payload.
+    #[error("forbidden: holder DID mismatch")]
+    ForbiddenHolderMismatch,
+
+    /// `validate_reason` found a control character in
+    /// `U+0000`-`U+001F` or `U+007F`. Payload is the offending
+    /// character as a `String` in hex-escaped code-point notation
+    /// (e.g., `<U+001B>` for ESC, `<U+0000>` for NUL), NEVER the raw
+    /// byte — `Display` impl MUST NOT echo attacker bytes back to the
+    /// terminal (pager-hijack mitigation per RFC-0015 §6.2.5).
+    /// CLI exit code = 16 per `OctoCliError::InvalidFilter` mapping.
+    #[error("reason contains control character: {0}")]
+    ReasonContainsControlChars(String),
+
+    /// `validate_reason` cap exceeded (input length over 256 bytes per
+    /// RFC-0015 §6.2.5). Payload is the offending byte length.
+    /// CLI exit code = 16 per `OctoCliError::InvalidFilter` mapping.
+    #[error("reason exceeds 256 bytes (got {0})")]
+    ReasonTooLong(usize),
 }

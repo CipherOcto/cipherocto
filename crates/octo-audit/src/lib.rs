@@ -43,3 +43,9 @@ pub mod storage;
 // deferred to v2.1+).
 pub mod scrub;
 pub use scrub::{scrub_adapter_error, scrub_adapter_error_with, scrub_registry_validate};
+
+// RFC-0016 §6.2 read-path surface (list_receipts + get_receipt +
+// audit_home + AuditFilter). Phase 1 process-global registry; Stoolap
+// DOMAIN adapter lands with RFC-0016-a paired-acceptance unblock.
+pub mod receipt_read;
+pub use receipt_read::{audit_home, get_receipt, insert_receipt, list_receipts, AuditFilter};

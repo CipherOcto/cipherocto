@@ -192,6 +192,131 @@ pub struct AgentFilter {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CapabilityId(pub [u8; 32]);
 
+/// List all agents owned by the caller-attested DID, filtered server-side
+/// (RFC-0015 §6.2.1).
+///
+/// SECURITY: HIGH (caller-attestation pattern per RFC-0011
+/// §Lifecycle Requirements). The `caller_did` MUST be the
+/// caller-attested active DID; the substrate enforces
+/// `filter.holder_did.is_none() || filter.holder_did == caller_did`
+/// (`ForbiddenHolderMismatch` on mismatch, multi-DID enumeration
+/// prevention).
+///
+/// Sorting: `registered_at_unix DESC` with secondary sort by `agent_id`
+/// ASC for determinism (per RFC-0008 Class B). Limit: clamp at 1024
+/// (substrate hard ceiling per RFC-0015 §6.2.1). Cursor: opaque token
+/// reserved for Phase 2 (currently ignored). Read-only: no state
+/// mutation.
+pub fn list_owned_agents(
+    caller_did: &Did,
+    filter: &AgentFilter,
+) -> Result<Vec<AgentSummary>, WalletError> {
+    let effective_holder = filter
+        .holder_did
+        .as_deref()
+        .unwrap_or_else(|| caller_did.as_str());
+    if effective_holder != caller_did.as_str() {
+        return Err(WalletError::ForbiddenHolderMismatch);
+    }
+
+    let limit = filter.limit.unwrap_or(1024).min(1024);
+
+    let registry = registry()
+        .lock()
+        .map_err(|_| WalletError::Config("agent registry mutex poisoned".to_string()))?;
+
+    let mut summaries: Vec<AgentSummary> = registry
+        .values()
+        .filter(|record| record.holder_did.as_str() == effective_holder)
+        .filter(|record| match filter.state {
+            Some(state) => {
+                // Phase 1 registry stores only Registered agents
+                // (write-path state transitions land with RFC-0015-a);
+                // pending agents never enter the registry until the
+                // state-machine substrate is wired. Surface future
+                // states per the AgentState enum without speculative
+                // writes.
+                record.manifest.label.is_some() && state == AgentState::Registered
+            }
+            None => true,
+        })
+        .map(|record| AgentSummary {
+            agent_id: record.manifest.manifest_id,
+            holder_did: record.holder_did.as_str().to_owned(),
+            state: AgentState::Registered,
+            label: record.manifest.label.clone(),
+            registered_at_unix: record.registered_at_unix,
+            manifest_digest: record.manifest.digest_hex(),
+        })
+        .collect();
+
+    summaries.sort_by(|a, b| {
+        b.registered_at_unix
+            .cmp(&a.registered_at_unix)
+            .then_with(|| a.agent_id.cmp(&b.agent_id))
+    });
+    summaries.truncate(limit);
+    Ok(summaries)
+}
+
+/// Point lookup of an agent manifest by canonical UUID
+/// (RFC-0015 §6.2.6).
+///
+/// Substrate-faithful to the in-memory `BTreeMap<Uuid, AgentRecord>`
+/// registry. Returns the canonical `AgentManifest` on hit;
+/// `WalletError::AgentNotFound(uuid)` on miss. Caller-attestation
+/// enforced: caller DID must equal the agent's holder DID or
+/// `WalletError::ForbiddenHolderMismatch` is raised. No mutation.
+pub fn lookup_agent(caller_did: &Did, uuid: Uuid) -> Result<AgentManifest, WalletError> {
+    let registry = registry()
+        .lock()
+        .map_err(|_| WalletError::Config("agent registry mutex poisoned".to_string()))?;
+
+    let record = registry
+        .get(&uuid)
+        .ok_or(WalletError::AgentNotFound(uuid))?;
+
+    if record.holder_did.as_str() != caller_did.as_str() {
+        return Err(WalletError::ForbiddenHolderMismatch);
+    }
+
+    Ok(record.manifest.clone())
+}
+
+/// Substrate-faithful control-character filter primitive
+/// (RFC-0015 §6.2.5).
+///
+/// Returns:
+/// - `Ok(())` if `reason` is empty OR contains only ASCII printable +
+///   non-control Unicode (`U+0020+`).
+/// - `Err(WalletError::ReasonContainsControlChars(<U+XXXX>))` if
+///   `reason` contains any control character in `U+0000`-`U+001F` or
+///   `U+007F`. The variant carries the offending character as a
+///   `String` in hex-escaped code-point notation (e.g., `<U+001B>`
+///   for ESC), NEVER the raw byte — `Display` impl MUST NOT echo
+///   attacker bytes back to the terminal.
+/// - `Err(WalletError::ReasonTooLong(len))` if `reason.len() > 256`.
+///
+/// Pure function on UTF-8 input; no IO, no state mutation.
+pub fn validate_reason(reason: &str) -> Result<(), WalletError> {
+    const REASON_MAX_BYTES: usize = 256;
+
+    if reason.len() > REASON_MAX_BYTES {
+        return Err(WalletError::ReasonTooLong(reason.len()));
+    }
+
+    for ch in reason.chars() {
+        let cp = ch as u32;
+        if (cp < 0x20) || cp == 0x7F {
+            return Err(WalletError::ReasonContainsControlChars(format!(
+                "<U+{cp:04X}>"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 impl CapabilityId {
     /// Parse a 64-char lowercase hex string into a `CapabilityId`.
     ///
@@ -341,5 +466,79 @@ mod tests {
         let a = crate::cli_fns::register_agent(&m_one, &cap, &did_a).expect("register a");
         let b = crate::cli_fns::register_agent(&m_two, &cap, &did_b).expect("register b");
         assert_ne!(a, b, "distinct inputs MUST yield distinct agent_ids");
+    }
+
+    // ----- Read-path surface tests (RFC-0015 §6.2.1, §6.2.5, §6.2.6) -----
+
+    #[test]
+    fn validate_reason_accepts_printable() {
+        // RFC-0015 §6.2.5: ASCII printable + non-control Unicode passes.
+        assert!(validate_reason("").is_ok());
+        assert!(validate_reason("hello world").is_ok());
+        assert!(validate_reason("non-control unicode: café — 漢字").is_ok());
+    }
+
+    #[test]
+    fn validate_reason_rejects_esc_byte() {
+        // RFC-0015 §6.2.5: U+001B (ESC) is in the rejected range.
+        // Payload must be hex-escaped code-point notation, NEVER the
+        // raw byte (pager-hijack mitigation).
+        let bad = "evil\u{001B}pager";
+        let err = validate_reason(bad).unwrap_err();
+        match err {
+            WalletError::ReasonContainsControlChars(s) => {
+                assert_eq!(s, "<U+001B>", "payload must be hex-escaped, not raw byte");
+            }
+            other => panic!("expected ReasonContainsControlChars, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_reason_rejects_del_byte() {
+        // RFC-0015 §6.2.5: U+007F (DEL) is also rejected.
+        let bad = "post\u{007F}malicious";
+        let err = validate_reason(bad).unwrap_err();
+        assert!(matches!(err, WalletError::ReasonContainsControlChars(_)));
+    }
+
+    #[test]
+    fn validate_reason_rejects_oversize() {
+        // RFC-0015 §6.2.5: input over 256 bytes fails. Payload carries
+        // the offending byte length as usize.
+        let too_long = "x".repeat(257);
+        let err = validate_reason(&too_long).unwrap_err();
+        match err {
+            WalletError::ReasonTooLong(len) => assert_eq!(len, 257),
+            other => panic!("expected ReasonTooLong, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lookup_agent_miss_returns_agent_not_found() {
+        // RFC-0015 §6.2.6: unknown UUID returns AgentNotFound with the
+        // searched UUID in the payload. Use a random UUID that
+        // (statistically) has never been registered.
+        let did = Did::from("did:octo:unknown-uuid-test");
+        let err = lookup_agent(&did, Uuid::new_v4()).unwrap_err();
+        match err {
+            WalletError::AgentNotFound(uuid) => {
+                assert_eq!(uuid.get_version_num(), 4, "Uuid payload preserved");
+            }
+            other => panic!("expected AgentNotFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn list_owned_agents_rejects_filter_holder_mismatch() {
+        // RFC-0015 §6.2.1: filter.holder_did differs from caller_did
+        // MUST raise ForbiddenHolderMismatch (multi-DID enumeration
+        // prevention).
+        let caller = Did::from("did:octo:caller-a");
+        let filter = AgentFilter {
+            holder_did: Some("did:octo:something-else".to_string()),
+            ..Default::default()
+        };
+        let err = list_owned_agents(&caller, &filter).unwrap_err();
+        assert!(matches!(err, WalletError::ForbiddenHolderMismatch));
     }
 }

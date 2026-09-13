@@ -28,7 +28,10 @@ pub mod role_nonce;
 pub mod vault;
 pub mod vault_rotation;
 
-pub use agent::{AgentFilter, AgentManifest, AgentState, AgentSummary, CapabilityId};
+pub use agent::{
+    list_owned_agents, lookup_agent, validate_reason, AgentFilter, AgentManifest, AgentState,
+    AgentSummary, CapabilityId,
+};
 pub use cli_fns::{
     active_identity, begin_rotation, identity_record as identity_record_fn, register_agent, revoke,
 };

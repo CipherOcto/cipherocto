@@ -24,7 +24,7 @@ This RFC defines the `octo-audit` Layer B façade surface for the audit receipt 
 - `get_receipt(id)` — bare `u64` primary-key lookup returning canonical `Receipt`
 - `audit_home()` — `pub(crate)` + `#[cfg(feature = "octo-audit-internal")]` discovery helper
 - `AuditFilter { since_unix, until_unix, limit }` — UNCONDITIONAL filter struct (no `capability_root`, `model`, `subject_did`, or `status` fields at KEEP; the substrate `Receipt` per `crates/octo-settlement-core/src/receipt.rs` §`Receipt` has 6 fields only)
-- Substrate-canonical 3-variant `AuditError` re-export at façade root
+- Substrate-canonical 3-variant `AuditError` re-export at façade root (PRE-EXISTING per `crates/octo-audit/src/lib.rs`; included for completeness only, NOT a KEEP additive item)
 
 ## Dependencies
 
@@ -55,7 +55,7 @@ Acceptance of this RFC at R2 does not authorize those features; they require pai
 ## Roles and Authorities
 
 - **Operator:** queries receipt store via `octo-audit list_receipts` / `get_receipt` through the `octo-audit` Layer B façade
-- **Auditor:** verifies BLAKE3 chain integrity on read via per-row `compute_chain_hash` (RFC-0012 chain-hash primitive; `verify_chain(&[AuditEvent])` operates on audit events per `crates/octo-audit-core/src/chain.rs`, NOT on receipt rows)
+- **Auditor:** verifies (a) audit event chain integrity via `octo_audit::verify_chain` (RFC-0012 chain-hash primitive on `&[AuditEvent]` per `crates/octo-audit-core/src/chain.rs`) AND/OR (b) receipt chain integrity via re-exported `verify_receipt_chain` from `octo-settlement-core` Layer A frozen substrate (KEEP surface via `octo-audit` Layer B façade re-export of `octo_settlement_core::chain::verify_receipt_chain`)
 
 ## Specification
 
@@ -67,9 +67,9 @@ Acceptance of this RFC at R2 does not authorize those features; they require pai
 | `get_receipt`                 | `fn(id: &u64) -> Result<octo_settlement::Receipt, octo_audit_core::AuditError>`                               | RFC-0014 `Receipt::receipt_id` (bare `u64` primary key)                                         |
 | `audit_home`                  | `pub(crate) fn() -> Result<PathBuf, octo_audit_core::AuditError>` + `#[cfg(feature = "octo-audit-internal")]` | RFC-0012 `octo-audit-core` substrate path resolution                                            |
 | `AuditFilter`                 | `struct { since_unix: Option<u64>, until_unix: Option<u64>, limit: Option<u32> }`                             | No substrate field extensions (NO `subject_did`, NO `status`, NO `capability_root`, NO `model`) |
-| `AuditError` (root re-export) | `pub use octo_audit_core::AuditError`                                                                         | RFC-0012 Layer A frozen 3-variant enum                                                          |
+| `AuditError` (root re-export) | `pub use octo_audit_core::AuditError` (PRE-EXISTING, no addition)                                             | RFC-0012 Layer A frozen 3-variant enum                                                          |
 
-> **Note (§6.1 chain-hash canonical):** substrate `verify_chain` operates on audit events per `crates/octo-audit-core/src/chain.rs`; receipt integrity uses per-row `compute_chain_hash` (DEFERRED to RFC-0016-a §Chain-Link Verification per §6.6).
+> **Note (§6.1 chain-hash canonical):** audit event chain integrity uses `verify_chain(&[AuditEvent])` per `crates/octo-audit-core/src/chain.rs`; receipt chain integrity uses re-exported `receipt_id_for` + `verify_receipt_chain` from `octo-settlement-core` Layer A frozen substrate (per §6.2.1 KEEP behavior; `pub fn receipt_id_for(receipt: &Receipt) -> [u8; 32]` + `pub fn verify_receipt_chain(receipts: &[Receipt]) -> Result<(), SettlementError>` at `crates/octo-settlement-core/src/chain.rs`).
 
 ### §6.2 Function contracts
 
@@ -90,7 +90,7 @@ pub fn list_receipts(filter: &AuditFilter) -> Result<Vec<octo_settlement::Receip
 - Sort: `Receipt::timestamp_unix DESC`, then `Receipt::receipt_id ASC` as deterministic tiebreaker
 - On miss/error: returns `AuditError::SinkSpecific(...)` per canonical 3-variant form (no `ReceiptNotFound` variant at KEEP)
 - On filter violation: returns `AuditError::SinkSpecific("filter: limit out of range".into())` (substrate-side validation)
-- KEEP does NOT verify per-row receipt chain integrity at the read boundary (the substrate has no primitive for hashing canonical `Receipt` bytes; `compute_chain_hash` and `canonical_bytes` are monomorphic on `&AuditEvent` per `crates/octo-audit-core/src/chain.rs`). Reads return canonical `Receipt` rows on miss/hit; tampering detection lands with RFC-0016-a §Chain-Link Verification (requires future substrate amendment adding `compute_receipt_chain_hash(receipt: &octo_settlement::Receipt) -> [u8; 32]` to `octo-audit-core` per RFC-0012 (Extension-over-enumeration pattern)).
+- KEEP does NOT verify per-row receipt chain integrity at the read boundary by default; per-row receipt chain verification is OPT-IN via `verify_receipt_chain` re-exported from `octo-settlement-core` Layer A frozen substrate (RFC-0014 §Chain Integrity; `pub fn verify_receipt_chain(receipts: &[Receipt]) -> Result<(), SettlementError>` at `crates/octo-settlement-core/src/chain.rs`). Reads return canonical `Receipt` rows on miss/hit; opt-in per-row verification is one-line trivial façade hop via `octo-audit` Layer B re-export, NO new substrate amendment needed (per-row invocation recommended with optional skip-on-large-resultset flag).
 
 #### §6.2.2 `get_receipt`
 
@@ -117,7 +117,7 @@ pub(crate) fn audit_home() -> Result<PathBuf, octo_audit_core::AuditError> {
 }
 ```
 
-- `pub(crate)` + `#[cfg(feature = "octo-audit-internal")]` — does NOT exist in non-internal builds
+- `pub(crate)` + `#[cfg(feature = "octo-audit-internal")]` — feature flag PROPOSED as ADDITIVE per `Cargo.toml` edit in §Key Files to Modify (does NOT exist in non-internal builds)
 - CLI does not call directly per info-leak prevention (per §Adversary Analysis row "audit_home() canonical-path info leak")
 
 #### §6.2.4 `AuditFilter`
@@ -145,13 +145,13 @@ pub use octo_audit_core::AuditError;
 - Substrate-canonical 3-variant form: `SequenceGap { event_id: u64, prev: u64 } / AlreadyExists(u64) / SinkSpecific(String)`
 - NO façade shadow enum
 - NO CLI-shape variants (`ReceiptNotFound` / `InvalidFilter` / `PermissionDenied` / `AuditAppendFailed` / `Internal`) — DEFERRED to RFC-0011-a per canonical `[ADD]` error envelope pattern
-- `SinkSpecific(String)` payload is substrate-side scrubbed (defense-in-depth) before construction per substrate-side scrubber contract
+- `SinkSpecific(String)` payload is facade-side scrubbed (defense-in-depth) before construction per `octo-audit` Layer B scrubber at `crates/octo-audit/src/scrub.rs` per RFC-0012-v3 §S5.1 canonical scrubber table
 
 ### §6.3 Cargo.toml Layer discipline
 
 ```toml
 [dependencies]
-# Layer B settlement façade (Layer B → Layer B hop; pre-existing `octo-audit-core` Layer A frozen dep provides the substrate-canonical `AuditError` re-export at `crates/octo-audit/src/lib.rs:26` — a canonical façade-to-substrate hop per CLAUDE.md §Architectural Principles)
+# Layer B settlement façade (Layer B → Layer B hop; pre-existing `octo-audit-core` Layer A frozen dep provides the substrate-canonical `AuditError` re-export at `crates/octo-audit/src/lib.rs` — a canonical façade-to-substrate hop per CLAUDE.md §Architectural Principles)
 octo-settlement = { path = "../octo-settlement" }
 
 [features]
@@ -174,33 +174,32 @@ Exit code 64 per RFC-0011-a §Error via `#[error(transparent)] From<AuditError>`
 ### §6.6 Determinism requirements
 
 - **Read determinism** — `list_receipts` returns the same results for the same filter across runs (sort key is canonical `Receipt::timestamp_unix` per RFC-0959-ask §Data Structures; secondary sort `Receipt::receipt_id` ASC as deterministic tiebreaker)
-- **Chain integrity** — DEFERRED to RFC-0016-a §Chain-Link Verification per §6.6. The substrate has no primitive for hashing canonical `Receipt` bytes (`compute_chain_hash` + `canonical_bytes` are monomorphic on `&AuditEvent` per `crates/octo-audit-core/src/chain.rs`); tampering detection requires future substrate amendment adding `compute_receipt_chain_hash` to `octo-audit-core` per RFC-0012 (Extension-over-enumeration pattern).
-- **Exit codes stable** — substrate error variants map to stable CLI exit codes per §6.4
+- **Chain integrity** — `verify_chain(&[AuditEvent])` on audit events per `crates/octo-audit-core/src/chain.rs`; `verify_receipt_chain(&[Receipt])` re-exported from `octo-settlement-core` Layer A frozen substrate (per `crates/octo-settlement-core/src/chain.rs`). `list_receipts` + `get_receipt` are substrate-faithful to RFC-0012 + RFC-0014 chain-hash primitives; per-row receipt verification is opt-in at the read boundary (one-line trivial hop via façade re-export, NO new substrate amendment needed).
 
 ### §6.7 RFC-0008 Execution Class Mapping
 
-All RFC-0016 R2 KEEP items are Class A (read) per RFC-0008 §Execution Class Mapping. No state mutation; observable in any environment.
+All RFC-0016 R2 KEEP items are Class A (read) per RFC-0008 §Execution Class Mapping (mirrors RFC-0015 §6.7). No state mutation; observable in any environment.
 
 CLI surfaces `Class A` operations unconditionally (no `--allow-write` gate).
 
 ### §6.8 Forward Pointer to RFC-0016-a
 
-All rows below require RFC-0016-a + paired future Layer A substrate amendments per §Dependencies. The following DEFERRED surface ships with `0016-a-audit-receipt-write-path.md`. None of these features is provided by any currently Accepted substrate amendment; the §6.8 column cites the canonical substrate RFC (§Extension over enumeration or §Data Structures) where the future amendment will land:
+All rows below require RFC-0016-a + paired future Layer A substrate amendments per §Dependencies. The following DEFERRED surface ships with `0016-a-audit-receipt-write-path.md`. None of these features is provided by any currently Accepted substrate amendment; the §6.8 column cites the canonical substrate RFC (RFC-0012 (Extension-over-enumeration pattern) or RFC-0959-ask §Data Structures) where the future amendment will land:
 
-| Deferred feature                                       | Canonical substrate anchor                                                                                                                                                            |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `append_audit_event`                                   | RFC-0012 (Extension-over-enumeration pattern) (`AuditEventKind` typed-discriminator namespace)                                                                                        |
-| `ReceiptId(pub u64)` newtype                           | RFC-0959-ask §Data Structures (`Receipt` field extensions)                                                                                                                            |
-| `ChainHash(pub [u8; 32])` newtype                      | RFC-0012 (parent §Module Layout) `event` (AuditEvent chain_hash field — already present in substrate)                                                                                 |
-| `ReceiptStatus { Ok, Partial, Reject }` enum           | RFC-0959-ask §Data Structures (future `ReceiptStatus` enum addition)                                                                                                                  |
-| `ReceiptSummary` projection struct                     | RFC-0959-ask §Data Structures (`Receipt` field extensions)                                                                                                                            |
-| `AuditFilter.subject_did: Option<Did>` ACL             | RFC-0959-ask §Data Structures (future `Receipt.subject_did` field)                                                                                                                    |
-| `AuditFilter.status: Vec<ReceiptStatus>` multi-valued  | RFC-0959-ask §Data Structures (future canonical `ReceiptStatus` enum)                                                                                                                 |
-| `AuditEventKind` redaction extension                   | RFC-0012 (Extension-over-enumeration pattern) (`AuditEventKind` typed-discriminator namespace; NO central-enum 4th variant per substrate `#[non_exhaustive]`)                         |
-| CLI-shape error variants                               | RFC-0011-a §Error Envelope (canonical `[ADD]` error envelope)                                                                                                                         |
-| `ScrubbedAuditError` + `ScrubbedString` newtypes       | none (façade-only; defense-in-depth scrubber at output boundary)                                                                                                                      |
-| Canonical-bytes-on-write invariant                     | RFC-0012 (parent §Module Layout) `event` (canonical bytes per `compute_chain_hash`; `verify_chain(&[AuditEvent])` operates on audit events per `crates/octo-audit-core/src/chain.rs`) |
-| Single-writer lock + read-stalls-while-write invariant | RFC-0012 (parent §Module Layout) `sink` (`AppendOnlyAuditSink` write lock; existing substrate lock primitive)                                                                         |
+| Deferred feature                                       | Canonical substrate anchor                                                                                                                                                                                                                                    |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `append_audit_event`                                   | RFC-0012 (Extension-over-enumeration pattern) (`AuditEventKind` typed-discriminator namespace)                                                                                                                                                                |
+| `ReceiptId(pub u64)` newtype                           | RFC-0959-ask §Data Structures (`Receipt` field extensions)                                                                                                                                                                                                    |
+| `ChainHash(pub [u8; 32])` newtype                      | RFC-0012 (parent §Module Layout) `event` (AuditEvent chain_hash field — already present in substrate)                                                                                                                                                         |
+| `ReceiptStatus { Ok, Partial, Reject }` enum           | RFC-0959-ask §Data Structures (future `ReceiptStatus` enum addition)                                                                                                                                                                                          |
+| `ReceiptSummary` projection struct                     | RFC-0959-ask §Data Structures (`Receipt` field extensions)                                                                                                                                                                                                    |
+| `AuditFilter.subject_did: Option<Did>` ACL             | RFC-0959-ask §Data Structures (future `Receipt.subject_did` field)                                                                                                                                                                                            |
+| `AuditFilter.status: Vec<ReceiptStatus>` multi-valued  | RFC-0959-ask §Data Structures (future canonical `ReceiptStatus` enum)                                                                                                                                                                                         |
+| `AuditEventKind` redaction extension                   | RFC-0012 (Extension-over-enumeration pattern) (`AuditEventKind` typed-discriminator namespace; NO central-enum 4th variant per substrate `#[non_exhaustive]`)                                                                                                 |
+| CLI-shape error variants                               | RFC-0011-a §Error Envelope (canonical `[ADD]` error envelope)                                                                                                                                                                                                 |
+| `ScrubbedAuditError` + `ScrubbedString` newtypes       | none (façade-only; defense-in-depth scrubber at output boundary)                                                                                                                                                                                              |
+| Canonical-bytes-on-write invariant                     | RFC-0012 (parent §Module Layout) `event` (audit event canonical bytes per `compute_chain_hash`; receipt canonical bytes per `receipt_id_for` re-exported from `octo-settlement-core` Layer A frozen substrate per `crates/octo-settlement-core/src/chain.rs`) |
+| Single-writer lock + read-stalls-while-write invariant | RFC-0012 (parent §Module Layout) `sink` (`AppendOnlyAuditSink` type-level `&mut self` enforcement; concrete runtime lock is DOMAIN-adapter concern, e.g. `StoolapAuditSink` per `crates/octo-audit/src/storage/`)                                             |
 
 See `rfcs/draft/process/0016-a-audit-receipt-write-path.md` for full DEFERRED surface specification.
 
@@ -231,7 +230,7 @@ See `rfcs/draft/process/0016-a-audit-receipt-write-path.md` for full DEFERRED su
 
 **Adversary:** Operator modifies the persisted receipt store directly (bypasses `get_receipt`).
 
-**Mitigation:** Receipts are append-only; chain-integrity verification is DEFERRED to RFC-0016-a §Chain-Link Verification per §6.6. Per-row `compute_chain_hash` does NOT run on any read at v2 KEEP (the substrate primitive is monomorphic on `&AuditEvent` per `crates/octo-audit-core/src/chain.rs`); tampering detection requires future substrate amendment adding `compute_receipt_chain_hash` to `octo-audit-core` per RFC-0012 (Extension-over-enumeration pattern).
+**Mitigation:** Receipts are append-only; per-row receipt chain-integrity verification is OPT-IN at the read boundary via `verify_receipt_chain` re-exported from `octo-settlement-core` Layer A frozen substrate (per `crates/octo-settlement-core/src/chain.rs`; substrate primitive `pub fn verify_receipt_chain(receipts: &[Receipt]) -> Result<(), SettlementError>` operates on `&[Receipt]`, NOT `&[AuditEvent]`). Default KEEP read path does NOT invoke per-row verification (substrate-faithful no-op; opt-in via façade). NO future substrate amendment required.
 
 ### Threat: filter-injection via query string
 
@@ -247,14 +246,14 @@ See `rfcs/draft/process/0016-a-audit-receipt-write-path.md` for full DEFERRED su
 
 ## Adversary Analysis (5-Question Test)
 
-| Threat                                           | Q1: Who?                                          | Q2: What?                                                       | Q3: Why?                                   | Q4: How mitigated?                                                                                                                                                 | Q5: Residual risk?                                                                                                                                                  |
-| ------------------------------------------------ | ------------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Receipt-store tampering                          | Operator                                          | Modify persisted store                                          | Hide receipt rows                          | Append-only sink — substrate-faithful chain verification is DEFERRED to RFC-0016-a §Chain-Link Verification per §6.6 (no per-row chain-integrity check at v2 KEEP) | Disk corruption mitigated                                                                                                                                           |
-| Filter-injection                                 | Compromised CLI                                   | Malicious query string                                          | Trigger downstream eval                    | CLI parser rejects malformed values per RFC-0011-a                                                                                                                 | NONE (substrate trust)                                                                                                                                              |
-| Read-during-write race                           | Concurrent reads                                  | Read inconsistency                                              | Data inconsistency                         | No write path at R2 KEEP (DEFERRED to RFC-0016-a per §6.8); reads today operate against canonical store with no writer present                                     | R2 surface is read-only; risk lands with RFC-0016-a acceptance                                                                                                      |
-| Read access control (DEFERRED `subject_did` ACL) | Compromised CLI / co-tenant on multi-process host | Read another tenant's receipts by omitting `subject_did` filter | Reconnaissance / receipt-store enumeration | Per §Implicit Assumptions Audit row 4 (multi-tenant restriction)                                                                                                   | Per-process trust boundary assumed at R2 KEEP; multi-tenant deployments sharing `$OCTO_HOME` across tenants MUST NOT enable RFC-0016 reads on shared receipt stores |
-| `get_receipt` timing oracle on existence         | Compromised CLI                                   | Measure point-lookup latency                                    | Infer whether a specific receipt ID exists | NONE — constant-time lookup is NOT substrate-enforced                                                                                                              | Substrate-internal trust; cross-process exploitation blocked by per-process trust boundary per §Implicit Assumptions Audit row 4                                    |
-| `audit_home()` canonical-path info leak          | Compromised CLI                                   | Surface canonical receipt-store path                            | Leak `$OCTO_HOME` or filesystem layout     | CLI never calls `audit_home()` directly per §6.2.3; substrate-internal caller trust                                                                                | Substrate-internal trust; CLI bypass would expose canonical path                                                                                                    |
+| Threat                                           | Q1: Who?                                          | Q2: What?                                                       | Q3: Why?                                   | Q4: How mitigated?                                                                                                                                                                                                             | Q5: Residual risk?                                                                                                                                                  |
+| ------------------------------------------------ | ------------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Receipt-store tampering                          | Operator                                          | Modify persisted store                                          | Hide receipt rows                          | Append-only sink — substrate-faithful chain verification via re-exported `verify_receipt_chain` from `octo-settlement-core` Layer A frozen substrate (opt-in at the read boundary per §6.2.1; default KEEP read path is no-op) | Disk corruption mitigated                                                                                                                                           |
+| Filter-injection                                 | Compromised CLI                                   | Malicious query string                                          | Trigger downstream eval                    | CLI parser rejects malformed values per RFC-0011-a                                                                                                                                                                             | NONE (substrate trust)                                                                                                                                              |
+| Read-during-write race                           | Concurrent reads                                  | Read inconsistency                                              | Data inconsistency                         | No write path at R2 KEEP (DEFERRED to RFC-0016-a per §6.8); reads today operate against canonical store with no writer present                                                                                                 | R2 surface is read-only; risk lands with RFC-0016-a acceptance                                                                                                      |
+| Read access control (DEFERRED `subject_did` ACL) | Compromised CLI / co-tenant on multi-process host | Read another tenant's receipts by omitting `subject_did` filter | Reconnaissance / receipt-store enumeration | Per §Implicit Assumptions Audit row 4 (multi-tenant restriction)                                                                                                                                                               | Per-process trust boundary assumed at R2 KEEP; multi-tenant deployments sharing `$OCTO_HOME` across tenants MUST NOT enable RFC-0016 reads on shared receipt stores |
+| `get_receipt` timing oracle on existence         | Compromised CLI                                   | Measure point-lookup latency                                    | Infer whether a specific receipt ID exists | NONE — constant-time lookup is NOT substrate-enforced                                                                                                                                                                          | Substrate-internal trust; cross-process exploitation blocked by per-process trust boundary per §Implicit Assumptions Audit row 4                                    |
+| `audit_home()` canonical-path info leak          | Compromised CLI                                   | Surface canonical receipt-store path                            | Leak `$OCTO_HOME` or filesystem layout     | CLI never calls `audit_home()` directly per §6.2.3; substrate-internal caller trust                                                                                                                                            | Substrate-internal trust; CLI bypass would expose canonical path                                                                                                    |
 
 ## Economic Analysis
 
@@ -262,7 +261,7 @@ DEFER — audit receipt substrate has no direct token cost; cite RFC-0900+ (Role
 
 ## Compatibility
 
-1. **No breaking changes.** 5 KEEP items on `octo-audit` (Layer B façade) per RFC-0012; no existing public API modified.
+1. **No breaking changes.** 4 KEEP items on `octo-audit` (Layer B façade) per RFC-0012; no existing public API modified.
 2. **No new exit codes break parent semantics.** Substrate-canonical 3-variant `AuditError` per §6.2.5; reserved slots per §6.8.
 3. **No new clap variants break parent dispatch.** This RFC is substrate-only; CLI missions consume the new surface via existing CLI variant sets.
 4. **Substrate-side scrubber defense-in-depth** — at R2 KEEP, the substrate's only error variant carrying a string payload is `octo_audit_core::AuditError::SinkSpecific(String)`. The substrate-side scrubber applies canonical redaction patterns per RFC-0012-v3 §S5.1 canonical scrubber table before constructing the variant. These patterns are defense-in-depth substrate-side scrubbers; the CLI `OctoCliRedactor` per RFC-0011-a §Redaction performs the canonical second-pass sweep at output time. The patterns do NOT add new `OctoCliRedactor` rules.
@@ -294,24 +293,24 @@ CLI-level test vectors live in RFC-0011-a §Test Vectors (UNCHANGED).
 
 ## Implementation Phases
 
-- **Phase 1 (this RFC, R2 KEEP)** — substrate additions on `octo-audit` Layer B façade; 5 KEEP items per §6.1; 12+ DEFERRED items per §6.8 forward pointer
+- **Phase 1 (this RFC, R2 KEEP)** — substrate additions on `octo-audit` Layer B façade; 4 KEEP items per §6.1; 12+ DEFERRED items per §6.8 forward pointer
 - **Phase 2 (RFC-0011-a acceptance + RFC-0016 acceptance)** — gates RFC-0011-a §Substrate-truth disclaimer resolution; CLI substrate amendments become implementable for the read surface
 - **Phase 3 (RFC-0016-a acceptance — paired with future Layer A substrate amendments + RFC-0011-a)** — restores DEFERRED surface per §6.8 (the future substrate amendments per §6.8 add `AuditEventKind` extensions + `Receipt` field extensions + canonical `ReceiptStatus` enum; not yet implemented)
 
 ## Key Files to Modify
 
-- `crates/octo-audit/src/lib.rs` — append the 5 KEEP items per §6.1; existing re-exports preserved; ~150 LoC incl. tests
-- `crates/octo-audit/Cargo.toml` — add `octo-settlement = { path = "../octo-settlement" }` (Layer B settlement façade per RFC-0014; Layer B → Layer B hop, no direct B→A edge per CLAUDE.md §Architectural Principles)
+- `crates/octo-audit/src/lib.rs` — append the 4 KEEP items per §6.1; existing re-exports preserved; ~150 LoC incl. tests
+- `crates/octo-audit/Cargo.toml` — add `octo-settlement = { path = "../octo-settlement" }` (Layer B settlement façade per RFC-0014; Layer B → Layer B hop, no direct B→A edge per CLAUDE.md §Architectural Principles) + ADDITIVE `[features] octo-audit-internal = []` feature-flag (default builds DO NOT include the feature; `audit_home()` remains gated behind `#[cfg(feature = "octo-audit-internal")]` per §6.2.3)
 
 **Layer placement table:**
 
-| Crate                  | Layer                     | Substrate anchor                                                                                                               | Role at RFC-0016 R2 KEEP                                          |
-| ---------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
-| `octo-audit-core`      | Layer A frozen (RFC-0012) | `AuditError` enum (`SequenceGap`/`AlreadyExists`/`SinkSpecific`)                                                               | Canonical substrate error envelope; root re-export per §6.2.5     |
-| `octo-audit`           | Layer B façade (RFC-0012) | `crates/octo-audit/src/lib.rs` §re-export block                                                                                | Façade; re-exports `octo-audit-core::AuditError` per §6.2.5       |
-| `octo-settlement-core` | Layer A frozen (RFC-0014) | `Receipt` struct per `crates/octo-settlement-core/src/receipt.rs` §`Receipt`                                                   | Canonical `Receipt` primary-key substrate for `get_receipt` reads |
-| `octo-settlement`      | Layer B façade (RFC-0014) | `crates/octo-settlement/src/lib.rs` §re-export block                                                                           | Re-exports `octo-settlement-core` Layer A frozen                  |
-| `octo-storage-core`    | Layer A frozen (RFC-0206) | DOMAIN storage adapter substrate per `crates/octo-audit/Cargo.toml` inline comment (carries `StoolapAuditSink` DOMAIN adapter) | DOMAIN storage adapter substrate (pre-existing B→A direct edge)   |
+| Crate                  | Layer                     | Substrate anchor                                                                                                 | Role at RFC-0016 R2 KEEP                                          |
+| ---------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `octo-audit-core`      | Layer A frozen (RFC-0012) | `AuditError` enum (`SequenceGap`/`AlreadyExists`/`SinkSpecific`)                                                 | Canonical substrate error envelope; root re-export per §6.2.5     |
+| `octo-audit`           | Layer B façade (RFC-0012) | `crates/octo-audit/src/lib.rs` §re-export block                                                                  | Façade; re-exports `octo-audit-core::AuditError` per §6.2.5       |
+| `octo-settlement-core` | Layer A frozen (RFC-0014) | `Receipt` struct per `crates/octo-settlement-core/src/receipt.rs` §`Receipt`                                     | Canonical `Receipt` primary-key substrate for `get_receipt` reads |
+| `octo-settlement`      | Layer B façade (RFC-0014) | `crates/octo-settlement/src/lib.rs` §re-export block                                                             | Re-exports `octo-settlement-core` Layer A frozen                  |
+| `octo-storage-core`    | Layer A frozen (RFC-0206) | DOMAIN storage adapter substrate (carries `StoolapAuditSink` DOMAIN adapter at `crates/octo-audit/src/storage/`) | DOMAIN storage adapter substrate (pre-existing B→A direct edge)   |
 
 Layer direction: `octo-audit` (Layer B) → `octo-settlement` (Layer B) → `octo-settlement-core` (Layer A frozen). Pre-existing direct B→A edges from `octo-audit` (Layer B): → `octo-audit-core` (Layer A frozen) for the canonical façade-to-substrate hop carrying `AuditError` root re-export + function error types per §6.1 + §6.2.x signatures; → `octo-settlement-core` (Layer A frozen) for the `octo_settlement::Receipt` re-export per §6.1; → `octo-storage-core` (Layer A frozen) for the DOMAIN `StoolapAuditSink` adapter per RFC-0206. The §6.3 Cargo.toml proposal adds `octo-settlement` (Layer B) hop but does NOT remove the pre-existing direct `octo-settlement-core` B→A edge. All B→A edges are canonical façade-to-substrate hops per CLAUDE.md §Architectural Principles (Layer B → Layer A is the canonical substrate-dep pattern for additive-only surface; no NEW non-canonical B→A edges are introduced by RFC-0016 v2 KEEP). No reverse deps.
 
@@ -329,7 +328,7 @@ No changes to Layer A crates (`octo-audit-core`, `octo-settlement-core`); no CLI
 ## Rationale
 
 - **Substrate-faithful** — Layer A frozen untouched; this RFC adds Layer B façade surface per RFC-0012 + RFC-0014 acceptance pattern
-- **Additive only** — CLAUDE.md §Rust crate-level stability: Layer B additive changes do not break consumers; the 5 KEEP items per §6.1 are additive
+- **Additive only** — CLAUDE.md §Rust crate-level stability: Layer B additive changes do not break consumers; the 4 KEEP items per §6.1 are additive
 - **No parallel abstractions** — `list_receipts` returns canonical `Receipt` directly (no projection newtype at KEEP); bare `u64` for `Receipt::receipt_id` lookup (no newtype)
 - **CLI parity** — substrate-faithful read surface; CLI substrate amendments become implementable for the read surface at RFC-0011-a acceptance
 - **Split strategy** — write surface paired-with-substrate-amendment moved to RFC-0016-a per R29 review plan; halves per-RFC complexity, breaks divergence loop
@@ -337,7 +336,7 @@ No changes to Layer A crates (`octo-audit-core`, `octo-settlement-core`); no CLI
 ## Version History
 
 - v1.0 (2026-09-11) Initial draft. Read substrate-faithful surface (RFC-0002 + RFC-0011-c).
-- v2 (2026-09-11) KEEP-only rewrite. Dropped write-path surface (`append_audit_event` + `ReceiptId`/`ChainHash`/`ReceiptStatus`/`ReceiptSummary`/`subject_did` ACL + CLI-shape variants + `ScrubbedAuditError`/`ScrubbedString` + DEFERRED TVs) → forward pointer to RFC-0016-a. Slimmed to 5 KEEP items per §6.1 + substrate-canonical 3-variant `AuditError` re-export per §6.2.5.
+- v2 (2026-09-11) KEEP-only rewrite. Dropped write-path surface (`append_audit_event` + `ReceiptId`/`ChainHash`/`ReceiptStatus`/`ReceiptSummary`/`subject_did` ACL + CLI-shape variants + `ScrubbedAuditError`/`ScrubbedString` + DEFERRED TVs) → forward pointer to RFC-0016-a. Slimmed to 4 KEEP items per §6.1 (plus the PRE-EXISTING `AuditError` re-export per §6.2.5, NOT counted in KEEP scope per §6.1 table annotation).
 
 ## Related RFCs
 
@@ -427,4 +426,4 @@ sequenceDiagram
     CLI-->>Op: OutputEnvelope<AuditShowOutput> exit 0
 ```
 
-> **R2 scope-cut note:** the previous v1.0 diagram included a CLI → `append_audit_event` flow for `octo agent destroy`. R2 removes this flow per §6.8 DEFERRED SURFACE — the write path is DEFERRED to RFC-0016-a acceptance. CLI dispatch at R2 acceptance is **substrate-read-only** (`list_receipts` + `get_receipt` + `audit_home`). Writes route through `octo_wallet::transition_agent` (DEFERRED per RFC-0015 §6.8 forward pointer) → `octo_audit::append_audit_event` (DEFERRED per §6.8) — the CLI never invokes the write façade directly.
+> **R2 scope-cut note:** previous v1.0 diagram included a CLI → `append_audit_event` flow for `octo agent destroy`; R2 removes this flow per §6.8 DEFERRED SURFACE (write path DEFERRED to RFC-0016-a acceptance). CLI dispatch at R2 is **substrate-read-only** (`list_receipts` + `get_receipt` + `audit_home`); the CLI never invokes the write façade directly per §6.5.

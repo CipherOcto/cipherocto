@@ -17,7 +17,7 @@ Draft v2 (2026-09-11)
 This RFC defines the canonical agent operations substrate as **three additive public functions + four additive error variants** on the existing `octo-wallet` (Layer B years-stable per CLAUDE.md §Rust crate-level stability):
 
 1. **`pub fn list_owned_agents(caller_did: &Did, filter: &AgentFilter) -> Result<Vec<AgentSummary>, WalletError>`** — NEW ADDITIVE read function per §6.2.1. The `AgentFilter` / `AgentSummary` / `AgentState` types are substrate-faithful to `crates/octo-wallet/src/agent.rs` per `AgentFilter` / `AgentSummary` / `AgentState`. Server-side filter on `holder_did`, `state`, `limit`, `cursor`; returns `Vec<AgentSummary>` per-call (cursor is forward-compat opaque token).
-2. **`pub fn lookup_agent(caller_did: &Did, uuid: Uuid) -> Result<AgentManifest, WalletError>`** — NEW ADDITIVE point-lookup function per §6.2.5 (lookup_agent). Returns the canonical `AgentManifest` on hit; returns `WalletError::AgentNotFound(uuid)` on miss.
+2. **`pub fn lookup_agent(caller_did: &Did, uuid: Uuid) -> Result<AgentManifest, WalletError>`** — NEW ADDITIVE point-lookup function per §6.2.6 (lookup_agent). Returns the canonical `AgentManifest` on hit; returns `WalletError::AgentNotFound(uuid)` on miss.
 3. **`pub fn validate_reason(reason: &str) -> Result<(), WalletError>`** — NEW ADDITIVE primitive string-level control-char filter per §6.2.5 (validate_reason). Pure function on UTF-8 input; no substrate amendment required at the primitive level (the variant it returns is the only substrate addition).
 4. **`WalletError::AgentNotFound(Uuid)`** — NEW ADDITIVE enum variant per §6.2.3. Mirrors the existing `WalletError::AgentAlreadyExists(Uuid)` shape; provides a KEEP source for the new `lookup_agent` function.
 5. **`WalletError::ForbiddenHolderMismatch`** — NEW ADDITIVE enum variant per §6.2.4. HIGH sec fix (multi-DID enumeration prevention) for the read path.
@@ -103,7 +103,7 @@ Layer direction: CLI (Layer C/D) → `octo-wallet` (Layer B). No direct B→A ed
 Seven additive items = 3 functions + 4 error variants, layered atop the existing `AgentManifest` / `AgentState` / `AgentSummary` / `AgentFilter` / `CapabilityId` types already present in the same file:
 
 1. **`list_owned_agents`** — read function (§6.2.1)
-2. **`lookup_agent`** — point-lookup function (§6.2.5 lookup_agent)
+2. **`lookup_agent`** — point-lookup function (§6.2.6 lookup_agent)
 3. **`validate_reason`** — primitive string-level filter (§6.2.5 validate_reason)
 4. **`WalletError::AgentNotFound(Uuid)`** — error variant (§6.2.3)
 5. **`WalletError::ForbiddenHolderMismatch`** — error variant (§6.2.4)
@@ -112,7 +112,7 @@ Seven additive items = 3 functions + 4 error variants, layered atop the existing
 
 The write function `transition_agent` + paired write-path variants are DEFERRED (see §6.7).
 
-#### §6.2.1 `list_owned_agents`
+#### §6.2.1 `list_owned_agents` (KEEP)
 
 ```rust
 /// List all agents owned by the caller-attested DID, filtered server-side.
@@ -151,7 +151,7 @@ pub struct AgentFilter {
 
 The `transition_agent` write function is **DEFERRED** (see §6.7).
 
-#### §6.2.3 `WalletError::AgentNotFound(Uuid)`
+#### §6.2.3 `WalletError::AgentNotFound(Uuid)` (KEEP)
 
 ```rust
 /// Agent UUID not found in the active DID's registry.
@@ -161,9 +161,9 @@ AgentNotFound(Uuid),
 
 - Mirrors the existing `WalletError::AgentAlreadyExists(Uuid)` shape for symmetry.
 - CLI maps to `OctoCliError::AgentNotFound(Uuid)` (exit 42 per RFC-0011-c §9.8 slot allocation).
-- **KEEP source (v2):** raised by `lookup_agent(caller_did, uuid)` per §6.2.5 (lookup_agent) on miss.
+- **KEEP source (v2):** raised by `lookup_agent(caller_did, uuid)` per §6.2.6 (lookup_agent) on miss.
 
-#### §6.2.4 `WalletError::ForbiddenHolderMismatch`
+#### §6.2.4 `WalletError::ForbiddenHolderMismatch` (KEEP)
 
 ```rust
 /// Caller-attested DID does not match filter's `holder_did` field.
@@ -172,7 +172,7 @@ AgentNotFound(Uuid),
 ForbiddenHolderMismatch,
 ```
 
-- **Where raised:** `list_owned_agents(caller_did, filter)` when `filter.holder_did.is_some()` and `filter.holder_did != caller_did` (per §6.2.1 caller-attestation enforcement); also raised by `lookup_agent(caller_did, uuid)` per §6.2.5 (lookup_agent) on caller/holder mismatch.
+- **Where raised:** `list_owned_agents(caller_did, filter)` when `filter.holder_did.is_some()` and `filter.holder_did != caller_did` (per §6.2.1 caller-attestation enforcement); also raised by `lookup_agent(caller_did, uuid)` per §6.2.6 (lookup_agent) on caller/holder mismatch.
 - **CLI mapping:** Exit code 37 → `OctoCliError::ForbiddenHolderMismatch` (NEW ADDITIVE CLI variant proposed per §6.2.7 — substrate addition to `crates/octo-cli/src/error.rs` §`OctoCliError`; mirrors the §6.2.7 `WalletError` ADDITIVE pattern). Maps to exit code 37 per RFC-0011 §Exit Codes slot allocation (NOT slot 13; slot 13 is `PolicyNotFound`).
 
 #### §6.2.5 `validate_reason` — primitive string-level filter
@@ -225,15 +225,15 @@ pub fn lookup_agent(
 
 #### §6.2.7 Substrate additions (RFC-0015 v2 KEEP amendments)
 
-Two paired substrate amendments land with RFC-0015 v2 KEEP acceptance; both are additive and substrate-faithful to existing patterns:
+Three paired substrate additions land with RFC-0015 v2 KEEP acceptance; all are additive and substrate-faithful to existing patterns:
 
 1. **`#[non_exhaustive]` attribute on `WalletError` enum** at `crates/octo-wallet/src/error.rs` §`WalletError` (currently NOT present per substrate hard-check 2026-09-13). Mirrors the existing `OctoCliError` pattern at `crates/octo-cli/src/error.rs` §`OctoCliError` (per `#[non_exhaustive]` per F-14 + Wave 4.5 finding 10 — additive growth). Future-proofs the enum against downstream exhaustive-match breaks per RFC migration etiquette; any new `WalletError` variant added by RFC-0015 v2 KEEP (or any future RFC) will not break downstream consumers.
-2. **`OctoCliError::ForbiddenHolderMismatch` NEW ADDITIVE variant** at `crates/octo-cli/src/error.rs` §`OctoCliError` (currently NOT present per substrate hard-check 2026-09-13). Tuple/struct variant shape mirrors `OctoCliError::GroupBindingRejected { reason }` (exit 36) per `crates/octo-cli/src/error.rs` §`OctoCliError::GroupBindingRejected` — the canonical additive-struct pattern. Maps to exit code 37 per RFC-0011 §Exit Codes slot allocation (NOT slot 13; slot 13 is `PolicyNotFound`). Source substrate variant: `WalletError::ForbiddenHolderMismatch` per §6.2.4.
-3. **`OctoCliError::AgentNotFound(Uuid)` NEW ADDITIVE variant** at `crates/octo-cli/src/error.rs` §`OctoCliError` (currently NOT present per substrate hard-check 2026-09-13). Tuple variant shape mirrors `OctoCliError::HolderNotFound(String)` (exit 9) per `crates/octo-cli/src/error.rs` §`OctoCliError::HolderNotFound` — the canonical `Uuid`-payload tuple pattern. Maps to exit code 42 per RFC-0011-c §9.8 slot allocation. Source substrate variant: `WalletError::AgentNotFound(Uuid)` per §6.2.3.
+2. **`OctoCliError::ForbiddenHolderMismatch` NEW ADDITIVE variant** at `crates/octo-cli/src/error.rs` §`OctoCliError` (currently NOT present per substrate hard-check 2026-09-13). Unit variant shape mirrors `OctoCliError::NoActiveIdentity` per `crates/octo-cli/src/error.rs` §`OctoCliError::NoActiveIdentity` — the canonical unit-variant pattern (substrate-faithful byte-for-byte; no payload matches `WalletError::ForbiddenHolderMismatch` unit substrate variant). Maps to exit code 37 per RFC-0011 §Exit Codes slot allocation (NOT slot 13; slot 13 is `PolicyNotFound`). Source substrate variant: `WalletError::ForbiddenHolderMismatch` per §6.2.4.
+3. **`OctoCliError::AgentNotFound(Uuid)` NEW ADDITIVE variant** at `crates/octo-cli/src/error.rs` §`OctoCliError` (currently NOT present per substrate hard-check 2026-09-13). Tuple variant shape mirrors `OctoCliError::AgentAlreadyExists(uuid::Uuid)` (exit 41) per `crates/octo-cli/src/error.rs` §`OctoCliError::AgentAlreadyExists` — canonical `Uuid`-payload tuple pattern. Maps to exit code 42 per RFC-0011-c §9.8 slot allocation. Source substrate variant: `WalletError::AgentNotFound(Uuid)` per §6.2.3.
 
 ### §6.3 Error envelope
 
-Canonical substrate-variant → CLI-variant → exit-code cross-reference lives in §Appendix B. `WalletError` variants at RFC-0015 v2 KEEP are 4 NEW ADDITIVE additions (`AgentNotFound`, `ForbiddenHolderMismatch`, `ReasonContainsControlChars`, `ReasonTooLong`); write-path variants are DEFERRED — see §6.7. CLI mapping follows RFC-0011-a §7.4 Substrate `[ADD]` error-envelope pattern (substrate variant → CLI variant → exit code) byte-for-byte. Substrate additions to `WalletError` + `OctoCliError` enums (including the `#[non_exhaustive]` attribute proposal) are catalogued in §6.2.7.
+Canonical substrate-variant → CLI-variant → exit-code cross-reference lives in §Appendix B. `WalletError` variants at RFC-0015 v2 KEEP are 4 NEW ADDITIVE additions (`AgentNotFound`, `ForbiddenHolderMismatch`, `ReasonContainsControlChars`, `ReasonTooLong`); write-path variants are DEFERRED — see §6.7. CLI mapping follows RFC-0011-a §7.4 Substrate `[ADD]` error-envelope pattern (substrate variant → CLI variant → exit code) byte-for-byte.
 
 ### §6.4 CLI integration contract
 
@@ -245,7 +245,7 @@ CLI missions consuming this substrate:
 | `0011-c-agent-list-subcommand.md`   | `octo_wallet::list_owned_agents(caller_did, &filter)` (NEW per §6.2.1)  | Sub-step 3 (NEW, KEEP) |
 | `0011-c-agent-attach-subcommand.md` | (read-only; uses `octo_runtime::attach`) — substrate is read-only at v2 | N/A                    |
 
-Each mission's accepted-state precondition is checked locally against the `AgentState` returned by `octo_wallet::register_agent` + `list_owned_agents` calls; the substrate is source of truth, not the CLI. RFC-0015 v2 acceptance unblocks the read-only missions (`create`, `list`, `attach`); write-path missions (`run`, `destroy`) remain gated on RFC-0015-a acceptance (which itself requires a future Layer A substrate amendment adding the `AgentTransition` extension to `AuditEventKind`).
+Writes DEFERRED to RFC-0015-a per §6.7.
 
 ### §6.5 Determinism requirements
 
@@ -327,7 +327,7 @@ DEFER — agent read operations have no direct token cost; cite RFC-0900+ (Role 
 
 1. **No breaking changes.** Seven additive items (3 functions + 4 error variants) on `octo-wallet` (Layer B years-stable); no existing public API modified.
 2. **No `schema_version` bump.** The `OutputEnvelope<T>` envelope carries no new fields; CLI mission output schemas unchanged.
-3. **No new exit codes for the new errors.** The two KEEP error variants `AgentNotFound` (42) and `ForbiddenHolderMismatch` (37) map to existing RFC-0011-c §9.8 reserved slots already documented. The slot-16 mappings (`ReasonContainsControlChars`, `ReasonTooLong`) reuse `InvalidFilter` (16). The slot-43 mappings (`AlreadyInTransition`, `InvalidStateTransition`) and slot-52 (`AuditUnavailable`) remain RESERVED for the post-RFC-0015-a acceptance write-path variants — they are NOT consumed at RFC-0015 v2 KEEP.
+3. **No new exit codes for the new errors.** `AgentNotFound` (42) per RFC-0011-c §9.8 slot allocation; `ForbiddenHolderMismatch` (37) per RFC-0011 §Exit Codes 17-63 reserved range (slot 37 free per substrate exit_code mapping). The slot-16 mappings (`ReasonContainsControlChars`, `ReasonTooLong`) reuse `InvalidFilter` (16). The slot-43 mappings (`AlreadyInTransition`, `InvalidStateTransition`) and slot-52 (`AuditUnavailable`) remain RESERVED for the post-RFC-0015-a acceptance write-path variants — they are NOT consumed at RFC-0015 v2 KEEP.
 4. **No new clap variants.** Existing `AgentAction` enum (RFC-0011-c §9.3 dispatch) absorbs the new substrate calls; the missions land their variant-per-subcommand as planned.
 
 ## Test Vectors
@@ -352,8 +352,8 @@ Substrate-level test vectors (`crates/octo-wallet/src/agent.rs` test module). Wr
 | TV-WLT-AGT-19  | `list_owned_agents(caller_did, &AgentFilter { holder_did: Some("did:octo:nonexistent") })`                                    | Unknown holder DID (canonical RFC-0010 string form per §6.2.1)           | `Ok(Vec::new())` (unknown DID has zero registered agents in the in-process registry; substrate-faithful: empty Vec is NOT an error per §6.2.1 return semantics)                                                                             | Unknown DID → empty (no registered agents for unknown DID)                                                                            |
 | TV-WLT-AGT-20  | `register_agent` deterministic UUIDv5 check: same `(manifest_digest, active_did)` inputs → same UUID across 100 calls         | Determinism across 100 register calls                                    | All 100 calls return the same `Uuid` (UUIDv5 derived from `(manifest_digest, active_did)` in the CipherOcto-agent namespace per §6.2.1 substrate-faithful ordering note; NOT UUIDv7)                                                        | Substrate-faithful UUIDv5 determinism (namespace+name based; substrate-faithful determinism per §6.6 determinism requirement)         |
 | TV-WLT-AGT-21  | `validate_reason("a".repeat(256))` (unit test)                                                                                | Reason at 256-char boundary (per §6.2.5 length cap)                      | `Ok(())` (256 chars is the inclusive boundary; reason.len() == 256 is allowed per §6.2.5 length semantics; the primitive rejects `reason.len() > 256` only)                                                                                 | Verifies 256-char boundary OK (≤ 256 inclusive)                                                                                       |
-| TV-WLT-AGT-22  | `lookup_agent(caller_did, registered_uuid)`                                                                                   | Existing agent registered via `register_agent` per §6.2.5 (lookup_agent) | `Ok(<AgentManifest with agent_id, holder_did, registered_at_unix, ...>)` (canonical substrate-faithful `AgentManifest` struct per `crates/octo-wallet/src/agent.rs` §`AgentManifest` hard-checked 2026-09-11)                               | KEEP source for `WalletError::AgentNotFound(Uuid)` variant per §6.2.3                                                                 |
-| TV-WLT-AGT-23  | `lookup_agent(caller_did, unregistered_uuid)`                                                                                 | Unknown UUID (canonical RFC-0010 string form per §6.2.5 lookup_agent)    | `Err(WalletError::AgentNotFound(uuid))` (KEEP source per §6.2.3)                                                                                                                                                                            | Verifies `AgentNotFound` raised by `lookup_agent` on miss                                                                             |
+| TV-WLT-AGT-22  | `lookup_agent(caller_did, registered_uuid)`                                                                                   | Existing agent registered via `register_agent` per §6.2.6 (lookup_agent) | `Ok(<AgentManifest with agent_id, holder_did, registered_at_unix, ...>)` (canonical substrate-faithful `AgentManifest` struct per `crates/octo-wallet/src/agent.rs` §`AgentManifest` hard-checked 2026-09-11)                               | KEEP source for `WalletError::AgentNotFound(Uuid)` variant per §6.2.3                                                                 |
+| TV-WLT-AGT-23  | `lookup_agent(caller_did, unregistered_uuid)`                                                                                 | Unknown UUID (canonical RFC-0010 string form per §6.2.6 lookup_agent)    | `Err(WalletError::AgentNotFound(uuid))` (KEEP source per §6.2.3)                                                                                                                                                                            | Verifies `AgentNotFound` raised by `lookup_agent` on miss                                                                             |
 
 CLI-level test vectors live in RFC-0011-c §Test Vectors TV-AGT1..AGT-12 (UNCHANGED — RFC-0015 substrate alignment does not modify CLI TV).
 
@@ -457,7 +457,7 @@ pub fn lookup_agent(
     // 2. On miss → `WalletError::AgentNotFound(uuid)` (KEEP per §6.2.3).
     // 3. On hit, validate caller/holder DID consistency:
     //    `agent.holder_did == caller_did`; mismatch →
-    //    `WalletError::ForbiddenHolderMismatch` (HIGH sec fix per §6.2.5 lookup_agent).
+    //    `WalletError::ForbiddenHolderMismatch` (HIGH sec fix per §6.2.6 lookup_agent).
     // 4. Return canonical `AgentManifest`.
 }
 
@@ -504,7 +504,7 @@ sequenceDiagram
         Wal-->>CLI: Err(WalletError::AgentNotFound(uuid))
     else on hit
         Reg-->>Wal: Some(AgentManifest)
-        Wal->>Wal: validate agent.holder_did == caller_did (else ForbiddenHolderMismatch per §6.2.5 lookup_agent)
+        Wal->>Wal: validate agent.holder_did == caller_did (else ForbiddenHolderMismatch per §6.2.6 lookup_agent)
         Wal-->>CLI: Ok(AgentManifest)
     end
     CLI-->>Op: OutputEnvelope<AgentShowOutput> exit 0 or 42 or 37

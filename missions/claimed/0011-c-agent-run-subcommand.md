@@ -17,6 +17,7 @@ release_gate: 0011-c-octo-runtime-substrate mission landing (per RFC-0011-c §Im
 status: Claimed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-01
+substrate_unblocked: 2026-09-13
 ---
 
 # 0011-c-agent-run-subcommand — `octo agent run` subcommand
@@ -36,6 +37,20 @@ Open (RFC-0011-c §Phase 2 CLI wiring, subcommand 2 of 5). Conditionally depends
 ## Substrate (RFC-0011-c)
 
 Per RFC-0011-c §9.3.2 `octo agent run <agent-id>` and §9.8 Error Handling (`AgentNotFound`, `InvalidStateTransition`, `RuntimeSpawnFailed`).
+
+### Substrate additions landed (commit `next e09f3e3a`, 2026-09-13)
+
+The following substrate surface is now in place so this mission can be implemented in a follow-on session without further substrate work:
+
+- `octo_wallet::transition_agent(caller_did, uuid, target: AgentState, reason)` (Layer B) — full state-machine guard per RFC-0015-a Appendix A. The `Registered → Running` edge is exercised by this mission.
+- `octo_wallet::TransitionReceipt` projection struct (Layer B) re-exported from `crates/octo-wallet/src/lib.rs`.
+- `WalletError::AlreadyInTransition(Uuid)` / `InvalidStateTransition { from, to }` / `AuditUnavailable(String)` variants.
+- `OctoCliError::AlreadyInTransition(Uuid)` → exit 43, `InvalidStateTransition { from, to }` → exit 43 (mirrors), `RuntimeSpawnFailed { reason }` → exit 44 (still to add — part of this mission), `AgentNotFound(Uuid)` → exit 42.
+- `AuditEventKind::AgentTransition` variant cfg-gated behind `octo-audit-internal` feature (Layer A frozen contract preserved); permanent once RFC-0012-v2 lands Accepted.
+
+### Still pending at substrate level
+
+- The `octo-runtime` substrate crate provides `spawn_agent(agent_id, handle) -> RuntimeHandle` (Layer B). If not landed, this mission ships as a stub emitting `RuntimeSubstrateNotReady` (exit 51).
 
 ## Parent
 
@@ -99,7 +114,7 @@ Land the `octo agent run` subcommand per RFC-0011-c §9.3.2. The four sibling su
 
 2. **`AgentRunOutput` payload type** — same file. `#[derive(Serialize, Deserialize, Debug, Clone)]`. Wrapped in `OutputEnvelope<T>` with `schema_version = 4` per RFC-0011-c §9.4 / §9.4.1 Divergence slot table.
 
-3. **CLI handler** — same file. `agent run` calls `octo_wallet::transition_agent(agent_id, Active)` then `octo_runtime::spawn_agent(agent_id, handle)`; surfaces `runtime_handle` in output. Respects `--detach` (default: detached; spawn does not block). Respects `--json` (TTY-override).
+3. **CLI handler** — same file. `agent run` calls `octo_wallet::transition_agent(caller_did, agent_id, AgentState::Running, reason)` (Layer B; substrate enforces caller-attestation against holder_did per RFC-0011 §Lifecycle Requirements, then the state-machine guard) then `octo_runtime::spawn_agent(agent_id, handle)`; surfaces `runtime_handle` in output alongside `TransitionReceipt::audit_log_entry` (Hex32). Respects `--detach` (default: detached; spawn does not block). Respects `--json` (TTY-override).
 
 4. **`AgentNotFound`, `InvalidStateTransition`, `RuntimeSpawnFailed` error variants + exit 42/43/44 mapping** — `crates/octo-cli/src/error.rs` (Layer C/D). Add three variants to the `#[non_exhaustive] OctoCliError` enum; map to exits 42/43/44 per RFC-0011-c §9.8 (slot allocation 39-52).
 
@@ -117,10 +132,10 @@ No new external crates required; all substrate types are defined in `octo-wallet
 
 2 TV (TV-AGT4..TV-AGT5) covering `agent run`:
 
-| #       | Subcommand  | Input                        | Expected Output                                                     | Notes                               |
-| ------- | ----------- | ---------------------------- | ------------------------------------------------------------------- | ----------------------------------- |
-| TV-AGT4 | `agent run` | Registered agent, no runtime | `AgentRunOutput { state: BUSY, ... }` (exit 0)                      | Spawns runtime container; warm path |
-| TV-AGT5 | `agent run` | Terminated agent             | `InvalidStateTransition { from: TERMINATED, to: ACTIVE }` (exit 43) | State machine rejects               |
+| #       | Subcommand  | Input                        | Expected Output                                                      | Notes                                                                     |
+| ------- | ----------- | ---------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| TV-AGT4 | `agent run` | Registered agent, no runtime | `AgentRunOutput { state: BUSY, ... }` (exit 0)                       | Spawns runtime container; warm path                                       |
+| TV-AGT5 | `agent run` | Terminated agent             | `InvalidStateTransition { from: terminated, to: running }` (exit 43) | State machine rejects (canonical lowercase `AgentState::as_str()` labels) |
 
 ## Layer direction (RFC-0011-c §9.1 Architecture + per [[cipherocto-design-principles]])
 

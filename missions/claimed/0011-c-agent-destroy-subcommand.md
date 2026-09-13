@@ -15,6 +15,7 @@ metadata:
 status: Claimed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-01
+substrate_unblocked: 2026-09-13
 ---
 
 # 0011-c-agent-destroy-subcommand — `octo agent destroy` subcommand
@@ -34,6 +35,21 @@ Open (RFC-0011-c §Phase 2 CLI wiring, subcommand 4 of 5).
 ## Substrate (RFC-0011-c)
 
 Per RFC-0011-c §9.3.4 `octo agent destroy <agent-id>` and §9.8 Error Handling (`AgentNotFound`, `ConfirmationRequired`, `InvalidStateTransition`).
+
+### Substrate additions landed (commit `next e09f3e3a`, 2026-09-13)
+
+The following substrate surface is now in place so this mission can be implemented in a follow-on session without further substrate work:
+
+- `octo_wallet::transition_agent(caller_did, uuid, target: AgentState, reason)` (Layer B) — emits the `AgentTransition` audit event with `from`/`to`/`reason` payload, fully implementing the destroy state-machine edge (`Running → Terminated` per RFC-0015-a Appendix A). When the audit append is not available (feature-off), the function fails closed with `AuditUnavailable` and rolls back the state mutation.
+- `octo_audit::append_agent_transition_event` + `register_audit_sink` (Layer B façade) — the runtime adapter registers its `AppendOnlyAuditSink` once at startup, and `transition_agent` appends to it via the façade.
+- `octo_wallet::TransitionReceipt` projection struct re-exported from `crates/octo-wallet/src/lib.rs`.
+- `WalletError::AlreadyInTransition(Uuid)` / `InvalidStateTransition { from, to }` / `AuditUnavailable(String)` variants.
+- `OctoCliError::AuditSubstrateNotReady` → exit 52, `AlreadyInTransition(Uuid)` → exit 43, `InvalidStateTransition { from, to }` → exit 43, `AgentNotFound(Uuid)` → exit 42, `ConfirmationRequired` (still to add — part of this mission) → exit 47.
+- `AuditEventKind::AgentTransition` variant cfg-gated behind `octo-audit-internal` feature (Layer A frozen contract preserved); permanent once RFC-0012-v2 lands Accepted.
+
+### Still pending at substrate level
+
+- The `ConfirmationRequired` error variant (exit 47) is reserved by RFC-0011-c §9.8 but the substrate enum shape is out-of-scope for unblock — this mission adds it.
 
 ## Parent
 
@@ -98,7 +114,7 @@ Land the `octo agent destroy` subcommand per RFC-0011-c §9.3.4. The four siblin
 
 2. **`AgentDestroyOutput` payload type** — same file. `#[derive(Serialize, Deserialize, Debug, Clone)]`. Wrapped in `OutputEnvelope<T>` with `schema_version = 4` per RFC-0011-c §9.4 / §9.4.1 Divergence slot table.
 
-3. **CLI handler** — same file. `agent destroy` calls `octo_wallet::transition_agent(agent_id, Terminated { reason })`; then appends to audit log via RFC-0011-a substrate. Surfaces `audit_log_entry` digest in output. Respects `--reason` (audit log entry; default: empty string). Respects `--json` (TTY-override). **Refuses to proceed without `--confirm`** — emits `ConfirmationRequired` (CLI exit 2 / substrate exit 47) and aborts.
+3. **CLI handler** — same file. `agent destroy` calls `octo_wallet::transition_agent(caller_did, agent_id, AgentState::Terminated, reason)`; the substrate appends the `AgentTransition` audit event with `from = running, to = terminated, reason` payload via the `octo-audit` façade. Surfaces `audit_log_entry` digest (Hex32) from `TransitionReceipt` in `AgentDestroyOutput`. Respects `--reason` (audit log entry; default: empty string per `validate_reason(0..=256)` cap). Respects `--json` (TTY-override). **Refuses to proceed without `--confirm`** — emits `ConfirmationRequired` (CLI exit 2 / substrate exit 47) and aborts. When the audit sink is not registered AND `--features octo-audit-internal` is OFF, emits `OctoCliError::AuditSubstrateNotReady` (exit 52).
 
 4. **`ConfirmationRequired` error variant + exit 47 mapping** — `crates/octo-cli/src/error.rs` (Layer C/D). Add `ConfirmationRequired` variant to the `#[non_exhaustive] OctoCliError` enum; map to exit 47 per RFC-0011-c §9.8 (slot allocation 39-52). The CLI also performs its own `--confirm` re-check surfacing parent RFC-0011 §Error Handling exit 2.
 

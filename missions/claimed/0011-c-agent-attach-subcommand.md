@@ -18,6 +18,7 @@ release_gate: octo-runtime substrate landing (per RFC-0011-c §Implementation Ph
 status: Claimed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-01
+substrate_unblocked: 2026-09-13
 ---
 
 # 0011-c-agent-attach-subcommand — `octo agent attach` subcommand
@@ -38,6 +39,17 @@ Open (RFC-0011-c §Phase 2 CLI wiring, subcommand 5 of 5). **Release-gated** on 
 ## Substrate (RFC-0011-c)
 
 Per RFC-0011-c §9.3.5 `octo agent attach <agent-id>` and §9.8 Error Handling (`AgentNotFound`, `AgentNotRunning`, `RuntimeAttachFailed`).
+
+### Substrate additions landed (commit `next e09f3e3a`, 2026-09-13)
+
+The following substrate surface is now in place so this mission can be implemented in a follow-on session without further substrate work:
+
+- `octo_wallet::lookup_agent(caller_did, uuid)` (Layer B) — the attach handler reads `AgentManifest` to verify the holder DID matches the caller (caller-attestation per RFC-0011 §Lifecycle Requirements). The read-path substrate is unchanged from Phase 1 list-surface.
+- `OctoCliError::AgentNotRunning(Uuid)` → exit 48 (added in commit `next e09f3e3a`). Surfaces the substrate-faithful state check (look up the record, verify `state == AgentState::Running`, otherwise reject).
+
+### Still pending at substrate level
+
+- `octo_runtime::attach(handle, since) -> AttachedSession` (Layer B; new crate). Until it lands, this mission ships as a stub emitting `RuntimeSubstrateNotReady` (exit 51).
 
 ## Parent
 
@@ -100,7 +112,7 @@ Land the `octo agent attach` subcommand per RFC-0011-c §9.3.5. The four sibling
 
 2. **`AgentAttachOutput` payload type** — same file. `#[derive(Serialize, Deserialize, Debug, Clone)]`. Wrapped in `OutputEnvelope<T>` with `schema_version = 4` per RFC-0011-c §9.4 / §9.4.1 Divergence slot table.
 
-3. **CLI handler** — same file. `agent attach` calls `octo_runtime::attach(handle, since)`; surfaces `runtime_handle`, `attached_at_unix`, `event_cursor` in output. Respects `--since <unix-seconds>` (replay from timestamp; substrate validates). Respects `--json` (TTY-override). **No state mutation** — attach is read-only.
+3. **CLI handler** — same file. `agent attach` first calls `octo_wallet::lookup_agent(caller_did, agent_id)` to verify the agent exists and the caller is the holder, then reads the agent's `state` to confirm `AgentState::Running` (otherwise emits `AgentNotRunning(Uuid)` exit 48). Then calls `octo_runtime::attach(handle, since)`; surfaces `runtime_handle`, `attached_at_unix`, `event_cursor` in output. Respects `--since <unix-seconds>` (replay from timestamp; substrate validates). Respects `--json` (TTY-override). **No state mutation** — attach is read-only.
 
 4. **`AgentNotRunning`, `RuntimeAttachFailed` error variants + exit 48/49 mapping** — `crates/octo-cli/src/error.rs` (Layer C/D). Add two variants to the `#[non_exhaustive] OctoCliError` enum; map to exits 48/49 per RFC-0011-c §9.8 (slot allocation 39-52).
 

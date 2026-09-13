@@ -21,6 +21,7 @@ status: Claimed
 claimed_by: mmacedoeu
 claimed_at: 2026-09-01
 amended_at: 2026-09-10
+substrate_unblocked: 2026-09-13
 amendment: "RFC-0011-a v1.5 layer-model note: canonical `AuditEvent` lives in `octo-audit-core` (Layer A frozen per RFC-0012); canonical `Receipt` + `AskState` + `ReservationState` live in `octo-settlement-core` (Layer A frozen per RFC-0014). CLI consumes via Layer B façades `octo-audit` + `octo-settlement`."
 ---
 
@@ -47,6 +48,24 @@ Open — DOC-ONLY amendment per RFC-0011-a §Implementation Phases; both subcomm
 ## Substrate (RFC-0011-a)
 
 RFC-0011-a §Specification (rfcs/draft/process/0011-a-audit-commands.md).
+
+### Substrate additions landed (commits landed before 2026-09-13 read-path substrate cycle)
+
+The following substrate surface is in place for the audit read path:
+
+- `octo_audit::list_receipts(filter: AuditFilter)` — list-shape projection over `Receipt` rows.
+- `octo_audit::get_receipt(id)` — point lookup by integer key.
+- `octo_audit::audit_home()` discovery helper (default OFF — `octo-audit-internal` feature).
+- `octo_audit::AuditFilter` — 5-field filter primitive (RFC-0011-a §Substrate entry #3).
+
+### Substrate still missing (deferred, paired-acceptance pending)
+
+- `ReceiptId(pub [u8;32])` newtype — current substrate uses integer keys; the typed `ReceiptId` lands once RFC-0014-v2 is Accepted (paired with RFC-0016-a).
+- `ReceiptStatus { Ok, Partial, Reject }` typed status enum — gated on RFC-0014-v2 acceptance.
+- `ReceiptSummary` projection struct — distinct from `Receipt`; current list returns rows via the integer-key projection.
+- `ReceiptStatus` redaction in `OctoCliError::AuditReadFailed(String)` payload — paired with the v2 substrate change.
+
+This mission implements against the current integer-key + read-path surface; once RFC-0014-v2 lands Accepted, the typed `ReceiptId` + `ReceiptStatus` + `ReceiptSummary` migration is a follow-on mission (RFC-0016 paired-acceptance per RFC-0011-a §Implementation Phases).
 
 ## Parent
 

@@ -72,11 +72,11 @@ The substrate's existing surface is **types-only**: `AgentManifest`, `AgentState
 
 ## Roles and Authorities
 
-| Role                | Authority                                                                             | Audit trail                |
-| ------------------- | ------------------------------------------------------------------------------------- | -------------------------- |
-| Operator (human/CI) | `list_owned_agents` + `lookup_agent` + `validate_reason` (read-only on v2 acceptance) | CLI log per RFC-0011-a     |
-| Wallet substrate    | Source of truth for `AgentManifest` + `AgentSummary`; rejects unauthorized callers    | Internal state machine log |
-| CLI (octo-cli)      | Operator UX over substrate functions; never bypasses substrate caller-attestation     | Same as operator           |
+| Role                | Authority                                                                                      | Audit trail                |
+| ------------------- | ---------------------------------------------------------------------------------------------- | -------------------------- |
+| Operator (human/CI) | `list_owned_agents` + `lookup_agent` + `validate_reason` (read-only on v2 acceptance)          | CLI log per RFC-0011-a     |
+| Wallet substrate    | Source of truth for `AgentManifest` + `AgentSummary`; rejects unauthorized callers             | Internal state machine log |
+| CLI (octo-cli)      | Operator UX over substrate functions; never bypasses substrate caller-attestation (per §6.2.1) | Same as operator           |
 
 ## Specification
 
@@ -219,7 +219,7 @@ pub fn lookup_agent(
 - **Where raised:** invoked by `0011-c-agent-show-subcommand` (CLI consumer; RFC-0011-c §9.3.x) for point-lookup.
 - **Error semantics:** `WalletError::AgentNotFound(uuid)` on miss (KEEP per §6.2.3); `WalletError::ForbiddenHolderMismatch` on caller/holder mismatch per §6.2.4.
 
-#### §6.2.7 Substrate additions (RFC-0015 v2 KEEP amendments)
+#### §6.2.7 Substrate additions (KEEP — RFC-0015 v2 amendments)
 
 Three paired substrate additions land with RFC-0015 v2 KEEP acceptance; all are additive and substrate-faithful to existing patterns:
 
@@ -369,7 +369,7 @@ CLI-level test vectors live in RFC-0011-c §Test Vectors TV-AGT1..AGT-12 (UNCHAN
 
 - `crates/octo-wallet/Cargo.toml` — **NO new deps at v2 KEEP.** No `parking_lot` entry; that dep is paired with the DEFERRED write-path Phase 2.5 lock-mode contract and lands with RFC-0015-a.
 - `crates/octo-wallet/src/agent.rs` — append `list_owned_agents` + `lookup_agent` + `validate_reason` (existing types; ~80 LoC incl. tests). `transition_agent` is DEFERRED (see §6.7).
-- `crates/octo-wallet/src/error.rs` — append 4 KEEP variants: `WalletError::AgentNotFound(Uuid)` + `WalletError::ForbiddenHolderMismatch` + `WalletError::ReasonContainsControlChars(String)` + `WalletError::ReasonTooLong(usize)` per §6.3. The DEFERRED write-path variants `AlreadyInTransition(Uuid)` + `InvalidStateTransition { from, to }` + `AuditUnavailable` are NOT added at v2 — they land with RFC-0015-a.
+- `crates/octo-wallet/src/error.rs` — append 4 KEEP variants per §6.2.3-§6.2.6. The DEFERRED write-path variants `AlreadyInTransition(Uuid)` + `InvalidStateTransition { from, to }` + `AuditUnavailable` are NOT added at v2 — they land with RFC-0015-a.
 - `crates/octo-wallet/src/lib.rs` — re-export the new functions (no breaking change to existing public surface).
 
 **Layer placement table (M-4 amendment — explicit layer discipline per CLAUDE.md §Rust crate-level stability):**
@@ -483,7 +483,7 @@ pub fn validate_reason(reason: &str) -> Result<(), WalletError> {
 | `WalletError::InvalidStateTransition { from, to }` | `OctoCliError::AlreadyInTransition(uuid)` | 43       | §9.8 slot 43    | DEFERRED NEW ADDITIVE (landed with RFC-0015-a per RFC-0015-a §6.3 + §Appendix B)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `WalletError::AuditUnavailable`                    | `OctoCliError::AuditSubstrateNotReady`    | 52       | RFC-0011-c §9.8 | DEFERRED NEW ADDITIVE (landed with RFC-0015-a per RFC-0015-a §6.3 + §Appendix B)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
-### Appendix C. Mermaid diagram — CLI → substrate → registry flow (v2 KEEP read-only)
+### Appendix C. Mermaid diagram — CLI → substrate → registry flow (v2 KEEP read-only — see §6.7)
 
 ```mermaid
 sequenceDiagram
@@ -505,5 +505,3 @@ sequenceDiagram
     end
     CLI-->>Op: OutputEnvelope<AgentShowOutput> exit 0 or 42 or 37
 ```
-
-> R2 scope-cut: previous v1.0 write-path diagram removed per §6.7.

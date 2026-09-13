@@ -27,9 +27,9 @@ use octo_settlement_core::{receipt_id_for, Receipt, CHAIN_DOMAIN_SEPARATOR};
 // for the byte-pin invariant.)
 
 // mission-defined: settlement-side domain-separator byte-pin (the
-// canonical byte-pinned value lives in
-// `crates/octo-settlement-core/src/chain.rs:23`; this is the single
-// test surface per substrate-faithful no-duplication policy).
+// canonical byte-pinned value is the substrate `CHAIN_DOMAIN_SEPARATOR`
+// constant; this is the single test surface per substrate-faithful
+// no-duplication policy).
 #[test]
 fn mission_01_domain_separator_byte_pin() {
     assert_eq!(CHAIN_DOMAIN_SEPARATOR, b"cipherocto/reservation/v1/");

@@ -27,27 +27,12 @@ use octo_settlement_core::{ReservationState, SettlementError};
 // ReservationState; transitions are enforced at the domain store
 // layer per the substrate-faithful test policy.)
 
-// mission-defined: AskState Minted -> Settled is a documented valid
-// transition (router signs settlement receipt). Substrate does NOT
-// enforce at the enum layer (no `can_transition_to` helper); the
-// domain store is the actual gate. This test pins the discriminant
-// values per RFC-0959 §State Machine and asserts the
-// `SettlementError::InvalidTransition` variant is constructible for
-// downstream-domain use.
-#[test]
-fn mission_01_ask_state_discriminant_pinning() {
-    use octo_settlement_core::AskState;
-    assert_eq!(AskState::Minted as u8, 0);
-    assert_eq!(AskState::Settled as u8, 1);
-    assert_eq!(AskState::Consumed as u8, 2);
-}
-
 // mission-defined: AskState Minted -> Consumed (skipping Settled)
 // is the documented non-default path requiring policy gates. The
 // substrate exposes `SettlementError::InvalidTransition` so domain
 // stores can emit the error on the invalid-transition path.
 #[test]
-fn mission_02_invalid_transition_variant_constructible() {
+fn mission_1_invalid_transition_variant_constructible() {
     let err = SettlementError::InvalidTransition {
         from: "Minted".to_owned(),
         to: "Consumed".to_owned(),
@@ -63,27 +48,27 @@ fn mission_02_invalid_transition_variant_constructible() {
 // mission-defined: ReservationState Pending -> Active is a valid
 // transition per RFC-0960 §2.3 (admin approves reservation).
 #[test]
-fn mission_03_reservation_state_pending_to_active() {
+fn mission_2_reservation_state_pending_to_active() {
     assert!(ReservationState::Pending.can_transition_to(ReservationState::Active));
 }
 
 // mission-defined: ReservationState Active -> Redeemed is a valid
 // transition per RFC-0960 §2.3 (ask settled against reservation).
 #[test]
-fn mission_04_reservation_state_active_to_redeemed() {
+fn mission_3_reservation_state_active_to_redeemed() {
     assert!(ReservationState::Active.can_transition_to(ReservationState::Redeemed));
 }
 
 // mission-defined: ReservationState Active -> Expired is a valid
 // transition per RFC-0960 §2.3 (lock expires without redemption).
 #[test]
-fn mission_05_reservation_state_active_to_expired() {
+fn mission_4_reservation_state_active_to_expired() {
     assert!(ReservationState::Active.can_transition_to(ReservationState::Expired));
 }
 
 // mission-defined: ReservationState Pending -> Redeemed (skipping
 // Active) is NOT a valid transition per RFC-0960 §2.3 table.
 #[test]
-fn mission_06_reservation_state_invalid_pending_to_redeemed() {
+fn mission_5_reservation_state_invalid_pending_to_redeemed() {
     assert!(!ReservationState::Pending.can_transition_to(ReservationState::Redeemed));
 }

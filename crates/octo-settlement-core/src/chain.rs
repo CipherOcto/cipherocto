@@ -37,8 +37,8 @@ pub const CHAIN_DOMAIN_SEPARATOR: &[u8] = b"cipherocto/reservation/v1/";
 /// hash to be deterministic for any replica that holds the same
 /// `Receipt` inputs (no per-deployment key material). The
 /// `domain_separator::mission_01_domain_separator_byte_pin`
-/// test (RFC-0014 §Test Vectors, single canonical surface) byte-pins
-/// this behavior.
+/// test (RFC-0014 §Module Layout §Chain Helpers invariant; single
+/// canonical substrate test surface) byte-pins this behavior.
 ///
 /// Production deployments that need keyed-hash defense-in-depth
 /// SHOULD wrap this function (e.g., via a `KeyedHasher` trait on
@@ -145,10 +145,7 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn domain_separator_pinned() {
-        // Byte-pinned per RFC-0959 + RFC-0014 §Test Vectors. Any drift
-        // breaks cross-replica consensus.
-        assert_eq!(CHAIN_DOMAIN_SEPARATOR, b"cipherocto/reservation/v1/");
-    }
+    // Byte-pin test lives at `domain_separator::mission_01_…` (single
+    // canonical substrate surface per substrate-faithful no-duplication
+    // policy). Do NOT add an inline duplicate here.
 }

@@ -20,7 +20,7 @@
 //! duplication here).
 //!
 //! Run with:
-//!   cargo test -p octo-settlement-core --test `chain_verify`
+//!   cargo test -p octo-settlement-core --test chain_verify
 #![allow(clippy::doc_markdown)]
 
 use octo_settlement_core::{receipt_id_for, verify_receipt_chain, Receipt, SettlementError};

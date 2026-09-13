@@ -39,9 +39,9 @@ Per RFC-0012 §Test Vectors (10 canonical vectors) + §Key Files to Modify test 
 ### Acceptance criteria
 
 - [x] AC-1: 14 `verify_chain_vectors` tests PASS (`chain-empty`, `chain-single`, `chain-monotonic`, `chain-gap`, `chain-hash-mismatch`, `chain-timestamp-regression`, `append-success`, `append-idempotent`, `extension-enum`, `debug-redaction` + 4 boundary variants: `mixed-kinds` / `timestamp-equal` / `first-event-nonzero-id` / `long-chain-50`) — `cargo test -p octo-audit --test verify_chain_vectors` 14/14 PASS
-- [x] AC-2: `StoolapAuditSink::append` enforces `event_id` monotonicity — verified at `crates/octo-audit/src/storage/stoolap.rs:138-143` (`if event.event_id != prev_u64 + 1 { return Err(AuditError::SequenceGap { .. }) }`)
-- [x] AC-3: `StoolapAuditSink::append` idempotent re-append returns `AuditError::AlreadyExists` (distinct from `SequenceGap` per RFC-0012 §Trait G3) — verified at `crates/octo-audit/src/storage/stoolap.rs:135-137`
-- [x] AC-4: `StoolapAuditSink::append` computes `chain_hash` via `BLAKE3(canonical_bytes)` via substrate `compute_chain_hash` — verified at `crates/octo-audit/src/storage/stoolap.rs:147`
+- [x] AC-2: `StoolapAuditSink::append` enforces `event_id` monotonicity — verified at the `StoolapAuditSink::append` strict-successor branch (`if event.event_id != prev_u64 + 1 { return Err(AuditError::SequenceGap { .. }) }`)
+- [x] AC-3: `StoolapAuditSink::append` idempotent re-append returns `AuditError::AlreadyExists` (distinct from `SequenceGap` per RFC-0012 §Trait G3) — verified at the `StoolapAuditSink::append` duplicate-id branch
+- [x] AC-4: `StoolapAuditSink::append` computes `chain_hash` via `BLAKE3(canonical_bytes)` via substrate `compute_chain_hash` — verified at the `StoolapAuditSink::append` chain_hash recompute site
 - [x] AC-5: `StoolapAuditSink` impl lives in DOMAIN crate `octo-audit/src/storage/stoolap.rs` (Layer B façade, NOT Layer A frozen `octo-audit-core`) — matches 0013 + 0014 storage adapter pattern
 - [x] AC-6: `cargo clippy -p octo-audit --all-targets --all-features -- -D warnings` — clean
 - [x] AC-7: `cargo fmt --all -- --check` — clean

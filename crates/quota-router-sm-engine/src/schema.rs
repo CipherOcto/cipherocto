@@ -8,13 +8,13 @@
 //! Migrations are compile-time baked via `include_str!`. Single source of
 //! truth; reproducible across builds. Cipherocto-owned schema per
 //! [[stoolap-general-purpose-db]] Path B.
-#![allow(deprecated)]
 //!
 //! Layer B (mission `octo-storage-split` S2): the underlying migration
 //! runner is the Layer A substrate `octo_storage_core::_legacy_apply_pending`.
 //! The custom `MigratableDatabase` trait that historically shimmed the
 //! Layer A interface is gone — substrate takes `&octo_storage_core::Database`
 //! directly, so the trait-and-impl shim is unnecessary indirection.
+#![allow(deprecated)]
 
 /// Migration table DDL + tracking table bootstrap.
 pub const BOOTSTRAP_SQL: &str = include_str!("../migrations/000_bootstrap.sql");

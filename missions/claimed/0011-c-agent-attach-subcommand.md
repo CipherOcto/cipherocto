@@ -112,7 +112,7 @@ Land the `octo agent attach` subcommand per RFC-0011-c §9.3.5. The four sibling
 
 2. **`AgentAttachOutput` payload type** — same file. `#[derive(Serialize, Deserialize, Debug, Clone)]`. Wrapped in `OutputEnvelope<T>` with `schema_version = 4` per RFC-0011-c §9.4 / §9.4.1 Divergence slot table.
 
-3. **CLI handler** — same file. `agent attach` first calls `octo_wallet::lookup_agent(caller_did, agent_id)` to verify the agent exists and the caller is the holder, then reads the agent's `state` to confirm `AgentState::Running` (otherwise emits `AgentNotRunning(Uuid)` exit 48). Then calls `octo_runtime::attach(handle, since)`; surfaces `runtime_handle`, `attached_at_unix`, `event_cursor` in output. Respects `--since <unix-seconds>` (replay from timestamp; substrate validates). Respects `--json` (TTY-override). **No state mutation** — attach is read-only.
+3. **CLI handler** — same file. `agent attach` calls `octo_wallet::lookup_agent(caller_did, agent_id)` to verify the agent exists and the caller is the holder, then calls `octo_wallet::read_agent_state(caller_did, agent_id)` (the read-only state accessor added in commit `next e09f3e3a` + R53.5 fixes; caller-attestation re-enforced) to confirm `AgentState::Running` (otherwise emits `AgentNotRunning(Uuid)` exit 48). Then calls `octo_runtime::attach(handle, since)`; surfaces `runtime_handle`, `attached_at_unix`, `event_cursor` in output. Respects `--since <unix-seconds>` (replay from timestamp; substrate validates). Respects `--json` (TTY-override). **No state mutation** — attach is read-only.
 
 4. **`AgentNotRunning`, `RuntimeAttachFailed` error variants + exit 48/49 mapping** — `crates/octo-cli/src/error.rs` (Layer C/D). Add two variants to the `#[non_exhaustive] OctoCliError` enum; map to exits 48/49 per RFC-0011-c §9.8 (slot allocation 39-52).
 
@@ -177,27 +177,25 @@ cargo test -p octo-cli --lib --tests  # green
 
 Release-gated on companion substrate mission `0011-c-octo-runtime-substrate` landing (per RFC-0011-c §Implementation Phases Phase 1). Until `0011-c-octo-runtime-substrate` lands, the subcommand ships as a stub emitting `RuntimeSubstrateNotReady` (exit 51). The gate is enforced in CI via the `release_gate:` frontmatter annotation; the mission cannot be marked Completed without the substrate mission in the dependency graph being Closed first.
 
-## Substrate Gap (hard-checked 2026-09-11)
+## Substrate Gap Closure (2026-09-13)
 
-Same blocking substrate gap as mission 0011-c-agent-run:
+Substrate state verified after commit `next e09f3e3a` + R53.5 fixes:
 
 - `octo_runtime::attach` module EXISTS at `crates/octo-runtime/src/attach.rs`
 - `octo_runtime::spawn_agent` EXISTS at `crates/octo-runtime/src/spawn.rs`
+- `octo_wallet::lookup_agent(caller_did: &Did, uuid: Uuid) -> Result<AgentManifest, WalletError>`
+  EXISTS at `crates/octo-wallet/src/agent.rs` (Layer B; caller-attestation enforced;
+  re-exported via `crates/octo-wallet/src/lib.rs`).
+- `octo_wallet::read_agent_state(caller_did: &Did, uuid: Uuid) -> Result<AgentState, WalletError>`
+  EXISTS at `crates/octo-wallet/src/agent.rs` (Layer B; caller-attestation re-enforced;
+  re-exported via `crates/octo-wallet/src/lib.rs`). Added in R53.5 fix cycle to
+  surface the agent's current `AgentState` (the read-only state accessor that
+  `AgentManifest` does NOT carry) for the `agent attach` precondition.
+- `OctoCliError::AgentNotRunning(Uuid)` → exit 48 (Layer C/D mirror;
+  added in commit `next e09f3e3a`).
 
-Substrate gap blocking implementation:
-
-- `octo_wallet::transition_agent` (state machine substrate) DOES NOT
-  exist in `crates/octo-wallet/src/` (verified via
-  `grep -rE "pub (fn|async fn) " crates/octo-wallet/src/`). Without
-  it the CLI cannot verify state-machine readiness for attach.
-
-**Unblock path:** same additive substrate addition as
-0011-c-agent-run; one shared landing surfaces both missions.
-Release-gate on `0011-c-octo-runtime-substrate` satisfied at the crate
-level (the crate exists); the wallet transition surface is the residual
-blocker per RFC-0002 §Agent State Machine substrate.
-
-**Implementation cannot proceed** until the substrate addition lands.
+Mission CAN proceed once user transitions `status: Claimed` →
+`status: In Progress` per [[Initiative user-only]] + [[git-workflow]].
 Mission remains `Claimed` per [[memory-is-never-status-ground-truth]].
 
 ## Claimant

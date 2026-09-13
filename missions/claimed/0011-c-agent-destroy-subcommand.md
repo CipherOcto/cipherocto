@@ -44,12 +44,12 @@ The following substrate surface is now in place so this mission can be implement
 - `octo_audit::append_agent_transition_event` + `register_audit_sink` (Layer B façade) — the runtime adapter registers its `AppendOnlyAuditSink` once at startup, and `transition_agent` appends to it via the façade.
 - `octo_wallet::TransitionReceipt` projection struct re-exported from `crates/octo-wallet/src/lib.rs`.
 - `WalletError::AlreadyInTransition(Uuid)` / `InvalidStateTransition { from, to }` / `AuditUnavailable(String)` variants.
-- `OctoCliError::AuditSubstrateNotReady` → exit 52, `AlreadyInTransition(Uuid)` → exit 43, `InvalidStateTransition { from, to }` → exit 43, `AgentNotFound(Uuid)` → exit 42, `ConfirmationRequired` (still to add — part of this mission) → exit 47.
+- `OctoCliError::AuditSubstrateNotReady` → exit 52, `AlreadyInTransition(Uuid)` → exit 43, `InvalidStateTransition { from, to }` → exit 43, `AgentNotFound(Uuid)` → exit 42, `ConfirmationRequired { command: String }` → exit 2 (pre-existing variant; surfaces clap `--confirm` gate per parent RFC-0011 §Error Handling).
 - `AuditEventKind::AgentTransition` variant cfg-gated behind `octo-audit-internal` feature (Layer A frozen contract preserved); permanent once RFC-0012-v2 lands Accepted.
 
 ### Still pending at substrate level
 
-- The `ConfirmationRequired` error variant (exit 47) is reserved by RFC-0011-c §9.8 but the substrate enum shape is out-of-scope for unblock — this mission adds it.
+- The `--confirm` clap wiring (clap `requires` annotation) is out-of-scope for substrate; this mission adds it as part of the CLI handler per RFC-0011-c §9.3.4.
 
 ## Parent
 
@@ -63,12 +63,12 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-c-agent-cr
 
 - [ ] `octo agent destroy <agent-id>` implemented + unit-tested (TV-AGT9, TV-AGT10 pass per RFC-0011-c §Test Vectors)
 - [ ] `AgentDestroyOutput` payload type implemented + unit-tested (`agent_id`, `state`, `terminated_at_unix`, `audit_log_entry`)
-- [ ] **Confirmation gate enforced** — `--confirm` required flag; absent → `ConfirmationRequired` (CLI exit 2 / substrate exit 47); no `--yes` / `--force` override
+- [ ] **Confirmation gate enforced** — `--confirm` required flag; absent → `ConfirmationRequired { command }` (exit 2 per parent RFC-0011 §Error Handling; the clap `requires` annotation surfaces the variant); no `--yes` / `--force` override
 - [ ] State transition ACTIVE → TERMINATED verified end-to-end against RFC-0002 §Agent State Machine
 - [ ] Audit log append verified end-to-end against RFC-0011-a §7.4 Substrate [ADD] signatures (when landed)
 - [ ] **Audit stub fallback** — if RFC-0011-a audit substrate is not yet Accepted, this mission ships as an audit-append-failed stub emitting `AuditSubstrateNotReady` (exit 52). Mission completion requires RFC-0011-a Accepted.
 - [ ] `OctoCliRedactor` patterns applied (same set as `agent create` per RFC-0011-c §Security)
-- [ ] `AgentNotFound(Uuid)` (exit 42), `ConfirmationRequired` (exit 47), `InvalidStateTransition { from, to }` (exit 43) wired (per RFC-0011-c §9.8 slot allocation 39-52)
+- [ ] `AgentNotFound(Uuid)` (exit 42), `ConfirmationRequired { command }` (exit 2 per parent §Error Handling), `InvalidStateTransition { from, to }` (exit 43) wired (per RFC-0011-c §9.8 slot allocation 39-52; `ConfirmationRequired` exit code maps to the parent envelope)
 - [ ] `--reason` flag implemented (audit log entry; per RFC-0011-c §9.3.4)
 - [ ] TTY-aware renderer parity: pretty table on TTY, JSON when stdout is not a TTY OR `--json` set
 - [ ] Layer direction verified (no reverse deps per [[cipherocto-design-principles]])
@@ -78,11 +78,11 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-c-agent-cr
 
 ### Type Coverage
 
-| RFC-0011-c type        | Sub-step            | Notes                                                                                                                                       |
-| ---------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AgentDestroyArgs`     | Sub-step 1 (clap)   | Layer C/D; clap derive struct (`agent_id: Uuid`, `--confirm` (required), `--reason <string>`, `--json`)                                     |
-| `AgentDestroyOutput`   | Sub-step 2 (output) | Layer C/D; CLI-output wrapper (`agent_id: Uuid`, `state: AgentState`, `terminated_at_unix: u64`, `audit_log_entry: Hex32`)                  |
-| `ConfirmationRequired` | Sub-step 3 (errors) | Layer C/D; new `OctoCliError` variant; exit 47 per RFC-0011-c §9.8 (reserved 17–63 range; substrate exit; CLI re-checks with parent exit 2) |
+| RFC-0011-c type        | Sub-step            | Notes                                                                                                                                                                                                               |
+| ---------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AgentDestroyArgs`     | Sub-step 1 (clap)   | Layer C/D; clap derive struct (`agent_id: Uuid`, `--confirm` (required), `--reason <string>`, `--json`)                                                                                                             |
+| `AgentDestroyOutput`   | Sub-step 2 (output) | Layer C/D; CLI-output wrapper (`agent_id: Uuid`, `state: AgentState`, `terminated_at_unix: u64`, `audit_log_entry: [u8; 32]` (BLAKE3-256 chain-hash; hex-encoded by `OctoCliRedactor` for the wire form))           |
+| `ConfirmationRequired` | Sub-step 3 (errors) | Layer C/D; pre-existing `OctoCliError` variant carrying `command: String`; exit 2 per parent RFC-0011 §Error Handling (the clap `--confirm` `requires` annotation surfaces this when the operator forgets the flag) |
 
 ## Implementation Guide
 
@@ -114,9 +114,9 @@ Land the `octo agent destroy` subcommand per RFC-0011-c §9.3.4. The four siblin
 
 2. **`AgentDestroyOutput` payload type** — same file. `#[derive(Serialize, Deserialize, Debug, Clone)]`. Wrapped in `OutputEnvelope<T>` with `schema_version = 4` per RFC-0011-c §9.4 / §9.4.1 Divergence slot table.
 
-3. **CLI handler** — same file. `agent destroy` calls `octo_wallet::transition_agent(caller_did, agent_id, AgentState::Terminated, reason)`; the substrate appends the `AgentTransition` audit event with `from = running, to = terminated, reason` payload via the `octo-audit` façade. Surfaces `audit_log_entry` digest (Hex32) from `TransitionReceipt` in `AgentDestroyOutput`. Respects `--reason` (audit log entry; default: empty string per `validate_reason(0..=256)` cap). Respects `--json` (TTY-override). **Refuses to proceed without `--confirm`** — emits `ConfirmationRequired` (CLI exit 2 / substrate exit 47) and aborts. When the audit sink is not registered AND `--features octo-audit-internal` is OFF, emits `OctoCliError::AuditSubstrateNotReady` (exit 52).
+3. **CLI handler** — same file. `agent destroy` calls `octo_wallet::transition_agent(caller_did, agent_id, AgentState::Terminated, reason)`; the substrate appends the `AgentTransition` audit event with `from = running, to = terminated, reason` payload via the `octo-audit` façade. Surfaces `audit_log_entry` digest (`[u8; 32]` BLAKE3-256 chain-hash, hex-encoded by `OctoCliRedactor` for the wire form) from `TransitionReceipt` in `AgentDestroyOutput`. Respects `--reason` (audit log entry; default: empty string per `validate_reason(0..=256)` cap). Respects `--json` (TTY-override). **Refuses to proceed without `--confirm`** — the clap `requires` annotation surfaces `ConfirmationRequired { command }` (exit 2 per parent RFC-0011 §Error Handling) and aborts. When the audit sink is not registered AND `--features octo-audit-internal` is OFF, emits `OctoCliError::AuditSubstrateNotReady` (exit 52).
 
-4. **`ConfirmationRequired` error variant + exit 47 mapping** — `crates/octo-cli/src/error.rs` (Layer C/D). Add `ConfirmationRequired` variant to the `#[non_exhaustive] OctoCliError` enum; map to exit 47 per RFC-0011-c §9.8 (slot allocation 39-52). The CLI also performs its own `--confirm` re-check surfacing parent RFC-0011 §Error Handling exit 2.
+4. **No new `OctoCliError` variant required** — `ConfirmationRequired { command: String }` is pre-existing in `crates/octo-cli/src/error.rs` and exits with code 2 per the parent `OctoCliError` `exit_code()` mapping. The CLI dispatch wires the `--confirm` clap `requires` annotation; no `error.rs` edit needed.
 
 ## Cargo deps
 
@@ -132,14 +132,14 @@ No new external crates required; all substrate types are defined in `octo-wallet
 
 2 TV (TV-AGT9..TV-AGT10) covering `agent destroy`:
 
-| #        | Subcommand      | Input                        | Expected Output                                                                | Notes                      |
-| -------- | --------------- | ---------------------------- | ------------------------------------------------------------------------------ | -------------------------- |
-| TV-AGT9  | `agent destroy` | Active agent, `--confirm`    | `AgentDestroyOutput { state: TERMINATED, audit_log_entry: ..., ... }` (exit 0) | Audit log appended         |
-| TV-AGT10 | `agent destroy` | Active agent, no `--confirm` | `ConfirmationRequired` (exit 47 substrate / exit 2 CLI)                        | Confirmation gate enforced |
+| #        | Subcommand      | Input                        | Expected Output                                                                                  | Notes                      |
+| -------- | --------------- | ---------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------- |
+| TV-AGT9  | `agent destroy` | Active agent, `--confirm`    | `AgentDestroyOutput { state: TERMINATED, audit_log_entry: ..., ... }` (exit 0)                   | Audit log appended         |
+| TV-AGT10 | `agent destroy` | Active agent, no `--confirm` | `ConfirmationRequired { command: "agent destroy" }` (exit 2 per parent RFC-0011 §Error Handling) | Confirmation gate enforced |
 
 ## Layer direction (RFC-0011-c §9.1 Architecture + per [[cipherocto-design-principles]])
 
-- `octo-cli` (Layer C/D) — new `AgentAction::Destroy` dispatch + `AgentDestroyOutput` payload type + `ConfirmationRequired` error variant.
+- `octo-cli` (Layer C/D) — new `AgentAction::Destroy` dispatch + `AgentDestroyOutput` payload type + `--confirm` clap `requires` wiring (no new `OctoCliError` variant; `ConfirmationRequired { command }` is pre-existing).
 - `octo-wallet` (Layer B) — substrate `transition_agent`, `AgentState` (existing types).
 - `octo-audit` (Layer B) — audit log append substrate (per RFC-0011-a §7.4 Substrate [ADD] signatures).
 - NO new Layer A types introduced.
@@ -180,39 +180,35 @@ cargo test -p octo-cli --lib --tests  # green
 
 No release gate at mission landing. The `agent destroy` subcommand is substrate-only and depends on `0011-c-agent-create-subcommand` for the clap root wiring. The audit log append depends on RFC-0011-a substrate; if RFC-0011-a is not yet Accepted, the subcommand ships as a stub emitting `AuditSubstrateNotReady` (exit 52). **Mission completion requires RFC-0011-a Accepted.**
 
-## Substrate Gap (hard-checked 2026-09-11)
+## Substrate Gap Closure (2026-09-13)
 
-Two-blocker substrate verification:
+Substrate state verified after commit `next e09f3e3a` + R53.5 fixes:
 
-1. **State machine blocker** — `octo_wallet::transition_agent` with
-   `Terminated` target DOES NOT EXIST in `crates/octo-wallet/src/`
-   (verified via `grep -rE "pub (fn|async fn) " crates/octo-wallet/src/`).
-   Sub-step 3 cannot dispatch the destroy transition.
+- `octo_wallet::transition_agent(caller_did: &Did, uuid: Uuid, target: AgentState, reason: Option<&str>) -> Result<TransitionReceipt, WalletError>`
+  EXISTS at `crates/octo-wallet/src/agent.rs` (Layer B; state-machine
+  guard accepts `Registered → Running` and `Running → Terminated` per
+  RFC-0015-a Appendix A). `TransitionReceipt` projection re-exported
+  via `crates/octo-wallet/src/lib.rs`.
+- `octo_audit::append_agent_transition_event(payload, transitioned_at_unix_secs) -> Result<[u8; 32], AuditError>`
+  EXISTS at `crates/octo-audit/src/audit_write.rs` (Layer B façade;
+  cfg-gated behind `octo-audit-internal` feature). The façade owns
+  chain-hash continuity via a process-global `LAST_CHAIN_HASH`
+  `OnceLock<Mutex<[u8; 32]>>` so the Layer A frozen
+  `AppendOnlyAuditSink` trait is unchanged.
+- `octo_audit::register_audit_sink(sink: Box<dyn AppendOnlyAuditSink + Send>) -> bool`
+  EXISTS at `crates/octo-audit/src/audit_write.rs` (idempotent
+  first-call-wins registration).
+- `OctoCliError::AuditSubstrateNotReady` → exit 52, `AlreadyInTransition(Uuid)` → exit 43,
+  `InvalidStateTransition { from, to }` → exit 43, `AgentNotRunning(Uuid)` → exit 48.
+- `OctoCliError::ConfirmationRequired { command: String }` → exit 2 (pre-existing variant;
+  the CLI wires the `--confirm` clap `requires` annotation to surface it per parent
+  RFC-0011 §Error Handling).
+- `AuditEventKind::AgentTransition { agent_id: String, from: String, to: String, reason: Option<String> }`
+  variant cfg-gated behind `feature = "octo-audit-internal"` (Layer A frozen contract preserved);
+  permanent once RFC-0012-v2 lands Accepted.
 
-2. **Audit append blocker** — `octo-audit` and `octo-audit-core`
-   expose `AppendOnlyAuditSink` trait + `AuditEvent`/`AuditEventKind`
-   enums (Layer A frozen per RFC-0012) but DO NOT expose a public
-   `append_event` / `append_audit` function callable from CLI. The
-   `OctoCliAuditAppend` facade layer required by RFC-0011-a §7.4
-   Substrate [ADD] signatures is unbuilt.
-
-**Unblock path:**
-
-- Substrate #1: add `pub fn transition_agent` (small additive, ~30 LoC)
-  to `crates/octo-wallet/src/agent.rs` (shared landing with 0011-c
-  run + attach missions).
-- Substrate #2: file RFC-0011-a-substrate (settlement receipt append
-  surface) — separate substrate RFC cycle, NOT a closure exercise.
-  Mission YAML frontmatter `v: "1.0"` should bump to `v: "1.1"`
-  once substrate RFC is authored.
-
-**Mission completion requires RFC-0011-a Accepted** per YAML frontmatter
-`release_gate`. RFC-0011-a status MUST be `Accepted` not `Draft` for
-this mission to land. The mission ships as a stub emitting
-`AuditSubstrateNotReady` (exit 52) per §Backward compat until both
-substrate blockers resolve.
-
-**Implementation cannot proceed** until both substrate blockers land.
+Mission CAN proceed once user transitions `status: Claimed` →
+`status: In Progress` per [[Initiative user-only]] + [[git-workflow]].
 Mission remains `Claimed` per [[memory-is-never-status-ground-truth]].
 
 ## Claimant

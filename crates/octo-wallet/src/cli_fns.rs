@@ -121,7 +121,7 @@ pub fn register_agent(
 /// Best-effort wall-clock for the `registered_at_unix` field. Phase 1
 /// uses `SystemTime::now()`; Phase 2 will route through the substrate
 /// monotonic clock for cross-replica determinism (RFC-0008 Class B).
-fn now_unix_secs() -> u64 {
+pub(crate) fn now_unix_secs() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

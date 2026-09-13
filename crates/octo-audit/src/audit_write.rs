@@ -69,6 +69,18 @@ pub struct AgentTransitionPayload {
 /// fail-closed per RFC-0015-a §6.1 rollback contract.
 static AUDIT_SINK: OnceLock<Mutex<Box<dyn AppendOnlyAuditSink + Send>>> = OnceLock::new();
 
+/// Process-global last-emitted chain-hash (BLAKE3-256).
+///
+/// The `AppendOnlyAuditSink` trait is Layer A frozen (RFC-0012) and
+/// exposes only `append` + `last_event_id` — NOT `last_chain_hash`.
+/// Chain-hash continuity is therefore owned by THIS façade (Layer B)
+/// rather than the sink (Layer A), keeping the frozen trait contract
+/// intact. Every successful append atomically updates this hash so
+/// the next event's `prev_chain_hash` field links to the previous
+/// event's `chain_hash` (RFC-0012 §Trait G3 + RFC-0015-a §6.1
+/// rollback contract).
+static LAST_CHAIN_HASH: OnceLock<Mutex<[u8; 32]>> = OnceLock::new();
+
 /// Register the process-global audit sink. Returns `true` on first
 /// registration, `false` if a sink was already registered (idempotent
 /// fail: caller is expected to call this exactly once at startup;
@@ -116,11 +128,18 @@ pub fn append_agent_transition_event(
         .lock()
         .map_err(|_| AuditError::SinkSpecific("audit chain sink mutex poisoned".to_string()))?;
 
-    // Resolve `event_id` + `prev_chain_hash` from the sink. The
-    // sink owns event-id monotonicity (RFC-0012 §Trait G3) so we
-    // never invent IDs at the façade.
+    // Resolve `event_id` from the sink (RFC-0012 §Trait G3: sink owns
+    // event-id monotonicity) and `prev_chain_hash` from the façade's
+    // process-global chain-hash registry (Layer B façade-owned
+    // continuity; the Layer A frozen `AppendOnlyAuditSink` trait
+    // does not expose `last_chain_hash`).
     let next_event_id = sink.last_event_id().map(|opt| opt.map_or(0, |id| id + 1))?;
-    let prev_chain_hash = [0u8; 32]; // Phase 2 unblock: single-event appends; chain-hash continuity lands with the runtime adapter.
+    let prev_chain_hash = match LAST_CHAIN_HASH.get() {
+        Some(m) => *m
+            .lock()
+            .map_err(|_| AuditError::SinkSpecific("audit chain-hash mutex poisoned".to_string()))?,
+        None => [0u8; 32],
+    };
 
     // Construct the canonical `AuditEvent`. `cap_root_hash` is
     // zeroed (the agent transition is not capability-bound;
@@ -146,6 +165,27 @@ pub fn append_agent_transition_event(
     event.chain_hash = compute_chain_hash(&event);
 
     sink.append(&event)?;
+
+    // Atomically update the façade-owned chain-hash registry so the
+    // next append links to this event's `chain_hash`. Fail-closed:
+    // if the lock is poisoned we surface the error rather than
+    // silently breaking chain continuity.
+    let chain_hash_to_record = event.chain_hash;
+    match LAST_CHAIN_HASH.get() {
+        Some(existing) => {
+            *existing.lock().map_err(|_| {
+                AuditError::SinkSpecific("audit chain-hash mutex poisoned".to_string())
+            })? = chain_hash_to_record;
+        }
+        None => {
+            // First event ever appended. Lazily initialize.
+            let m = Mutex::new(chain_hash_to_record);
+            // `OnceLock::set` returns Err if another thread won the
+            // race; in that case the winner's hash is canonical.
+            let _ = LAST_CHAIN_HASH.set(m);
+        }
+    }
+
     Ok(event.chain_hash)
 }
 

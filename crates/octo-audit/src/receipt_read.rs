@@ -12,7 +12,6 @@
 //! 1024 entries.
 
 use std::collections::BTreeMap;
-#[cfg(feature = "octo-audit-internal")]
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
@@ -152,11 +151,16 @@ pub fn get_receipt(id: &u64) -> Result<Receipt, AuditError> {
 /// `#[allow(dead_code)]` is required because the lib target's
 /// `dead_code` lint does not see the `#[cfg(test)]` test call sites
 /// (test target is a separate compilation unit); the function is
-/// exercised by the internal-feature-gated tests at the bottom of
-/// this module.
-#[cfg(feature = "octo-audit-internal")]
-#[allow(dead_code)]
-pub(crate) fn audit_home() -> Result<PathBuf, AuditError> {
+/// Resolve the canonical audit home directory
+/// (RFC-0016 §6.2.3; RFC-0011-a §Key Files `audit_home`).
+///
+/// Read-path discovery helper for the CLI `octo audit list/show` style
+/// subcommands. Resolves to `<OCTO_HOME>/audit/receipts` when
+/// `OCTO_HOME` is set, falling back to
+/// `<HOME>/.config/octo/audit/receipts` (default per
+/// RFC-0011-a §Configuration). No IO, no state mutation; pure
+/// path resolution.
+pub fn audit_home() -> Result<PathBuf, AuditError> {
     if let Ok(octo_home) = std::env::var("OCTO_HOME") {
         Ok(PathBuf::from(octo_home).join("audit/receipts"))
     } else {

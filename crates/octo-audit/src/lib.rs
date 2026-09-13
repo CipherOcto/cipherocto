@@ -48,7 +48,7 @@ pub use scrub::{scrub_adapter_error, scrub_adapter_error_with, scrub_registry_va
 // audit_home + AuditFilter). Phase 1 process-global registry; Stoolap
 // DOMAIN adapter lands with RFC-0016-a paired-acceptance unblock.
 pub mod receipt_read;
-pub use receipt_read::{get_receipt, insert_receipt, list_receipts, AuditFilter};
+pub use receipt_read::{audit_home, get_receipt, insert_receipt, list_receipts, AuditFilter};
 
 // RFC-0015-a §6.1 paired-acceptance bridge: audit write-path façade.
 // Process-global sink registry + `append_agent_transition_event`

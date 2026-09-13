@@ -49,14 +49,24 @@ Open — DOC-ONLY amendment per RFC-0011-a §Implementation Phases; both subcomm
 
 RFC-0011-a §Specification (rfcs/draft/process/0011-a-audit-commands.md).
 
-### Substrate additions landed (commits landed before 2026-09-13 read-path substrate cycle)
+### Substrate additions landed (commits `next e09f3e3a` + R53.5 fixes, 2026-09-13)
 
-The following substrate surface is in place for the audit read path:
+The following substrate surface is in place for the audit read path (this mission's primary concern):
 
-- `octo_audit::list_receipts(filter: AuditFilter)` — list-shape projection over `Receipt` rows.
-- `octo_audit::get_receipt(id)` — point lookup by integer key.
-- `octo_audit::audit_home()` discovery helper (default OFF — `octo-audit-internal` feature).
+- `octo_audit::list_receipts(filter: AuditFilter) -> Vec<u64>` — list-shape projection over `Receipt` rows; returns integer-key IDs (the typed `ReceiptId` newtype is deferred — see "still missing" below).
+- `octo_audit::get_receipt(id: u64) -> Result<Receipt, AuditError>` — point lookup by integer key.
+- `octo_audit::audit_home() -> Result<PathBuf, AuditError>` discovery helper (Layer B façade read-path; re-exported from `octo_audit::audit_home` per R53.5 fix cycle; previously `pub(crate)` — now `pub`).
 - `octo_audit::AuditFilter` — 5-field filter primitive (RFC-0011-a §Substrate entry #3).
+
+### Adjacent substrate surface (not directly required for this read-path mission)
+
+The following surface lives alongside the read-path substrate but is consumed by OTHER missions (0011-c-agent-destroy, 0011-c-agent-run via `transition_agent`):
+
+- `octo_audit::append_agent_transition_event(payload: &AgentTransitionPayload, transitioned_at_unix_secs: u64) -> Result<[u8; 32], AuditError>` (write-path; cfg-gated behind `octo-audit-internal` feature).
+- `octo_audit::register_audit_sink(sink: Box<dyn AppendOnlyAuditSink + Send>) -> bool` (write-path; cfg-gated).
+- `octo_audit::AgentTransitionPayload` projection struct (write-path; cfg-gated).
+
+This mission does NOT depend on the write-path surface above; the read-path only requires `list_receipts`, `get_receipt`, `audit_home`, and `AuditFilter`.
 
 ### Substrate still missing (deferred, paired-acceptance pending)
 
@@ -97,7 +107,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing per parent RFC-00
 - [ ] CI regression: G1 (no INSERT/UPDATE SQL hit the receipt store during `octo audit {list,show}` invocation per RFC-0011-a §Design Goals)
 - [ ] CI regression: G5 (byte-equivalent output across `auditor` / `ci` / `dev` / `human` modes for same canonical fixture per RFC-0011-a §Design Goals)
 - [ ] Substrate `[ADD]` surface landed via substrate-side RFC (filed separately per RFC-0011-a §Key Files to Modify — SUBSTRATE; out of scope for this RFC cycle but mission cannot Claim without substrate amendment acceptance)
-- [ ] Layer direction verified (octo-audit is Layer C; depends on Layer B octo-settlement; no reverse deps per [[cipherocto-design-principles]])
+- [ ] Layer direction verified (octo-audit is Layer B façade depending on Layer A octo-audit-core substrate per RFC-0012 §Module Layout; the peer dependency on Layer B octo-settlement is B→B, NOT C→B; no reverse deps per [[cipherocto-design-principles]])
 - [ ] `cargo fmt --all -- --check` clean
 - [ ] `cargo clippy -p octo-cli --all-targets --all-features -- -D warnings` zero warnings
 - [ ] `cargo test -p octo-cli --all-features` green

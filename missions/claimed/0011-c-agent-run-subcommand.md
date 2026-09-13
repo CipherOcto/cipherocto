@@ -114,7 +114,7 @@ Land the `octo agent run` subcommand per RFC-0011-c §9.3.2. The four sibling su
 
 2. **`AgentRunOutput` payload type** — same file. `#[derive(Serialize, Deserialize, Debug, Clone)]`. Wrapped in `OutputEnvelope<T>` with `schema_version = 4` per RFC-0011-c §9.4 / §9.4.1 Divergence slot table.
 
-3. **CLI handler** — same file. `agent run` calls `octo_wallet::transition_agent(caller_did, agent_id, AgentState::Running, reason)` (Layer B; substrate enforces caller-attestation against holder_did per RFC-0011 §Lifecycle Requirements, then the state-machine guard) then `octo_runtime::spawn_agent(agent_id, handle)`; surfaces `runtime_handle` in output alongside `TransitionReceipt::audit_log_entry` (Hex32). Respects `--detach` (default: detached; spawn does not block). Respects `--json` (TTY-override).
+3. **CLI handler** — same file. `agent run` calls `octo_wallet::transition_agent(caller_did, agent_id, AgentState::Running, reason)` (Layer B; substrate enforces caller-attestation against holder_did per RFC-0011 §Lifecycle Requirements, then the state-machine guard) then `octo_runtime::spawn_agent(agent_id, handle)`; surfaces `runtime_handle` in output alongside `TransitionReceipt::audit_log_entry` (BLAKE3-256 chain-hash `[u8; 32]`; the CLI hex-encodes it via `OctoCliRedactor` for the wire form). Respects `--detach` (default: detached; spawn does not block). Respects `--json` (TTY-override).
 
 4. **`AgentNotFound`, `InvalidStateTransition`, `RuntimeSpawnFailed` error variants + exit 42/43/44 mapping** — `crates/octo-cli/src/error.rs` (Layer C/D). Add three variants to the `#[non_exhaustive] OctoCliError` enum; map to exits 42/43/44 per RFC-0011-c §9.8 (slot allocation 39-52).
 
@@ -180,31 +180,24 @@ cargo test -p octo-cli --lib --tests  # green
 
 Release-gated on companion substrate mission `0011-c-octo-runtime-substrate` landing (per RFC-0011-c §Implementation Phases Phase 1). Until `0011-c-octo-runtime-substrate` lands, the subcommand ships as a stub emitting `RuntimeSubstrateNotReady` (exit 51). The gate is enforced in CI via the `release_gate:` frontmatter annotation; the mission cannot be marked Completed without the substrate mission in the dependency graph being Closed first.
 
-## Substrate Gap (hard-checked 2026-09-11)
+## Substrate Gap Closure (2026-09-13)
 
-Substrate verification confirms:
+Substrate state verified after commit `next e09f3e3a`:
 
 - `octo_runtime::spawn_agent` EXISTS at `crates/octo-runtime/src/spawn.rs`
 - `octo_runtime::error::RuntimeError::RuntimeSpawnFailed` EXISTS at
   `crates/octo-runtime/src/error.rs` with exit 44 wired
 - `octo_runtime::handle::RuntimeHandle` EXISTS
+- `octo_wallet::transition_agent(caller_did: &Did, uuid: Uuid, target: AgentState, reason: Option<&str>) -> Result<TransitionReceipt, WalletError>`
+  EXISTS at `crates/octo-wallet/src/agent.rs` (Layer B; state-machine
+  guard accepts `Registered → Running` and `Running → Terminated` per
+  RFC-0015-a Appendix A). `TransitionReceipt` projection
+  (`agent_id, previous_state, current_state, transitioned_at_unix,
+audit_log_entry: [u8; 32]`) is re-exported via
+  `crates/octo-wallet/src/lib.rs`.
 
-Substrate gap blocking implementation:
-
-- `octo_wallet::transition_agent` referenced by Sub-step 3 (CLI handler
-  calls `octo_wallet::transition_agent(agent_id, Active)`) DOES NOT
-  exist in `crates/octo-wallet/src/` (verified via
-  `grep -rE "pub (fn|async fn) " crates/octo-wallet/src/`).
-
-**Unblock path:** add `pub fn transition_agent(uuid: Uuid, target: AgentState, reason: Option<&str>) -> Result<AgentSummary, WalletError>`
-to `crates/octo-wallet/src/agent.rs` (small additive; ~30 LoC + state
-machine guard tests). Until that lands, this mission ships as a stub
-emitting `RuntimeSubstrateNotReady` (exit 51) per §Backward compat.
-The release_gate on `0011-c-octo-runtime-substrate` is partially
-satisfied (`octo-runtime` crate exists); the wallet transition surface
-is the residual blocker per RFC-0002 §Agent State Machine substrate.
-
-**Implementation cannot proceed** until the substrate addition lands.
+Mission CAN proceed once user transitions `status: Claimed` →
+`status: In Progress` per [[Initiative user-only]] + [[git-workflow]].
 Mission remains `Claimed` per [[memory-is-never-status-ground-truth]].
 
 ## Claimant

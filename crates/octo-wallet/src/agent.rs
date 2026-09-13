@@ -263,13 +263,10 @@ pub struct TransitionReceipt {
 }
 
 /// Best-effort wall-clock for `transitioned_at_unix` (Phase 2 unblock).
-/// Reuses the same helper pattern as `cli_fns::now_unix_secs` but
-/// lives in the agent module so `transition_agent` is self-contained.
+/// Routes through `cli_fns::now_unix_secs` so the wall-clock source
+/// is single-sourced (RFC-0015 §6.2.5 substrate-faithful invariant).
 fn now_unix_secs() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
+    crate::cli_fns::now_unix_secs()
 }
 
 /// Transition an agent's lifecycle state — RFC-0015-a §6.1.
@@ -470,7 +467,7 @@ pub fn list_owned_agents(
         .map(|record| AgentSummary {
             agent_id: record.manifest.manifest_id,
             holder_did: record.holder_did.as_str().to_owned(),
-            state: AgentState::Registered,
+            state: record.state,
             label: record.manifest.label.clone(),
             registered_at_unix: record.registered_at_unix,
             manifest_digest: record.manifest.digest_hex(),
@@ -508,6 +505,35 @@ pub fn lookup_agent(caller_did: &Did, uuid: Uuid) -> Result<AgentManifest, Walle
     }
 
     Ok(record.manifest.clone())
+}
+
+/// Point lookup of an agent state by canonical UUID
+/// (RFC-0015 §6.2.6 + RFC-0011-c §9.3.5 attach precondition).
+///
+/// Substrate-faithful to the in-memory `BTreeMap<Uuid, AgentRecord>`
+/// registry. Returns the current `AgentState` on hit; `AgentNotFound`
+/// on miss. Caller-attestation enforced: caller DID must equal the
+/// agent's holder DID or `ForbiddenHolderMismatch` is raised
+/// (multi-DID enumeration prevention). No mutation; lock released
+/// before return (state read is `Copy`).
+///
+/// Used by the `octo agent attach` subcommand to gate
+/// `OctoCliError::AgentNotRunning(Uuid)` (exit 48) — read-only
+/// precondition per RFC-0011-c §9.3.5.
+pub fn read_agent_state(caller_did: &Did, uuid: Uuid) -> Result<AgentState, WalletError> {
+    let registry = registry()
+        .lock()
+        .map_err(|_| WalletError::Config("agent registry mutex poisoned".to_string()))?;
+
+    let record = registry
+        .get(&uuid)
+        .ok_or(WalletError::AgentNotFound(uuid))?;
+
+    if record.holder_did.as_str() != caller_did.as_str() {
+        return Err(WalletError::ForbiddenHolderMismatch);
+    }
+
+    Ok(record.state)
 }
 
 /// Substrate-faithful control-character filter primitive

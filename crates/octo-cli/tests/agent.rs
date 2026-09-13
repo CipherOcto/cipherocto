@@ -11,10 +11,14 @@
 //! Each test runs as a child binary via `assert_cmd`, captures
 //! stdout/stderr, and inspects exit code + JSON shape per vector.
 
-use assert_cmd::Command;
-use octo_cli::redact::{redact_by_field, REDACTED_KEY};
-use predicates::str::contains;
 use std::io::Write;
+
+use assert_cmd::Command;
+use octo_cli::redact::{
+    redact_by_field, truncate_id, RedactedIdentifier, RedactionContext, REDACTED_KEY,
+};
+use predicates::str::contains;
+use serde_json::json;
 use tempfile::NamedTempFile;
 
 fn octo() -> Command {
@@ -202,8 +206,11 @@ fn tv_agt_help_lists_all_subcommands() {
         .stdout(contains("attach"));
 }
 
-/// TV-AGT-ENV-1: clap surface validation passes (catches malformed
-/// arg metadata at compile time via `debug_assert`).
+/// TV-AGT-CLAP-1: clap surface validation passes (catches
+/// malformed arg metadata at compile time via `debug_assert`).
+/// Reserves the `TV-AGT-ENV-*` namespace for envelope-boundary
+/// redaction vectors per mission
+/// `0011-c-agent-redaction-envelope`.
 #[test]
 fn tv_agt_clap_surface_is_valid() {
     // Just by invoking `--help` we exercise the clap surface; an
@@ -251,4 +258,200 @@ fn tv_agt_redact_log_line_replaces_agent_family_fields() {
         !log_line.contains("REDACTED"),
         "log line as-written MUST NOT contain any REDACTED marker (redaction happens at emit time): {log_line}",
     );
+}
+
+// ============================================================================
+// Phase 2 envelope-boundary redaction vectors — mission
+// `0011-c-agent-redaction-envelope` §Scope sub-step 4.
+//
+// These vectors exercise the substrate-faithful contract:
+//   1. `holder_did` redaction — operator-owned DID pass-through,
+//      non-owned DID stays wholesale REDACTED_KEY.
+//   2. `agent_id` truncation — first 8 chars + ellipsis form.
+//   3. Wholesale `REDACTED_KEY` for `capability_root` (and other
+//      `RedactedIdentifier` fields).
+//   4. `RedactionContext::apply` walks nested JSON objects.
+//
+// Each test exercises `RedactedIdentifier` + `RedactionContext` in
+// isolation — the envelope renderer is the only consumer that walks
+// a full `OutputEnvelope`, and unit-tests of that path live in
+// `crates/octo-cli/src/output.rs` (see `tv_env_redact_*`).
+// ============================================================================
+
+/// TV-AGT-ENV-1: `holder_did` redaction — operator-owned DID
+/// pass-through. When the CLI build path passes a `holder_did_raw`
+/// equal to the active DID, the renderer un-redacts the
+/// `[REDACTED:key]` marker to the actual DID value. This is the
+/// conditional reveal per mission §Scope sub-step 2.
+#[test]
+fn tv_agt_redact_holder_did_un_redacts_when_match() {
+    let mut payload = json!({
+        "agent_id": REDACTED_KEY,
+        "holder_did": REDACTED_KEY,
+        "state": "registered",
+    });
+    let redactor = self_holder_redactor("did:octo:zOperator");
+    redactor.apply(&mut payload);
+
+    let obj = payload.as_object().expect("payload is object");
+    assert_eq!(
+        obj.get("holder_did").and_then(|v| v.as_str()),
+        Some("did:octo:zOperator"),
+        "holder_did must un-redact to active DID when match: got {payload}",
+    );
+}
+
+/// TV-AGT-ENV-2: `holder_did` redaction — non-owned DID stays
+/// redacted. When `holder_did_raw != active_did`, the renderer keeps
+/// `[REDACTED:key]` (does NOT un-redact to the non-self DID).
+#[test]
+fn tv_agt_redact_holder_did_stays_redacted_when_mismatch() {
+    let mut payload = json!({
+        "agent_id": REDACTED_KEY,
+        "holder_did": REDACTED_KEY,
+        "state": "registered",
+    });
+    let redactor = RedactionContext::new()
+        .with_active_did("did:octo:zOperator")
+        .with_holder_did("did:octo:zOtherHolder")
+        .with_agent_id("00000000-0000-4000-8000-000000000001");
+    redactor.apply(&mut payload);
+
+    let obj = payload.as_object().expect("payload is object");
+    assert_eq!(
+        obj.get("holder_did").and_then(|v| v.as_str()),
+        Some(REDACTED_KEY),
+        "holder_did must stay REDACTED_KEY when mismatch: got {payload}",
+    );
+}
+
+/// TV-AGT-ENV-3: `agent_id` truncation. The renderer replaces
+/// `[REDACTED:key]` with a truncated form (first 8 chars + ellipsis)
+/// so operators can correlate with substrate logs without seeing the
+/// full UUID.
+#[test]
+fn tv_agt_redact_agent_id_truncates_to_eight_chars() {
+    let mut payload = json!({
+        "agent_id": REDACTED_KEY,
+        "holder_did": REDACTED_KEY,
+    });
+    let redactor = self_holder_redactor("did:octo:zOperator");
+    redactor.apply(&mut payload);
+
+    let obj = payload.as_object().expect("payload is object");
+    assert_eq!(
+        obj.get("agent_id").and_then(|v| v.as_str()),
+        Some("00000000..."),
+        "agent_id must truncate to first 8 chars + ellipsis: got {payload}",
+    );
+}
+
+/// TV-AGT-ENV-4: `capability_root` always emits `[REDACTED:key]`.
+/// The CLI build path wraps `capability_root` in `RedactedIdentifier`
+/// (wholesale redaction at the type level). The renderer walker is
+/// a no-op for this field — the `Serialize` impl emits the marker
+/// directly, and the walker leaves it untouched.
+#[test]
+fn tv_agt_redact_capability_root_emits_redacted_key() {
+    let redacted =
+        RedactedIdentifier::new("abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234");
+    let json = serde_json::to_string(&redacted).expect("serialize RedactedIdentifier");
+    assert_eq!(
+        json, "\"[REDACTED:key]\"",
+        "RedactedIdentifier::serialize must emit [REDACTED:key] marker, got: {json}",
+    );
+    // Inner value MUST NOT leak through Serialize.
+    assert!(
+        !json.contains("abcd1234"),
+        "RedactedIdentifier leaked inner value: {json}",
+    );
+}
+
+/// TV-AGT-ENV-5: `RedactionContext::apply` recurses into nested
+/// objects + arrays. The walker handles arbitrary JSON shapes so
+/// future envelope payloads (e.g. `AgentListOutput` with arrays of
+/// agents) get redaction without a per-shape rewrite.
+#[test]
+fn tv_agt_redact_walks_nested_payload() {
+    let mut payload = json!({
+        "agents": [
+            {
+                "agent_id": REDACTED_KEY,
+                "holder_did": REDACTED_KEY,
+            },
+            {
+                "agent_id": REDACTED_KEY,
+                "holder_did": REDACTED_KEY,
+            },
+        ],
+        "metadata": {
+            "agent_id": REDACTED_KEY,
+            "holder_did": REDACTED_KEY,
+        },
+    });
+    let redactor = self_holder_redactor("did:octo:zOperator");
+    redactor.apply(&mut payload);
+
+    // Outer metadata block.
+    let metadata = payload
+        .get("metadata")
+        .and_then(|v| v.as_object())
+        .expect("metadata is object");
+    assert_eq!(
+        metadata.get("holder_did").and_then(|v| v.as_str()),
+        Some("did:octo:zOperator"),
+        "metadata.holder_did un-redacted: {payload}",
+    );
+    assert_eq!(
+        metadata.get("agent_id").and_then(|v| v.as_str()),
+        Some("00000000..."),
+        "metadata.agent_id truncated: {payload}",
+    );
+
+    // Inner agents array.
+    let agents = payload
+        .get("agents")
+        .and_then(|v| v.as_array())
+        .expect("agents is array");
+    assert_eq!(agents.len(), 2);
+    for (i, agent) in agents.iter().enumerate() {
+        let obj = agent.as_object().expect("agent is object");
+        assert_eq!(
+            obj.get("holder_did").and_then(|v| v.as_str()),
+            Some("did:octo:zOperator"),
+            "agents[{i}].holder_did un-redacted: {payload}",
+        );
+        assert_eq!(
+            obj.get("agent_id").and_then(|v| v.as_str()),
+            Some("00000000..."),
+            "agents[{i}].agent_id truncated: {payload}",
+        );
+    }
+}
+
+/// TV-AGT-ENV-6: `truncate_id` returns the first 8 chars +
+/// ellipsis. UUID form gives the first UUID segment
+/// (`xxxxxxxx-...`). DID form gives the public scheme prefix
+/// (`did:octo...`).
+#[test]
+fn tv_agt_redact_truncate_id_returns_eight_chars_plus_ellipsis() {
+    assert_eq!(
+        truncate_id("00000000-0000-4000-8000-000000000001"),
+        "00000000...",
+    );
+    assert_eq!(truncate_id("did:octo:zTest"), "did:octo...");
+    // Short input (< 8 chars) — returns the full input + ellipsis.
+    assert_eq!(truncate_id("short"), "short...");
+    // Empty input — returns empty + ellipsis.
+    assert_eq!(truncate_id(""), "...");
+}
+
+/// Build a `RedactionContext` with holder_did == active_did so the
+/// conditional `holder_did` un-redact path fires. The `agent_id`
+/// truncation always fires (independent of holder match).
+fn self_holder_redactor(active_did: &str) -> RedactionContext {
+    RedactionContext::new()
+        .with_active_did(active_did)
+        .with_holder_did(active_did)
+        .with_agent_id("00000000-0000-4000-8000-000000000001")
 }

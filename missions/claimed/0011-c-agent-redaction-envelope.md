@@ -32,9 +32,9 @@ extends redaction to the envelope payload boundary itself, so that
 `octo agent create --json` output never leaks the agent substrate
 identifiers verbatim even when piped through `jq`.
 
-1. **`RedactedString` newtype for envelope-boundary redaction** —
+1. **`RedactedIdentifier` newtype for envelope-boundary redaction** —
    `crates/octo-cli/src/redact.rs` (Layer C/D). New wrapper
-   `RedactedString(&'static str)` with a custom `Serialize` impl
+   `RedactedIdentifier(String)` with a custom `Serialize` impl
    that emits `"[REDACTED:key]"` regardless of inner value. The
    wrapper enforces the redaction invariant at the type level —
    downstream JSON consumers cannot accidentally render the inner
@@ -48,16 +48,16 @@ identifiers verbatim even when piped through `jq`.
    has no notion of context-aware redaction).
 3. **`agent_id` truncation** — `agent_id` MUST be truncated to
    the first 8 hex chars + `...` (e.g.,
-   `"00000000-…"`) per RFC-0011 §Hex32 newtype redaction. Distinct
+   `"00000000..."`) per RFC-0011 §Hex32 newtype redaction. Distinct
    from wholesale `REDACTED_KEY` because the operator needs to
    correlate the truncated form with substrate logs without
    identifying the agent.
 4. **Envelope-renderer integration** — `OutputEnvelope::render`
-   (`output.rs:215`) walks the payload via `serde::Serialize` and
-   applies the conditional `holder_did` + `agent_id` truncation
-   rules. The renderer MUST skip redaction for the dry-run
-   `{redacted: true}` envelopes (where the payload is already a
-   preview shape, not the live substrate view).
+   walks the payload via `serde_json::Value` tree walk and applies
+   the conditional `holder_did` + `agent_id` truncation rules. The
+   renderer MUST skip redaction for the dry-run `{redacted: true}`
+   envelopes (where the payload is already a preview shape, not the
+   live substrate view).
 
 ## Phase 1 / Phase 2 boundary
 
@@ -70,16 +70,16 @@ strictly additive: no Phase 1 surface is removed or weakened.
 
 ## Mission scope (4 sub-steps)
 
-1. **`RedactedString` newtype** — `crates/octo-cli/src/redact.rs`.
-   Custom `Serialize` impl, `Deref<Target = &'static str>` for
-   internal borrows, `RedactedString::reveal()` for the single
-   server-internal escape hatch (guarded by an audit-log entry).
+1. **`RedactedIdentifier` newtype** — `crates/octo-cli/src/redact.rs`.
+   Custom `Serialize` impl (no `Deref<Target = str>` — in-process
+   `&r` would yield the plaintext silently, defeating the audit),
+   `RedactedIdentifier::reveal()` for the single server-internal
+   escape hatch (guarded by an audit-log entry).
 2. **`AgentCreateOutput` field migration** — wrap `holder_did` and
-   `agent_id` in `RedactedString` so the type-level invariant makes
+   `agent_id` in `RedactedIdentifier` so the type-level invariant makes
    accidental leakage a compile error. Keep public accessors for
    the conditional reveal (operator-owned DID, truncated agent_id).
-3. **`OutputEnvelope::render` integration** —
-   `crates/octo-cli/src/output.rs:215`. Walk payload, apply
+3. **`OutputEnvelope::render` integration** — walk payload, apply
    redaction, write JSON. Do NOT walk dry-run envelope payloads
    (the preview shape is operator-owned).
 4. **Test vectors** — exercise the new redaction shape in
@@ -127,3 +127,12 @@ the envelope is redacted, every tool that pipes `octo agent create
 --json` would need its own redaction layer — a policy-drift landmine
 that this mission removes by enforcing the invariant at the
 type level.
+
+## Substrate-Faithful Amendment Trail
+
+| Amendment                                     | Rationale                                                                                                                                                                                                                                                                                                                                                                              |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RedactedString` → `RedactedIdentifier`       | Name collision with the pre-existing memo-plaintext wrapper `crate::output::RedactedString` (carries a length signal in the redaction marker). `RedactedIdentifier` carries NO length signal — substrate identifiers are fixed-size hex / DID-form — so a length signal would itself leak information.                                                                                 |
+| `&'static str` inner → `String` inner         | `Zeroize` + `ZeroizeOnDrop` derive requires owned storage; `&'static str` cannot represent a runtime-determined agent identifier anyway (DID form is determined at registration, capability_root is operator input).                                                                                                                                                                   |
+| `Deref<Target = &'static str>` omitted        | Deliberate deviation: in-process `&r` would yield plaintext silently, defeating the audit-log invariant. `RedactedIdentifier::reveal()` is the only read path, and it emits `tracing::warn!(target: "octo_cli.audit", event = "redacted_identifier_revealed", ...)`.                                                                                                                   |
+| `RedactionContext` walker added (not in spec) | Spec said "in envelope-rendering path" without specifying a struct. `RedactionContext` is the explicit carrier so callers (future `agent list` / `agent run` sibling subcommands) can reuse the same context shape without per-callsite re-derivation. Audit emission moved here (`event = "holder_did_un_redacted"`) so the un-redact forensic trail mirrors the `reveal()` emission. |

@@ -33,6 +33,7 @@ use serde::Serialize;
 use crate::error::{sanitize_substrate_error, OctoCliError};
 use crate::flags::OperatorMode;
 use crate::output::OutputEnvelope;
+use crate::redact::{RedactedIdentifier, RedactionContext};
 use crate::Octo;
 
 // ---------------------------------------------------------------------------
@@ -218,8 +219,8 @@ mod create {
         // Build output envelope.
         let manifest_digest = manifest.digest_hex();
         let output = AgentCreateOutput {
-            agent_id,
-            holder_did: active_did.as_str().to_string(),
+            agent_id: RedactedIdentifier::new(agent_id.to_string()),
+            holder_did: RedactedIdentifier::new(active_did.as_str()),
             state: "registered".to_string(),
             label: manifest.label.clone(),
             manifest_digest,
@@ -227,7 +228,14 @@ mod create {
             registered_at: DateTime::<Utc>::from_timestamp(now_unix_secs() as i64, 0)
                 .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).expect("epoch")),
         };
-        render_envelope("octo.agent.create.v1", output, cli)
+        // Envelope-boundary redaction context. For `agent create`
+        // `holder_did == active_did` by construction; sibling
+        // subcommands reuse the same context shape.
+        let redactor = RedactionContext::new()
+            .with_active_did(active_did.as_str())
+            .with_holder_did(active_did.as_str())
+            .with_agent_id(agent_id.to_string());
+        render_envelope("octo.agent.create.v1", output, cli, &redactor)
     }
 
     /// Best-effort wall-clock — same Phase-1 caveat as the substrate
@@ -264,20 +272,35 @@ mod create {
 /// The substrate owns the `agent_id` derivation
 /// (UUIDv5 over `(manifest_digest, active_did)`); the CLI surfaces
 /// it verbatim.
+///
+/// Phase 2 envelope-boundary redaction (mission
+/// `0011-c-agent-redaction-envelope`): both `holder_did` and
+/// `agent_id` are wrapped in [`RedactedIdentifier`] so `Serialize`
+/// always emits `[REDACTED:key]`. The envelope renderer then
+/// conditionally un-redacts `holder_did` via [`RedactionContext`]
+/// when the holder IS the active operator (mission §Scope sub-step 2)
+/// and truncates `agent_id` to first 8 chars + `...` for correlation
+/// with substrate logs (mission §Scope sub-step 3).
 #[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
 pub struct AgentCreateOutput {
     /// Deterministic `agent_id` (RFC-0011-c §9.10 substrate signature).
+    /// Wrapped in [`RedactedIdentifier`] so `Serialize` always emits
+    /// `[REDACTED:key]` and the envelope renderer can apply the
+    /// mission §Scope sub-step 3 truncation (`first-8-chars + "..."`).
     /// Schemars annotation emits a plain string for the JSON Schema
-    /// (matches the runtime UUID canonical form); the `uuid` crate
-    /// itself does not implement `JsonSchema` (see `crates/octo-cli`
-    /// Cargo.toml — `schemars` appears in two versions transitively,
-    /// so the blanket `JsonSchema` derive does not see the
-    /// `uuid::Uuid` impl).
+    /// (the runtime marker is the fixed-string form).
     #[schemars(with = "String")]
-    pub agent_id: uuid::Uuid,
+    pub agent_id: RedactedIdentifier,
     /// Subject DID (RFC-0010 form) — the active identity at
-    /// registration time.
-    pub holder_did: String,
+    /// registration time. Wrapped in [`RedactedIdentifier`] so
+    /// `Serialize` always emits `[REDACTED:key]`; the envelope
+    /// renderer conditionally un-redacts via [`RedactionContext`]
+    /// when `holder_did == active_did`. Schemars annotation emits
+    /// a plain string for the JSON Schema (the runtime marker is
+    /// always `[REDACTED:key]` so the schema contract is the
+    /// fixed-string form).
+    #[schemars(with = "String")]
+    pub holder_did: RedactedIdentifier,
     /// Lifecycle state label — always `"registered"` for the create
     /// command (the substrate transitions to `Running` only via the
     /// `octo agent run` subcommand, wired by a follow-on mission).
@@ -296,14 +319,18 @@ pub struct AgentCreateOutput {
 
 /// Render an output envelope for the given payload (serializable).
 ///
-/// Mirrors the `commands::reputation::render_envelope` helper.
+/// Mirrors the `commands::reputation::render_envelope` helper. The
+/// `redactor` is the envelope-boundary redaction context (mission
+/// `0011-c-agent-redaction-envelope` §Scope sub-step 3); callers
+/// that do not need contextual redaction pass `&RedactionContext::new()`.
 fn render_envelope<T: serde::Serialize>(
     schema: &'static str,
     data: T,
     cli: &Octo,
+    redactor: &RedactionContext,
 ) -> Result<(), OctoCliError> {
     let env = OutputEnvelope::new(schema, data);
-    env.render(cli.output.json, cli.output.no_color)
+    env.render_with_redaction(cli.output.json, cli.output.no_color, redactor)
         .map_err(|e| {
             OctoCliError::Internal(sanitize_substrate_error(&format!("render envelope: {e}")))
         })
@@ -396,13 +423,19 @@ mod tests {
         assert!(!clean.contains("crates/octo-"), "{clean}");
     }
 
-    /// Pin the schemars contract for `AgentCreateOutput`: the JSON
-    /// Schema emitted for the envelope payload declares
-    /// `agent_id` as a plain string (per the `#[schemars(with =
-    /// "String")]` annotation), not as a UUID-typed object. Downstream
-    /// consumers (e.g., `octo-cli agent list --json | jq`) build their
-    /// paths off this contract; a schemars regression would silently
-    /// shift the schema and break tooling.
+    /// Pin the schemars contract for `AgentCreateOutput`: both
+    /// `agent_id` and `holder_did` are wrapped in `RedactedIdentifier`
+    /// and carry the `#[schemars(with = "String")]` annotation. The
+    /// JSON Schema must declare BOTH fields as `string` (not as the
+    /// underlying `uuid::Uuid` / `String` types — `RedactedIdentifier`
+    /// does not implement `JsonSchema`, so the annotation is the only
+    /// path that keeps the schema surface stable). Downstream consumers
+    /// (e.g., `octo-cli agent list --json | jq`) build their paths
+    /// off this contract; a schemars regression would silently shift
+    /// the schema and break tooling.
+    ///
+    /// Mission `0011-c-agent-redaction-envelope` §Risk requires this
+    /// mitigation per-field; both fields pin the contract here.
     #[test]
     fn agent_create_output_schema_declares_agent_id_as_string() {
         use schemars::schema_for;
@@ -415,6 +448,14 @@ mod tests {
         assert_eq!(
             agent_id, "string",
             "agent_id must round-trip as JSON Schema `string`, got {agent_id:?}",
+        );
+        let holder_did = json
+            .pointer("/properties/holder_did/type")
+            .and_then(|v| v.as_str())
+            .expect("holder_did schema must declare a type");
+        assert_eq!(
+            holder_did, "string",
+            "holder_did must round-trip as JSON Schema `string`, got {holder_did:?}",
         );
     }
 }

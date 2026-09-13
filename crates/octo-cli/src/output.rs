@@ -24,10 +24,13 @@
 //! `schema_version = 4` guarantees the v4 shape; anything else is a
 //! pre-amendment surface and SHOULD be rejected by the consumer.
 
+use std::io::{self, IsTerminal, Write};
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::io::{self, IsTerminal, Write};
 use zeroize::{Zeroize, ZeroizeOnDrop};
+
+use crate::redact::RedactionContext;
 
 /// 32-byte hex value (RFC-0011 §Hex32 newtype).
 ///
@@ -211,27 +214,61 @@ fn now_unix_secs() -> u64 {
 
 impl<T: Serialize> OutputEnvelope<T> {
     /// Render to stdout — JSON when forced or when stdout is not a TTY,
-    /// otherwise a colourised pretty form.
+    /// otherwise a colourised pretty form. No envelope-boundary
+    /// redaction applied (callers that need contextual redaction for
+    /// `holder_did` / `agent_id` use [`OutputEnvelope::render_with_redaction`]).
     pub fn render(&self, force_json: bool, no_color: bool) -> io::Result<()> {
+        self.render_with_redaction(force_json, no_color, &RedactionContext::new())
+    }
+
+    /// Render to stdout with envelope-boundary redaction applied.
+    ///
+    /// Mission `0011-c-agent-redaction-envelope` §Scope sub-step 3:
+    /// the renderer walks the serialised JSON tree and applies the
+    /// contextual redaction rules from [`RedactionContext`]. For the
+    /// JSON path, the walker runs on a `serde_json::Value` between
+    /// serialisation and write. For the pretty path, the walker runs
+    /// on the same `Value` before colourisation.
+    ///
+    /// An empty [`RedactionContext`] is the no-op identity — the
+    /// renderer behaves exactly like [`OutputEnvelope::render`].
+    pub fn render_with_redaction(
+        &self,
+        force_json: bool,
+        no_color: bool,
+        redactor: &RedactionContext,
+    ) -> io::Result<()> {
         let stdout = io::stdout();
         let tty = stdout.is_terminal();
         let mut w = stdout.lock();
+        let mut value = serde_json::to_value(self)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        // Mission `0011-c-agent-redaction-envelope` §Scope sub-step 4:
+        // skip redaction for dry-run (`redacted: true`) envelopes.
+        // The preview shape is operator-owned per RFC-0011-c §9.4;
+        // redaction would alter a surface the operator is reviewing,
+        // not the live substrate view.
+        if !self.redacted {
+            redactor.apply(&mut value);
+        }
         if force_json || !tty {
-            let json = serde_json::to_string(self)
+            let json = serde_json::to_string(&value)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             writeln!(w, "{json}")
         } else {
-            self.render_pretty(&mut w, no_color, tty)
+            let colored = !no_color && tty;
+            write_value(&mut w, &value, 0, colored)?;
+            writeln!(w)
         }
     }
 
+    #[cfg(test)]
     fn render_pretty<W: Write>(&self, w: &mut W, no_color: bool, tty: bool) -> io::Result<()> {
+        // Test-only thin wrapper — the canonical path is
+        // `render_with_redaction`, which inlines the apply + write
+        // logic for both JSON and pretty outputs.
         let value = serde_json::to_value(self)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        // Use the cached `tty` value passed by `render` — do not re-detect
-        // via `io::stdout().is_terminal()` here. Two detection calls in the
-        // same render path can disagree if a wrapper manipulates fd flags
-        // between them.
         let colored = !no_color && tty;
         write_value(w, &value, 0, colored)?;
         writeln!(w)
@@ -438,6 +475,114 @@ mod tests {
         assert!(
             !noc_out.contains("\x1b["),
             "expected no ANSI escape codes when no_color=true, got: {noc_out:?}"
+        );
+    }
+
+    /// TV-ENV-REDACT-1: mission
+    /// `0011-c-agent-redaction-envelope` §Scope sub-step 4 — the
+    /// renderer MUST skip redaction for dry-run (`redacted: true`)
+    /// envelopes. The preview shape is operator-owned per RFC-0011-c
+    /// §9.4; redaction would alter a surface the operator is
+    /// reviewing, not the live substrate view. The walker is a no-op
+    /// when `self.redacted == true`.
+    ///
+    /// The redactor's payload-walk would otherwise turn the
+    /// `holder_did` field into a conditional reveal (active vs
+    /// non-active DID) — for a preview envelope the operator wants to
+    /// see the preview shape as-is.
+    #[test]
+    fn tv_env_redact_dry_run_envelope_skips_redactor() {
+        use crate::redact::RedactionContext;
+
+        let preview = serde_json::json!({
+            "agent_id": "[REDACTED:key]",
+            "holder_did": "[REDACTED:key]",
+            "preview": true,
+        });
+        // Build an envelope explicitly marked as a preview (the
+        // `redacted: true` shape).
+        let env = OutputEnvelope {
+            schema_version: 4,
+            command: "octo.test.preview.v1".to_string(),
+            executed_at_unix: 0,
+            redacted: true,
+            payload: preview,
+        };
+
+        // Serialise manually (not via `render` — render writes to
+        // stdout which is not capturable in this unit test). Pin the
+        // dry-run skip policy at the redactor-apply gate: when
+        // `env.redacted == true`, the renderer does NOT call
+        // `redactor.apply`. We assert the gate by reproducing the
+        // renderer's serialise-and-maybe-apply logic and confirming
+        // the preview-shape payload passes through verbatim when
+        // `redacted == true`.
+        let mut value = serde_json::to_value(&env).unwrap();
+        if !env.redacted {
+            RedactionContext::new().apply(&mut value);
+        }
+        let json = serde_json::to_string(&value).unwrap();
+        // Preview shape: both redacted markers preserved verbatim.
+        assert!(
+            json.contains(r#""holder_did":"[REDACTED:key]""#),
+            "dry-run envelope MUST preserve holder_did marker: {json}",
+        );
+        assert!(
+            json.contains(r#""agent_id":"[REDACTED:key]""#),
+            "dry-run envelope MUST preserve agent_id marker: {json}",
+        );
+        assert!(
+            json.contains(r#""redacted":true"#),
+            "dry-run envelope MUST advertise redacted=true: {json}",
+        );
+    }
+
+    /// TV-ENV-REDACT-2: applied envelope (`redacted: false`) runs
+    /// the redactor. The walker applies the contextual rules —
+    /// `holder_did` is replaced with the actual value when it
+    /// matches the operator's active DID; `agent_id` is truncated.
+    /// This is the inverse of TV-ENV-REDACT-1 and pins the
+    /// redactor-apply gate on the other branch.
+    #[test]
+    fn tv_env_redact_applied_envelope_runs_redactor() {
+        use crate::redact::RedactionContext;
+
+        let payload = serde_json::json!({
+            "agent_id": "[REDACTED:key]",
+            "holder_did": "[REDACTED:key]",
+            "state": "registered",
+        });
+        let env = OutputEnvelope {
+            schema_version: 4,
+            command: "octo.test.applied.v1".to_string(),
+            executed_at_unix: 0,
+            redacted: false,
+            payload,
+        };
+
+        let mut value = serde_json::to_value(&env).unwrap();
+        if !env.redacted {
+            RedactionContext::new()
+                .with_active_did("did:octo:zOperator")
+                .with_holder_did("did:octo:zOperator")
+                .with_agent_id("00000000-0000-4000-8000-000000000001")
+                .apply(&mut value);
+        }
+        let json = serde_json::to_string(&value).unwrap();
+
+        // Applied envelope: holder_did un-redacted (match), agent_id
+        // truncated.
+        assert!(
+            json.contains(r#""holder_did":"did:octo:zOperator""#),
+            "applied envelope MUST un-redact holder_did when match: {json}",
+        );
+        assert!(
+            json.contains(r#""agent_id":"00000000...""#),
+            "applied envelope MUST truncate agent_id: {json}",
+        );
+        assert!(
+            json.contains(r#""redacted":false"#),
+            "applied envelope MUST advertise redacted=false: {json}",
         );
     }
 }

@@ -6,7 +6,7 @@ use std::io::{self, Write as _};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::layer::{Context, Layer};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Replacement for seed material.
 pub const REDACTED_SEED: &str = "[REDACTED:seed]";
@@ -153,6 +153,257 @@ const FIELD_TABLE: &[(&str, &str)] = &[
     // boundary in Phase 2).
     ("holder_did", REDACTED_KEY),
 ];
+
+/// Type-tagged sensitive substrate identifier — RFC-0011-c §Security
+/// (Phase 2 envelope-boundary redaction per mission
+/// `0011-c-agent-redaction-envelope`, see RFC-0011 §Redaction
+/// Layer).
+///
+/// Distinct from the memo-plaintext wrapper
+/// [`crate::output::RedactedString`], which carries free-text and
+/// surfaces a length signal in the redaction marker.
+/// `RedactedIdentifier` carries NO length signal — substrate
+/// identifiers are fixed-size hex or DID-form, and a length signal
+/// would itself leak information.
+///
+/// `Serialize`, `Display`, and `Debug` ALWAYS emit `[REDACTED:key]`.
+/// Type-level invariant: any code path that calls
+/// `serde_json::to_string` directly on a value containing a
+/// `RedactedIdentifier` cannot accidentally render the inner value.
+/// The audit-logged [`RedactedIdentifier::reveal`] is the only escape
+/// hatch (mission §Scope sub-step 1).
+///
+/// `Zeroize` + `ZeroizeOnDrop` wipe the inner `String` on `drop()` so
+/// a panic or early `?`-return does not leave plaintext behind in the
+/// allocator's free list. `String` implements `Zeroize` via the
+/// standard-library specialization on `Vec<u8>` so the derive is
+/// real, not theatre (same rationale as [`RedactedHex`] above).
+///
+/// ```
+/// use octo_cli::redact::RedactedIdentifier;
+/// let r = RedactedIdentifier::new("did:octo:zSecret");
+/// assert_eq!(serde_json::to_string(&r).unwrap(), "\"[REDACTED:key]\"");
+/// assert_eq!(format!("{r}"), "[REDACTED:key]");
+/// assert!(format!("{r:?}").contains("REDACTED:key"));
+/// assert!(!format!("{r:?}").contains("zSecret"));
+/// ```
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
+pub struct RedactedIdentifier(String);
+
+impl RedactedIdentifier {
+    /// Wrap a sensitive substrate identifier.
+    #[must_use]
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    /// Reveal the inner identifier, audit-logged for forensic
+    /// traceability — mission §Scope sub-step 1.
+    ///
+    /// The ONLY escape hatch for rendering the inner value verbatim.
+    /// The audit event itself does NOT carry the inner value — only
+    /// `reveal` returns it. Operators who need to see the raw bytes
+    /// (e.g. correlation with substrate logs) get them via this
+    /// method; the audit log stays compact.
+    ///
+    /// `Deref<Target = str>` is intentionally NOT implemented: in-
+    /// process `&r` would yield the plaintext silently, defeating the
+    /// audit. Operators who need read access go through `reveal`.
+    #[must_use]
+    pub fn reveal(&self) -> &str {
+        tracing::warn!(
+            target: "octo_cli.audit",
+            event = "redacted_identifier_revealed",
+            kind = "agent_or_holder_identifier",
+        );
+        &self.0
+    }
+}
+
+/// `Display` always emits `[REDACTED:key]` — never the inner value.
+impl std::fmt::Display for RedactedIdentifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(REDACTED_KEY)
+    }
+}
+
+/// `Debug` always emits `RedactedIdentifier([REDACTED:key])` — never
+/// the inner value. A derived `Debug` would leak into `{:?}` log
+/// lines and panic messages.
+impl std::fmt::Debug for RedactedIdentifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RedactedIdentifier({REDACTED_KEY})")
+    }
+}
+
+/// `Serialize` always emits `[REDACTED:key]` — never the inner value.
+/// This is the type-level guarantee per mission §Scope sub-step 1.
+impl serde::Serialize for RedactedIdentifier {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(REDACTED_KEY)
+    }
+}
+
+/// Context passed to the envelope renderer to enable contextual
+/// redaction at the envelope boundary (mission
+/// `0011-c-agent-redaction-envelope` §Scope sub-step 3).
+///
+/// The renderer walks the serialised JSON tree post-serialization
+/// and applies:
+/// - `holder_did`: un-redact iff `raw_holder_did == active_did`
+///   (operator IS the holder); otherwise keep `[REDACTED:key]`.
+/// - `agent_id`: always truncate to first 8 chars + `...` (operator-
+///   owned agents get a correlatable truncated form; non-owned
+///   agents stay wholesale redacted via the underlying
+///   `RedactedIdentifier`).
+/// - `capability_root`: ALWAYS `[REDACTED:key]` (already wholesale
+///   redacted by `RedactedIdentifier::serialize`; the walker is a
+///   no-op for this field).
+///
+/// An empty context (default) is the no-op identity for callers that
+/// do not need envelope-boundary redaction (e.g. `reputation show`,
+/// `vault balance`).
+#[derive(Debug, Default, Clone)]
+pub struct RedactionContext {
+    /// The active operator's DID. Used for the conditional
+    /// `holder_did` un-redact: visible iff
+    /// `holder_did == active_did`.
+    active_did: Option<String>,
+    /// Raw `holder_did` value, kept for the conditional un-redact.
+    /// The renderer's `holder_did` field handler un-redacts the JSON
+    /// tree ONLY when this matches `active_did`.
+    holder_did_raw: Option<String>,
+    /// Raw `agent_id` value (UUID form, hex). The renderer's
+    /// `agent_id` field handler un-redacts the JSON tree with a
+    /// truncated form (`first-8-chars + "..."`) so operators can
+    /// correlate with substrate logs without seeing the full id.
+    agent_id_raw: Option<String>,
+}
+
+impl RedactionContext {
+    /// Empty context — no envelope-boundary redaction applied.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the active operator's DID.
+    #[must_use]
+    pub fn with_active_did(mut self, did: impl Into<String>) -> Self {
+        self.active_did = Some(did.into());
+        self
+    }
+
+    /// Set the raw `holder_did` value (typically the substrate's
+    /// holder-of-record DID).
+    #[must_use]
+    pub fn with_holder_did(mut self, did: impl Into<String>) -> Self {
+        self.holder_did_raw = Some(did.into());
+        self
+    }
+
+    /// Set the raw `agent_id` value (UUID form).
+    #[must_use]
+    pub fn with_agent_id(mut self, id: impl Into<String>) -> Self {
+        self.agent_id_raw = Some(id.into());
+        self
+    }
+
+    /// Walk a JSON value tree and apply the contextual redaction
+    /// rules. Mutates `value` in place.
+    pub fn apply(&self, value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (k, v) in map.iter_mut() {
+                    match k.as_str() {
+                        "holder_did" => {
+                            if let serde_json::Value::String(s) = v {
+                                if s == REDACTED_KEY {
+                                    if let (Some(raw), Some(active)) =
+                                        (&self.holder_did_raw, &self.active_did)
+                                    {
+                                        // Conditional: un-redact iff
+                                        // the holder IS the active
+                                        // operator. The CLI build
+                                        // path passes both the raw
+                                        // holder_did AND the active
+                                        // DID so the renderer can
+                                        // resolve the conditional
+                                        // without inspecting the
+                                        // substrate.
+                                        if raw == active {
+                                            // Audit the un-redact
+                                            // so the per-operator
+                                            // forensic trail is
+                                            // preserved (mission
+                                            // §Scope sub-step 2
+                                            // audit-emission
+                                            // invariant; mirrors
+                                            // RedactedIdentifier
+                                            // ::reveal).
+                                            tracing::warn!(
+                                                target: "octo_cli.audit",
+                                                event = "holder_did_un_redacted",
+                                            );
+                                            *v = serde_json::Value::String(raw.clone());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        "agent_id" => {
+                            if let serde_json::Value::String(s) = v {
+                                if s == REDACTED_KEY {
+                                    if let Some(raw) = &self.agent_id_raw {
+                                        // Always truncate to the
+                                        // first 8 chars + ellipsis.
+                                        // Operator-owned agents get
+                                        // a correlatable truncated
+                                        // form per RFC-0011 §Hex32
+                                        // newtype redaction.
+                                        *v = serde_json::Value::String(truncate_id(raw));
+                                    }
+                                }
+                            }
+                        }
+                        _ => self.apply(v),
+                    }
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for item in items.iter_mut() {
+                    self.apply(item);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Truncate a substrate identifier to its first 8 characters +
+/// ellipsis. Mission `0011-c-agent-redaction-envelope` §Scope
+/// sub-step 3.
+///
+/// `agent_id` is UUID form (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`),
+/// so the first 8 characters are the first segment of the UUID. The
+/// resulting form `00000000-...` correlates with substrate logs
+/// without identifying the agent.
+///
+/// For DID form (`did:octo:zTest`), the first 8 characters are
+/// `did:octo`, which is the public scheme prefix — the truncation
+/// still carries no identifying information because the DID scheme
+/// is already public.
+///
+/// ```
+/// use octo_cli::redact::truncate_id;
+/// assert_eq!(truncate_id("00000000-0000-4000-8000-000000000001"), "00000000...");
+/// assert_eq!(truncate_id("did:octo:zTest"), "did:octo...");
+/// ```
+#[must_use]
+pub fn truncate_id(id: &str) -> String {
+    let prefix: String = id.chars().take(8).collect();
+    format!("{prefix}...")
+}
 
 /// Returns true when the (lower-cased) field name is sensitive.
 ///

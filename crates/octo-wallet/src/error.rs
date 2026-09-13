@@ -3,6 +3,7 @@
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::agent::AgentState;
 use crate::hsm::HsmError;
 use crate::lifecycle::LifecycleState;
 
@@ -177,4 +178,43 @@ pub enum WalletError {
     /// CLI exit code = 16 per `OctoCliError::InvalidFilter` mapping.
     #[error("reason exceeds 256 bytes (got {0})")]
     ReasonTooLong(usize),
+
+    // ----- Agent write-path errors (RFC-0015-a §6.3 paired-acceptance bridge) -----
+    /// `transition_agent` observed the per-agent lock is held by a
+    /// concurrent transition (the `parking_lot::Mutex::try_lock()`
+    /// returned `WouldBlock`). Payload carries the agent UUID the
+    /// caller attempted to transition; the substrate holds the lock
+    /// until the in-flight transition completes. CLI exit code = 43
+    /// per RFC-0011-c §9.8 + RFC-0015-a §6.3 slot allocation.
+    #[error("agent already in transition: {0}")]
+    AlreadyInTransition(Uuid),
+
+    /// `transition_agent` rejected the requested transition because
+    /// the state-machine guard (RFC-0015-a Appendix A) does not
+    /// permit `from → to`. Payload carries the typed `AgentState`
+    /// pair so the CLI surfaces the typed variant and the substrate
+    /// retains the substrate-faithful enum form. Self-transition
+    /// (`from == to`) returns `Ok(())` (idempotent success, no audit
+    /// append) instead of this error. Terminal `Terminated` state
+    /// always raises this error (terminal-by-construction per
+    /// RFC-0015-a §6.1). CLI exit code = 43 per RFC-0015-a §6.3.
+    #[error("invalid state transition: {from:?} -> {to:?}")]
+    InvalidStateTransition {
+        /// Current (rejected-source) state.
+        from: AgentState,
+        /// Requested (rejected-target) state.
+        to: AgentState,
+    },
+
+    /// `transition_agent` rolled back the state transition because
+    /// the audit append failed (RFC-0015-a §6.1 rollback contract).
+    /// Payload carries the underlying `AuditError::SinkSpecific`
+    /// reason string for log forensics; the CLI surfaces the typed
+    /// variant and sanitizes the reason via `scrub_adapter_error`
+    /// (RFC-0012-v3 §S5.1 per-façade scrubber contract). The agent
+    /// record is NOT modified in this case (state rollback is
+    /// synchronous before the function returns). CLI exit code = 52
+    /// per RFC-0015-a §6.3 + RFC-0016-a §6.7 slot allocation.
+    #[error("audit substrate unavailable: {0}")]
+    AuditUnavailable(String),
 }

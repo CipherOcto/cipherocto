@@ -14,20 +14,6 @@ path = "src/bin/octo-wallet.rs"
 name = "octo_wallet"
 path = "src/lib.rs"
 
-[features]
-# **Mission 0958-b S2 (2026-08-05):** the `full` cargo feature was
-# REMOVED. Real-zk STWO selection is now runtime (see
-# `zk_vendor::loaded_library()`), not compile-time. The bench tests
-# in `tests/bench.rs` exercise the dispatch path transparently:
-# - When `libstwo_sys.so` is reachable (vendor state == Ffi), the
-#   proof-size gate asserts 50-500KB and the latency gates measure
-#   real STWO proof gen / verify.
-# - When only the mock path is available (vendor state == Stub,
-#   default dev/CI), the benches run structural smoke + assert
-#   non-emptiness only — same behavior as before but no feature
-#   gate required. Production deployments ship the cdylib alongside
-# the binary.
-
 [dependencies]
 # Workspace deps — only what's needed for wallet MVP
 serde.workspace = true
@@ -183,6 +169,21 @@ octo-cap-macaroon = { path = "../octo-cap-macaroon" }
 # canonical AuditEvent + AuditEventKind + AppendOnlyAuditSink + verify_chain
 # per mission 0012-audit-wallet-migration.
 octo-audit = { path = "../octo-audit" }
+
+[features]
+# RFC-0015-a §6.4 paired-acceptance bridge: when this wallet feature
+# is on, `octo-audit`'s `octo-audit-internal` feature also turns on
+# (Cargo pass-through syntax), which transitively enables the
+# `octo-audit-core` substrate's `AgentTransition` variant. Used by
+# `transition_agent` (the agent write-path substrate) to emit
+# canonical audit events on `Registered → Running` and
+# `Running → Terminated` transitions.
+#
+# Phase 2 unblock: when the feature is OFF (default), `transition_agent`
+# fails closed with `WalletError::AuditUnavailable` — no audit event
+# is emitted, no sink registration is attempted. This preserves the
+# RFC-0015-a §6.1 rollback contract even in feature-off builds.
+octo-audit-internal = ["octo-audit/octo-audit-internal"]
 
 [dev-dependencies]
 assert_cmd = "2"

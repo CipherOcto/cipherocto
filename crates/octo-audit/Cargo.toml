@@ -31,6 +31,12 @@ thiserror = { workspace = true }
 regex = { workspace = true }
 # Lazy static regex compilation (RFC-0012-v3 §S5.1 / RFC-0014-v3 §S5.1; Layer B façade)
 once_cell = { workspace = true }
+# RFC-0015-a §6.1: `AgentTransitionPayload::agent_id` carries the
+# canonical UUID of the transitioning agent (Layer B façade;
+# `octo-audit-core` Layer A stays free of the `uuid` crate per
+# RFC-0012 frozen contract — the payload uses `String` hex form on
+# the substrate side, and `Uuid` only at this façade boundary).
+uuid = { workspace = true }
 
 [lints.rust]
 unsafe_code = "forbid"
@@ -45,4 +51,12 @@ doc_lazy_continuation = "allow"
 # Only the `octo-audit` Layer B façade (cli tests + future write-path
 # missions) can call `audit_home` when this flag is enabled; default
 # `cargo build` builds DO NOT include the function (compile-error guard).
-octo-audit-internal = []
+#
+# RFC-0015-a §6.4 paired-acceptance bridge: also enables the
+# `AuditEventKind::AgentTransition` cfg-gated variant on the
+# `octo-audit-core` Layer A substrate via Cargo feature
+# pass-through — when this facade feature is on, the substrate's
+# `octo-audit-internal` feature also turns on, so the variant is
+# visible to both layers atomically. No chance of a partial-flag
+# build exposing the extension on one layer but not the other.
+octo-audit-internal = ["octo-audit-core/octo-audit-internal"]

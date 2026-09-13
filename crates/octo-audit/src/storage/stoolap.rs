@@ -41,9 +41,14 @@ fn event_kind_sql(kind: AuditEventKind) -> i64 {
         AuditEventKind::Insert => 0,
         AuditEventKind::Revoke => 1,
         AuditEventKind::Sync => 2,
-        // `#[non_exhaustive]` extension variants cannot exist yet
-        // (the substrate owns the enum); defensive default until a
-        // future amendment updates this match.
+        // RFC-0015-a §6.4 paired-acceptance bridge: `AgentTransition`
+        // (gated via `octo-audit-internal` feature) maps to column
+        // value 3. Permanent once RFC-0012-v2 lands.
+        #[cfg(feature = "octo-audit-internal")]
+        AuditEventKind::AgentTransition { .. } => 3,
+        // `#[non_exhaustive]` forward-compat: defensive default for
+        // unknown future variants (per RFC-0012 §Canonical Serialization
+        // reserved-tagging scheme).
         _ => u8::MAX as i64,
     }
 }
@@ -160,7 +165,7 @@ impl AppendOnlyAuditSink for StoolapAuditSink {
             (
                 event.event_id as i64,
                 event.node_did.clone(),
-                event_kind_sql(event.event_kind),
+                event_kind_sql(event.event_kind.clone()),
                 event.cap_root_hash.to_vec(),
                 event.at_millis_unix as i64,
                 event.prev_chain_hash.to_vec(),

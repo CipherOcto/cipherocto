@@ -9,7 +9,7 @@
 //! All functions are pure additions; no existing types / methods / behavior
 //! are modified.
 
-use crate::agent::{registry, AgentManifest, CapabilityId};
+use crate::agent::{registry, AgentManifest, AgentState, CapabilityId};
 use crate::error::WalletError;
 use crate::identity::IdentityKey;
 use crate::identity_record::{Did, IdentityRecord, WalletStore};
@@ -112,6 +112,7 @@ pub fn register_agent(
             manifest: manifest.clone(),
             holder_did: active_did.clone(),
             registered_at_unix: now_unix_secs(),
+            state: AgentState::Registered,
         },
     );
     Ok(agent_id)

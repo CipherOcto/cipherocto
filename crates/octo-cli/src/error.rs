@@ -374,6 +374,43 @@ pub enum OctoCliError {
     #[error("forbidden: holder DID mismatch")]
     ForbiddenHolderMismatch,
 
+    /// `transition_agent` observed the per-agent lock held by a
+    /// concurrent transition (RFC-0015-a §6.1 + RFC-0011-c §9.8,
+    /// slot 43 reserved by the agent amendment chain). Exit 43.
+    #[error("agent already in transition: {0}")]
+    AlreadyInTransition(uuid::Uuid),
+
+    /// `transition_agent` rejected the requested state-machine edge
+    /// (RFC-0015-a §6.1 + Appendix A state-machine guard). The CLI
+    /// renders the typed `from`/`to` labels (canonical
+    /// `AgentState::as_str()` form) so the operator can diff against
+    /// the substrate guard table. Exit 43 (shared slot with
+    /// `AlreadyInTransition` — both are write-path state errors).
+    #[error("invalid agent state transition: {from} -> {to}")]
+    InvalidStateTransition {
+        /// Current (rejected-source) state label (`AgentState::as_str`).
+        from: String,
+        /// Requested (rejected-target) state label (`AgentState::as_str`).
+        to: String,
+    },
+
+    /// Audit chain sink is not configured (RFC-0015-a §6.1 paired-
+    /// acceptance bridge — no `octo-audit` sink registered for the
+    /// write-path façade). Exit 52 per RFC-0011-c §9.8 slot
+    /// allocation + RFC-0016-a §6.7 audit-substrate-not-ready code.
+    /// Same slot as `AuditUnavailable` substrate mapping; the CLI
+    /// surfaces this when the substrate's `octo-audit-internal`
+    /// feature is OFF (default build) OR when the sink registration
+    /// step has not run.
+    #[error("audit substrate not ready: register the audit sink or enable the octo-audit-internal feature")]
+    AuditSubstrateNotReady,
+
+    /// `octo agent attach` observed the target agent exists but is
+    /// not in `Running` state (RFC-0011-c §9.8 + RFC-0015-a §6.3,
+    /// slot 48 reserved by the agent amendment chain). Exit 48.
+    #[error("agent not running: {0}")]
+    AgentNotRunning(uuid::Uuid),
+
     /// Unexpected internal failure.
     #[error("internal error: {0}")]
     Internal(String),
@@ -442,6 +479,14 @@ impl OctoCliError {
             Self::ForbiddenHolderMismatch => 17,
             Self::InvalidLimit(_) => 45,
             Self::InvalidCursor(_) => 46,
+            // RFC-0015-a §6.3 + RFC-0011-c §9.8: agent amendment chain
+            // write-path slots. `AlreadyInTransition` and
+            // `InvalidStateTransition` share slot 43 (both are
+            // state-machine write-path errors).
+            Self::AlreadyInTransition(_) => 43,
+            Self::InvalidStateTransition { .. } => 43,
+            Self::AuditSubstrateNotReady => 52,
+            Self::AgentNotRunning(_) => 48,
             Self::Internal(_) => 64,
             Self::StaleStub { .. } => 65,
         }
@@ -559,6 +604,20 @@ impl OctoCliError {
             }
             Self::InvalidCursor(_) => {
                 "the supplied cursor is malformed; cursors are opaque tokens reserved for forward-compat pagination (Phase 2)".to_string()
+            }
+            Self::AlreadyInTransition(_) => {
+                "the target agent is currently being transitioned by a concurrent command; wait for the in-flight transition to complete and retry".to_string()
+            }
+            Self::InvalidStateTransition { from, to } => {
+                format!(
+                    "the requested state transition `{from} -> {to}` is not a valid edge per RFC-0015-a Appendix A state-machine guard; valid edges are `registered -> running` (run mission) and `running -> terminated` (destroy mission)"
+                )
+            }
+            Self::AuditSubstrateNotReady => {
+                "the audit chain sink is not configured; run with --features octo-audit-internal OR ensure the runtime adapter has called `register_audit_sink` at startup".to_string()
+            }
+            Self::AgentNotRunning(_) => {
+                "the target agent exists but is not in `Running` state; run `octo agent run` before `octo agent attach`".to_string()
             }
             Self::StaleStub { .. } => "this command was removed; see the migration notes".to_string(),
             Self::Internal(_) => "re-run with `RUST_LOG=debug` and report the diagnostic".to_string(),

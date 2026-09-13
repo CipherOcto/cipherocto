@@ -17,6 +17,14 @@ serde = { version = "1", features = ["derive"] }
 # Layer A error type per cipherocto-design-principles Layer A row.
 thiserror = "2.0"
 
+[features]
+# RFC-0015-a §6.4 paired-acceptance bridge: gates the `AuditEventKind::AgentTransition`
+# extension variant on Layer A frozen substrate (default OFF preserves the RFC-0012
+# frozen contract; permanent once RFC-0012-v2 is Accepted). Per
+# cipherocto-design-principles Layer A row, this is the ONLY mutable surface
+# in the substrate — every other change here is a semver-major event.
+octo-audit-internal = []
+
 [lints.rust]
 unsafe_code = "forbid"
 

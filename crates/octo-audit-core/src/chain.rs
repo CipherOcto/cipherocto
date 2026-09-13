@@ -19,6 +19,15 @@ use crate::event::AuditEvent;
 ///
 /// `chain_hash` is excluded (it IS the hash of the other fields + the
 /// `prev_chain_hash`).
+///
+/// `event_kind` tag byte mapping (RFC-0012 §Canonical Serialization):
+/// - `Insert` → `0`
+/// - `Revoke` → `1`
+/// - `Sync` → `2`
+/// - `AgentTransition` → `3` (RFC-0015-a §6.4 paired-acceptance bridge;
+///   requires `octo-audit-internal` feature; permanent once RFC-0012-v2
+///   lands)
+/// - unknown future variants → `0xFF` (reserved; same gate)
 pub fn canonical_bytes(event: &AuditEvent) -> Vec<u8> {
     let mut buf = Vec::with_capacity(8 + event.node_did.len() + 1 + 32 + 8 + 32);
     buf.extend_from_slice(&event.event_id.to_be_bytes());
@@ -30,15 +39,32 @@ pub fn canonical_bytes(event: &AuditEvent) -> Vec<u8> {
     buf
 }
 
+// Forward-compat `_` arm below is intentionally present even though
+// it's unreachable on the current 3+1 variant set — when a future
+// amendment adds a new variant, this catch-all surfaces it as `0xFF`
+// (reserved tag per RFC-0012 §Canonical Serialization) without
+// breaking the canonical-byte format. `#[allow(unreachable_patterns)]`
+// silences the build-time warning while preserving the runtime
+// forward-compat contract.
+#[allow(unreachable_patterns)]
 fn event_kind_tag(kind: &crate::event::AuditEventKind) -> u8 {
     use crate::event::AuditEventKind::*;
     match kind {
         Insert => 0,
         Revoke => 1,
         Sync => 2,
-        // `#[non_exhaustive]` extension variants cannot exist yet (the
-        // substrate owns this enum); if a future amendment adds variants,
-        // update this match.
+        // RFC-0015-a §6.4 paired-acceptance bridge: `AgentTransition`
+        // (gated via `octo-audit-internal` feature) maps to tag byte 3.
+        // Permanent once RFC-0012-v2 lands.
+        #[cfg(feature = "octo-audit-internal")]
+        AgentTransition { .. } => 3,
+        // `#[non_exhaustive]` forward-compat: any future amendment
+        // variant lands here without breaking the canonical-byte format
+        // (tag 0xFF is reserved for unknown, per RFC-0012 §Canonical
+        // Serialization). Gated behind the feature so the default
+        // build's match is exhaustive on the 3 stable variants.
+        #[cfg(feature = "octo-audit-internal")]
+        _ => 0xFF,
     }
 }
 

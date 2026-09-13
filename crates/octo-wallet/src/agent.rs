@@ -55,6 +55,12 @@ pub(crate) struct AgentRecord {
     pub(crate) holder_did: Did,
     #[allow(dead_code)] // Phase 1: persisted for sibling mission wiring.
     pub(crate) registered_at_unix: u64,
+    /// Current lifecycle state (RFC-0015-a §6.1). Defaults to
+    /// `Registered` for records created by `register_agent`; mutated
+    /// additively by `transition_agent` on `Registered → Running` and
+    /// `Running → Terminated` edges. Terminal state is
+    /// `Terminated` (no further transitions permitted).
+    pub(crate) state: AgentState,
 }
 
 /// Canonical agent manifest wire form — RFC-0002 §Agent Manifest.
@@ -208,6 +214,210 @@ pub struct AgentFilter {
 /// `--capability-root <hex>` argument into this newtype.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CapabilityId(pub [u8; 32]);
+
+/// Receipt returned by `transition_agent` — RFC-0015-a Appendix A
+/// (operative intent; missions reference `TransitionReceipt`).
+///
+/// Captures the full transition audit trail in one substrate-faithful
+/// projection: the canonical `agent_id`, the typed `previous_state` +
+/// `current_state` pair (matches the `AgentState` enum byte-for-byte),
+/// the unix-seconds timestamp at which the substrate applied the
+/// transition (best-effort wall-clock per `cli_fns::now_unix_secs`),
+/// and the 32-byte BLAKE3-256 chain-hash of the audit event that
+/// committed this transition (CLI surfaces as Hex32 per
+/// `OctoCliError::InvalidStateTransition` mirror pattern).
+///
+/// # Layer discipline + field-level invariants
+///
+/// - `agent_id` is the canonical UUID (RFC-0010 form) of the
+///   transitioned record (the registry stores the manifest's
+///   `manifest_id` as the agent key — `transition_agent` returns it
+///   verbatim).
+/// - `previous_state` and `current_state` are typed `AgentState`
+///   variants; the CLI converts to `as_str()` at the envelope
+///   boundary for stable wire form (`registered` / `running` /
+///   `terminated`).
+/// - `transitioned_at_unix` is best-effort `SystemTime::now()`;
+///   Phase 2 follow-on swaps to the substrate monotonic clock per
+///   RFC-0008 Class B determinism.
+/// - `audit_log_entry` is the canonical chain-hash from
+///   `append_audit_event`; `None` only when the state transition
+///   was an idempotent self-transition (no audit event emitted per
+///   RFC-0015-a §6.1 idempotency contract) OR when the audit append
+///   was rolled back (function never returns in that case, so
+///   `Some(_)` is the only invariant at the receipt level).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransitionReceipt {
+    /// Canonical UUID of the transitioned agent.
+    pub agent_id: Uuid,
+    /// State before the transition.
+    pub previous_state: AgentState,
+    /// State after the transition.
+    pub current_state: AgentState,
+    /// Unix-seconds timestamp at which the substrate applied the
+    /// transition.
+    pub transitioned_at_unix: u64,
+    /// BLAKE3-256 chain-hash of the audit event that committed this
+    /// transition (Hex32 wire form per RFC-0015-a Appendix A).
+    pub audit_log_entry: [u8; 32],
+}
+
+/// Best-effort wall-clock for `transitioned_at_unix` (Phase 2 unblock).
+/// Reuses the same helper pattern as `cli_fns::now_unix_secs` but
+/// lives in the agent module so `transition_agent` is self-contained.
+fn now_unix_secs() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// Transition an agent's lifecycle state — RFC-0015-a §6.1.
+///
+/// State-machine guard (per RFC-0015-a Appendix A):
+/// - `Registered → Running`: valid (`run` mission)
+/// - `Running → Terminated`: valid (`destroy` mission)
+/// - `Terminated → *`: rejected (`InvalidStateTransition`; terminal state)
+/// - `Registered → Terminated`: rejected (`InvalidStateTransition`;
+///   skipping `Running` is not a valid edge)
+/// - self-transition `state == target`: idempotent success, returns
+///   `TransitionReceipt` with `previous_state == current_state` and
+///   `audit_log_entry == [0u8; 32]` (no audit event emitted per the
+///   §6.1 idempotency contract — re-running a `run` against an
+///   already-running agent is a no-op, not a duplicate audit event).
+///
+/// # Caller-attestation + security (RFC-0011 §Lifecycle Requirements)
+///
+/// `caller_did` MUST match the agent's `holder_did`; on mismatch,
+/// `ForbiddenHolderMismatch` is returned (multi-DID enumeration
+/// prevention). Lookup-first ordering: the substrate resolves the
+/// record, verifies the holder DID, and only then reads the state —
+/// never branches on the holder DID before the lookup.
+///
+/// # Audit append + rollback contract (RFC-0015-a §6.1)
+///
+/// On a successful state-machine transition, this function constructs
+/// an `AuditEvent` with `event_kind = AuditEventKind::AgentTransition
+/// { agent_id, from, to, reason }` (the variant is cfg-gated via
+/// `octo-audit-internal`) and calls `append_audit_event` to commit it
+/// to the sink. If the audit append fails (e.g., sink not configured,
+/// feature flag off, IO error), the state transition is ROLLED BACK
+/// to the previous state and `WalletError::AuditUnavailable` is
+/// returned. The `agent_id` lookup result is consumed before the
+/// rollback so the caller-attestation check is not re-run.
+///
+/// # Reason scrubbing
+///
+/// If `reason.is_some()`, `validate_reason` is invoked first (256-byte
+/// cap + control-character rejection per RFC-0015 §6.2.5); the
+/// scrubbed reason is stored in the audit event payload.
+pub fn transition_agent(
+    caller_did: &Did,
+    uuid: Uuid,
+    target: AgentState,
+    reason: Option<&str>,
+) -> Result<TransitionReceipt, WalletError> {
+    // 1. Reason scrub: control-char + length check (RFC-0015 §6.2.5).
+    //    No-op when `reason` is `None`.
+    if let Some(r) = reason {
+        validate_reason(r)?;
+    }
+
+    // 2. Lock the registry. `WalletError::Config` on poisoning
+    //    (fail-closed per the established `octo-wallet` pattern —
+    //    other call sites in this module use the same mapping).
+    let mut registry = registry()
+        .lock()
+        .map_err(|_| WalletError::Config("agent registry mutex poisoned".to_string()))?;
+
+    // 3. Point lookup + caller-attestation. `AgentNotFound` is the
+    //    substrate-faithful miss variant; `ForbiddenHolderMismatch`
+    //    is the multi-DID enumeration prevention guard.
+    let record = registry
+        .get_mut(&uuid)
+        .ok_or(WalletError::AgentNotFound(uuid))?;
+
+    if record.holder_did.as_str() != caller_did.as_str() {
+        return Err(WalletError::ForbiddenHolderMismatch);
+    }
+
+    let from = record.state;
+
+    // 4. Self-transition idempotency (RFC-0015-a §6.1 contract).
+    //    No audit event emitted; `audit_log_entry` is zeroed per the
+    //    TransitionReceipt invariant comment.
+    if from == target {
+        return Ok(TransitionReceipt {
+            agent_id: uuid,
+            previous_state: from,
+            current_state: from,
+            transitioned_at_unix: now_unix_secs(),
+            audit_log_entry: [0u8; 32],
+        });
+    }
+
+    // 5. State-machine guard. The two valid edges are
+    //    `Registered → Running` (run mission) and
+    //    `Running → Terminated` (destroy mission). All other
+    //    transitions are rejected with `InvalidStateTransition`.
+    let valid_edge = matches!(
+        (from, target),
+        (AgentState::Registered, AgentState::Running)
+            | (AgentState::Running, AgentState::Terminated)
+    );
+    if !valid_edge {
+        return Err(WalletError::InvalidStateTransition { from, to: target });
+    }
+
+    // 6. Apply state mutation. Audit append follows; if it fails,
+    //    we roll back to `from`.
+    record.state = target;
+    let transitioned_at_unix = now_unix_secs();
+
+    // 7. Build + append the audit event. The `AgentTransition`
+    //    variant is cfg-gated via `octo-audit-internal`; when the
+    //    feature is off, this branch is unreachable, so the
+    //    function falls through to `WalletError::AuditUnavailable`
+    //    (fail-closed per the audit append + rollback contract).
+    #[cfg(feature = "octo-audit-internal")]
+    let audit_result = {
+        use octo_audit::audit_write::{append_agent_transition_event, AgentTransitionPayload};
+        let payload = AgentTransitionPayload {
+            agent_id: uuid,
+            from: from.as_str().to_owned(),
+            to: target.as_str().to_owned(),
+            reason: reason.map(str::to_owned),
+        };
+        append_agent_transition_event(&payload, transitioned_at_unix)
+            .map_err(|e| WalletError::AuditUnavailable(format!("{e:?}")))
+    };
+
+    #[cfg(not(feature = "octo-audit-internal"))]
+    let audit_result: Result<[u8; 32], WalletError> = Err(WalletError::AuditUnavailable(
+        "octo-audit-internal feature not enabled (RFC-0015-a §6.4 paired-acceptance bridge)"
+            .to_string(),
+    ));
+
+    // 8. Audit append + rollback contract (RFC-0015-a §6.1). On
+    //    audit failure, the state mutation is rolled back to `from`
+    //    before the function returns so the registry remains
+    //    consistent.
+    let chain_hash = match audit_result {
+        Ok(hash) => hash,
+        Err(e) => {
+            record.state = from;
+            return Err(e);
+        }
+    };
+
+    Ok(TransitionReceipt {
+        agent_id: uuid,
+        previous_state: from,
+        current_state: target,
+        transitioned_at_unix,
+        audit_log_entry: chain_hash,
+    })
+}
 
 /// List all agents owned by the caller-attested DID, filtered server-side
 /// (RFC-0015 §6.2.1).
@@ -557,5 +767,147 @@ mod tests {
         };
         let err = list_owned_agents(&caller, &filter).unwrap_err();
         assert!(matches!(err, WalletError::ForbiddenHolderMismatch));
+    }
+
+    // ----- Write-path surface tests (RFC-0015-a §6.1, Appendix A) -----
+
+    /// Register an agent with deterministic inputs and return its
+    /// UUID. Helper for the `transition_agent_*` tests.
+    fn register_one() -> (Uuid, Did) {
+        let manifest = AgentManifest {
+            manifest_id: Uuid::new_v4(),
+            holder_did: format!("did:octo:transition-test-{}", Uuid::new_v4()),
+            label: Some("transition-test".to_string()),
+            created_at_unix: 1_700_000_010,
+            signature_hex: "00".repeat(64),
+        };
+        let cap = CapabilityId([0x05; 32]);
+        let did = Did::from(manifest.holder_did.as_str());
+        let uuid = crate::cli_fns::register_agent(&manifest, &cap, &did)
+            .expect("register_agent must succeed in test");
+        (uuid, did)
+    }
+
+    #[test]
+    fn transition_agent_unknown_uuid_returns_agent_not_found() {
+        // RFC-0015-a §6.1: point-lookup miss returns AgentNotFound.
+        // The miss happens BEFORE the state-machine guard, so no
+        // event lookup, no audit append.
+        let did = Did::from("did:octo:transition-miss");
+        let err = transition_agent(&did, Uuid::new_v4(), AgentState::Running, None).unwrap_err();
+        match err {
+            WalletError::AgentNotFound(uuid) => {
+                assert_eq!(uuid.get_version_num(), 4);
+            }
+            other => panic!("expected AgentNotFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transition_agent_caller_attestation_guard() {
+        // RFC-0015-a §6.1 + RFC-0011 §Lifecycle Requirements: caller_did
+        // must match record.holder_did. Lookup-first ordering — the
+        // lookup succeeds, the holder DID differs, then
+        // ForbiddenHolderMismatch is returned (multi-DID enumeration
+        // prevention). The error type alone proves the guard fired
+        // BEFORE the state-machine transition (lookup-first ordering);
+        // the substrate's `ForbiddenHolderMismatch` branch carries no
+        // state mutation by construction.
+        let (uuid, _holder) = register_one();
+        let other = Did::from("did:octo:different-caller");
+        let err = transition_agent(&other, uuid, AgentState::Running, None).unwrap_err();
+        assert!(matches!(err, WalletError::ForbiddenHolderMismatch));
+    }
+
+    #[test]
+    fn transition_agent_self_transition_is_idempotent() {
+        // RFC-0015-a §6.1 idempotency contract: re-running a
+        // `run`-equivalent transition against an already-Running
+        // agent MUST be a no-op success (`previous_state == current_state`),
+        // NOT a duplicate audit event. The receipt's `audit_log_entry`
+        // is zeroed (no audit append path was taken).
+        //
+        // We can't reach Running without an audit feature, so the
+        // self-transition test exercises the Registered → Registered
+        // branch which is structurally identical (no audit append,
+        // zeroed chain-hash).
+        let (uuid, holder) = register_one();
+        let receipt =
+            transition_agent(&holder, uuid, AgentState::Registered, None).expect("self-transit");
+        assert_eq!(receipt.previous_state, AgentState::Registered);
+        assert_eq!(receipt.current_state, AgentState::Registered);
+        assert_eq!(
+            receipt.audit_log_entry, [0u8; 32],
+            "self-transition MUST NOT emit an audit event",
+        );
+    }
+
+    #[test]
+    fn transition_agent_rejects_registered_to_terminated() {
+        // RFC-0015-a Appendix A state-machine guard: the only valid
+        // edge from Registered is Running. Registered → Terminated
+        // (skipping Running) MUST be rejected with
+        // InvalidStateTransition (the typed `from`/`to` enum payload).
+        let (uuid, holder) = register_one();
+        let err = transition_agent(&holder, uuid, AgentState::Terminated, None).unwrap_err();
+        match err {
+            WalletError::InvalidStateTransition { from, to } => {
+                assert_eq!(from, AgentState::Registered);
+                assert_eq!(to, AgentState::Terminated);
+            }
+            other => panic!("expected InvalidStateTransition, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transition_agent_runs_through_audit_unavailable_fail_closed_path() {
+        // Default-build (no `octo-audit-internal` feature): the
+        // function reaches step 7 (audit append), the feature-off
+        // branch returns AuditUnavailable, step 8 rolls the state
+        // mutation back. The caller sees AuditUnavailable.
+        //
+        // The `#[cfg(feature = "octo-audit-internal")]` branch is
+        // exercised when the feature is enabled (separate CI lane);
+        // this test pins the feature-off substrate-faithful contract.
+        let (uuid, holder) = register_one();
+        let err = transition_agent(&holder, uuid, AgentState::Running, None).unwrap_err();
+        match err {
+            WalletError::AuditUnavailable(msg) => {
+                assert!(
+                    msg.contains("octo-audit-internal") || msg.contains("sink"),
+                    "AuditUnavailable message MUST reference the feature gate or sink state, got: {msg}",
+                );
+            }
+            other => panic!("expected AuditUnavailable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transition_agent_oversize_reason_rejected_before_state_change() {
+        // RFC-0015 §6.2.5: validate_reason runs BEFORE the registry
+        // lock + lookup; the agent_id never even reaches the
+        // caller-attestation path. We use a fresh UUID so any
+        // mutation would be impossible (the agent isn't registered)
+        // — the test pins the contract that ReasonTooLong surfaces
+        // FIRST regardless of agent existence.
+        let did = Did::from("did:octo:oversize-reason-test");
+        let too_long = "x".repeat(257);
+        let err = transition_agent(&did, Uuid::new_v4(), AgentState::Running, Some(&too_long))
+            .unwrap_err();
+        assert!(matches!(err, WalletError::ReasonTooLong(257)));
+    }
+
+    #[test]
+    fn transition_agent_control_char_reason_rejected_before_state_change() {
+        // RFC-0015 §6.2.5: ESC byte triggers ReasonContainsControlChars
+        // (hex-escaped code-point form, never raw byte).
+        let did = Did::from("did:octo:ctrl-char-reason-test");
+        let bad = "evil\u{001B}pager";
+        let err =
+            transition_agent(&did, Uuid::new_v4(), AgentState::Running, Some(bad)).unwrap_err();
+        match err {
+            WalletError::ReasonContainsControlChars(s) => assert_eq!(s, "<U+001B>"),
+            other => panic!("expected ReasonContainsControlChars, got {other:?}"),
+        }
     }
 }

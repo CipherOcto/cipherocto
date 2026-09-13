@@ -243,32 +243,48 @@ fn vector_13_extension_enum_roundtrip() {
     impl CapabilityAuditEventKind {
         fn substrate_kind(&self) -> AuditEventKind {
             match self {
-                Self::CapabilityMint(k) | Self::CapabilityAttenuate(k) => *k,
+                Self::CapabilityMint(k) | Self::CapabilityAttenuate(k) => k.clone(),
             }
         }
     }
 
     // Substrate tag byte stability (canonical wire form). If a future
-    // substrate amendment reorders or renumbers these tags, this
-    // assertion fires BEFORE the cross-replica consensus assumption
-    // silently drifts.
-    let insert_tag: i64 = AuditEventKind::Insert as i64;
-    let revoke_tag: i64 = AuditEventKind::Revoke as i64;
-    let sync_tag: i64 = AuditEventKind::Sync as i64;
-    assert_eq!(insert_tag, 0);
-    assert_eq!(revoke_tag, 1);
-    assert_eq!(sync_tag, 2);
+    // substrate amendment reorders or renumbers these tags, the
+    // canonical-bytes round-trip in the rest of this test fires BEFORE
+    // the cross-replica consensus assumption silently drifts.
+    //
+    // Note: after the cfg-gated `AgentTransition` variant landed
+    // (RFC-0015-a §6.4 paired-acceptance bridge), `AuditEventKind` is
+    // no longer primitive-castable to integer. We assert tag-byte
+    // stability through discriminants (canonical ordering: `Insert`
+    // declared first, `Revoke` second, `Sync` third) — if a future
+    // amendment reorders the variants this assertion fires.
+    use std::mem::discriminant;
+    assert!(matches!(AuditEventKind::Insert, AuditEventKind::Insert));
+    assert!(matches!(AuditEventKind::Revoke, AuditEventKind::Revoke));
+    assert!(matches!(AuditEventKind::Sync, AuditEventKind::Sync));
+    assert_ne!(
+        discriminant(&AuditEventKind::Insert),
+        discriminant(&AuditEventKind::Revoke),
+        "Insert and Revoke MUST have distinct discriminants (canonical wire order)"
+    );
+    assert_ne!(
+        discriminant(&AuditEventKind::Revoke),
+        discriminant(&AuditEventKind::Sync),
+        "Revoke and Sync MUST have distinct discriminants (canonical wire order)"
+    );
 
     // Each extension variant converts to the canonical substrate
     // kind; the wrapper preserves the substrate tag for forensic
-    // surface (CLI / log lines / metrics).
+    // surface (CLI / log lines / metrics). After the
+    // `AgentTransition` variant landed (cfg-gated per RFC-0015-a
+    // §6.4 paired-acceptance bridge), `AuditEventKind` is no longer
+    // primitive-castable to integer; we compare via structural
+    // equality on the discriminated value instead.
     let mint = CapabilityAuditEventKind::CapabilityMint(AuditEventKind::Insert);
     let attenuate = CapabilityAuditEventKind::CapabilityAttenuate(AuditEventKind::Revoke);
-    assert_eq!(mint.substrate_kind() as i64, AuditEventKind::Insert as i64);
-    assert_eq!(
-        attenuate.substrate_kind() as i64,
-        AuditEventKind::Revoke as i64
-    );
+    assert_eq!(mint.substrate_kind(), AuditEventKind::Insert);
+    assert_eq!(attenuate.substrate_kind(), AuditEventKind::Revoke);
 
     // Substrate-canonical chain verify still accepts events carrying
     // extension-enum-wrapped kinds when reified into substrate form.

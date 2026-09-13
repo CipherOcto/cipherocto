@@ -49,3 +49,15 @@ pub use scrub::{scrub_adapter_error, scrub_adapter_error_with, scrub_registry_va
 // DOMAIN adapter lands with RFC-0016-a paired-acceptance unblock.
 pub mod receipt_read;
 pub use receipt_read::{get_receipt, insert_receipt, list_receipts, AuditFilter};
+
+// RFC-0015-a §6.1 paired-acceptance bridge: audit write-path façade.
+// Process-global sink registry + `append_agent_transition_event`
+// helper. Gated behind `octo-audit-internal` feature per RFC-0015-a
+// §6.4 paired-acceptance bridge contract; the whole module is
+// INVISIBLE in default builds (the substrate `AuditEventKind` does
+// not expose `AgentTransition` without the feature). Permanent
+// once RFC-0012-v2 lands.
+#[cfg(feature = "octo-audit-internal")]
+pub mod audit_write;
+#[cfg(feature = "octo-audit-internal")]
+pub use audit_write::{append_agent_transition_event, register_audit_sink, AgentTransitionPayload};

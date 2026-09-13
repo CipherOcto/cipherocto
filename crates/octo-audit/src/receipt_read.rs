@@ -144,12 +144,18 @@ pub fn get_receipt(id: &u64) -> Result<Receipt, AuditError> {
 /// leak" — only the `octo-audit` Layer B façade can call this
 /// function (with the internal feature flag enabled), preventing
 /// accidental path leakage to downstream consumers (e.g., `octo-cli`
-/// in default builds). The function is fallible (returns
-/// `AuditError`) so callers surface IO errors uniformly with the
-/// rest of the receipt surface (no panic path on filesystem
-/// regression).
+/// in default builds). The Result return is RESERVED for a future
+/// Phase 2 IO-error path (filesystem stat failures on the canonical
+/// audit-receipts directory); Phase 1 env-var resolution is
+/// infallible (both branches construct `Ok(...)`).
+///
+/// `#[allow(dead_code)]` is required because the lib target's
+/// `dead_code` lint does not see the `#[cfg(test)]` test call sites
+/// (test target is a separate compilation unit); the function is
+/// exercised by the internal-feature-gated tests at the bottom of
+/// this module.
 #[cfg(feature = "octo-audit-internal")]
-#[must_use]
+#[allow(dead_code)]
 pub(crate) fn audit_home() -> Result<PathBuf, AuditError> {
     if let Ok(octo_home) = std::env::var("OCTO_HOME") {
         Ok(PathBuf::from(octo_home).join("audit/receipts"))

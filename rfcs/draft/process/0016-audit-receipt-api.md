@@ -264,7 +264,7 @@ DEFER — audit receipt substrate has no direct token cost; cite RFC-0900+ (Role
 
 ## Compatibility
 
-1. **No breaking changes.** 4 KEEP items on `octo-audit` (Layer B façade) per RFC-0012; no existing public API modified. `AuditFilter` field set is additive (`router_id`/`timestamp_unix_gte`/`timestamp_unix_lte`/`cursor` are NEW at KEEP; `limit` typed `usize` per Rust convention); `list_receipts` returns `Vec<u64>` (no projection newtype at KEEP; `Vec<Receipt>` projection DEFERRED to RFC-0016-a per §6.8 paired-acceptance).
+1. **No breaking changes.** 4 KEEP items on `octo-audit` (Layer B façade) per RFC-0012; no existing public API modified. `AuditFilter` field set: `router_id` and `cursor` are NEW at KEEP; `timestamp_unix_gte`/`timestamp_unix_lte` are RENAMED from `since_unix`/`until_unix` (semantics `_gte` is `>=`, `_lte` is `<=`; closes off-by-one ambiguity); `limit` retyped to `usize` per Rust convention. `list_receipts` returns `Vec<u64>` (no projection newtype at KEEP; `Vec<Receipt>` projection DEFERRED to RFC-0016-a per §6.8 paired-acceptance).
 2. **No new exit codes break parent semantics.** Substrate-canonical 3-variant `AuditError` per §6.2.5; reserved slots per §6.8.
 3. **No new clap variants break parent dispatch.** This RFC is substrate-only; CLI missions consume the new surface via existing CLI variant sets.
 4. **Substrate-side scrubber defense-in-depth** — per §6.2.5 (SinkSpecific payload scrubbed via `octo-audit/src/scrub.rs`); ScrubbedAuditError newtype surface DEFERRED to RFC-0016-a per §6.8.

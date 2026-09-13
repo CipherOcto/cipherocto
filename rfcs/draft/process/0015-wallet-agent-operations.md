@@ -24,7 +24,7 @@ This RFC defines the canonical agent operations substrate as **three additive pu
 6. **`WalletError::ReasonContainsControlChars(String)`** — NEW ADDITIVE enum variant per §6.2.5 (validate_reason). Payload `String` carries hex-escaped code-point notation (e.g., `<U+001B>` for ESC), NEVER the raw byte — prevents attacker-byte echo via `Display` impl (terminal-render hijack mitigation).
 7. **`WalletError::ReasonTooLong(usize)`** — NEW ADDITIVE enum variant per §6.2.5 (validate_reason) length cap. Payload `usize` is the offending byte length.
 
-The write-path surface (`transition_agent` + paired `WalletError::AlreadyInTransition` + `WalletError::InvalidStateTransition` + `WalletError::AuditUnavailable`) is **DEFERRED** to RFC-0015-a (write-path amendment). Acceptance of RFC-0015 does NOT authorize the write path; that requires RFC-0015-a acceptance paired with RFC-0012-v2 (Layer A `AuditEventKind::AgentTransition` amendment).
+The write-path surface (`transition_agent` + paired `WalletError::AlreadyInTransition` + `WalletError::InvalidStateTransition` + `WalletError::AuditUnavailable`) is **DEFERRED** to RFC-0015-a (write-path amendment). Acceptance of RFC-0015 does NOT authorize the write path; that requires RFC-0015-a acceptance paired with RFC-0012-v3 (Layer A `AuditEventKind::AgentTransition` amendment, Accepted 2026-09-12).
 
 The substrate is intentionally **read-only on RFC-0015 v2 acceptance** — `register_agent` already exists at `cli_fns.rs`. No new persistence, no new envelopes. Domain consumers are CLI missions `0011-c-agent-{list,attach}-subcommand` (KEEP at v2 acceptance) and `0011-c-agent-{run,destroy}-subcommand` (DEFERRED to RFC-0015-a acceptance). RFC-0002 §Agent State Machine is the canonical state authority.
 
@@ -43,11 +43,11 @@ The substrate is intentionally **read-only on RFC-0015 v2 acceptance** — `regi
 
 **Amendment sibling (DEFERRED write-path):**
 
-- **RFC-0015-a** — `octo-wallet` Agent Write-Path Amendment (`transition_agent` + `WalletError::AlreadyInTransition` + `WalletError::InvalidStateTransition` + `WalletError::AuditUnavailable`). See `rfcs/draft/process/0015-a-wallet-agent-write-path.md`. DEFERRED to paired acceptance with RFC-0012-v2 (Layer A `AuditEventKind::AgentTransition` amendment).
+- **RFC-0015-a** — `octo-wallet` Agent Write-Path Amendment (`transition_agent` + `WalletError::AlreadyInTransition` + `WalletError::InvalidStateTransition` + `WalletError::AuditUnavailable`). See `rfcs/draft/process/0015-a-wallet-agent-write-path.md`. DEFERRED to paired acceptance with RFC-0012-v3 (Layer A `AuditEventKind::AgentTransition` amendment, now Accepted 2026-09-12).
 
 **Substrate amendment dependencies (informational — apply to RFC-0015-a, NOT to this RFC-0015 v2):**
 
-- **RFC-0012-v2** — `AuditEventKind::AgentTransition { agent_id, from, to, reason }` variant addition to `octo-audit-core` (Layer A frozen; parent `AuditEvent::at_millis_unix` carries the timestamp — variant payload does NOT duplicate the parent timestamp). **(DRAFT — required for RFC-0015-a write-path acceptance.)**
+- **RFC-0012-v3** — `AuditEventKind::AgentTransition { agent_id, from, to, reason }` variant addition to `octo-audit-core` (Layer A frozen; parent `AuditEvent::at_millis_unix` carries the timestamp — variant payload does NOT duplicate the parent timestamp). **(Accepted 2026-09-12 — substrate amendment landed; write-path RFC-0015-a Draft remains unblocked for sibling acceptance.)**
 - **RFC-0002-v2** — `AgentState` 5-state ACTIVE/BUSY split (companion amendment per §Summary "Substrate-faithful note"). **(DRAFT — informational; not on the RFC-0015 v2 critical path.)**
 
 ## Design Goals
@@ -149,7 +149,7 @@ pub struct AgentFilter {
 
 #### §6.2.2 `transition_agent` — DEFERRED to RFC-0015-a
 
-The `transition_agent` write function is **DEFERRED** to RFC-0015-a. See `rfcs/draft/process/0015-a-wallet-agent-write-path.md` §6.1 for the full specification including TOCTOU mitigation (paired `parking_lot::Mutex::try_lock()` per-agent lock + global registry lock upgrade), audit append + rollback contract (paired with RFC-0012-v2 `AuditEventKind::AgentTransition` variant), and the `WalletError::{AlreadyInTransition(Uuid), InvalidStateTransition { from, to }, AuditUnavailable}` paired variants.
+The `transition_agent` write function is **DEFERRED** to RFC-0015-a. See `rfcs/draft/process/0015-a-wallet-agent-write-path.md` §6.1 for the full specification including TOCTOU mitigation (paired `parking_lot::Mutex::try_lock()` per-agent lock + global registry lock upgrade), audit append + rollback contract (paired with RFC-0012-v3 `AuditEventKind::AgentTransition` variant, Accepted 2026-09-12), and the `WalletError::{AlreadyInTransition(Uuid), InvalidStateTransition { from, to }, AuditUnavailable}` paired variants.
 
 #### §6.2.3 `WalletError::AgentNotFound(Uuid)`
 
@@ -255,7 +255,7 @@ CLI missions consuming this substrate:
 | `0011-c-agent-list-subcommand.md`   | `octo_wallet::list_owned_agents(caller_did, &filter)` (NEW per §6.2.1)  | Sub-step 3 (NEW, KEEP) |
 | `0011-c-agent-attach-subcommand.md` | (read-only; uses `octo_runtime::attach`) — substrate is read-only at v2 | N/A                    |
 
-Each mission's accepted-state precondition is checked locally against the `AgentState` returned by `octo_wallet::register_agent` + `list_owned_agents` calls; the substrate is source of truth, not the CLI. RFC-0015 v2 acceptance unblocks the read-only missions (`create`, `list`, `attach`); write-path missions (`run`, `destroy`) remain gated on RFC-0015-a acceptance (which itself requires RFC-0012-v2 acceptance).
+Each mission's accepted-state precondition is checked locally against the `AgentState` returned by `octo_wallet::register_agent` + `list_owned_agents` calls; the substrate is source of truth, not the CLI. RFC-0015 v2 acceptance unblocks the read-only missions (`create`, `list`, `attach`); write-path missions (`run`, `destroy`) remain gated on RFC-0015-a acceptance (which itself requires RFC-0012-v3 acceptance; RFC-0012-v3 Accepted 2026-09-12).
 
 ### §6.6 Determinism requirements
 
@@ -283,7 +283,7 @@ The write-path surface (`transition_agent` + paired `WalletError::{AlreadyInTran
 
 **`rfcs/draft/process/0015-a-wallet-agent-write-path.md`**
 
-Acceptance of RFC-0015 v2 does NOT authorize these features. Unblock requires RFC-0015-a acceptance paired with RFC-0012-v2 acceptance (Layer A frozen `AuditEventKind::AgentTransition` variant in `octo-audit-core`).
+Acceptance of RFC-0015 v2 does NOT authorize these features. Unblock requires RFC-0015-a acceptance paired with RFC-0012-v3 acceptance (Layer A frozen `AuditEventKind::AgentTransition` variant in `octo-audit-core`; RFC-0012-v3 Accepted 2026-09-12 — paired RFC-0015-a Draft remains unblocked for sibling acceptance).
 
 ## Performance Targets
 
@@ -343,7 +343,7 @@ DEFER — agent read operations have no direct token cost; cite RFC-0900+ (Role 
 
 ## Test Vectors
 
-Substrate-level test vectors (`crates/octo-wallet/src/agent.rs` test module). Write-path vectors (TV-WLT-AGT-3 through TV-WLT-AGT-11c) are **DEFERRED** to RFC-0015-a §Test Vectors — they exercise `transition_agent` which requires RFC-0012-v2 acceptance.
+Substrate-level test vectors (`crates/octo-wallet/src/agent.rs` test module). Write-path vectors (TV-WLT-AGT-3 through TV-WLT-AGT-11c) are **DEFERRED** to RFC-0015-a §Test Vectors — they exercise `transition_agent` which requires RFC-0012-v3 acceptance (Accepted 2026-09-12).
 
 | #              | Substrate call                                                                                                                | Input                                                                    | Expected Output                                                                                                                                                                                                                             | Notes                                                                                                                                 |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
@@ -380,7 +380,7 @@ CLI-level test vectors live in RFC-0011-c §Test Vectors TV-AGT1..AGT-12 (UNCHAN
 
 - **Phase 1 (this RFC, v2 KEEP)** — substrate function additions only; 7 KEEP items = 3 functions (`list_owned_agents` + `lookup_agent` + `validate_reason`) + 4 error variants (`WalletError::AgentNotFound(Uuid)` + `WalletError::ForbiddenHolderMismatch` + `WalletError::ReasonContainsControlChars(String)` + `WalletError::ReasonTooLong(usize)`) land on `octo-wallet` Layer B; no CLI changes; no `transition_agent`.
 - **Phase 2 (RFC-0011-c read-only missions)** — CLI missions `0011-c-agent-{create,list,show,attach}-subcommand` consume the read surface; mutation traces per RFC-0011-c §Test Vectors. **Cursor support:** the `cursor: Option<String>` field on `AgentFilter` (per §6.2.1) is RESERVED for Phase 2 multi-page iteration; the substrate accepts and returns the cursor as opaque, but the CLI does not surface cursor-based iteration at Phase 2 — the cursor is forward-compat for >1024-agent registries (see Future Work §`list_owned_agents` cursor support).
-- **Phase 2.5 (RFC-0015-a acceptance, paired with RFC-0012-v2)** — `transition_agent` + paired write-path `WalletError` variants land on `octo-wallet` Layer B. `AuditEventKind::AgentTransition { agent_id, from, to, reason }` variant lands in `octo-audit-core` (Layer A frozen; parent `AuditEvent::at_millis_unix` carries the timestamp). See RFC-0015-a §Implementation Phases for the paired unblock.
+- **Phase 2.5 (RFC-0015-a acceptance, paired with RFC-0012-v3)** — `transition_agent` + paired write-path `WalletError` variants land on `octo-wallet` Layer B. `AuditEventKind::AgentTransition { agent_id, from, to, reason }` variant lands in `octo-audit-core` (Layer A frozen; parent `AuditEvent::at_millis_unix` carries the timestamp; RFC-0012-v3 Accepted 2026-09-12 — paired RFC-0015-a Draft remains unblocked for sibling acceptance). See RFC-0015-a §Implementation Phases for the paired unblock.
 - **Phase 3 (RFC-0011-c write missions)** — CLI missions `0011-c-agent-{run,destroy}-subcommand` consume the write surface (post-RFC-0015-a acceptance); mutation traces per RFC-0011-c §Test Vectors.
 
 ## Key Files to Modify
@@ -392,11 +392,11 @@ CLI-level test vectors live in RFC-0011-c §Test Vectors TV-AGT1..AGT-12 (UNCHAN
 
 **Layer placement table (M-4 amendment — explicit layer discipline per CLAUDE.md §Rust crate-level stability):**
 
-| Crate              | Layer                       | Substrate anchor (§symbol ref)                                                                        | Role at RFC-0015 v2 KEEP                                                                                                  |
-| ------------------ | --------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `octo-wallet-core` | Layer A frozen (RFC-0009)   | `IdentityHandle` struct per `crates/octo-wallet-core/src/identity.rs` §`IdentityHandle`               | Canonical identity substrate; HSM-bound `caller_did` provenance source for §6.2.1 + §6.2.5 caller-attestation pattern     |
-| `octo-wallet`      | Layer B façade (RFC-0011-c) | `crates/octo-wallet/src/agent.rs` §`AgentManifest` + `crates/octo-wallet/src/error.rs` §`WalletError` | Façade; KEEP additive items (`list_owned_agents` + `lookup_agent` + `validate_reason` + 4 error variants) land here at v2 |
-| `octo-audit-core`  | Layer A frozen (RFC-0012)   | `AuditEventKind` enum (3 variants)                                                                    | Canonical substrate for paired-DEFER `transition_agent` audit append (lands with RFC-0012-v2 + RFC-0015-a)                |
+| Crate              | Layer                       | Substrate anchor (§symbol ref)                                                                        | Role at RFC-0015 v2 KEEP                                                                                                         |
+| ------------------ | --------------------------- | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `octo-wallet-core` | Layer A frozen (RFC-0009)   | `IdentityHandle` struct per `crates/octo-wallet-core/src/identity.rs` §`IdentityHandle`               | Canonical identity substrate; HSM-bound `caller_did` provenance source for §6.2.1 + §6.2.5 caller-attestation pattern            |
+| `octo-wallet`      | Layer B façade (RFC-0011-c) | `crates/octo-wallet/src/agent.rs` §`AgentManifest` + `crates/octo-wallet/src/error.rs` §`WalletError` | Façade; KEEP additive items (`list_owned_agents` + `lookup_agent` + `validate_reason` + 4 error variants) land here at v2        |
+| `octo-audit-core`  | Layer A frozen (RFC-0012)   | `AuditEventKind` enum (3 variants)                                                                    | Canonical substrate for paired-DEFER `transition_agent` audit append (lands with RFC-0012-v3, Accepted 2026-09-12, + RFC-0015-a) |
 
 Layer direction: `octo-wallet` (Layer B) → `octo-wallet-core` (Layer A frozen) for HSM-bound identity; `octo-wallet` (Layer B) → `octo-audit-core` (Layer A frozen) for the paired-DEFER audit append. No direct B→A edges in RFC-0015 v2 KEEP. Layer B → Layer A is the canonical façade-to-substrate hop per CLAUDE.md §Architectural Principles.
 
@@ -413,7 +413,7 @@ No changes to Layer A crates (`octo-audit-core`, etc.); no CLI binary changes; n
 ## Rationale
 
 - **Substrate-faithful** — substrate is canonical per RFC-0012/0013/0014 acceptance pattern; the three-state `AgentState` enum is canonical even when it differs from the RFC-0002 spec diagram.
-- **Additive only** — CLAUDE.md §Layer A stability: Layer B additive changes do not break consumers; the new functions + 4 KEEP error variants are additive; the 5 DEFERRED variants land with RFC-0015-a (paired with RFC-0012-v2).
+- **Additive only** — CLAUDE.md §Layer A stability: Layer B additive changes do not break consumers; the new functions + 4 KEEP error variants are additive; the 5 DEFERRED variants land with RFC-0015-a (paired with RFC-0012-v3, Accepted 2026-09-12).
 - **No parallel abstractions** — function names + parameter shapes mirror CLI mission call sites exactly (per [[cipherocto-design-principles]] §No parallel abstractions).
 - **Pairing discipline** — RFC-0015 (this RFC) + RFC-0015-a (write-path amendment) follow the extension-over-enumeration pattern per [[cipherocto-design-principles]]; no central enum edit at Layer A.
 
@@ -431,7 +431,7 @@ No changes to Layer A crates (`octo-audit-core`, etc.); no CLI binary changes; n
 - RFC-0010 — Canonical DID Codec (DID parsing for `holder_did` filter field)
 - RFC-0008 — Deterministic AI Execution Boundary (execution class mapping)
 - RFC-0015-a — `octo-wallet` Agent Write-Path Amendment (sibling; DEFERRED write-path surface)
-- RFC-0012-v2 — Audit Substrate Amendment (sibling; required for RFC-0015-a acceptance; adds `AuditEventKind::AgentTransition` variant)
+- RFC-0012-v3 — Audit Substrate Amendment (sibling; Accepted 2026-09-12; adds `AuditEventKind::AgentTransition` variant; required for RFC-0015-a write-path acceptance)
 - [[cipherocto-design-principles]] — Layer model + substrate-faithful principle; §RFC-0015 / §RFC-0015-a pair follows the extension-over-enumeration pattern (no central enum edit at Layer A)
 
 ## Related Use Cases
@@ -488,7 +488,7 @@ pub fn validate_reason(reason: &str) -> Result<(), WalletError> {
 }
 ```
 
-`transition_agent` is DEFERRED to RFC-0015-a §Appendix A. The write-path signature + paired `WalletError::{AlreadyInTransition(Uuid), InvalidStateTransition { from, to }, AuditUnavailable}` variants + audit append + `parking_lot::Mutex::try_lock()` lock-mode contract land with RFC-0015-a + RFC-0012-v2 paired acceptance.
+`transition_agent` is DEFERRED to RFC-0015-a §Appendix A. The write-path signature + paired `WalletError::{AlreadyInTransition(Uuid), InvalidStateTransition { from, to }, AuditUnavailable}` variants + audit append + `parking_lot::Mutex::try_lock()` lock-mode contract land with RFC-0015-a + RFC-0012-v3 paired acceptance (RFC-0012-v3 Accepted 2026-09-12 — paired RFC-0015-a Draft remains unblocked for sibling acceptance).
 
 ### Appendix B. Error envelope cross-reference table
 
@@ -541,4 +541,4 @@ sequenceDiagram
     CLI-->>Op: OutputEnvelope<AgentShowOutput> exit 0 or 42 or 13
 ```
 
-> **v2 scope note:** the previous v1.0 sequence diagram illustrated the `transition_agent` write path through `octo-audit-core`. v2 replaces it with the read-only `list_owned_agents` + `lookup_agent` flows. The write-path sequence (`octo agent destroy --reason`) is **DEFERRED** to RFC-0015-a §Appendix C — it lands with RFC-0012-v2 + RFC-0015-a paired acceptance.
+> **v2 scope note:** the previous v1.0 sequence diagram illustrated the `transition_agent` write path through `octo-audit-core`. v2 replaces it with the read-only `list_owned_agents` + `lookup_agent` flows. The write-path sequence (`octo agent destroy --reason`) is **DEFERRED** to RFC-0015-a §Appendix C — it lands with RFC-0012-v3 + RFC-0015-a paired acceptance (RFC-0012-v3 Accepted 2026-09-12 — paired RFC-0015-a Draft remains unblocked for sibling acceptance).

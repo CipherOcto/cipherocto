@@ -132,10 +132,10 @@ No new external crates required; all substrate types are defined in `octo-wallet
 
 2 TV (TV-AGT9..TV-AGT10) covering `agent destroy`:
 
-| #        | Subcommand      | Input                        | Expected Output                                                                                  | Notes                      |
-| -------- | --------------- | ---------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------- |
-| TV-AGT9  | `agent destroy` | Active agent, `--confirm`    | `AgentDestroyOutput { state: TERMINATED, audit_log_entry: ..., ... }` (exit 0)                   | Audit log appended         |
-| TV-AGT10 | `agent destroy` | Active agent, no `--confirm` | `ConfirmationRequired { command: "agent destroy" }` (exit 2 per parent RFC-0011 §Error Handling) | Confirmation gate enforced |
+| #        | Subcommand      | Input                         | Expected Output                                                                                  | Notes                      |
+| -------- | --------------- | ----------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------- |
+| TV-AGT9  | `agent destroy` | Running agent, `--confirm`    | `AgentDestroyOutput { state: terminated, audit_log_entry: ..., ... }` (exit 0)                   | Audit log appended         |
+| TV-AGT10 | `agent destroy` | Running agent, no `--confirm` | `ConfirmationRequired { command: "agent destroy" }` (exit 2 per parent RFC-0011 §Error Handling) | Confirmation gate enforced |
 
 ## Layer direction (RFC-0011-c §9.1 Architecture + per [[cipherocto-design-principles]])
 
@@ -167,7 +167,7 @@ cargo test -p octo-cli --lib --tests  # green
 ## Cross-references
 
 - RFC-0011-c §9.3.4 `octo agent destroy` subcommand specification
-- RFC-0011-c §9.8 Error Handling (1 new variant: `ConfirmationRequired` (substrate exit 47 / parent CLI exit 2))
+- RFC-0011-c §9.8 Error Handling (no new variants added by this mission: `ConfirmationRequired` is pre-existing per Type Coverage row + Sub-step 4)
 - RFC-0011-c §9.4 Output Envelope (`OutputEnvelope<T>` wrapper, `schema_version = 4`)
 - RFC-0011-c §Security (confirmation gate, redaction patterns)
 - RFC-0011-a §7.4 Substrate [ADD] signatures (audit log append substrate)

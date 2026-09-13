@@ -134,7 +134,7 @@ No new external crates required; all substrate types are defined in `octo-wallet
 
 | #       | Subcommand  | Input                        | Expected Output                                                      | Notes                                                                     |
 | ------- | ----------- | ---------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| TV-AGT4 | `agent run` | Registered agent, no runtime | `AgentRunOutput { state: BUSY, ... }` (exit 0)                       | Spawns runtime container; warm path                                       |
+| TV-AGT4 | `agent run` | Registered agent, no runtime | `AgentRunOutput { state: running, ... }` (exit 0)                    | Spawns runtime container; warm path                                       |
 | TV-AGT5 | `agent run` | Terminated agent             | `InvalidStateTransition { from: terminated, to: running }` (exit 43) | State machine rejects (canonical lowercase `AgentState::as_str()` labels) |
 
 ## Layer direction (RFC-0011-c §9.1 Architecture + per [[cipherocto-design-principles]])

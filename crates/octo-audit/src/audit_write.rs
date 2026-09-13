@@ -94,17 +94,21 @@ static LAST_CHAIN_HASH: OnceLock<Mutex<[u8; 32]>> = OnceLock::new();
 /// sink (e.g. `StoolapAuditSink`) so this façade stays free of Layer C
 /// adapter deps. The `Send` bound is required for `Mutex<Box<...>>` to
 /// itself be `Send` (the `Mutex<T>: Send` bound requires `T: Send`).
+///
+/// # Atomicity + cost
+///
+/// `OnceLock::set` is atomic: when two threads race to register, only
+/// the first one's sink is installed; the second `set` returns `Err`
+/// carrying the rejected sink. The rejected sink (wrapped in
+/// `Mutex::new`) is dropped at the call site — one heap allocation +
+/// drop per failed registration. This cost is acceptable because
+/// `register_audit_sink` is called exactly once at startup; the
+/// non-first-call path is a configuration-error path, not a hot loop.
+/// A `get_or_init`-based implementation cannot reliably distinguish
+/// first-call-wins from already-initialized without a TOCTOU race on
+/// the boolean, so `set()` is the substrate-faithful choice.
 pub fn register_audit_sink(sink: Box<dyn AppendOnlyAuditSink + Send>) -> bool {
-    // OnceLock::set is idempotent at the first-call-wins level: when
-    // a sink is already registered, the new `sink` (and its
-    // Mutex wrapper) is silently dropped rather than wrapping it
-    // only to throw the wrapper away. Use `get_or_init` so we only
-    // allocate the Mutex on the path that actually wins the race.
-    AUDIT_SINK
-        .get_or_init(|| Mutex::new(sink))
-        .lock()
-        .map(|_existing| true)
-        .unwrap_or(false)
+    AUDIT_SINK.set(Mutex::new(sink)).is_ok()
 }
 
 /// Append an `AgentTransition` audit event to the registered sink
@@ -260,18 +264,21 @@ mod tests {
 
     #[test]
     fn register_idempotent_first_call_returns_true() {
-        // First registration wins; the second call returns false
-        // without replacing the original sink (fail-closed per
-        // OnceLock::set() semantics).
-        //
-        // We register a unique sink each time the test runs and assert
-        // first registration returns true. Subsequent tests (if any)
-        // that try to register again will see false.
-        let sink = MockSink::new();
+        // Contract: first registration wins (returns true); any
+        // subsequent registration returns false. We don't pin the
+        // first call's boolean return because cargo's default
+        // parallel test execution may have another test in this
+        // binary claim the slot first; the contract is "exactly one
+        // call wins, all subsequent calls fail".
+        let sink1 = MockSink::new();
+        let first = register_audit_sink(Box::new(sink1));
+        let sink2 = MockSink::new();
+        let second = register_audit_sink(Box::new(sink2));
         assert!(
-            register_audit_sink(Box::new(sink)),
-            "first registration MUST return true",
+            !second,
+            "second registration MUST return false (idempotent fail)",
         );
+        let _ = first;
     }
 
     #[test]

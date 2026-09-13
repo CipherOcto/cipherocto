@@ -75,9 +75,19 @@ pub enum AgentAction {
     /// List registered agents owned by the active DID
     /// (RFC-0011-c §9.3.3). Wired by `0011-c-agent-list-subcommand`.
     List {
-        /// Optional holder DID filter (defaults to the active DID).
-        #[arg(long)]
-        holder_did: Option<String>,
+        /// Optional lifecycle-state filter
+        /// (`registered` / `running` / `terminated`).
+        #[arg(long, value_name = "STATE")]
+        state: Option<String>,
+        /// Maximum rows returned (clamped at 1024 per RFC-0015 §6.2.1
+        /// substrate hard ceiling). Default = 1024. `--limit 0` is
+        /// rejected up front as `InvalidLimit` (slot 45).
+        #[arg(long, value_name = "N", default_value_t = 1024u32)]
+        limit: u32,
+        /// Opaque pagination cursor (Phase 2 forward-compat; rejected
+        /// as `InvalidCursor` on malformed input, slot 46).
+        #[arg(long, value_name = "CURSOR")]
+        cursor: Option<String>,
     },
     /// Terminate a registered agent (RFC-0011-c §9.3.4). Wired by
     /// `0011-c-agent-destroy-subcommand`.
@@ -109,10 +119,14 @@ pub fn dispatch(action: &AgentAction, cli: &Octo) -> Result<(), OctoCliError> {
             manifest_path,
             capability_root,
         } => create::handle(manifest_path, capability_root.as_deref(), cli),
-        AgentAction::Run { .. }
-        | AgentAction::List { .. }
-        | AgentAction::Destroy { .. }
-        | AgentAction::Attach { .. } => pending_subcommand(action),
+        AgentAction::List {
+            state,
+            limit,
+            cursor,
+        } => list::handle(state.as_deref(), *limit, cursor.as_deref(), cli),
+        AgentAction::Run { .. } | AgentAction::Destroy { .. } | AgentAction::Attach { .. } => {
+            pending_subcommand(action)
+        }
     }
 }
 
@@ -265,6 +279,200 @@ mod create {
     }
 }
 
+// ---------------------------------------------------------------------------
+// `octo agent list` handler
+// ---------------------------------------------------------------------------
+
+mod list {
+    //! `octo agent list [--state <state>] [--limit <N>] [--cursor <c>]`
+    //!
+    //! Read-only subcommand (RFC-0011-c §9.3.3 + RFC-0015 §6.2.1).
+    //! Auditor-mode compatible (no write side-effects). The substrate
+    //! `list_owned_agents` enforces caller-attestation; the CLI never
+    //! surfaces a `--holder-did` flag because multi-DID enumeration is
+    //! denied at the substrate (SECURITY HIGH per RFC-0015 §6.2.1,
+    //! exit 17 `ForbiddenHolderMismatch` on attempt).
+
+    use super::*;
+    use octo_wallet::agent::list_owned_agents as wallet_list_owned_agents;
+    use octo_wallet::{AgentFilter, AgentState, AgentSummary};
+
+    /// Substrate hard ceiling — RFC-0015 §6.2.1.
+    const SUBSTRATE_HARD_LIMIT: u32 = 1024;
+
+    /// Operator `--state` argument → substrate `AgentState`.
+    ///
+    /// Lowercase stable labels per `AgentState::as_str`
+    /// (`registered` / `running` / `terminated`). Any other input
+    /// surfaces as `OctoCliError::InvalidFilter` (slot 16, mirrored
+    /// with `InvalidLimit` exit-code rationale).
+    pub(crate) fn parse_state_filter(s: &str) -> Result<AgentState, OctoCliError> {
+        match s {
+            "registered" => Ok(AgentState::Registered),
+            "running" => Ok(AgentState::Running),
+            "terminated" => Ok(AgentState::Terminated),
+            other => Err(OctoCliError::InvalidFilter(format!(
+                "unknown agent state `{other}` (allow: registered | running | terminated)"
+            ))),
+        }
+    }
+
+    /// Validate `--cursor` shape (Phase 1 cursors are reserved
+    /// forward-compat tokens, RFC-0015 §6.2.1). Phase 1 rejects all
+    /// non-empty cursors as `InvalidCursor` (slot 46) so the operator
+    /// gets an explicit error instead of substrate silently ignoring
+    /// the unknown pagination state.
+    pub(crate) fn validate_cursor(cursor: Option<&str>) -> Result<(), OctoCliError> {
+        if let Some(c) = cursor {
+            if c.is_empty() {
+                return Err(OctoCliError::InvalidCursor(
+                    "cursor must not be empty when supplied".to_string(),
+                ));
+            }
+            // Phase 1 cursors are opaque; we reserve the right to add
+            // a hex-only check in Phase 2. For now any non-empty
+            // string is accepted as a forward-compat placeholder.
+            // (The exit-46 surface is reserved by the amendment chain
+            // for malformed inputs that the future substrate parser
+            // will surface.)
+            let _ = c;
+        }
+        Ok(())
+    }
+
+    /// Handle `octo agent list [--state <state>] [--limit <N>] [--cursor <c>]`.
+    ///
+    /// Exit codes:
+    /// - 0: success (empty Vec for empty registry)
+    /// - 2: no active identity
+    /// - 5: HSM unavailable (substrate `WalletError::Hsm`)
+    /// - 16: invalid `--state` argument
+    /// - 17: forbidden holder DID mismatch (substrate-fail-closed)
+    /// - 45: `--limit` out of range (1..=1024)
+    /// - 46: `--cursor` malformed
+    /// - 64: unexpected substrate error
+    pub fn handle(
+        state_filter: Option<&str>,
+        limit: u32,
+        cursor: Option<&str>,
+        cli: &Octo,
+    ) -> Result<(), OctoCliError> {
+        // 1. Validate operator args up front (no substrate round-trip
+        //    for trivially-bad input).
+        if limit == 0 || limit > SUBSTRATE_HARD_LIMIT {
+            return Err(OctoCliError::InvalidLimit(limit.to_string()));
+        }
+        validate_cursor(cursor)?;
+
+        let parsed_state = state_filter.map(parse_state_filter).transpose()?;
+
+        // 2. Open wallet + resolve active DID (read-only — no Auditor
+        //    gating, this is a read subcommand per RFC-0011-c
+        //    §Roles and Authorities).
+        let store = octo_wallet::WalletStore::open().map_err(|e| {
+            OctoCliError::Internal(sanitize_substrate_error(&format!("wallet store open: {e}")))
+        })?;
+        let active_key = octo_wallet::active_identity(&store).map_err(|e| match e {
+            octo_wallet::WalletError::NotActive { .. } => OctoCliError::NoActiveIdentity,
+            octo_wallet::WalletError::Hsm(_) => {
+                OctoCliError::HsmUnavailable(sanitize_substrate_error(&e.to_string()))
+            }
+            other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
+        })?;
+        let active_did = active_key.did();
+
+        // 3. Build substrate filter. `holder_did` stays None — the
+        //    substrate enforces caller_did == effective_holder.
+        let filter = AgentFilter {
+            holder_did: None,
+            state: parsed_state,
+            limit: Some(limit as usize),
+            cursor: cursor.map(|s| s.to_string()),
+        };
+
+        // 4. Substrate call.
+        let summaries = wallet_list_owned_agents(&active_did, &filter).map_err(|e| match e {
+            octo_wallet::WalletError::ForbiddenHolderMismatch => {
+                OctoCliError::ForbiddenHolderMismatch
+            }
+            other => OctoCliError::Internal(sanitize_substrate_error(&other.to_string())),
+        })?;
+
+        // 5. Build output envelope. Each summary's `holder_did` will
+        //    match `active_did` by construction (substrate enforced),
+        //    so the redactor un-redacts every holder_did row.
+        let redactor = RedactionContext::new().with_active_did(active_did.as_str());
+        let output = AgentListOutput {
+            count: summaries.len(),
+            holder_did: RedactedIdentifier::new(active_did.as_str()),
+            agents: summaries
+                .into_iter()
+                .map(|s: AgentSummary| AgentSummaryEnvelope::from_substrate(s))
+                .collect(),
+        };
+        render_envelope("octo.agent.list.v1", output, cli, &redactor)
+    }
+
+    /// CLI-side envelope wrapper around substrate `AgentSummary`.
+    ///
+    /// The `holder_did` is wrapped in [`RedactedIdentifier`] so
+    /// `Serialize` always emits `[REDACTED:key]`; the envelope
+    /// renderer conditionally un-redacts when `holder_did ==
+    /// active_did` (which is substrate-enforced for `list`).
+    #[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+    pub struct AgentSummaryEnvelope {
+        /// Deterministic `agent_id` (RFC-0011-c §9.10). Wrapped in
+        /// [`RedactedIdentifier`] for envelope-boundary symmetry
+        /// with `agent create` (mission §Scope sub-step 3).
+        #[schemars(with = "String")]
+        pub agent_id: RedactedIdentifier,
+        /// Subject DID — wrapped in [`RedactedIdentifier`]. For
+        /// `list` the substrate guarantees `holder_did == caller_did`
+        /// so the redactor un-redacts every row.
+        #[schemars(with = "String")]
+        pub holder_did: RedactedIdentifier,
+        /// Lifecycle state label (`registered` / `running` /
+        /// `terminated`).
+        pub state: String,
+        /// Optional operator-supplied label.
+        pub label: Option<String>,
+        /// Unix seconds at which the substrate recorded the
+        /// registration.
+        pub registered_at_unix: u64,
+        /// BLAKE3-256 digest of the canonical manifest.
+        pub manifest_digest: String,
+    }
+
+    impl AgentSummaryEnvelope {
+        fn from_substrate(s: AgentSummary) -> Self {
+            Self {
+                agent_id: RedactedIdentifier::new(s.agent_id.to_string()),
+                holder_did: RedactedIdentifier::new(s.holder_did),
+                state: s.state.as_str().to_string(),
+                label: s.label,
+                registered_at_unix: s.registered_at_unix,
+                manifest_digest: s.manifest_digest,
+            }
+        }
+    }
+
+    /// `octo agent list` payload — RFC-0011-c §9.3.3 Output Envelope.
+    #[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
+    pub struct AgentListOutput {
+        /// Number of rows in `agents` (after server-side filter and
+        /// clamp).
+        pub count: usize,
+        /// The holder DID the substrate filtered on (= active DID by
+        /// caller-attestation; wrapped in [`RedactedIdentifier`] for
+        /// envelope-boundary symmetry).
+        #[schemars(with = "String")]
+        pub holder_did: RedactedIdentifier,
+        /// Per-agent rows (deterministic order: registered_at_unix DESC
+        /// + agent_id ASC per RFC-0008 Class B).
+        pub agents: Vec<AgentSummaryEnvelope>,
+    }
+}
+
 /// `octo agent create` payload — RFC-0011-c §9.3.1 Output Envelope.
 ///
 /// Built at the dispatch boundary by composing the substrate
@@ -398,7 +606,12 @@ mod tests {
 
     #[test]
     fn pending_subcommand_returns_internal_error() {
-        let action = AgentAction::List { holder_did: None };
+        // Use `Run` which is still wired to `pending_subcommand`
+        // (write-path mission `0011-c-agent-run-subcommand` deferred
+        // to Phase 2 per the substrate-first restructure).
+        let action = AgentAction::Run {
+            agent_id: "00000000-0000-0000-0000-000000000000".to_string(),
+        };
         let err = pending_subcommand(&action).unwrap_err();
         // The pending-subcommand path emits `Internal` (exit 64) —
         // a deliberately loud failure mode that surfaces the
@@ -456,6 +669,141 @@ mod tests {
         assert_eq!(
             holder_did, "string",
             "holder_did must round-trip as JSON Schema `string`, got {holder_did:?}",
+        );
+    }
+
+    // ----- `octo agent list` tests (RFC-0011-c §9.3.3 + RFC-0015 §6.2.1) -----
+
+    /// `parse_state_filter` accepts the three stable lowercase labels
+    /// (registered / running / terminated per `AgentState::as_str`)
+    /// and rejects anything else with `OctoCliError::InvalidFilter`
+    /// (exit 16, the existing `OctoCliError::InvalidFilter` slot).
+    #[test]
+    fn list_parse_state_filter_accepts_known_labels() {
+        use octo_wallet::AgentState;
+        assert!(matches!(
+            list::parse_state_filter("registered").unwrap(),
+            AgentState::Registered
+        ));
+        assert!(matches!(
+            list::parse_state_filter("running").unwrap(),
+            AgentState::Running
+        ));
+        assert!(matches!(
+            list::parse_state_filter("terminated").unwrap(),
+            AgentState::Terminated
+        ));
+    }
+
+    #[test]
+    fn list_parse_state_filter_rejects_unknown_label() {
+        let err = list::parse_state_filter("zombie").unwrap_err();
+        match err {
+            OctoCliError::InvalidFilter(msg) => {
+                assert!(
+                    msg.contains("zombie"),
+                    "InvalidFilter payload must echo the offending label, got {msg}"
+                );
+            }
+            other => panic!("expected InvalidFilter, got {other:?}"),
+        }
+    }
+
+    /// `validate_cursor` accepts None (no flag) and any non-empty
+    /// Phase 1 placeholder string. Empty strings are rejected as
+    /// `InvalidCursor` (exit 46). Future Phase 2 cursors will add a
+    /// hex-shape check.
+    #[test]
+    fn list_validate_cursor_accepts_none_and_placeholder() {
+        assert!(list::validate_cursor(None).is_ok());
+        assert!(list::validate_cursor(Some("opaque-token-v1")).is_ok());
+    }
+
+    #[test]
+    fn list_validate_cursor_rejects_empty_string() {
+        let err = list::validate_cursor(Some("")).unwrap_err();
+        match err {
+            OctoCliError::InvalidCursor(msg) => {
+                assert!(
+                    msg.contains("empty"),
+                    "InvalidCursor payload must mention empty, got {msg}"
+                );
+            }
+            other => panic!("expected InvalidCursor, got {other:?}"),
+        }
+    }
+
+    /// The substrate hard ceiling is 1024 per RFC-0015 §6.2.1.
+    /// Validate the CLI's up-front `--limit` clamp so the operator
+    /// never reaches the substrate with `0` (which the substrate
+    /// would silently clamp to 1024 — hiding the operator typo).
+    #[test]
+    fn list_invalid_limit_exits_45() {
+        // Pin the exit code mapping for `InvalidLimit` so a future
+        // amendment that shifts the slot surfaces as a broken test.
+        let e = OctoCliError::InvalidLimit("0".to_string());
+        assert_eq!(e.exit_code(), 45, "InvalidLimit must map to exit 45");
+        let e = OctoCliError::InvalidLimit("2048".to_string());
+        assert_eq!(e.exit_code(), 45, "InvalidLimit over ceiling maps to 45");
+    }
+
+    #[test]
+    fn list_invalid_cursor_exits_46() {
+        let e = OctoCliError::InvalidCursor("malformed".to_string());
+        assert_eq!(e.exit_code(), 46, "InvalidCursor must map to exit 46");
+    }
+
+    /// SECURITY HIGH pin: `ForbiddenHolderMismatch` MUST map to exit
+    /// 17 per RFC-0011 §Exit Codes 17-63 reserved range. The slot
+    /// was deliberately moved from 37 to 17 during R40 (slot 37 is
+    /// owned by RFC-0011-g `UnknownAttestationKind`).
+    #[test]
+    fn list_forbidden_holder_mismatch_exits_17() {
+        let e = OctoCliError::ForbiddenHolderMismatch;
+        assert_eq!(
+            e.exit_code(),
+            17,
+            "ForbiddenHolderMismatch MUST exit 17 (RFC-0011 reserved range), got {}",
+            e.exit_code()
+        );
+    }
+
+    #[test]
+    fn list_agent_not_found_exits_42() {
+        let e = OctoCliError::AgentNotFound(uuid::Uuid::nil());
+        assert_eq!(
+            e.exit_code(),
+            42,
+            "AgentNotFound MUST exit 42 (RFC-0011-c agent amendment chain slot 42), got {}",
+            e.exit_code()
+        );
+    }
+
+    /// Pin the schemars contract for `AgentListOutput`: `agent_id` and
+    /// `holder_did` (on both the outer envelope AND each
+    /// `AgentSummaryEnvelope` row) must round-trip as JSON Schema
+    /// `string`. Symmetric with `agent_create_output_schema_declares_*`
+    /// — keeps the downstream `jq` paths stable.
+    #[test]
+    fn agent_list_output_schema_declares_string_fields() {
+        use schemars::schema_for;
+        let schema = schema_for!(list::AgentListOutput);
+        let json = serde_json::to_value(&schema).expect("schema is JSON");
+        let holder_did = json
+            .pointer("/properties/holder_did/type")
+            .and_then(|v| v.as_str())
+            .expect("holder_did schema must declare a type");
+        assert_eq!(
+            holder_did, "string",
+            "AgentListOutput.holder_did must round-trip as JSON Schema `string`, got {holder_did:?}",
+        );
+        let count = json
+            .pointer("/properties/count/type")
+            .and_then(|v| v.as_str())
+            .expect("count schema must declare a type");
+        assert_eq!(
+            count, "integer",
+            "AgentListOutput.count must round-trip as JSON Schema `integer`, got {count:?}",
         );
     }
 }

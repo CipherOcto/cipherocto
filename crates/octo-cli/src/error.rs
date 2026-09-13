@@ -343,6 +343,37 @@ pub enum OctoCliError {
     #[error("agent already registered: {0}")]
     AgentAlreadyExists(uuid::Uuid),
 
+    /// `--limit` argument was zero or otherwise unparseable for the
+    /// agent-list filter (RFC-0011-c §9.8, slot 45 reserved by the
+    /// agent amendment chain). Substrate clamps at 1024 silently —
+    /// this variant surfaces the operator error up front so the
+    /// `0` / non-numeric input never reaches the substrate. Exit 45.
+    #[error("invalid --limit value `{0}` (must be 1..=1024)")]
+    InvalidLimit(String),
+
+    /// `--cursor` argument could not be parsed by the substrate
+    /// (RFC-0011-c §9.8, slot 46 reserved by the agent amendment
+    /// chain). Phase 1 cursors are opaque tokens; malformed input
+    /// surfaces here so the CLI never reaches the substrate with
+    /// ambiguous pagination state. Exit 46.
+    #[error("invalid --cursor value `{0}` (malformed opaque token)")]
+    InvalidCursor(String),
+
+    /// `lookup_agent` miss — agent UUID not found in the caller-attested
+    /// DID's wallet registry (RFC-0011-c §9.8 + RFC-0015 §6.2.3).
+    /// Mirrors the `AgentAlreadyExists` (slot 41) inverse but for the
+    /// not-found side. Exit 42.
+    #[error("agent not found: {0}")]
+    AgentNotFound(uuid::Uuid),
+
+    /// Caller-attested DID does not match the filter's `holder_did`
+    /// field — SECURITY HIGH (multi-DID enumeration prevention per
+    /// RFC-0015 §6.2.1). Exit 17 per RFC-0011 §Exit Codes 17-63
+    /// reserved range (NOT slot 13 which is `PolicyNotFound`, NOT
+    /// slot 37 which is owned by RFC-0011-g `UnknownAttestationKind`).
+    #[error("forbidden: holder DID mismatch")]
+    ForbiddenHolderMismatch,
+
     /// Unexpected internal failure.
     #[error("internal error: {0}")]
     Internal(String),
@@ -405,6 +436,12 @@ impl OctoCliError {
             Self::ManifestParseError { .. } => 39,
             Self::CapabilityValidationFailed(_) => 40,
             Self::AgentAlreadyExists(_) => 41,
+            Self::AgentNotFound(_) => 42,
+            // RFC-0011 §Exit Codes 17-63 reserved range; slot 17
+            // (free per amendment tracker — RFC-0011-g owns 37).
+            Self::ForbiddenHolderMismatch => 17,
+            Self::InvalidLimit(_) => 45,
+            Self::InvalidCursor(_) => 46,
             Self::Internal(_) => 64,
             Self::StaleStub { .. } => 65,
         }
@@ -510,6 +547,18 @@ impl OctoCliError {
             }
             Self::AgentAlreadyExists(_) => {
                 "the derived agent_id (RFC-0011-c §9.10) is already registered; check with `octo agent list` (once that subcommand ships) before re-submitting".to_string()
+            }
+            Self::AgentNotFound(_) => {
+                "the supplied agent_id was not registered to the active DID; check with `octo agent list` for owned agents".to_string()
+            }
+            Self::ForbiddenHolderMismatch => {
+                "the requested holder_did does not match the active operator DID; SECURITY HIGH — multi-DID enumeration is denied at the substrate (RFC-0015 §6.2.1)".to_string()
+            }
+            Self::InvalidLimit(_) => {
+                "pass `--limit` as a positive integer in the range 1..=1024 (the substrate hard ceiling per RFC-0015 §6.2.1)".to_string()
+            }
+            Self::InvalidCursor(_) => {
+                "the supplied cursor is malformed; cursors are opaque tokens reserved for forward-compat pagination (Phase 2)".to_string()
             }
             Self::StaleStub { .. } => "this command was removed; see the migration notes".to_string(),
             Self::Internal(_) => "re-run with `RUST_LOG=debug` and report the diagnostic".to_string(),
